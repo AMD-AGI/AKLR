@@ -1,0 +1,36 @@
+# Weekly AgentX end-to-end run (demo). The grid, the serving configuration and the client all
+# come from one InferenceX commit; this file names the entry and adds only what InferenceX
+# leaves to the host.
+schema: 1
+inferencex:
+  repo: SemiAnalysisAI/InferenceX
+  ref: main
+  config_key: glm5.2-fp4-mi355x-sglang-agentic-mtp
+  # The resolve step fails when the entry stops matching these: same model, same hardware class.
+  expect:
+    config_file: inferencex-e2e/configs/amd-master.yaml
+    recipe: inferencex-e2e/benchmarks/single_node/srt-slurm-recipes/glm5.2/sglang/mi355x-fp4-mtp/agentic.yaml
+    model: amd/GLM-5.2-MXFP4
+    model-prefix: glm5.2
+    framework: sglang
+    precision: fp4
+    runner_pattern: mi355x
+    points: 9
+  # Maps InferenceX search-space rows to our arm names.
+  arms:
+    tp8: {tp: 8, ep: 1, kv-offloading: none}
+    tp4: {tp: 4, ep: 4, kv-offloading: dram}
+weights:
+  repo: amd/GLM-5.2-MXFP4
+  revision: 386bd0e4ec821f7b07975701cec3c3b953a5576a
+# Added to every server's environment; may not override a variable the recipe sets.
+advisory_env:
+  AKLR_SGLANG_PLUGIN: "1"
+sweep:
+  port: 30000
+  ready_timeout_s: 3600
+  point_timeout_s: {tp8: 6600, tp4: 7200}
+  # InferenceX's dram-utilization: the TP4 arm's share of host memory reported to the client.
+  dram_utilization: 0.85
+report:
+  repo: AMD-AGI/SIKL

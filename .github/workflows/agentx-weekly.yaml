@@ -1,0 +1,223 @@
+name: AKLR-agentx-weekly
+
+# Weekly AgentX end-to-end run (demo): resolve InferenceX's GLM-5.2 MI355X FP4 agentic recipe
+# into 9 launch specs → sweep them on an MI355X self-hosted runner in the AKLR CI image →
+# Pareto / week-over-week / PR report → GitHub Pages. See benchmarks/agentx/README.md.
+on:
+  schedule:
+    # The cadence: edit this line. Scheduled runs also need vars.AGENTX_SCHEDULE_ENABLED == 'true'.
+    - cron: '17 10 * * 5'
+  workflow_dispatch:
+    inputs:
+      inferencex_ref:
+        description: InferenceX branch, tag or sha (grid, serving config and client)
+        type: string
+        default: main
+      arms:
+        description: Arms to run
+        type: choice
+        options: [all, tp8, tp4]
+        default: all
+      mock:
+        description: Fake results on a hosted runner, no GPU
+        type: boolean
+        default: false
+      duration_s:
+        description: DURATION per point for a smoke run (empty = the recipe's)
+        type: string
+        default: ''
+      publish:
+        description: Deploy the report to GitHub Pages (scheduled runs always do)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentx-weekly
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+    working-directory: benchmarks/agentx
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  plan:
+    if: github.event_name != 'schedule' || vars.AGENTX_SCHEDULE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python -m pip install pyyaml==6.0.3
+      - name: Test the AgentX scripts
+        run: python -m unittest discover -s tests -t . -v
+      - name: Resolve the InferenceX recipe
+        id: resolve
+        env:
+          INFERENCEX_REF: ${{ inputs.inferencex_ref || 'main' }}
+        run: |
+          serving="$RUNNER_TEMP/serving/serving.json"
+          python -m agentx_ci resolve --ix-ref "$INFERENCEX_REF" --work "$RUNNER_TEMP/work" --out "$serving" > "$RUNNER_TEMP/resolve.json"
+          { echo '### Serving config'; echo '```json'; cat "$RUNNER_TEMP/resolve.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          echo "image=$(jq -r .image.run "$serving")" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentx-serving
+          path: ${{ runner.temp }}/serving/
+
+  # One MI355X host runs the 9 points in turn (about 15 h at the recipe's 3600 s per point).
+  sweep:
+    needs: plan
+    if: ${{ !inputs.mock }}
+    runs-on: ${{ vars.AGENTX_RUNNER_LABEL || 'agentx-mi355x' }}
+    # The image AKLR is validated in (ci.yaml AKLR_CI_IMAGE), as resolve recorded it.
+    # AGENTX_HF_HUB_DIR holds the pinned GLM-5.2 snapshot and the AgentX trace dataset.
+    container:
+      image: ${{ needs.plan.outputs.image }}
+      options: >-
+        --env HOME=/github/home --env XDG_CACHE_HOME=/github/home/.cache
+        --device=/dev/kfd --device=/dev/dri --ipc=host
+        --security-opt=seccomp=unconfined --ulimit memlock=-1:-1
+      volumes:
+        - ${{ vars.AGENTX_HF_HUB_DIR }}:${{ vars.AGENTX_HF_HUB_DIR }}:ro
+      env:
+        HF_HUB_CACHE: ${{ vars.AGENTX_HF_HUB_DIR }}
+        HF_HUB_OFFLINE: '1'
+    timeout-minutes: 1260
+    steps:
+      - name: Checkout source and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: agentx-serving
+          path: ${{ runner.temp }}/serving
+      # ci.yaml's setup_aklr, reduced: the image's ROCm torch and Triton, this checkout editable.
+      - name: Install AKLR
+        working-directory: .
+        run: |
+          set -euo pipefail
+          git config --global --add safe.directory '*'
+          GPU_ARCHS=$(python3 -c "import torch; print(';'.join(sorted({torch.cuda.get_device_properties(i).gcnArchName.split(':')[0] for i in range(torch.cuda.device_count())})))")
+          echo "GPU_ARCHS=$GPU_ARCHS"
+          GPU_ARCHS=$GPU_ARCHS PREBUILD_KERNELS=0 AITER_USE_SYSTEM_TRITON=1 \
+            python3 -m pip install --no-build-isolation --no-deps -e .
+          python3 -c "import aklr; from aiter._aklr_proxy import AKLR_AVAILABLE; assert AKLR_AVAILABLE; print('AKLR from', aklr.__file__)"
+      - name: Sweep
+        env:
+          ARMS: ${{ inputs.arms || 'all' }}
+          DURATION_S: ${{ inputs.duration_s }}
+        run: |
+          python3 -m agentx_ci sweep --serving "$RUNNER_TEMP/serving/serving.json" --arms "$ARMS" \
+            ${DURATION_S:+--duration "$DURATION_S"} --work "$RUNNER_TEMP/agentx" --out "$RUNNER_TEMP/results"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agentx-results
+          path: ${{ runner.temp }}/results/
+          if-no-files-found: ignore
+
+  sweep-mock:
+    needs: plan
+    if: ${{ inputs.mock }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python -m pip install pyyaml==6.0.3
+      - uses: actions/download-artifact@v4
+        with:
+          name: agentx-serving
+          path: ${{ runner.temp }}/serving
+      - name: Sweep (mock)
+        env:
+          ARMS: ${{ inputs.arms || 'all' }}
+        run: |
+          python -m agentx_ci sweep --mock --mock-seed "$GITHUB_RUN_NUMBER" --arms "$ARMS" \
+            --serving "$RUNNER_TEMP/serving/serving.json" --out "$RUNNER_TEMP/results"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentx-results
+          path: ${{ runner.temp }}/results/
+
+  report:
+    needs: [plan, sweep, sweep-mock]
+    if: ${{ !cancelled() && (needs.sweep.result == 'success' || needs.sweep-mock.result == 'success') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      # Full history: the PR list walks main's first-parent commits since the previous run.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python -m pip install pyyaml==6.0.3
+      - uses: actions/download-artifact@v4
+        with:
+          name: agentx-results
+          path: ${{ runner.temp }}/results
+      # The baseline is whatever the site publishes now: the previous published run.
+      - name: Fetch the previous run
+        env:
+          PAGES_URL: ${{ vars.AGENTX_PAGES_URL }}
+        run: |
+          owner=${GITHUB_REPOSITORY_OWNER,,}
+          url=${PAGES_URL:-https://$owner.github.io/${GITHUB_REPOSITORY#*/}}
+          curl -fsSL "$url/results.json" -o "$RUNNER_TEMP/baseline.json" || echo "No previous run at $url"
+      - name: Render the report
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python -m agentx_ci report --results "$RUNNER_TEMP/results/results.json" \
+            --baseline "$RUNNER_TEMP/baseline.json" --out "$RUNNER_TEMP/site"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentx-site
+          path: ${{ runner.temp }}/site/
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name == 'schedule' || inputs.publish
+        with:
+          path: ${{ runner.temp }}/site/
+
+  pages:
+    needs: report
+    if: ${{ !cancelled() && needs.report.result == 'success' && (github.event_name == 'schedule' || inputs.publish) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4
