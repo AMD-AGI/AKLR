@@ -1,0 +1,79 @@
+name: AKLR-perf-guard
+
+# The trusted copy of the audit's measured-field rule: the base's copy runs, so a PR
+# cannot weaken it.
+on:
+  pull_request_target: # zizmor: ignore[dangerous-triggers] only the base's git and jq run; the PR head is read as data, never checked out or executed
+    branches: [main]
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-guard-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  perf-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Only git and jq run below; the read-only token fetches the PR head as data.
+      - name: Checkout the base
+        uses: actions/checkout@v4  # zizmor: ignore[artipacked] nothing is uploaded and no PR code runs
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+      - name: Compare measured fields with the base
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # ci.yaml's AKLR_BOT_PR, byte for byte but the event name.
+          AKLR_BOT_PR: >-
+            ${{ github.event_name == 'pull_request_target' && vars.AKLR_BOT_LOGIN != '' &&
+            github.event.sender.login == vars.AKLR_BOT_LOGIN && github.event.pull_request.user.login == vars.AKLR_BOT_LOGIN &&
+            github.head_ref == 'aklr-perf/main' && github.event.pull_request.head.repo.full_name == github.repository }}
+        run: |
+          git fetch --no-tags origin "refs/pull/$PR_NUMBER/head"
+          base=$(git merge-base HEAD "$HEAD_SHA")   # fails when the head moved; the newer event re-runs
+          authored='del(.workloads[] | .speedup, .accuracy)'
+          measured='[.workloads[] | select(has("speedup") or has("accuracy")) | {axes, speedup, accuracy}] | sort_by(.axes)'
+          # Collected first: -e checks a command substitution, not a process substitution.
+          # dispatch's glob follows symlinks (Path.glob, Path.is_file): a symlink or submodule
+          # anywhere under aklr/ops/ or aklr/plugins/ could point it at files this guard never reads.
+          links=$(git diff --raw --no-renames --diff-filter=d "$base" "$HEAD_SHA" -- aklr/ops aklr/plugins |
+            awk -F'\t' 'split($1, m, " ") && m[2] ~ /^1[26]0000$/ {print $2}')
+          if [[ -n $links ]]; then
+            while IFS= read -r p; do echo "::error file=$p::a symlink or submodule under aklr/ops/ or aklr/plugins/"; done <<<"$links"
+            exit 1
+          fi
+          # Exactly the files dispatch loads (locate.committed_schema_paths: impls/<language>/*/*.json);
+          # every change but a deletion, so a type change (file -> symlink) is seen.
+          changed=$(git diff --name-only --no-renames --diff-filter=d "$base" "$HEAD_SHA" -- ':(glob)aklr/ops/*/impls/*/*/*.json' ':(glob)aklr/plugins/**/impls/*/*/*.json')
+          status=0
+          while IFS= read -r p; do
+            [[ -n $p ]] || continue
+            new=$(git show "$HEAD_SHA:$p")
+            if ! old=$(git show "$base:$p" 2>/dev/null); then
+              # A new path: never measured by hand, and the bot only refreshes paths on main.
+              if [[ $AKLR_BOT_PR == true ]]; then
+                reason='the bot PR may only change paths present at the base'
+              else
+                [[ $(jq -c "$measured" <<<"$new") == '[]' ]] && continue
+                reason='a new schema carries measured fields'
+              fi
+            elif [[ $AKLR_BOT_PR == true ]]; then
+              [[ $(jq -S "$authored" <<<"$new") == "$(jq -S "$authored" <<<"$old")" ]] && continue
+              reason='the bot PR changes more than measured fields'
+            else
+              [[ $(jq -S "$measured" <<<"$new") == "$(jq -S "$measured" <<<"$old")" ]] && continue
+              reason='measured fields differ from the base; only the publish-measurement bot writes them'
+            fi
+            echo "::error file=$p::$reason"; status=1
+          done <<<"$changed"
+          exit "$status"
