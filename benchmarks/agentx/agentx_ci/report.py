@@ -1,15 +1,15 @@
 # SPDX-License-Identifier: MIT
-"""Render the weekly page: Pareto charts, the week-over-week table and the PRs merged since.
+"""Render the weekly page: Pareto charts, the week-over-week table and what landed since.
 
 Writes ``index.html`` (self-contained, inline SVG), ``results.json`` (this run, next week's
-baseline) and ``report.json`` (frontiers, comparison, PR list) into ``--out``.
+baseline) and ``report.json`` (frontiers, comparison, history since the previous run)
+into ``--out``.
 """
 
 from __future__ import annotations
 
 import argparse
 import math
-import os
 from html import escape
 from pathlib import Path
 
@@ -22,7 +22,7 @@ from agentx_ci.common import (
     write_json,
 )
 from agentx_ci.pareto import X, Y, compare, frontier, frontiers, measured
-from agentx_ci.prs import merged_prs
+from agentx_ci.prs import landed
 
 ARM_COLORS = {"tp8": "#2563eb", "tp4": "#ea580c"}
 FALLBACK_COLORS = ("#16a34a", "#9333ea", "#0891b2")
@@ -256,22 +256,30 @@ def comparison_tables(comparison: dict) -> str:
     return "\n".join(out)
 
 
-def pr_section(prs: dict | None, repo: str) -> str:
-    if prs is None:
-        return '<p class="muted">PR listing skipped (no previous run, or --no-prs).</p>'
-    compare_url = f"https://github.com/{repo}/compare/{prs['base']}...{prs['head']}"
-    head = f'<p class="muted">{short(prs["base"])}…{short(prs["head"])} · <a href="{compare_url}">compare</a></p>'
-    if prs["error"]:
-        return head + f'<p class="bad">PR lookup failed: {escape(prs["error"])}</p>'
-    if not prs["prs"]:
-        return head + '<p class="muted">No PRs merged in this range.</p>'
-    items = "".join(
-        f'<li><a href="{escape(pr["url"])}">#{pr["number"]}</a> {escape(pr["title"])} '
-        f'<span class="muted">@{escape(pr["author"] or "?")} · {escape(pr["merged_at"][:10])}</span></li>'
-        for pr in prs["prs"]
-    )
-    more = '<p class="muted">Truncated at 200 commits.</p>' if prs["truncated"] else ""
-    return head + f'<ul class="prs">{items}</ul>{more}'
+def history_section(history: dict | None, repo_url: str) -> str:
+    if history is None:
+        return '<p class="muted">First run: there is no previous run to list changes since.</p>'
+    base, head = history["base"], history["head"]
+    compare_url = f"{repo_url}/compare/{base}...{head}"
+    line = f'<p class="muted">git log --first-parent {short(base)}..{short(head)} · <a href="{escape(compare_url)}">compare</a></p>'
+    if history["error"]:
+        return (
+            line + f'<p class="bad">History unavailable: {escape(history["error"])}</p>'
+        )
+    if not history["entries"]:
+        return line + '<p class="muted">Nothing landed on main in this range.</p>'
+    items = []
+    for e in history["entries"]:
+        if e["kind"] == "pr":
+            ref = f'<a href="{escape(e["url"])}">#{e["number"]}</a>'
+        else:
+            ref = f'<a href="{escape(e["commit_url"])}"><code>{short(e["sha"])}</code></a> <span class="badge new-arm">direct commit</span>'
+        items.append(
+            f'<li>{ref} {escape(e["title"])} <span class="muted">{escape(e["author"])} · {escape(e["date"])}</span></li>'
+        )
+    prs = sum(e["kind"] == "pr" for e in history["entries"])
+    count = f'<p class="muted">{prs} PRs, {len(history["entries"]) - prs} direct commits.</p>'
+    return line + f'<ul class="prs">{"".join(items)}</ul>{count}'
 
 
 def points_table(results: dict) -> str:
@@ -326,11 +334,17 @@ dt { color:var(--muted); } dd { margin:0; word-break:break-all; }
 
 
 def render(
-    results: dict, baseline: dict | None, comparison: dict, prs: dict | None, repo: str
+    results: dict,
+    baseline: dict | None,
+    comparison: dict,
+    history: dict | None,
+    repo_url: str,
 ) -> str:
     run, ix = results["run"], results["run"]["inferencex"]
     mock = '<span class="badge mock">MOCK DATA</span>' if run["mode"] == "mock" else ""
-    aklr_link = f'<a href="https://github.com/{repo}/commit/{run["aklr_sha"]}">{short(run["aklr_sha"])}</a>'
+    aklr_link = (
+        f'<a href="{repo_url}/commit/{run["aklr_sha"]}">{short(run["aklr_sha"])}</a>'
+    )
     ix_link = f'<a href="https://github.com/{ix["repo"]}/commit/{ix["sha"]}">{short(ix["sha"])}</a>'
     warnings = results["serving"]["warnings"]
     warn = (
@@ -372,8 +386,8 @@ AKLR {aklr_link} · InferenceX {ix_link} · {ok}/{len(results['points'])} points
 <p class="muted">An arm is compared only when its whole serving config (arm_serve_sha256) equals the previous run's;
 otherwise it starts a new segment. Deltas are colored beyond ±{NOTABLE * 100:.0f}% (no noise model yet).</p>
 {comparison_tables(comparison)}
-<h2>AKLR PRs merged since the previous run</h2>
-{pr_section(prs, repo)}
+<h2>AKLR changes since the previous run</h2>
+{history_section(history, repo_url)}
 <h2>Points</h2>
 {points_table(results)}
 <h2>Provenance</h2>
@@ -403,35 +417,28 @@ def main(argv: list[str] | None = None) -> int:
         "--git-dir",
         type=Path,
         default=REPO_ROOT,
-        help="checkout for first-parent history",
+        help="AKLR checkout whose first-parent history lists the changes",
     )
-    parser.add_argument("--no-prs", action="store_true", help="skip the GitHub API")
     args = parser.parse_args(argv)
 
-    repo = load_config(args.config)["report"]["repo"]
+    repo_url = load_config(args.config)["report"]["repo_url"].rstrip("/")
     results = read_json(args.results)
     baseline = (
         read_json(args.baseline) if args.baseline and args.baseline.is_file() else None
     )
     comparison = compare(results, baseline)
-    prs = None
-    if comparison["status"] == "ok" and not args.no_prs:
-        token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
-        prs = merged_prs(
-            repo,
-            comparison["baseline_aklr_sha"],
-            results["run"]["aklr_sha"],
-            token,
-            args.git_dir,
-        )
+    history = None
+    if baseline is not None:
+        base, head = baseline["run"]["aklr_sha"], results["run"]["aklr_sha"]
+        history = landed(base, head, args.git_dir, repo_url)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "index.html").write_text(
-        render(results, baseline, comparison, prs, repo)
+        render(results, baseline, comparison, history, repo_url)
     )
     write_json(args.out / "results.json", results)
     write_json(
         args.out / "report.json",
-        {"frontiers": frontiers(results), "comparison": comparison, "prs": prs},
+        {"frontiers": frontiers(results), "comparison": comparison, "history": history},
     )
     print(f"wrote {args.out / 'index.html'} ({comparison['status']})")
     return 0

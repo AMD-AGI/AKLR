@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import contextlib
 import io
+import os
 import socket
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -66,7 +68,7 @@ class PipelineTests(unittest.TestCase):
         site1, site2 = self.root / "site1", self.root / "site2"
         quiet(
             report.main,
-            ["--results", str(self.sweep("w1")), "--out", str(site1), "--no-prs"],
+            ["--results", str(self.sweep("w1")), "--out", str(site1)],
         )
         w2 = self.sweep("w2", "--mock-seed", "1", "--mock-scale", "tp4=1.5")
         argv = [
@@ -76,7 +78,6 @@ class PipelineTests(unittest.TestCase):
             str(site1 / "results.json"),
             "--out",
             str(site2),
-            "--no-prs",
         ]
         quiet(report.main, argv)
         html = (site2 / "index.html").read_text()
@@ -193,69 +194,142 @@ class LivePathTests(unittest.TestCase):
             self.assertTrue(sweep.port_free(port))
 
 
-class PrTests(unittest.TestCase):
-    def test_merged_prs_dedupes_and_skips_unmerged(self):
-        pulls = {
-            "c1": [
-                {
-                    "number": 2,
-                    "title": "two",
-                    "html_url": "u2",
-                    "user": {"login": "x"},
-                    "merged_at": "2026-10-02",
-                }
-            ],
-            "c2": [
-                {
-                    "number": 1,
-                    "title": "one",
-                    "html_url": "u1",
-                    "user": {"login": "y"},
-                    "merged_at": "2026-10-01",
-                },
-                {
-                    "number": 3,
-                    "title": "open",
-                    "html_url": "u3",
-                    "user": None,
-                    "merged_at": None,
-                },
-            ],
-            "c3": [
-                {
-                    "number": 2,
-                    "title": "two",
-                    "html_url": "u2",
-                    "user": {"login": "x"},
-                    "merged_at": "2026-10-02",
-                }
-            ],
+class HistoryRepo:
+    """A temporary main: base → squash PR → direct commit → merge-commit PR."""
+
+    def __init__(self, root: Path):
+        self.root = root
+        self.git("init", "-q", "--initial-branch=main")
+        self.base = self.commit("initial", "Ann")
+        self.commit("feat: squash-merged change (#12)", "Alice")
+        self.commit("fix a typo", "Bob")
+        self.git("checkout", "-q", "-b", "topic")
+        self.commit("work on topic", "Carol")
+        self.git("checkout", "-q", "main")
+        merge = "Merge pull request #15 from org/topic\n\nfeat: merged through a merge commit"
+        self.git("merge", "-q", "--no-ff", "topic", "-m", merge, author="Dave")
+        self.head = self.git("rev-parse", "HEAD")
+
+    def git(self, *args: str, author: str = "Ann") -> str:
+        env = {
+            "GIT_AUTHOR_NAME": author,
+            "GIT_AUTHOR_EMAIL": f"{author.lower()}@example.com",
+            "GIT_COMMITTER_NAME": author,
+            "GIT_COMMITTER_EMAIL": f"{author.lower()}@example.com",
+            "GIT_CONFIG_GLOBAL": "/dev/null",
+            "PATH": os.environ["PATH"],
         }
+        done = subprocess.run(
+            ["git", *args],
+            cwd=self.root,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return done.stdout.strip()
 
-        def get(path, token):
-            return pulls[path.split("/")[-2]]
+    def commit(self, subject: str, author: str) -> str:
+        self.git("commit", "-q", "--allow-empty", "-m", subject, author=author)
+        return self.git("rev-parse", "HEAD")
 
-        with (
-            patch.object(prs, "first_parent", return_value=["c1", "c2", "c3"]),
-            patch.object(prs, "get", get),
-        ):
-            out = prs.merged_prs("o/r", "base", "head", None, Path("."))
+
+class HistoryTests(unittest.TestCase):
+    URL = "https://github.com/o/r"
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.tmp = Path(temporary.name)
+        (self.tmp / "main").mkdir()
+        self.repo = HistoryRepo(self.tmp / "main")
+
+    def test_first_parent_entries(self):
+        out = prs.landed(self.repo.base, self.repo.head, self.repo.root, self.URL)
         self.assertIsNone(out["error"])
-        self.assertEqual([pr["number"] for pr in out["prs"]], [2, 1])
-
-    def test_lookup_errors_are_reported(self):
-        with (
-            patch.object(prs, "first_parent", return_value=["c1"]),
-            patch.object(prs, "get", side_effect=OSError("down")),
-        ):
-            out = prs.merged_prs("o/r", "base", "head", None, Path("."))
-        self.assertIn("down", out["error"])
+        got = [
+            (e["kind"], e["number"], e["title"], e["author"]) for e in out["entries"]
+        ]
+        self.assertEqual(
+            got,
+            [
+                ("pr", 15, "feat: merged through a merge commit", "Dave"),
+                ("commit", None, "fix a typo", "Bob"),
+                ("pr", 12, "feat: squash-merged change", "Alice"),
+            ],
+        )
+        self.assertEqual(out["entries"][0]["url"], f"{self.URL}/pull/15")
+        self.assertNotIn("url", out["entries"][1])
+        self.assertTrue(
+            out["entries"][1]["commit_url"].startswith(f"{self.URL}/commit/")
+        )
+        self.assertRegex(out["entries"][2]["date"], r"^\d{4}-\d{2}-\d{2}$")
 
     def test_same_commit_lists_nothing(self):
-        self.assertEqual(prs.merged_prs("o/r", "a", "a", None, Path("."))["prs"], [])
+        out = prs.landed(self.repo.head, self.repo.head, self.repo.root, self.URL)
+        self.assertEqual((out["entries"], out["error"]), ([], None))
 
-    def test_report_repo_is_configured(self):
-        self.assertEqual(load_config()["report"]["repo"], "AMD-AGI/SIKL")
+    def test_unknown_baseline_is_a_clear_error(self):
+        out = prs.landed("0" * 40, self.repo.head, self.repo.root, self.URL)
+        self.assertIn("fetch-depth: 0", out["error"])
+        self.assertEqual(out["entries"], [])
+
+    def test_baseline_off_main_is_an_error(self):
+        topic = self.repo.git("rev-parse", "topic")
+        side = self.repo.git("rev-parse", "HEAD~1")
+        out = prs.landed(topic, side, self.repo.root, self.URL)
+        self.assertIn("not an ancestor", out["error"])
+
+    def test_a_missing_baseline_is_fetched(self):
+        self.repo.git("config", "uploadpack.allowAnySHA1InWant", "true")
+        clone = self.tmp / "clone"
+        source = f"file://{self.repo.root}"
+        subprocess.run(
+            ["git", "clone", "-q", "--depth=1", source, str(clone)], check=True
+        )
+        self.assertFalse(prs.has_commit(clone, self.repo.base))
+        out = prs.landed(self.repo.base, self.repo.head, clone, self.URL)
+        self.assertIsNone(out["error"])
+        self.assertEqual(out["fetched"], ["unshallow"])
+        self.assertEqual(len(out["entries"]), 3)
+
+    def test_report_lists_the_history(self):
+        serving = write_json(self.tmp / "serving.json", build())
+        runs = {}
+        for name, sha in (("w1", self.repo.base), ("w2", self.repo.head)):
+            argv = ["--serving", str(serving), "--out", str(self.tmp / name), "--mock"]
+            with patch.dict(os.environ, {"GITHUB_SHA": sha}):
+                quiet(sweep.main, [*argv, "--run-id", name])
+            runs[name] = self.tmp / name / "results.json"
+        site = self.tmp / "site"
+        argv = ["--results", str(runs["w2"]), "--baseline", str(runs["w1"])]
+        quiet(
+            report.main, [*argv, "--out", str(site), "--git-dir", str(self.repo.root)]
+        )
+        html = (site / "index.html").read_text()
+        self.assertIn("/pull/15", html)
+        self.assertIn("direct commit", html)
+        history = read_json(site / "report.json")["history"]
+        self.assertEqual([e["number"] for e in history["entries"]], [15, None, 12])
+
+    def test_first_run_has_no_history(self):
+        site = self.tmp / "site"
+        serving = write_json(self.tmp / "serving.json", build())
+        quiet(
+            sweep.main,
+            ["--serving", str(serving), "--out", str(self.tmp / "w1"), "--mock"],
+        )
+        quiet(
+            report.main,
+            ["--results", str(self.tmp / "w1/results.json"), "--out", str(site)],
+        )
+        self.assertIn("First run", (site / "index.html").read_text())
+        self.assertIsNone(read_json(site / "report.json")["history"])
+
+    def test_repo_url_is_configured(self):
+        self.assertEqual(
+            load_config()["report"]["repo_url"], "https://github.com/AMD-AGI/SIKL"
+        )
 
 
 if __name__ == "__main__":

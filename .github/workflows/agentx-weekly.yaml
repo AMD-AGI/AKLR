@@ -166,11 +166,9 @@ jobs:
     if: ${{ !cancelled() && (needs.sweep.result == 'success' || needs.sweep-mock.result == 'success') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    permissions:
-      contents: read
-      pull-requests: read
     steps:
-      # Full history: the PR list walks main's first-parent commits since the previous run.
+      # Full history, so the previous run's AKLR commit is local: the page lists what landed
+      # since with git log --first-parent on this checkout, no API call.
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -193,8 +191,6 @@ jobs:
           url=${PAGES_URL:-https://$owner.github.io/${GITHUB_REPOSITORY#*/}}
           curl -fsSL "$url/results.json" -o "$RUNNER_TEMP/baseline.json" || echo "No previous run at $url"
       - name: Render the report
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
         run: |
           python -m agentx_ci report --results "$RUNNER_TEMP/results/results.json" \
             --baseline "$RUNNER_TEMP/baseline.json" --out "$RUNNER_TEMP/site"
