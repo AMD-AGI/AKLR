@@ -13,9 +13,8 @@ full design. Each week it:
    `/health` and `/v1/models`, run InferenceX's AgentX client (`python3 -m infx.bench agentic`),
    stop the server;
 3. **reports** per-arm and combined Pareto frontiers (throughput per GPU against P90 E2E
-   interactivity), a week-over-week comparison with the previous published run, and what
-   landed on AKLR main since (PRs and direct commits, from this checkout's git history), as a
-   static page;
+   interactivity), a week-over-week comparison with the previous published run, and the two
+   runs' AKLR commits with a GitHub compare link, as a static page;
 4. **publishes** the page to GitHub Pages.
 
 ```
@@ -26,7 +25,6 @@ benchmarks/agentx/
   agentx_ci/ix_points.py               runs inside the InferenceX checkout, its code only
   agentx_ci/sweep.py                   serving.json → results.json (live or --mock)
   agentx_ci/pareto.py                  frontiers, whole-arm week-over-week comparison
-  agentx_ci/prs.py                     git log --first-parent between two AKLR commits
   agentx_ci/report.py                  index.html, results.json, report.json
   tests/                               unittest; data/ holds InferenceX 70a7601's own output
 scripts/agentx/register_runner.sh      register an MI355X host as a runner
@@ -34,7 +32,7 @@ scripts/agentx/register_runner.sh      register an MI355X host as a runner
 
 ## Run it locally in mock mode
 
-Needs Python ≥ 3.10, PyYAML, git, and network access to GitHub for the InferenceX fetch; no GPU.
+Needs Python ≥ 3.10, PyYAML, git and network access to GitHub; no GPU.
 
 ```bash
 cd benchmarks/agentx
@@ -43,15 +41,14 @@ python3 -m unittest discover -s tests -t .
 # 1. Resolve InferenceX main (a sparse clone, about 5 s; add --ix-ref <sha> to pin it).
 python3 -m agentx_ci resolve --work /tmp/agx/work --out /tmp/agx/serving.json
 
-# 2. Two fake weeks; the second scales tp4's throughput by 6 %. A run records its AKLR commit
-#    from $GITHUB_SHA (else HEAD): week 1 pretends to have run five commits ago.
-GITHUB_SHA=$(git rev-parse HEAD~5) python3 -m agentx_ci sweep --mock --mock-seed 1 --run-id 101 \
+# 2. Two fake weeks; the second scales tp4's throughput by 6 %.
+python3 -m agentx_ci sweep --mock --mock-seed 1 --run-id 101 \
   --serving /tmp/agx/serving.json --out /tmp/agx/week1
 python3 -m agentx_ci report --results /tmp/agx/week1/results.json --out /tmp/agx/site1
 python3 -m agentx_ci sweep --mock --mock-seed 2 --mock-scale tp4=1.06 --run-id 102 \
   --serving /tmp/agx/serving.json --out /tmp/agx/week2
 
-# 3. Week 2 against week 1, with what landed between the two runs' AKLR commits.
+# 3. Week 2 against week 1.
 python3 -m agentx_ci report --results /tmp/agx/week2/results.json \
   --baseline /tmp/agx/site1/results.json --out /tmp/agx/site2
 xdg-open /tmp/agx/site2/index.html
@@ -59,16 +56,9 @@ xdg-open /tmp/agx/site2/index.html
 
 Mock results are never compared with live ones; the page carries a `MOCK DATA` badge.
 
-### What landed since the previous run
-
-`git log --first-parent <previous run's AKLR sha>..<this run's sha>` on the checkout given by
-`--git-dir` (default: this repository). A subject ending in `(#123)` (squash merge) or
-`Merge pull request #123 from …` (merge commit, title from the body) is PR #123, linked under
-`report.repo_url` of `agentx.yaml`; any other commit is listed as a direct commit, with
-author and date. No GitHub API, no token. The first run has no previous run and lists
-nothing. A shallow checkout is unshallowed, and a previous sha still missing is fetched from
-`origin`; when that fails the page says so (the workflow checks out with `fetch-depth: 0`). A
-previous sha that is not an ancestor of this run's (a rewritten branch) is an error too.
+Each run records its AKLR commit (`$GITHUB_SHA`, else `HEAD`). The page shows this run's
+commit and, when there is a previous run, the previous run's commit and
+`<report.repo_url>/compare/<previous>...<this>`; it does not list the PRs in between.
 
 ## Run it for real
 
