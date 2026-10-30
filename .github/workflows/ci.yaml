@@ -289,6 +289,9 @@ jobs:
           mkdir -p "$cache"
           export FLYDSL_RUNTIME_CACHE_DIR="$cache/flydsl-runtime" FLYDSL_AUTOTUNE_CACHE_DIR="$cache/flydsl-autotune" \
                  TRITON_CACHE_DIR="$cache/triton" XDG_CACHE_HOME="$cache/xdg" AKLR_KERNEL_CACHE_DIR="$cache/aklr-kernels"
+          # Not aiter's default, 3rdparty/aiter/aiter/jit: checkout does not clean the submodule, and a
+          # killed build's lock there, owned by an earlier job's container, would block every later job.
+          export AITER_JIT_DIR="$cache/aiter-jit"
           # Bench task directories need a local disk (peak len(devices) × 16 GiB): flock, atomic renames, real free space.
           export TMPDIR="$AKLR_CI_STATE_DIR"
           echo "📂 Checkout: $GITHUB_WORKSPACE (commit $(git rev-parse --short HEAD))"
@@ -360,6 +363,7 @@ jobs:
             printf 'TRITON_CACHE_DIR=%s\n' "$TRITON_CACHE_DIR"
             printf 'XDG_CACHE_HOME=%s\n' "$XDG_CACHE_HOME"
             printf 'AKLR_KERNEL_CACHE_DIR=%s\n' "$AKLR_KERNEL_CACHE_DIR"
+            printf 'AITER_JIT_DIR=%s\n' "$AITER_JIT_DIR"
             printf 'TMPDIR=%s\n' "$TMPDIR"
             printf 'COVERAGE_PROCESS_START=%s/pyproject.toml\n' "$GITHUB_WORKSPACE"
           } >> "$GITHUB_ENV"
