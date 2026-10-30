@@ -474,9 +474,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 3.559
+      }
     },
     {
       "axes": {
@@ -491,9 +489,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 3.465
+      }
     },
     {
       "axes": {
@@ -508,9 +504,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 3.521
+      }
     },
     {
       "axes": {
@@ -525,9 +519,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 3.35
+      }
     },
     {
       "axes": {
@@ -542,9 +534,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 3.298
+      }
     },
     {
       "axes": {
@@ -559,9 +549,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 3.871
+      }
     },
     {
       "axes": {
@@ -576,9 +564,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 3.81
+      }
     },
     {
       "axes": {
@@ -593,9 +579,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 2.692
+      }
     },
     {
       "axes": {
@@ -610,9 +594,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 2.086
+      }
     }
   ],
   "layout_variants": {

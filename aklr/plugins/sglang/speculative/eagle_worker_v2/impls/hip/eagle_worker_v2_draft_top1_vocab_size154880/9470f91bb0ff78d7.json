@@ -51,58 +51,42 @@
     {
       "axes": {
         "n_rows": 1
-      },
-      "accuracy": "passed",
-      "speedup": 1.412
+      }
     },
     {
       "axes": {
         "n_rows": 2
-      },
-      "accuracy": "passed",
-      "speedup": 1.282
+      }
     },
     {
       "axes": {
         "n_rows": 3
-      },
-      "accuracy": "passed",
-      "speedup": 1.201
+      }
     },
     {
       "axes": {
         "n_rows": 4
-      },
-      "accuracy": "passed",
-      "speedup": 1.1
+      }
     },
     {
       "axes": {
         "n_rows": 6
-      },
-      "accuracy": "passed",
-      "speedup": 1.263
+      }
     },
     {
       "axes": {
         "n_rows": 8
-      },
-      "accuracy": "passed",
-      "speedup": 1.247
+      }
     },
     {
       "axes": {
         "n_rows": 12
-      },
-      "accuracy": "passed",
-      "speedup": 1.158
+      }
     },
     {
       "axes": {
         "n_rows": 16
-      },
-      "accuracy": "passed",
-      "speedup": 1.084
+      }
     }
   ],
   "layout_variants": {

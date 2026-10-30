@@ -484,9 +484,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 2.473
+      }
     },
     {
       "axes": {
@@ -501,9 +499,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 2.42
+      }
     },
     {
       "axes": {
@@ -518,9 +514,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 2.415
+      }
     },
     {
       "axes": {
@@ -535,9 +529,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 2.062
+      }
     },
     {
       "axes": {
@@ -552,9 +544,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 2.065
+      }
     },
     {
       "axes": {
@@ -569,9 +559,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 2.327
+      }
     },
     {
       "axes": {
@@ -586,9 +574,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 2.328
+      }
     },
     {
       "axes": {
@@ -603,9 +589,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 1.706
+      }
     },
     {
       "axes": {
@@ -620,9 +604,7 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      },
-      "accuracy": "passed",
-      "speedup": 1.323
+      }
     }
   ],
   "layout_variants": {
