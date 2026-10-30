@@ -3,6 +3,7 @@
 
 import os
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 import torch
@@ -62,11 +63,22 @@ def builder_registry() -> Iterator[BuilderRegistry]:
         BuilderRegistry.set_instance(None)
 
 
+@pytest.fixture(scope="session")
+def committed_kernel_cache(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One kernel cache for every init over the committed schemas: kernels are cached
+    by content hash, so each is built once per session, not once per test."""
+    return tmp_path_factory.mktemp("committed_kernel_cache")
+
+
 @pytest.fixture
 def default_dispatchers(
     builder_registry: BuilderRegistry,
+    committed_kernel_cache: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[DispatcherRegistry]:
-    """``DispatcherRegistry.default()`` with every dispatcher closed (``NO_SCHEMA``), no recorder."""
+    """``DispatcherRegistry.default()`` with every dispatcher closed (``NO_SCHEMA``), no
+    recorder, building into ``committed_kernel_cache``."""
+    monkeypatch.setenv(ENV_KERNEL_CACHE_DIR, str(committed_kernel_cache))
     registry = DispatcherRegistry.default()
     for dispatcher in registry.dispatchers().values():
         dispatcher.close(FallbackReason.NO_SCHEMA)
