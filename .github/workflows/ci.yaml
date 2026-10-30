@@ -86,7 +86,7 @@ jobs:
           echo "🐧 Runner: $RUNNER_NAME ($RUNNER_OS); event: $GITHUB_EVENT_NAME; ref: $GITHUB_REF"
           echo "⏱️ Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           echo '🧭 Pipeline: lint → GPU node → AKLR tests → validation → coverage report.'
-          echo '🔎 Checks: pre-commit, AITER path warning, import contracts, export check, audit.'
+          echo '🔎 Checks: pre-commit, import contracts, export check, audit.'
           if [[ "$GPU_ENABLED" == true ]]; then
             echo '🟢 GPU jobs are eligible; each test stage must pass before the next starts.' | tee -a "$GITHUB_STEP_SUMMARY"
           else
@@ -156,11 +156,6 @@ jobs:
           git diff --name-only --diff-filter=ACMRTUXB "$base" "$head"
           echo '::endgroup::'
           echo "args=--from-ref $base --to-ref $head --show-diff-on-failure" >> "$GITHUB_OUTPUT"
-      - name: Test CI Git inspection scripts
-        run: python3 -m unittest discover -s .github/scripts/tests -v
-      - name: Warn about AITER path changes (advisory)
-        if: github.event_name == 'pull_request' || github.event_name == 'push'
-        run: python3 .github/scripts/warn_aiter_changes.py github
       - name: Run pre-commit
         id: precommit
         uses: pre-commit/action@v3.0.1
@@ -168,9 +163,9 @@ jobs:
           extra_args: ${{ steps.lint.outputs.args }}
       # export check and the audit load the default registry, which imports the ops' apis and torch.
       - &install_cpu_deps
-        name: Install pydantic, CPU torch, ruff and black
+        name: Install pydantic, CPU torch and ruff
         run: |
-          python -m pip install "$(grep -E '^pydantic==' requirements.txt)" -r requirements-dev.txt
+          python -m pip install -r requirements.txt
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
       # Covers main moving before this run only: GitHub does not re-run the bot PR's
       # checks when main moves later.
@@ -283,7 +278,6 @@ jobs:
           # The host runner user owns the checkout, the container runs as root; checkout trusts it only in a temporary HOME.
           git config --global --add safe.directory '*'
           export AKLR_CI_STATE_DIR="$RUNNER_TEMP/aklr-ci"
-          export PYTHONPATH="$GITHUB_WORKSPACE"
           export COVERAGE_FILE="$AKLR_CI_STATE_DIR/.coverage"
           export PIP_CACHE_DIR="$AKLR_CI_STATE_DIR/pip-cache"
           mkdir -p "$AKLR_CI_STATE_DIR/test-reports"
@@ -295,8 +289,6 @@ jobs:
           mkdir -p "$cache"
           export FLYDSL_RUNTIME_CACHE_DIR="$cache/flydsl-runtime" FLYDSL_AUTOTUNE_CACHE_DIR="$cache/flydsl-autotune" \
                  TRITON_CACHE_DIR="$cache/triton" XDG_CACHE_HOME="$cache/xdg" AKLR_KERNEL_CACHE_DIR="$cache/aklr-kernels"
-          # Shared by validation's child processes, which inherit it as is.
-          export AITER_JIT_DIR="$GITHUB_WORKSPACE/aiter/jit"
           # Bench task directories need a local disk (peak len(devices) × 16 GiB): flock, atomic renames, real free space.
           export TMPDIR="$AKLR_CI_STATE_DIR"
           echo "📂 Checkout: $GITHUB_WORKSPACE (commit $(git rev-parse --short HEAD))"
@@ -321,41 +313,36 @@ jobs:
           Path(sys.argv[1]).write_text(";".join(sorted(architectures)))
           PY
           echo '::endgroup::'
-          setup_phase='prepare submodules'
-          echo '::group::🧰 Prepare CK and export the GPU build settings'
-          if [[ ! -f 3rdparty/composable_kernel/CMakeLists.txt ]]; then
-            echo '📥 Initialize the pinned CK submodule.'
-            git submodule update --init --recursive --depth 1
-          fi
+          setup_phase='export the GPU build settings'
+          echo '::group::🧰 Export the GPU build settings'
           export GPU_ARCHS
           GPU_ARCHS=$(cat "$AKLR_CI_STATE_DIR/gpu-archs")
-          export PREBUILD_KERNELS=0 AITER_USE_SYSTEM_TRITON=1
           unset AITER_ASM_DIR
           echo '::endgroup::'
           setup_phase='install test tools and this checkout'
-          echo '::group::📦 Install test tools and the AKLR fork with the image Triton'
-          echo "🔧 GPU_ARCHS=$GPU_ARCHS; PREBUILD_KERNELS=$PREBUILD_KERNELS; AITER_USE_SYSTEM_TRITON=$AITER_USE_SYSTEM_TRITON"
+          echo '::group::📦 Install test tools and amd-aiter (submodule AITER plus AKLR)'
+          echo "🔧 GPU_ARCHS=$GPU_ARCHS"
           echo '📥 Install coverage 7.16.0, pytest-timeout 2.4.0 and expecttest 0.3.0.'
           # Install coverage over any copy the image ships, so pip never has to uninstall it.
           python3 -m pip install --ignore-installed 'coverage[toml]==7.16.0'
           python3 -m pip install 'pytest-timeout==2.4.0' 'expecttest==0.3.0'
-          # Keep the image's ROCm 10 Triton: the PyPI wheel segfaults when imported after torch.
-          echo '📥 Install this checkout in editable mode, with JIT builds deferred until use.'
-          python3 -m pip install --no-build-isolation --no-deps -e . -v
-          echo '🔎 Verify Triton 3.8.0 and ensure AITER / AKLR import from this checkout.'
+          # With its dependencies: aiter's kernels need its pinned FlyDSL, not the image's.
+          echo '📥 Install this checkout in editable mode over the image amd-aiter.'
+          python3 -m pip install -e . -v
+          echo '🔎 Verify Triton 3.8.0, AKLR from this checkout and its AITER proxies.'
           python3 -c "import torch, triton, sys; v = triton.__version__.split('+')[0]; print(f'triton {triton.__version__}'); sys.exit(0 if v == '3.8.0' else f'triton==3.8.0 is required, found {triton.__version__}')"
           python3 - <<'PY'
           from pathlib import Path
           from importlib.metadata import version
           import aiter
           import aklr
-          from aiter._aklr_proxy import AKLR_AVAILABLE
+          from aklr.ops import load_routes
           root = Path.cwd().resolve()
-          assert Path(aiter.__file__).resolve().is_relative_to(root), aiter.__file__
           assert Path(aklr.__file__).resolve().is_relative_to(root), aklr.__file__
-          assert AKLR_AVAILABLE, "The AKLR proxy could not be imported"
-          assert "aklr" in version("amd-aiter"), version("amd-aiter")
-          print("Testing", version("amd-aiter"), "from", root)
+          load_routes()
+          assert hasattr(aiter.gemm_a8w8, "aklr_proxy"), "AKLR did not proxy aiter"
+          assert Path(aiter.__file__).resolve().is_relative_to(root / "3rdparty" / "aiter"), aiter.__file__
+          print("Testing amd-aiter", version("amd-aiter"), "from", root)
           PY
           echo '::endgroup::'
           setup_phase='enable coverage and export the environment'
@@ -365,7 +352,6 @@ jobs:
           # These variables must persist into the workflow's later steps.
           {
             printf 'AKLR_CI_STATE_DIR=%s\n' "$AKLR_CI_STATE_DIR"
-            printf 'PYTHONPATH=%s\n' "$PYTHONPATH"
             printf 'COVERAGE_FILE=%s\n' "$COVERAGE_FILE"
             printf 'PIP_CACHE_DIR=%s\n' "$PIP_CACHE_DIR"
             printf 'GPU_ARCHS=%s\n' "$GPU_ARCHS"
@@ -374,7 +360,6 @@ jobs:
             printf 'TRITON_CACHE_DIR=%s\n' "$TRITON_CACHE_DIR"
             printf 'XDG_CACHE_HOME=%s\n' "$XDG_CACHE_HOME"
             printf 'AKLR_KERNEL_CACHE_DIR=%s\n' "$AKLR_KERNEL_CACHE_DIR"
-            printf 'AITER_JIT_DIR=%s\n' "$AITER_JIT_DIR"
             printf 'TMPDIR=%s\n' "$TMPDIR"
             printf 'COVERAGE_PROCESS_START=%s/pyproject.toml\n' "$GITHUB_WORKSPACE"
           } >> "$GITHUB_ENV"
