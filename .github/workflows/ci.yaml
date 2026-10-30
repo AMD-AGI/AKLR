@@ -454,7 +454,9 @@ jobs:
       env:
         HF_HUB_CACHE: ${{ vars.AKLR_SHARED_HF_HUB_DIR }}
         HF_HUB_OFFLINE: '1'
-    timeout-minutes: 150
+    # A full validation (no base: a force push, a replaced run, a dispatch) benches every schema:
+    # 247 schemas need about 225 minutes on 8 MI355X (170 of 257 batches ran in 150).
+    timeout-minutes: 300
     env:
       STAGES: ${{ needs.code-lint.outputs.should_run_e2e == 'true' && 'audit,bench,e2e' || 'audit,bench' }}
     steps:
