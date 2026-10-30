@@ -21,6 +21,15 @@ rather than a person at a terminal.
   must print help.
 - Settle the budget (`--max-hours`) and the model with the user if they did not give them: the agents spend
   money from step 2 on.
+- **Split small M from large M: one run per regime, never one run over both.** A run scores the mean over its
+  workloads, so a schema whose small-M Points (decode: launch, latency or the weight read) sit beside large-M ones
+  (prefill: compute) gets one kernel tuned for whichever Points outnumber the others. Read each workload's bound
+  first: the weight bytes over the read roof against the FLOPs over the compute roof; the M where they cross
+  (peak FLOP/s / read bandwidth x weight bytes per element, about 230 for bf16 on MI355X) splits a GEMM, and a
+  long flat stretch of time over M marks the latency-bound end. Give each regime its own run, card and schema
+  file holding only its workloads; each delivers its own kernel file, and dispatch serves every Point with the
+  best one. forge_task reads a schema only where AKLR keeps it, so write each regime's file into that run's own
+  AKLR clone, under `aklr/ops/<op>/impls/<language>/<name>/`.
 - Pick one card nobody uses (`rocm-smi --showmeminfo vram`, `rocm-smi --showpids`) and use it in steps 1, 2
   and 5. Another process on the card makes every timing on it meaningless.
 
