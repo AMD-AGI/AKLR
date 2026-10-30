@@ -1,0 +1,4 @@
+pre-commit==4.5.1
+ruff==0.15.12
+# the lint job's export check and audit load the ops' contracts
+pydantic==2.13.4

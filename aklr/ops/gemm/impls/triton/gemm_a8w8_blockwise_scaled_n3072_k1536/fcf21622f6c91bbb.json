@@ -1,0 +1,154 @@
+{
+  "schema_version": 5,
+  "name": "gemm_a8w8_blockwise_scaled_n3072_k1536",
+  "contract_id": "gemm_a8w8_blockwise_scaled@1.0",
+  "description": "fp8 gemm dequantized per block: a fp32 scale per 128 x 128 of b, per 1 x 128 of a, K-major or MN-major. operand_format is '<a>:<b>'; 'none:preshuffled' is aiter's 16 x 16 shuffle_weight b with a raw column-major a_scale. Set a_scale.is_row_major to pass a row-major a_scale with a shuffled b.",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 3072,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 1536,
+      "description": "Reduction length."
+    },
+    "scale_rows": {
+      "type": "const",
+      "value": 24,
+      "description": "Weight-scale rows."
+    },
+    "scale_columns": {
+      "type": "const",
+      "value": 12,
+      "description": "Scale columns."
+    }
+  },
+  "attrs": {
+    "scale_major_mode": "K",
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    },
+    "a_scale": {
+      "shape": [
+        "m",
+        "scale_columns"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "Per 1 x 128 block of a."
+    },
+    "b_scale": {
+      "shape": [
+        "scale_rows",
+        "scale_columns"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "Per 128 x 128 block of b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T, scaled."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 32
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "operand_format",
+            "expected_value": "none:none"
+          },
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "author": "openai",
+    "entry_point": "main.py::run",
+    "sources": [
+      {
+        "path": "adapter.py",
+        "content": "\"\"\"Metadata checks shared by the gfx950 N3072/K1536 FP8 candidates.\"\"\"\n\nimport torch\n\n\ndef validate_inputs(a, b, a_scale, b_scale, supported_m):\n    tensors = (a, b, a_scale, b_scale)\n    if not all(isinstance(t, torch.Tensor) and t.ndim == 2 for t in tensors):\n        raise ValueError(\"expected four two-dimensional tensors\")\n    if any(t.layout != torch.strided or not t.is_contiguous() for t in tensors):\n        raise ValueError(\"expected contiguous K-major tensors\")\n    if any(t.is_conj() or t.is_neg() for t in tensors):\n        raise ValueError(\"conjugate and negative views are unsupported\")\n    if any(t.device != a.device for t in tensors):\n        raise ValueError(\"all tensors must be on the same device\")\n    m, k = a.shape\n    if m not in supported_m:\n        raise ValueError(f\"unsupported M={m}; expected one of {supported_m}\")\n    if k != 1536 or b.shape != (3072, 1536):\n        raise ValueError(\"expected N=3072 and K=1536\")\n    if a.dtype != torch.float8_e4m3fn or b.dtype != torch.float8_e4m3fn:\n        raise ValueError(\"expected E4M3FN operands\")\n    if a_scale.dtype != torch.float32 or b_scale.dtype != torch.float32:\n        raise ValueError(\"expected FP32 scales\")\n    if a_scale.shape != (m, 12) or b_scale.shape != (24, 12):\n        raise ValueError(\"expected activation 1x128 and weight 128x128 scales\")\n    if getattr(b, \"is_shuffled\", False):\n        raise ValueError(\"preshuffled weights are unsupported\")\n"
+      },
+      {
+        "path": "kernel.py",
+        "content": "from dataclasses import dataclass\nfrom typing import NamedTuple\n\nimport torch\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n\n@dataclass(frozen=True, slots=True)\nclass FP8PrecisionConfig:\n    dtype: torch.dtype\n    max_finite: float\n    group_quant_max: float\n\n\nFP8_E4M3_FN = FP8PrecisionConfig(torch.float8_e4m3fn, 448.0, 448.0)\n\n\nclass _Schedule(NamedTuple):\n    dense_scales: bool\n    prefetch: int\n    stripes: int\n    read_ahead: bool\n    early_groups: int\n    dual_acc: bool\n    late_scale: bool\n    waves: int\n\n\n@gluon.constexpr_function\ndef _schedule(m, x_strides, xs_strides, w_strides, ws_strides):\n\n    dense = xs_strides == (12, 1) and ws_strides == (12, 1)\n    contiguous = dense and x_strides == (1536, 1) and w_strides == (1536, 1)\n    aligned_m64 = (\n        m == 64\n        and dense\n        and w_strides == (1536, 1)\n        and x_strides[1] == 1\n        and x_strides[0] >= 1536\n        and x_strides[0] % 64 == 0\n    )\n    scalar_pipeline = contiguous or aligned_m64\n    return _Schedule(\n        dense_scales=dense,\n        prefetch=5 if scalar_pipeline else (4 if dense else (5 if m == 32 else 3)),\n        stripes=(8 if dense and not contiguous else 16) if m == 32 else 32,\n        read_ahead=contiguous or (dense and m == 64),\n        early_groups=2 if scalar_pipeline else 0,\n        dual_acc=contiguous and m == 32,\n        late_scale=scalar_pipeline and m == 64,\n        waves=(\n            (8 if m == 32 else 7) if scalar_pipeline else (5 if dense or m == 64 else 0)\n        ),\n    )\n\n\n@gluon.constexpr_function\ndef _pending_groups(first, stop, split_mask):\n\n    return stop - first + sum((split_mask >> i) & 1 for i in range(first, stop))\n\n\n@gluon.jit\ndef _load_operand(shared, OPERAND: gl.constexpr, LAYOUT: gl.constexpr):\n\n    SHARED_READ: gl.constexpr = gl.SharedLinearLayout(\n        [\n            [0, 1],\n            [0, 2],\n            [0, 4],\n            [0, 8],\n            [0, 16],\n            [0, 32],\n            [1, 0],\n            [2, 0],\n            [4, 0],\n            [8, 0],\n            [0, 64],\n        ]\n    )\n    view = shared._reinterpret(shape=(16, 128), layout=SHARED_READ)\n    if OPERAND == 1:\n        view = view.permute((1, 0))\n    return gl.amd.cdna4.async_copy.load_shared_relaxed(\n        view, gl.DotOperandLayout(OPERAND, LAYOUT, 32)\n    )\n\n\n@gluon.jit\ndef _copy_group(\n    A_SHARED,\n    B_SHARED,\n    X,\n    W,\n    a_offsets,\n    b_offsets,\n    X_STRIDES: gl.constexpr,\n    W_STRIDES: gl.constexpr,\n    GROUP: gl.constexpr,\n    COPY_AABB: gl.constexpr,\n    COMMIT: gl.constexpr = True,\n    SPLIT: gl.constexpr = False,\n    REVERSE_K: gl.constexpr = False,\n):\n\n    for copy in gl.static_range(4):\n        operand: gl.constexpr\n        half: gl.constexpr\n        operand = copy // 2 if COPY_AABB else copy % 2\n        half = (copy % 2 if COPY_AABB else copy // 2) ^ REVERSE_K\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(\n            (A_SHARED, B_SHARED)[operand].index(half),\n            (X, W)[operand],\n            (a_offsets, b_offsets)[operand]\n            + (GROUP * 128 + half * 64) * (X_STRIDES, W_STRIDES)[operand][1],\n        )\n        if SPLIT and copy == 1:\n            gl.amd.cdna4.async_copy.commit_group()\n    if COMMIT:\n        gl.amd.cdna4.async_copy.commit_group()\n\n\n@gluon.jit\ndef _load_scalar_weight_scales(WS, STRIDE: gl.constexpr, IDENTITY: gl.constexpr):\n\n    if IDENTITY:\n        address = gl.inline_asm_elementwise(\n            \"\",\n            constraints=\"=s,0\",\n            args=[WS.to(gl.uint64)],\n            dtype=gl.uint64,\n            is_pure=True,\n            pack=1,\n        )\n    else:\n        address = gl.inline_asm_elementwise(\n            \"s_mov_b64 $0, $1;\",\n            constraints=\"=s,s\",\n            args=[WS.to(gl.uint64)],\n            dtype=gl.uint64,\n            is_pure=True,\n            pack=1,\n        )\n    WS = address.to(gl.pointer_type(gl.float32, 4))\n    scales = ()\n    for group in gl.static_range(12):\n        scales += (gl.load(WS + group * STRIDE),)\n    return scales\n\n\n@gluon.jit\ndef _stage_scales(\n    XS,\n    WS,\n    XS_STRIDES: gl.constexpr,\n    WS_STRIDES: gl.constexpr,\n    DENSE_SCALES: gl.constexpr,\n    xs_base,\n    ws_base,\n    FUSE_COMMIT: gl.constexpr,\n    SCALAR_IDENTITY: gl.constexpr,\n):\n    if DENSE_SCALES:\n        LXS: gl.constexpr = gl.SharedLinearLayout(\n            [\n                [0, 1],\n                [0, 2],\n                [1, 0],\n                [2, 0],\n                [4, 0],\n                [8, 0],\n                [0, 4],\n                [0, 8],\n            ]\n        )\n        LXS_COPY: gl.constexpr = gl.BlockedLayout([1, 4], [16, 4], [1, 1], [0, 1])\n    else:\n        LXS: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, [0, 1])\n        LXS_COPY: gl.constexpr = gl.BlockedLayout([1, 1], [16, 4], [1, 1], [0, 1])\n    xs_shared = gl.allocate_shared_memory(gl.float32, (16, 16), LXS)\n    sr = gl.arange(0, 16, gl.SliceLayout(1, LXS_COPY))\n    sg = gl.arange(0, 16, gl.SliceLayout(0, LXS_COPY))\n    if DENSE_SCALES:\n        weight_scales = _load_scalar_weight_scales(\n            WS + ws_base, WS_STRIDES[1], SCALAR_IDENTITY\n        )\n    else:\n        LWS: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, [1, 0])\n        LWS_COPY: gl.constexpr = gl.BlockedLayout([1, 1], [1, 64], [1, 1], [1, 0])\n        weight_scales = gl.allocate_shared_memory(gl.float32, (1, 64), LWS)\n        wg = gl.arange(0, 64, gl.SliceLayout(0, LWS_COPY))\n    if DENSE_SCALES:\n\n        sg = gl.max_contiguous(gl.where(sg < 12, sg, sg - 4), 4)\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(\n        xs_shared,\n        XS,\n        xs_base + sr[:, None] * XS_STRIDES[0] + sg[None, :] * XS_STRIDES[1],\n        None if DENSE_SCALES else sg[None, :] < 12,\n        other=None if DENSE_SCALES else 0.0,\n    )\n    if not DENSE_SCALES:\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(\n            weight_scales,\n            WS,\n            ws_base + wg[None, :] * WS_STRIDES[1],\n            wg[None, :] < 12,\n            other=0.0,\n        )\n    if not FUSE_COMMIT:\n        gl.amd.cdna4.async_copy.commit_group()\n    return xs_shared, weight_scales\n\n\n@gluon.jit\ndef _block_scaled_gemm(\n    X,\n    XS,\n    W,\n    WS,\n    Y,\n    M: gl.constexpr,\n    X_STRIDES: gl.constexpr,\n    XS_STRIDES: gl.constexpr,\n    W_STRIDES: gl.constexpr,\n    WS_STRIDES: gl.constexpr,\n):\n    S: gl.constexpr = _schedule(M, X_STRIDES, XS_STRIDES, W_STRIDES, WS_STRIDES)\n    PREFETCH: gl.constexpr = S.prefetch\n    EARLY_GROUPS: gl.constexpr = S.early_groups\n\n    SPLIT_MASK: gl.constexpr = 0xFF7 if S.dual_acc else 0\n\n    K_ORDER: gl.constexpr = (\n        (0, 2, 4, 6, 8, 1, 10, 3, 5, 7, 9, 11)\n        if S.dual_acc\n        else (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)\n    )\n    COPY_LAYOUT: gl.constexpr = gl.BlockedLayout([1, 16], [16, 4], [1, 1], [1, 0])\n    SHARED_COPY: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, [1, 0])\n    LC: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4,\n        instr_shape=[16, 16, 128],\n        transposed=True,\n        warps_per_cta=[1, 1],\n    )\n    pid = gl.program_id(0).to(gl.uint32)\n    if S.late_scale:\n        gl.assume(pid < M // 16 * 192)\n    pid_m = (pid // S.stripes) % (M // 16)\n    pid_n = (pid % S.stripes) * (192 // S.stripes) + pid // (S.stripes * (M // 16))\n    X += pid_m * 16 * X_STRIDES[0]\n    W += pid_n * 16 * W_STRIDES[0]\n    r = gl.arange(0, 16, gl.SliceLayout(1, COPY_LAYOUT))\n    k = gl.arange(0, 64, gl.SliceLayout(0, COPY_LAYOUT))\n    a_offsets = r[:, None] * X_STRIDES[0] + k[None, :] * X_STRIDES[1]\n    b_offsets = r[:, None] * W_STRIDES[0] + k[None, :] * W_STRIDES[1]\n    a_buffers = ()\n    b_buffers = ()\n    for group in gl.static_range(12):\n        a_buffers += (\n            gl.allocate_shared_memory(X.dtype.element_ty, (2, 16, 64), SHARED_COPY),\n        )\n        b_buffers += (\n            gl.allocate_shared_memory(W.dtype.element_ty, (2, 16, 64), SHARED_COPY),\n        )\n    for group in gl.static_range(EARLY_GROUPS):\n        _copy_group(\n            a_buffers[group],\n            b_buffers[group],\n            X,\n            W,\n            a_offsets,\n            b_offsets,\n            X_STRIDES,\n            W_STRIDES,\n            K_ORDER[group],\n            S.read_ahead,\n            group < S.early_groups - 1,\n            SPLIT=(SPLIT_MASK >> group) & 1,\n            REVERSE_K=S.dual_acc,\n        )\n    if S.dense_scales and not S.late_scale:\n        xs_base = pid_m * 16 * XS_STRIDES[0]\n        ws_base = (pid_n // 8) * WS_STRIDES[0]\n    else:\n        XS += pid_m * 16 * XS_STRIDES[0]\n        WS += (pid_n // 8) * WS_STRIDES[0]\n        xs_base = 0\n        ws_base = 0\n    xs_shared, weight_scales = _stage_scales(\n        XS,\n        WS,\n        XS_STRIDES,\n        WS_STRIDES,\n        S.dense_scales,\n        xs_base,\n        ws_base,\n        S.dense_scales and not S.early_groups,\n        S.dual_acc,\n    )\n    for group in gl.static_range(EARLY_GROUPS, PREFETCH):\n        _copy_group(\n            a_buffers[group],\n            b_buffers[group],\n            X,\n            W,\n            a_offsets,\n            b_offsets,\n            X_STRIDES,\n            W_STRIDES,\n            K_ORDER[group],\n            S.read_ahead,\n            SPLIT=(SPLIT_MASK >> group) & 1,\n            REVERSE_K=S.dual_acc,\n        )\n    if S.early_groups:\n\n        gl.amd.cdna4.async_copy.wait_group(\n            _pending_groups(EARLY_GROUPS, PREFETCH, SPLIT_MASK)\n        )\n    acc = gl.zeros((16, 16), gl.float32, LC)\n    odd_acc = gl.zeros((16, 16), gl.float32, LC)\n    if S.read_ahead:\n        gl.amd.cdna4.async_copy.wait_group(\n            _pending_groups(1, PREFETCH, SPLIT_MASK) + (SPLIT_MASK & 1)\n        )\n        a = _load_operand(a_buffers[0], 0, LC)\n        if SPLIT_MASK & 1:\n            gl.amd.cdna4.async_copy.wait_group(_pending_groups(1, PREFETCH, SPLIT_MASK))\n        b = _load_operand(b_buffers[0], 1, LC)\n        if S.late_scale:\n            scale = (\n                gl.amd.cdna4.async_copy.load_shared_relaxed(\n                    xs_shared.slice(0, 1, dim=1), LC\n                )\n                * weight_scales[0]\n            )\n\n    for group in gl.static_range(12):\n        if not S.read_ahead:\n            gl.amd.cdna4.async_copy.wait_group(min(S.prefetch - 1, 11 - group))\n            a = _load_operand(a_buffers[group], 0, LC)\n            b = _load_operand(b_buffers[group], 1, LC)\n        if not S.late_scale:\n            sx = gl.amd.cdna4.async_copy.load_shared_relaxed(\n                xs_shared.slice(K_ORDER[group], 1, dim=1), LC\n            )\n            if S.dense_scales:\n                sw = weight_scales[K_ORDER[group]]\n            else:\n                sw = gl.amd.cdna4.async_copy.load_shared_relaxed(\n                    weight_scales.slice(K_ORDER[group], 1, dim=1), LC\n                )\n        if S.read_ahead and group < 11:\n            gl.amd.cdna4.async_copy.wait_group(\n                _pending_groups(group + 2, min(group + PREFETCH, 12), SPLIT_MASK)\n                + ((SPLIT_MASK >> (group + 1)) & 1)\n            )\n            next_a = _load_operand(a_buffers[group + 1], 0, LC)\n            if (SPLIT_MASK >> (group + 1)) & 1:\n                gl.amd.cdna4.async_copy.wait_group(\n                    _pending_groups(group + 2, min(group + PREFETCH, 12), SPLIT_MASK)\n                )\n            next_b = _load_operand(b_buffers[group + 1], 1, LC)\n        partial = gl.amd.cdna4.mfma_scaled(\n            a, None, \"e4m3\", b, None, \"e4m3\", gl.zeros((16, 16), gl.float32, LC)\n        )\n        if group < 12 - S.prefetch:\n            _copy_group(\n                a_buffers[group + S.prefetch],\n                b_buffers[group + S.prefetch],\n                X,\n                W,\n                a_offsets,\n                b_offsets,\n                X_STRIDES,\n                W_STRIDES,\n                K_ORDER[group + S.prefetch],\n                S.read_ahead,\n                SPLIT=(SPLIT_MASK >> (group + PREFETCH)) & 1,\n                REVERSE_K=S.dual_acc,\n            )\n\n        if S.dual_acc and K_ORDER[group] % 2 == 1:\n            odd_acc = gl.fma(partial, sx * sw, odd_acc)\n        elif S.late_scale:\n            acc = gl.fma(partial, scale, acc)\n        elif S.dense_scales:\n            acc = gl.fma(partial, sx * sw, acc)\n        else:\n            acc = gl.fma(partial * sx, sw, acc)\n        if S.late_scale and group < 11:\n\n            next_sx = gl.amd.cdna4.async_copy.load_shared_relaxed(\n                xs_shared.slice(group + 1, 1, dim=1), LC\n            )\n            scale = next_sx * weight_scales[group + 1]\n        if S.read_ahead and group < 11:\n            a = next_a\n            b = next_b\n    if S.dual_acc:\n        acc += odd_acc\n    rows = gl.arange(0, 16, gl.SliceLayout(1, LC))\n    cols = gl.arange(0, 16, gl.SliceLayout(0, LC))\n    gl.amd.cdna4.buffer_store(\n        acc.to(gl.bfloat16),\n        Y + (pid_m * 16 * 3072 + pid_n * 16),\n        rows[:, None] * 3072 + cols[None, :],\n    )\n\n\ndef _launch_gemm(tensors, m, strides):\n    schedule = _schedule(m, *strides)\n    return _block_scaled_gemm[(m // 16 * 192,)](\n        *tensors,\n        m,\n        *strides,\n        num_warps=1,\n        waves_per_eu=schedule.waves,\n    )\n\n\ndef fp8_a8w8_block_scaled_gemm_fn(\n    x: torch.Tensor,\n    x_scales: torch.Tensor,\n    weight: torch.Tensor,\n    weight_scales: torch.Tensor,\n    *,\n    out: torch.Tensor,\n    group_n: int = 128,\n    group_k: int = 128,\n    block_m: int = 32,\n    precision_config: FP8PrecisionConfig = FP8_E4M3_FN,\n) -> None:\n\n    m, k = x.shape\n    n = weight.shape[0]\n    assert m in (32, 64)\n    assert n == 3072 and k == 1536 and weight.shape[1] == k\n    assert x.dtype == weight.dtype == torch.float8_e4m3fn\n    assert precision_config.dtype == torch.float8_e4m3fn\n    assert x_scales.dtype == weight_scales.dtype == torch.float32\n    assert group_n == group_k == 128\n    assert x_scales.shape == (m, 12) and weight_scales.shape == (24, 12)\n    tensors = (x, x_scales, weight, weight_scales, out)\n    strides = (x.stride(), x_scales.stride(), weight.stride(), weight_scales.stride())\n    _launch_gemm(tensors, m, strides)\n"
+      },
+      {
+        "path": "main.py",
+        "content": "\"\"\"Canonical argument adapter for the m32 candidate.\"\"\"\n\nfrom .adapter import validate_inputs\n\nSUPPORTED_M = (32,)\n\n\ndef run(\n    *,\n    a,\n    b,\n    a_scale,\n    b_scale,\n    scale_major_mode,\n    trans_b,\n    operand_format,\n    bias,\n    out_dtype,\n    out,\n):\n    validate_inputs(a, b, a_scale, b_scale, SUPPORTED_M)\n    from .kernel import fp8_a8w8_block_scaled_gemm_fn\n\n    # Preserve this implementation's own precision default.\n    # Attrs, bias and out_dtype are fixed by this schema's Point; keep the old behaviour.\n    fp8_a8w8_block_scaled_gemm_fn(a, a_scale, b, b_scale, out=out)\n"
+      }
+    ]
+  }
+}

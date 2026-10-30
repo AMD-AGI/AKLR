@@ -1,0 +1,112 @@
+{
+  "schema_version": 5,
+  "name": "qwen2_moe_router_model_dim4096_n_routed512_topk10",
+  "contract_id": "qwen2_moe_router@1.0",
+  "description": "sglang's Qwen2MoeSparseMoeBlock router, its gate and TopK with renormalize: the logits hidden_states router_weight^T, rounded to bf16, pick each token's topk experts by descending logit, a tie going to the lower expert id, weighed by the softmax of their logits (the softmax over every expert, renormalized over the chosen ones).",
+  "op_type": "qwen2_moe",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 4096,
+      "description": "Hidden size."
+    },
+    "n_routed": {
+      "type": "const",
+      "value": 512,
+      "description": "Routed experts: the router's rows."
+    },
+    "topk": {
+      "type": "const",
+      "value": 10,
+      "description": "Routed experts per token."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The tokens' hidden states, the MoE block's input."
+    },
+    "router_weight": {
+      "shape": [
+        "n_routed",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 4096
+      },
+      "description": "The router (the block's gate) projection."
+    }
+  },
+  "outputs": {
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "float32",
+      "description": "The chosen experts' weights, in topk_ids' order."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "description": "The chosen experts, by descending logit."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 8
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"CDNA4 split-K projection, stable pair queues, and wave-native winner recording.\"\"\"\n\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n\n@gluon.jit\ndef _project_split_k(\n    hidden,\n    router,\n    partial,\n    ROWS: gl.constexpr,\n    WIDTH: gl.constexpr,\n    SPLITS: gl.constexpr,\n    BLOCK_M: gl.constexpr,\n    BLOCK_K: gl.constexpr,\n):\n    row_tile = 0 if ROWS <= BLOCK_M else gl.program_id(0)\n    # Adjacent CTAs traverse K splits within the same expert tile.\n    expert_tile = gl.program_id(2)\n    split = gl.program_id(1)\n    gl.assume(split >= 0)\n    gl.assume(split < SPLITS)\n    gl.assume(expert_tile >= 0)\n    gl.assume(expert_tile < 32)\n    ASYNC_HIDDEN: gl.constexpr = ROWS <= 8\n    if ASYNC_HIDDEN:\n        a_load: gl.constexpr = gl.BlockedLayout([1, 8], [1, 64], [1, 1], [1, 0])\n        b_load: gl.constexpr = gl.BlockedLayout([8, 1], [4, 16], [1, 1], [1, 0])\n    else:\n        a_load: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [1, 1], [1, 0])\n        b_load: gl.constexpr = gl.BlockedLayout([8, 1], [16, 4], [1, 1], [0, 1])\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[1, 1]\n    )\n    a_dot: gl.constexpr = gl.DotOperandLayout(0, mma, 8)\n    b_dot: gl.constexpr = gl.DotOperandLayout(1, mma, 8)\n    rows = row_tile * BLOCK_M + gl.arange(0, BLOCK_M, gl.SliceLayout(1, a_load))\n    ka = gl.arange(0, BLOCK_K, gl.SliceLayout(0, a_load))\n    kb = gl.arange(0, BLOCK_K, gl.SliceLayout(1, b_load))\n    experts = expert_tile * 16 + gl.arange(0, 16, gl.SliceLayout(0, b_load))\n    acc = gl.zeros((BLOCK_M, 16), gl.float32, mma)\n    for tile in range(WIDTH // (SPLITS * BLOCK_K)):\n        offset = split * (WIDTH // SPLITS) + tile * BLOCK_K\n        if ASYNC_HIDDEN:\n            staging = gl.allocate_shared_memory(\n                gl.bfloat16, (BLOCK_M, BLOCK_K),\n                gl.SwizzledSharedLayout(1, 1, 1, [1, 0]),\n            )\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(\n                staging, hidden, rows[:, None] * WIDTH + offset + ka[None, :],\n                mask=rows[:, None] < ROWS, other=0,\n            )\n            gl.amd.cdna4.async_copy.commit_group()\n            b = gl.amd.cdna4.buffer_load(\n                router, experts[None, :] * WIDTH + offset + kb[:, None]\n            )\n            gl.amd.cdna4.async_copy.wait_group(0)\n            a = staging.load(a_dot)\n            acc = gl.amd.cdna4.mfma(a, gl.convert_layout(b, b_dot), acc)\n            staging._keep_alive()\n        else:\n            a = gl.load(\n                hidden + rows[:, None] * WIDTH + offset + ka[None, :],\n                mask=rows[:, None] < ROWS, other=0,\n            )\n            b = gl.load(router + experts[None, :] * WIDTH + offset + kb[:, None])\n            acc = gl.amd.cdna4.mfma(\n                gl.convert_layout(a, a_dot), gl.convert_layout(b, b_dot), acc\n            )\n    om = row_tile * BLOCK_M + gl.arange(0, BLOCK_M, gl.SliceLayout(1, mma))\n    on = expert_tile * 16 + gl.arange(0, 16, gl.SliceLayout(0, mma))\n    # Write through the projection partials for the immediately following CTA grid.\n    gl.store(\n        partial + (om[:, None] * SPLITS + split) * 512 + on[None, :],\n        acc, mask=om[:, None] < ROWS,\n        cache_modifier=\".wt\",\n    )\n\n\n@gluon.jit\ndef _first_matching_expert(local_value, value, expert):\n    # Select the first matching lane. Exceptional IDs are repaired after top-k.\n    return gl.inline_asm_elementwise(\n        \"v_cmp_eq_f32_e32 vcc, $2, $1;\\n\"\n        \"s_ff1_i32_b64 $0, vcc;\\n\"\n        \"v_readlane_b32 $0, $3, $0;\",\n        constraints=\"=s,v,s,v,~{vcc},~{scc}\",\n        args=[local_value, value, expert],\n        dtype=gl.int32, is_pure=True, pack=1,\n    )\n\n\n@gluon.jit\ndef _head_expert(heads, head_ids, maximum):\n    \"\"\"Select the first matching pair; caller handles exhausted/NaN lanes.\"\"\"\n    even, odd = gl.split(gl.reshape(heads, (64, 2, 2)))\n    head0, head2 = gl.split(even)\n    head1, _ = gl.split(odd)\n    ieven, iodd = gl.split(gl.reshape(head_ids, (64, 2, 2)))\n    expert0, expert2 = gl.split(ieven)\n    expert1, expert3 = gl.split(iodd)\n    layout: gl.constexpr = maximum.type.layout\n    head0 = gl.convert_layout(head0, layout)\n    head1 = gl.convert_layout(head1, layout)\n    head2 = gl.convert_layout(head2, layout)\n    expert0 = gl.convert_layout(expert0, layout)\n    expert1 = gl.convert_layout(expert1, layout)\n    expert2 = gl.convert_layout(expert2, layout)\n    expert3 = gl.convert_layout(expert3, layout)\n    expert = gl.where(head2 == maximum, expert2, expert3)\n    expert = gl.where(head1 == maximum, expert1, expert)\n    return gl.where(head0 == maximum, expert0, expert)\n\n\n@gluon.jit\ndef _finish_routing(\n    partial, logits, output, ids_output,\n    SPLITS: gl.constexpr, TOPK: gl.constexpr, ROWS: gl.constexpr,\n):\n    row = gl.program_id(0)\n    reduce_layout: gl.constexpr = gl.BlockedLayout([1, 8], [1, 64], [1, 1], [1, 0])\n    experts = gl.arange(0, 512, gl.SliceLayout(0, reduce_layout))\n    accum = gl.full((512,), 0, gl.float32, gl.SliceLayout(0, reduce_layout))\n    for split in gl.static_range(SPLITS):\n        accum += gl.amd.cdna4.buffer_load(\n            partial, (row * SPLITS + split) * 512 + experts\n        )\n    rounded = accum.to(gl.bfloat16)\n    gl.store(logits + row * 512 + experts, rounded)\n    local_layout: gl.constexpr = gl.BlockedLayout([1, 8], [64, 1], [1, 1], [0, 1])\n    values = gl.convert_layout(gl.reshape(rounded, (64, 8)), local_layout).to(gl.float32)\n    lanes = gl.arange(0, 64, gl.SliceLayout(1, local_layout))\n    pair_layout: gl.constexpr = gl.BlockedLayout([1, 4], [64, 1], [1, 1], [0, 1])\n    lanes = gl.convert_layout(lanes, gl.SliceLayout(1, pair_layout))\n    even, odd = gl.split(gl.reshape(values, (64, 4, 2)))\n    even = gl.convert_layout(even, pair_layout)\n    odd = gl.convert_layout(odd, pair_layout)\n    heads = gl.maximum(even, odd)\n    tails = gl.maximum(gl.where(even == heads, odd, even), -float(\"inf\"))\n    pair = gl.arange(0, 4, gl.SliceLayout(0, pair_layout))\n    base = lanes[:, None] * 8 + 2 * pair[None, :]\n    head_ids = gl.where(even == heads, base, base + 1)\n    tail_ids = gl.where(even == heads, base + 1, base)\n    output_layout: gl.constexpr = gl.BlockedLayout([1], [64], [1], [0])\n    slots = gl.arange(0, 64, output_layout)\n    first_lane = gl.full((1,), 0, gl.int32, output_layout)\n    chosen = gl.full((64,), -float(\"inf\"), gl.float32, output_layout)\n    chosen_ids = gl.full((64,), 0, gl.int32, output_layout)\n    for slot in gl.static_range(TOPK):\n        local_value = gl.max(heads, 1)\n        local_expert = _head_expert(heads, head_ids, local_value)\n        value = gl.max(local_value, 0)\n        winners = _first_matching_expert(local_value, value, local_expert)\n        winner = gl.sum(\n            gl.gather(gl.convert_layout(winners, output_layout), first_lane, 0), 0\n        )\n        pop = head_ids == winner\n        heads = gl.where(pop, tails, heads)\n        tails = gl.where(pop, -float(\"inf\"), tails)\n        head_ids = gl.where(pop, tail_ids, head_ids)\n        # One physical wave register holds the winners in lanes 0..TOPK-1.\n        # The immediate lane operand avoids AMD's scalar constant-bus conflict.\n        chosen = gl.inline_asm_elementwise(\n            \"v_writelane_b32 $0, $2, $3;\",\n            constraints=\"=v,0,s,n\",\n            args=[chosen, value, slot],\n            dtype=gl.float32, is_pure=True, pack=1,\n        )\n        chosen_ids = gl.inline_asm_elementwise(\n            \"v_writelane_b32 $0, $2, $3;\",\n            constraints=\"=v,0,s,n\",\n            args=[chosen_ids, winner, slot],\n            dtype=gl.int32, is_pure=True, pack=1,\n        )\n        if slot == 0:\n            largest = value\n    # Keep the reference's 16-slot padded softmax reduction.\n    # Numeric winners above -inf need no fallback. If selection is exhausted,\n    # the reference repeats the first numeric ID (or INT_MAX for all-NaN rows).\n    # Recover that ID from the original logits, not the mutated pair queues.\n    if not (value > -float(\"inf\")):\n        first_valid = gl.min(gl.where(rounded == rounded, experts, 2147483647), 0)\n        chosen_ids = gl.where(chosen > -float(\"inf\"), chosen_ids, first_valid)\n    # Normalize each 16-lane group separately. Only group zero is stored;\n    # its padded reduction tree is identical to the reference softmax.\n    grouped = gl.reshape(chosen, (4, 16))\n    exps = gl.exp(grouped - largest)\n    probs = gl.reshape(exps / gl.sum(exps, 1)[:, None], (64,))\n    gl.amd.cdna4.buffer_store(probs, output, row * TOPK + slots, slots < TOPK)\n    gl.amd.cdna4.buffer_store(\n        chosen_ids, ids_output, row * TOPK + slots, slots < TOPK,\n    )\n\n\ndef fused_router_projection_topk_softmax(\n    hidden: torch.Tensor, router_weight: torch.Tensor, *, topk: int = 10, weights: torch.Tensor, ids: torch.Tensor\n) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:\n    \"\"\"Return BF16 logits, FP32 selected-softmax weights, and stable int32 IDs.\"\"\"\n    assert hidden.ndim == 2 and router_weight.shape == (512, hidden.shape[1])\n    rows, width = hidden.shape\n    assert rows > 0 and width == 4096 and topk == 10\n    assert hidden.dtype is torch.bfloat16 and router_weight.dtype is torch.bfloat16\n    assert hidden.is_contiguous() and router_weight.is_contiguous()\n    splits = 8 if rows <= 32 else 4\n    block_m = 8 if rows <= 8 else 16\n    block_k = 512\n    logits = torch.empty((rows, 512), dtype=torch.bfloat16, device=hidden.device)\n    partial = torch.empty((rows, splits, 512), dtype=torch.float32, device=hidden.device)\n    _project_split_k[(triton.cdiv(rows, block_m), splits, 32)](\n        hidden, router_weight, partial, rows, width, splits, block_m, block_k,\n        num_warps=1,\n        llvm_fn_attrs=[[\"amdgpu-sched-strategy\", \"iterative-ilp\"]],\n    )\n    _finish_routing[(rows,)](\n        partial, logits, weights, ids, splits, topk, rows,\n        num_warps=1,\n        llvm_fn_attrs=[\n            [\"amdgpu-sched-strategy\", \"max-ilp\"], [\"amdgpu-ieee\", \"false\"],\n        ],\n    )\n    return logits, weights, ids\n\n\ndef run(*, hidden_states, router_weight, topk_weights, topk_ids):\n    \"\"\"Route ``hidden_states`` into the caller's ``topk_weights`` and ``topk_ids``.\"\"\"\n    fused_router_projection_topk_softmax(\n        hidden_states,\n        router_weight,\n        topk=topk_ids.shape[1],\n        weights=topk_weights,\n        ids=topk_ids,\n    )\n"
+      }
+    ]
+  }
+}

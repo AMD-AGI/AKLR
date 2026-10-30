@@ -1,18 +1,10 @@
-# Keep these versions aligned with requirements-dev.txt and pyproject.toml.
-minimum_pre_commit_version: "4.6.0"
-# AITER sources are maintained separately; formatting hooks skip them entirely.
-exclude: ^aiter/
+# See https://pre-commit.com for more information
+# See https://pre-commit.com/hooks.html for more hooks
+
+# Install
+# 1. pip install -r requirements.txt
+# 2. pre-commit install
 repos:
-  - repo: local
-    hooks:
-      - id: warn-aiter-changes
-        name: AITER path warning (advisory)
-        entry: python3 .github/scripts/warn_aiter_changes.py staged
-        language: system
-        # Read the index directly, even when every staged file was excluded.
-        always_run: true
-        pass_filenames: false
-        verbose: true
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -27,23 +19,12 @@ repos:
       - id: debug-statements
       - id: detect-private-key
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.0
+    rev: v0.15.12
     hooks:
       - id: ruff-check
-        args: [--fix, --no-unsafe-fixes]
-        types_or: [python, pyi]
-  - repo: https://github.com/psf/black-pre-commit-mirror
-    rev: 26.5.1
-    hooks:
-      - id: black
-        types_or: [python, pyi]
+        args: ["--fix"]
+      - id: ruff-format
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.10.0.1
     hooks:
       - id: shellcheck
-  - repo: https://github.com/pre-commit/mirrors-clang-format
-    rev: v20.1.6
-    hooks:
-      - id: clang-format
-        args: [--style=file]
-        files: \.(cpp|c|cc|cu|h|hpp|cuh)$

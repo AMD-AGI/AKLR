@@ -1,0 +1,5 @@
+[submodule "3rdparty/aiter"]
+	path = 3rdparty/aiter
+	url = https://github.com/ROCm/aiter.git
+	# setup.py writes aiter/install_mode and aiter_meta/ into the work tree
+	ignore = dirty

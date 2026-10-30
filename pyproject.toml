@@ -1,0 +1,99 @@
+[build-system]
+requires = [
+    "setuptools>=64",
+    "setuptools_scm>=8",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+# One distribution: upstream aiter (the 3rdparty/aiter submodule) plus the aklr package,
+# so it replaces any other amd-aiter and uninstalling amd-aiter removes aklr too.
+name = "amd-aiter"
+dynamic = ["version"]
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: Unix",
+]
+dependencies = [
+    # aiter's
+    "pybind11>=3.0.1",
+    "ninja",
+    "pandas",
+    "einops",
+    "psutil",
+    "packaging",
+    "flydsl==0.3.2",
+    # aklr's
+    "pydantic>=2.12",
+    "pyyaml",
+]
+
+[project.entry-points."sglang.srt.plugins"]
+aklr = "aklr.plugins.sglang:register"
+
+[project.entry-points."vllm.general_plugins"]
+aklr = "aklr.core.runtime.dispatch:register_vllm_plugin"
+
+[tool.setuptools.packages.find]
+where = [".", "3rdparty/aiter"]
+# aiter ships as one package whose subpackages are package data, as in its own setup.py.
+include = ["aklr", "aklr.*", "aiter"]
+
+[tool.setuptools.package-data]
+"*" = ["*"]
+"aklr.ops" = ["*/impls/*/*/*.json"]
+"aklr.plugins" = ["*/*/*/impls/*/*/*.json"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["safetensors/*/*"]
+
+[tool.setuptools_scm]
+# aiter's version; setup.py appends AKLR's commit as the local label.
+root = "3rdparty/aiter"
+version_file = "3rdparty/aiter/aiter/_version.py"
+version_file_template = "__version__ = '{version}'\n"
+fallback_version = "0.1.0"
+tag_regex = "^(?:[\\w-]+-)?(?P<version>[vV]?\\d+(?:\\.\\d+){0,2}[^-+]*(?:-(?:preview|alpha|beta|post|pre|dev|rev|rc|a|b|c|r)\\d*)?)(?:-.*)?(?:\\+.*)?$"
+
+[tool.ruff]
+line-length = 110
+extend-exclude = ["3rdparty"]
+
+[tool.ruff.lint]
+select = ["B", "F", "I", "W"]
+ignore = [
+    # F403/F405: package __init__ files use intentional star-imports for API aggregation.
+    "F403",
+    "F405",
+    # B905: zip(..., strict=) requires py3.10+ everywhere; revisit as a separate sweep.
+    "B905",
+    # B007: unused loop control variable is common and low-risk here.
+    "B007",
+    # B028: explicit stacklevel on every warnings.warn is noisy; skip it.
+    "B028",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+
+[tool.coverage.run]
+branch = true
+parallel = true
+relative_files = true
+concurrency = ["multiprocessing", "thread"]
+source = ["aklr"]
+omit = [
+    "*/tests/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+# Python line coverage does not measure JIT kernel bodies.
+omit = [
+    "aklr/ops/*/impls/*",
+]
+
+[tool.coverage.paths]
+aklr = ["aklr/", "*/aklr/"]

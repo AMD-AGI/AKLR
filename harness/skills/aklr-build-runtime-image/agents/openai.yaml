@@ -1,0 +1,4 @@
+interface:
+  display_name: "Build Runtime Image"
+  short_description: "Build reproducible AKLR runtime test images"
+  default_prompt: "Use $aklr-build-runtime-image to build a reproducible AKLR test image."

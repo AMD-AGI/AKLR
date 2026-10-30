@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "apis": {
+    "aklr.ops.fused_moe.fused_moe.fused_moe": {
+      "operator": "fused_moe",
+      "backend_apis": ["aiter.fused_moe.fused_moe"],
+      "aiter": [
+        "op_tests/test_moe_2stage.py",
+        "op_tests/test_moe_ep.py",
+        "op_tests/test_moe_tkw1.py"
+      ],
+      "triton": []
+    },
+    "aklr.ops.gemm.gemm.gemm": {
+      "operator": "gemm",
+      "backend_apis": ["aiter.tuned_gemm.gemm_a16w16"],
+      "aiter": ["op_tests/test_gemm_a16w16.py"],
+      "triton": []
+    },
+    "aklr.ops.gemm.gemm.gemm_a8w8": {
+      "operator": "gemm",
+      "backend_apis": ["aiter.ops.gemm_op_a8w8.gemm_a8w8"],
+      "aiter": ["op_tests/test_gemm_a8w8.py"],
+      "triton": []
+    },
+    "aklr.ops.gemm.gemm.gemm_a8w8_blockwise_scaled": {
+      "operator": "gemm",
+      "backend_apis": [
+        "aiter.ops.gemm_op_a8w8.gemm_a8w8_blockscale",
+        "aiter.ops.triton.gemm.basic.gemm_a8w8_blockscale.gemm_a8w8_blockscale"
+      ],
+      "aiter": ["op_tests/test_gemm_a8w8_blockscale.py"],
+      "triton": []
+    },
+    "aklr.ops.gemm.gemm.gemm_a4w4_mxfp4": {
+      "operator": "gemm",
+      "backend_apis": ["aiter.ops.gemm_op_a4w4.gemm_a4w4"],
+      "aiter": ["op_tests/test_gemm_a4w4.py"],
+      "triton": []
+    },
+    "aklr.ops.gemm.gemm.bmm": {
+      "operator": "gemm",
+      "backend_apis": ["aiter.ops.batched_gemm_op_bf16.batched_gemm_bf16"],
+      "aiter": ["op_tests/test_batched_gemm_bf16.py"],
+      "triton": []
+    }
+  }
+}
