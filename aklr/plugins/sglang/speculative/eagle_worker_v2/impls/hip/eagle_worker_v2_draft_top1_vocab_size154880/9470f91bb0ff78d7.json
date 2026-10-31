@@ -1,0 +1,122 @@
+{
+  "schema_version": 5,
+  "name": "eagle_worker_v2_draft_top1_vocab_size154880",
+  "contract_id": "eagle_worker_v2_draft_top1@1.0",
+  "description": "sglang's EAGLE draft token at topk 1 without rejection sampling: each row's highest logit's index, as torch.argmax (NaN highest, the first of equal values), and its probability as sglang's topk 1 path records it, 1.",
+  "op_type": "eagle_worker_v2",
+  "axes": {
+    "n_rows": {
+      "type": "var",
+      "description": "Rows, one per request."
+    },
+    "vocab_size": {
+      "type": "const",
+      "value": 154880,
+      "description": "Logits per row."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "logits": {
+      "shape": [
+        "n_rows",
+        "vocab_size"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The draft's next-token logits."
+    }
+  },
+  "outputs": {
+    "topk_p": {
+      "shape": [
+        "n_rows",
+        1
+      ],
+      "dtype": "float32",
+      "description": "1."
+    },
+    "topk_index": {
+      "shape": [
+        "n_rows",
+        1
+      ],
+      "dtype": "int64",
+      "description": "The highest logit's index."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_rows": 1
+      }
+    },
+    {
+      "axes": {
+        "n_rows": 2
+      }
+    },
+    {
+      "axes": {
+        "n_rows": 3
+      }
+    },
+    {
+      "axes": {
+        "n_rows": 4
+      }
+    },
+    {
+      "axes": {
+        "n_rows": 6
+      }
+    },
+    {
+      "axes": {
+        "n_rows": 8
+      }
+    },
+    {
+      "axes": {
+        "n_rows": 12
+      }
+    },
+    {
+      "axes": {
+        "n_rows": 16
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "hip",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.hip::run",
+    "state_bytes": 65536,
+    "sources": [
+      {
+        "path": "kernel.hip",
+        "content": "// sglang's EAGLE draft token at topk 1 (eagle_worker_v2_draft_top1@1.0): each row's highest float32\n// logit's index, as torch.argmax (NaN highest, the first of equal values), and p = 1. Block (b, row)\n// folds the float4s b * THREADS + t, + BLOCKS * THREADS, .. into one 64-bit key, the logit's order\n// over the index's complement, and the row's slot keeps the highest key (atomic max); the row's last\n// block to count itself done writes the outputs and clears the slot and the count for the next call.\n// The order is Infera-Flash's lm_head_argmax's (csrc/glm5/lm_head.hip).\n// Each block's count is a release at agent scope, and with more rows they add up: from 5 rows\n// top1_wide_kernel counts half the blocks a row, each twice as wide, each row's slot on cache lines\n// of its own, and only a row's last block acquires. Both leave the state zero, so any rows follow.\n#include <ATen/ATen.h>\n#include <ATen/hip/HIPContext.h>\n#include <ATen/hip/impl/HIPGuardImplMasqueradingAsCUDA.h>\n#include <c10/hip/HIPException.h>\n#include <torch/library.h>\n\nnamespace {\n\nconstexpr int     WAVE     = 64;\nconstexpr int     THREADS  = 256;\nconstexpr int     BLOCKS   = 32; // per row\nconstexpr int64_t MAX_ROWS = 4096;\n\nstruct RowSlot {\n    unsigned long long key;\n    unsigned int       done;\n    unsigned int       unused;\n};\n// zeroed once and kept: each call's last block clears what it used\nconstexpr int64_t STATE_BYTES = MAX_ROWS * sizeof(RowSlot);\n\n// top1_kernel up to NARROW_ROWS rows, top1_wide_kernel above while its slots fit in the state\nconstexpr int64_t NARROW_ROWS     = 4;\nconstexpr int     WIDE_THREADS    = 512;\nconstexpr int     WIDE_BLOCKS     = 16; // per row\nconstexpr int64_t WIDE_SLOT_BYTES = 256;\n\n// a logit as torch.argmax orders it, as an integer above 0: NaN highest, -0 as +0\n__device__ __forceinline__ unsigned int order_of(float v) {\n    const unsigned int bits = __float_as_uint(v) == 0x80000000u ? 0u : __float_as_uint(v);\n    if ((bits & 0x7fffffffu) > 0x7f800000u) {\n        return 0xffffffffu;\n    }\n    return bits & 0x80000000u ? ~bits : bits | 0x80000000u;\n}\n\n// higher logits first, then lower indices\n__device__ __forceinline__ unsigned long long key_of(float v, unsigned int index) {\n    return static_cast<unsigned long long>(order_of(v)) << 32 | ~index;\n}\n\n__device__ __forceinline__ unsigned long long higher(unsigned long long a, unsigned long long b) {\n    return a > b ? a : b;\n}\n\n__global__ __launch_bounds__(THREADS) void top1_kernel(const float *logits, int vocab, float *topk_p,\n                                                       int64_t *topk_index, RowSlot *slots) {\n    const int     row  = blockIdx.y;\n    const float4 *x    = reinterpret_cast<const float4 *>(logits + static_cast<size_t>(row) * vocab);\n    unsigned long long best = 0;\n    for (int i = blockIdx.x * THREADS + threadIdx.x; i < vocab / 4; i += BLOCKS * THREADS) {\n        const float4 v = x[i];\n        best           = higher(best, higher(higher(key_of(v.x, 4 * i), key_of(v.y, 4 * i + 1)),\n                                             higher(key_of(v.z, 4 * i + 2), key_of(v.w, 4 * i + 3))));\n    }\n    for (int width = WAVE / 2; width >= 1; width /= 2) {\n        best = higher(best, __shfl_xor(best, width));\n    }\n    __shared__ unsigned long long waves[THREADS / WAVE];\n    if (threadIdx.x % WAVE == 0) {\n        waves[threadIdx.x / WAVE] = best;\n    }\n    __syncthreads();\n    if (threadIdx.x != 0) {\n        return;\n    }\n    for (int w = 1; w < THREADS / WAVE; ++w) {\n        best = higher(best, waves[w]);\n    }\n    RowSlot &slot = slots[row];\n    __hip_atomic_fetch_max(&slot.key, best, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);\n    if (__hip_atomic_fetch_add(&slot.done, 1u, __ATOMIC_ACQ_REL, __HIP_MEMORY_SCOPE_AGENT) !=\n        BLOCKS - 1) {\n        return;\n    }\n    const unsigned long long key =\n        __hip_atomic_load(&slot.key, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);\n    topk_index[row] = ~static_cast<unsigned int>(key);\n    topk_p[row]     = 1.0f;\n    __hip_atomic_store(&slot.key, 0ull, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);\n    __hip_atomic_store(&slot.done, 0u, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);\n}\n\n// top1_kernel's fold at WIDE_BLOCKS blocks of WIDE_THREADS a row; row r's slot at byte\n// r * WIDE_SLOT_BYTES of the state\n__global__ __launch_bounds__(WIDE_THREADS) void top1_wide_kernel(const float *logits, int vocab,\n                                                                 float *topk_p, int64_t *topk_index,\n                                                                 unsigned char *state) {\n    const int     row  = blockIdx.y;\n    const float4 *x    = reinterpret_cast<const float4 *>(logits + static_cast<size_t>(row) * vocab);\n    unsigned long long best = 0;\n    for (int i = blockIdx.x * WIDE_THREADS + threadIdx.x; i < vocab / 4;\n         i += WIDE_BLOCKS * WIDE_THREADS) {\n        const float4 v = x[i];\n        best           = higher(best, higher(higher(key_of(v.x, 4 * i), key_of(v.y, 4 * i + 1)),\n                                             higher(key_of(v.z, 4 * i + 2), key_of(v.w, 4 * i + 3))));\n    }\n    for (int width = WAVE / 2; width >= 1; width /= 2) {\n        best = higher(best, __shfl_xor(best, width));\n    }\n    __shared__ unsigned long long waves[WIDE_THREADS / WAVE];\n    if (threadIdx.x % WAVE == 0) {\n        waves[threadIdx.x / WAVE] = best;\n    }\n    __syncthreads();\n    if (threadIdx.x != 0) {\n        return;\n    }\n    for (int w = 1; w < WIDE_THREADS / WAVE; ++w) {\n        best = higher(best, waves[w]);\n    }\n    RowSlot &slot = *reinterpret_cast<RowSlot *>(state + row * WIDE_SLOT_BYTES);\n    __hip_atomic_fetch_max(&slot.key, best, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);\n    // the max before the count, as top1_kernel's acq_rel count orders it\n    __builtin_amdgcn_fence(__ATOMIC_RELEASE, \"agent\");\n    if (__hip_atomic_fetch_add(&slot.done, 1u, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT) !=\n        WIDE_BLOCKS - 1) {\n        return;\n    }\n    __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, \"agent\");\n    const unsigned long long key =\n        __hip_atomic_load(&slot.key, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);\n    topk_index[row] = ~static_cast<unsigned int>(key);\n    topk_p[row]     = 1.0f;\n    __hip_atomic_store(&slot.key, 0ull, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);\n    __hip_atomic_store(&slot.done, 0u, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);\n}\n\nvoid run(const at::Tensor &logits, at::Tensor &topk_p, at::Tensor &topk_index, at::Tensor &state) {\n    const int64_t rows = logits.size(0), vocab = logits.size(1);\n    TORCH_CHECK(rows >= 1 && rows <= MAX_ROWS, \"1 to \", MAX_ROWS, \" rows\");\n    TORCH_CHECK(vocab % 4 == 0 && reinterpret_cast<uintptr_t>(logits.data_ptr()) % 16 == 0,\n                \"16-byte aligned rows\");\n    TORCH_CHECK(state.nbytes() >= STATE_BYTES, \"state: \", STATE_BYTES, \" bytes\");\n    const at::hip::OptionalHIPGuardMasqueradingAsCUDA guard(logits.device());\n    if (rows > NARROW_ROWS && rows * WIDE_SLOT_BYTES <= STATE_BYTES) {\n        top1_wide_kernel<<<dim3(WIDE_BLOCKS, rows), WIDE_THREADS, 0,\n                           at::hip::getCurrentHIPStream()>>>(\n            logits.data_ptr<float>(), static_cast<int>(vocab), topk_p.data_ptr<float>(),\n            topk_index.data_ptr<int64_t>(), static_cast<unsigned char *>(state.data_ptr()));\n    } else {\n        top1_kernel<<<dim3(BLOCKS, rows), THREADS, 0, at::hip::getCurrentHIPStream()>>>(\n            logits.data_ptr<float>(), static_cast<int>(vocab), topk_p.data_ptr<float>(),\n            topk_index.data_ptr<int64_t>(), static_cast<RowSlot *>(state.data_ptr()));\n    }\n    C10_HIP_CHECK(hipGetLastError());\n}\n\n} // namespace\n\n#define TORCH_LIBRARY_EXPAND(ns, m) TORCH_LIBRARY(ns, m)\nTORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {\n    m.def(\"run(Tensor logits, Tensor(a!) topk_p, Tensor(b!) topk_index, Tensor(c!) state) -> ()\",\n          &run);\n}\n"
+      }
+    ]
+  }
+}

@@ -1,0 +1,112 @@
+{
+  "schema_version": 5,
+  "name": "qwen2_moe_router_model_dim4096_n_routed512_topk10",
+  "contract_id": "qwen2_moe_router@1.0",
+  "description": "sglang's Qwen2MoeSparseMoeBlock router, its gate and TopK with renormalize: the logits hidden_states router_weight^T, rounded to bf16, pick each token's topk experts by descending logit, a tie going to the lower expert id, weighed by the softmax of their logits (the softmax over every expert, renormalized over the chosen ones).",
+  "op_type": "qwen2_moe",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 4096,
+      "description": "Hidden size."
+    },
+    "n_routed": {
+      "type": "const",
+      "value": 512,
+      "description": "Routed experts: the router's rows."
+    },
+    "topk": {
+      "type": "const",
+      "value": 10,
+      "description": "Routed experts per token."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The tokens' hidden states, the MoE block's input."
+    },
+    "router_weight": {
+      "shape": [
+        "n_routed",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 4096
+      },
+      "description": "The router (the block's gate) projection."
+    }
+  },
+  "outputs": {
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "float32",
+      "description": "The chosen experts' weights, in topk_ids' order."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "description": "The chosen experts, by descending logit."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 16
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"MI355 split-K BF16 projection and lane-deposited, stable top-k softmax.\"\"\"\n\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n\n@gluon.jit\ndef _project_partials(\n    hidden,\n    router_weight,\n    partials,\n    ROWS: gl.constexpr,\n    WIDTH: gl.constexpr,\n    SPLIT_K: gl.constexpr,\n):\n    \"\"\"One wave computes a 16x16 output tile for one independent K slice.\"\"\"\n    # A one-tile row grid has a statically zero origin. Folding it here also\n    # simplifies the per-lane hidden-load and partial-store addresses.\n    if ROWS <= 16:\n        tile_m = 0\n    else:\n        tile_m = gl.program_id(0)\n    tile_n = gl.program_id(1)\n    split = gl.program_id(2)\n    block_k: gl.constexpr = WIDTH // SPLIT_K\n    load_layout: gl.constexpr = gl.BlockedLayout([1, 8], [16, 4], [1, 1], [1, 0])\n    weight_layout: gl.constexpr = gl.BlockedLayout([1, 8], [16, 4], [1, 1], [0, 1])\n    # Native accumulator ownership improves the single-tile decode projection.\n    mma_layout: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4,\n        instr_shape=[16, 16, 32],\n        transposed=not (ROWS == 16 and WIDTH == 4096),\n        warps_per_cta=[1, 1],\n    )\n    rows = tile_m * 16 + gl.arange(0, 16, gl.SliceLayout(1, load_layout))\n    experts = tile_n * 16 + gl.arange(0, 16, gl.SliceLayout(1, weight_layout))\n    k = split * block_k + gl.arange(0, block_k, gl.SliceLayout(0, load_layout))\n    weight_k = split * block_k + gl.arange(0, block_k, gl.SliceLayout(0, weight_layout))\n    if ROWS % 16 == 0:\n        x = gl.amd.cdna3.buffer_load(hidden, rows[:, None] * WIDTH + k[None, :])\n    else:\n        x = gl.amd.cdna3.buffer_load(\n            hidden, rows[:, None] * WIDTH + k[None, :], rows[:, None] < ROWS, 0\n        )\n    w = gl.amd.cdna3.buffer_load(\n        router_weight, experts[:, None] * WIDTH + weight_k[None, :]\n    )\n    a = gl.convert_layout(x, gl.DotOperandLayout(0, mma_layout, 8))\n    b = gl.convert_layout(w.permute((1, 0)), gl.DotOperandLayout(1, mma_layout, 8))\n    acc = gl.amd.cdna3.mfma(a, b, gl.zeros((16, 16), gl.float32, mma_layout))\n    out_rows = tile_m * 16 + gl.arange(0, 16, gl.SliceLayout(1, mma_layout))\n    out_experts = tile_n * 16 + gl.arange(0, 16, gl.SliceLayout(0, mma_layout))\n    offsets = split * ROWS * 512 + out_rows[:, None] * 512 + out_experts[None, :]\n    if ROWS % 16 == 0:\n        gl.amd.cdna3.buffer_store(acc, partials, offsets, cache=\".wt\")\n    else:\n        gl.amd.cdna3.buffer_store(\n            acc, partials, offsets, out_rows[:, None] < ROWS, cache=\".wt\"\n        )\n\n\n@gluon.jit\ndef _reduce_and_route(\n    partials,\n    logits_out,\n    weights_out,\n    ids_out,\n    ROWS: gl.constexpr,\n    SPLIT_K: gl.constexpr,\n    TOPK: gl.constexpr,\n):\n    \"\"\"Reduce projection splits, emit BF16 logits, and route one row per wave.\"\"\"\n    row = gl.program_id(0)\n    load_layout: gl.constexpr = gl.BlockedLayout([1, 8], [1, 64], [1, 1], [1, 0])\n    splits = gl.arange(0, SPLIT_K, gl.SliceLayout(1, load_layout))\n    experts = gl.arange(0, 512, gl.SliceLayout(0, load_layout))\n    offsets = splits[:, None] * ROWS * 512 + row * 512 + experts[None, :]\n    partial = gl.amd.cdna3.buffer_load(partials, offsets)\n    # Route from exactly the BF16 values exposed in the logits output.\n    flat_logits = gl.sum(partial, 0).to(gl.bfloat16).to(gl.float32)\n    gl.amd.cdna3.buffer_store(\n        flat_logits.to(gl.bfloat16), logits_out, row * 512 + experts, cache=\".wt\"\n    )\n    group_layout: gl.constexpr = gl.BlockedLayout([1, 8], [64, 1], [1, 1], [0, 1])\n    flat_logits = gl.convert_layout(flat_logits, gl.BlockedLayout([8], [64], [1], [0]))\n    logits = gl.convert_layout(flat_logits.reshape((64, 8)), group_layout)\n    lanes = gl.arange(0, 64, gl.SliceLayout(1, group_layout))\n    evens, odds = gl.split(logits.reshape((64, 4, 2)))\n    v04, v26 = gl.split(evens.reshape((64, 2, 2)))\n    v15, v37 = gl.split(odds.reshape((64, 2, 2)))\n    v0, v4 = gl.split(v04)\n    v2, v6 = gl.split(v26)\n    v1, v5 = gl.split(v15)\n    v3, v7 = gl.split(v37)\n    v0 = gl.convert_layout(v0, gl.SliceLayout(1, group_layout))\n    v1 = gl.convert_layout(v1, gl.SliceLayout(1, group_layout))\n    v2 = gl.convert_layout(v2, gl.SliceLayout(1, group_layout))\n    v3 = gl.convert_layout(v3, gl.SliceLayout(1, group_layout))\n    v4 = gl.convert_layout(v4, gl.SliceLayout(1, group_layout))\n    v5 = gl.convert_layout(v5, gl.SliceLayout(1, group_layout))\n    v6 = gl.convert_layout(v6, gl.SliceLayout(1, group_layout))\n    v7 = gl.convert_layout(v7, gl.SliceLayout(1, group_layout))\n    # Four ordered pairs reduce the number of candidates in each iteration.\n    # A NaN tail becomes the removed head's -inf placeholder, matching the\n    # reference's behavior when fewer than TOPK non-NaN experts remain.\n    head0 = gl.maximum(v0, v1)\n    tail0 = gl.maximum(gl.where(v0 == head0, v1, v0), -float(\"inf\"))\n    head_slot0 = gl.where(v0 == head0, 0, 1)\n    tail_slot0 = head_slot0 ^ 1\n    head1 = gl.maximum(v2, v3)\n    tail1 = gl.maximum(gl.where(v2 == head1, v3, v2), -float(\"inf\"))\n    head_slot1 = gl.where(v2 == head1, 2, 3)\n    tail_slot1 = head_slot1 ^ 1\n    head2 = gl.maximum(v4, v5)\n    tail2 = gl.maximum(gl.where(v4 == head2, v5, v4), -float(\"inf\"))\n    head_slot2 = gl.where(v4 == head2, 4, 5)\n    tail_slot2 = head_slot2 ^ 1\n    head3 = gl.maximum(v6, v7)\n    tail3 = gl.maximum(gl.where(v6 == head3, v7, v6), -float(\"inf\"))\n    head_slot3 = gl.where(v6 == head3, 6, 7)\n    tail_slot3 = head_slot3 ^ 1\n    output_layout: gl.constexpr = gl.BlockedLayout([1], [64], [1], [0])\n    slots = gl.arange(0, 64, output_layout)\n    selected = gl.full((64,), -float(\"inf\"), gl.float32, output_layout)\n    selected_ids = gl.full((64,), 0, gl.int32, output_layout)\n    for slot in gl.static_range(TOPK):\n        local_max = gl.maximum(gl.maximum(head0, head1), gl.maximum(head2, head3))\n        local_slot = gl.where(\n            head0 == local_max,\n            head_slot0,\n            gl.where(\n                head1 == local_max,\n                head_slot1,\n                gl.where(head2 == local_max, head_slot2, head_slot3),\n            ),\n        )\n        value = gl.max(local_max, 0)\n        if slot == 0:\n            first_max = value\n        first_lane = gl.inline_asm_elementwise(\n            \"v_cmp_eq_f32_e64 $1, $2, $3\\n\\ts_ff1_i32_b64 $0, $1\",\n            constraints=\"=&s,=&s,v,s\",\n            args=[local_max, value],\n            dtype=(gl.int32, gl.int64),\n            is_pure=True,\n            pack=1,\n        )[0]\n        uniform_id = gl.inline_asm_elementwise(\n            \"v_readlane_b32 $0, $1, $2\\n\\ts_lshl3_add_u32 $0, $2, $0\",\n            constraints=\"=&s,v,s,~{scc}\",\n            args=[local_slot, first_lane],\n            dtype=gl.int32,\n            is_pure=True,\n            pack=1,\n        )\n        index = gl.gather(\n            uniform_id,\n            gl.full((1,), 0, gl.int32, gl.SliceLayout(1, group_layout)),\n            0,\n        ).reshape(())\n        selected = gl.inline_asm_elementwise(\n            f\"v_writelane_b32 $0, $2, {slot}\",\n            constraints=\"=v,0,s\",\n            args=[selected, value],\n            dtype=gl.float32,\n            is_pure=True,\n            pack=1,\n        )\n        selected_ids = gl.inline_asm_elementwise(\n            f\"v_writelane_b32 $0, $2, {slot}\",\n            constraints=\"=v,0,s\",\n            args=[selected_ids, index],\n            dtype=gl.int32,\n            is_pure=True,\n            pack=1,\n        )\n        winning_pair = index >> 1\n        winner0 = winning_pair == lanes * 4 + 0\n        head0 = gl.where(winner0, tail0, head0)\n        tail0 = gl.where(winner0, -float(\"inf\"), tail0)\n        head_slot0 = gl.where(winner0, tail_slot0, head_slot0)\n        winner1 = winning_pair == lanes * 4 + 1\n        head1 = gl.where(winner1, tail1, head1)\n        tail1 = gl.where(winner1, -float(\"inf\"), tail1)\n        head_slot1 = gl.where(winner1, tail_slot1, head_slot1)\n        winner2 = winning_pair == lanes * 4 + 2\n        head2 = gl.where(winner2, tail2, head2)\n        tail2 = gl.where(winner2, -float(\"inf\"), tail2)\n        head_slot2 = gl.where(winner2, tail_slot2, head_slot2)\n        winner3 = winning_pair == lanes * 4 + 3\n        head3 = gl.where(winner3, tail3, head3)\n        tail3 = gl.where(winner3, -float(\"inf\"), tail3)\n        head_slot3 = gl.where(winner3, tail_slot3, head_slot3)\n    # Removed experts remain eligible at -inf; NaN experts never win.\n    if value == -float(\"inf\"):\n        valid_experts = gl.arange(0, 512, gl.BlockedLayout([8], [64], [1], [0]))\n        first_valid = gl.min(\n            gl.where(flat_logits == flat_logits, valid_experts, 2147483647), 0\n        )\n        selected_ids = gl.where(selected == -float(\"inf\"), first_valid, selected_ids)\n    selected_ids = gl.where(selected_ids < 0, 2147483647, selected_ids)\n    # Match the reference's sixteen-element padded softmax reduction.\n    probabilities = gl.exp(selected.reshape((4, 16)) - first_max)\n    probabilities = (probabilities / gl.sum(probabilities, 1)[:, None]).reshape((64,))\n    gl.amd.cdna3.buffer_store(\n        probabilities, weights_out, row * TOPK + slots, slots < TOPK\n    )\n    gl.amd.cdna3.buffer_store(selected_ids, ids_out, row * TOPK + slots, slots < TOPK)\n\n\ndef fused_router_projection_topk_softmax(\n    hidden: torch.Tensor,\n    router_weight: torch.Tensor,\n    *,\n    topk: int = 10,\n    weights: torch.Tensor,\n    ids: torch.Tensor,\n) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:\n    \"\"\"Return BF16 logits, FP32 selected softmax weights, and stable int32 IDs.\"\"\"\n    assert hidden.ndim == 2\n    rows, width = hidden.shape\n    assert rows > 0 and width in (2048, 4096) and topk == 10\n    assert router_weight.shape == (512, width)\n    assert hidden.dtype is torch.bfloat16 and router_weight.dtype is torch.bfloat16\n    assert hidden.is_contiguous() and router_weight.is_contiguous()\n    split_k = 8\n    partials = torch.empty((split_k, rows, 512), dtype=torch.float32, device=hidden.device)\n    logits = torch.empty((rows, 512), dtype=torch.bfloat16, device=hidden.device)\n    # The default projection scheduler reduces VGPR pressure without spills.\n    _project_partials[(triton.cdiv(rows, 16), 32, split_k)](\n        hidden, router_weight, partials, rows, width, split_k, num_warps=1\n    )\n    _reduce_and_route[(rows,)](\n        partials, logits, weights, ids, rows, split_k, topk,\n        num_warps=1,\n        llvm_fn_attrs=[[\"amdgpu-sched-strategy\", \"max-ilp\"], [\"amdgpu-ieee\", \"false\"]],\n    )\n    return logits, weights, ids\n\n\ndef run(*, hidden_states, router_weight, topk_weights, topk_ids):\n    \"\"\"Route ``hidden_states`` into the caller's ``topk_weights`` and ``topk_ids``.\"\"\"\n    fused_router_projection_topk_softmax(\n        hidden_states,\n        router_weight,\n        topk=topk_ids.shape[1],\n        weights=topk_weights,\n        ids=topk_ids,\n    )\n"
+      }
+    ]
+  }
+}

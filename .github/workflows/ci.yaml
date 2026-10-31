@@ -1,0 +1,782 @@
+name: AKLR-CI
+
+env:
+  # Shared by all GPU jobs; container.image cannot reference the env context.
+  AKLR_CI_IMAGE: &ci_image lmsysorg/sglang:v0.5.22-rocm10-mi35x
+  PYTHONDONTWRITEBYTECODE: '1'
+  # The publish-measurement bot's rolling PR: sent and opened by the bot, from aklr-perf/main of
+  # this repository. perf-guard.yaml spells the same expression.
+  AKLR_BOT_PR: >-
+    ${{ github.event_name == 'pull_request' && vars.AKLR_BOT_LOGIN != '' &&
+    github.event.sender.login == vars.AKLR_BOT_LOGIN && github.event.pull_request.user.login == vars.AKLR_BOT_LOGIN &&
+    github.head_ref == 'aklr-perf/main' && github.event.pull_request.head.repo.full_name == github.repository }}
+  # The one "still current" rule, run by main's own code: a measurement taken at commit
+  # argv[1] stands iff the working tree differs from it only in what the bench
+  # re-measures nothing for (documents and schema data, ValidationScope.path_kind).
+  # Callers keep scratch files under $RUNNER_TEMP: an untracked file counts as a change.
+  AKLR_MEASUREMENT_CURRENT: |
+    import sys
+    from aklr.core.validation.stages.validation_scope import ValidationScope
+    scope = ValidationScope.of_working_tree(sys.argv[1], None)
+    sys.exit("other" in map(scope.path_kind, scope.changed_paths()))
+
+on:
+  workflow_dispatch:
+    inputs:
+      e2e:
+        description: Run the e2e stage too
+        type: boolean
+        default: false
+      full_lint:
+        description: Check all files, including inherited formatting debt
+        type: boolean
+        default: false
+  push:
+    branches: [main]
+
+  # Only PRs into main: a stacked PR's base branch is author-controlled.
+  # labeled/unlabeled let ci:gpu take effect; any label change restarts the run.
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+
+# A PR update cancels its older run. Pushes and dispatches never cancel a running run,
+# but a newer one replaces a pending one (one pending run per group; see Select lint range).
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # The audit gate rejects invalid schemas, audit violations and mixed changes
+  # before PR code reaches the GPU runner (D §8.4).
+  code-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
+    outputs:
+      gpu_enabled: ${{ steps.gpu.outputs.gpu_enabled }}
+      has_bench_paths: ${{ steps.audit.outputs.has_bench_paths }}
+      validation_base: ${{ steps.lint.outputs.validation_base }}
+      should_run_e2e: ${{ steps.e2e.outputs.should_run_e2e }}
+    steps:
+      - name: Decide whether GPU jobs run
+        id: gpu
+        env:
+          GPU_ENABLED: >-
+            ${{ github.event_name != 'pull_request' ||
+                (github.event.pull_request.head.repo.full_name == github.repository &&
+                 contains(github.event.pull_request.labels.*.name, 'ci:gpu')) }}
+        run: echo "gpu_enabled=$GPU_ENABLED" >> "$GITHUB_OUTPUT"
+      - name: Print job info
+        env:
+          GPU_ENABLED: ${{ steps.gpu.outputs.gpu_enabled }}
+        run: | # zizmor: ignore[github-env] only an internally generated numeric timestamp is exported
+          echo "AKLR_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+          echo '🎉 [1/4] Begin AKLR lint.'
+          echo "🐧 Runner: $RUNNER_NAME ($RUNNER_OS); event: $GITHUB_EVENT_NAME; ref: $GITHUB_REF"
+          echo "⏱️ Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo '🧭 Pipeline: lint → AKLR tests (GPU) → validation → coverage report.'
+          echo '🔎 Checks: pre-commit, export check, audit.'
+          if [[ "$GPU_ENABLED" == true ]]; then
+            echo '🟢 GPU jobs are eligible; each test stage must pass before the next starts.' | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo '⏭️ PR GPU jobs require the ci:gpu label on a same-repository PR; fork PRs never run here.' | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Checkout source and lint history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # Read at run time: a Re-run reuses the original payload and its labels.
+      # Before any step runs PR code, which could otherwise shadow gh on PATH.
+      - name: Read the ci:e2e label
+        id: e2e
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          DISPATCH_E2E: ${{ inputs.e2e }}
+        run: |
+          case $GITHUB_EVENT_NAME in
+            push) should_run_e2e=true ;;
+            workflow_dispatch) should_run_e2e=$DISPATCH_E2E ;;
+            *) should_run_e2e=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq 'any(.labels[]; .name == "ci:e2e")') ;;
+          esac
+          echo "should_run_e2e=$should_run_e2e" >> "$GITHUB_OUTPUT"
+      - &setup_python
+        name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # The tree has existing lint findings. Apply the pre-commit hooks to each
+      # change only, without requiring a repository-wide reformat.
+      - name: Select lint range
+        id: lint
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+          FULL_LINT: ${{ inputs.full_lint }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head=$(git rev-parse HEAD)
+          # The validation base: incumbents and the change set start here; empty validates everything.
+          validation_base=
+          if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            # Checkout tests the PR merge commit; its first parent is the
+            # base the merge was made on (the merge-base rule), not the payload's base.sha.
+            base=$(git rev-parse HEAD^1)
+            validation_base=$base
+          elif [[ -n "$PUSH_BEFORE" ]] && git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
+            base=$PUSH_BEFORE
+            # A replaced (cancelled) run benched nothing; [skip ci] commits have no run; an unknown status benches everything.
+            replaced=$(gh run list -R "$GITHUB_REPOSITORY" -w ci.yaml -e push -c "$base" --json conclusion --jq 'length > 0 and all(.[]; .conclusion == "cancelled")') || replaced=true
+            # A force push or a replaced run validates everything.
+            if git merge-base --is-ancestor "$base" HEAD && [[ $replaced != true ]]; then validation_base=$base; fi
+          elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
+            base=$(git rev-parse HEAD^)
+          else
+            base=$(git hash-object -t tree /dev/null)
+          fi
+          echo "validation_base=$validation_base" >> "$GITHUB_OUTPUT"
+          if [[ "$FULL_LINT" == true ]]; then
+            echo '🔎 Lint scope: all files, including inherited formatting debt.' | tee -a "$GITHUB_STEP_SUMMARY"
+            echo 'args=--all-files --show-diff-on-failure' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "🔎 Lint range: $base → $head" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '::group::📄 Files in the lint range (hook filters still apply)'
+          git diff --name-only --diff-filter=ACMRTUXB "$base" "$head"
+          echo '::endgroup::'
+          echo "args=--from-ref $base --to-ref $head --show-diff-on-failure" >> "$GITHUB_OUTPUT"
+      - name: Run pre-commit
+        id: precommit
+        uses: pre-commit/action@v3.0.1
+        with:
+          extra_args: ${{ steps.lint.outputs.args }}
+      # export check and the audit load the default registry, which imports the ops' apis and torch.
+      - &install_cpu_deps
+        name: Install pydantic, CPU torch and ruff
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+      # Covers main moving before this run only: GitHub does not re-run the bot PR's
+      # checks when main moves later.
+      - name: Check the bot PR's measurements are current
+        if: env.AKLR_BOT_PR == 'true'
+        run: |
+          # HEAD is the merge commit; HEAD^2 the bot commit.
+          shas=$(git log -1 --format='%(trailers:key=Measured-SHA,valueonly)' HEAD^2)
+          [[ -n $shas ]] || { echo '::error::The bot commit has no Measured-SHA trailer'; exit 1; }
+          for sha in $shas; do
+            [[ $sha =~ ^[0-9a-f]{40}$ ]] || { printf '::error::Malformed Measured-SHA %q\n' "$sha"; exit 1; }
+            PYTHONPATH=. python -c "$AKLR_MEASUREMENT_CURRENT" "$sha" ||
+              { echo "::error::Measured at $sha, before code changes on main; a later publish-measurement rebuilds this PR without it"; exit 1; }
+          done
+      # CI only checks; authors export the schemas locally.
+      - name: Check exported files
+        id: export
+        run: python -m aklr export check
+      # A jq that decides the gate is its own assignment: inside echo, a failure would not stop the step.
+      - name: Audit gate
+        id: audit
+        env:
+          BASE: ${{ steps.lint.outputs.validation_base }}
+          AUDIT_REPORT_DIR: ${{ runner.temp }}/audit-report
+        run: |
+          report="$AUDIT_REPORT_DIR/report.json"
+          flags=(${BASE:+--base "$BASE"})
+          [[ $AKLR_BOT_PR != true ]] || flags+=(--allow-measured-edits)
+          if python -m aklr validate "${flags[@]}" --stages audit --out "$AUDIT_REPORT_DIR"; then
+            has_bench_paths=$(jq '.bench_paths | length > 0' "$report")
+            echo "audit passed, $(jq '.schema_paths | length' "$report") schemas, $(jq '.bench_paths | length' "$report") to bench" >> "$GITHUB_STEP_SUMMARY"
+            echo "has_bench_paths=$has_bench_paths" >> "$GITHUB_OUTPUT"
+          else
+            code=$?
+            [[ ! -f $AUDIT_REPORT_DIR/report.md ]] || cat "$AUDIT_REPORT_DIR/report.md" >> "$GITHUB_STEP_SUMMARY"
+            exit "$code"
+          fi
+      - name: Summarize lint result
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          LINT_RESULT: ${{ steps.precommit.outcome }}
+          EXPORT_RESULT: ${{ steps.export.outcome }}
+          AUDIT_RESULT: ${{ steps.audit.outcome }}
+        run: |
+          case "$JOB_STATUS" in
+            success) icon='✅' ;;
+            cancelled) icon='⏹️' ;;
+            *) icon='❌' ;;
+          esac
+          now=$(date +%s)
+          {
+            echo
+            echo "### $icon [1/4] Lint: $JOB_STATUS"
+            echo
+            echo "pre-commit: ${LINT_RESULT:-skipped}; export check: ${EXPORT_RESULT:-skipped}."
+            echo "Audit: ${AUDIT_RESULT:-skipped}."
+            echo "⏱️ Finished at: $(date -u '+%Y-%m-%d %H:%M:%S UTC'); elapsed: $((now - ${AKLR_CI_JOB_STARTED_AT:-$now})) seconds."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  unittest-aklr:
+    needs: code-lint
+    if: needs.code-lint.outputs.gpu_enabled == 'true'
+    runs-on: &gpu_runner aklr-gpu
+    # Bots, Bot-sent events and outside PRs wait for maintainer approval before PR code reaches the GPU runner (D §8.5).
+    environment: >-
+      ${{ github.event.sender.type != 'Bot' &&
+          (github.event_name != 'pull_request' ||
+           (github.event.pull_request.user.type != 'Bot' &&
+            contains(fromJSON('["OWNER","MEMBER"]'), github.event.pull_request.author_association)))
+          && 'gpu-trusted' || 'gpu' }}
+    container:
+      image: *ci_image
+      options: &gpu_container_options >-
+        --env HOME=/github/home --env XDG_CACHE_HOME=/github/home/.cache
+        --device=/dev/kfd --device=/dev/dri --ipc=host
+        --security-opt=seccomp=unconfined --ulimit memlock=-1:-1
+    timeout-minutes: 60
+    steps:
+      - name: Print job info
+        run: | # zizmor: ignore[github-env] only an internally generated numeric timestamp is exported
+          echo "AKLR_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+          echo '🎉 [2/4] Begin AKLR unit tests.'
+          echo "🐧 Runner: $RUNNER_NAME ($RUNNER_OS); event: $GITHUB_EVENT_NAME; ref: $GITHUB_REF"
+          echo "⏱️ Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo '🧪 Run all tests once, including core and GPU tests.'
+          echo '➡️ Passing this job allows validation to start.'
+      - &checkout_source
+        name: Checkout source and submodules
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up AKLR and coverage
+        id: setup
+        run: &setup_aklr | # zizmor: ignore[github-env] fixed local workspace paths are exported
+          set -euo pipefail
+          setup_phase='prepare workspace'
+          finish_setup() {
+            local status=$?
+            if [[ "$status" -ne 0 ]]; then
+              echo "::error::❌ AKLR setup failed during: $setup_phase (exit $status)."
+            fi
+            echo "⏱️ AKLR environment setup finished in ${SECONDS}s (exit $status)."
+          }
+          trap finish_setup EXIT
+          echo '🧰 Use the ROCm environment of the job container, install this checkout and enable subprocess coverage.'
+          cd "$GITHUB_WORKSPACE"
+          # The host runner user owns the checkout, the container runs as root; checkout trusts it only in a temporary HOME.
+          git config --global --add safe.directory '*'
+          export AKLR_CI_STATE_DIR="$RUNNER_TEMP/aklr-ci"
+          export COVERAGE_FILE="$AKLR_CI_STATE_DIR/.coverage"
+          export PIP_CACHE_DIR="$AKLR_CI_STATE_DIR/pip-cache"
+          mkdir -p "$AKLR_CI_STATE_DIR/test-reports"
+          unset COVERAGE_PROCESS_START
+          rm -f "$COVERAGE_FILE" "$COVERAGE_FILE".*
+          # Kernel build caches are job-local and emptied first.
+          cache="$AKLR_CI_STATE_DIR/cache/$GITHUB_JOB"
+          rm -rf "$cache"
+          mkdir -p "$cache"
+          export FLYDSL_RUNTIME_CACHE_DIR="$cache/flydsl-runtime" FLYDSL_AUTOTUNE_CACHE_DIR="$cache/flydsl-autotune" \
+                 TRITON_CACHE_DIR="$cache/triton" XDG_CACHE_HOME="$cache/xdg" AKLR_KERNEL_CACHE_DIR="$cache/aklr-kernels"
+          # Not aiter's default, 3rdparty/aiter/aiter/jit: checkout does not clean the submodule, and a
+          # killed build's lock there, owned by an earlier job's container, would block every later job.
+          export AITER_JIT_DIR="$cache/aiter-jit"
+          # Bench task directories need a local disk (peak len(devices) × 16 GiB): flock, atomic renames, real free space.
+          export TMPDIR="$AKLR_CI_STATE_DIR"
+          echo "📂 Checkout: $GITHUB_WORKSPACE (commit $(git rev-parse --short HEAD))"
+          echo "📂 CI state: $AKLR_CI_STATE_DIR; kernel caches: $cache"
+          echo "🧹 Cleared previous coverage at $COVERAGE_FILE."
+
+          setup_phase='check ROCm PyTorch and visible GPUs'
+          echo '::group::🔎 Check Python, ROCm PyTorch and visible GPUs'
+          python3 - "$AKLR_CI_STATE_DIR/gpu-archs" <<'PY'
+          import sys
+          from pathlib import Path
+          import torch
+          assert torch.version.hip, "AKLR CI requires ROCm PyTorch"
+          assert torch.cuda.is_available(), "No GPU is visible to PyTorch"
+          print(f"Python: {sys.version.split()[0]}; PyTorch: {torch.__version__}; ROCm: {torch.version.hip}")
+          architectures = set()
+          for index in range(torch.cuda.device_count()):
+              props = torch.cuda.get_device_properties(index)
+              arch = props.gcnArchName.split(":", 1)[0]
+              architectures.add(arch)
+              print(f"GPU {index}: {props.name}; architecture: {arch}")
+          Path(sys.argv[1]).write_text(";".join(sorted(architectures)))
+          PY
+          echo '::endgroup::'
+          setup_phase='export the GPU build settings'
+          echo '::group::🧰 Export the GPU build settings'
+          export GPU_ARCHS
+          GPU_ARCHS=$(cat "$AKLR_CI_STATE_DIR/gpu-archs")
+          unset AITER_ASM_DIR
+          echo '::endgroup::'
+          setup_phase='install test tools and this checkout'
+          echo '::group::📦 Install test tools and amd-aiter (submodule AITER plus AKLR)'
+          echo "🔧 GPU_ARCHS=$GPU_ARCHS"
+          echo '📥 Install coverage 7.16.0, pytest-timeout 2.4.0 and expecttest 0.3.0.'
+          # Install coverage over any copy the image ships, so pip never has to uninstall it.
+          python3 -m pip install --ignore-installed 'coverage[toml]==7.16.0'
+          python3 -m pip install 'pytest-timeout==2.4.0' 'expecttest==0.3.0'
+          # With its dependencies: aiter's kernels need its pinned FlyDSL, not the image's.
+          echo '📥 Install this checkout in editable mode over the image amd-aiter.'
+          python3 -m pip install -e . -v
+          echo '🔎 Verify Triton 3.8.0, AKLR from this checkout and its AITER proxies.'
+          python3 -c "import torch, triton, sys; v = triton.__version__.split('+')[0]; print(f'triton {triton.__version__}'); sys.exit(0 if v == '3.8.0' else f'triton==3.8.0 is required, found {triton.__version__}')"
+          python3 - <<'PY'
+          from pathlib import Path
+          from importlib.metadata import version
+          import aiter
+          import aklr
+          from aklr.ops import load_routes
+          root = Path.cwd().resolve()
+          assert Path(aklr.__file__).resolve().is_relative_to(root), aklr.__file__
+          load_routes()
+          assert hasattr(aiter.gemm_a8w8, "aklr_proxy"), "AKLR did not proxy aiter"
+          assert Path(aiter.__file__).resolve().is_relative_to(root / "3rdparty" / "aiter"), aiter.__file__
+          print("Testing amd-aiter", version("amd-aiter"), "from", root)
+          PY
+          echo '::endgroup::'
+          setup_phase='enable coverage and export the environment'
+          echo '::group::📊 Enable coverage for Python subprocesses and export the job environment'
+          site_packages=$(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
+          echo 'import coverage; coverage.process_startup()' > "$site_packages/coverage_subprocess.pth"
+          # These variables must persist into the workflow's later steps.
+          {
+            printf 'AKLR_CI_STATE_DIR=%s\n' "$AKLR_CI_STATE_DIR"
+            printf 'COVERAGE_FILE=%s\n' "$COVERAGE_FILE"
+            printf 'PIP_CACHE_DIR=%s\n' "$PIP_CACHE_DIR"
+            printf 'GPU_ARCHS=%s\n' "$GPU_ARCHS"
+            printf 'FLYDSL_RUNTIME_CACHE_DIR=%s\n' "$FLYDSL_RUNTIME_CACHE_DIR"
+            printf 'FLYDSL_AUTOTUNE_CACHE_DIR=%s\n' "$FLYDSL_AUTOTUNE_CACHE_DIR"
+            printf 'TRITON_CACHE_DIR=%s\n' "$TRITON_CACHE_DIR"
+            printf 'XDG_CACHE_HOME=%s\n' "$XDG_CACHE_HOME"
+            printf 'AKLR_KERNEL_CACHE_DIR=%s\n' "$AKLR_KERNEL_CACHE_DIR"
+            printf 'AITER_JIT_DIR=%s\n' "$AITER_JIT_DIR"
+            printf 'TMPDIR=%s\n' "$TMPDIR"
+            printf 'COVERAGE_PROCESS_START=%s/pyproject.toml\n' "$GITHUB_WORKSPACE"
+          } >> "$GITHUB_ENV"
+          echo "📊 Coverage config: $GITHUB_WORKSPACE/pyproject.toml"
+          echo "📊 Raw coverage files: $COVERAGE_FILE.*"
+          echo '::endgroup::'
+          echo '✅ AKLR environment ready: checkout imports verified, GPU visible, subprocess coverage enabled.'
+      - name: Run AKLR unit tests
+        id: tests
+        timeout-minutes: 30
+        run: |
+          trap 'echo "⏱️ AKLR unit tests finished in ${SECONDS}s (exit $?)."' EXIT
+          echo "🧪 Running tests with Python coverage; GPU_ARCHS=$GPU_ARCHS"
+          echo "📂 JUnit and console log: $AKLR_CI_STATE_DIR/test-reports/aklr.{xml,log}"
+          timeout -k 60s 25m python3 -m coverage run -m pytest -v tests \
+            --timeout=600 --timeout-method=thread \
+            --junitxml="$AKLR_CI_STATE_DIR/test-reports/aklr.xml" \
+            2>&1 | tee "$AKLR_CI_STATE_DIR/test-reports/aklr.log"
+          echo '✅ AKLR unit tests passed.'
+      - name: Combine and stage coverage data
+        id: coverage
+        if: ${{ always() && steps.setup.outcome == 'success' }}
+        run: |
+          echo "📊 Combining AKLR test coverage from $AKLR_CI_STATE_DIR (including subprocesses)."
+          unset COVERAGE_PROCESS_START
+          python3 -m coverage combine --append "$AKLR_CI_STATE_DIR"
+          cp "$COVERAGE_FILE" coverage_data_aklr
+          echo '📦 Prepared coverage_data_aklr for artifact coverage-aklr.'
+      - name: Upload AKLR coverage (coverage-aklr)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-aklr
+          path: coverage_data_aklr
+          if-no-files-found: warn
+      - name: Upload AKLR test logs (unittest-aklr-logs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unittest-aklr-logs
+          path: ${{ runner.temp }}/aklr-ci/test-reports/
+          if-no-files-found: warn
+      - name: Summarize AKLR unit test result
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          SETUP_RESULT: ${{ steps.setup.outcome }}
+          TEST_RESULT: ${{ steps.tests.outcome }}
+          COVERAGE_RESULT: ${{ steps.coverage.outcome }}
+        run: |
+          case "$JOB_STATUS" in
+            success) icon='✅' ;;
+            cancelled) icon='⏹️' ;;
+            *) icon='❌' ;;
+          esac
+          now=$(date +%s)
+          {
+            echo
+            echo "### $icon [2/4] AKLR unit tests: $JOB_STATUS"
+            echo
+            echo "Setup: ${SETUP_RESULT:-skipped}; tests: ${TEST_RESULT:-skipped}; coverage collection: ${COVERAGE_RESULT:-skipped}."
+            echo "⏱️ Finished at: $(date -u '+%Y-%m-%d %H:%M:%S UTC'); elapsed: $((now - ${AKLR_CI_JOB_STARTED_AT:-$now})) seconds."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Best effort on normal/failure paths; killed jobs may still need recovery.
+      - &normalize_work_permissions
+        name: Normalize this job's work permissions
+        if: always()
+        working-directory: /
+        run: chmod -R a+rwX /__w
+
+  # No secrets and no actions/cache: this job runs the PR's code and kernels.
+  validation:
+    needs: [code-lint, unittest-aklr]
+    if: needs.code-lint.outputs.has_bench_paths == 'true'
+    runs-on: *gpu_runner
+    # Only the read-only HF hub cache is mounted: no HF_HOME token reaches PR code.
+    # AKLR_SHARED_HF_HUB_DIR: a pre-filled HF hub directory (models--org--name), at the same path on every GPU node.
+    # It also holds the e2e texts (datasets--org--name), at the revisions aklr/benchmarks/models/main.py pins.
+    container:
+      image: *ci_image
+      options: *gpu_container_options
+      volumes:
+        - ${{ vars.AKLR_SHARED_HF_HUB_DIR }}:${{ vars.AKLR_SHARED_HF_HUB_DIR }}:ro
+      env:
+        HF_HUB_CACHE: ${{ vars.AKLR_SHARED_HF_HUB_DIR }}
+        HF_HUB_OFFLINE: '1'
+    # A full validation (no base: a force push, a replaced run, a dispatch) benches every schema:
+    # 247 schemas need about 225 minutes on 8 MI355X (170 of 257 batches ran in 150).
+    timeout-minutes: 300
+    env:
+      STAGES: ${{ needs.code-lint.outputs.should_run_e2e == 'true' && 'audit,bench,e2e' || 'audit,bench' }}
+    steps:
+      - name: Print job info
+        run: | # zizmor: ignore[github-env] only an internally generated numeric timestamp is exported
+          echo "AKLR_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+          echo '🎉 [3/4] Begin AKLR validation.'
+          echo "🐧 Runner: $RUNNER_NAME ($RUNNER_OS); event: $GITHUB_EVENT_NAME; ref: $GITHUB_REF"
+          echo "⏱️ Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+      - *checkout_source
+      - name: Set up AKLR
+        run: *setup_aklr # zizmor: ignore[github-env] fixed local workspace paths are exported
+      - name: Show untracked files
+        run: git status --porcelain | tee -a "$GITHUB_STEP_SUMMARY"
+      # The exit code is the conclusion; report.md's first line says which failure.
+      # Without coverage: its tracer would skew the measurements publish-measurement publishes.
+      # review-tier reads the stages from this name (ValidationGate.e2e_step).
+      - name: Validate (${{ env.STAGES }})
+        env:
+          BASE: ${{ needs.code-lint.outputs.validation_base }}
+        run: |
+          unset COVERAGE_PROCESS_START
+          flags=(${BASE:+--base "$BASE"})
+          [[ $AKLR_BOT_PR != true ]] || flags+=(--allow-measured-edits)
+          # No --e2e-scenario: e2e runs every scenario in scenarios.yaml.
+          python -m aklr validate "${flags[@]}" --stages "$STAGES" \
+            --out "$RUNNER_TEMP/validation-report"
+      # The PR head the reviewer signs; the checkout is the merge commit.
+      - name: Summarize
+        if: always()
+        env:
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          report="$RUNNER_TEMP/validation-report/report.md"
+          { [[ -z $PR_HEAD ]] || echo "PR head: \`$PR_HEAD\`"; [[ ! -f $report ]] || cat "$report"; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the validation report (validation-report-<attempt>)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-report-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/validation-report/
+          retention-days: 90
+      - *normalize_work_permissions
+
+  coverage-report:
+    needs: [code-lint, unittest-aklr, validation]
+    # The required check: always runs, since a skipped job would satisfy one on its own.
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Print job info and coverage producer results
+        env:
+          GPU_ENABLED: ${{ needs.code-lint.outputs.gpu_enabled }}
+          AKLR_RESULT: ${{ needs.unittest-aklr.result }}
+        run: | # zizmor: ignore[github-env] only an internally generated numeric timestamp is exported
+          echo "AKLR_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+          echo '🎉 [4/4] Begin AKLR coverage report.'
+          echo "🐧 Runner: $RUNNER_NAME ($RUNNER_OS); event: $GITHUB_EVENT_NAME; ref: $GITHUB_REF"
+          echo "⏱️ Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo '📊 Merge Python coverage from the AKLR tests; validation runs without coverage.'
+          {
+            echo '### Coverage producers'
+            echo
+            echo '| Stage | Result |'
+            echo '| --- | --- |'
+            echo "| AKLR unit tests | $AKLR_RESULT |"
+            echo
+            if [[ "$GPU_ENABLED" != true ]]; then
+              echo '⏭️ GPU tests require a same-repository PR with the ci:gpu label; no coverage data was collected.'
+            elif [[ "$AKLR_RESULT" != success ]]; then
+              echo 'ℹ️ The AKLR tests did not succeed. Merge the available data; coverage does not imply the tests passed.'
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Checkout source for coverage reports
+        if: needs.code-lint.outputs.gpu_enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python 3.12
+        if: needs.code-lint.outputs.gpu_enabled == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install coverage
+        if: needs.code-lint.outputs.gpu_enabled == 'true'
+        run: |
+          echo '🧰 Install coverage 7.16.0, matching all coverage producers.'
+          python -m pip install 'coverage[toml]==7.16.0'
+      - name: Download raw data from coverage-* artifacts
+        if: needs.code-lint.outputs.gpu_enabled == 'true'
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: coverage-artifacts
+          merge-multiple: true
+      - name: Merge coverage data and generate reports
+        id: merge
+        if: needs.code-lint.outputs.gpu_enabled == 'true'
+        run: |
+          trap 'echo "⏱️ Coverage merge/report finished in ${SECONDS}s (exit $?)."' EXIT
+          shopt -s nullglob
+          data_files=(coverage-artifacts/coverage_data_*)
+          if [[ ${#data_files[@]} -eq 0 ]]; then
+            echo '⏭️ No coverage data found. Skip report generation; inspect the producer results above.' | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "📥 Received ${#data_files[@]} raw coverage files:" | tee -a "$GITHUB_STEP_SUMMARY"
+          printf '  - %s\n' "${data_files[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo '📊 Combine raw data into one dataset before calculating line and branch coverage.'
+          coverage combine "${data_files[@]}"
+          echo '📋 Python coverage report (JIT kernel bodies are excluded):'
+          coverage report
+          echo '📝 Generate HTML, JSON and the module summary.'
+          coverage html -d visual-coverage
+          coverage json -o coverage.json
+          python .github/scripts/coverage_summary.py coverage.json | tee -a "$GITHUB_STEP_SUMMARY"
+          echo 'report_ready=true' >> "$GITHUB_OUTPUT"
+          echo '✅ Reports generated: visual-coverage/index.html and coverage.json.'
+      - name: Upload combined coverage report
+        id: upload_combined
+        if: always() && steps.merge.outputs.report_ready == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: visual-coverage
+          path: |
+            visual-coverage/
+            coverage.json
+          if-no-files-found: warn
+      - name: Link coverage artifact in run summary
+        if: always()
+        env:
+          ARTIFACT_URL: ${{ steps.upload_combined.outputs.artifact-url }}
+        run: |
+          if [[ -n "$ARTIFACT_URL" ]]; then
+            echo "📦 Full HTML report: download [visual-coverage]($ARTIFACT_URL), unzip and open visual-coverage/index.html." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Summarize coverage report result
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+          REPORT_READY: ${{ steps.merge.outputs.report_ready }}
+        run: |
+          case "$JOB_STATUS" in
+            success) icon='✅' ;;
+            cancelled) icon='⏹️' ;;
+            *) icon='❌' ;;
+          esac
+          now=$(date +%s)
+          {
+            echo
+            echo "### $icon [4/4] Coverage report: $JOB_STATUS"
+            echo
+            echo "Reports generated: ${REPORT_READY:-false}. Test results are listed separately above."
+            echo "⏱️ Finished at: $(date -u '+%Y-%m-%d %H:%M:%S UTC'); elapsed: $((now - ${AKLR_CI_JOB_STARTED_AT:-$now})) seconds."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Last, so the report is still produced when the gate fails.
+      - name: Enforce the overall CI result
+        if: always()
+        env:
+          LINT: ${{ needs.code-lint.result }}
+          GPU_ENABLED: ${{ needs.code-lint.outputs.gpu_enabled }}
+          HAS_BENCH_PATHS: ${{ needs.code-lint.outputs.has_bench_paths }}
+          GPU_RESULT: ${{ needs.unittest-aklr.result }}
+          VALIDATION: ${{ needs.validation.result }}
+        run: |
+          [[ $LINT == success ]] || { echo '::error::code-lint did not succeed'; exit 1; }
+          [[ $GPU_ENABLED != true || $GPU_RESULT == success ]] || { echo "::error::GPU job: $GPU_RESULT"; exit 1; }
+          # A PR without ci:gpu runs no validation; the review-tier gate decides whether it needs one.
+          [[ $GPU_ENABLED != true || $HAS_BENCH_PATHS != true || $VALIDATION == success ]] ||
+            { echo "::error::Kernels to measure, but validation: $VALIDATION"; exit 1; }
+
+  # Publishes a main push run's measurements through one rolling bot PR, aklr-perf/main
+  # -> main; no GPU, never runs PR code. The artifact is untrusted: only measured-field
+  # changes to schemas on main, only measurements still current on main. A failed
+  # validation still writes (a demotion is a failure); write_schemas decides per schema.
+  # The [skip ci] squash starts no run: squash-merge the bot PR only with its title as
+  # the subject, otherwise main's push run fails with PERF_EDITED.
+  # No job concurrency: main push runs already share the workflow group.
+  publish-measurement:
+    needs: [validation]
+    if: >-
+      !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      vars.AKLR_BOT_LOGIN != '' && (needs.validation.result == 'success' || needs.validation.result == 'failure')
+    runs-on: ubuntu-latest
+    environment: bot
+    timeout-minutes: 20
+    # Writes use the App token, not GITHUB_TOKEN.
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Mint the bot token
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AKLR_BOT_APP_ID }}
+          private-key: ${{ secrets.AKLR_BOT_PRIVATE_KEY }}
+      - name: Checkout main
+        uses: actions/checkout@v4  # zizmor: ignore[artipacked] the App token pushes the commit; nothing is uploaded
+        with:
+          ref: main
+          token: ${{ steps.token.outputs.token }}
+          # The carry and the current rule read every Measured-SHA commit.
+          fetch-depth: 0
+      # export check and the current rule run main's aklr.
+      - *setup_python
+      - *install_cpu_deps
+      # A missed measurement is not retried; the next code change on main re-benches every schema.
+      # validation can fail before write_schemas: no artifact is nothing to write.
+      - name: Download the validation report (validation-report-<attempt>)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: validation-report-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/validation-report
+      # Carries the bot branch's still-current measurements, then this run's; the newest
+      # measurement of a file wins. The commit body lists "<sha> <path>" per published
+      # file (the next run's carry) and one Measured-SHA trailer per sha (lint's check).
+      # %q escapes newlines, so an artifact name cannot inject workflow commands.
+      - name: Rebuild the bot branch
+        id: commit
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          BOT_LOGIN: ${{ vars.AKLR_BOT_LOGIN }}
+        run: |
+          schemas=$RUNNER_TEMP/validation-report/schemas
+          if [[ ! -d $schemas ]]; then
+            echo 'No measured schema.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'committed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          schema_path='^aklr/(ops|plugins(/[^/]+)+)/[^/]+/impls/[^/]+/[^/]+/[0-9a-f]{16}\.json$'
+          authored='del(.workloads[] | .speedup, .accuracy)'
+          # Every workload measured; speedup absent only on a failed one.
+          shape='(.workloads | length > 0) and all(.workloads[];
+            (.speedup == null or (.speedup | type == "number" and . > 0)) and
+            (.accuracy == "passed" and .speedup != null or .accuracy == "failed"))'
+          manifest=$RUNNER_TEMP/manifest
+          # accept <file> <path> <sha>: copy over main's file iff only measured fields change.
+          accept() {
+            if [[ $2 =~ $schema_path ]] &&
+              [[ -f $1 && ! -L $1 && -f $2 && ! -L $2 ]] &&
+              git --literal-pathspecs ls-files --error-unmatch -- "$2" >/dev/null 2>&1 &&
+              a=$(jq -eS "$authored" "$2") && b=$(jq -eS "$authored" "$1") && [[ $a == "$b" ]] &&
+              jq -e "$shape" "$1" >/dev/null; then
+              cp -- "$1" "$2"
+              echo "$3 $2" >> "$manifest"
+            else
+              printf '::warning::Dropped %q: not a measured-only change to a schema on main\n' "$2"
+            fi
+          }
+          # current <sha>: the current rule, memoised per sha (the manifest has many lines but few shas).
+          declare -A current_of
+          current() {
+            [[ -v current_of[$1] ]] ||
+              { current_of[$1]=0; PYTHONPATH=. python -c "$AKLR_MEASUREMENT_CURRENT" "$1" || current_of[$1]=$?; }
+            return "${current_of[$1]}"
+          }
+          prev=
+          if git fetch --no-tags origin aklr-perf/main; then
+            prev=$(git rev-parse FETCH_HEAD)
+            while read -r sha path; do
+              [[ $sha =~ ^[0-9a-f]{40}$ && $path =~ $schema_path ]] || continue
+              if ! current "$sha"; then
+                printf '::warning::Dropped %q: measured at %s, before code changes on main\n' "$path" "$sha"
+                continue
+              fi
+              git show "$prev:$path" > "$RUNNER_TEMP/carried.json"
+              accept "$RUNNER_TEMP/carried.json" "$path" "$sha"
+            done < <(git log -1 --format=%b "$prev")
+          fi
+          if current "$GITHUB_SHA"; then
+            while IFS= read -r -d '' new; do
+              accept "$new" "${new#"$schemas/"}" "$GITHUB_SHA"
+            done < <(find "$schemas" -mindepth 1 \( -type f -o -type l \) -print0)
+          else
+            echo "::warning::Dropped this run's measurements: main has code changes since $GITHUB_SHA"
+          fi
+          if git diff --quiet; then
+            echo 'No measured schema to publish.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'committed=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          stray=$(comm -23 <(git diff --name-only | sort) <(cut -d' ' -f2 "$manifest" | sort -u))
+          [[ -z $stray ]] || { printf '::error::Changed outside the accepted schemas: %q\n' "$stray"; exit 1; }
+          python -m aklr export check
+          # The last measurement per changed path; a carried value already on main drops out.
+          published=$(awk 'NR == FNR {changed[$0]; next} $2 in changed {sha[$2] = $1} END {for (p in sha) print sha[p], p}' \
+            <(git diff --name-only) "$manifest" | sort -k2)
+          echo "$(wc -l <<< "$published") measured schemas published" >> "$GITHUB_STEP_SUMMARY"
+          # jq -e fails the step on a missing or unsafe hardware name
+          hardware=$(jq -er '.platform.hardware | select(test("^[A-Za-z0-9_. -]+$"))' "$RUNNER_TEMP/validation-report/report.json")
+          bot_id=$(gh api "users/$BOT_LOGIN" --jq .id)
+          git config user.name "$BOT_LOGIN"
+          git config user.email "$bot_id+$BOT_LOGIN@users.noreply.github.com"
+          {
+            echo "perf: measurements on $hardware (run $GITHUB_RUN_ID, image $AKLR_CI_IMAGE)"
+            echo
+            echo "$published"
+            echo
+            cut -d' ' -f1 <<< "$published" | sort -u | sed 's/^/Measured-SHA: /'
+          } | git commit -aF -
+          echo 'committed=true' >> "$GITHUB_OUTPUT"
+          echo "prev=$prev" >> "$GITHUB_OUTPUT"
+      # An empty PREV leases on the branch not existing. A lost lease (a bot squash merged
+      # and the branch was deleted mid-run) drops this run's values until the next publish-measurement.
+      - name: Push and update the bot PR
+        if: steps.commit.outputs.committed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          PREV: ${{ steps.commit.outputs.prev }}
+        run: |
+          if ! git push --force-with-lease="refs/heads/aklr-perf/main:$PREV" origin HEAD:refs/heads/aklr-perf/main; then
+            echo '::warning::aklr-perf/main moved (merged or deleted) during this run; the next publish-measurement republishes'
+            exit 0
+          fi
+          # The title carries [skip ci] into the default squash subject; set each run to follow the newest commit.
+          title="$(git log -1 --format=%s) [skip ci]"
+          if [[ $(gh pr list --head aklr-perf/main --base main --state open --json number --jq length) == 0 ]]; then
+            gh pr create --base main --head aklr-perf/main --title "$title" \
+              --body "Measurements published by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Squash-merge with the PR title."
+          else
+            gh pr edit aklr-perf/main --title "$title"
+          fi

@@ -1,0 +1,193 @@
+{
+  "schema_version": 5,
+  "name": "topk_transform_paged_page_size64_has_page_tables_topk512",
+  "contract_id": "topk_transform_paged@1.0",
+  "description": "Select each row's topk highest scores among its first seq_lens candidates; write their positions, or their page slots, padded with -1.",
+  "op_type": "topk",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Rows, one per token."
+    },
+    "n_candidates": {
+      "type": "var",
+      "description": "Candidate scores per row, 4-float aligned rows."
+    },
+    "n_plan_rows": {
+      "type": "var",
+      "description": "Plan rows: n_tokens + 1."
+    },
+    "topk": {
+      "type": "const",
+      "value": 512,
+      "description": "Candidates selected per row."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Page table columns."
+    }
+  },
+  "attrs": {
+    "page_size": 64,
+    "has_page_tables": true
+  },
+  "inputs": {
+    "scores": {
+      "shape": [
+        "n_tokens",
+        "n_candidates"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "permutation"
+      },
+      "description": "Candidate scores per row."
+    },
+    "seq_lens": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "min(n_candidates, n_pages * page_size)",
+        "distinct": false
+      },
+      "description": "Valid candidates per row, a prefix the page table covers."
+    },
+    "page_tables": {
+      "shape": [
+        "n_tokens",
+        "n_pages"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_pages - 1",
+        "distinct": true
+      },
+      "description": "Page of each page_size candidates, distinct within a row."
+    },
+    "metadata": {
+      "shape": [
+        "n_plan_rows",
+        2
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "topk_static_plan"
+      },
+      "description": "sglang's top-k metadata (plan_topk_v2), static threshold."
+    }
+  },
+  "outputs": {
+    "out_page_indices": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "description": "Selected positions, or page_tables slots when passed; -1 after a short row's entries."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1,
+        "n_candidates": 262208,
+        "n_plan_rows": 2,
+        "n_pages": 4097
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2,
+        "n_candidates": 262208,
+        "n_plan_rows": 3,
+        "n_pages": 4097
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4,
+        "n_candidates": 262208,
+        "n_plan_rows": 5,
+        "n_pages": 4097
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8,
+        "n_candidates": 262208,
+        "n_plan_rows": 9,
+        "n_pages": 4097
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16,
+        "n_candidates": 262208,
+        "n_plan_rows": 17,
+        "n_pages": 4097
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 32,
+        "n_candidates": 262208,
+        "n_plan_rows": 33,
+        "n_pages": 4097
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 64,
+        "n_candidates": 262208,
+        "n_plan_rows": 65,
+        "n_pages": 4097
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 128,
+        "n_candidates": 262208,
+        "n_plan_rows": 129,
+        "n_pages": 4097
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 256,
+        "n_candidates": 262208,
+        "n_plan_rows": 257,
+        "n_pages": 4097
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "any_in_full_rows"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": []
+  }
+}
