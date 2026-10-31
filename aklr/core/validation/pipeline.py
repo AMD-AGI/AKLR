@@ -6,19 +6,18 @@
 from __future__ import annotations
 
 import contextlib
-import inspect
-import json
 import shutil
 import time
 from collections.abc import Sequence
-from pathlib import Path, PurePosixPath
+from dataclasses import fields, replace
+from pathlib import Path
 from typing import Any, Final
 
-from pydantic import SerializeAsAny
+from pydantic import Field, SerializeAsAny, TypeAdapter
 
-from aklr.core.contract.registry import ContractRegistry
-from aklr.core.contract.spec import FrozenModel, axes_text
+from aklr.core._frozen_model import frozen_dataclass
 from aklr.core.platform.device import DeviceTarget
+from aklr.core.schema import Schema, load_json_file, save_json_file
 from aklr.core.validation.stages import (
     MEASUREMENT_PROFILE,
     STAGE_ORDER,
@@ -34,6 +33,7 @@ from aklr.core.validation.stages import (
     ValidationScope,
     escape,
 )
+from aklr.core.validation.stages._report._markdown import axes_text
 
 __all__ = ["REPORT_VERSION", "Pipeline", "PipelineReport", "PlatformRecord"]
 
@@ -78,7 +78,7 @@ class Pipeline:
 
         for number, stage in enumerate(self._stages, 1):
             if skip_reason is not None:
-                report = stage.report_type.skipped(skip_reason)
+                report = stage.report_type.skipped(stage.name, skip_reason)
             else:
                 stage.progress.write(f"started (stage {number}/{len(self._stages)})")
                 report = stage.execute(scope, pipeline_report())
@@ -89,7 +89,8 @@ class Pipeline:
         return pipeline_report()
 
 
-class PlatformRecord(FrozenModel):
+@frozen_dataclass
+class PlatformRecord:
     """The platform a pipeline ran on: facts only."""
 
     arch: str
@@ -107,7 +108,7 @@ class PlatformRecord(FrozenModel):
         try:
             import torch
         except ImportError:
-            return cls(**dict.fromkeys(cls.model_fields, unknown) | {"n_visible_devices": 0})
+            return cls(**dict.fromkeys((f.name for f in fields(cls)), unknown) | {"n_visible_devices": 0})
         n_visible_devices = torch.cuda.device_count()
         triton_version = flydsl_version = unknown
         with contextlib.suppress(ImportError):
@@ -130,10 +131,11 @@ class PlatformRecord(FrozenModel):
         )
 
 
-class PipelineReport(FrozenModel):
+@frozen_dataclass
+class PipelineReport:
     """One validation run; written, never read back."""
 
-    version: int = REPORT_VERSION
+    version: int = Field(default=REPORT_VERSION, kw_only=True)
     head_sha: str
     base_sha: str | None
     measurement_profile: dict[str, Any]
@@ -186,91 +188,62 @@ class PipelineReport(FrozenModel):
     def write(self, directory: Path) -> None:
         """Write ``report.json`` and ``report.md`` under ``directory``."""
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / "report.json").write_text(self.model_dump_json(indent=2), encoding="utf-8")
+        (directory / "report.json").write_text(
+            TypeAdapter(PipelineReport).dump_json(self, indent=2).decode(),
+            encoding="utf-8",
+        )
         (directory / "report.md").write_text(self.markdown_text(), encoding="utf-8")
 
-    def write_schemas(self, root: Path, directory: Path) -> None:
-        """Write each bench schema with its measurements; one schema's finding does not
-        stop the rest (``BenchReport.measurements``)."""
+    def write_schemas(self, root: Path, directory: Path) -> int:
+        """Write each schema of :meth:`measured_schemas`, return how many."""
         shutil.rmtree(directory, ignore_errors=True)  # no earlier run's rewrites
+        measured = self.measured_schemas(root)
+        for path, schema in measured.items():
+            save_json_file(schema, directory / path)
+        return len(measured)
+
+    def measured_schemas(self, root: Path) -> dict[str, Schema]:
+        """Each bench schema with its measurements, by path, where they changed; one
+        schema's finding or another stage's fault does not stop the rest
+        (``BenchReport.measurements``)."""
         bench = next((s for s in self.stages if isinstance(s, BenchReport)), None)
         target = DeviceTarget.from_names(self.platform.arch, self.platform.hardware)
         if bench is None or not target.is_complete:
-            return
-        registry = ContractRegistry.default()
+            return {}
+        rewritten: dict[str, Schema] = {}
         for path in self.bench_paths:
-            schema = registry.parse_schema((root / path).read_bytes(), path)
-            if schema.kernel.targets != (target,):
+            schema = load_json_file(Schema, root / path)
+            if schema.kernel is None or not schema.kernel.build.runs_on(target):
                 continue
-            measured = bench.measurements(path, schema)
+            measured = bench.measurements(path, schema, self.head_sha, str(target))
             if measured is None:
                 continue
             for w in schema.workloads:
                 m = measured[axes_text(w.axes)]
-                if (w.accuracy, w.speedup is None) != (
-                    m.accuracy,
-                    m.speedup is None,
-                ) or (m.speedup is not None and abs(m.speedup / w.speedup - 1) > _REWRITE_TOLERANCE):
-                    out = directory / path
-                    out.parent.mkdir(parents=True, exist_ok=True)
-                    out.write_text(
-                        schema.with_measurements(measured).schema_text(),
-                        encoding="utf-8",
+                stored = w.evaluation(target)
+                is_changed = (
+                    stored is None
+                    or stored.accuracy != m.accuracy
+                    or stored.speedup.keys() != m.speedup.keys()
+                )
+                is_changed = is_changed or any(
+                    abs(m.speedup[b].value / stored.speedup[b].value - 1) > _REWRITE_TOLERANCE
+                    for b in m.speedup
+                )
+                if is_changed:
+                    rewritten[path] = replace(
+                        schema,
+                        workloads=[
+                            replace(
+                                x,
+                                evaluations=sorted(
+                                    [e for e in x.evaluations if e.hardware != str(target)]
+                                    + [measured[axes_text(x.axes)]],
+                                    key=lambda e: e.hardware,
+                                ),
+                            )
+                            for x in schema.workloads
+                        ],
                     )
                     break
-
-    def write_baselines(self, scope: ValidationScope, directory: Path) -> None:
-        """Re-export, replacing the last run's, what each benched workload was compared
-        with: an incumbent's base schema, else the defined baseline in main's Solution
-        shape (``<op_type>/<name>/<name>__baseline.json``); never committed."""
-        shutil.rmtree(directory, ignore_errors=True)  # a changed baseline replaces it
-        bench = next((s for s in self.stages if isinstance(s, BenchReport)), None)
-        if bench is None:
-            return
-        registry = ContractRegistry.default()
-        schemas = {
-            path: registry.parse_schema((scope.root / path).read_bytes(), path) for path in self.bench_paths
-        }
-        # same-named schemas share a definition: (op_type, name, baseline) -> workloads
-        groups: dict[tuple[str, str, str], dict[str, dict]] = {}
-        for r in bench.workload_records:
-            if r.baseline is None:  # the new case is its own baseline: nothing to show
-                continue
-            schema = schemas[r.schema_path]
-            key = axes_text(r.axes)
-            workload = next(
-                w for w in schema.model_dump(mode="json")["workloads"] if axes_text(w["axes"]) == key
-            )
-            group = (schema.op_type, schema.name, r.baseline)
-            groups.setdefault(group, {})[key] = workload
-        for (op_type, name, baseline), workloads in groups.items():
-            if baseline.endswith(".json"):  # an incumbent at base, kernel as committed
-                data = json.loads(scope.text_at_base(baseline))
-                data["workloads"] = [w for w in data["workloads"] if axes_text(w["axes"]) in workloads]
-                file_name = PurePosixPath(baseline).name
-            else:
-                contract = registry.get(next(s for s in schemas.values() if s.name == name).contract_id)
-                fn = contract.baseline()
-                data = {
-                    "name": f"{name}__baseline",
-                    "definition": name,
-                    "author": "baseline",
-                    "spec": {
-                        "language": "python",
-                        "target": [str(DeviceTarget.from_names(self.platform.arch, self.platform.hardware))],
-                        "entry_point": "main.py::run",
-                        "destination_passing_style": False,
-                    },
-                    "sources": [
-                        {
-                            "path": "main.py",
-                            "content": f"{inspect.getsource(fn)}\nrun = {fn.__name__}\n",
-                        }
-                    ],
-                    "description": f"The baseline of {name}: {baseline}.",
-                    "workloads": list(workloads.values()),
-                }
-                file_name = f"{name}__baseline.json"
-            out = directory / op_type / name / file_name
-            out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        return rewritten

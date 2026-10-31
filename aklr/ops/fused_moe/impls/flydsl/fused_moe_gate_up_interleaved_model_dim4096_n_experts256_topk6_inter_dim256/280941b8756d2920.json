@@ -1,0 +1,260 @@
+{
+  "name": "fused_moe_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim256",
+  "op_type": "fused_moe",
+  "axes": {
+    "n_tokens": {
+      "description": "Tokens routed in this call.",
+      "type": "var"
+    },
+    "model_dim": {
+      "description": "Hidden size.",
+      "value": 4096,
+      "type": "const"
+    },
+    "n_experts": {
+      "description": "Local experts on this rank.",
+      "value": 256,
+      "type": "const"
+    },
+    "topk": {
+      "description": "Experts per token.",
+      "value": 6,
+      "type": "const"
+    },
+    "inter_dim": {
+      "description": "Expert intermediate size.",
+      "value": 256,
+      "type": "const"
+    },
+    "global_experts": {
+      "description": "Experts of the whole expert-parallel group.",
+      "value": null,
+      "type": "const"
+    },
+    "gate_up_rows": {
+      "description": "w1 rows: 2 * inter_dim.",
+      "value": 512,
+      "type": "const"
+    },
+    "packed_model_dim": {
+      "description": "Bytes per w1 row: model_dim // 2.",
+      "value": 2048,
+      "type": "const"
+    },
+    "packed_inter_dim": {
+      "description": "Bytes per w2 row: inter_dim // 2.",
+      "value": 128,
+      "type": "const"
+    },
+    "model_blocks": {
+      "description": "w1 scale columns: model_dim // 32.",
+      "value": 128,
+      "type": "const"
+    },
+    "inter_blocks": {
+      "description": "w2 scale columns: inter_dim // 32.",
+      "value": 8,
+      "type": "const"
+    },
+    "one": {
+      "description": "A single count.",
+      "value": 1,
+      "type": "const"
+    },
+    "w1_scale_rows": {
+      "description": "w1 scale rows, every expert's: n_experts * gate_up_rows.",
+      "value": 131072,
+      "type": "const"
+    },
+    "w1_scale_columns": {
+      "description": "w1 scale columns, padded: ceil_div(model_blocks, 8) * 8.",
+      "value": 128,
+      "type": "const"
+    },
+    "w2_scale_rows": {
+      "description": "w2 scale rows, every expert's: n_experts * model_dim.",
+      "value": 1048576,
+      "type": "const"
+    },
+    "w2_scale_columns": {
+      "description": "w2 scale columns, padded: ceil_div(inter_blocks, 8) * 8.",
+      "value": 8,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 32
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 128
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 256
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Token activations."
+    },
+    "w1": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "packed_model_dim"
+      ],
+      "dtype": "float4_e2m1fn_x2",
+      "description": "Gate-up projection per expert, two values a byte."
+    },
+    "w2": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "packed_inter_dim"
+      ],
+      "dtype": "float4_e2m1fn_x2",
+      "description": "Down projection per expert, two values a byte."
+    },
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "float32",
+      "description": "Routing weight of each chosen expert."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "description": "Chosen experts per token, distinct within a row; global ids under expert parallelism."
+    },
+    "expert_mask": {
+      "shape": [
+        "global_experts"
+      ],
+      "dtype": "int32",
+      "description": "1 for the experts this rank holds, in the order w1 holds them."
+    },
+    "activation": {
+      "dtype": "string",
+      "description": "Gate activation.",
+      "shape": null
+    },
+    "act_quant": {
+      "dtype": "string",
+      "description": "Quantization of each expert gemm's activations, per 1 x 32 with e8m0 scales: 'mxfp4', 'mxfp8' (e4m3), or None for none.",
+      "shape": null
+    },
+    "w1_scale": {
+      "shape": [
+        "w1_scale_rows",
+        "w1_scale_columns"
+      ],
+      "dtype": "float8_e8m0fnu",
+      "description": "Per 1 x 32 block of w1."
+    },
+    "w2_scale": {
+      "shape": [
+        "w2_scale_rows",
+        "w2_scale_columns"
+      ],
+      "dtype": "float8_e8m0fnu",
+      "description": "Per 1 x 32 block of w2."
+    },
+    "swiglu_limit": {
+      "dtype": "float32",
+      "description": "Clamped SwiGLU bound: gate at most this, up within +/- this.",
+      "shape": null
+    },
+    "beta": {
+      "dtype": "float32",
+      "description": "SiTUv2 gate saturation.",
+      "shape": null
+    },
+    "linear_beta": {
+      "dtype": "float32",
+      "description": "SiTUv2 up saturation.",
+      "shape": null
+    },
+    "num_local_tokens": {
+      "shape": [
+        "one"
+      ],
+      "dtype": "int32",
+      "description": "Rows this rank received; later rows are unused."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Routing-weighted sum of the chosen experts' outputs; under expert parallelism, this rank's share."
+    }
+  },
+  "reference": "from __future__ import annotations\nimport math\nimport torch\nimport torch.nn.functional as F\n\ndef _mxfp8(x: Tensor) -> Tensor:\n    import torch\n\n    blocks = x.unflatten(-1, (-1, 32))\n    amax = blocks.abs().amax(dim=-1, keepdim=True)\n    finite = amax.isfinite()\n    mantissa, exponent = torch.frexp(torch.where(finite, amax, 0.0) / 448.0)\n    exponent = (exponent - 1 + (mantissa != 0.5).int()).clamp(-126, 127)\n    scale = torch.where(finite, torch.exp2(exponent.double()), float(\"nan\"))\n    scaled = torch.where(finite, blocks, 0.0) / scale\n    codes = scaled.to(torch.float8_e4m3fn).double()\n    return (codes * scale).flatten(-2)\n\ndef _weight(w: Tensor, scale: Tensor, expert: int) -> Tensor:\n    import torch\n\n    magnitudes = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0)\n    e2m1 = torch.tensor(magnitudes, dtype=torch.float64, device=w.device)\n    e2m1 = torch.cat((e2m1, -e2m1))\n    codes = w[expert].view(torch.uint8).long()\n    decoded = e2m1[torch.stack((codes & 0xF, codes >> 4), dim=-1).flatten(-2)]\n    codes = scale[expert].view(torch.uint8)\n    scale = torch.exp2(codes.double() - 127).masked_fill(codes == 255, math.nan)\n    return decoded * scale.repeat_interleave(32, dim=-1)\n\ndef _mxfp4(x: Tensor, grid: Tensor) -> Tensor:\n    import torch\n\n    blocks = x.unflatten(-1, (-1, 32))\n    amax = blocks.abs().amax(dim=-1, keepdim=True)\n    finite = amax.isfinite()\n    mantissa, exponent = torch.frexp(torch.where(finite, amax, 0.0).clamp_min(1e-10))\n    exponent = (exponent - 3 + (mantissa > 0.75).int()).clamp(-127, 127)\n    scale = torch.where(finite, torch.exp2(exponent.double()), float(\"nan\"))\n    scaled = torch.where(finite, blocks, 0.0) / scale\n    m = scaled.abs()\n    lo = torch.bucketize(m, grid, right=True) - 1  # the largest code <= m\n    hi = (lo + 1).clamp_max(len(grid) - 1)\n    below, above = m - grid[lo], grid[hi] - m\n    up = (above < below) | ((above == below) & (hi % 2 == 0))\n    codes = torch.where(up, grid[hi], grid[lo]) * scaled.sign()\n    return (codes * scale).flatten(-2)\n\ndef fused_moe_reference(\n    hidden_states,\n    w1,\n    w2,\n    topk_weights,\n    topk_ids,\n    expert_mask=None,\n    activation=None,\n    w1_scale=None,\n    w2_scale=None,\n    beta=None,\n    linear_beta=None,\n    num_local_tokens=None,\n    swiglu_limit=None,\n    act_quant=None,\n) -> Tensor:\n    \"\"\"Each token through its top-k experts, weighted by its routing weights, summed.\"\"\"\n    import torch\n    import torch.nn.functional as F\n\n    ids = topk_ids.long()\n    if expert_mask is not None:\n        # A global id to its slot in w1, as aiter's sorting maps it; -1 off this rank.\n        local = expert_mask.long()\n        slot = local.cumsum(0) - 1\n        ids = torch.where(local[ids] == 1, slot[ids], -1)\n    if num_local_tokens is not None:\n        ids[int(num_local_tokens[0]) :] = -1  # rows not received\n    # e2m1's 8 magnitudes, ascending\n    fp4_grid = torch.tensor(\n        (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0),\n        dtype=torch.float64,\n        device=hidden_states.device,\n    )\n    quantize = {\n        None: lambda t: t,\n        \"mxfp8\": _mxfp8,\n        \"mxfp4\": lambda t: _mxfp4(t, fp4_grid),\n    }[act_quant]\n    x = quantize(hidden_states.double())\n    weights = topk_weights.double()\n    out = x.new_zeros((*ids.shape, x.shape[-1]))\n    for expert in ids.unique().tolist():\n        if expert < 0:  # another rank's route adds nothing\n            continue\n        routed = ids == expert\n        tokens = routed.nonzero(as_tuple=True)[0]  # topk_ids rows are distinct\n        projected = x[tokens] @ _weight(w1, w1_scale, expert).mT\n        gate, up = projected.chunk(2, dim=-1)  # w1 stores [gate | up] along its rows\n        if swiglu_limit is not None:  # aiter's torch_moe_stage1: clamp, then activate\n            gate = gate.clamp(max=swiglu_limit)\n            up = up.clamp(-swiglu_limit, swiglu_limit)\n        if activation == \"silu\":\n            gated = F.silu(gate) * up\n        elif activation == \"gelu\":\n            gated = F.gelu(gate) * up\n        else:\n            gate = beta * torch.tanh(gate / beta) * torch.sigmoid(gate)\n            gated = gate * (linear_beta * torch.tanh(up / linear_beta))\n        gated = gated.to(hidden_states.dtype).double()\n        out[routed] = quantize(gated) @ _weight(w2, w2_scale, expert).mT\n    return (out * weights.unsqueeze(-1)).sum(dim=1)\n\ndef unshuffle_tiles(\n    stored: Tensor, split: tuple[int, ...], order: tuple[int, ...]\n) -> Tensor:\n    \"\"\"The inverse of splitting the last two dims of a tensor into ``split`` and\n    permuting them by ``order``: the bytes of ``stored``, in its shape and dtype.\"\"\"\n    import torch\n\n    x = stored.view(torch.uint8) if stored.element_size() == 1 else stored\n    lead = tuple(x.shape[:-2])\n    inverse = tuple(sorted(range(len(order)), key=order.__getitem__))\n    n = len(lead)\n    x = x.reshape(*lead, *(split[i] for i in order))\n    x = x.permute(*range(n), *(n + i for i in inverse))\n    return x.contiguous().view(stored.shape).view(stored.dtype)\n\ndef deinterleave_gate_up_weight(stored: Tensor, gate_up: bool) -> Tensor:\n    \"\"\"aiter ``shuffle_weight(is_guinterleave=True)`` undone on expert weights: 16-row\n    by 64-byte tiles; with ``gate_up`` the gate and up halves alternate tile by tile.\"\"\"\n    rows, cols = stored.shape[-2:]\n    if gate_up:\n        split, order = (2, rows // 32, 16, cols // 64, 4, 16), (1, 0, 3, 4, 2, 5)\n    else:\n        split, order = (rows // 16, 16, cols // 64, 4, 16), (0, 2, 3, 1, 4)\n    return unshuffle_tiles(stored, split, order)\n\ndef deinterleave_gate_up_scales(\n    stored: Tensor, experts: int, rows: int, cols: int, gate_up: bool\n) -> Tensor:\n    \"\"\"aiter ``shuffle_scale(is_guinterleave=True)`` undone on the 2-D ``(experts *\n    rows, padded cols)`` scales: the ``(experts, rows, cols)`` ones.\"\"\"\n    padded_cols = stored.shape[-1]\n    x = stored.reshape(experts, rows, padded_cols)\n    if gate_up:\n        split = (2, rows // 32, 16, padded_cols // 8, 2, 4)\n        order = (1, 3, 5, 2, 4, 0)\n    else:\n        split, order = (rows // 32, 2, 16, padded_cols // 8, 2, 4), (0, 3, 5, 2, 4, 1)\n    return unshuffle_tiles(x, split, order)[..., :cols].contiguous()\n\ndef fused_moe_gate_up_interleaved_reference(\n    hidden_states,\n    w1,\n    w2,\n    topk_weights,\n    topk_ids,\n    expert_mask=None,\n    activation=None,\n    w1_scale=None,\n    w2_scale=None,\n    beta=None,\n    linear_beta=None,\n    num_local_tokens=None,\n    swiglu_limit=None,\n    act_quant=None,\n) -> Tensor:\n    \"\"\"The row-major maths on gate-up interleaved weights and 2-D scales undone.\"\"\"\n    experts, gate_up_rows, model_bytes = w1.shape\n    model_dim, inter_bytes = w2.shape[-2:]\n    return fused_moe_reference(\n        hidden_states,\n        deinterleave_gate_up_weight(w1, gate_up=True),\n        deinterleave_gate_up_weight(w2, gate_up=False),\n        topk_weights,\n        topk_ids,\n        expert_mask,\n        activation,\n        deinterleave_gate_up_scales(\n            w1_scale, experts, gate_up_rows, model_bytes * 2 // 32, gate_up=True\n        ),\n        deinterleave_gate_up_scales(\n            w2_scale, experts, model_dim, inter_bytes * 2 // 32, gate_up=False\n        ),\n        beta,\n        linear_beta,\n        num_local_tokens,\n        swiglu_limit,\n        act_quant,\n    )\n\nrun = fused_moe_gate_up_interleaved_reference\n",
+  "check": "from __future__ import annotations\nimport torch\n\ndef _fused_moe_check(reference_outputs, actual_outputs, **_unused):\n    # SQNR >= 13 dB, not a tolerance: the e33/e65 kernels keep fp8/MXFP4 partials,\n    # far off aiter's error\n    reference, actual = (\n        o[0] if isinstance(o, (list, tuple)) else o\n        for o in (reference_outputs, actual_outputs)\n    )\n    if reference.shape != actual.shape:\n        return False\n    reference, actual = reference.double(), actual.double()\n    error = (actual - reference).norm().item()\n    return error <= reference.norm().item() * 10 ** (-13.0 / 20)\n\nrun = _fused_moe_check\n",
+  "init": "from __future__ import annotations\nimport math\nimport torch\n\ndef _fused_moe_inputs(\n    n_tokens, model_dim, n_experts, topk, inter_dim, global_experts, device, seed\n):\n    torch.manual_seed(seed)\n    id_range = n_experts if global_experts is None else global_experts\n    w1 = torch.randint(\n        0, 256, (n_experts, 2 * inter_dim, model_dim // 2), device=device\n    ).to(torch.uint8)\n    w2 = torch.randint(\n        0, 256, (n_experts, model_dim, inter_dim // 2), device=device\n    ).to(torch.uint8)\n    call = {\n        \"hidden_states\": torch.randn(n_tokens, model_dim, device=device).to(\n            torch.bfloat16\n        ),\n        \"w1\": w1.view(torch.float4_e2m1fn_x2),\n        \"w2\": w2.view(torch.float4_e2m1fn_x2),\n        \"topk_weights\": torch.randn(n_tokens, topk, device=device),\n        \"topk_ids\": torch.randn(n_tokens, id_range, device=device)\n        .topk(topk, dim=-1)\n        .indices.to(torch.int32),\n        \"expert_mask\": None,\n        \"activation\": \"silu\",\n        \"use_shuffled_weight\": True,\n    }\n    if global_experts is not None:\n        rank = int(torch.randint(global_experts // n_experts, ()))\n        mask = torch.zeros(global_experts, dtype=torch.int32, device=device)\n        mask[rank * n_experts : (rank + 1) * n_experts] = 1\n        call[\"expert_mask\"] = mask\n    return call\n\ndef _e8m0_scales(shape, fan_in, device):\n    lo = 122 - fan_in.bit_length() // 2\n    codes = torch.randint(lo, lo + 7, shape, device=device)\n    return codes.to(torch.uint8).view(torch.float8_e8m0fnu)\n\ndef _fused_moe_gate_up_interleaved_init(\n    *,\n    n_tokens,\n    model_dim,\n    n_experts,\n    topk,\n    inter_dim,\n    global_experts=None,\n    device=\"cuda\",\n    seed=0,\n):\n    call = _fused_moe_inputs(\n        n_tokens, model_dim, n_experts, topk, inter_dim, global_experts, device, seed\n    )\n    w1_columns = (model_dim // 32 + 7) // 8 * 8\n    w2_columns = (inter_dim // 32 + 7) // 8 * 8\n    call[\"w1_scale\"] = _e8m0_scales(\n        (n_experts * 2 * inter_dim, w1_columns), model_dim, device\n    )\n    call[\"w2_scale\"] = _e8m0_scales(\n        (n_experts * model_dim, w2_columns), inter_dim, device\n    )\n    call[\"swiglu_limit\"] = 10.0\n    call[\"gate_mode\"] = \"interleave\"\n    call[\"act_quant\"] = None\n    return call\n\nrun = _fused_moe_gate_up_interleaved_init\n",
+  "tags": [
+    "deepseek-v4-flash/tp8",
+    "deepseek-v4-flash/tp8+dp8"
+  ],
+  "description": "out = sum over the top-k experts e of topk_weights[e] * (act(gate) * up) @ w2[e].T, [gate | up] = hidden_states @ w1[e].T; mxfp4 weights with e8m0 scales per 1 x 32. Gate and up tiles interleaved in w1, the scales 2-D with columns padded to 8 and shuffled.",
+  "constraints": [
+    "gate_up_rows == 2 * inter_dim",
+    "packed_model_dim == model_dim // 2",
+    "packed_inter_dim == inter_dim // 2",
+    "model_blocks == model_dim // 32",
+    "inter_blocks == inter_dim // 32",
+    "expert_mask is not None or topk <= n_experts",
+    "expert_mask is None or topk <= global_experts",
+    "expert_mask is None or n_experts <= global_experts",
+    "model_dim % 128 == 0 and inter_dim % 128 == 0",
+    "hidden_states.dtype in ('bfloat16', 'float16')",
+    "topk_weights.dtype in ('float32', 'bfloat16', 'float16')",
+    "topk_ids.dtype in ('int32', 'int64')",
+    "num_local_tokens is None or expert_mask is not None",
+    "activation in ('silu', 'gelu', 'situv2')",
+    "(activation == 'situv2') == (beta is not None)",
+    "(beta is None) == (linear_beta is None)",
+    "act_quant is None or act_quant in ('mxfp4', 'mxfp8')",
+    "use_shuffled_weight",
+    "gate_mode == 'interleave'",
+    "w1_scale_rows == n_experts * gate_up_rows",
+    "w1_scale_columns == ceil_div(model_blocks, 8) * 8",
+    "w2_scale_rows == n_experts * model_dim",
+    "w2_scale_columns == ceil_div(inter_blocks, 8) * 8"
+  ],
+  "kernel": null
+}

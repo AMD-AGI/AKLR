@@ -12,7 +12,7 @@ class TestRuntimeEnv:
     @pytest.mark.parametrize(
         ("name", "value"),
         [
-            ("AKLR_EXPORT", "2"),
+            ("AKLR_ENABLE_TRACING", "2"),
             ("AKLR_MIN_SPEEDUP", "abc"),
             ("AKLR_MIN_SPEEDUP", "nan"),
         ],
@@ -23,9 +23,9 @@ class TestRuntimeEnv:
         with pytest.raises(ValueError, match=name):
             RuntimeEnv()
 
-    def test_disable_names_contracts(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """``AKLR_DISABLE=gemm@1.0,bmm@1.0`` disables those two contracts, not all."""
-        monkeypatch.setenv(ENV_DISABLE, "gemm@1.0,bmm@1.0")
+    def test_disable_names_op_types(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``AKLR_DISABLE=gemm,bmm`` disables those two op types, not all."""
+        monkeypatch.setenv(ENV_DISABLE, "gemm,bmm")
         env = RuntimeEnv()
-        assert env.disabled_contracts == {"gemm@1.0", "bmm@1.0"}
+        assert env.disabled_op_types == {"gemm", "bmm"}
         assert not env.is_all_disabled

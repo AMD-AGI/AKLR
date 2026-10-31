@@ -12,6 +12,7 @@ import queue
 import threading
 from collections.abc import Callable
 from concurrent.futures import CancelledError, Future, InvalidStateError
+from pathlib import Path
 from typing import ClassVar, Generic, TypeVar
 
 from aklr.core.validation.stages._bench._execution._model import TaskState
@@ -69,7 +70,8 @@ class ExecutionFuture(Future, Generic[T]):
         self._task_id = task_id
         self._task_state = TaskState.PENDING
         self._resource_id: str | None = None
-        self._devices: tuple[str, ...] | None = None
+        self._device: str | None = None
+        self._directory: Path | None = None
         self._metadata_lock = threading.Lock()
         self._callbacks: list[Callable[[ExecutionFuture[T]], None]] = []
         self._callback_lock = threading.Lock()
@@ -98,25 +100,31 @@ class ExecutionFuture(Future, Generic[T]):
             return self._resource_id
 
     @property
-    def devices(self) -> tuple[str, ...] | None:
+    def device(self) -> str | None:
         with self._metadata_lock:
-            return self._devices
+            return self._device
 
-    def assign(self, resource_id: str, devices: tuple[str, ...] | None = None) -> bool:
+    @property
+    def directory(self) -> Path | None:
+        with self._metadata_lock:
+            return self._directory
+
+    def assign(self, resource_id: str, device: str | None = None) -> bool:
         if self.cancelled():
             return False
         with self._metadata_lock:
             self._resource_id = resource_id
-            self._devices = devices
+            self._device = device
             self._task_state = TaskState.ASSIGNED
         return True
 
-    def mark_running(self) -> bool:
+    def mark_running(self, directory: Path | None) -> bool:
         with self._transition_lock:
             if not self.set_running_or_notify_cancel():
                 self._cancellation_notified = True
                 return False
         with self._metadata_lock:
+            self._directory = directory
             self._task_state = TaskState.RUNNING
         return True
 

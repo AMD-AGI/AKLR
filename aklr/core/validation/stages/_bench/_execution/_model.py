@@ -73,7 +73,7 @@ class ResourceRequest:
 @dataclass(frozen=True)
 class ResourceSnapshot:
     resource_id: str
-    devices: tuple[str, ...]
+    device: str
     capabilities: ResourceCapabilities
     state: ResourceState
 
@@ -97,5 +97,4 @@ class ExecutionContext:
 
     device: str
     log_path: Path
-    # the leased devices, visible as cuda:0 ... cuda:n_devices - 1
-    n_devices: int = 1
+    directory: Path

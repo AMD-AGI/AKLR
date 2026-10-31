@@ -8,8 +8,9 @@ import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, ClassVar
 
-from pydantic import ConfigDict, ValidationInfo, field_validator
-from pydantic.dataclasses import dataclass
+from pydantic import ValidationInfo, field_validator
+
+from aklr.core._frozen_model import frozen_dataclass
 
 if TYPE_CHECKING:
     import torch
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
 __all__ = ["DeviceTarget", "physical_device"]
 
 
-@dataclass(frozen=True, order=True, config=ConfigDict(extra="forbid"))
+@frozen_dataclass
 class DeviceTarget:
     """Immutable, normalized architecture/model pair."""
 
@@ -64,20 +65,6 @@ class DeviceTarget:
     def from_names(cls, arch: str | None, hardware: str | None) -> DeviceTarget:
         """Normalize observed device names, retaining unknown values as None."""
         return cls(cls.normalize_arch(arch), cls.normalize_hardware(hardware))
-
-    @classmethod
-    def normalize_targets(cls, targets: Sequence[DeviceTarget] | None) -> tuple[DeviceTarget, ...] | None:
-        """Validate, deduplicate and sort build constraints; None is unrestricted."""
-        if targets is None:
-            return None
-        if not targets or any(not target.is_known for target in targets):
-            raise ValueError("target must contain at least one architecture or hardware model")
-        return tuple(
-            sorted(
-                set(targets),
-                key=lambda target: (target.arch or "", target.hardware or ""),
-            )
-        )
 
     @classmethod
     def matches_target(cls, target: DeviceTarget, constraints: Sequence[DeviceTarget] | None) -> bool:

@@ -4,28 +4,29 @@
 from __future__ import annotations
 
 import contextlib
-import dataclasses
 import functools
 import math
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
-from aklr.core.contract import semantics
-from aklr.core.contract.op import OpContract
-from aklr.core.contract.spec import FrozenModel
+from pydantic import TypeAdapter
+
+from aklr.core._frozen_model import frozen_dataclass
+from aklr.core.schema import Schema
+from aklr.core.utils import dtype_str_to_torch_dtype
 from aklr.core.validation.stages import _measure
-from aklr.core.validation.stages._bench._evaluation._request import Step, TrialRequest
-from aklr.core.validation.stages._bench._execution import (
-    ExecutionContext,
-    TaskExecutionTimeout,
-    caused_by_the_task,
+from aklr.core.validation.stages._bench._evaluation._safetensors import (
+    outputs_file_name,
 )
+from aklr.core.validation.stages._bench._evaluation._trials import Step, TrialRequest
+from aklr.core.validation.stages._bench._execution import ExecutionContext
+from aklr.core.validation.stages._measure import derive_seed
 from aklr.core.validation.stages._report._finding import Finding, FindingCode
 
 if TYPE_CHECKING:
     from torch import Tensor
 
-    from aklr.core.runtime.dispatch import KernelDispatcher
+    from aklr.core.runtime.builder import Runnable
 
 __all__ = [
     "MAX_FIRST_CALL_BYTES", "CandidateResult", "CandidateWorkloadResult",
@@ -36,93 +37,26 @@ __all__ = [
 MAX_FIRST_CALL_BYTES: Final = 16 << 30
 
 _BASELINE_FAILED_DETAIL: Final = (
-    "the fallback does not serve this workload and a rerun will not help: remove "
-    "the workload or fix the contract's domain"
+    "no adapter of the api binds this workload and a rerun will not help: remove "
+    "the workload or fix the schema"
 )
 
 
-class CandidateWorkloadResult(FrozenModel):
+@frozen_dataclass
+class CandidateWorkloadResult:
     axes_text: str
     findings: tuple[Finding, ...]
     rounds: tuple[_measure.RoundTimes, ...]
-    # the lent tensors it filled (Step.output_key), in step order
-    output_keys: tuple[str, ...]
-
-    @property
-    def is_declined(self) -> bool:
-        """Whether the baseline declined the workload: its finding alone stands, nothing is
-        evaluated."""
-        return any(f.code == FindingCode.BASELINE_FAILED for f in self.findings)
+    # the adapter entry point that bound and timed (of several, the first to bind);
+    # None: none timed
+    baseline: str | None
+    backend: str | None
 
 
-class CandidateResult(FrozenModel):
+@frozen_dataclass
+class CandidateResult:
     findings: tuple[Finding, ...]
     workload_results: tuple[CandidateWorkloadResult, ...]
-
-    @classmethod
-    def from_task(cls, value: Any, axes_texts: Sequence[str]) -> CandidateResult:
-        detail = "the candidate task's result is not one for the batch"
-        try:
-            result = cls.model_validate(value)
-        except ValueError as e:
-            raise ValueError(detail) from e
-        if sorted(r.axes_text for r in result.workload_results) != sorted(axes_texts):
-            raise ValueError(detail)
-        by_axes = {r.axes_text: r for r in result.workload_results}
-        return result.model_copy(update={"workload_results": tuple(by_axes[a] for a in axes_texts)})
-
-    @classmethod
-    def of_failure(cls, error: BaseException) -> CandidateResult:
-        """The batch finding of a candidate task that gave no result: the last line of
-        ``error``, whose type says whether the candidate or the platform failed."""
-        detail = str(error).strip().split("\n")[-1]
-        if isinstance(error, TaskExecutionTimeout):
-            code = FindingCode.CANDIDATE_TIMEOUT
-        elif caused_by_the_task(error):
-            # a tracer fault crashes the timing by itself; only the last line is
-            # aklr's text, the log and traceback above it are the candidate's
-            is_tracer = ": timing: " in detail and _measure.is_tracer_fault(detail)
-            code = FindingCode.PLATFORM_FAILURE if is_tracer else FindingCode.CANDIDATE_CRASH
-        elif isinstance(error, ValueError):
-            code = FindingCode.CANDIDATE_CRASH
-        else:
-            code = FindingCode.PLATFORM_FAILURE
-        return cls(findings=(Finding.unlocated(code, detail),), workload_results=())
-
-    @classmethod
-    def of_ranks(cls, results: Sequence[CandidateResult]) -> CandidateResult:
-        """The group's result of its finding-free ``results`` in rank order: rank 0's
-        workload findings and output keys, each round's time of a participant its slowest
-        rank's, or an unusable one if a rank's is (compare_performance reports it)."""
-        if len(results) == 1:
-            return results[0]
-        workload_results = []
-        for per_rank in zip(*(r.workload_results for r in results), strict=True):
-            first = per_rank[0]
-            expected = [(r.mode, r.round_index, r.order) for r in first.rounds]
-            for rank, workload in enumerate(per_rank):
-                where = f"rank {rank}: {workload.axes_text}"
-                if (
-                    workload.axes_text != first.axes_text
-                    or [(r.mode, r.round_index, r.order) for r in workload.rounds] != expected
-                    or any(set(r.milliseconds) != set(r.order) for r in workload.rounds)
-                ):
-                    return cls.of_failure(ValueError(f"{where}: timing rounds differ across ranks"))
-            # an unusable time ranks above any other, so that max keeps it (it drops a NaN by position)
-            unusable_first = lambda ms: (not (math.isfinite(ms) and ms > 0), ms)  # noqa: E731
-            rounds = tuple(
-                same[0].model_copy(
-                    update={
-                        "milliseconds": {
-                            p: max((r.milliseconds[p] for r in same), key=unusable_first)
-                            for p in same[0].order
-                        }
-                    }
-                )
-                for same in zip(*(w.rounds for w in per_rank), strict=True)
-            )
-            workload_results.append(per_rank[0].model_copy(update={"rounds": rounds}))
-        return cls(findings=(), workload_results=tuple(workload_results))
 
 
 class StepFailed(Exception):
@@ -145,134 +79,92 @@ class StepFailed(Exception):
             raise cls(ended_as, f"{description}{type(e).__name__}: {e}") from e
 
 
-def run_candidate(
-    context: ExecutionContext,
-    *,
-    requests: Sequence[TrialRequest],
-    outputs: Mapping[str, Mapping[str, Tensor]],
-    rank: int | None = None,
-    rendezvous: str | None = None,
-) -> dict:
-    """Check and time the batch on ``context.device``, each workload's outputs copied
-    into the tensors the trial task lent (``outputs[axes_text]``,
-    ``TrialRequest.empty_outputs``), or, as ``rank`` of the group that meets at the file
-    ``rendezvous``, on the group's device ``cuda:<rank>``; returns a ``CandidateResult``
-    json. A rank stops the batch at its first finding: its peers' next call would wait on
-    it forever."""
+def run_candidate(context: ExecutionContext, *, requests: Sequence[TrialRequest]) -> dict:
+    """Check and time the batch on ``context.device``; returns a ``CandidateResult`` json."""
     import torch
+    from safetensors.torch import save_file
 
     from aklr.core.platform.device import DeviceTarget
-    from aklr.core.platform.toolchain import unmet_requirement
     from aklr.core.utils.testing import flush_l2_cache
 
     schema = requests[0].schema
     batch_findings: tuple[Finding, ...] = ()
     stopped: dict[str, Finding] = {}
     rounds: dict[str, tuple[_measure.RoundTimes, ...]] = {}
-    dispatcher = None
-    incumbent_dispatchers: dict[str, KernelDispatcher] = {}
-    device = context.device
-    if rank is not None and device != "cpu":
-        # the task sees the group's devices as the trial task does: a lent tensor's IPC
-        # handle names its device by the trial task's index
-        device = f"cuda:{rank}"
-        torch.cuda.set_device(device)
-    target = DeviceTarget.current(device)
+    baselines: dict[str, tuple[str, str] | None] = {}
+    runnable = None
+    incumbent_runnables: dict[str, Runnable] = {}
+    target = DeviceTarget.current(context.device)
     try:
         if not target.is_complete:
-            detail = f"{device}: unknown arch or hardware ({target})"
+            detail = f"{context.device}: unknown arch or hardware ({target})"
             raise StepFailed(FindingCode.PLATFORM_FAILURE, detail)
-        if not DeviceTarget.matches_target(target, schema.kernel.targets):
-            detail = f"{target} matches no target of kernel.targets"
+        if not schema.kernel.build.runs_on(target):
+            detail = f"{target} matches no kernel.build.target_hardware"
             raise StepFailed(FindingCode.NO_MATCHING_DEVICE, detail)
-        if (unmet := unmet_requirement(schema.kernel.requires)) is not None:
-            detail = f"kernel.requires: {unmet}"
-            raise StepFailed(FindingCode.NO_MATCHING_TOOLCHAIN, detail)
         with StepFailed.failing_as(FindingCode.PLATFORM_FAILURE, "compile tripwire: "):
             tripwire = _CompileTripwire.resolve()
-        group = None
-        if rank is not None:
-            import torch.distributed as dist
-
-            with StepFailed.failing_as(FindingCode.PLATFORM_FAILURE, "group: "):
-                dist.init_process_group(
-                    "cpu:gloo,cuda:nccl",
-                    init_method=f"file://{rendezvous}",
-                    rank=rank,
-                    world_size=requests[0].n_ranks,
-                    device_id=None if device == "cpu" else torch.device(device),
-                )
-                group = dist.group.WORLD
-                if (group_init := requests[0].contract.group_init()) is not None:
-                    group_init()
-        run = CandidateRun(device, tripwire, _measure.bind_clock(group), rank or 0)
+        run = CandidateRun(context.device, tripwire, _measure.bind_clock())
         flush_l2_cache()
         run.clock.synchronize()
         for request in requests:
             try:
                 with StepFailed.failing_as(FindingCode.PLATFORM_FAILURE, "baseline: "):
-                    try:
-                        run.run_baseline(request)
-                    except NotImplementedError as e:
-                        raise StepFailed(FindingCode.BASELINE_FAILED, _BASELINE_FAILED_DETAIL) from e
+                    run.run_baseline(request)
             except StepFailed as e:
-                if rank is not None:
-                    raise StepFailed(e.code, f"{request.axes_text}: {e}") from e
                 stopped[request.axes_text] = Finding.unlocated(e.code, str(e))
         run.clock.synchronize()
         live = [r for r in requests if r.axes_text not in stopped]
         if live:
             before = torch.cuda.memory_allocated()
             with StepFailed.failing_as(FindingCode.BUILD_FAILED):
-                dispatcher, first_call_peak_bytes = run.make_warmed_dispatcher(schema, live)
+                runnable, first_call_peak_bytes = run.make_warmed_runnable(schema, live)
             resident_bytes = torch.cuda.memory_allocated() - before
             if max(first_call_peak_bytes, resident_bytes) > MAX_FIRST_CALL_BYTES:
                 detail = f"peak {first_call_peak_bytes} or resident {resident_bytes} bytes: too many"
                 raise StepFailed(FindingCode.BUILD_FAILED, detail)
-            # one dispatcher per incumbent kernel; the incumbents passed their review
+            # one runnable per incumbent kernel; the incumbents passed their review
             with StepFailed.failing_as(FindingCode.PLATFORM_FAILURE, "incumbent: "):
                 requests_by_hash: dict[str, list[TrialRequest]] = {}
                 for request in live:
                     if request.incumbent is not None:
-                        content_hash = request.incumbent.kernel.content_hash
+                        content_hash = request.incumbent.kernel.hash()
                         requests_by_hash.setdefault(content_hash, []).append(request)
                 for requests_of_hash in requests_by_hash.values():
-                    incumbent_dispatcher, _ = run.make_warmed_dispatcher(
+                    incumbent_runnable, _ = run.make_warmed_runnable(
                         requests_of_hash[0].incumbent, requests_of_hash
                     )
-                    incumbent_dispatchers |= dict.fromkeys(
-                        (r.axes_text for r in requests_of_hash), incumbent_dispatcher
+                    incumbent_runnables |= dict.fromkeys(
+                        (r.axes_text for r in requests_of_hash), incumbent_runnable
                     )
     except StepFailed as e:
         batch_findings = (Finding.unlocated(e.code, str(e)),)
-    output_keys: dict[str, tuple[str, ...]] = {}
     for request in requests:
         axes_text = request.axes_text
-        filled: list[str] = []
+        outputs: dict[str, Tensor] = {}
         if not batch_findings and axes_text not in stopped:
             try:
-                rounds[axes_text] = run.check_and_time(
-                    request, dispatcher, incumbent_dispatchers.get(axes_text), outputs[axes_text], filled
+                rounds[axes_text], baselines[axes_text] = run.check_and_time(
+                    request, runnable, incumbent_runnables.get(axes_text), outputs
                 )
             except StepFailed as e:
-                if rank is not None:
-                    batch_findings = (Finding.unlocated(e.code, f"{axes_text}: {e}"),)
-                else:
-                    stopped[axes_text] = Finding.unlocated(e.code, str(e))
-        output_keys[axes_text] = tuple(filled)
-    if device != "cpu" and not batch_findings:
-        torch.cuda.synchronize()  # the lent tensors are filled before the result says so
-    workload_results = [
-        CandidateWorkloadResult(
-            axes_text=r.axes_text,
-            findings=(stopped[r.axes_text],) if r.axes_text in stopped else (),
-            rounds=rounds.get(r.axes_text, ()),
-            output_keys=output_keys[r.axes_text],
+                stopped[axes_text] = Finding.unlocated(e.code, str(e))
+        # with no tensor too: a missing file is always the candidate's fault
+        save_file(outputs, context.directory / outputs_file_name(axes_text))
+    workload_results = []
+    for r in requests:
+        baseline, backend = baselines.get(r.axes_text) or (None, None)
+        workload_results.append(
+            CandidateWorkloadResult(
+                axes_text=r.axes_text,
+                findings=(stopped[r.axes_text],) if r.axes_text in stopped else (),
+                rounds=rounds.get(r.axes_text, ()),
+                baseline=baseline,
+                backend=backend,
+            )
         )
-        for r in requests
-    ]
     value = CandidateResult(findings=batch_findings, workload_results=workload_results)
-    return value.model_dump(mode="json")
+    return TypeAdapter(CandidateResult).dump_python(value, mode="json")
 
 
 def _bytes(tensor: Tensor) -> Tensor:
@@ -325,188 +217,146 @@ class CandidateRun:
     device: str
     tripwire: _CompileTripwire
     clock: _measure.Clock
-    # the rank whose inputs the run draws, 0 alone
-    rank: int
 
-    def __init__(self, device: str, tripwire: _CompileTripwire, clock: _measure.Clock, rank: int = 0) -> None:
+    def __init__(self, device: str, tripwire: _CompileTripwire, clock: _measure.Clock) -> None:
         self.device = device
         self.tripwire = tripwire
         self.clock = clock
-        self.rank = rank
+
+    def bind_baseline(
+        self, request: TrialRequest, call: Mapping[str, Any]
+    ) -> tuple[Callable[[], Any], str, str] | None:
+        import aklr.seam  # noqa: F401 -- declares every adapter
+        from aklr.core.runtime.seam import SeamRegistry
+
+        adapters = SeamRegistry.default().adapters(request.schema.op_type)
+        if not adapters:
+            return None
+        failure: Exception | None = None
+        for adapter in adapters:
+            try:
+                adapter.original()
+            except Exception as e:  # noqa: BLE001
+                failure = failure or e
+                continue
+            backend_call = adapter.baseline(call)
+            if backend_call is not None:
+                return backend_call, adapter.entry, adapter.backend
+        if failure is not None:
+            raise failure
+        raise StepFailed(FindingCode.BASELINE_FAILED, _BASELINE_FAILED_DETAIL)
 
     def run_baseline(self, request: TrialRequest) -> None:
-        baseline = request.contract.baseline()
-        if baseline is None:
-            return  # the new case is its own baseline: nothing to run
-        row_major_args = None
-        if request.has_workload_set:
-            workload_step = next(s for s in request.steps if s.input_set == "workload")
-            with contextlib.suppress(ValueError):
-                row_major_args = request.compose_inputs(workload_step, self.device, self.rank)
-        if row_major_args is None:
-            row_major_args = request.compose_inputs(None, self.device, self.rank)
-        baseline(**request.assemble_call(row_major_args, self.device))
+        bound = self.bind_baseline(request, request.compose_call(None, self.device))
+        if bound is not None:
+            bound[0]()
 
-    def make_warmed_dispatcher(
-        self, kernel_schema: OpContract, requests: Sequence[TrialRequest]
-    ) -> tuple[KernelDispatcher, int]:
+    @staticmethod
+    def call_kernel(request: TrialRequest, runnable: Runnable, call: Mapping[str, Any]) -> Any:
+        from aklr.core.runtime.dispatch._adapt import adapt_and_call
+
+        return adapt_and_call(
+            template=request.schema,
+            fn=runnable,
+            namespace=dict(call),
+            dps=runnable.metadata.destination_passing_style,
+            is_inplace=False,
+            dests={o: o for o in request.schema.outputs},
+            axes=request.workload.axes,
+        )
+
+    def make_warmed_runnable(
+        self, kernel_schema: Schema, requests: Sequence[TrialRequest]
+    ) -> tuple[Runnable, int]:
         import torch
 
         from aklr.core.runtime.builder import BuilderRegistry
-        from aklr.core.runtime.dispatch import (
-            DispatchTable,
-            FallbackReason,
-            KernelDispatcher,
-        )
 
-        # the keys come from the candidate's schema: same-named files share them
-        schema, contract = requests[0].schema, requests[0].contract
         runnable = BuilderRegistry.get_instance().build(kernel_schema)
-        unmeasured = {"speedup": None, "accuracy": None}
-        workloads = [r.workload.model_copy(update=unmeasured) for r in requests]
-        dispatcher = KernelDispatcher(contract)
-        dispatcher.set_table(
-            DispatchTable.from_schemas(
-                contract,
-                torch.device(self.device),
-                [(schema, runnable, workloads)],
-                min_speedup=0,
-            )
-        )
-        allocated = dict.fromkeys(contract.allocated_outputs)
         peak_bytes = 0
         for request in requests:
-            # the workload's own scalars too: a kernel may compile per scalar value,
-            # and the workload step runs in a capture
-            steps = [None, *[s for s in request.steps if s.input_set == "workload"]]
-            for step in steps:
-                try:
-                    row_major_args = request.compose_inputs(step, self.device, self.rank)
-                except ValueError:  # as in produce_outputs: the step is skipped
-                    if step is None:
-                        raise
-                    continue
-                call = request.assemble_call(row_major_args, self.device)
-                torch.cuda.synchronize()
-                allocated_before = torch.cuda.memory_allocated()
-                torch.cuda.reset_peak_memory_stats()
-                # the first call: it may compile
-                first_result = dispatcher.dispatch(call | allocated)
-                if isinstance(first_result, FallbackReason):
-                    raise RuntimeError(  # noqa: TRY004 -- BUILD_FAILED, not a type error
-                        f"{request.axes_text}: the first call fell back: {first_result.value}"
-                    )
-                torch.cuda.synchronize()
-                peak_bytes = max(peak_bytes, torch.cuda.max_memory_allocated() - allocated_before)
-        return dispatcher, peak_bytes
+            call = request.compose_call(None, self.device)
+            torch.cuda.synchronize()
+            allocated_before = torch.cuda.memory_allocated()
+            torch.cuda.reset_peak_memory_stats()
+            # the first call: it may compile
+            self.call_kernel(request, runnable, call)
+            torch.cuda.synchronize()
+            peak_bytes = max(peak_bytes, torch.cuda.max_memory_allocated() - allocated_before)
+        return runnable, peak_bytes
 
     def check_and_time(
         self,
         request: TrialRequest,
-        dispatcher: KernelDispatcher,
-        incumbent_dispatcher: KernelDispatcher | None,
-        lent: Mapping[str, Tensor],
-        filled: list[str],
-    ) -> tuple[_measure.RoundTimes, ...]:
-        """Run the workload's check steps, then its timing rounds; return the rounds."""
-        from aklr.core.runtime.dispatch import FallbackReason
-
-        contract, steps = request.contract, request.steps
-        outputs_json = request.schema_json["outputs"]
-        with self._poisoned_alloc_outputs(dispatcher, outputs_json):
-            self.produce_outputs(
-                request,
-                dispatcher,
-                [s for s in steps if s.check != "post_timing"],
-                lent,
-                filled,
-            )
-        call = request.assemble_call(request.compose_inputs(None, self.device, self.rank), self.device)
-        allocated = dict.fromkeys(contract.allocated_outputs)
-        # a new dict per call: the dispatcher allocates into the one it gets
-        fns = {"candidate": lambda: dispatcher.dispatch(call | allocated)}
-        if incumbent_dispatcher is not None:
-            fns["incumbent"] = lambda: incumbent_dispatcher.dispatch(call | allocated)
-            # called once in make_warmed_dispatcher(); still serves the call?
-            if isinstance(fns["incumbent"](), FallbackReason):
-                detail = "internal: the incumbent's dispatch fell back"
-                raise StepFailed(FindingCode.PLATFORM_FAILURE, detail)
+        runnable: Runnable,
+        incumbent_runnable: Runnable | None,
+        outputs: dict[str, Tensor],
+    ) -> tuple[tuple[_measure.RoundTimes, ...], tuple[str, str] | None]:
+        """Run the workload's check steps, then its timing rounds; return them and
+        the adapter entry point and backend that bound."""
+        steps = request.steps
+        self.produce_outputs(request, runnable, [s for s in steps if s.check != "post_timing"], outputs)
+        call = request.compose_call(None, self.device)
+        fns = {"candidate": lambda: self.call_kernel(request, runnable, call)}
+        if incumbent_runnable is not None:
+            fns["incumbent"] = lambda: self.call_kernel(request, incumbent_runnable, call)
         where = f"{request.schema_path}:{request.axes_text}"
         try:
-            baseline = contract.baseline()
-            if baseline is not None:
-                fns["baseline"] = lambda: baseline(**call)
-            elif "incumbent" in fns:  # no defined baseline: the incumbent is it
-                fns["baseline"] = fns.pop("incumbent")
+            bound = self.bind_baseline(request, call)
+            if bound is None:
+                if "incumbent" in fns:  # no adapter: the incumbent is the baseline
+                    fns["baseline"] = fns.pop("incumbent")
+            else:
+                fns["baseline"] = bound[0]
             rounds = ()
             if "baseline" in fns:  # none: the new case is its own baseline, untimed
-                root_hash = semantics.workload_hash(request.schema_json["name"], request.workload_json)
-                seed = semantics.derive_seed(root_hash, "timing")
-                rounds = self.clock.time_rounds(
-                    fns, seed=seed, thresholds=request.thresholds, min_speedup=request.min_speedup
-                )
+                seed = derive_seed(request.workload_hash, "timing")
+                rounds = self.clock.time_rounds(fns, seed=seed)
+        except StepFailed:
+            raise
         except Exception as e:
             text = f"{where}: timing: {type(e).__name__}: {e}"
             raise RuntimeError(text) from e
-        with self._poisoned_alloc_outputs(dispatcher, outputs_json):
-            self.produce_outputs(
-                request,
-                dispatcher,
-                [s for s in steps if s.check == "post_timing"],
-                lent,
-                filled,
-                timing_call=call,
-            )
-        return rounds
+        self.produce_outputs(
+            request,
+            runnable,
+            [s for s in steps if s.check == "post_timing"],
+            outputs,
+            timing_call=call,
+        )
+        return rounds, None if bound is None else (bound[1], bound[2])
 
     def produce_outputs(
         self,
         request: TrialRequest,
-        dispatcher: KernelDispatcher,
+        runnable: Runnable,
         steps: Sequence[Step],
-        lent: Mapping[str, Tensor],
-        filled: list[str],
+        outputs: dict[str, Tensor],
         timing_call: Mapping[str, Any] | None = None,
     ) -> None:
-        """Run ``steps``, each step's mutable tensors copied into the lent tensors of its
-        ``Step.output_key`` as it ends, the key then appended to ``filled``."""
         import torch
 
-        from aklr.core.runtime.dispatch import FallbackReason
-
-        contract = request.contract
-        outputs_json = request.schema_json["outputs"]
-        output_shapes = {o: contract.storage_shape_of(o, request.point) for o in contract.outputs}
-        unset_outputs = dict.fromkeys(contract.allocated_outputs, None)
-        live = result = step_outputs = graph = None
+        schema = request.schema
+        output_names = tuple(schema.outputs)
+        output_shapes = request.output_shapes
+        live = step_outputs = graph = None
         for step in steps:
             label = step.label
-            try:
-                values = request.assemble_call(
-                    request.compose_inputs(step, self.device, self.rank), self.device
-                )
-            except ValueError:
-                if step.input_set != "workload":
-                    raise
-                continue
+            values = request.compose_call(step, self.device)
             if step.buffer_source == "new":
                 live = values
             elif step.buffer_source == "timing":
                 live = dict(timing_call)
-            held = {
-                name: v for name, v in live.items() if torch.is_tensor(v) and name not in contract.outputs
-            }
+            held = {name: v for name, v in live.items() if torch.is_tensor(v) and name not in output_names}
             if step.buffer_source != "new":
                 for name, value in held.items():
                     # Model weight reloads that preserve both address and _version.
                     value.data.copy_(values[name])
             # a reused step hands every output back as the last step left it
-            reused = step_outputs if step.is_out_reused else unset_outputs
-            call = live | reused
-            outputs_to_poison = () if step.is_out_reused else contract.required_outputs
+            call = live | (step_outputs if step.is_out_reused else {o: values[o] for o in output_names})
+            outputs_to_poison = () if step.is_out_reused else output_names
             # on the device: a CPU copy of a multi-GB pool costs more than the call
-            read_only = {n: v for n, v in held.items() if n not in contract.mutable_inputs}
-            snapshots = {name: v.detach().clone() for name, v in read_only.items()}
+            snapshots = {name: v.detach().clone() for name, v in held.items()}
             if step.mode == "capture":
                 description = f"{label}: capture: "
                 try:
@@ -517,8 +367,8 @@ class CandidateRun:
                             torch.cuda.graph(graph, capture_error_mode="global"),
                         ):
                             # the poisoning is captured too
-                            self._poison_outputs(call, outputs_to_poison, outputs_json)
-                            result = dispatcher.dispatch(call)
+                            self._poison_outputs(call, outputs_to_poison)
+                            self.call_kernel(request, runnable, call)
                         if compile_calls:
                             raise RuntimeError(f"{compile_calls[0]}: compiled in the capture")
                 except Exception:
@@ -526,9 +376,6 @@ class CandidateRun:
                 except BaseException as e:
                     text = f"{description}{type(e).__name__}: {e}"
                     raise StepFailed(FindingCode.CAPTURE_UNSAFE, text) from e
-            if isinstance(result, FallbackReason):
-                detail = f"{label}: internal: dispatch fell back ({result.value})"
-                raise StepFailed(FindingCode.PLATFORM_FAILURE, detail)
             description = f"{label}: replay: "
             try:
                 with StepFailed.failing_as(FindingCode.CAPTURE_UNSAFE, description):
@@ -538,63 +385,29 @@ class CandidateRun:
             except BaseException as e:
                 text = f"{description}{type(e).__name__}: {e}"
                 raise StepFailed(FindingCode.CAPTURE_UNSAFE, text) from e
-            step_outputs = contract.outputs_by_name(result)
+            step_outputs = {o: call[o] for o in output_names}
             for o, out in step_outputs.items():
-                shape, dtype = output_shapes[o], outputs_json[o]["dtype"]["any_of"][0]
+                shape, dtype = output_shapes[o], schema.outputs[o].dtype
                 is_declared = torch.is_tensor(out) and tuple(out.shape) == shape
-                if not is_declared or out.dtype not in semantics.torch_dtypes(dtype):
+                if not is_declared or out.dtype != dtype_str_to_torch_dtype(dtype):
                     detail = f"{label}: the output {o} is not a {shape} {dtype} tensor"
                     raise StepFailed(FindingCode.CANDIDATE_CRASH, detail)
             is_unchanged = all(call[name] is v for name, v in held.items()) and all(
-                torch.equal(_bytes(v.detach()), _bytes(snapshots[name])) for name, v in read_only.items()
+                torch.equal(_bytes(v.detach()), _bytes(snapshots[name])) for name, v in held.items()
             )
             if not is_unchanged:
                 detail = f"{label}: the call changed its inputs"
                 raise StepFailed(FindingCode.INPUT_MUTATION, detail)
-            for o, out in contract.call_mutable_tensors(result, call).items():
-                key = step.output_key(o)
-                # another storage dtype of the output holds the same bytes; copy_ would broadcast
-                is_same_width = out.element_size() == lent[key].element_size()
-                value = out.view(lent[key].dtype) if is_same_width else out
-                if value.shape != lent[key].shape or value.dtype != lent[key].dtype:
-                    detail = f"{label}: {o} is a {tuple(out.shape)} {out.dtype}, not the lent {tuple(lent[key].shape)} {lent[key].dtype}"
-                    raise StepFailed(FindingCode.CANDIDATE_CRASH, detail)
-                lent[key].copy_(value)
-                filled.append(key)
+            for o, out in step_outputs.items():
+                outputs[step.output_key(o)] = out.to("cpu", copy=True).contiguous()
 
     @staticmethod
-    @contextlib.contextmanager
-    def _poisoned_alloc_outputs(
-        dispatcher: KernelDispatcher, outputs_json: Mapping[str, Any]
-    ) -> Iterator[None]:
-        table = dispatcher.table
-        dispatcher.set_table(
-            dataclasses.replace(
-                table,
-                # the outputs left None are known before the allocation fills them
-                alloc_outputs=lambda key, call: (
-                    outputs_to_poison := [o for o in outputs_json if call[o] is None],
-                    table.alloc_outputs(key, call),
-                    CandidateRun._poison_outputs(call, outputs_to_poison, outputs_json),
-                )[1],
-            )
-        )
-        try:
-            yield
-        finally:
-            dispatcher.set_table(table)
-
-    @staticmethod
-    def _poison_outputs(
-        call: Mapping[str, Any],
-        output_names: Iterable[str],
-        outputs_json: Mapping[str, Any],
-    ) -> None:
+    def _poison_outputs(call: Mapping[str, Any], output_names: Iterable[str]) -> None:
         import torch
 
         for o in output_names:
-            traits = semantics.DTYPE_TRAITS[outputs_json[o]["dtype"]["any_of"][0]]
-            if traits.is_integral or traits.bits < 8:
-                call[o].view(torch.uint8).fill_(0xFF)
+            out = call[o]
+            if out.dtype.is_floating_point and out.dtype.itemsize > 1:
+                out.fill_(math.nan)
             else:
-                call[o].fill_(math.nan)
+                out.view(torch.uint8).fill_(0xFF)

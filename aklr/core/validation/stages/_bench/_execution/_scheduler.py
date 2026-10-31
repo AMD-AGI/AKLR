@@ -240,7 +240,7 @@ class ExecutionScheduler:
                 if lease is None:
                     continue
                 self._discard(future)
-                if not future.assign(selected.resource_id, selected.devices):
+                if not future.assign(selected.resource_id, selected.device):
                     self._resources.release(lease, ResourceHealth.HEALTHY)
                     self._known_task_ids.discard(task.task_id)
                     continue

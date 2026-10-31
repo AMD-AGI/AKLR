@@ -1,0 +1,754 @@
+{
+  "name": "flash_mla_with_kvcache_sparse_query_length1_n_heads64_page_size256_n_indices128_extra_page_size2_n_extra_indices8256",
+  "op_type": "flash_mla_with_kvcache",
+  "axes": {
+    "batch": {
+      "description": "Rows: one token each (sparse) or one request each (dense).",
+      "type": "var"
+    },
+    "query_length": {
+      "description": "Queries per row.",
+      "value": 1,
+      "type": "const"
+    },
+    "n_heads": {
+      "description": "Query heads.",
+      "value": 64,
+      "type": "const"
+    },
+    "n_pages": {
+      "description": "Pages of the KV pool.",
+      "type": "var"
+    },
+    "page_size": {
+      "description": "Slots per page of the KV pool.",
+      "value": 256,
+      "type": "const"
+    },
+    "n_indices": {
+      "description": "Sparse indices per token.",
+      "value": 128,
+      "type": "const"
+    },
+    "n_extra_pages": {
+      "description": "Pages of the extra KV pool.",
+      "type": "var"
+    },
+    "extra_page_size": {
+      "description": "Slots per page of the extra KV pool.",
+      "value": 2,
+      "type": "const"
+    },
+    "n_extra_indices": {
+      "description": "Extra sparse indices per token.",
+      "value": 8256,
+      "type": "const"
+    },
+    "table_width": {
+      "description": "Columns of the 2-D block_table, or length of the flat one.",
+      "type": "var"
+    },
+    "n_offsets": {
+      "description": "Offsets in cu_seqlens_k: batch + 1.",
+      "type": "var"
+    },
+    "head_dim": {
+      "description": "Query values per head.",
+      "value": 512,
+      "type": "const"
+    },
+    "kv_dim": {
+      "description": "Bytes (sparse) or values (dense) per pool slot.",
+      "value": 584,
+      "type": "const"
+    },
+    "v_dim": {
+      "description": "Output values per head.",
+      "value": 512,
+      "type": "const"
+    },
+    "one": {
+      "description": "A single KV head.",
+      "value": 1,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 10543,
+        "n_extra_pages": 105428
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 10941,
+        "n_extra_pages": 109404
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 11167,
+        "n_extra_pages": 111670
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 11177,
+        "n_extra_pages": 111761
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 11561,
+        "n_extra_pages": 115603
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 11935,
+        "n_extra_pages": 119349
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 12064,
+        "n_extra_pages": 120631
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 12153,
+        "n_extra_pages": 121529
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 12317,
+        "n_extra_pages": 123163
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 10543,
+        "n_extra_pages": 105428
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 10941,
+        "n_extra_pages": 109404
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 11167,
+        "n_extra_pages": 111670
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 11177,
+        "n_extra_pages": 111761
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 11561,
+        "n_extra_pages": 115603
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 11935,
+        "n_extra_pages": 119349
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 12064,
+        "n_extra_pages": 120631
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 12153,
+        "n_extra_pages": 121529
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 12317,
+        "n_extra_pages": 123163
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 10543,
+        "n_extra_pages": 105428
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 10941,
+        "n_extra_pages": 109404
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 11167,
+        "n_extra_pages": 111670
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 11561,
+        "n_extra_pages": 115603
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 11935,
+        "n_extra_pages": 119349
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 12153,
+        "n_extra_pages": 121529
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 12317,
+        "n_extra_pages": 123163
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 10543,
+        "n_extra_pages": 105428
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 10941,
+        "n_extra_pages": 109404
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 11167,
+        "n_extra_pages": 111670
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 11561,
+        "n_extra_pages": 115603
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 11935,
+        "n_extra_pages": 119349
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 12317,
+        "n_extra_pages": 123163
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 10543,
+        "n_extra_pages": 105428
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 10941,
+        "n_extra_pages": 109404
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 11167,
+        "n_extra_pages": 111670
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 11177,
+        "n_extra_pages": 111761
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 11561,
+        "n_extra_pages": 115603
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 11935,
+        "n_extra_pages": 119349
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 12064,
+        "n_extra_pages": 120631
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 12317,
+        "n_extra_pages": 123163
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 10543,
+        "n_extra_pages": 105428
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 10941,
+        "n_extra_pages": 109404
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 11167,
+        "n_extra_pages": 111670
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 11177,
+        "n_extra_pages": 111761
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 11561,
+        "n_extra_pages": 115603
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 11935,
+        "n_extra_pages": 119349
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 12064,
+        "n_extra_pages": 120631
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 12317,
+        "n_extra_pages": 123163
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 64,
+        "n_pages": 10543,
+        "n_extra_pages": 105428
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 64,
+        "n_pages": 11167,
+        "n_extra_pages": 111670
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 64,
+        "n_pages": 11177,
+        "n_extra_pages": 111761
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 64,
+        "n_pages": 11561,
+        "n_extra_pages": 115603
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 64,
+        "n_pages": 12064,
+        "n_extra_pages": 120631
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 64,
+        "n_pages": 12317,
+        "n_extra_pages": 123163
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 128,
+        "n_pages": 11167,
+        "n_extra_pages": 111670
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 128,
+        "n_pages": 11177,
+        "n_extra_pages": 111761
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 128,
+        "n_pages": 12064,
+        "n_extra_pages": 120631
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 128,
+        "n_pages": 12317,
+        "n_extra_pages": 123163
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 256,
+        "n_pages": 11167,
+        "n_extra_pages": 111670
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 256,
+        "n_pages": 11177,
+        "n_extra_pages": 111761
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 256,
+        "n_pages": 12064,
+        "n_extra_pages": 120631
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 256,
+        "n_pages": 12317,
+        "n_extra_pages": 123163
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "q": {
+      "shape": [
+        "batch",
+        "query_length",
+        "n_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "The queries of each row; dense: the rope part last."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_pages",
+        "page_size",
+        "one",
+        "kv_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "The KV pool: packed dsv4 slots of 584 bytes, 576-byte payloads then 8-byte scales. sglang's DeepSeekV4TokenToKVPool pads each page to ceil_div(page_size * 584, 576) * 576 bytes."
+    },
+    "sparse_indices": {
+      "shape": [
+        "batch",
+        "one",
+        "n_indices"
+      ],
+      "dtype": "int32",
+      "description": "Slots of the KV pool each token reads; negative: skipped."
+    },
+    "sparse_lens": {
+      "shape": [
+        "batch"
+      ],
+      "dtype": "int32",
+      "description": "Leading sparse_indices each token reads; all when absent."
+    },
+    "extra_kv_cache": {
+      "shape": [
+        "n_extra_pages",
+        "extra_page_size",
+        "one",
+        "kv_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "The extra KV pool, packed dsv4 slots in pages padded as kv_cache's."
+    },
+    "extra_sparse_indices": {
+      "shape": [
+        "batch",
+        "one",
+        "n_extra_indices"
+      ],
+      "dtype": "int32",
+      "description": "Slots of the extra KV pool each token reads; negative: skipped."
+    },
+    "extra_sparse_lens": {
+      "shape": [
+        "batch"
+      ],
+      "dtype": "int32",
+      "description": "Leading extra_sparse_indices each token reads; all when absent."
+    },
+    "block_table": {
+      "shape": [
+        "batch",
+        "table_width"
+      ],
+      "dtype": "int32",
+      "description": "Pool rows of each request: a (batch, width) table read up to cache_seqlens, or every request's rows back to back."
+    },
+    "cache_seqlens": {
+      "shape": [
+        "batch"
+      ],
+      "dtype": "int32",
+      "description": "Leading block_table entries each request reads, at least one."
+    },
+    "cu_seqlens_k": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "description": "Where each request's rows start in block_table, then its length."
+    },
+    "causal": {
+      "dtype": "bool",
+      "description": "Whether query i of a request of length L reads only its first L - query_length + i + 1 rows.",
+      "shape": null
+    },
+    "sm_scale": {
+      "dtype": "float32",
+      "description": "Multiplies every logit; q.shape[-1] ** -0.5 when absent.",
+      "shape": null
+    },
+    "sinks": {
+      "shape": [
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "description": "Per-head logit added to the normalisation only, not to lse."
+    },
+    "kv_cache_format": {
+      "dtype": "string",
+      "description": "The pool rows: DeepSeek-V4's packed fp8 slots (sparse), or 576 fp8 or bf16 values (dense).",
+      "shape": null
+    },
+    "kv_scale": {
+      "dtype": "float32",
+      "description": "Multiplies every KV value, in the logits and the values.",
+      "shape": null
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "batch",
+        "query_length",
+        "n_heads",
+        "v_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Softmax-weighted sum of the read values; 0 for no row read."
+    },
+    "lse": {
+      "shape": [
+        "batch",
+        "query_length",
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "description": "Log-sum-exp of the scaled logits, sinks excluded; for no row read +inf (sparse) or -inf (dense)."
+    }
+  },
+  "reference": "from __future__ import annotations\nimport math\nimport torch\nimport torch.nn.functional as F\n\ndef _attend(\n    q: Tensor,\n    keys_of: Callable[[slice], Tensor],\n    visible: Tensor,\n    sinks: Tensor | None,\n    sm_scale: float | None,\n    kv_scale: float,\n    empty_lse: float,\n) -> tuple[Tensor, Tensor]:\n    \"\"\"Each head of a query attends over the KV rows ``visible`` marks, chunked by\n    rows; ``keys_of(rows)`` gathers their keys in float64.\"\"\"\n    import torch\n\n    batch = q.shape[0]\n    sinks = None if sinks is None else sinks.double()\n    scale = (q.shape[-1] ** -0.5 if sm_scale is None else sm_scale) * kv_scale\n    output = q.new_zeros(*q.shape[:-1], 512)\n    lse = q.new_full(q.shape[:-1], empty_lse)\n    # gathered KV values per chunk of rows: 512 MiB of float64\n    n_rows = max(1, 2**26 // (visible.shape[-1] * q.shape[-1]))\n    for start in range(0, batch, n_rows):\n        rows = slice(start, start + n_rows)\n        keys = keys_of(rows)\n        seen = visible[rows][:, :, None]\n        logits = torch.einsum(\"rqhd,rkd->rqhk\", q[rows], keys) * scale\n        logits = logits.masked_fill(~seen, -torch.inf)\n        row_lse = logits.logsumexp(dim=-1)\n        empty = ~seen.any(dim=-1)\n        if sinks is not None:\n            logits = torch.cat((logits, sinks.expand_as(row_lse)[..., None]), dim=-1)\n        # Normalized directly: subtracting lse would carry its rounding at large logits.\n        weights = logits.softmax(dim=-1)[..., : keys.shape[1]]\n        weights = weights.masked_fill(empty[..., None], 0)\n        output[rows] = weights @ (keys[:, None, :, :512] * kv_scale)\n        lse[rows] = row_lse.masked_fill(empty, empty_lse)\n    return output, lse\n\ndef flash_mla_with_kvcache_sparse_reference(\n    q,\n    kv_cache,\n    sparse_indices=None,\n    *,\n    sparse_lens=None,\n    extra_kv_cache=None,\n    extra_sparse_indices=None,\n    extra_sparse_lens=None,\n    block_table=None,\n    cache_seqlens=None,\n    cu_seqlens_k=None,\n    causal=False,\n    head_dim_v=None,\n    sm_scale=None,\n    sinks=None,\n    kv_cache_format=\"dsv4_fp8\",\n    kv_scale=1.0,\n) -> tuple[Tensor, Tensor]:\n    \"\"\"Each token attends to the slots its indices name, in the pool and the optional\n    extra one, DeepSeek-V4's packed fp8 slots.\"\"\"\n    import torch\n\n    pools = []\n    for cache, slots, lengths in (\n        (kv_cache, sparse_indices, sparse_lens),\n        (extra_kv_cache, extra_sparse_indices, extra_sparse_lens),\n    ):\n        if cache is None:\n            continue\n        slots = slots[:, 0].long()\n        width = slots.shape[-1]\n        selected = slots >= 0\n        if lengths is not None:\n            if ((lengths < 0) | (lengths > width)).any():\n                raise ValueError(\"a sparse length is outside [0, its index width]\")\n            positions = torch.arange(width, device=slots.device)\n            selected &= positions < lengths[:, None]\n        if (slots[selected] >= cache.shape[0] * cache.shape[1]).any():\n            raise ValueError(\"a selected sparse index is outside its KV pool\")\n        # an unselected slot reads slot 0, hidden by ``visible``\n        pools.append((cache, slots.where(selected, 0), selected))\n    visible = torch.cat([selected for *_, selected in pools], dim=-1)[:, None]\n\n    def keys_of(rows: slice) -> Tensor:\n        # The kernel's literal bf16 bit assembly, not fp8 scaling.\n        keys = []\n        for cache, slots, _ in pools:\n            page_size = cache.shape[1]\n            raw = cache.view(torch.uint8).flatten()\n            within = (slots[rows] % page_size)[..., None]\n            page = (slots[rows] // page_size)[..., None] * (page_size * 584)\n            payload = page + within * 576\n            arange = torch.arange(448, device=raw.device)\n            codes = raw[payload + arange].int()\n            scales = raw[page + page_size * 576 + within * 8 + arange[:7]].int()\n            exponent = ((codes >> 3) & 15) + scales.repeat_interleave(64, dim=-1) - 7\n            bits = ((codes & 128) << 8) | (exponent << 7) | ((codes & 7) << 4)\n            nope = (bits & 65535).to(torch.int16).view(torch.bfloat16)\n            rope = raw[payload + 448 + arange[:128]].view(torch.bfloat16)\n            keys.append(torch.cat((nope, rope), dim=-1).double())\n        return torch.cat(keys, dim=1)\n\n    return _attend(q.double(), keys_of, visible, sinks, sm_scale, kv_scale, torch.inf)\n\nrun = flash_mla_with_kvcache_sparse_reference\n",
+  "check": "from __future__ import annotations\nimport torch\n\ndef _as_output_list(outputs: Any) -> List[Any]:\n    if isinstance(outputs, list):\n        return outputs\n    if isinstance(outputs, tuple):\n        return list(outputs)\n    return [outputs]\n\ndef default_tolerances(dtype: Union[torch.dtype, str]) -> Tuple[float, float]:\n    \"\"\"Return ``(rtol, atol)`` defaults for a trace correctness check.\n\n    These defaults are intentionally conservative for low-precision inference\n    data types. Template-specific ``check`` functions can override them by\n    passing explicit ``rtol`` and ``atol`` to :func:`default_check`.\n    \"\"\"\n    dtype_name = str(dtype).replace(\"torch.\", \"\")\n    if dtype_name in (\"float64\", \"double\"):\n        return 1e-7, 1e-7\n    if dtype_name in (\"float32\", \"float\"):\n        return 1e-5, 1e-5\n    if dtype_name in (\"float16\", \"half\"):\n        return 1e-3, 1e-3\n    if dtype_name == \"bfloat16\":\n        return 1e-2, 1e-2\n    if dtype_name.startswith(\"float8\"):\n        return 1e-1, 1e-1\n    if dtype_name.startswith(\"float4\") or \"fp4\" in dtype_name:\n        return 1.0, 1.0\n    return 0.0, 0.0\n\ndef _cosine_similarity(actual: torch.Tensor, expected: torch.Tensor) -> float:\n    actual = actual.reshape(-1).to(torch.float32)\n    expected = expected.reshape(-1).to(torch.float32)\n    finite = torch.isfinite(actual) & torch.isfinite(expected)\n    if not finite.any():\n        return 1.0\n    actual = actual[finite]\n    expected = expected[finite]\n    actual_norm = torch.linalg.vector_norm(actual)\n    expected_norm = torch.linalg.vector_norm(expected)\n    if actual_norm.item() == 0 or expected_norm.item() == 0:\n        return 1.0 if torch.equal(actual, expected) else 0.0\n    return ((actual * expected).sum() / (actual_norm * expected_norm)).item()\n\ndef default_check(\n    reference_outputs: Any,\n    actual_outputs: Any,\n    *,\n    rtol: Optional[float] = None,\n    atol: Optional[float] = None,\n    max_mismatch_pct: float = 0.0,\n    min_cos_sim: Optional[float] = 1.0 - 1e-3,\n) -> bool:\n    \"\"\"Validate actual outputs against reference outputs.\n\n    ``reference_outputs`` and ``actual_outputs`` may be lists/tuples,\n    dictionaries with matching keys, or single output values. Tensor outputs\n    are checked for shape equality, closeness, mismatch percentage, and cosine\n    similarity. Non-floating tensors are checked exactly unless\n    ``max_mismatch_pct`` allows mismatches. Non-tensor outputs use Python\n    equality.\n    \"\"\"\n    if isinstance(reference_outputs, dict) or isinstance(actual_outputs, dict):\n        if not isinstance(reference_outputs, dict) or not isinstance(\n            actual_outputs, dict\n        ):\n            return False\n        if reference_outputs.keys() != actual_outputs.keys():\n            return False\n        refs = [reference_outputs[key] for key in reference_outputs]\n        actuals = [actual_outputs[key] for key in reference_outputs]\n    else:\n        refs = _as_output_list(reference_outputs)\n        actuals = _as_output_list(actual_outputs)\n\n    if len(refs) != len(actuals):\n        return False\n\n    for ref, actual in zip(refs, actuals, strict=True):\n        if isinstance(ref, torch.Tensor) != isinstance(actual, torch.Tensor):\n            return False\n        if not isinstance(ref, torch.Tensor):\n            if ref != actual:\n                return False\n            continue\n\n        if ref.shape != actual.shape:\n            return False\n        if ref.numel() == 0:\n            continue\n\n        ref_is_float = torch.is_floating_point(ref)\n        actual_is_float = torch.is_floating_point(actual)\n        if ref_is_float or actual_is_float:\n            tolerance_dtype = actual.dtype if actual_is_float else ref.dtype\n            default_rtol, default_atol = default_tolerances(tolerance_dtype)\n            rtol_value = default_rtol if rtol is None else rtol\n            atol_value = default_atol if atol is None else atol\n            close = torch.isclose(\n                actual.to(torch.float32),\n                ref.to(torch.float32),\n                rtol=rtol_value,\n                atol=atol_value,\n            )\n            mismatch_pct = 100.0 * (~close).sum().item() / close.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n            if min_cos_sim is not None:\n                cos_sim = _cosine_similarity(actual, ref)\n                if cos_sim < min_cos_sim:\n                    return False\n        else:\n            matches = actual == ref\n            mismatch_pct = 100.0 * (~matches).sum().item() / matches.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n\n    return True\n\ndef _flash_mla_check(\n    reference_outputs,\n    actual_outputs,\n    *,\n    rtol=None,\n    atol=None,\n    max_mismatch_pct=0.0,\n    min_cos_sim=None,\n):\n    # aiter's flash_mla tests: allclose(atol=1e-2, rtol=1e-2)\n    return default_check(\n        reference_outputs,\n        actual_outputs,\n        rtol=1e-2 if rtol is None else rtol,\n        atol=1e-2 if atol is None else atol,\n        max_mismatch_pct=max_mismatch_pct,\n        min_cos_sim=min_cos_sim,\n    )\n\nrun = _flash_mla_check\n",
+  "init": "from __future__ import annotations\nimport math\nimport torch\n\ndef _dsv4_fp8_kv_cache(n_pages, page_size, device):\n    payload_bytes, page_bytes = page_size * 576, page_size * 584\n    page_stride = (page_bytes + 575) // 576 * 576\n    pool = torch.zeros(n_pages, page_stride, dtype=torch.uint8, device=device)\n    distinct = min(n_pages, 251)\n    values = torch.randn(distinct, page_size, 512, device=device)\n    codes = values[..., :448].clamp(-448, 448).to(torch.float8_e4m3fn)\n    rope = values[..., 448:].to(torch.bfloat16)\n    payloads = torch.cat((codes.view(torch.uint8), rope.view(torch.uint8)), dim=-1)\n    payloads = payloads.flatten(1)\n    for start in range(0, n_pages, distinct):\n        stop = min(start + distinct, n_pages)\n        pool[start:stop, :payload_bytes] = payloads[: stop - start]\n    slots = pool[:, payload_bytes:page_bytes].unflatten(1, (page_size, 8))\n    slots[..., :7] = torch.randint(\n        124, 128, (n_pages, page_size, 7), dtype=torch.uint8, device=device\n    )\n    return pool.view(torch.float8_e4m3fn).as_strided(\n        (n_pages, page_size, 1, 584), (page_stride, 584, 584, 1)\n    )\n\ndef _flash_mla_with_kvcache_sparse_init(\n    *,\n    batch,\n    n_heads,\n    n_pages,\n    page_size,\n    n_indices,\n    n_extra_pages=None,\n    extra_page_size=None,\n    n_extra_indices=None,\n    device=\"cuda\",\n    seed=0,\n):\n    torch.manual_seed(seed)\n    call = {\n        \"q\": torch.randn(batch, 1, n_heads, 512, device=device).to(torch.bfloat16),\n        \"kv_cache\": _dsv4_fp8_kv_cache(n_pages, page_size, device),\n        \"sparse_indices\": torch.randint(\n            -1, n_pages * page_size, (batch, 1, n_indices), device=device\n        ).to(torch.int32),\n        \"sparse_lens\": torch.randint(0, n_indices + 1, (batch,), device=device).to(\n            torch.int32\n        ),\n        \"sinks\": torch.randn(n_heads, device=device),\n        \"sm_scale\": 512**-0.5,\n        \"kv_scale\": 1.0,\n        \"causal\": False,\n        \"kv_cache_format\": \"dsv4_fp8\",\n    }\n    if extra_page_size is not None:\n        call[\"extra_kv_cache\"] = _dsv4_fp8_kv_cache(\n            n_extra_pages, extra_page_size, device\n        )\n        call[\"extra_sparse_indices\"] = torch.randint(\n            -1,\n            n_extra_pages * extra_page_size,\n            (batch, 1, n_extra_indices),\n            device=device,\n        ).to(torch.int32)\n        call[\"extra_sparse_lens\"] = torch.randint(\n            0, n_extra_indices + 1, (batch,), device=device\n        ).to(torch.int32)\n    return call\n\nrun = _flash_mla_with_kvcache_sparse_init\n",
+  "tags": [
+    "deepseek-v4-flash/tp4",
+    "deepseek-v4-flash/tp4+dp4",
+    "deepseek-v4-flash/tp4+dp4+ep4",
+    "deepseek-v4-flash/tp4+ep4",
+    "deepseek-v4-flash/tp8",
+    "deepseek-v4-flash/tp8+dp8",
+    "deepseek-v4-flash/tp8+dp8+ep8",
+    "deepseek-v4-flash/tp8+ep8",
+    "deepseek-v4-pro/tp4",
+    "deepseek-v4-pro/tp4+ep4",
+    "deepseek-v4-pro/tp8",
+    "deepseek-v4-pro/tp8+ep8"
+  ],
+  "description": "MLA attention over a paged KV pool, FlashMLA's API. Sparse: each token attends to the slots its indices name, in the pool and the optional extra one; sinks join the normalisation only. Dense: each request attends to its context rows; q's rope part is last, scores are q . row * sm_scale * kv_scale and values row[:head_dim_v] * kv_scale. With causal, query i of a request of length L reads its first L - query_length + i + 1 rows.",
+  "constraints": [
+    "block_table is None",
+    "cache_seqlens is None",
+    "cu_seqlens_k is None",
+    "n_pages * page_size <= 2147483648",
+    "kv_cache_format == 'dsv4_fp8'",
+    "kv_cache.dtype in ('uint8', 'float8_e4m3fn')",
+    "head_dim_v is None",
+    "(extra_kv_cache is None) == (extra_sparse_indices is None)",
+    "extra_kv_cache is not None or extra_sparse_lens is None",
+    "extra_kv_cache is None or extra_kv_cache.dtype in ('uint8', 'float8_e4m3fn')",
+    "extra_kv_cache is None or n_extra_pages * extra_page_size <= 2147483648",
+    "query_length == 1",
+    "not causal"
+  ],
+  "kernel": {
+    "name": "flash_mla_with_kvcache_sparse_query_length1_n_heads64_page_size256_n_indices128_extra_page_size2_n_extra_indices8256_flydsl_b51bf79c42e13609",
+    "author": "unknown",
+    "build": {
+      "language": "flydsl",
+      "target_hardware": [
+        "gfx950/MI355X"
+      ],
+      "entry_point": "kernel.py::run",
+      "dependencies": [],
+      "destination_passing_style": true,
+      "binding": null
+    },
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"FlyDSL port of flash_mla_with_kvcache: DeepSeek-V4 sparse MLA decode.\n\nThe partial kernel gathers and dequantises packed dsv4 fp8 KV slots into one\nbf16 LDS tile, 32 keys by 512 dims, in 16 blocks of 32 columns. The logits\nGEMM reads a block directly. The value GEMM reads it with ds_read_b64_tr_b16,\nwhose 32-wide rows are the layout that instruction accepts. A flash softmax\nruns over one group of keys for all 64 heads and writes one bf16 partial\noutput plus its log-sum-exp per group. The combine kernel merges the groups\nof a row with its four waves splitting the groups, folds the sink logit into\nthe normalisation, and writes the bf16 output and the fp32 lse.\n\nThe launch grid stays one slot per 32 keys so its shape does not depend on\nthe live lengths. A segment whose live length selects k keys per CTA (KTIERS)\nruns k/32 steps through the same tile in slot g and covers keys\n[g*k, g*k+k). Later slots exit. The 128-wide SWA segment always keeps 32.\n\"\"\"\n\nimport functools\n\nimport torch\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nfrom flydsl.expr import math as fmath\nfrom flydsl.expr import const_expr, range_constexpr, rocdl\nfrom flydsl.expr.typing import BFloat16, Float32, Int16, Int32, T\nfrom flydsl.expr.typing import Vector as Vec\n\nNHEAD = 64\nDIM = 512\nBI = 32\nKPG = 32\n# (live length cut, keys per CTA), cuts ascending: a segment wider than 128\n# whose live length is strictly above a cut runs that many keys per CTA.\nKTIERS = ((1024, 64),)\nTHREADS = 256\nNWAVE = 4\nHPW = 16\nCWG = 64\nMSLICE = THREADS // 64\nCPT = DIM // 64\nCUNR = 4\nLOG2E = 1.4426950408889634\nLN2 = 0.6931471805599453\nNEGBIG = -1.0e30\nMINIT = -1.0e20\n\n\n@fx.struct\nclass Shared:\n    \"\"\"LDS: 16 blocks of 32 keys by 32 dims, plus the softmax scratch.\"\"\"\n\n    vt: fx.Array[BFloat16, 16384, 16]\n    bias: fx.Array[Float32, 32, 16]\n    scr: fx.Array[Float32, 64, 16]\n\n\ndef _geom(ps):\n    \"\"\"(int32 words per page, int32 offset of the scale block, log2(ps)).\"\"\"\n    stride = ((ps * 584 + 575) // 576) * 576\n    shift = 0\n    while (1 << shift) < ps:\n        shift += 1\n    return stride // 4, ps * 144, shift\n\n\ndef _tiers(width):\n    \"\"\"The KTIERS a segment of this allocated width can reach.\"\"\"\n    if width <= 128:\n        return ()\n    return tuple(t for t in KTIERS if t[0] < width)\n\n\ndef _slots(width):\n    \"\"\"Partials a segment of this width can write: the most live CTAs any tier allows.\"\"\"\n    most, k = 0, KPG\n    for cut, kt in _tiers(width) + ((width, None),):\n        most = max(most, -(-min(cut, width) // k))\n        k = kt\n    return most\n\n\n@functools.cache\ndef _workspace(batch, n1, n2, dev):\n    \"\"\"Partial output / lse scratch for one row count, within int32 element counts.\"\"\"\n    groups = _slots(n1) + _slots(n2)\n    po = torch.empty((batch * groups * NHEAD * DIM,), dtype=torch.bfloat16, device=dev)\n    pl = torch.empty((batch * groups * NHEAD,), dtype=torch.float32, device=dev)\n    return po, pl\n\n\n@functools.cache\ndef _build(sm_scale, kv_scale, n1, ps1, n2, ps2):\n    \"\"\"Compile the partial and combine kernels for one definition.\"\"\"\n    has2 = n2 > 0\n    g1 = n1 // KPG\n    g2 = n2 // KPG\n    ngrp = g1 + g2\n    nslot = _slots(n1) + _slots(n2)\n    tiers1 = _tiers(n1)\n    tiers2 = _tiers(n2) if has2 else ()\n    long_any = bool(tiers1 or tiers2)\n    ksteps = tuple(sorted({KPG} | {t[1] for t in tiers1 + tiers2}))\n\n    def _k_of(length, tiers):\n        \"\"\"Keys per CTA this live length selects.\"\"\"\n        k = fx.Int32(KPG)\n        for cut, kt in tiers:\n            k = (length > fx.Int32(cut)).select(fx.Int32(kt), k)\n        return k\n\n    def _na(length, tiers):\n        \"\"\"Live partials of one segment. Slots stay packed at the segment base.\"\"\"\n        n = (length + fx.Int32(KPG - 1)) // KPG\n        for cut, kt in tiers:\n            n = (length > fx.Int32(cut)).select((length + fx.Int32(kt - 1)) // kt, n)\n        return n\n\n    u1, sc1, sh1 = _geom(ps1)\n    if has2:\n        u2, sc2, sh2 = _geom(ps2)\n    else:\n        u2, sc2, sh2 = u1, sc1, sh1\n    scale2 = float(sm_scale) * float(kv_scale) * LOG2E\n    vscale = float(kv_scale)\n\n    @flyc.kernel\n    def part_kernel(q_t, kv1_t, ix1_t, ln1_t, kv2_t, ix2_t, ln2_t, po_t, pl_t):\n        tid = fx.thread_idx.x\n        bx, by, bz = fx.block_idx\n        row = fx.Int32(bx)\n        grp = fx.Int32(by)\n\n        lds = fx.SharedAllocator().allocate(Shared).peek()\n        vp = lds.vt.ptr\n        vi = fx.recast_iter(Int32, vp)\n        biasp = lds.bias.ptr\n        scrp = lds.scr.ptr\n\n        lane = tid % 64\n        wave = tid // 64\n        lr = lane % 16\n        lg = lane // 16\n        h0 = wave * 16\n\n        len1 = fx.ptr_load(fx.add_offset(fx.get_iter(ln1_t), row))\n        if const_expr(has2):\n            len2 = fx.ptr_load(fx.add_offset(fx.get_iter(ln2_t), row))\n            first = grp < fx.Int32(g1)\n            plen = first.select(len1, len2)\n            # Slot g owns [g*k, g*k+k). The grid keeps a slot per 32 keys, and\n            # a slot whose g*k is past the live length exits.\n            k = first.select(_k_of(len1, tiers1), _k_of(len2, tiers2))\n            pos0 = first.select(grp, grp - fx.Int32(g1)) * k\n        else:\n            first = None\n            plen = len1\n            k = _k_of(len1, tiers1)\n            pos0 = grp * k\n\n        if pos0 < plen:\n            qp = fx.get_iter(q_t)\n            qbase = (row * NHEAD + h0 + lr) * DIM + 8 * lg\n            qv = []\n            for ks in range_constexpr(16):\n                qv.append(fx.ptr_load(fx.add_offset(qp, qbase + 32 * ks), T.bf16x8))\n\n            kk = tid // 8\n            jj = tid % 8\n\n            def stage(kvt, ixt, nidx, shft, uwords, scoff, base_pos):\n                kvp = fx.get_iter(kvt)\n                spos = base_pos + kk\n                if const_expr(long_any):\n                    # A multi-step tail can start inside the buffer and end past it.\n                    inb = spos < fx.Int32(nidx)\n                    sidx = fx.ptr_load(\n                        fx.add_offset(\n                            fx.get_iter(ixt), row * nidx + inb.select(spos, fx.Int32(0))\n                        )\n                    )\n                    okv = (sidx >= fx.Int32(0)) & (spos < plen) & inb\n                else:\n                    sidx = fx.ptr_load(fx.add_offset(fx.get_iter(ixt), row * nidx + spos))\n                    okv = (sidx >= fx.Int32(0)) & (spos < plen)\n                slot = okv.select(sidx, fx.Int32(0))\n                page = slot >> shft\n                within = slot - (page << shft)\n                pay = page * uwords + within * 144\n                if jj == fx.Int32(0):\n                    fx.ptr_store(\n                        Vec.from_elements(\n                            [okv.select(fx.Float32(0.0), fx.Float32(NEGBIG))], Float32\n                        ),\n                        fx.add_offset(biasp, kk),\n                    )\n                if jj < fx.Int32(7):\n                    scw = fx.ptr_load(\n                        fx.add_offset(\n                            kvp, page * uwords + scoff + within * 2 + (jj >> 2)\n                        )\n                    )\n                    scb = (scw >> ((jj & fx.Int32(3)) * 8)) & fx.Int32(255)\n                    cmv = (scb + fx.Int32(249)) & fx.Int32(255)\n                    c1 = cmv << 7\n                    c2 = c1 | (c1 << 16)\n                    nbase = pay + jj * 16\n                    for c in range_constexpr(4):\n                        v = fx.ptr_load(fx.add_offset(kvp, nbase + c * 4), T.i32x4)\n                        outs = []\n                        for q4 in range_constexpr(4):\n                            w = fx.Int32(v[q4])\n                            x01 = (w & fx.Int32(255)) | ((w & fx.Int32(65280)) << 8)\n                            x23 = ((w >> 16) & fx.Int32(255)) | (\n                                (w >> 8) & fx.Int32(16711680)\n                            )\n                            o0 = (((x01 & fx.Int32(8323199)) << 4) + c2) | (\n                                (x01 & fx.Int32(8388736)) << 8\n                            )\n                            o1 = (((x23 & fx.Int32(8323199)) << 4) + c2) | (\n                                (x23 & fx.Int32(8388736)) << 8\n                            )\n                            outs.append(o0)\n                            outs.append(o1)\n                        base = (jj * 2 + (c // 2)) * 512 + kk * 16 + (c % 2) * 8\n                        for s in range_constexpr(2):\n                            fx.ptr_store(\n                                Vec.from_elements(outs[s * 4 : s * 4 + 4], Int32),\n                                fx.add_offset(vi, base + s * 4),\n                            )\n                else:\n                    rbase = pay + 112\n                    for c in range_constexpr(8):\n                        vr = fx.ptr_load(fx.add_offset(kvp, rbase + c * 4), T.i32x4)\n                        dim = 448 + c * 8\n                        fx.ptr_store(\n                            vr,\n                            fx.add_offset(vi, (dim // 32) * 512 + kk * 16 + (dim % 32) // 2),\n                        )\n\n            acc = []\n            for n in range_constexpr(32):\n                acc.append(Vec.filled(4, 0.0, Float32))\n            mrun = fx.Float32(MINIT)\n            srun = fx.Float32(0.0)\n            zero4 = Vec.filled(4, 0.0, Float32)\n\n            def step(bpos, acc, mrun, srun):\n                # Copy before mutating. The untaken side of a later step's\n                # branch reads the same list object, and in-place stores would\n                # put this step's vectors into that side's yield.\n                acc = list(acc)\n                fx.barrier()\n                if const_expr(has2):\n                    if first:\n                        stage(kv1_t, ix1_t, n1, sh1, u1, sc1, bpos)\n                    else:\n                        stage(kv2_t, ix2_t, n2, sh2, u2, sc2, bpos)\n                else:\n                    stage(kv1_t, ix1_t, n1, sh1, u1, sc1, bpos)\n                fx.barrier()\n\n                sv = []\n                for t in range_constexpr(2):\n                    sa = Vec.filled(4, 0.0, Float32)\n                    for ks in range_constexpr(16):\n                        av = fx.ptr_load(\n                            fx.add_offset(\n                                vp, ks * 1024 + (16 * t + lr) * 32 + 8 * lg\n                            ),\n                            T.bf16x8,\n                        )\n                        sa = Vec(\n                            rocdl.mfma_f32_16x16x32_bf16(T.f32x4, [av, qv[ks], sa])\n                        )\n                    bv4 = Vec(\n                        fx.ptr_load(fx.add_offset(biasp, 16 * t + 4 * lg), T.f32x4)\n                    )\n                    for e in range_constexpr(4):\n                        sv.append(fx.Float32(sa[e]) * scale2 + fx.Float32(bv4[e]))\n\n                mblk = sv[0]\n                for e in range_constexpr(1, 8):\n                    mblk = mblk.maximumf(sv[e])\n                mblk = mblk.maximumf(mblk.shuffle_xor(16, 64))\n                mblk = mblk.maximumf(mblk.shuffle_xor(32, 64))\n                mnew = mrun.maximumf(mblk)\n                alpha = fmath.exp2(mrun - mnew)\n                pv = []\n                for e in range_constexpr(8):\n                    pv.append(fmath.exp2(sv[e] - mnew))\n                ssum = pv[0]\n                for e in range_constexpr(1, 8):\n                    ssum = ssum + pv[e]\n                ssum = ssum + ssum.shuffle_xor(16, 64)\n                ssum = ssum + ssum.shuffle_xor(32, 64)\n                srun = srun * alpha + ssum\n                mrun = mnew\n\n                if lane < fx.Int32(16):\n                    fx.ptr_store(\n                        Vec.from_elements([alpha], Float32),\n                        fx.add_offset(scrp, wave * 16 + lr),\n                    )\n                rocdl.s_waitcnt(lgkmcnt=0)\n                a4 = Vec(\n                    fx.ptr_load(fx.add_offset(scrp, wave * 16 + 4 * lg), T.f32x4)\n                )\n                for n in range_constexpr(32):\n                    acc[n] = Vec(fx.fma(acc[n], a4, zero4))\n\n                pf = []\n                for t in range_constexpr(2):\n                    pf.append(\n                        Vec.from_elements(\n                            [pv[4 * t + e] for e in range(4)], Float32\n                        ).to(BFloat16).bitcast(Int16)\n                    )\n                tr_atom = fx.make_copy_atom(rocdl.cdna4.LDSReadTrans16_64b(), BFloat16)\n                tr_layout = fx.make_layout(4, 1)\n                for n in range_constexpr(32):\n                    for t in range_constexpr(2):\n                        base = (n // 2) * 1024 + (16 * t) * 32 + (n % 2) * 16\n                        elem = base + (lane // 4) * 32 + (lane % 4) * 4\n                        src = fx.make_view(fx.add_offset(vp, elem), tr_layout)\n                        dst = fx.make_rmem_tensor(tr_layout, BFloat16)\n                        fx.copy(tr_atom, src, dst)\n                        bvv = Vec(dst.load()).bitcast(Int16)\n                        acc[n] = Vec(\n                            rocdl.mfma_f32_16x16x16bf16_1k(\n                                T.f32x4, [pf[t], bvv, acc[n]]\n                            )\n                        )\n                return acc, mrun, srun\n\n            acc, mrun, srun = step(pos0, acc, mrun, srun)\n            for t in range_constexpr(1, len(ksteps)):\n                if k > fx.Int32(ksteps[t - 1]):\n                    for s in range_constexpr(ksteps[t - 1] // BI, ksteps[t] // BI):\n                        acc, mrun, srun = step(pos0 + fx.Int32(s * BI), acc, mrun, srun)\n\n            nonempty = srun > fx.Float32(0.0)\n            inv = nonempty.select(fx.Float32(1.0) / srun, fx.Float32(0.0))\n            lsev = nonempty.select(\n                (mrun + fmath.log2(srun.maximumf(fx.Float32(1.0e-38)))) * LN2,\n                fx.Float32(NEGBIG),\n            )\n            rowb = (row * nslot + grp) * NHEAD\n            if lane < fx.Int32(16):\n                fx.ptr_store(\n                    Vec.from_elements([lsev], Float32),\n                    fx.add_offset(fx.get_iter(pl_t), rowb + h0 + lr),\n                )\n                fx.ptr_store(\n                    Vec.from_elements([inv], Float32),\n                    fx.add_offset(scrp, wave * 16 + lr),\n                )\n            rocdl.s_waitcnt(lgkmcnt=0)\n            iv4 = Vec(fx.ptr_load(fx.add_offset(scrp, wave * 16 + 4 * lg), T.f32x4))\n            pop = fx.get_iter(po_t)\n            pbase = (rowb + h0 + 4 * lg) * DIM + lr\n            for n in range_constexpr(32):\n                vals = Vec.from_elements(\n                    [fx.Float32(acc[n][e]) * fx.Float32(iv4[e]) for e in range(4)],\n                    Float32,\n                ).to(BFloat16)\n                for e in range_constexpr(4):\n                    fx.ptr_store(\n                        Vec.from_elements([vals[e]], BFloat16),\n                        fx.add_offset(pop, pbase + e * DIM + 16 * n),\n                    )\n\n    @flyc.kernel\n    def comb_kernel(po_t, pl_t, sk_t, out_t, lse_t, ln1_t, ln2_t):\n        tid = fx.thread_idx.x\n        bx, by, bz = fx.block_idx\n        head = fx.Int32(bx)\n        row = fx.Int32(by)\n        lds = fx.SharedAllocator().allocate(Shared).peek()\n        krm = fx.recast_iter(Int32, lds.vt.ptr)\n        scrp = lds.scr.ptr\n\n        len1 = fx.ptr_load(fx.add_offset(fx.get_iter(ln1_t), row))\n        na1 = _na(len1, tiers1)\n        if const_expr(has2):\n            len2 = fx.ptr_load(fx.add_offset(fx.get_iter(ln2_t), row))\n            na2 = _na(len2, tiers2)\n        else:\n            na2 = fx.Int32(0)\n        nat = na1 + na2\n\n        msl = tid // 64\n        mln = tid % 64\n        dim = mln * CPT\n        plp = fx.get_iter(pl_t)\n        mpo = fx.get_iter(po_t)\n        rbase = row * nslot * NHEAD\n        negb = fx.Float32(NEGBIG)\n        zerof = fx.Float32(0.0)\n\n        def slot(i):\n            \"\"\"Address-safe group index for a possibly out of range trip.\"\"\"\n            ok = i < nat\n            ii = ok.select(i, fx.Int32(0))\n            gi = (ii < na1).select(ii, ii - na1 + fx.Int32(g1))\n            return ok, rbase + gi * NHEAD + head\n\n        # Each wave takes every MSLICE-th group: its own max, then its own\n        # scaled sum; the waves are flash-merged through LDS below.\n        mcur = negb\n        for ib in range(0, nat, MSLICE * CUNR):\n            for u in range_constexpr(CUNR):\n                ok, off = slot(ib + msl + fx.Int32(MSLICE * u))\n                lv = fx.ptr_load(fx.add_offset(plp, off))\n                mcur = mcur.maximumf(ok.select(lv, negb))\n\n        ssum = zerof\n        macc = Vec.filled(CPT, 0.0, Float32)\n        for ib in range(0, nat, MSLICE * CUNR):\n            for u in range_constexpr(CUNR):\n                ok, off = slot(ib + msl + fx.Int32(MSLICE * u))\n                lv = fx.ptr_load(fx.add_offset(plp, off))\n                sc = ok.select(fmath.exp2((lv - mcur) * LOG2E), zerof)\n                ov = Vec(\n                    fx.ptr_load(fx.add_offset(mpo, off * DIM + dim), T.bf16x8)\n                ).to(Float32)\n                macc = Vec(fx.fma(ov, Vec.from_elements([sc] * CPT, Float32), macc))\n                ssum = ssum + sc\n\n        if mln == fx.Int32(0):\n            fx.ptr_store(\n                Vec.from_elements([mcur], Float32), fx.add_offset(scrp, msl)\n            )\n            fx.ptr_store(\n                Vec.from_elements([ssum], Float32),\n                fx.add_offset(scrp, MSLICE + msl),\n            )\n        fx.ptr_store(macc.bitcast(Int32), fx.add_offset(krm, tid * CPT))\n        fx.barrier()\n\n        if msl == fx.Int32(0):\n            mv = Vec(fx.ptr_load(scrp, T.f32x4))\n            sv = Vec(fx.ptr_load(fx.add_offset(scrp, MSLICE), T.f32x4))\n            mtop = fx.Float32(mv[0])\n            for k in range_constexpr(1, MSLICE):\n                mtop = mtop.maximumf(fx.Float32(mv[k]))\n            tot = zerof\n            acc8 = Vec.filled(CPT, 0.0, Float32)\n            for k in range_constexpr(MSLICE):\n                wk = fmath.exp2((fx.Float32(mv[k]) - mtop) * LOG2E)\n                tot = tot + wk * fx.Float32(sv[k])\n                part = Vec(\n                    fx.ptr_load(fx.add_offset(krm, (k * 64 + mln) * CPT), T.vec(CPT, T.i32))\n                ).bitcast(Float32)\n                acc8 = Vec(fx.fma(part, Vec.from_elements([wk] * CPT, Float32), acc8))\n            live = mtop > fx.Float32(-1.0e29)\n            lsef = mtop + fmath.log2(tot.maximumf(fx.Float32(1.0e-38))) * LN2\n            sink = fx.ptr_load(fx.add_offset(fx.get_iter(sk_t), head))\n            fac = fx.Float32(1.0) / (\n                fx.Float32(1.0) + fmath.exp2((sink - lsef) * LOG2E)\n            )\n            mul = live.select(fac * vscale / tot.maximumf(fx.Float32(1.0e-38)), zerof)\n            fx.ptr_store(\n                Vec(fx.fma(acc8, Vec.from_elements([mul] * CPT, Float32),\n                           Vec.filled(CPT, 0.0, Float32))).to(BFloat16),\n                fx.add_offset(fx.get_iter(out_t), (row * NHEAD + head) * DIM + dim),\n            )\n            if mln == fx.Int32(0):\n                fx.ptr_store(\n                    Vec.from_elements(\n                        [live.select(lsef, fx.Float32(float(\"inf\")))], Float32\n                    ),\n                    fx.add_offset(fx.get_iter(lse_t), row * NHEAD + head),\n                )\n\n    @flyc.jit\n    def launch_all(\n        q_t,\n        kv1_t,\n        ix1_t,\n        ln1_t,\n        kv2_t,\n        ix2_t,\n        ln2_t,\n        po_t,\n        pl_t,\n        sk_t,\n        out_t,\n        lse_t,\n        nb: fx.Int32,\n        stream: fx.Stream,\n    ):\n        part_kernel(q_t, kv1_t, ix1_t, ln1_t, kv2_t, ix2_t, ln2_t, po_t, pl_t).launch(\n            grid=(nb, ngrp, 1), block=(THREADS, 1, 1), stream=stream\n        )\n        comb_kernel(po_t, pl_t, sk_t, out_t, lse_t, ln1_t, ln2_t).launch(\n            grid=(CWG, nb, 1), block=(THREADS, 1, 1), stream=stream\n        )\n\n    def launch(q, kv_cache, sparse_indices, sparse_lens, extra_kv_cache,\n               extra_sparse_indices, extra_sparse_lens, sinks, output, lse, ws):\n        po, pl = ws\n        launch_all(\n            q.view(-1),\n            _words(kv_cache),\n            sparse_indices.view(-1),\n            sparse_lens.view(-1),\n            _words(extra_kv_cache),\n            extra_sparse_indices.view(-1),\n            extra_sparse_lens.view(-1),\n            po,\n            pl,\n            sinks.view(-1),\n            output.view(-1),\n            lse.view(-1),\n            q.shape[0],\n            fx.Stream(torch.cuda.current_stream()),\n        )\n\n    return launch\n\n\ndef _words(cache):\n    \"\"\"A flat int32 view of the whole storage a padded dsv4 pool lives in.\"\"\"\n    raw = cache.view(torch.uint8)\n    total = raw.untyped_storage().size()\n    flat = torch.as_strided(raw, ((total // 4) * 4,), (1,), 0)\n    return flat.view(torch.int32)\n\n\ndef run(\n    q,\n    kv_cache,\n    sparse_indices,\n    sparse_lens,\n    extra_kv_cache,\n    extra_sparse_indices,\n    extra_sparse_lens,\n    block_table,\n    cache_seqlens,\n    cu_seqlens_k,\n    causal,\n    sm_scale,\n    sinks,\n    kv_cache_format,\n    kv_scale,\n    output,\n    lse,\n):\n    \"\"\"Write the sparse MLA decode of this row batch into output and lse.\"\"\"\n    head_dim_v = None\n    sm_scale = q.shape[-1] ** -0.5 if sm_scale is None else sm_scale\n    if extra_kv_cache is None:\n        fn = _build(sm_scale, kv_scale, sparse_indices.shape[2], kv_cache.shape[1],\n                    0, 0)\n        ws = _workspace(q.shape[0], sparse_indices.shape[2], 0, q.device)\n        fn(q, kv_cache, sparse_indices, sparse_lens, kv_cache, sparse_indices,\n           sparse_lens, sinks, output, lse, ws)\n    else:\n        fn = _build(sm_scale, kv_scale, sparse_indices.shape[2], kv_cache.shape[1],\n                    extra_sparse_indices.shape[2], extra_kv_cache.shape[1])\n        ws = _workspace(q.shape[0], sparse_indices.shape[2],\n                        extra_sparse_indices.shape[2], q.device)\n        fn(q, kv_cache, sparse_indices, sparse_lens, extra_kv_cache,\n           extra_sparse_indices, extra_sparse_lens, sinks, output, lse, ws)\n"
+      }
+    ],
+    "description": null
+  }
+}

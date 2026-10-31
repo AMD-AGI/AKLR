@@ -3,65 +3,77 @@
 
 from __future__ import annotations
 
-from aklr.core.runtime.dispatch import api
-from aklr.ops.gemm.contract import (
-    BMM,
-    GEMM,
-    GEMM_A4W4_MXFP4,
-    GEMM_A8W8,
-    GEMM_A8W8_BLOCKWISE_SCALED,
+import torch
+
+from aklr.core.runtime.dispatch import aklr_api
+from aklr.ops.gemm.schema import (
+    bmm_bf16_nn_op_schema,
+    bmm_bf16_nt_op_schema,
+    gemm_a8w8_nt_op_schema,
+    gemm_bf16_nt_op_schema,
+    gemm_fp8_nt_blockscaled_op_schema,
+    gemm_mxfp4_nt_op_schema,
 )
 
 __all__ = [
-    "bmm",
-    "gemm",
-    "gemm_a4w4_mxfp4",
-    "gemm_a8w8",
-    "gemm_a8w8_blockwise_scaled",
+    "bmm_bf16_nn",
+    "bmm_bf16_nt",
+    "gemm_a8w8_nt",
+    "gemm_bf16_nt",
+    "gemm_fp8_nt_blockscaled",
+    "gemm_mxfp4_nt",
 ]
 
-
-@api(GEMM)
-def gemm(a, b, trans_b=True, bias=None, out_dtype=None, out=None): ...
-
-
-@api(GEMM_A8W8)
-def gemm_a8w8(a, b, a_scale, b_scale, trans_b=True, bias=None, out_dtype=None, out=None): ...
+# Tensor parameters are named as the schema's inputs and outputs; the others pick the
+# schema (b's storage, scale layout) or the output dtype.
 
 
-@api(GEMM_A8W8_BLOCKWISE_SCALED)
-def gemm_a8w8_blockwise_scaled(
+@aklr_api(gemm_bf16_nt_op_schema)
+def gemm_bf16_nt(a, b, bias=None, out=None, out_dtype=torch.bfloat16, use_shuffled_weight=False): ...
+
+
+@aklr_api(gemm_a8w8_nt_op_schema)
+def gemm_a8w8_nt(
     a,
     b,
     a_scale,
     b_scale,
-    block_size=(128, 128),
-    scale_major_mode="K",
-    trans_b=True,
     bias=None,
-    out_dtype=None,
     out=None,
-    *,
-    operand_format="none:none",
+    out_dtype=torch.bfloat16,
+    use_shuffled_weight=False,
 ): ...
 
 
-@api(GEMM_A4W4_MXFP4)
-def gemm_a4w4_mxfp4(
+@aklr_api(gemm_fp8_nt_blockscaled_op_schema)
+def gemm_fp8_nt_blockscaled(
     a,
     b,
     a_scale,
     b_scale,
-    alpha=1.0,
-    beta=0.0,
-    trans_b=True,
-    bias=None,
-    out_dtype=None,
+    scale_major_mode="MN",
     out=None,
-    *,
-    operand_format="none:preshuffled",
+    out_dtype=None,
+    use_shuffled_weight=False,
 ): ...
 
 
-@api(BMM)
-def bmm(a, b, trans_b=True, bias=None, out_dtype=None, out=None): ...
+@aklr_api(gemm_mxfp4_nt_op_schema)
+def gemm_mxfp4_nt(
+    a,
+    b,
+    a_descale,
+    b_descale,
+    bias=None,
+    out=None,
+    out_dtype=torch.bfloat16,
+    use_shuffled_weight=False,
+): ...
+
+
+@aklr_api(bmm_bf16_nt_op_schema)
+def bmm_bf16_nt(A, B, out=None, out_dtype=torch.bfloat16, use_shuffled_weight=False): ...
+
+
+@aklr_api(bmm_bf16_nn_op_schema)
+def bmm_bf16_nn(A, B, out=None, out_dtype=torch.bfloat16, use_shuffled_weight=False): ...

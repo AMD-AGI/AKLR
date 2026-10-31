@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import gc
+import hashlib
+import json
 import math
 import random
 import statistics
@@ -11,8 +14,8 @@ from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any, Literal, NamedTuple, get_args
 
-from aklr.core.contract.semantics import derive_seed
-from aklr.core.contract.spec import FrozenModel
+from aklr.core._frozen_model import frozen_dataclass
+from aklr.core.utils import testing
 from aklr.core.validation.stages._report._finding import Finding, FindingCode
 
 __all__ = [
@@ -22,9 +25,8 @@ __all__ = [
     "MAX_REGRESS_FRACTION",
     "MEASUREMENT_PROFILE",
     "MIN_GAIN_FRACTION",
-    "LOOK_ALPHA",
+    "N_ROUNDS",
     "N_WARMUP_ROUNDS",
-    "ROUND_LOOKS",
     "THRESHOLD_RATIOS",
     "Clock",
     "Mode",
@@ -35,9 +37,10 @@ __all__ = [
     "Versus",
     "bind_clock",
     "compare_performance",
+    "derive_seed",
     "gate",
-    "is_tracer_fault",
     "ratio_lower_bound",
+    "sorted_key_json",
     "timing_records",
 ]
 
@@ -48,12 +51,7 @@ THRESHOLD_RATIOS: Mapping[Threshold, float] = MappingProxyType(
 )
 ALPHA = 0.05
 MAX_ABS_LOG_RATIO = math.log(2)
-# the round counts at which the bounds are read; timing stops at the first that decides them all.
-# None at 8: eight rounds can all miss a slow mode a quarter of the rounds take, and the t bound
-# then passes a kernel slower than the threshold far more often than alpha
-ROUND_LOOKS = (16, 32)
-# alpha split evenly over the looks, so that stopping early keeps the false-pass rate within ALPHA
-LOOK_ALPHA = ALPHA / len(ROUND_LOOKS)
+N_ROUNDS = 32
 N_WARMUP_ROUNDS = 1
 GRAPH_BUDGET_MILLISECONDS = 20.0
 
@@ -61,37 +59,28 @@ MEASUREMENT_PROFILE: Mapping[str, Any] = MappingProxyType(
     {
         "version": 18,
         "timer": "bench_cudagraph",
+        **dataclasses.asdict(testing.CudaGraphTimer()),
         "sample_count_policy": "rep_ms_estimate_capped_by_kernel_record_budget",
-        "estimation_samples": 5,
         "estimation_timer": "cuda_event_eager_with_cache_flush",
-        "capture_warmup_runs": 1,
         "execution_mode": "cuda_graph",
         "metric": "gpu_duration_sum",
-        "profiler": "kineto",
+        "profiler": "rocprofiler_sdk_kernel_dispatch",
         "calls_per_graph": "adaptive",
         "cache_policy": "flush_before_each_call_in_graph",
-        "cache_flush_bytes": 1 << 30,
         "cache_flush_access": "read",
         "cache_flush_kernel": "_flush_l2_cache_kernel",
-        "profiler_warmup_replays": 1,
-        "kineto_warmup": "one_unrecorded_baseline_bench_cudagraph",
-        "tracer_fault_policy": "measure_again_once_in_place_then_rerun_task_once",
-        "measurement_replays": 10,
-        "profiler_drain_replays": 1,
+        "profiler_warmup": "one_unrecorded_baseline_bench_cudagraph",
         "sample_aggregation": "mean_within_replay",
         "replay_aggregation": "median",
         "graph_budget_milliseconds": GRAPH_BUDGET_MILLISECONDS,
         "round_order": "seeded_shuffle_per_round",
-        "round_looks": ROUND_LOOKS,
-        "round_stop": "gate_baseline_entry_and_min_speedup_decided_at_a_look",
+        "rounds": N_ROUNDS,
         "warmup_rounds": N_WARMUP_ROUNDS,
         "max_abs_log_ratio": MAX_ABS_LOG_RATIO,
-        "max_abs_log_ratio_scope": "gate_bounds_only",
+        "max_abs_log_ratio_scope": "gate_lower_bound_only",
         "trial_aggregation": "student_t_lower_bound_of_mean_log_ratio",
         "alpha": ALPHA,
-        "alpha_per_look": LOOK_ALPHA,
-        "inputs_drawn_on": "task_device",
-        "concurrent_timing": "one_trial_task_per_device",
+        "concurrent_timing": "one_task_per_device, reference_tasks_may_run_on_neighbors",
     }
 )
 
@@ -103,7 +92,8 @@ Versus = Literal["baseline", "incumbent"]
 Threshold = Literal["entry", "retain"]
 
 
-class TimingRecord(FrozenModel):
+@frozen_dataclass
+class TimingRecord:
     """A measurement, never a verdict: ``gate`` decides it."""
 
     mode: Mode
@@ -112,35 +102,32 @@ class TimingRecord(FrozenModel):
     n_rounds: int
     log_ratio_mean: float
     ratio_lower_bound: float
-    ratio_upper_bound: float
     min_ratio: float
     versus_milliseconds: tuple[float, ...]
     candidate_milliseconds: tuple[float, ...]
 
-    @property
-    def speedup_bounds(self) -> tuple[float, float]:
-        """The lower and upper bounds of the mean ratio over the unclamped rounds, which a 3x
-        kernel must not lose to the clamp, as published: to 3 decimals, floored at 0.001."""
-        raw = [math.log(v / c) for v, c in zip(self.versus_milliseconds, self.candidate_milliseconds)]
-        lower, upper = _ratio_bounds(raw, alpha=LOOK_ALPHA)
-        return max(round(lower, 3), 0.001), max(round(upper, 3), 0.001)
 
-    def is_decided(self, min_speedup: float) -> bool:
-        """Whether the bounds settle every verdict the record feeds, each threshold under the
-        lower bound or over the upper: the gate, and against the baseline whether the workload
-        qualifies (``entry``) and whether dispatch serves its published speedup (``min_speedup``)."""
-        bounds = (self.ratio_lower_bound, self.ratio_upper_bound)
-        settled = {(*bounds, THRESHOLD_RATIOS[self.threshold])}
-        if self.versus == "baseline":
-            settled |= {(*bounds, THRESHOLD_RATIOS["entry"]), (*self.speedup_bounds, min_speedup)}
-        return all(lower >= t or upper < t for lower, upper, t in settled)
-
-
-class RoundTimes(FrozenModel):
+@frozen_dataclass
+class RoundTimes:
     mode: Mode
     round_index: int
     order: tuple[Participant, ...]
     milliseconds: dict[Participant, float]
+
+
+def sorted_key_json(value: Any) -> str:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+
+def derive_seed(*parts: str | int) -> int:
+    digest = hashlib.sha256(sorted_key_json(list(parts)).encode()).digest()
+    return int.from_bytes(digest[:8], "big")
 
 
 def ratio_lower_bound(log_ratios: Sequence[float], *, alpha: float = ALPHA) -> float:
@@ -157,13 +144,6 @@ def ratio_lower_bound(log_ratios: Sequence[float], *, alpha: float = ALPHA) -> f
     t_quantile = math.sqrt(df * (1 - lo) / lo)
     half_width = t_quantile * statistics.stdev(log_ratios) / math.sqrt(n)
     return math.exp(statistics.fmean(log_ratios) - half_width)
-
-
-def _ratio_bounds(log_ratios: Sequence[float], *, alpha: float) -> tuple[float, float]:
-    """One-sided Student-t lower and upper bounds of the mean speedup ratio, each at ``alpha``."""
-    return ratio_lower_bound(log_ratios, alpha=alpha), 1 / ratio_lower_bound(
-        [-x for x in log_ratios], alpha=alpha
-    )
 
 
 def _beta_regularized(a: float, b: float, x: float) -> float:
@@ -204,9 +184,8 @@ def timing_records(
             if not all(map(math.isfinite, versus_milliseconds + candidate_milliseconds)):
                 raise ValueError(f"{mode} rounds with a non-finite time")
             raw = [math.log(v / c) for v, c in zip(versus_milliseconds, candidate_milliseconds)]
-            # clamped for the gate's bounds only, against an outlier round
+            # clamped only for the gate's lower bound, against an outlier round
             log_ratios = [min(max(x, -MAX_ABS_LOG_RATIO), MAX_ABS_LOG_RATIO) for x in raw]
-            lower, upper = _ratio_bounds(log_ratios, alpha=LOOK_ALPHA)
             records.append(
                 TimingRecord(
                     mode=mode,
@@ -214,8 +193,7 @@ def timing_records(
                     threshold=threshold,
                     n_rounds=len(log_ratios),
                     log_ratio_mean=statistics.fmean(raw),
-                    ratio_lower_bound=lower,
-                    ratio_upper_bound=upper,
+                    ratio_lower_bound=ratio_lower_bound(log_ratios),
                     min_ratio=math.exp(min(raw)),
                     versus_milliseconds=versus_milliseconds,
                     candidate_milliseconds=candidate_milliseconds,
@@ -256,44 +234,27 @@ def compare_performance(
 class Clock(NamedTuple):
     synchronize: Callable
     bench_cudagraph: Callable
-    # the torch.distributed group whose ranks time each call together; None: this process alone
-    group: Any = None
-
-    def graph_reading(self, call: Callable[[], object]) -> float:
-        if self.group is not None:
-            # no rank retries alone, its peers would go on to the next call: a tracer fault
-            # fails the group's task, which the bench reruns whole
-            return self.bench_cudagraph(call, rep=GRAPH_BUDGET_MILLISECONDS, group=self.group)
-        try:
-            return self.bench_cudagraph(call, rep=GRAPH_BUDGET_MILLISECONDS)
-        except Exception as e:
-            if not is_tracer_fault(str(e)):
-                raise
-        return self.bench_cudagraph(call, rep=GRAPH_BUDGET_MILLISECONDS)
 
     def time_rounds(
         self,
         fns: Mapping[Participant, Callable[[], object]],
         *,
         seed: int,
-        thresholds: Mapping[Versus, Threshold],
-        min_speedup: float,
     ) -> tuple[RoundTimes, ...]:
-        """The recorded rounds, after one unrecorded warm-up profile, up to the first of
-        ``ROUND_LOOKS`` at which every timing record of ``thresholds`` is decided."""
+        """Every recorded round, after one unrecorded warm-up profile."""
         participants = list(fns)
         rounds = []
         is_gc_enabled = gc.isenabled()
         gc.disable()
         try:
-            self.graph_reading(fns["baseline"])
+            self.bench_cudagraph(fns["baseline"], rep=GRAPH_BUDGET_MILLISECONDS)
             for mode in get_args(Mode):
-                for round_index in range(-N_WARMUP_ROUNDS, ROUND_LOOKS[-1]):
+                for round_index in range(-N_WARMUP_ROUNDS, N_ROUNDS):
                     order_seed = derive_seed(seed, "order", mode, round_index)
                     order = random.Random(order_seed).sample(participants, k=len(participants))
                     milliseconds = {}
                     for p in order:
-                        milliseconds[p] = self.graph_reading(fns[p])
+                        milliseconds[p] = self.bench_cudagraph(fns[p], rep=GRAPH_BUDGET_MILLISECONDS)
                     if round_index >= 0:
                         rounds.append(
                             RoundTimes(
@@ -303,57 +264,16 @@ class Clock(NamedTuple):
                                 milliseconds=milliseconds,
                             )
                         )
-                    if round_index + 1 in ROUND_LOOKS[:-1]:  # the last look ends the rounds anyway
-                        looked = rounds
-                        if self.group is not None:
-                            # every rank decides on the group's rounds, the slowest rank's time of
-                            # each (CandidateResult.of_ranks), so that all stop at the same look
-                            import torch
-
-                            slowest = torch.tensor(
-                                [[r.milliseconds[p] for p in participants] for r in rounds],
-                                dtype=torch.float64,
-                                device=torch.cuda.current_device(),
-                            )
-                            torch.distributed.all_reduce(
-                                slowest, torch.distributed.ReduceOp.MAX, group=self.group
-                            )
-                            looked = [
-                                r.model_copy(
-                                    update={"milliseconds": dict(zip(participants, row, strict=True))}
-                                )
-                                for r, row in zip(rounds, slowest.tolist(), strict=True)
-                            ]
-                        times = [ms for r in looked for ms in r.milliseconds.values()]
-                        if not all(math.isfinite(ms) and ms > 0 for ms in times):
-                            break  # rounds unusable now stay so: compare_performance reports them
-                        if all(r.is_decided(min_speedup) for r in timing_records(looked, thresholds)):
-                            break
         finally:
             if is_gc_enabled:
                 gc.enable()
         return tuple(rounds)
 
 
-def bind_clock(group: Any = None) -> Clock:
+def bind_clock() -> Clock:
     import torch
-
-    from aklr.core.utils.testing import bench_cudagraph
 
     return Clock(
         synchronize=torch.cuda.synchronize,
-        bench_cudagraph=bench_cudagraph,
-        group=group,
+        bench_cudagraph=testing.bench_cudagraph,
     )
-
-
-_TRACER_FAULT_MESSAGES = (
-    "Kineto recorded no kernels for a single call",
-    "L2 flushes per replay, got 0",
-    "std::bad_alloc",
-    "std::length_error",
-)
-
-
-def is_tracer_fault(text: str) -> bool:
-    return any(message in text for message in _TRACER_FAULT_MESSAGES)

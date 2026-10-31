@@ -1,0 +1,507 @@
+{
+  "name": "fp8_paged_mqa_logits_n_heads64_page_tokens64",
+  "op_type": "fp8_paged_mqa_logits",
+  "axes": {
+    "batch": {
+      "description": "Requests, one decode query each.",
+      "type": "var"
+    },
+    "n_heads": {
+      "description": "Indexer heads.",
+      "value": 64,
+      "type": "const"
+    },
+    "n_pages": {
+      "description": "Pages of the key pool.",
+      "type": "var"
+    },
+    "page_tokens": {
+      "description": "Tokens per page of the key pool: page_size.",
+      "value": 64,
+      "type": "const"
+    },
+    "max_blocks": {
+      "description": "Pages per request in the block table.",
+      "type": "var"
+    },
+    "max_seq_len": {
+      "description": "Logits per request: one per slot of its block table row.",
+      "type": "var"
+    },
+    "one": {
+      "description": "A single decode query, a single key head.",
+      "value": 1,
+      "type": "const"
+    },
+    "index_dim": {
+      "description": "Values per query head.",
+      "value": 128,
+      "type": "const"
+    },
+    "token_bytes": {
+      "description": "Bytes per token of a page: 128 fp8 keys, then an fp32 scale.",
+      "value": 132,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 6621,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 15005,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 15005,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 6621,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 15005,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 6621,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 6621,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 15005,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 15005,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 64,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 64,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 128,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 128,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "q": {
+      "shape": [
+        "batch",
+        "one",
+        "n_heads",
+        "index_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "The decode query of each request."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_pages",
+        "page_tokens",
+        "one",
+        "token_bytes"
+      ],
+      "dtype": "uint8",
+      "description": "The key pool, a page a row: page_size x 128 fp8 keys in aiter's preshuffled 16 x 16 tiles, then page_size fp32 scales."
+    },
+    "weights": {
+      "shape": [
+        "batch",
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "description": "Per-head weight of each request."
+    },
+    "context_lens": {
+      "shape": [
+        "batch"
+      ],
+      "dtype": "int32",
+      "description": "Cached tokens of each request."
+    },
+    "block_tables": {
+      "shape": [
+        "batch",
+        "max_blocks"
+      ],
+      "dtype": "int32",
+      "description": "The pages of each request, in context order."
+    },
+    "page_size": {
+      "dtype": "int32",
+      "description": "Tokens per page.",
+      "shape": null
+    }
+  },
+  "outputs": {
+    "logits": {
+      "shape": [
+        "batch",
+        "max_seq_len"
+      ],
+      "dtype": "float32",
+      "description": "The logits of each request's cached tokens."
+    }
+  },
+  "reference": "from __future__ import annotations\nimport math\nimport torch\nimport torch.nn.functional as F\n\ndef fp8_paged_mqa_logits_reference(\n    q,\n    kv_cache,\n    weights,\n    context_lens,\n    block_tables,\n    logits,\n    *,\n    page_size,\n    preshuffled=True,\n) -> Tensor:\n    \"\"\"Each request's weighted relu logits over the keys of its pages.\"\"\"\n    import torch\n\n    n_pages = kv_cache.shape[0]\n    raw = kv_cache.reshape(n_pages, -1)\n    # a page's 16 x 16 tiles back to (token, dim) order\n    tiles = raw[:, : page_size * 128].reshape(n_pages, page_size // 16, 8, 16, 16)\n    keys = tiles.transpose(2, 3).reshape(n_pages, page_size, 128)\n    scales = raw[:, page_size * 128 :].contiguous().view(torch.float32)\n    keys = keys.view(torch.float8_e4m3fn).double() * scales.double()[..., None]\n    table = block_tables.long()\n    queries = q[:, 0].double()\n    out = queries.new_empty(table.shape[0], table.shape[1] * page_size)\n    # a chunk's gathered keys and its per-head logits: each at most 2**26 elements\n    n_rows = max(1, 2**26 // (out.shape[1] * max(queries.shape[1], 128)))\n    for start in range(0, out.shape[0], n_rows):\n        rows = slice(start, start + n_rows)\n        row_keys = keys[table[rows]].flatten(1, 2)  # (rows, max_seq_len, 128)\n        scores = torch.einsum(\"bhd,btd->bht\", queries[rows], row_keys).relu()\n        out[rows] = torch.einsum(\"bht,bh->bt\", scores, weights[rows].double())\n    positions = torch.arange(out.shape[1], device=out.device)\n    return out.masked_fill(positions >= context_lens.long()[:, None], -torch.inf)\n\nrun = fp8_paged_mqa_logits_reference\n",
+  "check": "from __future__ import annotations\nimport torch\n\ndef _fp8_paged_mqa_logits_check(reference_outputs, actual_outputs, **_unused):\n    # the old SQNR comparison: 20 * log10(|ref| / |actual - ref|) >= 30 dB\n    reference, actual = (\n        o[0] if isinstance(o, (list, tuple)) else o\n        for o in (reference_outputs, actual_outputs)\n    )\n    if reference.shape != actual.shape:\n        return False\n    reference, actual = reference.double(), actual.double()\n    error = (actual - reference).norm().item()\n    return error <= reference.norm().item() * 10 ** (-30.0 / 20)\n\nrun = _fp8_paged_mqa_logits_check\n",
+  "init": "from __future__ import annotations\nimport math\nimport torch\n\ndef _fp8_paged_mqa_logits_init(\n    *,\n    batch,\n    n_heads,\n    n_pages,\n    page_tokens,\n    max_blocks,\n    max_seq_len,\n    device=\"cuda\",\n    seed=0,\n):\n    torch.manual_seed(seed)\n    return {\n        \"q\": torch.randn(batch, 1, n_heads, 128, device=device).to(torch.float8_e4m3fn),\n        \"kv_cache\": torch.randint(\n            0, 64, (n_pages, page_tokens, 1, 132), device=device\n        ).to(torch.uint8),\n        \"weights\": torch.randn(batch, n_heads, device=device),\n        \"context_lens\": torch.full(\n            (batch,), max_seq_len, dtype=torch.int32, device=device\n        ),\n        \"block_tables\": torch.randint(\n            0, n_pages, (batch, max_blocks), device=device\n        ).to(torch.int32),\n        \"page_size\": page_tokens,\n        \"logits\": torch.empty(batch, max_seq_len, device=device),\n        \"preshuffled\": True,\n    }\n\nrun = _fp8_paged_mqa_logits_init\n",
+  "tags": [
+    "deepseek-v4-flash/tp4",
+    "deepseek-v4-flash/tp4+dp4",
+    "deepseek-v4-flash/tp4+dp4+ep4",
+    "deepseek-v4-flash/tp4+ep4",
+    "deepseek-v4-flash/tp8",
+    "deepseek-v4-flash/tp8+dp8",
+    "deepseek-v4-flash/tp8+dp8+ep8",
+    "deepseek-v4-flash/tp8+ep8",
+    "deepseek-v4-pro/tp4",
+    "deepseek-v4-pro/tp4+dp4",
+    "deepseek-v4-pro/tp4+dp4+ep4",
+    "deepseek-v4-pro/tp4+ep4",
+    "deepseek-v4-pro/tp8",
+    "deepseek-v4-pro/tp8+dp8",
+    "deepseek-v4-pro/tp8+dp8+ep8",
+    "deepseek-v4-pro/tp8+ep8"
+  ],
+  "description": "DeepSeek-V4 indexer logits: for each request and each cached token t, sum over heads h of weights[h] * relu(q[h] . k_t) * scale_t, over a paged pool of fp8 keys with an fp32 scale per token.",
+  "constraints": [
+    "page_tokens == page_size",
+    "preshuffled",
+    "page_size % 16 == 0",
+    "max_seq_len == max_blocks * page_size"
+  ],
+  "kernel": null
+}

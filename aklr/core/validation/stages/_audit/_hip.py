@@ -12,10 +12,8 @@ import re
 from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Final
 
-from aklr.core.validation.stages._report._finding import Finding, FindingCode
-
 if TYPE_CHECKING:
-    from aklr.core.contract.spec import KernelSpec
+    from aklr.core.schema._kernel import Kernel
 
 __all__ = ["check_hip_kernel"]
 
@@ -60,23 +58,14 @@ _STATE: Final = re.compile(
 )
 
 
-def check_hip_kernel(schema_path: str, kernel: KernelSpec) -> tuple[Finding, ...]:
-    """Every SH0-SH5 rejection of the hip kernel of the schema at ``schema_path``."""
+def check_hip_kernel(kernel: Kernel) -> set[tuple[str, int, int, str]]:
+    """Every SH0-SH5 rejection of a hip kernel: (path, line, rule, what)."""
     sources = {source.path: source.content for source in kernel.sources}
-    rejections = {
+    return {
         (path, line, rule, what)
         for path, text in sources.items()
-        for rule, line, what in _rejections(path, text, sources, kernel.entry_file)
+        for rule, line, what in _rejections(path, text, sources, kernel.get_entry_path().as_posix())
     }
-    return tuple(
-        Finding(
-            code=FindingCode.SOURCE_REJECTED,
-            schema_path=schema_path,
-            axes=None,
-            detail=f"SH{rule} {path}:{line} {what}",
-        )
-        for path, line, rule, what in sorted(rejections)
-    )
 
 
 def _rejections(

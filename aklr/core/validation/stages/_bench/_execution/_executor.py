@@ -55,26 +55,21 @@ class Executor:
         cls,
         devices: Sequence[str],
         *,
-        devices_per_task: int = 1,
-        n_cpu_shares: int | None = None,
         startup_timeout_seconds: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
     ) -> Executor:
         # the catalog first: a ValueError leaves no job directory behind
-        """A subprocess backend over ``devices`` with disposable runners, one task per
-        ``devices_per_task`` devices, each runner given 1 / ``n_cpu_shares`` of the host's
-        CPUs (default: per device)."""
-        resources = LocalAcceleratorCatalog(devices, devices_per_task)
-        n_resources = len(resources.resources())
+        """A subprocess backend over ``devices`` with disposable runners, one task per device."""
+        resources = LocalAcceleratorCatalog(devices)
         return cls(
             SubprocessExecutionBackend(
                 resources=resources,
                 runner_factory=DisposableRunnerFactory(
-                    n_resources=n_cpu_shares or len(devices),
+                    n_resources=len(devices),
                     startup_timeout_seconds=startup_timeout_seconds,
                 ),
                 engine=ExecutionEngine(),
                 strategy=RoundRobinStrategy(),
-                max_concurrency=n_resources,
+                max_concurrency=len(devices),
             )
         )
 

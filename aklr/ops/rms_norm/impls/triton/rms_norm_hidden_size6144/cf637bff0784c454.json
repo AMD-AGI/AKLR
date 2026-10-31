@@ -1,21 +1,103 @@
 {
-  "schema_version": 5,
   "name": "rms_norm_hidden_size6144",
-  "contract_id": "rms_norm@1.0",
-  "description": "normalized = x * rsqrt(mean(x**2) + epsilon) * weight, the mean over the hidden axis.",
   "op_type": "rms_norm",
   "axes": {
     "n_tokens": {
-      "type": "var",
-      "description": "Tokens."
+      "description": "Tokens.",
+      "type": "var"
     },
     "hidden_size": {
-      "type": "const",
+      "description": "Width normalized.",
       "value": 6144,
-      "description": "Width normalized."
+      "type": "const"
     }
   },
-  "attrs": {},
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 3
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 6
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 12
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 18
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 128
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 256
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 512
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1024
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 4096
+      },
+      "evaluations": []
+    }
+  ],
   "inputs": {
     "x": {
       "shape": [
@@ -23,9 +105,6 @@
         "hidden_size"
       ],
       "dtype": "bfloat16",
-      "distribution": {
-        "kind": "finite"
-      },
       "description": "Rows to normalize."
     },
     "weight": {
@@ -33,17 +112,12 @@
         "hidden_size"
       ],
       "dtype": "bfloat16",
-      "distribution": {
-        "kind": "log_uniform",
-        "log2_lo": -1,
-        "log2_hi": "0.58"
-      },
       "description": "Scale of each normalized column."
     },
     "epsilon": {
-      "shape": null,
       "dtype": "float32",
-      "description": "Added to the mean square."
+      "description": "Added to the mean square.",
+      "shape": null
     }
   },
   "outputs": {
@@ -56,175 +130,35 @@
       "description": "The normalized rows, scaled by weight."
     }
   },
-  "workloads": [
-    {
-      "axes": {
-        "n_tokens": 3
-      },
-      "scalars": {
-        "epsilon": 9.999999747378752e-06
-      },
-      "accuracy": "passed",
-      "speedup": 1.024
-    },
-    {
-      "axes": {
-        "n_tokens": 4
-      },
-      "scalars": {
-        "epsilon": 9.999999747378752e-06
-      },
-      "accuracy": "passed",
-      "speedup": 1.023
-    },
-    {
-      "axes": {
-        "n_tokens": 6
-      },
-      "scalars": {
-        "epsilon": 9.999999747378752e-06
-      },
-      "accuracy": "passed",
-      "speedup": 1.019
-    },
-    {
-      "axes": {
-        "n_tokens": 8
-      },
-      "scalars": {
-        "epsilon": 9.999999747378752e-06
-      },
-      "accuracy": "passed",
-      "speedup": 1.024
-    },
-    {
-      "axes": {
-        "n_tokens": 12
-      },
-      "scalars": {
-        "epsilon": 9.999999747378752e-06
-      },
-      "accuracy": "passed",
-      "speedup": 1.022
-    },
-    {
-      "axes": {
-        "n_tokens": 16
-      },
-      "scalars": {
-        "epsilon": 9.999999747378752e-06
-      },
-      "accuracy": "passed",
-      "speedup": 1.027
-    },
-    {
-      "axes": {
-        "n_tokens": 18
-      },
-      "scalars": {
-        "epsilon": 9.999999747378752e-06
-      },
-      "accuracy": "passed",
-      "speedup": 1.026
-    },
-    {
-      "axes": {
-        "n_tokens": 64
-      },
-      "scalars": {
-        "epsilon": 9.999999747378752e-06
-      },
-      "accuracy": "passed",
-      "speedup": 1.022
-    },
-    {
-      "axes": {
-        "n_tokens": 128
-      },
-      "scalars": {
-        "epsilon": 9.999999747378752e-06
-      },
-      "accuracy": "passed",
-      "speedup": 1.048
-    },
-    {
-      "axes": {
-        "n_tokens": 256
-      },
-      "scalars": {
-        "epsilon": 9.999999747378752e-06
-      },
-      "accuracy": "passed",
-      "speedup": 1.084
-    },
-    {
-      "axes": {
-        "n_tokens": 512
-      },
-      "scalars": {
-        "epsilon": 9.999999747378752e-06
-      },
-      "accuracy": "passed",
-      "speedup": 1.147
-    },
-    {
-      "axes": {
-        "n_tokens": 1024
-      },
-      "scalars": {
-        "epsilon": 9.999999747378752e-06
-      },
-      "accuracy": "passed",
-      "speedup": 1.074
-    },
-    {
-      "axes": {
-        "n_tokens": 2048
-      },
-      "scalars": {
-        "epsilon": 9.999999747378752e-06
-      },
-      "accuracy": "passed",
-      "speedup": 1.194
-    },
-    {
-      "axes": {
-        "n_tokens": 4096
-      },
-      "scalars": {
-        "epsilon": 9.999999747378752e-06
-      },
-      "accuracy": "passed",
-      "speedup": 1.157
-    }
+  "reference": "from __future__ import annotations\nimport math\nimport torch\nimport torch.nn.functional as F\n\ndef rms_norm_reference(x, weight, epsilon=1e-6) -> Tensor:\n    \"\"\"x times the reciprocal rms of its row, times weight.\"\"\"\n    x = x.double()\n    return (x.square().mean(dim=-1, keepdim=True) + epsilon).rsqrt() * x * weight.double()\n\nrun = rms_norm_reference\n",
+  "check": "from __future__ import annotations\nimport torch\n\ndef _as_output_list(outputs: Any) -> List[Any]:\n    if isinstance(outputs, list):\n        return outputs\n    if isinstance(outputs, tuple):\n        return list(outputs)\n    return [outputs]\n\ndef default_tolerances(dtype: Union[torch.dtype, str]) -> Tuple[float, float]:\n    \"\"\"Return ``(rtol, atol)`` defaults for a trace correctness check.\n\n    These defaults are intentionally conservative for low-precision inference\n    data types. Template-specific ``check`` functions can override them by\n    passing explicit ``rtol`` and ``atol`` to :func:`default_check`.\n    \"\"\"\n    dtype_name = str(dtype).replace(\"torch.\", \"\")\n    if dtype_name in (\"float64\", \"double\"):\n        return 1e-7, 1e-7\n    if dtype_name in (\"float32\", \"float\"):\n        return 1e-5, 1e-5\n    if dtype_name in (\"float16\", \"half\"):\n        return 1e-3, 1e-3\n    if dtype_name == \"bfloat16\":\n        return 1e-2, 1e-2\n    if dtype_name.startswith(\"float8\"):\n        return 1e-1, 1e-1\n    if dtype_name.startswith(\"float4\") or \"fp4\" in dtype_name:\n        return 1.0, 1.0\n    return 0.0, 0.0\n\ndef _cosine_similarity(actual: torch.Tensor, expected: torch.Tensor) -> float:\n    actual = actual.reshape(-1).to(torch.float32)\n    expected = expected.reshape(-1).to(torch.float32)\n    finite = torch.isfinite(actual) & torch.isfinite(expected)\n    if not finite.any():\n        return 1.0\n    actual = actual[finite]\n    expected = expected[finite]\n    actual_norm = torch.linalg.vector_norm(actual)\n    expected_norm = torch.linalg.vector_norm(expected)\n    if actual_norm.item() == 0 or expected_norm.item() == 0:\n        return 1.0 if torch.equal(actual, expected) else 0.0\n    return ((actual * expected).sum() / (actual_norm * expected_norm)).item()\n\ndef default_check(\n    reference_outputs: Any,\n    actual_outputs: Any,\n    *,\n    rtol: Optional[float] = None,\n    atol: Optional[float] = None,\n    max_mismatch_pct: float = 0.0,\n    min_cos_sim: Optional[float] = 1.0 - 1e-3,\n) -> bool:\n    \"\"\"Validate actual outputs against reference outputs.\n\n    ``reference_outputs`` and ``actual_outputs`` may be lists/tuples,\n    dictionaries with matching keys, or single output values. Tensor outputs\n    are checked for shape equality, closeness, mismatch percentage, and cosine\n    similarity. Non-floating tensors are checked exactly unless\n    ``max_mismatch_pct`` allows mismatches. Non-tensor outputs use Python\n    equality.\n    \"\"\"\n    if isinstance(reference_outputs, dict) or isinstance(actual_outputs, dict):\n        if not isinstance(reference_outputs, dict) or not isinstance(actual_outputs, dict):\n            return False\n        if reference_outputs.keys() != actual_outputs.keys():\n            return False\n        refs = [reference_outputs[key] for key in reference_outputs]\n        actuals = [actual_outputs[key] for key in reference_outputs]\n    else:\n        refs = _as_output_list(reference_outputs)\n        actuals = _as_output_list(actual_outputs)\n\n    if len(refs) != len(actuals):\n        return False\n\n    for ref, actual in zip(refs, actuals, strict=True):\n        if isinstance(ref, torch.Tensor) != isinstance(actual, torch.Tensor):\n            return False\n        if not isinstance(ref, torch.Tensor):\n            if ref != actual:\n                return False\n            continue\n\n        if ref.shape != actual.shape:\n            return False\n        if ref.numel() == 0:\n            continue\n\n        ref_is_float = torch.is_floating_point(ref)\n        actual_is_float = torch.is_floating_point(actual)\n        if ref_is_float or actual_is_float:\n            tolerance_dtype = actual.dtype if actual_is_float else ref.dtype\n            default_rtol, default_atol = default_tolerances(tolerance_dtype)\n            rtol_value = default_rtol if rtol is None else rtol\n            atol_value = default_atol if atol is None else atol\n            close = torch.isclose(\n                actual.to(torch.float32),\n                ref.to(torch.float32),\n                rtol=rtol_value,\n                atol=atol_value,\n            )\n            mismatch_pct = 100.0 * (~close).sum().item() / close.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n            if min_cos_sim is not None:\n                cos_sim = _cosine_similarity(actual, ref)\n                if cos_sim < min_cos_sim:\n                    return False\n        else:\n            matches = actual == ref\n            mismatch_pct = 100.0 * (~matches).sum().item() / matches.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n\n    return True\n\ndef _add_rms_norm_check(\n    reference_outputs,\n    actual_outputs,\n    *,\n    rtol=None,\n    atol=None,\n    max_mismatch_pct=0.0,\n    min_cos_sim=None,\n):\n    # the output's unit roundoff: B = 2u|y| in bfloat16, rounding the output only\n    return default_check(\n        reference_outputs,\n        actual_outputs,\n        rtol=2**-8 if rtol is None else rtol,\n        atol=0.0 if atol is None else atol,\n        max_mismatch_pct=max_mismatch_pct,\n        min_cos_sim=min_cos_sim,\n    )\n\nrun = _add_rms_norm_check\n",
+  "init": "from __future__ import annotations\nimport math\nimport torch\n\ndef _rms_norm_init(*, n_tokens, hidden_size, device=\"cuda\", seed=0):\n    torch.manual_seed(seed)\n    x = torch.randn(n_tokens, hidden_size, device=device).to(torch.bfloat16)\n    log2_weight = torch.empty(hidden_size, device=device).uniform_(-1.0, 0.58)\n    return {\n        \"x\": x,\n        \"weight\": torch.exp2(log2_weight).to(torch.bfloat16),\n        \"epsilon\": 1e-6,\n        \"normalized\": torch.empty_like(x),\n    }\n\nrun = _rms_norm_init\n",
+  "tags": [],
+  "description": "normalized = x * rsqrt(mean(x**2) + epsilon) * weight, the mean over the hidden axis.",
+  "constraints": [
+    "epsilon > 0",
+    "x.dtype in ('bfloat16', 'float16')",
+    "weight.dtype == x.dtype"
   ],
-  "layout_variants": {
-    "by_name": {
-      "row_major": {
-        "layouts": {},
-        "detect_facts": []
-      }
-    }
-  },
-  "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bitwise",
-    "element_order": "fixed"
-  },
   "kernel": {
-    "language": "triton",
-    "targets": [
-      {
-        "arch": "gfx950",
-        "hardware": "MI355X"
-      }
-    ],
-    "entry_point": "kernel.py::run",
+    "name": "rms_norm_hidden_size6144_triton_cf637bff0784c454",
+    "author": "unknown",
+    "build": {
+      "language": "triton",
+      "target_hardware": [
+        "gfx950/MI355X"
+      ],
+      "entry_point": "kernel.py::run",
+      "dependencies": [],
+      "destination_passing_style": true,
+      "binding": null
+    },
     "sources": [
       {
         "path": "kernel.py",
-        "content": "\"\"\"Triton RMSNorm of 16-bit rows in float32: the row in three 2048-wide chunks; one program per row, or m // 512 rows per program from m=1024 with the next row's loads pipelined and the weight loaded once; loads bypass the caches and stores write through.\"\"\"\n\nimport triton\nimport triton.language as tl\n\n\n@triton.jit\ndef _rms_kernel(x_ptr, w_ptr, o_ptr, M, eps,\n                H: tl.constexpr, CHUNK: tl.constexpr, LOOP: tl.constexpr, NS: tl.constexpr):\n    # Loads bypass caches (sc0 nt), stores write through (sc0 sc1): 10-20% faster on gfx950.\n    NCH: tl.constexpr = 3 if CHUNK * 3 == H else 1\n    cols = tl.arange(0, CHUNK)\n    cmask = cols < H\n    w0 = tl.load(w_ptr + cols, mask=cmask, other=0.0).to(tl.float32)\n    if NCH == 3:\n        w1 = tl.load(w_ptr + CHUNK + cols).to(tl.float32)\n        w2 = tl.load(w_ptr + 2 * CHUNK + cols).to(tl.float32)\n    for it in tl.range(0, LOOP, num_stages=NS):\n        row = tl.program_id(0) + it * tl.num_programs(0)\n        rmask = cmask & (row < M)\n        base = row.to(tl.int64) * H + cols\n        x0 = tl.load(x_ptr + base, mask=rmask, other=0.0, cache_modifier=\".cg\").to(tl.float32)\n        if NCH == 3:\n            x1 = tl.load(x_ptr + base + CHUNK, mask=rmask, other=0.0, cache_modifier=\".cg\").to(tl.float32)\n            x2 = tl.load(x_ptr + base + 2 * CHUNK, mask=rmask, other=0.0, cache_modifier=\".cg\").to(tl.float32)\n        sq = x0 * x0\n        if NCH == 3:\n            sq += x1 * x1 + x2 * x2\n        rstd = tl.rsqrt(tl.sum(sq, axis=0) / H + eps)\n        tl.store(o_ptr + base, (x0 * rstd * w0).to(o_ptr.dtype.element_ty), mask=rmask, cache_modifier=\".wt\")\n        if NCH == 3:\n            tl.store(o_ptr + base + CHUNK, (x1 * rstd * w1).to(o_ptr.dtype.element_ty), mask=rmask, cache_modifier=\".wt\")\n            tl.store(o_ptr + base + 2 * CHUNK, (x2 * rstd * w2).to(o_ptr.dtype.element_ty), mask=rmask, cache_modifier=\".wt\")\n\n\ndef _config(m, h):\n    \"\"\"(CHUNK, LOOP, NS, num_warps), from microbenchmarks on MI355X.\"\"\"\n    third = h // 3\n    chunk = third if h % 3 == 0 and third & (third - 1) == 0 else triton.next_power_of_2(h)\n    if h > 4096:\n        # Large m: m // 512 rows per program, the next row's loads pipelined.\n        loop = m // 512 if m >= 1024 else 1\n        return chunk, loop, 2 if loop > 1 else 1, 4\n    if h > 1024:\n        return chunk, 1, 1, 2 if m >= 4096 else 4\n    return chunk, 1, 1, max(1, min(4, chunk // 512))\n\n\ndef run(*, x, weight, epsilon, normalized):\n    m, h = x.shape\n    chunk, loop, ns, warps = _config(m, h)\n    _rms_kernel[(triton.cdiv(m, loop),)](\n        x, weight, normalized, m, epsilon,\n        H=h, CHUNK=chunk, LOOP=loop, NS=ns, num_warps=warps,\n    )\n"
+        "content": "\"\"\"Triton RMSNorm of 16-bit rows in float32: the row in three 2048-wide chunks; one program per row, or m // 512 rows per program from m=1024 with the next row's loads pipelined and the weight loaded once; loads bypass the caches and stores write through.\"\"\"\n\nimport triton\nimport triton.language as tl\n\n\n@triton.jit\ndef _rms_kernel(x_ptr, w_ptr, o_ptr, M, eps,\n                H: tl.constexpr, CHUNK: tl.constexpr, LOOP: tl.constexpr, NS: tl.constexpr):\n    # Loads bypass caches (sc0 nt), stores write through (sc0 sc1): 10-20% faster on gfx950.\n    NCH: tl.constexpr = 3 if CHUNK * 3 == H else 1\n    cols = tl.arange(0, CHUNK)\n    cmask = cols < H\n    w0 = tl.load(w_ptr + cols, mask=cmask, other=0.0).to(tl.float32)\n    if NCH == 3:\n        w1 = tl.load(w_ptr + CHUNK + cols).to(tl.float32)\n        w2 = tl.load(w_ptr + 2 * CHUNK + cols).to(tl.float32)\n    for it in tl.range(0, LOOP, num_stages=NS):\n        row = tl.program_id(0) + it * tl.num_programs(0)\n        rmask = cmask & (row < M)\n        base = row.to(tl.int64) * H + cols\n        x0 = tl.load(x_ptr + base, mask=rmask, other=0.0, cache_modifier=\".cg\").to(tl.float32)\n        if NCH == 3:\n            x1 = tl.load(x_ptr + base + CHUNK, mask=rmask, other=0.0, cache_modifier=\".cg\").to(tl.float32)\n            x2 = tl.load(x_ptr + base + 2 * CHUNK, mask=rmask, other=0.0, cache_modifier=\".cg\").to(tl.float32)\n        sq = x0 * x0\n        if NCH == 3:\n            sq += x1 * x1 + x2 * x2\n        rstd = tl.rsqrt(tl.sum(sq, axis=0) / H + eps)\n        tl.store(o_ptr + base, (x0 * rstd * w0).to(o_ptr.dtype.element_ty), mask=rmask, cache_modifier=\".wt\")\n        if NCH == 3:\n            tl.store(o_ptr + base + CHUNK, (x1 * rstd * w1).to(o_ptr.dtype.element_ty), mask=rmask, cache_modifier=\".wt\")\n            tl.store(o_ptr + base + 2 * CHUNK, (x2 * rstd * w2).to(o_ptr.dtype.element_ty), mask=rmask, cache_modifier=\".wt\")\n\n\ndef _config(m, h):\n    \"\"\"(CHUNK, LOOP, NS, num_warps), from microbenchmarks on MI355X.\"\"\"\n    third = h // 3\n    chunk = third if h % 3 == 0 and third & (third - 1) == 0 else triton.next_power_of_2(h)\n    if h > 4096:\n        # Large m: m // 512 rows per program, the next row's loads pipelined.\n        loop = m // 512 if m >= 1024 else 1\n        return chunk, loop, 2 if loop > 1 else 1, 4\n    if h > 1024:\n        return chunk, 1, 1, 2 if m >= 4096 else 4\n    return chunk, 1, 1, max(1, min(4, chunk // 512))\n\n\ndef run(x, weight, epsilon, normalized):\n    m, h = x.shape\n    chunk, loop, ns, warps = _config(m, h)\n    _rms_kernel[(triton.cdiv(m, loop),)](\n        x, weight, normalized, m, epsilon,\n        H=h, CHUNK=chunk, LOOP=loop, NS=ns, num_warps=warps,\n    )\n"
       }
-    ]
+    ],
+    "description": null
   }
 }

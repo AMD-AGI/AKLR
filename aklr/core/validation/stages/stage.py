@@ -11,22 +11,12 @@ import time
 import traceback
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    ClassVar,
-    Final,
-    Generic,
-    Literal,
-    Self,
-    TypeVar,
-    get_args,
-)
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Self
 
-from aklr.core.contract.spec import FrozenModel
-from aklr.core.validation.stages._report._finding import Finding
+from aklr.core._frozen_model import frozen_dataclass
+from aklr.core.validation.stages._report._finding import Finding, FindingCode
 from aklr.core.validation.stages._report._markdown import (
     BulletList,
     Heading,
@@ -40,46 +30,42 @@ if TYPE_CHECKING:
     from aklr.core.validation.stages._report._markdown import Block
     from aklr.core.validation.stages.validation_scope import ValidationScope
 
-__all__ = [
-    "STAGE_ORDER", "PipelineStage", "Progress", "StageName", "StageReport",
-    "StageStatus",
-]  # fmt: skip
+__all__ = ["PipelineStage", "Progress", "StageReport", "StageStatus"]
 
-StageName = Literal["audit", "bench"]
-STAGE_ORDER: Final = get_args(StageName)
 StageStatus = Literal["passed", "failed", "skipped", "aborted"]
 _MAX_CONSOLE_FINDINGS: Final = 10
 
 
-class StageReport(FrozenModel):
+@frozen_dataclass
+class StageReport:
     """What one stage found and measured; subclasses add their records."""
 
-    stage_name: StageName
+    stage_name: str
     status: StageStatus
     detail: str = ""
     findings: tuple[Finding, ...] = ()
     elapsed_seconds: float = 0.0
 
     @classmethod
-    def from_findings(cls, findings: Sequence[Finding], **records: Any) -> Self:
+    def from_findings(cls, stage_name: str, findings: Sequence[Finding], **records: Any) -> Self:
         """Any candidate fault fails the stage; else any platform fault aborts it."""
-        if any(not f.code.is_platform_fault for f in findings):
+        if any(not FindingCode(f.code).is_platform_fault for f in findings):
             status = "failed"
         elif findings:
             status = "aborted"
         else:
             status = "passed"
-        return cls(status=status, findings=tuple(findings), **records)
+        return cls(stage_name=stage_name, status=status, findings=tuple(findings), **records)
 
     @classmethod
-    def skipped(cls, detail: str) -> Self:
+    def skipped(cls, stage_name: str, detail: str) -> Self:
         """The report of a stage not run, and why."""
-        return cls(status="skipped", detail=detail)
+        return cls(stage_name=stage_name, status="skipped", detail=detail)
 
     @classmethod
-    def aborted(cls, detail: str) -> Self:
+    def aborted(cls, stage_name: str, detail: str) -> Self:
         """The report of a stage stopped by aklr's own defect."""
-        return cls(status="aborted", detail=detail)
+        return cls(stage_name=stage_name, status="aborted", detail=detail)
 
     @property
     def is_passed(self) -> bool:
@@ -148,30 +134,27 @@ class Progress:
             self.write(line)
 
 
-ReportT = TypeVar("ReportT", bound=StageReport)
-
-
-class PipelineStage(ABC, Generic[ReportT]):
+class PipelineStage(ABC):
     """One stage of the pipeline, answering a ``report_type``."""
 
-    name: ClassVar[StageName]
+    name: ClassVar[str]
     report_type: ClassVar[type[StageReport]]
 
     @abstractmethod
-    def run(self, scope: ValidationScope, earlier: PipelineReport) -> ReportT:
+    def run(self, scope: ValidationScope, earlier: PipelineReport) -> StageReport:
         """The stage's own work on ``scope``; ``earlier`` is the run so far."""
 
     @property
     def progress(self) -> Progress:
         return Progress(self.name)
 
-    def execute(self, scope: ValidationScope, earlier: PipelineReport) -> ReportT:
+    def execute(self, scope: ValidationScope, earlier: PipelineReport) -> StageReport:
         """Run the stage timed; its own exception aborts it as aklr's defect."""
         start = time.monotonic()
         try:
             report = self.run(scope, earlier)
         except Exception as e:  # noqa: BLE001 -- aklr's defect: aborted, reported
             traceback.print_exc()
-            report = self.report_type.aborted(f"internal: {type(e).__name__}: {e}")
+            report = self.report_type.aborted(self.name, f"internal: {type(e).__name__}: {e}")
         elapsed_seconds = time.monotonic() - start
-        return report.model_copy(update={"elapsed_seconds": elapsed_seconds})
+        return replace(report, elapsed_seconds=elapsed_seconds)

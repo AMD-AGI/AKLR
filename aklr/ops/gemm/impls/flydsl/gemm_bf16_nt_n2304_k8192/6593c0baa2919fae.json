@@ -1,0 +1,862 @@
+{
+  "name": "gemm_bf16_nt_n2304_k8192",
+  "op_type": "gemm_bf16_nt",
+  "axes": {
+    "M": {
+      "description": "Tokens.",
+      "type": "var"
+    },
+    "N": {
+      "description": "Output columns.",
+      "value": 2304,
+      "type": "const"
+    },
+    "K": {
+      "description": "Reduction length.",
+      "value": 8192,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "M": 7
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 14
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 16
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 21
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 24
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 28
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 32
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 35
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 40
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 42
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 48
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 49
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 56
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 64
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 70
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 72
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 77
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 80
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 84
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 88
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 91
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 96
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 98
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 104
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 105
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 112
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 120
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 126
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 128
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 133
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 136
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 140
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 144
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 147
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 152
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 154
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 160
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 161
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 168
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 176
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 182
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 184
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 189
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 192
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 196
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 200
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 203
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 210
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 216
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 217
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 224
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 232
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 238
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 240
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 245
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 248
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 252
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 256
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 259
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 272
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 273
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 288
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 294
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 304
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 308
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 320
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 322
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 336
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 352
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 357
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 368
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 371
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 384
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 385
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 400
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 406
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 416
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 420
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 432
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 434
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 448
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 464
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 480
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 496
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 512
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1024
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1026
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1032
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1080
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1120
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1128
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1136
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1144
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1152
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1240
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1248
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1256
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1264
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1272
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1280
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1339
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1480
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1488
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1496
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1504
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1512
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1520
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1528
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1536
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1691
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2054
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2152
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2160
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2480
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2488
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2496
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2504
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2512
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2520
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2528
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2536
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2544
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2552
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2560
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 3072
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 3073
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "a": {
+      "shape": [
+        "M",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "N",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Weights."
+    },
+    "bias": {
+      "shape": [
+        "N"
+      ],
+      "dtype": null,
+      "description": "Added to every output row."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "M",
+        "N"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "reference": "from __future__ import annotations\nimport math\nimport torch\nimport torch.nn.functional as F\n\ndef _plus_bias(product: Tensor, bias: Tensor | None) -> Tensor:\n    return product if bias is None else product + bias.double()\n\ndef gemm_bf16_nt_reference(a, b, bias=None) -> Tensor:\n    \"\"\"``a @ b.T + bias``.\"\"\"\n    return _plus_bias(a.double() @ b.double().mT, bias)\n\nrun = gemm_bf16_nt_reference\n",
+  "check": "from __future__ import annotations\nimport torch\n\ndef _as_output_list(outputs: Any) -> List[Any]:\n    if isinstance(outputs, list):\n        return outputs\n    if isinstance(outputs, tuple):\n        return list(outputs)\n    return [outputs]\n\ndef default_tolerances(dtype: Union[torch.dtype, str]) -> Tuple[float, float]:\n    \"\"\"Return ``(rtol, atol)`` defaults for a trace correctness check.\n\n    These defaults are intentionally conservative for low-precision inference\n    data types. Template-specific ``check`` functions can override them by\n    passing explicit ``rtol`` and ``atol`` to :func:`default_check`.\n    \"\"\"\n    dtype_name = str(dtype).replace(\"torch.\", \"\")\n    if dtype_name in (\"float64\", \"double\"):\n        return 1e-7, 1e-7\n    if dtype_name in (\"float32\", \"float\"):\n        return 1e-5, 1e-5\n    if dtype_name in (\"float16\", \"half\"):\n        return 1e-3, 1e-3\n    if dtype_name == \"bfloat16\":\n        return 1e-2, 1e-2\n    if dtype_name.startswith(\"float8\"):\n        return 1e-1, 1e-1\n    if dtype_name.startswith(\"float4\") or \"fp4\" in dtype_name:\n        return 1.0, 1.0\n    return 0.0, 0.0\n\ndef _cosine_similarity(actual: torch.Tensor, expected: torch.Tensor) -> float:\n    actual = actual.reshape(-1).to(torch.float32)\n    expected = expected.reshape(-1).to(torch.float32)\n    finite = torch.isfinite(actual) & torch.isfinite(expected)\n    if not finite.any():\n        return 1.0\n    actual = actual[finite]\n    expected = expected[finite]\n    actual_norm = torch.linalg.vector_norm(actual)\n    expected_norm = torch.linalg.vector_norm(expected)\n    if actual_norm.item() == 0 or expected_norm.item() == 0:\n        return 1.0 if torch.equal(actual, expected) else 0.0\n    return ((actual * expected).sum() / (actual_norm * expected_norm)).item()\n\ndef default_check(\n    reference_outputs: Any,\n    actual_outputs: Any,\n    *,\n    rtol: Optional[float] = None,\n    atol: Optional[float] = None,\n    max_mismatch_pct: float = 0.0,\n    min_cos_sim: Optional[float] = 1.0 - 1e-3,\n) -> bool:\n    \"\"\"Validate actual outputs against reference outputs.\n\n    ``reference_outputs`` and ``actual_outputs`` may be lists/tuples,\n    dictionaries with matching keys, or single output values. Tensor outputs\n    are checked for shape equality, closeness, mismatch percentage, and cosine\n    similarity. Non-floating tensors are checked exactly unless\n    ``max_mismatch_pct`` allows mismatches. Non-tensor outputs use Python\n    equality.\n    \"\"\"\n    if isinstance(reference_outputs, dict) or isinstance(actual_outputs, dict):\n        if not isinstance(reference_outputs, dict) or not isinstance(actual_outputs, dict):\n            return False\n        if reference_outputs.keys() != actual_outputs.keys():\n            return False\n        refs = [reference_outputs[key] for key in reference_outputs]\n        actuals = [actual_outputs[key] for key in reference_outputs]\n    else:\n        refs = _as_output_list(reference_outputs)\n        actuals = _as_output_list(actual_outputs)\n\n    if len(refs) != len(actuals):\n        return False\n\n    for ref, actual in zip(refs, actuals, strict=True):\n        if isinstance(ref, torch.Tensor) != isinstance(actual, torch.Tensor):\n            return False\n        if not isinstance(ref, torch.Tensor):\n            if ref != actual:\n                return False\n            continue\n\n        if ref.shape != actual.shape:\n            return False\n        if ref.numel() == 0:\n            continue\n\n        ref_is_float = torch.is_floating_point(ref)\n        actual_is_float = torch.is_floating_point(actual)\n        if ref_is_float or actual_is_float:\n            tolerance_dtype = actual.dtype if actual_is_float else ref.dtype\n            default_rtol, default_atol = default_tolerances(tolerance_dtype)\n            rtol_value = default_rtol if rtol is None else rtol\n            atol_value = default_atol if atol is None else atol\n            close = torch.isclose(\n                actual.to(torch.float32),\n                ref.to(torch.float32),\n                rtol=rtol_value,\n                atol=atol_value,\n            )\n            mismatch_pct = 100.0 * (~close).sum().item() / close.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n            if min_cos_sim is not None:\n                cos_sim = _cosine_similarity(actual, ref)\n                if cos_sim < min_cos_sim:\n                    return False\n        else:\n            matches = actual == ref\n            mismatch_pct = 100.0 * (~matches).sum().item() / matches.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n\n    return True\n\ndef _gemm_check(\n    reference_outputs,\n    actual_outputs,\n    *,\n    rtol=None,\n    atol=None,\n    max_mismatch_pct=0.0,\n    min_cos_sim=None,\n):\n    # main's compare_gemm_outputs: atol = rtol 1e-3 fp16, 1e-2 otherwise, every element\n    out = actual_outputs\n    if isinstance(out, (list, tuple)):\n        out = out[0]\n    tolerance = 1e-3 if out.dtype == torch.float16 else 1e-2\n    return default_check(\n        reference_outputs,\n        actual_outputs,\n        rtol=tolerance if rtol is None else rtol,\n        atol=tolerance if atol is None else atol,\n        max_mismatch_pct=max_mismatch_pct,\n        min_cos_sim=min_cos_sim,\n    )\n\nrun = _gemm_check\n",
+  "init": "from __future__ import annotations\nimport math\nimport torch\n\ndef _gemm_bf16_nt_init(*, M, N, K, device=\"cuda\", seed=0):\n    torch.manual_seed(seed)\n    return {\n        \"a\": torch.randn(M, K, device=device).to(torch.bfloat16),\n        \"b\": torch.randn(N, K, device=device).to(torch.bfloat16),\n        \"out_dtype\": torch.bfloat16,\n    }\n\nrun = _gemm_bf16_nt_init\n",
+  "tags": [],
+  "description": "bf16 gemm: out = a @ b.T + bias, b stored (N, K).",
+  "constraints": [
+    "not use_shuffled_weight",
+    "bias is None or bias.dtype in ('bfloat16', 'float16', 'float32')",
+    "out.dtype in ('bfloat16', 'float16', 'float32')"
+  ],
+  "kernel": {
+    "name": "gemm_bf16_nt_n2304_k8192_flydsl_6593c0baa2919fae",
+    "author": "fanxingran",
+    "build": {
+      "language": "flydsl",
+      "target_hardware": [
+        "gfx950/MI355X"
+      ],
+      "entry_point": "kernel.py::run",
+      "dependencies": [],
+      "destination_passing_style": true,
+      "binding": null
+    },
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"FlyDSL bf16 GEMM out[m, 2304] = a[m, 8192] @ b[2304, 8192]^T for gfx950, without atomics.\n\nA and B tiles stream into LDS through `buffer_load ... lds` DMA (16 B chunks XOR-swizzled\nper row) over a multi-stage ring, and MFMA 16x16x32 accumulates in fp32. Every m picks a\nrow of _CONFIGS: tile, wave grid, ring depth, K split and how the splits are folded.\n\n- split_k 1: one output tile per workgroup; each XCD takes a contiguous run of tiles so\n  its L2 shares A rows and B columns.\n- split_k > 1 (decode and short prefill): every split stores its fp32 partial to a\n  workspace and raises flags, and a flag-gated reducer sums the partials in split order\n  before rounding once to bf16 -- the last split (\"False\"), every split for 1/split_k of\n  the tile (\"True\"), or reducer workgroups dispatched after all producers (\"red\", one\n  fragment per wave). Each (tile or fragment, split) has its own flag slot, and a flag is\n  the launch's full dispatch id and queue pointer, which no earlier launch shares: a\n  workspace from `torch.empty` never needs clearing. Decode reads B once with\n  non-temporal loads.\n- \"gemv\" (m <= 16): no split and no workspace. Each of 256 workgroups owns 9 rows of B over\n  the full K; every K stage of those rows and of A lands in an LDS ring by DMA, the waves\n  take disjoint 32-K slices of the stage, and their fp32 sums are added in LDS. The K start\n  rotates per workgroup so CUs do not fetch the same A lines at once.\n- \"big\" (m = 193..512, 1024, 1345..2048): 4 waves, BK 64 through a 3- or 4-deep ring; the\n  MFMAs are emitted in program order with every accumulator pinned to an AGPR (inline\n  asm), and the stage's DMA issues and the next K step's LDS reads sit at fixed MFMA\n  slots. Split-K partials fold as \"True\" above, or (split_k 2) as \"False\": the last split\n  of a tile has a higher workgroup id than the others, so it never waits on a workgroup\n  that cannot be dispatched.\n\"\"\"\n\nimport functools\nimport types\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import arith as std_arith\nfrom flydsl._mlir.dialects import llvm\nfrom flydsl._mlir.dialects import rocdl as rocdl_d\nfrom flydsl._mlir.dialects import vector as _vector\nfrom flydsl.expr import arith, const_expr, gpu, range_constexpr, rocdl\nfrom flydsl.expr.typing import T, Vector\n\n_N = 2304\n_K = 8192\n\n# m upper bound -> (tile_m, tile_n, m_warps, n_warps, stages, split_k[, bk, fold, xcd_remap,\n#                   b_cache_policy, red_k]); fold as in the module docstring.\n# \"gemv\" rows: (\"gemv\", waves, 32-K slices per wave and stage, ring depth, K rotation).\n# \"big\" rows: (\"big\", tile_m, tile_n, m_warps, n_warps, ring depth, DMA slots, LDS-read\n#              slots, split_k[, bk, fold loads in flight, last-split fold, b_cache_policy]); the\n#              slots place a stage's DMA issues / next-step fragment reads over its MFMAs\n#              as fractions of the stage.\n_NT = \"sc0 nt\"\n_RED = \"red\"\n_GEMV = \"gemv\"\n_BIG = \"big\"\n_CONFIGS = types.MappingProxyType(\n    {\n        16: (_GEMV, 4, 4, 4, 3),\n        32: (32, 96, 1, 2, 6, 8, 64, _RED, True, _NT, 2),\n        48: (48, 96, 1, 2, 6, 8, 64, _RED, True, _NT, 2),\n        64: (64, 96, 4, 1, 8, 8, 64, _RED, True, _NT, 4),\n        80: (80, 96, 1, 3, 6, 8, 64, _RED, True, _NT, 3),\n        96: (96, 96, 1, 3, 4, 8, 64, _RED, False, _NT, 3),\n        128: (64, 144, 1, 3, 4, 8, 64, _RED, False, _NT, 3),\n        160: (160, 96, 2, 2, 4, 8, 64, _RED, False, _NT, 4),\n        192: (192, 96, 4, 2, 4, 8, 64, _RED, True, _NT, 4),\n        256: (_BIG, 128, 144, 4, 1, 4, (0.2, 1.8), (0.3, 0.9), 8, 64, 4, False, _NT),\n        384: (_BIG, 192, 144, 4, 1, 3, (0.2, 1.8), (0.3, 0.9), 8, 64, 4, False, _NT),\n        512: (_BIG, 256, 144, 4, 1, 3, (0.2, 1.8), (0.3, 0.9), 8, 64, 4, False, _NT),\n        1024: (_BIG, 128, 288, 2, 2, 3, (0.2, 1.8), (0.3, 0.9), 4),\n        1080: (160, 256, 2, 4, 3, 4, 64, True),\n        1152: (128, 192, 2, 4, 3, 2, 64, False),\n        1344: (192, 128, 2, 4, 3, 2, 64, False),\n        1536: (_BIG, 96, 288, 2, 2, 3, (0.2, 1.8), (0.3, 0.9), 2, 64, 4, True),\n        1691: (_BIG, 128, 288, 2, 2, 3, (0.2, 1.8), (0.3, 0.9), 2, 64, 4, True),\n        1792: (192, 192, 2, 4, 3, 2, 64, True),\n        2048: (_BIG, 128, 288, 2, 2, 3, (0.2, 1.8), (0.3, 0.9), 2, 64, 4, True),\n        2240: (224, 192, 2, 4, 3, 2, 64, False),\n        2560: (192, 128, 2, 4, 3, 1, 64, False, True),\n        3073: (224, 128, 2, 4, 3, 1, 64, False, True),\n        1 << 30: (256, 288, 4, 2, 2, 1, 64, False, True, \"sc0\"),\n    }\n)\n\n_SC01 = 17  # sc0 | sc1: device-coherent access that bypasses the non-coherent caches\n_MAX_POLLS = 1 << 16\n_TAG_B = 16  # bytes per flag: the launch tag\n\n\ndef _flag_line(nflags):\n    \"\"\"Bytes of one tile's flags, padded to whole 128 B lines.\"\"\"\n    return (nflags * _TAG_B + 127) // 128 * 128\n\n\ndef _as_i32(v):\n    if isinstance(v, int):\n        return fx.arith.constant(v)\n    v = fx.arith.unwrap(v)\n    t = v.type\n    if isinstance(t, ir.IntegerType):\n        if t.width == 32:\n            return v\n        if t.width > 32:\n            return std_arith.TruncIOp(T.i32, v).result\n        return std_arith.ExtSIOp(T.i32, v).result\n    return std_arith.IndexCastOp(T.i32, v).result\n\n\ndef _rsrc(tensor, num_records_bytes):\n    buf = rocdl.make_buffer_tensor(\n        tensor, max_size=False, num_records_bytes=num_records_bytes\n    )\n    return fx.arith.unwrap(rocdl.get_buffer_rsrc(fx.get_iter(buf)))\n\n\ndef _aux(v):\n    return ir.IntegerAttr.get(T.i32, v)\n\n\ndef _bload(res_ty, rsrc, byte_off, aux=0):\n    return rocdl_d.RawPtrBufferLoadOp(\n        res_ty, rsrc, _as_i32(byte_off), fx.arith.constant(0), aux=_aux(aux)\n    ).result\n\n\ndef _bstore(data, rsrc, byte_off, aux=0):\n    rocdl_d.RawPtrBufferStoreOp(\n        fx.arith.unwrap(data),\n        rsrc,\n        _as_i32(byte_off),\n        fx.arith.constant(0),\n        aux=_aux(aux),\n    )\n\n\ndef _lds_ptr(addr_i64):\n    v = fx.arith.unwrap(addr_i64)\n    return llvm.IntToPtrOp(ir.Type.parse(\"!llvm.ptr<3>\"), v).result\n\n\ndef _gep(base_ptr, byte_offset=None, static_byte_offset=0):\n    base_ptr = fx.arith.unwrap(base_ptr)\n    i8 = ir.IntegerType.get_signless(8)\n    if byte_offset is None:\n        return llvm.GEPOp(\n            base_ptr.type, base_ptr, [], [int(static_byte_offset)], i8, None\n        ).result\n    off = fx.arith.unwrap(byte_offset)\n    return llvm.GEPOp(base_ptr.type, base_ptr, [off], [-(2**31)], i8, None).result\n\n\n@functools.cache\ndef _launcher(m):\n    cfg = _CONFIGS[min(bound for bound in _CONFIGS if m <= bound)]\n    if cfg[0] == _GEMV:\n        return _build_gemv(m, *cfg[1:]), 0\n    if cfg[0] == _BIG:\n        return _build_big(m, *cfg[1:])\n    return _build(m, *cfg)\n\n\ndef _launch_tag():\n    \"\"\"This launch's (dispatch id, queue pointer) as 4 uniform dwords. Dispatch ids are\n    unique per queue, so a flag left in the workspace by any earlier launch never\n    equals it; the flag's position, not its value, names the tile and split.\"\"\"\n    did = llvm.call_intrinsic(T.i64, \"llvm.amdgcn.dispatch.id\", [], [], [])\n    qptr = llvm.call_intrinsic(ir.Type.parse(\"!llvm.ptr<4>\"), \"llvm.amdgcn.queue.ptr\", [], [], [])\n    words = []\n    for v in (did, llvm.PtrToIntOp(T.i64, qptr).result):\n        v = fx.Int64(v)\n        words += [fx.Int32(v), fx.Int32(v >> 32)]\n    return [rocdl.readfirstlane(T.i32, _as_i32(w)) for w in words]\n\n\ndef _store_tag(rsrc, byte_off, tag):\n    _bstore(_vector.from_elements(T.i32x4, tag), rsrc, byte_off, _SC01)\n\n\ndef _count_ready(rsrc, flag_byte_base, nprod, tag):\n    \"\"\"Count the flags at flag_byte_base[0 .. nprod) that hold this launch's tag.\"\"\"\n    loads = [\n        Vector(_bload(T.i32x4, rsrc, flag_byte_base + sp * _TAG_B, _SC01)) for sp in range(nprod)\n    ]\n    cnt = None\n    for v in loads:\n        diff = None\n        for w in range(4):\n            d = std_arith.XOrIOp(_as_i32(v[w]), tag[w]).result\n            diff = d if diff is None else std_arith.OrIOp(diff, d).result\n        eq = std_arith.CmpIOp(std_arith.CmpIPredicate.eq, diff, fx.arith.constant(0)).result\n        c = std_arith.ExtUIOp(T.i32, eq).result\n        cnt = c if cnt is None else std_arith.AddIOp(cnt, c).result\n    return cnt\n\n\ndef _build(\n    m, BM, BN, WM, WN, STAGES, SPLIT, BK=64, DIST=False, XCD=False, BPOL=\"sc0\", RED_K=2\n):\n    n, k = _N, _K\n    WAVES = WM * WN\n    THREADS = WAVES * 64\n    WARP_M = BM // WM\n    WARP_N = BN // WN\n    MS = WARP_M // 16\n    NS = WARP_N // 16\n    assert MS * 16 * WM == BM and NS * 16 * WN == BN\n    NF = MS * NS\n    N_BLOCKS = n // BN\n    assert N_BLOCKS * BN == n\n    M_BLOCKS = (m + BM - 1) // BM\n    TILES = M_BLOCKS * N_BLOCKS\n    ks = k // SPLIT\n    assert ks * SPLIT == k and ks % BK == 0\n    LOOPS = ks // BK\n    assert LOOPS >= STAGES >= 2\n    K_STEPS = BK // 32\n    KV = BK // 8  # 16-byte vectors per LDS row\n    # 16-byte chunks per tile; the last pass may cover only the first waves\n    A_CH = BM * KV\n    B_CH = BN * KV\n    C_CH = BM * BN // 8\n    A_DMA = (A_CH + THREADS - 1) // THREADS\n    B_DMA = (B_CH + THREADS - 1) // THREADS\n    C_VECS = (C_CH + THREADS - 1) // THREADS\n    for ch in (A_CH, B_CH, C_CH):\n        assert ch % 64 == 0 and ch >= THREADS\n    A_TAIL = (A_CH - (A_DMA - 1) * THREADS) // 64  # waves issuing the last pass\n    B_TAIL = (B_CH - (B_DMA - 1) * THREADS) // 64\n    # vmcnt is per wave: wait on the fewest loads any wave issues per stage\n    WAIT = A_DMA - (A_TAIL < WAVES) + B_DMA - (B_TAIL < WAVES)\n    assert (STAGES - 2) * (A_DMA + B_DMA) < 63\n    C_XV = BN // 8\n    NPROD = SPLIT - 1\n    PART = BM * BN  # floats per tile partial\n    part_numel = NPROD * TILES * PART\n    flag_base_bytes = part_numel * 4\n    FLB = _flag_line(SPLIT)\n    ws_numel = part_numel + TILES * FLB // 4 if SPLIT > 1 else 0\n    RED = DIST == \"red\" and SPLIT > 1\n    DIST = DIST is True and SPLIT > 1\n    PROD = TILES * SPLIT\n    GRID = (TILES, SPLIT, 1)\n    if RED:\n        # Producers are the first PROD workgroups of a 1-D grid; reducers follow. 1-D\n        # workgroups dispatch in order, so every producer is resident before any reducer\n        # is dispatched and producers never wait on a reducer. (Were that ever false, a\n        # reducer would time out its poll and write NaN, which correctness catches.)\n        assert SPLIT <= 16 and PROD <= 256 and RED_K <= WAVES\n        FRAGS = TILES * WAVES * NF\n        FPW = 1\n        while (FRAGS + RED_K * FPW - 1) // (RED_K * FPW) > 256:\n            FPW += 1\n        RED_WGS = (FRAGS + RED_K * FPW - 1) // (RED_K * FPW)\n        flag_base_bytes = SPLIT * TILES * PART * 4\n        # one flag per (fragment, split)\n        ws_numel = SPLIT * TILES * PART + FRAGS * SPLIT * _TAG_B // 4\n        GRID = (PROD + RED_WGS, 1, 1)\n    if DIST:\n        # every split stores a plane; each reduces 1/SPLIT of the tile's f32x4 vectors\n        assert SPLIT <= 8 and SPLIT * TILES <= 256\n        flag_base_bytes = SPLIT * TILES * PART * 4\n        ws_numel = SPLIT * TILES * PART + TILES * FLB // 4\n        DV = PART // 4\n        DQ = (DV + SPLIT - 1) // SPLIT\n        DRI = (DQ + THREADS - 1) // THREADS\n\n    AS_ELEMS = STAGES * BM * BK\n    BS_ELEMS = STAGES * BN * BK\n    CS_ELEMS = BM * BN\n\n    # The A/B pipeline and the C staging tile are live at disjoint times: one\n    # LDS array holds both.\n    LDS_ELEMS = max(AS_ELEMS + BS_ELEMS, CS_ELEMS)\n\n    @fx.struct\n    class SharedStorage:\n        buf: fx.Array[fx.BFloat16, LDS_ELEMS, 16]\n\n    @flyc.kernel(known_block_size=[THREADS, 1, 1])\n    def gemm_n2304_k8192_hgemm(\n        A: fx.Tensor, B: fx.Tensor, C: fx.Tensor, W: fx.Tensor\n    ):\n        bf16x8 = fx.Vector.make_type(8, fx.BFloat16)\n        a_rsrc = _rsrc(A, m * k * 2)\n        b_rsrc = _rsrc(B, n * k * 2)\n        c_rsrc = _rsrc(C, m * n * 2)\n        lds = fx.SharedAllocator().allocate(SharedStorage)\n        a_lds_ptr = lds.buf.peek().ptr\n        b_lds_ptr = a_lds_ptr + fx.Int64(AS_ELEMS)\n        c_lds_ptr = a_lds_ptr\n        a_lds_i64 = fx.Int64(fx.ptrtoint(a_lds_ptr))\n        b_lds_i64 = fx.Int64(fx.ptrtoint(b_lds_ptr))\n\n        tid = fx.thread_idx.x\n        wid = tid // 64\n        lane = tid % 64\n        bid = fx.block_idx.x\n        s_idx = fx.block_idx.y\n        tag = _launch_tag() if const_expr(SPLIT > 1) else None\n        if const_expr(RED and XCD):\n            # workgroups dispatch round-robin over 8 XCDs: split-minor ids give each XCD\n            # its own K slices, so every XCD reads only its slices of A and B\n            tile_id = bid // SPLIT\n            s_idx = bid % SPLIT\n            block_m = tile_id // N_BLOCKS\n            block_n = tile_id % N_BLOCKS\n        elif const_expr(RED):\n            tile_id = bid % TILES\n            s_idx = bid // TILES\n            block_m = tile_id // N_BLOCKS\n            block_n = tile_id % N_BLOCKS\n        elif const_expr(DIST):\n            # (tile, split) pairs dispatch round-robin over 8 XCDs: give each XCD a\n            # contiguous split-major run so its L2 shares one K-slice of A and B tiles\n            lin = bid + s_idx * TILES\n            x_q, x_r = PROD // 8, PROD % 8\n            xcd = lin % 8\n            logical = xcd * x_q + arith.select(xcd < x_r, xcd, x_r) + lin // 8\n            s_idx = logical // TILES\n            tile_id = logical % TILES\n            block_m = tile_id // N_BLOCKS\n            block_n = tile_id % N_BLOCKS\n        elif const_expr(XCD and SPLIT == 1):\n            # workgroups dispatch round-robin over 8 XCDs: give each XCD a\n            # contiguous run of tiles so its L2 sees shared A rows / B columns\n            x_q, x_r = TILES // 8, TILES % 8\n            xcd = bid % 8\n            logical = xcd * x_q + arith.select(xcd < x_r, xcd, x_r) + bid // 8\n            block_m = logical // N_BLOCKS\n            block_n = logical % N_BLOCKS\n        else:\n            block_m = bid // N_BLOCKS\n            block_n = bid % N_BLOCKS\n        m_off = block_m * BM\n        n_off = block_n * BN\n        ks_begin = _as_i32(s_idx * ks)\n        def kpos(j):\n            return ks_begin + _as_i32(fx.Int32(j) * BK)\n\n        warp_m = wid // WN * WARP_M\n        warp_n = wid % WN * WARP_N\n        frag_r = lane % 16\n        frag_k = lane // 16 * 8\n\n        acc_init = arith.constant_vector(0.0, T.vec(4, T.f32))\n        c_frags = [acc_init] * NF\n\n        warp_offset = rocdl.readfirstlane(\n            T.i64, arith.index_cast(T.i64, fx.Index(wid) * fx.Index(64 * 16))\n        )\n        wid_s = None\n        if const_expr(A_TAIL < WAVES or B_TAIL < WAVES):\n            wid_s = fx.Int32(rocdl.readfirstlane(T.i32, _as_i32(wid)))\n\n        def barrier(vmcnt):\n            llvm.InlineAsmOp(\n                None, [], f\"s_waitcnt vmcnt({vmcnt})\\n\\ts_barrier\", \"\", has_side_effects=True\n            )\n\n        def dma(rsrc, lds_ptr, goff, pol=\"sc0\"):\n            llvm.InlineAsmOp(\n                None,\n                [lds_ptr, goff, rsrc],\n                f\"s_mov_b32 m0, $0\\n\\tbuffer_load_dwordx4 $1, $2, 0 offen {pol} lds\",\n                \"s,v,s\",\n                has_side_effects=True,\n            )\n\n        def dma_tile(rsrc, lds_i64, rows, row_off, row_lim, count, tail, k_off, stage, pol=\"sc0\"):\n            lds_p = None\n            for ii in range_constexpr(count):\n                gtid = THREADS * ii + tid\n                r = gtid // KV\n                col_bytes = (gtid % KV * 16) ^ (r % KV * 16)\n                row = row_off + r\n                if const_expr(row_lim is not None):\n                    row = arith.select(\n                        arith.cmpi(arith.CmpIPredicate.ult, fx.Index(row), fx.Index(row_lim)),\n                        fx.Index(row),\n                        fx.Index(0),\n                    )\n                goff = _as_i32(fx.Index(row) * fx.Index(k * 2)) + _as_i32(\n                    k_off * 2\n                ) + _as_i32(col_bytes)\n                if const_expr(lds_p is None):\n                    base = lds_i64 + fx.Int64(\n                        arith.index_cast(T.i64, fx.Index(stage) * fx.Index(rows * BK * 2))\n                    )\n                    lds_p = _gep(_lds_ptr(base), warp_offset)\n                else:\n                    lds_p = _gep(lds_p, static_byte_offset=THREADS * 16)\n                if const_expr(ii == count - 1 and tail < WAVES):\n                    if wid_s < fx.Int32(tail):\n                        dma(rsrc, lds_p, goff, pol)\n                else:\n                    dma(rsrc, lds_p, goff, pol)\n\n        def dma_a(k_off, stage):\n            dma_tile(a_rsrc, a_lds_i64, BM, m_off, m, A_DMA, A_TAIL, k_off, stage)\n\n        def dma_b(k_off, stage):\n            dma_tile(b_rsrc, b_lds_i64, BN, n_off, None, B_DMA, B_TAIL, k_off, stage, BPOL)\n\n        def lds_frag(base_ptr, rows, stage, row, kcol):\n            col_bytes = (kcol * 2) ^ (row % KV * 16)\n            off = (\n                fx.Int64(stage) * (rows * BK)\n                + fx.Int64(row) * BK\n                + fx.Int64(col_bytes // 2)\n            )\n            return fx.ptr_load(base_ptr + off, result_type=bf16x8)\n\n        def compute(stage, frags):\n            s = fx.Index(stage)\n            out = [x for x in frags]\n            for kk in range_constexpr(K_STEPS):\n                kcol = kk * 32 + frag_k\n                b_fr = [\n                    lds_frag(b_lds_ptr, BN, s, warp_n + j * 16 + frag_r, kcol)\n                    for j in range_constexpr(NS)\n                ]\n                a_fr = [\n                    lds_frag(a_lds_ptr, BM, s, warp_m + i * 16 + frag_r, kcol)\n                    for i in range_constexpr(MS)\n                ]\n                rocdl.sched_barrier(0)\n                for i in range_constexpr(MS):\n                    for j in range_constexpr(NS):\n                        out[i * NS + j] = rocdl.mfma_f32_16x16x32_bf16(\n                            T.vec(4, T.f32), [a_fr[i], b_fr[j], out[i * NS + j], 0, 0, 0]\n                        )\n            return out\n\n        def hot_loop_scheduler():\n            for _ in range_constexpr(B_DMA + A_DMA):\n                rocdl.sched_vmem(1)\n            for _ in range_constexpr(K_STEPS):\n                for _ in range_constexpr(NS + MS):\n                    rocdl.sched_dsrd(1)\n                for _ in range_constexpr(MS):\n                    rocdl.sched_mfma(NS)\n            rocdl.sched_barrier(0)\n\n        def mainloop():\n            for st in range_constexpr(STAGES - 1):\n                dma_b(kpos(st), st)\n                dma_a(kpos(st), st)\n            rocdl.sched_barrier(0)\n\n            init_state = [fx.Int32(0), arith.constant(0, index=True)] + acc0\n            for bki, state in range(0, LOOPS - (STAGES - 1), 1, init=init_state):\n                k_offset = state[0]\n                cur = fx.Index(state[1])\n                frags = state[2:]\n                nxt = (cur + 1) % STAGES\n                wst = (cur + STAGES - 1) % STAGES\n                barrier((STAGES - 2) * WAIT)\n                dma_b(kpos(k_offset + (STAGES - 1)), wst)\n                dma_a(kpos(k_offset + (STAGES - 1)), wst)\n                new = compute(cur, frags)\n                hot_loop_scheduler()\n                results = yield [k_offset + fx.Int32(1), nxt] + new\n            cur = fx.Index(results[1])\n            m_frags = results[2:]\n            for st in range_constexpr(STAGES - 1):\n                barrier((STAGES - 2 - st) * WAIT)\n                m_frags = compute(cur, m_frags)\n                cur = (cur + 1) % STAGES\n            return m_frags\n\n        acc0 = c_frags\n        if const_expr(not RED):\n            c_frags = mainloop()\n\n        def store_c(frags):\n            gpu.barrier()\n            c_m = lane // 16 * 4\n            c_n = lane % 16\n            for i in range_constexpr(MS):\n                for j in range_constexpr(NS):\n                    cast = Vector(frags[i * NS + j]).to(fx.BFloat16)\n                    for e in range_constexpr(4):\n                        row = warp_m + i * 16 + c_m + e\n                        col = warp_n + j * 16 + c_n\n                        fx.ptr_store(cast[e], c_lds_ptr + fx.Int64(row * BN + col))\n            gpu.barrier()\n            for i in range_constexpr(C_VECS):\n                g = THREADS * i + tid\n                r = g // C_XV\n                cc = g % C_XV * 8\n                row = m_off + r\n                if const_expr(i == C_VECS - 1 and C_CH % THREADS != 0):\n                    row = arith.select(\n                        g < fx.Int32(C_CH), fx.Int32(row), fx.Int32(m)\n                    )\n                if row < fx.Int32(m):\n                    v = fx.ptr_load(c_lds_ptr + fx.Int64(r * BN + cc), result_type=bf16x8)\n                    _bstore(v, c_rsrc, (row * n + n_off + cc) * 2)\n\n        def red_produce():\n            w_rsrc = _rsrc(W, ws_numel * 4)\n            p_frags = mainloop()\n            # fragment-major planes: (split, tile, wave, frag, lane) x f32x4\n            p_base = (tile_id * WAVES + wid) * NF\n            for f in range_constexpr(NF):\n                off = ((s_idx * (TILES * WAVES * NF) + p_base + f) * 64 + lane) * 16\n                _bstore(Vector(p_frags[f]), w_rsrc, off, _SC01)\n            # each tag covers only stores its own wave has seen acknowledged\n            rocdl.s_waitcnt(vmcnt=0)\n            if lane < fx.Int32(NF):\n                fi = p_base + lane\n                _store_tag(w_rsrc, flag_base_bytes + (fi * SPLIT + s_idx) * _TAG_B, tag)\n\n        def red_reduce():\n            w_rsrc = _rsrc(W, ws_numel * 4)\n            g = (bid - PROD) * RED_K + wid\n            fi0 = g * FPW\n            if fi0 < fx.Int32(FRAGS):\n                fis = []\n                for j in range_constexpr(FPW):\n                    fis.append(\n                        arith.select(\n                            fi0 + j < fx.Int32(FRAGS), fx.Int32(fi0 + j), fx.Int32(fi0)\n                        )\n                    )\n\n                def nready_all():\n                    tot = None\n                    for j in range_constexpr(FPW):\n                        c = _count_ready(w_rsrc, flag_base_bytes + fis[j] * (SPLIT * _TAG_B), SPLIT, tag)\n                        tot = c if tot is None else std_arith.AddIOp(tot, c).result\n                    return fx.Int32(tot)\n\n                r_n = nready_all()\n                r_polls = fx.Int32(0)\n                while (r_n != fx.Int32(FPW * SPLIT)) & (r_polls < fx.Int32(_MAX_POLLS)):\n                    rocdl_d.s_sleep(1)\n                    r_n = nready_all()\n                    r_polls = r_polls + fx.Int32(1)\n                r_ready = std_arith.CmpIOp(\n                    std_arith.CmpIPredicate.eq, _as_i32(r_n), fx.arith.constant(FPW * SPLIT)\n                ).result\n                r_nan4 = fx.arith.unwrap(fx.constant_vector(float(\"nan\"), T.f32x4))\n                r_vals = [\n                    [\n                        Vector(\n                            _bload(\n                                T.f32x4,\n                                w_rsrc,\n                                ((fx.Int32(sp * TILES * WAVES * NF) + fis[j]) * 64 + lane) * 16,\n                                _SC01,\n                            )\n                        )\n                        for sp in range_constexpr(SPLIT)\n                    ]\n                    for j in range_constexpr(FPW)\n                ]\n                for j in range_constexpr(FPW):\n                    r_tot = r_vals[j][0]\n                    for sp in range_constexpr(1, SPLIT):\n                        r_tot = r_tot + r_vals[j][sp]\n                    r_tot = Vector(\n                        std_arith.SelectOp(r_ready, fx.arith.unwrap(r_tot), r_nan4).result\n                    )\n                    r_cast = r_tot.to(fx.BFloat16)\n                    fi = fis[j]\n                    r_tile = fi // (WAVES * NF)\n                    wv = fi // NF % WAVES\n                    ff = fi % NF\n                    rm_off = r_tile // N_BLOCKS * BM\n                    rn_off = r_tile % N_BLOCKS * BN\n                    r0 = rm_off + (wv // WN) * WARP_M + (ff // NS) * 16 + (lane // 16) * 4\n                    col = rn_off + (wv % WN) * WARP_N + (ff % NS) * 16 + lane % 16\n                    j_ok = fi0 + j < fx.Int32(FRAGS)\n                    for e in range_constexpr(4):\n                        row = r0 + e\n                        ok = j_ok & (row < fx.Int32(m))\n                        coff = arith.select(\n                            ok, fx.Int32((row * n + col) * 2), fx.Int32(0x7FFFFFF0)\n                        )\n                        _bstore(r_cast[e], c_rsrc, coff)\n\n        if const_expr(RED):\n            if bid < fx.Int32(PROD):\n                red_produce()\n            else:\n                if const_expr(RED_K < WAVES):\n                    if wid < fx.Int32(RED_K):\n                        red_reduce()\n                else:\n                    red_reduce()\n        elif const_expr(SPLIT == 1):\n            store_c(c_frags)\n        elif const_expr(DIST):\n            w_rsrc = _rsrc(W, ws_numel * 4)\n            # fragment-major planes: (split, tile, wave, frag, lane) x f32x4\n            tile_vec0 = tile_id * (WAVES * NF * 64)\n            frag_base = (tile_id * WAVES + wid) * NF\n            for f in range_constexpr(NF):\n                off = ((s_idx * (TILES * WAVES * NF) + frag_base + f) * 64 + lane) * 16\n                _bstore(Vector(c_frags[f]), w_rsrc, off, _SC01)\n            rocdl.s_waitcnt(vmcnt=0)\n            gpu.barrier()\n            arr_bytes = flag_base_bytes + tile_id * FLB\n            if tid == fx.Int32(0):\n                _store_tag(w_rsrc, arr_bytes + s_idx * _TAG_B, tag)\n            d_nready = fx.Int32(_count_ready(w_rsrc, arr_bytes, SPLIT, tag))\n            d_polls = fx.Int32(0)\n            while (d_nready != fx.Int32(SPLIT)) & (d_polls < fx.Int32(_MAX_POLLS)):\n                rocdl_d.s_sleep(1)\n                d_nready = fx.Int32(_count_ready(w_rsrc, arr_bytes, SPLIT, tag))\n                d_polls = d_polls + fx.Int32(1)\n            d_ready = std_arith.CmpIOp(\n                std_arith.CmpIPredicate.eq,\n                _as_i32(d_nready),\n                fx.arith.constant(SPLIT),\n            ).result\n            d_nan4 = fx.arith.unwrap(fx.constant_vector(float(\"nan\"), T.f32x4))\n            v_lo = s_idx * DQ\n            d_vals = []\n            d_vcs = []\n            d_oks = []\n            for i in range_constexpr(DRI):\n                v = v_lo + tid + i * THREADS\n                v_ok = (v < v_lo + DQ) & (v < fx.Int32(DV))\n                vc = arith.select(v_ok, fx.Int32(v), fx.Int32(0))\n                d_vcs.append(vc)\n                d_oks.append(v_ok)\n                d_vals.append(\n                    [\n                        Vector(\n                            _bload(\n                                T.f32x4,\n                                w_rsrc,\n                                (fx.Int32(sp * TILES * WAVES * NF * 64) + tile_vec0 + vc) * 16,\n                                _SC01,\n                            )\n                        )\n                        for sp in range_constexpr(SPLIT)\n                    ]\n                )\n            for i in range_constexpr(DRI):\n                d_tot = d_vals[i][0]\n                for sp in range_constexpr(1, SPLIT):\n                    d_tot = d_tot + d_vals[i][sp]\n                d_tot = Vector(std_arith.SelectOp(d_ready, fx.arith.unwrap(d_tot), d_nan4).result)\n                d_cast = d_tot.to(fx.BFloat16)\n                vc = d_vcs[i]\n                ln = vc % 64\n                fw = vc // 64\n                wv = fw // NF\n                ff = fw % NF\n                r0 = (wv // WN) * WARP_M + (ff // NS) * 16 + (ln // 16) * 4\n                col = n_off + (wv % WN) * WARP_N + (ff % NS) * 16 + ln % 16\n                for e in range_constexpr(4):\n                    row = m_off + r0 + e\n                    ok = d_oks[i] & (row < fx.Int32(m))\n                    coff = arith.select(ok, fx.Int32((row * n + col) * 2), fx.Int32(0x7FFFFFF0))\n                    _bstore(d_cast[e], c_rsrc, coff)\n        else:\n            w_rsrc = _rsrc(W, ws_numel * 4)\n            # fragment-major partial: (split, tile, wave, frag, lane) x f32x4\n            frag_base = (bid * WAVES + wid) * NF\n            flag_bytes = flag_base_bytes + bid * FLB\n            if s_idx == fx.Int32(NPROD):\n                nready = fx.Int32(_count_ready(w_rsrc, flag_bytes, NPROD, tag))\n                polls = fx.Int32(0)\n                while (nready != fx.Int32(NPROD)) & (polls < fx.Int32(_MAX_POLLS)):\n                    rocdl_d.s_sleep(1)\n                    nready = fx.Int32(_count_ready(w_rsrc, flag_bytes, NPROD, tag))\n                    polls = polls + fx.Int32(1)\n                ready = std_arith.CmpIOp(\n                    std_arith.CmpIPredicate.eq,\n                    _as_i32(nready),\n                    fx.arith.constant(NPROD),\n                ).result\n                nan4 = fx.arith.unwrap(fx.constant_vector(float(\"nan\"), T.f32x4))\n                sums = []\n                for f in range_constexpr(NF):\n                    tot = None\n                    for sp in range_constexpr(NPROD):\n                        off = (((sp * TILES * WAVES * NF) + frag_base + f) * 64 + lane) * 16\n                        v = Vector(_bload(T.f32x4, w_rsrc, off, _SC01))\n                        tot = v if tot is None else tot + v\n                    tot = tot + Vector(c_frags[f])\n                    sums.append(\n                        Vector(\n                            std_arith.SelectOp(ready, fx.arith.unwrap(tot), nan4).result\n                        )\n                    )\n                # bf16 straight from the fragments: no LDS staging, no barriers\n                for f in range_constexpr(NF):\n                    cast = sums[f].to(fx.BFloat16)\n                    r0 = m_off + warp_m + (f // NS) * 16 + lane // 16 * 4\n                    col = n_off + warp_n + (f % NS) * 16 + lane % 16\n                    for e in range_constexpr(4):\n                        row = r0 + e\n                        coff = arith.select(\n                            row < fx.Int32(m), fx.Int32((row * n + col) * 2), fx.Int32(0x7FFFFFF0)\n                        )\n                        _bstore(cast[e], c_rsrc, coff)\n            else:\n                for f in range_constexpr(NF):\n                    off = ((s_idx * (TILES * WAVES * NF) + frag_base + f) * 64 + lane) * 16\n                    _bstore(Vector(c_frags[f]), w_rsrc, off, _SC01)\n                rocdl.s_waitcnt(vmcnt=0)\n                gpu.barrier()\n                if tid == fx.Int32(0):\n                    _store_tag(w_rsrc, flag_bytes + s_idx * _TAG_B, tag)\n\n    @flyc.jit\n    def launch(\n        A: fx.Tensor, B: fx.Tensor, C: fx.Tensor, W: fx.Tensor, stream: fx.Stream\n    ):\n        gemm_n2304_k8192_hgemm(A, B, C, W).launch(\n            grid=GRID, block=(THREADS, 1, 1), stream=stream\n        )\n\n    return launch, ws_numel\n\n\ndef _build_gemv(m, WAVES, U, NS, ROT):\n    n, k = _N, _K\n    ROWS = 9\n    WGS = n // ROWS\n    MF = (m + 15) // 16\n    AR = (m + 7) // 8 * 8  # A rows staged per stage\n    THREADS = WAVES * 64\n    BK = 32 * U * WAVES\n    KV = BK // 8\n    STAGES = k // BK\n    assert WGS * ROWS == n and STAGES * BK == k and 2 <= NS <= STAGES\n    # stage slot: B rows, then A rows, as 16 B chunks in DMA order (row-major, XOR-swizzled)\n    CH = (ROWS + AR) * KV\n    PASSES = (CH + THREADS - 1) // THREADS\n    ST_E = PASSES * THREADS * 8\n    RED_E = WAVES * MF * 256\n    assert NS * ST_E * 2 + RED_E * 4 <= 160 * 1024 and MF * 64 <= THREADS\n\n    @fx.struct\n    class SharedStorage:\n        buf: fx.Array[fx.BFloat16, NS * ST_E, 16]\n        red: fx.Array[fx.Float32, RED_E, 16]\n\n    @flyc.kernel(known_block_size=[THREADS, 1, 1])\n    def gemm_n2304_k8192_gemv(A: fx.Tensor, B: fx.Tensor, C: fx.Tensor):\n        bf16x8 = fx.Vector.make_type(8, fx.BFloat16)\n        a_rsrc = _rsrc(A, m * k * 2)\n        b_rsrc = _rsrc(B, n * k * 2)\n        c_rsrc = _rsrc(C, m * n * 2)\n        lds = fx.SharedAllocator().allocate(SharedStorage)\n        lp = lds.buf.peek().ptr\n        rp = lds.red.peek().ptr\n        lds_i64 = fx.Int64(fx.ptrtoint(lp))\n        tid = fx.thread_idx.x\n        wid = tid // 64\n        lane = tid % 64\n        bid = fx.block_idx.x\n        n0 = bid * ROWS\n        rot = fx.Int32(rocdl.readfirstlane(T.i32, _as_i32(bid * ROT)))\n        warp_off = rocdl.readfirstlane(\n            T.i64, arith.index_cast(T.i64, fx.Index(wid) * fx.Index(1024))\n        )\n\n        goffs = []\n        for p in range_constexpr(PASSES):\n            g = tid + p * THREADS\n            ga = g - ROWS * KV\n            rb = g // KV\n            ra = ga // KV\n            ob = fx.Int32((n0 + rb) * (k * 2) + ((g % KV) ^ (rb % KV)) * 16)\n            oa = arith.select(\n                (ra < fx.Int32(m)) & (g < fx.Int32(CH)),\n                fx.Int32(ra * (k * 2) + ((ga % KV) ^ (ra % KV)) * 16),\n                fx.Int32(0x7FFFFFF0),\n            )\n            goffs.append((g < fx.Int32(ROWS * KV), ob, oa))\n\n        def dma(rsrc, ptr, goff, pol):\n            llvm.InlineAsmOp(\n                None,\n                [ptr, _as_i32(goff), rsrc],\n                f\"s_mov_b32 m0, $0\\n\\tbuffer_load_dwordx4 $1, $2, 0 offen {pol} lds\",\n                \"s,v,s\",\n                has_side_effects=True,\n            )\n\n        def issue(st):\n            kb = (rot + st) % STAGES * (BK * 2)\n            for p in range_constexpr(PASSES):\n                is_b, ob, oa = goffs[p]\n                base = lds_i64 + fx.Int64((st % NS * ST_E + p * THREADS * 8) * 2)\n                ptr = _gep(_lds_ptr(base), warp_off)\n                # every wave issues every pass, so vmcnt counts agree across waves\n                if const_expr(p * THREADS + THREADS <= ROWS * KV):\n                    dma(b_rsrc, ptr, ob + kb, _NT)\n                elif const_expr(p * THREADS >= ROWS * KV):\n                    dma(a_rsrc, ptr, oa + kb, \"\")\n                else:\n                    if is_b:\n                        dma(b_rsrc, ptr, ob + kb, _NT)\n                    else:\n                        dma(a_rsrc, ptr, oa + kb, \"\")\n\n        r = lane % 16\n        kc = lane // 16\n        rb_rd = arith.select(r < fx.Int32(ROWS), fx.Int32(r), fx.Int32(ROWS - 1))\n        ra_rd = [\n            arith.select(r + 16 * i < fx.Int32(AR), fx.Int32(r + 16 * i), fx.Int32(AR - 1))\n            for i in range_constexpr(MF)\n        ]\n\n        def frag(slot, chunk0, row, u):\n            ch = wid * (4 * U) + u * 4 + kc\n            off = slot * ST_E + (chunk0 + row * KV + (ch ^ (row % KV))) * 8\n            return fx.ptr_load(lp + fx.Int64(off), result_type=bf16x8)\n\n        acc = [arith.constant_vector(0.0, T.vec(4, T.f32))] * MF\n        for st in range_constexpr(NS - 1):\n            issue(st)\n        for st in range_constexpr(STAGES):\n            vm = min(NS - 2, STAGES - 1 - st) * PASSES\n            llvm.InlineAsmOp(\n                None, [], f\"s_waitcnt vmcnt({vm})\\n\\ts_barrier\", \"\", has_side_effects=True\n            )\n            if const_expr(st + NS - 1 < STAGES):\n                issue(st + NS - 1)\n            for u in range_constexpr(U):\n                bf = frag(st % NS, 0, rb_rd, u)\n                afs = [frag(st % NS, ROWS * KV, ra_rd[i], u) for i in range_constexpr(MF)]\n                for i in range_constexpr(MF):\n                    acc[i] = rocdl.mfma_f32_16x16x32_bf16(\n                        T.vec(4, T.f32), [afs[i], bf, acc[i], 0, 0, 0]\n                    )\n\n        for i in range_constexpr(MF):\n            fx.ptr_store(Vector(acc[i]), rp + fx.Int64(((wid * MF + i) * 64 + lane) * 4))\n        gpu.barrier()\n        if tid < fx.Int32(MF * 64):\n            i = tid // 64\n            tot = None\n            for w in range_constexpr(WAVES):\n                v = Vector(\n                    fx.ptr_load(\n                        rp + fx.Int64(((w * MF + i) * 64 + lane) * 4), result_type=T.vec(4, T.f32)\n                    )\n                )\n                tot = v if tot is None else tot + v\n            cast = tot.to(fx.BFloat16)\n            col = lane % 16\n            row0 = i * 16 + lane // 16 * 4\n            for e in range_constexpr(4):\n                row = row0 + e\n                ok = (col < fx.Int32(ROWS)) & (row < fx.Int32(m))\n                coff = arith.select(ok, fx.Int32((row * n + n0 + col) * 2), fx.Int32(0x7FFFFFF0))\n                _bstore(cast[e], c_rsrc, coff)\n\n    @flyc.jit\n    def launch(A: fx.Tensor, B: fx.Tensor, C: fx.Tensor, W: fx.Tensor, stream: fx.Stream):\n        gemm_n2304_k8192_gemv(A, B, C).launch(\n            grid=(WGS, 1, 1), block=(THREADS, 1, 1), stream=stream\n        )\n\n    return launch\n\n\n\ndef _xcd_logical(PROD):\n    \"\"\"Logical index of each workgroup id under the XCD remap of _build_big.\"\"\"\n    x_q, x_r = PROD // 8, PROD % 8\n    return [(b % 8) * x_q + min(b % 8, x_r) + b // 8 for b in range(PROD)]\n\n\ndef _build_big(\n    m, BM, BN, WM, WN, NBUF, SCHED_D, SCHED_R, SPLIT, BK=64, RG=4, LAST=False, BPOL=\"sc0\"\n):\n    n, k = _N, _K\n    K_STEPS = BK // 32\n    WAVES = WM * WN\n    THREADS = WAVES * 64\n    WARP_M = BM // WM\n    WARP_N = BN // WN\n    MS = WARP_M // 16\n    NS = WARP_N // 16\n    NF = MS * NS\n    NR = MS + NS\n    N_BLOCKS = n // BN\n    M_BLOCKS = (m + BM - 1) // BM\n    TILES = M_BLOCKS * N_BLOCKS\n    KS = k // SPLIT\n    LOOPS = KS // BK\n    assert LOOPS * BK * SPLIT == k\n    PROD = TILES * SPLIT\n    assert SPLIT == 1 or LAST or PROD <= 256\n    if LAST and SPLIT > 1:\n        # only a tile's last split waits, and only on smaller workgroup ids; each XCD\n        # dispatches in id order, so the lowest unfinished workgroup always runs and no\n        # set of waiting workgroups can keep the ones they wait on from being dispatched\n        bid_of = {lg: b for b, lg in enumerate(_xcd_logical(PROD))}\n        for t in range(TILES):\n            last = bid_of[(SPLIT - 1) * TILES + t]\n            assert all(bid_of[s * TILES + t] < last for s in range(SPLIT - 1))\n    PART = BM * BN\n    DV = PART // 4\n    DQ = (DV + SPLIT - 1) // SPLIT\n    DRI = (DQ + THREADS - 1) // THREADS\n    FLB = _flag_line(SPLIT)\n    WS = SPLIT * TILES * PART + TILES * FLB // 4 if SPLIT > 1 else 0\n    FLAG_B = SPLIT * TILES * PART * 4\n    KV = BK // 8\n    A_CH = BM * KV\n    B_CH = BN * KV\n    A_DMA = (A_CH + THREADS - 1) // THREADS\n    B_DMA = (B_CH + THREADS - 1) // THREADS\n    A_TAIL = (A_CH - (A_DMA - 1) * THREADS) // 64\n    B_TAIL = (B_CH - (B_DMA - 1) * THREADS) // 64\n    for ch in (A_CH, B_CH):\n        assert ch % 64 == 0\n    # vmcnt is per wave: count the fewest loads any wave issues per stage\n    D_MIN = A_DMA - (A_TAIL < WAVES) + B_DMA - (B_TAIL < WAVES)\n    assert (NBUF - 2) * D_MIN < 63 and LOOPS > NBUF + 1\n    C_CH = BM * BN // 8\n    C_VECS = (C_CH + THREADS - 1) // THREADS\n    C_XV = BN // 8\n    AS_ELEMS = NBUF * BM * BK\n    BS_ELEMS = NBUF * BN * BK\n    LDS_ELEMS = max(AS_ELEMS + BS_ELEMS, BM * BN)\n    assert LDS_ELEMS * 2 <= 163840\n\n    @fx.struct\n    class SharedStorage:\n        buf: fx.Array[fx.BFloat16, LDS_ELEMS, 16]\n\n    @flyc.kernel(known_block_size=[THREADS, 1, 1])\n    def gemm_n2304_k8192_big(A: fx.Tensor, B: fx.Tensor, C: fx.Tensor, W: fx.Tensor):\n        bf16x8 = fx.Vector.make_type(8, fx.BFloat16)\n        _flags = (SCHED_D, SCHED_R, NBUF, K_STEPS, SPLIT, RG, LAST)  # closure constants used by nested defs\n        a_rsrc = _rsrc(A, m * k * 2)\n        b_rsrc = _rsrc(B, n * k * 2)\n        c_rsrc = _rsrc(C, m * n * 2)\n        lds = fx.SharedAllocator().allocate(SharedStorage)\n        a_lds_ptr = lds.buf.peek().ptr\n        b_lds_ptr = a_lds_ptr + fx.Int64(AS_ELEMS)\n        c_lds_ptr = a_lds_ptr\n        a_lds_i64 = fx.Int64(fx.ptrtoint(a_lds_ptr))\n        b_lds_i64 = fx.Int64(fx.ptrtoint(b_lds_ptr))\n\n        tid = fx.thread_idx.x\n        wid = tid // 64\n        lane = tid % 64\n        bid = fx.block_idx.x\n        # workgroups dispatch round-robin over 8 XCDs: each XCD takes a contiguous\n        # split-major run so its L2 shares one K slice of A rows and B columns\n        x_q, x_r = PROD // 8, PROD % 8\n        xcd = bid % 8\n        logical = xcd * x_q + arith.select(xcd < x_r, xcd, x_r) + bid // 8\n        s_idx = logical // TILES\n        tile_id = logical % TILES\n        block_m = tile_id // N_BLOCKS\n        block_n = tile_id % N_BLOCKS\n        ks_begin = s_idx * KS\n        m_off = block_m * BM\n        n_off = block_n * BN\n\n        warp_m = wid // WN * WARP_M\n        warp_n = wid % WN * WARP_N\n        frag_r = lane % 16\n        frag_k = lane // 16 * 8\n\n        warp_offset = rocdl.readfirstlane(\n            T.i64, arith.index_cast(T.i64, fx.Index(wid) * fx.Index(64 * 16))\n        )\n        wid_s = fx.Int32(rocdl.readfirstlane(T.i32, _as_i32(wid)))\n\n        def barrier(vmcnt):\n            llvm.InlineAsmOp(\n                None, [], f\"s_waitcnt vmcnt({vmcnt}) lgkmcnt(0)\\n\\ts_barrier\", \"\", has_side_effects=True\n            )\n\n        def dma(rsrc, lds_ptr, goff, tail, pol):\n            if const_expr(tail is None):\n                llvm.InlineAsmOp(\n                    None, [lds_ptr, goff, rsrc],\n                    f\"s_mov_b32 m0, $0\\n\\tbuffer_load_dwordx4 $1, $2, 0 offen {pol} lds\",\n                    \"s,v,s\", has_side_effects=True,\n                )\n            else:\n                if wid_s < fx.Int32(tail):\n                    llvm.InlineAsmOp(\n                        None, [lds_ptr, goff, rsrc],\n                        f\"s_mov_b32 m0, $0\\n\\tbuffer_load_dwordx4 $1, $2, 0 offen {pol} lds\",\n                        \"s,v,s\", has_side_effects=True,\n                    )\n\n        def dma_tile(ops, rsrc, lds_i64, rows, row_off, row_lim, count, tail, k_off, buf, pol):\n            lds_p = None\n            for ii in range_constexpr(count):\n                gtid = THREADS * ii + tid\n                r = gtid // KV\n                col_bytes = (gtid % KV * 16) ^ (r % KV * 16)\n                row = row_off + r\n                if const_expr(row_lim is not None):\n                    row = arith.select(\n                        arith.cmpi(arith.CmpIPredicate.ult, fx.Index(row), fx.Index(row_lim)),\n                        fx.Index(row), fx.Index(0),\n                    )\n                goff = _as_i32(fx.Index(row) * fx.Index(k * 2)) + _as_i32(k_off * 2) + _as_i32(col_bytes)\n                if const_expr(lds_p is None):\n                    base = lds_i64 + fx.Int64(\n                        arith.index_cast(T.i64, fx.Index(buf) * fx.Index(rows * BK * 2))\n                    )\n                    lds_p = _gep(_lds_ptr(base), warp_offset)\n                else:\n                    lds_p = _gep(lds_p, static_byte_offset=THREADS * 16)\n                t = tail if (ii == count - 1 and tail < WAVES) else None\n                ops.append((rsrc, lds_p, goff, t, pol))\n\n        def dma_ops(kb, buf):\n            ops = []\n            k_off = _as_i32(fx.Int32(kb) * BK + ks_begin)\n            dma_tile(ops, b_rsrc, b_lds_i64, BN, n_off, None, B_DMA, B_TAIL, k_off, buf, BPOL)\n            dma_tile(ops, a_rsrc, a_lds_i64, BM, m_off, m, A_DMA, A_TAIL, k_off, buf, \"sc0\")\n            return ops\n\n        def lds_frag(base_ptr, rows, buf, row, kcol):\n            col_bytes = (kcol * 2) ^ (row % KV * 16)\n            off = fx.Int64(buf) * (rows * BK) + fx.Int64(row) * BK + fx.Int64(col_bytes // 2)\n            return fx.ptr_load(base_ptr + off, result_type=bf16x8)\n\n        def read_frags(buf, ks=0):\n            b = fx.Index(buf)\n            kc = ks * 32 + frag_k\n            fr = [lds_frag(a_lds_ptr, BM, b, warp_m + i * 16 + frag_r, kc) for i in range_constexpr(MS)]\n            fr += [lds_frag(b_lds_ptr, BN, b, warp_n + j * 16 + frag_r, kc) for j in range_constexpr(NS)]\n            return fr\n\n        def mma(a, b, c, in_agpr):\n            cls = \"a\" if in_agpr else \"v\"\n            if const_expr(c is None):\n                return llvm.InlineAsmOp(\n                    T.vec(4, T.f32), [fx.arith.unwrap(a), fx.arith.unwrap(b)],\n                    \"v_mfma_f32_16x16x32_bf16 $0, $1, $2, 0\", f\"=&{cls},v,v\",\n                ).result\n            return llvm.InlineAsmOp(\n                T.vec(4, T.f32), [fx.arith.unwrap(a), fx.arith.unwrap(b), fx.arith.unwrap(c)],\n                \"v_mfma_f32_16x16x32_bf16 $0, $1, $2, $3\", f\"={cls},v,v,0\",\n            ).result\n\n        def step(fr, acc, ops, read_buf, read_ks=0):\n            \"\"\"One K stage of MFMAs in program order; the DMA issues and the next stage's\n            fragment reads sit at fixed MFMA slots.\"\"\"\n            out = list(acc)\n            nfr = []\n            d_at, r_at = {}, {}\n            for q in range_constexpr(len(ops)):\n                d_at.setdefault(int(ops[q][0] * NF), []).append(q)\n            ops = [o for _, o in ops]\n            rd = []\n            if const_expr(read_buf is not None):\n                r_lo, r_hi = SCHED_R\n                for q in range_constexpr(NR):\n                    r_at.setdefault(int(r_lo * NF + q * (r_hi - r_lo) * NF / NR), []).append(q)\n                b = fx.Index(read_buf)\n                rd = [(a_lds_ptr, BM, warp_m + i * 16 + frag_r) for i in range_constexpr(MS)]\n                rd += [(b_lds_ptr, BN, warp_n + j * 16 + frag_r) for j in range_constexpr(NS)]\n            idx = 0\n            for i in range_constexpr(MS):\n                for j in range_constexpr(NS):\n                    for q in d_at.get(idx, []):\n                        dma(*ops[q])\n                    for q in r_at.get(idx, []):\n                        p, rows, row = rd[q]\n                        nfr.append(lds_frag(p, rows, b, row, read_ks * 32 + frag_k))\n                    f = i * NS + j\n                    out[f] = mma(fr[i], fr[MS + j], out[f], f < 64)\n                    rocdl.sched_barrier(0)\n                    idx += 1\n            return out, nfr\n\n        # prologue: stages 0..NBUF-1 in flight, stage 0 read into registers\n        for s in range_constexpr(NBUF):\n            for op in dma_ops(s, s):\n                dma(*op)\n        barrier((NBUF - 1) * D_MIN)\n        fr = read_frags(0)\n        rocdl.sched_barrier(0)\n        # the first MFMAs write the accumulators with src2 = 0\n        acc = [None] * NF\n        for ks in range_constexpr(K_STEPS - 1):\n            acc, fr = step(fr, acc, [], 0, ks + 1)\n\n        def body(kb, fr, acc, issue, vm):\n            \"\"\"Enters holding stage kb's last K step; leaves holding stage kb+1's.\"\"\"\n            cur = fx.Index(kb) % NBUF\n            nxt = (cur + 1) % NBUF\n            # stage kb+1 landed in every wave; every wave has read stage kb\n            barrier(vm)\n            ops = dma_ops(kb + NBUF, cur) if issue else []\n            # SCHED_D spans the stage's K steps: [0, K_STEPS)\n            d_lo, d_hi = SCHED_D\n            parts = [[] for _ in range(K_STEPS)]\n            for q in range_constexpr(len(ops)):\n                pos = d_lo + q * (d_hi - d_lo) / max(1, len(ops))\n                parts[min(K_STEPS - 1, int(pos))].append((pos - int(pos), ops[q]))\n            acc, fr = step(fr, acc, parts[0], nxt, 0)\n            for ks in range_constexpr(K_STEPS - 1):\n                acc, fr = step(fr, acc, parts[ks + 1], nxt, ks + 1)\n            return acc, fr\n\n        acc, fr = body(fx.Int32(0), fr, acc, True, (NBUF - 2) * D_MIN)\n        init = [fx.Int32(1)] + fr + acc\n        for it, st in range(1, LOOPS - NBUF, 1, init=init):\n            kb = st[0]\n            acc, nfr = body(kb, st[1 : 1 + NR], st[1 + NR :], True, (NBUF - 2) * D_MIN)\n            res = yield [kb + fx.Int32(1)] + nfr + acc\n        fr = res[1 : 1 + NR]\n        acc = res[1 + NR :]\n        for t in range_constexpr(NBUF - 1):\n            kb = LOOPS - NBUF + t\n            acc, fr = body(fx.Int32(kb), fr, acc, False, (NBUF - 2 - t) * D_MIN)\n        acc, _ = step(fr, acc, [], None)\n        # the hazard recognizer cannot see MFMAs inside inline asm\n        llvm.InlineAsmOp(None, [], \"s_nop 7\\n\\ts_nop 7\\n\\ts_nop 7\", \"\", has_side_effects=True)\n        # pass every accumulator through an ordered no-op so no read moves above the nops\n        acc = [\n            llvm.InlineAsmOp(\n                T.vec(4, T.f32), [fx.arith.unwrap(x)], \"\", \"=a,0\" if f < 64 else \"=v,0\",\n                has_side_effects=True,\n            ).result\n            for f, x in enumerate(acc)\n        ]\n\n        def store_c(acc):\n            # C: fragments -> LDS (bf16) -> 16 B rows\n            gpu.barrier()\n            c_m = lane // 16 * 4\n            c_n = lane % 16\n            for i in range_constexpr(MS):\n                for j in range_constexpr(NS):\n                    cast = Vector(acc[i * NS + j]).to(fx.BFloat16)\n                    for e in range_constexpr(4):\n                        row = warp_m + i * 16 + c_m + e\n                        col = warp_n + j * 16 + c_n\n                        fx.ptr_store(cast[e], c_lds_ptr + fx.Int64(row * BN + col))\n            gpu.barrier()\n            for i in range_constexpr(C_VECS):\n                g = THREADS * i + tid\n                r = g // C_XV\n                cc = g % C_XV * 8\n                row = m_off + r\n                if const_expr(i == C_VECS - 1 and C_CH % THREADS != 0):\n                    row = arith.select(g < fx.Int32(C_CH), fx.Int32(row), fx.Int32(m))\n                if row < fx.Int32(m):\n                    v = fx.ptr_load(c_lds_ptr + fx.Int64(r * BN + cc), result_type=bf16x8)\n                    _bstore(v, c_rsrc, (row * n + n_off + cc) * 2)\n\n        def fold(acc):\n            w_rsrc = _rsrc(W, WS * 4)\n            tag = _launch_tag()\n            tile_vec0 = tile_id * (WAVES * NF * 64)\n            frag_base = (tile_id * WAVES + wid) * NF\n            for f in range_constexpr(NF):\n                off = ((s_idx * (TILES * WAVES * NF) + frag_base + f) * 64 + lane) * 16\n                _bstore(Vector(acc[f]), w_rsrc, off, _SC01)\n            rocdl.s_waitcnt(vmcnt=0)\n            gpu.barrier()\n            arr = FLAG_B + tile_id * FLB\n            if tid == fx.Int32(0):\n                _store_tag(w_rsrc, arr + s_idx * _TAG_B, tag)\n\n            def nready():\n                return fx.Int32(_count_ready(w_rsrc, arr, SPLIT, tag))\n\n            nr = nready()\n            polls = fx.Int32(0)\n            while (nr != fx.Int32(SPLIT)) & (polls < fx.Int32(1 << 16)):\n                rocdl_d.s_sleep(1)\n                nr = nready()\n                polls = polls + fx.Int32(1)\n            ready = std_arith.CmpIOp(std_arith.CmpIPredicate.eq, _as_i32(nr), fx.arith.constant(SPLIT)).result\n            nan4 = fx.arith.unwrap(fx.constant_vector(float(\"nan\"), T.f32x4))\n            v_lo = s_idx * DQ\n            for g0 in range_constexpr(0, DRI, RG):\n                grp = []\n                for i in range_constexpr(g0, min(DRI, g0 + RG)):\n                    v = v_lo + tid + i * THREADS\n                    ok = (v < v_lo + DQ) & (v < fx.Int32(DV))\n                    vc = arith.select(ok, fx.Int32(v), fx.Int32(0))\n                    vals = [\n                        Vector(_bload(T.f32x4, w_rsrc, (fx.Int32(sp * TILES * WAVES * NF * 64) + tile_vec0 + vc) * 16, _SC01))\n                        for sp in range_constexpr(SPLIT)\n                    ]\n                    grp.append((vc, ok, vals))\n                for vc, ok, vals in grp:\n                    tot = vals[0]\n                    for sp in range_constexpr(1, SPLIT):\n                        tot = tot + vals[sp]\n                    tot = Vector(std_arith.SelectOp(ready, fx.arith.unwrap(tot), nan4).result)\n                    cast = tot.to(fx.BFloat16)\n                    ln = vc % 64\n                    fw = vc // 64\n                    wv = fw // NF\n                    ff = fw % NF\n                    r0 = m_off + (wv // WN) * WARP_M + (ff // NS) * 16 + (ln // 16) * 4\n                    col = n_off + (wv % WN) * WARP_N + (ff % NS) * 16 + ln % 16\n                    for e in range_constexpr(4):\n                        row = r0 + e\n                        okr = ok & (row < fx.Int32(m))\n                        _bstore(cast[e], c_rsrc, arith.select(okr, fx.Int32((row * n + col) * 2), fx.Int32(0x7FFFFFF0)))\n\n        def fold_last(acc):\n            w_rsrc = _rsrc(W, WS * 4)\n            tag = _launch_tag()\n            frag_base = (tile_id * WAVES + wid) * NF\n            arr = FLAG_B + tile_id * FLB\n            if s_idx == fx.Int32(SPLIT - 1):\n                nr = fx.Int32(_count_ready(w_rsrc, arr, SPLIT - 1, tag))\n                polls = fx.Int32(0)\n                while (nr != fx.Int32(SPLIT - 1)) & (polls < fx.Int32(_MAX_POLLS)):\n                    rocdl_d.s_sleep(1)\n                    nr = fx.Int32(_count_ready(w_rsrc, arr, SPLIT - 1, tag))\n                    polls = polls + fx.Int32(1)\n                ready = std_arith.CmpIOp(\n                    std_arith.CmpIPredicate.eq, _as_i32(nr), fx.arith.constant(SPLIT - 1)\n                ).result\n                nan4 = fx.arith.unwrap(fx.constant_vector(float(\"nan\"), T.f32x4))\n                sums = []\n                for f in range_constexpr(NF):\n                    tot = None\n                    for sp in range_constexpr(SPLIT - 1):\n                        off = ((sp * (TILES * WAVES * NF) + frag_base + f) * 64 + lane) * 16\n                        v = Vector(_bload(T.f32x4, w_rsrc, off, _SC01))\n                        tot = v if tot is None else tot + v\n                    tot = tot + Vector(acc[f])\n                    sums.append(Vector(std_arith.SelectOp(ready, fx.arith.unwrap(tot), nan4).result))\n                store_c(sums)\n            else:\n                for f in range_constexpr(NF):\n                    off = ((s_idx * (TILES * WAVES * NF) + frag_base + f) * 64 + lane) * 16\n                    _bstore(Vector(acc[f]), w_rsrc, off, _SC01)\n                rocdl.s_waitcnt(vmcnt=0)\n                gpu.barrier()\n                if tid == fx.Int32(0):\n                    _store_tag(w_rsrc, arr + s_idx * _TAG_B, tag)\n\n        if const_expr(SPLIT == 1):\n            store_c(acc)\n        elif const_expr(LAST):\n            fold_last(acc)\n        else:\n            fold(acc)\n\n    @flyc.jit\n    def launch(A: fx.Tensor, B: fx.Tensor, C: fx.Tensor, W: fx.Tensor, stream: fx.Stream):\n        gemm_n2304_k8192_big(A, B, C, W).launch(grid=(PROD, 1, 1), block=(THREADS, 1, 1), stream=stream)\n\n    return launch, WS\n\n\ndef run(a, b, bias, out):\n    out_dtype = out.dtype\n    trans_b = True\n    if not trans_b or bias is not None:\n        raise ValueError(\"gemm_n2304_k8192 expects trans_b=True and no bias\")\n    stream = fx.Stream(torch.cuda.current_stream(a.device))\n    launch, ws_numel = _launcher(a.shape[0])\n    ws = torch.empty((ws_numel,), dtype=torch.float32, device=a.device) if ws_numel else out\n    launch(a, b, out, ws, stream=stream)\n"
+      }
+    ],
+    "description": null
+  }
+}

@@ -1,0 +1,118 @@
+{
+  "name": "gemm_bf16_nt_n2624_k6144",
+  "op_type": "gemm_bf16_nt",
+  "axes": {
+    "M": {
+      "description": "Tokens.",
+      "type": "var"
+    },
+    "N": {
+      "description": "Output columns.",
+      "value": 2624,
+      "type": "const"
+    },
+    "K": {
+      "description": "Reduction length.",
+      "value": 6144,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "M": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 64
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "a": {
+      "shape": [
+        "M",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "N",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Weights."
+    },
+    "bias": {
+      "shape": [
+        "N"
+      ],
+      "dtype": null,
+      "description": "Added to every output row."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "M",
+        "N"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "reference": "from __future__ import annotations\nimport math\nimport torch\nimport torch.nn.functional as F\n\ndef _plus_bias(product: Tensor, bias: Tensor | None) -> Tensor:\n    return product if bias is None else product + bias.double()\n\ndef gemm_bf16_nt_reference(a, b, bias=None) -> Tensor:\n    \"\"\"``a @ b.T + bias``.\"\"\"\n    return _plus_bias(a.double() @ b.double().mT, bias)\n\nrun = gemm_bf16_nt_reference\n",
+  "check": "from __future__ import annotations\nimport torch\n\ndef _as_output_list(outputs: Any) -> List[Any]:\n    if isinstance(outputs, list):\n        return outputs\n    if isinstance(outputs, tuple):\n        return list(outputs)\n    return [outputs]\n\ndef default_tolerances(dtype: Union[torch.dtype, str]) -> Tuple[float, float]:\n    \"\"\"Return ``(rtol, atol)`` defaults for a trace correctness check.\n\n    These defaults are intentionally conservative for low-precision inference\n    data types. Template-specific ``check`` functions can override them by\n    passing explicit ``rtol`` and ``atol`` to :func:`default_check`.\n    \"\"\"\n    dtype_name = str(dtype).replace(\"torch.\", \"\")\n    if dtype_name in (\"float64\", \"double\"):\n        return 1e-7, 1e-7\n    if dtype_name in (\"float32\", \"float\"):\n        return 1e-5, 1e-5\n    if dtype_name in (\"float16\", \"half\"):\n        return 1e-3, 1e-3\n    if dtype_name == \"bfloat16\":\n        return 1e-2, 1e-2\n    if dtype_name.startswith(\"float8\"):\n        return 1e-1, 1e-1\n    if dtype_name.startswith(\"float4\") or \"fp4\" in dtype_name:\n        return 1.0, 1.0\n    return 0.0, 0.0\n\ndef _cosine_similarity(actual: torch.Tensor, expected: torch.Tensor) -> float:\n    actual = actual.reshape(-1).to(torch.float32)\n    expected = expected.reshape(-1).to(torch.float32)\n    finite = torch.isfinite(actual) & torch.isfinite(expected)\n    if not finite.any():\n        return 1.0\n    actual = actual[finite]\n    expected = expected[finite]\n    actual_norm = torch.linalg.vector_norm(actual)\n    expected_norm = torch.linalg.vector_norm(expected)\n    if actual_norm.item() == 0 or expected_norm.item() == 0:\n        return 1.0 if torch.equal(actual, expected) else 0.0\n    return ((actual * expected).sum() / (actual_norm * expected_norm)).item()\n\ndef default_check(\n    reference_outputs: Any,\n    actual_outputs: Any,\n    *,\n    rtol: Optional[float] = None,\n    atol: Optional[float] = None,\n    max_mismatch_pct: float = 0.0,\n    min_cos_sim: Optional[float] = 1.0 - 1e-3,\n) -> bool:\n    \"\"\"Validate actual outputs against reference outputs.\n\n    ``reference_outputs`` and ``actual_outputs`` may be lists/tuples,\n    dictionaries with matching keys, or single output values. Tensor outputs\n    are checked for shape equality, closeness, mismatch percentage, and cosine\n    similarity. Non-floating tensors are checked exactly unless\n    ``max_mismatch_pct`` allows mismatches. Non-tensor outputs use Python\n    equality.\n    \"\"\"\n    if isinstance(reference_outputs, dict) or isinstance(actual_outputs, dict):\n        if not isinstance(reference_outputs, dict) or not isinstance(\n            actual_outputs, dict\n        ):\n            return False\n        if reference_outputs.keys() != actual_outputs.keys():\n            return False\n        refs = [reference_outputs[key] for key in reference_outputs]\n        actuals = [actual_outputs[key] for key in reference_outputs]\n    else:\n        refs = _as_output_list(reference_outputs)\n        actuals = _as_output_list(actual_outputs)\n\n    if len(refs) != len(actuals):\n        return False\n\n    for ref, actual in zip(refs, actuals, strict=True):\n        if isinstance(ref, torch.Tensor) != isinstance(actual, torch.Tensor):\n            return False\n        if not isinstance(ref, torch.Tensor):\n            if ref != actual:\n                return False\n            continue\n\n        if ref.shape != actual.shape:\n            return False\n        if ref.numel() == 0:\n            continue\n\n        ref_is_float = torch.is_floating_point(ref)\n        actual_is_float = torch.is_floating_point(actual)\n        if ref_is_float or actual_is_float:\n            tolerance_dtype = actual.dtype if actual_is_float else ref.dtype\n            default_rtol, default_atol = default_tolerances(tolerance_dtype)\n            rtol_value = default_rtol if rtol is None else rtol\n            atol_value = default_atol if atol is None else atol\n            close = torch.isclose(\n                actual.to(torch.float32),\n                ref.to(torch.float32),\n                rtol=rtol_value,\n                atol=atol_value,\n            )\n            mismatch_pct = 100.0 * (~close).sum().item() / close.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n            if min_cos_sim is not None:\n                cos_sim = _cosine_similarity(actual, ref)\n                if cos_sim < min_cos_sim:\n                    return False\n        else:\n            matches = actual == ref\n            mismatch_pct = 100.0 * (~matches).sum().item() / matches.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n\n    return True\n\ndef _gemm_check(\n    reference_outputs,\n    actual_outputs,\n    *,\n    rtol=None,\n    atol=None,\n    max_mismatch_pct=0.0,\n    min_cos_sim=None,\n):\n    # main's compare_gemm_outputs: atol = rtol 1e-3 fp16, 1e-2 otherwise, every element\n    out = actual_outputs\n    if isinstance(out, (list, tuple)):\n        out = out[0]\n    tolerance = 1e-3 if out.dtype == torch.float16 else 1e-2\n    return default_check(\n        reference_outputs,\n        actual_outputs,\n        rtol=tolerance if rtol is None else rtol,\n        atol=tolerance if atol is None else atol,\n        max_mismatch_pct=max_mismatch_pct,\n        min_cos_sim=min_cos_sim,\n    )\n\nrun = _gemm_check\n",
+  "init": "from __future__ import annotations\nimport math\nimport torch\n\ndef _gemm_bf16_nt_init(*, M, N, K, device=\"cuda\", seed=0):\n    torch.manual_seed(seed)\n    return {\n        \"a\": torch.randn(M, K, device=device).to(torch.bfloat16),\n        \"b\": torch.randn(N, K, device=device).to(torch.bfloat16),\n        \"out_dtype\": torch.bfloat16,\n    }\n\nrun = _gemm_bf16_nt_init\n",
+  "tags": [
+    "glm-5.2/tp4",
+    "glm-5.2/tp4+ep4",
+    "glm-5.2/tp8",
+    "glm-5.2/tp8+dp8",
+    "glm-5.2/tp8+dp8+ep8"
+  ],
+  "description": "bf16 gemm: out = a @ b.T + bias, b stored (N, K).",
+  "constraints": [
+    "not use_shuffled_weight",
+    "bias is None or bias.dtype in ('bfloat16', 'float16', 'float32')",
+    "out.dtype in ('bfloat16', 'float16', 'float32')"
+  ],
+  "kernel": {
+    "name": "gemm_bf16_nt_n2624_k6144_triton_397e92bbb6bba350",
+    "author": "GEAK",
+    "build": {
+      "language": "triton",
+      "target_hardware": [
+        "gfx950/MI355X"
+      ],
+      "entry_point": "kernel.py::run",
+      "dependencies": [],
+      "destination_passing_style": true,
+      "binding": null
+    },
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Decode bf16 GEMM, out = a @ b.T, for n = 2624 and k = 6144 on gfx950 (Triton).\n\nAt small m the call streams the 32 MB weight exactly once. Every workgroup\nowns one N tile across all rows of `a` and accumulates in fp32 registers;\nworkgroups are remapped so each XCD streams a contiguous run of N tiles, the\nweight is loaded with the `.cg` cache modifier, and each workgroup starts its K\nwalk at its own phase so the workgroups sharing an XCD do not read the same `a`\nlines in lockstep.\n\n- m <= 16: a 16-row tile, 16-column N tiles (164 workgroups), BLOCK_K = 512,\n  no K split: each output is one fp32 sum, stored once.\n- m <= 64: a 64-row tile, 64-column N tiles, the K range split six ways. Each\n  split writes its fp32 partial tile to scratch, and a second kernel adds the\n  six partials in a fixed order before rounding to bf16, so the result is\n  bitwise reproducible.\n\"\"\"\n\nimport functools\n\nimport torch\nimport triton\nimport triton.language as tl\n\n\n@triton.jit\ndef _xcd_remap(pid, GRID: tl.constexpr, NXCD: tl.constexpr):\n    per: tl.constexpr = (GRID + NXCD - 1) // NXCD\n    tall: tl.constexpr = GRID % NXCD if GRID % NXCD else NXCD\n    xcd = pid % NXCD\n    local = pid // NXCD\n    if xcd < tall:\n        tile = xcd * per + local\n    else:\n        tile = tall * per + (xcd - tall) * (per - 1) + local\n    return tile\n\n\n@triton.jit\ndef _gemm_kernel(\n    A,\n    B,\n    W,\n    M,\n    N: tl.constexpr,\n    K: tl.constexpr,\n    BLOCK_M: tl.constexpr,\n    BLOCK_N: tl.constexpr,\n    BLOCK_K: tl.constexpr,\n    SPLIT_K: tl.constexpr,\n    N_TILES: tl.constexpr,\n    NXCD: tl.constexpr,\n    EVEN_M: tl.constexpr,\n    KROT: tl.constexpr,\n):\n    grid: tl.constexpr = N_TILES * SPLIT_K\n    raw = tl.program_id(0)\n    pid = _xcd_remap(raw, grid, NXCD)\n    pid_n = pid % N_TILES\n    pid_k = pid // N_TILES\n    k_chunk: tl.constexpr = K // SPLIT_K\n    n_kb: tl.constexpr = k_chunk // BLOCK_K\n    kphase = ((raw // NXCD) * KROT) % n_kb\n    offs_m = tl.arange(0, BLOCK_M)\n    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)\n    offs_k = tl.arange(0, BLOCK_K)\n    row_ok = offs_m[:, None] < M\n    a_offs = offs_m[:, None] * K + offs_k[None, :] + pid_k * k_chunk\n    b_offs = offs_k[:, None] + offs_n[None, :] * K + pid_k * k_chunk\n    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)\n    for i in tl.range(0, n_kb):\n        kb = ((i + kphase) % n_kb) * BLOCK_K\n        if EVEN_M:\n            a = tl.load((A + kb) + a_offs)\n        else:\n            a = tl.load((A + kb) + a_offs, mask=row_ok, other=0.0)\n        b = tl.load((B + kb) + b_offs, cache_modifier=\".cg\")\n        acc = tl.dot(a, b, acc=acc)\n    if SPLIT_K == 1:\n        c_ptrs = W + offs_m[:, None] * N + offs_n[None, :]\n        tl.store(c_ptrs, acc.to(W.dtype.element_ty), mask=row_ok)\n    else:\n        w_ptrs = W + pid_k * (M * N) + offs_m[:, None] * N + offs_n[None, :]\n        tl.store(w_ptrs, acc, mask=row_ok)\n\n\n@triton.jit\ndef _reduce_kernel(W, C, TOTAL, SPLIT_K: tl.constexpr, BLOCK: tl.constexpr):\n    offs = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)\n    ok = offs < TOTAL\n    acc = tl.load(W + offs, mask=ok, other=0.0, cache_modifier=\".cg\")\n    for s in tl.static_range(1, SPLIT_K):\n        acc += tl.load(W + s * TOTAL + offs, mask=ok, other=0.0, cache_modifier=\".cg\")\n    tl.store(C + offs, acc.to(C.dtype.element_ty), mask=ok)\n\n\n@functools.cache\ndef _launch_for(a_shape, b_shape):\n    m, k = a_shape\n    n = b_shape[0]\n    if m <= 16:\n        n_tiles = n // 16\n        warps = 2 if m in (1, 16) else 4\n        even_m = m == 16\n\n        def launch(a, b, out, ws):\n            _gemm_kernel[(n_tiles,)](\n                a,\n                b,\n                out,\n                m,\n                N=n,\n                K=k,\n                BLOCK_M=16,\n                BLOCK_N=16,\n                BLOCK_K=512,\n                SPLIT_K=1,\n                N_TILES=n_tiles,\n                NXCD=8,\n                EVEN_M=even_m,\n                KROT=1,\n                num_warps=warps,\n                num_stages=3,\n                waves_per_eu=2,\n                matrix_instr_nonkdim=16,\n            )\n\n        return launch, 0\n    n_tiles = n // 64\n    split_k = 6\n    total = m * n\n    even_m = m == 64\n\n    def launch(a, b, out, ws):\n        _gemm_kernel[(n_tiles * split_k,)](\n            a,\n            b,\n            ws,\n            m,\n            N=n,\n            K=k,\n            BLOCK_M=64,\n            BLOCK_N=64,\n            BLOCK_K=128,\n            SPLIT_K=split_k,\n            N_TILES=n_tiles,\n            NXCD=8,\n            EVEN_M=even_m,\n            KROT=0,\n            num_warps=8,\n            num_stages=3,\n            waves_per_eu=2,\n            matrix_instr_nonkdim=16,\n        )\n        _reduce_kernel[(triton.cdiv(total, 1024),)](\n            ws, out, total, SPLIT_K=split_k, BLOCK=1024, num_warps=4\n        )\n\n    return launch, split_k * total\n\n\ndef run(a, b, bias, out):\n    out_dtype = out.dtype\n    launch, ws_elems = _launch_for(tuple(a.shape), tuple(b.shape))\n    ws = (\n        torch.empty(ws_elems, dtype=torch.float32, device=a.device)\n        if ws_elems\n        else None\n    )\n    launch(a, b, out, ws)\n"
+      }
+    ],
+    "description": null
+  }
+}

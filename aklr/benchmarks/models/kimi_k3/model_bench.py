@@ -2,6 +2,7 @@
 
 import argparse
 import contextlib
+import dataclasses
 import inspect
 import multiprocessing
 import os
@@ -19,6 +20,7 @@ from sglang_bench import (
     agreed,
     local_conc,
     moe_parallel,
+    publish_once,
     require_aiter,
     table,
 )
@@ -296,14 +298,6 @@ def run(work_func: Callable, server_args, args) -> None:
         kill_process_tree(os.getpid(), include_parent=False)
 
 
-def publish_once(server_args) -> None:
-    """Publish the config bags if nothing has yet."""
-    from sglang.srt.runtime_context import get_context, publish
-
-    if not get_context().is_config_namespace_published("model"):
-        publish(server_args, role="scheduler")
-
-
 def setup(server_args, port_args, gpu_id: int, tp_rank: int, tag: str = "BENCH"):
     """Build the model. Returns (model_runner, rank_print)."""
     from sglang.benchmark.one_batch import load_model
@@ -315,7 +309,7 @@ def setup(server_args, port_args, gpu_id: int, tp_rank: int, tag: str = "BENCH")
 
     # Dispatch on the signature, since the sglang trees declare this differently and none agree on a version.
     if not inspect.signature(initialize_moe_config).parameters:
-        publish_once(server_args)
+        publish_once(server_args, gpu_id, tp_rank)
     for fn in (
         initialize_moe_config,
         initialize_fp8_gemm_config,
@@ -479,8 +473,9 @@ def state_buffers(model_runner) -> list:
     cache = mamba_cache(model_runner)
     if cache is None:
         return []
+    names = [f.name for f in dataclasses.fields(cache)] if dataclasses.is_dataclass(cache) else []
     out, seen = [], set()
-    for field in _dataclass_fields(cache):
+    for field in names:
         for buf in _tensors(getattr(cache, field, None)):
             key = (buf.data_ptr(), tuple(buf.shape), tuple(buf.stride()))
             if key in seen or not buf.numel():
@@ -488,14 +483,6 @@ def state_buffers(model_runner) -> list:
             seen.add(key)
             out.append(buf)
     return out
-
-
-def _dataclass_fields(obj) -> tuple:
-    import dataclasses
-
-    if not dataclasses.is_dataclass(obj):
-        return ()
-    return tuple(f.name for f in dataclasses.fields(obj))
 
 
 def _tensors(value) -> list:

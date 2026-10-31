@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import functools
 
-from aklr.core.runtime.dispatch._registry import DispatcherRegistry
+from aklr.core.runtime.dispatch._dispatcher import KernelDispatcher
 
 __all__ = ["VLLM_HOOKED_METHOD", "register_vllm_plugin"]
 
@@ -14,8 +14,8 @@ VLLM_HOOKED_METHOD = "vllm.v1.worker.gpu_worker.Worker.init_device"
 
 
 def register_vllm_plugin() -> None:
-    """The ``vllm.general_plugins`` entry point (``pyproject.toml``): starts AKLR after
-    ``VLLM_HOOKED_METHOD``."""
+    """The ``vllm.general_plugins`` entry point (``pyproject.toml``): wraps ``VLLM_HOOKED_METHOD``
+    to start the dispatcher after it."""
     from vllm.v1.worker.gpu_worker import Worker
 
     init_device = Worker.init_device
@@ -23,7 +23,7 @@ def register_vllm_plugin() -> None:
     @functools.wraps(init_device)
     def wrapper(self, *args, **kwargs):
         result = init_device(self, *args, **kwargs)
-        DispatcherRegistry.default().init_once()
+        KernelDispatcher.get_instance()
         return result
 
     Worker.init_device = wrapper

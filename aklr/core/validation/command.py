@@ -33,8 +33,8 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument(
         "--stages",
         type=lambda text: tuple(text.split(",")),
-        default=("audit", "bench"),
-        help=f"a part of {','.join(STAGE_ORDER)} that starts with audit",
+        default=(AuditStage.name, BenchStage.name),
+        help=f"a part of {','.join(STAGE_ORDER)} that starts with {AuditStage.name}",
     )
     parser.add_argument("--devices", help="0-7 or 0,2,5")
     parser.add_argument("--out", type=Path, default=DEFAULT_REPORT_DIR)
@@ -45,15 +45,16 @@ def main(argv: Sequence[str]) -> int:
     )
     args = parser.parse_args(argv)
     names = args.stages
-    if names[:1] != ("audit",) or names != tuple(n for n in STAGE_ORDER if n in names):
+    if names[:1] != (AuditStage.name,) or names != tuple(n for n in STAGE_ORDER if n in names):
         parser.error(
-            f"--stages {','.join(names)!r} is not a part of {','.join(STAGE_ORDER)} that starts with audit"
+            f"--stages {','.join(names)!r} is not a part of {','.join(STAGE_ORDER)}"
+            f" that starts with {AuditStage.name}"
         )
     Progress().write("collecting schemas and platform")
     try:
         scope = ValidationScope.of_working_tree(args.base, args.paths or None)
         stages: list[PipelineStage] = [AuditStage(allow_measured_edits=args.allow_measured_edits)]
-        if "bench" in names:
+        if BenchStage.name in names:
             if args.devices is None:
                 indices = range(PlatformRecord.current().n_visible_devices)
             else:
@@ -72,6 +73,5 @@ def main(argv: Sequence[str]) -> int:
     report = pipeline.run(scope)
     report.write(args.out)
     report.write_schemas(scope.root, args.out / "schemas")
-    report.write_baselines(scope, args.out / "baseline")
     print(f"validation {report.conclusion}: {args.out / 'report.md'}")
     return report.exit_code

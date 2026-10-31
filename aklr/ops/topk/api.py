@@ -3,19 +3,20 @@
 
 from __future__ import annotations
 
-from aklr.core.runtime.dispatch import api
-from aklr.ops.topk.contract import TOPK_TRANSFORM_PAGED
+from aklr.core.runtime.dispatch import aklr_api
+from aklr.ops.topk.schema import TOPK_TRANSFORM_PAGED
 
 __all__ = ["topk_transform_paged"]
 
 
-@api(TOPK_TRANSFORM_PAGED)
+@aklr_api(TOPK_TRANSFORM_PAGED)
 def topk_transform_paged(
     scores,
     seq_lens,
     page_tables,
+    k,
     out_page_indices,
-    page_size,
-    metadata,
+    *,
+    page_size=1,
     out_raw_indices=None,
 ): ...

@@ -1,0 +1,162 @@
+{
+  "name": "add_rms_norm_hidden_size6144",
+  "op_type": "add_rms_norm",
+  "axes": {
+    "n_tokens": {
+      "description": "Tokens.",
+      "type": "var"
+    },
+    "hidden_size": {
+      "description": "Width normalized.",
+      "value": 6144,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 32
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 128
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 256
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 512
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 4096
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 8192
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "x": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The layer's output."
+    },
+    "residual": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The residual stream."
+    },
+    "weight": {
+      "shape": [
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "Scale of each normalized column."
+    },
+    "epsilon": {
+      "dtype": "float32",
+      "description": "Added to the mean square.",
+      "shape": null
+    }
+  },
+  "outputs": {
+    "normalized": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The normalized sum, scaled by weight."
+    },
+    "residual_out": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "x + residual."
+    }
+  },
+  "reference": "from __future__ import annotations\nimport math\nimport torch\nimport torch.nn.functional as F\n\ndef add_rms_norm_reference(x, residual, weight, epsilon=1e-6) -> tuple[Tensor, Tensor]:\n    \"\"\"(normalized, residual_out) from the exact sum x + residual.\"\"\"\n    total = x.double() + residual.double()\n    mean_square = total.square().mean(dim=-1, keepdim=True)\n    return (mean_square + epsilon).rsqrt() * total * weight.double(), total\n\nrun = add_rms_norm_reference\n",
+  "check": "from __future__ import annotations\nimport torch\n\ndef _as_output_list(outputs: Any) -> List[Any]:\n    if isinstance(outputs, list):\n        return outputs\n    if isinstance(outputs, tuple):\n        return list(outputs)\n    return [outputs]\n\ndef default_tolerances(dtype: Union[torch.dtype, str]) -> Tuple[float, float]:\n    \"\"\"Return ``(rtol, atol)`` defaults for a trace correctness check.\n\n    These defaults are intentionally conservative for low-precision inference\n    data types. Template-specific ``check`` functions can override them by\n    passing explicit ``rtol`` and ``atol`` to :func:`default_check`.\n    \"\"\"\n    dtype_name = str(dtype).replace(\"torch.\", \"\")\n    if dtype_name in (\"float64\", \"double\"):\n        return 1e-7, 1e-7\n    if dtype_name in (\"float32\", \"float\"):\n        return 1e-5, 1e-5\n    if dtype_name in (\"float16\", \"half\"):\n        return 1e-3, 1e-3\n    if dtype_name == \"bfloat16\":\n        return 1e-2, 1e-2\n    if dtype_name.startswith(\"float8\"):\n        return 1e-1, 1e-1\n    if dtype_name.startswith(\"float4\") or \"fp4\" in dtype_name:\n        return 1.0, 1.0\n    return 0.0, 0.0\n\ndef _cosine_similarity(actual: torch.Tensor, expected: torch.Tensor) -> float:\n    actual = actual.reshape(-1).to(torch.float32)\n    expected = expected.reshape(-1).to(torch.float32)\n    finite = torch.isfinite(actual) & torch.isfinite(expected)\n    if not finite.any():\n        return 1.0\n    actual = actual[finite]\n    expected = expected[finite]\n    actual_norm = torch.linalg.vector_norm(actual)\n    expected_norm = torch.linalg.vector_norm(expected)\n    if actual_norm.item() == 0 or expected_norm.item() == 0:\n        return 1.0 if torch.equal(actual, expected) else 0.0\n    return ((actual * expected).sum() / (actual_norm * expected_norm)).item()\n\ndef default_check(\n    reference_outputs: Any,\n    actual_outputs: Any,\n    *,\n    rtol: Optional[float] = None,\n    atol: Optional[float] = None,\n    max_mismatch_pct: float = 0.0,\n    min_cos_sim: Optional[float] = 1.0 - 1e-3,\n) -> bool:\n    \"\"\"Validate actual outputs against reference outputs.\n\n    ``reference_outputs`` and ``actual_outputs`` may be lists/tuples,\n    dictionaries with matching keys, or single output values. Tensor outputs\n    are checked for shape equality, closeness, mismatch percentage, and cosine\n    similarity. Non-floating tensors are checked exactly unless\n    ``max_mismatch_pct`` allows mismatches. Non-tensor outputs use Python\n    equality.\n    \"\"\"\n    if isinstance(reference_outputs, dict) or isinstance(actual_outputs, dict):\n        if not isinstance(reference_outputs, dict) or not isinstance(\n            actual_outputs, dict\n        ):\n            return False\n        if reference_outputs.keys() != actual_outputs.keys():\n            return False\n        refs = [reference_outputs[key] for key in reference_outputs]\n        actuals = [actual_outputs[key] for key in reference_outputs]\n    else:\n        refs = _as_output_list(reference_outputs)\n        actuals = _as_output_list(actual_outputs)\n\n    if len(refs) != len(actuals):\n        return False\n\n    for ref, actual in zip(refs, actuals, strict=True):\n        if isinstance(ref, torch.Tensor) != isinstance(actual, torch.Tensor):\n            return False\n        if not isinstance(ref, torch.Tensor):\n            if ref != actual:\n                return False\n            continue\n\n        if ref.shape != actual.shape:\n            return False\n        if ref.numel() == 0:\n            continue\n\n        ref_is_float = torch.is_floating_point(ref)\n        actual_is_float = torch.is_floating_point(actual)\n        if ref_is_float or actual_is_float:\n            tolerance_dtype = actual.dtype if actual_is_float else ref.dtype\n            default_rtol, default_atol = default_tolerances(tolerance_dtype)\n            rtol_value = default_rtol if rtol is None else rtol\n            atol_value = default_atol if atol is None else atol\n            close = torch.isclose(\n                actual.to(torch.float32),\n                ref.to(torch.float32),\n                rtol=rtol_value,\n                atol=atol_value,\n            )\n            mismatch_pct = 100.0 * (~close).sum().item() / close.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n            if min_cos_sim is not None:\n                cos_sim = _cosine_similarity(actual, ref)\n                if cos_sim < min_cos_sim:\n                    return False\n        else:\n            matches = actual == ref\n            mismatch_pct = 100.0 * (~matches).sum().item() / matches.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n\n    return True\n\ndef _add_rms_norm_check(\n    reference_outputs,\n    actual_outputs,\n    *,\n    rtol=None,\n    atol=None,\n    max_mismatch_pct=0.0,\n    min_cos_sim=None,\n):\n    # the output's unit roundoff: B = 2u|y| in bfloat16, rounding the output only\n    return default_check(\n        reference_outputs,\n        actual_outputs,\n        rtol=2**-8 if rtol is None else rtol,\n        atol=0.0 if atol is None else atol,\n        max_mismatch_pct=max_mismatch_pct,\n        min_cos_sim=min_cos_sim,\n    )\n\nrun = _add_rms_norm_check\n",
+  "init": "from __future__ import annotations\nimport math\nimport torch\n\ndef _add_rms_norm_init(*, n_tokens, hidden_size, device=\"cuda\", seed=0):\n    torch.manual_seed(seed)\n    x = torch.randn(n_tokens, hidden_size, device=device).to(torch.bfloat16)\n    residual = torch.randn(n_tokens, hidden_size, device=device).to(torch.bfloat16)\n    log2_weight = torch.empty(hidden_size, device=device).uniform_(-1.0, 0.58)\n    return {\n        \"x\": x,\n        \"residual\": residual,\n        \"weight\": torch.exp2(log2_weight).to(torch.bfloat16),\n        \"epsilon\": 1e-6,\n        \"normalized\": torch.empty_like(x),\n        \"residual_out\": torch.empty_like(x),\n    }\n\nrun = _add_rms_norm_init\n",
+  "tags": [
+    "glm-5.2/tp4",
+    "glm-5.2/tp4+ep4",
+    "glm-5.2/tp8",
+    "glm-5.2/tp8+dp8",
+    "glm-5.2/tp8+dp8+ep8"
+  ],
+  "description": "residual_out = x + residual; normalized = residual_out * rsqrt(mean(residual_out**2) + epsilon) * weight, the mean over the hidden axis.",
+  "constraints": [
+    "epsilon > 0",
+    "x.dtype in ('bfloat16', 'float16')",
+    "residual.dtype == x.dtype and weight.dtype == x.dtype"
+  ],
+  "kernel": {
+    "name": "add_rms_norm_hidden_size6144_hip_b75fd4e810e2a0a2",
+    "author": "GEAK",
+    "build": {
+      "language": "hip",
+      "target_hardware": [
+        "gfx950/MI355X"
+      ],
+      "entry_point": "kernel.hip::run",
+      "dependencies": [],
+      "destination_passing_style": true,
+      "binding": null
+    },
+    "sources": [
+      {
+        "path": "kernel.hip",
+        "content": "// Fused residual add + RMSNorm over contiguous bf16 rows, hidden size H in {2048, 4096, 6144, 8192}\n// (GLM-5.2: 6144):\n//   residual_out = bf16(x + residual)\n//   normalized   = bf16((x + residual) * rsqrt(mean((x + residual)^2) + epsilon) * weight)\n// One 256-thread block per row; thread t owns H/256 elements as 16-byte chunks at element\n// (t % 64) * 8 + (t / 64) * H/4 + c * 512 (aiter's interleaved layout).\n//\n// Bit-identical by construction to aiter's add_rmsnorm_quant_kernel<bf16, bf16, 256, H/256, true,\n// false, true, 1>, the HIP path of aiter.rmsnorm2d_fwd_with_add, as aiter builds it (-ffast-math,\n// fp32 denormals flushed). The fp32 dataflow is read off that build's gfx950 ISA:\n//   s = x + r (fp32), residual_out = RNE bf16 of s (v_cvt_pk_bf16_f32)\n//   per thread: separately rounded squares, summed sequentially in element order (no fma)\n//   wave: DPP quad_perm [1,0,3,2], [2,3,0,1], row_half_mirror, row_mirror, row_bcast:15,\n//         row_bcast:31 (lane 63 holds the wave sum); block: (w0 + w1) + (w2 + w3)\n//   r = v_rsq_f32((float)((double)(total * v_rcp_iflag_f32((float)H)) + epsilon))\n//   normalized = RNE bf16 of (s * r) * (weight + 0.0f)\n// What differs from aiter is only the schedule (the fast path of the GLM-5.2 candidate): no\n// kernarg preload, compile-time H and strides, loads issued chunk by chunk so the sequential sum\n// runs while later chunks arrive, a single ds_read_b128 for the cross-wave exchange, the last\n// residual_out chunk stored in the shadow of that read, sc0|sc1 on every store, and store data\n// held in its VGPRs until the end so no VALU write can race a 16-byte buffer_store.\n\n#include <ATen/hip/HIPContext.h>\n#include <hip/hip_runtime.h>\n#include <torch/library.h>\n\n#include <cstdint>\n#include <initializer_list>\n\nnamespace {\n\nusing u32x4 = unsigned int __attribute__((ext_vector_type(4)));\nusing f32x2 = float __attribute__((ext_vector_type(2)));\nusing f32x4 = float __attribute__((ext_vector_type(4)));\nusing bf16x2 = __bf16 __attribute__((ext_vector_type(2)));\n\nconstexpr int kThreads = 256;\nconstexpr int kWave = 64;\nconstexpr int kChunkElems = 8;                   // bf16 in one 16-byte chunk\nconstexpr int kChunkStride = kWave * kChunkElems * 2;  // bytes between a thread's chunks\n// cache-policy bits of a gfx950 buffer instruction: sc0 = 1, nt = 2, sc1 = 16\nconstexpr int kStreamLoad = 3;   // sc0 nt: x and residual, read once (as aiter)\nconstexpr int kWeightLoad = 0;   // weight: cached (as aiter)\nconstexpr int kResidualStore = 17;    // sc0 sc1 on both outputs (as the candidate; aiter:\nconstexpr int kNormalizedStore = 17;  // sc0 nt on residual_out, none on normalized)\n// hwreg(HW_REG_MODE, 4, 2): the fp32 field of MODE.FP_DENORM; 0 flushes fp32 denormals in and\n// out, the mode aiter's build runs in (its kernel descriptor: float_denorm_mode_32 = 0)\nconstexpr int kModeDenormF32 = (1 << 11) | (4 << 6) | 1;\n#if defined(__gfx90a__) || defined(__gfx940__) || defined(__gfx941__) || defined(__gfx942__) || \\\n    defined(__gfx950__)\nconstexpr unsigned int kRsrcConfig = 0x00020000u;\n#else\nconstexpr unsigned int kRsrcConfig = 0u;  // host pass only: device code is built for gfx9 CDNA\n#endif\n\n__device__ __forceinline__ __amdgpu_buffer_rsrc_t row_rsrc(const void* base, int bytes) {\n    return __builtin_amdgcn_make_buffer_rsrc(const_cast<void*>(base), 0, bytes, kRsrcConfig);\n}\n\n// bf16 pair (low half first) to fp32, exactly: integer ops, as aiter\n__device__ __forceinline__ f32x2 unpack(unsigned int w) {\n    return f32x2{__builtin_bit_cast(float, w << 16), __builtin_bit_cast(float, w & 0xffff0000u)};\n}\n\n// fp32 pair to bf16, round to nearest even (v_cvt_pk_bf16_f32 on gfx950, as aiter)\n__device__ __forceinline__ unsigned int pack(f32x2 v) {\n    return __builtin_bit_cast(unsigned int, __builtin_convertvector(v, bf16x2));\n}\n\n__device__ __forceinline__ float dpp_sum(float v) {\n    // every lane of a row ends with the row sum; lane 63 then holds (R3 + R2) + (R1 + R0)\n    v += __builtin_bit_cast(float, __builtin_amdgcn_update_dpp(0, __builtin_bit_cast(int, v), 0xb1, 0xf, 0xf, true));\n    v += __builtin_bit_cast(float, __builtin_amdgcn_update_dpp(0, __builtin_bit_cast(int, v), 0x4e, 0xf, 0xf, true));\n    v += __builtin_bit_cast(float, __builtin_amdgcn_update_dpp(0, __builtin_bit_cast(int, v), 0x141, 0xf, 0xf, true));\n    v += __builtin_bit_cast(float, __builtin_amdgcn_update_dpp(0, __builtin_bit_cast(int, v), 0x140, 0xf, 0xf, true));\n    v += __builtin_bit_cast(float, __builtin_amdgcn_update_dpp(0, __builtin_bit_cast(int, v), 0x142, 0xf, 0xf, false));\n    v += __builtin_bit_cast(float, __builtin_amdgcn_update_dpp(0, __builtin_bit_cast(int, v), 0x143, 0xf, 0xf, false));\n    return v;\n}\n\ntemplate <int kChunks>\n__global__ __launch_bounds__(kThreads) void add_rmsnorm_bf16_kernel(\n    const void* __restrict__ x, const void* __restrict__ residual, const void* __restrict__ weight,\n    void* __restrict__ normalized, void* __restrict__ residual_out, double epsilon) {\n#pragma clang fp contract(off)\n    constexpr int kHidden = kThreads * kChunks * kChunkElems;\n    constexpr int kRowBytes = kHidden * 2;\n    __builtin_amdgcn_s_setreg(kModeDenormF32, 0);\n\n    const int tid = static_cast<int>(threadIdx.x);\n    const int lane = tid % kWave;\n    const int wave = tid / kWave;\n    const int voff = (lane * kChunkElems + wave * kWave * kChunks * kChunkElems) * 2;\n    const int64_t row_off = static_cast<int64_t>(blockIdx.x) * kRowBytes;\n\n    const auto x_rsrc = row_rsrc(static_cast<const char*>(x) + row_off, kRowBytes);\n    const auto r_rsrc = row_rsrc(static_cast<const char*>(residual) + row_off, kRowBytes);\n    const auto w_rsrc = row_rsrc(weight, kRowBytes);\n\n    // x and residual chunk by chunk (sched_barrier: not regrouped by base), weight last: the\n    // sequential sum starts on chunk 0 while later chunks are still arriving\n    u32x4 xv[kChunks], rv[kChunks], wv[kChunks];\n#pragma unroll\n    for (int c = 0; c < kChunks; ++c) {\n        xv[c] = __builtin_amdgcn_raw_buffer_load_b128(x_rsrc, voff + c * kChunkStride, 0, kStreamLoad);\n        rv[c] = __builtin_amdgcn_raw_buffer_load_b128(r_rsrc, voff + c * kChunkStride, 0, kStreamLoad);\n        __builtin_amdgcn_sched_barrier(0);\n    }\n#pragma unroll\n    for (int c = 0; c < kChunks; ++c) {\n        wv[c] = __builtin_amdgcn_raw_buffer_load_b128(w_rsrc, voff + c * kChunkStride, 0, kWeightLoad);\n    }\n    // 1 / H as the hardware rounds it (aiter: v_rcp_iflag_f32 of (float)n), in the load shadow;\n    // asm keeps the compiler from folding it to the correctly rounded constant\n    float inv_h;\n    asm volatile(\"v_rcp_iflag_f32 %0, %1\\n\\ts_nop 0\" : \"=v\"(inv_h) : \"v\"(static_cast<float>(kHidden)));\n\n    const auto ro_rsrc = row_rsrc(static_cast<char*>(residual_out) + row_off, kRowBytes);\n    f32x2 s[kChunks][4];\n    u32x4 ro[kChunks];\n    float sum = 0.0f;\n#pragma unroll\n    for (int c = 0; c < kChunks; ++c) {\n#pragma unroll\n        for (int j = 0; j < 4; ++j) {\n            s[c][j] = unpack(xv[c][j]) + unpack(rv[c][j]);\n            ro[c][j] = pack(s[c][j]);\n            const f32x2 q = s[c][j] * s[c][j];\n            // aiter's 0 + q0 is q0: a square is never -0\n            sum = (c == 0 && j == 0) ? q[0] : sum + q[0];\n            sum = sum + q[1];\n        }\n        if (c + 1 < kChunks) {\n            __builtin_amdgcn_raw_buffer_store_b128(ro[c], ro_rsrc, voff + c * kChunkStride, 0, kResidualStore);\n        }\n    }\n\n    const float wave_sum = dpp_sum(sum);\n    __shared__ __attribute__((aligned(16))) float s_wave_sum[kThreads / kWave];\n    if (lane == kWave - 1) {\n        s_wave_sum[wave] = wave_sum;\n    }\n    __syncthreads();\n    const f32x4 w4 = *reinterpret_cast<const f32x4*>(s_wave_sum);\n\n    // in the shadow of that ds_read: the weights, and the last residual_out chunk\n    __builtin_amdgcn_sched_barrier(0);\n    // weight + 0.0f: aiter adds its (zero) gemma offset, which turns a -0 weight into +0\n    f32x2 wf[kChunks][4];\n#pragma unroll\n    for (int c = 0; c < kChunks; ++c) {\n#pragma unroll\n        for (int j = 0; j < 4; ++j) {\n            wf[c][j] = unpack(wv[c][j]) + f32x2{0.0f, 0.0f};\n        }\n    }\n    __builtin_amdgcn_raw_buffer_store_b128(ro[kChunks - 1], ro_rsrc, voff + (kChunks - 1) * kChunkStride, 0, kResidualStore);\n    __builtin_amdgcn_sched_barrier(0);\n\n    // (w0 + w1) + (w2 + w3) in three scalar adds (the asm keeps it from becoming a pk_add)\n    float w01 = w4[0] + w4[1];\n    asm(\"\" : \"+v\"(w01));\n    const float total = w01 + (w4[2] + w4[3]);\n    const float mean = total * inv_h;\n    const float r = __builtin_amdgcn_rsqf(static_cast<float>(static_cast<double>(mean) + epsilon));\n    const f32x2 r2 = {r, r};\n\n    const auto norm_rsrc = row_rsrc(static_cast<char*>(normalized) + row_off, kRowBytes);\n    u32x4 ov[kChunks];\n#pragma unroll\n    for (int c = 0; c < kChunks; ++c) {\n#pragma unroll\n        for (int j = 0; j < 4; ++j) {\n            const f32x2 n = s[c][j] * r2;\n            ov[c][j] = pack(n * wf[c][j]);\n        }\n        __builtin_amdgcn_raw_buffer_store_b128(ov[c], norm_rsrc, voff + c * kChunkStride, 0, kNormalizedStore);\n    }\n    // every stored chunk stays in its VGPRs to here: nothing overwrites store data in flight\n#pragma unroll\n    for (int c = 0; c < kChunks; ++c) {\n        asm volatile(\"\" ::\"v\"(ro[c]), \"v\"(ov[c]));\n    }\n}\n\ntemplate <int kChunks>\nvoid launch(const at::Tensor& x, const at::Tensor& residual, const at::Tensor& weight, double epsilon,\n            at::Tensor& normalized, at::Tensor& residual_out, int64_t m, hipStream_t stream) {\n    add_rmsnorm_bf16_kernel<kChunks><<<dim3(static_cast<unsigned int>(m)), dim3(kThreads), 0, stream>>>(\n        x.data_ptr(), residual.data_ptr(), weight.data_ptr(), normalized.data_ptr(), residual_out.data_ptr(),\n        epsilon);\n}\n\nvoid run(const at::Tensor& x, const at::Tensor& residual, const at::Tensor& weight, double epsilon,\n         at::Tensor& normalized, at::Tensor& residual_out) {\n    TORCH_CHECK(x.dim() == 2, \"x must be [M, H], got \", x.sizes());\n    const int64_t m = x.size(0);\n    const int64_t h = x.size(1);\n    for (const at::Tensor* t : std::initializer_list<const at::Tensor*>{&x, &residual, &normalized, &residual_out}) {\n        TORCH_CHECK(t->sizes() == x.sizes(), \"x, residual, normalized, residual_out must share a shape\");\n    }\n    TORCH_CHECK(weight.dim() == 1 && weight.size(0) == h, \"weight must be [H]\");\n    TORCH_CHECK(h == 2048 || h == 4096 || h == 6144 || h == 8192,\n                \"hidden size must be 2048, 4096, 6144 or 8192, got \", h);\n    for (const at::Tensor* t :\n         std::initializer_list<const at::Tensor*>{&x, &residual, &weight, &normalized, &residual_out}) {\n        TORCH_CHECK(t->scalar_type() == at::kBFloat16, \"bf16 only, got \", t->scalar_type());\n        TORCH_CHECK(t->is_contiguous(), \"tensors must be contiguous\");\n        TORCH_CHECK(t->device() == x.device(), \"tensors must share a device\");\n    }\n    TORCH_CHECK(x.is_cuda(), \"tensors must be on the GPU\");\n    const auto stream = at::hip::getCurrentHIPStream();\n    TORCH_CHECK(stream.device_index() == x.get_device(), \"tensors are not on the current device\");\n    TORCH_CHECK(m <= INT32_MAX, \"too many rows: \", m);\n    if (m == 0) {\n        return;\n    }\n    switch (h) {\n    case 2048: launch<1>(x, residual, weight, epsilon, normalized, residual_out, m, stream); break;\n    case 4096: launch<2>(x, residual, weight, epsilon, normalized, residual_out, m, stream); break;\n    case 6144: launch<3>(x, residual, weight, epsilon, normalized, residual_out, m, stream); break;\n    case 8192: launch<4>(x, residual, weight, epsilon, normalized, residual_out, m, stream); break;\n    default: break;\n    }\n}\n\n}  // namespace\n\n#define TORCH_LIBRARY_EXPAND(ns, m) TORCH_LIBRARY(ns, m)\nTORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {\n    m.def(\"run(Tensor x, Tensor residual, Tensor weight, float epsilon, Tensor(a!) normalized, \"\n          \"Tensor(a!) residual_out) -> ()\",\n          &run);\n}\n"
+      }
+    ],
+    "description": null
+  }
+}

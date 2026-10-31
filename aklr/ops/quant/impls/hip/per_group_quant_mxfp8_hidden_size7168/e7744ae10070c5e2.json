@@ -1,36 +1,49 @@
 {
-  "schema_version": 5,
   "name": "per_group_quant_mxfp8_hidden_size7168",
-  "contract_id": "per_group_quant_mxfp8@1.0",
-  "description": "Quantize groups of 32 BF16 values to E4M3FN with row-major E8M0 dequantization scales, rounding each scale up to a power of two.",
-  "op_type": "quant",
+  "op_type": "per_group_quant_mxfp8",
   "axes": {
     "n_tokens": {
-      "type": "var",
-      "description": "Rows quantized independently."
+      "description": "Rows quantized independently.",
+      "type": "var"
     },
     "hidden_size": {
-      "type": "const",
+      "description": "Elements per row, divisible by 32.",
       "value": 7168,
-      "description": "Elements per row, divisible by 32."
+      "type": "const"
     },
     "n_groups": {
-      "type": "const",
+      "description": "Groups of 32 elements per row: hidden_size // 32.",
       "value": 224,
-      "description": "Groups of 32 elements per row."
+      "type": "const"
     }
   },
-  "attrs": {},
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1792
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2752
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 16384
+      },
+      "evaluations": []
+    }
+  ],
   "inputs": {
     "x": {
       "shape": [
         "n_tokens",
         "hidden_size"
       ],
-      "dtype": "bfloat16",
-      "distribution": {
-        "kind": "finite"
-      },
+      "dtype": null,
       "description": "Finite BF16 activations."
     }
   },
@@ -52,57 +65,35 @@
       "description": "E8M0 exponent bytes at [row, group]; scale is 2**(byte - 127)."
     }
   },
-  "workloads": [
-    {
-      "axes": {
-        "n_tokens": 1792
-      },
-      "accuracy": "passed",
-      "speedup": 1.054
-    },
-    {
-      "axes": {
-        "n_tokens": 2752
-      },
-      "accuracy": "passed",
-      "speedup": 1.08
-    },
-    {
-      "axes": {
-        "n_tokens": 16384
-      },
-      "accuracy": "passed",
-      "speedup": 1.068
-    }
+  "reference": "from __future__ import annotations\nimport math\nimport torch\nimport torch.nn.functional as F\n\ndef per_group_quant_mxfp8_reference(x) -> tuple[Tensor, Tensor]:\n    \"\"\"The scale multiply rounds to float32, then its exponent rounds up; the division by\n    that power of two and the FP8 rounding are the quantization itself.\"\"\"\n    import torch\n\n    x = x.double()\n    rows, columns = x.shape\n    grouped = x.reshape(rows, columns // 32, 32)\n    maximum = grouped.abs().amax(-1).clamp_min(float(torch.tensor(1e-10, dtype=torch.float32)))\n    divisor = float(torch.tensor(1.0 / 448.0, dtype=torch.float32))\n    raw = (maximum * divisor).to(torch.float32).contiguous().view(torch.int32)\n    exponent = (raw >> 23) + ((raw & 0x7FFFFF) != 0).to(torch.int32)\n    scale = (exponent << 23).contiguous().view(torch.float32).double()\n    values = (grouped / scale.unsqueeze(-1)).to(torch.float32).clamp(-448.0, 448.0)\n    return values.to(torch.float8_e4m3fn).double().reshape(rows, columns), exponent.to(torch.uint8)\n\nrun = per_group_quant_mxfp8_reference\n",
+  "check": "from __future__ import annotations\nimport torch\n\ndef _as_output_list(outputs: Any) -> List[Any]:\n    if isinstance(outputs, list):\n        return outputs\n    if isinstance(outputs, tuple):\n        return list(outputs)\n    return [outputs]\n\ndef default_tolerances(dtype: Union[torch.dtype, str]) -> Tuple[float, float]:\n    \"\"\"Return ``(rtol, atol)`` defaults for a trace correctness check.\n\n    These defaults are intentionally conservative for low-precision inference\n    data types. Template-specific ``check`` functions can override them by\n    passing explicit ``rtol`` and ``atol`` to :func:`default_check`.\n    \"\"\"\n    dtype_name = str(dtype).replace(\"torch.\", \"\")\n    if dtype_name in (\"float64\", \"double\"):\n        return 1e-7, 1e-7\n    if dtype_name in (\"float32\", \"float\"):\n        return 1e-5, 1e-5\n    if dtype_name in (\"float16\", \"half\"):\n        return 1e-3, 1e-3\n    if dtype_name == \"bfloat16\":\n        return 1e-2, 1e-2\n    if dtype_name.startswith(\"float8\"):\n        return 1e-1, 1e-1\n    if dtype_name.startswith(\"float4\") or \"fp4\" in dtype_name:\n        return 1.0, 1.0\n    return 0.0, 0.0\n\ndef _cosine_similarity(actual: torch.Tensor, expected: torch.Tensor) -> float:\n    actual = actual.reshape(-1).to(torch.float32)\n    expected = expected.reshape(-1).to(torch.float32)\n    finite = torch.isfinite(actual) & torch.isfinite(expected)\n    if not finite.any():\n        return 1.0\n    actual = actual[finite]\n    expected = expected[finite]\n    actual_norm = torch.linalg.vector_norm(actual)\n    expected_norm = torch.linalg.vector_norm(expected)\n    if actual_norm.item() == 0 or expected_norm.item() == 0:\n        return 1.0 if torch.equal(actual, expected) else 0.0\n    return ((actual * expected).sum() / (actual_norm * expected_norm)).item()\n\ndef default_check(\n    reference_outputs: Any,\n    actual_outputs: Any,\n    *,\n    rtol: Optional[float] = None,\n    atol: Optional[float] = None,\n    max_mismatch_pct: float = 0.0,\n    min_cos_sim: Optional[float] = 1.0 - 1e-3,\n) -> bool:\n    \"\"\"Validate actual outputs against reference outputs.\n\n    ``reference_outputs`` and ``actual_outputs`` may be lists/tuples,\n    dictionaries with matching keys, or single output values. Tensor outputs\n    are checked for shape equality, closeness, mismatch percentage, and cosine\n    similarity. Non-floating tensors are checked exactly unless\n    ``max_mismatch_pct`` allows mismatches. Non-tensor outputs use Python\n    equality.\n    \"\"\"\n    if isinstance(reference_outputs, dict) or isinstance(actual_outputs, dict):\n        if not isinstance(reference_outputs, dict) or not isinstance(actual_outputs, dict):\n            return False\n        if reference_outputs.keys() != actual_outputs.keys():\n            return False\n        refs = [reference_outputs[key] for key in reference_outputs]\n        actuals = [actual_outputs[key] for key in reference_outputs]\n    else:\n        refs = _as_output_list(reference_outputs)\n        actuals = _as_output_list(actual_outputs)\n\n    if len(refs) != len(actuals):\n        return False\n\n    for ref, actual in zip(refs, actuals, strict=True):\n        if isinstance(ref, torch.Tensor) != isinstance(actual, torch.Tensor):\n            return False\n        if not isinstance(ref, torch.Tensor):\n            if ref != actual:\n                return False\n            continue\n\n        if ref.shape != actual.shape:\n            return False\n        if ref.numel() == 0:\n            continue\n\n        ref_is_float = torch.is_floating_point(ref)\n        actual_is_float = torch.is_floating_point(actual)\n        if ref_is_float or actual_is_float:\n            tolerance_dtype = actual.dtype if actual_is_float else ref.dtype\n            default_rtol, default_atol = default_tolerances(tolerance_dtype)\n            rtol_value = default_rtol if rtol is None else rtol\n            atol_value = default_atol if atol is None else atol\n            close = torch.isclose(\n                actual.to(torch.float32),\n                ref.to(torch.float32),\n                rtol=rtol_value,\n                atol=atol_value,\n            )\n            mismatch_pct = 100.0 * (~close).sum().item() / close.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n            if min_cos_sim is not None:\n                cos_sim = _cosine_similarity(actual, ref)\n                if cos_sim < min_cos_sim:\n                    return False\n        else:\n            matches = actual == ref\n            mismatch_pct = 100.0 * (~matches).sum().item() / matches.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n\n    return True\n\ndef _exact_check(\n    reference_outputs,\n    actual_outputs,\n    *,\n    rtol=None,\n    atol=None,\n    max_mismatch_pct=0.0,\n    min_cos_sim=None,\n):\n    # the reference rounds as the op does: every value and scale is exact\n    return default_check(\n        reference_outputs,\n        actual_outputs,\n        rtol=0.0 if rtol is None else rtol,\n        atol=0.0 if atol is None else atol,\n        max_mismatch_pct=max_mismatch_pct,\n        min_cos_sim=min_cos_sim,\n    )\n\nrun = _exact_check\n",
+  "init": "from __future__ import annotations\nimport math\nimport torch\n\ndef _per_group_quant_init(*, n_tokens, hidden_size, device=\"cuda\", seed=0):\n    torch.manual_seed(seed)\n    return {\"x\": torch.randn(n_tokens, hidden_size, device=device).to(torch.bfloat16)}\n\nrun = _per_group_quant_init\n",
+  "tags": [],
+  "description": "Quantize groups of 32 BF16 values to E4M3FN with row-major E8M0 dequantization scales, rounding each scale up to a power of two.",
+  "constraints": [
+    "hidden_size % 32 == 0",
+    "n_groups == hidden_size // 32",
+    "x.dtype == 'bfloat16'"
   ],
-  "layout_variants": {
-    "by_name": {
-      "row_major": {
-        "layouts": {},
-        "detect_facts": []
-      }
-    }
-  },
-  "compare": {
-    "max_violation_fraction": 0.0,
-    "determinism": "bitwise",
-    "element_order": "fixed"
-  },
   "kernel": {
-    "language": "hip",
-    "targets": [
-      {
-        "arch": "gfx950",
-        "hardware": "MI355X"
-      }
-    ],
+    "name": "per_group_quant_mxfp8_hidden_size7168_hip_e7744ae10070c5e2",
     "author": "GEAK; AKLR port by Codex",
-    "entry_point": "kernel.hip::run",
+    "build": {
+      "language": "hip",
+      "target_hardware": [
+        "gfx950/MI355X"
+      ],
+      "entry_point": "kernel.hip::run",
+      "dependencies": [],
+      "destination_passing_style": true,
+      "binding": null
+    },
     "sources": [
       {
         "path": "kernel.hip",
         "content": "// Coalesced group-32 BF16 to MXFP8 quantization, two lanes per group.\n// SPDX-License-Identifier: MIT\n// Copyright (C) 2024-2026, Advanced Micro Devices, Inc. All rights reserved.\n#include <ATen/hip/HIPContext.h>\n#include <hip/hip_runtime.h>\n#include <torch/library.h>\n#include <cstdint>\n\nnamespace {\nusing u32x4 = uint32_t __attribute__((ext_vector_type(4)));\nusing u32x8 = uint32_t __attribute__((ext_vector_type(8)));\nusing u16x2 = unsigned short __attribute__((ext_vector_type(2)));\n\ntemplate<int Threads>\n__global__ __launch_bounds__(Threads)\nvoid quantize(const uint16_t* __restrict__ x, uint8_t* __restrict__ y,\n              uint8_t* __restrict__ scales, int64_t elements) {\n    const int64_t slot = int64_t(blockIdx.x) * Threads + threadIdx.x;\n    if (slot >= elements / 16) return;\n    const u32x8 data = *reinterpret_cast<const u32x8*>(x + slot * 16);\n    u16x2 maximum = __builtin_bit_cast(u16x2, data[0] & 0x7FFF7FFFu);\n#pragma unroll\n    for (int i = 1; i < 8; ++i)\n        maximum = __builtin_elementwise_max(maximum, __builtin_bit_cast(u16x2, data[i] & 0x7FFF7FFFu));\n    uint32_t max_bits = maximum[0] > maximum[1] ? maximum[0] : maximum[1];\n    const uint32_t other = __builtin_amdgcn_mov_dpp(max_bits, 0xB1, 0xF, 0xF, true);\n    max_bits = max_bits > other ? max_bits : other;\n    const float amax = fmaxf(1e-10f, __builtin_bit_cast(float, max_bits << 16));\n    const uint32_t unrounded = __builtin_bit_cast(uint32_t, amax * (1.0f / 448.0f));\n    const uint32_t exponent = (unrounded >> 23) + ((unrounded & 0x7FFFFFu) != 0);\n    const float scale = __builtin_bit_cast(float, exponent << 23);\n    const float inverse = 1.0f / scale;\n    u32x4 packed;\n#pragma unroll\n    for (int i = 0; i < 4; ++i) {\n        const uint32_t lo = data[2 * i], hi = data[2 * i + 1];\n        const float a = __builtin_bit_cast(float, lo << 16) * inverse;\n        const float b = __builtin_bit_cast(float, lo & 0xffff0000u) * inverse;\n        const float c = __builtin_bit_cast(float, hi << 16) * inverse;\n        const float d = __builtin_bit_cast(float, hi & 0xffff0000u) * inverse;\n        int result = __builtin_amdgcn_cvt_pk_fp8_f32(a, b, 0, false);\n        result = __builtin_amdgcn_cvt_pk_fp8_f32(c, d, result, true);\n        packed[i] = result;\n    }\n    *reinterpret_cast<u32x4*>(y + slot * 16) = packed;\n    if ((threadIdx.x & 1) == 0) scales[slot / 2] = exponent;\n}\n\nvoid run(const at::Tensor& x, at::Tensor& quantized, at::Tensor& scales) {\n    const int64_t elements = x.numel();\n    auto xp = static_cast<const uint16_t*>(x.data_ptr());\n    auto yp = static_cast<uint8_t*>(quantized.data_ptr());\n    auto sp = static_cast<uint8_t*>(scales.data_ptr());\n    const auto stream = at::hip::getCurrentHIPStream();\n    if (elements >= (int64_t{32} << 20))\n        quantize<128><<<(elements / 16 + 127) / 128, 128, 0, stream>>>(xp, yp, sp, elements);\n    else\n        quantize<256><<<(elements / 16 + 255) / 256, 256, 0, stream>>>(xp, yp, sp, elements);\n}\n} // namespace\n\n#define TORCH_LIBRARY_EXPAND(ns, m) TORCH_LIBRARY(ns, m)\nTORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {\n    m.def(\"run(Tensor x, Tensor(a!) quantized, Tensor(b!) scales) -> ()\", &run);\n}\n"
       }
-    ]
+    ],
+    "description": null
   }
 }
