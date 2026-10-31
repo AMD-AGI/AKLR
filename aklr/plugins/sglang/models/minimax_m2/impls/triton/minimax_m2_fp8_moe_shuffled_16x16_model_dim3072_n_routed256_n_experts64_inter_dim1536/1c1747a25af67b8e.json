@@ -166,7 +166,9 @@
       },
       "scalars": {
         "expert_offset": 192
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 3.213
     },
     {
       "axes": {
@@ -174,7 +176,9 @@
       },
       "scalars": {
         "expert_offset": 192
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 2.638
     },
     {
       "axes": {
@@ -182,7 +186,9 @@
       },
       "scalars": {
         "expert_offset": 192
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.816
     },
     {
       "axes": {
@@ -190,7 +196,9 @@
       },
       "scalars": {
         "expert_offset": 192
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.384
     },
     {
       "axes": {
@@ -198,7 +206,9 @@
       },
       "scalars": {
         "expert_offset": 192
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.357
     }
   ],
   "layout_variants": {

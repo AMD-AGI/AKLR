@@ -474,7 +474,9 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 3.54
     },
     {
       "axes": {
@@ -489,7 +491,9 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 3.519
     },
     {
       "axes": {
@@ -504,7 +508,9 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 3.557
     },
     {
       "axes": {
@@ -519,7 +525,9 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 3.404
     },
     {
       "axes": {
@@ -534,7 +542,9 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 3.406
     },
     {
       "axes": {
@@ -549,7 +559,9 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 3.895
     },
     {
       "axes": {
@@ -564,7 +576,9 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 3.899
     },
     {
       "axes": {
@@ -579,7 +593,9 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 2.761
     },
     {
       "axes": {
@@ -594,7 +610,9 @@
         "eps": 9.999999747378752e-06,
         "k_norm_eps": 9.999999974752427e-07,
         "sm_scale": 0.0625
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 2.132
     }
   ],
   "layout_variants": {

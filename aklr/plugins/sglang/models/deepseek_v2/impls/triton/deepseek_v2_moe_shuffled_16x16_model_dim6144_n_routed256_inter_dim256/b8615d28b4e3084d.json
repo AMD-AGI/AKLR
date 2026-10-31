@@ -163,7 +163,8 @@
       },
       "scalars": {
         "routed_scaling_factor": 2.5
-      }
+      },
+      "accuracy": "failed"
     }
   ],
   "layout_variants": {
