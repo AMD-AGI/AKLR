@@ -2,7 +2,7 @@ name: AKLR-CI
 
 env:
   # Shared by all GPU jobs; container.image cannot reference the env context.
-  AKLR_CI_IMAGE: &ci_image lmsysorg/sglang:v0.5.22-rocm10-mi35x@sha256:1438dd8b9000adaefb5828edb1cc5713992815d4296f4ad1a1e98dee4e9c7e5f
+  AKLR_CI_IMAGE: &ci_image lmsysorg/sglang:v0.5.22-rocm10-mi35x
   PYTHONDONTWRITEBYTECODE: '1'
   # The publish-measurement bot's rolling PR: sent and opened by the bot, from aklr-perf/main of
   # this repository. perf-guard.yaml spells the same expression.
