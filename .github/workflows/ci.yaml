@@ -55,7 +55,7 @@ defaults:
 
 jobs:
   # The audit gate rejects invalid schemas, audit violations and mixed changes
-  # before any GPU node is requested (D §8.4).
+  # before PR code reaches the GPU runner (D §8.4).
   code-lint:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -85,8 +85,8 @@ jobs:
           echo '🎉 [1/4] Begin AKLR lint.'
           echo "🐧 Runner: $RUNNER_NAME ($RUNNER_OS); event: $GITHUB_EVENT_NAME; ref: $GITHUB_REF"
           echo "⏱️ Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          echo '🧭 Pipeline: lint → GPU node → AKLR tests → validation → coverage report.'
-          echo '🔎 Checks: pre-commit, import contracts, export check, audit.'
+          echo '🧭 Pipeline: lint → AKLR tests (GPU) → validation → coverage report.'
+          echo '🔎 Checks: pre-commit, export check, audit.'
           if [[ "$GPU_ENABLED" == true ]]; then
             echo '🟢 GPU jobs are eligible; each test stage must pass before the next starts.' | tee -a "$GITHUB_STEP_SUMMARY"
           else
@@ -117,7 +117,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      # The fork has existing lint findings. Apply the pre-commit hooks to each
+      # The tree has existing lint findings. Apply the pre-commit hooks to each
       # change only, without requiring a repository-wide reformat.
       - name: Select lint range
         id: lint
@@ -228,8 +228,8 @@ jobs:
 
   unittest-aklr:
     needs: code-lint
-    if: ${{ !cancelled() && needs.code-lint.result == 'success' && needs.code-lint.outputs.gpu_enabled == 'true' }}
-    runs-on: aklr-gpu
+    if: needs.code-lint.outputs.gpu_enabled == 'true'
+    runs-on: &gpu_runner aklr-gpu
     # Bots, Bot-sent events and outside PRs wait for maintainer approval before PR code reaches the GPU runner (D §8.5).
     environment: >-
       ${{ github.event.sender.type != 'Bot' &&
@@ -239,7 +239,7 @@ jobs:
           && 'gpu-trusted' || 'gpu' }}
     container:
       image: *ci_image
-      options: >-
+      options: &gpu_container_options >-
         --env HOME=/github/home --env XDG_CACHE_HOME=/github/home/.cache
         --device=/dev/kfd --device=/dev/dri --ipc=host
         --security-opt=seccomp=unconfined --ulimit memlock=-1:-1
@@ -438,17 +438,14 @@ jobs:
   # No secrets and no actions/cache: this job runs the PR's code and kernels.
   validation:
     needs: [code-lint, unittest-aklr]
-    if: ${{ !cancelled() && needs.unittest-aklr.result == 'success' && needs.code-lint.outputs.has_bench_paths == 'true' }}
-    runs-on: aklr-gpu
+    if: needs.code-lint.outputs.has_bench_paths == 'true'
+    runs-on: *gpu_runner
     # Only the read-only HF hub cache is mounted: no HF_HOME token reaches PR code.
     # AKLR_SHARED_HF_HUB_DIR: a pre-filled HF hub directory (models--org--name), at the same path on every GPU node.
     # It also holds the e2e texts (datasets--org--name), at the revisions aklr/benchmarks/models/main.py pins.
     container:
       image: *ci_image
-      options: >-
-        --env HOME=/github/home --env XDG_CACHE_HOME=/github/home/.cache
-        --device=/dev/kfd --device=/dev/dri --ipc=host
-        --security-opt=seccomp=unconfined --ulimit memlock=-1:-1
+      options: *gpu_container_options
       volumes:
         - ${{ vars.AKLR_SHARED_HF_HUB_DIR }}:${{ vars.AKLR_SHARED_HF_HUB_DIR }}:ro
       env:
