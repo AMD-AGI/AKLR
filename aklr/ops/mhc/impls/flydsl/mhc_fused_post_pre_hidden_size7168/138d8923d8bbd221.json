@@ -1,0 +1,233 @@
+{
+  "name": "mhc_fused_post_pre_hidden_size7168",
+  "op_type": "mhc_fused_post_pre",
+  "axes": {
+    "n_tokens": {
+      "description": "Tokens.",
+      "type": "var"
+    },
+    "hidden_size": {
+      "description": "Hidden size of one stream.",
+      "value": 7168,
+      "type": "const"
+    },
+    "n_streams": {
+      "description": "Residual streams.",
+      "value": 4,
+      "type": "const"
+    },
+    "n_mix_logits": {
+      "description": "Mix logits: 4 pre, 4 post, 16 combination.",
+      "value": 24,
+      "type": "const"
+    },
+    "n_mix_scales": {
+      "description": "Pre, post and combination.",
+      "value": 3,
+      "type": "const"
+    },
+    "one": {
+      "description": "A post mix per stream.",
+      "value": 1,
+      "type": "const"
+    },
+    "projection_size": {
+      "description": "Projection input: n_streams * hidden_size.",
+      "value": 28672,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 32
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 128
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "x": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The layer's output."
+    },
+    "residual": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "Four residual streams."
+    },
+    "post_mix": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "one"
+      ],
+      "dtype": "float32",
+      "description": "Weight of x in each new stream."
+    },
+    "comb_mix": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "n_streams"
+      ],
+      "dtype": "float32",
+      "description": "Weight of old stream i in new stream j, at [i, j]."
+    },
+    "proj_weight": {
+      "shape": [
+        "n_mix_logits",
+        "projection_size"
+      ],
+      "dtype": "float32",
+      "description": "Projects the flattened streams to the mix logits."
+    },
+    "mix_scale": {
+      "shape": [
+        "n_mix_scales"
+      ],
+      "dtype": "float32",
+      "description": "Scale of the pre, post and combination logits."
+    },
+    "mix_bias": {
+      "shape": [
+        "n_mix_logits"
+      ],
+      "dtype": "float32",
+      "description": "Bias of the mix logits."
+    },
+    "rms_eps": {
+      "dtype": "float32",
+      "description": "Added to the mean square of the streams.",
+      "shape": null
+    },
+    "pre_eps": {
+      "dtype": "float32",
+      "description": "Added to each pre mix after its sigmoid.",
+      "shape": null
+    },
+    "sinkhorn_eps": {
+      "dtype": "float32",
+      "description": "Added in each Sinkhorn normalization.",
+      "shape": null
+    },
+    "post_multiplier": {
+      "dtype": "float32",
+      "description": "Multiplies each post mix after its sigmoid.",
+      "shape": null
+    },
+    "sinkhorn_iters": {
+      "dtype": "int32",
+      "description": "Sinkhorn normalizations of the combination mix.",
+      "shape": null
+    },
+    "norm_weight": {
+      "shape": [
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "Weight of the rms norm of layer_input."
+    },
+    "norm_eps": {
+      "dtype": "float32",
+      "description": "Added to the mean square of layer_input.",
+      "shape": null
+    }
+  },
+  "outputs": {
+    "next_post_mix": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "one"
+      ],
+      "dtype": "float32",
+      "description": "Post mix of the next mHC post."
+    },
+    "next_comb_mix": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "n_streams"
+      ],
+      "dtype": "float32",
+      "description": "Combination mix of the next mHC post."
+    },
+    "layer_input": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The streams summed under the pre mix."
+    },
+    "next_residual": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The new streams."
+    }
+  },
+  "reference": "from __future__ import annotations\nimport math\nimport torch\nimport torch.nn.functional as F\n\ndef mhc_post_reference(x, residual, post_mix, comb_mix) -> Tensor:\n    \"\"\"Out[t, j] = x[t] * post_mix[t, j] + sum_i comb_mix[t, i, j] * residual[t, i].\"\"\"\n    residual = residual.double()\n    return x.double().unsqueeze(1) * post_mix.double() + comb_mix.double().mT @ residual\n\ndef mhc_pre_reference(\n    residual,\n    proj_weight,\n    mix_scale,\n    mix_bias,\n    *,\n    rms_eps=1e-6,\n    pre_eps=1e-6,\n    sinkhorn_eps=1e-6,\n    post_multiplier=1.0,\n    sinkhorn_iters=20,\n    norm_weight=None,\n    norm_eps=1e-6,\n) -> tuple[Tensor, Tensor, Tensor]:\n    \"\"\"Rms-scaled projection of the residual streams, then sigmoid and Sinkhorn mixes.\"\"\"\n    import torch\n\n    residual = residual.double()\n    n_tokens, streams, _ = residual.shape\n    flat = residual.flatten(1)\n    rms = torch.rsqrt(flat.square().mean(dim=-1, keepdim=True) + rms_eps)\n    mixes = (flat @ proj_weight.double().mT) * rms\n    mix_scale, mix_bias = mix_scale.double(), mix_bias.double()\n    sizes = (streams, streams, streams * streams)\n    pre_logits, post_logits, comb_logits = mixes.split(sizes, dim=-1)\n    pre_bias, post_bias, comb_bias = mix_bias.split(sizes)\n    pre_mix = torch.sigmoid(pre_logits * mix_scale[0] + pre_bias) + pre_eps\n    post_mix = torch.sigmoid(post_logits * mix_scale[1] + post_bias) * post_multiplier\n    comb_mix = (comb_logits * mix_scale[2] + comb_bias).reshape(n_tokens, streams, streams)\n    comb_mix = comb_mix.softmax(dim=-1) + sinkhorn_eps\n    comb_mix = comb_mix / (comb_mix.sum(dim=-2, keepdim=True) + sinkhorn_eps)\n    for _ in range(sinkhorn_iters - 1):\n        comb_mix = comb_mix / (comb_mix.sum(dim=-1, keepdim=True) + sinkhorn_eps)\n        comb_mix = comb_mix / (comb_mix.sum(dim=-2, keepdim=True) + sinkhorn_eps)\n    layer_input = (residual * pre_mix.unsqueeze(-1)).sum(dim=1)\n    if norm_weight is not None:\n        rms = torch.rsqrt(layer_input.square().mean(dim=-1, keepdim=True) + norm_eps)\n        layer_input = layer_input * rms * norm_weight.double()\n    return post_mix.unsqueeze(-1), comb_mix, layer_input\n\ndef mhc_fused_post_pre_reference(\n    x,\n    residual,\n    post_mix,\n    comb_mix,\n    proj_weight,\n    mix_scale,\n    mix_bias,\n    *,\n    rms_eps=1e-6,\n    pre_eps=1e-6,\n    sinkhorn_eps=1e-6,\n    post_multiplier=1.0,\n    sinkhorn_iters=20,\n    norm_weight=None,\n    norm_eps=1e-6,\n) -> tuple[Tensor, Tensor, Tensor, Tensor]:\n    \"\"\"Post, then the next pre on its result; with norm_weight, an rms norm of\n    layer_input.\"\"\"\n    next_residual = mhc_post_reference(x, residual, post_mix, comb_mix)\n    rounded = next_residual.to(residual.dtype)\n    next_post_mix, next_comb_mix, layer_input = mhc_pre_reference(\n        rounded,\n        proj_weight,\n        mix_scale,\n        mix_bias,\n        rms_eps=rms_eps,\n        pre_eps=pre_eps,\n        sinkhorn_eps=sinkhorn_eps,\n        post_multiplier=post_multiplier,\n        sinkhorn_iters=sinkhorn_iters,\n        norm_weight=norm_weight,\n        norm_eps=norm_eps,\n    )\n    return next_post_mix, next_comb_mix, layer_input, next_residual\n\nrun = mhc_fused_post_pre_reference\n",
+  "check": "from __future__ import annotations\nimport torch\n\ndef _as_output_list(outputs: Any) -> List[Any]:\n    if isinstance(outputs, list):\n        return outputs\n    if isinstance(outputs, tuple):\n        return list(outputs)\n    return [outputs]\n\ndef default_tolerances(dtype: Union[torch.dtype, str]) -> Tuple[float, float]:\n    \"\"\"Return ``(rtol, atol)`` defaults for a trace correctness check.\n\n    These defaults are intentionally conservative for low-precision inference\n    data types. Template-specific ``check`` functions can override them by\n    passing explicit ``rtol`` and ``atol`` to :func:`default_check`.\n    \"\"\"\n    dtype_name = str(dtype).replace(\"torch.\", \"\")\n    if dtype_name in (\"float64\", \"double\"):\n        return 1e-7, 1e-7\n    if dtype_name in (\"float32\", \"float\"):\n        return 1e-5, 1e-5\n    if dtype_name in (\"float16\", \"half\"):\n        return 1e-3, 1e-3\n    if dtype_name == \"bfloat16\":\n        return 1e-2, 1e-2\n    if dtype_name.startswith(\"float8\"):\n        return 1e-1, 1e-1\n    if dtype_name.startswith(\"float4\") or \"fp4\" in dtype_name:\n        return 1.0, 1.0\n    return 0.0, 0.0\n\ndef _cosine_similarity(actual: torch.Tensor, expected: torch.Tensor) -> float:\n    actual = actual.reshape(-1).to(torch.float32)\n    expected = expected.reshape(-1).to(torch.float32)\n    finite = torch.isfinite(actual) & torch.isfinite(expected)\n    if not finite.any():\n        return 1.0\n    actual = actual[finite]\n    expected = expected[finite]\n    actual_norm = torch.linalg.vector_norm(actual)\n    expected_norm = torch.linalg.vector_norm(expected)\n    if actual_norm.item() == 0 or expected_norm.item() == 0:\n        return 1.0 if torch.equal(actual, expected) else 0.0\n    return ((actual * expected).sum() / (actual_norm * expected_norm)).item()\n\ndef default_check(\n    reference_outputs: Any,\n    actual_outputs: Any,\n    *,\n    rtol: Optional[float] = None,\n    atol: Optional[float] = None,\n    max_mismatch_pct: float = 0.0,\n    min_cos_sim: Optional[float] = 1.0 - 1e-3,\n) -> bool:\n    \"\"\"Validate actual outputs against reference outputs.\n\n    ``reference_outputs`` and ``actual_outputs`` may be lists/tuples,\n    dictionaries with matching keys, or single output values. Tensor outputs\n    are checked for shape equality, closeness, mismatch percentage, and cosine\n    similarity. Non-floating tensors are checked exactly unless\n    ``max_mismatch_pct`` allows mismatches. Non-tensor outputs use Python\n    equality.\n    \"\"\"\n    if isinstance(reference_outputs, dict) or isinstance(actual_outputs, dict):\n        if not isinstance(reference_outputs, dict) or not isinstance(actual_outputs, dict):\n            return False\n        if reference_outputs.keys() != actual_outputs.keys():\n            return False\n        refs = [reference_outputs[key] for key in reference_outputs]\n        actuals = [actual_outputs[key] for key in reference_outputs]\n    else:\n        refs = _as_output_list(reference_outputs)\n        actuals = _as_output_list(actual_outputs)\n\n    if len(refs) != len(actuals):\n        return False\n\n    for ref, actual in zip(refs, actuals, strict=True):\n        if isinstance(ref, torch.Tensor) != isinstance(actual, torch.Tensor):\n            return False\n        if not isinstance(ref, torch.Tensor):\n            if ref != actual:\n                return False\n            continue\n\n        if ref.shape != actual.shape:\n            return False\n        if ref.numel() == 0:\n            continue\n\n        ref_is_float = torch.is_floating_point(ref)\n        actual_is_float = torch.is_floating_point(actual)\n        if ref_is_float or actual_is_float:\n            tolerance_dtype = actual.dtype if actual_is_float else ref.dtype\n            default_rtol, default_atol = default_tolerances(tolerance_dtype)\n            rtol_value = default_rtol if rtol is None else rtol\n            atol_value = default_atol if atol is None else atol\n            close = torch.isclose(\n                actual.to(torch.float32),\n                ref.to(torch.float32),\n                rtol=rtol_value,\n                atol=atol_value,\n            )\n            mismatch_pct = 100.0 * (~close).sum().item() / close.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n            if min_cos_sim is not None:\n                cos_sim = _cosine_similarity(actual, ref)\n                if cos_sim < min_cos_sim:\n                    return False\n        else:\n            matches = actual == ref\n            mismatch_pct = 100.0 * (~matches).sum().item() / matches.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n\n    return True\n\ndef _mhc_check(\n    reference_outputs,\n    actual_outputs,\n    *,\n    rtol=None,\n    atol=None,\n    max_mismatch_pct=0.0,\n    min_cos_sim=None,\n):\n    # aiter's mHC tests: allclose(atol=1e-2, rtol=1e-2)\n    return default_check(\n        reference_outputs,\n        actual_outputs,\n        rtol=1e-2 if rtol is None else rtol,\n        atol=1e-2 if atol is None else atol,\n        max_mismatch_pct=max_mismatch_pct,\n        min_cos_sim=min_cos_sim,\n    )\n\nrun = _mhc_check\n",
+  "init": "from __future__ import annotations\nimport math\nimport torch\n\ndef _mhc_fused_post_pre_init(*, n_tokens, hidden_size, device=\"cuda\", seed=0):\n    torch.manual_seed(seed)\n    projection_size = 4 * hidden_size\n\n    def log_uniform(shape, lo, hi):\n        return torch.exp2(torch.empty(shape, device=device).uniform_(lo, hi))\n\n    return {\n        \"x\": torch.randn(n_tokens, hidden_size, device=device).to(torch.bfloat16),\n        \"residual\": torch.randn(n_tokens, 4, hidden_size, device=device).to(torch.bfloat16),\n        \"post_mix\": log_uniform((n_tokens, 4, 1), -3.32, -0.15),\n        \"comb_mix\": log_uniform((n_tokens, 4, 4), -4.0, 0.0),\n        \"proj_weight\": torch.randn(24, projection_size, device=device) / math.sqrt(projection_size),\n        \"mix_scale\": torch.ones(3, device=device),\n        \"mix_bias\": torch.randn(24, device=device),\n        \"rms_eps\": 1e-6,\n        \"pre_eps\": 1e-6,\n        \"sinkhorn_eps\": 1e-6,\n        \"post_multiplier\": 2.0,\n        \"sinkhorn_iters\": 20,\n        \"norm_weight\": log_uniform(hidden_size, -1.0, 0.58).to(torch.bfloat16),\n        \"norm_eps\": 1e-6,\n    }\n\nrun = _mhc_fused_post_pre_init\n",
+  "tags": [],
+  "description": "mHC post, then the next mHC pre on the new streams rounded to residual's dtype; aiter's return order (next_post_mix, next_comb_mix, layer_input, next_residual), not sglang's residual-first order.",
+  "constraints": [
+    "projection_size == n_streams * hidden_size",
+    "sinkhorn_iters >= 1"
+  ],
+  "kernel": null
+}

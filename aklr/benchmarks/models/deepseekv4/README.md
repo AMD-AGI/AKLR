@@ -102,14 +102,13 @@ Inputs are recorded before in-place mutation, outside the timing clocks; tensor 
 
 The first three layers route by hash; the rest use a learned gate. The benchmark's balanced-routing override applies to both. Actual quantization and parallel layout are recorded in the report rather than inferred from the checkpoint name.
 
-## AKLR schema export
+## AKLR workload tracing
 
-Record every call that reaches a AKLR operator (an `@api` function, or an AITER entry point bound by `aklr_proxy`) during a run, then export the schemas:
+Record every call that reaches a AKLR operator (a `@aklr_api` function, or an AITER entry point bound by `aklr_proxy`) during a run; at exit each call's shape is added as a workload to the kernel-less schema file of its scenario:
 
 ```bash
-export AKLR_EXPORT=1
-export AKLR_EXPORT_DIR=/tmp/aklr_export   # default: ./aklr_export, relative to the cwd above
-python -m aklr export --language flydsl   # from the repository root, after the run
+export AKLR_ENABLE_TRACING=1
+export AKLR_SCHEMA_PATH=/tmp/aklr_schemas   # also the dataset dispatch reads; unset: written into aklr/ops
 ```
 
 See the workflow in `aklr/ops/README.md`. Native SGLang/AITER calls that do not go through AKLR are not recorded.
@@ -123,7 +122,7 @@ export AITER_BF16_FP8_MOE_BOUND=16 MORI_SHMEM_MODE=ISOLATION SGLANG_MORI_NUM_MAX
 MORI="--moe-a2a-backend mori --moe-dense-tp-size 1 --enable-dp-lm-head --chunked-prefill-size 256"
 for cfg in "--tp-size 8" "--tp-size 8 --enable-dp-attention --dp-size 8" \
            "--tp-size 8 --ep-size 8" "--tp-size 8 --ep-size 8 --enable-dp-attention --dp-size 8 $MORI"; do
-    AKLR_EXPORT=1 python3 profile_decode.py --model "$M" --load-format dummy $cfg \
+    AKLR_ENABLE_TRACING=1 python3 profile_decode.py --model "$M" --load-format dummy $cfg \
         --ISL 100000 --CONC 1 2 4 8 16 32 64 128 256 512 1024 2048 4096 --reps 10 --repeat 2
 done
 ```

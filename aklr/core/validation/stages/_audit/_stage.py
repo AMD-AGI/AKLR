@@ -9,46 +9,56 @@ import json
 from collections.abc import Collection, Iterable, Iterator, Sequence
 from itertools import starmap
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from aklr.core.contract import op
-from aklr.core.contract.registry import ContractRegistry
+from pydantic import TypeAdapter, ValidationError
+
+from aklr.core.schema import Schema, Tensor
+from aklr.core.schema._collection import OPS_DIR, SchemaCollection
 from aklr.core.validation.stages._audit._hip import check_hip_kernel
-from aklr.core.validation.stages._audit._report import AuditReport
 from aklr.core.validation.stages._audit._rules import SOURCE_RULES
 from aklr.core.validation.stages._report._finding import Finding, FindingCode
-from aklr.core.validation.stages.stage import PipelineStage
-from aklr.core.validation.stages.validation_scope import ValidationScope
+from aklr.core.validation.stages._report._markdown import axes_text
+from aklr.core.validation.stages.stage import PipelineStage, StageReport
+from aklr.core.validation.stages.validation_scope import (
+    SCHEMA_PATH_PATTERN,
+    ValidationScope,
+)
 
 if TYPE_CHECKING:
-    from aklr.core.contract.spec import KernelSpec
+    from aklr.core.schema._kernel import Kernel
     from aklr.core.validation.pipeline import PipelineReport
 
 __all__ = ["AuditStage", "check_kernel"]
 
 
-class AuditStage(PipelineStage[AuditReport]):
+class AuditStage(PipelineStage):
     name = "audit"
-    report_type = AuditReport
+    report_type = StageReport
 
     def __init__(self, *, allow_measured_edits: bool = False) -> None:
         # skip PERF_EDITED: the bot's measurement PR only
         self._allow_measured_edits = allow_measured_edits
 
-    def run(self, scope: ValidationScope, earlier: PipelineReport) -> AuditReport:
+    def run(self, scope: ValidationScope, earlier: PipelineReport) -> StageReport:
         self.progress.write(f"checking {len(scope.schema_paths)} schemas")
-        registry = ContractRegistry.default()
         findings = []
         for path in scope.schema_paths:
-            findings += self._schema_findings(path, scope, registry)
+            findings += self._schema_findings(path, scope)
+        findings += self._collection_findings(scope)
         if scope.base_sha:
             self.progress.write(f"checking changes against base {scope.base_sha[:12]}")
             findings += self._change_findings(scope)
-        return AuditReport.from_findings(findings)
+        return StageReport.from_findings(self.name, findings)
 
-    def _schema_findings(
-        self, path: Path, scope: ValidationScope, registry: ContractRegistry
-    ) -> list[Finding]:
+    def _collection_findings(self, scope: ValidationScope) -> list[Finding]:
+        try:
+            SchemaCollection.from_layout(scope.layout)
+        except ValueError as e:
+            return [Finding.unlocated(FindingCode.SCHEMA_INVALID, str(e))]
+        return []
+
+    def _schema_findings(self, path: Path, scope: ValidationScope) -> list[Finding]:
         root = scope.root.resolve()
         path = path.resolve()
         schema_path = path.relative_to(root).as_posix()
@@ -64,28 +74,57 @@ class AuditStage(PipelineStage[AuditReport]):
                 for line in lines
             ]
 
-        raw = path.read_bytes()
         try:
-            schema = registry.parse_schema(raw, schema_path)
-        except ValueError as e:
-            return invalid(str(e).splitlines())
-        contract = registry.get(schema.contract_id)
-        errors = contract.schema_errors(Path(schema_path), schema)
+            schema = TypeAdapter(Schema).validate_json(path.read_bytes())
+        except ValidationError as e:
+            return invalid([f"{'.'.join(map(str, d['loc']))}: {d['msg']}" for d in e.errors()])
+        errors = []
+        match = SCHEMA_PATH_PATTERN.fullmatch(schema_path)
+        if match is None:
+            errors.append(f"not at {OPS_DIR}/<op>/impls/<language>/<name>/<uuid>.json")
+        elif match["name"] != schema.name:
+            errors.append(f"the directory is not the name {schema.name}")
+        elif schema.kernel is not None and match["language"] != schema.kernel.build.language:
+            errors.append(f"not under impls/{schema.kernel.build.language}")
+        if schema.kernel is not None and schema.init is None:
+            errors.append("a schema with a kernel has no init to draw its inputs")
+        seen = set()
+        for w in schema.workloads:
+            at = f"workload {{{axes_text(w.axes)}}}"
+            if not set(w.axes) <= set(schema.var_axes):
+                errors.append(f"{at}: axes are not of {schema.var_axes}")
+            if tuple(w.axes.items()) in seen:
+                errors.append(f"{at}: repeats")
+            seen.add(tuple(w.axes.items()))
         if errors:
             return invalid(errors)
-        if not schema.kernel.sources:  # a definition: no kernel to audit
+        if schema.kernel is None:
             return []
-        if schema.kernel.language == "hip":
-            return list(check_hip_kernel(schema_path, schema.kernel))
-        return list(
-            check_kernel(
-                schema_path,
-                schema.kernel,
-                call_keys=schema.kernel_call_keys,
-                tensor_names=tuple(contract.tensors()),
-                mutable_names=tuple(contract.mutable_tensors),
+        if schema.kernel.build.language == "hip":
+            family, rejections = "SH", check_hip_kernel(schema.kernel)
+        else:
+            call_keys = [*schema.inputs]
+            if schema.kernel.build.destination_passing_style:
+                call_keys += schema.outputs
+            tensors = {**schema.inputs, **schema.outputs}
+            family, rejections = (
+                "SA",
+                check_kernel(
+                    schema.kernel,
+                    call_keys=call_keys,
+                    tensor_names=tuple(n for n, t in tensors.items() if isinstance(t, Tensor)),
+                    output_names=tuple(schema.outputs),
+                ),
             )
-        )
+        return [
+            Finding(
+                code=FindingCode.SOURCE_REJECTED,
+                schema_path=schema_path,
+                axes=None,
+                detail=f"{family}{rule} {path}:{line} {what}",
+            )
+            for path, line, rule, what in sorted(rejections)
+        ]
 
     def _change_findings(self, scope: ValidationScope) -> list[Finding]:
         base_parts = functools.cache(lambda p: _schema_parts_of(scope.text_at_base(p)))
@@ -101,8 +140,8 @@ class AuditStage(PipelineStage[AuditReport]):
                 continue
             # text_at_base raises on a new path; a new or unparsable base has none
             base = base_parts(path) if path in at_base else None
-            base_measured = base[1] if base else {}
-            edited = [k for k, parts in head[1].items() if parts != base_measured.get(k, {})]
+            base_measured = base or {}
+            edited = [k for k, evaluations in head.items() if evaluations != base_measured.get(k, [])]
             if edited:
                 findings.append(
                     Finding(
@@ -110,21 +149,19 @@ class AuditStage(PipelineStage[AuditReport]):
                         schema_path=path,
                         axes=None,
                         detail=f"measured fields at {'; '.join(edited)} differ from"
-                        " the base: only the bot writes speedup and accuracy",
+                        " the base: only the bot writes evaluations",
                     )
                 )
         return findings
 
 
-def _schema_parts_of(text: str | None) -> tuple[dict[str, Any], dict[str, dict]] | None:
+def _schema_parts_of(text: str | None) -> dict[str, list] | None:
     if text is None:
         return None
     try:
         parsed = json.loads(text)
-        if not isinstance(parsed, dict):
-            return None
-        return op.OpContract.authored_parts(parsed), op.OpContract.measured_parts(parsed)
-    except ValueError:
+        return {axes_text(w["axes"]): w.get("evaluations", []) for w in parsed["workloads"]}
+    except (ValueError, TypeError, KeyError):
         return None
 
 
@@ -138,16 +175,15 @@ _DEVICE_DECORATORS = (
 
 
 def check_kernel(
-    schema_path: str,
-    kernel: KernelSpec,
+    kernel: Kernel,
     *,
     call_keys: Collection[str],
     tensor_names: Collection[str],
-    mutable_names: Collection[str],
-) -> tuple[Finding, ...]:
-    """Every SA0-SA4 rejection of the kernel of the schema at ``schema_path``."""
+    output_names: Collection[str],
+) -> set[tuple[str, int, int, str]]:
+    """Every SA0-SA4 rejection of a kernel: (path, line, rule, what)."""
     try:
-        kernel_sources = KernelSources(kernel, call_keys, tensor_names, mutable_names)
+        kernel_sources = KernelSources(kernel, call_keys, tensor_names, output_names)
         parsed_sources = kernel_sources.parsed_sources
         reached = kernel_sources.reach()
         node_args = [
@@ -166,16 +202,8 @@ def check_kernel(
             for r in rule_rejections
         }
     except RecursionError:
-        rejections = {(kernel.entry_file, 0, 0, "nests too deeply to audit")}
-    return tuple(
-        Finding(
-            code=FindingCode.SOURCE_REJECTED,
-            schema_path=schema_path,
-            axes=None,
-            detail=f"SA{rule} {path}:{line} {what}",
-        )
-        for path, line, rule, what in sorted(rejections)
-    )
+        rejections = {(kernel.get_entry_path().as_posix(), 0, 0, "nests too deeply to audit")}
+    return rejections
 
 
 def _bound_name(alias: ast.alias) -> str:
@@ -218,16 +246,15 @@ class KernelSources:
 
     def __init__(
         self,
-        kernel: KernelSpec,
+        kernel: Kernel,
         call_keys: Collection[str],
         tensor_names: Collection[str],
-        mutable_names: Collection[str],
+        output_names: Collection[str],
     ) -> None:
         self.kernel = kernel
         self.call_keys = tuple(call_keys)
         self.tensor_names = frozenset(tensor_names)
-        # what the kernel must not write: all but the outputs and the mutable inputs
-        self.input_names = self.tensor_names - frozenset(mutable_names)
+        self.input_names = self.tensor_names - frozenset(output_names)
         self.trees: dict[str, ast.Module] = {}
         # path -> (line, message) of a source that does not parse (SA0)
         self.parse_errors: dict[str, tuple[int, str]] = {}
@@ -245,9 +272,9 @@ class KernelSources:
             for path, tree in self.trees.items()
         }
         self.parsed_sources = {path: ParsedSource(self, path, tree) for path, tree in self.trees.items()}
-        self.entry_path = kernel.entry_file
+        self.entry_path = kernel.get_entry_path().as_posix()
         # the module-level entry def; None when it is missing or does not parse
-        self.entry = self.defs.get(self.entry_path, {}).get(kernel.entry_symbol)
+        self.entry = self.defs.get(self.entry_path, {}).get(kernel.get_entry_symbol())
         self.compile_functions: list[tuple[str, ast.FunctionDef]] = [
             (path, d)
             for path, source in self.parsed_sources.items()

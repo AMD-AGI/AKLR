@@ -418,10 +418,8 @@ def report(
     kernel_errors=None,
 ):
     """Returns (markdown, one-line headline for the log)."""
+    import aklr.ops  # noqa: F401 -- registers every op and route
     from aklr.core.runtime.seam import routes
-    from aklr.ops import load_routes
-
-    load_routes()
 
     counts = layers.counts
     model_bench.add_residuals(times, counts)

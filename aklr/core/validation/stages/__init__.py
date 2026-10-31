@@ -13,16 +13,12 @@ from aklr.core.validation.stages._report._markdown import (
     Table,
     escape,
 )
-from aklr.core.validation.stages.stage import (
-    STAGE_ORDER,
-    PipelineStage,
-    Progress,
-    StageName,
-    StageReport,
-)
+from aklr.core.validation.stages.stage import PipelineStage, Progress, StageReport
 from aklr.core.validation.stages.validation_scope import ValidationScope
+
+STAGE_ORDER = tuple(stage.name for stage in (AuditStage, BenchStage, E2eStage))
 
 __all__ = [
     "MEASUREMENT_PROFILE", "STAGE_ORDER", "AuditStage", "BenchReport", "BenchStage", "Block", "E2eStage", "Heading",
-    "Paragraph", "PipelineStage", "Progress", "StageName", "StageReport", "Table", "ValidationScope", "escape",
+    "Paragraph", "PipelineStage", "Progress", "StageReport", "Table", "ValidationScope", "escape",
 ]  # fmt: skip

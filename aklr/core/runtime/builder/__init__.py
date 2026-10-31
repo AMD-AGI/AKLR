@@ -15,24 +15,22 @@
 
 
 from aklr.core.runtime.builder.builder import (
-    KERNEL_PACKAGE_PREFIX,
     Builder,
     BuildError,
     FlyDSLBuilder,
-    HipBuilder,
     PythonBuilder,
+    TorchBuilder,
     TritonBuilder,
 )
 from aklr.core.runtime.builder.registry import BuilderRegistry
 from aklr.core.runtime.builder.runnable import Runnable, RunnableMetadata
 
 __all__ = [
-    "KERNEL_PACKAGE_PREFIX",
     "BuildError",
     "Builder",
     "BuilderRegistry",
     "FlyDSLBuilder",
-    "HipBuilder",
+    "TorchBuilder",
     "PythonBuilder",
     "Runnable",
     "RunnableMetadata",

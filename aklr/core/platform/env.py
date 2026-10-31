@@ -8,26 +8,20 @@ import os
 from pathlib import Path
 
 __all__ = [
-    "DEFAULT_EXPORT_DIR",
+    "ENV_BUILD_CACHE_DIR",
     "ENV_DISABLE",
-    "ENV_EXPORT",
-    "ENV_EXPORT_DIR",
-    "ENV_KERNEL_CACHE_DIR",
-    "ENV_MEASURED_DIR",
+    "ENV_ENABLE_TRACING",
     "ENV_MIN_SPEEDUP",
-    "ENV_SGLANG_PLUGIN",
+    "ENV_SCHEMA_PATH",
     "RuntimeEnv",
 ]
 
 # RuntimeEnv() reads them; e2e writes them for its child processes
 ENV_DISABLE = "AKLR_DISABLE"
 ENV_MIN_SPEEDUP = "AKLR_MIN_SPEEDUP"
-ENV_KERNEL_CACHE_DIR = "AKLR_KERNEL_CACHE_DIR"
-ENV_EXPORT = "AKLR_EXPORT"
-ENV_EXPORT_DIR = "AKLR_EXPORT_DIR"
-ENV_MEASURED_DIR = "AKLR_MEASURED_DIR"
-ENV_SGLANG_PLUGIN = "AKLR_SGLANG_PLUGIN"
-DEFAULT_EXPORT_DIR = "aklr_export"
+ENV_BUILD_CACHE_DIR = "AKLR_BUILD_CACHE_DIR"
+ENV_ENABLE_TRACING = "AKLR_ENABLE_TRACING"
+ENV_SCHEMA_PATH = "AKLR_SCHEMA_PATH"
 
 
 class RuntimeEnv:
@@ -35,22 +29,21 @@ class RuntimeEnv:
     ``""`` is unset, a bad value raises ``ValueError`` naming the variable."""
 
     def __init__(self) -> None:
-        # AKLR_DISABLE: "1" all, "0" or unset none, else contract ids the runtime checks
+        # AKLR_DISABLE: "1" all, "0" or unset none, else op types the runtime checks;
+        # an older AKLR's id "<op_type>@<version>" names its op type
         disable = os.environ.get(ENV_DISABLE) or "0"
         self.is_all_disabled = disable == "1"
-        self.disabled_contracts: frozenset[str] = (
-            frozenset() if disable in ("0", "1") else frozenset(item.strip() for item in disable.split(","))
+        self.disabled_op_types: frozenset[str] = (
+            frozenset()
+            if disable in ("0", "1")
+            else frozenset(item.strip().split("@", 1)[0] for item in disable.split(","))
         )
-        export = os.environ.get(ENV_EXPORT) or "0"
-        if export not in ("0", "1"):
-            raise ValueError(f"{ENV_EXPORT}={export!r}: expected '1' or '0'")
-        self.is_export_enabled = export == "1"
-        # AKLR_SGLANG_PLUGIN: "1" hooks sglang's layers to the plugin's ops
-        plugin = os.environ.get(ENV_SGLANG_PLUGIN) or "0"
-        if plugin not in ("0", "1"):
-            raise ValueError(f"{ENV_SGLANG_PLUGIN}={plugin!r}: expected '1' or '0'")
-        self.is_sglang_plugin_enabled = plugin == "1"
-        self.export_dir = Path(os.environ.get(ENV_EXPORT_DIR) or DEFAULT_EXPORT_DIR).absolute()
+        tracing = os.environ.get(ENV_ENABLE_TRACING) or "0"
+        if tracing not in ("0", "1"):
+            raise ValueError(f"{ENV_ENABLE_TRACING}={tracing!r}: expected '1' or '0'")
+        self.is_tracing_enabled = tracing == "1"
+        directory = os.environ.get(ENV_SCHEMA_PATH)
+        self.schema_path = Path(directory).absolute() if directory else None
         # AKLR_MIN_SPEEDUP: least speedup over aiter to serve; <= 0 also serves unmeasured
         speedup = os.environ.get(ENV_MIN_SPEEDUP) or "1.03"
         try:
@@ -59,15 +52,10 @@ class RuntimeEnv:
             raise ValueError(f"{ENV_MIN_SPEEDUP}={speedup!r}: {e}") from e
         if not math.isfinite(self.min_speedup):
             raise ValueError(f"{ENV_MIN_SPEEDUP}={speedup!r}: expected a finite number")
-        # AKLR_MEASURED_DIR: schemas laid out as the checkout that replace the committed
-        # ones they name; validation's e2e serves its bench's measurements through it
-        directory = os.environ.get(ENV_MEASURED_DIR)
-        self.measured_dir = Path(directory).absolute() if directory else None
-        # reads HOME itself, not Path.home(), which falls back to the password database
-        self.build_cache_path: Path | None = None
-        if directory := os.environ.get(ENV_KERNEL_CACHE_DIR):
+        # expanduser, unlike Path.home(), never raises when HOME and the password database both miss
+        if directory := os.environ.get(ENV_BUILD_CACHE_DIR):
             self.build_cache_path = Path(directory).absolute()
         elif directory := os.environ.get("XDG_CACHE_HOME"):
             self.build_cache_path = Path(directory, "aklr", "kernels").absolute()
-        elif directory := os.environ.get("HOME"):
-            self.build_cache_path = Path(directory, ".cache", "aklr", "kernels").absolute()
+        else:
+            self.build_cache_path = Path(os.path.expanduser("~/.cache/aklr/kernels")).absolute()

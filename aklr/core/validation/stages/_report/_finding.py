@@ -6,7 +6,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Final
 
-from aklr.core.contract.spec import FrozenModel
+from aklr.core._frozen_model import frozen_dataclass
 from aklr.core.validation.stages._report._markdown import (
     axes_cell,
     detail_text,
@@ -29,7 +29,6 @@ class FindingCode(StrEnum):
     CAPTURE_UNSAFE = "capture_unsafe"
     INPUT_MUTATION = "input_mutation"
     NUMERIC_MISMATCH = "numeric_mismatch"
-    NONDETERMINISTIC = "nondeterministic"
     POST_TIMING_MISMATCH = "post_timing_mismatch"
     NOT_FASTER = "not_faster"
     REGRESSED = "regressed"
@@ -39,7 +38,6 @@ class FindingCode(StrEnum):
     E2E_CRASH = "e2e_crash"
     PLATFORM_FAILURE = "platform_failure"
     NO_MATCHING_DEVICE = "no_matching_device"
-    NO_MATCHING_TOOLCHAIN = "no_matching_toolchain"
 
     @property
     def is_platform_fault(self) -> bool:
@@ -50,12 +48,12 @@ _PLATFORM_FAULT_CODES: Final[frozenset[FindingCode]] = frozenset(
     {
         FindingCode.PLATFORM_FAILURE,
         FindingCode.NO_MATCHING_DEVICE,
-        FindingCode.NO_MATCHING_TOOLCHAIN,
     }
 )
 
 
-class Finding(FrozenModel):
+@frozen_dataclass
+class Finding:
     code: FindingCode
     schema_path: str | None
     axes: dict[str, int] | None

@@ -41,8 +41,8 @@ jobs:
         run: |
           git fetch --no-tags origin "refs/pull/$PR_NUMBER/head"
           base=$(git merge-base HEAD "$HEAD_SHA")   # fails when the head moved; the newer event re-runs
-          authored='del(.workloads[] | .speedup, .accuracy)'
-          measured='[.workloads[] | select(has("speedup") or has("accuracy")) | {axes, speedup, accuracy}] | sort_by(.axes)'
+          authored='del(.workloads[] | .evaluations)'
+          measured='[.workloads[] | select(.evaluations | length > 0) | {axes, evaluations}] | sort_by(.axes)'
           # Collected first: -e checks a command substitution, not a process substitution.
           # dispatch's glob follows symlinks (Path.glob, Path.is_file): a symlink or submodule
           # anywhere under aklr/ops/ or aklr/plugins/ could point it at files this guard never reads.

@@ -8,14 +8,16 @@ import logging
 import shutil
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, TypeVar
 
-from aklr.core.contract.locate import schema_op_dir
-from aklr.core.contract.op import OpContract
-from aklr.core.contract.registry import ContractRegistry
-from aklr.core.contract.spec import WorkloadSpec, axes_text
+from pydantic import TypeAdapter
+
+from aklr.core.platform.device import DeviceTarget
 from aklr.core.platform.env import RuntimeEnv
+from aklr.core.schema import Schema, load_json_file
+from aklr.core.schema._workload import Workload
 from aklr.core.validation.stages import _measure
 from aklr.core.validation.stages._bench._evaluation import (
     CandidateResult,
@@ -33,6 +35,7 @@ from aklr.core.validation.stages._bench._execution import (
 from aklr.core.validation.stages._bench._report import BenchReport, WorkloadRecord
 from aklr.core.validation.stages._measure import Threshold, Versus
 from aklr.core.validation.stages._report._finding import Finding, FindingCode
+from aklr.core.validation.stages._report._markdown import axes_text
 from aklr.core.validation.stages.stage import PipelineStage
 from aklr.core.validation.stages.validation_scope import ValidationScope
 
@@ -53,11 +56,7 @@ WORKLOAD_TIMEOUT_SECONDS: Final = 300.0
 # the reference compares every stored output in float64 on the CPU, so its time grows with them: at m=342073,
 # gemm_n3072_k512's 23 GiB of outputs took about 420 s on a busy MI355X node
 REFERENCE_SECONDS_PER_OUTPUT_GIB: Final = 60.0
-
-
-def _reference_timeout_seconds(requests: Sequence[TrialRequest]) -> float:
-    output_gib = sum(r.output_bytes for r in requests) / (1 << 30)
-    return WORKLOAD_TIMEOUT_SECONDS * len(requests) + REFERENCE_SECONDS_PER_OUTPUT_GIB * output_gib
+ResultT = TypeVar("ResultT", CandidateResult, ReferenceResult)
 
 
 class ReferenceNotProduced(RuntimeError):
@@ -66,10 +65,10 @@ class ReferenceNotProduced(RuntimeError):
 
 class UnreadableIncumbent(RuntimeError):
     """A base schema of the same name does not parse: its replacement is never timed
-    without it."""
+    without it. One of another name that does not parse is skipped."""
 
 
-class BenchStage(PipelineStage[BenchReport]):
+class BenchStage(PipelineStage):
     """Each schema's workloads in batches: a candidate task, then a reference task, per device."""
 
     name = "bench"
@@ -79,17 +78,19 @@ class BenchStage(PipelineStage[BenchReport]):
         if not devices:
             raise ValueError("no device to run on")
         self._devices = tuple(devices)
+        # by (base sha, path): every benched schema of an op reads its op's base files
+        self._base_schemas: dict[tuple[str, str], Schema | ValueError] = {}
 
     def run(self, scope: ValidationScope, earlier: PipelineReport) -> BenchReport:
         if not scope.bench_paths:
-            return BenchReport.skipped("no kernel to measure")
+            return BenchReport.skipped(self.name, "no kernel to measure")
         self.progress.write(f"reading {len(scope.bench_paths)} schemas")
-        registry = ContractRegistry.default()
         unreadable: list[Finding] = []
         batches: list[tuple[TrialRequest, ...]] = []
+        target = DeviceTarget.from_names(earlier.platform.arch, earlier.platform.hardware)
         for path in scope.bench_paths:
             try:
-                batches += self._workloads_to_run(scope, path, registry)
+                batches += self._workloads_to_run(scope, path, target)
             except UnreadableIncumbent as e:
                 unreadable.append(
                     Finding(
@@ -124,33 +125,31 @@ class BenchStage(PipelineStage[BenchReport]):
         outcomes = [started[order.index(i)] for i in range(len(batches))]
         findings = [*unreadable, *(f for found, _ in outcomes for f in found)]
         records = [r for _, batch_records in outcomes for r in batch_records]
-        return BenchReport.from_findings(findings, workload_records=tuple(records))
+        return BenchReport.from_findings(self.name, findings, workload_records=tuple(records))
 
     def _workloads_to_run(
-        self,
-        scope: ValidationScope,
-        path: Path,
-        registry: ContractRegistry,
+        self, scope: ValidationScope, path: Path, target: DeviceTarget
     ) -> list[tuple[TrialRequest, ...]]:
-        from aklr.core.runtime import seam  # torch: only once a bench runs
-
         base_sha = scope.base_sha
         path = path.resolve()
         schema_path = path.relative_to(scope.root.resolve()).as_posix()
-        schema = registry.parse_schema(path.read_bytes(), schema_path)
-        if not schema.kernel.sources:  # a definition: no kernel to bench
+        schema = load_json_file(Schema, path)
+        if schema.kernel is None:  # a definition: no kernel to bench
             return []
-        contract = registry.get(schema.contract_id)
-        defined_baseline = seam.baseline_of(contract)
-        # dispatch's rule: a kernel must beat the defined baseline, if there is one
-        min_speedup = RuntimeEnv().min_speedup if defined_baseline is not None else 0
-        incumbents = self._incumbents(scope, schema_path, schema, contract, min_speedup) if base_sha else {}
+        import aklr.seam  # noqa: F401 -- declares every adapter
+        from aklr.core.runtime.seam import SeamRegistry
+
+        adapters = SeamRegistry.default().adapters(schema.op_type)
+        # speedups are keyed by the backend: the first adapter's top-level package
+        backend = adapters[0].backend if adapters else ""
+        # dispatch's rule: a kernel must beat the backend, if there is one
+        min_speedup = RuntimeEnv().min_speedup if adapters else 0
+        incumbents = (
+            self._incumbents(scope, schema_path, schema, target, min_speedup, backend) if base_sha else {}
+        )
         # A first release has no incumbent; per-kernel admission is in BenchReport.
         first_release = scope.is_first_release
-        # the whole json the semantics read (the file holds the values at the Point)
-        schema_json = schema.model_dump(mode="json")
-        workloads_json = {axes_text(w["axes"]): w for w in schema_json["workloads"]}
-        content_hash = schema.kernel.content_hash
+        content_hash = schema.kernel.hash()
         batches: list[tuple[TrialRequest, ...]] = []
         batch: list[TrialRequest] = []
         batch_bytes = 0
@@ -162,36 +161,26 @@ class BenchStage(PipelineStage[BenchReport]):
         ]
         for workload in schema.workloads:
             workload_axes_text = axes_text(workload.axes)
-            point = schema.point_with_contract_id(workload.axes, contract.contract_id)
-            contract.check_point(point)
             incumbent, incumbent_path, is_served = incumbents.get(workload_axes_text, (None, None, False))
             is_kept = (
-                not base_sha
-                or first_release
-                or (incumbent is not None and incumbent.kernel.same_kernel(schema.kernel))
+                not base_sha or first_release or (incumbent is not None and incumbent.kernel == schema.kernel)
             )
             thresholds: dict[Versus, Threshold] = {"baseline": "retain" if is_kept else "entry"}
-            if incumbent is not None and incumbent.kernel.content_hash != content_hash:
+            if incumbent is not None and incumbent.kernel.hash() != content_hash:
                 thresholds["incumbent"] = "retain"
             else:
                 incumbent = None  # this very kernel: never timed against itself
-            if defined_baseline is None:
+            if not adapters:
                 # the incumbent times as the baseline; with none, nothing is timed
                 thresholds = {"baseline": "retain"} if incumbent is not None else {}
-            request = TrialRequest(
-                schema_path=str(path),
-                schema=schema,
-                contract=contract,
-                workload=workload,
-                point=point,
-                axes_text=workload_axes_text,
-                schema_json=schema_json,
-                workload_json=workloads_json[workload_axes_text],
-                distributions=schema.distributions_at(point),
+            request = TrialRequest.of_workload(
+                str(path),
+                schema,
+                workload,
                 thresholds=thresholds,
                 incumbent=incumbent,
                 # what users run today: the served base kernel, this one included
-                baseline=(incumbent_path if is_served else None) or defined_baseline,
+                baseline=incumbent_path if is_served else None,
             )
             n_bytes = request.output_bytes
             if batch and (
@@ -210,52 +199,56 @@ class BenchStage(PipelineStage[BenchReport]):
         self,
         scope: ValidationScope,
         schema_path: str,
-        schema: OpContract,
-        contract: OpContract,
+        schema: Schema,
+        target: DeviceTarget,
         min_speedup: float,
-    ) -> dict[str, tuple[OpContract, str, bool]]:
-        """Per workload, the base kernel dispatch serves at its Point (or this very
+        backend: str,
+    ) -> dict[str, tuple[Schema, str, bool]]:
+        """Per workload, the base kernel dispatch serves at its key (or this very
         kernel at base), its path, and whether dispatch serves it."""
-        impls_dir = (schema_op_dir(Path(schema_path)) / "impls").as_posix()
-        paths = [
-            p
-            for p in scope.paths_at_base(impls_dir)
-            if ValidationScope.path_kind(p) == "schema_data" and PurePosixPath(p).parent.name == schema.name
-        ]
-        served: dict[Any, list[tuple[OpContract, WorkloadSpec, str]]] = {}
+        impls_dir = (Path(schema_path).parents[3] / "impls").as_posix()
+        paths = [p for p in scope.paths_at_base(impls_dir) if ValidationScope.path_kind(p) == "schema_data"]
+        served: dict[Any, list[tuple[Schema, Workload, str]]] = {}
         for path in paths:
-            try:
-                base = ContractRegistry.default().parse_schema(scope.text_at_base(path).encode(), path)
-            except ValueError as e:
-                raise UnreadableIncumbent(f"cannot read the incumbent {path}: {e}") from e
-            entries = []
+            key = (scope.base_sha, path)
+            base = self._base_schemas.get(key)
+            if base is None:
+                try:
+                    base = TypeAdapter(Schema).validate_json(scope.text_at_base(path))
+                except ValueError as e:
+                    base = e
+                self._base_schemas[key] = base
+            if isinstance(base, ValueError):
+                if PurePosixPath(path).parent.name != schema.name:
+                    continue
+                raise UnreadableIncumbent(f"cannot read the incumbent {path}: {base}") from base
+            if base.kernel is None:
+                continue
             for workload in base.workloads:
-                try:  # a Point of other keys: another contract version's base
-                    point = base.point_with_contract_id(workload.axes, contract.contract_id)
-                    contract.check_point(point)
-                except ValueError:
-                    entries = []
-                    break
-                entries.append((point.key(), workload))
-            if base.kernel.sources:
-                for key, workload in entries:
-                    if workload.qualifies(min_speedup) or base.kernel.same_kernel(schema.kernel):
-                        served.setdefault(key, []).append((base, workload, path))
+                if workload.qualifies(target, min_speedup, backend) or base.kernel == schema.kernel:
+                    workload_key = (base.name, tuple(sorted(workload.axes.items())))
+                    served.setdefault(workload_key, []).append((base, workload, path))
         incumbents = {}
         for workload in schema.workloads:
-            key = schema.point_with_contract_id(workload.axes, contract.contract_id).key()
-            if key in served:
+            workload_key = (schema.name, tuple(sorted(workload.axes.items())))
+            if workload_key in served:
                 base, served_workload, path = max(
-                    served[key],
+                    served[workload_key],
                     key=lambda entry: (
-                        entry[0].kernel.same_kernel(schema.kernel),
-                        entry[0].rank_key(entry[1]),
+                        entry[0].kernel == schema.kernel,
+                        (e := entry[1].evaluation(target)) is None or e.accuracy != "failed",
+                        (
+                            e.speedup[backend].value
+                            if e is not None and backend in e.speedup
+                            else float("-inf")
+                        ),
+                        entry[0].kernel.hash(),
                     ),
                 )
                 incumbents[axes_text(workload.axes)] = (
                     base,
                     path,
-                    served_workload.qualifies(min_speedup),
+                    served_workload.qualifies(target, min_speedup, backend),
                 )
         return incumbents
 
@@ -274,28 +267,18 @@ class BenchStage(PipelineStage[BenchReport]):
         is_succeeded = lambda f: f.done() and not f.cancelled() and f.exception() is None
         try:
             future = None
-            for attempt in range(2):
-                try:
-                    future = executor.submit(
-                        run_candidate,
-                        timeout_seconds=BUILD_TIMEOUT_SECONDS + WORKLOAD_TIMEOUT_SECONDS * len(batch),
-                        requests=batch,
-                    )
-                    candidate = CandidateResult.from_task(future.result(), [r.axes_text for r in batch])
-                except (ExecutionError, ValueError) as e:
-                    finding = self._build_failed_finding(e)
-                    # a tracer fault is the platform's: a fresh process measures again
-                    if (
-                        attempt == 0
-                        and finding.code == FindingCode.PLATFORM_FAILURE
-                        and _measure.is_tracer_fault(finding.detail)
-                    ):
-                        continue
-                    failures.append(finding)
-                finally:
-                    if future is not None and is_succeeded(future) and future.directory:
-                        directories.append(future.directory)
-                break
+            try:
+                future = executor.submit(
+                    run_candidate,
+                    timeout_seconds=BUILD_TIMEOUT_SECONDS + WORKLOAD_TIMEOUT_SECONDS * len(batch),
+                    requests=batch,
+                )
+                candidate = self._task_result(CandidateResult, future.result(), batch)
+            except (ExecutionError, ValueError) as e:
+                failures.append(self._build_failed_finding(e))
+            finally:
+                if future is not None and is_succeeded(future) and future.directory:
+                    directories.append(future.directory)
             if candidate is not None and not candidate.findings:
                 declined = {
                     r.axes_text
@@ -309,19 +292,21 @@ class BenchStage(PipelineStage[BenchReport]):
                     try:
                         reference_future = executor.submit(
                             run_reference,
-                            timeout_seconds=_reference_timeout_seconds(requests),
+                            timeout_seconds=WORKLOAD_TIMEOUT_SECONDS * len(requests)
+                            + REFERENCE_SECONDS_PER_OUTPUT_GIB
+                            * sum(r.output_bytes for r in requests)
+                            / (1 << 30),
                             requests=requests,
                             candidate_dir=future.directory,
                         )
                         try:
-                            reference = ReferenceResult.from_task(
-                                reference_future.result(),
-                                [r.axes_text for r in requests],
+                            reference = self._task_result(
+                                ReferenceResult, reference_future.result(), requests
                             )
                         except ExecutionError as e:
                             raise ReferenceNotProduced(f"reference: {self._last_line(e)}") from e
                         except ValueError as e:
-                            raise ReferenceNotProduced(str(e)) from e
+                            raise ReferenceNotProduced(f"internal: {e}") from e
                     except (ExecutionError, ReferenceNotProduced) as e:
                         reference = None
                         failures.append(self._build_failed_finding(e))
@@ -337,7 +322,9 @@ class BenchStage(PipelineStage[BenchReport]):
                 shutil.rmtree(directory, ignore_errors=True)
         findings, records = self._judged_findings(scope, batch, failures, candidate, reference)
         try:
-            line = BenchReport.from_findings(findings, workload_records=tuple(records)).batch_line()
+            line = BenchReport.from_findings(
+                self.name, findings, workload_records=tuple(records)
+            ).batch_line()
         except Exception:  # a progress line never costs the batch's records
             logging.getLogger(__name__).exception("bench progress line failed")
             line = f"{records[0].schema_path}: progress text unavailable"
@@ -360,14 +347,15 @@ class BenchStage(PipelineStage[BenchReport]):
         findings: list[Finding] = []
         records: list[WorkloadRecord] = []
         for request in batch:
-            found, timings, worst_violation_fraction = list(batch_findings), (), None
+            found, timings, is_compared, backend = list(batch_findings), (), False, None
             if not batch_findings:
                 candidate_result = candidate_results[request.axes_text]
                 # absent: declined by the baseline, the candidate's finding alone
                 reference_result = reference_results.get(request.axes_text)
                 found = list(candidate_result.findings)
+                backend = candidate_result.backend
                 if reference_result is not None:
-                    worst_violation_fraction = reference_result.worst_violation_fraction
+                    is_compared = reference_result.is_compared
                     found[:0] = reference_result.findings
                     if not candidate_result.findings:
                         if not reference_result.is_complete:
@@ -379,20 +367,19 @@ class BenchStage(PipelineStage[BenchReport]):
                         if gated is not None:
                             found.append(gated)
             located = {"schema_path": schema_path, "axes": request.workload.axes}
-            # a defined baseline is named by what bound (of several routes, the first
-            # to bind); none bound: nothing ran, nothing to export
-            baseline = request.baseline
-            if baseline is not None and not baseline.endswith(".json"):
-                baseline = None if batch_findings else candidate_result.baseline
-            findings += [f.model_copy(update=located) for f in found]
+            # an adapter is named by what bound (of several, the first to bind); none
+            # bound: nothing ran, nothing to export
+            baseline = request.baseline or (None if batch_findings else candidate_result.baseline)
+            findings += [replace(f, **located) for f in found]
             records.append(
                 WorkloadRecord(
                     **located,
                     batch_stopped=bool(batch_findings),
-                    kernel_content_hash=request.schema.kernel.content_hash,
+                    kernel_content_hash=request.schema.kernel.hash(),
                     baseline=baseline,
+                    backend=backend,
                     is_timed="baseline" in request.thresholds,
-                    worst_violation_fraction=worst_violation_fraction,
+                    is_compared=is_compared,
                     timings=timings,
                 )
             )
@@ -402,12 +389,7 @@ class BenchStage(PipelineStage[BenchReport]):
         detail = self._last_line(error)
         if isinstance(error, TaskExecutionTimeout):
             code = FindingCode.CANDIDATE_TIMEOUT
-        elif caused_by_the_task(error):
-            # a tracer fault crashes the timing by itself; only the last line is
-            # aklr's text, the log and traceback above it are the candidate's
-            is_tracer = ": timing: " in detail and _measure.is_tracer_fault(detail)
-            code = FindingCode.PLATFORM_FAILURE if is_tracer else FindingCode.CANDIDATE_CRASH
-        elif isinstance(error, ValueError):
+        elif caused_by_the_task(error) or isinstance(error, ValueError):
             code = FindingCode.CANDIDATE_CRASH
         else:
             code = FindingCode.PLATFORM_FAILURE
@@ -416,3 +398,15 @@ class BenchStage(PipelineStage[BenchReport]):
     @staticmethod
     def _last_line(error: BaseException) -> str:
         return str(error).strip().split("\n")[-1]
+
+    @staticmethod
+    def _task_result(result_type: type[ResultT], value: Any, requests: Sequence[TrialRequest]) -> ResultT:
+        detail = f"the task's result is not a {result_type.__name__} of the batch"
+        try:
+            result = TypeAdapter(result_type).validate_python(value)
+        except ValueError as e:
+            raise ValueError(detail) from e
+        axes_texts = sorted(r.axes_text for r in result.workload_results)
+        if axes_texts != sorted(r.axes_text for r in requests):
+            raise ValueError(detail)
+        return result

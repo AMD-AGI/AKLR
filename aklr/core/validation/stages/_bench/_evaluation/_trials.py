@@ -3,16 +3,24 @@
 
 from __future__ import annotations
 
+import hashlib
+import inspect
 import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple
 
-from aklr.core.contract import semantics
-from aklr.core.contract.op import OpContract
-from aklr.core.contract.spec import PointSpec, ScalarSpec, WorkloadSpec, axes_text
-from aklr.core.validation.stages._measure import Threshold, Versus
+from aklr.core.schema import Schema, Tensor
+from aklr.core.schema._workload import Workload
+from aklr.core.utils import dtype_str_to_torch_dtype
+from aklr.core.validation.stages._measure import (
+    Threshold,
+    Versus,
+    derive_seed,
+    sorted_key_json,
+)
 from aklr.core.validation.stages._report._finding import FindingCode
+from aklr.core.validation.stages._report._markdown import axes_text
 
 if TYPE_CHECKING:
     import torch
@@ -24,18 +32,14 @@ N_POST_TIMING_SETS: Final = 4
 CheckName = Literal[
     "first_capture",
     "numeric",
-    "large_magnitude",
-    "determinism",
     "post_timing",
 ]
 
 
-# a mismatching step's code: (index 0, index > 0); determinism has one step
+# a mismatching step's code: (index 0, index > 0)
 _MISMATCH_CODES: Final[Mapping[CheckName, tuple[FindingCode, FindingCode]]] = {
     "first_capture": (FindingCode.NUMERIC_MISMATCH, FindingCode.CAPTURE_UNSAFE),
     "numeric": (FindingCode.NUMERIC_MISMATCH, FindingCode.NUMERIC_MISMATCH),
-    "large_magnitude": (FindingCode.NUMERIC_MISMATCH, FindingCode.NUMERIC_MISMATCH),
-    "determinism": (FindingCode.NUMERIC_MISMATCH, FindingCode.NUMERIC_MISMATCH),
     "post_timing": (FindingCode.POST_TIMING_MISMATCH,) * 2,
 }
 
@@ -74,50 +78,32 @@ class TrialRequest:
     """Everything a task needs of one workload, made in the parent and pickled to the child."""
 
     schema_path: str
-    schema: OpContract
-    contract: OpContract
-    workload: WorkloadSpec
-    point: PointSpec
+    schema: Schema
+    workload: Workload
     axes_text: str
-    schema_json: dict[str, Any]
-    workload_json: dict[str, Any]
-    # each present tensor's distribution item, evaluated: schema.distributions_at
-    distributions: dict[str, dict[str, Any]]
     thresholds: dict[Versus, Threshold]
-    incumbent: OpContract | None
-    # what users run today, exported as the baseline: the base kernel dispatch serves
-    # (this very kernel too), else the defined baseline's dotted name; None: neither
+    incumbent: Schema | None
+    # the path of the base kernel dispatch serves (this very kernel too), exported as
+    # the baseline; None: the adapter that binds is
     baseline: str | None
 
     @classmethod
     def of_workload(
         cls,
         schema_path: str,
-        schema: OpContract,
-        contract: OpContract,
-        workload: WorkloadSpec,
+        schema: Schema,
+        workload: Workload,
         *,
         thresholds: dict[Versus, Threshold],
-        incumbent: OpContract | None,
+        incumbent: Schema | None,
         baseline: str | None,
     ) -> TrialRequest:
         """The request of ``schema``'s ``workload``."""
-        point = schema.point_with_contract_id(workload.axes, contract.contract_id)
-        contract.check_point(point)
-        workload_axes_text = axes_text(workload.axes)
-        # the whole json the semantics read (the file holds the values at the Point)
-        schema_json = schema.model_dump(mode="json")
-        workloads_json = {axes_text(w["axes"]): w for w in schema_json["workloads"]}
         return cls(
             schema_path=schema_path,
             schema=schema,
-            contract=contract,
             workload=workload,
-            point=point,
-            axes_text=workload_axes_text,
-            schema_json=schema_json,
-            workload_json=workloads_json[workload_axes_text],
-            distributions=schema.distributions_at(point),
+            axes_text=axes_text(workload.axes),
             thresholds=thresholds,
             incumbent=incumbent,
             baseline=baseline,
@@ -130,87 +116,53 @@ class TrialRequest:
             steps.append(Step("first_capture", i, f"numeric/{i}", "reuse", "replay"))
         for i in range(3):
             steps.append(Step("numeric", i, f"numeric/{i}", "new", "capture"))
-        if self.has_workload_set:
-            steps.append(Step("numeric", 3, "workload", "new", "capture"))
-        if self.has_error_bound("dot_product"):
-            steps.append(Step("large_magnitude", 0, "large_magnitude", "new", "capture"))
-        if self.schema_json["compare"]["determinism"] == "bitwise":
-            steps.append(Step("determinism", 0, "numeric/0", "new", "capture"))
         modes = ["capture"] * (N_POST_TIMING_SETS - 1) + ["replay"]
         for i, mode in enumerate(modes):
             steps.append(Step("post_timing", i, f"post_timing/{i}", "timing", mode))
         return tuple(steps)
 
     @property
-    def has_workload_set(self) -> bool:
-        inputs_json = self.schema_json["inputs"]
-        return any(
-            value
-            != ScalarSpec.model_validate(inputs_json[name]).normalize(
-                semantics.default_scalar(inputs_json[name])
-            )
-            for name, value in self.workload.scalars.items()
-        )
+    def output_shapes(self) -> dict[str, tuple[int, ...]]:
+        shapes = self.schema.get_output_shapes(self.workload.axes)
+        return {o: tuple(s) for o, s in zip(self.schema.outputs, shapes, strict=True)}
 
     @property
     def output_bytes(self) -> int:
-        dtypes = self.point.dtypes
         return len(self.steps) * sum(
-            math.prod(self.contract.storage_shape_of(o, self.point))
-            * max(semantics.DTYPE_TRAITS[dtypes[o]].bits, 8)
-            // 8
-            for o in self.contract.mutable_tensors
+            math.prod(shape) * dtype_str_to_torch_dtype(self.schema.outputs[o].dtype).itemsize
+            for o, shape in self.output_shapes.items()
         )
 
     @property
     def input_bytes(self) -> int:
-        """One input set's bytes: every present tensor input at the Point."""
-        dtypes = self.point.dtypes
+        """One input set's bytes: every present tensor input at the workload."""
+        values = {**self.schema.const_axes, **self.workload.axes}
         return sum(
-            math.prod(self.contract.storage_shape_of(name, self.point))
-            * max(semantics.DTYPE_TRAITS[dtypes[name]].bits, 8)
-            // 8
-            for name in self.distributions
+            math.prod(values[d] for d in spec.dim_names) * dtype_str_to_torch_dtype(spec.dtype).itemsize
+            for spec in self.schema.inputs.values()
+            if isinstance(spec, Tensor) and spec.dtype is not None and set(spec.dim_names) <= values.keys()
         )
 
-    def has_error_bound(self, kind: str) -> bool:
-        return any(
-            o["error_bounds"] and o["error_bounds"][0][1]["kind"] == kind
-            for o in semantics.mutable_tensor_declarations(self.schema_json).values()
-        )
+    @property
+    def workload_hash(self) -> str:
+        text = sorted_key_json([self.schema.name, self.workload.axes])
+        return hashlib.sha256(text.encode()).hexdigest()[:16]
 
-    def compose_inputs(self, step: Step | None) -> dict[str, Any]:
-        input_set = "timing" if step is None else step.input_set
-        row_major_args = semantics.row_major_inputs(
-            self.schema_json,
-            self.workload_json,
-            self.distributions,
-            input_set=input_set,
-        )
-        if step is None:
-            return row_major_args
-        if step.check == "large_magnitude":
-            return semantics.magnified_inputs(self.schema_json, self.distributions, row_major_args)
-        return row_major_args
-
-    def assemble_call(self, row_major_args: Mapping[str, Any], device: str | torch.device) -> dict[str, Any]:
+    def compose_call(self, step: Step | None, device: str | torch.device) -> dict[str, Any]:
         import torch
 
-        contract, point = self.contract, self.point
-        call = {p.name: p.default for p in contract.api_params}
-        call.update(semantics.stored_inputs(self.schema_json, row_major_args, device=device))
-        variant = contract.layout_variants.by_name[point.layout_variant_name]
-        for fact in variant.detect_facts:
-            param_name = fact.location.param_name(fact.name)
-            if param_name is not None:
-                call[param_name] = fact.expected_value
-        for name, attr in contract.attrs.items():
-            if attr.param_name is not None:
-                call[attr.param_name] = point.attrs[name]
-        if "out_dtype" in call:
-            call["out_dtype"] = semantics.torch_dtypes(point.dtypes["out"])[0]
-        for o in contract.required_outputs:
-            dtype = semantics.torch_dtypes(point.dtypes[o])[0]
-            shape = contract.storage_shape_of(o, point)
+        input_set = "timing" if step is None else step.input_set
+        init = self.schema.source_to_function("init")
+        if init is None:
+            raise ValueError(f"{self.schema.name}: the schema has no init")
+        axes = {**self.schema.const_axes, **self.workload.axes}
+        params = inspect.signature(init).parameters
+        call = init(
+            **{n: v for n, v in axes.items() if n in params},
+            device=str(device),
+            seed=derive_seed(self.workload_hash, input_set),
+        )
+        for o, shape in self.output_shapes.items():
+            dtype = dtype_str_to_torch_dtype(self.schema.outputs[o].dtype)
             call[o] = torch.empty(shape, dtype=dtype, device=device)
         return call

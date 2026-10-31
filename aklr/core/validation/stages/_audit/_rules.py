@@ -197,7 +197,7 @@ class _EntryRule(SourceRule):
         if entry_path not in kernel_sources.parsed_sources:
             return
         tree = kernel_sources.parsed_sources[entry_path].tree
-        symbol = kernel_sources.kernel.entry_symbol
+        symbol = kernel_sources.kernel.get_entry_symbol()
         if not ast.get_docstring(tree):
             yield Rejection.from_node(entry_path, tree, "no module docstring")
         entry = kernel_sources.entry
@@ -205,9 +205,11 @@ class _EntryRule(SourceRule):
             yield Rejection.from_node(entry_path, tree, f"no module-level def {symbol}")
             return
         args, keys = entry.args, kernel_sources.call_keys
-        names = {a.arg for a in (*args.args, *args.kwonlyargs)}
-        accepted = names == set(keys) and not (args.posonlyargs or args.args or args.vararg or args.kwarg)
-        what = f"must take exactly the keyword-only parameters {', '.join(keys)}"
+        names = [a.arg for a in args.args]
+        accepted = names == list(keys) and not (
+            args.posonlyargs or args.kwonlyargs or args.vararg or args.kwarg
+        )
+        what = f"must take exactly the parameters {', '.join(keys)}"
         if not accepted:
             yield Rejection.from_node(entry_path, entry, f"{symbol} {what}")
 

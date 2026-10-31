@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import re
 import threading
-import time
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
@@ -59,7 +58,6 @@ class ResourceLease:
     lease_id: str
     task_id: str
     resource: ExecutionResource
-    acquired_at: float
 
 
 class ResourceCatalog(ABC):
@@ -128,7 +126,6 @@ class LocalAcceleratorCatalog(ResourceCatalog):
                 lease_id=uuid.uuid4().hex,
                 task_id=task_id,
                 resource=resource,
-                acquired_at=time.monotonic(),
             )
             self._lease_id_by_resource[resource_id] = lease.lease_id
             return lease

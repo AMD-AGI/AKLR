@@ -1,0 +1,614 @@
+{
+  "name": "gemm_bf16_nt_n25256_k8192",
+  "op_type": "gemm_bf16_nt",
+  "axes": {
+    "M": {
+      "description": "Tokens.",
+      "type": "var"
+    },
+    "N": {
+      "description": "Output columns.",
+      "value": 25256,
+      "type": "const"
+    },
+    "K": {
+      "description": "Reduction length.",
+      "value": 8192,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "M": 6
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 7
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 9
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 10
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 11
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 12
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 13
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 14
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 15
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 16
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 17
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 18
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 20
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 21
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 24
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 25
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 26
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 28
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 32
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 33
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 34
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 35
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 36
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 40
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 41
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 42
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 43
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 44
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 45
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 47
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 48
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 49
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 51
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 53
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 55
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 56
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 57
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 59
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 61
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 63
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 64
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 65
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 67
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 70
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 72
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 73
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 75
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 77
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 80
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 81
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 83
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 84
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 88
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 89
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 91
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 96
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 133
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 136
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 140
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 144
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 147
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 152
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 154
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 160
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 161
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 168
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 176
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 182
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 184
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 189
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 192
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 196
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 200
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 203
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 210
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 216
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 217
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 224
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 232
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 238
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 240
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 245
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 248
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 252
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 256
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "a": {
+      "shape": [
+        "M",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "N",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Weights."
+    },
+    "bias": {
+      "shape": [
+        "N"
+      ],
+      "dtype": null,
+      "description": "Added to every output row."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "M",
+        "N"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "reference": "from __future__ import annotations\nimport math\nimport torch\nimport torch.nn.functional as F\n\ndef _plus_bias(product: Tensor, bias: Tensor | None) -> Tensor:\n    return product if bias is None else product + bias.double()\n\ndef gemm_bf16_nt_reference(a, b, bias=None) -> Tensor:\n    \"\"\"``a @ b.T + bias``.\"\"\"\n    return _plus_bias(a.double() @ b.double().mT, bias)\n\nrun = gemm_bf16_nt_reference\n",
+  "check": "from __future__ import annotations\nimport torch\n\ndef _as_output_list(outputs: Any) -> List[Any]:\n    if isinstance(outputs, list):\n        return outputs\n    if isinstance(outputs, tuple):\n        return list(outputs)\n    return [outputs]\n\ndef default_tolerances(dtype: Union[torch.dtype, str]) -> Tuple[float, float]:\n    \"\"\"Return ``(rtol, atol)`` defaults for a trace correctness check.\n\n    These defaults are intentionally conservative for low-precision inference\n    data types. Template-specific ``check`` functions can override them by\n    passing explicit ``rtol`` and ``atol`` to :func:`default_check`.\n    \"\"\"\n    dtype_name = str(dtype).replace(\"torch.\", \"\")\n    if dtype_name in (\"float64\", \"double\"):\n        return 1e-7, 1e-7\n    if dtype_name in (\"float32\", \"float\"):\n        return 1e-5, 1e-5\n    if dtype_name in (\"float16\", \"half\"):\n        return 1e-3, 1e-3\n    if dtype_name == \"bfloat16\":\n        return 1e-2, 1e-2\n    if dtype_name.startswith(\"float8\"):\n        return 1e-1, 1e-1\n    if dtype_name.startswith(\"float4\") or \"fp4\" in dtype_name:\n        return 1.0, 1.0\n    return 0.0, 0.0\n\ndef _cosine_similarity(actual: torch.Tensor, expected: torch.Tensor) -> float:\n    actual = actual.reshape(-1).to(torch.float32)\n    expected = expected.reshape(-1).to(torch.float32)\n    finite = torch.isfinite(actual) & torch.isfinite(expected)\n    if not finite.any():\n        return 1.0\n    actual = actual[finite]\n    expected = expected[finite]\n    actual_norm = torch.linalg.vector_norm(actual)\n    expected_norm = torch.linalg.vector_norm(expected)\n    if actual_norm.item() == 0 or expected_norm.item() == 0:\n        return 1.0 if torch.equal(actual, expected) else 0.0\n    return ((actual * expected).sum() / (actual_norm * expected_norm)).item()\n\ndef default_check(\n    reference_outputs: Any,\n    actual_outputs: Any,\n    *,\n    rtol: Optional[float] = None,\n    atol: Optional[float] = None,\n    max_mismatch_pct: float = 0.0,\n    min_cos_sim: Optional[float] = 1.0 - 1e-3,\n) -> bool:\n    \"\"\"Validate actual outputs against reference outputs.\n\n    ``reference_outputs`` and ``actual_outputs`` may be lists/tuples,\n    dictionaries with matching keys, or single output values. Tensor outputs\n    are checked for shape equality, closeness, mismatch percentage, and cosine\n    similarity. Non-floating tensors are checked exactly unless\n    ``max_mismatch_pct`` allows mismatches. Non-tensor outputs use Python\n    equality.\n    \"\"\"\n    if isinstance(reference_outputs, dict) or isinstance(actual_outputs, dict):\n        if not isinstance(reference_outputs, dict) or not isinstance(actual_outputs, dict):\n            return False\n        if reference_outputs.keys() != actual_outputs.keys():\n            return False\n        refs = [reference_outputs[key] for key in reference_outputs]\n        actuals = [actual_outputs[key] for key in reference_outputs]\n    else:\n        refs = _as_output_list(reference_outputs)\n        actuals = _as_output_list(actual_outputs)\n\n    if len(refs) != len(actuals):\n        return False\n\n    for ref, actual in zip(refs, actuals, strict=True):\n        if isinstance(ref, torch.Tensor) != isinstance(actual, torch.Tensor):\n            return False\n        if not isinstance(ref, torch.Tensor):\n            if ref != actual:\n                return False\n            continue\n\n        if ref.shape != actual.shape:\n            return False\n        if ref.numel() == 0:\n            continue\n\n        ref_is_float = torch.is_floating_point(ref)\n        actual_is_float = torch.is_floating_point(actual)\n        if ref_is_float or actual_is_float:\n            tolerance_dtype = actual.dtype if actual_is_float else ref.dtype\n            default_rtol, default_atol = default_tolerances(tolerance_dtype)\n            rtol_value = default_rtol if rtol is None else rtol\n            atol_value = default_atol if atol is None else atol\n            close = torch.isclose(\n                actual.to(torch.float32),\n                ref.to(torch.float32),\n                rtol=rtol_value,\n                atol=atol_value,\n            )\n            mismatch_pct = 100.0 * (~close).sum().item() / close.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n            if min_cos_sim is not None:\n                cos_sim = _cosine_similarity(actual, ref)\n                if cos_sim < min_cos_sim:\n                    return False\n        else:\n            matches = actual == ref\n            mismatch_pct = 100.0 * (~matches).sum().item() / matches.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n\n    return True\n\ndef _gemm_check(\n    reference_outputs,\n    actual_outputs,\n    *,\n    rtol=None,\n    atol=None,\n    max_mismatch_pct=0.0,\n    min_cos_sim=None,\n):\n    # main's compare_gemm_outputs: atol = rtol 1e-3 fp16, 1e-2 otherwise, every element\n    out = actual_outputs\n    if isinstance(out, (list, tuple)):\n        out = out[0]\n    tolerance = 1e-3 if out.dtype == torch.float16 else 1e-2\n    return default_check(\n        reference_outputs,\n        actual_outputs,\n        rtol=tolerance if rtol is None else rtol,\n        atol=tolerance if atol is None else atol,\n        max_mismatch_pct=max_mismatch_pct,\n        min_cos_sim=min_cos_sim,\n    )\n\nrun = _gemm_check\n",
+  "init": "from __future__ import annotations\nimport math\nimport torch\n\ndef _gemm_bf16_nt_init(*, M, N, K, device=\"cuda\", seed=0):\n    torch.manual_seed(seed)\n    return {\n        \"a\": torch.randn(M, K, device=device).to(torch.bfloat16),\n        \"b\": torch.randn(N, K, device=device).to(torch.bfloat16),\n        \"out_dtype\": torch.bfloat16,\n    }\n\nrun = _gemm_bf16_nt_init\n",
+  "tags": [],
+  "description": "bf16 gemm: out = a @ b.T + bias, b stored (N, K).",
+  "constraints": [
+    "not use_shuffled_weight",
+    "bias is None or bias.dtype in ('bfloat16', 'float16', 'float32')",
+    "out.dtype in ('bfloat16', 'float16', 'float32')"
+  ],
+  "kernel": {
+    "name": "gemm_bf16_nt_n25256_k8192_hip_5d96546c6293eafa",
+    "author": "fanxingran",
+    "build": {
+      "language": "hip",
+      "target_hardware": [
+        "gfx950/MI355X"
+      ],
+      "entry_point": "kernel.hip::run",
+      "dependencies": [],
+      "destination_passing_style": true,
+      "binding": null
+    },
+    "sources": [
+      {
+        "path": "gemm_stream.h",
+        "content": "// Weight-streaming bf16 GEMM body: out[m, N] = a[m, K] @ b[N, K].T for one fixed (N, K), m <= MT.\n#pragma once\n\n#include <hip/hip_runtime.h>\n\n#include <cstdint>\n\nextern \"C\" __device__ uint64_t lmhead_dispatch_id() __asm(\"llvm.amdgcn.dispatch.id\");\n\nnamespace lmhead {\n\ntypedef __attribute__((ext_vector_type(8))) __bf16 bf16x8;\ntypedef __attribute__((ext_vector_type(4))) float f32x4;\ntypedef __attribute__((ext_vector_type(4))) int i32x4;\ntypedef __attribute__((ext_vector_type(2))) unsigned u32x2;\n\n__device__ __forceinline__ i32x4 make_rsrc(const void* base, uint32_t bytes) {\n    const uint64_t p = reinterpret_cast<uint64_t>(base);\n    i32x4 r;\n    r.x = __builtin_amdgcn_readfirstlane(static_cast<int>(static_cast<uint32_t>(p)));\n    r.y = __builtin_amdgcn_readfirstlane(static_cast<int>(static_cast<uint32_t>(p >> 32)));\n    r.z = static_cast<int>(bytes);\n    r.w = 0x00020000;\n    return r;\n}\n\n// 16 bytes per lane from rsrc + voff + soff into LDS at m0 + lane * 16 (nt: streamed, evicted\n// first); counted by vmcnt only, so the compiler never waits on it.\ntemplate <bool NT>\n__device__ __forceinline__ void dma16(uint32_t lds, uint32_t voff, i32x4 rsrc, uint32_t soff) {\n    if constexpr (NT) {\n        asm volatile(\"s_mov_b32 m0, %0\\n\\ts_nop 0\\n\\tbuffer_load_dwordx4 %1, %2, %3 offen nt lds\"\n                     ::\"s\"(lds), \"v\"(voff), \"s\"(rsrc), \"s\"(soff) : \"memory\", \"m0\");\n    } else {\n        asm volatile(\"s_mov_b32 m0, %0\\n\\ts_nop 0\\n\\tbuffer_load_dwordx4 %1, %2, %3 offen lds\"\n                     ::\"s\"(lds), \"v\"(voff), \"s\"(rsrc), \"s\"(soff) : \"memory\", \"m0\");\n    }\n}\n\ntemplate <int VM>\n__device__ __forceinline__ void wait_vm() {\n    static_assert(VM >= 0 && VM < 64, \"vmcnt range\");\n    __builtin_amdgcn_s_waitcnt((VM & 15) | ((VM >> 4) << 14) | (7 << 4) | (15 << 8));\n}\n\n// wait_vm<rem * L>() for a runtime rem in [0, R]\ntemplate <int L, int R>\n__device__ __forceinline__ void wait_tail(int rem) {\n    if constexpr (R > 0) {\n        if (rem >= R) {\n            wait_vm<R * L>();\n            return;\n        }\n        wait_tail<L, R - 1>(rem);\n    } else {\n        wait_vm<0>();\n    }\n}\n\n// a wave that issues L or L - 1 DMAs per stage waits until at most min(R, rem) stages are pending\ntemplate <int L, int R>\n__device__ __forceinline__ void wait_stages(bool short_wave, int rem) {\n    if constexpr (L > 1) {\n        if (short_wave) {\n            wait_tail<L - 1, R>(rem);\n            return;\n        }\n    }\n    wait_tail<L, R>(rem);\n}\n\n__device__ __forceinline__ void barrier_lds() {\n    asm volatile(\"s_waitcnt lgkmcnt(0)\\n\\ts_barrier\" ::: \"memory\");\n}\n\n__device__ __forceinline__ uint32_t pack_bf16x2(float lo, float hi) {\n    const uint32_t a = __builtin_bit_cast(uint32_t, lo);\n    const uint32_t b = __builtin_bit_cast(uint32_t, hi);\n    const uint32_t ra = (a + 0x7fffu + ((a >> 16) & 1u)) >> 16;\n    const uint32_t rb = (b + 0x7fffu + ((b >> 16) & 1u)) >> 16;\n    return ra | (rb << 16);\n}\n\n// G workgroups: G / SK tiles of contiguous b rows (8-row groups split evenly, NT rows at most)\n// times SK slices of K. b and a go to LDS by DMA in BK-wide K tiles, b through an SB-deep ring\n// issued by the first W - WA waves and a through an SA-deep ring issued by the last WA waves, so\n// each wave's vmcnt covers one stream only and b can run further ahead than a. The product is\n// computed transposed (MFMA rows are b rows); WM x WN waves each own MS m-blocks x NSW n-blocks\n// of 16. Consecutive tiles start K at a rotated phase so that workgroups do not hit the same HBM\n// channels together. The SK slices of a tile run on one XCD (workgroups t + 8 j); each finalizes\n// every SK-th accumulator block, adding the others' fp32 partials in slice order, so the result\n// does not depend on arrival order.\ntemplate <int N_, int K_, int MT_, int G_, int SK_, int SB_, int SA_, int WM_, int WN_, int WA_, int KROT_ = 8>\nstruct Cfg {\n    static constexpr int N = N_, K = K_, MT = MT_, G = G_, SK = SK_, BK = 64, SB = SB_, SA = SA_;\n    static constexpr int WM = WM_, WN = WN_, WA = WA_, KROT = KROT_;\n    static constexpr int TILES = G / SK;\n    static constexpr int NT = (N / 8 + TILES - 1) / TILES * 8;\n    static constexpr int CH = BK / 8;\n    static constexpr int NTL = (NT * CH + 63) / 64 * 64 / CH;\n    static constexpr int NS = (NT + 15) / 16;\n    static constexpr int NSW = (NS + WN - 1) / WN;\n    static constexpr int MS = MT / 16 / WM;\n    static constexpr int NB = MS * NSW;\n    static constexpr int W = WM * WN;\n    static constexpr int T = 64 * W;\n    static constexpr int WB = W - WA;\n    static constexpr int KT = K / SK / BK;\n    static constexpr int KSTEPS = BK / 32;\n    static constexpr int IB = NTL * CH / 64;\n    static constexpr int IA = MT * CH / 64;\n    static constexpr int LB = (IB + WB - 1) / WB;\n    static constexpr int LA = (IA + WA - 1) / WA;\n    static constexpr int STB = NTL * CH * 16;\n    static constexpr int STA = MT * CH * 16;\n    static constexpr int LDS = SB * STB + SA * STA;\n    static_assert(MT % (16 * WM) == 0 && NTL * CH % 64 == 0 && MT * CH % 64 == 0, \"tiling\");\n    static_assert(WA >= 1 && WB >= 1 && W <= 16, \"wave roles\");\n    static_assert(N % 8 == 0 && TILES <= N / 8, \"8-row groups\");\n    static_assert(SK == 1 || G % (8 * SK) == 0, \"split-K groups share an XCD\");\n    static_assert(K % (SK * BK) == 0 && KT >= SB && KT >= SA && SA >= 2 && SB >= 2, \"pipeline depth\");\n    static_assert((SB - 2) * LB < 64 && (SA - 2) * LA < 64, \"vmcnt\");\n    static_assert(LDS <= 160 * 1024, \"LDS\");\n};\n\ntemplate <class C>\n__global__ __launch_bounds__(C::T) void gemm_kernel(const __bf16* __restrict__ a, const __bf16* __restrict__ b,\n                                                     __bf16* __restrict__ out, f32x4* __restrict__ ws,\n                                                     uint64_t* __restrict__ flags, int m) {\n    constexpr int N = C::N, K = C::K, BK = C::BK, SB = C::SB, SA = C::SA, CH = C::CH;\n    constexpr int KT = C::KT, MS = C::MS, NSW = C::NSW, SK = C::SK;\n    __shared__ __attribute__((aligned(1024))) char smem[C::LDS];\n\n    const int lane = threadIdx.x & 63;\n    const int wave = __builtin_amdgcn_readfirstlane(threadIdx.x >> 6);\n    const int wm = wave % C::WM;\n    const int wn = wave / C::WM;\n    const int bid = blockIdx.x;\n    const int tile = SK == 1 ? bid : bid / (8 * SK) * 8 + bid % 8;\n    const int kh = SK == 1 ? 0 : bid / 8 % SK;\n    const int r0 = (tile * (N / 8) / C::TILES) * 8;\n    const int nr = ((tile + 1) * (N / 8) / C::TILES) * 8 - r0;\n    const int k0 = kh * (K / SK);\n\n    const bool b_wave = wave < C::WB;\n    const int rw = b_wave ? wave : wave - C::WB;\n    const int nw = b_wave ? C::WB : C::WA;\n    const int ni = b_wave ? C::IB : C::IA;\n    const bool short_wave = rw + nw * ((b_wave ? C::LB : C::LA) - 1) >= ni;\n    const i32x4 rsrc = b_wave ? make_rsrc(b + k0, static_cast<uint32_t>(N) * K * 2)\n                              : make_rsrc(a + k0, static_cast<uint32_t>(m) * K * 2);\n    const uint32_t lds0 = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(smem));\n    const uint32_t lds_a = lds0 + SB * C::STB;\n\n    // DMA i of a stage covers 64 16-byte chunks of consecutive rows, each row's chunks swizzled.\n    // b rows >= nr reload row nr - 1 and a rows >= m reload row m - 1; they are never stored.\n    constexpr int L = C::LB > C::LA ? C::LB : C::LA;\n    uint32_t voff[L];\n#pragma unroll\n    for (int j = 0; j < L; ++j) {\n        const int u = (rw + nw * j) * 64 + lane;\n        const int row = u / CH;\n        const int c = (u % CH) ^ (row & 7);\n        const int src = b_wave ? r0 + min(row, nr - 1) : min(row, m - 1);\n        voff[j] = static_cast<uint32_t>(src * K * 2 + c * 16);\n    }\n\n    const int phase = ((tile >> 3) * C::KROT + (tile & 7)) % KT;\n    auto issue = [&](int slot, int it) {\n        const int kb = it + phase >= KT ? it + phase - KT : it + phase;\n        const uint32_t soff = __builtin_amdgcn_readfirstlane(static_cast<uint32_t>(kb * BK * 2));\n        if (b_wave) {\n            const uint32_t base = lds0 + slot * C::STB;\n#pragma unroll\n            for (int j = 0; j < C::LB; ++j) {\n                const int i = rw + C::WB * j;\n                if (j < C::LB - 1 || i < C::IB)\n                    dma16<true>(__builtin_amdgcn_readfirstlane(base + i * 1024), voff[j], rsrc, soff);\n            }\n        } else {\n            const uint32_t base = lds_a + slot * C::STA;\n#pragma unroll\n            for (int j = 0; j < C::LA; ++j) {\n                const int i = rw + C::WA * j;\n                if (j < C::LA - 1 || i < C::IA)\n                    dma16<false>(__builtin_amdgcn_readfirstlane(base + i * 1024), voff[j], rsrc, soff);\n            }\n        }\n    };\n\n    f32x4 acc[MS][NSW];\n#pragma unroll\n    for (int i = 0; i < MS; ++i)\n#pragma unroll\n        for (int j = 0; j < NSW; ++j) acc[i][j] = f32x4{0.f, 0.f, 0.f, 0.f};\n\n    const int g = lane >> 4;\n    const int rowl = lane & 15;\n    const int sw = rowl & 7;\n    const uint32_t b_lane = static_cast<uint32_t>(((wn * NSW) * 16 + rowl) * CH * 16);\n    const uint32_t a_lane = static_cast<uint32_t>(SB * C::STB + ((wm * MS) * 16 + rowl) * CH * 16);\n\n    const int ahead = b_wave ? SB - 1 : SA - 1;\n    const int ring = b_wave ? SB : SA;\n    for (int s = 0; s < ahead; ++s) issue(s, s);\n\n    int sb = 0, sa = 0, si = ahead;\n    for (int it = 0; it < KT; ++it) {\n        if (b_wave) {\n            wait_stages<C::LB, SB - 2>(short_wave, KT - 1 - it);\n        } else {\n            wait_stages<C::LA, SA - 2>(short_wave, KT - 1 - it);\n        }\n        barrier_lds();\n        if (it + ahead < KT) issue(si, it + ahead);\n        si = si + 1 == ring ? 0 : si + 1;\n        const char* stb = smem + sb * C::STB;\n        const char* sta = smem + sa * C::STA;\n        // all fragments of the stage are read before the first MFMA, so LDS latency is paid once\n        bf16x8 bf[C::KSTEPS][NSW], af[C::KSTEPS][MS];\n#pragma unroll\n        for (int ks = 0; ks < C::KSTEPS; ++ks) {\n            const uint32_t slot = static_cast<uint32_t>(((ks * 4 + g) ^ sw) * 16);\n#pragma unroll\n            for (int ns = 0; ns < NSW; ++ns)\n                bf[ks][ns] = *reinterpret_cast<const bf16x8*>(stb + b_lane + ns * 16 * CH * 16 + slot);\n#pragma unroll\n            for (int ms = 0; ms < MS; ++ms)\n                af[ks][ms] = *reinterpret_cast<const bf16x8*>(sta + a_lane + ms * 16 * CH * 16 + slot);\n        }\n        __builtin_amdgcn_sched_barrier(0);\n#pragma unroll\n        for (int ks = 0; ks < C::KSTEPS; ++ks)\n#pragma unroll\n            for (int ms = 0; ms < MS; ++ms)\n#pragma unroll\n                for (int ns = 0; ns < NSW; ++ns)\n                    acc[ms][ns] = __builtin_amdgcn_mfma_f32_16x16x32_bf16(bf[ks][ns], af[ks][ms], acc[ms][ns], 0, 0, 0);\n        sb = sb + 1 == SB ? 0 : sb + 1;\n        sa = sa + 1 == SA ? 0 : sa + 1;\n    }\n\n    // lane holds out[m = mb * 16 + rowl][n = nb * 16 + g * 4 + r], r < 4, of its blocks\n    auto block_live = [&](int ms, int ns) {\n        return (wn * NSW + ns) * 16 < nr && (wm * MS + ms) * 16 < m;\n    };\n    auto store = [&](int ms, int ns, f32x4 v) {\n        const int row = (wm * MS + ms) * 16 + rowl;\n        const int n = (wn * NSW + ns) * 16 + g * 4;\n        if (row < m && n < nr) {\n            u32x2 p;\n            p.x = pack_bf16x2(v.x, v.y);\n            p.y = pack_bf16x2(v.z, v.w);\n            *reinterpret_cast<u32x2*>(out + static_cast<size_t>(row) * N + r0 + n) = p;\n        }\n    };\n\n    if constexpr (SK == 1) {\n#pragma unroll\n        for (int ms = 0; ms < MS; ++ms)\n#pragma unroll\n            for (int ns = 0; ns < NSW; ++ns) store(ms, ns, acc[ms][ns]);\n    } else {\n        // block (ms, ns) belongs to slice (ms * NSW + ns) % SK; the others' partials go through ws\n        // in register order, and flags[tile * SK + q] holds this launch's tag once slice q's are out\n        const uint64_t tag = lmhead_dispatch_id() * 0x9e3779b97f4a7c15ull +\n                             static_cast<uint64_t>(reinterpret_cast<uintptr_t>(__builtin_amdgcn_queue_ptr()));\n        f32x4* mine = ws + static_cast<size_t>(tile * SK + kh) * C::NB * C::T + threadIdx.x;\n#pragma unroll\n        for (int ms = 0; ms < MS; ++ms)\n#pragma unroll\n            for (int ns = 0; ns < NSW; ++ns) {\n                const int blk = ms * NSW + ns;\n                if (blk % SK != kh && block_live(ms, ns)) mine[blk * C::T] = acc[ms][ns];\n            }\n        // the group shares this XCD's L2: stores acknowledged by L2 are visible to it\n        wait_vm<0>();\n        barrier_lds();\n        if (threadIdx.x == 0)\n            __hip_atomic_store(flags + tile * SK + kh, tag, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT);\n        if (threadIdx.x < SK && threadIdx.x != kh) {\n            while (__hip_atomic_load(flags + tile * SK + threadIdx.x, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_AGENT) != tag) {\n            }\n        }\n        barrier_lds();\n        asm volatile(\"buffer_inv sc0\" ::: \"memory\");\n        const f32x4* grp = ws + static_cast<size_t>(tile * SK) * C::NB * C::T + threadIdx.x;\n        // this slice's blocks are kh + SK * o; all loads are issued before the first add\n        constexpr int NO = (C::NB + SK - 1) / SK;\n        f32x4 own[NO], oth[NO][SK];\n#pragma unroll\n        for (int o = 0; o < NO; ++o) {\n            own[o] = acc[0][0];\n#pragma unroll\n            for (int q = 0; q < SK; ++q)\n                if (q + SK * o < C::NB && kh == q) own[o] = acc[(q + SK * o) / NSW][(q + SK * o) % NSW];\n        }\n        auto live = [&](int o) {\n            const int blk = kh + SK * o;\n            return blk < C::NB && block_live(blk / NSW, blk % NSW);\n        };\n#pragma unroll\n        for (int o = 0; o < NO; ++o) {\n            if (!live(o)) continue;\n#pragma unroll\n            for (int q = 0; q < SK; ++q)\n                if (q != kh) oth[o][q] = grp[(q * C::NB + kh + SK * o) * C::T];\n        }\n#pragma unroll\n        for (int o = 0; o < NO; ++o) {\n            if (!live(o)) continue;\n            f32x4 s = kh == 0 ? own[o] : oth[o][0];\n#pragma unroll\n            for (int q = 1; q < SK; ++q) s += kh == q ? own[o] : oth[o][q];\n            store((kh + SK * o) / NSW, (kh + SK * o) % NSW, s);\n        }\n    }\n}\n\ntemplate <class C>\ninline void launch(const void* a, const void* b, void* out, float* ws, uint64_t* flags, int m, hipStream_t stream) {\n    gemm_kernel<C><<<dim3(C::G), dim3(C::T), 0, stream>>>(static_cast<const __bf16*>(a),\n                                                        static_cast<const __bf16*>(b),\n                                                        static_cast<__bf16*>(out), reinterpret_cast<f32x4*>(ws),\n                                                        flags, m);\n}\n\n// 64-bit flag words and fp32 workspace words a launch of C needs\ntemplate <class C>\nconstexpr int64_t flag_words() {\n    return C::SK == 1 ? 0 : static_cast<int64_t>(C::G);\n}\ntemplate <class C>\nconstexpr int64_t ws_words() {\n    return C::SK == 1 ? 0 : static_cast<int64_t>(C::G) * C::NB * C::T * 4;\n}\n\n}  // namespace lmhead\n"
+      },
+      {
+        "path": "kernel.hip",
+        "content": "// bf16 GEMM for the 25256 x 8192 lm-head slice (vocabulary 202048 / 8):\n//   out[m, 25256] = a[m, 8192] @ b[25256, 8192].T, fp32 accumulation, m <= 256.\n// Every m here is weight-streaming: b (414 MB) is read once at HBM speed and each workgroup keeps\n// its m rows of a in an LDS ring next to b's. Each workgroup owns a contiguous run of b's 8-row\n// groups; a's rows past m repeat row m - 1 and are never stored. m > 64 splits K in two within an\n// XCD (halving the a traffic per CU); each workgroup of a pair finalizes half of the output blocks,\n// adding the other's fp32 partial in fixed order, so results are bitwise reproducible. The tile\n// shape is picked per m bucket (gemm_stream.h).\n#include <ATen/ATen.h>\n#include <ATen/hip/HIPContext.h>\n#include <torch/library.h>\n\n#include <initializer_list>\n#include <optional>\n\n#include \"gemm_stream.h\"\n\nnamespace {\n\nconstexpr int kN = 25256;\nconstexpr int kK = 8192;\n\n// MT rows of a per tile, G workgroups, SK K slices, SB / SA stages of b / a, WM x WN waves of which\n// WA load a, K phase rotation KROT between tiles\ntemplate <int MT, int G, int SK, int SB, int SA, int WM, int WN, int WA, int KROT = 8>\nusing Tile = lmhead::Cfg<kN, kK, MT, G, SK, SB, SA, WM, WN, WA, KROT>;\n\ntemplate <class C>\nvoid launch(const at::Tensor& a, const at::Tensor& b, at::Tensor& out, int m, hipStream_t stream) {\n    float* ws = nullptr;\n    uint64_t* flags = nullptr;\n    at::Tensor scratch;\n    if constexpr (C::SK > 1) {\n        constexpr int64_t flag_words = lmhead::flag_words<C>();\n        constexpr int64_t ws_words = lmhead::ws_words<C>();\n        scratch = at::empty({flag_words + ws_words / 2}, a.options().dtype(at::kLong));\n        flags = reinterpret_cast<uint64_t*>(scratch.data_ptr<int64_t>());\n        ws = reinterpret_cast<float*>(flags + flag_words);\n    }\n    lmhead::launch<C>(a.data_ptr(), b.data_ptr(), out.data_ptr(), ws, flags, m, stream);\n}\n\nvoid run(const at::Tensor& a, const at::Tensor& b, const std::optional<at::Tensor>& bias, at::Tensor& out) {\n    TORCH_CHECK(!bias.has_value(), \"bias is not supported\");\n    TORCH_CHECK(a.dim() == 2 && a.size(1) == kK, \"a must be [m, \", kK, \"], got \", a.sizes());\n    TORCH_CHECK(b.dim() == 2 && b.size(0) == kN && b.size(1) == kK, \"b must be [\", kN, \", \", kK, \"]\");\n    const int64_t m = a.size(0);\n    TORCH_CHECK(out.dim() == 2 && out.size(0) == m && out.size(1) == kN, \"out must be [m, \", kN, \"]\");\n    for (const at::Tensor* t : std::initializer_list<const at::Tensor*>{&a, &b, &out}) {\n        TORCH_CHECK(t->scalar_type() == at::kBFloat16, \"bf16 only, got \", t->scalar_type());\n        TORCH_CHECK(t->is_contiguous(), \"tensors must be contiguous\");\n        TORCH_CHECK(t->device() == a.device(), \"tensors must share a device\");\n    }\n    TORCH_CHECK(a.is_cuda(), \"tensors must be on the GPU\");\n    TORCH_CHECK(m <= 256, \"m must be at most 256, got \", m);\n    const auto stream = at::hip::getCurrentHIPStream();\n    TORCH_CHECK(stream.device_index() == a.get_device(), \"tensors are not on the current device\");\n    if (m == 0) {\n        return;\n    }\n    const int mi = static_cast<int>(m);\n    if (mi <= 32) {\n        launch<Tile<32, 243, 1, 5, 3, 1, 2, 1>>(a, b, out, mi, stream);\n    } else if (mi <= 48) {\n        launch<Tile<48, 243, 1, 4, 5, 3, 1, 1>>(a, b, out, mi, stream);\n    } else if (mi <= 64) {\n        launch<Tile<64, 243, 1, 4, 4, 4, 1, 1>>(a, b, out, mi, stream);\n    } else if (mi <= 80) {\n        launch<Tile<80, 256, 2, 3, 3, 5, 2, 2>>(a, b, out, mi, stream);\n    } else if (mi <= 96) {\n        launch<Tile<96, 256, 2, 3, 3, 1, 7, 2>>(a, b, out, mi, stream);\n    } else if (mi <= 112) {\n        launch<Tile<112, 256, 2, 3, 3, 7, 2, 2>>(a, b, out, mi, stream);\n    } else if (mi <= 128) {\n        launch<Tile<128, 256, 2, 4, 3, 4, 2, 2>>(a, b, out, mi, stream);\n    } else if (mi <= 144) {\n        launch<Tile<144, 256, 2, 4, 3, 1, 7, 2, 16>>(a, b, out, mi, stream);\n    } else if (mi <= 160) {\n        launch<Tile<160, 256, 2, 4, 3, 1, 7, 2, 16>>(a, b, out, mi, stream);\n    } else if (mi <= 176) {\n        launch<Tile<176, 256, 2, 3, 3, 1, 7, 2, 16>>(a, b, out, mi, stream);\n    } else if (mi <= 192) {\n        launch<Tile<192, 256, 2, 3, 3, 4, 2, 2, 16>>(a, b, out, mi, stream);\n    } else if (mi <= 208) {\n        launch<Tile<208, 256, 2, 2, 3, 1, 7, 2, 16>>(a, b, out, mi, stream);\n    } else if (mi <= 224) {\n        launch<Tile<224, 256, 2, 2, 3, 7, 1, 2, 16>>(a, b, out, mi, stream);\n    } else {\n        launch<Tile<256, 256, 2, 2, 3, 4, 2, 2, 16>>(a, b, out, mi, stream);\n    }\n}\n\n}  // namespace\n\n#define TORCH_LIBRARY_EXPAND(ns, m) TORCH_LIBRARY(ns, m)\nTORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {\n    m.def(\"run(Tensor a, Tensor b, Tensor? bias, Tensor(a!) out) -> ()\", &run);\n}\n"
+      }
+    ],
+    "description": null
+  }
+}

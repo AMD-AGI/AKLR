@@ -1,216 +1,198 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-import inspect
-import textwrap
+import sys
+import types
+import warnings
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 import torch
 
-import aklr.ops
-import aklr.ops.gemm.api as gemm_api
-from aklr.core.runtime import seam
-from aklr.core.runtime.dispatch import DispatcherRegistry
-from aklr.core.runtime.seam import (
-    RouteError,
-    aklr_route,
-    backend_bind,
-    none_if_falsy,
-    route_for,
-    unused,
-)
-from aklr.ops.gemm.api import gemm
-from tests.op_case import OpCase
+from aklr.core.platform.env import RuntimeEnv
+from aklr.core.runtime.seam import Adapter, SeamRegistry
+from aklr.core.runtime.tracing import TracingConfig, TracingRuntime, WorkloadEntry
+from aklr.core.schema import SchemaCollection, Workload
+from aklr.ops import gemm_bf16_nt
+from tests.op_case import GEMM_KERNEL, OpCase, dispatcher
+
+_PACKAGE = "_aklr_fake_backend"
+_ENTRY = f"{_PACKAGE}.ops.gemm"
 
 
-def _opaque(*args, **kwargs): ...
+def _bind(A, B, scale=None):
+    return {"a": A, "b": B}
 
 
-def _same(out, x, residual, post_layer_mix, comb_res_mix, store_nt=-1): ...
+def _declining_bind(A, B, scale=None):
+    return None if scale is not None else _bind(A, B)
 
 
-def _renamed(out, x, residual, post_mix, comb_res_mix, store_nt=-1): ...
+@pytest.fixture
+def backend(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
+    module = types.ModuleType(f"{_PACKAGE}.ops")
+    module.gemm = lambda A, B, scale=None: "backend"
+    caller = types.ModuleType(f"{_PACKAGE}_caller")
+    caller.gemm = module.gemm
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setitem(sys.modules, caller.__name__, caller)
+    return caller
 
 
-class TestRoute:
-    """``aklr_route`` refuses a malformed route at declaration, before registering it."""
-
-    @pytest.mark.parametrize(
-        "body",
-        [
-            pytest.param("return gemm_api.gemm(a=a, b=b)", id="attribute_call"),
-            pytest.param("c = a\n    return gemm(a=c, b=b)", id="body_computes"),
-        ],
-    )
-    def test_rejects_malformed_body(self, body: str) -> None:
-        """A route whose body calls the api other than by its plain name, or computes before the call."""
-
-        def attribute_call(a, b):
-            return gemm_api.gemm(a=a, b=b)
-
-        def body_computes(a, b):
-            c = a
-            return gemm(a=c, b=b)
-
-        reasons = {
-            attribute_call: "call the op by a plain name",
-            body_computes: "Anything that computes belongs in a kernel",
-        }
-        route = next(fn for fn in reasons if body in textwrap.dedent(inspect.getsource(fn)))
-        api = f"{__name__}.{route.__name__}"
-        with pytest.raises(RouteError, match=reasons[route]):
-            aklr_route(api)(route)
-        assert route_for(api) is None
-
-    @pytest.mark.parametrize(
-        "entry, raises",
-        [
-            pytest.param(_opaque, False, id="opaque_entry_binds_route_names"),
-            pytest.param(_same, False, id="same_names"),
-            pytest.param(_renamed, True, id="renamed_param_rejected"),
-        ],
-    )
-    def test_backend_bind_entry(self, monkeypatch: pytest.MonkeyPatch, entry, raises: bool) -> None:
-        """An opaque entry binds by the route's names; a visible entry must match the route."""
-        aklr.ops.load_routes()
-        api = "aiter.ops.mhc.mhc_post"
-        monkeypatch.setattr(seam, "import_entry", lambda _: entry)
-        case = OpCase.of("mhc_post@1.0")
-        call = case.call(case.inputs())
-        # a missing out needs cuda to allocate
-        call["out"] = call["residual"].clone()
-        route = route_for(api)
-        if raises:
-            with pytest.raises(RouteError, match="no longer describes the entry point"):
-                route.backend_bind(case.contract, call)
-            return
-        bound = route.backend_bind(case.contract, call)
-        assert bound.backend_fn is entry and not bound.args
-        assert set(bound.kwargs) == {
-            "out",
-            "x",
-            "residual",
-            "post_layer_mix",
-            "comb_res_mix",
-        }
-
-    def test_rejects_none_if_falsy_unforwarded(self) -> None:
-        """``none_if_falsy`` names a parameter the op receives, not a dropped one."""
-
-        def falsy_dropped(a, b, scale=0.0):
-            unused(scale)
-            none_if_falsy(scale)
-            return gemm(a=a, b=b)
-
-        api = f"{__name__}.falsy_dropped"
-        with pytest.raises(RouteError, match="only a parameter forwarded"):
-            aklr_route(api)(falsy_dropped)
-        assert route_for(api) is None
+@pytest.fixture
+def seam(request: pytest.FixtureRequest, backend: types.ModuleType) -> Iterator[types.ModuleType]:
+    registry = SeamRegistry()
+    registry.add(Adapter(_ENTRY, gemm_bf16_nt, getattr(request, "param", _bind), None))
+    registry.install()
+    yield backend
+    registry.uninstall()
 
 
-def _gemm_a16w16(A, B, bias=None, otype=None, scale_a=None, scale_b=None, scale_c=None):
-    """aiter.tuned_gemm.gemm_a16w16's signature, on the CPU."""
-    return A @ B.T
-
-
-class TestProxy:
-    """A backend entry point proxied by ``aklr_proxy`` falls back to its own body."""
+class TestSeam:
+    def test_backend_runs_without_a_dispatcher(self, seam: types.ModuleType) -> None:
+        call = OpCase.of("gemm_bf16_nt").call()
+        assert seam.gemm(call["a"], B=call["b"]) == "backend"
 
     @pytest.mark.gpu
-    @pytest.mark.parametrize("declined", [False, True], ids=["closed", "declined"])
-    def test_falls_back_to_backend_body(
-        self,
-        default_dispatchers: DispatcherRegistry,
-        monkeypatch: pytest.MonkeyPatch,
-        declined: bool,
-    ) -> None:
-        """With every dispatcher closed (``NO_SCHEMA``), or when the route declines
-        the call (``must_default``)."""
-        aklr.ops.load_routes()
-        from aiter.tuned_gemm import gemm_a16w16
+    @pytest.mark.usefixtures("builder_registry")
+    def test_active_dispatcher_serves_the_backend_call(self, seam: types.ModuleType) -> None:
+        case = OpCase.of("gemm_bf16_nt")
+        call = case.call()
+        with dispatcher(case.served(GEMM_KERNEL)):
+            out = seam.gemm(call["a"], B=call["b"])
+        assert torch.equal(out, call["a"] @ call["b"].mT)
 
-        case = OpCase.of("gemm@1.0")
-        bound = backend_bind(case.contract, case.call(case.inputs(), "cuda"))
-        assert bound.backend_fn is not gemm_a16w16
-        if declined:
-            # any table opens the proxy; a decline never reaches it
-            dispatcher = default_dispatchers.dispatchers()[case.contract_id]
-            monkeypatch.setattr(dispatcher, "table", object())
-            bound.kwargs["scale_a"] = torch.ones(1, device="cuda")
-        proxied = gemm_a16w16(*bound.args, **bound.kwargs)
-        backend = bound.backend_fn(*bound.args, **bound.kwargs)
-        assert torch.equal(proxied, backend)
+    @pytest.mark.gpu
+    def test_backend_runs_on_a_miss(self, seam: types.ModuleType) -> None:
+        call = OpCase.of("gemm_bf16_nt").call()
+        with dispatcher():
+            assert seam.gemm(call["a"], B=call["b"]) == "backend"
+
+    @pytest.mark.gpu
+    @pytest.mark.usefixtures("builder_registry")
+    @pytest.mark.parametrize("seam", [_declining_bind], indirect=True)
+    def test_declined_call_runs_the_backend(self, seam: types.ModuleType) -> None:
+        case = OpCase.of("gemm_bf16_nt")
+        call = case.call()
+        with dispatcher(case.served(GEMM_KERNEL)):
+            assert seam.gemm(call["a"], B=call["b"], scale=2) == "backend"
+
+    def test_uninstall_restores_the_entry_point(self, backend: types.ModuleType) -> None:
+        original = backend.gemm
+        registry = SeamRegistry()
+        registry.add(Adapter(_ENTRY, gemm_bf16_nt, _bind, None))
+        registry.install()
+        assert backend.gemm is not original
+        registry.uninstall()
+        assert backend.gemm is original
+        assert sys.modules[f"{_PACKAGE}.ops"].gemm is original
 
     @pytest.mark.parametrize(
-        "limit, expected",
-        [(None, None), (0.0, None), (0, None), (10.0, 10.0)],
-        ids=["none", "zero_float", "zero_int", "set"],
+        ("declared", "entry", "match"),
+        [
+            pytest.param([_ENTRY], _ENTRY, "two adapters", id="duplicate"),
+            pytest.param([], "gemm", "not a dotted", id="undotted"),
+        ],
     )
-    def test_none_if_falsy(self, limit, expected) -> None:
-        """aiter's falsy ``swiglu_limit`` means no clamp; the op receives None."""
-        aklr.ops.load_routes()
-        route = route_for("aiter.fused_moe.fused_moe")
-        proxy = seam.Proxy(route, route.declared)
-        api_kwargs = proxy._to_api_kwargs((1, 2, 3, 4, 5), {"swiglu_limit": limit})
-        assert api_kwargs["swiglu_limit"] == expected
-        assert api_kwargs["hidden_states"] == 1
+    def test_add_rejects(self, declared: list[str], entry: str, match: str) -> None:
+        registry = SeamRegistry()
+        for name in declared:
+            registry.add(Adapter(name, gemm_bf16_nt, _bind, None))
+        with pytest.raises(ValueError, match=match):
+            registry.add(Adapter(entry, gemm_bf16_nt, _bind, None))
 
-    @pytest.mark.parametrize("declined", [False, True], ids=["offered", "declined"])
-    def test_compiled_traces_backend_body(self, monkeypatch: pytest.MonkeyPatch, declined: bool) -> None:
-        """Under torch.compile (as sglang compiles its DSA indexer's head gate) an open
-        proxy traces as the entry point's own body, in one graph: no binder, no dispatch."""
-        stand_in = route_for("aiter.tuned_gemm.gemm_a16w16").proxy(_gemm_a16w16)
-        # any table opens the proxy; tracing dispatch would fail on it
-        monkeypatch.setattr(stand_in.aklr_proxy._dispatcher, "table", object())
+    @pytest.mark.parametrize(
+        ("source", "warns"),
+        [
+            pytest.param(None, False, id="absent_module"),
+            pytest.param("", False, id="absent_function"),
+            pytest.param("import _aklr_absent_dependency\n", True, id="failing_import"),
+            pytest.param("raise RuntimeError('build failed')\n", True, id="failing_build"),
+        ],
+    )
+    def test_unavailable_entry_is_skipped(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        source: str | None,
+        warns: bool,
+    ) -> None:
+        module = f"_aklr_{tmp_path.name}"
+        if source is not None:
+            (tmp_path / f"{module}.py").write_text(source)
+        monkeypatch.syspath_prepend(tmp_path)
+        registry = SeamRegistry()
+        registry.add(Adapter(f"{module}.gemm", gemm_bf16_nt, _bind, None))
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            registry.install()
+        assert any(module in str(w.message) for w in caught) is warns
 
-        @torch.compile(backend="eager", dynamic=True, fullgraph=True)
-        def f(a, b):
-            scale_a = torch.ones(1) if declined else None
-            return stand_in(a, b, bias=None, otype=a.dtype, scale_a=scale_a, scale_b=None, scale_c=None)
-
-        for m in (1, 4, 6):
-            a, b = torch.randn(m, 64), torch.randn(32, 64)
-            torch.testing.assert_close(f(a, b), a @ b.T)
-
-
-def gemm_baseline(a, b, trans_b=True, bias=None, out_dtype=None, out=None):
-    """A custom baseline, as an op's ``baseline.py`` would hold it."""
-    return a @ (b.T if trans_b else b)
-
-
-class TestBaseline:
-    """The defined baseline: the op's ``baseline.py`` function, else its first route."""
-
-    def test_topk_prefers_current_sglang_entry(self) -> None:
-        contract = OpCase.of("topk_transform_paged@1.0").contract
-        prefix = "sglang.kernels.ops.attention.dsv4.topk."
-        assert seam.baseline_of(contract) == prefix + "topk_transform_paged_v2"
-
-    def test_custom_baseline_wins_over_route(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A ``baseline.py`` function is bound with the api's params, route or not."""
-        contract = OpCase.of("gemm@1.0").contract
-        baseline_module = type(inspect)("baseline")
-        baseline_module.gemm_baseline = gemm_baseline
-        real_op_module = seam.op_module
-        monkeypatch.setattr(
-            seam,
-            "op_module",
-            lambda pkg, sub: baseline_module if sub == "baseline" else real_op_module(pkg, sub),
+    def test_absent_entry_has_no_baseline(self) -> None:
+        adapter = Adapter(
+            f"{_PACKAGE}.absent.gemm",
+            gemm_bf16_nt,
+            _bind,
+            lambda original, **_: lambda: original(),
         )
-        call = {"a": 1, "b": 2}
-        bound = backend_bind(contract, call)
-        assert bound.backend_fn is gemm_baseline
-        assert bound.kwargs == call and bound.out_mode == "value"
-        assert bound.name == seam.baseline_of(contract)
-        assert bound.name.endswith(".gemm_baseline")
+        assert adapter.baseline({}) is None
 
-    def test_no_route_no_baseline(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Neither: ``baseline_of`` is None and ``backend_bind`` raises
-        ``NoBaselineError``, a ``RouteError``."""
-        contract = OpCase.of("gemm@1.0").contract
-        assert seam.baseline_of(contract) is not None  # gemm has routes
-        monkeypatch.setattr(seam, "_ROUTES", {})
-        assert seam.baseline_of(contract) is None
-        with pytest.raises(seam.NoBaselineError) as raised:
-            backend_bind(contract, {})
-        assert isinstance(raised.value, RouteError)
+
+class TestTracing:
+    @staticmethod
+    def _traced() -> dict[str, list[list[Workload]]]:
+        collection = SchemaCollection.from_path(str(RuntimeEnv().schema_path))
+        return {name: [s.workloads for s in schemas] for name, schemas in collection.schemas.items()}
+
+    def test_records_each_workload_the_backend_runs(self, seam: types.ModuleType) -> None:
+        call = OpCase.of("gemm_bf16_nt").call()
+        with TracingRuntime(TracingConfig()):
+            for m in (4, 4, 8):
+                assert seam.gemm(call["a"][:1].expand(m, -1), B=call["b"]) == "backend"
+        assert self._traced() == {
+            "gemm_bf16_nt_n32_k64": [[Workload(axes={"M": 4}), Workload(axes={"M": 8})]]
+        }
+
+    def test_keeps_the_first_entry_of_each_workload(self) -> None:
+        policy = TracingConfig().create_filter_policy()
+        for order, m in enumerate((4, 4, 8)):
+            policy.submit(WorkloadEntry("gemm", {"M": m}, {}, order))
+        assert [entry.axes for entry in policy.drain()] == [{"M": 4}, {"M": 8}]
+
+    def test_adds_to_the_recorded_workloads(self, seam: types.ModuleType) -> None:
+        case = OpCase.of("gemm_bf16_nt")
+        SchemaCollection.from_path(str(RuntimeEnv().schema_path)).add_workloads(
+            [(case.schema(), Workload(axes={"M": 2}))]
+        )
+        call = case.call()
+        with TracingRuntime(TracingConfig()):
+            seam.gemm(call["a"], B=call["b"])
+        assert self._traced() == {
+            "gemm_bf16_nt_n32_k64": [[Workload(axes={"M": 2}), Workload(axes={"M": 4})]]
+        }
+
+    @pytest.mark.gpu
+    @pytest.mark.usefixtures("builder_registry")
+    def test_skips_a_served_call(self, seam: types.ModuleType) -> None:
+        case = OpCase.of("gemm_bf16_nt")
+        call = case.call()
+        with dispatcher(case.served(GEMM_KERNEL)), TracingRuntime(TracingConfig()):
+            seam.gemm(call["a"], B=call["b"])
+        assert self._traced() == {}
+
+    def test_skips_a_call_of_an_unnamed_dtype(self, seam: types.ModuleType) -> None:
+        call = OpCase.of("gemm_bf16_nt").call()
+        with TracingRuntime(TracingConfig()):
+            assert seam.gemm(call["a"].double(), B=call["b"].double()) == "backend"
+        assert self._traced() == {}
+
+    def test_failing_trace_warns_once_and_runs_the_backend(self, seam: types.ModuleType) -> None:
+        call = OpCase.of("gemm_bf16_nt").call()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with TracingRuntime(TracingConfig(input_dump_policy=["x"])):
+                for _ in range(2):
+                    assert seam.gemm(call["a"], B=call["b"]) == "backend"
+        assert [w.filename for w in caught if "tracing failed" in str(w.message)] == [__file__]
+        assert self._traced() == {}

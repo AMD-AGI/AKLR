@@ -3,41 +3,20 @@
 
 from __future__ import annotations
 
-from aklr.core.runtime.dispatch import api
-from aklr.core.runtime.seam import aklr_route, must_default
-from aklr.ops.topk.contract import TOPK_TRANSFORM_PAGED
+from aklr.core.runtime.dispatch import aklr_api
+from aklr.ops.topk.schema import TOPK_TRANSFORM_PAGED
 
 __all__ = ["topk_transform_paged"]
 
 
-@api(TOPK_TRANSFORM_PAGED)
+@aklr_api(TOPK_TRANSFORM_PAGED)
 def topk_transform_paged(
     scores,
     seq_lens,
     page_tables,
+    k,
     out_page_indices,
-    page_size,
-    metadata,
+    *,
+    page_size=1,
     out_raw_indices=None,
 ): ...
-
-
-@aklr_route("sglang.kernels.ops.attention.dsv4.topk.topk_transform_paged_v2")
-def _(
-    scores,
-    seq_lens,
-    page_tables,
-    out_page_indices,
-    page_size,
-    metadata,
-    out_raw_indices=None,
-):
-    must_default(out_raw_indices)  # a second raw output is not in the contract
-    topk_transform_paged(
-        scores=scores,
-        seq_lens=seq_lens,
-        metadata=metadata,
-        out_page_indices=out_page_indices,
-        page_size=page_size,
-        page_tables=page_tables,
-    )

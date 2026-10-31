@@ -3,7 +3,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import gc
+import hashlib
+import json
 import math
 import random
 import statistics
@@ -12,8 +15,8 @@ from contextlib import AbstractContextManager
 from types import MappingProxyType
 from typing import Any, Literal, NamedTuple, get_args
 
-from aklr.core.contract.semantics import derive_seed
-from aklr.core.contract.spec import FrozenModel
+from aklr.core._frozen_model import frozen_dataclass
+from aklr.core.utils import testing
 from aklr.core.validation.stages._report._finding import Finding, FindingCode
 
 __all__ = [
@@ -35,9 +38,10 @@ __all__ = [
     "Versus",
     "bind_clock",
     "compare_performance",
+    "derive_seed",
     "gate",
-    "is_tracer_fault",
     "ratio_lower_bound",
+    "sorted_key_json",
     "timing_records",
 ]
 
@@ -54,25 +58,19 @@ GRAPH_BUDGET_MILLISECONDS = 20.0
 
 MEASUREMENT_PROFILE: Mapping[str, Any] = MappingProxyType(
     {
-        "version": 17,
+        "version": 18,
         "timer": "bench_cudagraph",
+        **dataclasses.asdict(testing.CudaGraphTimer()),
         "sample_count_policy": "rep_ms_estimate_capped_by_kernel_record_budget",
-        "estimation_samples": 5,
         "estimation_timer": "cuda_event_eager_with_cache_flush",
-        "capture_warmup_runs": 1,
         "execution_mode": "cuda_graph",
         "metric": "gpu_duration_sum",
-        "profiler": "kineto",
+        "profiler": "rocprofiler_sdk_kernel_dispatch",
         "calls_per_graph": "adaptive",
         "cache_policy": "flush_before_each_call_in_graph",
-        "cache_flush_bytes": 1 << 30,
         "cache_flush_access": "read",
         "cache_flush_kernel": "_flush_l2_cache_kernel",
-        "profiler_warmup_replays": 1,
-        "kineto_warmup": "one_unrecorded_baseline_bench_cudagraph",
-        "tracer_fault_policy": "measure_again_once_in_place_then_rerun_task_once",
-        "measurement_replays": 10,
-        "profiler_drain_replays": 1,
+        "profiler_warmup": "one_unrecorded_baseline_bench_cudagraph",
         "sample_aggregation": "mean_within_replay",
         "replay_aggregation": "median",
         "graph_budget_milliseconds": GRAPH_BUDGET_MILLISECONDS,
@@ -95,7 +93,8 @@ Versus = Literal["baseline", "incumbent"]
 Threshold = Literal["entry", "retain"]
 
 
-class TimingRecord(FrozenModel):
+@frozen_dataclass
+class TimingRecord:
     """A measurement, never a verdict: ``gate`` decides it."""
 
     mode: Mode
@@ -109,11 +108,27 @@ class TimingRecord(FrozenModel):
     candidate_milliseconds: tuple[float, ...]
 
 
-class RoundTimes(FrozenModel):
+@frozen_dataclass
+class RoundTimes:
     mode: Mode
     round_index: int
     order: tuple[Participant, ...]
     milliseconds: dict[Participant, float]
+
+
+def sorted_key_json(value: Any) -> str:
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    )
+
+
+def derive_seed(*parts: str | int) -> int:
+    digest = hashlib.sha256(sorted_key_json(list(parts)).encode()).digest()
+    return int.from_bytes(digest[:8], "big")
 
 
 def ratio_lower_bound(log_ratios: Sequence[float], *, alpha: float = ALPHA) -> float:
@@ -221,14 +236,6 @@ class Clock(NamedTuple):
     synchronize: Callable
     bench_cudagraph: Callable
 
-    def graph_reading(self, call: Callable[[], object]) -> float:
-        try:
-            return self.bench_cudagraph(call, rep=GRAPH_BUDGET_MILLISECONDS)
-        except Exception as e:
-            if not is_tracer_fault(str(e)):
-                raise
-        return self.bench_cudagraph(call, rep=GRAPH_BUDGET_MILLISECONDS)
-
     def time_rounds(
         self,
         fns: Mapping[Participant, Callable[[], object]],
@@ -243,7 +250,7 @@ class Clock(NamedTuple):
         gc.disable()
         try:
             with context_fns["baseline"]():
-                self.graph_reading(fns["baseline"])
+                self.bench_cudagraph(fns["baseline"], rep=GRAPH_BUDGET_MILLISECONDS)
             for mode in get_args(Mode):
                 for round_index in range(-N_WARMUP_ROUNDS, N_ROUNDS):
                     order_seed = derive_seed(seed, "order", mode, round_index)
@@ -251,7 +258,7 @@ class Clock(NamedTuple):
                     milliseconds = {}
                     for p in order:
                         with context_fns[p]():
-                            milliseconds[p] = self.graph_reading(fns[p])
+                            milliseconds[p] = self.bench_cudagraph(fns[p], rep=GRAPH_BUDGET_MILLISECONDS)
                     if round_index >= 0:
                         rounds.append(
                             RoundTimes(
@@ -270,21 +277,7 @@ class Clock(NamedTuple):
 def bind_clock() -> Clock:
     import torch
 
-    from aklr.core.utils.testing import bench_cudagraph
-
     return Clock(
         synchronize=torch.cuda.synchronize,
-        bench_cudagraph=bench_cudagraph,
+        bench_cudagraph=testing.bench_cudagraph,
     )
-
-
-_TRACER_FAULT_MESSAGES = (
-    "Kineto recorded no kernels for a single call",
-    "L2 flushes per replay, got 0",
-    "std::bad_alloc",
-    "std::length_error",
-)
-
-
-def is_tracer_fault(text: str) -> bool:
-    return any(message in text for message in _TRACER_FAULT_MESSAGES)

@@ -1,0 +1,335 @@
+{
+  "name": "flash_mla_with_kvcache_ragged_query_length8_n_heads96_page_size1",
+  "op_type": "flash_mla_with_kvcache",
+  "axes": {
+    "batch": {
+      "description": "Rows: one token each (sparse) or one request each (dense).",
+      "type": "var"
+    },
+    "query_length": {
+      "description": "Queries per row.",
+      "value": 8,
+      "type": "const"
+    },
+    "n_heads": {
+      "description": "Query heads.",
+      "value": 96,
+      "type": "const"
+    },
+    "n_pages": {
+      "description": "Pages of the KV pool.",
+      "type": "var"
+    },
+    "page_size": {
+      "description": "Slots per page of the KV pool.",
+      "value": 1,
+      "type": "const"
+    },
+    "n_indices": {
+      "description": "Sparse indices per token.",
+      "value": null,
+      "type": "const"
+    },
+    "n_extra_pages": {
+      "description": "Pages of the extra KV pool.",
+      "type": "var"
+    },
+    "extra_page_size": {
+      "description": "Slots per page of the extra KV pool.",
+      "value": null,
+      "type": "const"
+    },
+    "n_extra_indices": {
+      "description": "Extra sparse indices per token.",
+      "value": null,
+      "type": "const"
+    },
+    "table_width": {
+      "description": "Columns of the 2-D block_table, or length of the flat one.",
+      "type": "var"
+    },
+    "n_offsets": {
+      "description": "Offsets in cu_seqlens_k: batch + 1.",
+      "type": "var"
+    },
+    "head_dim": {
+      "description": "Query values per head.",
+      "value": 576,
+      "type": "const"
+    },
+    "kv_dim": {
+      "description": "Bytes (sparse) or values (dense) per pool slot.",
+      "value": 576,
+      "type": "const"
+    },
+    "v_dim": {
+      "description": "Output values per head.",
+      "value": 512,
+      "type": "const"
+    },
+    "one": {
+      "description": "A single KV head.",
+      "value": 1,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 8,
+        "table_width": 8,
+        "n_offsets": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 16,
+        "table_width": 16,
+        "n_offsets": 3
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 3,
+        "n_pages": 24,
+        "table_width": 24,
+        "n_offsets": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 32,
+        "table_width": 32,
+        "n_offsets": 5
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 5,
+        "n_pages": 40,
+        "table_width": 40,
+        "n_offsets": 6
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 6,
+        "n_pages": 48,
+        "table_width": 48,
+        "n_offsets": 7
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 7,
+        "n_pages": 56,
+        "table_width": 56,
+        "n_offsets": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 64,
+        "table_width": 64,
+        "n_offsets": 9
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 10,
+        "n_pages": 80,
+        "table_width": 80,
+        "n_offsets": 11
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 12,
+        "n_pages": 96,
+        "table_width": 96,
+        "n_offsets": 13
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 14,
+        "n_pages": 112,
+        "table_width": 112,
+        "n_offsets": 15
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "q": {
+      "shape": [
+        "batch",
+        "query_length",
+        "n_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "The queries of each row; dense: the rope part last."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_pages",
+        "page_size",
+        "one",
+        "kv_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "The KV pool: one 576-value row a page."
+    },
+    "sparse_indices": {
+      "shape": [
+        "batch",
+        "one",
+        "n_indices"
+      ],
+      "dtype": "int32",
+      "description": "Slots of the KV pool each token reads; negative: skipped."
+    },
+    "sparse_lens": {
+      "shape": [
+        "batch"
+      ],
+      "dtype": "int32",
+      "description": "Leading sparse_indices each token reads; all when absent."
+    },
+    "extra_kv_cache": {
+      "shape": [
+        "n_extra_pages",
+        "extra_page_size",
+        "one",
+        "kv_dim"
+      ],
+      "dtype": null,
+      "description": "The extra KV pool, packed dsv4 slots in pages padded as kv_cache's."
+    },
+    "extra_sparse_indices": {
+      "shape": [
+        "batch",
+        "one",
+        "n_extra_indices"
+      ],
+      "dtype": "int32",
+      "description": "Slots of the extra KV pool each token reads; negative: skipped."
+    },
+    "extra_sparse_lens": {
+      "shape": [
+        "batch"
+      ],
+      "dtype": "int32",
+      "description": "Leading extra_sparse_indices each token reads; all when absent."
+    },
+    "block_table": {
+      "shape": [
+        "table_width"
+      ],
+      "dtype": "int32",
+      "description": "Pool rows of each request: a (batch, width) table read up to cache_seqlens, or every request's rows back to back."
+    },
+    "cache_seqlens": {
+      "shape": [
+        "batch"
+      ],
+      "dtype": "int32",
+      "description": "Leading block_table entries each request reads, at least one."
+    },
+    "cu_seqlens_k": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "description": "Where each request's rows start in block_table, then its length."
+    },
+    "causal": {
+      "dtype": "bool",
+      "description": "Whether query i of a request of length L reads only its first L - query_length + i + 1 rows.",
+      "shape": null
+    },
+    "sm_scale": {
+      "dtype": "float32",
+      "description": "Multiplies every logit; q.shape[-1] ** -0.5 when absent.",
+      "shape": null
+    },
+    "sinks": {
+      "shape": [
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "description": "Per-head logit added to the normalisation only, not to lse."
+    },
+    "kv_cache_format": {
+      "dtype": "string",
+      "description": "The pool rows: DeepSeek-V4's packed fp8 slots (sparse), or 576 fp8 or bf16 values (dense).",
+      "shape": null
+    },
+    "kv_scale": {
+      "dtype": "float32",
+      "description": "Multiplies every KV value, in the logits and the values.",
+      "shape": null
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "batch",
+        "query_length",
+        "n_heads",
+        "v_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Softmax-weighted sum of the read values; 0 for no row read."
+    },
+    "lse": {
+      "shape": [
+        "batch",
+        "query_length",
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "description": "Log-sum-exp of the scaled logits, sinks excluded; for no row read +inf (sparse) or -inf (dense)."
+    }
+  },
+  "reference": "from __future__ import annotations\nimport math\nimport torch\nimport torch.nn.functional as F\n\ndef _attend(\n    q: Tensor,\n    keys_of: Callable[[slice], Tensor],\n    visible: Tensor,\n    sinks: Tensor | None,\n    sm_scale: float | None,\n    kv_scale: float,\n    empty_lse: float,\n) -> tuple[Tensor, Tensor]:\n    \"\"\"Each head of a query attends over the KV rows ``visible`` marks, chunked by\n    rows; ``keys_of(rows)`` gathers their keys in float64.\"\"\"\n    import torch\n\n    batch = q.shape[0]\n    sinks = None if sinks is None else sinks.double()\n    scale = (q.shape[-1] ** -0.5 if sm_scale is None else sm_scale) * kv_scale\n    output = q.new_zeros(*q.shape[:-1], 512)\n    lse = q.new_full(q.shape[:-1], empty_lse)\n    # gathered KV values per chunk of rows: 512 MiB of float64\n    n_rows = max(1, 2**26 // (visible.shape[-1] * q.shape[-1]))\n    for start in range(0, batch, n_rows):\n        rows = slice(start, start + n_rows)\n        keys = keys_of(rows)\n        seen = visible[rows][:, :, None]\n        logits = torch.einsum(\"rqhd,rkd->rqhk\", q[rows], keys) * scale\n        logits = logits.masked_fill(~seen, -torch.inf)\n        row_lse = logits.logsumexp(dim=-1)\n        empty = ~seen.any(dim=-1)\n        if sinks is not None:\n            logits = torch.cat((logits, sinks.expand_as(row_lse)[..., None]), dim=-1)\n        # Normalized directly: subtracting lse would carry its rounding at large logits.\n        weights = logits.softmax(dim=-1)[..., : keys.shape[1]]\n        weights = weights.masked_fill(empty[..., None], 0)\n        output[rows] = weights @ (keys[:, None, :, :512] * kv_scale)\n        lse[rows] = row_lse.masked_fill(empty, empty_lse)\n    return output, lse\n\ndef _attend_dense(\n    q: Tensor,\n    kv_cache: Tensor,\n    table: Tensor,\n    lengths: Tensor,\n    causal: bool,\n    sinks: Tensor | None,\n    sm_scale: float | None,\n    kv_scale: float,\n) -> tuple[Tensor, Tensor]:\n    \"\"\"Each request attends to its first ``lengths`` table rows of the pool.\"\"\"\n    import torch\n\n    pool = kv_cache.flatten(0, 2)\n    query_length = q.shape[1]\n    positions = torch.arange(int(lengths.max()), device=table.device)\n    # entries past a row's length are padding: they read row 0, hidden by ``visible``\n    table = table[:, : positions.numel()].where(positions < lengths[:, None], 0)\n    ends = lengths[:, None]\n    if causal:\n        ends = ends - query_length + 1 + torch.arange(query_length, device=q.device)\n    visible = positions < ends[..., None]\n\n    def keys_of(rows: slice) -> Tensor:\n        \"\"\"The 576 values of each pool row the rows read, in float64.\"\"\"\n        return pool[table[rows]].double()\n\n    return _attend(q.double(), keys_of, visible, sinks, sm_scale, kv_scale, -torch.inf)\n\ndef flash_mla_with_kvcache_ragged_reference(\n    q,\n    kv_cache,\n    sparse_indices=None,\n    *,\n    sparse_lens=None,\n    extra_kv_cache=None,\n    extra_sparse_indices=None,\n    extra_sparse_lens=None,\n    block_table=None,\n    cache_seqlens=None,\n    cu_seqlens_k=None,\n    causal=False,\n    head_dim_v=None,\n    sm_scale=None,\n    sinks=None,\n    kv_cache_format=\"dsv4_fp8\",\n    kv_scale=1.0,\n) -> tuple[Tensor, Tensor]:\n    \"\"\"Each request attends to its rows of the flat block_table, cu_seqlens_k apart.\"\"\"\n    import torch\n\n    table = block_table.long()\n    offsets = cu_seqlens_k.long()\n    lengths = offsets.diff()\n    columns = torch.arange(int(lengths.max()), device=table.device)\n    table = table[(offsets[:-1, None] + columns).clamp(max=table.numel() - 1)]\n    return _attend_dense(q, kv_cache, table, lengths, causal, sinks, sm_scale, kv_scale)\n\nrun = flash_mla_with_kvcache_ragged_reference\n",
+  "check": "from __future__ import annotations\nimport torch\n\ndef _as_output_list(outputs: Any) -> List[Any]:\n    if isinstance(outputs, list):\n        return outputs\n    if isinstance(outputs, tuple):\n        return list(outputs)\n    return [outputs]\n\ndef default_tolerances(dtype: Union[torch.dtype, str]) -> Tuple[float, float]:\n    \"\"\"Return ``(rtol, atol)`` defaults for a trace correctness check.\n\n    These defaults are intentionally conservative for low-precision inference\n    data types. Template-specific ``check`` functions can override them by\n    passing explicit ``rtol`` and ``atol`` to :func:`default_check`.\n    \"\"\"\n    dtype_name = str(dtype).replace(\"torch.\", \"\")\n    if dtype_name in (\"float64\", \"double\"):\n        return 1e-7, 1e-7\n    if dtype_name in (\"float32\", \"float\"):\n        return 1e-5, 1e-5\n    if dtype_name in (\"float16\", \"half\"):\n        return 1e-3, 1e-3\n    if dtype_name == \"bfloat16\":\n        return 1e-2, 1e-2\n    if dtype_name.startswith(\"float8\"):\n        return 1e-1, 1e-1\n    if dtype_name.startswith(\"float4\") or \"fp4\" in dtype_name:\n        return 1.0, 1.0\n    return 0.0, 0.0\n\ndef _cosine_similarity(actual: torch.Tensor, expected: torch.Tensor) -> float:\n    actual = actual.reshape(-1).to(torch.float32)\n    expected = expected.reshape(-1).to(torch.float32)\n    finite = torch.isfinite(actual) & torch.isfinite(expected)\n    if not finite.any():\n        return 1.0\n    actual = actual[finite]\n    expected = expected[finite]\n    actual_norm = torch.linalg.vector_norm(actual)\n    expected_norm = torch.linalg.vector_norm(expected)\n    if actual_norm.item() == 0 or expected_norm.item() == 0:\n        return 1.0 if torch.equal(actual, expected) else 0.0\n    return ((actual * expected).sum() / (actual_norm * expected_norm)).item()\n\ndef default_check(\n    reference_outputs: Any,\n    actual_outputs: Any,\n    *,\n    rtol: Optional[float] = None,\n    atol: Optional[float] = None,\n    max_mismatch_pct: float = 0.0,\n    min_cos_sim: Optional[float] = 1.0 - 1e-3,\n) -> bool:\n    \"\"\"Validate actual outputs against reference outputs.\n\n    ``reference_outputs`` and ``actual_outputs`` may be lists/tuples,\n    dictionaries with matching keys, or single output values. Tensor outputs\n    are checked for shape equality, closeness, mismatch percentage, and cosine\n    similarity. Non-floating tensors are checked exactly unless\n    ``max_mismatch_pct`` allows mismatches. Non-tensor outputs use Python\n    equality.\n    \"\"\"\n    if isinstance(reference_outputs, dict) or isinstance(actual_outputs, dict):\n        if not isinstance(reference_outputs, dict) or not isinstance(\n            actual_outputs, dict\n        ):\n            return False\n        if reference_outputs.keys() != actual_outputs.keys():\n            return False\n        refs = [reference_outputs[key] for key in reference_outputs]\n        actuals = [actual_outputs[key] for key in reference_outputs]\n    else:\n        refs = _as_output_list(reference_outputs)\n        actuals = _as_output_list(actual_outputs)\n\n    if len(refs) != len(actuals):\n        return False\n\n    for ref, actual in zip(refs, actuals, strict=True):\n        if isinstance(ref, torch.Tensor) != isinstance(actual, torch.Tensor):\n            return False\n        if not isinstance(ref, torch.Tensor):\n            if ref != actual:\n                return False\n            continue\n\n        if ref.shape != actual.shape:\n            return False\n        if ref.numel() == 0:\n            continue\n\n        ref_is_float = torch.is_floating_point(ref)\n        actual_is_float = torch.is_floating_point(actual)\n        if ref_is_float or actual_is_float:\n            tolerance_dtype = actual.dtype if actual_is_float else ref.dtype\n            default_rtol, default_atol = default_tolerances(tolerance_dtype)\n            rtol_value = default_rtol if rtol is None else rtol\n            atol_value = default_atol if atol is None else atol\n            close = torch.isclose(\n                actual.to(torch.float32),\n                ref.to(torch.float32),\n                rtol=rtol_value,\n                atol=atol_value,\n            )\n            mismatch_pct = 100.0 * (~close).sum().item() / close.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n            if min_cos_sim is not None:\n                cos_sim = _cosine_similarity(actual, ref)\n                if cos_sim < min_cos_sim:\n                    return False\n        else:\n            matches = actual == ref\n            mismatch_pct = 100.0 * (~matches).sum().item() / matches.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n\n    return True\n\ndef _flash_mla_check(\n    reference_outputs,\n    actual_outputs,\n    *,\n    rtol=None,\n    atol=None,\n    max_mismatch_pct=0.0,\n    min_cos_sim=None,\n):\n    # aiter's flash_mla tests: allclose(atol=1e-2, rtol=1e-2)\n    return default_check(\n        reference_outputs,\n        actual_outputs,\n        rtol=1e-2 if rtol is None else rtol,\n        atol=1e-2 if atol is None else atol,\n        max_mismatch_pct=max_mismatch_pct,\n        min_cos_sim=min_cos_sim,\n    )\n\nrun = _flash_mla_check\n",
+  "init": null,
+  "tags": [
+    "kimi-k3/tp8+dcp8"
+  ],
+  "description": "MLA attention over a paged KV pool, FlashMLA's API. Sparse: each token attends to the slots its indices name, in the pool and the optional extra one; sinks join the normalisation only. Dense: each request attends to its context rows; q's rope part is last, scores are q . row * sm_scale * kv_scale and values row[:head_dim_v] * kv_scale. With causal, query i of a request of length L reads its first L - query_length + i + 1 rows.",
+  "constraints": [
+    "sparse_indices is None",
+    "sparse_lens is None",
+    "extra_kv_cache is None",
+    "extra_sparse_indices is None",
+    "extra_sparse_lens is None",
+    "sinks is None",
+    "cache_seqlens is None",
+    "n_pages * page_size <= 2147483648",
+    "kv_cache_format in ('fp8_e4m3', 'bf16')",
+    "(kv_cache.dtype == 'bfloat16') == (kv_cache_format == 'bf16')",
+    "kv_cache_format != 'fp8_e4m3' or kv_cache.dtype == 'float8_e4m3fn'",
+    "head_dim_v == 512",
+    "page_size == 1",
+    "n_offsets == batch + 1",
+    "table_width >= batch * query_length"
+  ],
+  "kernel": null
+}

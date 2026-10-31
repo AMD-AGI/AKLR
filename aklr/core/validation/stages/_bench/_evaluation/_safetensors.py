@@ -8,7 +8,7 @@ import stat
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
-from aklr.core.contract import semantics
+from aklr.core.utils import dtype_str_to_torch_dtype
 from aklr.core.validation.stages._bench._evaluation._trials import Step
 
 if TYPE_CHECKING:
@@ -38,15 +38,15 @@ def read_step_outputs(
     candidate_file: Any,
     step: Step,
     output_shapes: Mapping[str, tuple[int, ...]],
-    outputs_json: Mapping[str, Any],
+    output_dtypes: Mapping[str, str],
 ) -> dict[str, Tensor]:
     actual_outputs = {}
     for o, shape in output_shapes.items():
-        key, dtype = step.output_key(o), outputs_json[o]["dtype"]["any_of"][0]
+        key, dtype = step.output_key(o), output_dtypes[o]
         found = tuple(candidate_file.get_slice(key).get_shape())
         if found != shape:
             raise ValueError(f"the output {o} has shape {found}, not {shape} {dtype}")
         actual = actual_outputs[o] = candidate_file.get_tensor(key)
-        if actual.dtype not in semantics.torch_dtypes(dtype):
+        if actual.dtype != dtype_str_to_torch_dtype(dtype):
             raise ValueError(f"the output {o} has {actual.dtype}, not {shape} {dtype}")
     return actual_outputs

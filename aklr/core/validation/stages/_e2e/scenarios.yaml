@@ -57,8 +57,6 @@ scenarios:
       mem-fraction-static: 0.6
     env:
       SGLANG_USE_AITER: "1"
-      # the sglang plugin's layer routes too; the off side's AKLR_DISABLE=1 leaves them out
-      AKLR_SGLANG_PLUGIN: "1"
 
   # DeepSeek-V4-Flash decode at concurrency 1, 2 and 4, the batches the sparse MLA
   # kernels target. Plain TP with sglang's default pool settings: the KV pool's page

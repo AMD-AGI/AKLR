@@ -35,8 +35,8 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument(
         "--stages",
         type=lambda text: tuple(text.split(",")),
-        default=("audit", "bench"),
-        help=f"a part of {','.join(STAGE_ORDER)} that starts with audit",
+        default=(AuditStage.name, BenchStage.name),
+        help=f"a part of {','.join(STAGE_ORDER)} that starts with {AuditStage.name}",
     )
     parser.add_argument(
         "--e2e-scenario",
@@ -55,15 +55,16 @@ def main(argv: Sequence[str]) -> int:
     )
     args = parser.parse_args(argv)
     names = args.stages
-    if names[:1] != ("audit",) or names != tuple(n for n in STAGE_ORDER if n in names):
+    if names[:1] != (AuditStage.name,) or names != tuple(n for n in STAGE_ORDER if n in names):
         parser.error(
-            f"--stages {','.join(names)!r} is not a part of {','.join(STAGE_ORDER)} that starts with audit"
+            f"--stages {','.join(names)!r} is not a part of {','.join(STAGE_ORDER)}"
+            f" that starts with {AuditStage.name}"
         )
     Progress().write("collecting schemas and platform")
     try:
         scope = ValidationScope.of_working_tree(args.base, args.paths or None)
         devices: list[str] = []
-        if {"bench", "e2e"} & set(names):
+        if {BenchStage.name, E2eStage.name} & set(names):
             if args.devices is None:
                 indices = range(PlatformRecord.current().n_visible_devices)
             else:
@@ -77,9 +78,9 @@ def main(argv: Sequence[str]) -> int:
                 raise ValueError("no visible device and no --devices")
             devices = [f"cuda:{i}" for i in indices]
         stages: list[PipelineStage] = [AuditStage(allow_measured_edits=args.allow_measured_edits)]
-        if "bench" in names:
+        if BenchStage.name in names:
             stages.append(BenchStage(devices))
-        if "e2e" in names:
+        if E2eStage.name in names:
             scenarios = E2eConfig.read().selected(args.scenarios)
             stages.append(E2eStage(scenarios, devices))
         pipeline = Pipeline(stages)
@@ -88,6 +89,5 @@ def main(argv: Sequence[str]) -> int:
     report = pipeline.run(scope)
     report.write(args.out)
     report.write_schemas(scope.root, args.out / "schemas")
-    report.write_baselines(scope, args.out / "baseline")
     print(f"validation {report.conclusion}: {args.out / 'report.md'}")
     return report.exit_code

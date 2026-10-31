@@ -272,13 +272,6 @@ def setup(server_args, port_args, gpu_id: int, tp_rank: int, tag: str = "BENCH")
     configure_logger(server_args, prefix=f" TP{tp_rank}")
     # as the scheduler process does: sglang.srt.plugins hooks (AKLR's dispatch) attach
     load_plugins()
-    # load_routes proxies aiter's entry points only: proxy sglang's too, so AKLR_EXPORT records them
-    from aklr.core.runtime import seam
-    from aklr.ops import load_routes
-
-    load_routes()
-    seam.aklr_proxy()
-
     model_runner = load_model(server_args, port_args, gpu_id, tp_rank)[0].torch_runner
 
     if tp_rank != 0:

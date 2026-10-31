@@ -5,4 +5,4 @@ __all__ = ["LoadError"]
 
 
 class LoadError(RuntimeError):
-    """Aklr cannot start serving: a bad ``AKLR_*`` value, an unknown device, a bad schema."""
+    """Aklr cannot start serving: an unknown device, a bad schema."""

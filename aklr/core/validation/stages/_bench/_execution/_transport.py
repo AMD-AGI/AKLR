@@ -133,6 +133,9 @@ class ChildRunnerEndpoint:
         except Exception as error:
             raise ChannelFailure(f"could not send runner event: {error}") from error
 
+    def close(self) -> None:
+        self._event_connection.close()
+
 
 class MultiprocessingRunnerChannel(RunnerChannel):
     def __init__(self, command_queue: Any, event_connection: Any) -> None:
@@ -189,8 +192,6 @@ class MultiprocessingRunnerChannel(RunnerChannel):
             return event_type(**message)
         except ChannelReceiveTimeout:
             raise
-        except EOFError:
-            raise ChannelFailure("could not receive runner event: the child closed the pipe") from None
         except (OSError, ValueError, RecursionError) as error:
             raise ChannelFailure(f"could not receive runner event: {error}") from error
 

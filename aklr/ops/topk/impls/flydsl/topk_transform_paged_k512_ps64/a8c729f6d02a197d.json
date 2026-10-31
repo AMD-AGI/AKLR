@@ -1,0 +1,166 @@
+{
+  "name": "topk_transform_paged_k512_ps64",
+  "op_type": "topk_transform_paged",
+  "axes": {
+    "n_tokens": {
+      "description": "Rows, one per token.",
+      "type": "var"
+    },
+    "n_candidates": {
+      "description": "Candidate scores per row.",
+      "type": "var"
+    },
+    "k": {
+      "description": "Candidates selected per row.",
+      "value": 512,
+      "type": "const"
+    },
+    "n_pages": {
+      "description": "Page table columns.",
+      "type": "var"
+    },
+    "page_size": {
+      "description": "Slots per page.",
+      "value": 64,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 4,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 8,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 16,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 32,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 64,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 128,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 256,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "scores": {
+      "shape": [
+        "n_tokens",
+        "n_candidates"
+      ],
+      "dtype": "float32",
+      "description": "Candidate scores per row."
+    },
+    "seq_lens": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int32",
+      "description": "Valid candidates per row, a prefix the page table covers."
+    },
+    "page_tables": {
+      "shape": [
+        "n_tokens",
+        "n_pages"
+      ],
+      "dtype": "int32",
+      "description": "Page of each page_size candidates, distinct within a row."
+    },
+    "k": {
+      "dtype": "int32",
+      "description": "Candidates selected per row.",
+      "shape": null
+    },
+    "page_size": {
+      "dtype": "int32",
+      "description": "Slots per page.",
+      "shape": null
+    }
+  },
+  "outputs": {
+    "out_page_indices": {
+      "shape": [
+        "n_tokens",
+        "k"
+      ],
+      "dtype": "int32",
+      "description": "Selected positions, or page_tables slots when passed; -1 after a short row's entries."
+    }
+  },
+  "reference": "from __future__ import annotations\nimport math\nimport torch\nimport torch.nn.functional as F\n\ndef topk_transform_paged_reference(\n    scores, seq_lens, page_tables=None, *, k, page_size=1\n) -> Tensor:\n    \"\"\"Each row's selected candidates, mapped through its page table when given.\"\"\"\n    import torch\n\n    width = min(k, scores.shape[-1])\n    lengths = seq_lens.long().unsqueeze(-1)\n    positions = torch.arange(scores.shape[-1], device=scores.device)\n    # float32 compares exactly: ranking needs no decode.\n    ranked = scores.masked_fill(positions >= lengths, -torch.inf).argsort(\n        dim=-1, descending=True, stable=True\n    )[:, :width]\n    selected = torch.where(lengths <= k, positions[:width], ranked)\n    is_selected = positions[:width] < lengths\n    if page_tables is not None:\n        rows = is_selected.nonzero(as_tuple=True)[0]\n        chosen = selected[is_selected]\n        pages = page_tables[rows, chosen // page_size].long()\n        selected = selected.masked_scatter(\n            is_selected, pages * page_size + chosen % page_size\n        )\n    return torch.nn.functional.pad(\n        torch.where(is_selected, selected, -1), (0, k - width), value=-1\n    ).double()\n\nrun = topk_transform_paged_reference\n",
+  "check": "from __future__ import annotations\nimport torch\n\ndef _as_output_list(outputs: Any) -> List[Any]:\n    if isinstance(outputs, list):\n        return outputs\n    if isinstance(outputs, tuple):\n        return list(outputs)\n    return [outputs]\n\ndef default_tolerances(dtype: Union[torch.dtype, str]) -> Tuple[float, float]:\n    \"\"\"Return ``(rtol, atol)`` defaults for a trace correctness check.\n\n    These defaults are intentionally conservative for low-precision inference\n    data types. Template-specific ``check`` functions can override them by\n    passing explicit ``rtol`` and ``atol`` to :func:`default_check`.\n    \"\"\"\n    dtype_name = str(dtype).replace(\"torch.\", \"\")\n    if dtype_name in (\"float64\", \"double\"):\n        return 1e-7, 1e-7\n    if dtype_name in (\"float32\", \"float\"):\n        return 1e-5, 1e-5\n    if dtype_name in (\"float16\", \"half\"):\n        return 1e-3, 1e-3\n    if dtype_name == \"bfloat16\":\n        return 1e-2, 1e-2\n    if dtype_name.startswith(\"float8\"):\n        return 1e-1, 1e-1\n    if dtype_name.startswith(\"float4\") or \"fp4\" in dtype_name:\n        return 1.0, 1.0\n    return 0.0, 0.0\n\ndef _cosine_similarity(actual: torch.Tensor, expected: torch.Tensor) -> float:\n    actual = actual.reshape(-1).to(torch.float32)\n    expected = expected.reshape(-1).to(torch.float32)\n    finite = torch.isfinite(actual) & torch.isfinite(expected)\n    if not finite.any():\n        return 1.0\n    actual = actual[finite]\n    expected = expected[finite]\n    actual_norm = torch.linalg.vector_norm(actual)\n    expected_norm = torch.linalg.vector_norm(expected)\n    if actual_norm.item() == 0 or expected_norm.item() == 0:\n        return 1.0 if torch.equal(actual, expected) else 0.0\n    return ((actual * expected).sum() / (actual_norm * expected_norm)).item()\n\ndef default_check(\n    reference_outputs: Any,\n    actual_outputs: Any,\n    *,\n    rtol: Optional[float] = None,\n    atol: Optional[float] = None,\n    max_mismatch_pct: float = 0.0,\n    min_cos_sim: Optional[float] = 1.0 - 1e-3,\n) -> bool:\n    \"\"\"Validate actual outputs against reference outputs.\n\n    ``reference_outputs`` and ``actual_outputs`` may be lists/tuples,\n    dictionaries with matching keys, or single output values. Tensor outputs\n    are checked for shape equality, closeness, mismatch percentage, and cosine\n    similarity. Non-floating tensors are checked exactly unless\n    ``max_mismatch_pct`` allows mismatches. Non-tensor outputs use Python\n    equality.\n    \"\"\"\n    if isinstance(reference_outputs, dict) or isinstance(actual_outputs, dict):\n        if not isinstance(reference_outputs, dict) or not isinstance(\n            actual_outputs, dict\n        ):\n            return False\n        if reference_outputs.keys() != actual_outputs.keys():\n            return False\n        refs = [reference_outputs[key] for key in reference_outputs]\n        actuals = [actual_outputs[key] for key in reference_outputs]\n    else:\n        refs = _as_output_list(reference_outputs)\n        actuals = _as_output_list(actual_outputs)\n\n    if len(refs) != len(actuals):\n        return False\n\n    for ref, actual in zip(refs, actuals, strict=True):\n        if isinstance(ref, torch.Tensor) != isinstance(actual, torch.Tensor):\n            return False\n        if not isinstance(ref, torch.Tensor):\n            if ref != actual:\n                return False\n            continue\n\n        if ref.shape != actual.shape:\n            return False\n        if ref.numel() == 0:\n            continue\n\n        ref_is_float = torch.is_floating_point(ref)\n        actual_is_float = torch.is_floating_point(actual)\n        if ref_is_float or actual_is_float:\n            tolerance_dtype = actual.dtype if actual_is_float else ref.dtype\n            default_rtol, default_atol = default_tolerances(tolerance_dtype)\n            rtol_value = default_rtol if rtol is None else rtol\n            atol_value = default_atol if atol is None else atol\n            close = torch.isclose(\n                actual.to(torch.float32),\n                ref.to(torch.float32),\n                rtol=rtol_value,\n                atol=atol_value,\n            )\n            mismatch_pct = 100.0 * (~close).sum().item() / close.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n            if min_cos_sim is not None:\n                cos_sim = _cosine_similarity(actual, ref)\n                if cos_sim < min_cos_sim:\n                    return False\n        else:\n            matches = actual == ref\n            mismatch_pct = 100.0 * (~matches).sum().item() / matches.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n\n    return True\n\ndef _topk_transform_paged_check(reference_outputs, actual_outputs, **_unused):\n    # a full row's selections may come in any order: compare each row sorted\n    reference, actual = (\n        o[0] if isinstance(o, (list, tuple)) else o\n        for o in (reference_outputs, actual_outputs)\n    )\n    if reference.shape != actual.shape:\n        return False\n    return default_check(\n        reference.sort(dim=-1).values,\n        actual.sort(dim=-1).values,\n        min_cos_sim=None,\n    )\n\nrun = _topk_transform_paged_check\n",
+  "init": null,
+  "tags": [
+    "deepseek-v4-flash/tp4",
+    "deepseek-v4-flash/tp4+dp4",
+    "deepseek-v4-flash/tp4+dp4+ep4",
+    "deepseek-v4-flash/tp4+ep4",
+    "deepseek-v4-flash/tp8",
+    "deepseek-v4-flash/tp8+dp8",
+    "deepseek-v4-flash/tp8+dp8+ep8",
+    "deepseek-v4-flash/tp8+ep8"
+  ],
+  "description": "Select each row's k highest scores among its first seq_lens candidates; write their positions, or their page slots, padded with -1.",
+  "constraints": [
+    "page_size >= 1",
+    "page_tables is None or n_pages * page_size <= 2147483648"
+  ],
+  "kernel": null
+}

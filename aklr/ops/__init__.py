@@ -1,34 +1,34 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-from aklr.ops.gemm import bmm, gemm_a4w4_mxfp4, gemm_a8w8, gemm_a8w8_blockwise_scaled
+# Importing an op api registers its op schemas and routes; an api named as its
+# package stays reached through the package.
+from aklr.ops import biased_grouped_topk, fused_moe, gemm  # noqa: F401
+from aklr.ops.gemm import (
+    bmm_bf16_nn,
+    bmm_bf16_nt,
+    gemm_a8w8_nt,
+    gemm_bf16_nt,
+    gemm_fp8_nt_blockscaled,
+    gemm_mxfp4_nt,
+)
 from aklr.ops.mhc import mhc_fused_post_pre, mhc_post, mhc_pre
 from aklr.ops.mla import flash_mla_with_kvcache, fp8_paged_mqa_logits
+from aklr.ops.rms_norm import add_rms_norm
 from aklr.ops.topk import topk_transform_paged
 
 __all__ = [
-    "bmm",
+    "add_rms_norm",
+    "bmm_bf16_nn",
+    "bmm_bf16_nt",
     "flash_mla_with_kvcache",
     "fp8_paged_mqa_logits",
-    "gemm_a4w4_mxfp4",
-    "gemm_a8w8",
-    "gemm_a8w8_blockwise_scaled",
-    "load_routes",
+    "gemm_a8w8_nt",
+    "gemm_bf16_nt",
+    "gemm_fp8_nt_blockscaled",
+    "gemm_mxfp4_nt",
     "mhc_fused_post_pre",
     "mhc_post",
     "mhc_pre",
     "topk_transform_paged",
 ]
-
-
-def load_routes() -> None:
-    """Import every op's ``api`` module so its routes register, then proxy aiter's routed
-    entry points."""
-    from aklr.core.contract.locate import op_module
-    from aklr.core.contract.registry import ContractRegistry
-    from aklr.core.runtime.seam import aklr_proxy
-
-    contracts = ContractRegistry.default().contracts()
-    for package in sorted({c.op_package for c in contracts}):
-        op_module(package, "api")
-    aklr_proxy("aiter")

@@ -1,58 +1,477 @@
 {
-  "schema_version": 5,
   "name": "fused_moe_shuffled_16x16_model_dim4096_n_experts256_topk1_inter_dim512",
-  "contract_id": "fused_moe@1.0",
-  "description": "Route each token to its top-k experts, run both projections, combine.",
   "op_type": "fused_moe",
   "axes": {
     "n_tokens": {
-      "type": "var",
-      "description": "Tokens routed in this call."
+      "description": "Tokens routed in this call.",
+      "type": "var"
     },
     "model_dim": {
-      "type": "const",
+      "description": "Hidden size.",
       "value": 4096,
-      "description": "Hidden size."
+      "type": "const"
     },
     "n_experts": {
-      "type": "const",
+      "description": "Local experts on this rank.",
       "value": 256,
-      "description": "Local experts on this rank."
+      "type": "const"
     },
     "topk": {
-      "type": "const",
+      "description": "Experts per token.",
       "value": 1,
-      "description": "Experts per token."
+      "type": "const"
     },
     "inter_dim": {
-      "type": "const",
+      "description": "Expert intermediate size.",
       "value": 512,
-      "description": "Expert intermediate size."
+      "type": "const"
+    },
+    "global_experts": {
+      "description": "Experts of the whole expert-parallel group.",
+      "value": null,
+      "type": "const"
     },
     "gate_up_rows": {
-      "type": "const",
+      "description": "w1 rows: 2 * inter_dim.",
       "value": 1024,
-      "description": "w1 rows: gate and up concatenated."
+      "type": "const"
+    },
+    "packed_model_dim": {
+      "description": "Bytes per w1 row: model_dim // 2.",
+      "value": 2048,
+      "type": "const"
+    },
+    "packed_inter_dim": {
+      "description": "Bytes per w2 row: inter_dim // 2.",
+      "value": 256,
+      "type": "const"
     },
     "model_blocks": {
-      "type": "const",
+      "description": "w1 scale columns: model_dim // 32.",
       "value": 128,
-      "description": "w1 scale columns."
+      "type": "const"
     },
     "inter_blocks": {
-      "type": "const",
+      "description": "w2 scale columns: inter_dim // 32.",
       "value": 16,
-      "description": "w2 scale columns."
+      "type": "const"
+    },
+    "one": {
+      "description": "A single count.",
+      "value": 1,
+      "type": "const"
     }
   },
-  "attrs": {
-    "activation": "silu",
-    "quant_type": "per_1x32",
-    "doweight_stage1": false,
-    "gate_mode": "separated",
-    "has_expert_mask": false,
-    "act_quant": 4
-  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 32
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 128
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 192
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 256
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 320
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 384
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 448
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 512
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 576
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 640
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 704
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 768
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 832
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 896
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 960
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1024
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1088
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1152
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1216
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1280
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1344
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1408
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1472
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1536
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1600
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1664
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1728
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1792
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1856
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1920
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 1984
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2176
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2304
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2432
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2560
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2688
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2816
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2944
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 3072
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 3200
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 3328
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 3456
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 3584
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 3712
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 3840
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 3968
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 4096
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 8192
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 8256
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 8640
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 9152
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 10712
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 16384
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 24584
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 28864
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 49984
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 57352
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 57416
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 57664
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 57672
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 58184
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 59144
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 65032
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 65536
+      },
+      "evaluations": []
+    }
+  ],
   "inputs": {
     "hidden_states": {
       "shape": [
@@ -60,34 +479,25 @@
         "model_dim"
       ],
       "dtype": "bfloat16",
-      "distribution": {
-        "kind": "finite"
-      },
       "description": "Token activations."
     },
     "w1": {
       "shape": [
         "n_experts",
         "gate_up_rows",
-        "model_dim"
+        "packed_model_dim"
       ],
-      "dtype": "float4_e2m1",
-      "distribution": {
-        "kind": "finite"
-      },
-      "description": "Gate-up projection per expert: gate rows, then up rows."
+      "dtype": "float4_e2m1fn_x2",
+      "description": "Gate-up projection per expert, two values a byte."
     },
     "w2": {
       "shape": [
         "n_experts",
         "model_dim",
-        "inter_dim"
+        "packed_inter_dim"
       ],
-      "dtype": "float4_e2m1",
-      "distribution": {
-        "kind": "finite"
-      },
-      "description": "Down projection per expert."
+      "dtype": "float4_e2m1fn_x2",
+      "description": "Down projection per expert, two values a byte."
     },
     "topk_weights": {
       "shape": [
@@ -95,9 +505,6 @@
         "topk"
       ],
       "dtype": "float32",
-      "distribution": {
-        "kind": "finite"
-      },
       "description": "Routing weight of each chosen expert."
     },
     "topk_ids": {
@@ -106,13 +513,24 @@
         "topk"
       ],
       "dtype": "int32",
-      "distribution": {
-        "kind": "int_range",
-        "lo": 0,
-        "hi": 255,
-        "distinct": true
-      },
       "description": "Chosen experts per token, distinct within a row; global ids under expert parallelism."
+    },
+    "expert_mask": {
+      "shape": [
+        "global_experts"
+      ],
+      "dtype": "int32",
+      "description": "1 for the experts this rank holds, in the order w1 holds them."
+    },
+    "activation": {
+      "dtype": "string",
+      "description": "Gate activation.",
+      "shape": null
+    },
+    "act_quant": {
+      "dtype": "string",
+      "description": "Quantization of each expert gemm's activations, per 1 x 32 with e8m0 scales: 'mxfp4', 'mxfp8' (e4m3), or None for none.",
+      "shape": null
     },
     "w1_scale": {
       "shape": [
@@ -120,12 +538,7 @@
         "gate_up_rows",
         "model_blocks"
       ],
-      "dtype": "float8_e8m0",
-      "distribution": {
-        "kind": "log_uniform",
-        "log2_lo": -11,
-        "log2_hi": -5
-      },
+      "dtype": "float8_e8m0fnu",
       "description": "Per 1 x 32 block of w1."
     },
     "w2_scale": {
@@ -134,13 +547,30 @@
         "model_dim",
         "inter_blocks"
       ],
-      "dtype": "float8_e8m0",
-      "distribution": {
-        "kind": "log_uniform",
-        "log2_lo": -10,
-        "log2_hi": -4
-      },
+      "dtype": "float8_e8m0fnu",
       "description": "Per 1 x 32 block of w2."
+    },
+    "swiglu_limit": {
+      "dtype": "float32",
+      "description": "Clamped SwiGLU bound: gate at most this, up within +/- this.",
+      "shape": null
+    },
+    "beta": {
+      "dtype": "float32",
+      "description": "SiTUv2 gate saturation.",
+      "shape": null
+    },
+    "linear_beta": {
+      "dtype": "float32",
+      "description": "SiTUv2 up saturation.",
+      "shape": null
+    },
+    "num_local_tokens": {
+      "shape": [
+        "one"
+      ],
+      "dtype": "int32",
+      "description": "Rows this rank received; later rows are unused."
     }
   },
   "outputs": {
@@ -153,553 +583,56 @@
       "description": "Routing-weighted sum of the chosen experts' outputs; under expert parallelism, this rank's share."
     }
   },
-  "workloads": [
-    {
-      "axes": {
-        "n_tokens": 8
-      },
-      "accuracy": "passed",
-      "speedup": 2.383
-    },
-    {
-      "axes": {
-        "n_tokens": 16
-      },
-      "accuracy": "passed",
-      "speedup": 2.198
-    },
-    {
-      "axes": {
-        "n_tokens": 32
-      },
-      "accuracy": "passed",
-      "speedup": 1.348
-    },
-    {
-      "axes": {
-        "n_tokens": 64
-      },
-      "accuracy": "passed",
-      "speedup": 1.278
-    },
-    {
-      "axes": {
-        "n_tokens": 128
-      },
-      "accuracy": "passed",
-      "speedup": 1.171
-    },
-    {
-      "axes": {
-        "n_tokens": 192
-      },
-      "accuracy": "passed",
-      "speedup": 1.165
-    },
-    {
-      "axes": {
-        "n_tokens": 256
-      },
-      "accuracy": "passed",
-      "speedup": 1.13
-    },
-    {
-      "axes": {
-        "n_tokens": 320
-      },
-      "accuracy": "passed",
-      "speedup": 1.1
-    },
-    {
-      "axes": {
-        "n_tokens": 384
-      },
-      "accuracy": "passed",
-      "speedup": 1.12
-    },
-    {
-      "axes": {
-        "n_tokens": 448
-      },
-      "accuracy": "passed",
-      "speedup": 1.092
-    },
-    {
-      "axes": {
-        "n_tokens": 512
-      },
-      "accuracy": "passed",
-      "speedup": 1.116
-    },
-    {
-      "axes": {
-        "n_tokens": 576
-      },
-      "accuracy": "passed",
-      "speedup": 1.105
-    },
-    {
-      "axes": {
-        "n_tokens": 640
-      },
-      "accuracy": "passed",
-      "speedup": 1.103
-    },
-    {
-      "axes": {
-        "n_tokens": 704
-      },
-      "accuracy": "passed",
-      "speedup": 1.104
-    },
-    {
-      "axes": {
-        "n_tokens": 768
-      },
-      "accuracy": "passed",
-      "speedup": 1.096
-    },
-    {
-      "axes": {
-        "n_tokens": 832
-      },
-      "accuracy": "passed",
-      "speedup": 1.097
-    },
-    {
-      "axes": {
-        "n_tokens": 896
-      },
-      "accuracy": "passed",
-      "speedup": 1.086
-    },
-    {
-      "axes": {
-        "n_tokens": 960
-      },
-      "accuracy": "passed",
-      "speedup": 1.104
-    },
-    {
-      "axes": {
-        "n_tokens": 1024
-      },
-      "accuracy": "passed",
-      "speedup": 1.097
-    },
-    {
-      "axes": {
-        "n_tokens": 1088
-      },
-      "accuracy": "passed",
-      "speedup": 1.24
-    },
-    {
-      "axes": {
-        "n_tokens": 1152
-      },
-      "accuracy": "passed",
-      "speedup": 1.248
-    },
-    {
-      "axes": {
-        "n_tokens": 1216
-      },
-      "accuracy": "passed",
-      "speedup": 1.248
-    },
-    {
-      "axes": {
-        "n_tokens": 1280
-      },
-      "accuracy": "passed",
-      "speedup": 1.261
-    },
-    {
-      "axes": {
-        "n_tokens": 1344
-      },
-      "accuracy": "passed",
-      "speedup": 1.267
-    },
-    {
-      "axes": {
-        "n_tokens": 1408
-      },
-      "accuracy": "passed",
-      "speedup": 1.26
-    },
-    {
-      "axes": {
-        "n_tokens": 1472
-      },
-      "accuracy": "passed",
-      "speedup": 1.262
-    },
-    {
-      "axes": {
-        "n_tokens": 1536
-      },
-      "accuracy": "passed",
-      "speedup": 1.26
-    },
-    {
-      "axes": {
-        "n_tokens": 1600
-      },
-      "accuracy": "passed",
-      "speedup": 1.259
-    },
-    {
-      "axes": {
-        "n_tokens": 1664
-      },
-      "accuracy": "passed",
-      "speedup": 1.265
-    },
-    {
-      "axes": {
-        "n_tokens": 1728
-      },
-      "accuracy": "passed",
-      "speedup": 1.261
-    },
-    {
-      "axes": {
-        "n_tokens": 1792
-      },
-      "accuracy": "passed",
-      "speedup": 1.257
-    },
-    {
-      "axes": {
-        "n_tokens": 1856
-      },
-      "accuracy": "passed",
-      "speedup": 1.254
-    },
-    {
-      "axes": {
-        "n_tokens": 1920
-      },
-      "accuracy": "passed",
-      "speedup": 1.253
-    },
-    {
-      "axes": {
-        "n_tokens": 1984
-      },
-      "accuracy": "passed",
-      "speedup": 1.256
-    },
-    {
-      "axes": {
-        "n_tokens": 2048
-      },
-      "accuracy": "passed",
-      "speedup": 1.304
-    },
-    {
-      "axes": {
-        "n_tokens": 2176
-      },
-      "accuracy": "passed",
-      "speedup": 1.631
-    },
-    {
-      "axes": {
-        "n_tokens": 2304
-      },
-      "accuracy": "passed",
-      "speedup": 1.633
-    },
-    {
-      "axes": {
-        "n_tokens": 2432
-      },
-      "accuracy": "passed",
-      "speedup": 1.629
-    },
-    {
-      "axes": {
-        "n_tokens": 2560
-      },
-      "accuracy": "passed",
-      "speedup": 1.627
-    },
-    {
-      "axes": {
-        "n_tokens": 2688
-      },
-      "accuracy": "passed",
-      "speedup": 1.626
-    },
-    {
-      "axes": {
-        "n_tokens": 2816
-      },
-      "accuracy": "passed",
-      "speedup": 1.623
-    },
-    {
-      "axes": {
-        "n_tokens": 2944
-      },
-      "accuracy": "passed",
-      "speedup": 1.626
-    },
-    {
-      "axes": {
-        "n_tokens": 3072
-      },
-      "accuracy": "passed",
-      "speedup": 1.616
-    },
-    {
-      "axes": {
-        "n_tokens": 3200
-      },
-      "accuracy": "passed",
-      "speedup": 1.619
-    },
-    {
-      "axes": {
-        "n_tokens": 3328
-      },
-      "accuracy": "passed",
-      "speedup": 1.618
-    },
-    {
-      "axes": {
-        "n_tokens": 3456
-      },
-      "accuracy": "passed",
-      "speedup": 1.618
-    },
-    {
-      "axes": {
-        "n_tokens": 3584
-      },
-      "accuracy": "passed",
-      "speedup": 1.605
-    },
-    {
-      "axes": {
-        "n_tokens": 3712
-      },
-      "accuracy": "passed",
-      "speedup": 1.613
-    },
-    {
-      "axes": {
-        "n_tokens": 3840
-      },
-      "accuracy": "passed",
-      "speedup": 1.606
-    },
-    {
-      "axes": {
-        "n_tokens": 3968
-      },
-      "accuracy": "passed",
-      "speedup": 1.609
-    },
-    {
-      "axes": {
-        "n_tokens": 4096
-      },
-      "accuracy": "passed",
-      "speedup": 1.601
-    },
-    {
-      "axes": {
-        "n_tokens": 8192
-      },
-      "accuracy": "passed",
-      "speedup": 1.621
-    },
-    {
-      "axes": {
-        "n_tokens": 8256
-      },
-      "accuracy": "passed",
-      "speedup": 1.432
-    },
-    {
-      "axes": {
-        "n_tokens": 8640
-      },
-      "accuracy": "passed",
-      "speedup": 1.44
-    },
-    {
-      "axes": {
-        "n_tokens": 9152
-      },
-      "accuracy": "passed",
-      "speedup": 1.444
-    },
-    {
-      "axes": {
-        "n_tokens": 10712
-      },
-      "accuracy": "passed",
-      "speedup": 1.444
-    },
-    {
-      "axes": {
-        "n_tokens": 16384
-      },
-      "accuracy": "passed",
-      "speedup": 1.565
-    },
-    {
-      "axes": {
-        "n_tokens": 24584
-      },
-      "accuracy": "passed",
-      "speedup": 1.947
-    },
-    {
-      "axes": {
-        "n_tokens": 28864
-      },
-      "accuracy": "passed",
-      "speedup": 1.898
-    },
-    {
-      "axes": {
-        "n_tokens": 49984
-      },
-      "accuracy": "passed",
-      "speedup": 1.903
-    },
-    {
-      "axes": {
-        "n_tokens": 57352
-      },
-      "accuracy": "passed",
-      "speedup": 1.911
-    },
-    {
-      "axes": {
-        "n_tokens": 57416
-      },
-      "accuracy": "passed",
-      "speedup": 1.912
-    },
-    {
-      "axes": {
-        "n_tokens": 57664
-      },
-      "accuracy": "passed",
-      "speedup": 1.845
-    },
-    {
-      "axes": {
-        "n_tokens": 57672
-      },
-      "accuracy": "passed",
-      "speedup": 1.923
-    },
-    {
-      "axes": {
-        "n_tokens": 58184
-      },
-      "accuracy": "passed",
-      "speedup": 1.887
-    },
-    {
-      "axes": {
-        "n_tokens": 59144
-      },
-      "accuracy": "passed",
-      "speedup": 1.876
-    },
-    {
-      "axes": {
-        "n_tokens": 65032
-      },
-      "accuracy": "passed",
-      "speedup": 1.976
-    },
-    {
-      "axes": {
-        "n_tokens": 65536
-      },
-      "accuracy": "passed",
-      "speedup": 1.938
-    }
+  "reference": "from __future__ import annotations\nimport math\nimport torch\nimport torch.nn.functional as F\n\ndef _mxfp8(x: Tensor) -> Tensor:\n    import torch\n\n    blocks = x.unflatten(-1, (-1, 32))\n    amax = blocks.abs().amax(dim=-1, keepdim=True)\n    finite = amax.isfinite()\n    mantissa, exponent = torch.frexp(torch.where(finite, amax, 0.0) / 448.0)\n    exponent = (exponent - 1 + (mantissa != 0.5).int()).clamp(-126, 127)\n    scale = torch.where(finite, torch.exp2(exponent.double()), float(\"nan\"))\n    scaled = torch.where(finite, blocks, 0.0) / scale\n    codes = scaled.to(torch.float8_e4m3fn).double()\n    return (codes * scale).flatten(-2)\n\ndef _weight(w: Tensor, scale: Tensor, expert: int) -> Tensor:\n    import torch\n\n    magnitudes = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0)\n    e2m1 = torch.tensor(magnitudes, dtype=torch.float64, device=w.device)\n    e2m1 = torch.cat((e2m1, -e2m1))\n    codes = w[expert].view(torch.uint8).long()\n    decoded = e2m1[torch.stack((codes & 0xF, codes >> 4), dim=-1).flatten(-2)]\n    codes = scale[expert].view(torch.uint8)\n    scale = torch.exp2(codes.double() - 127).masked_fill(codes == 255, math.nan)\n    return decoded * scale.repeat_interleave(32, dim=-1)\n\ndef _mxfp4(x: Tensor, grid: Tensor) -> Tensor:\n    import torch\n\n    blocks = x.unflatten(-1, (-1, 32))\n    amax = blocks.abs().amax(dim=-1, keepdim=True)\n    finite = amax.isfinite()\n    mantissa, exponent = torch.frexp(torch.where(finite, amax, 0.0).clamp_min(1e-10))\n    exponent = (exponent - 3 + (mantissa > 0.75).int()).clamp(-127, 127)\n    scale = torch.where(finite, torch.exp2(exponent.double()), float(\"nan\"))\n    scaled = torch.where(finite, blocks, 0.0) / scale\n    m = scaled.abs()\n    lo = torch.bucketize(m, grid, right=True) - 1  # the largest code <= m\n    hi = (lo + 1).clamp_max(len(grid) - 1)\n    below, above = m - grid[lo], grid[hi] - m\n    up = (above < below) | ((above == below) & (hi % 2 == 0))\n    codes = torch.where(up, grid[hi], grid[lo]) * scaled.sign()\n    return (codes * scale).flatten(-2)\n\ndef fused_moe_reference(\n    hidden_states,\n    w1,\n    w2,\n    topk_weights,\n    topk_ids,\n    expert_mask=None,\n    activation=None,\n    w1_scale=None,\n    w2_scale=None,\n    beta=None,\n    linear_beta=None,\n    num_local_tokens=None,\n    swiglu_limit=None,\n    act_quant=None,\n) -> Tensor:\n    \"\"\"Each token through its top-k experts, weighted by its routing weights, summed.\"\"\"\n    import torch\n    import torch.nn.functional as F\n\n    ids = topk_ids.long()\n    if expert_mask is not None:\n        # A global id to its slot in w1, as aiter's sorting maps it; -1 off this rank.\n        local = expert_mask.long()\n        slot = local.cumsum(0) - 1\n        ids = torch.where(local[ids] == 1, slot[ids], -1)\n    if num_local_tokens is not None:\n        ids[int(num_local_tokens[0]) :] = -1  # rows not received\n    # e2m1's 8 magnitudes, ascending\n    fp4_grid = torch.tensor(\n        (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0),\n        dtype=torch.float64,\n        device=hidden_states.device,\n    )\n    quantize = {\n        None: lambda t: t,\n        \"mxfp8\": _mxfp8,\n        \"mxfp4\": lambda t: _mxfp4(t, fp4_grid),\n    }[act_quant]\n    x = quantize(hidden_states.double())\n    weights = topk_weights.double()\n    out = x.new_zeros((*ids.shape, x.shape[-1]))\n    for expert in ids.unique().tolist():\n        if expert < 0:  # another rank's route adds nothing\n            continue\n        routed = ids == expert\n        tokens = routed.nonzero(as_tuple=True)[0]  # topk_ids rows are distinct\n        projected = x[tokens] @ _weight(w1, w1_scale, expert).mT\n        gate, up = projected.chunk(2, dim=-1)  # w1 stores [gate | up] along its rows\n        if swiglu_limit is not None:  # aiter's torch_moe_stage1: clamp, then activate\n            gate = gate.clamp(max=swiglu_limit)\n            up = up.clamp(-swiglu_limit, swiglu_limit)\n        if activation == \"silu\":\n            gated = F.silu(gate) * up\n        elif activation == \"gelu\":\n            gated = F.gelu(gate) * up\n        else:\n            gate = beta * torch.tanh(gate / beta) * torch.sigmoid(gate)\n            gated = gate * (linear_beta * torch.tanh(up / linear_beta))\n        gated = gated.to(hidden_states.dtype).double()\n        out[routed] = quantize(gated) @ _weight(w2, w2_scale, expert).mT\n    return (out * weights.unsqueeze(-1)).sum(dim=1)\n\ndef unshuffle_tiles(stored: Tensor, split: tuple[int, ...], order: tuple[int, ...]) -> Tensor:\n    \"\"\"The inverse of splitting the last two dims of a tensor into ``split`` and\n    permuting them by ``order``: the bytes of ``stored``, in its shape and dtype.\"\"\"\n    import torch\n\n    x = stored.view(torch.uint8) if stored.element_size() == 1 else stored\n    lead = tuple(x.shape[:-2])\n    inverse = tuple(sorted(range(len(order)), key=order.__getitem__))\n    n = len(lead)\n    x = x.reshape(*lead, *(split[i] for i in order))\n    x = x.permute(*range(n), *(n + i for i in inverse))\n    return x.contiguous().view(stored.shape).view(stored.dtype)\n\ndef unshuffle_weight(stored: Tensor, tile: tuple[int, int]) -> Tensor:\n    \"\"\"aiter ``shuffle_weight(x, layout=tile)`` undone on the last two dims: tiles of\n    ``tile[0]`` rows by ``2 * tile[1]`` columns, each in 16-byte vectors.\"\"\"\n    rows, cols = stored.shape[-2:]\n    tile_rows, tile_cols = tile[0], tile[1] * 2\n    vector = 16 // stored.element_size()  # elements per 16-byte load\n    split = (\n        rows // tile_rows,\n        tile_rows,\n        cols // tile_cols,\n        tile_cols // vector,\n        vector,\n    )\n    return unshuffle_tiles(stored, split, (0, 2, 3, 1, 4))\n\ndef unshuffle_e8m0_scales(stored: Tensor, rows: int, cols: int) -> Tensor:\n    \"\"\"aiter ``shuffle_scale`` undone on the last two dims, then the padding to\n    multiples of (256, 8) dropped: the ``(..., rows, cols)`` scales.\"\"\"\n    padded_rows, padded_cols = stored.shape[-2:]\n    split = (padded_rows // 32, 2, 16, padded_cols // 8, 2, 4)\n    order = (0, 3, 5, 2, 4, 1)\n    return unshuffle_tiles(stored, split, order)[..., :rows, :cols].contiguous()\n\ndef fused_moe_shuffled_16x16_reference(\n    hidden_states,\n    w1,\n    w2,\n    topk_weights,\n    topk_ids,\n    expert_mask=None,\n    activation=None,\n    w1_scale=None,\n    w2_scale=None,\n    beta=None,\n    linear_beta=None,\n    num_local_tokens=None,\n    swiglu_limit=None,\n    act_quant=None,\n) -> Tensor:\n    \"\"\"The row-major maths on weights unshuffled (16 x 16) and scales unshuffled.\"\"\"\n    return fused_moe_reference(\n        hidden_states,\n        unshuffle_weight(w1, (16, 16)),\n        unshuffle_weight(w2, (16, 16)),\n        topk_weights,\n        topk_ids,\n        expert_mask,\n        activation,\n        unshuffle_e8m0_scales(w1_scale, w1.shape[-2], w1.shape[-1] * 2 // 32),\n        unshuffle_e8m0_scales(w2_scale, w2.shape[-2], w2.shape[-1] * 2 // 32),\n        beta,\n        linear_beta,\n        num_local_tokens,\n        swiglu_limit,\n        act_quant,\n    )\n\nrun = fused_moe_shuffled_16x16_reference\n",
+  "check": "from __future__ import annotations\nimport torch\n\ndef _fused_moe_check(reference_outputs, actual_outputs, **_unused):\n    # SQNR >= 13 dB, not a tolerance: the e33/e65 kernels keep fp8/MXFP4 partials,\n    # far off aiter's error\n    reference, actual = (\n        o[0] if isinstance(o, (list, tuple)) else o for o in (reference_outputs, actual_outputs)\n    )\n    if reference.shape != actual.shape:\n        return False\n    reference, actual = reference.double(), actual.double()\n    error = (actual - reference).norm().item()\n    return error <= reference.norm().item() * 10 ** (-13.0 / 20)\n\nrun = _fused_moe_check\n",
+  "init": "from __future__ import annotations\nimport math\nimport torch\n\ndef _fused_moe_inputs(n_tokens, model_dim, n_experts, topk, inter_dim, global_experts, device, seed):\n    torch.manual_seed(seed)\n    id_range = n_experts if global_experts is None else global_experts\n    w1 = torch.randint(0, 256, (n_experts, 2 * inter_dim, model_dim // 2), device=device).to(torch.uint8)\n    w2 = torch.randint(0, 256, (n_experts, model_dim, inter_dim // 2), device=device).to(torch.uint8)\n    call = {\n        \"hidden_states\": torch.randn(n_tokens, model_dim, device=device).to(torch.bfloat16),\n        \"w1\": w1.view(torch.float4_e2m1fn_x2),\n        \"w2\": w2.view(torch.float4_e2m1fn_x2),\n        \"topk_weights\": torch.randn(n_tokens, topk, device=device),\n        \"topk_ids\": torch.randn(n_tokens, id_range, device=device).topk(topk, dim=-1).indices.to(torch.int32),\n        \"expert_mask\": None,\n        \"activation\": \"silu\",\n        \"use_shuffled_weight\": True,\n    }\n    if global_experts is not None:\n        rank = int(torch.randint(global_experts // n_experts, ()))\n        mask = torch.zeros(global_experts, dtype=torch.int32, device=device)\n        mask[rank * n_experts : (rank + 1) * n_experts] = 1\n        call[\"expert_mask\"] = mask\n    return call\n\ndef _e8m0_scales(shape, fan_in, device):\n    lo = 122 - fan_in.bit_length() // 2\n    codes = torch.randint(lo, lo + 7, shape, device=device)\n    return codes.to(torch.uint8).view(torch.float8_e8m0fnu)\n\ndef _fused_moe_shuffled_16x16_init(\n    *,\n    n_tokens,\n    model_dim,\n    n_experts,\n    topk,\n    inter_dim,\n    global_experts=None,\n    device=\"cuda\",\n    seed=0,\n):\n    call = _fused_moe_inputs(n_tokens, model_dim, n_experts, topk, inter_dim, global_experts, device, seed)\n    call[\"w1_scale\"] = _e8m0_scales((n_experts, 2 * inter_dim, model_dim // 32), model_dim, device)\n    call[\"w2_scale\"] = _e8m0_scales((n_experts, model_dim, inter_dim // 32), inter_dim, device)\n    call[\"gate_mode\"] = \"separated\"\n    call[\"act_quant\"] = \"mxfp4\"\n    return call\n\nrun = _fused_moe_shuffled_16x16_init\n",
+  "tags": [],
+  "description": "out = sum over the top-k experts e of topk_weights[e] * (act(gate) * up) @ w2[e].T, [gate | up] = hidden_states @ w1[e].T; mxfp4 weights with e8m0 scales per 1 x 32. Weights in aiter's shuffle_weight 16 x 16 tiles, scales in its shuffle_scale order.",
+  "constraints": [
+    "gate_up_rows == 2 * inter_dim",
+    "packed_model_dim == model_dim // 2",
+    "packed_inter_dim == inter_dim // 2",
+    "model_blocks == model_dim // 32",
+    "inter_blocks == inter_dim // 32",
+    "expert_mask is not None or topk <= n_experts",
+    "expert_mask is None or topk <= global_experts",
+    "expert_mask is None or n_experts <= global_experts",
+    "model_dim % 128 == 0 and inter_dim % 128 == 0",
+    "hidden_states.dtype in ('bfloat16', 'float16')",
+    "topk_weights.dtype in ('float32', 'bfloat16', 'float16')",
+    "topk_ids.dtype in ('int32', 'int64')",
+    "num_local_tokens is None or expert_mask is not None",
+    "activation in ('silu', 'gelu', 'situv2')",
+    "(activation == 'situv2') == (beta is not None)",
+    "(beta is None) == (linear_beta is None)",
+    "act_quant is None or act_quant in ('mxfp4', 'mxfp8')",
+    "use_shuffled_weight",
+    "gate_mode == 'separated'",
+    "model_dim % 256 == 0 and inter_dim % 256 == 0"
   ],
-  "layout_variants": {
-    "by_name": {
-      "shuffled_16x16": {
-        "layouts": {
-          "w1": {
-            "kind": "preshuffle",
-            "tile": [16, 16]
-          },
-          "w2": {
-            "kind": "preshuffle",
-            "tile": [16, 16]
-          },
-          "w1_scale": {
-            "kind": "e8m0_scales",
-            "block_size": 32,
-            "pad_to": [256, 8],
-            "shuffled": true
-          },
-          "w2_scale": {
-            "kind": "e8m0_scales",
-            "block_size": 32,
-            "pad_to": [256, 8],
-            "shuffled": true
-          }
-        },
-        "detect_facts": [
-          {
-            "location": "tensor_attr",
-            "name": "w1.is_shuffled",
-            "expected_value": true
-          },
-          {
-            "location": "tensor_attr",
-            "name": "w2.is_shuffled",
-            "expected_value": true
-          },
-          {
-            "location": "tensor_attr",
-            "name": "w1_scale.ndim",
-            "expected_value": 3
-          }
-        ]
-      }
-    }
-  },
-  "compare": {
-    "max_violation_fraction": 0.001,
-    "determinism": "bounded",
-    "element_order": "fixed"
-  },
   "kernel": {
-    "language": "flydsl",
-    "targets": [
-      {
-        "arch": "gfx950",
-        "hardware": "MI355X"
-      }
-    ],
+    "name": "fused_moe_shuffled_16x16_model_dim4096_n_experts256_topk1_inter_dim512_flydsl_e7f32742fd63da5f",
     "author": "fanxingran",
-    "entry_point": "kernel.py::run",
+    "build": {
+      "language": "flydsl",
+      "target_hardware": [
+        "gfx950/MI355X"
+      ],
+      "entry_point": "kernel.py::run",
+      "dependencies": [],
+      "destination_passing_style": true,
+      "binding": null
+    },
     "sources": [
       {
         "path": "buffer_ops.py",
-        "content": "# SPDX-License-Identifier: Apache-2.0\n# Copyright (c) 2025 FlyDSL Project Contributors\n# Modifications Copyright (C) 2026 Advanced Micro Devices, Inc.\n\n\"\"\"AMD buffer resource descriptors and buffer loads over raw device addresses.\n\nBuffer instructions are an AMD hardware feature (buffer resource descriptor\nplus ROCDL intrinsics) providing out-of-bounds protection and better memory\nthroughput. Only published flydsl APIs are used.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import arith as std_arith\nfrom flydsl._mlir.dialects import llvm, rocdl\nfrom flydsl._mlir.extras import types as T\nfrom flydsl.expr.meta import dsl_loc_tracing\nfrom flydsl.runtime.device import is_rdna_arch\n\n\ndef _get_buffer_flags(arch=None):\n    \"\"\"Get AMD buffer resource descriptor (V#) flags word (bits 127:96).\n\n    CDNA (gfx9xx):    (7 << 12) | (4 << 15)                         = 0x20070\n    RDNA (gfx10+):    (7 << 12) | (4 << 15) | (1 << 24) | (2 << 28) = 0x21020070\n      - bit 24 set to 1 (required on RDNA)\n      - OOB_SELECT=2 (no bounds checking, matching LLVM boundsCheck=false)\n\n    With ``arch=None`` the arch comes from ``is_rdna_arch``'s own detection.\n    \"\"\"\n    flags = (7 << 12) | (4 << 15)\n    if is_rdna_arch(arch):\n        flags |= 1 << 24  # reserved bit, must be 1 on RDNA\n        flags |= 2 << 28  # OOB_SELECT = 2 (no bounds checking)\n    return flags\n\n\ndef _unwrap_value(value):\n    \"\"\"Recursively unwrap ArithValue or similar wrappers to get the actual MLIR value.\n\n    Handles:\n    - FlyDSL ArithValue (has ._value)\n    - flyc DSL Numeric like fx.Int32 (has .ir_value() method)\n    - flyc ArithValue (is already ir.Value subclass)\n    \"\"\"\n    # DSL Numeric (Int32, Float32, etc.) — use ir_value() to materialize\n    if hasattr(value, \"ir_value\") and not isinstance(value, ir.Value):\n        return value.ir_value()\n    max_depth = 10  # Safety limit\n    depth = 0\n    while depth < max_depth and not isinstance(value, ir.Value):\n        if hasattr(value, \"_value\"):\n            value = value._value\n        elif hasattr(value, \"value\"):\n            value = value.value\n        else:\n            break\n        depth += 1\n    return value\n\n\n@dsl_loc_tracing\ndef _create_i32_constant(value: int) -> ir.Value:\n    \"\"\"Create i32 constant using standard MLIR arith dialect.\"\"\"\n    i32_type = T.i32()\n    if value > 0x7FFFFFFF:\n        value = int(value - 2**32)\n    attr = ir.IntegerAttr.get(i32_type, value)\n    op = std_arith.ConstantOp(i32_type, attr)\n    return _unwrap_value(op.result)\n\n\ndef _to_i32_offset(offset: ir.Value) -> ir.Value:\n    \"\"\"Normalize an already-unwrapped offset value to i32.\n\n    Accepts index (index_cast), i32 (as-is), wider ints e.g. i64 (trunc), and\n    narrower ints (sign-extend). Lets callers pass fx.Int64 offsets (element or\n    byte) without hitting the ``index_cast i64<->i32`` incompatibility.\n    \"\"\"\n    ot = offset.type\n    if isinstance(ot, ir.IntegerType):\n        if ot.width == 32:\n            return offset\n        if ot.width > 32:\n            return _unwrap_value(std_arith.TruncIOp(T.i32(), offset).result)\n        return _unwrap_value(std_arith.ExtSIOp(T.i32(), offset).result)\n    return _unwrap_value(std_arith.IndexCastOp(T.i32(), offset).result)\n\n\n@dsl_loc_tracing\ndef _create_i16_constant(value: int) -> ir.Value:\n    \"\"\"Create i16 constant using standard MLIR arith dialect.\"\"\"\n    i16_type = T.i16()\n    attr = ir.IntegerAttr.get(i16_type, value)\n    op = std_arith.ConstantOp(i16_type, attr)\n    return _unwrap_value(op.result)\n\n\n@dsl_loc_tracing\ndef _create_i64_constant(value: int) -> ir.Value:\n    \"\"\"Create i64 constant using standard MLIR arith dialect.\"\"\"\n    i64_type = T.i64()\n    attr = ir.IntegerAttr.get(i64_type, value)\n    op = std_arith.ConstantOp(i64_type, attr)\n    return _unwrap_value(op.result)\n\n\n@dsl_loc_tracing\ndef _ptr8_to_v4i32(ptr8_val) -> ir.Value:\n    \"\"\"Reinterpret a buffer resource (!llvm.ptr<8>) as a <4 x i32> vector.\n\n    Required by the scalar ``s.buffer.load`` intrinsic, whose resource operand is\n    a v4i32 rather than the opaque buffer pointer used by the vector path.\n    \"\"\"\n    i128_ty = ir.IntegerType.get_signless(128)\n    v4i32_ty = ir.VectorType.get([4], ir.IntegerType.get_signless(32))\n    i128_val = llvm.ptrtoint(i128_ty, _unwrap_value(ptr8_val))\n    return llvm.bitcast(v4i32_ty, i128_val)\n\n\n@dsl_loc_tracing\ndef get_element_ptr(\n    base_ptr,\n    byte_offset: int | ir.Value | None = None,\n    static_byte_offset: int = 0,\n    elem_type: ir.Type | None = None,\n    no_wrap_flags=None,\n) -> ir.Value:\n    \"\"\"Build an LLVM GEP from a base pointer plus byte offsets.\"\"\"\n    _gep_dynamic_index_sentinel = -(2**31)\n\n    base_ptr = _unwrap_value(base_ptr)\n    if not isinstance(static_byte_offset, int):\n        raise TypeError(\n            f\"static_byte_offset must be int, got {type(static_byte_offset)!r}\"\n        )\n    if elem_type is None:\n        elem_type = T.i8()\n    elif callable(elem_type):\n        elem_type = elem_type()\n\n    if byte_offset is None:\n        dynamic_indices = []\n        raw_constant_indices = [int(static_byte_offset)]\n    elif isinstance(byte_offset, int):\n        dynamic_indices = []\n        raw_constant_indices = [int(byte_offset) + int(static_byte_offset)]\n    else:\n        offset_val = _unwrap_value(byte_offset)\n        if isinstance(offset_val.type, ir.IndexType):\n            i64_type = T.i64()\n            offset_val = _unwrap_value(\n                std_arith.IndexCastOp(i64_type, offset_val).result\n            )\n        elif not isinstance(offset_val.type, ir.IntegerType):\n            raise TypeError(\n                \"byte_offset must be int, index, or integer-typed MLIR value; \"\n                f\"got {offset_val.type}\"\n            )\n\n        if static_byte_offset != 0:\n            static_type = offset_val.type\n            static_attr = ir.IntegerAttr.get(static_type, int(static_byte_offset))\n            static_const = _unwrap_value(\n                std_arith.ConstantOp(static_type, static_attr).result\n            )\n            offset_val = _unwrap_value(\n                std_arith.AddIOp(offset_val, static_const).result\n            )\n\n        dynamic_indices = [offset_val]\n        raw_constant_indices = [_gep_dynamic_index_sentinel]\n\n    return llvm.GEPOp(\n        base_ptr.type,\n        base_ptr,\n        dynamic_indices,\n        raw_constant_indices,\n        elem_type,\n        no_wrap_flags,\n    ).result\n\n\n@dsl_loc_tracing\ndef create_buffer_resource_from_addr(\n    addr_i64: ir.Value,\n    *,\n    num_records_bytes: int | ir.Value | None = None,\n) -> ir.Value:\n    \"\"\"Create AMD buffer resource descriptor from a raw i64 device address.\n\n    Useful when working with runtime pointer arrays (e.g. IPC-mapped addresses\n    or device-side pointer tables) where no fly.memref is available.\n    The full address is encoded as the buffer base; callers should pass\n    byte offset 0 to buffer_load / buffer_store.\n\n    Args:\n        addr_i64: Raw 64-bit device address (i64 MLIR value).\n        num_records_bytes: Optional buffer size in bytes for hardware OOB checking.\n\n    Returns:\n        ROCDL buffer resource descriptor (!llvm.ptr<8>).\n\n    Example:\n        >>> rsrc = create_buffer_resource_from_addr(raw_addr_i64)\n        >>> data = buffer_load(rsrc, i32_zero, vec_width=4, dtype=T.i32)\n    \"\"\"\n    addr_i64 = _unwrap_value(addr_i64)\n    ptr_type = ir.Type.parse(\"!llvm.ptr\")\n    base_ptr = llvm.IntToPtrOp(ptr_type, addr_i64).result\n    flags = _create_i32_constant(_get_buffer_flags())\n    stride = _create_i16_constant(0)\n    if num_records_bytes is None:\n        num_records = _create_i64_constant(0xFFFFFFFF)\n    elif isinstance(num_records_bytes, int):\n        nbytes = max(0, min(int(num_records_bytes), 0xFFFFFFFF))\n        num_records = _create_i64_constant(nbytes)\n    else:\n        num_records = _unwrap_value(num_records_bytes)\n        i64_type = T.i64()\n        if (\n            not isinstance(num_records.type, ir.IntegerType)\n            or num_records.type.width != 64\n        ):\n            if isinstance(num_records.type, ir.IndexType):\n                num_records = _unwrap_value(\n                    std_arith.IndexCastOp(i64_type, num_records).result\n                )\n            else:\n                num_records = _unwrap_value(\n                    std_arith.ExtSIOp(i64_type, num_records).result\n                )\n    rsrc_type = ir.Type.parse(\"!llvm.ptr<8>\")\n    return rocdl.MakeBufferRsrcOp(\n        rsrc_type, base_ptr, stride, num_records, flags\n    ).result\n\n\n@dsl_loc_tracing\ndef buffer_load(\n    rsrc: ir.Value,\n    offset: ir.Value,\n    vec_width: int = 4,\n    dtype=None,\n    mask: ir.Value | None = None,\n    cache_modifier: int = 0,\n    soffset_bytes: int | ir.Value | None = None,\n    is_scalar: bool = False,\n) -> ir.Value:\n    \"\"\"AMD buffer load operation.\n\n    Load data from global memory using buffer descriptor and offset.\n    Uses hardware-level bounds checking and vectorization.\n\n    Args:\n        rsrc: Buffer resource descriptor (!llvm.ptr<8>)\n        offset: Offset in elements (i32 type)\n        vec_width: Vector width (1, 2, or 4)\n        dtype: Element data type (None for f32, or ir.F32Type, etc.)\n        mask: Optional mask for predicated load (i1 type)\n        cache_modifier: Cache control flags (0 for default)\n        soffset_bytes: Optional scalar offset (in BYTES) added by the buffer instruction (soffset).\n                      Use this to fold small constant deltas into the instruction instead of emitting\n                      extra VGPR address arithmetic.\n        is_scalar: Emit a uniform/SGPR scalar load (llvm.amdgcn.s.buffer.load) instead of the\n                      vector buffer load. Use only for wave-uniform addresses to route through the\n                      SMEM cache and land the result directly in SGPRs. Restricted to vec_width 1 or 4;\n                      dtype is forced to i32 (the result is raw i32 dwords). mask and soffset_bytes\n                      are not supported in this mode and raise ValueError if provided.\n\n    Returns:\n        Loaded data (scalar or vector depending on vec_width)\n\n    Example:\n        >>> # Load 4xf32\n        >>> data = buffer_load(rsrc, offset, vec_width=4)\n        >>>\n        >>> # Load with mask\n        >>> data = buffer_load(rsrc, offset, vec_width=4, mask=valid)\n    \"\"\"\n    # Scalar (uniform) loads return raw i32 dwords; force the element type so the\n    # element->byte offset math below uses 4 and the result type is i32 / v4i32.\n    if is_scalar:\n        if vec_width not in (1, 4):\n            raise ValueError(\n                f\"buffer_load(is_scalar=True): unsupported vec_width={vec_width}\"\n            )\n        if mask is not None or soffset_bytes is not None:\n            raise ValueError(\n                \"buffer_load(is_scalar=True) does not support mask or soffset_bytes\"\n            )\n        dtype = T.i32()\n    # Default dtype to f32\n    elif dtype is None:\n        dtype = T.f32()\n    # Accept DSL Numeric class (e.g. fx.Int32) as dtype: unwrap to ir.Type\n    elif hasattr(dtype, \"ir_type\"):\n        dtype = dtype.ir_type\n\n    # Unwrap offset first (accept Python ints and DSL Numeric values).\n    if isinstance(offset, int):\n        offset = _create_i32_constant(offset)\n    elif hasattr(offset, \"ir_value\"):\n        offset = offset.ir_value()\n    offset = _unwrap_value(offset)\n\n    # Convert offset to i32 if needed (accepts index/i64/i32)\n    offset = _to_i32_offset(offset)\n\n    # IMPORTANT: Buffer load offset is in BYTES, not elements!\n    # For vec4xf32, each element is 4 bytes, so multiply offset by 4\n    element_bytes = dtype.width // 8\n    bytes_const = _create_i32_constant(element_bytes)\n    op = std_arith.MulIOp(offset, bytes_const)\n    offset = _unwrap_value(op.result)\n\n    # Apply mask by setting invalid offsets to max\n    if mask is not None:\n        mask = _unwrap_value(mask)\n        max_offset = _create_i32_constant(0x7FFFFFFF)\n        op = std_arith.SelectOp(mask, offset, max_offset)\n        offset = _unwrap_value(op.result)\n\n    # Create vector type\n    if vec_width == 1:\n        result_type = dtype\n    else:\n        result_type = ir.VectorType.get([vec_width], dtype)\n\n    # Scalar/uniform load path: emit s.buffer.load with a v4i32 resource and the\n    # byte offset computed above. Returns i32 (vec_width 1) or v4i32 (vec_width 4).\n    if is_scalar:\n        rsrc_v4 = _ptr8_to_v4i32(rsrc)\n        cache_policy = _create_i32_constant(cache_modifier)\n        suffix = \"i32\" if vec_width == 1 else \"v4i32\"\n        return llvm.call_intrinsic(\n            result_type,\n            f\"llvm.amdgcn.s.buffer.load.{suffix}\",\n            [rsrc_v4, offset, cache_policy],\n            [],\n            [],\n        )\n\n    # Create instruction offset and aux flags\n    if soffset_bytes is None:\n        soffset = _create_i32_constant(0)\n    else:\n        if isinstance(soffset_bytes, int):\n            soffset = _create_i32_constant(soffset_bytes)\n        else:\n            soffset = _to_i32_offset(_unwrap_value(soffset_bytes))\n    aux_attr = (\n        ir.IntegerAttr.get(ir.IntegerType.get_signless(32), cache_modifier)\n        if cache_modifier\n        else None\n    )\n\n    # Emit buffer load\n    load_op = rocdl.RawPtrBufferLoadOp(\n        result_type,\n        rsrc,\n        offset,\n        soffset,\n        aux=aux_attr,\n    )\n\n    return load_op.result\n"
+        "content": "# SPDX-License-Identifier: Apache-2.0\n# Copyright (c) 2025 FlyDSL Project Contributors\n# Modifications Copyright (C) 2026 Advanced Micro Devices, Inc.\n\n\"\"\"AMD buffer resource descriptors and buffer loads over raw device addresses.\n\nBuffer instructions are an AMD hardware feature (buffer resource descriptor\nplus ROCDL intrinsics) providing out-of-bounds protection and better memory\nthroughput. Only published flydsl APIs are used.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import arith as std_arith\nfrom flydsl._mlir.dialects import llvm, rocdl\nfrom flydsl._mlir.extras import types as T\nfrom flydsl.expr.meta import dsl_loc_tracing\nfrom flydsl.runtime.device import is_rdna_arch\n\n\ndef _get_buffer_flags(arch=None):\n    \"\"\"Get AMD buffer resource descriptor (V#) flags word (bits 127:96).\n\n    CDNA (gfx9xx):    (7 << 12) | (4 << 15)                         = 0x20070\n    RDNA (gfx10+):    (7 << 12) | (4 << 15) | (1 << 24) | (2 << 28) = 0x21020070\n      - bit 24 set to 1 (required on RDNA)\n      - OOB_SELECT=2 (no bounds checking, matching LLVM boundsCheck=false)\n\n    With ``arch=None`` the arch comes from ``is_rdna_arch``'s own detection.\n    \"\"\"\n    flags = (7 << 12) | (4 << 15)\n    if is_rdna_arch(arch):\n        flags |= 1 << 24  # reserved bit, must be 1 on RDNA\n        flags |= 2 << 28  # OOB_SELECT = 2 (no bounds checking)\n    return flags\n\n\ndef _unwrap_value(value):\n    \"\"\"Recursively unwrap ArithValue or similar wrappers to get the actual MLIR value.\n\n    Handles:\n    - FlyDSL ArithValue (has ._value)\n    - flyc DSL Numeric like fx.Int32 (has .ir_value() method)\n    - flyc ArithValue (is already ir.Value subclass)\n    \"\"\"\n    # DSL Numeric (Int32, Float32, etc.) \u2014 use ir_value() to materialize\n    if hasattr(value, \"ir_value\") and not isinstance(value, ir.Value):\n        return value.ir_value()\n    max_depth = 10  # Safety limit\n    depth = 0\n    while depth < max_depth and not isinstance(value, ir.Value):\n        if hasattr(value, \"_value\"):\n            value = value._value\n        elif hasattr(value, \"value\"):\n            value = value.value\n        else:\n            break\n        depth += 1\n    return value\n\n\n@dsl_loc_tracing\ndef _create_i32_constant(value: int) -> ir.Value:\n    \"\"\"Create i32 constant using standard MLIR arith dialect.\"\"\"\n    i32_type = T.i32()\n    if value > 0x7FFFFFFF:\n        value = int(value - 2**32)\n    attr = ir.IntegerAttr.get(i32_type, value)\n    op = std_arith.ConstantOp(i32_type, attr)\n    return _unwrap_value(op.result)\n\n\ndef _to_i32_offset(offset: ir.Value) -> ir.Value:\n    \"\"\"Normalize an already-unwrapped offset value to i32.\n\n    Accepts index (index_cast), i32 (as-is), wider ints e.g. i64 (trunc), and\n    narrower ints (sign-extend). Lets callers pass fx.Int64 offsets (element or\n    byte) without hitting the ``index_cast i64<->i32`` incompatibility.\n    \"\"\"\n    ot = offset.type\n    if isinstance(ot, ir.IntegerType):\n        if ot.width == 32:\n            return offset\n        if ot.width > 32:\n            return _unwrap_value(std_arith.TruncIOp(T.i32(), offset).result)\n        return _unwrap_value(std_arith.ExtSIOp(T.i32(), offset).result)\n    return _unwrap_value(std_arith.IndexCastOp(T.i32(), offset).result)\n\n\n@dsl_loc_tracing\ndef _create_i16_constant(value: int) -> ir.Value:\n    \"\"\"Create i16 constant using standard MLIR arith dialect.\"\"\"\n    i16_type = T.i16()\n    attr = ir.IntegerAttr.get(i16_type, value)\n    op = std_arith.ConstantOp(i16_type, attr)\n    return _unwrap_value(op.result)\n\n\n@dsl_loc_tracing\ndef _create_i64_constant(value: int) -> ir.Value:\n    \"\"\"Create i64 constant using standard MLIR arith dialect.\"\"\"\n    i64_type = T.i64()\n    attr = ir.IntegerAttr.get(i64_type, value)\n    op = std_arith.ConstantOp(i64_type, attr)\n    return _unwrap_value(op.result)\n\n\n@dsl_loc_tracing\ndef _ptr8_to_v4i32(ptr8_val) -> ir.Value:\n    \"\"\"Reinterpret a buffer resource (!llvm.ptr<8>) as a <4 x i32> vector.\n\n    Required by the scalar ``s.buffer.load`` intrinsic, whose resource operand is\n    a v4i32 rather than the opaque buffer pointer used by the vector path.\n    \"\"\"\n    i128_ty = ir.IntegerType.get_signless(128)\n    v4i32_ty = ir.VectorType.get([4], ir.IntegerType.get_signless(32))\n    i128_val = llvm.ptrtoint(i128_ty, _unwrap_value(ptr8_val))\n    return llvm.bitcast(v4i32_ty, i128_val)\n\n\n@dsl_loc_tracing\ndef get_element_ptr(\n    base_ptr,\n    byte_offset: int | ir.Value | None = None,\n    static_byte_offset: int = 0,\n    elem_type: ir.Type | None = None,\n    no_wrap_flags=None,\n) -> ir.Value:\n    \"\"\"Build an LLVM GEP from a base pointer plus byte offsets.\"\"\"\n    _gep_dynamic_index_sentinel = -(2**31)\n\n    base_ptr = _unwrap_value(base_ptr)\n    if not isinstance(static_byte_offset, int):\n        raise TypeError(\n            f\"static_byte_offset must be int, got {type(static_byte_offset)!r}\"\n        )\n    if elem_type is None:\n        elem_type = T.i8()\n    elif callable(elem_type):\n        elem_type = elem_type()\n\n    if byte_offset is None:\n        dynamic_indices = []\n        raw_constant_indices = [int(static_byte_offset)]\n    elif isinstance(byte_offset, int):\n        dynamic_indices = []\n        raw_constant_indices = [int(byte_offset) + int(static_byte_offset)]\n    else:\n        offset_val = _unwrap_value(byte_offset)\n        if isinstance(offset_val.type, ir.IndexType):\n            i64_type = T.i64()\n            offset_val = _unwrap_value(\n                std_arith.IndexCastOp(i64_type, offset_val).result\n            )\n        elif not isinstance(offset_val.type, ir.IntegerType):\n            raise TypeError(\n                \"byte_offset must be int, index, or integer-typed MLIR value; \"\n                f\"got {offset_val.type}\"\n            )\n\n        if static_byte_offset != 0:\n            static_type = offset_val.type\n            static_attr = ir.IntegerAttr.get(static_type, int(static_byte_offset))\n            static_const = _unwrap_value(\n                std_arith.ConstantOp(static_type, static_attr).result\n            )\n            offset_val = _unwrap_value(\n                std_arith.AddIOp(offset_val, static_const).result\n            )\n\n        dynamic_indices = [offset_val]\n        raw_constant_indices = [_gep_dynamic_index_sentinel]\n\n    return llvm.GEPOp(\n        base_ptr.type,\n        base_ptr,\n        dynamic_indices,\n        raw_constant_indices,\n        elem_type,\n        no_wrap_flags,\n    ).result\n\n\n@dsl_loc_tracing\ndef create_buffer_resource_from_addr(\n    addr_i64: ir.Value,\n    *,\n    num_records_bytes: int | ir.Value | None = None,\n) -> ir.Value:\n    \"\"\"Create AMD buffer resource descriptor from a raw i64 device address.\n\n    Useful when working with runtime pointer arrays (e.g. IPC-mapped addresses\n    or device-side pointer tables) where no fly.memref is available.\n    The full address is encoded as the buffer base; callers should pass\n    byte offset 0 to buffer_load / buffer_store.\n\n    Args:\n        addr_i64: Raw 64-bit device address (i64 MLIR value).\n        num_records_bytes: Optional buffer size in bytes for hardware OOB checking.\n\n    Returns:\n        ROCDL buffer resource descriptor (!llvm.ptr<8>).\n\n    Example:\n        >>> rsrc = create_buffer_resource_from_addr(raw_addr_i64)\n        >>> data = buffer_load(rsrc, i32_zero, vec_width=4, dtype=T.i32)\n    \"\"\"\n    addr_i64 = _unwrap_value(addr_i64)\n    ptr_type = ir.Type.parse(\"!llvm.ptr\")\n    base_ptr = llvm.IntToPtrOp(ptr_type, addr_i64).result\n    flags = _create_i32_constant(_get_buffer_flags())\n    stride = _create_i16_constant(0)\n    if num_records_bytes is None:\n        num_records = _create_i64_constant(0xFFFFFFFF)\n    elif isinstance(num_records_bytes, int):\n        nbytes = max(0, min(int(num_records_bytes), 0xFFFFFFFF))\n        num_records = _create_i64_constant(nbytes)\n    else:\n        num_records = _unwrap_value(num_records_bytes)\n        i64_type = T.i64()\n        if (\n            not isinstance(num_records.type, ir.IntegerType)\n            or num_records.type.width != 64\n        ):\n            if isinstance(num_records.type, ir.IndexType):\n                num_records = _unwrap_value(\n                    std_arith.IndexCastOp(i64_type, num_records).result\n                )\n            else:\n                num_records = _unwrap_value(\n                    std_arith.ExtSIOp(i64_type, num_records).result\n                )\n    rsrc_type = ir.Type.parse(\"!llvm.ptr<8>\")\n    return rocdl.MakeBufferRsrcOp(\n        rsrc_type, base_ptr, stride, num_records, flags\n    ).result\n\n\n@dsl_loc_tracing\ndef buffer_load(\n    rsrc: ir.Value,\n    offset: ir.Value,\n    vec_width: int = 4,\n    dtype=None,\n    mask: ir.Value | None = None,\n    cache_modifier: int = 0,\n    soffset_bytes: int | ir.Value | None = None,\n    is_scalar: bool = False,\n) -> ir.Value:\n    \"\"\"AMD buffer load operation.\n\n    Load data from global memory using buffer descriptor and offset.\n    Uses hardware-level bounds checking and vectorization.\n\n    Args:\n        rsrc: Buffer resource descriptor (!llvm.ptr<8>)\n        offset: Offset in elements (i32 type)\n        vec_width: Vector width (1, 2, or 4)\n        dtype: Element data type (None for f32, or ir.F32Type, etc.)\n        mask: Optional mask for predicated load (i1 type)\n        cache_modifier: Cache control flags (0 for default)\n        soffset_bytes: Optional scalar offset (in BYTES) added by the buffer instruction (soffset).\n                      Use this to fold small constant deltas into the instruction instead of emitting\n                      extra VGPR address arithmetic.\n        is_scalar: Emit a uniform/SGPR scalar load (llvm.amdgcn.s.buffer.load) instead of the\n                      vector buffer load. Use only for wave-uniform addresses to route through the\n                      SMEM cache and land the result directly in SGPRs. Restricted to vec_width 1 or 4;\n                      dtype is forced to i32 (the result is raw i32 dwords). mask and soffset_bytes\n                      are not supported in this mode and raise ValueError if provided.\n\n    Returns:\n        Loaded data (scalar or vector depending on vec_width)\n\n    Example:\n        >>> # Load 4xf32\n        >>> data = buffer_load(rsrc, offset, vec_width=4)\n        >>>\n        >>> # Load with mask\n        >>> data = buffer_load(rsrc, offset, vec_width=4, mask=valid)\n    \"\"\"\n    # Scalar (uniform) loads return raw i32 dwords; force the element type so the\n    # element->byte offset math below uses 4 and the result type is i32 / v4i32.\n    if is_scalar:\n        if vec_width not in (1, 4):\n            raise ValueError(\n                f\"buffer_load(is_scalar=True): unsupported vec_width={vec_width}\"\n            )\n        if mask is not None or soffset_bytes is not None:\n            raise ValueError(\n                \"buffer_load(is_scalar=True) does not support mask or soffset_bytes\"\n            )\n        dtype = T.i32()\n    # Default dtype to f32\n    elif dtype is None:\n        dtype = T.f32()\n    # Accept DSL Numeric class (e.g. fx.Int32) as dtype: unwrap to ir.Type\n    elif hasattr(dtype, \"ir_type\"):\n        dtype = dtype.ir_type\n\n    # Unwrap offset first (accept Python ints and DSL Numeric values).\n    if isinstance(offset, int):\n        offset = _create_i32_constant(offset)\n    elif hasattr(offset, \"ir_value\"):\n        offset = offset.ir_value()\n    offset = _unwrap_value(offset)\n\n    # Convert offset to i32 if needed (accepts index/i64/i32)\n    offset = _to_i32_offset(offset)\n\n    # IMPORTANT: Buffer load offset is in BYTES, not elements!\n    # For vec4xf32, each element is 4 bytes, so multiply offset by 4\n    element_bytes = dtype.width // 8\n    bytes_const = _create_i32_constant(element_bytes)\n    op = std_arith.MulIOp(offset, bytes_const)\n    offset = _unwrap_value(op.result)\n\n    # Apply mask by setting invalid offsets to max\n    if mask is not None:\n        mask = _unwrap_value(mask)\n        max_offset = _create_i32_constant(0x7FFFFFFF)\n        op = std_arith.SelectOp(mask, offset, max_offset)\n        offset = _unwrap_value(op.result)\n\n    # Create vector type\n    if vec_width == 1:\n        result_type = dtype\n    else:\n        result_type = ir.VectorType.get([vec_width], dtype)\n\n    # Scalar/uniform load path: emit s.buffer.load with a v4i32 resource and the\n    # byte offset computed above. Returns i32 (vec_width 1) or v4i32 (vec_width 4).\n    if is_scalar:\n        rsrc_v4 = _ptr8_to_v4i32(rsrc)\n        cache_policy = _create_i32_constant(cache_modifier)\n        suffix = \"i32\" if vec_width == 1 else \"v4i32\"\n        return llvm.call_intrinsic(\n            result_type,\n            f\"llvm.amdgcn.s.buffer.load.{suffix}\",\n            [rsrc_v4, offset, cache_policy],\n            [],\n            [],\n        )\n\n    # Create instruction offset and aux flags\n    if soffset_bytes is None:\n        soffset = _create_i32_constant(0)\n    else:\n        if isinstance(soffset_bytes, int):\n            soffset = _create_i32_constant(soffset_bytes)\n        else:\n            soffset = _to_i32_offset(_unwrap_value(soffset_bytes))\n    aux_attr = (\n        ir.IntegerAttr.get(ir.IntegerType.get_signless(32), cache_modifier)\n        if cache_modifier\n        else None\n    )\n\n    # Emit buffer load\n    load_op = rocdl.RawPtrBufferLoadOp(\n        result_type,\n        rsrc,\n        offset,\n        soffset,\n        aux=aux_attr,\n    )\n\n    return load_op.result\n"
       },
       {
         "path": "kernel.py",
-        "content": "\"\"\"MXFP4 fused MoE for 256 experts, top-1, model_dim 4096, inter_dim 512 in FlyDSL.\n\nDecode (<= 384 rows) runs persistent stage 1 + persistent stage 2, after a quant pass above 16\nrows (_plan_dec); no kernel waits on another workgroup. Larger batches use three kernels:\nPrep: workgroup 0 sorts the routed rows by expert in LDS (histogram, scan, scatter) and writes\nthe tile list (expert, first sorted row, row count); the other workgroups quantize the bf16\nactivations to MXFP4 (e8m0 per 32) in row order.\nStage 1: per (tile, gate/up n-block), the gate/up GEMM of the gathered rows against the\n16x16-preshuffled w1 with scaled MFMAs, software-pipelined through registers and LDS;\nsilu(gate) * up is rounded to bf16 and quantized to MXFP4 in sorted-row order.\nStage 2: per (tile, column group), the down GEMM against w2 with the tile's activations held\nin LDS, scaled by the routing weight and stored as bf16 into the row's output (top-1: one\nwriter per row, no atomics).\n\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import arith, llvm\nfrom flydsl._mlir.dialects import rocdl as rocdl_ods\nfrom flydsl.expr import const_expr, gpu, range_constexpr, rocdl\nfrom flydsl.expr.typing import T\n\nfrom . import buffer_ops\n\n_D = 4096\n_I = 512\n_E = 256\n_LDS_BYTES = 4096\n_ALIGN = 256\n\n\ndef _raw(v):\n    if not isinstance(v, ir.Value) and hasattr(v, \"ir_value\"):\n        return v.ir_value()\n    return v\n\n\ndef _rsrc(addr):\n    return buffer_ops.create_buffer_resource_from_addr(_raw(fx.Int64(addr)))\n\n\ndef _ld4(rsrc, off):\n    return fx.Vector(rocdl.raw_ptr_buffer_load(T.i32x4, rsrc, fx.Int32(off), fx.Int32(0)))\n\n\ndef _ld1(rsrc, off):\n    return fx.Int32(rocdl.raw_ptr_buffer_load(T.i32, rsrc, fx.Int32(off), fx.Int32(0)))\n\n\ndef _st(rsrc, off, value):\n    rocdl_ods.raw_ptr_buffer_store(_raw(value), rsrc, _raw(fx.Int32(off)), _raw(fx.Int32(0)))\n\n\ndef _st16(rsrc, off, value):\n    _st(rsrc, off, arith.trunci(T.i16, _raw(fx.Int32(value))))\n\n\ndef _uniform(x):\n    return fx.Int32(rocdl.readfirstlane(T.i32, _raw(fx.Int32(x))))\n\n\ndef _lds(base, off):\n    ptr_ty = fx.PointerType.get(T.i8, fx.AddressSpace.Shared)\n    return fx.to_llvm_ptr(fx.inttoptr(ptr_ty, fx.Int64(base + off)))\n\n\ndef _lds_ld(base, off):\n    return fx.Int32(llvm.LoadOp(T.i32, _lds(base, off)).res)\n\n\ndef _lds_st(base, off, value):\n    llvm.StoreOp(_raw(fx.Int32(value)), _lds(base, off))\n\n\ndef _lds_add(base, off, value):\n    return fx.Int32(llvm.AtomicRMWOp(\n        llvm.AtomicBinOp.add, _lds(base, off), _raw(fx.Int32(value)),\n        llvm.AtomicOrdering.monotonic, syncscope=\"workgroup\").res)\n\n\ndef _umax(a, b):\n    return (fx.Uint32(a) > fx.Uint32(b)).select(a, b)\n\n\ndef _e8m0(amax_bits):\n    \"\"\"Biased e8m0 exponent of the reference's MXFP4 scale for an |amax| bit pattern.\"\"\"\n    am = amax_bits.bitcast(fx.Float32)\n    am = (am > fx.Float32(1e-10)).select(am, fx.Float32(1e-10))\n    bits = am.bitcast(fx.Int32)\n    return ((bits >> 23) & 255) - 2 + ((bits & 0x7FFFFF) > 0x400000).select(fx.Int32(1), fx.Int32(0))\n\n\ndef _pack_fp4(vals, scale):\n    \"\"\"Eight floats to one dword of fp4 (element j in nibble j).\"\"\"\n    q = fx.Int32(0)\n    for j in range_constexpr(len(vals) // 2):\n        q = fx.Int32(rocdl.cvt_scalef32_pk_fp4_f32(\n            T.i32, _raw(q), _raw(vals[2 * j]), _raw(vals[2 * j + 1]), _raw(scale), j))\n    return q\n\n\ndef _bf16_bits(x):\n    return fx.Int32(fx.BFloat16(x).bitcast(fx.Uint16))\n\n\ndef _xor_lane(x, lane, mask):\n    return fx.Int32(rocdl.ds_bpermute(T.i32, _raw((lane ^ mask) * 4), _raw(x)))\n\n\ndef _quant8(v):\n    \"\"\"Eight bf16 (one i32x4 of packed pairs, 4 lanes per 32-value group) to (fp4 dword, e8m0).\"\"\"\n    v2i16 = ir.VectorType.get([2], ir.IntegerType.get_signless(16))\n    m = None\n    for k in range_constexpr(4):\n        a = llvm.BitcastOp(v2i16, _raw(v[k] & 0x7FFF7FFF)).result\n        m = a if m is None else arith.maxui(m, a)\n    m = fx.Int32(llvm.BitcastOp(T.i32, m).result)\n    peak = _umax(m << 16, m & fx.Int32(-65536))\n    # quad_perm [1,0,3,2] and [2,3,0,1]\n    for ctrl in (0xB1, 0x4E):\n        peak = _umax(peak, fx.Int32(rocdl.update_dpp(T.i32, _raw(peak), _raw(peak), ctrl, 0xF, 0xF, True)))\n    ex = _e8m0(peak)\n    scale = (ex << 23).bitcast(fx.Float32)\n    v2bf16 = ir.VectorType.get([2], ir.BF16Type.get())\n    q = fx.Int32(0)\n    for k in range_constexpr(4):\n        q = fx.Int32(rocdl.cvt_scalef32_pk_fp4_bf16(T.i32, _raw(q), llvm.BitcastOp(v2bf16, _raw(v[k])).result,\n                                                    _raw(scale), k))\n    return q, ex\n\n\n_XCD = 8\n_XC = 16\n\n\ndef _xcd_block(bid):\n    \"\"\"Workgroups go round-robin over the XCDs; give each XCD runs of _XC consecutive virtual ids so\n    tiles sharing an expert's weights share one L2. The grid must be a multiple of _XCD * _XC.\"\"\"\n    return bid // (_XCD * _XC) * (_XCD * _XC) + bid % _XCD * _XC + bid // _XCD % _XC\n\n\ndef _max_tiles(rows, bm):\n    return (rows + bm - 1) // bm + min(_E, rows)\n\n\ndef _load_ids(ids, chunk, tid, rows, nthreads):\n    \"\"\"16 (row, expert) pairs per thread from a 16 * nthreads row chunk; rows past the end read row 0.\"\"\"\n    vecs = []\n    for j in range_constexpr(4):\n        first = chunk + (j * nthreads + tid) * 4\n        vecs.append((first, _ld4(ids, (first < rows).select(first, fx.Int32(0)) * 4)))\n    return [(first + k, v[k] & 255) for first, v in vecs for k in range_constexpr(4)]\n\n\n@functools.cache\ndef _prep_kernel(R, BM, PT):\n    @fx.struct\n    class Smem:\n        raw: fx.Array[fx.Uint8, _LDS_BYTES, 16]\n\n    @flyc.kernel(known_block_size=[PT, 1, 1])\n    def prep(X: fx.Int64, IDS: fx.Int64, XQ: fx.Int64, XS: fx.Int64,\n             STOK: fx.Int64, TILES: fx.Int64):\n        tid = fx.Int32(gpu.thread_id(\"x\"))\n        bid = fx.Int32(gpu.block_id(\"x\"))\n        if bid == 0:\n            base = fx.Int32(fx.ptrtoint(fx.SharedAllocator().allocate(Smem).peek().raw.ptr))\n            ids = _rsrc(IDS)\n            stok = _rsrc(STOK)\n            tiles = _rsrc(TILES)\n            # threads >= 256 mirror expert tid & 255 and never write per-expert state\n            ex = tid & 255\n            mine = tid < 256\n            # LDS words: [0,256) counts, [256,512) cursors, [512,768) row scan, [768,1024) tile scan\n            if mine:\n                _lds_st(base, ex * 4, 0)\n            gpu.barrier()\n            for chunk in range(0, R, PT * 16):\n                for idx, eid in _load_ids(ids, chunk, tid, R, PT):\n                    _lds_add(base, eid * 4, (idx < R).select(fx.Int32(1), fx.Int32(0)))\n            gpu.barrier()\n            c = _lds_ld(base, ex * 4)\n            nt = (c + (BM - 1)) // BM\n            v = c\n            w = nt\n            if mine:\n                _lds_st(base, 2048 + ex * 4, v)\n                _lds_st(base, 3072 + ex * 4, w)\n            gpu.barrier()\n            for d in range_constexpr(8):\n                src = (ex >= (1 << d)).select(ex - (1 << d), ex)\n                keep = (ex >= (1 << d)).select(fx.Int32(1), fx.Int32(0))\n                pv = _lds_ld(base, 2048 + src * 4) * keep\n                pw = _lds_ld(base, 3072 + src * 4) * keep\n                gpu.barrier()\n                v = v + pv\n                w = w + pw\n                if mine:\n                    _lds_st(base, 2048 + ex * 4, v)\n                    _lds_st(base, 3072 + ex * 4, w)\n                gpu.barrier()\n            roff = v - c\n            toff = w - nt\n            if mine:\n                _lds_st(base, 1024 + ex * 4, roff)\n                for j in range(nt):\n                    rem = c - j * BM\n                    n = (rem < BM).select(rem, fx.Int32(BM))\n                    rec = fx.Vector.from_elements([ex, roff + j * BM, n, fx.Int32(0)], fx.Int32)\n                    _st(tiles, 16 + (toff + j) * 16, rec)\n            if tid == 255:\n                _st(tiles, 0, w)\n            gpu.barrier()\n            for chunk in range(0, R, PT * 16):\n                for idx, eid in _load_ids(ids, chunk, tid, R, PT):\n                    p = _lds_add(base, 1024 + eid * 4, (idx < R).select(fx.Int32(1), fx.Int32(0)))\n                    if idx < R:\n                        _st(stok, p * 4, idx)\n        else:\n            # one 16 B chunk (8 values) per lane, 4 lanes per 32-value group, 4 chunks per thread\n            x = _rsrc(X)\n            xq = _rsrc(XQ)\n            xs = _rsrc(XS)\n            lane = tid % 64\n            first = (bid - 1) * (PT * 4) + tid\n            loads = []\n            for j in range_constexpr(4):\n                i = first + j * PT\n                loads.append(_ld4(x, (i < R * 512).select(i, fx.Int32(0)) * 16))\n            for j in range_constexpr(4):\n                i = first + j * PT\n                packed, ex = _quant8(loads[j])\n                if i < R * 512:\n                    _st(xq, i * 4, packed)\n                    if i % 4 == 0:\n                        row = i // 512\n                        g = (i // 4) % 128\n                        _st(xs, row * (_D // 32) + (g >> 4) * 16 + (g & 3) * 4 + ((g >> 2) & 3),\n                            arith.trunci(T.i8, _raw(ex)))\n\n    return prep\n\n\n@flyc.jit\ndef _silu_mul_quant_store(accs, TM, TN, nrows, lane, l16, lg, start, cnt, oq, osc):\n    \"\"\"Stage-1 epilogue: gate tiles [0, TN/2), up tiles [TN/2, TN); MXFP4 rows in sorted order.\"\"\"\n    for m in range_constexpr(TM):\n        r = m * 16 + l16\n        pos = start + r\n        for gi in range_constexpr(TN // 4):\n            hs = []\n            peak = fx.Int32(0)\n            for half in range_constexpr(2):\n                t = gi * 2 + half\n                ga = accs[t * TM + m]\n                ua = accs[(t + TN // 2) * TM + m]\n                for j in range_constexpr(4):\n                    gv = ga[j]\n                    ep = fx.Float32(rocdl.exp2(T.f32, _raw(gv * fx.Float32(-1.4426950408889634))))\n                    sig = fx.Float32(rocdl.rcp(T.f32, _raw(fx.Float32(1.0) + ep)))\n                    h = fx.Float32(fx.BFloat16(gv * sig * ua[j]))\n                    hs.append(h)\n                    peak = _umax(peak, h.bitcast(fx.Int32) & 0x7FFFFFFF)\n            peak = _umax(peak, _xor_lane(peak, lane, 16))\n            peak = _umax(peak, _xor_lane(peak, lane, 32))\n            ex = _e8m0(peak)\n            scale = (ex << 23).bitcast(fx.Float32)\n            qa = _pack_fp4(hs[0:4], scale)\n            qb = _pack_fp4(hs[4:8], scale)\n            col = nrows[gi * 2]\n            if r < cnt:\n                _st16(oq, pos * (_I // 2) + (col >> 1) + lg * 2, qa)\n                _st16(oq, pos * (_I // 2) + (col >> 1) + 8 + lg * 2, qb)\n                if lg == 0:\n                    G = col >> 5\n                    _st(osc, pos * (_I // 32) + (G & 3) * 4 + ((G >> 2) & 3),\n                        arith.trunci(T.i8, _raw(ex)))\n\n\n@functools.cache\ndef _up_kernel(R, BM, PD, NBW=1):\n    \"\"\"Stage-1 GEMM, tile BM x 256 (128 gate + 128 up columns), 256 K per stage.\n\n    B fragments and scales are prefetched PD stages ahead in registers; the A tile goes\n    global -> registers -> a double-buffered LDS tile ([BM][128 B], 16 B chunks xor-swizzled by\n    row & 7); the tile's activation scales are staged in LDS once.\n    \"\"\"\n    K = _D\n    N = 2 * _I\n    BN = 256\n    TN = 4\n    TM = BM // 16\n    NIT = K // 256\n    NNB = N // BN\n    A_BYTES = BM * 128\n    AJ = BM // 32\n    # one row of scales per tile row, padded by 4 bytes so a fragment's 16 rows hit distinct banks\n    AS_STR = K // 32 + 4\n    AS_BASE = 2 * A_BYTES\n    LDS_BYTES = AS_BASE + BM * AS_STR\n    UNR = PD + 1\n    NG = NNB // NBW\n    S = NBW * NIT\n    assert BM % 32 == 0 and PD >= 1 and NIT % UNR == 0 and NNB % NBW == 0\n\n    @fx.struct\n    class Smem:\n        raw: fx.Array[fx.Uint8, LDS_BYTES, 16]\n\n    @flyc.kernel(known_block_size=[256, 1, 1])\n    def up(AQ: fx.Int64, AS: fx.Int64, W: fx.Int64, WS: fx.Int64, STOK: fx.Int64,\n           TILES: fx.Int64, OQ: fx.Int64, OS: fx.Int64):\n        tid = fx.Int32(gpu.thread_id(\"x\"))\n        lane = tid % 64\n        wave = _uniform(tid // 64)\n        bid = _xcd_block(fx.Int32(gpu.block_id(\"x\")))\n        nb0 = bid % NG * NBW\n        tile = bid // NG\n        tl = _rsrc(TILES)\n        if tile < _uniform(_ld1(tl, 0)):\n            rec = _ld4(tl, 16 + tile * 16)\n            e = _uniform(rec[0])\n            start = _uniform(rec[1])\n            cnt = _uniform(rec[2])\n            stok = _rsrc(STOK)\n            aq = _rsrc(AQ)\n            asc = _rsrc(AS)\n            w = _rsrc(W)\n            ws = _rsrc(WS)\n            lbase = fx.Int32(fx.ptrtoint(fx.SharedAllocator().allocate(Smem).peek().raw.ptr))\n            l16 = lane % 16\n            lg = lane // 16\n\n            def row_of(r):\n                return _ld1(stok, (start + (r < cnt).select(r, fx.Int32(0))) * 4)\n\n            def nrows_of(nb):\n                g0 = nb * 128 + wave * 32\n                return [g0, g0 + 16, g0 + _I, g0 + _I + 16]\n\n            nrows = nrows_of(0)\n            b_off = [e * (N * K // 2) + (n >> 4) * (K * 8) + lane * 16 for n in nrows]\n            bs_off = [e * (N * K // 32) + (n >> 5) * K + lg * 64 + l16 * 4 for n in nrows]\n            crow = tid // 8\n            cch = tid % 8\n            a_off = []\n            a_lds = []\n            for j in range_constexpr(AJ):\n                rr = crow + 32 * j\n                row = row_of(rr)\n                a_off.append(row * (K // 2) + cch * 16)\n                a_lds.append(rr * 128 + ((cch ^ (rr & 7)) * 16))\n                sv = _ld4(asc, row * (K // 32) + cch * 16)\n                for i in range_constexpr(4):\n                    _lds_st(lbase, AS_BASE + rr * AS_STR + cch * 16 + i * 4, sv[i])\n            as_rd = [AS_BASE + (m * 16 + l16) * AS_STR + lg * 4 for m in range_constexpr(TM)]\n            a_rd = [m * 2048 + l16 * 128 for m in range_constexpr(TM)]\n            NBV = 2 * TN\n            NQ = NBV + TN\n\n            # stage s covers column block nb0 + s // NIT, K step s % NIT\n            def load_b(s):\n                it = s % NIT\n                nb = nb0 + s // NIT\n                bo = nb * (128 // 16 * K * 8) + it * 2048\n                so = nb * (128 // 32 * K) + it * 256\n                return ([_ld4(w, o + bo + u * 1024) for u in range_constexpr(2) for o in b_off]\n                        + [_ld1(ws, o + so) for o in bs_off])\n\n            def load_a(s):\n                return [_ld4(aq, o + (s % NIT) * 128) for o in a_off]\n\n            def store_a(it, regs):\n                buf = lbase + (it & 1) * A_BYTES\n                for j in range_constexpr(AJ):\n                    llvm.StoreOp(_raw(regs[j]), _lds(buf, a_lds[j]), alignment=16)\n\n            def compute(s, accs, bq):\n                buf = lbase + (s & 1) * A_BYTES\n                it = s % NIT\n                shift = (it & 1) * 16\n                ass = [_lds_ld(lbase, o + (it >> 1) * 16) >> shift for o in as_rd]\n                out = list(accs)\n                for u in range_constexpr(2):\n                    sw = ((u * 4 + lg) ^ (l16 & 7)) * 16\n                    avs = [fx.Vector(llvm.LoadOp(T.i32x4, _lds(buf, o + sw), alignment=16).res)\n                           for o in a_rd]\n                    for t in range_constexpr(TN):\n                        for m in range_constexpr(TM):\n                            out[t * TM + m] = fx.Vector(rocdl.mfma_scale_f32_16x16x128_f8f6f4(\n                                T.f32x4, [bq[u * TN + t], avs[m], out[t * TM + m], 4, 4,\n                                          u * 2 + (t & 1), bq[NBV + t], u, ass[m]]))\n                return out\n\n            def clamp(it):\n                return (it < S).select(it, fx.Int32(S - 1))\n\n            # queues: B/scales for stages s .. s+PD-1, A registers for stages s+1 .. s+PD\n            store_a(fx.Int32(0), load_a(fx.Int32(0)))\n            bq = []\n            for s in range_constexpr(PD):\n                bq += load_b(fx.Int32(min(s, S - 1)))\n            aqs = []\n            for s in range_constexpr(1, PD + 1):\n                aqs += load_a(fx.Int32(min(s, S - 1)))\n            gpu.barrier()\n            NA = TN * TM\n            zero = [_raw(fx.Vector.filled(4, 0.0, fx.Float32)) for _ in range_constexpr(NA)]\n            pipe = [_raw(x) for x in bq] + [_raw(x) for x in aqs]\n            for j in range_constexpr(NBW):\n                # unrolled by PD + 1 so the queues rotate statically (no copies of in-flight loads)\n                for iv, state in range(j * (NIT // UNR), (j + 1) * (NIT // UNR), 1, init=zero + pipe):\n                    cur = [fx.Vector(x) for x in state[:NA]]\n                    q = list(state[NA:NA + PD * NQ])\n                    ar = [fx.Vector(x) for x in state[NA + PD * NQ:]]\n                    for p in range_constexpr(UNR):\n                        it = fx.Int32(iv) * UNR + p\n                        bcur = [fx.Vector(x) for x in q[:NBV]] + [fx.Int32(x) for x in q[NBV:NQ]]\n                        nb_ = load_b(clamp(it + PD))\n                        na_ = load_a(clamp(it + PD + 1))\n                        rocdl.sched_barrier(0)\n                        cur = compute(it, cur, bcur)\n                        store_a(it + 1, ar[:AJ])\n                        ar = ar[AJ:] + na_\n                        q = q[NQ:] + [_raw(x) for x in nb_]\n                        gpu.barrier()\n                    results = yield [_raw(a) for a in cur] + [_raw(x) for x in q] + [_raw(x) for x in ar]\n                accs = [fx.Vector(x) for x in results[:NA]]\n                pipe = list(results[NA:])\n                _silu_mul_quant_store(accs, TM, TN, nrows_of(nb0 + j), lane, l16, lg, start, cnt,\n                                      _rsrc(OQ), _rsrc(OS))\n\n    return up\n\n\n@functools.cache\ndef _down_kernel(R, BM, PD, NSPLIT):\n    \"\"\"Stage-2 GEMM, one tile of BM rows against NNB/NSPLIT blocks of 256 columns.\n\n    The A tile and its scales stay in LDS; B is prefetched PD stages ahead across column blocks,\n    so the epilogue of one block overlaps the loads of the next.\n    \"\"\"\n    K = _I\n    N = _D\n    BN = 256\n    TN = 4\n    TM = BM // 16\n    NIT = K // 256\n    NPB = N // BN // NSPLIT\n    S = NPB * NIT\n    UNR = PD + 1\n    A_BYTES = BM * 128\n    AJ = BM // 32\n    AS_STR = K // 32 + 4\n    AS_BASE = 2 * A_BYTES\n    OSTRIDE = BN * 2 + 16\n    O_BASE = (AS_BASE + BM * AS_STR + 15) // 16 * 16\n    LDS_BYTES = O_BASE + BM * OSTRIDE\n    LPR = BN * 2 // 16\n    RPP = 256 // LPR\n    assert BM % 32 == 0 and UNR % NIT == 0 and S % UNR == 0\n\n    @fx.struct\n    class Smem:\n        raw: fx.Array[fx.Uint8, LDS_BYTES, 16]\n\n    @flyc.kernel(known_block_size=[256, 1, 1])\n    def down(AQ: fx.Int64, AS: fx.Int64, W: fx.Int64, WS: fx.Int64, STOK: fx.Int64,\n             TILES: fx.Int64, OUT: fx.Int64, RW: fx.Int64):\n        tid = fx.Int32(gpu.thread_id(\"x\"))\n        lane = tid % 64\n        wave = _uniform(tid // 64)\n        bid = _xcd_block(fx.Int32(gpu.block_id(\"x\")))\n        tile = bid // NSPLIT\n        nb0 = (bid % NSPLIT) * NPB\n        tl = _rsrc(TILES)\n        if tile < _uniform(_ld1(tl, 0)):\n            rec = _ld4(tl, 16 + tile * 16)\n            e = _uniform(rec[0])\n            start = _uniform(rec[1])\n            cnt = _uniform(rec[2])\n            stok = _rsrc(STOK)\n            aq = _rsrc(AQ)\n            asc = _rsrc(AS)\n            w = _rsrc(W)\n            ws = _rsrc(WS)\n            rw = _rsrc(RW)\n            out = _rsrc(OUT)\n            lbase = fx.Int32(fx.ptrtoint(fx.SharedAllocator().allocate(Smem).peek().raw.ptr))\n            l16 = lane % 16\n            lg = lane // 16\n\n            def pos_of(r):\n                return start + (r < cnt).select(r, fx.Int32(0))\n\n            nrows = [nb0 * BN + wave * 64 + 16 * t for t in range_constexpr(TN)]\n            b_off = [e * (N * K // 2) + (n >> 4) * (K * 8) + lane * 16 for n in nrows]\n            bs_off = [e * (N * K // 32) + (n >> 5) * K + lg * 64 + l16 * 4 for n in nrows]\n\n            def load_b(it):\n                nbi = it >> 1\n                ks = it & 1\n                bo = nbi * (BN // 16 * K * 8) + ks * 2048\n                so = nbi * (BN // 32 * K) + ks * 256\n                return ([_ld4(w, o + bo + u * 1024) for u in range_constexpr(2) for o in b_off]\n                        + [_ld1(ws, o + so) for o in bs_off])\n\n            crow = tid // 8\n            cch = tid % 8\n            for s in range_constexpr(NIT):\n                for j in range_constexpr(AJ):\n                    rr = crow + 32 * j\n                    v = _ld4(aq, pos_of(rr) * (K // 2) + s * 128 + cch * 16)\n                    llvm.StoreOp(_raw(v), _lds(lbase, s * A_BYTES + rr * 128 + ((cch ^ (rr & 7)) * 16)),\n                                 alignment=16)\n            if tid < BM:\n                sv = _ld4(asc, pos_of(tid) * 16)\n                for i in range_constexpr(4):\n                    _lds_st(lbase, AS_BASE + tid * AS_STR + i * 4, sv[i])\n            wts = [_ld1(rw, _ld1(stok, pos_of(m * 16 + l16) * 4) * 4).bitcast(fx.Float32)\n                   for m in range_constexpr(TM)]\n            orow = tid // LPR\n            ocol = tid % LPR\n            otok = [_ld1(stok, pos_of(orow + RPP * i) * 4) * (_D * 2) + ocol * 16\n                    for i in range_constexpr(BM // RPP)]\n            a_rd = [m * 2048 + l16 * 128 for m in range_constexpr(TM)]\n            as_rd = [AS_BASE + (m * 16 + l16) * AS_STR + lg * 4 for m in range_constexpr(TM)]\n            NBV = 2 * TN\n            NQ = NBV + TN\n\n            def compute(ks, accs, bq):\n                buf = lbase + ks * A_BYTES\n                ass = [_lds_ld(lbase, o) >> (ks * 16) for o in as_rd]\n                out_ = list(accs)\n                for u in range_constexpr(2):\n                    sw = ((u * 4 + lg) ^ (l16 & 7)) * 16\n                    avs = [fx.Vector(llvm.LoadOp(T.i32x4, _lds(buf, o + sw), alignment=16).res)\n                           for o in a_rd]\n                    for t in range_constexpr(TN):\n                        for m in range_constexpr(TM):\n                            out_[t * TM + m] = fx.Vector(rocdl.mfma_scale_f32_16x16x128_f8f6f4(\n                                T.f32x4, [bq[u * TN + t], avs[m], out_[t * TM + m], 4, 4,\n                                          u * 2 + (t & 1), bq[NBV + t], u, ass[m]]))\n                return out_\n\n            def epilogue(accs, nb):\n                gpu.barrier()\n                for m in range_constexpr(TM):\n                    r = m * 16 + l16\n                    for t in range_constexpr(TN):\n                        a = accs[t * TM + m]\n                        lo = _bf16_bits(a[0] * wts[m]) | (_bf16_bits(a[1] * wts[m]) << 16)\n                        hi = _bf16_bits(a[2] * wts[m]) | (_bf16_bits(a[3] * wts[m]) << 16)\n                        col = wave * (TN * 16) + t * 16 + lg * 4\n                        llvm.StoreOp(_raw(fx.Vector.from_elements([lo, hi], fx.Int32)),\n                                     _lds(lbase, O_BASE + r * OSTRIDE + col * 2), alignment=8)\n                gpu.barrier()\n                for i in range_constexpr(BM // RPP):\n                    r = orow + RPP * i\n                    v = fx.Vector(llvm.LoadOp(T.i32x4, _lds(lbase, O_BASE + r * OSTRIDE + ocol * 16),\n                                              alignment=16).res)\n                    if r < cnt:\n                        _st(out, otok[i] + nb * (BN * 2), v)\n\n            def clamp(it):\n                return (it < S).select(it, fx.Int32(S - 1))\n\n            bq = []\n            for s in range_constexpr(PD):\n                bq += load_b(fx.Int32(min(s, S - 1)))\n            gpu.barrier()\n            zero = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range_constexpr(TN * TM)]\n            init = [_raw(x) for x in bq]\n            for iv, state in range(0, S // UNR, 1, init=init):\n                q = list(state)\n                cur = zero\n                for p in range_constexpr(UNR):\n                    it = fx.Int32(iv) * UNR + p\n                    bcur = [fx.Vector(x) for x in q[:NBV]] + [fx.Int32(x) for x in q[NBV:NQ]]\n                    nb_ = load_b(clamp(it + PD))\n                    rocdl.sched_barrier(0)\n                    cur = compute(p % NIT, zero if p % NIT == 0 else cur, bcur)\n                    q = q[NQ:] + [_raw(x) for x in nb_]\n                    if const_expr(p % NIT == NIT - 1):\n                        epilogue(cur, nb0 + (it >> 1))\n                yield [_raw(x) for x in q]\n\n    return down\n\n\ndef _wave_scan(v, lane):\n    \"\"\"Inclusive prefix sum over the 64 lanes of a wave.\"\"\"\n    for d in (1, 2, 4, 8, 16, 32):\n        y = fx.Int32(rocdl.ds_bpermute(T.i32, _raw(((lane - d) & 63) * 4), _raw(v)))\n        v = v + (lane >= d).select(y, fx.Int32(0))\n    return v\n\n\n# LDS bytes of the decode routing: [0, 1024) per-expert counts, then offsets; 1024 sink for masked\n# stores; [1088, 1216) wave totals; [1216, 3264) touched experts (expert | count << 16, first row);\n# rows grouped by expert from _SROW.\n_SINK = 1024\n_WT = 1088\n_TINFO = 1216\n_SROW = 3264\n\n\ndef _route_all(ids, lb, tid, lane, wave, R, W):\n    \"\"\"Counting sort of the R routed rows by expert in LDS; returns the number of touched experts.\"\"\"\n    P = (R + 64 * W - 1) // (64 * W)\n    _lds_st(lb, (tid & 255) * 4, 0)\n    gpu.barrier()\n    items = []\n    for k in range_constexpr(P):\n        r = tid * P + k\n        ok = r < R\n        eid = ok.select(_ld1(ids, ok.select(r, fx.Int32(0)) * 4) & 255, fx.Int32(256))\n        items.append((r, eid, _lds_add(lb, eid * 4, 1)))\n    gpu.barrier()\n    c = _lds_ld(lb, (tid & 255) * 4)\n    f = (c > 0).select(fx.Int32(1), fx.Int32(0))\n    ic = _wave_scan(c, lane)\n    if_ = _wave_scan(f, lane)\n    last = lane == 63\n    _lds_st(lb, last.select(_WT + wave * 4, fx.Int32(_SINK)), ic)\n    _lds_st(lb, last.select(_WT + 64 + wave * 4, fx.Int32(_SINK)), if_)\n    gpu.barrier()\n    wc = [_lds_ld(lb, _WT + w * 4) for w in range_constexpr(4)]\n    wf = [_lds_ld(lb, _WT + 64 + w * 4) for w in range_constexpr(4)]\n    offc = ic - c\n    offf = if_ - f\n    for w in range_constexpr(4):\n        offc = offc + (wave > w).select(wc[w], fx.Int32(0))\n        offf = offf + (wave > w).select(wf[w], fx.Int32(0))\n    total = _uniform(wf[0] + wf[1] + wf[2] + wf[3])\n    gpu.barrier()\n    mine = tid < 256\n    _lds_st(lb, mine.select((tid & 255) * 4, fx.Int32(_SINK)), offc)\n    hit = mine.select(f, fx.Int32(0)) != 0\n    _lds_st(lb, hit.select(_TINFO + offf * 8, fx.Int32(_SINK)), tid | (c << 16))\n    _lds_st(lb, hit.select(_TINFO + offf * 8 + 4, fx.Int32(_SINK)), offc)\n    gpu.barrier()\n    for r, eid, rank in items:\n        dst = _SROW + (_lds_ld(lb, (eid & 255) * 4) + rank) * 4\n        _lds_st(lb, (eid < 256).select(dst, fx.Int32(_SINK)), r)\n    gpu.barrier()\n    return total\n\n\ndef _unit(lb, jj):\n    \"\"\"(expert, first sorted row, row count) of the jj-th touched expert.\"\"\"\n    w0 = _uniform(_lds_ld(lb, _TINFO + jj * 8))\n    return w0 & 0xFFFF, _uniform(_lds_ld(lb, _TINFO + jj * 8 + 4)), w0 >> 16\n\n\ndef _quant32(vecs):\n    \"\"\"32 bf16 values (four i32x4 of bf16 pairs) to MXFP4: (i32x4 of fp4, e8m0 exponent).\"\"\"\n    vals = []\n    peak = fx.Int32(0)\n    for v in vecs:\n        for k in range_constexpr(4):\n            lo = v[k] << 16\n            hi = v[k] & fx.Int32(-65536)\n            vals.append(lo.bitcast(fx.Float32))\n            vals.append(hi.bitcast(fx.Float32))\n            peak = _umax(peak, lo & 0x7FFFFFFF)\n            peak = _umax(peak, hi & 0x7FFFFFFF)\n    ex = _e8m0(peak)\n    scale = (ex << 23).bitcast(fx.Float32)\n    q = [_pack_fp4(vals[8 * i:8 * i + 8], scale) for i in range_constexpr(4)]\n    return fx.Vector.from_elements(q, fx.Int32), ex\n\n\ndef _silu_mul_bf16(g, u):\n    ep = fx.Float32(rocdl.exp2(T.f32, _raw(g * fx.Float32(-1.4426950408889634))))\n    sig = fx.Float32(rocdl.rcp(T.f32, _raw(fx.Float32(1.0) + ep)))\n    return fx.Float32(fx.BFloat16(g * sig * u))\n\n\ndef _pack_bf16x4(vals):\n    lo = _bf16_bits(vals[0]) | (_bf16_bits(vals[1]) << 16)\n    hi = _bf16_bits(vals[2]) | (_bf16_bits(vals[3]) << 16)\n    return fx.Vector.from_elements([lo, hi], fx.Int32)\n\n\n@functools.cache\ndef _quant_kernel(R, PT):\n    \"\"\"bf16 rows to MXFP4 (e8m0 per 32) in row order, scales in the layout the decode stage 1 loads.\"\"\"\n\n    @flyc.kernel(known_block_size=[PT, 1, 1])\n    def quant(X: fx.Int64, XQ: fx.Int64, XS: fx.Int64):\n        tid = fx.Int32(gpu.thread_id(\"x\"))\n        bid = fx.Int32(gpu.block_id(\"x\"))\n        x = _rsrc(X)\n        xq = _rsrc(XQ)\n        xs = _rsrc(XS)\n        lane = tid % 64\n        first = bid * (PT * 4) + tid\n        loads = []\n        for j in range_constexpr(4):\n            i = first + j * PT\n            loads.append(_ld4(x, (i < R * 512).select(i, fx.Int32(0)) * 16))\n        for j in range_constexpr(4):\n            i = first + j * PT\n            packed, ex = _quant8(loads[j])\n            if i < R * 512:\n                _st(xq, i * 4, packed)\n                if i % 4 == 0:\n                    row = i // 512\n                    g = (i // 4) % 128\n                    _st(xs, row * (_D // 32) + (g >> 4) * 16 + (g & 3) * 4 + ((g >> 2) & 3),\n                        arith.trunci(T.i8, _raw(ex)))\n\n    return quant\n\n\n@functools.cache\ndef _up_dec_kernel(R, W, TN, G, XQ):\n    \"\"\"Decode stage 1, persistent: units (touched expert, TN/2 gate + TN/2 up 16-column tiles), W\n    waves splitting K.\n\n    A comes from pre-quantized rows (XQ) or, without a quant pass, each lane quantizes its own 32\n    bf16 activations (one MXFP4 group). The next unit's weights and first 16 rows are loaded right\n    after the MFMAs, under the cross-wave reduction and the epilogue, which quantizes silu(gate) * up\n    to MXFP4 by token row. Rows past an expert's first 16 are rare and take a slow path that reloads\n    one K-chunk at a time.\n    \"\"\"\n    K = _D\n    N = 2 * _I\n    NI = K // 256 // W\n    HT = TN // 2\n    NCG = _I // (HT * 16)\n    RED = (_SROW + R * 4 + 15) // 16 * 16\n    LDS_BYTES = RED + W * TN * 64 * 16\n    NW = NI * 2 * TN\n    NS = NI * TN\n    PERSIST = G < min(R, _E) * NCG\n    assert NI * W * 256 == K and HT % 2 == 0 and W >= 4 and (not XQ or NI % 2 == 0)\n\n    @fx.struct\n    class Smem:\n        raw: fx.Array[fx.Uint8, LDS_BYTES, 16]\n\n    @flyc.kernel(known_block_size=[64 * W, 1, 1])\n    def up_dec(X: fx.Int64, XS: fx.Int64, IDS: fx.Int64, W1: fx.Int64, WS1: fx.Int64,\n               A2: fx.Int64, A2S: fx.Int64):\n        tid = fx.Int32(gpu.thread_id(\"x\"))\n        lane = tid % 64\n        wave = _uniform(tid // 64)\n        bid = fx.Int32(gpu.block_id(\"x\"))\n        l16 = lane % 16\n        lg = lane // 16\n        lb = fx.Int32(fx.ptrtoint(fx.SharedAllocator().allocate(Smem).peek().raw.ptr))\n        total = _route_all(_rsrc(IDS), lb, tid, lane, wave, R, W)\n        nunits = total * NCG\n        w = _rsrc(W1)\n        ws = _rsrc(WS1)\n        x = _rsrc(X)\n        xs = _rsrc(XS)\n        a2 = _rsrc(A2)\n        a2s = _rsrc(A2S)\n        it0 = wave * NI\n\n        def cols(cg):\n            g0 = cg * (HT * 16)\n            return [g0 + 16 * t for t in range_constexpr(HT)] + [g0 + _I + 16 * t for t in range_constexpr(HT)]\n\n        def w_off(e, n, i, u):\n            return e * (N * K // 2) + (n >> 4) * (K * 8) + (it0 + i) * 2048 + u * 1024 + lane * 16\n\n        def s_off(e, n, i):\n            return e * (N * K // 32) + (n >> 5) * K + lg * 64 + l16 * 4 + (it0 + i) * 256\n\n        def row_at(off, c, r):\n            return _lds_ld(lb, _SROW + (off + (r < c).select(r, c - 1)) * 4)\n\n        def load_a(row, i, u):\n            if const_expr(XQ):\n                return [_ld4(x, row * (K // 2) + (it0 + i) * 128 + u * 64 + lg * 16)]\n            return [_ld4(x, row * (K * 2) + ((it0 + i) * 256 + u * 128 + lg * 32) * 2 + q * 16)\n                    for q in range_constexpr(4)]\n\n        def a_operand(regs, sw, i, u):\n            if const_expr(XQ):\n                return regs[0], sw, (2 * i + u) & 3\n            av, ax = _quant32(regs)\n            return av, ax, 0\n\n        def load(u):\n            e, off, c = _unit(lb, u // NCG)\n            ncol = cols(u % NCG)\n            row = row_at(off, c, l16)\n            bv = [_ld4(w, w_off(e, n, i, uu)) for i in range_constexpr(NI) for uu in range_constexpr(2)\n                  for n in ncol]\n            bs = [_ld1(ws, s_off(e, n, i)) for i in range_constexpr(NI) for n in ncol]\n            xa = [v for i in range_constexpr(NI) for uu in range_constexpr(2) for v in load_a(row, i, uu)]\n            sw = [_ld1(xs, row * (K // 32) + wave * 16 + lg * 4)] if XQ else []\n            return [_raw(v) for v in bv + bs + xa + sw]\n\n        def mma(bv, bs, xa, sw, i, uu, accs):\n            av, ax, osel = a_operand(xa, sw, i, uu)\n            for t in range_constexpr(TN):\n                accs[t] = fx.Vector(rocdl.mfma_scale_f32_16x16x128_f8f6f4(\n                    T.f32x4, [bv[t], av, accs[t], 4, 4, uu * 2 + (t & 1), bs[t], osel, ax]))\n            return accs\n\n        def reduce_store(accs, cg, r, row, c):\n            for t in range_constexpr(TN):\n                llvm.StoreOp(_raw(accs[t]), _lds(lb, RED + ((wave * TN + t) * 64 + lane) * 16), alignment=16)\n            gpu.barrier()\n            for q in range_constexpr(HT // 2):\n                if wave == q % W:\n                    hs = []\n                    for pp in range_constexpr(2 * q, 2 * q + 2):\n                        g = [fx.Float32(0.0)] * 4\n                        uv_ = [fx.Float32(0.0)] * 4\n                        for wv in range_constexpr(W):\n                            gv = fx.Vector(llvm.LoadOp(T.f32x4, _lds(lb, RED + ((wv * TN + pp) * 64 + lane) * 16),\n                                                       alignment=16).res)\n                            uv = fx.Vector(llvm.LoadOp(T.f32x4, _lds(lb, RED + ((wv * TN + pp + HT) * 64 + lane) * 16),\n                                                       alignment=16).res)\n                            g = [g[k] + gv[k] for k in range_constexpr(4)]\n                            uv_ = [uv_[k] + uv[k] for k in range_constexpr(4)]\n                        hs += [_silu_mul_bf16(g[k], uv_[k]) for k in range_constexpr(4)]\n                    peak = fx.Int32(0)\n                    for hv in hs:\n                        peak = _umax(peak, hv.bitcast(fx.Int32) & 0x7FFFFFFF)\n                    peak = _umax(peak, _xor_lane(peak, lane, 16))\n                    peak = _umax(peak, _xor_lane(peak, lane, 32))\n                    ex = _e8m0(peak)\n                    scale = (ex << 23).bitcast(fx.Float32)\n                    qa = _pack_fp4(hs[0:4], scale)\n                    qb = _pack_fp4(hs[4:8], scale)\n                    col = cg * (HT * 16) + 32 * q\n                    if r < c:\n                        _st16(a2, row * (_I // 2) + (col >> 1) + lg * 2, qa)\n                        _st16(a2, row * (_I // 2) + (col >> 1) + 8 + lg * 2, qb)\n                        if lg == 0:\n                            gg = col >> 5\n                            _st(a2s, row * (_I // 32) + (gg & 3) * 4 + ((gg >> 2) & 3),\n                                arith.trunci(T.i8, _raw(ex)))\n            gpu.barrier()\n\n        def unit_body(u, state):\n            e, off, c = _unit(lb, u // NCG)\n            cg = u % NCG\n            ncol = cols(cg)\n            bv = [fx.Vector(v) for v in state[:NW]]\n            bs = [fx.Int32(v) for v in state[NW:NW + NS]]\n            na = 1 if XQ else 4\n            xa = [fx.Vector(v) for v in state[NW + NS:NW + NS + NI * 2 * na]]\n            sw = fx.Int32(state[-1]) if XQ else None\n            accs = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range_constexpr(TN)]\n            for i in range_constexpr(NI):\n                for uu in range_constexpr(2):\n                    k = i * 2 + uu\n                    accs = mma(bv[k * TN:(k + 1) * TN], bs[i * TN:(i + 1) * TN], xa[k * na:(k + 1) * na],\n                               sw, i, uu, accs)\n            nxt = None\n            if const_expr(PERSIST):\n                rocdl.sched_barrier(0)\n                un = u + G\n                nxt = load((un < nunits).select(un, u))\n                rocdl.sched_barrier(0)\n            reduce_store(accs, cg, l16, row_at(off, c, l16), c)\n            for p in range(1, (c + 15) // 16):\n                r = fx.Int32(p) * 16 + l16\n                row = row_at(off, c, r)\n                sw2 = _ld1(xs, row * (K // 32) + wave * 16 + lg * 4) if XQ else None\n                accs = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range_constexpr(TN)]\n                for i in range_constexpr(NI):\n                    for uu in range_constexpr(2):\n                        bvv = [_ld4(w, w_off(e, n, i, uu)) for n in ncol]\n                        bss = [_ld1(ws, s_off(e, n, i)) for n in ncol]\n                        accs = mma(bvv, bss, load_a(row, i, uu), sw2, i, uu, accs)\n                        rocdl.sched_barrier(0)\n                reduce_store(accs, cg, r, row, c)\n            return nxt\n\n        if const_expr(PERSIST):\n            first = (bid < nunits).select(bid, fx.Int32(0))\n            for iu, state in range(bid, nunits, G, init=load(first)):\n                nxt = unit_body(fx.Int32(iu), state)\n                yield nxt\n        else:\n            if bid < nunits:\n                unit_body(bid, load(bid))\n\n    return up_dec, NCG\n\n\n@functools.cache\ndef _down_dec_kernel(R, W, TN, G):\n    \"\"\"Decode stage 2, persistent: units (touched expert, W * TN 16-column tiles), full K = 512 per wave.\n\n    A is the MXFP4 intermediate by token row; the next unit is loaded right after the MFMAs; the\n    routing weight is applied and bf16 goes straight to the token's output row.\n    \"\"\"\n    K = _I\n    N = _D\n    CPW = TN * 16\n    NCG = N // (W * CPW)\n    LDS_BYTES = (_SROW + R * 4 + 15) // 16 * 16\n    NW = 2 * 2 * TN\n    NS = 2 * TN\n    PERSIST = G < min(R, _E) * NCG\n    assert TN % 2 == 0 and W >= 4\n\n    @fx.struct\n    class Smem:\n        raw: fx.Array[fx.Uint8, LDS_BYTES, 16]\n\n    @flyc.kernel(known_block_size=[64 * W, 1, 1])\n    def down_dec(A2: fx.Int64, A2S: fx.Int64, IDS: fx.Int64, W2: fx.Int64, WS2: fx.Int64,\n                 RW: fx.Int64, OUT: fx.Int64):\n        tid = fx.Int32(gpu.thread_id(\"x\"))\n        lane = tid % 64\n        wave = _uniform(tid // 64)\n        bid = fx.Int32(gpu.block_id(\"x\"))\n        l16 = lane % 16\n        lg = lane // 16\n        lb = fx.Int32(fx.ptrtoint(fx.SharedAllocator().allocate(Smem).peek().raw.ptr))\n        total = _route_all(_rsrc(IDS), lb, tid, lane, wave, R, W)\n        nunits = total * NCG\n        w = _rsrc(W2)\n        ws = _rsrc(WS2)\n        a2 = _rsrc(A2)\n        a2s = _rsrc(A2S)\n        rw = _rsrc(RW)\n        out = _rsrc(OUT)\n\n        def cols(cg):\n            return [cg * (W * CPW) + wave * CPW + 16 * t for t in range_constexpr(TN)]\n\n        def w_off(e, n, i, u):\n            return e * (N * K // 2) + (n >> 4) * (K * 8) + i * 2048 + u * 1024 + lane * 16\n\n        def s_off(e, n, i):\n            return e * (N * K // 32) + (n >> 5) * K + lg * 64 + l16 * 4 + i * 256\n\n        def row_at(off, c, r):\n            return _lds_ld(lb, _SROW + (off + (r < c).select(r, c - 1)) * 4)\n\n        def load_rows(row):\n            return ([_ld4(a2, row * (K // 2) + k * 64 + lg * 16) for k in range_constexpr(4)]\n                    + [_ld1(a2s, row * (K // 32) + lg * 4), _ld1(rw, row * 4)])\n\n        def load(u):\n            e, off, c = _unit(lb, u // NCG)\n            ncol = cols(u % NCG)\n            row = row_at(off, c, l16)\n            bv = [_ld4(w, w_off(e, n, i, uu)) for i in range_constexpr(2) for uu in range_constexpr(2) for n in ncol]\n            bs = [_ld1(ws, s_off(e, n, i)) for i in range_constexpr(2) for n in ncol]\n            return [_raw(v) for v in bv + bs + load_rows(row)]\n\n        def mma(bv, bs, av, sw, k, accs):\n            for t in range_constexpr(TN):\n                accs[t] = fx.Vector(rocdl.mfma_scale_f32_16x16x128_f8f6f4(\n                    T.f32x4, [bv[t], av, accs[t], 4, 4, (k & 1) * 2 + (t & 1), bs[t], k, sw]))\n            return accs\n\n        def store(accs, ncol, r, row, c, wt):\n            for t in range_constexpr(TN):\n                ov = _pack_bf16x4([accs[t][k] * wt for k in range_constexpr(4)])\n                if r < c:\n                    _st(out, row * (N * 2) + (ncol[t] + 4 * lg) * 2, ov)\n\n        def unit_body(u, state):\n            e, off, c = _unit(lb, u // NCG)\n            ncol = cols(u % NCG)\n            bv = [fx.Vector(v) for v in state[:NW]]\n            bs = [fx.Int32(v) for v in state[NW:NW + NS]]\n            av = [fx.Vector(v) for v in state[NW + NS:NW + NS + 4]]\n            sw = fx.Int32(state[NW + NS + 4])\n            wt = fx.Int32(state[NW + NS + 5]).bitcast(fx.Float32)\n            accs = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range_constexpr(TN)]\n            for k in range_constexpr(4):\n                accs = mma(bv[k * TN:(k + 1) * TN], bs[(k >> 1) * TN:((k >> 1) + 1) * TN], av[k], sw, k, accs)\n            nxt = None\n            if const_expr(PERSIST):\n                rocdl.sched_barrier(0)\n                un = u + G\n                nxt = load((un < nunits).select(un, u))\n                rocdl.sched_barrier(0)\n            store(accs, ncol, l16, row_at(off, c, l16), c, wt)\n            for p in range(1, (c + 15) // 16):\n                r = fx.Int32(p) * 16 + l16\n                row = row_at(off, c, r)\n                rr = load_rows(row)\n                accs = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range_constexpr(TN)]\n                for k in range_constexpr(4):\n                    bvv = [_ld4(w, w_off(e, n, k >> 1, k & 1)) for n in ncol]\n                    bss = [_ld1(ws, s_off(e, n, k >> 1)) for n in ncol]\n                    accs = mma(bvv, bss, rr[k], rr[4], k, accs)\n                    rocdl.sched_barrier(0)\n                store(accs, ncol, r, row, c, rr[5].bitcast(fx.Float32))\n            return nxt\n\n        if const_expr(PERSIST):\n            first = (bid < nunits).select(bid, fx.Int32(0))\n            for iu, state in range(bid, nunits, G, init=load(first)):\n                nxt = unit_body(fx.Int32(iu), state)\n                yield nxt\n        else:\n            if bid < nunits:\n                unit_body(bid, load(bid))\n\n    return down_dec, NCG\n\n\n_DEC_MAX = 384\n\n\ndef _dec_config(rows):\n    \"\"\"Decode path: (quantize X in a separate pass, stage-1 waves, stage-1 16-column tiles, stage-1\n    grid, stage-2 waves, stage-2 tiles per wave, stage-2 grid).\"\"\"\n    return 0 if rows <= 16 else 1, 8, 4, 256, 4, 2, 512\n\n\ndef _config(rows):\n    \"\"\"(BM, stage-1 prefetch depth, stage-2 prefetch depth, stage-2 column groups per tile,\n    stage-1 column blocks per workgroup).\n\n    BM = 128 where an expert holds 64..128 rows, so its weights are read by one tile, not two.\n    \"\"\"\n    if rows < 8192:\n        return 32, 1, 1, 16, 1\n    if 16384 < rows <= 32768:\n        return 128, 1, 1, 4, 1\n    if rows < 40000:\n        return 64, 1, 1, 16, 1\n    return 64, 1, 1, 2, 2\n\n\ndef _workspace(rows):\n    sizes = (rows * _D // 2, rows * _D // 32, rows * 4, 16 + _max_tiles(rows, 32) * 16,\n             rows * _I // 2, rows * _I // 32)\n    offsets = []\n    total = 0\n    for size in sizes:\n        offsets.append(total)\n        total += (size + _ALIGN - 1) // _ALIGN * _ALIGN\n    return total, tuple(offsets)\n\n\ndef _plan_dec(rows):\n    xq, w1, tn1, gr1, w2, tn2, gr2 = _dec_config(rows)\n    g1, ncg1 = _up_dec_kernel(rows, w1, tn1, gr1, xq)\n    g2, ncg2 = _down_dec_kernel(rows, w2, tn2, gr2)\n    gr1 = min(gr1, min(rows, _E) * ncg1)\n    gr2 = min(gr2, min(rows, _E) * ncg2)\n    qk = _quant_kernel(rows, 256) if xq else None\n    nq = (rows * 512 + 1023) // 1024\n\n    @flyc.jit\n    def launch(X: fx.Int64, IDS: fx.Int64, W1: fx.Int64, WS1: fx.Int64, W2: fx.Int64,\n               WS2: fx.Int64, RW: fx.Int64, OUT: fx.Int64, XQ: fx.Int64, XS: fx.Int64,\n               STOK: fx.Int64, TILES: fx.Int64, A2: fx.Int64, A2S: fx.Int64,\n               stream: fx.Stream):\n        if const_expr(xq):\n            qk(X, XQ, XS).launch(grid=(nq, 1, 1), block=(256, 1, 1), stream=stream)\n            g1(XQ, XS, IDS, W1, WS1, A2, A2S).launch(grid=(gr1, 1, 1), block=(64 * w1, 1, 1), stream=stream)\n        else:\n            g1(X, XS, IDS, W1, WS1, A2, A2S).launch(grid=(gr1, 1, 1), block=(64 * w1, 1, 1), stream=stream)\n        g2(A2, A2S, IDS, W2, WS2, RW, OUT).launch(grid=(gr2, 1, 1), block=(64 * w2, 1, 1), stream=stream)\n\n    return (launch,) + _workspace(rows)\n\n\n@functools.cache\ndef _plan(rows):\n    if rows <= _DEC_MAX:\n        return _plan_dec(rows)\n    cfg = _config(rows)\n    bm, pd1, pd2, nsplit = cfg[:4]\n    nbw = cfg[4] if len(cfg) > 4 else 1\n    max_tiles = _max_tiles(rows, bm)\n    tile_blocks = (max_tiles + 7) // 8 * 8\n    grid1 = -(-tile_blocks * (2 * _I // 256 // nbw) // (_XCD * _XC)) * (_XCD * _XC)\n    grid2 = -(-tile_blocks * nsplit // (_XCD * _XC)) * (_XCD * _XC)\n    pt = 256 if rows < 8192 else 1024\n    prep = _prep_kernel(rows, bm, pt)\n    g1 = _up_kernel(rows, bm, pd1, nbw)\n    g2 = _down_kernel(rows, bm, pd2, nsplit)\n    n_prep = 1 + (rows * 512 + pt * 4 - 1) // (pt * 4)\n\n    @flyc.jit\n    def launch(X: fx.Int64, IDS: fx.Int64, W1: fx.Int64, WS1: fx.Int64, W2: fx.Int64,\n               WS2: fx.Int64, RW: fx.Int64, OUT: fx.Int64, XQ: fx.Int64, XS: fx.Int64,\n               STOK: fx.Int64, TILES: fx.Int64, A2: fx.Int64, A2S: fx.Int64,\n               stream: fx.Stream):\n        prep(X, IDS, XQ, XS, STOK, TILES).launch(\n            grid=(n_prep, 1, 1), block=(pt, 1, 1), stream=stream)\n        g1(XQ, XS, W1, WS1, STOK, TILES, A2, A2S).launch(\n            grid=(grid1, 1, 1), block=(256, 1, 1), stream=stream)\n        g2(A2, A2S, W2, WS2, STOK, TILES, OUT, RW).launch(\n            grid=(grid2, 1, 1), block=(256, 1, 1), stream=stream)\n\n    sizes = (rows * _D // 2, rows * _D // 32, rows * 4, 16 + max_tiles * 16,\n             rows * _I // 2, rows * _I // 32)\n    offsets = []\n    total = 0\n    for size in sizes:\n        offsets.append(total)\n        total += (size + _ALIGN - 1) // _ALIGN * _ALIGN\n    return launch, total, tuple(offsets)\n\n\ndef run(*, hidden_states, w1, w2, topk_weights, topk_ids, w1_scale, w2_scale, activation,\n        quant_type, doweight_stage1, gate_mode, act_quant, expert_mask, beta, linear_beta,\n        out_dtype, out):\n    rows = hidden_states.shape[0]\n    launch, ws_bytes, offsets = _plan(rows)\n    ws = torch.empty(ws_bytes, dtype=torch.uint8, device=hidden_states.device)\n    base = ws.data_ptr()\n    xq, xs, stok, tiles, a2, a2s = (base + o for o in offsets)\n    launch(hidden_states.data_ptr(), topk_ids.data_ptr(), w1.data_ptr(), w1_scale.data_ptr(),\n           w2.data_ptr(), w2_scale.data_ptr(), topk_weights.data_ptr(), out.data_ptr(),\n           xq, xs, stok, tiles, a2, a2s,\n           torch.cuda.current_stream(hidden_states.device).cuda_stream)\n"
+        "content": "\"\"\"MXFP4 fused MoE for 256 experts, top-1, model_dim 4096, inter_dim 512 in FlyDSL.\n\nDecode (<= 384 rows) runs persistent stage 1 + persistent stage 2, after a quant pass above 16\nrows (_plan_dec); no kernel waits on another workgroup. Larger batches use three kernels:\nPrep: workgroup 0 sorts the routed rows by expert in LDS (histogram, scan, scatter) and writes\nthe tile list (expert, first sorted row, row count); the other workgroups quantize the bf16\nactivations to MXFP4 (e8m0 per 32) in row order.\nStage 1: per (tile, gate/up n-block), the gate/up GEMM of the gathered rows against the\n16x16-preshuffled w1 with scaled MFMAs, software-pipelined through registers and LDS;\nsilu(gate) * up is rounded to bf16 and quantized to MXFP4 in sorted-row order.\nStage 2: per (tile, column group), the down GEMM against w2 with the tile's activations held\nin LDS, scaled by the routing weight and stored as bf16 into the row's output (top-1: one\nwriter per row, no atomics).\n\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import arith, llvm\nfrom flydsl._mlir.dialects import rocdl as rocdl_ods\nfrom flydsl.expr import const_expr, gpu, range_constexpr, rocdl\nfrom flydsl.expr.typing import T\n\nfrom . import buffer_ops\n\n_D = 4096\n_I = 512\n_E = 256\n_LDS_BYTES = 4096\n_ALIGN = 256\n\n\ndef _raw(v):\n    if not isinstance(v, ir.Value) and hasattr(v, \"ir_value\"):\n        return v.ir_value()\n    return v\n\n\ndef _rsrc(addr):\n    return buffer_ops.create_buffer_resource_from_addr(_raw(fx.Int64(addr)))\n\n\ndef _ld4(rsrc, off):\n    return fx.Vector(rocdl.raw_ptr_buffer_load(T.i32x4, rsrc, fx.Int32(off), fx.Int32(0)))\n\n\ndef _ld1(rsrc, off):\n    return fx.Int32(rocdl.raw_ptr_buffer_load(T.i32, rsrc, fx.Int32(off), fx.Int32(0)))\n\n\ndef _st(rsrc, off, value):\n    rocdl_ods.raw_ptr_buffer_store(_raw(value), rsrc, _raw(fx.Int32(off)), _raw(fx.Int32(0)))\n\n\ndef _st16(rsrc, off, value):\n    _st(rsrc, off, arith.trunci(T.i16, _raw(fx.Int32(value))))\n\n\ndef _uniform(x):\n    return fx.Int32(rocdl.readfirstlane(T.i32, _raw(fx.Int32(x))))\n\n\ndef _lds(base, off):\n    ptr_ty = fx.PointerType.get(T.i8, fx.AddressSpace.Shared)\n    return fx.to_llvm_ptr(fx.inttoptr(ptr_ty, fx.Int64(base + off)))\n\n\ndef _lds_ld(base, off):\n    return fx.Int32(llvm.LoadOp(T.i32, _lds(base, off)).res)\n\n\ndef _lds_st(base, off, value):\n    llvm.StoreOp(_raw(fx.Int32(value)), _lds(base, off))\n\n\ndef _lds_add(base, off, value):\n    return fx.Int32(llvm.AtomicRMWOp(\n        llvm.AtomicBinOp.add, _lds(base, off), _raw(fx.Int32(value)),\n        llvm.AtomicOrdering.monotonic, syncscope=\"workgroup\").res)\n\n\ndef _umax(a, b):\n    return (fx.Uint32(a) > fx.Uint32(b)).select(a, b)\n\n\ndef _e8m0(amax_bits):\n    \"\"\"Biased e8m0 exponent of the reference's MXFP4 scale for an |amax| bit pattern.\"\"\"\n    am = amax_bits.bitcast(fx.Float32)\n    am = (am > fx.Float32(1e-10)).select(am, fx.Float32(1e-10))\n    bits = am.bitcast(fx.Int32)\n    return ((bits >> 23) & 255) - 2 + ((bits & 0x7FFFFF) > 0x400000).select(fx.Int32(1), fx.Int32(0))\n\n\ndef _pack_fp4(vals, scale):\n    \"\"\"Eight floats to one dword of fp4 (element j in nibble j).\"\"\"\n    q = fx.Int32(0)\n    for j in range_constexpr(len(vals) // 2):\n        q = fx.Int32(rocdl.cvt_scalef32_pk_fp4_f32(\n            T.i32, _raw(q), _raw(vals[2 * j]), _raw(vals[2 * j + 1]), _raw(scale), j))\n    return q\n\n\ndef _bf16_bits(x):\n    return fx.Int32(fx.BFloat16(x).bitcast(fx.Uint16))\n\n\ndef _xor_lane(x, lane, mask):\n    return fx.Int32(rocdl.ds_bpermute(T.i32, _raw((lane ^ mask) * 4), _raw(x)))\n\n\ndef _quant8(v):\n    \"\"\"Eight bf16 (one i32x4 of packed pairs, 4 lanes per 32-value group) to (fp4 dword, e8m0).\"\"\"\n    v2i16 = ir.VectorType.get([2], ir.IntegerType.get_signless(16))\n    m = None\n    for k in range_constexpr(4):\n        a = llvm.BitcastOp(v2i16, _raw(v[k] & 0x7FFF7FFF)).result\n        m = a if m is None else arith.maxui(m, a)\n    m = fx.Int32(llvm.BitcastOp(T.i32, m).result)\n    peak = _umax(m << 16, m & fx.Int32(-65536))\n    # quad_perm [1,0,3,2] and [2,3,0,1]\n    for ctrl in (0xB1, 0x4E):\n        peak = _umax(peak, fx.Int32(rocdl.update_dpp(T.i32, _raw(peak), _raw(peak), ctrl, 0xF, 0xF, True)))\n    ex = _e8m0(peak)\n    scale = (ex << 23).bitcast(fx.Float32)\n    v2bf16 = ir.VectorType.get([2], ir.BF16Type.get())\n    q = fx.Int32(0)\n    for k in range_constexpr(4):\n        q = fx.Int32(rocdl.cvt_scalef32_pk_fp4_bf16(T.i32, _raw(q), llvm.BitcastOp(v2bf16, _raw(v[k])).result,\n                                                    _raw(scale), k))\n    return q, ex\n\n\n_XCD = 8\n_XC = 16\n\n\ndef _xcd_block(bid):\n    \"\"\"Workgroups go round-robin over the XCDs; give each XCD runs of _XC consecutive virtual ids so\n    tiles sharing an expert's weights share one L2. The grid must be a multiple of _XCD * _XC.\"\"\"\n    return bid // (_XCD * _XC) * (_XCD * _XC) + bid % _XCD * _XC + bid // _XCD % _XC\n\n\ndef _max_tiles(rows, bm):\n    return (rows + bm - 1) // bm + min(_E, rows)\n\n\ndef _load_ids(ids, chunk, tid, rows, nthreads):\n    \"\"\"16 (row, expert) pairs per thread from a 16 * nthreads row chunk; rows past the end read row 0.\"\"\"\n    vecs = []\n    for j in range_constexpr(4):\n        first = chunk + (j * nthreads + tid) * 4\n        vecs.append((first, _ld4(ids, (first < rows).select(first, fx.Int32(0)) * 4)))\n    return [(first + k, v[k] & 255) for first, v in vecs for k in range_constexpr(4)]\n\n\n@functools.cache\ndef _prep_kernel(R, BM, PT):\n    @fx.struct\n    class Smem:\n        raw: fx.Array[fx.Uint8, _LDS_BYTES, 16]\n\n    @flyc.kernel(known_block_size=[PT, 1, 1])\n    def prep(X: fx.Int64, IDS: fx.Int64, XQ: fx.Int64, XS: fx.Int64,\n             STOK: fx.Int64, TILES: fx.Int64):\n        tid = fx.Int32(gpu.thread_id(\"x\"))\n        bid = fx.Int32(gpu.block_id(\"x\"))\n        if bid == 0:\n            base = fx.Int32(fx.ptrtoint(fx.SharedAllocator().allocate(Smem).peek().raw.ptr))\n            ids = _rsrc(IDS)\n            stok = _rsrc(STOK)\n            tiles = _rsrc(TILES)\n            # threads >= 256 mirror expert tid & 255 and never write per-expert state\n            ex = tid & 255\n            mine = tid < 256\n            # LDS words: [0,256) counts, [256,512) cursors, [512,768) row scan, [768,1024) tile scan\n            if mine:\n                _lds_st(base, ex * 4, 0)\n            gpu.barrier()\n            for chunk in range(0, R, PT * 16):\n                for idx, eid in _load_ids(ids, chunk, tid, R, PT):\n                    _lds_add(base, eid * 4, (idx < R).select(fx.Int32(1), fx.Int32(0)))\n            gpu.barrier()\n            c = _lds_ld(base, ex * 4)\n            nt = (c + (BM - 1)) // BM\n            v = c\n            w = nt\n            if mine:\n                _lds_st(base, 2048 + ex * 4, v)\n                _lds_st(base, 3072 + ex * 4, w)\n            gpu.barrier()\n            for d in range_constexpr(8):\n                src = (ex >= (1 << d)).select(ex - (1 << d), ex)\n                keep = (ex >= (1 << d)).select(fx.Int32(1), fx.Int32(0))\n                pv = _lds_ld(base, 2048 + src * 4) * keep\n                pw = _lds_ld(base, 3072 + src * 4) * keep\n                gpu.barrier()\n                v = v + pv\n                w = w + pw\n                if mine:\n                    _lds_st(base, 2048 + ex * 4, v)\n                    _lds_st(base, 3072 + ex * 4, w)\n                gpu.barrier()\n            roff = v - c\n            toff = w - nt\n            if mine:\n                _lds_st(base, 1024 + ex * 4, roff)\n                for j in range(nt):\n                    rem = c - j * BM\n                    n = (rem < BM).select(rem, fx.Int32(BM))\n                    rec = fx.Vector.from_elements([ex, roff + j * BM, n, fx.Int32(0)], fx.Int32)\n                    _st(tiles, 16 + (toff + j) * 16, rec)\n            if tid == 255:\n                _st(tiles, 0, w)\n            gpu.barrier()\n            for chunk in range(0, R, PT * 16):\n                for idx, eid in _load_ids(ids, chunk, tid, R, PT):\n                    p = _lds_add(base, 1024 + eid * 4, (idx < R).select(fx.Int32(1), fx.Int32(0)))\n                    if idx < R:\n                        _st(stok, p * 4, idx)\n        else:\n            # one 16 B chunk (8 values) per lane, 4 lanes per 32-value group, 4 chunks per thread\n            x = _rsrc(X)\n            xq = _rsrc(XQ)\n            xs = _rsrc(XS)\n            lane = tid % 64\n            first = (bid - 1) * (PT * 4) + tid\n            loads = []\n            for j in range_constexpr(4):\n                i = first + j * PT\n                loads.append(_ld4(x, (i < R * 512).select(i, fx.Int32(0)) * 16))\n            for j in range_constexpr(4):\n                i = first + j * PT\n                packed, ex = _quant8(loads[j])\n                if i < R * 512:\n                    _st(xq, i * 4, packed)\n                    if i % 4 == 0:\n                        row = i // 512\n                        g = (i // 4) % 128\n                        _st(xs, row * (_D // 32) + (g >> 4) * 16 + (g & 3) * 4 + ((g >> 2) & 3),\n                            arith.trunci(T.i8, _raw(ex)))\n\n    return prep\n\n\n@flyc.jit\ndef _silu_mul_quant_store(accs, TM, TN, nrows, lane, l16, lg, start, cnt, oq, osc):\n    \"\"\"Stage-1 epilogue: gate tiles [0, TN/2), up tiles [TN/2, TN); MXFP4 rows in sorted order.\"\"\"\n    for m in range_constexpr(TM):\n        r = m * 16 + l16\n        pos = start + r\n        for gi in range_constexpr(TN // 4):\n            hs = []\n            peak = fx.Int32(0)\n            for half in range_constexpr(2):\n                t = gi * 2 + half\n                ga = accs[t * TM + m]\n                ua = accs[(t + TN // 2) * TM + m]\n                for j in range_constexpr(4):\n                    gv = ga[j]\n                    ep = fx.Float32(rocdl.exp2(T.f32, _raw(gv * fx.Float32(-1.4426950408889634))))\n                    sig = fx.Float32(rocdl.rcp(T.f32, _raw(fx.Float32(1.0) + ep)))\n                    h = fx.Float32(fx.BFloat16(gv * sig * ua[j]))\n                    hs.append(h)\n                    peak = _umax(peak, h.bitcast(fx.Int32) & 0x7FFFFFFF)\n            peak = _umax(peak, _xor_lane(peak, lane, 16))\n            peak = _umax(peak, _xor_lane(peak, lane, 32))\n            ex = _e8m0(peak)\n            scale = (ex << 23).bitcast(fx.Float32)\n            qa = _pack_fp4(hs[0:4], scale)\n            qb = _pack_fp4(hs[4:8], scale)\n            col = nrows[gi * 2]\n            if r < cnt:\n                _st16(oq, pos * (_I // 2) + (col >> 1) + lg * 2, qa)\n                _st16(oq, pos * (_I // 2) + (col >> 1) + 8 + lg * 2, qb)\n                if lg == 0:\n                    G = col >> 5\n                    _st(osc, pos * (_I // 32) + (G & 3) * 4 + ((G >> 2) & 3),\n                        arith.trunci(T.i8, _raw(ex)))\n\n\n@functools.cache\ndef _up_kernel(R, BM, PD, NBW=1):\n    \"\"\"Stage-1 GEMM, tile BM x 256 (128 gate + 128 up columns), 256 K per stage.\n\n    B fragments and scales are prefetched PD stages ahead in registers; the A tile goes\n    global -> registers -> a double-buffered LDS tile ([BM][128 B], 16 B chunks xor-swizzled by\n    row & 7); the tile's activation scales are staged in LDS once.\n    \"\"\"\n    K = _D\n    N = 2 * _I\n    BN = 256\n    TN = 4\n    TM = BM // 16\n    NIT = K // 256\n    NNB = N // BN\n    A_BYTES = BM * 128\n    AJ = BM // 32\n    # one row of scales per tile row, padded by 4 bytes so a fragment's 16 rows hit distinct banks\n    AS_STR = K // 32 + 4\n    AS_BASE = 2 * A_BYTES\n    LDS_BYTES = AS_BASE + BM * AS_STR\n    UNR = PD + 1\n    NG = NNB // NBW\n    S = NBW * NIT\n    assert BM % 32 == 0 and PD >= 1 and NIT % UNR == 0 and NNB % NBW == 0\n\n    @fx.struct\n    class Smem:\n        raw: fx.Array[fx.Uint8, LDS_BYTES, 16]\n\n    @flyc.kernel(known_block_size=[256, 1, 1])\n    def up(AQ: fx.Int64, AS: fx.Int64, W: fx.Int64, WS: fx.Int64, STOK: fx.Int64,\n           TILES: fx.Int64, OQ: fx.Int64, OS: fx.Int64):\n        tid = fx.Int32(gpu.thread_id(\"x\"))\n        lane = tid % 64\n        wave = _uniform(tid // 64)\n        bid = _xcd_block(fx.Int32(gpu.block_id(\"x\")))\n        nb0 = bid % NG * NBW\n        tile = bid // NG\n        tl = _rsrc(TILES)\n        if tile < _uniform(_ld1(tl, 0)):\n            rec = _ld4(tl, 16 + tile * 16)\n            e = _uniform(rec[0])\n            start = _uniform(rec[1])\n            cnt = _uniform(rec[2])\n            stok = _rsrc(STOK)\n            aq = _rsrc(AQ)\n            asc = _rsrc(AS)\n            w = _rsrc(W)\n            ws = _rsrc(WS)\n            lbase = fx.Int32(fx.ptrtoint(fx.SharedAllocator().allocate(Smem).peek().raw.ptr))\n            l16 = lane % 16\n            lg = lane // 16\n\n            def row_of(r):\n                return _ld1(stok, (start + (r < cnt).select(r, fx.Int32(0))) * 4)\n\n            def nrows_of(nb):\n                g0 = nb * 128 + wave * 32\n                return [g0, g0 + 16, g0 + _I, g0 + _I + 16]\n\n            nrows = nrows_of(0)\n            b_off = [e * (N * K // 2) + (n >> 4) * (K * 8) + lane * 16 for n in nrows]\n            bs_off = [e * (N * K // 32) + (n >> 5) * K + lg * 64 + l16 * 4 for n in nrows]\n            crow = tid // 8\n            cch = tid % 8\n            a_off = []\n            a_lds = []\n            for j in range_constexpr(AJ):\n                rr = crow + 32 * j\n                row = row_of(rr)\n                a_off.append(row * (K // 2) + cch * 16)\n                a_lds.append(rr * 128 + ((cch ^ (rr & 7)) * 16))\n                sv = _ld4(asc, row * (K // 32) + cch * 16)\n                for i in range_constexpr(4):\n                    _lds_st(lbase, AS_BASE + rr * AS_STR + cch * 16 + i * 4, sv[i])\n            as_rd = [AS_BASE + (m * 16 + l16) * AS_STR + lg * 4 for m in range_constexpr(TM)]\n            a_rd = [m * 2048 + l16 * 128 for m in range_constexpr(TM)]\n            NBV = 2 * TN\n            NQ = NBV + TN\n\n            # stage s covers column block nb0 + s // NIT, K step s % NIT\n            def load_b(s):\n                it = s % NIT\n                nb = nb0 + s // NIT\n                bo = nb * (128 // 16 * K * 8) + it * 2048\n                so = nb * (128 // 32 * K) + it * 256\n                return ([_ld4(w, o + bo + u * 1024) for u in range_constexpr(2) for o in b_off]\n                        + [_ld1(ws, o + so) for o in bs_off])\n\n            def load_a(s):\n                return [_ld4(aq, o + (s % NIT) * 128) for o in a_off]\n\n            def store_a(it, regs):\n                buf = lbase + (it & 1) * A_BYTES\n                for j in range_constexpr(AJ):\n                    llvm.StoreOp(_raw(regs[j]), _lds(buf, a_lds[j]), alignment=16)\n\n            def compute(s, accs, bq):\n                buf = lbase + (s & 1) * A_BYTES\n                it = s % NIT\n                shift = (it & 1) * 16\n                ass = [_lds_ld(lbase, o + (it >> 1) * 16) >> shift for o in as_rd]\n                out = list(accs)\n                for u in range_constexpr(2):\n                    sw = ((u * 4 + lg) ^ (l16 & 7)) * 16\n                    avs = [fx.Vector(llvm.LoadOp(T.i32x4, _lds(buf, o + sw), alignment=16).res)\n                           for o in a_rd]\n                    for t in range_constexpr(TN):\n                        for m in range_constexpr(TM):\n                            out[t * TM + m] = fx.Vector(rocdl.mfma_scale_f32_16x16x128_f8f6f4(\n                                T.f32x4, [bq[u * TN + t], avs[m], out[t * TM + m], 4, 4,\n                                          u * 2 + (t & 1), bq[NBV + t], u, ass[m]]))\n                return out\n\n            def clamp(it):\n                return (it < S).select(it, fx.Int32(S - 1))\n\n            # queues: B/scales for stages s .. s+PD-1, A registers for stages s+1 .. s+PD\n            store_a(fx.Int32(0), load_a(fx.Int32(0)))\n            bq = []\n            for s in range_constexpr(PD):\n                bq += load_b(fx.Int32(min(s, S - 1)))\n            aqs = []\n            for s in range_constexpr(1, PD + 1):\n                aqs += load_a(fx.Int32(min(s, S - 1)))\n            gpu.barrier()\n            NA = TN * TM\n            zero = [_raw(fx.Vector.filled(4, 0.0, fx.Float32)) for _ in range_constexpr(NA)]\n            pipe = [_raw(x) for x in bq] + [_raw(x) for x in aqs]\n            for j in range_constexpr(NBW):\n                # unrolled by PD + 1 so the queues rotate statically (no copies of in-flight loads)\n                for iv, state in range(j * (NIT // UNR), (j + 1) * (NIT // UNR), 1, init=zero + pipe):\n                    cur = [fx.Vector(x) for x in state[:NA]]\n                    q = list(state[NA:NA + PD * NQ])\n                    ar = [fx.Vector(x) for x in state[NA + PD * NQ:]]\n                    for p in range_constexpr(UNR):\n                        it = fx.Int32(iv) * UNR + p\n                        bcur = [fx.Vector(x) for x in q[:NBV]] + [fx.Int32(x) for x in q[NBV:NQ]]\n                        nb_ = load_b(clamp(it + PD))\n                        na_ = load_a(clamp(it + PD + 1))\n                        rocdl.sched_barrier(0)\n                        cur = compute(it, cur, bcur)\n                        store_a(it + 1, ar[:AJ])\n                        ar = ar[AJ:] + na_\n                        q = q[NQ:] + [_raw(x) for x in nb_]\n                        gpu.barrier()\n                    results = yield [_raw(a) for a in cur] + [_raw(x) for x in q] + [_raw(x) for x in ar]\n                accs = [fx.Vector(x) for x in results[:NA]]\n                pipe = list(results[NA:])\n                _silu_mul_quant_store(accs, TM, TN, nrows_of(nb0 + j), lane, l16, lg, start, cnt,\n                                      _rsrc(OQ), _rsrc(OS))\n\n    return up\n\n\n@functools.cache\ndef _down_kernel(R, BM, PD, NSPLIT):\n    \"\"\"Stage-2 GEMM, one tile of BM rows against NNB/NSPLIT blocks of 256 columns.\n\n    The A tile and its scales stay in LDS; B is prefetched PD stages ahead across column blocks,\n    so the epilogue of one block overlaps the loads of the next.\n    \"\"\"\n    K = _I\n    N = _D\n    BN = 256\n    TN = 4\n    TM = BM // 16\n    NIT = K // 256\n    NPB = N // BN // NSPLIT\n    S = NPB * NIT\n    UNR = PD + 1\n    A_BYTES = BM * 128\n    AJ = BM // 32\n    AS_STR = K // 32 + 4\n    AS_BASE = 2 * A_BYTES\n    OSTRIDE = BN * 2 + 16\n    O_BASE = (AS_BASE + BM * AS_STR + 15) // 16 * 16\n    LDS_BYTES = O_BASE + BM * OSTRIDE\n    LPR = BN * 2 // 16\n    RPP = 256 // LPR\n    assert BM % 32 == 0 and UNR % NIT == 0 and S % UNR == 0\n\n    @fx.struct\n    class Smem:\n        raw: fx.Array[fx.Uint8, LDS_BYTES, 16]\n\n    @flyc.kernel(known_block_size=[256, 1, 1])\n    def down(AQ: fx.Int64, AS: fx.Int64, W: fx.Int64, WS: fx.Int64, STOK: fx.Int64,\n             TILES: fx.Int64, OUT: fx.Int64, RW: fx.Int64):\n        tid = fx.Int32(gpu.thread_id(\"x\"))\n        lane = tid % 64\n        wave = _uniform(tid // 64)\n        bid = _xcd_block(fx.Int32(gpu.block_id(\"x\")))\n        tile = bid // NSPLIT\n        nb0 = (bid % NSPLIT) * NPB\n        tl = _rsrc(TILES)\n        if tile < _uniform(_ld1(tl, 0)):\n            rec = _ld4(tl, 16 + tile * 16)\n            e = _uniform(rec[0])\n            start = _uniform(rec[1])\n            cnt = _uniform(rec[2])\n            stok = _rsrc(STOK)\n            aq = _rsrc(AQ)\n            asc = _rsrc(AS)\n            w = _rsrc(W)\n            ws = _rsrc(WS)\n            rw = _rsrc(RW)\n            out = _rsrc(OUT)\n            lbase = fx.Int32(fx.ptrtoint(fx.SharedAllocator().allocate(Smem).peek().raw.ptr))\n            l16 = lane % 16\n            lg = lane // 16\n\n            def pos_of(r):\n                return start + (r < cnt).select(r, fx.Int32(0))\n\n            nrows = [nb0 * BN + wave * 64 + 16 * t for t in range_constexpr(TN)]\n            b_off = [e * (N * K // 2) + (n >> 4) * (K * 8) + lane * 16 for n in nrows]\n            bs_off = [e * (N * K // 32) + (n >> 5) * K + lg * 64 + l16 * 4 for n in nrows]\n\n            def load_b(it):\n                nbi = it >> 1\n                ks = it & 1\n                bo = nbi * (BN // 16 * K * 8) + ks * 2048\n                so = nbi * (BN // 32 * K) + ks * 256\n                return ([_ld4(w, o + bo + u * 1024) for u in range_constexpr(2) for o in b_off]\n                        + [_ld1(ws, o + so) for o in bs_off])\n\n            crow = tid // 8\n            cch = tid % 8\n            for s in range_constexpr(NIT):\n                for j in range_constexpr(AJ):\n                    rr = crow + 32 * j\n                    v = _ld4(aq, pos_of(rr) * (K // 2) + s * 128 + cch * 16)\n                    llvm.StoreOp(_raw(v), _lds(lbase, s * A_BYTES + rr * 128 + ((cch ^ (rr & 7)) * 16)),\n                                 alignment=16)\n            if tid < BM:\n                sv = _ld4(asc, pos_of(tid) * 16)\n                for i in range_constexpr(4):\n                    _lds_st(lbase, AS_BASE + tid * AS_STR + i * 4, sv[i])\n            wts = [_ld1(rw, _ld1(stok, pos_of(m * 16 + l16) * 4) * 4).bitcast(fx.Float32)\n                   for m in range_constexpr(TM)]\n            orow = tid // LPR\n            ocol = tid % LPR\n            otok = [_ld1(stok, pos_of(orow + RPP * i) * 4) * (_D * 2) + ocol * 16\n                    for i in range_constexpr(BM // RPP)]\n            a_rd = [m * 2048 + l16 * 128 for m in range_constexpr(TM)]\n            as_rd = [AS_BASE + (m * 16 + l16) * AS_STR + lg * 4 for m in range_constexpr(TM)]\n            NBV = 2 * TN\n            NQ = NBV + TN\n\n            def compute(ks, accs, bq):\n                buf = lbase + ks * A_BYTES\n                ass = [_lds_ld(lbase, o) >> (ks * 16) for o in as_rd]\n                out_ = list(accs)\n                for u in range_constexpr(2):\n                    sw = ((u * 4 + lg) ^ (l16 & 7)) * 16\n                    avs = [fx.Vector(llvm.LoadOp(T.i32x4, _lds(buf, o + sw), alignment=16).res)\n                           for o in a_rd]\n                    for t in range_constexpr(TN):\n                        for m in range_constexpr(TM):\n                            out_[t * TM + m] = fx.Vector(rocdl.mfma_scale_f32_16x16x128_f8f6f4(\n                                T.f32x4, [bq[u * TN + t], avs[m], out_[t * TM + m], 4, 4,\n                                          u * 2 + (t & 1), bq[NBV + t], u, ass[m]]))\n                return out_\n\n            def epilogue(accs, nb):\n                gpu.barrier()\n                for m in range_constexpr(TM):\n                    r = m * 16 + l16\n                    for t in range_constexpr(TN):\n                        a = accs[t * TM + m]\n                        lo = _bf16_bits(a[0] * wts[m]) | (_bf16_bits(a[1] * wts[m]) << 16)\n                        hi = _bf16_bits(a[2] * wts[m]) | (_bf16_bits(a[3] * wts[m]) << 16)\n                        col = wave * (TN * 16) + t * 16 + lg * 4\n                        llvm.StoreOp(_raw(fx.Vector.from_elements([lo, hi], fx.Int32)),\n                                     _lds(lbase, O_BASE + r * OSTRIDE + col * 2), alignment=8)\n                gpu.barrier()\n                for i in range_constexpr(BM // RPP):\n                    r = orow + RPP * i\n                    v = fx.Vector(llvm.LoadOp(T.i32x4, _lds(lbase, O_BASE + r * OSTRIDE + ocol * 16),\n                                              alignment=16).res)\n                    if r < cnt:\n                        _st(out, otok[i] + nb * (BN * 2), v)\n\n            def clamp(it):\n                return (it < S).select(it, fx.Int32(S - 1))\n\n            bq = []\n            for s in range_constexpr(PD):\n                bq += load_b(fx.Int32(min(s, S - 1)))\n            gpu.barrier()\n            zero = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range_constexpr(TN * TM)]\n            init = [_raw(x) for x in bq]\n            for iv, state in range(0, S // UNR, 1, init=init):\n                q = list(state)\n                cur = zero\n                for p in range_constexpr(UNR):\n                    it = fx.Int32(iv) * UNR + p\n                    bcur = [fx.Vector(x) for x in q[:NBV]] + [fx.Int32(x) for x in q[NBV:NQ]]\n                    nb_ = load_b(clamp(it + PD))\n                    rocdl.sched_barrier(0)\n                    cur = compute(p % NIT, zero if p % NIT == 0 else cur, bcur)\n                    q = q[NQ:] + [_raw(x) for x in nb_]\n                    if const_expr(p % NIT == NIT - 1):\n                        epilogue(cur, nb0 + (it >> 1))\n                yield [_raw(x) for x in q]\n\n    return down\n\n\ndef _wave_scan(v, lane):\n    \"\"\"Inclusive prefix sum over the 64 lanes of a wave.\"\"\"\n    for d in (1, 2, 4, 8, 16, 32):\n        y = fx.Int32(rocdl.ds_bpermute(T.i32, _raw(((lane - d) & 63) * 4), _raw(v)))\n        v = v + (lane >= d).select(y, fx.Int32(0))\n    return v\n\n\n# LDS bytes of the decode routing: [0, 1024) per-expert counts, then offsets; 1024 sink for masked\n# stores; [1088, 1216) wave totals; [1216, 3264) touched experts (expert | count << 16, first row);\n# rows grouped by expert from _SROW.\n_SINK = 1024\n_WT = 1088\n_TINFO = 1216\n_SROW = 3264\n\n\ndef _route_all(ids, lb, tid, lane, wave, R, W):\n    \"\"\"Counting sort of the R routed rows by expert in LDS; returns the number of touched experts.\"\"\"\n    P = (R + 64 * W - 1) // (64 * W)\n    _lds_st(lb, (tid & 255) * 4, 0)\n    gpu.barrier()\n    items = []\n    for k in range_constexpr(P):\n        r = tid * P + k\n        ok = r < R\n        eid = ok.select(_ld1(ids, ok.select(r, fx.Int32(0)) * 4) & 255, fx.Int32(256))\n        items.append((r, eid, _lds_add(lb, eid * 4, 1)))\n    gpu.barrier()\n    c = _lds_ld(lb, (tid & 255) * 4)\n    f = (c > 0).select(fx.Int32(1), fx.Int32(0))\n    ic = _wave_scan(c, lane)\n    if_ = _wave_scan(f, lane)\n    last = lane == 63\n    _lds_st(lb, last.select(_WT + wave * 4, fx.Int32(_SINK)), ic)\n    _lds_st(lb, last.select(_WT + 64 + wave * 4, fx.Int32(_SINK)), if_)\n    gpu.barrier()\n    wc = [_lds_ld(lb, _WT + w * 4) for w in range_constexpr(4)]\n    wf = [_lds_ld(lb, _WT + 64 + w * 4) for w in range_constexpr(4)]\n    offc = ic - c\n    offf = if_ - f\n    for w in range_constexpr(4):\n        offc = offc + (wave > w).select(wc[w], fx.Int32(0))\n        offf = offf + (wave > w).select(wf[w], fx.Int32(0))\n    total = _uniform(wf[0] + wf[1] + wf[2] + wf[3])\n    gpu.barrier()\n    mine = tid < 256\n    _lds_st(lb, mine.select((tid & 255) * 4, fx.Int32(_SINK)), offc)\n    hit = mine.select(f, fx.Int32(0)) != 0\n    _lds_st(lb, hit.select(_TINFO + offf * 8, fx.Int32(_SINK)), tid | (c << 16))\n    _lds_st(lb, hit.select(_TINFO + offf * 8 + 4, fx.Int32(_SINK)), offc)\n    gpu.barrier()\n    for r, eid, rank in items:\n        dst = _SROW + (_lds_ld(lb, (eid & 255) * 4) + rank) * 4\n        _lds_st(lb, (eid < 256).select(dst, fx.Int32(_SINK)), r)\n    gpu.barrier()\n    return total\n\n\ndef _unit(lb, jj):\n    \"\"\"(expert, first sorted row, row count) of the jj-th touched expert.\"\"\"\n    w0 = _uniform(_lds_ld(lb, _TINFO + jj * 8))\n    return w0 & 0xFFFF, _uniform(_lds_ld(lb, _TINFO + jj * 8 + 4)), w0 >> 16\n\n\ndef _quant32(vecs):\n    \"\"\"32 bf16 values (four i32x4 of bf16 pairs) to MXFP4: (i32x4 of fp4, e8m0 exponent).\"\"\"\n    vals = []\n    peak = fx.Int32(0)\n    for v in vecs:\n        for k in range_constexpr(4):\n            lo = v[k] << 16\n            hi = v[k] & fx.Int32(-65536)\n            vals.append(lo.bitcast(fx.Float32))\n            vals.append(hi.bitcast(fx.Float32))\n            peak = _umax(peak, lo & 0x7FFFFFFF)\n            peak = _umax(peak, hi & 0x7FFFFFFF)\n    ex = _e8m0(peak)\n    scale = (ex << 23).bitcast(fx.Float32)\n    q = [_pack_fp4(vals[8 * i:8 * i + 8], scale) for i in range_constexpr(4)]\n    return fx.Vector.from_elements(q, fx.Int32), ex\n\n\ndef _silu_mul_bf16(g, u):\n    ep = fx.Float32(rocdl.exp2(T.f32, _raw(g * fx.Float32(-1.4426950408889634))))\n    sig = fx.Float32(rocdl.rcp(T.f32, _raw(fx.Float32(1.0) + ep)))\n    return fx.Float32(fx.BFloat16(g * sig * u))\n\n\ndef _pack_bf16x4(vals):\n    lo = _bf16_bits(vals[0]) | (_bf16_bits(vals[1]) << 16)\n    hi = _bf16_bits(vals[2]) | (_bf16_bits(vals[3]) << 16)\n    return fx.Vector.from_elements([lo, hi], fx.Int32)\n\n\n@functools.cache\ndef _quant_kernel(R, PT):\n    \"\"\"bf16 rows to MXFP4 (e8m0 per 32) in row order, scales in the layout the decode stage 1 loads.\"\"\"\n\n    @flyc.kernel(known_block_size=[PT, 1, 1])\n    def quant(X: fx.Int64, XQ: fx.Int64, XS: fx.Int64):\n        tid = fx.Int32(gpu.thread_id(\"x\"))\n        bid = fx.Int32(gpu.block_id(\"x\"))\n        x = _rsrc(X)\n        xq = _rsrc(XQ)\n        xs = _rsrc(XS)\n        lane = tid % 64\n        first = bid * (PT * 4) + tid\n        loads = []\n        for j in range_constexpr(4):\n            i = first + j * PT\n            loads.append(_ld4(x, (i < R * 512).select(i, fx.Int32(0)) * 16))\n        for j in range_constexpr(4):\n            i = first + j * PT\n            packed, ex = _quant8(loads[j])\n            if i < R * 512:\n                _st(xq, i * 4, packed)\n                if i % 4 == 0:\n                    row = i // 512\n                    g = (i // 4) % 128\n                    _st(xs, row * (_D // 32) + (g >> 4) * 16 + (g & 3) * 4 + ((g >> 2) & 3),\n                        arith.trunci(T.i8, _raw(ex)))\n\n    return quant\n\n\n@functools.cache\ndef _up_dec_kernel(R, W, TN, G, XQ):\n    \"\"\"Decode stage 1, persistent: units (touched expert, TN/2 gate + TN/2 up 16-column tiles), W\n    waves splitting K.\n\n    A comes from pre-quantized rows (XQ) or, without a quant pass, each lane quantizes its own 32\n    bf16 activations (one MXFP4 group). The next unit's weights and first 16 rows are loaded right\n    after the MFMAs, under the cross-wave reduction and the epilogue, which quantizes silu(gate) * up\n    to MXFP4 by token row. Rows past an expert's first 16 are rare and take a slow path that reloads\n    one K-chunk at a time.\n    \"\"\"\n    K = _D\n    N = 2 * _I\n    NI = K // 256 // W\n    HT = TN // 2\n    NCG = _I // (HT * 16)\n    RED = (_SROW + R * 4 + 15) // 16 * 16\n    LDS_BYTES = RED + W * TN * 64 * 16\n    NW = NI * 2 * TN\n    NS = NI * TN\n    PERSIST = G < min(R, _E) * NCG\n    assert NI * W * 256 == K and HT % 2 == 0 and W >= 4 and (not XQ or NI % 2 == 0)\n\n    @fx.struct\n    class Smem:\n        raw: fx.Array[fx.Uint8, LDS_BYTES, 16]\n\n    @flyc.kernel(known_block_size=[64 * W, 1, 1])\n    def up_dec(X: fx.Int64, XS: fx.Int64, IDS: fx.Int64, W1: fx.Int64, WS1: fx.Int64,\n               A2: fx.Int64, A2S: fx.Int64):\n        tid = fx.Int32(gpu.thread_id(\"x\"))\n        lane = tid % 64\n        wave = _uniform(tid // 64)\n        bid = fx.Int32(gpu.block_id(\"x\"))\n        l16 = lane % 16\n        lg = lane // 16\n        lb = fx.Int32(fx.ptrtoint(fx.SharedAllocator().allocate(Smem).peek().raw.ptr))\n        total = _route_all(_rsrc(IDS), lb, tid, lane, wave, R, W)\n        nunits = total * NCG\n        w = _rsrc(W1)\n        ws = _rsrc(WS1)\n        x = _rsrc(X)\n        xs = _rsrc(XS)\n        a2 = _rsrc(A2)\n        a2s = _rsrc(A2S)\n        it0 = wave * NI\n\n        def cols(cg):\n            g0 = cg * (HT * 16)\n            return [g0 + 16 * t for t in range_constexpr(HT)] + [g0 + _I + 16 * t for t in range_constexpr(HT)]\n\n        def w_off(e, n, i, u):\n            return e * (N * K // 2) + (n >> 4) * (K * 8) + (it0 + i) * 2048 + u * 1024 + lane * 16\n\n        def s_off(e, n, i):\n            return e * (N * K // 32) + (n >> 5) * K + lg * 64 + l16 * 4 + (it0 + i) * 256\n\n        def row_at(off, c, r):\n            return _lds_ld(lb, _SROW + (off + (r < c).select(r, c - 1)) * 4)\n\n        def load_a(row, i, u):\n            if const_expr(XQ):\n                return [_ld4(x, row * (K // 2) + (it0 + i) * 128 + u * 64 + lg * 16)]\n            return [_ld4(x, row * (K * 2) + ((it0 + i) * 256 + u * 128 + lg * 32) * 2 + q * 16)\n                    for q in range_constexpr(4)]\n\n        def a_operand(regs, sw, i, u):\n            if const_expr(XQ):\n                return regs[0], sw, (2 * i + u) & 3\n            av, ax = _quant32(regs)\n            return av, ax, 0\n\n        def load(u):\n            e, off, c = _unit(lb, u // NCG)\n            ncol = cols(u % NCG)\n            row = row_at(off, c, l16)\n            bv = [_ld4(w, w_off(e, n, i, uu)) for i in range_constexpr(NI) for uu in range_constexpr(2)\n                  for n in ncol]\n            bs = [_ld1(ws, s_off(e, n, i)) for i in range_constexpr(NI) for n in ncol]\n            xa = [v for i in range_constexpr(NI) for uu in range_constexpr(2) for v in load_a(row, i, uu)]\n            sw = [_ld1(xs, row * (K // 32) + wave * 16 + lg * 4)] if XQ else []\n            return [_raw(v) for v in bv + bs + xa + sw]\n\n        def mma(bv, bs, xa, sw, i, uu, accs):\n            av, ax, osel = a_operand(xa, sw, i, uu)\n            for t in range_constexpr(TN):\n                accs[t] = fx.Vector(rocdl.mfma_scale_f32_16x16x128_f8f6f4(\n                    T.f32x4, [bv[t], av, accs[t], 4, 4, uu * 2 + (t & 1), bs[t], osel, ax]))\n            return accs\n\n        def reduce_store(accs, cg, r, row, c):\n            for t in range_constexpr(TN):\n                llvm.StoreOp(_raw(accs[t]), _lds(lb, RED + ((wave * TN + t) * 64 + lane) * 16), alignment=16)\n            gpu.barrier()\n            for q in range_constexpr(HT // 2):\n                if wave == q % W:\n                    hs = []\n                    for pp in range_constexpr(2 * q, 2 * q + 2):\n                        g = [fx.Float32(0.0)] * 4\n                        uv_ = [fx.Float32(0.0)] * 4\n                        for wv in range_constexpr(W):\n                            gv = fx.Vector(llvm.LoadOp(T.f32x4, _lds(lb, RED + ((wv * TN + pp) * 64 + lane) * 16),\n                                                       alignment=16).res)\n                            uv = fx.Vector(llvm.LoadOp(T.f32x4, _lds(lb, RED + ((wv * TN + pp + HT) * 64 + lane) * 16),\n                                                       alignment=16).res)\n                            g = [g[k] + gv[k] for k in range_constexpr(4)]\n                            uv_ = [uv_[k] + uv[k] for k in range_constexpr(4)]\n                        hs += [_silu_mul_bf16(g[k], uv_[k]) for k in range_constexpr(4)]\n                    peak = fx.Int32(0)\n                    for hv in hs:\n                        peak = _umax(peak, hv.bitcast(fx.Int32) & 0x7FFFFFFF)\n                    peak = _umax(peak, _xor_lane(peak, lane, 16))\n                    peak = _umax(peak, _xor_lane(peak, lane, 32))\n                    ex = _e8m0(peak)\n                    scale = (ex << 23).bitcast(fx.Float32)\n                    qa = _pack_fp4(hs[0:4], scale)\n                    qb = _pack_fp4(hs[4:8], scale)\n                    col = cg * (HT * 16) + 32 * q\n                    if r < c:\n                        _st16(a2, row * (_I // 2) + (col >> 1) + lg * 2, qa)\n                        _st16(a2, row * (_I // 2) + (col >> 1) + 8 + lg * 2, qb)\n                        if lg == 0:\n                            gg = col >> 5\n                            _st(a2s, row * (_I // 32) + (gg & 3) * 4 + ((gg >> 2) & 3),\n                                arith.trunci(T.i8, _raw(ex)))\n            gpu.barrier()\n\n        def unit_body(u, state):\n            e, off, c = _unit(lb, u // NCG)\n            cg = u % NCG\n            ncol = cols(cg)\n            bv = [fx.Vector(v) for v in state[:NW]]\n            bs = [fx.Int32(v) for v in state[NW:NW + NS]]\n            na = 1 if XQ else 4\n            xa = [fx.Vector(v) for v in state[NW + NS:NW + NS + NI * 2 * na]]\n            sw = fx.Int32(state[-1]) if XQ else None\n            accs = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range_constexpr(TN)]\n            for i in range_constexpr(NI):\n                for uu in range_constexpr(2):\n                    k = i * 2 + uu\n                    accs = mma(bv[k * TN:(k + 1) * TN], bs[i * TN:(i + 1) * TN], xa[k * na:(k + 1) * na],\n                               sw, i, uu, accs)\n            nxt = None\n            if const_expr(PERSIST):\n                rocdl.sched_barrier(0)\n                un = u + G\n                nxt = load((un < nunits).select(un, u))\n                rocdl.sched_barrier(0)\n            reduce_store(accs, cg, l16, row_at(off, c, l16), c)\n            for p in range(1, (c + 15) // 16):\n                r = fx.Int32(p) * 16 + l16\n                row = row_at(off, c, r)\n                sw2 = _ld1(xs, row * (K // 32) + wave * 16 + lg * 4) if XQ else None\n                accs = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range_constexpr(TN)]\n                for i in range_constexpr(NI):\n                    for uu in range_constexpr(2):\n                        bvv = [_ld4(w, w_off(e, n, i, uu)) for n in ncol]\n                        bss = [_ld1(ws, s_off(e, n, i)) for n in ncol]\n                        accs = mma(bvv, bss, load_a(row, i, uu), sw2, i, uu, accs)\n                        rocdl.sched_barrier(0)\n                reduce_store(accs, cg, r, row, c)\n            return nxt\n\n        if const_expr(PERSIST):\n            first = (bid < nunits).select(bid, fx.Int32(0))\n            for iu, state in range(bid, nunits, G, init=load(first)):\n                nxt = unit_body(fx.Int32(iu), state)\n                yield nxt\n        else:\n            if bid < nunits:\n                unit_body(bid, load(bid))\n\n    return up_dec, NCG\n\n\n@functools.cache\ndef _down_dec_kernel(R, W, TN, G):\n    \"\"\"Decode stage 2, persistent: units (touched expert, W * TN 16-column tiles), full K = 512 per wave.\n\n    A is the MXFP4 intermediate by token row; the next unit is loaded right after the MFMAs; the\n    routing weight is applied and bf16 goes straight to the token's output row.\n    \"\"\"\n    K = _I\n    N = _D\n    CPW = TN * 16\n    NCG = N // (W * CPW)\n    LDS_BYTES = (_SROW + R * 4 + 15) // 16 * 16\n    NW = 2 * 2 * TN\n    NS = 2 * TN\n    PERSIST = G < min(R, _E) * NCG\n    assert TN % 2 == 0 and W >= 4\n\n    @fx.struct\n    class Smem:\n        raw: fx.Array[fx.Uint8, LDS_BYTES, 16]\n\n    @flyc.kernel(known_block_size=[64 * W, 1, 1])\n    def down_dec(A2: fx.Int64, A2S: fx.Int64, IDS: fx.Int64, W2: fx.Int64, WS2: fx.Int64,\n                 RW: fx.Int64, OUT: fx.Int64):\n        tid = fx.Int32(gpu.thread_id(\"x\"))\n        lane = tid % 64\n        wave = _uniform(tid // 64)\n        bid = fx.Int32(gpu.block_id(\"x\"))\n        l16 = lane % 16\n        lg = lane // 16\n        lb = fx.Int32(fx.ptrtoint(fx.SharedAllocator().allocate(Smem).peek().raw.ptr))\n        total = _route_all(_rsrc(IDS), lb, tid, lane, wave, R, W)\n        nunits = total * NCG\n        w = _rsrc(W2)\n        ws = _rsrc(WS2)\n        a2 = _rsrc(A2)\n        a2s = _rsrc(A2S)\n        rw = _rsrc(RW)\n        out = _rsrc(OUT)\n\n        def cols(cg):\n            return [cg * (W * CPW) + wave * CPW + 16 * t for t in range_constexpr(TN)]\n\n        def w_off(e, n, i, u):\n            return e * (N * K // 2) + (n >> 4) * (K * 8) + i * 2048 + u * 1024 + lane * 16\n\n        def s_off(e, n, i):\n            return e * (N * K // 32) + (n >> 5) * K + lg * 64 + l16 * 4 + i * 256\n\n        def row_at(off, c, r):\n            return _lds_ld(lb, _SROW + (off + (r < c).select(r, c - 1)) * 4)\n\n        def load_rows(row):\n            return ([_ld4(a2, row * (K // 2) + k * 64 + lg * 16) for k in range_constexpr(4)]\n                    + [_ld1(a2s, row * (K // 32) + lg * 4), _ld1(rw, row * 4)])\n\n        def load(u):\n            e, off, c = _unit(lb, u // NCG)\n            ncol = cols(u % NCG)\n            row = row_at(off, c, l16)\n            bv = [_ld4(w, w_off(e, n, i, uu)) for i in range_constexpr(2) for uu in range_constexpr(2) for n in ncol]\n            bs = [_ld1(ws, s_off(e, n, i)) for i in range_constexpr(2) for n in ncol]\n            return [_raw(v) for v in bv + bs + load_rows(row)]\n\n        def mma(bv, bs, av, sw, k, accs):\n            for t in range_constexpr(TN):\n                accs[t] = fx.Vector(rocdl.mfma_scale_f32_16x16x128_f8f6f4(\n                    T.f32x4, [bv[t], av, accs[t], 4, 4, (k & 1) * 2 + (t & 1), bs[t], k, sw]))\n            return accs\n\n        def store(accs, ncol, r, row, c, wt):\n            for t in range_constexpr(TN):\n                ov = _pack_bf16x4([accs[t][k] * wt for k in range_constexpr(4)])\n                if r < c:\n                    _st(out, row * (N * 2) + (ncol[t] + 4 * lg) * 2, ov)\n\n        def unit_body(u, state):\n            e, off, c = _unit(lb, u // NCG)\n            ncol = cols(u % NCG)\n            bv = [fx.Vector(v) for v in state[:NW]]\n            bs = [fx.Int32(v) for v in state[NW:NW + NS]]\n            av = [fx.Vector(v) for v in state[NW + NS:NW + NS + 4]]\n            sw = fx.Int32(state[NW + NS + 4])\n            wt = fx.Int32(state[NW + NS + 5]).bitcast(fx.Float32)\n            accs = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range_constexpr(TN)]\n            for k in range_constexpr(4):\n                accs = mma(bv[k * TN:(k + 1) * TN], bs[(k >> 1) * TN:((k >> 1) + 1) * TN], av[k], sw, k, accs)\n            nxt = None\n            if const_expr(PERSIST):\n                rocdl.sched_barrier(0)\n                un = u + G\n                nxt = load((un < nunits).select(un, u))\n                rocdl.sched_barrier(0)\n            store(accs, ncol, l16, row_at(off, c, l16), c, wt)\n            for p in range(1, (c + 15) // 16):\n                r = fx.Int32(p) * 16 + l16\n                row = row_at(off, c, r)\n                rr = load_rows(row)\n                accs = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range_constexpr(TN)]\n                for k in range_constexpr(4):\n                    bvv = [_ld4(w, w_off(e, n, k >> 1, k & 1)) for n in ncol]\n                    bss = [_ld1(ws, s_off(e, n, k >> 1)) for n in ncol]\n                    accs = mma(bvv, bss, rr[k], rr[4], k, accs)\n                    rocdl.sched_barrier(0)\n                store(accs, ncol, r, row, c, rr[5].bitcast(fx.Float32))\n            return nxt\n\n        if const_expr(PERSIST):\n            first = (bid < nunits).select(bid, fx.Int32(0))\n            for iu, state in range(bid, nunits, G, init=load(first)):\n                nxt = unit_body(fx.Int32(iu), state)\n                yield nxt\n        else:\n            if bid < nunits:\n                unit_body(bid, load(bid))\n\n    return down_dec, NCG\n\n\n_DEC_MAX = 384\n\n\ndef _dec_config(rows):\n    \"\"\"Decode path: (quantize X in a separate pass, stage-1 waves, stage-1 16-column tiles, stage-1\n    grid, stage-2 waves, stage-2 tiles per wave, stage-2 grid).\"\"\"\n    return 0 if rows <= 16 else 1, 8, 4, 256, 4, 2, 512\n\n\ndef _config(rows):\n    \"\"\"(BM, stage-1 prefetch depth, stage-2 prefetch depth, stage-2 column groups per tile,\n    stage-1 column blocks per workgroup).\n\n    BM = 128 where an expert holds 64..128 rows, so its weights are read by one tile, not two.\n    \"\"\"\n    if rows < 8192:\n        return 32, 1, 1, 16, 1\n    if 16384 < rows <= 32768:\n        return 128, 1, 1, 4, 1\n    if rows < 40000:\n        return 64, 1, 1, 16, 1\n    return 64, 1, 1, 2, 2\n\n\ndef _workspace(rows):\n    sizes = (rows * _D // 2, rows * _D // 32, rows * 4, 16 + _max_tiles(rows, 32) * 16,\n             rows * _I // 2, rows * _I // 32)\n    offsets = []\n    total = 0\n    for size in sizes:\n        offsets.append(total)\n        total += (size + _ALIGN - 1) // _ALIGN * _ALIGN\n    return total, tuple(offsets)\n\n\ndef _plan_dec(rows):\n    xq, w1, tn1, gr1, w2, tn2, gr2 = _dec_config(rows)\n    g1, ncg1 = _up_dec_kernel(rows, w1, tn1, gr1, xq)\n    g2, ncg2 = _down_dec_kernel(rows, w2, tn2, gr2)\n    gr1 = min(gr1, min(rows, _E) * ncg1)\n    gr2 = min(gr2, min(rows, _E) * ncg2)\n    qk = _quant_kernel(rows, 256) if xq else None\n    nq = (rows * 512 + 1023) // 1024\n\n    @flyc.jit\n    def launch(X: fx.Int64, IDS: fx.Int64, W1: fx.Int64, WS1: fx.Int64, W2: fx.Int64,\n               WS2: fx.Int64, RW: fx.Int64, OUT: fx.Int64, XQ: fx.Int64, XS: fx.Int64,\n               STOK: fx.Int64, TILES: fx.Int64, A2: fx.Int64, A2S: fx.Int64,\n               stream: fx.Stream):\n        if const_expr(xq):\n            qk(X, XQ, XS).launch(grid=(nq, 1, 1), block=(256, 1, 1), stream=stream)\n            g1(XQ, XS, IDS, W1, WS1, A2, A2S).launch(grid=(gr1, 1, 1), block=(64 * w1, 1, 1), stream=stream)\n        else:\n            g1(X, XS, IDS, W1, WS1, A2, A2S).launch(grid=(gr1, 1, 1), block=(64 * w1, 1, 1), stream=stream)\n        g2(A2, A2S, IDS, W2, WS2, RW, OUT).launch(grid=(gr2, 1, 1), block=(64 * w2, 1, 1), stream=stream)\n\n    return (launch,) + _workspace(rows)\n\n\n@functools.cache\ndef _plan(rows):\n    if rows <= _DEC_MAX:\n        return _plan_dec(rows)\n    cfg = _config(rows)\n    bm, pd1, pd2, nsplit = cfg[:4]\n    nbw = cfg[4] if len(cfg) > 4 else 1\n    max_tiles = _max_tiles(rows, bm)\n    tile_blocks = (max_tiles + 7) // 8 * 8\n    grid1 = -(-tile_blocks * (2 * _I // 256 // nbw) // (_XCD * _XC)) * (_XCD * _XC)\n    grid2 = -(-tile_blocks * nsplit // (_XCD * _XC)) * (_XCD * _XC)\n    pt = 256 if rows < 8192 else 1024\n    prep = _prep_kernel(rows, bm, pt)\n    g1 = _up_kernel(rows, bm, pd1, nbw)\n    g2 = _down_kernel(rows, bm, pd2, nsplit)\n    n_prep = 1 + (rows * 512 + pt * 4 - 1) // (pt * 4)\n\n    @flyc.jit\n    def launch(X: fx.Int64, IDS: fx.Int64, W1: fx.Int64, WS1: fx.Int64, W2: fx.Int64,\n               WS2: fx.Int64, RW: fx.Int64, OUT: fx.Int64, XQ: fx.Int64, XS: fx.Int64,\n               STOK: fx.Int64, TILES: fx.Int64, A2: fx.Int64, A2S: fx.Int64,\n               stream: fx.Stream):\n        prep(X, IDS, XQ, XS, STOK, TILES).launch(\n            grid=(n_prep, 1, 1), block=(pt, 1, 1), stream=stream)\n        g1(XQ, XS, W1, WS1, STOK, TILES, A2, A2S).launch(\n            grid=(grid1, 1, 1), block=(256, 1, 1), stream=stream)\n        g2(A2, A2S, W2, WS2, STOK, TILES, OUT, RW).launch(\n            grid=(grid2, 1, 1), block=(256, 1, 1), stream=stream)\n\n    sizes = (rows * _D // 2, rows * _D // 32, rows * 4, 16 + max_tiles * 16,\n             rows * _I // 2, rows * _I // 32)\n    offsets = []\n    total = 0\n    for size in sizes:\n        offsets.append(total)\n        total += (size + _ALIGN - 1) // _ALIGN * _ALIGN\n    return launch, total, tuple(offsets)\n\n\ndef run(\n    hidden_states,\n    w1,\n    w2,\n    topk_weights,\n    topk_ids,\n    expert_mask,\n    activation,\n    act_quant,\n    w1_scale,\n    w2_scale,\n    swiglu_limit,\n    beta,\n    linear_beta,\n    num_local_tokens,\n    out,\n):\n    quant_type = 'per_1x32'\n    out_dtype = out.dtype\n    rows = hidden_states.shape[0]\n    launch, ws_bytes, offsets = _plan(rows)\n    ws = torch.empty(ws_bytes, dtype=torch.uint8, device=hidden_states.device)\n    base = ws.data_ptr()\n    xq, xs, stok, tiles, a2, a2s = (base + o for o in offsets)\n    launch(hidden_states.data_ptr(), topk_ids.data_ptr(), w1.data_ptr(), w1_scale.data_ptr(),\n           w2.data_ptr(), w2_scale.data_ptr(), topk_weights.data_ptr(), out.data_ptr(),\n           xq, xs, stok, tiles, a2, a2s,\n           torch.cuda.current_stream(hidden_states.device).cuda_stream)\n"
       }
-    ]
+    ],
+    "description": null
   }
 }

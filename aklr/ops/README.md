@@ -5,115 +5,127 @@ in the file it names; when the two disagree, the named file wins.
 
 ```
 aklr/ops/
-  __init__.py                  load_routes(): registers every route, proxies aiter's entry points
+  __init__.py                  imports every op's apis: registers their op schemas and routes
   README.md                    this file
   <op>/                        biased_grouped_topk, gemm, fused_moe, mhc, mla, topk
     __init__.py                re-exports api.py's apis
-    contract.py                OpContract constants, CONTRACTS
-    reference.py               one <contract>_reference per contract
-    api.py                     one @api function and at least one route per contract
+    schema.py                  OpSchema constants and any dispatch functions
+    reference.py               one <op_schema>_reference per op schema
+    api.py                     one @aklr_api function per op type, plus routes; a dispatch function may cover several op schemas
     impls/<language>/<name>/<uuid>.json        one kernel and the workloads it serves
 ```
 
 - `<language>` equals the schema's `kernel.language` (`flydsl`, `hip` or `triton`, `Language` in
-  `aklr/core/contract/spec/_kernel.py`). `impls/` is not a Python package: it holds language directories, they hold
+  `aklr/core/schema/comps/_kernel.py`). `impls/` is not a Python package: it holds language directories, they hold
   `<name>/` directories, and those hold `<uuid>.json` only.
-- Several files may share a `<name>` and its Points; dispatch serves each Point with the best measured one
+- Several files may share a `<name>`; dtype, attrs and input presence distinguish their scenarios.
+  Dispatch serves each workload's complete semantic key with the best measured implementation
   (`AKLR_MIN_SPEEDUP`).
-- `<uuid>` is 16 hex digits of `sha256(sorted_key_json([name, authored_parts]))` (`OpContract.authored_parts`): it
-  changes with the kernel, its targets, requires or author, the scalars or the Points, never with `speedup`, `accuracy` or workload order.
-  `export check` names the expected path of a file whose uuid is stale.
+- `<uuid>` is 16 hex digits of `sha256(sorted_key_json([name, authored_parts]))` (`OpSchema.authored_parts`): it
+  changes with the kernel, its targets, requires or author, attrs, tensor dtypes, workload scalars or axes,
+  never with `evaluations` or workload order.
+
+`OpSchema.schema_data()` supplies the fields shared by schema serialization and UUID computation.
+`OpSchema.relative_path()` computes the schema path and UUID without formatting and reparsing JSON.
+`SchemaRegistry.schema_paths()` supplies
+the shared file scan; its `SCHEMA_PATH_PATTERN` defines the path format used by validation and reports.
 
 ## Workflow
 
-1. Run the model with `AKLR_EXPORT=1` and `AKLR_EXPORT_DIR` set to an absolute path outside the checkout (the
-   default `./aklr_export` inside it is untracked data). Every dispatch
-   is counted in `<export dir>/calls.pid<p>.<run>.jsonl`, served or fallen back alike. A count is the number of
-   Python-level dispatches: a CUDA graph replay is never counted, so decode shows its capture count. The set of
-   Points is complete; never read the counts as throughput weights.
-2. `python -m aklr export [--from DIR] [--to DIR] [--language L]` writes under `--to`, per scenario name, one new
-   `<op>/impls/<language>/<name>/<uuid>.json` holding every called Point no committed file serves, with
-   `"sources": []`. A Point a committed file already serves is only listed with that file and its call count (and a
-   note when the calls came from a target the file does not list).
-   Export never rewrites a committed file and never writes into `aklr/`; `--to` belongs outside the repository. A
-   rerun removes only the earlier export's files whose `sources` is empty; filled files stay.
-3. Fill `kernel.sources` with one `{"path": "<file>.py", "content": "<the file's text>"}` per file; export writes
-   `"entry_point": "kernel.py::run"`, so one file is `kernel.py` defining `run` (or edit `entry_point`); a hip
+1. Run the model with `AKLR_ENABLE_TRACING=1`. At exit each traced call's shape is added as a workload to the
+   kernel-less schema file of its scenario: under `AKLR_SCHEMA_PATH` (`schemas/<op_type>/<name>/<uuid>.json`; set it
+   to an absolute path outside the checkout) or, unset, in `aklr/ops/<op>/impls/flydsl/<name>/` for a name `aklr/ops`
+   already has; other names are not traced. A file that has a kernel is never changed.
+2. Fill in its `kernel` section ([below](#the-kernel-section-and-abi)), `sources` holding one
+   `{"path": "<file>.py", "content": "<the file's text>"}` per file; with `"entry_point": "kernel.py::run"`, one file
+   is `kernel.py` defining `run`; a hip
    kernel's are `.hip` and `.h` files, `kernel.hip::run` its entry ([hip kernels](#hip-kernels)). To give a
-   scenario a second kernel, copy its committed file, delete `accuracy` and `speedup` from every workload (only CI
-   writes them: `PERF_EDITED`), and fill the copy with the second kernel.
-4. Copy the file to the same relative path under `aklr/ops/` and rename it to the `<uuid>.json` that
-   `python -m aklr export check` names (the uuid hashes the kernel). To change a committed kernel, edit its
-   `content` or `requires`, delete `accuracy` and `speedup` from every workload (only CI writes them:
+   scenario a second kernel, copy its committed file, empty `evaluations` in every workload (only CI writes them:
+   `PERF_EDITED`), and fill the copy with the second kernel.
+3. Copy the file to the same relative path under `aklr/ops/` and rename it to its `<uuid>.json` (`Schema.uuid`: the
+   schema without its workloads, so the kernel too). To change a committed kernel, edit its
+   `content` or `requires`, empty `evaluations` in every workload (only CI writes them:
    `PERF_EDITED`), and rename the file the same way. Audit checks every committed kernel's sources, changed or not.
-5. Self-test: `python -m aklr export check`, then `python -m aklr validate --base origin/main`. The result does
-   not count; CI decides.
-6. Open a PR.
+4. Self-test: `python -m aklr validate --base origin/main`. The result does
+   not count; CI decides. A base schema of the same name that does not parse fails validation, one of another
+   name is skipped.
+5. Open a PR.
 
 ## Schema fields
 
-A schema file is the registered `OpContract` narrowed to one scenario's values (`OpContract.narrow`), exactly the
+A schema file is the registered `OpSchema` specialized to one scenario's values (`OpSchema.make_schema`), exactly the
 text `schema_text` writes: keys in the order below, two-space indent, a list of only numbers on one line, non-ASCII
-characters unescaped, a final newline. Anything else is rejected;
-`python -m aklr export` writes that text. Model: `OpContract` in `aklr/core/contract/op.py`.
+characters unescaped, a final newline. Anything else is rejected. Model: `OpSchema` in `aklr/core/schema/op.py`.
 
 | Key | Written by | Content |
 |---|---|---|
-| `schema_version` | export | `5` (`CONTRACT_VERSION`) |
-| `name` | export | the scenario name, equal to the parent directory (see Names) |
-| `contract_id` | export | `<contract>@<major>.<minor>` |
-| `description` | export | what the op computes |
-| `op_type` | export | the op family, the `<op>` of `aklr/ops/<op>/`; the api function is `aklr.ops.<op>.api.<contract>`. A plugin op's is its package's last name (`aklr/plugins/README.md`) |
-| `axes` | export | the contract's axes, every one but the var ones pinned to this scenario's value; a derived axis's `expr` becomes its int value |
-| `attrs` | export | every attr, keeping this scenario's value alone |
-| `inputs` | export | every input of the contract, narrowed to this scenario |
-| `outputs` | export | every output, narrowed to this scenario; always row-major |
-| `workloads` | export, author, CI | one item per Point served (see Workloads) |
-| `layout_variants` | export | this scenario's layout variant alone |
-| `compare` | export | `max_violation_fraction`, `determinism`, `element_order` |
-| `kernel` | export (`language`, `targets`, `entry_point`, `"sources": []`), author (`sources`, `requires`, `author`) | the kernel section; empty `sources` in the repository make a definition: loaded and audited, never served or benched |
+| `schema_version` | tracing | `1` (`SCHEMA_VERSION`) |
+| `name` | tracing | a readable scenario label, equal to the parent directory, not its complete identity (see Names) |
+| `description` | tracing | what the op computes |
+| `op_type` | tracing | the op family: the name of its api function in `aklr/ops/<op>/api.py`, shared by the op schemas that function dispatches between (`gemm_fp8_nt_blockscaled` in `gemm/`) |
+| `axes` | tracing | the op schema's axes, every one but the var ones pinned to this scenario's value; a derived axis's `expr` becomes its int value |
+| `inputs` | tracing | every input of the op schema, narrowed to this scenario |
+| `attrs` | tracing | one normalized value per `Scalar(is_attr=True)`, in input declaration order; an absent optional attr is `null` |
+| `outputs` | tracing | every output, narrowed to this scenario; always row-major |
+| `workloads` | tracing, author, CI | one item per Point served (see Workloads) |
+| `compare` | tracing | the floating outputs' comparison, `{<method>: {<param>: <value>}}`; `{}` with no floating output |
+| `kernel` | author | the kernel section; empty `sources` in the repository make a definition: loaded and audited, never served or benched |
 
-Every key written by export alone is derived from the Python contract and checked against it (`export check`). Editing one directly only produces an error. A committed file and its
-export differ only in `kernel.sources`, `kernel.requires` and `kernel.author`.
+Every key written by tracing alone is derived from the Python op schema; a committed file and the file tracing
+writes differ only in `kernel`.
 
-The fields below belong to the Python contract (`TensorSpec` and `ScalarSpec` in `aklr/core/contract/spec/_args.py`,
-read through the op's `contract.py`); a schema file's `inputs` and `outputs` items carry only `shape`, `dtype`,
-`distribution` (tensor inputs that have one) and `description`.
+The fields below belong to the Python op schema (`Tensor` and `Scalar` in `aklr/core/schema/comps/_args.py`,
+read through the op's `schema.py`); a schema file's `inputs` and `outputs` items carry `shape`, `strides` of a
+padded input, `dtype`, `optional` when true, `distribution` for tensor inputs, and `description`.
 
-- A tensor input has `shape` (axis names or ints, logical elements), `dtype`, `layout` (`{"kind": "row_major"}`
-  unless this variant stores it otherwise), `storage_shape`, `can_squeeze` (only when `true`: the shape without its
-  trailing 1 is accepted too), `lifetime` and `description`. `lifetime` `weight` means address and value stay
-  fixed across calls in production, `per_call` that they change on every call. `mutable` (only when `true`, on a
-  required input such as a KV cache) lets the kernel write it in place; it is not required to, and the input shares
-  no byte with another input. The outputs and the mutable inputs are the op's mutable tensors
-  (`OpContract.mutable_tensors`): each is checked against the reference after a call, under its `error_bounds`;
-  every other input must be left unchanged.
-- `storage_shape` is the shape of the bytes the kernel receives: const axes are ints, var axes stay names or
-  expressions such as `ceil_div(m, 256) * 256`. A 4-bit dtype packs two values into one stored element along the
-  last dimension. For integers, call `storage_shape_of(tensor, point)` on the op's contract; from the json alone,
-  call `storage_shape` on the dtype storage shape with the layout parsed by the `aklr.core.contract.semantics` class
-  whose `kind` is the layout's `kind`, e.g. `E8M0Scales.model_validate(layout).storage_shape(shape)`.
-- A scalar input has `"shape": null`, `dtype`, `values` (an enumeration) or `interval`, an optional `default`, and
-  `description`. A kernel must be correct for every value in the declared range.
-- A mutable tensor's `error_bounds` (in `contract.py`, not in the schema file; narrowing to the scenario
-  picks one) is one of `dot_product`, `output_rounding`, `baseline_relative`, `tolerance`, `sqnr` (whole-output
-  SQNR against the reference rounded to the output dtype); each formula is an `ErrorBound` kind in
-  `semantics/_compare.py`. An integer one has none and must equal the reference exactly. `baseline_relative` needs
-  the baseline's output: outside the repository, call the contract's api baseline yourself.
-- `compare.element_order` is `fixed` (element by element) or `any_in_full_rows` (integer outputs only: a row
-  holding no padding may list its entries in any order); each is an `ElementOrder` member.
-- The reference is `<contract>_reference(point, row_major_args, to_float64) -> Tensor` (a tuple when there are
-  several: the mutable tensors in order, each mutable input as the call leaves it) in float64, never rounded to the
-  output dtype. It reads only `point.axes`, `point.attrs` and `point.dtypes`. A rounding every correct
+- A tensor declaration has `dim_names`, optional fixed `dtype`, `optional` and `description`. Storage
+  checks enforce contiguous tensors in their declared shape; an adapter brings a caller's tensors to it.
+- The schema states the op's semantics only. A caller's convention (aiter's `is_shuffled`, a squeezed shape,
+  a launch plan) is translated by its adapter; a limit of the baseline makes its baseline function return
+  `None`; a limit of a kernel is a const axis of its file or handled in its `run`. A storage layout is an api
+  parameter (`use_shuffled_weight`) its dispatch function picks the schema by; a value no schema describes
+  makes the dispatch function return `None`, and the call falls back.
+- An input a caller keeps padded declares its element `strides`, ints or expressions of const axes (sglang's
+  DeepSeek-V4 kv pool: `ceil_div(page_size * 584, 576) * 576` per page); storage checks enforce those strides
+  instead of contiguity, and validation allocates the input so, the padding zero.
+- `dim_names` are the stored shape: an MN-major scale is declared `(scale_columns, m)`, and a route passing a
+  transposed view writes `a_scale=x_scale.mT`.
+- A 4-bit dtype packs two values into one stored element along the last dimension. Use
+  `schema.storage_shape_of(tensor, workload)` for the actual stored shape.
+- A scalar declaration has `dtype`, `optional`, `default`, `description` and `is_attr`. It remains an ordinary
+  API/kernel argument whether fixed or dynamic. `is_attr=True` puts its normalized value in schema-level `attrs`
+  and the dispatch key: transposition, quantization configuration, and MXFP4 GEMM's fixed `alpha=1.0`, `beta=0.0`
+  use this path. Floats are supported, including float32 normalization and signed-zero canonicalization.
+- Other scalar values remain in `workload.scalars` as test samples, not specialization keys. A kernel must support
+  every value permitted by the op schema's `constraints`. Runtime dispatch validates scalar types, finite floats
+  and every constraint; optional dynamic scalar presence is keyed separately. Schema attrs must never also appear
+  in any workload's scalars.
+- Distribution and `compare` branches must be decided by the fixed scenario, not dynamic scalar
+  samples. Unresolved branches are rejected. Distribution parameters that remain expressions
+  are evaluated per workload.
+- Output dtype resolves from the call's `out_dtype` when given (`dtype_from_out_dtype=True`),
+  otherwise `dtype_from` input, otherwise the declared `dtype` fallback. Constraints determine supported results. A supplied output buffer must match that
+  resolved dtype; it does not override resolution. A fallback dtype does not restrict valid explicit overrides,
+  while an input's fixed encoded dtype remains fixed. An output with `dtype_from` and no `dtype_from_out_dtype` has
+  its input's dtype in every schema.
+- The op schema's `compare` (narrowing to the scenario picks one branch) compares every floating output: elementwise
+  `tolerance` (absolute and relative error), or whole-output `sqnr` or `cosine` against the
+  reference rounded to the output dtype; each method is a `Comparison` class in `semantics/_compare.py`. An integer
+  output must equal the reference exactly.
+- An integer output with `any_order_in_full_rows` (in the op's `schema.py`, not in the schema file) may list the entries
+  of a row in any order when that row of the reference holds no -1 padding; other rows compare element by element.
+- The reference is `<op_schema>_reference(<ordinary tensor and scalar inputs>) -> Tensor` (a tuple in output order
+  when there are several outputs). Validation supplies its reference inputs at the required precision; there is
+  no Domain or Point argument. A rounding every correct
   kernel must perform bit for bit is part of the op and is written in the reference (each docstring lists its
   rounding points); everything else is error left to `compare`.
 
 ## The kernel section and ABI
 
-`kernel` (model `KernelSpec`): `language`, `targets` (a list of
-`{arch, hardware}`; a missing field leaves that dimension unrestricted (`DeviceTarget.matches_target`); only a
-load gate), `requires` (optional, see below), `author` (optional, see below), `entry_point` (`"<path>::<symbol>"`),
-`state_bytes` and `peer_bytes` (optional, see below) and `sources`, a list of `{path, content}`, `content`
+`kernel` (model `Kernel`): `language`, `build.target_hardware` (a list of
+`"<arch>"` or `"<arch>/<hardware>"`, such as `"gfx950"` for any gfx950 device or `"gfx950/MI355X"` for MI355X only
+(`DeviceTarget.matches_target`); only a
+load gate), `requires` (see below), `author` (see below), `entry_point` (`"<path>::<symbol>"`) and `sources`, a list of `{path, content}`, `content`
 being the file's whole text (utf-8 without a byte order mark or a non-utf-8 encoding declaration, no control
 character but `\n`, one final newline and no blank line before it); a path is one `<identifier>.py` segment other
 than `__init__.py`, sorted and unique (a hip kernel's: [hip kernels](#hip-kernels)). The module docstring of the entry
@@ -121,59 +133,34 @@ file describes the kernel; its prose carries no history, commit or speedup, and 
 (such as `legacy_solution:`, `keep_commit:`, `device_edits:`) are allowed; audit rejects an empty docstring (SA4).
 
 `requires` maps a language to a PEP 440 specifier of the toolchain versions the kernel needs, such as
-`{"triton": ">=3.8"}`; it is omitted when empty, and a dev or rc build counts as its release. Where the installed
+`{"triton": ">=3.8"}`; `{}` requires nothing, and a dev or rc build counts as its release. Where the installed
 toolchain misses it, the runtime skips the schema, logging why at INFO, and validation reports
 `no_matching_toolchain`. Give a lower bound when the kernel uses a newer toolchain's feature, an upper bound only once
 a release breaks it. A kernel that fails where `requires` holds raises: nothing falls back on an error.
 
-`author` names who wrote the kernel: a person, a team or an agent, such as `"GEAK"`. It is one line without
-surrounding spaces, omitted when empty, and only recorded: dispatch and the build ignore it, and validation
-compares kernels without it (`KernelSpec.same_kernel`), so a committed kernel whose `author` alone changes keeps
-its audit exemption and the retention threshold. The uuid hashes it, so that edit still renames the file and
-deletes `speedup` and `accuracy` (step 4); dispatch serves the file again once CI writes them back.
-
-`state_bytes` is memory the kernel keeps between its calls, for the sync slots of blocks that wait on each other
-(each call counting its epoch on from the last call's); it is omitted when 0, and changes the content hash. aklr
-zeroes that many bytes on a device at the kernel's first call there, which must not be inside a graph capture (a
-capture would record the zeroing for every replay), and passes the same bytes as `state` on every call. The state
-holds no result: what a call writes to its outputs still depends on its inputs only. Every call on the device shares
-it, so calls of the kernel must not overlap (run them on one stream).
-
-`peer_bytes` is memory through which the kernel exchanges with the other ranks of its group inside a call, such as
-the receive buffers of an all-reduce: every rank holds that many bytes, each rank's mapped into the others' address
-space. It is omitted when 0, and changes the content hash. aklr opens it, zeroed, at the kernel's first call on a
-device (not inside a graph capture, as `state`), across the process group the integration names
-(`aklr.core.runtime.peer_memory.set_group`, a gloo group: the buffers' handles go as host tensors; the sglang
-plugin names its TP group's), else as a group of one,
-and passes `peers` (every rank's buffer address, int64 on the host, this rank's at `rank`) and `rank` on every
-call. Opening is collective: every rank must call the kernel in the same order. An op whose kernel has peer memory
-says in its contract what it sums over the ranks; validation runs it as a group of one.
+`author` names who wrote the kernel: a person, a team or an agent, such as `"GEAK"`. It is `""` when not
+recorded, and only recorded: dispatch and the build ignore it, and validation
+compares kernels without it (`Kernel.same_kernel`). The uuid hashes it, so that edit still renames the file and
+empties `evaluations` (step 4); dispatch serves the file again once CI writes them back.
 
 ```python
-def run(*, <every name of OpContract.kernel_call_keys>) -> None: ...
+def run(*, <every name of OpSchema.kernel_call_keys>) -> None: ...
 ```
 
 - The entry is the module-level def `entry_point` names (`run` by convention). It takes exactly the
-  `kernel_call_keys` names as keyword-only arguments (SA4); aklr calls `run(**call)`. These are the
-  `api_params` but an `optional` attr at its default (an attr added after schemas were committed, left out of
-  their files), its parameter and the inputs whose `present_when` reads it, then `state` when `state_bytes` is set
-  and `peers` and `rank` when `peer_bytes` is set:
+  `kernel_call_keys` as keyword-only arguments (SA4): the `api_params` names; aklr calls `run(**call)`:
 
   | Keys | From | Value |
   |---|---|---|
-  | tensors and scalars | the contract inputs; an optional one absent here is still a key | stored tensor or scalar; `None` when absent |
-  | attr arguments (`trans_b`, `activation`) | attrs with a parameter name | the value in `attrs` |
-  | layout arguments (`operand_format`, `"<a>:<b>"`) | `detect_facts` with `location` `arg` | that fact's `expected_value` |
-  | `out_dtype` | only when the one output is `out` | its dtype, or `None` when the caller passes none (`out` holds the dtype) |
+  | tensors and scalars | the op schema inputs; an optional one absent here is still a key | stored tensor or scalar; `None` when absent |
+  | fixed scalar arguments (`trans_b`, `activation`, fixed `alpha`/`beta`) | scalar inputs marked `is_attr` | the normalized value in schema `attrs` |
+  | `out_dtype` | only when the one output is `out` | its dtype |
   | outputs | every name in `outputs` | the preallocated output tensor |
-  | `state` | only when `kernel.state_bytes` is set | the kernel's `uint8` state on the call's device |
-  | `peers`, `rank` | only when `kernel.peer_bytes` is set | every rank's peer memory address (int64, host), and this rank's index in it |
 
 - `run` writes each output into the output argument and returns nothing; it never allocates or keeps an output. A
   required output (one carrying an axis no required input carries, such as `topk`) comes from the caller and is
   never allocated by aklr.
-- Inputs other than the mutable ones are read-only: write only the mutable tensors and the kernel's own scratch
-  space. Writes of an input include
+- Inputs are read-only: write only the outputs and the kernel's own scratch space. Writes of an input include
   `a += x`, `torch.relu_(a)`, `out=a` and `inplace=True`. A method ending in `_` or named like a container
   mutator (`add`, `sort`, `update`, ...) writes its receiver even where torch's version is out of place: write
   `torch.add(a, b)` and `torch.sort(a)`, not `a.add(b)` or `a.sort()` (SA2).
@@ -234,29 +221,27 @@ def run(*, <every name of OpContract.kernel_call_keys>) -> None: ...
 A `hip` kernel is C++: `.hip` translation units and `.h` headers whose paths may nest (`common/math.h`), so a
 source tree keeps its includes; the entry file is a `.hip` beginning with a comment that describes the kernel.
 On first load aklr builds the sources with `torch.utils.cpp_extension` against the running torch, for the GPU's
-arch, under `<AKLR_KERNEL_CACHE_DIR>/hip/aklr_hip_<hash16>/` (`aklr/core/jit/hip_extension.py`): seconds per kernel, once
+arch, under `<AKLR_BUILD_CACHE_DIR>/hip/aklr_hip_<hash16>/` (`TorchBuilder` in `aklr/core/runtime/builder/builder.py`): seconds per kernel, once
 per machine, torch and ROCm, shared by the machine's processes. `aklr_hip_<hash16>` is the build's
 `TORCH_EXTENSION_NAME` and the op namespace, and the entry is the op the library registers there:
 
 ```cpp
 #define TORCH_LIBRARY_EXPAND(ns, m) TORCH_LIBRARY(ns, m)
 TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {
-    m.def("run(Tensor a, Tensor b, bool trans_b, Tensor? bias, ScalarType? out_dtype, Tensor(a!) out) -> ()", &run);
+    m.def("run(Tensor a, Tensor b, bool trans_b, Tensor? bias, ScalarType out_dtype, Tensor(a!) out) -> ()", &run);
 }
 ```
 
-- The op's arguments are exactly the `api_params` names, plus `state` when `state_bytes` is set and `Tensor peers`
-  and `int rank` when `peer_bytes` is set, in any order, each output, mutable input and `state` a `Tensor(a!)`, and
-  it returns `()`: aklr calls it as `run(**call)`, and the rules of `run` hold (it writes the preallocated outputs and
-  the mutable inputs, reads its other inputs only and keeps nothing across calls but `state` and its peer memory).
+- The op's arguments are exactly the `api_params` names, in any order, each output a `Tensor(a!)`, and it returns
+  `()`: aklr calls it as `run(**call)`, and the rules of `run` hold (it writes the preallocated outputs, reads its
+  inputs only and keeps nothing across calls).
 - Launch on `at::hip::getCurrentHIPStream()`; allocate scratch with `at::empty` on an argument's device.
 - Audit applies SH0–SH5 (`aklr/core/validation/stages/_audit/_hip.py`) instead of SA0–SA4, on the text with
   comments and literals blanked: no unterminated comment or literal (SH0); the one registration above, in the entry
   file, and no other library macro (SH1: a second library of one namespace aborts the process that loads it);
   includes are sources, `hip/`, `ATen/`, `c10/`, `torch/library.h` or a listed standard header (SH2); no
   synchronization, allocation outside torch, IPC, device or process change, environment, I/O or CUDA name (SH3);
-  no `static` or `__device__` variable that is not const (SH4: memory kept between calls is `state` or peer memory); the entry
-  file's leading comment (SH5).
+  no `static` or `__device__` variable that is not const (SH4); the entry file's leading comment (SH5).
 
 A host capturing CUDA graphs calls every Point at least once outside a capture first (sglang does). A Point first
 called inside a capture returns `not_warmed`: its fallback is recorded into the graph, and replays no longer pass
@@ -265,71 +250,65 @@ through dispatch.
 ## Inputs and workloads
 
 Each present tensor input carries its `distribution` (a `kind` and its parameters, an expression where it reads a
-var axis): the values a kernel may assume, and how bench draws them. It is the contract's at the Point, written
+var axis): the values a kernel may assume, and how bench draws them. It is the op schema's at the Point, written
 once per file; changing it is rejected, not a way to change the inputs.
 
-`workloads` is a list (model `WorkloadSpec`): `{"axes": {<var axis>: int}, "scalars": {...}, "accuracy": "passed" | "failed", "speedup": float}`,
-axes in contract order, sorted by their values, each Point once. A var axis the contract declares `any_size`
-(the rows of a KV cache, which the kernel does not depend on) is served at every value of its domain: its workload
-values are only the sizes bench runs. `scalars` holds every present scalar input, a
-captured or authored value inside its declared range; it is omitted when the schema has none. `speedup` (over aiter) and
-`accuracy` are written by CI on every workload or none (a `failed` one may lack `speedup`; it is never dispatched),
-with one complete `kernel.targets` item.
+`workloads` is a list (model `Workload`): `{"axes": {<var axis>: int}, "scalars": {...}, "evaluations": [...]}`,
+axes in op schema order, sorted by their values, each axes combination once. `scalars` holds only present dynamic
+scalar inputs, with captured or authored values satisfying the op schema; fixed scalar values live in schema-level
+`attrs` and cannot differ between workloads. `scalars` is omitted when empty. `evaluations` holds one
+`{"hardware": "<arch>/<hardware>", "accuracy": "passed" | "failed", "speedup": {<baseline>: {"commit", "value"}}}`
+per device CI measured on, written on every workload or none; a run on another device keeps the other entries.
+Dispatch reads only the current device's entry: a `failed` one is never served there, and a workload without one
+is served there only at `AKLR_MIN_SPEEDUP` 0 or less.
 
 No workload carries a uuid. A workload is located by its file and its `axes` (`m=1` in reports). Every tensor is
 seeded from `workload_hash(name, workload)` (its axes and scalars), 16 hex digits of a sha256: the same Point with
 the same scalars gets the same values in every file and every language.
 
-Correctness is always checked on the default inputs (every tensor drawn from its `distribution`, every scalar at
-its declaration's default). Captured scalars other than the defaults add one more input set, named `workload`.
+Correctness is always checked on the default inputs (every tensor drawn from its `distribution`, schema attrs
+unchanged, dynamic scalars at their declared defaults). If a dynamic scalar has no default, each workload uses
+its own sample; schema construction never turns the first workload's sample into a default.
+Captured dynamic scalars differing from declared defaults add one more input set, named `workload`.
 
 ## Names
 
-`<contract>`, then the name part of each variant symbol whose value is not its first declared one, then
-`<axis><value>` for each const int axis, joined by `_`; var, derived and absent axes are not part of it.
-A name is unique per variant, across every contract (`tests/ops/test_contracts.py`, as flashinfer-bench requires).
+`<name_prefix>`, then `<axis name><value>` for each present, non-derived const int axis, joined by `_`.
+For example, `gemm_bf16_nt_n1024_k4096`. Variable and derived axes, dtypes, attrs and input presence do not appear in the name.
+Storage variants that need separate op schemas have separate prefixes.
 
-| symbol: attrs (in declaration order, whatever their type), then dtypes, then the layout variant | first declared value (no part) | name part otherwise |
-|---|---|---|
-| bool attr | `values[0]` | `<label>` when true, `no_<label>` when false |
-| int attr | `values[0]` | `<label><value>` |
-| str attr | `values[0]` | the value, lowercased |
-| dtype of a tensor holding its own (not another tensor's via `same_as_tensor` alone) | `any_of[0]`, or the `same_as_tensor` dtype when both are set | `<tensor>_<dtype>`; none when absent |
-| layout variant | the first (`row_major`) | its name |
+A name is a readable grouping label, not a unique definition. `OpSchema.scenario_key` identifies a scenario by
+op schema prefix, fixed axes, every tensor dtype, typed scalar attrs, and present inputs. `workload_key` adds variable
+axes. Existing coverage and benchmark incumbent selection use these keys, never name plus axes
+alone. Dynamic scalar values are test samples within that identity.
 
-`<label>` is the attr's `abbrev`, else its name. Example: `gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k4096`.
-An attr's or a dtype's `default` is its first declared value. Implementation: `OpContract.name_at` in
-`aklr/core/contract/op.py`.
-
-A name follows the declarations: reordering `values`/`any_of`/layout variants, inserting before the last, or renaming
-an attr, tensor or variant renames committed schemas (`parse_schema` reports the moved name). Append new values.
-A file is `impls/<language>/<name>/<uuid>.json`; see the directory section for `<uuid>`.
+Files with the same name but different semantics coexist at `impls/<language>/<name>/<uuid>.json`; the UUID
+includes the authored attrs, tensor dtypes, kernel and workloads.
 
 ## Semantics
 
-A name in a schema file means what `aklr/core/contract/semantics/` of the reading aklr says; a schema names no
-semantics file. Each json kind is one class in `aklr/core/contract/semantics/` holding its fields and behaviour: the
-distribution kind `log_uniform` is `LogUniformDistribution` in `semantics/_distributions.py`. Dtypes, determinism levels
-and tensor lifetimes are plain enums read by the json functions.
+A name in a schema file means what `aklr/core/schema/semantics/` of the reading aklr says; a schema names no
+semantics file. Each json kind is one class in `aklr/core/schema/semantics/` holding its fields and behaviour: the
+distribution kind `log_uniform` is `LogUniformDistribution` in `semantics/_distributions.py`. Dtypes are a plain enum
+read by the json functions.
 
 Any input set name other than `workload` gives a default input set; the same `workload_hash` and name give the
 same values bit for bit.
-Only when an output has a `dot_product` bound, bench's `large_magnitude/0` inputs go through `magnified_inputs`, then
-`stored_inputs`.
 
 The existing first-capture and post-timing checks overwrite reused input buffers, including weights, through
 `.data.copy_()`: addresses and tensor versions stay unchanged. This exposes stale weight caches keyed by address
 or version without adding check steps or timing rounds. A mismatch fails the existing capture or post-timing check.
 
 A schema file carries no semantics stamp. After a change to the schema format, rewrite every committed file as
-`OpContract.schema_text` writes it (`ContractRegistry.parse_schema` names the first differing line).
+`OpSchema.schema_text` writes it (`SchemaRegistry.parse_schema` names the first differing line).
+The schema version is 1. Fixed scalar values live in top-level `attrs`, not workloads. Every read requires the
+current canonical structure. Rewritten schemas must be measured again rather than carrying the previous UUID's
+`evaluations`.
 
 ## Commands
 
 | Command | Does | Exit |
 |---|---|---|
-| `python -m aklr export [--from DIR] [--to DIR] [--language L]` | export (`--from` and `--to` default to `AKLR_EXPORT_DIR`, else `./aklr_export`; `--language` required); fails with `no calls.*.jsonl in DIR` when there are no calls | 0 done, 1 error, 2 usage |
-| `python -m aklr export check` | checks every committed schema and `impls/`; no GPU, no environment | 0 clean, 1 problems on stderr, 2 usage |
 | `python -m aklr validate [PATH ...] [--base REV] [--stages audit,bench,e2e] ...` | audit, bench and e2e stages (default: audit, bench); writes `aklr_validation/report.json` and `report.md` | 0 passed, 1 failed, 2 usage, 3 aborted |
 
 Options and stages of `validate`: `python -m aklr validate --help`.
@@ -340,10 +319,8 @@ Read only by `RuntimeEnv()` in `aklr/core/platform/env.py`.
 
 | Variable | Values | Effect |
 |---|---|---|
-| `AKLR_DISABLE` | `1`, `0`, unset, `<contract_id>,...` | emergency stop: every contract, or the listed ones, falls back |
-| `AKLR_MIN_SPEEDUP` | a finite number | the least measured `speedup` over aiter that a workload needs to be served, default `1.03`; `0` or less also serves unmeasured workloads, never a `failed` one |
-| `AKLR_KERNEL_CACHE_DIR` | a path | where kernels are materialized; default `${XDG_CACHE_HOME:-$HOME/.cache}/aklr/kernels` |
-| `AKLR_EXPORT` | `1`, `0`, unset | record calls; any other value is an error |
-| `AKLR_EXPORT_DIR` | a path | the export directory, default `./aklr_export`; setting it alone records nothing |
-| `AKLR_MEASURED_DIR` | a path | a directory laid out like the checkout whose schemas replace the committed ones they name; set by the e2e stage for its child processes |
-| `AKLR_SGLANG_PLUGIN` | `1`, `0`, unset | `1`: the sglang plugin hooks sglang's layers to its ops (`aklr/plugins/README.md`); any other value is an error |
+| `AKLR_DISABLE` | `1`, `0`, unset, `<op_type>,...` | emergency stop: every op, or the listed op types, falls back; an older AKLR's id `<op_type>@<version>` names its op type, an unknown op type fails the start |
+| `AKLR_MIN_SPEEDUP` | a finite number | the least `speedup` over aiter, measured on the current device, that a workload needs to be served, default `1.03`; `0` or less also serves unmeasured workloads, never a `failed` one |
+| `AKLR_BUILD_CACHE_DIR` | a path | where kernels are materialized; default `${XDG_CACHE_HOME:-$HOME/.cache}/aklr/kernels` |
+| `AKLR_ENABLE_TRACING` | `1`, `0`, unset | record each call's shape as a workload of its scenario's kernel-less schema file, written at exit (see `AKLR_SCHEMA_PATH`); any other value is an error |
+| `AKLR_SCHEMA_PATH` | a path | the dataset dispatch reads and tracing writes, laid out as `schemas/<op_type>/<name>/<uuid>.json` (uuid: the schema without its workloads); default `aklr/ops` in its own layout; the e2e stage points its child processes at a copy holding the bench's measurements |

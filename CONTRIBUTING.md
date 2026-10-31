@@ -39,8 +39,8 @@ AITER is the `3rdparty/aiter` submodule, pinned to the [ROCm/aiter](https://gith
 commit AKLR's routes describe. `pyproject.toml` packages it with `aklr` as one `amd-aiter`
 distribution; `setup.py` reproduces AITER's default build (no kernel prebuild).
 
-AKLR does not edit AITER. `aklr.ops.load_routes()`, which the SGLang and vLLM plugins
-call at startup, replaces each AITER entry point an `@aklr_route` names with a proxy,
-under every name a loaded module binds it to. To route a new AITER function, declare
-its `@aklr_route`. To move to a newer AITER, update the routes to its signatures and the
-submodule commit together.
+AKLR does not edit AITER. The dispatcher, which the SGLang and vLLM plugins start,
+replaces each AITER entry point an `@adapter` in `aklr/seam/aiter.py` names with its
+stand-in, under every name a loaded module binds it to. To route a new AITER function,
+declare its `@adapter`. To move to a newer AITER, update the adapters to its signatures
+and the submodule commit together.

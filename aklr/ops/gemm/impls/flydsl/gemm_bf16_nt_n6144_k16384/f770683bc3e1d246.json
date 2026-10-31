@@ -1,0 +1,149 @@
+{
+  "name": "gemm_bf16_nt_n6144_k16384",
+  "op_type": "gemm_bf16_nt",
+  "axes": {
+    "M": {
+      "description": "Tokens.",
+      "type": "var"
+    },
+    "N": {
+      "description": "Output columns.",
+      "value": 6144,
+      "type": "const"
+    },
+    "K": {
+      "description": "Reduction length.",
+      "value": 16384,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "M": 1
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 16
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 32
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 64
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 128
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 256
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 512
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 1024
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 4096
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "a": {
+      "shape": [
+        "M",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "N",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Weights."
+    },
+    "bias": {
+      "shape": [
+        "N"
+      ],
+      "dtype": null,
+      "description": "Added to every output row."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "M",
+        "N"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "reference": "from __future__ import annotations\nimport math\nimport torch\nimport torch.nn.functional as F\n\ndef _plus_bias(product: Tensor, bias: Tensor | None) -> Tensor:\n    return product if bias is None else product + bias.double()\n\ndef gemm_bf16_nt_reference(a, b, bias=None) -> Tensor:\n    \"\"\"``a @ b.T + bias``.\"\"\"\n    return _plus_bias(a.double() @ b.double().mT, bias)\n\nrun = gemm_bf16_nt_reference\n",
+  "check": "from __future__ import annotations\nimport torch\n\ndef _as_output_list(outputs: Any) -> List[Any]:\n    if isinstance(outputs, list):\n        return outputs\n    if isinstance(outputs, tuple):\n        return list(outputs)\n    return [outputs]\n\ndef default_tolerances(dtype: Union[torch.dtype, str]) -> Tuple[float, float]:\n    \"\"\"Return ``(rtol, atol)`` defaults for a trace correctness check.\n\n    These defaults are intentionally conservative for low-precision inference\n    data types. Template-specific ``check`` functions can override them by\n    passing explicit ``rtol`` and ``atol`` to :func:`default_check`.\n    \"\"\"\n    dtype_name = str(dtype).replace(\"torch.\", \"\")\n    if dtype_name in (\"float64\", \"double\"):\n        return 1e-7, 1e-7\n    if dtype_name in (\"float32\", \"float\"):\n        return 1e-5, 1e-5\n    if dtype_name in (\"float16\", \"half\"):\n        return 1e-3, 1e-3\n    if dtype_name == \"bfloat16\":\n        return 1e-2, 1e-2\n    if dtype_name.startswith(\"float8\"):\n        return 1e-1, 1e-1\n    if dtype_name.startswith(\"float4\") or \"fp4\" in dtype_name:\n        return 1.0, 1.0\n    return 0.0, 0.0\n\ndef _cosine_similarity(actual: torch.Tensor, expected: torch.Tensor) -> float:\n    actual = actual.reshape(-1).to(torch.float32)\n    expected = expected.reshape(-1).to(torch.float32)\n    finite = torch.isfinite(actual) & torch.isfinite(expected)\n    if not finite.any():\n        return 1.0\n    actual = actual[finite]\n    expected = expected[finite]\n    actual_norm = torch.linalg.vector_norm(actual)\n    expected_norm = torch.linalg.vector_norm(expected)\n    if actual_norm.item() == 0 or expected_norm.item() == 0:\n        return 1.0 if torch.equal(actual, expected) else 0.0\n    return ((actual * expected).sum() / (actual_norm * expected_norm)).item()\n\ndef default_check(\n    reference_outputs: Any,\n    actual_outputs: Any,\n    *,\n    rtol: Optional[float] = None,\n    atol: Optional[float] = None,\n    max_mismatch_pct: float = 0.0,\n    min_cos_sim: Optional[float] = 1.0 - 1e-3,\n) -> bool:\n    \"\"\"Validate actual outputs against reference outputs.\n\n    ``reference_outputs`` and ``actual_outputs`` may be lists/tuples,\n    dictionaries with matching keys, or single output values. Tensor outputs\n    are checked for shape equality, closeness, mismatch percentage, and cosine\n    similarity. Non-floating tensors are checked exactly unless\n    ``max_mismatch_pct`` allows mismatches. Non-tensor outputs use Python\n    equality.\n    \"\"\"\n    if isinstance(reference_outputs, dict) or isinstance(actual_outputs, dict):\n        if not isinstance(reference_outputs, dict) or not isinstance(\n            actual_outputs, dict\n        ):\n            return False\n        if reference_outputs.keys() != actual_outputs.keys():\n            return False\n        refs = [reference_outputs[key] for key in reference_outputs]\n        actuals = [actual_outputs[key] for key in reference_outputs]\n    else:\n        refs = _as_output_list(reference_outputs)\n        actuals = _as_output_list(actual_outputs)\n\n    if len(refs) != len(actuals):\n        return False\n\n    for ref, actual in zip(refs, actuals, strict=True):\n        if isinstance(ref, torch.Tensor) != isinstance(actual, torch.Tensor):\n            return False\n        if not isinstance(ref, torch.Tensor):\n            if ref != actual:\n                return False\n            continue\n\n        if ref.shape != actual.shape:\n            return False\n        if ref.numel() == 0:\n            continue\n\n        ref_is_float = torch.is_floating_point(ref)\n        actual_is_float = torch.is_floating_point(actual)\n        if ref_is_float or actual_is_float:\n            tolerance_dtype = actual.dtype if actual_is_float else ref.dtype\n            default_rtol, default_atol = default_tolerances(tolerance_dtype)\n            rtol_value = default_rtol if rtol is None else rtol\n            atol_value = default_atol if atol is None else atol\n            close = torch.isclose(\n                actual.to(torch.float32),\n                ref.to(torch.float32),\n                rtol=rtol_value,\n                atol=atol_value,\n            )\n            mismatch_pct = 100.0 * (~close).sum().item() / close.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n            if min_cos_sim is not None:\n                cos_sim = _cosine_similarity(actual, ref)\n                if cos_sim < min_cos_sim:\n                    return False\n        else:\n            matches = actual == ref\n            mismatch_pct = 100.0 * (~matches).sum().item() / matches.numel()\n            if mismatch_pct > max_mismatch_pct:\n                return False\n\n    return True\n\ndef _gemm_check(\n    reference_outputs,\n    actual_outputs,\n    *,\n    rtol=None,\n    atol=None,\n    max_mismatch_pct=0.0,\n    min_cos_sim=None,\n):\n    # main's compare_gemm_outputs: atol = rtol 1e-3 fp16, 1e-2 otherwise, every element\n    out = actual_outputs\n    if isinstance(out, (list, tuple)):\n        out = out[0]\n    tolerance = 1e-3 if out.dtype == torch.float16 else 1e-2\n    return default_check(\n        reference_outputs,\n        actual_outputs,\n        rtol=tolerance if rtol is None else rtol,\n        atol=tolerance if atol is None else atol,\n        max_mismatch_pct=max_mismatch_pct,\n        min_cos_sim=min_cos_sim,\n    )\n\nrun = _gemm_check\n",
+  "init": "from __future__ import annotations\nimport math\nimport torch\n\ndef _gemm_bf16_nt_init(*, M, N, K, device=\"cuda\", seed=0):\n    torch.manual_seed(seed)\n    return {\n        \"a\": torch.randn(M, K, device=device).to(torch.bfloat16),\n        \"b\": torch.randn(N, K, device=device).to(torch.bfloat16),\n        \"out_dtype\": torch.bfloat16,\n    }\n\nrun = _gemm_bf16_nt_init\n",
+  "tags": [
+    "glm-5.2/tp8+dp8",
+    "glm-5.2/tp8+dp8+ep8"
+  ],
+  "description": "bf16 gemm: out = a @ b.T + bias, b stored (N, K).",
+  "constraints": [
+    "not use_shuffled_weight",
+    "bias is None or bias.dtype in ('bfloat16', 'float16', 'float32')",
+    "out.dtype in ('bfloat16', 'float16', 'float32')"
+  ],
+  "kernel": null
+}

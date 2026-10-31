@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Final, Literal
 
-from pydantic import Field
+from pydantic import Field, TypeAdapter
 
-from aklr.core.contract.spec import FrozenModel
+from aklr.core._frozen_model import frozen_dataclass
 
 __all__ = [
     "DEFAULT_CONFIG_PATH", "SCENARIO_DIR", "E2eConfig", "E2eSettings", "Scenario",
@@ -20,7 +21,8 @@ DEFAULT_CONFIG_PATH: Final = Path(__file__).with_name("scenarios.yaml")
 SCENARIO_DIR: Final = Path(__file__).resolve().parents[4] / "benchmarks" / "models"
 
 
-class E2eSettings(FrozenModel):
+@frozen_dataclass
+class E2eSettings:
     """The test parameters of a scenario; a value out of range fails validation."""
 
     # ratio_lower_bound needs two rounds
@@ -35,7 +37,8 @@ class E2eSettings(FrozenModel):
         return 1 + self.min_gain_fraction
 
 
-class Scenario(FrozenModel):
+@frozen_dataclass
+class Scenario:
     """One scenario: a model and phase, its parameters and its test parameters."""
 
     name: str
@@ -48,8 +51,8 @@ class Scenario(FrozenModel):
     ep: int | None = None
     input_length: int | None = None
     concurrency: int | None = None
-    extra_args: dict[str, str | int | float | bool] = {}  # noqa: RUF012
-    env: dict[str, str] = {}  # noqa: RUF012
+    extra_args: dict[str, str | int | float | bool] = Field(default_factory=dict)
+    env: dict[str, str] = Field(default_factory=dict)
 
     def argv(self, result_json_path: Path) -> list[str]:
         argv: list[str] = [str(SCENARIO_DIR / "main.py"), self.model, self.phase]
@@ -71,7 +74,8 @@ class Scenario(FrozenModel):
         return [*argv, "--result-json", str(result_json_path)]
 
 
-class E2eConfig(FrozenModel):
+@frozen_dataclass
+class E2eConfig:
     """The scenarios of an e2e configuration file, in its order."""
 
     scenarios: tuple[Scenario, ...]
@@ -96,9 +100,9 @@ class E2eConfig(FrozenModel):
             raise ValueError(  # noqa: TRY004 (the docstring's ValueError)
                 f"{path}: 'defaults' is not a mapping or 'scenarios' not a list"
             )
-        settings_names = set(E2eSettings.model_fields)
+        settings_names = {f.name for f in dataclasses.fields(E2eSettings)}
         try:
-            E2eSettings.model_validate(defaults)
+            TypeAdapter(E2eSettings).validate_python(defaults)
         except ValidationError as error:
             raise ValueError(f"{path}: defaults: {error}") from error
         scenarios: list[Scenario] = []
@@ -112,8 +116,8 @@ class E2eConfig(FrozenModel):
             overrides = {k: v for k, v in entry.items() if k in settings_names}
             fields = {k: v for k, v in entry.items() if k not in settings_names}
             try:
-                settings = E2eSettings.model_validate(defaults | overrides)
-                scenario = Scenario.model_validate(fields | {"settings": settings})
+                settings = TypeAdapter(E2eSettings).validate_python(defaults | overrides)
+                scenario = TypeAdapter(Scenario).validate_python(fields | {"settings": settings})
             except ValidationError as error:
                 raise ValueError(f"{where}: {error}") from error
             if any(s.name == scenario.name for s in scenarios):

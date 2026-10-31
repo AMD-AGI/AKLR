@@ -3,18 +3,16 @@
 
 from __future__ import annotations
 
-import re
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Final
 
-from aklr.core.contract import locate
-from aklr.core.contract.spec import axes_text
+from aklr.core.validation.stages.validation_scope import SCHEMA_PATH_PATTERN
 
 __all__ = [
     "MAX_DETAIL_CHARACTERS", "Block", "BulletList", "Heading", "Paragraph", "Table",
-    "axes_cell", "detail_text", "escape", "one_line", "schema_short_name",
+    "axes_cell", "axes_text", "detail_text", "escape", "one_line", "schema_short_name",
 ]  # fmt: skip
 
 MAX_DETAIL_CHARACTERS: Final = 400
@@ -86,10 +84,14 @@ def one_line(text: str, limit: int = 200) -> str:
 
 
 def schema_short_name(schema_path: str) -> str:
-    match = re.fullmatch(locate.REPOSITORY_SCHEMA_PATH_PATTERN, schema_path)
+    match = SCHEMA_PATH_PATTERN.fullmatch(schema_path)
     if match is None:
         return escape(schema_path)
     return escape(f"{match['language']}/{match['name']}/{match['uuid'][:8]}")
+
+
+def axes_text(axes: Mapping[str, int]) -> str:
+    return ",".join(f"{a}={v}" for a, v in axes.items())
 
 
 def axes_cell(axes: Mapping[str, int] | None) -> str:

@@ -31,7 +31,7 @@ dependencies = [
 ]
 
 [project.entry-points."sglang.srt.plugins"]
-aklr = "aklr.plugins.sglang:register"
+aklr = "aklr.core.runtime.dispatch:register_sglang_plugin"
 
 [project.entry-points."vllm.general_plugins"]
 aklr = "aklr.core.runtime.dispatch:register_vllm_plugin"
@@ -44,7 +44,6 @@ include = ["aklr", "aklr.*", "aiter"]
 [tool.setuptools.package-data]
 "*" = ["*"]
 "aklr.ops" = ["*/impls/*/*/*.json"]
-"aklr.plugins" = ["*/*/*/impls/*/*/*.json"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["safetensors/*/*"]
