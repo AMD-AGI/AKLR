@@ -158,7 +158,9 @@
     {
       "axes": {
         "n_tokens": 4
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.059
     }
   ],
   "layout_variants": {
