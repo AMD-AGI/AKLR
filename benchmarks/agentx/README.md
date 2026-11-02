@@ -96,7 +96,6 @@ otherwise it starts a new segment and the per-point hashes only say which points
 - **Sandboxing**: InferenceX's resolution code runs as a plain child process with a minimal
   environment, not in a network-less, read-only container.
 - **argcheck**: no check of the rendered flags and env against the run image's sglang.
-- **Cookbook divergence table**: the sglang cookbook reference path is not included.
 - **History store**: the baseline is only the previously published `results.json`; there is
   no `agentx-data` branch, trend, noise model (σ) or regression verdict.
 - Shared `setup_aklr.sh` with `ci.yaml`, HF prefetch and verification, preflight GPU checks
