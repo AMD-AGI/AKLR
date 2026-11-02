@@ -24,7 +24,7 @@ one reviewed commit ── publish ──▶ aklr/ops ── aklr validate ─�
 - In that container:
 
   ```bash
-  pip install "flydsl==0.3.2" "ruff==0.16.0" "black==26.5.1"
+  pip install "flydsl==0.3.2" "ruff==0.15.12"   # the ruff that .pre-commit-config.yaml pins
   pip install -e "<your Hyperloom checkout>[forge]"    # KernelForge, from Hyperloom's AKLR branch
   ```
 
@@ -81,7 +81,7 @@ python -m kernelforge.cli forge-ablate --workspace $W --gpus 0
 python -m kernelforge.cli forge-finalize --workspace $W --gpu 0 --model claude-opus-5-5 \
   --author "$(git config user.name) <$(git config user.email)>" \
   --lint "python -m ruff check --no-fix --config $A/pyproject.toml" \
-  --lint "python -m black --check --config $A/pyproject.toml" \
+  --lint "python -m ruff format --check --config $A/pyproject.toml" \
   --review-guide $A/.claude/skills/flydsl-kernel-code-cleanup/SKILL.md
 # What the FlyDSL skill should learn from the run, as a patch for you to review
 python -m kernelforge.cli forge-distill --workspace $W --model claude-opus-5-5 \
