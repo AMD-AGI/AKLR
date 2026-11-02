@@ -104,8 +104,10 @@ python -m aklr export check && python -m aklr validate --base origin/main
 ```
 
 `publish` writes the reviewed kernel into `aklr/ops/` as the schema's kernel; commit it as `aklr/ops/README.md`
-describes and open a pull request. The skill patch is yours to take or leave: `git apply
-$RUN/knowledge_patch/knowledge_patch.diff`, then review its pages as the skill's `CONTRIBUTING.md` says.
+describes and open a pull request. What the run taught goes into the same pull request: apply
+`$RUN/knowledge_patch/knowledge_patch.diff`, then review it item by item as the skill's `CONTRIBUTING.md` says --
+edits to existing pages in place, new pages in `staging/` for a person to approve. A change to the method itself
+(this README, the driver, the `forge-loop-campaign` skill) goes into a pull request of its own.
 
 An AI agent can run the whole campaign: the `forge-loop-campaign` skill in `.claude/skills/` guides it.
 

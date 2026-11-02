@@ -70,11 +70,29 @@ echo $! > $RUN/forge_loop.pid
   validate gives a kernel the GPU alone, so it passes one that is right only while every workgroup of a launch is
   resident: a split-K fold that polls for its partners and gives up with NaN. On a stream limited to part of the CUs
   such a kernel returns NaN. Do not deliver it; tell the user, and have its fold made wait-free first.
-- Do not apply the skill patch yourself: hand `$RUN/knowledge_patch/distill.md` and the patch to the user.
 - `python .claude/skills/flydsl-kernel-optimization/tools/kb_gaps.py $RUN/workspace` lists the skill pages the
   rounds opened and the questions they found no page for.
 - Report: AKLR's verdict per workload from `aklr validate`, the delivered commit, what forge-ablate said each kept
   round is worth, and the skill's gaps.
+
+## Step 7: put what the campaign taught into the skill
+
+forge-distill's patch (`$RUN/knowledge_patch/`) is a proposal. Review every item before it goes in, as
+`flydsl-kernel-optimization/CONTRIBUTING.md` says:
+
+- Check each claim against the run's files (`$W/forge_experiments/`: `lessons/`, `analysis/`, `ablation.md`),
+  FlyDSL's source or the ISA. A number carries the ruler it was taken with; a gain inside the noise, or measured by
+  another ruler than AKLR's, is not a gain.
+- Search the skill for a page that already says it, and extend that page rather than write a second one.
+- An edit to an existing page goes in place; a new page goes to `staging/` with its `<slug>.review.md`, for a person
+  to approve with `tools/kb_approve.py` and link afterwards.
+- `python tools/kb_lint.py --errors-only` and `python tools/kb_index.py --check` pass, and `tools/kb_numbers_guard.py`
+  accounts for every number an edited page gains or loses.
+- Several campaigns at once leave patches that touch the same pages: review them together, one owner per page.
+
+What the campaign taught about the kernel goes into the pull request that delivers the kernel's schema file; a kernel
+held back keeps its knowledge back with it. What it taught about the method -- this skill, forge_task, its driver, a
+ruler -- goes into a pull request of its own that changes the method.
 
 ## Pitfalls
 
