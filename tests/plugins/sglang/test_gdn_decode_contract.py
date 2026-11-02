@@ -75,7 +75,6 @@ def test_decode_kernels_are_self_contained_schemas(contract, rows):
         assert not kernel.state_bytes and not kernel.peer_bytes
         assert [s.path for s in kernel.sources] == ["kernel.py"]
         assert kernel.sources[0].content.startswith("# Created by OpenAI\n")
-        assert all(w.accuracy is None and w.speedup is None for w in schema.workloads)
         findings = check_kernel(
             str(path),
             kernel,

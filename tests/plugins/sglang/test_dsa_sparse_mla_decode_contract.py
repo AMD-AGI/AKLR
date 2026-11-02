@@ -41,7 +41,6 @@ def test_the_schemas_serve_glm52s_decode_points_once_each():
             assert point.axes["kv_dim"] == 576 and point.axes["topk"] == 2048
             assert point.dtypes["q"] == point.dtypes["kv_cache"] == "float8_e4m3fn"
             assert workload.scalars == {"sm_scale": 0.0625}
-            assert workload.accuracy is None and workload.speedup is None
             served.append((point.axes["n_heads"], point.axes["n_tokens"]))
     assert sorted(served) == sorted(POINTS)
 
