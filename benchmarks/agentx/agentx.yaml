@@ -33,5 +33,5 @@ sweep:
   # InferenceX's dram-utilization: the TP4 arm's share of host memory reported to the client.
   dram_utilization: 0.85
 report:
-  # Commit and compare links on the page.
+  # PR, commit and compare links on the page; the PR list itself comes from the local checkout.
   repo_url: https://github.com/AMD-AGI/SIKL

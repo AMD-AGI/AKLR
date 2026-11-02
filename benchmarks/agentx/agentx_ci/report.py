@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
-"""Render the weekly page: Pareto charts, the week-over-week table and the AKLR commits compared.
+"""Render the weekly page: Pareto charts, the week-over-week table and what landed since.
 
 Writes ``index.html`` (self-contained, inline SVG), ``results.json`` (this run, next week's
-baseline) and ``report.json`` (frontiers, comparison) into ``--out``.
+baseline) and ``report.json`` (frontiers, comparison, history since the previous run)
+into ``--out``.
 """
 
 from __future__ import annotations
@@ -14,12 +15,14 @@ from pathlib import Path
 
 from agentx_ci.common import (
     DEFAULT_CONFIG,
+    REPO_ROOT,
     load_config,
     read_json,
     utc_now,
     write_json,
 )
 from agentx_ci.pareto import X, Y, compare, frontier, frontiers, measured
+from agentx_ci.prs import landed
 
 ARM_COLORS = {"tp8": "#2563eb", "tp4": "#ea580c"}
 FALLBACK_COLORS = ("#16a34a", "#9333ea", "#0891b2")
@@ -253,19 +256,42 @@ def comparison_tables(comparison: dict) -> str:
     return "\n".join(out)
 
 
-def aklr_section(results: dict, baseline: dict | None, repo_url: str) -> str:
-    def link(sha: str) -> str:
-        return f'<a href="{escape(repo_url)}/commit/{escape(sha)}"><code>{short(sha)}</code></a>'
+def commit_link(sha: str, repo_url: str) -> str:
+    return f'<a href="{escape(repo_url)}/commit/{escape(sha)}"><code>{short(sha)}</code></a>'
 
-    this = results["run"]["aklr_sha"]
-    if baseline is None:
-        return f"<p>This run {link(this)} · first run, no previous run to compare with.</p>"
-    base = baseline["run"]["aklr_sha"]
-    compare_url = f"{repo_url}/compare/{base}...{this}"
-    return (
-        f"<p>Previous run {link(base)} → this run {link(this)} · "
-        f'<a href="{escape(compare_url)}">compare on GitHub</a></p>'
+
+def history_section(history: dict | None, this: str, repo_url: str) -> str:
+    if history is None:
+        return (
+            f"<p>This run {commit_link(this, repo_url)} · first run, "
+            "no previous run to compare with.</p>"
+        )
+    base, head = history["base"], history["head"]
+    compare_url = f"{repo_url}/compare/{base}...{head}"
+    line = (
+        f"<p>Previous run {commit_link(base, repo_url)} → this run "
+        f"{commit_link(head, repo_url)} · "
+        f'<a href="{escape(compare_url)}">compare on GitHub</a> · '
+        f'<span class="muted">git log --first-parent {short(base)}..{short(head)}</span></p>'
     )
+    if history["error"]:
+        return (
+            line + f'<p class="bad">History unavailable: {escape(history["error"])}</p>'
+        )
+    if not history["entries"]:
+        return line + '<p class="muted">Nothing landed on main in this range.</p>'
+    items = []
+    for e in history["entries"]:
+        if e["kind"] == "pr":
+            ref = f'<a href="{escape(e["url"])}">#{e["number"]}</a>'
+        else:
+            ref = f'<a href="{escape(e["commit_url"])}"><code>{short(e["sha"])}</code></a> <span class="badge new-arm">direct commit</span>'
+        items.append(
+            f'<li>{ref} {escape(e["title"])} <span class="muted">{escape(e["author"])} · {escape(e["date"])}</span></li>'
+        )
+    prs = sum(e["kind"] == "pr" for e in history["entries"])
+    count = f'<p class="muted">{prs} PRs, {len(history["entries"]) - prs} direct commits.</p>'
+    return line + f'<ul class="prs">{"".join(items)}</ul>{count}'
 
 
 def points_table(results: dict) -> str:
@@ -323,6 +349,7 @@ def render(
     results: dict,
     baseline: dict | None,
     comparison: dict,
+    history: dict | None,
     repo_url: str,
 ) -> str:
     run, ix = results["run"], results["run"]["inferencex"]
@@ -371,8 +398,8 @@ AKLR {aklr_link} · InferenceX {ix_link} · {ok}/{len(results['points'])} points
 <p class="muted">An arm is compared only when its whole serving config (arm_serve_sha256) equals the previous run's;
 otherwise it starts a new segment. Deltas are colored beyond ±{NOTABLE * 100:.0f}% (no noise model yet).</p>
 {comparison_tables(comparison)}
-<h2>AKLR commits</h2>
-{aklr_section(results, baseline, repo_url)}
+<h2>AKLR changes since the previous run</h2>
+{history_section(history, run["aklr_sha"], repo_url)}
 <h2>Points</h2>
 {points_table(results)}
 <h2>Provenance</h2>
@@ -398,6 +425,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--out", type=Path, required=True, help="site directory")
     parser.add_argument("--config", default=DEFAULT_CONFIG)
+    parser.add_argument(
+        "--git-dir",
+        type=Path,
+        default=REPO_ROOT,
+        help="AKLR checkout whose first-parent history lists the changes",
+    )
     args = parser.parse_args(argv)
 
     repo_url = load_config(args.config)["report"]["repo_url"].rstrip("/")
@@ -406,14 +439,18 @@ def main(argv: list[str] | None = None) -> int:
         read_json(args.baseline) if args.baseline and args.baseline.is_file() else None
     )
     comparison = compare(results, baseline)
+    history = None
+    if baseline is not None:
+        base, head = baseline["run"]["aklr_sha"], results["run"]["aklr_sha"]
+        history = landed(base, head, args.git_dir, repo_url)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "index.html").write_text(
-        render(results, baseline, comparison, repo_url)
+        render(results, baseline, comparison, history, repo_url)
     )
     write_json(args.out / "results.json", results)
     write_json(
         args.out / "report.json",
-        {"frontiers": frontiers(results), "comparison": comparison},
+        {"frontiers": frontiers(results), "comparison": comparison, "history": history},
     )
     print(f"wrote {args.out / 'index.html'} ({comparison['status']})")
     return 0
