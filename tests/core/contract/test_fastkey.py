@@ -9,6 +9,9 @@ from aklr.core.contract.semantics import DTYPE_TRAITS
 from aklr.core.contract.spec import ScalarSpec
 from tests.op_case import OpCase
 
+# layouts whose pages view a bigger buffer: padded rows, or one half of each row
+_PAGE_KINDS = ("deepseekv4_kv_pages", "kv_split_pages")
+
 
 class TestFastKey:
     """The hot-path ``fast_key`` agrees with the offline ``FastKeyCodec``."""
@@ -30,9 +33,9 @@ class TestFastKey:
                 call[n] = stored[n].view(*stored[n].shape[::-1]).mT
                 assert not call[n].is_contiguous()
         if form == "unpadded":
-            # sglang's pool pages without their padding are not its bytes
+            # a pool's pages copied out of their buffer are not its bytes
             variant = op_case.contract.layout_variants.by_name[op_case.point.layout_variant_name]
-            names = [n for n in stored if variant.layout_of(n).kind == "deepseekv4_kv_pages"]
+            names = [n for n in stored if variant.layout_of(n).kind in _PAGE_KINDS]
             if not names:
                 pytest.skip("no padded kv pages")
             for n in names:

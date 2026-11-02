@@ -1,0 +1,949 @@
+{
+  "schema_version": 5,
+  "name": "paged_attention_decode_kv_split_pages_n_heads16_n_kv_heads2_head_dim64_block_size16",
+  "contract_id": "paged_attention_decode@1.0",
+  "description": "Decode attention over a paged KV cache: query head h of each request attends to KV head h // (n_heads / n_kv_heads) of the first context_lens tokens its block_tables row names, block_size tokens a block; with sliding_window > 0 only to the last sliding_window of them. Logits are q . k * scale.",
+  "op_type": "attention",
+  "axes": {
+    "batch": {
+      "type": "var",
+      "description": "Requests, one query token each."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 16,
+      "description": "Query heads."
+    },
+    "n_kv_heads": {
+      "type": "const",
+      "value": 2,
+      "description": "KV heads."
+    },
+    "head_dim": {
+      "type": "const",
+      "value": 64,
+      "description": "Values per head."
+    },
+    "n_blocks": {
+      "type": "var",
+      "description": "Blocks of the KV cache."
+    },
+    "block_size": {
+      "type": "const",
+      "value": 16,
+      "description": "Tokens per block."
+    },
+    "max_blocks": {
+      "type": "var",
+      "description": "Blocks per request in the block table."
+    }
+  },
+  "attrs": {
+    "kv_cache_dtype": "auto",
+    "kv_cache_layout": "NHD",
+    "has_alibi_slopes": false
+  },
+  "inputs": {
+    "query": {
+      "shape": [
+        "batch",
+        "n_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The query of each request."
+    },
+    "key_cache": {
+      "shape": [
+        "n_blocks",
+        "block_size",
+        "n_kv_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The keys of every cached token, block by block."
+    },
+    "value_cache": {
+      "shape": [
+        "n_blocks",
+        "block_size",
+        "n_kv_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The values of every cached token, block by block."
+    },
+    "block_tables": {
+      "shape": [
+        "batch",
+        "max_blocks"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_blocks - 1",
+        "distinct": false
+      },
+      "description": "The blocks of each request, in context order."
+    },
+    "context_lens": {
+      "shape": [
+        "batch"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 1,
+        "hi": "max_blocks * block_size",
+        "distinct": false
+      },
+      "description": "Cached tokens of each request, the query's own included."
+    },
+    "scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every logit."
+    },
+    "sliding_window": {
+      "shape": null,
+      "dtype": "int32",
+      "description": "Trailing tokens each query reads; 0 reads the whole context."
+    },
+    "logits_soft_cap": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Logit soft cap; 0 is none."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "batch",
+        "n_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Softmax-weighted sum of the read values."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "batch": 1,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 3,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 5,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 6,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 7,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 9,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 10,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 11,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 12,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 13,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 14,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 15,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 17,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 18,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 19,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 20,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 21,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 22,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 23,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 24,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 25,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 26,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 27,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 28,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 29,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 30,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 31,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 33,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 34,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 35,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 36,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 37,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 38,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 39,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 40,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 41,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 42,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 43,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 44,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 45,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 46,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 47,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 48,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 49,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 50,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 51,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 52,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 53,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 54,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 55,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 56,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 57,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 58,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 59,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 60,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 61,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 62,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 63,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 64,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "scale": 0.125,
+        "sliding_window": 0,
+        "logits_soft_cap": 0.0
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "kv_split_pages": {
+        "layouts": {
+          "query": {
+            "kind": "strided_rows"
+          },
+          "key_cache": {
+            "kind": "kv_split_pages"
+          },
+          "value_cache": {
+            "kind": "kv_split_pages"
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "kv_cache_storage",
+            "expected_value": "kv_split_pages"
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": []
+  }
+}

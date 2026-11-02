@@ -467,6 +467,36 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"has_norm_weight": True},
         layout_variant_name="row_major",
     ),
+    *(
+        PointSpec(
+            contract_id="paged_attention_decode@1.0",
+            axes={
+                "batch": 2,
+                "n_heads": n_heads,
+                "n_kv_heads": 2,
+                "head_dim": head_dim,
+                "n_blocks": 8,
+                "block_size": block_size,
+                "max_blocks": 4,
+            },
+            dtypes={
+                "query": "bfloat16",
+                "key_cache": "bfloat16",
+                "value_cache": "bfloat16",
+                "block_tables": "int32",
+                "context_lens": "int32",
+                "alibi_slopes": None,
+                "out": "bfloat16",
+            },
+            attrs={"kv_cache_dtype": "auto", "kv_cache_layout": "NHD", "has_alibi_slopes": False},
+            layout_variant_name=layout,
+        )
+        # vLLM's K and V halves of one cache; a contiguous one
+        for layout, n_heads, head_dim, block_size in (
+            ("kv_split_pages", 16, 64, 16),
+            ("row_major", 8, 128, 32),
+        )
+    ),
     PointSpec(
         contract_id="rms_norm@1.0",
         axes={"n_tokens": 4, "hidden_size": 2048},
@@ -511,6 +541,48 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         },
         attrs={"page_size": 16, "has_page_tables": True},
         layout_variant_name="row_major",
+    ),
+    *(
+        PointSpec(
+            contract_id="unified_attention@1.0",
+            axes={
+                "total_q": total_q,
+                "batch": 2,
+                "n_offsets": 3,
+                "n_heads": n_heads,
+                "n_kv_heads": n_kv_heads,
+                "head_dim": head_dim,
+                "n_blocks": max_blocks,
+                "block_size": block_size,
+                "max_blocks": max_blocks,
+            },
+            dtypes={
+                "q": "bfloat16",
+                "k": "bfloat16",
+                "v": "bfloat16",
+                "cu_seqlens_q": "int32",
+                "seqused_k": "int32",
+                "block_table": "int32",
+                "q_descale": None,
+                "k_descale": None,
+                "v_descale": None,
+                "out": "bfloat16",
+            },
+            attrs={
+                "max_seqlen_q": max_q,
+                "window_size": window,
+                "causal": True,
+                "has_q_descale": False,
+                "has_k_descale": False,
+                "has_v_descale": False,
+            },
+            layout_variant_name=layout,
+        )
+        # Muse's verify step on vLLM's cache; a windowed one past its window, contiguous
+        for layout, total_q, max_q, window, n_heads, n_kv_heads, head_dim, block_size, max_blocks in (
+            ("kv_split_pages", 12, 8, (-1, -1), 16, 2, 64, 16, 4),
+            ("row_major", 5, 4, (2047, 0), 8, 1, 128, 32, 96),
+        )
     ),
 )
 # whose backend runs only on gfx950 (fp4, dsv4 MLA, e4m3fn bytes)
