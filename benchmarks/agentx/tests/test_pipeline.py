@@ -146,6 +146,20 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(quiet(sweep.main, argv), 1)
         self.assertIn("model snapshot", err.getvalue())
 
+    def test_live_sweep_needs_main_at_the_pinned_revision(self):
+        weights = load_config()["weights"]
+        model = self.root / "hub" / ("models--" + weights["repo"].replace("/", "--"))
+        (model / "snapshots" / weights["revision"]).mkdir(parents=True)
+        (model / "refs").mkdir()
+        (model / "refs" / "main").write_text("0" * 40)
+        argv = ["--serving", str(self.serving), "--out", str(self.root / "live")]
+        with (
+            patch.dict(os.environ, {"HF_HUB_CACHE": str(self.root / "hub")}),
+            contextlib.redirect_stderr(io.StringIO()) as err,
+        ):
+            self.assertEqual(quiet(sweep.main, argv), 1)
+        self.assertIn("not the pinned", err.getvalue())
+
 
 FAKE_SERVER = """
 import http.server, sys
@@ -161,6 +175,7 @@ FAKE_CLIENT = """
 import json, os, pathlib
 env = os.environ
 assert env["TOTAL_CPU_DRAM_GB"] == "0" and env["SERVED_MODEL_NAME"] and env["AKLR_FAKE"] == "client"
+assert env["TOKENIZER"] == "amd/GLM-5.2-MXFP4"
 out = pathlib.Path(env["AGENTIC_OUTPUT_DIR"]) / (env["RESULT_FILENAME"] + ".json")
 metrics = {"throughput": {"per_gpu": {"total_tput_tps": 10.0 * int(env["CONC"])}},
            "latency": {"e2e_norm_intvty": {"p90": 50.0}}}
@@ -199,6 +214,7 @@ class LivePathTests(unittest.TestCase):
                 "dram_utilization": 0.85,
                 "memory_gb": 1000,
                 "model_path": str(root),
+                "tokenizer": "amd/GLM-5.2-MXFP4",
                 "ix_e2e": root / "ix",
                 "agentx_runtime_dir": root / "venv",
                 "client_env_overrides": {"AKLR_FAKE": "client"},

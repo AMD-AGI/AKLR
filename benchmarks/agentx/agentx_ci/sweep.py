@@ -155,7 +155,7 @@ def run_live(point: dict, out: Path, host: dict) -> dict:
             ),
             "PORT": str(port),
             "SERVED_MODEL_NAME": point["served_model_name"],
-            "TOKENIZER": host["model_path"],
+            "TOKENIZER": host["tokenizer"],
             "AIPERF_SERVER_METRICS_URLS": f"{base_url}/metrics",
             "AIPERF_RUNTIME_DIR": str(host["agentx_runtime_dir"]),
             "RESULT_DIR": str(out / "agentic"),
@@ -229,13 +229,22 @@ def parse_scale(items: list[str]) -> dict[str, float]:
 def host_settings(args: argparse.Namespace, config: dict, serving: dict) -> dict:
     sweep = config["sweep"]
     weights = serving["weights"]
-    model_path = args.model_path
+    model_path, tokenizer = args.model_path, args.model_path
     if model_path is None:
         hub = Path(
             os.environ.get("HF_HUB_CACHE", Path.home() / ".cache/huggingface/hub")
         )
-        model_dir = "models--" + weights["repo"].replace("/", "--")
-        model_path = hub / model_dir / "snapshots" / weights["revision"]
+        model_dir = hub / ("models--" + weights["repo"].replace("/", "--"))
+        model_path = model_dir / "snapshots" / weights["revision"]
+        # Offline, aiperf resolves --tokenizer as a repo id through the cache's refs/main,
+        # even when given a snapshot path, so main must be the pinned revision.
+        tokenizer = weights["repo"]
+        main = model_dir / "refs" / "main"
+        if main.is_file() and main.read_text().strip() != weights["revision"]:
+            raise RuntimeError(
+                f"{main} is {main.read_text().strip()}, not the pinned {weights['revision']}; "
+                "the AgentX client's tokenizer would come from another revision"
+            )
     if not Path(model_path).is_dir():
         raise RuntimeError(
             f"model snapshot {model_path} not found; prefill the HF hub cache"
@@ -250,6 +259,7 @@ def host_settings(args: argparse.Namespace, config: dict, serving: dict) -> dict
         "dram_utilization": sweep["dram_utilization"],
         "memory_gb": host_memory_gb(),
         "model_path": str(model_path),
+        "tokenizer": str(tokenizer),
         "ix_e2e": ix_dir / "inferencex-e2e",
         "agentx_runtime_dir": args.work / "agentx-runtime",
         "client_env_overrides": overrides,
