@@ -420,3 +420,21 @@ def test_stress_compares_as_the_schemas_determinism_asks(run):
     assert not driver._agrees(wrong, alone, "bounded", 0.001)
     ids = torch.arange(16)
     assert driver._agrees(ids, ids.clone(), "bounded", 0.001)
+
+
+def test_stress_reports_a_call_that_never_finishes_as_hung(real_run, monkeypatch, capsys):
+    """A kernel whose workgroups wait for each other may never finish under stress: the check names the case and fails
+    instead of waiting with it."""
+    run, schema = real_run
+    driver = _import_driver(run)
+    calls = driver._calls("cpu")
+    monkeypatch.setattr(driver, "_calls", lambda device: calls)
+
+    def hangs(candidate, call, outputs):
+        raise driver.StressHang
+
+    monkeypatch.setattr(driver, "_stress_conditions", lambda: {"on 16 CUs": hangs})
+    assert driver._run_stress("cpu") == 1
+    out = capsys.readouterr().out
+    assert f"hung, no result within 60 s: {schema.workloads[0].case_id} on 16 CUs" in out
+    assert out.strip().endswith("stress: FAIL")

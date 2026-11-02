@@ -145,6 +145,7 @@ baseline; `--run-dir` (default `./aklr-runs/<schema>-<time>`).
 | `run directory … is not empty` | give each task a directory of its own |
 | `Kineto recorded no kernels for a single call` | the profiler lost a trace, usually on a busy machine: try again, or on an idle one |
 | `stress: differs from the call alone: …` | the kernel's workgroups wait for each other (a split-K fold that polls flags), or its concurrent calls share scratch memory: make it wait-free, the last workgroup to arrive on an atomic counter doing the fold, before you publish |
+| `stress: hung, no result within 60 s: …` | the same defect, a wait with no bound: the kernel never finished on that stream. The check stops there, since the device is still running it |
 
 ## Tests
 
