@@ -4,9 +4,6 @@
 # Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 ###############################################################################
 
-"""The e2e stage's run on real text, the same for every model:
-``python main.py <model> <phase> [the model's flags] --result-json PATH``."""
-
 import argparse
 import hashlib
 import json
@@ -26,19 +23,17 @@ from sglang_bench import (
     prepare_decode,
 )
 
-# Teacher-forced steps timed after prefill.
 DECODE_STEPS = 256
 
 
 @dataclass(frozen=True)
 class HubText:
-    """One text of a parquet file in an HF dataset repo, pinned by revision and hash;
-    read from the HF cache like the weights, so CI's offline cache must hold it."""
+    """An HF dataset parquet's text, pinned by revision and hash; CI's offline HF cache must hold it."""
 
     repo: str
     file: str
     revision: str
-    # the row's ``url`` column, which picks the text out of the file
+    # The parquet row's `url` value, which picks the text out of the file.
     url: str
     sha256: str
 
@@ -67,15 +62,13 @@ TEXTS = {
 
 
 def work(server_args, port_args, args, gpu_id, tp_rank):
-    """Time one model on real text: a real chunked prefill, then teacher-forced
-    decode steps. Rank 0 writes ``--result-json`` for ``--phase``."""
-    # Imported here, not at module level: a spawned rank re-imports this file without
-    # running __main__, though it inherits the sys.path that finds the model's directory.
+    """Time real text: chunked prefill, then teacher-forced decode steps; rank 0 writes --result-json."""
+    # Imported here: a spawned rank re-imports this file without __main__ but inherits its sys.path.
     import model_bench
     from sglang.benchmark.one_batch import prepare_synthetic_inputs_for_latency_test
     from transformers import AutoTokenizer
 
-    # setup returns (model_runner, [spec,] rank_print), by model
+    # setup returns (model_runner, [spec,] rank_print), depending on the model.
     mr, *_, rank_print = model_bench.setup(server_args, port_args, gpu_id, tp_rank)
     tokenizer = AutoTokenizer.from_pretrained(
         server_args.tokenizer_path or server_args.model_path,

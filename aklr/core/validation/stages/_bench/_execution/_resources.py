@@ -24,8 +24,6 @@ from aklr.core.validation.stages._bench._execution._model import (
 
 
 class ExecutionResource(Protocol):
-    """Resource shape consumed by schedulers and runners."""
-
     resource_id: str
     device: str
     capabilities: ResourceCapabilities
@@ -61,7 +59,7 @@ class ResourceLease:
 
 
 class ResourceCatalog(ABC):
-    """Owns execution resources and grants exclusive leases."""
+    """Owns the resources and leases each to one task at a time."""
 
     @abstractmethod
     def resources(self) -> Sequence[AcceleratorResource]: ...
@@ -80,8 +78,6 @@ class ResourceCatalog(ABC):
 
 
 class LocalAcceleratorCatalog(ResourceCatalog):
-    """Thread-safe catalog of the devices of this host the caller names."""
-
     def __init__(self, devices: Sequence[str]) -> None:
         if not devices:
             raise ValueError("no device to run on")

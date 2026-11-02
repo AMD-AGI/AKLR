@@ -1,6 +1,4 @@
-# Reports. A run writes one per shape per day, auto-named; they are output, not
-# source, and a stale one is worse than none -- the tool that produced it moves
-# faster than the numbers in it, which is why the report carries a `bench` row.
+# Run reports are output, not source: a stale one is worse than none.
 *.md
 !README.md
 !DEFINITIONS.md

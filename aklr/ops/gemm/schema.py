@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -48,10 +51,6 @@ __all__ = [
     "gemm_fp8_nt_blockscaled_op_schema",
     "gemm_mxfp4_nt_op_schema",
 ]
-
-# nt: b is stored (N, K). scale_major_mode and use_shuffled_weight are fixed per
-# schema, so they are constraints, not inputs; the api's dispatch function picks
-# the schema by them.
 
 
 def _scaled_out(description: str) -> Tensor:
@@ -224,7 +223,7 @@ gemm_bf16_nt_op_schema = _by_b_storage(GEMM_BF16_NT, GEMM_BF16_NT_SHUFFLED)
 gemm_a8w8_nt_op_schema = _by_b_storage(GEMM_A8W8_NT, GEMM_A8W8_NT_SHUFFLED)
 
 
-# Fixed 128 x 128 blocks: all aiter passes.
+# Blocks are fixed at 128 x 128: the only size aiter passes.
 def _blockscaled(
     name: str,
     shuffled: bool,
@@ -294,7 +293,7 @@ GEMM_FP8_NT_BLOCKSCALED_MN = _blockscaled(
     gemm_fp8_nt_blockscaled_mn_reference,
     _gemm_fp8_nt_blockscaled_mn_init,
 )
-# aiter's shuffled kernel: e4m3 only.
+# aiter's shuffled kernel takes e4m3 only.
 GEMM_FP8_NT_BLOCKSCALED_SHUFFLED_MN = _blockscaled(
     "gemm_fp8_nt_blockscaled_shuffled_mn",
     True,
@@ -326,7 +325,6 @@ def gemm_fp8_nt_blockscaled_op_schema(
     scale_major_mode: str = "MN",
     **__: Any,
 ) -> Schema:
-    """The schema of a call by its storage."""
     return _BLOCKSCALED[(use_shuffled_weight, scale_major_mode)]
 
 

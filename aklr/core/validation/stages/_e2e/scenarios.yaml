@@ -1,71 +1,29 @@
-# The e2e stage's scenarios: whole model steps with aklr on against off (D §7.8).
-#
-# `python -m aklr validate --stages audit,bench,e2e` runs every scenario below;
-# `--e2e-scenario NAME` (repeatable) runs only the named ones.
-#
-# A scenario runs `aklr/benchmarks/models/main.py <model> <phase>` with its
-# parameters as flags, plus `--result-json`: the script then prefills real text
-# (main.py's TEXTS, pinned, read from the HF cache like the weights) and runs
-# teacher-forced decode steps,
-# writing `tokens_per_s` and `latency_ms` to the JSON.
-# The stage compares performance between the two sides; real
-# weights only (a dummy load is refused):
-#
-#   name          the scenario's name in the report and on the command line
-#   model         the directory under aklr/benchmarks/models (kimi_k3, glm52, ...)
-#   phase         decode or prefill
-#   model_path    --model-path   the checkpoint
-#   tp            --tp-size      tensor parallel size
-#   dp            --dp-size      data parallel size
-#   ep            --ep-size      expert parallel size
-#   input_length  --ISL          input sequence length, tokens
-#   concurrency   --CONC         concurrent requests, global across dp ranks
-#   extra_args    any other flag of main.py or the model's, `flag: value` (`flag: true` for a
-#                 switch), e.g. `mem-fraction-static: 0.85`
-#   env           environment variables of every run, e.g. `SGLANG_USE_AITER: "1"`
-#
-# `defaults` holds the test parameters every scenario starts from; a scenario may
-# override any of them:
-#
-#   n_runs_per_side        rounds, each one run per side in a secret order
-#   timeout_seconds        per run
-#   min_gain_fraction      the smallest gain (tokens/s, on over off) accepted: the
-#                          ratio's lower bound must reach 1 + it; never below 0,
-#                          e2e accepts no regression
-
+# The e2e stage's scenarios: model steps of aklr/benchmarks/models/main.py, aklr on against off
 defaults:
   n_runs_per_side: 6
   timeout_seconds: 3600
-  # TODO: 1% is provisional, not calibrated; measure off-against-off noise per
-  # scenario on the target platform and set the gain above it.
+  # TODO: 1% is provisional, uncalibrated: set it above each scenario's off-against-off noise on the target
   min_gain_fraction: 0.01
 
 scenarios:
-  # GLM-5.2 MXFP4 decode at concurrency 1, where the kernels' gain shows. Plain TP:
-  # --CONC must divide by dp_size. No attention-backend flag: `aiter` there disables
-  # GLM-5.2's sparse attention; mem-fraction-static 0.6: without DP attention the
-  # indexer's chunk x context score matrix needs 6.5 GB at 100k (glm52/README.md)
+  # GLM-5.2 MXFP4 decode at concurrency 1, where the kernels' gain shows
   - name: glm52-decode-tp8-conc1
     model: glm52
     phase: decode
-    tp: 8
+    tp: 8  # plain TP: --CONC must divide by dp_size
     input_length: 100000
     concurrency: 1
-    # the fewest rounds ratio_lower_bound accepts: fast, at the cost of a wider bound
-    n_runs_per_side: 2
-    extra_args:
-      mem-fraction-static: 0.6
+    n_runs_per_side: 2  # the fewest rounds ratio_lower_bound accepts: fast, at the cost of a wider bound
+    extra_args:  # no attention-backend flag: aiter there disables GLM-5.2's sparse attention
+      mem-fraction-static: 0.6  # no DP attention: the indexer's chunk x context scores take 6.5 GB at 100k
     env:
       SGLANG_USE_AITER: "1"
 
-  # DeepSeek-V4-Flash decode at concurrency 1, 2 and 4, the batches the sparse MLA
-  # kernels target. Plain TP with sglang's default pool settings: the KV pool's page
-  # counts are axes of the attention definitions, and their workloads hold the counts
-  # these runs allocate on MI355X (n_pages 12153), so changing a pool flag misses them.
+  # DeepSeek-V4-Flash decode at concurrency 1, 2 and 4, the batches the sparse MLA kernels target
   - name: deepseekv4-flash-decode-tp8-conc1
     model: deepseekv4
     phase: decode
-    tp: 8
+    tp: 8  # default pool flags: attention workloads hold the n_pages these runs allocate (12153 on MI355X)
     input_length: 100000
     concurrency: 1
     n_runs_per_side: 2
@@ -90,14 +48,11 @@ scenarios:
     env:
       AITER_BF16_FP8_MOE_BOUND: "16"
 
-  # Kimi-K3 decode at concurrency 1 and 2 on the K3 cookbook's MI355X recipe (kimi_k3/README.md).
-  # Plain TP8, not DCP8: at --CONC 1 and 2 its step is the faster one and its KV pool holds 16
-  # requests at 100k. HONOR_EXPLICIT_MEM_FRACTION keeps 0.85, which sglang otherwise scales
-  # to 0.7225 under aiter at long context, too small for the 194 GB/rank of weights.
+  # Kimi-K3 decode at concurrency 1 and 2 on the K3 cookbook's MI355X recipe (kimi_k3/README.md)
   - name: kimi-k3-decode-tp8-conc1
     model: kimi_k3
     phase: decode
-    tp: 8
+    tp: 8  # not DCP8: at --CONC 1 and 2 TP8's step is faster and its KV pool holds 16 requests at 100k
     input_length: 100000
     concurrency: 1
     n_runs_per_side: 2
@@ -110,6 +65,7 @@ scenarios:
       SGLANG_AITER_K3_OPT: "1"
       AITER_FLYDSL_FORCE: "1"
       AITER_SITUV2_A8W4: "1"
+      # keeps 0.85, else scaled to 0.7225 under aiter at long context: too little for 194 GB/rank of weights
       SGLANG_AITER_HONOR_EXPLICIT_MEM_FRACTION: "1"
   - name: kimi-k3-decode-tp8-conc2
     model: kimi_k3

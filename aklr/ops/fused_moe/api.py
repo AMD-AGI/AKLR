@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -8,8 +11,7 @@ from aklr.ops.fused_moe.schema import fused_moe_op_schema
 
 __all__ = ["fused_moe"]
 
-# Positional parameters are the schema's inputs, then its outputs, in its order; the
-# others pick the schema by the weights' storage.
+# Positional parameters are the schema's inputs, then its outputs, in order; the rest pick the schema.
 
 
 @aklr_api(fused_moe_op_schema)

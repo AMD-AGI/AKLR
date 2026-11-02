@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -36,7 +39,7 @@ CheckName = Literal[
 ]
 
 
-# a mismatching step's code: (index 0, index > 0)
+# codes at (index 0, index > 0): a first_capture replay on new inputs that mismatches is capture-unsafe
 _MISMATCH_CODES: Final[Mapping[CheckName, tuple[FindingCode, FindingCode]]] = {
     "first_capture": (FindingCode.NUMERIC_MISMATCH, FindingCode.CAPTURE_UNSAFE),
     "numeric": (FindingCode.NUMERIC_MISMATCH, FindingCode.NUMERIC_MISMATCH),
@@ -83,8 +86,7 @@ class TrialRequest:
     axes_text: str
     thresholds: dict[Versus, Threshold]
     incumbent: Schema | None
-    # the path of the base kernel dispatch serves (this very kernel too), exported as
-    # the baseline; None: the adapter that binds is
+    # the served base kernel's path (this one too), exported as the baseline; None: the bound adapter is
     baseline: str | None
 
     @classmethod
@@ -98,7 +100,6 @@ class TrialRequest:
         incumbent: Schema | None,
         baseline: str | None,
     ) -> TrialRequest:
-        """The request of ``schema``'s ``workload``."""
         return cls(
             schema_path=schema_path,
             schema=schema,
@@ -149,6 +150,7 @@ class TrialRequest:
         return hashlib.sha256(text.encode()).hexdigest()[:16]
 
     def compose_call(self, step: Step | None, device: str | torch.device) -> dict[str, Any]:
+        """The api call for ``step`` (None: timing), seeded so both tasks draw the same inputs."""
         import torch
 
         input_set = "timing" if step is None else step.input_set

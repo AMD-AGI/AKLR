@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -61,7 +64,6 @@ class Finding:
 
     @classmethod
     def unlocated(cls, code: FindingCode, detail: str) -> Finding:
-        """A finding of no schema and no workload."""
         return cls(code=code, schema_path=None, axes=None, detail=detail)
 
     def markdown_item(self) -> str:

@@ -1,16 +1,15 @@
+###############################################################################
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Copyright (c) 2025 by FlashInfer team.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# Adapted from FlashInfer (https://github.com/flashinfer-ai/flashinfer)
+# Modified by the AKLR team.
 #
-#   http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
+# not the MIT license that covers the rest of AKLR (see LICENSE).
+###############################################################################
 
 from __future__ import annotations
 
@@ -148,7 +147,7 @@ def standard_check(
     max_mismatch_pct: float = 0.0,
     min_cos_sim: Optional[float] = 1.0 - 1e-3,
 ) -> bool:
-    """Default trace correctness check used when a template does not override it."""
+    """The check of a schema that sets none."""
     return default_check(
         reference_outputs,
         actual_outputs,

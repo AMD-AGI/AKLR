@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -140,8 +143,6 @@ def _flash_mla(
     constraints: tuple[str, ...],
     init: Any = None,
 ) -> Schema:
-    # Of the api's optional tensors a variant passes required, never absent, maybe
-    # the others. head_dim 512: the sparse dsv4 pool, 576: the dense one.
     kv_cache = Tensor(
         ["n_pages", "page_size", "one", "kv_dim"],
         description=(
@@ -311,7 +312,6 @@ FLASH_MLA_SPARSE = _flash_mla(
         "kv_cache_format == 'dsv4_fp8'",
         "kv_cache.dtype in ('uint8', 'float8_e4m3fn')",
         "head_dim_v is None",
-        # the extra pool and its indices come together; its lengths only with them
         "(extra_kv_cache is None) == (extra_sparse_indices is None)",
         "extra_kv_cache is not None or extra_sparse_lens is None",
         "extra_kv_cache is None or extra_kv_cache.dtype in ('uint8', 'float8_e4m3fn')",
@@ -379,7 +379,6 @@ def flash_mla_with_kvcache_op_schema(
     kv_cache_format: str = "dsv4_fp8",
     **__: Any,
 ) -> Schema:
-    """The schema of a call: sparse, dense or ragged."""
     if kv_cache_format == "dsv4_fp8":
         return FLASH_MLA_SPARSE
     if cu_seqlens_k is None:
@@ -499,7 +498,6 @@ FP8_PAGED_MQA_LOGITS = Schema(
 
 
 def fp8_paged_mqa_logits_op_schema(*_: Any, preshuffled: bool = True, **__: Any) -> Schema | None:
-    """The schema of a call: only preshuffled pages are described."""
     return FP8_PAGED_MQA_LOGITS if preshuffled else None
 
 

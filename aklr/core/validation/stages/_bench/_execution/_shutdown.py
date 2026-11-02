@@ -31,6 +31,7 @@ class ShutdownGate:
         ).start()
 
     def wait_until_complete(self) -> None:
+        # called from the body's own thread: waiting here would never end
         if self._owner_thread_id == threading.get_ident():
             return
         self._complete.wait()
@@ -42,7 +43,6 @@ class ShutdownGate:
         try:
             run_shutdown()
         except BaseException as error:  # noqa: BLE001
-            # Waiters re-raise this failure.
             self._error = error
         finally:
             self._owner_thread_id = None

@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -25,12 +28,12 @@ _RUN_LOG_TAIL_BYTES: Final = 2 << 10
 
 
 class RunNotKilledError(RuntimeError):
-    """A run's process group outlived its ``SIGKILL`` and still holds the devices."""
+    """A run's process group outlived its SIGKILL and still holds the devices."""
 
 
 @frozen_dataclass
 class RunResult:
-    """A run's result.json: its headline throughput and latency (decode step, or TTFT)."""
+    """A run's result.json: headline throughput and latency (the decode step, or TTFT)."""
 
     tokens_per_s: float
     latency_ms: float
@@ -38,15 +41,13 @@ class RunResult:
 
 @dataclass(frozen=True)
 class ScenarioRun:
-    """``scenario`` run once on ``side``, in ``run_dir``."""
-
     scenario: Scenario
     side: RunSide
     run_dir: Path
     env: Mapping[str, str]
 
     def execute(self) -> str | None:
-        """Run within the scenario timeout: ``None`` on success, else why and the log tail."""
+        """Run once within the scenario's timeout: None on success, else why, with the log tail."""
         self.run_dir.mkdir(parents=True)
         log_path = self.run_dir.with_suffix(".log")
         argv = [sys.executable, *self.scenario.argv(self.run_dir / "result.json")]

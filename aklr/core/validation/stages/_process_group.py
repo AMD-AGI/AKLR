@@ -41,6 +41,7 @@ class ProcessGroup:
                 state, _, process_group = stat_path.read_text().rpartition(")")[2].split()[:3]
             except (OSError, ValueError):
                 continue
+            # a zombie (an orphan no init reaps, as in a container) holds nothing
             if int(process_group) == self.group_id and state != "Z":
                 return True
         return False

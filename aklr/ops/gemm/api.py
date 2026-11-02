@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -24,8 +27,7 @@ __all__ = [
     "gemm_mxfp4_nt",
 ]
 
-# Tensor parameters are named as the schema's inputs and outputs; the others pick the
-# schema (b's storage, scale layout) or the output dtype.
+# Tensor parameters bind to schema inputs and outputs by name; the others pick the schema or out dtype.
 
 
 @aklr_api(gemm_bf16_nt_op_schema)

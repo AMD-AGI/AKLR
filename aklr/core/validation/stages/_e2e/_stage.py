@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -44,8 +47,7 @@ class E2eStage(PipelineStage):
         if not devices:
             raise ValueError("e2e needs at least one device")
         self._scenarios = tuple(scenarios)
-        # dropped from the parent's environment; each run sets its own (AKLR_MIN_SPEEDUP
-        # stays: the runs serve at the bench's threshold)
+        # each run sets these itself; AKLR_MIN_SPEEDUP stays: the runs serve at the bench's threshold
         aklr_env_names = (ENV_DISABLE, ENV_SCHEMA_PATH)
         env = {k: v for k, v in os.environ.items() if k not in aklr_env_names}
         # ROCR_VISIBLE_DEVICES is left as it is: HIP indexes within it (E11)
@@ -59,12 +61,10 @@ class E2eStage(PipelineStage):
         self._env = env
 
     def run(self, scope: ValidationScope, earlier: PipelineReport) -> E2eReport:
-        """Run every scenario; only a ``RunNotKilledError`` ends the stage."""
         findings: list[Finding] = []
         records: list[E2eRecord] = []
         with tempfile.TemporaryDirectory(prefix="aklr-validation-e2e-") as work_dir:
-            # the runs' dispatch reads this run's measurements over the committed schemas,
-            # so "on" serves what it will once they land; the checkout stays clean
+            # "on" serves this run's measurements, as it will once they land; the checkout stays clean
             measured = earlier.measured_schemas(scope.root)
             self.progress.write(
                 f"serving {len(measured)} schemas rewritten with this run's measurements,"
@@ -129,7 +129,6 @@ class E2eStage(PipelineStage):
     def _compare_rounds(  # structure: allow S4 patched in latency comparison tests
         self, scenario: Scenario, work_dir: Path, env: Mapping[str, str]
     ) -> list[tuple[RunResult, RunResult]] | Finding:
-        """Per round: on's and off's throughput and latency."""
         side_envs = {"on": {}, "off": {ENV_DISABLE: "1"}}
         rounds: list[tuple[RunResult, RunResult]] = []
         n = scenario.settings.n_runs_per_side

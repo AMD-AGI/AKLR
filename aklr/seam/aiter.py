@@ -1,7 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
-
-"""aiter's adapters: each aiter entry point AKLR serves, and the api it reaches."""
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -186,19 +187,19 @@ def _(
 ):
     # moe_sorting_dispatch_policy and splitk are scheduling: the registry decides.
     if block_size_M is not None or hidden_pad or intermediate_pad:
-        return None  # a layout AKLR does not describe
+        return None
     if shared_expert_id != -1 or any(
         s is not None for s in (shared_w1, shared_w2, shared_w1_scale, shared_w2_scale)
     ):
-        return None  # a layout AKLR does not describe
+        return None
     if stage2_scatter is not None:
         return None  # writes stage 2 elsewhere, on the gfx1250 path
     if any(s is not None for s in (a1_scale, a2_scale, bias1, bias2)):
-        return None  # not in the schema: activation scales, biases
+        return None
     if doweight_stage1 or getattr(quant_type, "name", None) != "per_1x32":
         return None  # the schemas weight in stage 2 and quantize per 1 x 32
     if dtype is not None and dtype != hidden_states.dtype:
-        return None  # out takes hidden_states' dtype
+        return None
     activation = "silu" if activation is None else activation.name.lower()
     if activation == "situv2" and os.environ.get("AITER_SITUV2_A8W4") != "1":
         return None  # situv2's activation quant is chosen by aiter's environment
@@ -231,9 +232,9 @@ def _gemm_a16w16_baseline(original, a, b, bias=None, out_dtype=None, use_shuffle
 @adapter("aiter.tuned_gemm.gemm_a16w16", gemm_bf16_nt, _gemm_a16w16_baseline)
 def _(A, B, bias=None, otype=None, scale_a=None, scale_b=None, scale_c=None):
     if any(s is not None for s in (scale_a, scale_b, scale_c)):
-        return None  # a scaled gemm is not this op
+        return None
     if A.dtype != torch.bfloat16:
-        return None  # a bf16 op
+        return None
     return {
         "a": A,
         "b": B,
@@ -272,8 +273,7 @@ def _(XQ, WQ, x_scale, w_scale, bias=None, dtype=None, splitK=None):
     }
 
 
-# The bench baseline is the first adapter that binds: the plain blockscale baseline is
-# CK, so CK comes before Triton.
+# CK precedes Triton: the bench baseline is the first adapter that binds, and plain blockscale's is CK.
 def _gemm_a8w8_blockscale_baseline(
     original,
     a,
@@ -345,7 +345,7 @@ def _(
     if config is not None or skip_reduce or backend is not None:
         return None  # explicit tuning
     if kernel_type != "bandwidth_bound":
-        return None  # explicit tuning
+        return None
     return {
         "a": x,
         "b": w,
@@ -438,7 +438,7 @@ def _(
     if global_A_scale is not None or global_B_scale is not None:
         return None  # nvfp4, another op
     if alpha != 1.0 or beta != 0.0:
-        return None  # not in the schema: output scaling
+        return None
     return {
         "a": A,
         "b": B,
@@ -464,9 +464,9 @@ def _batched_gemm_bf16_baseline(original, A, B, out_dtype=None, use_shuffled_wei
 def _(XQ, WQ, bias=None, dtype=None, splitK=None):
     # splitK is scheduling; the registry decides.
     if bias is not None:
-        return None  # not in the schema: bias
+        return None
     if XQ.dtype != torch.bfloat16:
-        return None  # a bf16 op
+        return None
     return {"A": XQ, "B": WQ, "out_dtype": dtype}
 
 
@@ -690,7 +690,6 @@ def _deepgemm_fp8_paged_mqa_logits_baseline(
 ):
     if logits is None:
         return None
-    # max_model_len is the logits' width
     return lambda: original(
         q_fp8=q,
         kv_cache=kv_cache,

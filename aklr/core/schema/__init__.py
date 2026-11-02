@@ -1,7 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
-
-"""The schema layer: what an op promises, the meaning of its json names, and export."""
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from aklr.core._frozen_model import frozen_dataclass
 from aklr.core.schema._args import Const, DType, Scalar, Tensor, Var

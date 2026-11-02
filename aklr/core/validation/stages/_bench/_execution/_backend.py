@@ -44,8 +44,6 @@ from aklr.core.validation.stages._bench._execution._shutdown import ShutdownGate
 
 
 class ExecutionBackend(ABC):
-    """Execution implementation owned by one Executor."""
-
     @abstractmethod
     def submit(self, task: ExecutionTask) -> ExecutionFuture[Any]: ...
 
@@ -57,8 +55,6 @@ class ExecutionBackend(ABC):
 
 
 class RunnerSupervisor:
-    """Runs, observes, and reaps disposable execution runners."""
-
     def __init__(
         self,
         runner_factory: RunnerFactory,
@@ -96,7 +92,7 @@ class RunnerSupervisor:
                 try:
                     runner.close()
                 except Exception:  # noqa: BLE001, S110
-                    # The runner's own thread reads its health and reports.
+                    # the runner's own pool thread reads its health and reports it
                     pass
         self._pool.shutdown(wait=wait, cancel_futures=False)
 
@@ -117,7 +113,6 @@ class RunnerSupervisor:
         is_returned = False
         failure = None
         runner_health = RunnerHealth.HEALTHY
-        # Two steps, two failures: a runner that would not start, and a task that would not run.
         try:
             runner = self._runner_factory.create(lease, self._engine)
             if isinstance(runner, DisposableExecutionRunner):
@@ -129,10 +124,9 @@ class RunnerSupervisor:
             runner.start()
             is_started = True
         except BaseException as error:  # noqa: BLE001
-            # Startup must resolve the future.
             failure = self._as_execution_error(error, RunnerStartupFailed, "could not start execution runner")
         else:
-            # Running only once started: a task retried elsewhere is still pending.
+            # marked running only once started: a start failure may retry the task elsewhere
             if future.mark_running(directory):
                 try:
                     result = runner.submit(task).result(timeout=task.timeout_seconds)
@@ -147,7 +141,6 @@ class RunnerSupervisor:
                     runner.close()
                     runner_health = runner.health()
                 except BaseException as error:  # noqa: BLE001
-                    # Retain cleanup failures.
                     runner_health = RunnerHealth.RESOURCE_FAILED
                     failure = self._append_cleanup_failure(failure, "runner cleanup failed", error)
                 finally:
@@ -157,11 +150,10 @@ class RunnerSupervisor:
                 try:
                     diagnostics = runner.diagnostics()
                 except BaseException as error:  # noqa: BLE001
-                    # Attach diagnostic failures.
                     diagnostics = None
                     failure = self._append_cleanup_failure(failure, "runner diagnostics failed", error)
                 if diagnostics and failure is not None:
-                    # the log first: the failure's own text stays the last line
+                    # the log first, so the failure's own text stays the last line
                     message = f"Runner log:\n{diagnostics}\n\n{failure}"
                     failure = (
                         type(failure)(message)
@@ -177,7 +169,6 @@ class RunnerSupervisor:
             try:
                 self._on_finished(lease, resource_health)
             except BaseException as error:  # noqa: BLE001
-                # Publish release failures too.
                 failure = self._append_cleanup_failure(failure, "resource release failed", error)
 
         if failure is None and is_returned:
@@ -188,7 +179,7 @@ class RunnerSupervisor:
             shutil.rmtree(directory, ignore_errors=True)
         if failure is None:
             return
-        # E7: the resource left; the task tries once more elsewhere
+        # the runner never started and its resource left: the task tries once more elsewhere
         if not is_started and resource_health == ResourceHealth.UNHEALTHY and self._retry(task, future):
             return
         future.publish_exception(failure)
@@ -218,8 +209,6 @@ class RunnerSupervisor:
 
 
 class SubprocessExecutionBackend(ExecutionBackend):
-    """Schedules tasks across resources using one disposable child per task."""
-
     def __init__(
         self,
         resources: ResourceCatalog,
@@ -235,7 +224,6 @@ class SubprocessExecutionBackend(ExecutionBackend):
             engine=engine,
             on_finished=lambda lease, health: self._scheduler.complete(lease, health),
             retry=lambda task, future: self._scheduler.retry(task, future),
-            # One task per resource unless the caller says otherwise.
             max_concurrency=max_concurrency or len(resources.resources()),
         )
         self._scheduler = ExecutionScheduler(
@@ -272,7 +260,7 @@ class SubprocessExecutionBackend(ExecutionBackend):
 
     def _close_scheduler_and_supervisor(self) -> None:
         try:
-            # no new task; the pending ones cancelled
+            # stop dispatching, then kill the running children, then wait for their threads
             self._scheduler.shutdown(wait=False)
             self._supervisor.shutdown(wait=False)
             self._supervisor.shutdown(wait=True)

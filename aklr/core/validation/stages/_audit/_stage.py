@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -37,7 +40,7 @@ class AuditStage(PipelineStage):
     report_type = StageReport
 
     def __init__(self, *, allow_measured_edits: bool = False) -> None:
-        # skip PERF_EDITED: the bot's measurement PR only
+        # skips PERF_EDITED: for the bot's measurement PR only
         self._allow_measured_edits = allow_measured_edits
 
     def run(self, scope: ValidationScope, earlier: PipelineReport) -> StageReport:
@@ -138,7 +141,7 @@ class AuditStage(PipelineStage):
             head = _schema_parts_of(head_path.read_text(encoding="utf-8", errors="replace"))
             if self._allow_measured_edits or head is None:
                 continue
-            # text_at_base raises on a new path; a new or unparsable base has none
+            # text_at_base raises on a new path; a new or unparsable base has no measurements
             base = base_parts(path) if path in at_base else None
             base_measured = base or {}
             edited = [k for k, evaluations in head.items() if evaluations != base_measured.get(k, [])]
@@ -181,7 +184,7 @@ def check_kernel(
     tensor_names: Collection[str],
     output_names: Collection[str],
 ) -> set[tuple[str, int, int, str]]:
-    """Every SA0-SA4 rejection of a kernel: (path, line, rule, what)."""
+    """Every SA0-SA4 rejection of a Python kernel, as (path, line, rule, what)."""
     try:
         kernel_sources = KernelSources(kernel, call_keys, tensor_names, output_names)
         parsed_sources = kernel_sources.parsed_sources
@@ -242,8 +245,6 @@ def _own_and_class_nodes(scope: ast.AST) -> Iterator[ast.AST]:
 
 
 class KernelSources:
-    """One kernel's parsed sources, entry, compile functions and reach set."""
-
     def __init__(
         self,
         kernel: Kernel,
@@ -256,7 +257,6 @@ class KernelSources:
         self.tensor_names = frozenset(tensor_names)
         self.input_names = self.tensor_names - frozenset(output_names)
         self.trees: dict[str, ast.Module] = {}
-        # path -> (line, message) of a source that does not parse (SA0)
         self.parse_errors: dict[str, tuple[int, str]] = {}
         for source in kernel.sources:
             try:
@@ -273,7 +273,6 @@ class KernelSources:
         }
         self.parsed_sources = {path: ParsedSource(self, path, tree) for path, tree in self.trees.items()}
         self.entry_path = kernel.get_entry_path().as_posix()
-        # the module-level entry def; None when it is missing or does not parse
         self.entry = self.defs.get(self.entry_path, {}).get(kernel.get_entry_symbol())
         self.compile_functions: list[tuple[str, ast.FunctionDef]] = [
             (path, d)
@@ -353,6 +352,7 @@ class KernelSources:
         while todo:
             path, fn = todo.pop()
             source = self.parsed_sources[path]
+            # device functions are compiled and compile functions run once per shape: not launch code
             if (
                 (path, fn) in reached
                 or source.is_device(fn)
@@ -382,8 +382,6 @@ class KernelSources:
 
 
 class ParsedSource:
-    """One parsed source of a kernel and the facts the rules read."""
-
     def __init__(self, kernel_sources: KernelSources, path: str, tree: ast.Module) -> None:
         self.path = path
         self.tree = tree
@@ -417,6 +415,7 @@ class ParsedSource:
         return ".".join([self.imports.get(node.id, node.id), *reversed(parts)])
 
     def decorator_qualname(self, fn: ast.AST) -> str | None:
+        # a second decorator (triton.autotune above triton.jit) makes the def host code
         if not isinstance(fn, _FUNCTION_NODES) or len(fn.decorator_list) != 1:
             return None
         (d,) = fn.decorator_list

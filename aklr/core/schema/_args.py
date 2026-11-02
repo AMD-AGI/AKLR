@@ -1,16 +1,17 @@
+###############################################################################
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Copyright (c) 2025 by FlashInfer team.
+# Copyright (c) 2025 by FlashInfer-Bench Contributors
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# Adapted from FlashInfer (https://github.com/flashinfer-ai/flashinfer) and
+# FlashInfer-Bench (https://github.com/flashinfer-ai/flashinfer-bench)
+# Modified by the AKLR team.
 #
-#   http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
+# not the MIT license that covers the rest of AKLR (see LICENSE).
+###############################################################################
 
 from __future__ import annotations
 
@@ -23,6 +24,8 @@ from aklr.core._frozen_model import Excluded, NonEmptyStr, frozen_dataclass
 
 
 class DType(str, Enum):
+    """Element types, each named as its torch dtype."""
+
     FLOAT32 = "float32"
     FLOAT16 = "float16"
     BFLOAT16 = "bfloat16"
@@ -42,8 +45,7 @@ class DType(str, Enum):
 
 @frozen_dataclass
 class Tensor:
-    """Specification of a tensor argument of an op: its symbolic shape, where the
-    call passes it, and how its dtype is resolved."""
+    """An op's tensor argument: its symbolic shape, where the call passes it and how its dtype resolves."""
 
     dim_names: List[NonEmptyStr] = Field(alias="shape")
     dtype: Optional[DType] = None
@@ -58,11 +60,9 @@ class Tensor:
 
 @frozen_dataclass
 class Scalar:
-    """Specification of a scalar (non-tensor) argument of an op."""
-
     dtype: str
     description: Optional[str] = None
-    # Always null: a scalar is a tensor spec without a shape in the json.
+    # always None: in the json a scalar is a tensor spec without a shape
     shape: None = Field(default=None, kw_only=True, repr=False)
 
     param: Excluded[Optional[NonEmptyStr]] = None
@@ -71,7 +71,7 @@ class Scalar:
 
 @frozen_dataclass
 class Var:
-    """Runtime-variable axis (e.g. ``batch_size``, ``seq_len``)."""
+    """A runtime-variable axis, such as batch_size or seq_len."""
 
     description: Optional[str] = None
     type: Literal["var"] = Field(default="var", kw_only=True, repr=False)
@@ -79,10 +79,10 @@ class Var:
 
 @frozen_dataclass
 class Const:
-    """Compile-time-constant axis (e.g. ``hidden_size``, ``num_heads``)."""
+    """A compile-time-constant axis, such as hidden_size or num_heads."""
 
     description: Optional[str] = None
-    abbrev: Excluded[Optional[str]] = None
+    abbrev: Excluded[Optional[str]] = None  # its prefix in schema names: "" omits the axis, None: its name
     value: Optional[NonNegativeInt] = None
     type: Literal["const"] = Field(default="const", kw_only=True, repr=False)
 

@@ -41,8 +41,6 @@ if TYPE_CHECKING:
 
 
 class Executor:
-    """Submit tasks to one long-lived, replaceable execution backend."""
-
     def __init__(self, backend: ExecutionBackend) -> None:
         self._backend = backend
         self._state = ExecutorState.OPEN
@@ -57,8 +55,8 @@ class Executor:
         *,
         startup_timeout_seconds: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
     ) -> Executor:
-        # the catalog first: a ValueError leaves no job directory behind
-        """A subprocess backend over ``devices`` with disposable runners, one task per device."""
+        """An executor that runs each task in a fresh child process, one task per device at a time."""
+        # the catalog first: a bad device raises before the job directory exists
         resources = LocalAcceleratorCatalog(devices)
         return cls(
             SubprocessExecutionBackend(
@@ -88,7 +86,7 @@ class Executor:
         metadata: Mapping[str, str] | None = None,
         **kwargs: Any,
     ) -> ExecutionFuture[Any]:
-        """Run ``fn(context, **kwargs)`` on one resource, some time from now."""
+        """Runs ``fn(context, **kwargs)`` in a child; ``fn`` and kwargs go pickled, the result as JSON."""
         task = ExecutionTask(
             call=fn,
             kwargs=kwargs,
@@ -123,6 +121,7 @@ class Executor:
         self.shutdown(wait=True)
 
     def __enter__(self) -> Self:
+        # the children lead their own sessions: a signal must unwind through __exit__ to kill them
         if threading.current_thread() is threading.main_thread():
             for signal_number in (signal.SIGTERM, signal.SIGINT):
                 self._previous_signal_handlers[signal_number] = signal.signal(

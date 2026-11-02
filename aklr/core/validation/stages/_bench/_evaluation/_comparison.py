@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -19,6 +22,7 @@ def is_reference_comparable(
     reference_outputs: Mapping[str, Tensor],
     check: Callable[..., Any],
 ) -> bool:
+    """Whether the reference rounded to the output dtypes stays finite where it was and passes ``check``."""
     rounded = {o: r.to(dtype_str_to_torch_dtype(output_dtypes[o])) for o, r in reference_outputs.items()}
     is_finite_where_reference_is = all(
         (rounded[o].double().isfinite() | ~r.isfinite()).all() for o, r in reference_outputs.items()

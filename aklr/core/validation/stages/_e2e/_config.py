@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -17,30 +20,24 @@ __all__ = [
 ]  # fmt: skip
 
 DEFAULT_CONFIG_PATH: Final = Path(__file__).with_name("scenarios.yaml")
-# the scripts must import the aklr of this checkout, hence the package's location
+# the scripts must import this checkout's aklr, hence a path from the package's location
 SCENARIO_DIR: Final = Path(__file__).resolve().parents[4] / "benchmarks" / "models"
 
 
 @frozen_dataclass
 class E2eSettings:
-    """The test parameters of a scenario; a value out of range fails validation."""
-
-    # ratio_lower_bound needs two rounds
-    n_runs_per_side: int = Field(ge=2)
+    n_runs_per_side: int = Field(ge=2)  # ratio_lower_bound needs two rounds
     timeout_seconds: float = Field(gt=0, allow_inf_nan=False)
-    # e2e accepts no regression
-    min_gain_fraction: float = Field(ge=0, allow_inf_nan=False)
+    min_gain_fraction: float = Field(ge=0, allow_inf_nan=False)  # e2e accepts no regression
 
     @property
     def min_ratio(self) -> float:
-        """The throughput ratio lower bound a scenario must reach."""
+        """The on/off throughput ratio's lower bound a scenario must reach."""
         return 1 + self.min_gain_fraction
 
 
 @frozen_dataclass
 class Scenario:
-    """One scenario: a model and phase, its parameters and its test parameters."""
-
     name: str
     model: str
     phase: Literal["decode", "prefill"]
@@ -76,13 +73,11 @@ class Scenario:
 
 @frozen_dataclass
 class E2eConfig:
-    """The scenarios of an e2e configuration file, in its order."""
-
     scenarios: tuple[Scenario, ...]
 
     @classmethod
     def read(cls, path: Path = DEFAULT_CONFIG_PATH) -> E2eConfig:
-        """Read the scenarios and defaults from the YAML file at ``path``."""
+        """The YAML file's scenarios, defaults applied; any defect in the file is a ValueError."""
         import yaml
         from pydantic import ValidationError
 

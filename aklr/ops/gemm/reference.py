@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -79,19 +82,16 @@ def gemm_bf16_nt_reference(a, b, bias=None) -> Tensor:
 
 
 def gemm_bf16_nt_shuffled_reference(a, b, bias=None) -> Tensor:
-    """The row-major maths on b unshuffled (16 x 16)."""
     return gemm_bf16_nt_reference(a, unshuffle_weight(b, (16, 16)), bias)
 
 
 def gemm_a8w8_nt_reference(a, b, a_scale, b_scale, bias=None) -> Tensor:
-    """Per-row scales."""
     a = a.double() * a_scale.double().reshape(-1, 1)
     b = b.double() * b_scale.double().reshape(-1, 1)
     return _plus_bias(a @ b.mT, bias)
 
 
 def gemm_a8w8_nt_shuffled_reference(a, b, a_scale, b_scale, bias=None) -> Tensor:
-    """The row-major maths on b unshuffled (16 x 16)."""
     return gemm_a8w8_nt_reference(a, unshuffle_weight(b, (16, 16)), a_scale, b_scale, bias)
 
 
@@ -120,8 +120,7 @@ def gemm_fp8_nt_blockscaled_shuffled_k_reference(a, b, a_scale, b_scale) -> Tens
 
 
 def gemm_mxfp4_nt_reference(a, b, a_descale, b_descale, bias=None) -> Tensor:
-    """``a @ b.T + bias``, one e8m0 scale per 32 fp4 values along ``k``; fp4 packs
-    two values a byte, low nibble first."""
+    """``a @ b.T + bias``; fp4 packs two values a byte, low nibble first; an e8m0 scale per 32 along k."""
     import torch
 
     magnitudes = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0)
@@ -139,8 +138,6 @@ def gemm_mxfp4_nt_reference(a, b, a_descale, b_descale, bias=None) -> Tensor:
 
 
 def gemm_mxfp4_nt_shuffled_reference(a, b, a_descale, b_descale, bias=None) -> Tensor:
-    """The row-major maths on b unshuffled (16 x 16) and both scales unshuffled and
-    unpadded."""
     m, n, scale_columns = a.shape[0], b.shape[0], a.shape[1] * 2 // 32
     return gemm_mxfp4_nt_reference(
         a,
@@ -162,10 +159,8 @@ def bmm_bf16_nn_reference(A, B) -> Tensor:
 
 
 def bmm_bf16_nt_shuffled_reference(A, B) -> Tensor:
-    """The nt maths on B unshuffled (16 x 16)."""
     return bmm_bf16_nt_reference(A, unshuffle_weight(B, (16, 16)))
 
 
 def bmm_bf16_nn_shuffled_reference(A, B) -> Tensor:
-    """The nn maths on B unshuffled (16 x 16)."""
     return bmm_bf16_nn_reference(A, unshuffle_weight(B, (16, 16)))

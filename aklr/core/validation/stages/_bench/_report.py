@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -38,9 +41,8 @@ _WORKLOAD_COLUMNS: Final = (
     "schema", "axes", "verdict", "graph/baseline", "graph/incumbent",
 )  # fmt: skip
 
-# Workload findings remain measurements even when another workload admits the kernel.
+# the accuracy a workload finding records, even when another workload admits the kernel
 _MEASURED_AS: Final[Mapping[FindingCode, Literal["passed", "failed"]]] = {
-    # correctness: reference-side (timed) or candidate-side stops (untimed, Q4 b)
     FindingCode.NUMERIC_MISMATCH: "failed",
     FindingCode.POST_TIMING_MISMATCH: "failed",
     FindingCode.INPUT_MUTATION: "failed",
@@ -48,7 +50,7 @@ _MEASURED_AS: Final[Mapping[FindingCode, Literal["passed", "failed"]]] = {
     FindingCode.BUILD_FAILED: "failed",
     FindingCode.CANDIDATE_CRASH: "failed",
     FindingCode.CANDIDATE_TIMEOUT: "failed",
-    # the gate's: measured low; the threshold drops them at dispatch
+    # the gate's codes: correct but slow; dispatch's speedup threshold drops them
     FindingCode.NOT_FASTER: "passed",
     FindingCode.REGRESSED: "passed",
 }
@@ -56,20 +58,17 @@ _MEASURED_AS: Final[Mapping[FindingCode, Literal["passed", "failed"]]] = {
 
 @frozen_dataclass
 class WorkloadRecord:
-    """One workload of a head schema: facts only."""
-
     schema_path: str
     axes: dict[str, int]
     kernel_content_hash: str
-    # what users run today: a served base kernel's path, else the adapter entry point
-    # that bound (dotted name); None: neither
+    # what users run today: the served base kernel's path, else the bound adapter's entry point; None: neither
     baseline: str | None
     backend: str | None
-    # a baseline was timed; not: no adapter and no other kernel to beat
+    # False: no adapter and no other kernel to beat, so nothing was timed
     is_timed: bool
     is_compared: bool
     timings: tuple[TimingRecord, ...]
-    # a batch finding (build, task crash or timeout) stands for its findings
+    # a batch finding (build, task crash or timeout) stands in for the workload's own findings
     batch_stopped: bool
 
     @property
@@ -77,7 +76,7 @@ class WorkloadRecord:
         if self.batch_stopped:
             return False
         if not self.is_timed:
-            return True  # no baseline to beat
+            return True
         baselines = [t for t in self.timings if t.versus == "baseline"]
         return {t.mode for t in baselines} == {"graph"} and all(
             math.isfinite(t.ratio_lower_bound) and t.ratio_lower_bound > THRESHOLD_RATIOS["entry"]
@@ -86,8 +85,7 @@ class WorkloadRecord:
 
     @property
     def speedup(self) -> float | None:
-        """The graph ratio lower bound vs the baseline, floored at 0.001;
-        1.0 with nothing timed as the baseline (the case is its own)."""
+        """Unclamped graph/baseline ratio lower bound, floored at 0.001; 1.0 if untimed (its own baseline)."""
         if not self.is_timed and not self.batch_stopped:
             return 1.0
         baselines = [t for t in self.timings if t.versus == "baseline"]
@@ -118,6 +116,7 @@ class BenchReport(StageReport):
 
     @classmethod
     def from_findings(cls, stage_name: str, findings: Sequence[Finding], **records: Any) -> Self:
+        """Measured workload findings become demotions; a schema with no qualifying workload fails."""
         workloads = records.get("workload_records", ())
         demotable = {(r.schema_path, axes_text(r.axes)) for r in workloads}
         incorrect = {
@@ -158,8 +157,7 @@ class BenchReport(StageReport):
         return super().from_findings(stage_name, deciding, demotions=tuple(demoted), **records)
 
     def verdicts(self) -> list[tuple[WorkloadRecord, Finding | None]]:
-        """Each workload record with its verdict: its first finding, deciding or demoted; None if it has none."""
-        # reversed: a workload's first finding is its verdict
+        # reversed: the dict keeps the last, so a workload's first finding is its verdict
         first = {
             (f.schema_path, frozenset(f.axes.items())): f
             for f in reversed((*self.findings, *self.demotions))
@@ -187,7 +185,6 @@ class BenchReport(StageReport):
         return failed, ok
 
     def batch_line(self) -> str:
-        """One batch's console line: ``<status> <lang/name/uuid8>: <n> wl, speedup, acc``."""
         n = len(self.workload_records)
         parts = [f"{n} wl"]
         s = self.speedups()
@@ -203,12 +200,11 @@ class BenchReport(StageReport):
             parts.append("acc ok")
         else:
             parts.append(f"acc ok {ok}/{n}")
-        # escape() writes &#N; entities
+        # schema_short_name escapes markdown as &#N; entities; a console line wants them plain
         label = html.unescape(schema_short_name(self.workload_records[0].schema_path))
         return f"{self.status} {label}: {', '.join(parts)}"
 
     def outcome_lines(self) -> list[str]:
-        """The end-of-stage roll-up of workloads by verdict, speedup and accuracy."""
         if not self.workload_records:
             return []
         n = len(self.workload_records)
@@ -247,6 +243,7 @@ class BenchReport(StageReport):
     def measurements(
         self, schema_path: str, schema: Schema, commit: str, hardware: str
     ) -> dict[str, Evaluation] | None:
+        """Each workload's evaluation by axes text; None if a fault or an unmeasured workload voids them."""
         if any(
             f.schema_path == schema_path and f.code != FindingCode.NO_QUALIFYING_WORKLOAD
             for f in self.findings

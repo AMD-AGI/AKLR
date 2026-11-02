@@ -1,4 +1,8 @@
-"""Per-operator decode timing for Kimi-K3, rolled up to a per-step estimate."""
+###############################################################################
+# SPDX-License-Identifier: MIT
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 import sys
 import time
@@ -27,13 +31,13 @@ def work(server_args, port_args, args, gpu_id, tp_rank):
             return b
 
         if args.full_step:
-            # A step advances the batch it is given, so each needs its own.
             n = args.full_step
             model_bench.randomize_kv(mr)
 
             # Synced per step: all CPU work sits on the critical path.
             ms = []
             for _ in range(n + 2):
+                # A step advances the batch it is given, so each needs its own.
                 b = new_batch()
                 torch.cuda.synchronize()
                 t = time.perf_counter()
@@ -63,7 +67,7 @@ def work(server_args, port_args, args, gpu_id, tp_rank):
         torch.cuda.synchronize()
         sglang_bench.assert_lockstep(saved)
 
-        # The reference the roll-up is checked against, graph-captured so it is launch-free like the per-op rows.
+        # The roll-up's reference, graph-captured so it is launch-free like the per-op rows.
         rank_print("timing: full forward")
         model = model_bench.language_model(mr.model)
         full_ms = sglang_bench.bench(
@@ -78,14 +82,13 @@ def work(server_args, port_args, args, gpu_id, tp_rank):
         for name, entry in saved.items():
             rank_print(f"timing: {name}")
             try:
-                # Rotated so a MALL-sized weight is not read cache-hot.
                 with model_bench.rotated_calls(ops[name], entry) as (fns, inner):
                     times[name] = sglang_bench.bench(fns, args.reps, inner=inner, rounds=args.repeat)
             except torch.cuda.OutOfMemoryError:
-                # Not a shape mismatch: every later op would be skipped too, so abort instead of a partial report.
+                # Not a shape mismatch: every later op would be skipped too, so abort, not a partial report.
                 raise
             except RuntimeError as e:
-                # Replaying a module outside its own forward can hit a check the ambient state no longer satisfies; lose that row only.
+                # Outside its own forward a module can fail a check on ambient state; lose only that row.
                 first = str(e).split("\n")[0]
                 if "out of memory" in first.lower():
                     raise
@@ -96,7 +99,7 @@ def work(server_args, port_args, args, gpu_id, tp_rank):
                 times.pop(name, None)
                 skipped.setdefault(name, "skipped on another rank")
 
-        # After every timing pass, so the profiler never touches a clock; every rank replays to pair collectives.
+        # After all timing, so the profiler never touches a clock; every rank replays to pair collectives.
         profiles, profile_errors = {}, {}
         if not args.no_kernels:
             profiles, profile_errors = profile_saved_ops(ops, saved, times, rank_print)
@@ -130,7 +133,6 @@ def work(server_args, port_args, args, gpu_id, tp_rank):
 
 
 def profile_saved_ops(ops, saved, times, rank_print):
-    """Kineto over the same recorded calls; a parent's sample leaves out its timed children."""
     profiles, errors = {}, {}
     for label in times:
         rank_print(f"kernels: {label}")
@@ -261,7 +263,6 @@ def _cell(text) -> str:
     return str(text).replace("|", "\\|").replace("\n", " ")
 
 
-# Kernel or API substrings that mark a cross-rank collective.
 COLLECTIVE_MARKS = (
     "all_reduce",
     "allreduce",
@@ -283,7 +284,6 @@ def is_collective(kernel: str, api: str) -> bool:
 
 
 def kernel_hotspot_table(totals, rollup, contents, kernels, errors) -> str:
-    """The hotspot rows, each followed by the GPU kernels its replay launched."""
     headers = ("op / kernel", "ms/step", "share", "calls/step", "GPU ms/step", "API")
     lines = [
         "| " + " | ".join(headers) + " |",
@@ -368,7 +368,6 @@ def rollup_table(times, counts) -> str:
 
 
 def depth_section(rows, gaps=None) -> str:
-    """What a layer costs at each depth into the attention-residual stream."""
     table = sglang_bench.table(
         [(kind, depth, n, ms, total) for kind, _, depth, n, ms, total in rows],
         ("layer kind", "depth", "layers", "ms/call", "ms/step"),
@@ -398,9 +397,7 @@ def report(
     kernels=None,
     kernel_errors=None,
 ):
-    """Returns (markdown, one-line headline for the log)."""
     depths = model_bench.depth_rows(times, layers)
-    # Counts come from the fold: a kind whose `layer` replay failed at some depth is summed over the layers measured.
     times, counts = model_bench.fold_depths(times, layers)
     gaps = model_bench.coverage_gaps(counts, layers)
     model_bench.add_residuals(times, counts)
@@ -439,14 +436,12 @@ def report(
         ),
         ("Roll-up -- one step", rollup_table(times, counts)),
         *([("Coverage", coverage)] if coverage else []),
-        # Beside Coverage: those ops fired but could not be timed, and only they contaminate a `<rest>` row.
         *([("Not replayable", note)] if (note := model_bench.skipped_note(skipped or {}, gaps)) else []),
     ]
     md = "\n\n".join(
         [
             "# Kimi-K3 decode profile",
             time.strftime("%Y-%m-%d %H:%M %Z"),
-            # Above the tables, not buried in Config.
             *filter(
                 None,
                 [

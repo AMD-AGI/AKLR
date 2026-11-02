@@ -1,25 +1,15 @@
+###############################################################################
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Copyright (c) 2025 by FlashInfer team.
 #
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
+# Adapted from FlashInfer (https://github.com/flashinfer-ai/flashinfer)
+# Modified by the AKLR team.
 #
-#   http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
-"""The standalone source form of a schema function.
-
-A schema keeps ``reference``, ``check`` and ``init`` as Python source so it
-dumps to json; :class:`FunctionSource` renders a callable into that source
-and loads the source back into a callable. The project functions it calls are
-found from its code and inlined ahead of it. A new kind of schema function is one more :data:`FUNCTION_SOURCES` entry;
-a kind that needs a different layout subclasses :class:`FunctionSource`.
-"""
+# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
+# not the MIT license that covers the rest of AKLR (see LICENSE).
+###############################################################################
 
 from __future__ import annotations
 
@@ -35,28 +25,13 @@ from typing import Any
 
 @dataclass(frozen=True)
 class FunctionSource:
-    """How one kind of schema function is kept as standalone source.
-
-    Attributes
-    ----------
-    preamble:
-        Imports put ahead of the function so the source runs on its own.
-    entry:
-        Top-level name the source binds the function to.
-    """
+    """How one kind of schema function (reference, check, init) is kept as standalone source."""
 
     preamble: str
     entry: str = "run"
 
     def render(self, fn: Callable) -> str:
-        """Return the standalone source of *fn*, bound to :attr:`entry`.
-
-        Raises
-        ------
-        ValueError
-            If *fn* or a dependency is a lambda or a closure, whose source does
-            not run alone.
-        """
+        """The standalone source of fn: preamble, the project functions it calls, fn, bound to entry."""
         functions = (*self.dependencies(fn), fn)
         for f in functions:
             if f.__name__ == "<lambda>" or f.__code__.co_freevars:
@@ -70,19 +45,6 @@ class FunctionSource:
         return "\n".join(parts)
 
     def dependencies(self, fn: Callable) -> tuple[FunctionType, ...]:
-        """Return the functions *fn* calls transitively, callees first.
-
-        A dependency is a global name loaded by the code of *fn* (nested defs
-        and comprehensions included) bound to a plain function of the top-level
-        package of *fn* and not imported by :attr:`preamble`. Override to change
-        what is inlined.
-
-        Raises
-        ------
-        ValueError
-            If a function loads any other global that :attr:`preamble` does
-            not import, so the standalone source could not bind it.
-        """
         imported = {
             (alias.asname or alias.name).partition(".")[0]
             for node in ast.parse(self.preamble).body
@@ -96,6 +58,7 @@ class FunctionSource:
         def visit(f: Callable) -> None:
             codes = [f.__code__]
             for code in codes:
+                # nested defs and comprehensions: code objects in co_consts, visited by this same loop
                 codes += [c for c in code.co_consts if isinstance(c, CodeType)]
                 for instruction in dis.get_instructions(code):
                     name = instruction.argval
@@ -115,13 +78,6 @@ class FunctionSource:
         return tuple(ordered)
 
     def validate(self, source: str) -> None:
-        """Check that *source* is valid Python binding :attr:`entry` at top level.
-
-        Raises
-        ------
-        ValueError
-            If the source does not parse or does not bind :attr:`entry`.
-        """
         try:
             module = ast.parse(source, mode="exec")
         except SyntaxError as e:
@@ -146,10 +102,6 @@ class FunctionSource:
                 raise ValueError("Source must not import aklr")
 
     def load(self, source: str, filename: str) -> Callable:
-        """Execute *source* and return the function bound to :attr:`entry`.
-
-        *filename* names the source in tracebacks.
-        """
         namespace: dict[str, Any] = {}
         code = compile(source, filename, "exec")
         exec(code, namespace)  # noqa: S102 schema sources are trusted repo files
@@ -169,4 +121,3 @@ FUNCTION_SOURCES: dict[str, FunctionSource] = {
         preamble=("from __future__ import annotations\nimport math\nimport torch\n"),
     ),
 }
-"""The source form of each schema function field, keyed by field name."""

@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -20,8 +23,6 @@ _MARKDOWN_SPECIAL_CHARACTERS: Final = frozenset("\\`*_[]<>|@#&~!")
 
 
 class Block(ABC):
-    """One CommonMark block."""
-
     @abstractmethod
     def lines(self) -> list[str]: ...
 
@@ -64,8 +65,7 @@ class BulletList(Block):
 
 
 def escape(text: object) -> str:
-    """Replace every Markdown special character with its ``&#N;`` HTML entity and
-    fold line breaks to spaces."""
+    """Markdown-safe text: each special character as its &#N; entity, line breaks as spaces."""
     return "".join(
         (f"&#{ord(ch)};" if ch in _MARKDOWN_SPECIAL_CHARACTERS else " " if ch in "\r\n" else ch)
         for ch in str(text)

@@ -2,18 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
-# Copyright (c) 2025 FlashInfer-Bench Contributors
+# Copyright (c) 2025 by FlashInfer-Bench Contributors
 #
 # Adapted from FlashInfer-Bench (https://github.com/flashinfer-ai/flashinfer-bench)
-# Source: flashinfer_bench/compile/{builder,utils}.py and
-#         flashinfer_bench/compile/builders/{python_builder,triton_builder}.py
-# Modified by Advanced Micro Devices, Inc. for the AKLR project.
-# Modified for aklr/core/runtime/builder
+# Modified by the AKLR team.
 #
 # This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
-# not the MIT license that covers the rest of aiter (see LICENSE).
+# not the MIT license that covers the rest of AKLR (see LICENSE).
 ###############################################################################
-
 
 from __future__ import annotations
 
@@ -47,7 +43,7 @@ if TYPE_CHECKING:
 
 
 class BuildError(LoadError):
-    """A schema's kernel could not be made callable; ``__cause__`` an ``OSError``: the platform's fault."""
+    """A schema's kernel could not be made callable; an ``OSError`` cause marks the platform's fault."""
 
 
 class Builder(ABC):
@@ -63,15 +59,15 @@ class Builder(ABC):
     @staticmethod
     @abstractmethod
     def is_available() -> bool:
-        """Whether this builder's toolchain is installed here."""
+        pass
 
     @abstractmethod
     def can_build(self, schema: Schema) -> bool:
-        """Whether this builder claims ``schema.kernel.language``."""
+        pass
 
     @abstractmethod
     def build(self, schema: Schema) -> Runnable:
-        """Import ``schema``'s kernel, running none of it; raises :class:`BuildError`."""
+        """Make ``schema``'s kernel callable without calling it; failures raise :class:`BuildError`."""
 
     def _get_package_name_and_build_path(self, kernel: Kernel) -> tuple[str, Path]:
         package_name = create_package_name(kernel, self._package_prefix)
@@ -83,7 +79,6 @@ class Builder(ABC):
 
     def _try_validate_signature(self, callable: Callable, schema: Schema) -> None:
 
-        # Analyze the signature of the callable (skip all checks if signature unavailable)
         try:
             signature = self._signature(callable)
         except (ValueError, TypeError):
@@ -92,10 +87,7 @@ class Builder(ABC):
         dps = schema.kernel.build.destination_passing_style
         expected_nparam = len(schema.inputs) + len(schema.outputs) if dps else len(schema.inputs)
 
-        # Validate against the actual call shape used by benchmark/apply runtime: a fixed number
-        # of positional arguments derived from the definition. This accepts extra optional
-        # parameters with defaults while still rejecting missing required or keyword-only
-        # parameters that cannot be satisfied by positional calling.
+        # the runtime passes exactly these args positionally: extra params need defaults
         sample_args = [object() for _ in range(expected_nparam)]
         try:
             signature.bind(*sample_args)
@@ -106,14 +98,12 @@ class Builder(ABC):
                 f"but signature '{signature}' is incompatible: {e}"
             ) from e
 
-        # Check return annotation (only for value-returning style)
         if not dps:
             num_outputs = len(schema.outputs)
             ret_ann = signature.return_annotation
             if ret_ann is not inspect.Signature.empty:
                 origin = getattr(ret_ann, "__origin__", None)
                 if origin is tuple:
-                    # If returning tuple, length must match num_outputs
                     args = getattr(ret_ann, "__args__", None)
                     if args is not None and len(args) != num_outputs:
                         raise BuildError(
@@ -121,13 +111,11 @@ class Builder(ABC):
                             f"return a {num_outputs}-element tuple, got {ret_ann}"
                         )
                 elif ret_ann is None:
-                    # If return None, num_outputs must be 0
                     if num_outputs != 0:
                         raise BuildError(
                             f"Value-returning style callable with {num_outputs} outputs must not return None"
                         )
                 elif num_outputs != 1:
-                    # If returning non-tuple, num_outputs must be 1
                     raise BuildError(
                         f"Value-returning style callable returning non-tuple must "
                         f"only have one output, got {num_outputs}"
@@ -135,7 +123,7 @@ class Builder(ABC):
 
 
 class PythonBuilder(Builder):
-    """Writes the sources into the kernel cache and imports the entry point as a package made in memory."""
+    """Imports the entry point from the sources written to the build cache, as a per-kernel package."""
 
     _LANGUAGE: ClassVar[str] = "python"
 
@@ -144,35 +132,14 @@ class PythonBuilder(Builder):
 
     @staticmethod
     def is_available() -> bool:
-        """Python builds always work."""
         return True
 
     def can_build(self, schema: Schema) -> bool:
-        """Whether ``schema``'s kernel is in this builder's language."""
         return schema.kernel is not None and schema.kernel.build.language == self._LANGUAGE
 
     def _get_cleaner(self, package: str, build_path: Path) -> Callable[[], None]:
-        """Create a cleaner function that removes build artifacts.
-
-        The cleaner unloads the imported module, removes it from sys.path, and
-        deletes the build directory.
-
-        Parameters
-        ----------
-        package : str
-            The package name to unload from sys.modules.
-        build_path : Path
-            The directory to delete.
-
-        Returns
-        -------
-        Callable[[], None]
-            A function that performs the cleanup.
-        """
-
         def cleaner() -> None:
             try:
-                # Unload module and submodules
                 to_delete = [m for m in sys.modules if m == package or m.startswith(package + ".")]
                 for m in to_delete:
                     sys.modules.pop(m, None)
@@ -189,7 +156,6 @@ class PythonBuilder(Builder):
         return cleaner
 
     def build(self, schema: Schema) -> Runnable:
-        """Write the changed sources, then import ``entry_point`` from an empty package made in memory."""
         kernel = schema.kernel
         assert kernel is not None
 
@@ -202,13 +168,11 @@ class PythonBuilder(Builder):
         package_name, build_path = self._get_package_name_and_build_path(kernel)
         module_name = package_name + "." + ".".join(Path(entry_file).with_suffix("").parts)
 
-        # Create package directory structure: build_path/<package_name>/...
         package_path = build_path / package_name
         write_sources_to_path(package_path, kernel.sources)
 
         cleaner = self._get_cleaner(package_name, build_path)
 
-        # Insert build_path into sys.path so we can import <package_name>.<module>
         sys.path.insert(0, str(build_path))
 
         try:
@@ -241,8 +205,6 @@ class PythonBuilder(Builder):
         return Runnable(callable=fn, metadata=metadata, cleaner=cleaner)
 
     def check_call_keys(self, schema: Schema, entry: Callable[..., Any]) -> None:
-        """Raise :class:`BuildError` unless the call keys bind to ``entry``'s
-        signature; an uninspectable entry binds anything."""
         call_keys = schema.kernel_call_keys
         try:
             signature = inspect.signature(entry)
@@ -258,13 +220,10 @@ class PythonBuilder(Builder):
 
 
 class TritonBuilder(PythonBuilder):
-    """Triton is python: only the language differs."""
-
     _LANGUAGE: ClassVar[str] = "triton"
 
     @staticmethod
     def is_available() -> bool:
-        """Whether triton is importable here."""
         try:
             import triton  # noqa: F401
         except ImportError:
@@ -273,13 +232,12 @@ class TritonBuilder(PythonBuilder):
 
 
 class FlyDSLBuilder(PythonBuilder):
-    """FlyDSL is python too: it JIT-compiles from inside the imported module."""
+    """FlyDSL is python too: its kernels JIT-compile themselves inside the imported module."""
 
     _LANGUAGE: ClassVar[str] = "flydsl"
 
     @staticmethod
     def is_available() -> bool:
-        """Whether flydsl is importable here."""
         try:
             import flydsl  # noqa: F401
         except ImportError:
@@ -288,21 +246,18 @@ class FlyDSLBuilder(PythonBuilder):
 
 
 class TorchBuilder(Builder):
-    """Builds hip sources into a torch extension for this GPU's arch with
-    ``torch.utils.cpp_extension.load``; the kernel is its op ``torch.ops.<package>.<entry symbol>``."""
+    """Builds hip sources for this GPU's arch into the TORCH_LIBRARY op ``torch.ops.<package>.<symbol>``."""
 
     _LANGUAGE: ClassVar[str] = "torch"
 
     _CPP_HIP_CUDA_EXTENSIONS: ClassVar[List[str]] = [".hip", ".cu", ".cpp", ".cc", ".cxx", ".c"]
 
     def __init__(self) -> None:
-        # the package names the op namespace too, which TORCH_LIBRARY pastes after an
-        # underscore: a leading one would make a reserved C++ identifier
+        # the package is TORCH_LIBRARY's namespace, pasted after "_": a leading "_" would make a reserved "__"
         super().__init__(f"aklr_{self._LANGUAGE}_", self._LANGUAGE)
 
     @staticmethod
     def is_available() -> bool:
-        """Whether torch is a ROCm build and ROCm's hipcc and ninja are here."""
         try:
             import torch
         except ImportError:
@@ -310,44 +265,19 @@ class TorchBuilder(Builder):
         return torch.cuda.is_available()
 
     def can_build(self, schema: Schema) -> bool:
-        """Whether ``schema``'s kernel is in this builder's language."""
         return schema.kernel is not None and schema.kernel.build.language in ("hip", "cuda", "cpp")
 
     def _filter_sources(self, source_paths: List[Path]) -> List[str]:
-        """Filter source files to include only C/C++/CUDA files.
-
-        Parameters
-        ----------
-        source_paths : List[Path]
-            List of all source file paths.
-
-        Returns
-        -------
-        List[str]
-            List of source file paths with C/C++/CUDA extensions.
-        """
         return [str(path) for path in source_paths if path.suffix in self._CPP_HIP_CUDA_EXTENSIONS]
 
     def _get_cleaner(self, build_dir: Path) -> Callable[[], None]:
-        """Create a cleaner function that removes the build directory.
-
-        Parameters
-        ----------
-        build_dir : Path
-            The directory to delete.
-
-        Returns
-        -------
-        Callable[[], None]
-            A function that performs the cleanup.
-        """
-
         def cleaner() -> None:
             shutil.rmtree(build_dir, ignore_errors=True)
 
         return cleaner
 
     def _signature(self, callable: Callable) -> inspect.Signature:
+        """The op's signature from its schema: ``inspect.signature`` sees only ``(*args, **kwargs)``."""
         import torch
 
         op_schema = callable._schema
@@ -367,7 +297,7 @@ class TorchBuilder(Builder):
                 for argument in op_schema.arguments
             ],
             return_annotation=(
-                inspect.Signature.empty
+                inspect.Signature.empty  # a list return has no fixed length to check
                 if any(isinstance(r.type, torch.ListType) for r in op_schema.returns)
                 else tuple[(Any,) * len(op_schema.returns)]
             ),
@@ -396,16 +326,18 @@ class TorchBuilder(Builder):
         extra_include_paths = [str(build_dir)]
         with_cuda = kernel.build.language in ("cuda", "hip")
 
+        # a killed build leaves torch's lock and load() would wait forever; BuilderRegistry serializes builds
         (build_dir / "lock").unlink(missing_ok=True)
         arch = DeviceTarget.current().arch
         if arch is None:
             raise BuildError(f"{kernel.name}: no GPU arch to build for")
         try:
+            # torch adds its archs (PYTORCH_ROCM_ARCH) unless extra_cflags, not extra_cuda_cflags, name one
             load(
                 name=package_name,
                 sources=cpp_cuda_paths,
                 extra_include_paths=extra_include_paths,
-                extra_cflags=[f"--offload-arch={arch}"],
+                extra_cflags=[f"--offload-arch={arch}"],  # host c++ also gets it and fails: no .cpp sources
                 extra_cuda_cflags=["-O3"],
                 with_cuda=with_cuda,
                 build_directory=build_dir,

@@ -1,8 +1,10 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
-# Importing an op api registers its op schemas and routes; an api named as its
-# package stays reached through the package.
+# an api named as its package (fused_moe, biased_grouped_topk) stays reached through the package
 from aklr.ops import biased_grouped_topk, fused_moe, gemm  # noqa: F401
 from aklr.ops.gemm import (
     bmm_bf16_nn,

@@ -1,4 +1,8 @@
-"""DeepSeek-V4 decode: per-module graph timing and full-forward comparison."""
+###############################################################################
+# SPDX-License-Identifier: MIT
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 import os
 import sys
@@ -35,7 +39,6 @@ def work(server_args, port_args, args, gpu_id, tp_rank):
 
 
 def measure_conc(args, mr, layers, rank_print, tp_rank) -> None:
-    """Time, record and profile one CONC; rank 0 writes its report."""
     with sglang_bench.forward_ctx(mr):
         if args.full_step:
             model_bench.randomize_kv(mr)
@@ -69,7 +72,7 @@ def measure_conc(args, mr, layers, rank_print, tp_rank) -> None:
         if args.export_only:
             from aklr.core.runtime.dispatch import DispatcherRegistry
 
-            # the record must not wait for the recorder's periodic or exit-time save
+            # Save now: the record must not wait for the recorder's periodic or exit-time save.
             recorder = DispatcherRegistry.default().recorder
             if recorder is not None:
                 recorder.save()
@@ -91,7 +94,7 @@ def measure_conc(args, mr, layers, rank_print, tp_rank) -> None:
             try:
                 kind, _, op_name = name.partition("|")
                 if kind in layers.kinds and op_name in ("layer", "attn", "mlp"):
-                    # A real forward visits different layer weights; one representative would make parent rows cache-hot.
+                    # Rotate over the kind's layers: one layer's weights alone would read cache-hot.
                     attr = {"layer": "", "attn": "self_attn", "mlp": "mlp"}[op_name]
                     modules = [
                         getattr(layers.layers[i], attr) if attr else layers.layers[i]
@@ -109,10 +112,10 @@ def measure_conc(args, mr, layers, rank_print, tp_rank) -> None:
                     with model_bench.rotated_calls(ops[name], entry) as (fns, inner):
                         times[name] = sglang_bench.bench(fns, args.reps, inner=inner, rounds=args.repeat)
             except torch.cuda.OutOfMemoryError:
-                # Not a shape mismatch: every later op would be skipped too, so abort instead of a partial report.
+                # Not a shape mismatch: every later op would fail too; abort, not a partial report.
                 raise
             except RuntimeError as e:
-                # A standalone replay may violate shape or forward-state constraints; only a deterministic failure may be skipped.
+                # Replay alone may break shape or forward-state rules; skip only deterministic failures.
                 first = str(e).split("\n")[0]
                 if "out of memory" in first.lower():
                     raise
@@ -126,7 +129,7 @@ def measure_conc(args, mr, layers, rank_print, tp_rank) -> None:
         times = model_bench.world_times({**times, "full": full_ms}, mr)
         full_ms = times.pop("full")
 
-        # Profile after every timing pass so hooks/Kineto never enter the clocks; all ranks replay to pair collectives.
+        # Profile after all timing so Kineto stays off the clocks; every rank replays to pair collectives.
         profiles, profile_errors = profile_saved_ops(ops, saved, times, rank_print)
 
     if tp_rank != 0:
@@ -417,7 +420,6 @@ def report(
     kernels=None,
     kernel_errors=None,
 ):
-    """Returns (markdown, one-line headline for the log)."""
     import aklr.ops  # noqa: F401 -- registers every op and route
     from aklr.core.runtime.seam import routes
 
@@ -445,14 +447,12 @@ def report(
         ("Per layer kind -- one step", kind_sections(times, counts, contents)),
         ("Roll-up -- one step", rollup_table(times, counts)),
         *([("Coverage", coverage)] if coverage else []),
-        # Beside Coverage: those ops fired but could not be timed, and only they contaminate a `<rest>` row.
         *([("Not replayable", skipped)] if skipped else []),
     ]
     md = "\n\n".join(
         [
             f"# {model_bench.model_tag(mr.server_args)} decode profile",
             time.strftime("%Y-%m-%d %H:%M %Z"),
-            # Above the tables, not buried in Config.
             *filter(None, [model_bench.dummy_banner(mr.server_args)]),
         ]
         + [f"## {title}\n\n{body}" for title, body in sections]

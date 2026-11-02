@@ -21,8 +21,6 @@ LOG_TAIL_BYTES: Final = 8 << 10
 
 @dataclass(frozen=True)
 class TaskLog:
-    """The log of one task's child."""
-
     path: Path
 
     @contextlib.contextmanager
@@ -35,7 +33,7 @@ class TaskLog:
             os.dup2(redirected_fd, 1)
             os.dup2(redirected_fd, 2)
             os.close(redirected_fd)
-            # it truncates fd 1, so it lives inside the redirect
+            # the cap thread truncates fd 1, so it runs only while fd 1 is the log
             stop = threading.Event()
             cap_thread = threading.Thread(target=self._cap, args=(stop,), name="aklr-log-cap", daemon=True)
             cap_thread.start()
@@ -67,6 +65,6 @@ class TaskLog:
                 if os.fstat(1).st_size <= MAX_LOG_BYTES:
                     continue
                 os.ftruncate(1, MAX_LOG_BYTES)
-                os.lseek(1, MAX_LOG_BYTES, os.SEEK_SET)
+                os.lseek(1, MAX_LOG_BYTES, os.SEEK_SET)  # else the next write leaves a hole of NUL bytes
             except OSError:
                 return
