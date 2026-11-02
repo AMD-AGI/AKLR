@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import copy
 import types
 from collections.abc import Callable
@@ -26,6 +27,9 @@ def compile_closure(module: ast.Module, func_name: str, scope: dict[str, Any], o
     # The module is assembled from AKLR's own metadata, never from runtime input.
     code = compile(tree, origin, "exec")
     (fn_code,) = (c for c in code.co_consts if isinstance(c, types.CodeType) and c.co_name == func_name)
+    # torch.compile inlines these functions (an aiter proxy inside a compiled sglang layer) and
+    # reads their globals' __builtins__, which FunctionType does not add as exec does.
+    scope.setdefault("__builtins__", builtins)
     fn = types.FunctionType(fn_code, scope, func_name)
     return fn
 
