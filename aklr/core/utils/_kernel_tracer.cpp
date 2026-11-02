@@ -1,16 +1,10 @@
-// SPDX-License-Identifier: MIT
-// Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+/***************************************************************************************************
+ * SPDX-License-Identifier: MIT
+ *
+ * Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+ **************************************************************************************************/
 
-// Kernel dispatch timestamps from rocprofiler-sdk, for testing.bench_cudagraph: a context traces
-// every kernel dispatch into a lossless buffer while it is started. Each launch between push and
-// pop carries its own external correlation id, so a record names the launch it came from, however
-// its kernels interleave with the next launch's and however late it arrives; a window (start) keeps
-// only its launches' records.
-//
-// shortcut: stands in for torch.profiler while torch's Kineto traces ROCm with roctracer (torch
-// 2.11); torch >= 2.12's Kineto traces with rocprofiler-sdk, and testing.kernel_tracer warns there
-// from rocprofiler-sdk 1.4.2 on, which fixed ROCM-29087.
-
+// Kernel dispatch timestamps from rocprofiler-sdk, for testing.bench_cudagraph
 #include <rocprofiler-sdk/external_correlation.h>
 #include <rocprofiler-sdk/registration.h>
 #include <rocprofiler-sdk/rocprofiler.h>
@@ -27,26 +21,25 @@
 #include <tuple>
 #include <vector>
 
+// shortcut: stands in for torch.profiler while torch's Kineto traces ROCm with roctracer (torch 2.11)
 namespace {
 
 using Record = std::tuple<uint64_t, uint64_t, uint64_t, uint64_t>;  // launch, kernel id, start ns, end ns
 
-// The process's one rocprofiler-sdk tool: rocprofiler_force_configure's callback carries no pointer
-// to it, so it is reached through instance().
+// retire it on torch >= 2.12 with rocprofiler-sdk >= 1.4.2, where testing.kernel_tracer warns
 class KernelTracer {
    public:
+    // reaches the process's one tool: rocprofiler_force_configure's callback carries no pointer to it
     static KernelTracer& instance() {
         static KernelTracer tracer;
         return tracer;
     }
 
     void configure() {
-        // WORKAROUND: ROCM-29087, fixed in rocprofiler-sdk 1.4.2 (ROCm 10.2); delete this when the images
-        // ship it. Below 1.4.2, the queue interposition rocprofiler-sdk traces through by default deadlocks a
-        // HIP graph whose streams fork and join: a barrier waits on a kernel's completion signal that only a
-        // free one of 4 busy-waiting handler threads releases. Its legacy queue intercept does not.
+        // WORKAROUND: ROCM-29087, fixed in rocprofiler-sdk 1.4.2 (ROCm 10.2); delete when the images ship it
 #if ROCPROFILER_SDK_VERSION < 10402
-        setenv("ROCPROFILER_QUEUE_INTERPOSITION", "0", 1);
+        // below 1.4.2 the default queue interposition deadlocks a HIP graph whose streams fork and join
+        setenv("ROCPROFILER_QUEUE_INTERPOSITION", "0", 1);  // the legacy queue intercept does not
 #endif
         // rocprofiler-sdk takes a tool only before the ROCm runtime initializes
         check(rocprofiler_force_configure(&KernelTracer::tool), "configure before the first GPU call");
@@ -68,6 +61,7 @@ class KernelTracer {
         check(rocprofiler_start_context(context_), "start");
     }
 
+    // each launch between push and pop carries its own external correlation id
     void push() {
         rocprofiler_user_data_t launch{};
         {
@@ -141,6 +135,7 @@ class KernelTracer {
             }
             const auto* record =
                 static_cast<const rocprofiler_buffer_tracing_kernel_dispatch_record_t*>(header->payload);
+            // a record names its launch however its kernels interleave or however late it arrives
             const uint64_t launch = record->correlation_id.external.value;
             if (tracer.first_launch_ != 0 && launch >= tracer.first_launch_) {
                 tracer.records_.emplace_back(launch - tracer.first_launch_, record->dispatch_info.kernel_id,
@@ -155,10 +150,10 @@ class KernelTracer {
     std::vector<Record> records_;
     uint64_t dropped_ = 0;
     uint64_t next_launch_ = 1;
-    uint64_t first_launch_ = 0;  // of the window; 0 before the first
+    uint64_t first_launch_ = 0;  // the window's first launch; 0 before the first start()
 };
 
-}  // namespace
+}
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("rocprofiler_sdk_version") = pybind11::make_tuple(

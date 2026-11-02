@@ -1,4 +1,17 @@
-"""Shared plumbing for the GLM-5.2 micro-benchmarks: sglang model setup, per-op timing and layer roll-up."""
+###############################################################################
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Portions of this file are derived from SGLang
+# (https://github.com/sgl-project/sglang),
+# licensed under the Apache License, Version 2.0 (see LICENSE-APACHE).
+# Original copyright: Copyright 2023-2024 SGLang Team.
+# Modifications to the imported portions have been made by the AKLR team.
+#
+# Those portions remain under Apache-2.0, not the MIT license that covers the
+# rest of AKLR (see LICENSE).
+###############################################################################
 
 import argparse
 import contextlib
@@ -25,10 +38,8 @@ from sglang_bench import (
     table,
 )
 
-# Hub id keeps the default working off this machine; point --model at a local copy to avoid fetching weights.
 DEFAULT_MODEL = "amd/GLM-5.2-MXFP4"
 
-# Constant report prefix: the hub id or a local dir does not normalize into a readable name.
 MODEL_TAG = "glm52_mxfp4"
 
 
@@ -37,7 +48,6 @@ def make_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser()
     ServerArgs.add_cli_args(parser)
-    # ServerArgs marks --model-path required; default it instead.
     for action in parser._actions:
         if action.dest == "model_path":
             action.required = False
@@ -68,21 +78,18 @@ DUMMY_WARNING = (
 
 
 def warn_if_dummy_weights(load_format: str) -> None:
-    """Warn that dummy weights mistime ops whose cost depends on the values."""
     if load_format != "dummy":
         return
     print(f"[BENCH] WARNING: {DUMMY_WARNING}", flush=True)
 
 
 def dummy_banner(server_args) -> str:
-    """The dummy-weight warning as markdown, or empty on a real load."""
     if server_args.load_format != "dummy":
         return ""
     return f"\n> **WARNING: {DUMMY_WARNING}**\n"
 
 
 def parallel_tags(model_runner, layers: "Layers") -> list[str]:
-    """Report-name parts for the layout, e.g. ``tp8 dp8 ep8 mori normal cap4096``."""
     ps, moe = parallel_state(model_runner), moe_parallel(model_runner)
     tags = [f"tp{ps.tp_size}"]
     if ps.attn_dp_size > 1:
@@ -98,7 +105,6 @@ def parallel_tags(model_runner, layers: "Layers") -> list[str]:
 
 
 def parallel_line(model_runner) -> str:
-    """The ``parallel`` row of the config table."""
     ps, moe = parallel_state(model_runner), moe_parallel(model_runner)
     line = f"TP {ps.tp_size}, attn-DP {ps.attn_dp_size}, MoE-EP {moe.ep_size}"
     if moe.ep_size > 1 and moe.tp_size > 1:
@@ -109,7 +115,6 @@ def parallel_line(model_runner) -> str:
 
 
 def a2a_impl(model_runner, layers: "Layers") -> A2aImpl | None:
-    """The all-to-all's cap and dtypes, or None without one."""
     if moe_parallel(model_runner).a2a is None:
         return None
     experts = next(
@@ -133,7 +138,6 @@ def a2a_impl(model_runner, layers: "Layers") -> A2aImpl | None:
 
 
 def moe_line(model_runner, layers: "Layers") -> str | None:
-    """The ``moe`` row of the config table, or None when nothing needs saying."""
     moe = moe_parallel(model_runner)
     if moe.a2a is None:
         return None
@@ -164,7 +168,6 @@ def cfg(server_args):
 
 
 def build_server_args(args: argparse.Namespace):
-    """Fill in defaults suited to a micro-bench run."""
     from sglang.srt.server_args import ServerArgs
 
     require_aiter()
@@ -177,7 +180,7 @@ def build_server_args(args: argparse.Namespace):
         args.kv_cache_dtype = "fp8_e4m3"
 
     server_args = ServerArgs.from_cli_args(args)
-    # Resolve first, as one_batch.main does: unresolved, mori gets deepep_mode=auto and picks the wrong kernel.
+    # Resolve first, as one_batch.main does: unresolved, mori gets deepep_mode=auto and the wrong kernel.
     if hasattr(server_args, "resolve_once"):
         server_args.resolve_once()
     if cfg(server_args).enable_dp_attention and args.CONC % server_args.dp_size:
@@ -220,14 +223,13 @@ def run(work_func: Callable, server_args, args) -> None:
             p.join()
         failed = [p.exitcode for p in procs if p.exitcode]
         if failed:
-            # A dead rank must not leave the parent at exit 0.
             raise SystemExit(f"{len(failed)} of {len(procs)} ranks exited non-zero: {failed}")
     finally:
         kill_process_tree(os.getpid(), include_parent=False)
 
 
 def setup(server_args, port_args, gpu_id: int, tp_rank: int, tag: str = "BENCH"):
-    """Build the model. Returns (model_runner, rank_print)."""
+    """Load the model on this rank; returns (model_runner, spec worker or None, rank-0-only print)."""
     from sglang.benchmark.one_batch import load_model
     from sglang.srt.layers.moe import initialize_moe_config
     from sglang.srt.layers.quantization.fp4_utils import initialize_fp4_gemm_config
@@ -245,7 +247,7 @@ def setup(server_args, port_args, gpu_id: int, tp_rank: int, tag: str = "BENCH")
     ):
         fn(server_args) if inspect.signature(fn).parameters else fn()
     configure_logger(server_args, prefix=f" TP{tp_rank}")
-    # as the scheduler process does: sglang.srt.plugins hooks (AKLR's dispatch) attach
+    # Attach the sglang.srt.plugins hooks (AKLR's dispatch), as the scheduler process does.
     load_plugins()
 
     spec = _build_spec_worker(server_args, port_args, gpu_id, tp_rank)
@@ -268,7 +270,7 @@ def _parallel_state(server_args, gpu_id: int, tp_rank: int):
     from sglang.srt.distributed.parallel_state_wrapper import ParallelState
     from sglang.srt.layers.dp_attention import compute_dp_attention_world_info
 
-    # Use the resolved view, as one_batch.load_model does; the raw record builds a different world under mori.
+    # The resolved view, as one_batch.load_model uses: the raw record builds a different world under mori.
     c = cfg(server_args)
     attn_tp_rank, attn_tp_size, attn_dp_rank, attn_dp_size = compute_dp_attention_world_info(
         c.enable_dp_attention,
@@ -301,7 +303,6 @@ def _parallel_state(server_args, gpu_id: int, tp_rank: int):
 
 
 def _build_spec_worker(server_args, port_args, gpu_id: int, tp_rank: int):
-    """sglang's own EAGLE worker, or None when --speculative-algorithm is unset."""
     from sglang.srt.managers.tp_worker import TpModelWorker
     from sglang.srt.speculative.eagle_worker_v2 import EAGLEWorkerV2
     from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
@@ -309,7 +310,7 @@ def _build_spec_worker(server_args, port_args, gpu_id: int, tp_rank: int):
     if SpeculativeAlgorithm.from_string(server_args.speculative_algorithm).is_none():
         return None
 
-    # The bags must exist before TpModelWorker builds a ModelRunner; the scheduler publishes first for the same reason.
+    # Config bags must exist before TpModelWorker builds a ModelRunner; the scheduler publishes first too.
     publish_once(server_args, gpu_id, tp_rank)
 
     ps = _parallel_state(server_args, gpu_id, tp_rank)
@@ -343,14 +344,12 @@ def _build_spec_worker(server_args, port_args, gpu_id: int, tp_rank: int):
 
 
 def accept_len():
-    """SGLANG_SIMULATE_ACC_LEN, the same knob the server runs under."""
     from sglang.srt.speculative.spec_utils import SIMULATE_ACC_LEN
 
     return SIMULATE_ACC_LEN if SIMULATE_ACC_LEN > 0 else None
 
 
 def spec_draft_decodes(server_args) -> int:
-    """Draft-decode forwards in one step."""
     return max(0, (cfg(server_args).speculative_num_steps or 1) - 1)
 
 
@@ -406,7 +405,7 @@ def run_step(spec, new_batch, forward_batch, model_runner):
         return model_runner.forward(forward_batch)
     batch = new_batch()
     seed_draft_input(spec, batch)
-    # Seed the DSA top-k a previous draft-extend left, so the draft's first step matches the server's steady state.
+    # Reuse the last draft-extend's DSA top-k, as the server's steady state always has one.
     carried = getattr(spec, "_bench_dsa_seed", None)
     if carried is not None:
         batch.spec_info.dsa_topk_indices = carried
@@ -441,7 +440,6 @@ def make_reqs(args, model_runner, factor: int = 1):
 
 
 def make_extend_batch(reqs, model_runner, reset: bool = True):
-    """A prefill ScheduleBatch, up to but not including the forward."""
     from sglang.benchmark.one_batch import (
         TreeCacheNamespace,
         _maybe_prepare_mlp_sync_batch,
@@ -475,7 +473,6 @@ def make_extend_batch(reqs, model_runner, reset: bool = True):
 
 
 def randomize_kv(model_runner, spec=None) -> None:
-    """Fill the KV pool with random values, standing in for the extend forward."""
     runners = [model_runner]
     if spec is not None:
         runners = list(spec_runners(spec).values())
@@ -502,14 +499,12 @@ def chunk_tokens(args, model_runner) -> int:
 
 
 def chunk_flag(args, model_runner) -> int:
-    """The --chunked-prefill-size behind that budget, before the DP division."""
     if args.chunked_prefill_size:
         return args.chunked_prefill_size
     return chunk_tokens(args, model_runner) * parallel_state(model_runner).attn_dp_size
 
 
 def plan_prefill(args, model_runner) -> list[PrefillStep]:
-    """The chunk timeline the scheduler would walk for one request."""
     page = cfg(model_runner.server_args).page_size
     cached = int(args.ISL * args.prefix_cache_hit) // page * page
     budget = chunk_tokens(args, model_runner)
@@ -535,7 +530,6 @@ def make_prefill_context(args, model_runner) -> list[torch.Tensor]:
 
 
 def make_prefill_batch(model_runner, context, step: PrefillStep):
-    """A ScheduleBatch for one prefill step, its prefix already in the pool."""
     from sglang.benchmark.one_batch import prepare_synthetic_inputs_for_latency_test
 
     reqs = prepare_synthetic_inputs_for_latency_test(len(context), step.prefix + step.extend)
@@ -546,7 +540,6 @@ def make_prefill_batch(model_runner, context, step: PrefillStep):
 
 
 def free_req_rows(batch, model_runner) -> None:
-    """Give a chunk's page-table rows back."""
     pool = model_runner.req_to_token_pool
     if hasattr(pool, "free_rows"):
         pool.free_rows(batch.req_pool_indices_cpu.tolist())
@@ -558,13 +551,12 @@ def free_req_rows(batch, model_runner) -> None:
 
 @contextlib.contextmanager
 def time_calls(targets, into: dict):
-    """CUDA-event timing around chosen methods, one event pair per call."""
     saved = []
     for label, obj, name in targets:
         orig = getattr(obj, name)
         patched_forward = False
         if isinstance(orig, torch.nn.Module):
-            # nn.Module.__setattr__ refuses a plain function on a submodule; patch its forward via the instance instead.
+            # nn.Module.__setattr__ refuses a function over a submodule, so patch that submodule's forward.
             obj, name, orig = orig, "forward", orig.forward
             patched_forward = True
 
@@ -589,12 +581,10 @@ def time_calls(targets, into: dict):
 
 
 def elapsed(into: dict) -> dict:
-    """(ms, call count) per label, after a synchronize."""
     return {k: (sum(s.elapsed_time(e) for s, e in pairs), len(pairs)) for k, pairs in into.items()}
 
 
 def spec_phases(spec) -> list:
-    """The phases of one speculative step, and the model forwards inside them."""
     models = spec_models(spec)
     return [
         ("draft", spec.draft_worker, "draft"),
@@ -607,7 +597,6 @@ def spec_phases(spec) -> list:
 
 @contextlib.contextmanager
 def bench_forwards(models: dict, reps: int, rounds: int, into: dict):
-    """Time every top-level forward of one step, each with its own graph."""
     originals = {name: model.forward for name, model in models.items()}
     for name, model in models.items():
 
@@ -635,7 +624,6 @@ def spec_models(spec) -> dict:
 
 
 def draft_ops(spec) -> dict:
-    """The draft model's hookable modules, keyed `draft|<name>`."""
     model = spec.draft_worker.draft_runner.model
     inner = model.model
     ops = {f"draft|{n}": m for n, m in layer_ops(inner.decoder).items()}
@@ -665,7 +653,6 @@ class Recorded(NamedTuple):
 
 
 def residual_owner(name: str) -> str:
-    """The `<rest>` row that absorbs ``name``'s cost when it has no row of its own."""
     kind, _, op = name.rpartition("|")
     if not kind or kind == "draft":
         return ""
@@ -678,7 +665,6 @@ def residual_owner(name: str) -> str:
 
 
 def skipped_note(skipped: dict) -> str:
-    """Ops that fired but could not be replayed on their own, and where they went."""
     if not skipped:
         return ""
     rows = []
@@ -702,7 +688,6 @@ def skipped_note(skipped: dict) -> str:
 
 
 def coverage_note(ops: dict, saved: dict) -> str:
-    """The hooked names that never fired, so they have no row anywhere."""
     missing = sorted(n for n in ops if n not in saved)
     if not missing:
         return ""
@@ -718,7 +703,6 @@ def coverage_note(ops: dict, saved: dict) -> str:
 
 @contextlib.contextmanager
 def record_inputs(ops: dict, into: dict):
-    """Record each op's real inputs from one real forward."""
     from sglang.srt.runtime_context import get_forward
 
     handles = []
@@ -819,7 +803,6 @@ def balance_moe_routing(layers) -> None:
 
 
 def balance_modules(modules) -> None:
-    """Install the balanced router on any module list, not just the target stack."""
     for layer in modules:
         experts = getattr(layer.mlp, "experts", None)
         if experts is not None:
@@ -840,7 +823,7 @@ class Layers:
         # Excludes the nextn draft layer, which sits past the end of the stack.
         self.n_all = model_runner.model_config.hf_config.num_hidden_layers
 
-        # skip_topk layers reuse the previous result but still have an Indexer module, so `is not None` would overcount.
+        # skip_topk layers reuse the last top-k yet keep an Indexer, so a None check would overcount.
         self.kinds: dict[str, list[int]] = {}
         for i in range(self.n_all):
             layer = self.layers[i]
@@ -851,7 +834,6 @@ class Layers:
 
     @property
     def counts(self) -> dict[str, int]:
-        """How many layers of each kind."""
         return {k: len(v) for k, v in self.kinds.items()}
 
     def describe(self) -> str:
@@ -899,12 +881,10 @@ RESIDUALS["layer"] = ["input_layernorm", "attn", "post_attention_layernorm", "ml
 # Rows that partition a layer without overlap; their sum is the roll-up exactly.
 LEAVES = [n for n, d in TREE if d == 2] + [n for n, d in TREE if d == 1 and n not in RESIDUALS]
 
-# TREE names are attribute paths, except `attn`, which is `self_attn`.
 _ATTR = {"attn": "self_attn"}
 
 
 def layer_ops(layer) -> dict[str, torch.nn.Module]:
-    """The hookable modules of one decoder layer, keyed by TREE name."""
     owners = {"": layer, "attn": layer.self_attn, "mlp": layer.mlp}
     ops = {"layer": layer}
     for name, _ in TREE:
@@ -921,7 +901,6 @@ GLOBAL_OPS = ("embed_tokens", "norm", "logits")
 
 
 def collect_ops(layers: "Layers", model) -> dict:
-    """Everything to time: `kind|op` per layer kind, plus the global ops."""
     ops = {}
     for kind, ids in layers.kinds.items():
         for name, mod in layer_ops(layers.layers[ids[0]]).items():
@@ -934,7 +913,6 @@ def collect_ops(layers: "Layers", model) -> dict:
 
 
 def add_residuals(times: dict, counts: dict) -> None:
-    """Give every parent a `<rest>` row: itself minus its measurable children."""
     for kind in counts:
         for parent, kids in RESIDUALS.items():
             if f"{kind}|{parent}" in times:
@@ -943,7 +921,6 @@ def add_residuals(times: dict, counts: dict) -> None:
 
 
 def leaf_totals(times: dict, counts: dict) -> dict:
-    """ms per forward for the rows that partition a layer without overlapping."""
     totals = {}
     for name in LEAVES:
         ms = sum(
@@ -961,14 +938,12 @@ GB = 1 << 30
 
 
 def memory_section(args, model_runner, layers, spec=None, kv_factor: int = 1) -> str:
-    """Weights and KV pool, measured off the real buffers rather than a formula."""
     mr = model_runner
     pool = mr.token_to_kv_pool
     idx_bufs = [t for t in getattr(pool, "index_k_with_scale_buffer", []) if t.numel()]
     idx = sum(t.numel() * t.element_size() for t in idx_bufs)
     total = pool.get_kv_size_bytes()
     cap = mr.max_total_num_tokens
-    # kv_factor is the peak, not the reservation.
     used = local_conc(args, mr) * args.ISL * kv_factor
     dp = parallel_state(mr).attn_dp_size
     n_indexer = sum(len(v) for k, v in layers.kinds.items() if "indexer" in k)
@@ -998,7 +973,6 @@ def memory_section(args, model_runner, layers, spec=None, kv_factor: int = 1) ->
         ("weights", "", "", "", weights / GB),
         ("**HBM**", "", "", "", hbm / GB),
     ]
-    # Lead with real serving capacity: under DP attention the cluster holds dp_size times a rank's pool.
     if dp > 1:
         capacity = (
             f"**capacity {cap * dp:,} tokens cluster-wide** = {cap:,} per rank x"
@@ -1053,7 +1027,6 @@ def memory_section(args, model_runner, layers, spec=None, kv_factor: int = 1) ->
     )
 
 
-# What lands in each `<rest>` row: inline code or fused kernels with no module to hook.
 RESIDUAL_CONTENTS = {
     "attn.<rest>": "qk_norm+rope+absorb_bmm+kv_write+attn_kernel",
     "mlp.<rest>": "act_fn (dense); shared+routed add, post-expert all-reduce (moe)",
@@ -1074,7 +1047,6 @@ def attn_path(model_runner) -> str:
 
 
 def residual_contents(model_runner, path: str) -> dict[str, str]:
-    """Labels for the `<rest>` rows, by attention path and MoE layout."""
     contents = dict(MHA_RESIDUAL_CONTENTS if path == "mha" else RESIDUAL_CONTENTS)
     a2a = moe_parallel(model_runner).a2a
     if a2a is None:
@@ -1091,12 +1063,10 @@ def residual_contents(model_runner, path: str) -> dict[str, str]:
 
 
 def index_topk(model_runner):
-    """Tokens the DSA indexer keeps per query, or None on a dense model."""
     return getattr(model_runner.model_config.hf_config, "index_topk", None)
 
 
 def tree_name(name: str, depth: int, contents: dict[str, str] | None = None) -> str:
-    """Indent an op name for a markdown table, tagging rows named in `contents`."""
     contents = (RESIDUAL_CONTENTS if contents is None else contents).get(name)
     label = f"{name} :: {contents}" if contents else name
     return f"`{'  ' * depth}{label}`"

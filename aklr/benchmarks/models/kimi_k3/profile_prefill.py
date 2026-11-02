@@ -1,4 +1,8 @@
-"""Per-operator prefill timing for Kimi-K3, rolled up to a TTFT estimate."""
+###############################################################################
+# SPDX-License-Identifier: MIT
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 import sys
 import time
@@ -6,7 +10,7 @@ from pathlib import Path
 
 import torch
 
-# sglang_bench.py and kernel_breakdown.py live one directory up.
+# sglang_bench.py lives one directory up.
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import model_bench
@@ -14,18 +18,16 @@ import sglang_bench
 
 
 class StepResult:
-    """One chunk's measurements, kept together so the report can walk them."""
+    """One prefill chunk's timings, folded and rolled up for the report."""
 
     def __init__(self, step, times, full_ms, layers, path, contents, skipped=None, fired=()):
         self.step = step
         self.skipped = skipped or {}
         self.full_ms = full_ms
         self.path = path
-        # Keep what the recording forward called before folding renames the per-depth rows; Coverage needs it.
+        # Coverage needs every op that fired, under the per-depth names folding replaces.
         self.fired = dict.fromkeys(fired, True)
-        # Per-depth `layer` rows collapse into one row per kind; the spread is kept for its own table.
         self.depths = model_bench.depth_rows(times, layers)
-        # Counts from the fold: a kind whose `layer` replay failed at some depth is summed over the layers measured.
         times, counts = model_bench.fold_depths(times, layers)
         self.counts = counts
         self.gaps = model_bench.coverage_gaps(counts, layers)
@@ -38,7 +40,6 @@ class StepResult:
 
 
 def measure_step(args, mr, ops, context, step, layers, rank_print) -> StepResult:
-    """Time every op for one chunk, plus the full forward it is checked against."""
     batch = model_bench.make_prefill_batch(mr, context, step)
     fb = sglang_bench.forward_batch_of(batch, mr)
 
@@ -51,14 +52,13 @@ def measure_step(args, mr, ops, context, step, layers, rank_print) -> StepResult
     torch.cuda.synchronize()
     sglang_bench.assert_lockstep(saved)
     path = model_bench.attn_path(saved)
-    # `saved` is emptied op by op to release inputs, so take the key set now for Coverage.
+    # `saved` is emptied op by op to release inputs, so take its keys for Coverage now.
     fired = list(saved)
-    # The full forward runs on the batch the model saw, not on `fb`.
     fb = model_bench.runner_batch(saved, fb)
-    # After the recording forward: the KDA state slot is freshly allocated and marked for a deferred clear.
+    # After the recording forward: it allocates the KDA state slot and marks it for a deferred clear.
     model_bench.randomize_state(mr)
 
-    # Run eagerly, as the server runs a chunk: this is what the roll-up is checked against and TTFT is summed from.
+    # Eager, as the server runs a chunk: the roll-up is checked against this and TTFT is summed from it.
     rank_print("  timing: full forward")
     model = model_bench.language_model(mr.model)
     full_ms = sglang_bench.bench_eager(
@@ -69,24 +69,24 @@ def measure_step(args, mr, ops, context, step, layers, rank_print) -> StepResult
 
     inner = sglang_bench.graph_reps_for(step.extend)
     times = {}
-    # Popped, not iterated: a recorded entry pins that op's chunk-sized input tensors.
     skipped = {}
     eager = set()
+    # Popped, not iterated: a recorded entry pins that op's chunk-sized input tensors.
     for name in list(saved):
         rank_print(f"  timing: {name}")
         fn = model_bench.make_call(ops[name], saved.pop(name))
         try:
             times[name] = sglang_bench.bench(fn, args.reps, inner=inner, rounds=args.repeat)
         except torch.cuda.OutOfMemoryError:
-            # Not a shape mismatch: every later op would be skipped too, so abort instead of a partial report.
+            # Not a shape mismatch: every later op would be skipped too, so abort, not a partial report.
             raise
         except RuntimeError as e:
-            # As in profile_decode: only a deterministic failure may be skipped, since every rank must skip the same ops.
+            # Only a deterministic failure may be skipped, since every rank must skip the same ops.
             first = str(e).split("\n")[0]
             if "out of memory" in first.lower():
                 raise
             if "stream is capturing" in first:
-                # The op makes a call a graph cannot hold (e.g. KDA's chunked prefill kernel), so time it with launches in.
+                # A call a graph cannot hold (e.g. KDA's chunked prefill kernel): time it with launches in.
                 times[name] = sglang_bench.bench_eager(fn, args.reps, rounds=args.repeat)
                 eager.add(name)
                 rank_print("    not capturable; timed eagerly")
@@ -97,9 +97,8 @@ def measure_step(args, mr, ops, context, step, layers, rank_print) -> StepResult
         if not sglang_bench.agreed(name in times):
             times.pop(name, None)
             skipped.setdefault(name, "skipped on another rank")
-    # The page-table row and KDA state slot go back; KV slots stay as the context for later chunks.
     model_bench.free_req_rows(batch, mr)
-    # The recorded `attn_res_out` is bound to this chunk's AttnResidual bank, gigabytes at a long chunk; drop it.
+    # The recorded `attn_res_out` binds this chunk's AttnResidual bank, gigabytes at a long chunk; drop it.
     ops.pop("attn_res_out", None)
     result = StepResult(
         step,
@@ -157,7 +156,6 @@ def default_out(args, mr, layers) -> str:
 
 
 def ttft_ms(results) -> float:
-    """One request's time to first token: every chunk of its prefill."""
     return sum(r.full_ms for r in results)
 
 
@@ -231,7 +229,6 @@ def config_table(args, mr, layers) -> str:
 
 
 def timeline_table(results) -> str:
-    """One row per chunk, so the shape being measured is on the record."""
     rows = [
         (
             i + 1,
@@ -263,14 +260,13 @@ def timeline_table(results) -> str:
 
 
 def growth_table(results) -> str:
-    """Ops down the side, chunks across, so what scales with context is visible."""
     totals = {}
     for r in results:
         for name, ms in r.totals.items():
             totals[name] = totals.get(name, 0.0) + ms
     names = sorted(totals, key=lambda n: -totals[n])
     rollup = sum(totals.values())
-    # Exact prefixes rather than a rounded `8k`, which would collide for chunks under 1000 tokens.
+    # Exact prefixes, not a rounded `8k`, which would collide for chunks under 1000 tokens.
     headers = ("op",) + tuple(f"{r.step.prefix:,}" for r in results) + ("total", "share")
     rows = [
         (model_bench.tree_name(name, 0, results[-1].contents),)
@@ -318,7 +314,6 @@ def kind_sections(mr, result, counts) -> str:
 
 
 def depth_section(result, gaps=None) -> str:
-    """What a layer costs at each depth into the attention-residual stream."""
     table = sglang_bench.table(
         [(kind, depth, n, ms, total) for kind, _, depth, n, ms, total in result.depths],
         ("layer kind", "depth", "layers", "ms/call", "ms/chunk"),
@@ -337,7 +332,6 @@ def depth_section(result, gaps=None) -> str:
 
 
 def eager_note(results) -> str:
-    """The rows timed with their launches in, because a graph could not hold them."""
     by_op: dict[str, set[str]] = {}
     for name in {n for r in results for n in r.eager}:
         kind, _, op = name.rpartition("|")
@@ -354,7 +348,6 @@ def eager_note(results) -> str:
 
 
 def report(args, mr, layers, results, ops):
-    """Returns (markdown, one-line headline for the log)."""
     last = results[-1]
     sections = [
         ("Summary", summary_table(args, results)),
@@ -402,12 +395,10 @@ def report(args, mr, layers, results, ops):
         [
             "# Kimi-K3 prefill profile",
             time.strftime("%Y-%m-%d %H:%M %Z"),
-            # Above the tables, not buried in Config.
             *filter(
                 None,
                 [
                     model_bench.dummy_banner(mr.server_args),
-                    # Any chunk's contradiction taints the TTFT it is summed into, so the banner covers the whole timeline.
                     model_bench.contradiction_banner([b for r in results for b in r.bad]),
                 ],
             ),
@@ -437,6 +428,6 @@ def make_parser():
 
 if __name__ == "__main__":
     args = make_parser().parse_args()
-    # Not a flag: chunked prefill gives a long request the forward to itself, and every DP rank schedules its own.
+    # Not a flag: chunked prefill gives a long request a whole forward, and each DP rank runs its own.
     args.CONC = sglang_bench.prefill_conc(args)
     model_bench.run(work, model_bench.build_server_args(args), args)

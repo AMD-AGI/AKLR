@@ -1,3 +1,16 @@
+###############################################################################
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+# Copyright (c) 2025 by FlashInfer-Bench Contributors
+#
+# Adapted from FlashInfer-Bench (https://github.com/flashinfer-ai/flashinfer-bench)
+# Modified by the AKLR team.
+#
+# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
+# not the MIT license that covers the rest of AKLR (see LICENSE).
+###############################################################################
+
 from __future__ import annotations
 
 import re
@@ -48,34 +61,9 @@ def is_dtype_integer(dtype: torch.dtype) -> bool:
 
 
 def write_sources_to_path(path: Path, sources: List[SourceFile]) -> List[Path]:
-    """Write source files to a directory and return their paths. Create path if not exists.
-
-    This function writes all source files from a kernel to a specified directory,
-    creating subdirectories as needed. It performs security checks to prevent path
-    traversal attacks and absolute path injection.
-
-    Parameters
-    ----------
-    path : Path
-        The root directory where source files will be written.
-    sources : List[SourceFile]
-        The list of source files to write. Each file's path must be relative and
-        not contain parent directory references ("..").
-
-    Returns
-    -------
-    List[Path]
-        List of absolute paths to the written files.
-
-    Raises
-    ------
-    AssertionError
-        If any source file has an absolute path or contains path traversal.
-    """
     path.mkdir(parents=True, exist_ok=True)
     paths: List[Path] = []
     for src in sources:
-        # Defensive assertion: path should be validated at Kernel creation time
         src_path_obj = Path(src.path)
 
         assert not src_path_obj.is_absolute(), f"Absolute path detected: {src.path}"
@@ -83,10 +71,8 @@ def write_sources_to_path(path: Path, sources: List[SourceFile]) -> List[Path]:
 
         src_path = path / src.path
 
-        # Ensure parent directories exist
         src_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Write source file
         src_path.write_text(src.content)
         paths.append(src_path)
 
@@ -94,34 +80,6 @@ def write_sources_to_path(path: Path, sources: List[SourceFile]) -> List[Path]:
 
 
 def create_package_name(kernel: Kernel, package_prefix: str = "") -> str:
-    """Generate a unique package name for a kernel.
-
-    The package name is constructed from three parts:
-    1. A prefix (typically identifying the builder)
-    2. The normalized kernel name (alphanumeric and underscores only)
-    3. A 6-character hash of the kernel content
-
-    This ensures the package name is both human-readable and uniquely identifies
-    the kernel's content.
-
-    Parameters
-    ----------
-    kernel : Kernel
-        The kernel to create a package name for.
-    prefix : str, optional
-        The prefix to prepend to the package name. Default is empty string.
-
-    Returns
-    -------
-    str
-        A unique package name in the format: {prefix}{normalized_name}_{hash}.
-
-    Examples
-    --------
-    >>> create_package_name(kernel, "fib_python_")
-    'fib_python_rmsnorm_v1_a3f2b1'
-    """
-    # Normalize the kernel name
     s = re.sub(r"[^0-9a-zA-Z_]", "_", kernel.name)
     if not s or s[0].isdigit():
         s = "_" + s

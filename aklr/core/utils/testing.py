@@ -21,15 +21,11 @@ import torch
 from aklr.core._frozen_model import frozen_dataclass
 
 
+# shortcut: a hand-made rocprofiler-sdk tool standing in for torch.profiler
 @functools.cache
 def kernel_tracer():
-    """rocprofiler-sdk's kernel dispatch tracer (``_kernel_tracer.cpp``), built once into the
-    build cache. A process calls its ``configure()`` before its first GPU call: rocprofiler-sdk
-    takes a tool only then."""
-    # shortcut: a hand-made rocprofiler-sdk tool, as torch 2.11's Kineto traces ROCm with roctracer
-    # and at times records none of a replay's kernels; on torch >= 2.12, whose Kineto traces with
-    # rocprofiler-sdk, and rocprofiler-sdk >= 1.4.2 (ROCm 10.2), which fixed ROCM-29087, trace
-    # bench_cudagraph's replays with torch.profiler and delete this tracer
+    """A process must configure() it before its first GPU call: rocprofiler-sdk takes a tool only then."""
+    # torch 2.11's Kineto traces ROCm with roctracer and at times records none of a replay's kernels
     from torch.utils.cpp_extension import ROCM_HOME, load
 
     from aklr.core.platform.env import RuntimeEnv
@@ -43,16 +39,15 @@ def kernel_tracer():
         extra_ldflags=[f"-L{ROCM_HOME}/lib", "-lrocprofiler-sdk"],
         build_directory=str(build),
     )
-    # warned here, not in configure(): the bench's parent, whose stderr is read, builds the tracer and
-    # only its children configure it. FutureWarning: Python's default filters hide a DeprecationWarning
+    # warn here, not in configure(): the bench's parent, whose stderr is read, builds; only children configure
     if tracer.rocprofiler_sdk_version >= (1, 4, 2) and torch.__version__ >= (2, 12):
-        warnings.warn(
+        warnings.warn(  # retire on torch >= 2.12 (Kineto on rocprofiler-sdk) with rocprofiler-sdk >= 1.4.2
             f"torch {torch.__version__}'s Kineto traces with a rocprofiler-sdk that fixed ROCM-29087: trace "
             "bench_cudagraph's replays with torch.profiler and delete aklr/core/utils/_kernel_tracer.cpp",
-            FutureWarning,
+            FutureWarning,  # Python's default filters hide a DeprecationWarning
             stacklevel=2,
         )
-    elif tracer.rocprofiler_sdk_version >= (1, 4, 2):
+    elif tracer.rocprofiler_sdk_version >= (1, 4, 2):  # rocprofiler-sdk 1.4.2 (ROCm 10.2) fixed ROCM-29087
         warnings.warn(
             "rocprofiler-sdk fixed ROCM-29087: delete the WORKAROUND in aklr/core/utils/_kernel_tracer.cpp",
             FutureWarning,
@@ -62,40 +57,32 @@ def kernel_tracer():
 
 
 class GpuTimer(Protocol):
-    """Times a subject on the GPU. Each implementation is one way of timing, its fields that way's
-    parameters: CudaGraphTimer replays CUDA graphs of cold-cache calls; eager launches or a warm
-    cache would be other implementations."""
+    """Times a subject on the GPU, one implementation per way of timing, its fields that way's parameters."""
 
-    def measure(self, fn: Callable[[], object], rep: float) -> list[float]:
-        """Per-call GPU times of ``fn`` in milliseconds, one per sample, over as many calls as
-        ``rep`` milliseconds allow."""
-        ...
+    def measure(self, fn: Callable[[], object], rep: float) -> list[float]: ...
 
 
 @frozen_dataclass
 class CudaGraphTimer(GpuTimer):
-    """The GpuTimer bench_cudagraph uses: a subject's per-call GPU time is the durations of its
-    kernels in replays of a CUDA graph of back-to-back calls, each after an L2 and MALL flush.
-    MEASUREMENT_PROFILE records the fields."""
+    """The GpuTimer of bench_cudagraph; MEASUREMENT_PROFILE records its fields."""
 
     cache_flush_bytes: int = 1 << 30
     capture_warmup_runs: int = 1
     estimation_samples: int = 5
-    # replays of a one-call graph: alike, they name the kernels of a call
+    # the replays of a one-call graph must agree, and they name the kernels of one call
     single_call_replays: int = 6
     profiler_warmup_replays: int = 1
     measurement_replays: int = 10
     profiler_drain_replays: int = 1
-    # kernel records of a measured graph's replays, all together
+    # the kernel records of all of a measured graph's replays together
     kernel_record_budget: int = 2048
 
-    # a dispatch's record trails the synchronize that saw its kernel end: 0.1 s seen under load
+    # a dispatch's record can trail the synchronize that saw its kernel end: 0.1 s seen under load
     record_wait_seconds: ClassVar[float] = 10.0
     record_poll_seconds: ClassVar[float] = 0.001
 
     def measure(self, fn: Callable[[], object], rep: float) -> list[float]:
-        """Per-call GPU times in milliseconds, cache flush excluded, one per measured replay of a
-        graph that fits as many calls as ``rep`` milliseconds allow."""
+        """Per-call GPU ms, flush excluded, one per measured replay of a graph of up to rep ms of calls."""
         if not math.isfinite(rep) or rep <= 0:
             raise ValueError("rep must be a finite positive millisecond budget")
 
@@ -118,7 +105,7 @@ class CudaGraphTimer(GpuTimer):
 
         estimate_ms = start_event.elapsed_time(end_event) / self.estimation_samples
 
-        # a call is its flush, the graph's root and so its first kernel, then the subject's kernels
+        # a call is its flush (the graph's root, so its first kernel), then the subject's kernels
         one_call = self._trace(fn, stream, 1, self.single_call_replays, None)
         per_call = Counter(kernel for kernel, _, _ in one_call[0])
         flush = min(one_call[0], key=lambda record: record[1])[0] if one_call[0] else None
@@ -150,8 +137,7 @@ class CudaGraphTimer(GpuTimer):
         return samples
 
     def flush_l2_cache(self) -> None:
-        """Read ``cache_flush_bytes`` of GPU memory, not write it: written lines stay dirty,
-        and the next kernel pays their write-back."""
+        """Flush L2 and MALL by reading 1 GiB, not writing: dirty lines cost the next kernel a write-back."""
         cache = torch.empty(self.cache_flush_bytes // 4, dtype=torch.int32, device="cuda")
         blocks = math.ceil(cache.numel() / 4096)
         sums = torch.empty(blocks, dtype=torch.int32, device="cuda")
@@ -160,8 +146,7 @@ class CudaGraphTimer(GpuTimer):
     @staticmethod
     @functools.cache
     def _capture_stream(device: int) -> torch.cuda.Stream:
-        """The stream a process both warms subjects on and captures them on, so per-stream
-        state a subject may only create eagerly exists on the stream it is captured on."""
+        """Warm-up and capture share it: per-stream state made only eagerly exists on the capture stream."""
         return torch.cuda.Stream(device=device)
 
     @staticmethod
@@ -186,8 +171,6 @@ class CudaGraphTimer(GpuTimer):
         replays: int,
         expected: int | None,
     ) -> list[list[tuple[int, int, int]]]:
-        """Each replay's (kernel id, start ns, end ns) records of a graph of ``calls`` flushed
-        calls: ``expected`` in all, or (None) as many as make every replay the same kernels."""
         graph = torch.cuda.CUDAGraph()
         try:
             with torch.cuda.graph(graph, stream=stream):
@@ -223,11 +206,10 @@ class CudaGraphTimer(GpuTimer):
 
 
 def flush_l2_cache() -> None:
-    """Flush L2 and MALL by reading a 1 GiB GPU buffer, not writing it: written lines
-    stay dirty, and the next kernel pays their write-back."""
+    """Flush L2 and MALL by reading 1 GiB, not writing: dirty lines cost the next kernel a write-back."""
     CudaGraphTimer().flush_l2_cache()
 
 
 def bench_cudagraph(fn, rep: float) -> float:
-    """Return the median per-call GPU time in milliseconds, cache flush excluded."""
+    """The median per-call GPU time of fn in milliseconds, cache flush excluded."""
     return statistics.median(CudaGraphTimer().measure(fn, rep))

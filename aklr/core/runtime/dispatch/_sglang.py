@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -11,7 +14,7 @@ SGLANG_HOOKED_METHOD = "sglang.srt.model_executor.model_runner.ModelRunner.init_
 
 
 def register_sglang_plugin() -> None:
-    """The ``sglang.srt.plugins`` entry point (``pyproject.toml``): hooks, after ``SGLANG_HOOKED_METHOD``."""
+    """The ``sglang.srt.plugins`` entry point: starts the dispatcher after ``SGLANG_HOOKED_METHOD``."""
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
     HookRegistry.register(

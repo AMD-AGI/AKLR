@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -68,8 +71,6 @@ def run_reference(
 
 
 class WorkloadEvaluation:
-    """One workload's candidate outputs against the float64 reference."""
-
     request: TrialRequest
     directory_descriptor: int
     device: str | torch.device

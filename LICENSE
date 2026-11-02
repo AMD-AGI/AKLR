@@ -19,3 +19,31 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+--------------------------------------------------------------------------------
+Third-Party Dependencies
+
+AKLR uses or references the following third-party projects. Code derived from
+them carries the upstream attribution in its file header and remains licensed
+under Apache-2.0 rather than the MIT license above.
+
+1. FlashInfer
+   - License: Apache License 2.0 (full text in LICENSE-APACHE)
+   - Repository: https://github.com/flashinfer-ai/flashinfer.git
+   - NOTICE: FlashInfer
+             Copyright 2025-2026 NVIDIA
+             Copyright 2023-2026 FlashInfer community (https://flashinfer.ai/)
+
+2. FlashInfer-Bench
+   - License: Apache License 2.0 (full text in LICENSE-APACHE)
+   - Repository: https://github.com/flashinfer-ai/flashinfer-bench.git
+   - NOTICE: FlashInfer-Bench
+             Copyright (c) 2025 by FlashInfer-Bench Contributors
+
+3. SGLang
+   - License: Apache License 2.0 (full text in LICENSE-APACHE)
+   - Repository: https://github.com/sgl-project/sglang.git
+
+Please comply with the respective licenses of these third-party projects when
+using or distributing AKLR. The Apache-2.0 text referenced above is in
+LICENSE-APACHE.

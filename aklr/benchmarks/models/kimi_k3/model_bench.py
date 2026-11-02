@@ -1,4 +1,17 @@
-"""Shared plumbing for the Kimi-K3 micro-benchmarks: sglang model setup, per-op timing and layer roll-up."""
+###############################################################################
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Portions of this file are derived from SGLang
+# (https://github.com/sgl-project/sglang),
+# licensed under the Apache License, Version 2.0 (see LICENSE-APACHE).
+# Original copyright: Copyright 2023-2024 SGLang Team.
+# Modifications to the imported portions have been made by the AKLR team.
+#
+# Those portions remain under Apache-2.0, not the MIT license that covers the
+# rest of AKLR (see LICENSE).
+###############################################################################
 
 import argparse
 import contextlib
@@ -25,10 +38,8 @@ from sglang_bench import (
     table,
 )
 
-# Hub id keeps the default working off this machine; point --model at a local copy to avoid fetching weights.
 DEFAULT_MODEL = "moonshotai/Kimi-K3"
 
-# Constant report prefix: the hub id or a local dir does not normalize into a readable name.
 MODEL_TAG = "kimi_k3_mxfp4"
 
 
@@ -37,7 +48,7 @@ def make_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser()
     ServerArgs.add_cli_args(parser)
-    # ServerArgs marks --model-path required; default it instead.
+    # ServerArgs marks --model-path required; default it to the hub id instead.
     for action in parser._actions:
         if action.dest == "model_path":
             action.required = False
@@ -70,21 +81,18 @@ DUMMY_WARNING = (
 
 
 def warn_if_dummy_weights(load_format: str) -> None:
-    """Warn that dummy weights mistime ops whose cost depends on the values."""
     if load_format != "dummy":
         return
     print(f"[BENCH] WARNING: {DUMMY_WARNING}", flush=True)
 
 
 def dummy_banner(server_args) -> str:
-    """The dummy-weight warning as markdown, or empty on a real load."""
     if server_args.load_format != "dummy":
         return ""
     return f"\n> **WARNING: {DUMMY_WARNING}**\n"
 
 
 def parallel_tags(model_runner, layers: "Layers") -> list[str]:
-    """Report-name parts for the layout, e.g. ``tp8 dp8 ep8 mori normal cap4096``."""
     ps, moe = model_runner.ps, moe_parallel(model_runner)
     tags = [f"tp{ps.tp_size}"]
     if ps.attn_dp_size > 1:
@@ -102,12 +110,10 @@ def parallel_tags(model_runner, layers: "Layers") -> list[str]:
 
 
 def dcp_size(model_runner) -> int:
-    """Ranks the MLA KV cache is sharded over along the sequence; 1 without DCP."""
     return max(1, getattr(model_runner.ps, "attn_dcp_size", 1) or 1)
 
 
 def parallel_line(model_runner) -> str:
-    """The ``parallel`` row of the config table."""
     ps, moe = model_runner.ps, moe_parallel(model_runner)
     line = f"TP {ps.tp_size}, attn-DP {ps.attn_dp_size}"
     if dcp_size(model_runner) > 1:
@@ -121,7 +127,6 @@ def parallel_line(model_runner) -> str:
 
 
 def a2a_impl(model_runner, layers: "Layers") -> A2aImpl | None:
-    """The all-to-all's cap and dtypes, or None without one."""
     if moe_parallel(model_runner).a2a is None:
         return None
     experts = next(
@@ -145,7 +150,6 @@ def a2a_impl(model_runner, layers: "Layers") -> A2aImpl | None:
 
 
 def moe_line(model_runner, layers: "Layers") -> str | None:
-    """The ``moe`` row of the config table, or None when nothing needs saying."""
     moe = moe_parallel(model_runner)
     if moe.a2a is None:
         return None
@@ -169,7 +173,7 @@ def moe_line(model_runner, layers: "Layers") -> str | None:
 
 
 def cfg(server_args):
-    """What resolution decided, which is not what the raw ServerArgs fields say."""
+    """The ServerArgs values sglang's resolution settled on; the raw fields can say otherwise."""
     try:
         from sglang.srt.arg_groups.overrides import resolving_view
     except ImportError:
@@ -179,32 +183,30 @@ def cfg(server_args):
 
 
 def build_server_args(args: argparse.Namespace):
-    """Fill in defaults suited to a micro-bench run."""
     from sglang.srt.server_args import ServerArgs
 
     require_aiter()
 
     warn_if_dummy_weights(args.load_format)
-    # DSPARK is not modelled: a step would run a draft model this bench neither times nor sizes a pool for.
     if args.speculative_algorithm is not None:
         raise SystemExit(
             "this bench does not model speculative decoding on K3. Drop"
             " --speculative-algorithm; the rows below would cover the target"
             " stack only while the draft's share of the step went unmeasured."
         )
-    # Eager is required: with sglang's graph on, record_inputs() pre-hooks never fire.
+    # Per-op profiling needs eager: with sglang's cuda graph on, record_inputs() pre-hooks never fire.
     args.disable_cuda_graph = not args.full_step
     # `auto` is bf16, doubling attention bytes per token; production runs fp8.
     if args.kv_cache_dtype == "auto":
         args.kv_cache_dtype = "fp8_e4m3"
-    # The K3 checkpoint ships its config and processor as code, so the tokenizer refuses to load without it.
+    # The K3 checkpoint ships its config and processor as code; the tokenizer refuses to load without this.
     args.trust_remote_code = True
     # Unset, sglang sizes the request and KDA state pools for a huge serving batch.
     if args.max_running_requests is None:
         args.max_running_requests = pool_rows(args)
 
     server_args = ServerArgs.from_cli_args(args)
-    # Resolve first, as one_batch.main does: unresolved, mori gets deepep_mode=auto and picks the wrong kernel.
+    # Resolve as one_batch.main does: unresolved, mori gets deepep_mode=auto and picks the wrong kernel.
     if hasattr(server_args, "resolve_once"):
         server_args.resolve_once()
     warn_if_mem_fraction_scaled(args, server_args)
@@ -217,7 +219,6 @@ def build_server_args(args: argparse.Namespace):
 
 
 def warn_if_mem_fraction_scaled(args, server_args) -> None:
-    """Say so when sglang did not keep an explicit ``--mem-fraction-static``."""
     asked = args.mem_fraction_static
     got = cfg(server_args).mem_fraction_static
     if asked is None or got is None or abs(asked - got) < 1e-6:
@@ -231,14 +232,12 @@ def warn_if_mem_fraction_scaled(args, server_args) -> None:
 
 
 def attn_tp_size(args) -> int:
-    """Ranks one attention shard spans, from the flags rather than a built world."""
     if args.enable_dp_attention:
         return max(1, args.tp_size // max(1, args.dp_size))
     return max(1, args.tp_size)
 
 
 def pool_rows(args) -> int:
-    """Request-pool rows the run needs, globally; the value the flag takes."""
     dp = max(1, args.dp_size) if args.enable_dp_attention else 1
     tp = attn_tp_size(args)
     local = max(1, args.CONC // dp)
@@ -246,7 +245,6 @@ def pool_rows(args) -> int:
 
 
 def claim_out_dir(out: str | None) -> str | None:
-    """Make the report's directory before the run that fills it, and resolve ``~``."""
     if not out:
         return out
     out = str(Path(out).expanduser())
@@ -258,7 +256,7 @@ def claim_out_dir(out: str | None) -> str | None:
 
 
 def run(work_func: Callable, server_args, args) -> None:
-    """Run ``work_func`` per rank, mirroring ``one_batch.main`` (TP>1 forks one process per rank)."""
+    """Call `work_func` on each rank as sglang's one_batch.main does, one process per rank when TP > 1."""
     if hasattr(args, "out"):
         args.out = claim_out_dir(args.out)
 
@@ -292,14 +290,13 @@ def run(work_func: Callable, server_args, args) -> None:
             p.join()
         failed = [p.exitcode for p in procs if p.exitcode]
         if failed:
-            # A dead rank must not leave the parent at exit 0.
             raise SystemExit(f"{len(failed)} of {len(procs)} ranks exited non-zero: {failed}")
     finally:
         kill_process_tree(os.getpid(), include_parent=False)
 
 
 def setup(server_args, port_args, gpu_id: int, tp_rank: int, tag: str = "BENCH"):
-    """Build the model. Returns (model_runner, rank_print)."""
+    """Load the model on this rank; returns (model_runner, rank_print), rank_print a no-op off rank 0."""
     from sglang.benchmark.one_batch import load_model
     from sglang.srt.layers.moe import initialize_moe_config
     from sglang.srt.layers.quantization.fp4_utils import initialize_fp4_gemm_config
@@ -307,7 +304,7 @@ def setup(server_args, port_args, gpu_id: int, tp_rank: int, tag: str = "BENCH")
     from sglang.srt.plugins import load_plugins
     from sglang.srt.utils import configure_logger
 
-    # Dispatch on the signature, since the sglang trees declare this differently and none agree on a version.
+    # Dispatch on the signature: sglang trees declare these differently and none agree on a version.
     if not inspect.signature(initialize_moe_config).parameters:
         publish_once(server_args, gpu_id, tp_rank)
     for fn in (
@@ -317,7 +314,7 @@ def setup(server_args, port_args, gpu_id: int, tp_rank: int, tag: str = "BENCH")
     ):
         fn(server_args) if inspect.signature(fn).parameters else fn()
     configure_logger(server_args, prefix=f" TP{tp_rank}")
-    # as the scheduler process does: sglang.srt.plugins hooks (AKLR's dispatch) attach
+    # As the scheduler process does: AKLR's dispatch attaches through sglang.srt.plugins hooks.
     load_plugins()
 
     model_runner = load_model(server_args, port_args, gpu_id, tp_rank)[0].torch_runner
@@ -336,10 +333,10 @@ def make_reqs(args, model_runner, factor: int = 1, decode_tokens: int = 0):
 
     conc = local_conc(args, model_runner)
     page, have = kv_alloc_capacity(model_runner)
-    # ``factor`` is the peak: prefill holds its context and every chunk allocates on top of it.
+    # `factor` is the peak: prefill holds its context and every chunk allocates on top of it.
     want = -(-(args.ISL + decode_tokens) // page) * page * conc * factor
     if want > have:
-        # Fail here; sglang's own out-of-memory path raises while formatting the message.
+        # Fail here: sglang's own out-of-memory path raises while formatting its message.
         raise ValueError(
             f"--ISL {args.ISL:,} x --CONC {args.CONC}"
             + (
@@ -360,7 +357,7 @@ def make_reqs(args, model_runner, factor: int = 1, decode_tokens: int = 0):
             " KV side more of the split with a lower --mamba-full-memory-ratio."
         )
 
-    # The KDA state pool is a second ceiling and binds at high concurrency: a state is per request whatever its length.
+    # The KDA state pool is a second ceiling, binding at high concurrency: a state per request, any length.
     cap = state_request_cap(model_runner)
     if cap is not None and conc > cap:
         raise ValueError(
@@ -373,7 +370,7 @@ def make_reqs(args, model_runner, factor: int = 1, decode_tokens: int = 0):
 
 
 def kv_alloc_capacity(model_runner) -> tuple[int, int]:
-    """``(page, tokens)`` the KV allocator hands out; under DCP this is dcp_size times what a rank stores."""
+    """(page, tokens) the KV allocator hands out; under DCP, dcp_size times the rows a rank stores."""
     alloc = model_runner.token_to_kv_pool_allocator
     page = getattr(alloc, "page_size", None) or cfg(model_runner.server_args).page_size
     size = getattr(alloc, "size", None)
@@ -383,7 +380,7 @@ def kv_alloc_capacity(model_runner) -> tuple[int, int]:
 
 
 def runner_batch(saved: dict, fallback):
-    """The ForwardBatch the model actually ran on in the recording forward."""
+    """The ForwardBatch the model actually ran on in the recording forward, else `fallback`."""
     from sglang.srt.model_executor.forward_batch_info import ForwardBatch
 
     for entry in saved.values():
@@ -394,7 +391,6 @@ def runner_batch(saved: dict, fallback):
 
 
 def make_extend_batch(reqs, model_runner, reset: bool = True):
-    """A prefill ScheduleBatch, up to but not including the forward."""
     from sglang.benchmark.one_batch import (
         TreeCacheNamespace,
         _maybe_prepare_mlp_sync_batch,
@@ -410,8 +406,8 @@ def make_extend_batch(reqs, model_runner, reset: bool = True):
         reqs=reqs,
         req_to_token_pool=model_runner.req_to_token_pool,
         token_to_kv_pool_allocator=model_runner.token_to_kv_pool_allocator,
-        # DCP widens the page to page_size x dcp_size; use the same for the tree cache so eviction and allocation agree.
         tree_cache=TreeCacheNamespace(
+            # The allocator's page, which DCP widens by dcp_size, so eviction and allocation agree.
             page_size=kv_alloc_capacity(model_runner)[0],
             device=model_runner.device,
             token_to_kv_pool_allocator=model_runner.token_to_kv_pool_allocator,
@@ -429,26 +425,25 @@ def make_extend_batch(reqs, model_runner, reset: bool = True):
 
 
 def randomize_kv(model_runner) -> None:
-    """Fill both pools with random values, standing in for the extend forward."""
+    """Fill the KV and KDA state pools with random values, standing in for a prefill forward."""
     _randomize_pool(kv_pool(model_runner))
     randomize_state(model_runner)
 
 
 def randomize_state(model_runner) -> None:
-    """Fill the KDA state pool with random values."""
     for buf in state_buffers(model_runner):
         _fill(buf)
 
 
 def _fill(buf) -> None:
     if buf.element_size() == 1:
+        # Bytes below 0x7C are finite and non-negative in every fp8 format.
         buf.view(torch.uint8).random_(0, 0x7C)
     else:
         buf.uniform_(-1, 1)
 
 
 def kv_pool(model_runner):
-    """The pool holding the paged MLA KV, unwrapped from the hybrid facade."""
     pool = model_runner.token_to_kv_pool
     return getattr(pool, "full_kv_pool", pool)
 
@@ -459,17 +454,14 @@ def _randomize_pool(pool) -> None:
 
 
 def mamba_pool(model_runner):
-    """K3's KDA state pool, or None on a model without a recurrent state."""
     return getattr(model_runner.req_to_token_pool, "mamba_pool", None)
 
 
 def mamba_cache(model_runner):
-    """The dataclass holding that pool's state tensors."""
     return getattr(mamba_pool(model_runner), "mamba_cache", None)
 
 
 def state_buffers(model_runner) -> list:
-    """Every tensor the KDA state pool holds, one entry per distinct view."""
     cache = mamba_cache(model_runner)
     if cache is None:
         return []
@@ -494,7 +486,6 @@ def _tensors(value) -> list:
 
 
 def state_bytes(model_runner) -> int:
-    """Bytes the KDA state pool holds, as the pool itself reports them."""
     pool = mamba_pool(model_runner)
     return int(pool.get_kv_size_bytes()) if pool is not None else 0
 
@@ -505,7 +496,6 @@ def state_slot_of(req):
 
 
 def state_slots(model_runner) -> int | None:
-    """Physical slots in the KDA state pool, or None on a model without one."""
     pool = mamba_pool(model_runner)
     if pool is None:
         return None
@@ -520,7 +510,6 @@ def state_slots(model_runner) -> int | None:
 
 
 def state_request_cap(model_runner) -> int | None:
-    """Requests this rank can run at once, or None on a model with no state pool."""
     if mamba_pool(model_runner) is None:
         return None
     size = getattr(model_runner.req_to_token_pool, "size", None)
@@ -534,20 +523,18 @@ def state_request_cap(model_runner) -> int | None:
 
 
 def chunk_tokens(args, model_runner) -> int:
-    """New tokens the scheduler admits per forward, on this rank."""
     size = cfg(model_runner.server_args).chunked_prefill_size
     return size if size > 0 else args.ISL
 
 
 def chunk_flag(args, model_runner) -> int:
-    """The --chunked-prefill-size behind that budget, before the DP division."""
+    """The --chunked-prefill-size flag value: `chunk_tokens` before sglang divides it across DP ranks."""
     if args.chunked_prefill_size:
         return args.chunked_prefill_size
     return chunk_tokens(args, model_runner) * model_runner.ps.attn_dp_size
 
 
 def plan_prefill(args, model_runner) -> list[PrefillStep]:
-    """The chunk timeline the scheduler would walk for one request."""
     page = kv_alloc_capacity(model_runner)[0]
     cached = int(args.ISL * args.prefix_cache_hit) // page * page
     budget = chunk_tokens(args, model_runner)
@@ -564,7 +551,7 @@ def plan_prefill(args, model_runner) -> list[PrefillStep]:
 
 
 def make_prefill_context(args, model_runner) -> list[torch.Tensor]:
-    """KV slots holding each request's context; a step takes its prefix from these."""
+    """KV slots holding each request's context; each prefill step takes its prefix from these."""
     batch = make_extend_batch(make_reqs(args, model_runner, factor=2), model_runner)
     randomize_kv(model_runner)
     table = model_runner.req_to_token_pool.req_to_token
@@ -575,7 +562,6 @@ def make_prefill_context(args, model_runner) -> list[torch.Tensor]:
 
 
 def make_prefill_batch(model_runner, context, step: PrefillStep):
-    """A ScheduleBatch for one prefill step, its prefix already in the pool."""
     from sglang.benchmark.one_batch import prepare_synthetic_inputs_for_latency_test
 
     reqs = prepare_synthetic_inputs_for_latency_test(len(context), step.prefix + step.extend)
@@ -586,7 +572,7 @@ def make_prefill_batch(model_runner, context, step: PrefillStep):
 
 
 def free_req_rows(batch, model_runner) -> None:
-    """Give a batch's page-table rows and KDA state slots back."""
+    """Give a batch's page-table rows and KDA state slots back; its KV slots stay allocated."""
     pool = model_runner.req_to_token_pool
     free_mamba = getattr(pool, "free_mamba_cache", None)
     if free_mamba is not None:
@@ -605,7 +591,6 @@ MLP_FLAGS = ("fuse_mlp_allreduce", "mlp_reduce_scatter")
 
 
 def mlp_flags(fwd) -> dict[str, bool]:
-    """The MLP collective flags this sglang's forward state actually carries."""
     return {f: getattr(fwd, f) for f in MLP_FLAGS if hasattr(fwd, f)}
 
 
@@ -614,12 +599,10 @@ STASH_ATTRS = ("_k3_onorm_gate", "_k3_onorm_consumed", "_k3_deferred_f_b")
 
 
 def module_stash(mod) -> dict:
-    """The kernel-selecting attributes this module currently carries."""
     return {a: getattr(mod, a) for a in STASH_ATTRS if hasattr(mod, a)}
 
 
 def attn_res_banks(args, kwargs) -> list[tuple]:
-    """``(bank, num_valid_blocks)`` for each attention-residual bank passed in."""
     return [
         (a, a.num_valid_blocks)
         for a in (*args, *kwargs.values())
@@ -628,7 +611,7 @@ def attn_res_banks(args, kwargs) -> list[tuple]:
 
 
 class Recorded(NamedTuple):
-    """One op's captured call site: arguments plus the ambient state it reads."""
+    """One op's recorded call: its arguments plus the ambient forward state it reads."""
 
     args: tuple
     kwargs: dict
@@ -639,12 +622,9 @@ class Recorded(NamedTuple):
 
 
 def residual_owner(name: str) -> str:
-    """The `<rest>` row that absorbs ``name``'s cost when it has no row of its own."""
     kind, _, op = name.rpartition("|")
-    # A depth-keyed row folds into its kind's row, so the residual is named for the kind.
     kind = kind.partition("#")[0]
     if not kind:
-        # embed_tokens / attn_res_out / logits hang off no parent.
         return ""
     if op == "layer":
         return ""
@@ -655,12 +635,11 @@ def residual_owner(name: str) -> str:
 
 
 def skipped_note(skipped: dict, gaps: dict | None = None) -> str:
-    """Ops that fired but could not be replayed on their own, and where they went."""
+    """Ops that fired but could not be replayed on their own, and the row their cost now sits in."""
     if not skipped:
         return ""
     rows = []
     for name, err in sorted(skipped.items()):
-        # Split on the bar: a `kind|op` key carries the character markdown uses to end a cell.
         kind, _, op = name.rpartition("|")
         depth_keyed = "#" in kind
         kind = kind.partition("#")[0]
@@ -684,7 +663,6 @@ def skipped_note(skipped: dict, gaps: dict | None = None) -> str:
     return note
 
 
-# Groups of names that go missing together, and the one kernel that takes each group's work.
 FUSION_NOTES = (
     (
         ("input_layernorm", "post_attention_layernorm"),
@@ -729,7 +707,7 @@ FUSION_NOTES = (
 
 
 def coverage_note(ops: dict, saved: dict) -> str:
-    """The hooked names that never fired, so they have no row anywhere."""
+    """The hooked ops that never fired in the recording forward, so no table has a row for them."""
     missing = sorted(n for n in ops if n not in saved)
     if not missing:
         return ""
@@ -766,7 +744,6 @@ def coverage_note(ops: dict, saved: dict) -> str:
 
 @contextlib.contextmanager
 def record_inputs(ops: dict, into: dict):
-    """Record each op's real inputs from one real forward."""
     from sglang.srt.runtime_context import get_forward
 
     handles = []
@@ -796,11 +773,10 @@ def record_inputs(ops: dict, into: dict):
 
 @contextlib.contextmanager
 def record_attn_res_out(model, ops: dict, into: dict):
-    """Record the model-level attention-residual aggregation as ``attn_res_out``."""
+    """Record the model-level attention-residual aggregation as op `attn_res_out`."""
     try:
         from sglang.srt.layers.attn_residual import AttnResidual
     except ImportError:
-        # A tree without the attention-residual stream has no final aggregation to time.
         yield into
         return
 
@@ -823,7 +799,7 @@ def record_attn_res_out(model, ops: dict, into: dict):
             depth = self.num_valid_blocks if mine else None
             out = original(self, *args, **kwargs)
             if mine and out is not None:
-                # Bind to the real method, not this wrapper, so the replay does not re-enter the recorder.
+                # Bind the real method, not this wrapper, so the replay does not re-enter the recorder.
                 ops[name] = original.__get__(self)
                 into[name] = Recorded(args, kwargs, None, {}, {}, [(self, depth)])
             return out
@@ -841,7 +817,6 @@ def record_attn_res_out(model, ops: dict, into: dict):
 
 
 def make_call(mod, entry) -> Callable:
-    """A callable that runs `mod` on its recorded inputs, ambient state included."""
     from sglang.srt.layers.communicator import ATTN_TP_CONTEXT, AttentionInputs
     from sglang.srt.runtime_context import get_forward
 
@@ -862,16 +837,14 @@ def make_call(mod, entry) -> Callable:
     return call
 
 
-# MI355X's last-level cache.
-MALL_BYTES = 256 << 20
-# Twice the cache, so a slot is evicted before its next read.
-ROTATION_BYTES = 2 * MALL_BYTES
+MALL_BYTES = 256 << 20  # MI355X's last-level cache
+ROTATION_BYTES = 2 * MALL_BYTES  # twice the cache, so a slot is evicted before its next read
 MAX_ROTATION_SLOTS = 256
 
 
 @contextlib.contextmanager
 def rotated_calls(mod, entry):
-    """Yield ``(fns, inner)`` reading a different copy of the weight each call."""
+    """Yield (fns, inner) for bench(), rotating a weight that fits the MALL so no call reads it cache-hot."""
     call = make_call(mod, entry)
     w = getattr(mod, "weight", None)
     if not isinstance(w, torch.Tensor) or w.dim() != 2:
@@ -889,7 +862,7 @@ def rotated_calls(mod, entry):
     except torch.cuda.OutOfMemoryError:
         torch.cuda.empty_cache()
         ring = None
-    # Agreed across ranks: a rank that fell back alone would issue mismatched collectives and wedge the world.
+    # Agreed across ranks: a rank falling back alone would issue mismatched collectives and wedge the world.
     if not agreed(ring is not None):
         if ring is not None:
             del ring
@@ -916,14 +889,12 @@ def rotated_calls(mod, entry):
 
 
 def balance_moe_routing(layers, load_format: str) -> None:
-    """Under dummy weights, make every MoE layer spread its tokens over experts."""
     if load_format != "dummy":
         return
     balance_modules(layers.layers)
 
 
 def balance_modules(modules) -> None:
-    """Install the balanced router on every MoE layer in a module list."""
     for layer in modules:
         experts = getattr(layer.mlp, "experts", None)
         if experts is not None:
@@ -931,17 +902,15 @@ def balance_modules(modules) -> None:
 
 
 def language_model(model):
-    """The text stack, whichever class sglang instantiated for the checkpoint."""
     return getattr(model, "language_model", None) or model
 
 
 def backbone(model):
-    """The decoder stack: ``embed_tokens``, ``layers``, ``norm``."""
     return language_model(model).model
 
 
 class Layers:
-    """Which layers pay for what, so the roll-up multiplies by the right counts."""
+    """Decoder layers by kind and residual depth, so the roll-up multiplies each row by the right count."""
 
     def __init__(self, model_runner):
         self.layers = backbone(model_runner.model).layers
@@ -957,12 +926,10 @@ class Layers:
 
     @property
     def counts(self) -> dict[str, int]:
-        """How many layers of each kind."""
         return {k: len(v) for k, v in self.kinds.items()}
 
     @property
     def depth_counts(self) -> dict[tuple[str, tuple[int, bool]], int]:
-        """How many layers of each (kind, residual depth), keyed as the ops are."""
         return {(kind, depth): len(ids) for kind, per in self.depths.items() for depth, ids in per.items()}
 
     def describe(self) -> str:
@@ -975,7 +942,6 @@ class Layers:
         )
 
     def experts_per_rank(self) -> int:
-        """Routed experts this rank holds, read off the first MoE layer."""
         for layer in self.layers:
             experts = getattr(layer.mlp, "experts", None)
             if experts is not None:
@@ -984,7 +950,7 @@ class Layers:
 
 
 def depth_of(layer) -> tuple[int, bool]:
-    """Residual aggregation this layer does: (banked rows, banks one); cost grows with depth."""
+    """The layer's residual depth: (banked rows it mixes, whether it banks one); cost grows with depth."""
     return (
         int(getattr(layer, "prev_valid_blocks", 0) or 0),
         bool(getattr(layer, "is_block_write_layer", False)),
@@ -992,13 +958,11 @@ def depth_of(layer) -> tuple[int, bool]:
 
 
 def depth_tag(depth: tuple[int, bool]) -> str:
-    """A depth as it appears in an op key and in the report: `3`, or `3w` for a layer that banks a row."""
     nvb, write = depth
     return f"{nvb}w" if write else str(nvb)
 
 
 def is_kda(layer) -> bool:
-    """Whether this layer runs Kimi Delta Attention rather than MLA."""
     return hasattr(layer.self_attn, "o_norm")
 
 
@@ -1006,22 +970,16 @@ TREE = [
     ("layer", 0),
     ("input_layernorm", 1),
     ("attn", 1),
-    # MLA.
     ("attn.fused_qkv_a_proj_with_mqa", 2),
     ("attn.q_b_proj", 2),
     ("attn.kv_b_proj", 2),
-    # KDA, attention TP == TP: one wide GEMM for q, k, v and the output gate.
     ("attn.fused_qkvg_proj", 2),
-    # KDA, DP attention: the same four projections as separate modules.
     ("attn.qkv_proj", 2),
     ("attn.b_proj", 2),
     ("attn.f_a_proj", 2),
     ("attn.f_b_proj", 2),
-    # KDA's output gate under DP attention, and MLA's on every layout.
     ("attn.g_proj", 2),
-    # The KDA conv + recurrence kernel; KDA layers only.
     ("attn.attn", 2),
-    # The MLA attention kernels: `attn_mqa` is the absorbed path, `attn_mha` the dense path.
     ("attn.attn_mqa", 2),
     ("attn.attn_mqa_for_dcp_decode", 2),
     ("attn.attn_mha", 2),
@@ -1048,7 +1006,7 @@ TREE = [
     ("layer.<rest>", 1),
 ]
 
-# parent -> children subtracted from it to get its `<rest>` row.
+# parent -> the children subtracted from it to get its `<rest>` row.
 RESIDUALS = {
     parent: [n for n, d in TREE if d == 2 and n.startswith(f"{parent}.") and not n.endswith("<rest>")]
     for parent in ("attn", "mlp")
@@ -1058,12 +1016,10 @@ RESIDUALS["layer"] = [n for n, d in TREE if d == 1 and not n.endswith("<rest>")]
 # Rows that partition a layer without overlap; their sum is the roll-up exactly.
 LEAVES = [n for n, d in TREE if d == 2] + [n for n, d in TREE if d == 1 and n not in RESIDUALS]
 
-# TREE names are attribute paths, except `attn`, which is `self_attn`.
 _ATTR = {"attn": "self_attn"}
 
 
 def layer_ops(layer) -> dict[str, torch.nn.Module]:
-    """The hookable modules of one decoder layer, keyed by TREE name."""
     owners = {"": layer, "attn": layer.self_attn, "mlp": layer.mlp}
     ops = {"layer": layer}
     for name, _ in TREE:
@@ -1076,7 +1032,6 @@ def layer_ops(layer) -> dict[str, torch.nn.Module]:
     return ops
 
 
-# Outside the layer stack, run once per forward.
 GLOBAL_OPS = (
     "embed_tokens",
     "attn_res_out",
@@ -1086,22 +1041,21 @@ GLOBAL_OPS = (
     "logits",
 )
 
-# The names `attn_res_out` subsumes; on fused paths it reads their weights rather than calling them.
+# The ops `attn_res_out` subsumes; on fused paths it reads their weights rather than calling them.
 ATTN_RES_OUT_CHILDREN = ("output_attn_res_proj", "output_attn_res_norm", "norm")
 
-# Ops whose cost depends on residual depth, timed once per (kind, depth) rather than once per kind.
+# Ops whose cost depends on residual depth, timed per (kind, depth) rather than per kind.
 DEPTH_OPS = ("layer",)
 
 
 def op_key(kind: str, depth: tuple[int, bool], name: str) -> str:
-    """`kind|op`, or `kind#depth|op` for an op that is timed per depth."""
+    """`kind|op`, or `kind#depth|op` for an op timed per depth."""
     if name not in DEPTH_OPS:
         return f"{kind}|{name}"
     return f"{kind}#{depth_tag(depth)}|{name}"
 
 
 def collect_ops(layers: "Layers", model) -> dict:
-    """Everything to time: one entry per layer kind and depth, plus the globals."""
     ops = {}
     for kind, per_depth in layers.depths.items():
         for depth, ids in sorted(per_depth.items()):
@@ -1124,7 +1078,7 @@ def collect_ops(layers: "Layers", model) -> dict:
 
 
 def fold_depths(times: dict, layers: "Layers") -> tuple[dict, dict]:
-    """Collapse the per-depth rows into one row per kind."""
+    """Fold the per-depth rows into one row per kind; counts drop to the layers actually measured."""
     out = {k: v for k, v in times.items() if "#" not in k.partition("|")[0]}
     per_depth = layers.depth_counts
     counts = dict(layers.counts)
@@ -1143,12 +1097,10 @@ def fold_depths(times: dict, layers: "Layers") -> tuple[dict, dict]:
 
 
 def coverage_gaps(counts: dict, layers: "Layers") -> dict[str, tuple[int, int]]:
-    """Kinds whose rows cover fewer layers than the kind has: {kind: (got, all)}."""
     return {kind: (counts[kind], n) for kind, n in layers.counts.items() if counts.get(kind, n) < n}
 
 
 def gap_note(gaps: dict) -> str:
-    """One sentence naming the kinds whose rows cover only part of the stack."""
     if not gaps:
         return ""
     parts = ", ".join(f"`{k}` {got} of {all_}" for k, (got, all_) in sorted(gaps.items()))
@@ -1161,7 +1113,6 @@ def gap_note(gaps: dict) -> str:
 
 
 def depth_rows(times: dict, layers: "Layers") -> list[tuple]:
-    """The per-depth `layer` measurements, for the report section that shows them."""
     counts = layers.depth_counts
     rows = []
     for name in DEPTH_OPS:
@@ -1175,7 +1126,7 @@ def depth_rows(times: dict, layers: "Layers") -> list[tuple]:
 
 
 def add_residuals(times: dict, counts: dict) -> None:
-    """Give every parent a `<rest>` row: itself minus its measurable children."""
+    """Give every parent a `<rest>` row: itself minus its measured children."""
     for kind in counts:
         for parent, kids in RESIDUALS.items():
             if f"{kind}|{parent}" in times:
@@ -1184,7 +1135,7 @@ def add_residuals(times: dict, counts: dict) -> None:
 
 
 def contradictions(times: dict, counts: dict) -> list[tuple]:
-    """Parents measured smaller than the children they contain."""
+    """Parents measured at under half their children's sum, so one of the timings was disturbed."""
     out = []
     for kind in counts:
         for parent, kids in RESIDUALS.items():
@@ -1198,7 +1149,6 @@ def contradictions(times: dict, counts: dict) -> list[tuple]:
 
 
 def contradiction_banner(bad: list[tuple]) -> str:
-    """The warning that goes above the tables when the tree contradicts itself."""
     if not bad:
         return ""
     rows = ", ".join(
@@ -1219,7 +1169,6 @@ def contradiction_banner(bad: list[tuple]) -> str:
 
 
 def leaf_totals(times: dict, counts: dict) -> dict:
-    """ms per forward for the rows that partition a layer without overlapping."""
     totals = {}
     for name in LEAVES:
         ms = sum(
@@ -1234,7 +1183,7 @@ def leaf_totals(times: dict, counts: dict) -> dict:
 
 
 def kernel_children(label: str, ops: dict, times: dict) -> list:
-    """The child modules whose kernels a parent's kernel profile leaves out."""
+    """The timed child modules a parent's kernel profile leaves out, so its kernels are its own."""
     head, _, name = label.rpartition("|")
     if not head or name not in RESIDUALS:
         return []
@@ -1256,7 +1205,7 @@ def kernel_children(label: str, ops: dict, times: dict) -> list:
 
 
 def kernel_totals(profiles: dict, times: dict, layers: "Layers") -> dict:
-    """Kernel samples rolled up onto the hotspot rows, with the roll-up's counts."""
+    """Kernel samples rolled up onto the hotspot rows, multiplied by the roll-up's layer counts."""
     folded, counts = fold_depths(times, layers)
     depth_of_key = {
         op_key(kind, depth, name): (kind, depth)
@@ -1292,7 +1241,6 @@ def kernel_totals(profiles: dict, times: dict, layers: "Layers") -> dict:
 
 
 def global_leaves(times: dict) -> list[str]:
-    """The global ops that partition the forward without overlapping."""
     names = [n for n in GLOBAL_OPS if n in times]
     if "attn_res_out" in times:
         names = [n for n in names if n not in ATTN_RES_OUT_CHILDREN]
@@ -1318,7 +1266,6 @@ KERNEL_ENV = (
 
 
 def kernel_env() -> list[tuple]:
-    """The kernel-selecting environment, unset names included."""
     return [(name, os.environ.get(name) or "unset") for name in KERNEL_ENV]
 
 
@@ -1326,27 +1273,21 @@ GB = 1 << 30
 
 
 def memory_section(args, model_runner, layers, kv_factor: int = 1) -> str:
-    """Weights and both pools, measured off the real buffers rather than a formula."""
     mr = model_runner
-    # Paged KV alone; the state pool's bytes are counted separately below.
     kv_total = mr.token_to_kv_pool.get_kv_size_bytes()
-    # In tokens of context, which under DCP is dcp_size times the rows a rank stores.
     _, cap = kv_alloc_capacity(mr)
     dcp = dcp_size(mr)
-    # kv_factor is the peak, not the reservation.
     conc = local_conc(args, mr)
     used = conc * args.ISL * kv_factor
     dp = mr.ps.attn_dp_size
     n_mla = sum(len(v) for k, v in layers.kinds.items() if k.endswith("+mla"))
     n_kda = sum(len(v) for k, v in layers.kinds.items() if k.endswith("+kda"))
 
-    # Off the pool's own accounting, which knows what is allocated and the dedup.
     state_total = state_bytes(mr)
     slots = state_slots(mr)
     state_cap = state_request_cap(mr)
 
     def row(name, n_layers, nbytes, per, unit):
-        """One pool: total bytes, and what one unit of its capacity costs."""
         each = nbytes / per if per else 0
         return (
             name,
@@ -1369,7 +1310,6 @@ def memory_section(args, model_runner, layers, kv_factor: int = 1) -> str:
         ("weights", "", "", "", "", weights / GB),
         ("**HBM**", "", "", "", "", hbm / GB),
     ]
-    # Lead with real serving capacity: under DP attention the cluster holds dp_size times a rank's pool.
     if dp > 1:
         capacity = (
             f"**MLA KV capacity {cap * dp:,} tokens cluster-wide** = {cap:,} per"
@@ -1452,7 +1392,6 @@ def memory_section(args, model_runner, layers, kv_factor: int = 1) -> str:
     )
 
 
-# What lands in each `<rest>` row: inline code or fused kernels with no module to hook.
 RESIDUAL_CONTENTS = {
     "attn.<rest>": "attn internals: see the per-kind tables",
     "mlp.<rest>": "gather/scatter+prefix add (dense); fused front+tail (moe)",
@@ -1470,7 +1409,6 @@ MHA_ATTN_REST = "qk_norm+k/v split+kv_write (kernel is attn_mha)"
 
 
 def attn_path(saved) -> str:
-    """Which attention the MLA layers of the last forward took."""
     if any(n.endswith("|attn.kv_b_proj") for n in saved):
         return "mha"
     if any(n.endswith("|attn.attn_mqa_for_dcp_decode") for n in saved):
@@ -1479,7 +1417,6 @@ def attn_path(saved) -> str:
 
 
 def residual_contents(model_runner, path: str) -> dict[str, str]:
-    """Labels for the `<rest>` rows, by MoE layout."""
     contents = dict(RESIDUAL_CONTENTS)
     a2a = moe_parallel(model_runner).a2a
     if a2a is None:
@@ -1494,7 +1431,6 @@ def residual_contents(model_runner, path: str) -> dict[str, str]:
 
 
 def kind_contents(model_runner, kind: str, path: str) -> dict[str, str]:
-    """`residual_contents` with `attn.<rest>` named for this kind's attention."""
     contents = dict(residual_contents(model_runner, path))
     if kind.endswith("+kda"):
         contents["attn.<rest>"] = KDA_ATTN_REST
@@ -1504,7 +1440,6 @@ def kind_contents(model_runner, kind: str, path: str) -> dict[str, str]:
 
 
 def attn_line(model_runner, layers: "Layers") -> str:
-    """The `attention` row of the config table: the hybrid split and its backend."""
     counts = layers.counts
     n_kda = sum(v for k, v in counts.items() if k.endswith("+kda"))
     n_mla = sum(v for k, v in counts.items() if k.endswith("+mla"))
@@ -1515,7 +1450,6 @@ def attn_line(model_runner, layers: "Layers") -> str:
 
 
 def attn_backends(model_runner) -> str:
-    """The attention backends sglang built, by class, rather than the flags."""
     parts = []
 
     def walk(backend, role):
@@ -1542,7 +1476,6 @@ def attn_backends(model_runner) -> str:
 
 
 def tree_name(name: str, depth: int, contents: dict[str, str] | None = None) -> str:
-    """Indent an op name for a markdown table, tagging rows named in `contents`."""
     contents = (RESIDUAL_CONTENTS if contents is None else contents).get(name)
     label = f"{name} :: {contents}" if contents else name
     return f"`{'  ' * depth}{label}`"

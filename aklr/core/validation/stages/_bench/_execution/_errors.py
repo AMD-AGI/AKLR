@@ -6,7 +6,7 @@
 
 
 class ExecutionError(RuntimeError):
-    """Base class for failures that prevented an execution from completing."""
+    pass
 
 
 class ExecutorClosed(ExecutionError):

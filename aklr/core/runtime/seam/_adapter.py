@@ -1,7 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
-
-"""The adapter of one backend entry point to a AKLR api."""
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ __all__ = ["Adapter"]
 
 
 class Adapter:
-    """Serves one backend entry point through a AKLR api."""
+    """Serves a backend entry point through an AKLR api: ``bind_fn`` maps its call, None to decline."""
 
     def __init__(
         self,
@@ -34,7 +35,7 @@ class Adapter:
             raise ValueError(f"not a dotted entry point: {entry!r}")
         self.entry = entry
         self.api = api
-        # The entry point's top-level package, the baseline dispatch must beat.
+        # the entry point's top-level package: the baseline dispatch must beat
         self.backend = module.partition(".")[0]
         self.bind_fn = bind_fn
         self.baseline_fn = baseline_fn
@@ -43,10 +44,12 @@ class Adapter:
         return f"<Adapter {self.entry} -> {self.api.__name__}>"
 
     def original(self) -> Callable | None:
+        """The entry point's unpatched function, or None when this environment lacks it."""
         module, _, name = self.entry.rpartition(".")
         try:
             entry = getattr(importlib.import_module(module), name, None)
         except ModuleNotFoundError as e:
+            # only the entry's own module (or a parent) missing means this environment lacks it
             if e.name is None or not f"{module}.".startswith(f"{e.name}."):
                 raise
             return None
@@ -55,6 +58,7 @@ class Adapter:
         return entry.__wrapped__ if getattr(entry, "aklr_adapter", None) is self else entry
 
     def baseline(self, call: Mapping[str, Any]) -> Callable[[], Any] | None:
+        """A no-argument call of the backend's original on api kwargs ``call``, for timing; else None."""
         if self.baseline_fn is None:
             return None
         original = self.original()

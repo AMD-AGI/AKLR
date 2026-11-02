@@ -1,7 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
-
-"""SchemaCollection as a pure data warehouse for schemas."""
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -18,7 +19,7 @@ from aklr.core.schema._schema import Schema
 from aklr.core.schema._workload import Workload
 
 OPS_DIR: Final = "aklr/ops"
-# the parts of a schema file that may differ between files of one name
+# the only fields in which two files of one schema name may differ
 _DATA_FIELDS: Final = {"kernel", "workloads"}
 
 
@@ -53,21 +54,13 @@ class DefaultLayout(SchemaLayout):
 
 @dataclass
 class SchemaCollection:
-    """Stores a AKLR dataset of schemas.
-
-    Every schema json is one ``Schema``: the op contract, at most one kernel and its
-    measured workloads; its ``layout`` decides where each file lives. Files sharing a
-    ``name`` are identical outside their kernel and workloads.
-    """
+    """A dataset's schemas by name; files of one name differ only in their kernel and workloads."""
 
     layout: SchemaLayout | None = None
     schemas: dict[str, list[Schema]] = field(default_factory=dict)
-    """Map from schema name to all its schemas, with or without a kernel."""
     _schema_by_kernel: dict[str, Schema] = field(default_factory=dict, init=False, repr=False)
-    """Fast lookup index: kernel name -> the Schema carrying it. Automatically maintained."""
 
     def __post_init__(self):
-        """Initialize the kernel index from existing data."""
         for schemas_list in self.schemas.values():
             for schema in schemas_list:
                 if schema.kernel is None:
@@ -78,33 +71,13 @@ class SchemaCollection:
 
     @classmethod
     def from_path(cls: type[SchemaCollection], path: str | None = None) -> SchemaCollection:
-        """Load a SchemaCollection from a directory.
-
-        Parameters
-        ----------
-        path : Optional[str], optional
-            Root directory in the ``SchemaLayout``. If None, ``AKLR_SCHEMA_PATH`` is used,
-            else ``aklr/ops`` in the ``DefaultLayout``.
-
-        Returns
-        -------
-        SchemaCollection
-            A new SchemaCollection instance populated with data from the directory.
-        """
+        """Load path, else AKLR_SCHEMA_PATH, as a SchemaLayout; with neither, aklr/ops as a DefaultLayout."""
         root = Path(path) if path else RuntimeEnv().schema_path
         checkout = Path(__file__).resolve().parents[3]
         return cls.from_layout(SchemaLayout(root) if root else DefaultLayout(checkout / OPS_DIR))
 
     @classmethod
     def from_layout(cls: type[SchemaCollection], layout: SchemaLayout) -> SchemaCollection:
-        """Load a SchemaCollection from every schema json of a layout.
-
-        Raises
-        ------
-        ValueError
-            If two files of one name differ outside their kernel and workloads, or if
-            duplicate kernel names are found.
-        """
         layout.root.mkdir(parents=True, exist_ok=True)
         schemas: dict[str, list[Schema]] = {}
 
@@ -121,13 +94,6 @@ class SchemaCollection:
         return cls(layout=layout, schemas=schemas)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert the SchemaCollection to a Python dict.
-
-        Returns
-        -------
-        Dict[str, Any]
-            A dictionary representation of the SchemaCollection.
-        """
         schema_adapter = TypeAdapter(Schema)
         return {
             "schemas": {
@@ -137,41 +103,12 @@ class SchemaCollection:
         }
 
     def get_schema(self, kernel_name: str) -> Schema | None:
-        """Get the schema carrying a kernel, by kernel name.
-
-        Parameters
-        ----------
-        kernel_name : str
-            The name of the kernel to retrieve.
-
-        Returns
-        -------
-        Optional[Schema]
-            The schema whose kernel has the given name, or None if not found.
-        """
         return self._schema_by_kernel.get(kernel_name)
 
     def filter_schemas(
         self, name: str, target: DeviceTarget, min_speedup: float, baseline: str
     ) -> list[tuple[Schema, Workload]]:
-        """Every (schema, workload) of a schema name dispatch may serve on ``target``.
-
-        Parameters
-        ----------
-        name : str
-            Name of the schemas to filter.
-        target : DeviceTarget
-            The device; a kernel serves only if its ``target_hardware`` matches it.
-        min_speedup : float
-            ``AKLR_MIN_SPEEDUP``, see :meth:`Workload.qualifies`.
-        baseline : str
-            The backend dispatch would replace, see :meth:`Workload.qualifies`.
-
-        Returns
-        -------
-        List[Tuple[Schema, Workload]]
-            Each qualified workload with the schema (and so the kernel) it was measured on.
-        """
+        """Each (schema, workload) of name that dispatch may serve on target, see Workload.qualifies."""
         return [
             (s, w)
             for s in self.schemas.get(name, [])
@@ -181,6 +118,7 @@ class SchemaCollection:
         ]
 
     def add_workloads(self, workloads: list[tuple[Schema, Workload]]) -> None:
+        """Add each workload to its name's kernel-less schema, made if missing, and save it to the layout."""
         updated: dict[str, Schema] = {}
         for schema, workload in workloads:
             same_name = self.schemas.setdefault(schema.name, [])

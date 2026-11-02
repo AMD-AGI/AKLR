@@ -1,4 +1,15 @@
-"""Dispatch table for mapping workload keys to optimal kernels."""
+###############################################################################
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+# Copyright (c) 2025 by FlashInfer-Bench Contributors
+#
+# Adapted from FlashInfer-Bench (https://github.com/flashinfer-ai/flashinfer-bench)
+# Modified by the AKLR team.
+#
+# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
+# not the MIT license that covers the rest of AKLR (see LICENSE).
+###############################################################################
 
 from __future__ import annotations
 
@@ -22,50 +33,24 @@ if TYPE_CHECKING:
 
 
 def _dispatch_table_dir() -> Path:
-    """Get the directory for storing dispatch table cache files.
-
-    Returns
-    -------
-    Path
-        The dispatch table cache directory path.
-    """
     return RuntimeEnv().build_cache_path / "dispatch_table"
 
 
 @dataclass
 class DispatchTable:
-    """Dispatch table for mapping workload keys to optimal kernels.
-
-    This class manages a lookup table that maps workload characteristics (DispatchKey)
-    to the kernels of each schema name ranked best first, judged against the baseline
-    a call would otherwise run (the seam's backend). It supports caching to disk and
-    ahead-of-time compilation of frequently used kernels.
-    """
+    """Kernels ranked per dispatch key from the schemas' measured workloads; cached on disk by digest."""
 
     UNMEASURED: ClassVar[str] = ""
     """The slot of a direct call, or of a baseline no workload was measured against."""
 
     digest: str
-    """Hash digest identifying this table's configuration and data."""
     index: dict[str, dict[str, dict[DispatchKey, list[str]]]] = field(default_factory=dict)
-    """Mapping from baseline to schema name to (key -> kernel names, best first) lookup."""
+    """baseline -> schema name -> dispatch key -> kernel names, best first."""
     best_kernel: dict[str, dict[str, str]] = field(default_factory=dict)
-    """Mapping from baseline to schema name to the kernel winning the most keys."""
+    """baseline -> schema name -> the kernel ranked first on the most keys."""
 
     @classmethod
     def _load_from_disk(cls, digest: str) -> dict[str, Any] | None:
-        """Load dispatch table data from cache file.
-
-        Parameters
-        ----------
-        digest : str
-            The digest hash identifying the cached data.
-
-        Returns
-        -------
-        Optional[Dict[str, Any]]
-            The cached data if exists, None otherwise.
-        """
         index_path = _dispatch_table_dir() / f"{digest}.json"
 
         if index_path.exists():
@@ -76,18 +61,10 @@ class DispatchTable:
 
     @classmethod
     def _save_to_disk(cls, digest: str, data: dict[str, Any]) -> None:
-        """Save dispatch table data to cache file.
-
-        Parameters
-        ----------
-        digest : str
-            The digest hash identifying the data to cache.
-        data : Dict[str, Any]
-            The data to save to cache.
-        """
         index_path = _dispatch_table_dir() / f"{digest}.json"
         index_path.parent.mkdir(parents=True, exist_ok=True)
 
+        # a plain write: a process loading this table meanwhile can read it half-written
         with open(index_path, "w") as f:
             json.dump(data, f)
 
@@ -99,32 +76,10 @@ class DispatchTable:
         target: DeviceTarget,
         min_speedup: float,
     ) -> DispatchTable:
-        """Load an existing dispatch table from cache or build a new one.
-
-        This method first attempts to load a cached dispatch table based on the
-        digest of the schema collection, configuration, device and threshold. If no
-        cached version exists, it builds a new table from scratch and caches it.
-
-        Parameters
-        ----------
-        schema_collection : SchemaCollection
-            The schema collection containing benchmark data and kernels.
-        config_registry : DispatchConfigRegistry
-            Per-schema configuration registry for building the dispatch table.
-        target : DeviceTarget
-            The device the table serves.
-        min_speedup : float
-            ``AKLR_MIN_SPEEDUP``, see :meth:`Workload.qualifies`.
-
-        Returns
-        -------
-        DispatchTable
-            The loaded or newly built dispatch table.
-        """
+        """Load the table cached for these inputs, or build and cache it; then build its AOT kernels."""
         digest = cls._digest(schema_collection, config_registry, target, min_speedup)
         keys = TypeAdapter(DispatchKey)
 
-        # Try to load from cache
         raw = cls._load_from_disk(digest)
         if raw is not None:
             index: dict[str, dict[str, dict[DispatchKey, list[str]]]] = {}
@@ -143,9 +98,7 @@ class DispatchTable:
 
             return table
 
-        # Build fresh
         table = cls._build(schema_collection, config_registry, target, min_speedup, digest)
-        # Persist minimal index
         to_dump: dict[str, Any] = {
             "digest": table.digest,
             "index": {},
@@ -171,33 +124,6 @@ class DispatchTable:
         min_speedup: float,
         digest: str,
     ) -> DispatchTable:
-        """Build a new dispatch table from schema collection data.
-
-        Per baseline any workload was measured against, plus :attr:`UNMEASURED`, and per
-        schema name, every workload dispatch may serve on ``target`` in place of that
-        baseline is keyed, and each key ranks its kernels by speedup over that baseline
-        (0 without one), then by name; :attr:`UNMEASURED` ranks by the baseline most of
-        the key's kernels were measured against. The kernel ranked first on the most
-        keys is the name's best kernel.
-
-        Parameters
-        ----------
-        schema_collection : SchemaCollection
-            The schema collection containing benchmark data.
-        config_registry : DispatchConfigRegistry
-            Per-schema configuration registry.
-        target : DeviceTarget
-            The device the table serves.
-        min_speedup : float
-            ``AKLR_MIN_SPEEDUP``, see :meth:`Workload.qualifies`.
-        digest : str
-            :meth:`_digest` of the other arguments, the table's identity.
-
-        Returns
-        -------
-        DispatchTable
-            The newly built dispatch table.
-        """
         index: dict[str, dict[str, dict[DispatchKey, list[str]]]] = {}
         best_kernel: dict[str, dict[str, str]] = {}
 
@@ -228,6 +154,7 @@ class DispatchTable:
                 bucket = by_schema.setdefault(schema_name, {})
                 for key, kernels in per_key.items():
                     rank_by = baseline
+                    # UNMEASURED ranks by the baseline most of the key's kernels were measured against
                     if baseline == cls.UNMEASURED:
                         common = Counter(b for measured in kernels.values() for b in measured)
                         rank_by = min(
@@ -249,20 +176,6 @@ class DispatchTable:
         config_registry: DispatchConfigRegistry,
         table: DispatchTable,
     ) -> None:
-        """Perform ahead-of-time compilation of frequently used kernels.
-
-        This method pre-compiles kernels that are used frequently according to
-        the AOT ratio configuration. This reduces runtime compilation overhead.
-
-        Parameters
-        ----------
-        schema_collection : SchemaCollection
-            The schema collection containing schemas and kernels.
-        config_registry : DispatchConfigRegistry
-            Per-schema configuration registry containing AOT ratio and miss policy settings.
-        table : DispatchTable
-            The dispatch table containing kernel mappings.
-        """
         reg = BuilderRegistry.get_instance()
 
         buckets = [item for by_schema in table.index.values() for item in by_schema.items()]
@@ -285,7 +198,6 @@ class DispatchTable:
                 if kernel_schema:
                     reg.build(kernel_schema)
 
-        # Build best_kernel for schemas with on_miss_policy == "use_best_kernel"
         best = [item for by_schema in table.best_kernel.values() for item in by_schema.items()]
         for schema_name, kernel_name in best:
             config = config_registry.get(schema_name)
@@ -304,34 +216,11 @@ class DispatchTable:
         target: DeviceTarget,
         min_speedup: float,
     ) -> str:
-        """Compute a hash digest for the schema collection and configuration.
-
-        This method creates a deterministic hash that uniquely identifies the
-        combination of schema collection data, dispatch configuration, device and
-        threshold. The digest is used for caching dispatch tables.
-
-        Parameters
-        ----------
-        schema_collection : SchemaCollection
-            The schema collection containing benchmark data.
-        config_registry : DispatchConfigRegistry
-            Per-schema configuration registry.
-        target : DeviceTarget
-            The device the table serves.
-        min_speedup : float
-            ``AKLR_MIN_SPEEDUP``.
-
-        Returns
-        -------
-        str
-            SHA256 hash digest as a hexadecimal string.
-        """
         kept_schemas: list[dict[str, Any]] = []
         kept_workloads: list[dict[str, Any]] = []
         for schemas in schema_collection.to_dict()["schemas"].values():
             for schema in schemas:
                 kernel = schema["kernel"]
-                # kernel-less schemas never dispatch
                 if kernel is None:
                     continue
                 for drop in ("description", "tags", "reference", "constraints"):
@@ -359,7 +248,7 @@ class DispatchTable:
                     )
 
         payload = {
-            "index": "ranked",
+            "index": "ranked",  # the cache file's index format: a new value retires files of the old one
             "cfg": config_registry.model_dump(mode="json"),
             "target": str(target),
             "min_speedup": min_speedup,
@@ -373,30 +262,13 @@ class DispatchTable:
         return hashlib.sha256(str_repr).hexdigest()
 
     def match_kernel(self, schema_name: str, key: DispatchKey, baseline: str | None) -> str | None:
-        """Find the best kernel for a given schema name and workload key.
-
-        Parameters
-        ----------
-        schema_name : str
-            Name of the schema.
-        key : DispatchKey
-            Workload characteristics key to match against.
-        baseline : Optional[str]
-            The backend the call falls back to, e.g. ``aiter`` or ``sglang``; None for a
-            direct ``aklr.ops`` call, which has no baseline to beat.
-
-        Returns
-        -------
-        Optional[str]
-            The name of the best kernel, or None to fall back to ``baseline``.
-        """
+        """The best kernel for ``key`` against ``baseline`` (None: a direct call), or None to fall back."""
         return next(iter(self.candidates(schema_name, key, baseline)), None)
 
     def candidates(self, schema_name: str, key: DispatchKey, baseline: str | None) -> list[str]:
         return self.index.get(self.slot(baseline), {}).get(schema_name, {}).get(key, [])
 
     def match_best_kernel(self, schema_name: str, baseline: str | None) -> str | None:
-        """The kernel winning the most keys of ``schema_name`` against ``baseline``."""
         return self.best_kernel.get(self.slot(baseline), {}).get(schema_name)
 
     def slot(self, baseline: str | None) -> str:

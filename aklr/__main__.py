@@ -1,7 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
-
-"""``python -m aklr validate``: forwards to the command module."""
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m aklr")
     parser.add_argument("command", choices=_COMMANDS)
     parser.add_argument("command_argv", nargs=argparse.REMAINDER, metavar="args")
-    args = parser.parse_args(argv)  # anything else: usage, exit 2
+    args = parser.parse_args(argv)
     from aklr.core.validation import command
 
     return command.main(args.command_argv)

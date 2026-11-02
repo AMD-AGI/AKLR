@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -54,8 +57,7 @@ MAX_BATCH_OUTPUT_BYTES: Final = 16 << 30
 MAX_BATCH_WORKLOADS: Final = 16
 BUILD_TIMEOUT_SECONDS: Final = 900.0
 WORKLOAD_TIMEOUT_SECONDS: Final = 300.0
-# the reference compares every stored output in float64 on the CPU, so its time grows with them: at m=342073,
-# gemm_n3072_k512's 23 GiB of outputs took about 420 s on a busy MI355X node
+# the float64 CPU reference scales with outputs: gemm_n3072_k512 at m=342073, 23 GiB, ~420 s on a busy MI355X
 REFERENCE_SECONDS_PER_OUTPUT_GIB: Final = 60.0
 ResultT = TypeVar("ResultT", CandidateResult, ReferenceResult)
 
@@ -65,8 +67,7 @@ class ReferenceNotProduced(RuntimeError):
 
 
 class UnreadableIncumbent(RuntimeError):
-    """A base schema of the same name is not even JSON: its replacement is never timed
-    without it. Any other base schema that does not parse is skipped."""
+    """A same-name base schema that is not even JSON: its replacement is never timed without it."""
 
 
 class BenchStage(PipelineStage):
@@ -79,7 +80,7 @@ class BenchStage(PipelineStage):
         if not devices:
             raise ValueError("no device to run on")
         self._devices = tuple(devices)
-        # by (base sha, path): every benched schema of an op reads its op's base files
+        # by (base sha, path): every benched schema of an op reads all of its op's base files
         self._base_schemas: dict[tuple[str, str], Schema | ValueError | None] = {}
 
     def run(self, scope: ValidationScope, earlier: PipelineReport) -> BenchReport:
@@ -106,9 +107,7 @@ class BenchStage(PipelineStage):
             f" {sum(map(len, batches))} workloads, {len(self._devices)} devices"
         )
         done = itertools.count(1)
-        # the costliest batches start first, so none of them is left as the tail:
-        # a workload's checks and timing cost about one unit, and each GiB of its
-        # inputs, drawn and copied for every step, about one more
+        # costliest first, so none is the tail: ~1 unit per workload, +1 per GiB of inputs redrawn each step
         order = sorted(
             range(len(batches)),
             key=lambda i: -sum(1 + r.input_bytes / 2**30 for r in batches[i]),
@@ -135,7 +134,7 @@ class BenchStage(PipelineStage):
         path = path.resolve()
         schema_path = path.relative_to(scope.root.resolve()).as_posix()
         schema = load_json_file(Schema, path)
-        if schema.kernel is None:  # a definition: no kernel to bench
+        if schema.kernel is None:
             return []
         import aklr.seam  # noqa: F401 -- declares every adapter
         from aklr.core.runtime.seam import SeamRegistry
@@ -180,7 +179,6 @@ class BenchStage(PipelineStage):
                 workload,
                 thresholds=thresholds,
                 incumbent=incumbent,
-                # what users run today: the served base kernel, this one included
                 baseline=incumbent_path if is_served else None,
             )
             n_bytes = request.output_bytes
@@ -205,8 +203,6 @@ class BenchStage(PipelineStage):
         min_speedup: float,
         backend: str,
     ) -> dict[str, tuple[Schema, str, bool]]:
-        """Per workload, the base kernel dispatch serves at its key (or this very
-        kernel at base), its path, and whether dispatch serves it."""
         impls_dir = (Path(schema_path).parents[3] / "impls").as_posix()
         paths = [p for p in scope.paths_at_base(impls_dir) if ValidationScope.path_kind(p) == "schema_data"]
         served: dict[Any, list[tuple[Schema, Workload, str]]] = {}
@@ -359,7 +355,7 @@ class BenchStage(PipelineStage):
             found, timings, is_compared, backend = list(batch_findings), (), False, None
             if not batch_findings:
                 candidate_result = candidate_results[request.axes_text]
-                # absent: declined by the baseline, the candidate's finding alone
+                # absent: declined by the baseline (BASELINE_FAILED); the candidate's finding stands alone
                 reference_result = reference_results.get(request.axes_text)
                 found = list(candidate_result.findings)
                 backend = candidate_result.backend
@@ -376,8 +372,6 @@ class BenchStage(PipelineStage):
                         if gated is not None:
                             found.append(gated)
             located = {"schema_path": schema_path, "axes": request.workload.axes}
-            # an adapter is named by what bound (of several, the first to bind); none
-            # bound: nothing ran, nothing to export
             baseline = request.baseline or (None if batch_findings else candidate_result.baseline)
             findings += [replace(f, **located) for f in found]
             records.append(

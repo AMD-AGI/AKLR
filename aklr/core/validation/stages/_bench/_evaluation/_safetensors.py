@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -24,6 +27,7 @@ def outputs_file_name(axes_text: str) -> str:
 def open_candidate_outputs(directory_descriptor: int, file_name: str) -> Any:
     from safetensors import safe_open
 
+    # the candidate's process wrote this file: refuse links and non-regular files, never block on a FIFO
     flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
     descriptor = os.open(file_name, flags, dir_fd=directory_descriptor)
     try:

@@ -63,7 +63,7 @@ class _CallbackDispatcher:
 
 
 class ExecutionFuture(Future, Generic[T]):
-    """A standard Python Future carrying AKLR execution identity and state."""
+    """A Future that also records where its task runs, and runs done-callbacks off the resolving thread."""
 
     def __init__(self, task_id: str) -> None:
         super().__init__()
@@ -140,6 +140,7 @@ class ExecutionFuture(Future, Generic[T]):
         with self._transition_lock:
             is_cancelled = super().cancel()
             if is_cancelled and not self._cancellation_notified:
+                # wait() and as_completed() see a cancel only once notified; notifying twice raises
                 self.set_running_or_notify_cancel()
                 self._cancellation_notified = True
         if is_cancelled:

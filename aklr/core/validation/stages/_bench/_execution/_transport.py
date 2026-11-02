@@ -83,8 +83,6 @@ class ChannelReceiveTimeout(TimeoutError):
 
 
 class RunnerChannel(ABC):
-    """Parent-side command/event channel used by an ExecutionRunner."""
-
     @abstractmethod
     def send(self, command: RunnerCommand) -> None: ...
 
@@ -99,7 +97,7 @@ class RunnerChannel(ABC):
 
 
 class ChildRunnerEndpoint:
-    """Child-side inverse of RunnerChannel: pickled commands in, json events out."""
+    """The child's end: pickled commands in, JSON events out, so the parent never unpickles its bytes."""
 
     def __init__(self, command_queue: Any, event_connection: Any) -> None:
         self._command_queue = command_queue
@@ -153,7 +151,7 @@ class MultiprocessingRunnerChannel(RunnerChannel):
         if self._is_closed:
             raise ChannelFailure("runner channel is closed")
         try:
-            ForkingPickler.dumps(command)
+            ForkingPickler.dumps(command)  # put() pickles on a feeder thread, which only prints its failure
             self._command_queue.put(command)
         except Exception as error:
             raise ChannelFailure(f"could not send runner command: {error}") from error
@@ -203,10 +201,10 @@ class MultiprocessingRunnerChannel(RunnerChannel):
             return
         self._is_closed = True
         try:
+            # a dead child never drains the pipe: joining the queue's feeder thread at exit would hang
             self._command_queue.cancel_join_thread()
             self._command_queue.close()
         except Exception:  # noqa: BLE001, S110
-            # Close the event pipe even after failure.
             pass
         with contextlib.suppress(OSError):
             self._event_connection.close()

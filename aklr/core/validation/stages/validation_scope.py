@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -26,8 +29,6 @@ SCHEMA_PATH_PATTERN: Final = re.compile(
 
 @dataclass(frozen=True)
 class ValidationScope:
-    """What one pipeline run validates: the working tree's schemas against ``base_sha``."""
-
     root: Path
     head_sha: str
     base_sha: str | None
@@ -36,7 +37,6 @@ class ValidationScope:
 
     @classmethod
     def of_working_tree(cls, base: str | None, schema_paths: Sequence[Path] | None) -> ValidationScope:
-        """The scope of the working directory's repository since the merge-base with ``base``."""
         stdout = cls._git(Path.cwd(), "rev-parse", "--show-toplevel")
         root = Path(os.fsdecode(stdout.rstrip(b"\n"))).resolve()
         head_sha = cls._git(root, "rev-parse", "--verify", "HEAD^{commit}")
@@ -61,6 +61,7 @@ class ValidationScope:
         else:
             paths = tuple(scope.layout.paths())
         bench_paths = paths
+        # the bench skips measurement-only changes: schemas at paths the base already has
         if is_schema_only:
             at_base = set(scope.paths_at_base(OPS_DIR))
             bench_paths = tuple(p for p in paths if scope.relative_path(p) not in at_base)
@@ -74,7 +75,6 @@ class ValidationScope:
         return Path(path).resolve().relative_to(self.root.resolve()).as_posix()
 
     def changed_paths(self) -> tuple[str, ...]:
-        """The sorted change set: what differs from ``base_sha`` in the working tree."""
         if self.base_sha is None:
             return ()
         diff = self._git(
@@ -104,13 +104,12 @@ class ValidationScope:
 
     @functools.cached_property  # one git call per run, not per workload
     def is_first_release(self) -> bool:
-        """The base holds no schema data: its schemas ship on correctness alone."""
+        """The base holds no schema data: the change's schemas ship on correctness alone."""
         return self.base_sha is not None and "schema_data" not in map(
             ValidationScope.path_kind, self.paths_at_base(OPS_DIR)
         )
 
     def text_at_base(self, path: str) -> str:
-        """``path``'s text at the base; git's failure is a ``ValueError``."""
         if self.base_sha is None:
             raise ValueError(f"no base to read {path} at")
         blob = self._git(self.root, "cat-file", "blob", f"{self.base_sha}:{path}")
@@ -119,6 +118,7 @@ class ValidationScope:
     @staticmethod
     def _git(directory: Path, *args: str) -> bytes:
         directory = directory.resolve()
+        # safe.directory: git refuses a bind-mounted repo owned by the host user without it
         argv = ["git", "-c", f"safe.directory={directory}", "-C", str(directory), *args]
         try:
             done = subprocess.run(argv, capture_output=True, check=False)

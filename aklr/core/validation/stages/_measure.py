@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -126,12 +129,13 @@ def sorted_key_json(value: Any) -> str:
 
 
 def derive_seed(*parts: str | int) -> int:
+    """A 64-bit seed of ``parts``, alike in every process (``hash`` of a str is salted per process)."""
     digest = hashlib.sha256(sorted_key_json(list(parts)).encode()).digest()
     return int.from_bytes(digest[:8], "big")
 
 
 def ratio_lower_bound(log_ratios: Sequence[float], *, alpha: float = ALPHA) -> float:
-    """One-sided Student-t lower bound of the mean speedup ratio."""
+    """One-sided Student-t lower bound of the geometric-mean speedup ratio."""
     n = len(log_ratios)
     if n < 2:
         raise ValueError(f"ratio_lower_bound needs at least 2 rounds, got {n}")
@@ -172,7 +176,6 @@ def _beta_regularized(a: float, b: float, x: float) -> float:
 def timing_records(
     rounds: Sequence[RoundTimes], thresholds: Mapping[Versus, Threshold]
 ) -> tuple[TimingRecord, ...]:
-    """One record per mode and per ``versus`` in ``thresholds``."""
     records = []
     for mode in get_args(Mode):
         mode_rounds = [r for r in rounds if r.mode == mode]
@@ -203,7 +206,6 @@ def timing_records(
 
 
 def gate(records: Sequence[TimingRecord]) -> FindingCode | None:
-    """A finding when a ratio lower bound is below its threshold, else ``None``."""
     failed = {r.threshold for r in records if r.ratio_lower_bound < THRESHOLD_RATIOS[r.threshold]}
     if "retain" in failed:
         return FindingCode.REGRESSED
@@ -213,7 +215,6 @@ def gate(records: Sequence[TimingRecord]) -> FindingCode | None:
 def compare_performance(
     rounds: Sequence[RoundTimes], thresholds: Mapping[Versus, Threshold]
 ) -> tuple[tuple[TimingRecord, ...], Finding | None]:
-    """The timing records of ``rounds`` and the gate's finding."""
     try:
         records = timing_records(rounds, thresholds)
         code = gate(records)
@@ -241,15 +242,16 @@ class Clock(NamedTuple):
         *,
         seed: int,
     ) -> tuple[RoundTimes, ...]:
-        """Every recorded round, after one unrecorded warm-up profile."""
         participants = list(fns)
         rounds = []
         is_gc_enabled = gc.isenabled()
         gc.disable()
         try:
+            # unrecorded: the profiler's warm-up
             self.bench_cudagraph(fns["baseline"], rep=GRAPH_BUDGET_MILLISECONDS)
             for mode in get_args(Mode):
                 for round_index in range(-N_WARMUP_ROUNDS, N_ROUNDS):
+                    # a seeded shuffle per round: no participant always runs first or last
                     order_seed = derive_seed(seed, "order", mode, round_index)
                     order = random.Random(order_seed).sample(participants, k=len(participants))
                     milliseconds = {}

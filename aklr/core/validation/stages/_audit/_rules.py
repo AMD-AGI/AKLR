@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -12,8 +15,6 @@ if TYPE_CHECKING:
 
 
 class Rejection(NamedTuple):
-    """One line a source rule rejects."""
-
     path: str
     line: int
     what: str
@@ -24,7 +25,7 @@ class Rejection(NamedTuple):
 
 
 class SourceRule:
-    """One SA rule over a kernel's sources."""
+    """One SA rule over the whole kernel, each source, or each node of launch code."""
 
     number: ClassVar[int]
 
@@ -71,7 +72,7 @@ class _GlobalStatementRule(SourceRule):
                 yield Rejection.from_node(source.path, node, _source_text(node))
 
 
-# container mutators; ``copy_`` and every other non-dunder ``*_`` method too.
+# container mutators; on an input they count as writes even where torch's (add, sort) is out of place
 _MUTATORS = (
     *("append", "extend", "insert", "update", "setdefault", "pop", "clear", "add"),
     *("remove", "sort", "reverse", "popitem", "discard", "difference_update"),
@@ -106,8 +107,7 @@ class _InputWriteRule(SourceRule):
             written = [keywords["out"]] if "out" in keywords else []
             inplace = keywords.get("inplace")
             qualname = source.qualname(node.func) or ""
-            # `torch.relu_(x)` and `torch.ops.aten.fill_.Scalar(x)` write their
-            # first argument, not the module
+            # torch.relu_(x) and torch.ops.aten.fill_.Scalar(x) write their first argument
             if not (inplace is None or isinstance(inplace, ast.Constant) and inplace.value is False) or (
                 root_name(node.func) in source.imports and any(map(_is_inplace_name, qualname.split(".")))
             ):
@@ -132,18 +132,17 @@ class _InputWriteRule(SourceRule):
             yield Rejection.from_node(source.path, node, what)
 
 
-# in R: synchronization and timing; allocating workspace is fine.
+# in launch code: synchronization and timing; allocating workspace is fine
 _SYNCHRONIZATION_AND_TIMING = (
     *("synchronize", "item", "cpu", "tolist", "numpy"),
     *("Event", "elapsed_time", "perf_counter"),
 )
-# draw from the global RNG or copy host data: not workspace
+# draws from the global RNG or copies host data: not workspace
 _RNG_AND_HOST_FACTORIES = ("rand", "randn", "randint", "tensor", "as_tensor")
 _INPUT_OUTPUT_CALLS = ("open", "print", "input", "breakpoint", "exit", "quit")
 _FILE_CALLS = ("torch.save", "torch.load")
 
 
-# process-wide torch state: precision, RNG, default dtype or device, current stream
 _GLOBAL_STATE_CALLS = (
     *("torch.set_", "torch.cuda.set_", "torch.use_deterministic_algorithms"),
     *("torch.manual_seed", "torch.seed", "torch.cuda.manual_seed", "torch.cuda.seed"),

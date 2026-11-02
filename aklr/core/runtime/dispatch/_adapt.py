@@ -1,5 +1,15 @@
-# SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+# Copyright (c) 2025 by FlashInfer team.
+#
+# Adapted from FlashInfer (https://github.com/flashinfer-ai/flashinfer)
+# Modified by the AKLR team.
+#
+# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
+# not the MIT license that covers the rest of AKLR (see LICENSE).
+###############################################################################
 
 from __future__ import annotations
 
@@ -14,6 +24,7 @@ from aklr.core.utils import dtype_str_to_torch_dtype
 
 
 def ordered_input_values(template: Any, namespace: dict[str, Any]) -> list[Any]:
+    """The call's input values in the schema's order, None where absent: kernels take them positionally."""
     out: list[Any] = []
     for json_key, desc in template.inputs.items():
         param = getattr(desc, "param", None) or json_key
@@ -35,6 +46,7 @@ def adapt_and_call(
     dests: dict[str, str],
     axes: dict[str, int],
 ) -> Any:
+    """Run kernel ``fn`` on the call and return its outputs the api's way, written to any caller buffers."""
     out_keys = [k for k, d in template.outputs.items() if isinstance(d, Tensor)]
     args = ordered_input_values(template, namespace)
 
@@ -83,6 +95,7 @@ def adapt_and_call(
 
 
 def _is_inplace_api(original: Callable) -> bool:
+    """Whether the api returns None, i.e. writes its results into its arguments."""
     try:
         ann = inspect.signature(original).return_annotation
         return ann is None or ann is type(None) or ann == "None"

@@ -1,9 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
-
-"""SH0-SH5, the audit of a hip kernel: lexical, on each source's text with comments and
-literals blanked. Writes of an input, launches off the current stream and state that
-changes an output are caught by bench, not here."""
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -20,15 +19,13 @@ __all__ = ["check_hip_kernel"]
 _COMMENT_OR_LITERAL: Final = re.compile(
     r"//[^\n]*|/\*.*?\*/|\"(?:\\.|[^\"\\\n])*\"|'(?:\\.|[^'\\\n])*'", re.DOTALL
 )
-# SH1: a library registers only in its build's namespace (TORCH_EXTENSION_NAME), as a
-# second library of one namespace aborts the process that loads it
+# SH1: register in the build's TORCH_EXTENSION_NAME only: a namespace's second library aborts the process
 _LIBRARY_MACRO: Final = re.compile(r"\b(TORCH_LIBRARY\w*|PYBIND11_MODULE)\b")
 _EXPAND_DEFINITION: Final = re.compile(
     r"#\s*define\s+TORCH_LIBRARY_EXPAND\s*\(\s*(\w+)\s*,\s*(\w+)\s*\)"
     r"\s*TORCH_LIBRARY\s*\(\s*\1\s*,\s*\2\s*\)"
 )
 _REGISTRATION: Final = re.compile(r"\bTORCH_LIBRARY_EXPAND\s*\(\s*TORCH_EXTENSION_NAME\s*,\s*\w+\s*\)")
-# SH2
 _INCLUDE: Final = re.compile(r"^[ \t]*#[ \t]*include\b", re.MULTILINE)
 _INCLUDED: Final = re.compile(r"#\s*include\s*(?:<([^>\n]+)>|\"([^\"\n]+)\")")
 _HEADER_PREFIXES: Final = ("ATen/", "c10/", "hip/")
@@ -40,8 +37,7 @@ _HEADERS: Final = frozenset(
         *("type_traits", "utility", "vector"),
     }
 )
-# SH3: synchronizing, allocating outside torch, mapping memory, changing the device or the
-# process, I/O, and CUDA's names (hipify would rewrite them)
+# SH3: syncs, allocation outside torch, device or process changes, I/O; cuda* names, which hipify rewrites
 _FORBIDDEN: Final = re.compile(
     r"\b(hip(?:DeviceSynchronize|StreamSynchronize|EventSynchronize|SetDevice"
     r"|DeviceReset|DeviceEnablePeerAccess|LaunchHostFunc|StreamAddCallback)"
@@ -59,7 +55,7 @@ _STATE: Final = re.compile(
 
 
 def check_hip_kernel(kernel: Kernel) -> set[tuple[str, int, int, str]]:
-    """Every SH0-SH5 rejection of a hip kernel: (path, line, rule, what)."""
+    """SH0-SH5 rejections, (path, line, rule, what); bench catches input writes and off-stream launches."""
     sources = {source.path: source.content for source in kernel.sources}
     return {
         (path, line, rule, what)
@@ -71,7 +67,6 @@ def check_hip_kernel(kernel: Kernel) -> set[tuple[str, int, int, str]]:
 def _rejections(
     path: str, text: str, sources: Mapping[str, str], entry_file: str
 ) -> Iterator[tuple[int, int, str]]:
-    """(rule, line, what) of each rejection in one source."""
     blanked = _COMMENT_OR_LITERAL.sub(lambda m: re.sub(r"[^\n]", " ", m[0]), text)
 
     def line(offset: int) -> int:

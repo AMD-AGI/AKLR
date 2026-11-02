@@ -74,8 +74,6 @@ class RunnerInvocation:
 
 
 class ExecutionRunner(ABC):
-    """Executes tasks on one leased resource, whatever the engine makes of them."""
-
     @property
     @abstractmethod
     def runner_id(self) -> str: ...
@@ -107,7 +105,7 @@ class ExecutionRunner(ABC):
 
 
 class DisposableExecutionRunner(ExecutionRunner):
-    """A fresh spawned process that accepts exactly one execution task."""
+    """A freshly spawned child process that runs exactly one task."""
 
     def __init__(
         self,
@@ -153,6 +151,7 @@ class DisposableExecutionRunner(ExecutionRunner):
             from aklr.core.utils.testing import kernel_tracer
 
             kernel_tracer()  # built here, outside the child's startup timeout
+        # spawn, not fork: torch refuses the GPU in a child forked from a parent that already used it
         context = multiprocessing.get_context("spawn")
         channel, child_endpoint = MultiprocessingRunnerChannel.create(context)
         process = context.Process(
@@ -193,9 +192,8 @@ class DisposableExecutionRunner(ExecutionRunner):
             if not is_closed:
                 self._set_state(RunnerState.FAILED)
                 if self.health() == RunnerHealth.HEALTHY:
-                    # E7: a resource whose child did not start leaves.
+                    # a resource whose child did not start leaves the pool
                     self._set_health(RunnerHealth.RESOURCE_FAILED)
-            # Close while the failure is on its way up, and keep that failure.
             try:
                 self.close()
             except ExecutionError as close_error:
@@ -252,7 +250,7 @@ class DisposableExecutionRunner(ExecutionRunner):
                 raise
             if isinstance(error, RunnerExitedEarly):
                 raise RunnerCrashed(str(error)) from error
-            # what the task's process wrote on the pipe is the task's (E1)
+            # an invalid message is the task's: its code ran in the process that wrote it
             raise TaskExecutionFailed(
                 f"runner {self._runner_id} sent an invalid message for task {task_id}: {error}"
             ) from error
@@ -279,7 +277,6 @@ class DisposableExecutionRunner(ExecutionRunner):
         try:
             self._require_channel().send(CancelTask(runner_id=self._runner_id, task_id=task_id))
         except Exception:  # noqa: BLE001, S110
-            # Termination below is the fallback.
             pass
         process = self._process
         if process is not None and process.pid is not None:
@@ -287,7 +284,7 @@ class DisposableExecutionRunner(ExecutionRunner):
                 ProcessGroup(process.pid).signal(signal.SIGTERM)
                 process.terminate()
             except Exception:  # noqa: BLE001, S110
-                # Close kills the group and records health.
+                # close() kills the group and records the health
                 pass
         return True
 
@@ -320,7 +317,6 @@ class DisposableExecutionRunner(ExecutionRunner):
                 )
                 is_shutdown_sent = True
             except Exception:  # noqa: BLE001
-                # Failed shutdown must downgrade health.
                 has_cleanup_failed = True
 
         is_orphaned = False
@@ -335,7 +331,7 @@ class DisposableExecutionRunner(ExecutionRunner):
                 process.join(timeout=RUNNER_JOIN_SECONDS)
                 is_gone = is_gone and bool(multiprocessing.connection.wait([process.sentinel], 0))
             except Exception:  # noqa: BLE001
-                # A process that cannot be reaped is assumed alive.
+                # a process that cannot be reaped is assumed alive
                 has_cleanup_failed = True
             if not is_gone:
                 self._set_health(RunnerHealth.RESOURCE_FAILED)
@@ -385,7 +381,6 @@ class DisposableExecutionRunner(ExecutionRunner):
                     break
         except EOFError:
             process.join(RUNNER_JOIN_SECONDS)
-        # Neutral: only the caller knows startup from mid-task.
         raise RunnerExitedEarly(f"runner {self._runner_id} exited with code {process.exitcode}")
 
     def _require_state(self, expected: RunnerState) -> None:
@@ -418,7 +413,7 @@ class DisposableExecutionRunner(ExecutionRunner):
         task_id: str | None = None
         is_gpu = device != "cpu"
         try:
-            os.setsid()
+            os.setsid()  # its pid becomes a group id: the parent kills the group, subprocesses included
             os.chdir(directory)
             task_log = TaskLog(directory / "task.log")
             with task_log.redirected_stdio():
@@ -454,7 +449,7 @@ class DisposableExecutionRunner(ExecutionRunner):
                     sys.stderr.flush()
                     endpoint.send(TaskCompleted(runner_id=runner_id, task_id=task_id, result=result))
                 except BaseException as error:  # noqa: BLE001
-                    # The task's, whatever it is; before started, the device's.
+                    # after the task arrived, a failure is the task's; before, on a GPU, the device's
                     traceback.print_exc()
                     sys.stdout.flush()
                     sys.stderr.flush()
@@ -470,19 +465,16 @@ class DisposableExecutionRunner(ExecutionRunner):
                             )
                         )
                     except Exception:  # noqa: BLE001, S110
-                        # Parent also observes process exit.
+                        # the parent sees the exit anyway
                         pass
         finally:
             try:
                 endpoint.send(RunnerExited(runner_id=runner_id, task_id=task_id, exit_code=0))
             except Exception:  # noqa: BLE001, S110
-                # Exit notification is best effort.
                 pass
 
 
 class RunnerFactory(ABC):
-    """Creates a runner for an exclusive resource lease."""
-
     @abstractmethod
     def create(
         self,

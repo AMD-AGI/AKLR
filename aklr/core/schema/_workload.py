@@ -1,7 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
-
-"""Specification for workloads, which defines the input tensors for a kernel."""
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -21,21 +22,17 @@ from aklr.core.platform.device import DeviceTarget
 
 @frozen_dataclass
 class Speedup:
-    """A workload's measured speedup over one baseline at one commit or tag."""
+    """A workload's speedup over one baseline, measured at that baseline's commit or tag."""
 
     commit: Annotated[str, Field(pattern=r"^\S+$")]
-    """The baseline's git commit or tag the speedup was measured against."""
     value: PositiveFloat
-    """Speedup over the baseline (validation's formula)."""
 
 
 @frozen_dataclass
 class Evaluation:
     hardware: str
     accuracy: Literal["passed", "failed"]
-    """Validation's correctness verdict on this workload."""
     speedup: dict[Annotated[str, Field(pattern=r"^[a-z][a-z0-9_]*$")], Speedup] = Field(default_factory=dict)
-    """Baseline name (``aiter``, ``aklr``, ...) to its speedup; {}: none timed."""
 
     @field_validator("hardware")
     @classmethod
@@ -49,15 +46,7 @@ class Evaluation:
 
 @frozen_dataclass
 class Workload:
-    """One item of a schema's ``workloads``: var axes, inputs and measurement.
-
-    Defines a specific instance of a computational workload with concrete
-    values for all variable axes and specifications for all input data.
-    This represents an executable configuration that can be benchmarked.
-    """
-
     axes: dict[str, NonNegativeInt]
-    """Every var axis of the schema to its concrete value, schema order; {}: none."""
     evaluations: list[Evaluation] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -71,10 +60,7 @@ class Workload:
         return next((e for e in self.evaluations if e.hardware == str(target)), None)
 
     def qualifies(self, target: DeviceTarget, min_speedup: float, baseline: str) -> bool:
-        """Whether dispatch may serve this workload on ``target`` in place of ``baseline``
-        at ``AKLR_MIN_SPEEDUP``: never a failed one; any when ``min_speedup <= 0``; else a
-        passed one whose speedup over ``baseline`` reaches it, or that was not measured
-        against ``baseline``."""
+        """Whether dispatch may serve this workload on target in place of baseline at AKLR_MIN_SPEEDUP."""
         evaluation = self.evaluation(target)
         if evaluation is None:
             return min_speedup <= 0

@@ -1,4 +1,15 @@
-"""Key builders for matching workloads to kernels."""
+###############################################################################
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+# Copyright (c) 2025 by FlashInfer-Bench Contributors
+#
+# Adapted from FlashInfer-Bench (https://github.com/flashinfer-ai/flashinfer-bench)
+# Modified by the AKLR team.
+#
+# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
+# not the MIT license that covers the rest of AKLR (see LICENSE).
+###############################################################################
 
 from __future__ import annotations
 
@@ -12,15 +23,10 @@ from aklr.core.schema._workload import Workload
 
 @frozen_dataclass
 class DispatchKey:
-    """Key for matching workloads to kernels in Dispatch runtime.
-
-    This is an immutable (frozen) model that can be used as dict keys or in sets.
-    """
+    """A dispatch-table key: a call's or workload's axes as sorted (name, value) pairs, plus features."""
 
     axes: Tuple[Tuple[str, int], ...] = ()
-    """Variable axis values as sorted (name, value) tuples."""
     feats: Tuple[Tuple[str, Union[int, float, bool]], ...] = ()
-    """Additional features extracted from input tensors."""
 
 
 class DispatchKeyBuilder(ABC):
@@ -28,22 +34,13 @@ class DispatchKeyBuilder(ABC):
         self.schema = schema
 
     @abstractmethod
-    def build_from_args(self, args: Tuple[Any, ...]) -> DispatchKey:
-        """Build a key from positional runtime arguments (inputs only)"""
-        ...
+    def build_from_args(self, args: Tuple[Any, ...]) -> DispatchKey: ...
 
     @abstractmethod
-    def build_from_workload(self, workload: Workload) -> DispatchKey:
-        """Build a key from offline workload trace"""
-        ...
+    def build_from_workload(self, workload: Workload) -> DispatchKey: ...
 
     @abstractmethod
-    def features(self, args: Tuple[Any, ...]) -> Tuple[Tuple[str, Any], ...]:
-        """Lightweight feature extraction from input args"""
-        ...
-
-
-# Key Builders
+    def features(self, args: Tuple[Any, ...]) -> Tuple[Tuple[str, Any], ...]: ...
 
 
 class AxesOnlyKeyBuilder(DispatchKeyBuilder):
@@ -68,7 +65,6 @@ class DispatchKeyFactory:
 
     @classmethod
     def for_type(cls, type_name: str) -> Type[DispatchKeyBuilder]:
-        # Default to AxesOnlyKeyBuilder if not registered
         return cls._REGISTRY.get(type_name, AxesOnlyKeyBuilder)
 
     @classmethod

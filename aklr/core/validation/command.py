@@ -1,7 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
-
-"""The ``python -m aklr validate`` command."""
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ DEFAULT_REPORT_DIR: Final = Path("aklr_validation")
 
 
 def main(argv: Sequence[str]) -> int:
-    """Validate the change against its base and return the pipeline exit code."""
+    """Validate the change against its base and return the pipeline's exit code."""
     parser = argparse.ArgumentParser(prog="python -m aklr validate")
     parser.add_argument("paths", nargs="*", type=Path, metavar="PATH")
     parser.add_argument("--base", help="a git ref; enables the change rules")

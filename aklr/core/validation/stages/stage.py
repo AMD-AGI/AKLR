@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -38,8 +41,6 @@ _MAX_CONSOLE_FINDINGS: Final = 10
 
 @frozen_dataclass
 class StageReport:
-    """What one stage found and measured; subclasses add their records."""
-
     stage_name: str
     status: StageStatus
     detail: str = ""
@@ -59,12 +60,10 @@ class StageReport:
 
     @classmethod
     def skipped(cls, stage_name: str, detail: str) -> Self:
-        """The report of a stage not run, and why."""
         return cls(stage_name=stage_name, status="skipped", detail=detail)
 
     @classmethod
     def aborted(cls, stage_name: str, detail: str) -> Self:
-        """The report of a stage stopped by aklr's own defect."""
         return cls(stage_name=stage_name, status="aborted", detail=detail)
 
     @property
@@ -82,7 +81,6 @@ class StageReport:
         )
 
     def console_lines(self) -> list[str]:
-        """The finish text for the console: status line, then the first findings."""
         if self.status == "skipped":
             return [f"skipped: {one_line(self.detail)}"]
         n = len(self.findings)
@@ -110,21 +108,18 @@ class StageReport:
 
 @dataclass(frozen=True)
 class Progress:
-    """Line-atomic stderr progress under one tag: a stage name, or ``validate``."""
+    """Line-atomic progress lines on stderr under one tag: a stage name, or `validate`."""
 
     tag: str = "validate"
-    # one stderr, one lock for every tag
-    _lock: ClassVar[threading.Lock] = threading.Lock()
+    _lock: ClassVar[threading.Lock] = threading.Lock()  # one stderr, one lock for every tag
 
     def write(self, text: str) -> None:
-        """One ``[HH:MM:SS] <tag>: <text>`` line; a dead stderr is ignored."""
         line = f"[{time.strftime('%H:%M:%S')}] {self.tag}: {text}\n"
         with self._lock, contextlib.suppress(OSError, ValueError, AttributeError):
             sys.stderr.write(line)
             sys.stderr.flush()
 
     def finish(self, report: StageReport) -> None:
-        """Write the report's console lines; a failure to build them is logged."""
         try:
             lines = report.console_lines()
         except Exception:  # progress text never costs a report
@@ -135,21 +130,18 @@ class Progress:
 
 
 class PipelineStage(ABC):
-    """One stage of the pipeline, answering a ``report_type``."""
-
     name: ClassVar[str]
     report_type: ClassVar[type[StageReport]]
 
     @abstractmethod
     def run(self, scope: ValidationScope, earlier: PipelineReport) -> StageReport:
-        """The stage's own work on ``scope``; ``earlier`` is the run so far."""
+        """The stage's own work on scope; earlier is the pipeline's report so far."""
 
     @property
     def progress(self) -> Progress:
         return Progress(self.name)
 
     def execute(self, scope: ValidationScope, earlier: PipelineReport) -> StageReport:
-        """Run the stage timed; its own exception aborts it as aklr's defect."""
         start = time.monotonic()
         try:
             report = self.run(scope, earlier)

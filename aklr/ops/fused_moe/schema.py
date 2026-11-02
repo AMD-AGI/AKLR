@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -325,7 +328,6 @@ def fused_moe_op_schema(
     activation: str | None = None,
     **__: Any,
 ) -> Schema | None:
-    """The schema of a call by its weights' storage."""
     if gate_mode == "interleave":
         return FUSED_MOE_GATE_UP_INTERLEAVED if use_shuffled_weight else None
     if activation == "situv2":  # aiter's SiTUv2 reads the gate-up interleaved storage only

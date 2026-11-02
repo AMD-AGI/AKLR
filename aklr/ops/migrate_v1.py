@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -140,6 +143,7 @@ class LegacyKernelEntry:
         line_end = self.source.find("\n", tail_start)
         one_line = "(" + ", ".join(self.params) + ")"
         def_indent = " " * fn.col_offset
+        # 88: black's default line length
         if len(self.source[line_start:head_end] + one_line + self.source[tail_start:line_end]) <= 88:
             signature = one_line
         else:
@@ -340,6 +344,7 @@ class LegacySchemaFile:
                     or not all(
                         od == d
                         or (isinstance(axes[d], Const) and axes[d].value == od)
+                        # v1 sized an fp4x2 last dim in fp4 values, the schema in packed pairs
                         or (
                             o["dtype"] == "float4_e2m1fn_x2"
                             and i == len(shape) - 1
@@ -545,6 +550,7 @@ def main() -> int:
             continue
         print(f"OK      {rel}" + "".join(f"\n          dropped {d}" for d in f.dropped))
 
+    # the converted files must load together as a collection before --write touches the tree
     with tempfile.TemporaryDirectory() as tmp:
         for rel, text in converted.items():
             (Path(tmp) / rel).parent.mkdir(parents=True, exist_ok=True)

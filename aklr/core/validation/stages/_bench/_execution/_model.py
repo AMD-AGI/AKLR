@@ -57,14 +57,12 @@ class RunnerHealth(str, Enum):
 
 @dataclass(frozen=True)
 class ResourceCapabilities:
-    """Static properties used to decide whether a resource can run a task."""
-
     backend: str
 
 
 @dataclass(frozen=True)
 class ResourceRequest:
-    """Constraints on the resource selected for one execution."""
+    """Which resources a task may run on; an empty field allows any."""
 
     resource_ids: tuple[str, ...] = ()
     backend: str | None = None
@@ -80,8 +78,6 @@ class ResourceSnapshot:
 
 @dataclass(frozen=True, kw_only=True)
 class ExecutionTask:
-    """One callable to place on a resource."""
-
     call: Callable[..., Any]
     timeout_seconds: float
     task_id: str
@@ -93,7 +89,7 @@ class ExecutionTask:
 
 @dataclass(frozen=True, kw_only=True)
 class ExecutionContext:
-    """Runtime facts supplied by the runner to the task's callable."""
+    """What the runner's child process hands the task's callable as its first argument."""
 
     device: str
     log_path: Path

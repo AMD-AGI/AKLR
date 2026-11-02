@@ -1,7 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
-
-"""SGLang's adapters: each SGLang entry point AKLR serves, and the api it reaches."""
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -33,8 +34,7 @@ def _dpsk_v4_fp8_attention_baseline(
     **_,
 ):
     if kv_cache_format != "dsv4_fp8":
-        # dense: aiter's Gluon MLA decode over the 2-D block table, the kernel sglang
-        # serves Kimi K3's DSPARK verify prefix with
+        # dense: aiter's Gluon MLA decode, the kernel sglang serves Kimi K3's DSPARK verify prefix with
         if block_table is None or cache_seqlens is None or causal or sinks is not None or q.shape[1] != 1:
             return None
         from aiter.ops.triton.gluon.mla_gluon import mla_gluon
@@ -101,8 +101,7 @@ def _(
     topk_length=None,
     extra_topk_length=None,
 ):
-    # block_table, cache_seqlens, head_dim_v, tile_scheduler_metadata, num_splits,
-    # causal and is_fp8_kvcache reach no schema argument.
+    # block_table, cache_seqlens, head_dim_v, scheduling, causal and is_fp8_kvcache reach no schema argument
     return {
         "q": q,
         "kv_cache": k_cache,
@@ -145,7 +144,7 @@ def _(
 ):
     # metadata is sglang's launch plan, not the schema's
     if out_raw_indices is not None:
-        return None  # a second raw output is not in the schema
+        return None
     return {
         "scores": scores,
         "seq_lens": seq_lens,

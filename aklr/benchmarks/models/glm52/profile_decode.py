@@ -1,4 +1,8 @@
-"""Per-operator decode timing for GLM-5.2, rolled up to a per-step estimate."""
+###############################################################################
+# SPDX-License-Identifier: MIT
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 import contextlib
 import sys
@@ -7,7 +11,6 @@ from pathlib import Path
 
 import torch
 
-# sglang_bench.py and kernel_breakdown.py live one directory up.
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 import model_bench
@@ -35,7 +38,7 @@ def work(server_args, port_args, args, gpu_id, tp_rank):
             seed = None
 
             def step(b):
-                # Hand on the previous step's DSA top-k seed, which a step leaves on its return value; the server always has one.
+                # Carry the previous step's DSA top-k seed, which a step returns; the server always has one.
                 nonlocal seed
                 if spec is None:
                     mr.forward(sglang_bench.forward_batch_of(b, mr))
@@ -93,11 +96,10 @@ def work(server_args, port_args, args, gpu_id, tp_rank):
         torch.cuda.synchronize()
         sglang_bench.assert_lockstep(saved)
 
-        # The reference the roll-up is checked against, graph-captured so it is launch-free like the per-op rows.
+        # The roll-up's reference, graph-captured so it is launch-free like the per-op rows.
         fwd_ms = {}
         rank_print("timing: forwards" if spec else "timing: full forward")
         if spec is not None:
-            # A step is several forwards across two models; each is timed in place under its own graph and summed.
             with model_bench.bench_forwards(model_bench.spec_models(spec), args.reps, args.repeat, fwd_ms):
                 model_bench.run_step(spec, new_batch, fb, mr)
             full_ms = sum(sum(v) for v in fwd_ms.values())
@@ -121,10 +123,10 @@ def work(server_args, port_args, args, gpu_id, tp_rank):
                 with model_bench.rotated_calls(ops[name], entry) as (fns, inner):
                     times[name] = sglang_bench.bench(fns, args.reps, inner=inner, rounds=args.repeat)
             except torch.cuda.OutOfMemoryError:
-                # Not a shape mismatch: every later op would be skipped too, so abort instead of a partial report.
+                # Not a shape mismatch: every later op would be skipped too, so fail the whole run.
                 raise
             except RuntimeError as e:
-                # Replaying a module outside its own forward can hit a shape check the ambient state no longer satisfies.
+                # Outside its own forward a module can fail a shape check the ambient state no longer meets.
                 first = str(e).split("\n")[0]
                 if "out of memory" in first.lower():
                     raise
@@ -175,7 +177,6 @@ def work(server_args, port_args, args, gpu_id, tp_rank):
 
 
 def trace_step(args, spec, new_batch, fb, mr, rank_print, tp_rank) -> None:
-    """Kernel-level breakdown of one step: what the per-op rows are made of."""
     from torch.profiler import ProfilerActivity, profile
 
     model_bench.run_step(spec, new_batch, fb, mr)
@@ -374,12 +375,10 @@ def rollup_table(times, counts) -> str:
 
 
 def report(args, mr, layers, times, full_ms, coverage="", spec=None, draft_ms=0.0, skipped=""):
-    """Returns (markdown, one-line headline for the log)."""
     counts = layers.counts
     model_bench.add_residuals(times, counts)
     totals = model_bench.leaf_totals(times, counts)
     if draft_ms:
-        # One row, not a per-op tree: the draft model is a single nextn layer run several times per step.
         totals["draft model"] = draft_ms
     rollup = sum(totals.values())
     contents = model_bench.residual_contents(mr, "mla")
@@ -399,14 +398,12 @@ def report(args, mr, layers, times, full_ms, coverage="", spec=None, draft_ms=0.
         ("Per layer kind -- one step", kind_sections(times, counts, contents)),
         ("Roll-up -- one step", rollup_table(times, counts)),
         *([("Coverage", coverage)] if coverage else []),
-        # Beside Coverage: those ops fired but could not be timed, and only they contaminate a `<rest>` row.
         *([("Not replayable", skipped)] if skipped else []),
     ]
     md = "\n\n".join(
         [
             "# GLM-5.2 decode profile",
             time.strftime("%Y-%m-%d %H:%M %Z"),
-            # Above the tables, not buried in Config.
             *filter(None, [model_bench.dummy_banner(mr.server_args)]),
         ]
         + [f"## {title}\n\n{body}" for title, body in sections]
@@ -436,14 +433,14 @@ def make_parser():
     return parser
 
 
-# The synced loop takes N+2 samples and reports the fastest; fewer samples do not clear the warm-up.
+# The synced loop takes N+2 samples and keeps the fastest; fewer samples do not clear the warm-up.
 _IMPLIED_FULL_STEP = 3
 
 
 if __name__ == "__main__":
     args = make_parser().parse_args()
     model_bench.run(work, model_bench.build_server_args(args), args)
-    # The per-op pass cannot see sampling, accept/reject and bookkeeping between forwards, so --full-step is implied.
+    # The per-op pass misses sampling, accept/reject and bookkeeping between forwards, so add --full-step.
     if args.speculative_algorithm is not None and not args.full_step:
         args.full_step = _IMPLIED_FULL_STEP
         model_bench.run(work, model_bench.build_server_args(args), args)

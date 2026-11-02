@@ -28,8 +28,7 @@ from aklr.core.validation.stages._bench._execution._resources import (
     ResourceLease,
 )
 
-# Ceiling on shutdown's wait for in-flight tasks to report back.
-DRAIN_TIMEOUT_SECONDS: Final = 300.0
+DRAIN_TIMEOUT_SECONDS: Final = 300.0  # how long shutdown waits for in-flight tasks to report back
 
 Dispatch = Callable[[ExecutionTask, ExecutionFuture[Any], ResourceLease], None]
 Assignment = tuple[ExecutionTask, ExecutionFuture[Any], ResourceLease]
@@ -37,8 +36,6 @@ Rejection = tuple[ExecutionFuture[Any], Exception]
 
 
 class SchedulingStrategy(ABC):
-    """Select one resource from the currently available candidates."""
-
     @abstractmethod
     def choose(
         self,
@@ -68,7 +65,7 @@ class RoundRobinStrategy(SchedulingStrategy):
 
 
 class ExecutionScheduler:
-    """Assign pending tasks to exclusive leases without blocking submitters."""
+    """Hands pending tasks to free resources on its own thread, so submitting never blocks."""
 
     def __init__(
         self,
@@ -176,7 +173,6 @@ class ExecutionScheduler:
                     try:
                         self._resources.release(lease, ResourceHealth.UNHEALTHY)
                     except Exception:  # noqa: BLE001, S110
-                        # Continue releasing stranded leases.
                         pass
         with self._condition:
             self._condition.notify_all()
@@ -212,7 +208,6 @@ class ExecutionScheduler:
                 try:
                     self._dispatch(task, future, lease)
                 except BaseException as error:  # noqa: BLE001
-                    # Resolve every submitted future.
                     self.complete(lease, ResourceHealth.HEALTHY)
                     future.publish_exception(SubmissionRejected(str(error)))
         finally:
@@ -247,12 +242,10 @@ class ExecutionScheduler:
                 self._active[task.task_id] = lease
                 return (task, future, lease), None
             except Exception as error:  # noqa: BLE001
-                # Convert strategy failures to rejection.
                 if lease is not None:
                     try:
                         self._resources.release(lease, ResourceHealth.UNHEALTHY)
                     except Exception:  # noqa: BLE001, S110
-                        # Preserve the original rejection.
                         pass
                 self._discard(future)
                 self._known_task_ids.discard(task.task_id)

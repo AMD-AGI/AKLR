@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -18,7 +21,7 @@ from aklr.core.schema import Schema, extract_axes
 def aklr_api(
     schema_or_resolver: Schema | Callable[..., Schema | None],
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    """The decorator of an op's api function: its schema, or a resolver choosing one per call."""
+    """Decorate an op's api with its schema, or a resolver (listing its ``.schemas``) picking one per call."""
 
     def decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
         sig = signature(fn)
@@ -53,6 +56,7 @@ def aklr_api(
                 )
             schema_name = schema.schema_name(extract_axes(extractor_map, bound.arguments))
             tracing = TracingRuntime.get_instance()
+            # only calls that fall back are traced: the workloads no AKLR kernel serves
             if fallback is not None and tracing is not None:
                 untraced = fallback
 
@@ -65,6 +69,7 @@ def aklr_api(
                             warnings.warn(
                                 f"{api}: tracing failed, {type(e).__name__}: {e}; "
                                 "further ones of this type are not reported",
+                                # point at the patched entry point's caller; dispatcher.dispatch adds a frame
                                 stacklevel=4 if dispatcher is None else 5,
                             )
                     return untraced(*fallback_args, **fallback_kwargs)
@@ -83,7 +88,7 @@ def aklr_api(
 
         @wraps(fn)
         def wrapped(*args: Any, **kwargs: Any) -> Any:
-            # The api body is a stub, so a miss raises instead of falling back to it.
+            # the api body is a stub: with no fallback, a miss raises
             return dispatch(args, kwargs, None, None, is_inplace)
 
         wrapped.dispatch = dispatch

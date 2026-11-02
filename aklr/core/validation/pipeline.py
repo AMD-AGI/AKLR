@@ -1,7 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
-
-"""The validation pipeline and the report of one run."""
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -38,13 +39,11 @@ from aklr.core.validation.stages._report._markdown import axes_text
 __all__ = ["REPORT_VERSION", "Pipeline", "PipelineReport", "PlatformRecord"]
 
 REPORT_VERSION: Final = 2
-_REWRITE_TOLERANCE: Final = 0.02
+_REWRITE_TOLERANCE: Final = 0.02  # a speedup within 2% of the stored one does not rewrite its schema
 _EXIT_CODES: Final = {"failed": 1, "aborted": 3}
 
 
 class Pipeline:
-    """Runs the stages in ``STAGE_ORDER``; the audit always comes first."""
-
     def __init__(self, stages: Sequence[PipelineStage]) -> None:
         if not stages or not isinstance(stages[0], AuditStage):
             raise ValueError("a pipeline's first stage is an AuditStage")
@@ -55,7 +54,7 @@ class Pipeline:
         self._stages = tuple(stages)
 
     def run(self, scope: ValidationScope) -> PipelineReport:
-        """Run each stage on ``scope``; later stages are skipped once one does not pass."""
+        """Run each stage on scope; once one does not pass, the later ones are skipped."""
         platform = PlatformRecord.current()
         base = "-" if scope.base_sha is None else scope.base_sha[:12]
         Progress().write(
@@ -91,8 +90,6 @@ class Pipeline:
 
 @frozen_dataclass
 class PlatformRecord:
-    """The platform a pipeline ran on: facts only."""
-
     arch: str
     hardware: str
     n_visible_devices: int
@@ -103,7 +100,6 @@ class PlatformRecord:
 
     @classmethod
     def current(cls) -> PlatformRecord:
-        """This process's platform; ``"unknown"`` for what it cannot read."""
         unknown = "unknown"
         try:
             import torch
@@ -133,8 +129,6 @@ class PlatformRecord:
 
 @frozen_dataclass
 class PipelineReport:
-    """One validation run; written, never read back."""
-
     version: int = Field(default=REPORT_VERSION, kw_only=True)
     head_sha: str
     base_sha: str | None
@@ -146,7 +140,6 @@ class PipelineReport:
 
     @property
     def deciding_stage(self) -> StageReport | None:
-        """The first failed stage, else the first aborted one."""
         for status in ("failed", "aborted"):
             for stage in self.stages:
                 if stage.status == status:
@@ -155,13 +148,12 @@ class PipelineReport:
 
     @property
     def conclusion(self) -> str:
-        """``passed``, or the deciding stage's ``<status> (<stage name>)``."""
         stage = self.deciding_stage
         return "passed" if stage is None else f"{stage.status} ({stage.stage_name})"
 
     @property
     def exit_code(self) -> int:
-        """0 passed, 1 failed (candidate's fault), 3 aborted (platform's fault)."""
+        """0 passed, 1 failed (the candidate's fault), 3 aborted (the platform's fault)."""
         stage = self.deciding_stage
         return 0 if stage is None else _EXIT_CODES[stage.status]
 
@@ -186,7 +178,6 @@ class PipelineReport:
         return "\n\n".join("\n".join(lines) for lines in lines_of_blocks if lines) + "\n"
 
     def write(self, directory: Path) -> None:
-        """Write ``report.json`` and ``report.md`` under ``directory``."""
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "report.json").write_text(
             TypeAdapter(PipelineReport).dump_json(self, indent=2).decode(),
@@ -195,17 +186,14 @@ class PipelineReport:
         (directory / "report.md").write_text(self.markdown_text(), encoding="utf-8")
 
     def write_schemas(self, root: Path, directory: Path) -> int:
-        """Write each schema of :meth:`measured_schemas`, return how many."""
-        shutil.rmtree(directory, ignore_errors=True)  # no earlier run's rewrites
+        shutil.rmtree(directory, ignore_errors=True)  # no earlier run's rewrites may remain
         measured = self.measured_schemas(root)
         for path, schema in measured.items():
             save_json_file(schema, directory / path)
         return len(measured)
 
     def measured_schemas(self, root: Path) -> dict[str, Schema]:
-        """Each bench schema with its measurements, by path, where they changed; one
-        schema's finding or another stage's fault does not stop the rest
-        (``BenchReport.measurements``)."""
+        """Bench schemas whose measurements changed, rewritten, by path, whatever failed elsewhere."""
         bench = next((s for s in self.stages if isinstance(s, BenchReport)), None)
         target = DeviceTarget.from_names(self.platform.arch, self.platform.hardware)
         if bench is None or not target.is_complete:

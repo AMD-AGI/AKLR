@@ -1,5 +1,15 @@
-# SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+# Copyright (c) 2025 by FlashInfer-Bench Contributors
+#
+# Adapted from FlashInfer-Bench (https://github.com/flashinfer-ai/flashinfer-bench)
+# Modified by the AKLR team.
+#
+# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
+# not the MIT license that covers the rest of AKLR (see LICENSE).
+###############################################################################
 
 from __future__ import annotations
 
@@ -27,48 +37,30 @@ logger = logging.getLogger(__name__)
 
 
 class DispatchConfig(BaseModel):
-    """Configuration for dispatcher behavior.
-
-    Controls AOT compilation strategy and miss handling policy.
-    """
-
     aot_ratio: float = Field(default=1.0, ge=0, le=1)
-    """The ratio of the top kernels to AOT build for each schema."""
+    """The share of each name's key-winning kernels built when the table loads, most wins first."""
     on_miss_policy: Literal["fallback_only", "use_best_kernel"] = "fallback_only"
-    """The policy when a runtime DispatchKey misses the table."""
+    """On a key the table lacks: run the fallback, or the kernel ranked first on the most keys."""
 
 
 class DispatchConfigRegistry(ConfigRegistry[DispatchConfig]):
-    pass
+    """Dispatch configs by schema name; a name with no config and no default is never dispatched."""
 
 
 @cache
 def get_default_registry() -> DispatchConfigRegistry:
-    """Get the default config registry (cached).
-
-    The default registry applies all kernels with the default ApplyConfig.
-    """
     return DispatchConfigRegistry(default=DispatchConfig())
 
 
-#
 class KernelDispatcher:
+    """Sends each api call to the best kernel the dispatch table has for it, else to its fallback."""
+
     _instance: ClassVar[Optional[KernelDispatcher]] = None
-    """The active dispatcher."""
     _env_initialized: ClassVar[bool] = False
-    """Whether initialization from environment variables has been attempted."""
 
     @classmethod
     def get_instance(cls) -> Optional[KernelDispatcher]:
-        """Get the active KernelDispatcher instance.
-
-        Lazily initializes from environment variables on first call if none is active.
-
-        Returns
-        -------
-        Optional[KernelDispatcher]
-            The active dispatcher, or None if none is active.
-        """
+        """The active dispatcher; the first call starts one from the env unless AKLR_DISABLE=1."""
         if cls._instance is None and not cls._env_initialized:
             cls._env_initialized = True
             if not RuntimeEnv().is_all_disabled:
@@ -81,21 +73,6 @@ class KernelDispatcher:
         dispatch_config: Union[DispatchConfig, DispatchConfigRegistry, None] = None,
         tuner: Optional[KernelTuner] = None,
     ) -> None:
-        """Initialize the dispatcher.
-
-        Parameters
-        ----------
-        schema_collection : SchemaCollection
-            A SchemaCollection object.
-        dispatch_config : Union[DispatchConfig, DispatchConfigRegistry, None], optional
-            Configuration for the dispatcher. Can be:
-
-            - DispatchConfig: A single config used as the default for all schemas.
-            - DispatchConfigRegistry: A registry with per-schema configs.
-            - None: Uses the default registry.
-        tuner : Optional[KernelTuner], optional
-            Chooses online among a key's kernels when no baseline was measured.
-        """
         self._schema_collection = schema_collection
         self._tuner = tuner
 
@@ -113,10 +90,8 @@ class KernelDispatcher:
             RuntimeEnv().min_speedup,
         )
 
-        # schema_name -> callable: (runtime_kwargs) -> DispatchKey
         self._key_builders: Dict[str, DispatchKeyBuilder] = {}
 
-        # Install integrations
         from aklr.core.runtime.seam import SeamRegistry  # seam imports this module
 
         SeamRegistry.default().install()
@@ -150,11 +125,7 @@ class KernelDispatcher:
         baseline: Optional[str] = None,
         is_inplace: bool = False,
     ) -> Any:
-        # kernel dispatch for host launch or maybe device launch in the future
-
-        # 1. get schema from collections
-
-        # Check if dispatch is configured for this schema
+        """Run the call on the best kernel for its key and ``baseline``, else on ``fallback``."""
         dispatch_config = self._config_registry.get(schema_name)
         if dispatch_config is None:
             if fallback is None:
@@ -168,7 +139,7 @@ class KernelDispatcher:
             if fallback is None:
                 raise RuntimeError(f"Schema '{schema_name}' not found and no fallback provided")
             return fallback(*args, **kwargs)
-        schema = schemas[0]
+        schema = schemas[0]  # a name's files agree outside their kernel and workloads
 
         names = [*schema.inputs, *schema.outputs]
         if len(args) > len(names):
@@ -179,14 +150,12 @@ class KernelDispatcher:
         call = {**dict(zip(names, args)), **kwargs}
         dests = {name: name for name in schema.outputs}
 
-        # Build key from input arguments
         builder = self._key_builders.get(schema.name)
         if builder is None:
             builder = DispatchKeyFactory.specialize(schema)
             self._key_builders[schema.name] = builder
         key = builder.build_from_args(ordered_input_values(schema, call))
 
-        # Lookup kernel
         kernel_name = self._table.match_kernel(schema_name, key, baseline)
         candidates = self._table.candidates(schema_name, key, baseline)
         if (
@@ -214,7 +183,6 @@ class KernelDispatcher:
             if kernel_schema:
                 runnable = BuilderRegistry.get_instance().build(kernel_schema)
 
-        # Miss policy
         if runnable is None:
             if dispatch_config.on_miss_policy == "use_best_kernel":
                 best_kernel_name = self._table.match_best_kernel(schema_name, baseline)
@@ -229,7 +197,6 @@ class KernelDispatcher:
                 raise RuntimeError(f"Dispatch miss for '{schema_name}' and no fallback provided")
             return fallback(*args, **kwargs)
 
-        # Call the runnable with appropriate style
         return adapt_and_call(
             template=schema,
             fn=runnable,

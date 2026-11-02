@@ -1,5 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -33,7 +36,7 @@ __all__ = [
     "StepFailed", "run_candidate",
 ]  # fmt: skip
 
-# the first calls' peak, outputs included, and what stays allocated after them
+# bounds both the first calls' peak, outputs included, and what stays allocated after them
 MAX_FIRST_CALL_BYTES: Final = 16 << 30
 
 _BASELINE_FAILED_DETAIL: Final = (
@@ -47,8 +50,6 @@ class CandidateWorkloadResult:
     axes_text: str
     findings: tuple[Finding, ...]
     rounds: tuple[_measure.RoundTimes, ...]
-    # the adapter entry point that bound and timed (of several, the first to bind);
-    # None: none timed
     baseline: str | None
     backend: str | None
 
@@ -123,7 +124,7 @@ def run_candidate(context: ExecutionContext, *, requests: Sequence[TrialRequest]
             if max(first_call_peak_bytes, resident_bytes) > MAX_FIRST_CALL_BYTES:
                 detail = f"peak {first_call_peak_bytes} or resident {resident_bytes} bytes: too many"
                 raise StepFailed(FindingCode.BUILD_FAILED, detail)
-            # one runnable per incumbent kernel; the incumbents passed their review
+            # the incumbents passed their review: a failure here is the platform's fault
             with StepFailed.failing_as(FindingCode.PLATFORM_FAILURE, "incumbent: "):
                 requests_by_hash: dict[str, list[TrialRequest]] = {}
                 for request in live:
@@ -149,7 +150,7 @@ def run_candidate(context: ExecutionContext, *, requests: Sequence[TrialRequest]
                 )
             except StepFailed as e:
                 stopped[axes_text] = Finding.unlocated(e.code, str(e))
-        # with no tensor too: a missing file is always the candidate's fault
+        # even with no tensor: a missing file is then always the candidate's fault
         save_file(outputs, context.directory / outputs_file_name(axes_text))
     workload_results = []
     for r in requests:
@@ -182,6 +183,7 @@ class _CompileTripwire(NamedTuple):
         import flydsl.compiler.jit_function as flydsl_jit
         import triton.runtime.jit as triton_jit
 
+        # private compile entry points of triton and FlyDSL: a release that renames one fails here
         hooks = (
             (triton_jit.JITFunction, "_do_compile"),
             (flydsl_jit, "_build_call_state"),
@@ -212,8 +214,6 @@ class _CompileTripwire(NamedTuple):
 
 
 class CandidateRun:
-    """The candidate task's run on its device, shared by every workload of the batch."""
-
     device: str
     tripwire: _CompileTripwire
     clock: _measure.Clock
@@ -279,7 +279,6 @@ class CandidateRun:
             torch.cuda.synchronize()
             allocated_before = torch.cuda.memory_allocated()
             torch.cuda.reset_peak_memory_stats()
-            # the first call: it may compile
             self.call_kernel(request, runnable, call)
             torch.cuda.synchronize()
             peak_bytes = max(peak_bytes, torch.cuda.max_memory_allocated() - allocated_before)
@@ -292,8 +291,6 @@ class CandidateRun:
         incumbent_runnable: Runnable | None,
         outputs: dict[str, Tensor],
     ) -> tuple[tuple[_measure.RoundTimes, ...], tuple[str, str] | None]:
-        """Run the workload's check steps, then its timing rounds; return them and
-        the adapter entry point and backend that bound."""
         steps = request.steps
         self.produce_outputs(request, runnable, [s for s in steps if s.check != "post_timing"], outputs)
         call = request.compose_call(None, self.device)
@@ -304,12 +301,12 @@ class CandidateRun:
         try:
             bound = self.bind_baseline(request, call)
             if bound is None:
-                if "incumbent" in fns:  # no adapter: the incumbent is the baseline
+                if "incumbent" in fns:
                     fns["baseline"] = fns.pop("incumbent")
             else:
                 fns["baseline"] = bound[0]
             rounds = ()
-            if "baseline" in fns:  # none: the new case is its own baseline, untimed
+            if "baseline" in fns:
                 seed = derive_seed(request.workload_hash, "timing")
                 rounds = self.clock.time_rounds(fns, seed=seed)
         except StepFailed:
@@ -350,9 +347,8 @@ class CandidateRun:
             held = {name: v for name, v in live.items() if torch.is_tensor(v) and name not in output_names}
             if step.buffer_source != "new":
                 for name, value in held.items():
-                    # Model weight reloads that preserve both address and _version.
+                    # like a model's weight reload: new values at the same address and _version
                     value.data.copy_(values[name])
-            # a reused step hands every output back as the last step left it
             call = live | (step_outputs if step.is_out_reused else {o: values[o] for o in output_names})
             outputs_to_poison = () if step.is_out_reused else output_names
             # on the device: a CPU copy of a multi-GB pool costs more than the call
@@ -366,7 +362,7 @@ class CandidateRun:
                             self.tripwire.armed() as compile_calls,
                             torch.cuda.graph(graph, capture_error_mode="global"),
                         ):
-                            # the poisoning is captured too
+                            # captured too: each replay poisons the outputs first
                             self._poison_outputs(call, outputs_to_poison)
                             self.call_kernel(request, runnable, call)
                         if compile_calls:

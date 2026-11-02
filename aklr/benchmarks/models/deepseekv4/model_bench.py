@@ -1,4 +1,17 @@
-"""Shared plumbing for DeepSeek-V4 Flash/Pro micro-benchmarks."""
+###############################################################################
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+#
+# Portions of this file are derived from SGLang
+# (https://github.com/sgl-project/sglang),
+# licensed under the Apache License, Version 2.0 (see LICENSE-APACHE).
+# Original copyright: Copyright 2023-2024 SGLang Team.
+# Modifications to the imported portions have been made by the AKLR team.
+#
+# Those portions remain under Apache-2.0, not the MIT license that covers the
+# rest of AKLR (see LICENSE).
+###############################################################################
 
 import argparse
 import contextlib
@@ -26,12 +39,10 @@ from sglang_bench import (
     table,
 )
 
-# Point --model at a local checkpoint to avoid downloading weights.
 DEFAULT_MODEL = "deepseek-ai/DeepSeek-V4-Flash"
 
 
 def model_tag(server_args) -> str:
-    """Checkpoint basename, keeping Flash/Pro reports separate."""
     return server_args.model_path.rstrip("/").rpartition("/")[2].replace(".", "")
 
 
@@ -59,21 +70,18 @@ DUMMY_WARNING = (
 
 
 def warn_if_dummy_weights(load_format: str) -> None:
-    """Warn that dummy weights mistime ops whose cost depends on the values."""
     if load_format != "dummy":
         return
     print(f"[BENCH] WARNING: {DUMMY_WARNING}", flush=True)
 
 
 def dummy_banner(server_args) -> str:
-    """The dummy-weight warning as markdown, or empty on a real load."""
     if server_args.load_format != "dummy":
         return ""
     return f"\n> **WARNING: {DUMMY_WARNING}**\n"
 
 
 def weights_line(model_runner) -> str:
-    """The ``weights`` row: how the checkpoint is quantized, read off its config."""
     sa = model_runner.server_args
     hf = model_runner.model_config.hf_config
     q = getattr(hf, "quantization_config", None) or {}
@@ -87,7 +95,6 @@ def weights_line(model_runner) -> str:
 
 
 def parallel_tags(model_runner, layers: "Layers") -> list[str]:
-    """Report-name parts for the layout, e.g. ``tp8 dp8 ep8 mori normal cap4096``."""
     ps, moe = parallel_state(model_runner), moe_parallel(model_runner)
     tags = [f"tp{ps.tp_size}"]
     if ps.attn_dp_size > 1:
@@ -103,7 +110,6 @@ def parallel_tags(model_runner, layers: "Layers") -> list[str]:
 
 
 def parallel_line(model_runner) -> str:
-    """The ``parallel`` row of the config table."""
     ps, moe = parallel_state(model_runner), moe_parallel(model_runner)
     line = f"TP {ps.tp_size}, attn-DP {ps.attn_dp_size}, MoE-EP {moe.ep_size}"
     if moe.ep_size > 1 and moe.tp_size > 1:
@@ -114,7 +120,6 @@ def parallel_line(model_runner) -> str:
 
 
 def a2a_impl(model_runner, layers: "Layers") -> A2aImpl | None:
-    """The all-to-all's cap and dtypes, or None without one."""
     if moe_parallel(model_runner).a2a is None:
         return None
     experts = layers.layers[0].mlp.experts
@@ -135,7 +140,6 @@ def a2a_impl(model_runner, layers: "Layers") -> A2aImpl | None:
 
 
 def moe_line(model_runner, layers: "Layers") -> str | None:
-    """The ``moe`` row of the config table, or None when nothing needs saying."""
     moe = moe_parallel(model_runner)
     if moe.a2a is None:
         return None
@@ -156,7 +160,7 @@ def moe_line(model_runner, layers: "Layers") -> str | None:
 
 
 def world_times(times: dict[str, float], model_runner) -> dict[str, float]:
-    """Per-key ms over world ranks: the slowest under EP, whose routed load differs per rank, else the fastest."""
+    """Per-key ms over ranks: the slowest under EP, where routed load differs per rank, else the fastest."""
     from sglang.srt.distributed import get_world_group
 
     try:
@@ -176,7 +180,6 @@ def cfg(server_args):
 
 
 def build_server_args(args: argparse.Namespace):
-    """Validate the supported V4 workload before resolving native server flags."""
     from sglang.srt.server_args import ServerArgs
 
     if args.speculative_algorithm is not None:
@@ -206,7 +209,6 @@ def build_server_args(args: argparse.Namespace):
 
 
 def validate_model(server_args):
-    """Reject other architectures from config, before loading model weights."""
     from sglang.srt.configs.model_config import ModelConfig
 
     hf = ModelConfig.from_server_args(server_args).hf_config
@@ -247,7 +249,7 @@ def run(work_func: Callable, server_args, args) -> None:
         while alive:
             for sentinel in wait(alive):
                 rank, p = alive.pop(sentinel)
-                p.join()  # already exited; reaps it and sets exitcode
+                p.join()
                 if p.exitcode:
                     # A dead rank leaves the others blocked in its collectives; the finally kills them.
                     raise SystemExit(f"rank {rank} exited {p.exitcode}; aborting {len(alive)} ranks")
@@ -256,7 +258,7 @@ def run(work_func: Callable, server_args, args) -> None:
 
 
 def setup(server_args, port_args, gpu_id: int, tp_rank: int, tag: str = "BENCH"):
-    """Build the model. Returns (model_runner, rank_print)."""
+    """Load the model on this rank; returns (model_runner, rank_print), which prints on rank 0 only."""
     from sglang.benchmark.one_batch import load_model
     from sglang.srt.layers.moe import initialize_moe_config
     from sglang.srt.layers.quantization.fp4_utils import initialize_fp4_gemm_config
@@ -264,13 +266,13 @@ def setup(server_args, port_args, gpu_id: int, tp_rank: int, tag: str = "BENCH")
     from sglang.srt.plugins import load_plugins
     from sglang.srt.utils import configure_logger
 
-    # The initializers read the published runtime context, and a spawned child arrives with nothing published.
+    # The initializers read the published runtime context; a spawned child arrives with none published.
     publish_once(server_args, gpu_id, tp_rank)
     initialize_moe_config()
     initialize_fp8_gemm_config()
     initialize_fp4_gemm_config()
     configure_logger(server_args, prefix=f" TP{tp_rank}")
-    # as the scheduler process does: sglang.srt.plugins hooks (AKLR's dispatch) attach
+    # As the scheduler process does, so the sglang.srt.plugins hooks (AKLR's dispatch) attach.
     load_plugins()
 
     model_runner = load_model(server_args, port_args, gpu_id, tp_rank)[0].torch_runner
@@ -347,7 +349,6 @@ def decode_swa_prefix(args, model_runner) -> int:
 
 
 def make_decode_batch(args, model_runner):
-    """Synthetic performance inputs with native full-KV / SWA-tail allocation."""
     swa_prefix = decode_swa_prefix(args, model_runner)
     reqs = make_reqs(args, model_runner, decode_tokens=1, swa_prefix=swa_prefix)
     if swa_prefix:
@@ -383,7 +384,6 @@ def make_decode_batch(args, model_runner):
 
 
 def make_extend_batch(reqs, model_runner, reset: bool = True):
-    """A prefill ScheduleBatch, up to but not including the forward."""
     from sglang.benchmark.one_batch import (
         TreeCacheNamespace,
         _maybe_prepare_mlp_sync_batch,
@@ -437,7 +437,6 @@ SUB_POOLS = ("swa_kv_pool", "c4_kv_pool", "c128_kv_pool", "c4_indexer_kv_pool")
 
 
 def sub_pools(pool):
-    """V4's SWA, compressed KV and indexer pools (no top-level KV buffers)."""
     for name in SUB_POOLS:
         child = getattr(pool, name)
         if child is not None:
@@ -448,6 +447,7 @@ def _randomize_pool(pool) -> None:
     for p in sub_pools(pool):
         for buf in getattr(p, "kv_buffer", []):
             if buf.element_size() == 1:
+                # Bytes below 0x7C are finite and non-negative in every fp8 format; 0x7C is e5m2's +inf.
                 buf.view(torch.uint8).random_(0, 0x7C)
             else:
                 buf.uniform_(-1, 1)
@@ -464,7 +464,7 @@ def chunk_tokens(args, model_runner) -> int:
 
 
 def chunk_flag(args, model_runner) -> int:
-    """The --chunked-prefill-size behind that budget, before the DP division."""
+    """The --chunked-prefill-size behind chunk_tokens, before the DP division."""
     if args.chunked_prefill_size:
         return args.chunked_prefill_size
     return chunk_tokens(args, model_runner) * parallel_state(model_runner).attn_dp_size
@@ -497,7 +497,6 @@ def make_prefill_context(args, model_runner) -> list[torch.Tensor]:
 
 
 def make_prefill_batch(model_runner, context, step: PrefillStep):
-    """A ScheduleBatch for one prefill step, its prefix already in the pool."""
     from sglang.benchmark.one_batch import prepare_synthetic_inputs_for_latency_test
 
     reqs = prepare_synthetic_inputs_for_latency_test(len(context), step.prefix + step.extend)
@@ -508,7 +507,6 @@ def make_prefill_batch(model_runner, context, step: PrefillStep):
 
 
 def free_req_rows(batch, model_runner) -> None:
-    """Release request rows between chunks, retaining the shared KV context."""
     model_runner.req_to_token_pool.free_rows(batch.req_pool_indices_cpu.tolist())
 
 
@@ -516,7 +514,7 @@ MLP_FLAGS = ("fuse_mlp_allreduce", "mlp_reduce_scatter")
 
 
 class Recorded(NamedTuple):
-    """One op's captured call site: arguments plus the ambient state it reads."""
+    """One op's captured call: arguments plus the forward's MoE flags it reads."""
 
     args: tuple
     kwargs: dict
@@ -537,7 +535,6 @@ def residual_owner(name: str) -> str:
 
 
 def skipped_note(skipped: dict) -> str:
-    """Ops that fired but could not be replayed on their own, and where they went."""
     if not skipped:
         return ""
     rows = []
@@ -609,7 +606,6 @@ def record_inputs(ops: dict, into: dict):
 
 
 def make_call(mod, entry) -> Callable:
-    """Replay a V4 module with its recorded arguments and scoped MoE flags."""
     from sglang.srt.runtime_context import get_forward
 
     def call():
@@ -646,7 +642,7 @@ def rotated_calls(mod, entry):
     except torch.cuda.OutOfMemoryError:
         torch.cuda.empty_cache()
         ring = None
-    # Agreed across ranks: a rank that fell back alone would issue mismatched collectives and wedge the world.
+    # Agreed across ranks: one rank falling back alone would mismatch collectives and wedge the world.
     if not agreed(ring is not None):
         if ring is not None:
             del ring
@@ -681,7 +677,6 @@ def balance_moe_routing(layers) -> None:
 
 
 def layer_kind(layer) -> str:
-    """V4 layers differ by KV compression (0/4/128) and hash versus gate routing."""
     attn, mlp = layer.self_attn, layer.mlp
     ratio = attn.compress_ratio
     if ratio not in (0, 4, 128):
@@ -704,7 +699,6 @@ class Layers:
 
     @property
     def counts(self) -> dict[str, int]:
-        """How many layers of each kind."""
         return {k: len(v) for k, v in self.kinds.items()}
 
     def describe(self) -> str:
@@ -712,7 +706,6 @@ class Layers:
         return f"{self.n_all} layers -- {kinds}"
 
     def experts_per_rank(self) -> int:
-        """Routed experts this rank holds, read off the first MoE layer."""
         experts = self.layers[0].mlp.experts
         return int(experts.num_local_experts - experts.num_fused_shared_experts)
 
@@ -740,7 +733,7 @@ TREE = [
     ("layer.<rest>", 1),
 ]
 
-# parent -> children subtracted from it to get its `<rest>` row; mHC and collectives live in `layer` itself.
+# Parent -> children subtracted from it to get its `<rest>` row; mHC and collectives live in `layer` itself.
 RESIDUALS = {
     parent: [n for n, d in TREE if d == 2 and n.startswith(f"{parent}.") and not n.endswith("<rest>")]
     for parent in ("attn", "mlp")
@@ -750,12 +743,10 @@ RESIDUALS["layer"] = ["input_layernorm", "attn", "post_attention_layernorm", "ml
 # Rows that partition a layer without overlap; their sum is the roll-up exactly.
 LEAVES = [n for n, d in TREE if d == 2] + [n for n, d in TREE if d == 1 and n not in RESIDUALS]
 
-# TREE names are attribute paths, except `attn`, which is `self_attn`.
 _ATTR = {"attn": "self_attn"}
 
 
 def layer_ops(layer) -> dict[str, torch.nn.Module]:
-    """The hookable modules of one decoder layer, keyed by TREE name."""
     owners = {"": layer, "attn": layer.self_attn, "mlp": layer.mlp}
     ops = {"layer": layer}
     for name, _ in TREE:
@@ -768,7 +759,6 @@ def layer_ops(layer) -> dict[str, torch.nn.Module]:
     return ops
 
 
-# Outside the layer stack, run once per forward.
 GLOBAL_OPS = ("embed_tokens", "norm", "logits")
 
 
@@ -833,14 +823,13 @@ def memory_section(args, model_runner, layers, kv_factor: int = 1) -> str:
     """Weights and KV pool, measured off the real buffers rather than a formula."""
     mr = model_runner
     pool = mr.token_to_kv_pool
-    # Only entries holding bytes: the pool keeps a slot per layer whether or not it runs the indexer.
     pools = list(sub_pools(pool))
     kv_bufs = [t for p in pools for t in getattr(p, "kv_buffer", [])]
+    # Only entries holding bytes: the pool keeps a slot per layer whether or not it runs the indexer.
     idx_bufs = [t for p in pools for t in getattr(p, "index_k_with_scale_buffer", []) if t.numel()]
     idx = sum(t.numel() * t.element_size() for t in idx_bufs)
     total = idx + sum(t.numel() * t.element_size() for t in kv_bufs)
     cap = mr.max_total_num_tokens
-    # kv_factor is the peak, not the reservation.
     used = local_conc(args, mr) * args.ISL * kv_factor
     dp = parallel_state(mr).attn_dp_size
 
@@ -865,7 +854,6 @@ def memory_section(args, model_runner, layers, kv_factor: int = 1) -> str:
         ("weights", "", "", "", weights / GB),
         ("**HBM**", "", "", "", hbm / GB),
     ]
-    # Lead with real serving capacity: under DP attention the cluster holds dp_size times a rank's pool.
     if dp > 1:
         capacity = (
             f"**capacity {cap * dp:,} tokens cluster-wide** = {cap:,} per rank x"
@@ -932,7 +920,6 @@ def residual_contents(model_runner) -> dict[str, str]:
 
 
 def index_topk(model_runner):
-    """Compressed C4 tokens retained per query by the V4 indexer."""
     return model_runner.model_config.hf_config.index_topk
 
 

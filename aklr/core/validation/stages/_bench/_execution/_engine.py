@@ -15,8 +15,7 @@ from aklr.core.validation.stages._bench._execution._model import (
 
 
 class ExecutionEngine:
-    # what the runner builds and hands a call; subclasses may widen it
-    """Call what the task carries, on the resource that was chosen for it."""
+    """Calls what a task carries, inside the runner's child process."""
 
     context_type: ClassVar[type[ExecutionContext]] = ExecutionContext
 

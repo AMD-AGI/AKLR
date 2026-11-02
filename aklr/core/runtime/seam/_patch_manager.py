@@ -1,7 +1,8 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
-
-"""Patches backend entry points with adapters' stand-ins and restores them."""
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
@@ -15,15 +16,13 @@ __all__ = ["PatchManager"]
 
 
 class PatchManager:
-    """Patches entry points in place and restores them."""
+    """Swaps entry points for their adapters' stand-ins in every loaded module, and back."""
 
     def __init__(self) -> None:
-        # entry point -> (original, stand-in)
-        self._patched: dict[str, tuple[Callable, Callable]] = {}
+        self._patched: dict[str, tuple[Callable, Callable]] = {}  # entry point -> (original, stand-in)
 
     def patch(self, adapter: Adapter) -> bool:
-        """Patch ``adapter.entry`` with its stand-in; ``False`` if this environment
-        lacks the entry point or its backend fails to import. Idempotent."""
+        """Patch ``adapter.entry``; False if this environment lacks it or its backend fails to import."""
         if adapter.entry in self._patched:
             return True
         # shortcut: module-level functions only; resolve Class.method when a target needs it
@@ -43,13 +42,12 @@ class PatchManager:
         return True
 
     def unpatch_all(self) -> None:
-        """Restore every patched entry point."""
         for original, stand_in in self._patched.values():
             self._rebind(stand_in, original)
         self._patched.clear()
 
     def _rebind(self, old: Callable, new: Callable) -> None:
-        # Every module namespace: callers that ran `from x import f` hold f themselves.
+        # every module's namespace: callers that ran `from x import f` hold their own f
         for module in list(sys.modules.values()):
             namespace = getattr(module, "__dict__", None)
             if type(namespace) is dict:

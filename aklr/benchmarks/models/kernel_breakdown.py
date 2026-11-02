@@ -1,4 +1,8 @@
-"""Kineto kernel breakdown for the standalone module replays."""
+###############################################################################
+# SPDX-License-Identifier: MIT
+#
+# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 import contextlib
 import importlib
@@ -21,7 +25,6 @@ _PLUMBING = (
     "/aiter/jit/core.py",
 )
 _PACKAGES = frozenset({"aiter", "sglang", "torch"})
-# Substrings of a kernel name or of any enclosing frame that mark a cross-rank collective.
 COLLECTIVE_MARKS = (
     "all_reduce",
     "allreduce",
@@ -55,7 +58,6 @@ def contains_launch(scope, launch):
 
 
 def python_api(event):
-    """Turn a Kineto Python frame into `module.function:defline`."""
     name = event.get("name", "")
     if name.startswith("<") or "): " not in name:
         return None
@@ -104,7 +106,6 @@ def launch_api(launch, frames, cpu_ops):
 
 
 def add_sample(dest, key, ms, calls, frames) -> None:
-    """Accumulate one `(ms, calls, frames)` sample into `dest[key]`."""
     old_ms, old_calls, old_frames = dest.get(key, (0.0, 0, ()))
     dest[key] = (
         old_ms + ms,
@@ -201,7 +202,7 @@ def profile_call(call, children=()):
             with profiler.record_function(ROOT):
                 call()
             torch.cuda.synchronize()
-    # Temporary and rank-local: no separate trace artifact.
+    # Rank-local and temporary: the trace is read here, not kept as an artifact.
     with tempfile.TemporaryDirectory(prefix="aklr-kineto-") as directory:
         path = Path(directory) / "trace.json"
         try:
@@ -214,10 +215,10 @@ def profile_call(call, children=()):
 class HotKernel(NamedTuple):
     api: str
     ms: float  # calibrated to graph time
-    kineto_ms: float  # raw Kineto ms
+    kineto_ms: float
     calls: int
     share: float  # of the leaf roll-up
-    hottest: str  # kernel symbol with the most calibrated ms
+    hottest: str
     collective: bool
 
 
@@ -226,7 +227,7 @@ class TimedRow(NamedTuple):
 
     graph_ms: float
     kernels: dict  # {(kernel, api): (ms, calls, frames)}
-    collective: dict  # {(kernel, api): bool}
+    collective: dict
     collective_ms: float
     compute_ms: float
 
@@ -257,7 +258,7 @@ class Ranking(NamedTuple):
 
     kernels: list[HotKernel]
     factors: tuple[float, float]  # (lo, hi) over the trusted rows
-    clamped: int  # heavy rows clamped into [lo, hi]
+    clamped: int
 
     @classmethod
     def of(cls, kernels_by_row: dict, leaves: dict[str, float]) -> "Ranking":
@@ -307,7 +308,6 @@ class Ranking(NamedTuple):
         return picked[:end]
 
     def section(self, table: Callable) -> str:
-        """The hottest groups as a markdown `table`; `target` marks the AKLR top-5 targets."""
         picked = self.targets()
         rows = [
             (
