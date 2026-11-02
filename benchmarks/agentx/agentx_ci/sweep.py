@@ -340,7 +340,11 @@ def main(argv: list[str] | None = None) -> int:
         },
         "serving": {
             "grid_sha256": serving["grid_sha256"],
-            "arms": serving["arms"],
+            "arms": {
+                arm: spec
+                for arm, spec in serving["arms"].items()
+                if any(p["arm"] == arm for p in points)
+            },
             "warnings": serving["warnings"],
         },
         "points": records,

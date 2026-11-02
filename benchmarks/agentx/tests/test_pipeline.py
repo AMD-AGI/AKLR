@@ -70,6 +70,11 @@ class PipelineTests(unittest.TestCase):
             sorted((p["arm"], p["conc"]) for p in results["points"]),
             [("tp4", 4), ("tp8", 1)],
         )
+        one_arm = self.sweep("w2", "--points", "tp8:1")
+        self.assertEqual(list(read_json(one_arm)["serving"]["arms"]), ["tp8"])
+        site = self.root / "site"
+        quiet(report.main, ["--results", str(one_arm), "--out", str(site)])
+        self.assertEqual((site / "index.html").read_text().count("<svg"), 2)
         argv = ["--serving", str(self.serving), "--out", str(self.root / "x")]
         with contextlib.redirect_stderr(io.StringIO()) as err:
             self.assertEqual(quiet(sweep.main, [*argv, "--mock", "--points", "tp8:3"]), 1)

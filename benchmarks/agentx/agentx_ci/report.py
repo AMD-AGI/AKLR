@@ -140,8 +140,8 @@ def short(sha: str) -> str:
 
 
 def charts(results: dict, baseline: dict | None, comparison: dict) -> str:
-    arms = sorted(results["serving"]["arms"])
     current = frontiers(results)
+    arms = sorted(current["arms"])
     series = [
         {
             "label": f"{arm} (this run)",
