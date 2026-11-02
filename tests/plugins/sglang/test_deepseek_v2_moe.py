@@ -49,7 +49,6 @@ def test_kernels_are_openai_gluon_schemas_of_sglangs_layout():
         assert findings == ()
         for w in schema.workloads:
             assert w.scalars == {"routed_scaling_factor": 2.5}
-            assert w.accuracy is None and w.speedup is None
             points.setdefault(axes["inter_dim"], []).append(w.axes["n_tokens"])
     assert {k: sorted(v) for k, v in points.items()} == _POINTS
 

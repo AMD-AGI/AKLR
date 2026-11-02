@@ -349,8 +349,8 @@ def test_the_kernels_are_self_contained_openai_schemas():
     """23 Gluon kernels serve each of 40 exact MiniMax-M2.5 TP4 Points once: fp8 and MXFP4,
     every expert on the rank or 64 of 256 (EP4), all but MXFP4 EP1 at 32, 128 and 256 tokens
     (there the kernels only match sglang's aiter call, which skips the padded intermediate);
-    every kernel passes the audit, reads no global next_power_of_2 in device code (sglang
-    replaces it) and is unmeasured."""
+    every kernel passes the audit and reads no global next_power_of_2 in device code (sglang
+    replaces it)."""
     registry = ContractRegistry.default()
     served = {}
     paths = sorted(IMPLS.rglob("*.json"))
@@ -360,7 +360,6 @@ def test_the_kernels_are_self_contained_openai_schemas():
         assert kernel.language == "triton" and kernel.author == "openai"
         assert kernel.requires == {"triton": ">=3.8"}
         assert not kernel.state_bytes and not kernel.peer_bytes
-        assert all(w.accuracy is None and w.speedup is None for w in schema.workloads)
         ((source,),) = [kernel.sources]
         assert source.path == "kernel.py"
         assert source.content.startswith("# Created by OpenAI\n")

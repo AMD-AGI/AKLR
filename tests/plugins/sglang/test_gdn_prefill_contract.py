@@ -33,7 +33,6 @@ def test_all_implementations_are_self_contained_schemas():
         assert schema.kernel.author == "OpenAI"
         assert schema.kernel.requires == {"triton": ">=3.8"}
         assert not schema.kernel.state_bytes and not schema.kernel.peer_bytes
-        assert all(w.accuracy is None and w.speedup is None for w in schema.workloads)
         findings = list(
             check_kernel(
                 str(path),

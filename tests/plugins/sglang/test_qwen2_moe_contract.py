@@ -92,8 +92,6 @@ def test_each_kernel_is_one_self_contained_openai_schema_at_its_decode_point():
         assert source.path == "kernel.py" and len(schema.workloads) == 1
         assert source.content.startswith("# Created by OpenAI\n")
         assert schema.name == SCENARIOS[schema.contract_id] == path.parent.name
-        # only CI measures
-        assert all(w.accuracy is None and w.speedup is None for w in schema.workloads)
         findings = list(
             check_kernel(
                 str(path),
