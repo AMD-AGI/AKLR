@@ -122,6 +122,49 @@ def port_free(port: int) -> bool:
         return probe.connect_ex(("127.0.0.1", port)) != 0
 
 
+# Run with InferenceX on the path: its own runtime bootstrap and trace choice, then
+# load_dataset online once. Offline, datasets reads only a prepared HF_DATASETS_CACHE,
+# never the hub cache's raw files, so the client could not load the traces otherwise.
+PREPARE_TRACES = """
+import os, subprocess, sys
+from pathlib import Path
+from infx.bench.agentic import traces
+from infx.bench.agentic.venv import Runtime, bootstrap
+runtime_dir, model_prefix = Path(sys.argv[1]), sys.argv[2]
+runtime = Runtime(runtime_dir)
+if bootstrap(runtime):
+    sys.exit("AgentX runtime bootstrap failed")
+_, dataset = traces.resolve(model_prefix, os.environ.get("WEKA_LOADER_OVERRIDE") or None)
+offline = ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE")
+env = {k: v for k, v in os.environ.items() if k not in offline}
+load = "import sys; from datasets import load_dataset; d = load_dataset(sys.argv[1]); print(sys.argv[1], {s: len(v) for s, v in d.items()})"
+subprocess.run([str(runtime.python), "-c", load, dataset], env=env, check=True)
+"""
+
+
+def prepare_traces(host: dict, points: list[dict], log_path: Path) -> None:
+    """Fill ``host["datasets_cache"]`` with the AgentX traces the points replay."""
+    prefixes = {p["client_env"]["MODEL_PREFIX"] for p in points}
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    for prefix in sorted(prefixes):
+        with log_path.open("a") as log:
+            done = subprocess.run(
+                [sys.executable, "-c", PREPARE_TRACES, str(host["agentx_runtime_dir"]), prefix],
+                cwd=host["ix_e2e"],
+                env={
+                    **os.environ,
+                    "PYTHONPATH": str(host["ix_e2e"]),
+                    "HF_DATASETS_CACHE": str(host["datasets_cache"]),
+                },
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                timeout=1800,
+                check=False,
+            )
+        if done.returncode:
+            raise RuntimeError(f"preparing the AgentX traces failed; see {log_path}")
+
+
 def run_live(point: dict, out: Path, host: dict) -> dict:
     """One point on this host; returns the client's aggregate."""
     port, base_url = host["port"], f"http://127.0.0.1:{host['port']}"
@@ -158,6 +201,7 @@ def run_live(point: dict, out: Path, host: dict) -> dict:
             "TOKENIZER": host["tokenizer"],
             "AIPERF_SERVER_METRICS_URLS": f"{base_url}/metrics",
             "AIPERF_RUNTIME_DIR": str(host["agentx_runtime_dir"]),
+            "HF_DATASETS_CACHE": str(host["datasets_cache"]),
             "RESULT_DIR": str(out / "agentic"),
             "RESULT_FILENAME": result_name,
             "AGENTIC_OUTPUT_DIR": str(out),
@@ -262,6 +306,7 @@ def host_settings(args: argparse.Namespace, config: dict, serving: dict) -> dict
         "tokenizer": str(tokenizer),
         "ix_e2e": ix_dir / "inferencex-e2e",
         "agentx_runtime_dir": args.work / "agentx-runtime",
+        "datasets_cache": args.work / "hf-datasets",
         "client_env_overrides": overrides,
     }
 
@@ -322,7 +367,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         host = None if args.mock else host_settings(args, config, serving)
-    except RuntimeError as error:
+        if host is not None:
+            print(f"[{utc_now()}] preparing the AgentX traces", flush=True)
+            prepare_traces(host, points, args.out / "prepare_traces.log")
+    except (RuntimeError, subprocess.TimeoutExpired) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
     started = utc_now()

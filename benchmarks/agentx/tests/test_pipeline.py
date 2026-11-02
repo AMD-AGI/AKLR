@@ -217,6 +217,7 @@ class LivePathTests(unittest.TestCase):
                 "tokenizer": "amd/GLM-5.2-MXFP4",
                 "ix_e2e": root / "ix",
                 "agentx_runtime_dir": root / "venv",
+                "datasets_cache": root / "hf-datasets",
                 "client_env_overrides": {"AKLR_FAKE": "client"},
             }
             with patch.object(sweep, "POLL_S", 0.2):
@@ -224,6 +225,55 @@ class LivePathTests(unittest.TestCase):
             self.assertEqual(record["status"], "ok", record["error"])
             self.assertEqual(record["tput_per_gpu"], 20.0)
             self.assertTrue(sweep.port_free(port))
+
+
+FAKE_VENV = """
+import sys
+from pathlib import Path
+class Runtime:
+    def __init__(self, root):
+        self.root, self.python = Path(root), Path(sys.executable)
+def bootstrap(runtime):
+    runtime.root.mkdir(parents=True, exist_ok=True)
+    return 0
+"""
+FAKE_TRACES = """
+def resolve(model_prefix, override):
+    return "loader", f"org/{model_prefix}-traces"
+"""
+FAKE_DATASETS = """
+import os, pathlib
+def load_dataset(name):
+    assert "HF_HUB_OFFLINE" not in os.environ
+    cache = pathlib.Path(os.environ["HF_DATASETS_CACHE"])
+    cache.mkdir(parents=True, exist_ok=True)
+    (cache / name.replace("/", "___")).write_text("prepared")
+    return {"train": [1, 2, 3]}
+"""
+
+
+class PrepareTracesTests(unittest.TestCase):
+    def test_prepares_the_datasets_cache_online(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            agentic = root / "ix" / "infx" / "bench" / "agentic"
+            agentic.mkdir(parents=True)
+            for package in (agentic.parents[1], agentic.parent, agentic):
+                (package / "__init__.py").write_text("")
+            (agentic / "venv.py").write_text(FAKE_VENV)
+            (agentic / "traces.py").write_text(FAKE_TRACES)
+            (root / "ix" / "datasets.py").write_text(FAKE_DATASETS)
+            host = {
+                "ix_e2e": root / "ix",
+                "agentx_runtime_dir": root / "runtime",
+                "datasets_cache": root / "hf-datasets",
+            }
+            points = [{"client_env": {"MODEL_PREFIX": "glm5.2"}}] * 2
+            with patch.dict(os.environ, {"HF_HUB_OFFLINE": "1"}):
+                sweep.prepare_traces(host, points, root / "prepare.log")
+            prepared = root / "hf-datasets" / "org___glm5.2-traces"
+            self.assertEqual(prepared.read_text(), "prepared")
+            self.assertIn("'train': 3", (root / "prepare.log").read_text())
 
 
 class HistoryRepo:
