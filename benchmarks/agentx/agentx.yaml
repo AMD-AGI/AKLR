@@ -34,4 +34,4 @@ sweep:
   dram_utilization: 0.85
 report:
   # PR, commit and compare links on the page; the PR list itself comes from the local checkout.
-  repo_url: https://github.com/AMD-AGI/SIKL
+  repo_url: https://github.com/AMD-AGI/AKLR

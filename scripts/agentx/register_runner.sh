@@ -8,7 +8,7 @@
 # sudo is used only for the install directory and the systemd service.
 set -euo pipefail
 
-repo=AMD-AGI/SIKL
+repo=AMD-AGI/AKLR
 label=agentx-mi355x
 version=2.338.2
 dir=/opt/agentx-runner

@@ -139,7 +139,29 @@ class RuleTests(unittest.TestCase):
     def test_ci_image_comes_from_ci_yaml(self):
         from agentx_ci.common import REPO_ROOT
 
-        self.assertIn("@sha256:", rr.ci_image(REPO_ROOT / ".github/workflows/ci.yaml"))
+        digest = "sha256:" + "2" * 64
+        image, warnings = rr.ci_image(
+            REPO_ROOT / ".github/workflows/ci.yaml", lookup=lambda _: digest
+        )
+        self.assertIn("@sha256:", image)
+        if image.endswith(digest):
+            self.assertEqual(len(warnings), 1)
+
+    def test_ci_image_without_digest(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            workflow = Path(tmp) / "ci.yaml"
+            workflow.write_text("env:\n  AKLR_CI_IMAGE: img:tag\n")
+            digest = "sha256:" + "3" * 64
+            self.assertEqual(
+                rr.ci_image(workflow, lookup=lambda _: digest)[0], f"img:tag@{digest}"
+            )
+            image, warnings = rr.ci_image(workflow, lookup=lambda _: None)
+            self.assertEqual(image, "img:tag")
+            self.assertIn("none could be looked up", warnings[0])
+            workflow.write_text(f"env:\n  AKLR_CI_IMAGE: img:tag@{digest}\n")
+            self.assertEqual(rr.ci_image(workflow), (f"img:tag@{digest}", []))
 
 
 if __name__ == "__main__":

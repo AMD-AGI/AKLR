@@ -18,6 +18,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import sysconfig
 import time
 from pathlib import Path
 
@@ -167,7 +168,9 @@ def locked_versions(uv_lock: str) -> dict[str, str]:
 
 
 def ensure_deps(versions: dict[str, str], cache: Path) -> Path:
-    target = cache / f"ixdeps-{sha256_json(versions)[:16]}"
+    # Binary wheels (pydantic-core) are per interpreter, so the interpreter is part of the key.
+    abi = f"{sys.implementation.cache_tag}-{sysconfig.get_platform()}"
+    target = cache / f"ixdeps-{sha256_json([versions, abi])[:16]}"
     if not (target / ".complete").exists():
         shutil.rmtree(target, ignore_errors=True)
         pins = [f"{name}=={version}" for name, version in versions.items()]
@@ -413,11 +416,36 @@ def build_spec(
     }
 
 
-def ci_image(workflow: Path) -> str:
+def registry_digest(image: str) -> str | None:
+    """The tag's current manifest digest from the registry, else from the local image store."""
+    try:
+        listing = sh(["docker", "buildx", "imagetools", "inspect", image], timeout=120)
+        for line in listing.splitlines():
+            key, _, value = line.partition(":")
+            if key.strip() == "Digest" and value.strip().startswith("sha256:"):
+                return value.strip()
+        repo_digests = json.loads(
+            sh(["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image])
+        )
+    except (ResolveError, OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    for reference in repo_digests or []:
+        if "@sha256:" in reference:
+            return reference.split("@", 1)[1]
+    return None
+
+
+def ci_image(workflow: Path, lookup=registry_digest) -> tuple[str, list[str]]:
+    """AKLR_CI_IMAGE pinned to a digest, and a warning when ci.yaml pins none itself."""
     image = yaml.safe_load(workflow.read_text())["env"]["AKLR_CI_IMAGE"]
-    if "@sha256:" not in image:
-        raise ResolveError(f"AKLR_CI_IMAGE {image!r} must pin a digest")
-    return image
+    if "@sha256:" in image:
+        return image, []
+    digest = lookup(image)
+    if digest is None:
+        return image, [f"AKLR_CI_IMAGE {image} pins no digest and none could be looked up"]
+    return f"{image}@{digest}", [
+        f"AKLR_CI_IMAGE {image} pins no digest; pinned the tag's digest at resolve time"
+    ]
 
 
 def git_blob(tree: Path, path: str) -> str:
@@ -459,7 +487,11 @@ def main(argv: list[str] | None = None) -> int:
 def resolve(args: argparse.Namespace) -> dict:
     config = load_config(args.config)
     source = config["inferencex"]
-    run_image = args.run_image or ci_image(REPO_ROOT / ".github/workflows/ci.yaml")
+    run_image, image_warnings = (
+        (args.run_image, [])
+        if args.run_image
+        else ci_image(REPO_ROOT / ".github/workflows/ci.yaml")
+    )
     if args.ix_src:
         ix = args.ix_src
         sha = sh(["git", "rev-parse", "HEAD"], cwd=ix).strip()
@@ -505,5 +537,6 @@ def resolve(args: argparse.Namespace) -> dict:
         client_defaults=client_defaults,
         provenance=provenance,
     )
+    spec["warnings"] = image_warnings + spec["warnings"]
     write_json(args.out, spec)
     return spec

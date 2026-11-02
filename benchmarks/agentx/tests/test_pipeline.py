@@ -333,7 +333,7 @@ class HistoryTests(unittest.TestCase):
 
     def test_repo_url_is_configured(self):
         self.assertEqual(
-            load_config()["report"]["repo_url"], "https://github.com/AMD-AGI/SIKL"
+            load_config()["report"]["repo_url"], "https://github.com/AMD-AGI/AKLR"
         )
 
 
