@@ -83,6 +83,9 @@ python -m kernelforge.cli forge-finalize --workspace $W --gpu 0 --model claude-o
   --lint "python -m ruff check --no-fix --config $A/pyproject.toml" \
   --lint "python -m ruff format --check --config $A/pyproject.toml" \
   --review-guide $A/.claude/skills/flydsl-kernel-code-cleanup/SKILL.md
+# The same answer on a stream limited to a few CUs and beside a second call of its own: a kernel whose
+# workgroups wait for each other does not give it, and validate, which gives a kernel the GPU alone, cannot tell
+HIP_VISIBLE_DEVICES=0 python $W/driver.py --stress
 # What the FlyDSL skill should learn from the run, as a patch for you to review
 python -m kernelforge.cli forge-distill --workspace $W --model claude-opus-5-5 \
   --skill-dir $A/.claude/skills/flydsl-kernel-optimization --out $RUN/knowledge_patch \
@@ -139,6 +142,7 @@ baseline; `--run-dir` (default `./aklr-runs/<schema>-<time>`).
 | `AKLR timed no baseline for …` | the schema has nothing to time against: prepare again with `--anchor start` |
 | `run directory … is not empty` | give each task a directory of its own |
 | `Kineto recorded no kernels for a single call` | the profiler lost a trace, usually on a busy machine: try again, or on an idle one |
+| `stress: differs from the call alone: …` | the kernel's workgroups wait for each other (a split-K fold that polls flags), or its concurrent calls share scratch memory: make it wait-free, the last workgroup to arrive on an atomic counter doing the fold, before you publish |
 
 ## Tests
 

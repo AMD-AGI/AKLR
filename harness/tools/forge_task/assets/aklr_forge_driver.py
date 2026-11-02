@@ -380,6 +380,100 @@ def _run_profile() -> int:
     return 0
 
 
+# A stream limited to fewer CUs than a launch has workgroups: workgroups that wait for each other cannot all run.
+STRESS_CUS = (16, 64)
+STRESS_TRIES = 3
+
+
+def _output_names() -> list[str]:
+    registry, *_ = _aklr()
+    schema = registry.parse_schema(_candidate_text()[0].encode(), str(SCHEMA_JSON))
+    return list(registry.get(schema.contract_id).outputs)
+
+
+def _cu_limited_stream(cus: int):
+    """A stream whose kernels run on the first ``cus`` CUs only, made by the HIP runtime torch loaded: a second copy
+    of the runtime makes streams torch cannot use."""
+    import ctypes
+
+    import torch
+
+    maps = Path("/proc/self/maps").read_text().splitlines()
+    hip = ctypes.CDLL(next(line.split()[-1] for line in maps if "libamdhip64.so" in line))
+    total = torch.cuda.get_device_properties(0).multi_processor_count
+    mask = (ctypes.c_uint32 * ((total + 31) // 32))()
+    for cu in range(min(cus, total)):
+        mask[cu // 32] |= 1 << (cu % 32)
+    handle = ctypes.c_void_p()
+    if hip.hipExtStreamCreateWithCUMask(ctypes.byref(handle), len(mask), mask):
+        raise RuntimeError(f"no stream limited to {cus} CUs")
+    return torch.cuda.ExternalStream(handle.value)
+
+
+def _stress_conditions() -> dict:
+    """Ways to call the candidate under contention, each returning the calls whose outputs it wrote: on a stream
+    limited to a few CUs, and beside a second call of its own on another stream, into outputs of its own."""
+    import torch
+
+    def on(stream):
+        def launch(candidate, call, outputs):
+            for name in outputs:
+                call[name].zero_()
+            stream.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(stream):
+                candidate.run(**call)
+            torch.cuda.synchronize()
+            return [call]
+
+        return launch
+
+    side = torch.cuda.Stream()
+
+    def beside_another(candidate, call, outputs):
+        twin = {**call, **{name: torch.zeros_like(call[name]) for name in outputs}}
+        for name in outputs:
+            call[name].zero_()
+        side.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(side):
+            candidate.run(**twin)
+        candidate.run(**call)
+        torch.cuda.synchronize()
+        return [call, twin]
+
+    conditions = {f"on {cus} CUs": on(_cu_limited_stream(cus)) for cus in STRESS_CUS}
+    conditions["beside a second call"] = beside_another
+    return conditions
+
+
+def _same_bits(a, b) -> bool:
+    import torch
+
+    return torch.equal(a.contiguous().view(torch.uint8), b.contiguous().view(torch.uint8))
+
+
+def _run_stress(device: str = "cuda") -> int:
+    """Every workload under each stress condition, against the candidate's own result alone, bit for bit. AKLR's
+    validate runs a kernel with the GPU to itself, so it passes a kernel that is right only while every workgroup of a
+    launch is resident at once, and one whose concurrent calls share scratch memory."""
+    candidate = _load_candidate()
+    outputs = _output_names()
+    conditions = _stress_conditions()
+    failed = []
+    for case_id, call in _calls(device).items():
+        candidate.run(**call)
+        alone = {name: call[name].clone() for name in outputs if name in call}
+        for label, launch in conditions.items():
+            for _ in range(STRESS_TRIES):
+                results = launch(candidate, call, alone)
+                if not all(_same_bits(result[name], alone[name]) for result in results for name in alone):
+                    failed.append(f"{case_id} {label}")
+                    break
+    for failure in failed:
+        print(f"stress: differs from the call alone: {failure}")
+    print(f"stress: {'FAIL' if failed else 'PASS'}")
+    return 1 if failed else 0
+
+
 def main() -> int:
     # KernelForge sends SIGUSR1 to a driver that outruns its timeout before killing it: every thread's stack is the
     # only record of where it hung.
@@ -397,6 +491,11 @@ def main() -> int:
         action="store_true",
         help="write the kernel into the AKLR checkout as the schema's kernel, and keep it there",
     )
+    parser.add_argument(
+        "--stress",
+        action="store_true",
+        help="run every workload on streams limited to a few CUs and beside a second call; same answer or fail",
+    )
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument(
         "--iters",
@@ -410,6 +509,8 @@ def main() -> int:
         return 0
     if args.profile_run:
         return _run_profile()
+    if args.stress:
+        return _run_stress()
     if args.baseline_json:
         return _write_baseline(args.baseline_json)
     if args.bench_mode:

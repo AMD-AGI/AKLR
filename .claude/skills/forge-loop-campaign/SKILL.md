@@ -52,6 +52,10 @@ echo $! > $RUN/forge_loop.pid
 
 - Start them only once the loop has ended: `$RUN/forge_loop.log` ends with forge-loop's result.
 - Give forge-ablate several `--gpus` only when this machine runs this campaign alone.
+- After forge-finalize, `python $W/driver.py --stress` must end with `stress: PASS` before you publish. AKLR's
+  validate gives a kernel the GPU alone, so it passes one that is right only while every workgroup of a launch is
+  resident: a split-K fold that polls for its partners and gives up with NaN. On a stream limited to part of the CUs
+  such a kernel returns NaN. Do not deliver it; tell the user, and have its fold made wait-free first.
 - Do not apply the skill patch yourself: hand `$RUN/knowledge_patch/distill.md` and the patch to the user.
 - `python .claude/skills/flydsl-kernel-optimization/tools/kb_gaps.py $RUN/workspace` lists the skill pages the
   rounds opened and the questions they found no page for.

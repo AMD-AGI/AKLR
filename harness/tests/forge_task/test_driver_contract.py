@@ -373,3 +373,31 @@ def test_a_reading_the_profiler_dropped_is_taken_again_once(run):
             20.0,
             is_fault,
         )
+
+
+def test_stress_passes_one_answer_and_names_the_workload_that_differs(real_run, monkeypatch, capsys):
+    """--stress compares the outputs of every call under contention with the candidate's own result alone, bit for
+    bit: here on the CPU, with stand-in conditions in place of the CU-limited and concurrent streams."""
+    run, schema = real_run
+    driver = _import_driver(run)
+    calls = driver._calls("cpu")
+    monkeypatch.setattr(driver, "_calls", lambda device: calls)
+
+    def again(candidate, call, outputs):
+        candidate.run(**call)
+        return [call]
+
+    def drifting(candidate, call, outputs):
+        candidate.run(**call)
+        for name in outputs:
+            call[name].add_(1)
+        return [call]
+
+    monkeypatch.setattr(driver, "_stress_conditions", lambda: {"again": again})
+    assert driver._run_stress("cpu") == 0
+    assert capsys.readouterr().out.strip().endswith("stress: PASS")
+    monkeypatch.setattr(driver, "_stress_conditions", lambda: {"drifting": drifting})
+    assert driver._run_stress("cpu") == 1
+    out = capsys.readouterr().out
+    assert f"differs from the call alone: {schema.workloads[0].case_id} drifting" in out
+    assert out.strip().endswith("stress: FAIL")
