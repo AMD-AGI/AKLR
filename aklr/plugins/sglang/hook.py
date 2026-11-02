@@ -1,82 +1,72 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""``@sglang_route``: how a sglang method reaches an op, declared beside the op's api."""
+"""``@sglang_route``: how a sglang function reaches AKLR ops, declared beside them."""
 
 from __future__ import annotations
 
 import logging
+import pkgutil
 from collections.abc import Callable
 from importlib.metadata import version
 
-from packaging.specifiers import SpecifierSet
+import torch
 from packaging.version import Version
 
 from aklr.core.runtime.dispatch import FallbackReason
 
+__all__ = ["install", "sglang_route", "sglang_version"]
+
 _LOGGER = logging.getLogger(__name__)
 
-_ROUTES: list[tuple[str, SpecifierSet, Callable]] = []
+_ROUTES: list[tuple[str, tuple[str, ...], Callable]] = []
 
 
-def sglang_route(target: str, versions: str) -> Callable[[Callable], Callable]:
-    """Declare that sglang's ``target`` reaches an op through this function, on the sglang
-    ``versions``: a range with an upper bound, since a later sglang may change the
-    target."""
-    # Parsed here so a bad range fails its own package's import, not every route.
-    supported = SpecifierSet(versions)
-    if not any(s.operator in ("<", "<=", "==", "===", "~=") for s in supported):
-        raise ValueError(f"{target}: sglang versions {versions!r} have no upper bound")
+def sglang_route(target: str, *, versions: tuple[str, ...]) -> Callable[[Callable], Callable]:
+    """Declare that sglang's ``target`` reaches AKLR ops through this function, on the sglang
+    releases ``versions`` it was tested on; on any other, sglang runs its own code."""
 
     def declare(route: Callable) -> Callable:
-        _ROUTES.append((target, supported, route))
+        _ROUTES.append((target, versions, route))
         return route
 
     return declare
 
 
+def sglang_version() -> str:
+    """The installed sglang's release, without a local label (0.5.22+rocm is 0.5.22)."""
+    return Version(version("sglang")).public
+
+
 def install() -> None:
-    """Wrap each declared target with its one route for the running sglang; a route
-    returning a ``FallbackReason`` runs the original, one that raises is not caught."""
+    """Wrap the targets of the routes tested on the installed sglang."""
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
-    running = version("sglang")
-    # A dev or rc build counts as its release: sglang images ship 0.5.19.dev<date>.
-    release = Version(running).base_version
-    declared: dict[str, list[tuple[SpecifierSet, Callable]]] = {}
-    for target, supported, route in _ROUTES:
-        declared.setdefault(target, []).append((supported, route))
-    for target, routes in declared.items():
-        matching = [r for s, r in routes if s.contains(release)]
-        if len(matching) == 1:
-            wrapper = _around(matching[0])
+    installed = sglang_version()
+    untested = []
+    for target, versions, route in _ROUTES:
+        if installed in versions:
+            # sglang only logs a target it cannot resolve
+            pkgutil.resolve_name(target)
+            HookRegistry.register(target, _around(route), HookType.AROUND)
         else:
-            ranges = "; ".join(str(supported) for supported, _ in routes)
-            wrapper = _unrouted(
-                f"[aklr] {target}: {len(matching)} routes for sglang {running}, "
-                f"not 1 (declared: {ranges}); falling back to sglang"
-            )
-        HookRegistry.register(target, wrapper, HookType.AROUND)
-
-
-def _unrouted(message: str) -> Callable:
-    """The original, after one warning on first use: a layer this sglang runs without
-    AKLR is never silent."""
-    warned = False
-
-    def around(orig, *args, **kwargs):
-        nonlocal warned
-        if not warned:
-            warned = True
-            _LOGGER.warning(message)
-        return orig(*args, **kwargs)
-
-    return around
+            untested.append(target)
+    # a warning, so that the line shows at any sglang log level
+    _LOGGER.warning(
+        "aklr hooks %d sglang functions on sglang %s%s",
+        len(_ROUTES) - len(untested),
+        installed,
+        f"; not {', '.join(untested)}, untested on it" if untested else "",
+    )
 
 
 def _around(route: Callable) -> Callable:
     def around(orig, *args, **kwargs):
-        result = route(*args, **kwargs)
-        return orig(*args, **kwargs) if isinstance(result, FallbackReason) else result
+        # Dynamo would trace AKLR's table lookup and recompile for every new shape
+        if not torch.compiler.is_compiling():
+            result = route(*args, **kwargs)
+            if not isinstance(result, FallbackReason):
+                return result
+        return orig(*args, **kwargs)
 
     return around

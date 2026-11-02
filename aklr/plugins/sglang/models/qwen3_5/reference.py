@@ -189,7 +189,7 @@ def gdn_decode_reference(point, row_major_args, to_float64):
 
 def gdn_prefill_group_fp8_quant_reference(point, row_major_args, to_float64):
     """Independent recurrence; return outputs followed by final mutable inputs."""
-    call = {k: v for k, v in row_major_args.items() if k not in ("max_seq_len", "first_seq_len")}
+    call = {k: v for k, v in row_major_args.items() if k != "max_seq_len"}
     output, conv, state, values, scales = reference_prefill(**call)
     return tuple(
         to_float64(t, point.dtypes[n])

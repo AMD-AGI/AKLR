@@ -25,7 +25,6 @@ def gdn_prefill_group_fp8_quant_baseline(
     dt_bias,
     norm_weight,
     max_seq_len=2048,
-    first_seq_len=0,
     scale=128**-0.5,
     eps=1e-6,
     normalized=None,

@@ -37,7 +37,7 @@ SGLang and vLLM load AKLR automatically at startup; no code changes are needed.
 |---|---|
 | `AKLR_DISABLE=1` | Turn AKLR off and use AITER only |
 | `AKLR_DISABLE=<contract id>,...` | Turn off the listed ops, e.g. `gemm@1.0` |
-| `AKLR_SGLANG_PLUGIN=1` | Also serve whole SGLang layers (GLM-5) |
+| `AKLR_SGLANG_PLUGIN=1` | Also hook SGLang's own layers to the plugin's ops ([aklr/plugins/README.md](/aklr/plugins/README.md)) |
 | `AKLR_MIN_SPEEDUP=<x>` | Serve only kernels with a measured speedup of at least x (default 1.03) |
 
 ## Testing

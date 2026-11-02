@@ -21,9 +21,9 @@ import inspect
 import sys
 import types
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar, Final
+from typing import TYPE_CHECKING, Any, ClassVar, Final
 
 import torch
 
@@ -174,9 +174,7 @@ class PythonBuilder(Builder):
                     raise BuildError(
                         f"{kernel.entry_point} does not take the call keys {list(call_keys)}: {e}"
                     ) from e
-            if len(call_keys) < len(schema.api_params):  # an optional attr hides some
-                kernel_fn = entry
-                entry = lambda **call: kernel_fn(**{k: call[k] for k in call_keys})
+            entry = _taking_call_keys(entry, schema)
         except BaseException as e:  # KeyboardInterrupt too: leave no package behind
             clean_up_build()
             if isinstance(e, BuildError) or not isinstance(e, Exception):
@@ -189,13 +187,7 @@ class PythonBuilder(Builder):
             content_hash=kernel.content_hash,
             misc={"module_name": module_name, "entry_symbol": kernel.entry_symbol},
         )
-        return Runnable(
-            entry,
-            metadata,
-            cleaner=clean_up_build,
-            state_bytes=kernel.state_bytes,
-            peer_bytes=kernel.peer_bytes,
-        )
+        return Runnable(entry, metadata, cleaner=clean_up_build)
 
 
 class TritonBuilder(PythonBuilder):
@@ -250,7 +242,7 @@ class HipBuilder(Builder):
         return schema.kernel is not None and schema.kernel.language == self._LANGUAGE
 
     def build(self, schema: OpContract) -> Runnable:
-        """The library's entry op, the library built first on a new toolchain; raises :class:`BuildError` unless the op takes exactly the call keys and writes exactly the outputs, the mutable inputs and any state."""
+        """The library's entry op, the library built first on a new toolchain; raises :class:`BuildError` unless the op takes exactly the call keys and writes exactly the outputs and the mutable inputs."""
         kernel = schema.kernel
         assert kernel is not None
         package, build_path = self._get_package_name_and_build_path(schema)
@@ -271,12 +263,11 @@ class HipBuilder(Builder):
                 f"{kernel.entry_point}: the library registers no op {kernel.entry_symbol}"
                 " in TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m)"
             ) from None
-        state = ("state",) if kernel.state_bytes else ()
         _check_op_schema(
             kernel.entry_point,
             op._schema,
             schema.kernel_call_keys,
-            (*schema.mutable_tensors, *state),
+            schema.mutable_tensors,
         )
         metadata = RunnableMetadata(
             build_type=self._LANGUAGE,
@@ -286,12 +277,15 @@ class HipBuilder(Builder):
             misc={"library": str(library), "op": f"{package}::{kernel.entry_symbol}"},
         )
         # a loaded library stays: no cleaner
-        return Runnable(
-            op,
-            metadata,
-            state_bytes=kernel.state_bytes,
-            peer_bytes=kernel.peer_bytes,
-        )
+        return Runnable(_taking_call_keys(op, schema), metadata)
+
+
+def _taking_call_keys(fn: Callable[..., Any], schema: OpContract) -> Callable[..., Any]:
+    """``fn``, given only ``schema.kernel_call_keys`` of the api params dispatch passes."""
+    call_keys = schema.kernel_call_keys
+    if len(call_keys) == len(schema.api_params):
+        return fn
+    return lambda **call: fn(**{k: call[k] for k in call_keys})
 
 
 def _check_op_schema(

@@ -1,7 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Created by OpenAI
-# Applies to the metadata-only workload availability query.
 
 from __future__ import annotations
 
@@ -29,7 +28,7 @@ from aklr.core.contract.fastkey import (
     FastKeyFnGenerator,
 )
 from aklr.core.contract.op import OpContract
-from aklr.core.contract.spec import PointSpec, WorkloadSpec, axes_text
+from aklr.core.contract.spec import WorkloadSpec, axes_text
 from aklr.core.platform.env import ENV_DISABLE
 from aklr.core.platform.toolchain import toolchain_version
 from aklr.core.runtime.builder import Runnable
@@ -187,25 +186,6 @@ class KernelDispatcher:
         self.has_warned_not_warmed = False
         self.recorder = None
         self.table = None
-
-    def has_workload(self, point: PointSpec) -> bool:
-        """Whether metadata currently matches a qualified runnable.
-
-        Routes can avoid expensive input preparation on a miss. This is only a
-        preflight: dispatch still checks actual tensors and capture warmup. A
-        route collecting export inputs must call the API even on a miss.
-        """
-        table = self.table
-        if table is None or point.contract_id != self.contract.contract_id:
-            return False
-        try:
-            self.contract.check_point(point)
-            if not self.contract.domain.contains(point):
-                return False
-            key = FastKeyCodec.from_contract(self.contract).to_fast_key(point)
-        except (ValueError, KeyError):
-            return False
-        return table.match_key(key) in table.runnables
 
     def dispatch(self, call: CallArgs) -> Any:
         """The api's result, or a ``FallbackReason``.

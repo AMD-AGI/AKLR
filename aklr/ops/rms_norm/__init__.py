@@ -3,8 +3,10 @@
 
 from aklr.ops.rms_norm.api import (
     add_rms_norm,
+    rms_norm,
 )
 
 __all__ = [
     "add_rms_norm",
+    "rms_norm",
 ]

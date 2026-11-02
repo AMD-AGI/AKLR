@@ -53,8 +53,8 @@ file. "m" is the Point's M.
 - **Arrival counters that live across calls.** n2048's counters are zeroed once per shape in the cached builder;
   n256's are allocated on the first call inside `launch` and kept in a closure list (with per-address pointer
   caches). The reducing block resets each counter, so the next call finds zeros. `SKILL.md`'s Stop table asks
-  for scratch rewritten by every call before it is read, or `state_bytes`: for a new kernel, tag flags per
-  launch or keep the slots in `state` with an epoch (`../gemm/flydsl_gemm_small_m.md` §4).
+  for scratch rewritten by every call before it is read: for a new kernel, tag flags per launch
+  (`../gemm/flydsl_gemm_small_m.md` §4).
 - **System-scope partials.** n2048 stores and reloads its fp32 partials with `sc0 sc1` (`CPOL_SYS`);
   `../gemm/flydsl_gemm_small_m.md` §4 found agent scope sufficient across XCDs on other kernels. Not raced here.
 - **Code that no Point runs:** n512's cross-workgroup split-K with a separate reduce kernel (`_build_reduce`; the

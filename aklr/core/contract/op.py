@@ -62,7 +62,7 @@ __all__ = [
 ]
 
 CONTRACT_VERSION: Final = 5  # the json format of a schema file (its "schema_version")
-_RESERVED_NAMES = frozenset({"out_dtype", "layout_variant", "state", "peers", "rank"})
+_RESERVED_NAMES = frozenset({"out_dtype", "layout_variant"})
 _DISTINCT_PRIME_DIMS = (10007, 10009, 10037, 10039, 10061, 10067, 10069, 10079)
 
 
@@ -461,8 +461,8 @@ class OpContract(FrozenModel):
     def api_params(self) -> tuple[ApiParam, ...]:
         """The api's params, in order: required inputs and outputs, attrs, layout args
         (defaulting to the first variant's facts), optional inputs, ``out_dtype`` if the
-        output is ``out``, then the outputs not required. The kernel entry takes all of
-        them, and ``state``, ``peers`` and ``rank`` when it keeps some (``kernel_call_keys``).
+        output is ``out``, then the outputs not required; the kernel entry takes the subset
+        ``kernel_call_keys``.
         """
         required, optional = [], []
         for name, spec in self.inputs.items():
@@ -496,22 +496,14 @@ class OpContract(FrozenModel):
     @property
     def kernel_call_keys(self) -> tuple[str, ...]:
         """The call keys the kernel entry takes, in ``api_params`` order: all but a
-        schema's optional attrs at their default, and the inputs whose presence reads one;
-        then ``state`` when the schema's kernel keeps some (``KernelSpec.state_bytes``), then
-        ``peers`` and ``rank`` when it has peer memory (``KernelSpec.peer_bytes``).
-        """
+        schema's optional attrs at their default, and the inputs whose presence reads one."""
         hidden = {n for n, a in self.attrs.items() if a.optional and self.name}
         left_out = {self.attrs[n].param_name for n in hidden} | {
             n
             for n, s in self.inputs.items()
             if s.present_when and expr.parse(s.present_when).symbols & hidden
         }
-        keys = tuple(p.name for p in self.api_params if p.name not in left_out)
-        if self.kernel is not None and self.kernel.state_bytes:
-            keys = (*keys, "state")
-        if self.kernel is not None and self.kernel.peer_bytes:
-            keys = (*keys, "peers", "rank")
-        return keys
+        return tuple(p.name for p in self.api_params if p.name not in left_out)
 
     @property
     def reference_name(self) -> str:

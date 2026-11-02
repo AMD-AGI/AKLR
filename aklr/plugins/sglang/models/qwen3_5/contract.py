@@ -21,6 +21,8 @@ from aklr.core.contract.spec import (
     derived_axis,
 )
 
+__all__ = ["CONTRACTS", "GDN_DECODE", "GDN_DECODE_GROUP_FP8_QUANT", "GDN_PREFILL_GROUP_FP8_QUANT"]
+
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
 _FP32 = DTypeSpec(any_of=(DType.FLOAT32,))
 _FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
@@ -50,8 +52,8 @@ GDN_PREFILL_GROUP_FP8_QUANT = OpContract(
         "in [value,key] order. BF16 attention output is gated RMS-normalized, rounded to "
         "BF16 and quantized per value head to E4M3FN, with scale=max(amax,1e-10)/448. "
         "Only the indexed state slots change. cu_seqlens partitions all tokens into "
-        "positive sequences with actual maximum max_seq_len; nonzero first_seq_len fixes the first "
-        "length. Unindexed state slots and all other inputs are preserved."
+        "positive sequences with actual maximum max_seq_len. Unindexed state slots and all "
+        "other inputs are preserved."
     ),
     axes={
         "n_tokens": axis("Tokens in this prefill.", 1, 16384, is_var=True),
@@ -83,13 +85,6 @@ GDN_PREFILL_GROUP_FP8_QUANT = OpContract(
             default=2048,
             param_name="max_seq_len",
         ),
-        "first_seq_len": attr(
-            "Fixed first sequence length, or zero for unrestricted.",
-            0,
-            10000,
-            default=0,
-            param_name="first_seq_len",
-        ),
     },
     constraints=(
         "conv_dim > value_width",
@@ -101,7 +96,6 @@ GDN_PREFILL_GROUP_FP8_QUANT = OpContract(
         "n_starts == n_sequences + 1",
         "n_tokens >= n_sequences + max_seq_len - 1",
         "n_tokens <= n_sequences * max_seq_len",
-        "first_seq_len == 0 or (n_sequences == 2 and n_tokens > first_seq_len and first_seq_len <= max_seq_len)",
     ),
     inputs={
         "projected_qkvz": _tensor("Contiguous Q, K, V, Z columns.", ("n_tokens", "projection_dim"), _BF16),
@@ -133,9 +127,7 @@ GDN_PREFILL_GROUP_FP8_QUANT = OpContract(
             "Cumulative sequence boundaries.",
             ("n_starts",),
             _INT32,
-            distribution=BoundedCuSeqlensDistribution(
-                total="n_tokens", max_seqlen="max_seq_len", first_seqlen="first_seq_len"
-            ),
+            distribution=BoundedCuSeqlensDistribution(total="n_tokens", max_seqlen="max_seq_len"),
         ),
         "has_initial_state": _tensor(
             "Use each slot's initial state, or start from zero.",

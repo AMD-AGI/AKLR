@@ -54,7 +54,7 @@ the Point's M.
 - **Counters that live across calls.** n32's split paths (m = 2 and m ≥ 16, the served m = 2048 included) zero
   their arrival counters once per shape and rely on `atomicrmw uinc_wrap` returning each to 0 at its last
   arrival; n128 at m ≥ 512 advances a counter by one generation per call and never resets it. `SKILL.md`'s Stop
-  table asks for scratch rewritten by every call before it is read, or `state_bytes` with an epoch.
+  table asks for scratch rewritten by every call before it is read.
 - **Not the compile-function form.** `run` keeps built launches in a module-level dict (`_RUN_CACHE`), not in a
   `functools.cache` function, so compilation and scratch allocation run inside `run` on a Point's first call
   (`aklr/ops/README.md` § The kernel section and ABI).

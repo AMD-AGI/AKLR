@@ -15,10 +15,10 @@ _UUID = "0123456789abcdef"
     [
         (f"aklr/ops/gemm/impls/triton/gemm_n8_k8/{_UUID}.json", "schema_data"),
         (
-            f"aklr/plugins/sglang/layers/norms/impls/triton/rms_norm_hidden_size8/{_UUID}.json",
+            f"aklr/plugins/sglang/models/qwen2_moe/impls/triton/qwen2_moe_model_dim8/{_UUID}.json",
             "schema_data",
         ),
-        ("aklr/plugins/sglang/layers/norms/route.py", "other"),
+        ("aklr/plugins/sglang/models/qwen2_moe/api.py", "other"),
         ("aklr/ops/gemm/impls/triton/fp8/fp8_gfx950_m1.json", "other"),
     ],
 )

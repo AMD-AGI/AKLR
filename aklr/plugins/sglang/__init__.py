@@ -5,41 +5,30 @@
 
 from __future__ import annotations
 
-import importlib
-
-from aklr.core.contract.locate import op_packages
 from aklr.core.platform.env import RuntimeEnv
-from aklr.core.runtime import peer_memory
 from aklr.core.runtime.dispatch import register_sglang_plugin
-from aklr.plugins.sglang.hook import install
+from aklr.plugins.sglang import hook
 
 __all__ = ["register"]
 
 
-def _tp_group():
-    """sglang's TP group, which the kernels with peer memory sum over: its host (gloo) group,
-    as ``peer_memory.set_group`` takes it."""
-    from sglang.srt.distributed import get_tp_group
-
-    return get_tp_group().cpu_group
-
-
 def register() -> None:
-    """Entry point sglang calls once per process: AKLR starts once torch.distributed is
-    up; unless AKLR_DISABLE=1, aiter's entry points are proxied and, with
-    AKLR_SGLANG_PLUGIN=1, the layer routes hook and kernels with peer memory span the
-    TP group."""
+    """Entry point sglang calls once per process; a plugin that cannot start ends the process,
+    which sglang would only log."""
+    try:
+        _register()
+    except Exception as e:
+        raise SystemExit(f"aklr: the sglang plugin cannot start: {e!r}") from e
+
+
+def _register() -> None:
     register_sglang_plugin()
     env = RuntimeEnv()
     if env.is_all_disabled:
         return
     from aklr.ops import load_routes  # aklr.ops imports this package's contracts
 
+    # imports every op's api.py, the plugin's routes among them
     load_routes()
-    if not env.is_sglang_plugin_enabled:
-        return
-    for package in op_packages():
-        if package.startswith(f"{__name__}."):
-            importlib.import_module(f"{package}.api")
-    install()
-    peer_memory.set_group(_tp_group)
+    if env.is_sglang_plugin_enabled:
+        hook.install()

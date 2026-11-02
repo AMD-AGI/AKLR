@@ -7,6 +7,7 @@ from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
     DeterminismLevel,
     DType,
+    E8M0Scales,
     FiniteDistribution,
     LecunNormalDistribution,
     LogUniformDistribution,
@@ -25,7 +26,6 @@ from aklr.core.contract.spec import (
     axis,
     derived_axis,
 )
-from aklr.ops.fused_moe.contract import FUSED_MOE
 
 __all__ = ["CONTRACTS", "MINIMAX_M2_FP8_MOE", "MINIMAX_M2_MXFP4_MOE"]
 
@@ -86,7 +86,7 @@ _ROUTING_INPUTS = {
         description="Added to the scores to pick experts; never weighs them.",
         shape=("n_routed",),
         dtype=_FLOAT32,
-        # about 8, a spread like GLM-5's (deepseek_v2's MoE layer ops draw it so too)
+        # about 8, a spread like GLM-5's, as deepseek_v2_mxfp4_moe draws it
         distribution=LogUniformDistribution(log2_lo="2.99", log2_hi="3.01"),
         lifetime="weight",
     ),
@@ -111,6 +111,65 @@ def _output(min_sqnr_db: float) -> TensorSpec:
         dtype=DTypeSpec(same_as_tensor="hidden_states"),
         error_bounds=SqnrBound(min_sqnr_db=min_sqnr_db),
     )
+
+
+def _e8m0_scales(fan_in: str) -> LogUniformDistribution:
+    return LogUniformDistribution(
+        log2_lo=f"-5 - bit_length({fan_in}) // 2", log2_hi=f"1 - bit_length({fan_in}) // 2"
+    )
+
+
+def _mxfp4_facts(shuffled: bool) -> tuple[LayoutFact, ...]:
+    facts = {"w1.is_shuffled": shuffled, "w2.is_shuffled": shuffled, "w1_scale.ndim": 3}
+    return tuple(LayoutFact(location="tensor_attr", name=n, expected_value=v) for n, v in facts.items())
+
+
+# MXFP4 experts as aiter's fused_moe takes them: fp4 values at an e8m0 scale per 32
+_MXFP4_EXPERTS = {
+    "w1": TensorSpec(
+        description="Gate-up projection per expert: gate rows, then up rows.",
+        shape=("n_experts", "gate_up_rows", "model_dim"),
+        dtype=DTypeSpec(any_of=(DType.FLOAT4_E2M1,)),
+        distribution=FiniteDistribution(),
+        lifetime="weight",
+    ),
+    "w1_scale": TensorSpec(
+        description="Per 1 x 32 block of w1.",
+        shape=("n_experts", "gate_up_rows", "model_blocks"),
+        dtype=DTypeSpec(any_of=(DType.FLOAT8_E8M0,)),
+        distribution=_e8m0_scales("model_dim"),
+        lifetime="weight",
+    ),
+    "w2": TensorSpec(
+        description="Down projection per expert.",
+        shape=("n_experts", "model_dim", "inter_dim"),
+        dtype=DTypeSpec(any_of=(DType.FLOAT4_E2M1,)),
+        distribution=FiniteDistribution(),
+        lifetime="weight",
+    ),
+    "w2_scale": TensorSpec(
+        description="Per 1 x 32 block of w2.",
+        shape=("n_experts", "model_dim", "inter_blocks"),
+        dtype=DTypeSpec(any_of=(DType.FLOAT8_E8M0,)),
+        distribution=_e8m0_scales("inter_dim"),
+        lifetime="weight",
+    ),
+}
+# row-major, or as sglang holds them for aiter: shuffle_weight's 16 x 16 tiles, the scales shuffled
+_MXFP4_LAYOUTS = LayoutVariantsSpec(
+    by_name={
+        "row_major": LayoutVariant(layouts={}, detect_facts=_mxfp4_facts(False)),
+        "shuffled_16x16": LayoutVariant(
+            layouts={
+                "w1": Preshuffle(tile=(16, 16)),
+                "w2": Preshuffle(tile=(16, 16)),
+                "w1_scale": E8M0Scales(block_size=32, pad_to=(256, 8), shuffled=True),
+                "w2_scale": E8M0Scales(block_size=32, pad_to=(256, 8), shuffled=True),
+            },
+            detect_facts=_mxfp4_facts(True),
+        ),
+    }
+)
 
 
 def _shuffled(*weights: str) -> LayoutVariantsSpec:
@@ -210,24 +269,17 @@ MINIMAX_M2_MXFP4_MOE = OpContract(
     attrs=_ATTRS,
     constraints=(
         *_CONSTRAINTS,
-        # fused_moe's: it makes aiter's scale padding a no-op
+        # makes the scales' padding a no-op
         "model_dim % 256 == 0 and inter_dim % 256 == 0",
     ),
     inputs={
         **_ROUTING_INPUTS,
-        # fused_moe's MXFP4 experts, as aiter takes them; its distributions' last
-        # branches, the silu ones (its predicates read attrs this layer lacks)
-        **{
-            n: FUSED_MOE.inputs[n].model_copy(update={"distribution": FUSED_MOE.inputs[n].distribution[-1:]})
-            for n in ("w1", "w1_scale", "w2", "w2_scale")
-        },
+        **_MXFP4_EXPERTS,
         "expert_offset": _EXPERT_OFFSET,
     },
     # the experts' MXFP4 activations alone come to about 13 dB on the bench's inputs
     outputs={"out": _output(10.0)},
-    layout_variants=LayoutVariantsSpec(
-        by_name={n: FUSED_MOE.layout_variants.by_name[n] for n in ("row_major", "shuffled_16x16")}
-    ),
+    layout_variants=_MXFP4_LAYOUTS,
     compare=_COMPARE,
 )
 
