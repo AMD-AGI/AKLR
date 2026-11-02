@@ -403,6 +403,27 @@ def test_stress_passes_one_answer_and_names_the_workload_that_differs(real_run, 
     assert out.strip().endswith("stress: FAIL")
 
 
+def test_a_kernel_with_state_is_published_with_it_and_every_call_gets_the_same(real_run):
+    """A kernel's ``STATE_BYTES`` goes into the schema it is published as, and every call, as AKLR's builder makes
+    them, gets the same zeroed bytes; a kernel without it gets none."""
+    run, schema = real_run
+    driver = _import_driver(run)
+    assert driver.state_bytes() == 0
+    assert "state_bytes" not in json.loads(driver._candidate_text()[0])["kernel"]
+    assert all("state" not in call for call in driver._calls("cpu").values())
+    kernel = run.workspace / "kernel.py"
+    kernel.write_text(
+        kernel.read_text(encoding="utf-8")
+        + "\n\nSTATE_BYTES = 4 * 1024\n_alone = run\n\n\ndef run(*, state, **call):\n    _alone(**call)\n",
+        encoding="utf-8",
+    )
+    assert driver.state_bytes() == 4096
+    assert json.loads(driver._candidate_text()[0])["kernel"]["state_bytes"] == 4096
+    states = [call["state"] for call in driver._calls("cpu").values()]
+    assert len(states) == len(schema.workloads) and all(state is states[0] for state in states)
+    assert states[0].numel() == 4096 and not states[0].any()
+
+
 def test_stress_compares_as_the_schemas_determinism_asks(run):
     """Bitwise wants every bit; bounded lets atomics reorder the last bits but not a new NaN or a wrong value."""
     torch = pytest.importorskip("torch")
