@@ -82,7 +82,8 @@ that contains `: `. `flydsl` is the version the page was checked against (`0.3.2
 
 An edit to an existing page skips staging, but passes lint and review the same way, and a new number in it gets an
 evidence line. A knowledge patch proposed by the optimization loop's distill step (Hyperloom `AKLR`
-`forge-distill`) is reviewed like any other edit; a new page in it goes to `staging/` first.
+`forge-distill`) is reviewed like any other edit; a new page in it goes to `staging/` first. It is committed with
+the kernel it came from, in that kernel's pull request (`forge-loop-campaign` skill, step 7).
 
 ## Upkeep
 

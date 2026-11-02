@@ -373,3 +373,68 @@ def test_a_reading_the_profiler_dropped_is_taken_again_once(run):
             20.0,
             is_fault,
         )
+
+
+def test_stress_passes_one_answer_and_names_the_workload_that_differs(real_run, monkeypatch, capsys):
+    """--stress compares the outputs of every call under contention with the candidate's own result alone, bit for
+    bit: here on the CPU, with stand-in conditions in place of the CU-limited and concurrent streams."""
+    run, schema = real_run
+    driver = _import_driver(run)
+    calls = driver._calls("cpu")
+    monkeypatch.setattr(driver, "_calls", lambda device: calls)
+
+    def again(candidate, call, outputs):
+        candidate.run(**call)
+        return [call]
+
+    def drifting(candidate, call, outputs):
+        candidate.run(**call)
+        for name in outputs:
+            call[name].add_(1)
+        return [call]
+
+    monkeypatch.setattr(driver, "_stress_conditions", lambda: {"again": again})
+    assert driver._run_stress("cpu") == 0
+    assert capsys.readouterr().out.strip().endswith("stress: PASS")
+    monkeypatch.setattr(driver, "_stress_conditions", lambda: {"drifting": drifting})
+    assert driver._run_stress("cpu") == 1
+    out = capsys.readouterr().out
+    assert f"differs from the call alone: {schema.workloads[0].case_id} drifting" in out
+    assert out.strip().endswith("stress: FAIL")
+
+
+def test_stress_compares_as_the_schemas_determinism_asks(run):
+    """Bitwise wants every bit; bounded lets atomics reorder the last bits but not a new NaN or a wrong value."""
+    torch = pytest.importorskip("torch")
+    driver = _import_driver(run)
+    alone = torch.linspace(1, 64, 4096, dtype=torch.bfloat16)
+    one_ulp = alone.clone()
+    one_ulp.view(torch.int16)[::50] += 1  # the next bf16 value up: one ulp
+    assert not driver._agrees(one_ulp, alone, "bitwise", 0.0)
+    assert driver._agrees(one_ulp, alone, "bounded", 0.001)
+    nan = one_ulp.clone()
+    nan[7] = float("nan")
+    assert not driver._agrees(nan, alone, "bounded", 0.001)
+    wrong = alone.clone()
+    wrong[:100] += 8
+    assert not driver._agrees(wrong, alone, "bounded", 0.001)
+    ids = torch.arange(16)
+    assert driver._agrees(ids, ids.clone(), "bounded", 0.001)
+
+
+def test_stress_reports_a_call_that_never_finishes_as_hung(real_run, monkeypatch, capsys):
+    """A kernel whose workgroups wait for each other may never finish under stress: the check names the case and fails
+    instead of waiting with it."""
+    run, schema = real_run
+    driver = _import_driver(run)
+    calls = driver._calls("cpu")
+    monkeypatch.setattr(driver, "_calls", lambda device: calls)
+
+    def hangs(candidate, call, outputs):
+        raise driver.StressHang
+
+    monkeypatch.setattr(driver, "_stress_conditions", lambda: {"on 16 CUs": hangs})
+    assert driver._run_stress("cpu") == 1
+    out = capsys.readouterr().out
+    assert f"hung, no result within 60 s: {schema.workloads[0].case_id} on 16 CUs" in out
+    assert out.strip().endswith("stress: FAIL")

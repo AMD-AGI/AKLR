@@ -21,10 +21,24 @@ rather than a person at a terminal.
   must print help.
 - Settle the budget (`--max-hours`) and the model with the user if they did not give them: the agents spend
   money from step 2 on.
+- **Split small M from large M: one run per regime, never one run over both.** A run scores the mean over its
+  workloads, so a schema whose small-M Points (decode: launch, latency or the weight read) sit beside large-M ones
+  (prefill: compute) gets one kernel tuned for whichever Points outnumber the others. Read each workload's bound
+  first: the weight bytes over the read roof against the FLOPs over the compute roof; the M where they cross
+  (peak FLOP/s / read bandwidth x weight bytes per element, about 230 for bf16 on MI355X) splits a GEMM, and a
+  long flat stretch of time over M marks the latency-bound end. Give each regime its own run, card and schema
+  file holding only its workloads; each delivers its own kernel file, and dispatch serves every Point with the
+  best one. forge_task reads a schema only where AKLR keeps it, so write each regime's file into that run's own
+  AKLR clone, under `aklr/ops/<op>/impls/<language>/<name>/`.
 - Pick one card nobody uses (`rocm-smi --showmeminfo vram`, `rocm-smi --showpids`) and use it in steps 1, 2
   and 5. Another process on the card makes every timing on it meaningless.
 
 ## Step 2: launch in the background
+
+Read `$RUN/baseline.json` first. AKLR's timer reads every dispatch at about 4.1 µs or more, because its bench runner
+forces queue profiling, which costs that much per dispatch. A workload whose baseline runs near that floor reads as
+parity in CI whatever the kernel does there (a 1.7 µs kernel against a 2.6 µs baseline read 4.09 against 4.10 µs).
+Tell the user which workloads those are before you launch: the campaign can win nothing AKLR will show there.
 
 You keep no terminal open, so start the loop in a process group of its own:
 
@@ -52,11 +66,33 @@ echo $! > $RUN/forge_loop.pid
 
 - Start them only once the loop has ended: `$RUN/forge_loop.log` ends with forge-loop's result.
 - Give forge-ablate several `--gpus` only when this machine runs this campaign alone.
-- Do not apply the skill patch yourself: hand `$RUN/knowledge_patch/distill.md` and the patch to the user.
+- After forge-finalize, `python $W/driver.py --stress` must end with `stress: PASS` before you publish. AKLR's
+  validate gives a kernel the GPU alone, so it passes one that is right only while every workgroup of a launch is
+  resident: a split-K fold that polls for its partners and gives up with NaN. On a stream limited to part of the CUs
+  such a kernel returns NaN. Do not deliver it; tell the user, and have its fold made wait-free first.
 - `python .claude/skills/flydsl-kernel-optimization/tools/kb_gaps.py $RUN/workspace` lists the skill pages the
   rounds opened and the questions they found no page for.
 - Report: AKLR's verdict per workload from `aklr validate`, the delivered commit, what forge-ablate said each kept
   round is worth, and the skill's gaps.
+
+## Step 7: put what the campaign taught into the skill
+
+forge-distill's patch (`$RUN/knowledge_patch/`) is a proposal. Review every item before it goes in, as
+`flydsl-kernel-optimization/CONTRIBUTING.md` says:
+
+- Check each claim against the run's files (`$W/forge_experiments/`: `lessons/`, `analysis/`, `ablation.md`),
+  FlyDSL's source or the ISA. A number carries the ruler it was taken with; a gain inside the noise, or measured by
+  another ruler than AKLR's, is not a gain.
+- Search the skill for a page that already says it, and extend that page rather than write a second one.
+- An edit to an existing page goes in place; a new page goes to `staging/` with its `<slug>.review.md`, for a person
+  to approve with `tools/kb_approve.py` and link afterwards.
+- `python tools/kb_lint.py --errors-only` and `python tools/kb_index.py --check` pass, and `tools/kb_numbers_guard.py`
+  accounts for every number an edited page gains or loses.
+- Several campaigns at once leave patches that touch the same pages: review them together, one owner per page.
+
+What the campaign taught about the kernel goes into the pull request that delivers the kernel's schema file; a kernel
+held back keeps its knowledge back with it. What it taught about the method -- this skill, forge_task, its driver, a
+ruler -- goes into a pull request of its own that changes the method.
 
 ## Pitfalls
 

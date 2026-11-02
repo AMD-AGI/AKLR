@@ -480,7 +480,7 @@ def _run_compiled(exe, *args):             # in tensor_shim.py — do not duplic
 3. **Migrate in small commits**, one family at a time, matching local style.
 4. **Verify:**
    ```bash
-   black <changed-files> && ruff check <changed-files>
+   ruff format <changed-files> && ruff check <changed-files>
    FLYDSL_RUNTIME_ENABLE_CACHE=0 python3 -m pytest op_tests/test_flydsl_<kernel>.py -v
    # or: op_tests/flydsl_tests/test_flydsl_<kernel>.py
    ```

@@ -14,6 +14,7 @@ import faulthandler
 import hashlib
 import importlib
 import json
+import os
 import signal
 import statistics
 import subprocess
@@ -380,6 +381,157 @@ def _run_profile() -> int:
     return 0
 
 
+# A stream limited to fewer CUs than a launch has workgroups: workgroups that wait for each other cannot all run.
+STRESS_CUS = (16, 64)
+STRESS_TRIES = 3
+# Under bounded determinism two runs may differ in the last bits (atomics land in another order): a difference counts
+# against the schema's violation fraction only beyond this many output ulps of the element plus the output's mean.
+STRESS_BOUNDED_ULPS = 8
+# A call under stress not finished after this long is taken as hung: its workgroups wait for each other.
+STRESS_SECONDS = 60.0
+
+
+class StressHang(Exception):
+    """A call under stress did not finish within ``STRESS_SECONDS``."""
+
+
+def _settle(streams) -> None:
+    """Wait for the work queued on ``streams``, at most ``STRESS_SECONDS``: a kernel whose workgroups wait for each
+    other may never finish, and a synchronize would wait with it."""
+    import time
+
+    import torch
+
+    events = []
+    for stream in streams:
+        event = torch.cuda.Event()
+        event.record(stream)
+        events.append(event)
+    deadline = time.monotonic() + STRESS_SECONDS
+    while not all(event.query() for event in events):
+        if time.monotonic() > deadline:
+            raise StressHang
+        time.sleep(0.001)
+
+
+def _output_names() -> list[str]:
+    registry, *_ = _aklr()
+    schema = registry.parse_schema(_candidate_text()[0].encode(), str(SCHEMA_JSON))
+    return list(registry.get(schema.contract_id).outputs)
+
+
+def _cu_limited_stream(cus: int):
+    """A stream whose kernels run on the first ``cus`` CUs only, made by the HIP runtime torch loaded: a second copy
+    of the runtime makes streams torch cannot use."""
+    import ctypes
+
+    import torch
+
+    maps = Path("/proc/self/maps").read_text().splitlines()
+    hip = ctypes.CDLL(next(line.split()[-1] for line in maps if "libamdhip64.so" in line))
+    total = torch.cuda.get_device_properties(0).multi_processor_count
+    mask = (ctypes.c_uint32 * ((total + 31) // 32))()
+    for cu in range(min(cus, total)):
+        mask[cu // 32] |= 1 << (cu % 32)
+    handle = ctypes.c_void_p()
+    if hip.hipExtStreamCreateWithCUMask(ctypes.byref(handle), len(mask), mask):
+        raise RuntimeError(f"no stream limited to {cus} CUs")
+    return torch.cuda.ExternalStream(handle.value)
+
+
+def _stress_conditions() -> dict:
+    """Ways to call the candidate under contention, each returning the calls whose outputs it wrote: on a stream
+    limited to a few CUs, and beside a second call of its own on another stream, into outputs of its own."""
+    import torch
+
+    def on(stream):
+        def launch(candidate, call, outputs):
+            for name in outputs:
+                call[name].zero_()
+            stream.wait_stream(torch.cuda.current_stream())
+            with torch.cuda.stream(stream):
+                candidate.run(**call)
+            _settle([stream, torch.cuda.current_stream()])
+            return [call]
+
+        return launch
+
+    side = torch.cuda.Stream()
+
+    def beside_another(candidate, call, outputs):
+        twin = {**call, **{name: torch.zeros_like(call[name]) for name in outputs}}
+        for name in outputs:
+            call[name].zero_()
+        side.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(side):
+            candidate.run(**twin)
+        candidate.run(**call)
+        _settle([side, torch.cuda.current_stream()])
+        return [call, twin]
+
+    conditions = {f"on {cus} CUs": on(_cu_limited_stream(cus)) for cus in STRESS_CUS}
+    conditions["beside a second call"] = beside_another
+    return conditions
+
+
+def _compare_spec() -> tuple[str, float]:
+    compare = json.loads(_candidate_text()[0]).get("compare") or {}
+    return compare.get("determinism", "bitwise"), float(compare.get("max_violation_fraction", 0.0))
+
+
+def _agrees(stressed, alone, determinism: str, max_fraction: float) -> bool:
+    """Whether an output under contention agrees with the output alone as the schema's determinism asks: bit for bit
+    under ``bitwise``; under ``bounded``, no value turned non-finite and all but ``max_fraction`` of the elements
+    within a few ulps."""
+    import torch
+
+    if determinism == "bitwise" or not alone.is_floating_point():
+        return torch.equal(stressed.contiguous().view(torch.uint8), alone.contiguous().view(torch.uint8))
+    unit = torch.finfo(alone.dtype).eps / 2
+    stressed, alone = stressed.double(), alone.double()
+    finite = torch.isfinite(alone)
+    if bool((finite & ~torch.isfinite(stressed)).any()):
+        return False
+    bound = STRESS_BOUNDED_ULPS * unit * (alone.abs() + alone[finite].abs().mean())
+    off = finite & ((stressed - alone).abs() > bound)
+    return float(off.double().mean()) <= max_fraction
+
+
+def _run_stress(device: str = "cuda") -> int:
+    """Every workload under each stress condition, against the candidate's own result alone, as the schema's
+    determinism asks. AKLR's validate runs a kernel with the GPU to itself, so it passes a kernel that is right only
+    while every workgroup of a launch is resident at once, and one whose concurrent calls share scratch memory. A call
+    that does not finish is reported as hung and ends the check: the device is still running it."""
+    candidate = _load_candidate()
+    outputs = _output_names()
+    determinism, max_fraction = _compare_spec()
+    conditions = _stress_conditions()
+    failed = []
+    for case_id, call in _calls(device).items():
+        candidate.run(**call)
+        alone = {name: call[name].clone() for name in outputs if name in call}
+        for label, launch in conditions.items():
+            for _ in range(STRESS_TRIES):
+                try:
+                    results = launch(candidate, call, alone)
+                except StressHang:
+                    print(f"stress: hung, no result within {STRESS_SECONDS:g} s: {case_id} {label}")
+                    print("stress: FAIL")
+                    return 1
+                agree = (
+                    _agrees(r[name], alone[name], determinism, max_fraction)
+                    for r in results
+                    for name in alone
+                )
+                if not all(agree):
+                    failed.append(f"{case_id} {label}")
+                    break
+    for failure in failed:
+        print(f"stress: differs from the call alone: {failure}")
+    print(f"stress: {'FAIL' if failed else 'PASS'}")
+    return 1 if failed else 0
+
+
 def main() -> int:
     # KernelForge sends SIGUSR1 to a driver that outruns its timeout before killing it: every thread's stack is the
     # only record of where it hung.
@@ -397,6 +549,11 @@ def main() -> int:
         action="store_true",
         help="write the kernel into the AKLR checkout as the schema's kernel, and keep it there",
     )
+    parser.add_argument(
+        "--stress",
+        action="store_true",
+        help="run every workload on streams limited to a few CUs and beside a second call; same answer or fail",
+    )
     parser.add_argument("--warmup", type=int, default=10)
     parser.add_argument(
         "--iters",
@@ -410,6 +567,11 @@ def main() -> int:
         return 0
     if args.profile_run:
         return _run_profile()
+    if args.stress:
+        code = _run_stress()
+        sys.stdout.flush()
+        # A hung kernel cannot be waited out at interpreter exit; leaving at once drops the device context with it.
+        os._exit(code)
     if args.baseline_json:
         return _write_baseline(args.baseline_json)
     if args.bench_mode:
