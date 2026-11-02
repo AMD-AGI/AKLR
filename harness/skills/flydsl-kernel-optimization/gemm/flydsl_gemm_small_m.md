@@ -133,9 +133,12 @@ an idle-device tuner (§1).
   **Not in the current kernels.**
 - **Give each counter its own 128 B line.** *(field, E34)* Packing the per-tile counters as adjacent dwords put a whole
   launch on two cache lines and cost 1.1–2.5 µs.
-- **A counter tagged with the launch needs no reset.** Keep `llvm.amdgcn.dispatch.id` xor `llvm.amdgcn.queue.ptr`,
-  which is new on every launch and graph replay, in the counter word's high half and the count in its low half; a
-  word carrying another launch's tag counts as zero. Scratch allocated per call holds whatever was there before.
+- **Zero counters in per-call scratch before launching the GEMM.** AKLR kernels receive only their contract
+  call keys and keep no state between calls. Allocate counters with `torch.zeros` on the input device on every
+  call; the partial planes may use `torch.empty` because each is written before it is read. The zeroing adds
+  one kernel to each split-K call. A launch tag in the counter word (`llvm.amdgcn.dispatch.id` xor `llvm.amdgcn.queue.ptr`) is 32
+  bits and repeats: dispatch ids 1 and 2^32 on one queue give the same tag, and a stale word that reads as
+  this launch's, already complete, leaves its tile unwritten.
 - **Price split-K with this fold.** The last split to arrive reads every partial through one CU, and arrival skew
   leaves most tiles' fold to one split. *(field, E107)* Against folds that waited and spread the sum over all
   splits, it was 16% slower at M=128 and within 2% at M ≤ 64 on one GEMM, 24% and 8% slower at M 256 and 512 on

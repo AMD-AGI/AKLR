@@ -94,8 +94,8 @@ enumerated M ≤ 16.
   relatively. The audit does not check imports (`aklr/ops/README.md`), and no committed AKLR kernel imports aiter.
 - **Persistent buffers are an aiter choice.** Both split-K schemes keep their counters (and the preshuffle
   family its workspace) alive across calls in an `lru_cache`. A AKLR kernel allocates scratch per call, or once
-  per shape in its compile function and rewritten whole before it is read, so it zeroes its counters on every
-  call (or, in per-call scratch, compares them against a per-launch tag).
+  per shape in its compile function and rewritten whole before it is read, so its counters must be
+  zeroed on every call.
 - **Re-measure on your hardware and your shapes.** A tuned row was chosen on one machine's timing; the row, not
   the kernel, is what changes between deployments.
 

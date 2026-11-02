@@ -190,7 +190,7 @@ the in-launch split-K reduce of `../gemm/flydsl_gemm_grid_pricing.md` §2 and of
   launch that cut nothing exits at once. *(field, E21)* ~4 µs on a balanced load, 46–75 µs when it folds.
 - **Dense split-K forms worth racing here:** the reduce in the same launch, done by the last split to arrive on a
   per-tile counter, never by a workgroup that waits for another (`../gemm/flydsl_gemm_grid_pricing.md` §2); counters
-  in per-call scratch compared against a per-launch tag, so nothing is reset, and fp32 partials packed to 24 bits
+  in per-call scratch, zeroed before the GEMM launch, and fp32 partials packed to 24 bits
   (`../gemm/flydsl_gemm_small_m.md` §4); and each XCD on a contiguous run of one split's tiles
   (`../gemm/flydsl_gemm_schedule_and_locality.md` §2).
 - **Scratch for CUDA graphs.** Keep it persistent per (shape, device) and size it for the deepest geometry any

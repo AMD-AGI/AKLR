@@ -72,7 +72,7 @@ the rendezvous as existing kernels write it.
   polled the same way returned millions of NaN on streams limited to 64 and 128 CUs. Bound the poll loop, so that a
   broken assumption produces a wrong answer instead of a hung device.
 - Column length: `2 ≤ n_groups ≤ 16` on one shared counter. *(field, E6)* 32 workgroups on one counter: +3.25%.
-  *(field, E43)* With one launch-tagged flag per workgroup (`../gemm/flydsl_gemm_small_m.md` §4) polled by one
+  *(field, E43)* With one launch-tagged flag per workgroup polled by one
   wave, 32 per row: −3.6% against producer + combine; 16: −2.0%; 21–22: +0.7%. The residency rule is unchanged.
 
 *(field, E7)* Bit-identical outputs; −1.0% to −7.6% against two kernels; +2.47% on the decode-step benchmark.
