@@ -100,9 +100,11 @@ def _(
     TotalCuCount=None,
     WavePerEU=2,
     VarCtxSchedule=None,
+    SplitKV=None,
+    PersistentSchedule=None,
 ):
     # logits' width carries max_model_len; the rest is tiling
-    unused(max_model_len, ChunkK, TotalCuCount, WavePerEU, VarCtxSchedule)
+    unused(max_model_len, ChunkK, TotalCuCount, WavePerEU, VarCtxSchedule, SplitKV, PersistentSchedule)
     fp8_paged_mqa_logits(
         q=q_fp8,
         kv_cache=kv_cache,

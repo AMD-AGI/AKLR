@@ -65,10 +65,12 @@ def _(
     norm_weight=None,
     norm_eps=1e-6,
     large_m_splitk=False,
-    is_fn_pack_bf16=0,
+    w_preshuffle_bf16=0,
+    res_preshuffle=False,
 ):
     unused(large_m_splitk)  # Scheduling, not part of the mathematical contract.
-    must_default(is_fn_pack_bf16)  # Packed projection storage is not yet supported.
+    must_default(w_preshuffle_bf16)  # Packed projection storage is not yet supported.
+    must_default(res_preshuffle)  # A shuffled residual layout AKLR does not describe.
     return mhc_pre(
         residual=residual,
         proj_weight=fn,
@@ -85,8 +87,9 @@ def _(
 
 
 @aklr_route("aiter.ops.mhc.mhc_post")
-def _(out, x, residual, post_layer_mix, comb_res_mix, store_nt=-1):
+def _(out, x, residual, post_layer_mix, comb_res_mix, store_nt=-1, res_preshuffle=False):
     unused(store_nt)  # Store/cache strategy, not mathematical semantics.
+    must_default(res_preshuffle)  # A shuffled residual layout AKLR does not describe.
     mhc_post(
         x=x,
         residual=residual,
@@ -113,10 +116,14 @@ def _(
     norm_weight=None,
     norm_eps=1e-6,
     force_fused=False,
-    is_fn_pack_bf16=0,
+    w_preshuffle_bf16=False,
+    res_preshuffle=False,
+    backend=None,
 ):
     unused(force_fused)  # Scheduling, not part of the mathematical contract.
-    must_default(is_fn_pack_bf16)  # Packed projection storage is not yet supported.
+    must_default(w_preshuffle_bf16)  # Packed projection storage is not yet supported.
+    must_default(res_preshuffle)  # A shuffled residual layout AKLR does not describe.
+    must_default(backend)  # explicit kernel choice
     return mhc_fused_post_pre(
         x=layer_input,  # aiter's input; the contract's layer_input is an output
         residual=residual_in,

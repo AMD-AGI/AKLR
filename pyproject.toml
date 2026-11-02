@@ -24,7 +24,7 @@ dependencies = [
     "einops",
     "psutil",
     "packaging",
-    "flydsl==0.3.2",
+    "flydsl==0.4.0",
     # aklr's
     "pydantic>=2.12",
     "pyyaml",

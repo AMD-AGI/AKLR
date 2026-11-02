@@ -24,7 +24,7 @@ one reviewed commit ── publish ──▶ aklr/ops ── aklr validate ─�
 - In that container:
 
   ```bash
-  pip install "flydsl==0.3.2" "ruff==0.16.0" "black==26.5.1"
+  pip install "flydsl==0.4.0" "ruff==0.16.0" "black==26.5.1"
   pip install -e "<your Hyperloom checkout>[forge]"    # KernelForge, from Hyperloom's AKLR branch
   ```
 

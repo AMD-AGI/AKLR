@@ -34,6 +34,9 @@ class AiterBuildPy(build_py):
         open(os.path.join(meta_dir, "__init__.py"), "w").close()
         with open(os.path.join(self.build_lib, "aiter", "install_mode"), "w") as f:
             f.write("install")
+        # aiter's top-level py_module: its JIT imports it to size every build. An editable
+        # aiter finds it in 3rdparty/aiter, which aiter.jit.core puts on sys.path.
+        self.copy_file(os.path.join(AITER_DIR, "aiter_worker_limits.py"), self.build_lib)
 
 
 class PlatlibDistribution(Distribution):
@@ -51,7 +54,7 @@ aklr_version = get_version(
     local_scheme="no-local-version",
 )
 setup(
-    # aiter's version, then AKLR's commit: 0.1.21.dev66+aklr.ge64734fac.
+    # aiter's version, then AKLR's commit: 0.1.26+aklr.ge64734fac.
     use_scm_version={"local_scheme": lambda _: f"+{aklr_version}"},
     cmdclass={"build_py": AiterBuildPy},
     distclass=PlatlibDistribution,

@@ -83,14 +83,22 @@ def _(
     shared_w2_scale=None,
     shared_expert_id=-1,
     stage2_scatter=None,
+    output=None,
+    quant_type_a=None,
+    quant_dtype_a=None,
+    quant_dtype_a2=None,
+    clamp_shared=True,
 ):
     unused(moe_sorting_dispatch_policy, splitk)  # scheduling; the registry decides
     # a layout AKLR does not describe
     must_default(block_size_M, hidden_pad, intermediate_pad)
-    must_default(shared_w1, shared_w2, shared_w1_scale, shared_w2_scale, shared_expert_id)
+    # aiter raises on clamp_shared=False without shared experts
+    must_default(shared_w1, shared_w2, shared_w1_scale, shared_w2_scale, shared_expert_id, clamp_shared)
     must_default(stage2_scatter)  # writes stage 2 elsewhere, on the gfx1250 path
-    # not in the contract: activation scales, biases
+    must_default(output)  # the caller's destination buffer
+    # not in the contract: activation scales, biases, activation quant overrides
     must_default(a1_scale, a2_scale, bias1, bias2)
+    must_default(quant_type_a, quant_dtype_a, quant_dtype_a2)
     # aiter clamps only at a truthy limit; vLLM passes 0.0 for none
     none_if_falsy(swiglu_limit)
     return fused_moe(

@@ -83,9 +83,10 @@ def _(XQ, WQ, x_scale, w_scale, bias=None, dtype=None, splitK=None):
 # FIXME(main-kernels): the bench baseline is the first route that binds; main's plain
 # blockscale baseline is CK, so CK comes before Triton.
 @aklr_route("aiter.ops.gemm_op_a8w8.gemm_a8w8_blockscale")
-def _(XQ, WQ, x_scale, w_scale, dtype=None, isBpreshuffled=False):
+def _(XQ, WQ, x_scale, w_scale, dtype=None, isBpreshuffled=False, split_k=None):
     # This flag selects a different gfx950 ASM packing, not the 16x16 one below.
     must_default(isBpreshuffled)
+    must_default(split_k)  # explicit tuning
     return gemm_a8w8_blockwise_scaled(a=XQ, b=WQ, a_scale=x_scale, b_scale=w_scale, out_dtype=dtype)
 
 
