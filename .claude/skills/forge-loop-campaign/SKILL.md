@@ -26,6 +26,11 @@ rather than a person at a terminal.
 
 ## Step 2: launch in the background
 
+Read `$RUN/baseline.json` first. AKLR's timer reads every dispatch at about 4.1 µs or more, because its bench runner
+forces queue profiling, which costs that much per dispatch. A workload whose baseline runs near that floor reads as
+parity in CI whatever the kernel does there (a 1.7 µs kernel against a 2.6 µs baseline read 4.09 against 4.10 µs).
+Tell the user which workloads those are before you launch: the campaign can win nothing AKLR will show there.
+
 You keep no terminal open, so start the loop in a process group of its own:
 
 ```bash
