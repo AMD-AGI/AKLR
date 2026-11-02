@@ -49,8 +49,8 @@ basis: source-semantics
   a trip-count additive probe (S19), or N and K swapped at equal FLOPs (S20).
 - Kernel-argument preload — `gemm/flydsl_gemm_small_m.md` §6 — trims `F` at any M (S21); pass operands as
   `fx.Pointer` (S22) and confirm `.amdhsa_user_sgpr_kernarg_preload_length` > 0 in the ISA (S23).
-- Keep the split-K fold in the GEMM launch, in a fixed order — `gemm/flydsl_gemm_small_m.md` §4 — race its form per
-  M (S24); touch the fold's workspace lines with one used load before the K loop (S25).
+- Keep the split-K fold in the GEMM launch, in a fixed order, done by the last split to arrive on an atomic counter
+  — `gemm/flydsl_gemm_small_m.md` §4 — so that no workgroup waits for another (S24).
 - Split-K on latency-bound rows and single N-blocks — `gemm/flydsl_gemm_small_m.md` §4 — not on streaming rows or
   short K (S26, S27).
 - Launch the `flyc.compile` object, not the `@flyc.jit` function, except under graph capture, where the raw
@@ -84,8 +84,7 @@ basis: source-semantics
 - S21 gemm/flydsl_gemm_grid_pricing.md:239 kernel-argument preload trims F at any M
 - S22 gemm/flydsl_gemm_small_m.md:231 pass operands as fx.Pointer; a raw torch.Tensor stops the preload
 - S23 gemm/flydsl_gemm_small_m.md:230 the dumped ISA shows .amdhsa_user_sgpr_kernarg_preload_length > 0
-- S24 gemm/flydsl_gemm_small_m.md:123 race the in-launch fixed-order fold's form per M; no form won everywhere
-- S25 gemm/flydsl_gemm_small_m.md:136 touch the fold's workspace lines with one used load before the K loop
+- S24 gemm/flydsl_gemm_small_m.md:121 no workgroup may wait for another; the last split to arrive folds
 - S26 gemm/flydsl_gemm_small_m.md:108 split-K pays on a single N-block and on latency-bound rows
 - S27 gemm/flydsl_gemm_small_m.md:109 split-K does not pay on streaming rows or short K
 - S28 gemm/flydsl_gemm_autotune.md:161 call the flyc.compile object, not the @flyc.jit function

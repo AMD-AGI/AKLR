@@ -188,10 +188,11 @@ the in-launch split-K reduce of `../gemm/flydsl_gemm_grid_pricing.md` §2 and of
   the same stream, folds the bands into C in ascending chunk order, in fp32, with no atomics: bit-reproducible
   (`kernel_grouped_tn_wgrad_reduce`, FP8:4450; launch FP8:4617). Its grid is the compile-time tile space, and a
   launch that cut nothing exits at once. *(field, E21)* ~4 µs on a balanced load, 46–75 µs when it folds.
-- **Dense split-K forms worth racing here:** the reduce in the same launch, by reducer workgroups that poll per-tile
-  flags (`../gemm/flydsl_gemm_grid_pricing.md` §2); flags in per-call scratch compared against a per-launch tag, so
-  nothing is reset, and fp32 partials packed to 24 bits (`../gemm/flydsl_gemm_small_m.md` §4); and each XCD on a
-  contiguous run of one split's tiles (`../gemm/flydsl_gemm_schedule_and_locality.md` §2).
+- **Dense split-K forms worth racing here:** the reduce in the same launch, done by the last split to arrive on a
+  per-tile counter, never by a workgroup that waits for another (`../gemm/flydsl_gemm_grid_pricing.md` §2); counters
+  in per-call scratch compared against a per-launch tag, so nothing is reset, and fp32 partials packed to 24 bits
+  (`../gemm/flydsl_gemm_small_m.md` §4); and each XCD on a contiguous run of one split's tiles
+  (`../gemm/flydsl_gemm_schedule_and_locality.md` §2).
 - **Scratch for CUDA graphs.** Keep it persistent per (shape, device) and size it for the deepest geometry any
   candidate can pick, so replay sees fixed addresses (`_wgrad_split_ws`, FP8:3758-3775).
 - **What it buys.** *(field, E22)* One expert with 99.8% of the tokens: gate_up 3024 → 2389 µs (21% less time), down 1381

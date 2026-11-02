@@ -43,6 +43,7 @@ wins. Check a plan against this table before writing code.
 | Compilation and the choice of configuration happen in a module-level `@functools.cache` function on a Point's first call; later calls may be inside a CUDA graph capture | The first-call race of `gemm/flydsl_gemm_autotune.md` §1 as written: choose from the shape, with a table raced offline |
 | Inputs other than the mutable ones are read-only (SA2); nothing derived from an argument is kept across calls, and there is no `global` or `nonlocal` (SA1) | Caching a repacked weight: repack on every call, or serve the contract's shuffled layout variant where it has one |
 | Scratch is allocated in the call (`torch.empty`: contents undefined) or once per shape in the compile function and rewritten before it is read; no call depends on what an earlier call left | Counters that live across calls: zero workspaces in each call before any read, or tag flags per launch (`gemm/flydsl_gemm_small_m.md` §4) |
+| No workgroup waits for another: nothing polls a flag or data that another workgroup of the launch writes, since a launch's workgroups need not all be resident (a stream limited to part of the CUs, another kernel holding CUs) | A split-K fold or split-KV merge whose owner polls its partners: merge in a separate launch, or have each publish and count in on an atomic counter and the last to arrive merge, in a fixed order |
 | `run(*, <kernel_call_keys>)` writes the preallocated outputs and returns nothing; the entry file's docstring describes the kernel, with no history or speedup (SA4) | Allocating outputs; importing sibling files other than relatively (the package name is a hash) |
 
 ## How to look things up
@@ -67,6 +68,7 @@ wins. Check a plan against this table before writing code.
 | Write or optimize an attention kernel (prefill, backward, decode with split KV) | `attention/INDEX.md` → the card it routes to |
 | A fused MoE at decode sizes (MXFP4, routing sort, stage 1 / stage 2) | `moe/INDEX.md` → the technique, cases and expert-GEMM card it routes to |
 | See each GEMM or MoE technique added to a working kernel, one per step, with its gfx950 ISA | `examples/README.md` (compile-checked; `examples/run.sh` checks them against torch on a GPU) |
+| Dump a kernel's IR and final ISA; read registers, LDS, spills, waits and hot-loop counts | `gemm/flydsl_gemm_mainloop.md` §10 (`FLYDSL_DUMP_IR=1`); `tools/isa_diff.py` compares two dumps |
 | Author and optimize any other kernel, structure first | `optimize/flydsl_levers/flydsl_authoring_method.md` |
 | Read aiter's shipped FlyDSL kernels (dense GEMM, MoE, attention and the rest) and their knobs | `optimize/flydsl_levers/flydsl_kernel_library.md` → `optimize/flydsl_levers/flydsl_knob_space.md` |
 | LDS bank conflicts, double buffering, swizzle | `optimize/lds-optimization.md` |
@@ -117,7 +119,11 @@ wins. Check a plan against this table before writing code.
   (`aklr/plugins/README.md`), so an `aklr/ops` kernel runs in a model only where the engine calls its api.
 - **Workflow** (`aklr/ops/README.md` § Workflow): export the Points, fill `kernel.sources`, then
   `python -m aklr export check` and `python -m aklr validate --base origin/main`. The local result does not
-  count; CI measures. A `platform_failure` "Kineto recorded no kernels for a single call" is a tracer fault: rerun.
+  count; CI measures. A `platform_failure` "Kineto recorded no kernels for a single call" is a tracer fault: on a
+  busy node, wait a few minutes before you rerun (`pitfalls/profiler_misses_kernels.md`).
+- **AKLR does not time below about 4 µs.** Its bench runner forces `GPU_FORCE_QUEUE_PROFILING`, and a profiled
+  dispatch costs about that however little it does, so a short kernel and its baseline read about the same. A
+  Point whose baseline sits near that floor shows no gain in CI: check `baseline.json` before working on it.
 
 ## Folder structure
 

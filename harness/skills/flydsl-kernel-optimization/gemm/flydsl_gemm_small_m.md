@@ -47,7 +47,8 @@ sources:
   against kernels of 4.6–8 µs. One graph node cost 1.75–1.95 µs even for a 1-element op, so at
   M ≤ 16 on a small weight more than half the measured time is the node. *(field, E7, E8, E9)* Under AKLR's timer (L2
   flushed before each call) an empty kernel read ~4 µs and a second launch added ~4 µs (a separate split-K fold
-  took M=8 from ~8 to ~11 µs): keep the fold in the GEMM launch.
+  took M=8 from ~8 to ~11 µs): keep the fold in the GEMM launch. That ~4 µs is the timer's floor for any
+  dispatch, not the kernel (`../SKILL.md` § Also in AKLR).
 - **Price aiter's rows through the deployed entry** (`aiter.tuned_gemm.gemm_a16w16`, the call `gemm_baseline`
   makes), not a direct kernel call; time your own kernel through its `run` entry, as
   the benchmark calls it.
@@ -115,31 +116,32 @@ an idle-device tuner (§1).
 - In the generic kernel, split 0 writes zero (or the bias) into C and raises a per-tile signal, the other splits
   spin until it is visible, and every split adds its bf16-rounded partial into C with an `atomicrmw fadd`
   (`splitk_hgemm.py:401-504, 1015, 1059-1066`). The small-M kernel lets the first split to arrive zero the tile
-  (`small_m_hgemm.py:674-730`).
-- *(field, E33, E34)* That kind of protocol cost 1.5–2.5 µs per launch at M=1. Replacing it with
-  per-split workspace planes, a last-arriving block that sums the planes in f32, and **one arrival counter per
-  128 B line** brought a 2048×2048, M=1, split-K 8 kernel from 4.66 to 3.85 µs (with a replayed, warm weight;
-  the cost is latency and coherence, not bandwidth). Packing the per-tile counters as adjacent dwords put a whole
-  launch on two cache lines and cost 1.1–2.5 µs. **Not in the current kernels.**
-- **Race the in-launch fixed-order fold's form per M; no form won everywhere.** The last-arriving split folds
-  the tile; reducer workgroups appended after the producers fold it; or every split folds 1/s of the tile's rows
-  after its poll, the owner adding its own share from registers (~5% at split-K 2 and 4, M ≈ 900–2700 *(field, E35)*). *(field, E36, E37, E38, E39)* Across
-  three kernels: on one, a designated last split that waits for the others won at M ≤ 32, and the 1/s fold won near
-  M=900 but was 18% slower at M=8 (warm L2); on another, the last arriver lost 1.15–1.7× to reducer workgroups at
-  M 16–112; on a third, the 1/s fold won at M of tens.
-- **With one plain-stored flag per split, keep a tile's flags contiguous** (`tile·splits + s`) and poll them with
-  `dwordx4` loads. *(field, E40, E41)* ~4% over flags strided by split; polling one flag per round trip took 10.40 µs
-  against 8.13 µs polling them all at once (m=14).
-- **A flag that stores the launch's tag needs no reset**: `llvm.amdgcn.dispatch.id` xor `llvm.amdgcn.queue.ptr` is
-  new on every launch and graph replay. Tagging the partials themselves, `(value, tag)` pairs the consumer polls,
-  is a race: *(field, E42, E43)* it won at M=8 on one kernel (which uses it up to M=48) and lost 7–20% to plain partials plus a flag on another.
-  *(field, E44)* On a third it won 0.12–0.25 µs, an estimated ~1%, only at split-K 2 with ≤ 32-row tiles; it lost ~1–5% at split-K 4 and ~19% on a 224-row tile.
-- **Touch the fold's workspace lines with one load per thread before the K loop, and use the value** (LLVM
-  deletes an unused load): the cold misses overlap the loop, not the poll. *(field, E45)* Dropping it cost 6–8% at M 32–60.
-- **When every split folds a share of the tile, store the partner's share before summing your own.** *(field, E46)* 0.6–1.2% at M 32–60 on split-2 fold rows, nothing measurable elsewhere.
+  (`small_m_hgemm.py:674-730`). *(field, E33)* That protocol cost 1.5–2.5 µs per launch at M=1, and its spin is the
+  kind of wait the next bullet rules out.
+- **No workgroup may wait for another.** A split that polls a flag, a counter or a tagged partial until another
+  split has written assumes that split is already running. On a stream limited to part of the CUs, or beside another
+  process, it may not be, and a capped poll then returns garbage. *(field, E106)* A split-K bf16 GEMM whose splits
+  polled returned up to 4.7 M NaN at M 256–512 on a 16-CU stream, and calls of up to 140 ms; its wait-free rewrite
+  passed the same test. This holds for every fold form: a designated last split, reducer workgroups appended after
+  the producers, and every split summing a share of the tile all wait.
+- **Fold by arrival instead.** Each split stores its partial at agent scope or wider (`sc1` or `sc0 sc1`, scope
+  below), waits `s_waitcnt vmcnt(0)`, then adds one to its tile's counter with a device-scope atomic that returns the
+  old value. The split that sees `s − 1` earlier arrivals reads every partial, its own through the same packing, and
+  adds them in split order, so the result is bitwise the same whichever split folds; the others exit. *(field, E33)* Against zero-C + spin + atomics, per-split
+  planes, a last-arriving block summing them in f32 and one counter per 128 B line took a 2048×2048, M=1, split-K 8
+  kernel from 4.66 to 3.85 µs (replayed, warm weight: the cost is latency and coherence, not bandwidth).
+  **Not in the current kernels.**
+- **Give each counter its own 128 B line.** *(field, E34)* Packing the per-tile counters as adjacent dwords put a whole
+  launch on two cache lines and cost 1.1–2.5 µs.
+- **A counter tagged with the launch needs no reset.** Keep `llvm.amdgcn.dispatch.id` xor `llvm.amdgcn.queue.ptr`,
+  which is new on every launch and graph replay, in the counter word's high half and the count in its low half; a
+  word carrying another launch's tag counts as zero. Scratch allocated per call holds whatever was there before.
+- **Price split-K with this fold.** The last split to arrive reads every partial through one CU, and arrival skew
+  leaves most tiles' fold to one split. *(field, E107)* Against folds that waited and spread the sum over all
+  splits, it was 16% slower at M=128 and within 2% at M ≤ 64 on one GEMM, 24% and 8% slower at M 256 and 512 on
+  another; a fixed-order pairwise tree of counters was no faster, because every level waits for its own stores to be
+  acknowledged.
 - A per-split marginal cost does not show the reduction: price the whole kernel.
-- **Unequal K shares between the folding split and its producers do not hide the fold.** *(field, E47, E48)* A fold-off arm
-  priced it at 7–14% at M 64–112; every unequal share, either way, was neutral to ~4% slower.
 
 **Constraints and correctness**
 - Split-K must divide K, each split must be whole `tile_k` steps and hold at least `stages` of them; the
@@ -156,17 +158,19 @@ an idle-device tuner (§1).
 - **Race fp32 partials rounded to their top 24 bits, four packed in three dwords** (25% fewer plane bytes, error
   ≤ 2⁻¹⁶ of each partial). *(field, E51)* 4.5–4.9% at M ≈ 112, nothing at M ≤ 16; within 1 bf16 ulp unless the sum cancels.
 - Coherence scope of the partials on gfx950: `sc0 sc1` is system scope (past the MALL). *(field, E52)* Using it for
-  every partial was 5–9% slower than the narrowest correct scope; agent scope suffices across XCDs, and XCD-local
-  scope suffices only when all splits of a tile run on one XCD (workgroup ids `t + s·grid_x` with `grid_x % 8 == 0`).
-  *(field, E53, E54, E55)* On other kernels agent scope (`sc1`) timed the same as `sc0 sc1`; moving a tile's splits onto one XCD
-  to use the XCD-local scope gained nothing on one and on another lost 2–6% at M 64–112 (within 0.5% of
-  the canonical kernel at M ≤ 32). Race the scope.
-- **Hand off through those scoped stores and loads, not fences** (flag after `s_waitcnt(vmcnt=0)` + barrier): an
-  agent-scope release emits `buffer_wbl2 sc1`, acquire `buffer_inv sc1`; *(field, E56)* the release cost ~3×, and the acquire made it slower still.
+  every partial was 5–9% slower than the narrowest correct scope; *(field, E53)* on another kernel agent scope (`sc1`)
+  timed the same as `sc0 sc1`. Agent scope suffices across XCDs. XCD-local scope is correct only while every split
+  of a tile runs on one XCD (workgroup ids `t + s·grid_x` with `grid_x % 8 == 0`), which rests on the dispatcher's
+  round-robin, not on the kernel; *(field, E54, E55)* moving a tile's splits onto one XCD to use it gained nothing
+  on one kernel and on another lost 2–6% at M 64–112 (within 0.5% of the canonical kernel at M ≤ 32).
+- **Order the hand-off with the scoped stores and `s_waitcnt vmcnt(0)` before the counter atomic, not with fences**:
+  an agent-scope release emits `buffer_wbl2 sc1`, acquire `buffer_inv sc1`; *(field, E56)* on a split-K hand-off the
+  release cost ~3×, and the acquire made it slower still.
 - **A fully co-resident grid hides a broken split-K hand-off.** *(field, E57)* Racy variants reported error 0 on grids
-  that fit the device at once. Test the reduction on a grid larger than one dispatch round.
+  that fit the device at once. Test the reduction on a grid larger than one dispatch round and on a stream limited to
+  part of the CUs (`flydsl_gemm_correctness.md` §3).
 - If you pad a grid (for XCD alignment or a full round), padding blocks must exit before they touch the
-  semaphore, workspace or swizzle.
+  counter, workspace or swizzle.
 
 ## 5. Tile, warps and pipeline
 
@@ -212,9 +216,14 @@ an idle-device tuner (§1).
   - With all blocks starting at k-tile 0, concurrent reads hit the same low address bits.
   - *(field, E82)* −2.9 to −8.6% per shape on cold read-once B.
   - *(field, E83, E84, E85, E86)* On three later kernels it was neutral or lost 1–6% (+12% at split-K 4): where blocks share an operand
-    in L2, and on a `nt` B stream.
-  - *(field, E87)* Yet on a one-M-block, split-K 1 grid of 256 blocks all reading one A, with `nt` B, dropping it cost 10.5–12% at M ≈ 112.
+    in L2, and on one `nt` B stream.
+  - *(field, E87, E108)* Yet on one-M-block grids reading a `nt` B stream, dropping it cost 10.5–12% at M ≈ 112 on one
+    kernel, and 4–13% at every M from 1 to 128 (split-K 1 up to M=16) on two GPUs on another, with HBM read bytes unchanged.
   - An R sharing a factor with `k_iters` (8 with 64 iterations) collapsed the blocks onto 8 starts and lost 55% against a coprime R (44% against no stagger) *(field, E88)*.
+  - **The stagger is for B; an A that every block of an XCD re-reads wants the opposite.** Where that A is about the
+    size of one XCD's L2 (4 MiB), make the start depend only on the XCD (`bid % 8`), so the XCD's blocks walk A
+    together, or give each XCD one K split. *(field, E109)* At M=128 (A 4 MiB) per-block starts cost 41% against
+    XCD-uniform ones, and won once the A loads were removed; at M=64 (A 2 MiB) per-block starts still won.
   - It interacts with the XCD band below; re-sweep both after any tile change.
   - **Not in the current kernels.**
 - **When the grid leaves CUs idle, give them workgroups that load later K-tiles of B into L2** (cached, not `nt`).
@@ -337,20 +346,6 @@ setup); otherwise `FlyDSL ?`.
 - E32 [2026-09, gfx950, FlyDSL ?, aiter fork base 99a91e173, N=?, ?] split-K 2 to fill a 0.438-wave grid: +15.5% / +17.6% (kv_b draft GEMM, K=512; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260912_171610/memory.md:208)
 - E33 [2026-08, gfx950, FlyDSL ?, aiter fork base f464f2bd1, N=?, graph, hot (one weight replayed)] a timing-only plain store in place of zero-C + spin + atomics: split-K 8 4.657 → 2.194 µs, split-K 4 4.180 → 2.664 (the reduction 1.5–2.5 µs); planes + last arriver with one counter per 128 B line: split-K 8 3.854 µs (2048x2048, M=1; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260830_081239/memory.md:172)
 - E34 [2026-08, gfx950, FlyDSL ?, aiter fork base f464f2bd1, N=?, graph, hot (one weight replayed)] per-tile counters packed as adjacent dwords put a launch on two cache lines and cost 1.1–2.5 µs (2048x2048 split-K reduction; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260830_081239/memory.md:175)
-- E35 [2026-10, gfx950, FlyDSL 0.3.2, N=8, in-process race, 8 rounds; driver --bench-mode reruns] each slice summing its own share from registers: m=893 (split-K 4) 30.785 → 29.362 µs (−4.6%), m=2732 (split-K 2) 66.181 → 61.959 µs (−6.4%); the path compiles only at these two large M (gemm_n1536_k7168 forge run, iter 14; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n1536_k7168/forge_experiments/lessons/iter_014.md:37)
-- E36 [2026-10, gfx950, FlyDSL 0.3.2, N=5–7, in-process harness under AKLR bench_cudagraph, NaN-prefilled outputs, median of 5–7 rounds] the canonical fold, a designated last split that waits for the others, beat a padded reducer-workgroup fold at m=8–32 (m=8 7.945 against 8.268 µs) (gemm_n2112_k7168 forge run, iter 13; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n2112_k7168/forge_experiments/lessons/iter_013.md:14)
-- E37 [2026-10, gfx950, FlyDSL 0.3.2, N=?, scratch harness on AKLR bench_cudagraph, arms interleaved] a last-arriver reduce inside the producers against appended reducer workgroups: m=16 8.60 vs 7.49 µs (1.148×) up to m=112 20.66 vs 12.31 µs (1.678×) (gemm_n1280_k7168 forge run, iter 9; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n1280_k7168/forge_experiments/lessons/iter_009.md:18)
-- E38 [2026-10, gfx950, FlyDSL 0.3.2, N=3, forge-loop ablation ladder, 3 pairs, driver --bench-mode] in-producer reduce-scatter (every split folds its share) gained +4.11% mean over the parent's reducer waves, +1.4% at m=28 to +11.9% at m=84 (gemm_n3584_k7168, ladder entry a22022de0 (iter 4); local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n3584_k7168/forge_experiments/ablation.json:125)
-- E39 [2026-10, gfx950, FlyDSL 0.3.2, N=?, warm-cache timer] distributed (1/s) fold against the consumer fold: m=893 46.88 vs 48.31 µs; m=8 8.59 vs 7.29 µs (+18%) (gemm_n2112_k7168 forge run, iter 3; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n2112_k7168/forge_experiments/lessons/iter_003.md:79)
-- E40 [2026-10, gfx950, FlyDSL 0.3.2, N=3, forge-loop ablation ladder, 3 pairs, driver --bench-mode] a contiguous per-tile flag line polled with four vector loads gained +4.01% [+3.94, +4.09] over its parent (flag offset s·sub+t → t·splits+s) (gemm_n768_k7168, iter 16, commit e00fac4; fa6fcabe6; local:/workspace/code/gpt_oss_docker/work/sikl/kb_evidence/sources/distill_12h/ablation.json:333)
-- E41 [2026-10, gfx950, FlyDSL 0.3.2, N=?, 200-call CUDA-graph harness] polling one flag per round trip 10.40 µs against 8.13 µs for all 16 flags at once at m=14 (12.57 vs 9.43 at m=56, 14.81 vs 11.74 at m=98) (gemm_n768_k7168 forge run, iter 7; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards/demo_n768_12h/forge_experiments/lessons/iter_007.md:39)
-- E42 [2026-10, gfx950, FlyDSL 0.3.2, N=5, own harness on AKLR bench_cudagraph, 5 readings per case] (value, tag) pairs 7.02 / 9.42 / 12.86 µs at m=8/64/112 against 7.49 / 8.81 / 11.75 for fp32 planes plus per-(tile, slice) flags; the flags were kept for m > 48 (no per-M reading between 8 and 64 is recorded) (gemm_n1536_k7168 forge run, iter 4; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n1536_k7168/forge_experiments/lessons/iter_004.md:39)
-- E43 [2026-10, gfx950, FlyDSL 0.3.2, N=3–5, CUDA events, L2 flushed per call, arms alternated, median of 30 calls per repeat] tagged partials against plain partials plus a flag: m=8 11.42 vs 10.62 µs (+7.5%) to m=24 13.20 vs 10.96 (+20.4%) (gemm_n2112_k7168 forge run, iter 11; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n2112_k7168/forge_experiments/lessons/iter_011.md:23)
-- E44 [2026-10, gfx950, FlyDSL 0.3.2, N=5, AKLR bench_cudagraph, median of 5 runs, incumbent re-timed in process] dispatch-tagged chunks: faster at m=8–32 on split-2 rows by 0.12–0.25 µs (no base time in that section, so the ~1% is a computed figure); m=40/64/96 18.54/18.73/22.19 against 17.60/18.51/21.14 µs; m=893 (224-row tile) 86.49 against 72.71 µs (gemm_n6016_k7168 forge run, iter 7; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n6016_k7168/forge_experiments/lessons/iter_007.md:23)
-- E45 [2026-10, gfx950, FlyDSL 0.3.2, N=3–4, own harness: L2 flushed by zeroing 512 MB, CUDA events, median of 20–60 calls, alternating rounds] without the workspace pre-touch: m=32 23.34–23.62 vs 21.92–21.98 µs, m=48 25.88–26.24 vs 23.98–24.20, m=60 29.80–30.34 vs 28.04–28.24 (6–8%) (gemm_n6288_k7168 forge run, iter 10; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n6288_k7168/forge_experiments/lessons/iter_010.md:46)
-- E46 [2026-10, gfx950, FlyDSL 0.3.2, N=3, forge-loop ablation, 3 pairs, driver --bench-mode] storing the partner's share before summing: +0.62% to +1.22% at m=32–60 (m=48 +1.22%), within 0.06% on the other cases, +0.32% overall (gemm_n6288_k7168, kept change 8768465b (iter 6); local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n6288_k7168/forge_experiments/ablation.json:234)
-- E47 [2026-10, gfx950, FlyDSL 0.3.2, N=2, driver --bench-mode single case, warmup 3, 20 iterations; GPUs shared; wrong-result build, timing only] fold off: m=112 17.73 → 16.46 µs, m=64 14.20 → 12.40, m=96 16.59 → 14.31 (7–14% of the kernel) (gemm_n7168_k4224 forge run, iter 6; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n7168_k4224/forge_experiments/lessons/iter_006.md:30)
-- E48 [2026-10, gfx950, FlyDSL 0.3.2, N=1, driver --bench-mode single case; outputs of the variants not checked] unequal K shares at m=112: LP=32/31/34/35 read 18.16/18.46/18.40/18.81 µs against 18.08 at the equal LP=33 (+0.4% to +4.0%) (gemm_n7168_k4224 forge run, iter 7; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n7168_k4224/forge_experiments/lessons/iter_007.md:10)
 - E49 [2026-10, gfx950, FlyDSL 0.3.2, aiter a0e3cbea, N=400, eager calls, a side-stream matmul on alternate repeats] aiter's HGEMM and small-M split-K: with a bias at split-K 2, and at split-K 3, 4 and 8, 400/400 repeats differed from the first; split-K 1, and 2 without a bias, 0 (m,n,k = 16, 2048, 6144 (probe /workspace/code/gpt_oss_docker/work/sikl/skillenv/probes_sikl.py:165; its output is kept only in this note); local:/workspace/code/gpt_oss_docker/.claude/memory/project_sikl_flydsl_skill_port.md:30)
 - E50 [2026-09, gfx950, FlyDSL 0.3.2, aiter fork base 5a11152e2, N=?, aiter tuner run_perftest, rotated (cold)] the same configuration at split-K 12: bf16 partials err_ratio 0.0241 (gate 0.02), f32 partials 0.000000 (a camp23 GLM-5.2 decode point, not named in the record; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260904_151953/memory.md:181)
 - E51 [2026-10, gfx950, FlyDSL 0.3.2, N=1, driver flushed bench (--bench-case, warmup 3, 20 iterations)] 24-bit packed partials: m=112 29.22 µs against 30.66 (masking alone) and 30.59 (canonical); m ≤ 16 unchanged (22.60/21.83/21.80 vs 22.56/21.83/21.81 µs); output within 1 bf16 ulp of canonical. "Unless the sum cancels" comes from a numpy simulation whose output was not kept (gemm_n8448_k7168 forge run, iters 4–5; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n8448_k7168/forge_experiments/lessons/iter_004.md:32)
@@ -408,3 +403,7 @@ setup); otherwise `FlyDSL ?`.
 - E103 [2026-08, gfx950, FlyDSL 0.3.2, aiter fork base 1e5145d9d, N=3, graph, cold (B rotated over >= 512 MB), ABAB×3] fetching only the real A rows (mr8): qkv 8.310/8.310/8.317 vs 8.567/8.435/8.432 µs (−1.5%); q_b 13.642/13.655/13.667 vs 12.585/12.302/12.307 (+11%) (qkv (8,2624,6144), q_b (8,16384,2048); local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260831_145853/memory.md:223)
 - E104 [2026-09, gfx950, FlyDSL ?, aiter fork base 99a91e173, N=2, e2e decode bench (c8/c10/c14 tok/s), two palindromes, 8 scored reads] an arm adding four tuned rows, the M=96 o_proj row among them, scored −2.63% and −3.35%; a cold probe through the entry found that row the only loser, at M=84 (o_proj 17.32 → 17.66 µs). The record states, without measuring it, that the row also served the M=72 verify batch (GLM-5.2 TP4/EP4 decode; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260912_171610/memory.md:172)
 - E105 [2026-10, gfx950, FlyDSL 0.3.2, aiter in AKLR, N=?, tuned-table lookup probe through AKLR] a table holding only an M=96 row served M 81–96; one holding only an M=16 row served M 1–16 (local:/workspace/code/gpt_oss_docker/.claude/memory/project_sikl_flydsl_skill_port.md:31)
+- E106 [2026-10, gfx950, FlyDSL 0.3.2, N=?, the campaign's stress test (CU-masked streams of 16/32/64/128 CUs, a second launch of the kernel beside it, eager and graph), outputs checked for NaN and against a reference] the delivered split-K kernel, whose splits polled flags and planes up to `_MAX_POLLS` and then wrote NaN: up to 4.7 M NaN at m=256 and m=512 and calls of up to 140 ms on 16 CUs; the rewrite in which the last split to arrive at a launch-tagged counter folds: no NaN and no difference under every mask (0.71 ms on 16 CUs); the other K3 split-K GEMM's polled fold was right under the masks but once gave NaN at m=32 while another process shared the GPU (bf16 GEMM n6144 k16384, m=256 and 512; local:/shared_nfs/kyle/moe/k3six/fix/gemm_l_session.md:19; local:/shared_nfs/kyle/moe/k3six/deliver/validate_1653/report.md:36)
+- E107 [2026-10, gfx950, FlyDSL 0.3.2, N=2–6 interleaved rounds, forge driver bench on AKLR's graph timer, the kernel before the wait-free commit against after] arrival fold against a fold in which every split waited and summed a share of the tile: m=1–16 within 0.1%, m=32 +0.6%, m=64 +1.8%, m=128 37.95 → 44.00 µs (+15.9%) on one GEMM; m=256 0.0551 → 0.0686 ms (+24.3%), m=512 0.0875 → 0.0947 (+8.3%) on the other; a pairwise tree of per-pair counters: m=128 43.79, m=256 0.0702, m=512 0.0959 (bf16 GEMM n6144 k16384, m=1–128 and m=256–512 lanes; local:/shared_nfs/kyle/moe/k3six/fix/gemm_s_session.md:26; local:/shared_nfs/kyle/moe/k3six/fix/gemm_l_session.md:24; :25; local:/shared_nfs/kyle/moe/k3six/fix/gemm_s_tree.md:20; local:/shared_nfs/kyle/moe/k3six/fix/gemm_l_tree.md:19)
+- E108 [2026-10, gfx950, FlyDSL 0.3.2, N=5 readings per arm, AKLR bench_cudagraph (1 GiB flush per call), one process per set with a fresh FlyDSL cache, two GPUs; placement alone moved a case about ±1 µs between processes] per-block K start `(bid·R) mod loops` against none (B `sc0 nt`): GPU 3 m=1/2/4/8/16/32/64/128 32.98/33.10/31.89/32.71/33.09/33.81/38.28/43.91 against 34.93/36.85/34.81/35.50/36.28/35.99/39.77/48.71 µs; GPU 6 the same sign on every case, 2.4–5.5 µs; HBM read 202–244 MB per call with and without it, request stalls lower with it (bf16 GEMM n6144 k16384; local:/shared_nfs/kyle/moe/k3six/runs/gemm_s/workspace/forge_experiments/analysis/236ca0f0c864d119d1b61ee6ca9f60fea6b03734/generation-001/ablation/summary.md:111; :40; local:/shared_nfs/kyle/moe/k3six/runs/gemm_s/workspace/forge_experiments/analysis/236ca0f0c864d119d1b61ee6ca9f60fea6b03734/generation-001/pmc_compare.md:7)
+- E109 [2026-10, gfx950, FlyDSL 0.3.2, N=5 readings per arm, as E108] m=128 (A 128 × 16384 bf16 = 4 MiB, every split of a tile on XCD `bid mod 8`): per-block starts R=1 61.72 µs (R=3 and 5 61.8–63.4 on GPU 6) against R=16, one start per XCD, 43.91; with the A loads removed R=1 34.59 against 37.08; m=64 (A 2 MiB) R=1 38.93 < R=3 39.54 < R=16 42.01 (GPU 6); with each XCD on one K split, R=1 41.96–42.00 against R=16 42.46 (bf16 GEMM n6144 k16384; local:/shared_nfs/kyle/moe/k3six/runs/gemm_s/workspace/forge_experiments/analysis/236ca0f0c864d119d1b61ee6ca9f60fea6b03734/generation-001/ablation/summary.md:129; :89; :66; local:/shared_nfs/kyle/moe/k3six/runs/gemm_s/workspace/forge_experiments/lessons/iter_003.md:32; :38)

@@ -60,7 +60,7 @@ the output row is the sum over the token's k routes of `topk_weights` × that pr
 | Stage 2: atomics or a fixed-order reduce | `../grouped_gemm/flydsl_grouped_moe_inference.md` §6, `../gemm/flydsl_gemm_correctness.md` §8 |
 | Sort and quantization kernels around the GEMMs | `../grouped_gemm/flydsl_grouped_moe_inference.md` §7 |
 | Measuring at decode sizes | `../grouped_gemm/flydsl_grouped_moe_inference.md` §8, `../gemm/flydsl_gemm_small_m.md` §1 |
-| Split K over the waves of one workgroup | `../gemm/flydsl_gemm_small_m.md` §4 |
+| Split K over the waves of one workgroup | `../gemm/flydsl_gemm_small_m.md` §5 |
 | Kernel-argument preload; rows bound by launch and latency | `../gemm/flydsl_gemm_small_m.md` §6, `../patterns/launch_floor_small_m.md` |
 | Preshuffled operands and MX scales | `../gemm/flydsl_gemm_datapath.md` §10, §11 |
 | MFMA atom: scaled fp4, or bf16 on dequantized fp4 | `../gemm/flydsl_gemm_mainloop.md` §5 |

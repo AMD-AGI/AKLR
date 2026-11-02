@@ -2,7 +2,8 @@
 title: "LDS bank conflicts and LDS-side stalls"
 kind: pattern
 signals: ["SQ_LDS_BANK_CONFLICT above the hand-computed floor", "stall on the ds_read / ds_write instructions themselves",
-  "s_waitcnt lgkmcnt(0) stall right after a ds_write", "SQ_WAIT_INST_LDS", "SQ_LDS_IDX_ACTIVE", "ds_read2 offsets that are multiples of 64"]
+  "s_waitcnt lgkmcnt(0) stall right after a ds_write", "SQ_WAIT_INST_LDS", "SQ_LDS_IDX_ACTIVE", "ds_read2 offsets that are multiples of 64",
+  "ds_read2_b32 where a ds_read_b128 was meant"]
 ops: [gemm]
 gens: [gfx950]
 flydsl: 0.3.2
@@ -31,6 +32,8 @@ basis: source-semantics
    moment hide nothing for each other (S13); LDS and bank-conflict counters stay identical and only
    `SQ_WAIT_ANY / SQ_WAVE_CYCLES` moves (S14).
 5. **Capacity:** LDS per workgroup caps occupancy (S15).
+6. **Split reads:** `ds_read2_b32` or `ds_read2_b64` in the ISA where a `ds_read_b128` was meant: the 16-byte load was
+   declared only 4- or 8-byte aligned; declare 16 (`language/limits.md`, S32).
 
 ## Rule out first
 
@@ -89,3 +92,4 @@ basis: source-semantics
 - S29 gemm/flydsl_gemm_schedule_and_locality.md:58 state the wave_id → (wave_m, wave_n) mapping explicitly
 - S30 gemm/flydsl_gemm_mainloop.md:78 why the 2×2-wave tile wins on long K: fewer LDS reads per MAC
 - S31 gemm/flydsl_gemm_mainloop.md:88 compile both designs and race them; the crossover depends on the shape
+- S32 language/limits.md:103 a 16-byte LDS load declared 4- or 8-byte aligned becomes `ds_read2_b32` / `ds_read2_b64`; `Vector.load` passes no alignment; declaring 16 cut a MoE epilogue's bank conflicts 4.2–4.9×

@@ -76,12 +76,16 @@ Two more cases:
   next call of the same jit object, `flyc.compile` included, raise `RuntimeError: global '<dict>' … changed
   since first compile`. Fill it before the first call, or keep the cache inside the builder.
 
-Two checks that settle "did my change run?":
+Three checks that settle "did my change run?":
 - **Break it on purpose.** Make the kernel compute something wrong (scale by 2) without clearing the
   cache. If the old correct result comes back, every earlier measurement of that edit was stale.
 - **Identical numbers are a signal.** Variants that should differ but report byte-identical timings, or
   identical `VGPR_Count` / `Accum_VGPR_Count` / `SGPR_Count` in a rocprofv3 kernel trace, are almost
   always one cached binary.
+- **Read what was compiled.** In a fresh process, `FLYDSL_DUMP_IR=1` skips the disk cache and writes every
+  pass and `NN_final_isa.s` under `$FLYDSL_DUMP_DIR/<kernel>/` (default `~/.flydsl/debug`;
+  `python/flydsl/utils/env.py:249-251`, `python/flydsl/compiler/jit_function.py:1414`). How to read the dump:
+  `../gemm/flydsl_gemm_mainloop.md` §10.
 
 ## Start from the symptom
 | What you observe | Most likely cause | Section |
@@ -379,6 +383,10 @@ print(f"loop: start={part_start}, stop={part_end}, step={cpb}")
 `gpu.barrier()` requires **every** thread in the workgroup to reach it. If a runtime `if` sends some
 threads down another path, the barrier deadlocks. FlyDSL does not support divergent barriers — hoist
 the barrier out of the conditional, do not try to make the condition uniform.
+
+Branches that every lane of a wave takes the same way (wave roles) may hold barriers only if each wave
+executes the same number of `s_barrier`; a mismatch can give stale LDS instead of a hang. Count them per arm
+in the ISA: two adjacent barriers in one arm compile to one (`../language/limits.md`, Unclassified).
 
 ### Recovery
 ```bash

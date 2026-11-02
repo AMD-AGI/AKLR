@@ -91,6 +91,11 @@ workspaces) must be warmed before a probe starts counting.
   was clean 8/8.
 - Deeper prefetch fails first: a race that only appears on the largest K is pointing at a
   pipeline-drain seam.
+- **Test anything one workgroup hands to another (a split-K fold) where residency and timing change**: on streams
+  limited to part of the CUs (16 and 64), beside a second launch of the same kernel, with two input sets
+  alternating between calls so that a stale partial always shows. *(field, E23)* Such a test caught partials stored
+  without `sc0 sc1` on every launch; leaving out the `vmcnt(0)` before the counter or the fold loads' cache bits did
+  not fail it, so keep what the ISA requires even when the test passes.
 
 ## 4. Waits, barriers and the scheduler
 
@@ -119,18 +124,18 @@ workspaces) must be warmed before a probe starts counting.
   about 0.7% of time. A mask that let ALU/MFMA cross (`0x40F`) made it worse on one token distribution (6/11
   bad, against 1/15 for the clean tree; 0/11 on the other).
 - `s_barrier` does not drain `vmcnt`; `lgkmcnt` is 4 bits (max 15), `vmcnt` 6 bits (max 63).
-- **A spin-wait on a buffer load needs a `rocdl.s_sleep` in its body; `s_sleep(0)`, which waits not at all, is
-  enough**: otherwise LLVM deletes a bounded poll loop and reads an unbounded one's flag once, `sc` bits
-  notwithstanding. The volatile aux bit (bit 31) also keeps it, but waits `vmcnt(0)` after every load
-  (10.3–15.1 µs against 5.15–9.41 µs without it at M = 8–112 on a split-K hand-off *(field, E9)*). An atomic
-  `llvm.LoadOp(…, ordering=llvm.AtomicOrdering.monotonic, syncscope="agent")` keeps the loop without `s_sleep`,
-  as one `global_load … sc1` per pass.
-- **Poll another workgroup's flag with a load that misses the CU cache: `sc1` (aux=16) or `nt` (aux=2).** A default
-  or `sc0` load hits the CU's stale copy (`../isa/memory_and_sync.md` §2.4) and spins to the poll cap, even when
-  both workgroups are on one XCD; `buffer_inv sc0` is a no-op outside TG-split mode.
-- **When every wave polls a hand-off flag, barrier after the poll before posting "consumed" or clearing it**;
-  otherwise a slower wave polls a cleared flag and spins to its timeout. *(field, E10)* 15 µs → 1062 µs at
-  M = 112 (10573 µs at M = 893).
+- **No workgroup may wait for another.** A spin on another workgroup's flag or data assumes that workgroup is
+  running; on a stream limited to part of the CUs, or beside another process, it may not be, and a capped spin
+  returns garbage. *(field, E22)* A split-K GEMM whose splits polled returned millions of NaN on a 16-CU stream.
+  Fold split-K by arrival instead (`flydsl_gemm_small_m.md` §4).
+- **Read another workgroup's data with a load that misses the CU cache: `sc1` (aux=16), `nt` (aux=2) or `sc0 sc1`.**
+  A default or `sc0` load hits the CU's stale copy (`../isa/memory_and_sync.md` §2.4), even when both workgroups
+  are on one XCD; `buffer_inv sc0` is a no-op outside TG-split mode.
+- **Reading a kernel that polls** (aiter's generic split-K kernel spins): LLVM deletes a bounded poll loop whose
+  body has no `rocdl.s_sleep` and reads an unbounded one's flag once, `sc` bits notwithstanding. The volatile aux bit
+  (bit 31) keeps the loop but waits `vmcnt(0)` after every load (10.3–15.1 µs against 5.15–9.41 µs at M = 8–112
+  *(field, E9)*); an atomic `llvm.LoadOp(…, ordering=llvm.AtomicOrdering.monotonic, syncscope="agent")` keeps it as
+  one `global_load … sc1` per pass.
 
 ## 5. LDS placement and DMA
 
@@ -186,7 +191,10 @@ workspaces) must be warmed before a probe starts counting.
   accumulators lost the last K iteration's contribution (SNR still 37–45 dB). Put the wait states in
   the asm string of the tail iteration only.
 - **The reverse too:** asm that *reads* an MFMA destination loses the compiler's `s_nop`. A drop in
-  `s_nop` count after moving code into asm is a red flag, not a saving.
+  `s_nop` count after moving code into asm is a red flag, not a saving. *(field, E21)* On a split-K GEMM an inline-asm
+  `v_max3_f32` that read the accumulators right after the main loop got no wait states and about 1.5% of the
+  outputs came out wrong, by exact powers of two; written as `math.absf` and `arith.maxnumf`, the compiler emitted
+  the same `v_max3_f32` with its wait states (seen once).
 - **An untied asm pin (`"=a,v"`) silently deletes the operand.** It compiles, runs, removes spills and
   runs faster, because it emits no copy and the output is uninitialized.
 - **Moving an asm output from AGPR to arch VGPR needs `&` (early clobber).** Without it the register
@@ -242,7 +250,6 @@ sits in the directory of the line's `local:` path.
 - E7 [2026-07, gfx950, FlyDSL ?, N=1, bitwise repeat test over 30000 runs (`_race_wg.py`)] the first two-pool three-buffer build: 1 race in 30000 runs on deepseek-up; the wait counted one pool's writes (`_n_outstanding = nsb`, 4) while two three-buffer pools left 2×nsb = 8 in flight; with the sum counted, 0 of 30000 on all 7 shapes (Turbo grouped fp8 tensorwise weight-gradient GEMM, 4 waves; KB note, no run record found; the build became Turbo's default in 57610c1e; local:/workspace/code/gpt_oss_docker/.claude/memory/project_wgrad_occ_feed_bound.md:1417)
 - E8 [2026-09, gfx950, FlyDSL 0.2.4, N=10, corrupted gate readings counted across repeated bench runs (the gate data are identical every run), per arm and token distribution; price from same-session palindrome pairs B A A B B A A B, 4 reads per arm] DeepSeek-V3 geometry (K=7168; the gpt-oss and Qwen3 geometries, K 2880 and 4096, clean): clean tree 1/15 + 2/15 = 3/30 readings corrupted; `sched_barrier(0)` after the two drains, together with an SRD hoist shown bitwise-equivalent, 0/5 + 0/5; the mask `0x40F` on the clean tree 6/11 on the balanced distribution and 0/11 on the skewed one; hoist + `sched_barrier(0)` −0.72 gm (pairs +0.65 / +0.32 / +1.07 / +0.82 on scores of 107–110), the hoist alone +0.03 gm (gpt-oss-20b-shaped fused MoE FC2 dgrad, an MXFP4 grouped GEMM with a dGLU and dual-quantization epilogue; campaign 20260923_120547, round 19; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260923_120547/rounds/round-19/agent.txt:21; :12; memory.md:430)
 - E9 [2026-10, gfx950, FlyDSL 0.3.2, N=?, the record lists driver runs (warmup 3, 20 iterations) and AKLR bench_cudagraph A/B runs and does not say which timed these two arms] one reducer polling all split partials with the volatile aux bit set (`sc0 sc1`): m=8–112 at 10.3–15.1 µs, suite median 0.2884 ms; the same reducer without it: m=8 5.150, 24 6.138, 40 7.483, 64 7.970, 80 8.968, 96 9.412, 112 8.646 µs, suite median 0.2234 ms; per-M times with the bit set are not recorded (gemm_n144_k7168 forge run, iter 6; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n144_k7168/forge_experiments/lessons/iter_006.md:22; :25; distill note /workspace/code/gpt_oss_docker/work/sikl/kb_evidence/sources/k3_distill/gemm_n144_k7168.distill.md:13)
-- E10 [2026-10, gfx950, FlyDSL 0.3.2, N=?, the agent's warm-cache timer, medians] a distributed split-K fold (every split waits for all arrival flags, then sums its slice): with a barrier after the arrival wait and another before the flag clear, 14.90 µs at m=112; two earlier versions without them hung to the poll timeout, 1062 µs at m=112 and 10573 µs at m=893 (gemm_n2112_k7168 forge run, iter 3; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n2112_k7168/forge_experiments/lessons/iter_003.md:88; :78)
 - E11 [2026-09, gfx950, FlyDSL ?, N=?, correctness bisect probe (`_kyle_r50_corr.py`); wrong outputs bitwise repeatable] a three-slot A ring whose rotation put the role with the base pre-decremented by a K block on the leaf at LDS offset 0: SNR 55.535 → 14.8 dB, exactly 512 of 2048 256×256 blocks wrong (one tile index per workgroup), `block_rel_max` 1.25; with the period-4 slot table ((0,1),(2,1),(0,2),(1,2)) 55.535 dB and `|C|sum` bitwise equal to the baseline (MXFP4 dense NT GEMM, whole-loop kernel; campaign 20260911_112823, round 10; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260911_112823/rounds/round-10/agent.txt:16)
 - E12 [2026-10, gfx950, FlyDSL ?, N=?, correctness probe on the campaign's shapes] a barrier-free three-slot rotation, static per tile: rel 8e-4, M rows 0..31 of every tile wrong in all N columns (wave 0's first M0 window, 4096 B); slot pairs (0,1), (0,2), (1,2) passed and (1,0), (2,1), (2,0) failed (MXFP4 dense dgrad/wgrad GEMM, training shapes; campaign 20261010_100506, round 12; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20261010_100506/rounds/round-12/agent.txt:13; :15)
 - E13 [2026-09, gfx950, FlyDSL ?, N=1, operator-level score of the MoE bench (`_bench_moe_ep4.py`, noise 0.2%), arms in the same period on the same GPU, one reading each for HEAD and the descriptor arm] the bound `(packed_row >= 0) & (row < sorted_len)` in the buffer descriptor (`num_records_bytes`) 1.13583 against unbounded HEAD 1.13511; the same bound as a software predicate in the store loop 1.10337 / 1.10294 / 1.10228 (1.1029), which the campaign goal's ruler rules give as the reading with debug instrumentation in place; the descriptor arm also read 1.102 with the instrumentation in; no reading of the predicate without it is recorded. The same note, those ruler rules and the fault-attribution note put the 1.1029 → 1.1358 gap on the instrumentation's host overhead; the goal's bounds rule and myskill charge it to the predicate (GLM-5.2 TP4/EP4 MoE operator, the quantization scale scatter; local:/workspace/code/gpt_oss_docker/.claude/memory/project_glm52_moe_rowinv_oob.md:110; :111; /workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260912_145335/goal.md:67; :65; :52; /workspace/code/gpt_oss_docker/.claude/memory/reference_gpu_fault_attribution.md:93; /workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/04-race-vmcnt-correctness.md:348; /workspace/code/gpt_oss_docker/myskill/optimizer/00-decision-index.md:778)
@@ -252,3 +259,6 @@ sits in the directory of the line's `local:` path.
 - E17 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only, `21_final_isa.s`] 8 row loads under per-row `if`: 8 `s_and_saveexec` / `s_cbranch_execz` blocks, each load followed by `s_waitcnt vmcnt(0)` before the next branch; the same loads with an out-of-range offset selected: 8 `buffer_load_dword` back to back, then `vmcnt(6)`…`vmcnt(0)` (local:/shared_nfs/kyle/moe/kf/runs/tp8_bw_m/knowledge_patch_v2/probe/guard_probe.py)
 - E18 [2026-10, gfx950, FlyDSL 0.3.2, N=?, per-kernel Kineto median, 1 GiB read flush before each call] a fused MoE sort + quant kernel prefetching 8 rows per thread at 40 / 64 / 112 tokens: loads guarded by per-row `if` 14.26 / 15.96 / 18.32 µs, unguarded 9.52 / 10.34 / 10.64, out-of-range offset for missing rows 9.16 / 10.22 / 10.48 (896 experts, top-16, model dim 3584; local:/shared_nfs/kyle/moe/kf/runs/tp8_bw_m/workspace/forge_experiments/lessons/iter_002.md:17)
 - E19 [2026-10, gfx950, FlyDSL 0.3.2, N=1, one run] a scatter fused into a MoE sorting kernel, storing through a max-size descriptor with `buffer_store(mask=)`: GPU memory fault, a write to a read-only page; the same kernel with an out-of-range element index instead ran and matched (max_diff 0) (fused MoE EP8 prefill, n_tokens 9397 and 16384; local:/shared_nfs/kyle/moe/kf/runs/ep8_cmp/workspace/forge_experiments/lessons/iter_018.md:11; :34)
+- E21 [2026-10, gfx950, FlyDSL 0.3.2, N=1, single observation, the fix session's correctness check] `_pack16e` reading MFMA results through inline-asm `v_max3_f32` / `v_max_f32_e64`, once the pack ran straight after the main loop: about 1.5% of elements wrong, off by exact powers of two; the same max written as `math_d.absf` + `arith.MaxNumFOp` compiled to `v_max3_f32` with the wait states and passed (bf16 split-K GEMM n6144 k16384; local:/shared_nfs/kyle/moe/k3six/fix/gemm_l_session.md:13; commit af3ec32 in local:/shared_nfs/kyle/moe/k3six/runs/gemm_l_fixwork/workspace, kernel.py comment "plain ops, not inline asm")
+- E22 [2026-10, gfx950, FlyDSL 0.3.2, N=?, the campaign's stress test: CU-masked streams of 16/32/64/128 CUs and a second launch beside the kernel] splits that polled flags and planes up to `_MAX_POLLS`, then wrote NaN: up to 4.7 M NaN at m=256 and m=512, calls of up to 140 ms on 16 CUs; the arrival-fold rewrite passed every mask (bf16 split-K GEMM n6144 k16384; local:/shared_nfs/kyle/moe/k3six/fix/gemm_l_session.md:19; local:/workspace/code/gpt_oss_docker/.claude/memory/project_k3_six_remaining.md:122)
+- E23 [2026-10, gfx950, FlyDSL 0.3.2, N=340 launches, ordering test: two input sets alternating, full, 64-CU and 16-CU streams, a second launch of the kernel alongside] the arrival fold: 0 differing launches of 340; with the partial stores' `sc0 sc1` removed, every launch differed; without the `vmcnt(0)` before the counter, or without the fold loads' cache bits, no launch differed (bf16 split-K GEMM n6144 k16384; local:/shared_nfs/kyle/moe/k3six/fix/gemm_l_session.md:15)
