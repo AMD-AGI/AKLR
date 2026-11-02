@@ -164,7 +164,8 @@
       "scalars": {
         "routed_scaling_factor": 2.5
       },
-      "accuracy": "failed"
+      "accuracy": "passed",
+      "speedup": 1.196
     }
   ],
   "layout_variants": {
