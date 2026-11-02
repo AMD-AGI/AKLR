@@ -196,7 +196,9 @@ def case(monkeypatch):
 
 
 def run(case):
-    return _around(adapter._gdn_forward)(case.stock, case.module, case.hidden, case.batch)
+    return _around("sglang.srt.models.qwen3_5.Qwen3_5GatedDeltaNet.forward", adapter._gdn_forward)(
+        case.stock, case.module, case.hidden, case.batch
+    )
 
 
 def untouched(case):

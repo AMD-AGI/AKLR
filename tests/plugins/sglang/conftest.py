@@ -12,6 +12,8 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
+from aklr.plugins.sglang import stats
+
 
 @dataclass(frozen=True, eq=False)
 class UnreducedOutput:
@@ -274,3 +276,14 @@ def sglang(monkeypatch):
         module.__dict__.update(attributes)
         monkeypatch.setitem(sys.modules, name, module)
     return state
+
+
+@pytest.fixture(autouse=True)
+def fresh_stats(monkeypatch, tmp_path):
+    """Empty route statistics for each test, exported to its own directory."""
+    monkeypatch.setattr(stats, "_counts", stats.Counter())
+    monkeypatch.setattr(stats, "_details", {})
+    monkeypatch.setattr(stats, "_devices", {})
+    monkeypatch.setattr(stats, "_info", {})
+    monkeypatch.setenv("AKLR_EXPORT_DIR", str(tmp_path))
+    return tmp_path

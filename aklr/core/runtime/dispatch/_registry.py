@@ -16,7 +16,7 @@ from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.spec import CONTRACT_ID_PATTERN, ContractId
 from aklr.core.platform.device import DeviceTarget
-from aklr.core.platform.env import ENV_DISABLE, RuntimeEnv
+from aklr.core.platform.env import ENV_DISABLE, NAMESPACES, RuntimeEnv
 from aklr.core.platform.toolchain import unmet_requirement
 from aklr.core.runtime import LoadError
 from aklr.core.runtime.builder import BuilderRegistry, BuildError
@@ -77,15 +77,23 @@ class DispatcherRegistry:
             for contract_id in runtime_env.disabled_contracts
             if not CONTRACT_ID_PATTERN.fullmatch(contract_id)
         )
-        if malformed_ids:  # every AKLR_DISABLE item but '1' and '0' is a contract id
-            raise LoadError(f"{ENV_DISABLE}: expected '1', '0' or contract ids, got {malformed_ids}")
+        if malformed_ids:  # every other AKLR_DISABLE item is a contract id
+            raise LoadError(
+                f"{ENV_DISABLE}: expected '1', '0', contract ids (name@major.minor), "
+                f"namespaces {list(NAMESPACES)} or backend names, got {malformed_ids}"
+            )
         for contract in ContractRegistry.default().contracts():
             self.dispatcher(contract)
         registered_contract_ids = frozenset(self._dispatchers)
         disabled_contract_ids = (
             registered_contract_ids
             if runtime_env.is_all_disabled
-            else runtime_env.disabled_contracts & registered_contract_ids
+            else (runtime_env.disabled_contracts & registered_contract_ids)
+            | {
+                contract_id
+                for contract_id, dispatcher in self._dispatchers.items()
+                if runtime_env.is_package_disabled(dispatcher.contract.op_package)
+            }
         )
         live_contracts = {
             contract_id: dispatcher.contract
@@ -115,7 +123,7 @@ class DispatcherRegistry:
                 has_baseline = seam.baseline_of(contract) is not None
             except (ImportError, seam.RouteError) as e:
                 raise LoadError(f"{contract_id}: its baseline: {e}") from e
-            min_speedups[contract_id] = runtime_env.min_speedup if has_baseline else 0
+            min_speedups[contract_id] = runtime_env.min_speedup_of(contract.op_package) if has_baseline else 0
         device = target = None
         if schemas or (runtime_env.is_export_enabled and live_contracts):
             device, target = self._probe_device()
@@ -185,6 +193,12 @@ class DispatcherRegistry:
             n_skipped,
             "not probed" if target is None else target,
         )
+        for contract_id, contract in sorted(live_contracts.items()):
+            if contract.op_package.startswith("aklr.plugins."):
+                table = tables.get(contract_id)
+                n = 0 if table is None else len(table.runnables)
+                why = "" if n else f" ({FallbackReason.NO_SCHEMA.value})"
+                _LOGGER.info("plugin op %s: %d points served%s", contract_id, n, why)
 
     def init_once(self) -> None:
         """``init`` unless ``is_initialized``: for hosts that may start twice (the sglang plugin)."""

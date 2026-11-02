@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
+import dataclasses
 import inspect
+import sys
 import textwrap
+import types
 
 import pytest
 import torch
@@ -111,6 +114,30 @@ class TestRoute:
 class TestProxy:
     """A backend entry point proxied by ``aklr_proxy`` falls back to its own body."""
 
+    def test_another_version_keeps_its_body_unless_strict(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An entry point the route no longer describes raises under ``strict``; otherwise it
+        keeps its own body and is named, while one the route describes is proxied."""
+        aklr.ops.load_routes()
+        stale, current = "aiter.ops.mhc.mhc_post", "aiter.ops.mhc.mhc_pre"
+        declared = route_for(current).declared
+        described = types.FunctionType(declared.__code__, declared.__globals__, "mhc_pre")
+        entries = {stale: _renamed, current: described}
+
+        def import_entry(api: str):
+            if api not in entries:
+                raise ImportError(api)
+            return entries[api]
+
+        monkeypatch.setattr(seam, "import_entry", import_entry)
+        with pytest.raises(RouteError, match="no longer describes the entry point"):
+            seam.aklr_proxy("aiter")
+        caller = types.ModuleType("aiter_caller")
+        caller.mhc_post, caller.mhc_pre = _renamed, described
+        monkeypatch.setitem(sys.modules, caller.__name__, caller)
+        assert seam.aklr_proxy("aiter", strict=False) == [stale]
+        assert caller.mhc_post is _renamed
+        assert caller.mhc_pre.aklr_proxy.backend_fn is described
+
     @pytest.mark.gpu
     @pytest.mark.parametrize("declined", [False, True], ids=["closed", "declined"])
     def test_falls_back_to_backend_body(
@@ -192,3 +219,24 @@ class TestBaseline:
         with pytest.raises(seam.NoBaselineError) as raised:
             backend_bind(contract, {})
         assert isinstance(raised.value, RouteError)
+
+    def test_route_of_another_version(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A route whose entry point the installed backend lacks, as one sglang version's
+        on another, is passed over for the next; with none left, its error is raised."""
+        case = OpCase.of("topk_transform_paged@1.0")
+        (route,) = seam.contract_routes(case.contract)
+        other = dataclasses.replace(route, api=f"{route.api}_of_another_sglang")
+        monkeypatch.setattr(seam, "contract_routes", lambda contract: (other, route))
+        missing, present = other.api, route.api
+
+        def import_entry(api: str):
+            if api == missing:
+                raise AttributeError(api)
+            return _opaque
+
+        monkeypatch.setattr(seam, "import_entry", import_entry)
+        call = case.call(case.inputs())
+        assert backend_bind(case.contract, call).name == present
+        monkeypatch.setattr(seam, "import_entry", lambda _: import_entry(missing))
+        with pytest.raises(seam.BackendNotLoadedError, match=missing):
+            backend_bind(case.contract, call)

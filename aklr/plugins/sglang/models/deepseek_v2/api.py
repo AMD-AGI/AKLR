@@ -900,18 +900,20 @@ def _moe_forward_normal(
     num_token_non_padded=None,
     use_vision_topk=False,
     return_moe_output=False,
+    leave_output_sum=False,
 ):
     """A DeepseekV2MoE's router, top-k and experts (the shared one among them) as one op
     call on hidden_states, in the layers the layer route leaves to sglang: the op of the
     experts' format (_moe_call); then forward_normal's end, sglang's post-experts
     all-reduce summing the output over the ranks unless a later step does
     (reduce_results)."""
+    # leave_output_sum (later 0.5.22 builds) asks for the MoEOutput pieces too
     if _forward_normal_falls_back(
         self,
         skip_shared_experts,
         num_token_non_padded,
         use_vision_topk,
-        return_moe_output,
+        return_moe_output or leave_output_sum,
     ):
         return FallbackReason.OUT_OF_CONTRACT
     call = _moe_call(self, hidden_states)

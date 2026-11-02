@@ -1,0 +1,332 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the SGLang-AMD-Mono project
+# Adapted from sgl-project/sglang#43984 at 134919476c (kernels/ops/mono/gfx950/
+# deepseek_v41/indexer/runner.py)
+"""K2i's host side on one rank (``DSV41MonoRunner.enable_k2i``): graph-safe buffers, builds, walk
+plans and an index source's selection (``full``, ``producer`` with candidate blocks, or ``reindex``
+of them) into SGLang's ``sparse_raw_indices`` / ``sparse_page_indices``, -1 padded."""
+
+from __future__ import annotations
+
+import torch
+from sglang.kernels.ops.attention.dsv4.candidate_blocks_hip import (
+    select_candidate_blocks_hip,
+    topk_transform_paged_hip,
+)
+
+from . import index_plan as ip
+from .candidate_table import PLANE_ROWS, map_compact_selection, reindex_table
+from .k2i import MAX_ROWS, build_k2i
+from .walk_plan import fill_walk_plan_device, new_plan
+
+# The SGLang names this module reads (test/unit/test_contract.py pins them)
+SGLANG_READS = {
+    "kernels/ops/attention/dsv4/candidate_blocks_hip.py": (
+        "select_candidate_blocks_hip",
+        "topk_transform_paged_hip",
+        "select_candidate_blocks_hip(logits)",
+        "select_candidate_blocks_hip(seq_lens)",
+        "select_candidate_blocks_hip(topk_blocks)",
+        "select_candidate_blocks_hip(block_size)",
+        "topk_transform_paged_hip(scores)",
+        "topk_transform_paged_hip(seq_lens)",
+        "topk_transform_paged_hip(page_table)",
+        "topk_transform_paged_hip(page_indices)",
+        "topk_transform_paged_hip(page_size)",
+        "topk_transform_paged_hip(raw_indices)",
+        # CandidateBlocks: the candidate source's blocks of each row
+        "ids",
+    ),
+}
+
+COMPACT = ip.TOPK_BLOCKS * ip.BLOCK_ROWS  # a REINDEX row's candidate columns
+KINDS = ("full", "producer", "reindex")
+
+
+def _roundup(x: int, m: int) -> int:
+    return -(-x // m) * m
+
+
+def check_plane(*, payload: torch.Tensor, scale: torch.Tensor) -> None:
+    """Raise unless the index plane is SGLang's split FP4 layout of 64-row pages:
+    payload [pages, 1, 4, 64, 16 B], scales [pages, 1, 4, 64]."""
+    u8 = payload.view(torch.uint8)
+    pages = scale.shape[0]
+    if not (
+        u8.is_contiguous()
+        and scale.is_contiguous()
+        and scale.dtype == torch.uint8
+        and u8.numel() == pages * 4 * PLANE_ROWS * 16
+        and scale.numel() == pages * 4 * PLANE_ROWS
+    ):
+        raise RuntimeError(
+            f"K2i index plane: payload {tuple(payload.shape)} {payload.dtype}, scales "
+            f"{tuple(scale.shape)} {scale.dtype}; want [pages, 1, 4, {PLANE_ROWS}, 16] "
+            f"and [pages, 1, 4, {PLANE_ROWS}] bytes"
+        )
+
+
+class K2iRunner:
+    """K2i on one device, for rows up to MAX_ROWS and column bounds up to
+    ``bound_max``."""
+
+    def __init__(self, device: torch.device, bound_max: int):
+        f32 = {"dtype": torch.float32, "device": device}
+        i32 = {"dtype": torch.int32, "device": device}
+        self.bound_max = _roundup(max(bound_max, COMPACT), ip.CHUNK)
+        self.ilog = torch.empty(MAX_ROWS * self.bound_max, **f32)
+        # a REINDEX layer's candidate blocks (newest last), their key table and
+        # the compact columns each row reads (``reindex_table``)
+        self.cand_ids = torch.empty(MAX_ROWS, ip.TOPK_BLOCKS, **i32)
+        self.cand_table = torch.empty(MAX_ROWS, ip.TOPK_BLOCKS, **i32)
+        self.cand_bound = torch.empty(MAX_ROWS, **i32)
+        # its top-k of the compact columns, as one page at slot 0: a column is its slot
+        self.compact_pos = torch.empty(MAX_ROWS, ip.TOPK, **i32)
+        self.compact_table = torch.zeros(MAX_ROWS, 1, **i32)
+        self.plans = {ratio: new_plan(device) for ratio in (1, 2)}
+        # owners[p - 1][t]: row t's request's first row, for p rows a request
+        t = torch.arange(MAX_ROWS)
+        self.owners = torch.stack([t // p * p for p in range(1, MAX_ROWS + 1)]).to(**i32)
+        self._kernels: dict = {}
+
+    def kernel(self, rows: int, page8: bool = False):
+        from ..runner import no_capture
+
+        key = (rows, page8)
+        if key not in self._kernels:
+            no_capture(f"K2i width {rows}" + (" (page 8)" if page8 else ""))
+            self._kernels[key] = build_k2i(rows, page8)
+        return self._kernels[key]
+
+    def walk_plan(self, *, ratio: int, bounds: torch.Tensor, rows: int, per_req: int) -> None:
+        """The step's FULL walk plan of compress ratio ``ratio`` from the rows'
+        device bounds: once a step and ratio, before its first FULL or producer
+        layer (each reads it)."""
+        fill_walk_plan_device(
+            bounds=bounds,
+            owners=self.owners[per_req - 1],
+            plan=self.plans[ratio],
+            rows=rows,
+        )
+
+    def select(
+        self,
+        *,
+        kind: str,
+        rows: int,
+        per_req: int,
+        ratio: int,
+        query: tuple,  # [rows, 32, 64] E2M1 pairs, [rows, 1, 4, 16, 4] E8M0, [rows, 32] bf16
+        plane: tuple,  # the layer's index plane (``check_plane``) and its page-8 flag
+        page_table: torch.Tensor,  # int32 [rows, pages] of 64-row pages
+        bounds: torch.Tensor,  # int32 [rows]: the columns each row sees
+        raw_out: torch.Tensor,  # int32 [rows, 512]: sparse_raw_indices
+        page_out: torch.Tensor,  # int32 [rows, 512]: sparse_page_indices
+        candidates=None,  # a REINDEX layer's: the producer's CandidateBlocks
+        table_ready: bool = False,  # a REINDEX layer: this step's candidate table is built
+    ):
+        """An index source's top-512 of each row (``kind`` in KINDS). A FULL or
+        producer layer reads the step's walk plan of ``ratio``; a producer returns
+        its candidate blocks, which the step's REINDEX layers take."""
+        assert kind in KINDS, kind
+        _check(
+            rows=rows,
+            per_req=per_req,
+            query=query,
+            page_table=page_table,
+            bounds=bounds,
+            raw_out=raw_out,
+            page_out=page_out,
+        )
+        inputs = {
+            "rows": rows,
+            "per_req": per_req,
+            "query": query,
+            "plane": plane,
+            "page_table": page_table,
+            "bounds": bounds,
+        }
+        if kind == "reindex":
+            compact, lens, ids = self.score_candidates(
+                candidates=candidates, table_ready=table_ready, **inputs
+            )
+            pos = self.compact_pos[:rows]
+            topk_transform_paged_hip(
+                scores=compact,
+                seq_lens=lens,
+                page_table=self.compact_table[:rows],
+                page_indices=pos,
+                page_size=COMPACT,
+                raw_indices=None,
+            )
+            map_compact_selection(
+                compact_pos=pos,
+                ids=ids,
+                page_table=page_table,
+                raw_out=raw_out,
+                page_out=page_out,
+            )
+            return None
+        logits = self.score(ratio=ratio, **inputs)
+        published = None
+        if kind == "producer":
+            published = select_candidate_blocks_hip(
+                logits=logits,
+                seq_lens=bounds,
+                topk_blocks=ip.TOPK_BLOCKS,
+                block_size=ip.BLOCK_ROWS,
+            )
+        topk_transform_paged_hip(
+            scores=logits,
+            seq_lens=bounds,
+            page_table=page_table,
+            page_indices=page_out,
+            page_size=PLANE_ROWS,
+            raw_indices=raw_out,
+        )
+        return published
+
+    def score(self, *, rows, per_req, ratio, query, plane, page_table, bounds) -> torch.Tensor:
+        """A FULL or producer layer's logits, [rows, width] f32, valid below each
+        row's bound; ``width`` is the page table's columns, as wide as SGLang's
+        logits for its top-k."""
+        width = min(page_table.shape[1] * PLANE_ROWS, self.bound_max)
+        # a page-table entry is 8 virtual 8-row pages (ishift 3)
+        self._score(
+            rows=rows,
+            query=query,
+            plane=plane,
+            plan=self.plans[ratio],
+            itab=page_table,
+            itab_stride=page_table.stride(0),
+            itab_len=page_table.shape[1],
+            ibatch=self.owners[per_req - 1],
+            ishift=3,
+            ibound=bounds,
+            lstride=width,
+            reindex=0,
+        )
+        return self.ilog[: rows * width].view(rows, width)
+
+    def score_candidates(
+        self,
+        *,
+        candidates,
+        rows,
+        per_req,
+        query,
+        plane,
+        page_table,
+        bounds,
+        table_ready=False,
+    ):
+        """A REINDEX layer's (compact [rows, COMPACT] f32 logits valid below ``lens``, lens [rows],
+        ids [rows, TOPK_BLOCKS]): ``ids`` is ``candidates.ids`` with the newest block last, column
+        j * 8 + i being row i of block ids[j]."""
+        if tuple(candidates.ids.shape) != (rows, ip.TOPK_BLOCKS):
+            raise RuntimeError(f"K2i: candidate blocks {tuple(candidates.ids.shape)} for {rows} rows")
+        owners = self.owners[per_req - 1]
+        ids, lens = self.cand_ids[:rows], self.cand_bound[:rows]
+        if not table_ready:
+            reindex_table(
+                ids=candidates.ids,
+                page_table=page_table,
+                owners=owners,
+                bounds=bounds,
+                ids_out=ids,
+                table=self.cand_table,
+                context=lens,
+            )
+        # a REINDEX launch takes its task from its CTA index, not a walk plan
+        self._score(
+            rows=rows,
+            query=query,
+            plane=plane,
+            plan=self.plans[1],
+            itab=self.cand_table,
+            itab_stride=ip.TOPK_BLOCKS,
+            itab_len=ip.TOPK_BLOCKS,
+            ibatch=owners,
+            ishift=0,
+            ibound=lens,
+            lstride=COMPACT,
+            reindex=1,
+        )
+        return self.ilog[: rows * COMPACT].view(rows, COMPACT), lens, ids
+
+    def _score(
+        self,
+        *,
+        rows,
+        query,
+        plane,
+        plan,
+        itab,
+        itab_stride,
+        itab_len,
+        ibatch,
+        ishift,
+        ibound,
+        lstride,
+        reindex,
+    ) -> None:
+        """The K2i launch (``k2i``'s arguments)."""
+        q_fp4, q_scale, weights = query
+        payload, scale, page8 = plane
+        self.kernel(rows, page8)(
+            q_fp4.data_ptr(),
+            q_scale.data_ptr(),
+            weights.data_ptr(),
+            payload.data_ptr(),
+            scale.data_ptr(),
+            plan.data_ptr(),
+            itab.data_ptr(),
+            itab_stride,
+            itab_len,
+            ibatch.data_ptr(),
+            ishift,
+            ibound.data_ptr(),
+            self.ilog.data_ptr(),
+            lstride,
+            reindex,
+            stream=torch.cuda.current_stream(),
+        )
+
+
+def _check(*, rows, per_req, query, page_table, bounds, raw_out, page_out) -> None:
+    """Raise unless a selection's tensors are the shapes K2i reads and writes."""
+    if not (0 < rows <= MAX_ROWS and rows % per_req == 0):
+        raise RuntimeError(f"K2i: {rows} rows, {per_req} a request")
+    q_fp4, q_scale, weights = query
+    if not (
+        q_fp4.is_contiguous()
+        and q_fp4.numel() == rows * ip.HEADS * ip.DIM // 2
+        and q_fp4.element_size() == 1
+        and q_scale.is_contiguous()
+        and q_scale.numel() == rows * 4 * 16 * 4
+        and tuple(weights.shape) == (rows, ip.HEADS)
+        and weights.dtype == torch.bfloat16
+        and weights.is_contiguous()
+    ):
+        raise RuntimeError(
+            f"K2i query: {tuple(q_fp4.shape)} {q_fp4.dtype}, scales "
+            f"{tuple(q_scale.shape)}, weights {tuple(weights.shape)} {weights.dtype}"
+        )
+    if not (
+        page_table.dtype == torch.int32
+        and page_table.dim() == 2
+        and page_table.stride(1) == 1
+        and page_table.shape[0] == rows
+        and bounds.dtype == torch.int32
+        and bounds.is_contiguous()
+        and bounds.shape[0] == rows
+    ):
+        raise RuntimeError(
+            f"K2i page table {tuple(page_table.shape)} {page_table.dtype}, "
+            f"bounds {tuple(bounds.shape)} {bounds.dtype}"
+        )
+    for name, t in (("raw", raw_out), ("page", page_out)):
+        if not (
+            t.dtype == torch.int32 and t.stride(1) == 1 and t.stride(0) == ip.TOPK and t.shape[0] == rows
+        ):
+            raise RuntimeError(f"K2i {name} indices: {tuple(t.shape)} {t.stride()} {t.dtype}")

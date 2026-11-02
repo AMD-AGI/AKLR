@@ -34,6 +34,7 @@ from aklr.core.runtime.dispatch import DispatcherRegistry, FallbackReason
 __all__ = [
     "OUT_MODES",
     "BackendCall",
+    "BackendNotLoadedError",
     "EnvAttr",
     "NoBaselineError",
     "Proxy",
@@ -74,6 +75,10 @@ class EnvAttr(NamedTuple):
 
 class RouteError(ValueError):
     pass
+
+
+class BackendNotLoadedError(RouteError):
+    """The route's entry point is not in the installed backend, e.g. another version's."""
 
 
 class RouteDeclinedError(ValueError):
@@ -141,7 +146,7 @@ class ProxyRoute:
         try:
             entry = import_entry(api)
         except (ImportError, AttributeError) as exc:
-            raise RouteError(f"{api}: backend not loaded") from exc
+            raise BackendNotLoadedError(f"{api}: backend not loaded") from exc
         proxy = getattr(entry, "aklr_proxy", None)
         backend_fn = entry if proxy is None else proxy.backend_fn
         bind_fn = self.bind_fn(backend_fn)
@@ -726,10 +731,12 @@ def _make_binder(
     )
 
 
-def aklr_proxy(package: str | None = None) -> None:
+def aklr_proxy(package: str | None = None, *, strict: bool = True) -> list[str]:
     """Replace each routed entry point under ``package`` (all if None) that imports with
-    its proxy, under every module-level name it is bound to."""
-    stand_ins = {}
+    its proxy, under every module-level name it is bound to. Not ``strict``, an entry point
+    the route no longer describes (another backend version's) keeps its own body; returns
+    those entry points' names."""
+    stand_ins, skipped = {}, []
     for route in routes():
         if package is not None and not route.api.startswith(f"{package}."):
             continue
@@ -738,10 +745,14 @@ def aklr_proxy(package: str | None = None) -> None:
         except (ImportError, AttributeError):  # not in this environment
             continue
         if not hasattr(entry, "aklr_proxy"):
-            stand_ins[id(entry)] = (
-                entry,
-                route.proxy(entry),
-            )  # entry kept: ids stay unique
+            try:
+                proxy = route.proxy(entry)
+            except RouteError:
+                if strict:
+                    raise
+                skipped.append(route.api)
+                continue
+            stand_ins[id(entry)] = (entry, proxy)  # entry kept: ids stay unique
     # The names `from x import entry` bound before now, including the entry module's own.
     for module in list(sys.modules.values()):
         namespace = getattr(module, "__dict__", None)
@@ -750,6 +761,7 @@ def aklr_proxy(package: str | None = None) -> None:
         for name, value in list(namespace.items()):
             if id(value) in stand_ins:
                 namespace[name] = stand_ins[id(value)][1]
+    return skipped
 
 
 # --- reverse: the bench's baseline --------------------------------------------
@@ -804,7 +816,8 @@ def baseline_of(contract: OpContract) -> str | None:
 
 def backend_bind(contract: OpContract, call: CallArgs) -> BackendCall:
     """``call`` (api param names and spellings) for the defined baseline: the custom
-    baseline (called with the api's params), else the first route that binds."""
+    baseline (called with the api's params), else the first route that binds; one whose
+    entry point the installed backend lacks (another version's) does not."""
     fn = custom_baseline(contract)
     if fn is not None:
         name = f"{fn.__module__}.{fn.__qualname__}"
@@ -812,13 +825,13 @@ def backend_bind(contract: OpContract, call: CallArgs) -> BackendCall:
     found = contract_routes(contract)
     if not found:
         raise NoBaselineError(f"{contract.contract_id}: no baseline")
-    declined = None
+    unbound = None
     for route in found:
         try:
             return route.backend_bind(contract, call)
-        except RouteDeclinedError as exc:
-            declined = declined or exc
-    raise declined
+        except (RouteDeclinedError, BackendNotLoadedError) as exc:
+            unbound = unbound or exc
+    raise unbound
 
 
 def backend_call(  # structure: allow S2 reads the module route registry; OpContract cannot own it without an import cycle

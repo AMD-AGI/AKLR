@@ -1305,6 +1305,7 @@ FORWARD_NORMAL_ARGUMENT_FALLBACKS = {
     "padded-rows-masked": {"num_token_non_padded": torch.tensor(3)},
     "vision-topk": {"use_vision_topk": True},
     "output-in-pieces": {"return_moe_output": True},
+    "output-sum-left": {"leave_output_sum": True},
 }
 
 
@@ -1420,9 +1421,22 @@ ROUTES = {
 
 @pytest.mark.parametrize("release", ["0.5.20", "0.5.21", "0.5.22", "0.5.23"])
 def test_each_target_has_one_route_on_0_5_22_and_none_on_another_sglang(release):
+    """These op packages' routes; a model backend's (deepseek_v4) are its own tests'."""
+    packages = {
+        m.__name__
+        for m in (
+            qwen3_5,
+            qwen2_moe,
+            norms,
+            dsa_backend,
+            deepseek_v2,
+            minimax_m2,
+            eagle,
+        )
+    }
     routes = {}
-    for target, versions, route in hook._ROUTES:
-        if versions.contains(release):
+    for target, versions, route, _ in hook._ROUTES:
+        if route.__module__ in packages and versions.contains(release):
             routes.setdefault(target, []).append(route)
     expected = {target: [route] for target, route in ROUTES.items()}
     assert routes == (expected if release == "0.5.22" else {})

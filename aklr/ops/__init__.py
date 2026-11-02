@@ -21,9 +21,10 @@ __all__ = [
 ]
 
 
-def load_routes() -> None:
+def load_routes(*, strict: bool = True) -> list[str]:
     """Import every op's ``api`` module so its routes register, then proxy aiter's routed
-    entry points."""
+    entry points; not ``strict``, those of another aiter version keep their own body
+    (returned, by name)."""
     from aklr.core.contract.locate import op_module
     from aklr.core.contract.registry import ContractRegistry
     from aklr.core.runtime.seam import aklr_proxy
@@ -31,4 +32,4 @@ def load_routes() -> None:
     contracts = ContractRegistry.default().contracts()
     for package in sorted({c.op_package for c in contracts}):
         op_module(package, "api")
-    aklr_proxy("aiter")
+    return aklr_proxy("aiter", strict=strict)

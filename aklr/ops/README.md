@@ -346,4 +346,5 @@ Read only by `RuntimeEnv()` in `aklr/core/platform/env.py`.
 | `AKLR_EXPORT` | `1`, `0`, unset | record calls; any other value is an error |
 | `AKLR_EXPORT_DIR` | a path | the export directory, default `./aklr_export`; setting it alone records nothing |
 | `AKLR_MEASURED_DIR` | a path | a directory laid out like the checkout whose schemas replace the committed ones they name; set by the e2e stage for its child processes |
-| `AKLR_SGLANG_PLUGIN` | `1`, `0`, unset | `1`: the sglang plugin hooks sglang's layers to its ops (`aklr/plugins/README.md`); any other value is an error |
+| `AKLR_SGLANG_PLUGIN` | `1`, `0`, unset | `1`: the sglang plugin hooks sglang's layers to its ops and registers its model backends (`aklr/plugins/README.md`); any other value is an error |
+| `AKLR_PLUGIN_MIN_SPEEDUP` | a number | `AKLR_MIN_SPEEDUP` for plugin ops (`aklr.plugins.*`) alone; unset: `AKLR_MIN_SPEEDUP` |

@@ -15,19 +15,24 @@ __all__ = [
     "ENV_KERNEL_CACHE_DIR",
     "ENV_MEASURED_DIR",
     "ENV_MIN_SPEEDUP",
+    "ENV_PLUGIN_MIN_SPEEDUP",
     "ENV_SGLANG_PLUGIN",
+    "NAMESPACES",
     "RuntimeEnv",
 ]
 
 # RuntimeEnv() reads them; e2e writes them for its child processes
 ENV_DISABLE = "AKLR_DISABLE"
 ENV_MIN_SPEEDUP = "AKLR_MIN_SPEEDUP"
+ENV_PLUGIN_MIN_SPEEDUP = "AKLR_PLUGIN_MIN_SPEEDUP"
 ENV_KERNEL_CACHE_DIR = "AKLR_KERNEL_CACHE_DIR"
 ENV_EXPORT = "AKLR_EXPORT"
 ENV_EXPORT_DIR = "AKLR_EXPORT_DIR"
 ENV_MEASURED_DIR = "AKLR_MEASURED_DIR"
 ENV_SGLANG_PLUGIN = "AKLR_SGLANG_PLUGIN"
 DEFAULT_EXPORT_DIR = "aklr_export"
+# op package namespaces AKLR_DISABLE also takes: every contract of the ops under one
+NAMESPACES = ("aklr.ops", "aklr.plugins")
 
 
 class RuntimeEnv:
@@ -35,12 +40,19 @@ class RuntimeEnv:
     ``""`` is unset, a bad value raises ``ValueError`` naming the variable."""
 
     def __init__(self) -> None:
-        # AKLR_DISABLE: "1" all, "0" or unset none, else contract ids the runtime checks
+        # AKLR_DISABLE: "1" all, "0" or unset none, else contract ids (name@major.minor) the
+        # runtime checks, op package namespaces (NAMESPACES: every op under one) and the
+        # names of a plugin's model backends (e.g. a monokernel spec's), which it checks
         disable = os.environ.get(ENV_DISABLE) or "0"
         self.is_all_disabled = disable == "1"
-        self.disabled_contracts: frozenset[str] = (
+        items = (
             frozenset() if disable in ("0", "1") else frozenset(item.strip() for item in disable.split(","))
         )
+        self.disabled_namespaces: frozenset[str] = items & frozenset(NAMESPACES)
+        self.disabled_names: frozenset[str] = frozenset(
+            item for item in items - self.disabled_namespaces if "@" not in item
+        )
+        self.disabled_contracts: frozenset[str] = items - self.disabled_namespaces - self.disabled_names
         export = os.environ.get(ENV_EXPORT) or "0"
         if export not in ("0", "1"):
             raise ValueError(f"{ENV_EXPORT}={export!r}: expected '1' or '0'")
@@ -59,6 +71,15 @@ class RuntimeEnv:
             raise ValueError(f"{ENV_MIN_SPEEDUP}={speedup!r}: {e}") from e
         if not math.isfinite(self.min_speedup):
             raise ValueError(f"{ENV_MIN_SPEEDUP}={speedup!r}: expected a finite number")
+        # AKLR_PLUGIN_MIN_SPEEDUP: the same for plugin ops (aklr.plugins.*), without
+        # touching aklr.ops; unset, plugin ops share AKLR_MIN_SPEEDUP
+        speedup = os.environ.get(ENV_PLUGIN_MIN_SPEEDUP) or str(self.min_speedup)
+        try:
+            self.plugin_min_speedup = float(speedup)
+        except ValueError as e:
+            raise ValueError(f"{ENV_PLUGIN_MIN_SPEEDUP}={speedup!r}: {e}") from e
+        if not math.isfinite(self.plugin_min_speedup):
+            raise ValueError(f"{ENV_PLUGIN_MIN_SPEEDUP}={speedup!r}: expected a finite number")
         # AKLR_MEASURED_DIR: schemas laid out as the checkout that replace the committed
         # ones they name; validation's e2e serves its bench's measurements through it
         directory = os.environ.get(ENV_MEASURED_DIR)
@@ -71,3 +92,13 @@ class RuntimeEnv:
             self.build_cache_path = Path(directory, "aklr", "kernels").absolute()
         elif directory := os.environ.get("HOME"):
             self.build_cache_path = Path(directory, ".cache", "aklr", "kernels").absolute()
+
+    def is_package_disabled(self, op_package: str) -> bool:
+        """Whether AKLR_DISABLE names ``op_package``'s namespace."""
+        return any(op_package.startswith(f"{ns}.") for ns in self.disabled_namespaces)
+
+    def min_speedup_of(self, op_package: str) -> float:
+        """The least speedup ``op_package``'s kernels serve at."""
+        if op_package.startswith("aklr.plugins."):
+            return self.plugin_min_speedup
+        return self.min_speedup
