@@ -383,6 +383,9 @@ def _run_profile() -> int:
 # A stream limited to fewer CUs than a launch has workgroups: workgroups that wait for each other cannot all run.
 STRESS_CUS = (16, 64)
 STRESS_TRIES = 3
+# Under bounded determinism two runs may differ in the last bits (atomics land in another order): a difference counts
+# against the schema's violation fraction only beyond this many output ulps of the element plus the output's mean.
+STRESS_BOUNDED_ULPS = 8
 
 
 def _output_names() -> list[str]:
@@ -445,18 +448,36 @@ def _stress_conditions() -> dict:
     return conditions
 
 
-def _same_bits(a, b) -> bool:
+def _compare_spec() -> tuple[str, float]:
+    compare = json.loads(_candidate_text()[0]).get("compare") or {}
+    return compare.get("determinism", "bitwise"), float(compare.get("max_violation_fraction", 0.0))
+
+
+def _agrees(stressed, alone, determinism: str, max_fraction: float) -> bool:
+    """Whether an output under contention agrees with the output alone as the schema's determinism asks: bit for bit
+    under ``bitwise``; under ``bounded``, no value turned non-finite and all but ``max_fraction`` of the elements
+    within a few ulps."""
     import torch
 
-    return torch.equal(a.contiguous().view(torch.uint8), b.contiguous().view(torch.uint8))
+    if determinism == "bitwise" or not alone.is_floating_point():
+        return torch.equal(stressed.contiguous().view(torch.uint8), alone.contiguous().view(torch.uint8))
+    unit = torch.finfo(alone.dtype).eps / 2
+    stressed, alone = stressed.double(), alone.double()
+    finite = torch.isfinite(alone)
+    if bool((finite & ~torch.isfinite(stressed)).any()):
+        return False
+    bound = STRESS_BOUNDED_ULPS * unit * (alone.abs() + alone[finite].abs().mean())
+    off = finite & ((stressed - alone).abs() > bound)
+    return float(off.double().mean()) <= max_fraction
 
 
 def _run_stress(device: str = "cuda") -> int:
-    """Every workload under each stress condition, against the candidate's own result alone, bit for bit. AKLR's
-    validate runs a kernel with the GPU to itself, so it passes a kernel that is right only while every workgroup of a
-    launch is resident at once, and one whose concurrent calls share scratch memory."""
+    """Every workload under each stress condition, against the candidate's own result alone, as the schema's
+    determinism asks. AKLR's validate runs a kernel with the GPU to itself, so it passes a kernel that is right only
+    while every workgroup of a launch is resident at once, and one whose concurrent calls share scratch memory."""
     candidate = _load_candidate()
     outputs = _output_names()
+    determinism, max_fraction = _compare_spec()
     conditions = _stress_conditions()
     failed = []
     for case_id, call in _calls(device).items():
@@ -465,7 +486,12 @@ def _run_stress(device: str = "cuda") -> int:
         for label, launch in conditions.items():
             for _ in range(STRESS_TRIES):
                 results = launch(candidate, call, alone)
-                if not all(_same_bits(result[name], alone[name]) for result in results for name in alone):
+                agree = (
+                    _agrees(r[name], alone[name], determinism, max_fraction)
+                    for r in results
+                    for name in alone
+                )
+                if not all(agree):
                     failed.append(f"{case_id} {label}")
                     break
     for failure in failed:

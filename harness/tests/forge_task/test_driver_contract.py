@@ -401,3 +401,22 @@ def test_stress_passes_one_answer_and_names_the_workload_that_differs(real_run, 
     out = capsys.readouterr().out
     assert f"differs from the call alone: {schema.workloads[0].case_id} drifting" in out
     assert out.strip().endswith("stress: FAIL")
+
+
+def test_stress_compares_as_the_schemas_determinism_asks(run):
+    """Bitwise wants every bit; bounded lets atomics reorder the last bits but not a new NaN or a wrong value."""
+    torch = pytest.importorskip("torch")
+    driver = _import_driver(run)
+    alone = torch.linspace(1, 64, 4096, dtype=torch.bfloat16)
+    one_ulp = alone.clone()
+    one_ulp.view(torch.int16)[::50] += 1  # the next bf16 value up: one ulp
+    assert not driver._agrees(one_ulp, alone, "bitwise", 0.0)
+    assert driver._agrees(one_ulp, alone, "bounded", 0.001)
+    nan = one_ulp.clone()
+    nan[7] = float("nan")
+    assert not driver._agrees(nan, alone, "bounded", 0.001)
+    wrong = alone.clone()
+    wrong[:100] += 8
+    assert not driver._agrees(wrong, alone, "bounded", 0.001)
+    ids = torch.arange(16)
+    assert driver._agrees(ids, ids.clone(), "bounded", 0.001)

@@ -83,8 +83,8 @@ python -m kernelforge.cli forge-finalize --workspace $W --gpu 0 --model claude-o
   --lint "python -m ruff check --no-fix --config $A/pyproject.toml" \
   --lint "python -m ruff format --check --config $A/pyproject.toml" \
   --review-guide $A/.claude/skills/flydsl-kernel-code-cleanup/SKILL.md
-# The same answer on a stream limited to a few CUs and beside a second call of its own: a kernel whose
-# workgroups wait for each other does not give it, and validate, which gives a kernel the GPU alone, cannot tell
+# The same answer, as the schema's determinism asks, on a stream limited to a few CUs and beside a second call of
+# its own: a kernel whose workgroups wait for each other does not give it, and validate cannot tell
 HIP_VISIBLE_DEVICES=0 python $W/driver.py --stress
 # What the FlyDSL skill should learn from the run, as a patch for you to review
 python -m kernelforge.cli forge-distill --workspace $W --model claude-opus-5-5 \
