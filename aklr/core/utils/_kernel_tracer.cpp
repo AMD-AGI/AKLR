@@ -8,7 +8,8 @@
 // only its launches' records.
 //
 // shortcut: stands in for torch.profiler while torch's Kineto traces ROCm with roctracer (torch
-// 2.11); torch >= 2.12's Kineto traces with rocprofiler-sdk, and testing.kernel_tracer warns there.
+// 2.11); torch >= 2.12's Kineto traces with rocprofiler-sdk, and testing.kernel_tracer warns there
+// from rocprofiler-sdk 1.4.2 on, which fixed ROCM-29087.
 
 #include <rocprofiler-sdk/external_correlation.h>
 #include <rocprofiler-sdk/registration.h>
@@ -46,13 +47,6 @@ class KernelTracer {
         // free one of 4 busy-waiting handler threads releases. Its legacy queue intercept does not.
 #if ROCPROFILER_SDK_VERSION < 10402
         setenv("ROCPROFILER_QUEUE_INTERPOSITION", "0", 1);
-#else
-        if (PyErr_WarnEx(PyExc_UserWarning,
-                         "rocprofiler-sdk " ROCPROFILER_SDK_VERSION_STRING
-                         " fixed ROCM-29087: delete the WORKAROUND in aklr/core/utils/_kernel_tracer.cpp",
-                         1) < 0) {
-            throw pybind11::error_already_set();
-        }
 #endif
         // rocprofiler-sdk takes a tool only before the ROCm runtime initializes
         check(rocprofiler_force_configure(&KernelTracer::tool), "configure before the first GPU call");
@@ -167,6 +161,8 @@ class KernelTracer {
 }  // namespace
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+    m.attr("rocprofiler_sdk_version") = pybind11::make_tuple(
+        ROCPROFILER_SDK_VERSION_MAJOR, ROCPROFILER_SDK_VERSION_MINOR, ROCPROFILER_SDK_VERSION_PATCH);
     m.def("configure", [] { KernelTracer::instance().configure(); });
     m.def("start", [] { KernelTracer::instance().start(); });
     m.def("push", [] { KernelTracer::instance().push(); });

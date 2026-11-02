@@ -28,26 +28,37 @@ def kernel_tracer():
     takes a tool only then."""
     # shortcut: a hand-made rocprofiler-sdk tool, as torch 2.11's Kineto traces ROCm with roctracer
     # and at times records none of a replay's kernels; on torch >= 2.12, whose Kineto traces with
-    # rocprofiler-sdk, trace bench_cudagraph's replays with torch.profiler and delete this tracer
-    if torch.__version__ >= (2, 12):
-        warnings.warn(
-            f"torch {torch.__version__}'s Kineto traces ROCm with rocprofiler-sdk: trace bench_cudagraph's "
-            "replays with torch.profiler and delete aklr/core/utils/_kernel_tracer.cpp",
-            stacklevel=2,
-        )
+    # rocprofiler-sdk, and rocprofiler-sdk >= 1.4.2 (ROCm 10.2), which fixed ROCM-29087, trace
+    # bench_cudagraph's replays with torch.profiler and delete this tracer
     from torch.utils.cpp_extension import ROCM_HOME, load
 
     from aklr.core.platform.env import RuntimeEnv
 
     build = RuntimeEnv().build_cache_path / "kernel_tracer"
     build.mkdir(parents=True, exist_ok=True)
-    return load(
+    tracer = load(
         name="aklr_kernel_tracer",
         sources=[str(Path(__file__).with_name("_kernel_tracer.cpp"))],
         extra_include_paths=[f"{ROCM_HOME}/include"],
         extra_ldflags=[f"-L{ROCM_HOME}/lib", "-lrocprofiler-sdk"],
         build_directory=str(build),
     )
+    # warned here, not in configure(): the bench's parent, whose stderr is read, builds the tracer and
+    # only its children configure it. FutureWarning: Python's default filters hide a DeprecationWarning
+    if tracer.rocprofiler_sdk_version >= (1, 4, 2) and torch.__version__ >= (2, 12):
+        warnings.warn(
+            f"torch {torch.__version__}'s Kineto traces with a rocprofiler-sdk that fixed ROCM-29087: trace "
+            "bench_cudagraph's replays with torch.profiler and delete aklr/core/utils/_kernel_tracer.cpp",
+            FutureWarning,
+            stacklevel=2,
+        )
+    elif tracer.rocprofiler_sdk_version >= (1, 4, 2):
+        warnings.warn(
+            "rocprofiler-sdk fixed ROCM-29087: delete the WORKAROUND in aklr/core/utils/_kernel_tracer.cpp",
+            FutureWarning,
+            stacklevel=2,
+        )
+    return tracer
 
 
 class GpuTimer(Protocol):
