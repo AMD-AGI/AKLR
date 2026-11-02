@@ -270,6 +270,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--work", type=Path, default=Path("/tmp/agentx-work"))
     parser.add_argument("--arms", default="all", help="comma-separated arms, or all")
     parser.add_argument(
+        "--points",
+        help="comma-separated ARM:CONC, e.g. tp8:1,tp4:4 (smoke runs only)",
+    )
+    parser.add_argument(
         "--model-path", help="default: the pinned revision in $HF_HUB_CACHE"
     )
     parser.add_argument(
@@ -294,6 +298,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.arms != "all":
         wanted = set(args.arms.split(","))
         points = [p for p in points if p["arm"] in wanted]
+    if args.points:
+        wanted = set(args.points.split(","))
+        points = [p for p in points if f"{p['arm']}:{p['conc']}" in wanted]
+        missing = wanted - {f"{p['arm']}:{p['conc']}" for p in points}
+        if missing:
+            print(f"ERROR: no such points: {sorted(missing)}", file=sys.stderr)
+            return 1
     mock = (
         {"seed": args.mock_seed, "scale": parse_scale(args.mock_scale)}
         if args.mock

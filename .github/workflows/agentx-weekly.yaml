@@ -18,6 +18,10 @@ on:
         type: choice
         options: [all, tp8, tp4]
         default: all
+      points:
+        description: Only these ARM:CONC points, e.g. tp8:1,tp4:4 (smoke runs; empty = every point of the arms)
+        type: string
+        default: ''
       mock:
         description: Fake results on a hosted runner, no GPU
         type: boolean
@@ -107,24 +111,19 @@ jobs:
         with:
           name: agentx-serving
           path: ${{ runner.temp }}/serving
-      # ci.yaml's setup_aklr, reduced: the image's ROCm torch and Triton, this checkout editable.
+      # ci.yaml's setup_aklr without coverage; exports the kernel caches to the next steps.
       - name: Install AKLR
         working-directory: .
-        run: |
-          set -euo pipefail
-          git config --global --add safe.directory '*'
-          GPU_ARCHS=$(python3 -c "import torch; print(';'.join(sorted({torch.cuda.get_device_properties(i).gcnArchName.split(':')[0] for i in range(torch.cuda.device_count())})))")
-          echo "GPU_ARCHS=$GPU_ARCHS"
-          GPU_ARCHS=$GPU_ARCHS PREBUILD_KERNELS=0 AITER_USE_SYSTEM_TRITON=1 \
-            python3 -m pip install --no-build-isolation --no-deps -e .
-          python3 -c "import aklr; from aiter._aklr_proxy import AKLR_AVAILABLE; assert AKLR_AVAILABLE; print('AKLR from', aklr.__file__)"
+        run: scripts/agentx/install_aklr.sh "$RUNNER_TEMP/aklr-cache"
       - name: Sweep
         env:
           ARMS: ${{ inputs.arms || 'all' }}
+          POINTS: ${{ inputs.points }}
           DURATION_S: ${{ inputs.duration_s }}
         run: |
           python3 -m agentx_ci sweep --serving "$RUNNER_TEMP/serving/serving.json" --arms "$ARMS" \
-            ${DURATION_S:+--duration "$DURATION_S"} --work "$RUNNER_TEMP/agentx" --out "$RUNNER_TEMP/results"
+            ${POINTS:+--points "$POINTS"} ${DURATION_S:+--duration "$DURATION_S"} \
+            --work "$RUNNER_TEMP/agentx" --out "$RUNNER_TEMP/results"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -153,9 +152,10 @@ jobs:
       - name: Sweep (mock)
         env:
           ARMS: ${{ inputs.arms || 'all' }}
+          POINTS: ${{ inputs.points }}
         run: |
           python -m agentx_ci sweep --mock --mock-seed "$GITHUB_RUN_NUMBER" --arms "$ARMS" \
-            --serving "$RUNNER_TEMP/serving/serving.json" --out "$RUNNER_TEMP/results"
+            ${POINTS:+--points "$POINTS"} --serving "$RUNNER_TEMP/serving/serving.json" --out "$RUNNER_TEMP/results"
       - uses: actions/upload-artifact@v4
         with:
           name: agentx-results

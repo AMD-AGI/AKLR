@@ -64,6 +64,17 @@ class PipelineTests(unittest.TestCase):
         ratio = scaled["points"][0]["tput_per_gpu"] / base["points"][0]["tput_per_gpu"]
         self.assertAlmostEqual(ratio, 2.0, places=2)
 
+    def test_point_filter(self):
+        results = read_json(self.sweep("w1", "--points", "tp8:1,tp4:4"))
+        self.assertEqual(
+            sorted((p["arm"], p["conc"]) for p in results["points"]),
+            [("tp4", 4), ("tp8", 1)],
+        )
+        argv = ["--serving", str(self.serving), "--out", str(self.root / "x")]
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(quiet(sweep.main, [*argv, "--mock", "--points", "tp8:3"]), 1)
+        self.assertIn("tp8:3", err.getvalue())
+
     def test_report_compares_with_the_previous_run(self):
         site1, site2 = self.root / "site1", self.root / "site2"
         quiet(
