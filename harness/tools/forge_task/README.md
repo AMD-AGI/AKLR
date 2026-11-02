@@ -21,6 +21,10 @@ one reviewed commit ── publish ──▶ aklr/ops ── aklr validate ─�
 
 - An MI355X (gfx950) machine, inside the ROCm container you run AKLR in.
 - A clone of AKLR that is yours alone: while a candidate is checked, the driver writes it into `aklr/ops/`.
+- AKLR installed in that container from your clone, as AKLR's README says (`git submodule update --init
+  --recursive`, then `pip install -e .`). AKLR routes calls through the AITER of its `3rdparty/aiter`; with an AITER
+  installed from another tree the import can fail, and the starting kernel then crashes on every workload
+  (`candidate_crash`).
 - In that container:
 
   ```bash
@@ -103,11 +107,13 @@ For a Triton kernel, leave out `--review-guide` and skip `forge-distill`.
 
 ```bash
 python harness/tools/forge_task publish $RUN
-python -m aklr export check && python -m aklr validate --base origin/main
+python -m aklr export check && python -m aklr validate --base origin/main <the path publish printed>
 ```
 
-`publish` writes the reviewed kernel into `aklr/ops/` as the schema's kernel; commit it as `aklr/ops/README.md`
-describes and open a pull request. What the run taught goes into the same pull request: apply
+`publish` writes the reviewed kernel into `aklr/ops/` as the schema's kernel. Give validate that path: with none, it
+checks only the schema files a change touches, and only when it touches nothing else; on a branch that also changes
+code, it checks every schema in AKLR, which takes hours. Commit the kernel as `aklr/ops/README.md` describes and
+open a pull request. What the run taught goes into the same pull request: apply
 `$RUN/knowledge_patch/knowledge_patch.diff`, then review it item by item as the skill's `CONTRIBUTING.md` says --
 edits to existing pages in place, new pages in `staging/` for a person to approve. A change to the method itself
 (this README, the driver, the `forge-loop-campaign` skill) goes into a pull request of its own.
