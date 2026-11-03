@@ -148,7 +148,6 @@ baseline; `--run-dir` (default `./aklr-runs/<schema>-<time>`).
 | `AKLR does not pass the starting kernel on every workload` | fix the starting kernel on the workloads listed |
 | `AKLR timed no baseline for …` | the schema has nothing to time against: prepare again with `--anchor start` |
 | `run directory … is not empty` | give each task a directory of its own |
-| `Kineto recorded no kernels for a single call` | the profiler lost a trace, usually on a busy machine: try again, or on an idle one |
 | `stress: differs from the call alone: …` | the kernel's workgroups wait for each other (a split-K fold that polls flags), or its concurrent calls share scratch memory: make it wait-free, the last workgroup to arrive on an atomic counter doing the fold, before you publish. Counters that must start at zero are zeroed in the call: scratch from `torch.empty` holds whatever was there |
 | `stress: hung, no result within 60 s: …` | the same defect, a wait with no bound: the kernel never finished on that stream. The check stops there, since the device is still running it |
 

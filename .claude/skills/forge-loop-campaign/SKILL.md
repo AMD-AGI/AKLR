@@ -100,5 +100,3 @@ ruler -- goes into a pull request of its own that changes the method.
 - Two runs must not share an AKLR clone or a run directory.
 - Clear FlyDSL's compile cache only at `FLYDSL_RUNTIME_CACHE_DIR` (default `~/.flydsl/cache`). A glob such as
   `/tmp/flydsl*` also deletes source trees.
-- "Kineto recorded no kernels for a single call" on a busy machine is the profiler's, not the kernel's: see
-  `flydsl-kernel-optimization/pitfalls/profiler_misses_kernels.md`.

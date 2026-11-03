@@ -279,28 +279,18 @@ class BenchStage(PipelineStage[BenchReport]):
         is_succeeded = lambda f: f.done() and not f.cancelled() and f.exception() is None
         try:
             future = None
-            for attempt in range(2):
-                try:
-                    future = executor.submit(
-                        run_candidate,
-                        timeout_seconds=BUILD_TIMEOUT_SECONDS + WORKLOAD_TIMEOUT_SECONDS * len(batch),
-                        requests=batch,
-                    )
-                    candidate = CandidateResult.from_task(future.result(), [r.axes_text for r in batch])
-                except (ExecutionError, ValueError) as e:
-                    finding = self._build_failed_finding(e)
-                    # a tracer fault is the platform's: a fresh process measures again
-                    if (
-                        attempt == 0
-                        and finding.code == FindingCode.PLATFORM_FAILURE
-                        and _measure.is_tracer_fault(finding.detail)
-                    ):
-                        continue
-                    failures.append(finding)
-                finally:
-                    if future is not None and is_succeeded(future) and future.directory:
-                        directories.append(future.directory)
-                break
+            try:
+                future = executor.submit(
+                    run_candidate,
+                    timeout_seconds=BUILD_TIMEOUT_SECONDS + WORKLOAD_TIMEOUT_SECONDS * len(batch),
+                    requests=batch,
+                )
+                candidate = CandidateResult.from_task(future.result(), [r.axes_text for r in batch])
+            except (ExecutionError, ValueError) as e:
+                failures.append(self._build_failed_finding(e))
+            finally:
+                if future is not None and is_succeeded(future) and future.directory:
+                    directories.append(future.directory)
             if candidate is not None and not candidate.findings:
                 declined = {
                     r.axes_text
@@ -406,12 +396,7 @@ class BenchStage(PipelineStage[BenchReport]):
         detail = self._last_line(error)
         if isinstance(error, TaskExecutionTimeout):
             code = FindingCode.CANDIDATE_TIMEOUT
-        elif caused_by_the_task(error):
-            # a tracer fault crashes the timing by itself; only the last line is
-            # aklr's text, the log and traceback above it are the candidate's
-            is_tracer = ": timing: " in detail and _measure.is_tracer_fault(detail)
-            code = FindingCode.PLATFORM_FAILURE if is_tracer else FindingCode.CANDIDATE_CRASH
-        elif isinstance(error, ValueError):
+        elif caused_by_the_task(error) or isinstance(error, ValueError):
             code = FindingCode.CANDIDATE_CRASH
         else:
             code = FindingCode.PLATFORM_FAILURE

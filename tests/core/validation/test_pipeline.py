@@ -123,9 +123,6 @@ def _workload(
     )
 
 
-_TRACER_FAULT = "x: timing: Kineto recorded no kernels for a single call"
-
-
 def _reruns(*details: str) -> tuple[int, set[FindingCode]]:
     """``_run_batch``'s candidate submits and finding codes, its candidate task failing
     with each of ``details`` in turn."""
@@ -515,11 +512,6 @@ class TestPipeline:
                     "  per-schema table: report.md",
                 ],
                 id="outcome",
-            ),
-            pytest.param(
-                lambda _: _reruns(_TRACER_FAULT, _TRACER_FAULT),
-                (2, {FindingCode.PLATFORM_FAILURE}),
-                id="tracer-reruns-once",
             ),
             pytest.param(
                 lambda _: _reruns("boom"),

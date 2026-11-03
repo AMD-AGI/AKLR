@@ -115,7 +115,7 @@ wins. Check a plan against this table before writing code.
   `gemm_a8w8_bpreshuffle`, aiter's FlyDSL fp8 path, is not routed: read it as reference code.
 - **Workflow** (`aklr/ops/README.md` § Workflow): export the Points, fill `kernel.sources`, then
   `python -m aklr export check` and `python -m aklr validate --base origin/main`. The local result does not
-  count; CI measures. A `platform_failure` "Kineto recorded no kernels for a single call" is a tracer fault: rerun.
+  count; CI measures.
 
 ## Folder structure
 

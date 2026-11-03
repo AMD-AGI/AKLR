@@ -191,6 +191,10 @@ class DisposableExecutionRunner(ExecutionRunner):
         self._require_state(RunnerState.CREATED)
         self._set_state(RunnerState.STARTING)
 
+        if self._lease.resource.device != "cpu":
+            from aklr.core.utils.testing import kernel_tracer
+
+            kernel_tracer()  # built here, outside the child's startup timeout
         context = multiprocessing.get_context("spawn")
         channel, child_endpoint = MultiprocessingRunnerChannel.create(context)
         process = context.Process(
@@ -477,12 +481,11 @@ class DisposableExecutionRunner(ExecutionRunner):
                         )
                         import torch
 
+                        from aklr.core.utils.testing import kernel_tracer
+
+                        # rocprofiler-sdk takes the timer's kernel tracer only before the first GPU call
+                        kernel_tracer().configure()
                         torch.cuda.set_device(0)
-                        # Kineto initialized before the task fingerprints its globals
-                        with torch.profiler.profile(
-                            activities=[torch.profiler.ProfilerActivity.CUDA],
-                        ):
-                            pass
                     endpoint.send(RunnerStarted(runner_id=runner_id))
 
                     command = endpoint.receive()
