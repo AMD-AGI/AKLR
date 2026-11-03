@@ -21,10 +21,8 @@ one reviewed commit ── publish ──▶ aklr/ops ── aklr validate ─�
 
 - An MI355X (gfx950) machine, inside the ROCm container you run AKLR in.
 - A clone of AKLR that is yours alone: while a candidate is checked, the driver writes it into `aklr/ops/`.
-- AKLR installed in that container from your clone, as AKLR's README says (`git submodule update --init
-  --recursive`, then `pip install -e .`). AKLR routes calls through the AITER of its `3rdparty/aiter`; with an AITER
-  installed from another tree the import can fail, and the starting kernel then crashes on every workload
-  (`candidate_crash`).
+- AKLR installed in that container from your clone, and the baseline that its validate run times against, as AKLR's
+  README says (`pip install -e .`, then the `AKLR_BASELINE_AITER` install line).
 - In that container:
 
   ```bash
