@@ -5,15 +5,36 @@
 <div align="center">
 
 [![CI](https://github.com/AMD-AGI/AKLR/actions/workflows/ci.yaml/badge.svg)](https://github.com/AMD-AGI/AKLR/actions/workflows/ci.yaml)
-[![License](https://img.shields.io/badge/license-MIT%20%2B%20Apache--2.0-blue)](/LICENSE)
+[![License](https://img.shields.io/badge/license-MIT%20%2B%20Apache--2.0-blue)](../LICENSE)
 
-[Install](#install) | [Usage](#usage) | [Testing](#testing) | [Contributing](#contributing)
+[Repository map](#repository-map) | [Rosetta Stone](#the-kernel-rosetta-stone) | [Install](#install) | [Usage](#usage) | [Testing](#testing) | [Contributing](#contributing)
 
 </div>
 
 **AKLR** is a kernel library for LLM inference on ROCm, where agents write the kernels and every kernel is validated automatically before it serves. It is a step toward AI improving the systems that run AI.
 
 We believe kernel performance will no longer come from rare, hand-tuned efforts but from continuous, automatic improvement, with AI driving each speedup on ROCm.
+
+## Repository map
+
+AKLR has two main parts: `aklr/` runs kernels, while `harness/` helps agents build and deliver them.
+
+| Path | What is here |
+|---|---|
+| [`aklr/ops/`](../aklr/ops/README.md) | Each operator's API, correctness check, speed-test baseline, and kernel files. |
+| [`aklr/core/`](../aklr/core/) | Shared code that checks inputs, loads kernels, picks one for each workload, and validates results. |
+| [`aklr/plugins/`](../aklr/plugins/README.md) | Connections to inference engines. SGLang works today; vLLM is planned; `atom/` has no code yet. |
+| [`aklr/benchmarks/`](../aklr/benchmarks/) | Model workloads and benchmark code. |
+| [`harness/`](../harness/README.md) | Guides and tools for agents to write, test, review, and submit kernels. [`forge_task`](../docs/forge_task.md) sends an AKLR problem to KernelForge. |
+| [`tests/`](../tests/) and [`.github/workflows/`](workflows/) | Local tests and CI checks. |
+
+An engine calls an AKLR operator. AKLR checks the inputs and picks a kernel that passed validation. If no kernel fits, the engine uses its original code. AKLR uses AITER as a speed-test baseline for library kernels; it does not ship AITER as a runtime fallback.
+
+## The Kernel Rosetta Stone
+
+The **Kernel Rosetta Stone** is a guide for agents writing AMD kernels. It brings together tips from handwritten kernels, AMD architecture and CDNA4 ISA documents, and real examples. Start at [`SKILL.md`](../harness/skills/flydsl-kernel-optimization/SKILL.md). As of 2026-11-03, it has **131 pages** and **1,192 findings with sources**.
+
+It aims to help agents reach the same speed sooner, use fewer tokens, and find faster kernels. We have not yet measured this by running the same task with and without the guide.
 
 ## Install
 
@@ -29,7 +50,7 @@ git clone https://github.com/AMD-AGI/AKLR.git && cd AKLR
 pip install -e .
 ```
 
-Validation times AKLR's kernels against a baseline pinned at `AKLR_BASELINE_AITER` in [ci.yaml](/.github/workflows/ci.yaml); install that commit before validating: `AITER_USE_SYSTEM_TRITON=1 pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@<that commit>"`.
+Validation times AKLR's kernels against a baseline pinned at `AKLR_BASELINE_AITER` in [ci.yaml](workflows/ci.yaml); install that commit before validating: `AITER_USE_SYSTEM_TRITON=1 pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@<that commit>"`.
 
 ## Usage
 
@@ -39,7 +60,7 @@ SGLang and vLLM load AKLR at startup; SGLang reaches AKLR's kernels only with `A
 |---|---|
 | `AKLR_DISABLE=1` | Turn AKLR off |
 | `AKLR_DISABLE=<contract id>,...` | Turn off the listed ops, e.g. `gemm@1.0` |
-| `AKLR_SGLANG_PLUGIN=1` | Also hook SGLang's own layers to the plugin's ops ([aklr/plugins/README.md](/aklr/plugins/README.md)) |
+| `AKLR_SGLANG_PLUGIN=1` | Also hook SGLang's own layers to the plugin's ops ([aklr/plugins/README.md](../aklr/plugins/README.md)) |
 | `AKLR_MIN_SPEEDUP=<x>` | Serve only kernels with a measured speedup of at least x (default 1.03) |
 
 ## Testing
@@ -51,6 +72,6 @@ python -m aklr validate --stages audit,bench --devices 0-7  # full validation
 
 ## Contributing
 
-- Commit hooks and the baseline: [CONTRIBUTING.md](/CONTRIBUTING.md)
-- Optimizing a kernel with forge_task: [docs/forge_task.md](/docs/forge_task.md)
-- PR descriptions: follow the [template](/.github/pull_request_template.md)
+- Commit hooks and the baseline: [CONTRIBUTING.md](../CONTRIBUTING.md)
+- Optimizing a kernel with forge_task: [docs/forge_task.md](../docs/forge_task.md)
+- PR descriptions: follow the [template](pull_request_template.md)

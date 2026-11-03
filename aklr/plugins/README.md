@@ -23,7 +23,8 @@ aklr/plugins/
 │   │       ├── baseline.py   sglang's original implementation, the baseline for kernel performance
 │   │       └── impls/        kernel implementations, one JSON file per kernel
 │   └── layers/               mirrors sglang's srt/layers/, with the same layout
-└── vllm/                     planned, with the same layout as sglang/
+├── vllm/                     planned, with the same layout as sglang/
+└── atom/                     empty placeholder; no routes or integration yet
 ```
 
 ## Call flow
