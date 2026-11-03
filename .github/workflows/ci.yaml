@@ -62,7 +62,6 @@ jobs:
       actions: read
     outputs:
       gpu_enabled: ${{ steps.gpu.outputs.gpu_enabled }}
-      gpu_trusted: ${{ steps.gpu.outputs.gpu_trusted }}
       has_bench_paths: ${{ steps.audit.outputs.has_bench_paths }}
       validation_base: ${{ steps.lint.outputs.validation_base }}
     steps:
@@ -73,22 +72,7 @@ jobs:
             ${{ github.event_name != 'pull_request' ||
                 (github.event.pull_request.head.repo.full_name == github.repository &&
                  contains(github.event.pull_request.labels.*.name, 'ci:gpu')) }}
-          NOT_BOT: ${{ github.event.sender.type != 'Bot' && github.event.pull_request.user.type != 'Bot' }}
-          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          GH_TOKEN: ${{ github.token }}
-        # A PR is trusted by its author's write access here, not author_association:
-        # that reports a private org member as a non-member. Read at run time, before PR code runs;
-        # "Re-run failed jobs" keeps this decision, "Re-run all jobs" reads it again.
-        run: |
-          echo "gpu_enabled=$GPU_ENABLED" >> "$GITHUB_OUTPUT"
-          trusted=$NOT_BOT
-          if [[ $trusted == true && $GITHUB_EVENT_NAME == pull_request ]]; then
-            # .permission folds maintain into write; a failed lookup is untrusted.
-            permission=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$PR_AUTHOR/permission" --jq .permission) ||
-              { echo '::warning::PR author permission lookup failed; the GPU job waits for approval.'; permission=none; }
-            [[ $permission == admin || $permission == write ]] || trusted=false
-          fi
-          echo "gpu_trusted=$trusted" | tee -a "$GITHUB_OUTPUT"
+        run: echo "gpu_enabled=$GPU_ENABLED" >> "$GITHUB_OUTPUT"
       - name: Print job info
         env:
           GPU_ENABLED: ${{ steps.gpu.outputs.gpu_enabled }}
@@ -223,53 +207,14 @@ jobs:
             echo "⏱️ Finished at: $(date -u '+%Y-%m-%d %H:%M:%S UTC'); elapsed: $((now - ${AKLR_CI_JOB_STARTED_AT:-$now})) seconds."
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
-  # Allocates one Spur GPU node for this run attempt and registers a runner on it, labelled
-  # with its own name; the GPU jobs run there and release-gpu frees it.
+  # The Spur host's jobs run from main, never from a PR's own workflow (gpu-node.yaml);
+  # a local ./ path would be the PR's copy.
   prepare-gpu:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
-    runs-on: &spur_host aklr-spur-host
-    # Bots, Bot-sent events and PRs by authors without write access wait for maintainer approval
-    # before a node is requested for PR code.
-    environment: ${{ needs.code-lint.outputs.gpu_trusted == 'true' && 'gpu-trusted' || 'gpu' }}
-    # The queue waits at most 15m and the runner 20m; leave time for cancellation.
-    timeout-minutes: 50
-    outputs:
-      runner_label: ${{ steps.prepare.outputs.runner_label }}
-      allocation_id: ${{ steps.prepare.outputs.allocation_id }}
-      # "Re-run failed jobs" reuses these outputs after release-gpu freed their node:
-      # the GPU jobs run only in the attempt that allocated it.
-      attempt: ${{ github.run_attempt }}
-    env: &spur_env
-      # Host service installation/authentication is managed outside this repository.
-      PATH: ${{ vars.AKLR_HOST_PATH }}
-      AKLR_SPUR_SHARED_DIR: ${{ vars.AKLR_SPUR_SHARED_DIR }}
-      AKLR_GITHUB_TOKEN_FILE: ${{ vars.AKLR_GITHUB_TOKEN_FILE }}
-      # Comma/space-separated lists; one allocation is requested per account and
-      # partition pair, the first to start is kept and the rest are cancelled.
-      AKLR_SPUR_ACCOUNT: ${{ vars.AKLR_SPUR_ACCOUNT }}
-      AKLR_SPUR_PARTITION: ${{ vars.AKLR_SPUR_PARTITION }}
-      AKLR_SPUR_CPUS: ${{ vars.AKLR_SPUR_CPUS || '64' }}
-      AKLR_SPUR_MEMORY: ${{ vars.AKLR_SPUR_MEMORY || '512G' }}
-      AKLR_SPUR_GPUS_PER_NODE: ${{ vars.AKLR_SPUR_GPUS_PER_NODE || 'mi355x:8' }}
-      # Comma-separated nodes to never allocate (e.g. known-broken GPU nodes).
-      AKLR_SPUR_EXCLUDE: ${{ vars.AKLR_SPUR_EXCLUDE }}
-      # Whole-run limit, not a separate budget for each GPU job.
-      AKLR_SPUR_TIME_LIMIT: ${{ vars.AKLR_SPUR_TIME_LIMIT || '8:00:00' }}
-      AKLR_RUNNER_VERSION: ${{ vars.AKLR_RUNNER_VERSION || '2.337.0' }}
-      AKLR_RUNNER_SHA256: ${{ vars.AKLR_RUNNER_SHA256 || '70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613' }}
-    steps:
-      # PRs use the base commit's control scripts, never their own. A reviewed bootstrap
-      # commit can be selected with AKLR_CI_CONTROL_SHA before its first merge.
-      - &checkout_gpu_control
-        name: Checkout GPU control scripts
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ vars.AKLR_CI_CONTROL_SHA || github.event.pull_request.base.sha || github.sha }}
-          persist-credentials: false
-      - name: Prepare one GPU node for this run attempt
-        id: prepare
-        run: bash .github/scripts/manage_spur_runner.sh prepare
+    uses: AMD-AGI/AKLR/.github/workflows/gpu-node.yaml@docs/sikl-gpu-design
+    with:
+      operation: prepare
 
   unittest-aklr:
     needs: [code-lint, prepare-gpu]
@@ -536,17 +481,12 @@ jobs:
   release-gpu:
     needs: [prepare-gpu, unittest-aklr, validation]
     if: always() && needs.prepare-gpu.result != 'skipped'
-    runs-on: *spur_host
-    timeout-minutes: 15
-    env: *spur_env
-    steps:
-      - *checkout_gpu_control
+    uses: AMD-AGI/AKLR/.github/workflows/gpu-node.yaml@docs/sikl-gpu-design
+    with:
+      operation: release
       # The node of the attempt that allocated it, not necessarily the current attempt's.
-      - name: Release only this run's runner and node
-        env:
-          ALLOCATION_ID: ${{ needs.prepare-gpu.outputs.allocation_id }}
-          GPU_RUNNER_NAME: ${{ needs.prepare-gpu.outputs.runner_label }}
-        run: bash .github/scripts/manage_spur_runner.sh release "$ALLOCATION_ID" "$GPU_RUNNER_NAME"
+      runner_label: ${{ needs.prepare-gpu.outputs.runner_label }}
+      allocation_id: ${{ needs.prepare-gpu.outputs.allocation_id }}
 
   coverage-report:
     needs: [code-lint, prepare-gpu, unittest-aklr, validation]
