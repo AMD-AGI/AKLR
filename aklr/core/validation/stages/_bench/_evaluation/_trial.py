@@ -19,7 +19,7 @@ from aklr.core.validation.stages._bench._evaluation._candidate import (
     run_candidate,
 )
 from aklr.core.validation.stages._bench._evaluation._reference import (
-    ReferenceResult,
+    ReferenceWorkloadResult,
     WorkloadEvaluation,
 )
 from aklr.core.validation.stages._bench._evaluation._trials import TrialRequest
@@ -35,8 +35,8 @@ __all__ = ["TrialResult", "run_trial"]
 
 class TrialResult(FrozenModel):
     candidate: CandidateResult
-    # None: the candidate stopped the batch, no output to compare
-    reference: ReferenceResult | None
+    # one per workload its baseline did not decline; None: the candidate stopped the batch
+    reference: tuple[ReferenceWorkloadResult, ...] | None
 
     @classmethod
     def from_task(cls, value: Any, axes_texts: Sequence[str]) -> TrialResult:
@@ -49,11 +49,15 @@ class TrialResult(FrozenModel):
         if candidate.findings:
             is_whole = reference is None
         else:
-            evaluated = {r.axes_text for r in reference.workload_results} if reference else None
+            evaluated = [
+                r.axes_text
+                for r in candidate.workload_results
+                if all(f.code != FindingCode.BASELINE_FAILED for f in r.findings)
+            ]
             is_whole = (
                 sorted(r.axes_text for r in candidate.workload_results) == sorted(axes_texts)
-                and evaluated is not None
-                and evaluated <= set(axes_texts)
+                and reference is not None
+                and sorted(r.axes_text for r in reference) == sorted(evaluated)
             )
         if not is_whole:
             raise ValueError(detail)
@@ -98,19 +102,17 @@ def run_trial(
     reference = None
     if not candidate.findings:
         workload_results = {r.axes_text: r for r in candidate.workload_results}
-        reference = ReferenceResult(
-            workload_results=tuple(
-                WorkloadEvaluation(
-                    r,
-                    outputs[r.axes_text],
-                    workload_results[r.axes_text].output_keys,
-                    context.device,
-                ).evaluate()
-                for r in requests
-                # declined by the baseline: the candidate's finding alone
-                if all(f.code != FindingCode.BASELINE_FAILED for f in workload_results[r.axes_text].findings)
-            )
+        reference = tuple(
+            WorkloadEvaluation(
+                r,
+                outputs[r.axes_text],
+                workload_results[r.axes_text].output_keys,
+                context.device,
+            ).evaluate()
+            for r in requests
+            # declined by the baseline: the candidate's finding alone
+            if all(f.code != FindingCode.BASELINE_FAILED for f in workload_results[r.axes_text].findings)
         )
     if kernels := [m for m in sys.modules if m.startswith(KERNEL_PACKAGE_PREFIX)]:
-        raise RuntimeError(f"the reference task imported kernels: {sorted(kernels)}")
+        raise RuntimeError(f"the trial task imported kernels: {sorted(kernels)}")
     return TrialResult(candidate=candidate, reference=reference).model_dump(mode="json")

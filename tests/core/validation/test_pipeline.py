@@ -33,7 +33,7 @@ from aklr.core.validation.stages._audit._report import AuditReport
 from aklr.core.validation.stages._bench._evaluation import (
     CandidateResult,
     CandidateWorkloadResult,
-    ReferenceResult,
+    ReferenceWorkloadResult,
     TrialResult,
     run_trial,
 )
@@ -484,7 +484,7 @@ class TestPipeline:
                         (
                             FindingCode.PLATFORM_FAILURE,
                             None,
-                            "reference: RunnerStartupFailed",
+                            "trial: RunnerStartupFailed",
                         )
                     ],
                     _workload({"m": 1}, 1.5),
@@ -555,9 +555,7 @@ class TestTimeRounds:
         jitter = itertools.cycle([1.0, 1.01, 0.99, 1.02, 0.98])
         fns = {"candidate": lambda: 1.0, "baseline": lambda: baseline_ms}
         clock = Clock(synchronize=lambda: None, bench_cudagraph=lambda fn, rep: fn() * next(jitter))
-        rounds = clock.time_rounds(
-            fns, dict.fromkeys(fns, nullcontext), seed=0, thresholds={"baseline": threshold}
-        )
+        rounds = clock.time_rounds(fns, seed=0, thresholds={"baseline": threshold})
         assert len(rounds) == n_rounds
 
 
@@ -800,14 +798,12 @@ class TestBaseline:
                     axes_text=r.axes_text,
                     findings=() if r.axes_text == self._B else (crash,),
                     rounds=(timed,) if r.axes_text == self._B else (),
+                    output_keys=(),
                 )
                 for r in requests.values()
             ),
         )
-        reference = ReferenceResult(workload_results=())
-        _, records = BenchStage(["cpu"])._judged_findings(
-            scope, tuple(requests.values()), [], candidate, reference
-        )
+        _, records = BenchStage(["cpu"])._judged_findings(scope, tuple(requests.values()), [], candidate, ())
         baselines = {axes_text(r.axes): r.baseline for r in records}
         assert baselines.pop(self._A) == _SCHEMA
         assert baselines.pop(self._B) == requests[self._B].baseline is not None
@@ -969,9 +965,9 @@ def test_post_timing_exposes_stale_weight_cache(monkeypatch: pytest.MonkeyPatch,
     dispatcher = Mock(dispatch=Mock(side_effect=dispatch))
     tripwire = Mock(armed=lambda: nullcontext([]))
     steps = [s for s in request.steps if s.check == "post_timing"]
-    outputs = {}
+    outputs, filled = request.empty_outputs("cpu"), []
     CandidateRun("cpu", tripwire, None).produce_outputs(
-        request, dispatcher, steps, outputs, timing_call=timing_call
+        request, dispatcher, steps, outputs, filled, timing_call=timing_call
     )
 
     assert weight.data_ptr() == pointer and weight._version == version
@@ -982,6 +978,7 @@ def test_post_timing_exposes_stale_weight_cache(monkeypatch: pytest.MonkeyPatch,
         expected = values["a"] @ values["b"].mT
         assert torch.equal(outputs[step.output_key("out")], expected) == (cache_key == "none")
         assert step.mismatch_code is FindingCode.POST_TIMING_MISMATCH
+    assert filled == [step.output_key("out") for step in steps]
 
 
 def test_a_call_writing_its_input_is_input_mutation(
@@ -1016,7 +1013,7 @@ def test_a_call_writing_its_input_is_input_mutation(
     tripwire = Mock(armed=lambda: nullcontext([]))
     step = next(s for s in request.steps if s.buffer_source == "new")
     with pytest.raises(StepFailed) as failed:
-        CandidateRun("cpu", tripwire, None).produce_outputs(request, dispatcher, [step], {})
+        CandidateRun("cpu", tripwire, None).produce_outputs(request, dispatcher, [step], {}, [])
     assert failed.value.code is FindingCode.INPUT_MUTATION
 
 
@@ -1054,6 +1051,33 @@ def test_warm_up_covers_the_workload_scalars(monkeypatch: pytest.MonkeyPatch) ->
         monkeypatch.setattr(torch.cuda, name, lambda *a: 0)
     CandidateRun("cpu", None, None).make_warmed_dispatcher(schema, [request])
     assert sorted(seen) == [1.0, 2.0]
+
+
+@pytest.mark.parametrize(
+    ("evaluated", "is_whole"),
+    [(("m=1",), True), ((), False), (("m=1", "m=1"), False), (("m=1", "m=2"), False)],
+    ids=["exact", "missing", "twice", "declined"],
+)
+def test_the_trial_evaluates_each_workload_its_baseline_did_not_decline(
+    evaluated: tuple[str, ...], is_whole: bool
+) -> None:
+    """A trial's result is the batch's only with each workload the baseline did not
+    decline evaluated once, and no other."""
+    declined = (Finding.unlocated(FindingCode.BASELINE_FAILED, ""),)
+    candidate = CandidateResult(
+        findings=(),
+        workload_results=tuple(
+            CandidateWorkloadResult(axes_text=a, findings=f, rounds=(), output_keys=())
+            for a, f in (("m=1", ()), ("m=2", declined))
+        ),
+    )
+    reference = tuple(
+        ReferenceWorkloadResult(axes_text=a, findings=(), worst_violation_fraction=None, is_complete=True)
+        for a in evaluated
+    )
+    value = TrialResult(candidate=candidate, reference=reference).model_dump(mode="json")
+    with nullcontext() if is_whole else pytest.raises(ValueError, match="not one for the batch"):
+        TrialResult.from_task(value, ["m=1", "m=2"])
 
 
 def test_reference_compares_the_lent_outputs() -> None:

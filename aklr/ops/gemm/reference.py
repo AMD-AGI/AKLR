@@ -67,7 +67,14 @@ def gemm_a8w8_reference(
     row_major_args: Mapping[str, Any],
     decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
-    """Per-row scales; a squeezed ``(rows,)`` scale reads as ``(rows, 1)``."""
+    """Per-row scales; a squeezed ``(rows,)`` scale reads as ``(rows, 1)``. int8 operands
+    define an exact int32 sum the output rounds once: past float32's 24 bits, in float64."""
+    if point.dtypes["a"] == "int8":
+        given_decode = decode
+
+        def decode(tensor: Tensor, dtype: str) -> Tensor:
+            return given_decode(tensor, dtype).double()
+
     a_scale = _decoded(point, row_major_args, "a_scale", decode)
     b_scale = _decoded(point, row_major_args, "b_scale", decode)
     a = _decoded(point, row_major_args, "a", decode) * a_scale.reshape(-1, 1)

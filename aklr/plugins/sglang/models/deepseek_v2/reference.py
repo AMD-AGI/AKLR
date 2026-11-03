@@ -111,4 +111,4 @@ def deepseek_v2_mxfp4_moe_reference(
     def mlp(rows: Tensor, e: int) -> Tensor:
         return _mlp(rows, weight("w1", e), weight("w2", e))
 
-    return _experts(x, ids, weights, mlp).double()
+    return _experts(x, ids, weights, mlp)

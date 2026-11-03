@@ -108,7 +108,7 @@ def minimax_m2_fp8_moe_reference(
         gate_up = _fp8_linear(rows, f("w1", e), f("w1_scale", e))
         return _fp8_linear(_silu_and_mul(gate_up), f("w2", e), f("w2_scale", e))
 
-    return _held_experts(point, row_major_args, x, ids, weights, mlp).double()
+    return _held_experts(point, row_major_args, x, ids, weights, mlp)
 
 
 def minimax_m2_mxfp4_moe_reference(
@@ -130,4 +130,4 @@ def minimax_m2_mxfp4_moe_reference(
         gate_up = rows @ weight("w1", e).T
         return _silu_and_mul(gate_up) @ weight("w2", e).T
 
-    return _held_experts(point, row_major_args, x, ids, weights, mlp).double()
+    return _held_experts(point, row_major_args, x, ids, weights, mlp)

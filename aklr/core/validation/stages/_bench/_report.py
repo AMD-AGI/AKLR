@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal, Self
 
 from aklr.core.contract.spec import FrozenModel, axes_text
 from aklr.core.validation.stages._measure import (
+    LOOK_ALPHA,
     THRESHOLD_RATIOS,
     TimingRecord,
     ratio_lower_bound,
@@ -93,7 +94,8 @@ class WorkloadRecord(FrozenModel):
             return None
         lower_bounds = (
             ratio_lower_bound(
-                [math.log(v / c) for v, c in zip(t.versus_milliseconds, t.candidate_milliseconds)]
+                [math.log(v / c) for v, c in zip(t.versus_milliseconds, t.candidate_milliseconds)],
+                alpha=LOOK_ALPHA,
             )
             for t in baselines
         )

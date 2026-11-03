@@ -164,7 +164,7 @@ class TrialRequest:
 
     def empty_outputs(self, device: str | torch.device) -> dict[str, torch.Tensor]:
         """Every step's mutable tensors, uninitialized on ``device``, by ``Step.output_key``
-        (``output_bytes`` in all): the reference task lends them to the candidate's, which
+        (``output_bytes`` in all): the trial task lends them to the candidate's, which
         fills them."""
         import torch
 

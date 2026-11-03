@@ -46,7 +46,7 @@ class CandidateWorkloadResult(FrozenModel):
     findings: tuple[Finding, ...]
     rounds: tuple[_measure.RoundTimes, ...]
     # the lent tensors it filled (Step.output_key), in step order
-    output_keys: tuple[str, ...] = ()
+    output_keys: tuple[str, ...]
 
 
 class CandidateResult(FrozenModel):
@@ -110,7 +110,7 @@ def run_candidate(
     outputs: Mapping[str, Mapping[str, Tensor]],
 ) -> dict:
     """Check and time the batch on ``context.device``, each workload's outputs copied
-    into the tensors the reference task lent (``outputs[axes_text]``,
+    into the tensors the trial task lent (``outputs[axes_text]``,
     ``TrialRequest.empty_outputs``); returns a ``CandidateResult`` json."""
     import torch
 
@@ -178,22 +178,15 @@ def run_candidate(
     output_keys: dict[str, tuple[str, ...]] = {}
     for request in requests:
         axes_text = request.axes_text
-        produced: dict[str, Tensor] = {}
+        filled: list[str] = []
         if not batch_findings and axes_text not in stopped:
             try:
                 rounds[axes_text] = run.check_and_time(
-                    request, dispatcher, incumbent_dispatchers.get(axes_text), produced
+                    request, dispatcher, incumbent_dispatchers.get(axes_text), outputs[axes_text], filled
                 )
             except StepFailed as e:
                 stopped[axes_text] = Finding.unlocated(e.code, str(e))
-        lent = outputs[axes_text]
-        for key, value in produced.items():
-            # another storage dtype of the output holds the same bytes; copy_ would broadcast
-            value = value.view(lent[key].dtype)
-            if value.shape != lent[key].shape:
-                raise ValueError(f"{axes_text}: {key} is {tuple(value.shape)}, not {tuple(lent[key].shape)}")
-            lent[key].copy_(value)
-        output_keys[axes_text] = tuple(produced)
+        output_keys[axes_text] = tuple(filled)
     if context.device != "cpu":
         torch.cuda.synchronize()  # the lent tensors are filled before the result says so
     workload_results = [
@@ -336,7 +329,8 @@ class CandidateRun:
         request: TrialRequest,
         dispatcher: KernelDispatcher,
         incumbent_dispatcher: KernelDispatcher | None,
-        outputs: dict[str, Tensor],
+        lent: Mapping[str, Tensor],
+        filled: list[str],
     ) -> tuple[_measure.RoundTimes, ...]:
         """Run the workload's check steps, then its timing rounds; return the rounds."""
         from aklr.core.runtime.dispatch import FallbackReason
@@ -348,7 +342,8 @@ class CandidateRun:
                 request,
                 dispatcher,
                 [s for s in steps if s.check != "post_timing"],
-                outputs,
+                lent,
+                filled,
             )
         call = request.assemble_call(request.compose_inputs(None, self.device), self.device)
         allocated = dict.fromkeys(contract.allocated_outputs)
@@ -380,7 +375,8 @@ class CandidateRun:
                 request,
                 dispatcher,
                 [s for s in steps if s.check == "post_timing"],
-                outputs,
+                lent,
+                filled,
                 timing_call=call,
             )
         return rounds
@@ -390,9 +386,12 @@ class CandidateRun:
         request: TrialRequest,
         dispatcher: KernelDispatcher,
         steps: Sequence[Step],
-        outputs: dict[str, Tensor],
+        lent: Mapping[str, Tensor],
+        filled: list[str],
         timing_call: Mapping[str, Any] | None = None,
     ) -> None:
+        """Run ``steps``, each step's mutable tensors copied into the lent tensors of its
+        ``Step.output_key`` as it ends, the key then appended to ``filled``."""
         import torch
 
         from aklr.core.runtime.dispatch import FallbackReason
@@ -473,7 +472,14 @@ class CandidateRun:
                 detail = f"{label}: the call changed its inputs"
                 raise StepFailed(FindingCode.INPUT_MUTATION, detail)
             for o, out in contract.call_mutable_tensors(result, call).items():
-                outputs[step.output_key(o)] = out.clone()
+                key = step.output_key(o)
+                # another storage dtype of the output holds the same bytes; copy_ would broadcast
+                value = out.view(lent[key].dtype)
+                if value.shape != lent[key].shape:
+                    detail = f"{label}: {o} is {tuple(value.shape)}, not {tuple(lent[key].shape)}"
+                    raise StepFailed(FindingCode.CANDIDATE_CRASH, detail)
+                lent[key].copy_(value)
+                filled.append(key)
 
     @staticmethod
     @contextlib.contextmanager

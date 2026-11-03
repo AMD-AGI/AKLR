@@ -151,7 +151,7 @@ def runs_agree(determinism: str, outputs: Sequence[Tensor]) -> bool:
 
 class ErrorBound(FrozenModel):
     """One ``error_bounds`` item of a floating output: how it is compared with y, the
-    float64 reference."""
+    reference."""
 
     kind: str
     expr_fields: ClassVar[tuple[str, ...]] = ()  # expression fields, in order
@@ -169,7 +169,7 @@ class ErrorBound(FrozenModel):
         baseline_out: Tensor | None,
     ) -> CompareResult:
         """Output ``a`` against y (``reference_out``) and y rounded to the output dtype
-        (``rounded``), all float64."""
+        (``rounded``), ``a`` and ``rounded`` in float64."""
 
 
 class ElementwiseBound(ErrorBound):

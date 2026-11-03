@@ -8,10 +8,7 @@ from aklr.core.validation.stages._bench._evaluation._candidate import (
     StepFailed,
     run_candidate,
 )
-from aklr.core.validation.stages._bench._evaluation._reference import (
-    ReferenceResult,
-    ReferenceWorkloadResult,
-)
+from aklr.core.validation.stages._bench._evaluation._reference import ReferenceWorkloadResult
 from aklr.core.validation.stages._bench._evaluation._trial import (
     TrialResult,
     run_trial,
@@ -29,7 +26,6 @@ __all__ = [
     "CandidateResult",
     "CandidateWorkloadResult",
     "CheckName",
-    "ReferenceResult",
     "ReferenceWorkloadResult",
     "Step",
     "StepFailed",

@@ -6,7 +6,6 @@ from __future__ import annotations
 import itertools
 import json
 import logging
-import shutil
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
@@ -20,7 +19,7 @@ from aklr.core.platform.env import RuntimeEnv
 from aklr.core.validation.stages import _measure
 from aklr.core.validation.stages._bench._evaluation import (
     CandidateResult,
-    ReferenceResult,
+    ReferenceWorkloadResult,
     TrialRequest,
     TrialResult,
     run_trial,
@@ -280,15 +279,12 @@ class BenchStage(PipelineStage[BenchReport]):
                 candidate_timeout_seconds=candidate_timeout,
                 n_cpu_shares=len(self._devices),
             )
-            value = future.result()
-            if future.directory:  # a succeeded task's directory is the caller's to delete
-                shutil.rmtree(future.directory, ignore_errors=True)
-            trial = TrialResult.from_task(value, [r.axes_text for r in batch])
+            trial = TrialResult.from_task(future.result(), [r.axes_text for r in batch])
             candidate, reference = trial.candidate, trial.reference
         except (ExecutionError, ValueError) as e:
             # the candidate's failures are in the result: the trial's own are the platform's
             detail = str(e).strip().split("\n")[-1]
-            failures.append(Finding.unlocated(FindingCode.PLATFORM_FAILURE, f"reference: {detail}"))
+            failures.append(Finding.unlocated(FindingCode.PLATFORM_FAILURE, f"trial: {detail}"))
         findings, records = self._judged_findings(scope, batch, failures, candidate, reference)
         try:
             line = BenchReport.from_findings(findings, workload_records=tuple(records)).batch_line()
@@ -304,12 +300,12 @@ class BenchStage(PipelineStage[BenchReport]):
         batch: tuple[TrialRequest, ...],
         failures: Sequence[Finding],
         candidate: CandidateResult | None,
-        reference: ReferenceResult | None,
+        reference: Sequence[ReferenceWorkloadResult] | None,
     ) -> tuple[list[Finding], list[WorkloadRecord]]:
         batch_findings = [*failures, *(candidate.findings if candidate else ())]
         if not batch_findings:
             candidate_results = {r.axes_text: r for r in candidate.workload_results}
-            reference_results = {r.axes_text: r for r in reference.workload_results}
+            reference_results = {r.axes_text: r for r in reference}
         schema_path = scope.relative_path(Path(batch[0].schema_path))
         findings: list[Finding] = []
         records: list[WorkloadRecord] = []

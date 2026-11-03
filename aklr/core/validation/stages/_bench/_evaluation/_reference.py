@@ -20,7 +20,7 @@ from aklr.core.validation.stages._report._finding import Finding, FindingCode
 if TYPE_CHECKING:
     import torch
 
-__all__ = ["ReferenceResult", "ReferenceWorkloadResult", "WorkloadEvaluation"]
+__all__ = ["ReferenceWorkloadResult", "WorkloadEvaluation"]
 
 
 class ReferenceWorkloadResult(FrozenModel):
@@ -28,10 +28,6 @@ class ReferenceWorkloadResult(FrozenModel):
     findings: tuple[Finding, ...]
     worst_violation_fraction: float | None
     is_complete: bool
-
-
-class ReferenceResult(FrozenModel):
-    workload_results: tuple[ReferenceWorkloadResult, ...]
 
 
 class WorkloadEvaluation:
@@ -116,10 +112,6 @@ class WorkloadEvaluation:
                     raise ValueError(f"{contract.contract_id}: a baseline_relative bound needs a baseline")
                 call = request.assemble_call(row_major_args, device)
                 compare_kwargs["baseline_outputs"] = contract.call_mutable_tensors(baseline(**call), call)
-            compare_kwargs = {
-                kind: {r: t.to(device) for r, t in tensors.items()}
-                for kind, tensors in compare_kwargs.items()
-            }
             compared = functools.partial(semantics.compare_outputs, request.schema_json, **compare_kwargs)
             if not is_reference_comparable(mutable_dtypes, compare_kwargs["reference_outputs"], compared):
                 detail = "the reference rounded to the output dtypes is not finite or fails compare"

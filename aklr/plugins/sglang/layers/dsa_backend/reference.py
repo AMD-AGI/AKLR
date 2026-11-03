@@ -47,4 +47,4 @@ def dsa_sparse_mla_decode_reference(
         # a token that reads no row gets 0
         weights = scores.softmax(-1).nan_to_num(0.0)
         output[chunk] = torch.einsum("thk,tkr->thr", weights, rows[..., :latent])
-    return output.double()
+    return output

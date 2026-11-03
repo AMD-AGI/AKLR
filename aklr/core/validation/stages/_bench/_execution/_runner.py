@@ -204,6 +204,7 @@ class DisposableExecutionRunner(ExecutionRunner):
                 self._engine,
                 self._directory,
                 self._n_resources,
+                os.getpid(),
             ),
             daemon=False,
         )
@@ -454,6 +455,7 @@ class DisposableExecutionRunner(ExecutionRunner):
         engine: ExecutionEngine,
         directory: Path,
         n_resources: int,
+        parent_pid: int,
     ) -> None:
         task_id: str | None = None
         is_gpu = device != "cpu"
@@ -461,6 +463,8 @@ class DisposableExecutionRunner(ExecutionRunner):
             os.setsid()
             # killed with the parent: a task's own children (the bench trial's candidate) end with it
             ctypes.CDLL(None, use_errno=True).prctl(_PR_SET_PDEATHSIG, signal.SIGKILL)
+            if os.getppid() != parent_pid:  # the parent died before the signal was set
+                return
             parent_cwd = os.getcwd()
             os.chdir(directory)
             sys.path[:] = [entry or parent_cwd for entry in sys.path]

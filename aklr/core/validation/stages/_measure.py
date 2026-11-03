@@ -8,7 +8,6 @@ import math
 import random
 import statistics
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import suppress
 from types import MappingProxyType
 from typing import Any, Literal, NamedTuple, get_args
 
@@ -85,7 +84,7 @@ MEASUREMENT_PROFILE: Mapping[str, Any] = MappingProxyType(
         "round_stop": "gate_and_baseline_entry_decided_at_a_look",
         "warmup_rounds": N_WARMUP_ROUNDS,
         "max_abs_log_ratio": MAX_ABS_LOG_RATIO,
-        "max_abs_log_ratio_scope": "gate_lower_bound_only",
+        "max_abs_log_ratio_scope": "gate_bounds_only",
         "trial_aggregation": "student_t_lower_bound_of_mean_log_ratio",
         "alpha": ALPHA,
         "alpha_per_look": LOOK_ALPHA,
@@ -187,7 +186,7 @@ def timing_records(
             if not all(map(math.isfinite, versus_milliseconds + candidate_milliseconds)):
                 raise ValueError(f"{mode} rounds with a non-finite time")
             raw = [math.log(v / c) for v, c in zip(versus_milliseconds, candidate_milliseconds)]
-            # clamped only for the gate's lower bound, against an outlier round
+            # clamped for the gate's bounds only, against an outlier round
             log_ratios = [min(max(x, -MAX_ABS_LOG_RATIO), MAX_ABS_LOG_RATIO) for x in raw]
             records.append(
                 TimingRecord(
@@ -279,10 +278,11 @@ class Clock(NamedTuple):
                             )
                         )
                     if round_index + 1 in ROUND_LOOKS:
-                        # unusable rounds decide nothing; compare_performance reports them
-                        with suppress(ValueError, ArithmeticError):
+                        try:
                             if all(r.is_decided for r in timing_records(rounds, thresholds)):
                                 break
+                        except (ValueError, ArithmeticError):
+                            break  # rounds unusable now stay so: compare_performance reports them
         finally:
             if is_gc_enabled:
                 gc.enable()
