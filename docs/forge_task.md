@@ -11,8 +11,8 @@ kept rounds ── forge-ablate, forge-finalize ──▶ one reviewed commit
 one reviewed commit ── --stress, publish ──▶ aklr/ops ── aklr validate ──▶ pull request
 ```
 
-This page is the walk-through. `harness/tools/forge_task/README.md` has every option and the error messages. The
-`forge-loop-campaign` skill in `.claude/skills/` lets an AI agent run the whole campaign.
+This page is the walk-through. `harness/scripts/forge_task/README.md` has every option and the error messages. The
+`forge-loop-campaign` skill in `harness/skills/` lets an AI agent run the whole campaign.
 
 ## Set up
 
@@ -57,7 +57,7 @@ workload in `$RUN/baseline.json`, and writes the task. A GEMM starts from torch;
 
 ```bash
 RUN=~/aklr-runs/bmm_n128_k512
-HIP_VISIBLE_DEVICES=0 python harness/tools/forge_task prepare --schema bmm_n128_k512 --run-dir $RUN
+HIP_VISIBLE_DEVICES=0 python harness/scripts/forge_task prepare --schema bmm_n128_k512 --run-dir $RUN
 ```
 
 **2. Optimize** (hours; the agents cost money from here, about $10 an hour on a GEMM). Run it in `tmux`:
@@ -89,10 +89,10 @@ python -m kernelforge.cli forge-finalize --workspace $W --gpu 0 --model claude-o
   --author "$(git config user.name) <$(git config user.email)>" \
   --lint "python -m ruff check --no-fix --config $A/pyproject.toml" \
   --lint "python -m ruff format --check --config $A/pyproject.toml" \
-  --review-guide $A/.claude/skills/flydsl-kernel-code-cleanup/SKILL.md   # review, squash into one commit
+  --review-guide $A/harness/skills/flydsl-kernel-code-cleanup/SKILL.md   # review, squash into one commit
 HIP_VISIBLE_DEVICES=0 python $W/driver.py --stress                 # must end with "stress: PASS"
 python -m kernelforge.cli forge-distill --workspace $W --model claude-opus-5-5 \
-  --skill-dir $A/.claude/skills/flydsl-kernel-optimization --out $RUN/knowledge_patch \
+  --skill-dir $A/harness/skills/flydsl-kernel-optimization --out $RUN/knowledge_patch \
   --reference $A --guide CONTRIBUTING.md \
   --lint "python tools/kb_lint.py --errors-only --repo-root {repo}"   # what the skill should learn
 ```
@@ -105,13 +105,13 @@ returns NaN or hangs. Do not deliver a kernel that fails it. For a Triton kernel
 **6. Deliver.**
 
 ```bash
-python harness/tools/forge_task publish $RUN
+python harness/scripts/forge_task publish $RUN
 python -m aklr export check && python -m aklr validate --base origin/main <the path publish printed>
 ```
 
 Commit the published file as `aklr/ops/README.md` describes and open a pull request. What the run taught the skill
 goes into the same pull request: apply `$RUN/knowledge_patch/knowledge_patch.diff` and review it item by item, as
-`.claude/skills/flydsl-kernel-optimization/CONTRIBUTING.md` says.
+`harness/skills/flydsl-kernel-optimization/CONTRIBUTING.md` says.
 
 ## What you get
 

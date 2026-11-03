@@ -62,7 +62,7 @@ def test_prepare_writes_the_task_and_prints_kernelforges_command(aklr_root: Path
     assert command[command.index("--driver") + 1] == str(workspace_dir / "driver.py")
     assert command[command.index("--baseline-json") + 1] == str(run_dir.resolve() / "baseline.json")
     assert command[command.index("--skill-dir") + 1] == str(
-        aklr_root / ".claude" / "skills" / "flydsl-kernel-optimization"
+        aklr_root / "harness" / "skills" / "flydsl-kernel-optimization"
     )
     assert {"--paired-keep", "--early-stop"} <= set(command)
 
@@ -121,7 +121,7 @@ def test_the_agents_read_aklrs_skill_for_the_language_if_it_has_one(
     if skill is None:
         assert "--skill-dir" not in command
     else:
-        assert command[command.index("--skill-dir") + 1] == str(aklr_root / ".claude" / "skills" / skill)
+        assert command[command.index("--skill-dir") + 1] == str(aklr_root / "harness" / "skills" / skill)
 
 
 def test_a_relative_aklr_root_reaches_the_driver_and_the_brief_absolute(

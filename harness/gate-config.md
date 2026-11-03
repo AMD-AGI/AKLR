@@ -1,8 +1,7 @@
 # Gate Configuration
 
 This file records the categories of configuration required to execute the
-gates. Concrete values will move to `config/` when the execution environment is
-defined.
+gates. Concrete values will be set when the execution environment is defined.
 
 ## Required Configuration
 

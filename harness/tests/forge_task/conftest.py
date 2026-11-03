@@ -10,8 +10,8 @@ from pathlib import Path
 
 import pytest
 
-# harness/tests/forge_task/conftest.py -> harness/tools
-sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+# harness/tests/forge_task/conftest.py -> harness/scripts
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
 from fake_aklr import install_aklr, schema_payload, write_schema
 
