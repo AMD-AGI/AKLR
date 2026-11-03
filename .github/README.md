@@ -21,7 +21,7 @@ We believe kernel performance will no longer come from rare, hand-tuned efforts 
 |---|---|
 | [`aklr/ops/`](../aklr/ops/README.md) | Operator contracts, reference implementations, benchmark baselines, public APIs, and kernel schemas. A schema names the workloads a kernel may serve. |
 | [`aklr/core/`](../aklr/core/) | Contract types, kernel loading and compilation, per-workload dispatch, and validation. |
-| [`aklr/plugins/`](../aklr/plugins/README.md) | Inference-engine routes. The SGLang plugin is implemented; vLLM routes are planned. |
+| [`aklr/plugins/`](../aklr/plugins/README.md) | Inference-engine routes. The SGLang plugin is implemented; vLLM routes are planned, and `atom/` is an empty placeholder. |
 | [`aklr/benchmarks/`](../aklr/benchmarks/) | Model workload definitions and benchmark support. |
 | [`harness/`](../harness/README.md) | Agent skills and the kernel delivery lifecycle, including [`forge_task`](../docs/forge_task.md), which sends an AKLR problem to KernelForge. |
 | [`tests/`](../tests/) and [`.github/workflows/`](workflows/) | Tests and CI validation. |
