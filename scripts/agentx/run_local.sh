@@ -42,7 +42,9 @@ docker run --rm --name "agentx-sweep-$(id -un)" --network host \
   "$image" bash -c '
     set -euo pipefail
     trap "chown -R $HOST_IDS /agentx/out /agentx/cache" EXIT
-    cp -a /src /aklr && cd /aklr
+    # Not cp -a: a checkout on NFSv4 carries ACLs the container filesystem cannot take.
+    cp -r /src /aklr
+    cd /aklr
     scripts/agentx/install_aklr.sh /agentx/cache 2>&1 | tee /agentx/out/install.log
     set -a; . /agentx/cache/aklr.env; set +a
     cd benchmarks/agentx

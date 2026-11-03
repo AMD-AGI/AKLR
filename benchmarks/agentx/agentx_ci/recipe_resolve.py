@@ -311,10 +311,13 @@ def resolve_point(
     command = ["python3", "-m", "sglang.launch_server", *runtime_args, *cli]
     bench_env = (recipe.get("benchmark") or {}).get("env") or {}
     backend = (row.get("kv-offload-backend") or {}).get("name")
+    # The client's result processing requires the backend's metadata next to its name.
+    backend_metadata = env.get("KV_OFFLOAD_BACKEND_METADATA")
     client_env = {
         **client_defaults,
         **{name: env[name] for name in POINT_CLIENT_ENV},
         **({"KV_OFFLOAD_BACKEND": backend} if backend else {}),
+        **({"KV_OFFLOAD_BACKEND_METADATA": backend_metadata} if backend_metadata else {}),
         "DURATION": str(row["duration"]),
         **{k: str(v) for k, v in bench_env.items() if k not in BOUND_CLIENT_ENV},
         **FIXED_CLIENT_ENV,

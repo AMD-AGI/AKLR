@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import unittest
 from pathlib import Path
 
@@ -66,8 +67,18 @@ class GoldenTests(unittest.TestCase):
         self.assertEqual(
             (client["KV_OFFLOADING"], client["KV_OFFLOAD_BACKEND"]), ("dram", "hicache")
         )
+        self.assertEqual(
+            json.loads(client["KV_OFFLOAD_BACKEND_METADATA"])["name"], "hicache"
+        )
         self.assertEqual(client["ENABLE_AGENTX_POWER"], "false")
         self.assertNotIn("TOTAL_CPU_DRAM_GB", client)
+
+    def test_no_offload_has_no_backend(self):
+        point = next(p for p in build()["points"] if p["arm"] == "tp8")
+        client = point["client_env"]
+        self.assertEqual(client["KV_OFFLOADING"], "none")
+        self.assertNotIn("KV_OFFLOAD_BACKEND", client)
+        self.assertNotIn("KV_OFFLOAD_BACKEND_METADATA", client)
 
     def test_image_difference_is_a_warning(self):
         warnings = build()["warnings"]
