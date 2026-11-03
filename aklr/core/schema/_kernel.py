@@ -19,8 +19,8 @@ from typing import Annotated, List, Literal, Optional
 
 from pydantic import Field, model_validator
 
-from aklr.core._frozen_model import NonEmptyStr, frozen_dataclass
 from aklr.core.platform.device import DeviceTarget
+from aklr.core.schema._frozen_model import NonEmptyStr, frozen_dataclass
 
 # build.language and impls/<language>/ values; a new language is a code PR first, then a schema PR
 Language = Literal["flydsl", "hip", "triton"]

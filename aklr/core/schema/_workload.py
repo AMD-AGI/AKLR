@@ -16,8 +16,8 @@ from pydantic import (
     model_validator,
 )
 
-from aklr.core._frozen_model import frozen_dataclass
 from aklr.core.platform.device import DeviceTarget
+from aklr.core.schema._frozen_model import frozen_dataclass
 
 
 @frozen_dataclass

@@ -31,9 +31,9 @@ from pydantic import (
     model_validator,
 )
 
-from aklr.core._frozen_model import NonEmptyStr, frozen_dataclass
 from aklr.core.schema._args import Const, Scalar, Tensor, Var
 from aklr.core.schema._check import standard_check
+from aklr.core.schema._frozen_model import NonEmptyStr, frozen_dataclass
 from aklr.core.schema._function_source import FUNCTION_SOURCES
 from aklr.core.schema._kernel import Kernel
 from aklr.core.schema._workload import Workload

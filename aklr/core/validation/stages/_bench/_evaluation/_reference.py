@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import TypeAdapter
 
-from aklr.core._frozen_model import frozen_dataclass
+from aklr.core.schema._frozen_model import frozen_dataclass
 from aklr.core.validation.stages._bench._evaluation._comparison import (
     is_reference_comparable,
 )

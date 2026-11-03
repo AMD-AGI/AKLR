@@ -9,7 +9,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Final
 
-from aklr.core._frozen_model import frozen_dataclass
+from aklr.core.schema._frozen_model import frozen_dataclass
 from aklr.core.validation.stages._report._markdown import (
     axes_cell,
     detail_text,

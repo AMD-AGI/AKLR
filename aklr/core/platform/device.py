@@ -11,9 +11,8 @@ import re
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, ClassVar
 
-from pydantic import ValidationInfo, field_validator
-
-from aklr.core._frozen_model import frozen_dataclass
+from pydantic import ConfigDict, ValidationInfo, field_validator
+from pydantic.dataclasses import dataclass
 
 if TYPE_CHECKING:
     import torch
@@ -21,7 +20,8 @@ if TYPE_CHECKING:
 __all__ = ["DeviceTarget", "physical_device"]
 
 
-@frozen_dataclass
+# not schema's frozen_dataclass: aklr.core.schema imports this module
+@dataclass(frozen=True, config=ConfigDict(extra="forbid"))
 class DeviceTarget:
     """A normalized GPU arch (gfx950) and hardware model (MI355X); None: unknown, or any in a constraint."""
 

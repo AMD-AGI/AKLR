@@ -16,9 +16,9 @@ from typing import Any, Final
 
 from pydantic import Field, SerializeAsAny, TypeAdapter
 
-from aklr.core._frozen_model import frozen_dataclass
 from aklr.core.platform.device import DeviceTarget
 from aklr.core.schema import Schema, load_json_file, save_json_file
+from aklr.core.schema._frozen_model import frozen_dataclass
 from aklr.core.validation.stages import (
     MEASUREMENT_PROFILE,
     STAGE_ORDER,

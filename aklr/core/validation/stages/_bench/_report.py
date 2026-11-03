@@ -13,7 +13,7 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Final, Literal, Self
 
-from aklr.core._frozen_model import frozen_dataclass
+from aklr.core.schema._frozen_model import frozen_dataclass
 from aklr.core.schema._workload import Evaluation, Speedup
 from aklr.core.validation.stages._measure import (
     THRESHOLD_RATIOS,

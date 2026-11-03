@@ -17,7 +17,7 @@ from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
 from typing import Any, Literal, NamedTuple, get_args
 
-from aklr.core._frozen_model import frozen_dataclass
+from aklr.core.schema._frozen_model import frozen_dataclass
 from aklr.core.utils import testing
 from aklr.core.validation.stages._report._finding import Finding, FindingCode
 

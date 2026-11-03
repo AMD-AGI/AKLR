@@ -18,7 +18,7 @@ from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Self
 
-from aklr.core._frozen_model import frozen_dataclass
+from aklr.core.schema._frozen_model import frozen_dataclass
 from aklr.core.validation.stages._report._finding import Finding, FindingCode
 from aklr.core.validation.stages._report._markdown import (
     BulletList,

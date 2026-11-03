@@ -20,7 +20,7 @@ from typing import Any, Callable, Dict, List, Literal, Optional
 
 from pydantic import Field, NonNegativeInt
 
-from aklr.core._frozen_model import Excluded, NonEmptyStr, frozen_dataclass
+from aklr.core.schema._frozen_model import Excluded, NonEmptyStr, frozen_dataclass
 
 
 class DType(str, Enum):

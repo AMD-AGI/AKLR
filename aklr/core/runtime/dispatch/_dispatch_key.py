@@ -16,8 +16,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Tuple, Type, Union
 
-from aklr.core._frozen_model import frozen_dataclass
 from aklr.core.schema import Schema
+from aklr.core.schema._frozen_model import frozen_dataclass
 from aklr.core.schema._workload import Workload
 
 

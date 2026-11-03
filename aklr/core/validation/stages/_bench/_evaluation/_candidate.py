@@ -14,8 +14,8 @@ from typing import TYPE_CHECKING, Any, Final, NamedTuple
 
 from pydantic import TypeAdapter
 
-from aklr.core._frozen_model import frozen_dataclass
 from aklr.core.schema import Schema
+from aklr.core.schema._frozen_model import frozen_dataclass
 from aklr.core.utils import dtype_str_to_torch_dtype
 from aklr.core.validation.stages import _measure
 from aklr.core.validation.stages._bench._evaluation._safetensors import (

@@ -18,7 +18,7 @@ from typing import ClassVar, Protocol
 
 import torch
 
-from aklr.core._frozen_model import frozen_dataclass
+from aklr.core.schema._frozen_model import frozen_dataclass
 
 
 # shortcut: a hand-made rocprofiler-sdk tool standing in for torch.profiler
