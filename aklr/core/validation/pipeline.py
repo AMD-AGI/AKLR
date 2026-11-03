@@ -189,17 +189,15 @@ class PipelineReport(FrozenModel):
         (directory / "report.json").write_text(self.model_dump_json(indent=2), encoding="utf-8")
         (directory / "report.md").write_text(self.markdown_text(), encoding="utf-8")
 
-    def write_schemas(self, root: Path, directory: Path) -> int:
-        """Write each bench schema with its measurements, return how many; one schema's
-        finding or another stage's fault does not stop the rest
-        (``BenchReport.measurements``)."""
+    def write_schemas(self, root: Path, directory: Path) -> None:
+        """Write each bench schema with its measurements; one schema's finding does not
+        stop the rest (``BenchReport.measurements``)."""
         shutil.rmtree(directory, ignore_errors=True)  # no earlier run's rewrites
         bench = next((s for s in self.stages if isinstance(s, BenchReport)), None)
         target = DeviceTarget.from_names(self.platform.arch, self.platform.hardware)
         if bench is None or not target.is_complete:
-            return 0
+            return
         registry = ContractRegistry.default()
-        n_rewritten = 0
         for path in self.bench_paths:
             schema = registry.parse_schema((root / path).read_bytes(), path)
             if schema.kernel.targets != (target,):
@@ -219,16 +217,12 @@ class PipelineReport(FrozenModel):
                         schema.with_measurements(measured).schema_text(),
                         encoding="utf-8",
                     )
-                    n_rewritten += 1
                     break
-        return n_rewritten
 
     def write_baselines(self, scope: ValidationScope, directory: Path) -> None:
         """Re-export, replacing the last run's, what each benched workload was compared
         with: an incumbent's base schema, else the defined baseline in main's Solution
         shape (``<op_type>/<name>/<name>__baseline.json``); never committed."""
-        from aklr.core.runtime import seam
-
         shutil.rmtree(directory, ignore_errors=True)  # a changed baseline replaces it
         bench = next((s for s in self.stages if isinstance(s, BenchReport)), None)
         if bench is None:
@@ -256,9 +250,7 @@ class PipelineReport(FrozenModel):
                 file_name = PurePosixPath(baseline).name
             else:
                 contract = registry.get(next(s for s in schemas.values() if s.name == name).contract_id)
-                fn = seam.custom_baseline(contract) or next(
-                    r.declared for r in seam.contract_routes(contract) if r.api == baseline
-                )
+                fn = contract.baseline()
                 data = {
                     "name": f"{name}__baseline",
                     "definition": name,

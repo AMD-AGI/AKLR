@@ -64,10 +64,8 @@ enumerated M ≤ 16.
 
 ## How the bf16 path is reached
 
-1. `aiter.tuned_gemm.gemm_a16w16` (`aiter/tuned_gemm.py:294`) is wrapped by `aklr_proxy` (:293): with AKLR
-   importable it first offers the call to AKLR's own GEMM dispatch, and only a AKLR fallback reaches the steps
-   below. `AKLR_DISABLE=1` runs aiter's own path,
-   which is the one to time when you price aiter.
+1. `aiter.tuned_gemm.gemm_a16w16` (`aiter/tuned_gemm.py:294`) is the entry point, and `gemm`'s baseline
+   (`aklr/ops/gemm/baseline.py`) calls it: its path is the one to time when you price aiter.
 2. The lookup (`get_GEMM_A16W16_config`, `tuned_gemm.py:131`) matches `(gfx, cu_num, M, N, K, bias, dtype,
    outdtype, scaleAB, bpreshuffle)`, with M as is, then padded twice by `get_padded_m` (the padding is in
    `../../gemm/flydsl_gemm_small_m.md` §7).
@@ -154,9 +152,9 @@ serve; which run where: `../../moe/INDEX.md` § Kernels to start from.
 ## Other FlyDSL families in this repository's aiter
 
 Same layout as the GEMMs: host wrapper in `aiter/ops/flydsl/`, body under `kernels/`, and nothing runs unless
-`is_flydsl_available()` (`aiter/ops/flydsl/utils.py:72`). `aiter.fused_moe.fused_moe` is wrapped by `aklr_proxy`
-(`aiter/fused_moe.py:471`) like `gemm_a16w16`, so price aiter's MoE with `AKLR_DISABLE=1` (step 1 of § How the
-bf16 path is reached). Everything here runs on gfx950 unless § Not for gfx950 lists it.
+`is_flydsl_available()` (`aiter/ops/flydsl/utils.py:72`). `aiter.fused_moe.fused_moe` (`aiter/fused_moe.py:471`)
+is `fused_moe`'s baseline (`aklr/ops/fused_moe/baseline.py`), as `gemm_a16w16` is `gemm`'s. Everything here runs
+on gfx950 unless § Not for gfx950 lists it.
 
 ### MoE (grouped GEMM)
 

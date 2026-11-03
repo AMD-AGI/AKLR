@@ -4,10 +4,8 @@
 import pytest
 import torch
 
-import aklr.ops
 from aklr.core.contract import semantics
 from aklr.core.platform.device import DeviceTarget
-from aklr.core.runtime import seam
 from aklr.core.validation.stages._bench._evaluation._comparison import (
     is_reference_comparable,
 )
@@ -40,10 +38,9 @@ class TestReference:
     def test_backend_matches_reference(self, op_case: OpCase) -> None:
         if op_case.needs_gfx950 and DeviceTarget.current().arch != "gfx950":
             pytest.skip("the backend runs the Point only on gfx950")
-        aklr.ops.load_routes()
         args = op_case.inputs()
         call = op_case.call(args, "cuda")
-        outputs = op_case.contract.call_mutable_tensors(seam.backend_call(op_case.contract, call), call)
+        outputs = op_case.contract.call_mutable_tensors(op_case.contract.baseline()(**call), call)
         results = op_case.compare(outputs, args, baseline_outputs=outputs)
         output_specs = semantics.mutable_tensor_declarations(op_case.request.schema_json)
         baseline_relative = {

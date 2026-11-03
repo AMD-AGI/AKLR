@@ -2,8 +2,6 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
 import logging
-import sys
-import types
 from pathlib import Path
 
 import pytest
@@ -22,7 +20,7 @@ from aklr.core.platform.env import (
     ENV_EXPORT_DIR,
     ENV_MIN_SPEEDUP,
 )
-from aklr.core.runtime import LoadError, seam
+from aklr.core.runtime import LoadError
 from aklr.core.runtime.builder import BuilderRegistry
 from aklr.core.runtime.dispatch import (
     CallRecorder,
@@ -30,7 +28,6 @@ from aklr.core.runtime.dispatch import (
     DispatchTable,
     FallbackReason,
     KernelDispatcher,
-    register_vllm_plugin,
 )
 from tests.op_case import GEMM_KERNEL_SOURCE, KERNEL_TARGET, OpCase
 
@@ -349,10 +346,10 @@ class TestDispatcherRegistry:
         """An op's ``baseline.py`` that fails to import fails the init as a
         ``LoadError``, the error a host catches."""
 
-        def baseline_of(contract: OpContract) -> str:
+        def baseline(contract: OpContract) -> None:
             raise ModuleNotFoundError("No module named 'sglang'", name="sglang")
 
-        monkeypatch.setattr(seam, "baseline_of", baseline_of)
+        monkeypatch.setattr(OpContract, "baseline", baseline)
         with pytest.raises(LoadError, match="its baseline"):
             default_dispatchers.init()
 
@@ -368,7 +365,7 @@ class TestDispatcherRegistry:
                 [],
             ),
         )
-        monkeypatch.setattr(seam, "baseline_of", lambda contract: None)
+        monkeypatch.setattr(OpContract, "baseline", lambda contract: None)
         target = DeviceTarget.from_names(**KERNEL_TARGET)
         monkeypatch.setattr(
             DispatcherRegistry,
@@ -423,7 +420,7 @@ class TestDispatcherRegistry:
             monkeypatch.setenv(ENV_MIN_SPEEDUP, "0")
         else:
             monkeypatch.delenv(ENV_MIN_SPEEDUP, raising=False)
-            monkeypatch.setattr(seam, "baseline_of", lambda contract: None)
+            monkeypatch.setattr(OpContract, "baseline", lambda contract: None)
         default_dispatchers.init()
         contract = OpCase.of("gemm@1.0").contract
         schemas, errors = ContractRegistry.default().read_schemas(contract.op_package)
@@ -441,25 +438,3 @@ class TestDispatcherRegistry:
         assert not isinstance(result, FallbackReason)
         comparisons = case.compare(case.contract.outputs_by_name(result), args)
         assert {o: c.is_passed for o, c in comparisons.items()} == dict.fromkeys(case.contract.outputs, True)
-
-
-class TestVllmPlugin:
-    """``register_vllm_plugin``: AKLR starts in a vLLM worker once its device is bound."""
-
-    def test_init_runs_after_init_device(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The wrapped ``Worker.init_device`` runs the original, then ``init_once``, and
-        returns the original's result."""
-        events: list[str] = []
-
-        class Worker:
-            def init_device(self) -> str:
-                events.append("init_device")
-                return "bound"
-
-        module = types.ModuleType("vllm.v1.worker.gpu_worker")
-        module.Worker = Worker
-        monkeypatch.setitem(sys.modules, module.__name__, module)
-        monkeypatch.setattr(DispatcherRegistry, "init_once", lambda self: events.append("init_once"))
-        register_vllm_plugin()
-        assert Worker().init_device() == "bound"
-        assert events == ["init_device", "init_once"]

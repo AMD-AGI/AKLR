@@ -1,3 +1,0 @@
-graft 3rdparty/aiter/aiter
-prune 3rdparty/aiter/aiter/jit/build
-global-exclude *.py[cod]

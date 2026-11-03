@@ -44,9 +44,6 @@ class CandidateWorkloadResult(FrozenModel):
     axes_text: str
     findings: tuple[Finding, ...]
     rounds: tuple[_measure.RoundTimes, ...]
-    # the defined baseline that bound and timed (of several routes, the first to
-    # bind); None: none timed
-    baseline: str | None
 
 
 class CandidateResult(FrozenModel):
@@ -92,15 +89,12 @@ def run_candidate(context: ExecutionContext, *, requests: Sequence[TrialRequest]
 
     from aklr.core.platform.device import DeviceTarget
     from aklr.core.platform.toolchain import unmet_requirement
-    from aklr.core.runtime import seam
     from aklr.core.utils.testing import flush_l2_cache
-    from aklr.ops import load_routes
 
     schema = requests[0].schema
     batch_findings: tuple[Finding, ...] = ()
     stopped: dict[str, Finding] = {}
     rounds: dict[str, tuple[_measure.RoundTimes, ...]] = {}
-    baselines: dict[str, str | None] = {}
     dispatcher = None
     incumbent_dispatchers: dict[str, KernelDispatcher] = {}
     target = DeviceTarget.current(context.device)
@@ -116,8 +110,6 @@ def run_candidate(context: ExecutionContext, *, requests: Sequence[TrialRequest]
             raise StepFailed(FindingCode.NO_MATCHING_TOOLCHAIN, detail)
         with StepFailed.failing_as(FindingCode.PLATFORM_FAILURE, "compile tripwire: "):
             tripwire = _CompileTripwire.resolve()
-        # no DispatcherRegistry.init(): a aklr op inside a baseline falls back
-        load_routes()
         run = CandidateRun(context.device, tripwire, _measure.bind_clock())
         flush_l2_cache()
         run.clock.synchronize()
@@ -126,7 +118,7 @@ def run_candidate(context: ExecutionContext, *, requests: Sequence[TrialRequest]
                 with StepFailed.failing_as(FindingCode.PLATFORM_FAILURE, "baseline: "):
                     try:
                         run.run_baseline(request)
-                    except seam.RouteDeclinedError as e:
+                    except NotImplementedError as e:
                         raise StepFailed(FindingCode.BASELINE_FAILED, _BASELINE_FAILED_DETAIL) from e
             except StepFailed as e:
                 stopped[request.axes_text] = Finding.unlocated(e.code, str(e))
@@ -161,7 +153,7 @@ def run_candidate(context: ExecutionContext, *, requests: Sequence[TrialRequest]
         outputs: dict[str, Tensor] = {}
         if not batch_findings and axes_text not in stopped:
             try:
-                rounds[axes_text], baselines[axes_text] = run.check_and_time(
+                rounds[axes_text] = run.check_and_time(
                     request, dispatcher, incumbent_dispatchers.get(axes_text), outputs
                 )
             except StepFailed as e:
@@ -173,7 +165,6 @@ def run_candidate(context: ExecutionContext, *, requests: Sequence[TrialRequest]
             axes_text=r.axes_text,
             findings=(stopped[r.axes_text],) if r.axes_text in stopped else (),
             rounds=rounds.get(r.axes_text, ()),
-            baseline=baselines.get(r.axes_text),
         )
         for r in requests
     ]
@@ -238,8 +229,9 @@ class CandidateRun:
         self.clock = clock
 
     def run_baseline(self, request: TrialRequest) -> None:
-        from aklr.core.runtime import seam
-
+        baseline = request.contract.baseline()
+        if baseline is None:
+            return  # the new case is its own baseline: nothing to run
         row_major_args = None
         if request.has_workload_set:
             workload_step = next(s for s in request.steps if s.input_set == "workload")
@@ -247,13 +239,7 @@ class CandidateRun:
                 row_major_args = request.compose_inputs(workload_step)
         if row_major_args is None:
             row_major_args = request.compose_inputs(None)
-        call = request.assemble_call(row_major_args, self.device)
-        try:
-            bound = seam.backend_bind(request.contract, call)
-        except seam.NoBaselineError:
-            return  # the new case is its own baseline: nothing to run
-        with seam.apply_env(bound.env):
-            bound.backend_fn(*bound.args, **bound.kwargs)
+        baseline(**request.assemble_call(row_major_args, self.device))
 
     def make_warmed_dispatcher(
         self, kernel_schema: OpContract, requests: Sequence[TrialRequest]
@@ -314,10 +300,8 @@ class CandidateRun:
         dispatcher: KernelDispatcher,
         incumbent_dispatcher: KernelDispatcher | None,
         outputs: dict[str, Tensor],
-    ) -> tuple[tuple[_measure.RoundTimes, ...], str | None]:
-        """Run the workload's check steps, then its timing rounds; return them and
-        the defined baseline that bound."""
-        from aklr.core.runtime import seam
+    ) -> tuple[_measure.RoundTimes, ...]:
+        """Run the workload's check steps, then its timing rounds; return the rounds."""
         from aklr.core.runtime.dispatch import FallbackReason
 
         contract, steps = request.contract, request.steps
@@ -341,30 +325,16 @@ class CandidateRun:
                 raise StepFailed(FindingCode.PLATFORM_FAILURE, detail)
         where = f"{request.schema_path}:{request.axes_text}"
         try:
-            try:
-                bound = seam.backend_bind(contract, dict(call))
-            except seam.NoBaselineError:
-                bound = None
-                if "incumbent" in fns:  # no defined baseline: the incumbent is it
-                    fns["baseline"] = fns.pop("incumbent")
-            else:
-                relayout = request.point.layout_variant_name == "b_shuffled_row_major_a_scale"
-                # FIXME(main-kernels): aiter's bpreshuffle reads x_scale as column-major
-                # memory whatever its strides; main's aslogical baseline relayouts it in
-                # the timed call.
-                fns["baseline"] = lambda: bound.backend_fn(
-                    *bound.args,
-                    **bound.kwargs
-                    | ({"x_scale": bound.kwargs["x_scale"].T.contiguous().T} if relayout else {}),
-                )
-            context_fns = dict.fromkeys(fns, contextlib.nullcontext)
-            if bound is not None:
-                context_fns["baseline"] = functools.partial(seam.apply_env, bound.env)
+            baseline = contract.baseline()
+            if baseline is not None:
+                fns["baseline"] = lambda: baseline(**call)
+            elif "incumbent" in fns:  # no defined baseline: the incumbent is it
+                fns["baseline"] = fns.pop("incumbent")
             rounds = ()
             if "baseline" in fns:  # none: the new case is its own baseline, untimed
                 root_hash = semantics.workload_hash(request.schema_json["name"], request.workload_json)
                 seed = semantics.derive_seed(root_hash, "timing")
-                rounds = self.clock.time_rounds(fns, context_fns, seed=seed)
+                rounds = self.clock.time_rounds(fns, seed=seed)
         except Exception as e:
             text = f"{where}: timing: {type(e).__name__}: {e}"
             raise RuntimeError(text) from e
@@ -376,7 +346,7 @@ class CandidateRun:
                 outputs,
                 timing_call=call,
             )
-        return rounds, bound.name if bound is not None else None
+        return rounds
 
     def produce_outputs(
         self,

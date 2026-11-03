@@ -70,7 +70,7 @@ python3 profile_prefill.py --model $M --tp-size 8 \
 
 Pass the attention backends explicitly too. Left unset, sglang resolves `triton` on this image; the recipe is `aiter`, and at long context they are not close: at TP8, ISL 100k, `--CONC` 8 the MLA decode kernel took 13.9 ms of a 35.0 ms step under Triton and 2.4 ms of 23.0 ms under aiter. The report's `attention` row names the backend classes sglang built, so a run on the wrong ones shows it.
 
-The bench measures whichever `aiter` Python imports. This repository carries its own `aiter` package, so running with the repository root on `PYTHONPATH` times this tree's kernels rather than the image's; the report's Versions table says which. The scripts need only their own directory on the path.
+The bench measures whichever `aiter` Python imports; the report's Versions table says which. The scripts need only their own directory on the path.
 
 ### What fits, measured on 8x MI355X (288 GB each)
 

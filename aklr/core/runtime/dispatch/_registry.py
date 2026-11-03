@@ -105,15 +105,13 @@ class DispatcherRegistry:
             errors += op_errors
         if errors:
             raise LoadError("\n".join(errors))
-        from aklr.core.runtime import seam  # seam imports this module
-
         # nothing to beat without a defined baseline (the bench's rule): speedup 1.0
         # qualifies; an op's baseline.py that fails to import fails the init
         min_speedups = {}
         for contract_id, contract in live_contracts.items():
             try:
-                has_baseline = seam.baseline_of(contract) is not None
-            except (ImportError, seam.RouteError) as e:
+                has_baseline = contract.baseline() is not None
+            except ImportError as e:
                 raise LoadError(f"{contract_id}: its baseline: {e}") from e
             min_speedups[contract_id] = runtime_env.min_speedup if has_baseline else 0
         device = target = None

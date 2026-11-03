@@ -4,11 +4,9 @@
 import io
 import json
 import math
-import os
 import re
 import statistics
 import sys
-import threading
 from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import replace
@@ -18,9 +16,9 @@ from unittest.mock import Mock
 
 import pytest
 
+from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.spec import axes_text
-from aklr.core.runtime import seam
 from aklr.core.validation import (
     AuditStage,
     BenchStage,
@@ -41,12 +39,6 @@ from aklr.core.validation.stages._bench._execution import (
     TaskExecutionFailed,
 )
 from aklr.core.validation.stages._bench._report import WorkloadRecord
-from aklr.core.validation.stages._e2e import _run as _e2e_run
-from aklr.core.validation.stages._e2e import _stage as _e2e_stage
-from aklr.core.validation.stages._e2e._config import E2eConfig
-from aklr.core.validation.stages._e2e._report import E2eRecord, E2eReport
-from aklr.core.validation.stages._e2e._run import RunNotKilledError, ScenarioRun
-from aklr.core.validation.stages._e2e._stage import E2eStage
 from aklr.core.validation.stages._measure import (
     RoundTimes,
     TimingRecord,
@@ -165,9 +157,6 @@ _STARTED_PASSED = [
 ]
 _NEWLY_WRONG = [(FindingCode.NUMERIC_MISMATCH, {"m": 1}, "out 0\n  bad")]
 
-_E2E_PASSED = E2eReport(status="passed")
-_E2E_PLATFORM_FAULT = E2eReport.from_findings([Finding.unlocated(FindingCode.PLATFORM_FAILURE, "")])
-
 
 class TestPipeline:
     """``Pipeline``: stages in order behind the audit, the rest skipped after one that does not pass."""
@@ -204,15 +193,10 @@ class TestPipeline:
         return report.status, len(report.findings), len(report.demotions)
 
     @staticmethod
-    def _writes_back(
-        tmp_path: Path,
-        speedup: float,
-        bench_finding: FindingCode | None,
-        e2e: StageReport,
-    ) -> bool:
+    def _writes_back(tmp_path: Path, speedup: float, bench_finding: FindingCode | None) -> bool:
         """Whether ``write_schemas`` rewrites the schema stored at speedup 1.5, measured at
-        ``speedup``, with ``bench_finding`` on the schema and ``e2e`` after the bench; an
-        earlier run's rewrite in the directory does not count."""
+        ``speedup``, with ``bench_finding`` on the schema; an earlier run's rewrite in the
+        directory does not count."""
         registry = ContractRegistry.default()
         schema = registry.parse_schema(Path(_SCHEMA).read_bytes(), _SCHEMA)
         stored = {
@@ -238,7 +222,7 @@ class TestPipeline:
             platform=PlatformRecord(**_PLATFORM),
             schema_paths=(_SCHEMA,),
             bench_paths=(_SCHEMA,),
-            stages=(AuditReport(status="passed"), bench, e2e),
+            stages=(AuditReport(status="passed"), bench),
         ).write_schemas(tmp_path, tmp_path / "out")
         return (tmp_path / "out" / _SCHEMA).exists()
 
@@ -407,23 +391,10 @@ class TestPipeline:
                 id="regressed-demotes",
             ),
             # PipelineReport.write_schemas: whether the schema stored at 1.5 is rewritten
+            pytest.param(lambda p: TestPipeline._writes_back(p, 1.56, None), True, id="moved-4%"),
+            pytest.param(lambda p: TestPipeline._writes_back(p, 1.52, None), False, id="moved-1.3%"),
             pytest.param(
-                lambda p: TestPipeline._writes_back(p, 1.56, None, _E2E_PASSED),
-                True,
-                id="moved-4%",
-            ),
-            pytest.param(
-                lambda p: TestPipeline._writes_back(p, 1.52, None, _E2E_PASSED),
-                False,
-                id="moved-1.3%",
-            ),
-            pytest.param(
-                lambda p: TestPipeline._writes_back(p, 1.56, None, _E2E_PLATFORM_FAULT),
-                True,
-                id="e2e-platform-fault",
-            ),
-            pytest.param(
-                lambda p: TestPipeline._writes_back(p, 1.56, FindingCode.PLATFORM_FAILURE, _E2E_PASSED),
+                lambda p: TestPipeline._writes_back(p, 1.56, FindingCode.PLATFORM_FAILURE),
                 False,
                 id="bench-aborted",
             ),
@@ -468,19 +439,6 @@ class TestPipeline:
                 lambda _: BenchReport.skipped("no kernel to measure").console_lines(),
                 ["skipped: no kernel to measure"],
                 id="finish-skipped",
-            ),
-            pytest.param(
-                lambda _: E2eRecord(
-                    scenario="s",
-                    n_runs_per_side=2,
-                    throughput_ratio_lower_bound=1.02,
-                    latency_ratio_lower_bound=1.05,
-                    n_hit_calls=3,
-                    n_fallback_calls=0,
-                ).console_line(1.01),
-                "throughput ratio lower bound 1.0200, gate >= 1.0100,"
-                " latency ratio lower bound 1.0500, 3 hit calls, 0 fallback calls",
-                id="e2e-line",
             ),
             pytest.param(
                 lambda _: TestPipeline._passed_bench().batch_line(),
@@ -817,22 +775,20 @@ class TestBaseline:
         monkeypatch.setattr(ValidationScope, "text_at_base", lambda self, path: json.dumps(base))
         assert all(r.incumbent is None for r in self._requests(scope).values())
 
-    def test_record_names_the_route_that_bound(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Of several routes the first that binds is timed, so it names the defined
-        baseline; a served base kernel stays the baseline; a workload stopped before
-        timing has none to export."""
+    def test_record_names_a_timed_defined_baseline(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A timed defined baseline is named; a served base kernel stays the baseline;
+        a workload stopped before timing has none to export."""
         scope = self._base_scope(monkeypatch, {self._A: 1.2})
         requests = self._requests(scope)
-        bound = "aiter.ops.the_route_that_bound"
         crash = Finding.unlocated(FindingCode.CANDIDATE_CRASH, "")
+        timed = RoundTimes(mode="graph", round_index=0, order=("baseline",), milliseconds={"baseline": 1.0})
         candidate = CandidateResult(
             findings=(),
             workload_results=tuple(
                 CandidateWorkloadResult(
                     axes_text=r.axes_text,
                     findings=() if r.axes_text == self._B else (crash,),
-                    rounds=(),
-                    baseline=bound if r.axes_text == self._B else None,
+                    rounds=(timed,) if r.axes_text == self._B else (),
                 )
                 for r in requests.values()
             ),
@@ -843,13 +799,12 @@ class TestBaseline:
         )
         baselines = {axes_text(r.axes): r.baseline for r in records}
         assert baselines.pop(self._A) == _SCHEMA
-        assert baselines.pop(self._B) == bound
+        assert baselines.pop(self._B) == requests[self._B].baseline is not None
         assert set(baselines.values()) == {None}
 
-    def test_custom_baseline_without_route(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """A ``baseline.py`` function and no route: the defined baseline, timed."""
-        monkeypatch.setattr(seam, "_ROUTES", {})
-        monkeypatch.setattr(seam, "custom_baseline", lambda contract: _custom_baseline)
+    def test_baseline_py_function_is_the_defined_baseline(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The op's ``baseline.py`` function: the defined baseline, timed."""
+        monkeypatch.setattr(OpContract, "baseline", lambda contract: _custom_baseline)
         requests = self._requests(ValidationScope(Path.cwd(), "", None, (), ()))
         name = f"{_custom_baseline.__module__}.{_custom_baseline.__qualname__}"
         assert {r.baseline for r in requests.values()} == {name}
@@ -863,12 +818,13 @@ class TestBaseline:
         assert requests[self._A].thresholds["incumbent"] == "retain"
         assert requests[self._A].baseline == _SCHEMA
         assert requests[self._B].incumbent is None
-        assert requests[self._B].baseline == seam.baseline_of(contract) is not None
+        baseline = contract.baseline()
+        assert requests[self._B].baseline == f"{baseline.__module__}.{baseline.__qualname__}"
 
     def test_no_defined_baseline(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """No defined baseline: a base kernel at 1.0 is the baseline (retain); with
         none, nothing is timed and the speedup is 1.0."""
-        monkeypatch.setattr(seam, "baseline_of", lambda contract: None)
+        monkeypatch.setattr(OpContract, "baseline", lambda contract: None)
         requests = self._requests(self._base_scope(monkeypatch, {self._A: 1.0}))
         assert requests[self._A].thresholds == {"baseline": "retain"}
         assert requests[self._A].baseline == _SCHEMA
@@ -885,7 +841,7 @@ class TestBaseline:
         """This very kernel, served at base, is the exported baseline yet never timed
         against itself: A at 1.2 always; B at 0.9 only without a defined baseline."""
         if not has_defined_baseline:
-            monkeypatch.setattr(seam, "baseline_of", lambda contract: None)
+            monkeypatch.setattr(OpContract, "baseline", lambda contract: None)
         scope = self._base_scope(monkeypatch, {self._A: 1.2, self._B: 0.9}, same_kernel=True)
         requests = self._requests(scope)
         a, b = requests[self._A], requests[self._B]
@@ -922,7 +878,8 @@ class TestBaseline:
         workload with no baseline."""
         scope = self._base_scope(monkeypatch, {self._A: 1.2})
         schema = ContractRegistry.default().parse_schema(Path(_SCHEMA).read_bytes(), _SCHEMA)
-        route = seam.baseline_of(ContractRegistry.default().get(schema.contract_id))
+        baseline = ContractRegistry.default().get(schema.contract_id).baseline()
+        defined = f"{baseline.__module__}.{baseline.__qualname__}"
         out = tmp_path / "baseline"
         directory = out / schema.op_type / schema.name
         solution = directory / f"{schema.name}__baseline.json"
@@ -947,18 +904,18 @@ class TestBaseline:
             return sorted(p.name for p in out.rglob("*.json"))
 
         base_file = Path(_SCHEMA).name
-        assert write({self._A: _SCHEMA, self._B: route}) == sorted([base_file, solution.name])
+        assert write({self._A: _SCHEMA, self._B: defined}) == sorted([base_file, solution.name])
         workloads_of = lambda p: [axes_text(w["axes"]) for w in json.loads(p.read_text())["workloads"]]
         assert workloads_of(directory / base_file) == [self._A]
         assert workloads_of(solution) == [self._B]
         written = json.loads(solution.read_text())
         assert written["author"] == "baseline"
         assert written["spec"]["entry_point"] == "main.py::run"
-        assert "@aklr_route" in written["sources"][0]["content"]
+        assert f"def {baseline.__name__}" in written["sources"][0]["content"]
         # B's base kernel now qualifies too: the defined baseline's file goes
         assert write({self._A: _SCHEMA, self._B: _SCHEMA}) == [base_file]
-        # a custom baseline.py function is exported as main.py
-        monkeypatch.setattr(seam, "custom_baseline", lambda c: _custom_baseline)
+        # whatever baseline.py holds is exported as main.py
+        monkeypatch.setattr(OpContract, "baseline", lambda c: _custom_baseline)
         assert write({self._A: None, self._B: "x._custom_baseline"}) == [solution.name]
         assert "def _custom_baseline" in json.loads(solution.read_text())["sources"][0]["content"]
         assert write({self._A: None, self._B: None}) == []
@@ -1143,148 +1100,3 @@ def test_importing_validation_loads_no_torch() -> None:
 
     code = "import sys, aklr.core.validation; sys.exit('torch' in sys.modules)"
     assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
-
-
-class TestE2e:
-    @pytest.mark.parametrize("on_ms", [(4.0, 4.0), (8.0, 8.0), (4.0, 8.0)])
-    def test_latency_comparison(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        tmp_path: Path,
-        on_ms: tuple[float, float],
-    ) -> None:
-        """Latency uses paired off/on bounds, independently of throughput."""
-        rounds = [
-            (
-                _e2e_run.RunResult(tokens_per_s=2, latency_ms=ms),
-                _e2e_run.RunResult(tokens_per_s=1, latency_ms=6),
-            )
-            for ms in on_ms
-        ]
-        monkeypatch.setattr(E2eStage, "_compare_rounds", lambda *args: rounds)
-        monkeypatch.setattr(ScenarioRun, "execute", lambda self: None)
-        monkeypatch.setattr(_e2e_stage, "read_calls", lambda directory: [])
-        scenarios = E2eConfig.read().scenarios
-        findings, record = E2eStage(scenarios, ["cuda:0"])._bench_scenario(scenarios[0], tmp_path, {})
-        assert not findings
-        assert record is not None
-        expected = ratio_lower_bound([math.log(6 / ms) for ms in on_ms])
-        assert record.latency_ratio_lower_bound == pytest.approx(expected)
-        assert record.throughput_ratio_lower_bound == pytest.approx(2)
-        payload = record.model_dump()
-        assert payload["latency_ratio_lower_bound"] == pytest.approx(expected)
-        assert {key for key in payload if key.startswith("latency")} == {"latency_ratio_lower_bound"}
-        assert set(payload) == {
-            "scenario",
-            "n_runs_per_side",
-            "throughput_ratio_lower_bound",
-            "latency_ratio_lower_bound",
-            "n_hit_calls",
-            "n_fallback_calls",
-        }
-        assert len(record.table_row()) == 6
-        assert record.table_row()[3] == f"{expected:.4f}"
-
-    @staticmethod
-    def _write_run(run_dir: Path, tokens_per_s: float) -> None:
-        run_dir.mkdir(parents=True)
-        result = {"tokens_per_s": tokens_per_s, "latency_ms": 1 / tokens_per_s}
-        (run_dir / "result.json").write_text(json.dumps(result))
-
-    def test_serves_the_bench_measurements(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Every e2e run's dispatch reads the bench's measurements over the committed
-        schemas, at the inherited threshold; the checkout is left as it is."""
-        registry = ContractRegistry.default()
-        schema = registry.parse_schema(Path(_SCHEMA).read_bytes(), _SCHEMA)
-        op_package = registry.get(schema.contract_id).op_package
-        bench = BenchReport.from_findings(
-            [],
-            workload_records=tuple(_workload(w.axes, 2.0, 0.0) for w in schema.workloads),
-        )
-        earlier = PipelineReport(
-            head_sha="",
-            base_sha=None,
-            measurement_profile={},
-            platform=PlatformRecord(**_PLATFORM),
-            schema_paths=(_SCHEMA,),
-            bench_paths=(_SCHEMA,),
-            stages=(AuditReport(status="passed"), bench),
-        )
-        envs: dict[str, dict[str, str]] = {}
-
-        def execute(run: ScenarioRun) -> None:
-            measured_dir = Path(run.env["AKLR_MEASURED_DIR"])
-            served, _ = registry.read_schemas(op_package, measured_dir=measured_dir)
-            (served_schema,) = [s for p, s in served if p.name == Path(_SCHEMA).name]
-            assert {w.speedup for w in served_schema.workloads} == {2.0}
-            envs[run.side] = dict(run.env)
-            self._write_run(run.run_dir, 1.0)
-
-        monkeypatch.setattr(ScenarioRun, "execute", execute)
-        monkeypatch.setattr(_e2e_stage, "read_calls", lambda directory: [])
-        monkeypatch.setenv("AKLR_MIN_SPEEDUP", "1.1")
-        committed = Path(_SCHEMA).read_bytes()
-        E2eStage(E2eConfig.read().scenarios, ["cuda:0"]).run(
-            ValidationScope(Path.cwd(), "", None, (), ()), earlier
-        )
-        assert {e["AKLR_MIN_SPEEDUP"] for e in envs.values()} == {"1.1"}
-        assert "AKLR_DISABLE" not in envs["on"]
-        assert Path(_SCHEMA).read_bytes() == committed
-
-    @pytest.mark.parametrize(
-        ("on_tokens_per_s", "code"),
-        [
-            pytest.param(2.0, None, id="faster"),
-            pytest.param(1.0, FindingCode.E2E_NOT_FASTER, id="no-gain"),
-            pytest.param(0.5, FindingCode.E2E_NOT_FASTER, id="slower"),
-        ],
-    )  # fmt: skip
-    def test_gates_performance_with_result_json_only(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        capsys: pytest.CaptureFixture[str],
-        on_tokens_per_s: float,
-        code: FindingCode | None,
-    ) -> None:
-        """Only timing results are required; performance regressions still fail."""
-
-        def execute(run: ScenarioRun) -> None:
-            self._write_run(run.run_dir, 1.0 if run.side == "off" else on_tokens_per_s)
-
-        monkeypatch.setattr(ScenarioRun, "execute", execute)
-        monkeypatch.setattr(_e2e_stage, "read_calls", lambda directory: [])
-        earlier = Mock()
-        earlier.write_schemas.return_value = 0
-        report = E2eStage(E2eConfig.read().scenarios[:1], ["cuda:0"]).run(
-            ValidationScope(Path.cwd(), "", None, (), ()), earlier
-        )
-        assert [f.code for f in report.findings] == ([code] if code else [])
-        if code is None:
-            assert (
-                "on 2.0 tokens/s, latency 0.500 ms; off 1.0 tokens/s, latency 1.000 ms, ratio 2.0000"
-            ) in capsys.readouterr().err
-
-
-def test_unkillable_run_raises_instead_of_hanging(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """A group leader that outlives its SIGKILL (a GPU hang in D state) ends the run
-    with RunNotKilledError rather than blocking on its exit."""
-    script = tmp_path / "hang.py"
-    script.write_text("import time\ntime.sleep(5)\n")
-    scenario = Mock(settings=Mock(timeout_seconds=0.2))
-    scenario.argv.return_value = [str(script)]
-    monkeypatch.setattr(_e2e_run.os, "killpg", lambda *args: None)
-    monkeypatch.setattr(_e2e_run, "_KILL_WAIT_SECONDS", 0.2)
-    run = ScenarioRun(scenario, "on", tmp_path / "run", dict(os.environ))
-    raised: list[RunNotKilledError] = []
-
-    def execute() -> None:
-        try:
-            run.execute()
-        except RunNotKilledError as e:
-            raised.append(e)
-
-    thread = threading.Thread(target=execute, daemon=True)
-    thread.start()
-    thread.join(3)
-    assert not thread.is_alive()
-    assert len(raised) == 1

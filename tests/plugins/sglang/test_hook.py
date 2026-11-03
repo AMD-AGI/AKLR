@@ -13,14 +13,13 @@ from types import ModuleType, SimpleNamespace
 import pytest
 import torch
 
-import aklr.ops
 import aklr.plugins.sglang as plugin
 from aklr.core.contract.locate import op_packages
 from aklr.core.platform.env import ENV_DISABLE, ENV_SGLANG_PLUGIN
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.sglang import hook
 
-# at collection, as aklr.ops.load_routes does at start-up: before any test empties hook._ROUTES
+# at collection, as the plugin does at start-up: before any test empties hook._ROUTES
 for package in op_packages():
     if package.startswith("aklr.plugins.sglang."):
         importlib.import_module(f"{package}.api")
@@ -155,26 +154,28 @@ def register_calls(monkeypatch):
     """What register() did, in order."""
     calls = []
     monkeypatch.setattr(plugin, "register_sglang_plugin", lambda: calls.append("aklr starts"))
-    monkeypatch.setattr(aklr.ops, "load_routes", lambda: calls.append("load_routes"))
+    monkeypatch.setattr(plugin, "op_packages", lambda: ("aklr.ops.gemm", "aklr.plugins.sglang.x.y"))
+    monkeypatch.setattr(plugin.importlib, "import_module", calls.append)
     monkeypatch.setattr(hook, "install", lambda: calls.append("install"))
     return calls
 
 
 @pytest.mark.parametrize(
-    "env, proxied, hooked",
+    "env, hooked",
     [
-        ({}, True, False),
-        ({ENV_SGLANG_PLUGIN: "0"}, True, False),
-        ({ENV_SGLANG_PLUGIN: "1"}, True, True),
-        ({ENV_SGLANG_PLUGIN: "1", ENV_DISABLE: "1"}, False, False),
+        ({}, False),
+        ({ENV_SGLANG_PLUGIN: "0"}, False),
+        ({ENV_SGLANG_PLUGIN: "1"}, True),
+        ({ENV_SGLANG_PLUGIN: "1", ENV_DISABLE: "1"}, False),
     ],
 )
-def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, proxied, hooked):
-    """aiter's entry points are proxied unless AKLR_DISABLE=1."""
+def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, hooked):
+    """The layer routes hook only with AKLR_SGLANG_PLUGIN=1, and not with AKLR_DISABLE=1."""
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     plugin.register()
-    assert register_calls == ["aklr starts", *(["load_routes"] * proxied), *(["install"] * hooked)]
+    routes = ["aklr.plugins.sglang.x.y.api", "install"] if hooked else []
+    assert register_calls == ["aklr starts", *routes]
 
 
 def test_any_other_switch_value_ends_the_process(monkeypatch, register_calls):

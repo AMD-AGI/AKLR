@@ -9,7 +9,6 @@
 | | | | | | | |
 
 - **Generated-kernel candidates:**
-- **AITER synchronization candidates:**
 - **Items requiring human triage:**
 - **Rejected or duplicate changes:**
 - **Missing configuration or blocked access:**

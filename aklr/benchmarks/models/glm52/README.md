@@ -10,8 +10,6 @@ Times every operator on its own, sums them as `per-layer cost × layer count`, c
 
 CI uses `lmsysorg/sglang:v0.5.22-rocm10-mi35x` with its bundled ROCm Triton 3.8.0. Keep that build: replacing it with the PyPI wheel crashes when Triton is imported after PyTorch. The benchmark publishes each worker's GPU and world rank for SGLang's process-local runtime context; older runner-owned parallel state remains supported.
 
-The CI decode scenario uses `--full-step 128` to reduce short-window timing noise, retaining two on/off rounds and a throughput-ratio confidence lower bound of at least 1.01.
-
 ```bash
 cd aklr/benchmarks/models/glm52     # required, the scripts do `import model_bench`
 M=/path/to/GLM-5.2-MXFP4            # local checkout; the default is a hub id and a 408 GB fetch

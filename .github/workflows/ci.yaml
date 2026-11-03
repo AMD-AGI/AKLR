@@ -3,6 +3,8 @@ name: AKLR-CI
 env:
   # Shared by all GPU jobs; container.image cannot reference the env context.
   AKLR_CI_IMAGE: &ci_image lmsysorg/sglang:v0.5.22-rocm10-mi35x
+  # The AITER the bench times AKLR's kernels against: ROCm/aiter at this commit, installed over the image's.
+  AKLR_BASELINE_AITER: dbd8bf5bd624120197a7a26780a8c72201824f0f
   PYTHONDONTWRITEBYTECODE: '1'
   # The publish-measurement bot's rolling PR: sent and opened by the bot, from aklr-perf/main of
   # this repository. perf-guard.yaml spells the same expression.
@@ -23,10 +25,6 @@ env:
 on:
   workflow_dispatch:
     inputs:
-      e2e:
-        description: Run the e2e stage too
-        type: boolean
-        default: false
       full_lint:
         description: Check all files, including inherited formatting debt
         type: boolean
@@ -61,14 +59,12 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-      pull-requests: read
       actions: read
     outputs:
       gpu_enabled: ${{ steps.gpu.outputs.gpu_enabled }}
       gpu_trusted: ${{ steps.gpu.outputs.gpu_trusted }}
       has_bench_paths: ${{ steps.audit.outputs.has_bench_paths }}
       validation_base: ${{ steps.lint.outputs.validation_base }}
-      should_run_e2e: ${{ steps.e2e.outputs.should_run_e2e }}
     steps:
       - name: Decide whether GPU jobs run
         id: gpu
@@ -113,21 +109,6 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      # Read at run time: a Re-run reuses the original payload and its labels.
-      # Before any step runs PR code, which could otherwise shadow gh on PATH.
-      - name: Read the ci:e2e label
-        id: e2e
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          DISPATCH_E2E: ${{ inputs.e2e }}
-        run: |
-          case $GITHUB_EVENT_NAME in
-            push) should_run_e2e=true ;;
-            workflow_dispatch) should_run_e2e=$DISPATCH_E2E ;;
-            *) should_run_e2e=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json labels --jq 'any(.labels[]; .name == "ci:e2e")') ;;
-          esac
-          echo "should_run_e2e=$should_run_e2e" >> "$GITHUB_OUTPUT"
       - &setup_python
         name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -266,10 +247,9 @@ jobs:
           echo '🧪 Run all tests once, including core and GPU tests.'
           echo '➡️ Passing this job allows validation to start.'
       - &checkout_source
-        name: Checkout source and submodules
+        name: Checkout source
         uses: actions/checkout@v4
         with:
-          submodules: recursive
           fetch-depth: 0
           persist-credentials: false
       - name: Set up AKLR and coverage
@@ -301,9 +281,6 @@ jobs:
           mkdir -p "$cache"
           export FLYDSL_RUNTIME_CACHE_DIR="$cache/flydsl-runtime" FLYDSL_AUTOTUNE_CACHE_DIR="$cache/flydsl-autotune" \
                  TRITON_CACHE_DIR="$cache/triton" XDG_CACHE_HOME="$cache/xdg" AKLR_KERNEL_CACHE_DIR="$cache/aklr-kernels"
-          # Not aiter's default, 3rdparty/aiter/aiter/jit: checkout does not clean the submodule, and a
-          # killed build's lock there, owned by an earlier job's container, would block every later job.
-          export AITER_JIT_DIR="$cache/aiter-jit"
           # Bench task directories need a local disk (peak len(devices) × 16 GiB): flock, atomic renames, real free space.
           export TMPDIR="$AKLR_CI_STATE_DIR"
           echo "📂 Checkout: $GITHUB_WORKSPACE (commit $(git rev-parse --short HEAD))"
@@ -330,34 +307,35 @@ jobs:
           echo '::endgroup::'
           setup_phase='export the GPU build settings'
           echo '::group::🧰 Export the GPU build settings'
+          # The baseline AITER reads it when it JIT-builds.
           export GPU_ARCHS
           GPU_ARCHS=$(cat "$AKLR_CI_STATE_DIR/gpu-archs")
-          unset AITER_ASM_DIR
           echo '::endgroup::'
           setup_phase='install test tools and this checkout'
-          echo '::group::📦 Install test tools and amd-aiter (submodule AITER plus AKLR)'
+          echo '::group::📦 Install test tools and AKLR'
           echo "🔧 GPU_ARCHS=$GPU_ARCHS"
           echo '📥 Install coverage 7.16.0, pytest-timeout 2.4.0 and expecttest 0.3.0.'
           # Install coverage over any copy the image ships, so pip never has to uninstall it.
           python3 -m pip install --ignore-installed 'coverage[toml]==7.16.0'
           python3 -m pip install 'pytest-timeout==2.4.0' 'expecttest==0.3.0'
-          # With its dependencies: aiter's kernels need its pinned FlyDSL, not the image's.
-          echo '📥 Install this checkout in editable mode over the image amd-aiter.'
+          # It also pins the FlyDSL that AKLR's kernels are built with.
+          echo "📥 Install the baseline AITER, ROCm/aiter@$AKLR_BASELINE_AITER, over the image's."
+          python3 -m pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@$AKLR_BASELINE_AITER"
+          echo '📥 Install this checkout in editable mode.'
           python3 -m pip install -e . -v
-          echo '🔎 Verify Triton 3.8.0, AKLR from this checkout and its AITER proxies.'
+          echo '🔎 Verify Triton 3.8.0, AKLR from this checkout and the baseline AITER.'
           python3 -c "import torch, triton, sys; v = triton.__version__.split('+')[0]; print(f'triton {triton.__version__}'); sys.exit(0 if v == '3.8.0' else f'triton==3.8.0 is required, found {triton.__version__}')"
           python3 - <<'PY'
+          import os
           from pathlib import Path
           from importlib.metadata import version
           import aiter
           import aklr
-          from aklr.ops import load_routes
           root = Path.cwd().resolve()
           assert Path(aklr.__file__).resolve().is_relative_to(root), aklr.__file__
-          load_routes()
-          assert hasattr(aiter.gemm_a8w8, "aklr_proxy"), "AKLR did not proxy aiter"
-          assert Path(aiter.__file__).resolve().is_relative_to(root / "3rdparty" / "aiter"), aiter.__file__
-          print("Testing amd-aiter", version("amd-aiter"), "from", root)
+          assert aiter.__file__, "aiter is an empty namespace package"
+          assert f"+g{os.environ['AKLR_BASELINE_AITER'][:7]}" in version("amd-aiter"), version("amd-aiter")
+          print("Testing aklr", version("aklr"), "from", root, "against amd-aiter", version("amd-aiter"))
           PY
           echo '::endgroup::'
           setup_phase='enable coverage and export the environment'
@@ -375,7 +353,6 @@ jobs:
             printf 'TRITON_CACHE_DIR=%s\n' "$TRITON_CACHE_DIR"
             printf 'XDG_CACHE_HOME=%s\n' "$XDG_CACHE_HOME"
             printf 'AKLR_KERNEL_CACHE_DIR=%s\n' "$AKLR_KERNEL_CACHE_DIR"
-            printf 'AITER_JIT_DIR=%s\n' "$AITER_JIT_DIR"
             printf 'TMPDIR=%s\n' "$TMPDIR"
             printf 'COVERAGE_PROCESS_START=%s/pyproject.toml\n' "$GITHUB_WORKSPACE"
           } >> "$GITHUB_ENV"
@@ -452,22 +429,14 @@ jobs:
     needs: [code-lint, unittest-aklr]
     if: needs.code-lint.outputs.has_bench_paths == 'true'
     runs-on: *gpu_runner
-    # Only the read-only HF hub cache is mounted: no HF_HOME token reaches PR code.
-    # AKLR_SHARED_HF_HUB_DIR: a pre-filled HF hub directory (models--org--name), at the same path on every GPU node.
-    # It also holds the e2e texts (datasets--org--name), at the revisions aklr/benchmarks/models/main.py pins.
     container:
       image: *ci_image
       options: *gpu_container_options
-      volumes:
-        - ${{ vars.AKLR_SHARED_HF_HUB_DIR }}:${{ vars.AKLR_SHARED_HF_HUB_DIR }}:ro
-      env:
-        HF_HUB_CACHE: ${{ vars.AKLR_SHARED_HF_HUB_DIR }}
-        HF_HUB_OFFLINE: '1'
     # A full validation (no base: a force push, a replaced run, a dispatch) benches every schema:
     # 247 schemas need about 225 minutes on 8 MI355X (170 of 257 batches ran in 150).
     timeout-minutes: 300
     env:
-      STAGES: ${{ needs.code-lint.outputs.should_run_e2e == 'true' && 'audit,bench,e2e' || 'audit,bench' }}
+      STAGES: audit,bench
     steps:
       - name: Print job info
         run: | # zizmor: ignore[github-env] only an internally generated numeric timestamp is exported
@@ -490,7 +459,6 @@ jobs:
           unset COVERAGE_PROCESS_START
           flags=(${BASE:+--base "$BASE"})
           [[ $AKLR_BOT_PR != true ]] || flags+=(--allow-measured-edits)
-          # No --e2e-scenario: e2e runs every scenario in scenarios.yaml.
           python -m aklr validate "${flags[@]}" --stages "$STAGES" \
             --out "$RUNNER_TEMP/validation-report"
       # The PR head the reviewer signs; the checkout is the merge commit.

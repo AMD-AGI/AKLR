@@ -33,14 +33,11 @@ Style checks do not replace operator correctness tests or performance
 qualification. Follow the workflows in [harness/README.md](harness/README.md)
 for kernel lifecycle changes.
 
-## Changing AITER
+## The AITER baseline
 
-AITER is the `3rdparty/aiter` submodule, pinned to the [ROCm/aiter](https://github.com/ROCm/aiter)
-commit AKLR's routes describe. `pyproject.toml` packages it with `aklr` as one `amd-aiter`
-distribution; `setup.py` reproduces AITER's default build (no kernel prebuild).
-
-AKLR does not edit AITER. `aklr.ops.load_routes()`, which the SGLang and vLLM plugins
-call at startup, replaces each AITER entry point an `@aklr_route` names with a proxy,
-under every name a loaded module binds it to. To route a new AITER function, declare
-its `@aklr_route`. To move to a newer AITER, update the routes to its signatures and the
-submodule commit together.
+AKLR neither ships nor patches [AITER](https://github.com/ROCm/aiter): AITER is only the
+baseline AKLR's kernels are timed against, at the commit `AKLR_BASELINE_AITER` in
+`.github/workflows/ci.yaml`, which CI installs over the image's AITER (with the FlyDSL it pins).
+To time an op against an AITER function, call it from the op's `<contract>_baseline` in its
+`baseline.py`. To move the baseline, change that commit: the next validation re-measures every
+kernel against it.

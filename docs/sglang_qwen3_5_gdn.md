@@ -89,9 +89,8 @@ python -m aklr validate --base origin/main --stages audit,bench \
 Correctness and performance fields are populated by validation/CI, not copied
 from earlier results. Before merge, run native-versus-plugin forward checks
 with fresh/cached/mixed states, consecutive calls and all supported partitions,
-then Qwen3.5 TP4 accuracy and paired serving performance. Generic GLM e2e CI
-does not qualify this model. No GPU qualification or speedup is claimed by
-CPU tests, schema export or static audit alone.
+then Qwen3.5 TP4 accuracy and paired serving performance. No GPU qualification
+or speedup is claimed by CPU tests, schema export or static audit alone.
 
 ## Decode
 

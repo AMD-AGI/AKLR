@@ -35,8 +35,6 @@ class FindingCode(StrEnum):
     REGRESSED = "regressed"
     NO_QUALIFYING_WORKLOAD = "no_qualifying_workload"
     BASELINE_FAILED = "baseline_failed"
-    E2E_NOT_FASTER = "e2e_not_faster"
-    E2E_CRASH = "e2e_crash"
     PLATFORM_FAILURE = "platform_failure"
     NO_MATCHING_DEVICE = "no_matching_device"
     NO_MATCHING_TOOLCHAIN = "no_matching_toolchain"

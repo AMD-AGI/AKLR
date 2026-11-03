@@ -12,11 +12,9 @@ from aklr.core.runtime.dispatch._sglang import (
     SGLANG_HOOKED_METHOD,
     register_sglang_plugin,
 )
-from aklr.core.runtime.dispatch._vllm import VLLM_HOOKED_METHOD, register_vllm_plugin
 
 __all__ = [
     "SGLANG_HOOKED_METHOD",
-    "VLLM_HOOKED_METHOD",
     "CallRecorder",
     "DispatchTable",
     "DispatcherRegistry",
@@ -24,5 +22,4 @@ __all__ = [
     "KernelDispatcher",
     "api",
     "register_sglang_plugin",
-    "register_vllm_plugin",
 ]

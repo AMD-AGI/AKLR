@@ -168,14 +168,12 @@ def prefill_conc(args) -> int:
     return args.dp_size if args.enable_dp_attention else 1
 
 
-def prepare_decode(batch, model_runner, input_ids=None) -> None:
-    """Advance the batch to its next decode step, on ``input_ids`` or random tokens."""
+def prepare_decode(batch, model_runner) -> None:
+    """Advance the batch to its next decode step, on random tokens."""
     from sglang.benchmark.one_batch import _maybe_prepare_mlp_sync_batch
 
-    if input_ids is None:
-        vocab = model_runner.model_config.vocab_size
-        input_ids = torch.randint(0, vocab, (len(batch.reqs),), device=batch.device)
-    batch.input_ids = input_ids
+    vocab = model_runner.model_config.vocab_size
+    batch.input_ids = torch.randint(0, vocab, (len(batch.reqs),), device=batch.device)
     batch.prepare_for_decode()
     _maybe_prepare_mlp_sync_batch(batch, model_runner)
 

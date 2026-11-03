@@ -1,65 +1,44 @@
 [build-system]
 requires = [
-    "setuptools>=64",
+    "setuptools>=77",
     "setuptools_scm>=8",
 ]
 build-backend = "setuptools.build_meta"
 
 [project]
-# One distribution: upstream aiter (the 3rdparty/aiter submodule) plus the aklr package,
-# so it replaces any other amd-aiter and uninstalling amd-aiter removes aklr too.
-name = "amd-aiter"
+name = "aklr"
 dynamic = ["version"]
-requires-python = ">=3.10"
+requires-python = ">=3.11"
+license = "MIT AND Apache-2.0"
 classifiers = [
     "Programming Language :: Python :: 3",
-    "License :: OSI Approved :: BSD License",
     "Operating System :: Unix",
 ]
+# torch and triton come with the environment, as do aiter and sglang, which only the
+# baselines and the sglang plugin import.
 dependencies = [
-    # aiter's
-    "pybind11>=3.0.1",
+    "flydsl>=0.3.2",
     "ninja",
-    "pandas",
-    "einops",
-    "psutil",
     "packaging",
-    "flydsl==0.3.2",
-    # aklr's
     "pydantic>=2.12",
-    "pyyaml",
+    "safetensors",
 ]
 
 [project.entry-points."sglang.srt.plugins"]
 aklr = "aklr.plugins.sglang:register"
 
-[project.entry-points."vllm.general_plugins"]
-aklr = "aklr.core.runtime.dispatch:register_vllm_plugin"
-
 [tool.setuptools.packages.find]
-where = [".", "3rdparty/aiter"]
-# aiter ships as one package whose subpackages are package data, as in its own setup.py.
-include = ["aklr", "aklr.*", "aiter"]
+include = ["aklr", "aklr.*"]
 
 [tool.setuptools.package-data]
-"*" = ["*"]
 "aklr.ops" = ["*/impls/*/*/*.json"]
 "aklr.plugins" = ["*/*/*/impls/*/*/*.json"]
 
-[tool.setuptools.exclude-package-data]
-"*" = ["safetensors/*/*"]
-
+# The version is AKLR's commit: 0.1.devN+g<sha> before the first tag.
 [tool.setuptools_scm]
-# aiter's version; setup.py appends AKLR's commit as the local label.
-root = "3rdparty/aiter"
-version_file = "3rdparty/aiter/aiter/_version.py"
-version_file_template = "__version__ = '{version}'\n"
-fallback_version = "0.1.0"
-tag_regex = "^(?:[\\w-]+-)?(?P<version>[vV]?\\d+(?:\\.\\d+){0,2}[^-+]*(?:-(?:preview|alpha|beta|post|pre|dev|rev|rc|a|b|c|r)\\d*)?)(?:-.*)?(?:\\+.*)?$"
 
 [tool.ruff]
 line-length = 110
-extend-exclude = ["3rdparty"]
 
 [tool.ruff.lint]
 select = ["B", "F", "I", "W"]

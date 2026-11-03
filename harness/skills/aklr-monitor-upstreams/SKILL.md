@@ -23,8 +23,7 @@ Read the harness [rules](../../rules.md), [gates](../../gates.md), current
 - Record source revision, affected operator, claimed gain, supported GPU scope,
   provenance, and available tests or benchmark evidence.
 - Check AKLR and the candidate queue for equivalent or duplicate work.
-- Route generated-kernel candidates to `aklr-port-generated-kernels` and
-  human-written AITER candidates to `aklr-sync-aiter`.
+- Route generated-kernel candidates to `aklr-port-generated-kernels`.
 - Rank candidates by relevance and evidence quality without treating upstream
   benchmark claims as verified AKLR results.
 

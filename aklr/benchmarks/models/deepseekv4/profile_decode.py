@@ -418,18 +418,12 @@ def report(
     kernel_errors=None,
 ):
     """Returns (markdown, one-line headline for the log)."""
-    from aklr.core.runtime.seam import routes
-    from aklr.ops import load_routes
-
-    load_routes()
-
     counts = layers.counts
     model_bench.add_residuals(times, counts)
     totals = model_bench.leaf_totals(times, counts)
     rollup = sum(totals.values())
     contents = model_bench.residual_contents(mr)
-    routed = frozenset(route.api for route in routes())
-    ranking = kernel_breakdown.Ranking.of(kernels or {}, totals, routed)
+    ranking = kernel_breakdown.Ranking.of(kernels or {}, totals)
 
     sections = [
         ("Summary", summary_table(args, mr, full_ms, rollup)),
