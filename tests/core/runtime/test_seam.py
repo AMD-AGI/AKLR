@@ -11,6 +11,7 @@ import pytest
 import torch
 
 from aklr.core.platform.env import RuntimeEnv
+from aklr.core.runtime.dispatch import KernelDispatcher
 from aklr.core.runtime.seam import Adapter, SeamRegistry
 from aklr.core.runtime.tracing import TracingConfig, TracingRuntime, WorkloadEntry
 from aklr.core.schema import SchemaCollection, Workload
@@ -53,6 +54,28 @@ class TestSeam:
     def test_backend_runs_without_a_dispatcher(self, seam: types.ModuleType) -> None:
         call = OpCase.of("gemm_bf16_nt").call()
         assert seam.gemm(call["a"], B=call["b"]) == "backend"
+
+    def test_compiled_call_traces_the_backend(
+        self, backend: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Under torch.compile (as sglang compiles its DSA indexer's head gate) an active dispatcher
+        still traces the backend, in one graph: dispatch reads data_ptr and keys on each call's sizes."""
+        backend.gemm = sys.modules[f"{_PACKAGE}.ops"].gemm = lambda A, B, scale=None: A @ B.T
+        registry = SeamRegistry()
+        registry.add(Adapter(_ENTRY, gemm_bf16_nt, _bind, None))
+        registry.install()
+        # any instance makes the stand-in dispatch; tracing dispatch would fail on it
+        monkeypatch.setattr(KernelDispatcher, "get_instance", classmethod(lambda cls: object()))
+        try:
+            assert hasattr(backend.gemm, "aklr_adapter")
+            compiled = torch.compile(
+                lambda a, b: backend.gemm(a, b), backend="eager", dynamic=True, fullgraph=True
+            )
+            for m in (1, 4, 6):
+                a, b = torch.randn(m, 64), torch.randn(32, 64)
+                torch.testing.assert_close(compiled(a, b), a @ b.T)
+        finally:
+            registry.uninstall()
 
     @pytest.mark.gpu
     @pytest.mark.usefixtures("builder_registry")
