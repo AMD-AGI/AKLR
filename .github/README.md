@@ -52,4 +52,5 @@ python -m aklr validate --stages audit,bench --devices 0-7  # full validation
 ## Contributing
 
 - Commit hooks and the baseline: [CONTRIBUTING.md](/CONTRIBUTING.md)
+- Optimizing a kernel with forge_task: [docs/forge_task.md](/docs/forge_task.md)
 - PR descriptions: follow the [template](/.github/pull_request_template.md)
