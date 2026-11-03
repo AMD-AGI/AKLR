@@ -478,6 +478,11 @@ class DisposableExecutionRunner(ExecutionRunner):
                             CUDA_VISIBLE_DEVICES=visible,
                             GPU_FORCE_QUEUE_PROFILING="1",
                             ROC_SIGNAL_POOL_SIZE="65536",
+                            # tensors lent over KFD's own IPC handles: a dma-buf imported on the GPU it
+                            # came from shares the exporter's GEM handle, which both frees delete, the
+                            # second another buffer's that took the number since
+                            # (amdgpu_amdkfd_gpuvm_import_dmabuf_fd)
+                            HSA_ENABLE_IPC_MODE_LEGACY="1",
                         )
                         import torch
 
