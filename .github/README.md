@@ -17,24 +17,28 @@ We believe kernel performance will no longer come from rare, hand-tuned efforts 
 
 ## Repository map
 
-| Path | What it owns |
-|---|---|
-| [`aklr/ops/`](../aklr/ops/README.md) | Operator contracts, reference implementations, benchmark baselines, public APIs, and kernel schemas. A schema names the workloads a kernel may serve. |
-| [`aklr/core/`](../aklr/core/) | Contract types, kernel loading and compilation, per-workload dispatch, and validation. |
-| [`aklr/plugins/`](../aklr/plugins/README.md) | Inference-engine routes. The SGLang plugin is implemented; vLLM routes are planned, and `atom/` is an empty placeholder. |
-| [`aklr/benchmarks/`](../aklr/benchmarks/) | Model workload definitions and benchmark support. |
-| [`harness/`](../harness/README.md) | Agent skills and the kernel delivery lifecycle, including [`forge_task`](../docs/forge_task.md), which sends an AKLR problem to KernelForge. |
-| [`tests/`](../tests/) and [`.github/workflows/`](workflows/) | Tests and CI validation. |
+AKLR has two main parts: `aklr/` runs kernels, while `harness/` helps agents build and deliver them.
 
-An engine plugin or another caller invokes an AKLR op. The op checks its contract and selects a validated kernel for that workload. If none qualifies, AKLR returns a `FallbackReason` and the caller runs its original path. AITER is a validation baseline, not a runtime fallback bundled with AKLR.
+| Path | What is here |
+|---|---|
+| [`aklr/ops/`](../aklr/ops/README.md) | Each operator's API, correctness check, speed-test baseline, and kernel files. |
+| [`aklr/core/`](../aklr/core/) | Shared code that checks inputs, loads kernels, picks one for each workload, and validates results. |
+| [`aklr/plugins/`](../aklr/plugins/README.md) | Connections to inference engines. SGLang works today; vLLM is planned; `atom/` has no code yet. |
+| [`aklr/benchmarks/`](../aklr/benchmarks/) | Model workloads and benchmark code. |
+| [`harness/`](../harness/README.md) | Guides and tools for agents to write, test, review, and submit kernels. [`forge_task`](../docs/forge_task.md) sends an AKLR problem to KernelForge. |
+| [`tests/`](../tests/) and [`.github/workflows/`](workflows/) | Local tests and CI checks. |
+
+An engine calls an AKLR operator. AKLR checks the inputs and picks a kernel that passed validation. If no kernel fits, the engine uses its original code. AKLR uses AITER as a speed-test baseline for library kernels; it does not ship AITER as a runtime fallback.
 
 ## The Kernel Rosetta Stone
 
-The **Kernel Rosetta Stone** is the agent-readable AMD kernel optimization guide in [`harness/skills/flydsl-kernel-optimization/`](../harness/skills/flydsl-kernel-optimization/SKILL.md). It is knowledge for authors and agents, not a runtime component. It turns experience from handwritten AMD kernels and CDNA4 ISA and architecture references into task-specific Markdown pages: GEMM, grouped GEMM, attention and MoE techniques; debugging and measurement guides; pitfalls; and [case studies](../harness/skills/flydsl-kernel-optimization/cases/INDEX.md) of delivered kernels.
+The **Kernel Rosetta Stone** is a guide that helps agents write fast AMD kernels. It lives in [`harness/skills/flydsl-kernel-optimization/`](../harness/skills/flydsl-kernel-optimization/SKILL.md). The guide is not code that runs during inference.
 
-Agents start at the skill's [`SKILL.md`](../harness/skills/flydsl-kernel-optimization/SKILL.md), follow its task or symptom table to one relevant page, apply a technique, and validate the result with AKLR. As of 2026-11-03, the guide contains **131 Markdown pages** (including indexes) and **1,192 sourced findings**. Measured findings record their workload, GPU, toolchain, method, and source so readers can check when a lesson applies. New pages pass [evidence and review rules](../harness/skills/flydsl-kernel-optimization/CONTRIBUTING.md).
+It collects lessons from handwritten AMD kernels, AMD architecture documents, and the CDNA4 ISA guide. Pages cover GEMM, grouped GEMM, attention, MoE, debugging, measurement, and [real kernel examples](../harness/skills/flydsl-kernel-optimization/cases/INDEX.md). An agent can find an idea, try it, and check the result on a GPU.
 
-The intended benefits are less time and fewer agent tokens to reach the same validated performance, and a higher best speedup at an equal optimization budget. AKLR does not yet have a controlled run with and without this guide, so these are goals, not measured gains. A comparison should hold the problem, agent, GPU, and budget fixed, then record time and input/output tokens to the first qualifying kernel and the best validated speedup at the same budget.
+Start with [`SKILL.md`](../harness/skills/flydsl-kernel-optimization/SKILL.md), which points to a page for each task or problem. As of 2026-11-03, the guide has **131 Markdown pages** (including indexes) and **1,192 findings with sources**. Each measured result says what was tested and where the number came from. New pages follow the [review rules](../harness/skills/flydsl-kernel-optimization/CONTRIBUTING.md).
+
+We want the guide to help agents reach the same speed sooner, use fewer tokens, and find faster kernels. We have not tested the same task with and without the guide yet, so we do not claim a measured gain. To test it, keep the task, agent, GPU, and budget the same. Then compare the time and tokens needed to reach a qualifying kernel, and the best speedup at the same budget.
 
 ## Install
 
