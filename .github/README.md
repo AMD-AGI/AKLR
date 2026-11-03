@@ -7,7 +7,7 @@
 [![CI](https://github.com/AMD-AGI/AKLR/actions/workflows/ci.yaml/badge.svg)](https://github.com/AMD-AGI/AKLR/actions/workflows/ci.yaml)
 [![License](https://img.shields.io/badge/license-MIT%20%2B%20Apache--2.0-blue)](/LICENSE)
 
-[Install](#install) | [Usage](#usage) | [Testing](#testing) | [Contributing](#contributing) | [AITER](https://github.com/ROCm/aiter)
+[Install](#install) | [Usage](#usage) | [Testing](#testing) | [Contributing](#contributing)
 
 </div>
 
@@ -22,20 +22,22 @@ We believe kernel performance will no longer come from rare, hand-tuned efforts 
 | SGLang | `lmsysorg/sglang:v0.5.22-rocm10-mi35x` |
 | vLLM | TODO |
 
-Inside the image, install AKLR. It ships as `amd-aiter`: the AITER commit AKLR's routes describe (the `3rdparty/aiter` submodule, built from source in a few minutes) plus the `aklr` package, versioned `<aiter version>+aklr.g<commit>`. pip replaces the image's AITER, and `pip uninstall amd-aiter` removes both:
+Inside the image, install AKLR, one pure-Python package `aklr` (Python 3.11 or later), versioned `0.1.devN+g<commit>` before the first tag. It uses the image's torch, Triton and SGLang and replaces none of them:
 
 ```bash
-git clone --recursive https://github.com/AMD-AGI/AKLR.git && cd AKLR
+git clone https://github.com/AMD-AGI/AKLR.git && cd AKLR
 pip install -e .
 ```
 
+Validation times AKLR's kernels against a baseline pinned at `AKLR_BASELINE_AITER` in [ci.yaml](/.github/workflows/ci.yaml); install that commit before validating: `AITER_USE_SYSTEM_TRITON=1 pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@<that commit>"`.
+
 ## Usage
 
-SGLang and vLLM load AKLR automatically at startup; no code changes are needed.
+SGLang and vLLM load AKLR at startup; SGLang reaches AKLR's kernels only with `AKLR_SGLANG_PLUGIN=1`. Other code starts AKLR once (`DispatcherRegistry.default().init()`, from `aklr.core.runtime.dispatch`), then calls the ops in `aklr.ops` and runs its own code when one returns a `FallbackReason`.
 
 | Variable | Effect |
 |---|---|
-| `AKLR_DISABLE=1` | Turn AKLR off and use AITER only |
+| `AKLR_DISABLE=1` | Turn AKLR off |
 | `AKLR_DISABLE=<contract id>,...` | Turn off the listed ops, e.g. `gemm@1.0` |
 | `AKLR_SGLANG_PLUGIN=1` | Also hook SGLang's own layers to the plugin's ops ([aklr/plugins/README.md](/aklr/plugins/README.md)) |
 | `AKLR_MIN_SPEEDUP=<x>` | Serve only kernels with a measured speedup of at least x (default 1.03) |
@@ -43,11 +45,11 @@ SGLang and vLLM load AKLR automatically at startup; no code changes are needed.
 ## Testing
 
 ```bash
-pytest tests                                                    # unit tests
-python -m aklr validate --stages audit,bench,e2e --devices 0-7  # full validation
+pytest tests                                                # unit tests
+python -m aklr validate --stages audit,bench --devices 0-7  # full validation
 ```
 
 ## Contributing
 
-- Commit hooks and how to change AITER: [CONTRIBUTING.md](/CONTRIBUTING.md)
+- Commit hooks and the baseline: [CONTRIBUTING.md](/CONTRIBUTING.md)
 - PR descriptions: follow the [template](/.github/pull_request_template.md)

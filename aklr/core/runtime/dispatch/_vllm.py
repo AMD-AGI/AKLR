@@ -14,15 +14,10 @@ VLLM_HOOKED_METHOD = "vllm.v1.worker.gpu_worker.Worker.init_device"
 
 
 def register_vllm_plugin() -> None:
-    """The ``vllm.general_plugins`` entry point (``setup.py``): wraps ``VLLM_HOOKED_METHOD``
-    and, unless AKLR_DISABLE=1, proxies aiter's entry points."""
+    """The ``vllm.general_plugins`` entry point (``pyproject.toml``): starts AKLR after
+    ``VLLM_HOOKED_METHOD``."""
     from vllm.v1.worker.gpu_worker import Worker
 
-    from aklr.core.platform.env import RuntimeEnv
-    from aklr.ops import load_routes
-
-    if not RuntimeEnv().is_all_disabled:
-        load_routes()
     init_device = Worker.init_device
 
     @functools.wraps(init_device)

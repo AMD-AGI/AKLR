@@ -19,7 +19,7 @@ __all__ = [
     "RuntimeEnv",
 ]
 
-# RuntimeEnv() reads them; e2e writes them for its child processes
+# RuntimeEnv() reads them
 ENV_DISABLE = "AKLR_DISABLE"
 ENV_MIN_SPEEDUP = "AKLR_MIN_SPEEDUP"
 ENV_KERNEL_CACHE_DIR = "AKLR_KERNEL_CACHE_DIR"
@@ -60,7 +60,7 @@ class RuntimeEnv:
         if not math.isfinite(self.min_speedup):
             raise ValueError(f"{ENV_MIN_SPEEDUP}={speedup!r}: expected a finite number")
         # AKLR_MEASURED_DIR: schemas laid out as the checkout that replace the committed
-        # ones they name; validation's e2e serves its bench's measurements through it
+        # ones they name, e.g. the schemas/ directory a validation run writes
         directory = os.environ.get(ENV_MEASURED_DIR)
         self.measured_dir = Path(directory).absolute() if directory else None
         # reads HOME itself, not Path.home(), which falls back to the password database

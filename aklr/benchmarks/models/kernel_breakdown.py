@@ -6,7 +6,7 @@ import json
 import math
 import tempfile
 from collections import Counter, defaultdict
-from collections.abc import Callable, Collection
+from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
@@ -260,16 +260,13 @@ class Ranking(NamedTuple):
     clamped: int  # heavy rows clamped into [lo, hi]
 
     @classmethod
-    def of(cls, kernels_by_row: dict, leaves: dict[str, float], routed: Collection[str]) -> "Ranking":
+    def of(cls, kernels_by_row: dict, leaves: dict[str, float]) -> "Ranking":
         rows = [
             TimedRow.of(leaves[name], kernels) for name, kernels in kernels_by_row.items() if name in leaves
         ]
         rows = [row for row in rows if row.collective_ms + row.compute_ms > 0]
         trusted = [row.factor for row in rows if not row.heavy]
         lo, hi = (min(trusted), max(trusted)) if trusted else (1.0, 1.0)
-        by_last = defaultdict(list)
-        for api in routed:
-            by_last[api.rpartition(".")[2]].append(api)
         ms_of, calls_of, kineto = Counter(), Counter(), Counter()
         symbols = defaultdict(Counter)
         for row in rows:
@@ -283,18 +280,7 @@ class Ranking(NamedTuple):
                     calibrated = residual * ms / row.collective_ms
                 else:
                     calibrated = 0.0
-                hit = None
-                # innermost first: exact routed name, else unique last component
-                for frame in frames:
-                    name = frame.rsplit(":", 1)[0]
-                    same = [name] if name in routed else by_last.get(name.rpartition(".")[2], [])
-                    if len(same) == 1:
-                        hit = same[0]
-                        break
-                group = (
-                    hit or (api if frames else f"unavailable:{kernel}"),
-                    collective,
-                )
+                group = (api if frames else f"unavailable:{kernel}", collective)
                 ms_of[group] += calibrated
                 calls_of[group] += calls
                 kineto[group] += ms

@@ -2,24 +2,26 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 """Tests of the registered op contracts: registration and variant names."""
 
+import inspect
 import itertools
 import os
 import re
+import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
-import aklr.ops
-from aklr.core.contract import export, expr
-from aklr.core.contract.op import OpContract, api_name
+import pytest
+
+from aklr.core.contract import export, expr, op
+from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.spec import AxisSpec, PointSpec
 from aklr.core.contract.spec._points import attr_membership_key
-from aklr.core.runtime import seam
 from tests.op_case import OpCase
 
 
 class TestOpRegistration:
-    """Every registered contract has an ``OpCase`` and an api; a route is optional."""
+    """Every registered contract has an ``OpCase`` and an api; a baseline is optional."""
 
     def test_every_contract_has_an_op_case(self) -> None:
         """``OpCase.all()``'s distinct contract ids are exactly
@@ -28,16 +30,33 @@ class TestOpRegistration:
             c.contract_id for c in ContractRegistry.default().contracts()
         ]
 
-    def test_load_routes_declares_ck_blockscale_first(self) -> None:
-        """``aklr.ops.load_routes()`` imports every op's api; a new op may have no
-        route (it is its own baseline)."""
-        aklr.ops.load_routes()
-        blockscale = OpCase.of("gemm_a8w8_blockwise_scaled@1.0").contract.api_name
-        # FIXME(main-kernels): the bench baseline is the first route that binds; main's is CK
-        assert (
-            next(r.api for r in seam.routes() if api_name(r.api_fn) == blockscale)
-            == "aiter.ops.gemm_op_a8w8.gemm_a8w8_blockscale"
+    def test_baseline_is_the_baseline_py_function(self) -> None:
+        baseline = OpCase.of("topk_transform_paged@1.0").contract.baseline()
+        assert f"{baseline.__module__}.{baseline.__qualname__}" == (
+            "aklr.ops.topk.baseline.topk_transform_paged_baseline"
         )
+
+    def test_every_baseline_takes_the_api_params(self) -> None:
+        """Bench calls a baseline with its contract's inputs and outputs by name."""
+        for contract in ContractRegistry.default().contracts():
+            baseline = contract.baseline()
+            if baseline is not None:
+                names = {**contract.inputs, **contract.outputs}
+                inspect.signature(baseline).bind_partial(**dict.fromkeys(names))
+
+    def test_no_baseline_py_is_no_baseline(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A new op may have no ``baseline.py`` (it is its own baseline); one whose own
+        import fails raises."""
+        contract = OpCase.of("gemm@1.0").contract
+        monkeypatch.setitem(sys.modules, "aklr.ops.gemm.baseline", None)  # import raises
+        assert contract.baseline() is None
+
+        def unimportable(op_package: str, submodule: str) -> None:
+            raise ModuleNotFoundError("No module named 'aiter'", name="aiter")
+
+        monkeypatch.setattr(op, "op_module", unimportable)
+        with pytest.raises(ModuleNotFoundError, match="aiter"):
+            contract.baseline()
 
     def test_committed_schemas_have_no_errors(self) -> None:
         """``export.repository_errors()`` (``python -m aklr export check``) is ``[]``."""

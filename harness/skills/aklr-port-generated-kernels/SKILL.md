@@ -1,6 +1,6 @@
 ---
 name: aklr-port-generated-kernels
-description: Port agent-generated GPU kernels into AKLR while preserving AITER-compatible interfaces, provenance, dispatch, fallbacks, and review evidence. Use for kernels produced in OpenAI or other generator repositories. Do not use for selectively syncing human-written AITER changes.
+description: Port agent-generated GPU kernels into AKLR with their provenance, dispatch, fallbacks, and review evidence. Use for kernels produced in OpenAI or other generator repositories.
 ---
 
 # Port Generated Kernels
@@ -21,14 +21,14 @@ Read the harness [rules](../../rules.md), [gates](../../gates.md), and current
 
 - Pin and record the exact source revision, generator context, and provenance.
 - Map the implementation to a AKLR contract and schema name, or add the op with
-  its AITER route.
+  its `<contract>_baseline`.
 - Deliver the kernel as one schema JSON whose `kernel.sources` are
   self-contained and pass the audit, with `kernel.author` naming the generator.
 - Replace numeric or opaque artifact names with meaningful operator, variant,
   dtype, shape, or architecture names without obscuring source traceability.
-- Reach the kernel only through the contract's AITER routes; dispatch serves a
-  Point once its measured speedup clears `AKLR_MIN_SPEEDUP`. Avoid a parallel
-  public API for the generated kernel.
+- Reach the kernel only through the contract's `@api` function; dispatch
+  serves a Point once its measured speedup clears `AKLR_MIN_SPEEDUP`. Avoid a
+  parallel public API for the generated kernel.
 - Preserve unsupported cases by falling back safely rather than returning a
   silently incorrect result.
 - Produce correctness, coverage, and fair incumbent-comparison evidence per

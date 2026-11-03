@@ -19,6 +19,7 @@ from pydantic import Field, ValidationError, model_validator
 from aklr.core.contract import expr, semantics
 from aklr.core.contract.locate import (
     OP_PACKAGE_PATTERN,
+    op_module,
     op_package_of,
     schema_relative_path,
     schema_uuid,
@@ -392,7 +393,7 @@ class OpContract(FrozenModel):
 
     @cached_property
     def allocated_outputs(self) -> tuple[str, ...]:
-        """The outputs dispatch and seam allocate: those not required."""
+        """The outputs dispatch allocates: those not required."""
         return tuple(o for o in self.outputs if o not in self.required_outputs)
 
     def outputs_by_name(self, result: Any) -> dict[str, Any]:
@@ -512,8 +513,20 @@ class OpContract(FrozenModel):
 
     @property
     def baseline_name(self) -> str:
-        """The custom baseline function's name in the op's ``baseline.py``."""
+        """The baseline function's name in the op's ``baseline.py``."""
         return f"{contract_name(self.contract_id)}_baseline"
+
+    def baseline(self) -> Callable | None:
+        """The op's ``baseline.py`` function ``baseline_name``, if it has one: it takes the
+        api's params and returns the outputs, as the api does, and raises
+        ``NotImplementedError`` for a call it does not serve."""
+        try:
+            module = op_module(self.op_package, "baseline")
+        except ModuleNotFoundError as e:
+            if e.name != f"{self.op_package}.baseline":  # baseline.py exists but its own import failed
+                raise
+            return None
+        return getattr(module, self.baseline_name, None)
 
     def check_point(self, point: PointSpec) -> None:
         """Raise ``ValueError`` unless ``point`` names exactly this contract's keys (no

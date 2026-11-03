@@ -1,7 +1,7 @@
 <!-- A one-minute briefing for a reviewer who has the diff. Drop a section with nothing to say.
 What each kind of change needs (the review-tier check finds the kinds from the diff):
 - contract (schema, empty kernel.sources): Why, Scope, Verification (export), Risk. No GPU run.
-- kernel (schema with kernel.sources): every section. GPU validation with e2e (ci:gpu, ci:e2e).
+- kernel (schema with kernel.sources): every section. GPU validation (ci:gpu).
 - code, aklr/core above all: every section. CI validation of every schema and a code owner's approval.
 - withdrawn kernel (deleted schema): Why, Scope, Risk.
 - document (docs/, harness/, .claude/, *.md: docs and agent skills): Why only.
@@ -14,7 +14,7 @@ wait for the code. -->
 
 ## Scope
 
-<!-- Required for every kind but documents. 1–3 items: what this covers (models, ops, shapes) and what it leaves on AITER or defers. -->
+<!-- Required for every kind but documents. 1–3 items: what this covers (models, ops, shapes) and what it leaves to the caller's own path or defers. -->
 
 ## Tradeoffs
 
@@ -78,6 +78,6 @@ need ran on this head. -->
 
 <!-- Required for every kind but documents. -->
 Affects: <!-- models, ops, shapes; for code, which kernels or stages (often: every kernel) -->
-If wrong: <!-- wrong output, a crash, slower than AITER, a CI failure -->
-Undo: <!-- `AKLR_DISABLE=<contract id>` runs AITER for one op; otherwise `git revert`, and what that
+If wrong: <!-- wrong output, a crash, slower than the baseline, a CI failure -->
+Undo: <!-- `AKLR_DISABLE=<contract id>` turns one op off; otherwise `git revert`, and what that
 does not undo (a schema or measurement version, published measurements) -->
