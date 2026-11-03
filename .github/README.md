@@ -23,7 +23,7 @@ AKLR has two main parts: `aklr/` runs kernels, while `harness/` helps agents bui
 |---|---|
 | [`aklr/ops/`](../aklr/ops/README.md) | Each operator's API, correctness check, speed-test baseline, and kernel files. |
 | [`aklr/core/`](../aklr/core/) | Shared code that checks inputs, loads kernels, picks one for each workload, and validates results. |
-| [`aklr/plugins/`](../aklr/plugins/README.md) | Connections to inference engines. SGLang works today; vLLM and aiter plugin is planning. |
+| [`aklr/plugins/`](../aklr/plugins/README.md) | Plugins for other projects. SGLang works today; vLLM and AITER are planned. `aiter/` is empty. |
 | [`aklr/benchmarks/`](../aklr/benchmarks/) | Model workloads and benchmark code. |
 | [`harness/`](../harness/README.md) | Guides and tools for agents to write, test, review, and submit kernels. [`forge_task`](../docs/forge_task.md) sends an AKLR problem to KernelForge. |
 | [`tests/`](../tests/) and [`.github/workflows/`](workflows/) | Local tests and CI checks. |

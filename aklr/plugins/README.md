@@ -24,7 +24,7 @@ aklr/plugins/
 │   │       └── impls/        kernel implementations, one JSON file per kernel
 │   └── layers/               mirrors sglang's srt/layers/, with the same layout
 ├── vllm/                     planned, with the same layout as sglang/
-└── atom/                     empty placeholder; no routes or integration yet
+└── aiter/                    empty placeholder; no routes or integration yet
 ```
 
 ## Call flow
