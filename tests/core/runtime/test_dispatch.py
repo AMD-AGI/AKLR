@@ -2,6 +2,8 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
 import logging
+import sys
+import types
 from pathlib import Path
 
 import pytest
@@ -28,6 +30,7 @@ from aklr.core.runtime.dispatch import (
     DispatchTable,
     FallbackReason,
     KernelDispatcher,
+    register_vllm_plugin,
 )
 from tests.op_case import GEMM_KERNEL_SOURCE, KERNEL_TARGET, OpCase
 
@@ -438,3 +441,25 @@ class TestDispatcherRegistry:
         assert not isinstance(result, FallbackReason)
         comparisons = case.compare(case.contract.outputs_by_name(result), args)
         assert {o: c.is_passed for o, c in comparisons.items()} == dict.fromkeys(case.contract.outputs, True)
+
+
+class TestVllmPlugin:
+    """``register_vllm_plugin``: AKLR starts in a vLLM worker once its device is bound."""
+
+    def test_init_runs_after_init_device(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The wrapped ``Worker.init_device`` runs the original, then ``init_once``, and
+        returns the original's result."""
+        events: list[str] = []
+
+        class Worker:
+            def init_device(self) -> str:
+                events.append("init_device")
+                return "bound"
+
+        module = types.ModuleType("vllm.v1.worker.gpu_worker")
+        module.Worker = Worker
+        monkeypatch.setitem(sys.modules, module.__name__, module)
+        monkeypatch.setattr(DispatcherRegistry, "init_once", lambda self: events.append("init_once"))
+        register_vllm_plugin()
+        assert Worker().init_device() == "bound"
+        assert events == ["init_device", "init_once"]

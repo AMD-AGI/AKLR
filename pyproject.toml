@@ -27,6 +27,9 @@ dependencies = [
 [project.entry-points."sglang.srt.plugins"]
 aklr = "aklr.plugins.sglang:register"
 
+[project.entry-points."vllm.general_plugins"]
+aklr = "aklr.core.runtime.dispatch:register_vllm_plugin"
+
 [tool.setuptools.packages.find]
 include = ["aklr", "aklr.*"]
 

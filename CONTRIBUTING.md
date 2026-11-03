@@ -35,8 +35,8 @@ for kernel lifecycle changes.
 
 ## The AITER baseline
 
-AKLR neither ships nor patches [AITER](https://github.com/ROCm/aiter): AITER is only the
-baseline AKLR's kernels are timed against, at the commit `AKLR_BASELINE_AITER` in
+[AITER](https://github.com/ROCm/aiter) is the baseline AKLR's kernels are timed against in
+performance tests, at the commit `AKLR_BASELINE_AITER` in
 `.github/workflows/ci.yaml`, which CI installs over the image's AITER (with the FlyDSL it pins).
 To time an op against an AITER function, call it from the op's `<contract>_baseline` in its
 `baseline.py`. To move the baseline, change that commit: the next validation re-measures every

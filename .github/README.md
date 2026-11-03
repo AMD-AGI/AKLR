@@ -35,7 +35,7 @@ Validation times AKLR's kernels against AITER at `AKLR_BASELINE_AITER` in [ci.ya
 
 ## Usage
 
-SGLang loads AKLR at startup but reaches AKLR's kernels only with `AKLR_SGLANG_PLUGIN=1`. Other code starts AKLR once (`DispatcherRegistry.default().init()`, from `aklr.core.runtime.dispatch`), then calls the ops in `aklr.ops` and runs its own code when one returns a `FallbackReason`.
+SGLang and vLLM load AKLR at startup; SGLang reaches AKLR's kernels only with `AKLR_SGLANG_PLUGIN=1`. Other code starts AKLR once (`DispatcherRegistry.default().init()`, from `aklr.core.runtime.dispatch`), then calls the ops in `aklr.ops` and runs its own code when one returns a `FallbackReason`.
 
 | Variable | Effect |
 |---|---|
