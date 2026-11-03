@@ -2,6 +2,7 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 """Tests of the registered op contracts: registration and variant names."""
 
+import inspect
 import itertools
 import os
 import re
@@ -34,6 +35,14 @@ class TestOpRegistration:
         assert f"{baseline.__module__}.{baseline.__qualname__}" == (
             "aklr.ops.topk.baseline.topk_transform_paged_baseline"
         )
+
+    def test_every_baseline_takes_the_api_params(self) -> None:
+        """Bench calls a baseline with its contract's inputs and outputs by name."""
+        for contract in ContractRegistry.default().contracts():
+            baseline = contract.baseline()
+            if baseline is not None:
+                names = {**contract.inputs, **contract.outputs}
+                inspect.signature(baseline).bind_partial(**dict.fromkeys(names))
 
     def test_no_baseline_py_is_no_baseline(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A new op may have no ``baseline.py`` (it is its own baseline); one whose own

@@ -19,7 +19,7 @@ def add_rms_norm_baseline(x, residual, weight, epsilon=1e-6, normalized=None, re
     return normalized, residual_out
 
 
-def rms_norm_baseline(x, weight, epsilon=1e-6):
+def rms_norm_baseline(x, weight, epsilon=1e-6, normalized=None):
     """aiter's RMSNorm."""
     from aiter.ops.rmsnorm import rmsnorm2d_fwd
 
