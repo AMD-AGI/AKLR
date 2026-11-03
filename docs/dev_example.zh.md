@@ -113,7 +113,9 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 - code-lint（CPU：pre-commit、`export check`、`validate --stages audit`）→ unittest-aklr（GPU：全部 pytest）→ validation（GPU：`validate --base <合并基> --stages audit,bench`，只在有要 bench 的 schema 时运行）。
 - 只有 `aklr/core/` 下的非 `.md` 改动才测全部 schema，其他改动（schema、文档、新建 `aklr/ops/<op>` 等）只测改动集合里的 schema（`validation_scope.py`）。
 
-**运行时分发**：调用 api 时，如果这次调用的 Point 在某个已加载 schema（`targets`/`requires` 与本机匹配）的 workloads 里，且该 workload 的 `accuracy` 不是 `failed`、`speedup ≥ AKLR_MIN_SPEEDUP`（默认 1.03），就运行该 kernel。
+## 5. 运行时分发
+
+调用 api 时，如果这次调用的 Point 在某个已加载 schema（`targets`/`requires` 与本机匹配）的 workloads 里，且该 workload 的 `accuracy` 不是 `failed`、`speedup ≥ AKLR_MIN_SPEEDUP`（默认 1.03），就运行该 kernel。
 
 其余情况不走 kernel：api 返回 `FallbackReason`，由调用方运行自己的实现。
 
@@ -216,6 +218,6 @@ python -m aklr validate --stages audit $D/<uuid1>.json   # 可选：无 GPU 时�
 python -m aklr validate --base origin/main --stages audit,bench $D/<uuid1>.json
 ```
 
-**4. 提交 PR 跑 CI 测试** push代码到远程仓库开一个 PR。开 PR 时加 `ci:gpu`，正文贴第 3 步的 `report.md` 结论，并写明形状和 `n_tokens` 的来源。main 的 push CI 重新测量，再由 `aklr-perf/main` bot PR 写回 PR 里保留的那些 workload 的 `accuracy`/`speedup`，这个 bot PR 合入后才生效，分发规则见 §4「运行时分发」。
+**4. 提交 PR 跑 CI 测试** push代码到远程仓库开一个 PR。开 PR 时加 `ci:gpu`，正文贴第 3 步的 `report.md` 结论，并写明形状和 `n_tokens` 的来源。main 的 push CI 重新测量，再由 `aklr-perf/main` bot PR 写回 PR 里保留的那些 workload 的 `accuracy`/`speedup`，这个 bot PR 合入后才生效。
 
 **5. 完成合入**

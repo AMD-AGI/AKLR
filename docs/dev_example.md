@@ -113,7 +113,9 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 - code-lint (CPU: pre-commit, `export check`, `validate --stages audit`) → unittest-aklr (GPU: all of pytest) → validation (GPU: `validate --base <merge base> --stages audit,bench`, run only when there are schemas to bench).
 - Only non-`.md` changes under `aklr/core/` test all schemas; any other change (schemas, docs, a new `aklr/ops/<op>`, and so on) tests only the schemas in the change set (`validation_scope.py`).
 
-**Runtime dispatch**: when the api is called, if the call's Point is in the workloads of a loaded schema (one whose `targets`/`requires` match this machine), and that workload's `accuracy` is not `failed` and its `speedup ≥ AKLR_MIN_SPEEDUP` (default 1.03), that kernel runs.
+## 5. Runtime dispatch
+
+When the api is called, if the call's Point is in the workloads of a loaded schema (one whose `targets`/`requires` match this machine), and that workload's `accuracy` is not `failed` and its `speedup ≥ AKLR_MIN_SPEEDUP` (default 1.03), that kernel runs.
 
 In every other case no kernel runs: the api returns a `FallbackReason`, and the caller runs its own implementation.
 
@@ -216,6 +218,6 @@ python -m aklr validate --stages audit $D/<uuid1>.json   # optional: quick self-
 python -m aklr validate --base origin/main --stages audit,bench $D/<uuid1>.json
 ```
 
-**4. Open a PR to run CI** Push the code to the remote repository and open a PR. Add `ci:gpu` when opening it, paste the conclusion of the `report.md` from step 3 into the body, and state where the shapes and the `n_tokens` values come from. main's push CI remeasures, and then the `aklr-perf/main` bot PR writes back `accuracy`/`speedup` for the workloads kept in the PR; they take effect only after that bot PR merges. For the dispatch rules, see "Runtime dispatch" in §4.
+**4. Open a PR to run CI** Push the code to the remote repository and open a PR. Add `ci:gpu` when opening it, paste the conclusion of the `report.md` from step 3 into the body, and state where the shapes and the `n_tokens` values come from. main's push CI remeasures, and then the `aklr-perf/main` bot PR writes back `accuracy`/`speedup` for the workloads kept in the PR; they take effect only after that bot PR merges.
 
 **5. Complete the merge**
