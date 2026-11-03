@@ -53,7 +53,7 @@ defaults:
 
 jobs:
   # The audit gate rejects invalid schemas, audit violations and mixed changes
-  # before PR code reaches the GPU runner (D §8.4).
+  # before any GPU node is requested.
   code-lint:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -97,7 +97,7 @@ jobs:
           echo '🎉 [1/4] Begin AKLR lint.'
           echo "🐧 Runner: $RUNNER_NAME ($RUNNER_OS); event: $GITHUB_EVENT_NAME; ref: $GITHUB_REF"
           echo "⏱️ Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          echo '🧭 Pipeline: lint → AKLR tests (GPU) → validation → coverage report.'
+          echo '🧭 Pipeline: lint → GPU node → AKLR tests → validation → coverage report.'
           echo '🔎 Checks: pre-commit, export check, audit.'
           if [[ "$GPU_ENABLED" == true ]]; then
             echo '🟢 GPU jobs are eligible; each test stage must pass before the next starts.' | tee -a "$GITHUB_STEP_SUMMARY"
@@ -223,13 +223,60 @@ jobs:
             echo "⏱️ Finished at: $(date -u '+%Y-%m-%d %H:%M:%S UTC'); elapsed: $((now - ${AKLR_CI_JOB_STARTED_AT:-$now})) seconds."
           } | tee -a "$GITHUB_STEP_SUMMARY"
 
-  unittest-aklr:
+  # Allocates one Spur GPU node for this run attempt and registers a runner on it, labelled
+  # with its own name; the GPU jobs run there and release-gpu frees it.
+  prepare-gpu:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
-    runs-on: &gpu_runner aklr-gpu
+    runs-on: &spur_host aklr-spur-host
     # Bots, Bot-sent events and PRs by authors without write access wait for maintainer approval
-    # before PR code reaches the GPU runner (D §8.5).
+    # before a node is requested for PR code.
     environment: ${{ needs.code-lint.outputs.gpu_trusted == 'true' && 'gpu-trusted' || 'gpu' }}
+    # The queue waits at most 15m and the runner 20m; leave time for cancellation.
+    timeout-minutes: 50
+    outputs:
+      runner_label: ${{ steps.prepare.outputs.runner_label }}
+      allocation_id: ${{ steps.prepare.outputs.allocation_id }}
+      # "Re-run failed jobs" reuses these outputs after release-gpu freed their node:
+      # the GPU jobs run only in the attempt that allocated it.
+      attempt: ${{ github.run_attempt }}
+    env: &spur_env
+      # Host service installation/authentication is managed outside this repository.
+      PATH: ${{ vars.AKLR_HOST_PATH }}
+      AKLR_SPUR_SHARED_DIR: ${{ vars.AKLR_SPUR_SHARED_DIR }}
+      AKLR_GITHUB_TOKEN_FILE: ${{ vars.AKLR_GITHUB_TOKEN_FILE }}
+      # Comma/space-separated lists; one allocation is requested per account and
+      # partition pair, the first to start is kept and the rest are cancelled.
+      AKLR_SPUR_ACCOUNT: ${{ vars.AKLR_SPUR_ACCOUNT }}
+      AKLR_SPUR_PARTITION: ${{ vars.AKLR_SPUR_PARTITION }}
+      AKLR_SPUR_CPUS: ${{ vars.AKLR_SPUR_CPUS || '64' }}
+      AKLR_SPUR_MEMORY: ${{ vars.AKLR_SPUR_MEMORY || '512G' }}
+      AKLR_SPUR_GPUS_PER_NODE: ${{ vars.AKLR_SPUR_GPUS_PER_NODE || 'mi355x:8' }}
+      # Comma-separated nodes to never allocate (e.g. known-broken GPU nodes).
+      AKLR_SPUR_EXCLUDE: ${{ vars.AKLR_SPUR_EXCLUDE }}
+      # Whole-run limit, not a separate budget for each GPU job.
+      AKLR_SPUR_TIME_LIMIT: ${{ vars.AKLR_SPUR_TIME_LIMIT || '8:00:00' }}
+      AKLR_RUNNER_VERSION: ${{ vars.AKLR_RUNNER_VERSION || '2.337.0' }}
+      AKLR_RUNNER_SHA256: ${{ vars.AKLR_RUNNER_SHA256 || '70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613' }}
+    steps:
+      # PRs use the base commit's control scripts, never their own. A reviewed bootstrap
+      # commit can be selected with AKLR_CI_CONTROL_SHA before its first merge.
+      - &checkout_gpu_control
+        name: Checkout GPU control scripts
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ vars.AKLR_CI_CONTROL_SHA || github.event.pull_request.base.sha || github.sha }}
+          persist-credentials: false
+      - name: Prepare one GPU node for this run attempt
+        id: prepare
+        run: bash .github/scripts/manage_spur_runner.sh prepare
+
+  unittest-aklr:
+    needs: [code-lint, prepare-gpu]
+    if: >-
+      !cancelled() && needs.prepare-gpu.result == 'success' &&
+      needs.prepare-gpu.outputs.attempt == github.run_attempt
+    runs-on: ${{ needs.prepare-gpu.outputs.runner_label }}
     container:
       image: *ci_image
       options: &gpu_container_options >-
@@ -432,9 +479,9 @@ jobs:
 
   # No secrets and no actions/cache: this job runs the PR's code and kernels.
   validation:
-    needs: [code-lint, unittest-aklr]
-    if: needs.code-lint.outputs.has_bench_paths == 'true'
-    runs-on: *gpu_runner
+    needs: [code-lint, prepare-gpu, unittest-aklr]
+    if: needs.code-lint.outputs.has_bench_paths == 'true' && needs.prepare-gpu.outputs.attempt == github.run_attempt
+    runs-on: ${{ needs.prepare-gpu.outputs.runner_label }}
     container:
       image: *ci_image
       options: *gpu_container_options
@@ -484,8 +531,25 @@ jobs:
           retention-days: 90
       - *normalize_work_permissions
 
+  # After the last GPU job, so the node is freed while coverage-report runs. Also after a
+  # failed or cancelled prepare-gpu: it may have submitted before failing.
+  release-gpu:
+    needs: [prepare-gpu, unittest-aklr, validation]
+    if: always() && needs.prepare-gpu.result != 'skipped'
+    runs-on: *spur_host
+    timeout-minutes: 15
+    env: *spur_env
+    steps:
+      - *checkout_gpu_control
+      # The node of the attempt that allocated it, not necessarily the current attempt's.
+      - name: Release only this run's runner and node
+        env:
+          ALLOCATION_ID: ${{ needs.prepare-gpu.outputs.allocation_id }}
+          GPU_RUNNER_NAME: ${{ needs.prepare-gpu.outputs.runner_label }}
+        run: bash .github/scripts/manage_spur_runner.sh release "$ALLOCATION_ID" "$GPU_RUNNER_NAME"
+
   coverage-report:
-    needs: [code-lint, unittest-aklr, validation]
+    needs: [code-lint, prepare-gpu, unittest-aklr, validation]
     # The required check: always runs, since a skipped job would satisfy one on its own.
     if: always()
     runs-on: ubuntu-latest
@@ -604,11 +668,14 @@ jobs:
           LINT: ${{ needs.code-lint.result }}
           GPU_ENABLED: ${{ needs.code-lint.outputs.gpu_enabled }}
           HAS_BENCH_PATHS: ${{ needs.code-lint.outputs.has_bench_paths }}
-          GPU_RESULT: ${{ needs.unittest-aklr.result }}
+          GPU_ATTEMPT: ${{ needs.prepare-gpu.outputs.attempt }}
+          GPU_RESULTS: ${{ needs.prepare-gpu.result }} ${{ needs.unittest-aklr.result }}
           VALIDATION: ${{ needs.validation.result }}
         run: |
           [[ $LINT == success ]] || { echo '::error::code-lint did not succeed'; exit 1; }
-          [[ $GPU_ENABLED != true || $GPU_RESULT == success ]] || { echo "::error::GPU job: $GPU_RESULT"; exit 1; }
+          [[ $GPU_ENABLED != true || -z $GPU_ATTEMPT || $GPU_ATTEMPT == "$GITHUB_RUN_ATTEMPT" ]] ||
+            { echo "::error::Re-run failed jobs cannot reuse the GPU node released by attempt $GPU_ATTEMPT; use Re-run all jobs."; exit 1; }
+          [[ $GPU_ENABLED != true || $GPU_RESULTS == 'success success' ]] || { echo "::error::GPU jobs: $GPU_RESULTS"; exit 1; }
           # A PR without ci:gpu runs no validation; the review-tier gate decides whether it needs one.
           [[ $GPU_ENABLED != true || $HAS_BENCH_PATHS != true || $VALIDATION == success ]] ||
             { echo "::error::Kernels to measure, but validation: $VALIDATION"; exit 1; }
