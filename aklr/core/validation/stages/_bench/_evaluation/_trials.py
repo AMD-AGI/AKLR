@@ -162,6 +162,25 @@ class TrialRequest:
             for o in self.contract.mutable_tensors
         )
 
+    def empty_outputs(self, device: str | torch.device) -> dict[str, torch.Tensor]:
+        """Every step's mutable tensors, uninitialized on ``device``, by ``Step.output_key``
+        (``output_bytes`` in all): the reference task lends them to the candidate's, which
+        fills them."""
+        import torch
+
+        tensors = {
+            o: (
+                self.contract.storage_shape_of(o, self.point),
+                semantics.torch_dtypes(self.point.dtypes[o])[0],
+            )
+            for o in self.contract.mutable_tensors
+        }
+        return {
+            step.output_key(o): torch.empty(shape, dtype=dtype, device=device)
+            for step in self.steps
+            for o, (shape, dtype) in tensors.items()
+        }
+
     @property
     def input_bytes(self) -> int:
         """One input set's bytes: every present tensor input at the Point."""

@@ -14,11 +14,12 @@ from aklr.core.contract import semantics
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.spec import FrozenModel
 from aklr.core.validation.stages import _measure
-from aklr.core.validation.stages._bench._evaluation._safetensors import (
-    outputs_file_name,
-)
 from aklr.core.validation.stages._bench._evaluation._trials import Step, TrialRequest
-from aklr.core.validation.stages._bench._execution import ExecutionContext
+from aklr.core.validation.stages._bench._execution import (
+    ExecutionContext,
+    TaskExecutionTimeout,
+    caused_by_the_task,
+)
 from aklr.core.validation.stages._report._finding import Finding, FindingCode
 
 if TYPE_CHECKING:
@@ -44,6 +45,8 @@ class CandidateWorkloadResult(FrozenModel):
     axes_text: str
     findings: tuple[Finding, ...]
     rounds: tuple[_measure.RoundTimes, ...]
+    # the lent tensors it filled (Step.output_key), in step order
+    output_keys: tuple[str, ...] = ()
 
 
 class CandidateResult(FrozenModel):
@@ -60,6 +63,24 @@ class CandidateResult(FrozenModel):
         if sorted(r.axes_text for r in result.workload_results) != sorted(axes_texts):
             raise ValueError(detail)
         return result
+
+    @classmethod
+    def of_failure(cls, error: BaseException) -> CandidateResult:
+        """The batch finding of a candidate task that gave no result: the last line of
+        ``error``, whose type says whether the candidate or the platform failed."""
+        detail = str(error).strip().split("\n")[-1]
+        if isinstance(error, TaskExecutionTimeout):
+            code = FindingCode.CANDIDATE_TIMEOUT
+        elif caused_by_the_task(error):
+            # a tracer fault crashes the timing by itself; only the last line is
+            # aklr's text, the log and traceback above it are the candidate's
+            is_tracer = ": timing: " in detail and _measure.is_tracer_fault(detail)
+            code = FindingCode.PLATFORM_FAILURE if is_tracer else FindingCode.CANDIDATE_CRASH
+        elif isinstance(error, ValueError):
+            code = FindingCode.CANDIDATE_CRASH
+        else:
+            code = FindingCode.PLATFORM_FAILURE
+        return cls(findings=(Finding.unlocated(code, detail),), workload_results=())
 
 
 class StepFailed(Exception):
@@ -82,10 +103,16 @@ class StepFailed(Exception):
             raise cls(ended_as, f"{description}{type(e).__name__}: {e}") from e
 
 
-def run_candidate(context: ExecutionContext, *, requests: Sequence[TrialRequest]) -> dict:
-    """Check and time the batch on ``context.device``; returns a ``CandidateResult`` json."""
+def run_candidate(
+    context: ExecutionContext,
+    *,
+    requests: Sequence[TrialRequest],
+    outputs: Mapping[str, Mapping[str, Tensor]],
+) -> dict:
+    """Check and time the batch on ``context.device``, each workload's outputs copied
+    into the tensors the reference task lent (``outputs[axes_text]``,
+    ``TrialRequest.empty_outputs``); returns a ``CandidateResult`` json."""
     import torch
-    from safetensors.torch import save_file
 
     from aklr.core.platform.device import DeviceTarget
     from aklr.core.platform.toolchain import unmet_requirement
@@ -148,23 +175,33 @@ def run_candidate(context: ExecutionContext, *, requests: Sequence[TrialRequest]
                     )
     except StepFailed as e:
         batch_findings = (Finding.unlocated(e.code, str(e)),)
+    output_keys: dict[str, tuple[str, ...]] = {}
     for request in requests:
         axes_text = request.axes_text
-        outputs: dict[str, Tensor] = {}
+        produced: dict[str, Tensor] = {}
         if not batch_findings and axes_text not in stopped:
             try:
                 rounds[axes_text] = run.check_and_time(
-                    request, dispatcher, incumbent_dispatchers.get(axes_text), outputs
+                    request, dispatcher, incumbent_dispatchers.get(axes_text), produced
                 )
             except StepFailed as e:
                 stopped[axes_text] = Finding.unlocated(e.code, str(e))
-        # with no tensor too: a missing file is always the candidate's fault
-        save_file(outputs, context.directory / outputs_file_name(axes_text))
+        lent = outputs[axes_text]
+        for key, value in produced.items():
+            # another storage dtype of the output holds the same bytes; copy_ would broadcast
+            value = value.view(lent[key].dtype)
+            if value.shape != lent[key].shape:
+                raise ValueError(f"{axes_text}: {key} is {tuple(value.shape)}, not {tuple(lent[key].shape)}")
+            lent[key].copy_(value)
+        output_keys[axes_text] = tuple(produced)
+    if context.device != "cpu":
+        torch.cuda.synchronize()  # the lent tensors are filled before the result says so
     workload_results = [
         CandidateWorkloadResult(
             axes_text=r.axes_text,
             findings=(stopped[r.axes_text],) if r.axes_text in stopped else (),
             rounds=rounds.get(r.axes_text, ()),
+            output_keys=output_keys[r.axes_text],
         )
         for r in requests
     ]
@@ -436,7 +473,7 @@ class CandidateRun:
                 detail = f"{label}: the call changed its inputs"
                 raise StepFailed(FindingCode.INPUT_MUTATION, detail)
             for o, out in contract.call_mutable_tensors(result, call).items():
-                outputs[step.output_key(o)] = out.to("cpu", copy=True).contiguous()
+                outputs[step.output_key(o)] = out.clone()
 
     @staticmethod
     @contextlib.contextmanager

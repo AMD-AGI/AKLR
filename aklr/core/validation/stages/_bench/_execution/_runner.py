@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import itertools
 import logging
 import multiprocessing
@@ -61,6 +62,7 @@ from aklr.core.validation.stages._bench._execution._transport import (
 )
 
 DEFAULT_STARTUP_TIMEOUT_SECONDS: Final = 30.0
+_PR_SET_PDEATHSIG: Final = 1
 RUNNER_POLL_SECONDS: Final = 0.25
 RUNNER_JOIN_SECONDS: Final = 2.0
 
@@ -457,6 +459,8 @@ class DisposableExecutionRunner(ExecutionRunner):
         is_gpu = device != "cpu"
         try:
             os.setsid()
+            # killed with the parent: a task's own children (the bench trial's candidate) end with it
+            ctypes.CDLL(None, use_errno=True).prctl(_PR_SET_PDEATHSIG, signal.SIGKILL)
             parent_cwd = os.getcwd()
             os.chdir(directory)
             sys.path[:] = [entry or parent_cwd for entry in sys.path]

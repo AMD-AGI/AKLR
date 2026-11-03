@@ -160,11 +160,12 @@ class OpCase:
         return self.request.assemble_call(row_major_args, device)
 
     def reference_outputs(self, row_major_args: Mapping[str, Any]) -> dict[str, Any]:
-        """The op's float64 reference of ``row_major_args``, by name in ``contract.mutable_tensors``."""
+        """The op's reference of ``row_major_args`` in float32, as validation computes it, by
+        name in ``contract.mutable_tensors``."""
         reference_module = op_module(self.contract.op_package, "reference")
         reference_fn = getattr(reference_module, self.contract.reference_name)
         return self.contract.mutable_tensors_by_name(
-            reference_fn(self.point, row_major_args, semantics.to_float64)
+            reference_fn(self.point, row_major_args, semantics.to_float32)
         )
 
     def compare(

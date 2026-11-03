@@ -24,7 +24,7 @@ def _mxfp4(x: Tensor, grid: Tensor) -> Tensor:
     finite = amax.isfinite()
     mantissa, exponent = torch.frexp(torch.where(finite, amax, 0.0).clamp_min(1e-10))
     exponent = (exponent - 3 + (mantissa > 0.75).int()).clamp(-127, 127)
-    scale = torch.where(finite, torch.exp2(exponent.double()), float("nan"))
+    scale = torch.where(finite, torch.exp2(exponent.to(x.dtype)), float("nan"))
     scaled = torch.where(finite, blocks, 0.0) / scale
     m = scaled.abs()
     lo = torch.bucketize(m, grid, right=True) - 1  # the largest code <= m
@@ -43,9 +43,9 @@ def _mxfp8(x: Tensor) -> Tensor:
     finite = amax.isfinite()
     mantissa, exponent = torch.frexp(torch.where(finite, amax, 0.0) / 448.0)
     exponent = (exponent - 1 + (mantissa != 0.5).int()).clamp(-126, 127)
-    scale = torch.where(finite, torch.exp2(exponent.double()), float("nan"))
+    scale = torch.where(finite, torch.exp2(exponent.to(x.dtype)), float("nan"))
     scaled = torch.where(finite, blocks, 0.0) / scale
-    codes = scaled.to(torch.float8_e4m3fn).double()
+    codes = scaled.to(torch.float8_e4m3fn).to(x.dtype)
     return (codes * scale).flatten(-2)
 
 
@@ -53,17 +53,17 @@ def _weight(
     row_major_args: Mapping[str, Any],
     name: str,
     expert: int,
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
-    w = to_float64(row_major_args[name][expert], "float4_e2m1")
-    scale = to_float64(row_major_args[f"{name}_scale"][expert], "float8_e8m0")
+    w = decode(row_major_args[name][expert], "float4_e2m1")
+    scale = decode(row_major_args[f"{name}_scale"][expert], "float8_e8m0")
     return w * scale.repeat_interleave(_BLOCK, dim=-1)
 
 
 def fused_moe_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """Each token through its top-k experts, weighted by its routing weights, summed.
 
@@ -84,7 +84,7 @@ def fused_moe_reference(
         ids[int(row_major_args["num_local_tokens"][0]) :] = -1  # rows not received
     # e2m1's 8 magnitudes, ascending: byte i holds code i in its low nibble.
     codes = torch.arange(16, dtype=torch.uint8, device=hidden.device)
-    fp4_grid = to_float64(codes, "float4_e2m1")[0::2][:8]
+    fp4_grid = decode(codes, "float4_e2m1")[0::2][:8]
     activation, stage1 = point.attrs["activation"], point.attrs["doweight_stage1"]
     limit = row_major_args.get("swiglu_limit")
     if point.attrs["gate_mode"] == "interleave" or (
@@ -96,15 +96,15 @@ def fused_moe_reference(
     else:
         quantize = functools.partial(_mxfp4, grid=fp4_grid)
     beta, linear_beta = row_major_args.get("beta"), row_major_args.get("linear_beta")
-    x = quantize(to_float64(hidden, point.dtypes["hidden_states"]))
-    weights = to_float64(row_major_args["topk_weights"], point.dtypes["topk_weights"])
+    x = quantize(decode(hidden, point.dtypes["hidden_states"]))
+    weights = decode(row_major_args["topk_weights"], point.dtypes["topk_weights"])
     out = x.new_zeros((*ids.shape, x.shape[-1]))
     for expert in ids.unique().tolist():
         if expert < 0:  # another rank's route adds nothing
             continue
         routed = ids == expert
         tokens = routed.nonzero(as_tuple=True)[0]  # topk_ids rows are distinct
-        projected = x[tokens] @ _weight(row_major_args, "w1", expert, to_float64).mT
+        projected = x[tokens] @ _weight(row_major_args, "w1", expert, decode).mT
         if stage1:
             projected = projected * weights[routed].unsqueeze(-1)
         gate, up = projected.chunk(2, dim=-1)  # w1 stores [gate | up] along its rows
@@ -119,8 +119,8 @@ def fused_moe_reference(
         else:
             gate = beta * torch.tanh(gate / beta) * torch.sigmoid(gate)
             gated = gate * (linear_beta * torch.tanh(up / linear_beta))
-        gated = gated.to(hidden.dtype).double()
-        w2 = _weight(row_major_args, "w2", expert, to_float64)
+        gated = gated.to(hidden.dtype).to(x.dtype)
+        w2 = _weight(row_major_args, "w2", expert, decode)
         out[routed] = quantize(gated) @ w2.mT
     if not stage1:
         out = out * weights.unsqueeze(-1)

@@ -11,7 +11,10 @@ from aklr.core.validation.stages._bench._evaluation._candidate import (
 from aklr.core.validation.stages._bench._evaluation._reference import (
     ReferenceResult,
     ReferenceWorkloadResult,
-    run_reference,
+)
+from aklr.core.validation.stages._bench._evaluation._trial import (
+    TrialResult,
+    run_trial,
 )
 from aklr.core.validation.stages._bench._evaluation._trials import (
     N_POST_TIMING_SETS,
@@ -31,6 +34,7 @@ __all__ = [
     "Step",
     "StepFailed",
     "TrialRequest",
+    "TrialResult",
     "run_candidate",
-    "run_reference",
+    "run_trial",
 ]

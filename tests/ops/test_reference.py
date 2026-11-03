@@ -16,12 +16,13 @@ class TestReference:
     """The reference's outputs are as declared, admitted by the contract's compare."""
 
     def test_outputs_are_declared(self, op_case: OpCase) -> None:
-        """On the CPU, ``reference_outputs`` holds every result, float64, finite."""
+        """On the CPU, ``reference_outputs`` holds every result, float32 or float64 (an
+        exact one), finite."""
         reference = op_case.reference_outputs(op_case.inputs())
         assert list(reference) == list(op_case.contract.mutable_tensors)
         for name, tensor in reference.items():
             assert tensor.device.type == "cpu", name
-            assert tensor.dtype == torch.float64, name
+            assert tensor.dtype in (torch.float32, torch.float64), name
             assert tensor.isfinite().all(), name
             assert tuple(tensor.shape) == op_case.contract.dtype_storage_shape_of(name, op_case.point), name
 

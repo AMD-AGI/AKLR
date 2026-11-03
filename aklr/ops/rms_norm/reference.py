@@ -15,23 +15,23 @@ __all__ = ["add_rms_norm_reference", "rms_norm_reference"]
 def add_rms_norm_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor]:
     """(normalized, residual_out) from the exact sum x + residual."""
     args, dtypes = row_major_args, point.dtypes
-    total = to_float64(args["x"], dtypes["x"]) + to_float64(args["residual"], dtypes["residual"])
-    return _normalized(total, to_float64(args["weight"], dtypes["weight"]), args["epsilon"]), total
+    total = decode(args["x"], dtypes["x"]) + decode(args["residual"], dtypes["residual"])
+    return _normalized(total, decode(args["weight"], dtypes["weight"]), args["epsilon"]), total
 
 
 def rms_norm_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """x times the reciprocal rms of its row, times weight."""
     args, dtypes = row_major_args, point.dtypes
     return _normalized(
-        to_float64(args["x"], dtypes["x"]), to_float64(args["weight"], dtypes["weight"]), args["epsilon"]
+        decode(args["x"], dtypes["x"]), decode(args["weight"], dtypes["weight"]), args["epsilon"]
     )
 
 

@@ -162,7 +162,7 @@ def reference_decode(
     return normalized, conv_result, state_result, values.reshape(rows, -1), scales
 
 
-def _decode_reference(point, row_major_args, to_float64, outputs):
+def _decode_reference(point, row_major_args, decode, outputs):
     names = inspect.signature(reference_decode).parameters
     normalized, conv, state, values, scales = reference_decode(
         **{k: v for k, v in row_major_args.items() if k in names}
@@ -174,25 +174,25 @@ def _decode_reference(point, row_major_args, to_float64, outputs):
         "conv_state": conv,
         "delta_state": state,
     }
-    return tuple(to_float64(results[n], point.dtypes[n]) for n in (*outputs, "conv_state", "delta_state"))
+    return tuple(decode(results[n], point.dtypes[n]) for n in (*outputs, "conv_state", "delta_state"))
 
 
-def gdn_decode_group_fp8_quant_reference(point, row_major_args, to_float64):
+def gdn_decode_group_fp8_quant_reference(point, row_major_args, decode):
     """Independent decode; the FP8 outputs, then both final state pools."""
-    return _decode_reference(point, row_major_args, to_float64, ("values", "scales"))
+    return _decode_reference(point, row_major_args, decode, ("values", "scales"))
 
 
-def gdn_decode_reference(point, row_major_args, to_float64):
+def gdn_decode_reference(point, row_major_args, decode):
     """Independent decode; the BF16 output, then both final state pools."""
-    return _decode_reference(point, row_major_args, to_float64, ("normalized",))
+    return _decode_reference(point, row_major_args, decode, ("normalized",))
 
 
-def gdn_prefill_group_fp8_quant_reference(point, row_major_args, to_float64):
+def gdn_prefill_group_fp8_quant_reference(point, row_major_args, decode):
     """Independent recurrence; return outputs followed by final mutable inputs."""
     call = {k: v for k, v in row_major_args.items() if k != "max_seq_len"}
     output, conv, state, values, scales = reference_prefill(**call)
     return tuple(
-        to_float64(t, point.dtypes[n])
+        decode(t, point.dtypes[n])
         for n, t in zip(
             ("normalized", "values", "scales", "conv_state", "delta_state"),
             (output, values, scales, conv, state),

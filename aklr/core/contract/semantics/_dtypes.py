@@ -112,6 +112,14 @@ def to_float64(tensor: Tensor, dtype: str) -> Tensor:
             raise ValueError(f"no decoding rule for {dtype}")
 
 
+def to_float32(tensor: Tensor, dtype: str) -> Tensor:
+    """``to_float64``'s values in float32, which holds every dtype's exactly but an int's
+    past 2**24 and a float64's."""
+    if DTYPE_TRAITS[DType(dtype)].decoding["kind"] == "cast":
+        return tensor.float()
+    return to_float64(tensor, dtype).float()  # 1-byte codes: their float64 is small
+
+
 def from_float64(float64_tensor: Tensor, dtype: str) -> Tensor:
     """The inverse of ``to_float64`` for a CPU logical-shape tensor, in the primary
     storage dtype (-0 may become +0); a value ``dtype`` cannot hold exactly (NaN

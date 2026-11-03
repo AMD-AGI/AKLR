@@ -100,9 +100,9 @@ def compare_outputs(
     magnitude_outputs: Mapping[str, Tensor] | None = None,
     baseline_outputs: Mapping[str, Tensor] | None = None,
 ) -> dict[str, CompareResult]:
-    """Each mutable tensor of the schema json (``mutable_tensor_declarations``) against its float64
-    reference, on the CPU, under its one ``error_bounds`` item (an integer one must be
-    exact); keyed in that order."""
+    """Each mutable tensor of the schema json (``mutable_tensor_declarations``) against its
+    reference, on the tensors' device, under its one ``error_bounds`` item (an integer one
+    must be exact); keyed in that order."""
     compare = schema["compare"]
     element_order = ElementOrder(compare["element_order"])
     magnitude_outputs = magnitude_outputs or {}

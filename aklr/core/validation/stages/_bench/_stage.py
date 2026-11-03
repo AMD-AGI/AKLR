@@ -22,14 +22,13 @@ from aklr.core.validation.stages._bench._evaluation import (
     CandidateResult,
     ReferenceResult,
     TrialRequest,
-    run_candidate,
-    run_reference,
+    TrialResult,
+    run_trial,
 )
 from aklr.core.validation.stages._bench._execution import (
+    DEFAULT_STARTUP_TIMEOUT_SECONDS,
     ExecutionError,
     Executor,
-    TaskExecutionTimeout,
-    caused_by_the_task,
 )
 from aklr.core.validation.stages._bench._report import BenchReport, WorkloadRecord
 from aklr.core.validation.stages._measure import Threshold, Versus
@@ -42,8 +41,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BUILD_TIMEOUT_SECONDS", "MAX_BATCH_OUTPUT_BYTES", "MAX_BATCH_WORKLOADS",
-    "REFERENCE_SECONDS_PER_OUTPUT_GIB", "WORKLOAD_TIMEOUT_SECONDS",
-    "BenchStage", "ReferenceNotProduced",
+    "REFERENCE_SECONDS_PER_OUTPUT_GIB", "WORKLOAD_TIMEOUT_SECONDS", "BenchStage",
 ]  # fmt: skip
 
 MAX_BATCH_OUTPUT_BYTES: Final = 16 << 30
@@ -51,8 +49,8 @@ MAX_BATCH_OUTPUT_BYTES: Final = 16 << 30
 MAX_BATCH_WORKLOADS: Final = 16
 BUILD_TIMEOUT_SECONDS: Final = 900.0
 WORKLOAD_TIMEOUT_SECONDS: Final = 300.0
-# the reference compares every stored output in float64 on the CPU, so its time grows with them: at m=342073,
-# gemm_n3072_k512's 23 GiB of outputs took about 420 s on a busy MI355X node
+# the reference's time grows with the outputs it compares: at m=342073, gemm_n3072_k512's 23 GiB of outputs
+# took about 420 s on a busy MI355X node compared in float64 on the CPU, far less on the GPU
 REFERENCE_SECONDS_PER_OUTPUT_GIB: Final = 60.0
 
 
@@ -61,17 +59,14 @@ def _reference_timeout_seconds(requests: Sequence[TrialRequest]) -> float:
     return WORKLOAD_TIMEOUT_SECONDS * len(requests) + REFERENCE_SECONDS_PER_OUTPUT_GIB * output_gib
 
 
-class ReferenceNotProduced(RuntimeError):
-    """The reference task failed or gave no result: the platform's fault, never the candidate's."""
-
-
 class UnreadableIncumbent(RuntimeError):
     """A base schema of the same name is not even JSON: its replacement is never timed
     without it."""
 
 
 class BenchStage(PipelineStage[BenchReport]):
-    """Each schema's workloads in batches: a candidate task, then a reference task, per device."""
+    """Each schema's workloads in batches, a trial task per batch and device (``run_trial``):
+    the candidate in its child task, then the reference."""
 
     name = "bench"
     report_type = BenchReport
@@ -273,73 +268,27 @@ class BenchStage(PipelineStage[BenchReport]):
         total: int,
     ) -> tuple[list[Finding], list[WorkloadRecord]]:
         failures: list[Finding] = []
-        directories: list[Path] = []
         candidate = reference = None
-        # a succeeded task's directory is the caller's to delete
-        is_succeeded = lambda f: f.done() and not f.cancelled() and f.exception() is None
+        candidate_timeout = BUILD_TIMEOUT_SECONDS + WORKLOAD_TIMEOUT_SECONDS * len(batch)
         try:
-            future = None
-            for attempt in range(2):
-                try:
-                    future = executor.submit(
-                        run_candidate,
-                        timeout_seconds=BUILD_TIMEOUT_SECONDS + WORKLOAD_TIMEOUT_SECONDS * len(batch),
-                        requests=batch,
-                    )
-                    candidate = CandidateResult.from_task(future.result(), [r.axes_text for r in batch])
-                except (ExecutionError, ValueError) as e:
-                    finding = self._build_failed_finding(e)
-                    # a tracer fault is the platform's: a fresh process measures again
-                    if (
-                        attempt == 0
-                        and finding.code == FindingCode.PLATFORM_FAILURE
-                        and _measure.is_tracer_fault(finding.detail)
-                    ):
-                        continue
-                    failures.append(finding)
-                finally:
-                    if future is not None and is_succeeded(future) and future.directory:
-                        directories.append(future.directory)
-                break
-            if candidate is not None and not candidate.findings:
-                declined = {
-                    r.axes_text
-                    for r in candidate.workload_results
-                    if any(f.code == FindingCode.BASELINE_FAILED for f in r.findings)
-                }
-                requests = tuple(r for r in batch if r.axes_text not in declined)
-                reference = ReferenceResult(workload_results=())
-                if requests:
-                    reference_future = None
-                    try:
-                        reference_future = executor.submit(
-                            run_reference,
-                            timeout_seconds=_reference_timeout_seconds(requests),
-                            requests=requests,
-                            candidate_dir=future.directory,
-                        )
-                        try:
-                            reference = ReferenceResult.from_task(
-                                reference_future.result(),
-                                [r.axes_text for r in requests],
-                            )
-                        except ExecutionError as e:
-                            raise ReferenceNotProduced(f"reference: {self._last_line(e)}") from e
-                        except ValueError as e:
-                            raise ReferenceNotProduced(str(e)) from e
-                    except (ExecutionError, ReferenceNotProduced) as e:
-                        reference = None
-                        failures.append(self._build_failed_finding(e))
-                    finally:
-                        if (
-                            reference_future is not None
-                            and is_succeeded(reference_future)
-                            and reference_future.directory
-                        ):
-                            directories.append(reference_future.directory)
-        finally:
-            for directory in directories:
-                shutil.rmtree(directory, ignore_errors=True)
+            future = executor.submit(
+                run_trial,
+                # the candidate twice (a tracer fault reruns it), each in a child it starts
+                timeout_seconds=2 * (DEFAULT_STARTUP_TIMEOUT_SECONDS + candidate_timeout)
+                + _reference_timeout_seconds(batch),
+                requests=batch,
+                candidate_timeout_seconds=candidate_timeout,
+                n_cpu_shares=len(self._devices),
+            )
+            value = future.result()
+            if future.directory:  # a succeeded task's directory is the caller's to delete
+                shutil.rmtree(future.directory, ignore_errors=True)
+            trial = TrialResult.from_task(value, [r.axes_text for r in batch])
+            candidate, reference = trial.candidate, trial.reference
+        except (ExecutionError, ValueError) as e:
+            # the candidate's failures are in the result: the trial's own are the platform's
+            detail = str(e).strip().split("\n")[-1]
+            failures.append(Finding.unlocated(FindingCode.PLATFORM_FAILURE, f"reference: {detail}"))
         findings, records = self._judged_findings(scope, batch, failures, candidate, reference)
         try:
             line = BenchReport.from_findings(findings, workload_records=tuple(records)).batch_line()
@@ -401,22 +350,3 @@ class BenchStage(PipelineStage[BenchReport]):
                 )
             )
         return findings, records
-
-    def _build_failed_finding(self, error: BaseException) -> Finding:
-        detail = self._last_line(error)
-        if isinstance(error, TaskExecutionTimeout):
-            code = FindingCode.CANDIDATE_TIMEOUT
-        elif caused_by_the_task(error):
-            # a tracer fault crashes the timing by itself; only the last line is
-            # aklr's text, the log and traceback above it are the candidate's
-            is_tracer = ": timing: " in detail and _measure.is_tracer_fault(detail)
-            code = FindingCode.PLATFORM_FAILURE if is_tracer else FindingCode.CANDIDATE_CRASH
-        elif isinstance(error, ValueError):
-            code = FindingCode.CANDIDATE_CRASH
-        else:
-            code = FindingCode.PLATFORM_FAILURE
-        return Finding.unlocated(code, detail)
-
-    @staticmethod
-    def _last_line(error: BaseException) -> str:
-        return str(error).strip().split("\n")[-1]

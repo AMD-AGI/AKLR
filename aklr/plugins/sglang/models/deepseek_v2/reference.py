@@ -22,7 +22,7 @@ _MXFP4_BLOCK = 32
 def _fp32(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> Callable[..., Tensor]:
     """Tensor argument ``name`` (its ``index`` only, if given) in fp32."""
 
@@ -30,7 +30,7 @@ def _fp32(
         tensor = row_major_args[name]
         if index is not None:
             tensor = tensor[index]
-        return to_float64(tensor, point.dtypes[name]).float()
+        return decode(tensor, point.dtypes[name]).float()
 
     return get
 
@@ -88,17 +88,17 @@ def _with_shared_slot(point: Any, ids: Tensor, weights: Tensor) -> tuple[Tensor,
 def deepseek_v2_mxfp4_moe_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """On hidden_states, each token's routed experts and the shared one (the last slot) at
     weight 1, the MXFP4 weights dequantized per 32 values. Rounding point: the router's logits,
     exact products of hidden_states and router_weight summed in float64, round to
     hidden_states' dtype."""
-    args, f = row_major_args, _fp32(point, row_major_args, to_float64)
+    args, f = row_major_args, _fp32(point, row_major_args, decode)
     hidden = args["hidden_states"]
     logits = (
-        to_float64(hidden, point.dtypes["hidden_states"])
-        @ to_float64(args["router_weight"], point.dtypes["router_weight"]).T
+        decode(hidden, point.dtypes["hidden_states"]).double()
+        @ decode(args["router_weight"], point.dtypes["router_weight"]).double().T
     )
     x = f("hidden_states")
     ids, weights = _routed(point, args, logits.to(hidden.dtype).float(), f("correction_bias"))

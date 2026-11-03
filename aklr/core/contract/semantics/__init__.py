@@ -39,6 +39,7 @@ from ._dtypes import (
     absolute_value,
     dtype_storage_shape,
     from_float64,
+    to_float32,
     to_float64,
     torch_dtypes,
 )
@@ -108,6 +109,7 @@ __all__ = [
     "runs_agree",
     "sorted_key_json",
     "stored_inputs",
+    "to_float32",
     "to_float64",
     "torch_dtypes",
     "workload_hash",

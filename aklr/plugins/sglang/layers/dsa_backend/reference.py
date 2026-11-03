@@ -23,7 +23,7 @@ _CHUNK_TOKENS = 16
 def dsa_sparse_mla_decode_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """Each head's softmax over the scores q . row * sm_scale of the rows its token's
     top-k slots name (-1: none, never a weight), weighing the rows' latent parts; 0 for a
@@ -32,7 +32,7 @@ def dsa_sparse_mla_decode_reference(
 
     args = row_major_args
     latent = point.axes["kv_dim"] - ROPE_DIM
-    q = to_float64(args["q"], point.dtypes["q"]).float()
+    q = decode(args["q"], point.dtypes["q"]).float()
     # gathered as bytes: the fp8 rows decode only where a token reads them
     pool = args["kv_cache"].view(torch.uint8)
     slots = args["topk_indices"].long()
@@ -41,7 +41,7 @@ def dsa_sparse_mla_decode_reference(
         chunk = slice(start, start + _CHUNK_TOKENS)
         picked = slots[chunk]
         rows = pool[picked.clamp(min=0)].view(args["kv_cache"].dtype)
-        rows = to_float64(rows, point.dtypes["kv_cache"]).float()
+        rows = decode(rows, point.dtypes["kv_cache"]).float()
         scores = torch.einsum("thc,tkc->thk", q[chunk], rows) * args["sm_scale"]
         scores = scores.masked_fill((picked < 0)[:, None], -torch.inf)
         # a token that reads no row gets 0

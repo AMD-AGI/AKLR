@@ -15,14 +15,14 @@ __all__ = ["biased_grouped_topk_reference"]
 def biased_grouped_topk_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor]:
     """(topk_weights, topk_ids): each token's topk experts by biased score.
 
     Every group is kept (the contract's constraint), so the groups mask nothing.
     """
-    logits = to_float64(row_major_args["router_logits"], point.dtypes["router_logits"])
-    bias = to_float64(row_major_args["correction_bias"], point.dtypes["correction_bias"])
+    logits = decode(row_major_args["router_logits"], point.dtypes["router_logits"])
+    bias = decode(row_major_args["correction_bias"], point.dtypes["correction_bias"])
     scores = logits.sigmoid()
     chosen = (scores + bias).topk(point.axes["topk"], dim=-1).indices
     weights = scores.gather(-1, chosen)

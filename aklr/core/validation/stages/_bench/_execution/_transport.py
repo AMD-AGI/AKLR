@@ -107,7 +107,7 @@ class ChildRunnerEndpoint:
 
     def receive(self) -> RunnerCommand:
         try:
-            return self._command_queue.get()
+            return ForkingPickler.loads(self._command_queue.get())
         except Exception as error:
             raise ChannelFailure(f"could not receive runner command: {error}") from error
 
@@ -150,8 +150,8 @@ class MultiprocessingRunnerChannel(RunnerChannel):
         if self._is_closed:
             raise ChannelFailure("runner channel is closed")
         try:
-            ForkingPickler.dumps(command)
-            self._command_queue.put(command)
+            # pickled once: each pickling of a CUDA tensor is an IPC share its receiver releases
+            self._command_queue.put(bytes(ForkingPickler.dumps(command)))
         except Exception as error:
             raise ChannelFailure(f"could not send runner command: {error}") from error
 

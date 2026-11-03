@@ -12,7 +12,7 @@ from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -33,8 +33,11 @@ from aklr.core.validation.stages._bench._evaluation import (
     CandidateResult,
     CandidateWorkloadResult,
     ReferenceResult,
+    TrialResult,
+    run_trial,
 )
 from aklr.core.validation.stages._bench._execution import (
+    ExecutionContext,
     Executor,
     TaskExecutionFailed,
 )
@@ -126,27 +129,19 @@ def _workload(
 _TRACER_FAULT = "x: timing: Kineto recorded no kernels for a single call"
 
 
-def _reruns(*details: str) -> tuple[int, set[FindingCode]]:
-    """``_run_batch``'s candidate submits and finding codes, its candidate task failing
+def _reruns(tmp_path: Path, *details: str) -> tuple[int, set[FindingCode]]:
+    """``run_trial``'s candidate submits and finding codes, its candidate task failing
     with each of ``details`` in turn."""
     errors = iter(TaskExecutionFailed(d) for d in details)
-
-    def submit(*args: Any, **kwargs: Any) -> Mock:
-        error = next(errors)
-        return Mock(
-            done=lambda: True,
-            cancelled=lambda: False,
-            exception=lambda: error,
-            result=Mock(side_effect=error),
-            directory=None,
-        )
-
-    executor = Mock(submit=Mock(side_effect=submit))
+    executor = Mock(submit=Mock(side_effect=lambda *a, **k: Mock(result=Mock(side_effect=next(errors)))))
     scope = ValidationScope(Path.cwd(), "", "HEAD", (), ())
-    stage = BenchStage(["cpu"])
-    batch, *_ = stage._workloads_to_run(scope, Path(_SCHEMA), ContractRegistry.default())
-    findings, _ = stage._run_batch(scope, executor, batch, iter(range(1, 9)), 1)
-    return executor.submit.call_count, {f.code for f in findings}
+    batch, *_ = BenchStage(["cpu"])._workloads_to_run(scope, Path(_SCHEMA), ContractRegistry.default())
+    context = ExecutionContext(device="cpu", log_path=tmp_path / "log", directory=tmp_path)
+    with patch.object(Executor, "for_devices", lambda devices, **kwargs: nullcontext(executor)):
+        value = run_trial(context, requests=batch, candidate_timeout_seconds=1.0, n_cpu_shares=1)
+    trial = TrialResult.from_task(value, [r.axes_text for r in batch])
+    assert trial.reference is None
+    return executor.submit.call_count, {f.code for f in trial.candidate.findings}
 
 
 _NONE = ", findings: 0, 0:00:00"
@@ -517,12 +512,12 @@ class TestPipeline:
                 id="outcome",
             ),
             pytest.param(
-                lambda _: _reruns(_TRACER_FAULT, _TRACER_FAULT),
+                lambda tmp_path: _reruns(tmp_path, _TRACER_FAULT, _TRACER_FAULT),
                 (2, {FindingCode.PLATFORM_FAILURE}),
                 id="tracer-reruns-once",
             ),
             pytest.param(
-                lambda _: _reruns("boom"),
+                lambda tmp_path: _reruns(tmp_path, "boom"),
                 (1, {FindingCode.CANDIDATE_CRASH}),
                 id="crash-no-rerun",
             ),
@@ -1038,6 +1033,35 @@ def test_warm_up_covers_the_workload_scalars(monkeypatch: pytest.MonkeyPatch) ->
     assert sorted(seen) == [1.0, 2.0]
 
 
+def test_reference_compares_the_lent_outputs() -> None:
+    """The reference task reads what the candidate left in the tensors it lent: its own
+    float32 values pass every step, a NaN fails its step, a missing step leaves the
+    workload incomplete."""
+    import torch
+
+    from aklr.core.validation.stages._bench._evaluation._reference import (
+        WorkloadEvaluation,
+    )
+    from tests.op_case import OpCase
+
+    case = OpCase.of("gemm@1.0")
+    request = case.request
+    outputs = request.empty_outputs("cpu")
+    for step in request.steps:
+        expected = case.reference_outputs(request.compose_inputs(step))
+        for o, value in expected.items():
+            outputs[step.output_key(o)].copy_(value)
+    keys = [step.output_key(o) for step in request.steps for o in request.contract.mutable_tensors]
+    passed = WorkloadEvaluation(request, outputs, keys, "cpu").evaluate()
+    assert passed.findings == () and passed.is_complete
+
+    bad = request.steps[3]
+    outputs[bad.output_key("out")].view(-1)[0] = torch.nan
+    failed = WorkloadEvaluation(request, outputs, keys[:-1], "cpu").evaluate()
+    assert [f.code for f in failed.findings] == [bad.mismatch_code]
+    assert failed.findings[0].detail.startswith(bad.label) and not failed.is_complete
+
+
 def test_long_schema_spreads_over_batches(monkeypatch: pytest.MonkeyPatch) -> None:
     """A schema of more workloads than a batch holds splits into even batches of at
     most ``MAX_BATCH_WORKLOADS``, every workload once, in schema order."""
@@ -1071,7 +1095,6 @@ def test_platform_the_kernel_does_not_state_aborts(
     from aklr.core.contract.spec import KernelSpec
     from aklr.core.platform.device import DeviceTarget
     from aklr.core.validation.stages._bench._evaluation import run_candidate
-    from aklr.core.validation.stages._bench._execution import ExecutionContext
     from tests.op_case import KERNEL_TARGET, OpCase
 
     case = OpCase.of("gemm@1.0")
@@ -1081,7 +1104,10 @@ def test_platform_the_kernel_does_not_state_aborts(
     target = DeviceTarget.from_names(**KERNEL_TARGET)
     monkeypatch.setattr(DeviceTarget, "current", classmethod(lambda cls, d: target))
     context = ExecutionContext(device="cpu", log_path=tmp_path / "log", directory=tmp_path)
-    result = run_candidate(context, requests=[replace(case.request, schema=schema)])
+    request = replace(case.request, schema=schema)
+    result = run_candidate(
+        context, requests=[request], outputs={request.axes_text: request.empty_outputs("cpu")}
+    )
     findings = CandidateResult.model_validate(result).findings
     assert [f.code for f in findings] == [code]
     assert code.is_platform_fault

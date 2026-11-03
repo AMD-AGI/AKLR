@@ -15,7 +15,7 @@ __all__ = ["topk_transform_paged_reference"]
 def topk_transform_paged_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """Each row's selected candidates, mapped through its page table when given."""
     import torch

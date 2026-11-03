@@ -104,9 +104,12 @@ read through the op's `contract.py`); a schema file's `inputs` and `outputs` ite
   the baseline's output: outside the repository, call the contract's `<contract>_baseline` yourself.
 - `compare.element_order` is `fixed` (element by element) or `any_in_full_rows` (integer outputs only: a row
   holding no padding may list its entries in any order); each is an `ElementOrder` member.
-- The reference is `<contract>_reference(point, row_major_args, to_float64) -> Tensor` (a tuple when there are
-  several: the mutable tensors in order, each mutable input as the call leaves it) in float64, never rounded to the
-  output dtype. It reads only `point.axes`, `point.attrs` and `point.dtypes`. A rounding every correct
+- The reference is `<contract>_reference(point, row_major_args, decode) -> Tensor` (a tuple when there are
+  several: the mutable tensors in order, each mutable input as the call leaves it), never rounded to the output
+  dtype. It computes in the float dtype `decode(tensor, dtype)` returns the inputs in: float32 in validation
+  (`semantics.to_float32`, on the GPU), float64 when a test passes `semantics.to_float64`; it upcasts to float64
+  itself only where the op defines an exact value (an exact sum rounded once, an index past 2**24). It reads only
+  `point.axes`, `point.attrs` and `point.dtypes`. A rounding every correct
   kernel must perform bit for bit is part of the op and is written in the reference (each docstring lists its
   rounding points); everything else is error left to `compare`.
 
