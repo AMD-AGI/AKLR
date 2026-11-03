@@ -116,6 +116,7 @@ edits to existing pages in place, new pages in `staging/` for a person to approv
 (this README, the driver, the `forge-loop-campaign` skill) goes into a pull request of its own.
 
 An AI agent can run the whole campaign: the `forge-loop-campaign` skill in `.claude/skills/` guides it.
+To have GEAK (AMD-AGI/GEAK) optimize the task instead of KernelForge, follow the `geak-campaign` skill.
 
 ## What `prepare` writes
 
