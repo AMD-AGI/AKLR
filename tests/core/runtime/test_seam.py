@@ -108,6 +108,11 @@ class TestRoute:
         assert route_for(api) is None
 
 
+def _gemm_a16w16(A, B, bias=None, otype=None, scale_a=None, scale_b=None, scale_c=None):
+    """aiter.tuned_gemm.gemm_a16w16's signature, on the CPU."""
+    return A @ B.T
+
+
 class TestProxy:
     """A backend entry point proxied by ``aklr_proxy`` falls back to its own body."""
 
@@ -149,6 +154,23 @@ class TestProxy:
         api_kwargs = proxy._to_api_kwargs((1, 2, 3, 4, 5), {"swiglu_limit": limit})
         assert api_kwargs["swiglu_limit"] == expected
         assert api_kwargs["hidden_states"] == 1
+
+    @pytest.mark.parametrize("declined", [False, True], ids=["offered", "declined"])
+    def test_compiled_traces_backend_body(self, monkeypatch: pytest.MonkeyPatch, declined: bool) -> None:
+        """Under torch.compile (as sglang compiles its DSA indexer's head gate) an open
+        proxy traces as the entry point's own body, in one graph: no binder, no dispatch."""
+        stand_in = route_for("aiter.tuned_gemm.gemm_a16w16").proxy(_gemm_a16w16)
+        # any table opens the proxy; tracing dispatch would fail on it
+        monkeypatch.setattr(stand_in.aklr_proxy._dispatcher, "table", object())
+
+        @torch.compile(backend="eager", dynamic=True, fullgraph=True)
+        def f(a, b):
+            scale_a = torch.ones(1) if declined else None
+            return stand_in(a, b, bias=None, otype=a.dtype, scale_a=scale_a, scale_b=None, scale_c=None)
+
+        for m in (1, 4, 6):
+            a, b = torch.randn(m, 64), torch.randn(32, 64)
+            torch.testing.assert_close(f(a, b), a @ b.T)
 
 
 def gemm_baseline(a, b, trans_b=True, bias=None, out_dtype=None, out=None):

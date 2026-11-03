@@ -665,8 +665,9 @@ class Proxy:
 
     def call(self, args: tuple, kwargs: dict) -> Any:
         """Serve from AKLR if the op runs a kernel, else the entry point's own body."""
-        # Closed: dispatch would only return its reason.
-        if self._dispatcher.table is None:
+        # Closed: dispatch would only return its reason. Compiling: dispatch reads data_ptr
+        # and keys on each call's sizes, so the graph keeps the entry point's own body.
+        if self._dispatcher.table is None or torch.compiler.is_compiling():
             return self.backend_fn(*args, **kwargs)
         try:
             if self._check_defaults is not None:
