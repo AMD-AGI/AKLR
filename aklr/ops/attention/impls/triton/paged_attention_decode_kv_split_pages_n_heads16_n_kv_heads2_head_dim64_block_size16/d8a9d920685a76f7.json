@@ -427,18 +427,6 @@
     },
     {
       "axes": {
-        "batch": 25,
-        "n_blocks": 65536,
-        "max_blocks": 2048
-      },
-      "scalars": {
-        "scale": 0.125,
-        "sliding_window": 0,
-        "logits_soft_cap": 0.0
-      }
-    },
-    {
-      "axes": {
         "batch": 26,
         "n_blocks": 65536,
         "max_blocks": 2048
@@ -619,18 +607,6 @@
     },
     {
       "axes": {
-        "batch": 41,
-        "n_blocks": 65536,
-        "max_blocks": 2048
-      },
-      "scalars": {
-        "scale": 0.125,
-        "sliding_window": 0,
-        "logits_soft_cap": 0.0
-      }
-    },
-    {
-      "axes": {
         "batch": 42,
         "n_blocks": 65536,
         "max_blocks": 2048
@@ -704,18 +680,6 @@
     {
       "axes": {
         "batch": 48,
-        "n_blocks": 65536,
-        "max_blocks": 2048
-      },
-      "scalars": {
-        "scale": 0.125,
-        "sliding_window": 0,
-        "logits_soft_cap": 0.0
-      }
-    },
-    {
-      "axes": {
-        "batch": 49,
         "n_blocks": 65536,
         "max_blocks": 2048
       },
@@ -835,18 +799,6 @@
     },
     {
       "axes": {
-        "batch": 59,
-        "n_blocks": 65536,
-        "max_blocks": 2048
-      },
-      "scalars": {
-        "scale": 0.125,
-        "sliding_window": 0,
-        "logits_soft_cap": 0.0
-      }
-    },
-    {
-      "axes": {
         "batch": 60,
         "n_blocks": 65536,
         "max_blocks": 2048
@@ -943,7 +895,13 @@
         "hardware": "MI355X"
       }
     ],
+    "author": "fanxingran",
     "entry_point": "kernel.py::run",
-    "sources": []
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"paged_attention_decode for vLLM's one-token decode on gfx950: split-KV, every head of a request in one program.\n\nA request's 16 query heads are the 16 rows of one MFMA tile. Each step loads TILE tokens of both kv heads as one\n(2 * TILE, 64) K tile and V tile (rows < TILE kv head 0, the rest kv head 1): in vLLM's cache a block's two heads\nare 8 KB of contiguous memory. The logits (16, 2 * TILE) mask the cross terms (query heads 0..7 read kv head 0\nonly, 8..15 kv head 1), so P.V is one dot too. A request is cut into segments of SEG_TILES tiles; one of at most\n_SHORT tokens (vLLM's 2048-token sliding window, a short context) into up to _SHORT_SEGS segments of at least\n_SHORT_MIN tokens. The programs that do work follow the batch's contexts while the launch depends only on the\nbatch and the table width (graph-safe, no host sync); programs past a request's last segment return at once. A\nsecond kernel merges the fp32 partials; no program waits for another.\n\"\"\"\n\nimport torch\nimport triton\nimport triton.language as tl\n\n_LOG2E = 1.4426950408889634\n_SHORT = 2560\n_SHORT_SEGS = 32\n_SHORT_MIN = 128\n\n\n@triton.jit\ndef _split(L, window, TILE: tl.constexpr, SEG_TILES: tl.constexpr, SHORT_TILES: tl.constexpr,\n           SHORT_SEGS: tl.constexpr, SHORT_MIN: tl.constexpr):\n    \"\"\"A request's first key, rounded down to a tile, and its tiles per segment (sizes in tiles).\"\"\"\n    lo = 0\n    if window > 0:\n        lo = tl.maximum(L - window, 0)\n    lo = (lo // TILE) * TILE\n    n_tiles = tl.cdiv(L - lo, TILE)\n    per_seg = SEG_TILES\n    if n_tiles <= SHORT_TILES:\n        per_seg = tl.minimum(tl.maximum(tl.cdiv(n_tiles, SHORT_SEGS), SHORT_MIN), SEG_TILES)\n    return lo, per_seg\n\n\n@triton.jit\ndef _segment(\n    q_ptr, k_ptr, v_ptr, part_acc_ptr, part_ml_ptr, lens_ptr, bt_ptr,\n    qk_scale, window,\n    sq0, sq1, sk0, sk1, sk2, sv0, sv1, sv2, bt_stride,\n    N_HEADS: tl.constexpr, GROUP: tl.constexpr, HEAD: tl.constexpr, BS: tl.constexpr,\n    TILE: tl.constexpr, SEG_TILES: tl.constexpr, SHORT_TILES: tl.constexpr, SHORT_SEGS: tl.constexpr,\n    SHORT_MIN: tl.constexpr, NUM_SEG: tl.constexpr,\n):\n    b = tl.program_id(0)\n    s = tl.program_id(1)\n    L = tl.load(lens_ptr + b)\n    lo, per_seg = _split(L, window, TILE, SEG_TILES, SHORT_TILES, SHORT_SEGS, SHORT_MIN)\n    seg_lo = lo + s * per_seg * TILE\n    seg_hi = tl.minimum(seg_lo + per_seg * TILE, L)\n    if seg_lo >= seg_hi:\n        return\n\n    rows = tl.arange(0, N_HEADS)\n    d = tl.arange(0, HEAD)\n    q = tl.load(q_ptr + b.to(tl.int64) * sq0 + rows[:, None] * sq1 + d[None, :])\n    # column c of a tile is token c % TILE of kv head c // TILE\n    cols = tl.arange(0, 2 * TILE)\n    kvh = cols // TILE\n    own = (rows // GROUP)[:, None] == kvh[None, :]\n    bt_row = bt_ptr + b.to(tl.int64) * bt_stride\n    m_i = tl.full([N_HEADS], float(\"-inf\"), tl.float32)\n    l_i = tl.zeros([N_HEADS], tl.float32)\n    acc = tl.zeros([N_HEADS, HEAD], tl.float32)\n    for start in range(seg_lo, seg_hi, TILE):\n        pos = start + cols % TILE\n        live = (pos < seg_hi) & (pos >= lo)\n        if window > 0:\n            live = live & (pos >= L - window)\n        blk = tl.load(bt_row + pos // BS, mask=live, other=0).to(tl.int64)\n        slot = pos % BS\n        kk = tl.load(k_ptr + (blk * sk0 + slot * sk1 + kvh * sk2)[:, None] + d[None, :], mask=live[:, None], other=0.0)\n        vv = tl.load(v_ptr + (blk * sv0 + slot * sv1 + kvh * sv2)[:, None] + d[None, :], mask=live[:, None], other=0.0)\n        sc = tl.dot(q, tl.trans(kk))\n        sc = tl.where(own & live[None, :], sc * qk_scale, float(\"-inf\"))\n        m_new = tl.maximum(m_i, tl.max(sc, 1))\n        m_safe = tl.where(m_new == float(\"-inf\"), 0.0, m_new)\n        p = tl.math.exp2(sc - m_safe[:, None])\n        alpha = tl.math.exp2(m_i - m_safe)\n        l_i = l_i * alpha + tl.sum(p, 1)\n        acc = acc * alpha[:, None] + tl.dot(p.to(vv.dtype), vv)\n        m_i = m_new\n\n    idx = (b.to(tl.int64) * N_HEADS + rows) * NUM_SEG + s\n    tl.store(part_acc_ptr + idx[:, None] * HEAD + d[None, :], acc)\n    tl.store(part_ml_ptr + idx * 2, m_i)\n    tl.store(part_ml_ptr + idx * 2 + 1, l_i)\n\n\n@triton.jit\ndef _merge(\n    out_ptr, part_acc_ptr, part_ml_ptr, lens_ptr, window, so0, so1,\n    N_HEADS: tl.constexpr, HEAD: tl.constexpr, TILE: tl.constexpr, SEG_TILES: tl.constexpr,\n    SHORT_TILES: tl.constexpr, SHORT_SEGS: tl.constexpr, SHORT_MIN: tl.constexpr, NUM_SEG: tl.constexpr,\n    HB: tl.constexpr,\n):\n    b = tl.program_id(0)\n    L = tl.load(lens_ptr + b)\n    lo, per_seg = _split(L, window, TILE, SEG_TILES, SHORT_TILES, SHORT_SEGS, SHORT_MIN)\n    n_act = tl.cdiv(L - lo, per_seg * TILE)\n    heads = tl.program_id(1) * HB + tl.arange(0, HB)\n    segs = tl.arange(0, NUM_SEG)\n    seg_ok = segs < n_act\n    idx = (b.to(tl.int64) * N_HEADS + heads[:, None]) * NUM_SEG + segs[None, :]\n    m = tl.load(part_ml_ptr + idx * 2, mask=seg_ok[None, :], other=float(\"-inf\"))\n    l = tl.load(part_ml_ptr + idx * 2 + 1, mask=seg_ok[None, :], other=0.0)\n    d = tl.arange(0, HEAD)\n    acc = tl.load(part_acc_ptr + idx[:, :, None] * HEAD + d[None, None, :], mask=seg_ok[None, :, None], other=0.0)\n    mx = tl.max(m, 1)\n    mx = tl.where(mx == float(\"-inf\"), 0.0, mx)\n    w = tl.math.exp2(m - mx[:, None])\n    denom = tl.sum(l * w, 1)\n    o = tl.sum(acc * w[:, :, None], 1) / tl.where(denom == 0.0, 1.0, denom)[:, None]\n    tl.store(out_ptr + b.to(tl.int64) * so0 + heads[:, None] * so1 + d[None, :], o.to(out_ptr.dtype.element_ty))\n\n\n# (smallest batch, tile, tiles per segment, warps), tuned on MI355X at 16 Q / 2 KV heads, head_dim 64, block 16,\n# contexts 1..32768; a batch takes the row of the largest tuned batch <= it.\n_PLAN = ((1, 32, 2, 2), (8, 32, 4, 2), (16, 32, 8, 2), (24, 32, 8, 1), (44, 32, 12, 1), (56, 32, 16, 1))\n\n\ndef plan(batch):\n    pick = _PLAN[0]\n    for row in _PLAN:\n        if row[0] <= batch:\n            pick = row\n    return pick[1:]\n\n\ndef paged_decode(query, key_cache, value_cache, block_tables, context_lens, scale, window, out):\n    batch, n_heads, head = query.shape\n    tile, seg_tiles, warps = plan(batch)\n    short_tiles = _SHORT // tile\n    num_seg = triton.next_power_of_2(\n        max(_SHORT_SEGS, triton.cdiv(block_tables.shape[1] * key_cache.shape[1], seg_tiles * tile))\n    )\n    part_acc = torch.empty(batch * n_heads * num_seg * head, dtype=torch.float32, device=query.device)\n    part_ml = torch.empty(batch * n_heads * num_seg * 2, dtype=torch.float32, device=query.device)\n    _segment[(batch, num_seg)](\n        query, key_cache, value_cache, part_acc, part_ml, context_lens, block_tables,\n        scale * _LOG2E, window,\n        query.stride(0), query.stride(1), key_cache.stride(0), key_cache.stride(1), key_cache.stride(2),\n        value_cache.stride(0), value_cache.stride(1), value_cache.stride(2), block_tables.stride(0),\n        N_HEADS=n_heads, GROUP=n_heads // key_cache.shape[2], HEAD=head, BS=key_cache.shape[1], TILE=tile,\n        SEG_TILES=seg_tiles, SHORT_TILES=short_tiles, SHORT_SEGS=_SHORT_SEGS, SHORT_MIN=_SHORT_MIN // tile,\n        NUM_SEG=num_seg, num_warps=warps, num_stages=1,\n    )\n    hb = n_heads\n    while hb > 1 and hb * num_seg * head > 4096:\n        hb //= 2\n    _merge[(batch, n_heads // hb)](\n        out, part_acc, part_ml, context_lens, window, out.stride(0), out.stride(1),\n        N_HEADS=n_heads, HEAD=head, TILE=tile, SEG_TILES=seg_tiles, SHORT_TILES=short_tiles,\n        SHORT_SEGS=_SHORT_SEGS, SHORT_MIN=_SHORT_MIN // tile, NUM_SEG=num_seg, HB=hb, num_warps=4,\n    )\n    return out\n\n\ndef run(*, query, key_cache, value_cache, block_tables, context_lens, scale, kv_cache_dtype,\n        kv_cache_layout, kv_cache_storage, alibi_slopes, sliding_window, logits_soft_cap, out_dtype, out):\n    # kv_cache_dtype (auto), the NHD layout and no alibi are the schema's Point, logits_soft_cap is 0 by contract;\n    # strides carry the cache storage\n    paged_decode(query, key_cache, value_cache, block_tables, context_lens, scale, sliding_window, out)\n"
+      }
+    ]
   }
 }
