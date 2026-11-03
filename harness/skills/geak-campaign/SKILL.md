@@ -10,7 +10,7 @@ allowed-tools: Read Edit Bash Grep Glob
 # GEAK on an AKLR schema
 
 AKLR measures and GEAK optimizes. `forge_task prepare` turns the schema into a task whose `driver.py` checks a kernel
-with `aklr validate` and times it with AKLR's own timer (`harness/tools/forge_task/README.md`, step 1). This skill
+with `aklr validate` and times it with AKLR's own timer (`harness/scripts/forge_task/README.md`, step 1). This skill
 gives that task GEAK's format: a `config.yaml` whose compile, correctness and performance commands run
 `task_runner.py`, which calls the driver. GEAK's kernel_workflow then optimizes `kernel.py` against those commands,
 and `forge_task publish` writes the kernel it ends with back into `aklr/ops/`.
@@ -35,7 +35,7 @@ the clone. From the AKLR clone's root:
 
 ```bash
 RUN=~/aklr-runs/<run> S=harness/skills/geak-campaign
-HIP_VISIBLE_DEVICES=0 python harness/tools/forge_task prepare --schema <name> --run-dir $RUN --kernel-backend triton
+HIP_VISIBLE_DEVICES=0 python harness/scripts/forge_task prepare --schema <name> --run-dir $RUN --kernel-backend triton
 # GEAK names the kernel, and the knowledge it records, after the task folder
 T=$RUN/<schema name>
 mkdir -p $T/scripts && cp $RUN/workspace/*.py $RUN/workspace/program.md $S/config.yaml $T/
@@ -77,7 +77,7 @@ cd $G && set -m && GEAK_CLAUDE_MODEL=claude-opus-5-5 nohup node interface/runtim
 E=$(python -c "import json, sys; print(json.load(open(sys.argv[1]))['eval_dir'])" $RUN/geak_result.json)
 cp $(ls $E/optimized/*.py | grep -v '/driver\.py$') $RUN/workspace/
 HIP_VISIBLE_DEVICES=0 python $RUN/workspace/driver.py --stress
-python harness/tools/forge_task publish $RUN
+python harness/scripts/forge_task publish $RUN
 python -m aklr export check && python -m aklr validate --base origin/main <the path publish printed>
 ```
 

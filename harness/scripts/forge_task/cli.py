@@ -15,12 +15,12 @@ from pathlib import Path
 from . import workspace
 from .schema import SchemaError, find, load
 
-# The checkout this file is in: <root>/harness/tools/forge_task/cli.py.
+# The checkout this file is in: <root>/harness/scripts/forge_task/cli.py.
 DEFAULT_AKLR_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="python harness/tools/forge_task")
+    parser = argparse.ArgumentParser(prog="python harness/scripts/forge_task")
     commands = parser.add_subparsers(dest="command", required=True)
 
     prepare = commands.add_parser(

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""`python harness/tools/forge_task`: run the tool from a checkout, nothing installed."""
+"""`python harness/scripts/forge_task`: run the tool from a checkout, nothing installed."""
 
 import sys
 from pathlib import Path

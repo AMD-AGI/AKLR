@@ -11,7 +11,7 @@ allowed-tools: Read Edit Bash Grep Glob
 
 # Forge-loop campaign on an AKLR schema
 
-`harness/tools/forge_task/README.md` § Run a campaign has the six steps and their commands: read it first and
+`harness/scripts/forge_task/README.md` § Run a campaign has the six steps and their commands: read it first and
 follow it. This skill adds what you decide, and what you must not forget, when you run the campaign yourself
 rather than a person at a terminal.
 

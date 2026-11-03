@@ -42,7 +42,7 @@ aklr/ops/*/impls/*/*/` lists the schema names.
 
 ```bash
 RUN=~/aklr-runs/bmm_n128_k512
-HIP_VISIBLE_DEVICES=0 python harness/tools/forge_task prepare --schema bmm_n128_k512 --run-dir $RUN
+HIP_VISIBLE_DEVICES=0 python harness/scripts/forge_task prepare --schema bmm_n128_k512 --run-dir $RUN
 ```
 
 It checks the starting kernel with AKLR, records AKLR's baseline times and writes the task into `$RUN`. A GEMM
@@ -101,7 +101,7 @@ For a Triton kernel, leave out `--review-guide` and skip `forge-distill`.
 **6. Deliver.**
 
 ```bash
-python harness/tools/forge_task publish $RUN
+python harness/scripts/forge_task publish $RUN
 python -m aklr export check && python -m aklr validate --base origin/main <the path publish printed>
 ```
 
