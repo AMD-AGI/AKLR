@@ -113,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         names = ", ".join(dst.name for _, dst in moves)
         print(f"{args.to}/INDEX.md is written by hand: add a row that routes to {names}")
-    command = "git add " + " ".join(staged)
+    command = f"git -C {repo} add " + " ".join(staged)
     for src, _ in moves:
         tracked = subprocess.run(
             ["git", "ls-files", "--error-unmatch", src.relative_to(repo).as_posix()],
@@ -122,7 +122,7 @@ def main(argv: list[str] | None = None) -> int:
             check=False,
         )
         if tracked.returncode == 0:
-            command += f" && git rm -q --cached {src.relative_to(repo).as_posix()}"
+            command += f" && git -C {repo} rm -q --cached {src.relative_to(repo).as_posix()}"
     for _, dst in moves:
         print(f"approved: {dst.relative_to(SKILL_ROOT)}")
     print(f"next: {command}")

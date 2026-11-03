@@ -18,17 +18,17 @@ arch-names: [gfx950, CDNA4, MI350, MI355]
 # FlyDSL kernel optimization
 
 Techniques for making a FlyDSL kernel fast on gfx950, by phase. Paths below are relative to this folder,
-except those starting with `aiter/`, `csrc/` or `aklr/`, which are relative to the repository root.
+except those starting with `aklr/`, relative to the repository root, and `aiter/` or `csrc/`, relative to aiter's.
 The language itself (layouts, `@flyc.kernel` / `@flyc.jit`, copy atoms, MFMA, loops) is the
 `flydsl-kernel-authoring` skill (`../flydsl-kernel-authoring/SKILL.md`); modernizing an existing kernel's
 code is the `flydsl-kernel-code-cleanup` skill.
 
 Every API statement here is for FlyDSL v0.3.2, the version this repository pins. AKLR's CI installs with `--no-deps`
 and measures on its image's FlyDSL, 0.3.4.1 (`pitfalls/measured_a_different_build.md`). File and line citations are to
-ROCm/FlyDSL `v0.3.2` (`dd8373349`), AMD-AGI/Primus-Turbo main `7615a5a2` (`ca1fdd67` in `grouped_gemm/`) and this
-repository's `aiter/`; check out those revisions to follow them. The files under `optimize/`, `profile/` and
-`bottleneck/` that come from FlyDSL's own skills keep their `Usage: /name` lines; those commands are not registered
-here, so open the file instead.
+ROCm/FlyDSL `v0.3.2` (`dd8373349`), AMD-AGI/Primus-Turbo main `7615a5a2` (`ca1fdd67` in `grouped_gemm/`) and
+ROCm/aiter `dbd8bf5` (`AKLR_BASELINE_AITER`); check out those revisions to follow them. The files under `optimize/`,
+`profile/` and `bottleneck/` that come from FlyDSL's own skills keep their `Usage: /name` lines; those commands are
+not registered here, so open the file instead.
 
 ## Stop: what a AKLR kernel cannot do
 
@@ -38,7 +38,7 @@ wins. Check a plan against this table before writing code.
 | Rule | What it rules out here |
 |---|---|
 | Outputs pass the definition's `compare` block; under `determinism: bitwise`, the default, two runs are byte-identical (`runs_agree`, `aklr/core/contract/semantics/_compare.py`) | Reducing in arrival order (atomic split-K, stream-K fix-ups): reduce in a fixed order (`gemm/flydsl_gemm_correctness.md` §8, `gemm/flydsl_gemm_grid_pricing.md` §2) |
-| A Point is served by the file with the best measured `speedup` over aiter, and only from `AKLR_MIN_SPEEDUP` (1.03) | Judging on a mean: compare each Point with the faster of the kernel AKLR serves there and aiter |
+| A Point is served by the file with the best measured `speedup` over the baseline, and only from `AKLR_MIN_SPEEDUP` (1.03) | Judging on a mean: compare each Point with the faster of the kernel AKLR serves there and the baseline |
 | Launch code (`run` and what it calls) does not synchronize, call `.item()` / `.cpu()`, print, read a clock or the environment, or change torch state (SA3) | Timing or racing configurations in `run` |
 | Compilation and the choice of configuration happen in a module-level `@functools.cache` function on a Point's first call; later calls may be inside a CUDA graph capture | The first-call race of `gemm/flydsl_gemm_autotune.md` §1 as written: choose from the shape, with a table raced offline |
 | Inputs other than the mutable ones are read-only (SA2); nothing derived from an argument is kept across calls, and there is no `global` or `nonlocal` (SA1) | Caching a repacked weight: repack on every call, or serve the contract's shuffled layout variant where it has one |
@@ -112,8 +112,9 @@ wins. Check a plan against this table before writing code.
 - **The aiter these cards describe is the baseline**, ROCm/aiter at `AKLR_BASELINE_AITER`
   (`.github/workflows/ci.yaml`): AKLR does not ship, patch or fall back to it, so its `aiter/` paths are that
   revision's, read as reference code. Price aiter through the op's `<contract>_baseline`
-  (`aklr/ops/<op>/baseline.py`), the call bench times. A Point no kernel serves is the caller's to run: in a model,
-  the framework's own path (`aklr/plugins/README.md`).
+  (`aklr/ops/<op>/baseline.py`), the call bench times. At a Point no kernel serves, the api returns a
+  `FallbackReason` and its caller runs its own path. AKLR's plugins route a model to plugin ops only
+  (`aklr/plugins/README.md`), so an `aklr/ops` kernel runs in a model only where the engine calls its api.
 - **Workflow** (`aklr/ops/README.md` § Workflow): export the Points, fill `kernel.sources`, then
   `python -m aklr export check` and `python -m aklr validate --base origin/main`. The local result does not
   count; CI measures. A `platform_failure` "Kineto recorded no kernels for a single call" is a tracer fault: rerun.

@@ -33,12 +33,12 @@ called directly, not through AKLR:
 - The library accepts a shape its kernel does not support and computes on it (the a4w4 asm path, hipBLASLt's
   MXFP8 kernel), or rounds the output toward zero instead of to nearest even, which caps the SNR of a correct
   MX result against an fp32 reference.
-- AKLR's bench binds the Point's baseline route and calls it once; a route that declines gives `baseline_failed`,
-  but the baseline's output is compared with nothing (S1). The candidate is checked against the float64 reference
-  (`aklr/ops/README.md` § Schema fields), so a wrong baseline does not fail a correct candidate: it becomes the
-  denominator of the Point's `speedup`. The one error bound that reads the baseline's output,
-  `baseline_relative`, would widen the candidate's allowed error by the baseline's error (S2); no op's contract
-  uses it at 0cef4f2e3.
+- AKLR's bench calls the contract's `<contract>_baseline` once; one that raises `NotImplementedError` gives
+  `baseline_failed`, but the baseline's output is compared with nothing (S1). The candidate is checked against
+  the float64 reference (`aklr/ops/README.md` § Schema fields), so a wrong baseline does not fail a correct
+  candidate: it becomes the denominator of the Point's `speedup`. The one error bound that reads the baseline's
+  output, `baseline_relative`, would widen the candidate's allowed error by the baseline's error (S2); no op's
+  contract uses it at 0cef4f2e3.
 
 ## How to detect
 
@@ -66,8 +66,8 @@ called directly, not through AKLR:
   directly. Not re-checked through AKLR or on AKLR's in-tree aiter at 0cef4f2e3, whose
   `aiter/ops/gemm_op_a4w4.py` changed in three commits after `c16d44b93`.
 - No `gemm_a4w4_mxfp4` schema is committed at 0cef4f2e3, so no recorded AKLR Point is known to be affected.
-  `torch._scaled_mm` is not one of AKLR's baseline routes at 0cef4f2e3; the hipBLASLt items matter when you
-  build your own vendor column or reference.
+  `torch._scaled_mm` is not one of AKLR's baselines (`aklr/ops/gemm/baseline.py`); the hipBLASLt items matter
+  when you build your own vendor column or reference.
 
 ## Evidence
 
@@ -78,7 +78,7 @@ the same session; the raw probe output was not kept. E3 is in the run's own reco
 - E2 [2026-10, gfx950, torch 2.11.0+rocm7.2 hipBLASLt, N=?, adapter validation, repeated calls] torch._scaled_mm MXFP8 26–49 dB varying from call to call at 8192×5120×2944, 4096×4096×2944, 8192×5120×4224; MXFP4 unaffected (MX dense GEMM; local:/workspace/code/gpt_oss_docker/work/gemm_h2h/code/h2h_adapter_vendor.py:262)
 - E3 [2026-10, gfx950, torch 2.11.0+rocm7.2 FlyDSL 0.3.2 aiter c16d44b93, N=2, head-to-head smoke run on GPU 4 of crsuse2-m2m-v3-023, SNR of two calls] torch._scaled_mm MXFP4 8192³ 49.603 / 49.603 dB and aiter a4w4 55.600 / 55.600 dB on the same problem; torch._scaled_mm MXFP8 16384×4096×4096 49.605 / 49.605 dB (MX dense GEMM; local:/workspace/code/gpt_oss_docker/work/gemm_h2h/partial_1019/smoke/gpu4/V.jsonl:14; :15; :19)
 - E4 [2026-10, gfx950, torch 2.11.0+rocm7.2 hipBLASLt, N=?, element-wise comparison with the fp32 reference] |out| ≤ |ref| on 99.4–100% of the elements of the MX bf16 outputs (KB note; local:/workspace/code/gpt_oss_docker/.claude/memory/reference_vendor_gemm_silent_wrong_gfx950.md:17)
-- S1 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:255 at 0cef4f2e3: `run_baseline` binds the route and calls it; only `RouteDeclinedError` becomes `baseline_failed` (:132-135)
+- S1 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:231 `run_baseline` calls `contract.baseline()` (:232) and discards its output; only `NotImplementedError` becomes `baseline_failed` (:121-122)
 - S2 aklr/core/contract/semantics/_compare.py:295 at 0cef4f2e3: `BaselineRelativeBound` allows a multiple of the baseline's error; no contract under aklr/ops uses it
 - S3 aklr/ops/gemm/contract.py:312: `k` axis 64..65536, `multiple_of=64`; `gemm_a4w4_mxfp4_baseline` calls `aiter.ops.gemm_op_a4w4.gemm_a4w4` at aklr/ops/gemm/baseline.py:82
 - S4 local:/workspace/code/gpt_oss_docker/work/gemm_h2h/code/h2h_adapter_vendor.py:400 the adapter's K padding (data 0, scale 127) and its extra-work percentage

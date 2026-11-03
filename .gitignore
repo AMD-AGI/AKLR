@@ -7,8 +7,9 @@ dist
 .vscode
 .coverage*
 test-reports/
-# Local Claude Code settings and worktrees; .claude/skills, a symlink to harness/skills, stays tracked
-.claude/
+# Local Claude Code settings and worktrees; .claude/skills is the tracked symlink to harness/skills
+.claude/*
+!.claude/skills
 # aklr validate --out: reports, measured schemas and re-exported baselines
 aklr_validation/
 # forge_task prepare's default run directories

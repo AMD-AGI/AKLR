@@ -27,7 +27,7 @@ will raise.
 **Not here if you are authoring.** In your own kernel, knobs are the last thing you touch;
 `flydsl_authoring_method.md` explains why reaching for them early wastes the run.
 
-A path given in full is from the repository root; after that a file is named without its directory, and
+A path given in full is from aiter's root; after that a file is named without its directory, and
 `kernels/…` is `aiter/ops/flydsl/kernels/…`. The signatures and the validation functions named below are the
 specification; nothing else is.
 

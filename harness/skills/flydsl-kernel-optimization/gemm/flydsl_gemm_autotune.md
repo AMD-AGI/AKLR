@@ -20,8 +20,8 @@ sources:
 > No single FlyDSL GEMM configuration is best across shapes. Two loop designs, tile shapes, L2 bands, store
 > policy and split-K all change sign between shapes (`flydsl_gemm_mainloop.md` §1,
 > `flydsl_gemm_epilogue.md` §5). Turbo's dense GEMMs therefore race a short candidate list on the first call
-> for each shape and cache the winner. FlyDSL's own kernels take their configuration from the caller; this
-> repository's aiter ships its own copies and picks their configuration from offline-tuned tables
+> for each shape and cache the winner. FlyDSL's own kernels take their configuration from the caller; the
+> baseline aiter ships its own copies and picks their configuration from offline-tuned tables
 > (`flydsl_gemm_small_m.md` §7). FlyDSL also ships a general `flydsl.autotune`
 > decorator that benchmarks a config list per key (`python/flydsl/autotune.py`).
 > "FP8", "FP4", "MX8" and "GH" are the files under

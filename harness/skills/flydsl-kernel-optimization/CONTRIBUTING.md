@@ -52,8 +52,8 @@ that contains `: `. `flydsl` is the version the page was checked against (`0.3.2
 - **A number measured on another kind of kernel says so in the sentence** ("on a grouped GEMM", "on an attention
   kernel"), not only in its evidence line: readers do not read the evidence.
 - **A number worked out rather than measured** says "estimated" and gets no `E` line.
-- **Speedups in AKLR are per Point** against the faster of the kernel AKLR serves at that Point and aiter, the
-  same yardstick dispatch uses; never a mean over Points.
+- **Speedups in AKLR are per Point** against the faster of the kernel AKLR serves at that Point and the op's
+  baseline, the same yardstick dispatch uses; never a mean over Points.
 
 ## What not to write
 

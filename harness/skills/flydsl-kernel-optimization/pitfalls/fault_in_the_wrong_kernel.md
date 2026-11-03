@@ -35,7 +35,7 @@ example as an index, faults, and the fault names that later kernel.
 - FlyDSL's `make_buffer_tensor` bounds nothing by default (`num_records = 0xFFFFFFFF`,
   `../language/limits.md` § By design; `../gemm/flydsl_gemm_correctness.md` §6).
 - The raw helper `create_buffer_resource(t, max_size=False)` falls back to the same 4 GiB bound, without a
-  warning, when the memref's shape is dynamic. It is not in the wheel: FlyDSL's repository and AKLR's in-tree
+  warning, when the memref's shape is dynamic. It is not in the wheel: FlyDSL's repository and the baseline
   aiter each carry a copy, and both do this (S1, S3). The wheel's `make_buffer_tensor(t, max_size=False)` derives
   the bound from the layout at run time instead (S2).
 - In the recorded case a FlyDSL MoE sorting kernel wrote its row-inverse table 5 int32 past its end at capacities
@@ -73,8 +73,8 @@ example as an index, faults, and the fault names that later kernel.
 ## Scope
 
 - Recorded once, in 2026-09, on MI355X: aiter's FlyDSL MoE sorting kernel in a GLM-5.2 TP4/EP4 sglang server; the
-  FlyDSL version of that tree is not recorded. S1 and S2 are read from FlyDSL `v0.3.2` source, S3 from AKLR's
-  in-tree aiter.
+  FlyDSL version of that tree is not recorded. S1 and S2 are read from FlyDSL `v0.3.2` source, S3 from the
+  baseline aiter.
 - Applies to any store or load through a descriptor wider than its buffer, in any kernel of the run.
 
 ## Evidence
@@ -91,4 +91,4 @@ in the round's record.
 - E6 [2026-09, gfx950, FlyDSL ?, N=280, canary probe with top-k ids from `torch.topk` on random scores] 280 of 280 cases clean while the out-of-bounds write was present (KB note; local:/workspace/code/gpt_oss_docker/.claude/memory/project_glm52_moe_rowinv_oob.md:41)
 - S1 kernels/common/buffer_ops.py:343 at ROCm/FlyDSL dd8373349: with `max_size=False` and no `num_records_bytes`, a memref shape with a dynamic dimension gives `None` (:301) and the descriptor falls back to `0xFFFFFFFF` (:347)
 - S2 python/flydsl/expr/rocdl/universal.py:287 at ROCm/FlyDSL dd8373349: `make_buffer_tensor(max_size=False)` sets `num_records_bytes` from `cosize(layout)` times the element size
-- S3 aiter/ops/flydsl/kernels/buffer_ops.py:373 at AMD-AGI/AKLR 0cef4f2e3: the same fallback to `0xFFFFFFFF` when the static size cannot be read (:376)
+- S3 aiter/ops/flydsl/kernels/buffer_ops.py:373 at ROCm/aiter dbd8bf5: the same fallback to `0xFFFFFFFF` when the static size cannot be read (:376)

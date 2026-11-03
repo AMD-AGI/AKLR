@@ -46,8 +46,9 @@ The two numbers come from different rulers, and the description's number is a me
   to candidate time over 32 rounds (S2). Each round's reading is the median of 10 graph replays of the per-call
   GPU kernel time recorded by Kineto, every call preceded by a 1 GiB read that flushes L2 and MALL (S3); the arms
   run in a seeded random order each round (S4).
-- **The baseline is the aiter route AKLR binds for the Point**, here `gemm_a8w8_blockscale_bpreshuffle`; for the
-  `b_shuffled_row_major_a_scale` variant, the timed baseline call also relayouts `x_scale` (S5).
+- **The baseline is the contract's `<contract>_baseline`**, here `gemm_a8w8_blockwise_scaled_baseline`, which calls
+  aiter's `gemm_a8w8_blockscale_bpreshuffle`; for the `b_shuffled_row_major_a_scale` variant, the timed baseline
+  call also relayouts `a_scale` (S5).
 - **AKLR CI uses the FlyDSL of its CI image**: the GPU job installs the checkout with `--no-deps` (S6), and these
   schemas declare no `requires`. That was FlyDSL 0.3.4.1 for run 40154665266 and 0.3.1 for the run of `cc6e3b96c`
   (`../pitfalls/measured_a_different_build.md`). The PR's numbers were taken on FlyDSL 0.3.2.
@@ -63,7 +64,7 @@ The two numbers come from different rulers, and the description's number is a me
 ## How to detect
 
 - Read your result per Point from AKLR's ruler before you trust it: `bench_cudagraph` (S3), arms in random order,
-  against the route AKLR binds as the baseline. `python -m aklr validate --base origin/main` runs that ruler
+  against the contract's `<contract>_baseline`. `python -m aklr validate --base origin/main` runs that ruler
   locally; the local result does not count, CI decides (`aklr/ops/README.md` § Workflow).
 - A number that is a mean over shapes says nothing about any one Point; compare Point by Point
   (`../CONTRIBUTING.md` § Evidence).
@@ -95,5 +96,5 @@ The two numbers come from different rulers, and the description's number is a me
 - S2 aklr/core/validation/stages/_bench/_report.py:86 at 0cef4f2e3: `speedup` is the graph ratio lower bound against the baseline, `ratio_lower_bound` at aklr/core/validation/stages/_measure.py:120, 32 rounds (:51)
 - S3 aklr/core/utils/testing.py:162 at 0cef4f2e3: `bench_cudagraph`, the flush at :49-55, the median of 10 replays at :206-209
 - S4 aklr/core/validation/stages/_measure.py:263 at 0cef4f2e3: a seeded shuffle of the participants every round
-- S5 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:369 at 0cef4f2e3: `x_scale.T.contiguous().T` inside the timed baseline call for `b_shuffled_row_major_a_scale`
+- S5 aklr/ops/gemm/baseline.py:58 `gemm_a8w8_blockwise_scaled_baseline` relays out a row-major `a_scale` (`a_scale.T.contiguous().T`, :59) inside the timed call
 - S6 .github/workflows/ci.yaml:404 at 0cef4f2e3: `pip install --no-build-isolation --no-deps -e .` in the image `AKLR_CI_IMAGE` (:5)

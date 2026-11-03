@@ -178,8 +178,8 @@ How these kernels map work, what moved them and where FlyDSL's own copies differ
 picks FlyDSL for per-1x32 fp4/fp8 activations and weights (pre-shuffled, fused gate+up, no stage-1 weighting),
 with tiles chosen by token count and stage 2 in `atomic` mode (`fused_moe.py:2748-2851`; `AITER_FLYDSL_FORCE`,
 default `1`, admits activations other than SwiGLU/SiTUv2), and for int4 weights through the a16wi4 port
-(`:2709-2749`). SwiGLU with interleaved gate/up and non-fp8 weights goes to CK-Tile before either check
-(`:2674-2701`). The fmoe table is `aiter/configs/tuned_fmoe.csv` merged with every
+(`:2707-2747`). SwiGLU with interleaved gate/up and non-fp8 weights goes to CK-Tile before either check
+(`:2672-2699`). The fmoe table is `aiter/configs/tuned_fmoe.csv` merged with every
 `aiter/configs/model_configs/*tuned_fmoe*.csv`, unless `AITER_CONFIG_FMOE` names a file (`aiter/jit/core.py:116-119,
 419-440`).
 

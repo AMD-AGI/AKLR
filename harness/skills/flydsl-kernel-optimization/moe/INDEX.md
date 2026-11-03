@@ -97,7 +97,7 @@ the output row is the sum over the token's k routes of `topk_weights` × that pr
   definition: loaded and audited, not served): § Schema fields.
 - `AKLR_DISABLE=fused_moe@1.0` stops serving every MoE schema.
 - Kernel-less `fused_moe` files on main at 0cef4f2e3, counted from `aklr/ops/fused_moe/impls/flydsl/`: 17 of the 25
-  files, 200 Points, all run by aiter (S1). By schema name, after `fused_moe_`:
+  files, 200 Points, none served (S1). By schema name, after `fused_moe_`:
 
 | Name | Points | Added by |
 |---|---|---|
@@ -120,4 +120,4 @@ the output row is the sum over the token's k routes of `topk_weights` × that pr
 - E5 [2026-10, gfx950, FlyDSL ?, N=1, `python -m aklr validate --base origin/main` run locally on one MI355X: graph replay, 1 GiB flush per call, one-sided lower bound against aiter; touched experts counted from the same inputs] speedup over aiter at m 8–112: TP 1.373, 1.287, 1.243, 1.194, 1.168, 1.084, 1.069, 1.061, 1.058, 1.054, 1.043, 1.039, 1.038; EP8 1.592, 1.427, 1.347, 1.281, 1.220, 1.278, 1.282, 1.276, 1.262, 1.253, 1.245, 1.229, 1.240; weight bytes of the touched experts over the median candidate time 6.04–6.20 TB/s (TP, m 40–112) and 6.20–6.45 TB/s (EP8, m 32–112), aiter 5.0–5.97 TB/s; read roof 6.5 TB/s from a read-only kernel (the eight K3 kernel files of branch kyle/k3-moe-kernels; local:/shared_nfs/kyle/moe/k3rebase/val2/report.json; local:/shared_nfs/kyle/moe/kf/scan/touched.json; local:/workspace/code/gpt_oss_docker/.claude/memory/reference_mi355_measured_ceilings.md)
 - E6 [2026-10, gfx950, FlyDSL 0.3.2, N=1, eager calls on the validate inputs, L2 flushed between calls, torch.profiler kernel times; useful FLOPs 2 · routes · N · K per GEMM] at 16384 tokens, the delivered kernels against aiter: TP stage 1 732.4 µs = 1970 TF/s (aiter 1008.2 µs = 1431), stage 2 535.8 µs = 1347 (776.8 µs = 929), other kernels 264.5 µs with the reduce 190.4 (480.3 with 374.8); EP8 stage 1 762.6 µs = 1889 (987.2 µs = 1459), stage 2 408.1 µs = 1764 (568.3 µs = 1267), other 57.5 µs (508.5); at 9397 tokens TP 1701 / 1200, EP8 1660 / 1511 TF/s (local:/shared_nfs/kyle/moe/kf/flops_run/r2/tp8.txt; local:/shared_nfs/kyle/moe/kf/flops_run/r2/ep8.txt; script local:/shared_nfs/kyle/moe/kf/flops_run/prof_flops.py)
 - E7 [2026-09, gfx950, FlyDSL ?, N=?, FlyDSL's own GEMM bench and hipBLASLt on one idle MI355X] dense fp8 GEMM at M=131072: N5632 K2560 2288 / 2474, N6144 K3072 2396 / 2602, N2560 K2560 2167 / 2488, N3072 K3072 2369 / 2664 TF/s (FlyDSL / hipBLASLt); fp8 16384³ 3319 / 2813 (local:/workspace/code/gpt_oss_docker/.claude/memory/reference_mi355_measured_ceilings.md)
-- S1 aklr/ops/README.md:74 a schema file with empty `sources` is a definition: loaded and audited, not served or benched
+- S1 aklr/ops/README.md:76 a schema file with empty `sources` is a definition: loaded and audited, not served or benched

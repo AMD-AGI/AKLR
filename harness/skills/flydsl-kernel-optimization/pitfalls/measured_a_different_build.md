@@ -47,12 +47,13 @@ Each channel puts a different build under the ruler.
    measured on that FlyDSL, and the run's commit message names the image, not the version.
 5. **AKLR runs the schema, not your file.** Validation and dispatch run the `content` strings of the schema's
    `kernel.sources`, imported as a package `_aklr_<hash16>` (`aklr/ops/README.md` § Workflow and § The kernel
-   section and ABI). In a model run a Point falls back to the framework's own path, with a reason, when for
-   example AKLR is disabled, the Point has no workload or no qualifying measured speedup, or it is first called
-   inside a graph capture (S3); a toolchain outside the schema's `requires` skips the schema with an INFO log
-   (`aklr/ops/README.md` § The kernel section and ABI). A schema you just edited has no `speedup` until CI writes
-   one (§ Workflow), so a model run of your own times the framework's own path at its Points unless
-   `AKLR_MIN_SPEEDUP` allows unmeasured workloads (§ Environment variables).
+   section and ABI). A model reaches an `aklr/ops` kernel only where the engine calls the op's api: AKLR's plugins
+   route models to plugin ops (`aklr/plugins/README.md`). The api returns a reason instead of running the kernel
+   (S3) when for example AKLR is disabled, the Point has no workload or no qualifying measured speedup, or it is
+   first called inside a graph capture; a toolchain outside the schema's `requires` skips the schema with an INFO
+   log (`aklr/ops/README.md` § The kernel section and ABI). A schema you just edited has no `speedup` until CI
+   writes one (§ Workflow), so it is not served at its Points unless `AKLR_MIN_SPEEDUP` allows unmeasured
+   workloads (§ Environment variables).
 
 ## How to detect
 
@@ -67,7 +68,7 @@ Each channel puts a different build under the ruler.
   (`../gemm/flydsl_gemm_measurement.md` §6). A compile-time switch that shows in the kernel name makes the arms
   tell apart in a trace (`../gemm/flydsl_gemm_attribution.md` §3). Break the kernel on purpose once
   (`../bottleneck/debug-flydsl-kernel.md` § What the cache key sees).
-- **In AKLR, check what was served.** Compare the schema's `content` with your file. Run the model with
+- **In AKLR, check what was served.** Compare the schema's `content` with your file. Call the op's api with
   `AKLR_EXPORT=1`: every call record carries `fallback_reason`, empty when the kernel served it (S4).
 
 ## Fix or workaround

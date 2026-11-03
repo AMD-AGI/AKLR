@@ -47,6 +47,15 @@ def main(argv: list[str] | None = None) -> int:
         check=True,
     ).stdout.strip()
     rel = path.relative_to(top).as_posix()
+    follow = ["log", "--follow", "--diff-filter=R", "--name-status", "--format="]
+    renamed = subprocess.run(
+        ["git", "-C", top, *follow, f"{args.rev}..HEAD", "--", rel],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    if renamed:  # the oldest rename since --rev gives the page's path there
+        rel = renamed[-1].split("\t")[1]
     old_text = subprocess.run(
         ["git", "-C", top, "show", f"{args.rev}:{rel}"],
         capture_output=True,

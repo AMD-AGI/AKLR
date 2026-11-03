@@ -35,6 +35,15 @@ def _old_lines(page: Path, rev: str) -> list[str]:
         check=True,
     ).stdout.strip()
     rel = page.resolve().relative_to(top).as_posix()
+    follow = ["log", "--follow", "--diff-filter=R", "--name-status", "--format="]
+    renamed = subprocess.run(
+        ["git", "-C", top, *follow, f"{rev}..HEAD", "--", rel],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.splitlines()
+    if renamed:  # the oldest rename since `rev` gives the page's path there
+        rel = renamed[-1].split("\t")[1]
     shown = subprocess.run(
         ["git", "-C", top, "show", f"{rev}:{rel}"],
         capture_output=True,

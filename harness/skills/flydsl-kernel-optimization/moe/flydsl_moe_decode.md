@@ -141,7 +141,7 @@ _d = _base + _p2 + _inc2 - _x - _lo
 - A kernel trace of one call shows two kernels, `gemm1_a4w4_fold_…_fold<M>` and
   `gemm2_a4w4_port_…_atomic_g2bs2_pro125` (names built at `g1_fold.py:1766–1831`, `g2_port.py:131–135`), and no
   `mxfp4_moe_sort` or `moe_sorting` kernel.
-- In a model run with `AKLR_EXPORT=1`, the call records at these Points carry an empty `fallback_reason`
+- With `AKLR_EXPORT=1`, the records of calls to the op's api at these Points carry an empty `fallback_reason`
   (`../pitfalls/measured_a_different_build.md` § How to detect).
 
 ### 3. Equivalence under atomics

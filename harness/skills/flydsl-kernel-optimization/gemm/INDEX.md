@@ -65,8 +65,8 @@ Numbers marked `*(field)*` or `*(field, E<n>)*` are measured values; `E<n>` name
 | `mxfp4_preshuffle.py` | A MXFP4/MXFP6/MXFP8 × B MXFP4 or MXFP8 (preshuffled weights and scales) | 4 waves along N; A by DMA into a 2-buffer LDS ring; preshuffled B and the scales loaded straight to registers; scaled 16x16x128 MFMA | `launch_gemm` (:58) |
 
 Shared helpers are in `kernels/common/mma/` (`mfma_preshuffle_pipeline.py`, `mfma_epilogues.py`). None of these
-handles a K tail: K must be a multiple of the K tile. Their arguments are the entry-point signatures above. This
-repository's aiter ships its own FlyDSL GEMMs (a bf16 split-K HGEMM, fp8/int8 preshuffle GEMMs): their entry points
+handles a K tail: K must be a multiple of the K tile. Their arguments are the entry-point signatures above. The
+baseline aiter ships its own FlyDSL GEMMs (a bf16 split-K HGEMM, fp8/int8 preshuffle GEMMs): their entry points
 and split-K reductions are in `../optimize/flydsl_levers/flydsl_kernel_library.md`, their arguments in
 `../optimize/flydsl_levers/flydsl_knob_space.md`.
 

@@ -74,7 +74,7 @@ dispatch + GEMMs + combine kernel (`kernels/mega_moe/`); it is not covered here.
 **In the baseline aiter** (`aiter/ops/flydsl/kernels/`): the FlyDSL code that aiter's `fused_moe`, AKLR's
 baseline, may dispatch to by tuned row (other rows run CK or HIP kernels):
 
-| FlyDSL v0.3.2 | aiter here | How they relate |
+| FlyDSL v0.3.2 | baseline aiter | How they relate |
 |---|---|---|
 | `mxfp_moe/` | `mxfp4_gemm1.py` (`compile_gemm1_a4w4_port` :775), `mxfp4_gemm2.py` (`compile_gemm2_a4w4_port` :86); hosts `aiter/ops/flydsl/mxfp4_gemm{1,2}_kernels.py` | one pipeline, "ported back from aiter" into FlyDSL (`mxfp_moe/__init__.py:6`); the copies have diverged since |
 | `moe_2stage_a16wmix/` | `moe_2stage_a16wmix/` (`compile_gemm1_a16w4_port` `gemm1.py:375`, `compile_gemm2_a16w4_port` `gemm2.py:304`) | the same design (persistent above `4 · NUM_CU`, `b_cache_mod=2`); line numbers differ |
@@ -87,7 +87,7 @@ the v2 stage 2 for `flydsl_moe2_layout_*`); `flydsl_mxmoe_*` rows are a small mi
 `mxfp4_gemm{1,2}` differ from what this card cites: stage 2 is persistent for the plain non-atomic and the MXFP4-out
 epilogues, not CShuffle (`_persistent`, `mxfp4_gemm2.py:113`); the non-persistent atomic path keeps the hardware XCD
 order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel name (`aiter/fused_moe.py:1646`,
-`:1835`) instead of the automatic switch of §4; and the hosts build a4w4 only, with no fp8-out epilogue
+`:1833`) instead of the automatic switch of §4; and the hosts build a4w4 only, with no fp8-out epilogue
 (`_SUPPORTED` in both host files).
 
 ## 2. How the work is mapped
@@ -108,7 +108,7 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
   counts.
 - **Under expert parallelism, sort and size by the local experts.** aiter pads the sort buffers, and so stage 1's
   grid, for every global expert: it passes `expert_mask.numel()` (`aiter/fused_moe.py:767-769`, `:983`, padding
-  `:222`; grid `aiter/ops/flydsl/moe_kernels.py:1625`). With 112 of 896 experts local, 9% of 45,696 stage-1
+  `:221`; grid `aiter/ops/flydsl/moe_kernels.py:1625`). With 112 of 896 experts local, 9% of 45,696 stage-1
   workgroups had work at 112 tokens, and a local sort cut the sort 24.5 → 9.5 µs and stage 1 174.4 → 160.6 µs
   *(field, E30)*; at 893 / 2732 tokens local sizing cut a call 2.0–3.7% and a local-only sort 3.0–3.4% more *(field, E33)*.
   One way to sort locally: a global → local table in LDS, −1 dropping a route to another rank's expert; at 8–16 tokens
