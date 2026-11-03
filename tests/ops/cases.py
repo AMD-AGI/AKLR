@@ -468,6 +468,13 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         layout_variant_name="row_major",
     ),
     PointSpec(
+        contract_id="rms_norm@1.0",
+        axes={"n_tokens": 4, "hidden_size": 2048},
+        dtypes={"x": "bfloat16", "weight": "bfloat16", "normalized": "bfloat16"},
+        attrs={},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
         contract_id="topk_transform_paged@1.0",
         axes={
             "n_tokens": 4,

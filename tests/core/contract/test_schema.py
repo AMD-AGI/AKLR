@@ -7,11 +7,13 @@ import re
 from pathlib import Path
 
 import pytest
+import torch
 
 from aklr.core.contract import expr, locate, semantics
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.semantics import sorted_key_json
+from aklr.core.contract.spec import attr
 from tests.op_case import OpCase
 
 
@@ -131,42 +133,6 @@ class TestSchemaFile:
             with pytest.raises(ValueError, match=r"^a\.json: kernel\.author"):
                 parse(with_author(bad), "a.json")
 
-    def test_kernel_state_bytes(self) -> None:
-        """``kernel.state_bytes`` follows ``entry_point`` and is absent when 0; with it the
-        kernel takes ``state`` after the api params, and the hash and uuid cover it."""
-        case = OpCase.of("gemm@1.0")
-        plain, kept = case.schema(), case.schema(state_bytes=16384)
-        assert "state_bytes" not in json.loads(plain.schema_text())["kernel"]
-        keys = list(json.loads(kept.schema_text())["kernel"])
-        assert keys[keys.index("entry_point") + 1] == "state_bytes"
-        parsed = ContractRegistry.default().parse_schema(kept.schema_text().encode(), "a.json")
-        assert parsed == kept
-        assert parsed.kernel.state_bytes == 16384
-        assert kept.kernel_call_keys == (*plain.kernel_call_keys, "state")
-        assert kept.kernel.content_hash != plain.kernel.content_hash
-        assert kept.relative_path() != plain.relative_path()
-        with pytest.raises(ValueError, match="state_bytes"):
-            case.schema(state_bytes=-1)
-
-    def test_kernel_peer_bytes(self) -> None:
-        """``kernel.peer_bytes`` follows ``state_bytes`` and is absent when 0; with it the
-        kernel takes ``peers`` and ``rank`` after the api params and ``state``, and the hash
-        and uuid cover it."""
-        case = OpCase.of("gemm@1.0")
-        plain = case.schema(state_bytes=16384)
-        exchanging = case.schema(state_bytes=16384, peer_bytes=1 << 20)
-        assert "peer_bytes" not in json.loads(plain.schema_text())["kernel"]
-        keys = list(json.loads(exchanging.schema_text())["kernel"])
-        assert keys[keys.index("state_bytes") + 1] == "peer_bytes"
-        parsed = ContractRegistry.default().parse_schema(exchanging.schema_text().encode(), "a.json")
-        assert parsed == exchanging
-        assert parsed.kernel.peer_bytes == 1 << 20
-        assert exchanging.kernel_call_keys == (*plain.kernel_call_keys, "peers", "rank")
-        assert exchanging.kernel.content_hash != plain.kernel.content_hash
-        assert exchanging.relative_path() != plain.relative_path()
-        with pytest.raises(ValueError, match="peer_bytes"):
-            case.schema(peer_bytes=-1)
-
     @pytest.mark.parametrize(
         "content, line",
         [
@@ -243,26 +209,31 @@ class TestMutableInput:
     def test_contract_rules(self) -> None:
         """A floating mutable input needs error_bounds, an input that is not mutable has
         none, and a mutable input is required and per_call."""
-        contract = ContractRegistry.default().get("deepseek_v2_attention@1.0")
-        assert contract.mutable_inputs == ("kv_cache",)
-        assert contract.mutable_tensors == ("output", "kv_cache")
-        bounds = contract.inputs["kv_cache"].error_bounds
-        with pytest.raises(ValueError, match="kv_cache: a floating mutable tensor needs"):
-            _with_tensor(contract, "kv_cache", error_bounds=())
-        with pytest.raises(ValueError, match="hidden_states: only a mutable input has error_bounds"):
-            _with_tensor(contract, "hidden_states", error_bounds=bounds)
-        for update in ({"lifetime": "weight"}, {"present_when": "has_w_scale"}):
-            with pytest.raises(ValueError, match="kv_cache: a mutable input is required"):
-                _with_tensor(contract, "kv_cache", **update)
+        contract = ContractRegistry.default().get("gdn_decode@1.0")
+        assert contract.mutable_inputs == ("conv_state", "delta_state")
+        assert contract.mutable_tensors == ("normalized", "conv_state", "delta_state")
+        bounds = contract.inputs["delta_state"].error_bounds
+        with pytest.raises(ValueError, match="delta_state: a floating mutable tensor needs"):
+            _with_tensor(contract, "delta_state", error_bounds=())
+        with pytest.raises(ValueError, match="projected_qkvz: only a mutable input has error_bounds"):
+            _with_tensor(contract, "projected_qkvz", error_bounds=bounds)
+        with pytest.raises(ValueError, match="delta_state: a mutable input is required"):
+            _with_tensor(contract, "delta_state", lifetime="weight")
+        presence = {"has_delta_state": attr("Whether delta_state is passed.", True, False)}
+        optional = contract.model_copy(update={"attrs": presence})
+        with pytest.raises(ValueError, match="delta_state: a mutable input is required"):
+            _with_tensor(optional, "delta_state", present_when="has_delta_state")
 
     def test_compare_checks_it(self) -> None:
-        """``compare_outputs`` checks the KV cache as the call leaves it: one element off
-        its reference fails it."""
-        case = OpCase.of("deepseek_v2_attention@1.0")
+        """``compare_outputs`` checks a state as the call leaves it: one element off its
+        reference fails it."""
+        case = OpCase.of("gdn_decode@1.0")
         args = case.inputs()
+        shape = case.contract.storage_shape_of("normalized", case.point)
         reference = {
-            "output": semantics.to_float64(args["hidden_states"], "bfloat16"),
-            "kv_cache": semantics.to_float64(args["kv_cache"], "float8_e4m3fn"),
+            "normalized": torch.randn(shape, generator=torch.Generator().manual_seed(0), dtype=torch.float64),
+            "conv_state": semantics.to_float64(args["conv_state"], "bfloat16"),
+            "delta_state": semantics.to_float64(args["delta_state"], "float32"),
         }
         actual = {r: t.to(semantics.torch_dtypes(case.point.dtypes[r])[0]) for r, t in reference.items()}
 
@@ -270,10 +241,10 @@ class TestMutableInput:
             return semantics.compare_outputs(case.request.schema_json, actual, reference)
 
         assert all(r.is_passed for r in compare().values())
-        flat = actual["kv_cache"].view(-1)
-        flat[0] = 0.0 if flat[0].float().abs() > 1 else 100.0
+        flat = actual["delta_state"].view(-1)
+        flat[0] = 0.0 if flat[0].abs() > 1 else 100.0
         results = compare()
-        assert results["output"].is_passed and results["kv_cache"].is_bound_exceeded
+        assert results["normalized"].is_passed and results["delta_state"].is_bound_exceeded
 
 
 def _with_tensor(contract: OpContract, name: str, **update: object) -> OpContract:

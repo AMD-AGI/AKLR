@@ -1,55 +1,162 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""The plugin switch, one route per target for the running sglang, and falling back to sglang."""
+"""The plugin switch, the routes, and falling back to sglang."""
 
-from unittest.mock import MagicMock
+import importlib
+import importlib.metadata
+import inspect
+import pkgutil
+import sys
+from types import ModuleType, SimpleNamespace
 
 import pytest
+import torch
 
 import aklr.ops
 import aklr.plugins.sglang as plugin
+from aklr.core.contract.locate import op_packages
 from aklr.core.platform.env import ENV_DISABLE, ENV_SGLANG_PLUGIN
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.sglang import hook
+
+# at collection, as aklr.ops.load_routes does at start-up: before any test empties hook._ROUTES
+for package in op_packages():
+    if package.startswith("aklr.plugins.sglang."):
+        importlib.import_module(f"{package}.api")
+DECLARED = list(hook._ROUTES)
+INSTALLED = "0.5.22"
+
+
+def test_no_two_routes_take_one_target():
+    targets = [target for target, _, _ in DECLARED]
+    assert targets and len(set(targets)) == len(targets)
+
+
+def installed_sglang():
+    try:
+        return hook.sglang_version()
+    except importlib.metadata.PackageNotFoundError:
+        pytest.skip("sglang is not installed")
+
+
+def test_every_route_was_tested_on_the_installed_sglang():
+    """A new sglang image needs the routes adapted."""
+    installed = installed_sglang()
+    assert [target for target, versions, _ in DECLARED if installed not in versions] == []
+
+
+def parameters(fn):
+    return [(p.name, p.kind, p.default) for p in inspect.signature(fn).parameters.values()]
+
+
+@pytest.mark.parametrize(
+    ("target", "route"), [(t, r) for t, _, r in DECLARED], ids=[t for t, _, _ in DECLARED]
+)
+def test_every_route_takes_its_targets_parameters(target, route):
+    installed_sglang()
+    assert parameters(route) == parameters(pkgutil.resolve_name(target))
+
+
+@pytest.mark.parametrize(
+    ("installed", "release"),
+    [("0.5.22+rocm7.0", "0.5.22"), ("0.5.22.dev20260906+g5bebe7a", "0.5.22.dev20260906")],
+)
+def test_only_a_local_label_is_dropped(monkeypatch, installed, release):
+    """A development build is not the release it precedes."""
+    monkeypatch.setattr(hook, "version", lambda dist: installed)
+    assert hook.sglang_version() == release
 
 
 def original(x):
     return f"sglang({x})"
 
 
+TARGET = f"{__name__}.original"
+
+
 @pytest.fixture
-def logger(monkeypatch):
-    fake = MagicMock()
-    monkeypatch.setattr(hook, "_LOGGER", fake)
-    return fake
-
-
-def installed(monkeypatch, sglang, running, *routes):
-    """The wrapper sglang gets for one target declaring ``routes``, (versions, route) pairs, on sglang ``running``."""
+def hooks(monkeypatch):
+    """No route declared; what install() hooks, as sglang's HookRegistry records it."""
+    registered = []
+    registry = ModuleType("sglang.srt.plugins.hook_registry")
+    registry.HookType = SimpleNamespace(AROUND="around")
+    registry.HookRegistry = SimpleNamespace(register=lambda *args: registered.append(args))
+    monkeypatch.setitem(sys.modules, registry.__name__, registry)
     monkeypatch.setattr(hook, "_ROUTES", [])
-    monkeypatch.setattr(hook, "version", lambda _: running)
-    for versions, route in routes:
-        hook.sglang_route("pkg.Layer.forward", versions)(route)
+    monkeypatch.setattr(hook, "sglang_version", lambda: INSTALLED)
+    return registered
+
+
+def declare(route):
+    hook.sglang_route(TARGET, versions=(INSTALLED,))(route)
+
+
+def wrapper(hooks):
+    (around,) = [w for t, w, kind in hooks if t == TARGET and kind == "around"]
+    return around
+
+
+def test_a_route_serves(hooks):
+    declare(lambda x: f"aklr({x})")
     hook.install()
-    (wrapper,) = [w for t, w, kind in sglang.registered if t == "pkg.Layer.forward"]
-    return wrapper
+    assert wrapper(hooks)(original, 1) == "aklr(1)"
+
+
+def test_a_fallback_reason_runs_sglang(hooks):
+    declare(lambda x: FallbackReason.NOT_MEASURED)
+    hook.install()
+    assert wrapper(hooks)(original, 1) == "sglang(1)"
+
+
+def test_a_raising_route_raises(hooks):
+    def boom(x):
+        raise RuntimeError("boom")
+
+    declare(boom)
+    hook.install()
+    with pytest.raises(RuntimeError, match="boom"):
+        wrapper(hooks)(original, 1)
+
+
+def test_a_route_untested_on_the_installed_sglang_is_neither_resolved_nor_hooked(hooks):
+    hook.sglang_route(f"{__name__}.missing", versions=("0.5.21",))(lambda x: x)
+    hook.install()
+    assert hooks == []
+
+
+def test_a_target_that_does_not_resolve_raises(hooks):
+    hook.sglang_route(f"{__name__}.missing", versions=(INSTALLED,))(lambda x: x)
+    with pytest.raises((AttributeError, ImportError)):
+        hook.install()
+
+
+def test_inside_a_compiled_region_the_route_is_not_traced(hooks):
+    traced = []
+    declare(lambda x: traced.append(x) or x + 10)
+    hook.install()
+    around = wrapper(hooks)
+
+    def sglangs(x):
+        return x * 2
+
+    torch._dynamo.reset()
+    try:
+        compiled = torch.compile(lambda x: around(sglangs, x), backend="eager")
+        assert torch.equal(compiled(torch.ones(2)), torch.full((2,), 2.0))
+    finally:
+        torch._dynamo.reset()
+    assert traced == []
+    assert torch.equal(around(sglangs, torch.ones(2)), torch.full((2,), 11.0))
 
 
 @pytest.fixture
 def register_calls(monkeypatch):
-    """What register() did, in order, its plugin op package being aklr.plugins.sglang.x.y."""
+    """What register() did, in order."""
     calls = []
     monkeypatch.setattr(plugin, "register_sglang_plugin", lambda: calls.append("aklr starts"))
-    monkeypatch.setattr(plugin, "op_packages", lambda: ("aklr.ops.gemm", "aklr.plugins.sglang.x.y"))
-    monkeypatch.setattr(plugin.importlib, "import_module", calls.append)
     monkeypatch.setattr(aklr.ops, "load_routes", lambda: calls.append("load_routes"))
-    monkeypatch.setattr(plugin, "install", lambda: calls.append("install"))
-    monkeypatch.setattr(
-        plugin.peer_memory,
-        "set_group",
-        lambda group: calls.append(f"peers across {group.__name__}"),
-    )
+    monkeypatch.setattr(hook, "install", lambda: calls.append("install"))
     return calls
 
 
@@ -63,74 +170,26 @@ def register_calls(monkeypatch):
     ],
 )
 def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, proxied, hooked):
-    """aiter's entry points are proxied unless AKLR_DISABLE=1; the layer routes hook only
-    with AKLR_SGLANG_PLUGIN=1."""
+    """aiter's entry points are proxied unless AKLR_DISABLE=1."""
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     plugin.register()
-    routes = ["aklr.plugins.sglang.x.y.api", "install", "peers across _tp_group"] if hooked else []
-    assert register_calls == ["aklr starts", *(["load_routes"] * proxied), *routes]
+    assert register_calls == ["aklr starts", *(["load_routes"] * proxied), *(["install"] * hooked)]
 
 
-def test_any_other_switch_value_is_an_error(monkeypatch, register_calls):
+def test_any_other_switch_value_ends_the_process(monkeypatch, register_calls):
     monkeypatch.setenv(ENV_SGLANG_PLUGIN, "true")
-    with pytest.raises(ValueError, match=ENV_SGLANG_PLUGIN):
+    with pytest.raises(SystemExit, match=ENV_SGLANG_PLUGIN):
         plugin.register()
 
 
-def test_the_route_for_the_running_sglang_serves(monkeypatch, sglang, logger):
-    wrapper = installed(
-        monkeypatch,
-        sglang,
-        "0.5.20",
-        (">=0.5.18,<0.5.19", lambda x: f"old({x})"),
-        (">=0.5.19,<0.5.21", lambda x: f"new({x})"),
-    )
-    assert wrapper(original, 1) == "new(1)"
-    logger.warning.assert_not_called()
+def test_a_plugin_that_cannot_start_ends_the_process(monkeypatch, register_calls):
+    """sglang only logs an exception from a plugin."""
+    monkeypatch.setenv(ENV_SGLANG_PLUGIN, "1")
 
+    def install():
+        raise ValueError("broken declaration")
 
-def test_a_dev_build_takes_its_release_route(monkeypatch, sglang):
-    wrapper = installed(
-        monkeypatch,
-        sglang,
-        "0.5.19.dev20260906+g5bebe7a033",
-        (">=0.5.19,<0.5.21", lambda x: f"new({x})"),
-    )
-    assert wrapper(original, 1) == "new(1)"
-
-
-def test_a_fallback_reason_runs_sglang(monkeypatch, sglang):
-    wrapper = installed(
-        monkeypatch,
-        sglang,
-        "0.5.19",
-        (">=0.5.19,<0.5.21", lambda x: FallbackReason.NOT_MEASURED),
-    )
-    assert wrapper(original, 1) == "sglang(1)"
-
-
-def test_a_raising_route_raises(monkeypatch, sglang):
-    def boom(x):
-        raise RuntimeError("boom")
-
-    wrapper = installed(monkeypatch, sglang, "0.5.20", (">=0.5.19,<0.5.21", boom))
-    with pytest.raises(RuntimeError, match="boom"):
-        wrapper(original, 1)
-
-
-@pytest.mark.parametrize(
-    "ranges",
-    [[">=0.5.21,<0.5.22"], [">=0.5.19,<0.5.21", ">=0.5.20,<0.5.21"]],
-    ids=["none", "two"],
-)
-def test_no_single_route_warns_once_and_runs_sglang(monkeypatch, sglang, logger, ranges):
-    routes = [(versions, lambda x: "served") for versions in ranges]
-    wrapper = installed(monkeypatch, sglang, "0.5.20", *routes)
-    assert [wrapper(original, x) for x in (1, 2)] == ["sglang(1)", "sglang(2)"]
-    logger.warning.assert_called_once()
-
-
-def test_a_range_without_an_upper_bound_is_an_error():
-    with pytest.raises(ValueError, match="no upper bound"):
-        hook.sglang_route("pkg.Layer.forward", ">=0.5.20")
+    monkeypatch.setattr(hook, "install", install)
+    with pytest.raises(SystemExit, match="broken declaration"):
+        plugin.register()

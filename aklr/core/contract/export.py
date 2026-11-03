@@ -183,6 +183,10 @@ def export_schemas(
             errors.append(f"{calls_dir}: {record.contract_id}: unknown contract")
             continue
         try:
+            contract.check_point(point)
+            # no kernel serves a Point outside the domain, such as an idle rank's call of no rows
+            if not contract.domain.contains(point):
+                continue
             workload = contract.workload_for(point, record.scalars)
         except ValueError as e:
             errors.append(f"{calls_dir}: {point.key()}: {e}")
@@ -315,4 +319,11 @@ def main(argv: Sequence[str], *, export_dir: Path | None) -> int:
         print(line)
     if n_calls := sum(r.n_calls for r in records if r.point is None):
         print(f"{n_calls} calls had no point (fallback only)")
+    registry = ContractRegistry.default()
+    if n_calls := sum(
+        r.n_calls
+        for r in records
+        if r.point is not None and not registry.get(r.contract_id).domain.contains(r.point)
+    ):
+        print(f"{n_calls} calls were outside their contract's domain (fallback only)")
     return 0

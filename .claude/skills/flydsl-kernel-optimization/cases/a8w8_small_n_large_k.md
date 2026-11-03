@@ -48,8 +48,8 @@ sources:
 - **Cross-workgroup split-K is present in n512_k4096 and n1024_k4096 but no Point reaches it.** n512_k4096 keeps a
   last-arriving-wave fused split-K (`_pick_fused`, a separate `reduce_kernel`); n1024_k4096 a last-arriving-split
   path (`split_k > 1`). Both keep their arrival counters in memory the builder zeroes once per shape (`torch.zeros`),
-  relying on the counter arithmetic or the last arriver to leave it reusable. AKLR keeps memory between calls only as
-  `state_bytes` (`../SKILL.md`, Stop table), so a variant that needs these paths needs that rework first.
+  relying on the counter arithmetic or the last arriver to leave it reusable. No AKLR call may depend on
+  what an earlier call left (`../SKILL.md`, Stop table), so a variant that needs these paths needs that rework first.
 
 ## Mechanism
 

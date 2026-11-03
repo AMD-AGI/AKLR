@@ -164,20 +164,20 @@ class TestKernelDispatcher:
         if miss == "not_warmed":  # capture never marks the key warm
             assert not dispatcher.table.warmed_keys
 
-    def _kv_cache_dispatcher(
+    def _state_dispatcher(
         self,
         builder_registry: BuilderRegistry,
         workloads: tuple[WorkloadSpec, ...] = (),
         min_speedup: float = 0.0,
     ) -> tuple[OpCase, KernelDispatcher]:
-        """deepseek_v2_attention served at its case's workload, or at ``workloads``, by a
-        kernel that zeroes the output and the KV cache, its mutable input."""
-        case = OpCase.of("deepseek_v2_attention@1.0")
+        """gdn_decode served at its case's workload, or at ``workloads``, by a kernel that
+        zeroes the output and the two state pools, its mutable inputs."""
+        case = OpCase.of("gdn_decode@1.0")
         schema = case.schema(
-            "import torch\n\n\n"
-            "def run(*, output, kv_cache, **_):\n"
-            "    output.zero_()\n"
-            "    kv_cache.view(torch.uint8).zero_()\n"
+            "def run(*, normalized, conv_state, delta_state, **_):\n"
+            "    normalized.zero_()\n"
+            "    conv_state.zero_()\n"
+            "    delta_state.zero_()\n"
         )
         if workloads:
             schema = schema.model_copy(update={"workloads": workloads})
@@ -189,35 +189,37 @@ class TestKernelDispatcher:
         return case, dispatcher
 
     def test_any_size_axis_matches_every_value(self, builder_registry: BuilderRegistry) -> None:
-        """A schema serving one value of an any_size axis serves every value of it: a
-        KV cache of twice the workload's rows is served, and written in place."""
-        case, dispatcher = self._kv_cache_dispatcher(builder_registry)
+        """A schema serving one value of an any_size axis serves every value of it: state
+        pools of twice the workload's slots are served, and written in place."""
+        case, dispatcher = self._state_dispatcher(builder_registry)
         call = case.call(case.inputs())
-        call["kv_cache"] = torch.cat([call["kv_cache"], call["kv_cache"]])
+        for name in ("conv_state", "delta_state"):
+            call[name] = torch.cat([call[name], call[name]])
         output = dispatcher.dispatch(call)
-        assert not output.any() and not call["kv_cache"].view(torch.uint8).any()
+        assert not output.any() and not call["conv_state"].any() and not call["delta_state"].any()
 
-    @pytest.mark.parametrize("rows", [0, 64], ids=["below_its_lo", "constrained"])
-    def test_any_size_axis_keeps_its_domain(self, builder_registry: BuilderRegistry, rows: int) -> None:
+    @pytest.mark.parametrize("slots", [0, 2], ids=["below_its_lo", "constrained"])
+    def test_any_size_axis_keeps_its_domain(self, builder_registry: BuilderRegistry, slots: int) -> None:
         """An any_size axis matches only values its bounds and the constraints reading it
-        admit: a KV cache of no rows (below n_slots' lowest) or of 64 (topk 128 <=
-        n_slots + 1 fails) falls back."""
-        case, dispatcher = self._kv_cache_dispatcher(builder_registry)
+        admit: state pools of no slots (below n_slots' lowest) or of 2 (4 tokens <=
+        n_slots + 1 fails) fall back."""
+        case, dispatcher = self._state_dispatcher(builder_registry)
         call = case.call(case.inputs())
-        call["kv_cache"] = call["kv_cache"][:rows]
+        for name in ("conv_state", "delta_state"):
+            call[name] = call[name][:slots]
         assert dispatcher.dispatch(call) is FallbackReason.OUT_OF_CONTRACT
 
     def test_any_size_axis_needs_each_workload_qualified(self, builder_registry: BuilderRegistry) -> None:
         """Workloads differing in an any_size axis alone share a key, served only if each
         of them qualifies: one too slow leaves the case's call unserved."""
-        case = OpCase.of("deepseek_v2_attention@1.0")
+        case = OpCase.of("gdn_decode@1.0")
         workload = case.contract.workload_for(case.point, {})
-        rows = {**workload.axes, "n_slots": 2 * workload.axes["n_slots"]}
-        _, dispatcher = self._kv_cache_dispatcher(
+        doubled = {**workload.axes, "n_slots": 2 * workload.axes["n_slots"]}
+        _, dispatcher = self._state_dispatcher(
             builder_registry,
             (
                 workload.model_copy(update={"accuracy": "passed", "speedup": 2.0}),
-                workload.model_copy(update={"axes": rows, "accuracy": "passed", "speedup": 0.5}),
+                workload.model_copy(update={"axes": doubled, "accuracy": "passed", "speedup": 0.5}),
             ),
             min_speedup=1.0,
         )
@@ -226,15 +228,15 @@ class TestKernelDispatcher:
 
     def test_mutable_input_sharing_bytes_declines(self, builder_registry: BuilderRegistry) -> None:
         """A mutable input sharing a byte with another input falls back, unwritten."""
-        case, dispatcher = self._kv_cache_dispatcher(builder_registry)
+        case, dispatcher = self._state_dispatcher(builder_registry)
         call = case.call(case.inputs())
-        kv_bytes = call["kv_cache"].view(torch.uint8).view(-1)
-        n = call["positions"].numel()
-        kv_bytes[: 8 * n].view(torch.int64).copy_(call["positions"])
-        call["positions"] = kv_bytes[: 8 * n].view(torch.int64)
-        before = kv_bytes.clone()
+        conv_bytes = call["conv_state"].view(torch.uint8).view(-1)
+        n = call["cache_indices"].numel()
+        conv_bytes[: 4 * n].view(torch.int32).copy_(call["cache_indices"])
+        call["cache_indices"] = conv_bytes[: 4 * n].view(torch.int32)
+        before = conv_bytes.clone()
         assert dispatcher.dispatch(call) is FallbackReason.OUT_OF_CONTRACT
-        assert torch.equal(kv_bytes, before)
+        assert torch.equal(conv_bytes, before)
 
     def test_failing_kernel_raises(
         self, builder_registry: BuilderRegistry, caplog: pytest.LogCaptureFixture

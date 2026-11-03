@@ -1,0 +1,165 @@
+{
+  "schema_version": 5,
+  "name": "add_rms_norm_hidden_size6144",
+  "contract_id": "add_rms_norm@1.0",
+  "description": "residual_out = x + residual; normalized = residual_out * rsqrt(mean(residual_out**2) + epsilon) * weight, the mean over the hidden axis.",
+  "op_type": "rms_norm",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "hidden_size": {
+      "type": "const",
+      "value": 6144,
+      "description": "Width normalized."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "x": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The layer's output."
+    },
+    "residual": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The residual stream."
+    },
+    "weight": {
+      "shape": [
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": "0.58"
+      },
+      "description": "Scale of each normalized column."
+    },
+    "epsilon": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to the mean square."
+    }
+  },
+  "outputs": {
+    "normalized": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The normalized sum, scaled by weight."
+    },
+    "residual_out": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "x + residual."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 4
+      },
+      "scalars": {
+        "epsilon": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8
+      },
+      "scalars": {
+        "epsilon": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "scalars": {
+        "epsilon": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 32
+      },
+      "scalars": {
+        "epsilon": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "scalars": {
+        "epsilon": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 128
+      },
+      "scalars": {
+        "epsilon": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 256
+      },
+      "scalars": {
+        "epsilon": 9.999999747378752e-06
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Triton RMSNorm of x + residual for 16-bit rows, in float32 from the unrounded sum, which is stored rounded: the row in three 2048-wide chunks, one program per row; loads bypass the caches and stores write through.\"\"\"\n\nimport triton\nimport triton.language as tl\n\n\n@triton.jit\ndef _rms_kernel(x_ptr, r_ptr, ro_ptr, w_ptr, o_ptr, eps, H: tl.constexpr, CHUNK: tl.constexpr):\n    # Loads bypass caches (sc0 nt), stores write through (sc0 sc1): 10-20% faster on gfx950.\n    NCH: tl.constexpr = 3 if CHUNK * 3 == H else 1\n    cols = tl.arange(0, CHUNK)\n    cmask = cols < H\n    w0 = tl.load(w_ptr + cols, mask=cmask, other=0.0).to(tl.float32)\n    if NCH == 3:\n        w1 = tl.load(w_ptr + CHUNK + cols).to(tl.float32)\n        w2 = tl.load(w_ptr + 2 * CHUNK + cols).to(tl.float32)\n    base = tl.program_id(0).to(tl.int64) * H + cols\n    x0 = tl.load(x_ptr + base, mask=cmask, other=0.0, cache_modifier=\".cg\").to(tl.float32)\n    if NCH == 3:\n        x1 = tl.load(x_ptr + base + CHUNK, mask=cmask, other=0.0, cache_modifier=\".cg\").to(tl.float32)\n        x2 = tl.load(x_ptr + base + 2 * CHUNK, mask=cmask, other=0.0, cache_modifier=\".cg\").to(tl.float32)\n    # Normalize the fp32 sum, as aiter does; only the stored residual is rounded.\n    x0 += tl.load(r_ptr + base, mask=cmask, other=0.0, cache_modifier=\".cg\").to(tl.float32)\n    tl.store(ro_ptr + base, x0.to(ro_ptr.dtype.element_ty), mask=cmask, cache_modifier=\".wt\")\n    if NCH == 3:\n        x1 += tl.load(r_ptr + base + CHUNK, mask=cmask, other=0.0, cache_modifier=\".cg\").to(tl.float32)\n        x2 += tl.load(r_ptr + base + 2 * CHUNK, mask=cmask, other=0.0, cache_modifier=\".cg\").to(tl.float32)\n        tl.store(ro_ptr + base + CHUNK, x1.to(ro_ptr.dtype.element_ty), mask=cmask, cache_modifier=\".wt\")\n        tl.store(ro_ptr + base + 2 * CHUNK, x2.to(ro_ptr.dtype.element_ty), mask=cmask, cache_modifier=\".wt\")\n    sq = x0 * x0\n    if NCH == 3:\n        sq += x1 * x1 + x2 * x2\n    rstd = tl.rsqrt(tl.sum(sq, axis=0) / H + eps)\n    tl.store(o_ptr + base, (x0 * rstd * w0).to(o_ptr.dtype.element_ty), mask=cmask, cache_modifier=\".wt\")\n    if NCH == 3:\n        tl.store(o_ptr + base + CHUNK, (x1 * rstd * w1).to(o_ptr.dtype.element_ty), mask=cmask, cache_modifier=\".wt\")\n        tl.store(o_ptr + base + 2 * CHUNK, (x2 * rstd * w2).to(o_ptr.dtype.element_ty), mask=cmask, cache_modifier=\".wt\")\n\n\ndef _config(m, h):\n    \"\"\"(CHUNK, num_warps), from microbenchmarks on MI355X.\"\"\"\n    third = h // 3\n    chunk = third if h % 3 == 0 and third & (third - 1) == 0 else triton.next_power_of_2(h)\n    if h > 4096:\n        return chunk, 4\n    if h > 1024:\n        return chunk, 2 if m >= 4096 else 4\n    return chunk, max(1, min(4, chunk // 512))\n\n\ndef run(*, x, residual, weight, epsilon, normalized, residual_out):\n    m, h = x.shape\n    chunk, warps = _config(m, h)\n    _rms_kernel[(m,)](\n        x, residual, residual_out, weight, normalized, epsilon,\n        H=h, CHUNK=chunk, num_warps=warps,\n    )\n"
+      }
+    ]
+  }
+}

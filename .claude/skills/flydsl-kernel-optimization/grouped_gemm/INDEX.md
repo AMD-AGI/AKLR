@@ -39,7 +39,7 @@ path, and the gates and rulers that a skewed distribution needs.
 
 ## In AKLR
 
-AKLR has no grouped-GEMM op. Its MoE op is `fused_moe` (the sglang plugin also has whole-layer MoE contracts): start
+AKLR has no grouped-GEMM op. Its MoE op is `fused_moe` (the sglang plugin's MoE ops take a whole MoE block): start
 at `../moe/flydsl_moe_decode.md`, then `flydsl_grouped_moe_inference.md`; AKLR's own FlyDSL MoE kernels are listed
 in `../optimize/flydsl_levers/flydsl_kernel_library.md` § AKLR's own FlyDSL MoE kernels. The training cards apply as
 techniques. Where a card disagrees with `aklr/ops/README.md` (§ The kernel section and ABI), the README wins

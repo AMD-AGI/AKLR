@@ -51,7 +51,7 @@ sources:
   block on a 16×16 tile.
 - **Cross-workgroup split-K counters live between calls.** n512_k4096 (m ≤ 256) and n1024_k4096 (m = 256) keep
   their arrival counters in memory the builder zeroes once per shape; the last arriver resets them. Both sum the
-  splits in split order, not arrival order. AKLR keeps memory between calls only as `state_bytes` (`../SKILL.md`,
+  splits in split order, not arrival order. No AKLR call may depend on what an earlier call left (`../SKILL.md`,
   Stop table), and two streams calling the same Point at once would share the counters.
 
 ## Mechanism

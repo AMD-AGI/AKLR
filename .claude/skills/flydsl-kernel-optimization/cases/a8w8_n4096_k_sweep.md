@@ -68,7 +68,7 @@ sources:
   need a fixed order (`../gemm/flydsl_gemm_correctness.md` §8, `../gemm/flydsl_gemm_small_m.md` §4). At m = 256
   (split 2) the two-term sum does not depend on the order.
 - **The same split-K keeps its counters between calls**: the builder zeroes them once per shape (`torch.zeros`) and
-  the last arriver subtracts the split count. AKLR keeps memory between calls only as `state_bytes` (`../SKILL.md`,
+  the last arriver subtracts the split count. No AKLR call may depend on what an earlier call left (`../SKILL.md`,
   Stop table), and two streams calling the same Point at once would share the counters.
 
 ## Mechanism

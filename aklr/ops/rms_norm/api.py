@@ -5,9 +5,9 @@ from __future__ import annotations
 
 from aklr.core.runtime.dispatch import api
 from aklr.core.runtime.seam import aklr_route, must_default
-from aklr.ops.rms_norm.contract import ADD_RMS_NORM
+from aklr.ops.rms_norm.contract import ADD_RMS_NORM, RMS_NORM
 
-__all__ = ["add_rms_norm"]
+__all__ = ["add_rms_norm", "rms_norm"]
 
 
 @api(ADD_RMS_NORM)
@@ -34,3 +34,13 @@ def _(
         normalized=out,
         residual_out=residual_out,
     )
+
+
+@api(RMS_NORM)
+def rms_norm(x, weight, epsilon): ...
+
+
+@aklr_route("aiter.ops.rmsnorm.rmsnorm2d_fwd")
+def _(input, weight, epsilon, use_model_sensitive_rmsnorm=0):
+    must_default(use_model_sensitive_rmsnorm)
+    return rms_norm(x=input, weight=weight, epsilon=epsilon)

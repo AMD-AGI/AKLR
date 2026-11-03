@@ -63,16 +63,16 @@ The README's rule that nothing derived from an argument is kept across calls is 
 - **Read the source; timing is not enough.** In one loop, timing missed three kernels whose machinery a dispatch
   constant switched off at the timed shapes; a source read found them (commit `0b6e82fd9`). Search launch code
   and device code for `_version`, `data_ptr`, `id(`, `weakref`, `is` comparisons on an argument, `nonlocal`,
-  `global`, a module-level container filled from an argument, a saved copy of an input in per-shape scratch or
-  in `state`, and a flag that guards the MFMAs or the whole body.
+  `global`, a module-level container filled from an argument, a saved copy of an input in per-shape scratch,
+  and a flag that guards the MFMAs or the whole body.
 - **A passing correctness check says nothing here**: both forms compute the right answer on any input that
   changed.
 
 ## Fix or workaround
 
 - Repack on every call, or serve the contract's shuffled layout variant where it has one (`../SKILL.md`, the
-  table under "Stop: what a AKLR kernel cannot do"). Memory kept between calls is only the kernel's `state`, for
-  sync slots, and it holds no result (`aklr/ops/README.md` § The kernel section and ABI).
+  table under "Stop: what a AKLR kernel cannot do"). A kernel keeps nothing derived from an argument between
+  calls, and no call depends on what an earlier call left (`aklr/ops/README.md` § The kernel section and ABI).
 - In an optimization loop, time candidates on inputs that change between calls, and reject a candidate whose
   source keeps argument-derived data, whatever its score.
 - To roll back a loop's result, walk its accepted commits back to the newest one whose source contains no such
@@ -83,8 +83,7 @@ The README's rule that nothing derived from an argument is kept across calls is 
 
 - Launch code and device code in any AKLR language; the observed kernels are FlyDSL bf16 GEMMs and MXFP4 fused MoE
   on MI355X.
-- Not this trap: the `state` memory AKLR zeroes once and passes to every call for sync slots, and kernels whose
-  first call differs from later ones (`../gemm/flydsl_gemm_correctness.md` §2).
+- Not this trap: kernels whose first call differs from later ones (`../gemm/flydsl_gemm_correctness.md` §2).
 
 ## Evidence
 

@@ -494,6 +494,8 @@ mhc_fused_post_pre_has_norm_weight_hidden_size#
 mhc_post_hidden_size#
 mhc_pre_hidden_size#
 mhc_pre_has_norm_weight_hidden_size#
+rms_norm_hidden_size#
+rms_norm_x_float16_hidden_size#
 topk_transform_paged_topk#
 topk_transform_paged_has_page_tables_topk#
 topk_transform_paged_page_size2_topk#

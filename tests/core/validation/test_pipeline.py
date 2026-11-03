@@ -802,6 +802,21 @@ class TestBaseline:
         assert [(f.code, f.schema_path) for f in report.findings] == [(FindingCode.PLATFORM_FAILURE, _SCHEMA)]
         assert "cannot read the incumbent" in report.findings[0].detail
 
+    @pytest.mark.parametrize("contract_id", ["gone@1.0", None])
+    def test_base_of_a_rewritten_contract_is_no_incumbent(
+        self, monkeypatch: pytest.MonkeyPatch, contract_id: str | None
+    ) -> None:
+        """A base schema that is JSON but not this contract's schema text (its contract
+        was removed or rewritten here): no incumbent, timed against the defined baseline."""
+        base = json.loads(self._base_text({self._A: 1.2}))
+        if contract_id:
+            base["contract_id"] = contract_id
+        else:
+            base["unknown_key"] = 1
+        scope = self._base_scope(monkeypatch, {self._A: 1.2})
+        monkeypatch.setattr(ValidationScope, "text_at_base", lambda self, path: json.dumps(base))
+        assert all(r.incumbent is None for r in self._requests(scope).values())
+
     def test_record_names_the_route_that_bound(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Of several routes the first that binds is timed, so it names the defined
         baseline; a served base kernel stays the baseline; a workload stopped before

@@ -7,7 +7,7 @@ in the file it names; when the two disagree, the named file wins.
 aklr/ops/
   __init__.py                  load_routes(): registers every route, proxies aiter's entry points
   README.md                    this file
-  <op>/                        biased_grouped_topk, gemm, fused_moe, mhc, mla, topk
+  <op>/                        biased_grouped_topk, gemm, fused_moe, mhc, mla, rms_norm, topk
     __init__.py                re-exports api.py's apis
     contract.py                OpContract constants, CONTRACTS
     reference.py               one <contract>_reference per contract
@@ -34,7 +34,8 @@ aklr/ops/
 2. `python -m aklr export [--from DIR] [--to DIR] [--language L]` writes under `--to`, per scenario name, one new
    `<op>/impls/<language>/<name>/<uuid>.json` holding every called Point no committed file serves, with
    `"sources": []`. A Point a committed file already serves is only listed with that file and its call count (and a
-   note when the calls came from a target the file does not list).
+   note when the calls came from a target the file does not list); a Point outside its contract's domain is only
+   counted.
    Export never rewrites a committed file and never writes into `aklr/`; `--to` belongs outside the repository. A
    rerun removes only the earlier export's files whose `sources` is empty; filled files stay.
 3. Fill `kernel.sources` with one `{"path": "<file>.py", "content": "<the file's text>"}` per file; export writes
@@ -110,10 +111,9 @@ read through the op's `contract.py`); a schema file's `inputs` and `outputs` ite
 
 ## The kernel section and ABI
 
-`kernel` (model `KernelSpec`): `language`, `targets` (a list of
-`{arch, hardware}`; a missing field leaves that dimension unrestricted (`DeviceTarget.matches_target`); only a
-load gate), `requires` (optional, see below), `author` (optional, see below), `entry_point` (`"<path>::<symbol>"`),
-`state_bytes` and `peer_bytes` (optional, see below) and `sources`, a list of `{path, content}`, `content`
+`kernel` (model `KernelSpec`): `language`, `targets` (a list of `{arch, hardware}`; a missing field leaves that
+dimension unrestricted (`DeviceTarget.matches_target`); only a load gate), `requires` (optional, see below), `author`
+(optional, see below), `entry_point` (`"<path>::<symbol>"`), and `sources`, a list of `{path, content}`, `content`
 being the file's whole text (utf-8 without a byte order mark or a non-utf-8 encoding declaration, no control
 character but `\n`, one final newline and no blank line before it); a path is one `<identifier>.py` segment other
 than `__init__.py`, sorted and unique (a hip kernel's: [hip kernels](#hip-kernels)). The module docstring of the entry
@@ -132,23 +132,6 @@ compares kernels without it (`KernelSpec.same_kernel`), so a committed kernel wh
 its audit exemption and the retention threshold. The uuid hashes it, so that edit still renames the file and
 deletes `speedup` and `accuracy` (step 4); dispatch serves the file again once CI writes them back.
 
-`state_bytes` is memory the kernel keeps between its calls, for the sync slots of blocks that wait on each other
-(each call counting its epoch on from the last call's); it is omitted when 0, and changes the content hash. aklr
-zeroes that many bytes on a device at the kernel's first call there, which must not be inside a graph capture (a
-capture would record the zeroing for every replay), and passes the same bytes as `state` on every call. The state
-holds no result: what a call writes to its outputs still depends on its inputs only. Every call on the device shares
-it, so calls of the kernel must not overlap (run them on one stream).
-
-`peer_bytes` is memory through which the kernel exchanges with the other ranks of its group inside a call, such as
-the receive buffers of an all-reduce: every rank holds that many bytes, each rank's mapped into the others' address
-space. It is omitted when 0, and changes the content hash. aklr opens it, zeroed, at the kernel's first call on a
-device (not inside a graph capture, as `state`), across the process group the integration names
-(`aklr.core.runtime.peer_memory.set_group`, a gloo group: the buffers' handles go as host tensors; the sglang
-plugin names its TP group's), else as a group of one,
-and passes `peers` (every rank's buffer address, int64 on the host, this rank's at `rank`) and `rank` on every
-call. Opening is collective: every rank must call the kernel in the same order. An op whose kernel has peer memory
-says in its contract what it sums over the ranks; validation runs it as a group of one.
-
 ```python
 def run(*, <every name of OpContract.kernel_call_keys>) -> None: ...
 ```
@@ -156,8 +139,7 @@ def run(*, <every name of OpContract.kernel_call_keys>) -> None: ...
 - The entry is the module-level def `entry_point` names (`run` by convention). It takes exactly the
   `kernel_call_keys` names as keyword-only arguments (SA4); aklr calls `run(**call)`. These are the
   `api_params` but an `optional` attr at its default (an attr added after schemas were committed, left out of
-  their files), its parameter and the inputs whose `present_when` reads it, then `state` when `state_bytes` is set
-  and `peers` and `rank` when `peer_bytes` is set:
+  their files), its parameter and the inputs whose `present_when` reads it:
 
   | Keys | From | Value |
   |---|---|---|
@@ -166,8 +148,6 @@ def run(*, <every name of OpContract.kernel_call_keys>) -> None: ...
   | layout arguments (`operand_format`, `"<a>:<b>"`) | `detect_facts` with `location` `arg` | that fact's `expected_value` |
   | `out_dtype` | only when the one output is `out` | its dtype, or `None` when the caller passes none (`out` holds the dtype) |
   | outputs | every name in `outputs` | the preallocated output tensor |
-  | `state` | only when `kernel.state_bytes` is set | the kernel's `uint8` state on the call's device |
-  | `peers`, `rank` | only when `kernel.peer_bytes` is set | every rank's peer memory address (int64, host), and this rank's index in it |
 
 - `run` writes each output into the output argument and returns nothing; it never allocates or keeps an output. A
   required output (one carrying an axis no required input carries, such as `topk`) comes from the caller and is
@@ -245,17 +225,16 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {
 }
 ```
 
-- The op's arguments are exactly the `api_params` names, plus `state` when `state_bytes` is set and `Tensor peers`
-  and `int rank` when `peer_bytes` is set, in any order, each output, mutable input and `state` a `Tensor(a!)`, and
-  it returns `()`: aklr calls it as `run(**call)`, and the rules of `run` hold (it writes the preallocated outputs and
-  the mutable inputs, reads its other inputs only and keeps nothing across calls but `state` and its peer memory).
+- The op's arguments are exactly the `kernel_call_keys` names, in any order, each output and mutable input a
+  `Tensor(a!)`, and it returns `()`: aklr calls it as `run(**call)`, and the rules of `run` hold (it writes the
+  preallocated outputs and the mutable inputs, reads its other inputs only and keeps nothing across calls).
 - Launch on `at::hip::getCurrentHIPStream()`; allocate scratch with `at::empty` on an argument's device.
 - Audit applies SH0–SH5 (`aklr/core/validation/stages/_audit/_hip.py`) instead of SA0–SA4, on the text with
   comments and literals blanked: no unterminated comment or literal (SH0); the one registration above, in the entry
   file, and no other library macro (SH1: a second library of one namespace aborts the process that loads it);
   includes are sources, `hip/`, `ATen/`, `c10/`, `torch/library.h` or a listed standard header (SH2); no
   synchronization, allocation outside torch, IPC, device or process change, environment, I/O or CUDA name (SH3);
-  no `static` or `__device__` variable that is not const (SH4: memory kept between calls is `state` or peer memory); the entry
+  no `static` or `__device__` variable that is not const (SH4: a kernel keeps nothing between calls); the entry
   file's leading comment (SH5).
 
 A host capturing CUDA graphs calls every Point at least once outside a capture first (sglang does). A Point first

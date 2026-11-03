@@ -18,17 +18,16 @@ def dsa_sparse_mla_decode(q, kv_cache, topk_indices, sm_scale): ...
 # implementation (triton, HIP's default), and this is the one the baseline measures.
 @sglang_route(
     "sglang.srt.layers.attention.dsa_backend.DeepseekSparseAttnBackend._forward_triton_decode",
-    versions=">=0.5.22,<0.5.23",
+    versions=("0.5.22",),
 )
 def _forward_triton_decode(self, q_nope, q_rope, kv_cache, v_head_dim, page_table_1, sm_scale):
-    """The decode's attention as one op call on the whole q, the layer's KV pool as rows
-    and the top-k slots (page_table_1), returned as sglang's kernel returns it:
-    [1, tokens, heads, v_head_dim], v_head_dim being q_nope's width (sglang's kernel
-    asserts it). Speculative decoding (MTP) and a q not held as one buffer fall back to
-    sglang; the contract checks the rest (fp8 q and pool, shapes, the top-k's width, the
-    pool's size)."""
+    """The decode's attention as one op call on the whole q, returned as sglang's kernel returns
+    it, [1, tokens, heads, v_head_dim]; v_head_dim is q_nope's width, as sglang's kernel asserts."""
+    from sglang.srt.runtime_context import get_spec
+
     q = _whole_query(q_nope, q_rope)
-    if q is None or _speculative():
+    # speculative decoding's draft steps stay on sglang
+    if q is None or get_spec().speculative_algorithm is not None:
         return FallbackReason.OUT_OF_CONTRACT
     output = dsa_sparse_mla_decode(
         q=q,
@@ -42,9 +41,8 @@ def _forward_triton_decode(self, q_nope, q_rope, kv_cache, v_head_dim, page_tabl
 
 
 def _whole_query(q_nope, q_rope):
-    """The [tokens, heads, latent + rope] q that forward_decode splits into the two views
-    it passes (q_all, as the fused RoPE and cache write leaves it); None for two tensors
-    apart."""
+    """The [tokens, heads, latent + rope] q whose two views forward_decode passes; None for two
+    tensors apart."""
     tokens, heads, latent = q_nope.shape
     width = latent + q_rope.shape[-1]
     if not (
@@ -56,10 +54,3 @@ def _whole_query(q_nope, q_rope):
     ):
         return None
     return q_nope.as_strided((tokens, heads, width), q_nope.stride())
-
-
-def _speculative() -> bool:
-    """Whether sglang decodes speculatively (MTP): its draft steps stay on sglang."""
-    from sglang.srt.runtime_context import get_spec
-
-    return get_spec().speculative_algorithm is not None

@@ -97,8 +97,8 @@ DSA_SPARSE_MLA_DECODE = OpContract(
             ),
             shape=("n_tokens", "n_heads", "kv_lora_rank"),
             dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
-            # as deepseek_v2_attention's: sglang's own kernel, which rounds the softmax
-            # weights to fp8, comes to about 33 dB on these inputs
+            # sglang's own kernel, which rounds the softmax weights to fp8, comes to about
+            # 33 dB on these inputs
             error_bounds=SqnrBound(min_sqnr_db=20.0),
         ),
     },

@@ -70,7 +70,7 @@ The same fold forms at N 6016–8448 and at K 35840 are in [k3_bf16_splitk_wide_
   `torch.empty` and each fold clears its flags (or tags) at the end "for the next call" (n3584's comment): a call
   depends on the previous call having cleared them, and a fold that timed out leaves late producers' flags set
   for the next call to match. `aklr/ops/README.md` § The kernel section and ABI asks for scratch rewritten before
-  it is read, or `state_bytes`; n1536's per-launch tag needs no clearing. n2112's `_count_ready` docstring says the
+  it is read; n1536's per-launch tag needs no clearing. n2112's `_count_ready` docstring says the
   flags hold "this call's tag".
 - **Partials rounded to 24 bits before the fold.** n1280 at m 56–112 and 893 and its tail partial at 2732, and
   n3584 at m 21–56, store each fp32 partial with a 16-bit significand (four in three dwords) and sum them in fp32.

@@ -114,12 +114,9 @@ class OpCase:
         *,
         language: Language = "flydsl",
         other_sources: Mapping[str, str] | None = None,
-        state_bytes: int = 0,
-        peer_bytes: int = 0,
     ) -> OpContract:
         """The schema serving the Point: the contract narrowed to one workload, its kernel
-        ``kernel_source`` in kernel.py (kernel.hip in hip) beside ``other_sources``, keeping
-        ``state_bytes`` between calls and exchanging through ``peer_bytes``."""
+        ``kernel_source`` in kernel.py (kernel.hip in hip) beside ``other_sources``."""
         entry_file = f"kernel{SOURCE_SUFFIXES[language][0]}"
         sources = {entry_file: kernel_source, **(other_sources or {})}
         return self.contract.narrow(
@@ -130,8 +127,6 @@ class OpCase:
                 "targets": [KERNEL_TARGET],
                 "entry_point": f"{entry_file}::run",
                 "sources": [{"path": p, "content": c} for p, c in sorted(sources.items())],
-                "state_bytes": state_bytes,
-                "peer_bytes": peer_bytes,
             },
         )
 

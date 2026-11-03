@@ -259,18 +259,13 @@ class CuSeqlensDistribution(Distribution):
 
 
 class BoundedCuSeqlensDistribution(Distribution):
-    """Positive sequence partitions whose actual maximum is ``max_seqlen``.
-
-    ``first_seqlen=0`` leaves the first partition free; a positive value fixes it.
-    This expresses fixed prefill partitions as well as ragged short sequences,
-    without reading device metadata during dispatch.
-    """
+    """Positive sequence partitions whose actual maximum is ``max_seqlen``, so that dispatch
+    reads no device metadata for it."""
 
     kind: Literal["bounded_cu_seqlens"] = "bounded_cu_seqlens"
     total: str | int
     max_seqlen: str | int
-    first_seqlen: str | int = 0
-    expr_fields = ("total", "max_seqlen", "first_seqlen")
+    expr_fields = ("total", "max_seqlen")
 
     def accepts_dtype(self, dtype):
         return dtype == DType.INT32
@@ -279,14 +274,12 @@ class BoundedCuSeqlensDistribution(Distribution):
         import torch
 
         parts = shape[-1] - 1
-        total, maximum, first = self.total, self.max_seqlen, self.first_seqlen
-        if parts < 1 or maximum < 1 or first < 0 or first > maximum:
+        total, maximum = self.total, self.max_seqlen
+        if parts < 1 or maximum < 1:
             raise ValueError("invalid bounded sequence partition")
-        lengths = [first] if first else [maximum]
-        if first and first != maximum:
-            lengths.append(maximum)
-        remaining = total - sum(lengths)
-        count = parts - len(lengths)
+        lengths = [maximum]
+        remaining = total - maximum
+        count = parts - 1
         if not count <= remaining <= count * maximum:
             raise ValueError("sequence bounds cannot partition the token count")
         for left in range(count, 0, -1):
@@ -295,9 +288,8 @@ class BoundedCuSeqlensDistribution(Distribution):
             length = int(torch.randint(lo, hi + 1, (), generator=generator))
             lengths.append(length)
             remaining -= length
-        fixed = 1 if first else 0
-        order = torch.randperm(parts - fixed, generator=generator).tolist()
-        lengths = lengths[:fixed] + [lengths[i + fixed] for i in order]
+        order = torch.randperm(parts, generator=generator).tolist()
+        lengths = [lengths[i] for i in order]
         offsets = torch.tensor([0, *lengths], dtype=torch.int32).cumsum(0)
         return offsets.expand(shape).to(torch_dtypes(dtype)[0])
 
@@ -309,7 +301,6 @@ class BoundedCuSeqlensDistribution(Distribution):
             & (steps >= 1).all()
             & (steps <= self.max_seqlen).all()
             & (steps.max(dim=-1).values == self.max_seqlen).all()
-            & ((steps[..., 0] == self.first_seqlen).all() if self.first_seqlen else True)
         )
 
 

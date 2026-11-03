@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from torch import Tensor
 
-__all__ = ["add_rms_norm_reference"]
+__all__ = ["add_rms_norm_reference", "rms_norm_reference"]
 
 
 def add_rms_norm_reference(
@@ -18,10 +18,22 @@ def add_rms_norm_reference(
     to_float64: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor]:
     """(normalized, residual_out) from the exact sum x + residual."""
-    total = to_float64(row_major_args["x"], point.dtypes["x"]) + to_float64(
-        row_major_args["residual"], point.dtypes["residual"]
+    args, dtypes = row_major_args, point.dtypes
+    total = to_float64(args["x"], dtypes["x"]) + to_float64(args["residual"], dtypes["residual"])
+    return _normalized(total, to_float64(args["weight"], dtypes["weight"]), args["epsilon"]), total
+
+
+def rms_norm_reference(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+    to_float64: Callable[[Tensor, str], Tensor],
+) -> Tensor:
+    """x times the reciprocal rms of its row, times weight."""
+    args, dtypes = row_major_args, point.dtypes
+    return _normalized(
+        to_float64(args["x"], dtypes["x"]), to_float64(args["weight"], dtypes["weight"]), args["epsilon"]
     )
-    weight = to_float64(row_major_args["weight"], point.dtypes["weight"])
-    mean_square = total.square().mean(dim=-1, keepdim=True)
-    normalized = total * (mean_square + row_major_args["epsilon"]).rsqrt() * weight
-    return normalized, total
+
+
+def _normalized(x: Tensor, weight: Tensor, epsilon: float) -> Tensor:
+    return x * (x.square().mean(dim=-1, keepdim=True) + epsilon).rsqrt() * weight

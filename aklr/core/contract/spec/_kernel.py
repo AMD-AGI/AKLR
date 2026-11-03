@@ -50,13 +50,6 @@ class KernelSpec(FrozenModel):
     author: str = ""
     # "<path>::<symbol>"
     entry_point: str
-    # bytes the kernel keeps between its calls, zeroed once per device and passed as ``state``
-    # (the sync slots of blocks that wait on each other); 0: none
-    state_bytes: Annotated[int, Field(ge=0)] = 0
-    # bytes on every rank of the peer group, each rank's mapped into the others' address space,
-    # zeroed once per device and passed as ``peers`` and ``rank`` (the receive buffers of an
-    # all-reduce inside the kernel); 0: none
-    peer_bytes: Annotated[int, Field(ge=0)] = 0
     sources: tuple[SourceFile, ...]
 
     @field_validator("requires")
@@ -120,10 +113,6 @@ class KernelSpec(FrozenModel):
             data.pop("requires", None)
         if not self.author:
             data.pop("author", None)
-        if not self.state_bytes:
-            data.pop("state_bytes", None)
-        if not self.peer_bytes:
-            data.pop("peer_bytes", None)
         return data
 
     @property
@@ -141,15 +130,10 @@ class KernelSpec(FrozenModel):
 
     @cached_property
     def content_hash(self) -> str:
-        """sha256 of the entry point, the sources and any state or peer memory, so editing
-        ``targets``, ``requires`` or ``author`` rebuilds nothing; never in the json."""
+        """sha256 of the entry point and the sources, so editing ``targets``, ``requires``
+        or ``author`` rebuilds nothing; never in the json."""
         parts: dict[str, Any] = {
             "entry_point": self.entry_point,
             "sources": [[s.path, s.content] for s in self.sources],
         }
-        # one runnable per hash owns the state and the peer memory
-        if self.state_bytes:
-            parts["state_bytes"] = self.state_bytes
-        if self.peer_bytes:
-            parts["peer_bytes"] = self.peer_bytes
         return hashlib.sha256(sorted_key_json(parts).encode()).hexdigest()

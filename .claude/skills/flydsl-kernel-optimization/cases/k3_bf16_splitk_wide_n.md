@@ -71,7 +71,7 @@ large-m paths of the four K 7168 kernels come from one further campaign over the
 - **Flags read before this call writes them.** Where the tag is the same every call (n6016 above m 32, n6144,
   n8448), the workspace comes from `torch.empty` and the fold clears the flags at the end: a call depends on the
   previous call having cleared them, and a timed-out fold leaves late producers' flags set for the next call
-  (`aklr/ops/README.md` § The kernel section and ABI: scratch rewritten before it is read, or `state_bytes`). Each
+  (`aklr/ops/README.md` § The kernel section and ABI: scratch rewritten before it is read). Each
   file's `_count_ready` docstring says the flags hold "this call's tag".
 - **n8448 rounds its partials to 24 bits at m 24–112** (`_pack24`: add 0x80 to the bit pattern and keep the top
   24 bits, round to nearest with ties away from zero) before the fp32 fold; the module docstring says the partials

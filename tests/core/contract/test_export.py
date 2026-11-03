@@ -73,6 +73,36 @@ class TestExport:
         text = committed_path.read_bytes()
         assert registry.parse_schema(text, "copy").schema_text().encode() == text
 
+    def test_a_point_outside_the_domain_is_skipped(self, tmp_path: Path) -> None:
+        """An idle rank's call of no rows: no kernel can serve it, so it adds no schema."""
+        case = OpCase.of("gemm@1.0")
+        empty = case.point.model_copy(update={"axes": {**case.point.axes, "m": 0}})
+        assert not case.contract.domain.contains(empty)
+        record = export.CallRecord(
+            contract_id=case.contract_id,
+            point=empty,
+            scalars={},
+            fallback_reason="no_workload",
+            target=KERNEL_TARGET,
+            n_calls=3,
+        )
+        assert export.export_schemas(None, [record], tmp_path / "export", language="flydsl") == []
+
+    def test_a_point_of_other_keys_is_an_error(self, tmp_path: Path) -> None:
+        """A call recorded under another form of the contract is not taken as outside the domain."""
+        case = OpCase.of("gemm@1.0")
+        stale = case.point.model_copy(update={"axes": {**case.point.axes, "removed": 1}})
+        record = export.CallRecord(
+            contract_id=case.contract_id,
+            point=stale,
+            scalars={},
+            fallback_reason="no_workload",
+            target=KERNEL_TARGET,
+            n_calls=1,
+        )
+        with pytest.raises(ValueError, match="axes"):
+            export.export_schemas(None, [record], tmp_path / "export", language="flydsl")
+
     @pytest.mark.parametrize(
         ("language", "entry_point"),
         [("flydsl", "kernel.py::run"), ("hip", "kernel.hip::run")],

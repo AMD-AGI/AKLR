@@ -64,8 +64,8 @@ kernel as `kernel.sources[0].content` (`kernel.py`); function names below are in
   each call, at most 65536 polls with `s_sleep 1`, stores NaN if a producer has not arrived, and clears the flags
   with plain stores. The fold order is fixed (planes 0, 1, … then its own), so the result is bitwise stable, but a
   flag word is read before this call writes it: correctness depends on the previous call having cleared it.
-  `aklr/ops/README.md` § The kernel section and ABI asks for scratch rewritten before it is read, or
-  `state_bytes`; a per-launch tag (`../gemm/flydsl_gemm_small_m.md` §4) removes the dependency. Its docstring
+  `aklr/ops/README.md` § The kernel section and ABI asks for scratch rewritten before it is read; a
+  per-launch tag (`../gemm/flydsl_gemm_small_m.md` §4) removes the dependency. Its docstring
   (`_sk_count_ready`) says "this call's tag".
 - **A cross-workgroup split lost on k1792's grid.** A one-launch split-K 2 with a flag hand-off measured 9.89 µs at
   m 7 to 15.76 µs at m 98, worse at every Point than the single-pass kernel (6.13–11.55 µs) *(field, E18)*.

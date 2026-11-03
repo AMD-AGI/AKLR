@@ -8,28 +8,27 @@ from aklr.core.contract.semantics import BoundedCuSeqlensDistribution
 
 
 @pytest.mark.parametrize(
-    "total,parts,maximum,first",
+    "total,parts,maximum",
     [
-        (4, 2, 2, 0),
-        (9, 3, 6, 2),
-        (512, 2, 256, 0),
-        (2049, 2, 2048, 0),
-        (8193, 5, 2048, 0),
-        (15361, 8, 2048, 0),
-        (15000, 3, 5000, 0),
-        (16384, 2, 8192, 0),
-        (16384, 2, 10000, 10000),
+        (4, 2, 2),
+        (9, 3, 6),
+        (512, 2, 256),
+        (2049, 2, 2048),
+        (8193, 5, 2048),
+        (15361, 8, 2048),
+        (15000, 3, 5000),
+        (16384, 2, 8192),
+        (16384, 2, 10000),
     ],
 )
-def test_partitions_have_the_declared_actual_maximum(total, parts, maximum, first):
-    distribution = BoundedCuSeqlensDistribution(total=total, max_seqlen=maximum, first_seqlen=first)
+def test_partitions_have_the_declared_actual_maximum(total, parts, maximum):
+    distribution = BoundedCuSeqlensDistribution(total=total, max_seqlen=maximum)
     for seed in range(5):
         sampled = distribution.sample((parts + 1,), "int32", torch.Generator().manual_seed(seed))
         lengths = sampled.diff().tolist()
         assert sampled[0] == 0 and sampled[-1] == total
         assert len(lengths) == parts and min(lengths) > 0
         assert max(lengths) == maximum
-        assert not first or lengths[0] == first
         assert distribution.contains(sampled, "int32")
 
 
