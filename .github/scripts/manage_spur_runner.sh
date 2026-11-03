@@ -12,8 +12,9 @@
 # AKLR_SPUR_ACCOUNT and AKLR_SPUR_PARTITION each hold one or more names separated
 # by commas and/or whitespace. prepare submits one allocation per account and
 # partition pair under the same job name; the first to start running is kept and
-# every other one is cancelled. The registration token is consumed by the first
-# bootstrap, so a losing allocation that also starts cannot register a runner.
+# every other one is cancelled. The registration token is written only once every
+# other allocation has ended, so the kept allocation is the only one that can
+# register the runner; its bootstrap downloads the runner meanwhile and waits for it.
 #
 # release takes the runner name prepare published, so a re-run attempt that reuses
 # an earlier attempt's outputs releases that attempt's resources; the name must
@@ -315,7 +316,7 @@ release_runner() {
 
     # End the allocation first, so bootstrap cannot register after our deletion.
     remove_github_runner || return 1
-    rm -f -- "$handoff_dir/registration-token" || return 1
+    rm -f -- "$handoff_dir/registration-token" "$handoff_dir/registration-token.partial" || return 1
     echo "Released $runner_name; node cleanup is handled by Spur."
 }
 
@@ -325,31 +326,23 @@ on_prepare_exit() {
     local exit_status=$?
     trap - EXIT INT TERM
 
-    if [[ $runner_ready != true ]]; then
-        if [[ $submission_started == true ]]; then
-            if ! release_runner; then
-                echo "::error::Release incomplete; inspect Spur job $runner_name and GitHub runner $runner_name" >&2
-            fi
-        else
-            rm -f -- "$handoff_dir/registration-token"
-        fi
+    # The token is written only after submission, and release removes it.
+    if [[ $runner_ready != true && $submission_started == true ]] && ! release_runner; then
+        echo "::error::Release incomplete; inspect Spur job $runner_name and GitHub runner $runner_name" >&2
     fi
     exit "$exit_status"
 }
 
-write_bootstrap_input() {
-    local registration_token bootstrap_source
+# Renamed into place, so a waiting bootstrap never reads a partial token.
+write_registration_token() {
+    local registration_token
 
     registration_token=$(github_api --method POST \
         "repos/$GITHUB_REPOSITORY/actions/runners/registration-token" --jq '.token')
     [[ $registration_token =~ ^[A-Za-z0-9_-]{20,4096}$ ]] || die 'Invalid GitHub registration token response'
-    printf '%s' "$registration_token" > "$handoff_dir/registration-token"
+    printf '%s' "$registration_token" > "$handoff_dir/registration-token.partial"
     unset registration_token
-
-    # Snapshot the trusted script before submitting: another Host checkout must
-    # not alter a queued allocation's bootstrap. The Host API token stays local.
-    bootstrap_source="$(dirname -- "${BASH_SOURCE[0]}")/run_gpu_runner.sh"
-    cp -- "$bootstrap_source" "$handoff_dir/run_gpu_runner.sh"
+    mv -- "$handoff_dir/registration-token.partial" "$handoff_dir/registration-token"
 }
 
 submit_allocations() {
@@ -428,16 +421,14 @@ wait_for_allocation() {
     done
 }
 
-# A failed cancellation is retried by release, which cancels by job name.
+# Every other allocation must have ended before the token is written: one still
+# running could take it. Failing here lets the EXIT handler release them all.
 cancel_other_allocations() {
     local other_ids id
 
-    if ! other_ids=$(list_other_allocations "$allocation_id"); then
-        echo '::warning::Could not list the other allocations; release will cancel them' >&2
-        return 0
-    fi
+    other_ids=$(list_other_allocations "$allocation_id") || die 'Could not list the other allocations'
     for id in $other_ids; do
-        cancel_allocation "$id" || echo "::warning::Could not cancel allocation $id; release will retry" >&2
+        cancel_allocation "$id" || die "Could not cancel allocation $id"
     done
     allocation_ids=("$allocation_id")
 }
@@ -478,12 +469,15 @@ prepare_runner() {
     trap 'exit 130' INT
     trap 'exit 143' TERM
 
-    write_bootstrap_input
+    # Snapshot the trusted script before submitting: another Host checkout must
+    # not alter a queued allocation's bootstrap. The Host API token stays local.
+    cp -- "$(dirname -- "${BASH_SOURCE[0]}")/run_gpu_runner.sh" "$handoff_dir/run_gpu_runner.sh"
     # Submission and queueing share one budget; bootstrap gets a separate budget.
     queue_deadline=$((SECONDS + QUEUE_TIMEOUT_SECONDS))
     submit_allocations "$queue_deadline"
     wait_for_allocation "$queue_deadline"
     cancel_other_allocations
+    write_registration_token
     publish_workflow_outputs
     wait_for_runner
 

@@ -7,6 +7,10 @@ set +x
 set -euo pipefail
 umask 077
 
+# The Host writes the token once it has kept this allocation and ended the others;
+# a Host that never does (it died before release) must not hold the node for its time limit.
+readonly TOKEN_WAIT_SECONDS=1800
+
 # Initialized by parse_arguments and shared by the bootstrap steps below.
 repository=''
 runner_name=''
@@ -45,12 +49,8 @@ parse_arguments() {
 }
 
 validate_runtime() {
-    if [[ $registration_token_file != /* || ! -f $registration_token_file ||
-          -L $registration_token_file ]]; then
-        die 'Registration token must be an absolute path to a regular file'
-    fi
-    if [[ $(stat -c '%u:%a' "$registration_token_file") != "$(id -u):600" ]]; then
-        die 'Registration token must be owned by this user with mode 0600'
+    if [[ $registration_token_file != /* ]]; then
+        die 'Registration token must be an absolute path'
     fi
     if ((EUID == 0)); then
         die 'Run the GPU runner as a non-root user'
@@ -83,8 +83,16 @@ download_runner() {
 }
 
 register_runner() {
-    local registration_token
+    local registration_token deadline=$((SECONDS + TOKEN_WAIT_SECONDS))
 
+    until [[ -e $registration_token_file ]]; do
+        ((SECONDS < deadline)) || die 'The Host did not hand over a registration token'
+        sleep 2
+    done
+    if [[ ! -f $registration_token_file || -L $registration_token_file ||
+          $(stat -c '%u:%a' "$registration_token_file") != "$(id -u):600" ]]; then
+        die 'Registration token must be a regular file owned by this user with mode 0600'
+    fi
     registration_token=$(cat "$registration_token_file")
     rm -- "$registration_token_file"
     if [[ ! $registration_token =~ ^[A-Za-z0-9_-]{20,4096}$ ]]; then
