@@ -163,7 +163,7 @@ def cfg(server_args):
     return resolving_view(server_args)
 
 
-def build_server_args(args: argparse.Namespace, cuda_graph: bool = False):
+def build_server_args(args: argparse.Namespace):
     """Fill in defaults suited to a micro-bench run."""
     from sglang.srt.server_args import ServerArgs
 
@@ -171,7 +171,7 @@ def build_server_args(args: argparse.Namespace, cuda_graph: bool = False):
 
     warn_if_dummy_weights(args.load_format)
     # Eager is required: with sglang's graph on, record_inputs() pre-hooks never fire.
-    args.disable_cuda_graph = not (args.full_step or cuda_graph)
+    args.disable_cuda_graph = not args.full_step
     # `auto` is bf16, doubling attention bytes per token; production runs fp8.
     if args.kv_cache_dtype == "auto":
         args.kv_cache_dtype = "fp8_e4m3"

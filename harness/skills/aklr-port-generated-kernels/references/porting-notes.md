@@ -6,7 +6,7 @@ Traps met turning agent-generated kernels into AKLR schemas, and what settled ea
 
 - **Triage on AKLR's Points first.** Generated kernels are often specialized to the source's
   workload. A MoE kernel whose fast path (the routing sort folded into stage 1) was enabled only for
-  token counts 6, 12, …, 42 ran at 1.00 – 1.06× AITER on AKLR's 8 – 64 Points as shipped, and 1.09 – 1.15×
+  token counts 6, 12, …, 42 ran at 1.00 – 1.06× the baseline on AKLR's 8 – 64 Points as shipped, and 1.09 – 1.15×
   once the fast path was enabled for them. Read every environment gate and per-shape table before
   timing.
 - **Confirm the fast path ran.** Sources wrap optimizations in `try` / `except` that fall back to the

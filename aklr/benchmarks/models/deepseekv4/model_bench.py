@@ -175,7 +175,7 @@ def cfg(server_args):
     return resolving_view(server_args)
 
 
-def build_server_args(args: argparse.Namespace, cuda_graph: bool = False):
+def build_server_args(args: argparse.Namespace):
     """Validate the supported V4 workload before resolving native server flags."""
     from sglang.srt.server_args import ServerArgs
 
@@ -191,7 +191,7 @@ def build_server_args(args: argparse.Namespace, cuda_graph: bool = False):
     require_aiter()
     warn_if_dummy_weights(args.load_format)
     # Module hooks need Python forwards; each op gets its own graph instead.
-    args.disable_cuda_graph = not (args.full_step or cuda_graph)
+    args.disable_cuda_graph = not args.full_step
     if args.kv_cache_dtype == "auto":
         args.kv_cache_dtype = "fp8_e4m3"
     server_args = ServerArgs.from_cli_args(args)
@@ -272,12 +272,6 @@ def setup(server_args, port_args, gpu_id: int, tp_rank: int, tag: str = "BENCH")
     configure_logger(server_args, prefix=f" TP{tp_rank}")
     # as the scheduler process does: sglang.srt.plugins hooks (AKLR's dispatch) attach
     load_plugins()
-    # load_routes proxies aiter's entry points only: proxy sglang's too, so AKLR_EXPORT records them
-    from aklr.core.runtime import seam
-    from aklr.ops import load_routes
-
-    load_routes()
-    seam.aklr_proxy()
 
     model_runner = load_model(server_args, port_args, gpu_id, tp_rank)[0].torch_runner
 

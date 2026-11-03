@@ -8,12 +8,6 @@ from __future__ import annotations
 __all__ = ["deepseek_v2_mxfp4_moe_baseline"]
 
 
-def _aiter(fn):
-    """aiter's own body, not AKLR's stand-in: the speedup is over aiter."""
-    proxy = getattr(fn, "aklr_proxy", None)
-    return fn if proxy is None else proxy.backend_fn
-
-
 def _check_aiter_path() -> None:
     """Raise unless sglang takes the aiter path the baseline replays, chosen at import."""
     from sglang.srt.layers.quantization import unquant
@@ -53,7 +47,7 @@ def _route(
     shape, device = (hidden_states.shape[0], topk), hidden_states.device
     weights = torch.empty(shape, dtype=torch.float32, device=device)
     ids = torch.empty(shape, dtype=torch.int32, device=device)
-    _aiter(biased_grouped_topk)(
+    biased_grouped_topk(
         logits,
         _in_dtype(correction_bias, logits.dtype),
         weights,
@@ -102,7 +96,7 @@ def deepseek_v2_mxfp4_moe_baseline(
         routed_scaling_factor,
     )
     ids, weights = fused_append_shared_experts(ids, weights, 1, 1.0, router_weight.shape[0])
-    return _aiter(fused_moe)(
+    return fused_moe(
         hidden_states,
         w1,
         w2,

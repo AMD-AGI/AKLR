@@ -14,7 +14,7 @@ import json
 import sys
 from collections import defaultdict
 
-PACKAGES = ("aklr", "aiter")
+PACKAGES = ("aklr",)
 # JIT kernel paths are excluded by [tool.coverage.report] in pyproject.toml.
 # Top-level groups whose sub-packages are shown as indented detail rows; every
 # other group (common, ...) is a single bold row.
@@ -97,7 +97,7 @@ def render(reports: list) -> str:
     groups = [g for g in agg if group_totals(g)[1] > 0]
     tc = sum(group_totals(g)[0] for g in groups)
     tn = sum(group_totals(g)[1] for g in groups)
-    out = ["## AKLR / AITER coverage\n"]
+    out = ["## AKLR coverage\n"]
     out.append(
         "**Total line coverage: {:.1f}%** ({} / {} statements; excludes JIT kernel bodies)\n".format(
             _pct(tc, tn), format(tc, ","), format(tn, ",")

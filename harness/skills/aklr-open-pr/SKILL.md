@@ -46,7 +46,7 @@ what each kind needs) and [.github/scripts/review_tier/policy.py](../../../.gith
    `Risk` names what is affected, how it fails if wrong, and how to undo it.
 5. **Title**: Conventional Commits, `type(scope): subject`, e.g. `feat(flydsl): ...`.
 6. **Open or update** with `gh pr create --base main --body-file <file>` or `gh pr edit`. Add
-   `ci:gpu` for kernels and code, `ci:e2e` when the e2e stage is part of the evidence.
+   `ci:gpu` for kernels and code.
 7. **Check** `gh pr checks <number>` for the `review-tier` status and the kinds it found. When
    its kinds differ from the body's, the body is wrong: fix it.
 

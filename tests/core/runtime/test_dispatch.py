@@ -22,7 +22,7 @@ from aklr.core.platform.env import (
     ENV_EXPORT_DIR,
     ENV_MIN_SPEEDUP,
 )
-from aklr.core.runtime import LoadError, seam
+from aklr.core.runtime import LoadError
 from aklr.core.runtime.builder import BuilderRegistry
 from aklr.core.runtime.dispatch import (
     CallRecorder,
@@ -349,10 +349,10 @@ class TestDispatcherRegistry:
         """An op's ``baseline.py`` that fails to import fails the init as a
         ``LoadError``, the error a host catches."""
 
-        def baseline_of(contract: OpContract) -> str:
+        def baseline(contract: OpContract) -> None:
             raise ModuleNotFoundError("No module named 'sglang'", name="sglang")
 
-        monkeypatch.setattr(seam, "baseline_of", baseline_of)
+        monkeypatch.setattr(OpContract, "baseline", baseline)
         with pytest.raises(LoadError, match="its baseline"):
             default_dispatchers.init()
 
@@ -368,7 +368,7 @@ class TestDispatcherRegistry:
                 [],
             ),
         )
-        monkeypatch.setattr(seam, "baseline_of", lambda contract: None)
+        monkeypatch.setattr(OpContract, "baseline", lambda contract: None)
         target = DeviceTarget.from_names(**KERNEL_TARGET)
         monkeypatch.setattr(
             DispatcherRegistry,
@@ -423,7 +423,7 @@ class TestDispatcherRegistry:
             monkeypatch.setenv(ENV_MIN_SPEEDUP, "0")
         else:
             monkeypatch.delenv(ENV_MIN_SPEEDUP, raising=False)
-            monkeypatch.setattr(seam, "baseline_of", lambda contract: None)
+            monkeypatch.setattr(OpContract, "baseline", lambda contract: None)
         default_dispatchers.init()
         contract = OpCase.of("gemm@1.0").contract
         schemas, errors = ContractRegistry.default().read_schemas(contract.op_package)

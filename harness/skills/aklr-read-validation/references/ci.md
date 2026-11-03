@@ -5,12 +5,11 @@ Sources: `.github/workflows/ci.yaml` (`validation` job),
 
 ## Scope
 
-- GPU jobs run on a same-repository PR labelled `ci:gpu`. On a PR the e2e stage
-  (`glm52-decode-tp8-conc1`) runs only with `ci:e2e`; a push to main always runs it.
+- GPU jobs run on a same-repository PR labelled `ci:gpu`.
 - `python -m aklr validate --base <base>` with no schema paths, as CI runs it, picks:
   - the changed schemas, when every changed path is a schema file or a document (`docs/`, `*.md`);
-  - **every committed schema** otherwise. A PR that also touches an op's Python, `aiter/`, tests or
-    any other file benches all of them (one such run: 88 schemas, 559 Points, 39 minutes on 8 GPUs)
+  - **every committed schema** otherwise. A PR that also touches an op's Python, tests or any
+    other file benches all of them (one such run: 88 schemas, 559 Points, 39 minutes on 8 GPUs)
     and fails on any finding, another kernel's included.
 - CI validates the merge of the PR head into its base, so main's newest kernels are in it.
 
@@ -29,11 +28,11 @@ Sources: `.github/workflows/ci.yaml` (`validation` job),
 
 - Top level: `version`, `head_sha`, `base_sha`, `measurement_profile`, `platform`, `schema_paths`,
   `bench_paths`, `stages`.
-- `stages[]` has `stage_name` (`audit`, `bench`, `e2e`), `status`, `findings[]` (`code`,
+- `stages[]` has `stage_name` (`audit`, `bench`), `status`, `findings[]` (`code`,
   `schema_path`, `axes`, `detail`); the bench stage adds `demotions[]` and `workload_records[]`.
 - A workload record: `schema_path`, `axes`, `kernel_content_hash`, `baseline` (what it was timed
-  against: an AITER route or a committed schema), `is_timed`, `is_kept`, `worst_violation_fraction`,
-  `timings[]`.
+  against: a `<contract>_baseline` function or a committed schema), `is_timed`, `is_kept`,
+  `worst_violation_fraction`, `timings[]`.
 - A timing: `mode` (`graph`), `versus` (`baseline` or `incumbent`), `threshold` (`entry` or
   `retain`), `n_rounds`, `ratio_lower_bound` (the gate's, clamped), `log_ratio_mean` and `min_ratio`
   (unclamped), and the per-round `candidate_milliseconds` / `versus_milliseconds`.

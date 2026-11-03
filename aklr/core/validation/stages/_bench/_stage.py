@@ -133,8 +133,6 @@ class BenchStage(PipelineStage[BenchReport]):
         path: Path,
         registry: ContractRegistry,
     ) -> list[tuple[TrialRequest, ...]]:
-        from aklr.core.runtime import seam  # torch: only once a bench runs
-
         base_sha = scope.base_sha
         path = path.resolve()
         schema_path = path.relative_to(scope.root.resolve()).as_posix()
@@ -142,7 +140,8 @@ class BenchStage(PipelineStage[BenchReport]):
         if not schema.kernel.sources:  # a definition: no kernel to bench
             return []
         contract = registry.get(schema.contract_id)
-        defined_baseline = seam.baseline_of(contract)
+        baseline = contract.baseline()
+        defined_baseline = None if baseline is None else f"{baseline.__module__}.{baseline.__qualname__}"
         # dispatch's rule: a kernel must beat the defined baseline, if there is one
         min_speedup = RuntimeEnv().min_speedup if defined_baseline is not None else 0
         incumbents = self._incumbents(scope, schema_path, schema, contract, min_speedup) if base_sha else {}
@@ -385,11 +384,10 @@ class BenchStage(PipelineStage[BenchReport]):
                         if gated is not None:
                             found.append(gated)
             located = {"schema_path": schema_path, "axes": request.workload.axes}
-            # a defined baseline is named by what bound (of several routes, the first
-            # to bind); none bound: nothing ran, nothing to export
+            # a defined baseline is named once it timed; untimed: nothing to export
             baseline = request.baseline
             if baseline is not None and not baseline.endswith(".json"):
-                baseline = None if batch_findings else candidate_result.baseline
+                baseline = None if batch_findings or not candidate_result.rounds else baseline
             findings += [f.model_copy(update=located) for f in found]
             records.append(
                 WorkloadRecord(

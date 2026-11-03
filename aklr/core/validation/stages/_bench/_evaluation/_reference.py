@@ -65,9 +65,7 @@ def run_reference(
 ) -> dict:
     """Compare the batch's results with the float64 reference; returns ``ReferenceResult`` json."""
     from aklr.core.runtime.builder import KERNEL_PACKAGE_PREFIX
-    from aklr.ops import load_routes
 
-    load_routes()
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     directory_descriptor = os.open(candidate_dir, flags)
     try:
@@ -104,8 +102,6 @@ class WorkloadEvaluation:
     def evaluate(self) -> ReferenceWorkloadResult:
         import torch
         from safetensors import SafetensorError
-
-        from aklr.core.runtime import seam
 
         request, device = self.request, self.device
         contract, point = request.contract, request.point
@@ -166,10 +162,11 @@ class WorkloadEvaluation:
                     reference_fn(point, row_major_args | magnitudes, semantics.to_float64)
                 )
             if request.has_error_bound("baseline_relative"):
+                baseline = contract.baseline()
+                if baseline is None:
+                    raise ValueError(f"{contract.contract_id}: a baseline_relative bound needs a baseline")
                 call = request.assemble_call(row_major_args, device)
-                compare_kwargs["baseline_outputs"] = contract.call_mutable_tensors(
-                    seam.backend_call(contract, call), call
-                )
+                compare_kwargs["baseline_outputs"] = contract.call_mutable_tensors(baseline(**call), call)
             compare_kwargs = {
                 kind: {r: t.cpu() for r, t in tensors.items()} for kind, tensors in compare_kwargs.items()
             }

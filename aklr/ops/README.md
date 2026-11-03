@@ -5,13 +5,14 @@ in the file it names; when the two disagree, the named file wins.
 
 ```
 aklr/ops/
-  __init__.py                  load_routes(): registers every route, proxies aiter's entry points
+  __init__.py                  re-exports op apis
   README.md                    this file
   <op>/                        biased_grouped_topk, gemm, fused_moe, mhc, mla, rms_norm, topk
     __init__.py                re-exports api.py's apis
     contract.py                OpContract constants, CONTRACTS
     reference.py               one <contract>_reference per contract
-    api.py                     one @api function and at least one route per contract
+    api.py                     one @api function per contract
+    baseline.py                one <contract>_baseline per contract that has a baseline
     impls/<language>/<name>/<uuid>.json        one kernel and the workloads it serves
 ```
 
@@ -100,7 +101,7 @@ read through the op's `contract.py`); a schema file's `inputs` and `outputs` ite
   picks one) is one of `dot_product`, `output_rounding`, `baseline_relative`, `tolerance`, `sqnr` (whole-output
   SQNR against the reference rounded to the output dtype); each formula is an `ErrorBound` kind in
   `semantics/_compare.py`. An integer one has none and must equal the reference exactly. `baseline_relative` needs
-  the baseline's output: outside the repository, call the contract's api baseline yourself.
+  the baseline's output: outside the repository, call the contract's `<contract>_baseline` yourself.
 - `compare.element_order` is `fixed` (element by element) or `any_in_full_rows` (integer outputs only: a row
   holding no padding may list its entries in any order); each is an `ElementOrder` member.
 - The reference is `<contract>_reference(point, row_major_args, to_float64) -> Tensor` (a tuple when there are
@@ -251,7 +252,7 @@ once per file; changing it is rejected, not a way to change the inputs.
 axes in contract order, sorted by their values, each Point once. A var axis the contract declares `any_size`
 (the rows of a KV cache, which the kernel does not depend on) is served at every value of its domain: its workload
 values are only the sizes bench runs. `scalars` holds every present scalar input, a
-captured or authored value inside its declared range; it is omitted when the schema has none. `speedup` (over aiter) and
+captured or authored value inside its declared range; it is omitted when the schema has none. `speedup` (over `<contract>_baseline`) and
 `accuracy` are written by CI on every workload or none (a `failed` one may lack `speedup`; it is never dispatched),
 with one complete `kernel.targets` item.
 
@@ -309,7 +310,7 @@ A schema file carries no semantics stamp. After a change to the schema format, r
 |---|---|---|
 | `python -m aklr export [--from DIR] [--to DIR] [--language L]` | export (`--from` and `--to` default to `AKLR_EXPORT_DIR`, else `./aklr_export`; `--language` required); fails with `no calls.*.jsonl in DIR` when there are no calls | 0 done, 1 error, 2 usage |
 | `python -m aklr export check` | checks every committed schema and `impls/`; no GPU, no environment | 0 clean, 1 problems on stderr, 2 usage |
-| `python -m aklr validate [PATH ...] [--base REV] [--stages audit,bench,e2e] ...` | audit, bench and e2e stages (default: audit, bench); writes `aklr_validation/report.json` and `report.md` | 0 passed, 1 failed, 2 usage, 3 aborted |
+| `python -m aklr validate [PATH ...] [--base REV] [--stages audit,bench] ...` | audit and bench stages (default: both); writes `aklr_validation/report.json` and `report.md` | 0 passed, 1 failed, 2 usage, 3 aborted |
 
 Options and stages of `validate`: `python -m aklr validate --help`.
 
@@ -320,9 +321,9 @@ Read only by `RuntimeEnv()` in `aklr/core/platform/env.py`.
 | Variable | Values | Effect |
 |---|---|---|
 | `AKLR_DISABLE` | `1`, `0`, unset, `<contract_id>,...` | emergency stop: every contract, or the listed ones, falls back |
-| `AKLR_MIN_SPEEDUP` | a finite number | the least measured `speedup` over aiter that a workload needs to be served, default `1.03`; `0` or less also serves unmeasured workloads, never a `failed` one |
+| `AKLR_MIN_SPEEDUP` | a finite number | the least measured `speedup` over the baseline that a workload needs to be served, default `1.03`; `0` or less also serves unmeasured workloads, never a `failed` one |
 | `AKLR_KERNEL_CACHE_DIR` | a path | where kernels are materialized; default `${XDG_CACHE_HOME:-$HOME/.cache}/aklr/kernels` |
 | `AKLR_EXPORT` | `1`, `0`, unset | record calls; any other value is an error |
 | `AKLR_EXPORT_DIR` | a path | the export directory, default `./aklr_export`; setting it alone records nothing |
-| `AKLR_MEASURED_DIR` | a path | a directory laid out like the checkout whose schemas replace the committed ones they name; set by the e2e stage for its child processes |
+| `AKLR_MEASURED_DIR` | a path | a directory laid out like the checkout whose schemas replace the committed ones they name |
 | `AKLR_SGLANG_PLUGIN` | `1`, `0`, unset | `1`: the sglang plugin hooks sglang's layers to its ops (`aklr/plugins/README.md`); any other value is an error |

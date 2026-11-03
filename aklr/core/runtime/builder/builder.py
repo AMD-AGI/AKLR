@@ -11,7 +11,7 @@
 # Modified for aklr/core/runtime/builder
 #
 # This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
-# not the MIT license that covers the rest of aiter (see LICENSE).
+# not the MIT license that covers the rest of AKLR (see LICENSE).
 ###############################################################################
 
 

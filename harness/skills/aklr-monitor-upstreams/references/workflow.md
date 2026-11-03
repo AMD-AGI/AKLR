@@ -12,9 +12,8 @@
 4. **Deduplicate.** Search AKLR, active pull requests, and prior candidate
    records for equivalent operator, algorithm, architecture, and shape work.
 5. **Classify and route.** Send generated implementations to
-   `aklr-port-generated-kernels`; send human-written AITER performance changes
-   to `aklr-sync-aiter`. Flag interface-only, correctness, or security changes
-   for human triage.
+   `aklr-port-generated-kernels`. Flag interface-only, correctness, or security
+   changes for human triage.
 6. **Report and checkpoint.** Rank candidates by supported-workload relevance
    and evidence quality. Update external monitoring state only when the
    scheduled workflow explicitly authorizes that mutation.

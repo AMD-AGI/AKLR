@@ -24,12 +24,6 @@ __all__ = [
 _N_SHARED = 1  # the shared expert fused into the experts' last slot
 
 
-def _aiter(fn):
-    """aiter's own body, not AKLR's stand-in: the speedup is over aiter."""
-    proxy = getattr(fn, "aklr_proxy", None)
-    return fn if proxy is None else proxy.backend_fn
-
-
 def _check_aiter_path() -> None:
     """Raise unless sglang takes the aiter path the baselines replay: it is chosen at
     import, from SGLANG_USE_AITER=1 on gfx950."""
@@ -132,7 +126,7 @@ def _experts(hidden_states, weights, ids, w1, w1_scale, w2, w2_scale):
                     return out
         except smallm.SmallMMoeUnavailable:
             pass
-    return _aiter(fused_moe)(
+    return fused_moe(
         hidden_states,
         w1,
         w2,

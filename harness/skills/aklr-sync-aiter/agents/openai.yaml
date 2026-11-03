@@ -1,4 +1,0 @@
-interface:
-  display_name: "Sync AITER"
-  short_description: "Evaluate and selectively sync AITER improvements"
-  default_prompt: "Use $aklr-sync-aiter to evaluate an AITER change for AKLR."

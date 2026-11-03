@@ -74,7 +74,7 @@ KV is randomized instead of populated by a real prefix forward, and expert routi
 
 Inputs are recorded before in-place mutation, outside the timing clocks; tensor snapshots may increase preparation memory. Native batch metadata stays shared and scoped MoE flags are restored per replay. Parent decode rows cycle through real layers of the same kind; small matrix weights rotate through a buffer larger than MI355X's last-level cache.
 
-**Top kernels** ranks kernel groups by their share of the step, each grouped under its innermost AKLR-routed API; `target` marks the top 5.
+**Top kernels** ranks kernel groups by their share of the step, each grouped under the Python/dispatcher API that launched it; `target` marks the top 5.
 
 `ratio` is a cross-check, not a completeness proof: a residual is a subtraction, so the roll-up can balance despite missing or mismeasured child rows. Synthetic forward throughput is not serving throughput. Every report carries source/version information so measurements from different implementations can be distinguished.
 
@@ -104,7 +104,7 @@ The first three layers route by hash; the rest use a learned gate. The benchmark
 
 ## AKLR schema export
 
-Record every call that reaches a AKLR operator (an `@api` function, or an AITER entry point bound by `aklr_proxy`) during a run, then export the schemas:
+Record every call of a AKLR `@api` function during a run, then export the schemas:
 
 ```bash
 export AKLR_EXPORT=1
@@ -112,7 +112,7 @@ export AKLR_EXPORT_DIR=/tmp/aklr_export   # default: ./aklr_export, relative to 
 python -m aklr export --language flydsl   # from the repository root, after the run
 ```
 
-See the workflow in `aklr/ops/README.md`. Native SGLang/AITER calls that do not go through AKLR are not recorded.
+See the workflow in `aklr/ops/README.md`. Native SGLang/AITER calls are not recorded.
 
 ## Decode sweep
 

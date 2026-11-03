@@ -7,7 +7,7 @@ review contract, not an automated CI implementation.
 
 - The source and provenance are recorded.
 - The kernel has a meaningful name and follows AKLR placement conventions.
-- The public integration path remains AITER-compatible.
+- The public integration path is the contract's `@api` function.
 - Dispatch, fallback behavior, and supported GPU scope are clear.
 
 ## Gate 2: Kernel Qualification

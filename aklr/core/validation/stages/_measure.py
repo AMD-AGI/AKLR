@@ -8,7 +8,6 @@ import math
 import random
 import statistics
 from collections.abc import Callable, Mapping, Sequence
-from contextlib import AbstractContextManager
 from types import MappingProxyType
 from typing import Any, Literal, NamedTuple, get_args
 
@@ -232,7 +231,6 @@ class Clock(NamedTuple):
     def time_rounds(
         self,
         fns: Mapping[Participant, Callable[[], object]],
-        context_fns: Mapping[Participant, Callable[[], AbstractContextManager]],
         *,
         seed: int,
     ) -> tuple[RoundTimes, ...]:
@@ -242,16 +240,14 @@ class Clock(NamedTuple):
         is_gc_enabled = gc.isenabled()
         gc.disable()
         try:
-            with context_fns["baseline"]():
-                self.graph_reading(fns["baseline"])
+            self.graph_reading(fns["baseline"])
             for mode in get_args(Mode):
                 for round_index in range(-N_WARMUP_ROUNDS, N_ROUNDS):
                     order_seed = derive_seed(seed, "order", mode, round_index)
                     order = random.Random(order_seed).sample(participants, k=len(participants))
                     milliseconds = {}
                     for p in order:
-                        with context_fns[p]():
-                            milliseconds[p] = self.graph_reading(fns[p])
+                        milliseconds[p] = self.graph_reading(fns[p])
                     if round_index >= 0:
                         rounds.append(
                             RoundTimes(
