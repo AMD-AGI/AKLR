@@ -32,13 +32,9 @@ An engine calls an AKLR operator. AKLR checks the inputs and picks a kernel that
 
 ## The Kernel Rosetta Stone
 
-The **Kernel Rosetta Stone** is a guide that helps agents write fast AMD kernels. It lives in [`harness/skills/flydsl-kernel-optimization/`](../harness/skills/flydsl-kernel-optimization/SKILL.md). The guide is not code that runs during inference.
+The **Kernel Rosetta Stone** is a guide for agents writing AMD kernels. It brings together tips from handwritten kernels, AMD architecture and CDNA4 ISA documents, and real examples. Start at [`SKILL.md`](../harness/skills/flydsl-kernel-optimization/SKILL.md). As of 2026-11-03, it has **131 pages** and **1,192 findings with sources**.
 
-It collects lessons from handwritten AMD kernels, AMD architecture documents, and the CDNA4 ISA guide. Pages cover GEMM, grouped GEMM, attention, MoE, debugging, measurement, and [real kernel examples](../harness/skills/flydsl-kernel-optimization/cases/INDEX.md). An agent can find an idea, try it, and check the result on a GPU.
-
-Start with [`SKILL.md`](../harness/skills/flydsl-kernel-optimization/SKILL.md), which points to a page for each task or problem. As of 2026-11-03, the guide has **131 Markdown pages** (including indexes) and **1,192 findings with sources**. Each measured result says what was tested and where the number came from. New pages follow the [review rules](../harness/skills/flydsl-kernel-optimization/CONTRIBUTING.md).
-
-We want the guide to help agents reach the same speed sooner, use fewer tokens, and find faster kernels. We have not tested the same task with and without the guide yet, so we do not claim a measured gain. To test it, keep the task, agent, GPU, and budget the same. Then compare the time and tokens needed to reach a qualifying kernel, and the best speedup at the same budget.
+It aims to help agents reach the same speed sooner, use fewer tokens, and find faster kernels. We have not yet measured this by running the same task with and without the guide.
 
 ## Install
 
