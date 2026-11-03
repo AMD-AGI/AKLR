@@ -5,7 +5,9 @@ full design. Each week it:
 
 1. **resolves** InferenceX `main`'s `glm5.2-fp4-mi355x-sglang-agentic-mtp` entry and its recipe
    (`glm5.2/sglang/mi355x-fp4-mtp/agentic.yaml`) into one launch spec per point: 2 arms
-   (`tp8`: c1, c2, c4; `tp4` + HiCache: c4 … c16), 9 points. The grid, the serving
+   (`tp8`: c1, c2, c4; `tp4` + HiCache: c4 … c16), 9 points at `70a7601`. A point InferenceX
+   adds outside these arms becomes its own arm with a warning (`c5e8b9b` added
+   `tp4-ep4-none`, c16 … c48). The grid, the serving
    configuration and the client all come from that one InferenceX commit, through
    InferenceX's own matrix and binding code (`agentx_ci/ix_points.py`);
 2. **sweeps** the points one at a time on an MI355X self-hosted runner, in the AKLR CI image
@@ -29,12 +31,15 @@ benchmarks/agentx/
   agentx_ci/prs.py                     git log --first-parent between two AKLR commits
   agentx_ci/report.py                  index.html, results.json, report.json
   tests/                               unittest; data/ holds InferenceX 70a7601's own output
+scripts/agentx/install_aklr.sh         ci.yaml's AKLR install, in the image, for the sweep
+scripts/agentx/run_local.sh            one sweep on this host in the image, outside Actions
 scripts/agentx/register_runner.sh      register an MI355X host as a runner
 ```
 
 ## Run it locally in mock mode
 
-Needs Python ≥ 3.10, PyYAML, git, and network access to GitHub for the InferenceX fetch; no GPU.
+Needs PyYAML, git, and network access to GitHub for the InferenceX fetch; no GPU. `resolve` runs
+InferenceX's own code, which needs Python ≥ 3.12; the other steps run on ≥ 3.10.
 
 ```bash
 cd benchmarks/agentx
@@ -74,6 +79,25 @@ branch) is an error too.
 
 ## Run it for real
 
+### Once, by hand
+
+On the MI355X host, with the pinned snapshot and the dataset in an HF hub cache:
+
+```bash
+python3 -m agentx_ci resolve --work /tmp/agx/work --out /tmp/agx/serving.json  # Python ≥ 3.12
+scripts/agentx/run_local.sh --serving /tmp/agx/serving.json --hub <hub> --out <run dir> \
+  --cache <kernel cache> --run-id smoke-1 --points tp8:1,tp4:4 --duration 600
+python3 -m agentx_ci report --results <run dir>/results.json --out <site dir> \
+  [--baseline <previous site dir>/results.json]
+```
+
+`run_local.sh` copies the checkout into the image, installs it with `install_aklr.sh`, prepares
+the AgentX traces' `datasets` cache under `<run dir>/work` (online, once), then runs every
+point with `HF_HUB_OFFLINE=1`. It uses host networking, and the hub directory is mounted
+read-only. Without `--points` and `--duration` it runs the full grid.
+
+### Through GitHub Actions
+
 1. On the MI355X host (≥ 1 TB memory, Docker, ROCm devices), with the pinned
    `amd/GLM-5.2-MXFP4` snapshot and the `semianalysisai/cc-traces-weka-062126` dataset in an
    HF hub cache: `RUNNER_TOKEN=… scripts/agentx/register_runner.sh --hf-hub-dir <hub>`.
@@ -81,8 +105,9 @@ branch) is an error too.
    `AGENTX_RUNNER_LABEL` (default `agentx-mi355x`), `AGENTX_PAGES_URL` (where the previous
    `results.json` is read from), `AGENTX_SCHEDULE_ENABLED=true` to turn on the cron. Enable
    Pages with "GitHub Actions" as the source.
-3. Dispatch `agentx-weekly.yaml`; `duration_s` shortens every point for a smoke run, `mock`
-   runs the whole workflow on hosted runners.
+3. Dispatch `agentx-weekly.yaml`; `duration_s` shortens every point and `points`
+   (`tp8:1,tp4:4`) picks some for a smoke run, `mock` runs the whole workflow on hosted
+   runners.
 
 The cadence is the `cron` line of the workflow. A full run takes about 15 h (9 points × ~90
 min, each point restarts the server).
@@ -110,6 +135,6 @@ otherwise it starts a new segment and the per-point hashes only say which points
 - **argcheck**: no check of the rendered flags and env against the run image's sglang.
 - **History store**: the baseline is only the previously published `results.json`; there is
   no `agentx-data` branch, trend, noise model (σ) or regression verdict.
-- Shared `setup_aklr.sh` with `ci.yaml`, HF prefetch and verification, preflight GPU checks
+- One setup script shared with `ci.yaml` (`install_aklr.sh` repeats its install), HF prefetch and verification, preflight GPU checks
   and fingerprints, per-arm JIT warm-up, job splitting under the 24 h limit, the D1 / D2
   diagnostics, and the monthly accuracy run.
