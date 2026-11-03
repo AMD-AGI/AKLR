@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import itertools
+import json
 import logging
 import shutil
 from collections.abc import Iterator, Sequence
@@ -65,7 +66,7 @@ class ReferenceNotProduced(RuntimeError):
 
 
 class UnreadableIncumbent(RuntimeError):
-    """A base schema of the same name does not parse: its replacement is never timed
+    """A base schema of the same name is not even JSON: its replacement is never timed
     without it."""
 
 
@@ -224,10 +225,15 @@ class BenchStage(PipelineStage[BenchReport]):
         ]
         served: dict[Any, list[tuple[OpContract, WorkloadSpec, str]]] = {}
         for path in paths:
+            text = scope.text_at_base(path)
             try:
-                base = ContractRegistry.default().parse_schema(scope.text_at_base(path).encode(), path)
+                base = ContractRegistry.default().parse_schema(text.encode(), path)
             except ValueError as e:
-                raise UnreadableIncumbent(f"cannot read the incumbent {path}: {e}") from e
+                try:  # JSON, so base CI read it: a schema of a contract this change rewrote
+                    json.loads(text)
+                except ValueError:
+                    raise UnreadableIncumbent(f"cannot read the incumbent {path}: {e}") from e
+                continue
             entries = []
             for workload in base.workloads:
                 try:  # a Point of other keys: another contract version's base
