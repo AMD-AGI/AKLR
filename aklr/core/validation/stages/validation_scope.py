@@ -17,7 +17,7 @@ from aklr.core.contract.locate import committed_schema_paths
 
 __all__ = ["PathKind", "ValidationScope"]
 
-PathKind = Literal["schema_data", "document", "other"]
+PathKind = Literal["schema_data", "core", "other"]
 
 _SCHEMA_PATH_PATTERN: Final = re.compile(locate.REPOSITORY_SCHEMA_PATH_PATTERN)
 
@@ -48,7 +48,7 @@ class ValidationScope:
             base_sha=None if base_sha is None else base_sha.decode().strip(),
         )
         kinds = {p: scope.path_kind(p) for p in scope.changed_paths()}
-        is_schema_only = scope.base_sha is not None and "other" not in kinds.values()
+        is_schema_only = scope.base_sha is not None and "core" not in kinds.values()
         if schema_paths is not None:
             for path in schema_paths:
                 if not path.is_file() or not path.resolve().is_relative_to(root):
@@ -124,10 +124,11 @@ class ValidationScope:
 
     @staticmethod
     def path_kind(path: str) -> PathKind:
-        if path.startswith("docs/") or path.endswith(".md"):
-            return "document"
+        """aklr/core's code is the only change that re-benches every schema."""
         match = _SCHEMA_PATH_PATTERN.fullmatch(path)
         is_schema_json = match is not None and match["language"] in spec.LANGUAGES
         if is_schema_json:
             return "schema_data"
+        if path.startswith("aklr/core/") and not path.endswith(".md"):
+            return "core"
         return "other"

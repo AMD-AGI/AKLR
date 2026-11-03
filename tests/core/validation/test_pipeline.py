@@ -573,13 +573,6 @@ class TestPipeline:
                 "passed, findings: 0, 0:00:00",
                 id="bench-console",
             ),
-            pytest.param(
-                lambda _: [
-                    ValidationScope.path_kind(p) for p in (".github/README.md", ".github/workflows/ci.yaml")
-                ],
-                ["document", "other"],
-                id="github-md-is-document",
-            ),
         ],
     )
     def test_verdict_rules(self, tmp_path: Path, case: Callable[[Path], Any], expected: Any) -> None:
