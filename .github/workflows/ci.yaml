@@ -179,7 +179,7 @@ jobs:
   prepare-gpu:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
-    uses: AMD-AGI/AKLR/.github/workflows/gpu-node.yaml@docs/sikl-gpu-design
+    uses: AMD-AGI/AKLR/.github/workflows/gpu-node.yaml@main
     with:
       operation: prepare
 
@@ -395,7 +395,7 @@ jobs:
   release-gpu:
     needs: [prepare-gpu, unittest-aklr, validation]
     if: always() && needs.prepare-gpu.result != 'skipped'
-    uses: AMD-AGI/AKLR/.github/workflows/gpu-node.yaml@docs/sikl-gpu-design
+    uses: AMD-AGI/AKLR/.github/workflows/gpu-node.yaml@main
     with:
       operation: release
       # The node of the attempt that allocated it, not necessarily the current attempt's.
