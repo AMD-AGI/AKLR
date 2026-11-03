@@ -121,19 +121,19 @@ def to_float32(tensor: Tensor, dtype: str) -> Tensor:
 
 
 def from_float64(float64_tensor: Tensor, dtype: str) -> Tensor:
-    """The inverse of ``to_float64`` for a CPU logical-shape tensor, in the primary
-    storage dtype (-0 may become +0); a value ``dtype`` cannot hold exactly (NaN
+    """The inverse of ``to_float64`` for a logical-shape tensor, in the primary storage
+    dtype on its device (-0 may become +0); a value ``dtype`` cannot hold exactly (NaN
     included) raises ``ValueError``."""
     import torch
 
     decoding = DTYPE_TRAITS[DType(dtype)].decoding  # an unknown name: ValueError
     shape = dtype_storage_shape(dtype, float64_tensor.shape)
-    stored = torch.empty(shape, dtype=torch_dtypes(dtype)[0])
+    stored = torch.empty(shape, dtype=torch_dtypes(dtype)[0], device=float64_tensor.device)
     match decoding:
         case {"kind": "cast"}:
             stored.copy_(float64_tensor)
         case {"kind": "nibble_table", "decoded_values": decoded_values}:
-            table = torch.tensor(decoded_values, dtype=torch.float64)
+            table = torch.tensor(decoded_values, dtype=torch.float64, device=float64_tensor.device)
             nibbles = (float64_tensor.unsqueeze(-1) == table).byte().argmax(-1).byte()
             stored.view(torch.uint8).copy_(nibbles[..., 0::2] | nibbles[..., 1::2] << 4)
         case {"kind": "power_of_two", "exponent_bias": exponent_bias}:

@@ -342,7 +342,7 @@ def _calls(device: str) -> dict[str, dict]:
             incumbent=None,
             baseline=None,
         )
-        assembled = request.assemble_call(request.compose_inputs(None), device)
+        assembled = request.assemble_call(request.compose_inputs(None, device), device)
         call = {key: assembled[key] for key in schema.kernel_call_keys if key in assembled}
         for name in contract.allocated_outputs:
             call[name] = torch.empty(

@@ -8,6 +8,7 @@ import math
 import random
 import statistics
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from types import MappingProxyType
 from typing import Any, Literal, NamedTuple, get_args
 
@@ -22,8 +23,9 @@ __all__ = [
     "MAX_REGRESS_FRACTION",
     "MEASUREMENT_PROFILE",
     "MIN_GAIN_FRACTION",
-    "N_ROUNDS",
+    "LOOK_ALPHA",
     "N_WARMUP_ROUNDS",
+    "ROUND_LOOKS",
     "THRESHOLD_RATIOS",
     "Clock",
     "Mode",
@@ -47,13 +49,16 @@ THRESHOLD_RATIOS: Mapping[Threshold, float] = MappingProxyType(
 )
 ALPHA = 0.05
 MAX_ABS_LOG_RATIO = math.log(2)
-N_ROUNDS = 32
+# the round counts at which the bounds are read; timing stops at the first that decides them all
+ROUND_LOOKS = (8, 16, 32)
+# alpha split evenly over the looks, so that stopping early keeps the false-pass rate within ALPHA
+LOOK_ALPHA = ALPHA / len(ROUND_LOOKS)
 N_WARMUP_ROUNDS = 1
 GRAPH_BUDGET_MILLISECONDS = 20.0
 
 MEASUREMENT_PROFILE: Mapping[str, Any] = MappingProxyType(
     {
-        "version": 17,
+        "version": 18,
         "timer": "bench_cudagraph",
         "sample_count_policy": "rep_ms_estimate_capped_by_kernel_record_budget",
         "estimation_samples": 5,
@@ -76,13 +81,16 @@ MEASUREMENT_PROFILE: Mapping[str, Any] = MappingProxyType(
         "replay_aggregation": "median",
         "graph_budget_milliseconds": GRAPH_BUDGET_MILLISECONDS,
         "round_order": "seeded_shuffle_per_round",
-        "rounds": N_ROUNDS,
+        "round_looks": ROUND_LOOKS,
+        "round_stop": "gate_and_baseline_entry_decided_at_a_look",
         "warmup_rounds": N_WARMUP_ROUNDS,
         "max_abs_log_ratio": MAX_ABS_LOG_RATIO,
         "max_abs_log_ratio_scope": "gate_lower_bound_only",
         "trial_aggregation": "student_t_lower_bound_of_mean_log_ratio",
         "alpha": ALPHA,
-        "concurrent_timing": "one_task_per_device, reference_tasks_may_run_on_neighbors",
+        "alpha_per_look": LOOK_ALPHA,
+        "inputs_drawn_on": "task_device",
+        "concurrent_timing": "one_trial_task_per_device",
     }
 )
 
@@ -103,9 +111,19 @@ class TimingRecord(FrozenModel):
     n_rounds: int
     log_ratio_mean: float
     ratio_lower_bound: float
+    ratio_upper_bound: float
     min_ratio: float
     versus_milliseconds: tuple[float, ...]
     candidate_milliseconds: tuple[float, ...]
+
+    @property
+    def is_decided(self) -> bool:
+        """Whether the bounds settle the gate and, against the baseline, whether the
+        workload qualifies (``entry``): each threshold under the lower one or over the upper."""
+        thresholds = {THRESHOLD_RATIOS[self.threshold]}
+        if self.versus == "baseline":
+            thresholds.add(THRESHOLD_RATIOS["entry"])
+        return all(self.ratio_lower_bound >= t or self.ratio_upper_bound < t for t in thresholds)
 
 
 class RoundTimes(FrozenModel):
@@ -178,7 +196,8 @@ def timing_records(
                     threshold=threshold,
                     n_rounds=len(log_ratios),
                     log_ratio_mean=statistics.fmean(raw),
-                    ratio_lower_bound=ratio_lower_bound(log_ratios),
+                    ratio_lower_bound=ratio_lower_bound(log_ratios, alpha=LOOK_ALPHA),
+                    ratio_upper_bound=1 / ratio_lower_bound([-x for x in log_ratios], alpha=LOOK_ALPHA),
                     min_ratio=math.exp(min(raw)),
                     versus_milliseconds=versus_milliseconds,
                     candidate_milliseconds=candidate_milliseconds,
@@ -233,8 +252,10 @@ class Clock(NamedTuple):
         fns: Mapping[Participant, Callable[[], object]],
         *,
         seed: int,
+        thresholds: Mapping[Versus, Threshold],
     ) -> tuple[RoundTimes, ...]:
-        """Every recorded round, after one unrecorded warm-up profile."""
+        """The recorded rounds, after one unrecorded warm-up profile, up to the first of
+        ``ROUND_LOOKS`` at which every timing record of ``thresholds`` is decided."""
         participants = list(fns)
         rounds = []
         is_gc_enabled = gc.isenabled()
@@ -242,7 +263,7 @@ class Clock(NamedTuple):
         try:
             self.graph_reading(fns["baseline"])
             for mode in get_args(Mode):
-                for round_index in range(-N_WARMUP_ROUNDS, N_ROUNDS):
+                for round_index in range(-N_WARMUP_ROUNDS, ROUND_LOOKS[-1]):
                     order_seed = derive_seed(seed, "order", mode, round_index)
                     order = random.Random(order_seed).sample(participants, k=len(participants))
                     milliseconds = {}
@@ -257,6 +278,11 @@ class Clock(NamedTuple):
                                 milliseconds=milliseconds,
                             )
                         )
+                    if round_index + 1 in ROUND_LOOKS:
+                        # unusable rounds decide nothing; compare_performance reports them
+                        with suppress(ValueError, ArithmeticError):
+                            if all(r.is_decided for r in timing_records(rounds, thresholds)):
+                                break
         finally:
             if is_gc_enabled:
                 gc.enable()

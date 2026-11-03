@@ -2,6 +2,7 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
 import io
+import itertools
 import json
 import math
 import re
@@ -43,6 +44,7 @@ from aklr.core.validation.stages._bench._execution import (
 )
 from aklr.core.validation.stages._bench._report import WorkloadRecord
 from aklr.core.validation.stages._measure import (
+    Clock,
     RoundTimes,
     TimingRecord,
     compare_performance,
@@ -95,6 +97,7 @@ def _timing(mode: str, versus: str, threshold: str, ratio: float) -> TimingRecor
         n_rounds=2,
         log_ratio_mean=math.log(ratio),
         ratio_lower_bound=ratio,
+        ratio_upper_bound=ratio,
         min_ratio=ratio,
         versus_milliseconds=(ratio, ratio),
         candidate_milliseconds=(1.0, 1.0),
@@ -538,6 +541,26 @@ class TestPipeline:
             assert case(tmp_path) == expected
 
 
+class TestTimeRounds:
+    """``Clock.time_rounds`` stops at the first look that decides every bound."""
+
+    @pytest.mark.parametrize(
+        ("baseline_ms", "threshold", "n_rounds"),
+        [(2.0, "entry", 8), (1.02, "entry", 32), (1.02, "retain", 32)],
+        ids=["clear-win-stops-at-8", "at-the-threshold-runs-32", "kept-at-the-entry-ratio-runs-32"],
+    )
+    def test_stops_at_the_deciding_look(self, baseline_ms: float, threshold: str, n_rounds: int) -> None:
+        """A 2x candidate is decided at the first look; one at the entry ratio never is, a
+        kept one's retain gate settled or not: whether it qualifies stays open."""
+        jitter = itertools.cycle([1.0, 1.01, 0.99, 1.02, 0.98])
+        fns = {"candidate": lambda: 1.0, "baseline": lambda: baseline_ms}
+        clock = Clock(synchronize=lambda: None, bench_cudagraph=lambda fn, rep: fn() * next(jitter))
+        rounds = clock.time_rounds(
+            fns, dict.fromkeys(fns, nullcontext), seed=0, thresholds={"baseline": threshold}
+        )
+        assert len(rounds) == n_rounds
+
+
 class TestSpeedupMeasures:
     """The reported ratios are unclamped; the speedup is the min over the modes."""
 
@@ -918,7 +941,7 @@ def test_post_timing_exposes_stale_weight_cache(monkeypatch: pytest.MonkeyPatch,
     from tests.op_case import OpCase
 
     request = OpCase.of("gemm@1.0").request
-    timing_call = request.assemble_call(request.compose_inputs(None), "cpu")
+    timing_call = request.assemble_call(request.compose_inputs(None, "cpu"), "cpu")
     weight = timing_call["b"]
     pointer, version = weight.data_ptr(), weight._version
     cache = {(pointer, version if cache_key == "version" else 0): weight.clone()}
@@ -955,7 +978,7 @@ def test_post_timing_exposes_stale_weight_cache(monkeypatch: pytest.MonkeyPatch,
     assert len(steps) == graph.replay.call_count == 4
     assert capture.call_count == dispatcher.dispatch.call_count == 3
     for step in steps:
-        values = request.compose_inputs(step)
+        values = request.compose_inputs(step, "cpu")
         expected = values["a"] @ values["b"].mT
         assert torch.equal(outputs[step.output_key("out")], expected) == (cache_key == "none")
         assert step.mismatch_code is FindingCode.POST_TIMING_MISMATCH
@@ -1048,7 +1071,7 @@ def test_reference_compares_the_lent_outputs() -> None:
     request = case.request
     outputs = request.empty_outputs("cpu")
     for step in request.steps:
-        expected = case.reference_outputs(request.compose_inputs(step))
+        expected = case.reference_outputs(request.compose_inputs(step, "cpu"))
         for o, value in expected.items():
             outputs[step.output_key(o)].copy_(value)
     keys = [step.output_key(o) for step in request.steps for o in request.contract.mutable_tensors]

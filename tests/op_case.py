@@ -146,13 +146,14 @@ class OpCase:
         )
 
     def inputs(self, input_set: str = "numeric/0") -> dict[str, Any]:
-        """The row-major inputs of ``input_set`` on the CPU (``row_major_inputs``)."""
+        """The row-major inputs of ``input_set`` drawn on the CPU (``row_major_inputs``)."""
         request = self.request
         return semantics.row_major_inputs(
             request.schema_json,
             request.workload_json,
             request.distributions,
             input_set=input_set,
+            device="cpu",
         )
 
     def call(self, row_major_args: Mapping[str, Any], device: str = "cpu") -> CallArgs:

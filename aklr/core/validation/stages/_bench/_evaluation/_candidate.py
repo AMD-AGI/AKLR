@@ -273,9 +273,9 @@ class CandidateRun:
         if request.has_workload_set:
             workload_step = next(s for s in request.steps if s.input_set == "workload")
             with contextlib.suppress(ValueError):
-                row_major_args = request.compose_inputs(workload_step)
+                row_major_args = request.compose_inputs(workload_step, self.device)
         if row_major_args is None:
-            row_major_args = request.compose_inputs(None)
+            row_major_args = request.compose_inputs(None, self.device)
         baseline(**request.assemble_call(row_major_args, self.device))
 
     def make_warmed_dispatcher(
@@ -312,7 +312,7 @@ class CandidateRun:
             steps = [None, *[s for s in request.steps if s.input_set == "workload"]]
             for step in steps:
                 try:
-                    row_major_args = request.compose_inputs(step)
+                    row_major_args = request.compose_inputs(step, self.device)
                 except ValueError:  # as in produce_outputs: the step is skipped
                     if step is None:
                         raise
@@ -350,7 +350,7 @@ class CandidateRun:
                 [s for s in steps if s.check != "post_timing"],
                 outputs,
             )
-        call = request.assemble_call(request.compose_inputs(None), self.device)
+        call = request.assemble_call(request.compose_inputs(None, self.device), self.device)
         allocated = dict.fromkeys(contract.allocated_outputs)
         # a new dict per call: the dispatcher allocates into the one it gets
         fns = {"candidate": lambda: dispatcher.dispatch(call | allocated)}
@@ -371,7 +371,7 @@ class CandidateRun:
             if "baseline" in fns:  # none: the new case is its own baseline, untimed
                 root_hash = semantics.workload_hash(request.schema_json["name"], request.workload_json)
                 seed = semantics.derive_seed(root_hash, "timing")
-                rounds = self.clock.time_rounds(fns, seed=seed)
+                rounds = self.clock.time_rounds(fns, seed=seed, thresholds=request.thresholds)
         except Exception as e:
             text = f"{where}: timing: {type(e).__name__}: {e}"
             raise RuntimeError(text) from e
@@ -405,7 +405,7 @@ class CandidateRun:
         for step in steps:
             label = step.label
             try:
-                values = request.assemble_call(request.compose_inputs(step), self.device)
+                values = request.assemble_call(request.compose_inputs(step, self.device), self.device)
             except ValueError:
                 if step.input_set != "workload":
                     raise

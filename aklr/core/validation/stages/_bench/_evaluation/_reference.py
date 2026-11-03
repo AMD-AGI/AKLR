@@ -67,7 +67,7 @@ class WorkloadEvaluation:
         steps = list(request.steps)
         if step := next((s for s in steps if s.input_set == "workload"), None):
             try:
-                request.compose_inputs(step)
+                request.compose_inputs(step, device)
             except ValueError as e:
                 self._fail(step, FindingCode.SCHEMA_INVALID, str(e))
                 steps.remove(step)
@@ -95,8 +95,7 @@ class WorkloadEvaluation:
             first,
             *rest,
         ) in steps_by_inputs.values():
-            row_major_args = request.compose_inputs(first)
-            row_major_args |= {n: v.to(device) for n, v in row_major_args.items() if torch.is_tensor(v)}
+            row_major_args = request.compose_inputs(first, device)
             compare_kwargs = {
                 "reference_outputs": contract.mutable_tensors_by_name(
                     reference_fn(point, row_major_args, semantics.to_float32)

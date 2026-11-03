@@ -57,8 +57,11 @@ def row_major_inputs(
     distributions: Mapping[str, Mapping[str, Any]],
     *,
     input_set: str,
+    device: str,
 ) -> dict[str, Any]:
-    """Every present input of ``workload`` row-major on the CPU, in schema order."""
+    """Every present input of ``workload`` row-major, drawn on ``device``, in schema order.
+    The values depend on the device's generator: a GPU's differ from the CPU's and between
+    GPU models."""
     import torch
 
     symbols = {
@@ -79,11 +82,12 @@ def row_major_inputs(
             dims = [d if isinstance(d, int) else symbols[d] for d in declaration["shape"]]
             dtype = declaration["dtype"]["any_of"][0]
             seed = derive_seed(input_set_seed, "initialize", name)
-            generator = torch.Generator("cpu").manual_seed(seed)
+            generator = torch.Generator(device).manual_seed(seed)
             try:
-                inputs[name] = _DISTRIBUTION_ADAPTER.validate_python(distributions[name]).sample(
-                    dtype_storage_shape(dtype, dims), dtype, generator
-                )
+                with torch.device(device):
+                    inputs[name] = _DISTRIBUTION_ADAPTER.validate_python(distributions[name]).sample(
+                        dtype_storage_shape(dtype, dims), dtype, generator
+                    )
             except ValueError as e:
                 raise ValueError(f"{name}: {e}") from None
     return inputs

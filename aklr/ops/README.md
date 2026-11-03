@@ -261,7 +261,8 @@ with one complete `kernel.targets` item.
 
 No workload carries a uuid. A workload is located by its file and its `axes` (`m=1` in reports). Every tensor is
 seeded from `workload_hash(name, workload)` (its axes and scalars), 16 hex digits of a sha256: the same Point with
-the same scalars gets the same values in every file and every language.
+the same scalars gets the same values in every file and every language on the same kind of device. Bench draws
+them on its GPU, so they differ from a CPU draw (the tests') and between GPU models.
 
 Correctness is always checked on the default inputs (every tensor drawn from its `distribution`, every scalar at
 its declaration's default). Captured scalars other than the defaults add one more input set, named `workload`.

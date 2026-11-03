@@ -198,13 +198,14 @@ class TrialRequest:
             for o in semantics.mutable_tensor_declarations(self.schema_json).values()
         )
 
-    def compose_inputs(self, step: Step | None) -> dict[str, Any]:
+    def compose_inputs(self, step: Step | None, device: str) -> dict[str, Any]:
         input_set = "timing" if step is None else step.input_set
         row_major_args = semantics.row_major_inputs(
             self.schema_json,
             self.workload_json,
             self.distributions,
             input_set=input_set,
+            device=device,
         )
         if step is None:
             return row_major_args
