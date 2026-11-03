@@ -69,7 +69,7 @@ To replace an sglang function with an AKLR implementation:
 
 ## Correctness: validation
 
-Correctness rests mainly on validation (`python -m aklr validate`), which has three stages. In CI, audit always runs; bench needs the PR to carry the `ci:gpu` label, and e2e needs `ci:e2e` as well; after a merge to main, all three run.
+Correctness rests mainly on validation (`python -m aklr validate`), which has three stages. In CI, audit always runs and bench needs the PR to carry the `ci:gpu` label (a push to main always qualifies); CI does not run e2e.
 
 1. audit: checks that kernel code follows the rules, for example that it keeps no state between calls and does not modify read-only inputs.
 2. bench: for each kernel, draws several sets of inputs from the contract, compares the results with the reference for correctness and with the baseline for performance, and writes the results back to the JSON. At runtime, only kernels that passed and are faster than sglang are used.
