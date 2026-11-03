@@ -4,7 +4,7 @@ When no contract covers the kernel, add the op before its schema. The layout and
 each file are in `aklr/ops/README.md`; this is the order and the traps.
 
 1. **`aklr/ops/<op>/contract.py`**: the `OpContract` constants and `CONTRACTS`. Name the axes,
-   inputs and outputs after the math, not after AITER's arguments. A contract with several outputs
+   inputs and outputs after the math, not after the baseline's arguments. A contract with several outputs
    names none of them `out` (`outputs are 'out' alone, or names other than 'out'`); give each output
    its `error_bounds` and the contract its `determinism` (`bitwise` unless the op's kernels need
    atomics).

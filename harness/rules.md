@@ -4,10 +4,10 @@ These high-level rules define the intended boundary of the AKLR kernel
 lifecycle. Automated enforcement can be added later without changing the
 meaning of the rules.
 
-1. **AITER compatibility:** AKLR must preserve the public interfaces required
-   by existing AITER consumers unless a migration is explicitly approved.
+1. **Interface compatibility:** AKLR must preserve the public interfaces its
+   consumers rely on unless a migration is explicitly approved.
 2. **Generated-kernel destination:** New agent-generated kernels should land in
-   AKLR rather than extending AITER as a generated-kernel warehouse.
+   AKLR rather than extending an upstream library as a generated-kernel warehouse.
 3. **Evidence before acceptance:** Correctness, coverage, and performance
    claims must be supported by reproducible evidence on declared hardware and
    software versions.

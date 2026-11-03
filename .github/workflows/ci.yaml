@@ -281,6 +281,9 @@ jobs:
           mkdir -p "$cache"
           export FLYDSL_RUNTIME_CACHE_DIR="$cache/flydsl-runtime" FLYDSL_AUTOTUNE_CACHE_DIR="$cache/flydsl-autotune" \
                  TRITON_CACHE_DIR="$cache/triton" XDG_CACHE_HOME="$cache/xdg" AKLR_KERNEL_CACHE_DIR="$cache/aklr-kernels"
+          # Not aiter's default, its site-packages tree or, if that is read-only, ~/.aiter under the
+          # runner's persistent HOME, where a killed build's lock would block every later job.
+          export AITER_JIT_DIR="$cache/aiter-jit"
           # Bench task directories need a local disk (peak len(devices) × 16 GiB): flock, atomic renames, real free space.
           export TMPDIR="$AKLR_CI_STATE_DIR"
           echo "📂 Checkout: $GITHUB_WORKSPACE (commit $(git rev-parse --short HEAD))"
@@ -320,7 +323,8 @@ jobs:
           python3 -m pip install 'pytest-timeout==2.4.0' 'expecttest==0.3.0'
           # It also pins the FlyDSL that AKLR's kernels are built with.
           echo "📥 Install the baseline AITER, ROCm/aiter@$AKLR_BASELINE_AITER, over the image's."
-          python3 -m pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@$AKLR_BASELINE_AITER"
+          # Keep the image's Triton: otherwise aiter's setup.py swaps in the one it pins.
+          AITER_USE_SYSTEM_TRITON=1 python3 -m pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@$AKLR_BASELINE_AITER"
           echo '📥 Install this checkout in editable mode.'
           python3 -m pip install -e . -v
           echo '🔎 Verify Triton 3.8.0, AKLR from this checkout and the baseline AITER.'
@@ -328,12 +332,13 @@ jobs:
           python3 - <<'PY'
           import os
           from pathlib import Path
-          from importlib.metadata import version
+          from importlib.metadata import distribution, version
           import aiter
           import aklr
           root = Path.cwd().resolve()
           assert Path(aklr.__file__).resolve().is_relative_to(root), aklr.__file__
-          assert aiter.__file__, "aiter is an empty namespace package"
+          # the aiter Python imports is the one pip just installed, not another copy on sys.path
+          assert aiter.__file__ and Path(aiter.__file__).resolve() == Path(distribution("amd-aiter").locate_file("aiter/__init__.py")).resolve(), aiter.__file__
           assert f"+g{os.environ['AKLR_BASELINE_AITER'][:7]}" in version("amd-aiter"), version("amd-aiter")
           print("Testing aklr", version("aklr"), "from", root, "against amd-aiter", version("amd-aiter"))
           PY
@@ -353,6 +358,7 @@ jobs:
             printf 'TRITON_CACHE_DIR=%s\n' "$TRITON_CACHE_DIR"
             printf 'XDG_CACHE_HOME=%s\n' "$XDG_CACHE_HOME"
             printf 'AKLR_KERNEL_CACHE_DIR=%s\n' "$AKLR_KERNEL_CACHE_DIR"
+            printf 'AITER_JIT_DIR=%s\n' "$AITER_JIT_DIR"
             printf 'TMPDIR=%s\n' "$TMPDIR"
             printf 'COVERAGE_PROCESS_START=%s/pyproject.toml\n' "$GITHUB_WORKSPACE"
           } >> "$GITHUB_ENV"

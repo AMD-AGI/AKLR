@@ -36,7 +36,7 @@ Sources: `aklr/core/validation/stages/_measure.py`, `stages/_bench/_stage.py`,
 
 - **Per-call weight caches miss.** A kernel that caches a prepared weight keyed on one tensor misses
   on every timed call, since each set brings its own weight, as a model's layers do. Measured on CI:
-  a FlyDSL decode GEMM that re-packs `b` on a miss took 17.45 µs against AITER's 7.12 µs at m = 4, and
+  a FlyDSL decode GEMM that re-packs `b` on a miss took 17.45 µs against the baseline's 7.12 µs at m = 4, and
   its stored 1.109 did not hold.
 - **The graph-node floor.** With the flush, a small kernel's node costs about 4 µs whatever its work:
   add + RMSNorm at hidden 6144 took 3.9 – 4.5 µs from 1 to 256 tokens, for both kernels. A gain of

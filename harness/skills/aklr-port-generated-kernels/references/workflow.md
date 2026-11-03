@@ -7,7 +7,7 @@
    `aklr/ops/<op>/contract.py` at a schema name (`aklr/ops/<op>/impls/<language>/<name>/`),
    or needs a new op ([new-op.md](new-op.md)). List the committed kernels under
    that name and the Points they serve (stored `speedup` at least
-   `AKLR_MIN_SPEEDUP`): those are the incumbents to beat, besides AITER.
+   `AKLR_MIN_SPEEDUP`): those are the incumbents to beat, besides the baseline.
 3. **Triage on AKLR's Points before porting.** Time the source as it is on the
    contract's Points and inputs, not on the shapes it was tuned for. Read its
    environment gates and per-shape tables: a fast path enabled only for the

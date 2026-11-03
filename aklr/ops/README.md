@@ -252,7 +252,7 @@ once per file; changing it is rejected, not a way to change the inputs.
 axes in contract order, sorted by their values, each Point once. A var axis the contract declares `any_size`
 (the rows of a KV cache, which the kernel does not depend on) is served at every value of its domain: its workload
 values are only the sizes bench runs. `scalars` holds every present scalar input, a
-captured or authored value inside its declared range; it is omitted when the schema has none. `speedup` (over aiter) and
+captured or authored value inside its declared range; it is omitted when the schema has none. `speedup` (over `<contract>_baseline`) and
 `accuracy` are written by CI on every workload or none (a `failed` one may lack `speedup`; it is never dispatched),
 with one complete `kernel.targets` item.
 
@@ -321,7 +321,7 @@ Read only by `RuntimeEnv()` in `aklr/core/platform/env.py`.
 | Variable | Values | Effect |
 |---|---|---|
 | `AKLR_DISABLE` | `1`, `0`, unset, `<contract_id>,...` | emergency stop: every contract, or the listed ones, falls back |
-| `AKLR_MIN_SPEEDUP` | a finite number | the least measured `speedup` over aiter that a workload needs to be served, default `1.03`; `0` or less also serves unmeasured workloads, never a `failed` one |
+| `AKLR_MIN_SPEEDUP` | a finite number | the least measured `speedup` over the baseline that a workload needs to be served, default `1.03`; `0` or less also serves unmeasured workloads, never a `failed` one |
 | `AKLR_KERNEL_CACHE_DIR` | a path | where kernels are materialized; default `${XDG_CACHE_HOME:-$HOME/.cache}/aklr/kernels` |
 | `AKLR_EXPORT` | `1`, `0`, unset | record calls; any other value is an error |
 | `AKLR_EXPORT_DIR` | a path | the export directory, default `./aklr_export`; setting it alone records nothing |

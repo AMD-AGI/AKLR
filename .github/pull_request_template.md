@@ -14,7 +14,7 @@ wait for the code. -->
 
 ## Scope
 
-<!-- Required for every kind but documents. 1–3 items: what this covers (models, ops, shapes) and what it leaves on AITER or defers. -->
+<!-- Required for every kind but documents. 1–3 items: what this covers (models, ops, shapes) and what it leaves to the caller's own path or defers. -->
 
 ## Tradeoffs
 
@@ -78,6 +78,6 @@ need ran on this head. -->
 
 <!-- Required for every kind but documents. -->
 Affects: <!-- models, ops, shapes; for code, which kernels or stages (often: every kernel) -->
-If wrong: <!-- wrong output, a crash, slower than AITER, a CI failure -->
+If wrong: <!-- wrong output, a crash, slower than the baseline, a CI failure -->
 Undo: <!-- `AKLR_DISABLE=<contract id>` turns one op off; otherwise `git revert`, and what that
 does not undo (a schema or measurement version, published measurements) -->

@@ -2,7 +2,7 @@
 
 1. **Define the matrix.** Pin the AKLR image, GPU, model, workload, and exact
    SGLang, vLLM, and ATOM revisions required by the current gate configuration.
-2. **Establish the baseline.** Choose the approved AITER or prior AKLR runtime
+2. **Establish the baseline.** Choose the approved runtime without AKLR, or a prior AKLR one,
    and keep all non-AKLR inputs identical between baseline and candidate.
 3. **Install and probe.** Verify each downstream can import and call the expected
    AKLR interface (`aklr.ops` or the SGLang plugin) before starting expensive

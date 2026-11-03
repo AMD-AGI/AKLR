@@ -7,7 +7,7 @@ defined.
 ## Required Configuration
 
 - AKLR base and candidate revisions.
-- AITER performance baseline (ROCm/aiter at `AKLR_BASELINE_AITER` in `.github/workflows/ci.yaml`).
+- Performance baseline (`<contract>_baseline`, at `AKLR_BASELINE_AITER` in `.github/workflows/ci.yaml`).
 - Supported AMD GPU architectures and node topology.
 - ROCm, Python, PyTorch, and compiler versions.
 - Correctness tolerances by operator and data type.

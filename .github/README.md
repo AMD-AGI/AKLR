@@ -7,7 +7,7 @@
 [![CI](https://github.com/AMD-AGI/AKLR/actions/workflows/ci.yaml/badge.svg)](https://github.com/AMD-AGI/AKLR/actions/workflows/ci.yaml)
 [![License](https://img.shields.io/badge/license-MIT%20%2B%20Apache--2.0-blue)](/LICENSE)
 
-[Install](#install) | [Usage](#usage) | [Testing](#testing) | [Contributing](#contributing) | [AITER](https://github.com/ROCm/aiter)
+[Install](#install) | [Usage](#usage) | [Testing](#testing) | [Contributing](#contributing)
 
 </div>
 
@@ -22,16 +22,14 @@ We believe kernel performance will no longer come from rare, hand-tuned efforts 
 | SGLang | `lmsysorg/sglang:v0.5.22-rocm10-mi35x` |
 | vLLM | TODO |
 
-Inside the image, install AKLR, one pure-Python package `aklr` (Python 3.11 or later), versioned `0.1.devN+g<commit>` before the first tag. It uses the image's torch, Triton, AITER and SGLang and replaces none of them:
+Inside the image, install AKLR, one pure-Python package `aklr` (Python 3.11 or later), versioned `0.1.devN+g<commit>` before the first tag. It uses the image's torch, Triton and SGLang and replaces none of them:
 
 ```bash
 git clone https://github.com/AMD-AGI/AKLR.git && cd AKLR
 pip install -e .
 ```
 
-The `amd-aiter` this repository used to install replaced the image's AITER: in a container that has it, start from a fresh image rather than installing over it.
-
-Validation times AKLR's kernels against AITER at `AKLR_BASELINE_AITER` in [ci.yaml](/.github/workflows/ci.yaml); install it over the image's before validating: `pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@<that commit>"`.
+Validation times AKLR's kernels against a baseline pinned at `AKLR_BASELINE_AITER` in [ci.yaml](/.github/workflows/ci.yaml); install that commit before validating: `AITER_USE_SYSTEM_TRITON=1 pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@<that commit>"`.
 
 ## Usage
 
@@ -53,5 +51,5 @@ python -m aklr validate --stages audit,bench --devices 0-7  # full validation
 
 ## Contributing
 
-- Commit hooks and the AITER baseline: [CONTRIBUTING.md](/CONTRIBUTING.md)
+- Commit hooks and the baseline: [CONTRIBUTING.md](/CONTRIBUTING.md)
 - PR descriptions: follow the [template](/.github/pull_request_template.md)
