@@ -26,8 +26,8 @@ GITIGNORE = "__pycache__/\n*.pyc\n*.log\nbuild/\nforge_experiments/\n.stop\n"
 
 # The AKLR skill the agents read, per kernel language.
 SKILLS = {
-    "flydsl": Path(".claude/skills/flydsl-kernel-optimization"),
-    "triton": Path(".claude/skills/triton-kernel-optimization"),
+    "flydsl": Path("harness/skills/flydsl-kernel-optimization"),
+    "triton": Path("harness/skills/triton-kernel-optimization"),
 }
 
 # A torch statement that computes a gemm-contract schema into its preallocated output, by the operand rank.

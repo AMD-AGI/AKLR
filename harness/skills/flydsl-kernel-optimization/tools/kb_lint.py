@@ -21,7 +21,7 @@ from pathlib import Path
 
 
 def _repository_of(skill_root: Path) -> Path:
-    """The repository a skill in place sits in: <repo>/.claude/skills/<skill>."""
+    """The repository a skill in place sits in: <repo>/harness/skills/<skill>."""
     return skill_root.parents[2] if len(skill_root.parents) > 2 else skill_root
 
 
@@ -506,12 +506,12 @@ def check_body(page: Page, level: str) -> Iterable[Issue]:
 
 def skill_home() -> Path:
     """Where the skill sits in its repository: its own folder, unless it is a copy outside the repository, whose
-    original is `.claude/skills/<the name in its SKILL.md>` there."""
+    original is `harness/skills/<the name in its SKILL.md>` there."""
     if SKILL_ROOT.is_relative_to(REPO_ROOT):
         return SKILL_ROOT
     entry = SKILL_ROOT / "SKILL.md"
     name = (read_page(entry).front or {}).get("name") if entry.is_file() else None
-    return REPO_ROOT / ".claude" / "skills" / str(name or SKILL_ROOT.name)
+    return REPO_ROOT / "harness" / "skills" / str(name or SKILL_ROOT.name)
 
 
 def skill_arch() -> tuple[str, frozenset[str]]:

@@ -4,8 +4,7 @@
 Refuses when a page has lint errors at its new place, when the destination exists, or when a technique's `lever` is
 already taken. Pages that link to each other go in one call: they move together, are checked where they will live,
 and go back to staging/ together if any fails. On success it deletes each page's review notes
-(staging/<name>.review.md) and rebuilds the indexes. The skill lives
-under .claude/, which the repository ignores, so the moved page has to be added with `git add -f`.
+(staging/<name>.review.md) and rebuilds the indexes, and prints the `git add` command for the moved pages.
 
     python tools/kb_approve.py staging/xcd_remap.md --to techniques
     python tools/kb_approve.py staging/a.md staging/b.md --to cases
@@ -114,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         names = ", ".join(dst.name for _, dst in moves)
         print(f"{args.to}/INDEX.md is written by hand: add a row that routes to {names}")
-    command = "git add -f " + " ".join(staged)
+    command = "git add " + " ".join(staged)
     for src, _ in moves:
         tracked = subprocess.run(
             ["git", "ls-files", "--error-unmatch", src.relative_to(repo).as_posix()],

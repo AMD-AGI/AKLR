@@ -34,7 +34,7 @@ Split regimes and pick a card as `forge-loop-campaign` says in "Before step 1". 
 the clone. From the AKLR clone's root:
 
 ```bash
-RUN=~/aklr-runs/<run> S=.claude/skills/geak-campaign
+RUN=~/aklr-runs/<run> S=harness/skills/geak-campaign
 HIP_VISIBLE_DEVICES=0 python harness/tools/forge_task prepare --schema <name> --run-dir $RUN --kernel-backend triton
 # GEAK names the kernel, and the knowledge it records, after the task folder
 T=$RUN/<schema name>

@@ -4,7 +4,7 @@ This directory is the home of AKLR's agent-facing kernel lifecycle. It defines
 how generated kernels enter AKLR, how kernel pull requests are reviewed, and
 how releases are qualified for downstream engines.
 
-The initial layout is intentionally small. The seven skills are usable guidance;
+The initial layout is intentionally small. The skills are usable guidance;
 the `tools`, `schemas`, `config`, and `tests` directories currently document
 their future ownership boundaries without introducing implementation or CI.
 
@@ -24,11 +24,11 @@ The lifecycle is governed by [rules.md](rules.md), [gates.md](gates.md), and
 
 ## Layout
 
-- `skills/`: seven independent Codex skills and their supporting references.
+- `skills/`: every AKLR agent skill, `skills/<name>/SKILL.md`, kept only here. Agents find them
+  through symlinks: `.claude/skills` for Claude Code, `.agents/skills` for Codex and Cursor.
 - `tools/`: future reusable implementation tools.
 - `schemas/`: future machine-readable result schemas.
 - `config/`: future repository, GPU, and downstream configuration.
 - `tests/`: future skill, tool, and workflow tests.
-- `install-agent-skills.py`: local installer for the seven skills.
 
 This first version does not add or modify GitHub Actions workflows.

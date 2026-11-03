@@ -74,8 +74,7 @@ that contains `: `. `flydsl` is the version the page was checked against (`0.3.2
 3. Review: check each claim against its source or a run, look for an existing page that covers it, set `basis`.
    Review notes go to `staging/<slug>.review.md`.
 4. Approval by a person: `python tools/kb_approve.py staging/<slug>.md --to <folder>` lints the page again, moves
-   it, deletes its review notes and rebuilds the indexes. The skill sits under `.claude/`, which `.gitignore`
-   lists, so add the files with the `git add -f` command it prints.
+   it, deletes its review notes and rebuilds the indexes. Add the files with the `git add` command it prints.
 5. Link the page from where an agent looks for it: a row of `SKILL.md`'s task or symptom table, or the package's
    `INDEX.md`. `patterns/`, `cases/`, `language/` and `pitfalls/` need no link by hand: their `INDEX.md` is
    generated.

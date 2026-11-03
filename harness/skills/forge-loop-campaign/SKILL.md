@@ -71,7 +71,7 @@ echo $! > $RUN/forge_loop.pid
   validate gives a kernel the GPU alone, so it passes one that is right only while every workgroup of a launch is
   resident: a split-K fold that polls for its partners and gives up with NaN. On a stream limited to part of the CUs
   such a kernel returns NaN. Do not deliver it; tell the user, and have its fold made wait-free first.
-- `python .claude/skills/flydsl-kernel-optimization/tools/kb_gaps.py $RUN/workspace` lists the skill pages the
+- `python harness/skills/flydsl-kernel-optimization/tools/kb_gaps.py $RUN/workspace` lists the skill pages the
   rounds opened and the questions they found no page for.
 - Report: AKLR's verdict per workload from `aklr validate`, the delivered commit, what forge-ablate said each kept
   round is worth, and the skill's gaps.
