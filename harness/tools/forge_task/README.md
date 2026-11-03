@@ -49,9 +49,7 @@ HIP_VISIBLE_DEVICES=0 python harness/tools/forge_task prepare --schema bmm_n128_
 
 It checks the starting kernel with AKLR, records AKLR's baseline times and writes the task into `$RUN`. A GEMM
 schema starts from torch; any other needs `--starting-kernel <kernel.py>`, or `--starting-kernel <dir>` for a kernel
-of several files: every `*.py` in the directory, `kernel.py` among them. A kernel whose counters or flags must
-outlive a call, such as split-K arrival counters, sets `STATE_BYTES` in `kernel.py`: AKLR zeroes that many bytes
-once per device and passes them to every call as `state`, and the driver does the same.
+of several files: every `*.py` in the directory, `kernel.py` among them.
 
 **2. Optimize.** Hours, and the agents cost money from here: in the Kimi-K3 runs, about $10 an hour on a GEMM
 and $17 on a MoE. Run it inside `tmux`:
@@ -90,8 +88,7 @@ python -m kernelforge.cli forge-finalize --workspace $W --gpu 0 --model claude-o
   --lint "python -m ruff format --check --config $A/pyproject.toml" \
   --review-guide $A/.claude/skills/flydsl-kernel-code-cleanup/SKILL.md
 # The same answer, as the schema's determinism asks, on a stream limited to a few CUs and beside a second call of
-# its own (not for a kernel with state, whose calls AKLR runs on one stream): a kernel whose workgroups wait for
-# each other does not give it, and validate cannot tell
+# its own: a kernel whose workgroups wait for each other does not give it, and validate cannot tell
 HIP_VISIBLE_DEVICES=0 python $W/driver.py --stress
 # What the FlyDSL skill should learn from the run, as a patch for you to review
 python -m kernelforge.cli forge-distill --workspace $W --model claude-opus-5-5 \
@@ -153,7 +150,7 @@ baseline; `--run-dir` (default `./aklr-runs/<schema>-<time>`).
 | `AKLR timed no baseline for …` | the schema has nothing to time against: prepare again with `--anchor start` |
 | `run directory … is not empty` | give each task a directory of its own |
 | `Kineto recorded no kernels for a single call` | the profiler lost a trace, usually on a busy machine: try again, or on an idle one |
-| `stress: differs from the call alone: …` | the kernel's workgroups wait for each other (a split-K fold that polls flags), or its concurrent calls share scratch memory: make it wait-free, the last workgroup to arrive on an atomic counter doing the fold, before you publish. Counters that must start at zero go in `state` (`STATE_BYTES`), the last to arrive setting them back to zero; scratch from `torch.empty` holds whatever was there |
+| `stress: differs from the call alone: …` | the kernel's workgroups wait for each other (a split-K fold that polls flags), or its concurrent calls share scratch memory: make it wait-free, the last workgroup to arrive on an atomic counter doing the fold, before you publish. Counters that must start at zero are zeroed in the call: scratch from `torch.empty` holds whatever was there |
 | `stress: hung, no result within 60 s: …` | the same defect, a wait with no bound: the kernel never finished on that stream. The check stops there, since the device is still running it |
 
 ## Tests

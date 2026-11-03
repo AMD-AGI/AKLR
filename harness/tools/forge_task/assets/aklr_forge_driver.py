@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import ast
-import contextlib
 import faulthandler
 import hashlib
 import importlib
@@ -95,14 +94,6 @@ def kernel_sources() -> dict[str, str]:
     return dict(sorted(sources.items()))
 
 
-def state_bytes() -> int:
-    """The bytes of state the candidate keeps between its calls: its module's ``STATE_BYTES``, as AKLR's kernels with
-    state declare it, or 0. AKLR zeroes them once per device and passes the same bytes as ``state`` to every call.
-    What importing the kernel prints goes to stderr: ``--publish`` prints the path alone."""
-    with contextlib.redirect_stdout(sys.stderr):
-        return int(getattr(_load_candidate(), "STATE_BYTES", 0))
-
-
 def _candidate_text() -> tuple[str, str]:
     """The schema text AKLR expects for this kernel, and the file name AKLR derives from it."""
     registry, op_contract, _, schema_uuid = _aklr()
@@ -111,9 +102,6 @@ def _candidate_text() -> tuple[str, str]:
     raw["kernel"]["sources"] = [
         {"path": name, "content": content} for name, content in kernel_sources().items()
     ]
-    raw["kernel"].pop("state_bytes", None)
-    if state := state_bytes():
-        raw["kernel"]["state_bytes"] = state
     contract = registry.for_schema_json(raw)
     point = contract.point_from_json(raw, raw["workloads"][0]["axes"])
     text = contract.narrow(point, workloads=raw["workloads"], kernel=raw["kernel"]).schema_text()
@@ -332,8 +320,7 @@ def _calls(device: str) -> dict[str, dict]:
     """Per workload, the call validate's bench times, on AKLR's timing inputs, built by AKLR's own trial code:
     inputs from another draw describe a call nobody scores. The call holds the schema's call keys only, as AKLR's
     builder hands the kernel: a trial call also carries API parameters an attr hides from the kernel. The outputs
-    dispatch would allocate are allocated here, since the candidate is called directly, and so is the state of a
-    kernel that keeps some: one zeroed tensor that every call gets, as AKLR keeps one per device.
+    dispatch would allocate are allocated here, since the candidate is called directly.
     """
     import torch
 
@@ -345,9 +332,6 @@ def _calls(device: str) -> dict[str, dict]:
     schema = registry.parse_schema(text.encode(), str(SCHEMA_JSON))
     contract = registry.get(schema.contract_id)
     calls = {}
-    state = None
-    if schema.kernel.state_bytes:
-        state = torch.zeros(schema.kernel.state_bytes, dtype=torch.uint8, device=device)
     for workload in schema.workloads:
         request = TrialRequest.of_workload(
             str(SCHEMA_JSON),
@@ -360,8 +344,6 @@ def _calls(device: str) -> dict[str, dict]:
         )
         assembled = request.assemble_call(request.compose_inputs(None), device)
         call = {key: assembled[key] for key in schema.kernel_call_keys if key in assembled}
-        if state is not None:
-            call["state"] = state
         for name in contract.allocated_outputs:
             call[name] = torch.empty(
                 contract.storage_shape_of(name, request.point),
@@ -459,9 +441,7 @@ def _cu_limited_stream(cus: int):
 
 def _stress_conditions() -> dict:
     """Ways to call the candidate under contention, each returning the calls whose outputs it wrote: on a stream
-    limited to a few CUs, and beside a second call of its own on another stream, into outputs of its own. A kernel
-    with state is not called beside itself: every call on a device shares the state, so AKLR runs its calls on one
-    stream."""
+    limited to a few CUs, and beside a second call of its own on another stream, into outputs of its own."""
     import torch
 
     def on(stream):
@@ -490,8 +470,7 @@ def _stress_conditions() -> dict:
         return [call, twin]
 
     conditions = {f"on {cus} CUs": on(_cu_limited_stream(cus)) for cus in STRESS_CUS}
-    if not state_bytes():
-        conditions["beside a second call"] = beside_another
+    conditions["beside a second call"] = beside_another
     return conditions
 
 
