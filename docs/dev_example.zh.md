@@ -4,8 +4,6 @@ Contract: **contract 是算子的完整定义。** 它是 `aklr/ops/<op>/contrac
 
 Schema: **schema 是一个 JSON 文件。** 它把某个算子的 `OpContract` 收窄到一个场景（固定 dtype、常量轴、属性、布局），列出这个场景要服务的 workload（var 轴的具体取值），并内嵌 kernel 源码。schema 存放在 `aklr/ops/<op>/impls/<language>/<name>/<uuid>.json`。Schema 是 AKLR 与其他 kernel 生成工具交互的契约。
 
-详细的字段解释见 [aklr-schema-overview.md](aklr-schema-overview.md)。
-
 ## Workflow
 
 ```mermaid

@@ -4,8 +4,6 @@ Contract: **a contract is the complete definition of an op.** It is an `OpContra
 
 Schema: **a schema is a JSON file.** It narrows an op's `OpContract` to one scenario (fixed dtypes, const axes, attrs, layout), lists the workloads that scenario serves (concrete values of the var axes), and embeds the kernel source. Schemas live at `aklr/ops/<op>/impls/<language>/<name>/<uuid>.json`. The schema is the interface agreement between AKLR and other kernel-generation tools.
 
-For a field-by-field description, see [aklr-schema-overview.md](aklr-schema-overview.md).
-
 ## Workflow
 
 ```mermaid
