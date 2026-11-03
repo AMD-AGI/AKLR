@@ -50,4 +50,5 @@ python -m aklr validate --stages audit,bench,e2e --devices 0-7  # full validatio
 ## Contributing
 
 - Commit hooks and how to change AITER: [CONTRIBUTING.md](/CONTRIBUTING.md)
+- Optimizing a kernel with forge_task: [docs/forge_task.md](/docs/forge_task.md)
 - PR descriptions: follow the [template](/.github/pull_request_template.md)
