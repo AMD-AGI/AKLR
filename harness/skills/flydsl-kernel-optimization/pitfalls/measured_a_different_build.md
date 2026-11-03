@@ -47,12 +47,12 @@ Each channel puts a different build under the ruler.
    measured on that FlyDSL, and the run's commit message names the image, not the version.
 5. **AKLR runs the schema, not your file.** Validation and dispatch run the `content` strings of the schema's
    `kernel.sources`, imported as a package `_aklr_<hash16>` (`aklr/ops/README.md` § Workflow and § The kernel
-   section and ABI). In a model run a Point falls back to aiter, with a reason, when for example AKLR is disabled,
-   the Point has no workload or no qualifying measured speedup, or it is first called inside a graph capture (S3); a
-   toolchain outside the schema's `requires` skips the schema with an INFO log (`aklr/ops/README.md` § The
-   kernel section and ABI). A schema you just edited has no `speedup` until CI writes one (§ Workflow), so a
-   model run of your own times aiter at its Points unless `AKLR_MIN_SPEEDUP` allows unmeasured workloads
-   (§ Environment variables).
+   section and ABI). In a model run a Point falls back to the framework's own path, with a reason, when for
+   example AKLR is disabled, the Point has no workload or no qualifying measured speedup, or it is first called
+   inside a graph capture (S3); a toolchain outside the schema's `requires` skips the schema with an INFO log
+   (`aklr/ops/README.md` § The kernel section and ABI). A schema you just edited has no `speedup` until CI writes
+   one (§ Workflow), so a model run of your own times the framework's own path at its Points unless
+   `AKLR_MIN_SPEEDUP` allows unmeasured workloads (§ Environment variables).
 
 ## How to detect
 

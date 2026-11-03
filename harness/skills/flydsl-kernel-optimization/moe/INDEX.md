@@ -82,20 +82,20 @@ the output row is the sum over the token's k routes of `topk_weights` × that pr
     (m ≥ 256) run at served Points.
   - `4fbd9d02…`: one stage-2 binary serves all four token counts; stage 1 compiles per count.
 - **aiter's FlyDSL MoE families** and their knobs: `../optimize/flydsl_levers/flydsl_kernel_library.md` § Other
-  FlyDSL families in this repository's aiter (MoE). aiter is the baseline; price it through `aiter.fused_moe.fused_moe`
-  with `AKLR_DISABLE=1` set before aiter is imported (`../grouped_gemm/flydsl_grouped_moe_inference.md` §8).
+  FlyDSL families in the baseline aiter (MoE). aiter is the baseline; price it through `fused_moe_baseline`, which
+  calls `aiter.fused_moe.fused_moe` (`../grouped_gemm/flydsl_grouped_moe_inference.md` §8).
 - **FlyDSL v0.3.2's `kernels/moe/`** and how aiter's copies differ: `../grouped_gemm/flydsl_grouped_moe_inference.md`
   §1.
 
 ## In AKLR
 
-- The contract and its compare: `aklr/ops/fused_moe/contract.py`. The route on `aiter.fused_moe.fused_moe`:
+- The contract and its compare: `aklr/ops/fused_moe/contract.py`. The api:
   `aklr/ops/fused_moe/api.py`. The baseline call and its environment (`AITER_BF16_FP8_MOE_BOUND=16` for gate mode
   interleave, sglang's DeepSeek-V4 setting): `aklr/ops/fused_moe/baseline.py`.
 - Kernel form, scratch and compile function: `aklr/ops/README.md` § The kernel section and ABI (`../SKILL.md`, Stop
   table). Workflow and CI: § Workflow. The serving threshold: § Environment variables. Kernel-less files (a
   definition: loaded and audited, not served): § Schema fields.
-- `AKLR_DISABLE=fused_moe@1.0` sends every MoE schema to aiter.
+- `AKLR_DISABLE=fused_moe@1.0` stops serving every MoE schema.
 - Kernel-less `fused_moe` files on main at 0cef4f2e3, counted from `aklr/ops/fused_moe/impls/flydsl/`: 17 of the 25
   files, 200 Points, all run by aiter (S1). By schema name, after `fused_moe_`:
 

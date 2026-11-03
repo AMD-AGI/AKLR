@@ -41,16 +41,17 @@ are called here by their extra pool: "no extra" (window only), "extra 8256" (ext
   1e-3 (`aklr/ops/mla/contract.py`). The reference defines the fp8 → bf16 step as the same bit assembly the kernel
   does, so that step matches it exactly; the error left to `compare` comes from bf16 P, bf16 partials and the bf16
   output.
-- Yardstick: `aklr/ops/mla/baseline.py` has no function for this contract, so bench times the first route's entry
-  point, sglang's TileLang `dpsk_v4_fp8_attention_fwd` (`seam.baseline_of`), not aiter. Each schema name has one
+- Yardstick: `flash_mla_with_kvcache_baseline` (`aklr/ops/mla/baseline.py`), which for this cache format calls
+  sglang's TileLang `dpsk_v4_fp8_attention_fwd` (S3), not aiter. Each schema name has one
   kernel file and no file in another language. The extra-8256 directory also holds `69a38923eb0c686a.json`, a
   definition (empty `sources`, never served or benched) whose 19 Points (pools of 1501–5229 pages) are not this
   file's.
 
 ## Counter-signals
 
-- **Only the recorded pool sizes are served.** The TP8 decode pool of the e2e scenarios (12153 main, 121529 extra
-  pages) is a Point at batch 1, 2 and 4 only. A deployment whose pool differs by one page runs the TileLang kernel.
+- **Only the recorded pool sizes are served.** The TP8 decode pool of the removed e2e stage's scenarios (12153 main,
+  121529 extra pages) is a Point at batch 1, 2 and 4 only. A deployment whose pool differs by one page runs the
+  TileLang kernel.
 - **The thinnest margin is the window-only schema at batch ≥ 128**: 1.165–1.188 at batch 128 and 1.193–1.354 at
   batch 256 *(field, E1)*, against 1.582–2.405 at batch ≤ 64. The cause is not established.
 - **The bench draws lengths and indices uniformly.** `sparse_lens` and `extra_sparse_lens` are uniform in
@@ -191,7 +192,7 @@ lines are cited in the window-only file.
 - E4 [2026-10, gfx950, FlyDSL 0.3.4.1, N=2, AKLR CI] the two committed measurements, in commit order: no extra 1.167–2.439 then 1.165–2.405, extra 8256 2.374–5.616 then 2.396–5.845, extra 512 2.363–5.019 then 2.362–5.078, all 183 Points ≥ 1.03 both times; per-Point ratio between the runs 0.924–1.070; extra 8256 at batch 1 by pool size 2.753, 5.616, 5.542, 5.027, 5.246, 5.523, 3.468, 4.491, 2.791 then 2.809, 5.845, 5.595, 5.071, 5.357, 5.526, 3.444, 4.494, 2.861 (the three schemas; 102877ca0, CI run 40154665266; 5571f4589, CI run 40613440602)
 - S1 aklr/ops/mla/contract.py:346 compare `BOUNDED`; `output` tolerance at :315, `lse` at :326; `n_pages` declared without `any_size` at :114
 - S2 aklr/ops/mla/reference.py:50 the reference's dequantisation is "the kernel's literal bf16 bit assembly, not fp8 scaling"
-- S3 aklr/core/runtime/seam.py:859 `baseline_of`: the custom baseline, else the first route's entry point; the route is aklr/ops/mla/api.py:37
+- S3 aklr/ops/mla/baseline.py:35 `flash_mla_with_kvcache_baseline` calls sglang's `dpsk_v4_fp8_attention_fwd` (:40) for the `dsv4_fp8` cache format
 - S4 aklr/core/contract/fastkey/_codec.py:75 `match_key` drops only `any_size` axes from the dispatch key
 - S5 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/97e39bdef97d3e9b.json#kernel.py:35 `KTIERS`; `_slots` at :74; `_workspace` at :84; `_build` keyed by `sm_scale`, `kv_scale` at :93
 - S6 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/97e39bdef97d3e9b.json#kernel.py:171 `stage`: bias at :190, exponent arithmetic at :204, rope copy at :232

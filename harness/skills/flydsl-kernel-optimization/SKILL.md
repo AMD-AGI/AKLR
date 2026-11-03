@@ -109,10 +109,11 @@ wins. Check a plan against this table before writing code.
 
 ## Also in AKLR
 
-- **The aiter these cards describe is this repository's `aiter/`**, whose entry points AKLR's routes stand in
-  for (`aklr/ops/gemm/api.py`). `aiter.tuned_gemm.gemm_a16w16` is wrapped by `aklr_proxy` and tries AKLR's
-  dispatch first; `AKLR_DISABLE=1` runs aiter's own path, the one to time when you price the baseline.
-  `gemm_a8w8_bpreshuffle`, aiter's FlyDSL fp8 path, is not routed: read it as reference code.
+- **The aiter these cards describe is the baseline**, ROCm/aiter at `AKLR_BASELINE_AITER`
+  (`.github/workflows/ci.yaml`): AKLR does not ship, patch or fall back to it, so its `aiter/` paths are that
+  revision's, read as reference code. Price aiter through the op's `<contract>_baseline`
+  (`aklr/ops/<op>/baseline.py`), the call bench times. A Point no kernel serves is the caller's to run: in a model,
+  the framework's own path (`aklr/plugins/README.md`).
 - **Workflow** (`aklr/ops/README.md` § Workflow): export the Points, fill `kernel.sources`, then
   `python -m aklr export check` and `python -m aklr validate --base origin/main`. The local result does not
   count; CI measures. A `platform_failure` "Kineto recorded no kernels for a single call" is a tracer fault: rerun.

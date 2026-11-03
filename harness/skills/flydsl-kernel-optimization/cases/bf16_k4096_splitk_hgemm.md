@@ -107,7 +107,7 @@ repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`).
 | n256 *(field, E3)* | 1.000 | 1.002 | **1.101** | **1.081** | **1.130** | **1.071** | **1.036** | 0.992 | **1.109** | **1.207** | **1.153** | **1.172** | **1.057** | 10 of 13 |
 | n512 *(field, E4)* | 0.925 | 0.898 | 0.877 | 0.850 | 0.793 | 0.851 | 0.941 | **1.187** | **1.194** | **1.237** | 1.025 | **1.116** | **1.059** | 5 of 13 |
 
-29 of the 52 Points are served. Where a Point is not served, aiter runs.
+29 of the 52 Points are served.
 
 ## Reproduce
 
@@ -128,8 +128,8 @@ bench measures only schemas that are not at the base, so on an unchanged checkou
 
 ## Rollback
 
-Delete the schema file: dispatch falls back to aiter at that file's Points. `AKLR_DISABLE=gemm@1.0` sends the
-whole contract to aiter, every other bf16 GEMM schema included. A re-measured Point below 1.03 stops being served
+Delete the schema file: dispatch stops serving that file's Points. `AKLR_DISABLE=gemm@1.0` stops serving the
+whole contract, every other bf16 GEMM schema included. A re-measured Point below 1.03 stops being served
 without a rollback, and a `failed` accuracy is never served. Roll back for a wrong result CI does not catch, for
 example after a FlyDSL or LLVM upgrade, or a split-K counter left non-zero by an aborted launch.
 

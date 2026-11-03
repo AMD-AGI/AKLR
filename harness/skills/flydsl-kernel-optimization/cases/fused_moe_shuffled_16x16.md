@@ -45,7 +45,7 @@ names below are in those sources. "m" is the Point's `n_tokens`; a route is one 
 
 ## Counter-signals
 
-- **257 experts at m 4 and m ≥ 128: aiter runs.** `4fbd9d02…` has no Point there and `1fee5982…` reads 0.138–0.862
+- **257 experts at m 4 and m ≥ 128: not served.** `4fbd9d02…` has no Point there and `1fee5982…` reads 0.138–0.862
   *(field, E1)*. At m 4, 16, 128, 512 and 1024 `1fee5982…` repacks `w1`, `w2` and their scales into a K-major record
   layout on every call (`pack_weights`, two extra `pack_weight_scales` launches): about 0.64 GB read and as much
   written per call (estimated from the tensor sizes). Those five Points read 0.138–0.425, its other unserved Points
@@ -180,8 +180,8 @@ repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`).
 | 65 experts `1bf41ccb…` *(field, E4)* | **1.353** | 1.024 | 0.980 | 0.991 | 0.970 | 0.952 | 0.956 | 0.909 | 1.023 | **1.113** | **1.365** | 0.873 | 0.801 | 3 of 13 |
 
 "–": no workload in that file. By schema name: 257 experts 6 of 13 Points served (2 by `1fee5982…`, 4 by
-`4fbd9d02…`), 33 experts 11 of 13, 65 experts 3 of 13: 20 of 39. Every workload reads `accuracy: passed`; aiter runs
-the other Points.
+`4fbd9d02…`), 33 experts 11 of 13, 65 experts 3 of 13: 20 of 39. Every workload reads `accuracy: passed`; no kernel
+serves the other Points.
 
 ## Reproduce
 
@@ -199,11 +199,11 @@ local result does not count; CI's measurement is the one dispatch reads (`aklr/o
 
 ## Rollback
 
-Delete a schema file (in a PR): its Points fall back to the other file of the same name where it qualifies, else to
-aiter. Deleting `4fbd9d02…` sends m 8–64 of the 257-expert name to aiter, since `1fee5982…` is below 1.03 there.
-`AKLR_DISABLE=fused_moe@1.0` sends the whole contract to aiter, every other MoE kernel included. Points CI measures
-below 1.03 are not served without any rollback. Remove `4fbd9d02…` if the contract becomes bitwise, and `ef15e878…`
-and `1bf41ccb…` at their fp8- or truncation-affected Points if the error bound tightens.
+Delete a schema file (in a PR): its Points fall back to the other file of the same name where it qualifies, else go
+unserved. Deleting `4fbd9d02…` leaves m 8–64 of the 257-expert name unserved, since `1fee5982…` is below 1.03
+there. `AKLR_DISABLE=fused_moe@1.0` stops serving the whole contract, every other MoE kernel included. Points CI
+measures below 1.03 are not served without any rollback. Remove `4fbd9d02…` if the contract becomes bitwise, and
+`ef15e878…` and `1bf41ccb…` at their fp8- or truncation-affected Points if the error bound tightens.
 
 ## Evidence
 

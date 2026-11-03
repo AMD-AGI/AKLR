@@ -40,7 +40,7 @@ sources:
 > The one card on inference MoE expert GEMMs: tokens are sorted by expert into blocks of tile-M rows, and each
 > workgroup runs one (M-block, N-block) of one expert — stage 1 is gate + up with the activation, stage 2 the down
 > projection with the routing weights. FlyDSL facts are for v0.3.2 (`kernels/moe/`); this repository does not
-> contain that tree, and the copies its aiter serves differ in places (§1). "BM" in FlyDSL's code is tile-M.
+> contain that tree, and the copies the baseline aiter ships differ in places (§1). "BM" in FlyDSL's code is tile-M.
 > Numbers marked `*(field, E<n>)*` are measured values from MoE kernels of this family at decode batch sizes (a4w4,
 > and a8w4 for the comm-fused stage 2 and E24–E29's 112-of-896-expert MoE), except where a sentence names another kernel; their conditions are listed
 > under Evidence at the end. Use them for direction and order of magnitude. aiter's FlyDSL
@@ -71,7 +71,7 @@ one K=32 MFMA (`mfma_f32_16x16x32_bf16`) per K step (`moe_2stage_a16wmix/utils.p
 epilogue that stages C through LDS to reshuffle it into wide, coalesced stores. FlyDSL also ships a fused
 dispatch + GEMMs + combine kernel (`kernels/mega_moe/`); it is not covered here.
 
-**In this repository's aiter** (`aiter/ops/flydsl/kernels/`): the FlyDSL code that aiter's `fused_moe`, AKLR's
+**In the baseline aiter** (`aiter/ops/flydsl/kernels/`): the FlyDSL code that aiter's `fused_moe`, AKLR's
 baseline, may dispatch to by tuned row (other rows run CK or HIP kernels):
 
 | FlyDSL v0.3.2 | aiter here | How they relate |
@@ -79,14 +79,14 @@ baseline, may dispatch to by tuned row (other rows run CK or HIP kernels):
 | `mxfp_moe/` | `mxfp4_gemm1.py` (`compile_gemm1_a4w4_port` :775), `mxfp4_gemm2.py` (`compile_gemm2_a4w4_port` :86); hosts `aiter/ops/flydsl/mxfp4_gemm{1,2}_kernels.py` | one pipeline, "ported back from aiter" into FlyDSL (`mxfp_moe/__init__.py:6`); the copies have diverged since |
 | `moe_2stage_a16wmix/` | `moe_2stage_a16wmix/` (`compile_gemm1_a16w4_port` `gemm1.py:375`, `compile_gemm2_a16w4_port` `gemm2.py:304`) | the same design (persistent above `4 · NUM_CU`, `b_cache_mod=2`); line numbers differ |
 | `moe_gemm_2stage/` | no copy; only `moe_reduce.py` corresponds (`compile_moe_reduction` :206) | aiter's `flydsl_moe1_*` and non-layout `flydsl_moe2_*` rows run the parametric `mixed_moe_gemm_2stage_common.py` instead, which v0.3.2 no longer ships (`mxfp_moe/__init__.py:16`) |
-| `moe_sorting_kernel.py` | `moe_sorting_kernel.py` (`moe_sorting_flydsl` :1934), `UNIT_SIZE = 32` | the same algorithm; aiter sorts with Opus unless `AITER_USE_FLYDSL_MOE_SORTING=1` (`aiter/fused_moe.py:65-67`), and its MXFP4 path with the HIP `aiter.mxfp4_moe_sort` (`aiter/fused_moe.py:162`) |
+| `moe_sorting_kernel.py` | `moe_sorting_kernel.py` (`moe_sorting_flydsl` :1934), `UNIT_SIZE = 32` | the same algorithm; aiter sorts with Opus unless `AITER_USE_FLYDSL_MOE_SORTING=1` (`aiter/fused_moe.py:64-66`), and its MXFP4 path with the HIP `aiter.mxfp4_moe_sort` (`aiter/fused_moe.py:161`) |
 | — | v2 stage 2: `mxmoe_dispatcher.py` (`mxfp4_moe_gemm2` :616), `mxmoe_gemm_v2.py` (:221) | aiter only |
 
 Most FlyDSL rows in aiter's tuned fused-MoE tables are `flydsl_moe1_*` and `flydsl_moe2_*` (the mixed builders, and
 the v2 stage 2 for `flydsl_moe2_layout_*`); `flydsl_mxmoe_*` rows are a small minority. Where aiter's
 `mxfp4_gemm{1,2}` differ from what this card cites: stage 2 is persistent for the plain non-atomic and the MXFP4-out
 epilogues, not CShuffle (`_persistent`, `mxfp4_gemm2.py:113`); the non-persistent atomic path keeps the hardware XCD
-order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel name (`aiter/fused_moe.py:1648`,
+order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel name (`aiter/fused_moe.py:1646`,
 `:1835`) instead of the automatic switch of §4; and the hosts build a4w4 only, with no fp8-out epilogue
 (`_SUPPORTED` in both host files).
 
@@ -107,7 +107,7 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
   `bound = cumsum[0] / BM · n_blocks` computed on the device (`mxfp_moe/gemm1.py:748-750`). No host read of the
   counts.
 - **Under expert parallelism, sort and size by the local experts.** aiter pads the sort buffers, and so stage 1's
-  grid, for every global expert: it passes `expert_mask.numel()` (`aiter/fused_moe.py:769-771`, `:985`, padding
+  grid, for every global expert: it passes `expert_mask.numel()` (`aiter/fused_moe.py:767-769`, `:983`, padding
   `:222`; grid `aiter/ops/flydsl/moe_kernels.py:1625`). With 112 of 896 experts local, 9% of 45,696 stage-1
   workgroups had work at 112 tokens, and a local sort cut the sort 24.5 → 9.5 µs and stage 1 174.4 → 160.6 µs
   *(field, E30)*; at 893 / 2732 tokens local sizing cut a call 2.0–3.7% and a local-only sort 3.0–3.4% more *(field, E33)*.
@@ -276,8 +276,8 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
 
 - Decode reads cold weights, runs under graph replay and pays a per-node floor: rotate weight copies past the
   MALL, time a replayed graph, and price through the deployed entry (`../gemm/flydsl_gemm_small_m.md` §1). AKLR's
-  bench already replays a graph with a cache flush per call; price aiter's MoE with `AKLR_DISABLE=1`
-  (`../optimize/flydsl_levers/flydsl_kernel_library.md` § Other FlyDSL families in this repository's aiter).
+  bench already replays a graph with a cache flush per call, and times aiter's MoE through `fused_moe_baseline`
+  (`../optimize/flydsl_levers/flydsl_kernel_library.md` § Other FlyDSL families in the baseline aiter).
 - *(field, E18)* A MoE decode scorer's in-batch noise was ~0.2%, but identical code drifted 0.3–0.4% between batches.
   Decide on interleaved pairs within one batch; use cross-batch values for direction only. *(field, E35)* Unchanged
   code also moved 9% within one session, and a null change was recorded at +6%: even direction needs a fresh pair.
@@ -302,8 +302,8 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
 
 A FlyDSL version is given only where the cited run, or another round in the same container and venv, printed it
 (`flydsl.__version__`, an import path with its version, or a `pip install flydsl==` in the run's own setup); otherwise
-`FlyDSL ?`. `aiter fork rev ?`: the GLM-5.2 campaigns ran on this repository's aiter fork at a commit their records do
-not give. The Kimi-K3 forge runs installed FlyDSL 0.3.2.
+`FlyDSL ?`. `aiter fork rev ?`: the GLM-5.2 campaigns ran on the aiter fork AKLR grew out of, at a commit their
+records do not give. The Kimi-K3 forge runs installed FlyDSL 0.3.2.
 
 - E1 [2026-10, gfx950, FlyDSL 0.3.2, N=3–4, AKLR graph timer, arms interleaved in one process] one contiguous band of tiles per XCD: 16.45 against 16.06 µs at m=14 and 16.92 against 15.40 µs at m=12 (dense bf16 GEMM n=163840, k=256, Kimi-K3 forge run, iter 6; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n163840_k256/forge_experiments/lessons/iter_006.md:25)
 - E2 [2026-10, gfx950, FlyDSL 0.3.2, N=4–6, AKLR graph timer, arms interleaved in one process] runs of 8 tiles per XCD against plain order at m=5–10: 14.55 against 14.92 µs at m=5 … 14.51 against 14.94 at m=10 (1.4–2.9%) (dense bf16 GEMM n=163840, k=256, Kimi-K3 forge run, iter 11; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n163840_k256/forge_experiments/lessons/iter_011.md:54)

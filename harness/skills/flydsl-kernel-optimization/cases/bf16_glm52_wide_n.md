@@ -37,7 +37,7 @@ the shapes also have a Triton kernel under the same name: n2624_k6144 (the QKV p
 - N × K = 2624 × 6144, 3072 × 6144, 6144 × 2048, 6144 × 3072: a weight of 30.75, 36, 24 and 36 MiB, a streaming
   row bound by the read of `b` (`../gemm/flydsl_gemm_small_m.md` §2).
 - m = 1 and 2 only. FlyDSL is served at n2624 m 1, n3072 m 1, 2, n6144_k2048 m 1, n6144_k3072 m 1, 2. The Triton
-  kernels are served at n2624 m 2, 4, 8, 64 and n6144_k2048 m 2–64; aiter runs every other Point.
+  kernels are served at n2624 m 2, 4, 8, 64 and n6144_k2048 m 2–64; no kernel serves the other Points.
 - The yardstick at a Point is the faster of the kernel AKLR serves there and aiter: aiter, except at the Points
   the Triton kernels serve.
 
@@ -125,8 +125,8 @@ skips the bench (`aklr/core/validation/stages/validation_scope.py`, `of_working_
 
 ## Rollback
 
-Delete the FlyDSL schema file: its m 1 (and m 2) Points fall back to aiter, while the Triton files keep the Points
-they serve. `AKLR_DISABLE=gemm@1.0` sends the whole contract to aiter, every other bf16 GEMM schema included. A
+Delete the FlyDSL schema file: its m 1 (and m 2) Points go unserved, while the Triton files keep the Points
+they serve. `AKLR_DISABLE=gemm@1.0` stops serving the whole contract, every other bf16 GEMM schema included. A
 re-measured Point below 1.03 stops being served without a rollback, and a `failed` accuracy is never served. Roll
 back for a wrong result CI does not catch, for example after a FlyDSL or LLVM upgrade.
 

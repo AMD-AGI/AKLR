@@ -1,5 +1,5 @@
 ---
-title: FlyDSL — what is tunable on this repository's aiter FlyDSL GEMMs, and what is fixed
+title: FlyDSL — what is tunable on the baseline aiter's FlyDSL GEMMs, and what is fixed
 kind: topic
 lever: flydsl_knob_space
 ops: [gemm]
@@ -20,7 +20,7 @@ sources:
 # The tunable surface of aiter's FlyDSL GEMMs
 
 ## Route here when
-You are reading a tuned row for, or racing against, a FlyDSL GEMM that this repository's aiter ships
+You are reading a tuned row for, or racing against, a FlyDSL GEMM that the baseline aiter ships
 (`flydsl_kernel_library.md`), and want to know which arguments exist, which values are legal, and which ones
 will raise.
 

@@ -21,7 +21,7 @@ sources:
 > Scope: dense GEMM with M ≈ 1–256 (decode steps, speculative-decode verify), mostly bf16. MoE expert GEMMs at
 > decode are in `../grouped_gemm/flydsl_grouped_moe_inference.md`. Primus-Turbo's FlyDSL
 > GEMMs (the exemplar elsewhere in this package) are built for training shapes and do not target small M.
-> "The current kernels" are this repository's aiter bf16 FlyDSL GEMMs behind `flydsl_hgemm`: the generic split-K
+> "The current kernels" are the baseline aiter's bf16 FlyDSL GEMMs behind `flydsl_hgemm`: the generic split-K
 > kernel `aiter/ops/flydsl/kernels/splitk_hgemm.py` and the small-M kernel `kernels/small_m_hgemm.py`, which no
 > shipped tuned row selects. Their arguments are in `../optimize/flydsl_levers/flydsl_knob_space.md`.
 >
@@ -48,8 +48,8 @@ sources:
   M ≤ 16 on a small weight more than half the measured time is the node. *(field, E7, E8, E9)* Under AKLR's timer (L2
   flushed before each call) an empty kernel read ~4 µs and a second launch added ~4 µs (a separate split-K fold
   took M=8 from ~8 to ~11 µs): keep the fold in the GEMM launch.
-- **Price aiter's rows through the deployed entry** (`aiter.tuned_gemm.gemm_a16w16`, with `AKLR_DISABLE=1`
-  set before aiter is imported), not a direct kernel call; time your own kernel through its `run` entry, as
+- **Price aiter's rows through the deployed entry** (`aiter.tuned_gemm.gemm_a16w16`, the call `gemm_baseline`
+  makes), not a direct kernel call; time your own kernel through its `run` entry, as
   the benchmark calls it.
   *(field, E10)* A row that a direct call measured 0.76 µs faster was 0.34 µs slower through the entry, and in deployment
   that row alone cost about 4.2 percentage points of the step score.
@@ -245,7 +245,7 @@ an idle-device tuner (§1).
 
 ## 7. aiter's tuned table at small M
 
-The lookup (`get_GEMM_A16W16_config`, `aiter/tuned_gemm.py:131`) matches `gfx`, `cu_num`, N, K, bias, dtypes,
+The lookup (`get_GEMM_A16W16_config`, `aiter/tuned_gemm.py:130`) matches `gfx`, `cu_num`, N, K, bias, dtypes,
 `scaleAB` and `bpreshuffle` exactly and tries M three times: as is, then `getPaddedM` at granularity 0, then at
 granularity 1 (`csrc/py_itfs_cu/gemm_common.cu:13-40`):
 
@@ -264,7 +264,7 @@ What it means at small M:
   across every M that reaches it, and add it only if it beats what the pad fallback already gives.
 - **A row whose kernel name the catalog cannot parse falls through** to the next candidate or the default,
   with only a logged warning, and every `flydsl` row falls through silently when FlyDSL is not importable
-  (`tuned_gemm.py:164-176`). This aiter parses only `flydsl_gemm{stages}_..._split_k{s}_...` names; a name in any
+  (`tuned_gemm.py:163-175`). This aiter parses only `flydsl_gemm{stages}_..._split_k{s}_...` names; a name in any
   other format (e.g. `flydsl_hgemm_..._ks7_...`) logs a warning and falls through. Re-tune instead of copying
   rows.
 - **Merging model tables keeps the row with the lowest `us`** across files written by different rulers, rewrites

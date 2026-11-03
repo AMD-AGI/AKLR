@@ -106,7 +106,7 @@ Turbo's dense kernels (`../gemm/INDEX.md` § Kernel map).
 
 `kernels/mega_moe/` fuses dispatch, both GEMMs and combine across GPUs; it is outside this package.
 
-This repository's aiter carries diverged copies of `mxfp_moe` and `moe_2stage_a16wmix`, none of `moe_gemm_2stage`,
+The baseline aiter carries diverged copies of `mxfp_moe` and `moe_2stage_a16wmix`, none of `moe_gemm_2stage`,
 and MoE kernels FlyDSL lacks; the mapping is in `flydsl_grouped_moe_inference.md` §1.
 
 Constants in both code bases (tile tables, band widths, group-count limits, adoption margins) were tuned on

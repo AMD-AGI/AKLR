@@ -161,7 +161,7 @@ under Counter-signals (`../gemm/flydsl_gemm_grid_pricing.md` §2).
 ## Result
 
 `speedup` is absent from every workload of these files: CI has not measured them, so dispatch serves none of
-their 115 Points and aiter runs them all. When CI does measure them it runs the FlyDSL of its image (0.3.4.1 in
+their 115 Points. When CI does measure them it runs the FlyDSL of its image (0.3.4.1 in
 the image of the latest perf runs), not the 0.3.2 of the local numbers below
 (`../pitfalls/measured_a_different_build.md`).
 
@@ -205,8 +205,8 @@ bench measures only schemas that are not at the base, so on an unchanged checkou
 
 ## Rollback
 
-Delete the schema file: its Points fall back to aiter, since no other file serves them. `AKLR_DISABLE=gemm@1.0`
-sends the whole contract to aiter, every other bf16 GEMM schema included. Until CI writes `speedup`, nothing is
+Delete the schema file: its Points go unserved, since no other file serves them. `AKLR_DISABLE=gemm@1.0`
+stops serving the whole contract, every other bf16 GEMM schema included. Until CI writes `speedup`, nothing is
 served and nothing needs rolling back; afterwards a Point measured below 1.03 is not served, and a `failed`
 accuracy never is. Roll back for a wrong result CI does not catch: a NaN or stale fold from k4224's flags at
 m 56–112 after an aborted or timed-out launch, or a change of FlyDSL or LLVM.

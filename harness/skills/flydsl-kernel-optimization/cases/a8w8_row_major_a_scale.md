@@ -149,7 +149,7 @@ local result does not count; CI's measurement is the one dispatch reads.
 
 ## Rollback
 
-Delete the schema file (in a PR): its Points fall back to aiter, since no other file serves them. `AKLR_DISABLE`
+Delete the schema file (in a PR): its Points go unserved, since no other file serves them. `AKLR_DISABLE`
 takes a whole contract id and would also drop every other `gemm_a8w8_blockwise_scaled@1.0` kernel. The two m = 1
 Points below 1.03 are not served without any rollback. If the bench stops relayouting a_scale in the timed baseline,
 re-measure all four files before trusting their m ≥ 2 margins.

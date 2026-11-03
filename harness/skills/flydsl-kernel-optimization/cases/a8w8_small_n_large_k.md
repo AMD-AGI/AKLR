@@ -159,7 +159,7 @@ measurement is the one dispatch reads.
 
 ## Rollback
 
-Delete the schema file (in a PR): its Points fall back to aiter, since no other file serves them. `AKLR_DISABLE`
+Delete the schema file (in a PR): its Points go unserved, since no other file serves them. `AKLR_DISABLE`
 takes a whole contract id and would also drop every other `gemm_a8w8_blockwise_scaled@1.0` kernel. A Point that CI
 measures below 1.03 stops being served without a rollback (as n1024_k4096 m = 4096 is now); delete the file for a
 wrong result, a crash, or a regression above the threshold that CI has not yet measured.

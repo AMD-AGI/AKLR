@@ -28,7 +28,7 @@ and have their own package, `../grouped_gemm/INDEX.md`.
 The cards in this package start from what FlyDSL's guide already says and add the rest. Read the guide first if
 you have not built a FlyDSL GEMM before.
 
-**Small M (decode, M ≤ 256)** is in `flydsl_gemm_small_m.md`: the kernels there are this repository's aiter bf16
+**Small M (decode, M ≤ 256)** is in `flydsl_gemm_small_m.md`: the kernels there are the baseline aiter's bf16
 FlyDSL GEMMs (`splitk_hgemm`, `small_m_hgemm`). Primus-Turbo does not target small M.
 
 Numbers marked `*(field)*` or `*(field, E<n>)*` are measured values; `E<n>` names the line under the card's `## Evidence` that gives the conditions. Use them for direction and order of magnitude, not as targets.

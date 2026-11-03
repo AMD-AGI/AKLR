@@ -35,7 +35,7 @@ is the Point's number of requests.
 - Yardstick: `fp8_paged_mqa_logits_baseline` (`aklr/ops/mla/baseline.py`), aiter's
   `deepgemm_fp8_paged_mqa_logits` (`aiter/ops/triton/attention/pa_mqa_logits.py`) with `Preshuffle`, `KVBlockSize`
   64 and the logits' width as `max_model_len`; `ChunkK`, `WavePerEU` and the scheduling arguments stay at aiter's
-  defaults, because the route drops what sglang passes for them. On gfx950 that function takes its Gluon kernel when
+  defaults, because the baseline does not pass them (S2). On gfx950 that function takes its Gluon kernel when
   Triton is 3.5 or later (read from the source; the CI image's Triton was not checked).
 - The schema name has one kernel file and none in another language. `9d22a1efb2186f81.json` in the same directory is
   a DeepSeek-V4-Pro definition (empty `sources`, never served or benched) whose 41 Points (pools of 6621–52289
@@ -153,7 +153,7 @@ measurement is the one dispatch reads.
 
 ## Rollback
 
-Delete the schema file (in a PR): its Points fall back to aiter, since no other file serves them.
+Delete the schema file (in a PR): its Points go unserved, since no other file serves them.
 `AKLR_DISABLE=fp8_paged_mqa_logits@1.0` drops this kernel and nothing else (the contract's other file is a
 definition). A Point CI measures below 1.03 stops being served without a rollback, as the batch-1 Points can. Roll
 back for a wrong result CI does not catch: a consumer that reads logits past a request's last page, a process that
@@ -168,7 +168,7 @@ aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/a989fd4b5f2
 - E2 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] the other committed measurement: 1.024–1.891 per Point, 57 of 58 ≥ 1.03; batch 1 by pool size 105428 1.055, 109404 1.035, 111670 1.024, 111761 1.073, 115603 1.035, 119349 1.030, 120631 1.037, 123163 1.031 (fp8_paged_mqa_logits_page_size64_n_heads64; 102877ca0, CI run 40154665266)
 - E3 [2026-10, gfx950, FlyDSL ?, N=?, AKLR bench_cudagraph, local run] batch 1, 2 and 4 "1.7x, 2.1x and 2.2x faster than aiter" after the depth-2 pipeline (fp8_paged_mqa_logits_page_size64_n_heads64; commit message of 39a51ac02, PR #71)
 - S1 aklr/ops/mla/contract.py:429 `SqnrBound(min_sqnr_db=30.0)`; compare `BOUNDED` at :433; `context_lens` drawn at `max_seq_len` only at :415; pool bytes below 0x40 at :399
-- S2 aklr/ops/mla/baseline.py:9 the baseline calls aiter with `Preshuffle` and `KVBlockSize` only; the route drops `ChunkK`, `WavePerEU` and the scheduling arguments at aklr/ops/mla/api.py:90
+- S2 aklr/ops/mla/baseline.py:91 the baseline calls aiter with `Preshuffle`, `KVBlockSize` and the logits' width only, leaving `ChunkK`, `WavePerEU` and the scheduling arguments at aiter's defaults
 - S3 aklr/ops/mla/reference.py:135 the reference scales the keys before relu
 - S4 aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/a989fd4b5f22b3d2.json#kernel.py:161 `_issue_page`; MFMA at :225; scale after the head sum at :238; −inf past the context at :240; nt store at :252
 - S5 aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/a989fd4b5f22b3d2.json#kernel.py:280 `split_table`; `band_table` at :300; `small` at :354; body chosen at :832

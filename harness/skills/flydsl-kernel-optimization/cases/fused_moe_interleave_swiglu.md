@@ -42,7 +42,7 @@ inter dim 256 or 512. The function names below are in that `kernel.py`. "m" is t
   reduction in this kernel at a served Point runs in a fixed order, with no atomics.
 - Served Points: m 1, 2 (expert parallel) and m 1, 2, 4, 8 (all local): every Point of the four files. Each schema
   name also has a kernel-less file (`550200e0…`, `58ad3640…`, `af9db8f6…`, `ff293e2a…`) holding m 16–256, a
-  definition that is not served (`aklr/ops/README.md` § Schema fields); aiter runs those Points.
+  definition that is not served (`aklr/ops/README.md` § Schema fields).
 - The baseline is aiter's `fused_moe` with `AITER_BF16_FP8_MOE_BOUND=16`, sglang's DeepSeek-V4 setting
   (`aklr/ops/fused_moe/baseline.py`): below 16 rows aiter keeps bf16 activations. Each file is the only measured
   file of its name, so the yardstick is aiter.
@@ -143,8 +143,8 @@ local result does not count; CI's measurement is the one dispatch reads (`aklr/o
 
 ## Rollback
 
-Delete the schema file (in a PR): its Points fall back to aiter, since the other file of each name has no kernel.
-`AKLR_DISABLE=fused_moe@1.0` sends the whole contract to aiter, every other MoE kernel included. Roll back for a wrong
+Delete the schema file (in a PR): its Points go unserved, since the other file of each name has no kernel.
+`AKLR_DISABLE=fused_moe@1.0` stops serving the whole contract, every other MoE kernel included. Roll back for a wrong
 result CI does not catch, for example after a FlyDSL or LLVM upgrade.
 
 ## Evidence

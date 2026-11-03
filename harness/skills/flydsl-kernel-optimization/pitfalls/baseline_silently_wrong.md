@@ -48,7 +48,7 @@ called directly, not through AKLR:
 - Check which kernel the baseline launched, and that it is the path you meant to beat
   (`../gemm/flydsl_gemm_measurement.md` §7).
 - Flag MXFP4 and MXFP8 Points whose K is not a multiple of 256. AKLR's `gemm_a4w4_mxfp4` contract admits any K
-  that is a multiple of 64 and routes to aiter's `gemm_a4w4` (S3).
+  that is a multiple of 64, and its baseline calls aiter's `gemm_a4w4` (S3).
 - Do not take a hipBLASLt MX output as the reference for an MX kernel: it is itself 49.6 dB from the fp32 result
   (E3).
 
@@ -80,5 +80,5 @@ the same session; the raw probe output was not kept. E3 is in the run's own reco
 - E4 [2026-10, gfx950, torch 2.11.0+rocm7.2 hipBLASLt, N=?, element-wise comparison with the fp32 reference] |out| ≤ |ref| on 99.4–100% of the elements of the MX bf16 outputs (KB note; local:/workspace/code/gpt_oss_docker/.claude/memory/reference_vendor_gemm_silent_wrong_gfx950.md:17)
 - S1 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:255 at 0cef4f2e3: `run_baseline` binds the route and calls it; only `RouteDeclinedError` becomes `baseline_failed` (:132-135)
 - S2 aklr/core/contract/semantics/_compare.py:295 at 0cef4f2e3: `BaselineRelativeBound` allows a multiple of the baseline's error; no contract under aklr/ops uses it
-- S3 aklr/ops/gemm/contract.py:328 at 0cef4f2e3: `k` axis 64..65536, `multiple_of=64`; route `aiter.ops.gemm_op_a4w4.gemm_a4w4` at aklr/ops/gemm/api.py:130
+- S3 aklr/ops/gemm/contract.py:312: `k` axis 64..65536, `multiple_of=64`; `gemm_a4w4_mxfp4_baseline` calls `aiter.ops.gemm_op_a4w4.gemm_a4w4` at aklr/ops/gemm/baseline.py:82
 - S4 local:/workspace/code/gpt_oss_docker/work/gemm_h2h/code/h2h_adapter_vendor.py:400 the adapter's K padding (data 0, scale 127) and its extra-work percentage

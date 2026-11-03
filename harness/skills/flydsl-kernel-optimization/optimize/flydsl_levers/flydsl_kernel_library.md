@@ -1,5 +1,5 @@
 ---
-title: FlyDSL — the kernels this repository's aiter ships, so you don't rewrite one
+title: FlyDSL — the kernels the baseline aiter ships, so you don't rewrite one
 kind: topic
 lever: flydsl_kernel_library
 ops: [gemm, moe, attention]
@@ -30,12 +30,12 @@ sources:
   - aiter/mla.py
 ---
 
-# The FlyDSL kernels in this repository's aiter
+# The FlyDSL kernels in the baseline aiter
 
-**This is about reading or copying aiter's kernels, not writing your own.** The kernels below are built and
-sitting in `aiter/ops/flydsl/` of this repository: host wrappers there, kernel bodies under `kernels/`. A path
-given in full is from the repository root; after that a file is named without its directory, and `kernels/…`
-is `aiter/ops/flydsl/kernels/…`. AKLR kernels do not import this `aiter/`: read these kernels to know what you
+**This is about reading or copying aiter's kernels, not writing your own.** The kernels below are in
+`aiter/ops/flydsl/` of the baseline aiter (`../../SKILL.md` § Also in AKLR): host wrappers there, kernel bodies under
+`kernels/`. A path given in full is from aiter's root; after that a file is named without its directory, and
+`kernels/…` is `aiter/ops/flydsl/kernels/…`. AKLR kernels do not import aiter: read these kernels to know what you
 are racing, and copy code out of them if you reuse it. The dense GEMMs come first; the other FlyDSL families in
 that directory (MoE, linear attention, MLA reduce, EP dispatch/combine and smaller fused ops) are mapped in
 § Other FlyDSL families below.
@@ -53,10 +53,10 @@ that directory (MoE, linear attention, MLA reduce, EP dispatch/combine and small
 
 | Family | Entry → body | Reached from |
 |---|---|---|
-| bf16/fp16 HGEMM | `flydsl_hgemm` (`aiter/ops/flydsl/gemm_kernels.py:859`) → `compile_flydsl_hgemm_kernel` (`kernels/hgemm_dispatch.py:10`) → `compile_hgemm_kernel` (`kernels/splitk_hgemm.py:98`) | a `libtype=flydsl` row of the bf16 tuned table, through `flydsl_gemm` (`aiter/tuned_gemm.py:478`) |
+| bf16/fp16 HGEMM | `flydsl_hgemm` (`aiter/ops/flydsl/gemm_kernels.py:859`) → `compile_flydsl_hgemm_kernel` (`kernels/hgemm_dispatch.py:10`) → `compile_hgemm_kernel` (`kernels/splitk_hgemm.py:98`) | a `libtype=flydsl` row of the bf16 tuned table, through `flydsl_gemm` (`aiter/tuned_gemm.py:474`) |
 | bf16 small-M HGEMM | the same entry with `kernel_family="small_m"` → `compile_small_m_hgemm_kernel` (`kernels/small_m_hgemm.py:386`) | only a tuned row whose name carries the `_small_m` suffix; the catalog does not generate them (`gemm_kernels.py:652-685` is disabled) and the shipped tables name none |
-| fp8/int8 per-token × per-channel, B preshuffled | `flydsl_preshuffle_gemm_a8` (`gemm_kernels.py:1022`) → `compile_preshuffle_gemm` (`kernels/preshuffle_gemm.py:127`) | a `flydsl_bpreshuflle_…` row of an a8w8 bpreshuffle table, through `gemm_a8w8_bpreshuffle_flydsl` (`aiter/ops/gemm_op_a8w8.py:165`); the op takes fp8 B only (`gemm_op_a8w8.py:732`) |
-| fp8 8-wave, B preshuffled | `run_gemm_a8w8_bpreshuffle_8wave` (`aiter/ops/flydsl/gemm_a8w8_bpreshuffle_8wave.py:265`) → `compile_fp8_gemm_8w` (`kernels/gemm_a8w8_8wave.py:326`) | the same tables, rows named `flydsl_bpreshuffle_8w_…` (`gemm_op_a8w8.py:182`) |
+| fp8/int8 per-token × per-channel, B preshuffled | `flydsl_preshuffle_gemm_a8` (`gemm_kernels.py:1022`) → `compile_preshuffle_gemm` (`kernels/preshuffle_gemm.py:127`) | a `flydsl_bpreshuflle_…` row of an a8w8 bpreshuffle table, through `gemm_a8w8_bpreshuffle_flydsl` (`aiter/ops/gemm_op_a8w8.py:164`); the op takes fp8 B only (`gemm_op_a8w8.py:730`) |
+| fp8 8-wave, B preshuffled | `run_gemm_a8w8_bpreshuffle_8wave` (`aiter/ops/flydsl/gemm_a8w8_bpreshuffle_8wave.py:265`) → `compile_fp8_gemm_8w` (`kernels/gemm_a8w8_8wave.py:326`) | the same tables, rows named `flydsl_bpreshuffle_8w_…` (`gemm_op_a8w8.py:181`) |
 
 The small-M family is bf16 only, fixes `tile_m` 16 and one wave along M, and launches `ceil(M / 16)` row
 blocks (`gemm_kernels.py:781-791`, `small_m_hgemm.py:403-409, 1402-1407`); its disabled catalog only
@@ -64,22 +64,20 @@ enumerated M ≤ 16.
 
 ## How the bf16 path is reached
 
-1. `aiter.tuned_gemm.gemm_a16w16` (`aiter/tuned_gemm.py:294`) is wrapped by `aklr_proxy` (:293): with AKLR
-   importable it first offers the call to AKLR's own GEMM dispatch, and only a AKLR fallback reaches the steps
-   below. `AKLR_DISABLE=1` runs aiter's own path,
-   which is the one to time when you price aiter.
-2. The lookup (`get_GEMM_A16W16_config`, `tuned_gemm.py:131`) matches `(gfx, cu_num, M, N, K, bias, dtype,
+1. `aiter.tuned_gemm.gemm_a16w16` (`aiter/tuned_gemm.py:290`) is the entry, and the call AKLR's `gemm_baseline`
+   makes (`aklr/ops/gemm/baseline.py`): time aiter through it.
+2. The lookup (`get_GEMM_A16W16_config`, `tuned_gemm.py:130`) matches `(gfx, cu_num, M, N, K, bias, dtype,
    outdtype, scaleAB, bpreshuffle)`, with M as is, then padded twice by `get_padded_m` (the padding is in
    `../../gemm/flydsl_gemm_small_m.md` §7).
 3. A `flydsl` row is used only if FlyDSL is importable on an architecture it supports
    (`is_flydsl_available`, `aiter/ops/flydsl/utils.py`) and its `kernelName` is in the catalog or parses with
    `_HGEMM_KERNEL_RE` (`gemm_kernels.py:45, 579`); otherwise the lookup moves on, with a logged warning when
-   only the name failed (`tuned_gemm.py:164-176`).
+   only the name failed (`tuned_gemm.py:163-175`).
 4. Without a tuned row the default is hipBLASLt, asm, skinny, Triton or torch, never FlyDSL: **a FlyDSL GEMM
    runs only where a tuned row names it.**
 5. `flydsl_gemm` fuses a bias only when the output dtype is the input dtype and the bias has that dtype, and
-   otherwise adds it after the GEMM (`tuned_gemm.py:497-528`). The kernel's output is always the input dtype;
-   a row with an fp32 `outdtype` runs the bf16 GEMM and casts the result (`tuned_gemm.py:530`).
+   otherwise adds it after the GEMM (`tuned_gemm.py:493-524`). The kernel's output is always the input dtype;
+   a row with an fp32 `outdtype` runs the bf16 GEMM and casts the result (`tuned_gemm.py:526`).
 
 ## Split-K: how each family reduces
 
@@ -151,12 +149,12 @@ serve; which run where: `../../moe/INDEX.md` § Kernels to start from.
 | `…_n_experts33_topk9_inter_dim2048/ef15e878…` | one XCD remap for every GEMM (`_chiplet_order`) with `GROUP_M` row tiles inside an expert; route ranks from ballot and popcount with one atomic per wave or workgroup (`_route_block`); one aligned scale dword reused across column halves and K slices (`PACKED_SCALES1`/`PACKED_SCALES2`); stage-2 partials stored as unscaled fp8 and summed in a fixed order (`_reduce_fp8x4`) |
 | `…_n_experts65_topk9_inter_dim2048/1bf41ccb…` | at m = 1, split-K over the waves of one workgroup with SiLU and requantization after the LDS sum (`FUSE_SPLIT_QUANT`); routing by one workgroup's LDS histogram while the launch's other workgroups quantize the input (`_make_small_route`); the whole stage-2 K panel in LDS so the MFMA loop needs no cross-wave barrier (`FULL_STAGE_A`) |
 
-## Other FlyDSL families in this repository's aiter
+## Other FlyDSL families in the baseline aiter
 
 Same layout as the GEMMs: host wrapper in `aiter/ops/flydsl/`, body under `kernels/`, and nothing runs unless
-`is_flydsl_available()` (`aiter/ops/flydsl/utils.py:72`). `aiter.fused_moe.fused_moe` is wrapped by `aklr_proxy`
-(`aiter/fused_moe.py:471`) like `gemm_a16w16`, so price aiter's MoE with `AKLR_DISABLE=1` (step 1 of § How the
-bf16 path is reached). Everything here runs on gfx950 unless § Not for gfx950 lists it.
+`is_flydsl_available()` (`aiter/ops/flydsl/utils.py:72`). `aiter.fused_moe.fused_moe` (`aiter/fused_moe.py:470`) is
+the call `fused_moe_baseline` makes (`aklr/ops/fused_moe/baseline.py`), in sglang's environment: price aiter's MoE
+through it. Everything here runs on gfx950 unless § Not for gfx950 lists it.
 
 ### MoE (grouped GEMM)
 
@@ -165,20 +163,20 @@ How these kernels map work, what moved them and where FlyDSL's own copies differ
 
 | Family | Computes | Entry → body | Reached from |
 |---|---|---|---|
-| 2-stage MoE, fp4/fp8 weights | stage 1: gate+up GEMM over expert-sorted rows plus the activation, optionally quantizing its output to fp4/fp8; stage 2: down GEMM, router-weighted | `flydsl_moe_stage1` (`aiter/ops/flydsl/moe_kernels.py:1884`), `flydsl_moe_stage2` (`moe_kernels.py:2277`) → `compile_mixed_moe_gemm1` / `compile_mixed_moe_gemm2` (`kernels/mixed_moe_gemm_2stage.py:30, 91`) → `compile_mixed_moe_gemm1_common` / `compile_mixed_moe_gemm2_common` (`kernels/mixed_moe_gemm_2stage_common.py:127, 3425`) | `fused_moe` → `get_2stage_cfgs` (`aiter/fused_moe.py:2144`): a tuned row whose `kernelName1`/`kernelName2` start with `flydsl_` (`fused_moe.py:2573-2581`) |
+| 2-stage MoE, fp4/fp8 weights | stage 1: gate+up GEMM over expert-sorted rows plus the activation, optionally quantizing its output to fp4/fp8; stage 2: down GEMM, router-weighted | `flydsl_moe_stage1` (`aiter/ops/flydsl/moe_kernels.py:1884`), `flydsl_moe_stage2` (`moe_kernels.py:2277`) → `compile_mixed_moe_gemm1` / `compile_mixed_moe_gemm2` (`kernels/mixed_moe_gemm_2stage.py:30, 91`) → `compile_mixed_moe_gemm1_common` / `compile_mixed_moe_gemm2_common` (`kernels/mixed_moe_gemm_2stage_common.py:127, 3425`) | `fused_moe` → `get_2stage_cfgs` (`aiter/fused_moe.py:2142`): a tuned row whose `kernelName1`/`kernelName2` start with `flydsl_` (`fused_moe.py:2571-2579`) |
 | 2-stage MoE, bf16 activations × fp4/int4 weights | the same two stages | the same entries; `compile_flydsl_moe_stage1/2` (`moe_kernels.py:641, 728`) send this dtype pair to `compile_gemm1_a16w4_port` (`kernels/moe_2stage_a16wmix/gemm1.py:375`) / `compile_gemm2_a16w4_port` (`kernels/moe_2stage_a16wmix/gemm2.py:304`) | as above |
-| a4w4 "mxmoe" | the two stages for MXFP4 activations and weights, N and K tiles fixed at 256 | `flydsl_mxfp4_gemm1` (`aiter/ops/flydsl/mxfp4_gemm1_kernels.py:70`) → `compile_gemm1_a4w4_port` (`kernels/mxfp4_gemm1.py:775`); `flydsl_mxfp4_gemm2` (`mxfp4_gemm2_kernels.py:102`) → `compile_gemm2_a4w4_port` (`kernels/mxfp4_gemm2.py:86`) | rows named `flydsl_mxmoe_g{1,2}_a4w4_<BM>x256x256[_flag…]` (`fused_moe.py:2524`; grammar `aiter/ops/flydsl/mxfp4_kname.py:7-9`) |
-| v2 stage 2 | stage 2 only, behind whichever stage 1 the row names, mxmoe included | `mxfp4_moe_gemm2` (`kernels/mxmoe_dispatcher.py:616`) → `gemm2_body_v2` (`kernels/mxmoe_gemm_v2.py:221`) | `kernelName2` = `flydsl_moe2_layout_…` (`fused_moe.py:1901, 2614-2619`; grammar `mxfp4_kname.py:19-24`) |
-| FHMoE | the 2-stage MoE over MXFP4 routed experts plus one FP8 E4M3 shared expert, id `E - 1` (`aiter/fhmoe.py:74-89`) | `flydsl_fhmoe_stage1` / `flydsl_fhmoe_stage2` (`aiter/ops/flydsl/fhmoe.py:253, 339`) → `compile_mixed_fhmoe_gemm1/2` (`kernels/fhmoe.py:17, 85`) → the same `_common` builders | `fused_moe` with `shared_w1`… or `shared_expert_id` set (`fused_moe.py:509-518`) → `aiter/fhmoe.py`; rows of `aiter/configs/tuned_fhmoe.csv` (`AITER_CONFIG_FHMOE`) |
-| MoE sorting | counting sort of the `(slot << 24) \| token` ids into expert blocks: `sorted_token_ids`, `sorted_weights`, `sorted_expert_ids`, `num_valid_ids` | `flydsl_moe_sorting_fwd` (`aiter/ops/flydsl/moe_sorting.py:19`) → `moe_sorting_flydsl` (`kernels/moe_sorting_kernel.py:1934`) | `AITER_USE_FLYDSL_MOE_SORTING=1`; the default is Opus (`fused_moe.py:64-67, 369-378`) |
-| top-k reduce | `Y[t] = Σ_k X[t, k]` over a token's per-slot rows, with optional EP mask and weights | `_run_moe_reduction` (`moe_kernels.py:1017`) → `compile_moe_reduction` (`kernels/moe_reduce.py:206`) | stage 2 in `reduce` mode; the v2 stage 2 `reduce` epilogue (`fused_moe.py:2127`) |
-| split-K stage-1 activation | activation × up over split-K partials, then optional fp4/fp8 quant and the sorted e8m0 scale write; SwiGLU variant for the interleaved layout | `_get_compiled_silu_fused` (`moe_kernels.py:1319`) → `build_silu_and_mul_fq_module` (`kernels/silu_and_mul_fq.py:32`); `flydsl_swiglu_and_mul_interleaved` (`moe_kernels.py:1348`) → `build_swiglu_and_mul_module` (`kernels/swiglu_and_mul.py:33`) | FlyDSL stage 1 with `k_batch` > 1 and interleaved gate/up or fp4 output (`moe_kernels.py:1763-1847`; other split-K stage 1 runs aiter's HIP `silu_and_mul`/`swiglu_and_mul`, `:1849-1871`); CK-Tile split-K stage 1 on interleaved weights (`fused_moe.py:4038-4063`) |
+| a4w4 "mxmoe" | the two stages for MXFP4 activations and weights, N and K tiles fixed at 256 | `flydsl_mxfp4_gemm1` (`aiter/ops/flydsl/mxfp4_gemm1_kernels.py:70`) → `compile_gemm1_a4w4_port` (`kernels/mxfp4_gemm1.py:775`); `flydsl_mxfp4_gemm2` (`mxfp4_gemm2_kernels.py:102`) → `compile_gemm2_a4w4_port` (`kernels/mxfp4_gemm2.py:86`) | rows named `flydsl_mxmoe_g{1,2}_a4w4_<BM>x256x256[_flag…]` (`fused_moe.py:2522`; grammar `aiter/ops/flydsl/mxfp4_kname.py:7-9`) |
+| v2 stage 2 | stage 2 only, behind whichever stage 1 the row names, mxmoe included | `mxfp4_moe_gemm2` (`kernels/mxmoe_dispatcher.py:616`) → `gemm2_body_v2` (`kernels/mxmoe_gemm_v2.py:221`) | `kernelName2` = `flydsl_moe2_layout_…` (`fused_moe.py:1899, 2612-2617`; grammar `mxfp4_kname.py:19-24`) |
+| FHMoE | the 2-stage MoE over MXFP4 routed experts plus one FP8 E4M3 shared expert, id `E - 1` (`aiter/fhmoe.py:74-89`) | `flydsl_fhmoe_stage1` / `flydsl_fhmoe_stage2` (`aiter/ops/flydsl/fhmoe.py:253, 339`) → `compile_mixed_fhmoe_gemm1/2` (`kernels/fhmoe.py:17, 85`) → the same `_common` builders | `fused_moe` with `shared_w1`… or `shared_expert_id` set (`fused_moe.py:507-516`) → `aiter/fhmoe.py`; rows of `aiter/configs/tuned_fhmoe.csv` (`AITER_CONFIG_FHMOE`) |
+| MoE sorting | counting sort of the `(slot << 24) \| token` ids into expert blocks: `sorted_token_ids`, `sorted_weights`, `sorted_expert_ids`, `num_valid_ids` | `flydsl_moe_sorting_fwd` (`aiter/ops/flydsl/moe_sorting.py:19`) → `moe_sorting_flydsl` (`kernels/moe_sorting_kernel.py:1934`) | `AITER_USE_FLYDSL_MOE_SORTING=1`; the default is Opus (`fused_moe.py:63-66, 368-377`) |
+| top-k reduce | `Y[t] = Σ_k X[t, k]` over a token's per-slot rows, with optional EP mask and weights | `_run_moe_reduction` (`moe_kernels.py:1017`) → `compile_moe_reduction` (`kernels/moe_reduce.py:206`) | stage 2 in `reduce` mode; the v2 stage 2 `reduce` epilogue (`fused_moe.py:2125`) |
+| split-K stage-1 activation | activation × up over split-K partials, then optional fp4/fp8 quant and the sorted e8m0 scale write; SwiGLU variant for the interleaved layout | `_get_compiled_silu_fused` (`moe_kernels.py:1319`) → `build_silu_and_mul_fq_module` (`kernels/silu_and_mul_fq.py:32`); `flydsl_swiglu_and_mul_interleaved` (`moe_kernels.py:1348`) → `build_swiglu_and_mul_module` (`kernels/swiglu_and_mul.py:33`) | FlyDSL stage 1 with `k_batch` > 1 and interleaved gate/up or fp4 output (`moe_kernels.py:1763-1847`; other split-K stage 1 runs aiter's HIP `silu_and_mul`/`swiglu_and_mul`, `:1849-1871`); CK-Tile split-K stage 1 on interleaved weights (`fused_moe.py:4036-4061`) |
 | MegaMoE v2 | dispatch, GEMM1, GEMM2 and combine in one launch over mori shmem | class `MegaMoEV2` (`kernels/mega_moe/mega_moe_v2.py:25`) | no aiter op; import it directly |
 | EP dispatch/combine, intranode | expert-parallel token dispatch and weighted combine between the GPUs of one node | `FlyDSLDispatchCombineIntraNodeOp` (`kernels/flydsl_dispatch_combine_intranode_op.py:548`; `dispatch` :1086, `combine` :1415) → `make_dispatch_kernel` / `make_combine_kernel` (`kernels/flydsl_dispatch_combine_intranode_kernel.py:68, 420`) | `all2all_backend == "flydsl"` (`aiter/dist/device_communicators/communicator_cuda.py:134`) → `FlyDSLAll2AllManager` (`aiter/dist/device_communicators/all2all.py:116`); needs mori |
 
 **A FlyDSL MoE can run without a FlyDSL row.** When no tuned row names a FlyDSL kernel, `get_2stage_cfgs` still
 picks FlyDSL for per-1x32 fp4/fp8 activations and weights (pre-shuffled, fused gate+up, no stage-1 weighting),
-with tiles chosen by token count and stage 2 in `atomic` mode (`fused_moe.py:2750-2853`; `AITER_FLYDSL_FORCE`,
+with tiles chosen by token count and stage 2 in `atomic` mode (`fused_moe.py:2748-2851`; `AITER_FLYDSL_FORCE`,
 default `1`, admits activations other than SwiGLU/SiTUv2), and for int4 weights through the a16wi4 port
 (`:2709-2749`). SwiGLU with interleaved gate/up and non-fp8 weights goes to CK-Tile before either check
 (`:2674-2701`). The fmoe table is `aiter/configs/tuned_fmoe.csv` merged with every
@@ -191,7 +189,7 @@ default `1`, admits activations other than SwiGLU/SiTUv2), and for int4 weights 
 | 2-stage, stage 2 | tiles; `atomic` or `reduce`; `_persist`, `_bnt{n}`, `_xcd{n}` (`moe_kernels.py:287-338`). `tile_k` 256 runs as 128 when `inter_dim % 256 != 0` (`:119-137, 2099`). `AITER_FLYDSL_FORCE_REDUCE=1` forces `reduce`, and so does an output above 4 GiB (`:2084-2092`) | `atomic`: every (token, slot) row is added into the output with a bf16/f16 atomic fadd (`mixed_moe_gemm_2stage_common.py:5210, 5348-5374`), so a token's top-k contributions meet in no fixed order: not bitwise reproducible at top-k ≥ 3. `reduce`: per-slot rows, then `moe_reduce` sums the slots in index order (`moe_reduce.py:165-181`). |
 | a16w4 / a16wi4 stage 2 | `TILE_N`, `TILE_K`, `xcd_swizzle`, `b_cache_mod`, `waves_per_eu` (`moe_2stage_a16wmix/gemm2.py:304-317`) | always the atomic scatter (`moe_2stage_a16wmix/gemm2.py:37, 273`); the name's `atomic`/`reduce` token is not read on this path (`moe_kernels.py:2018-2075`) |
 | mxmoe gemm1 | `BM` with `nt` and `f16in` (inline activation quant) from the legal set (`mxfp4_gemm1_kernels.py:11-17`); `xcd{n}` (`mxfp4_kname.py:53-63`) | no atomics in `kernels/mxfp4_gemm1.py` |
-| mxmoe gemm2 | `BM`; `atomic` (else non-atomic), `nt`, `f4out`, `cshuffle` (`mxfp4_kname.py:66-87`; legal set `mxfp4_gemm2_kernels.py:11-23`) | `atomic`: bf16 `atomicrmw fadd` (`kernels/mxfp4_gemm2.py:787-866`), order not fixed; non-atomic: per-sorted-row output, then the HIP op `aiter.mxfp4_moe_scatter_reduce` (`fused_moe.py:1801`) |
+| mxmoe gemm2 | `BM`; `atomic` (else non-atomic), `nt`, `f4out`, `cshuffle` (`mxfp4_kname.py:66-87`; legal set `mxfp4_gemm2_kernels.py:11-23`) | `atomic`: bf16 `atomicrmw fadd` (`kernels/mxfp4_gemm2.py:787-866`), order not fixed; non-atomic: per-sorted-row output, then the HIP op `aiter.mxfp4_moe_scatter_reduce` (`fused_moe.py:1799`) |
 | v2 stage 2 | tiles; `atomic` or `reduce`; `_persist`, `_nt`, `_sbm{n}`, `_bf16lds`, `_sp{n}` (`mxfp4_kname.py:19-24`) | `atomic`: packed bf16 buffer atomic add (`kernels/mxmoe_gemm_v2.py:888, 967`); `reduce`: `moe_reduce` as above |
 | sorting, top-k reduce, split-K activation | sorting picks a one-shot or a 2- or 4-kernel multiphase path by token count (`moe_sorting_kernel.py:12-15`) | no atomics in their bodies |
 | EP dispatch/combine | launch geometry per EP size and GPU from `kernels/mega_moe_tuning_config/` (`flydsl_dispatch_combine_intranode_op.py:138-208`; ships `flydsl_gfx950_mi355x_IntraNode_ep8.json`) | dispatch takes each token's receive slot from an integer atomic (`flydsl_dispatch_combine_intranode_kernel.py:173`), so the receive order varies run to run; combine adds a token's slots in fixed order (`:948-1000`) |

@@ -30,7 +30,7 @@ One FlyDSL kernel for `mhc_fused_post_pre@1.0` (PR #52). The schema embeds it as
   `sinkhorn_iters` 20 in every workload.
 - Compare: `determinism: bounded`, `max_violation_fraction` 0.0, atol = rtol = 1e-2 on all four outputs
   (`aklr/ops/mhc/contract.py`).
-- Yardstick: there is no `baseline.py` for this op, so bench times the first route's entry point, aiter's
+- Yardstick: `mhc_fused_post_pre_baseline` (`aklr/ops/mhc/baseline.py`), aiter's
   `mhc_fused_post_pre` (`aiter/ops/mhc.py`): on gfx950 its fused HIP kernel below 1024 tokens, `mhc_post` then
   `mhc_pre` from 1024 on (read from the source). This file is the only one of its schema name, in any language; the
   hidden-7168 schema of the same contract is a definition with no kernel.
@@ -150,7 +150,7 @@ measurement is the one dispatch reads.
 
 ## Rollback
 
-Delete the schema file (in a PR): its Points fall back to aiter, since no other file serves them.
+Delete the schema file (in a PR): its Points go unserved, since no other file serves them.
 `AKLR_DISABLE=mhc_fused_post_pre@1.0` drops this kernel and nothing else (the hidden-7168 file is a definition). A
 Point CI measures below 1.03 stops being served without a rollback. Roll back for a wrong result CI does not catch,
 such as a model whose scalars differ from the captured ones and are first seen inside a graph capture, a process that
@@ -164,7 +164,7 @@ aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af
 - E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter per Point 1.100–1.510, 13 of 13 ≥ 1.03; T 1 1.167, 2 1.185, 4 1.117, 8 1.144, 16 1.125, 32 1.132, 64 1.100, 128 1.225, 256 1.325, 512 1.393, 1024 1.423, 2048 1.397, 4096 1.510 (mhc_fused_post_pre_has_norm_weight_hidden_size4096, T 1–4096; 5571f4589, CI run 40613440602)
 - E2 [2026-10, gfx950, FlyDSL ?, N=5, AKLR CI; FlyDSL of the runs: not recorded, 0.3.1, then 0.3.4.1 three times] per-Point range and served count in commit order: 1.042–1.217, 1.134–1.439, 1.095–1.504, 1.134–1.451, 1.100–1.510, 13 of 13 each time; the kernel text is the same in all five (mhc_fused_post_pre_has_norm_weight_hidden_size4096, b4b4a7b28dc91a1a.json; baa858028, cc6e3b96c with CI run 39908769447, cca5b12df with CI run 40058570127, 102877ca0 with CI run 40154665266, 5571f4589 with CI run 40613440602)
 - S1 aklr/ops/mhc/contract.py:227 compare `BOUNDED`; tolerance atol = rtol = 1e-2 at :39, on all four outputs at :151–169
-- S2 aklr/ops/mhc/api.py:99 the route on aiter's `mhc_fused_post_pre`, the defined baseline; aiter/ops/mhc.py:563 aiter runs `mhc_post` and `mhc_pre` from 1024 tokens on gfx950
+- S2 aklr/ops/mhc/baseline.py:79 `mhc_fused_post_pre_baseline` calls aiter's `mhc_fused_post_pre`; aiter/ops/mhc.py:560 aiter runs `mhc_post` and `mhc_pre` from 1024 tokens on gfx950
 - S3 aklr/ops/mhc/reference.py:103 the reference rounds `next_residual` to bf16 before the pre step
 - S4 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json#kernel.py:1783 `_config`; `_PCFG` at :1818; NK at :1839; `part` on `torch.device("cuda")` at :1843; per-scalar compile in `launch` at :1855
 - S5 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json#kernel.py:1247 `_make_kmm_p`: weight slab to bf16 LDS at :1372, 96 KiB reservation at :1270 with its comment at :1265, Gram MFMAs at T 512 and 2048 at :1262
