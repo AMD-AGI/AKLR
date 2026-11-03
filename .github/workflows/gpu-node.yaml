@@ -1,0 +1,134 @@
+name: AKLR-GPU-node
+
+# One Spur GPU node for a CI run attempt: prepare allocates it and registers a runner on it,
+# labelled with its own name; release ends the allocation and deletes the runner.
+# The only code that runs on the aklr-spur-host runner, which holds the Spur account and a
+# runner-admin token. A PR edits its own ci.yaml, so ci.yaml calls this file at main, and the
+# host's runner group admits only this file at refs/heads/main.
+
+on:
+  workflow_call:
+    inputs:
+      operation:
+        description: prepare, or release the node a prepare published
+        type: string
+        required: true
+      runner_label:
+        description: release only; prepare's runner_label, which may be an earlier attempt's
+        type: string
+        default: ''
+      allocation_id:
+        description: release only; prepare's allocation_id
+        type: string
+        default: ''
+    outputs:
+      runner_label:
+        value: ${{ jobs.prepare.outputs.runner_label }}
+      allocation_id:
+        value: ${{ jobs.prepare.outputs.allocation_id }}
+      # "Re-run failed jobs" reuses these outputs after release freed their node:
+      # the caller's GPU jobs run only in the attempt that allocated it.
+      attempt:
+        value: ${{ jobs.prepare.outputs.attempt }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # Decided here, not by the caller: a PR could forge an input.
+  trust:
+    if: inputs.operation == 'prepare'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      environment: ${{ steps.trust.outputs.environment }}
+    steps:
+      - name: Decide whether the run waits for approval
+        id: trust
+        env:
+          NOT_BOT: ${{ github.event.sender.type != 'Bot' && github.event.pull_request.user.type != 'Bot' }}
+          SENDER: ${{ github.event.sender.login }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          GH_TOKEN: ${{ github.token }}
+        # Trusted only when the sender and the PR author, if any, have write access, whatever the
+        # event: a PR's own workflow may call this one from any event. By permission, not
+        # author_association: that reports a private org member as a non-member.
+        # "Re-run failed jobs" keeps this decision, "Re-run all jobs" reads it again.
+        run: |
+          trusted=$NOT_BOT
+          for user in "$SENDER" ${PR_AUTHOR:+"$PR_AUTHOR"}; do
+            # .permission folds maintain into write; a failed lookup is untrusted.
+            permission=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$user/permission" --jq .permission) ||
+              { echo "::warning::Permission lookup for $user failed; the GPU node waits for approval."; permission=none; }
+            [[ $permission == admin || $permission == write ]] || trusted=false
+          done
+          echo "environment=$([[ $trusted == true ]] && echo gpu-trusted || echo gpu)" | tee -a "$GITHUB_OUTPUT"
+
+  prepare:
+    needs: trust
+    runs-on: &spur_host aklr-spur-host
+    # Bots, Bot-sent events and PRs by authors without write access wait for maintainer approval
+    # before a node is requested for PR code.
+    environment: ${{ needs.trust.outputs.environment }}
+    # manage_spur_runner.sh waits at most 15m for the queue and 20m for the runner.
+    timeout-minutes: 50
+    outputs:
+      runner_label: ${{ steps.prepare.outputs.runner_label }}
+      allocation_id: ${{ steps.prepare.outputs.allocation_id }}
+      attempt: ${{ github.run_attempt }}
+    env: &spur_env
+      # Host service installation/authentication is managed outside this repository.
+      PATH: ${{ vars.AKLR_HOST_PATH }}
+      AKLR_SPUR_SHARED_DIR: ${{ vars.AKLR_SPUR_SHARED_DIR }}
+      AKLR_GITHUB_TOKEN_FILE: ${{ vars.AKLR_GITHUB_TOKEN_FILE }}
+      # Comma/space-separated lists; one allocation is requested per account and
+      # partition pair, the first to start is kept and the rest are cancelled.
+      AKLR_SPUR_ACCOUNT: ${{ vars.AKLR_SPUR_ACCOUNT }}
+      AKLR_SPUR_PARTITION: ${{ vars.AKLR_SPUR_PARTITION }}
+      # Unset resource settings take manage_spur_runner.sh's defaults.
+      AKLR_SPUR_CPUS: ${{ vars.AKLR_SPUR_CPUS }}
+      AKLR_SPUR_MEMORY: ${{ vars.AKLR_SPUR_MEMORY }}
+      AKLR_SPUR_GPUS_PER_NODE: ${{ vars.AKLR_SPUR_GPUS_PER_NODE }}
+      # Comma-separated nodes to never allocate (e.g. known-broken GPU nodes).
+      AKLR_SPUR_EXCLUDE: ${{ vars.AKLR_SPUR_EXCLUDE }}
+      # The whole run's limit, not a budget per GPU job.
+      AKLR_SPUR_TIME_LIMIT: ${{ vars.AKLR_SPUR_TIME_LIMIT }}
+      AKLR_RUNNER_VERSION: ${{ vars.AKLR_RUNNER_VERSION || '2.337.0' }}
+      AKLR_RUNNER_SHA256: ${{ vars.AKLR_RUNNER_SHA256 || '70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613' }}
+    steps:
+      # The scripts of this workflow's own commit, never the caller's: an empty ref would
+      # check out the caller's commit, so it fails here instead.
+      - &require_workflow_sha
+        name: Require this workflow's commit
+        env:
+          WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: '[[ $WORKFLOW_SHA =~ ^[0-9a-f]{40}$ ]] || { echo "::error::job.workflow_sha is ${WORKFLOW_SHA:-empty}"; exit 1; }'
+      - &checkout_control
+        name: Checkout GPU control scripts
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - name: Prepare one GPU node for this run attempt
+        id: prepare
+        run: bash .github/scripts/manage_spur_runner.sh prepare
+
+  release:
+    # always(): the caller releases after failed or cancelled jobs too.
+    if: always() && inputs.operation == 'release'
+    runs-on: *spur_host
+    timeout-minutes: 15
+    env: *spur_env
+    steps:
+      - *require_workflow_sha
+      - *checkout_control
+      # The script checks that both belong to this run before touching anything.
+      - name: Release only this run's runner and node
+        env:
+          ALLOCATION_ID: ${{ inputs.allocation_id }}
+          GPU_RUNNER_NAME: ${{ inputs.runner_label }}
+        run: bash .github/scripts/manage_spur_runner.sh release "$ALLOCATION_ID" "$GPU_RUNNER_NAME"
