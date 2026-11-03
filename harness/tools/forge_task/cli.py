@@ -117,8 +117,9 @@ def _publish(args: argparse.Namespace) -> int:
     if completed.returncode:
         sys.stderr.write(completed.stdout + completed.stderr)
         return completed.returncode
-    print(f"published: {completed.stdout.strip()}")
-    print("next: python -m aklr export check && python -m aklr validate --base origin/main")
+    path = completed.stdout.strip()
+    print(f"published: {path}")
+    print(f"next: python -m aklr export check && python -m aklr validate --base origin/main {path}")
     return 0
 
 

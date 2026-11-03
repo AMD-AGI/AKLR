@@ -185,6 +185,17 @@ def test_a_schema_aklr_times_no_baseline_for_needs_the_start_anchor(tmp_path: Pa
     assert "prepare with --anchor start" in capsys.readouterr().err
 
 
+def test_publish_names_the_file_it_wrote_and_validates_that_file(aklr_root: Path, tmp_path: Path, capsys):
+    """validate with no path checks every schema on a branch that also changes code: the next command names the file."""
+    assert _prepare(aklr_root, tmp_path) == 0
+    capsys.readouterr()
+    assert cli.main(["publish", str(tmp_path / "run")]) == 0
+    out = capsys.readouterr().out
+    path = out.split("published: ")[1].splitlines()[0]
+    assert (aklr_root / path).is_file()
+    assert f"aklr validate --base origin/main {path}" in out
+
+
 def test_publish_refuses_a_directory_without_a_task(tmp_path: Path, capsys):
     assert cli.main(["publish", str(tmp_path)]) == 2
     assert "holds no task" in capsys.readouterr().err

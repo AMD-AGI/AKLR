@@ -28,8 +28,9 @@ rather than a person at a terminal.
   (peak FLOP/s / read bandwidth x weight bytes per element, about 230 for bf16 on MI355X) splits a GEMM, and a
   long flat stretch of time over M marks the latency-bound end. Give each regime its own run, card and schema
   file holding only its workloads; each delivers its own kernel file, and dispatch serves every Point with the
-  best one. forge_task reads a schema only where AKLR keeps it, so write each regime's file into that run's own
-  AKLR clone, under `aklr/ops/<op>/impls/<language>/<name>/`.
+  best one. forge_task reads a schema file at a path shaped like AKLR's, `<op>/impls/<language>/<name>/<file>.json`;
+  keep each regime's file outside the AKLR clone, e.g. `~/aklr-regimes/gemm/impls/flydsl/<name>/small_m.json`. In
+  the clone, `aklr export check` in step 6 rejects it: its name is not its content hash.
 - Pick one card nobody uses (`rocm-smi --showmeminfo vram`, `rocm-smi --showpids`) and use it in steps 1, 2
   and 5. Another process on the card makes every timing on it meaningless.
 

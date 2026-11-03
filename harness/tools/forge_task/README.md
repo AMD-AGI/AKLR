@@ -21,6 +21,10 @@ one reviewed commit ── publish ──▶ aklr/ops ── aklr validate ─�
 
 - An MI355X (gfx950) machine, inside the ROCm container you run AKLR in.
 - A clone of AKLR that is yours alone: while a candidate is checked, the driver writes it into `aklr/ops/`.
+- AKLR installed in that container from your clone, as AKLR's README says (`git submodule update --init
+  --recursive`, then `pip install -e .`). AKLR routes calls through the AITER of its `3rdparty/aiter`; with an AITER
+  installed from another tree the import can fail, and the starting kernel then crashes on every workload
+  (`candidate_crash`).
 - In that container:
 
   ```bash
@@ -45,7 +49,9 @@ HIP_VISIBLE_DEVICES=0 python harness/tools/forge_task prepare --schema bmm_n128_
 
 It checks the starting kernel with AKLR, records AKLR's baseline times and writes the task into `$RUN`. A GEMM
 schema starts from torch; any other needs `--starting-kernel <kernel.py>`, or `--starting-kernel <dir>` for a kernel
-of several files: every `*.py` in the directory, `kernel.py` among them.
+of several files: every `*.py` in the directory, `kernel.py` among them. A kernel whose counters or flags must
+outlive a call, such as split-K arrival counters, sets `STATE_BYTES` in `kernel.py`: AKLR zeroes that many bytes
+once per device and passes them to every call as `state`, and the driver does the same.
 
 **2. Optimize.** Hours, and the agents cost money from here: in the Kimi-K3 runs, about $10 an hour on a GEMM
 and $17 on a MoE. Run it inside `tmux`:
@@ -84,7 +90,8 @@ python -m kernelforge.cli forge-finalize --workspace $W --gpu 0 --model claude-o
   --lint "python -m ruff format --check --config $A/pyproject.toml" \
   --review-guide $A/.claude/skills/flydsl-kernel-code-cleanup/SKILL.md
 # The same answer, as the schema's determinism asks, on a stream limited to a few CUs and beside a second call of
-# its own: a kernel whose workgroups wait for each other does not give it, and validate cannot tell
+# its own (not for a kernel with state, whose calls AKLR runs on one stream): a kernel whose workgroups wait for
+# each other does not give it, and validate cannot tell
 HIP_VISIBLE_DEVICES=0 python $W/driver.py --stress
 # What the FlyDSL skill should learn from the run, as a patch for you to review
 python -m kernelforge.cli forge-distill --workspace $W --model claude-opus-5-5 \
@@ -100,11 +107,13 @@ For a Triton kernel, leave out `--review-guide` and skip `forge-distill`.
 
 ```bash
 python harness/tools/forge_task publish $RUN
-python -m aklr export check && python -m aklr validate --base origin/main
+python -m aklr export check && python -m aklr validate --base origin/main <the path publish printed>
 ```
 
-`publish` writes the reviewed kernel into `aklr/ops/` as the schema's kernel; commit it as `aklr/ops/README.md`
-describes and open a pull request. What the run taught goes into the same pull request: apply
+`publish` writes the reviewed kernel into `aklr/ops/` as the schema's kernel. Give validate that path: with none, it
+checks only the schema files a change touches, and only when it touches nothing else; on a branch that also changes
+code, it checks every schema in AKLR, which takes hours. Commit the kernel as `aklr/ops/README.md` describes and
+open a pull request. What the run taught goes into the same pull request: apply
 `$RUN/knowledge_patch/knowledge_patch.diff`, then review it item by item as the skill's `CONTRIBUTING.md` says --
 edits to existing pages in place, new pages in `staging/` for a person to approve. A change to the method itself
 (this README, the driver, the `forge-loop-campaign` skill) goes into a pull request of its own.
@@ -144,7 +153,7 @@ baseline; `--run-dir` (default `./aklr-runs/<schema>-<time>`).
 | `AKLR timed no baseline for …` | the schema has nothing to time against: prepare again with `--anchor start` |
 | `run directory … is not empty` | give each task a directory of its own |
 | `Kineto recorded no kernels for a single call` | the profiler lost a trace, usually on a busy machine: try again, or on an idle one |
-| `stress: differs from the call alone: …` | the kernel's workgroups wait for each other (a split-K fold that polls flags), or its concurrent calls share scratch memory: make it wait-free, the last workgroup to arrive on an atomic counter doing the fold, before you publish |
+| `stress: differs from the call alone: …` | the kernel's workgroups wait for each other (a split-K fold that polls flags), or its concurrent calls share scratch memory: make it wait-free, the last workgroup to arrive on an atomic counter doing the fold, before you publish. Counters that must start at zero go in `state` (`STATE_BYTES`), the last to arrive setting them back to zero; scratch from `torch.empty` holds whatever was there |
 | `stress: hung, no result within 60 s: …` | the same defect, a wait with no bound: the kernel never finished on that stream. The check stops there, since the device is still running it |
 
 ## Tests
