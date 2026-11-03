@@ -11,5 +11,5 @@ test-reports/
 .claude/
 # aklr validate --out: reports, measured schemas and re-exported baselines
 aklr_validation/
-# forge_task prepare's default run directories: untracked files there would widen aklr validate --base to every schema
+# forge_task prepare's default run directories
 aklr-runs/
