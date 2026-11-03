@@ -65,6 +65,7 @@ jobs:
       actions: read
     outputs:
       gpu_enabled: ${{ steps.gpu.outputs.gpu_enabled }}
+      gpu_trusted: ${{ steps.gpu.outputs.gpu_trusted }}
       has_bench_paths: ${{ steps.audit.outputs.has_bench_paths }}
       validation_base: ${{ steps.lint.outputs.validation_base }}
       should_run_e2e: ${{ steps.e2e.outputs.should_run_e2e }}
@@ -76,7 +77,22 @@ jobs:
             ${{ github.event_name != 'pull_request' ||
                 (github.event.pull_request.head.repo.full_name == github.repository &&
                  contains(github.event.pull_request.labels.*.name, 'ci:gpu')) }}
-        run: echo "gpu_enabled=$GPU_ENABLED" >> "$GITHUB_OUTPUT"
+          NOT_BOT: ${{ github.event.sender.type != 'Bot' && github.event.pull_request.user.type != 'Bot' }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          GH_TOKEN: ${{ github.token }}
+        # A PR is trusted by its author's write access here, not author_association:
+        # that reports a private org member as a non-member. Read at run time, before PR code runs;
+        # "Re-run failed jobs" keeps this decision, "Re-run all jobs" reads it again.
+        run: |
+          echo "gpu_enabled=$GPU_ENABLED" >> "$GITHUB_OUTPUT"
+          trusted=$NOT_BOT
+          if [[ $trusted == true && $GITHUB_EVENT_NAME == pull_request ]]; then
+            # .permission folds maintain into write; a failed lookup is untrusted.
+            permission=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$PR_AUTHOR/permission" --jq .permission) ||
+              { echo '::warning::PR author permission lookup failed; the GPU job waits for approval.'; permission=none; }
+            [[ $permission == admin || $permission == write ]] || trusted=false
+          fi
+          echo "gpu_trusted=$trusted" | tee -a "$GITHUB_OUTPUT"
       - name: Print job info
         env:
           GPU_ENABLED: ${{ steps.gpu.outputs.gpu_enabled }}
@@ -230,13 +246,9 @@ jobs:
     needs: code-lint
     if: needs.code-lint.outputs.gpu_enabled == 'true'
     runs-on: &gpu_runner aklr-gpu
-    # Bots, Bot-sent events and outside PRs wait for maintainer approval before PR code reaches the GPU runner (D §8.5).
-    environment: >-
-      ${{ github.event.sender.type != 'Bot' &&
-          (github.event_name != 'pull_request' ||
-           (github.event.pull_request.user.type != 'Bot' &&
-            contains(fromJSON('["OWNER","MEMBER"]'), github.event.pull_request.author_association)))
-          && 'gpu-trusted' || 'gpu' }}
+    # Bots, Bot-sent events and PRs by authors without write access wait for maintainer approval
+    # before PR code reaches the GPU runner (D §8.5).
+    environment: ${{ needs.code-lint.outputs.gpu_trusted == 'true' && 'gpu-trusted' || 'gpu' }}
     container:
       image: *ci_image
       options: &gpu_container_options >-
