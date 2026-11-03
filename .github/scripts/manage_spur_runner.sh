@@ -4,7 +4,7 @@
 #   manage_spur_runner.sh prepare|release [allocation-id] [runner-name]
 #
 # Requires Bash, gh (repository runner administration), jq, timeout and Spur.
-# ci.yaml supplies resource settings and the official runner version/checksum.
+# gpu-node.yaml supplies the Spur settings and the official runner version/checksum.
 # AKLR_SPUR_SHARED_DIR must be private and accessible at the same absolute path
 # on the Host and GPU nodes. Bootstrap scripts/logs remain there for diagnosis;
 # the short-lived registration token is removed after use.
@@ -26,6 +26,9 @@ set -euo pipefail
 umask 077
 
 readonly COMMAND_TIMEOUT_SECONDS=30
+# gpu-node.yaml's prepare timeout covers both waits plus cancellation.
+readonly QUEUE_TIMEOUT_SECONDS=900
+readonly RUNNER_ONLINE_TIMEOUT_SECONDS=1200
 readonly CANCEL_TIMEOUT_SECONDS=120
 readonly POLL_INTERVAL_SECONDS=2
 
@@ -138,19 +141,12 @@ load_prepare_settings() {
     gpus_per_node=${AKLR_SPUR_GPUS_PER_NODE:-mi355x:8}
     allocation_time_limit=${AKLR_SPUR_TIME_LIMIT:-8:00:00}
     exclude_nodes=${AKLR_SPUR_EXCLUDE:-}
-    queue_timeout_seconds=${AKLR_QUEUE_TIMEOUT_SECONDS:-900}
-    runner_online_timeout_seconds=${AKLR_RUNNER_ONLINE_TIMEOUT_SECONDS:-1200}
 
     [[ $cpus_per_task =~ ^[1-9][0-9]*$ ]] || die 'Invalid AKLR_SPUR_CPUS'
     [[ $memory_per_node =~ ^[1-9][0-9]*[KMGTkmgt]?$ ]] || die 'Invalid AKLR_SPUR_MEMORY'
     [[ $gpus_per_node =~ ^([A-Za-z0-9_-]+:)?[1-9][0-9]*$ ]] || die 'Invalid AKLR_SPUR_GPUS_PER_NODE'
     [[ $allocation_time_limit =~ ^[1-9][0-9]*:[0-5][0-9]:[0-5][0-9]$ ]] || die 'Time limit must be H:MM:SS'
     [[ -z $exclude_nodes || $exclude_nodes =~ ^[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*$ ]] || die 'Invalid AKLR_SPUR_EXCLUDE'
-    [[ $queue_timeout_seconds =~ ^[1-9][0-9]*$ ]] || die 'Invalid queue timeout'
-    [[ $runner_online_timeout_seconds =~ ^[1-9][0-9]*$ ]] || die 'Invalid runner online timeout'
-    if ((queue_timeout_seconds > 900 || runner_online_timeout_seconds > 1200)); then
-        die 'Queue/online waits may not exceed 900/1200 seconds'
-    fi
 
     [[ ${AKLR_RUNNER_VERSION:-} =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 'Set the official runner version'
     [[ ${AKLR_RUNNER_SHA256:-} =~ ^[a-f0-9]{64}$ ]] || die 'Set the official runner SHA256'
@@ -447,7 +443,7 @@ cancel_other_allocations() {
 }
 
 wait_for_runner() {
-    local online_deadline=$((SECONDS + runner_online_timeout_seconds))
+    local online_deadline=$((SECONDS + RUNNER_ONLINE_TIMEOUT_SECONDS))
     local allocation_status runner_json
 
     while :; do
@@ -484,7 +480,7 @@ prepare_runner() {
 
     write_bootstrap_input
     # Submission and queueing share one budget; bootstrap gets a separate budget.
-    queue_deadline=$((SECONDS + queue_timeout_seconds))
+    queue_deadline=$((SECONDS + QUEUE_TIMEOUT_SECONDS))
     submit_allocations "$queue_deadline"
     wait_for_allocation "$queue_deadline"
     cancel_other_allocations

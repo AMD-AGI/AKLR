@@ -74,7 +74,7 @@ jobs:
     # Bots, Bot-sent events and PRs by authors without write access wait for maintainer approval
     # before a node is requested for PR code.
     environment: ${{ needs.trust.outputs.environment }}
-    # The queue waits at most 15m and the runner 20m; leave time for cancellation.
+    # manage_spur_runner.sh waits at most 15m for the queue and 20m for the runner.
     timeout-minutes: 50
     outputs:
       runner_label: ${{ steps.prepare.outputs.runner_label }}
@@ -89,13 +89,14 @@ jobs:
       # partition pair, the first to start is kept and the rest are cancelled.
       AKLR_SPUR_ACCOUNT: ${{ vars.AKLR_SPUR_ACCOUNT }}
       AKLR_SPUR_PARTITION: ${{ vars.AKLR_SPUR_PARTITION }}
-      AKLR_SPUR_CPUS: ${{ vars.AKLR_SPUR_CPUS || '64' }}
-      AKLR_SPUR_MEMORY: ${{ vars.AKLR_SPUR_MEMORY || '512G' }}
-      AKLR_SPUR_GPUS_PER_NODE: ${{ vars.AKLR_SPUR_GPUS_PER_NODE || 'mi355x:8' }}
+      # Unset resource settings take manage_spur_runner.sh's defaults.
+      AKLR_SPUR_CPUS: ${{ vars.AKLR_SPUR_CPUS }}
+      AKLR_SPUR_MEMORY: ${{ vars.AKLR_SPUR_MEMORY }}
+      AKLR_SPUR_GPUS_PER_NODE: ${{ vars.AKLR_SPUR_GPUS_PER_NODE }}
       # Comma-separated nodes to never allocate (e.g. known-broken GPU nodes).
       AKLR_SPUR_EXCLUDE: ${{ vars.AKLR_SPUR_EXCLUDE }}
-      # Whole-run limit, not a separate budget for each GPU job.
-      AKLR_SPUR_TIME_LIMIT: ${{ vars.AKLR_SPUR_TIME_LIMIT || '8:00:00' }}
+      # The whole run's limit, not a budget per GPU job.
+      AKLR_SPUR_TIME_LIMIT: ${{ vars.AKLR_SPUR_TIME_LIMIT }}
       AKLR_RUNNER_VERSION: ${{ vars.AKLR_RUNNER_VERSION || '2.337.0' }}
       AKLR_RUNNER_SHA256: ${{ vars.AKLR_RUNNER_SHA256 || '70920811a4f8ad4328818682bca5c6469c1c942fab52448868071d0063816613' }}
     steps:
@@ -117,7 +118,8 @@ jobs:
         run: bash .github/scripts/manage_spur_runner.sh prepare
 
   release:
-    if: inputs.operation == 'release'
+    # always(): the caller releases after failed or cancelled jobs too.
+    if: always() && inputs.operation == 'release'
     runs-on: *spur_host
     timeout-minutes: 15
     env: *spur_env

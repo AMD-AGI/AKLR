@@ -60,30 +60,19 @@ jobs:
     permissions:
       contents: read
       actions: read
+    env:
+      GPU_ENABLED: >-
+        ${{ github.event_name != 'pull_request' ||
+            (github.event.pull_request.head.repo.full_name == github.repository &&
+             contains(github.event.pull_request.labels.*.name, 'ci:gpu')) }}
     outputs:
-      gpu_enabled: ${{ steps.gpu.outputs.gpu_enabled }}
+      gpu_enabled: ${{ env.GPU_ENABLED }}
       has_bench_paths: ${{ steps.audit.outputs.has_bench_paths }}
       validation_base: ${{ steps.lint.outputs.validation_base }}
     steps:
-      - name: Decide whether GPU jobs run
-        id: gpu
-        env:
-          GPU_ENABLED: >-
-            ${{ github.event_name != 'pull_request' ||
-                (github.event.pull_request.head.repo.full_name == github.repository &&
-                 contains(github.event.pull_request.labels.*.name, 'ci:gpu')) }}
-        run: echo "gpu_enabled=$GPU_ENABLED" >> "$GITHUB_OUTPUT"
-      - name: Print job info
-        env:
-          GPU_ENABLED: ${{ steps.gpu.outputs.gpu_enabled }}
-        run: | # zizmor: ignore[github-env] only an internally generated numeric timestamp is exported
-          echo "AKLR_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
-          echo '🎉 [1/4] Begin AKLR lint.'
-          echo "🐧 Runner: $RUNNER_NAME ($RUNNER_OS); event: $GITHUB_EVENT_NAME; ref: $GITHUB_REF"
-          echo "⏱️ Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          echo '🧭 Pipeline: lint → GPU node → AKLR tests → validation → coverage report.'
-          echo '🔎 Checks: pre-commit, export check, audit.'
-          if [[ "$GPU_ENABLED" == true ]]; then
+      - name: Report whether GPU jobs run
+        run: |
+          if [[ $GPU_ENABLED == true ]]; then
             echo '🟢 GPU jobs are eligible; each test stage must pass before the next starts.' | tee -a "$GITHUB_STEP_SUMMARY"
           else
             echo '⏭️ PR GPU jobs require the ci:gpu label on a same-repository PR; fork PRs never run here.' | tee -a "$GITHUB_STEP_SUMMARY"
@@ -184,28 +173,6 @@ jobs:
             [[ ! -f $AUDIT_REPORT_DIR/report.md ]] || cat "$AUDIT_REPORT_DIR/report.md" >> "$GITHUB_STEP_SUMMARY"
             exit "$code"
           fi
-      - name: Summarize lint result
-        if: always()
-        env:
-          JOB_STATUS: ${{ job.status }}
-          LINT_RESULT: ${{ steps.precommit.outcome }}
-          EXPORT_RESULT: ${{ steps.export.outcome }}
-          AUDIT_RESULT: ${{ steps.audit.outcome }}
-        run: |
-          case "$JOB_STATUS" in
-            success) icon='✅' ;;
-            cancelled) icon='⏹️' ;;
-            *) icon='❌' ;;
-          esac
-          now=$(date +%s)
-          {
-            echo
-            echo "### $icon [1/4] Lint: $JOB_STATUS"
-            echo
-            echo "pre-commit: ${LINT_RESULT:-skipped}; export check: ${EXPORT_RESULT:-skipped}."
-            echo "Audit: ${AUDIT_RESULT:-skipped}."
-            echo "⏱️ Finished at: $(date -u '+%Y-%m-%d %H:%M:%S UTC'); elapsed: $((now - ${AKLR_CI_JOB_STARTED_AT:-$now})) seconds."
-          } | tee -a "$GITHUB_STEP_SUMMARY"
 
   # The Spur host's jobs run from main, never from a PR's own workflow (gpu-node.yaml);
   # a local ./ path would be the PR's copy.
@@ -217,36 +184,26 @@ jobs:
       operation: prepare
 
   unittest-aklr:
-    needs: [code-lint, prepare-gpu]
-    if: >-
-      !cancelled() && needs.prepare-gpu.result == 'success' &&
-      needs.prepare-gpu.outputs.attempt == github.run_attempt
+    needs: prepare-gpu
+    # "Re-run failed jobs" reuses an earlier attempt's node, which release-gpu already freed.
+    if: needs.prepare-gpu.outputs.attempt == github.run_attempt
     runs-on: ${{ needs.prepare-gpu.outputs.runner_label }}
     container:
       image: *ci_image
       options: &gpu_container_options >-
-        --env HOME=/github/home --env XDG_CACHE_HOME=/github/home/.cache
         --device=/dev/kfd --device=/dev/dri --ipc=host
         --security-opt=seccomp=unconfined --ulimit memlock=-1:-1
     timeout-minutes: 60
     steps:
-      - name: Print job info
-        run: | # zizmor: ignore[github-env] only an internally generated numeric timestamp is exported
-          echo "AKLR_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
-          echo '🎉 [2/4] Begin AKLR unit tests.'
-          echo "🐧 Runner: $RUNNER_NAME ($RUNNER_OS); event: $GITHUB_EVENT_NAME; ref: $GITHUB_REF"
-          echo "⏱️ Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          echo '🧪 Run all tests once, including core and GPU tests.'
-          echo '➡️ Passing this job allows validation to start.'
       - &checkout_source
         name: Checkout source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Set up AKLR and coverage
-        id: setup
-        run: &setup_aklr | # zizmor: ignore[github-env] fixed local workspace paths are exported
+      - &setup_aklr_step
+        name: Set up AKLR
+        run: | # zizmor: ignore[github-env] fixed local workspace paths are exported
           set -euo pipefail
           setup_phase='prepare workspace'
           finish_setup() {
@@ -257,62 +214,47 @@ jobs:
             echo "⏱️ AKLR environment setup finished in ${SECONDS}s (exit $status)."
           }
           trap finish_setup EXIT
-          echo '🧰 Use the ROCm environment of the job container, install this checkout and enable subprocess coverage.'
+          echo '🧰 Use the ROCm environment of the job container and install this checkout.'
           cd "$GITHUB_WORKSPACE"
           # The host runner user owns the checkout, the container runs as root; checkout trusts it only in a temporary HOME.
           git config --global --add safe.directory '*'
+          # Under $RUNNER_TEMP, which the runner empties at the start of every job.
           export AKLR_CI_STATE_DIR="$RUNNER_TEMP/aklr-ci"
-          export COVERAGE_FILE="$AKLR_CI_STATE_DIR/.coverage"
-          export PIP_CACHE_DIR="$AKLR_CI_STATE_DIR/pip-cache"
-          mkdir -p "$AKLR_CI_STATE_DIR/test-reports"
-          unset COVERAGE_PROCESS_START
-          rm -f "$COVERAGE_FILE" "$COVERAGE_FILE".*
-          # Kernel build caches are job-local and emptied first.
-          cache="$AKLR_CI_STATE_DIR/cache/$GITHUB_JOB"
-          rm -rf "$cache"
-          mkdir -p "$cache"
+          cache="$AKLR_CI_STATE_DIR/cache"
+          mkdir -p "$AKLR_CI_STATE_DIR/test-reports" "$cache"
           export FLYDSL_RUNTIME_CACHE_DIR="$cache/flydsl-runtime" FLYDSL_AUTOTUNE_CACHE_DIR="$cache/flydsl-autotune" \
                  TRITON_CACHE_DIR="$cache/triton" XDG_CACHE_HOME="$cache/xdg" AKLR_KERNEL_CACHE_DIR="$cache/aklr-kernels"
-          # Not aiter's default, its site-packages tree or, if that is read-only, ~/.aiter under the
-          # runner's persistent HOME, where a killed build's lock would block every later job.
+          # Not aiter's default, its site-packages tree or, if that is read-only, ~/.aiter,
+          # which outlives the job.
           export AITER_JIT_DIR="$cache/aiter-jit"
           # Bench task directories need a local disk (peak len(devices) × 16 GiB): flock, atomic renames, real free space.
           export TMPDIR="$AKLR_CI_STATE_DIR"
           echo "📂 Checkout: $GITHUB_WORKSPACE (commit $(git rev-parse --short HEAD))"
           echo "📂 CI state: $AKLR_CI_STATE_DIR; kernel caches: $cache"
-          echo "🧹 Cleared previous coverage at $COVERAGE_FILE."
 
           setup_phase='check ROCm PyTorch and visible GPUs'
           echo '::group::🔎 Check Python, ROCm PyTorch and visible GPUs'
-          python3 - "$AKLR_CI_STATE_DIR/gpu-archs" <<'PY'
+          # The baseline AITER reads GPU_ARCHS when it JIT-builds; the script reports on stderr.
+          export GPU_ARCHS
+          GPU_ARCHS=$(python3 - <<'PY'
           import sys
-          from pathlib import Path
           import torch
           assert torch.version.hip, "AKLR CI requires ROCm PyTorch"
           assert torch.cuda.is_available(), "No GPU is visible to PyTorch"
-          print(f"Python: {sys.version.split()[0]}; PyTorch: {torch.__version__}; ROCm: {torch.version.hip}")
+          print(f"Python: {sys.version.split()[0]}; PyTorch: {torch.__version__}; ROCm: {torch.version.hip}", file=sys.stderr)
           architectures = set()
           for index in range(torch.cuda.device_count()):
               props = torch.cuda.get_device_properties(index)
               arch = props.gcnArchName.split(":", 1)[0]
               architectures.add(arch)
-              print(f"GPU {index}: {props.name}; architecture: {arch}")
-          Path(sys.argv[1]).write_text(";".join(sorted(architectures)))
+              print(f"GPU {index}: {props.name}; architecture: {arch}", file=sys.stderr)
+          print(";".join(sorted(architectures)))
           PY
-          echo '::endgroup::'
-          setup_phase='export the GPU build settings'
-          echo '::group::🧰 Export the GPU build settings'
-          # The baseline AITER reads it when it JIT-builds.
-          export GPU_ARCHS
-          GPU_ARCHS=$(cat "$AKLR_CI_STATE_DIR/gpu-archs")
-          echo '::endgroup::'
-          setup_phase='install test tools and this checkout'
-          echo '::group::📦 Install test tools and AKLR'
+          )
           echo "🔧 GPU_ARCHS=$GPU_ARCHS"
-          echo '📥 Install coverage 7.16.0, pytest-timeout 2.4.0 and expecttest 0.3.0.'
-          # Install coverage over any copy the image ships, so pip never has to uninstall it.
-          python3 -m pip install --ignore-installed 'coverage[toml]==7.16.0'
-          python3 -m pip install 'pytest-timeout==2.4.0' 'expecttest==0.3.0'
+          echo '::endgroup::'
+          setup_phase='install the baseline AITER and this checkout'
+          echo '::group::📦 Install the baseline AITER and AKLR'
           # It also pins the FlyDSL that AKLR's kernels are built with.
           echo "📥 Install the baseline AITER, ROCm/aiter@$AKLR_BASELINE_AITER, over the image's."
           # Keep the image's Triton: otherwise aiter's setup.py swaps in the one it pins.
@@ -335,15 +277,9 @@ jobs:
           print("Testing aklr", version("aklr"), "from", root, "against amd-aiter", version("amd-aiter"))
           PY
           echo '::endgroup::'
-          setup_phase='enable coverage and export the environment'
-          echo '::group::📊 Enable coverage for Python subprocesses and export the job environment'
-          site_packages=$(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
-          echo 'import coverage; coverage.process_startup()' > "$site_packages/coverage_subprocess.pth"
-          # These variables must persist into the workflow's later steps.
+          # These variables must persist into the job's later steps.
           {
             printf 'AKLR_CI_STATE_DIR=%s\n' "$AKLR_CI_STATE_DIR"
-            printf 'COVERAGE_FILE=%s\n' "$COVERAGE_FILE"
-            printf 'PIP_CACHE_DIR=%s\n' "$PIP_CACHE_DIR"
             printf 'GPU_ARCHS=%s\n' "$GPU_ARCHS"
             printf 'FLYDSL_RUNTIME_CACHE_DIR=%s\n' "$FLYDSL_RUNTIME_CACHE_DIR"
             printf 'FLYDSL_AUTOTUNE_CACHE_DIR=%s\n' "$FLYDSL_AUTOTUNE_CACHE_DIR"
@@ -352,12 +288,21 @@ jobs:
             printf 'AKLR_KERNEL_CACHE_DIR=%s\n' "$AKLR_KERNEL_CACHE_DIR"
             printf 'AITER_JIT_DIR=%s\n' "$AITER_JIT_DIR"
             printf 'TMPDIR=%s\n' "$TMPDIR"
-            printf 'COVERAGE_PROCESS_START=%s/pyproject.toml\n' "$GITHUB_WORKSPACE"
           } >> "$GITHUB_ENV"
-          echo "📊 Coverage config: $GITHUB_WORKSPACE/pyproject.toml"
-          echo "📊 Raw coverage files: $COVERAGE_FILE.*"
-          echo '::endgroup::'
-          echo '✅ AKLR environment ready: checkout imports verified, GPU visible, subprocess coverage enabled.'
+          echo '✅ AKLR environment ready: checkout imports verified, GPU visible.'
+      # Only here: validation runs without coverage, whose tracer would skew the measurements.
+      - name: Enable coverage and test tools
+        id: coverage_setup
+        run: | # zizmor: ignore[github-env] fixed local workspace paths are exported
+          # Install coverage over any copy the image ships, so pip never has to uninstall it.
+          python3 -m pip install --ignore-installed 'coverage[toml]==7.16.0'
+          python3 -m pip install 'pytest-timeout==2.4.0' 'expecttest==0.3.0'
+          site_packages=$(python3 -c "import sysconfig; print(sysconfig.get_paths()['purelib'])")
+          echo 'import coverage; coverage.process_startup()' > "$site_packages/coverage_subprocess.pth"
+          {
+            echo "COVERAGE_FILE=$AKLR_CI_STATE_DIR/.coverage"
+            echo "COVERAGE_PROCESS_START=$GITHUB_WORKSPACE/pyproject.toml"
+          } >> "$GITHUB_ENV"
       - name: Run AKLR unit tests
         id: tests
         timeout-minutes: 30
@@ -372,7 +317,7 @@ jobs:
           echo '✅ AKLR unit tests passed.'
       - name: Combine and stage coverage data
         id: coverage
-        if: ${{ always() && steps.setup.outcome == 'success' }}
+        if: always() && steps.coverage_setup.outcome == 'success'
         run: |
           echo "📊 Combining AKLR test coverage from $AKLR_CI_STATE_DIR (including subprocesses)."
           unset COVERAGE_PROCESS_START
@@ -393,29 +338,7 @@ jobs:
           name: unittest-aklr-logs
           path: ${{ runner.temp }}/aklr-ci/test-reports/
           if-no-files-found: warn
-      - name: Summarize AKLR unit test result
-        if: always()
-        env:
-          JOB_STATUS: ${{ job.status }}
-          SETUP_RESULT: ${{ steps.setup.outcome }}
-          TEST_RESULT: ${{ steps.tests.outcome }}
-          COVERAGE_RESULT: ${{ steps.coverage.outcome }}
-        run: |
-          case "$JOB_STATUS" in
-            success) icon='✅' ;;
-            cancelled) icon='⏹️' ;;
-            *) icon='❌' ;;
-          esac
-          now=$(date +%s)
-          {
-            echo
-            echo "### $icon [2/4] AKLR unit tests: $JOB_STATUS"
-            echo
-            echo "Setup: ${SETUP_RESULT:-skipped}; tests: ${TEST_RESULT:-skipped}; coverage collection: ${COVERAGE_RESULT:-skipped}."
-            echo "⏱️ Finished at: $(date -u '+%Y-%m-%d %H:%M:%S UTC'); elapsed: $((now - ${AKLR_CI_JOB_STARTED_AT:-$now})) seconds."
-          } | tee -a "$GITHUB_STEP_SUMMARY"
-
-      # Best effort on normal/failure paths; killed jobs may still need recovery.
+      # The container writes as root; the non-root runner must clean up before the next job on this node.
       - &normalize_work_permissions
         name: Normalize this job's work permissions
         if: always()
@@ -436,25 +359,16 @@ jobs:
     env:
       STAGES: audit,bench
     steps:
-      - name: Print job info
-        run: | # zizmor: ignore[github-env] only an internally generated numeric timestamp is exported
-          echo "AKLR_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
-          echo '🎉 [3/4] Begin AKLR validation.'
-          echo "🐧 Runner: $RUNNER_NAME ($RUNNER_OS); event: $GITHUB_EVENT_NAME; ref: $GITHUB_REF"
-          echo "⏱️ Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
       - *checkout_source
-      - name: Set up AKLR
-        run: *setup_aklr # zizmor: ignore[github-env] fixed local workspace paths are exported
+      - *setup_aklr_step
       - name: Show untracked files
         run: git status --porcelain | tee -a "$GITHUB_STEP_SUMMARY"
       # The exit code is the conclusion; report.md's first line says which failure.
-      # Without coverage: its tracer would skew the measurements publish-measurement publishes.
       # review-tier reads the stages from this name (ValidationGate.e2e_step).
       - name: Validate (${{ env.STAGES }})
         env:
           BASE: ${{ needs.code-lint.outputs.validation_base }}
         run: |
-          unset COVERAGE_PROCESS_START
           flags=(${BASE:+--base "$BASE"})
           [[ $AKLR_BOT_PR != true ]] || flags+=(--allow-measured-edits)
           python -m aklr validate "${flags[@]}" --stages "$STAGES" \
@@ -495,29 +409,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - name: Print job info and coverage producer results
+      - name: Note missing coverage
         env:
           GPU_ENABLED: ${{ needs.code-lint.outputs.gpu_enabled }}
           AKLR_RESULT: ${{ needs.unittest-aklr.result }}
-        run: | # zizmor: ignore[github-env] only an internally generated numeric timestamp is exported
-          echo "AKLR_CI_JOB_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
-          echo '🎉 [4/4] Begin AKLR coverage report.'
-          echo "🐧 Runner: $RUNNER_NAME ($RUNNER_OS); event: $GITHUB_EVENT_NAME; ref: $GITHUB_REF"
-          echo "⏱️ Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
-          echo '📊 Merge Python coverage from the AKLR tests; validation runs without coverage.'
-          {
-            echo '### Coverage producers'
-            echo
-            echo '| Stage | Result |'
-            echo '| --- | --- |'
-            echo "| AKLR unit tests | $AKLR_RESULT |"
-            echo
-            if [[ "$GPU_ENABLED" != true ]]; then
-              echo '⏭️ GPU tests require a same-repository PR with the ci:gpu label; no coverage data was collected.'
-            elif [[ "$AKLR_RESULT" != success ]]; then
-              echo 'ℹ️ The AKLR tests did not succeed. Merge the available data; coverage does not imply the tests passed.'
-            fi
-          } | tee -a "$GITHUB_STEP_SUMMARY"
+        run: |
+          if [[ "$GPU_ENABLED" != true ]]; then
+            echo '⏭️ GPU tests require a same-repository PR with the ci:gpu label; no coverage data was collected.' | tee -a "$GITHUB_STEP_SUMMARY"
+          elif [[ "$AKLR_RESULT" != success ]]; then
+            echo "ℹ️ The AKLR tests ended $AKLR_RESULT. Merge the available data; coverage does not imply the tests passed." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
       - name: Checkout source for coverage reports
         if: needs.code-lint.outputs.gpu_enabled == 'true'
         uses: actions/checkout@v4
@@ -531,7 +432,7 @@ jobs:
       - name: Install coverage
         if: needs.code-lint.outputs.gpu_enabled == 'true'
         run: |
-          echo '🧰 Install coverage 7.16.0, matching all coverage producers.'
+          echo "🧰 Install coverage 7.16.0, matching unittest-aklr's."
           python -m pip install 'coverage[toml]==7.16.0'
       - name: Download raw data from coverage-* artifacts
         if: needs.code-lint.outputs.gpu_enabled == 'true'
@@ -548,7 +449,7 @@ jobs:
           shopt -s nullglob
           data_files=(coverage-artifacts/coverage_data_*)
           if [[ ${#data_files[@]} -eq 0 ]]; then
-            echo '⏭️ No coverage data found. Skip report generation; inspect the producer results above.' | tee -a "$GITHUB_STEP_SUMMARY"
+            echo '⏭️ No coverage data found. Skip report generation.' | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           echo "📥 Received ${#data_files[@]} raw coverage files:" | tee -a "$GITHUB_STEP_SUMMARY"
@@ -581,26 +482,6 @@ jobs:
           if [[ -n "$ARTIFACT_URL" ]]; then
             echo "📦 Full HTML report: download [visual-coverage]($ARTIFACT_URL), unzip and open visual-coverage/index.html." | tee -a "$GITHUB_STEP_SUMMARY"
           fi
-      - name: Summarize coverage report result
-        if: always()
-        env:
-          JOB_STATUS: ${{ job.status }}
-          REPORT_READY: ${{ steps.merge.outputs.report_ready }}
-        run: |
-          case "$JOB_STATUS" in
-            success) icon='✅' ;;
-            cancelled) icon='⏹️' ;;
-            *) icon='❌' ;;
-          esac
-          now=$(date +%s)
-          {
-            echo
-            echo "### $icon [4/4] Coverage report: $JOB_STATUS"
-            echo
-            echo "Reports generated: ${REPORT_READY:-false}. Test results are listed separately above."
-            echo "⏱️ Finished at: $(date -u '+%Y-%m-%d %H:%M:%S UTC'); elapsed: $((now - ${AKLR_CI_JOB_STARTED_AT:-$now})) seconds."
-          } | tee -a "$GITHUB_STEP_SUMMARY"
-
       # Last, so the report is still produced when the gate fails.
       - name: Enforce the overall CI result
         if: always()
@@ -608,16 +489,16 @@ jobs:
           LINT: ${{ needs.code-lint.result }}
           GPU_ENABLED: ${{ needs.code-lint.outputs.gpu_enabled }}
           HAS_BENCH_PATHS: ${{ needs.code-lint.outputs.has_bench_paths }}
-          GPU_ATTEMPT: ${{ needs.prepare-gpu.outputs.attempt }}
           GPU_RESULTS: ${{ needs.prepare-gpu.result }} ${{ needs.unittest-aklr.result }}
           VALIDATION: ${{ needs.validation.result }}
         run: |
           [[ $LINT == success ]] || { echo '::error::code-lint did not succeed'; exit 1; }
-          [[ $GPU_ENABLED != true || -z $GPU_ATTEMPT || $GPU_ATTEMPT == "$GITHUB_RUN_ATTEMPT" ]] ||
-            { echo "::error::Re-run failed jobs cannot reuse the GPU node released by attempt $GPU_ATTEMPT; use Re-run all jobs."; exit 1; }
-          [[ $GPU_ENABLED != true || $GPU_RESULTS == 'success success' ]] || { echo "::error::GPU jobs: $GPU_RESULTS"; exit 1; }
+          [[ $GPU_ENABLED == true ]] || exit 0
+          # unittest-aklr is skipped after "Re-run failed jobs", which reuses a released node.
+          [[ $GPU_RESULTS == 'success success' ]] ||
+            { echo "::error::prepare-gpu, unittest-aklr: $GPU_RESULTS; after Re-run failed jobs, use Re-run all jobs."; exit 1; }
           # A PR without ci:gpu runs no validation; the review-tier gate decides whether it needs one.
-          [[ $GPU_ENABLED != true || $HAS_BENCH_PATHS != true || $VALIDATION == success ]] ||
+          [[ $HAS_BENCH_PATHS != true || $VALIDATION == success ]] ||
             { echo "::error::Kernels to measure, but validation: $VALIDATION"; exit 1; }
 
   # Publishes a main push run's measurements through one rolling bot PR, aklr-perf/main
