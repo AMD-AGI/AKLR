@@ -239,6 +239,13 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
   routes per token (EP8, 112 of 896 experts local, 893 and 2732 tokens), fp8 route rows plus a reduce kernel took
   123 / 153 µs where the atomic stage 2 took 110 / 125–127 *(field, E36)*. That contention per output element decides
   it is estimated, not measured.
+- **Where the compare block bounds output SQNR, the route rows can be MXFP4.** Stage 2 packs each row to e2m1 with
+  an E8M0 scale per 32 (`rocdl.cvt_scalef32_pk_fp4_bf16`), the reduce unpacks it (`cvt_scalef32_pk_f32_fp4`). With all
+  16 routes per token local, rows shrank 3712 → 1920 B, the reduce 190 → 104 µs at 16384 tokens, and the call gained
+  10.35%; the output read 17.97 dB SQNR against the fp8-row kernel's, against a 13 dB bound *(field, E39)*.
+- **Keep the reduce its own launch on the same stream.** Folding it into stage 2, the last workgroup of a token to
+  arrive on an atomic counter summing its rows, took stage 2 from ~305 to 526–547 µs against a 62 µs reduce; the
+  reduce on a second stream, overlapping stage 2, made the call 0.6–1.8% slower *(field, E40)*.
 - **Keep packed atomics coalesced.** FlyDSL's stage 2 keeps the CShuffle layout channel-major (32 lanes walk
   contiguous channels of one row) and `e_vec = 2` on the atomic path, so the 32 lanes cover 64 contiguous
   channels; its note puts the wider form at 4.25× the atomic traffic and 4.8× slower (`gemm2.py:434-443`).
@@ -262,8 +269,9 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
   it. One wave per expert instead of one workgroup each (936 → 152 workgroups) took a sort kernel from 7.3–7.8 to
   6.5 µs, +0.54% of the MoE call *(field, E20)*; deleting phases took another from 7.65 to 5.32 µs against a 4.4 µs
   floor *(field, E32)*. FlyDSL v0.3.2's mid-size sorting path runs two kernels (`moe_sorting_kernel.py:12-14`).
-  *(field, E16, E17)* Under AKLR's timer a graph node costs ~4 µs (measured on an empty kernel and on add + RMSNorm),
-  and folding the sort into stage 1 removed one (`../moe/flydsl_moe_decode.md` §1–§2).
+  *(field, E16, E17)* Under AKLR's timer a graph node costs ~4 µs (measured on an empty kernel and on add + RMSNorm;
+  that is the timer's floor for any dispatch, since its bench runner forces `GPU_FORCE_QUEUE_PROFILING`,
+  `aklr/core/validation/stages/_bench/_execution/_runner.py:475`), and folding the sort into stage 1 removed one (`../moe/flydsl_moe_decode.md` §1–§2).
 - **Or fold the per-token kernels into the sort launch.** *(field, E24)* Token quantization and the sorted-scale scatter
   as extra sort blocks, one per token, removed two nodes: 6.9–8.0 µs per call at 8–32 tokens.
 - **Merging kernels turns an inter-kernel order into an intra-kernel race.** One phase seeded a table with −1
@@ -284,7 +292,8 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
 - Cover several batch sizes, from a few tokens (single M-block per expert, non-temporal B) to above
   `experts · tile-M / top-k` tokens (over tile-M rows per expert: repeated blocks, cached B); the policy flips
   between them. Total M-blocks ≥ experts already holds at one block per expert, where *(field, E34)* cached B
-  cost a stage 2 ~15%.
+  cost a stage 2 ~15%. At three to five blocks per expert non-temporal weights lost: the call took 26% longer with
+  W1 non-temporal in stage 1 and 6–9% longer with W2 non-temporal in stage 2 *(field, E41)*.
 
 ## Verify
 - [ ] The sort unit equals tile-M (or is a multiple of it), and the tile-M sweep includes the unit itself.
@@ -347,3 +356,6 @@ tokens; the ruler is AKLR's graph timer (bench_cudagraph, L2 flushed per replay)
 - E36 [2026-10, gfx950, FlyDSL 0.3.2, N=1 per arm, Kineto per-kernel median after a read flush] stage 2 writing fp8 per-route rows plus a reduce kernel: 112.7 + 10.6 µs at 893 tokens, 129.2 + 24.0 µs at 2732; the atomic bf16 stage 2 110.0–110.2 and 125.3–126.5 µs in the same session (fused MoE SiTUv2, fp8 activations × MXFP4 weights, model dim 3584, inter 3072, top-16, 112 of 896 experts local; forge campaign ep8_bw_l; local:/shared_nfs/kyle/moe/kf/runs/ep8_bw_l/workspace/forge_experiments/lessons/iter_008.md:90-92; :12; :85)
 - E37 [2026-10, gfx950, FlyDSL 0.3.2, N=1–3 per arm, forge driver --bench-mode (the AKLR-style graph timer), whole call, n_tokens 9397 / 16384] stage-1 grid capped at 480 / 752 M-rows (from 3245 / 4992) with an 8-row tail launch: 0.863 / 1.345 ms (re-run 0.862 / 1.352) against 0.902 / 1.414 uncapped; the same cap as `scf.for` over the blocks inside the kernel: 1.054 / 1.693 ms, 202 → 264 VGPRs, 0 spills; folding the tail into the capped kernel later lost again (stage 1 679.6 / 987.8 against 584.3 / 899.6 µs; 292 VGPRs, 0.856 / 1.328 against 0.750 / 1.166 ms) (fused MoE SiTUv2, fp8 × MXFP4, 112 of 896 experts local, top-16, model_dim 3584, inter 3072, BM 64; local:/shared_nfs/kyle/moe/kf/runs/ep8_cmp/workspace/forge_experiments/lessons/iter_001.md:9; :10; :13; iter_005.md:31; iter_008.md:28; grid sizes from local:/shared_nfs/kyle/moe/kf/runs/ep8_cmp/workspace/kernel.py:269; :333)
 - E38 [2026-10, gfx950, FlyDSL 0.3.2, N=1–2 per arm, forge driver --bench-mode, whole call, n_tokens 9397 / 16384] w1 touched two steps ahead: 0.817 / 1.253 against 0.7497 / 1.1655 ms; one LDS-DMA dword per lane three steps ahead into a dummy slot: 0.8205 / 1.2639 (with sc1 0.8213 / 1.2631) against 0.7500 / 1.1664; one line per wave (diagnostic) 0.7534 / 1.1726; a B-hot oracle bounded the possible gain at 0.6708 / 1.0933 (same fused MoE as E19, stage 1 at 64×256, two waves per SIMD; local:/shared_nfs/kyle/moe/kf/runs/ep8_cmp/workspace/forge_experiments/lessons/iter_006.md:20; iter_008.md:5; :12; :18)
+- E39 [2026-10, gfx950, FlyDSL 0.3.2, N=? pairs, AKLR graph timer (forge ablation, the kept version beside the one before it, as recorded); per-kernel torch.profiler medians, one session] stage-2 route rows packed to e2m1 with an E8M0 scale per 32 (`cvt_scalef32_pk_fp4_bf16`) and unpacked in the reduce, in place of fp8 rows: +10.35% (one-sided 95% +10.30 … +10.40%, 2 of 2 cases); rows 3712 → 1920 B; reduce 107.7 / 189.5 → 57.7 / 104.1 µs and stage 2 312.4 / 497.7 → 277.9 / 447.1 µs at 9397 / 16384 tokens; output 17.97 dB SQNR against the fp8-row kernel's, AKLR validate passed; a torch emulation put the noise e2m1 rows add at 18.15 dB with each scale's exponent that of the block amax minus 2 (15.85 dB with minus 1), against the definition's 13 dB bound (fused MoE SiTUv2, fp8 activations × MXFP4 weights, TP: 896 experts, top-16, model dim 3584, inter 384; commit 20fe49315948; local:/shared_nfs/kyle/moe/k3six/runs/tp8cmp/workspace/forge_experiments/ablation.md:13; local:/shared_nfs/kyle/moe/k3six/runs/tp8cmp/workspace/forge_experiments/lessons/iter_007.md:3; :49–58)
+- E40 [2026-10, gfx950, FlyDSL 0.3.2, N=1 per arm, torch.profiler kernel times (fold, 9397 tokens only) and per-call sums (streams)] fold: incumbent stage 2 300–309 µs plus a 61.5 µs reduce; stage 2 with a per-(token, N-tile) agent-scope atomic counter whose last arriver sums the 16 fp4 rows in slot order 526–547 µs, counters and sc1 stores without the sum 364, counters alone 345; two streams (stage 2 and the reduce, overlap seen in the trace): 818.0 → 833.1 µs at 9397 and 1267.5 → 1275.1–1278.4 µs at 16384, stage 2 about 508 µs during the overlap against 425 alone (same MoE as E39; local:/shared_nfs/kyle/moe/k3six/runs/tp8cmp/workspace/forge_experiments/lessons/iter_027.md:15–19; local:/shared_nfs/kyle/moe/k3six/runs/tp8cmp/workspace/forge_experiments/lessons/iter_029.md:11–15)
+- E41 [2026-10, gfx950, FlyDSL 0.3.2, N=6 pairs per arm, AKLR graph timer, arms interleaved in one process, ratio base / candidate; the two A/Bs ran at the same time on one GPU] W1 buffer loads non-temporal (cache modifier 2) in stage 1: 0.791 / 0.795; W2 non-temporal in stage 2 (`use_nt=True`): 0.942 / 0.914; W1 with modifier 1: 0.9984 / 0.9978; at n_tokens 9397 / 16384, 3 / 5 64-row blocks per expert for 110 / 109 of the 112 local experts (fused MoE SiTUv2, fp8 × MXFP4, 112 of 896 experts local, top-16, model dim 3584, inter 3072, stage 1 64×256×256, stage 2 64×256×128; local:/shared_nfs/kyle/moe/k3six/runs/ep8cmp/workspace/forge_experiments/lessons/iter_012.md:12–14; block counts local:/shared_nfs/kyle/moe/k3six/runs/ep8cmp/workspace/forge_experiments/lessons/iter_019.md:21)

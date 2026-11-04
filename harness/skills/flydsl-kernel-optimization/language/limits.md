@@ -10,6 +10,7 @@ sources:
   - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/jit_function.py
   - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/jit_argument.py
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/gpu.py
+  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/typing.py
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/utils/arith.py
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/universal.py
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/__init__.py
@@ -99,6 +100,12 @@ tensors, no GPU): IR, ISA and code-object metadata, no timings. Error texts are 
   `fx.Index(x)` as the replacement for the deprecated `fx.index_cast` (S27), and only `index_cast` is marked
   deprecated in the source (S28). `fx.Index` is an unsigned 64-bit integer (S29): use `fx.Int64` for an offset that
   can be negative.
+- **A 16-byte LDS load declared 4- or 8-byte aligned is split.** At an address with a runtime offset, alignment 4
+  gave two `ds_read2_b32`, 8 one `ds_read2_b64` and 16 one `ds_read_b128`; at an address provably 16-byte aligned,
+  alignment 4 also gave `ds_read_b128` *(field, E19, E20)*. `Vector.load` passes no alignment to `vector.LoadOp`
+  (`Vector.store` takes one, S35), so a load of 4-byte elements carries 4. Build `vector.LoadOp(...,
+  alignment=16)` yourself, or `fx.ptr_load` through a pointer type declared 16-byte aligned. On two fused-MoE
+  C-shuffle epilogues this cut `SQ_LDS_BANK_CONFLICT` 4.2× and 4.9× *(field, E21)*.
 - **LDS overflow does not fail the compile.** `SharedAllocator` has no capacity check (S16; the legacy
   `SmemAllocator` has one, S17). 192 KiB on gfx950 printed `error: <unknown>:0:0: local memory (196608) exceeds
   limit (163840) …`, returned normally, cached a code object with `group_segment_fixed_size` 196608, and the next
@@ -118,6 +125,12 @@ tensors, no GPU): IR, ISA and code-object metadata, no timings. Error texts are 
 - **`denormal-fp-math-f32` reaches the IR, not the mode register.** Under `llvm.passthrough` the attribute is in
   the LLVM IR, yet the code object kept `FLOAT_DENORM_MODE_32 = 3` (denormals kept) *(field, E12)*: kernel-wide
   FP32 flush-to-zero is not set this way.
+- **Two adjacent `fx.barrier()` become one.** `fx.barrier` emits `gpu.barrier` (S33), and the pipeline's first
+  `canonicalize` (S34) erases a barrier that directly follows another. Barriers inside a branch that all lanes of a
+  wave take the same way (wave roles) are right only while every wave executes the same number of `s_barrier`: one
+  arm with `barrier; barrier` and the other with `barrier; ds_write; barrier` compiled to 4 `s_barrier` instead of
+  5, and the first arm's wave read stale LDS *(field, E18)*. Put an empty side-effecting `llvm.inline_asm` between
+  the two, and count `s_barrier` per arm in the ISA.
 - **Signed `%` truncates while `//` floors** (S6): for a negative dividend `(a // b) * b + a % b != a`. Keep
   index math non-negative, or use unsigned types.
 - **Autotune's online cache ignores the kernel source.** `~/.flydsl/autotune/<function name>.json` is keyed on
@@ -157,6 +170,9 @@ tensors, no GPU): IR, ISA and code-object metadata, no timings. Error texts are 
 - S29 ROCm/FlyDSL@dd8373349:python/flydsl/expr/numeric.py:942 `class Index(Integer, ..., width=64, signed=False, ...)`
 - S30 ROCm/FlyDSL@dd8373349:python/flydsl/compiler/kernel_function.py:632 calling a `@flyc.kernel` returns a `KernelLauncher`; `launch` emits the gpu.func at :360 and attaches the call's `value_attrs` at :367
 - S31 aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:3311 stage 1 sets `rocdl.waves_per_eu` on the module's gpu.funcs before `launcher.launch` (:3312); stage 2 :5628; `small_m_hgemm.py:1398` before the kernel call at :1406
+- S33 ROCm/FlyDSL@dd8373349:python/flydsl/expr/gpu.py:73 `barrier()` returns `gpu.barrier(...)`
+- S34 ROCm/FlyDSL@dd8373349:python/flydsl/compiler/backends/rocm.py:83 `canonicalize` in the pre-binary pipeline, right after `fly-int-swizzle-simplify`
+- S35 ROCm/FlyDSL@dd8373349:python/flydsl/expr/typing.py:2002 `Vector.load` builds `vector.LoadOp(result_type, memref, indices)` with no alignment; `Vector.store(..., alignment=None)` at :2016 passes one
 - E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] f32x4 a*b+c: 2 v_pk_mul_f32 + 2 v_pk_add_f32 by default, 2 v_pk_fma_f32 under fastmath("contract") (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p50_mul_add_default.py, local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p51_mul_add_contract.py)
 - E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] 4 lanes: exp2 default 4 v_exp_f32 + 8 v_cndmask + 4 v_ldexp; exp2 fast 4 v_exp_f32 only; exp fast 4 v_exp_f32 + 8 v_cndmask (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p62_exp2_default.py, local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p63_exp2_fast.py, local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p64_exp_fast.py)
 - E3 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] 00_origin.mlir argument type (?,?):(?{i64},1) for a raw tensor, (100,1000):(1000,1) via from_dlpack (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p00_base.py, local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p68_from_dlpack_static.py)
@@ -173,3 +189,7 @@ tensors, no GPU): IR, ISA and code-object metadata, no timings. Error texts are 
 - E14 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] examples/04-preshuffle_gemm.py (MFMA 16x16x16 f16, 256 MFMAs): 144 VGPRs, 0 spills without a hint and with maxnreg=64; 128 VGPRs, 94 VGPR spills and 81 scratch instructions with llvm.passthrough amdgpu-num-vgpr=64 (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p70a_mfma_base.py, local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p70b_mfma_maxnreg.py, local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p70c_mfma_num_vgpr_attr.py)
 - E15 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] `examples/gemm/step9_occupancy.py` (128x128 bf16 tile, 4 waves) with `rocdl.waves_per_eu` 4 alone: next_free_vgpr 128, accum_offset 64, agpr_count 64, vgpr_spill_count 96, scratch 164 B; with `amdgpu-agpr-alloc` 0 added: accum_offset 128, agpr_count 0, spills 0 (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p81_waves_per_eu_without_agpr_budget.py; local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/out/p81_isa_resources.txt; local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/out/p81_step9_agpr0_isa_resources.txt)
 - E16 [2026-10, gfx950, FlyDSL 0.3.2, N=1, one compile and launch on MI355X, `FLYDSL_DUMP_IR=1`] tagging `rocdl.waves_per_eu` 3 by walking `ctx.gpu_module_body` between the kernel call and `.launch()` found 0 gpu.func ops and the LLVM IR had no `"amdgpu-waves-per-eu"`; the same walk after `.launch()`, `value_attrs=` on the kernel call and `compile_hints["waves_per_eu"]` each gave `"amdgpu-waves-per-eu"="3"` (local:/shared_nfs/kyle/moe/kf/runs/tp8_bw_l/knowledge_patch_v2/probe_wpe/probe.py)
+- E18 [2026-10, gfx950, FlyDSL 0.3.2, N=1 compile per arm, 200 launches per arm on MI355X, `FLYDSL_DUMP_IR=1`] wave 0 `barrier; barrier`, wave 1 `barrier; ds_write; barrier`, then every thread reads wave 1's write: 5 `gpu.barrier` in 04_fly_int_swizzle_simplify.mlir, 4 in 05_canonicalize.mlir, 4 `s_barrier` in the ISA, wave 0 read stale LDS in 200 of 200 launches; with an empty side-effecting inline asm between wave 0's two barriers, 5 / 5 / 5 and 0 of 200 (local:/shared_nfs/kyle/moe/k3six/runs/mla_fp8/knowledge_patch/probe/barrier_probe.py, dumps dump_0/ and dump_1/); in an fp8 MLA decode the merge left ~37% of the outputs wrong until the asm went in (local:/shared_nfs/kyle/moe/k3six/runs/mla_fp8/workspace/forge_experiments/lessons/iter_005.md:22; :23)
+- E19 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only, `FLYDSL_DUMP_IR=1`] `vector<8xf16>` loaded with `vector.LoadOp` from an LDS memref at the runtime element index `8·(tid + shift)`: `alignment` 4 / 8 / 16 gave two `ds_read2_b32` / one `ds_read2_b64` / one `ds_read_b128`; without `alignment` (the f16 element's 2), one `ds_read_b128` (local:/shared_nfs/kyle/moe/k3six/runs/ep8cmp/knowledge_patch/probe_align/probe.py, ISA in dump4/, dump8/, dump16/, dump0/)
+- E20 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile and run, final ISA read, outputs equal] one `fx.ptr_load` of `vector<4xi32>` through `fx.PointerType.get(T.i32, fx.AddressSpace.Shared, align)` at a base plus a kernel-argument offset: align 4 two `ds_read2_b32`, 8 one `ds_read2_b64`, 16 one `ds_read_b128`; with no runtime offset, align 4 and 16 both one `ds_read_b128` (local:/shared_nfs/kyle/moe/k3six/runs/tp8cmp/knowledge_patch/probe_lds_align/probe2.py, ISA in d2_4/, d2_8/, d2_16/k_0/21_final_isa.s; probe.py, dump4/ and dump16/)
+- E21 [2026-10, gfx950, FlyDSL 0.3.2, N=1 per arm, rocprofv3 PMC on one stage-1 call at n_tokens 9397] `alignment=16` on the C-shuffle epilogue's `vector.LoadOp` of staged C: `ds_read2_b32` → `ds_read_b128`, `SQ_LDS_BANK_CONFLICT` 15.38M → 3.64M (EP8, 112 of 896 experts local, inter 3072) and 1.47e7 → 2.98e6 (TP, 896 experts, inter 384), outputs unchanged (fused MoE SiTUv2, fp8 activations × MXFP4 weights, top-16, model dim 3584, 8-wave stage-1 tiles of two 64-row groups; local:/shared_nfs/kyle/moe/k3six/runs/ep8cmp/workspace/forge_experiments/lessons/iter_003.md:25; :30; local:/shared_nfs/kyle/moe/k3six/runs/tp8cmp/workspace/forge_experiments/lessons/iter_018.md:24)

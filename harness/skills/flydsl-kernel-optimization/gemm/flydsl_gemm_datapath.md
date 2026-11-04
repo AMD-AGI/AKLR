@@ -100,6 +100,9 @@ stride keeps every phase on distinct banks.
   above; a layout you did not derive that way is unverified.
 - Padding must keep the 8- or 16-byte alignment a `ds_read_b64/b128` needs. `+1 element` on fp16 breaks
   it; pad by whole 16-byte slots, or swizzle.
+- **Declare 16-byte alignment on a 16-byte LDS read** where LLVM cannot prove it; otherwise the read splits into
+  `ds_read2_b32` or `ds_read2_b64` and conflicts more. FlyDSL's `Vector.load` declares none
+  (`../language/limits.md` § Unclassified has the lowering, the fix and its bank-conflict cost).
 - Compare `SQ_LDS_BANK_CONFLICT` against the floor you computed by hand, not against zero.
 - **Zero conflicts is not a speedup and LDS is not the bound until a probe says so.** *(field, E3)* An
   attention kernel whose `WAIT_INST_LDS` came to 81% of its CU-cycle budget gained nothing measurable
@@ -219,6 +222,10 @@ stride keeps every phase on distinct banks.
   and at one workgroup per CU nothing hides the longer L2 latency. *(field, E22, E23)* In an 8-wave kernel, B
   direct-to-VGPR reached 77.8% of the throughput of B through LDS; A direct-to-VGPR ran 2.5× slower on a
   long K. PS can load B straight to VGPR because B is pre-shuffled and each wave owns its own N slice.
+  Private rows do not rescue a row-major A: it must then be loaded in the MFMA lane layout, which touches more lines
+  per instruction (§6), or permuted in registers. *(field, E30)* With 8×1 waves, each owning its A rows, both lost
+  8–32% to A through LDS on a bf16 GEMM, while contiguous loads of the same rows (wrong output by design) were as
+  fast as it or up to 3% faster.
 - A prefetch that pushes the kernel over a register tier costs more than it hides; re-read
   `.vgpr_count` after adding one.
 - **Gate a prefetched load exactly as its consumer is gated**, in the prologue and in the loop body. A
@@ -335,3 +342,4 @@ earliest record that has the number.
 - E27 [2026-07, gfx950, FlyDSL ?, N=?, geomean of tw/mx over 14 cells (`_bench_campaign_mxfp8.py`) and per-workgroup PMC] wgrad with four E8M0 scales per dword: `SQ_INSTS_VMEM` per workgroup 3947 → 3387 (−14.2%), MFMA and VALU unchanged, six configurations +5.4–8.2% (gpt-oss MXFP8 grouped GEMM, variable-K wgrad; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260729_093030/memory.md:109)
 - E28 [2026-07, gfx950, FlyDSL ?, N=?, ruler not stated] in an MXFP8 dense per-K loop that already prefetched its scales one step ahead, a probe that loaded only the k=0 scales and reused them put the scale tax at ≈0% (all 4 shapes ≤ 1%, some slower) (MXFP8 dense GEMM, 4 shapes not named; recorded by 2026-07-05, myskill 9d3f961; local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/05-mxfp4-mxfp8-deadends.md:205, :365)
 - E29 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile and run, final ISA read] two `BufferCopyLDS128b` DMAs, an inline-asm `s_waitcnt vmcnt(1)` + `s_barrier`, then one `ds_read_b128`: the plain `llvm.load` got `s_waitcnt vmcnt(0)` before it, the same load with an `alias_scopes` attribute none; output correct in both (probe kernel; local:/shared_nfs/kyle/moe/kf/runs/ep8_cmp/knowledge_patch_v2/probe_alias/probe.py, ISA in dump0/ and dump1/probe_kernel_0/21_final_isa.s). On a fused-MoE stage 2 the same change removed the `vmcnt(4..12)` the compiler put before its A reads (local:/shared_nfs/kyle/moe/kf/runs/ep8_cmp/workspace/forge_experiments/lessons/iter_011.md:24; :27)
+- E30 [2026-10, gfx950, FlyDSL 0.3.2, N=1 per arm, in-process probe, L2 flushed before each call, randn inputs, every arm against a same-process control; arms equal to the A-through-LDS build except the diagnostics] bf16, m=512, 256×192 tile, 8×1 waves (32 A rows per wave): A through LDS 96.6–97.8 µs; A in the MFMA lane layout 113–118 (2 A stages), 106.0 (3 stages); quad-contiguous loads + `ds_bpermute` 107.7–110.0; permlane/DPP register transpose 124.8 (7 spills) and 127.5 (248 VGPRs, none); contiguous-load diagnostics, wrong output, 92.7–96.1 against controls of 95.3–96.7 (bf16 GEMM n6144 k16384; local:/shared_nfs/kyle/moe/k3six/runs/gemm_l/workspace/forge_experiments/lessons/iter_012.md:3; :7)

@@ -40,15 +40,21 @@ combine → `flydsl_attn_grid_dispatch.md` §3; GEMM-side split-K → `../gemm/f
   launch. Price a merge by launching the combine one extra time in the stream and reading the increase of the total
   (`../gemm/flydsl_gemm_attribution.md` §3).
 - Run the combine with one wave per workgroup (`../gemm/flydsl_gemm_grid_pricing.md` §2) and number its
-  workgroups like the producer's ownership (`flydsl_attn_grid_dispatch.md` §3).
+  workgroups like the producer's ownership (`flydsl_attn_grid_dispatch.md` §3), unless each output merges many
+  partials. *(field, E42)* At 16–32 partials per (row, head), one 64-lane workgroup per (row, head) made the whole call
+  10–32% slower than 512-lane workgroups whose waves split the partials; 1.5% slower at 11, level at 4.
 - Too few combine workgroups: split the value dimension into disjoint column slices (bit-identical).
   *(field, E4)* Gains fell monotonically with the unsliced CTA count (−9.7% at 224, −3.7% at 512, −0.6% at
   1536) and never changed sign. Each slice recomputes the split weights from the LSE column, so more
   slices lose where that recomputation is scalar.
 
 ## 2. Merging producer and combine: a persistent, cooperative rendezvous
-The merged form that pays has every producer workgroup of a row wait at a rendezvous and then share the
-reduce.
+The merged form that paid has every producer workgroup of a row wait at a rendezvous and then share the
+reduce. A workgroup that waits for another is right only while every workgroup it waits for is resident (Opening
+window below), which a kernel cannot promise: a deployment may run it on a stream limited to part of the CUs or
+beside another kernel. In a kernel for AKLR no workgroup waits on another: keep the separate combine (§1), or let
+the last workgroup to arrive on an atomic counter do the merge (§3 prices that here). The steps below describe
+the rendezvous as existing kernels write it.
 1. Write the partials and LSE as write-through stores that are visible across XCDs (`SC1` = aux value 16,
    device scope, is enough across XCDs; values 16 and 17 were both bitwise clean *(field, E5)*. `0x11` adds `SC0`,
    i.e. system scope. DLC (value 4) and SC0 give no cross-XCD visibility: with value 5 (SC0|DLC) the reader saw
@@ -61,9 +67,13 @@ reduce.
 
 **Opening window, both required.**
 - Residency: `rows × n_groups ≤ num_cu`. The rendezvous ends only if all splits of a row are resident
-  at once; at most one workgroup per CU guarantees it. Still bound the poll loop, so that a broken
-  assumption produces a wrong answer instead of a hung device.
-- Column length: `2 ≤ n_groups ≤ 16`. *(field, E6)* 32 workgroups on one counter: +3.25%.
+  at once; at most one workgroup per CU guarantees it only while the kernel has every CU to itself. A stream
+  limited to part of the CUs, or another kernel holding CUs, breaks it: *(field, E45)* a split-K GEMM fold that
+  polled the same way returned millions of NaN on streams limited to 64 and 128 CUs. Bound the poll loop, so that a
+  broken assumption produces a wrong answer instead of a hung device.
+- Column length: `2 ≤ n_groups ≤ 16` on one shared counter. *(field, E6)* 32 workgroups on one counter: +3.25%.
+  *(field, E43)* With one launch-tagged flag per workgroup polled by one
+  wave, 32 per row: −3.6% against producer + combine; 16: −2.0%; 21–22: +0.7%. The residency rule is unchanged.
 
 *(field, E7)* Bit-identical outputs; −1.0% to −7.6% against two kernels; +2.47% on the decode-step benchmark.
 
@@ -144,6 +154,9 @@ and gets hoisted. In the merged epilogue only the number of rounds and the store
   wide reached only ~45% of a stream copy *(field, E27)*), but it is not a ceiling: a tuned decode producer ran
   5.9–9.5% faster than the plain gather built to bound it *(field, E28)*.
   - Use the marginal-bandwidth fit above and never HBM peak (`flydsl_attn_measurement.md` §5).
+- **Price the partial write by skipping it.** *(field, E44)* On an fp8 MLA decode, skipping it took 4.5% off the
+  call. Staging the bf16 partials in LDS and storing them 16 B per lane, contiguous across lanes, in place of 8 B per
+  lane into head rows 1 KB apart, took 0.8–3.4% off, every shape faster (§7's rule for gathers, applied to stores).
 - Before compute-side work, run the compute-additivity probe on the producer (`flydsl_attn_attribution.md` §9).
   *(field, E29)* Four times the P·V MFMAs cost +7%. *(field, E30)* Waves spent
   ~54% of their cycles in `SQ_WAIT_ANY` and ~20% issuing; *(field, E31)* deeper steady-state gather prefetch
@@ -179,8 +192,10 @@ synchronize-bracketed wall carried ~27 µs of host time and turned a 16.8% kerne
 `flydsl_attn_measurement.md`.
 
 ## Verify
-- Combine numbering matches producer ownership; the combine has one wave per workgroup.
-- `rows × n_groups ≤ num_cu` holds wherever the cooperative merge is enabled, and the poll is bounded.
+- Combine numbering matches producer ownership; the combine has one wave per workgroup unless each output merges
+  many partials (§1).
+- No workgroup waits on another (no rendezvous, no polled flags): the merge is a separate combine launch or the
+  last workgroup to arrive on an atomic counter (§1, §3).
 - The grid has ≤ 1 CTA per CU and ≥ 2 tiles per split on every scored shape.
 - The benchmark's indices reproduce production adjacency.
 
@@ -239,3 +254,7 @@ language, or bare graph nodes. "Decode-step score" is that campaign's ruler: the
 - E39 [2026-10, gfx950, FlyDSL 0.3.2, N=3–5, paired in-process Kineto A/B, median of per-round ratios of 10 calls; outputs passed the contract on 11 batch sizes] equal-block stream-K over 256 CTAs against per-row splits with in-kernel longest-row-first ranking: 0.907 / 0.928 / 0.938 at batch 8 / 32 / 112; 512 CTAs against the same base 1.022 / 0.942 / 0.960 (dense MLA decode, 96 heads, one query, fp8 KV in 576 B rows, page size 1, `cache_seqlens` uniform in [1, 112431]; MI355X, 256 CUs; local:/shared_nfs/kyle/aklr_mla/runs/L4/workspace/forge_experiments/lessons/iter_006.md:14; :15)
 - E40 [2026-10, gfx950, FlyDSL 0.3.2, N=1 per arm for the per-batch times (driver --bench-mode, warmup 3, iters 20, cache cleared); the gain from the campaign's 3-pair ablation] persistent partial kernel (256 CTAs, one per CU, each owning an equal contiguous range of the 32-key steps of all rows; partial slot `cta + row`; combine merges in CTA order) against a (row, split) grid of per-row chunks sized from each row's length: b8 0.441 → 0.289 ms, b112 3.768 → 3.147 ms, total 19.56 → 15.08 ms; ablation +32.31% when kept, +32.87% measured by the ablation (one-sided 95% bounds +32.80…+32.93%), 11/11 cases faster (96-head MLA decode, query length 1, fp8 KV, page size 1, batch 8–112, per-row lengths uniform in [1, 112431]; local:/shared_nfs/kyle/aklr_mla/runs/L2/workspace/forge_experiments/lessons/iter_002.md:22; local:/shared_nfs/kyle/aklr_mla/runs/L2/workspace/forge_experiments/ablation.md:14)
 - E41 [2026-10, gfx950, FlyDSL 0.3.2, N=2–3 per arm, CUDA-graph replay of 10 calls, median of 15 replays, arms alternated; outputs bitwise identical] 576 B fp8 KV rows gathered by 12 lanes as 3 × 16 B loads: per-lane 48 B chunks (each instruction spans the whole row) → load c reading bytes 192c + 16j (each instruction 192 contiguous bytes): kernel with two dedicated gather waves b64 0.819 → 0.762, b80 1.000 → 0.938, b96 1.114 → 1.042, b112 1.488–1.500 → 1.392–1.401 ms; kernel whose six waves all gather, b8–b56: flat (96-head MLA decode, fp8 KV, page size 1; local:/shared_nfs/kyle/aklr_mla/runs/L2/workspace/forge_experiments/lessons/iter_011.md:28)
+- E42 [2026-10, gfx950, FlyDSL 0.3.2, N=1 per arm, AKLR graph timer via `driver.py --bench-mode`, warmup 3, 20 iterations] combine with one 64-lane workgroup per (row, head) against 512-lane workgroups whose waves take every 8th partial (256-lane at more rows), whole call: b8 0.0742 against 0.0561 ms, b12 0.0771 / 0.0680, b16 0.0921 / 0.0838, b24 0.1129 / 0.1112, b60 0.2544 / 0.2553; 256 partials over the batch, so ~32 / 21 / 16 / 11 / 4 per row (96-head MLA decode, query length 1, fp8 KV, page size 1; local:/shared_nfs/kyle/moe/k3six/runs/mla_fp8/workspace/forge_experiments/lessons/iter_005.md:28)
+- E43 [2026-10, gfx950, FlyDSL 0.3.2, N=3 pairs, forge ablation on AKLR's graph timer, noise floor 0.06%] producer with the merge fused (sc1 partial stores, one flag per workgroup holding `dispatch.id` xor `queue.ptr`, one wave polling the row's flags by ballot with `s_sleep`, an unbounded loop, no fences; one CTA per CU over 256 CUs) against producer + combine: +1.49% (time without over time with; one-sided 95% bounds +1.46…+1.53%), 8 of 9 cases faster; b8 (32 per row) +3.70%, b16 (16) +2.03%, b12 (21–22) −0.67% (same kernel family as E42; local:/shared_nfs/kyle/moe/k3six/runs/mla_fp8/workspace/forge_experiments/ablation.md:18; per-case gains in local:/shared_nfs/kyle/moe/k3six/runs/mla_fp8/workspace/forge_experiments/ablation.json; poll loop local:/shared_nfs/kyle/moe/k3six/runs/mla_fp8/workspace/kernel.py:1134)
+- E44 [2026-10, gfx950, FlyDSL 0.3.2, N=1 for the skip (driver bench, warmup 3, 20 iterations), 3 pairs for the staging (forge ablation on AKLR's graph timer, noise floor 0.06%)] partial stores skipped (outputs wrong): 1.2841 against 1.3442 ms summed over 9 batches; bf16 partials staged in LDS (16 B chunks XOR-swizzled by head) and copied out 16 B per lane contiguous across lanes, in place of 8 B per lane into head rows 1 KB apart: +1.84% (+1.78…+1.91%), per case +0.80% (b60) to +3.54% (b8), 9 of 9 faster (same kernel family as E42; local:/shared_nfs/kyle/moe/k3six/runs/mla_fp8/workspace/forge_experiments/lessons/iter_005.md:3; :18; local:/shared_nfs/kyle/moe/k3six/runs/mla_fp8/workspace/forge_experiments/ablation.md:17)
+- E45 [2026-11, gfx950, FlyDSL 0.3.2, N=1 per setting, eager calls on streams created with a CU mask, output against the same call alone] a one-launch split-K bf16 GEMM whose owner split polls its partners' flags and writes NaN once a bounded poll (~2 ms) gives up: m=256 3,151,872 NaN on 64 CUs and 2,340,864 on 128 CUs (35.5 and 12.4 ms per call), m=512 4,276,224 and 3,158,016 NaN; on 16 and 64 CUs the stress check failed at m=256 (gemm_n6144_k16384; local:/shared_nfs/kyle/moe/k3six/tasks2/step53b.out:12; :13; local:/shared_nfs/kyle/moe/k3six/tasks2/step73.out:9; poll bound local:/workspace/code/gpt_oss_docker/.claude/memory/project_k3_six_remaining.md:121)
