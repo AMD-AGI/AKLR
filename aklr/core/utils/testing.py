@@ -137,7 +137,7 @@ def _collect_scope_times(events, prefix):
 
 
 def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="median"):
-    """Triton's do_bench_cudagraph_proton on ROCm, with record_function scopes: per-call kernel ms, flush excluded."""
+    """The per-call GPU time in milliseconds of fn's kernels, replayed in a CUDA graph, cache flushes excluded."""
     assert return_mode in ["min", "max", "mean", "median", "all"]
 
     kernel_tracer()
