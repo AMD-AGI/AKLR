@@ -59,7 +59,7 @@ GRAPH_BUDGET_MILLISECONDS = 20.0
 
 MEASUREMENT_PROFILE: Mapping[str, Any] = MappingProxyType(
     {
-        "version": 18,
+        "version": 19,
         "timer": "bench_cudagraph",
         "sample_count_policy": "rep_ms_estimate",
         "estimation_samples": 5,
