@@ -84,7 +84,7 @@ def fused_moe_reference(
         ids[int(row_major_args["num_local_tokens"][0]) :] = -1  # rows not received
     # e2m1's 8 magnitudes, ascending: byte i holds code i in its low nibble.
     codes = torch.arange(16, dtype=torch.uint8, device=hidden.device)
-    fp4_grid = decode(codes, "float4_e2m1")[0::2][:8]
+    fp4_grid = decode(codes, "float4_e2m1")[0::2][:8].contiguous()
     activation, stage1 = point.attrs["activation"], point.attrs["doweight_stage1"]
     limit = row_major_args.get("swiglu_limit")
     if point.attrs["gate_mode"] == "interleave" or (

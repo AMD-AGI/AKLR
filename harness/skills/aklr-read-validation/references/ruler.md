@@ -7,18 +7,17 @@ Sources: `aklr/core/validation/stages/_measure.py`, `stages/_bench/_stage.py`,
 
 - Every call is replayed in a CUDA graph and preceded by a 1 GiB cache flush inside the graph, so
   weights and activations come from HBM on every call.
-- Timed calls rotate through 8 input sets (`N_TIMING_SETS`), each with its own tensors, weights
-  included, as a model's layers bring their own.
-- One warm-up round, then rounds until a look decides (`ROUND_LOOKS`: after 8, 16 and 32 rounds,
+- One warm-up round, then rounds until a look decides (`ROUND_LOOKS`: after 16 and 32 rounds,
   timing stops once every threshold a verdict reads is under the lower bound or over the upper one:
-  the gate's, and against the baseline also 1.02, which a workload clears to qualify). Each
+  the gate's, and against the baseline also 1.02, which a workload clears to qualify, and the
+  dispatch minimum against the speedup bounds to 3 decimals, as stored). Each
   round times the candidate and the versus side (the baseline, or a served kernel); its log ratio
   is `log(t_versus / t_candidate)`. `n_rounds` in a report says where it stopped.
 
 ## Judging
 
 - The gate is the one-sided Student-t lower bound of the mean log ratio, exponentiated, at
-  α = 0.05 split over the three looks (`LOOK_ALPHA`), so stopping early keeps the false-pass rate.
+  α = 0.05 split over the two looks (`LOOK_ALPHA`), so stopping early keeps the false-pass rate.
   For the gate only, each round's log ratio is clamped to ±ln 2 (`MAX_ABS_LOG_RATIO`): a report's
   ratio column never shows more than 2.000, and a bound near 0.5 can fall just under it. At either
   end, read the medians.

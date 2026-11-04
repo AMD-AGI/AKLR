@@ -60,10 +60,12 @@ from aklr.core.validation.stages._bench._execution._transport import (
     ShutdownRunner,
     TaskCompleted,
     TaskFailed,
+    TaskStarted,
 )
 
 DEFAULT_STARTUP_TIMEOUT_SECONDS: Final = 30.0
 _PR_SET_PDEATHSIG: Final = 1
+_PR_SET_CHILD_SUBREAPER: Final = 36
 RUNNER_POLL_SECONDS: Final = 0.25
 RUNNER_JOIN_SECONDS: Final = 2.0
 
@@ -174,6 +176,7 @@ class DisposableExecutionRunner(ExecutionRunner):
         self._channel: MultiprocessingRunnerChannel | None = None
         self._child_endpoint: ChildRunnerEndpoint | None = None
         self._submitted_task_id: str | None = None
+        self._is_task_started = False
         self._cancelled_task_id: str | None = None
         self._has_read_diagnostics = False
 
@@ -280,8 +283,16 @@ class DisposableExecutionRunner(ExecutionRunner):
             raise TaskCancelled(f"task {task_id} was cancelled")
         self._require_state(RunnerState.RUNNING)
 
+        deadline = None if timeout is None else time.monotonic() + timeout
         try:
             event = self._receive_event(timeout)
+            if (
+                isinstance(event, TaskStarted)
+                and event.runner_id == self._runner_id
+                and event.task_id == task_id
+            ):
+                self._is_task_started = True
+                event = self._receive_event(None if deadline is None else deadline - time.monotonic())
         except (TaskExecutionTimeout, RunnerExitedEarly, ChannelFailure) as error:
             if self.state == RunnerState.CLOSED or task_id == self._cancelled_task_id:
                 raise TaskCancelled(f"task {task_id} was cancelled") from error
@@ -307,6 +318,9 @@ class DisposableExecutionRunner(ExecutionRunner):
         if isinstance(event, TaskFailed) and event.runner_id == self._runner_id and event.task_id == task_id:
             raise TaskExecutionFailed(event.reason)
         if isinstance(event, RunnerFailed) and event.runner_id == self._runner_id:
+            if self._is_task_started:
+                # only the task's code, sharing the child's pipe, sends one after TaskStarted
+                raise TaskExecutionFailed(event.reason)
             # before the task ran: receiving its command (importing lent tensors) is the platform's
             self._raise_runner_failed(event, RunnerCommandFailed)
         if isinstance(event, RunnerExited) and event.runner_id == self._runner_id:
@@ -466,8 +480,14 @@ class DisposableExecutionRunner(ExecutionRunner):
         is_gpu = device != "cpu"
         try:
             os.setsid()
-            # killed with the parent: a task's own children (the bench trial's candidate) end with it
-            ctypes.CDLL(None, use_errno=True).prctl(_PR_SET_PDEATHSIG, signal.SIGKILL)
+            libc = ctypes.CDLL(None, use_errno=True)
+            # killed with the parent: a task's own children (the bench trial's candidate) end with it;
+            # the signal follows the parent's thread that started this process, which the runner's
+            # pool keeps until close
+            libc.prctl(_PR_SET_PDEATHSIG, signal.SIGKILL)
+            # orphans of a task's processes come back here, not to init: under this group while it
+            # lives, then to this runner's own runner (ProcessGroup.kill_adopted)
+            libc.prctl(_PR_SET_CHILD_SUBREAPER, 1)
             if os.getppid() != parent_pid:  # the parent died before the signal was set
                 return
             parent_cwd = os.getcwd()
@@ -518,6 +538,7 @@ class DisposableExecutionRunner(ExecutionRunner):
                         raise RuntimeError(f"runner received invalid command: {command}")
 
                     task_id = command.task_id
+                    endpoint.send(TaskStarted(runner_id=runner_id, task_id=task_id))
                     result = engine.execute(
                         command.task,
                         engine.context_type(

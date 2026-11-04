@@ -8,6 +8,7 @@ where the reference does."""
 
 from __future__ import annotations
 
+import contextlib
 import sys
 from collections.abc import Sequence
 from typing import Any
@@ -27,6 +28,7 @@ from aklr.core.validation.stages._bench._execution import (
     ExecutionContext,
     ExecutionError,
     Executor,
+    ProcessGroup,
 )
 from aklr.core.validation.stages._report._finding import FindingCode
 
@@ -67,31 +69,42 @@ def run_trial(
     """Run the batch's candidate in a child task on ``context.device`` (a tracer fault
     reruns it once), lent ``TrialRequest.empty_outputs``, then evaluate each workload its
     baseline did not decline; returns ``TrialResult`` json."""
+    import torch
+
     from aklr.core.runtime.builder import KERNEL_PACKAGE_PREFIX
 
     axes_texts = [r.axes_text for r in requests]
-    outputs = {r.axes_text: r.empty_outputs(context.device) for r in requests}
-    with Executor.for_devices([context.device], n_cpu_shares=n_cpu_shares) as executor:
-        for attempt in range(2):
-            try:
-                future = executor.submit(
-                    run_candidate,
-                    timeout_seconds=candidate_timeout_seconds,
-                    requests=requests,
-                    outputs=outputs,
-                )
-                candidate = CandidateResult.from_task(future.result(), axes_texts)
-            except (ExecutionError, ValueError) as e:
-                candidate = CandidateResult.of_failure(e)
-                (failure,) = candidate.findings
-                # a tracer fault is the platform's: a fresh process measures again
-                if (
-                    attempt == 0
-                    and failure.code == FindingCode.PLATFORM_FAILURE
-                    and _measure.is_tracer_fault(failure.detail)
-                ):
-                    continue
-            break
+    # in a pool of their own: a lent tensor's IPC handle maps its whole allocator segment, which
+    # no tensor of the reference's may share
+    pool = None if context.device == "cpu" else torch.cuda.MemPool()
+    with contextlib.nullcontext() if pool is None else torch.cuda.use_mem_pool(pool):
+        outputs = {r.axes_text: r.empty_outputs(context.device) for r in requests}
+    try:
+        with Executor.for_devices([context.device], n_cpu_shares=n_cpu_shares) as executor:
+            for attempt in range(2):
+                try:
+                    future = executor.submit(
+                        run_candidate,
+                        timeout_seconds=candidate_timeout_seconds,
+                        requests=requests,
+                        outputs=outputs,
+                    )
+                    candidate = CandidateResult.from_task(future.result(), axes_texts)
+                except (ExecutionError, ValueError) as e:
+                    candidate = CandidateResult.of_failure(e)
+                    (failure,) = candidate.findings
+                    # a tracer fault is the platform's: a fresh process measures again
+                    if (
+                        attempt == 0
+                        and failure.code == FindingCode.PLATFORM_FAILURE
+                        and _measure.is_tracer_fault(failure.detail)
+                    ):
+                        continue
+                break
+    finally:
+        # a candidate's process that left its session outlives the executor's kills
+        if not ProcessGroup.kill_adopted():
+            raise RuntimeError("the candidate's processes outlived their kill")
     reference = None
     if not candidate.findings:
         workload_results = {r.axes_text: r for r in candidate.workload_results}

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
+from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
@@ -152,3 +153,20 @@ def test_mhc_pre_normalizes_large_finite_residuals(fused: bool) -> None:
     reference = mhc_fused_post_pre_reference if fused else mhc_pre_reference
     layer_input = reference(point, args, semantics.to_float32)[2]
     torch.testing.assert_close(layer_input, torch.ones(tokens, hidden, dtype=layer_input.dtype))
+
+
+def test_float32_reference_fares_as_the_float64_one(op_case: OpCase) -> None:
+    """Rounded to the output dtypes and compared against the float64 reference, the float32
+    reference passes as the float64 one does: its own error leaves kernels their budget."""
+    args = op_case.inputs()
+
+    def worst_fraction(decode: Callable[[torch.Tensor, str], torch.Tensor]) -> float:
+        rounded = {
+            o: t.to(semantics.torch_dtypes(op_case.point.dtypes[o])[0])
+            for o, t in op_case.reference_outputs(args, decode).items()
+        }
+        results = op_case.compare(rounded, args, baseline_outputs=rounded, decode=semantics.to_float64)
+        assert all(r.is_passed for r in results.values()), {o: r.detail for o, r in results.items()}
+        return max(r.violation_fraction for r in results.values())
+
+    assert worst_fraction(semantics.to_float32) <= worst_fraction(semantics.to_float64) + 0.1

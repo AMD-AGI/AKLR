@@ -37,30 +37,52 @@ class ProcessGroup:
                 os.killpg(group_id, signal.SIGKILL)
         deadline = time.monotonic() + KILL_WAIT_SECONDS
         while (
-            is_alive := any(g in group_ids for _, g in _live_processes().values())
+            is_alive := any(g in group_ids for _, g, _ in _live_processes().values())
         ) and time.monotonic() < deadline:
             time.sleep(0.01)
         return not is_alive
 
+    @staticmethod
+    def kill_adopted() -> bool:
+        """Kills this process's descendants outside its session: what a runner's task left
+        behind in a session of its own, adopted here (PR_SET_CHILD_SUBREAPER) once its runner
+        is gone, which no group's kill finds."""
+        session = os.getsid(0)
+        deadline = time.monotonic() + KILL_WAIT_SECONDS
+        while True:
+            processes = _live_processes()
+            adopted, pids = set(), {os.getpid()}
+            while pids:
+                pids = {pid for pid, (parent, _, _) in processes.items() if parent in pids}
+                adopted |= {pid for pid in pids if processes[pid][2] != session}
+            if not adopted:
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            for pid in adopted:
+                with contextlib.suppress(ProcessLookupError, PermissionError):
+                    os.kill(pid, signal.SIGKILL)
+            time.sleep(0.01)
+
     def _tree_group_ids(self) -> set[int]:
         processes = _live_processes()
         group_ids = {self.group_id}
-        pids = {pid for pid, (_, group_id) in processes.items() if group_id == self.group_id}
+        pids = {pid for pid, (_, group_id, _) in processes.items() if group_id == self.group_id}
         while pids:
-            children = {pid for pid, (parent, _) in processes.items() if parent in pids}
+            children = {pid for pid, (parent, _, _) in processes.items() if parent in pids}
             group_ids |= {processes[pid][1] for pid in children}
             pids = children
         return group_ids
 
 
-def _live_processes() -> dict[int, tuple[int, int]]:
-    """Each live (not zombie) process's (parent pid, process group), by pid."""
+def _live_processes() -> dict[int, tuple[int, int, int]]:
+    """Each live (not zombie) process's (parent pid, process group, session), by pid."""
     processes = {}
     for stat_path in Path("/proc").glob("[0-9]*/stat"):
         try:
-            state, parent, process_group = stat_path.read_text().rpartition(")")[2].split()[:3]
+            state, parent, process_group, session = stat_path.read_text().rpartition(")")[2].split()[:4]
         except (OSError, ValueError):
             continue
         if state != "Z":
-            processes[int(stat_path.parent.name)] = (int(parent), int(process_group))
+            processes[int(stat_path.parent.name)] = (int(parent), int(process_group), int(session))
     return processes

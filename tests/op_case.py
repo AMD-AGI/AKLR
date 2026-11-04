@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from functools import cached_property
 from typing import Any
 
@@ -160,14 +160,14 @@ class OpCase:
         """The api call of ``row_major_args`` on ``device`` (``TrialRequest.assemble_call``)."""
         return self.request.assemble_call(row_major_args, device)
 
-    def reference_outputs(self, row_major_args: Mapping[str, Any]) -> dict[str, Any]:
-        """The op's reference of ``row_major_args`` in float32, as validation computes it, by
-        name in ``contract.mutable_tensors``."""
+    def reference_outputs(
+        self, row_major_args: Mapping[str, Any], decode: Callable[[Any, str], Any] = semantics.to_float32
+    ) -> dict[str, Any]:
+        """The op's reference of ``row_major_args``, in float32 as validation computes it unless
+        ``decode`` says otherwise, by name in ``contract.mutable_tensors``."""
         reference_module = op_module(self.contract.op_package, "reference")
         reference_fn = getattr(reference_module, self.contract.reference_name)
-        return self.contract.mutable_tensors_by_name(
-            reference_fn(self.point, row_major_args, semantics.to_float32)
-        )
+        return self.contract.mutable_tensors_by_name(reference_fn(self.point, row_major_args, decode))
 
     def compare(
         self,
@@ -175,16 +175,19 @@ class OpCase:
         row_major_args: Mapping[str, Any],
         *,
         baseline_outputs: Mapping[str, Any] | None = None,
+        decode: Callable[[Any, str], Any] = semantics.to_float32,
     ) -> dict[str, CompareResult]:
         """``compare_outputs`` of ``actual_outputs`` against the reference of ``row_major_args``, on the CPU."""
-        compare_kwargs = {"reference_outputs": self.reference_outputs(row_major_args)}
+        compare_kwargs = {"reference_outputs": self.reference_outputs(row_major_args, decode)}
         if self.request.has_error_bound("dot_product"):
             magnitudes = {
                 n: semantics.absolute_value(v, self.point.dtypes[n])
                 for n, v in row_major_args.items()
                 if torch.is_tensor(v)
             }
-            compare_kwargs["magnitude_outputs"] = self.reference_outputs({**row_major_args, **magnitudes})
+            compare_kwargs["magnitude_outputs"] = self.reference_outputs(
+                {**row_major_args, **magnitudes}, decode
+            )
         if baseline_outputs is not None:
             compare_kwargs["baseline_outputs"] = baseline_outputs
         compare_kwargs = {

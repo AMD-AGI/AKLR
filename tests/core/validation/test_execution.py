@@ -68,3 +68,52 @@ class _Unloadable:
 
 def _never_runs(context, value) -> None:
     raise AssertionError("the task ran")
+
+
+_ESCAPE = """
+import ctypes, os, subprocess, sys
+from pathlib import Path
+from aklr.core.validation.stages._bench._execution import ProcessGroup
+
+ctypes.CDLL(None).prctl(36, 1)  # PR_SET_CHILD_SUBREAPER, as a runner sets
+escapee = "import time; time.sleep(60)"
+task = (
+    "import subprocess, sys; "
+    f"print(subprocess.Popen([sys.executable, '-c', {escapee!r}], start_new_session=True, "
+    "stdout=subprocess.DEVNULL).pid)"
+)
+done = subprocess.run([sys.executable, "-c", task], start_new_session=True, stdout=subprocess.PIPE, text=True)
+stat = Path(f"/proc/{int(done.stdout)}/stat")
+assert stat.read_text().rpartition(")")[2].split()[1] == str(os.getpid()), "not adopted"
+assert ProcessGroup.kill_adopted()
+assert not stat.exists() or stat.read_text().rpartition(")")[2].split()[0] == "Z"
+"""
+
+
+def test_a_runner_kills_what_its_task_left_in_a_session_of_its_own() -> None:
+    """A task's process that started a session of its own and outlived its runner's group,
+    adopted by the runner above, dies with ``kill_adopted``."""
+    subprocess.run([sys.executable, "-c", _ESCAPE], check=True, timeout=60)
+
+
+def test_a_runner_failure_the_task_sends_is_the_tasks() -> None:
+    """The task shares its runner's pipe: a ``RunnerFailed`` after it started is its own crash,
+    not the platform's."""
+    with Executor.for_devices(["cpu"]) as executor:
+        future = executor.submit(_forge_runner_failed, timeout_seconds=60)
+        with pytest.raises(ExecutionError) as failure:
+            future.result()
+    assert caused_by_the_task(failure.value)
+
+
+def _forge_runner_failed(context) -> None:
+    import inspect
+
+    from aklr.core.validation.stages._bench._execution._transport import RunnerFailed
+
+    # the runner's own frame holds its endpoint and id, as the candidate's code can read
+    runner = next(f.frame.f_locals for f in inspect.stack() if "endpoint" in f.frame.f_locals)
+    runner["endpoint"].send(
+        RunnerFailed(runner_id=runner["runner_id"], reason="forged", resource_failed=True)
+    )
+    raise AssertionError("unreachable")

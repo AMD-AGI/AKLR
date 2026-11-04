@@ -482,9 +482,10 @@ class CandidateRun:
             for o, out in contract.call_mutable_tensors(result, call).items():
                 key = step.output_key(o)
                 # another storage dtype of the output holds the same bytes; copy_ would broadcast
-                value = out.view(lent[key].dtype)
-                if value.shape != lent[key].shape:
-                    detail = f"{label}: {o} is {tuple(value.shape)}, not {tuple(lent[key].shape)}"
+                is_same_width = out.element_size() == lent[key].element_size()
+                value = out.view(lent[key].dtype) if is_same_width else out
+                if value.shape != lent[key].shape or value.dtype != lent[key].dtype:
+                    detail = f"{label}: {o} is a {tuple(out.shape)} {out.dtype}, not the lent {tuple(lent[key].shape)} {lent[key].dtype}"
                     raise StepFailed(FindingCode.CANDIDATE_CRASH, detail)
                 lent[key].copy_(value)
                 filled.append(key)

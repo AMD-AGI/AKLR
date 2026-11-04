@@ -1148,6 +1148,38 @@ def test_reference_compares_the_lent_outputs() -> None:
     assert failed.findings[0].detail.startswith(bad.label) and not failed.is_complete
 
 
+def test_reference_takes_float64_where_float32_overflows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A gemm whose products of 2**64 cancel: float32 makes them inf and the reference NaN,
+    float64 sums them to 0, which a zero output passes and an infinite one fails."""
+    import torch
+
+    from aklr.core.validation.stages._bench._evaluation._reference import (
+        WorkloadEvaluation,
+    )
+    from tests.op_case import OpCase
+
+    request = OpCase.of("gemm@1.0").request
+    compose_inputs = request.compose_inputs
+
+    def cancelling(step: Any, device: str) -> dict[str, Any]:
+        args = compose_inputs(step, device)
+        rows, columns = torch.meshgrid(*(torch.arange(n) for n in args["b"].shape), indexing="ij")
+        args["a"] = torch.full_like(args["a"], 2.0**64)
+        args["b"] = (2.0**64 * (1 - 2 * ((rows + columns) % 2))).to(args["b"].dtype)
+        if args.get("bias") is not None:
+            args["bias"] = torch.zeros_like(args["bias"])
+        return args
+
+    monkeypatch.setattr(type(request), "compose_inputs", lambda self, step, device: cancelling(step, device))
+    outputs = {k: v.zero_() for k, v in request.empty_outputs("cpu").items()}
+    assert WorkloadEvaluation(request, outputs, list(outputs), "cpu").evaluate().findings == ()
+    for v in outputs.values():
+        v.fill_(torch.inf)
+    result = WorkloadEvaluation(request, outputs, list(outputs), "cpu").evaluate()
+    mismatch_codes = {s.mismatch_code for s in request.steps}
+    assert result.findings and all(f.code in mismatch_codes for f in result.findings), result.findings
+
+
 def test_long_schema_spreads_over_batches(monkeypatch: pytest.MonkeyPatch) -> None:
     """A schema of more workloads than a batch holds splits into even batches of at
     most ``MAX_BATCH_WORKLOADS``, every workload once, in schema order."""

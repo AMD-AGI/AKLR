@@ -32,7 +32,7 @@ class ReferenceWorkloadResult(FrozenModel):
 
 class WorkloadEvaluation:
     """One workload's outputs, as the candidate left them in the lent tensors, against the
-    float32 reference, on their device."""
+    float32 reference (float64 where float32 overflows), on their device."""
 
     request: TrialRequest
     outputs: Mapping[str, torch.Tensor]
@@ -61,9 +61,10 @@ class WorkloadEvaluation:
         request, device = self.request, self.device
         contract, point = request.contract, request.point
         steps = list(request.steps)
+        composed: dict[str, dict] = {}
         if step := next((s for s in steps if s.input_set == "workload"), None):
             try:
-                request.compose_inputs(step, device)
+                composed[step.input_set] = request.compose_inputs(step, device)
             except ValueError as e:
                 self._fail(step, FindingCode.SCHEMA_INVALID, str(e))
                 steps.remove(step)
@@ -91,21 +92,25 @@ class WorkloadEvaluation:
             first,
             *rest,
         ) in steps_by_inputs.values():
-            row_major_args = request.compose_inputs(first, device)
-            compare_kwargs = {
-                "reference_outputs": contract.mutable_tensors_by_name(
-                    reference_fn(point, row_major_args, semantics.to_float32)
-                )
-            }
-            if request.has_error_bound("dot_product"):
-                magnitudes = {
-                    n: semantics.absolute_value(v, point.dtypes[n])
-                    for n, v in row_major_args.items()
-                    if torch.is_tensor(v)
+            row_major_args = composed.get(first.input_set) or request.compose_inputs(first, device)
+            for decode in (semantics.to_float32, semantics.to_float64):
+                compare_kwargs = {
+                    "reference_outputs": contract.mutable_tensors_by_name(
+                        reference_fn(point, row_major_args, decode)
+                    )
                 }
-                compare_kwargs["magnitude_outputs"] = contract.mutable_tensors_by_name(
-                    reference_fn(point, row_major_args | magnitudes, semantics.to_float32)
-                )
+                if request.has_error_bound("dot_product"):
+                    magnitudes = {
+                        n: semantics.absolute_value(v, point.dtypes[n])
+                        for n, v in row_major_args.items()
+                        if torch.is_tensor(v)
+                    }
+                    compare_kwargs["magnitude_outputs"] = contract.mutable_tensors_by_name(
+                        reference_fn(point, row_major_args | magnitudes, decode)
+                    )
+                # float32 overflows where the op's value can be finite (a sum that cancels): float64 then
+                if all(t.isfinite().all() for outputs in compare_kwargs.values() for t in outputs.values()):
+                    break
             if request.has_error_bound("baseline_relative"):
                 baseline = contract.baseline()
                 if baseline is None:

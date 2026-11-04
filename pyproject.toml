@@ -21,7 +21,6 @@ dependencies = [
     "ninja",
     "packaging",
     "pydantic>=2.12",
-    "safetensors",
 ]
 
 [project.entry-points."sglang.srt.plugins"]
