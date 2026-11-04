@@ -62,6 +62,17 @@ def _time_a_subject_that_copies() -> float:
     return bench_cudagraph(subject, rep=20)
 
 
+def _time_a_subject_after_a_tracer_fault() -> float:
+    """A reading the tracer fails is measured again in place, in a profiler the failure left able to start."""
+    from aklr.core.utils.testing import kernel_tracer
+    from aklr.core.validation.stages._measure import bind_clock
+
+    clock = bind_clock()
+    x = torch.ones(1 << 20, device="cuda")
+    kernel_tracer().fail_next_window("1 dispatches of the graph replays matched no graph node")
+    return clock.graph_reading(lambda: x.mul_(1.0))
+
+
 @pytest.mark.gpu
 @pytest.mark.skipif(
     torch.version.hip is None,
@@ -69,8 +80,13 @@ def _time_a_subject_that_copies() -> float:
 )
 @pytest.mark.parametrize(
     "time_a_subject",
-    [_time_a_subject_with_per_stream_state, _time_a_subject_that_forks_a_stream, _time_a_subject_that_copies],
-    ids=["per_stream_state", "forked_stream", "copy"],
+    [
+        _time_a_subject_with_per_stream_state,
+        _time_a_subject_that_forks_a_stream,
+        _time_a_subject_that_copies,
+        _time_a_subject_after_a_tracer_fault,
+    ],
+    ids=["per_stream_state", "forked_stream", "copy", "after_a_tracer_fault"],
 )
 def test_a_subject_is_measurable(time_a_subject):
     with multiprocessing.get_context("spawn").Pool(1) as pool:

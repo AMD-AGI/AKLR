@@ -934,10 +934,21 @@ void attach() { KernelTracer::instance().attach(); }
 
 void start_profile() { KernelTracer::instance().start(); }
 
+// a window's error, for check(): one thrown into Kineto's stop would leave
+// Kineto unable to start the next window
+std::string failure, next_failure;
+
 Profile stop_profile() {
   auto &tracer = KernelTracer::instance();
-  tracer.stop();
-  return tracer.profile();
+  try {
+    tracer.stop();
+    if (!next_failure.empty())
+      throw std::runtime_error(std::exchange(next_failure, {}));
+    return tracer.profile();
+  } catch (const std::exception &error) {
+    failure = error.what();
+    return {};
+  }
 }
 
 void push_op(uint64_t correlation) { t_ops.push_back(correlation); }
@@ -984,5 +995,13 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.attr("rocprofiler_sdk_version") = pybind11::make_tuple(
       ROCPROFILER_SDK_VERSION_MAJOR, ROCPROFILER_SDK_VERSION_MINOR,
       ROCPROFILER_SDK_VERSION_PATCH);
+  m.def("check", [] {
+    if (!aklr::kernel_tracer::failure.empty())
+      throw std::runtime_error(std::exchange(aklr::kernel_tracer::failure, {}));
+  });
+  // for tests: the next window fails with this error
+  m.def("fail_next_window", [](std::string error) {
+    aklr::kernel_tracer::next_failure = std::move(error);
+  });
   aklr::kernel_tracer::register_kineto_profiler();
 }

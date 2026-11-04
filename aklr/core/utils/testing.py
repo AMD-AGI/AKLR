@@ -35,7 +35,9 @@ os.environ.setdefault("ROCP_TOOL_ATTACH", "1")
 # shortcut: no ROCm profiler attributes graph replays yet; retire with ROCm/rocm-systems #14204, #14211
 @functools.cache
 def kernel_tracer():
-    """A Kineto child profiler for torch.profiler runs that pass KERNEL_TRACER_CONFIG and ProfilerActivity.CPU only."""
+    """A Kineto child profiler for torch.profiler runs that pass KERNEL_TRACER_CONFIG and ProfilerActivity.CPU only.
+
+    Its check() raises what the last run's tracing failed with: that run has no GPU events."""
     from torch.utils.cpp_extension import ROCM_HOME, include_paths, load
 
     from aklr.core.platform.env import RuntimeEnv
@@ -160,7 +162,7 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
     """The per-call GPU time in milliseconds of fn's kernels, replayed in a CUDA graph, cache flushes excluded."""
     assert return_mode in ["min", "max", "mean", "median", "all"]
 
-    kernel_tracer()
+    tracer = kernel_tracer()
     stream = torch.cuda.Stream()
     stream.wait_stream(torch.cuda.current_stream())  # the inputs are written on the caller's stream
     with torch.cuda.stream(stream):
@@ -204,6 +206,7 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
             for i in range(n_retries):
                 g.replay()
             torch.cuda.synchronize()
+        tracer.check()
 
         times = [
             t / n_retries
