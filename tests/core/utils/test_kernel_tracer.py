@@ -8,6 +8,7 @@ does not opt in is Kineto's alone."""
 import collections
 import json
 import multiprocessing
+import os
 import tempfile
 from pathlib import Path
 
@@ -80,8 +81,38 @@ def _trace_of_a_graph_replay() -> list:
         return json.loads(path.read_text())["traceEvents"]
 
 
+def _kernels_of_a_graph_with_a_node_added_by_hand() -> list[str]:
+    import ctypes
+
+    from aklr.core.utils.testing import kernel_tracer
+
+    kernel_tracer()
+    hip = ctypes.CDLL("libamdhip64.so")
+    x = torch.randn(1 << 20, device="cuda")
+    stream = torch.cuda.Stream()
+    with torch.profiler.profile(**_opted_in()) as prof:
+        graph = torch.cuda.CUDAGraph(keep_graph=True)
+        with torch.cuda.stream(stream), torch.cuda.graph(graph, stream=stream):
+            x.mul_(2.0)
+            x.add_(1.0)
+        raw = ctypes.c_void_p(graph.raw_cuda_graph())
+        count = ctypes.c_size_t(0)
+        assert hip.hipGraphGetNodes(raw, None, ctypes.byref(count)) == 0
+        nodes = (ctypes.c_void_p * count.value)()
+        assert hip.hipGraphGetNodes(raw, nodes, ctypes.byref(count)) == 0
+        params = ctypes.create_string_buffer(256)  # hipKernelNodeParams, copied whole
+        assert hip.hipGraphKernelNodeGetParams(ctypes.c_void_p(nodes[0]), params) == 0
+        added, last = ctypes.c_void_p(), (ctypes.c_void_p * 1)(nodes[count.value - 1])
+        assert hip.hipGraphAddKernelNode(ctypes.byref(added), raw, last, ctypes.c_size_t(1), params) == 0
+        graph.instantiate()
+        graph.replay()
+        torch.cuda.synchronize()
+    return [e.name for e in prof.events() if e.device_type == torch.autograd.DeviceType.CUDA]
+
+
 def _error_of(opt_in_with_cuda: bool) -> str:
     if not opt_in_with_cuda:
+        os.environ.pop("ROCP_TOOL_ATTACH", None)  # inherited from a parent that imported the tracer's module
         torch.ones(1, device="cuda")  # the GPU runs before the tracer's module is imported
     from aklr.core.utils.testing import kernel_tracer
 
@@ -128,6 +159,13 @@ def test_a_chrome_trace_ties_kernels_to_their_launches():
     assert sorted(k["args"]["graph ordinal"] for k in replayed) == [0, 1]
     assert all(k["args"]["capture correlation"] for k in replayed)
     assert {e["id"] for e in events if e.get("ph") == "f"} <= {e["id"] for e in events if e.get("ph") == "s"}
+
+
+@pytest.mark.gpu
+@gpu
+def test_a_graph_node_added_by_hand_replays_unattributed_not_unmatched():
+    kernels = _in_a_fresh_process(_kernels_of_a_graph_with_a_node_added_by_hand)
+    assert len([k for k in kernels if "MulFunctor" in k]) == 2, kernels
 
 
 @pytest.mark.gpu

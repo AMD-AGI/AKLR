@@ -62,8 +62,8 @@ namespace {
 // the launch below
 constexpr int kOrdinalBits = 24;
 
-// a captured graph node a replay can dispatch: a kernel, or (kernel empty) a
-// copy or memset
+// a graph node a replay can dispatch: a kernel, or (kernel empty) a copy or
+// memset
 struct Node {
   std::string kernel;
   uint64_t call = 0;
@@ -73,8 +73,9 @@ struct Node {
 // a captured graph's nodes in the order its launch enqueues them
 struct Plan {
   std::vector<Node> nodes;
-  bool copies = false; // every node of the graph was captured, so the runtime's
-                       // blit kernels are its copies
+  bool copies = false; // every node a call captured, or a kernel, copy or
+                       // memset added by hand: the runtime's blit kernels are
+                       // its copies
   int64_t kernels = 0; // the graph's kernel nodes, captured or not: the
                        // non-blit dispatches of each launch
 };
@@ -220,11 +221,11 @@ public:
     profile.attribution = attribute();
     const auto unmatched = std::count_if(
         profile.attribution.begin(), profile.attribution.end(),
-        [](const Attribution &a) { return a.kernels >= 0 && !a.call; });
+        [](const Attribution &a) { return a.kernels >= 0 && !a.node; });
     if (unmatched) {
       throw std::runtime_error(std::to_string(unmatched) +
                                " dispatches of the graph replays matched no "
-                               "captured call");
+                               "graph node");
     }
     for (const auto &dispatch : window_) {
       auto name = names_.find(dispatch.kernel_id);
@@ -317,11 +318,14 @@ private:
                        : match(*plan->second, kernels);
       for (size_t j = 0; j < dispatches.size(); ++j) {
         const auto &[ordinal, i] = dispatches[j];
-        attribution[i] = {
-            static_cast<int64_t>(launch - first_launch_), ordinal,
-            nodes[j] ? nodes[j]->call : 0, nodes[j] ? nodes[j]->scope : 0,
-            plan == launched_.end() || !plan->second ? -1
-                                                     : plan->second->kernels};
+        attribution[i] = {static_cast<int64_t>(launch - first_launch_),
+                          ordinal,
+                          nodes[j] ? nodes[j]->call : 0,
+                          nodes[j] ? nodes[j]->scope : 0,
+                          plan == launched_.end() || !plan->second
+                              ? -1
+                              : plan->second->kernels,
+                          nodes[j] != nullptr};
       }
     }
     return attribution;
@@ -727,6 +731,9 @@ private:
         for (; next < end; ++next)
           captured.push_back({nodes[next], mark.call, mark.scope});
       }
+      // created by the capture, but reached by no call's mark
+      for (; next < nodes.size(); ++next)
+        captured.push_back({nodes[next], 0, 0});
       std::lock_guard<std::mutex> lock(mutex_);
       captured_[graph] = std::move(captured);
     }
@@ -795,56 +802,60 @@ private:
     return order.size() == nodes.size() ? order : std::vector<hipGraphNode_t>{};
   }
 
-  // at instantiation: the captured nodes of the source graph in enqueue order,
-  // kernels named as dispatches are
+  // at instantiation: the source graph's nodes in enqueue order, kernels named
+  // as dispatches are, each with the call that captured it; a node added by
+  // hand has none
   void plan(hipGraphExec_t exec, hipGraph_t graph) {
-    std::vector<Captured> captured;
+    std::unordered_map<hipGraphNode_t, Captured> captured;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       auto found = captured_.find(graph);
       if (found == captured_.end())
         return;
-      captured = found->second;
+      for (const auto &c : found->second)
+        captured.emplace(c.node, c);
     }
     auto order = enqueue_order(graph);
-    std::unordered_map<hipGraphNode_t, size_t> rank;
-    for (size_t i = 0; i < order.size(); ++i)
-      rank.emplace(order[i], i);
-    std::stable_sort(captured.begin(), captured.end(),
-                     [&rank](const Captured &l, const Captured &r) {
-                       auto a = rank.find(l.node), b = rank.find(r.node);
-                       return (a == rank.end() ? rank.size() : a->second) <
-                              (b == rank.end() ? rank.size() : b->second);
-                     });
+    auto type_of = [](hipGraphNode_t node) {
+      hipGraphNodeType type = hipGraphNodeTypeEmpty;
+      return hipGraphNodeGetType(node, &type) == hipSuccess
+                 ? type
+                 : hipGraphNodeTypeEmpty;
+    };
 
     auto plan = std::make_shared<Plan>();
-    // a node not captured (added by hand, or a child graph's) may dispatch a
-    // blit no captured copy owns
-    std::unordered_set<hipGraphNode_t> owned;
-    for (const auto &c : captured)
-      owned.insert(c.node);
-    plan->copies = !order.empty() && std::all_of(order.begin(), order.end(),
-                                                 [&owned](hipGraphNode_t node) {
-                                                   return owned.count(node);
-                                                 });
+    // a node the capture made but no call reached, or a child graph added by
+    // hand, may dispatch a blit no copy node owns
+    plan->copies =
+        !order.empty() &&
+        std::all_of(order.begin(), order.end(), [&](hipGraphNode_t node) {
+          auto c = captured.find(node);
+          if (c != captured.end())
+            return c->second.call != 0;
+          auto type = type_of(node);
+          return type == hipGraphNodeTypeKernel ||
+                 type == hipGraphNodeTypeMemcpy ||
+                 type == hipGraphNodeTypeMemset;
+        });
     plan->kernels = order.empty() ? -1 : 0;
-    for (auto node : order) {
-      hipGraphNodeType type = hipGraphNodeTypeEmpty;
-      plan->kernels += hipGraphNodeGetType(node, &type) == hipSuccess &&
-                       type == hipGraphNodeTypeKernel;
-    }
-    for (const auto &c : captured) {
-      hipGraphNodeType type = hipGraphNodeTypeEmpty;
-      if (hipGraphNodeGetType(c.node, &type) != hipSuccess)
-        continue;
+    for (auto node : order)
+      plan->kernels += type_of(node) == hipGraphNodeTypeKernel;
+    // unreadable edges: creation order, the order of a one-stream capture
+    for (auto node : order.empty() ? graph_nodes(graph) : order) {
+      auto c = captured.find(node);
+      if (c != captured.end() && !c->second.call)
+        continue; // its dispatches stay unmatched
+      const uint64_t call = c == captured.end() ? 0 : c->second.call;
+      const uint64_t scope = c == captured.end() ? 0 : c->second.scope;
+      auto type = type_of(node);
       if (type == hipGraphNodeTypeMemcpy || type == hipGraphNodeTypeMemset) {
         if (plan->copies)
-          plan->nodes.push_back({"", c.call, c.scope});
+          plan->nodes.push_back({"", call, scope});
         continue;
       }
       hipKernelNodeParams params{};
       if (type != hipGraphNodeTypeKernel ||
-          hipGraphKernelNodeGetParams(c.node, &params) != hipSuccess)
+          hipGraphKernelNodeGetParams(node, &params) != hipSuccess)
         continue;
       // a kernel node holds a registered host function, or a module launch's
       // hipFunction_t
@@ -853,7 +864,7 @@ private:
         name = hipKernelNameRef(static_cast<hipFunction_t>(params.func));
       if (!name || !*name)
         continue; // a node with no name cannot be matched
-      plan->nodes.push_back({name, c.call, c.scope});
+      plan->nodes.push_back({name, call, scope});
     }
     std::lock_guard<std::mutex> lock(mutex_);
     plans_[exec] = std::move(plan);

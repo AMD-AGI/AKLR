@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import bisect
 import functools
 import gc
 import math
@@ -134,11 +135,24 @@ def cuda_graph_without_gc(*args, **kwargs):
 
 # Kineto's raw events: torch's FunctionEvent tree costs up to 100 ms per call
 def _collect_scope_times(events, prefix):
-    scopes = {event.correlation_id(): event.name() for event in events if event.name().startswith(prefix)}
-    scope_times = dict.fromkeys(scopes.values(), 0.0)
+    cpu = {e.correlation_id(): e for e in events if e.device_type() == torch.autograd.DeviceType.CPU}
+    scopes = sorted(
+        (e.start_ns(), e.end_ns(), e.start_thread_id(), e.name())
+        for e in cpu.values()
+        if e.name().startswith(prefix)
+    )
+    starts = [scope[0] for scope in scopes]
+    scope_times = {scope[3]: 0.0 for scope in scopes}
     for event in events:
-        if event.device_type() == torch.autograd.DeviceType.CUDA and event.linked_correlation_id() in scopes:
-            scope_times[scopes[event.linked_correlation_id()]] += event.duration_ns() / 1e6
+        # inclusive, as proton's scopes: a kernel the subject's own annotation or op launched is the scope's too
+        op = (
+            cpu.get(event.linked_correlation_id())
+            if event.device_type() == torch.autograd.DeviceType.CUDA
+            else None
+        )
+        i = bisect.bisect_right(starts, op.start_ns()) - 1 if op else -1
+        if i >= 0 and op.end_ns() <= scopes[i][1] and op.start_thread_id() == scopes[i][2]:
+            scope_times[scopes[i][3]] += event.duration_ns() / 1e6
     return [time for _, time in sorted(scope_times.items()) if time > 0]
 
 

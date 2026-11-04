@@ -41,14 +41,15 @@ struct Dispatch {
 };
 
 // a dispatch's graph launch in the window (-1 for none), its ordinal there,
-// the HIP call and scope that captured it (0 when unknown), and the launched
-// graph's kernel nodes (-1 for a graph not captured)
+// the HIP call and scope that captured it (0 when unknown or added by hand),
+// and the launched graph's kernel nodes (-1 for a graph not captured)
 struct Attribution {
   int64_t launch = -1;
   uint64_t ordinal = 0;
   uint64_t call = 0;
   uint64_t scope = 0;
   int64_t kernels = -1;
+  bool node = false; // it replays a node of its launch's plan
 };
 
 // what torch.profiler's window recorded, the dispatches' kernels demangled
