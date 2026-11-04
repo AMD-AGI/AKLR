@@ -14,7 +14,7 @@ from aklr.core.validation.stages._bench._evaluation._comparison import (
     find_nondeterminism,
     is_reference_comparable,
 )
-from aklr.core.validation.stages._bench._evaluation._trials import Step, TrialRequest
+from aklr.core.validation.stages._bench._evaluation._request import Step, TrialRequest
 from aklr.core.validation.stages._report._finding import Finding, FindingCode
 
 if TYPE_CHECKING:

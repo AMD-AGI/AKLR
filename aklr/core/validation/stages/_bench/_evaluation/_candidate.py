@@ -14,7 +14,7 @@ from aklr.core.contract import semantics
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.spec import FrozenModel
 from aklr.core.validation.stages import _measure
-from aklr.core.validation.stages._bench._evaluation._trials import Step, TrialRequest
+from aklr.core.validation.stages._bench._evaluation._request import Step, TrialRequest
 from aklr.core.validation.stages._bench._execution import (
     ExecutionContext,
     TaskExecutionTimeout,

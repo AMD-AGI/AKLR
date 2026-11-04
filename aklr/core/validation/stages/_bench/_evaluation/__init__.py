@@ -9,15 +9,15 @@ from aklr.core.validation.stages._bench._evaluation._candidate import (
     run_candidate,
 )
 from aklr.core.validation.stages._bench._evaluation._reference import ReferenceWorkloadResult
-from aklr.core.validation.stages._bench._evaluation._trial import (
-    TrialResult,
-    run_trial,
-)
-from aklr.core.validation.stages._bench._evaluation._trials import (
+from aklr.core.validation.stages._bench._evaluation._request import (
     N_POST_TIMING_SETS,
     CheckName,
     Step,
     TrialRequest,
+)
+from aklr.core.validation.stages._bench._evaluation._trial import (
+    TrialResult,
+    run_trial,
 )
 
 __all__ = [

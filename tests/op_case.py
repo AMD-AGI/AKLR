@@ -16,7 +16,7 @@ from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.semantics import CompareResult
 from aklr.core.contract.spec import SOURCE_SUFFIXES, Language, PointSpec
-from aklr.core.validation.stages._bench._evaluation._trials import TrialRequest
+from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
 from tests.ops import cases as ops_cases
 from tests.plugins.sglang import cases as sglang_cases
 

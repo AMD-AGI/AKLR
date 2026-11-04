@@ -22,7 +22,7 @@ from aklr.core.validation.stages._bench._evaluation._reference import (
     ReferenceWorkloadResult,
     WorkloadEvaluation,
 )
-from aklr.core.validation.stages._bench._evaluation._trials import TrialRequest
+from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
 from aklr.core.validation.stages._bench._execution import (
     ExecutionContext,
     ExecutionError,
