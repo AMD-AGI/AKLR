@@ -61,9 +61,10 @@ def test_prepare_writes_the_task_and_prints_kernelforges_command(aklr_root: Path
     assert command[command.index("--kernel") + 1] == str(workspace_dir / "kernel.py")
     assert command[command.index("--driver") + 1] == str(workspace_dir / "driver.py")
     assert command[command.index("--baseline-json") + 1] == str(run_dir.resolve() / "baseline.json")
-    assert command[command.index("--skill-dir") + 1] == str(
-        aklr_root / "harness" / "skills" / "flydsl-kernel-optimization"
-    )
+    assert _skill_dirs(command) == [
+        str(aklr_root / "harness" / "skills" / "aklr-kb"),
+        str(aklr_root / "harness" / "skills" / "aklr-kb/flydsl"),
+    ]
     assert {"--paired-keep", "--early-stop"} <= set(command)
 
 
@@ -109,19 +110,23 @@ def test_the_start_anchor_writes_no_baseline(aklr_root: Path, tmp_path: Path, ca
     assert "--baseline-json" not in resume
 
 
+def _skill_dirs(command: list[str]) -> list[str]:
+    return [command[i + 1] for i, arg in enumerate(command) if arg == "--skill-dir"]
+
+
 @pytest.mark.parametrize(
     ("backend", "skill"),
-    [("triton", "triton-kernel-optimization"), ("gluon", None)],
+    [("triton", "aklr-kb/triton"), ("gluon", "aklr-kb/triton")],
 )
-def test_the_agents_read_aklrs_skill_for_the_language_if_it_has_one(
+def test_the_agents_read_the_wiki_and_the_skill_of_the_language(
     aklr_root: Path, tmp_path: Path, capsys, backend, skill
 ):
     assert _prepare(aklr_root, tmp_path, "--kernel-backend", backend) == 0
     command = _printed_command(capsys.readouterr().out)
-    if skill is None:
-        assert "--skill-dir" not in command
-    else:
-        assert command[command.index("--skill-dir") + 1] == str(aklr_root / "harness" / "skills" / skill)
+    assert _skill_dirs(command) == [
+        str(aklr_root / "harness" / "skills" / "aklr-kb"),
+        str(aklr_root / "harness" / "skills" / skill),
+    ]
 
 
 def test_a_relative_aklr_root_reaches_the_driver_and_the_brief_absolute(

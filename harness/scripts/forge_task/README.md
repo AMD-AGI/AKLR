@@ -80,17 +80,20 @@ A=$(pwd) W=$RUN/workspace
 # What each kept round is worth: pays, within noise, or faster without it
 python -m kernelforge.cli forge-ablate --workspace $W --gpus 0
 # An agent reviews the whole change against AKLR's checks and squashes it into one commit
+# FlyDSL's own code-cleanup skill is the review's guide; it is linked, not kept in this repository
+curl -sSfL https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/kernel-code-cleanup/SKILL.md \
+  -o $RUN/flydsl_code_cleanup.md
 python -m kernelforge.cli forge-finalize --workspace $W --gpu 0 --model claude-opus-5-5 \
   --author "$(git config user.name) <$(git config user.email)>" \
   --lint "python -m ruff check --no-fix --config $A/pyproject.toml" \
   --lint "python -m ruff format --check --config $A/pyproject.toml" \
-  --review-guide $A/harness/skills/flydsl-kernel-code-cleanup/SKILL.md
+  --review-guide $RUN/flydsl_code_cleanup.md
 # The same answer, as the schema's determinism asks, on a stream limited to a few CUs and beside a second call of
 # its own: a kernel whose workgroups wait for each other does not give it, and validate cannot tell
 HIP_VISIBLE_DEVICES=0 python $W/driver.py --stress
-# What the FlyDSL skill should learn from the run, as a patch for you to review
+# What the kernel wiki should learn from the run, as a patch for you to review
 python -m kernelforge.cli forge-distill --workspace $W --model claude-opus-5-5 \
-  --skill-dir $A/harness/skills/flydsl-kernel-optimization --out $RUN/knowledge_patch \
+  --skill-dir $A/harness/skills/aklr-kb --out $RUN/knowledge_patch \
   --reference $A --guide CONTRIBUTING.md \
   --lint "python tools/kb_lint.py --errors-only --repo-root {repo}"
 ```
@@ -109,8 +112,8 @@ python -m aklr export check && python -m aklr validate --base origin/main <the p
 checks only the schema files a change touches, and only when it touches nothing else; on a branch that also changes
 code, it checks every schema in AKLR, which takes hours. Commit the kernel as `aklr/ops/README.md` describes and
 open a pull request. What the run taught goes into the same pull request: apply
-`$RUN/knowledge_patch/knowledge_patch.diff`, then review it item by item as the skill's `CONTRIBUTING.md` says --
-edits to existing pages in place, new pages in `staging/` for a person to approve. A change to the method itself
+`$RUN/knowledge_patch/knowledge_patch.diff`, then review it item by item as aklr-kb's `CONTRIBUTING.md` says --
+edits to existing pages in place, new pages in their folder, reviewed in the kernel's pull request. A change to the method itself
 (this README, the driver, the `forge-loop-campaign` skill) goes into a pull request of its own.
 
 An AI agent can run the whole campaign: the `forge-loop-campaign` skill in `harness/skills/` guides it.

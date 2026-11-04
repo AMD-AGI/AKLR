@@ -24,10 +24,12 @@ ASSETS = Path(__file__).resolve().parent / "assets"
 # count as a change to the workspace.
 GITIGNORE = "__pycache__/\n*.pyc\n*.log\nbuild/\nforge_experiments/\n.stop\n"
 
-# The AKLR skill the agents read, per kernel language.
+# The AKLR skills the agents read, per kernel language: the shared kernel wiki and the language's own skill.
+WIKI = Path("harness/skills/aklr-kb")
 SKILLS = {
-    "flydsl": Path("harness/skills/flydsl-kernel-optimization"),
-    "triton": Path("harness/skills/triton-kernel-optimization"),
+    "flydsl": (WIKI, Path("harness/skills/aklr-kb/flydsl")),
+    "triton": (WIKI, Path("harness/skills/aklr-kb/triton")),
+    "gluon": (WIKI, Path("harness/skills/aklr-kb/triton")),
 }
 
 # A torch statement that computes a gemm-contract schema into its preallocated output, by the operand rank.
@@ -286,8 +288,9 @@ def forge_loop_commands(
 ) -> tuple[list[str], list[str]]:
     """KernelForge's own commands for this task: the one that starts the loop and the one that resumes it. Each
     candidate is timed beside the kernel kept so far, the loop stops once its known directions are mined out, and
-    the agents read AKLR's skill for the language. A resume keeps the kernel, driver, brief, backend and branch the
-    loop started with and refuses the first three again; every other option holds only when given again.
+    the agents read aklr-kb and AKLR's skill for the language. A resume keeps the kernel, driver, brief, backend
+    and branch the loop started with and refuses the first three again; every other option holds only when given
+    again.
     """
     loop = [sys.executable, "-m", "kernelforge.cli", "forge-loop"]
     options = [
@@ -298,8 +301,8 @@ def forge_loop_commands(
         "--paired-keep",
         "--early-stop",
     ]
-    if language in SKILLS:
-        options += ["--skill-dir", str(aklr_root / SKILLS[language])]
+    for skill in SKILLS.get(language, ()):
+        options += ["--skill-dir", str(aklr_root / skill)]
     if anchored:
         options += ["--baseline-json", str(run.baseline_json)]
     # The starting kernel's files, which KernelForge reads as the kernel's beside its --kernel.
