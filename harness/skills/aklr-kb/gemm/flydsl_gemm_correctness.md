@@ -32,7 +32,7 @@ sources:
 
 **Static checks first; they cost nothing.** LDS stays within 160 KiB per workgroup on gfx950; tile packing and
 vector widths match the operand layout; the swizzle or padding is applied identically by the writer and the
-reader (`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` §3.4); accumulator and output conversions cannot overflow; edges hold
+reader (`../flydsl/guides.md` § gemm-optimization (FlyDSL's §3.4)); accumulator and output conversions cannot overflow; edges hold
 for shapes that do not divide the tile.
 
 ## 1. A gate must execute the path you changed

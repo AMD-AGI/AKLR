@@ -14,7 +14,7 @@ flydsl: 0.3.2
 > Counters propose; probes decide. This card adds what attention bodies taught on top of
 > `../gemm/flydsl_gemm_attribution.md` (compute-additivity and byte-rate probes, drop/alias/identity/illegal
 > arms, additive margins, the wave-cycle budget, readings you cannot trust), which it does not repeat. Trace
-> capture is in `../profile/`. Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed
+> capture is in `../profile.md`. Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed
 > under Evidence at the end. Use them for direction and order of magnitude, not as targets.
 
 ## Route here when
@@ -160,7 +160,7 @@ its pipe time). One kernel of the family is fabric-bound, the other is not.
 
 ## Related
 `../gemm/flydsl_gemm_attribution.md` · `flydsl_attn_workflow.md` · `flydsl_attn_measurement.md` ·
-`flydsl_attn_schedule_sync.md` · `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md`
+`flydsl_attn_schedule_sync.md` · `../profile.md` § kernel-trace-analysis
 
 ## Evidence
 

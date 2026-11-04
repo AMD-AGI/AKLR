@@ -55,7 +55,7 @@ basis: source-semantics
   VGPR headroom is small (S26).
 - One base VGPR for a fragment's four transpose reads — `gemm/flydsl_gemm_datapath.md` §9 — avoids an
   address-register spill (S27).
-- Async copy for A — `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` §11 — A goes global → LDS by DMA and saves arch VGPRs (S28).
+- Async copy for A — `../flydsl/guides.md` § gemm-optimization (FlyDSL's §11) — A goes global → LDS by DMA and saves arch VGPRs (S28).
 - Not a register cap to make room — `../flydsl/language/limits.md` — in FlyDSL v0.3.2 `maxnreg` does not cap registers, and
   a cap through the `amdgpu-num-vgpr` attribute turns into spills (S29).
 - Other kernel families: attention's occupancy steps, spill scale, code shapes that spill and AGPRs —
@@ -91,5 +91,5 @@ basis: source-semantics
 - S25 gemm/flydsl_gemm_schedule_and_locality.md:178 gate any mask change on vgpr_spill_count before benchmarking
 - S26 gemm/flydsl_gemm_schedule_and_locality.md:236 with small VGPR headroom, inserting work lengthens a live range
 - S27 gemm/flydsl_gemm_datapath.md:250 one address VGPR instead of four avoids an address-register spill
-- S28 https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md:623 async copy saves arch_vgpr: A bypasses VGPRs
-- S29 ../flydsl/language/limits.md:76 maxnreg leaves the binary unchanged; the amdgpu-num-vgpr attribute spills
+- S28 ROCm/FlyDSL@dd8373349:.claude/skills/gemm-optimization/SKILL.md:623 async copy saves arch_vgpr: A bypasses VGPRs
+- S29 ../flydsl/language/limits.md:82 maxnreg leaves the binary unchanged; the amdgpu-num-vgpr attribute spills

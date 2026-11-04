@@ -158,7 +158,7 @@ bit means that class **may cross** the fence; `0` pins everything.
 
 **FlyDSL's `hot_loop_scheduler` is the reference use.** `preshuffle_gemm` builds one hint table per tile.
 On gfx950 it spreads the LDS reads and VMEM loads evenly over all MFMAs,
-for both sync and async copy (`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` §5.5);
+for both sync and async copy (`../flydsl/guides.md` § gemm-optimization (FlyDSL's §5.5));
 the sync path also places its LDS writes at the tail.
 `preload=(dsrd, dvmem)` sets how many go ahead of the first MFMA
 (PS:439-494).

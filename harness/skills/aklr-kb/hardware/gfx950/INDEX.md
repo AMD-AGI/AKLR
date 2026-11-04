@@ -50,7 +50,7 @@ is the specification to check them against.
 
 - `<!-- page N -->` marks the PDF page the following text comes from; cite it once you have checked it (below).
 - Every instruction except the two `V_MFMA_SCALE_*` is a heading `#### NAME` in upper case, followed by
-  `Opcode: N`, its description and usually its pseudocode. From the skill folder, `rg -n '^#### V_MFMA' isa/cdna4/`
+  `Opcode: N`, its description and usually its pseudocode. From the skill folder, `rg -n '^#### V_MFMA' hardware/gfx950/cdna4/`
   lists the MFMA instructions.
 - The text is a conversion of the PDF. A table that crosses pages sits under its first page's marker, some
   converted tables are misaligned, and six figures carry text that exists only in the image (`lookup.md` §6).

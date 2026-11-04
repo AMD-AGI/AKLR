@@ -44,11 +44,11 @@ basis: source-semantics
 
 ## Candidate techniques
 
-- More write-to-read distance — `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md` (Method 3) — for cause 1 (S20); with little VGPR
+- More write-to-read distance — `../flydsl/guides.md` § lds-optimization (Method 3) — for cause 1 (S20); with little VGPR
   headroom move the write instead of inserting work, `gemm/flydsl_gemm_schedule_and_locality.md` §5 (S21).
 - XOR swizzle on 16-byte slots, composed into the layout — `gemm/flydsl_gemm_datapath.md` §2 — one function keys the
   writer and the reader (S22); re-measure it, a derived swizzle is not automatically better (S23).
-- Padding — `gemm/flydsl_gemm_datapath.md` §3, `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md` (Method 2) — when a small stride bump
+- Padding — `gemm/flydsl_gemm_datapath.md` §3, `../flydsl/guides.md` § lds-optimization (Method 2) — when a small stride bump
   removes the conflict (S24); pad by whole 16-byte slots to keep `b64`/`b128` alignment (S25); for column-wise
   MFMA fragment reads the swizzle is easier (S26).
 - A wave term in the transpose-read key — `gemm/flydsl_gemm_datapath.md` §2 — when a per-wave chunk stride puts
@@ -63,9 +63,9 @@ basis: source-semantics
 ## Evidence
 
 - S1 gemm/flydsl_gemm_datapath.md:103 compare SQ_LDS_BANK_CONFLICT against the floor computed by hand, not zero
-- S2 https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md:143 Type A bank conflicts: high stall on ds_read/ds_write themselves
-- S3 https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md:157 Type B write-read latency exposed: lgkmcnt(0) stall after ds_write
-- S4 https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md:155 gfx950: ds_read2 offsets that are multiples of 64 hit the same bank
+- S2 ROCm/FlyDSL@dd8373349:.claude/skills/lds-optimization/SKILL.md:143 Type A bank conflicts: high stall on ds_read/ds_write themselves
+- S3 ROCm/FlyDSL@dd8373349:.claude/skills/lds-optimization/SKILL.md:157 Type B write-read latency exposed: lgkmcnt(0) stall after ds_write
+- S4 ROCm/FlyDSL@dd8373349:.claude/skills/lds-optimization/SKILL.md:155 gfx950: ds_read2 offsets that are multiples of 64 hit the same bank
 - S5 gemm/flydsl_gemm_attribution.md:137 SQ_WAIT_INST_LDS counts dependent waits; co-resident waves can hide them
 - S6 gemm/flydsl_gemm_datapath.md:78 tell the three LDS failure modes apart; each has a different fix
 - S7 gemm/flydsl_gemm_datapath.md:86 check the write-to-read distance before the layout
@@ -80,7 +80,7 @@ basis: source-semantics
 - S17 gemm/flydsl_gemm_datapath.md:104 zero conflicts is not a speedup; LDS is not the bound until a probe says so
 - S18 hardware/gfx950/memory_and_sync.md:271 the card's per-width lane phases are not from the ISA
 - S19 gemm/flydsl_gemm_correctness.md:144 reordering @fx.struct fields does not move LDS; read group_segment_fixed_size
-- S20 https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md:384 Method 3: increase write-read distance
+- S20 ROCm/FlyDSL@dd8373349:.claude/skills/lds-optimization/SKILL.md:384 Method 3: increase write-read distance
 - S21 gemm/flydsl_gemm_schedule_and_locality.md:236 when VGPR headroom is small, any insertion lengthens a live range
 - S22 gemm/flydsl_gemm_datapath.md:69 one function computes the swizzle key for both sides
 - S23 gemm/flydsl_gemm_datapath.md:67 re-measure a swizzle change; derived is not automatically better

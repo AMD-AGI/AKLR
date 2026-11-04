@@ -25,7 +25,7 @@ sources:
 > Everything between the QK MFMAs and the P·V MFMAs: the exp, the scale and shift, the row max and row sum,
 > and the online rescale. Guards for `-inf − -inf` and empty partitions are in
 > `../flydsl/debug-flydsl-kernel.md` §1; carrying the running max and sum through a FlyDSL loop is in
-> `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/prefetch-data-load/SKILL.md`; how many exps fit under the MFMAs is in `flydsl_attn_mfma_layout.md` §1
+> `../flydsl/guides.md` § prefetch-data-load; how many exps fit under the MFMAs is in `flydsl_attn_mfma_layout.md` §1
 > and `flydsl_attn_registers_occupancy.md` §8.
 >
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end.
@@ -221,7 +221,7 @@ sources:
 ## Related
 `flydsl_attn_mfma_layout.md` · `flydsl_attn_registers_occupancy.md` · `flydsl_attn_schedule_sync.md` ·
 `flydsl_attn_correctness.md` · `flydsl_attn_backward.md` · `flydsl_attn_decode_split_kv.md` ·
-`flydsl_attn_attribution.md` · `../flydsl/debug-flydsl-kernel.md` · `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/prefetch-data-load/SKILL.md`
+`flydsl_attn_attribution.md` · `../flydsl/debug-flydsl-kernel.md` · `../flydsl/guides.md` § prefetch-data-load
 
 ## Evidence
 

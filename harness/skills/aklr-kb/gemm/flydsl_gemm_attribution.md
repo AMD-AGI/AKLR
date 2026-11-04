@@ -13,16 +13,16 @@ flydsl: 0.3.2
 
 > Counters propose; probes decide. Numbers marked `*(field, E<n>)*` are measured values; their conditions are
 > listed under Evidence at the end. Use them for direction and order of magnitude, not as targets.
-> Trace capture and ATT tooling are in `../profile/`; this card is about turning readings into a price.
+> Trace capture and ATT tooling are in `../profile.md`; this card is about turning readings into a price.
 
 ## Route here when
 - You need to know which part of a kernel a change could save before building it.
 - A counter says "LDS-bound" or "latency-bound" and you are about to act on it.
 - A change moved wall time but not the counter you expected, or the other way round.
 
-Start from the trace: `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/capture-kernel-trace/SKILL.md` and `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md`
+Start from the trace: `../profile.md` § capture-kernel-trace and `../profile.md` § kernel-trace-analysis
 capture and read an ATT trace, and FlyDSL's GEMM guide maps the common GEMM stalls to first actions and counts
-the hot loop (`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` §8.4, §9). This card is for when those readings are
+the hot loop (`../flydsl/guides.md` § gemm-optimization (FlyDSL's §8.4, §9)). This card is for when those readings are
 ambiguous: probes that remove or repeat a part and read the time.
 
 ## 1. Two probes that classify the regime without a profiler
@@ -211,7 +211,7 @@ near busy.
 
 ## Related
 `flydsl_gemm_measurement.md` (rulers, null controls, A/B design) · `flydsl_gemm_grid_pricing.md` (rounds,
-fixed cost, illegal arm) · `flydsl_gemm_mainloop.md` · `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md`
+fixed cost, illegal arm) · `flydsl_gemm_mainloop.md` · `../profile.md` § kernel-trace-analysis
 
 ## Evidence
 

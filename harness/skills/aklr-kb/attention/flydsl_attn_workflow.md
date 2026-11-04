@@ -28,7 +28,7 @@ layer you have not audited.
 | Grid shape, XCD placement, dispatch order, padding, GQA sharer merging | `flydsl_attn_grid_dispatch.md` |
 | MFMA atom per GEMM, operand and accumulator layouts, P/dS as the next B operand | `flydsl_attn_mfma_layout.md` |
 | exp2, LSE format, online-softmax rescale, row sums | `flydsl_attn_softmax.md` |
-| Transposed LDS reads, row stride, bank-conflict readings | `flydsl_attn_lds.md` (with `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md`) |
+| Transposed LDS reads, row stride, bank-conflict readings | `flydsl_attn_lds.md` (with `../flydsl/guides.md` § lds-optimization) |
 | VGPR budget, occupancy steps, spills, AGPR | `flydsl_attn_registers_occupancy.md` |
 | `sched_group_barrier`, fences, `s_setprio`, waits, barriers | `flydsl_attn_schedule_sync.md` |
 | dQ/dK/dV accumulation, determinism, workspaces, fusion, masked q-loops | `flydsl_attn_backward.md` |

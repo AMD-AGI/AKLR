@@ -22,7 +22,7 @@ v0.3.2, or what this repository adds. A `§` names the skill's own section. Path
 
 ## gemm-optimization
 
-FlyDSL's guide: <https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md>. Read it for how FlyDSL's production preshuffle GEMM is built: tiling, the LDS ping-pong, the XOR swizzle, prefetch, `hot_loop_scheduler`, epilogues, main-loop instruction counts and the register budget. Where it differs on gfx950 with FlyDSL v0.3.2, and what this repository adds:
+FlyDSL's guide: <https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/gemm-optimization/SKILL.md>. Read it for how FlyDSL's production preshuffle GEMM is built: tiling, the LDS ping-pong, the XOR swizzle, prefetch, `hot_loop_scheduler`, epilogues, main-loop instruction counts and the register budget. Where it differs on gfx950 with FlyDSL v0.3.2, and what this repository adds:
 
 - **Whole guide**: what Primus-Turbo's FlyDSL GEMMs and measured GEMM work add to this guide (other loop designs, dispatch rounds, split-K, store classes, correctness gates, rulers) is in `../gemm/INDEX.md`.
 - **§2–§7 (the code excerpts)**: the excerpts show the structure, not the current source. `kernels/gemm/preshuffle_gemm.py` is written with the layout API, and the helpers the excerpts name are in `kernels/common/mma/mfma_preshuffle_pipeline.py` (`swizzle_xor16`, `lds_store_16b_xor16`, `make_preshuffle_b_layout`) and `kernels/common/mma/mfma_epilogues.py` (`c_shuffle_epilog`). There is no separate A0 prefetch step (§4.3): how many LDS reads and global loads go ahead of the first MFMA is the `preload=(dsrd_preload, dvmem_preload)` argument; the even spreading of §5.5 is written inline in `hot_loop_scheduler` (with a local `build_scheduler`, not `_build_scheduler`); and `preshuffle_gemm.py` stores C directly, while a CShuffle epilogue (§7.2) is in `kernels/gemm/gemm_a16w16_gfx950.py` (`write_cshuffle_vec_to_global`).
@@ -36,7 +36,7 @@ FlyDSL's guide: <https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-
 
 ## lds-optimization
 
-FlyDSL's guide: <https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md>. Read it for diagnosing LDS stalls from an ATT trace (bank conflicts, exposed write-to-read latency, cross-wave reduce serialization) and for its three fixes: XOR swizzle, padding, and more write-to-read distance. Where it differs on gfx950 with FlyDSL v0.3.2, and what this repository adds:
+FlyDSL's guide: <https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/lds-optimization/SKILL.md>. Read it for diagnosing LDS stalls from an ATT trace (bank conflicts, exposed write-to-read latency, cross-wave reduce serialization) and for its three fixes: XOR swizzle, padding, and more write-to-read distance. Where it differs on gfx950 with FlyDSL v0.3.2, and what this repository adds:
 
 - **§LDS Architecture on CDNA4 (gfx950) › Impact on Bank Conflict Analysis** (and **§Optimization Method 1: Swizzle Layout › The Problem**): a stride of 128 bytes puts every lane on one of only two banks, 0 and 32 (`64 / gcd(32, 64) = 2` banks in use). That is still a heavy conflict, not the "partial" or "2-way" conflict the guide describes (`../gemm/flydsl_gemm_datapath.md` §3).
 - **§LDS Instruction Model** (key rules 1–2 and the skill description): in the same wave, a `ds_read` after a `ds_write` needs no wait in between, because one wave's LDS operations complete in issue order ("Instructions of a given type return in order", ISA ch04 §4.4). Wait for `lgkmcnt` only before using the `ds_read`'s result. A read of what another wave wrote needs the writer's `s_waitcnt lgkmcnt(0)`, then an `s_barrier` that every wave meets (`lgkmcnt` alone is not enough).
@@ -46,7 +46,7 @@ FlyDSL's guide: <https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-o
 
 ## prefetch-data-load
 
-FlyDSL's guide: https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/prefetch-data-load/SKILL.md. Read it for
+FlyDSL's guide: https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/prefetch-data-load/SKILL.md. Read it for
 the shape of a software-prefetched loop (prologue load, state carried through `range(..., init=...)`, epilogue), its
 PA decode example, and hoisting the next phase's loads into barrier waits. Where it differs on gfx950 with FlyDSL
 v0.3.2, and what this repository adds:
@@ -54,15 +54,15 @@ v0.3.2, and what this repository adds:
 - **§Three Critical Pitfalls, pitfall 1** (also the bounds in §Transformation Steps, §PA Decode Kernel Example and the
   last Don't): know which loop form you wrote. `range(..., init=...)` lowers to `scf.for` and carries only the
   values you `yield`; Python-int bounds are fine (they become index constants), as are `fx.Index`, `fx.Int32` and
-  `fx.Int64` (`scf_range`, `compiler/ast_rewriter.py:966-1003`). A plain `range(...)` without `init=` also lowers to
+  `fx.Int64` (`scf_range`, `python/flydsl/compiler/ast_rewriter.py:966-1003`). A plain `range(...)` without `init=` also lowers to
   `scf.for` and carries every name the body reassigns, so it is not traced into N flat copies either (§FlyDSL
   Implementation). Only `range_constexpr` unrolls (`debug-flydsl-kernel.md` § The three loop forms).
 - **§Do, "Use `range(..., init=...)`"**: in this form a Python rebinding is not carried; only yielded values are.
 - **§Do, "Unwrap all init values to raw ir.Value"**: pass FlyDSL values to `init=` directly. The rewriter converts
-  `init` and `yield` values itself (`compiler/ast_rewriter.py:992`, `:1305-1313`); unwrap only at hard boundaries
+  `init` and `yield` values itself (`python/flydsl/compiler/ast_rewriter.py:992`, `:1305-1313`); unwrap only at hard boundaries
   (pitfall 2).
-- **§Don't** (added): don't let both the `init` value and the yielded value be bare `fx.ptr_load` results. LLVM folds
-  the phi of two loads into one load at the use, so the loop carries the address and the prefetch is gone. Pass the
+- **§Don't** (added): don't let both the `init` value and the yielded value be bare `fx.ptr_load` results. LLVM folded
+  the phi of two loads into one load at the use, in one K3 MLA campaign kernel (not re-checked since), so the loop carries the address and the prefetch is gone. Pass the
   prologue load through a `.select` on a loaded value that is never false, then check that the ISA's loop carries
   the data registers.
 - **§Register Budget**: the model holds on gfx950. Arch and accum VGPRs are two physical files that share one
@@ -83,7 +83,7 @@ v0.3.2, and what this repository adds:
 
 ## flydsl-kernel-authoring
 
-FlyDSL's skill: https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/flydsl-kernel-authoring/SKILL.md. Read it to look up the FlyDSL API while writing or reviewing a kernel: layout algebra, copy and MMA atoms, the `fx.*` forms that replace raw dialects, environment variables and the troubleshooting list. What this repository adds for FlyDSL v0.3.2:
+FlyDSL's skill: https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/flydsl-kernel-authoring/SKILL.md. Read it to look up the FlyDSL API while writing or reviewing a kernel: layout algebra, copy and MMA atoms, the `fx.*` forms that replace raw dialects, environment variables and the troubleshooting list. What this repository adds for FlyDSL v0.3.2:
 
 - **§3 Current Syntax Quick Reference**: `fx.Index` is not deprecated in v0.3.2 (only `fx.index_cast` is), but it is unsigned: use `fx.Int64` for offsets that can be negative ([limits](language/limits.md)).
 - **§3 Runtime Loops with Loop-Carried Values** (pitfall 1 and the comment in the example are wrong for v0.3.2): `range(..., init=...)` always emits a runtime `scf.for`, whatever the bounds' type; only what you `yield` is carried. Python-int bounds are fine: the rewriter turns them into `index` constants and neither unrolls the loop nor drops `init=` (`scf_range`, `python/flydsl/compiler/ast_rewriter.py:982-1003`); `range_constexpr` is the form that unrolls. A plain `range` without `init=` takes a Python int or `fx.Int32` bound, and `fx.Int64` raises `TypeError` there.
@@ -95,6 +95,6 @@ FlyDSL's skill: https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/flydsl
 
 ## kernel-code-cleanup
 
-FlyDSL's skill: https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/kernel-code-cleanup/SKILL.md. Read it when migrating an existing kernel off legacy constructs (`ArithValue`, `buffer_ops`, raw MLIR dialects, `SmemAllocator`/`SmemPtr`, `*_atom_call`, raw `rocdl.mfma_*`) onto the current `fx.*` surface, and when trimming its comments and dead code. What this repository adds for FlyDSL v0.3.2:
+FlyDSL's skill: https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/kernel-code-cleanup/SKILL.md. Read it when migrating an existing kernel off legacy constructs (`ArithValue`, `buffer_ops`, raw MLIR dialects, `SmemAllocator`/`SmemPtr`, `*_atom_call`, raw `rocdl.mfma_*`) onto the current `fx.*` surface, and when trimming its comments and dead code. What this repository adds for FlyDSL v0.3.2:
 
 - **§3 Raw upstream dialects → `fx.*` and Python, `scf`** (replaces "Runtime bounds must be typed (`fx.Int64`) or the rewriter unrolls and drops `init=`"): `range(..., init=)` is always a runtime `scf.for`: Python-int bounds become index constants. A plain `range` without `init=` takes a Python int or `fx.Int32` bound (`fx.Int64` raises `TypeError` there).

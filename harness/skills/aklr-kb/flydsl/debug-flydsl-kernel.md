@@ -8,7 +8,6 @@ description: >
   the three loop forms and what each carries, non-short-circuit and/or in traced code,
   buffer_load offset units, and barrier divergence. Use when a FlyDSL kernel produces
   incorrect output or fails to build.
-  Usage: /debug-flydsl-kernel
 allowed-tools: Read Edit Bash Grep Glob Agent
 ---
 

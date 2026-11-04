@@ -78,7 +78,8 @@ echo $! > $RUN/forge_loop.pid
 
 ## Step 7: put what the campaign taught into the skill
 
-forge-distill's patch (`$RUN/knowledge_patch/`) is a proposal. Review every item before it goes in, as
+forge-distill's patches (`$RUN/knowledge_patch/` for aklr-kb, `$RUN/knowledge_patch_flydsl/` for aklr-kb/flydsl)
+are proposals. Review every item before it goes in, as
 `aklr-kb/CONTRIBUTING.md` says:
 
 - Check each claim against the run's files (`$W/forge_experiments/`: `lessons/`, `analysis/`, `ablation.md`),

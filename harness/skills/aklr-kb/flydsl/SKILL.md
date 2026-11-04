@@ -14,10 +14,13 @@ gens: [gfx950]
 
 How to write in FlyDSL what `../SKILL.md` says to do; check a plan against its Stop table first. Paths
 below are relative to this folder. FlyDSL's own skills are linked at `v0.3.2`, not copied: `guides.md` gives each
-link and what differs on gfx950 or what this repository adds.
+link and what differs on gfx950 or what this repository adds. Read one with `curl -sSfL <link>` (it needs network);
+without network, `guides.md` still has every correction.
 
-Every API statement here is for FlyDSL v0.3.2, the version this repository pins. AKLR's CI installs with `--no-deps`
-and measures on its image's FlyDSL, 0.3.4.1 (`../pitfalls/measured_a_different_build.md`).
+Every API statement here is for FlyDSL v0.3.2; AKLR requires `flydsl>=0.3.2` (`pyproject.toml`). CI measures on the
+FlyDSL that the baseline aiter installs (`AKLR_BASELINE_AITER` in `.github/workflows/ci.yaml`; its `setup.py` pins
+0.3.2 today), so a new baseline can change it: check it before trusting a version difference
+(`../pitfalls/measured_a_different_build.md`).
 
 ## By task
 

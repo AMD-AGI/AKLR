@@ -35,7 +35,7 @@ shipped kernel → the entry points in `INDEX.md`'s kernel map, and aiter's FlyD
 `flydsl_gemm_small_m.md`.
 
 FlyDSL's guide starts the tile choice from `preshuffle_gemm`'s constraints and a table by M
-(`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` §1.3–§1.5), and its checklist asks for enough blocks to fill the GPU (§13).
+(`../flydsl/guides.md` § gemm-optimization (FlyDSL's §1.3–§1.5)), and its checklist asks for enough blocks to fill the GPU (§13).
 This card is the arithmetic behind "enough": dispatch rounds, last-round fill, and what split-K or a different
 tile can return.
 

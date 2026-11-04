@@ -68,7 +68,7 @@ basis: source-semantics
 - S8 gemm/flydsl_gemm_grid_pricing.md:68 last round full: intensity is the limit, widen
 - S9 gemm/flydsl_gemm_grid_pricing.md:244 "divisible ⇒ fast" is not a rule; evaluate the kernel's own gates
 - S10 gemm/flydsl_gemm_grid_pricing.md:259 each extra body variant adds code even when it does not run
-- S11 gemm/INDEX.md:84 constants in both code bases were tuned on specific shapes
+- S11 gemm/INDEX.md:86 constants in both code bases were tuned on specific shapes
 - S12 gemm/flydsl_gemm_small_m.md:248 the lookup tries M as is, then padded at granularity 0 and 1
 - S13 gemm/flydsl_gemm_small_m.md:264 a row whose kernel name the catalog cannot parse falls through
 - S14 gemm/flydsl_gemm_small_m.md:271 tuner filters can delete the winner silently

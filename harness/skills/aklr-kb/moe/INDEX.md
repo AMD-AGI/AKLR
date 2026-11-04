@@ -8,12 +8,12 @@ flydsl: 0.3.2
 basis: measured N=1
 ---
 
-# Fused MoE — package map
+# MoE — package map: fused MoE and the expert grouped GEMM
 
 Where to start on a fused MoE kernel in FlyDSL for AKLR: what the op computes, what bounds it at each token count,
 which cards to read, which kernels to start from, and the AKLR files that govern it. The expert GEMMs are grouped
 GEMMs; their card is `flydsl_grouped_moe_inference.md`, and the training grouped-GEMM cards apply as
-techniques (`INDEX.md`). "m" is a Point's `n_tokens`; a route is one (token, expert) pair.
+techniques (§ Expert GEMM (grouped GEMM) below). "m" is a Point's `n_tokens`; a route is one (token, expert) pair.
 
 ## What it computes
 

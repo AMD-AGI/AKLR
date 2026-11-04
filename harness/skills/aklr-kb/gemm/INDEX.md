@@ -12,10 +12,10 @@ scales), MXFP4, MXFP8, bf16/fp16 and int8, layouts NT/NN/TN. Grouped and MoE exp
 and have their own package, `../moe/INDEX.md`.
 
 **Three sources, used together.**
-- **FlyDSL's own GEMM guide and kernels.** `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` walks through how a FlyDSL GEMM is
+- **FlyDSL's own GEMM guide and kernels.** `../flydsl/guides.md` § gemm-optimization walks through how a FlyDSL GEMM is
   built, on `preshuffle_gemm`: tiling, the 2-stage LDS ping-pong, the XOR swizzle, `hot_loop_scheduler`, direct
-  and CShuffle epilogues, B preshuffle, register budget. `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md` and
-  `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/prefetch-data-load/SKILL.md` cover the general LDS and prefetch transformations. The kernels are in
+  and CShuffle epilogues, B preshuffle, register budget. `../flydsl/guides.md` § lds-optimization and
+  `../flydsl/guides.md` § prefetch-data-load cover the general LDS and prefetch transformations. The kernels are in
   FlyDSL's `kernels/gemm/` (map below).
 - **Primus-Turbo's FlyDSL GEMMs** (`primus_turbo/flydsl/{gemm,utils}` at main `7615a5a2`), built for training
   shapes (large M). They add fp8 NN/TN layouts (FlyDSL's bf16/fp16 `gemm_a16w16` already takes NN/NT/TN/TT),
@@ -38,16 +38,16 @@ Numbers marked `*(field)*` or `*(field, E<n>)*` are measured values; `E<n>` name
 
 | You are… | Read |
 |---|---|
-| building your first FlyDSL GEMM, or learning how the pieces fit | `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md`, then `flydsl_gemm_workflow.md` |
+| building your first FlyDSL GEMM, or learning how the pieces fit | `../flydsl/guides.md` § gemm-optimization, then `flydsl_gemm_workflow.md` |
 | starting work on a GEMM, or deciding what to do next | `flydsl_gemm_workflow.md` |
 | about to choose a tile, split-K or boundary body, or wanting the ceiling of an idea | `flydsl_gemm_grid_pricing.md` |
 | working on a GEMM with M ≤ 256 (decode, speculative verify), or aiter's FlyDSL bf16 tuned rows | `flydsl_gemm_small_m.md` |
 | designing or editing the K loop (2-stage ping-pong, 8-wave pipeline, 4-wave designs, waits, registers) | `flydsl_gemm_mainloop.md` |
-| working on LDS, swizzle, global→LDS DMA, B preshuffle, descriptors, transpose reads, MX scales | `flydsl_gemm_datapath.md` (with `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md`) |
+| working on LDS, swizzle, global→LDS DMA, B preshuffle, descriptors, transpose reads, MX scales | `flydsl_gemm_datapath.md` (with `../flydsl/guides.md` § lds-optimization) |
 | ordering tiles across XCDs, writing scheduling hints, mapping waves | `flydsl_gemm_schedule_and_locality.md` |
 | working on the C store, CShuffle, beta=1, or a fused epilogue | `flydsl_gemm_epilogue.md` |
 | putting several configurations behind one entry point; launch overhead; CUDA graphs | `flydsl_gemm_autotune.md` |
-| finding out where the time goes before changing anything | `flydsl_gemm_attribution.md` (with `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md`) |
+| finding out where the time goes before changing anything | `flydsl_gemm_attribution.md` (with `../profile.md` § kernel-trace-analysis) |
 | writing or trusting a correctness gate | `flydsl_gemm_correctness.md` |
 | measuring an A/B, setting a noise floor, deciding which of a series of changes paid | `flydsl_gemm_measurement.md` |
 | debugging a wrong result | `../flydsl/debug-flydsl-kernel.md` |

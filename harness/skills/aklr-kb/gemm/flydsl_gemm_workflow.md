@@ -32,9 +32,9 @@ or how to run the next round. For a grouped GEMM start at `../moe/flydsl_grouped
 | Correctness gates, races, silent-wrong traps | `flydsl_gemm_correctness.md` |
 | M ≤ 256: decode-shape rulers, grid, split-K reduction, aiter tuned rows | `flydsl_gemm_small_m.md` |
 | Rulers, noise floors, A/B design, what to report | `flydsl_gemm_measurement.md` |
-| How a FlyDSL GEMM is put together (FlyDSL's walkthrough on `preshuffle_gemm`) | `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` |
+| How a FlyDSL GEMM is put together (FlyDSL's walkthrough on `preshuffle_gemm`) | `../flydsl/guides.md` § gemm-optimization |
 | The kernel is wrong, not slow | `../flydsl/debug-flydsl-kernel.md` |
-| Writing your first FlyDSL kernel | the `flydsl-kernel-authoring` skill (`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/flydsl-kernel-authoring/SKILL.md`) |
+| Writing your first FlyDSL kernel | the `flydsl-kernel-authoring` skill (`../flydsl/guides.md` § flydsl-kernel-authoring) |
 | Not a GEMM, or the bottleneck is still unidentified | `../flydsl/kernels/flydsl_authoring_method.md` |
 
 **Two questions to settle before writing anything.** Does a shipped kernel already cover the shape (the
@@ -44,7 +44,7 @@ Is FlyDSL even the backend that will be dispatched (in aiter, only a tuned row n
 
 ## Step 0 — start from a reference kernel, not from a blank file
 
-Read FlyDSL's `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` for how the pieces of a FlyDSL GEMM fit together. Then pick
+Read FlyDSL's `../flydsl/guides.md` § gemm-optimization for how the pieces of a FlyDSL GEMM fit together. Then pick
 the closest reference kernel for your dtype, layout and shape from the two maps in `INDEX.md`:
 - **FlyDSL's `kernels/gemm/`**: fp8/int8/fp16/bf16 with a preshuffled B and an optional bias + ReLU/SiLU/GELU
   epilogue (`preshuffle_gemm`), bf16/fp16 in NN/NT/TN/TT with async DMA and split-K (`gemm_a16w16_gfx950`), and fp8/MXFP4 NT in 8-wave and 4-wave forms. K must be a multiple of the K tile.
@@ -82,8 +82,8 @@ First do the arithmetic that needs no profile: tiles, dispatch rounds and last-r
 | Few MFMAs per memory instruction | the loop body or its schedule |
 | Dense MFMAs but poor wall time | tile shape and rounds, occupancy, the store path, or the power cap |
 
-FlyDSL's guide has the same symptom table with first actions (`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` §8.4) and the
-instruction-count method for the hot loop (§9); `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md` reads the trace.
+FlyDSL's guide has the same symptom table with first actions (`../flydsl/guides.md` § gemm-optimization (FlyDSL's §8.4)) and the
+instruction-count method for the hot loop (§9); `../profile.md` § kernel-trace-analysis reads the trace.
 
 **Two common misreadings.**
 - TF/s rising with K is not proof that a kernel is memory-bound. A fixed per-tile cost (prologue,

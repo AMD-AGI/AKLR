@@ -30,7 +30,7 @@ One page answers one kind of question. A page of each kind has the front matter 
 | `op` | What an op family computes, where its time goes per regime, which kernels to start from | title, ops, dtypes, gens, flydsl, basis; What it computes, Bottleneck by regime, Techniques that apply, Kernels to start from, In AKLR | the op's package; a new op gets its folder with its first design page (MLA and DSA: `attention/`) |
 | `case` | How a delivered kernel got its speed, under which conditions, and how to reproduce it | title, ops, dtypes, regimes, contract, gens, flydsl, basis, measured, sources; Applies when, Counter-signals, Mechanism, Result, Reproduce, Rollback | `cases/`, named `<op>_<gist>.md` |
 | `pitfall` | A silent wrong result, a FlyDSL version trap or a measurement artifact | title, scope, gens, flydsl, basis; Symptom, Root cause, How to detect, Fix or workaround, Scope | `pitfalls/` |
-| `language-note` | What FlyDSL v0.3.2 does, read from its source: limits, compile errors, version differences | title, gens, flydsl, basis, sources | the language skill (`flydsl/language/`) |
+| `language-note` | What FlyDSL v0.3.2 does, read from its source: limits, compile errors, version differences | title, gens, flydsl, basis, sources | the language skill (`flydsl/language/`); a correction of one of FlyDSL's own skills goes to `flydsl/guides.md` |
 | `topic` | One area of an op (a card of numbered sections, one lever or decision each), such as the GEMM main loop | title, ops, dtypes, regimes, gens, flydsl; Route here when | the op's package |
 | `method` | How to work: measure, check correctness, attribute time, tune, debug | title, ops, gens, flydsl; Route here when | the package it serves |
 
@@ -43,9 +43,12 @@ because other pages cite them as `<card>.md §<n>`.
 - **Hardware**: `hardware/<arch>/` holds only an architecture's ISA guide and the guides to looking things up in
   it. What one architecture changes for an op goes to the op's package, with `gens: [<arch>]` (gfx942's GEMM
   notes: `gemm/flydsl_gemm_gfx942.md`).
-- **FlyDSL's own skills are linked, never copied**, pinned to `v0.3.2`: `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/<skill>/SKILL.md`. What this
+- **FlyDSL's own skills are linked, never copied**, pinned to `v0.3.2`: `https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/<skill>/SKILL.md`. What this
   repository adds to or corrects in one goes to `flydsl/guides.md`, or to `profile.md` for the trace and
-  bisection skills.
+  bisection skills. A card links that page (`flydsl/guides.md` § <skill>, `profile.md` § <skill>), not the
+  upstream file, so a reader meets the corrections first; a line of a skill is cited as
+  `ROCm/FlyDSL@dd8373349:.claude/skills/<skill>/SKILL.md:<line>`. The exception is the two trace-analysis scripts
+  in `tools/`, this repository's edited copies (`profile.md` § Scripts).
 
 ## Front matter
 
@@ -100,7 +103,8 @@ Front matter is YAML: quote a value that contains `: `. `flydsl` is the version 
 
 An edit to an existing page passes lint and review the same way, and a new number in it gets an evidence line. A
 knowledge patch proposed by the optimization loop's distill step (Hyperloom `AKLR` `forge-distill`) is reviewed
-like any other edit. It is committed with the kernel it came from, in that kernel's pull request
+like any other edit; it covers this skill, and a second run with `--skill-dir` on `flydsl` covers the
+language skill (`harness/scripts/forge_task/README.md`). It is committed with the kernel it came from, in that kernel's pull request
 (`forge-loop-campaign` skill, step 7).
 
 ## Upkeep

@@ -8,7 +8,7 @@ flydsl: 0.3.2
 
 # Finding and reading things in the CDNA4 ISA
 
-> Paths in the text are relative to `isa/`; the shell commands run from the skill folder. § and table
+> Paths in the text are relative to this folder (`hardware/gfx950/`); the shell commands run from the skill folder. § and table
 > numbers and quoted strings are the guide's own. The guide calls its target "CDNA4"; it never names gfx950
 > or a product.
 
@@ -27,12 +27,12 @@ an encoding suffix (`_e32`, `_e64`, `_sdwa`, `_dpp`; no heading has one), upper-
 
 ```sh
 n=$(echo v_add_f32_e64 | sed -E 's/_(e32|e64|sdwa|dpp)$//' | tr a-z A-Z)
-grep -rn "^#### $n\$" isa/cdna4/                    # or: rg -n "^#### $n\$" isa/cdna4/
-awk -v h="#### $n" '/^#/{p=($0==h); if(p) print "== " FILENAME} p' isa/cdna4/ch12_*.md    # full entries
-awk -v h="#### $n" '/<!-- page/{pg=$3} $0==h{print FILENAME": PDF page "pg}' isa/cdna4/ch12_*.md
-grep -rn '^#### V_CVT_SCALEF32_.*FP4' isa/cdna4/     # a family
+grep -rn "^#### $n\$" hardware/gfx950/cdna4/                    # or: rg -n "^#### $n\$" hardware/gfx950/cdna4/
+awk -v h="#### $n" '/^#/{p=($0==h); if(p) print "== " FILENAME} p' hardware/gfx950/cdna4/ch12_*.md    # full entries
+awk -v h="#### $n" '/<!-- page/{pg=$3} $0==h{print FILENAME": PDF page "pg}' hardware/gfx950/cdna4/ch12_*.md
+grep -rn '^#### V_CVT_SCALEF32_.*FP4' hardware/gfx950/cdna4/     # a family
 awk '/^#### /{n=$2} /^Opcode: 53$/{print n}' hardware/gfx950/cdna4/ch12_10_vop3p_instructions.md     # opcode -> name
-grep -rni 'v_mfma_f32_16x16x128_f8f6f4' isa/cdna4/   # every mention, prose and tables included
+grep -rni 'v_mfma_f32_16x16x128_f8f6f4' hardware/gfx950/cdna4/   # every mention, prose and tables included
 ```
 
 | File | § | Encoding | Headings |
@@ -205,7 +205,7 @@ The operand codes are in Table 23 (`cdna4/ch06_vector_alu_operations.md` §6.2.2
   hwRegId[5:0]}"; the pseudocode reads the size as `SIMM16[15:11] + 1`.
 - Launch state (§3.13): VGPR0 holds "{ 2’b00, Z[9:0], Y[9:0], X[9:0] }", the index within the workgroup;
   Table 8 gives the SGPR load order (user data, workgroup IDs, then the wave-in-group word).
-- Field by name: `grep -n 'FP16_OVFL' isa/cdna4/ch0[3-7]*.md`.
+- Field by name: `grep -n 'FP16_OVFL' hardware/gfx950/cdna4/ch0[3-7]*.md`.
 
 ## 5. Data formats and conversions
 
@@ -229,7 +229,7 @@ The operand codes are in Table 23 (`cdna4/ch06_vector_alu_operations.md` §6.2.2
      VOP1 8-bit sources, E8M0 scales from a VGPR or inline constant, FP4/FP6 saturation, OP_SEL[3:2] byte
      steering, the FP16_OVFL table for F32 → FP8/BF8, and "SH_MEM_CONFIG, bit[8] must be set to 1 to produce
      the correct results for BF8 and FP8 operations".
-  3. The entries: `grep -rn '^#### V_CVT_' isa/cdna4/`. The scaled converts (`V_CVT_SCALEF32_*`, including the
+  3. The entries: `grep -rn '^#### V_CVT_' hardware/gfx950/cdna4/`. The scaled converts (`V_CVT_SCALEF32_*`, including the
      `PK32` and `2XPK16` forms that Table 32 omits) exist only in ch12_11. `V_CVT_F32_FP8`, `V_CVT_PK_F32_FP8`
      and their BF8 twins are VOP1 entries with VOP3 copies.
   4. Rounding and denormals: MODE (§3.5) and §6.4 Table 26 (V_DOT2 flushes denormals); MFMA §7.4; float

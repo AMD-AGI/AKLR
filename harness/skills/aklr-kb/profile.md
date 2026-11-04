@@ -21,17 +21,17 @@ link and what differs on gfx950 with FlyDSL v0.3.2, or what this repository adds
 
 ## capture-kernel-trace
 
-FlyDSL's guide: https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/capture-kernel-trace/SKILL.md. Read it to
+FlyDSL's guide: https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/capture-kernel-trace/SKILL.md. Read it to
 capture an ATT trace with rocprofv3 (kernel discovery, `input.yaml`, debug info for source lines) and, as a separate
 run, PMC cache and HBM counters. What this repository adds:
 
 - **§Error Handling** (added row): `Option 'spirv-expand-step' registered more than once!`, then `caught signal 6`
-  and a hang. `import torch` alone triggers it (torch 2.11.0+rocm10.0.0, venv and `/opt/rocm` rocprofv3 alike): wrap
+  and a hang. `import torch` alone triggered it, seen once (torch 2.11.0+rocm10.0.0, venv and `/opt/rocm` rocprofv3 alike): wrap
   the run in `timeout -s KILL` and time kernels with `torch.profiler`.
 
 ## kernel-trace-analysis
 
-FlyDSL's guide: https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md. Read it to
+FlyDSL's guide: https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md. Read it to
 turn an ATT trace into ranked stall hotspots mapped to source lines, for its hotspot patterns and plan template, the
 PMC L2 / HBM decision tree, and the MFMA latency and dependency tables. Run its scripts from `tools/` (§ Scripts
 below). Where it differs on gfx950 with FlyDSL v0.3.2, and what this repository adds:
@@ -52,7 +52,7 @@ below). Where it differs on gfx950 with FlyDSL v0.3.2, and what this repository 
 
 ## bisect-perf-regression
 
-FlyDSL's guide: https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/bisect-perf-regression/SKILL.md. Use it
+FlyDSL's guide: https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/bisect-perf-regression/SKILL.md. Use it
 when a kernel got slower between two commits and a benchmark command prints the metric: it bisects the range with
 git and reports the commit that caused the regression. This repository adds nothing to it.
 
@@ -83,12 +83,14 @@ this repository has not re-measured them on gfx942.
 
 | You need | Read (FlyDSL v0.3.2) |
 |---|---|
-| gfx942's occupancy inputs (64 KB LDS, 256-byte LDS blocks), how FlyDSL's analyzer tells gfx942 from gfx950, a PA decode register example | kernel-trace-analysis [Register pressure check](https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md#register-pressure-check-architecture-aware) |
-| The PA decode L2 / HBM worked example on gfx942, and the hang that multi-pass counter collection caused there | kernel-trace-analysis [L2 / HBM efficiency analysis](https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md#l2--hbm-efficiency-analysis-pmc-not-att) |
-| fp8 MFMA latencies on gfx942 | kernel-trace-analysis [MFMA latency reference](https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md#mfma-latency-reference-cycles--pipeline-depth) |
-| One hardware pass per PMC job (multi-pass collection hung gfx942) | capture-kernel-trace [PMC Mode](https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/capture-kernel-trace/SKILL.md#pmc-mode-cache--hbm-counter-capture-separate-from-att) |
+| gfx942's occupancy inputs (64 KB LDS, 256-byte LDS blocks), how FlyDSL's analyzer tells gfx942 from gfx950, a PA decode register example | kernel-trace-analysis [Register pressure check](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md) |
+| The PA decode L2 / HBM worked example on gfx942, and the hang that multi-pass counter collection caused there | kernel-trace-analysis [L2 / HBM efficiency analysis](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md) |
+| fp8 MFMA latencies on gfx942 | kernel-trace-analysis [MFMA latency reference](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md) |
+| One hardware pass per PMC job (multi-pass collection hung gfx942) | capture-kernel-trace [PMC Mode](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/capture-kernel-trace/SKILL.md) |
 
-**Analyze a gfx942 trace with FlyDSL's `scripts/hotspot_analyzer.py`, not `tools/hotspot_analyzer.py`.** Ours labels
+**Analyze a gfx942 trace with FlyDSL's `scripts/hotspot_analyzer.py`, not `tools/hotspot_analyzer.py`** (`curl -sSfL
+https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/kernel-trace-analysis/scripts/hotspot_analyzer.py
+-o hotspot_analyzer.py`). Ours labels
 every trace gfx950 and sizes LDS at 160 KB. FlyDSL's takes a trace with none of `v_mfma_scale_f32_*`,
 `v_mfma_f32_16x16x128_*` and `v_mfma_f32_32x32x64_*` as CDNA3, reports it as `gfx942 (CDNA3)` and uses
 `lds_total = 65536` (64 KB) in its LDS limiter (`scripts/hotspot_analyzer.py:355-356`, `:422` at v0.3.2).

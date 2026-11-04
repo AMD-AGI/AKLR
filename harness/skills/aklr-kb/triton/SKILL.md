@@ -23,7 +23,7 @@ allowed-tools: Read Edit Bash Grep Glob Agent
 
 - A `@triton.jit` body reads no module-level value: pass it as a `tl.constexpr` argument. Choose the
   configuration in a `@functools.cache` compile function of shapes and dtypes. `@triton.autotune`
-  or `@triton.heuristics` above `@triton.jit` makes the def host code, audited by SA3, SA7 and SA8;
+  or `@triton.heuristics` above `@triton.jit` makes the def host code, audited by SA2 and SA3;
   choose the configuration in the compile function instead.
 - The dispatcher passes contiguous row-major tensors, so strides can be `tl.constexpr` values
   folded from the shape, and an `EVEN_M`-style constexpr can drop row masks.

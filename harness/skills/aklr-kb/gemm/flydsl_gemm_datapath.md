@@ -36,8 +36,8 @@ sources:
 
 FlyDSL's GEMM guide shows the baseline data path on `preshuffle_gemm`: A through LDS by sync copy or
 async DMA, B preshuffled straight to VGPRs, the XOR swizzle and its write/read pair
-(`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` §3, §4, §11, §12). The general LDS and prefetch skills
-(`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md`, `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/prefetch-data-load/SKILL.md`) cover diagnosis from a trace,
+(`../flydsl/guides.md` § gemm-optimization (FlyDSL's §3, §4, §11, §12)). The general LDS and prefetch skills
+(`../flydsl/guides.md` § lds-optimization, `../flydsl/guides.md` § prefetch-data-load) cover diagnosis from a trace,
 swizzle vs padding, write-to-read distance and the prologue/loop/epilogue prefetch transformation, for any
 kernel. gfx950 has 160 KiB of LDS per CU in 64 banks of 4 bytes.
 
@@ -81,7 +81,7 @@ overlays `ab` and `c`). `SmemAllocator` / `SmemPtr` are legacy.
 |---|---|---|
 | Capacity | LDS per workgroup caps occupancy | smaller tile or fewer stages |
 | Layout | bank conflicts from the stride or the access pattern | swizzle or padding |
-| Timing | a `ds_write` too close to the `ds_read` that depends on it | more write-to-read distance (`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md`) |
+| Timing | a `ds_write` too close to the `ds_read` that depends on it | more write-to-read distance (`../flydsl/guides.md` § lds-optimization) |
 
 Treating every LDS symptom as a swizzle problem wastes the most time: check the write-to-read distance before
 the layout.
@@ -215,7 +215,7 @@ stride keeps every phase on distinct banks.
   iteration needs — scale values and addresses, not only the tiles.
 - **Prefetch pays only when independent work can fill the latency it exposes**: next-tile loads, address
   arithmetic, MFMAs that do not depend on the load in flight, epilogue setup that touches no data in flight.
-  The general transformation (prologue, loop-carried buffers, epilogue) is `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/prefetch-data-load/SKILL.md`.
+  The general transformation (prologue, loop-carried buffers, epilogue) is `../flydsl/guides.md` § prefetch-data-load.
 - **Prefetch hides latency, not capacity.** *(field, E21)* When a grouped GEMM's working set thrashed L2,
   deeper prefetch bought nothing; fix the tile order (`flydsl_gemm_schedule_and_locality.md` §2) or the footprint.
 - **Bypassing LDS for an operand several waves share costs twice.** Each wave reloads it from global,
@@ -271,7 +271,7 @@ at most 4 GiB.
 
 There are two ways to get an operand into MFMA order without a runtime shuffle:
 - **Preshuffle it on the host.** FlyDSL's PS takes B as `[N/16, K/kpack, 4, 16, kpack_bytes]`, so each
-  `buffer_load_dwordx4` lands in MFMA register layout and B skips LDS (`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` §12);
+  `buffer_load_dwordx4` lands in MFMA register layout and B skips LDS (`../flydsl/guides.md` § gemm-optimization (FlyDSL's §12));
   the MXFP4 kernels take `shuffle_weight_w4` / `shuffle_scale_w4` layouts. The cost is a host-side pass, paid
   once for weights that do not change, as in inference.
 - **Permute rows in the fill.** Changing only which global row each G2S load fetches reorders a lane's

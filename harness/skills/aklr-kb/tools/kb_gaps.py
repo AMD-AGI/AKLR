@@ -49,10 +49,11 @@ def experiments_dir(path: Path) -> Path | None:
 
 
 def _page(text: str) -> str:
-    """A page as its path inside this skill: without the skill's name in front or a § reference after it."""
+    """A page as its path inside this skill, or as `<skill>/<path>` for a page of another skill (KernelForge records
+    reads as `<skill>/<path>`), without a § reference after it."""
     page = text.split("§", 1)[0].strip().strip("`").strip()
     first, _, rest = page.partition("/")
-    return rest if rest and not (SKILL_ROOT / first).exists() else page
+    return rest if rest and first in (SKILL_ROOT.name, "flydsl-kernel-optimization") else page
 
 
 def read_campaign(root: Path, gaps: Gaps) -> None:

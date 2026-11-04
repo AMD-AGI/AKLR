@@ -226,5 +226,5 @@ codegen-affecting refactor. When varying `Constexpr` values across recompiles, p
 
 ## Related
 `../../gemm/INDEX.md` (dense-GEMM package) ·
-`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/flydsl-kernel-authoring/SKILL.md` (first-time authoring) ·
+`../guides.md` § flydsl-kernel-authoring (first-time authoring) ·
 `../debug-flydsl-kernel.md` (correctness bugs)

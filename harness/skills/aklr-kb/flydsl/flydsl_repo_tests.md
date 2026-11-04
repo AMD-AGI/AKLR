@@ -186,7 +186,7 @@ matters. `.mlir` files carry no markers.
 - A kernel test follows `tests/kernels/test_vec_add.py`: a `@flyc.kernel`, a `@flyc.jit` launcher taking
   `stream: fx.Stream = fx.Stream(None)` and calling `.launch(grid=..., block=..., stream=stream)`, a torch
   reference, `checkAllclose`/`verify_output` and `run_perftest` from `tests/test_common.py`, and a `__main__`
-  CLI. Writing the kernel itself is the `flydsl-kernel-authoring` skill.
+  CLI. Writing the kernel itself is FlyDSL's `flydsl-kernel-authoring` skill (`guides.md` § flydsl-kernel-authoring).
 - A test without a GPU traces through `@flyc.jit` frontend-only. Under `tests/language/` an autouse fixture sets
   `COMPILE_ONLY=1`, a fixed `ARCH` that is not gfx950, `FLYDSL_RUNTIME_ENABLE_CACHE=0` and replaces `MlirCompiler.compile` with a
   no-op; `lang_utils.source_ir(body)` returns the pre-lowering MLIR and `launch_ir(kernel)` traces a launch:
@@ -263,4 +263,4 @@ read them: `../gemm/flydsl_gemm_mainloop.md` §10. Do not time a run with the du
 
 ## Related
 `../gemm/flydsl_gemm_measurement.md` · `../gemm/flydsl_gemm_correctness.md` · `debug-flydsl-kernel.md`
-· `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/bisect-perf-regression/SKILL.md` (an upstream test as the probe of a FlyDSL bisect)
+· `../profile.md` § bisect-perf-regression (an upstream test as the probe of a FlyDSL bisect)
