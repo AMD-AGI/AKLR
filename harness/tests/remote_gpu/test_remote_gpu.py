@@ -58,8 +58,8 @@ scheduler_query() {
   if [[ -e $HOME/state_$account:$qos ]]; then state=$(cat "$HOME/state_$account:$qos"); fi
   if [[ -n ${FAKE_START_TEAM_AFTER:-} && $qos != burst && $SECONDS -ge $FAKE_START_TEAM_AFTER ]]; then state=RUNNING; fi
   if [[ -e $root/$1.cancelled ]]; then state=CANCELLED; fi
-  printf '%s|n0,n1|01:00:00|%s|tomorrow|compute|%s|%s|4:00:00|%s|%s-test|00:01:00|%s|2\n' \
-    "$state" "${FAKE_REASON:-Resources}" "$account" "$qos" "${FAKE_OWNER:-$USER}" "$C" "${FAKE_END:-}"
+  printf '%s|%s|01:00:00|%s|tomorrow|compute|%s|%s|4:00:00|%s|%s-test|00:01:00|%s|2\n' \
+    "$state" "${FAKE_NODES-n0,n1}" "${FAKE_REASON:-Resources}" "$account" "$qos" "${FAKE_OWNER:-$USER}" "$C" "${FAKE_END:-}"
 }
 scheduler_jobs() {
   local file job
@@ -478,6 +478,13 @@ def test_bad_health_cancels_the_account_race_winner_too(env):
     assert result.returncode == 204, result.stderr
     cancelled = (Path(env["HOME"]) / "cancelled").read_text()
     assert "fake:1 " in cancelled and "fake:2 " in cancelled
+
+
+def test_alloc_keeps_a_running_winner_whose_nodes_cannot_be_resolved(env):
+    result = rg(dict(env, FAKE_NODES=""), "alloc", timeout=10)
+    assert result.returncode == 206, result.stderr
+    assert "ERR code=NODES_UNKNOWN" in result.stderr
+    assert not (Path(env["HOME"]) / "cancelled").exists()
 
 
 def test_release_waits_for_holder_markers_and_checks_ownership(env):
