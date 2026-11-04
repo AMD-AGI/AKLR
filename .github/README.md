@@ -7,7 +7,7 @@
 [![CI](https://github.com/AMD-AGI/AKLR/actions/workflows/ci.yaml/badge.svg)](https://github.com/AMD-AGI/AKLR/actions/workflows/ci.yaml)
 [![License](https://img.shields.io/badge/license-MIT%20%2B%20Apache--2.0-blue)](../LICENSE)
 
-[Repository map](#repository-map) | [Rosetta Stone](#the-kernel-rosetta-stone) | [Install](#install) | [Usage](#usage) | [Testing](#testing) | [Contributing](#contributing)
+[Repository map](#repository-map) | [Rosetta Stone](#the-kernel-rosetta-stone) | [Install](#install) | [Usage](#usage) | [Development](#development) | [Testing](#testing) | [Contributing](#contributing)
 
 </div>
 
@@ -54,14 +54,24 @@ Validation times AKLR's kernels against a baseline pinned at `AKLR_BASELINE_AITE
 
 ## Usage
 
-SGLang and vLLM load AKLR at startup; SGLang reaches AKLR's kernels only with `AKLR_SGLANG_PLUGIN=1`. Other code starts AKLR once (`DispatcherRegistry.default().init()`, from `aklr.core.runtime.dispatch`), then calls the ops in `aklr.ops` and runs its own code when one returns a `FallbackReason`.
+SGLang loads AKLR at startup and, with `AKLR_SGLANG_PLUGIN=1`, runs AKLR's kernels through the SGLang plugin. vLLM also loads AKLR, but no vLLM code calls AKLR's ops yet. Other code starts AKLR once (`DispatcherRegistry.default().init()`, from `aklr.core.runtime.dispatch`), then calls the ops in `aklr.ops` and runs its own code when one returns a `FallbackReason`.
 
 | Variable | Effect |
 |---|---|
 | `AKLR_DISABLE=1` | Turn AKLR off |
 | `AKLR_DISABLE=<contract id>,...` | Turn off the listed ops, e.g. `gemm@1.0` |
-| `AKLR_SGLANG_PLUGIN=1` | Also hook SGLang's own layers to the plugin's ops ([aklr/plugins/README.md](../aklr/plugins/README.md)) |
+| `AKLR_SGLANG_PLUGIN=1` | Hook SGLang's functions to the plugin's ops ([aklr/plugins/README.md](../aklr/plugins/README.md)) |
 | `AKLR_MIN_SPEEDUP=<x>` | Serve only kernels with a measured speedup of at least x (default 1.03) |
+
+## Development
+
+Read in this order:
+
+1. [Ops tutorial](../docs/ops_tutorial.md) ([中文](../docs/ops_tutorial.zh.md)): add a kernel to an op in `aklr/ops/`. The example is `fused_moe`, the experts of GLM-5's MoE layer.
+2. [Plugin tutorial](../docs/plugin_tutorial.md) ([中文](../docs/plugin_tutorial.zh.md)): when an optimization crosses one op's boundary, replace a whole SGLang function. The example, `deepseek_v2_mxfp4_moe`, takes the same MoE layer whole.
+3. [forge_task](../docs/forge_task.md): let agents write and tune a kernel.
+
+For reference: [aklr/ops/README.md](../aklr/ops/README.md) (schema fields, the kernel interface, names, commands), [aklr/plugins/README.md](../aklr/plugins/README.md) (the plugin layout, rules for routes, upgrading SGLang), [harness/README.md](../harness/README.md) (agent skills and the kernel lifecycle).
 
 ## Testing
 
@@ -73,5 +83,4 @@ python -m aklr validate --stages audit,bench --devices 0-7  # full validation
 ## Contributing
 
 - Commit hooks and the baseline: [CONTRIBUTING.md](../CONTRIBUTING.md)
-- Optimizing a kernel with forge_task: [docs/forge_task.md](../docs/forge_task.md)
 - PR descriptions: follow the [template](pull_request_template.md)

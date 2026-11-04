@@ -1,10 +1,14 @@
+# Ops 教程：给 AKLR 算子添加 kernel
+
+本教程演示如何给 `aklr/ops/` 中的算子添加 kernel，从定义算子一直到 kernel 合入。示例是 `fused_moe`，即 MoE 层的专家计算部分（AITER 的 `fused_moe` 所做的计算），使用 GLM-5 MoE 层的形状。[插件教程](plugin_tutorial.zh.md) 接着以同一个 MoE 层为例，说明如何越过这个算子的边界继续优化。
+
 ## 概念
 
 Contract: **contract 是算子的完整定义。** 它是 `aklr/ops/<op>/contract.py` 里的一个 `OpContract` 常量，登记在该模块的 `CONTRACTS` 中（registry 会自动发现）。
 
 Schema: **schema 是一个 JSON 文件。** 它把某个算子的 `OpContract` 收窄到一个场景（固定 dtype、常量轴、属性、布局），列出这个场景要服务的 workload（var 轴的具体取值），并内嵌 kernel 源码。schema 存放在 `aklr/ops/<op>/impls/<language>/<name>/<uuid>.json`。Schema 是 AKLR 与其他 kernel 生成工具交互的契约。
 
-## Workflow
+## 工作流程
 
 ```mermaid
 flowchart TD
@@ -143,7 +147,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 - layout：`row_major`、`shuffled_16x16`（w1/w2 做 16×16 preshuffle，两个 scale 做 shuffle 并 pad 到 (256, 8)；检测条件是 `w1.is_shuffled`、`w2.is_shuffled` 为真且 `w1_scale.ndim == 3`）、`gate_up_interleaved`。
 - 精度要求：`out` 的 SQNR ≥ 13 dB；`determinism` 是 `bounded`，`max_violation_fraction` 为 1e-3。
 
-固定 `model_dim=7168`、`n_experts=256`、`topk=8`、`inter_dim=256`，不带 EP（`global_experts=1`，`expert_mask`/`num_local_tokens` 不存在）。attr 取 `silu`、`per_1x32`、`doweight_stage1=False`、`separated`、`act_quant=4`，dtype 取 bf16 激活、fp32 `topk_weights`、int32 `topk_ids`，layout 取 `shuffled_16x16`。
+固定为 GLM-5 MXFP4 MoE 层在 TP8 下的形状：`model_dim=6144`；`n_experts=257`，即 256 个路由专家加 1 个共享专家，sglang 把共享专家追加为最后一个专家；`topk=9`，即 8 个路由专家加共享专家；`inter_dim=256`，即 GLM-5 的 2048 分到 8 张卡；不带 EP（`global_experts=1`，`expert_mask`/`num_local_tokens` 不存在）。attr 取 `silu`、`per_1x32`、`doweight_stage1=False`、`separated`、`act_quant=4`，dtype 取 bf16 激活、fp32 `topk_weights`、int32 `topk_ids`，layout 取 `shuffled_16x16`。仓库中已有这个场景，生成的结果可以和已提交的文件对照。
 
 **1. 生成 kernel-less schema。** 把脚本放在 clone 外，在仓库根目录运行。不带参数时写出 kernel-less 定义；带一个 kernel 目录参数时，把目录里的源码填进 `kernel.sources`（第 3 步会复用）。
 
@@ -159,7 +163,7 @@ from aklr.core.contract.spec import PointSpec, SourceFile
 contract = ContractRegistry.default().get("fused_moe@1.0")
 base = PointSpec(
     contract_id="fused_moe@1.0",
-    axes={"n_tokens": 1, "model_dim": 7168, "n_experts": 256, "topk": 8, "inter_dim": 256, "global_experts": 1},
+    axes={"n_tokens": 1, "model_dim": 6144, "n_experts": 257, "topk": 9, "inter_dim": 256, "global_experts": 1},
     dtypes={"hidden_states": "bfloat16", "w1": "float4_e2m1", "w2": "float4_e2m1", "topk_weights": "float32",
             "topk_ids": "int32", "w1_scale": "float8_e8m0", "w2_scale": "float8_e8m0",
             "expert_mask": None, "num_local_tokens": None, "out": "bfloat16"},
@@ -183,14 +187,14 @@ path.write_text(schema.schema_text(), encoding="utf-8")
 print(path)
 ```
 
-运行 `python ~/make_moe_schema.py`，会写出 `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim7168_n_experts256_topk8_inter_dim256/<uuid0>.json`（`<uuid0>` 只对应 kernel-less 版本，是临时的）。名字里只有 `shuffled_16x16`，因为它不是第一个声明的 layout；其余 attr/dtype 都是各自第一个声明的值，不进名字（`aklr/ops/README.md` 的 Names 一节）。文件内容与参照 schema `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/1fee59821837c26f.json` 相比，只有名字、常量轴和派生轴的值、`topk_ids` 的 `hi`、`kernel.sources` 和测量字段不同。新文件节选：
+运行 `python ~/make_moe_schema.py`，会写出 `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/<uuid0>.json`（`<uuid0>` 只对应 kernel-less 版本，是临时的）。名字里只有 `shuffled_16x16`，因为它不是第一个声明的 layout；其余 attr/dtype 都是各自第一个声明的值，不进名字（`aklr/ops/README.md` 的 Names 一节）。除 `kernel.sources` 和测量字段外，文件内容与已提交的 `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/1fee59821837c26f.json` 完全相同。新文件节选：
 
 ```json
-"axes": {"n_tokens": {"type": "var", ...}, "model_dim": {"type": "const", "value": 7168, ...}, "n_experts": {..., "value": 256}, "topk": {..., "value": 8},
-         "inter_dim": {..., "value": 256}, "gate_up_rows": {..., "value": 512}, "model_blocks": {..., "value": 224}, "inter_blocks": {..., "value": 8}},
+"axes": {"n_tokens": {"type": "var", ...}, "model_dim": {"type": "const", "value": 6144, ...}, "n_experts": {..., "value": 257}, "topk": {..., "value": 9},
+         "inter_dim": {..., "value": 256}, "gate_up_rows": {..., "value": 512}, "model_blocks": {..., "value": 192}, "inter_blocks": {..., "value": 8}},
 "attrs": {"activation": "silu", "quant_type": "per_1x32", "doweight_stage1": false, "gate_mode": "separated", "has_expert_mask": false, "act_quant": 4},
 "inputs": {"hidden_states": {"shape": ["n_tokens", "model_dim"], "dtype": "bfloat16", ...}, "w1": {"shape": ["n_experts", "gate_up_rows", "model_dim"], "dtype": "float4_e2m1", ...},
-           "topk_ids": {"shape": ["n_tokens", "topk"], "dtype": "int32", "distribution": {"kind": "int_range", "lo": 0, "hi": 255, "distinct": true}, ...}, ...},
+           "topk_ids": {"shape": ["n_tokens", "topk"], "dtype": "int32", "distribution": {"kind": "int_range", "lo": 0, "hi": 256, "distinct": true}, ...}, ...},
 "workloads": [{"axes": {"n_tokens": 1}}, ..., {"axes": {"n_tokens": 4096}}],
 "layout_variants": {"by_name": {"shuffled_16x16": {"layouts": {"w1": {"kind": "preshuffle", "tile": [16, 16]}, ...,
     "w1_scale": {"kind": "e8m0_scales", "block_size": 32, "pad_to": [256, 8], "shuffled": true}, ...}, ...}}},
@@ -210,7 +214,7 @@ print(path)
 **3. 本地验证。** kernel 写完后, 重新执行 `make_moe_schema.py`，生成最终的 schema 文件 `<uuid1>.json`
 
 ```bash
-D=aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim7168_n_experts256_topk8_inter_dim256
+D=aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256
 # ~/moe_kernel：第 2 步写好的 kernel 源码目录（含 kernel.py::run 入口文件）
 python ~/make_moe_schema.py ~/moe_kernel             # → $D/<uuid1>.json
 rm $D/<uuid0>.json                                   # 删除原本的 schema
@@ -220,4 +224,8 @@ python -m aklr validate --base origin/main --stages audit,bench $D/<uuid1>.json
 
 **4. 提交 PR 跑 CI 测试** push代码到远程仓库开一个 PR。开 PR 时加 `ci:gpu`，正文贴第 3 步的 `report.md` 结论，并写明形状和 `n_tokens` 的来源。main 的 push CI 重新测量，再由 `aklr-perf/main` bot PR 写回 PR 里保留的那些 workload 的 `accuracy`/`speedup`，这个 bot PR 合入后才生效。
 
-**5. 完成合入**
+**5. 完成合入。** PR 合入、且携带其测量结果的 `aklr-perf/main` bot PR 也合入之后，凡是加速比达到 `AKLR_MIN_SPEEDUP` 的 workload，分发都会使用这个 kernel（§5）。
+
+## 下一步
+
+`fused_moe` 只覆盖 MoE 层的专家计算。[插件教程](plugin_tutorial.zh.md) 会把整个 MoE 层（含路由和 top-k）一起接管。
