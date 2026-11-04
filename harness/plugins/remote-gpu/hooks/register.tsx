@@ -5,8 +5,6 @@ import type { Cluster, Job, Task } from '../types'
 
 const POLL_INTERVAL_MS = 60_000
 const CLI_TIMEOUT_MS = 120_000
-/** The CLI of the repository the session works in, so the band reads the clusters that branch knows. */
-const CLI = 'exec "$(git rev-parse --show-toplevel)/harness/skills/remote-gpu/scripts/remote-gpu" "$@"'
 
 const clusters = atom({ plugin: 'remote-gpu', key: 'clusters' } as const, [])
 const tasks = atom({ plugin: 'remote-gpu', key: 'tasks' } as const, [])
@@ -99,9 +97,12 @@ export function formatDuration(slurmTime: string): string {
 
 async function refresh($: EngineInterface): Promise<void> {
   const count = ++refreshCount
+  // The CLI beside this plugin (harness/skills/remote-gpu), never one found in the session's
+  // working tree: the polls run without a permission prompt.
+  const cli = `${$.plugin.root}/../../skills/remote-gpu/scripts/remote-gpu`
   const run = async (command: string) => {
     try {
-      return (await $.process.run(['bash', '-c', CLI, 'remote-gpu', command], { timeoutMs: CLI_TIMEOUT_MS })).stdout
+      return (await $.process.run([cli, command], { timeoutMs: CLI_TIMEOUT_MS })).stdout
     } catch {
       return ''
     }
