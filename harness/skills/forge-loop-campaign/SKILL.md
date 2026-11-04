@@ -26,29 +26,10 @@ rather than a person at a terminal.
 
 ## The machine
 
-The campaign needs one gfx950 card nobody else uses, for hours. If this machine has one (`rocm-smi --showpids`
-lists no process on it), use it and skip to "Before step 1". Otherwise get a node with the `remote-gpu` skill
-(`harness/skills/remote-gpu/SKILL.md`; `RG=harness/skills/remote-gpu/scripts/remote-gpu` from the clone's root):
-
-- **Choose the cluster from the manifests**,
-  `grep -H -E '^(GPU_ARCH|MAX_TIME|EXTEND|PREEMPTION)=' ~/.remote-gpu/clusters/*/cluster.env`: `GPU_ARCH=gfx950`, and a QOS that is not preempted, since a preempted job takes the loop with it. Pass the cluster
-  with `--cluster` when only some fit; if none fits, add one as the skill's `references/add-cluster.md` says, with
-  the user.
-- **Ask for the whole campaign at once**: `$RG --cluster NAME alloc -t <--max-hours + 4 h for steps 1, 5 and 6>
-  --idle 120`. Above the cluster's `MAX_TIME`, lower `--max-hours`, or plan to `extend` (`EXTEND=1`) or to resume on
-  a new node (README step 4). Keep the job handle `NAME:ID` in every report; release it after
-  step 6, and at once if the campaign is abandoned.
-- **Your own clone on the cluster**: `$RG --cluster NAME push . aklr-runs/<schema>/aklr` (push prints its path; a
-  push onto the same filesystem copies nothing, so then make a clone of your own there first). Put the run
-  directory on the cluster too, under the same directory, and set `RUN` to its path there; run every step from
-  that clone with `$RG exec -j NAME:ID -C <clone> -e RUN=$RUN`.
-- **The README's "Before you start" list holds inside the ROCm image you run AKLR in**: pass it with `--image`.
-  Each `--image` call is a fresh container, so install into a venv in the run directory
-  (`python -m venv --system-site-packages`) and activate it at the start of every command; the Claude CLI must be
-  on its PATH and logged in (`$HOME` is mounted, and the login with it).
-- **The node is yours alone**: all of its cards are free, so the card checks below pass; still give each run its
-  own card.
-- Commands under 8 minutes go through `exec`; steps 1, 2 and 5 go through `bg` + `wait`, as the next sections say.
+The campaign needs one gfx950 card that nobody else uses, for hours. First look at this machine
+(`rocm-smi --showpids`, `rocm-smi --showmeminfo vram`): if it has such a card, run the campaign here and skip
+everything about cluster nodes below. Only if it has none, get a node with the `remote-gpu` skill and run the
+campaign there (`$RG` below is its script).
 
 ## Before step 1
 
