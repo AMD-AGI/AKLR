@@ -11,6 +11,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
+from aklr.core.contract.semantics import rounded_to_bfloat16
+
 if TYPE_CHECKING:
     from torch import Tensor
 
@@ -21,17 +23,6 @@ __all__ = [
 ]
 
 _BLOCK = 128  # the FP8 scheme's block: 128 x 128 of a weight, 1 x 128 of an input
-_BF16_DIGITS = 8  # bfloat16's significant bits
-
-
-def _rounded_to_bf16(x: Tensor) -> Tensor:
-    """``x`` at its nearest bfloat16, ties to even, in its own dtype: rounded once, where
-    torch's float64 to bfloat16 cast rounds to float32 first."""
-    import torch
-
-    mantissa, exponent = torch.frexp(x)
-    digits = torch.full_like(exponent, _BF16_DIGITS)
-    return torch.ldexp(torch.round(torch.ldexp(mantissa, digits)), exponent - digits)
 
 
 def _router_logits(
@@ -43,7 +34,7 @@ def _router_logits(
     dtype."""
     x = decode(row_major_args["hidden_states"], point.dtypes["hidden_states"])
     w = decode(row_major_args["router_weight"], point.dtypes["router_weight"])
-    return _rounded_to_bf16(x.double() @ w.double().T).to(x.dtype)
+    return rounded_to_bfloat16(x.double() @ w.double().T).to(x.dtype)
 
 
 def _routed(logits: Tensor, topk: int) -> tuple[Tensor, Tensor]:
@@ -63,7 +54,7 @@ def _fp8_input(x: Tensor) -> Tensor:
     import torch
 
     fp8 = torch.float8_e4m3fn
-    groups = _rounded_to_bf16(x).float().unflatten(-1, (-1, _BLOCK))
+    groups = rounded_to_bfloat16(x).float().unflatten(-1, (-1, _BLOCK))
     scale = groups.abs().amax(-1, keepdim=True) / torch.finfo(fp8).max
     scale = scale.clamp(min=torch.finfo(torch.float32).tiny)
     return ((groups / scale).to(fp8).to(x.dtype) * scale.to(x.dtype)).flatten(-2)

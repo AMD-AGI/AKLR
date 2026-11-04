@@ -36,4 +36,6 @@ def rms_norm_reference(
 
 
 def _normalized(x: Tensor, weight: Tensor, epsilon: float) -> Tensor:
-    return x * (x.square().mean(dim=-1, keepdim=True) + epsilon).rsqrt() * weight
+    # the mean square in float64: a float32 square overflows on large finite bf16 inputs
+    mean_square = x.double().square().mean(dim=-1, keepdim=True)
+    return x * (mean_square + epsilon).rsqrt().to(x.dtype) * weight

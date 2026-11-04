@@ -39,26 +39,19 @@ class TrialResult(FrozenModel):
     reference: tuple[ReferenceWorkloadResult, ...] | None
 
     @classmethod
-    def from_task(cls, value: Any, axes_texts: Sequence[str]) -> TrialResult:
+    def from_task(cls, value: Any) -> TrialResult:
         detail = "internal: the trial task's result is not one for the batch"
         try:
             result = cls.model_validate(value)
         except ValueError as e:
             raise ValueError(detail) from e
         candidate, reference = result.candidate, result.reference
+        # the candidate's workloads the trial task checked (CandidateResult.from_task)
+        evaluated = [r.axes_text for r in candidate.workload_results if not r.is_declined]
         if candidate.findings:
             is_whole = reference is None
         else:
-            evaluated = [
-                r.axes_text
-                for r in candidate.workload_results
-                if all(f.code != FindingCode.BASELINE_FAILED for f in r.findings)
-            ]
-            is_whole = (
-                sorted(r.axes_text for r in candidate.workload_results) == sorted(axes_texts)
-                and reference is not None
-                and sorted(r.axes_text for r in reference) == sorted(evaluated)
-            )
+            is_whole = reference is not None and sorted(r.axes_text for r in reference) == sorted(evaluated)
         if not is_whole:
             raise ValueError(detail)
         return result
@@ -110,8 +103,7 @@ def run_trial(
                 context.device,
             ).evaluate()
             for r in requests
-            # declined by the baseline: the candidate's finding alone
-            if all(f.code != FindingCode.BASELINE_FAILED for f in workload_results[r.axes_text].findings)
+            if not workload_results[r.axes_text].is_declined
         )
     if kernels := [m for m in sys.modules if m.startswith(KERNEL_PACKAGE_PREFIX)]:
         raise RuntimeError(f"the trial task imported kernels: {sorted(kernels)}")

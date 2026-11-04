@@ -97,4 +97,3 @@ class ExecutionContext:
 
     device: str
     log_path: Path
-    directory: Path

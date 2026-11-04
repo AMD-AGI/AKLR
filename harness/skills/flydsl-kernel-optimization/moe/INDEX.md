@@ -30,7 +30,7 @@ the output row is the sum over the token's k routes of `topk_weights` × that pr
   8 to fp8 (SiTUv2 only); gate mode interleave keeps bf16 activations.
 - The var axis is `n_tokens`; model dim, experts, top-k and inter dim are fixed per schema name.
 - Compare: `determinism: bounded`, `max_violation_fraction` 1e-3, one whole-output SQNR ≥ 13 dB bound against the
-  float64 reference rounded to the output dtype, with no bias test. Atomic accumulation passes it, and so do fp8
+  reference (float32 in validation) rounded to the output dtype, with no bias test. Atomic accumulation passes it, and so do fp8
   partial rows and bf16 truncation ([fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md), Counter-signals).
 - Every AKLR kernel computes it in two GEMM stages. How the routes reach their expert's rows is the main choice at
   decode sizes: a separate sort kernel, a workgroup set per route with no sort, or a sort folded into stage 1.

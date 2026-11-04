@@ -48,6 +48,12 @@ class CandidateWorkloadResult(FrozenModel):
     # the lent tensors it filled (Step.output_key), in step order
     output_keys: tuple[str, ...]
 
+    @property
+    def is_declined(self) -> bool:
+        """Whether the baseline declined the workload: its finding alone stands, nothing is
+        evaluated."""
+        return any(f.code == FindingCode.BASELINE_FAILED for f in self.findings)
+
 
 class CandidateResult(FrozenModel):
     findings: tuple[Finding, ...]
@@ -366,7 +372,9 @@ class CandidateRun:
             if "baseline" in fns:  # none: the new case is its own baseline, untimed
                 root_hash = semantics.workload_hash(request.schema_json["name"], request.workload_json)
                 seed = semantics.derive_seed(root_hash, "timing")
-                rounds = self.clock.time_rounds(fns, seed=seed, thresholds=request.thresholds)
+                rounds = self.clock.time_rounds(
+                    fns, seed=seed, thresholds=request.thresholds, min_speedup=request.min_speedup
+                )
         except Exception as e:
             text = f"{where}: timing: {type(e).__name__}: {e}"
             raise RuntimeError(text) from e

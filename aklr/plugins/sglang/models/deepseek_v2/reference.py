@@ -10,6 +10,8 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
+from aklr.core.contract.semantics import rounded_to_bfloat16
+
 if TYPE_CHECKING:
     from torch import Tensor
 
@@ -92,8 +94,8 @@ def deepseek_v2_mxfp4_moe_reference(
 ) -> Tensor:
     """On hidden_states, each token's routed experts and the shared one (the last slot) at
     weight 1, the MXFP4 weights dequantized per 32 values. Rounding point: the router's logits,
-    exact products of hidden_states and router_weight summed in float64, round to
-    hidden_states' dtype."""
+    exact products of hidden_states and router_weight summed in float64, round once to
+    hidden_states' dtype, bf16."""
     args, f = row_major_args, _fp32(point, row_major_args, decode)
     hidden = args["hidden_states"]
     logits = (
@@ -101,7 +103,7 @@ def deepseek_v2_mxfp4_moe_reference(
         @ decode(args["router_weight"], point.dtypes["router_weight"]).double().T
     )
     x = f("hidden_states")
-    ids, weights = _routed(point, args, logits.to(hidden.dtype).float(), f("correction_bias"))
+    ids, weights = _routed(point, args, rounded_to_bfloat16(logits).float(), f("correction_bias"))
     ids, weights = _with_shared_slot(point, ids, weights)
 
     def weight(name: str, e: int) -> Tensor:

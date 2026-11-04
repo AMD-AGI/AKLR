@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BUILD_TIMEOUT_SECONDS", "MAX_BATCH_OUTPUT_BYTES", "MAX_BATCH_WORKLOADS",
-    "REFERENCE_SECONDS_PER_OUTPUT_GIB", "WORKLOAD_TIMEOUT_SECONDS", "BenchStage",
+    "EVALUATION_SECONDS_PER_OUTPUT_GIB", "WORKLOAD_TIMEOUT_SECONDS", "BenchStage",
 ]  # fmt: skip
 
 MAX_BATCH_OUTPUT_BYTES: Final = 16 << 30
@@ -48,14 +48,14 @@ MAX_BATCH_OUTPUT_BYTES: Final = 16 << 30
 MAX_BATCH_WORKLOADS: Final = 16
 BUILD_TIMEOUT_SECONDS: Final = 900.0
 WORKLOAD_TIMEOUT_SECONDS: Final = 300.0
-# the reference's time grows with the outputs it compares: at m=342073, gemm_n3072_k512's 23 GiB of outputs
-# took about 420 s on a busy MI355X node compared in float64 on the CPU, far less on the GPU
-REFERENCE_SECONDS_PER_OUTPUT_GIB: Final = 60.0
+# a trial's evaluation (references and compares) grows with the outputs: at m=342073, gemm_n3072_k512's
+# 23 GiB took about 420 s on a busy MI355X node compared in float64 on the CPU, far less on the GPU
+EVALUATION_SECONDS_PER_OUTPUT_GIB: Final = 60.0
 
 
-def _reference_timeout_seconds(requests: Sequence[TrialRequest]) -> float:
+def _evaluation_timeout_seconds(requests: Sequence[TrialRequest]) -> float:
     output_gib = sum(r.output_bytes for r in requests) / (1 << 30)
-    return WORKLOAD_TIMEOUT_SECONDS * len(requests) + REFERENCE_SECONDS_PER_OUTPUT_GIB * output_gib
+    return WORKLOAD_TIMEOUT_SECONDS * len(requests) + EVALUATION_SECONDS_PER_OUTPUT_GIB * output_gib
 
 
 class UnreadableIncumbent(RuntimeError):
@@ -183,6 +183,7 @@ class BenchStage(PipelineStage[BenchReport]):
                 workload_json=workloads_json[workload_axes_text],
                 distributions=schema.distributions_at(point),
                 thresholds=thresholds,
+                min_speedup=min_speedup,
                 incumbent=incumbent,
                 # what users run today: the served base kernel, this one included
                 baseline=(incumbent_path if is_served else None) or defined_baseline,
@@ -274,12 +275,12 @@ class BenchStage(PipelineStage[BenchReport]):
                 run_trial,
                 # the candidate twice (a tracer fault reruns it), each in a child it starts
                 timeout_seconds=2 * (DEFAULT_STARTUP_TIMEOUT_SECONDS + candidate_timeout)
-                + _reference_timeout_seconds(batch),
+                + _evaluation_timeout_seconds(batch),
                 requests=batch,
                 candidate_timeout_seconds=candidate_timeout,
                 n_cpu_shares=len(self._devices),
             )
-            trial = TrialResult.from_task(future.result(), [r.axes_text for r in batch])
+            trial = TrialResult.from_task(future.result())
             candidate, reference = trial.candidate, trial.reference
         except (ExecutionError, ValueError) as e:
             # the candidate's failures are in the result: the trial's own are the platform's

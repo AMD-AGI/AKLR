@@ -84,6 +84,8 @@ class TrialRequest:
     # each present tensor's distribution item, evaluated: schema.distributions_at
     distributions: dict[str, dict[str, Any]]
     thresholds: dict[Versus, Threshold]
+    # the least published speedup over the baseline dispatch serves; 0: whatever is measured
+    min_speedup: float
     incumbent: OpContract | None
     # what users run today, exported as the baseline: the base kernel dispatch serves
     # (this very kernel too), else the defined baseline's dotted name; None: neither
@@ -100,6 +102,7 @@ class TrialRequest:
         thresholds: dict[Versus, Threshold],
         incumbent: OpContract | None,
         baseline: str | None,
+        min_speedup: float = 0,
     ) -> TrialRequest:
         """The request of ``schema``'s ``workload``."""
         point = schema.point_with_contract_id(workload.axes, contract.contract_id)
@@ -119,6 +122,7 @@ class TrialRequest:
             workload_json=workloads_json[workload_axes_text],
             distributions=schema.distributions_at(point),
             thresholds=thresholds,
+            min_speedup=min_speedup,
             incumbent=incumbent,
             baseline=baseline,
         )

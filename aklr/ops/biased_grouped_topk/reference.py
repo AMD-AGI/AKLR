@@ -21,8 +21,9 @@ def biased_grouped_topk_reference(
 
     Every group is kept (the contract's constraint), so the groups mask nothing.
     """
-    logits = decode(row_major_args["router_logits"], point.dtypes["router_logits"])
-    bias = decode(row_major_args["correction_bias"], point.dtypes["correction_bias"])
+    # scored in float64: float32 ties distinct scores, and the ids compare exactly
+    logits = decode(row_major_args["router_logits"], point.dtypes["router_logits"]).double()
+    bias = decode(row_major_args["correction_bias"], point.dtypes["correction_bias"]).double()
     scores = logits.sigmoid()
     chosen = (scores + bias).topk(point.axes["topk"], dim=-1).indices
     weights = scores.gather(-1, chosen)

@@ -35,7 +35,7 @@ names below are in those sources. "m" is the Point's `n_tokens`; a route is one 
   routing weight applied in stage 2, `act_quant` 4 (activations quantized to MXFP4); bf16 `out`
   (`aklr/ops/fused_moe/contract.py`, the `shuffled_16x16` variant).
 - Compare: `determinism: bounded`, `max_violation_fraction` 1e-3, and one bound on the whole output: SQNR ≥ 13 dB
-  against the float64 reference rounded to bf16, with no per-element bound and no bias test (`SqnrBound`,
+  against the reference (float32 in validation) rounded to bf16, with no per-element bound and no bias test (`SqnrBound`,
   `aklr/core/contract/semantics/_compare.py`). Atomic accumulation is allowed.
 - The commit that adds the 257-expert `4fbd9d02…` names it GLM-5.2's MXFP4 MoE (256 routed experts plus the fused
   shared one, top-9) at decode sizes; the 65- and 33-expert names have no model named in their files.

@@ -139,10 +139,10 @@ def _reruns(tmp_path: Path, *details: str) -> tuple[int, set[FindingCode]]:
     executor = Mock(submit=Mock(side_effect=lambda *a, **k: Mock(result=Mock(side_effect=next(errors)))))
     scope = ValidationScope(Path.cwd(), "", "HEAD", (), ())
     batch, *_ = BenchStage(["cpu"])._workloads_to_run(scope, Path(_SCHEMA), ContractRegistry.default())
-    context = ExecutionContext(device="cpu", log_path=tmp_path / "log", directory=tmp_path)
+    context = ExecutionContext(device="cpu", log_path=tmp_path / "log")
     with patch.object(Executor, "for_devices", lambda devices, **kwargs: nullcontext(executor)):
         value = run_trial(context, requests=batch, candidate_timeout_seconds=1.0, n_cpu_shares=1)
-    trial = TrialResult.from_task(value, [r.axes_text for r in batch])
+    trial = TrialResult.from_task(value)
     assert trial.reference is None
     return executor.submit.call_count, {f.code for f in trial.candidate.findings}
 
@@ -545,18 +545,41 @@ class TestTimeRounds:
     """``Clock.time_rounds`` stops at the first look that decides every bound."""
 
     @pytest.mark.parametrize(
-        ("baseline_ms", "threshold", "n_rounds"),
-        [(2.0, "entry", 8), (1.02, "entry", 32), (1.02, "retain", 32)],
-        ids=["clear-win-stops-at-8", "at-the-threshold-runs-32", "kept-at-the-entry-ratio-runs-32"],
+        ("baseline_ms", "threshold", "min_speedup", "n_rounds"),
+        [
+            (2.0, "entry", 1.03, 16),
+            (1.02, "entry", 0, 32),
+            (1.02, "retain", 0, 32),
+            (1.045, "entry", 0, 16),
+            (1.045, "entry", 1.03, 32),
+        ],
+        ids=[
+            "clear-win-stops-at-16",
+            "at-the-threshold-runs-32",
+            "kept-at-the-entry-ratio-runs-32",
+            "qualified-stops-at-16",
+            "served-or-not-stays-open-runs-32",
+        ],
     )
-    def test_stops_at_the_deciding_look(self, baseline_ms: float, threshold: str, n_rounds: int) -> None:
+    def test_stops_at_the_deciding_look(
+        self, baseline_ms: float, threshold: str, min_speedup: float, n_rounds: int
+    ) -> None:
         """A 2x candidate is decided at the first look; one at the entry ratio never is, a
-        kept one's retain gate settled or not: whether it qualifies stays open."""
+        kept one's retain gate settled or not: whether it qualifies stays open. One that
+        qualifies early runs on while whether dispatch serves it at ``min_speedup`` is open."""
         jitter = itertools.cycle([1.0, 1.01, 0.99, 1.02, 0.98])
         fns = {"candidate": lambda: 1.0, "baseline": lambda: baseline_ms}
         clock = Clock(synchronize=lambda: None, bench_cudagraph=lambda fn, rep: fn() * next(jitter))
-        rounds = clock.time_rounds(fns, seed=0, thresholds={"baseline": threshold})
+        rounds = clock.time_rounds(fns, seed=0, thresholds={"baseline": threshold}, min_speedup=min_speedup)
         assert len(rounds) == n_rounds
+
+    def test_a_threshold_without_its_participant_is_raised(self) -> None:
+        """Only unusable times end the timing early; a threshold naming a participant that
+        was not timed is the bench's own error."""
+        fns = {"candidate": lambda: 1.0, "baseline": lambda: 2.0}
+        clock = Clock(synchronize=lambda: None, bench_cudagraph=lambda fn, rep: fn())
+        with pytest.raises(ValueError, match="without incumbent times"):
+            clock.time_rounds(fns, seed=0, thresholds={"incumbent": "retain"}, min_speedup=0)
 
 
 class TestSpeedupMeasures:
@@ -1077,11 +1100,11 @@ def test_the_trial_evaluates_each_workload_its_baseline_did_not_decline(
     )
     value = TrialResult(candidate=candidate, reference=reference).model_dump(mode="json")
     with nullcontext() if is_whole else pytest.raises(ValueError, match="not one for the batch"):
-        TrialResult.from_task(value, ["m=1", "m=2"])
+        TrialResult.from_task(value)
 
 
 def test_reference_compares_the_lent_outputs() -> None:
-    """The reference task reads what the candidate left in the tensors it lent: its own
+    """The trial's evaluation reads what the candidate left in the tensors it lent: its own
     float32 values pass every step, a NaN fails its step, a missing step leaves the
     workload incomplete."""
     import torch
@@ -1150,7 +1173,7 @@ def test_platform_the_kernel_does_not_state_aborts(
     schema = schema.model_copy(update={"kernel": kernel_spec})
     target = DeviceTarget.from_names(**KERNEL_TARGET)
     monkeypatch.setattr(DeviceTarget, "current", classmethod(lambda cls, d: target))
-    context = ExecutionContext(device="cpu", log_path=tmp_path / "log", directory=tmp_path)
+    context = ExecutionContext(device="cpu", log_path=tmp_path / "log")
     request = replace(case.request, schema=schema)
     result = run_candidate(
         context, requests=[request], outputs={request.axes_text: request.empty_outputs("cpu")}

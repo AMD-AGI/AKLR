@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
@@ -73,3 +75,34 @@ def test_mqa_logits_reference_is_the_same_in_chunks(
     whole = case.reference_outputs(args)["logits"]
     monkeypatch.setattr(mla_reference, "_CHUNK_ELEMENTS", 1)
     assert torch.equal(case.reference_outputs(args)["logits"], whole)
+
+
+def test_biased_grouped_topk_ranks_scores_float32_would_tie() -> None:
+    """Two logits a float32 sigmoid maps to one score: the ids still follow the larger."""
+    from aklr.ops.biased_grouped_topk.reference import biased_grouped_topk_reference
+
+    point = SimpleNamespace(
+        dtypes={"router_logits": "float32", "correction_bias": "float32"},
+        axes={"topk": 1},
+        attrs={"renormalize": False},
+    )
+    args = {
+        "router_logits": torch.tensor([[0.0, 2.0**-25]]),
+        "correction_bias": torch.zeros(2),
+        "routed_scaling_factor": 1.0,
+    }
+    _, ids = biased_grouped_topk_reference(point, args, semantics.to_float32)
+    assert ids.tolist() == [[1.0]]
+
+
+def test_rms_norm_reference_holds_large_finite_inputs() -> None:
+    """A row of bfloat16 2**64 normalizes to 1, its square past float32's range."""
+    from aklr.ops.rms_norm.reference import rms_norm_reference
+
+    point = SimpleNamespace(dtypes={"x": "bfloat16", "weight": "bfloat16"})
+    args = {
+        "x": torch.full((1, 8), 2.0**64, dtype=torch.bfloat16),
+        "weight": torch.ones(8, dtype=torch.bfloat16),
+        "epsilon": 1e-6,
+    }
+    torch.testing.assert_close(rms_norm_reference(point, args, semantics.to_float32), torch.ones(1, 8))
