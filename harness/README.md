@@ -25,6 +25,10 @@ The lifecycle is governed by [rules.md](rules.md), [gates.md](gates.md), and
 
 - `skills/`: every AKLR agent skill, `skills/<name>/SKILL.md`, kept only here. Agents find them
   through symlinks: `.claude/skills` for Claude Code, `.agents/skills` for Codex and Cursor.
+- `agents/`: subagent definitions the skills start, `agents/<name>.md`, found through
+  `.claude/agents`, which Claude Code and Cursor read. Codex reads only TOML from
+  `.codex/agents`, a symlink to `agents/codex/`; each `<name>.toml` there points back to
+  `agents/<name>.md`, so the prompt is written once.
 - `scripts/`: scripts the skills run, such as `forge_task/`.
 - `tests/`: tests of the scripts.
 
