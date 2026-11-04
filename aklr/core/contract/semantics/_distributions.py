@@ -482,6 +482,41 @@ class DsaIndexKCacheDistribution(Distribution):
         return bool(is_power.all() & ((codes & 0x7F) != 0x7F).all())
 
 
+class Mxfp8NopeRowsDistribution(Distribution):
+    """448 E4M3FN codes, fourteen E8M0 bytes, then padding to 512 bytes.
+
+    A row is the NoPE operand of DeepSeek-V4's split-precision CSR prefill.
+    Payload patterns repeat over large pools; each row has independent scales.
+    """
+
+    kind: Literal["mxfp8_nope_rows"] = "mxfp8_nope_rows"
+
+    def accepts_dtype(self, dtype):
+        return dtype == DType.UINT8
+
+    def sample(self, shape, dtype, generator):
+        import torch
+
+        if shape[-1] != 512:
+            raise ValueError("an MXFP8 NoPE row occupies 512 bytes")
+        rows = math.prod(shape[:-1])
+        distinct = min(rows, _DISTINCT_PAGES)
+        codes = torch.randn((distinct, 448), generator=generator).to(torch.float8_e4m3fn)
+        raw = torch.zeros((rows, 512), dtype=torch.uint8)
+        for start in range(0, rows, distinct):
+            count = min(distinct, rows - start)
+            raw[start : start + count, :448] = codes[:count].view(torch.uint8)
+        raw[:, 448:462] = torch.randint(124, 128, (rows, 14), generator=generator, dtype=torch.uint8)
+        return raw.reshape(shape)
+
+    def contains(self, tensor, dtype):
+        if tensor.shape[-1] != 512:
+            return False
+        raw = tensor.reshape(-1, 512)
+        codes, exponents = raw[:, :448], raw[:, 448:462]
+        return bool(((codes & 0x7F) != 0x7F).all() & ((exponents >= 8) & (exponents <= 246)).all())
+
+
 DistributionUnion = Annotated[
     FiniteDistribution
     | LogUniformDistribution
@@ -493,6 +528,7 @@ DistributionUnion = Annotated[
     | PermutationDistribution
     | TopkStaticPlanDistribution
     | Deepseekv4Fp8KvCacheDistribution
+    | Mxfp8NopeRowsDistribution
     | DsaIndexKCacheDistribution,
     Field(discriminator="kind"),
 ]
