@@ -1,7 +1,7 @@
 ###############################################################################
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 ###############################################################################
 
 import contextlib

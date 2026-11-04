@@ -1,7 +1,7 @@
 ###############################################################################
 # SPDX-License-Identifier: MIT
 #
-# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 ###############################################################################
 
 from aklr.ops.biased_grouped_topk.api import (
