@@ -1,0 +1,6 @@
+{
+  "name": "remote-gpu",
+  "version": "0.1.0",
+  "description": "A band above the prompt showing your remote-gpu jobs, free nodes and background tasks while you hold a job.",
+  "types": "./types/index.d.ts"
+}
