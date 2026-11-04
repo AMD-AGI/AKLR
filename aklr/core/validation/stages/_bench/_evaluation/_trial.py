@@ -89,27 +89,34 @@ def run_trial(
             if context.device == "cpu"
             else [f"cuda:{r}" for r in range(context.n_devices)]
         )
-    outputs = []
+    outputs, pools = [], []
     for device in devices:
         # in a pool of their own: a lent tensor's IPC handle maps its whole allocator segment, which
-        # no tensor of the reference's may share
-        pool = None if device == "cpu" else torch.cuda.MemPool()
-        with contextlib.nullcontext() if pool is None else torch.cuda.use_mem_pool(pool, device=device):
-            outputs.append({r.axes_text: r.empty_outputs(device) for r in requests})
+        # no tensor of the reference's may share; keep every pool until the trial ends
+        with contextlib.nullcontext() if device == "cpu" else torch.cuda.device(device):
+            pool = None if device == "cpu" else torch.cuda.MemPool()
+            pools.append(pool)
+            with contextlib.nullcontext() if pool is None else torch.cuda.use_mem_pool(pool):
+                outputs.append({r.axes_text: r.empty_outputs(device) for r in requests})
     try:
         for attempt in range(2):
             # a rank's finding or failure ends the group: its peers would wait on it forever
             # a group's every task leases all its devices, in the trial task's order (devices
-            # repeated, a group a rank): it receives tensors lent on any of them
-            with Executor.for_devices(
-                devices * len(devices) if is_group else devices,
-                devices_per_task=len(devices) if is_group else 1,
-                n_cpu_shares=n_cpu_shares,
-            ) as executor:
+            # repeated, a group a rank): a lent tensor's IPC handle names its device by index
+            with (
+                (
+                    tempfile.TemporaryDirectory(prefix="group-", dir=context.log_path.parent)
+                    if is_group
+                    else contextlib.nullcontext()
+                ) as directory,
+                Executor.for_devices(
+                    devices * len(devices) if is_group else devices,
+                    devices_per_task=len(devices) if is_group else 1,
+                    n_cpu_shares=n_cpu_shares,
+                ) as executor,
+            ):
                 # a FileStore's file meets one group once: a fresh one an attempt
-                group = (
-                    {"rendezvous": str(Path(tempfile.mkdtemp(prefix="group-")) / "store")} if is_group else {}
-                )
+                group = {"rendezvous": str(Path(directory) / "store")} if is_group else {}
                 futures = {
                     executor.submit(
                         run_candidate,

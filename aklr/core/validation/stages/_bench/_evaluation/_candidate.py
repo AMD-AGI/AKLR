@@ -68,7 +68,8 @@ class CandidateResult(FrozenModel):
             raise ValueError(detail) from e
         if sorted(r.axes_text for r in result.workload_results) != sorted(axes_texts):
             raise ValueError(detail)
-        return result
+        by_axes = {r.axes_text: r for r in result.workload_results}
+        return result.model_copy(update={"workload_results": tuple(by_axes[a] for a in axes_texts)})
 
     @classmethod
     def of_failure(cls, error: BaseException) -> CandidateResult:
@@ -92,12 +93,31 @@ class CandidateResult(FrozenModel):
     def of_ranks(cls, results: Sequence[CandidateResult]) -> CandidateResult:
         """The group's result of its finding-free ``results`` in rank order: rank 0's
         workload findings and output keys, each round's time of a participant its slowest
-        rank's."""
+        rank's, or an unusable one if a rank's is (compare_performance reports it)."""
+        if len(results) == 1:
+            return results[0]
         workload_results = []
         for per_rank in zip(*(r.workload_results for r in results), strict=True):
+            first = per_rank[0]
+            expected = [(r.mode, r.round_index, r.order) for r in first.rounds]
+            for rank, workload in enumerate(per_rank):
+                where = f"rank {rank}: {workload.axes_text}"
+                if (
+                    workload.axes_text != first.axes_text
+                    or [(r.mode, r.round_index, r.order) for r in workload.rounds] != expected
+                    or any(set(r.milliseconds) != set(r.order) for r in workload.rounds)
+                ):
+                    return cls.of_failure(ValueError(f"{where}: timing rounds differ across ranks"))
+            # an unusable time ranks above any other, so that max keeps it (it drops a NaN by position)
+            unusable_first = lambda ms: (not (math.isfinite(ms) and ms > 0), ms)  # noqa: E731
             rounds = tuple(
                 same[0].model_copy(
-                    update={"milliseconds": {p: max(r.milliseconds[p] for r in same) for p in same[0].order}}
+                    update={
+                        "milliseconds": {
+                            p: max((r.milliseconds[p] for r in same), key=unusable_first)
+                            for p in same[0].order
+                        }
+                    }
                 )
                 for same in zip(*(w.rounds for w in per_rank), strict=True)
             )
@@ -240,7 +260,7 @@ def run_candidate(
                 else:
                     stopped[axes_text] = Finding.unlocated(e.code, str(e))
         output_keys[axes_text] = tuple(filled)
-    if device != "cpu":
+    if device != "cpu" and not batch_findings:
         torch.cuda.synchronize()  # the lent tensors are filled before the result says so
     workload_results = [
         CandidateWorkloadResult(
