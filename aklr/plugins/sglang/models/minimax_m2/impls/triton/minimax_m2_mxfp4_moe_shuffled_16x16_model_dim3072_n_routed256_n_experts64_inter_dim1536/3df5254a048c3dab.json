@@ -161,7 +161,7 @@
         "expert_offset": 192
       },
       "accuracy": "passed",
-      "speedup": 2.038
+      "speedup": 1.991
     },
     {
       "axes": {
@@ -171,7 +171,7 @@
         "expert_offset": 192
       },
       "accuracy": "passed",
-      "speedup": 1.476
+      "speedup": 1.466
     }
   ],
   "layout_variants": {
