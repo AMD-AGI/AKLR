@@ -189,7 +189,7 @@ check_nodes() {
     [[ $(jfield "$J" '%T') == RUNNING ]] && err NODES_UNKNOWN "job=$C:$J msg=\"cannot resolve the job's nodes (controller busy?)\" hint=\"retry: remote-gpu ready -j $C:$J\""
     err JOB_GONE "job=$C:$J state=$(jfinal "$J")"
   fi
-  tmp=$(mktemp -d); pids=()
+  local pids=(); tmp=$(mktemp -d)
   for n in "${NL[@]}"; do   # all nodes in parallel: at most ~2 min whatever -N is
     ONTO=120 on_node "$J" "$n" bash -c '
       r=0; for d in /dev/dri/renderD*; do { exec 3<>"$d"; } 2>/dev/null && r=$((r + 1)); exec 3>&-; done
@@ -248,10 +248,11 @@ mkdir -p "$B/jobs/$J/tasks"; touch "$B/jobs/$J/heartbeat"
 check_nodes "$J"; ok_line "$J"
 EOF
 
-# The manifest's PARTITION and first ACCOUNTS pair are the defaults; -p/-A/-q override them.
+# The manifest's PARTITION and first ACCOUNTS pair are the defaults; -p/-A/-q override them. remote-gpu
+# passes -A itself when R_FREE prints account=.
 cmd_alloc() {
   local n=1 t=4:00:00 name="$CLUSTER-${REMOTE_GPU_SESSION:-$(hostname -s | cut -c1-12)}-$RANDOM" idle=60 wait=300 nowait=0 extra=()
-  local first=${ACCOUNTS%% *} p=$PARTITION a q
+  local first=${ACCOUNTS%% *} p=$PARTITION a q qset=0 pr
   a=${first%%:*} q=${first#*:}
   while (($#)); do case $1 in
     -N | --nodes) need2 "$@"; n=$2; shift 2 ;;
@@ -262,12 +263,16 @@ cmd_alloc() {
     --no-wait) nowait=1; shift ;;
     -p | --partition) need2 "$@"; p=$2; shift 2 ;;
     -A | --account) need2 "$@"; a=$2; shift 2 ;;
-    -q | --qos) need2 "$@"; q=$2; shift 2 ;;
+    -q | --qos) need2 "$@"; q=$2 qset=1; shift 2 ;;
+    --preemptible) [[ -n $BURST_QOS ]] || die "alloc: $CLUSTER has no preemptible BURST_QOS"; q=$BURST_QOS qset=1; shift ;;
     -w | --nodelist | -x | --exclude | -C | --constraint | --reservation)
       need2 "$@"; extra+=("$1" "$2"); shift 2 ;;
     *) die "alloc: unknown option $1" ;;
   esac; done
   [[ $n =~ ^[0-9]+$ && $idle =~ ^[0-9]+$ && $wait =~ ^[0-9]+$ ]] || die "alloc: -N/--idle/--wait must be integers"
+  if ((!qset)); then   # the QOS paired with the account in ACCOUNTS; none: the account's default
+    q=''; for pr in $ACCOUNTS; do [[ ${pr%%:*} == "$a" ]] && q=${pr#*:}; done
+  fi
   [[ -n $p ]] && extra+=(-p "$p"); [[ -n $a ]] && extra+=(-A "$a"); [[ -n $q ]] && extra+=(-q "$q")
   remote "$(with_script HOLDER_SH holder "$HOLDER")
 $R_AWAIT

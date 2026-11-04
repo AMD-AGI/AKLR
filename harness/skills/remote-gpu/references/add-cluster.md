@@ -74,9 +74,11 @@ What `scripts/remote-gpu` needs from `cluster.sh`:
   allocation, start the bg tasks queued in `$B/jobs/<J>/spawn/` as its own children, end the job
   when `$B/jobs/<J>/heartbeat` is older than IDLE minutes, and remove the job's containers (label
   `<C>.job=<J>`) and tasks when the job ends.
-- `R_AWAIT` defining `await`, `check_nodes` and `ok_line`; `R_ALLOC`, `R_READY`, `R_FREE`
-  (prints `OK cluster=... free=N`), `R_RELEASE`, `R_INFO`; and `cmd_alloc`, `cmd_ready`, `cmd_extend`,
-  `shell_cmd`.
+- `R_FREE` (prints `OK cluster=... free=N`, plus `account=` for the account with the most room and
+  `burst=` when there is a `BURST_QOS`), `R_RELEASE`, `R_INFO`; and `cmd_alloc` (prints
+  `SUBMITTED job=<C>:<ID>` for every job it submits; `--preemptible`, and `--aggressive` when
+  `ALLOC_AGGRESSIVE=1`), `cmd_ready`, `cmd_extend`, `shell_cmd`. `R_AWAIT`, `R_ALLOC` and `R_READY` are
+  the template's own helpers for those commands.
 
 ## 5. Verify
 

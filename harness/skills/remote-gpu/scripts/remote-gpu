@@ -65,7 +65,7 @@ work_root() {
     while read -r _ m; do [[ $m != */.snapshot* && -d $m/$USER && -O $m/$USER && -w $m/$USER ]] && { echo "$m/$USER"; break; }; done)
   r=${r:-$HOME}; mkdir -p "${f%/*}" && echo "$r" >"$f"; echo "$r"
 }
-REL=$(work_root) B=$(work_root)/$C
+REL=$(work_root); B=$REL/$C
 q() { echo "${*//\"/\'}" | tr '\n' ' ' | sed 's/ *$//'; }   # value safe inside key="..."
 tosec() {
   local t=$1 d=0 h=0 m=0 s=0 a
@@ -297,8 +297,8 @@ summary() { # summary TASK: per-rank lines; sets AGG (DONE|NOT_STARTED|RUNNING|L
   while read -r i node; do
     f=$TD/$1.$i
     if [[ -e $f.pid ]]; then read -r st r <<<"$(tstate "$f")"
-    elif [[ $(cat "$TD/$1.claim/state" 2>/dev/null) == failed ]]; then st=NOT_STARTED r=''
-    else st=RUNNING r=''; fi   # bg is still starting it
+    elif [[ $JS == RUNNING && $(cat "$TD/$1.claim/state" 2>/dev/null) != failed ]]; then st=RUNNING r=''   # bg is still starting it
+    else st=NOT_STARTED r=''; fi
     echo "  rank=$i node=$node state=$st${r:+ rc=$r} log=$f.log"
     case $st in RUNNING) [[ $AGG == LOST ]] || AGG=RUNNING ;; LOST) AGG=LOST ;; NOT_STARTED) [[ $AGG == DONE ]] && AGG=NOT_STARTED ;; DONE) ((r && !ARC)) && ARC=$r ;; esac
   done <"$TD/$1.claim/ranks"
@@ -444,7 +444,13 @@ cmd_push() {
   if ((isdir)); then
     src=$src/
     remote "$GITSEED"$'\n''[[ -e $1 ]] && exit 0; [[ -n $2 ]] && git_seed "$1" "$2" "$3" && exit 10; mkdir -p "$1" && exit 11' "$dst" "$url" "$sha"
-    r=$?; case $r in 0) ;; 10) opts+=(--delete) ;; 11) [[ -n $url ]] || on_login && gx=() ;; *) exit "$r" ;; esac
+    r=$?
+    case $r in
+      0) ;;                        # the directory exists: keep its own .git
+      10) opts+=(--delete) ;;      # cloned
+      11) if [[ -n $url ]] || on_login; then gx=(); fi ;;   # new, not cloned: copy .git unless it holds credentials
+      *) exit "$r" ;;
+    esac
   else remote 'mkdir -p "$(dirname "$1")"' "$dst" || exit 255; fi
   if on_login; then rsync "${opts[@]}" "${ex[@]}" "${gx[@]}" "$src" "$dst"
   else rsync "${opts[@]}" "${ex[@]}" "${gx[@]}" -e "ssh ${SSH_OPTS[*]}" "$src" "$HOST:$dst"; fi || err RSYNC_FAILED "cluster=$CLUSTER"
@@ -456,13 +462,20 @@ cmd_pull() {
   while (($#)); do case $1 in -*) die "pull: unknown option $1" ;; *) if [[ -z $src ]]; then src=$1; else dst=$1; fi; shift ;; esac; done
   [[ -n $src ]] || die "pull: missing REMOTE path"
   if [[ $src != /* ]]; then read -r rb rel < <(remote_dirs) && [[ $rel == /* ]] || exit 255; src=$rel/$src; fi
-  # First pull of a git repo: clone it here, then rsync the diff, deleting what the remote deleted;
-  # .git comes along only if the clone could not reach the remote's commit.
-  local tgt=$dst sha='' url=''; [[ $src == */ ]] || tgt=$dst/$(basename "$src")
-  if ! on_login && [[ ! -e $tgt ]]; then
-    read -r sha url < <(remote "$GITHEAD" "$src")
-    [[ -n $url ]] && git_seed "$tgt" "$url" "$sha" && opts+=(--exclude .git/ --delete)
+  # As push: a git repo going to a new directory is cloned here first, then the rsync sends the
+  # diff, deleting what the remote deleted. A new directory the clone failed for gets .git too,
+  # unless the repo holds credentials; an existing one keeps its own.
+  local tgt=$dst sha='' url='' gx=(--exclude .git/); [[ $src == */ ]] || tgt=$dst/$(basename "$src")
+  if [[ ! -e $tgt ]]; then
+    if on_login; then gx=()
+    else
+      read -r sha url < <(remote "$GITHEAD" "$src")
+      if [[ -n $url ]]; then
+        if git_seed "$tgt" "$url" "$sha"; then opts+=(--delete); else gx=(); fi
+      fi
+    fi
   fi
+  opts+=("${gx[@]}")
   if on_login; then rsync "${opts[@]}" "$src" "$dst"
   else rsync "${opts[@]}" -e "ssh ${SSH_OPTS[*]}" "$HOST:$src" "$dst"; fi || err RSYNC_FAILED "cluster=$CLUSTER"
   echo "OK local=$dst"
@@ -473,19 +486,63 @@ cmd_pull() {
 # ---------------------------------------------------------------------------
 kv() { grep -o "\b$1=[^ ]*" <<<"$2" | head -1 | cut -d= -f2; }
 
+# races CLUSTER ALLOC_ARGS...: alloc there races every team account by default (a race must wait).
+# The preemptible burst QOS joins only with --preemptible.
+races() { local c=$1; shift; [[ " $* " != *" --no-wait "* ]] && grep -q '^ALLOC_AGGRESSIVE=1' "$CDIRS/$c/cluster.env"; }
+# alloc_defaults ALLOC_ARGS...: on a named cluster, unless the caller chose the account, QOS or race:
+# race its team accounts; else take the account `free` reports the most room for (the manifest's
+# first ACCOUNTS pair may be at its team cap).
+alloc_defaults() {
+  local a
+  [[ " $* " =~ \ (-A|--account|-q|--qos|--aggressive)\  ]] && return
+  races "$CLUSTER" "$@" && { ALLOC_X=(--aggressive); return; }
+  a=$(kv account "$("$SELF" --cluster "$CLUSTER" free 2>/dev/null | grep -m1 '^OK ')")
+  [[ -n $a ]] && ALLOC_X=(-A "$a")
+}
+
+# race_clusters ALLOC_ARGS...: alloc on every cluster at once (each races its own accounts where it
+# can) and keep the first that gets nodes. However this process ends, the other allocs are stopped
+# and whatever they submitted is released.
+RACE_TMP='' RACE_PIDS=() RACE_WON=''
+race_cleanup() {
+  local c j
+  kill "${RACE_PIDS[@]}" 2>/dev/null; wait "${RACE_PIDS[@]}" 2>/dev/null
+  for c in "${CLUSTERS[@]}"; do
+    [[ $c == "$RACE_WON" ]] && continue
+    grep -ho "job=$c:[0-9]*" "$RACE_TMP/$c".* 2>/dev/null | sort -u | while read -r j; do
+      "$SELF" release -j "${j#job=}" >/dev/null 2>&1
+    done
+  done
+  rm -rf "$RACE_TMP"
+}
+race_clusters() {
+  local c pid rc=255 byp=() args=() a
+  for a in "$@"; do [[ $a == --aggressive ]] || args+=("$a"); done   # each cluster races where it can anyway
+  RACE_TMP=$(mktemp -d); trap race_cleanup EXIT; trap 'exit 130' INT TERM HUP
+  for c in "${CLUSTERS[@]}"; do
+    "$SELF" --cluster "$c" alloc "${args[@]}" >"$RACE_TMP/$c.out" 2>"$RACE_TMP/$c.err" & RACE_PIDS+=($!); byp[$!]=$c
+  done
+  echo "RACE clusters=\"${CLUSTERS[*]}\"" >&2
+  while ((${#RACE_PIDS[@]})); do
+    wait -n -p pid "${RACE_PIDS[@]}"; rc=$?
+    RACE_PIDS=($(printf '%s\n' "${RACE_PIDS[@]}" | grep -vx "$pid"))
+    if ((rc == 0)); then RACE_WON=${byp[pid]}; break; fi
+  done
+  if [[ -n $RACE_WON ]]; then
+    cat "$RACE_TMP/$RACE_WON.err" >&2; cat "$RACE_TMP/$RACE_WON.out"; echo "RACE kept=$RACE_WON" >&2; exit 0
+  fi
+  for c in "${CLUSTERS[@]}"; do cat "$RACE_TMP/$c.err" >&2; done   # nobody won: show why
+  exit "$rc"
+}
+
 # pick_cluster ALLOC_ARGS...: set CLUSTER to the cluster with the most free nodes (at least -N),
 # and ALLOC_X to the options that pin the account that has them.
 pick_cluster() {
-  local n=1 c f a line tmp best='' bf=-1 seen=() pids=()
+  local n=1 pre=0 c f a b line tmp best='' bf=-1 seen=() pids=()
   ((${#CLUSTERS[@]})) || err PROBE_FAILED "msg=\"no cluster under ~/.remote-gpu/clusters/\" hint=\"add one as references/add-cluster.md says\""
   while (($#)); do case $1 in
     -N | --nodes) need2 "$@"; n=$2; shift 2 ;;
-    --aggressive)
-      for c in "${CLUSTERS[@]}"; do grep -q '^ALLOC_AGGRESSIVE=1' "$CDIRS/$c/cluster.env" && { CLUSTER=$c; break; }; done
-      [[ -n $CLUSTER ]] || die "alloc: no cluster supports --aggressive (ALLOC_AGGRESSIVE=1 in its cluster.env)"
-      echo "PICK cluster=$CLUSTER (the first cluster with --aggressive)" >&2; return ;;
-    -p | --partition | -A | --account | -q | --qos | -w | --nodelist | -x | --exclude | -C | --constraint | --reservation)
-      die "alloc: $1 is cluster-specific; add --cluster NAME" ;;
+    --preemptible) pre=1; shift ;;
     *) shift ;;
   esac; done
   [[ $n =~ ^[0-9]+$ ]] || die "alloc: -N must be an integer"
@@ -495,12 +552,12 @@ pick_cluster() {
   for c in "${CLUSTERS[@]}"; do
     line=$(grep -m1 '^OK ' "$tmp/$c")
     if [[ -z $line ]]; then warn "cluster=$c probe failed: $(grep -m1 . "$tmp/$c")"; seen+=("$c=?"); continue; fi
-    f=$(kv free "$line"); a=$(kv account "$line"); b=$(kv burst "$line"); [[ $f =~ ^[0-9]+$ ]] || f=0; seen+=("$c=$f${b:+/burst=$b}")
+    f=$(kv free "$line"); a=$(kv account "$line"); b=$(kv burst "$line"); ((pre)) && f=$b; [[ $f =~ ^[0-9]+$ ]] || f=0; seen+=("$c=$f${b:+/burst=$b}")
     if ((f > bf)); then bf=$f best=$c ALLOC_X=(); [[ -n $a ]] && ALLOC_X=(-A "$a"); fi
   done
   rm -rf "$tmp"
   [[ -n $best ]] || err PROBE_FAILED "msg=\"no cluster answered the free-node probe\" hint=\"check ssh to the login nodes\""
-  ((bf >= n)) || err NO_FREE_NODES "need=$n free=\"${seen[*]}\" hint=\"no cluster has $n idle nodes now; ask the user: queue on one (remote-gpu --cluster NAME alloc --no-wait, then ready), or use a cluster's preemptible BURST_QOS from its cluster.env (remote-gpu --cluster NAME alloc -q QOS)\""
+  ((bf >= n)) || err NO_FREE_NODES "need=$n free=\"${seen[*]}\" hint=\"no cluster has $n idle nodes now; ask the user: queue on one (remote-gpu --cluster NAME alloc --no-wait, then ready), or alloc without --no-wait to race every cluster\""
   CLUSTER=$best
   echo "PICK cluster=$best free=\"${seen[*]}\"" >&2
 }
@@ -514,13 +571,16 @@ remote-gpu — whole GPU nodes on the clusters under ~/.remote-gpu/clusters/, on
         the job handle CLUSTER:ID printed by alloc (e.g. mycluster:202642) names the cluster.
 
   alloc [-N 1] [-t 4:00:00] [-J label] [--idle 60] [--wait 300] [--no-wait] [-x nodes]
-        [-p partition] [-A account] [-q qos] [-w nodes]       (-p/-A/-q/-w/-x need --cluster)
-        Get whole nodes (all their GPUs). Without --cluster, picks the cluster with the most free
-        nodes (see `free`); fails with NO_FREE_NODES if none has -N. Auto-release after --idle
-        minutes without activity (0 = never). On --wait timeout the pending job is cancelled;
-        with --no-wait it stays queued (poll with `ready`).
-        --aggressive (clusters with ALLOC_AGGRESSIVE=1): submit to every team QOS and the
-        preemptible BURST_QOS at once, keep the best that starts, cancel the rest. No -q/--no-wait.
+        [--preemptible] [-p partition] [-A account] [-q qos] [-w nodes]   (-p/-A/-q/-w/-x need --cluster)
+        Get whole nodes (all their GPUs). Without --cluster, races every cluster and keeps the
+        first to get nodes; with --no-wait, queues on the one with the most free nodes. Auto-release
+        after --idle minutes without activity (0 = never). On --wait timeout the pending job is
+        cancelled; with --no-wait it stays queued (poll with `ready`).
+        On clusters with ALLOC_AGGRESSIVE=1 alloc races by default (--aggressive): one job per
+        team account at once, keep the first that starts, cancel the rest. -A, -q or --no-wait
+        turn the race off.
+        --preemptible: also race the cluster's preemptible BURST_QOS (team jobs still win), or
+        with --no-wait queue on it alone. Only when the user asks for a temporary machine.
         Prints: OK cluster=... job=CLUSTER:ID nodes=... account=... qos=... workdir=...
   ready -j JOB [--wait 420]          wait for a queued job to start, health-check it, print the
                                      OK line (exit 205 = still pending, job kept)
@@ -544,8 +604,8 @@ remote-gpu — whole GPU nodes on the clusters under ~/.remote-gpu/clusters/, on
   push LOCAL [REMOTE] [--delete] [--exclude PAT] [--no-exclude]    (needs a cluster)
         rsync to the cluster (default <workdir>/src/<name>; a relative REMOTE is under the work
         root); prints OK remote=PATH. A git repo pushed to a new REMOTE is first cloned there
-        from its origin at the local HEAD, so only local changes cross the link (.git itself is
-        never rsynced). A path the cluster mounts too, at the same place, is left as it is.
+        from its origin at the local HEAD, so only local changes cross the link (an existing
+        REMOTE keeps its .git). A path the cluster mounts too, at the same place, is left as it is.
   pull REMOTE [LOCAL]                rsync back from the cluster; a git repo pulled to a new
                                      local path is first cloned from its origin the same way
   shell -j JOB [-w node]             interactive shell on a node (humans only)
@@ -610,7 +670,16 @@ session_job() {
 
 case $sub in
   help | -h | --help) usage; exit 0 ;;
-  alloc) [[ -n $CLUSTER ]] || pick_cluster "$@" ;;
+  alloc)
+    if [[ -n $CLUSTER ]]; then alloc_defaults "$@"
+    else
+      [[ " $* " =~ \ (-p|--partition|-A|--account|-q|--qos|-w|--nodelist|-x|--exclude|-C|--constraint|--reservation)\  ]] &&
+        die "alloc: ${BASH_REMATCH[1]} is cluster-specific; add --cluster NAME"
+      # No cluster named: race all of them; --no-wait queues on the one with the most free nodes.
+      if [[ " $* " == *" --no-wait "* ]] || ((${#CLUSTERS[@]} == 0)); then pick_cluster "$@"
+      elif ((${#CLUSTERS[@]} == 1)); then CLUSTER=${CLUSTERS[0]}; alloc_defaults "$@"
+      else race_clusters "$@"; fi
+    fi ;;
   free | ls | info) [[ -n $CLUSTER ]] || on_all "$sub" "$@" ;;
   release) [[ -n $CLUSTER || " $* " != *" --all "* ]] || on_all release "$@"
     [[ -n $CLUSTER ]] || die "release: missing -j CLUSTER:ID, the job handle printed by alloc; a bare ID needs --cluster" ;;
