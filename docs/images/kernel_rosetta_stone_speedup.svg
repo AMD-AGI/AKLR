@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="395" viewBox="0 0 960 395">
+<style>
+  .bg{fill:none}
+  text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,"DejaVu Sans",sans-serif;fill:#1f2328}
+  .t{font-size:15px;font-weight:600}
+  .s{font-size:12.5px;fill:#59636e}
+  .sec{font-size:13px;font-weight:600;fill:#59636e;letter-spacing:.06em}
+  .box{fill:#f6f8fa;stroke:#d1d9e0;stroke-width:1.2}
+  .hl{stroke:#0969da}
+  .cont{fill:none}
+  .ok{fill:#dafbe1;stroke:#4ac26b}
+  .fb{fill:#fff8c5;stroke:#d4a72c}
+  .pl{stroke-dasharray:5 4}
+  .ln{stroke:#818b98;stroke-width:1.6;fill:none}
+  .ah{fill:#818b98}
+  .grid{stroke:#d1d9e0;stroke-width:1}
+  .axis{stroke:#818b98;stroke-width:1}
+  .tick{font-size:12px;fill:#59636e}
+  .a{stroke:#0969da;stroke-width:2.5;fill:none}
+  .b{stroke:#8c959f;stroke-width:2.5;fill:none}
+  .ad{fill:#0969da}.bd{fill:#8c959f}
+  .ref{stroke:#59636e;stroke-width:1.2;stroke-dasharray:5 4}
+  .note{font-size:13px}
+  .na{fill:#0969da}.nb{fill:#59636e}
+  @media (prefers-color-scheme: dark){
+    text{fill:#f0f6fc}
+    .s,.sec,.tick{fill:#9198a1}
+    .box{fill:#151b23;stroke:#3d444d}
+    .hl{stroke:#4493f8}
+    .ok{fill:#0f2d1a;stroke:#2ea043}
+    .fb{fill:#2e2a12;stroke:#9e6a03}
+    .ln,.axis{stroke:#9198a1}.ah{fill:#9198a1}
+    .grid{stroke:#3d444d}
+    .a{stroke:#4493f8}.ad,.na{fill:#4493f8}
+    .b{stroke:#7d8590}.bd{fill:#7d8590}.nb{fill:#9198a1}
+    .ref{stroke:#9198a1}
+  }
+</style>
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0L10,5L0,10z"/></marker></defs>
+<text class="t" x="480.0" y="26" text-anchor="middle">Kernel Rosetta Stone: GEMM comparison</text>
+<text class="s" x="480.0" y="48" text-anchor="middle">The same agent tuned one bf16 GEMM (13 sizes) on MI355X, with and without AKLR knowledge base.</text>
+<text class="tick" x="18" y="220.0" text-anchor="middle" transform="rotate(-90 18 220.0)">speedup over AITER</text>
+<line class="grid" x1="80" x2="930" y1="308.1481481481481" y2="308.1481481481481"/>
+<text class="tick" x="72" y="312.1481481481481" text-anchor="end">1.10x</text>
+<line class="grid" x1="80" x2="930" y1="256.2962962962964" y2="256.2962962962964"/>
+<text class="tick" x="72" y="260.2962962962964" text-anchor="end">1.15x</text>
+<line class="grid" x1="80" x2="930" y1="204.44444444444457" y2="204.44444444444457"/>
+<text class="tick" x="72" y="208.44444444444457" text-anchor="end">1.20x</text>
+<line class="grid" x1="80" x2="930" y1="152.59259259259267" y2="152.59259259259267"/>
+<text class="tick" x="72" y="156.59259259259267" text-anchor="end">1.25x</text>
+<line class="grid" x1="80" x2="930" y1="121.48148148148152" y2="121.48148148148152"/>
+<text class="tick" x="72" y="125.48148148148152" text-anchor="end">1.28x</text>
+<line class="grid" x1="80" x2="930" y1="100.74074074074076" y2="100.74074074074076"/>
+<text class="tick" x="72" y="104.74074074074076" text-anchor="end">1.30x</text>
+<text class="tick" x="80.0" y="380" text-anchor="middle">0h</text>
+<text class="tick" x="186.25" y="380" text-anchor="middle">2h</text>
+<text class="tick" x="292.5" y="380" text-anchor="middle">4h</text>
+<text class="tick" x="398.75" y="380" text-anchor="middle">6h</text>
+<text class="tick" x="505.0" y="380" text-anchor="middle">8h</text>
+<text class="tick" x="611.25" y="380" text-anchor="middle">10h</text>
+<text class="tick" x="717.5" y="380" text-anchor="middle">12h</text>
+<text class="tick" x="823.75" y="380" text-anchor="middle">14h</text>
+<text class="tick" x="930.0" y="380" text-anchor="middle">16h</text>
+<line class="axis" x1="80" x2="930" y1="360" y2="360"/>
+<line class="ref" x1="80" x2="930" y1="121.48148148148152" y2="121.48148148148152"/>
+<path class="b" d="M80.0,332.0 L186.2,332.0 L292.5,256.3 L505.0,228.3 L717.5,144.3 L864.5,121.5 L921.1,112.1"/>
+<circle class="bd" cx="80.0" cy="332.0" r="3.5"/>
+<circle class="bd" cx="186.2" cy="332.0" r="3.5"/>
+<circle class="bd" cx="292.5" cy="256.3" r="3.5"/>
+<circle class="bd" cx="505.0" cy="228.3" r="3.5"/>
+<circle class="bd" cx="717.5" cy="144.3" r="3.5"/>
+<circle class="bd" cx="921.1" cy="112.1" r="3.5"/>
+<path class="a" d="M80.0,326.8 L186.2,153.6 L292.5,127.7 L363.3,121.5 L505.0,115.3 L696.2,100.7"/>
+<circle class="ad" cx="80.0" cy="326.8" r="3.5"/>
+<circle class="ad" cx="186.2" cy="153.6" r="3.5"/>
+<circle class="ad" cx="292.5" cy="127.7" r="3.5"/>
+<circle class="ad" cx="505.0" cy="115.3" r="3.5"/>
+<circle class="ad" cx="696.2" cy="100.7" r="3.5"/>
+<line class="ref" x1="363.3333333333333" x2="363.3333333333333" y1="121.48148148148152" y2="360"/>
+<circle class="ad" cx="363.3" cy="121.5" r="6"/>
+<text class="note na" x="373.3333333333333" y="147.48148148148152" text-anchor="start">1.28x at 5h20m, ~$52</text>
+<line class="ref" x1="864.4791666666667" x2="864.4791666666667" y1="121.48148148148152" y2="360"/>
+<circle class="bd" cx="864.5" cy="121.5" r="6"/>
+<text class="note nb" x="854.4791666666667" y="231.48148148148152" text-anchor="end">1.28x at 14h46m, ~$205</text>
+<text class="note na" x="700.25" y="88.74074074074076" text-anchor="end">1.300x at 11h36m, ~$133</text>
+<text class="note nb" x="930" y="88.74074074074076" text-anchor="end">1.289x at 15h50m, ~$230</text>
+<line class="a" x1="430.625" x2="456.625" y1="271.8518518518519" y2="271.8518518518519"/>
+<text class="s" x="464.625" y="275.8518518518519">With AKLR knowledge base</text>
+<line class="b" x1="430.625" x2="456.625" y1="295.8518518518519" y2="295.8518518518519"/>
+<text class="s" x="464.625" y="299.8518518518519">Without AKLR knowledge base</text>
+</svg>
