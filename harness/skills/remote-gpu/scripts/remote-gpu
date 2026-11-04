@@ -49,8 +49,8 @@ need2() { (($# >= 2)) || die "$1 needs a value"; }
 # Remote side. Every remote operation is one bash script fed on stdin to
 # `bash -s` on the login node, so no login shell ever parses user argv.
 # The cluster's manifest comes first, then this library, which sets REL (base of relative
-# paths) and B (state dir). Each cluster.sh adds CLUSTER_RLIB: SQUEUE/SCANCEL, jfinal, nodes_of,
-# on_node, LATE_HINT, DOCKER_X, NODE_ENV.
+# paths) and B (state dir). CLUSTER_RLIB supplies only scheduler hooks and site facts;
+# its contract is in templates/slurm.sh.
 # ---------------------------------------------------------------------------
 read -r -d '' RLIB <<'EOF'
 # REL: WORK_ROOT, or with WORK_ROOT=auto the network filesystem with the most free space that
@@ -75,35 +75,67 @@ tosec() {
   case ${#a[@]} in 3) h=${a[0]} m=${a[1]} s=${a[2]} ;; 2) m=${a[0]} s=${a[1]} ;; 1) s=${a[0]} ;; esac
   echo $((10#$d * 86400 + 10#$h * 3600 + 10#$m * 60 + 10#$s))
 }
-# jfield JOB FMT: one queue field set; retries because a controller hiccup also yields "".
-jfield() {
-  local o k
-  for k in 1 2 3; do
-    o=$($SQUEUE -j "$1" -h -o "$2" 2>/dev/null | head -1 | sed 's/^ *//;s/ *$//;s/ *| */|/g')
-    [[ -n ${o//|/} ]] && break; sleep 2
-  done
-  echo "$o"
+# Adapter records are decoded here; callers never know scheduler format codes.
+decode_job() {
+  IFS='|' read -r JOB_STATE JOB_NODES JOB_TIME_LEFT JOB_REASON JOB_START JOB_PARTITION \
+    JOB_ACCOUNT JOB_QOS JOB_TIME_LIMIT JOB_USER JOB_NAME JOB_ELAPSED JOB_END JOB_NODE_COUNT <<<"$1"
 }
-# need_running JOB: fail unless RUNNING; refresh the idle-release heartbeat.
+read_job() {
+  local record attempt
+  for attempt in 1 2 3; do
+    if record=$(scheduler_query "$1") && [[ -n $record ]]; then
+      decode_job "$record"
+      return 0
+    fi
+    if ((attempt < 3)); then sleep 2; fi
+  done
+  decode_job ''
+  return 1
+}
+job_value() {
+  read_job "$1"
+  local field=JOB_$2
+  printf '%s\n' "${!field}"
+}
+job_nodes() { job_value "$1" NODES | tr ',' '\n'; }
+terminal_state() {
+  case $1 in
+    COMPLETED | CANCELLED* | FAILED | TIMEOUT | PREEMPTED | NODE_FAIL | OUT_OF_MEMORY | BOOT_FAIL | DEADLINE) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+# Refresh the idle heartbeat only for a running job.
 need_running() {
-  local s left
-  IFS='|' read -r s left < <(jfield "$1" '%T|%L')
-  [[ $s == PENDING || $s == CONFIGURING ]] && err JOB_PENDING "job=$C:$1 state=$s hint=\"wait for it to start: remote-gpu ready -j $C:$1\""
-  [[ $s == RUNNING ]] || err JOB_GONE "job=$C:$1 state=${s:-$(jfinal "$1")} hint=\"allocate a new node with: remote-gpu alloc\""
+  local left
+  read_job "$1"
+  if [[ $JOB_STATE == PENDING || $JOB_STATE == CONFIGURING ]]; then
+    err JOB_PENDING "job=$C:$1 state=$JOB_STATE hint=\"wait for it to start: remote-gpu ready -j $C:$1\""
+  fi
+  if [[ $JOB_STATE != RUNNING ]]; then
+    err JOB_GONE "job=$C:$1 state=$JOB_STATE hint=\"allocate a new node with: remote-gpu alloc\""
+  fi
   mkdir -p "$B/jobs/$1/tasks" && touch "$B/jobs/$1/heartbeat"
-  left=$(tosec "$left"); ((left >= 0 && left < 900)) && warn "job=$C:$1 timeleft=${left}s hint=\"$LATE_HINT\""
-  return 0
+  left=$(tosec "$JOB_TIME_LEFT")
+  if ((left >= 0 && left < 900)); then warn "job=$C:$1 timeleft=${left}s hint=\"$LATE_HINT\""; fi
 }
-# withdraw JOB: cancel a pending job; returns 0 if it started meanwhile (keep it), 1 once it is gone.
+# Cancel only while pending; a job that starts during withdrawal is kept.
 withdraw() {
-  local k s
-  for k in 1 2 3 4 5 6; do
-    $SCANCEL -t PENDING "$1" >/dev/null 2>&1; sleep 1
-    s=$($SQUEUE -j "$1" -h -o '%T' 2>/dev/null | head -1 | tr -d ' ')
-    case $s in RUNNING | CONFIGURING) return 0 ;; PENDING) ;; *) [[ -n $s || -n $(jfinal "$1") ]] && return 1 ;; esac
+  local attempt
+  for attempt in 1 2 3 4 5 6; do
+    scheduler_cancel "$1" pending >/dev/null 2>&1
+    sleep 1
+    read_job "$1"
+    case $JOB_STATE in
+      RUNNING | CONFIGURING) return 0 ;;
+      PENDING | '') ;;
+      *) return 1 ;;
+    esac
   done
-  $SCANCEL "$1" >/dev/null 2>&1; return 1
+  scheduler_cancel "$1" >/dev/null 2>&1
+  return 1
 }
+# Node execution has the same transport contract for exec, health checks and bg confirmation.
+on_node() { local job=$1 node=$2; shift 2; scheduler_run "$job" "$node" batch "$@"; }
 # install NAME: atomically write stdin to $B/NAME (+x); safe with concurrent writers/readers.
 install_script() {
   local t
@@ -113,6 +145,124 @@ install_script() {
 # Creating and removing a file in DIR refreshes this NFS client's view of it; otherwise a cached
 # "no such file" for files written by compute nodes can persist for a minute.
 nfs_sync() { local t; t=$(mktemp "$1/.sync.XXXXXX" 2>/dev/null) && rm -f "$t"; }
+EOF
+
+# Shared holder: spawn requests, heartbeat/idle policy, time limit and cleanup.
+read -r -d '' HOLDER_LOOP <<'EOF'
+IDLE=${1:-60}; B=$3; C=$4
+scheduler_holder "$@"
+D=$B/jobs/$J
+mkdir -p "$D/tasks" "$D/spawn"; touch "$D/heartbeat"
+exec >>"$B/logs/$J.$H.log" 2>&1
+# Stop task process groups and containers together, allow ~20s for checkpoints, then mark
+# this node clean. Release waits for all holders before cancelling the scheduler allocation.
+cleanup() {
+  local reason=$1 containers task_file node pid process_groups=() attempt active docker_stop_pid=''
+  if [[ -e $D/cleaned.$H ]]; then return; fi
+  for task_file in "$D"/tasks/*.pid; do
+    if [[ ! -e $task_file || -e ${task_file%.pid}.rc ]]; then continue; fi
+    read -r node pid <"$task_file"
+    if [[ $node == "$H" && $pid =~ ^[1-9][0-9]*$ ]] && kill -TERM -- "-$pid" 2>/dev/null; then
+      process_groups+=("$pid")
+    fi
+  done
+  containers=$(docker ps -aq --filter "label=$C.job=$J" 2>/dev/null)
+  if [[ -n $containers ]]; then
+    timeout 30 docker stop -t 20 $containers >/dev/null 2>&1 & docker_stop_pid=$!
+  fi
+  for attempt in $(seq 20); do
+    active=0
+    for pid in "${process_groups[@]}"; do
+      if kill -0 -- "-$pid" 2>/dev/null; then active=1; fi
+    done
+    if ((active == 0)); then break; fi
+    sleep 1
+  done
+  for pid in "${process_groups[@]}"; do kill -KILL -- "-$pid" 2>/dev/null; done
+  if [[ -n $docker_stop_pid ]]; then wait "$docker_stop_pid"; fi
+  if [[ -n $containers ]]; then docker rm -f $containers >/dev/null 2>&1; fi
+  echo "$(date +%T) $H cleanup ($reason): containers=[$(echo $containers)] tasks=${#process_groups[@]}"
+  touch "$D/cleaned.$H"
+}
+# A reused pid only delays reaping; it never removes a live container.
+reap_orphans() {
+  local container pid
+  docker ps --filter "label=$C.job=$J" --format "{{.ID}} {{.Label \"$C.pid\"}}" 2>/dev/null |
+    while read -r container pid; do
+      if [[ -n $pid ]] && ! kill -0 "$pid" 2>/dev/null; then
+        if docker rm -f "$container" >/dev/null 2>&1; then echo "$(date +%T) reaped orphan container $container"; fi
+      fi
+    done
+}
+# Keep containers on unknown states/controller failures. Only explicit terminal jobs are stale.
+reap_stale() {
+  local container job state
+  docker ps -a --filter "label=$C.user=$USER" --format "{{.ID}} {{.Label \"$C.job\"}}" 2>/dev/null |
+    while read -r container job; do
+      if [[ $job == "$J" ]]; then continue; fi
+      state=$(job_value "$job" STATE)
+      if terminal_state "$state"; then
+        if docker rm -f "$container" >/dev/null 2>&1; then echo "$(date +%T) removed stale container $container of job $job ($state)"; fi
+      fi
+    done
+}
+holder_end_time() {
+  local end
+  end=$(job_value "$J" END)
+  [[ $end =~ ^[0-9]+$ ]] || return 1
+  echo "$end"
+}
+# Spawn requests are NUL-separated LOGBASE RUNNER CMD ARGS... files, atomically renamed by bg.
+# Tasks are children of the holder's step, so a detached task survives the login command.
+spawn_tasks() {
+  local request arguments=() log_base
+  for request in "$D/spawn/$H".*; do
+    [[ -e $request ]] || continue
+    mapfile -d '' arguments <"$request"
+    rm -f "$request"
+    log_base=${arguments[0]}
+    if [[ ! -f ${arguments[1]} ]]; then
+      echo "$C: runner ${arguments[1]} missing" >"$log_base.log"
+      echo 127 >"$log_base.rc"
+      echo "$H 0" >"$log_base.pid"
+      continue
+    fi
+    setsid nohup bash "${arguments[1]}" "$D" "$log_base" "${arguments[@]:2}" >"$log_base.log" 2>&1 </dev/null &
+    echo "$H $!" >"$log_base.pid.tmp"
+    mv -f "$log_base.pid.tmp" "$log_base.pid"
+  done
+}
+trap 'cleanup signal; exit 0' TERM INT HUP USR1
+echo "holder up on $H idle_release=${IDLE}m"
+reap_stale
+holder_end=$(holder_end_time) || holder_end=''
+last_maintenance=0
+while :; do
+  sleep 2 & wait $!
+  spawn_tasks
+  if [[ -e $D/release ]]; then cleanup release; exit 0; fi
+  if ((SECONDS < last_maintenance + 60)); then continue; fi
+  last_maintenance=$SECONDS
+  reap_orphans
+  if new_end=$(holder_end_time); then holder_end=$new_end; fi
+  if [[ $holder_end =~ ^[0-9]+$ ]] && (($(date +%s) >= holder_end - 90)); then
+    cleanup time-limit
+    exit 0
+  fi
+  if ((IDLE <= 0)); then continue; fi
+  if ! heartbeat_time=$(stat -c %Y "$D/heartbeat" 2>/dev/null); then
+    touch "$D/heartbeat"
+    continue
+  fi
+  idle_seconds=$(($(date +%s) - heartbeat_time))
+  if ((idle_seconds > IDLE * 60)); then
+    echo "$(date) idle ${idle_seconds}s > ${IDLE}m: releasing job $J"
+    # Every holder sees the same stale heartbeat and exits after cleanup. Cancellation here
+    # would SIGKILL the other nodes' holders before they finished cleaning up.
+    cleanup idle
+    exit 0
+  fi
+done
 EOF
 
 # bg task runner: keeps the heartbeat fresh while the task runs, records its rc.
@@ -128,7 +278,7 @@ exit $rc
 EOF
 
 remote() { # remote BODY ARG... : run BODY under bash on the login node with "$@" = ARG...
-  local body=$1 args='' s; shift
+  local body=$1 args='' s caller_pid=$BASHPID; shift
   (($#)) && args=$(printf '%q ' "$@")
   s="set -uo pipefail
 C=$CLUSTER
@@ -159,7 +309,7 @@ trap 'kill \$WD 2>/dev/null' EXIT
 $body
 } </dev/null
 exit
-}"; while kill -0 $$ 2>/dev/null; do sleep 2; done)
+}"; while kill -0 "$caller_pid" 2>/dev/null; do sleep 2; done)
 }
 
 # with_script VAR NAME CONTENT: remote body fragment that installs CONTENT as $B/NAME.<cksum>.sh
@@ -178,13 +328,331 @@ JOB=${REMOTE_GPU_JOB:-}
 # Job handles are CLUSTER:ID; the cluster part was consumed by the argv pre-scan below.
 need_job() { JOB=${JOB#*:}; [[ $JOB =~ ^[0-9]+$ ]] || die "missing or bad -j CLUSTER:ID (use the job printed by 'remote-gpu alloc'; see 'remote-gpu ls')"; }
 
-# Common option parser for exec/bg: fills JOB W DIR IMG TNAME UENV, leaves the command in CMD.
+# One explicit allocation request, parsed before cluster selection. Subshells racing clusters
+# inherit it; neither cluster choice nor adapter code reparses argv or appends override flags.
+parse_alloc_opts() {
+  ALLOC_REQUEST=([nodes]=1 [time]=4:00:00 [idle]=60 [wait]=300 [no_wait]=0
+    [aggressive]=0 [preemptible]=0 [account]='' [qos]='' [partition]='' [name]=''
+    [account_set]=0 [qos_set]=0 [partition_set]=0)
+  ALLOC_OPTIONS=()
+  local option
+  while (($#)); do
+    option=$1
+    case $option in
+      -N | --nodes) need2 "$@"; ALLOC_REQUEST[nodes]=$2; shift 2 ;;
+      -t | --time) need2 "$@"; ALLOC_REQUEST[time]=$2; shift 2 ;;
+      -J | --name)
+        need2 "$@"
+        [[ $2 =~ ^[A-Za-z0-9_.-]+$ ]] || die "alloc: -J label must match [A-Za-z0-9_.-]+"
+        ALLOC_REQUEST[name]=$2; shift 2 ;;
+      --idle) need2 "$@"; ALLOC_REQUEST[idle]=$2; shift 2 ;;
+      --wait) need2 "$@"; ALLOC_REQUEST[wait]=$2; shift 2 ;;
+      --no-wait) ALLOC_REQUEST[no_wait]=1; shift ;;
+      --aggressive) ALLOC_REQUEST[aggressive]=1; shift ;;
+      --preemptible) ALLOC_REQUEST[preemptible]=1; shift ;;
+      -p | --partition) need2 "$@"; ALLOC_REQUEST[partition]=$2; ALLOC_REQUEST[partition_set]=1; shift 2 ;;
+      -A | --account) need2 "$@"; ALLOC_REQUEST[account]=$2; ALLOC_REQUEST[account_set]=1; shift 2 ;;
+      -q | --qos) need2 "$@"; ALLOC_REQUEST[qos]=$2; ALLOC_REQUEST[qos_set]=1; shift 2 ;;
+      -w | --nodelist | -x | --exclude | -C | --constraint | --reservation)
+        need2 "$@"; ALLOC_OPTIONS+=("$1" "$2"); shift 2 ;;
+      *) die "alloc: unknown option $1" ;;
+    esac
+  done
+  for option in nodes idle wait; do
+    [[ ${ALLOC_REQUEST[$option]} =~ ^[0-9]+$ ]] || die "alloc: -N/--idle/--wait must be integers"
+  done
+}
+
+# Select complete ACCOUNT:QOS pairs. Burst is the only permitted QOS substitution and is
+# opt-in, including an explicit -q BURST_QOS. A capacity report never invents an account.
+alloc_pairs() {
+  local pair account qos capacity=${ALLOC_CAPACITY:-} preferred_account='' preferred_qos=''
+  local requested_account=${ALLOC_REQUEST[account]} requested_qos=${ALLOC_REQUEST[qos]}
+  local candidates=() teams=() associations=()
+  read -ra associations <<<"$ACCOUNTS"
+  if ((${#associations[@]} == 0)); then associations=(':'); fi
+  if ((ALLOC_REQUEST[preemptible])); then
+    [[ -n $BURST_QOS ]] || die "alloc: $CLUSTER has no preemptible BURST_QOS"
+    if ((!ALLOC_REQUEST[qos_set])); then requested_qos=$BURST_QOS; fi
+  fi
+  ALLOC_RACING=0
+  if ((!ALLOC_REQUEST[no_wait] && !ALLOC_REQUEST[account_set] && !ALLOC_REQUEST[qos_set])); then
+    if ((ALLOC_REQUEST[aggressive] || ALLOC_AGGRESSIVE)); then ALLOC_RACING=1; fi
+  fi
+  for pair in "${associations[@]}"; do
+    [[ $pair == *:* ]] || die "alloc: invalid ACCOUNTS pair '$pair'"
+    account=${pair%%:*} qos=${pair#*:}
+    if [[ -n $BURST_QOS && $qos == "$BURST_QOS" ]]; then continue; fi
+    teams+=("$pair")
+    if ((ALLOC_REQUEST[account_set])) && [[ $account != "$requested_account" ]]; then continue; fi
+    if [[ -n $requested_qos && $requested_qos != "$BURST_QOS" && $qos != "$requested_qos" ]]; then continue; fi
+    candidates+=("$pair")
+  done
+  ((${#candidates[@]})) || die "alloc: account/QOS is not a pair in ACCOUNTS"
+  if ((ALLOC_RACING)); then
+    ALLOC_PAIRS=("${teams[@]}")
+    if ((ALLOC_REQUEST[preemptible])); then ALLOC_PAIRS+=("${teams[0]%%:*}:$BURST_QOS"); fi
+    return
+  fi
+  if ((!ALLOC_REQUEST[account_set] && !ALLOC_REQUEST[qos_set])); then
+    if [[ -z $capacity ]]; then capacity=$(remote 'scheduler_capacity' 2>/dev/null); fi
+    preferred_account=$(kv account "$capacity")
+    preferred_qos=$(kv qos "$capacity")
+    if [[ -n $BURST_QOS && $requested_qos == "$BURST_QOS" ]]; then
+      preferred_account=$(kv burst_account "$capacity")
+      preferred_account=${preferred_account:-$(kv account "$capacity")}
+      preferred_qos=''
+    fi
+  fi
+  ALLOC_PAIRS=("${candidates[0]}")
+  for pair in "${candidates[@]}"; do
+    if [[ ${pair%%:*} == "$preferred_account" && ( -z $preferred_qos || ${pair#*:} == "$preferred_qos" ) ]]; then
+      ALLOC_PAIRS=("$pair")
+      break
+    fi
+  done
+  if [[ -n $BURST_QOS && $requested_qos == "$BURST_QOS" ]]; then
+    ALLOC_PAIRS=("${ALLOC_PAIRS[0]%%:*}:$BURST_QOS")
+  fi
+}
+
+read -r -d '' R_AWAIT <<'EOF_AWAIT'
+UNSCHEDULABLE='^(PartitionTimeLimit|PartitionNodeLimit|PartitionConfig|InvalidQOS|InvalidAccount|AccountNotAllowed|QOSNotAllowed|BadConstraints|QOSMaxWallDurationPerJobLimit|QOSMaxNodePerJobLimit|AssocMaxWallDurationPerJobLimit|AssocMaxNodesPerJobLimit)'
+PERUSER='^(QOSMax[A-Za-z]*PerUser|AssocMax)'
+# await_job JOB WAIT cancel|keep. A ready timeout leaves the queued job alone.
+await_job() {
+  local job=$1 deadline=$((SECONDS + $2)) on_timeout=$3 reason start
+  while :; do
+    read_job "$job"
+    case $JOB_STATE in
+      RUNNING) return 0 ;;
+      CONFIGURING | '') ;;
+      PENDING)
+        reason=$JOB_REASON start=$JOB_START
+        if [[ $reason =~ $UNSCHEDULABLE ]]; then
+          scheduler_cancel "$job" >/dev/null 2>&1
+          err UNSCHEDULABLE "job=$C:$job(cancelled) reason=\"$(q "$reason")\" hint=\"fix the request and alloc again\""
+        fi
+        if ((SECONDS >= deadline)); then
+          if [[ $on_timeout == keep ]]; then
+            echo "PENDING job=$C:$job reason=\"$(q "$reason")\" start_estimate=${start:-unknown}"
+            exit 205
+          fi
+          if withdraw "$job"; then return 0; fi
+          if [[ $reason =~ $PERUSER ]]; then
+            err QUOTA_FULL "job=$C:$job(cancelled) reason=\"$(q "$reason")\" hint=\"release jobs you no longer need (remote-gpu ls)\""
+          fi
+          err PENDING_TIMEOUT "job=$C:$job(cancelled) reason=\"$(q "$reason")\" start_estimate=${start:-unknown} waited=$2s"
+        fi ;;
+      *) err JOB_GONE "job=$C:$job state=$JOB_STATE reason=\"$(q "$JOB_REASON")\" log=$B/logs/$job.out" ;;
+    esac
+    if ((SECONDS >= deadline + 120)); then
+      if [[ $on_timeout == keep ]]; then echo "PENDING job=$C:$job state=${JOB_STATE:-unknown}"; exit 205; fi
+      scheduler_cancel "$job" >/dev/null 2>&1
+      err PENDING_TIMEOUT "job=$C:$job(cancelled) state=${JOB_STATE:-unknown}"
+    fi
+    sleep 5
+  done
+}
+# GPU health check, run as a job step: that is what exec/bg see. GPUs = min(GPU agents in KFD
+# sysfs, render nodes the step can open): a device cgroup blocks /dev/dri/* for a step without
+# the GPUs while KFD sysfs still lists them all, and rocm-smi can hang. The node must also see
+# the state dir. Sets NL (nodes) and N0 (rank 0) on success.
+check_nodes() {
+  local J=$1 n gpus foreign seen tmp
+  NL=($(job_nodes "$J")); N0=${NL[0]:-}
+  if ((${#NL[@]} == 0)); then
+    [[ $(job_value "$J" STATE) == RUNNING ]] && err NODES_UNKNOWN "job=$C:$J msg=\"cannot resolve the job's nodes (controller busy?)\" hint=\"retry: remote-gpu ready -j $C:$J\""
+    err JOB_GONE "job=$C:$J state=$(job_value "$J" STATE)"
+  fi
+  local pids=(); tmp=$(mktemp -d)
+  for n in "${NL[@]}"; do   # all nodes in parallel: at most ~2 min whatever -N is
+    ONTO=120 on_node "$J" "$n" bash -c '
+      r=0; for d in /dev/dri/renderD*; do { exec 3<>"$d"; } 2>/dev/null && r=$((r + 1)); exec 3>&-; done
+      g=$(grep -l "^gfx_target_version [1-9]" /sys/class/kfd/kfd/topology/nodes/*/properties 2>/dev/null | wc -l)
+      echo $((g < r ? g : r)); timeout 20 docker ps -q --filter "label=$0.job=$1" 2>/dev/null | wc -l
+      timeout 20 docker ps -q 2>/dev/null | wc -l; [ -d "$2" ] && echo 1 || echo 0' "$C" "$J" "$B" 2>/dev/null |
+      tr '\n' ' ' | awk '{print $1, $3 - $2, $4}' >"$tmp/$n" & pids+=($!)
+  done
+  wait "${pids[@]}"   # not a bare `wait`: that would also wait for remote()'s stdin watchdog
+  for n in "${NL[@]}"; do
+    read -r gpus foreign seen <"$tmp/$n"
+    if ((${gpus:-0} < GPUS_PER_NODE || ${seen:-0} == 0)); then
+      rm -rf "$tmp"
+      [[ $(job_value "$J" STATE) == RUNNING ]] || err JOB_GONE "job=$C:$J state=$(job_value "$J" STATE) msg=\"ended during the health check\""
+      scheduler_cancel "$J" >/dev/null 2>&1
+      err BAD_NODE "job=$C:$J(cancelled) node=$n gpus=${gpus:-0}/$GPUS_PER_NODE sees_workdir=${seen:-0} hint=\"retry: remote-gpu --cluster $C alloc ... -x $n\""
+    fi
+    ((${foreign:-0} > 0)) && warn "node=$n has $foreign pre-existing docker containers (not ours; GPUs may be busy)"
+  done
+  rm -rf "$tmp"
+}
+ok_line() {
+  local job=$1
+  read_job "$job"
+  echo "OK cluster=$C job=$C:$job nodes=$(IFS=,; echo "${NL[*]}") partition=$JOB_PARTITION account=$JOB_ACCOUNT qos=$JOB_QOS time=$JOB_TIME_LIMIT workdir=$B gpus=$GPUS_PER_NODE/$GPUS_PER_NODE arch=$GPU_ARCH"
+  if [[ -n $BURST_QOS && $JOB_QOS == "$BURST_QOS" ]]; then warn "job=$C:$job runs on $BURST_QOS and can be preempted (cancelled) at any time"; fi
+  echo "next: remote-gpu exec -j $C:$job -- hostname    |    release when done: remote-gpu release -j $C:$job" >&2
+}
+EOF_AWAIT
+
+# Alloc's remote envelope: nodes time idle wait no_wait name partition options_count,
+# that many scheduler options, then selected ACCOUNT:QOS pairs. See cmd_alloc below.
+read -r -d '' R_ALLOC <<'EOF_ALLOC'
+nodes=$1 time_limit=$2 idle=$3 wait_seconds=$4 no_wait=$5 name=$6 partition=$7 option_count=$8
+shift 8
+scheduler_options=("${@:1:option_count}"); shift "$option_count"
+candidates=("$@") submitted_jobs=() kept_job='' interrupted=0
+mkdir -p "$B/logs"
+alloc_cleanup() {
+  local job
+  if [[ -n ${WD:-} ]]; then kill "$WD" 2>/dev/null; fi
+  for job in "${submitted_jobs[@]}"; do
+    if [[ -n $job && $job != "$kept_job" ]]; then scheduler_cancel "$job" >/dev/null 2>&1; fi
+  done
+}
+trap alloc_cleanup EXIT
+trap 'exit 143' TERM INT HUP PIPE
+for pair in "${candidates[@]}"; do
+  account=${pair%%:*} qos=${pair#*:}
+  # Register a completed submission before handling a signal received during the hook.
+  trap 'interrupted=1' TERM INT HUP PIPE
+  output=$(scheduler_submit "$nodes" "$time_limit" "$name" "$partition" "$account" "$qos" "$HOLDER_SH" "$idle" "${scheduler_options[@]}")
+  submit_rc=$?
+  if ((submit_rc == 0)) && [[ $output =~ ^[0-9]+$ ]]; then
+    submitted_jobs+=("$output")
+    echo "SUBMITTED job=$C:$output account=$account qos=$qos nodes=$nodes time=$time_limit" >&2
+  else
+    submitted_jobs+=('')
+    warn "submit rejected account=$account qos=$qos"
+  fi
+  trap 'exit 143' TERM INT HUP PIPE
+  if ((interrupted)); then exit 143; fi
+  if ((${#candidates[@]} == 1 && submit_rc != 0)); then
+    if ((submit_rc == 201)); then err QUOTA_FULL "account=$account qos=$qos"; fi
+    err SUBMIT_FAILED "account=$account qos=$qos"
+  fi
+done
+if [[ ! ${submitted_jobs[*]} =~ [0-9] ]]; then err SUBMIT_FAILED 'msg="every candidate was rejected"'; fi
+if ((no_wait)); then
+  job=${submitted_jobs[0]}
+  mkdir -p "$B/jobs/$job/tasks"; touch "$B/jobs/$job/heartbeat"
+  echo "OK cluster=$C job=$C:$job state=PENDING start_estimate=$(job_value "$job" START) name=$name workdir=$B"
+  echo "next: remote-gpu ready -j $C:$job" >&2
+  kept_job=$job
+  exit 0
+fi
+if ((${#candidates[@]} == 1)); then
+  job=${submitted_jobs[0]}
+  await_job "$job" "$wait_seconds" cancel
+else
+  deadline=$((SECONDS + wait_seconds)) burst_seen=-1
+  while :; do
+    winner='' live=0
+    for index in "${!submitted_jobs[@]}"; do
+      job=${submitted_jobs[index]}
+      [[ -n $job ]] || continue
+      read_job "$job"
+      if [[ $JOB_STATE == RUNNING ]]; then
+        winner=$index
+        break
+      fi
+      if [[ $JOB_STATE == PENDING && $JOB_REASON =~ $UNSCHEDULABLE ]]; then
+        scheduler_cancel "$job" >/dev/null 2>&1
+        submitted_jobs[index]=''
+      elif ! terminal_state "$JOB_STATE"; then
+        live=$((live + 1))
+      fi
+    done
+    if [[ -n $winner ]]; then
+      if [[ -n $BURST_QOS && ${candidates[winner]#*:} == "$BURST_QOS" ]]; then
+        if ((burst_seen < 0)); then burst_seen=$SECONDS; fi
+        if ((SECONDS < burst_seen + 10)); then sleep 1; continue; fi
+      fi
+      job=${submitted_jobs[winner]}
+      break
+    fi
+    if ((live == 0)); then err JOB_GONE "jobs=\"${submitted_jobs[*]}\""; fi
+    if ((SECONDS >= deadline)); then err PENDING_TIMEOUT "jobs=\"${submitted_jobs[*]}\"(cancelled) waited=${wait_seconds}s"; fi
+    sleep 5
+  done
+  cancelled=()
+  for candidate in "${submitted_jobs[@]}"; do
+    if [[ -n $candidate && $candidate != "$job" ]]; then
+      scheduler_cancel "$candidate" >/dev/null 2>&1
+      cancelled+=("$candidate")
+    fi
+  done
+  echo "RACE kept=$C:$job (${candidates[winner]}) cancelled=\"${cancelled[*]}\"" >&2
+fi
+mkdir -p "$B/jobs/$job/tasks"; touch "$B/jobs/$job/heartbeat"
+check_nodes "$job"
+ok_line "$job"
+kept_job=$job
+EOF_ALLOC
+
+cmd_alloc() {
+  alloc_pairs
+  local name="$CLUSTER-${REMOTE_GPU_SESSION:-$(hostname -s | cut -c1-12)}-$RANDOM"
+  local partition=${ALLOC_REQUEST[partition]} holder
+  if [[ -n ${ALLOC_REQUEST[name]} ]]; then name="$CLUSTER-${REMOTE_GPU_SESSION:+$REMOTE_GPU_SESSION-}${ALLOC_REQUEST[name]}"; fi
+  if ((!ALLOC_REQUEST[partition_set])); then partition=$PARTITION; fi
+  # Braces force Bash to parse before execution: no incremental rereads of a live NFS script.
+  holder="#!/bin/bash
+{
+C=$CLUSTER
+$CLUSTER_ENV
+$ERRLIB
+$RLIB
+$CLUSTER_RLIB
+$HOLDER_LOOP
+}"
+  remote "$(with_script HOLDER_SH holder "$holder")
+$R_AWAIT
+$R_ALLOC" "${ALLOC_REQUEST[nodes]}" "${ALLOC_REQUEST[time]}" "${ALLOC_REQUEST[idle]}" \
+    "${ALLOC_REQUEST[wait]}" "${ALLOC_REQUEST[no_wait]}" "$name" "$partition" \
+    "${#ALLOC_OPTIONS[@]}" "${ALLOC_OPTIONS[@]}" "${ALLOC_PAIRS[@]}"
+}
+cmd_ready() {
+  local wait_seconds=420
+  while (($#)); do
+    case $1 in
+      -j | --job) need2 "$@"; JOB=$2; shift 2 ;;
+      --wait) need2 "$@"; wait_seconds=$2; shift 2 ;;
+      *) die "ready: unknown option $1" ;;
+    esac
+  done
+  need_job
+  [[ $wait_seconds =~ ^[0-9]+$ ]] || die "ready: bad --wait"
+  remote "$R_AWAIT"$'\n''await_job "$1" "$2" keep
+mkdir -p "$B/jobs/$1/tasks"; touch "$B/jobs/$1/heartbeat"
+check_nodes "$1"; ok_line "$1"' "$JOB" "$wait_seconds"
+}
+cmd_extend() {
+  local time_limit=''
+  [[ $EXTEND == 1 ]] || err UNSUPPORTED "msg=\"users cannot lengthen a running job on $CLUSTER\" hint=\"ask for enough -t at alloc (max $MAX_TIME)\""
+  while (($#)); do
+    case $1 in
+      -j | --job) need2 "$@"; JOB=$2; shift 2 ;;
+      -t | --time) need2 "$@"; time_limit=$2; shift 2 ;;
+      *) die "extend: unknown option $1" ;;
+    esac
+  done
+  need_job
+  [[ $time_limit =~ ^[0-9:-]+$ ]] || die "extend: -t NEW_TOTAL_LIMIT required"
+  remote 'need_running "$1"
+scheduler_extend "$1" "$2" >/dev/null || err EXTEND_FAILED "job=$C:$1"
+read_job "$1"
+echo "OK job=$C:$1 timelimit=$JOB_TIME_LIMIT timeleft=$JOB_TIME_LEFT"' "$JOB" "$time_limit"
+}
+
+# Common option parser for exec/bg: fills JOB RUN_NODES DIR IMG TNAME UENV, leaves the command in CMD.
 parse_run_opts() {
-  W='' DIR='' IMG='' TNAME='' UENV=() CMD=()
+  RUN_NODES='' DIR='' IMG='' TNAME='' UENV=() CMD=()
   while (($#)); do case $1 in
     -j | --job) need2 "$@"; JOB=$2; shift 2 ;;
-    -w | --node) need2 "$@"; W=$2; shift 2 ;;
-    --all) W=ALL; shift ;;
+    -w | --node) need2 "$@"; RUN_NODES=$2; shift 2 ;;
+    --all) RUN_NODES=ALL; shift ;;
     -C | --dir) need2 "$@"; DIR=$2; shift 2 ;;
     --image) need2 "$@"; IMG=$2; shift 2 ;;
     --name) need2 "$@"; TNAME=$2; shift 2 ;;
@@ -194,21 +662,29 @@ parse_run_opts() {
   esac; done
   need_job
   ((${#CMD[@]})) || die "missing command after --"
-  [[ -z $W || $W == ALL || $W =~ ^[a-z0-9,-]+$ ]] || die "bad -w node list"
+  [[ -z $RUN_NODES || $RUN_NODES == ALL || $RUN_NODES =~ ^[a-z0-9,-]+$ ]] || die "bad -w node list"
   return 0
 }
 
-# Remote prelude for exec/bg: resolves nodes and defines `mk RANK KIND CMD...` -> CMD array.
+# exec/bg envelope (sent only by run_remote): JOB NODE_SELECTION DIR IMAGE TAG ENV_COUNT,
+# ENV_COUNT environment entries, then command argv. No shell reparses these values.
+# Remote prelude for exec/bg: resolves nodes and defines `build_node_command RANK KIND CMD...` -> CMD array.
 read -r -d '' R_RUNPRE <<'EOF'
-J=$1 W=$2 DIR=$3 IMG=$4 TAG=$5 NE=$6; shift 6; UENV=("${@:1:NE}"); shift "$NE"
+J=$1 RUN_NODES=$2 DIR=$3 IMG=$4 TAG=$5 NE=$6; shift 6; UENV=("${@:1:NE}"); shift "$NE"
 need_running "$J"
-NL=($(nodes_of "$J")); N0=${NL[0]:-}; CSV=$(IFS=,; echo "${NL[*]}")
+NL=($(job_nodes "$J")); N0=${NL[0]:-}; CSV=$(IFS=,; echo "${NL[*]}")
 [[ -n $N0 ]] || err NODES_UNKNOWN "job=$C:$J msg=\"cannot resolve the job's nodes (controller busy?)\" hint=\"retry the same command\""
 DIR=${DIR:-$B}; [[ $DIR == /* ]] || DIR=$REL/$DIR
-if [[ -z $W ]]; then T=("$N0"); elif [[ $W == ALL ]]; then T=("${NL[@]}"); else T=($(tr ',' '\n' <<<"$W" | awk 'NF && !s[$0]++')); fi
+if [[ -z $RUN_NODES ]]; then
+  TARGET_NODES=("$N0")
+elif [[ $RUN_NODES == ALL ]]; then
+  TARGET_NODES=("${NL[@]}")
+else
+  TARGET_NODES=($(tr ',' '\n' <<<"$RUN_NODES" | awk 'NF && !s[$0]++'))
+fi
 rank_of() { local i; for i in "${!NL[@]}"; do [[ ${NL[$i]} == "$1" ]] && { echo "$i"; return; }; done; err USAGE "node=$1 is not in job $C:$J (nodes: $CSV)"; }
-for n in "${T[@]}"; do rank_of "$n" >/dev/null || exit 200; done
-mk() { # mk RANK KIND CMD... -> CMD array to execute on that node
+for n in "${TARGET_NODES[@]}"; do rank_of "$n" >/dev/null || exit 200; done
+build_node_command() { # build_node_command RANK KIND CMD... -> CMD array to execute on that node
   local i=$1 kind=$2; shift 2
   local E=(REMOTE_GPU_JOB=$C:$J REMOTE_GPU_NODES=$CSV REMOTE_GPU_NNODES=${#NL[@]} REMOTE_GPU_NODE_RANK=$i
            MASTER_ADDR=$N0 MASTER_PORT=${MASTER_PORT:-29500} "${UENV[@]}")
@@ -231,40 +707,51 @@ EOF
 
 read -r -d '' R_EXEC <<'EOF'
 # A foreground exec counts as activity: keep the idle-release heartbeat fresh while it runs.
-( while sleep 60; do touch "$B/jobs/$J/heartbeat"; done ) & HB=$!
+( while sleep 60; do touch "$B/jobs/$J/heartbeat"; done ) >/dev/null 2>&1 & HB=$!
 trap 'kill $HB 2>/dev/null; kill $WD 2>/dev/null' EXIT
-if ((${#T[@]} == 1)); then
-  mk "$(rank_of "${T[0]}")" exec "$@"; on_node "$J" "${T[0]}" "${CMD[@]}"; exit $?
+if ((${#TARGET_NODES[@]} == 1)); then
+  build_node_command "$(rank_of "${TARGET_NODES[0]}")" exec "$@"; on_node "$J" "${TARGET_NODES[0]}" "${CMD[@]}"; exit $?
 fi
 tmp=$(mktemp -d); pids=()
-for n in "${T[@]}"; do
-  mk "$(rank_of "$n")" exec "$@"
+for n in "${TARGET_NODES[@]}"; do
+  build_node_command "$(rank_of "$n")" exec "$@"
   { on_node "$J" "$n" "${CMD[@]}" 2>&1 | sed -u "s/^/[$n] /"; echo "${PIPESTATUS[0]}" >"$tmp/$n"; } & pids+=($!)
 done
 wait "${pids[@]}"; rc=0   # not a bare `wait`: the heartbeat loop and stdin watchdog never end
-for n in "${T[@]}"; do r=$(<"$tmp/$n"); ((r)) && { echo "[$n] exit=$r" >&2; ((rc)) || rc=$r; }; done
+for n in "${TARGET_NODES[@]}"; do
+  node_rc=$(<"$tmp/$n")
+  if ((node_rc)); then
+    echo "[$n] exit=$node_rc" >&2
+    if ((rc == 0)); then rc=$node_rc; fi
+  fi
+done
 rm -rf "$tmp"; exit $rc
 EOF
 
+# All exec/bg remote arguments are constructed here, beside their receiver above.
+run_remote() {
+  local body=$1 tag=$2
+  remote "$body" "$JOB" "$RUN_NODES" "$DIR" "$IMG" "$tag" "${#UENV[@]}" "${UENV[@]}" "${CMD[@]}"
+}
 cmd_exec() {
   parse_run_opts "$@"
-  remote "WD=\${WD:-}
+  run_remote "WD=\${WD:-}
 $R_RUNPRE
-$R_EXEC" "$JOB" "$W" "$DIR" "$IMG" "x$RANDOM$RANDOM-$$" "${#UENV[@]}" "${UENV[@]}" "${CMD[@]}"
+$R_EXEC" "x$RANDOM$RANDOM-$$"
 }
 
 read -r -d '' R_BG <<'EOF'
 TN=$TAG; [[ $TN =~ ^[A-Za-z0-9_-]+$ ]] || err USAGE "bad --name $TN (use [A-Za-z0-9_-])"
 TD=$B/jobs/$J/tasks; mkdir "$TD/$TN.claim" 2>/dev/null || err USAGE "task $TN already exists in job $C:$J"
-for n in "${T[@]}"; do echo "$(rank_of "$n") $n"; done >"$TD/$TN.claim/ranks"   # the ranks the task must run on
+for n in "${TARGET_NODES[@]}"; do echo "$(rank_of "$n") $n"; done >"$TD/$TN.claim/ranks"   # the ranks the task must run on
 SP=$B/jobs/$J/spawn; mkdir -p "$SP"
-for n in "${T[@]}"; do   # the holder on node n picks the request up within ~2s
-  i=$(rank_of "$n"); mk "$i" bg "$@"; F=$TD/$TN.$i
+for n in "${TARGET_NODES[@]}"; do   # the holder on node n picks the request up within ~2s
+  i=$(rank_of "$n"); build_node_command "$i" bg "$@"; F=$TD/$TN.$i
   printf '%s\0' "$F" "$BGRUN_SH" "${CMD[@]}" >"$SP/.$n.$TN.$i" && mv -f "$SP/.$n.$TN.$i" "$SP/$n.$TN.$i"
 done
 # Confirm on the node itself: the login node's NFS client caches "file absent" for a while.
 started=()
-for n in "${T[@]}"; do
+for n in "${TARGET_NODES[@]}"; do
   i=$(rank_of "$n")
   if ONTO=60 on_node "$J" "$n" bash -c 'for k in $(seq 30); do [ -e "$1" ] && exit 0; sleep 1; done; exit 1' _ "$TD/$TN.$i.pid"; then
     started+=("$n")
@@ -273,37 +760,51 @@ for n in "${T[@]}"; do
     err TASK_START_FAILED "task=$TN job=$C:$J node=$n started_on=\"$(IFS=,; echo "${started[*]}")\" msg=\"holder did not start the task within 30s (see $B/logs/$J.$n.log)\" hint=\"ranks that did start keep running; check with remote-gpu logs -j $C:$J $TN\""
   fi
 done
-echo "OK task=$TN job=$C:$J nodes=$(IFS=,; echo "${T[*]}") logs=$TD/$TN.<rank>.log"
+echo "OK task=$TN job=$C:$J nodes=$(IFS=,; echo "${TARGET_NODES[*]}") logs=$TD/$TN.<rank>.log"
 echo "next: remote-gpu wait -j $C:$J $TN   |   remote-gpu logs -j $C:$J $TN" >&2
 EOF
 
 cmd_bg() {
   parse_run_opts "$@"
-  remote "$(with_script BGRUN_SH bgrun "$BGRUN")
+  run_remote "$(with_script BGRUN_SH bgrun "$BGRUN")
 $R_RUNPRE
-$R_BG" "$JOB" "$W" "$DIR" "$IMG" "${TNAME:-t$(date +%m%d%H%M%S)-$RANDOM}" "${#UENV[@]}" "${UENV[@]}" "${CMD[@]}"
+$R_BG" "${TNAME:-t$(date +%m%d%H%M%S)-$RANDOM}"
 }
 
 # Task status (login node reads the task files on NFS; no job step needed).
 read -r -d '' R_TASKS <<'EOF'
 J=$1 TN=$2; TD=$B/jobs/$J/tasks
-JS=$(jfield "$J" '%T'); [[ $JS == RUNNING ]] && touch "$B/jobs/$J/heartbeat" 2>/dev/null
+JS=$(job_value "$J" STATE); [[ $JS == RUNNING ]] && touch "$B/jobs/$J/heartbeat" 2>/dev/null
 tstate() { # tstate FILEBASE -> "DONE rc" | "RUNNING" | "LOST"
   if [[ -e $1.rc ]]; then echo "DONE $(<"$1.rc")"; elif [[ $JS == RUNNING ]]; then echo RUNNING; else echo LOST; fi
 }
-summary() { # summary TASK: per-rank lines; sets AGG (DONE|NOT_STARTED|RUNNING|LOST) and ARC (first nonzero rc)
-  local i f st r node; AGG=DONE ARC=0
+summary() { # Per-rank lines; TASK_STATE and TASK_RC summarize the expected ranks.
+  local rank file state rc node missing=0 running=0 lost=0
+  TASK_STATE=DONE TASK_RC=0
   nfs_sync "$TD"
-  while read -r i node; do
-    f=$TD/$1.$i
-    if [[ -e $f.pid ]]; then read -r st r <<<"$(tstate "$f")"
-    elif [[ $JS == RUNNING && $(cat "$TD/$1.claim/state" 2>/dev/null) != failed ]]; then st=RUNNING r=''   # bg is still starting it
-    else st=NOT_STARTED r=''; fi
-    echo "  rank=$i node=$node state=$st${r:+ rc=$r} log=$f.log"
-    case $st in RUNNING) [[ $AGG == LOST ]] || AGG=RUNNING ;; LOST) AGG=LOST ;; NOT_STARTED) [[ $AGG == DONE ]] && AGG=NOT_STARTED ;; DONE) ((r && !ARC)) && ARC=$r ;; esac
+  while read -r rank node; do
+    file=$TD/$1.$rank
+    if [[ -e $file.pid ]]; then
+      read -r state rc <<<"$(tstate "$file")"
+    elif [[ $JS == RUNNING && $(cat "$TD/$1.claim/state" 2>/dev/null) != failed ]]; then
+      state=RUNNING rc=''   # bg is still starting this rank
+    else
+      state=NOT_STARTED rc=''
+    fi
+    echo "  rank=$rank node=$node state=$state${rc:+ rc=$rc} log=$file.log"
+    case $state in
+      RUNNING) running=1 ;;
+      LOST) lost=1 ;;
+      NOT_STARTED) missing=1 ;;
+      DONE) if ((rc && !TASK_RC)); then TASK_RC=$rc; fi ;;
+    esac
   done <"$TD/$1.claim/ranks"
+  if ((running)); then TASK_STATE=RUNNING
+  elif ((missing)); then TASK_STATE=NOT_STARTED
+  elif ((lost)); then TASK_STATE=LOST
+  fi
 }
-status_line() { echo "task=$1 job=$C:$J state=$AGG$([[ $AGG == DONE ]] && echo " rc=$ARC")"; }
+status_line() { echo "task=$1 job=$C:$J state=$TASK_STATE$([[ $TASK_STATE == DONE ]] && echo " rc=$TASK_RC")"; }
 EOF
 
 read -r -d '' R_LOGS <<'EOF'
@@ -313,7 +814,7 @@ if [[ -z $TN ]]; then
   exit 0
 fi
 [[ -s $TD/$TN.claim/ranks ]] || err NO_TASK "job=$C:$J task=$TN"
-for l in "$TD/$TN".*.log; do echo "==> $l <=="; tail -n "$3" "$l"; done
+for l in "$TD/$TN".*.log; do [[ -e $l ]] || continue; echo "==> $l <=="; tail -n "$3" "$l"; done
 summary "$TN"; status_line "$TN"
 EOF
 
@@ -322,16 +823,16 @@ end=$((SECONDS + $3))
 [[ -s $TD/$TN.claim/ranks ]] || err NO_TASK "job=$C:$J task=$TN"
 while :; do
   summary "$TN" >/dev/null
-  [[ $AGG == RUNNING ]] && ((SECONDS < end)) || break
-  sleep 10; JS=$(jfield "$J" '%T')
+  [[ $TASK_STATE == RUNNING ]] && ((SECONDS < end)) || break
+  sleep 10; JS=$(job_value "$J" STATE)
 done
-for l in "$TD/$TN".*.log; do echo "==> $l (last 20 lines) <=="; tail -n 20 "$l"; done
+for l in "$TD/$TN".*.log; do [[ -e $l ]] || continue; echo "==> $l (last 20 lines) <=="; tail -n 20 "$l"; done
 summary "$TN"; status_line "$TN"
-case $AGG in
-  DONE) exit "$ARC" ;;
+case $TASK_STATE in
+  DONE) exit "$TASK_RC" ;;
   RUNNING) exit 205 ;;
   NOT_STARTED) err TASK_START_FAILED "task=$TN job=$C:$J msg=\"some ranks never started\"" ;;
-  LOST) err JOB_GONE "task=$TN job=$C:$J job_state=${JS:-$(jfinal "$J")}" ;;
+  LOST) err JOB_GONE "task=$TN job=$C:$J job_state=${JS:-$(job_value "$J" STATE)}" ;;
 esac
 EOF
 
@@ -352,15 +853,67 @@ $R_WAIT" "$JOB" "$tn" "$to"
 }
 
 read -r -d '' R_LS <<'EOF'
+rows=$(scheduler_jobs) || err PROBE_FAILED 'msg="cannot list jobs"'
 {
   echo "JOB|NAME|STATE|NODES|ELAPSED|TIMELEFT|PARTITION|ACCOUNT|QOS|N|REASON|START|IDLE"
-  $SQUEUE -u "$USER" -h -o '%i|%j|%T|%N|%M|%L|%P|%a|%q|%D|%r|%S' | sed 's/^ *//;s/ *$//;s/ *| */|/g' | while IFS='|' read -r id rest; do
-    hb=$B/jobs/$id/heartbeat; idle=-
-    [[ -e $hb ]] && idle=$((($(date +%s) - $(stat -c %Y "$hb")) / 60))m
-    echo "$C:$id|${rest// /_}|$idle"
-  done
+  while IFS='|' read -r id record; do
+    [[ -n $id ]] || continue
+    decode_job "$record"
+    heartbeat=$B/jobs/$id/heartbeat; idle=-
+    if [[ -e $heartbeat ]]; then idle=$((($(date +%s) - $(stat -c %Y "$heartbeat")) / 60))m; fi
+    IFS=, read -ra nodes <<<"$JOB_NODES"
+    echo "$C:$id|${JOB_NAME// /_}|$JOB_STATE|$JOB_NODES|$JOB_ELAPSED|$JOB_TIME_LEFT|$JOB_PARTITION|$JOB_ACCOUNT|$JOB_QOS|${JOB_NODE_COUNT:-${#nodes[@]}}|${JOB_REASON// /_}|$JOB_START|$idle"
+  done <<<"$rows"
 } | column -t -s '|'
 EOF
+
+read -r -d '' R_RELEASE <<'EOF_RELEASE'
+release_jobs() {
+  local all=$1 job state node_count owner directory attempt cleaned rows id record
+  local jobs=(); shift
+  jobs=("$@")
+  if ((all)); then
+    rows=$(scheduler_jobs) || err PROBE_FAILED 'msg="cannot list jobs for release"'
+    while IFS='|' read -r id record; do
+      [[ -n $id ]] || continue
+      decode_job "$record"
+      if [[ $JOB_NAME == "$C-"* ]]; then jobs+=("$id"); fi
+    done <<<"$rows"
+  fi
+  if ((${#jobs[@]} == 0)); then echo "nothing to release on $C"; return; fi
+  for job in "${jobs[@]}"; do
+    if ! read_job "$job"; then warn "job=$C:$job cannot query ownership; skipped"; continue; fi
+    state=$JOB_STATE owner=$JOB_USER
+    if terminal_state "$state"; then echo "OK job=$C:$job already ended state=$state"; continue; fi
+    if [[ $owner != "$USER" ]]; then warn "job=$C:$job belongs to $owner, not you; skipped"; continue; fi
+    if [[ $state == RUNNING ]]; then
+      local nodes=()
+      IFS=, read -ra nodes <<<"$JOB_NODES"
+      node_count=${JOB_NODE_COUNT:-${#nodes[@]}}
+      directory=$B/jobs/$job
+      mkdir -p "$directory"; touch "$directory/release"
+      cleaned=0
+      for attempt in $(seq 90); do
+        nfs_sync "$directory"
+        cleaned=$(find "$directory" -maxdepth 1 -name 'cleaned.*' -type f | wc -l)
+        if ((node_count > 0 && cleaned >= node_count)); then break; fi
+        sleep 1
+      done
+      if ((node_count == 0 || cleaned < node_count)); then
+        warn "job=$C:$job only $cleaned/$node_count nodes confirmed cleanup within 90s; cancelling anyway (see $B/logs/$job.<node>.log)"
+      fi
+    fi
+    if scheduler_cancel "$job" >/dev/null 2>&1; then
+      echo "OK released job=$C:$job"
+    elif [[ $(job_value "$job" STATE) =~ ^(COMPLETING|COMPLETED)$ ]]; then
+      echo "OK released job=$C:$job"
+    else
+      warn "cancel failed job=$C:$job"
+    fi
+  done
+}
+release_jobs "$@"
+EOF_RELEASE
 
 cmd_release() {
   local all=0 jobs=() j
@@ -379,105 +932,175 @@ cmd_shell() {
   local w=''
   while (($#)); do case $1 in -j | --job) need2 "$@"; JOB=$2; shift 2 ;; -w | --node) need2 "$@"; w=$2; shift 2 ;; *) die "shell: unknown option $1" ;; esac; done
   need_job; [[ -z $w || $w =~ ^[a-z0-9-]+$ ]] || die "shell: bad -w"
-  local c; c=$(shell_cmd "$JOB" "$w")
-  if on_login; then eval "$c"; else ssh -t "${SSH_OPTS[@]}" "$HOST" "$c"; fi
+  local body command
+  body="C=$CLUSTER
+$CLUSTER_ENV
+$ERRLIB
+$RLIB
+$CLUSTER_RLIB
+$(printf 'set -- %q %q' "$JOB" "$w")
+need_running \"\$1\"
+NL=(\$(job_nodes \"\$1\")); N0=\${NL[0]:-}
+node=\${2:-\$N0}
+[[ -n \$node && ,\$JOB_NODES, == *,\$node,* ]] || err USAGE 'node is not in the job'
+scheduler_run \"\$1\" \"\$node\" interactive bash -l"
+  if on_login; then
+    "${LOGIN_ENV[@]}" bash "${RBASH[@]}" -c "$body"
+  else
+    printf -v command 'exec env -u BASH_ENV bash %s -c %q' "${RBASH[*]}" "$body"
+    ssh -t "${SSH_OPTS[@]}" "$HOST" "$command"
+  fi
 }
 
 # remote_dirs: "STATE_DIR BASE_DIR" on the cluster (where push puts code; what relative paths mean).
 remote_dirs() { remote 'echo "$B $REL"'; }
 
-# git_seed DIR URL SHA: create DIR as a clone of URL checked out at SHA, so the rsync after it
-# sends only local changes, not the whole tree. On failure DIR is not created.
-read -r -d '' GITSEED <<'EOF'
-git_seed() {
-  local t="$1.clone.$$"
-  # URL and SHA come from the other side: no options, no transports beyond https/ssh/git
-  [[ $2 != -* && $3 =~ ^[0-9a-f]{40}$ ]] || { warn "unexpected origin '$2' or commit '$3'; copying the whole tree"; return 1; }
-  mkdir -p "$(dirname "$1")" || return 1
-  { GIT_TERMINAL_PROMPT=0 git -c protocol.allow=never -c protocol.https.allow=always -c protocol.ssh.allow=always \
-      -c protocol.git.allow=always clone -q -- "$2" "$t" >&2 &&
-    { git -C "$t" checkout -q "$3" || { GIT_TERMINAL_PROMPT=0 git -C "$t" fetch -q origin "$3" && git -C "$t" checkout -q "$3"; }; } 2>/dev/null &&
-    mv "$t" "$1"; } || { rm -rf "$t"; warn "cannot clone $2 at $3; copying the whole tree"; return 1; }
+# Source metadata and destination preparation are shared by push/pull. Transport direction is
+# the only difference: these functions execute beside the source/destination respectively.
+read -r -d '' SYNCLIB <<'EOF_SYNC'
+git_source() {
+  local directory=$1 url='' sha='' safe=1
+  cd "$directory" 2>/dev/null || return 1
+  [[ $(git rev-parse --show-toplevel 2>/dev/null) == "$(pwd -P)" ]] || { echo '1||'; return; }
+  if git config --get-regexp '^http\..*extraheader$' >/dev/null ||
+    git config --get-regexp '^remote\..*\.(url|pushurl)$' | grep -qiE ' https?://[^/]*@'; then
+    safe=0
+  fi
+  if ((safe)); then
+    url=$(git remote get-url origin 2>/dev/null)
+    if [[ $url == http*://*@* ]]; then
+      safe=0 url=''
+    else
+      sha=$(git rev-parse HEAD 2>/dev/null)
+    fi
+  fi
+  printf '%s|%s|%s\n' "$safe" "$sha" "$url"
 }
-EOF
-eval "$GITSEED"
-# git_head DIR: "SHA URL" if DIR is the top of a git work tree with an origin remote. A repo with
-# credentials in its config (a token in the URL, an http extraheader) is skipped: cloning, or
-# copying its .git, would copy the token to the other side.
-GITHEAD='cd "$1" 2>/dev/null && [[ $(git rev-parse --show-toplevel 2>/dev/null) == "$(pwd -P)" ]] &&
-  u=$(git remote get-url origin 2>/dev/null) && [[ $u != http*://*@* ]] &&
-  ! git config --get-regexp "^http\..*extraheader" >/dev/null && echo "$(git rev-parse HEAD) $u"'
+# git_seed DIR URL SHA. Failed clones leave DIR absent. Git's protocol allowlist also
+# constrains redirects/helpers/submodules; reject option-like URLs and non-network URLs first.
+git_seed() {
+  local directory=$1 url=$2 sha=$3 temporary=$1.clone.$$
+  if [[ $url == -* || ! $sha =~ ^[0-9a-fA-F]{40}$ ||
+        ! ( $url == https://* || $url == ssh://* || $url == git://* || ( $url != *://* && $url =~ ^([^/@:]+@)?[^/:]+:[^:].* ) ) ]]; then
+    warn 'unexpected origin transport or commit; copying the whole tree'
+    return 1
+  fi
+  mkdir -p "$(dirname "$directory")" || return 1
+  if GIT_TERMINAL_PROMPT=0 GIT_ALLOW_PROTOCOL=https:ssh:git git -c protocol.allow=never -c protocol.https.allow=always \
+      -c protocol.ssh.allow=always -c protocol.git.allow=always clone -q -- "$url" "$temporary" >&2 &&
+    { git -C "$temporary" checkout -q "$sha" ||
+      { GIT_TERMINAL_PROMPT=0 GIT_ALLOW_PROTOCOL=https:ssh:git git -C "$temporary" fetch -q origin "$sha" && git -C "$temporary" checkout -q "$sha"; }; } 2>/dev/null &&
+    mv "$temporary" "$directory"; then
+    return 0
+  fi
+  rm -rf "$temporary"
+  warn 'cannot clone at the source commit; copying the whole tree'
+  return 1
+}
+# prepare_sync DIR IS_DIR SAFE SHA URL ON_LOGIN -> existing|seeded|fresh_git|fresh.
+# Only a fresh seed enables implicit --delete; existing destinations always keep their .git.
+prepare_sync() {
+  local directory=$1 is_directory=$2 safe=$3 sha=$4 url=$5 local_transport=$6
+  if ((!is_directory)); then mkdir -p "$(dirname "$directory")"; echo existing; return; fi
+  if [[ -e $directory ]]; then echo existing; return; fi
+  if ((!local_transport)) && [[ -n $url ]] && git_seed "$directory" "$url" "$sha"; then
+    echo seeded
+    return
+  fi
+  mkdir -p "$directory" || return 1
+  if ((safe || local_transport)); then echo fresh_git; else echo fresh; fi
+}
+EOF_SYNC
+eval "$SYNCLIB"
+
+# Common policy result -> rsync options, for both directions. --no-exclude affects build/cache
+# exclusions only; it never overwrites an existing destination's .git or copies credentials.
+sync_options() {
+  SYNC_GIT_OPTIONS=(--exclude .git/)
+  case $1 in
+    existing | fresh) ;;
+    seeded) SYNC_OPTIONS+=(--delete) ;;
+    fresh_git) SYNC_GIT_OPTIONS=() ;;
+    *) err RSYNC_FAILED 'msg="cannot prepare destination"' ;;
+  esac
+}
 
 RSYNC_EXCLUDES=(--exclude __pycache__/ --exclude '*.pyc' --exclude .venv/ --exclude node_modules/ --exclude /build/)
 cmd_push() {
-  local src='' dst='' opts=(-az --protect-args) ex=("${RSYNC_EXCLUDES[@]}") gx=(--exclude .git/)
-  while (($#)); do case $1 in
-    --delete) opts+=(--delete); shift ;;
-    --no-exclude) ex=() gx=(); shift ;;
-    --exclude) need2 "$@"; ex+=(--exclude "$2"); shift 2 ;;
-    -*) die "push: unknown option $1" ;;
-    *) if [[ -z $src ]]; then src=$1; else dst=$1; fi; shift ;;
-  esac; done
+  local src='' dst='' exclusions=("${RSYNC_EXCLUDES[@]}")
+  local SYNC_OPTIONS=(-az --protect-args) SYNC_GIT_OPTIONS=()
+  while (($#)); do
+    case $1 in
+      --delete) SYNC_OPTIONS+=(--delete); shift ;;
+      --no-exclude) exclusions=(); shift ;;
+      --exclude) need2 "$@"; exclusions+=(--exclude "$2"); shift 2 ;;
+      -*) die "push: unknown option $1" ;;
+      *) if [[ -z $src ]]; then src=$1; else dst=$1; fi; shift ;;
+    esac
+  done
   [[ -n $src && -e $src ]] || die "push: local path '$src' does not exist"
-  local rb rel isdir=0 rd tok same; read -r rb rel < <(remote_dirs) && [[ $rel == /* ]] || exit 255
-  [[ -d $src ]] && isdir=1
-  src=$(realpath "$src"); [[ $src != / ]] || die "push: refusing to push /"
-  dst=${dst:-$rb/src/$(basename "$src")}
-  [[ $dst == /* ]] || dst=$rel/$dst
-  # The cluster may mount the filesystem this box works on, at the same path: pushing a path onto
-  # itself is a no-op at best, and with --delete it would wipe the tree. A token file written here
-  # and seen there tells.
-  rd=$(realpath -m "$dst")
-  if [[ $rd == "$src" || $rd == "$src"/* || $src == "$rd"/* ]]; then
-    tok=$(mktemp "$( ((isdir)) && echo "$src" || dirname "$src")/.remote-gpu-same.XXXXXX") || die "push: cannot write a token next to '$src'"
-    remote '[[ -e $1 ]]' "$tok"; same=$?; rm -f "$tok"
+  local state_root relative_root is_directory=0 resolved token same source_safe=1 sha='' url='' plan local_transport=0
+  read -r state_root relative_root < <(remote_dirs) && [[ $relative_root == /* ]] || exit 255
+  if [[ -d $src ]]; then is_directory=1; fi
+  if on_login; then local_transport=1; fi
+  src=$(realpath "$src")
+  [[ $src != / ]] || die 'push: refusing to push /'
+  dst=${dst:-$state_root/src/$(basename "$src")}
+  if [[ $dst != /* ]]; then dst=$relative_root/$dst; fi
+  # Probe overlapping paths with a token: the remote filesystem may be mounted here too.
+  resolved=$(realpath -m "$dst")
+  if [[ $resolved == "$src" || $resolved == "$src"/* || $src == "$resolved"/* ]]; then
+    local token_dir=$src
+    if ((!is_directory)); then token_dir=$(dirname "$src"); fi
+    token=$(mktemp "$token_dir/.remote-gpu-same.XXXXXX") || die "push: cannot write a token next to '$src'"
+    remote '[[ -e $1 ]]' "$token"; same=$?
+    rm -f "$token"
     if ((same == 0)); then
-      [[ $rd == "$src" ]] && { echo "OK remote=$rd (same path on a filesystem shared with this box; nothing to copy)"; return; }
-      die "push: '$src' and '$rd' are nested in each other on a filesystem shared with this box"
+      if [[ $resolved == "$src" ]]; then echo "OK remote=$resolved (same path on a filesystem shared with this box; nothing to copy)"; return; fi
+      die "push: '$src' and '$resolved' are nested in each other on a filesystem shared with this box"
     fi
   fi
-  # First push of a git repo: clone it on the cluster (fast, near the git server), then rsync the
-  # diff, deleting what the source deleted. A new directory the clone failed for gets .git too,
-  # unless the repo holds credentials (no url then).
-  local sha='' url='' r
-  ((isdir)) && ! on_login && read -r sha url < <(bash -c "$GITHEAD" _ "$src")
-  if ((isdir)); then
+  if ((is_directory)); then
+    IFS='|' read -r source_safe sha url < <(git_source "$src")
     src=$src/
-    remote "$GITSEED"$'\n''[[ -e $1 ]] && exit 0; [[ -n $2 ]] && git_seed "$1" "$2" "$3" && exit 10; mkdir -p "$1" && exit 11' "$dst" "$url" "$sha"
-    r=$?
-    case $r in
-      0) ;;                        # the directory exists: keep its own .git
-      10) opts+=(--delete) ;;      # cloned
-      11) if [[ -n $url ]] || on_login; then gx=(); fi ;;   # new, not cloned: copy .git unless it holds credentials
-      *) exit "$r" ;;
-    esac
-  else remote 'mkdir -p "$(dirname "$1")"' "$dst" || exit 255; fi
-  if on_login; then rsync "${opts[@]}" "${ex[@]}" "${gx[@]}" "$src" "$dst"
-  else rsync "${opts[@]}" "${ex[@]}" "${gx[@]}" -e "ssh ${SSH_OPTS[*]}" "$src" "$HOST:$dst"; fi || err RSYNC_FAILED "cluster=$CLUSTER"
+  fi
+  plan=$(remote "$SYNCLIB"$'\n''prepare_sync "$@"' "$dst" "$is_directory" "$source_safe" "$sha" "$url" "$local_transport") || err RSYNC_FAILED 'msg="cannot prepare destination"'
+  sync_options "$plan"
+  if ((local_transport)); then
+    rsync "${SYNC_OPTIONS[@]}" "${exclusions[@]}" "${SYNC_GIT_OPTIONS[@]}" "$src" "$dst"
+  else
+    rsync "${SYNC_OPTIONS[@]}" "${exclusions[@]}" "${SYNC_GIT_OPTIONS[@]}" -e "ssh ${SSH_OPTS[*]}" "$src" "$HOST:$dst"
+  fi || err RSYNC_FAILED "cluster=$CLUSTER"
   echo "OK remote=$dst"
 }
-
 cmd_pull() {
-  local src='' dst=. opts=(-az --protect-args) rb rel
-  while (($#)); do case $1 in -*) die "pull: unknown option $1" ;; *) if [[ -z $src ]]; then src=$1; else dst=$1; fi; shift ;; esac; done
-  [[ -n $src ]] || die "pull: missing REMOTE path"
-  if [[ $src != /* ]]; then read -r rb rel < <(remote_dirs) && [[ $rel == /* ]] || exit 255; src=$rel/$src; fi
-  # As push: a git repo going to a new directory is cloned here first, then the rsync sends the
-  # diff, deleting what the remote deleted. A new directory the clone failed for gets .git too,
-  # unless the repo holds credentials; an existing one keeps its own.
-  local tgt=$dst sha='' url='' gx=(--exclude .git/); [[ $src == */ ]] || tgt=$dst/$(basename "$src")
-  if [[ ! -e $tgt ]]; then
-    if on_login; then gx=()
-    else
-      read -r sha url < <(remote "$GITHEAD" "$src")
-      if [[ -n $url ]]; then
-        if git_seed "$tgt" "$url" "$sha"; then opts+=(--delete); else gx=(); fi
-      fi
-    fi
+  local src='' dst=. state_root relative_root
+  local SYNC_OPTIONS=(-az --protect-args) SYNC_GIT_OPTIONS=()
+  while (($#)); do
+    case $1 in
+      -*) die "pull: unknown option $1" ;;
+      *) if [[ -z $src ]]; then src=$1; else dst=$1; fi; shift ;;
+    esac
+  done
+  [[ -n $src ]] || die 'pull: missing REMOTE path'
+  if [[ $src != /* ]]; then
+    read -r state_root relative_root < <(remote_dirs) && [[ $relative_root == /* ]] || exit 255
+    src=$relative_root/$src
   fi
-  opts+=("${gx[@]}")
-  if on_login; then rsync "${opts[@]}" "$src" "$dst"
-  else rsync "${opts[@]}" -e "ssh ${SSH_OPTS[*]}" "$HOST:$src" "$dst"; fi || err RSYNC_FAILED "cluster=$CLUSTER"
+  local target=$dst source_safe=1 sha='' url='' plan is_directory=0 local_transport=0
+  if [[ $src != */ ]]; then target=$dst/$(basename "$src"); fi
+  if on_login; then local_transport=1; fi
+  if remote '[[ -d $1 ]]' "$src"; then
+    is_directory=1
+    IFS='|' read -r source_safe sha url < <(remote "$SYNCLIB"$'\n''git_source "$1"' "$src")
+  fi
+  plan=$(prepare_sync "$target" "$is_directory" "$source_safe" "$sha" "$url" "$local_transport") || err RSYNC_FAILED 'msg="cannot prepare destination"'
+  sync_options "$plan"
+  if ((local_transport)); then
+    rsync "${SYNC_OPTIONS[@]}" "${SYNC_GIT_OPTIONS[@]}" "$src" "$dst"
+  else
+    rsync "${SYNC_OPTIONS[@]}" "${SYNC_GIT_OPTIONS[@]}" -e "ssh ${SSH_OPTS[*]}" "$HOST:$src" "$dst"
+  fi || err RSYNC_FAILED "cluster=$CLUSTER"
   echo "OK local=$dst"
 }
 
@@ -486,81 +1109,113 @@ cmd_pull() {
 # ---------------------------------------------------------------------------
 kv() { grep -o "\b$1=[^ ]*" <<<"$2" | head -1 | cut -d= -f2; }
 
-# races CLUSTER ALLOC_ARGS...: alloc there races every team account by default (a race must wait).
-# The preemptible burst QOS joins only with --preemptible.
-races() { local c=$1; shift; [[ " $* " != *" --no-wait "* ]] && grep -q '^ALLOC_AGGRESSIVE=1' "$CDIRS/$c/cluster.env"; }
-# alloc_defaults ALLOC_ARGS...: on a named cluster, unless the caller chose the account, QOS or race:
-# race its team accounts; else take the account `free` reports the most room for (the manifest's
-# first ACCOUNTS pair may be at its team cap).
-alloc_defaults() {
-  local a
-  [[ " $* " =~ \ (-A|--account|-q|--qos|--aggressive)\  ]] && return
-  races "$CLUSTER" "$@" && { ALLOC_X=(--aggressive); return; }
-  a=$(kv account "$("$SELF" --cluster "$CLUSTER" free 2>/dev/null | grep -m1 '^OK ')")
-  [[ -n $a ]] && ALLOC_X=(-A "$a")
-}
-
-# race_clusters ALLOC_ARGS...: alloc on every cluster at once (each races its own accounts where it
-# can) and keep the first that gets nodes. However this process ends, the other allocs are stopped
-# and whatever they submitted is released.
+# A cluster race forks the parsed request, not another CLI parser. Each child loads its own
+# manifest and adapter. Parent cleanup releases every submitted loser, including on signals.
 RACE_TMP='' RACE_PIDS=() RACE_WON=''
 race_cleanup() {
-  local c j
-  kill "${RACE_PIDS[@]}" 2>/dev/null; wait "${RACE_PIDS[@]}" 2>/dev/null
-  for c in "${CLUSTERS[@]}"; do
-    [[ $c == "$RACE_WON" ]] && continue
-    grep -ho "job=$c:[0-9]*" "$RACE_TMP/$c".* 2>/dev/null | sort -u | while read -r j; do
-      "$SELF" release -j "${j#job=}" >/dev/null 2>&1
-    done
+  local cluster handle
+  if ((${#RACE_PIDS[@]})); then
+    kill "${RACE_PIDS[@]}" 2>/dev/null
+    wait "${RACE_PIDS[@]}" 2>/dev/null
+  fi
+  for cluster in "${CLUSTERS[@]}"; do
+    [[ $cluster == "$RACE_WON" ]] && continue
+    while read -r handle; do
+      "$SELF" release -j "${handle#job=}" >/dev/null 2>&1
+    done < <(grep -ho "job=$cluster:[0-9]*" "$RACE_TMP/$cluster".* 2>/dev/null | sort -u)
   done
   rm -rf "$RACE_TMP"
 }
 race_clusters() {
-  local c pid rc=255 byp=() args=() a
-  for a in "$@"; do [[ $a == --aggressive ]] || args+=("$a"); done   # each cluster races where it can anyway
-  RACE_TMP=$(mktemp -d); trap race_cleanup EXIT; trap 'exit 130' INT TERM HUP
-  for c in "${CLUSTERS[@]}"; do
-    "$SELF" --cluster "$c" alloc "${args[@]}" >"$RACE_TMP/$c.out" 2>"$RACE_TMP/$c.err" & RACE_PIDS+=($!); byp[$!]=$c
+  local cluster pid rc=255 remaining=() child
+  local -A cluster_by_pid=()
+  RACE_TMP=$(mktemp -d)
+  trap race_cleanup EXIT
+  trap 'exit 130' INT TERM HUP
+  for cluster in "${CLUSTERS[@]}"; do
+    ( CLUSTER=$cluster; load_cluster; cmd_alloc ) >"$RACE_TMP/$cluster.out" 2>"$RACE_TMP/$cluster.err" &
+    child=$!
+    RACE_PIDS+=("$child")
+    cluster_by_pid[$child]=$cluster
   done
   echo "RACE clusters=\"${CLUSTERS[*]}\"" >&2
   while ((${#RACE_PIDS[@]})); do
-    wait -n -p pid "${RACE_PIDS[@]}"; rc=$?
-    RACE_PIDS=($(printf '%s\n' "${RACE_PIDS[@]}" | grep -vx "$pid"))
-    if ((rc == 0)); then RACE_WON=${byp[pid]}; break; fi
+    wait -n -p pid "${RACE_PIDS[@]}"
+    rc=$?
+    remaining=()
+    for child in "${RACE_PIDS[@]}"; do
+      if [[ $child != "$pid" ]]; then remaining+=("$child"); fi
+    done
+    RACE_PIDS=("${remaining[@]}")
+    if ((rc == 0)); then
+      RACE_WON=${cluster_by_pid[$pid]}
+      break
+    fi
   done
   if [[ -n $RACE_WON ]]; then
-    cat "$RACE_TMP/$RACE_WON.err" >&2; cat "$RACE_TMP/$RACE_WON.out"; echo "RACE kept=$RACE_WON" >&2; exit 0
+    cat "$RACE_TMP/$RACE_WON.err" >&2
+    cat "$RACE_TMP/$RACE_WON.out"
+    echo "RACE kept=$RACE_WON" >&2
+    exit 0
   fi
-  for c in "${CLUSTERS[@]}"; do cat "$RACE_TMP/$c.err" >&2; done   # nobody won: show why
+  for cluster in "${CLUSTERS[@]}"; do cat "$RACE_TMP/$cluster.err" >&2; done
   exit "$rc"
 }
 
-# pick_cluster ALLOC_ARGS...: set CLUSTER to the cluster with the most free nodes (at least -N),
-# and ALLOC_X to the options that pin the account that has them.
+# No-wait selection uses the same request and capacity pair that cmd_alloc will use.
 pick_cluster() {
-  local n=1 pre=0 c f a b line tmp best='' bf=-1 seen=() pids=()
-  ((${#CLUSTERS[@]})) || err PROBE_FAILED "msg=\"no cluster under ~/.remote-gpu/clusters/\" hint=\"add one as references/add-cluster.md says\""
-  while (($#)); do case $1 in
-    -N | --nodes) need2 "$@"; n=$2; shift 2 ;;
-    --preemptible) pre=1; shift ;;
-    *) shift ;;
-  esac; done
-  [[ $n =~ ^[0-9]+$ ]] || die "alloc: -N must be an integer"
+  local cluster free burst line tmp best='' best_free=-1 best_line='' seen=() pids=()
+  ((${#CLUSTERS[@]})) || err PROBE_FAILED 'msg="no cluster under ~/.remote-gpu/clusters/" hint="add one as references/add-cluster.md says"'
   tmp=$(mktemp -d)
-  for c in "${CLUSTERS[@]}"; do timeout 60 "$SELF" --cluster "$c" free >"$tmp/$c" 2>&1 & pids+=($!); done
+  for cluster in "${CLUSTERS[@]}"; do
+    timeout 60 "$SELF" --cluster "$cluster" free >"$tmp/$cluster" 2>&1 & pids+=($!)
+  done
   wait "${pids[@]}"
-  for c in "${CLUSTERS[@]}"; do
-    line=$(grep -m1 '^OK ' "$tmp/$c")
-    if [[ -z $line ]]; then warn "cluster=$c probe failed: $(grep -m1 . "$tmp/$c")"; seen+=("$c=?"); continue; fi
-    f=$(kv free "$line"); a=$(kv account "$line"); b=$(kv burst "$line"); ((pre)) && f=$b; [[ $f =~ ^[0-9]+$ ]] || f=0; seen+=("$c=$f${b:+/burst=$b}")
-    if ((f > bf)); then bf=$f best=$c ALLOC_X=(); [[ -n $a ]] && ALLOC_X=(-A "$a"); fi
+  for cluster in "${CLUSTERS[@]}"; do
+    line=$(grep -m1 '^OK ' "$tmp/$cluster")
+    if [[ -z $line ]]; then
+      warn "cluster=$cluster probe failed: $(grep -m1 . "$tmp/$cluster")"
+      seen+=("$cluster=?")
+      continue
+    fi
+    free=$(kv free "$line")
+    burst=$(kv burst "$line")
+    if ((ALLOC_REQUEST[preemptible])); then free=$burst; fi
+    if [[ ! $free =~ ^[0-9]+$ ]]; then free=0; fi
+    seen+=("$cluster=$free${burst:+/burst=$burst}")
+    if ((free > best_free)); then best_free=$free best=$cluster best_line=$line; fi
   done
   rm -rf "$tmp"
-  [[ -n $best ]] || err PROBE_FAILED "msg=\"no cluster answered the free-node probe\" hint=\"check ssh to the login nodes\""
-  ((bf >= n)) || err NO_FREE_NODES "need=$n free=\"${seen[*]}\" hint=\"no cluster has $n idle nodes now; ask the user: queue on one (remote-gpu --cluster NAME alloc --no-wait, then ready), or alloc without --no-wait to race every cluster\""
-  CLUSTER=$best
+  [[ -n $best ]] || err PROBE_FAILED 'msg="no cluster answered the free-node probe" hint="check ssh to the login nodes"'
+  if ((best_free < ALLOC_REQUEST[nodes])); then
+    err NO_FREE_NODES "need=${ALLOC_REQUEST[nodes]} free=\"${seen[*]}\" hint=\"queue with --cluster NAME alloc --no-wait, or alloc without --no-wait to race every cluster\""
+  fi
+  CLUSTER=$best ALLOC_CAPACITY=$best_line
   echo "PICK cluster=$best free=\"${seen[*]}\"" >&2
 }
+
+# Validate definitions locally without evaluating the adapter's remote site setup. A missing
+# hook fails before ssh or any command (including free) can partially execute.
+load_cluster() {
+  local directory=$CDIRS/$CLUSTER hook
+  PARTITION=''
+  source "$directory/cluster.env"
+  CLUSTER_ENV=$(<"$directory/cluster.env")
+  RBASH=(--noprofile --norc)
+  if [[ $LOGIN_PROFILE == 1 ]]; then RBASH=(--login); fi
+  LOGIN_ENV=(env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" PATH="$(getconf PATH)" LANG=C.UTF-8)
+  CLUSTER_RLIB=''
+  source "$directory/cluster.sh"
+  [[ -n $CLUSTER_RLIB ]] || die "adapter $CLUSTER: missing CLUSTER_RLIB"
+  bash --noprofile --norc -n <<<"$CLUSTER_RLIB" || die "adapter $CLUSTER: invalid CLUSTER_RLIB syntax"
+  for hook in scheduler_submit scheduler_query scheduler_jobs scheduler_cancel scheduler_run scheduler_capacity scheduler_holder; do
+    [[ $CLUSTER_RLIB =~ (^|$'\n')[[:space:]]*${hook}[[:space:]]*\(\) ]] || die "adapter $CLUSTER: missing required hook $hook (see templates/slurm.sh)"
+  done
+  if [[ $EXTEND == 1 && ! $CLUSTER_RLIB =~ (^|$'\n')[[:space:]]*scheduler_extend[[:space:]]*\(\) ]]; then
+    die "adapter $CLUSTER: EXTEND=1 requires scheduler_extend"
+  fi
+}
+on_login() { [[ ${REMOTE_GPU_ON_LOGIN:-} == 1 ]] || { [[ -n $LOGIN_HOSTS ]] && [[ $(hostname -s) == $LOGIN_HOSTS ]]; }; }
 
 usage() {
   cat <<'EOF'
@@ -626,7 +1281,9 @@ EOF
 # ---------------------------------------------------------------------------
 # Dispatch. Pre-scan argv (up to `--`) for --cluster and CLUSTER:ID job handles.
 # ---------------------------------------------------------------------------
-CLUSTER='' ALLOC_X=()
+CLUSTER=''
+declare -A ALLOC_REQUEST=()
+ALLOC_OPTIONS=() ALLOC_CAPACITY=''
 set_cluster() {
   [[ " ${CLUSTERS[*]} " == *" $1 "* ]] || die "unknown cluster '$1' (known: ${CLUSTERS[*]})"
   [[ -z $CLUSTER || $CLUSTER == "$1" ]] || die "conflicting clusters: $CLUSTER and $1"
@@ -671,14 +1328,18 @@ session_job() {
 case $sub in
   help | -h | --help) usage; exit 0 ;;
   alloc)
-    if [[ -n $CLUSTER ]]; then alloc_defaults "$@"
-    else
-      [[ " $* " =~ \ (-p|--partition|-A|--account|-q|--qos|-w|--nodelist|-x|--exclude|-C|--constraint|--reservation)\  ]] &&
-        die "alloc: ${BASH_REMATCH[1]} is cluster-specific; add --cluster NAME"
-      # No cluster named: race all of them; --no-wait queues on the one with the most free nodes.
-      if [[ " $* " == *" --no-wait "* ]] || ((${#CLUSTERS[@]} == 0)); then pick_cluster "$@"
-      elif ((${#CLUSTERS[@]} == 1)); then CLUSTER=${CLUSTERS[0]}; alloc_defaults "$@"
-      else race_clusters "$@"; fi
+    parse_alloc_opts "$@"
+    if [[ -z $CLUSTER ]]; then
+      if ((ALLOC_REQUEST[partition_set] || ALLOC_REQUEST[account_set] || ALLOC_REQUEST[qos_set] || ${#ALLOC_OPTIONS[@]})); then
+        die "alloc: scheduler-specific options need --cluster NAME"
+      fi
+      if ((ALLOC_REQUEST[no_wait] || ${#CLUSTERS[@]} == 0)); then
+        pick_cluster
+      elif ((${#CLUSTERS[@]} == 1)); then
+        CLUSTER=${CLUSTERS[0]}
+      else
+        race_clusters
+      fi
     fi ;;
   free | ls | info) [[ -n $CLUSTER ]] || on_all "$sub" "$@" ;;
   release) [[ -n $CLUSTER || " $* " != *" --all "* ]] || on_all release "$@"
@@ -690,17 +1351,9 @@ case $sub in
   *) die "unknown command $sub" ;;
 esac
 
-CDIR=$CDIRS/$CLUSTER
-source "$CDIR/cluster.env"; CLUSTER_ENV=$(<"$CDIR/cluster.env")
-# Remote scripts run under a bash that reads no profile, unless the scheduler's environment
-# (its commands, its controller address) only comes with a login shell.
-RBASH=(--noprofile --norc); [[ $LOGIN_PROFILE == 1 ]] && RBASH=(--login)
-on_login() { [[ ${REMOTE_GPU_ON_LOGIN:-} == 1 ]] || { [[ -n $LOGIN_HOSTS ]] && [[ $(hostname -s) == $LOGIN_HOSTS ]]; }; }
-# On the login node, keep the caller's environment out of job steps.
-LOGIN_ENV=(env -i HOME="$HOME" USER="$USER" LOGNAME="$USER" PATH="$(getconf PATH)" LANG=C.UTF-8)
-source "$CDIR/cluster.sh"
+load_cluster
 case $sub in
-  alloc) cmd_alloc "$@" "${ALLOC_X[@]}" ;;
+  alloc) cmd_alloc ;;
   ready) cmd_ready "$@" ;;
   exec) cmd_exec "$@" ;;
   bg) cmd_bg "$@" ;;
@@ -708,9 +1361,9 @@ case $sub in
   logs) cmd_logs "$@" ;;
   release) cmd_release "$@" ;;
   extend) cmd_extend "$@" ;;
-  free) remote "$R_FREE" ;;
+  free) remote 'scheduler_capacity' ;;
   ls) remote "$R_LS" ;;
-  info) remote "$R_INFO" ;;
+  info) remote 'scheduler_capacity info' ;;
   push) cmd_push "$@" ;;
   pull) cmd_pull "$@" ;;
   shell) cmd_shell "$@" ;;

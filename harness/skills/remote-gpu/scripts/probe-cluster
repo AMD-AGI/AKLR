@@ -47,9 +47,9 @@ case $S in
     scontrol show config 2>/dev/null | grep -E '^(PreemptType|PreemptMode|PreemptExemptTime|JobSubmitPlugins|MinJobAge) ' | sed 's/^/  /' ;;
   *) echo "== no Slurm or spur here: templates/slurm.sh does not fit; write cluster.sh by its structure" ;;
 esac
-echo "== network filesystems holding a writable dir named \$USER (mount | size | avail)"
+echo "== network filesystems holding a writable dir named \$USER owned by \$USER (mount | size | avail)"
 findmnt -rn -t nfs,nfs4,lustre,gpfs,beegfs,cifs -o TARGET,SIZE,AVAIL 2>/dev/null | while read -r m sz av; do
-  [[ $m != */.snapshot* && -d $m/$USER && -w $m/$USER ]] && echo "  $m $sz $av"
+  [[ $m != */.snapshot* && -d $m/$USER && -O $m/$USER && -w $m/$USER ]] && echo "  $m $sz $av"
 done
 EOF
 

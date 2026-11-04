@@ -37,7 +37,7 @@ worktree on this machine sees the same clusters:
 | file | what it is |
 |---|---|
 | `cluster.env` | The manifest: login, scheduler, partition, accounts, and what a node is (`GPU_MODEL`, `GPU_ARCH`, `GPUS_PER_NODE`, CPUs, memory), `MAX_TIME`, `EXTEND`, `PREEMPTION`. Plain `KEY=value`, one fact per line. |
-| `cluster.sh` | The scheduler-specific part, made from `templates/slurm.sh`; its header lists what was adapted. |
+| `cluster.sh` | Scheduler hooks and site facts, made from `templates/slurm.sh`; its header defines the adapter contract. |
 
 To choose a cluster for a job, read the manifests rather than guessing:
 
@@ -85,7 +85,7 @@ $RG release -j mycluster:202642         # ALWAYS, as soon as you are done
 | `release -j JOB` | Stops the job's bg tasks and containers, gives the nodes back. |
 | `extend -j JOB -t NEW_TOTAL` | New total time limit, on clusters with `EXTEND=1`. |
 | `free` / `ls` / `info` | Free nodes per cluster / my jobs (state, time left, start estimate, idle minutes) / accounts, QOS limits, node states. Every cluster unless `--cluster` is given. |
-| `push LOCAL [REMOTE]` / `pull REMOTE [LOCAL]` | rsync through the login node; needs `--cluster` (the filesystems differ). A git repo going to a path that does not exist yet is first `git clone`d there from its origin at the same commit, so only uncommitted/unpushed changes are copied, and files deleted from the source are deleted there too; when the clone fails, the whole tree is copied with its `.git`. A path the cluster mounts too, at the same place, is left as it is. |
+| `push LOCAL [REMOTE]` / `pull REMOTE [LOCAL]` | rsync through the login node; needs `--cluster` (the filesystems differ). A git repo going to a path that does not exist yet is first `git clone`d there from its origin at the same commit, so only uncommitted/unpushed changes are copied, and files deleted from the source are deleted there too; when the clone fails, a fresh directory receives `.git` only if the source repo holds no URL credentials or HTTP extraheader (or the command runs on the login node). Existing destinations keep their own `.git`, including with `--no-exclude`. A path the cluster mounts too, at the same place, is left as it is. |
 | `shell -j JOB` | Interactive shell, for humans only. Agents use `exec`. |
 
 Commands are arguments after `--`, passed through exactly: spaces, quotes, `$` and `!` all survive.
@@ -132,5 +132,10 @@ command's own exit code, so remote-gpu keeps 200–210 for its own errors:
 | 210 | NO_FREE_NODES | See "No free nodes" above. |
 | 255 | ssh failure / PROBE_FAILED | Check `ssh <HOST> true` with the cluster's `HOST`; set `<NAME>_HOST` (see `HOST=` in its manifest) to pin another login node. Never blindly re-run a non-idempotent command; check `ls` / `logs` first. |
 
-For cluster facts and internals (holder job, cleanup, heartbeat, task files), read the cluster's
-`cluster.env` and the comments in its `cluster.sh`.
+For cluster facts, read its `cluster.env`. The adapter contract is in
+[`templates/slurm.sh`](templates/slurm.sh), with migration guidance in
+[`references/add-cluster.md`](references/add-cluster.md). Scheduler hooks and site facts live
+in `cluster.sh`; shared allocation policy, holder cleanup/heartbeat, task files, and sync rules
+live in `scripts/remote-gpu`. `ALLOC_AGGRESSIVE` only controls whether account racing is the
+default; `--aggressive` works with every adapter. Allocation options are parsed once, and
+account/QOS selections are complete pairs from `ACCOUNTS` (burst is an explicit opt-in).
