@@ -6,7 +6,6 @@ has a holder that starts bg tasks; n1 has none, so a task never starts there.
 
 import os
 import subprocess
-import textwrap
 from pathlib import Path
 
 import pytest
@@ -75,11 +74,15 @@ def env(tmp_path):
 
 
 def rg(env, *args, **kw):
-    return subprocess.run([str(RG), "--cluster", "fake", *args], env=env, capture_output=True, text=True, **kw)
+    return subprocess.run(
+        [str(RG), "--cluster", "fake", *args], env=env, capture_output=True, text=True, **kw
+    )
 
 
 def git(cwd, *args):
-    return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(
+        ["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True
+    ).stdout.strip()
 
 
 def repo(tmp_path):
