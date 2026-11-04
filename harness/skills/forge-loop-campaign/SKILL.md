@@ -85,7 +85,8 @@ nohup $RUN/forge_loop.sh --max-hours 12 --model claude-opus-5-5 --gpu 0 \
 echo $! > $RUN/forge_loop.pid
 ```
 
-On a cluster node, start it as a bg task of the job instead; it runs as the container `NAME-ID-forge-0`:
+On a cluster node, start it as a bg task of the job instead; a task named `forge` runs as the container
+`NAME-ID-forge-0`:
 
 ```bash
 $RG bg -j NAME:ID --name forge --image <image> -C <clone> -e RUN=$RUN -- bash -lc \
@@ -107,10 +108,11 @@ report-progress timer line.
   stops forge-loop and the agents it started; killing forge-loop alone leaves them running, and spending.
 - Afterwards `pgrep -fa claude` must list no agent of this run.
 - On a cluster node, `$RG exec -j NAME:ID -- touch $RUN/workspace/.stop` stops after the round, and
-  `$RG exec -j NAME:ID -- docker stop -t 30 NAME-ID-forge-0` at once, the agents with it. `$RG release` also
+  `$RG exec -j NAME:ID -- docker stop -t 30 NAME-ID-<task>-0` at once, the agents with it. `$RG release` also
   stops it, and gives the node back.
 - Resume as the README's step 4 says, launched as above with `forge_loop_resume.sh` in place of
-  `forge_loop.sh`.
+  `forge_loop.sh`. A job keeps every task name it has used, so each resume on the same job takes a new
+  `--name` (`forge-r1`, `forge-r2`, ...).
 
 ## Steps 5 and 6
 

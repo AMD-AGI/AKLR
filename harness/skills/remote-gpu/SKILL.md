@@ -84,7 +84,7 @@ $RG release -j mycluster:202642         # ALWAYS, as soon as you are done
 | `release -j JOB` | Stops the job's bg tasks and containers, gives the nodes back. |
 | `extend -j JOB -t NEW_TOTAL` | New total time limit, on clusters with `EXTEND=1`. |
 | `free` / `ls` / `info` | Free nodes per cluster / my jobs (state, time left, start estimate, idle minutes) / accounts, QOS limits, node states. Every cluster unless `--cluster` is given. |
-| `push LOCAL [REMOTE]` / `pull REMOTE [LOCAL]` | rsync through the login node; needs `--cluster` (the filesystems differ). A git repo going to a path that does not exist yet is first `git clone`d there from its origin at the same commit, so only uncommitted/unpushed changes are copied. A path the cluster mounts too, at the same place, is left as it is. |
+| `push LOCAL [REMOTE]` / `pull REMOTE [LOCAL]` | rsync through the login node; needs `--cluster` (the filesystems differ). A git repo going to a path that does not exist yet is first `git clone`d there from its origin at the same commit, so only uncommitted/unpushed changes are copied, and files deleted from the source are deleted there too; when the clone fails, the whole tree is copied with its `.git`. A path the cluster mounts too, at the same place, is left as it is. |
 | `shell -j JOB` | Interactive shell, for humans only. Agents use `exec`. |
 
 Commands are arguments after `--`, passed through exactly: spaces, quotes, `$` and `!` all survive.
@@ -118,14 +118,14 @@ command's own exit code, so remote-gpu keeps 200–210 for its own errors:
 
 | rc | code | what to do |
 |---|---|---|
-| 200 | USAGE / UNSUPPORTED | Bad flags, a bare job ID without `--cluster`, `-w` names a node not in the job, `--name` reuses a task, or `extend` where `EXTEND=0`. Read `msg`. |
+| 200 | USAGE / UNSUPPORTED | Bad flags, a bare job ID without `--cluster`, `-w` names a node not in the job, `--name` reuses a task name of the job (each name is used once per job), or `extend` where `EXTEND=0`. Read `msg`. |
 | 201 | QUOTA_FULL | A per-user job limit (check `ls`, release what you don't need), or every team cap of `ACCOUNTS` is full: wait and retry, or ask about burst. |
 | 202 | PENDING_TIMEOUT | Plain `alloc` didn't start within `--wait`; the job was cancelled. Use `--no-wait` + `ready`. |
 | 203 | JOB_GONE | The job ended: time limit, idle release, preemption, or someone released it. `alloc` again, then re-run. |
 | 204 | BAD_NODE | A node showed fewer than `GPUS_PER_NODE` usable GPUs, or could not see the state dir; the job was cancelled. Re-alloc with `--cluster X ... -x <node>` (from `ready`: tell the user the queued job was lost). |
 | 205 | still running / pending | From `wait`/`ready`: call again. `JOB_PENDING` from `exec`/`bg`: the job hasn't started; use `ready`. |
 | 206 | SUBMIT_FAILED / UNSCHEDULABLE / NODES_UNKNOWN / INSTALL_FAILED | The scheduler rejected the request or it can never start as given (fix it); the controller was busy (retry); or the shared filesystem is full (tell the user). |
-| 207 | NO_TASK / TASK_START_FAILED | Wrong task name, or the holder didn't start the task. `started_on=` lists nodes where it runs anyway. |
+| 207 | NO_TASK / TASK_START_FAILED | Wrong task name, or the holder didn't start the task on some node. `started_on=` lists nodes where it runs anyway; `wait` on such a task exits 207 once those end. |
 | 208 | EXTEND_FAILED | Read the message. |
 | 209 | RSYNC_FAILED | Read rsync's message. |
 | 210 | NO_FREE_NODES | See "No free nodes" above. |

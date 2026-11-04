@@ -10,7 +10,7 @@
 # otherwise return the remote command's exit code; 255 = ssh failure.
 set -uo pipefail
 
-SELF=$(readlink -f "${BASH_SOURCE[0]}"); HERE=$(dirname "$SELF"); CDIRS=$HOME/.remote-gpu/clusters
+SELF=$(readlink -f "${BASH_SOURCE[0]}"); CDIRS=$HOME/.remote-gpu/clusters
 # Every cluster directory with a manifest, in PRIORITY order (the auto-pick tie-break).
 CLUSTERS=($(for d in "$CDIRS"/*/cluster.env; do
   [[ -e $d ]] && echo "$(sed -n 's/^PRIORITY=\([0-9]*\).*/\1/p' "$d" | head -1) $(basename "$(dirname "$d")")"
@@ -256,6 +256,7 @@ $R_EXEC" "$JOB" "$W" "$DIR" "$IMG" "x$RANDOM$RANDOM-$$" "${#UENV[@]}" "${UENV[@]
 read -r -d '' R_BG <<'EOF'
 TN=$TAG; [[ $TN =~ ^[A-Za-z0-9_-]+$ ]] || err USAGE "bad --name $TN (use [A-Za-z0-9_-])"
 TD=$B/jobs/$J/tasks; mkdir "$TD/$TN.claim" 2>/dev/null || err USAGE "task $TN already exists in job $C:$J"
+for n in "${T[@]}"; do echo "$(rank_of "$n") $n"; done >"$TD/$TN.claim/ranks"   # the ranks the task must run on
 SP=$B/jobs/$J/spawn; mkdir -p "$SP"
 for n in "${T[@]}"; do   # the holder on node n picks the request up within ~2s
   i=$(rank_of "$n"); mk "$i" bg "$@"; F=$TD/$TN.$i
@@ -290,14 +291,17 @@ JS=$(jfield "$J" '%T'); [[ $JS == RUNNING ]] && touch "$B/jobs/$J/heartbeat" 2>/
 tstate() { # tstate FILEBASE -> "DONE rc" | "RUNNING" | "LOST"
   if [[ -e $1.rc ]]; then echo "DONE $(<"$1.rc")"; elif [[ $JS == RUNNING ]]; then echo RUNNING; else echo LOST; fi
 }
-summary() { # summary TASK: per-rank lines; sets AGG (DONE|RUNNING|LOST) and ARC (first nonzero rc)
-  local p f st r node; AGG=DONE ARC=0
+summary() { # summary TASK: per-rank lines; sets AGG (DONE|NOT_STARTED|RUNNING|LOST) and ARC (first nonzero rc)
+  local i f st r node; AGG=DONE ARC=0
   nfs_sync "$TD"
-  for p in "$TD/$1".*.pid; do
-    f=${p%.pid}; read -r node _ <"$p"; read -r st r <<<"$(tstate "$f")"
-    echo "  rank=${f##*.} node=$node state=$st${r:+ rc=$r} log=$f.log"
-    case $st in RUNNING) [[ $AGG == LOST ]] || AGG=RUNNING ;; LOST) AGG=LOST ;; DONE) ((r && !ARC)) && ARC=$r ;; esac
-  done
+  while read -r i node; do
+    f=$TD/$1.$i
+    if [[ -e $f.pid ]]; then read -r st r <<<"$(tstate "$f")"
+    elif [[ $(cat "$TD/$1.claim/state" 2>/dev/null) == failed ]]; then st=NOT_STARTED r=''
+    else st=RUNNING r=''; fi   # bg is still starting it
+    echo "  rank=$i node=$node state=$st${r:+ rc=$r} log=$f.log"
+    case $st in RUNNING) [[ $AGG == LOST ]] || AGG=RUNNING ;; LOST) AGG=LOST ;; NOT_STARTED) [[ $AGG == DONE ]] && AGG=NOT_STARTED ;; DONE) ((r && !ARC)) && ARC=$r ;; esac
+  done <"$TD/$1.claim/ranks"
 }
 status_line() { echo "task=$1 job=$C:$J state=$AGG$([[ $AGG == DONE ]] && echo " rc=$ARC")"; }
 EOF
@@ -305,17 +309,17 @@ EOF
 read -r -d '' R_LOGS <<'EOF'
 if [[ -z $TN ]]; then
   [[ -d $TD ]] || { echo "no tasks for job $C:$J"; exit 0; }
-  for t in $(ls "$TD" | sed -n 's/\.[0-9]*\.pid$//p' | sort -u); do summary "$t" >/dev/null; status_line "$t"; done
+  for t in $(ls "$TD" | sed -n 's/\.claim$//p'); do summary "$t" >/dev/null; status_line "$t"; done
   exit 0
 fi
-compgen -G "$TD/$TN.*.pid" >/dev/null || err NO_TASK "job=$C:$J task=$TN"
+[[ -s $TD/$TN.claim/ranks ]] || err NO_TASK "job=$C:$J task=$TN"
 for l in "$TD/$TN".*.log; do echo "==> $l <=="; tail -n "$3" "$l"; done
 summary "$TN"; status_line "$TN"
 EOF
 
 read -r -d '' R_WAIT <<'EOF'
 end=$((SECONDS + $3))
-compgen -G "$TD/$TN.*.pid" >/dev/null || err NO_TASK "job=$C:$J task=$TN"
+[[ -s $TD/$TN.claim/ranks ]] || err NO_TASK "job=$C:$J task=$TN"
 while :; do
   summary "$TN" >/dev/null
   [[ $AGG == RUNNING ]] && ((SECONDS < end)) || break
@@ -326,6 +330,7 @@ summary "$TN"; status_line "$TN"
 case $AGG in
   DONE) exit "$ARC" ;;
   RUNNING) exit 205 ;;
+  NOT_STARTED) err TASK_START_FAILED "task=$TN job=$C:$J msg=\"some ranks never started\"" ;;
   LOST) err JOB_GONE "task=$TN job=$C:$J job_state=${JS:-$(jfinal "$J")}" ;;
 esac
 EOF
@@ -382,19 +387,17 @@ cmd_shell() {
 remote_dirs() { remote 'echo "$B $REL"'; }
 
 # git_seed DIR URL SHA: create DIR as a clone of URL checked out at SHA, so the rsync after it
-# sends only local changes, not the whole tree. Fails if the clone does or SHA is not on URL.
+# sends only local changes, not the whole tree. On failure DIR is not created.
 read -r -d '' GITSEED <<'EOF'
 git_seed() {
   local t="$1.clone.$$"
   # URL and SHA come from the other side: no options, no transports beyond https/ssh/git
   [[ $2 != -* && $3 =~ ^[0-9a-f]{40}$ ]] || { warn "unexpected origin '$2' or commit '$3'; copying the whole tree"; return 1; }
   mkdir -p "$(dirname "$1")" || return 1
-  GIT_TERMINAL_PROMPT=0 git -c protocol.allow=never -c protocol.https.allow=always -c protocol.ssh.allow=always \
-    -c protocol.git.allow=always clone -q -- "$2" "$t" >&2 && mv "$t" "$1" ||
-    { rm -rf "$t"; warn "git clone $2 failed; copying the whole tree"; return 1; }
-  git -C "$1" checkout -q "$3" 2>/dev/null ||
-    { GIT_TERMINAL_PROMPT=0 git -C "$1" fetch -q origin "$3" && git -C "$1" checkout -q "$3"; } 2>/dev/null ||
-    { warn "commit $3 is not on $2; the clone stays on its default branch"; return 1; }
+  { GIT_TERMINAL_PROMPT=0 git -c protocol.allow=never -c protocol.https.allow=always -c protocol.ssh.allow=always \
+      -c protocol.git.allow=always clone -q -- "$2" "$t" >&2 &&
+    { git -C "$t" checkout -q "$3" || { GIT_TERMINAL_PROMPT=0 git -C "$t" fetch -q origin "$3" && git -C "$t" checkout -q "$3"; }; } 2>/dev/null &&
+    mv "$t" "$1"; } || { rm -rf "$t"; warn "cannot clone $2 at $3; copying the whole tree"; return 1; }
 }
 EOF
 eval "$GITSEED"
@@ -403,12 +406,12 @@ eval "$GITSEED"
 GITHEAD='cd "$1" 2>/dev/null && [[ $(git rev-parse --show-toplevel 2>/dev/null) == "$(pwd -P)" ]] &&
   u=$(git remote get-url origin 2>/dev/null) && [[ $u != http*://*@* ]] && echo "$(git rev-parse HEAD) $u"'
 
-RSYNC_EXCLUDES=(--exclude .git/ --exclude __pycache__/ --exclude '*.pyc' --exclude .venv/ --exclude node_modules/ --exclude /build/)
+RSYNC_EXCLUDES=(--exclude __pycache__/ --exclude '*.pyc' --exclude .venv/ --exclude node_modules/ --exclude /build/)
 cmd_push() {
-  local src='' dst='' opts=(-az --protect-args) ex=("${RSYNC_EXCLUDES[@]}")
+  local src='' dst='' opts=(-az --protect-args) ex=("${RSYNC_EXCLUDES[@]}") gx=(--exclude .git/)
   while (($#)); do case $1 in
     --delete) opts+=(--delete); shift ;;
-    --no-exclude) ex=(); shift ;;
+    --no-exclude) ex=() gx=(); shift ;;
     --exclude) need2 "$@"; ex+=(--exclude "$2"); shift 2 ;;
     -*) die "push: unknown option $1" ;;
     *) if [[ -z $src ]]; then src=$1; else dst=$1; fi; shift ;;
@@ -431,13 +434,17 @@ cmd_push() {
       die "push: '$src' and '$rd' are nested in each other on a filesystem shared with this box"
     fi
   fi
-  # First push of a git repo: clone it on the cluster (fast, near the git server), then rsync the diff.
-  local sha='' url=''
+  # First push of a git repo: clone it on the cluster (fast, near the git server), then rsync the
+  # diff, deleting what the source deleted. A new directory the clone failed for gets .git too.
+  local sha='' url='' r
   ((isdir)) && ! on_login && read -r sha url < <(bash -c "$GITHEAD" _ "$src")
-  if ((isdir)); then src=$src/; remote "$GITSEED"$'\n''[[ -n $2 && ! -e $1 ]] && git_seed "$1" "$2" "$3"; mkdir -p "$1"' "$dst" "$url" "$sha" || exit 255
+  if ((isdir)); then
+    src=$src/
+    remote "$GITSEED"$'\n''[[ -e $1 ]] && exit 0; [[ -n $2 ]] && git_seed "$1" "$2" "$3" && exit 10; mkdir -p "$1" && exit 11' "$dst" "$url" "$sha"
+    r=$?; case $r in 0) ;; 10) opts+=(--delete) ;; 11) gx=() ;; *) exit "$r" ;; esac
   else remote 'mkdir -p "$(dirname "$1")"' "$dst" || exit 255; fi
-  if on_login; then rsync "${opts[@]}" "${ex[@]}" "$src" "$dst"
-  else rsync "${opts[@]}" "${ex[@]}" -e "ssh ${SSH_OPTS[*]}" "$src" "$HOST:$dst"; fi || err RSYNC_FAILED "cluster=$CLUSTER"
+  if on_login; then rsync "${opts[@]}" "${ex[@]}" "${gx[@]}" "$src" "$dst"
+  else rsync "${opts[@]}" "${ex[@]}" "${gx[@]}" -e "ssh ${SSH_OPTS[*]}" "$src" "$HOST:$dst"; fi || err RSYNC_FAILED "cluster=$CLUSTER"
   echo "OK remote=$dst"
 }
 
@@ -446,12 +453,12 @@ cmd_pull() {
   while (($#)); do case $1 in -*) die "pull: unknown option $1" ;; *) if [[ -z $src ]]; then src=$1; else dst=$1; fi; shift ;; esac; done
   [[ -n $src ]] || die "pull: missing REMOTE path"
   if [[ $src != /* ]]; then read -r rb rel < <(remote_dirs) && [[ $rel == /* ]] || exit 255; src=$rel/$src; fi
-  # First pull of a git repo: clone it here, then rsync the diff; .git comes along only if the
-  # clone could not reach the remote's commit.
+  # First pull of a git repo: clone it here, then rsync the diff, deleting what the remote deleted;
+  # .git comes along only if the clone could not reach the remote's commit.
   local tgt=$dst sha='' url=''; [[ $src == */ ]] || tgt=$dst/$(basename "$src")
   if ! on_login && [[ ! -e $tgt ]]; then
     read -r sha url < <(remote "$GITHEAD" "$src")
-    [[ -n $url ]] && git_seed "$tgt" "$url" "$sha" && opts+=(--exclude .git/)
+    [[ -n $url ]] && git_seed "$tgt" "$url" "$sha" && opts+=(--exclude .git/ --delete)
   fi
   if on_login; then rsync "${opts[@]}" "$src" "$dst"
   else rsync "${opts[@]}" -e "ssh ${SSH_OPTS[*]}" "$HOST:$src" "$dst"; fi || err RSYNC_FAILED "cluster=$CLUSTER"
