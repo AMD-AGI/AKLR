@@ -401,10 +401,12 @@ git_seed() {
 }
 EOF
 eval "$GITSEED"
-# git_head DIR: "SHA URL" if DIR is the top of a git work tree with an origin remote. An http(s)
-# URL with embedded credentials is skipped: cloning would copy the token to the other side.
+# git_head DIR: "SHA URL" if DIR is the top of a git work tree with an origin remote. A repo with
+# credentials in its config (a token in the URL, an http extraheader) is skipped: cloning, or
+# copying its .git, would copy the token to the other side.
 GITHEAD='cd "$1" 2>/dev/null && [[ $(git rev-parse --show-toplevel 2>/dev/null) == "$(pwd -P)" ]] &&
-  u=$(git remote get-url origin 2>/dev/null) && [[ $u != http*://*@* ]] && echo "$(git rev-parse HEAD) $u"'
+  u=$(git remote get-url origin 2>/dev/null) && [[ $u != http*://*@* ]] &&
+  ! git config --get-regexp "^http\..*extraheader" >/dev/null && echo "$(git rev-parse HEAD) $u"'
 
 RSYNC_EXCLUDES=(--exclude __pycache__/ --exclude '*.pyc' --exclude .venv/ --exclude node_modules/ --exclude /build/)
 cmd_push() {
@@ -435,13 +437,14 @@ cmd_push() {
     fi
   fi
   # First push of a git repo: clone it on the cluster (fast, near the git server), then rsync the
-  # diff, deleting what the source deleted. A new directory the clone failed for gets .git too.
+  # diff, deleting what the source deleted. A new directory the clone failed for gets .git too,
+  # unless the repo holds credentials (no url then).
   local sha='' url='' r
   ((isdir)) && ! on_login && read -r sha url < <(bash -c "$GITHEAD" _ "$src")
   if ((isdir)); then
     src=$src/
     remote "$GITSEED"$'\n''[[ -e $1 ]] && exit 0; [[ -n $2 ]] && git_seed "$1" "$2" "$3" && exit 10; mkdir -p "$1" && exit 11' "$dst" "$url" "$sha"
-    r=$?; case $r in 0) ;; 10) opts+=(--delete) ;; 11) gx=() ;; *) exit "$r" ;; esac
+    r=$?; case $r in 0) ;; 10) opts+=(--delete) ;; 11) [[ -n $url ]] || on_login && gx=() ;; *) exit "$r" ;; esac
   else remote 'mkdir -p "$(dirname "$1")"' "$dst" || exit 255; fi
   if on_login; then rsync "${opts[@]}" "${ex[@]}" "${gx[@]}" "$src" "$dst"
   else rsync "${opts[@]}" "${ex[@]}" "${gx[@]}" -e "ssh ${SSH_OPTS[*]}" "$src" "$HOST:$dst"; fi || err RSYNC_FAILED "cluster=$CLUSTER"

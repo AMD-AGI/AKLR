@@ -139,3 +139,16 @@ def test_pull_new_dir_is_the_remote_tree(env, tmp_path):
     r = rg(env, "pull", str(src), str(out))
     assert r.returncode == 0, r.stderr
     assert sorted(p.name for p in (out / "src").iterdir()) == [".git", "kept", "new"]
+
+
+@pytest.mark.parametrize("cred", ["url", "extraheader"])
+def test_push_never_copies_a_git_that_holds_credentials(env, tmp_path, cred):
+    src = repo(tmp_path)
+    if cred == "url":
+        git(src, "remote", "set-url", "origin", "https://u:tok@example.invalid/x.git")
+    else:
+        git(src, "config", "http.https://example.invalid/.extraheader", "AUTHORIZATION: bearer tok")
+    dst = tmp_path / "home/work/dst"
+    r = rg(env, "push", str(src), str(dst))
+    assert r.returncode == 0, r.stderr
+    assert sorted(p.name for p in dst.iterdir()) == ["kept", "new"]
