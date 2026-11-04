@@ -1,3 +1,7 @@
+# Ops tutorial: adding a kernel to an AKLR op
+
+This tutorial adds a kernel to an op in `aklr/ops/`, from the op's definition to a merged kernel. Its example is `fused_moe`, the experts of an MoE layer (the computation AITER's `fused_moe` does), at the shapes of GLM-5's MoE layer. The [plugin tutorial](plugin_tutorial.md) continues with the same layer and optimizes beyond this op's boundary.
+
 ## Concepts
 
 Contract: **a contract is the complete definition of an op.** It is an `OpContract` constant in `aklr/ops/<op>/contract.py`, registered in that module's `CONTRACTS` (the registry discovers it automatically).
@@ -143,7 +147,7 @@ How the example steps map to the sections above: steps 0 and 1 correspond to 1. 
 - layout: `row_major`, `shuffled_16x16` (w1/w2 get a 16×16 preshuffle, and both scales are shuffled and padded to (256, 8); detected when `w1.is_shuffled` and `w2.is_shuffled` are true and `w1_scale.ndim == 3`), `gate_up_interleaved`.
 - Accuracy requirements: SQNR of `out` ≥ 13 dB; `determinism` is `bounded`, with a `max_violation_fraction` of 1e-3.
 
-Fix `model_dim=7168`, `n_experts=256`, `topk=8`, `inter_dim=256`, without EP (`global_experts=1`, `expert_mask`/`num_local_tokens` absent). The attrs are `silu`, `per_1x32`, `doweight_stage1=False`, `separated`, `act_quant=4`; the dtypes are bf16 activations, fp32 `topk_weights` and int32 `topk_ids`; the layout is `shuffled_16x16`.
+Fix GLM-5's MXFP4 MoE layer at TP8: `model_dim=6144`; `n_experts=257`, the 256 routed experts plus the shared one, which sglang appends as the last expert; `topk=9`, 8 routed experts plus the shared one; `inter_dim=256`, GLM-5's 2048 split over 8 GPUs; without EP (`global_experts=1`, `expert_mask`/`num_local_tokens` absent). The attrs are `silu`, `per_1x32`, `doweight_stage1=False`, `separated`, `act_quant=4`; the dtypes are bf16 activations, fp32 `topk_weights` and int32 `topk_ids`; the layout is `shuffled_16x16`. This scenario is already in the repository, so what you generate can be checked against the committed file.
 
 **1. Generate the kernel-less schema.** Put the script outside the clone and run it from the repository root. With no arguments it writes the kernel-less definition; with one kernel-directory argument it fills `kernel.sources` with the sources in that directory (step 3 reuses this).
 
@@ -159,7 +163,7 @@ from aklr.core.contract.spec import PointSpec, SourceFile
 contract = ContractRegistry.default().get("fused_moe@1.0")
 base = PointSpec(
     contract_id="fused_moe@1.0",
-    axes={"n_tokens": 1, "model_dim": 7168, "n_experts": 256, "topk": 8, "inter_dim": 256, "global_experts": 1},
+    axes={"n_tokens": 1, "model_dim": 6144, "n_experts": 257, "topk": 9, "inter_dim": 256, "global_experts": 1},
     dtypes={"hidden_states": "bfloat16", "w1": "float4_e2m1", "w2": "float4_e2m1", "topk_weights": "float32",
             "topk_ids": "int32", "w1_scale": "float8_e8m0", "w2_scale": "float8_e8m0",
             "expert_mask": None, "num_local_tokens": None, "out": "bfloat16"},
@@ -183,14 +187,14 @@ path.write_text(schema.schema_text(), encoding="utf-8")
 print(path)
 ```
 
-Running `python ~/make_moe_schema.py` writes `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim7168_n_experts256_topk8_inter_dim256/<uuid0>.json` (`<uuid0>` belongs to the kernel-less version only and is temporary). Only `shuffled_16x16` appears in the name because it is not the first declared layout; every other attr/dtype is its first declared value and stays out of the name (the Names section of `aklr/ops/README.md`). Compared with the reference schema `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/1fee59821837c26f.json`, the file differs only in the name, the values of the const and derived axes, the `hi` of `topk_ids`, `kernel.sources` and the measurement fields. An excerpt of the new file:
+Running `python ~/make_moe_schema.py` writes `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/<uuid0>.json` (`<uuid0>` belongs to the kernel-less version only and is temporary). Only `shuffled_16x16` appears in the name because it is not the first declared layout; every other attr/dtype is its first declared value and stays out of the name (the Names section of `aklr/ops/README.md`). Apart from `kernel.sources` and the measurement fields, the file equals the committed `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/1fee59821837c26f.json`. An excerpt of the new file:
 
 ```json
-"axes": {"n_tokens": {"type": "var", ...}, "model_dim": {"type": "const", "value": 7168, ...}, "n_experts": {..., "value": 256}, "topk": {..., "value": 8},
-         "inter_dim": {..., "value": 256}, "gate_up_rows": {..., "value": 512}, "model_blocks": {..., "value": 224}, "inter_blocks": {..., "value": 8}},
+"axes": {"n_tokens": {"type": "var", ...}, "model_dim": {"type": "const", "value": 6144, ...}, "n_experts": {..., "value": 257}, "topk": {..., "value": 9},
+         "inter_dim": {..., "value": 256}, "gate_up_rows": {..., "value": 512}, "model_blocks": {..., "value": 192}, "inter_blocks": {..., "value": 8}},
 "attrs": {"activation": "silu", "quant_type": "per_1x32", "doweight_stage1": false, "gate_mode": "separated", "has_expert_mask": false, "act_quant": 4},
 "inputs": {"hidden_states": {"shape": ["n_tokens", "model_dim"], "dtype": "bfloat16", ...}, "w1": {"shape": ["n_experts", "gate_up_rows", "model_dim"], "dtype": "float4_e2m1", ...},
-           "topk_ids": {"shape": ["n_tokens", "topk"], "dtype": "int32", "distribution": {"kind": "int_range", "lo": 0, "hi": 255, "distinct": true}, ...}, ...},
+           "topk_ids": {"shape": ["n_tokens", "topk"], "dtype": "int32", "distribution": {"kind": "int_range", "lo": 0, "hi": 256, "distinct": true}, ...}, ...},
 "workloads": [{"axes": {"n_tokens": 1}}, ..., {"axes": {"n_tokens": 4096}}],
 "layout_variants": {"by_name": {"shuffled_16x16": {"layouts": {"w1": {"kind": "preshuffle", "tile": [16, 16]}, ...,
     "w1_scale": {"kind": "e8m0_scales", "block_size": 32, "pad_to": [256, 8], "shuffled": true}, ...}, ...}}},
@@ -210,7 +214,7 @@ Running `python ~/make_moe_schema.py` writes `aklr/ops/fused_moe/impls/flydsl/fu
 **3. Local validation.** Once the kernel is written, rerun `make_moe_schema.py` to generate the final schema file `<uuid1>.json`
 
 ```bash
-D=aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim7168_n_experts256_topk8_inter_dim256
+D=aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256
 # ~/moe_kernel: the kernel source directory written in step 2 (contains the kernel.py::run entry file)
 python ~/make_moe_schema.py ~/moe_kernel             # → $D/<uuid1>.json
 rm $D/<uuid0>.json                                   # delete the original schema
@@ -220,4 +224,8 @@ python -m aklr validate --base origin/main --stages audit,bench $D/<uuid1>.json
 
 **4. Open a PR to run CI** Push the code to the remote repository and open a PR. Add `ci:gpu` when opening it, paste the conclusion of the `report.md` from step 3 into the body, and state where the shapes and the `n_tokens` values come from. main's push CI remeasures, and then the `aklr-perf/main` bot PR writes back `accuracy`/`speedup` for the workloads kept in the PR; they take effect only after that bot PR merges.
 
-**5. Complete the merge**
+**5. Complete the merge.** Once the PR has merged and then the `aklr-perf/main` bot PR carrying its measurements, dispatch serves the kernel at every workload whose speedup reaches `AKLR_MIN_SPEEDUP` (§5).
+
+## Next
+
+`fused_moe` covers only the experts of the MoE layer. The [plugin tutorial](plugin_tutorial.md) takes the whole layer, router and top-k included.
