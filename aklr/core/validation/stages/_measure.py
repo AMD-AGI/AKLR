@@ -61,25 +61,23 @@ MEASUREMENT_PROFILE: Mapping[str, Any] = MappingProxyType(
     {
         "version": 18,
         "timer": "bench_cudagraph",
-        "sample_count_policy": "rep_ms_estimate_capped_by_kernel_record_budget",
+        "sample_count_policy": "rep_ms_estimate",
         "estimation_samples": 5,
         "estimation_timer": "cuda_event_eager_with_cache_flush",
         "capture_warmup_runs": 1,
         "execution_mode": "cuda_graph",
         "metric": "gpu_duration_sum",
-        "profiler": "kineto",
+        "profiler": "rocprofiler_sdk_graph_capture_attribution",
         "calls_per_graph": "adaptive",
         "cache_policy": "flush_before_each_call_in_graph",
         "cache_flush_bytes": 1 << 30,
         "cache_flush_access": "read",
         "cache_flush_kernel": "_flush_l2_cache_kernel",
-        "profiler_warmup_replays": 1,
-        "kineto_warmup": "one_unrecorded_baseline_bench_cudagraph",
+        "profiler_warmup": "one_unrecorded_baseline_bench_cudagraph",
         "tracer_fault_policy": "measure_again_once_in_place_then_rerun_task_once",
         "measurement_replays": 10,
-        "profiler_drain_replays": 1,
-        "sample_aggregation": "mean_within_replay",
-        "replay_aggregation": "median",
+        "sample_aggregation": "mean_over_replays_per_call",
+        "call_aggregation": "median",
         "graph_budget_milliseconds": GRAPH_BUDGET_MILLISECONDS,
         "round_order": "seeded_shuffle_per_round",
         "round_looks": ROUND_LOOKS,
@@ -348,10 +346,8 @@ def bind_clock(group: Any = None) -> Clock:
 
 
 _TRACER_FAULT_MESSAGES = (
-    "Kineto recorded no kernels for a single call",
-    "L2 flushes per replay, got 0",
-    "std::bad_alloc",
-    "std::length_error",
+    "rocprofiler-sdk dropped",
+    "graph replays",
 )
 
 

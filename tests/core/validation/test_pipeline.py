@@ -130,7 +130,7 @@ def _workload(
     )
 
 
-_TRACER_FAULT = "x: timing: Kineto recorded no kernels for a single call"
+_TRACER_FAULT = "x: timing: rocprofiler-sdk recorded 9 of 10 graph replays"
 
 
 def _reruns(tmp_path: Path, *details: str) -> tuple[int, set[FindingCode]]:

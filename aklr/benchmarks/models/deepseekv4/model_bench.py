@@ -257,6 +257,10 @@ def run(work_func: Callable, server_args, args) -> None:
 
 def setup(server_args, port_args, gpu_id: int, tp_rank: int, tag: str = "BENCH"):
     """Build the model. Returns (model_runner, rank_print)."""
+    from aklr.core.utils.testing import kernel_tracer
+
+    # before the rank's first GPU call: torch.profiler's kernels then come from AKLR's tracer, not Kineto's roctracer
+    kernel_tracer()
     from sglang.benchmark.one_batch import load_model
     from sglang.srt.layers.moe import initialize_moe_config
     from sglang.srt.layers.quantization.fp4_utils import initialize_fp4_gemm_config
