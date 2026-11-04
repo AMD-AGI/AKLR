@@ -171,7 +171,9 @@
       "scalars": {
         "beta": 4.0,
         "linear_beta": 25.0
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.78
     },
     {
       "axes": {
@@ -180,7 +182,9 @@
       "scalars": {
         "beta": 4.0,
         "linear_beta": 25.0
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.808
     }
   ],
   "layout_variants": {
