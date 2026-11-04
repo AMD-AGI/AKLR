@@ -26,12 +26,11 @@ An optimizing agent works in rounds: plan a change, write the kernel, check it i
 
 | Skill | What it does for you |
 |---|---|
-| `aklr-kb` | Gives your agent the knowledge base; KernelForge runs set up by `forge_task` load it by default (see below) |
-| `aklr-kb/flydsl` | How to write it in FlyDSL: limits, compile errors, debugging, and FlyDSL's own skills (kernel code cleanup among them) linked at v0.3.2; loaded with `aklr-kb` for a FlyDSL kernel |
+| `aklr-kb` | Gives your agent the knowledge base, with how to write it in FlyDSL, Triton (and Gluon) and HIP in its `flydsl/`, `triton/` and `hip/` folders; KernelForge runs set up by `forge_task` load it by default (see below) |
 | `forge-loop-campaign` | Has an agent run a whole KernelForge optimization of one AKLR task: prepare, run, watch, stop or resume, review, deliver |
 | `geak-campaign` | Runs such a campaign with GEAK (`AMD-AGI/GEAK`), another agent-driven optimizer, instead of KernelForge |
 
-Sibling skills cover Triton and Gluon (`aklr-kb/triton`) and HIP (`aklr-kb/hip`); gfx942 is covered in the knowledge base. The result below was measured with the knowledge base as it was before it was split into these skills.
+FlyDSL's own skills, kernel code cleanup among them, are linked from `aklr-kb/flydsl/guides.md`. The result below was measured with the knowledge base as it was before it was reorganized into `aklr-kb`.
 
 ## What it saved on one task
 

@@ -1,7 +1,7 @@
 # Adding to this skill
 
-For anyone, person or agent, who adds or edits a page of this skill or of a language skill beside it
-(`flydsl/`, `triton/`, `hip/`). The rules exist so that an agent can find the one page
+For anyone, person or agent, who adds or edits a page of this skill, its language folders (`flydsl/`, `triton/`,
+`hip/`) included. The rules exist so that an agent can find the one page
 that answers its question, trust what the page says for the conditions it states, and be told when a FlyDSL upgrade
 may have made it stale. `tools/kb_lint.py` enforces what can be checked mechanically; review does the rest.
 
@@ -15,8 +15,10 @@ may have made it stale. `tools/kb_lint.py` enforces what can be checked mechanic
 - `hardware/<arch>/` an architecture's ISA guide, and the guides to looking things up in it (`hardware/gfx950/`:
   CDNA4)
 - `tools/` the scripts below
-- A language's own pages (limits, compile errors, debugging, links to its own guides) are in its skill, such as
-  `flydsl/`
+- `flydsl/`, `triton/`, `hip/` a language's own pages, each starting at its `SKILL.md`. In `flydsl/`: `language/`
+  what FlyDSL itself does (limits, compile errors, version differences), `guides.md` FlyDSL's own skills linked at
+  `v0.3.2` with this repository's corrections, `debug-flydsl-kernel.md` debugging, `kernels/` aiter's FlyDSL
+  kernels, their knobs and how to write a new one
 
 ## Page kinds
 
@@ -30,7 +32,7 @@ One page answers one kind of question. A page of each kind has the front matter 
 | `op` | What an op family computes, where its time goes per regime, which kernels to start from | title, ops, dtypes, gens, flydsl, basis; What it computes, Bottleneck by regime, Techniques that apply, Kernels to start from, In AKLR | the op's package; a new op gets its folder with its first design page (MLA and DSA: `attention/`) |
 | `case` | How a delivered kernel got its speed, under which conditions, and how to reproduce it | title, ops, dtypes, regimes, contract, gens, flydsl, basis, measured, sources; Applies when, Counter-signals, Mechanism, Result, Reproduce, Rollback | `cases/`, named `<op>_<gist>.md` |
 | `pitfall` | A silent wrong result, a FlyDSL version trap or a measurement artifact | title, scope, gens, flydsl, basis; Symptom, Root cause, How to detect, Fix or workaround, Scope | `pitfalls/` |
-| `language-note` | What FlyDSL v0.3.2 does, read from its source: limits, compile errors, version differences | title, gens, flydsl, basis, sources | the language skill (`flydsl/language/`); a correction of one of FlyDSL's own skills goes to `flydsl/guides.md` |
+| `language-note` | What FlyDSL v0.3.2 does, read from its source: limits, compile errors, version differences | title, gens, flydsl, basis, sources | `flydsl/language/`; a correction of, or an addition to, one of FlyDSL's own skills is a bullet under that skill's section of `flydsl/guides.md` |
 | `topic` | One area of an op (a card of numbered sections, one lever or decision each), such as the GEMM main loop | title, ops, dtypes, regimes, gens, flydsl; Route here when | the op's package |
 | `method` | How to work: measure, check correctness, attribute time, tune, debug | title, ops, gens, flydsl; Route here when | the package it serves |
 
@@ -103,28 +105,28 @@ Front matter is YAML: quote a value that contains `: `. `flydsl` is the version 
 
 An edit to an existing page passes lint and review the same way, and a new number in it gets an evidence line. A
 knowledge patch proposed by the optimization loop's distill step (Hyperloom `AKLR` `forge-distill`) is reviewed
-like any other edit; it covers this skill, and a second run with `--skill-dir` on `flydsl` covers the
-language skill (`harness/scripts/forge_task/README.md`). It is committed with the kernel it came from, in that kernel's pull request
+like any other edit; one run covers this skill, its language folders included
+(`harness/scripts/forge_task/README.md`). It is committed with the kernel it came from, in that kernel's pull request
 (`forge-loop-campaign` skill, step 7).
 
 ## Upkeep
 
-- **FlyDSL upgrade**: `python tools/kb_lint.py --stale <new version>`, and the same with
-  `--skill-root flydsl`, list the pages checked against another version. Re-read each `language-note`
+- **FlyDSL upgrade**: `python tools/kb_lint.py --stale <new version>` lists the pages checked against another
+  version. Re-read each `language-note`
   against the new source; a `source-semantics` page is possibly stale, not wrong. Set `flydsl` once the page is
   checked. Move the links pinned to `v0.3.2` and re-check `flydsl/guides.md` against the new version.
 - **Gaps**: the `KB: no-match <question>` lines that optimization rounds leave (`SKILL.md` § How to look things
   up; `tools/kb_gaps.py` collects them) are the next pages to write. Delivered kernels, fixes and known traps
   without a `cases/` or `pitfalls/` page are the others: each month and after a batch of kernels merges,
   `tools/kb_reconcile.py` lists the FlyDSL kernels on main that no case names.
-- **Size**: each `SKILL.md`, this skill's and a language skill's, stays at most 150 lines and 12,000 bytes,
+- **Size**: each `SKILL.md`, this skill's and a language folder's, stays at most 150 lines and 12,000 bytes,
   because the optimization loop puts both into every round's prompt; a page over 600 lines is split.
 
 ## Tools
 
 | Command | Does |
 |---|---|
-| `python tools/kb_lint.py [page ...]` | checks front matter, sections, marks and evidence lines, forbidden headings, links, `§<n>` references, architecture names, duplicate levers and sizes; exit 1 on an error; `--skill-root flydsl` for a language skill, `--repo-root` for a copy of the skill |
+| `python tools/kb_lint.py [page ...]` | checks front matter, sections, marks and evidence lines, forbidden headings, links, `§<n>` references, architecture names, duplicate levers and sizes; exit 1 on an error; `--repo-root` for a copy of the skill |
 | `python tools/kb_lint.py --stale <version>` | lists pages and evidence lines checked against another FlyDSL version |
 | `python tools/kb_index.py [--check]` | rebuilds the generated `INDEX.md` of `patterns/`, `cases/` and `pitfalls/` |
 | `python tools/kb_quote_check.py <sidecar.tsv>` | checks that each quote of an evidence sidecar is at the source line it names |

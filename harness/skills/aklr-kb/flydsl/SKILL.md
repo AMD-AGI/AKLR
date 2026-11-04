@@ -4,7 +4,7 @@ description: >
   Writing FlyDSL kernels for AKLR on gfx950 (MI350/MI355X): FlyDSL v0.3.2 limits, compile errors and version
   differences, debugging wrong or non-compiling kernels and the compile cache, aiter's FlyDSL kernels and their
   knobs, authoring a kernel structure first, and links to FlyDSL's own skills (GEMM walkthrough, LDS, prefetch,
-  authoring, code cleanup) with what differs on gfx950. Use with aklr-kb when optimizing a FlyDSL kernel.
+  authoring, code cleanup) with what differs on gfx950. Read with aklr-kb's SKILL.md when optimizing a FlyDSL kernel.
   Not for Triton, Gluon or HIP kernels.
 allowed-tools: Read Edit Bash Grep Glob Agent
 gens: [gfx950]

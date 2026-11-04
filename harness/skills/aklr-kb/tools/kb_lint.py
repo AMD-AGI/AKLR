@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lint aklr-kb, or with --skill-root a language skill such as flydsl, against CONTRIBUTING.md.
+"""Lint aklr-kb, its language folders included, against CONTRIBUTING.md.
 
 Pages of the new kinds (technique, pattern, op, case, pitfall, language-note, topic, method) and SKILL.md are held
 to the rules: an error fails the run. Pages written before the rules (kinds language, index, reference,

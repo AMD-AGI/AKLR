@@ -1,25 +1,26 @@
 ---
 name: aklr-kb
 description: >
-  What makes a kernel fast on gfx950 (MI350/MI355X) inside AKLR, whatever language it is written in. Includes
+  What makes a kernel fast on gfx950 (MI350/MI355X) inside AKLR, and how to write it in FlyDSL, Triton/Gluon or
+  HIP (the flydsl/, triton/ and hip/ folders: limits, errors, debugging, each language's own guides). Includes
   a dense-GEMM package (fp8, MXFP4, MXFP8, bf16/fp16, int8, small-M decode shapes included): dispatch rounds
   and split-K, main-loop pipelines, LDS/swizzle/DMA data paths, XCD tile order and scheduling hints,
   epilogues, autotuning, attribution, correctness gates and A/B measurement. Also a MoE package (fused MoE at
   decode sizes, and the expert grouped GEMM: training forward, dgrad and variable-K wgrad in bf16, fp8, MXFP8
   and MXFP4), an attention package, symptom pages, pitfalls and delivered kernels, trace capture and analysis,
   perf-regression bisection, the CDNA4 (gfx950) ISA reference guide with guides to looking things up in it,
-  and gfx942 (MI300X) GEMM notes. Use with the language skill (aklr-kb/flydsl, aklr-kb/triton or aklr-kb/hip)
-  when optimizing a kernel, or finding out why one is slow or wrong.
+  and gfx942 (MI300X) GEMM notes. Use when optimizing a kernel in any of these languages, or finding out why one
+  is slow or wrong.
 allowed-tools: Read Edit Bash Grep Glob Agent
 gens: [gfx950, gfx942]
 ---
 
-# Kernel wiki
+# AKLR kernel knowledge base
 
 What makes a kernel fast on AMD GPUs inside AKLR, by op and by symptom. The `flydsl_` cards and the cases come
 from FlyDSL kernels: their mechanisms carry to other languages, their numbers were measured on FlyDSL code (re-derive
-them: § Rules that hold everywhere), and their code is FlyDSL. Writing it in
-a language is that language's skill: `flydsl/SKILL.md`, `triton/SKILL.md`, `hip/SKILL.md`.
+them: § Rules that hold everywhere), and their code is FlyDSL. How to write it in
+a language is in that language's folder: `flydsl/SKILL.md`, `triton/SKILL.md`, `hip/SKILL.md`.
 
 Paths below are relative to this folder, except those starting with `aklr/`, relative to the repository root, and
 `aiter/` or `csrc/`, relative to aiter's. File and line citations are to ROCm/FlyDSL `v0.3.2` (`dd8373349`),
@@ -68,7 +69,7 @@ wins. Check a plan against this table before writing code.
 | Dump a kernel's IR and final ISA; read registers, LDS, spills, waits and hot-loop counts | `gemm/flydsl_gemm_mainloop.md` §10 (`FLYDSL_DUMP_IR=1`); `tools/isa_diff.py` compares two dumps |
 | Capture a kernel trace and find the hotspot, or find the commit behind a performance regression | `profile.md` |
 | What an instruction, encoding, counter, wait state or hardware limit really is | `hardware/gfx950/INDEX.md` → `hardware/gfx950/lookup.md`, `hardware/gfx950/matrix_core.md`, `hardware/gfx950/memory_and_sync.md` |
-| The language: its API, compile errors, debugging, its own guides | the language skill: `flydsl/SKILL.md`, `triton/SKILL.md`, `hip/SKILL.md` |
+| The language: its API, compile errors, debugging, its own guides | the language's folder: `flydsl/SKILL.md`, `triton/SKILL.md`, `hip/SKILL.md` |
 
 ## By symptom
 

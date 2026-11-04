@@ -93,19 +93,14 @@ python -m kernelforge.cli forge-finalize --workspace $W --gpu 0 --model claude-o
 # The same answer, as the schema's determinism asks, on a stream limited to a few CUs and beside a second call of
 # its own: a kernel whose workgroups wait for each other does not give it, and validate cannot tell
 HIP_VISIBLE_DEVICES=0 python $W/driver.py --stress
-# What the kernel wiki should learn from the run, as a patch for you to review
+# What aklr-kb (its flydsl/ folder included) should learn from the run, as a patch for you to review
 python -m kernelforge.cli forge-distill --workspace $W --model claude-opus-5-5 \
   --skill-dir $A/harness/skills/aklr-kb --out $RUN/knowledge_patch \
   --reference $A --guide CONTRIBUTING.md \
   --lint "python tools/kb_lint.py --errors-only --repo-root {repo}"
-# What the FlyDSL skill should learn (language notes, corrections of FlyDSL's own skills): a second patch
-python -m kernelforge.cli forge-distill --workspace $W --model claude-opus-5-5 \
-  --skill-dir $A/harness/skills/aklr-kb/flydsl --out $RUN/knowledge_patch_flydsl \
-  --reference $A --guide CONTRIBUTING.md \
-  --lint "python $A/harness/skills/aklr-kb/tools/kb_lint.py --skill-root . --errors-only --repo-root {repo}"
 ```
 
-Their reports are `$W/forge_experiments/ablation.md` and `finalize.md`, and `$RUN/knowledge_patch/distill.md` and `$RUN/knowledge_patch_flydsl/distill.md`.
+Their reports are `$W/forge_experiments/ablation.md` and `finalize.md`, and `$RUN/knowledge_patch/distill.md`.
 For a Triton kernel, leave out `--review-guide` and skip `forge-distill`.
 
 **6. Deliver.**

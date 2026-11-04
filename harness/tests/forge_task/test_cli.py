@@ -63,7 +63,7 @@ def test_prepare_writes_the_task_and_prints_kernelforges_command(aklr_root: Path
     assert command[command.index("--baseline-json") + 1] == str(run_dir.resolve() / "baseline.json")
     assert _skill_dirs(command) == [
         str(aklr_root / "harness" / "skills" / "aklr-kb"),
-        str(aklr_root / "harness" / "skills" / "aklr-kb/flydsl"),
+        str(aklr_root / "harness" / "skills" / "aklr-kb" / "flydsl"),
     ]
     assert {"--paired-keep", "--early-stop"} <= set(command)
 
@@ -116,7 +116,7 @@ def _skill_dirs(command: list[str]) -> list[str]:
 
 @pytest.mark.parametrize(
     ("backend", "skill"),
-    [("triton", "aklr-kb/triton"), ("gluon", "aklr-kb/triton")],
+    [("triton", "triton"), ("gluon", "triton")],
 )
 def test_the_agents_read_the_wiki_and_the_skill_of_the_language(
     aklr_root: Path, tmp_path: Path, capsys, backend, skill
@@ -125,7 +125,7 @@ def test_the_agents_read_the_wiki_and_the_skill_of_the_language(
     command = _printed_command(capsys.readouterr().out)
     assert _skill_dirs(command) == [
         str(aklr_root / "harness" / "skills" / "aklr-kb"),
-        str(aklr_root / "harness" / "skills" / skill),
+        str(aklr_root / "harness" / "skills" / "aklr-kb" / skill),
     ]
 
 
