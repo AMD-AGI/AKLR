@@ -9,18 +9,22 @@
  **************************************************************************************************/
 
 // Kernel dispatch timestamps from rocprofiler-sdk, each replayed graph dispatch
-// matched to the HIP call and the scope that captured it, for
-// testing.bench_cudagraph; and, for torch.profiler (_kineto_profiler.cpp), HIP
-// calls and copies, collected as Kineto's rocprofiler-sdk backend
-// (pytorch/kineto RocprofLogger, BSD-3-Clause) collects them
+// matched to the HIP call and the scope that captured it, with the HIP calls
+// and copies, collected as Kineto's rocprofiler-sdk backend (pytorch/kineto
+// RocprofLogger, BSD-3-Clause) collects them, for torch.profiler runs that opt
+// in (_kineto_profiler.cpp). The tool attaches to the process at the first run,
+// through rocprofiler-register, which the process loads rocprofiler-sdk's
+// attach library for at startup (ROCP_TOOL_ATTACH=1)
 #include "_kernel_tracer.h"
 
 #include <cxxabi.h>
+#include <dlfcn.h>
 #include <hip/hip_runtime_api.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <rocprofiler-sdk/buffer_tracing.h>
 #include <rocprofiler-sdk/callback_tracing.h>
+#include <rocprofiler-sdk/experimental/registration.h>
 #include <rocprofiler-sdk/external_correlation.h>
 #include <rocprofiler-sdk/registration.h>
 #include <rocprofiler-sdk/rocprofiler.h>
@@ -112,57 +116,79 @@ thread_local std::vector<uint64_t> t_ops; // torch.profiler's op correlation ids
 
 class KernelTracer {
 public:
-  // reaches the process's one tool: rocprofiler_force_configure's callback
-  // carries no pointer to it
+  // reaches the process's one tool: rocprofiler_configure's callback carries
+  // no pointer to it
   static KernelTracer &instance() {
     static KernelTracer tracer;
     return tracer;
   }
 
-  void configure() {
-    // WORKAROUND: ROCM-29087, fixed in rocprofiler-sdk 1.4.2 (ROCm 10.2);
-    // delete when the images ship it
-#if ROCPROFILER_SDK_VERSION < 10402
-    // below 1.4.2 the default queue interposition deadlocks a HIP graph whose
-    // streams fork and join
-    setenv("ROCPROFILER_QUEUE_INTERPOSITION", "0",
-           1); // the legacy queue intercept does not
-#endif
+  static rocprofiler_tool_configure_result_t *
+  tool(uint32_t, const char *, uint32_t, rocprofiler_client_id_t *id) {
+    id->name = "aklr-kernel-tracer";
+    static rocprofiler_tool_configure_result_t result{
+        sizeof(rocprofiler_tool_configure_result_t), &KernelTracer::initialize,
+        nullptr, &instance()};
+    return &result;
+  }
+
+  // loads this library as rocprofiler-sdk's tool, which configures it; the
+  // runtime configured it already if it found the library loaded as it started
+  void attach() {
+    if (dispatches_.handle)
+      return;
+    void *reg = dlopen("librocprofiler-register.so.0", RTLD_NOW | RTLD_NOLOAD);
+    auto *attach = reg ? reinterpret_cast<int (*)(const char *, const char *)>(
+                             dlsym(reg, "rocprofiler_register_attach"))
+                       : nullptr;
+    if (!attach)
+      throw std::runtime_error("aklr kernel tracer: the ROCm runtime does not "
+                               "load rocprofiler-register");
+    Dl_info self{};
+    dladdr(reinterpret_cast<void *>(&KernelTracer::tool), &self);
+    // the attach exports these; a child inheriting them loads this tool at
+    // startup
     std::vector<std::pair<const char *, std::optional<std::string>>> inherited;
     for (const char *name :
-         {"ROCPROFILER_REGISTER_FORCE_LOAD", "ROCPROFILER_REGISTER_LIBRARY"}) {
+         {"ROCP_TOOL_LIBRARIES", "ROCPROFILER_REGISTER_TOOL_ATTACHED"}) {
       const char *value = std::getenv(name);
       inherited.emplace_back(name, value ? std::optional<std::string>(value)
                                          : std::nullopt);
     }
-    check(rocprofiler_force_configure(&KernelTracer::tool), "configure");
-    // force_configure exports these; a child inheriting them loads
-    // rocprofiler-sdk before it can configure
+    const uint32_t no_variables = 0;
+    const int status =
+        attach(reinterpret_cast<const char *>(&no_variables), self.dli_fname);
     for (const auto &[name, value] : inherited) {
       value ? setenv(name, value->c_str(), 1) : unsetenv(name);
     }
-    if (dispatches_.handle == 0) {
+    if (status == 9) { // ROCP_REG_ATTACHMENT_NOT_AVAILABLE
       throw std::runtime_error(
-          "rocprofiler-sdk: kernel dispatch tracing did not initialize");
+          "aklr kernel tracer: start the process with ROCP_TOOL_ATTACH=1 "
+          "(import aklr.core.utils.testing before its first GPU call)");
+    }
+    if (status || dispatches_.handle == 0) {
+      throw std::runtime_error(
+          "aklr kernel tracer: rocprofiler-register attach failed: " +
+          std::to_string(status));
     }
   }
 
-  // a window records every dispatch; torch.profiler's times HIP calls too
-  void start(bool calls) {
+  // a window records every dispatch and HIP call; between windows the tool
+  // sees only code objects load
+  void start() {
     {
       std::lock_guard<std::mutex> lock(mutex_);
       window_.clear();
       calls_.clear();
       launched_.clear();
+      // a graph exec may have changed while the HIP calls went unseen
+      plans_.clear();
       dropped_ = 0;
       first_launch_ = next_launch_;
     }
+    check(rocprofiler_start_context(captures_), "start");
     check(rocprofiler_start_context(dispatches_), "start");
-    if (!probed_) {
-      probe();
-      probed_ = true;
-    }
-    timing_ = calls;
+    timing_ = true;
   }
 
   // the HIP calls a thread makes between push and pop capture their graph nodes
@@ -182,6 +208,7 @@ public:
 
   void stop() {
     check(rocprofiler_stop_context(dispatches_), "stop");
+    check(rocprofiler_stop_context(captures_), "stop");
     timing_ = false;
   }
 
@@ -225,37 +252,6 @@ private:
     return id;
   }
 
-  // rocprofiler-sdk takes a tool only before the ROCm runtime initializes: a
-  // tool configured later sees no dispatch to a queue made before it
-  void probe() {
-    t_in_tool = true; // the probe's calls are no one's
-    void *word = nullptr;
-    const bool ran = hipMalloc(&word, sizeof(uint32_t)) == hipSuccess &&
-                     hipMemsetD32(word, 0, 1) == hipSuccess &&
-                     hipDeviceSynchronize() == hipSuccess;
-    t_in_tool = false;
-    bool seen = false;
-    // a completed dispatch's record may reach the buffer a little later
-    for (int wait = 0; ran && !seen && wait < 1000; ++wait) {
-      if (wait)
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-      check(rocprofiler_flush_buffer(buffer_), "flush");
-      std::lock_guard<std::mutex> lock(mutex_);
-      seen = !window_.empty();
-      window_.clear();
-    }
-    if (word)
-      (void)hipFree(word);
-    if (!seen) {
-      check(rocprofiler_stop_context(dispatches_), "stop");
-      throw std::runtime_error("aklr kernel tracer: load it before the "
-                               "process's first GPU call");
-    }
-  }
-
-  // a dispatch's record can trail the synchronize that saw its kernel end (0.1
-  // s seen under load): wait until each launch of a captured graph has its
-  // graph's kernel nodes, or 10 s pass
   void await_replays() {
     for (int wait = 0;; ++wait) {
       check(rocprofiler_flush_buffer(buffer_), "flush");
@@ -379,27 +375,20 @@ private:
     return nodes;
   }
 
-  static rocprofiler_tool_configure_result_t *
-  tool(uint32_t, const char *, uint32_t, rocprofiler_client_id_t *id) {
-    id->name = "aklr-kernel-tracer";
-    static rocprofiler_tool_configure_result_t result{
-        sizeof(rocprofiler_tool_configure_result_t), &KernelTracer::initialize,
-        nullptr, &instance()};
-    return &result;
-  }
-
   static int initialize(rocprofiler_client_finalize_t, void *tool_data) {
     auto &tracer = *static_cast<KernelTracer *>(tool_data);
     rocprofiler_tracing_operation_t symbol =
         ROCPROFILER_CODE_OBJECT_DEVICE_KERNEL_SYMBOL_REGISTER;
     rocprofiler_external_correlation_id_request_kind_t dispatch =
         ROCPROFILER_EXTERNAL_CORRELATION_REQUEST_KERNEL_DISPATCH;
-    // captures_ runs for the process: a graph is captured and instantiated
-    // before its replays are traced
-    if (rocprofiler_create_context(&tracer.captures_) !=
+    // symbols_ runs from the attach on: rocprofiler-sdk reports a code object
+    // loaded while it was stopped never again
+    if (rocprofiler_create_context(&tracer.symbols_) !=
+            ROCPROFILER_STATUS_SUCCESS ||
+        rocprofiler_create_context(&tracer.captures_) !=
             ROCPROFILER_STATUS_SUCCESS ||
         rocprofiler_configure_callback_tracing_service(
-            tracer.captures_, ROCPROFILER_CALLBACK_TRACING_CODE_OBJECT, &symbol,
+            tracer.symbols_, ROCPROFILER_CALLBACK_TRACING_CODE_OBJECT, &symbol,
             1, &KernelTracer::on_symbol,
             &tracer) != ROCPROFILER_STATUS_SUCCESS ||
         rocprofiler_configure_callback_tracing_service(
@@ -421,7 +410,7 @@ private:
         rocprofiler_configure_external_correlation_id_request_service(
             tracer.dispatches_, &dispatch, 1, &KernelTracer::on_dispatch,
             &tracer) != ROCPROFILER_STATUS_SUCCESS ||
-        rocprofiler_start_context(tracer.captures_) !=
+        rocprofiler_start_context(tracer.symbols_) !=
             ROCPROFILER_STATUS_SUCCESS) {
       return -1;
     }
@@ -909,6 +898,7 @@ private:
     }
   }
 
+  rocprofiler_context_id_t symbols_{0};
   rocprofiler_context_id_t captures_{0};
   rocprofiler_context_id_t dispatches_{0};
   rocprofiler_buffer_id_t buffer_{0};
@@ -921,7 +911,6 @@ private:
   std::vector<Dispatch> window_;
   std::vector<Call> calls_;
   std::atomic<bool> timing_{false}; // HIP calls, for torch.profiler
-  bool probed_ = false;
   uint64_t dropped_ = 0;
   uint64_t next_launch_ = 1;
   uint64_t first_launch_ =
@@ -930,7 +919,9 @@ private:
 
 } // namespace
 
-void start_profile() { KernelTracer::instance().start(true); }
+void attach() { KernelTracer::instance().attach(); }
+
+void start_profile() { KernelTracer::instance().start(); }
 
 Profile stop_profile() {
   auto &tracer = KernelTracer::instance();
@@ -961,11 +952,26 @@ std::string hip_api_name(rocprofiler_tracing_operation_t op) {
 
 } // namespace aklr::kernel_tracer
 
+// found by rocprofiler-sdk in the library rocprofiler-register attaches
+extern "C" ROCPROFILER_PUBLIC_API rocprofiler_tool_configure_result_t *
+rocprofiler_configure(uint32_t version, const char *runtime_version,
+                      uint32_t priority, rocprofiler_client_id_t *id) {
+  return aklr::kernel_tracer::KernelTracer::tool(version, runtime_version,
+                                                 priority, id);
+}
+
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+  // WORKAROUND: ROCM-29087, fixed in rocprofiler-sdk 1.4.2 (ROCm 10.2);
+  // delete when the images ship it
+#if ROCPROFILER_SDK_VERSION < 10402
+  // below 1.4.2 the default queue interposition deadlocks a HIP graph whose
+  // streams fork and join, and traces no queue made after an attach; set here,
+  // as a library loaded before the ROCm runtime initializes is configured then
+  setenv("ROCPROFILER_QUEUE_INTERPOSITION", "0",
+         1); // the legacy queue intercept does neither
+#endif
   m.attr("rocprofiler_sdk_version") = pybind11::make_tuple(
       ROCPROFILER_SDK_VERSION_MAJOR, ROCPROFILER_SDK_VERSION_MINOR,
       ROCPROFILER_SDK_VERSION_PATCH);
-  // rocprofiler-sdk takes a tool only before the ROCm runtime initializes
-  aklr::kernel_tracer::KernelTracer::instance().configure();
   aklr::kernel_tracer::register_kineto_profiler();
 }

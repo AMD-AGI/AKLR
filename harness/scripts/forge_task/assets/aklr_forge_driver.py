@@ -277,11 +277,7 @@ def _measure_candidate(warmup: int, rounds: int) -> dict[str, float]:
     """Per workload, the candidate's median time over ``rounds`` readings of AKLR's graph timer on the call
     validate's bench times."""
     budget, bind_clock, is_tracer_fault = _aklr_timer()
-    from aklr.core.utils.testing import kernel_tracer
-
-    # rocprofiler-sdk takes the timer's kernel tracer only before the first GPU call
-    kernel_tracer()
-    clock = bind_clock()
+    clock = bind_clock()  # imports the timer's module before the candidate's first GPU call
     candidate = _load_candidate()
     times = {}
     profiler_warm = False

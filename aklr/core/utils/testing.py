@@ -16,6 +16,7 @@ from __future__ import annotations
 import functools
 import gc
 import math
+import os
 import statistics
 import uuid
 import warnings
@@ -26,11 +27,14 @@ import torch
 import triton
 import triton.language as tl
 
+# read once, at the process's first GPU call: the ROCm runtime then lets the kernel tracer attach later
+os.environ.setdefault("ROCP_TOOL_ATTACH", "1")
+
 
 # shortcut: no ROCm profiler attributes graph replays yet; retire with ROCm/rocm-systems #14204, #14211
 @functools.cache
 def kernel_tracer():
-    """torch.profiler's GPU tracer in place of Kineto's; load it before the process's first GPU call."""
+    """A Kineto child profiler for torch.profiler runs that pass KERNEL_TRACER_CONFIG and ProfilerActivity.CPU only."""
     from torch.utils.cpp_extension import ROCM_HOME, include_paths, load
 
     from aklr.core.platform.env import RuntimeEnv
@@ -47,10 +51,9 @@ def kernel_tracer():
         # Kineto's headers use fmt, whose compiled half libtorch does not export
         extra_cflags=["-D__HIP_PLATFORM_AMD__", "-DFMT_HEADER_ONLY"],
         extra_include_paths=[f"{ROCM_HOME}/include", str(Path(include_paths()[0]) / "kineto")],
-        extra_ldflags=[f"-L{ROCM_HOME}/lib", "-lrocprofiler-sdk", "-lamdhip64"],
+        extra_ldflags=[f"-L{ROCM_HOME}/lib", "-lrocprofiler-sdk", "-lamdhip64", "-ldl"],
         build_directory=None if build is None else str(build),
     )
-    # warned by the bench's parent, whose stderr is read and which loads it first
     if tracer.rocprofiler_sdk_version >= (1, 4, 2):  # rocprofiler-sdk 1.4.2 (ROCm 10.2) fixed ROCM-29087
         warnings.warn(
             "rocprofiler-sdk fixed ROCM-29087: delete the WORKAROUND in aklr/core/utils/_kernel_tracer.cpp",
@@ -58,6 +61,9 @@ def kernel_tracer():
             stacklevel=2,
         )
     return tracer
+
+
+KERNEL_TRACER_CONFIG = "aklr_kernel_tracer"  # torch.profiler's custom_profiler_config
 
 
 @triton.jit
@@ -163,7 +169,10 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
         n_repeat = 1000 if estimate_ms == 0 else max(1, int(rep / estimate_ms))
 
         with torch.profiler.profile(
-            activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA]
+            activities=[torch.profiler.ProfilerActivity.CPU],
+            experimental_config=torch.profiler._ExperimentalConfig(
+                custom_profiler_config=KERNEL_TRACER_CONFIG
+            ),
         ) as session:
             g = torch.cuda.CUDAGraph()
             scope_prefix = f"aklr.{uuid.uuid4().hex}."

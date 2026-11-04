@@ -59,6 +59,9 @@ struct Profile {
   std::vector<std::string> kernels;
 };
 
+// attaches the tool to the process, once
+void attach();
+
 // a torch.profiler window: every kernel dispatch and copy, and every HIP call
 // with the op it ran in
 void start_profile();
@@ -75,7 +78,7 @@ void pop_scope();
 
 std::string hip_api_name(rocprofiler_tracing_operation_t op);
 
-// makes the tracer torch.profiler's GPU tracer
+// offers the tracer to torch.profiler runs, as a Kineto child profiler
 void register_kineto_profiler();
 
 } // namespace aklr::kernel_tracer

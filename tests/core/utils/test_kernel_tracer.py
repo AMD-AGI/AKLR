@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""Loaded before a process's first GPU call, the kernel tracer is torch.profiler's GPU tracer: the same kernels
-Kineto's records, each tied to the op that launched it, and a graph replay's to the call that captured it."""
+"""A torch.profiler run that opts in gets its GPU events from the kernel tracer: the same kernels Kineto's own
+tracer records, each tied to the op that launched it, and a graph replay's to the call that captured it. A run that
+does not opt in is Kineto's alone."""
 
 import collections
 import json
@@ -14,13 +15,19 @@ import pytest
 import torch
 
 
-def _eager_kernels(use_tracer: bool) -> collections.Counter:
-    if use_tracer:
-        from aklr.core.utils.testing import kernel_tracer
+def _opted_in() -> dict:
+    from aklr.core.utils.testing import KERNEL_TRACER_CONFIG
 
-        kernel_tracer()
-    from torch.profiler import ProfilerActivity, profile
+    return dict(
+        activities=[torch.profiler.ProfilerActivity.CPU],
+        experimental_config=torch.profiler._ExperimentalConfig(custom_profiler_config=KERNEL_TRACER_CONFIG),
+    )
 
+
+_KINETOS = dict(activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA])
+
+
+def _kernels_of_a_step(options: dict) -> tuple[collections.Counter, dict]:
     w = torch.randn(1024, 1024, device="cuda")
 
     def step():
@@ -28,35 +35,43 @@ def _eager_kernels(use_tracer: bool) -> collections.Counter:
 
     step()
     torch.cuda.synchronize()
-    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
+    with torch.profiler.profile(**options) as prof:
         for _ in range(3):
             step()
         torch.cuda.synchronize()
-    assert prof.key_averages().total_average().self_device_time_total > 0
-    for op in ("aten::mm", "aten::mul", "aten::_softmax", "aten::add_"):
-        assert sum(e.self_device_time_total for e in prof.events() if e.name == op) > 0, op
-    return collections.Counter(
+    kernels = collections.Counter(
         e.name for e in prof.events() if e.device_type == torch.autograd.DeviceType.CUDA
     )
+    per_op = {
+        op: sum(len(e.kernels) for e in prof.events() if e.name == op)
+        for op in ("aten::mm", "aten::mul", "aten::_softmax", "aten::add_")
+    }
+    return kernels, per_op
+
+
+def _kinetos_then_ours_then_kinetos() -> list:
+    from aklr.core.utils.testing import kernel_tracer
+
+    torch.ones(1, device="cuda")  # the GPU runs before the tracer loads
+    kinetos = _kernels_of_a_step(_KINETOS)
+    kernel_tracer()
+    return [kinetos, _kernels_of_a_step(_opted_in()), _kernels_of_a_step(_KINETOS)]
 
 
 def _trace_of_a_graph_replay() -> list:
     from aklr.core.utils.testing import kernel_tracer
 
     kernel_tracer()
-    from torch.profiler import ProfilerActivity, profile
-
     x = torch.randn(1 << 20, device="cuda")
     graph = torch.cuda.CUDAGraph()
     stream = torch.cuda.Stream()
-    with torch.cuda.stream(stream):
-        x.mul_(1.0)
-        with torch.cuda.graph(graph):
-            x.mul_(2.0)
-            x.add_(1.0)
-    torch.cuda.synchronize()
-    with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
-        x.mul_(0.5)
+    with torch.profiler.profile(**_opted_in()) as prof:
+        with torch.cuda.stream(stream):
+            x.mul_(1.0)
+            with torch.cuda.graph(graph):
+                x.mul_(2.0)
+                x.add_(1.0)
+        torch.cuda.synchronize()
         graph.replay()
         torch.cuda.synchronize()
     with tempfile.TemporaryDirectory() as directory:
@@ -65,25 +80,17 @@ def _trace_of_a_graph_replay() -> list:
         return json.loads(path.read_text())["traceEvents"]
 
 
-def _breakdown_of_a_call() -> dict:
+def _error_of(opt_in_with_cuda: bool) -> str:
+    if not opt_in_with_cuda:
+        torch.ones(1, device="cuda")  # the GPU runs before the tracer's module is imported
     from aklr.core.utils.testing import kernel_tracer
 
     kernel_tracer()
-    from aklr.benchmarks.models.kernel_breakdown import profile_call
-
-    w = torch.randn(1024, 1024, device="cuda")
-    return profile_call(lambda: torch.matmul(w, w).relu_())
-
-
-def _profile_after_the_first_gpu_call() -> str:
-    torch.ones(1, device="cuda")
-    from aklr.core.utils.testing import kernel_tracer
-
-    kernel_tracer()
-    from torch.profiler import ProfilerActivity, profile
-
+    options = _opted_in()
+    if opt_in_with_cuda:
+        options["activities"].append(torch.profiler.ProfilerActivity.CUDA)
     try:
-        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]):
+        with torch.profiler.profile(**options):
             torch.ones(1, device="cuda")
     except RuntimeError as error:
         return str(error)
@@ -100,8 +107,10 @@ gpu = pytest.mark.skipif(torch.version.hip is None, reason="rocprofiler-sdk trac
 
 @pytest.mark.gpu
 @gpu
-def test_the_same_kernels_as_kinetos():
-    assert _in_a_fresh_process(_eager_kernels, True) == _in_a_fresh_process(_eager_kernels, False)
+def test_an_opted_in_run_records_kinetos_kernels_and_leaves_kinetos_runs_alone():
+    kinetos, ours, kinetos_after = _in_a_fresh_process(_kinetos_then_ours_then_kinetos)
+    assert ours == kinetos == kinetos_after
+    assert all(n == 3 for n in ours[1].values()), ours[1]
 
 
 @pytest.mark.gpu
@@ -111,26 +120,23 @@ def test_a_chrome_trace_ties_kernels_to_their_launches():
     kernels = [e for e in events if e.get("cat") == "kernel"]
     launches = {e["args"]["correlation"]: e for e in events if e.get("cat") == "cuda_runtime"}
     ops = {e["args"]["External id"] for e in events if e.get("cat") == "cpu_op"}
-    assert len(kernels) == 3
     for kernel in kernels:
         assert kernel["args"]["correlation"] in launches
-    eager, *replayed = sorted(kernels, key=lambda e: e["ts"])
-    assert eager["args"]["External id"] in ops
-    assert "graph launch" not in eager["args"]
-    assert [k["args"]["graph ordinal"] for k in replayed] == [0, 1]
+    replayed = [k for k in kernels if "graph launch" in k["args"]]
+    eager = [k for k in kernels if "graph launch" not in k["args"]]
+    assert eager and all(k["args"]["External id"] in ops for k in eager)
+    assert sorted(k["args"]["graph ordinal"] for k in replayed) == [0, 1]
     assert all(k["args"]["capture correlation"] for k in replayed)
     assert {e["id"] for e in events if e.get("ph") == "f"} <= {e["id"] for e in events if e.get("ph") == "s"}
 
 
 @pytest.mark.gpu
 @gpu
-def test_the_kernel_breakdown_reads_its_trace():
-    breakdown = _in_a_fresh_process(_breakdown_of_a_call)
-    assert len(breakdown) == 2
-    assert all(ms > 0 and calls == 1 for ms, calls, _ in breakdown.values())
+def test_an_opted_in_run_refuses_kinetos_gpu_tracer_too():
+    assert "ProfilerActivity.CPU only" in _in_a_fresh_process(_error_of, True)
 
 
 @pytest.mark.gpu
 @gpu
-def test_a_tracer_loaded_late_refuses_to_profile():
-    assert "before the process's first GPU call" in _in_a_fresh_process(_profile_after_the_first_gpu_call)
+def test_a_process_not_initialized_for_the_tracer_refuses_to_profile():
+    assert "ROCP_TOOL_ATTACH=1" in _in_a_fresh_process(_error_of, False)

@@ -1,9 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""The CUDA Graph timer measures the subjects the bench meets, each in a fresh process, as the
-bench runs it: the timer's tracer is loaded before the first GPU call. A timing is only
-returned when every replayed kernel matched the call that captured it."""
+"""The CUDA Graph timer measures the subjects the bench meets, each in a fresh process."""
 
 import multiprocessing
 
@@ -14,9 +12,8 @@ import torch
 def _time_a_subject_with_per_stream_state() -> float:
     """Stands in for AITER's opus split-K: state it may only create eagerly, per stream, must
     already exist on the stream the timer captures it on."""
-    from aklr.core.utils.testing import bench_cudagraph, kernel_tracer
+    from aklr.core.utils.testing import bench_cudagraph
 
-    kernel_tracer()
     registered: set[int] = set()
     x = torch.ones(1 << 20, device="cuda")
 
@@ -35,9 +32,8 @@ def _time_a_subject_that_forks_a_stream() -> float:
     """A call that forks onto a second stream and joins back, at the bench's budget: under
     rocprofiler-sdk 1.3.5's queue interposition, its graph deadlocks (ROCM-29087), and the
     runtime replays one branch before the other."""
-    from aklr.core.utils.testing import bench_cudagraph, kernel_tracer
+    from aklr.core.utils.testing import bench_cudagraph
 
-    kernel_tracer()
     x, y = torch.ones(1 << 20, device="cuda"), torch.ones(1 << 20, device="cuda")
     side = torch.cuda.Stream()
 
@@ -54,9 +50,8 @@ def _time_a_subject_that_forks_a_stream() -> float:
 
 def _time_a_subject_that_copies() -> float:
     """A device copy is a memcpy node, which the runtime replays as its own blit kernel."""
-    from aklr.core.utils.testing import bench_cudagraph, kernel_tracer
+    from aklr.core.utils.testing import bench_cudagraph
 
-    kernel_tracer()
     x = torch.randn(1 << 22, device="cuda")
     y = torch.empty_like(x)
 
