@@ -165,6 +165,10 @@ mono kernel 之外，每轮 decode 还有 metadata、草稿采样、accept / inj
 
 结论（每项是否生效、首次比对的结果）写在 `AKLR_EXPORT_DIR` 导出的 info 里。
 
+sglang 的 `SGLANG_ENABLE_DP_GATHER_FP8`（prefill 的 DP gather 以 FP8 传输）在 ROCm 上依赖一个只在 CUDA 上 import 的
+group-quant kernel；`dp_routes.py` 在缺少它时改用 sglang 自带的 Triton 实现（info `fp8_group_quant`），无需开关。
+MI355X 上的高并发配置与压测见 [dsv41flash_mi355x/](dsv41flash_mi355x/)。
+
 ## 4. sglang 构建
 
 要求 sglang 0.5.22 带 monokernel 插件 API（RFC #43949），如 InferenceX 用的
