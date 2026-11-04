@@ -23,7 +23,7 @@ sources:
 > Attention chains GEMMs through registers: S (or dP) leaves one MFMA as a C fragment and enters the next one
 > as an operand. The atom therefore fixes the softmax lane map, the reductions, the store and the register
 > footprint, not only the MAC rate. GEMM-side atom facts are in `../gemm/flydsl_gemm_mainloop.md` §5, per-lane
-> register counts per atom in `../isa/matrix_core.md`, transposed-read lane maps in
+> register counts per atom in `../hardware/gfx950/matrix_core.md`, transposed-read lane maps in
 > `flydsl_attn_lds.md` §3.
 >
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end.
@@ -192,7 +192,7 @@ the f32 accumulator elements of a lane.
 ## Related
 `flydsl_attn_softmax.md` · `flydsl_attn_lds.md` · `flydsl_attn_registers_occupancy.md` ·
 `flydsl_attn_schedule_sync.md` · `flydsl_attn_backward.md` · `flydsl_attn_attribution.md` ·
-`../gemm/flydsl_gemm_mainloop.md` · `../isa/matrix_core.md`
+`../gemm/flydsl_gemm_mainloop.md` · `../hardware/gfx950/matrix_core.md`
 
 ## Evidence
 
@@ -221,4 +221,4 @@ run's; for a KB note without a run record, the date the note gives.
 - E18 [2026-08, gfx950, FlyDSL ?, N=3, campaign bench, three reads of the score cell; the round's gate read two (+3.51% against the previous best 978.30)] dQ split-K partials stored as E4M3: 1015.7 / 1015.4 / 1015.2 TF/s against a ~975 clean-tree median (+4.1%); dq SNR 31.32–31.39 dB at D64 against 47.9 dB in bf16, dk/dv unchanged; the campaign's total over its four kept changes 970.5 → 1012.65 (+4.34%) (gpt-oss D=64 attention backward, B=4 Hq=64 Hkv=8 S=8192 full causal; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260826_153437/memory.md:181)
 - E19 [2026-09, gfx950, torch (no FlyDSL kernel), N=?, torch simulation of the backward against fp32] per-tensor E4M3 on one tensor at a time: k → dq 28.4 dB, q → dk 28.7 dB, any other tensor 31.3–32.3 dB; all tensors 23.2 dB; 32-element MX scales: all tensors 24.1 dB (+0.9), the four operands 25.2 against 24.7 dB (+0.5); error powers add (D=64 attention backward model; KB note of a manual pricing session, not a campaign; local:/workspace/code/gpt_oss_docker/.claude/memory/project_gptoss_fp8_attn_bwd_onclock_campaign.md:111)
 - E20 [2026-07, gfx950, torch (no FlyDSL kernel), N=1, PyTorch SNR model of fp8 P, kernel unchanged] bf16 P 57.47 dB, e4m3 with per-row and with per-tile scale 33.41 dB, e5m2 with per-row scale 27.40 dB (6.0 dB below e4m3); scaled to the kernel's measured 51.61 dB, e4m3 P ≈ 27.6 dB, which the round sets against a 48 dB gate (same hd64 forward; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260728_082734/rounds/round-19/agent.txt:8)
-- E21 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-and-run probe, ISA dump, output compared bitwise with torch's e4m3 → bf16] 16 fp8 bytes per lane: `cvt_pk_f32_fp8` (lo, hi) then `.to(BFloat16)` emit 8 `v_cvt_pk_f32_fp8` + 8 `v_cvt_pk_bf16_f32`; `cvt_scalef32_pk_bf16_fp8` with scale 1.0 emits 8 `v_cvt_scalef32_pk_bf16_fp8`; both bit-equal to torch on all 254 non-NaN e4m3 codes (±0 included) (local:/shared_nfs/kyle/aklr_mla/runs/L3/knowledge_patch_v2/probe/cvt.py); instruction semantics in `../isa/cdna4/ch12_11_vop3a_vop3b_instructions.md` § V_CVT_SCALEF32_PK_BF16_FP8
+- E21 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-and-run probe, ISA dump, output compared bitwise with torch's e4m3 → bf16] 16 fp8 bytes per lane: `cvt_pk_f32_fp8` (lo, hi) then `.to(BFloat16)` emit 8 `v_cvt_pk_f32_fp8` + 8 `v_cvt_pk_bf16_f32`; `cvt_scalef32_pk_bf16_fp8` with scale 1.0 emits 8 `v_cvt_scalef32_pk_bf16_fp8`; both bit-equal to torch on all 254 non-NaN e4m3 codes (±0 included) (local:/shared_nfs/kyle/aklr_mla/runs/L3/knowledge_patch_v2/probe/cvt.py); instruction semantics in `../hardware/gfx950/cdna4/ch12_11_vop3a_vop3b_instructions.md` § V_CVT_SCALEF32_PK_BF16_FP8

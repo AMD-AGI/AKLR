@@ -158,7 +158,7 @@ bit means that class **may cross** the fence; `0` pins everything.
 
 **FlyDSL's `hot_loop_scheduler` is the reference use.** `preshuffle_gemm` builds one hint table per tile.
 On gfx950 it spreads the LDS reads and VMEM loads evenly over all MFMAs,
-for both sync and async copy (`../optimize/gemm-optimization.md` §5.5);
+for both sync and async copy (`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` §5.5);
 the sync path also places its LDS writes at the tail.
 `preload=(dsrd, dvmem)` sets how many go ahead of the first MFMA
 (PS:439-494).
@@ -283,7 +283,7 @@ as parallel chains, cost 1.87× the GELU's time per added instruction on one sha
 - **Ragged edges.** `fx.rocdl.make_buffer_tensor(t)` defaults to `max_size=True`, which sets
   `num_records = 0xFFFFFFFF` — no out-of-range masking. To have out-of-range loads return zero and
   out-of-range stores dropped, pass `max_size=False` or `num_records_bytes`, and derive the bound from
-  traced values (`../bottleneck/debug-flydsl-kernel.md` § What the cache key sees).
+  traced values (`../flydsl/debug-flydsl-kernel.md` § What the cache key sees).
 
 ## Verify
 - The `wave_id → (wave_m, wave_n)` mapping and its co-resident pairs are written down for the kernel.
@@ -292,7 +292,7 @@ as parallel chains, cost 1.87× the GELU's time per added instruction on one sha
 - An XCD/order change is judged on wall time and stall counters across all shape classes.
 
 ## Related
-`flydsl_gemm_grid_pricing.md` · `flydsl_gemm_workflow.md` · `../bottleneck/debug-flydsl-kernel.md`
+`flydsl_gemm_grid_pricing.md` · `flydsl_gemm_workflow.md` · `../flydsl/debug-flydsl-kernel.md`
 
 ## Evidence
 

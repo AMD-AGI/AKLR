@@ -89,7 +89,7 @@ or 12 routes: 768, 1536).
 - Weights: one 16-byte load per lane per chunk for the gate tile and one for the up tile of the interleaved pair; each
   dword of 8 fp4 values becomes 8 bf16 with the block scale applied by `cvt_scalef32_pk_bf16_fp4`; one scale dword
   holds the gate and up bytes of two chunks. Non-temporal loads under expert parallelism, cached otherwise (routes that
-  share an expert then reuse it from L2, per the code's note) (`../grouped_gemm/flydsl_grouped_moe_inference.md` §4).
+  share an expert then reuse it from L2, per the code's note) (`../moe/flydsl_grouped_moe_inference.md` §4).
 - `mfma_f32_16x16x32_bf16`, 4 per chunk for gate and 4 for up, into fp32 (`../gemm/flydsl_gemm_mainloop.md` §5).
 - `_reduce_waves`: the 4 waves' partials through LDS, summed in wave order (`../gemm/flydsl_gemm_small_m.md` §4).
   Wave 0 clamps, applies SiLU with `exp2` and `rcp`, rounds to bf16 and stores the route's 16 values to `Y`.

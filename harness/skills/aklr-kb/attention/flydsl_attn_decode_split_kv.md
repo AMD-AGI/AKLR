@@ -201,7 +201,7 @@ synchronize-bracketed wall carried ~27 µs of host time and turned a 16.8% kerne
 
 ## Related
 `flydsl_attn_grid_dispatch.md` · `flydsl_attn_backward.md` §6 · `flydsl_attn_measurement.md` ·
-`../gemm/flydsl_gemm_small_m.md` · `../gemm/flydsl_gemm_epilogue.md` §5 · `../isa/memory_and_sync.md`
+`../gemm/flydsl_gemm_small_m.md` · `../gemm/flydsl_gemm_epilogue.md` §5 · `../hardware/gfx950/memory_and_sync.md`
 
 ## Evidence
 

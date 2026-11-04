@@ -31,7 +31,7 @@ grep -rn "^#### $n\$" isa/cdna4/                    # or: rg -n "^#### $n\$" isa
 awk -v h="#### $n" '/^#/{p=($0==h); if(p) print "== " FILENAME} p' isa/cdna4/ch12_*.md    # full entries
 awk -v h="#### $n" '/<!-- page/{pg=$3} $0==h{print FILENAME": PDF page "pg}' isa/cdna4/ch12_*.md
 grep -rn '^#### V_CVT_SCALEF32_.*FP4' isa/cdna4/     # a family
-awk '/^#### /{n=$2} /^Opcode: 53$/{print n}' isa/cdna4/ch12_10_vop3p_instructions.md     # opcode -> name
+awk '/^#### /{n=$2} /^Opcode: 53$/{print n}' hardware/gfx950/cdna4/ch12_10_vop3p_instructions.md     # opcode -> name
 grep -rni 'v_mfma_f32_16x16x128_f8f6f4' isa/cdna4/   # every mention, prose and tables included
 ```
 
@@ -245,7 +245,7 @@ The operand codes are in Table 23 (`cdna4/ch06_vector_alu_operations.md` §6.2.2
   its first page's marker and the following markers are empty: ch07 Table 38 spans PDF pages 75–77 under the
   page-74 marker, and ch13 has several such runs. Rows can also land under the previous page's marker (the M0,
   EXEC→DPP, v_cmpx and permlane rows of ch04 Table 11 are on PDF page 29). To find the marker above a line:
-  `awk -v L=415 '/<!-- page/{pg=$3} FNR==L{print "marker: page " pg; exit}' isa/cdna4/ch12_08_vop1_instructions.md`;
+  `awk -v L=415 '/<!-- page/{pg=$3} FNR==L{print "marker: page " pg; exit}' hardware/gfx950/cdna4/ch12_08_vop1_instructions.md`;
   confirm the page against the PDF before citing it.
 - **Tables.** Converted tables can be misaligned: the rows of ch11 Table 57 (§11.3.1) are shifted by a column
   (`memory_and_sync.md` §4.1). Check a table cell, and any sign you rely on in a formula, constant, exponent or
@@ -266,4 +266,4 @@ The operand codes are in Table 23 (`cdna4/ch06_vector_alu_operations.md` §6.2.2
   calls it `MODE . EXCP_EN[8:0]`.
 
 ## Related
-`INDEX.md` (file map) · `matrix_core.md` · `memory_and_sync.md` · `cdna4/01_contents.md` · `../SKILL.md`
+`INDEX.md` (file map) · `matrix_core.md` · `memory_and_sync.md` · `cdna4/01_contents.md` · `../../SKILL.md`

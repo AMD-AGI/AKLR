@@ -33,7 +33,7 @@ basis: source-semantics
    `SQ_WAIT_ANY / SQ_WAVE_CYCLES` moves (S14).
 5. **Capacity:** LDS per workgroup caps occupancy (S15).
 6. **Split reads:** `ds_read2_b32` or `ds_read2_b64` in the ISA where a `ds_read_b128` was meant: the 16-byte load was
-   declared only 4- or 8-byte aligned; declare 16 (`language/limits.md`, S32).
+   declared only 4- or 8-byte aligned; declare 16 (`../flydsl/language/limits.md`, S32).
 
 ## Rule out first
 
@@ -44,11 +44,11 @@ basis: source-semantics
 
 ## Candidate techniques
 
-- More write-to-read distance — `optimize/lds-optimization.md` (Method 3) — for cause 1 (S20); with little VGPR
+- More write-to-read distance — `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md` (Method 3) — for cause 1 (S20); with little VGPR
   headroom move the write instead of inserting work, `gemm/flydsl_gemm_schedule_and_locality.md` §5 (S21).
 - XOR swizzle on 16-byte slots, composed into the layout — `gemm/flydsl_gemm_datapath.md` §2 — one function keys the
   writer and the reader (S22); re-measure it, a derived swizzle is not automatically better (S23).
-- Padding — `gemm/flydsl_gemm_datapath.md` §3, `optimize/lds-optimization.md` (Method 2) — when a small stride bump
+- Padding — `gemm/flydsl_gemm_datapath.md` §3, `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md` (Method 2) — when a small stride bump
   removes the conflict (S24); pad by whole 16-byte slots to keep `b64`/`b128` alignment (S25); for column-wise
   MFMA fragment reads the swizzle is easier (S26).
 - A wave term in the transpose-read key — `gemm/flydsl_gemm_datapath.md` §2 — when a per-wave chunk stride puts
@@ -63,9 +63,9 @@ basis: source-semantics
 ## Evidence
 
 - S1 gemm/flydsl_gemm_datapath.md:103 compare SQ_LDS_BANK_CONFLICT against the floor computed by hand, not zero
-- S2 optimize/lds-optimization.md:129 Type A bank conflicts: high stall on ds_read/ds_write themselves
-- S3 optimize/lds-optimization.md:142 Type B write-read latency exposed: lgkmcnt(0) stall after ds_write
-- S4 optimize/lds-optimization.md:140 gfx950: ds_read2 offsets that are multiples of 64 hit the same bank
+- S2 https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md:143 Type A bank conflicts: high stall on ds_read/ds_write themselves
+- S3 https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md:157 Type B write-read latency exposed: lgkmcnt(0) stall after ds_write
+- S4 https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md:155 gfx950: ds_read2 offsets that are multiples of 64 hit the same bank
 - S5 gemm/flydsl_gemm_attribution.md:137 SQ_WAIT_INST_LDS counts dependent waits; co-resident waves can hide them
 - S6 gemm/flydsl_gemm_datapath.md:78 tell the three LDS failure modes apart; each has a different fix
 - S7 gemm/flydsl_gemm_datapath.md:86 check the write-to-read distance before the layout
@@ -78,18 +78,18 @@ basis: source-semantics
 - S15 gemm/flydsl_gemm_datapath.md:82 capacity: LDS per workgroup caps occupancy
 - S16 gemm/flydsl_gemm_attribution.md:139 halve-the-reads probe; SQ_LDS_IDX_ACTIVE vs SQ_VALU_MFMA_BUSY_CYCLES
 - S17 gemm/flydsl_gemm_datapath.md:104 zero conflicts is not a speedup; LDS is not the bound until a probe says so
-- S18 isa/memory_and_sync.md:271 the card's per-width lane phases are not from the ISA
+- S18 hardware/gfx950/memory_and_sync.md:271 the card's per-width lane phases are not from the ISA
 - S19 gemm/flydsl_gemm_correctness.md:144 reordering @fx.struct fields does not move LDS; read group_segment_fixed_size
-- S20 optimize/lds-optimization.md:343 Method 3: increase write-read distance
+- S20 https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md:384 Method 3: increase write-read distance
 - S21 gemm/flydsl_gemm_schedule_and_locality.md:236 when VGPR headroom is small, any insertion lengthens a live range
 - S22 gemm/flydsl_gemm_datapath.md:69 one function computes the swizzle key for both sides
 - S23 gemm/flydsl_gemm_datapath.md:67 re-measure a swizzle change; derived is not automatically better
 - S24 gemm/flydsl_gemm_datapath.md:97 padding when a small stride bump removes the conflict
 - S25 gemm/flydsl_gemm_datapath.md:101 padding must keep the 8- or 16-byte alignment; pad by whole 16-byte slots
-- S26 optimize/lds-optimization.md:323 column-wise reads such as MFMA fragments: padding hard to use, prefer XOR
+- S26 ../flydsl/guides.md:44 column-wise reads such as MFMA fragments: padding hard to use, prefer XOR
 - S27 gemm/flydsl_gemm_datapath.md:72 transpose reads need a wave term: per-wave chunk stride hits the same banks
 - S28 gemm/flydsl_gemm_datapath.md:257 the transpose instruction and the LDS layout must change together
 - S29 gemm/flydsl_gemm_schedule_and_locality.md:58 state the wave_id → (wave_m, wave_n) mapping explicitly
 - S30 gemm/flydsl_gemm_mainloop.md:78 why the 2×2-wave tile wins on long K: fewer LDS reads per MAC
 - S31 gemm/flydsl_gemm_mainloop.md:88 compile both designs and race them; the crossover depends on the shape
-- S32 language/limits.md:103 a 16-byte LDS load declared 4- or 8-byte aligned becomes `ds_read2_b32` / `ds_read2_b64`; `Vector.load` passes no alignment; declaring 16 cut a MoE epilogue's bank conflicts 4.2–4.9×
+- S32 ../flydsl/language/limits.md:103 a 16-byte LDS load declared 4- or 8-byte aligned becomes `ds_read2_b32` / `ds_read2_b64`; `Vector.load` passes no alignment; declaring 16 cut a MoE epilogue's bank conflicts 4.2–4.9×

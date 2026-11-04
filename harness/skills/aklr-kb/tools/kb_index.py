@@ -29,11 +29,6 @@ FOLDERS = {
         "Delivered kernels: what made them fast, under which conditions, and how to reproduce them.",
         ("ops", "dtypes", "regimes", "contract", "basis"),
     ),
-    "language": (
-        "Language",
-        "What FlyDSL v0.3.2 does, read from its source: limits, compile errors, version differences.",
-        ("gens", "flydsl", "basis"),
-    ),
     "pitfalls": (
         "Pitfalls",
         "Silent wrong results, FlyDSL version traps and measurement artifacts.",

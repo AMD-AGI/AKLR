@@ -17,7 +17,7 @@ carried nearly all of the gain: reverting only those two constants, all else equ
 | `sc0 sc1` on both | 1.052 | 1.085 | 1.046 | 1.057 | 1.035 |
 | AITER's store bits | 0.996 | 0.997 | 1.017 | 0.992 | 1.002 |
 
-The ISA's store table (CDNA4 Table 50; `flydsl-kernel-optimization/isa/memory_and_sync.md`): system
+The ISA's store table (CDNA4 Table 50; `../hardware/gfx950/memory_and_sync.md`): system
 scope is "Coherent Cache Bypass" in L2 and "Hit LRU" in the last-level cache; wave scope with no bits
 is "Hit LRU" in L2, and `sc0 nt` is "Hit Stream". Why bypassing L2 is faster here is inferred, not
 measured with counters: the stores leave no dirty lines in the L2s to write back. Load cache bits

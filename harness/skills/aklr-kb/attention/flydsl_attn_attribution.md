@@ -160,7 +160,7 @@ its pipe time). One kernel of the family is fabric-bound, the other is not.
 
 ## Related
 `../gemm/flydsl_gemm_attribution.md` · `flydsl_attn_workflow.md` · `flydsl_attn_measurement.md` ·
-`flydsl_attn_schedule_sync.md` · `../profile/kernel-trace-analysis/SKILL.md`
+`flydsl_attn_schedule_sync.md` · `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md`
 
 ## Evidence
 

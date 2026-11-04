@@ -20,9 +20,9 @@ flydsl: 0.3.2
 - A counter says "LDS-bound" or "latency-bound" and you are about to act on it.
 - A change moved wall time but not the counter you expected, or the other way round.
 
-Start from the trace: `../profile/capture-kernel-trace.md` and `../profile/kernel-trace-analysis/SKILL.md`
+Start from the trace: `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/capture-kernel-trace/SKILL.md` and `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md`
 capture and read an ATT trace, and FlyDSL's GEMM guide maps the common GEMM stalls to first actions and counts
-the hot loop (`../optimize/gemm-optimization.md` §8.4, §9). This card is for when those readings are
+the hot loop (`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` §8.4, §9). This card is for when those readings are
 ambiguous: probes that remove or repeat a part and read the time.
 
 ## 1. Two probes that classify the regime without a profiler
@@ -211,7 +211,7 @@ near busy.
 
 ## Related
 `flydsl_gemm_measurement.md` (rulers, null controls, A/B design) · `flydsl_gemm_grid_pricing.md` (rounds,
-fixed cost, illegal arm) · `flydsl_gemm_mainloop.md` · `../profile/kernel-trace-analysis/SKILL.md`
+fixed cost, illegal arm) · `flydsl_gemm_mainloop.md` · `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md`
 
 ## Evidence
 

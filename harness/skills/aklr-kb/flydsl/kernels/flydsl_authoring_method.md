@@ -34,7 +34,7 @@ GEMM-like kernel, go to `../../gemm/INDEX.md`.
 3. **Imported helpers** (`flydsl.utils`, `flydsl.expr`) — reusable building blocks.
 4. The **test harness** — which shapes, dtypes and modes are actually benchmarked.
 5. If you plan to rewrite loops or memory paths, review the three loop forms
-   (`../../bottleneck/debug-flydsl-kernel.md` § The three loop forms), buffer-tensor bounds
+   (`../debug-flydsl-kernel.md` § The three loop forms), buffer-tensor bounds
    (`fx.rocdl.make_buffer_tensor`) and the kernel's LDS allocator **before** editing.
 
 ## Step 2 — classify, and know when to stop
@@ -226,5 +226,5 @@ codegen-affecting refactor. When varying `Constexpr` values across recompiles, p
 
 ## Related
 `../../gemm/INDEX.md` (dense-GEMM package) ·
-`../../../flydsl-kernel-authoring/SKILL.md` (first-time authoring) ·
-`../../bottleneck/debug-flydsl-kernel.md` (correctness bugs)
+`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/flydsl-kernel-authoring/SKILL.md` (first-time authoring) ·
+`../debug-flydsl-kernel.md` (correctness bugs)

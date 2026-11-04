@@ -1,5 +1,5 @@
 ---
-name: hip-kernel-optimization
+name: aklr-kb/hip
 description: >
   Making HIP kernels fast and AITER-exact on gfx950 (MI355X) inside AKLR. Covers memory-bound
   kernels (normalization, elementwise): the stores' cache policy, which schedule changes matter,
@@ -16,8 +16,9 @@ allowed-tools: Read Edit Bash Grep Glob Agent
 |---|---|
 | A memory-bound kernel (norm, elementwise) against AITER | `memory_bound.md` |
 | The ABI and audit of a hip schema kernel (`TORCH_LIBRARY_EXPAND`, SH0 – SH5) | `aklr/ops/README.md` (hip kernels) |
-| Cache bits, waits and hazards of an instruction | `flydsl-kernel-optimization/isa/memory_and_sync.md` |
-| How AKLR times a Point | `harness/skills/aklr-read-validation` (`references/ruler.md`) |
+| Cache bits, waits and hazards of an instruction | `../hardware/gfx950/memory_and_sync.md` |
+| How AKLR times a Point | `harness/skills/aklr-read-validation/references/ruler.md` |
+| What makes a kernel fast whatever its language (op packages, symptoms, cases, AKLR's rules) | `../SKILL.md` |
 
 ## In AKLR
 

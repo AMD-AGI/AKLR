@@ -234,7 +234,7 @@ jitfn.compile_hints["llvm_options"] = {"amdgpu-sched-strategy": "max-ilp"}   # c
 `flydsl_attn_registers_occupancy.md` · `flydsl_attn_lds.md` · `flydsl_attn_attribution.md` ·
 `flydsl_attn_correctness.md` · `flydsl_attn_grid_dispatch.md` · `flydsl_attn_decode_split_kv.md` ·
 `../gemm/flydsl_gemm_schedule_and_locality.md` · `../gemm/flydsl_gemm_correctness.md` ·
-`../optimize/prefetch-data-load.md` · `../bottleneck/debug-flydsl-kernel.md`
+`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/prefetch-data-load/SKILL.md` · `../flydsl/debug-flydsl-kernel.md`
 
 ## Evidence
 

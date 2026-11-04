@@ -137,7 +137,7 @@ Config(num_warps=4, waves_per_eu=3, maxnreg=128, **kernel_kwargs)
 
 `Config.compiler_opts()` separates the compiler options (`waves_per_eu`, `maxnreg`) from the kwargs injected
 into the `@jit` call; `@autotune` times the candidates and caches the winner on disk. In v0.3.2 `maxnreg` reaches
-only the binary's options and leaves the code unchanged (`../../language/limits.md`).
+only the binary's options and leaves the code unchanged (`../language/limits.md`).
 
 **aiter does not use it for GEMM.** It sweeps offline and writes the per-shape CSV that `tuned_gemm` reads at
 dispatch: decide offline, bake the answer, never search in the serving path.

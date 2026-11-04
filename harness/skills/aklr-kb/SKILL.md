@@ -1,34 +1,30 @@
 ---
-name: flydsl-kernel-optimization
+name: aklr-kb
 description: >
-  Making FlyDSL kernels fast on gfx950 (MI350/MI355X). Includes a dense-GEMM package
-  (fp8, MXFP4, MXFP8, bf16/fp16, int8, small-M decode shapes included): dispatch rounds
-  and split-K, main-loop pipelines, LDS/swizzle/DMA data paths, XCD tile order and
-  scheduling hints, epilogues, autotuning, attribution, correctness gates and A/B
-  measurement. Also a grouped-GEMM package (training forward, dgrad and variable-K wgrad in bf16, fp8,
-  MXFP8 and MXFP4; MoE expert GEMMs), an MXFP4 fused-MoE decode note, LDS and prefetch optimization, ATT trace capture and analysis,
-  perf-regression bisection, debugging wrong or non-compiling kernels, and the CDNA4 (gfx950)
-  ISA reference guide with guides to looking things up in it. Use when optimizing a FlyDSL
-  kernel, especially a GEMM or grouped GEMM, or finding out why one is slow or wrong.
+  What makes a kernel fast on gfx950 (MI350/MI355X) inside AKLR, whatever language it is written in. Includes
+  a dense-GEMM package (fp8, MXFP4, MXFP8, bf16/fp16, int8, small-M decode shapes included): dispatch rounds
+  and split-K, main-loop pipelines, LDS/swizzle/DMA data paths, XCD tile order and scheduling hints,
+  epilogues, autotuning, attribution, correctness gates and A/B measurement. Also a MoE package (fused MoE at
+  decode sizes, and the expert grouped GEMM: training forward, dgrad and variable-K wgrad in bf16, fp8, MXFP8
+  and MXFP4), an attention package, symptom pages, pitfalls and delivered kernels, trace capture and analysis,
+  perf-regression bisection, the CDNA4 (gfx950) ISA reference guide with guides to looking things up in it,
+  and gfx942 (MI300X) GEMM notes. Use with the language skill (aklr-kb/flydsl, aklr-kb/triton or aklr-kb/hip)
+  when optimizing a kernel, or finding out why one is slow or wrong.
 allowed-tools: Read Edit Bash Grep Glob Agent
-gens: [gfx950]
-arch-names: [gfx950, CDNA4, MI350, MI355]
+gens: [gfx950, gfx942]
 ---
 
-# FlyDSL kernel optimization
+# Kernel wiki
 
-Techniques for making a FlyDSL kernel fast on gfx950, by phase. Paths below are relative to this folder,
-except those starting with `aklr/`, relative to the repository root, and `aiter/` or `csrc/`, relative to aiter's.
-The language itself (layouts, `@flyc.kernel` / `@flyc.jit`, copy atoms, MFMA, loops) is the
-`flydsl-kernel-authoring` skill (`../flydsl-kernel-authoring/SKILL.md`); modernizing an existing kernel's
-code is the `flydsl-kernel-code-cleanup` skill.
+What makes a kernel fast on AMD GPUs inside AKLR, by op and by symptom. The `flydsl_` cards and the cases were
+measured on FlyDSL kernels: their mechanisms and numbers hold for any language; their code is FlyDSL. Writing it in
+a language is that language's skill: `flydsl/SKILL.md`, `triton/SKILL.md`, `hip/SKILL.md`.
 
-Every API statement here is for FlyDSL v0.3.2, the version this repository pins. AKLR's CI installs with `--no-deps`
-and measures on its image's FlyDSL, 0.3.4.1 (`pitfalls/measured_a_different_build.md`). File and line citations are to
-ROCm/FlyDSL `v0.3.2` (`dd8373349`), AMD-AGI/Primus-Turbo main `7615a5a2` (`ca1fdd67` in `grouped_gemm/`) and
-ROCm/aiter `dbd8bf5` (`AKLR_BASELINE_AITER`); check out those revisions to follow them. The files under `optimize/`,
-`profile/` and `bottleneck/` that come from FlyDSL's own skills keep their `Usage: /name` lines; those commands are
-not registered here, so open the file instead.
+Paths below are relative to this folder, except those starting with `aklr/`, relative to the repository root, and
+`aiter/` or `csrc/`, relative to aiter's. File and line citations are to ROCm/FlyDSL `v0.3.2` (`dd8373349`),
+AMD-AGI/Primus-Turbo main `7615a5a2` (`ca1fdd67` for the expert GEMM in `moe/`) and ROCm/aiter `dbd8bf5`
+(`AKLR_BASELINE_AITER`); check out those revisions to follow them. FlyDSL's own skills are linked at `v0.3.2`, not
+copied; a `§` after such a link is that skill's own numbering.
 
 ## Stop: what a AKLR kernel cannot do
 
@@ -62,22 +58,15 @@ wins. Check a plan against this table before writing code.
 
 | Task | Read in this order |
 |---|---|
-| Write or optimize a dense GEMM (fp8 / MXFP4 / MXFP8 / bf16) | `optimize/gemm-optimization.md` (FlyDSL's walkthrough) if you have not built a FlyDSL GEMM before → `gemm/INDEX.md` → the card it routes to |
+| Write or optimize a dense GEMM (fp8 / MXFP4 / MXFP8 / bf16) | `gemm/INDEX.md` → the card it routes to |
 | A GEMM with M ≤ 256 (decode, speculative verify) | `gemm/flydsl_gemm_small_m.md` |
-| Write or optimize a grouped GEMM / MoE expert GEMM (forward, dgrad, variable-K wgrad) | `grouped_gemm/INDEX.md` → the card it routes to (main loop and datapath in `gemm/`) |
+| A GEMM on gfx942 (MI300X) | `gemm/flydsl_gemm_gfx942.md` |
+| A MoE: fused MoE at decode sizes (MXFP4, routing sort, stage 1 / stage 2), or its expert grouped GEMM (forward, dgrad, variable-K wgrad) | `moe/INDEX.md` → the card it routes to; the expert GEMM is its § Expert GEMM (grouped GEMM), with main loop and datapath in `gemm/` |
 | Write or optimize an attention kernel (prefill, backward, decode with split KV) | `attention/INDEX.md` → the card it routes to |
-| A fused MoE at decode sizes (MXFP4, routing sort, stage 1 / stage 2) | `moe/INDEX.md` → the technique, cases and expert-GEMM card it routes to |
 | Dump a kernel's IR and final ISA; read registers, LDS, spills, waits and hot-loop counts | `gemm/flydsl_gemm_mainloop.md` §10 (`FLYDSL_DUMP_IR=1`); `tools/isa_diff.py` compares two dumps |
-| Author and optimize any other kernel, structure first | `optimize/flydsl_levers/flydsl_authoring_method.md` |
-| Read aiter's shipped FlyDSL kernels (dense GEMM, MoE, attention and the rest) and their knobs | `optimize/flydsl_levers/flydsl_kernel_library.md` → `optimize/flydsl_levers/flydsl_knob_space.md` |
-| LDS bank conflicts, double buffering, swizzle | `optimize/lds-optimization.md` |
-| Overlap loads with compute, prefetch, software pipelining | `optimize/prefetch-data-load.md` |
-| Wrong output, NaN, won't compile, a fix that didn't take | `bottleneck/debug-flydsl-kernel.md` (clear the cache first); an error message: `language/compile_errors.md` |
-| Code from another FlyDSL version, or FlyDSL doing what you did not expect | `language/version_notes.md`, `language/limits.md` |
-| Capture a kernel trace, find the hotspot | `profile/capture-kernel-trace.md` → `profile/kernel-trace-analysis/SKILL.md` |
-| A performance regression appeared; find the commit | `optimize/bisect-perf-regression.md` |
-| What an instruction, encoding, counter, wait state or hardware limit really is | `isa/INDEX.md` → `isa/lookup.md`, `isa/matrix_core.md`, `isa/memory_and_sync.md` |
-| Run or extend FlyDSL's own tests and benchmarks, inside a FlyDSL checkout | `profile/flydsl_repo_tests.md` |
+| Capture a kernel trace and find the hotspot, or find the commit behind a performance regression | `profile.md` |
+| What an instruction, encoding, counter, wait state or hardware limit really is | `hardware/gfx950/INDEX.md` → `hardware/gfx950/lookup.md`, `hardware/gfx950/matrix_core.md`, `hardware/gfx950/memory_and_sync.md` |
+| The language: its API, compile errors, debugging, its own guides | the language skill: `flydsl/SKILL.md`, `triton/SKILL.md`, `hip/SKILL.md` |
 
 ## By symptom
 
@@ -86,12 +75,12 @@ wins. Check a plan against this table before writing code.
 | Not yet known whether it is compute-, memory- or launch-bound | `gemm/flydsl_gemm_attribution.md` §1–3 |
 | Fewer workgroups than CUs, or a last dispatch round mostly empty | `gemm/flydsl_gemm_grid_pricing.md` §1–2, §10; `patterns/low_cu_utilization.md` |
 | M ≤ 256 on a row bound by launch, reduction and latency, not by reading B | `gemm/flydsl_gemm_small_m.md` §2–3; `patterns/launch_floor_small_m.md` |
-| LDS bank conflicts | `gemm/flydsl_gemm_datapath.md` §3, `optimize/lds-optimization.md`; `patterns/lds_bank_conflicts.md` |
-| MFMAs wait on global loads; bytes / time near the measured stream bandwidth | `gemm/flydsl_gemm_datapath.md` §5, §7, `optimize/prefetch-data-load.md`; `patterns/memory_bound.md` |
+| LDS bank conflicts | `gemm/flydsl_gemm_datapath.md` §3; `patterns/lds_bank_conflicts.md` |
+| MFMAs wait on global loads; bytes / time near the measured stream bandwidth | `gemm/flydsl_gemm_datapath.md` §5, §7; `patterns/memory_bound.md` |
 | Spills, VGPR / AGPR pressure, one wave per SIMD | `gemm/flydsl_gemm_mainloop.md` §4, §7, `gemm/flydsl_gemm_grid_pricing.md` §4; `patterns/register_pressure.md` |
 | The store costs more than expected | `gemm/flydsl_gemm_epilogue.md` §2–3 |
 | Memory-bound with a linear tile order: tiles that share a panel land on different XCDs | `gemm/flydsl_gemm_schedule_and_locality.md` §2 |
-| Stalls on `s_waitcnt` | `gemm/flydsl_gemm_schedule_and_locality.md` §4, `isa/memory_and_sync.md` §1 |
+| Stalls on `s_waitcnt` | `gemm/flydsl_gemm_schedule_and_locality.md` §4, `hardware/gfx950/memory_and_sync.md` §1 |
 | A fixed cost per tile: time not proportional to K | `gemm/flydsl_gemm_attribution.md` §7, `gemm/flydsl_gemm_grid_pricing.md` §6 |
 | Clocks drop under load; slower than the instruction count says | `gemm/flydsl_gemm_attribution.md` §4 |
 | A gain that does not reproduce, or an A/B inside the noise | `gemm/flydsl_gemm_measurement.md` §1, §4 |
@@ -101,8 +90,6 @@ wins. Check a plan against this table before writing code.
 ## Rules that hold everywhere
 
 - **Structure before parameters.** Fusion, pipelining and layout changes beat knob tuning; tune last.
-- **Clear the compile cache** (`rm -rf "${FLYDSL_RUNTIME_CACHE_DIR:-$HOME/.flydsl/cache}"`) before believing
-  any result; `bottleneck/debug-flydsl-kernel.md` § What the cache key sees tells you when a result was stale.
 - **Reuse the mechanism, re-derive the number.** Constants in the cited kernels (tile and preload tables,
   wait counts, adoption margins, cache thresholds) were tuned on specific shapes.
 - Numbers marked *(field)* are measured values: use them for direction and order of magnitude, not as
@@ -124,17 +111,6 @@ wins. Check a plan against this table before writing code.
   dispatch costs about that however little it does, so a short kernel and its baseline read about the same. A
   Point whose baseline sits near that floor shows no gain in CI: check `baseline.json` before working on it.
 
-## Folder structure
+## Folders and adding a page
 
-- Packages, each starting at its `INDEX.md`: `gemm/` dense GEMM · `grouped_gemm/` grouped GEMM · `attention/`
-  attention · `moe/` fused MoE at decode sizes
-- `patterns/` symptom pages · `cases/` delivered kernels · `pitfalls/` traps · `language/` FlyDSL v0.3.2 notes
-- `optimize/` FlyDSL's own guides, and `flydsl_levers/` on aiter's FlyDSL kernels and their knobs ·
-  `profile/` trace capture and analysis · `bottleneck/` debugging · `isa/` the CDNA4 ISA guide
-- `templates/`, `staging/`, `tools/` and `CONTRIBUTING.md`: adding a page
-
-## Adding knowledge
-
-A new page starts from `templates/`, goes to `staging/`, passes `tools/kb_lint.py` and review, and is moved in
-by `tools/kb_approve.py`: see `CONTRIBUTING.md`. Write the current best practice, not the history of how it was
-found.
+`CONTRIBUTING.md`: what each folder holds, the page kinds, and how a page gets in.

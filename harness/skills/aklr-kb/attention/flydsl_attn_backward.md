@@ -208,7 +208,7 @@ D64; band interleave paid at D128 only (§5); the D128 gap is the workspace (§2
 ## Related
 `flydsl_attn_grid_dispatch.md` · `flydsl_attn_decode_split_kv.md` · `flydsl_attn_registers_occupancy.md` ·
 `flydsl_attn_attribution.md` · `flydsl_attn_correctness.md` · `../gemm/flydsl_gemm_datapath.md` §8 ·
-`../gemm/flydsl_gemm_epilogue.md` §5 · `../gemm/flydsl_gemm_attribution.md` §2 · `../isa/memory_and_sync.md`
+`../gemm/flydsl_gemm_epilogue.md` §5 · `../gemm/flydsl_gemm_attribution.md` §2 · `../hardware/gfx950/memory_and_sync.md`
 
 ## Evidence
 

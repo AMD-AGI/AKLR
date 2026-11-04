@@ -151,7 +151,7 @@ sources:
 - Use measured ceilings with the same read/write ratio as the kernel, never the datasheet or your own
   fastest kernel.
 - Report TF/s and bytes moved with the per-dtype formulas in FlyDSL's guide, including MX scale bytes
-  (`../optimize/gemm-optimization.md` §8.1–§8.2). gfx950's vendor theoretical dense peaks at MI355X clocks
+  (`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` §8.1–§8.2). gfx950's vendor theoretical dense peaks at MI355X clocks
   are 2.5 PFLOP/s bf16/fp16, 5 PFLOP/s fp8 and 10 PFLOP/s MXFP4/MXFP6, with 8 TB/s
   HBM.
 

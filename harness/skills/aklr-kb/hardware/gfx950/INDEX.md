@@ -57,5 +57,5 @@ is the specification to check them against.
   Check page numbers, table cells and signs that matter against the PDF before citing them.
 
 ## Related
-`../SKILL.md` (this skill's map) · `../gemm/INDEX.md` (dense GEMM package) ·
-`../gemm/flydsl_gemm_mainloop.md` · `../gemm/flydsl_gemm_datapath.md` · `../gemm/flydsl_gemm_correctness.md`
+`../../SKILL.md` (this skill's map) · `../../gemm/INDEX.md` (dense GEMM package) ·
+`../../gemm/flydsl_gemm_mainloop.md` · `../../gemm/flydsl_gemm_datapath.md` · `../../gemm/flydsl_gemm_correctness.md`

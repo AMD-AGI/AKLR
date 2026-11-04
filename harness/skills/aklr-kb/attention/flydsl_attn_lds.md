@@ -21,7 +21,7 @@ sources:
 > P·V contracts over kv, and so do dV = Pᵀ·dO and dK = dSᵀ·Q in the backward pass. With K/V/Q/dO stored
 > `[row, d]` in LDS, one operand of each of these GEMMs is strided along the contraction and must be read
 > transposed. Generic LDS facts — 64 banks, read phases, swizzle vs padding, write-to-read distance, DMA
-> waits — are in `../gemm/flydsl_gemm_datapath.md` §2–§4 and §9 and `../optimize/lds-optimization.md`.
+> waits — are in `../gemm/flydsl_gemm_datapath.md` §2–§4 and §9 and `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md`.
 > This card adds what attention adds.
 >
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end.
@@ -170,7 +170,7 @@ segments are sensitive to LDS port contention; schedule write bursts where the r
 ## Related
 `flydsl_attn_mfma_layout.md` · `flydsl_attn_schedule_sync.md` · `flydsl_attn_registers_occupancy.md` ·
 `flydsl_attn_attribution.md` · `flydsl_attn_correctness.md` · `../gemm/flydsl_gemm_datapath.md` ·
-`../optimize/lds-optimization.md`
+`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md`
 
 ## Evidence
 

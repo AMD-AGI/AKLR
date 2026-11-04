@@ -119,7 +119,7 @@ A multi-cell score usually carries guard cells: cells the candidate does not cha
 ## 7. Cache hygiene
 - Clear or isolate the FlyDSL cache when comparing builds: *(field, E19)* one commit read 55–83% apart before and after
   clearing a cache shared across code versions. What the cache key does and does not see is in
-  `../bottleneck/debug-flydsl-kernel.md` § What the cache key sees.
+  `../flydsl/debug-flydsl-kernel.md` § What the cache key sees.
 - The first pass in a fresh cache directory includes compilation and any autotuning; discard it. Do not time with
   `FLYDSL_DUMP_IR=1` (`../gemm/flydsl_gemm_measurement.md` §6).
 
@@ -154,7 +154,7 @@ A multi-cell score usually carries guard cells: cells the candidate does not cha
 
 ## Related
 `../gemm/flydsl_gemm_measurement.md` · `flydsl_attn_attribution.md` · `flydsl_attn_correctness.md` ·
-`flydsl_attn_decode_split_kv.md` §8 · `../bottleneck/debug-flydsl-kernel.md`
+`flydsl_attn_decode_split_kv.md` §8 · `../flydsl/debug-flydsl-kernel.md`
 
 ## Evidence
 

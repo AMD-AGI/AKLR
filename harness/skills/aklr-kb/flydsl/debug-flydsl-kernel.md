@@ -329,7 +329,7 @@ Raised by `ASTRewriter.transform`. The rewriter re-reads the kernel's source fro
 since (an edit or sync under a long-running server or benchmark process), the lookup lands on whatever
 now sits there, for example a decorated class. The rewrite runs when the decorator executes, so it hits a
 kernel defined inside a factory function that runs after the edit; a module-level kernel, decorated at import, is
-not affected (`../language/compile_errors.md`). It says nothing about the kernel — restart the process,
+not affected (`language/compile_errors.md`). It says nothing about the kernel — restart the process,
 and keep sources frozen for the lifetime of a process that compiles lazily.
 A variant `exec`'d from a string fails the same way under the file's name (`OSError: could not get source code`
 under any other): in a sweep harness, write each variant to its own file and import it.
@@ -386,7 +386,7 @@ the barrier out of the conditional, do not try to make the condition uniform.
 
 Branches that every lane of a wave takes the same way (wave roles) may hold barriers only if each wave
 executes the same number of `s_barrier`; a mismatch can give stale LDS instead of a hang. Count them per arm
-in the ISA: two adjacent barriers in one arm compile to one (`../language/limits.md`, Unclassified).
+in the ISA: two adjacent barriers in one arm compile to one (`language/limits.md`, Unclassified).
 
 ### Recovery
 ```bash

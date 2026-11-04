@@ -182,7 +182,7 @@ each by adding 0/1/2/4 extra launches in one process and fitting the slope (`../
 `flydsl_grouped_group_mapping.md` · `flydsl_grouped_wgrad.md` · `flydsl_grouped_lowprec.md` ·
 `flydsl_grouped_measurement.md` · `flydsl_grouped_correctness.md` · `../gemm/flydsl_gemm_autotune.md` ·
 `../gemm/flydsl_gemm_attribution.md` · `../attention/flydsl_attn_measurement.md` ·
-`../bottleneck/debug-flydsl-kernel.md`
+`../flydsl/debug-flydsl-kernel.md`
 
 ## Evidence
 

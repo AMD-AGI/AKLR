@@ -20,7 +20,7 @@ sources:
 > reported clean; use them to design the gate before trusting it. The general rules — gates that reach the changed
 > path, calling twice, races found by bitwise repetition at the timing shapes, waits and barriers, inline-asm
 > hazards, random E8M0 exponents — are in `../gemm/flydsl_gemm_correctness.md`. Debugging a kernel already known
-> to be wrong starts in `../bottleneck/debug-flydsl-kernel.md`. Numbers marked `*(field, E<n>)*` are measured
+> to be wrong starts in `../flydsl/debug-flydsl-kernel.md`. Numbers marked `*(field, E<n>)*` are measured
 > values; their conditions are listed under Evidence at the end.
 
 ## Route here when
@@ -160,7 +160,7 @@ part of the contraction when the table lacks a split the policy can reach — no
 - [ ] Dense or helper changes reran the grouped gates and the import smoke.
 
 ## Related
-`../gemm/flydsl_gemm_correctness.md` · `../bottleneck/debug-flydsl-kernel.md` · `flydsl_grouped_group_mapping.md` ·
+`../gemm/flydsl_gemm_correctness.md` · `../flydsl/debug-flydsl-kernel.md` · `flydsl_grouped_group_mapping.md` ·
 `flydsl_grouped_wgrad.md` · `flydsl_grouped_lowprec.md` · `flydsl_grouped_measurement.md`
 
 ## Evidence

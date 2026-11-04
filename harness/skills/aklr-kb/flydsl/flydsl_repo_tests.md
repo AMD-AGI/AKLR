@@ -155,7 +155,7 @@ matters. `.mlir` files carry no markers.
 | `ARCH` | target arch for compilation |
 | `COMPILE_ONLY` | compile without launching |
 | `FLYDSL_RUNTIME_CACHE_DIR` | disk cache (default `~/.flydsl/cache`) |
-| `FLYDSL_RUNTIME_ENABLE_CACHE` | `0` disables the disk cache; the in-process cache stays (what the key covers: `../bottleneck/debug-flydsl-kernel.md` § What the cache key sees) |
+| `FLYDSL_RUNTIME_ENABLE_CACHE` | `0` disables the disk cache; the in-process cache stays (what the key covers: `debug-flydsl-kernel.md` § What the cache key sees) |
 | `FLYDSL_DUMP_IR`, `FLYDSL_DUMP_DIR` | per-stage IR dump (default dir `~/.flydsl/debug`), §8 |
 | `FLYDSL_AUTOTUNE`, `FLYDSL_AUTOTUNE_CACHE_DIR` | `1` forces the `flydsl.autotune` search; its results dir (default `~/.flydsl/autotune`) |
 | `FLYDSL_GPU_ARCH`, `HSA_OVERRIDE_GFX_VERSION` | arch detection hints (`flydsl/runtime/device.py`) |
@@ -262,5 +262,5 @@ script). Each kernel gets a subdirectory of numbered stages, `NN_<stage>.mlir` t
 read them: `../gemm/flydsl_gemm_mainloop.md` §10. Do not time a run with the dump on.
 
 ## Related
-`../gemm/flydsl_gemm_measurement.md` · `../gemm/flydsl_gemm_correctness.md` · `../bottleneck/debug-flydsl-kernel.md`
-· `../optimize/bisect-perf-regression.md` (an upstream test as the probe of a FlyDSL bisect)
+`../gemm/flydsl_gemm_measurement.md` · `../gemm/flydsl_gemm_correctness.md` · `debug-flydsl-kernel.md`
+· `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/bisect-perf-regression/SKILL.md` (an upstream test as the probe of a FlyDSL bisect)

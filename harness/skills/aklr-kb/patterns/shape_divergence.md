@@ -52,8 +52,8 @@ basis: source-semantics
 - Close with a full-table ablation that has an all-off arm — `gemm/flydsl_gemm_measurement.md` §9 — keep a change
   only if its sign agrees across cells (S31, S32). In AKLR a speedup is judged per Point (S33).
 - Other kernel families: in a grouped GEMM, find where the skew lives before reading a per-shape result —
-  `grouped_gemm/flydsl_grouped_scheduling.md` §1 — and decide waves per SIMD per pass —
-  `grouped_gemm/flydsl_grouped_tile_pricing.md` §2; in attention, key the tile heuristic on the axis the grid spreads
+  `moe/flydsl_grouped_scheduling.md` §1 — and decide waves per SIMD per pass —
+  `moe/flydsl_grouped_tile_pricing.md` §2; in attention, key the tile heuristic on the axis the grid spreads
   over — `attention/flydsl_attn_grid_dispatch.md` §6.
 
 ## Evidence
@@ -72,7 +72,7 @@ basis: source-semantics
 - S12 gemm/flydsl_gemm_small_m.md:248 the lookup tries M as is, then padded at granularity 0 and 1
 - S13 gemm/flydsl_gemm_small_m.md:264 a row whose kernel name the catalog cannot parse falls through
 - S14 gemm/flydsl_gemm_small_m.md:271 tuner filters can delete the winner silently
-- S15 optimize/flydsl_levers/flydsl_knob_space.md:155 a tuned row regressed: CSV raced on another build or machine
+- S15 ../flydsl/kernels/flydsl_knob_space.md:155 a tuned row regressed: CSV raced on another build or machine
 - S16 gemm/flydsl_gemm_small_m.md:64 adopt a per-shape change only above that shape's measured spread
 - S17 gemm/flydsl_gemm_autotune.md:88 time base and candidate in one process as a palindrome per rep
 - S18 gemm/flydsl_gemm_measurement.md:137 benchmark the deployment's per-call shape

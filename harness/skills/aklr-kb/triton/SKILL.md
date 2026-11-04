@@ -1,10 +1,10 @@
 ---
-name: triton-kernel-optimization
+name: aklr-kb/triton
 description: >
   Making Triton kernels fast on gfx950 (MI355X) inside AKLR. Covers small-M (decode) dense bf16
   GEMMs that stream their weight once: tile shape, weight view, XCD order, K phase, split-K under a
   bitwise contract, the M = 1 case, and re-tuning for AKLR's cold-cache measurement. Use when
-  writing or tuning a Triton kernel for a AKLR schema, especially a decode GEMM.
+  writing or tuning a Triton or Gluon kernel for a AKLR schema, especially a decode GEMM.
 allowed-tools: Read Edit Bash Grep Glob Agent
 ---
 
@@ -15,7 +15,8 @@ allowed-tools: Read Edit Bash Grep Glob Agent
 | Task | Read |
 |---|---|
 | A dense GEMM with M ≤ 64 (decode) | `gemm/decode_gemm.md` |
-| How AKLR times a Point, and why a result moved | `harness/skills/aklr-read-validation` (`references/ruler.md`) |
+| How AKLR times a Point, and why a result moved | `harness/skills/aklr-read-validation/references/ruler.md` |
+| What makes a kernel fast whatever its language (op packages, symptoms, cases, AKLR's rules) | `../SKILL.md` |
 | The kernel's rules: audit, compile functions, scratch | `aklr/ops/README.md` (the kernel section and ABI) |
 
 ## In AKLR

@@ -33,7 +33,7 @@ is larger than the buffer. The writing kernel exits cleanly; a later kernel that
 example as an index, faults, and the fault names that later kernel.
 
 - FlyDSL's `make_buffer_tensor` bounds nothing by default (`num_records = 0xFFFFFFFF`,
-  `../language/limits.md` § By design; `../gemm/flydsl_gemm_correctness.md` §6).
+  `../flydsl/language/limits.md` § By design; `../gemm/flydsl_gemm_correctness.md` §6).
 - The raw helper `create_buffer_resource(t, max_size=False)` falls back to the same 4 GiB bound, without a
   warning, when the memref's shape is dynamic. It is not in the wheel: FlyDSL's repository and the baseline
   aiter each carry a copy, and both do this (S1, S3). The wheel's `make_buffer_tensor(t, max_size=False)` derives

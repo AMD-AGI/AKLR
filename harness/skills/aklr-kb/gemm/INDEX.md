@@ -1,6 +1,7 @@
 ---
 title: FlyDSL dense GEMM on gfx950 — package map
 kind: index
+gens: [gfx950, gfx942]
 pinned_source: ROCm/FlyDSL@dd8373349 (v0.3.2; kernels/gemm, .claude/skills/gemm-optimization); AMD-AGI/Primus-Turbo@7615a5a2 (primus_turbo/flydsl/{gemm,utils})
 ---
 
@@ -8,13 +9,13 @@ pinned_source: ROCm/FlyDSL@dd8373349 (v0.3.2; kernels/gemm, .claude/skills/gemm-
 
 How to write and optimize a dense GEMM in FlyDSL on gfx950 (MI350/MI355X): fp8 (per-tensor and per-row
 scales), MXFP4, MXFP8, bf16/fp16 and int8, layouts NT/NN/TN. Grouped and MoE expert GEMMs build on these cards
-and have their own package, `../grouped_gemm/INDEX.md`.
+and have their own package, `../moe/INDEX.md`.
 
 **Three sources, used together.**
-- **FlyDSL's own GEMM guide and kernels.** `../optimize/gemm-optimization.md` walks through how a FlyDSL GEMM is
+- **FlyDSL's own GEMM guide and kernels.** `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` walks through how a FlyDSL GEMM is
   built, on `preshuffle_gemm`: tiling, the 2-stage LDS ping-pong, the XOR swizzle, `hot_loop_scheduler`, direct
-  and CShuffle epilogues, B preshuffle, register budget. `../optimize/lds-optimization.md` and
-  `../optimize/prefetch-data-load.md` cover the general LDS and prefetch transformations. The kernels are in
+  and CShuffle epilogues, B preshuffle, register budget. `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md` and
+  `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/prefetch-data-load/SKILL.md` cover the general LDS and prefetch transformations. The kernels are in
   FlyDSL's `kernels/gemm/` (map below).
 - **Primus-Turbo's FlyDSL GEMMs** (`primus_turbo/flydsl/{gemm,utils}` at main `7615a5a2`), built for training
   shapes (large M). They add fp8 NN/TN layouts (FlyDSL's bf16/fp16 `gemm_a16w16` already takes NN/NT/TN/TT),
@@ -37,19 +38,19 @@ Numbers marked `*(field)*` or `*(field, E<n>)*` are measured values; `E<n>` name
 
 | You are… | Read |
 |---|---|
-| building your first FlyDSL GEMM, or learning how the pieces fit | `../optimize/gemm-optimization.md`, then `flydsl_gemm_workflow.md` |
+| building your first FlyDSL GEMM, or learning how the pieces fit | `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md`, then `flydsl_gemm_workflow.md` |
 | starting work on a GEMM, or deciding what to do next | `flydsl_gemm_workflow.md` |
 | about to choose a tile, split-K or boundary body, or wanting the ceiling of an idea | `flydsl_gemm_grid_pricing.md` |
 | working on a GEMM with M ≤ 256 (decode, speculative verify), or aiter's FlyDSL bf16 tuned rows | `flydsl_gemm_small_m.md` |
 | designing or editing the K loop (2-stage ping-pong, 8-wave pipeline, 4-wave designs, waits, registers) | `flydsl_gemm_mainloop.md` |
-| working on LDS, swizzle, global→LDS DMA, B preshuffle, descriptors, transpose reads, MX scales | `flydsl_gemm_datapath.md` (with `../optimize/lds-optimization.md`) |
+| working on LDS, swizzle, global→LDS DMA, B preshuffle, descriptors, transpose reads, MX scales | `flydsl_gemm_datapath.md` (with `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md`) |
 | ordering tiles across XCDs, writing scheduling hints, mapping waves | `flydsl_gemm_schedule_and_locality.md` |
 | working on the C store, CShuffle, beta=1, or a fused epilogue | `flydsl_gemm_epilogue.md` |
 | putting several configurations behind one entry point; launch overhead; CUDA graphs | `flydsl_gemm_autotune.md` |
-| finding out where the time goes before changing anything | `flydsl_gemm_attribution.md` (with `../profile/kernel-trace-analysis/SKILL.md`) |
+| finding out where the time goes before changing anything | `flydsl_gemm_attribution.md` (with `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md`) |
 | writing or trusting a correctness gate | `flydsl_gemm_correctness.md` |
 | measuring an A/B, setting a noise floor, deciding which of a series of changes paid | `flydsl_gemm_measurement.md` |
-| debugging a wrong result | `../bottleneck/debug-flydsl-kernel.md` |
+| debugging a wrong result | `../flydsl/debug-flydsl-kernel.md` |
 
 ## Kernel map
 
@@ -67,8 +68,8 @@ Numbers marked `*(field)*` or `*(field, E<n>)*` are measured values; `E<n>` name
 Shared helpers are in `kernels/common/mma/` (`mfma_preshuffle_pipeline.py`, `mfma_epilogues.py`). None of these
 handles a K tail: K must be a multiple of the K tile. Their arguments are the entry-point signatures above. The
 baseline aiter ships its own FlyDSL GEMMs (a bf16 split-K HGEMM, fp8/int8 preshuffle GEMMs): their entry points
-and split-K reductions are in `../optimize/flydsl_levers/flydsl_kernel_library.md`, their arguments in
-`../optimize/flydsl_levers/flydsl_knob_space.md`.
+and split-K reductions are in `../flydsl/kernels/flydsl_kernel_library.md`, their arguments in
+`../flydsl/kernels/flydsl_knob_space.md`.
 
 ### Primus-Turbo main `7615a5a2`, `primus_turbo/flydsl/`
 
@@ -96,7 +97,7 @@ resource the `rocdl.raw_ptr_buffer_*` wrappers take. Kernel attributes passed th
 silently dropped. `rocdl.s_waitcnt` takes a raw bitfield or the keyword form `s_waitcnt(vmcnt=…, lgkmcnt=…)`.
 `rocdl.asyncmark()` and `wait_asyncmark(n)` exist and pair with `cdna4.BufferLoadAsyncLDS*`. A non-`int` `aux`
 (cache policy) on the `rocdl.raw_ptr_buffer_*` wrappers is silently replaced by `None`. A closure-captured Python
-dict is not in the JIT cache key. See `flydsl_gemm_mainloop.md` §4 and `../bottleneck/debug-flydsl-kernel.md`
+dict is not in the JIT cache key. See `flydsl_gemm_mainloop.md` §4 and `../flydsl/debug-flydsl-kernel.md`
 § What the cache key sees.
 
 ## Cards
@@ -114,3 +115,10 @@ dict is not in the JIT cache key. See `flydsl_gemm_mainloop.md` §4 and `../bott
 | `flydsl_gemm_correctness.md` | gates that reach the changed path, races, waits, bounds, register classes |
 | `flydsl_gemm_measurement.md` | rulers, arm order, warm-up, noise floors, statistics, closing a series of changes |
 | `flydsl_gemm_small_m.md` | decode-shape GEMM: cold rulers, dispatch rounds, split-K reduction cost, tile/stage/cache-policy choices, aiter tuned rows |
+
+## gfx942 (MI300X)
+
+`flydsl_gemm_gfx942.md`: where FlyDSL's own skills cover gfx942 (CDNA3: MI300X, MI308) — the LDS budget and its
+32 banks, the combined register budget, the synchronous-copy schedule, BF16/FP16 MFMA forms, peak figures — as
+links, with this repository's notes from FlyDSL v0.3.2's source (async copy, the K=16 path of the bf16-activation
+MoE, DMA and transpose reads). Not re-measured here.

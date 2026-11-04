@@ -102,7 +102,7 @@ What the four kernels share:
   workgroups, so the expert is read straight from `topk_ids`; the token row is quantized inside each stage-1
   workgroup; stage 1 splits K over waves or workgroups and adds the parts in a fixed order; stage 2 runs one wave per
   route and adds the 9 weighted rows of a token in LDS in route order. Every row of the 16-row MFMA tile is the same
-  token and only row 0 is kept. This is the decode shape of `../grouped_gemm/flydsl_grouped_moe_inference.md` §3
+  token and only row 0 is kept. This is the decode shape of `../moe/flydsl_grouped_moe_inference.md` §3
   (the N blocks are the parallelism) taken to one route per workgroup.
 - **Configuration per m from constants in the source**, compiled on a Point's first call.
 
@@ -131,7 +131,7 @@ stage 1: `../moe/flydsl_moe_decode.md` describes the fold.
   before the A loads, and `amdgpu-kernarg-preload-count` 16, `../gemm/flydsl_gemm_small_m.md` §6): per 16-row block,
   24 workgroups of 256 output columns, K = 256 in one tile, the MXFP4 intermediate by buffer→LDS DMA, weights
   non-temporal into registers, × routing weight, bf16x2 `atomicrmw fadd` into `out`. Upper-bound grids of
-  1728–6648 workgroups; those past the device bound exit (`../grouped_gemm/flydsl_grouped_moe_inference.md` §2, §6).
+  1728–6648 workgroups; those past the device bound exit (`../moe/flydsl_grouped_moe_inference.md` §2, §6).
 
 **`ef15e878…`, 33 experts, inter 2048 — served at m 1, 2, 4, 16, 64–4096.** Every GEMM maps its workgroup id with
 `_chiplet_order`, a contiguous slice of the tile order per XCD (`../gemm/flydsl_gemm_schedule_and_locality.md` §2);

@@ -6,7 +6,7 @@
 
 The register rule is `gemm/flydsl_gemm_mainloop.md` §7 (one 512-entry pool per SIMD, granule 8, arch rounded
 to 4 before the AGPRs); the workgroup step is `gemm/flydsl_gemm_grid_pricing.md` §4; the 160 KiB LDS limit and
-the fact that a larger allocation still compiles are in `language/limits.md`. The compiler's `; Occupancy:`
+the fact that a larger allocation still compiles are in `../flydsl/language/limits.md`. The compiler's `; Occupancy:`
 comment skips the workgroup step. Also lists the register ceiling of every reachable occupancy. Other per-CU
 limits (workgroup slots, SGPRs, barriers) are not modelled.
 
@@ -104,7 +104,7 @@ def selftest() -> int:
             dict(ceilings(8))[2] == 128 and workgroups_per_cu(129, 0, 8, 0)[0] == 1,
             "8 waves: 2 groups need <= 128",
         ),
-        # language/limits.md: 192 KiB of LDS does not fit
+        # ../flydsl/language/limits.md: 192 KiB of LDS does not fit
         (
             workgroups_per_cu(64, 0, 4, 196608)[0] == 0,
             "192 KiB of LDS: no workgroup fits",

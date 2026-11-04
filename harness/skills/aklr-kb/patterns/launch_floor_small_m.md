@@ -55,11 +55,11 @@ basis: source-semantics
   short K (S26, S27).
 - Launch the `flyc.compile` object, not the `@flyc.jit` function, except under graph capture, where the raw
   `@flyc.jit` closure is the one to launch — `gemm/flydsl_gemm_autotune.md` §6 (S28, S29).
-- Fewer launches by fusion — `optimize/flydsl_levers/flydsl_authoring_method.md` — for latency-bound small shapes (S30).
+- Fewer launches by fusion — `../flydsl/kernels/flydsl_authoring_method.md` — for latency-bound small shapes (S30).
 - Other kernel families: drop a graph node by folding a small kernel into its consumer — `moe/flydsl_moe_decode.md`
   §1–2; a decode attention's combine is a fixed cost, and when merging it into the producer pays —
   `attention/flydsl_attn_decode_split_kv.md` §1–2; the small kernels around MoE expert GEMMs —
-  `grouped_gemm/flydsl_grouped_moe_inference.md` §7.
+  `moe/flydsl_grouped_moe_inference.md` §7.
 
 ## Evidence
 
@@ -89,4 +89,4 @@ basis: source-semantics
 - S27 gemm/flydsl_gemm_small_m.md:109 split-K does not pay on streaming rows or short K
 - S28 gemm/flydsl_gemm_autotune.md:161 call the flyc.compile object, not the @flyc.jit function
 - S29 gemm/flydsl_gemm_autotune.md:169 under CUDA-graph capture call the raw closure
-- S30 optimize/flydsl_levers/flydsl_authoring_method.md:50 latency-bound (small shapes): reduce launch count, fusion
+- S30 ../flydsl/kernels/flydsl_authoring_method.md:50 latency-bound (small shapes): reduce launch count, fusion

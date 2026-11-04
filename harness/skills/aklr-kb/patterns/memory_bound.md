@@ -55,7 +55,7 @@ basis: source-semantics
 - XCD / L2 tile order — `gemm/flydsl_gemm_schedule_and_locality.md` §2 — when co-resident workgroups reuse a slab;
   not once one band's operand slice outgrows an XCD's L2 (S22); judge by wall time and stall counters such as
   `MemUnitStalled`, not L2 hit rate (S23).
-- Prefetch, deeper stages — `gemm/flydsl_gemm_datapath.md` §7, `optimize/prefetch-data-load.md` — when independent
+- Prefetch, deeper stages — `gemm/flydsl_gemm_datapath.md` §7, `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/prefetch-data-load/SKILL.md` — when independent
   work can fill the latency (S24); not when the working set thrashes L2 (S25), nor across a register tier (S26).
 - Cache policy on B and on C — `gemm/flydsl_gemm_small_m.md` §6, `gemm/flydsl_gemm_epilogue.md` §5 — a raced
   per-configuration axis whose sign depends on the shape (S27, S28).
@@ -64,7 +64,7 @@ basis: source-semantics
 - Other kernel families: attention gathers, unique lines and the index distribution —
   `attention/flydsl_attn_decode_split_kv.md` §7; bytes per score and GQA sharer merging —
   `attention/flydsl_attn_grid_dispatch.md` §9; cache policy on MoE weights at decode sizes —
-  `grouped_gemm/flydsl_grouped_moe_inference.md` §4.
+  `moe/flydsl_grouped_moe_inference.md` §4.
 
 ## Evidence
 
@@ -73,7 +73,7 @@ basis: source-semantics
 - S2 gemm/flydsl_gemm_attribution.md:44 a rate above stream bandwidth: caches serve part; not at the HBM limit
 - S3 gemm/flydsl_gemm_attribution.md:33 compute additivity: wall time does not move, compute is fully hidden
 - S4 gemm/flydsl_gemm_workflow.md:79 `vmcnt(0)` in front of the MFMAs: exposed global latency or a conservative drain
-- S5 profile/kernel-trace-analysis/SKILL.md:328 hotspots dominated by VMEM-load at a high stall rate: memory-bound
+- S5 https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md:336 hotspots dominated by VMEM-load at a high stall rate: memory-bound
 - S6 gemm/flydsl_gemm_small_m.md:191 at decode M the MFMA side is not the lever; the time is the B stream
 - S7 gemm/flydsl_gemm_grid_pricing.md:155 bytes a workgroup moves per K element against the MACs it produces
 - S8 gemm/flydsl_gemm_grid_pricing.md:68 last round full: no idle slot, intensity is the limit, widen

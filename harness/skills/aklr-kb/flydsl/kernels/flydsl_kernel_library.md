@@ -138,7 +138,7 @@ once for all of them) and pass AKLR's audit. Copy their techniques, not their ho
 `1fee5982…` reads its own file there, which `aklr/ops/README.md` does not allow (a `functools` compile function, no
 I/O in launch code). Four sum the top-k routes in a fixed order without atomics on the output; the 257-expert
 `4fbd9d02…` kernel adds into it with atomics. How the kernels map work and what moved them:
-`../../grouped_gemm/flydsl_grouped_moe_inference.md`. Several items below run only at Points their file does not
+`../../moe/flydsl_grouped_moe_inference.md`. Several items below run only at Points their file does not
 serve; which run where: `../../moe/INDEX.md` § Kernels to start from.
 
 | Kernel | Read it for |
@@ -159,7 +159,7 @@ through it. Everything here runs on gfx950 unless § Not for gfx950 lists it.
 ### MoE (grouped GEMM)
 
 How these kernels map work, what moved them and where FlyDSL's own copies differ:
-`../../grouped_gemm/flydsl_grouped_moe_inference.md`.
+`../../moe/flydsl_grouped_moe_inference.md`.
 
 | Family | Computes | Entry → body | Reached from |
 |---|---|---|---|
@@ -185,7 +185,7 @@ default `1`, admits activations other than SwiGLU/SiTUv2), and for int4 weights 
 
 | Family | Main knobs | Run to run |
 |---|---|---|
-| 2-stage, stage 1 | name `flydsl_moe1_a{A}_w{W}_{out}_t{M}x{N}x{K}` plus `_w{n}` waves per EU, which only pads LDS to 160 KiB / (n + 1) + 1 bytes so that at most n workgroups share a CU (`mixed_moe_gemm_2stage_common.py:341-348`): it caps no registers. The `rocdl.waves_per_eu` attribute is set only on heterogeneous-B (FHMoE) builds (`:158, 3307-3311`), and there by a walk before `.launch()`, which FlyDSL v0.3.2 loses (`../../language/limits.md`, Unclassified), `_kb{n}` split-K, `_bnt{n}` B cache mode, `_go` mock gate-only, `_gui` interleaved gate/up (fp8 A), `_xcd{n}` XCD swizzle, `_kw{n}` intra-block K waves, `_fp4`/`_fp8` fused output quant, `_sbm{n}` sort block (`moe_kernels.py:59-76, 162-284`). With fp8 activations × fp4 weights, a row's `tile_n` 256 runs as 128 when `inter_dim % 256 != 0` (`:140-159, 1569-1570`). With fp8 activations `tile_k` 128 does not build: `pack_K` is fixed at 2 (`mixed_moe_gemm_2stage_common.py:190`), so one 128-byte K step leaves no MFMA in the phase plan (`:371, 394`) and the plan divides by its zero phase count (`ZeroDivisionError`, `:405`); stage 2 takes `pack_K = min(2, tile_k // 128)` (`:3498`) | `_kb` > 1 adds partials into a zeroed bf16/f16 buffer with `atomicrmw fadd` (`mixed_moe_gemm_2stage_common.py:2733-2747`, buffer `moe_kernels.py:1601-1605`): arrival order is not fixed, so not bitwise reproducible once three or more partials meet. Without split-K: plain stores. |
+| 2-stage, stage 1 | name `flydsl_moe1_a{A}_w{W}_{out}_t{M}x{N}x{K}` plus `_w{n}` waves per EU, which only pads LDS to 160 KiB / (n + 1) + 1 bytes so that at most n workgroups share a CU (`mixed_moe_gemm_2stage_common.py:341-348`): it caps no registers. The `rocdl.waves_per_eu` attribute is set only on heterogeneous-B (FHMoE) builds (`:158, 3307-3311`), and there by a walk before `.launch()`, which FlyDSL v0.3.2 loses (`../language/limits.md`, Unclassified), `_kb{n}` split-K, `_bnt{n}` B cache mode, `_go` mock gate-only, `_gui` interleaved gate/up (fp8 A), `_xcd{n}` XCD swizzle, `_kw{n}` intra-block K waves, `_fp4`/`_fp8` fused output quant, `_sbm{n}` sort block (`moe_kernels.py:59-76, 162-284`). With fp8 activations × fp4 weights, a row's `tile_n` 256 runs as 128 when `inter_dim % 256 != 0` (`:140-159, 1569-1570`). With fp8 activations `tile_k` 128 does not build: `pack_K` is fixed at 2 (`mixed_moe_gemm_2stage_common.py:190`), so one 128-byte K step leaves no MFMA in the phase plan (`:371, 394`) and the plan divides by its zero phase count (`ZeroDivisionError`, `:405`); stage 2 takes `pack_K = min(2, tile_k // 128)` (`:3498`) | `_kb` > 1 adds partials into a zeroed bf16/f16 buffer with `atomicrmw fadd` (`mixed_moe_gemm_2stage_common.py:2733-2747`, buffer `moe_kernels.py:1601-1605`): arrival order is not fixed, so not bitwise reproducible once three or more partials meet. Without split-K: plain stores. |
 | 2-stage, stage 2 | tiles; `atomic` or `reduce`; `_persist`, `_bnt{n}`, `_xcd{n}` (`moe_kernels.py:287-338`). `tile_k` 256 runs as 128 when `inter_dim % 256 != 0` (`:119-137, 2099`). `AITER_FLYDSL_FORCE_REDUCE=1` forces `reduce`, and so does an output above 4 GiB (`:2084-2092`) | `atomic`: every (token, slot) row is added into the output with a bf16/f16 atomic fadd (`mixed_moe_gemm_2stage_common.py:5210, 5348-5374`), so a token's top-k contributions meet in no fixed order: not bitwise reproducible at top-k ≥ 3. `reduce`: per-slot rows, then `moe_reduce` sums the slots in index order (`moe_reduce.py:165-181`). |
 | a16w4 / a16wi4 stage 2 | `TILE_N`, `TILE_K`, `xcd_swizzle`, `b_cache_mod`, `waves_per_eu` (`moe_2stage_a16wmix/gemm2.py:304-317`) | always the atomic scatter (`moe_2stage_a16wmix/gemm2.py:37, 273`); the name's `atomic`/`reduce` token is not read on this path (`moe_kernels.py:2018-2075`) |
 | mxmoe gemm1 | `BM` with `nt` and `f16in` (inline activation quant) from the legal set (`mxfp4_gemm1_kernels.py:11-17`); `xcd{n}` (`mxfp4_kname.py:53-63`) | no atomics in `kernels/mxfp4_gemm1.py` |
@@ -226,4 +226,4 @@ Ahead-of-time compilation for the GEMM, MoE, mxmoe, FHMoE and GDN prefill kernel
 `flydsl_knob_space.md` (the arguments these families accept) ·
 `flydsl_authoring_method.md` (if none of them fit) ·
 `../../gemm/flydsl_gemm_small_m.md` (small-M use of the HGEMM kernels and the tuned table) ·
-`../../grouped_gemm/flydsl_grouped_moe_inference.md` (MoE expert GEMMs: mapping, cache policy, stage 2)
+`../../moe/flydsl_grouped_moe_inference.md` (MoE expert GEMMs: mapping, cache policy, stage 2)

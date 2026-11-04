@@ -55,12 +55,12 @@ basis: source-semantics
   VGPR headroom is small (S26).
 - One base VGPR for a fragment's four transpose reads — `gemm/flydsl_gemm_datapath.md` §9 — avoids an
   address-register spill (S27).
-- Async copy for A — `optimize/gemm-optimization.md` §11 — A goes global → LDS by DMA and saves arch VGPRs (S28).
-- Not a register cap to make room — `language/limits.md` — in FlyDSL v0.3.2 `maxnreg` does not cap registers, and
+- Async copy for A — `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` §11 — A goes global → LDS by DMA and saves arch VGPRs (S28).
+- Not a register cap to make room — `../flydsl/language/limits.md` — in FlyDSL v0.3.2 `maxnreg` does not cap registers, and
   a cap through the `amdgpu-num-vgpr` attribute turns into spills (S29).
 - Other kernel families: attention's occupancy steps, spill scale, code shapes that spill and AGPRs —
   `attention/flydsl_attn_registers_occupancy.md` §3, §5–7; grouped GEMM's register wall and waves per SIMD per pass —
-  `grouped_gemm/flydsl_grouped_tile_pricing.md` §1–2.
+  `moe/flydsl_grouped_tile_pricing.md` §1–2.
 
 ## Evidence
 
@@ -78,7 +78,7 @@ basis: source-semantics
 - S12 gemm/flydsl_gemm_attribution.md:174 the register allocator is the constraint on interleaving
 - S13 gemm/flydsl_gemm_mainloop.md:224 a bare "passthrough" key is silently dropped; default allocation, wrong result
 - S14 gemm/flydsl_gemm_attribution.md:191 rocprof VGPR_Count half, Accum_VGPR_Count 0; read registers from the ISA
-- S15 bottleneck/debug-flydsl-kernel.md:83 identical VGPR_Count / Accum_VGPR_Count across variants: one cached binary
+- S15 ../flydsl/debug-flydsl-kernel.md:83 identical VGPR_Count / Accum_VGPR_Count across variants: one cached binary
 - S16 gemm/flydsl_gemm_grid_pricing.md:198 the `; Occupancy:` comment does not apply workgroup quantization
 - S17 gemm/flydsl_gemm_grid_pricing.md:194 8-wave workgroup: only 2/4/6/8 waves per SIMD reachable
 - S18 gemm/flydsl_gemm_mainloop.md:219 at unchanged occupancy freed registers buy nothing on their own
@@ -91,5 +91,5 @@ basis: source-semantics
 - S25 gemm/flydsl_gemm_schedule_and_locality.md:178 gate any mask change on vgpr_spill_count before benchmarking
 - S26 gemm/flydsl_gemm_schedule_and_locality.md:236 with small VGPR headroom, inserting work lengthens a live range
 - S27 gemm/flydsl_gemm_datapath.md:250 one address VGPR instead of four avoids an address-register spill
-- S28 optimize/gemm-optimization.md:595 async copy saves arch_vgpr: A bypasses VGPRs
-- S29 language/limits.md:76 maxnreg leaves the binary unchanged; the amdgpu-num-vgpr attribute spills
+- S28 https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md:623 async copy saves arch_vgpr: A bypasses VGPRs
+- S29 ../flydsl/language/limits.md:76 maxnreg leaves the binary unchanged; the amdgpu-num-vgpr attribute spills

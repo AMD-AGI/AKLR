@@ -70,7 +70,7 @@ NT GEMM with 5888 B output rows.
 
 ## 3. Store classes, from free to expensive
 
-FlyDSL's guide describes the two ends (`../optimize/gemm-optimization.md` §7): a **direct store** from the MFMA
+FlyDSL's guide describes the two ends (`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` §7): a **direct store** from the MFMA
 layout, and **CShuffle**, which writes the accumulators to LDS row-major, re-reads them as `(MLane=8,
 NLane=32)` after a barrier and stores 4-element vectors, for `tile_n ≥ 128`. In FlyDSL v0.3.2, PS stores
 directly and can fuse a per-N bias with ReLU/SiLU/GELU (`epilogue=`); A16 and

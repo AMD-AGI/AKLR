@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Lint the flydsl-kernel-optimization skill against CONTRIBUTING.md.
+"""Lint aklr-kb, or with --skill-root a language skill such as flydsl, against CONTRIBUTING.md.
 
 Pages of the new kinds (technique, pattern, op, case, pitfall, language-note, topic, method) and SKILL.md are held
-to the rules: an error fails the run. Pages written before the rules (kinds language, index, reference, the copies
-of FlyDSL's own skills, and pages without front matter) only get warnings until they are converted.
+to the rules: an error fails the run. Pages written before the rules (kinds language, index, reference,
+and pages without front matter) only get warnings until they are converted.
 
     python tools/kb_lint.py                     # the whole skill
-    python tools/kb_lint.py staging/foo.md      # some pages
+    python tools/kb_lint.py moe/foo.md          # some pages
     python tools/kb_lint.py --stale 0.3.2       # pages and evidence lines checked against another FlyDSL version
 """
 
@@ -30,8 +30,13 @@ SKILL_ROOT = Path(__file__).resolve().parent.parent
 REPO_ROOT = _repository_of(SKILL_ROOT)
 # Where the skill sits in its repository: SKILL_ROOT, unless SKILL_ROOT is a copy outside REPO_ROOT.
 HOME_ROOT = SKILL_ROOT
-# A skill covers one architecture: `gens` in its SKILL.md names it, `arch-names` lists every name it goes by
-# (ISA family, product). Its pages name no other architecture.
+# The architectures a page may cover, and every name each goes by (ISA family, product). A page names only the
+# architectures of its own `gens` (gfx950 when it has none); SKILL.md and CONTRIBUTING.md may name any.
+ARCH_NAMES = {
+    "gfx950": frozenset({"gfx950", "CDNA4", "MI350", "MI355"}),
+    "gfx942": frozenset({"gfx942", "CDNA3", "MI300", "MI308", "MI325"}),
+}
+DEFAULT_GENS = ("gfx950",)
 # Whole names and family forms (gfx9, gfx95x, gfx94*); the `*` of a bold `**gfx950**` is not a wildcard.
 ARCH_TOKEN_RE = re.compile(r"\bgfx\d{1,4}(?:[a-z]\b|\*(?!\*)|\b)|\bCDNA ?\d\b|\bMI\d{3}X?\b")
 PINNED_FLYDSL = "0.3.2"
@@ -39,8 +44,8 @@ SKILL_MD_MAX_LINES = 150  # forge-loop inlines SKILL.md into every round's promp
 SKILL_MD_MAX_BYTES = 12_000  # of the body it inlines; the front matter is stripped
 CARD_MAX_LINES = 600
 
-# Not knowledge pages: the ISA chapters, code snapshots, templates, review notes, the tools and the examples.
-SKIP_PARTS = ("examples/", "isa/cdna4/", "reference/", "templates/", "tools/")
+# Not knowledge pages: the ISA chapters, code snapshots, review notes and the tools.
+SKIP_PARTS = ("gfx950/cdna4/", "reference/", "tools/")
 
 NEW_KINDS = (
     "technique",
@@ -182,9 +187,9 @@ class Page:
 
     @property
     def kind(self) -> str:
-        if self.rel == "SKILL.md":
+        if self.path.name == "SKILL.md":  # aklr-kb's and each language folder's
             return "entry"
-        if self.rel == "CONTRIBUTING.md":
+        if self.path.name == "CONTRIBUTING.md":
             return "guide"
         if self.front is None:
             return "untyped"
@@ -283,7 +288,7 @@ def _blocks(prose: str) -> Iterable[tuple[int, str]]:
 def _resolve(page: Page, target: str) -> Path | None:
     """Relative to the page, else to the skill; a path whose first part is a top-level folder of the repository
     and not of the skill (`aklr/`, `aiter/`) is relative to the repository root; a bare file name may also sit one
-    folder below the page. A path that leaves the skill (`../flydsl-kernel-authoring/`) is also relative to where
+    folder below the page. A path that leaves the skill (`flydsl/`) is also relative to where
     the page sits in the repository, which a copy of the skill is not in; one that stays in it is the copy's.
     """
     bases = [page.path.parent, SKILL_ROOT]
@@ -514,17 +519,15 @@ def skill_home() -> Path:
     return REPO_ROOT / "harness" / "skills" / str(name or SKILL_ROOT.name)
 
 
-def skill_arch() -> tuple[str, frozenset[str]]:
-    """The architecture the skill covers (the first of `gens` in its SKILL.md) and every name it goes by."""
-    entry = SKILL_ROOT / "SKILL.md"
-    front = (read_page(entry).front or {}) if entry.is_file() else {}
-    gens = front.get("gens") if isinstance(front.get("gens"), list) else []
-    gen = str(gens[0]) if gens else "gfx950"
-    return gen, frozenset({gen, *(str(n) for n in front.get("arch-names") or ())})
-
-
-def check_arch(page: Page, gen: str, names: frozenset[str]) -> Iterable[Issue]:
-    """Every architecture the page names is the skill's own; so is its `gens`."""
+def check_arch(page: Page) -> Iterable[Issue]:
+    """`gens` lists known architectures, and every architecture the page names is one of them."""
+    gens = (page.front or {}).get("gens")
+    if gens is not None and (not isinstance(gens, list) or any(str(g) not in ARCH_NAMES for g in gens)):
+        yield Issue("error", page.rel, 1, f"gens {gens}: a list of {', '.join(ARCH_NAMES)}")
+        return
+    own = [str(g) for g in gens or DEFAULT_GENS]
+    covered = ARCH_NAMES if page.kind in ("entry", "guide") else own
+    names = frozenset().union(*(ARCH_NAMES[g] for g in covered))
     for match in ARCH_TOKEN_RE.finditer(page.text):
         token = match.group(0).replace(" ", "").rstrip("X")
         if token not in names:
@@ -533,16 +536,31 @@ def check_arch(page: Page, gen: str, names: frozenset[str]) -> Iterable[Issue]:
                 "error",
                 page.rel,
                 line,
-                f"names {match.group(0)}; this skill covers {gen} only",
+                f"names {match.group(0)}; the page covers {', '.join(own)}",
             )
-    gens = (page.front or {}).get("gens")
-    if isinstance(gens, list) and [str(g) for g in gens] != [gen]:
-        yield Issue("error", page.rel, 1, f"gens {gens}; this skill covers [{gen}] only")
+
+
+def duplicate_levers(paths: Iterable[Path]) -> list[Issue]:
+    """A `lever` belongs to one technique page: a second page with it extends the first instead."""
+    owners: dict[str, str] = {}
+    issues = []
+    for path in paths:
+        page = read_page(path)
+        lever = (page.front or {}).get("lever") if page.kind == "technique" else None
+        if not lever:
+            continue
+        if str(lever) in owners:
+            issues.append(
+                Issue("error", page.rel, 1, f"lever `{lever}` is already {owners[str(lever)]}; merge into it")
+            )
+        else:
+            owners[str(lever)] = page.rel
+    return issues
 
 
 def lint_page(page: Page) -> list[Issue]:
     kind = page.kind
-    issues: list[Issue] = list(check_arch(page, *skill_arch()))
+    issues: list[Issue] = list(check_arch(page))
     if page.front_error:
         level = "error" if kind in NEW_KINDS else "warn"
         issues.append(
@@ -626,13 +644,13 @@ def lint_page(page: Page) -> list[Issue]:
 
 
 def is_page(path: Path) -> bool:
-    """A knowledge page of this skill: a Markdown file outside the templates, tools, snapshots and review notes."""
+    """A knowledge page of this skill: a Markdown file outside the tools, snapshots and review notes."""
     path = path.resolve()
     if path.suffix != ".md":
         return False
     rel = path.relative_to(SKILL_ROOT).as_posix() if path.is_relative_to(SKILL_ROOT) else path.as_posix()
     skipped = any(part in rel for part in SKIP_PARTS) or rel.endswith(".review.md")
-    return not skipped and rel != "staging/README.md"
+    return not skipped
 
 
 def knowledge_pages() -> list[Path]:
@@ -695,7 +713,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.stale:
         print("\n".join(stale(paths, args.stale)))
         return 0
-    issues = lint_paths(paths)
+    issues = lint_paths(paths) + duplicate_levers(knowledge_pages())
     errors = [i for i in issues if i.level == "error"]
     for issue in issues:
         if issue.level == "error" or not args.errors_only:

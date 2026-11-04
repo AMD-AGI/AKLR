@@ -28,14 +28,14 @@ layer you have not audited.
 | Grid shape, XCD placement, dispatch order, padding, GQA sharer merging | `flydsl_attn_grid_dispatch.md` |
 | MFMA atom per GEMM, operand and accumulator layouts, P/dS as the next B operand | `flydsl_attn_mfma_layout.md` |
 | exp2, LSE format, online-softmax rescale, row sums | `flydsl_attn_softmax.md` |
-| Transposed LDS reads, row stride, bank-conflict readings | `flydsl_attn_lds.md` (with `../optimize/lds-optimization.md`) |
+| Transposed LDS reads, row stride, bank-conflict readings | `flydsl_attn_lds.md` (with `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/lds-optimization/SKILL.md`) |
 | VGPR budget, occupancy steps, spills, AGPR | `flydsl_attn_registers_occupancy.md` |
 | `sched_group_barrier`, fences, `s_setprio`, waits, barriers | `flydsl_attn_schedule_sync.md` |
 | dQ/dK/dV accumulation, determinism, workspaces, fusion, masked q-loops | `flydsl_attn_backward.md` |
 | Decode, split-KV, the combine | `flydsl_attn_decode_split_kv.md` |
 | Rulers, noise floors, FLOP accounting, host-bound shapes | `flydsl_attn_measurement.md` |
 | Gates, spike inputs, mask conventions | `flydsl_attn_correctness.md` |
-| The kernel is wrong, not slow | `../bottleneck/debug-flydsl-kernel.md` |
+| The kernel is wrong, not slow | `../flydsl/debug-flydsl-kernel.md` |
 
 ## Step 0 — measure the kernel that ships
 - **Audit the dispatch per cell** before trusting any number: record which backend and which code path each
@@ -176,7 +176,7 @@ changed.
 
 ## Related
 `INDEX.md` · `../gemm/flydsl_gemm_workflow.md` (round discipline) · `../gemm/flydsl_gemm_attribution.md` ·
-`../optimize/flydsl_levers/flydsl_authoring_method.md` · `../isa/matrix_core.md`
+`../flydsl/kernels/flydsl_authoring_method.md` · `../hardware/gfx950/matrix_core.md`
 
 ## Evidence
 

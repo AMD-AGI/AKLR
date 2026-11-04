@@ -15,11 +15,11 @@ sources:
 
 > This card gives an order of operations and a discipline for each round. It does not say which
 > configuration wins; only measurement on the box does that. The GEMM-specific continuation of
-> `../optimize/flydsl_levers/flydsl_authoring_method.md`.
+> `../flydsl/kernels/flydsl_authoring_method.md`.
 
 ## Route here when
 The question has narrowed to a dense GEMM, and you need to know where to start, what to change first,
-or how to run the next round. For a grouped GEMM start at `../grouped_gemm/flydsl_grouped_workflow.md`.
+or how to run the next round. For a grouped GEMM start at `../moe/flydsl_grouped_workflow.md`.
 
 | The open question | Card |
 |---|---|
@@ -32,19 +32,19 @@ or how to run the next round. For a grouped GEMM start at `../grouped_gemm/flyds
 | Correctness gates, races, silent-wrong traps | `flydsl_gemm_correctness.md` |
 | M ≤ 256: decode-shape rulers, grid, split-K reduction, aiter tuned rows | `flydsl_gemm_small_m.md` |
 | Rulers, noise floors, A/B design, what to report | `flydsl_gemm_measurement.md` |
-| How a FlyDSL GEMM is put together (FlyDSL's walkthrough on `preshuffle_gemm`) | `../optimize/gemm-optimization.md` |
-| The kernel is wrong, not slow | `../bottleneck/debug-flydsl-kernel.md` |
-| Writing your first FlyDSL kernel | the `flydsl-kernel-authoring` skill (`../../flydsl-kernel-authoring/SKILL.md`) |
-| Not a GEMM, or the bottleneck is still unidentified | `../optimize/flydsl_levers/flydsl_authoring_method.md` |
+| How a FlyDSL GEMM is put together (FlyDSL's walkthrough on `preshuffle_gemm`) | `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` |
+| The kernel is wrong, not slow | `../flydsl/debug-flydsl-kernel.md` |
+| Writing your first FlyDSL kernel | the `flydsl-kernel-authoring` skill (`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/flydsl-kernel-authoring/SKILL.md`) |
+| Not a GEMM, or the bottleneck is still unidentified | `../flydsl/kernels/flydsl_authoring_method.md` |
 
 **Two questions to settle before writing anything.** Does a shipped kernel already cover the shape (the
-kernel maps in `INDEX.md`; aiter's FlyDSL wrappers in `../optimize/flydsl_levers/flydsl_kernel_library.md`)?
+kernel maps in `INDEX.md`; aiter's FlyDSL wrappers in `../flydsl/kernels/flydsl_kernel_library.md`)?
 Is FlyDSL even the backend that will be dispatched (in aiter, only a tuned row names a FlyDSL GEMM:
-`../optimize/flydsl_levers/flydsl_kernel_library.md`)? Both are cheaper to answer than a rewrite.
+`../flydsl/kernels/flydsl_kernel_library.md`)? Both are cheaper to answer than a rewrite.
 
 ## Step 0 — start from a reference kernel, not from a blank file
 
-Read FlyDSL's `../optimize/gemm-optimization.md` for how the pieces of a FlyDSL GEMM fit together. Then pick
+Read FlyDSL's `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` for how the pieces of a FlyDSL GEMM fit together. Then pick
 the closest reference kernel for your dtype, layout and shape from the two maps in `INDEX.md`:
 - **FlyDSL's `kernels/gemm/`**: fp8/int8/fp16/bf16 with a preshuffled B and an optional bias + ReLU/SiLU/GELU
   epilogue (`preshuffle_gemm`), bf16/fp16 in NN/NT/TN/TT with async DMA and split-K (`gemm_a16w16_gfx950`), and fp8/MXFP4 NT in 8-wave and 4-wave forms. K must be a multiple of the K tile.
@@ -82,8 +82,8 @@ First do the arithmetic that needs no profile: tiles, dispatch rounds and last-r
 | Few MFMAs per memory instruction | the loop body or its schedule |
 | Dense MFMAs but poor wall time | tile shape and rounds, occupancy, the store path, or the power cap |
 
-FlyDSL's guide has the same symptom table with first actions (`../optimize/gemm-optimization.md` §8.4) and the
-instruction-count method for the hot loop (§9); `../profile/kernel-trace-analysis/SKILL.md` reads the trace.
+FlyDSL's guide has the same symptom table with first actions (`https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/gemm-optimization/SKILL.md` §8.4) and the
+instruction-count method for the hot loop (§9); `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md` reads the trace.
 
 **Two common misreadings.**
 - TF/s rising with K is not proof that a kernel is memory-bound. A fixed per-tile cost (prologue,
@@ -159,5 +159,5 @@ These rules come from Primus-Turbo's optimization loop (`agent/skills/kernel-opt
 4. Check that no neighbouring shape regressed.
 
 ## Related
-`INDEX.md` (this package's map) · `../optimize/flydsl_levers/flydsl_authoring_method.md` ·
-`../optimize/flydsl_levers/flydsl_knob_space.md` · `../optimize/flydsl_levers/flydsl_kernel_library.md`
+`INDEX.md` (this package's map) · `../flydsl/kernels/flydsl_authoring_method.md` ·
+`../flydsl/kernels/flydsl_knob_space.md` · `../flydsl/kernels/flydsl_kernel_library.md`

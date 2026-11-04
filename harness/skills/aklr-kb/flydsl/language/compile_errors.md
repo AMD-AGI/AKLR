@@ -20,7 +20,7 @@ sources:
 Look up the last line of the traceback. Every row was reproduced with a compile-only probe (`COMPILE_ONLY=1
 ARCH=gfx950`, CPU tensors, one change to `examples/01-vectorAdd.py`); names such as `vector_add_kernel_0`, `y`
 or `GRID_PAD` come from the probe. Long messages are cut at `…` after their distinctive part. The loop and branch
-rules behind several rows are in `../bottleneck/debug-flydsl-kernel.md` §5.
+rules behind several rows are in `../debug-flydsl-kernel.md` §5.
 
 | Error, as raised | Cause | Fix |
 |---|---|---|

@@ -38,9 +38,9 @@ Each channel puts a different build under the ruler.
    or a `PYTHONPATH` order, decides what loads; `import aiter` loads the first `flydsl` on the path (S2). The
    absence of a message your new code would print shows nothing: code that did not load prints nothing either.
 3. **The compile cache returns an earlier binary.** What FlyDSL's cache key does and does not see is in
-   `../bottleneck/debug-flydsl-kernel.md` § What the cache key sees.
+   `../flydsl/debug-flydsl-kernel.md` § What the cache key sees.
 4. **Another venv or FlyDSL version.** Several changes between versions alter the result without an error
-   (`../language/version_notes.md` § Behaviour that changes without an error). AKLR's CI installs the checkout
+   (`../flydsl/language/version_notes.md` § Behaviour that changes without an error). AKLR's CI installs the checkout
    without its dependencies and runs the FlyDSL of its CI image, not the `flydsl==0.3.2` of the repository's
    `requirements.txt` (S6): 0.3.4.1 in the image of the runs from 2026-10-24 on, 0.3.1 in the one before, each
    the pin of the aiter commit the image was built from (S7, S8). The `speedup` CI writes into a schema was
@@ -67,7 +67,7 @@ Each channel puts a different build under the ruler.
   `../gemm/flydsl_gemm_mainloop.md` §10) made in a separate run: do not time with the dump on
   (`../gemm/flydsl_gemm_measurement.md` §6). A compile-time switch that shows in the kernel name makes the arms
   tell apart in a trace (`../gemm/flydsl_gemm_attribution.md` §3). Break the kernel on purpose once
-  (`../bottleneck/debug-flydsl-kernel.md` § What the cache key sees).
+  (`../flydsl/debug-flydsl-kernel.md` § What the cache key sees).
 - **In AKLR, check what was served.** Compare the schema's `content` with your file. Call the op's api with
   `AKLR_EXPORT=1`: every call record carries `fallback_reason`, empty when the kernel served it (S4).
 
@@ -75,7 +75,7 @@ Each channel puts a different build under the ruler.
 
 - With a wrapper that syncs a tree, edit only the side it syncs from, or call the bench without the wrapper.
 - Point the editable install or the front of `PYTHONPATH` at the edited tree.
-- Clear the compile cache before believing a result (`../SKILL.md` § Rules that hold everywhere).
+- Clear the compile cache before believing a result (`../flydsl/SKILL.md` § Rules that hold everywhere).
 - Pin one FlyDSL per venv and print it with every result.
 - In AKLR, copy the file into the schema's `content` before `python -m aklr validate`, and read the fallback
   reasons of an e2e run before reading its time.

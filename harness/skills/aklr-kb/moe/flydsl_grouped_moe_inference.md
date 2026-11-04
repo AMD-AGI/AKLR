@@ -45,7 +45,7 @@ sources:
 > and a8w4 for the comm-fused stage 2 and E24–E29's 112-of-896-expert MoE), except where a sentence names another kernel; their conditions are listed
 > under Evidence at the end. Use them for direction and order of magnitude. aiter's FlyDSL
 > MoE families, their entry points and knobs, and AKLR's own MoE kernels are in
-> `../optimize/flydsl_levers/flydsl_kernel_library.md`; a worked AKLR case is `../moe/flydsl_moe_decode.md`. Training
+> `../flydsl/kernels/flydsl_kernel_library.md`; a worked AKLR case is `../moe/flydsl_moe_decode.md`. Training
 > grouped GEMMs (variable-K wgrad, group offsets) are the rest of this package (`INDEX.md`).
 
 ## Route here when
@@ -174,7 +174,7 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
 - *(field, E7)* Halving stage 2's A-tile LDS (packing fp4 at its real width) was neutral: that stage 2 was not limited
   by LDS occupancy.
 - **Send padding rows' A loads out of range where each reads a distinct row.** Out-of-range buffer reads return
-  zero (`../isa/memory_and_sync.md` §2.3; the bounded descriptor, `../language/limits.md`). A stage 2 that reads A by
+  zero (`../hardware/gfx950/memory_and_sync.md` §2.3; the bounded descriptor, `../flydsl/language/limits.md`). A stage 2 that reads A by
   sorted row gained: +1.0%, 0.9–1.0 µs at 8 and 12 tokens *(field, E26)*; 58.7 → 57.0 µs at 40 tokens *(field, E31)*.
   A stage 1 that maps padding to token 0 gained nothing: every padding row already hits one cached row.
 - **aiter's v2 stage 2: stage C in fp32.** With `g2_kstatic` the bf16 default leaves 2 A slots and a barrier per K tile
@@ -254,7 +254,7 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
   output SQNR ≥ 13 dB with `max_violation_fraction` 1e-3 (`aklr/ops/fused_moe/contract.py`), so atomics are allowed
   there, unlike AKLR's GEMM contracts, all bitwise but `gemm_a8w8_blockwise_scaled`; a port's equivalence is judged
   by SQNR (`../moe/flydsl_moe_decode.md` §3). Four of AKLR's five MoE kernels still sum the routes in a fixed order
-  without atomics (`../optimize/flydsl_levers/flydsl_kernel_library.md` § AKLR's own FlyDSL MoE kernels).
+  without atomics (`../flydsl/kernels/flydsl_kernel_library.md` § AKLR's own FlyDSL MoE kernels).
 - **`mxfp_moe` stage 2 variants** (`host.py:21-48`): atomic at BM 16/32/64 with or without non-temporal B,
   non-atomic, CShuffle, MXFP4-out and fp8-out at BM 128 (CShuffle also at 32/64). FlyDSL's host defaults
   `xcd_swizzle = 3` for the non-atomic and fp8-out epilogues and routes BM-128 non-atomic to CShuffle
@@ -285,7 +285,7 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
 - Decode reads cold weights, runs under graph replay and pays a per-node floor: rotate weight copies past the
   MALL, time a replayed graph, and price through the deployed entry (`../gemm/flydsl_gemm_small_m.md` §1). AKLR's
   bench already replays a graph with a cache flush per call, and times aiter's MoE through `fused_moe_baseline`
-  (`../optimize/flydsl_levers/flydsl_kernel_library.md` § Other FlyDSL families in the baseline aiter).
+  (`../flydsl/kernels/flydsl_kernel_library.md` § Other FlyDSL families in the baseline aiter).
 - *(field, E18)* A MoE decode scorer's in-batch noise was ~0.2%, but identical code drifted 0.3–0.4% between batches.
   Decide on interleaved pairs within one batch; use cross-batch values for direction only. *(field, E35)* Unchanged
   code also moved 9% within one session, and a null change was recorded at +6%: even direction needs a fresh pair.
@@ -303,7 +303,7 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
 - [ ] Small kernels were priced by extra launches, and merged kernels write disjoint regions.
 
 ## Related
-`../moe/flydsl_moe_decode.md` · `../optimize/flydsl_levers/flydsl_kernel_library.md` ·
+`../moe/flydsl_moe_decode.md` · `../flydsl/kernels/flydsl_kernel_library.md` ·
 `../gemm/flydsl_gemm_small_m.md` · `../gemm/flydsl_gemm_grid_pricing.md` · `flydsl_grouped_scheduling.md` ·
 `flydsl_grouped_measurement.md` · `INDEX.md`
 

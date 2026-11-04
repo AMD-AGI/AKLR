@@ -19,11 +19,11 @@ sources:
 # FlyDSL GEMM at small M
 
 > Scope: dense GEMM with M ≈ 1–256 (decode steps, speculative-decode verify), mostly bf16. MoE expert GEMMs at
-> decode are in `../grouped_gemm/flydsl_grouped_moe_inference.md`. Primus-Turbo's FlyDSL
+> decode are in `../moe/flydsl_grouped_moe_inference.md`. Primus-Turbo's FlyDSL
 > GEMMs (the exemplar elsewhere in this package) are built for training shapes and do not target small M.
 > "The current kernels" are the baseline aiter's bf16 FlyDSL GEMMs behind `flydsl_hgemm`: the generic split-K
 > kernel `aiter/ops/flydsl/kernels/splitk_hgemm.py` and the small-M kernel `kernels/small_m_hgemm.py`, which no
-> shipped tuned row selects. Their arguments are in `../optimize/flydsl_levers/flydsl_knob_space.md`.
+> shipped tuned row selects. Their arguments are in `../flydsl/kernels/flydsl_knob_space.md`.
 >
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end. The
 > mechanisms carry over between kernels; the configurations do not. Each technique marked **Not in the current
@@ -94,7 +94,7 @@ The lessons below flip sign between two regimes. Decide which one a call site is
   M-blocks were 2–4× slower than the best kernel recorded for the row. Make sure the tuner's `tile_m` filter can produce `align_up(M, 16)` for every M it
   covers. aiter's reaches one M-block only when M ≤ 16 or M is itself a catalog `tile_m` (32, 48, 64, 80, 96,
   128, 256): it drops every `tile_m` above `max(M, 16)`, so M=24 keeps only 16 and M=72 only 16–64
-  (`../optimize/flydsl_levers/flydsl_knob_space.md`).
+  (`../flydsl/kernels/flydsl_knob_space.md`).
 - **On short K, race two XCD-paired M-blocks against one.** *(field, E27, E28)* At M 80–112, K=768, both M-blocks of an
   N strip on one XCD at doubled `tile_n` (same grid) won 6.7–6.9% at M 96–112 (1.7% at M=80) on one kernel and lost up to ~14% on another.
 - **Odd tile widths can be the only way to reach a full round** (for N=6144 at small M, 256 workgroups need
@@ -155,7 +155,7 @@ an idle-device tuner (§1).
   are added into C in arrival order. Measured, for both kernels: every one of 400 repeats differed at split-K 2
   with a bias and at 3, 4 and 8 *(field, E49)*. Where
   runs must match bitwise, use split-K 1 or 2 without a bias, or a fixed-order reduction
-  (`../optimize/flydsl_levers/flydsl_kernel_library.md` § Split-K).
+  (`../flydsl/kernels/flydsl_kernel_library.md` § Split-K).
 - *(field, E50)* bf16 partials exceeded a 0.02 relative-error gate at split-K ≈ 12 (0.0241); f32 partials read 0.
   Gate every deep split-K row on accuracy, not only the first one tuned.
 - **Race fp32 partials rounded to their top 24 bits, four packed in three dwords** (25% fewer plane bytes, error
@@ -306,8 +306,8 @@ What it means at small M:
 
 ## Related
 `flydsl_gemm_grid_pricing.md` · `flydsl_gemm_epilogue.md` §5 (store cache policy) · `flydsl_gemm_autotune.md` ·
-`flydsl_gemm_measurement.md` · `../optimize/flydsl_levers/flydsl_kernel_library.md` ·
-`../optimize/flydsl_levers/flydsl_knob_space.md`
+`flydsl_gemm_measurement.md` · `../flydsl/kernels/flydsl_kernel_library.md` ·
+`../flydsl/kernels/flydsl_knob_space.md`
 
 ## Evidence
 

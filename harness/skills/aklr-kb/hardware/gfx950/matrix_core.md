@@ -28,7 +28,7 @@ flydsl: 0.3.2
 **Naming.** "V_MFMA_[output type]\_[M]X[N]X[K][\_[B]B]\_[input type] where B (which is 1 if not specified) is the
 number of matrices (or blocks)" (ch07 §7.1). Each instruction is a `#### V_MFMA_…` or `#### V_SMFMAC_…` heading
 in vop3p, followed by `Opcode: N`; from the skill folder,
-`rg -n '^#### V_S?MFMA' isa/cdna4/ch12_10_vop3p_instructions.md` lists them and ch13 §13.3.6.1 Table 90 maps the
+`rg -n '^#### V_S?MFMA' hardware/gfx950/cdna4/ch12_10_vop3p_instructions.md` lists them and ch13 §13.3.6.1 Table 90 maps the
 numbers. Chapter 7 gives the dense list with cycle counts (§7.1.2 Table 28), the F8F6F4 forms (§7.1.5) and the
 sparse list (§7.5 Table 33).
 
@@ -230,11 +230,11 @@ MACs per cycle *(derived: M·N·K·B ÷ Table 28 cycles)*:
 
 | Card section | Here |
 |---|---|
-| `../gemm/flydsl_gemm_mainloop.md` §5 MFMA atom choice | §1 atom table, §4 rates |
+| `../../gemm/flydsl_gemm_mainloop.md` §5 MFMA atom choice | §1 atom table, §4 rates |
 | mainloop §4 Register plan and inline-asm constraints | §2 register files and sources; §3 "VALU writes → MFMA reads: 2" (its constraint rule 1) |
 | mainloop §2 8-wave pipeline, §3 4-wave whole loop | §3: K chains need no padding; the peeled first phase's `src2=0` is the inline constant; an epilogue scheduled between the closing MFMAs must still cover 8 / 12 / 20 |
 | mainloop §7 Occupancy and allocation knobs | ch03 §3.6.4: granule 8, 256 + 256 per wave. The card's occupancy tiers and round-to-4 rule are not in the guide |
-| `../gemm/flydsl_gemm_correctness.md` §6 Bounds (MFMA ignores EXEC) | §2 "forces it to 1 for all threads" |
+| `../../gemm/flydsl_gemm_correctness.md` §6 Bounds (MFMA ignores EXEC) | §2 "forces it to 1 for all threads" |
 | correctness §7 Register classes and inline asm | §3: the card's 8 / 8 / 12 / 20 match the VALU row at 4 / 4 / 8 / 16 passes |
 
 ## 6. Gaps and inconsistencies in the chapter text
@@ -251,5 +251,5 @@ MACs per cycle *(derived: M·N·K·B ÷ Table 28 cycles)*:
   MODE's denorm control.
 
 ## Related
-`INDEX.md` · `lookup.md` · `memory_and_sync.md` · `../gemm/flydsl_gemm_mainloop.md` ·
-`../gemm/flydsl_gemm_correctness.md` · `../gemm/flydsl_gemm_schedule_and_locality.md`
+`INDEX.md` · `lookup.md` · `memory_and_sync.md` · `../../gemm/flydsl_gemm_mainloop.md` ·
+`../../gemm/flydsl_gemm_correctness.md` · `../../gemm/flydsl_gemm_schedule_and_locality.md`

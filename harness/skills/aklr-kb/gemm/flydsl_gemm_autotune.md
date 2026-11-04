@@ -157,7 +157,7 @@ When a search stalls, change the family of the dimension you search (split-K, MF
   Leave either out and one call is handed the other's module.
 - **A value used as a compile-time constant is part of the specialization.** Pass truly dynamic values as
   `fx.Int32` arguments. Closure-captured Python dicts are *not* in FlyDSL's JIT cache key
-  (`../bottleneck/debug-flydsl-kernel.md` § What the cache key sees).
+  (`../flydsl/debug-flydsl-kernel.md` § What the cache key sees).
 - Build knobs that select a code path (tile order, store policy) must be in the key. Otherwise two policies
   share one cache slot and silently run as one binary.
 
@@ -202,7 +202,7 @@ When a search stalls, change the family of the dimension you search (split-K, MF
 
 ## Related
 `flydsl_gemm_mainloop.md` · `flydsl_gemm_epilogue.md` · `flydsl_gemm_measurement.md` (rulers, null controls) ·
-`flydsl_gemm_correctness.md` · `../bottleneck/debug-flydsl-kernel.md`
+`flydsl_gemm_correctness.md` · `../flydsl/debug-flydsl-kernel.md`
 
 ## Evidence
 

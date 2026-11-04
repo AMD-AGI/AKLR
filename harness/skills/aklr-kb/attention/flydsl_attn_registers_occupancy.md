@@ -108,7 +108,7 @@ sources:
   spill 0, 468 fewer instructions in the masked loop.
 - **`scf.if` around a large region keeps loop invariants (Q packs, LDS bases) live across it.** *(field, E20)*
   A per-wave phase-reversal vehicle was 10.6% slower by itself; duplicating the main loop per branch, 27% slower.
-- Runtime conditional syntax: `../bottleneck/debug-flydsl-kernel.md` § Runtime versus compile-time
+- Runtime conditional syntax: `../flydsl/debug-flydsl-kernel.md` § Runtime versus compile-time
   conditionals.
 
 ## 7. AGPRs are not free space

@@ -79,7 +79,7 @@ carried name must flatten to IR values, i.e. be a DSL value or a list/tuple/dict
 - BF16 emits its chunk loop through a helper, `emit_for`, that calls the rewriter's `scf_for_dispatch`
   (`compiler/ast_rewriter.py:1006`) with no carried state (GH:2134-2143); the body is then a plain Python closure,
   and its Python-level buffer rotation is resolved at trace time.
-- The three loop forms and what each carries: `../bottleneck/debug-flydsl-kernel.md` § The three loop forms.
+- The three loop forms and what each carries: `../flydsl/debug-flydsl-kernel.md` § The three loop forms.
 
 ## 3. K tails: let the descriptor zero them, except where it cannot
 - **Token-outer operands (tensorwise, bf16).** Fold `m_start · OUT` into the 64-bit descriptor base and bound
@@ -268,7 +268,7 @@ the in-launch split-K reduce of `../gemm/flydsl_gemm_grid_pricing.md` §2 and of
 `flydsl_grouped_scheduling.md` · `flydsl_grouped_tile_pricing.md` · `flydsl_grouped_lowprec.md` ·
 `flydsl_grouped_host_autotune.md` · `flydsl_grouped_correctness.md` · `flydsl_grouped_measurement.md` ·
 `../gemm/flydsl_gemm_mainloop.md` · `../gemm/flydsl_gemm_grid_pricing.md` · `../gemm/flydsl_gemm_epilogue.md` ·
-`../bottleneck/debug-flydsl-kernel.md` · `../attention/flydsl_attn_backward.md`
+`../flydsl/debug-flydsl-kernel.md` · `../attention/flydsl_attn_backward.md`
 
 ## Evidence
 

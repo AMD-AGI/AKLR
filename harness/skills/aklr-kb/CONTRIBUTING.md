@@ -1,34 +1,57 @@
 # Adding to this skill
 
-For anyone, person or agent, who adds or edits a page. The rules exist so that an agent can find the one page that
-answers its question, trust what the page says for the conditions it states, and be told when a FlyDSL upgrade may
-have made it stale. `tools/kb_lint.py` enforces what can be checked mechanically; review does the rest.
+For anyone, person or agent, who adds or edits a page of this skill or of a language skill beside it
+(`flydsl/`, `triton/`, `hip/`). The rules exist so that an agent can find the one page
+that answers its question, trust what the page says for the conditions it states, and be told when a FlyDSL upgrade
+may have made it stale. `tools/kb_lint.py` enforces what can be checked mechanically; review does the rest.
+
+## Folders
+
+- Packages, one per op, each starting at its `INDEX.md`: `gemm/` dense GEMM · `moe/` fused MoE and its expert
+  grouped GEMM · `attention/` attention
+- `patterns/` symptom pages · `cases/` delivered kernels · `pitfalls/` traps
+- `profile.md` trace capture and analysis, and perf-regression bisection: links to FlyDSL's own skills, with what
+  this repository adds
+- `hardware/<arch>/` an architecture's ISA guide, and the guides to looking things up in it (`hardware/gfx950/`:
+  CDNA4)
+- `tools/` the scripts below
+- A language's own pages (limits, compile errors, debugging, links to its own guides) are in its skill, such as
+  `flydsl/`
 
 ## Page kinds
 
-One page answers one kind of question. Start a page from its template in `templates/`.
+One page answers one kind of question. A page of each kind has the front matter fields and the sections below;
+`tools/kb_lint.py` lists the ones missing.
 
-| Kind | Answers | Template | Folder |
+| Kind | Answers | Front matter; sections | Folder |
 |---|---|---|---|
-| `technique` | How to do one thing (one `lever`), when it pays, when it does not, how to see it in the binary | `templates/technique.md` | the op's package (`gemm/`, `moe/`) |
-| `pattern` | What a symptom in a trace or counter means, and which techniques to try | `templates/pattern.md` | `patterns/` |
-| `op` | What an op family computes, where its time goes per regime, which kernels to start from | `templates/op.md` | the op's package |
-| `case` | How a delivered kernel got its speed, under which conditions, and how to reproduce it | `templates/case.md` | `cases/` |
-| `pitfall` | A silent wrong result, a FlyDSL version trap or a measurement artifact | `templates/pitfall.md` | `pitfalls/` |
-| `language-note` | What FlyDSL v0.3.2 does, read from its source: limits, compile errors, version differences | `templates/language.md` | `language/` |
-| `topic` | One area of an op (a card of numbered sections, one lever or decision each), such as the GEMM main loop | `templates/topic.md` | the op's package |
-| `method` | How to work: measure, check correctness, attribute time, tune, debug | `templates/method.md` | the package it serves |
+| `technique` | How to do one thing (one `lever`), when it pays, when it does not, how to see it in the binary | title, lever, ops, dtypes, regimes, gens, flydsl, basis, sources; What it does, How to write it, When it applies, Counter-signals, How to confirm it took effect, Cost and risk, Evidence | the op's package (`gemm/`, `moe/`, `attention/`); one that several ops use goes to the package it was measured in, and the others link it |
+| `pattern` | What a symptom in a trace or counter means, and which techniques to try | title, signals, ops, gens, flydsl, basis; Symptom, Likely causes, Rule out first, Candidate techniques, Evidence | `patterns/` |
+| `op` | What an op family computes, where its time goes per regime, which kernels to start from | title, ops, dtypes, gens, flydsl, basis; What it computes, Bottleneck by regime, Techniques that apply, Kernels to start from, In AKLR | the op's package; a new op gets its folder with its first design page (MLA and DSA: `attention/`) |
+| `case` | How a delivered kernel got its speed, under which conditions, and how to reproduce it | title, ops, dtypes, regimes, contract, gens, flydsl, basis, measured, sources; Applies when, Counter-signals, Mechanism, Result, Reproduce, Rollback | `cases/`, named `<op>_<gist>.md` |
+| `pitfall` | A silent wrong result, a FlyDSL version trap or a measurement artifact | title, scope, gens, flydsl, basis; Symptom, Root cause, How to detect, Fix or workaround, Scope | `pitfalls/` |
+| `language-note` | What FlyDSL v0.3.2 does, read from its source: limits, compile errors, version differences | title, gens, flydsl, basis, sources | the language skill (`flydsl/language/`) |
+| `topic` | One area of an op (a card of numbered sections, one lever or decision each), such as the GEMM main loop | title, ops, dtypes, regimes, gens, flydsl; Route here when | the op's package |
+| `method` | How to work: measure, check correctness, attribute time, tune, debug | title, ops, gens, flydsl; Route here when | the package it serves |
 
-Pages written before these rules — `kind: language`, `index` and `reference`, and the copies of FlyDSL's own
-skills under `optimize/`, `profile/` and `bottleneck/` — are checked with warnings only. A card of numbered
-sections becomes a `topic` or `method` page where it is: its path and section numbers stay, because other pages
-cite them as `<card>.md §<n>`.
+Pages written before these rules — `kind: language`, `index` and `reference` — are checked with warnings only. A
+card of numbered sections becomes a `topic` or `method` page where it is: its path and section numbers stay,
+because other pages cite them as `<card>.md §<n>`.
+
+- **Names**: no type prefix; `flydsl_` only on a card whose code is FlyDSL. A page's path and its section numbers
+  change only when the page is rewritten, and that pull request fixes every link to it.
+- **Hardware**: `hardware/<arch>/` holds only an architecture's ISA guide and the guides to looking things up in
+  it. What one architecture changes for an op goes to the op's package, with `gens: [<arch>]` (gfx942's GEMM
+  notes: `gemm/flydsl_gemm_gfx942.md`).
+- **FlyDSL's own skills are linked, never copied**, pinned to `v0.3.2`: `https://github.com/ROCm/FlyDSL/blob/v0.3.2/.claude/skills/<skill>/SKILL.md`. What this
+  repository adds to or corrects in one goes to `flydsl/guides.md`, or to `profile.md` for the trace and
+  bisection skills.
 
 ## Front matter
 
-The fields each kind needs are in its template; lint lists the ones missing. Front matter is YAML: quote a value
-that contains `: `. `flydsl` is the version the page was checked against (`0.3.2`), `gens` the architectures
-(`[gfx950]`), `regimes` the M ranges or regimes it covers.
+Front matter is YAML: quote a value that contains `: `. `flydsl` is the version the page was checked against
+(`0.3.2`), `gens` the architectures (`[gfx950]`; `[gfx942]` on a page about gfx942 only, such as
+`gemm/flydsl_gemm_gfx942.md`), `regimes` the M ranges or regimes it covers.
 
 ## Evidence
 
@@ -62,48 +85,44 @@ that contains `: `. `flydsl` is the version the page was checked against (`0.3.2
   stated as the condition under which it fails.
 - **No copy of an external rule.** AKLR's audit, contracts and serving threshold are linked to the section of
   `aklr/ops/README.md` that states them, not restated: a restated rule goes stale when the README changes.
-- **No second page for the same thing.** A technique's `lever` is unique (`tools/kb_approve.py` refuses a
+- **No second page for the same thing.** A technique's `lever` is unique (`tools/kb_lint.py` reports a
   duplicate); search the skill for the lever, the op and the symptom before writing, and extend the page you find.
 - **No unchecked claim.** Every statement is checked against source, the ISA or a GPU run before it goes in.
 
 ## How a page gets in
 
-1. Copy the template to `staging/<slug>.md` and fill it in. Write each link to another page as `../<folder>/<page>.md`,
-   even to a page of the folder it will go to: that path resolves from `staging/` and from the destination.
-2. `python tools/kb_lint.py staging/<slug>.md` reports no error.
-3. Review: check each claim against its source or a run, look for an existing page that covers it, set `basis`.
-   Review notes go to `staging/<slug>.review.md`.
-4. Approval by a person: `python tools/kb_approve.py staging/<slug>.md --to <folder>` lints the page again, moves
-   it, deletes its review notes and rebuilds the indexes. Add the files with the `git add` command it prints.
-5. Link the page from where an agent looks for it: a row of `SKILL.md`'s task or symptom table, or the package's
-   `INDEX.md`. `patterns/`, `cases/`, `language/` and `pitfalls/` need no link by hand: their `INDEX.md` is
-   generated.
+1. Write the page in its folder (the table above), with the front matter and sections of its kind.
+2. `python tools/kb_lint.py <page>` reports no error. Link the page from where an agent looks for it: a row of
+   `SKILL.md`'s task or symptom table, or the package's `INDEX.md`. `patterns/`, `cases/` and `pitfalls/` need no
+   link by hand: `python tools/kb_index.py` rebuilds their generated `INDEX.md`.
+3. Review, in the pull request that adds it: each claim against its source or a run, no existing page that covers
+   it, `basis` set.
 
-An edit to an existing page skips staging, but passes lint and review the same way, and a new number in it gets an
-evidence line. A knowledge patch proposed by the optimization loop's distill step (Hyperloom `AKLR`
-`forge-distill`) is reviewed like any other edit; a new page in it goes to `staging/` first. It is committed with
-the kernel it came from, in that kernel's pull request (`forge-loop-campaign` skill, step 7).
+An edit to an existing page passes lint and review the same way, and a new number in it gets an evidence line. A
+knowledge patch proposed by the optimization loop's distill step (Hyperloom `AKLR` `forge-distill`) is reviewed
+like any other edit. It is committed with the kernel it came from, in that kernel's pull request
+(`forge-loop-campaign` skill, step 7).
 
 ## Upkeep
 
-- **FlyDSL upgrade**: `python tools/kb_lint.py --stale <new version>` lists the pages checked against another
-  version. Re-read each `language-note` against the new source; a `source-semantics` page is possibly stale, not
-  wrong. Set `flydsl` once the page is checked.
+- **FlyDSL upgrade**: `python tools/kb_lint.py --stale <new version>`, and the same with
+  `--skill-root flydsl`, list the pages checked against another version. Re-read each `language-note`
+  against the new source; a `source-semantics` page is possibly stale, not wrong. Set `flydsl` once the page is
+  checked. Move the links pinned to `v0.3.2` and re-check `flydsl/guides.md` against the new version.
 - **Gaps**: the `KB: no-match <question>` lines that optimization rounds leave (`SKILL.md` § How to look things
   up; `tools/kb_gaps.py` collects them) are the next pages to write. Delivered kernels, fixes and known traps
   without a `cases/` or `pitfalls/` page are the others: each month and after a batch of kernels merges,
   `tools/kb_reconcile.py` lists the FlyDSL kernels on main that no case names.
-- **Size**: `SKILL.md` stays at most 150 lines, because the optimization loop puts it into every round's prompt;
-  a page over 600 lines is split.
+- **Size**: each `SKILL.md`, this skill's and a language skill's, stays at most 150 lines and 12,000 bytes,
+  because the optimization loop puts both into every round's prompt; a page over 600 lines is split.
 
 ## Tools
 
 | Command | Does |
 |---|---|
-| `python tools/kb_lint.py [page ...]` | checks front matter, sections, marks and evidence lines, forbidden headings, links, `§<n>` references and sizes; exit 1 on an error; `--repo-root` for a copy of the skill |
+| `python tools/kb_lint.py [page ...]` | checks front matter, sections, marks and evidence lines, forbidden headings, links, `§<n>` references, architecture names, duplicate levers and sizes; exit 1 on an error; `--skill-root flydsl` for a language skill, `--repo-root` for a copy of the skill |
 | `python tools/kb_lint.py --stale <version>` | lists pages and evidence lines checked against another FlyDSL version |
-| `python tools/kb_index.py [--check]` | rebuilds the generated `INDEX.md` of `patterns/`, `cases/`, `language/` and `pitfalls/` |
-| `python tools/kb_approve.py staging/<slug>.md [more.md ...] --to <folder>` | moves reviewed pages in; pages that link each other go in one call |
+| `python tools/kb_index.py [--check]` | rebuilds the generated `INDEX.md` of `patterns/`, `cases/` and `pitfalls/` |
 | `python tools/kb_quote_check.py <sidecar.tsv>` | checks that each quote of an evidence sidecar is at the source line it names |
 | `python tools/kb_numbers_guard.py <page> [--rev REV]` | lists the numbers an edit changed outside `## Evidence` and code |
 | `python tools/kb_reanchor.py <page> [--dry-run]` | moves the `S<n> path:line` citations of a page whose lines moved |
@@ -111,5 +130,7 @@ the kernel it came from, in that kernel's pull request (`forge-loop-campaign` sk
 | `python tools/kb_reconcile.py [--rev REV]` | the FlyDSL kernels at a revision that no case page names, and cases whose files are gone |
 | `python tools/isa_diff.py <a.s> <b.s> [--stream]` | compares two `NN_final_isa.s` dumps: resources and opcode counts, registers and labels normalized |
 | `python tools/budget.py --arch-vgpr N --agpr N --waves W [--lds B]` or `--isa <s>` | gfx950 register and LDS budget, occupancy and the register ceiling of each reachable occupancy |
+| `python tools/hotspot_analyzer.py <dispatch_dir> --topk 15 --mode both` | the hot instructions of an ATT trace (`profile.md`) |
+| `python tools/pmc_l2_analyzer.py <counters.csv>` | L2 and HBM efficiency from rocprofv3 PMC counters (`profile.md`) |
 
 They need Python 3.10 or later; PyYAML is used when installed.

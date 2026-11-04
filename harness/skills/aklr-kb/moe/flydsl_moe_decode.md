@@ -20,7 +20,7 @@ activations (E8M0 scale per 32), 257 experts, top-9, model dim 6144, inter dim 2
 16, 32 and 64 tokens. Its sources are `kernel.py` (the entry), `g1_fold.py` (stage 1) and `g2_port.py` (stage 2);
 line numbers below are in those files. "Tokens" (M in formulas) is the Point's `n_tokens`. Where it is served, and what the other
 kernel of the same schema name does at 1–2 tokens: [fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md).
-aiter's MoE kernels, their names and knobs: `../optimize/flydsl_levers/flydsl_kernel_library.md` (MoE).
+aiter's MoE kernels, their names and knobs: `../flydsl/kernels/flydsl_kernel_library.md` (MoE).
 
 ## What it does
 
@@ -94,7 +94,7 @@ _d = _base + _p2 + _inc2 - _x - _lo
 
 - The device then computes `bound = total_m_blocks × 2` n-blocks (:2048); a workgroup at or past it exits, and at 32
   tokens the tile id is remapped per XCD only after that test (:2091–2097;
-  `../grouped_gemm/flydsl_grouped_moe_inference.md` §2).
+  `flydsl_grouped_moe_inference.md` §2).
 - The first two weight and weight-scale prologue stages are issued as soon as step e has the expert id, before the
   LDS-only steps f and g, so the head runs under the weight stream (`_BEF`, :219, :966–980). Its effect is not
   measured here.
@@ -134,7 +134,7 @@ _d = _base + _p2 + _inc2 - _x - _lo
   tokens of this shape and a pre-quantized-activation stage 1 at 1 and 2 (S6).
 - **A bitwise contract.** The atomic stage 2 adds a token's 9 rows in arrival order. Use a fixed-order stage 2 there,
   for example one wave per route and an LDS sum in route order, as `1fee59821837c26f.json` does at 1–2 tokens
-  (`../grouped_gemm/flydsl_grouped_moe_inference.md` §6, `../gemm/flydsl_gemm_correctness.md` §8).
+  (`flydsl_grouped_moe_inference.md` §6, `../gemm/flydsl_gemm_correctness.md` §8).
 
 ## How to confirm it took effect
 
@@ -186,6 +186,6 @@ contents' lines.
 
 ## Related
 
-`../grouped_gemm/flydsl_grouped_moe_inference.md` (how FlyDSL MoE GEMMs map work; cache policy; stage 2) ·
-`../optimize/flydsl_levers/flydsl_kernel_library.md` § AKLR's own FlyDSL MoE kernels ·
+`flydsl_grouped_moe_inference.md` (how FlyDSL MoE GEMMs map work; cache policy; stage 2) ·
+`../flydsl/kernels/flydsl_kernel_library.md` § AKLR's own FlyDSL MoE kernels ·
 [fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md) · `INDEX.md`

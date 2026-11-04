@@ -17,7 +17,7 @@ flydsl: 0.3.2
 > The general GEMM rules — gates that reach the changed path, calling twice, races found by bitwise repetition,
 > waits and barriers, inline-asm hazards, a third reference after a reduction-order change — are in
 > `../gemm/flydsl_gemm_correctness.md`. Debugging a kernel already known to be wrong starts in
-> `../bottleneck/debug-flydsl-kernel.md` (its §1 covers `-inf − -inf` and divide-by-zero NaNs).
+> `../flydsl/debug-flydsl-kernel.md` (its §1 covers `-inf − -inf` and divide-by-zero NaNs).
 
 ## Route here when
 - You change the softmax shift, the LSE, a scale, an accumulator seed, a mask, a barrier or an anchor.
@@ -137,7 +137,7 @@ that accumulator must already be divided by c, or the scale applies twice.
   backward: put the reference forward and backward inside the same out-of-memory guard.
 
 ## Related
-`../gemm/flydsl_gemm_correctness.md` · `../bottleneck/debug-flydsl-kernel.md` · `flydsl_attn_softmax.md` ·
+`../gemm/flydsl_gemm_correctness.md` · `../flydsl/debug-flydsl-kernel.md` · `flydsl_attn_softmax.md` ·
 `flydsl_attn_backward.md` · `flydsl_attn_measurement.md` · `flydsl_attn_schedule_sync.md`
 
 ## Evidence
