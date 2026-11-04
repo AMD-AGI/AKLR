@@ -205,7 +205,8 @@ jitfn.compile_hints["llvm_options"] = {"amdgpu-sched-strategy": "max-ilp"}   # c
   *(field, E38)* on a dual-wave forward, deepening the ring to drop one barrier lost 2.2% (LDS doubled, spills 4 →
   9; the deeper ring alone cost 1.65%).
 - One barrier per iteration needs 2 buffers when every wave reads a buffer in the iteration after its refill
-  (`../examples/gemm/step5_pingpong.py`; *(field, E43)*), 3 when some waves read it a step later.
+  (FlyDSL's `kernels/gemm/preshuffle_gemm.py:509-524`, `pipeline_2stage`; *(field, E43)*), 3 when some waves
+  read it a step later.
 - A deeper ring relaxes write-after-read only, never read-after-write.
 - Register prefetch of cold per-head loads (LSE, delta): `flydsl_attn_grid_dispatch.md` §10.
 - `buffer_load … lds` gets no cross-workgroup vL1D reuse; judge request pressure by `TCP_TCC_READ_REQ`,

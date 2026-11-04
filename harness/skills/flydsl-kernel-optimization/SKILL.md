@@ -67,7 +67,6 @@ wins. Check a plan against this table before writing code.
 | Write or optimize a grouped GEMM / MoE expert GEMM (forward, dgrad, variable-K wgrad) | `grouped_gemm/INDEX.md` → the card it routes to (main loop and datapath in `gemm/`) |
 | Write or optimize an attention kernel (prefill, backward, decode with split KV) | `attention/INDEX.md` → the card it routes to |
 | A fused MoE at decode sizes (MXFP4, routing sort, stage 1 / stage 2) | `moe/INDEX.md` → the technique, cases and expert-GEMM card it routes to |
-| See each GEMM or MoE technique added to a working kernel, one per step, with its gfx950 ISA | `examples/README.md` (compile-checked; `examples/run.sh` checks them against torch on a GPU) |
 | Dump a kernel's IR and final ISA; read registers, LDS, spills, waits and hot-loop counts | `gemm/flydsl_gemm_mainloop.md` §10 (`FLYDSL_DUMP_IR=1`); `tools/isa_diff.py` compares two dumps |
 | Author and optimize any other kernel, structure first | `optimize/flydsl_levers/flydsl_authoring_method.md` |
 | Read aiter's shipped FlyDSL kernels (dense GEMM, MoE, attention and the rest) and their knobs | `optimize/flydsl_levers/flydsl_kernel_library.md` → `optimize/flydsl_levers/flydsl_knob_space.md` |
@@ -132,7 +131,6 @@ wins. Check a plan against this table before writing code.
 - `patterns/` symptom pages · `cases/` delivered kernels · `pitfalls/` traps · `language/` FlyDSL v0.3.2 notes
 - `optimize/` FlyDSL's own guides, and `flydsl_levers/` on aiter's FlyDSL kernels and their knobs ·
   `profile/` trace capture and analysis · `bottleneck/` debugging · `isa/` the CDNA4 ISA guide
-- `examples/` GEMM and MoE ladders, one technique per step
 - `templates/`, `staging/`, `tools/` and `CONTRIBUTING.md`: adding a page
 
 ## Adding knowledge
