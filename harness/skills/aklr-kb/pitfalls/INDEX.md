@@ -9,6 +9,7 @@ Silent wrong results, FlyDSL version traps and measurement artifacts.
 <!-- generated:start (tools/kb_index.py) -->
 | Page | Scope | Gens | FlyDSL | Basis |
 |---|---|---|---|---|
+| [AKLR reads every dispatch at about 4.1 µs or more: shorter kernels all look the same](aklr_dispatch_floor.md) | aklr validate and AKLR CI timing, any kernel or baseline shorter than about 4 µs | gfx950 | 0.3.2 | measured N=3 |
 | [The baseline you time against can return wrong values, and AKLR's bench does not check it](baseline_silently_wrong.md) | aiter gemm_a4w4 asm path at K % 256 != 0, hipBLASLt MX GEMMs through torch._scaled_mm, any baseline a AKLR Point is timed against | gfx950 | 0.3.2 | single-observation |
 | [A GPU memory access fault names the kernel that faulted, not the one that wrote out of bounds](fault_in_the_wrong_kernel.md) | runs of many kernels (a server, an e2e step) with FlyDSL kernels whose buffer descriptors are wider than their buffers | gfx950 | 0.3.2 | single-observation |
 | [The code you timed is not the code you edited](measured_a_different_build.md) | remote or synced campaign harnesses, servers and benches that import another checkout, FlyDSL's compile cache, several venvs or FlyDSL versions, AKLR validate and e2e runs | gfx950 | 0.3.2 | single-observation |

@@ -115,6 +115,7 @@ dict is not in the JIT cache key. See `flydsl_gemm_mainloop.md` §4 and `../flyd
 | `flydsl_gemm_correctness.md` | gates that reach the changed path, races, waits, bounds, register classes |
 | `flydsl_gemm_measurement.md` | rulers, arm order, warm-up, noise floors, statistics, closing a series of changes |
 | `flydsl_gemm_small_m.md` | decode-shape GEMM: cold rulers, dispatch rounds, split-K reduction cost, tile/stage/cache-policy choices, aiter tuned rows |
+| `flydsl_gemm_wait_free_fold.md` | a split-K fold in which no workgroup waits: the last split to arrive folds, in split order |
 
 ## gfx942 (MI300X)
 

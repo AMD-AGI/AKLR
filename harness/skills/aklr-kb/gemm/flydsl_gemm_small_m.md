@@ -130,7 +130,7 @@ an idle-device tuner (§1).
   adds them in split order, so the result is bitwise the same whichever split folds; the others exit. *(field, E33)* Against zero-C + spin + atomics, per-split
   planes, a last-arriving block summing them in f32 and one counter per 128 B line took a 2048×2048, M=1, split-K 8
   kernel from 4.66 to 3.85 µs (replayed, warm weight: the cost is latency and coherence, not bandwidth).
-  **Not in the current kernels.**
+  **Not in the current kernels.** How to write it, step by step: `flydsl_gemm_wait_free_fold.md`.
 - **Give each counter its own 128 B line.** *(field, E34)* Packing the per-tile counters as adjacent dwords put a whole
   launch on two cache lines and cost 1.1–2.5 µs.
 - **Zero counters in per-call scratch before launching the GEMM.** AKLR kernels receive only their contract
