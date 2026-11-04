@@ -98,7 +98,7 @@ HIP_VISIBLE_DEVICES=0 python $W/driver.py --stress                 # must end wi
 python -m kernelforge.cli forge-distill --workspace $W --model claude-opus-5-5 \
   --skill-dir $A/harness/skills/aklr-kb --out $RUN/knowledge_patch \
   --reference $A --guide CONTRIBUTING.md \
-  --lint "python tools/kb_lint.py --errors-only --repo-root {repo}"   # what aklr-kb should learn
+  --lint "python maintenance/kb_lint.py --errors-only --repo-root {repo}"   # what aklr-kb should learn
 ```
 
 `--stress` runs every workload on streams limited to a few CUs and beside a second call of its own. AKLR's validate

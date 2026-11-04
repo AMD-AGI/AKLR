@@ -11,8 +11,8 @@ matches it with the `sources:` of the pages in `cases/`:
 
 Run it monthly and after a batch of kernels merges; the missing ones are the next cases to write.
 
-    python tools/kb_reconcile.py                   # origin/main of this repository
-    python tools/kb_reconcile.py --rev HEAD --json reconcile.json
+    python maintenance/kb_reconcile.py                   # origin/main of this repository
+    python maintenance/kb_reconcile.py --rev HEAD --json reconcile.json
 """
 
 from __future__ import annotations

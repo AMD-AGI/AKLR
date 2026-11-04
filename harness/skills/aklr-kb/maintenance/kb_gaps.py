@@ -6,8 +6,8 @@ Reads each campaign's forge_experiments/: the skill files each round opened (`sk
 `KB: no-match <question>`, `KB: none`). A lesson the loop wrote itself, because the round's agent
 wrote none, is counted as not recorded rather than as a round that looked nothing up.
 
-    python tools/kb_gaps.py <campaign workspace or forge_experiments dir> ...
-    python tools/kb_gaps.py ws1 ws2 --json gaps.json
+    python maintenance/kb_gaps.py <campaign workspace or forge_experiments dir> ...
+    python maintenance/kb_gaps.py ws1 ws2 --json gaps.json
 """
 
 from __future__ import annotations

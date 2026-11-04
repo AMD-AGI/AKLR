@@ -66,7 +66,7 @@ wins. Check a plan against this table before writing code.
 | A GEMM on gfx942 (MI300X) | `gemm/flydsl_gemm_gfx942.md` |
 | A MoE: fused MoE at decode sizes (MXFP4, routing sort, stage 1 / stage 2), or its expert grouped GEMM (forward, dgrad, variable-K wgrad) | `moe/INDEX.md` → the card it routes to; the expert GEMM is its § Expert GEMM (grouped GEMM), with main loop and datapath in `gemm/` |
 | Write or optimize an attention kernel (prefill, backward, decode with split KV) | `attention/INDEX.md` → the card it routes to |
-| Dump a kernel's IR and final ISA; read registers, LDS, spills, waits and hot-loop counts | `gemm/flydsl_gemm_mainloop.md` §10 (`FLYDSL_DUMP_IR=1`); `tools/isa_diff.py` compares two dumps |
+| Dump a kernel's IR and final ISA; read registers, LDS, spills, waits and hot-loop counts | `gemm/flydsl_gemm_mainloop.md` §10 (`FLYDSL_DUMP_IR=1`); `analysis/isa_diff.py` compares two dumps |
 | Capture a kernel trace and find the hotspot, or find the commit behind a performance regression | `profile.md` |
 | What an instruction, encoding, counter, wait state or hardware limit really is | `hardware/gfx950/INDEX.md` → `hardware/gfx950/lookup.md`, `hardware/gfx950/matrix_core.md`, `hardware/gfx950/memory_and_sync.md` |
 | The language: its API, compile errors, debugging, its own guides | the language's folder: `flydsl/SKILL.md`, `triton/SKILL.md`, `hip/SKILL.md` |

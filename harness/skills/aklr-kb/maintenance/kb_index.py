@@ -3,8 +3,8 @@
 
 The table between the `generated` markers is rebuilt from each page's front matter; text outside the markers is kept.
 
-    python tools/kb_index.py            # rewrite the indexes
-    python tools/kb_index.py --check    # exit 1 if an index is out of date
+    python maintenance/kb_index.py            # rewrite the indexes
+    python maintenance/kb_index.py --check    # exit 1 if an index is out of date
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from pathlib import Path
 
 from kb_lint import SKILL_ROOT, read_page
 
-START, END = "<!-- generated:start (tools/kb_index.py) -->", "<!-- generated:end -->"
+START, END = "<!-- generated:start (maintenance/kb_index.py) -->", "<!-- generated:end -->"
 
 # folder -> (heading, one line on what the folder holds, the front-matter columns of its table)
 FOLDERS = {

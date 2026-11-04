@@ -6,7 +6,7 @@ kind: index
 
 Symptom pages: from what a trace or counter shows to the techniques worth trying.
 
-<!-- generated:start (tools/kb_index.py) -->
+<!-- generated:start (maintenance/kb_index.py) -->
 | Page | Signals | Ops | Basis |
 |---|---|---|---|
 | [Small-M launch floor: a decode row bound by launch, reduction and latency, not by reading B](launch_floor_small_m.md) | M ≤ 256 on a row bound by launch, reduction and memory latency, a large per-tile intercept F in a K-sweep fit, one CUDA-graph node or an empty kernel costs a large share of the measured time, s_load then lgkmcnt(0) in front of the first B load, .amdhsa_user_sgpr_kernarg_preload_length = 0 | gemm | source-semantics |

@@ -33,7 +33,7 @@ run, PMC cache and HBM counters. What this repository adds:
 
 FlyDSL's guide: https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md. Read it to
 turn an ATT trace into ranked stall hotspots mapped to source lines, for its hotspot patterns and plan template, the
-PMC L2 / HBM decision tree, and the MFMA latency and dependency tables. Run its scripts from `tools/` (§ Scripts
+PMC L2 / HBM decision tree, and the MFMA latency and dependency tables. Run its scripts from `analysis/` (§ Scripts
 below). Where it differs on gfx950 with FlyDSL v0.3.2, and what this repository adds:
 
 - **§Register pressure check, reading the real counts**: `out_kernel_trace.csv` is not authoritative for registers
@@ -58,14 +58,14 @@ git and reports the commit that caused the regression. This repository adds noth
 
 ## Scripts
 
-`tools/hotspot_analyzer.py` and `tools/pmc_l2_analyzer.py` are this repository's copies of the two scripts that
+`analysis/hotspot_analyzer.py` and `analysis/pmc_l2_analyzer.py` are this repository's copies of the two scripts that
 FlyDSL's kernel-trace-analysis ships in `scripts/`. Where FlyDSL's skills run `${CLAUDE_SKILL_DIR}/scripts/<script>`
 or `kernel-trace-analysis/scripts/<script>`, run them from this folder with the same arguments:
 
 ```bash
-python tools/hotspot_analyzer.py <dispatch_dir> --topk 15 --mode both
-python tools/hotspot_analyzer.py <dispatch_dir> --topk 5 --mode src --detail --context 4
-python tools/pmc_l2_analyzer.py <l2_counters.csv> <ea_counters.csv> --kernel <kernel> --ideal-gb <GB> --ea-channels 2
+python analysis/hotspot_analyzer.py <dispatch_dir> --topk 15 --mode both
+python analysis/hotspot_analyzer.py <dispatch_dir> --topk 5 --mode src --detail --context 4
+python analysis/pmc_l2_analyzer.py <l2_counters.csv> <ea_counters.csv> --kernel <kernel> --ideal-gb <GB> --ea-channels 2
 ```
 
 - `hotspot_analyzer.py` takes every trace to be gfx950: it reports `gfx950 (CDNA4)` and its LDS limiter uses 160 KB
@@ -88,7 +88,7 @@ this repository has not re-measured them on gfx942.
 | fp8 MFMA latencies on gfx942 | kernel-trace-analysis [MFMA latency reference](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md) |
 | One hardware pass per PMC job (multi-pass collection hung gfx942) | capture-kernel-trace [PMC Mode](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/capture-kernel-trace/SKILL.md) |
 
-**Analyze a gfx942 trace with FlyDSL's `scripts/hotspot_analyzer.py`, not `tools/hotspot_analyzer.py`** (`curl -sSfL
+**Analyze a gfx942 trace with FlyDSL's `scripts/hotspot_analyzer.py`, not `analysis/hotspot_analyzer.py`** (`curl -sSfL
 https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/kernel-trace-analysis/scripts/hotspot_analyzer.py
 -o hotspot_analyzer.py`). Ours labels
 every trace gfx950 and sizes LDS at 160 KB. FlyDSL's takes a trace with none of `v_mfma_scale_f32_*`,

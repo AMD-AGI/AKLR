@@ -36,8 +36,8 @@ basis: source-semantics
   (S14). Identical counts across variants that should differ usually mean one cached binary (S15).
 - **An unreachable tier.** `; Occupancy:` ignores workgroup quantization (S16): an 8-wave workgroup reaches only
   2/4/6/8 waves per SIMD (S17). At unchanged occupancy, freed registers buy nothing on their own (S18).
-  `tools/budget.py --isa <NN_final_isa.s> --waves W` reads the registers and LDS from the dump and lists the ceiling
-  of each reachable tier; `tools/isa_diff.py` shows which spills and instructions two builds differ by.
+  `analysis/budget.py --isa <NN_final_isa.s> --waves W` reads the registers and LDS from the dump and lists the ceiling
+  of each reachable tier; `analysis/isa_diff.py` shows which spills and instructions two builds differ by.
 - **Static code size** is nearly free; a spill slot is not, and removing code can create one (S19).
 
 ## Candidate techniques

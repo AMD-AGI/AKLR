@@ -5,9 +5,9 @@ Pages of the new kinds (technique, pattern, op, case, pitfall, language-note, to
 to the rules: an error fails the run. Pages written before the rules (kinds language, index, reference,
 and pages without front matter) only get warnings until they are converted.
 
-    python tools/kb_lint.py                     # the whole skill
-    python tools/kb_lint.py moe/foo.md          # some pages
-    python tools/kb_lint.py --stale 0.3.2       # pages and evidence lines checked against another FlyDSL version
+    python maintenance/kb_lint.py                     # the whole skill
+    python maintenance/kb_lint.py moe/foo.md          # some pages
+    python maintenance/kb_lint.py --stale 0.3.2       # pages and evidence lines checked against another FlyDSL version
 """
 
 from __future__ import annotations
@@ -44,8 +44,8 @@ SKILL_MD_MAX_LINES = 150  # forge-loop inlines SKILL.md into every round's promp
 SKILL_MD_MAX_BYTES = 12_000  # of the body it inlines; the front matter is stripped
 CARD_MAX_LINES = 600
 
-# Not knowledge pages: the ISA chapters, code snapshots, review notes and the tools.
-SKIP_PARTS = ("gfx950/cdna4/", "reference/", "tools/")
+# Not knowledge pages: the ISA chapters, code snapshots, review notes and the scripts.
+SKIP_PARTS = ("gfx950/cdna4/", "reference/", "maintenance/", "analysis/")
 
 NEW_KINDS = (
     "technique",
@@ -644,7 +644,7 @@ def lint_page(page: Page) -> list[Issue]:
 
 
 def is_page(path: Path) -> bool:
-    """A knowledge page of this skill: a Markdown file outside the tools, snapshots and review notes."""
+    """A knowledge page of this skill: a Markdown file outside the scripts, snapshots and review notes."""
     path = path.resolve()
     if path.suffix != ".md":
         return False

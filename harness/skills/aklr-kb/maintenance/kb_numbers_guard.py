@@ -4,8 +4,8 @@
 Adding evidence ids to a card should leave its numbers alone: this prints every number the working copy
 has more or fewer of than the page at REV, so each change can be matched to a correction that was meant.
 
-    python tools/kb_numbers_guard.py gemm/flydsl_gemm_small_m.md            # against HEAD
-    python tools/kb_numbers_guard.py gemm/flydsl_gemm_small_m.md --rev main
+    python maintenance/kb_numbers_guard.py gemm/flydsl_gemm_small_m.md            # against HEAD
+    python maintenance/kb_numbers_guard.py gemm/flydsl_gemm_small_m.md --rev main
 """
 
 from __future__ import annotations

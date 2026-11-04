@@ -8,9 +8,9 @@ numbers and branch labels on every line, which hides the change that matters. Th
 - the opcode counts that differ;
 - with --stream, a unified diff of the instruction streams with every register number and label replaced.
 
-    python tools/isa_diff.py before/21_final_isa.s after/21_final_isa.s
-    python tools/isa_diff.py a.s b.s --kernel gemm_kernel_0 --stream
-    python tools/isa_diff.py --selftest
+    python analysis/isa_diff.py before/21_final_isa.s after/21_final_isa.s
+    python analysis/isa_diff.py a.s b.s --kernel gemm_kernel_0 --stream
+    python analysis/isa_diff.py --selftest
 """
 
 from __future__ import annotations

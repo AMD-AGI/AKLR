@@ -3,7 +3,7 @@
 For anyone, person or agent, who adds or edits a page of this skill, its language folders (`flydsl/`, `triton/`,
 `hip/`) included. The rules exist so that an agent can find the one page
 that answers its question, trust what the page says for the conditions it states, and be told when a FlyDSL upgrade
-may have made it stale. `tools/kb_lint.py` enforces what can be checked mechanically; review does the rest.
+may have made it stale. `maintenance/kb_lint.py` enforces what can be checked mechanically; review does the rest.
 
 ## Folders
 
@@ -14,7 +14,9 @@ may have made it stale. `tools/kb_lint.py` enforces what can be checked mechanic
   this repository adds
 - `hardware/<arch>/` an architecture's ISA guide, and the guides to looking things up in it (`hardware/gfx950/`:
   CDNA4)
-- `tools/` the scripts below
+- `maintenance/` the scripts that keep this knowledge base consistent (lint, indexes, gaps, citations) · `analysis/`
+  scripts an agent runs on its own kernel (trace hotspots, L2/HBM counters, ISA diffs, register and LDS budget);
+  § Scripts lists both
 - `flydsl/`, `triton/`, `hip/` a language's own pages, each starting at its `SKILL.md`. In `flydsl/`: `language/`
   what FlyDSL itself does (limits, compile errors, version differences), `guides.md` FlyDSL's own skills linked at
   `v0.3.2` with this repository's corrections, `debug-flydsl-kernel.md` debugging, `kernels/` aiter's FlyDSL
@@ -23,7 +25,7 @@ may have made it stale. `tools/kb_lint.py` enforces what can be checked mechanic
 ## Page kinds
 
 One page answers one kind of question. A page of each kind has the front matter fields and the sections below;
-`tools/kb_lint.py` lists the ones missing.
+`maintenance/kb_lint.py` lists the ones missing.
 
 | Kind | Answers | Front matter; sections | Folder |
 |---|---|---|---|
@@ -50,7 +52,7 @@ because other pages cite them as `<card>.md §<n>`.
   bisection skills. A card links that page (`flydsl/guides.md` § <skill>, `profile.md` § <skill>), not the
   upstream file, so a reader meets the corrections first; a line of a skill is cited as
   `ROCm/FlyDSL@dd8373349:.claude/skills/<skill>/SKILL.md:<line>`. The exception is the two trace-analysis scripts
-  in `tools/`, this repository's edited copies (`profile.md` § Scripts).
+  in `analysis/`, this repository's edited copies (`profile.md` § Scripts).
 
 ## Front matter
 
@@ -90,16 +92,16 @@ Front matter is YAML: quote a value that contains `: `. `flydsl` is the version 
   stated as the condition under which it fails.
 - **No copy of an external rule.** AKLR's audit, contracts and serving threshold are linked to the section of
   `aklr/ops/README.md` that states them, not restated: a restated rule goes stale when the README changes.
-- **No second page for the same thing.** A technique's `lever` is unique (`tools/kb_lint.py` reports a
+- **No second page for the same thing.** A technique's `lever` is unique (`maintenance/kb_lint.py` reports a
   duplicate); search the skill for the lever, the op and the symptom before writing, and extend the page you find.
 - **No unchecked claim.** Every statement is checked against source, the ISA or a GPU run before it goes in.
 
 ## How a page gets in
 
 1. Write the page in its folder (the table above), with the front matter and sections of its kind.
-2. `python tools/kb_lint.py <page>` reports no error. Link the page from where an agent looks for it: a row of
+2. `python maintenance/kb_lint.py <page>` reports no error. Link the page from where an agent looks for it: a row of
    `SKILL.md`'s task or symptom table, or the package's `INDEX.md`. `patterns/`, `cases/` and `pitfalls/` need no
-   link by hand: `python tools/kb_index.py` rebuilds their generated `INDEX.md`.
+   link by hand: `python maintenance/kb_index.py` rebuilds their generated `INDEX.md`.
 3. Review, in the pull request that adds it: each claim against its source or a run, no existing page that covers
    it, `basis` set.
 
@@ -111,32 +113,32 @@ like any other edit; one run covers this skill, its language folders included
 
 ## Upkeep
 
-- **FlyDSL upgrade**: `python tools/kb_lint.py --stale <new version>` lists the pages checked against another
+- **FlyDSL upgrade**: `python maintenance/kb_lint.py --stale <new version>` lists the pages checked against another
   version. Re-read each `language-note`
   against the new source; a `source-semantics` page is possibly stale, not wrong. Set `flydsl` once the page is
   checked. Move the links pinned to `v0.3.2` and re-check `flydsl/guides.md` against the new version.
 - **Gaps**: the `KB: no-match <question>` lines that optimization rounds leave (`SKILL.md` § How to look things
-  up; `tools/kb_gaps.py` collects them) are the next pages to write. Delivered kernels, fixes and known traps
+  up; `maintenance/kb_gaps.py` collects them) are the next pages to write. Delivered kernels, fixes and known traps
   without a `cases/` or `pitfalls/` page are the others: each month and after a batch of kernels merges,
-  `tools/kb_reconcile.py` lists the FlyDSL kernels on main that no case names.
+  `maintenance/kb_reconcile.py` lists the FlyDSL kernels on main that no case names.
 - **Size**: each `SKILL.md`, this skill's and a language folder's, stays at most 150 lines and 12,000 bytes,
   because the optimization loop puts both into every round's prompt; a page over 600 lines is split.
 
-## Tools
+## Scripts
 
 | Command | Does |
 |---|---|
-| `python tools/kb_lint.py [page ...]` | checks front matter, sections, marks and evidence lines, forbidden headings, links, `§<n>` references, architecture names, duplicate levers and sizes; exit 1 on an error; `--repo-root` for a copy of the skill |
-| `python tools/kb_lint.py --stale <version>` | lists pages and evidence lines checked against another FlyDSL version |
-| `python tools/kb_index.py [--check]` | rebuilds the generated `INDEX.md` of `patterns/`, `cases/` and `pitfalls/` |
-| `python tools/kb_quote_check.py <sidecar.tsv>` | checks that each quote of an evidence sidecar is at the source line it names |
-| `python tools/kb_numbers_guard.py <page> [--rev REV]` | lists the numbers an edit changed outside `## Evidence` and code |
-| `python tools/kb_reanchor.py <page> [--dry-run]` | moves the `S<n> path:line` citations of a page whose lines moved |
-| `python tools/kb_gaps.py <campaign workspace> ...` | what forge-loop rounds opened in this skill and the questions they found no page for |
-| `python tools/kb_reconcile.py [--rev REV]` | the FlyDSL kernels at a revision that no case page names, and cases whose files are gone |
-| `python tools/isa_diff.py <a.s> <b.s> [--stream]` | compares two `NN_final_isa.s` dumps: resources and opcode counts, registers and labels normalized |
-| `python tools/budget.py --arch-vgpr N --agpr N --waves W [--lds B]` or `--isa <s>` | gfx950 register and LDS budget, occupancy and the register ceiling of each reachable occupancy |
-| `python tools/hotspot_analyzer.py <dispatch_dir> --topk 15 --mode both` | the hot instructions of an ATT trace (`profile.md`) |
-| `python tools/pmc_l2_analyzer.py <counters.csv>` | L2 and HBM efficiency from rocprofv3 PMC counters (`profile.md`) |
+| `python maintenance/kb_lint.py [page ...]` | checks front matter, sections, marks and evidence lines, forbidden headings, links, `§<n>` references, architecture names, duplicate levers and sizes; exit 1 on an error; `--repo-root` for a copy of the skill |
+| `python maintenance/kb_lint.py --stale <version>` | lists pages and evidence lines checked against another FlyDSL version |
+| `python maintenance/kb_index.py [--check]` | rebuilds the generated `INDEX.md` of `patterns/`, `cases/` and `pitfalls/` |
+| `python maintenance/kb_quote_check.py <sidecar.tsv>` | checks that each quote of an evidence sidecar is at the source line it names |
+| `python maintenance/kb_numbers_guard.py <page> [--rev REV]` | lists the numbers an edit changed outside `## Evidence` and code |
+| `python maintenance/kb_reanchor.py <page> [--dry-run]` | moves the `S<n> path:line` citations of a page whose lines moved |
+| `python maintenance/kb_gaps.py <campaign workspace> ...` | what forge-loop rounds opened in this skill and the questions they found no page for |
+| `python maintenance/kb_reconcile.py [--rev REV]` | the FlyDSL kernels at a revision that no case page names, and cases whose files are gone |
+| `python analysis/isa_diff.py <a.s> <b.s> [--stream]` | compares two `NN_final_isa.s` dumps: resources and opcode counts, registers and labels normalized |
+| `python analysis/budget.py --arch-vgpr N --agpr N --waves W [--lds B]` or `--isa <s>` | gfx950 register and LDS budget, occupancy and the register ceiling of each reachable occupancy |
+| `python analysis/hotspot_analyzer.py <dispatch_dir> --topk 15 --mode both` | the hot instructions of an ATT trace (`profile.md`) |
+| `python analysis/pmc_l2_analyzer.py <counters.csv>` | L2 and HBM efficiency from rocprofv3 PMC counters (`profile.md`) |
 
 They need Python 3.10 or later; PyYAML is used when installed.

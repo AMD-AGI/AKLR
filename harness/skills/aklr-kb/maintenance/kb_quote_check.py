@@ -12,7 +12,7 @@ A sidecar is a tab-separated file drafted beside a card's evidence lines, one ro
 and `quote` is text copied from it. A quote matches when, with runs of whitespace and Markdown emphasis
 ignored, it occurs within two lines of LINE (anywhere in a commit message). Rows of class C have no source.
 
-    python tools/kb_quote_check.py work/sikl/kb_evidence/flydsl_gemm_small_m.tsv
+    python maintenance/kb_quote_check.py work/sikl/kb_evidence/flydsl_gemm_small_m.tsv
 """
 
 from __future__ import annotations

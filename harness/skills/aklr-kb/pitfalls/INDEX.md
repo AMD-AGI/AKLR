@@ -6,7 +6,7 @@ kind: index
 
 Silent wrong results, FlyDSL version traps and measurement artifacts.
 
-<!-- generated:start (tools/kb_index.py) -->
+<!-- generated:start (maintenance/kb_index.py) -->
 | Page | Scope | Gens | FlyDSL | Basis |
 |---|---|---|---|---|
 | [AKLR reads every dispatch at about 4.1 µs or more: shorter kernels all look the same](aklr_dispatch_floor.md) | aklr validate and AKLR CI timing, any kernel or baseline shorter than about 4 µs | gfx950 | 0.3.2 | measured N=3 |

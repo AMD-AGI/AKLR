@@ -6,7 +6,7 @@ kind: index
 
 Delivered kernels: what made them fast, under which conditions, and how to reproduce them.
 
-<!-- generated:start (tools/kb_index.py) -->
+<!-- generated:start (maintenance/kb_index.py) -->
 | Page | Ops | Dtypes | Regimes | Contract | Basis |
 |---|---|---|---|---|---|
 | [fp8 block-scaled GEMM, N 4096 × K 256–8192 and N 8192 / 32768 × K 1024, shuffled B — one structure per K; at K 512 and 1024 most Points up to m = 1024 are not served](a8w8_n4096_k_sweep.md) | gemm | fp8 | M 1-64, M 128-512, M 1024-4096 | bounded | measured N=1 |

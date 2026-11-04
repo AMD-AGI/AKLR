@@ -10,10 +10,10 @@ the fact that a larger allocation still compiles are in `../flydsl/language/limi
 comment skips the workgroup step. Also lists the register ceiling of every reachable occupancy. Other per-CU
 limits (workgroup slots, SGPRs, barriers) are not modelled.
 
-    python tools/budget.py --arch-vgpr 128 --waves 8
-    python tools/budget.py --arch-vgpr 256 --agpr 81 --waves 4 --lds 65536
-    python tools/budget.py --isa 21_final_isa.s --waves 8      # resources from a FLYDSL_DUMP_IR=1 dump
-    python tools/budget.py --selftest
+    python analysis/budget.py --arch-vgpr 128 --waves 8
+    python analysis/budget.py --arch-vgpr 256 --agpr 81 --waves 4 --lds 65536
+    python analysis/budget.py --isa 21_final_isa.s --waves 8      # resources from a FLYDSL_DUMP_IR=1 dump
+    python analysis/budget.py --selftest
 """
 
 from __future__ import annotations
