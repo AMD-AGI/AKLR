@@ -53,6 +53,7 @@ STEP_ROUTES = {
     "sglang.srt.models.deepseek_v4.DeepseekV4ForCausalLM.__init__",
     "sglang.srt.managers.tokenizer_manager.TokenizerManager.__init__",
     "sglang.srt.models.deepseek_common.moe_transport._mask_dp_pad_rows",
+    "sglang.kernels.ops.quantization.fp8_kernel._run_per_token_group_quant_8bit_kernel",
 }
 
 

@@ -105,3 +105,48 @@ def test_the_dp_pad_mask_is_sglangs(not_serving):
     batch = SimpleNamespace(num_token_non_padded=torch.tensor(1))
     dp_routes._mask_dp_pad_rows(lambda x, b: calls.append("sglang's"), torch.ones(2, 4), batch)
     assert calls == ["sglang's"]
+
+
+def _fp8_kernel(monkeypatch, *, with_jit: bool) -> list:
+    calls = []
+    kernel = ModuleType("fp8_kernel")
+    kernel._per_token_group_quant_8bit_raw = lambda x, g, eps, *, dtype, output_q, output_s: calls.append(
+        "triton"
+    )
+    if with_jit:
+        kernel.per_token_group_quant = object()
+    monkeypatch.setitem(sys.modules, "sglang.kernels.ops.quantization.fp8_kernel", kernel)
+    return calls
+
+
+def _group_quant(calls):
+    from aklr.plugins.sglang.models.deepseek_v4 import dp_routes
+
+    x = torch.ones(4, 256)
+    x_q, x_s = x.to(torch.float8_e4m3fn), torch.empty(4, 2)
+    dp_routes._group_quant(
+        lambda *a, **k: calls.append("sglang's"),
+        x,
+        x_q,
+        x_s,
+        128,
+        1e-10,
+        -448.0,
+        448.0,
+        scale_ue8m0=False,
+        fuse_silu_and_mul=False,
+        masked_m=None,
+    )
+
+
+@pytest.mark.parametrize("with_jit", [False, True])
+def test_the_fp8_group_quant_runs_triton_only_without_sglangs_kernel(monkeypatch, with_jit):
+    calls = _fp8_kernel(monkeypatch, with_jit=with_jit)
+    _group_quant(calls)
+    assert calls == (["sglang's"] if with_jit else ["triton"])
+
+
+def test_the_fp8_group_quant_is_sglangs(monkeypatch, not_serving):
+    calls = _fp8_kernel(monkeypatch, with_jit=False)
+    _group_quant(calls)
+    assert calls == ["sglang's"]
