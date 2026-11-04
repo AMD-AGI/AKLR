@@ -34,7 +34,7 @@ An engine calls an AKLR operator. AKLR checks the inputs and picks a kernel that
 
 The **Kernel Rosetta Stone** is a guide for agents writing AMD kernels. It brings together tips from handwritten kernels, AMD architecture and CDNA4 ISA documents, and real examples. Start at [`SKILL.md`](../harness/skills/flydsl-kernel-optimization/SKILL.md). As of 2026-11-03, it has **131 pages** and **1,192 findings with sources**.
 
-It aims to help agents reach the same speed sooner, use fewer tokens, and find faster kernels. We have not yet measured this by running the same task with and without the guide.
+It aims to help agents reach the same speed sooner, use fewer tokens, and find faster kernels. In our first measurement, an agent with the guide and AKLR's existing kernels reached an average 1.28x speed-up over AITER across one GEMM's 13 sizes in about a third of the time and a quarter of the agent spend: 5h20m and about $52, against 14h46m and about $205 without them ([details](../docs/kernel_rosetta_stone.md)).
 
 ## Install
 
