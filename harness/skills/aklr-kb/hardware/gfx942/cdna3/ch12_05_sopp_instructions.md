@@ -1,0 +1,437 @@
+<!-- page 138 -->
+
+## 12.5. SOPP Instructions
+
+![](images/x140.png)
+
+#### S_NOP
+
+Opcode: 0
+
+Do nothing. Delay issue of next instruction by a small, fixed amount.
+
+Insert 0..15 wait states based on SIMM16[3:0]. 0x0 means the next instruction can issue on the next clock, 0xf means the next instruction can issue 16 clocks later.
+
+```
+for i in 0U : SIMM16.u16[3 : 0].u32 do
+    nop()
+endfor
+```
+
+**Notes**
+
+Examples:
+
+```
+    s_nop 0         // Wait 1 cycle.
+    s_nop 0xf       // Wait 16 cycles.
+```
+
+#### S_ENDPGM
+
+Opcode: 1
+
+End of program; terminate wavefront.
+
+The hardware implicitly executes S_WAITCNT 0 before executing this instruction. See S_ENDPGM_SAVED for the context-switch version of this instruction.
+
+#### S_BRANCH
+
+Opcode: 2
+
+Jump to a constant offset relative to the current PC.
+
+The literal argument is a signed DWORD offset relative to the PC of the next instruction.
+
+```
+PC = PC + signext(SIMM16.i16 * 16'4) + 4LL;
+// short jump.
+```
+
+**Notes**
+
+For a long jump or an indirect jump use S_SETPC_B64.
+
+Examples:
+
+<!-- page 139 -->
+
+```
+    s_branch label    // Set SIMM16 = +4 = 0x0004
+    s_nop 0    // 4 bytes
+label:
+    s_nop 0    // 4 bytes
+    s_branch label    // Set SIMM16 = -8 = 0xfff8
+```
+
+#### S_WAKEUP
+
+Opcode: 3
+
+Allow a wave to 'ping' all the other waves in its threadgroup to force them to wake up early from an S_SLEEP instruction.
+
+The ping is ignored if the waves are not sleeping. This allows for efficient polling on a memory location. The waves which are polling can sit in a long S_SLEEP between memory reads, but the wave which writes the value can tell them all to wake up early now that the data is available. This method is also safe from races since any waves that miss the ping resume when they complete their S_SLEEP.
+
+If the wave executing S_WAKEUP is in a threadgroup (in_tg set), then it wakes up all waves associated with the same threadgroup ID. Otherwise, S_WAKEUP is treated as an S_NOP.
+
+#### S_CBRANCH_SCC0
+
+Opcode: 4
+
+If SCC is 0 then jump to a constant offset relative to the current PC.
+
+The literal argument is a signed DWORD offset relative to the PC of the next instruction.
+
+```
+if SCC == 1'0U then
+    PC = PC + signext(SIMM16.i16 * 16'4) + 4LL
+else
+    PC = PC + 4LL
+endif
+```
+
+#### S_CBRANCH_SCC1
+
+Opcode: 5
+
+If SCC is 1 then jump to a constant offset relative to the current PC.
+
+The literal argument is a signed DWORD offset relative to the PC of the next instruction.
+
+```
+if SCC == 1'1U then
+    PC = PC + signext(SIMM16.i16 * 16'4) + 4LL
+else
+    PC = PC + 4LL
+endif
+```
+
+<!-- page 140 -->
+
+#### S_CBRANCH_VCCZ
+
+Opcode: 6
+
+If VCCZ is 1 then jump to a constant offset relative to the current PC.
+
+The literal argument is a signed DWORD offset relative to the PC of the next instruction.
+
+```
+if VCCZ.u1 == 1'1U then
+    PC = PC + signext(SIMM16.i16 * 16'4) + 4LL
+else
+    PC = PC + 4LL
+endif
+```
+
+#### S_CBRANCH_VCCNZ
+
+Opcode: 7
+
+If VCCZ is 0 then jump to a constant offset relative to the current PC.
+
+The literal argument is a signed DWORD offset relative to the PC of the next instruction.
+
+```
+if VCCZ.u1 == 1'0U then
+    PC = PC + signext(SIMM16.i16 * 16'4) + 4LL
+else
+    PC = PC + 4LL
+endif
+```
+
+#### S_CBRANCH_EXECZ
+
+Opcode: 8
+
+If EXECZ is 1 then jump to a constant offset relative to the current PC.
+
+The literal argument is a signed DWORD offset relative to the PC of the next instruction.
+
+```
+if EXECZ.u1 == 1'1U then
+    PC = PC + signext(SIMM16.i16 * 16'4) + 4LL
+else
+    PC = PC + 4LL
+endif
+```
+
+#### S_CBRANCH_EXECNZ
+
+Opcode: 9
+
+If EXECZ is 0 then jump to a constant offset relative to the current PC.
+
+The literal argument is a signed DWORD offset relative to the PC of the next instruction.
+
+```
+if EXECZ.u1 == 1'0U then
+    PC = PC + signext(SIMM16.i16 * 16'4) + 4LL
+else
+    PC = PC + 4LL
+endif
+```
+
+<!-- page 141 -->
+
+#### S_BARRIER
+
+Opcode: 10
+
+Synchronize waves within a threadgroup.
+
+If not all waves of the threadgroup have been created yet, waits for entire group before proceeding. If some waves in the threadgroup have already terminated, this waits on only the surviving waves. Barriers are legal inside trap handlers.
+
+Barrier instructions do not wait for any counters to go to zero before issuing. If the barrier is being used to protect an outstanding memory operation use the appropriate S_WAITCNT instruction before the barrier.
+
+#### S_SETKILL
+
+Opcode: 11
+
+Kill this wave if the least significant bit of the immediate constant is 1.
+
+Used primarily for debugging kill wave host command behavior.
+
+#### S_WAITCNT
+
+Opcode: 12
+
+Wait for the counts of outstanding local data share, vector memory and export instructions to be at or below the specified levels.
+
+```
+SIMM16[3:0] = vmcount (vector memory operations) lower bits [3:0],
+```
+
+```
+SIMM16[6:4] = export/mem-write-data count,
+```
+
+```
+SIMM16[11:8] = LGKMcnt (scalar-mem/GDS/LDS count),
+```
+
+```
+SIMM16[15:14] = vmcount (vector memory operations) upper bits [5:4].
+```
+
+#### S_SETHALT
+
+Opcode: 13
+
+Set or clear the HALT status bit.
+
+<!-- page 142 -->
+
+Set HALT bit to value of SIMM16[0]; 1 = halt, 0 = clear HALT bit. The halt flag is ignored while PRIV == 1 (inside trap handlers) but the shader halts after the handler returns if HALT is still set at that time.
+
+#### S_SLEEP
+
+Opcode: 14
+
+Cause a wave to sleep for up to ~8000 clocks.
+
+The wave sleeps for (64*(SIMM16[6:0]-1) .. 64*SIMM16[6:0]) clocks. The exact amount of delay is approximate. Compare with S_NOP. When SIMM16[6:0] is zero then no sleep occurs.
+
+**Notes**
+
+Examples:
+
+```
+    s_sleep 0       // Wait for 0 clocks.
+    s_sleep 1       // Wait for 1-64 clocks.
+    s_sleep 2       // Wait for 65-128 clocks.
+```
+
+#### S_SETPRIO
+
+Opcode: 15
+
+Change wave user priority.
+
+User settable wave priority is set to SIMM16[1:0]. 0 = lowest, 3 = highest. The overall wave priority is {SPIPrio[1:0], UserPrio[1:0], WaveAge[3:0]}.
+
+#### S_SENDMSG
+
+Opcode: 16
+
+Send a message upstream to graphics control hardware.
+
+SIMM16[9:0] contains the message type.
+
+**Notes**
+
+#### S_SENDMSGHALT
+
+Opcode: 17
+
+Send a message to upstream control hardware and then HALT the wavefront; see S_SENDMSG for details.
+
+#### S_TRAP
+
+Opcode: 18
+
+Enter the trap handler.
+
+This instruction may be generated internally as well in response to a host trap (HT = 1) or an exception. TrapID
+
+<!-- page 143 -->
+
+0 is reserved for hardware use and should not be used in a shader-generated trap.
+
+```
+TrapID = SIMM16.u16[7 : 0];
+"Wait for all instructions to complete";
+// PC passed into trap handler points to S_TRAP itself,
+// *not* to the next instruction.
+{ TTMP[1], TTMP[0] } = { 3'0, PCRewind[3 : 0], HT[0], TrapID[7 : 0], PC[47 : 0] };
+PC = TBA.i64;
+// trap base address
+WAVE_STATUS.PRIV = 1'1U
+```
+
+#### S_ICACHE_INV
+
+Opcode: 19
+
+Invalidate entire first level instruction cache.
+
+There must be 16 separate S_NOP instructions or a jump/branch instruction after this instruction to ensure the internal instruction buffers are also invalidated.
+
+#### S_INCPERFLEVEL
+
+Opcode: 20
+
+Increment performance counter specified in SIMM16[3:0] by 1.
+
+#### S_DECPERFLEVEL
+
+Opcode: 21
+
+Decrement performance counter specified in SIMM16[3:0] by 1.
+
+#### S_TTRACEDATA
+
+Opcode: 22
+
+Send M0 as user data to the thread trace stream.
+
+#### S_CBRANCH_CDBGSYS
+
+Opcode: 23
+
+If the system debug flag is set then jump to a constant offset relative to the current PC.
+
+The literal argument is a signed DWORD offset relative to the PC of the next instruction.
+
+```
+if WAVE_STATUS.COND_DBG_SYS.u32 != 0U then
+    PC = PC + signext(SIMM16.i16 * 16'4) + 4LL
+else
+    PC = PC + 4LL
+endif
+```
+
+<!-- page 144 -->
+
+#### S_CBRANCH_CDBGUSER
+
+Opcode: 24
+
+If the user debug flag is set then jump to a constant offset relative to the current PC.
+
+The literal argument is a signed DWORD offset relative to the PC of the next instruction.
+
+```
+if WAVE_STATUS.COND_DBG_USER.u32 != 0U then
+    PC = PC + signext(SIMM16.i16 * 16'4) + 4LL
+else
+    PC = PC + 4LL
+endif
+```
+
+#### S_CBRANCH_CDBGSYS_OR_USER
+
+Opcode: 25
+
+If either the system debug flag or the user debug flag is set then jump to a constant offset relative to the current PC.
+
+The literal argument is a signed DWORD offset relative to the PC of the next instruction.
+
+```
+if (WAVE_STATUS.COND_DBG_SYS || WAVE_STATUS.COND_DBG_USER) then
+    PC = PC + signext(SIMM16.i16 * 16'4) + 4LL
+else
+    PC = PC + 4LL
+endif
+```
+
+#### S_CBRANCH_CDBGSYS_AND_USER
+
+Opcode: 26
+
+If both the system debug flag and the user debug flag are set then jump to a constant offset relative to the current PC.
+
+The literal argument is a signed DWORD offset relative to the PC of the next instruction.
+
+```
+if (WAVE_STATUS.COND_DBG_SYS && WAVE_STATUS.COND_DBG_USER) then
+    PC = PC + signext(SIMM16.i16 * 16'4) + 4LL
+else
+    PC = PC + 4LL
+endif
+```
+
+#### S_ENDPGM_SAVED
+
+Opcode: 27
+
+End of program; signal that a wave has been saved by the context-switch trap handler and terminate wavefront.
+
+<!-- page 145 -->
+
+The hardware implicitly executes S_WAITCNT 0 before executing this instruction.
+
+See S_ENDPGM for additional variants.
+
+#### S_SET_GPR_IDX_OFF
+
+Opcode: 28
+
+Clear GPR indexing mode.
+
+Vector operations after this do not perform relative GPR addressing regardless of the contents of M0. This instruction does not modify M0.
+
+S_SET_GPR_IDX_ON, S_SET_GPR_IDX_OFF, S_SET_GPR_IDX_MODE and S_SET_GPR_IDX_IDX are related instructions.
+
+```
+WAVE_MODE.GPR_IDX_EN = 1'0U
+```
+
+#### S_SET_GPR_IDX_MODE
+
+Opcode: 29
+
+Modify the mode used for vector GPR indexing.
+
+The raw contents of the source field are read and used to set the enable bits. SIMM16[0] = VSRC0_REL, SIMM16[1] = VSRC1_REL, SIMM16[2] = VSRC2_REL and SIMM16[3] = VDST_REL.
+
+S_SET_GPR_IDX_ON, S_SET_GPR_IDX_OFF, S_SET_GPR_IDX_MODE and S_SET_GPR_IDX_IDX are related instructions.
+
+```
+M0[15 : 12] = SIMM16.u16[3 : 0].b4
+```
+
+<!-- page 146 -->
+
+### 12.5.1. Send Message
+
+The S_SENDMSG instruction encodes the message type in M0, and can also send data from the SIMM16 field and in some cases from EXEC.
+
+|**Message**|**SIMM16[3:0]**|**SIMM16[6:4]**|**Payload**|
+|---|---|---|---|
+|none|0|-|illegal|
+|Interrupt|1|-|M0[23:0] carries data payload|
+|Save wave|4|-|used in context switching|
+|Stall Wave Gen|5|-|stop new wave generation|
+|Halt Waves|6|-|halt all running waves of this vmid|
+|Get Doorbell ID|10|-|Returns doorbell into EXEC, with the doorbell physical address in bits [12:3].|
