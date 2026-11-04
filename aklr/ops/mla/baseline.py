@@ -29,9 +29,11 @@ def flash_mla_with_kvcache_baseline(
     output=None,
     lse=None,
 ):
-    """Sparse: sglang's kernel, as the route calls it. Dense: aiter's Gluon MLA decode
-    over the 2-D block table, the kernel sglang serves the DSPARK verify prefix with,
-    writing into the caller's output and lse when it passes them."""
+    """Sparse: sglang's kernel, as the route calls it. Dense: aiter's Gluon MLA decode, the
+    kernel sglang serves the DSPARK verify prefix with, over the 2-D block table read up to
+    cache_seqlens or over the flat one cut by cu_seqlens_k; several causal queries per row
+    take its multi-token path. It writes into the caller's output and lse when it passes
+    them."""
     if kv_cache_format == "dsv4_fp8":
         from sglang.kernels.ops.attention.dsa.tilelang_kernel import (
             dpsk_v4_fp8_attention_fwd,
@@ -52,25 +54,30 @@ def flash_mla_with_kvcache_baseline(
             topk_length=sparse_lens,
             extra_topk_length=extra_sparse_lens,
         )
-    if block_table is None or cache_seqlens is None or causal or sinks is not None:
-        raise ValueError("dense baseline: block_table and cache_seqlens only")
+    if block_table is None or sinks is not None:
+        raise ValueError("dense baseline: a block table and no sinks")
     from aiter.ops.triton.gluon.mla_gluon import mla_gluon
 
     batch, query_length, n_heads, dim = q.shape
-    if query_length != 1:
-        raise ValueError("dense baseline: one query per row")
+    if query_length != 1 and not causal:
+        raise ValueError("dense baseline: several queries per row only causally")
     if output is None:
         output = q.new_empty(batch, query_length, n_heads, head_dim_v)
+    q_nope, q_pe, out = q[..., :head_dim_v], q[..., head_dim_v:], output
+    if query_length == 1:
+        # one query per row runs the plain decode; several, the causal multi-token path
+        q_nope, q_pe = q_nope[:, 0], q_pe[:, 0]
+        out = output.view(batch, n_heads, head_dim_v)
     _, row_lse = mla_gluon(
-        q[:, 0, :, :head_dim_v],
-        q[:, 0, :, head_dim_v:],
+        q_nope,
+        q_pe,
         kv_cache.view(-1, dim),
-        output.view(batch, n_heads, head_dim_v),
+        out,
         block_table,
-        cache_seqlens,
+        cache_seqlens if cu_seqlens_k is None else cu_seqlens_k,
         sm_scale,
         kv_pe_offset=head_dim_v,
-        use_2d_view=True,
+        use_2d_view=cu_seqlens_k is None,
         kv_scale=kv_scale,
         return_lse=True,
     )

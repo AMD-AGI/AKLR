@@ -1,0 +1,79 @@
+---
+title: "GEMM on gfx942 (MI300X): where FlyDSL's own skills cover it, and notes from FlyDSL v0.3.2's source"
+kind: topic
+ops: [gemm]
+dtypes: [bf16, fp16, fp8]
+regimes: [all]
+gens: [gfx942]
+flydsl: 0.3.2
+sources:
+  - ROCm/FlyDSL@dd8373349:.claude/skills/gemm-optimization/SKILL.md
+  - ROCm/FlyDSL@dd8373349:.claude/skills/lds-optimization/SKILL.md
+  - ROCm/FlyDSL@dd8373349:.claude/skills/prefetch-data-load/SKILL.md
+  - ROCm/FlyDSL@dd8373349:.claude/skills/kernel-trace-analysis/SKILL.md
+  - ROCm/FlyDSL@dd8373349:kernels/gemm/preshuffle_gemm.py
+  - ROCm/FlyDSL@dd8373349:kernels/moe/moe_2stage_a16wmix/
+---
+
+# GEMM on gfx942
+
+gfx942 (CDNA3: MI300X, MI308) only. FlyDSL's own skills at v0.3.2 cover it next to the newer generation; they are
+linked here, not copied, and were not re-measured. The last section is this repository's, written from FlyDSL
+v0.3.2's source.
+
+## Route here when
+
+- The target is gfx942 and you write or tune a GEMM: § In FlyDSL's own skills says where each topic is covered;
+  § This repository's notes says what v0.3.2's source does on gfx942, and where FlyDSL's skills are wrong for it.
+
+## In FlyDSL's own skills
+
+| You need | Read (FlyDSL v0.3.2) |
+|---|---|
+| Tile sizes and the LDS budget (64 KB per CU) | gemm-optimization [§1.4](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/gemm-optimization/SKILL.md), [§2.4](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/gemm-optimization/SKILL.md), [§14](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/gemm-optimization/SKILL.md) step 3 |
+| A through LDS with the synchronous-copy schedule | gemm-optimization [§4.1](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/gemm-optimization/SKILL.md), [§5.3](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/gemm-optimization/SKILL.md), [§5.4](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/gemm-optimization/SKILL.md) |
+| BF16/FP16 MFMA forms and peak figures | gemm-optimization [§6.2](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/gemm-optimization/SKILL.md), [§8.1](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/gemm-optimization/SKILL.md) |
+| Async copy and its trade-offs | gemm-optimization [§11.2](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/gemm-optimization/SKILL.md), [§11.3](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/gemm-optimization/SKILL.md); on gfx942 see the notes below |
+| LDS size, 32 banks and the bank index, conflicting strides, the XOR swizzle mask, padding, LDS limits | lds-optimization [LDS Architecture on CDNA3](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/lds-optimization/SKILL.md), [Key Differences](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/lds-optimization/SKILL.md), [Swizzle Layout](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/lds-optimization/SKILL.md), [Choosing Swizzle Parameters](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/lds-optimization/SKILL.md), [Padding](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/lds-optimization/SKILL.md), [Verification Checklist](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/lds-optimization/SKILL.md) |
+| Bank conflicts in a trace | lds-optimization [Diagnosing LDS Bottlenecks from Trace](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/lds-optimization/SKILL.md) |
+| The combined VGPR budget (arch + accum share 512 per SIMD) and occupancy | prefetch-data-load [Register Budget](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/prefetch-data-load/SKILL.md), gemm-optimization [§10.2](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/gemm-optimization/SKILL.md), kernel-trace-analysis [Register pressure check](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md) |
+| Trace analysis on gfx942 | `../profile.md` § gfx942 (MI300X) |
+
+## This repository's notes
+
+Written in this repository from FlyDSL v0.3.2's source (`PS` is `kernels/gemm/preshuffle_gemm.py`, `A16` is
+`kernels/moe/moe_2stage_a16wmix/`); not re-measured.
+
+**No async copy on gfx942 in this GEMM.** `preshuffle_gemm` raises `ValueError` for `use_async_copy=True` on
+gfx942 (PS:154-157). The DMA instruction itself also lowers on gfx942, at 4 B per op.
+
+**LDS padding on 32 banks: +2 elements, not +1.** With a row of 128 fp16 elements the row stride is 64 dwords,
+so every row starts on the same bank. Padding by 2 elements gives 65 dwords, an odd dword stride, conflict-free;
+padding by 1 gives 64.5 dwords, and lanes 2k and 2k+1 share a bank. FlyDSL's lds-optimization offers "+1 or +2".
+
+**Three waves need a combined `arch_vgpr + accum_vgpr` ≤ 168, not ≤ 170.** Occupancy is
+`min(8, 512 / alignTo(arch_vgpr + accum_vgpr, 8))`: both constants come from LLVM for GFX90AInsts targets
+(`getMaxWavesPerEU` returns 8, `getVGPRAllocGranule` 8, `Utils/AMDGPUBaseInfo.cpp`), so a combined 170 rounds up to
+176 and yields 2 waves. FlyDSL's prefetch-data-load table says ≤ 170.
+
+**K=16 MFMA forms for BF16/FP16.** The K=16 forms (`mfma_f32_16x16x16bf16_1k`, `mfma_f32_16x16x16f16`) are what
+`preshuffle_gemm` uses on gfx942.
+
+**FlyDSL's `hot_loop_scheduler` is the reference use.** `preshuffle_gemm` builds one hint table per tile. On
+gfx942 it uses the sync-copy pattern of FlyDSL's guide: a prologue places the first LDS reads, then each step is
+one VMEM load, a group of MFMAs, one LDS read and a second group of MFMAs, with the next tile's LDS writes at the
+tail so they land before the barrier (gemm-optimization §5.3–5.4; PS:402-438).
+
+Global → LDS DMA and transpose reads:
+
+| | gfx942 |
+|---|---|
+| `buffer_load_dword … lds` | yes |
+| `buffer_load_dwordx4 … lds`, `global_load_lds_dwordx4` | no |
+| `ds_read_b64_tr_b16` and the other transpose reads | no |
+
+**FlyDSL's bf16-activation MoE takes a K=16 path on gfx942.** `moe_2stage_a16wmix` picks it in
+`a16wmix_use_k16` (A16 `utils.py:26-38`): gfx942 has no `mfma_f32_16x16x32_bf16` and no `v_cvt_pk_bf16_f32`, so
+each K32 step is two 16x16x16 MFMAs into one accumulator (A16 `gemm1.py:507-509`) and the int4 dequant converts to
+bf16 one value at a time (A16 `utils.py:132-138`). A reaches LDS through VGPRs, a 16 B `buffer_load` then a 16 B
+`ds_write`, because the 16 B direct-to-LDS form in the table above does not exist here (A16 `gemm1.py:282-291`).

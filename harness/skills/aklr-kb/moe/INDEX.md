@@ -1,0 +1,249 @@
+---
+title: "MoE on gfx950: fused MoE (MXFP4 experts) and the expert grouped GEMM — package map"
+kind: op
+ops: [moe, grouped_gemm]
+dtypes: [mxfp4, bf16, fp8]
+gens: [gfx950]
+flydsl: 0.3.2
+basis: measured N=1
+---
+
+# MoE — package map: fused MoE and the expert grouped GEMM
+
+Where to start on a fused MoE kernel in FlyDSL for AKLR: what the op computes, what bounds it at each token count,
+which cards to read, which kernels to start from, and the AKLR files that govern it. The expert GEMMs are grouped
+GEMMs; their card is `flydsl_grouped_moe_inference.md`, and the training grouped-GEMM cards apply as
+techniques (§ Expert GEMM (grouped GEMM) below). "m" is a Point's `n_tokens`; a route is one (token, expert) pair.
+
+## What it computes
+
+`fused_moe@1.0` (`aklr/ops/fused_moe/contract.py`, reference in `reference.py`): for each token and each of its top-k
+experts e (`topk_ids`), stage 1 computes act(x · W1_gate,eᵀ, x · W1_up,eᵀ), stage 2 projects that row with W2_e, and
+the output row is the sum over the token's k routes of `topk_weights` × that projection.
+
+- `act` is SiLU(gate) · up (`activation` silu), its clamped form with `swiglu_limit` (`gate_mode` interleave), GELU, or
+  SiTUv2 with `beta` and `linear_beta`. Under expert parallelism (`has_expert_mask`) the ids are global and only the
+  experts set in `expert_mask` contribute.
+- Weights are fp4 e2m1 with one E8M0 scale per 1 × 32: `w1` (experts, 2 · inter, model_dim), `w2` (experts,
+  model_dim, inter). Layout variants: `row_major`, `shuffled_16x16` (aiter's 16×16 preshuffle, shuffled scales) and
+  `gate_up_interleaved` (gate and up rows interleaved, 2-D scales). `act_quant` 4 quantizes the activations to MXFP4,
+  8 to fp8 (SiTUv2 only); gate mode interleave keeps bf16 activations.
+- The var axis is `n_tokens`; model dim, experts, top-k and inter dim are fixed per schema name.
+- Compare: `determinism: bounded`, `max_violation_fraction` 1e-3, one whole-output SQNR ≥ 13 dB bound against the
+  reference (float32 in validation) rounded to the output dtype, with no bias test. Atomic accumulation passes it, and so do fp8
+  partial rows and bf16 truncation ([fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md), Counter-signals).
+- Every AKLR kernel computes it in two GEMM stages. How the routes reach their expert's rows is the main choice at
+  decode sizes: a separate sort kernel, a workgroup set per route with no sort, or a sort folded into stage 1.
+
+## Bottleneck by regime
+
+| Regime | What bounds the time | Read |
+|---|---|---|
+| m 1–2 (6–18 routes) | Little work per call, so the launches and the sort weigh (estimated). At m 1 every AKLR kernel runs two launches, no sort and a workgroup set per route, and all four are served, at 1.26–3.36× *(field, E1)*; at m 2 the 33-expert kernel is served with four launches | the two cases |
+| m 8–64 with 257 experts | 72–576 routes over 257 experts, so most hit experts are read for one or two routes (estimated); each graph node adds a fixed cost (`../moe/flydsl_moe_decode.md` §1). Folding the sort into stage 1 saved 3.5–6.4 µs of 39–102 µs *(field, E2)* | `../moe/flydsl_moe_decode.md` §1–§2 |
+| Decode with tens of local experts | Measured on aiter's FlyDSL MXFP4 kernels: bandwidth. At 60 tokens a 75-layer step read 5.77 TB/s against a 6.27 TB/s read roof measured in the same run (92%); from 10 to 60 tokens the time grew 2.38× while the experts hit grew 2.6× *(field, E3)* | `flydsl_grouped_moe_inference.md` §3–§5 |
+| Kimi-K3 SiTUv2, fp8 × MXFP4, m 8–112: 896 experts (TP) or 112 of 896 local (EP8), top-16 | Bandwidth: the weights of the experts the routes touch, 2.19 MB each at inter 384 and 17.5 MB at inter 3072 (estimated from the layout); count the touched experts from AKLR's own inputs (`../patterns/memory_bound.md`, Rule out first). From 32–40 tokens up the delivered kernels read them at 6.0–6.45 TB/s against a 6.5 TB/s read roof, aiter at 5.0–5.97, so at most 5–8% is left; at 8–24 tokens the per-launch costs around the GEMMs weigh, and EP8 measured 1.28–1.59 there *(field, E5)* | `../patterns/memory_bound.md`; `flydsl_grouped_moe_inference.md` §2, §7; `../moe/flydsl_moe_decode.md` |
+| Kimi-K3 SiTUv2 at m 893–16384 | Every expert is touched; from ~9k tokens the GEMMs are compute-bound. At 16384 tokens the delivered kernels ran stage 1 at 1970 (TP) and 1889 (EP8) TF/s of useful FLOPs (padding rows not counted) and stage 2 at 1347 and 1764, where aiter ran 1431/1459 and 929/1267 *(field, E6)*; dense fp8 GEMMs of squat shapes reached ~2300–2550 TF/s on MI355X *(field, E7)*. TP's per-route rows and their reduce kernel took 190 of 1533 µs | `flydsl_grouped_moe_inference.md` §2, §6; `../gemm/flydsl_gemm_mainloop.md` §7 |
+| m 64–4096 with 33 local experts | Rows repeat per expert: tile-M 32–128, several row tiles of one expert per weight sweep, activations staged through LDS. Served at 1.030–1.609 over aiter at every m from 64 *(field, E4)* | [fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md) |
+
+## Techniques that apply
+
+| Task | Read |
+|---|---|
+| Decide the launch structure of a decode-sized call; count graph nodes | `../moe/flydsl_moe_decode.md` §1 |
+| Remove the sort launch at 8–64 tokens | `../moe/flydsl_moe_decode.md` §2 |
+| Judge a port whose stage 2 uses atomics against its source | `../moe/flydsl_moe_decode.md` §3 |
+| Map sorted tokens to expert blocks, exit on the device, persistent stage 2 | `flydsl_grouped_moe_inference.md` §2 |
+| Grid shape and tile-N at decode sizes | `flydsl_grouped_moe_inference.md` §3 |
+| Cache policy of the weight loads | `flydsl_grouped_moe_inference.md` §4 |
+| Tile-M against the sort unit | `flydsl_grouped_moe_inference.md` §5 |
+| Stage 2: atomics or a fixed-order reduce | `flydsl_grouped_moe_inference.md` §6, `../gemm/flydsl_gemm_correctness.md` §8 |
+| Sort and quantization kernels around the GEMMs | `flydsl_grouped_moe_inference.md` §7 |
+| Measuring at decode sizes | `flydsl_grouped_moe_inference.md` §8, `../gemm/flydsl_gemm_small_m.md` §1 |
+| Split K over the waves of one workgroup | `../gemm/flydsl_gemm_small_m.md` §5 |
+| Kernel-argument preload; rows bound by launch and latency | `../gemm/flydsl_gemm_small_m.md` §6, `../patterns/launch_floor_small_m.md` |
+| Preshuffled operands and MX scales | `../gemm/flydsl_gemm_datapath.md` §10, §11 |
+| MFMA atom: scaled fp4, or bf16 on dequantized fp4 | `../gemm/flydsl_gemm_mainloop.md` §5 |
+| Tile order across XCDs | `../gemm/flydsl_gemm_schedule_and_locality.md` §2 |
+
+## Kernels to start from
+
+- **AKLR's own.** `../flydsl/kernels/flydsl_kernel_library.md` § AKLR's own FlyDSL MoE kernels lists the five
+  kernels (eight schema files) and what to read each for. Which Points each file serves, and how it gets there:
+  [fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md) (257, 65 and 33 experts) and
+  [fused_moe_interleave_swiglu.md](../cases/fused_moe_interleave_swiglu.md) (clamped SwiGLU). Where the library's items
+  run on main:
+  - `1fee5982…`: the tile descriptors written by the slot-`% BM` route run at m 32–256 and the loop-carried
+    prefetch at m 128, 256, 2048, Points the file does not serve; at its served m 1, 2 the `ds_bpermute` gather runs.
+  - `ef15e878…`: `_route_block` runs at no Point (routing is `_quantize_route_fused` at m 2–32, `_route_expert` at
+    m ≥ 64, none at m 1); several row tiles per expert (`GROUP_M` > 1) only at m ≥ 512; fp8 rows at m 16, 32, 64 and
+    m ≥ 128.
+  - `1bf41ccb…`: `_make_small_route` runs at m 4–128, none served; `FUSE_SPLIT_QUANT` (m 1) and `FULL_STAGE_A`
+    (m ≥ 256) run at served Points.
+  - `4fbd9d02…`: one stage-2 binary serves all four token counts; stage 1 compiles per count.
+- **aiter's FlyDSL MoE families** and their knobs: `../flydsl/kernels/flydsl_kernel_library.md` § Other
+  FlyDSL families in the baseline aiter (MoE). aiter is the baseline; price it through `fused_moe_baseline`, which
+  calls `aiter.fused_moe.fused_moe` (`flydsl_grouped_moe_inference.md` §8).
+- **FlyDSL v0.3.2's `kernels/moe/`** and how aiter's copies differ: `flydsl_grouped_moe_inference.md`
+  §1.
+
+## In AKLR
+
+- The contract and its compare: `aklr/ops/fused_moe/contract.py`. The api:
+  `aklr/ops/fused_moe/api.py`. The baseline call and its environment (`AITER_BF16_FP8_MOE_BOUND=16` for gate mode
+  interleave, sglang's DeepSeek-V4 setting): `aklr/ops/fused_moe/baseline.py`.
+- Kernel form, scratch and compile function: `aklr/ops/README.md` § The kernel section and ABI (`../SKILL.md`, Stop
+  table). Workflow and CI: § Workflow. The serving threshold: § Environment variables. Kernel-less files (a
+  definition: loaded and audited, not served): § Schema fields.
+- `AKLR_DISABLE=fused_moe@1.0` stops serving every MoE schema.
+- Kernel-less `fused_moe` files on main at 0cef4f2e3, counted from `aklr/ops/fused_moe/impls/flydsl/`: 17 of the 25
+  files, 200 Points, none served (S1). By schema name, after `fused_moe_`:
+
+| Name | Points | Added by |
+|---|---|---|
+| `has_expert_mask_shuffled_16x16_model_dim4096_n_experts32_topk2_inter_dim4096_global_experts257` | 53, m 8–65536 | aa5e96bf3 |
+| `shuffled_16x16_model_dim4096_n_experts256_topk1_inter_dim512` | 51, m 8–65536 | aa5e96bf3 |
+| `shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim512` | 13, m 1–4096 | 97d5eb0b3 (#81) |
+| `situv2_act_quant8_gate_up_interleaved_model_dim3584_n_experts896_topk16_inter_dim384` | 17, m 8–16384 | a0e3cbea1 (#69) |
+| `situv2_has_expert_mask_act_quant8_gate_up_interleaved_model_dim3584_n_experts112_topk16_inter_dim3072_global_experts896` | 17, m 8–16384 | a0e3cbea1 (#69) |
+| `interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts384_topk6_inter_dim384` / `…_inter_dim768` | 9 and 6, m 1–256 | 31222a0d9 |
+| `interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts48_…` / `…_n_experts96_…` (inter 3072, 384 global) | 6 and 4, m 1–128 | 31222a0d9 |
+| the four `…_has_num_local_tokens_…` names (hidden 4096 or 7168) | 1 each, m 1024 or 2048 | 39a51ac02 (#71), 31222a0d9 |
+| the kernel-less siblings of the four clamped-SwiGLU kernel files | 5 each, m 16–256 | 39a51ac02 (#71) |
+
+## Expert GEMM (grouped GEMM)
+
+The grouped-GEMM package, folded in from its own folder: AKLR has no grouped-GEMM op, and its MoE op runs
+these GEMMs. Pinned sources: AMD-AGI/Primus-Turbo@ca1fdd67 (primus_turbo/flydsl/{grouped_gemm,utils}); ROCm/FlyDSL@dd8373349 (v0.3.2; kernels/moe).
+
+How to write and optimize a grouped GEMM in FlyDSL on gfx950 (MI350/MI355X): one launch that runs G independent
+GEMMs whose sizes differ per group, as in a mixture-of-experts layer. The body is training: the forward pass
+(NT), dgrad (NN, or NT on a transposed weight) and variable-K wgrad (TN, one contraction length per group), in
+bf16, fp8 with per-tensor scales, MXFP8 and MXFP4, with GLU/dGLU epilogue fusion. Inference MoE expert GEMMs
+(gathered by sorted token ids) have one card of their own.
+
+A grouped GEMM is a dense GEMM plus a group dimension. The main loop, MFMA atoms, LDS layout, DMA, scheduling
+hints, epilogue basics and the measurement protocol are the same as for dense GEMM and live in `../gemm/`; the
+cards here cover what the group dimension adds: mapping tiles to groups, ordering them under token skew, the
+per-tile fixed cost that small groups expose, variable-K wgrad, scales and quantization per group, the host
+path, and the gates and rulers that a skewed distribution needs.
+
+**Three sources, used together.**
+- **Primus-Turbo's FlyDSL grouped GEMMs** (`primus_turbo/flydsl/grouped_gemm/` at main `ca1fdd67`), built for
+  training. They keep group metadata on the device, launch a static upper-bound grid, find each tile's group
+  on the device (a lane-resident prefix table in the MXFP4 kernels and in the fp8 kernels above eight groups),
+  order tiles across XCDs, split deep variable-K groups with a deterministic reduce, and race most
+  configurations on balanced synthetic data. The cards cite them by file and line as techniques; Turbo pins a
+  newer FlyDSL, and every API named in the cards exists in v0.3.2.
+- **FlyDSL's own MoE GEMMs** (`kernels/moe/` in v0.3.2): sorted-token, per-M-block expert ids, persistent
+  stage 2. FlyDSL ships no variable-K grouped GEMM and no wgrad.
+- **Measured grouped-GEMM work**, marked `*(field, E<n>)*`: what moved wall time and what did not.
+
+- FlyDSL facts are stated for v0.3.2.
+- Numbers marked `*(field, E<n>)*` are measured values; `E<n>` names the line under the card's `## Evidence` that
+  gives the conditions. Read them as magnitudes, not targets.
+- Signed percentages of wall time, throughput or a score are speed changes (+ = faster) unless the sentence says
+  faster or slower; a sign next to a named quantity (cycles, sclk, a counter, bytes, registers) is the change of
+  that quantity.
+- Occupancy is stated as waves per SIMD or workgroups per CU, explicitly.
+
+### In AKLR
+
+AKLR has no grouped-GEMM op. Its MoE op is `fused_moe` (the sglang plugin's MoE ops take a whole MoE block): start
+at `../moe/flydsl_moe_decode.md`, then `flydsl_grouped_moe_inference.md`; AKLR's own FlyDSL MoE kernels are listed
+in `../flydsl/kernels/flydsl_kernel_library.md` § AKLR's own FlyDSL MoE kernels. The training cards apply as
+techniques. Where a card disagrees with `aklr/ops/README.md` (§ The kernel section and ABI), the README wins
+(`../SKILL.md` § In AKLR). What it changes here:
+- **Cache keys.** A compile function caches by the Point's full shape, M included: one compile per Point. The rule
+  against keying on `M_total` (`flydsl_grouped_host_autotune.md` §3) is for training callers whose token count
+  changes every step. Bound a cache with `@functools.lru_cache(maxsize=...)`, not with module-level state such as
+  MX4's `_bound_caches`.
+- **No tuner in launch code.** A Point compiles on its first, uncaptured call, every `beta` variant included, and
+  later calls may run inside a graph capture. The capture-time tuner of `flydsl_grouped_host_autotune.md` §2, the
+  races on a call's own data of §5 and the beta ranking of §6 become a configuration chosen from the shape in the
+  compile function, raced offline; §8's logged build errors stay in that offline script (sources may not `print`
+  or do I/O).
+- **Nothing derived from an argument survives a call.** The `(id(weight), weight._version)` cache of
+  `flydsl_grouped_host_autotune.md` §3 and quantizing weights once per optimizer step (`flydsl_grouped_lowprec.md`
+  §1) are not available: repack on every call. The harness overwrites weights with `.data.copy_()`, which keeps
+  both the address and `_version`. Handle ragged dimensions in the kernel (`flydsl_grouped_host_autotune.md` §4).
+- **Scratch.** Per-shape scratch must be "rewritten whole by every call before it is read" (README). The persistent
+  split-K bands of `flydsl_grouped_wgrad.md` §9, sized for the deepest geometry, do not meet that as written:
+  allocate them per call, or have every call write every band the kernel can read.
+- **Every output element is checked.** Write all of the output, zeros for empty groups included; the "fingerprint
+  only the region the contract writes" workaround of `flydsl_grouped_correctness.md` §3 does not apply.
+
+### Start here
+
+| You are… | Read |
+|---|---|
+| starting on a grouped GEMM, or deciding what to try next | `flydsl_grouped_workflow.md` |
+| mapping tiles to groups: grid size, group lookup, empty groups, 64-bit offsets | `flydsl_grouped_group_mapping.md` |
+| ordering tiles across XCDs and groups, handling token skew, choosing persistent or not | `flydsl_grouped_scheduling.md` |
+| choosing a tile, occupancy or boundary body per pass; pricing small groups | `flydsl_grouped_tile_pricing.md` |
+| working on wgrad with a per-group contraction length, split-K, beta=1 accumulation | `flydsl_grouped_wgrad.md` |
+| adding fp8, MXFP8 or MXFP4: scale preshuffle and packing, quantization, stores, GLU fusion | `flydsl_grouped_lowprec.md` |
+| launching without host syncs, CUDA graphs, caching, autotuning across distributions | `flydsl_grouped_host_autotune.md` |
+| benchmarking grouped kernels: shapes, distributions, deployment conditions, noise | `flydsl_grouped_measurement.md` (with `../gemm/flydsl_gemm_measurement.md`) |
+| writing or trusting a correctness gate for grouped kernels | `flydsl_grouped_correctness.md` (with `../gemm/flydsl_gemm_correctness.md`) |
+| working on an inference MoE expert GEMM (sorted token ids, decode) | `flydsl_grouped_moe_inference.md` |
+| working on the main loop, LDS, DMA, MFMA atoms or the epilogue itself | `../gemm/INDEX.md` |
+
+### Kernel map
+
+#### Primus-Turbo main `ca1fdd67`, `primus_turbo/flydsl/grouped_gemm/`
+
+| File | dtype / passes | Entry points |
+|---|---|---|
+| `grouped_gemm_bf16_kernel.py` | bf16/fp16: forward NT, dgrad NN, variable-K wgrad | `grouped_gemm_bf16_nt_flydsl_kernel` (:720), `grouped_gemm_bf16_nn_flydsl_kernel` (:888), `grouped_gemm_bf16_variable_k_flydsl_kernel` (:533) |
+| `grouped_gemm_fp8_kernel.py` | fp8 E4M3/E5M2 per-tensor scale: forward NT, dgrad NN, variable-K wgrad | `grouped_gemm_fp8_tensorwise_flydsl_kernel` (:2628), `grouped_gemm_fp8_variable_k_tensorwise_flydsl_kernel` (:4980) |
+| `grouped_gemm_mxfp8_kernel.py` | MXFP8 (E8M0 per 32): forward and dgrad as NT, variable-K wgrad | `grouped_gemm_mxfp8_flydsl_kernel` (:1239), `grouped_gemm_mxfp8_variable_k_flydsl_kernel` (:1835) |
+| `grouped_gemm_mxfp4_kernel.py` | MXFP4: forward and dgrad as NT, variable-K wgrad | `grouped_gemm_mxfp4_flydsl_kernel` (:1589), `grouped_gemm_mxfp4_variable_k_flydsl_kernel` (:2154) |
+| `grouped_gemm_{fp8,mxfp8,mxfp4}_glu_kernel.py` | GLU (forward) and dGLU (dgrad): fp8 and MXFP4 fuse them into the GEMM epilogue; MXFP8 runs the GEMM, then a separate GLU + dual-quantization kernel. The MX variants also quantize the output | e.g. `grouped_gemm_fp8_tensorwise_epi_glu_flydsl_kernel` (fp8 :138), `grouped_gemm_mxfp4_epi_dglu_quant_flydsl_kernel` (mxfp4 :314) |
+| `../utils/gemm_helper.py` | shared | group scans and lookups, XCD remaps, super-tile decode, 64-bit descriptor bases |
+
+The bf16 kernels reuse Turbo's dense bf16 tile bodies; the fp8 and MX kernels share their main-loop design with
+Turbo's dense kernels (`../gemm/INDEX.md` § Kernel map).
+
+#### FlyDSL v0.3.2, `kernels/moe/`
+
+| Path | What it is | Entry points |
+|---|---|---|
+| `moe_gemm_2stage/` | fp8 / int8 / int4-weight MoE GEMM, stage 2 atomic or split + reduce | `compile_moe_gemm1` (`gemm1.py:541`), `compile_moe_gemm2` (`gemm2.py:595`), `compile_moe_reduction` (`moe_reduce.py:164`) |
+| `mxfp_moe/` | MXFP4 / a8w4 MoE GEMM for gfx950, persistent non-atomic stage 2 | `compile_gemm1_a4w4_port` (`gemm1.py:680`), `compile_gemm2_a4w4_port` (`gemm2.py:78`), host `flydsl_mxfp4_gemm1/2` (`host.py:87`, `:168`) |
+| `moe_2stage_a16wmix/` | bf16 activations × MXFP4 / int4 / bf16 weights | `compile_gemm1_a16w4_port` (`gemm1.py:708`), `compile_gemm2_a16w4_port` (`gemm2.py:508`) |
+| `moe_sorting_kernel.py` | token sorting by expert, tile-M as the unit | `moe_sorting_flydsl` (:2070) |
+
+`kernels/mega_moe/` fuses dispatch, both GEMMs and combine across GPUs; it is outside this package.
+
+The baseline aiter carries diverged copies of `mxfp_moe` and `moe_2stage_a16wmix`, none of `moe_gemm_2stage`,
+and MoE kernels FlyDSL lacks; the mapping is in `flydsl_grouped_moe_inference.md` §1.
+
+Constants in both code bases (tile tables, band widths, group-count limits, adoption margins) were tuned on
+specific shapes and distributions. Reuse the mechanism and re-derive the number.
+
+### Cards
+
+| Card | One line |
+|---|---|
+| `flydsl_grouped_workflow.md` | what the group dimension changes, working order per pass, what is usually dead |
+| `flydsl_grouped_group_mapping.md` | device-side group metadata, upper-bound grids, tile→group lookups and their cost, empty groups, 64-bit bases |
+| `flydsl_grouped_scheduling.md` | XCD and L2 order across groups, where the skew lives, longest-first, persistent vs one tile per workgroup |
+| `flydsl_grouped_tile_pricing.md` | tile and occupancy per pass, boundary and tail bodies, the per-tile fixed cost of small groups |
+| `flydsl_grouped_wgrad.md` | variable-K loops, scale timing, store-bound short groups, deterministic split-K, beta=1 accumulation |
+| `flydsl_grouped_lowprec.md` | fp8/MX scale preshuffle and packing, quantization share, K padding, store forms, GLU/dGLU fusion |
+| `flydsl_grouped_host_autotune.md` | no host syncs, graph vs eager launch, caching, races on balanced data, beta and ranking |
+| `flydsl_grouped_measurement.md` | shapes and distributions, deployment conditions, FLOP accounting, per-cell noise |
+| `flydsl_grouped_correctness.md` | skewed and empty groups in the gate, out-of-bounds reads, MX probes, determinism vs correctness |
+| `flydsl_grouped_moe_inference.md` | sorted-token MoE expert GEMMs in FlyDSL: work mapping, persistent stage 2, cache policy, decode |
+
+## Evidence
+
+- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter at m 1: 2.472 (257 experts, 1fee59821837c26f), 1.258 (33 experts, ef15e87894a8ae06), 1.353 (65 experts, 1bf41ccba6750300), 3.015–3.359 (clamped SwiGLU, four files; 9dcb4d796b597d0b 3.089, a5a343437ee191a7 3.015 from 102877ca0) (5571f4589, CI run 40613440602)
+- E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, bench_cudagraph: graph replay, 1 GiB flush per call, Kineto kernel time, median; one run per arm] 39.09–102.04 µs per call with a separate sort node, 34.38–95.67 µs with it folded into stage 1, at m 8–64 (257 experts, inter 256; local:/workspace/code/gpt_oss_docker/scratch/glm52_sikl_port/evidence/moe_triage_AB.md:13)
+- E3 [2026-09, gfx950, FlyDSL ?, N=?, wall clock of a 75-layer MoE step over 8 weight sets against a read-roof kernel in the same process; per-layer times from a minibench] aiter's MXFP4 MoE (`mfma_moe1`/`mfma_moe2`, GLM-5.2 TP4/EP4: 64 local experts, inter 2048, hidden 6144) at 60 tokens: 5.77 TB/s against a 6.27 TB/s roof, 92.0%; 10 → 60 tokens 82.2 → 195.6 µs per layer (2.38×) with 20 → 52 experts hit (2.6×) (local:/workspace/code/gpt_oss_docker/.claude/memory/reference_glm52_moe_bandwidth_bound.md:21; :60; :81)
+- E4 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter at m 64–4096: 1.030, 1.147, 1.109, 1.257, 1.609, 1.081, 1.070 (fused_moe_shuffled_16x16_model_dim6144_n_experts33_topk9_inter_dim2048, file ef15e87894a8ae06; 5571f4589, CI run 40613440602)
+- E5 [2026-10, gfx950, FlyDSL ?, N=1, `python -m aklr validate --base origin/main` run locally on one MI355X: graph replay, 1 GiB flush per call, one-sided lower bound against aiter; touched experts counted from the same inputs] speedup over aiter at m 8–112: TP 1.373, 1.287, 1.243, 1.194, 1.168, 1.084, 1.069, 1.061, 1.058, 1.054, 1.043, 1.039, 1.038; EP8 1.592, 1.427, 1.347, 1.281, 1.220, 1.278, 1.282, 1.276, 1.262, 1.253, 1.245, 1.229, 1.240; weight bytes of the touched experts over the median candidate time 6.04–6.20 TB/s (TP, m 40–112) and 6.20–6.45 TB/s (EP8, m 32–112), aiter 5.0–5.97 TB/s; read roof 6.5 TB/s from a read-only kernel (the eight K3 kernel files of branch kyle/k3-moe-kernels; local:/shared_nfs/kyle/moe/k3rebase/val2/report.json; local:/shared_nfs/kyle/moe/kf/scan/touched.json; local:/workspace/code/gpt_oss_docker/.claude/memory/reference_mi355_measured_ceilings.md)
+- E6 [2026-10, gfx950, FlyDSL 0.3.2, N=1, eager calls on the validate inputs, L2 flushed between calls, torch.profiler kernel times; useful FLOPs 2 · routes · N · K per GEMM] at 16384 tokens, the delivered kernels against aiter: TP stage 1 732.4 µs = 1970 TF/s (aiter 1008.2 µs = 1431), stage 2 535.8 µs = 1347 (776.8 µs = 929), other kernels 264.5 µs with the reduce 190.4 (480.3 with 374.8); EP8 stage 1 762.6 µs = 1889 (987.2 µs = 1459), stage 2 408.1 µs = 1764 (568.3 µs = 1267), other 57.5 µs (508.5); at 9397 tokens TP 1701 / 1200, EP8 1660 / 1511 TF/s (local:/shared_nfs/kyle/moe/kf/flops_run/r2/tp8.txt; local:/shared_nfs/kyle/moe/kf/flops_run/r2/ep8.txt; script local:/shared_nfs/kyle/moe/kf/flops_run/prof_flops.py)
+- E7 [2026-09, gfx950, FlyDSL ?, N=?, FlyDSL's own GEMM bench and hipBLASLt on one idle MI355X] dense fp8 GEMM at M=131072: N5632 K2560 2288 / 2474, N6144 K3072 2396 / 2602, N2560 K2560 2167 / 2488, N3072 K3072 2369 / 2664 TF/s (FlyDSL / hipBLASLt); fp8 16384³ 3319 / 2813 (local:/workspace/code/gpt_oss_docker/.claude/memory/reference_mi355_measured_ceilings.md)
+- S1 aklr/ops/README.md:76 a schema file with empty `sources` is a definition: loaded and audited, not served or benched

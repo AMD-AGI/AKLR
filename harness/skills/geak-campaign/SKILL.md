@@ -88,7 +88,7 @@ python -m aklr export check && python -m aklr validate --base origin/main <the p
 - Report AKLR's verdict per workload, GEAK's `tech_lead_report.md` (each round's directions and the verified
   speedups), and the regime's workloads near the dispatch floor.
 - What the run taught AKLR's skills is not distilled for you: forge-distill reads KernelForge's runs only. Take
-  findings from `tech_lead_report.md` and `round_N/*/report.md` into the skill as its `CONTRIBUTING.md` says, in the
+  findings from `tech_lead_report.md` and `round_N/*/report.md` into the knowledge base as `harness/skills/aklr-kb/CONTRIBUTING.md` says, in the
   pull request that delivers the kernel.
 
 ## Pitfalls
