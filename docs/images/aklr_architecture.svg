@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="562" viewBox="0 0 960 562">
+<style>
+  .bg{fill:none}
+  text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,"DejaVu Sans",sans-serif;fill:#1f2328}
+  .t{font-size:15px;font-weight:600}
+  .s{font-size:12.5px;fill:#59636e}
+  .sec{font-size:13px;font-weight:600;fill:#59636e;letter-spacing:.06em}
+  .box{fill:#f6f8fa;stroke:#d1d9e0;stroke-width:1.2}
+  .hl{fill:#eef6ff;stroke:#0969da;stroke-width:2}
+  .cont{fill:#eef6ff}
+  .in{fill:#ffffff}
+  .ok{fill:#dafbe1;stroke:#4ac26b}
+  .fb{fill:#fff8c5;stroke:#d4a72c}
+  .pl{stroke-dasharray:5 4}
+  .ln{stroke:#818b98;stroke-width:1.6;fill:none}
+  .ah{fill:#818b98}
+  .grid{stroke:#d1d9e0;stroke-width:1}
+  .axis{stroke:#818b98;stroke-width:1}
+  .tick{font-size:12px;fill:#59636e}
+  .a{stroke:#0969da;stroke-width:2.5;fill:none}
+  .b{stroke:#8c959f;stroke-width:2.5;fill:none}
+  .ad{fill:#0969da}.bd{fill:#8c959f}
+  .ref{stroke:#59636e;stroke-width:1.2;stroke-dasharray:5 4}
+  .note{font-size:13px}
+  .na{fill:#0969da}.nb{fill:#59636e}
+  @media (prefers-color-scheme: dark){
+    text{fill:#f0f6fc}
+    .s,.sec,.tick{fill:#9198a1}
+    .box{fill:#151b23;stroke:#3d444d}
+    .hl{fill:#0d1d33;stroke:#4493f8}
+    .cont{fill:#0d1d33}
+    .in{fill:#0d1117}
+    .ok{fill:#0f2d1a;stroke:#2ea043}
+    .fb{fill:#2e2a12;stroke:#9e6a03}
+    .ln,.axis{stroke:#9198a1}.ah{fill:#9198a1}
+    .grid{stroke:#3d444d}
+    .a{stroke:#4493f8}.ad,.na{fill:#4493f8}
+    .b{stroke:#7d8590}.bd{fill:#7d8590}.nb{fill:#9198a1}
+    .ref{stroke:#9198a1}
+  }
+</style>
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ah" d="M0,0L10,5L0,10z"/></marker></defs>
+<rect class="box " x="82" y="16" width="220" height="44" rx="8"/>
+<text class="t" x="192.0" y="43.0" text-anchor="middle">vLLM</text>\n<path class="ln" d="M192,62 V96" marker-end="url(#ar)"/>\n<rect class="box " x="370" y="16" width="220" height="44" rx="8"/>
+<text class="t" x="480.0" y="43.0" text-anchor="middle">SGLang</text>\n<path class="ln" d="M480,62 V96" marker-end="url(#ar)"/>\n<rect class="box " x="658" y="16" width="220" height="44" rx="8"/>
+<text class="t" x="768.0" y="43.0" text-anchor="middle">ATOM</text>\n<path class="ln" d="M768,62 V96" marker-end="url(#ar)"/>\n<rect class="box hl" x="40" y="100" width="880" height="62" rx="8"/>
+<text class="t" x="480.0" y="127.0" text-anchor="middle">Stable engine API</text>
+<text class="s" x="480.0" y="146.0" text-anchor="middle">AITER plugin · engine plugins</text>\n<path class="ln" d="M480,164 V198" marker-end="url(#ar)"/>\n<rect class="box " x="72" y="202" width="240" height="70" rx="8"/>
+<text class="t" x="192.0" y="233.0" text-anchor="middle">Engine's own code</text>
+<text class="s" x="192.0" y="252.0" text-anchor="middle">when no kernel qualifies</text>\n<rect class="box hl" x="360" y="202" width="240" height="70" rx="8"/>
+<text class="t" x="480.0" y="233.0" text-anchor="middle">AKLR ops</text>
+<text class="s" x="480.0" y="252.0" text-anchor="middle">check inputs, pick a kernel</text>\n<rect class="box hl" x="648" y="202" width="240" height="70" rx="8"/>
+<text class="t" x="768.0" y="233.0" text-anchor="middle">AKLR kernels</text>
+<text class="s" x="768.0" y="252.0" text-anchor="middle">validated and faster</text>\n<path class="ln" d="M602,237 H644" marker-end="url(#ar)"/>\n<path class="ln" d="M358,237 H316" marker-end="url(#ar)"/>\n<rect class="box hl cont" x="40" y="312" width="880" height="132" rx="10"/>\n<text class="t" x="480" y="338" text-anchor="middle">AKLR harness</text>\n<rect class="box in" x="64" y="352" width="256" height="66" rx="8"/>
+<text class="t" x="192.0" y="381.0" text-anchor="middle">Schema</text>
+<text class="s" x="192.0" y="400.0" text-anchor="middle">the op and its workloads</text>\n<rect class="box in" x="352" y="352" width="256" height="66" rx="8"/>
+<text class="t" x="480.0" y="381.0" text-anchor="middle">Kernel Rosetta Stone</text>
+<text class="s" x="480.0" y="400.0" text-anchor="middle">knowledge base and skills</text>\n<rect class="box in" x="640" y="352" width="256" height="66" rx="8"/>
+<text class="t" x="768.0" y="381.0" text-anchor="middle">Validation</text>
+<text class="s" x="768.0" y="400.0" text-anchor="middle">correct and faster than the baseline</text>\n<path class="ln" d="M768,350 V276" marker-end="url(#ar)"/>
+<text class="s" x="830" y="298" text-anchor="middle">validated kernels</text>\n<path class="ln" d="M192,420 V480" marker-end="url(#ar)"/>
+<text class="s" x="216" y="468" text-anchor="middle">task</text>\n<path class="ln" d="M480,420 V480" marker-end="url(#ar)"/>
+<text class="s" x="520" y="468" text-anchor="middle">knowledge</text>\n<rect class="box " x="40" y="484" width="880" height="62" rx="8"/>
+<text class="t" x="480.0" y="511.0" text-anchor="middle">Agents</text>
+<text class="s" x="480.0" y="530.0" text-anchor="middle">any agent can submit kernels</text>\n<path class="ln" d="M768,482 V422" marker-end="url(#ar)"/>
+<text class="s" x="820" y="468" text-anchor="middle">pull request</text>
+</svg>
