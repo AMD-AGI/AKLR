@@ -132,14 +132,14 @@ def cuda_graph_without_gc(*args, **kwargs):
             gc.enable()
 
 
+# Kineto's raw events: torch's FunctionEvent tree costs up to 100 ms per call
 def _collect_scope_times(events, prefix):
-    scope_times = []
+    scopes = {event.correlation_id(): event.name() for event in events if event.name().startswith(prefix)}
+    scope_times = dict.fromkeys(scopes.values(), 0.0)
     for event in events:
-        if event.name.startswith(prefix):
-            time_ms = sum(kernel.duration for kernel in event.kernels) / 1e3
-            if time_ms > 0:
-                scope_times.append((event.name, time_ms))
-    return [time for _, time in sorted(scope_times)]
+        if event.device_type() == torch.autograd.DeviceType.CUDA and event.linked_correlation_id() in scopes:
+            scope_times[scopes[event.linked_correlation_id()]] += event.duration_ns() / 1e6
+    return [time for _, time in sorted(scope_times.items()) if time > 0]
 
 
 def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="median"):
@@ -191,6 +191,9 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
                 g.replay()
             torch.cuda.synchronize()
 
-        times = [t / n_retries for t in _collect_scope_times(session.events(), scope_prefix)]
+        times = [
+            t / n_retries
+            for t in _collect_scope_times(session.profiler.kineto_results.events(), scope_prefix)
+        ]
 
     return _summarize_statistics(times, quantiles, return_mode)
