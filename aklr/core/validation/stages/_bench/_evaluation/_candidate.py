@@ -88,6 +88,22 @@ class CandidateResult(FrozenModel):
             code = FindingCode.PLATFORM_FAILURE
         return cls(findings=(Finding.unlocated(code, detail),), workload_results=())
 
+    @classmethod
+    def of_ranks(cls, results: Sequence[CandidateResult]) -> CandidateResult:
+        """The group's result of its finding-free ``results`` in rank order: rank 0's
+        workload findings and output keys, each round's time of a participant its slowest
+        rank's."""
+        workload_results = []
+        for per_rank in zip(*(r.workload_results for r in results), strict=True):
+            rounds = tuple(
+                same[0].model_copy(
+                    update={"milliseconds": {p: max(r.milliseconds[p] for r in same) for p in same[0].order}}
+                )
+                for same in zip(*(w.rounds for w in per_rank), strict=True)
+            )
+            workload_results.append(per_rank[0].model_copy(update={"rounds": rounds}))
+        return cls(findings=(), workload_results=tuple(workload_results))
+
 
 class StepFailed(Exception):
     code: FindingCode
@@ -114,10 +130,15 @@ def run_candidate(
     *,
     requests: Sequence[TrialRequest],
     outputs: Mapping[str, Mapping[str, Tensor]],
+    rank: int | None = None,
+    rendezvous: str | None = None,
 ) -> dict:
     """Check and time the batch on ``context.device``, each workload's outputs copied
     into the tensors the trial task lent (``outputs[axes_text]``,
-    ``TrialRequest.empty_outputs``); returns a ``CandidateResult`` json."""
+    ``TrialRequest.empty_outputs``), or, as ``rank`` of the group that meets at the file
+    ``rendezvous``, on the group's device ``cuda:<rank>``; returns a ``CandidateResult``
+    json. A rank stops the batch at its first finding: its peers' next call would wait on
+    it forever."""
     import torch
 
     from aklr.core.platform.device import DeviceTarget
@@ -130,10 +151,16 @@ def run_candidate(
     rounds: dict[str, tuple[_measure.RoundTimes, ...]] = {}
     dispatcher = None
     incumbent_dispatchers: dict[str, KernelDispatcher] = {}
-    target = DeviceTarget.current(context.device)
+    device = context.device
+    if rank is not None and device != "cpu":
+        # the task sees the group's devices as the trial task does: a lent tensor's IPC
+        # handle names its device by the trial task's index
+        device = f"cuda:{rank}"
+        torch.cuda.set_device(device)
+    target = DeviceTarget.current(device)
     try:
         if not target.is_complete:
-            detail = f"{context.device}: unknown arch or hardware ({target})"
+            detail = f"{device}: unknown arch or hardware ({target})"
             raise StepFailed(FindingCode.PLATFORM_FAILURE, detail)
         if not DeviceTarget.matches_target(target, schema.kernel.targets):
             detail = f"{target} matches no target of kernel.targets"
@@ -143,7 +170,22 @@ def run_candidate(
             raise StepFailed(FindingCode.NO_MATCHING_TOOLCHAIN, detail)
         with StepFailed.failing_as(FindingCode.PLATFORM_FAILURE, "compile tripwire: "):
             tripwire = _CompileTripwire.resolve()
-        run = CandidateRun(context.device, tripwire, _measure.bind_clock())
+        group = None
+        if rank is not None:
+            import torch.distributed as dist
+
+            with StepFailed.failing_as(FindingCode.PLATFORM_FAILURE, "group: "):
+                dist.init_process_group(
+                    "cpu:gloo,cuda:nccl",
+                    init_method=f"file://{rendezvous}",
+                    rank=rank,
+                    world_size=requests[0].n_ranks,
+                    device_id=None if device == "cpu" else torch.device(device),
+                )
+                group = dist.group.WORLD
+                if (group_init := requests[0].contract.group_init()) is not None:
+                    group_init()
+        run = CandidateRun(device, tripwire, _measure.bind_clock(group), rank or 0)
         flush_l2_cache()
         run.clock.synchronize()
         for request in requests:
@@ -154,6 +196,8 @@ def run_candidate(
                     except NotImplementedError as e:
                         raise StepFailed(FindingCode.BASELINE_FAILED, _BASELINE_FAILED_DETAIL) from e
             except StepFailed as e:
+                if rank is not None:
+                    raise StepFailed(e.code, f"{request.axes_text}: {e}") from e
                 stopped[request.axes_text] = Finding.unlocated(e.code, str(e))
         run.clock.synchronize()
         live = [r for r in requests if r.axes_text not in stopped]
@@ -191,9 +235,12 @@ def run_candidate(
                     request, dispatcher, incumbent_dispatchers.get(axes_text), outputs[axes_text], filled
                 )
             except StepFailed as e:
-                stopped[axes_text] = Finding.unlocated(e.code, str(e))
+                if rank is not None:
+                    batch_findings = (Finding.unlocated(e.code, f"{axes_text}: {e}"),)
+                else:
+                    stopped[axes_text] = Finding.unlocated(e.code, str(e))
         output_keys[axes_text] = tuple(filled)
-    if context.device != "cpu":
+    if device != "cpu":
         torch.cuda.synchronize()  # the lent tensors are filled before the result says so
     workload_results = [
         CandidateWorkloadResult(
@@ -258,11 +305,14 @@ class CandidateRun:
     device: str
     tripwire: _CompileTripwire
     clock: _measure.Clock
+    # the rank whose inputs the run draws, 0 alone
+    rank: int
 
-    def __init__(self, device: str, tripwire: _CompileTripwire, clock: _measure.Clock) -> None:
+    def __init__(self, device: str, tripwire: _CompileTripwire, clock: _measure.Clock, rank: int = 0) -> None:
         self.device = device
         self.tripwire = tripwire
         self.clock = clock
+        self.rank = rank
 
     def run_baseline(self, request: TrialRequest) -> None:
         baseline = request.contract.baseline()
@@ -272,9 +322,9 @@ class CandidateRun:
         if request.has_workload_set:
             workload_step = next(s for s in request.steps if s.input_set == "workload")
             with contextlib.suppress(ValueError):
-                row_major_args = request.compose_inputs(workload_step, self.device)
+                row_major_args = request.compose_inputs(workload_step, self.device, self.rank)
         if row_major_args is None:
-            row_major_args = request.compose_inputs(None, self.device)
+            row_major_args = request.compose_inputs(None, self.device, self.rank)
         baseline(**request.assemble_call(row_major_args, self.device))
 
     def make_warmed_dispatcher(
@@ -311,7 +361,7 @@ class CandidateRun:
             steps = [None, *[s for s in request.steps if s.input_set == "workload"]]
             for step in steps:
                 try:
-                    row_major_args = request.compose_inputs(step, self.device)
+                    row_major_args = request.compose_inputs(step, self.device, self.rank)
                 except ValueError:  # as in produce_outputs: the step is skipped
                     if step is None:
                         raise
@@ -351,7 +401,7 @@ class CandidateRun:
                 lent,
                 filled,
             )
-        call = request.assemble_call(request.compose_inputs(None, self.device), self.device)
+        call = request.assemble_call(request.compose_inputs(None, self.device, self.rank), self.device)
         allocated = dict.fromkeys(contract.allocated_outputs)
         # a new dict per call: the dispatcher allocates into the one it gets
         fns = {"candidate": lambda: dispatcher.dispatch(call | allocated)}
@@ -412,7 +462,9 @@ class CandidateRun:
         for step in steps:
             label = step.label
             try:
-                values = request.assemble_call(request.compose_inputs(step, self.device), self.device)
+                values = request.assemble_call(
+                    request.compose_inputs(step, self.device, self.rank), self.device
+                )
             except ValueError:
                 if step.input_set != "workload":
                     raise

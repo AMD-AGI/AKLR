@@ -28,7 +28,7 @@ class ExecutionResource(Protocol):
     """Resource shape consumed by schedulers and runners."""
 
     resource_id: str
-    device: str
+    devices: tuple[str, ...]
     capabilities: ResourceCapabilities
     state: ResourceState
 
@@ -36,14 +36,14 @@ class ExecutionResource(Protocol):
 @dataclass
 class AcceleratorResource:
     resource_id: str
-    device: str
+    devices: tuple[str, ...]
     capabilities: ResourceCapabilities
     state: ResourceState = ResourceState.AVAILABLE
 
     def snapshot(self) -> ResourceSnapshot:
         return ResourceSnapshot(
             resource_id=self.resource_id,
-            device=self.device,
+            devices=self.devices,
             capabilities=self.capabilities,
             state=self.state,
         )
@@ -82,20 +82,27 @@ class ResourceCatalog(ABC):
 
 
 class LocalAcceleratorCatalog(ResourceCatalog):
-    """Thread-safe catalog of the devices of this host the caller names."""
+    """Thread-safe catalog of the devices of this host the caller names, leased
+    ``devices_per_resource`` at a time (the devices left over are unused)."""
 
-    def __init__(self, devices: Sequence[str]) -> None:
+    def __init__(self, devices: Sequence[str], devices_per_resource: int = 1) -> None:
         if not devices:
             raise ValueError("no device to run on")
         if invalid := [d for d in devices if not re.fullmatch(r"cpu|cuda:\d+", d)]:
             raise ValueError(f"not 'cpu' or 'cuda:<n>': {invalid}")
+        if not 1 <= devices_per_resource <= len(devices):
+            raise ValueError(f"{devices_per_resource} devices a resource, of {len(devices)}")
+        groups = [
+            tuple(devices[i : i + devices_per_resource])
+            for i in range(0, len(devices) - devices_per_resource + 1, devices_per_resource)
+        ]
         self._resources: dict[str, AcceleratorResource] = {
-            f"{index}:{device}": AcceleratorResource(
-                resource_id=f"{index}:{device}",
-                device=device,
-                capabilities=ResourceCapabilities(backend=device.partition(":")[0]),
+            f"{index}:{'+'.join(group)}": AcceleratorResource(
+                resource_id=f"{index}:{'+'.join(group)}",
+                devices=group,
+                capabilities=ResourceCapabilities(backend=group[0].partition(":")[0]),
             )
-            for index, device in enumerate(devices)
+            for index, group in enumerate(groups)
         }
         self._lease_id_by_resource: dict[str, str] = {}
         self._lock = threading.Lock()

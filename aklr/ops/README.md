@@ -13,8 +13,15 @@ aklr/ops/
     reference.py               one <contract>_reference per contract
     api.py                     one @api function per contract
     baseline.py                one <contract>_baseline per contract that has a baseline
+    group.py                   one <contract>_group_init per ranks contract that needs a set-up
     impls/<language>/<name>/<uuid>.json        one kernel and the workloads it serves
 ```
+
+- A contract with `ranks` (the attr holding the group size, e.g. `ep_size`) is called by every rank of its group
+  at once. The bench runs a process a rank, one device each, in one `torch.distributed` group; each rank draws its
+  own inputs. Its reference is `<contract>_reference(point, group_args, rank, decode)`, `group_args` every
+  rank's inputs in rank order, each on its rank's device (`cuda:<rank>`), and `group.py`'s `<contract>_group_init()`, if any, sets up on each rank what the
+  calls take for granted (as an engine does before the first, e.g. mori shmem).
 
 - `<language>` equals the schema's `kernel.language` (`flydsl`, `hip` or `triton`, `Language` in
   `aklr/core/contract/spec/_kernel.py`). `impls/` is not a Python package: it holds language directories, they hold

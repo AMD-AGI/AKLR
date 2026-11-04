@@ -70,7 +70,7 @@ def op_package_of(op_type: str) -> str:
 
 
 def op_module(op_package: str, submodule: str) -> ModuleType:
-    """``<op_package>.<submodule>``; ``submodule`` is contract, api, reference or baseline."""
+    """``<op_package>.<submodule>``; ``submodule`` is contract, api, reference, baseline or group."""
     return importlib.import_module(f"{op_package}.{submodule}")
 
 
