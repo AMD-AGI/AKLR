@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 _Dims = tuple[int | str, ...]  # a shape whose dims are ints or expression texts
 _BFLOAT16_DIGITS = 8  # bfloat16's significant bits
+_BFLOAT16_MIN_EXPONENT = -133  # its smallest subnormal's, 2**-133
 
 
 class DType(str, Enum):
@@ -129,12 +130,15 @@ def _decoded(tensor: Tensor, dtype: str, float_dtype: torch.dtype) -> Tensor:
 
 def rounded_to_bfloat16(x: Tensor) -> Tensor:
     """``x`` at its nearest bfloat16, ties to even, in its own dtype: rounded once, where
-    torch's float64 to bfloat16 cast rounds to float32 first."""
+    torch's float64 to bfloat16 cast rounds to float32 first; past bfloat16's range, infinity."""
     import torch
 
     mantissa, exponent = torch.frexp(x)
-    digits = torch.full_like(exponent, _BFLOAT16_DIGITS)
-    return torch.ldexp(torch.round(torch.ldexp(mantissa, digits)), exponent - digits)
+    # fewer digits below the smallest normal: subnormals keep the spacing 2**-133
+    digits = (exponent - _BFLOAT16_MIN_EXPONENT).clamp(max=_BFLOAT16_DIGITS)
+    rounded = torch.ldexp(torch.round(torch.ldexp(mantissa, digits)), exponent - digits)
+    largest = DTYPE_TRAITS["bfloat16"].largest_finite_value
+    return rounded.where(rounded.abs() <= largest, rounded.sign() * math.inf)
 
 
 def from_float64(float64_tensor: Tensor, dtype: str) -> Tensor:

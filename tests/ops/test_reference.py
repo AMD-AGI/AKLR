@@ -106,3 +106,49 @@ def test_rms_norm_reference_holds_large_finite_inputs() -> None:
         "epsilon": 1e-6,
     }
     torch.testing.assert_close(rms_norm_reference(point, args, semantics.to_float32), torch.ones(1, 8))
+
+
+def test_add_rms_norm_reference_holds_a_sum_past_float32() -> None:
+    """bfloat16 x = residual = 2**127: the exact sum 2**128 is past float32's range, its
+    normalized row still 1."""
+    from aklr.ops.rms_norm.reference import add_rms_norm_reference
+
+    point = SimpleNamespace(dtypes={"x": "bfloat16", "residual": "bfloat16", "weight": "bfloat16"})
+    x = torch.full((1, 8), 2.0**127, dtype=torch.bfloat16)
+    args = {"x": x, "residual": x, "weight": torch.ones(8, dtype=torch.bfloat16), "epsilon": 1e-6}
+    normalized, total = add_rms_norm_reference(point, args, semantics.to_float32)
+    torch.testing.assert_close(normalized, torch.ones(1, 8, dtype=normalized.dtype))
+    assert total.tolist() == [[2.0**128] * 8]
+
+
+@pytest.mark.parametrize("fused", [False, True], ids=["pre", "fused_post_pre"])
+def test_mhc_pre_normalizes_large_finite_residuals(fused: bool) -> None:
+    """Residual streams of bfloat16 2**64, a zero projection: both mean squares are past
+    float32's range, the normalized layer input is still 1."""
+    from aklr.ops.mhc.reference import mhc_fused_post_pre_reference, mhc_pre_reference
+
+    tokens, streams, hidden = 1, 2, 4
+    mixes = 2 * streams + streams * streams
+    args = {
+        "residual": torch.full((tokens, streams, hidden), 2.0**64, dtype=torch.bfloat16),
+        "x": torch.zeros(tokens, hidden, dtype=torch.bfloat16),
+        "post_mix": torch.zeros(tokens, streams),
+        "comb_mix": torch.eye(streams).expand(tokens, streams, streams).contiguous(),
+        "proj_weight": torch.zeros(mixes, streams * hidden),
+        "mix_scale": torch.ones(3),
+        "mix_bias": torch.zeros(mixes),
+        "norm_weight": torch.ones(hidden, dtype=torch.bfloat16),
+        "rms_eps": 1e-6,
+        "pre_eps": 0.0,
+        "post_multiplier": 2.0,
+        "sinkhorn_eps": 1e-6,
+        "sinkhorn_iters": 2,
+        "norm_eps": 1e-6,
+    }
+    point = SimpleNamespace(
+        dtypes={k: str(v.dtype).removeprefix("torch.") for k, v in args.items() if torch.is_tensor(v)},
+        attrs={"has_norm_weight": True},
+    )
+    reference = mhc_fused_post_pre_reference if fused else mhc_pre_reference
+    layer_input = reference(point, args, semantics.to_float32)[2]
+    torch.testing.assert_close(layer_input, torch.ones(tokens, hidden, dtype=layer_input.dtype))

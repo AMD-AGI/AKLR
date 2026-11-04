@@ -119,10 +119,11 @@ class TimingRecord(FrozenModel):
 
     @property
     def speedup_bounds(self) -> tuple[float, float]:
-        """The lower and upper bounds of the mean ratio over the unclamped rounds: the published
-        speedup's, which a 3x kernel must not lose to the clamp."""
+        """The lower and upper bounds of the mean ratio over the unclamped rounds, which a 3x
+        kernel must not lose to the clamp, as published: to 3 decimals, floored at 0.001."""
         raw = [math.log(v / c) for v, c in zip(self.versus_milliseconds, self.candidate_milliseconds)]
-        return _ratio_bounds(raw, alpha=LOOK_ALPHA)
+        lower, upper = _ratio_bounds(raw, alpha=LOOK_ALPHA)
+        return max(round(lower, 3), 0.001), max(round(upper, 3), 0.001)
 
     def is_decided(self, min_speedup: float) -> bool:
         """Whether the bounds settle every verdict the record feeds, each threshold under the

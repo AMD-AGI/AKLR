@@ -90,7 +90,7 @@ class WorkloadRecord(FrozenModel):
         baselines = [t for t in self.timings if t.versus == "baseline"]
         if {t.mode for t in baselines} != {"graph"}:
             return None
-        return max(round(min(t.speedup_bounds[0] for t in baselines), 3), 0.001)
+        return min(t.speedup_bounds[0] for t in baselines)
 
     def table_row(self, verdict: str) -> tuple[str, ...]:
         ratios = {f"{t.mode}/{t.versus}": f"{t.ratio_lower_bound:.4f}" for t in self.timings}

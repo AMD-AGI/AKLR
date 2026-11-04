@@ -619,6 +619,22 @@ class TestSpeedupMeasures:
         assert records == ()
         assert finding is not None and finding.code is FindingCode.CANDIDATE_CRASH
 
+    def test_min_speedup_is_decided_on_the_published_speedup(self) -> None:
+        """Raw bounds about 1.0292 and 1.0298 both under 1.03 publish as 1.029 and 1.030:
+        whether dispatch serves the workload at 1.03 is still open."""
+        rounds = [
+            RoundTimes(
+                mode="graph",
+                round_index=i,
+                order=("baseline", "candidate"),
+                milliseconds={"baseline": 1.029 if i % 2 else 1.030, "candidate": 1.0},
+            )
+            for i in range(16)
+        ]
+        record = timing_records(rounds, {"baseline": "entry"})[0]
+        assert record.speedup_bounds == (1.029, 1.030)
+        assert not record.is_decided(1.03)
+
     def test_speedup_is_the_graph_bound(self) -> None:
         """Graph 1.5 vs the baseline: 1.5."""
         record = _workload({"m": 1}, 1.5)

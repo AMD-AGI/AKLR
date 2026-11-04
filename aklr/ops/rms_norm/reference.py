@@ -19,7 +19,8 @@ def add_rms_norm_reference(
 ) -> tuple[Tensor, Tensor]:
     """(normalized, residual_out) from the exact sum x + residual."""
     args, dtypes = row_major_args, point.dtypes
-    total = decode(args["x"], dtypes["x"]) + decode(args["residual"], dtypes["residual"])
+    # in float64: a float32 sum overflows on large finite bf16 inputs
+    total = decode(args["x"], dtypes["x"]).double() + decode(args["residual"], dtypes["residual"]).double()
     return _normalized(total, decode(args["weight"], dtypes["weight"]), args["epsilon"]), total
 
 

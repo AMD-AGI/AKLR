@@ -36,7 +36,9 @@ def _pre(
     n_tokens, streams, _ = residual.shape
     flat = residual.flatten(1)
     proj_weight = _decoded(point, row_major_args, "proj_weight", decode)
-    rms = torch.rsqrt(flat.square().mean(dim=-1, keepdim=True) + row_major_args["rms_eps"])
+    # the mean squares in float64: a float32 square overflows on large finite bf16 inputs
+    rms = torch.rsqrt(flat.double().square().mean(dim=-1, keepdim=True) + row_major_args["rms_eps"])
+    rms = rms.to(flat.dtype)
     mixes = (flat @ proj_weight.mT) * rms
     mix_scale = _decoded(point, row_major_args, "mix_scale", decode)
     mix_bias = _decoded(point, row_major_args, "mix_bias", decode)
@@ -57,7 +59,8 @@ def _pre(
     layer_input = (residual * pre_mix.unsqueeze(-1)).sum(dim=1)
     if point.attrs["has_norm_weight"]:
         norm_weight = _decoded(point, row_major_args, "norm_weight", decode)
-        rms = torch.rsqrt(layer_input.square().mean(dim=-1, keepdim=True) + row_major_args["norm_eps"])
+        mean_square = layer_input.double().square().mean(dim=-1, keepdim=True)
+        rms = torch.rsqrt(mean_square + row_major_args["norm_eps"]).to(layer_input.dtype)
         layer_input = layer_input * rms * norm_weight
     return post_mix.unsqueeze(-1), comb_mix, layer_input
 
