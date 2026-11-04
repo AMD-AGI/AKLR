@@ -13,6 +13,8 @@ if TYPE_CHECKING:
     from torch import Tensor
 
 _Dims = tuple[int | str, ...]  # a shape whose dims are ints or expression texts
+_BFLOAT16_DIGITS = 8  # bfloat16's significant bits
+_BFLOAT16_MIN_EXPONENT = -133  # its smallest subnormal's, 2**-133
 
 
 class DType(str, Enum):
@@ -92,13 +94,27 @@ def to_float64(tensor: Tensor, dtype: str) -> Tensor:
     last dim."""
     import torch
 
+    return _decoded(tensor, dtype, torch.float64)
+
+
+def to_float32(tensor: Tensor, dtype: str) -> Tensor:
+    """``to_float64``'s values in float32, which holds every dtype's exactly but an int's
+    past 2**24 and a float64's."""
+    import torch
+
+    return _decoded(tensor, dtype, torch.float32)
+
+
+def _decoded(tensor: Tensor, dtype: str, float_dtype: torch.dtype) -> Tensor:
+    import torch
+
     match DTYPE_TRAITS[DType(dtype)].decoding:
         case {"kind": "cast"}:
-            return tensor.double()
+            return tensor.to(float_dtype)
         case {"kind": "nibble_table", "decoded_values": decoded_values}:
             # two 4-bit codes per byte, low nibble first
             codes = tensor.view(torch.uint8).long()
-            table = torch.tensor(decoded_values, dtype=torch.float64, device=tensor.device)
+            table = torch.tensor(decoded_values, dtype=float_dtype, device=tensor.device)
             return table[torch.stack((codes & 0xF, codes >> 4), dim=-1).flatten(-2)]
         case {
             "kind": "power_of_two",
@@ -106,26 +122,39 @@ def to_float64(tensor: Tensor, dtype: str) -> Tensor:
             "nan_code": nan_code,
         }:
             codes = tensor.view(torch.uint8)
-            decoded = torch.exp2(codes.double() - exponent_bias)
+            decoded = torch.exp2(codes.to(float_dtype) - exponent_bias)
             return decoded.masked_fill(codes == nan_code, math.nan)
         case _:
             raise ValueError(f"no decoding rule for {dtype}")
 
 
+def rounded_to_bfloat16(x: Tensor) -> Tensor:
+    """``x`` at its nearest bfloat16, ties to even, in its own dtype: rounded once, where
+    torch's float64 to bfloat16 cast rounds to float32 first; past bfloat16's range, infinity."""
+    import torch
+
+    mantissa, exponent = torch.frexp(x)
+    # fewer digits below the smallest normal: subnormals keep the spacing 2**-133
+    digits = (exponent - _BFLOAT16_MIN_EXPONENT).clamp(max=_BFLOAT16_DIGITS)
+    rounded = torch.ldexp(torch.round(torch.ldexp(mantissa, digits)), exponent - digits)
+    largest = DTYPE_TRAITS["bfloat16"].largest_finite_value
+    return rounded.where(rounded.abs() <= largest, rounded.sign() * math.inf)
+
+
 def from_float64(float64_tensor: Tensor, dtype: str) -> Tensor:
-    """The inverse of ``to_float64`` for a CPU logical-shape tensor, in the primary
-    storage dtype (-0 may become +0); a value ``dtype`` cannot hold exactly (NaN
+    """The inverse of ``to_float64`` for a logical-shape tensor, in the primary storage
+    dtype on its device (-0 may become +0); a value ``dtype`` cannot hold exactly (NaN
     included) raises ``ValueError``."""
     import torch
 
     decoding = DTYPE_TRAITS[DType(dtype)].decoding  # an unknown name: ValueError
     shape = dtype_storage_shape(dtype, float64_tensor.shape)
-    stored = torch.empty(shape, dtype=torch_dtypes(dtype)[0])
+    stored = torch.empty(shape, dtype=torch_dtypes(dtype)[0], device=float64_tensor.device)
     match decoding:
         case {"kind": "cast"}:
             stored.copy_(float64_tensor)
         case {"kind": "nibble_table", "decoded_values": decoded_values}:
-            table = torch.tensor(decoded_values, dtype=torch.float64)
+            table = torch.tensor(decoded_values, dtype=torch.float64, device=float64_tensor.device)
             nibbles = (float64_tensor.unsqueeze(-1) == table).byte().argmax(-1).byte()
             stored.view(torch.uint8).copy_(nibbles[..., 0::2] | nibbles[..., 1::2] << 4)
         case {"kind": "power_of_two", "exponent_bias": exponent_bias}:

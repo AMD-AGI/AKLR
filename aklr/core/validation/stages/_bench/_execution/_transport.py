@@ -55,6 +55,14 @@ class RunnerFailed:
 
 
 @dataclass(frozen=True)
+class TaskStarted:
+    """The command received, before the task's code runs: a ``RunnerFailed`` after it is the task's."""
+
+    runner_id: str
+    task_id: str
+
+
+@dataclass(frozen=True)
 class TaskCompleted:
     runner_id: str
     task_id: str
@@ -75,7 +83,7 @@ class RunnerExited:
     exit_code: int | None
 
 
-RunnerEvent = RunnerStarted | RunnerFailed | TaskCompleted | TaskFailed | RunnerExited
+RunnerEvent = RunnerStarted | RunnerFailed | TaskStarted | TaskCompleted | TaskFailed | RunnerExited
 
 
 class ChannelReceiveTimeout(TimeoutError):
@@ -107,7 +115,7 @@ class ChildRunnerEndpoint:
 
     def receive(self) -> RunnerCommand:
         try:
-            return self._command_queue.get()
+            return ForkingPickler.loads(self._command_queue.get())
         except Exception as error:
             raise ChannelFailure(f"could not receive runner command: {error}") from error
 
@@ -150,8 +158,8 @@ class MultiprocessingRunnerChannel(RunnerChannel):
         if self._is_closed:
             raise ChannelFailure("runner channel is closed")
         try:
-            ForkingPickler.dumps(command)
-            self._command_queue.put(command)
+            # pickled once: each pickling of a CUDA tensor is an IPC share its receiver releases
+            self._command_queue.put(bytes(ForkingPickler.dumps(command)))
         except Exception as error:
             raise ChannelFailure(f"could not send runner command: {error}") from error
 
@@ -173,6 +181,7 @@ class MultiprocessingRunnerChannel(RunnerChannel):
                     for known_type in (
                         RunnerStarted,
                         RunnerFailed,
+                        TaskStarted,
                         TaskCompleted,
                         TaskFailed,
                         RunnerExited,

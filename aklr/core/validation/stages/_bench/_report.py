@@ -14,7 +14,6 @@ from aklr.core.contract.spec import FrozenModel, axes_text
 from aklr.core.validation.stages._measure import (
     THRESHOLD_RATIOS,
     TimingRecord,
-    ratio_lower_bound,
 )
 from aklr.core.validation.stages._report._finding import Finding, FindingCode
 from aklr.core.validation.stages._report._markdown import (
@@ -91,13 +90,7 @@ class WorkloadRecord(FrozenModel):
         baselines = [t for t in self.timings if t.versus == "baseline"]
         if {t.mode for t in baselines} != {"graph"}:
             return None
-        lower_bounds = (
-            ratio_lower_bound(
-                [math.log(v / c) for v, c in zip(t.versus_milliseconds, t.candidate_milliseconds)]
-            )
-            for t in baselines
-        )
-        return max(round(min(lower_bounds), 3), 0.001)
+        return min(t.speedup_bounds[0] for t in baselines)
 
     def table_row(self, verdict: str) -> tuple[str, ...]:
         ratios = {f"{t.mode}/{t.versus}": f"{t.ratio_lower_bound:.4f}" for t in self.timings}

@@ -22,8 +22,9 @@ __all__ = [
     "MAX_REGRESS_FRACTION",
     "MEASUREMENT_PROFILE",
     "MIN_GAIN_FRACTION",
-    "N_ROUNDS",
+    "LOOK_ALPHA",
     "N_WARMUP_ROUNDS",
+    "ROUND_LOOKS",
     "THRESHOLD_RATIOS",
     "Clock",
     "Mode",
@@ -47,13 +48,18 @@ THRESHOLD_RATIOS: Mapping[Threshold, float] = MappingProxyType(
 )
 ALPHA = 0.05
 MAX_ABS_LOG_RATIO = math.log(2)
-N_ROUNDS = 32
+# the round counts at which the bounds are read; timing stops at the first that decides them all.
+# None at 8: eight rounds can all miss a slow mode a quarter of the rounds take, and the t bound
+# then passes a kernel slower than the threshold far more often than alpha
+ROUND_LOOKS = (16, 32)
+# alpha split evenly over the looks, so that stopping early keeps the false-pass rate within ALPHA
+LOOK_ALPHA = ALPHA / len(ROUND_LOOKS)
 N_WARMUP_ROUNDS = 1
 GRAPH_BUDGET_MILLISECONDS = 20.0
 
 MEASUREMENT_PROFILE: Mapping[str, Any] = MappingProxyType(
     {
-        "version": 17,
+        "version": 18,
         "timer": "bench_cudagraph",
         "sample_count_policy": "rep_ms_estimate_capped_by_kernel_record_budget",
         "estimation_samples": 5,
@@ -76,13 +82,16 @@ MEASUREMENT_PROFILE: Mapping[str, Any] = MappingProxyType(
         "replay_aggregation": "median",
         "graph_budget_milliseconds": GRAPH_BUDGET_MILLISECONDS,
         "round_order": "seeded_shuffle_per_round",
-        "rounds": N_ROUNDS,
+        "round_looks": ROUND_LOOKS,
+        "round_stop": "gate_baseline_entry_and_min_speedup_decided_at_a_look",
         "warmup_rounds": N_WARMUP_ROUNDS,
         "max_abs_log_ratio": MAX_ABS_LOG_RATIO,
-        "max_abs_log_ratio_scope": "gate_lower_bound_only",
+        "max_abs_log_ratio_scope": "gate_bounds_only",
         "trial_aggregation": "student_t_lower_bound_of_mean_log_ratio",
         "alpha": ALPHA,
-        "concurrent_timing": "one_task_per_device, reference_tasks_may_run_on_neighbors",
+        "alpha_per_look": LOOK_ALPHA,
+        "inputs_drawn_on": "task_device",
+        "concurrent_timing": "one_trial_task_per_device",
     }
 )
 
@@ -103,9 +112,28 @@ class TimingRecord(FrozenModel):
     n_rounds: int
     log_ratio_mean: float
     ratio_lower_bound: float
+    ratio_upper_bound: float
     min_ratio: float
     versus_milliseconds: tuple[float, ...]
     candidate_milliseconds: tuple[float, ...]
+
+    @property
+    def speedup_bounds(self) -> tuple[float, float]:
+        """The lower and upper bounds of the mean ratio over the unclamped rounds, which a 3x
+        kernel must not lose to the clamp, as published: to 3 decimals, floored at 0.001."""
+        raw = [math.log(v / c) for v, c in zip(self.versus_milliseconds, self.candidate_milliseconds)]
+        lower, upper = _ratio_bounds(raw, alpha=LOOK_ALPHA)
+        return max(round(lower, 3), 0.001), max(round(upper, 3), 0.001)
+
+    def is_decided(self, min_speedup: float) -> bool:
+        """Whether the bounds settle every verdict the record feeds, each threshold under the
+        lower bound or over the upper: the gate, and against the baseline whether the workload
+        qualifies (``entry``) and whether dispatch serves its published speedup (``min_speedup``)."""
+        bounds = (self.ratio_lower_bound, self.ratio_upper_bound)
+        settled = {(*bounds, THRESHOLD_RATIOS[self.threshold])}
+        if self.versus == "baseline":
+            settled |= {(*bounds, THRESHOLD_RATIOS["entry"]), (*self.speedup_bounds, min_speedup)}
+        return all(lower >= t or upper < t for lower, upper, t in settled)
 
 
 class RoundTimes(FrozenModel):
@@ -129,6 +157,13 @@ def ratio_lower_bound(log_ratios: Sequence[float], *, alpha: float = ALPHA) -> f
     t_quantile = math.sqrt(df * (1 - lo) / lo)
     half_width = t_quantile * statistics.stdev(log_ratios) / math.sqrt(n)
     return math.exp(statistics.fmean(log_ratios) - half_width)
+
+
+def _ratio_bounds(log_ratios: Sequence[float], *, alpha: float) -> tuple[float, float]:
+    """One-sided Student-t lower and upper bounds of the mean speedup ratio, each at ``alpha``."""
+    return ratio_lower_bound(log_ratios, alpha=alpha), 1 / ratio_lower_bound(
+        [-x for x in log_ratios], alpha=alpha
+    )
 
 
 def _beta_regularized(a: float, b: float, x: float) -> float:
@@ -169,8 +204,9 @@ def timing_records(
             if not all(map(math.isfinite, versus_milliseconds + candidate_milliseconds)):
                 raise ValueError(f"{mode} rounds with a non-finite time")
             raw = [math.log(v / c) for v, c in zip(versus_milliseconds, candidate_milliseconds)]
-            # clamped only for the gate's lower bound, against an outlier round
+            # clamped for the gate's bounds only, against an outlier round
             log_ratios = [min(max(x, -MAX_ABS_LOG_RATIO), MAX_ABS_LOG_RATIO) for x in raw]
+            lower, upper = _ratio_bounds(log_ratios, alpha=LOOK_ALPHA)
             records.append(
                 TimingRecord(
                     mode=mode,
@@ -178,7 +214,8 @@ def timing_records(
                     threshold=threshold,
                     n_rounds=len(log_ratios),
                     log_ratio_mean=statistics.fmean(raw),
-                    ratio_lower_bound=ratio_lower_bound(log_ratios),
+                    ratio_lower_bound=lower,
+                    ratio_upper_bound=upper,
                     min_ratio=math.exp(min(raw)),
                     versus_milliseconds=versus_milliseconds,
                     candidate_milliseconds=candidate_milliseconds,
@@ -233,8 +270,11 @@ class Clock(NamedTuple):
         fns: Mapping[Participant, Callable[[], object]],
         *,
         seed: int,
+        thresholds: Mapping[Versus, Threshold],
+        min_speedup: float,
     ) -> tuple[RoundTimes, ...]:
-        """Every recorded round, after one unrecorded warm-up profile."""
+        """The recorded rounds, after one unrecorded warm-up profile, up to the first of
+        ``ROUND_LOOKS`` at which every timing record of ``thresholds`` is decided."""
         participants = list(fns)
         rounds = []
         is_gc_enabled = gc.isenabled()
@@ -242,7 +282,7 @@ class Clock(NamedTuple):
         try:
             self.graph_reading(fns["baseline"])
             for mode in get_args(Mode):
-                for round_index in range(-N_WARMUP_ROUNDS, N_ROUNDS):
+                for round_index in range(-N_WARMUP_ROUNDS, ROUND_LOOKS[-1]):
                     order_seed = derive_seed(seed, "order", mode, round_index)
                     order = random.Random(order_seed).sample(participants, k=len(participants))
                     milliseconds = {}
@@ -257,6 +297,12 @@ class Clock(NamedTuple):
                                 milliseconds=milliseconds,
                             )
                         )
+                    if round_index + 1 in ROUND_LOOKS[:-1]:  # the last look ends the rounds anyway
+                        times = [ms for r in rounds for ms in r.milliseconds.values()]
+                        if not all(math.isfinite(ms) and ms > 0 for ms in times):
+                            break  # rounds unusable now stay so: compare_performance reports them
+                        if all(r.is_decided(min_speedup) for r in timing_records(rounds, thresholds)):
+                            break
         finally:
             if is_gc_enabled:
                 gc.enable()

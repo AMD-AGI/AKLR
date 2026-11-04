@@ -133,7 +133,7 @@ class RunnerSupervisor:
             failure = self._as_execution_error(error, RunnerStartupFailed, "could not start execution runner")
         else:
             # Running only once started: a task retried elsewhere is still pending.
-            if future.mark_running(directory):
+            if future.mark_running():
                 try:
                     result = runner.submit(task).result(timeout=task.timeout_seconds)
                     is_returned = True
@@ -180,12 +180,12 @@ class RunnerSupervisor:
                 # Publish release failures too.
                 failure = self._append_cleanup_failure(failure, "resource release failed", error)
 
+        # its log already read, a finished task's directory holds nothing anyone reads
+        if directory is not None:
+            shutil.rmtree(directory, ignore_errors=True)
         if failure is None and is_returned:
             future.publish_result(result)
             return
-        # a failed or cancelled task's directory goes now; a succeeded one's is the caller's
-        if directory is not None:
-            shutil.rmtree(directory, ignore_errors=True)
         if failure is None:
             return
         # E7: the resource left; the task tries once more elsewhere

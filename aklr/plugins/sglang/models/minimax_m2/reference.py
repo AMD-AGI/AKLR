@@ -25,7 +25,7 @@ _MXFP4_BLOCK = 32
 def _fp32(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> Callable[..., Tensor]:
     """Tensor argument ``name`` (its ``index`` only, if given) in fp32."""
 
@@ -33,7 +33,7 @@ def _fp32(
         tensor = row_major_args[name]
         if index is not None:
             tensor = tensor[index]
-        return to_float64(tensor, point.dtypes[name]).float()
+        return decode(tensor, point.dtypes[name]).float()
 
     return get
 
@@ -96,11 +96,11 @@ def _silu_and_mul(gate_up: Tensor) -> Tensor:
 def minimax_m2_fp8_moe_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """Each token's routed experts this rank holds, both linears of each an fp8 one
     (_fp8_linear), weighed by the renormalized scores and summed."""
-    f = _fp32(point, row_major_args, to_float64)
+    f = _fp32(point, row_major_args, decode)
     x = f("hidden_states")
     ids, weights = _routed(point, x, f("router_weight"), f("correction_bias"))
 
@@ -108,17 +108,17 @@ def minimax_m2_fp8_moe_reference(
         gate_up = _fp8_linear(rows, f("w1", e), f("w1_scale", e))
         return _fp8_linear(_silu_and_mul(gate_up), f("w2", e), f("w2_scale", e))
 
-    return _held_experts(point, row_major_args, x, ids, weights, mlp).double()
+    return _held_experts(point, row_major_args, x, ids, weights, mlp)
 
 
 def minimax_m2_mxfp4_moe_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """Each token's routed experts this rank holds, their MXFP4 weights dequantized per 32
     values, weighed by the renormalized scores and summed."""
-    f = _fp32(point, row_major_args, to_float64)
+    f = _fp32(point, row_major_args, decode)
     x = f("hidden_states")
     ids, weights = _routed(point, x, f("router_weight"), f("correction_bias"))
 
@@ -130,4 +130,4 @@ def minimax_m2_mxfp4_moe_reference(
         gate_up = rows @ weight("w1", e).T
         return _silu_and_mul(gate_up) @ weight("w2", e).T
 
-    return _held_experts(point, row_major_args, x, ids, weights, mlp).double()
+    return _held_experts(point, row_major_args, x, ids, weights, mlp)

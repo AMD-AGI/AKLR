@@ -6,7 +6,6 @@ from __future__ import annotations
 import itertools
 import json
 import logging
-import shutil
 from collections.abc import Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
@@ -20,16 +19,15 @@ from aklr.core.platform.env import RuntimeEnv
 from aklr.core.validation.stages import _measure
 from aklr.core.validation.stages._bench._evaluation import (
     CandidateResult,
-    ReferenceResult,
+    ReferenceWorkloadResult,
     TrialRequest,
-    run_candidate,
-    run_reference,
+    TrialResult,
+    run_trial,
 )
 from aklr.core.validation.stages._bench._execution import (
+    DEFAULT_STARTUP_TIMEOUT_SECONDS,
     ExecutionError,
     Executor,
-    TaskExecutionTimeout,
-    caused_by_the_task,
 )
 from aklr.core.validation.stages._bench._report import BenchReport, WorkloadRecord
 from aklr.core.validation.stages._measure import Threshold, Versus
@@ -42,8 +40,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "BUILD_TIMEOUT_SECONDS", "MAX_BATCH_OUTPUT_BYTES", "MAX_BATCH_WORKLOADS",
-    "REFERENCE_SECONDS_PER_OUTPUT_GIB", "WORKLOAD_TIMEOUT_SECONDS",
-    "BenchStage", "ReferenceNotProduced",
+    "EVALUATION_SECONDS_PER_OUTPUT_GIB", "WORKLOAD_TIMEOUT_SECONDS", "BenchStage",
 ]  # fmt: skip
 
 MAX_BATCH_OUTPUT_BYTES: Final = 16 << 30
@@ -51,18 +48,14 @@ MAX_BATCH_OUTPUT_BYTES: Final = 16 << 30
 MAX_BATCH_WORKLOADS: Final = 16
 BUILD_TIMEOUT_SECONDS: Final = 900.0
 WORKLOAD_TIMEOUT_SECONDS: Final = 300.0
-# the reference compares every stored output in float64 on the CPU, so its time grows with them: at m=342073,
-# gemm_n3072_k512's 23 GiB of outputs took about 420 s on a busy MI355X node
-REFERENCE_SECONDS_PER_OUTPUT_GIB: Final = 60.0
+# a trial's evaluation (references and compares) grows with the outputs: at m=342073, gemm_n3072_k512's
+# 23 GiB took about 420 s on a busy MI355X node compared in float64 on the CPU, far less on the GPU
+EVALUATION_SECONDS_PER_OUTPUT_GIB: Final = 60.0
 
 
-def _reference_timeout_seconds(requests: Sequence[TrialRequest]) -> float:
+def _evaluation_timeout_seconds(requests: Sequence[TrialRequest]) -> float:
     output_gib = sum(r.output_bytes for r in requests) / (1 << 30)
-    return WORKLOAD_TIMEOUT_SECONDS * len(requests) + REFERENCE_SECONDS_PER_OUTPUT_GIB * output_gib
-
-
-class ReferenceNotProduced(RuntimeError):
-    """The reference task failed or gave no result: the platform's fault, never the candidate's."""
+    return WORKLOAD_TIMEOUT_SECONDS * len(requests) + EVALUATION_SECONDS_PER_OUTPUT_GIB * output_gib
 
 
 class UnreadableIncumbent(RuntimeError):
@@ -71,7 +64,8 @@ class UnreadableIncumbent(RuntimeError):
 
 
 class BenchStage(PipelineStage[BenchReport]):
-    """Each schema's workloads in batches: a candidate task, then a reference task, per device."""
+    """Each schema's workloads in batches, a trial task per batch and device (``run_trial``):
+    the candidate in its child task, then the reference."""
 
     name = "bench"
     report_type = BenchReport
@@ -189,6 +183,7 @@ class BenchStage(PipelineStage[BenchReport]):
                 workload_json=workloads_json[workload_axes_text],
                 distributions=schema.distributions_at(point),
                 thresholds=thresholds,
+                min_speedup=min_speedup,
                 incumbent=incumbent,
                 # what users run today: the served base kernel, this one included
                 baseline=(incumbent_path if is_served else None) or defined_baseline,
@@ -273,73 +268,24 @@ class BenchStage(PipelineStage[BenchReport]):
         total: int,
     ) -> tuple[list[Finding], list[WorkloadRecord]]:
         failures: list[Finding] = []
-        directories: list[Path] = []
         candidate = reference = None
-        # a succeeded task's directory is the caller's to delete
-        is_succeeded = lambda f: f.done() and not f.cancelled() and f.exception() is None
+        candidate_timeout = BUILD_TIMEOUT_SECONDS + WORKLOAD_TIMEOUT_SECONDS * len(batch)
         try:
-            future = None
-            for attempt in range(2):
-                try:
-                    future = executor.submit(
-                        run_candidate,
-                        timeout_seconds=BUILD_TIMEOUT_SECONDS + WORKLOAD_TIMEOUT_SECONDS * len(batch),
-                        requests=batch,
-                    )
-                    candidate = CandidateResult.from_task(future.result(), [r.axes_text for r in batch])
-                except (ExecutionError, ValueError) as e:
-                    finding = self._build_failed_finding(e)
-                    # a tracer fault is the platform's: a fresh process measures again
-                    if (
-                        attempt == 0
-                        and finding.code == FindingCode.PLATFORM_FAILURE
-                        and _measure.is_tracer_fault(finding.detail)
-                    ):
-                        continue
-                    failures.append(finding)
-                finally:
-                    if future is not None and is_succeeded(future) and future.directory:
-                        directories.append(future.directory)
-                break
-            if candidate is not None and not candidate.findings:
-                declined = {
-                    r.axes_text
-                    for r in candidate.workload_results
-                    if any(f.code == FindingCode.BASELINE_FAILED for f in r.findings)
-                }
-                requests = tuple(r for r in batch if r.axes_text not in declined)
-                reference = ReferenceResult(workload_results=())
-                if requests:
-                    reference_future = None
-                    try:
-                        reference_future = executor.submit(
-                            run_reference,
-                            timeout_seconds=_reference_timeout_seconds(requests),
-                            requests=requests,
-                            candidate_dir=future.directory,
-                        )
-                        try:
-                            reference = ReferenceResult.from_task(
-                                reference_future.result(),
-                                [r.axes_text for r in requests],
-                            )
-                        except ExecutionError as e:
-                            raise ReferenceNotProduced(f"reference: {self._last_line(e)}") from e
-                        except ValueError as e:
-                            raise ReferenceNotProduced(str(e)) from e
-                    except (ExecutionError, ReferenceNotProduced) as e:
-                        reference = None
-                        failures.append(self._build_failed_finding(e))
-                    finally:
-                        if (
-                            reference_future is not None
-                            and is_succeeded(reference_future)
-                            and reference_future.directory
-                        ):
-                            directories.append(reference_future.directory)
-        finally:
-            for directory in directories:
-                shutil.rmtree(directory, ignore_errors=True)
+            future = executor.submit(
+                run_trial,
+                # the candidate twice (a tracer fault reruns it), each in a child it starts
+                timeout_seconds=2 * (DEFAULT_STARTUP_TIMEOUT_SECONDS + candidate_timeout)
+                + _evaluation_timeout_seconds(batch),
+                requests=batch,
+                candidate_timeout_seconds=candidate_timeout,
+                n_cpu_shares=len(self._devices),
+            )
+            trial = TrialResult.from_task(future.result())
+            candidate, reference = trial.candidate, trial.reference
+        except (ExecutionError, ValueError) as e:
+            # the candidate's failures are in the result: the trial's own are the platform's
+            detail = str(e).strip().split("\n")[-1]
+            failures.append(Finding.unlocated(FindingCode.PLATFORM_FAILURE, f"trial: {detail}"))
         findings, records = self._judged_findings(scope, batch, failures, candidate, reference)
         try:
             line = BenchReport.from_findings(findings, workload_records=tuple(records)).batch_line()
@@ -355,12 +301,12 @@ class BenchStage(PipelineStage[BenchReport]):
         batch: tuple[TrialRequest, ...],
         failures: Sequence[Finding],
         candidate: CandidateResult | None,
-        reference: ReferenceResult | None,
+        reference: Sequence[ReferenceWorkloadResult] | None,
     ) -> tuple[list[Finding], list[WorkloadRecord]]:
         batch_findings = [*failures, *(candidate.findings if candidate else ())]
         if not batch_findings:
             candidate_results = {r.axes_text: r for r in candidate.workload_results}
-            reference_results = {r.axes_text: r for r in reference.workload_results}
+            reference_results = {r.axes_text: r for r in reference}
         schema_path = scope.relative_path(Path(batch[0].schema_path))
         findings: list[Finding] = []
         records: list[WorkloadRecord] = []
@@ -401,22 +347,3 @@ class BenchStage(PipelineStage[BenchReport]):
                 )
             )
         return findings, records
-
-    def _build_failed_finding(self, error: BaseException) -> Finding:
-        detail = self._last_line(error)
-        if isinstance(error, TaskExecutionTimeout):
-            code = FindingCode.CANDIDATE_TIMEOUT
-        elif caused_by_the_task(error):
-            # a tracer fault crashes the timing by itself; only the last line is
-            # aklr's text, the log and traceback above it are the candidate's
-            is_tracer = ": timing: " in detail and _measure.is_tracer_fault(detail)
-            code = FindingCode.PLATFORM_FAILURE if is_tracer else FindingCode.CANDIDATE_CRASH
-        elif isinstance(error, ValueError):
-            code = FindingCode.CANDIDATE_CRASH
-        else:
-            code = FindingCode.PLATFORM_FAILURE
-        return Finding.unlocated(code, detail)
-
-    @staticmethod
-    def _last_line(error: BaseException) -> str:
-        return str(error).strip().split("\n")[-1]

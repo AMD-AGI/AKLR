@@ -14,11 +14,12 @@ from aklr.core.contract import semantics
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.spec import FrozenModel
 from aklr.core.validation.stages import _measure
-from aklr.core.validation.stages._bench._evaluation._safetensors import (
-    outputs_file_name,
+from aklr.core.validation.stages._bench._evaluation._request import Step, TrialRequest
+from aklr.core.validation.stages._bench._execution import (
+    ExecutionContext,
+    TaskExecutionTimeout,
+    caused_by_the_task,
 )
-from aklr.core.validation.stages._bench._evaluation._trials import Step, TrialRequest
-from aklr.core.validation.stages._bench._execution import ExecutionContext
 from aklr.core.validation.stages._report._finding import Finding, FindingCode
 
 if TYPE_CHECKING:
@@ -44,6 +45,14 @@ class CandidateWorkloadResult(FrozenModel):
     axes_text: str
     findings: tuple[Finding, ...]
     rounds: tuple[_measure.RoundTimes, ...]
+    # the lent tensors it filled (Step.output_key), in step order
+    output_keys: tuple[str, ...]
+
+    @property
+    def is_declined(self) -> bool:
+        """Whether the baseline declined the workload: its finding alone stands, nothing is
+        evaluated."""
+        return any(f.code == FindingCode.BASELINE_FAILED for f in self.findings)
 
 
 class CandidateResult(FrozenModel):
@@ -60,6 +69,24 @@ class CandidateResult(FrozenModel):
         if sorted(r.axes_text for r in result.workload_results) != sorted(axes_texts):
             raise ValueError(detail)
         return result
+
+    @classmethod
+    def of_failure(cls, error: BaseException) -> CandidateResult:
+        """The batch finding of a candidate task that gave no result: the last line of
+        ``error``, whose type says whether the candidate or the platform failed."""
+        detail = str(error).strip().split("\n")[-1]
+        if isinstance(error, TaskExecutionTimeout):
+            code = FindingCode.CANDIDATE_TIMEOUT
+        elif caused_by_the_task(error):
+            # a tracer fault crashes the timing by itself; only the last line is
+            # aklr's text, the log and traceback above it are the candidate's
+            is_tracer = ": timing: " in detail and _measure.is_tracer_fault(detail)
+            code = FindingCode.PLATFORM_FAILURE if is_tracer else FindingCode.CANDIDATE_CRASH
+        elif isinstance(error, ValueError):
+            code = FindingCode.CANDIDATE_CRASH
+        else:
+            code = FindingCode.PLATFORM_FAILURE
+        return cls(findings=(Finding.unlocated(code, detail),), workload_results=())
 
 
 class StepFailed(Exception):
@@ -82,10 +109,16 @@ class StepFailed(Exception):
             raise cls(ended_as, f"{description}{type(e).__name__}: {e}") from e
 
 
-def run_candidate(context: ExecutionContext, *, requests: Sequence[TrialRequest]) -> dict:
-    """Check and time the batch on ``context.device``; returns a ``CandidateResult`` json."""
+def run_candidate(
+    context: ExecutionContext,
+    *,
+    requests: Sequence[TrialRequest],
+    outputs: Mapping[str, Mapping[str, Tensor]],
+) -> dict:
+    """Check and time the batch on ``context.device``, each workload's outputs copied
+    into the tensors the trial task lent (``outputs[axes_text]``,
+    ``TrialRequest.empty_outputs``); returns a ``CandidateResult`` json."""
     import torch
-    from safetensors.torch import save_file
 
     from aklr.core.platform.device import DeviceTarget
     from aklr.core.platform.toolchain import unmet_requirement
@@ -148,23 +181,26 @@ def run_candidate(context: ExecutionContext, *, requests: Sequence[TrialRequest]
                     )
     except StepFailed as e:
         batch_findings = (Finding.unlocated(e.code, str(e)),)
+    output_keys: dict[str, tuple[str, ...]] = {}
     for request in requests:
         axes_text = request.axes_text
-        outputs: dict[str, Tensor] = {}
+        filled: list[str] = []
         if not batch_findings and axes_text not in stopped:
             try:
                 rounds[axes_text] = run.check_and_time(
-                    request, dispatcher, incumbent_dispatchers.get(axes_text), outputs
+                    request, dispatcher, incumbent_dispatchers.get(axes_text), outputs[axes_text], filled
                 )
             except StepFailed as e:
                 stopped[axes_text] = Finding.unlocated(e.code, str(e))
-        # with no tensor too: a missing file is always the candidate's fault
-        save_file(outputs, context.directory / outputs_file_name(axes_text))
+        output_keys[axes_text] = tuple(filled)
+    if context.device != "cpu":
+        torch.cuda.synchronize()  # the lent tensors are filled before the result says so
     workload_results = [
         CandidateWorkloadResult(
             axes_text=r.axes_text,
             findings=(stopped[r.axes_text],) if r.axes_text in stopped else (),
             rounds=rounds.get(r.axes_text, ()),
+            output_keys=output_keys[r.axes_text],
         )
         for r in requests
     ]
@@ -236,9 +272,9 @@ class CandidateRun:
         if request.has_workload_set:
             workload_step = next(s for s in request.steps if s.input_set == "workload")
             with contextlib.suppress(ValueError):
-                row_major_args = request.compose_inputs(workload_step)
+                row_major_args = request.compose_inputs(workload_step, self.device)
         if row_major_args is None:
-            row_major_args = request.compose_inputs(None)
+            row_major_args = request.compose_inputs(None, self.device)
         baseline(**request.assemble_call(row_major_args, self.device))
 
     def make_warmed_dispatcher(
@@ -275,7 +311,7 @@ class CandidateRun:
             steps = [None, *[s for s in request.steps if s.input_set == "workload"]]
             for step in steps:
                 try:
-                    row_major_args = request.compose_inputs(step)
+                    row_major_args = request.compose_inputs(step, self.device)
                 except ValueError:  # as in produce_outputs: the step is skipped
                     if step is None:
                         raise
@@ -299,7 +335,8 @@ class CandidateRun:
         request: TrialRequest,
         dispatcher: KernelDispatcher,
         incumbent_dispatcher: KernelDispatcher | None,
-        outputs: dict[str, Tensor],
+        lent: Mapping[str, Tensor],
+        filled: list[str],
     ) -> tuple[_measure.RoundTimes, ...]:
         """Run the workload's check steps, then its timing rounds; return the rounds."""
         from aklr.core.runtime.dispatch import FallbackReason
@@ -311,9 +348,10 @@ class CandidateRun:
                 request,
                 dispatcher,
                 [s for s in steps if s.check != "post_timing"],
-                outputs,
+                lent,
+                filled,
             )
-        call = request.assemble_call(request.compose_inputs(None), self.device)
+        call = request.assemble_call(request.compose_inputs(None, self.device), self.device)
         allocated = dict.fromkeys(contract.allocated_outputs)
         # a new dict per call: the dispatcher allocates into the one it gets
         fns = {"candidate": lambda: dispatcher.dispatch(call | allocated)}
@@ -334,7 +372,9 @@ class CandidateRun:
             if "baseline" in fns:  # none: the new case is its own baseline, untimed
                 root_hash = semantics.workload_hash(request.schema_json["name"], request.workload_json)
                 seed = semantics.derive_seed(root_hash, "timing")
-                rounds = self.clock.time_rounds(fns, seed=seed)
+                rounds = self.clock.time_rounds(
+                    fns, seed=seed, thresholds=request.thresholds, min_speedup=request.min_speedup
+                )
         except Exception as e:
             text = f"{where}: timing: {type(e).__name__}: {e}"
             raise RuntimeError(text) from e
@@ -343,7 +383,8 @@ class CandidateRun:
                 request,
                 dispatcher,
                 [s for s in steps if s.check == "post_timing"],
-                outputs,
+                lent,
+                filled,
                 timing_call=call,
             )
         return rounds
@@ -353,9 +394,12 @@ class CandidateRun:
         request: TrialRequest,
         dispatcher: KernelDispatcher,
         steps: Sequence[Step],
-        outputs: dict[str, Tensor],
+        lent: Mapping[str, Tensor],
+        filled: list[str],
         timing_call: Mapping[str, Any] | None = None,
     ) -> None:
+        """Run ``steps``, each step's mutable tensors copied into the lent tensors of its
+        ``Step.output_key`` as it ends, the key then appended to ``filled``."""
         import torch
 
         from aklr.core.runtime.dispatch import FallbackReason
@@ -368,7 +412,7 @@ class CandidateRun:
         for step in steps:
             label = step.label
             try:
-                values = request.assemble_call(request.compose_inputs(step), self.device)
+                values = request.assemble_call(request.compose_inputs(step, self.device), self.device)
             except ValueError:
                 if step.input_set != "workload":
                     raise
@@ -436,7 +480,15 @@ class CandidateRun:
                 detail = f"{label}: the call changed its inputs"
                 raise StepFailed(FindingCode.INPUT_MUTATION, detail)
             for o, out in contract.call_mutable_tensors(result, call).items():
-                outputs[step.output_key(o)] = out.to("cpu", copy=True).contiguous()
+                key = step.output_key(o)
+                # another storage dtype of the output holds the same bytes; copy_ would broadcast
+                is_same_width = out.element_size() == lent[key].element_size()
+                value = out.view(lent[key].dtype) if is_same_width else out
+                if value.shape != lent[key].shape or value.dtype != lent[key].dtype:
+                    detail = f"{label}: {o} is a {tuple(out.shape)} {out.dtype}, not the lent {tuple(lent[key].shape)} {lent[key].dtype}"
+                    raise StepFailed(FindingCode.CANDIDATE_CRASH, detail)
+                lent[key].copy_(value)
+                filled.append(key)
 
     @staticmethod
     @contextlib.contextmanager

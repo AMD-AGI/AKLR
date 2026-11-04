@@ -2,6 +2,7 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
 import io
+import itertools
 import json
 import math
 import re
@@ -12,7 +13,7 @@ from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -32,14 +33,18 @@ from aklr.core.validation.stages._audit._report import AuditReport
 from aklr.core.validation.stages._bench._evaluation import (
     CandidateResult,
     CandidateWorkloadResult,
-    ReferenceResult,
+    ReferenceWorkloadResult,
+    TrialResult,
+    run_trial,
 )
 from aklr.core.validation.stages._bench._execution import (
+    ExecutionContext,
     Executor,
     TaskExecutionFailed,
 )
 from aklr.core.validation.stages._bench._report import WorkloadRecord
 from aklr.core.validation.stages._measure import (
+    Clock,
     RoundTimes,
     TimingRecord,
     compare_performance,
@@ -92,6 +97,7 @@ def _timing(mode: str, versus: str, threshold: str, ratio: float) -> TimingRecor
         n_rounds=2,
         log_ratio_mean=math.log(ratio),
         ratio_lower_bound=ratio,
+        ratio_upper_bound=ratio,
         min_ratio=ratio,
         versus_milliseconds=(ratio, ratio),
         candidate_milliseconds=(1.0, 1.0),
@@ -126,27 +132,19 @@ def _workload(
 _TRACER_FAULT = "x: timing: Kineto recorded no kernels for a single call"
 
 
-def _reruns(*details: str) -> tuple[int, set[FindingCode]]:
-    """``_run_batch``'s candidate submits and finding codes, its candidate task failing
+def _reruns(tmp_path: Path, *details: str) -> tuple[int, set[FindingCode]]:
+    """``run_trial``'s candidate submits and finding codes, its candidate task failing
     with each of ``details`` in turn."""
     errors = iter(TaskExecutionFailed(d) for d in details)
-
-    def submit(*args: Any, **kwargs: Any) -> Mock:
-        error = next(errors)
-        return Mock(
-            done=lambda: True,
-            cancelled=lambda: False,
-            exception=lambda: error,
-            result=Mock(side_effect=error),
-            directory=None,
-        )
-
-    executor = Mock(submit=Mock(side_effect=submit))
+    executor = Mock(submit=Mock(side_effect=lambda *a, **k: Mock(result=Mock(side_effect=next(errors)))))
     scope = ValidationScope(Path.cwd(), "", "HEAD", (), ())
-    stage = BenchStage(["cpu"])
-    batch, *_ = stage._workloads_to_run(scope, Path(_SCHEMA), ContractRegistry.default())
-    findings, _ = stage._run_batch(scope, executor, batch, iter(range(1, 9)), 1)
-    return executor.submit.call_count, {f.code for f in findings}
+    batch, *_ = BenchStage(["cpu"])._workloads_to_run(scope, Path(_SCHEMA), ContractRegistry.default())
+    context = ExecutionContext(device="cpu", log_path=tmp_path / "log")
+    with patch.object(Executor, "for_devices", lambda devices, **kwargs: nullcontext(executor)):
+        value = run_trial(context, requests=batch, candidate_timeout_seconds=1.0, n_cpu_shares=1)
+    trial = TrialResult.from_task(value)
+    assert trial.reference is None
+    return executor.submit.call_count, {f.code for f in trial.candidate.findings}
 
 
 _NONE = ", findings: 0, 0:00:00"
@@ -486,7 +484,7 @@ class TestPipeline:
                         (
                             FindingCode.PLATFORM_FAILURE,
                             None,
-                            "reference: RunnerStartupFailed",
+                            "trial: RunnerStartupFailed",
                         )
                     ],
                     _workload({"m": 1}, 1.5),
@@ -517,12 +515,12 @@ class TestPipeline:
                 id="outcome",
             ),
             pytest.param(
-                lambda _: _reruns(_TRACER_FAULT, _TRACER_FAULT),
+                lambda tmp_path: _reruns(tmp_path, _TRACER_FAULT, _TRACER_FAULT),
                 (2, {FindingCode.PLATFORM_FAILURE}),
                 id="tracer-reruns-once",
             ),
             pytest.param(
-                lambda _: _reruns("boom"),
+                lambda tmp_path: _reruns(tmp_path, "boom"),
                 (1, {FindingCode.CANDIDATE_CRASH}),
                 id="crash-no-rerun",
             ),
@@ -541,6 +539,47 @@ class TestPipeline:
                 case(tmp_path)
         else:
             assert case(tmp_path) == expected
+
+
+class TestTimeRounds:
+    """``Clock.time_rounds`` stops at the first look that decides every bound."""
+
+    @pytest.mark.parametrize(
+        ("baseline_ms", "threshold", "min_speedup", "n_rounds"),
+        [
+            (2.0, "entry", 1.03, 16),
+            (1.02, "entry", 0, 32),
+            (1.02, "retain", 0, 32),
+            (1.045, "entry", 0, 16),
+            (1.045, "entry", 1.03, 32),
+        ],
+        ids=[
+            "clear-win-stops-at-16",
+            "at-the-threshold-runs-32",
+            "kept-at-the-entry-ratio-runs-32",
+            "qualified-stops-at-16",
+            "served-or-not-stays-open-runs-32",
+        ],
+    )
+    def test_stops_at_the_deciding_look(
+        self, baseline_ms: float, threshold: str, min_speedup: float, n_rounds: int
+    ) -> None:
+        """A 2x candidate is decided at the first look; one at the entry ratio never is, a
+        kept one's retain gate settled or not: whether it qualifies stays open. One that
+        qualifies early runs on while whether dispatch serves it at ``min_speedup`` is open."""
+        jitter = itertools.cycle([1.0, 1.01, 0.99, 1.02, 0.98])
+        fns = {"candidate": lambda: 1.0, "baseline": lambda: baseline_ms}
+        clock = Clock(synchronize=lambda: None, bench_cudagraph=lambda fn, rep: fn() * next(jitter))
+        rounds = clock.time_rounds(fns, seed=0, thresholds={"baseline": threshold}, min_speedup=min_speedup)
+        assert len(rounds) == n_rounds
+
+    def test_a_threshold_without_its_participant_is_raised(self) -> None:
+        """Only unusable times end the timing early; a threshold naming a participant that
+        was not timed is the bench's own error."""
+        fns = {"candidate": lambda: 1.0, "baseline": lambda: 2.0}
+        clock = Clock(synchronize=lambda: None, bench_cudagraph=lambda fn, rep: fn())
+        with pytest.raises(ValueError, match="without incumbent times"):
+            clock.time_rounds(fns, seed=0, thresholds={"incumbent": "retain"}, min_speedup=0)
 
 
 class TestSpeedupMeasures:
@@ -579,6 +618,22 @@ class TestSpeedupMeasures:
         records, finding = compare_performance(rounds, {"baseline": "entry"})
         assert records == ()
         assert finding is not None and finding.code is FindingCode.CANDIDATE_CRASH
+
+    def test_min_speedup_is_decided_on_the_published_speedup(self) -> None:
+        """Raw bounds about 1.0292 and 1.0298 both under 1.03 publish as 1.029 and 1.030:
+        whether dispatch serves the workload at 1.03 is still open."""
+        rounds = [
+            RoundTimes(
+                mode="graph",
+                round_index=i,
+                order=("baseline", "candidate"),
+                milliseconds={"baseline": 1.029 if i % 2 else 1.030, "candidate": 1.0},
+            )
+            for i in range(16)
+        ]
+        record = timing_records(rounds, {"baseline": "entry"})[0]
+        assert record.speedup_bounds == (1.029, 1.030)
+        assert not record.is_decided(1.03)
 
     def test_speedup_is_the_graph_bound(self) -> None:
         """Graph 1.5 vs the baseline: 1.5."""
@@ -782,14 +837,12 @@ class TestBaseline:
                     axes_text=r.axes_text,
                     findings=() if r.axes_text == self._B else (crash,),
                     rounds=(timed,) if r.axes_text == self._B else (),
+                    output_keys=(),
                 )
                 for r in requests.values()
             ),
         )
-        reference = ReferenceResult(workload_results=())
-        _, records = BenchStage(["cpu"])._judged_findings(
-            scope, tuple(requests.values()), [], candidate, reference
-        )
+        _, records = BenchStage(["cpu"])._judged_findings(scope, tuple(requests.values()), [], candidate, ())
         baselines = {axes_text(r.axes): r.baseline for r in records}
         assert baselines.pop(self._A) == _SCHEMA
         assert baselines.pop(self._B) == requests[self._B].baseline is not None
@@ -923,7 +976,7 @@ def test_post_timing_exposes_stale_weight_cache(monkeypatch: pytest.MonkeyPatch,
     from tests.op_case import OpCase
 
     request = OpCase.of("gemm@1.0").request
-    timing_call = request.assemble_call(request.compose_inputs(None), "cpu")
+    timing_call = request.assemble_call(request.compose_inputs(None, "cpu"), "cpu")
     weight = timing_call["b"]
     pointer, version = weight.data_ptr(), weight._version
     cache = {(pointer, version if cache_key == "version" else 0): weight.clone()}
@@ -951,19 +1004,20 @@ def test_post_timing_exposes_stale_weight_cache(monkeypatch: pytest.MonkeyPatch,
     dispatcher = Mock(dispatch=Mock(side_effect=dispatch))
     tripwire = Mock(armed=lambda: nullcontext([]))
     steps = [s for s in request.steps if s.check == "post_timing"]
-    outputs = {}
+    outputs, filled = request.empty_outputs("cpu"), []
     CandidateRun("cpu", tripwire, None).produce_outputs(
-        request, dispatcher, steps, outputs, timing_call=timing_call
+        request, dispatcher, steps, outputs, filled, timing_call=timing_call
     )
 
     assert weight.data_ptr() == pointer and weight._version == version
     assert len(steps) == graph.replay.call_count == 4
     assert capture.call_count == dispatcher.dispatch.call_count == 3
     for step in steps:
-        values = request.compose_inputs(step)
+        values = request.compose_inputs(step, "cpu")
         expected = values["a"] @ values["b"].mT
         assert torch.equal(outputs[step.output_key("out")], expected) == (cache_key == "none")
         assert step.mismatch_code is FindingCode.POST_TIMING_MISMATCH
+    assert filled == [step.output_key("out") for step in steps]
 
 
 def test_a_call_writing_its_input_is_input_mutation(
@@ -998,7 +1052,7 @@ def test_a_call_writing_its_input_is_input_mutation(
     tripwire = Mock(armed=lambda: nullcontext([]))
     step = next(s for s in request.steps if s.buffer_source == "new")
     with pytest.raises(StepFailed) as failed:
-        CandidateRun("cpu", tripwire, None).produce_outputs(request, dispatcher, [step], {})
+        CandidateRun("cpu", tripwire, None).produce_outputs(request, dispatcher, [step], {}, [])
     assert failed.value.code is FindingCode.INPUT_MUTATION
 
 
@@ -1038,6 +1092,94 @@ def test_warm_up_covers_the_workload_scalars(monkeypatch: pytest.MonkeyPatch) ->
     assert sorted(seen) == [1.0, 2.0]
 
 
+@pytest.mark.parametrize(
+    ("evaluated", "is_whole"),
+    [(("m=1",), True), ((), False), (("m=1", "m=1"), False), (("m=1", "m=2"), False)],
+    ids=["exact", "missing", "twice", "declined"],
+)
+def test_the_trial_evaluates_each_workload_its_baseline_did_not_decline(
+    evaluated: tuple[str, ...], is_whole: bool
+) -> None:
+    """A trial's result is the batch's only with each workload the baseline did not
+    decline evaluated once, and no other."""
+    declined = (Finding.unlocated(FindingCode.BASELINE_FAILED, ""),)
+    candidate = CandidateResult(
+        findings=(),
+        workload_results=tuple(
+            CandidateWorkloadResult(axes_text=a, findings=f, rounds=(), output_keys=())
+            for a, f in (("m=1", ()), ("m=2", declined))
+        ),
+    )
+    reference = tuple(
+        ReferenceWorkloadResult(axes_text=a, findings=(), worst_violation_fraction=None, is_complete=True)
+        for a in evaluated
+    )
+    value = TrialResult(candidate=candidate, reference=reference).model_dump(mode="json")
+    with nullcontext() if is_whole else pytest.raises(ValueError, match="not one for the batch"):
+        TrialResult.from_task(value)
+
+
+def test_reference_compares_the_lent_outputs() -> None:
+    """The trial's evaluation reads what the candidate left in the tensors it lent: its own
+    float32 values pass every step, a NaN fails its step, a missing step leaves the
+    workload incomplete."""
+    import torch
+
+    from aklr.core.validation.stages._bench._evaluation._reference import (
+        WorkloadEvaluation,
+    )
+    from tests.op_case import OpCase
+
+    case = OpCase.of("gemm@1.0")
+    request = case.request
+    outputs = request.empty_outputs("cpu")
+    for step in request.steps:
+        expected = case.reference_outputs(request.compose_inputs(step, "cpu"))
+        for o, value in expected.items():
+            outputs[step.output_key(o)].copy_(value)
+    keys = [step.output_key(o) for step in request.steps for o in request.contract.mutable_tensors]
+    passed = WorkloadEvaluation(request, outputs, keys, "cpu").evaluate()
+    assert passed.findings == () and passed.is_complete
+
+    bad = request.steps[3]
+    outputs[bad.output_key("out")].view(-1)[0] = torch.nan
+    failed = WorkloadEvaluation(request, outputs, keys[:-1], "cpu").evaluate()
+    assert [f.code for f in failed.findings] == [bad.mismatch_code]
+    assert failed.findings[0].detail.startswith(bad.label) and not failed.is_complete
+
+
+def test_reference_takes_float64_where_float32_overflows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A gemm whose products of 2**64 cancel: float32 makes them inf and the reference NaN,
+    float64 sums them to 0, which a zero output passes and an infinite one fails."""
+    import torch
+
+    from aklr.core.validation.stages._bench._evaluation._reference import (
+        WorkloadEvaluation,
+    )
+    from tests.op_case import OpCase
+
+    request = OpCase.of("gemm@1.0").request
+    compose_inputs = request.compose_inputs
+
+    def cancelling(step: Any, device: str) -> dict[str, Any]:
+        args = compose_inputs(step, device)
+        rows, columns = torch.meshgrid(*(torch.arange(n) for n in args["b"].shape), indexing="ij")
+        args["a"] = torch.full_like(args["a"], 2.0**64)
+        args["b"] = (2.0**64 * (1 - 2 * ((rows + columns) % 2))).to(args["b"].dtype)
+        if args.get("bias") is not None:
+            args["bias"] = torch.zeros_like(args["bias"])
+        return args
+
+    monkeypatch.setattr(type(request), "compose_inputs", lambda self, step, device: cancelling(step, device))
+    outputs = {k: v.zero_() for k, v in request.empty_outputs("cpu").items()}
+    assert WorkloadEvaluation(request, outputs, list(outputs), "cpu").evaluate().findings == ()
+    for v in outputs.values():
+        v.fill_(torch.inf)
+    result = WorkloadEvaluation(request, outputs, list(outputs), "cpu").evaluate()
+    mismatch_codes = {s.mismatch_code for s in request.steps}
+    assert result.findings and all(f.code in mismatch_codes for f in result.findings), result.findings
+
+
 def test_long_schema_spreads_over_batches(monkeypatch: pytest.MonkeyPatch) -> None:
     """A schema of more workloads than a batch holds splits into even batches of at
     most ``MAX_BATCH_WORKLOADS``, every workload once, in schema order."""
@@ -1071,7 +1213,6 @@ def test_platform_the_kernel_does_not_state_aborts(
     from aklr.core.contract.spec import KernelSpec
     from aklr.core.platform.device import DeviceTarget
     from aklr.core.validation.stages._bench._evaluation import run_candidate
-    from aklr.core.validation.stages._bench._execution import ExecutionContext
     from tests.op_case import KERNEL_TARGET, OpCase
 
     case = OpCase.of("gemm@1.0")
@@ -1080,8 +1221,11 @@ def test_platform_the_kernel_does_not_state_aborts(
     schema = schema.model_copy(update={"kernel": kernel_spec})
     target = DeviceTarget.from_names(**KERNEL_TARGET)
     monkeypatch.setattr(DeviceTarget, "current", classmethod(lambda cls, d: target))
-    context = ExecutionContext(device="cpu", log_path=tmp_path / "log", directory=tmp_path)
-    result = run_candidate(context, requests=[replace(case.request, schema=schema)])
+    context = ExecutionContext(device="cpu", log_path=tmp_path / "log")
+    request = replace(case.request, schema=schema)
+    result = run_candidate(
+        context, requests=[request], outputs={request.axes_text: request.empty_outputs("cpu")}
+    )
     findings = CandidateResult.model_validate(result).findings
     assert [f.code for f in findings] == [code]
     assert code.is_platform_fault

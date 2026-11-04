@@ -11,19 +11,19 @@ if TYPE_CHECKING:
 
 __all__ = ["flash_mla_with_kvcache_reference", "fp8_paged_mqa_logits_reference"]
 
-# Gathered KV values per chunk of rows: 512 MiB of float64.
+# Gathered KV values per chunk of rows: 256 MiB of float32.
 _CHUNK_ELEMENTS = 2**26
 
 
 def flash_mla_with_kvcache_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor]:
     """Each head of a query attends over the KV rows its row reads."""
     import torch
 
-    q = to_float64(row_major_args["q"], point.dtypes["q"])
+    q = decode(row_major_args["q"], point.dtypes["q"])
     batch, query_length = q.shape[:2]
     if point.attrs["kv_cache_format"] == "dsv4_fp8":
         pools = []
@@ -62,7 +62,7 @@ def flash_mla_with_kvcache_reference(
                 bits = ((codes & 128) << 8) | (exponent << 7) | ((codes & 7) << 4)
                 nope = (bits & 65535).to(torch.int16).view(torch.bfloat16)
                 rope = raw[payload + 448 + arange[:128]].view(torch.bfloat16)
-                keys.append(torch.cat((nope, rope), dim=-1).double())
+                keys.append(torch.cat((nope, rope), dim=-1).to(q.dtype))
             return torch.cat(keys, dim=1)
 
         empty_lse = torch.inf
@@ -86,12 +86,12 @@ def flash_mla_with_kvcache_reference(
         visible = positions < ends[..., None]
 
         def keys_of(rows: slice) -> Tensor:
-            """The 576 values of each pool row the rows read, in float64."""
-            return to_float64(pool[table[rows]], point.dtypes["kv_cache"])
+            """The 576 values of each pool row the rows read, decoded."""
+            return decode(pool[table[rows]], point.dtypes["kv_cache"])
 
         empty_lse = -torch.inf
     sinks = row_major_args.get("sinks")
-    sinks = None if sinks is None else to_float64(sinks, point.dtypes["sinks"])
+    sinks = None if sinks is None else decode(sinks, point.dtypes["sinks"])
     scale = row_major_args["sm_scale"] * row_major_args["kv_scale"]
     output = q.new_zeros(*q.shape[:-1], 512)
     lse = q.new_full(q.shape[:-1], empty_lse)
@@ -117,12 +117,12 @@ def flash_mla_with_kvcache_reference(
 def fp8_paged_mqa_logits_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """Each request's weighted relu logits over the keys of its pages."""
     import torch
 
-    q = to_float64(row_major_args["q"][:, 0], point.dtypes["q"])
+    q = decode(row_major_args["q"][:, 0], point.dtypes["q"])
     pool = row_major_args["kv_cache"]
     n_pages, page_size = pool.shape[:2]
     raw = pool.reshape(n_pages, -1)
@@ -130,9 +130,9 @@ def fp8_paged_mqa_logits_reference(
     tiles = raw[:, : page_size * 128].reshape(n_pages, page_size // 16, 8, 16, 16)
     keys = tiles.transpose(2, 3).reshape(n_pages, page_size, 128)
     scales = raw[:, page_size * 128 :].contiguous().view(torch.float32)
-    keys = keys.view(torch.float8_e4m3fn).double() * scales.double()[..., None]
+    keys = keys.view(torch.float8_e4m3fn).to(q.dtype) * scales.to(q.dtype)[..., None]
     table = row_major_args["block_tables"].long()
-    weights = to_float64(row_major_args["weights"], "float32")
+    weights = decode(row_major_args["weights"], "float32")
     out = q.new_empty(table.shape[0], table.shape[1] * page_size)
     # a chunk's gathered keys and its per-head logits: each at most _CHUNK_ELEMENTS
     n_rows = max(1, _CHUNK_ELEMENTS // (out.shape[1] * max(q.shape[1], 128)))

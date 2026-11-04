@@ -35,7 +35,7 @@ called directly, not through AKLR:
   MX result against an fp32 reference.
 - AKLR's bench calls the contract's `<contract>_baseline` once; one that raises `NotImplementedError` gives
   `baseline_failed`, but the baseline's output is compared with nothing (S1). The candidate is checked against
-  the float64 reference (`aklr/ops/README.md` § Schema fields), so a wrong baseline does not fail a correct
+  the reference (`aklr/ops/README.md` § Schema fields), so a wrong baseline does not fail a correct
   candidate: it becomes the denominator of the Point's `speedup`. The one error bound that reads the baseline's
   output, `baseline_relative`, would widen the candidate's allowed error by the baseline's error (S2); no op's
   contract uses it at 0cef4f2e3.

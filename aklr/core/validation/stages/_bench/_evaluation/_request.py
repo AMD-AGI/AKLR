@@ -84,6 +84,8 @@ class TrialRequest:
     # each present tensor's distribution item, evaluated: schema.distributions_at
     distributions: dict[str, dict[str, Any]]
     thresholds: dict[Versus, Threshold]
+    # the least published speedup over the baseline dispatch serves; 0: whatever is measured
+    min_speedup: float
     incumbent: OpContract | None
     # what users run today, exported as the baseline: the base kernel dispatch serves
     # (this very kernel too), else the defined baseline's dotted name; None: neither
@@ -100,6 +102,7 @@ class TrialRequest:
         thresholds: dict[Versus, Threshold],
         incumbent: OpContract | None,
         baseline: str | None,
+        min_speedup: float = 0,
     ) -> TrialRequest:
         """The request of ``schema``'s ``workload``."""
         point = schema.point_with_contract_id(workload.axes, contract.contract_id)
@@ -119,6 +122,7 @@ class TrialRequest:
             workload_json=workloads_json[workload_axes_text],
             distributions=schema.distributions_at(point),
             thresholds=thresholds,
+            min_speedup=min_speedup,
             incumbent=incumbent,
             baseline=baseline,
         )
@@ -162,6 +166,25 @@ class TrialRequest:
             for o in self.contract.mutable_tensors
         )
 
+    def empty_outputs(self, device: str | torch.device) -> dict[str, torch.Tensor]:
+        """Every step's mutable tensors, uninitialized on ``device``, by ``Step.output_key``
+        (``output_bytes`` in all): the trial task lends them to the candidate's, which
+        fills them."""
+        import torch
+
+        tensors = {
+            o: (
+                self.contract.storage_shape_of(o, self.point),
+                semantics.torch_dtypes(self.point.dtypes[o])[0],
+            )
+            for o in self.contract.mutable_tensors
+        }
+        return {
+            step.output_key(o): torch.empty(shape, dtype=dtype, device=device)
+            for step in self.steps
+            for o, (shape, dtype) in tensors.items()
+        }
+
     @property
     def input_bytes(self) -> int:
         """One input set's bytes: every present tensor input at the Point."""
@@ -179,13 +202,14 @@ class TrialRequest:
             for o in semantics.mutable_tensor_declarations(self.schema_json).values()
         )
 
-    def compose_inputs(self, step: Step | None) -> dict[str, Any]:
+    def compose_inputs(self, step: Step | None, device: str) -> dict[str, Any]:
         input_set = "timing" if step is None else step.input_set
         row_major_args = semantics.row_major_inputs(
             self.schema_json,
             self.workload_json,
             self.distributions,
             input_set=input_set,
+            device=device,
         )
         if step is None:
             return row_major_args

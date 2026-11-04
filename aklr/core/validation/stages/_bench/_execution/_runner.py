@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import ctypes
 import itertools
 import logging
 import multiprocessing
@@ -22,7 +23,7 @@ import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, ClassVar, Final
+from typing import Any, ClassVar, Final, NoReturn
 
 from aklr.core.platform.device import physical_device
 from aklr.core.validation.stages._bench._execution._engine import ExecutionEngine
@@ -30,6 +31,7 @@ from aklr.core.validation.stages._bench._execution._errors import (
     ChannelFailure,
     ExecutionError,
     InvalidRunnerState,
+    RunnerCommandFailed,
     RunnerCrashed,
     RunnerExitedEarly,
     RunnerStartupFailed,
@@ -58,9 +60,12 @@ from aklr.core.validation.stages._bench._execution._transport import (
     ShutdownRunner,
     TaskCompleted,
     TaskFailed,
+    TaskStarted,
 )
 
 DEFAULT_STARTUP_TIMEOUT_SECONDS: Final = 30.0
+_PR_SET_PDEATHSIG: Final = 1
+_PR_SET_CHILD_SUBREAPER: Final = 36
 RUNNER_POLL_SECONDS: Final = 0.25
 RUNNER_JOIN_SECONDS: Final = 2.0
 
@@ -171,6 +176,7 @@ class DisposableExecutionRunner(ExecutionRunner):
         self._channel: MultiprocessingRunnerChannel | None = None
         self._child_endpoint: ChildRunnerEndpoint | None = None
         self._submitted_task_id: str | None = None
+        self._is_task_started = False
         self._cancelled_task_id: str | None = None
         self._has_read_diagnostics = False
 
@@ -202,6 +208,7 @@ class DisposableExecutionRunner(ExecutionRunner):
                 self._engine,
                 self._directory,
                 self._n_resources,
+                os.getpid(),
             ),
             daemon=False,
         )
@@ -212,10 +219,7 @@ class DisposableExecutionRunner(ExecutionRunner):
             process.start()
             event = self._receive_event(self._startup_timeout_seconds)
             if isinstance(event, RunnerFailed) and event.runner_id == self._runner_id:
-                self._set_health(
-                    RunnerHealth.RESOURCE_FAILED if event.resource_failed else RunnerHealth.FAILED
-                )
-                raise RunnerStartupFailed(event.reason)
+                self._raise_runner_failed(event, RunnerStartupFailed)
             if not isinstance(event, RunnerStarted) or event.runner_id != self._runner_id:
                 raise RunnerStartupFailed(
                     f"runner {self._runner_id} sent {type(event).__name__} while starting"
@@ -279,8 +283,16 @@ class DisposableExecutionRunner(ExecutionRunner):
             raise TaskCancelled(f"task {task_id} was cancelled")
         self._require_state(RunnerState.RUNNING)
 
+        deadline = None if timeout is None else time.monotonic() + timeout
         try:
             event = self._receive_event(timeout)
+            if (
+                isinstance(event, TaskStarted)
+                and event.runner_id == self._runner_id
+                and event.task_id == task_id
+            ):
+                self._is_task_started = True
+                event = self._receive_event(None if deadline is None else deadline - time.monotonic())
         except (TaskExecutionTimeout, RunnerExitedEarly, ChannelFailure) as error:
             if self.state == RunnerState.CLOSED or task_id == self._cancelled_task_id:
                 raise TaskCancelled(f"task {task_id} was cancelled") from error
@@ -305,6 +317,12 @@ class DisposableExecutionRunner(ExecutionRunner):
         self._set_health(RunnerHealth.FAILED)
         if isinstance(event, TaskFailed) and event.runner_id == self._runner_id and event.task_id == task_id:
             raise TaskExecutionFailed(event.reason)
+        if isinstance(event, RunnerFailed) and event.runner_id == self._runner_id:
+            if self._is_task_started:
+                # only the task's code, sharing the child's pipe, sends one after TaskStarted
+                raise TaskExecutionFailed(event.reason)
+            # before the task ran: receiving its command (importing lent tensors) is the platform's
+            self._raise_runner_failed(event, RunnerCommandFailed)
         if isinstance(event, RunnerExited) and event.runner_id == self._runner_id:
             raise RunnerCrashed(f"runner {self._runner_id} exited before task {task_id} completed")
         raise RunnerCrashed(f"runner {self._runner_id} sent an invalid event for task {task_id}: {event}")
@@ -368,8 +386,8 @@ class DisposableExecutionRunner(ExecutionRunner):
                 if is_shutdown_sent and previous_state != RunnerState.STARTING:
                     # a ready child, or one whose task answered, exits by itself
                     process.join(timeout=RUNNER_JOIN_SECONDS)
-                process.kill()
                 is_gone = ProcessGroup(process.pid).kill()
+                process.kill()
                 process.join(timeout=RUNNER_JOIN_SECONDS)
                 is_gone = is_gone and not process.is_alive()
             except Exception:  # noqa: BLE001
@@ -439,6 +457,10 @@ class DisposableExecutionRunner(ExecutionRunner):
         with self._state_lock:
             self._health = health
 
+    def _raise_runner_failed(self, event: RunnerFailed, error_type: type[ExecutionError]) -> NoReturn:
+        self._set_health(RunnerHealth.RESOURCE_FAILED if event.resource_failed else RunnerHealth.FAILED)
+        raise error_type(event.reason)
+
     def _require_channel(self) -> MultiprocessingRunnerChannel:
         if self._channel is None:
             raise InvalidRunnerState(f"runner {self._runner_id} has no channel")
@@ -452,11 +474,22 @@ class DisposableExecutionRunner(ExecutionRunner):
         engine: ExecutionEngine,
         directory: Path,
         n_resources: int,
+        parent_pid: int,
     ) -> None:
         task_id: str | None = None
         is_gpu = device != "cpu"
         try:
             os.setsid()
+            libc = ctypes.CDLL(None, use_errno=True)
+            # killed with the parent: a task's own children (the bench trial's candidate) end with it;
+            # the signal follows the parent's thread that started this process, which the runner's
+            # pool keeps until close
+            libc.prctl(_PR_SET_PDEATHSIG, signal.SIGKILL)
+            # orphans of a task's processes come back here, not to init: under this group while it
+            # lives, then to this runner's own runner (ProcessGroup.kill_adopted)
+            libc.prctl(_PR_SET_CHILD_SUBREAPER, 1)
+            if os.getppid() != parent_pid:  # the parent died before the signal was set
+                return
             parent_cwd = os.getcwd()
             os.chdir(directory)
             sys.path[:] = [entry or parent_cwd for entry in sys.path]
@@ -468,12 +501,25 @@ class DisposableExecutionRunner(ExecutionRunner):
                         OMP_NUM_THREADS=str(max(1, (os.cpu_count() or 1) // max(1, n_resources))),
                     )
                     if is_gpu:
+                        # shortcut: an in-tree amdgpu has no version file, the ROCm DKMS one does;
+                        # an ioctl probe of KFD's IPC would be exact
+                        if not Path("/sys/module/amdgpu/version").exists():
+                            raise RuntimeError(
+                                "lending tensors takes KFD's legacy IPC (HSA_ENABLE_IPC_MODE_LEGACY), "
+                                "which only the ROCm DKMS amdgpu driver has; this host's amdgpu is in-tree"
+                            )
                         visible = physical_device(device)
                         os.environ.update(
                             HIP_VISIBLE_DEVICES=visible,
                             CUDA_VISIBLE_DEVICES=visible,
                             GPU_FORCE_QUEUE_PROFILING="1",
                             ROC_SIGNAL_POOL_SIZE="65536",
+                            # tensors lent over KFD's own IPC handles: a dma-buf imported on the GPU it
+                            # came from shares the exporter's GEM handle, which both frees delete, the
+                            # second another buffer's that took the number since
+                            # (amdgpu_amdkfd_gpuvm_import_dmabuf_fd); drop once KFD's import takes
+                            # its own handle
+                            HSA_ENABLE_IPC_MODE_LEGACY="1",
                         )
                         import torch
 
@@ -492,12 +538,12 @@ class DisposableExecutionRunner(ExecutionRunner):
                         raise RuntimeError(f"runner received invalid command: {command}")
 
                     task_id = command.task_id
+                    endpoint.send(TaskStarted(runner_id=runner_id, task_id=task_id))
                     result = engine.execute(
                         command.task,
                         engine.context_type(
                             device="cuda:0" if is_gpu else "cpu",
                             log_path=task_log.path,
-                            directory=directory,
                         ),
                     )
                     # the log is complete when the parent reads its tail

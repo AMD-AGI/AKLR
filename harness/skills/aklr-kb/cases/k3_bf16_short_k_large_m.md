@@ -170,7 +170,7 @@ The report goes to `aklr_validation/report.md`; a local run checks the file, the
 (`aklr/ops/README.md` § Workflow). Add `--base origin/main` only on a branch that edits the file: with the base set,
 bench measures only schemas that are not at the base, so on an unchanged checkout it skips the bench
 (`aklr/core/validation/stages/validation_scope.py`, `of_working_tree`). n3072's m 342073 compares a 2 GB output
-against a float64 reference; main's validate scales the reference's time limit with the output size (0108e2e57).
+against the reference; validate scales the trial's time limit with the output size.
 To read a kernel:
 `git show <rev>:<schema> | python3 -c 'import json,sys; print(json.load(sys.stdin)["kernel"]["sources"][0]["content"])'`.
 

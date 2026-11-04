@@ -100,9 +100,9 @@ def compare_outputs(
     magnitude_outputs: Mapping[str, Tensor] | None = None,
     baseline_outputs: Mapping[str, Tensor] | None = None,
 ) -> dict[str, CompareResult]:
-    """Each mutable tensor of the schema json (``mutable_tensor_declarations``) against its float64
-    reference, on the CPU, under its one ``error_bounds`` item (an integer one must be
-    exact); keyed in that order."""
+    """Each mutable tensor of the schema json (``mutable_tensor_declarations``) against its
+    reference, on the tensors' device, under its one ``error_bounds`` item (an integer one
+    must be exact); keyed in that order."""
     compare = schema["compare"]
     element_order = ElementOrder(compare["element_order"])
     magnitude_outputs = magnitude_outputs or {}
@@ -151,7 +151,7 @@ def runs_agree(determinism: str, outputs: Sequence[Tensor]) -> bool:
 
 class ErrorBound(FrozenModel):
     """One ``error_bounds`` item of a floating output: how it is compared with y, the
-    float64 reference."""
+    reference."""
 
     kind: str
     expr_fields: ClassVar[tuple[str, ...]] = ()  # expression fields, in order
@@ -169,7 +169,7 @@ class ErrorBound(FrozenModel):
         baseline_out: Tensor | None,
     ) -> CompareResult:
         """Output ``a`` against y (``reference_out``) and y rounded to the output dtype
-        (``rounded``), all float64."""
+        (``rounded``), ``a`` and ``rounded`` in float64."""
 
 
 class ElementwiseBound(ErrorBound):

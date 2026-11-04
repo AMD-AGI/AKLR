@@ -25,6 +25,10 @@ class RunnerStartupFailed(ExecutionError):
     pass
 
 
+class RunnerCommandFailed(ExecutionError):
+    pass
+
+
 class RunnerCrashed(ExecutionError):
     pass
 

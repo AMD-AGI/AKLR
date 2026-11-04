@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What the contracts say, in torch, in float64: every input decoded and nothing rounded
+"""What the contracts say, in torch, in the dtype the inputs decode to: nothing rounded
 or quantized in between (the kernels' bf16 steps are theirs) but the router's logits,
 rounded once to bf16 as the block's gate returns them, which pick the experts, and what
 the checkpoint's FP8 scheme quantizes: each expert linear's input (_fp8_input)."""
@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
+
+from aklr.core.contract.semantics import rounded_to_bfloat16
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -21,28 +23,18 @@ __all__ = [
 ]
 
 _BLOCK = 128  # the FP8 scheme's block: 128 x 128 of a weight, 1 x 128 of an input
-_BF16_DIGITS = 8  # bfloat16's significant bits
-
-
-def _rounded_to_bf16(x: Tensor) -> Tensor:
-    """``x`` (float64) at its nearest bfloat16, ties to even, still float64: rounded once,
-    where torch's float64 to bfloat16 cast rounds to float32 first."""
-    import torch
-
-    mantissa, exponent = torch.frexp(x)
-    digits = torch.full_like(exponent, _BF16_DIGITS)
-    return torch.ldexp(torch.round(torch.ldexp(mantissa, digits)), exponent - digits)
 
 
 def _router_logits(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
-    """hidden_states router_weight^T, exact, rounded to bf16."""
-    x = to_float64(row_major_args["hidden_states"], point.dtypes["hidden_states"])
-    w = to_float64(row_major_args["router_weight"], point.dtypes["router_weight"])
-    return _rounded_to_bf16(x @ w.T)
+    """hidden_states router_weight^T, exact (float64), rounded to bf16, in the decoded
+    dtype."""
+    x = decode(row_major_args["hidden_states"], point.dtypes["hidden_states"])
+    w = decode(row_major_args["router_weight"], point.dtypes["router_weight"])
+    return rounded_to_bfloat16(x.double() @ w.double().T).to(x.dtype)
 
 
 def _routed(logits: Tensor, topk: int) -> tuple[Tensor, Tensor]:
@@ -62,10 +54,10 @@ def _fp8_input(x: Tensor) -> Tensor:
     import torch
 
     fp8 = torch.float8_e4m3fn
-    groups = _rounded_to_bf16(x).float().unflatten(-1, (-1, _BLOCK))
+    groups = rounded_to_bfloat16(x).float().unflatten(-1, (-1, _BLOCK))
     scale = groups.abs().amax(-1, keepdim=True) / torch.finfo(fp8).max
     scale = scale.clamp(min=torch.finfo(torch.float32).tiny)
-    return ((groups / scale).to(fp8).double() * scale.double()).flatten(-2)
+    return ((groups / scale).to(fp8).to(x.dtype) * scale.to(x.dtype)).flatten(-2)
 
 
 def _dequantized(weight: Tensor, scale: Tensor) -> Tensor:
@@ -78,7 +70,7 @@ def _dequantized(weight: Tensor, scale: Tensor) -> Tensor:
 def _experts(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
     weights: Tensor,
     ids: Tensor,
     shared_slot: int,
@@ -91,7 +83,7 @@ def _experts(
 
     def f(name: str, e: int | None = None) -> Tensor:
         tensor = row_major_args[name]
-        return to_float64(tensor if e is None else tensor[e], point.dtypes[name])
+        return decode(tensor if e is None else tensor[e], point.dtypes[name])
 
     x = f("hidden_states")
     shared_weight = (x @ f("shared_gate_weight")[0]).sigmoid()
@@ -112,10 +104,10 @@ def _experts(
 def qwen2_moe_router_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor]:
     """(topk_weights, topk_ids) of the bf16 logits (_router_logits, _routed)."""
-    logits = _router_logits(point, row_major_args, to_float64)
+    logits = _router_logits(point, row_major_args, decode)
     weights, ids = _routed(logits, point.axes["topk"])
     return weights, ids.double()
 
@@ -123,23 +115,23 @@ def qwen2_moe_router_reference(
 def qwen2_moe_fp8_experts_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """The routed experts topk_ids at topk_weights and the gated shared one (_experts)."""
-    weights = to_float64(row_major_args["topk_weights"], point.dtypes["topk_weights"])
+    weights = decode(row_major_args["topk_weights"], point.dtypes["topk_weights"])
     ids = row_major_args["topk_ids"].long()
     shared_slot = point.axes["n_experts"] - 1
-    return _experts(point, row_major_args, to_float64, weights, ids, shared_slot)
+    return _experts(point, row_major_args, decode, weights, ids, shared_slot)
 
 
 def qwen2_moe_fp8_router_experts_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
-    to_float64: Callable[[Tensor, str], Tensor],
+    decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
     """The router's experts (qwen2_moe_router_reference) and the gated shared one
     (_experts)."""
-    logits = _router_logits(point, row_major_args, to_float64)
+    logits = _router_logits(point, row_major_args, decode)
     weights, ids = _routed(logits, point.attrs["topk"])
     shared_slot = point.axes["n_routed"]
-    return _experts(point, row_major_args, to_float64, weights, ids, shared_slot)
+    return _experts(point, row_major_args, decode, weights, ids, shared_slot)

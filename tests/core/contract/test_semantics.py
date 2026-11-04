@@ -188,3 +188,31 @@ class TestSqnrBound:
         result = semantics.compare_outputs(_SQNR_SCHEMA, {"out": actual}, {"out": y})
         assert not result["out"].is_passed
         assert result["out"].n_nonfinite_mismatches == n_nonfinite
+
+
+class TestRoundedToBfloat16:
+    """``rounded_to_bfloat16``: torch's own float32 to bfloat16 cast, rounded once."""
+
+    def test_float32_values_round_as_torch_casts_them(self) -> None:
+        """Random float32 bit patterns, every exponent included: the helper's bfloat16 is the
+        cast's, subnormals, overflow to infinity and NaN alike."""
+        bits = torch.randint(-(2**31), 2**31, (1 << 20,), generator=torch.Generator().manual_seed(0))
+        edges = torch.tensor([0.0, -0.0, 2.0**-133, 2.0**-134, 2.0**-149, 3.3961e38, -3.3961e38, math.inf])
+        x = torch.cat((bits.int().view(torch.float32), edges))
+        expected = x.bfloat16().float()
+        torch.testing.assert_close(semantics.rounded_to_bfloat16(x), expected, rtol=0, atol=0, equal_nan=True)
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (1 + 2.0**-8 + 2.0**-30, 1 + 2.0**-7),
+            (2.0**-140, 0.0),
+            (2.0**-133 * 1.5, 2.0**-132),
+            (2.0**128, math.inf),
+        ],
+        ids=["no-double-rounding", "underflow", "subnormal-tie-to-even", "overflow"],
+    )
+    def test_float64_values_round_once(self, value: float, expected: float) -> None:
+        """A float64 rounds to its nearest bfloat16, not through float32's."""
+        x = torch.tensor([value, -value], dtype=torch.float64)
+        assert semantics.rounded_to_bfloat16(x).tolist() == [expected, -expected]
