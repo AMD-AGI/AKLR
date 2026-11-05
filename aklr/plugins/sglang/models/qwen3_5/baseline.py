@@ -1,7 +1,4 @@
-# SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Created by OpenAI
-# Applies to the GDN baselines.
 """SGLang 0.5.22 Triton prefill and native block-128 FP8 activation quantization.
 
 Projection GEMMs and the output projection are outside this op on both paths.

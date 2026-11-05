@@ -1,7 +1,4 @@
-# SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Created by OpenAI
-# Applies to the GDN contracts.
 """GDN convolution, recurrent state update, gated RMSNorm and grouped FP8 output; the
 full-attention layers' gated decode attention over their FP8 KV cache."""
 

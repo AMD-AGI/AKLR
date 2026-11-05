@@ -1,7 +1,4 @@
-# SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Created by OpenAI
-# Applies to the GDN references.
 """Sequential mathematical oracle; deliberately independent of the Gluon kernels.
 
 Inputs use contiguous Q/K/V/Z and B/A projections. FP64 recurrence provides a

@@ -1,7 +1,4 @@
-# SPDX-License-Identifier: MIT
-# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Created by OpenAI
-# Applies to the GDN ops and their route.
 from functools import cache
 
 import torch
