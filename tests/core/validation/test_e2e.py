@@ -498,7 +498,7 @@ class TestStage:
         )
         scenario = _scenario({"unified": _UNIFIED})
         on = self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path)
-        assert (on.gsm8k_score, on.answer_matches, on.n_hit_calls, on.failure) == (0.81365, False, None, "")
+        assert (on.gsm8k_score, on.answer_matches, on.n_hit_calls, on.failure) == (0.81365, False, 0, "")
         answer = "Paris."
         assert self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path).answer_matches
         stdout += "All retry attempts exhausted for request. Returning empty response.\n"
@@ -507,6 +507,11 @@ class TestStage:
         assert off.gsm8k_score is None
         assert "1 GSM8K requests failed" in off.failure
         assert "during the phases: unified-0 exited with -9" in off.failure
+        monkeypatch.setattr(
+            Deployment, "start", lambda self, timeout: (_ for _ in ()).throw(RuntimeError("no"))
+        )
+        assert self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path).n_hit_calls is None
+        monkeypatch.setattr(Deployment, "start", lambda self, timeout: "http://h:1")
         answer = 42  # type: ignore[assignment]
         on = self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path)
         assert "content is not a string" in on.failure

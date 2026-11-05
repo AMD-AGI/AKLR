@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import subprocess
@@ -35,6 +36,9 @@ _JS_TOKEN: Final = re.compile(
     r"""|(?P<number>-?\d[\w.+-]*)"""
     r"""|(?P<punct>[\[\]{},:+])""",
     re.S,
+)
+_JS_COMMENT_OR_STRING: Final = re.compile(
+    r"""//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`""", re.S
 )
 # a non-literal value's tokens, to find where it ends: a `,`, `]` or `}` outside its brackets
 _JS_ANY_TOKEN: Final = re.compile(
@@ -104,7 +108,7 @@ class Cookbook(FrozenModel):
                 url = f"https://raw.githubusercontent.com/{repo}/{sha}/{relative_path}"
                 with urllib.request.urlopen(url, timeout=_FETCH_TIMEOUT_SECONDS) as response:
                     text = response.read().decode()
-        except (OSError, subprocess.SubprocessError) as error:
+        except (OSError, subprocess.SubprocessError, http.client.HTTPException) as error:
             raise ValueError(f"cookbook {config} at {source}: {error}") from error
         return cls.parse(text, source=source, sha=sha, config=config)
 
@@ -151,7 +155,9 @@ class Cookbook(FrozenModel):
     def _literal(cls, text: str, key: str) -> object:
         """The value of the ``key: [...]`` or ``key: {...}`` that starts a line; ``None`` if
         no line does."""
-        starts = list(re.finditer(rf"^[ \t]*{key}[ \t]*:[ \t]*(?=[\[{{])", text, re.M))
+        # in the text with its comments and strings blanked, so a commented-out example is no literal
+        code = _JS_COMMENT_OR_STRING.sub(lambda m: re.sub(r"[^\n]", " ", m[0]), text)
+        starts = list(re.finditer(rf"^[ \t]*{key}[ \t]*:[ \t]*(?=[\[{{])", code, re.M))
         if len(starts) > 1:
             raise ValueError(f"{key}: {len(starts)} literals")
         if not starts:

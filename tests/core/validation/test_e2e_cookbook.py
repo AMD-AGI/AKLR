@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import http.client
 from pathlib import Path
 
 import pytest
@@ -113,6 +114,20 @@ def test_a_format_change_fails_the_parse(old: str, new: str) -> None:
 def test_no_cells_literal_fails() -> None:
     with pytest.raises(ValueError, match="no `cells"):
         _parse(_KIMI_K3.replace("  cells: [", '  "cells": ['))
+    # a commented-out example is no literal, and the real one is not plain
+    commented = '/*\n  cells: [{match: {hw: "mi355x"}, flags: ["--tp 4"]}],\n*/\n  cells: makeCells(),\n'
+    with pytest.raises(ValueError, match="no `cells"):
+        _parse(_KIMI_K3[: _KIMI_K3.index("  cells: [")] + commented + "};\n")
+
+
+def test_a_truncated_download_is_a_value_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def truncated(*args: object, **kwargs: object) -> object:
+        raise http.client.IncompleteRead(b"cells", 100)
+
+    monkeypatch.setattr(Cookbook, "pinned", staticmethod(lambda source, repo: "0" * 40))
+    monkeypatch.setattr("urllib.request.urlopen", truncated)
+    with pytest.raises(ValueError, match="IncompleteRead"):
+        Cookbook.fetch("main", "moonshotai/kimi-k3")
 
 
 def test_javascript_escapes() -> None:
