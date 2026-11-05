@@ -160,7 +160,7 @@ Under skew one group's contraction outlasts the rest and the launch ends with on
 CUs idle. The device is full, so the dense wave-quantization gate (`../gemm/grid_pricing.md` §2) never
 fires; the trigger is the deepest group. Determinism by fixed-order reduce is the same idea as
 the in-launch split-K reduce of `../gemm/grid_pricing.md` §2 and of
-`../attention/flydsl_attn_backward.md` §1.
+`../attention/backward.md` §1.
 - **Decide on the device, from `group_offs`.** FP8 fixes the piece count from the static shape (tiles per group
   against CUs; `_wgrad_split_geom`, FP8:3688-3704) and cuts a group only if its own contraction clears a bar
   (`_wgrad_is_cut`, FP8:3747). A variant chose one window and its slice count S at run time. *(field, E18)* That
@@ -257,7 +257,7 @@ In FlyDSL: `../flydsl/moe.md` § grouped_wgrad Verify.
 `grouped_scheduling.md` · `grouped_tile_pricing.md` · `grouped_lowprec.md` ·
 `grouped_host_autotune.md` · `grouped_correctness.md` · `grouped_measurement.md` ·
 `../gemm/mainloop.md` · `../gemm/grid_pricing.md` · `../gemm/epilogue.md` ·
-`../flydsl/debug-flydsl-kernel.md` · `../attention/flydsl_attn_backward.md`
+`../flydsl/debug-flydsl-kernel.md` · `../attention/backward.md`
 
 ## Evidence
 

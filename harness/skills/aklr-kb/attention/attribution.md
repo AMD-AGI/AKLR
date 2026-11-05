@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL attention — attribution: the true clock, which counter ranks which change, stall pools and probes"
+title: "Attention — attribution: the true clock, which counter ranks which change, stall pools and probes"
 kind: method
-lever: flydsl_attn_attribution
+lever: attn_attribution
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16]
@@ -97,7 +97,7 @@ Subtractive arms give a ceiling; additive arms give a marginal price; the two ca
 - **Illegal subtraction overstates.** *(field, E16)* Replacing every barrier with a scheduling fence read +3.77% at
   B=1 (+3.36% at B=2, +0.20% at B=4); opening one redundant barrier priced 0.10% each; the legal reduction from 16
   to 9 barriers lost 1.2–1.7%, because it moved an LDS write burst into a transposed-read burst
-  (`flydsl_attn_lds.md` §9). The illegal arm also bought freedom from wave drift, which no legal version gets.
+  (`lds.md` §9). The illegal arm also bought freedom from wave drift, which no legal version gets.
 - **Price a synchronisation family at N, N/2 and 0.** *(field, E17)* Two barriers per iteration → one gained
   0.12–0.18%, → zero lost 0.25%: the remaining barrier pinned the dual-wave phase. Measuring only 0 hides both
   the sign and the optimum. Both 2 → 1 arms broke a real write-after-read dependency (SNR 51.7 → 23.0 dB): they
@@ -140,7 +140,7 @@ ISA gate (opcode histogram, spill, VGPR) before benchmarking, bracket the arms w
   not one.
 - **Transcendentals are the power-heavy instructions on these bodies.** *(field, E23)* Removing the 64 `v_exp_f32` of a
   loop gained 8.7% wall with sclk +3.1%. Rank by trans instruction count, not by MFMA cycles; whether a byte change
-  is a cycle or an energy change must be measured (`flydsl_attn_grid_dispatch.md` §9).
+  is a cycle or an energy change must be measured (`grid_dispatch.md` §9).
 - **An occupancy gain is partly paid back as clock.** *(field, E26)* 2.985 → 3.978 waves per SIMD: power unchanged,
   sclk −3.3%, 0.5% faster from 3.9% fewer cycles. Report sclk next to every occupancy candidate; below the
   cap, measure whether the cycle gain survives before assuming it does.
@@ -152,15 +152,15 @@ the PV MFMAs in its decode producer made it 7% slower (~6 wall cycles per 16-cyc
 its pipe time). One kernel of the family is fabric-bound, the other is not.
 
 ## 10. Budget arithmetic for "hide it under the MFMAs"
-- Pipe cycles, issue block and VALU shadow per MFMA atom are in `flydsl_attn_mfma_layout.md` §1; exp and VALU
-  rates in `flydsl_attn_softmax.md` §1. In short: 8 shadow cycles per 16x16x32 and 24 per 32x32x16, shared by
+- Pipe cycles, issue block and VALU shadow per MFMA atom are in `mfma_layout.md` §1; exp and VALU
+  rates in `softmax.md` §1. In short: 8 shadow cycles per 16x16x32 and 24 per 32x32x16, shared by
   every wave on the SIMD; an exp uses them twice as fast as a multiply and never runs beside other VALU work.
 - Check a per-class model against `SQ_ACTIVE_INST_VALU` before trusting a VALU budget: *(field, E28)* only the
   8-cycle exp fit a backward body's counter within 1%.
 
 ## Related
-`../gemm/attribution.md` · `flydsl_attn_workflow.md` · `flydsl_attn_measurement.md` ·
-`flydsl_attn_schedule_sync.md` · `../profile.md` § kernel-trace-analysis
+`../gemm/attribution.md` · `workflow.md` · `measurement.md` ·
+`schedule_sync.md` · `../profile.md` § kernel-trace-analysis
 
 ## Evidence
 

@@ -1,21 +1,19 @@
 ---
-title: "FlyDSL attention — register budget, occupancy steps and MFMA–VALU overlap"
+title: "Attention — register budget, occupancy steps and MFMA–VALU overlap"
 kind: topic
-lever: flydsl_attn_registers_occupancy
+lever: attn_registers_occupancy
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16]
 regimes: [prefill, backward, causal, gqa]
 flydsl: 0.3.2
 sources:
-  - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_gfx950.py:73
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_gfx950.py:427
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:1036
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:1614
-  - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/backends/rocm.py:52
 ---
 
-# Registers, occupancy and MFMA–VALU overlap in a FlyDSL attention kernel
+# Registers, occupancy and MFMA–VALU overlap in an attention kernel
 
 > Attention bodies carry an O accumulator, Q packs, a score tile and softmax state at once, so the
 > register file sets the occupancy and the occupancy decides which overlap tricks can pay. The register
@@ -37,18 +35,17 @@ sources:
   (steps: `../gemm/grid_pricing.md` §4). In these cards *occupancy N* means N co-resident
   workgroups per CU, which is what decides whether sibling waves can cover each other. A wave
   addresses at most 256 arch VGPRs; AGPRs come out of the same pool.
-- Read `.vgpr_count`, `.agpr_count`, `vgpr_spill_count` and `private_segment_fixed_size` from the
-  `FLYDSL_DUMP_IR=1` dump. rocprof's register columns are wrong (`../gemm/attribution.md` §9).
+- Read `.vgpr_count`, `.agpr_count`, `vgpr_spill_count` and `private_segment_fixed_size` from the kernel's
+  ISA metadata. rocprof's register columns are wrong (`../gemm/attribution.md` §9).
   *(field, E1)* A sparse-MLA backward dQ kernel reported as 172 VGPR / 0 AGPR was 256 + 81 = 337: one wave per SIMD.
 - For an 8-wave workgroup only 2/4/6/8 waves per SIMD are reachable. *(field, E2)* An 8-wave forward at 4
   waves/SIMD had to stay at ≤ 128 registers; at 3 waves/SIMD the second workgroup does not fit, so the
   third wave slot buys nothing.
-- FlyDSL v0.3.2: the occupancy target is the `waves_per_eu` compile hint (`maxnreg` also exists).
-  FlyDSL's gfx950 forward defaults to `waves_per_eu=2`; its D=128 causal kernel compiles to 246 VGPRs,
-  0 AGPRs, no spills. Kernel attributes through `value_attrs` go under `"llvm.passthrough"`
-  (`../flydsl/gemm.md` § INDEX FlyDSL version).
+
+In FlyDSL: `../flydsl/attention.md` § registers_occupancy §1.
 
 ## 2. Force occupancy with `waves_per_eu` only when the code already nearly fits
+- `waves_per_eu` (LLVM `amdgpu-waves-per-eu`) sets the occupancy target the register allocator must meet.
 - *(field, E3)* Allocation 130 → 128 registers with 2 spills: +8.5%, the deployed setting. Beyond that the allocator
   meets the target by spilling. *(field, E4)* Forward, 3 → 4 waves/SIMD: 128 registers, spills 46 → 213, hot loop
   244 → 343 instructions, 5.47× slower. *(field, E5)* A sparse-MLA backward dQ kernel forced to `waves_per_eu` 2: MFMA
@@ -64,9 +61,9 @@ sources:
   without writing it.
 - At the power cap part of an occupancy gain returns as clock. *(field, E8)* 3 → 4 waves/SIMD at 96.6% of TBP:
   sclk −3.3%, wall 0.5% faster, an estimated 3.9% fewer cycles (from wall and sclk). Report sclk with every
-  occupancy arm (`flydsl_attn_measurement.md`).
+  occupancy arm (`measurement.md`).
 - A change that drops a step loses even when it removes traffic: GQA merging past the step is in
-  `flydsl_attn_grid_dispatch.md` §9.
+  `grid_dispatch.md` §9.
 - **Registers saved without crossing a step are worth 0 or less.** *(field, E9)* At occupancy 1, dropping an
   AGPR tie that freed 14 registers: −0.80% at batch 4 (batch 1 inside noise). *(field, E10)* Sharing VOP3P splat
   constants (20 → 4 VGPRs, `.vgpr_count` unchanged): −0.9% at 3 waves/SIMD, −0.61% at 2. The 72+72-register
@@ -97,19 +94,19 @@ sources:
 ## 6. Code shapes that spill
 - **A loop remainder is a third body instance.** Register pressure scales with body instances. *(field, E17)* 2× unroll
   of a four-deep K/V ring plus a tail loop: spill 2 → 35, −19% (spill 30 with a 2-deep ring); removing the tail:
-  35 → 7 (10 → 0 with a shallower K prefetch). Write the remainder as a predicated second body: a runtime
-  `if j + 1 < end:` on a workgroup-uniform condition (the rewriter lowers it to `scf_if_dispatch`), yielding the
-  accumulators from both branches. Wrapping one body instance in a workgroup-uniform `if` whose `else` yields the
-  accumulators is harmless; a branch holding its own body copy is not (below); *(field, E18)* a conditional barrier
-  inside a branch, with K held fully resident, spilled 97.
-- **Specialize with sequential ifs, not nested ones.** Each runtime `if` returns its accumulators and the `else`
-  yields them unchanged. *(field, E19)* Nested: 476 registers (arch + 219 AGPR), above the 464 that kept a co-resident
-  reduce kernel resident; sequential: 460,
+  35 → 7 (10 → 0 with a shallower K prefetch). Write the remainder as a predicated second body under
+  a workgroup-uniform runtime condition (`j + 1 < end`), both branches producing the accumulators. Wrapping one
+  body instance in a workgroup-uniform branch that passes the accumulators through unchanged when not taken is
+  harmless; a branch holding its own body copy is not (below); *(field, E18)* a conditional barrier inside a branch,
+  with K held fully resident, spilled 97.
+- **Specialize with sequential branches, not nested ones.** Each runtime branch produces its accumulators and
+  passes them through unchanged when not taken. *(field, E19)* Nested: 476 registers (arch + 219 AGPR), above the
+  464 that kept a co-resident reduce kernel resident; sequential: 460,
   spill 0, 468 fewer instructions in the masked loop.
-- **`scf.if` around a large region keeps loop invariants (Q packs, LDS bases) live across it.** *(field, E20)*
+- **A runtime branch around a large region keeps loop invariants (Q packs, LDS bases) live across it.** *(field, E20)*
   A per-wave phase-reversal vehicle was 10.6% slower by itself; duplicating the main loop per branch, 27% slower.
-- Runtime conditional syntax: `../flydsl/debug-flydsl-kernel.md` § Runtime versus compile-time
-  conditionals.
+
+In FlyDSL: `../flydsl/attention.md` § registers_occupancy §6.
 
 ## 7. AGPRs are not free space
 - *(field, E21)* Forcing `amdgpu-agpr-alloc` to 32/64 to absorb 31 spilled dwords raised spills to 52/77 (the
@@ -125,10 +122,10 @@ sources:
   (`../gemm/correctness.md` §7).
 
 ## 8. MFMA–VALU co-execution
-What the rules below rest on (`flydsl_attn_mfma_layout.md` §1, `flydsl_attn_softmax.md` §1): *(field, E24)* a
+What the rules below rest on (`mfma_layout.md` §1, `softmax.md` §1): *(field, E24)* a
 `16x16x32` bf16 MFMA leaves an 8-cycle VALU shadow and a `32x32x16` 24, shared by every wave on the SIMD; an exp uses
 it twice as fast as a multiply and gains nothing over other VALU work from MFMA overlap.
-- Read coexec / MFMA busy and the stall pool as in `flydsl_attn_attribution.md` §2–§3.
+- Read coexec / MFMA busy and the stall pool as in `attribution.md` §2–§3.
 
 **Two co-resident workgroups per CU (backward): the overlap is already free.** Two independent workgroups sharing each
 SIMD fill each other's barrier and drain bubbles with no barrier between them. In-workgroup overlap trades that for a
@@ -164,11 +161,13 @@ slots, was neutral (−0.27%). At two or more waves per SIMD the clusters are st
 
 **Independent MFMAs placed in a VALU window get hoisted out.** *(field, E33)* Splitting a GEMM so 16 independent MFMAs
 faced the softmax window: coexec 19.2% → 15.9%, −3.0%. Pin the region with `sched_barrier(0)` placed after the
-`gpu.barrier()` that owns the LDS write and outside `range_constexpr` loops (`flydsl_attn_schedule_sync.md`).
+barrier (`s_barrier`) that owns the LDS write and outside compile-time-unrolled loops (`schedule_sync.md`).
 
 **Static shadow accounting is a zero-GPU prefilter.** Price each instruction class against the shadow budget above
 to discard candidates; rank survivors by measurement. *(field, E34)* Coverage distance, waitcnt and `s_nop` counts, MFMA
 run length and pipe/slack models each failed to rank arms on at least one body.
+
+In FlyDSL: `../flydsl/attention.md` § registers_occupancy §8.
 
 ## Verify
 - `.vgpr_count`, `.agpr_count`, spills and private segment read from the ISA for every arm.
@@ -178,8 +177,8 @@ run length and pipe/slack models each failed to rank arms on at least one body.
   remove instructions; otherwise → schedule.
 
 ## Related
-`flydsl_attn_schedule_sync.md` · `flydsl_attn_lds.md` · `flydsl_attn_attribution.md` · `flydsl_attn_softmax.md` ·
-`flydsl_attn_backward.md` · `../gemm/mainloop.md` · `../gemm/grid_pricing.md`
+`schedule_sync.md` · `lds.md` · `attribution.md` · `softmax.md` ·
+`backward.md` · `../gemm/mainloop.md` · `../gemm/grid_pricing.md`
 
 ## Evidence
 

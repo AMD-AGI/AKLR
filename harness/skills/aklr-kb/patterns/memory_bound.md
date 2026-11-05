@@ -62,8 +62,8 @@ basis: source-semantics
 - Decode streaming rows — `gemm/small_m.md` §2–3 — there split-K and more blocks lose (S29).
 - The C store — `gemm/epilogue.md` §2 — run its three ablations before changing it (S12).
 - Other kernel families: attention gathers, unique lines and the index distribution —
-  `attention/flydsl_attn_decode_split_kv.md` §7; bytes per score and GQA sharer merging —
-  `attention/flydsl_attn_grid_dispatch.md` §9; cache policy on MoE weights at decode sizes —
+  `attention/decode_split_kv.md` §7; bytes per score and GQA sharer merging —
+  `attention/grid_dispatch.md` §9; cache policy on MoE weights at decode sizes —
   `moe/grouped_moe_inference.md` §4.
 
 ## Evidence

@@ -58,7 +58,7 @@ basis: source-semantics
 - Fewer launches by fusion — `../flydsl/kernels/flydsl_authoring_method.md` — for latency-bound small shapes (S30).
 - Other kernel families: drop a graph node by folding a small kernel into its consumer — `moe/decode.md`
   §1–2; a decode attention's combine is a fixed cost, and when merging it into the producer pays —
-  `attention/flydsl_attn_decode_split_kv.md` §1–2; the small kernels around MoE expert GEMMs —
+  `attention/decode_split_kv.md` §1–2; the small kernels around MoE expert GEMMs —
   `moe/grouped_moe_inference.md` §7.
 
 ## Evidence

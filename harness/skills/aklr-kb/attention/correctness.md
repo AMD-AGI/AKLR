@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL attention — correctness gates: spike inputs, paths the gate must reach, shared LSE, seeds and mask conventions"
+title: "Attention — correctness gates: spike inputs, paths the gate must reach, shared LSE, seeds and mask conventions"
 kind: method
-lever: flydsl_attn_correctness
+lever: attn_correctness
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16]
@@ -9,7 +9,7 @@ regimes: [prefill, backward, causal, sliding-window, rectangular]
 flydsl: 0.3.2
 ---
 
-# Correctness for a FlyDSL attention kernel
+# Correctness for an attention kernel
 
 > Most cases marked `*(field, E<n>)*` below passed a gate that reported clean. Use them to design the gate before
 > trusting it. Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at
@@ -54,7 +54,7 @@ For each output — O, LSE, dQ, dK, dV — against an fp32 reference:
 ## 3. The gate must reach the path under test
 - **Defaults choose paths per head_dim, causality and window.** A kernel whose softmax path differs by head_dim
   can pass every D=128 check while the D=64 path never runs. List, per gated cell, which path ran
-  (`flydsl_attn_measurement.md` §8).
+  (`measurement.md` §8).
 - **Every configuration sweep carries the SNR gate.** *(field, E7)* Several `block_kv` values computed dQ silently
   wrong (8–14 dB) and one read 854 TF/s, exactly on target, because it skipped work.
 - **Synchronisation, anchor and fence changes need a grid of configurations, with determinism.** *(field, E8)* Two
@@ -89,7 +89,7 @@ q-block (W=32 against `BLOCK_Q=64`), a reduction read half-written bands; poison
   GEMMs); a second path may reduce dQ. Publish the scale from the builder and have every consumer read it. A
   gradient off by a constant factor names the wrong constant: log2e (1.443), ln 2 (0.693), 1/√D, or
   1/(sm·log2e) (7.84 at D=128).
-- The LSE pre-scaling format must match the exp mode on both sides (`flydsl_attn_softmax.md`).
+- The LSE pre-scaling format must match the exp mode on both sides (`softmax.md`).
 
 ## 6. Accumulator seeds
 When the softmax scale c is applied to the score accumulator rather than folded into Q, everything seeded into
@@ -137,8 +137,8 @@ that accumulator must already be divided by c, or the scale applies twice.
   backward: put the reference forward and backward inside the same out-of-memory guard.
 
 ## Related
-`../gemm/correctness.md` · `../flydsl/debug-flydsl-kernel.md` · `flydsl_attn_softmax.md` ·
-`flydsl_attn_backward.md` · `flydsl_attn_measurement.md` · `flydsl_attn_schedule_sync.md`
+`../gemm/correctness.md` · `../flydsl/debug-flydsl-kernel.md` · `softmax.md` ·
+`backward.md` · `measurement.md` · `schedule_sync.md`
 
 ## Evidence
 

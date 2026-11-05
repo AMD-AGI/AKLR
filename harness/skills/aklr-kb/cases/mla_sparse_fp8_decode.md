@@ -57,7 +57,7 @@ are called here by their extra pool: "no extra" (window only), "extra 8256" (ext
 - **The bench draws lengths and indices uniformly.** `sparse_lens` and `extra_sparse_lens` are uniform in
   [0, width] and the indices uniform over the whole pool (`IntRangeDistribution`). In serving they follow the
   model's top-k selection, whose index structure moved gather cost on another sparse kernel
-  (`../attention/flydsl_attn_decode_split_kv.md` §7); the speedup on serving inputs is not measured. At batch 1 one
+  (`../attention/decode_split_kv.md` §7); the speedup on serving inputs is not measured. At batch 1 one
   row's drawn lengths set the work: the nine batch-1 Points of extra 8256 read 2.809–5.845 *(field, E2)*, and each
   reproduces within 4.1% in the other committed run *(field, E4)*, so the spread follows each Point's inputs
   (seeded by its workload hash, `aklr/ops/README.md` § Inputs and workloads), not run noise.
@@ -75,12 +75,12 @@ are called here by their extra pool: "no extra" (window only), "extra 8256" (ext
   (`aklr/core/contract/semantics/_layouts.py`). A pool view that starts inside a larger allocation would be read
   from the wrong base. The bench's pools start at offset 0; sglang's were not checked for this page.
 - **Not the shape the decode cards recommend**, and nothing here prices the differences: the combine is a second
-  launch with 4 waves and an LDS merge (`../attention/flydsl_attn_decode_split_kv.md` §1 and
+  launch with 4 waves and an LDS merge (`../attention/decode_split_kv.md` §1 and
   `../gemm/grid_pricing.md` §2 found one wave per combine workgroup faster); a producer workgroup owns
   one 32-key tile, two above 1024 live keys, where §5 of the decode card asks for at least two per split; partials
   are bf16, which §5 says adds merge error.
 - **Each call goes through the `@flyc.jit` launcher** `launch_all`, which re-binds its arguments on every call
-  (`../attention/flydsl_attn_measurement.md` §6, on FlyDSL 0.3.2). CI's ratio is GPU time in graph replays, so that
+  (`../flydsl/attention.md` § measurement §6, on FlyDSL 0.3.2). CI's ratio is GPU time in graph replays, so that
   host cost is outside it; an eager caller pays it.
 - **64 heads are a constant** (`NHEAD`): the 128-head DeepSeek-V4-Pro definitions of this contract have no kernel.
 
@@ -101,27 +101,27 @@ loads plus that block's UE8M0 exponent, and build bf16 values by integer bit ass
 shifted into place, exponent + scale − 7 added in one integer add per pair, sign moved to bit 15. The eighth
 thread copies the 64 bf16 rope values. Everything lands in one bf16 LDS tile of 32 keys × 512 dims (32 KiB), stored
 as 16 blocks of 32 keys × 32 dims. A key with a negative index or past the live length reads slot 0 and gets a
-−1e30 bias in LDS, so its exp2 is 0 (the masking of `../attention/flydsl_attn_decode_split_kv.md` §4). A payload is
+−1e30 bias in LDS, so its exp2 is 0 (the masking of `../attention/decode_split_kv.md` §4). A payload is
 4.5 lines of 128 bytes at phase 0 or 64, so each key touches 5 lines plus its scale (from the layout; §7 of the same
 card).
 
 **Logits, heads on the lane.** Each wave owns 16 heads and keeps their q in registers for the whole workgroup (16
 loads of 16 bytes per lane). Per 16-key half, 16 `mfma_f32_16x16x32_bf16` with A = keys from LDS and B = q: C holds
 one head per lane and the keys on the element index, so the row max and row sum are an in-lane fold over 8 keys
-and two `shuffle_xor` (16, 32) (`../attention/flydsl_attn_mfma_layout.md` §3–4, `../attention/flydsl_attn_softmax.md`
+and two `shuffle_xor` (16, 32) (`../attention/mfma_layout.md` §3–4, `../attention/softmax.md`
 §5). `sm_scale · kv_scale · log2 e` and the bias go in with one multiply and one add before `exp2`
-(`../attention/flydsl_attn_softmax.md` §3).
+(`../attention/softmax.md` §3).
 
 **P·V from the same tile.** The values are the first 512 dims of the same latent, so P·V reads the tile again,
 transposed, with `ds_read_b64_tr_b16` (`LDSReadTrans16_64b`): 64 `mfma_f32_16x16x16bf16_1k` per 32 keys and wave,
 A = P as 4 bf16 per lane straight from the logits layout (keys already on the element index), B = Vᵀ, into 32 f32x4
-accumulators per lane, 16 heads × 512 dims per wave (`../attention/flydsl_attn_lds.md` §1–3,
-`../attention/flydsl_attn_mfma_layout.md` §4). One gather and one dequantisation feed both GEMMs and all 64 heads.
+accumulators per lane, 16 heads × 512 dims per wave (`../attention/lds.md` §1–3, `../flydsl/attention.md` § lds §2,
+`../attention/mfma_layout.md` §4). One gather and one dequantisation feed both GEMMs and all 64 heads.
 
 **Online softmax** (`step`). The running max starts at −1e20, so a block of masked keys gives P = 0, not NaN
-(`../attention/flydsl_attn_softmax.md` §6.1). The accumulator holds heads on its element index, so `alpha =
+(`../attention/softmax.md` §6.1). The accumulator holds heads on its element index, so `alpha =
 exp2(m_old − m_new)` moves to that layout through 16 floats of the wave's own LDS (an `lgkmcnt(0)` wait, no
-barrier) before it scales all 128 accumulators (`../attention/flydsl_attn_softmax.md` §6.2). Two barriers per
+barrier) before it scales all 128 accumulators (`../attention/softmax.md` §6.2). Two barriers per
 32-key step guard the tile. The row sum adds the fp32 P while P·V takes P rounded to bf16 (§5 of the softmax card
 sums the rounded P). At the end a lane scales by 1/l and stores the partial as bf16, 2 bytes per store; lanes 0–15
 store lse = (m + log2 l) · ln 2, or −1e30 for an empty slot.

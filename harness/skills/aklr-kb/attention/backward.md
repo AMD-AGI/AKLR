@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL attention backward — dQ/dK/dV accumulation, determinism, workspace, masking and fusion"
+title: "Attention backward — dQ/dK/dV accumulation, determinism, workspace, masking and fusion"
 kind: topic
-lever: flydsl_attn_backward
+lever: attn_backward
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16]
@@ -9,11 +9,10 @@ regimes: [backward, causal, sliding-window, gqa]
 flydsl: 0.3.2
 ---
 
-# The attention backward pass in FlyDSL
+# The attention backward pass
 
-> FlyDSL v0.3.2 ships no attention backward kernel; this card is what backward kernels written in FlyDSL
-> taught: a KV-outer dK/dV body that emits dQ as split-K partials, a Q-outer dq kernel, a delta (`dO·O`)
-> kernel, and the reduce that folds the partials.
+> This card is what measured backward kernels taught: a KV-outer dK/dV body that emits dQ as split-K partials,
+> a Q-outer dq kernel, a delta (`dO·O`) kernel, and the reduce that folds the partials.
 >
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end.
 > Use them for direction and order of magnitude, not as targets.
@@ -24,8 +23,8 @@ flydsl: 0.3.2
 - You consider fusing dq with dK/dV, fusing the delta kernel, or splitting a kernel.
 - A causal or windowed backward is slower than its FLOPs suggest.
 
-**Somewhere else if:** grid order, XCD placement, GQA merging → `flydsl_attn_grid_dispatch.md`;
-occupancy and spills → `flydsl_attn_registers_occupancy.md`; gates → `flydsl_attn_correctness.md`.
+**Somewhere else if:** grid order, XCD placement, GQA merging → `grid_dispatch.md`;
+occupancy and spills → `registers_occupancy.md`; gates → `correctness.md`.
 
 ## 1. Determinism by construction
 - One workgroup owns each output tile, and no float atomic touches an output.
@@ -80,10 +79,10 @@ Let `A` be the accumulator floats one workgroup holds.
 
 ## 4. Pricing the workspace round trip
 - **Subtract in layers.** A "skip the partial store" probe also lets LLVM delete the GEMM that fed it; run
-  the traffic-only, store-and-consumer and next-stage arms together (`flydsl_attn_attribution.md` §5).
+  the traffic-only, store-and-consumer and next-stage arms together (`attribution.md` §5).
 - **Price bytes with an alias probe, not a roofline.** *(field, E11)* Aliasing all bands onto one slab saved
   0.071 ms/GB against a roofline 0.161 ms/GB: the roofline overstated the gain 2.3×.
-- **Time an auxiliary kernel alone** (`flydsl_attn_measurement.md` §9). *(field, E12)* Widening a fold's tile
+- **Time an auxiliary kernel alone** (`measurement.md` §9). *(field, E12)* Widening a fold's tile
   (+10.7–12.9% in the kernel) moved wall an estimated 0.07–0.14%.
 - **Re-price the fold after every body win.** *(field, E13)* Removing it (diagnostic) cut 4.9% (0.289 ms), and 5.84%
   (0.333 ms) after the body got 4% faster with the same bytes.
@@ -125,7 +124,7 @@ Let `A` be the accumulator floats one workgroup holds.
 - `s_waitcnt` covers only the issuing wave. After a multi-wave store phase, the order is `s_waitcnt(0)` in
   every wave → workgroup barrier → the one atomic announcement.
 - With few rows per launch (decode) the same shape also serializes the reduce; see
-  `flydsl_attn_decode_split_kv.md` §3.
+  `decode_split_kv.md` §3.
 
 ## 7. Fusion
 - **Drop removable GEMMs first.** *(field, E23)* Removing a redundant GEMM and the global rho/R renormalization
@@ -154,7 +153,7 @@ Let `A` be the accumulator floats one workgroup holds.
   fought for DRAM, wall 227 → 256 ms.
 - **Price an auxiliary kernel by the main kernel's disturbed time.** An occupancy-1 body that fills the
   machine has no idle slots, so a "hidden" kernel only renames CU time.
-  - *(field, E32)* A delta kernel's per-call time beside the body spread over 25× (`flydsl_attn_measurement.md` §9); not
+  - *(field, E32)* A delta kernel's per-call time beside the body spread over 25× (`measurement.md` §9); not
     chunking it at all tied (+0.03%).
   - *(field, E33)* Aligning chunks to whole fills still left the D128 body 18% slower and the co-resident reduce
     3× slower: the binding term was the body's register headroom (498/512 → 18% tax; 449/512 → 3.6%).
@@ -177,8 +176,7 @@ Let `A` be the accumulator floats one workgroup holds.
     costs the slowest wave. *(field, E38)* Diagonal MFMAs 128 → 88, critical path 675 → 560, 0.59% faster,
     bit-identical; *(field, E39)* the dq version 0.34% faster.
   - Skip with a wave-uniform branch. An MFMA ignores EXEC, so lane masks skip nothing.
-  - Write the arms as sequential wave-uniform `if`s whose `else` yields the incoming accumulators
-    unchanged, not as nested ifs (`flydsl_attn_registers_occupancy.md` §6).
+  - Write the arms as sequential wave-uniform branches, not nested ones (`registers_occupancy.md` §6).
   - Count the values a branch must carry. *(field, E39)* In a fully unrolled dK/dV head loop the branch carried
     40 values: spill 0 → 5, 0.17% slower. Check spill before counting saved work.
 - **Sliding window.**
@@ -206,8 +204,8 @@ D64; band interleave paid at D128 only (§5); the D128 gap is the workspace (§2
 - The masked q-loop and the window bounds have their own ISA census and accuracy gate.
 
 ## Related
-`flydsl_attn_grid_dispatch.md` · `flydsl_attn_decode_split_kv.md` · `flydsl_attn_registers_occupancy.md` ·
-`flydsl_attn_attribution.md` · `flydsl_attn_correctness.md` · `../gemm/datapath.md` §8 ·
+`grid_dispatch.md` · `decode_split_kv.md` · `registers_occupancy.md` ·
+`attribution.md` · `correctness.md` · `../gemm/datapath.md` §8 ·
 `../gemm/epilogue.md` §5 · `../gemm/attribution.md` §2 · `../hardware/gfx950/memory_and_sync.md`
 
 ## Evidence

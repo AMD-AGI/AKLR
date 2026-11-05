@@ -108,7 +108,7 @@ worth very different wall time.
 - **Read the clock to classify a win.** If wall time and clock improved together, the change saved energy;
   if wall time moved and the clock did not, the change moved cycles at constant energy per cycle (stalls or work
   added or removed); below the power cap every change reads this way. A clock rise alone is not an energy
-  saving: a slower arm can clock higher (`../attention/flydsl_attn_attribution.md` §8).
+  saving: a slower arm can clock higher (`../attention/attribution.md` §8).
 - **Sample the clock correctly.** Use one shape under sustained load for at least 45 s and average only
   the samples taken under load. The mode of a whole benchmark run is the idle clock. Alternatively use
   `GRBM_GUI_ACTIVE / 8 / dispatch time`: the counter is summed over the 8 XCDs, and only long dispatches
@@ -177,7 +177,7 @@ near busy.
 - **At two or more waves per SIMD, moving VALU work between clusters rarely pays.** Other waves fill most gaps.
   *(field, E29)* On an attention kernel, moving a row sum into the P·V cluster cost 3.1% and into a memory cluster
   0.1%; deleting it gained 6.4%. The clusters are not interchangeable, though: count what each cluster's MFMAs
-  already cover before moving work into it (`../attention/flydsl_attn_registers_occupancy.md` §8).
+  already cover before moving work into it (`../attention/registers_occupancy.md` §8).
 - **Price a bare VALU chain with a deletion probe before covering it.** *(field, E30, E31)* On an attention
   kernel, a chain that looked like a bubble was on the critical path: covering it with MFMAs lost 1.5%, while
   deleting the scaling step's 32 packed FMAs saved 11.25%. Count `v_exp_f32` at 8 cycles in any per-pipe
@@ -185,7 +185,7 @@ near busy.
 - `v_exp_f32` (also `v_log_f32`, `v_rcp_f32`, `v_sqrt_f32`) takes 8 cycles per wave64 instruction on gfx950,
   against 4 for `v_mul_f32` from one wave; at two or more waves per SIMD plain VALU reaches 2 cycles per SIMD
   and exp stays at 8 *(field, E32)*
-  (`../attention/flydsl_attn_softmax.md` §1). Check a per-class model against `SQ_ACTIVE_INST_VALU`.
+  (`../attention/softmax.md` §1). Check a per-class model against `SQ_ACTIVE_INST_VALU`.
 
 ## 9. Readings you cannot trust
 

@@ -1,34 +1,27 @@
 ---
-title: "FlyDSL attention — scheduling hints, fences, priorities, waits, barriers and DMA pipelining"
+title: "Attention — scheduling hints, fences, priorities, waits, barriers and DMA pipelining"
 kind: topic
-lever: flydsl_attn_schedule_sync
+lever: attn_schedule_sync
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16, fp8]
 regimes: [prefill, backward, decode, causal]
 flydsl: 0.3.2
 sources:
-  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/__init__.py:107
-  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/__init__.py:810
-  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/inline_asm.py:55
-  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/universal.py:96
-  - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/jit_function.py:744
-  - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/kernel_function.py:157
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:74
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:1754
-  - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_gfx950.py:1018
 ---
 
-# Scheduling, synchronisation and pipelining in a FlyDSL attention kernel
+# Scheduling, synchronisation and pipelining in an attention kernel
 
 > An attention body interleaves MFMAs with a transcendental-heavy softmax, LDS reads and DMA, all between
 > barriers. The hint vocabulary (mask bits, greedy group filling, mask rules for unrolled epilogues), the
 > single `vmcnt` and LDS-DMA waits are in `../gemm/schedule_and_locality.md` §3–§4 and
-> `../gemm/datapath.md` §4; how to rank scheduling arms is in `flydsl_attn_attribution.md` §2
+> `../gemm/datapath.md` §4; how to rank scheduling arms is in `attribution.md` §2
 > and §5. This card adds what attention adds. Regime first: when co-resident waves already fill the
 > MFMA shadow (no bare VALU between MFMAs), reordering rarely pays; where bare VALU remains it still can, and it
 > paid more at 2 waves/SIMD than at 3 (§4). At one workgroup per CU, interleaving inside the workgroup is the only
-> cover (`flydsl_attn_registers_occupancy.md` §8).
+> cover (`registers_occupancy.md` §8).
 >
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end.
 > Use them for direction and order of magnitude, not as targets.
@@ -39,15 +32,15 @@ sources:
 - You are adding a prefetch, a second LDS buffer, or cache hints to K/V/Q/dO loads.
 - A scheduling change came back numerically wrong on some shapes.
 
-## 1. Primitives in FlyDSL v0.3.2
-- `rocdl.sched_group_barrier(mask, size, group_id)` (mask as an int or a keyword such as `"transcendental"`),
-  `rocdl.sched_barrier(mask)`, `rocdl.iglp_opt(id)`, `rocdl.s_setprio(p)`.
+## 1. Scheduling primitives and masks
 - **exp is TRANS, not VALU.** `0x400` selects transcendentals including `v_exp_f32`; `0x002` (VALU) does
   not; `0x008` matches both 16x16 and 32x32 MFMAs. A `{1 MFMA, 2 VALU} × 4` recipe left every `v_exp`
   after the last MFMA; only `{1 MFMA, 2 TRANS}` placed exps between MFMAs.
 - FlyDSL's gfx950 forward uses `0x008 / 0x002 / 0x400` groups of `{1 MFMA, n VALU}` and
   `{1 MFMA, 3 EXP}`, halved at D=64, and wraps every rendezvous as
   `sched_barrier(0); s_barrier; sched_barrier(0)` (`_dualwave_sync_barrier`).
+
+In FlyDSL: `../flydsl/attention.md` § schedule_sync §1.
 
 ## 2. `sched_group_barrier` recipes
 - **Classes not named in a region's groups go to the end of the region.** *(field, E1)* A recipe naming only MFMA
@@ -66,9 +59,10 @@ sources:
   *(field, E4)* A recipe placed after an internal `sched_barrier(0)` steered a region holding 2 MFMAs; moving
   or deleting it produced byte-identical ISA. After restructuring (e.g. loop unswitching) whole recipe
   sweeps can go inert.
-- **Hash the opcode stream before benchmarking an arm:**
-  `grep -o "^\s*[a-z_0-9]*" 21_final_isa.s | md5sum` on the `FLYDSL_DUMP_IR=1` dump. Equal hashes cost no
-  GPU time.
+- **Hash the opcode stream of the final ISA before benchmarking an arm:**
+  `grep -o "^\s*[a-z_0-9]*" <isa>.s | md5sum`. Equal hashes cost no GPU time.
+
+In FlyDSL: `../flydsl/attention.md` § schedule_sync §2.
 
 ## 3. `iglp_opt`
 - One strategy per region. Position inside the region and repeated calls compile byte-identically; the
@@ -116,32 +110,28 @@ sources:
 - With producer waves feeding MFMA waves, do not raise the MFMA waves. *(field, E45)* On an MLA decode, priority 2 on
   them (softmax, or QK and P·V) was 3–7% slower on every shape; on the producers, 1% faster to 3% slower.
 
-## 6. LLVM scheduler strategy through `compile_hints`
-```python
-jitfn.compile_hints["llvm_options"] = {"amdgpu-sched-strategy": "max-ilp"}   # changes the ISA
-```
-- Option names are LLVM `cl::opt`s; an unknown option name or a wrong value type raises, but an unknown
-  `amdgpu-sched-strategy` value (e.g. `max-occupancy`) is accepted and silently ignored. Hint layers merge
-  shallowly and a `CompilationContext.compile_hints(...)` context wins over `jitfn.compile_hints`: the
-  context's `llvm_options` replaces yours whole. FlyDSL's forward launcher sets its own in such a context, so
-  for that kernel add the option to the launcher's hint dict and keep
-  `{"enable-post-misched": False, "lsr-drop-solution": True}`. Hints are part of the cache key.
+## 6. LLVM scheduler strategy and options
+- The strategy is the LLVM option `amdgpu-sched-strategy` (values such as `max-ilp`, `max-memory-clause`,
+  `iterative-ilp`). Options are LLVM `cl::opt`s; an unknown strategy value (e.g. `max-occupancy`) is accepted and
+  silently ignored.
 - Confirm the opcode hash changed (§2), then rerun SNR and determinism.
 - On a body not yet hand-scheduled: *(field, E20)* `max-memory-clause` with post-RA scheduling +0.6–0.7%,
   `max-ilp` +0.4%; `iterative-ilp` was fastest but reordered hand fences and hazard guards into NaN.
 - On a hand-scheduled body only the downside is left: *(field, E21, E42)* backward −0.35% to −0.85%,
   *(field, E22)* forward −0.1% to −1.1%.
-- LLVM's SLP vectorizer packs independent scalar f32 FMAs into `v_pk_fma_f32`; `"slp-threshold": 100000` keeps them
-  scalar. *(field, E46)* With the softmax exponent rewritten as one scalar fma per score, together with the
-  threshold: 0 packed ops on the main path, +6.85% on an fp8 MLA decode (the threshold's own share unpriced).
+- LLVM's SLP vectorizer packs independent scalar f32 FMAs into `v_pk_fma_f32`; the LLVM option
+  `slp-threshold=100000` keeps them scalar. *(field, E46)* With the softmax exponent rewritten as one scalar fma
+  per score, together with the threshold: 0 packed ops on the main path, +6.85% on an fp8 MLA decode (the
+  threshold's own share unpriced).
+
+In FlyDSL: `../flydsl/attention.md` § schedule_sync §6.
 
 ## 7. Hazards
 - Inline-asm results are invisible to the hazard recognizer (`../gemm/correctness.md` §7).
-  In v0.3.2 `rocdl.cvt_pk_bf16_f32` is inline asm. An f32 → bf16 `.to(fx.BFloat16)` on a scalar or a
-  2-element vector lowers to the same `v_cvt_pk_bf16_f32` as an ordinary instruction; prefer it.
-- *(field, E23)* MFMAs consuming the asm pack directly got `s_nop 0` instead of the required wait states:
-  non-deterministic, half the q rows (alternate groups of 4) biased, 24.99 dB. Fix: `sched_barrier(0)` +
-  `s_nop 1` before those MFMAs, or the arith truncation.
+- *(field, E23)* MFMAs consuming an inline-asm `v_cvt_pk_bf16_f32` (the f32 → bf16 pack of P) directly got `s_nop 0`
+  instead of the required wait states: non-deterministic, half the q rows (alternate groups of 4) biased, 24.99 dB.
+  Fix: `sched_barrier(0)` + `s_nop 1` before those MFMAs, or a compiler-emitted `v_cvt_pk_bf16_f32` (an f32 → bf16
+  `fptrunc`).
 - **A clamp can be the hazard carrier.** When an inline-asm instruction reads an MFMA result, a compiler-visible
   VALU op on that value (a `min(s, 0)` that never fires on real data) is what makes LLVM insert the wait states.
   - *(field, E24)* Every variant without it failed the SNR gate; *(field, E25)* reducing it from one per element
@@ -150,13 +140,15 @@ jitfn.compile_hints["llvm_options"] = {"amdgpu-sched-strategy": "max-ilp"}   # c
 - **An anchor must read the exact value it protects.** *(field, E26)* One anchor per group instead of per
   vector: 0.31–2.53% faster, 16.9–19.7 dB and non-deterministic, only at q_split 4 with BLOCK_KV 128 or
   at BLOCK_KV 64; the main shapes passed. Gate hazard edits on a shape grid with bitwise determinism
-  (`flydsl_attn_correctness.md`).
+  (`correctness.md`).
+
+In FlyDSL: `../flydsl/attention.md` § schedule_sync §7.
 
 ## 8. Waits and barriers
 - **Before moving an instruction across a barrier, ask which write-after-read its `s_waitcnt` protects.**
-  `gpu.barrier()` is only `s_barrier`. *(field, E27)* MFMAs moved past a single-slot LDS barrier took the waits
-  that retired the previous head's reads with them; an `s_waitcnt lgkmcnt(0)` before the barrier restored
-  it at zero cost.
+  `s_barrier` waits on no counter (`../hardware/gfx950/memory_and_sync.md` §5). *(field, E27)* MFMAs moved past
+  a single-slot LDS barrier took the waits that retired the previous head's reads with them; an
+  `s_waitcnt lgkmcnt(0)` before the barrier restored it at zero cost.
 - **A hand-written `lgkmcnt(0)` right before a barrier is a tax** when every read it drains already has a
   consumer before the barrier: the consumers' graded waits retire them and the backend re-emits its own drain
   at `s_barrier` (check the ISA). That drain gives visibility, not write-after-read safety: delete the
@@ -170,9 +162,11 @@ jitfn.compile_hints["llvm_options"] = {"amdgpu-sched-strategy": "max-ilp"}   # c
   prefetch ahead of partial stores: `vmcnt(0)` 16 → 1, wait depths (7..0) → (11..4), +3.9%; grouping DMA
   cut `vmcnt` waits 89 → 18 but turned graded waits into full drains: −5.3%.
 - A barrier is also a scheduling boundary and, in a dual-wave body, the phase lock. Price a
-  barrier family at N, N/2 and 0 and re-price after nearby edits (`flydsl_attn_attribution.md` §5); the
+  barrier family at N, N/2 and 0 and re-price after nearby edits (`attribution.md` §5); the
   rendezvous pool tracks co-resident workgroups and barrier-domain width
-  (`flydsl_attn_grid_dispatch.md` §9).
+  (`grid_dispatch.md` §9).
+
+In FlyDSL: `../flydsl/attention.md` § schedule_sync §8.
 
 ## 9. Moving work into exposed segments
 - Cover the first uncovered wait of an exposed segment with MFMAs whose operands are already in registers.
@@ -194,35 +188,33 @@ jitfn.compile_hints["llvm_options"] = {"amdgpu-sched-strategy": "max-ilp"}   # c
 - **An LDS DMA in flight forces `vmcnt(0)` before every `ds_read` of the same allocation** (mechanism in
   `../gemm/datapath.md` §4). *(field, E33)* With a second K/V buffer, drains 16 → 85 and 109. With
   compiler-visible reads, DMA overlaps only register-resident work; asm reads that carry their own waits avoid the
-  drain (`../gemm/datapath.md` §4) at the price of hand-placed `lgkmcnt` (`flydsl_attn_lds.md` §2).
+  drain (`../gemm/datapath.md` §4) at the price of hand-placed `lgkmcnt` (`lds.md` §2).
 - **K/V double buffering usually loses: it hides latency; measured cost was throughput.** *(field, E34)* dq
   `BLOCK_KV` 96/64/32 double-buffered: −2.9/−3.2/−2.3%; *(field, E33)* a 256-VGPR body duplicated hoisted LDS
   addresses into 424 B of scratch: −16.5%. The winning form is a single buffer with a hand-off: issue the next DMA
   where the transposed-read registers die (`SQ_WAIT_ANY` −41% *(field, E35)*). At one workgroup per CU a second
   slot that removes a write-after-read barrier can pay (+2.4%, +3.1–3.8% with a prefetch retune on one dQ kernel)
   *(field, E36)*, but it is not a rule: *(field, E37)* on another such backward it lost 6.0% because the second
-  slot moved the next head's `ds_write` burst into a transposed-read burst (`flydsl_attn_lds.md` §9);
+  slot moved the next head's `ds_write` burst into a transposed-read burst (`lds.md` §9);
   *(field, E38)* on a dual-wave forward, deepening the ring to drop one barrier lost 2.2% (LDS doubled, spills 4 →
   9; the deeper ring alone cost 1.65%).
 - One barrier per iteration needs 2 buffers when every wave reads a buffer in the iteration after its refill
   (FlyDSL's `kernels/gemm/preshuffle_gemm.py:509-524`, `pipeline_2stage`; *(field, E43)*), 3 when some waves
   read it a step later.
 - A deeper ring relaxes write-after-read only, never read-after-write.
-- Register prefetch of cold per-head loads (LSE, delta): `flydsl_attn_grid_dispatch.md` §10.
+- Register prefetch of cold per-head loads (LSE, delta): `grid_dispatch.md` §10.
 - `buffer_load … lds` gets no cross-workgroup vL1D reuse; judge request pressure by `TCP_TCC_READ_REQ`,
-  not by DMA instruction count (`flydsl_attn_grid_dispatch.md` §2, §9).
-- **Cache bits:** the LDS-DMA atoms (`BufferCopyLDS*`, `cdna4.BufferLoadAsyncLDS*`, `GlobalLoadAsyncLDS*`)
-  always emit `aux = 0`. For `nt`/`sc` bits call
-  `rocdl.raw_ptr_buffer_load_lds(rsrc, lds_ptr, size, voffset, soffset, offset, aux=<python int>)`; any other
-  type is silently dropped (`../flydsl/gemm.md` § INDEX FlyDSL version).
+  not by DMA instruction count (`grid_dispatch.md` §2, §9).
 - **Non-temporal hints on attention operand streams were negative.** *(field, E39)* Q `nt` −0.95% (waves of one
   workgroup share Q lines); dkdv Q/dO DMA `nt` −7.6% *(field, E33)* (reused across workgroups); O store `nt` +0.11%
   (noise). Before marking a stream `nt`, ask whether lanes or waves of one workgroup share its lines.
-  Workspace partials are in `flydsl_attn_backward.md` §5.
+  Workspace partials are in `backward.md` §5.
 - **Decode prefetch depth:** a prologue depth of 2 pays only at ≤ 2 CTAs per CU. *(field, E40)* It was 1.7–2.7%
   faster up to 512 CTAs (2 per CU on 256 CUs) and 2.0–2.5% slower from 576 up; *(field, E41)* a steady-state depth
   ≥ 2 was 4.6–6.6% slower. Account the extra prologue tile so the first iteration consumes it, or it becomes the
-  steady-state depth (`flydsl_attn_decode_split_kv.md`).
+  steady-state depth (`decode_split_kv.md`).
+
+In FlyDSL: `../flydsl/attention.md` § schedule_sync §10.
 
 ## Verify
 - Every recipe arm has a changed opcode hash, and every region's MFMAs and TRANS ops are named.
@@ -231,8 +223,8 @@ jitfn.compile_hints["llvm_options"] = {"amdgpu-sched-strategy": "max-ilp"}   # c
   `SQ_WAIT_INST_LDS`, then by wall time.
 
 ## Related
-`flydsl_attn_registers_occupancy.md` · `flydsl_attn_lds.md` · `flydsl_attn_attribution.md` ·
-`flydsl_attn_correctness.md` · `flydsl_attn_grid_dispatch.md` · `flydsl_attn_decode_split_kv.md` ·
+`registers_occupancy.md` · `lds.md` · `attribution.md` ·
+`correctness.md` · `grid_dispatch.md` · `decode_split_kv.md` ·
 `../gemm/schedule_and_locality.md` · `../gemm/correctness.md` ·
 `../flydsl/guides.md` § prefetch-data-load · `../flydsl/debug-flydsl-kernel.md`
 

@@ -1,22 +1,15 @@
 ---
-title: "FlyDSL attention — LDS layout and transposed reads on gfx950"
+title: "Attention — LDS layout and transposed reads on gfx950"
 kind: topic
-lever: flydsl_attn_lds
+lever: attn_lds
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16, fp8]
 regimes: [prefill, backward, decode]
 flydsl: 0.3.2
-sources:
-  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/__init__.py:17
-  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/cdna4.py:31
-  - ROCm/FlyDSL@dd8373349:lib/Dialect/FlyROCDL/CDNA4/CopyAtom.cpp:146
-  - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:92
-  - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:2725
-  - ROCm/FlyDSL@dd8373349:kernels/attention/swa_gfx950.py:233
 ---
 
-# LDS layout and transposed reads in a FlyDSL attention kernel
+# LDS layout and transposed reads in an attention kernel
 
 > P·V contracts over kv, and so do dV = Pᵀ·dO and dK = dSᵀ·Q in the backward pass. With K/V/Q/dO stored
 > `[row, d]` in LDS, one operand of each of these GEMMs is strided along the contraction and must be read
@@ -46,29 +39,19 @@ sources:
   fixed by the tile and the transposed-read count is a structural constant. Budget the layout around it;
   no instruction halves it.
 
-## 2. FlyDSL v0.3.2 API
-`flydsl.expr.rocdl` re-exports the ROCDL ops, so three forms exist (`buffer_ops` is the repo's
-`kernels/common/buffer_ops.py`, not part of the wheel):
-```python
-ptr = buffer_ops.create_llvm_ptr(fx.Int64(byte_off), address_space=3)    # !llvm.ptr<3>
-v4 = rocdl.ds_read_tr16_b64(v4f16_ty, ptr).result      # op class: take .result
-v4 = rocdl.ds_read_tr16_b64_(v4f16_ty, ptr)            # function form
-atom = fx.make_copy_atom(rocdl.cdna4.LDSReadTrans16_64b(), bf16)   # copy atom
-```
-- The other widths: `ds_read_tr8_b64`, `ds_read_tr4_b64`, `ds_read_tr6_b96`; atoms `LDSReadTrans8_64b`,
-  `LDSReadTrans4_64b`, `LDSReadTrans6_96b`, or `rocdl.cdna4.LDSReadTrans(granularity, bits)` with only
-  (16, 64), (8, 64), (4, 64), (6, 96) accepted.
-- With a base pointer plus a compile-time constant, the op folds the constant into `offset:`; the ISA is
+## 2. Issue transposed reads through the intrinsic, not inline asm
+- The compiler intrinsics are `llvm.amdgcn.ds.read.tr16.b64`, `…tr8.b64`, `…tr4.b64` and `…tr6.b96`. With a
+  base pointer plus a compile-time constant, the intrinsic folds the constant into `offset:`; the ISA is
   identical to inline asm with an immediate.
-- **Use the op or the atom, not inline asm,** unless the reads sit in a hand-scheduled asm region that supplies its
+- **Use the intrinsic, not inline asm,** unless the reads sit in a hand-scheduled asm region that supplies its
   own waits (`../gemm/datapath.md` §4). The compiler does not track an asm read's destination, so
   every consumer needs a hand-written `lgkmcnt` drain, pinned with `sched_barrier(0)`, which cuts the
-  P·V cluster into fragments (`../gemm/datapath.md` §4). *(field, E1)* Swapping asm for the op
+  P·V cluster into fragments (`../gemm/datapath.md` §4). *(field, E1)* Swapping asm for the intrinsic
   emitted the same 96 reads, let the backend place graded waits, cut the slowdown from split K/V reads
   at 3 waves/SIMD from 3.26% to 1.95%, dropped spills at a 128-register target from 14–105 to 2, and measured
   occupancy rose from 2.985 to 3.978 waves/SIMD; at the power cap the wall gained only 0.50% (sclk −3.3%).
-- FlyDSL's dual-wave forward reads V with inline asm and immediate offsets
-  (`_ds_read_tr16_b64_imm`); its generic and SWA paths use the op and the atom.
+
+In FlyDSL: `../flydsl/attention.md` § lds §2.
 
 ## 3. Lane maps and k order
 - **tr_b16**, measured with a position-encoded LDS image *(field, E2)*: each 16-lane group is independent;
@@ -99,12 +82,12 @@ atom = fx.make_copy_atom(rocdl.cdna4.LDSReadTrans16_64b(), bf16)   # copy atom
   instead of retuning the shared phase.
 - Where a swizzle mask is combined with another address term by `+`, check the two bit fields stay
   disjoint under the new phase. *(field, E6)* An overlap gave finite, silently wrong dK/dV (norms off 0.06% and
-  0.48%). Gate layout arms on bitwise-equal output norms (`flydsl_attn_correctness.md`).
+  0.48%). Gate layout arms on bitwise-equal output norms (`correctness.md`).
 
 ## 5. Bank-conflict counters are usually a red herring
 - Compare `SQ_LDS_BANK_CONFLICT / SQ_LDS_IDX_ACTIVE` with a floor computed by hand from the access widths
   (`../gemm/datapath.md` §3), then prove LDS bounds the kernel with a probe before touching
-  the layout (`flydsl_attn_attribution.md`).
+  the layout (`attribution.md`).
 - *(field, E7)* On MFMA-latency-bound backward kernels, conflicts 19% → 0% (`LDSBankConflict`: `SQ_LDS_BANK_CONFLICT`
   per `GRBM_GUI_ACTIVE` cycle and CU, not the ratio above) and 21.7% → 4.4% bought no speed.
 - With bf16 `head_dim = 64` (128-byte rows) the row index adds almost no bank phase and a 64-element row
@@ -147,13 +130,15 @@ atom = fx.make_copy_atom(rocdl.cdna4.LDSReadTrans16_64b(), bf16)   # copy atom
 ## 8. Addresses
 - **A runtime LDS address term loses the DS immediate offset**, and every access recomputes its address.
   *(field, E17)* On a sparse-MLA backward, a per-access runtime XOR swizzle: −23%. *(field, E18)* On a sparse-MLA
-  forward, a block index made runtime turned every `tr_b16` offset runtime: 825 → 551 TF/s; returning it as a
-  compile-time int under `const_expr` restored 827.
+  forward, a block index made runtime turned every `tr_b16` offset runtime: 825 → 551 TF/s; making it a
+  compile-time constant again restored 827.
 - Keep swizzles as compile-time layout functions. Put per-slot or per-wave variation in the base pointer.
 - Keep slot and tile offsets in bits the swizzle does not XOR. If the mask XORs the bits that also carry
   the d-tile index, address differences become lane-dependent and each transposed read needs its own
   address VGPR. *(field, E19)* A second LDS slot raised the read-base registers from 59 to 96 and spilled 197
   dwords.
+
+In FlyDSL: `../flydsl/attention.md` § lds §8.
 
 ## 9. Keep LDS write bursts out of transposed-read bursts
 A legal restructuring that moved the next head's `ds_write` burst into the middle of a
@@ -161,15 +146,15 @@ transposed-read burst cost about 2.4%, estimated after crediting the barriers it
 segments are sensitive to LDS port contention; schedule write bursts where the read family is idle.
 
 ## Verify
-- The ISA shows only `ds_read_b64_tr_*` / `ds_read_b96_tr_b6` for transposed operands, issued by op or
-  atom, with immediate offsets.
+- The ISA shows only `ds_read_b64_tr_*` / `ds_read_b96_tr_b6` for transposed operands, issued by the
+  intrinsic, with immediate offsets.
 - Both operands of every MFMA use the same k order, checked with a position-encoded probe.
 - Swizzle phases keep 16-element blocks for transposed reads; rows are 16-byte aligned.
 - Any conflict-reduction claim comes with a hand-computed floor and a wall-time probe.
 
 ## Related
-`flydsl_attn_mfma_layout.md` · `flydsl_attn_schedule_sync.md` · `flydsl_attn_registers_occupancy.md` ·
-`flydsl_attn_attribution.md` · `flydsl_attn_correctness.md` · `../gemm/datapath.md` ·
+`mfma_layout.md` · `schedule_sync.md` · `registers_occupancy.md` ·
+`attribution.md` · `correctness.md` · `../gemm/datapath.md` ·
 `../flydsl/guides.md` § lds-optimization
 
 ## Evidence

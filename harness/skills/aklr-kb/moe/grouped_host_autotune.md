@@ -171,7 +171,7 @@ In FlyDSL: `../flydsl/moe.md` § grouped_host_autotune Verify.
 ## Related
 `grouped_group_mapping.md` · `grouped_wgrad.md` · `grouped_lowprec.md` ·
 `grouped_measurement.md` · `grouped_correctness.md` · `../gemm/autotune.md` ·
-`../gemm/attribution.md` · `../attention/flydsl_attn_measurement.md` ·
+`../gemm/attribution.md` · `../attention/measurement.md` ·
 `../flydsl/debug-flydsl-kernel.md`
 
 ## Evidence

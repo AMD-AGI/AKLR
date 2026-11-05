@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL attention — grid, dispatch order and XCD placement, audited before the kernel body"
+title: "Attention — grid, dispatch order and XCD placement, audited before the kernel body"
 kind: topic
-lever: flydsl_attn_grid_dispatch
+lever: attn_grid_dispatch
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16]
@@ -13,7 +13,7 @@ sources:
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_interface.py:1075
 ---
 
-# Grid and dispatch for a FlyDSL attention kernel
+# Grid and dispatch for an attention kernel
 
 > Which workgroup gets which `(batch, head, tile)`, in what order, and where the padding falls is index
 > arithmetic outside the kernel body. On attention it often pays more than the body: *(field, E1, E2)* three
@@ -29,8 +29,8 @@ sources:
 - You are merging GQA heads into one workgroup, or changing the number of waves per workgroup.
 - A consumer kernel (combine, reduce) reads what a producer kernel wrote.
 
-**Somewhere else if:** split-KV decode and the combine → `flydsl_attn_decode_split_kv.md`; dQ/dK/dV
-workspace and fusion → `flydsl_attn_backward.md`; generic round counting and tile pricing →
+**Somewhere else if:** split-KV decode and the combine → `decode_split_kv.md`; dQ/dK/dV
+workspace and fusion → `backward.md`; generic round counting and tile pricing →
 `../gemm/grid_pricing.md`.
 
 ## 1. The audit, in order
@@ -84,7 +84,7 @@ over `min(blocks_per_row, 8)` L2 domains, while the producer owned `split * seq 
 `(seq, blocks_per_row, 1)` makes the flat id `b * seq + row`, the producer's form: 18.6% and 7.0% faster on
 two decode shapes, ~0.5% faster where the producer's own traffic had already evicted the partials. It is a pure
 permutation. Before splitting any grid finer, check that the low 3 bits of the flat id did not change
-with it. The decode grid-size cliff is in `flydsl_attn_decode_split_kv.md` §4.
+with it. The decode grid-size cliff is in `decode_split_kv.md` §4.
 
 ## 4. Dispatch order is a list schedule
 - The dispatcher issues workgroups in block-id order, so the grid order is the schedule. Under a causal
@@ -194,7 +194,7 @@ A backward body that loops over the q-heads sharing one kv-head has a second loo
 - Rectangular, windowed and small-batch shapes are in the acceptance set.
 
 ## Related
-`flydsl_attn_backward.md` · `flydsl_attn_decode_split_kv.md` · `flydsl_attn_attribution.md` ·
+`backward.md` · `decode_split_kv.md` · `attribution.md` ·
 `../gemm/schedule_and_locality.md` §2 · `../gemm/grid_pricing.md`
 
 ## Evidence

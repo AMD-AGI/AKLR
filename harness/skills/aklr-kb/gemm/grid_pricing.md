@@ -152,7 +152,7 @@ Refinements, in the order they usually pay:
 number of waves per workgroup only decides whether the sum crosses waves (barriers and LDS round-trips).
 Try one wave per workgroup first. *(field, E14)* An attention decode's combine kernel, written in Triton, went
 from 4 waves to 1: `s_barrier` 5→0, time −3.7…−6.7%. One wave stops paying where each output merges many
-partials: race wider workgroups there (`../attention/flydsl_attn_decode_split_kv.md` §1). A changed reduction tree
+partials: race wider workgroups there (`../attention/decode_split_kv.md` §1). A changed reduction tree
 is not bit-identical to the old one — gate it against an independent reference, not old-vs-new max diff.
 
 ## 3. Asymmetric operand widths: the best tile is not square

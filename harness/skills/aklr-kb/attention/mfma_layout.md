@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL attention — MFMA timing, atom choice, fragment layouts and fp8 MFMAs on gfx950"
+title: "Attention — MFMA timing, atom choice, fragment layouts and fp8 MFMAs on gfx950"
 kind: topic
-lever: flydsl_attn_mfma_layout
+lever: attn_mfma_layout
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16, fp8]
@@ -14,17 +14,15 @@ sources:
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:3199
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:5560
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_gfx950.py:520
-  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/cdna4.py:80
-  - ROCm/FlyDSL@dd8373349:lib/Dialect/FlyROCDL/CDNA4/MmaAtom.cpp:245
 ---
 
-# MFMA atoms and fragment layouts in a FlyDSL attention kernel
+# MFMA atoms and fragment layouts in an attention kernel
 
 > Attention chains GEMMs through registers: S (or dP) leaves one MFMA as a C fragment and enters the next one
 > as an operand. The atom therefore fixes the softmax lane map, the reductions, the store and the register
 > footprint, not only the MAC rate. GEMM-side atom facts are in `../gemm/mainloop.md` §5, per-lane
 > register counts per atom in `../hardware/gfx950/matrix_core.md`, transposed-read lane maps in
-> `flydsl_attn_lds.md` §3.
+> `lds.md` §3.
 >
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end.
 > Use them for direction and order of magnitude, not as targets.
@@ -50,7 +48,7 @@ sources:
   and the chain costs nothing extra. Two or four independent accumulators run at the same 16 or 32 cycles per
   instruction *(field, E1)*. Splitting an accumulation into independent chains buys no latency ILP.
 - One MFMA pipe per SIMD: MFMA streams of two waves on one SIMD run one after the other, and the shadow is
-  shared by every wave on that SIMD *(field, E3)*. exp and mul draw on the same shadow (`flydsl_attn_softmax.md` §1).
+  shared by every wave on that SIMD *(field, E3)*. exp and mul draw on the same shadow (`softmax.md` §1).
 - `16x16x16_bf16` takes as long as `16x16x32` for half the K, i.e. half the MAC rate. The "4-cycle issue,
   12-cycle shadow" figure belongs to it, not to 16x16x32 *(field, E1, E2)*.
 - 16x16x32 and 32x32x16 have the same MAC rate (512 MAC per cycle), but per MAC the 32x32x16 atom leaves 1.5×
@@ -60,8 +58,8 @@ sources:
   D = 64 the exps alone take two thirds of the shadow; at D = 128 one third. FlyDSL's forward groups one
   `32x32x16` with three exps (`_sched_barrier_exp_pairs(traits, 6, 3, …)`), exactly one shadow.
 - These are pipe facts. At the power cap rank atoms and schedules by wall time and sclk
-  (`flydsl_attn_attribution.md` §8), and use the shadow table only to prefilter
-  (`flydsl_attn_registers_occupancy.md` §8).
+  (`attribution.md` §8), and use the shadow table only to prefilter
+  (`registers_occupancy.md` §8).
 
 ## 2. An MFMA ignores EXEC
 - On gfx950 an MFMA computes and writes all 64 lanes whatever EXEC holds. With EXEC = 0, one lane or half the
@@ -69,7 +67,7 @@ sources:
   lanes contributed to it; a `v_mov_b32` in the same region honoured EXEC *(field, E4)*.
 - A lane mask or a divergent `if` neither skips an MFMA nor protects its destination. Skip MFMA work with a
   wave-uniform branch, and mask scores with `-inf` (exp2 then gives exactly 0). Per-wave classification of
-  diagonal blocks: `flydsl_attn_backward.md` §8.
+  diagonal blocks: `backward.md` §8.
 
 ## 3. Fragment layouts (bf16, wave64)
 `D[m][n] = Σ_k A[m][k]·B[k][n] + C[m][n]`; s indexes the 8 bf16 values of an operand register group, t and e
@@ -95,7 +93,7 @@ the f32 accumulator elements of a lane.
   lane, with no gather. FlyDSL's gfx950 forward computes QK this way (`qk`) and reduces with one
   `permlane32_swap` (`_reduction_pair`).
 - Both QK operands stay contiguous in d (`[kv, d]` and `[q, d]` in LDS); the only transposed read is Vᵀ for
-  P·V (`flydsl_attn_lds.md`).
+  P·V (`lds.md`).
 - **P or dS feeding the next GEMM is locked to the previous GEMM's C layout.** Orient the previous GEMM so the
   next GEMM's contraction index is C's element index m, never the lane index n. P then packs inside the lane:
   FlyDSL's forward passes P as B of P·V with A = Vᵀ. With the contraction index on the lane, every tile needs a
@@ -124,8 +122,9 @@ the f32 accumulator elements of a lane.
   - its 4 consecutive values per lane store without a permlane;
   - the accumulator registers for a given output block are the same for both atoms.
   Independent-chain latency ILP is not a reason (§1).
-- **Forward: 32x32x16.** FlyDSL's gfx950 forward uses `fx.rocdl.MFMA(32, 32, 16, …)` for QK and P·V. It
-  leaves 1.5× the VALU shadow per MAC (§1), needs one swap per row reduction (§4) and keeps one q row per lane.
+- **Forward: 32x32x16.** FlyDSL's gfx950 forward uses `v_mfma_f32_32x32x16_bf16` for QK and P·V
+  (`flash_attn_utils.py:3500`). It leaves 1.5× the VALU shadow per MAC (§1), needs one swap per row reduction (§4)
+  and keeps one q row per lane.
   *(field, E11)* A D=64 forward ported to 16x16x32, spill-free and numerically exact, ran 8.4% slower;
   *(field, E12)* a spill-free arm with part of the O accumulator removed read 2.4% slower on the scorer and 1.2%
   faster in a sustained loop, where it clocked higher.
@@ -134,6 +133,8 @@ the f32 accumulator elements of a lane.
 - The GEMM finding that a smaller atom moves fewer register-file bytes per MAC and can clock higher at the power
   cap (`../gemm/mainloop.md` §5) applies here too: rank atoms on wall time, sclk and power, never on
   MFMA utilization.
+
+In FlyDSL: `../flydsl/attention.md` § mfma_layout §5.
 
 ## 6. Row sums on the matrix pipe
 - The softmax row sum can be an MFMA with a constant all-ones A over the packed P. Use 16x16x32: it needs half
@@ -147,10 +148,10 @@ the f32 accumulator elements of a lane.
 - *(field, E13)* Per iteration `v_add_f32` 68 → 0 and `permlane32_swap` 2 → 0 for 8 new 16x16x32 MFMAs; VGPR
   162 → 150; +1.96%; SNR 51.26 → 51.61 dB because numerator and denominator share the bf16 P.
 - These MFMAs anchor register allocation: removing or replacing them raised spills sharply
-  (`flydsl_attn_registers_occupancy.md` §4). *(field, E14)* Restoring an MFMA row sum in a different online forward
+  (`registers_occupancy.md` §4). *(field, E14)* Restoring an MFMA row sum in a different online forward
   was within noise; price it per kernel.
 - An MFMA that reads P straight from an inline-asm pack needs padding the compiler cannot add
-  (`flydsl_attn_schedule_sync.md`). *(field, E15)* Symptom: non-deterministic results with errors on half of the q
+  (`schedule_sync.md`). *(field, E15)* Symptom: non-deterministic results with errors on half of the q
   rows.
 
 ## 7. More rows per wave
@@ -158,16 +159,15 @@ the f32 accumulator elements of a lane.
   O is `ROWS·D/64` and Q `ROWS·D/128` dwords per lane. Two q heads or two row groups cost the same registers.
 - *(field, E16)* D=64 forward, rows per wave doubled: non-MFMA instructions per unit of work 194 → 151.5, sclk +9.2%
   at the power cap, but loop-carried VGPRs 100 → 192, occupancy 4 → 2 waves per SIMD, cycles +11.5%: net
-  −0.86%. Price the occupancy step first (`flydsl_attn_registers_occupancy.md` §3).
+  −0.86%. Price the occupancy step first (`registers_occupancy.md` §3).
 
 ## 8. fp8 MFMAs
 - Only the wide-K f8f6f4 forms raise throughput: 16x16x128 and 32x32x64 do 4× the K of the bf16 atoms in 2×
   the cycles. The legacy fp8 forms (`16x16x32_fp8_fp8`, `32x32x16_fp8_fp8`) take the bf16 cycle counts for the
   same K (32 cycles per `32x32x16_fp8_fp8`, the same as bf16) *(field, E17)*. Name the shape whenever an fp8 speed-up
   is quoted. *(field, E17)* Moving a forward's P·V to the legacy fp8 form bought no MFMA throughput.
-- FlyDSL v0.3.2 reaches the wide-K forms only in scaled form: `rocdl.mfma_scale_f32_16x16x128_f8f6f4`,
-  `rocdl.mfma_scale_f32_32x32x64_f8f6f4`, or the atom `rocdl.cdna4.MFMA_Scale(16, 16, 128, …)`, with E8M0
-  scales (bias 127). The unscaled wide-K intrinsics have no ROCDL binding.
+- The scaled forms (`v_mfma_scale_f32_16x16x128_f8f6f4`, `…_32x32x64_…`) take E8M0 scales (bias 127): scale bytes
+  of 127 (×1.0) give the unscaled product (`../hardware/gfx950/matrix_core.md` §2).
 - A GEMM qualifies only with a contraction ≥ 128. At D = 64, QK and dP (contraction D) and dV and dK
   (contraction BLOCK_Q = 64) do not; dQ (contraction BLOCK_KV) can. *(field, E18)* Storing only the dQ partials in
   fp8 saved bytes, not MFMA time: +3.5–4.1% with dq SNR 47.9 → 31.3 dB.
@@ -175,13 +175,15 @@ the f32 accumulator elements of a lane.
   axes in two GEMMs — dO along d in dP = dO·Vᵀ and along q in dV = Pᵀ·dO; dS along q and along kv — needs a
   per-tensor scale or two quantized copies. That is why fp8 attention defaults to per-tensor scales.
 - fp8 operands do not shrink the f32 accumulators; the S/dP register peak stays where it was.
-- Converting e4m3 to bf16 for a bf16 MFMA: `rocdl.cvt_scalef32_pk_bf16_fp8(T.vec(2, T.bf16), word, 1.0, hi)` is one
-  bit-exact instruction per pair, half the VALU of `cvt_pk_f32_fp8` plus an f32 → bf16 pack *(field, E21)*.
+- Converting e4m3 to bf16 for a bf16 MFMA: `v_cvt_scalef32_pk_bf16_fp8` with scale 1.0 is one bit-exact
+  instruction per pair, half the VALU of `v_cvt_pk_f32_fp8` plus `v_cvt_pk_bf16_f32` *(field, E21)*.
 - Treat accuracy as a budget: error powers of independent quantizations add. *(field, E19)* Q and K dominate (an S
   error is amplified by the exponential), P and dS are the cheapest; finer scales recover only ~0.5–0.9 dB
   because the e4m3 mantissa dominates; *(field, E20)* e5m2 is ~6 dB worse; fp8 P at D = 64 is estimated near 27.6 dB, below the
   forward's 48 dB gate.
-- fp8 P also constrains the softmax shift (`flydsl_attn_softmax.md` §6.1, §6.5).
+- fp8 P also constrains the softmax shift (`softmax.md` §6.1, §6.5).
+
+In FlyDSL: `../flydsl/attention.md` § mfma_layout §8.
 
 ## Verify
 - The atom of every GEMM in both passes is read from the ISA, not assumed.
@@ -190,8 +192,8 @@ the f32 accumulator elements of a lane.
 - An atom or rows-per-wave change reports VGPR, spill, occupancy and sclk next to the wall time.
 
 ## Related
-`flydsl_attn_softmax.md` · `flydsl_attn_lds.md` · `flydsl_attn_registers_occupancy.md` ·
-`flydsl_attn_schedule_sync.md` · `flydsl_attn_backward.md` · `flydsl_attn_attribution.md` ·
+`softmax.md` · `lds.md` · `registers_occupancy.md` ·
+`schedule_sync.md` · `backward.md` · `attribution.md` ·
 `../gemm/mainloop.md` · `../hardware/gfx950/matrix_core.md`
 
 ## Evidence

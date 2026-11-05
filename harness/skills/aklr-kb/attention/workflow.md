@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL attention — working order: pin the bound, audit the grid, price the MFMA, then hide latency"
+title: "Attention — working order: pin the bound, audit the grid, price the MFMA, then hide latency"
 kind: method
-lever: flydsl_attn_workflow
+lever: attn_workflow
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16]
@@ -9,7 +9,7 @@ regimes: [prefill, backward, causal, sliding-window, gqa]
 flydsl: 0.3.2
 ---
 
-# Working on a FlyDSL attention kernel
+# Working on an attention kernel
 
 > The order in which to look at a flash-attention forward or backward kernel (fwd, dq, dkdv, fused dq+dkdv,
 > and their helper kernels). It does not say which configuration wins. Numbers marked `*(field, E<n>)*` are
@@ -24,24 +24,24 @@ layer you have not audited.
 
 | The open question | Card |
 |---|---|
-| Where the time goes; which counter or probe answers which question | `flydsl_attn_attribution.md` |
-| Grid shape, XCD placement, dispatch order, padding, GQA sharer merging | `flydsl_attn_grid_dispatch.md` |
-| MFMA atom per GEMM, operand and accumulator layouts, P/dS as the next B operand | `flydsl_attn_mfma_layout.md` |
-| exp2, LSE format, online-softmax rescale, row sums | `flydsl_attn_softmax.md` |
-| Transposed LDS reads, row stride, bank-conflict readings | `flydsl_attn_lds.md` (with `../flydsl/guides.md` § lds-optimization) |
-| VGPR budget, occupancy steps, spills, AGPR | `flydsl_attn_registers_occupancy.md` |
-| `sched_group_barrier`, fences, `s_setprio`, waits, barriers | `flydsl_attn_schedule_sync.md` |
-| dQ/dK/dV accumulation, determinism, workspaces, fusion, masked q-loops | `flydsl_attn_backward.md` |
-| Decode, split-KV, the combine | `flydsl_attn_decode_split_kv.md` |
-| Rulers, noise floors, FLOP accounting, host-bound shapes | `flydsl_attn_measurement.md` |
-| Gates, spike inputs, mask conventions | `flydsl_attn_correctness.md` |
+| Where the time goes; which counter or probe answers which question | `attribution.md` |
+| Grid shape, XCD placement, dispatch order, padding, GQA sharer merging | `grid_dispatch.md` |
+| MFMA atom per GEMM, operand and accumulator layouts, P/dS as the next B operand | `mfma_layout.md` |
+| exp2, LSE format, online-softmax rescale, row sums | `softmax.md` |
+| Transposed LDS reads, row stride, bank-conflict readings | `lds.md` (with `../flydsl/guides.md` § lds-optimization) |
+| VGPR budget, occupancy steps, spills, AGPR | `registers_occupancy.md` |
+| `sched_group_barrier`, fences, `s_setprio`, waits, barriers | `schedule_sync.md` |
+| dQ/dK/dV accumulation, determinism, workspaces, fusion, masked q-loops | `backward.md` |
+| Decode, split-KV, the combine | `decode_split_kv.md` |
+| Rulers, noise floors, FLOP accounting, host-bound shapes | `measurement.md` |
+| Gates, spike inputs, mask conventions | `correctness.md` |
 | The kernel is wrong, not slow | `../flydsl/debug-flydsl-kernel.md` |
 
 ## Step 0 — measure the kernel that ships
 - **Audit the dispatch per cell** before trusting any number: record which backend and which code path each
-  scored shape really runs (`flydsl_attn_measurement.md` §8). A window wide enough to cover the whole sequence
-  may be normalised to full causal; a framework default may not be FlyDSL at all.
-- **Have a gate that reaches the changed path** (`flydsl_attn_correctness.md`) before the first timing.
+  scored shape really runs (`measurement.md` §8). A window wide enough to cover the whole sequence
+  may be normalised to full causal; a framework default may not be your kernel at all.
+- **Have a gate that reaches the changed path** (`correctness.md`) before the first timing.
 - **Dump the facts per path**, not per code base: the MFMA atom each GEMM issues (fwd and bwd in one code base
   can use different atoms), `.vgpr_count`, `.agpr_count`, spill, waves per SIMD, LDS bytes per workgroup, and
   a per-trip opcode histogram. Every later decision reads from this table.
@@ -51,21 +51,21 @@ layer you have not audited.
   when computed at the clock read under profiling) *(field, E1, E2)*; the rest was waits, rendezvous and serial VALU
   chains between GEMMs. But the bound is per cell: re-derive the
   per-pipe census for each head_dim with `v_exp_f32` at 8 cycles (the MFMA-to-exp ratio grows with D: exps fill two
-  thirds of the shadow at D=64 and one third at D=128, `flydsl_attn_mfma_layout.md` §1); a reorder that paid on one D
+  thirds of the shadow at D=64 and one third at D=128, `mfma_layout.md` §1); a reorder that paid on one D
   was noise on the other *(field, E3)*.
 - **Do not accept "issue-bound" from a paper count.** Paper issue budgets fail easily: one was off by 4×
   *(field, E4)* because it compared per-SIMD issue slots with per-wave pipe cycles, when all waves of a SIMD share one
   MFMA pipe. Confirm with the PMC split and a deletion probe.
 - Order of evidence: true clock → per-kernel additive compute probe → LDS port ratio → stall-pool split →
-  subtractive probes. All of them are in `flydsl_attn_attribution.md`.
+  subtractive probes. All of them are in `attribution.md`.
 
 | What the evidence shows | What it usually means | Next |
 |---|---|---|
 | MFMA duty well under 80% at the true clock, large share where neither pipe is busy | latency, rendezvous, serial exp/pack chains | price the stall pool (Step 4) |
-| MFMA busy + VALU busy near the timeline, low co-execution, occupancy 1 | the two pipes run nearly serially | overlap inside the workgroup (`flydsl_attn_schedule_sync.md`) |
-| One pipe saturated in a per-class census (exp at 8 cycles, `flydsl_attn_softmax.md` §1) | throughput on that pipe | delete its work; reordering pays nothing |
-| `SQ_VALU_MFMA_BUSY_CYCLES` under ~4× `SQ_LDS_IDX_ACTIVE` | LDS read bound (in fwd, usually the PV transposed reads) | `flydsl_attn_lds.md` |
-| sclk far under peak with power at the cap | energy-bound | price in wall and clock (`flydsl_attn_attribution.md` §8) |
+| MFMA busy + VALU busy near the timeline, low co-execution, occupancy 1 | the two pipes run nearly serially | overlap inside the workgroup (`schedule_sync.md`) |
+| One pipe saturated in a per-class census (exp at 8 cycles, `softmax.md` §1) | throughput on that pipe | delete its work; reordering pays nothing |
+| `SQ_VALU_MFMA_BUSY_CYCLES` under ~4× `SQ_LDS_IDX_ACTIVE` | LDS read bound (in fwd, usually the PV transposed reads) | `lds.md` |
+| sclk far under peak with power at the cap | energy-bound | price in wall and clock (`attribution.md` §8) |
 
 ## Step 2 — audit the grid and dispatch mapping before the kernel body
 Four index/order changes outside the kernel, the two XCD-major decodes among them bit-identical, were worth +7% on one
@@ -80,10 +80,10 @@ buffering and traversal changes inside the body had been worth ~1% *(field, E6)*
 
 - Judge this layer with `SQ_WAIT_ANY` and co-execution, not with L2 hit rate: a hit rate rising from 86.5% to
   94.8% (misses −62%) moved the wall only within noise, and +0.54% once kept together with an LDS hand-over
-  *(field, E7)* (`flydsl_attn_grid_dispatch.md` §2).
+  *(field, E7)* (`grid_dispatch.md` §2).
 - Sweep the batch axis before building a persistent or work-stealing scheduler for the tail; on one forward the
   grid quantisation and tail were ≤0.2% *(field, E8)*.
-- Mechanics and rules for each question: `flydsl_attn_grid_dispatch.md` §1–§8.
+- Mechanics and rules for each question: `grid_dispatch.md` §1–§8.
 
 ## Step 3 — compute the redundant-MFMA ratio before "reduce MFMA"
 Removing MFMAs pays only while the body still issues MFMAs the math does not need. Do the arithmetic first:
@@ -96,40 +96,40 @@ redundancy          = issued / causal-exact − 1
   diagonal band at tile granularity. That caps every "fewer MFMA" idea on that body at 3.1%.
 - Above ~15%, this is the first lever; under ~5%, go to Step 4.
 - With redundancy to remove, audit droppable GEMMs and global correction terms first: dropping one GEMM from a
-  dq kernel gained 9.8% *(field, E9)*. Fusion and drop rules are in `flydsl_attn_backward.md` §7.
+  dq kernel gained 9.8% *(field, E9)*. Fusion and drop rules are in `backward.md` §7.
 - Redundancy that buys a constraint is not free. A deterministic two-kernel backward recomputes S and dP in
   both kernels (7 GEMM-equivalents against the 5 the FLOP convention counts, ~29% of MACs); removing
-  it needs float atomics or a per-trip dQ partial store (`flydsl_attn_backward.md` §1–§4).
+  it needs float atomics or a per-trip dQ partial store (`backward.md` §1–§4).
 
 ## Step 4 — price the stall pool, then hide latency
 - Every route to a speed-up goes through the stall pool; only some routes also need more co-execution. Price
   the pool by source (barrier, wait counters, LDS return, prologue/epilogue) before touching the schedule
-  (`flydsl_attn_attribution.md` §3 and §6). Eight rounds of scheduling work on one body returned 0.4–4.0% in
+  (`attribution.md` §3 and §6). Eight rounds of scheduling work on one body returned 0.4–4.0% in
   total while its stall pool had not been priced *(field, E10)*.
 - **When co-resident waves already fill the MFMA shadow** (no bare VALU between MFMAs in the ISA, high coexec / MFMA
   busy), reordering inside one wave is worth about zero; only deleting instructions pays (forced exp
   interleave in a backward with two co-resident workgroups per CU: 0.00%) *(field, E11)*. Where bare VALU remains between MFMAs,
-  fence relaxation still paid at 2 waves/SIMD and was noise at 3 (`flydsl_attn_schedule_sync.md` §4): count
+  fence relaxation still paid at 2 waves/SIMD and was noise at 3 (`schedule_sync.md` §4): count
   `naked_work` first. With one workgroup per CU,
   interleaving inside the workgroup is the only cover.
-- Then, by what the census names: `flydsl_attn_schedule_sync.md` (anchors, fences, priorities, barriers),
-  `flydsl_attn_mfma_layout.md` (atom and chain structure), `flydsl_attn_lds.md` (transposed reads),
-  `flydsl_attn_registers_occupancy.md` (what a freed register buys), `flydsl_attn_softmax.md` (exp and rescale
+- Then, by what the census names: `schedule_sync.md` (anchors, fences, priorities, barriers),
+  `mfma_layout.md` (atom and chain structure), `lds.md` (transposed reads),
+  `registers_occupancy.md` (what a freed register buys), `softmax.md` (exp and rescale
   cost).
 
 ## Step 5 — numerics, occupancy, determinism
-Check these in order once the structure is settled: exp mode and LSE format (`flydsl_attn_softmax.md`),
-whether an occupancy step is reachable without spills (`flydsl_attn_registers_occupancy.md`), and whether the
-target requires bit-reproducible outputs (`flydsl_attn_backward.md` §1). A determinism requirement closes
+Check these in order once the structure is settled: exp mode and LSE format (`softmax.md`),
+whether an occupancy step is reachable without spills (`registers_occupancy.md`), and whether the
+target requires bit-reproducible outputs (`backward.md` §1). A determinism requirement closes
 every "relax determinism to drop MFMAs" option; decide it before Step 3, not after.
 
 ## Usually dead
 Each entry held on the bodies where it was measured; re-open one only with a probe that shows its precondition
 changed.
 - **LDS swizzle, padding or bank-conflict work** when MFMA busy cycles are ≥4× `SQ_LDS_IDX_ACTIVE`
-  (4× on a dq body, 8× on a dkdv body *(field, E12)*): the port is not the limit (`flydsl_attn_lds.md` §5).
+  (4× on a dq body, 8× on a dkdv body *(field, E12)*): the port is not the limit (`lds.md` §5).
 - **Raising occupancy by force** (`waves_per_eu`, AGPR allocation) when the code does not already nearly fit: the
-  compiler spills (`flydsl_attn_registers_occupancy.md` §2). *(field, E13)* One more wave
+  compiler spills (`registers_occupancy.md` §2). *(field, E13)* One more wave
   per SIMD made a backward 32% slower and two more 5× slower; *(field, E14)* forcing AGPR splits took a forward's
   spills from 31 to 52–77.
 - **Dual-wave, 8-wave, warp specialisation or stagger in a backward that already runs two workgroups per CU.** Those
@@ -139,22 +139,22 @@ changed.
   MFMA priority to force it, −3.3% *(field, E11, E16)*.
 - **Pure reordering on a power-capped kernel whose shadow is already full**: identical instructions in a new order pay
   0 ± 2% (co-execution 44% of SIMD cycles, 52% of MFMA busy) *(field, E17)*; at low co-execution reorders still gain
-  (`flydsl_attn_attribution.md` §8).
+  (`attribution.md` §8).
 - **K/V LDS double buffering to hide DMA with two co-resident workgroups per CU**: the occupancy already hides most
   DMA latency and the prefetch's LDS writes compete with the compute reads; *(field, E18)* a deletion probe showed 8.7%
-  headroom and the built prefetch lost 4.3–4.7% (`flydsl_attn_attribution.md` §5). At one workgroup per CU a second
-  slot that removes a write-after-read barrier can pay, but not as a rule (`flydsl_attn_schedule_sync.md` §10).
+  headroom and the built prefetch lost 4.3–4.7% (`attribution.md` §5). At one workgroup per CU a second
+  slot that removes a write-after-read barrier can pay, but not as a rule (`schedule_sync.md` §10).
 - **A fixed reference max for the softmax shift** as a general lever: exact only inside a data-dependent window,
-  silently wrong outside it (`flydsl_attn_softmax.md`).
+  silently wrong outside it (`softmax.md`).
 - **Lazy (threshold) O-rescale ported into a P-store pipeline**: the branch broke its overlap; −31% on one path,
-  neutral on another *(field, E19)*; on dense decodes with no such pipeline it paid (`flydsl_attn_softmax.md`
+  neutral on another *(field, E19)*; on dense decodes with no such pipeline it paid (`softmax.md`
   §6.3).
 - **Q-outer fused dq+dkdv**: reducing dK/dV over q takes float atomics (not deterministic) or a dK/dV partial
-  workspace that saves no bytes (`flydsl_attn_backward.md` §2). A KV-outer fusion with a narrow KV band
+  workspace that saves no bytes (`backward.md` §2). A KV-outer fusion with a narrow KV band
   (`BLOCK_KV = 64`) was 1.95–2.55× slower *(field, E20)*; the working fused structure is a KV-outer single pass with a
-  wide band (`flydsl_attn_backward.md` §7).
+  wide band (`backward.md` §7).
 - **fp32 atomic dQ**: each dQ element takes ~Skv/(2·BLOCK_KV) contributions; 105.5 ms against 6.34 ms
-  *(field, E21)* (`flydsl_attn_backward.md` §3).
+  *(field, E21)* (`backward.md` §3).
 - **Bigger tiles past the register wall**: a dkdv `BLOCK_Q` of 128 lost 67% *(field, E22)*.
 - **Tuning hand-written `vmcnt` drain levels**: removing every one of them priced at +0.3% on one forward
   *(field, E23)*; the barrier family, not the wait family, held the time.
@@ -169,10 +169,10 @@ changed.
 - **"The levers are exhausted" usually means one layer is.** List the layers (grid and dispatch, body, waits and
   barriers, helper kernels, host path) and name the last probe that priced each.
 - **Re-derive per head_dim.** Anchor counts, tile sizes and which pipe binds change with D; D=64 and D=128
-  sharing one file does not share gains (`flydsl_attn_measurement.md` §8).
+  sharing one file does not share gains (`measurement.md` §8).
 - **Static proxies do not rank candidates.** −351 instructions was worth 0.0% and a zero-instruction scheduling
   change +0.85% on one body *(field, E25, E26)*; a 31% longer LDS read-to-wait distance lost 0.65% on an MFMA-bound cell *(field, E27)*.
-  Rank with the counter that matches the change (`flydsl_attn_attribution.md` §2).
+  Rank with the counter that matches the change (`attribution.md` §2).
 
 ## Related
 `INDEX.md` · `../gemm/workflow.md` (round discipline) · `../gemm/attribution.md` ·

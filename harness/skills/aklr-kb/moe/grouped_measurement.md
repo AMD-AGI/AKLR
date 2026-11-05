@@ -167,7 +167,7 @@ In FlyDSL: `../flydsl/moe.md` § grouped_measurement §4.
   266 W), far below the cap, so cycle savings there are not handed back as clock. Prefer levers that remove bytes
   or requests on capped passes and skewed cells.
 - **Compare precisions on equal terms** (`grouped_lowprec.md` §8; quantization inside the timed region:
-  `../attention/flydsl_attn_measurement.md` §5).
+  `../attention/measurement.md` §5).
 
 ## 8. The race is a ruler too
 
@@ -191,7 +191,7 @@ In FlyDSL: `../flydsl/moe.md` § grouped_measurement Verify.
 
 ## Related
 `../gemm/measurement.md` · `../gemm/attribution.md` · `grouped_correctness.md` ·
-`grouped_host_autotune.md` · `../attention/flydsl_attn_measurement.md`
+`grouped_host_autotune.md` · `../attention/measurement.md`
 
 ## Evidence
 

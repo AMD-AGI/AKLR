@@ -58,7 +58,7 @@ basis: source-semantics
 - Fewer LDS reads per MAC with a 2×2 wave split — `gemm/mainloop.md` §1 — on long K; race it against
   the 8-wave design (S30, S31).
 - Attention's transposed reads: whole 16-element blocks, 16-byte-aligned row strides, and why its bank-conflict
-  counters mislead — `attention/flydsl_attn_lds.md` §4–6; keep write bursts out of transposed-read bursts — §9.
+  counters mislead — `attention/lds.md` §4–6; keep write bursts out of transposed-read bursts — §9.
 
 ## Evidence
 

@@ -54,7 +54,7 @@ basis: source-semantics
 - Other kernel families: in a grouped GEMM, find where the skew lives before reading a per-shape result —
   `moe/grouped_scheduling.md` §1 — and decide waves per SIMD per pass —
   `moe/grouped_tile_pricing.md` §2; in attention, key the tile heuristic on the axis the grid spreads
-  over — `attention/flydsl_attn_grid_dispatch.md` §6.
+  over — `attention/grid_dispatch.md` §6.
 
 ## Evidence
 

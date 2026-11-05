@@ -34,7 +34,7 @@ sources:
 > permutations of the tile index or of the grid; they leave every MFMA and every output byte unchanged, so
 > they are cheap to try and easy to get backwards. XCD basics, 2D bands and bijection proofs are in
 > `../gemm/schedule_and_locality.md` §2; dispatch order as a list schedule is §5
-> below and `../attention/flydsl_attn_grid_dispatch.md` §4. "FP8", "BF16" and "MX4" are Primus-Turbo's
+> below and `../attention/grid_dispatch.md` §4. "FP8", "BF16" and "MX4" are Primus-Turbo's
 > `primus_turbo/flydsl/grouped_gemm/grouped_gemm_{fp8,bf16,mxfp4}_kernel.py` and "GH" is
 > `primus_turbo/flydsl/utils/gemm_helper.py`, at main `ca1fdd67`.
 >
@@ -178,7 +178,7 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
 ## 5. Longest-first inside a wave
 - Forward and dgrad tiles cost the same: order changes are estimated at exactly 0 where every dispatch round
   was full. Variable-K wgrad tiles cost what their group's tokens cost, so the dispatch order is a list
-  schedule (`../attention/flydsl_attn_grid_dispatch.md` §4).
+  schedule (`../attention/grid_dispatch.md` §4).
 - Three ways to put the deepest group first, all computed on the device from the offsets:
   - Rank all groups in one wave: lane g holds group g's length, the stable descending rank takes G `readlane`
     compares, and slot → group is a one-hot ballot plus a popcount (`wave_rank_desc_stable`,
@@ -286,7 +286,7 @@ per-group launches of it gave 2836, and eight per-group launches of the vendor G
 `grouped_group_mapping.md` · `grouped_tile_pricing.md` · `grouped_wgrad.md` ·
 `grouped_host_autotune.md` · `grouped_measurement.md` ·
 `../gemm/schedule_and_locality.md` §2 · `../gemm/grid_pricing.md` §1, §10 ·
-`../attention/flydsl_attn_grid_dispatch.md` §4
+`../attention/grid_dispatch.md` §4
 
 ## Evidence
 

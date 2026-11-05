@@ -59,7 +59,7 @@ basis: source-semantics
 - Not a register cap to make room — `../flydsl/language/limits.md` — in FlyDSL v0.3.2 `maxnreg` does not cap registers, and
   a cap through the `amdgpu-num-vgpr` attribute turns into spills (S29).
 - Other kernel families: attention's occupancy steps, spill scale, code shapes that spill and AGPRs —
-  `attention/flydsl_attn_registers_occupancy.md` §3, §5–7; grouped GEMM's register wall and waves per SIMD per pass —
+  `attention/registers_occupancy.md` §3, §5–7; grouped GEMM's register wall and waves per SIMD per pass —
   `moe/grouped_tile_pricing.md` §1–2.
 
 ## Evidence

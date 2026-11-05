@@ -57,7 +57,7 @@ One FlyDSL kernel for `mhc_fused_post_pre@1.0` (PR #52). The schema embeds it as
   LDS in `k_mm_p`) and multiplied with the bf16 `next_residual`; the contract has no pre-rounded weight to read, and
   nothing derived from it is kept between calls. The outputs pass the 1e-2 bound; their distance to it was not read.
 - **Each call goes through a `@flyc.jit` launcher** (`run` or `run_p`), which re-binds its arguments on every call
-  (`../attention/flydsl_attn_measurement.md` §6, on FlyDSL 0.3.2). CI's ratio is GPU time in graph replays, so that
+  (`../flydsl/attention.md` § measurement §6, on FlyDSL 0.3.2). CI's ratio is GPU time in graph replays, so that
   host cost is outside it.
 - **Stale docstring.** The module docstring names the projection kernel `k_proj`; the code has three, `k_mm4`,
   `k_mm` and `k_mm_p`.

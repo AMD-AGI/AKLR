@@ -1,32 +1,27 @@
 ---
-title: "FlyDSL attention — exp2, scale and shift, row reductions and the online-softmax rescale"
+title: "Attention — exp2, scale and shift, row reductions and the online-softmax rescale"
 kind: topic
-lever: flydsl_attn_softmax
+lever: attn_softmax
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16, fp8]
 regimes: [prefill, decode, backward, causal]
 flydsl: 0.3.2
 sources:
-  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/math.py:192
-  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/utils/arith.py:526
-  - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/kernel_function.py:250
-  - ROCm/FlyDSL@dd8373349:lib/Conversion/FlyToROCDL/FastMathOps.cpp:35
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:432
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:3317
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:3710
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:3766
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:3840
-  - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_gfx950.py:1018
 ---
 
-# Softmax and exp2 in a FlyDSL attention kernel
+# Softmax and exp2 in an attention kernel
 
 > Everything between the QK MFMAs and the P·V MFMAs: the exp, the scale and shift, the row max and row sum,
 > and the online rescale. Guards for `-inf − -inf` and empty partitions are in
 > `../flydsl/debug-flydsl-kernel.md` §1; carrying the running max and sum through a FlyDSL loop is in
-> `../flydsl/guides.md` § prefetch-data-load; how many exps fit under the MFMAs is in `flydsl_attn_mfma_layout.md` §1
-> and `flydsl_attn_registers_occupancy.md` §8.
+> `../flydsl/guides.md` § prefetch-data-load; how many exps fit under the MFMAs is in `mfma_layout.md` §1
+> and `registers_occupancy.md` §8.
 >
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end.
 > Use them for direction and order of magnitude, not as targets.
@@ -45,50 +40,49 @@ sources:
   while one wave streams exps no other wave on that SIMD issues VALU. It draws on the same MFMA shadow as every
   other VALU op, twice as fast as a multiply.
 - It is a trans op (CDNA4 ISA Table 12): a non-trans VALU consumer of its result needs one wait state. The
-  compiler pads that for native instructions only (`flydsl_attn_schedule_sync.md`).
+  compiler pads that for native instructions only (`schedule_sync.md`).
 - To place exps between MFMAs, use the transcendental class `0x400` in `sched_group_barrier`; the VALU class
-  `0x002` does not match `v_exp_f32` (`flydsl_attn_schedule_sync.md`).
+  `0x002` does not match `v_exp_f32` (`schedule_sync.md`).
 - The tile fixes the count: one `v_exp_f32` per 64 scores. Only fewer scores (causal tile skipping, tile
   geometry) lowers it.
 - *(field, E2)* Deleting every softmax exp of a D=64 forward loop (wrong results, diagnostic only) bought ~8%,
   deleting half of them about half of that. *(field, E3, E4, E5, E6)* In backward bodies hardware exp cost
   1–9% against a no-exp body (4–9% on most) and a Schraudolph exp 2.5–3.3%. Price your own with a subtractive arm
-  that keeps the consumers alive (`flydsl_attn_attribution.md` §5).
+  that keeps the consumers alive (`attribution.md` §5).
 
-## 2. Writing exp2 in FlyDSL v0.3.2
-| Spelling | Lowering | ISA |
-|---|---|---|
-| `fx.math.exp2(x)`, `ArithValue.exp2()` / `fx.Float32(x).exp2()` without `afn` | `__ocml_exp2_f32` | ~8 VALU: compare with −126, +64 bias, `v_exp_f32`, `v_ldexp_f32` |
-| the same with `fastmath="afn"` or `"fast"`, or under the `fast_fp_math` compile hint | `rocdl.exp2` (pass `convert-rocdl-fastmath-ops`) | one `v_exp_f32` |
-| `rocdl.exp2(T.f32, x)`, or `llvm.amdgcn.exp2.f32` | intrinsic | one `v_exp_f32` |
-
-- The afn rewrite covers f32 scalars and 1-D f32 vectors only. A denormal-mode function attribute is not a
-  switch for it: a bare `"passthrough"` key is dropped (`../flydsl/gemm.md` § INDEX FlyDSL version).
-- The range reduction only exists to return denormal results; `v_exp_f32` flushes denormals to zero (ISA).
+## 2. exp2: one `v_exp_f32` is enough
+- An exp2 that keeps f32 denormal results — `__ocml_exp2_f32`, or `llvm.exp2.f32` without `afn` while f32
+  denormals are enabled — is about 8 VALU (a compare with −126, a +64 bias, `v_exp_f32`, `v_ldexp_f32`). The
+  `llvm.amdgcn.exp2.f32` intrinsic, or exp2 under fast-math `afn`, is one `v_exp_f32`. Which of the two a
+  language's default exp2 reaches depends on the language and its denormal mode: read it from the ISA (FlyDSL:
+  `../flydsl/attention.md` § softmax §2).
+- The range reduction of `__ocml_exp2_f32` only exists to return denormal results; `v_exp_f32` flushes denormals to zero (ISA).
   After the max shift every argument is ≤ 0 and every result lies in (0, 1], where a denormal is worthless
   next to bf16 P, so the single instruction is enough. *(field, E5, E7)* Replacing the range-reduced exp with one
   `v_exp_f32` bought +20% and +25% in two backward kernels.
 - `v_exp_f32(-inf) = 0` exactly (ISA): write `-inf` into masked scores and no select is needed after the exp.
-- Do not emit `v_exp_f32` as inline asm: `rocdl.exp2` gives the same instruction and stays visible to the
-  scheduler and to the hazard recognizer.
+- Do not emit `v_exp_f32` as inline asm: the `llvm.amdgcn.exp2.f32` intrinsic gives the same instruction and stays
+  visible to the scheduler and to the hazard recognizer.
 - **Reference pattern** — FlyDSL's gfx950 forward: Q is multiplied once by `rsqrt(D)·log2e` in f32 and truncated
   back to bf16 (`scale_all`), so scores and the running max are in log2 units; every softmax exp is
-  `rocdl.exp2` (the D=128 causal ISA has 197 `v_exp_f32`, no `v_ldexp_f32`, no OCML call); the LSE is converted
-  back to natural log at the store. Its compile hints include `fast_fp_math`.
+  the exp2 intrinsic (the D=128 causal ISA has 197 `v_exp_f32`, no `v_ldexp_f32`, no OCML call); the LSE is converted
+  back to natural log at the store.
+
+In FlyDSL: `../flydsl/attention.md` § softmax §2.
 
 ## 3. Scale, shift, clamp and pack at zero instruction cost
 - **Shift through the MFMA C operand.** MFMA computes A·B + C, so seeding C with the negative shift (`-ref` in
   the forward, `-log2e·lse` in the backward) makes the subtraction free. Build the seed inside the QK step from
   a scalar; a seed vector materialized outside the loop stays resident (16 VGPRs for a 32x32 C fragment). The
-  measured price of carrying it is in `flydsl_attn_registers_occupancy.md` §3; fold it in the masked loop too
-  (`flydsl_attn_backward.md` §8).
+  measured price of carrying it is in `registers_occupancy.md` §3; fold it in the masked loop too
+  (`backward.md` §8).
 - **Choose where the scale goes.** Pre-scaling Q costs nothing but rounds `q·sm·log2e` to bf16; the backward must
-  then reproduce that rounded operand (`flydsl_attn_correctness.md` §5). Scaling the accumulator leaves no residual
+  then reproduce that rounded operand (`correctness.md` §5). Scaling the accumulator leaves no residual
   (it removed a dQ correction pass that cost up to 8.5× when triggered, for an 8–13% slower forward, 4.1 points
   of it at D=64 from holding the pre-divided seed) *(field, E8)*, but every value seeded into it must be pre-divided
   by the scale; one missed seed site applies the scale twice, and a `-3e38` floor divided by a scale < 1 overflows
   fp32. If you must scale the accumulator, do the
-  shift inside the scaling FMA (`fma(acc, c, -ref)`) and seed zero. Gates: `flydsl_attn_correctness.md`.
+  shift inside the scaling FMA (`fma(acc, c, -ref)`) and seed zero. Gates: `correctness.md`.
 - **A seed must not cost the accumulator its precision.** The Schraudolph-prescaled LSE (~1e9) cannot be seeded: f32
   spacing at 1e9 is 64, the trick needs the low mantissa bits exact (output SNR fell to 1.5 dB) *(field, E9)*.
   Keep that FMA as the last per-element step.
@@ -96,9 +90,11 @@ sources:
   one `v_exp_f32_e64 … clamp`, no extra VALU. `max(min(e, 1), 0)` does not fold (`min(NaN, 1) = 1`, the clamp
   gives 0) and costs two VALU. A clamp turns an overflow into silent mass loss: use it as a backstop on a path
   whose arguments are already provably ≤ 0, never as the fix (§6.1).
-- **Pack natively.** An f32→bf16 `fptrunc` of a 2-element vector (`Vec(...).to(fx.BFloat16)`) lowers to one
-  `v_cvt_pk_bf16_f32`. `rocdl.cvt_pk_bf16_f32` emits the same instruction as inline asm, invisible to the
-  hazard recognizer; an MFMA reading that P directly needs explicit padding (`flydsl_attn_schedule_sync.md`).
+- **Pack natively.** An f32→bf16 `fptrunc` of a 2-element vector lowers to one `v_cvt_pk_bf16_f32`. The same
+  instruction written as inline asm is invisible to the hazard recognizer, so an MFMA that reads that P directly
+  needs explicit padding (`schedule_sync.md` §7).
+
+In FlyDSL: `../flydsl/attention.md` § softmax §3.
 
 ## 4. Precision tiers and the LSE contract
 | exp | per element | accuracy *(field, E5, E6, E10, E11)* |
@@ -123,18 +119,18 @@ sources:
 - **The backward's exp arguments are ≤ 0 only because lse ≥ the row max.** A forward shortcut that loses mass
   (a clamp, a dropped tile) puts lse below the max, and the backward's `exp2(s − lse)` overflows. *(field, E17)* A
   forward with clean outputs produced ~8·10⁵ non-finite gradients. Gate forward and backward together, and make
-  the backward reproduce the forward's scale rounding (`flydsl_attn_correctness.md`).
+  the backward reproduce the forward's scale rounding (`correctness.md`).
 
 ## 5. Row max and row sum
 - Orientation sets the cross-lane cost. With S computed as Sᵀ a lane holds the scores of one q row, and one
-  `permlane32_swap` finishes each reduction (`flydsl_attn_mfma_layout.md` §4).
+  `permlane32_swap` finishes each reduction (`mfma_layout.md` §4).
 - Max: LLVM folds a linear max chain over a lane's scores into `v_max3_f32` (16 for 32 values). A balanced binary
   tree breaks the fold (107 → 132 instructions) *(field, E18)*; a ternary tree of `max(max(a, b), c)` groups keeps
   the count nearly unchanged (107 → 112) and cuts the depth from 16 to 4 (+0.3–0.4%) *(field, E18, E19)*. gfx950
   has no `v_pk_max_f32` or `v_pk_min_f32`; packed f32 exists for add, mul, fma and mov only.
 - Sum: dependency depth did not matter (four accumulators, depth 32 → 8, 0.00%) *(field, E20)*; packing it into
   `v_pk_add_f32` removed 40 instructions at equal VGPRs and lost 1.45% *(field, E21)*. The matrix-pipe row sum
-  (`flydsl_attn_mfma_layout.md` §6) removes the adds and the cross-lane step.
+  (`mfma_layout.md` §6) removes the adds and the cross-lane step.
 - Sum the same bf16-rounded P that feeds P·V, so numerator and denominator share one rounding
   (51.26 → 51.61 dB) *(field, E22)*.
 
@@ -176,7 +172,7 @@ sources:
 ### 6.3 Skipping rescales
 - A skip branch must be wave-uniform, and one wave holds 32 rows. *(field, E31)* Per row only 6.9% / 19.1% of tiles
   moved the max (S = 8192 / 2048), yet only 39% / 9.2% of tiles were skippable per wave.
-- An `scf.if` in a hand-pipelined loop costs by itself (~1.3 pp per branch point) *(field, E32)*. Count branch points;
+- A runtime branch in a hand-pipelined loop costs by itself (~1.3 pp per branch point) *(field, E32)*. Count branch points;
   the instructions moved into a rarely taken branch are nearly free, and static counts misprice both.
 - Lazy rescale — keep the old reference while the max moved less than a threshold — pays only where its branch
   breaks no pipeline. FlyDSL's forward does it per wave: skip when every lane has `m_tile − m_row ≤ 8.0` (log2),
@@ -189,8 +185,10 @@ sources:
   near 8. On those decodes a larger threshold paid again *(field, E39)*: 0 → 8 1–3%, 8 → 64 4%; *(field, E41)* 8 → 80
   log2, re-based 48 above the new max: 2.6–6.2% less time (logits spread over tens of log2).
 - Check that a skip stayed a branch: the backend if-converts a short body (2–3 scaled vectors in a probe) into
-  `v_pk_mul_f32` plus `v_cndmask` on every trip; an empty side-effecting `llvm.inline_asm` in the body keeps the
+  `v_pk_mul_f32` plus `v_cndmask` on every trip; an empty side-effecting inline asm in the body keeps the
   branch *(field, E38)*.
+
+In FlyDSL: `../flydsl/attention.md` § softmax §6.3.
 
 ### 6.4 Rare rebase without a window
 - Keep the reference loop-carried and seeded (§3). Per tile, decide whether any score can exceed it; only then
@@ -219,9 +217,9 @@ sources:
 - Every value seeded into a score accumulator is accounted for: all seed sites, the scaling, the floor.
 
 ## Related
-`flydsl_attn_mfma_layout.md` · `flydsl_attn_registers_occupancy.md` · `flydsl_attn_schedule_sync.md` ·
-`flydsl_attn_correctness.md` · `flydsl_attn_backward.md` · `flydsl_attn_decode_split_kv.md` ·
-`flydsl_attn_attribution.md` · `../flydsl/debug-flydsl-kernel.md` · `../flydsl/guides.md` § prefetch-data-load
+`mfma_layout.md` · `registers_occupancy.md` · `schedule_sync.md` ·
+`correctness.md` · `backward.md` · `decode_split_kv.md` ·
+`attribution.md` · `../flydsl/debug-flydsl-kernel.md` · `../flydsl/guides.md` § prefetch-data-load
 
 ## Evidence
 

@@ -1,16 +1,12 @@
 ---
-title: "FlyDSL attention — measuring a change: steady state, rulers, zero points, FLOP accounting, host-bound shapes"
+title: "Attention — measuring a change: steady state, rulers, zero points, FLOP accounting, host-bound shapes"
 kind: method
-lever: flydsl_attn_measurement
+lever: attn_measurement
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16, fp8]
 regimes: [prefill, backward, decode, kernel-A/B]
 flydsl: 0.3.2
-sources:
-  - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/jit_function.py:1633
-  - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/jit_function.py:1651
-  - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/jit_function.py:1662
 ---
 
 # Measuring an attention kernel change
@@ -81,7 +77,7 @@ A multi-cell score usually carries guard cells: cells the candidate does not cha
   and windowed shapes need the real attended fraction, not the square-causal factor.
 - Work an implementation issues beyond the convention is not credited: a deterministic two-kernel backward
   issues 7 GEMM-equivalents for the convention's 5 (~29% of MACs). Use the gap as the redundancy
-  ratio of `flydsl_attn_workflow.md` Step 3, not as throughput.
+  ratio of `workflow.md` Step 3, not as throughput.
 - **Lower precision shows up as a smaller denominator with the same numerator.** Changing the numerator for an fp8
   arm is cheating. Produce every quantised byte inside the timed region: *(field, E11)* with Q/K quantisation moved
   into the clock, an fp8 backward that had "won" three times read 0.58× of bf16.
@@ -92,15 +88,6 @@ A multi-cell score usually carries guard cells: cells the candidate does not cha
   same-pattern reference that the kernel beats is not a ceiling.
 
 ## 6. Small shapes, the host and the launcher
-- **FlyDSL v0.3.2: call the object returned by `flyc.compile(...)` in hot loops and benchmarks.** A direct call of
-  a `@flyc.jit` launcher re-binds the signature, re-checks captured globals and rebuilds the cache key on every
-  call. *(field, E13)* ~31 µs per call for an 8-argument vector-add launcher against 2.4–2.7 µs for the compiled object
-  (`torch.add`: 1.8–2.3 µs); launchers with more arguments were not measured.
-- The compiled object takes positional arguments only and ignores new values of `Constexpr` arguments: they are
-  baked in at compile time (`jit_function.py:1651`). Recompile when one changes.
-- **`flyc.compile(fn, *args)` runs `fn` once with those arguments** while compiling (`jit_function.py:1662`).
-  Compile-then-call therefore executes twice, and a kernel that accumulates or atomically updates its outputs is
-  applied one extra time. Compile on scratch buffers or re-initialise outputs and counters afterwards.
 - **Every placeholder tensor built in the launcher is a kernel launch.** *(field, E14)* A `torch.zeros(1)` placeholder
   that the dense path did not read cost a 4.6–5.6 µs fill kernel per backward call, ~0.4% of a 1.22 ms call.
   Look for `fill_`/`zero_` entries that match no kernel of yours in the profiler table.
@@ -116,19 +103,21 @@ A multi-cell score usually carries guard cells: cells the candidate does not cha
      45–75 s of warm-up (0.08–0.28% range across repetitions) *(field, E18)*; or kernel time from
      `rocprofv3 --kernel-trace`.
 
+In FlyDSL: `../flydsl/attention.md` § measurement §6.
+
 ## 7. Cache hygiene
-- Clear or isolate the FlyDSL cache when comparing builds: *(field, E19)* one commit read 55–83% apart before and after
-  clearing a cache shared across code versions. What the cache key does and does not see is in
-  `../flydsl/debug-flydsl-kernel.md` § What the cache key sees.
-- The first pass in a fresh cache directory includes compilation and any autotuning; discard it. Do not time with
-  `FLYDSL_DUMP_IR=1` (`../flydsl/gemm.md` § measurement §6).
+- Clear or isolate the JIT and autotune cache when comparing builds: a cache carried across code versions skews
+  the readings. *(field, E19)* One commit read 55–83% apart before and after clearing it.
+- The first pass in a fresh cache directory includes compilation and any autotuning; discard it.
+
+In FlyDSL: `../flydsl/attention.md` § measurement §7.
 
 ## 8. Coverage traps
 - **A single scored shape gets traded against the others, silently.** *(field, E20)* With only full-causal S=16384
   scored, one round bought +1.8% there and −12.2% on the same shape with a sliding window; at a 3:1 window to
   full-causal deployment mix that round lost. Close every series of changes on the deployment mix: all shapes × all mask
   modes, weighted by the mix. Before gating a regime-specific change, align the other levers for that regime
-  (`flydsl_attn_workflow.md` § Rules that save rounds); gate on the trait only if it still loses there.
+  (`workflow.md` § Rules that save rounds); gate on the trait only if it still loses there.
 - **Weight cells by their share of step time.** *(field, E21)* Full causal was 92% of a backward step and the window
   cells 8%; an equal-weight geometric mean let a 13.6% window gain lift the score while step time did not move.
 - **A shared file is not a shared gain.** *(field, E22)* 40 rounds on the D=128 path gained 19.3%; the D=64 path in the
@@ -137,7 +126,7 @@ A multi-cell score usually carries guard cells: cells the candidate does not cha
   the whole a16 scheme, with two D=64 re-prices of its companion knobs, was worth 6.36% in one round).
 - **Audit the dispatch per cell before claiming "no regression".** Wrap the dispatcher and log the path each cell
   takes. A window covering the whole sequence is normalised to full causal; a framework's default backend may not
-  be FlyDSL, so the probe never reaches the change.
+  be your kernel, so the probe never reaches the change.
   - A command that pins the backend and one that resolves it automatically are different rulers (a false collapse
     from 936 to 123 TF/s) *(field, E23)*.
 
@@ -150,18 +139,18 @@ A multi-cell score usually carries guard cells: cells the candidate does not cha
   extra work.
 - **Kernel-time share is not wall share.** *(field, E26)* A helper was 14.95% of the summed kernel time of a B=4
   backward, while all exposed helper time (that helper, lset and the tail fold) was 1.9% of wall at B=4 and 3.9% at
-  B=1 on the timeline. Rank helper-kernel work by exposed time; fusion pricing is in `flydsl_attn_backward.md` §7.
+  B=1 on the timeline. Rank helper-kernel work by exposed time; fusion pricing is in `backward.md` §7.
 
 ## Related
-`../gemm/measurement.md` · `flydsl_attn_attribution.md` · `flydsl_attn_correctness.md` ·
-`flydsl_attn_decode_split_kv.md` §8 · `../flydsl/debug-flydsl-kernel.md`
+`../gemm/measurement.md` · `attribution.md` · `correctness.md` ·
+`decode_split_kv.md` §8 · `../flydsl/debug-flydsl-kernel.md`
 
 ## Evidence
 
 A FlyDSL version is given only where the cited run, or another round in the same container and venv, printed it
 (`flydsl.__version__`, an import path with its version, or a `pip install flydsl==` in the run's own setup); otherwise
 `FlyDSL ?`. The month is the run's where the record dates it; for a note kept outside the run the line says which date
-it is. Every workload below is an attention kernel or one of its helper kernels, except E13 (a vector-add launcher).
+it is. Every workload below is an attention kernel or one of its helper kernels.
 
 - E1 [2026-07, gfx950, FlyDSL ?, N=?, B=1 bench `_bench_square.py`: cold start, `sleep(0.3)` between calls, continuous load] the same dkdv kernel read 1024 TF/s cold, 727–969 half-cold with the sleep, and a value between them under continuous load: a 40% spread that buried a 5–14% gap; the note names no repeat count and no run record (hd64 deterministic attention backward, dkdv kernel at Sq=Skv=4096, B=1, Hq=128, Hkv=16, D=64, full causal; note dated 2026-07-21; local:/workspace/code/gpt_oss_docker/.claude/memory/project_meta_bwd_accept_bench.md:20; local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/02-measurement-noise.md:99)
 - E2 [2026-07, gfx950, FlyDSL ?, N=?, a B=1 sweep against the same configuration run alone] one configuration (acceptance shape s3, full causal, B=1, same q_split) read 482 inside the sweep and 759 alone (1.5×); the note takes B=4 as the trustworthy cell (hd64 deterministic attention backward, Hq=128, Hkv=16, D=64; note dated 2026-07-22; local:/workspace/code/gpt_oss_docker/.claude/memory/project_meta_bwd_accept_bench.md:125)
@@ -175,7 +164,6 @@ it is. Every workload below is an attention kernel or one of its helper kernels,
 - E10 [2026-09, gfx950, FlyDSL ?, N=3–5, in-process lab ruler with a same-binary A-vs-A control in each of 5 sessions, against the campaign bench run 3 times before and 3 times after] one change read +1.52 / +1.28 / +1.21 / +1.30 / +1.45% in-process and +0.82% on the bench (`cand_ms` 2.04458 → 2.02786) (gpt-oss D=64 attention forward, `K_HEAD` 3→2 with 10 scheduling anchors; campaign 20260924_001030 round 13; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260924_001030/rounds/round-13/agent.txt:44; local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/15-attention-optimize.md:381)
 - E11 [2026-09, gfx950, FlyDSL ?, N=?, `geomean(bf16_ms / fp8_ms)` over two cells, both arms alternated in one process from bf16 inputs, every E4M3 byte produced inside the timed region] zero point 0.5804 (5.2008 / 8.8679 = 0.5865 and 2.5842 / 4.4999 = 0.5743 ms); on the earlier ruler, with the Q/K quantisation outside the clock, three campaigns had netted about +0.7% (gpt-oss D=64 attention backward, fp8 against bf16, cells 4/64/8/8192/64 and 2/64/8/8192/64; campaign 20260902_093653; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260902_093653/goal.md:41; local:/workspace/code/gpt_oss_docker/.claude/memory/project_gptoss_fp8_attn_bwd_onclock_campaign.md:16)
 - E12 [2026-09, gfx950, FlyDSL ?, N=?, kernel time with PMC read bytes (`TCC_EA0_RDREQ_*B_sum`)] 1149.3 MB in 189.40 µs = 6.36 TB/s, 98.5% of a measured read-only ceiling of 6.46 TB/s; 73.0 GFLOP give 385 TF/s, 12% of the fp8 peak (3300), at 60.6 FLOP/B against a ridge of 511 (FlyDSL sparse-MLA prefill, GLM-5.2 TP4: H=16, topk=2048, D_V=512, D_R=64, fp8 KV, seq=1024; note dated 2026-09-11; local:/workspace/code/gpt_oss_docker/.claude/memory/reference_sparse_mla_flydsl_vs_triton.md:28)
-- E13 [2026-10, gfx950, FlyDSL 0.3.2, N=7, 2000 back-to-back calls synchronised at the end, 7 rounds per arm with the arm order rotated; in parentheses the host time with a synchronise before every call] a direct `@flyc.jit` call 31.01 µs [30.70–31.37] (31.84), the object `flyc.compile` returns 2.70 µs [2.60–2.74] (2.38), `torch.add(out=)` 2.34 µs [2.08–2.44] (1.81) (vector-add launcher with 8 arguments including 3 Constexpr and the stream, SIZE 4096, fresh runtime cache directory; probe `p3_flydsl_launch.py`; local:/workspace/code/gpt_oss_docker/scratch/attn_kb/verify/gpu_probes.md:148; local:/workspace/code/gpt_oss_docker/scratch/attn_kb/verify/raw/r_p3_run1.txt:15)
 - E14 [2026-09, gfx950, FlyDSL 0.2.4, N=?, kernel trace and torch profiler for the dispatch; wall share from the campaign's paired ruler] a `torch.zeros(1)` placeholder cost a 4.6–5.6 µs `vectorized_elementwise_kernel` per backward call (profiler `aten::zeros/zero_/fill_` 2.0 µs); removing it was worth 0.40% of wall at B=1 (1.22 ms) and 0.19% at B=2 (gpt-oss D=64 attention backward, Hq=64, Hkv=8, S=8192; campaign 20260911_114527 round 12; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260911_114527/memory.md:431; local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/13-meta-hd64-flash-bwd.md:2614)
 - E15 [2026-09, gfx950, FlyDSL ?, N=?, `synchronize()`-bracketed `perf_counter` wall against GPU time] at decode seq=48 FlyDSL 21.54 µs against Triton 25.88 µs of GPU time (16.8%), 38% apart on wall (FlyDSL wall 48.7 µs); ~27 µs of constant host time on both sides, the Triton Python launcher slower; three false scaling conclusions came from the wall readings (sparse-MLA decode, FlyDSL against Triton, GLM-5.2 TP4: H=16, topk=2048, fp8 KV; note dated 2026-09-11; local:/workspace/code/gpt_oss_docker/.claude/memory/reference_sparse_mla_flydsl_vs_triton.md:18)
 - E16 [2026-09, gfx950, FlyDSL ?, N=?, CUDA-event timing without a graph] a 21 µs kernel read 33.9 µs and two arms read 0.06% apart whatever their GPU work (as E15; local:/workspace/code/gpt_oss_docker/.claude/memory/reference_sparse_mla_flydsl_vs_triton.md:83)

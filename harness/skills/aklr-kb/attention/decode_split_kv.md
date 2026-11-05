@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL attention decode — split-KV grids, the combine, merging them, and pricing gathers"
+title: "Attention decode — split-KV grids, the combine, merging them, and pricing gathers"
 kind: topic
-lever: flydsl_attn_decode_split_kv
+lever: attn_decode_split_kv
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16, fp8]
@@ -12,7 +12,7 @@ sources:
   - ROCm/FlyDSL@dd8373349:kernels/attention/mla_fwd_decode.py:63
 ---
 
-# Split-KV decode in FlyDSL
+# Split-KV decode
 
 > A decode step has few query rows, so the grid comes from splitting the KV range: a producer writes one
 > partial output and LSE per split, and a combine merges them. FlyDSL's forward does this with a second
@@ -29,8 +29,8 @@ sources:
 - You want to merge the combine into the producer.
 - A gather-based (sparse or paged) decode kernel does not respond to compute-side changes.
 
-**Somewhere else if:** timing kernels of a few µs → `flydsl_attn_measurement.md`; XCD order of the
-combine → `flydsl_attn_grid_dispatch.md` §3; GEMM-side split-K → `../gemm/small_m.md` §4.
+**Somewhere else if:** timing kernels of a few µs → `measurement.md`; XCD order of the
+combine → `grid_dispatch.md` §3; GEMM-side split-K → `../gemm/small_m.md` §4.
 
 ## 1. The combine is a fixed cost
 - *(field, E1)* One graph node cost 1.5–1.8 µs. *(field, E2)* Priced by repeated launches, the combine's body
@@ -40,7 +40,7 @@ combine → `flydsl_attn_grid_dispatch.md` §3; GEMM-side split-K → `../gemm/s
   launch. Price a merge by launching the combine one extra time in the stream and reading the increase of the total
   (`../gemm/attribution.md` §3).
 - Run the combine with one wave per workgroup (`../gemm/grid_pricing.md` §2) and number its
-  workgroups like the producer's ownership (`flydsl_attn_grid_dispatch.md` §3), unless each output merges many
+  workgroups like the producer's ownership (`grid_dispatch.md` §3), unless each output merges many
   partials. *(field, E42)* At 16–32 partials per (row, head), one 64-lane workgroup per (row, head) made the whole call
   10–32% slower than 512-lane workgroups whose waves split the partials; 1.5% slower at 11, level at 4.
 - Too few combine workgroups: split the value dimension into disjoint column slices (bit-identical).
@@ -95,7 +95,7 @@ and gets hoisted. In the merged epilogue only the number of rounds and the store
   invalidates the XCD's L2. *(field, E12)* Decode-step benchmark −62%; *(field, E13)* release 5.1 µs + acquire
   1.3 µs, 3–4× the whole epilogue. Get cross-CU visibility from per-instruction scope bits.
 - In a backward pass, where thousands of output tiles reduce in parallel, the same pattern also lost to a separate
-  reduce kernel (`flydsl_attn_backward.md` §6).
+  reduce kernel (`backward.md` §6).
 
 ## 4. Grid size: fill the CUs once, with fat workgroups
 - **Ragged groups.** Allow any `n_groups` with `ceil(n_tiles / n_groups)` tiles per workgroup; in the last
@@ -142,7 +142,7 @@ and gets hoisted. In the merged epilogue only the number of rounds and the store
   waves per workgroup the optimum was about 4 workgroups per CU.
 - bf16 partials add merge error; gate every split count on accuracy (`../gemm/small_m.md` §4).
 - Changing the reduction order changes bits: compare against a reference whose order is shared by neither
-  arm (`flydsl_attn_correctness.md`).
+  arm (`correctness.md`).
 
 ## 6. Price the producer
 - Fit `t ≈ fixed + bytes / bandwidth`. *(field, E25)* `t ≈ (1.7–2.4 µs) + bytes / (6.0–6.2 TB/s)` over five
@@ -153,11 +153,11 @@ and gets hoisted. In the merged epilogue only the number of rounds and the store
 - A plain gather with the same row width and index pattern shows what the pattern allows (random rows 4.5 lines
   wide reached only ~45% of a stream copy *(field, E27)*), but it is not a ceiling: a tuned decode producer ran
   5.9–9.5% faster than the plain gather built to bound it *(field, E28)*.
-  - Use the marginal-bandwidth fit above and never HBM peak (`flydsl_attn_measurement.md` §5).
+  - Use the marginal-bandwidth fit above and never HBM peak (`measurement.md` §5).
 - **Price the partial write by skipping it.** *(field, E44)* On an fp8 MLA decode, skipping it took 4.5% off the
   call. Staging the bf16 partials in LDS and storing them 16 B per lane, contiguous across lanes, in place of 8 B per
   lane into head rows 1 KB apart, took 0.8–3.4% off, every shape faster (§7's rule for gathers, applied to stores).
-- Before compute-side work, run the compute-additivity probe on the producer (`flydsl_attn_attribution.md` §9).
+- Before compute-side work, run the compute-additivity probe on the producer (`attribution.md` §9).
   *(field, E29)* Four times the P·V MFMAs cost +7%. *(field, E30)* Waves spent
   ~54% of their cycles in `SQ_WAIT_ANY` and ~20% issuing; *(field, E31)* deeper steady-state gather prefetch
   lost 4.6–18%: more random 128 B requests in flight only queued.
@@ -189,7 +189,7 @@ and gets hoisted. In the merged epilogue only the number of rounds and the store
 ## 8. Measuring
 Time decode kernels as graph replays with events, arms interleaved in one process. *(field, E37)* A
 synchronize-bracketed wall carried ~27 µs of host time and turned a 16.8% kernel gap into 38%. Protocol:
-`flydsl_attn_measurement.md`.
+`measurement.md`.
 
 ## Verify
 - Combine numbering matches producer ownership; the combine has one wave per workgroup unless each output merges
@@ -200,7 +200,7 @@ synchronize-bracketed wall carried ~27 µs of host time and turned a 16.8% kerne
 - The benchmark's indices reproduce production adjacency.
 
 ## Related
-`flydsl_attn_grid_dispatch.md` · `flydsl_attn_backward.md` §6 · `flydsl_attn_measurement.md` ·
+`grid_dispatch.md` · `backward.md` §6 · `measurement.md` ·
 `../gemm/small_m.md` · `../gemm/epilogue.md` §5 · `../hardware/gfx950/memory_and_sync.md`
 
 ## Evidence

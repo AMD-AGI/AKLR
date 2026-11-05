@@ -181,7 +181,7 @@ epilogue (`_SUPPORTED` in both host files).
 
 - **Compile once and call the compiled object; compile beta=1 builds on a scratch output.** The object
   `flyc.compile` returns skips the per-call work of a `@flyc.jit` launcher, and compiling runs the kernel once
-  (§ grouped_host_autotune §2 below; `../attention/flydsl_attn_measurement.md` §6).
+  (§ grouped_host_autotune §2 below; `attention.md` § measurement §6).
 - In an in-process A/B (`../moe/grouped_measurement.md` §4), load each version as its own module: two versions that
   define `@flyc.jit` closures of the same name can collide in FlyDSL's JIT cache, and one binary then serves both
   arms.
@@ -196,7 +196,7 @@ epilogue (`_SUPPORTED` in both host files).
   and rebuilds the cache key before it reaches the cached call state (`JitFunction.__call__`,
   `jit_function.py:1358-1400`). The object returned by `flyc.compile` goes straight to the call state
   (`CompiledFunction.__call__`, `jit_function.py:1613-1635`). Measured gaps: `gemm.md` § autotune §6,
-  `../attention/flydsl_attn_measurement.md` §6.
+  `attention.md` § measurement §6.
 - **Mode split.** Eager calls the compiled object; under capture the raw `@flyc.jit` closure is launched, because
   in Turbo's measurement the compiled object "regresses under capture" (FP8:2743-2754, 5060-5074;
   `run_eager_or_capture`, MX8:79-86). FlyDSL v0.3.2 has no capture-specific path in `jit_function.py`; treat this
