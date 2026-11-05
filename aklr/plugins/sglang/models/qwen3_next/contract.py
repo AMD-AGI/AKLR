@@ -119,7 +119,16 @@ _OUTPUTS = {
         description="Gated normalized BF16 values.",
         shape=("n_tokens", "n_v_heads", "value_dim"),
         dtype=_BF16,
-        error_bounds=ToleranceBound(absolute_tolerance=0.005, relative_tolerance=0.02),
+        # sglang's causal_conv1d kernels round each tap's product to BF16 before the FP32
+        # sum; these kernels and the reference sum exact products. A Q/K/V channel can then
+        # differ by one BF16 ulp and a core element by up to ~2**-7 of the core's RMS, which
+        # the gated norm multiplies by |norm_weight * SiLU(z)| (~5 at N(0, 1) inputs), so
+        # at small elements the relative term does not cover it. Under (0.005, 0.02)
+        # sglang's own path failed CI's unit test (run 41950799326, MI355X): decode
+        # violation_fraction 0.000977, peak_bound_multiple 1.46; prefill 0.000977, 2.21.
+        # 0.04 is 2**-7 at a gate of 5; on CI's inputs, a CPU emulation of sglang's path
+        # that gives those numbers peaks at 0.33 (decode) and 0.55 (prefill) of it
+        error_bounds=ToleranceBound(absolute_tolerance=0.04, relative_tolerance=0.02),
     ),
     "values": TensorSpec(
         description="Grouped E4M3FN values.",
