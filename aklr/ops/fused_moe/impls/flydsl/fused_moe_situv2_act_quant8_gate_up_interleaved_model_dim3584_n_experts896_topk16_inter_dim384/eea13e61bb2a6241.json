@@ -184,7 +184,7 @@
         "linear_beta": 25.0
       },
       "accuracy": "passed",
-      "speedup": 1.449
+      "speedup": 1.447
     }
   ],
   "layout_variants": {
