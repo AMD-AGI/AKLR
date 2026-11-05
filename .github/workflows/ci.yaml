@@ -388,12 +388,10 @@ jobs:
       # e2e serves real weights from the shared, read-only Hugging Face cache
       volumes:
         - ${{ vars.AKLR_SHARED_HF_HUB_DIR }}:${{ vars.AKLR_SHARED_HF_HUB_DIR }}:ro
-      env:
-        HF_HUB_CACHE: ${{ vars.AKLR_SHARED_HF_HUB_DIR }}
-        HF_HUB_OFFLINE: '1'
     # A full validation (no base: a force push, a replaced run, a dispatch) benches every schema:
     # 247 schemas need about 225 minutes on 8 MI355X (170 of 257 batches ran in 150).
-    # e2e adds two servers per scenario, each capped at 90 minutes (E2eStage's SIDE_TIMEOUT_SECONDS).
+    # e2e adds two servers per scenario, each capped at 90 minutes (E2eStage's SIDE_TIMEOUT_SECONDS):
+    # raise this with each scenario scenarios.yaml enables.
     timeout-minutes: 480
     steps:
       - *checkout_source
@@ -403,6 +401,9 @@ jobs:
       # The exit code is the conclusion; report.md's first line says which failure.
       - name: Validate (audit,bench,e2e)
         env:
+          # e2e's weights: each scenario's pinned revision must be in this cache
+          HF_HUB_CACHE: ${{ vars.AKLR_SHARED_HF_HUB_DIR }}
+          HF_HUB_OFFLINE: '1'
           BASE: ${{ needs.code-lint.outputs.validation_base }}
           MEASURED_BY_BOT: ${{ needs.code-lint.outputs.measured_by_bot }}
         run: |

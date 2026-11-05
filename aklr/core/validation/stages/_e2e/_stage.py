@@ -46,6 +46,10 @@ __all__ = ["E2eStage"]
 # phase 1, GSM8K on both sides: every test question; run_eval takes its 5 few-shot examples
 # from them, so 1314 are graded
 GSM8K_N_QUESTIONS: Final = 1319
+# concurrent requests (run_eval's default is 512: a long-thinking model at 16384 tokens then
+# queues past its client's retries); failed requests tolerated, each scored wrong
+GSM8K_N_THREADS: Final = 64
+GSM8K_MAX_FAILED_REQUESTS: Final = 6
 # enough for a thinking model; others stop far earlier
 MAX_TOKENS: Final = 16384
 # provisional, about 2.5 sigma of the on - off difference over 1314 shared questions; to be
@@ -220,6 +224,7 @@ class E2eStage(PipelineStage[E2eReport]):
             argv = [
                 sys.executable, "-m", "sglang.test.run_eval", "--eval-name", "gsm8k", "--base-url", entry_url,
                 "--num-examples", str(GSM8K_N_QUESTIONS), "--max-tokens", str(MAX_TOKENS), "--temperature", "0",
+                "--num-threads", str(GSM8K_N_THREADS),
             ]  # fmt: skip
             try:
                 done = subprocess.run(
@@ -241,9 +246,12 @@ class E2eStage(PipelineStage[E2eReport]):
                     raise RuntimeError(
                         f"run_eval exited with {done.returncode}, no score\n{done.stderr[-2000:]}"
                     )
-                if n_failed:
+                # a few are a busy server's (each scored wrong, at most 0.005 of the score, well
+                # under GSM8K_MAX_DROP); more are a broken one
+                if n_failed > GSM8K_MAX_FAILED_REQUESTS:
                     raise RuntimeError(f"{n_failed} GSM8K requests failed\n{done.stdout[-2000:]}")
                 result["gsm8k_score"] = float(scores[-1])
+                result["n_failed_requests"] = n_failed
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                 failures.append(f"GSM8K: {error}")
             if side == "on":

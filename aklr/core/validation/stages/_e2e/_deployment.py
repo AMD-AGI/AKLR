@@ -153,14 +153,18 @@ class Role:
 
     def server_env(self) -> dict[str, str]:
         """The cell's env, then the scenario's; ``ValueError`` for a name ``env`` would read
-        as an option (-S runs a command line) or a name the cookbook may not set."""
+        as an option (-S runs a command line), or one the cookbook may not set unless the
+        scenario's env sets it too."""
         env: dict[str, str] = {}
         for entry in self.cell.env:
             # shell syntax: GLOO_SOCKET_IFNAME="<network-interface>"
             (token,) = shlex.split(entry) or [""]
             name, has_value, value = token.partition("=")
-            if not has_value or _UNSAFE_ENV_NAME.fullmatch(name):
-                raise ValueError(f"{self.name}: the cookbook's env {entry!r} is not allowed")
+            # the scenario's env may set a name the cookbook may not, and so replace it
+            if not has_value or (_UNSAFE_ENV_NAME.fullmatch(name) and name not in self.env):
+                raise ValueError(
+                    f"{self.name}: the cookbook's env {entry!r} is not allowed; set {name} in the scenario's env"
+                )
             env[name] = value
         env |= self.env
         if bad := [name for name in env if not _ENV_NAME.fullmatch(name)]:

@@ -36,6 +36,7 @@ class SideResult(FrozenModel):
 
     argvs: tuple[str, ...] = ()
     gsm8k_score: float | None = None
+    n_failed_requests: int = 0  # GSM8K's, each scored wrong
     # the on side's only
     prompt_answer: str | None = None
     answer_matches: bool | None = None
@@ -148,6 +149,10 @@ class E2eRecord(FrozenModel):
     def console_line(self) -> str:
         off, on = self.off or SideResult(), self.on or SideResult()
         parts = [f"GSM8K off {off.gsm8k_score}", f"on {on.gsm8k_score}"]
+        if failed := off.n_failed_requests + on.n_failed_requests:
+            parts.append(
+                f"{failed} GSM8K requests failed (off {off.n_failed_requests}, on {on.n_failed_requests})"
+            )
         if self.warning:
             parts.append(f"warning: {one_line(self.warning)}")
         if on.answer_matches is not None:
