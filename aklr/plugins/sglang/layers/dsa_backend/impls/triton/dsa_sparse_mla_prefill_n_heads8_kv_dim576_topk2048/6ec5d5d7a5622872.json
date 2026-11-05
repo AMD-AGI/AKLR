@@ -1,0 +1,177 @@
+{
+  "schema_version": 5,
+  "name": "dsa_sparse_mla_prefill_n_heads8_kv_dim576_topk2048",
+  "contract_id": "dsa_sparse_mla_prefill@1.0",
+  "description": "sglang's DSA backend's sparse MLA prefill on one rank, kv_b_proj absorbed (triton_sparse_mla_fwd, which DeepseekSparseAttnBackend.forward_extend calls for the triton DSA prefill backend): each head of each token attends the KV pool rows its top-k slots name (-1: none) with scores q . row * sm_scale, q and the rows the fp8 values sglang holds, unscaled; the output is the softmax-weighted sum of the rows' latent parts, 0 for a token that reads no row.",
+  "op_type": "dsa_backend",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, one query each."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 8,
+      "description": "Query heads on this rank."
+    },
+    "kv_dim": {
+      "type": "const",
+      "value": 576,
+      "description": "A query head and a KV row: the latent, then 64 RoPE values."
+    },
+    "topk": {
+      "type": "const",
+      "value": 2048,
+      "description": "Top-k entries per token."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Rows of the KV pool."
+    },
+    "kv_lora_rank": {
+      "type": "const",
+      "value": 512,
+      "description": "The latent's width: a row's first part, and the output's."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "q": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "kv_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's query per head: q_nope times W_UK (the latent's basis), then the RoPE'd q_pe."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_slots",
+        "kv_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "This layer's KV pool: a row per slot, the latent then the RoPE part."
+    },
+    "topk_indices": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "The slots each token attends; -1: none."
+    },
+    "sm_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every score."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each head's output in the latent's basis: the rows' latent parts weighed by the softmax of their scores."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1024,
+        "n_slots": 131072
+      },
+      "scalars": {
+        "sm_scale": 0.0625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2048,
+        "n_slots": 131072
+      },
+      "scalars": {
+        "sm_scale": 0.0625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3072,
+        "n_slots": 131072
+      },
+      "scalars": {
+        "sm_scale": 0.0625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4096,
+        "n_slots": 131072
+      },
+      "scalars": {
+        "sm_scale": 0.0625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4192,
+        "n_slots": 131072
+      },
+      "scalars": {
+        "sm_scale": 0.0625
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "_math.py",
+        "content": "# Created by OpenAI\n\"\"\"Integer helpers usable in host code and compile-time expressions.\"\"\"\n\nimport triton\nfrom triton.runtime.jit import ConstexprFunction\n\nnext_power_of_2 = triton.next_power_of_2\nif not isinstance(next_power_of_2, ConstexprFunction):\n    next_power_of_2 = triton.constexpr_function(next_power_of_2)\n"
+      },
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Sparse paged MLA prefill for GLM-5.2 on gfx950: TP8, 8 heads per rank, tuned for 1024 to 4192\ntokens.\n\nEach head attends the fp8 KV rows (512 latent values, then 64 RoPE values) its token's 2048\ntop-k slots name (-1: none), with scores q . row * softmax_scale; the output is the\nsoftmax-weighted sum of the rows' latent values, in bf16. The query is read in bf16. From 2048\ntokens on, a program takes two tokens' heads.\n\"\"\"\n\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\nfrom ._math import next_power_of_2 as _ceil_power_of_two\n\n_next_power_of = _ceil_power_of_two\n\n\n@gluon.jit\ndef _bit_or(left, right):\n    return left | right\n\n\n@gluon.jit\ndef _add_int(left, right):\n    return left + right\n\n\n@gluon.jit\ndef _build_pair_events(\n    S,\n    Packed,\n    pair,\n    S0: gl.constexpr,\n    SELECTED: gl.constexpr,\n    M: gl.constexpr,\n    INDEX_BITS: gl.constexpr,\n    OUTPUT_SCRATCH: gl.constexpr,\n    WARPS: gl.constexpr,\n):\n    col = gl.arange(0, _next_power_of(SELECTED), gl.BlockedLayout([4], [64], [WARPS], [0]))\n    left = gl.load(S + pair * 2 * S0 + col, col < SELECTED, -1).to(gl.int32)\n    right = gl.load(S + (pair * 2 + 1) * S0 + col, (col < SELECTED) & ((M % 2 == 0) | (pair * 2 + 1 < M)), -1).to(\n        gl.int32\n    )\n    left_valid = left >= 0\n    right_valid = right >= 0\n    same_position = (left >= 0) & (left == right)\n    previous_left = gl.load(S + pair * 2 * S0 + col - 1, (col > 0) & (col < SELECTED), -1)\n    previous_right = gl.load(\n        S + (pair * 2 + 1) * S0 + col - 1, (col > 0) & (col < SELECTED) & ((M % 2 == 0) | (pair * 2 + 1 < M)), -1\n    )\n    next_left = gl.load(S + pair * 2 * S0 + col + 1, col + 1 < SELECTED, -1)\n    next_right = gl.load(\n        S + (pair * 2 + 1) * S0 + col + 1, (col + 1 < SELECTED) & ((M % 2 == 0) | (pair * 2 + 1 < M)), -1\n    )\n    shifted_left = (left >= 0) & (left == previous_right) & ~same_position & (previous_left != previous_right)\n    shifted_right = (right >= 0) & (right == next_left) & ~same_position & (next_left != next_right)\n    common = same_position | shifted_left\n    right_keep = right_valid & ~(same_position | shifted_right)\n    first = left_valid | right_keep\n    second = left_valid & right_keep\n    event_count = first.to(gl.int32) + second.to(gl.int32)\n    end = gl.associative_scan(event_count, 0, _add_int)\n    start = end - event_count\n    first_slot = gl.where(left_valid, left, right)\n    first_mask = gl.where(common, 3, gl.where(left_valid, 1, 2))\n    first_event = first_slot | first_mask << INDEX_BITS\n    second_event = right.to(gl.uint32) | 2 << INDEX_BITS\n    if OUTPUT_SCRATCH:\n        base = Packed + pair * 8192\n    else:\n        base = Packed + pair * 2 * SELECTED\n    gl.store(base + start, first_event, first)\n    gl.store(base + start + 1, second_event, second)\n    bitmap_one = gl.full((_next_power_of(SELECTED),), 1, gl.uint64, gl.BlockedLayout([4], [64], [WARPS], [0]))\n    first_bit = bitmap_one << start // 64\n    second_bit = bitmap_one << (start + 1) // 64\n    left_tiles = gl.reduce(gl.where(left_valid, first_bit, 0), 0, _bit_or)\n    right_bits = gl.where(first & (first_mask & 2 != 0), first_bit, 0)\n    right_bits |= gl.where(second, second_bit, 0)\n    right_tiles = gl.reduce(right_bits, 0, _bit_or)\n    return (gl.sum(event_count, 0), left_tiles, right_tiles)\n\n\n@gluon.jit\ndef _compact_pair_slots(\n    S,\n    Packed,\n    Metadata,\n    S0: gl.constexpr,\n    SELECTED: gl.constexpr,\n    M: gl.constexpr,\n    INDEX_BITS: gl.constexpr,\n    OUTPUT_SCRATCH: gl.constexpr,\n):\n    pair = gl.program_id(0)\n    count, left, right = _build_pair_events(S, Packed, pair, S0, SELECTED, M, INDEX_BITS, OUTPUT_SCRATCH, 4)\n    gl.store(Metadata + pair * 3, count)\n    gl.store(Metadata + pair * 3 + 1, left)\n    gl.store(Metadata + pair * 3 + 2, right)\n\n\n@gluon.jit\ndef _first_active(bits):\n    return gl.inline_asm_elementwise(\n        \"s_ff1_i32_b32 $0, $1;\", \"=s,s,~{scc}\", [bits], dtype=gl.int32, is_pure=True, pack=1\n    )\n\n\n@gluon.jit\ndef _wait_event_writes():\n    gl.inline_asm_elementwise(\n        \"s_waitcnt vmcnt(0); s_mov_b32 $0, 0;\", \"=s,~{memory}\", [], dtype=gl.int32, is_pure=False, pack=1\n    )\n\n\n@gluon.jit\ndef _bit_or_pair(active_a, holes_a, active_b, holes_b):\n    return (active_a | active_b, holes_a | holes_b)\n\n\n@gluon.jit\ndef _uniform_bitmap(bits):\n    return gl.inline_asm_elementwise(\"s_mov_b32 $0, $1;\", \"=s,s\", [bits], dtype=bits.dtype, is_pure=True, pack=1)\n\n\n@gluon.jit\ndef _scan_selected_tiles(S, row, S0: gl.constexpr, SELECTED: gl.constexpr, BLOCK_N: gl.constexpr, WARPS: gl.constexpr):\n    scan_layout: gl.constexpr = gl.BlockedLayout([16], [64], [WARPS], [0])\n    SCAN_SIZE: gl.constexpr = max(64, _next_power_of(SELECTED))\n    scan_col = gl.arange(0, SCAN_SIZE, scan_layout)\n    scan_slots = gl.load(S + row * S0 + scan_col, scan_col < SELECTED, -1)\n    word_values = gl.where(scan_slots >= 0, 1 << (scan_col % 32).to(gl.uint32), 0)\n    validity_words = gl.reduce(gl.reshape(word_values, (SCAN_SIZE // 32, 32)), 1, _bit_or)\n    validity_shared = gl.allocate_shared_memory(gl.uint32, (SCAN_SIZE // 32,), gl.SwizzledSharedLayout(1, 1, 1, [0]))\n    validity_shared.store(validity_words)\n    bit = 1 << (scan_col // BLOCK_N).to(gl.uint32)\n    active_tiles, hole_tiles = gl.reduce(\n        (gl.where(scan_slots >= 0, bit, 0), gl.where(scan_slots < 0, bit, 0)), 0, _bit_or_pair\n    )\n    active_tiles = _uniform_bitmap(active_tiles)\n    full_tiles = _uniform_bitmap(active_tiles & ~hole_tiles)\n    return (active_tiles, full_tiles, validity_shared)\n\n\n@gluon.constexpr_function\ndef _cache_layout(channels, read):\n    assert channels in (64, 512)\n    bases = [\n        [0, 1],\n        [0, 2],\n        [0, 4],\n        [0, 8],\n        [0, 16],\n        [0, 32],\n        [1, 0],\n        [2, 0],\n        [4, 0],\n        [8, 32 if read else 0],\n        [16, 16 if read else 0],\n    ]\n    if channels == 512:\n        bases += [[0, 64], [0, 128], [0, 256]]\n    return gl.SharedLinearLayout(bases + [[32, 0]], [], 16)\n\n\n@gluon.jit\ndef _allocate_tile_storage(cache_dtype: gl.constexpr, BLOCK_H: gl.constexpr, BLOCK_N: gl.constexpr):\n    cache_shared = gl.allocate_shared_memory(cache_dtype, (BLOCK_N, 512), _cache_layout(512, False))\n    cache_read = cache_shared._reinterpret(layout=_cache_layout(512, True))\n    rope_shared = gl.allocate_shared_memory(cache_dtype, (BLOCK_N, 64), gl.SwizzledSharedLayout(1, 1, 1, [1, 0]))\n    rope_read = rope_shared._reinterpret(layout=_cache_layout(64, True))\n    probability_shared = rope_shared._reinterpret(\n        dtype=gl.float16, shape=(32, BLOCK_N), layout=gl.SwizzledSharedLayout(8, 1, 8, [1, 0])\n    ).slice(0, BLOCK_H, 0)\n    alpha_shared = gl.allocate_shared_memory(gl.float32, (2 * BLOCK_H,), gl.SwizzledSharedLayout(1, 1, 1, [0]))\n    return (cache_shared, cache_read, rope_shared, rope_read, probability_shared, alpha_shared)\n\n\n@gluon.jit\ndef _copy_region(shared, KV, slot, channel, active, K0: gl.constexpr):\n    row_offset = gl.where(active, slot.to(gl.int32) * K0, -2147483648).to(gl.uint32)\n    offsets = row_offset[:, None] + channel\n    offsets = gl.max_contiguous(gl.multiple_of(offsets, [1, 16]), [1, 16])\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(shared, KV, offsets)\n\n\n@gluon.jit\ndef _load_query(\n    Q,\n    row,\n    head_base,\n    Q0: gl.constexpr,\n    Q1: gl.constexpr,\n    H: gl.constexpr,\n    BLOCK_H: gl.constexpr,\n    WARPS: gl.constexpr,\n    lhs: gl.constexpr,\n    M: gl.constexpr,\n    PAIRED: gl.constexpr,\n):\n    query_layout: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [WARPS, 1], [1, 0])\n    head = head_base + gl.arange(0, BLOCK_H, gl.SliceLayout(1, query_layout))\n    latent = gl.arange(0, 512, gl.SliceLayout(0, query_layout))\n    query_rope = gl.arange(0, 64, gl.SliceLayout(0, query_layout))\n    if PAIRED:\n        q_latent = gl.amd.cdna4.buffer_load(\n            Q + row * Q0,\n            head[:, None] // 8 * Q0 + head[:, None] % 8 * Q1 + latent[None, :],\n            (M % 2 == 0) | (row + head[:, None] // 8 < M),\n            0,\n        )\n        q_rope = gl.amd.cdna4.buffer_load(\n            Q + row * Q0,\n            head[:, None] // 8 * Q0 + head[:, None] % 8 * Q1 + query_rope[None, :] + 512,\n            (M % 2 == 0) | (row + head[:, None] // 8 < M),\n            0,\n        )\n    else:\n        q_latent = gl.amd.cdna4.buffer_load(Q + row * Q0, head[:, None] * Q1 + latent[None, :], head[:, None] < H, 0)\n        q_rope = gl.amd.cdna4.buffer_load(\n            Q + row * Q0, head[:, None] * Q1 + query_rope[None, :] + 512, head[:, None] < H, 0\n        )\n    query_shared = gl.allocate_shared_memory(gl.bfloat16, (BLOCK_H, 1024), gl.SwizzledSharedLayout(8, 1, 8, [1, 0]))\n    query_latent_shared = query_shared.slice(0, 512, 1)\n    query_rope_shared = query_shared.slice(512, 64, 1)\n    query_latent_shared.store(q_latent)\n    query_rope_shared.store(q_rope)\n    q_latent = query_latent_shared.load(lhs)\n    q_rope = query_rope_shared.load(lhs)\n    return (q_latent, q_rope)\n\n\n@gluon.jit\ndef _latent_half(value, index: gl.constexpr):\n    left, right = gl.split(gl.permute(gl.reshape(value, (value.shape[0], 2, value.shape[1] // 2)), (0, 2, 1)))\n    if index == 0:\n        return left\n    else:\n        return right\n\n\n@gluon.jit\ndef _tile_scores(\n    q_latent,\n    q_rope,\n    cache_shared,\n    rope_shared,\n    full_tiles,\n    block,\n    validity_shared,\n    stats_col,\n    BLOCK_H: gl.constexpr,\n    BLOCK_N: gl.constexpr,\n    KEY_CHUNK: gl.constexpr,\n    mma: gl.constexpr,\n    lhs: gl.constexpr,\n    rhs: gl.constexpr,\n    stats_layout: gl.constexpr,\n    PAIRED: gl.constexpr,\n    row_membership,\n    row_tiles,\n):\n    score = gl.full((BLOCK_H, BLOCK_N), 0, gl.float32, mma)\n    gl.amd.cdna4.async_copy.wait_group(0)\n    for key_chunk in gl.static_range(512 // KEY_CHUNK):\n        q_part = _latent_half(q_latent, key_chunk)\n        key_shared = cache_shared.permute((1, 0)).slice(key_chunk * KEY_CHUNK, KEY_CHUNK, 0)\n        k_part = gl.amd.cdna4.async_copy.load_shared_relaxed(key_shared, rhs).to(gl.bfloat16)\n        score = gl.amd.cdna4.mfma(gl.convert_layout(q_part, lhs), k_part, score)\n    key_rope = gl.amd.cdna4.async_copy.load_shared_relaxed(rope_shared.permute((1, 0)), rhs).to(gl.bfloat16)\n    score = gl.amd.cdna4.mfma(q_rope, key_rope, score)\n    if PAIRED:\n        stats_head = gl.arange(0, BLOCK_H, gl.SliceLayout(1, stats_layout))\n        membership = gl.convert_layout(row_membership, gl.SliceLayout(0, stats_layout))\n        head_bit = 1 << stats_head // 8\n        valid = membership[None, :] & head_bit[:, None] != 0\n        left_live = row_tiles[0] >> block & 1 != 0\n        right_live = row_tiles[1] >> block & 1 != 0\n        live_heads = gl.where(stats_head < 8, left_live, right_live)\n        return (score, valid, live_heads)\n    else:\n        if full_tiles & 1 << block.to(gl.uint32) != 0:\n            valid = gl.full((BLOCK_N,), True, gl.int1, gl.SliceLayout(0, stats_layout))\n        else:\n            words = validity_shared.gather(block * 2 + stats_col // 32, axis=0)\n            valid = words >> stats_col % 32 & 1 != 0\n        return (score, valid, 0)\n\n\n@gluon.jit\ndef _set_priority(high: gl.constexpr):\n    instruction: gl.constexpr = \"s_setprio 1; s_mov_b32 $0, 0;\" if high else \"s_setprio 0; s_mov_b32 $0, 0;\"\n    gl.inline_asm_elementwise(instruction, \"=s\", [], dtype=gl.int32, is_pure=False, pack=1)\n\n\n@gluon.jit\ndef _pair_slot_halves(value):\n    return gl.reshape(gl.permute(gl.reshape(value, (16, 2, 2, 16)), (2, 0, 1, 3)), (2, 16, 32))\n\n\n@gluon.jit\ndef _pair_join_slot_halves(value):\n    return gl.reshape(gl.permute(gl.reshape(value, (2, 16, 2, 16)), (1, 2, 0, 3)), (16, 64))\n\n\n@gluon.jit\ndef _softmax_update(\n    score,\n    valid,\n    live_heads,\n    maximum,\n    denominator,\n    scale,\n    probability_shared,\n    alpha_shared,\n    stats_layout: gl.constexpr,\n    mma: gl.constexpr,\n    lhs: gl.constexpr,\n    KEEP_PRIORITY: gl.constexpr,\n    PAIRED: gl.constexpr,\n    LAST_TILE: gl.constexpr = False,\n):\n    if PAIRED:\n        local_layout: gl.constexpr = gl.BlockedLayout([1, 1, 4], [1, 16, 4], [2, 1, 1], [1, 2, 0])\n        partial_layout: gl.constexpr = gl.SliceLayout(2, local_layout)\n        row_layout: gl.constexpr = gl.SliceLayout(1, mma)\n        _set_priority(True)\n        score = gl.convert_layout(score, stats_layout, assert_trivial=True) * scale\n        score = gl.where(valid, score, -float(\"inf\"))\n        local_score = gl.convert_layout(_pair_slot_halves(score), local_layout, assert_trivial=True)\n        partial_max = gl.max(local_score, 2)\n        alpha_shared.store(gl.reshape(partial_max, (32,)))\n        max0 = alpha_shared.slice(0, 16, 0).load(row_layout)\n        max1 = alpha_shared.slice(16, 16, 0).load(row_layout)\n        next_max = gl.maximum(maximum, gl.maximum(max0, max1))\n        live = gl.convert_layout(live_heads, row_layout, assert_trivial=True)\n        safe_max = gl.where(live, next_max, 0.0)\n        alpha = gl.where(live, gl.exp2((maximum - safe_max) * 1.4426950408889634), 1.0)\n        max_rows = gl.convert_layout(safe_max, gl.SliceLayout(0, partial_layout), assert_trivial=True)\n        alpha_rows = gl.convert_layout(alpha, gl.SliceLayout(0, partial_layout), assert_trivial=True)\n        local_valid = gl.convert_layout(_pair_slot_halves(valid), local_layout, assert_trivial=True)\n        probability = gl.where(local_valid, gl.exp2((local_score - max_rows[None, :, None]) * 1.4426950408889634), 0.0)\n        denominator = denominator * alpha_rows[None, :] + gl.sum(probability, 2)\n        probability_shared.store(_pair_join_slot_halves(probability).to(gl.float16))\n        p = probability_shared.load(lhs)\n        if LAST_TILE:\n            alpha_shared.store(gl.reshape(denominator, (32,)))\n        if not KEEP_PRIORITY or LAST_TILE:\n            _set_priority(False)\n        return (p, alpha, next_max, denominator)\n    else:\n        _set_priority(True)\n        score = gl.convert_layout(score, stats_layout)\n        score = score * scale\n        score = gl.where(valid[None, :], score, -float(\"inf\"))\n        next_max = gl.maximum(maximum, gl.max(score, 1))\n        alpha = gl.exp2((maximum - next_max) * 1.4426950408889634)\n        probability = gl.where(valid[None, :], gl.exp2((score - next_max[:, None]) * 1.4426950408889634), 0.0)\n        denominator = denominator * alpha + gl.sum(probability, 1)\n        probability_shared.store(probability.to(gl.float16))\n        alpha_shared.slice(0, 8, 0).store(alpha)\n        if LAST_TILE:\n            alpha_shared.slice(8, 8, 0).store(denominator)\n        value_alpha = alpha_shared.slice(0, 8, 0).load(gl.SliceLayout(1, mma))\n        p = probability_shared.load(lhs)\n        if not KEEP_PRIORITY or LAST_TILE:\n            _set_priority(False)\n        return (p, value_alpha, next_max, denominator)\n\n\n@gluon.jit\ndef _store_empty(O, row, H: gl.constexpr, M: gl.constexpr, PAIRED: gl.constexpr):\n    BLOCK_H: gl.constexpr = 16 if PAIRED else 8\n    layout: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [2, 1], [1, 0])\n    head_base = gl.program_id(1) * (8 if H > 8 else 0)\n    head = head_base + gl.arange(0, BLOCK_H, gl.SliceLayout(1, layout))\n    channel = gl.arange(0, 512, gl.SliceLayout(0, layout))\n    gl.store(\n        O + (row * H + head[:, None]) * 512 + channel[None, :],\n        gl.full((BLOCK_H, 512), 0, gl.bfloat16, layout),\n        (M % 2 == 0) | (row + head[:, None] // 8 < M) if PAIRED else head[:, None] < H,\n    )\n\n\n@gluon.jit\ndef _store_final_tile(\n    O,\n    row,\n    head_base,\n    p,\n    value_alpha,\n    accumulators,\n    alpha_shared,\n    cache_read,\n    H: gl.constexpr,\n    BLOCK_H: gl.constexpr,\n    CHUNK: gl.constexpr,\n    mma: gl.constexpr,\n    rhs: gl.constexpr,\n    M: gl.constexpr,\n    PAIRED: gl.constexpr,\n):\n    if PAIRED:\n        denominator = alpha_shared.slice(0, 16, 0).load(gl.SliceLayout(1, mma)) + alpha_shared.slice(16, 16, 0).load(\n            gl.SliceLayout(1, mma)\n        )\n    else:\n        denominator = alpha_shared.slice(8, 8, 0).load(gl.SliceLayout(1, mma))\n    inverse_denom = 1.0 / gl.where(denominator > 0, denominator, 1.0)[:, None]\n    oh = head_base + gl.arange(0, BLOCK_H, gl.SliceLayout(1, mma))\n    od = gl.arange(0, CHUNK, gl.SliceLayout(0, mma))\n    out = O + (row * H + oh[:, None]) * 512 + od[None, :]\n    for chunk in gl.static_range(512 // CHUNK):\n        region = cache_read.slice(chunk * CHUNK, CHUNK, 1)\n        value = gl.amd.cdna4.async_copy.load_shared_relaxed(region, rhs).to(gl.float16)\n        accumulator = gl.amd.cdna4.mfma(p, value, accumulators[chunk] * value_alpha[:, None])\n        gl.store(\n            out + chunk * CHUNK,\n            (accumulator * inverse_denom).to(gl.bfloat16),\n            (M % 2 == 0) | (row + oh[:, None] // 8 < M) if PAIRED else oh[:, None] < H,\n        )\n\n\n@gluon.jit\ndef _attention_pipeline(\n    Q,\n    KV,\n    S,\n    O,\n    Metadata,\n    InputSlots,\n    scale,\n    Q0: gl.constexpr,\n    Q1: gl.constexpr,\n    K0: gl.constexpr,\n    S0: gl.constexpr,\n    H: gl.constexpr,\n    SELECTED: gl.constexpr,\n    SMALL_GRID: gl.constexpr,\n    M: gl.constexpr,\n    PAIRED: gl.constexpr,\n    INDEX_BITS: gl.constexpr,\n    OUTPUT_SCRATCH: gl.constexpr,\n):\n    BLOCK_H: gl.constexpr = 16 if PAIRED else 8\n    BLOCK_N: gl.constexpr = 64\n    CHUNK: gl.constexpr = 128\n    KEY_CHUNK: gl.constexpr = 256\n    WARPS: gl.constexpr = 2\n    K_WIDTH: gl.constexpr = 16\n    VEC: gl.constexpr = 16\n    pid = gl.program_id(0)\n    if SMALL_GRID:\n        band_size = gl.num_programs(0) // 8\n        row = gl.num_programs(0) - 1 - (pid % 8 * band_size + pid // 8)\n    else:\n        row = gl.num_programs(0) - 1 - pid\n    if PAIRED:\n        row = 2 * row\n    event_count = 0\n    row_tiles = (0, 0)\n    if PAIRED:\n        if OUTPUT_SCRATCH:\n            event_count, left_tiles, right_tiles = _build_pair_events(\n                InputSlots, S, row // 2, S0, SELECTED, M, INDEX_BITS, True, 2\n            )\n            row_tiles = (left_tiles, right_tiles)\n            _wait_event_writes()\n            gl.barrier()\n        else:\n            metadata_base = Metadata + row // 2 * 3\n            event_count = gl.load(metadata_base).to(gl.int32)\n            row_tiles = (gl.load(metadata_base + 1).to(gl.uint64), gl.load(metadata_base + 2).to(gl.uint64))\n        active_tiles = gl.cdiv(event_count, BLOCK_N)\n        full_tiles = 0\n        validity_shared = gl.allocate_shared_memory(gl.uint32, (1,), gl.SwizzledSharedLayout(1, 1, 1, [0]))\n    else:\n        active_tiles, full_tiles, validity_shared = _scan_selected_tiles(S, row, S0, SELECTED, BLOCK_N, WARPS)\n    if active_tiles == 0:\n        _store_empty(O, row, H, M, PAIRED)\n        return\n    head_base = gl.program_id(1) * (BLOCK_H if H > BLOCK_H else 0)\n    load_layout: gl.constexpr = gl.BlockedLayout([1, VEC], [16, 4], [WARPS, 1], [1, 0])\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[1, WARPS]\n    )\n    stats_layout: gl.constexpr = (\n        gl.BlockedLayout([1, 4], [16, 4], [1, WARPS], [0, 1])\n        if PAIRED\n        else gl.BlockedLayout([1, 4], [4, 16], [WARPS, 1], [1, 0])\n    )\n    lhs: gl.constexpr = gl.DotOperandLayout(0, mma, K_WIDTH)\n    rhs: gl.constexpr = gl.DotOperandLayout(1, mma, K_WIDTH)\n    q_latent, q_rope = _load_query(Q, row, head_base, Q0, Q1, H, BLOCK_H, WARPS, lhs, M, PAIRED)\n    rope = gl.arange(0, 64, gl.SliceLayout(0, load_layout))\n    col = gl.arange(0, BLOCK_N, gl.SliceLayout(1, load_layout))\n    if PAIRED:\n        maximum = gl.full((BLOCK_H,), -float(\"inf\"), gl.float32, gl.SliceLayout(1, mma))\n        local_layout: gl.constexpr = gl.BlockedLayout([1, 1, 4], [1, 16, 4], [2, 1, 1], [1, 2, 0])\n        denominator = gl.full((2, BLOCK_H), 0, gl.float32, gl.SliceLayout(2, local_layout))\n    else:\n        maximum = gl.full((BLOCK_H,), -float(\"inf\"), gl.float32, gl.SliceLayout(1, stats_layout))\n        denominator = gl.full((BLOCK_H,), 0, gl.float32, gl.SliceLayout(1, stats_layout))\n    accumulators = ()\n    for chunk in gl.static_range(512 // CHUNK):\n        accumulators += (gl.full((BLOCK_H, CHUNK), 0, gl.float32, mma),)\n    cache_shared, cache_read, rope_shared, rope_read, probability_shared, alpha_shared = _allocate_tile_storage(\n        KV.dtype.element_ty, BLOCK_H, BLOCK_N\n    )\n    block = 0 if PAIRED else _first_active(active_tiles)\n    row_membership = 0\n    if PAIRED:\n        pos = block * BLOCK_N + col\n        event = gl.load(S + row * (4096 if OUTPUT_SCRATCH else SELECTED) + pos, pos < event_count, 0).to(gl.uint32)\n        row_membership = event >> INDEX_BITS\n        slot = (event & (1 << INDEX_BITS) - 1).to(gl.int32)\n        active = pos < event_count\n    else:\n        pos = block * BLOCK_N + col\n        slot = gl.load(S + row * S0 + pos, pos < SELECTED, -1)\n        active = (pos < SELECTED) & (slot >= 0)\n    permutation = (col & 8) << 2 ^ col & 16\n    rope_offsets = rope[None, :] ^ permutation[:, None]\n    key_channel = gl.arange(0, KEY_CHUNK, gl.SliceLayout(0, load_layout))\n    key_offsets = key_channel[None, :] ^ permutation[:, None]\n    for key_chunk in gl.static_range(512 // KEY_CHUNK):\n        _copy_region(\n            cache_shared.slice(key_chunk * KEY_CHUNK, KEY_CHUNK, 1),\n            KV + key_chunk * KEY_CHUNK,\n            slot,\n            key_offsets,\n            active,\n            K0,\n        )\n    _copy_region(rope_shared, KV + 512, slot, rope_offsets, active, K0)\n    gl.amd.cdna4.async_copy.commit_group()\n    refill_channel = gl.arange(0, CHUNK, gl.SliceLayout(0, load_layout))\n    refill_offsets = refill_channel[None, :] ^ permutation[:, None]\n    stats_col = gl.arange(0, BLOCK_N, gl.SliceLayout(0, stats_layout))\n    while active_tiles > 1 if PAIRED else active_tiles & active_tiles - 1 != 0:\n        remaining_tiles = active_tiles - 1 if PAIRED else active_tiles & active_tiles - 1\n        next_block = block + 1 if PAIRED else _first_active(remaining_tiles)\n        if PAIRED:\n            next_pos = next_block * BLOCK_N + col\n            next_slots = S + row * (4096 if OUTPUT_SCRATCH else SELECTED)\n        else:\n            next_pos = next_block * BLOCK_N + col\n            next_slots = S + row * S0\n        if PAIRED:\n            next_event = gl.amd.cdna4.buffer_load(next_slots, next_pos, mask=next_pos < event_count, other=0).to(\n                gl.uint32\n            )\n            next_membership = next_event >> INDEX_BITS\n            next_slot = (next_event & (1 << INDEX_BITS) - 1).to(gl.int32)\n            next_active = next_pos < event_count\n        elif SELECTED % BLOCK_N == 0:\n            next_slot = gl.amd.cdna4.buffer_load(next_slots, next_pos)\n            next_active = next_slot >= 0\n        else:\n            next_slot = gl.amd.cdna4.buffer_load(next_slots, next_pos, mask=next_pos < SELECTED, other=-1)\n            next_active = (next_pos < SELECTED) & (next_slot >= 0)\n        score, valid, live_heads = _tile_scores(\n            q_latent,\n            q_rope,\n            cache_read,\n            rope_read,\n            full_tiles,\n            block,\n            validity_shared,\n            stats_col,\n            BLOCK_H,\n            BLOCK_N,\n            KEY_CHUNK,\n            mma,\n            lhs,\n            rhs,\n            stats_layout,\n            PAIRED,\n            row_membership,\n            row_tiles,\n        )\n        active_tiles = remaining_tiles\n        early_values = ()\n        for early in gl.static_range(2):\n            early_values += (\n                gl.amd.cdna4.async_copy.load_shared_relaxed(cache_read.slice(early * CHUNK, CHUNK, 1), rhs),\n            )\n        p, value_alpha, next_max, denominator = _softmax_update(\n            score,\n            valid,\n            live_heads,\n            maximum,\n            denominator,\n            scale,\n            probability_shared,\n            alpha_shared,\n            stats_layout,\n            mma,\n            lhs,\n            SMALL_GRID or PAIRED,\n            PAIRED,\n        )\n        _copy_region(cache_shared.slice(0, KEY_CHUNK, 1), KV, next_slot, key_offsets, next_active, K0)\n        next_accumulators = ()\n        for chunk in gl.static_range(512 // CHUNK):\n            region = cache_shared.slice(chunk * CHUNK, CHUNK, 1)\n            if chunk < 2:\n                value = early_values[chunk].to(gl.float16)\n            else:\n                value = gl.amd.cdna4.async_copy.load_shared_relaxed(cache_read.slice(chunk * CHUNK, CHUNK, 1), rhs).to(\n                    gl.float16\n                )\n                gl.barrier()\n                _copy_region(region, KV + chunk * CHUNK, next_slot, refill_offsets, next_active, K0)\n            if (SMALL_GRID or PAIRED) and chunk == 3:\n                _set_priority(False)\n            next_accumulators += (gl.amd.cdna4.mfma(p, value, accumulators[chunk] * value_alpha[:, None]),)\n        _copy_region(rope_shared, KV + 512, next_slot, rope_offsets, next_active, K0)\n        gl.amd.cdna4.async_copy.commit_group()\n        block = next_block\n        accumulators = next_accumulators\n        maximum = next_max\n        if PAIRED:\n            row_membership = next_membership\n    score, valid, live_heads = _tile_scores(\n        q_latent,\n        q_rope,\n        cache_read,\n        rope_read,\n        full_tiles,\n        block,\n        validity_shared,\n        stats_col,\n        BLOCK_H,\n        BLOCK_N,\n        KEY_CHUNK,\n        mma,\n        lhs,\n        rhs,\n        stats_layout,\n        PAIRED,\n        row_membership,\n        row_tiles,\n    )\n    p, value_alpha, next_max, denominator = _softmax_update(\n        score,\n        valid,\n        live_heads,\n        maximum,\n        denominator,\n        scale,\n        probability_shared,\n        alpha_shared,\n        stats_layout,\n        mma,\n        lhs,\n        SMALL_GRID or PAIRED,\n        PAIRED,\n        True,\n    )\n    _store_final_tile(\n        O,\n        row,\n        head_base,\n        p,\n        value_alpha,\n        accumulators,\n        alpha_shared,\n        cache_read,\n        H,\n        BLOCK_H,\n        CHUNK,\n        mma,\n        rhs,\n        M,\n        PAIRED,\n    )\n\n\ndef _launch(query, kv_cache, selected_slots, output, softmax_scale):\n    m, h, _ = query.shape\n    paired = h == 8 and m >= 2048\n    assert 0 < selected_slots.shape[1] <= 2048\n    assert kv_cache.stride(0) % 16 == 0\n    assert (kv_cache.shape[0] - 1) * kv_cache.stride(0) + 576 <= 2147483646\n    grid = (triton.cdiv(m, 2), 1) if paired else (m, triton.cdiv(h, 8))\n    metadata = selected_slots\n    slots = selected_slots\n    index_bits = 14 if kv_cache.shape[0] <= 16384 else 30\n    output_scratch = paired and index_bits == 14\n    if paired:\n        if output_scratch:\n            slots = output.view(torch.uint16)\n        else:\n            metadata = torch.empty((triton.cdiv(m, 2), 3), dtype=torch.int64, device=query.device)\n            slots = torch.empty(\n                (triton.cdiv(m, 2), 2 * selected_slots.shape[1]), dtype=torch.uint32, device=query.device\n            )\n            _compact_pair_slots[triton.cdiv(m, 2),](\n                selected_slots,\n                slots,\n                metadata,\n                selected_slots.stride(0),\n                selected_slots.shape[1],\n                m,\n                index_bits,\n                False,\n                num_warps=4,\n            )\n    return _attention_pipeline[grid](\n        query,\n        kv_cache,\n        slots,\n        output,\n        metadata,\n        selected_slots,\n        softmax_scale,\n        query.stride(0),\n        query.stride(1),\n        kv_cache.stride(0),\n        selected_slots.stride(0),\n        h,\n        selected_slots.shape[1],\n        SMALL_GRID=m == 1024,\n        M=m if paired else 0,\n        PAIRED=paired,\n        INDEX_BITS=index_bits if paired else 0,\n        OUTPUT_SCRATCH=output_scratch,\n        num_warps=2,\n        waves_per_eu=2,\n        enable_fp_fusion=False,\n        llvm_fn_attrs=[[\"amdgpu-agpr-alloc\", \"0\"]],\n    )\n\n\ndef sparse_paged_mla(\n    query: torch.Tensor,\n    kv_cache: torch.Tensor,\n    selected_slots: torch.Tensor,\n    *,\n    softmax_scale: float = 0.0625,\n    output: torch.Tensor,\n):\n    m, h, _ = query.shape\n    _launch(query, kv_cache, selected_slots, output, softmax_scale)\n    return output\n\n\ndef run(*, q, kv_cache, topk_indices, sm_scale, output):\n    \"\"\"Writes ``output``: sparse_paged_mla on an exact bf16 copy of sglang's fp8 ``q``,\n    the dtype these kernels read the query in.\"\"\"\n    sparse_paged_mla(\n        q.to(torch.bfloat16), kv_cache, topk_indices, softmax_scale=sm_scale, output=output\n    )\n"
+      }
+    ]
+  }
+}

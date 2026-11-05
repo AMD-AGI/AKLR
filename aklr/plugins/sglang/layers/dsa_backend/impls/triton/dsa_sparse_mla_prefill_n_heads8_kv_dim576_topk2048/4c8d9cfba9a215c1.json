@@ -1,0 +1,173 @@
+{
+  "schema_version": 5,
+  "name": "dsa_sparse_mla_prefill_n_heads8_kv_dim576_topk2048",
+  "contract_id": "dsa_sparse_mla_prefill@1.0",
+  "description": "sglang's DSA backend's sparse MLA prefill on one rank, kv_b_proj absorbed (triton_sparse_mla_fwd, which DeepseekSparseAttnBackend.forward_extend calls for the triton DSA prefill backend): each head of each token attends the KV pool rows its top-k slots name (-1: none) with scores q . row * sm_scale, q and the rows the fp8 values sglang holds, unscaled; the output is the softmax-weighted sum of the rows' latent parts, 0 for a token that reads no row.",
+  "op_type": "dsa_backend",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, one query each."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 8,
+      "description": "Query heads on this rank."
+    },
+    "kv_dim": {
+      "type": "const",
+      "value": 576,
+      "description": "A query head and a KV row: the latent, then 64 RoPE values."
+    },
+    "topk": {
+      "type": "const",
+      "value": 2048,
+      "description": "Top-k entries per token."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Rows of the KV pool."
+    },
+    "kv_lora_rank": {
+      "type": "const",
+      "value": 512,
+      "description": "The latent's width: a row's first part, and the output's."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "q": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "kv_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's query per head: q_nope times W_UK (the latent's basis), then the RoPE'd q_pe."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_slots",
+        "kv_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "This layer's KV pool: a row per slot, the latent then the RoPE part."
+    },
+    "topk_indices": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "The slots each token attends; -1: none."
+    },
+    "sm_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every score."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each head's output in the latent's basis: the rows' latent parts weighed by the softmax of their scores."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 4193,
+        "n_slots": 131072
+      },
+      "scalars": {
+        "sm_scale": 0.0625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6144,
+        "n_slots": 131072
+      },
+      "scalars": {
+        "sm_scale": 0.0625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8192,
+        "n_slots": 131072
+      },
+      "scalars": {
+        "sm_scale": 0.0625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 12288,
+        "n_slots": 131072
+      },
+      "scalars": {
+        "sm_scale": 0.0625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16384,
+        "n_slots": 131072
+      },
+      "scalars": {
+        "sm_scale": 0.0625
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Sparse paged MLA prefill for GLM-5.2 on gfx950: TP8, 8 heads per rank, tuned for 4193 to 16384\ntokens.\n\nEach head attends the fp8 KV rows (512 latent values, then 64 RoPE values) its token's 2048\ntop-k slots name (-1: none), with scores q . row * softmax_scale; the output is the\nsoftmax-weighted sum of the rows' latent values, in bf16. The query is read in bf16.\n\"\"\"\n\nimport torch\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\nfrom triton.language import core as tl_core\n\n\n@gluon.constexpr_function\ndef _latent_copy_layout(rows):\n    assert rows in (32, 64)\n    registers = [[0, 1], [0, 2], [0, 4], [0, 8], [4, 0], [8, 0]]\n    if rows == 64:\n        registers += [[32, 0]]\n    return gl.DistributedLinearLayout(\n        registers, [[0, 16], [0, 32], [0, 64], [0, 128], [0, 256], [16, 0]], [[1, 0], [2, 0]], [], [rows, 512]\n    )\n\n\n@gluon.jit\ndef _wave_priority(level: gl.constexpr):\n    gl.inline_asm_elementwise(f\"s_setprio {level}\", \"=s\", [], dtype=gl.int32, is_pure=False, pack=1)\n\n\n@gluon.jit\ndef _first_live_tile(mask):\n    return gl.inline_asm_elementwise(\"s_ff1_i32_b32 $0, $1\", \"=s,s\", [mask], dtype=gl.int32, is_pure=True, pack=1)\n\n\n@gluon.jit\ndef _bitwise_or(a, b):\n    return a | b\n\n\n@gluon.jit\ndef _scan_selections(selection_base, SELECTION_DTYPE: gl.constexpr, SELECTION_CACHE: gl.constexpr):\n    scan_layout: gl.constexpr = gl.BlockedLayout([2], [64], [4], [0])\n    column = gl.arange(0, 2048, layout=scan_layout)\n    selected = gl.amd.cdna4.buffer_load(selection_base, column, cache=SELECTION_CACHE)\n    compact = gl.maximum(selected, -1).to(SELECTION_DTYPE)\n    selection_shared = gl.allocate_shared_memory(\n        SELECTION_DTYPE, [2048], gl.SwizzledSharedLayout(1, 1, 1, [0]), compact\n    )\n    tile_bit = (1 << column // 64).to(gl.uint32)\n    tile_flags = gl.where(selected >= 0, tile_bit.to(gl.uint64), tile_bit.to(gl.uint64) << 32)\n    packed_flags = gl.reduce(tile_flags, 0, _bitwise_or)\n    live_tiles = packed_flags.to(gl.uint32)\n    invalid_tiles = (packed_flags >> 32).to(gl.uint32)\n    live_tiles, invalid_tiles = gl.inline_asm_elementwise(\n        \"s_mov_b32 $0, $2\\n s_mov_b32 $1, $3\",\n        \"=s,=s,s,s\",\n        [live_tiles, invalid_tiles],\n        dtype=(gl.uint32, gl.uint32),\n        is_pure=True,\n        pack=1,\n    )\n    return (selection_shared, live_tiles, invalid_tiles)\n\n\n@gluon.jit\ndef _prepare_row(\n    Q,\n    S,\n    row,\n    Q0: gl.constexpr,\n    Q1: gl.constexpr,\n    S0: gl.constexpr,\n    SELECTION_DTYPE: gl.constexpr,\n    SELECTION_CACHE: gl.constexpr,\n    qk_dot_q: gl.constexpr,\n):\n    q_layout: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [1, 4], [1, 0])\n    qh = gl.arange(0, 16, layout=gl.SliceLayout(1, q_layout)) % 8\n    qd = gl.arange(0, 512, layout=gl.SliceLayout(0, q_layout))\n    qr = gl.arange(0, 64, layout=gl.SliceLayout(0, q_layout))\n    latent_head = gl.arange(0, 8, layout=gl.SliceLayout(1, q_layout))\n    query = gl.load(Q + row * Q0 + latent_head[:, None] * Q1 + qd[None, :])\n    q_shared = gl.allocate_shared_memory(\n        gl.bfloat16,\n        [32, 128],\n        gl.SwizzledSharedLayout(8, 1, 8, [1, 0]),\n        query.reshape([8, 2, 2, 128]).permute((2, 1, 0, 3)).reshape([32, 128]),\n    )\n    query_rotary = gl.load(Q + row * Q0 + qh[:, None] * Q1 + 512 + qr[None, :])\n    query_rotary = gl.convert_layout(query_rotary, qk_dot_q)\n    selections, remaining, invalid = _scan_selections(S + row * S0, SELECTION_DTYPE, SELECTION_CACHE)\n    resident_queries = ()\n    for fragment in gl.static_range(2):\n        resident_queries += (q_shared.slice(fragment * 16, 16, 0).load(qk_dot_q),)\n    return (resident_queries, query_rotary, selections, remaining, invalid)\n\n\n@gluon.jit\ndef _gather_selection(selections, positions):\n    slot = selections.gather(positions, 0).to(gl.int32)\n    if selections.dtype == gl.uint16:\n        slot = gl.where(slot == 65535, -1, slot)\n    return slot\n\n\n@gluon.jit\ndef _load_rotary(cache, selections, start, channel, K0: gl.constexpr):\n    j = gl.arange(0, 64, layout=gl.SliceLayout(1, channel.type.layout.parent))\n    slot = _gather_selection(selections, start + j)\n    offset = slot * K0\n    return gl.amd.cdna4.buffer_load(cache, offset[:, None] + 512 + channel[None, :])\n\n\n@gluon.jit\ndef _stage_latent(shared, cache, selections, start, K0: gl.constexpr, j):\n    slot = _gather_selection(selections, start + j)\n    channel = gl.arange(0, 512, layout=gl.SliceLayout(0, j.type.layout.parent))\n    offset = slot * K0\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(shared, cache, offset[:, None] + channel[None, :])\n\n\n@gluon.jit\ndef _stage_tile(shared, cache, selections, start, rotary_channel, K0: gl.constexpr):\n    copy_layout: gl.constexpr = _latent_copy_layout(64)\n    j = gl.arange(0, 64, layout=gl.SliceLayout(1, copy_layout))\n    _stage_latent(shared, cache, selections, start, K0, j)\n    gl.amd.cdna4.async_copy.commit_group()\n    return _load_rotary(cache, selections, start, rotary_channel, K0)\n\n\n@gluon.jit\ndef _unique_head_scores(score, layout: gl.constexpr):\n    low_columns, high_columns = gl.split(score.reshape([16, 16, 2, 2]).permute((0, 1, 3, 2)))\n    head = gl.arange(0, 16, layout=gl.SliceLayout(1, gl.SliceLayout(2, low_columns.type.layout)))\n    unique = gl.where(head[:, None, None] < 8, low_columns, high_columns)\n    unique = unique.reshape([2, 8, 16, 2]).permute((1, 2, 0, 3))\n    return gl.convert_layout(unique.reshape([8, 64]), layout, assert_trivial=True)\n\n\n@gluon.jit\ndef _sum_head_banks(value):\n    width: gl.constexpr = value.shape[1]\n    banks = value.reshape([2, 8, width])\n    paired = gl.sum(banks, 0)\n    both = gl.broadcast(paired[None, :, :], banks)[0]\n    return gl.convert_layout(both.reshape([16, width]), value.type.layout)\n\n\n@gluon.jit\ndef _qk_scores(kv_shared, resident_queries, query_rotary, rotary, scale, softmax_layout: gl.constexpr):\n    mma: gl.constexpr = query_rotary.type.layout.parent\n    qk_dot_k: gl.constexpr = gl.DotOperandLayout(1, mma, query_rotary.type.layout.k_width)\n    score_parts = ()\n    for half in gl.static_range(2):\n        partial = gl.full([16, 64], 0.0, gl.float32, mma)\n        keys = ()\n        for fragment in gl.static_range(2):\n            keys += (\n                gl.amd.cdna4.async_copy.load_shared_relaxed(\n                    kv_shared.slice(half * 256 + fragment * 128, 128, 1).permute((1, 0)), qk_dot_k\n                ).to(gl.bfloat16),\n            )\n        for fragment in gl.static_range(2):\n            partial = gl.amd.cdna4.mfma(resident_queries[fragment], keys[fragment], partial)\n        score_parts += (partial,)\n    head = gl.arange(0, 16, layout=gl.SliceLayout(1, mma))\n    selected_parts = gl.where(head[:, None] < 8, score_parts[0], score_parts[1])\n    score = _sum_head_banks(selected_parts)\n    key_rotary = gl.convert_layout(rotary.permute((1, 0)), qk_dot_k).to(gl.bfloat16)\n    score = gl.amd.cdna4.mfma(query_rotary, key_rotary, score)\n    return _unique_head_scores(score, softmax_layout) * scale\n\n\n@gluon.jit\ndef _mask_scores(score, selections, start, all_active):\n    slot_layout: gl.constexpr = gl.SliceLayout(0, score.type.layout)\n    if all_active:\n        live = gl.full([64], True, gl.int1, slot_layout)\n    else:\n        j = gl.arange(0, 64, layout=slot_layout)\n        live = _gather_selection(selections, start + j) >= 0\n        score = gl.where(live[None, :], score, -float(\"inf\"))\n    return (score, live)\n\n\n@gluon.jit\ndef _maximum_propagating(a, b):\n    return gl.maximum(a, b, propagate_nan=tl_core.PropagateNan.ALL)\n\n\n@gluon.jit\ndef _online_maximum(score, maximum, maximum_shared, SOFTMAX_PRIORITY: gl.constexpr):\n    maximum_layout: gl.constexpr = gl.BlockedLayout([1, 4], [8, 8], [1, 4], [0, 1])\n    local_maximum = gl.reduce(score.reshape([8, 32, 2]), 2, _maximum_propagating)\n    prior_maximum = gl.convert_layout(maximum, gl.SliceLayout(1, local_maximum.type.layout))\n    local_maximum = _maximum_propagating(local_maximum, prior_maximum[:, None])\n    quarter_maximum = gl.reduce(local_maximum.reshape([8, 4, 4, 2]), 3, _maximum_propagating)\n    wave_maximum = gl.reduce(quarter_maximum, 2, _maximum_propagating)\n    _wave_priority(SOFTMAX_PRIORITY)\n    maximum_shared.store(wave_maximum)\n    tile_maximum = gl.reduce(maximum_shared.load(maximum_layout), 1, _maximum_propagating)\n    return gl.convert_layout(tile_maximum, maximum.type.layout)\n\n\n@gluon.jit\ndef _broadcast_head_banks(value, layout: gl.constexpr):\n    template = gl.full([16], 0.0, gl.float32, layout).reshape([2, 8])\n    bank = gl.convert_layout(value, gl.SliceLayout(0, template.type.layout))\n    both = gl.broadcast(bank[None, :], template)[0].reshape([16])\n    return gl.convert_layout(both, layout, assert_trivial=True)\n\n\n@gluon.jit\ndef _needs_rescale(alpha):\n    changed = gl.inline_asm_elementwise(\n        \"v_cmp_neq_f32_e64 $0, 1.0, $1\", \"=s,v\", [alpha], dtype=gl.uint64, is_pure=True, pack=1\n    )\n    vote = gl.gather(changed, gl.full([1], 0, gl.int32, alpha.type.layout), 0)\n    return gl.sum(vote, 0) != 0\n\n\n@gluon.jit\ndef _softmax_update(\n    score, live, all_active, maximum, next_maximum, probability_shared, denominator, accumulators, first_tile\n):\n    mma: gl.constexpr = accumulators[0].type.layout\n    alpha = gl.exp2((maximum - next_maximum) * 1.4426950408889634)\n    if all_active:\n        probability = gl.exp2((score - next_maximum[:, None]) * 1.4426950408889634)\n    else:\n        probability = gl.where(live[None, :], gl.exp2((score - next_maximum[:, None]) * 1.4426950408889634), 0.0)\n    tile_denominator = gl.sum(probability.reshape([8, 32, 2]), 2)\n    p_high = probability.to(gl.bfloat16)\n    p_low = (probability - p_high.to(gl.float32)).to(gl.bfloat16)\n    probability_banks = gl.join(p_high, p_low).permute((2, 0, 1)).reshape([16, 64])\n    _wave_priority(3)\n    probability_shared.store(probability_banks)\n    if not first_tile and _needs_rescale(alpha):\n        lane_alpha = gl.convert_layout(alpha, gl.SliceLayout(1, denominator.type.layout))\n        denominator = denominator * lane_alpha[:, None]\n        both_alpha = _broadcast_head_banks(alpha, gl.SliceLayout(1, mma))\n        rescaled_accumulators = ()\n        for segment in gl.static_range(4):\n            rescaled_accumulators += (accumulators[segment] * both_alpha[:, None],)\n        accumulators = rescaled_accumulators\n    return (denominator + tile_denominator, accumulators)\n\n\n@gluon.jit\ndef _accumulate_values(\n    kv_shared,\n    probability_shared,\n    accumulators,\n    cache,\n    selections,\n    next_start,\n    has_successor,\n    half_j,\n    K0: gl.constexpr,\n    DEFER_VALUE_CAST: gl.constexpr,\n):\n    mma: gl.constexpr = accumulators[0].type.layout\n    pv_dot_p: gl.constexpr = gl.DotOperandLayout(0, mma, 8)\n    pv_dot_v: gl.constexpr = gl.DotOperandLayout(1, mma, 8)\n    for reduction_half in gl.static_range(2):\n        p_fragment = probability_shared.slice(reduction_half * 32, 32, 1).load(pv_dot_p)\n        next_accumulators = ()\n        for pair in gl.static_range(2):\n            values = ()\n            for local in gl.static_range(2):\n                value = gl.amd.cdna4.async_copy.load_shared_relaxed(\n                    kv_shared.slice(reduction_half * 32, 32, 0).slice((pair * 2 + local) * 128, 128, 1), pv_dot_v\n                )\n                if not DEFER_VALUE_CAST:\n                    value = value.to(gl.bfloat16)\n                values += (value,)\n            if pair == 1 and has_successor:\n                gl.barrier()\n                _stage_latent(\n                    kv_shared.slice(reduction_half * 32, 32, 0),\n                    cache,\n                    selections,\n                    next_start + reduction_half * 32,\n                    K0,\n                    half_j,\n                )\n                if reduction_half == 1:\n                    gl.amd.cdna4.async_copy.commit_group()\n            for local in gl.static_range(2):\n                next_accumulators += (\n                    gl.amd.cdna4.mfma(p_fragment, values[local].to(gl.bfloat16), accumulators[pair * 2 + local]),\n                )\n        accumulators = next_accumulators\n    return accumulators\n\n\n@gluon.jit\ndef _store_output(O, row, denominator, accumulators):\n    mma: gl.constexpr = accumulators[0].type.layout\n    oh = gl.arange(0, 16, layout=gl.SliceLayout(1, mma))\n    od = gl.arange(0, 128, layout=gl.SliceLayout(0, mma))\n    denominator = _broadcast_head_banks(gl.sum(denominator, 1), gl.SliceLayout(1, mma))\n    inverse_denominator = 1.0 / gl.where(denominator > 0, denominator, 1.0)\n    for segment in gl.static_range(4):\n        total = _sum_head_banks(accumulators[segment])\n        result = total * inverse_denominator[:, None]\n        gl.store(\n            O + (row * 8 + oh[:, None]) * 512 + segment * 128 + od[None, :], result.to(gl.bfloat16), oh[:, None] < 8\n        )\n\n\n@gluon.jit\ndef _attention_rows(\n    Q,\n    KV,\n    S,\n    O,\n    scale,\n    Q0: gl.constexpr,\n    Q1: gl.constexpr,\n    K0: gl.constexpr,\n    S0: gl.constexpr,\n    SELECTION_DTYPE: gl.constexpr,\n    SELECTION_CACHE: gl.constexpr,\n    QK_PRIORITY: gl.constexpr,\n    SOFTMAX_PRIORITY: gl.constexpr,\n    DEFER_VALUE_CAST: gl.constexpr,\n):\n    row = gl.num_programs(0) - 1 - gl.program_id(0)\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[1, 4])\n    qk_dot_q: gl.constexpr = gl.DotOperandLayout(0, mma, 16)\n    pv_dot_v: gl.constexpr = gl.DotOperandLayout(1, mma, 8)\n    rotary_layout: gl.constexpr = gl.BlockedLayout([1, 16], [16, 4], [4, 1], [0, 1])\n    softmax_layout: gl.constexpr = gl.BlockedLayout([1, 2], [8, 8], [1, 4], [0, 1])\n    half_async_layout: gl.constexpr = _latent_copy_layout(32)\n    resident_queries, query_rotary, selection_shared, remaining_tiles, invalid_tiles = _prepare_row(\n        Q, S, row, Q0, Q1, S0, SELECTION_DTYPE, SELECTION_CACHE, qk_dot_q\n    )\n    kv_shared_layout: gl.constexpr = gl.amd.cdna4.compute_efficient_padded_shared_layout(\n        pv_dot_v, [64, 512], KV.dtype.element_ty, is_k_contig=False\n    )\n    kv_shared = gl.allocate_shared_memory(KV.dtype.element_ty, [64, 512], kv_shared_layout)\n    maximum_shared = gl.allocate_shared_memory(gl.float32, [8, 4], gl.SwizzledSharedLayout(1, 1, 1, [1, 0]))\n    probability_shared = gl.allocate_shared_memory(gl.bfloat16, [16, 64], gl.SwizzledSharedLayout(8, 1, 8, [1, 0]))\n    r = gl.arange(0, 64, layout=gl.SliceLayout(0, rotary_layout))\n    maximum = gl.full([8], -float(\"inf\"), gl.float32, gl.SliceLayout(1, softmax_layout))\n    denominator = gl.sum(gl.full([8, 64], 0.0, gl.float32, softmax_layout).reshape([8, 32, 2]), 2)\n    accumulators = ()\n    for segment in gl.static_range(4):\n        accumulators += (gl.full([16, 128], 0.0, gl.float32, mma),)\n    prefetched_rotary = gl.full([64, 64], 0.0, KV.dtype.element_ty, rotary_layout)\n    start = _first_live_tile(remaining_tiles) * 64\n    all_active = invalid_tiles & (remaining_tiles & -remaining_tiles) == 0\n    if remaining_tiles != 0:\n        prefetched_rotary = _stage_tile(kv_shared, KV, selection_shared, start, r, K0)\n    first_tile = True\n    while remaining_tiles != 0:\n        rotary = prefetched_rotary\n        gl.amd.cdna4.async_copy.wait_group(0)\n        _wave_priority(QK_PRIORITY)\n        score = _qk_scores(kv_shared, resident_queries, query_rotary, rotary, scale, softmax_layout)\n        remaining_tiles = remaining_tiles & remaining_tiles - 1\n        next_tile = _first_live_tile(remaining_tiles) & 31\n        next_start = next_tile * 64\n        successor_all_active = (remaining_tiles != 0) & (invalid_tiles & 1 << next_tile == 0)\n        has_successor = remaining_tiles != 0\n        half_j = gl.arange(0, 32, layout=gl.SliceLayout(1, half_async_layout))\n        score, live = _mask_scores(score, selection_shared, start, all_active)\n        next_maximum = _online_maximum(score, maximum, maximum_shared, SOFTMAX_PRIORITY)\n        prefetched_rotary = gl.full([64, 64], 0.0, KV.dtype.element_ty, rotary_layout)\n        if has_successor:\n            prefetched_rotary = _load_rotary(KV, selection_shared, next_start, r, K0)\n        denominator, accumulators = _softmax_update(\n            score, live, all_active, maximum, next_maximum, probability_shared, denominator, accumulators, first_tile\n        )\n        accumulators = _accumulate_values(\n            kv_shared,\n            probability_shared,\n            accumulators,\n            KV,\n            selection_shared,\n            next_start,\n            has_successor,\n            half_j,\n            K0,\n            DEFER_VALUE_CAST,\n        )\n        first_tile = False\n        maximum = next_maximum\n        start = next_start\n        all_active = successor_all_active\n        _wave_priority(0)\n    _store_output(O, row, denominator, accumulators)\n\n\ndef _launch_policy(rows, cache_rows):\n    return dict(\n        SELECTION_DTYPE=gl.int16 if cache_rows <= 32768 else gl.uint16 if cache_rows <= 65535 else gl.int32,\n        SELECTION_CACHE=\".cg\" if rows >= 12288 else \"\",\n        QK_PRIORITY=1 if rows <= 12288 else 2,\n        SOFTMAX_PRIORITY=2 if rows <= 12288 else 1,\n        DEFER_VALUE_CAST=rows <= 8192,\n    )\n\n\ndef sparse_paged_mla(\n    query: torch.Tensor,\n    kv_cache: torch.Tensor,\n    selected_slots: torch.Tensor,\n    *,\n    softmax_scale: float = 0.0625,\n    output: torch.Tensor,\n):\n    m, h, d = query.shape\n    assert m > 0 and h == 8 and (d == 576) and (query.dtype == torch.bfloat16)\n    assert kv_cache.ndim == 2 and kv_cache.shape[1] == 576\n    assert kv_cache.dtype == torch.float8_e4m3fn and kv_cache.stride(0) >= 576\n    assert selected_slots.shape == (m, 2048) and selected_slots.dtype == torch.int32\n    assert query.stride(-1) == kv_cache.stride(-1) == selected_slots.stride(-1) == 1\n    assert query.device == kv_cache.device == selected_slots.device and softmax_scale > 0\n    assert (kv_cache.shape[0] - 1) * kv_cache.stride(0) + 575 < 2**31\n    _attention_rows[m,](\n        query,\n        kv_cache,\n        selected_slots,\n        output,\n        softmax_scale,\n        query.stride(0),\n        query.stride(1),\n        kv_cache.stride(0),\n        selected_slots.stride(0),\n        **_launch_policy(m, kv_cache.shape[0]),\n        num_warps=4,\n        enable_fp_fusion=False,\n    )\n    return output\n\n\ndef run(*, q, kv_cache, topk_indices, sm_scale, output):\n    \"\"\"Writes ``output``: sparse_paged_mla on an exact bf16 copy of sglang's fp8 ``q``,\n    the dtype these kernels read the query in.\"\"\"\n    sparse_paged_mla(\n        q.to(torch.bfloat16), kv_cache, topk_indices, softmax_scale=sm_scale, output=output\n    )\n"
+      }
+    ]
+  }
+}

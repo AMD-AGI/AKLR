@@ -1,0 +1,150 @@
+{
+  "schema_version": 5,
+  "name": "dsa_sparse_mla_prefill_n_heads16_kv_dim576_topk2048",
+  "contract_id": "dsa_sparse_mla_prefill@1.0",
+  "description": "sglang's DSA backend's sparse MLA prefill on one rank, kv_b_proj absorbed (triton_sparse_mla_fwd, which DeepseekSparseAttnBackend.forward_extend calls for the triton DSA prefill backend): each head of each token attends the KV pool rows its top-k slots name (-1: none) with scores q . row * sm_scale, q and the rows the fp8 values sglang holds, unscaled; the output is the softmax-weighted sum of the rows' latent parts, 0 for a token that reads no row.",
+  "op_type": "dsa_backend",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, one query each."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 16,
+      "description": "Query heads on this rank."
+    },
+    "kv_dim": {
+      "type": "const",
+      "value": 576,
+      "description": "A query head and a KV row: the latent, then 64 RoPE values."
+    },
+    "topk": {
+      "type": "const",
+      "value": 2048,
+      "description": "Top-k entries per token."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Rows of the KV pool."
+    },
+    "kv_lora_rank": {
+      "type": "const",
+      "value": 512,
+      "description": "The latent's width: a row's first part, and the output's."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "q": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "kv_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's query per head: q_nope times W_UK (the latent's basis), then the RoPE'd q_pe."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_slots",
+        "kv_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "This layer's KV pool: a row per slot, the latent then the RoPE part."
+    },
+    "topk_indices": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "The slots each token attends; -1: none."
+    },
+    "sm_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every score."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each head's output in the latent's basis: the rows' latent parts weighed by the softmax of their scores."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 16384,
+        "n_slots": 131072
+      },
+      "scalars": {
+        "sm_scale": 0.0625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16768,
+        "n_slots": 131072
+      },
+      "scalars": {
+        "sm_scale": 0.0625
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "_math.py",
+        "content": "# Created by OpenAI\n\"\"\"Integer helpers usable in host code and compile-time expressions.\"\"\"\n\nimport triton\nfrom triton.runtime.jit import ConstexprFunction\n\nnext_power_of_2 = triton.next_power_of_2\nif not isinstance(next_power_of_2, ConstexprFunction):\n    next_power_of_2 = triton.constexpr_function(next_power_of_2)\n"
+      },
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Sparse paged MLA prefill for GLM-5.2 on gfx950: TP4, 16 heads per rank, tuned for 16384 and\n16768 tokens.\n\nEach head attends the fp8 KV rows (512 latent values, then 64 RoPE values) its token's 2048\ntop-k slots name (-1: none), with scores q . row * softmax_scale; the output is the\nsoftmax-weighted sum of the rows' latent values, in bf16. The query is read in bf16. A\npersistent grid of up to 1024 programs takes the tokens from a queue it resets on every call;\nfor a pool of at most twice the tokens it first copies the rows' latent and RoPE parts apart.\n\"\"\"\n\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\nfrom ._math import next_power_of_2 as _ceil_power_of_two\n\n\n@gluon.jit\ndef _score_maximum(scores, staged, partial_layout: gl.constexpr):\n    quartets = gl.convert_layout(gl.max(gl.reshape(scores, (16, 8, 4)), 2), partial_layout)\n    if staged.shape[1] == 4:\n        paired = gl.max(gl.reshape(quartets, (16, 2, 2, 2)), 2)\n        staged.store(gl.reshape(paired, (16, 4)))\n    else:\n        staged.store(quartets)\n    replicated_layout: gl.constexpr = gl.BlockedLayout([1, staged.shape[1]], [16, 4], [2, 1], [0, 1])\n    maximum = gl.max(staged.load(replicated_layout), 1)\n    return gl.convert_layout(maximum, gl.SliceLayout(1, scores.type.layout))\n\n\n@gluon.jit\ndef _wave_has_value(values, THRESHOLD: gl.constexpr):\n    wave_mask = gl.inline_asm_elementwise(\n        \"v_cmp_ge_u32_e64 $0, $1, $2\", \"=s,v,s\", [values, THRESHOLD], dtype=gl.uint64, is_pure=True, pack=1\n    )\n    flat_mask = gl.reshape(gl.permute(wave_mask, (1, 0)), (64,))\n    lane_zero = gl.full((1,), 0, gl.int32, flat_mask.type.layout)\n    return gl.sum(gl.gather(flat_mask, lane_zero, 0), 0) != 0\n\n\n@gluon.jit\ndef _packed_basis_vote(encodings):\n    pairs = gl.permute(gl.reshape(encodings, (16, 4, 2, 2, 2)), (0, 1, 4, 2, 3))\n    even, odd = gl.split(pairs)\n    first, third = gl.split(even)\n    second, fourth = gl.split(odd)\n    possible = gl.inline_asm_elementwise(\n        \"v_or3_b32 $0, $1, $2, $3\\nv_bitop3_b32 $0, $0, $4, $5 bitop3:0xa8\",\n        \"=&v,v,v,v,v,s\",\n        [first, second, third, fourth, gl.full(first.shape, 49152, gl.uint16, first.type.layout)],\n        dtype=gl.uint16,\n        is_pure=True,\n        pack=2,\n    )\n    vote = False\n    if _wave_has_value(gl.max(possible.to(gl.uint32), 2), 1):\n        largest = gl.inline_asm_elementwise(\n            \"v_pk_max_u16 $0, $1, $2\\nv_pk_max_u16 $0, $0, $3\\nv_pk_max_u16 $0, $0, $4\",\n            \"=&v,v,v,v,v\",\n            [first, second, third, fourth],\n            dtype=gl.uint16,\n            is_pure=True,\n            pack=2,\n        )\n        vote = _wave_has_value(gl.max(largest.to(gl.uint32), 2), 16429)\n    return vote\n\n\n@gluon.jit\ndef _basis_vote(weights, CACHE_PACKED: gl.constexpr):\n    vote_layout: gl.constexpr = gl.BlockedLayout([1, 8], [16, 4], [2, 1], [0, 1])\n    vote_weights = gl.convert_layout(weights, vote_layout, assert_trivial=True)\n    encodings = vote_weights.to(gl.uint16, bitcast=True)\n    if CACHE_PACKED:\n        return _packed_basis_vote(encodings)\n    else:\n        largest = gl.max(gl.reshape(encodings.to(gl.uint32), (16, 4, 8)), 2)\n        return _wave_has_value(largest, 16429)\n\n\n@gluon.jit\ndef _rounded_scores(scores):\n    return gl.inline_asm_elementwise(\"\", \"=v,0\", [scores], dtype=gl.float32, is_pure=True, pack=1)\n\n\n@gluon.jit\ndef _tile_probability(scores, shift, valid, word, FULL_TILE: gl.constexpr, NONEMPTY: gl.constexpr):\n    if FULL_TILE or word == 4294967295:\n        probability = gl.exp2((scores - shift[:, None]) * 1.4426950408889634)\n    else:\n        if NONEMPTY:\n            safe_shift = shift\n        else:\n            safe_shift = gl.where(word != 0, shift, 0.0)\n        probability = gl.where(valid[None, :], gl.exp2((scores - safe_shift[:, None]) * 1.4426950408889634), 0.0)\n    return probability\n\n\n@gluon.jit\ndef _rescale_accumulators(delta, denominator, numerator):\n    correction = gl.exp2(delta * 1.4426950408889634)\n    partial_correction = gl.convert_layout(correction, gl.SliceLayout(1, denominator.type.layout))\n    return (denominator * partial_correction[:, None], numerator * correction[:, None])\n\n\n@gluon.jit\ndef _attention_tile(\n    context,\n    state,\n    block,\n    next_block,\n    word,\n    FULL_TILE: gl.constexpr,\n    INITIAL_TILE: gl.constexpr,\n    CACHE_PACKED: gl.constexpr,\n    EARLY_SUM: gl.constexpr,\n    PRIORITIZE_KEYS: gl.constexpr,\n):\n    (\n        Cache,\n        Rotary,\n        query_low,\n        query_high,\n        query_rotary,\n        staged_slots,\n        maximum_stage,\n        selected_column,\n        latent_column,\n        rotary_selected,\n        rotary_column,\n        softmax_scale,\n    ) = context\n    shift, denominator, numerator, pending_slot = state\n    mma: gl.constexpr = numerator.type.layout\n    query_operand: gl.constexpr = query_low.type.layout\n    cache_operand: gl.constexpr = gl.DotOperandLayout(1, mma, 8)\n    denominator_layout: gl.constexpr = denominator.type.layout\n    tile_count: gl.constexpr = staged_slots.shape[0] // 32\n    rotary_slot = staged_slots.gather(block * 32 + rotary_selected, 0)\n    if CACHE_PACKED:\n        latent_slot = pending_slot * 8\n        latent_offsets = latent_slot[:, None] + latent_column[None, :]\n    else:\n        latent_offsets = pending_slot[:, None] + latent_column[None, :]\n    if CACHE_PACKED:\n        rotary_offsets = rotary_slot[:, None] + rotary_column[None, :]\n    else:\n        rotary_offsets = rotary_slot[:, None] + 512 + rotary_column[None, :]\n    latent_offsets = gl.max_contiguous(gl.multiple_of(latent_offsets, [1, 16]), [1, 16])\n    rotary_offsets = gl.max_contiguous(gl.multiple_of(rotary_offsets, [1, 8]), [1, 8])\n    cache_latent = gl.amd.cdna4.buffer_load(Cache, latent_offsets)\n    if CACHE_PACKED:\n        cache_rotary = gl.amd.cdna4.buffer_load(Rotary, rotary_offsets)\n    else:\n        cache_rotary = gl.amd.cdna4.buffer_load(Cache, rotary_offsets)\n    staged_latent = gl.allocate_shared_memory(\n        cache_latent.dtype,\n        (32, 512),\n        gl.SwizzledSharedLayout(vec=8, per_phase=1, max_phase=16, order=[1, 0]),\n        cache_latent,\n    )\n    if PRIORITIZE_KEYS:\n        gl.inline_asm_elementwise(\"s_setprio 1\", \"=s\", [], gl.int32, is_pure=False, pack=1)\n    keys_view = staged_latent.permute((1, 0))\n    scores = gl.full((16, 32), 0.0, gl.float32, mma)\n    keys_low = keys_view.slice(0, 256, 0).load(cache_operand).to(gl.bfloat16)\n    scores = gl.amd.cdna4.mfma(query_low, keys_low, scores)\n    keys_high = keys_view.slice(256, 256, 0).load(cache_operand).to(gl.bfloat16)\n    scores = gl.amd.cdna4.mfma(query_high, keys_high, scores)\n    keys_rotary = gl.convert_layout(cache_rotary.T, cache_operand).to(gl.bfloat16)\n    scores = gl.amd.cdna4.mfma(query_rotary, keys_rotary, scores) * softmax_scale\n    if PRIORITIZE_KEYS:\n        gl.inline_asm_elementwise(\"s_setprio 0\", \"=s\", [], gl.int32, is_pure=False, pack=1)\n    score_column = gl.arange(0, 32, layout=gl.SliceLayout(0, mma))\n    valid = gl.cast(word, gl.uint32) >> score_column & 1 != 0\n    if INITIAL_TILE:\n        if CACHE_PACKED:\n            scores = _rounded_scores(scores)\n        next_shift = _score_maximum(scores, maximum_stage, denominator_layout)\n        probability = gl.exp2((scores - next_shift[:, None]) * 1.4426950408889634)\n    else:\n        probability = _tile_probability(scores, shift, valid, word, FULL_TILE, EARLY_SUM)\n    if EARLY_SUM:\n        probability_sum = gl.convert_layout(gl.sum(gl.reshape(probability, (16, 8, 4)), 2), denominator_layout)\n    weight_stage = gl.allocate_shared_memory(\n        gl.bfloat16, (16, 32), gl.SwizzledSharedLayout(8, 2, 4, [1, 0]), probability.to(gl.bfloat16)\n    )\n    weights = weight_stage.load(query_operand)\n    if not INITIAL_TILE:\n        next_shift = shift\n        if _basis_vote(weights, CACHE_PACKED):\n            if CACHE_PACKED:\n                scores = _rounded_scores(scores)\n            if not FULL_TILE:\n                scores = gl.where(valid[None, :], scores, -float(\"inf\"))\n            tile_shift = _score_maximum(scores, maximum_stage, denominator_layout)\n            next_shift = gl.maximum(shift, tile_shift)\n            correction_delta = shift - next_shift\n            probability = _tile_probability(scores, next_shift, valid, word, FULL_TILE, EARLY_SUM)\n            if EARLY_SUM:\n                probability_sum = gl.convert_layout(gl.sum(gl.reshape(probability, (16, 8, 4)), 2), denominator_layout)\n            weight_stage.store(probability.to(gl.bfloat16))\n            weights = weight_stage.load(query_operand)\n            denominator, numerator = _rescale_accumulators(correction_delta, denominator, numerator)\n    if not EARLY_SUM:\n        probability_sum = gl.convert_layout(gl.sum(gl.reshape(probability, (16, 8, 4)), 2), denominator_layout)\n    if FULL_TILE:\n        next_position = (block + 1) % tile_count * 32 + selected_column\n    else:\n        next_position = next_block * 32 + selected_column\n    pending_slot = staged_slots.gather(next_position, 0)\n    denominator = denominator + probability_sum\n    gl.inline_asm_elementwise(\n        \"s_setprio 2\" if CACHE_PACKED else \"s_setprio 1\", \"=s\", [], gl.int32, is_pure=False, pack=1\n    )\n    values = staged_latent.load(cache_operand).to(gl.bfloat16)\n    numerator = gl.amd.cdna4.mfma(weights, values, numerator)\n    gl.inline_asm_elementwise(\"s_setprio 0\", \"=s\", [], gl.int32, is_pure=False, pack=1)\n    return (next_shift, denominator, numerator, pending_slot)\n\n\n@gluon.jit\ndef _first_set_bit(mask):\n    return gl.inline_asm_elementwise(\"s_ff1_i32_b64 $0, $1\", \"=s,s\", [mask], dtype=gl.int32, is_pure=True, pack=1)\n\n\n_next_power_of = _ceil_power_of_two\n\n\n@gluon.jit\ndef _stage_row_slots(\n    row,\n    Slots,\n    SLOT_ROW_STRIDE: gl.constexpr,\n    CACHE_ROW_STRIDE: gl.constexpr,\n    SELECTED: gl.constexpr,\n    CACHE_PACKED: gl.constexpr,\n):\n    tile_count: gl.constexpr = triton.cdiv(_next_power_of(SELECTED), 32)\n    scan_layout: gl.constexpr = gl.BlockedLayout([1, 4], [8, 8], [2, 1], [1, 0])\n    flat_layout: gl.constexpr = gl.BlockedLayout([4], [64], [2], [0])\n    scan_position = gl.arange(0, tile_count * 32, layout=flat_layout)\n    all_slots = gl.load(Slots + row * SLOT_ROW_STRIDE + scan_position, scan_position < SELECTED, -1)\n    if CACHE_PACKED:\n        staged_indices = gl.where(all_slots >= 0, all_slots.to(gl.int32) * 64, -64)\n    else:\n        staged_indices = gl.where(all_slots >= 0, all_slots.to(gl.int32) * CACHE_ROW_STRIDE, -2147483648)\n    staged_slots = gl.allocate_shared_memory(\n        staged_indices.dtype, (tile_count * 32,), gl.SwizzledSharedLayout(1, 1, 1, [0]), staged_indices\n    )\n    column = gl.arange(0, 32, layout=gl.SliceLayout(0, scan_layout))\n    present = gl.reshape(all_slots >= 0, (tile_count, 32))\n    validity_word = gl.sum(gl.where(present, gl.cast(1, gl.uint32) << column[None, :], 0), 1)\n    staged_validity = gl.allocate_shared_memory(\n        gl.uint32, (tile_count,), gl.SwizzledSharedLayout(1, 1, 1, [0]), validity_word\n    )\n    bounds_layout: gl.constexpr = gl.BlockedLayout([1], [64], [2], [0])\n    words = staged_validity.load(bounds_layout)\n    active_ballot = gl.inline_asm_elementwise(\n        \"v_cmp_ne_u32_e64 $0, 0, $1\", \"=s,v\", [words], dtype=gl.uint64, is_pure=True, pack=1\n    )\n    incomplete_ballot = gl.inline_asm_elementwise(\n        \"v_cmp_ne_u32_e64 $0, -1, $1\", \"=s,v\", [words], dtype=gl.uint64, is_pure=True, pack=1\n    )\n    first_word = gl.full((1,), 0, gl.int32, bounds_layout)\n    active_mask = gl.sum(gl.gather(active_ballot, first_word, 0), 0)\n    incomplete_mask = gl.sum(gl.gather(incomplete_ballot, first_word, 0), 0)\n    if tile_count < 64:\n        active_mask = active_mask & (1 << tile_count) - 1\n        incomplete_mask = incomplete_mask & (1 << tile_count) - 1\n    first_incomplete = incomplete_mask & 0 - incomplete_mask\n    full_prefix = gl.where(incomplete_mask != 0, 63 - gl.extra.libdevice.clz(first_incomplete.to(gl.int64)), tile_count)\n    return (staged_slots, staged_validity, active_mask, first_incomplete, full_prefix)\n\n\n@gluon.jit\ndef _load_row_query(\n    row,\n    Query,\n    QUERY_ROW_STRIDE: gl.constexpr,\n    QUERY_HEAD_STRIDE: gl.constexpr,\n    QUERY_CG: gl.constexpr,\n    query_operand: gl.constexpr,\n):\n    query_layout: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [2, 1], [1, 0])\n    head = gl.arange(0, 16, layout=gl.SliceLayout(1, query_layout))\n    latent = gl.arange(0, 512, layout=gl.SliceLayout(0, query_layout))\n    query_base = Query + row * QUERY_ROW_STRIDE + head[:, None] * QUERY_HEAD_STRIDE\n    query_cache: gl.constexpr = \".cg\" if QUERY_CG else \"\"\n    query = gl.load(query_base + latent[None, :], cache_modifier=query_cache)\n    rotary_query_layout: gl.constexpr = gl.BlockedLayout([1, 8], [16, 4], [2, 1], [0, 1])\n    rotary_head = gl.arange(0, 16, layout=gl.SliceLayout(1, rotary_query_layout))\n    rotary = gl.arange(0, 64, layout=gl.SliceLayout(0, rotary_query_layout))\n    rotary_query_base = Query + row * QUERY_ROW_STRIDE + rotary_head[:, None] * QUERY_HEAD_STRIDE\n    query_rotary = gl.load(rotary_query_base + 512 + rotary[None, :], cache_modifier=query_cache)\n    query_stage = gl.allocate_shared_memory(query.dtype, (16, 512), gl.SwizzledSharedLayout(8, 1, 8, [1, 0]), query)\n    query = query_stage.load(query_operand)\n    query_rotary = gl.convert_layout(query_rotary, query_operand, assert_trivial=True)\n    query_low, query_high = gl.split(gl.permute(gl.reshape(query, (16, 2, 256)), (0, 2, 1)))\n    query_low = gl.convert_layout(query_low, query_operand, assert_trivial=True)\n    query_high = gl.convert_layout(query_high, query_operand, assert_trivial=True)\n    return (query_low, query_high, query_rotary)\n\n\n@gluon.jit\ndef _store_row(row, Output, denominator, numerator):\n    mma: gl.constexpr = numerator.type.layout\n    query_layout: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [2, 1], [1, 0])\n    denominator = gl.convert_layout(gl.sum(denominator, 1), gl.SliceLayout(1, mma))\n    inverse = 1.0 / gl.where(denominator > 0, denominator, 1.0)\n    result = numerator * inverse[:, None]\n    output_stage = gl.allocate_shared_memory(\n        gl.bfloat16, (16, 512), gl.SwizzledSharedLayout(8, 1, 8, [1, 0]), result.to(gl.bfloat16)\n    )\n    result = output_stage.load(query_layout)\n    output_head = gl.arange(0, 16, layout=gl.SliceLayout(1, query_layout))\n    output_column = gl.arange(0, 512, layout=gl.SliceLayout(0, query_layout))\n    gl.store(Output + (row * 16 + output_head[:, None]) * 512 + output_column[None, :], result, cache_modifier=\".cs\")\n\n\n@gluon.jit\ndef _attention_row(\n    row,\n    Query,\n    Cache,\n    Rotary,\n    Slots,\n    Output,\n    softmax_scale,\n    QUERY_ROW_STRIDE: gl.constexpr,\n    QUERY_HEAD_STRIDE: gl.constexpr,\n    CACHE_ROW_STRIDE: gl.constexpr,\n    SLOT_ROW_STRIDE: gl.constexpr,\n    SELECTED: gl.constexpr,\n    QUERY_CG: gl.constexpr,\n    CACHE_PACKED: gl.constexpr,\n    EMPTY_BYPASS: gl.constexpr,\n    EARLY_SUM: gl.constexpr,\n    PRIORITIZE_KEYS: gl.constexpr,\n    MAXIMUM_PARTS: gl.constexpr,\n):\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[1, 2])\n    query_operand: gl.constexpr = gl.DotOperandLayout(0, mma, 8)\n    cache_layout: gl.constexpr = gl.BlockedLayout([1, 32], [16, 4], [2, 1], [1, 0])\n    staged_slots, staged_validity, active_mask, first_incomplete, full_prefix = _stage_row_slots(\n        row, Slots, SLOT_ROW_STRIDE, CACHE_ROW_STRIDE, SELECTED, CACHE_PACKED\n    )\n    tile_count: gl.constexpr = staged_slots.shape[0] // 32\n    if EMPTY_BYPASS and active_mask == 0:\n        empty_layout: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [2, 1], [1, 0])\n        empty_head = gl.arange(0, 16, gl.SliceLayout(1, empty_layout))\n        empty_column = gl.arange(0, 512, gl.SliceLayout(0, empty_layout))\n        gl.store(\n            Output + (row * 16 + empty_head[:, None]) * 512 + empty_column[None, :],\n            gl.full((16, 512), 0, gl.bfloat16, empty_layout),\n            cache_modifier=\".cs\",\n        )\n    else:\n        query_low, query_high, query_rotary = _load_row_query(\n            row, Query, QUERY_ROW_STRIDE, QUERY_HEAD_STRIDE, QUERY_CG, query_operand\n        )\n        selected_column = gl.arange(0, 32, layout=gl.SliceLayout(1, cache_layout))\n        latent_column = gl.arange(0, 512, layout=gl.SliceLayout(0, cache_layout))\n        rotary_layout: gl.constexpr = gl.BlockedLayout([1, 8], [16, 4], [2, 1], [0, 1])\n        rotary_selected = gl.arange(0, 32, layout=gl.SliceLayout(1, rotary_layout))\n        rotary_column = gl.arange(0, 64, layout=gl.SliceLayout(0, rotary_layout))\n        shift = gl.full((16,), -float(\"inf\"), gl.float32, gl.SliceLayout(1, mma))\n        denominator_layout: gl.constexpr = gl.DistributedLinearLayout(\n            reg_bases=[],\n            lane_bases=[[1, 0], [2, 0], [4, 0], [8, 0], [0, 1], [0, 2]],\n            warp_bases=[[0, 4]],\n            block_bases=[],\n            shape=[16, 8],\n        )\n        denominator = gl.full((16, 8), 0.0, gl.float32, denominator_layout)\n        numerator = gl.full((16, 512), 0.0, gl.float32, mma)\n        maximum_stage = gl.allocate_shared_memory(\n            gl.float32, (16, MAXIMUM_PARTS), gl.SwizzledSharedLayout(1, 1, 1, [1, 0])\n        )\n        pending_slot = staged_slots.gather(selected_column, 0)\n        context = (\n            Cache,\n            Rotary,\n            query_low,\n            query_high,\n            query_rotary,\n            staged_slots,\n            maximum_stage,\n            selected_column,\n            latent_column,\n            rotary_selected,\n            rotary_column,\n            softmax_scale,\n        )\n        state = (shift, denominator, numerator, pending_slot)\n        first_block = 0\n        if full_prefix > 0:\n            state = _attention_tile(\n                context, state, 0, 0, 4294967295, True, True, CACHE_PACKED, EARLY_SUM, PRIORITIZE_KEYS\n            )\n            first_block = 1\n        for block in range(first_block, full_prefix):\n            state = _attention_tile(\n                context, state, block, 0, 4294967295, True, False, CACHE_PACKED, EARLY_SUM, PRIORITIZE_KEYS\n            )\n        remaining = active_mask & 0 - first_incomplete\n        block = _first_set_bit(remaining) & tile_count - 1\n        pending_slot = staged_slots.gather(block * 32 + selected_column, 0)\n        state = (state[0], state[1], state[2], pending_slot)\n        while remaining != 0:\n            remaining = remaining & remaining - 1\n            next_block = _first_set_bit(remaining) & tile_count - 1\n            validity_index = block + gl.arange(0, 1, layout=gl.BlockedLayout([1], [64], [2], [0]))\n            word = gl.sum(staged_validity.gather(validity_index, 0), 0)\n            state = _attention_tile(\n                context, state, block, next_block, word, False, False, CACHE_PACKED, EARLY_SUM, PRIORITIZE_KEYS\n            )\n            block = next_block\n        _store_row(row, Output, state[1], state[2])\n\n\n@gluon.jit\ndef _persistent_attention(\n    Query,\n    Cache,\n    Rotary,\n    Slots,\n    Output,\n    Counter,\n    softmax_scale,\n    ROWS: gl.constexpr,\n    QUERY_ROW_STRIDE: gl.constexpr,\n    QUERY_HEAD_STRIDE: gl.constexpr,\n    CACHE_ROW_STRIDE: gl.constexpr,\n    SLOT_ROW_STRIDE: gl.constexpr,\n    SELECTED: gl.constexpr,\n    QUERY_CG: gl.constexpr,\n    CACHE_PACKED: gl.constexpr,\n):\n    prioritize_keys: gl.constexpr = CACHE_PACKED and (ROWS < 6144 or ROWS >= 12288)\n    early_sum: gl.constexpr = ROWS >= 6144 and (not CACHE_PACKED or ROWS < 12288)\n    maximum_parts: gl.constexpr = 8 if CACHE_PACKED and ROWS >= 12288 else 4\n    ticket = gl.program_id(0)\n    while ticket < ROWS:\n        _attention_row(\n            ROWS - 1 - ticket,\n            Query,\n            Cache,\n            Rotary,\n            Slots,\n            Output,\n            softmax_scale,\n            QUERY_ROW_STRIDE,\n            QUERY_HEAD_STRIDE,\n            CACHE_ROW_STRIDE,\n            SLOT_ROW_STRIDE,\n            SELECTED,\n            QUERY_CG,\n            CACHE_PACKED,\n            ROWS >= 6144 and (not CACHE_PACKED),\n            early_sum,\n            prioritize_keys,\n            maximum_parts,\n        )\n        ticket = gl.atomic_add(Counter, 1, sem=\"relaxed\", scope=\"gpu\")\n\n\n@gluon.jit\ndef _reset_queue(Counter, FIRST_TICKET: gl.constexpr):\n    gl.store(Counter, FIRST_TICKET)\n\n\n@gluon.jit\ndef _pack_cache(Cache, Latent, Rotary, Counter, ROWS: gl.constexpr, STRIDE: gl.constexpr, FIRST_TICKET: gl.constexpr):\n    if gl.program_id(0) == 0:\n        gl.store(Counter, FIRST_TICKET)\n    layout: gl.constexpr = gl.BlockedLayout([1, 8], [8, 8], [4, 1], [1, 0])\n    row = gl.program_id(0) * 64 + gl.arange(0, 64, gl.SliceLayout(1, layout))\n    column = gl.arange(0, 64, gl.SliceLayout(0, layout))\n    rotary = gl.load(Cache + row[:, None] * STRIDE + 512 + column[None, :], row[:, None] < ROWS, 0.0)\n    gl.store(Rotary + row[:, None] * 64 + column[None, :], rotary.to(gl.bfloat16), row[:, None] < ROWS)\n    latent_column = gl.arange(0, 512, gl.SliceLayout(0, layout))\n    latent = gl.load(Cache + row[:, None] * STRIDE + latent_column[None, :], row[:, None] < ROWS, 0.0)\n    gl.store(Latent + row[:, None] * 512 + latent_column[None, :], latent, row[:, None] < ROWS)\n\n\ndef sparse_paged_mla(\n    query: torch.Tensor,\n    kv_cache: torch.Tensor,\n    selected_slots: torch.Tensor,\n    *,\n    softmax_scale: float = 0.0625,\n    output: torch.Tensor,\n):\n    rows, heads, channels = query.shape\n    assert rows > 0 and heads == 16 and (channels == 576)\n    assert query.dtype == torch.bfloat16\n    assert kv_cache.ndim == 2 and kv_cache.shape[1] == 576\n    assert kv_cache.dtype == torch.float8_e4m3fn\n    assert selected_slots.ndim == 2 and selected_slots.shape[0] == rows\n    assert 0 < selected_slots.shape[1] <= 2048\n    assert selected_slots.dtype in (torch.int32, torch.int64)\n    assert query.stride(-1) == kv_cache.stride(-1) == selected_slots.stride(-1) == 1\n    assert query.device == kv_cache.device == selected_slots.device\n    assert softmax_scale > 0\n    assert (\n        0 < kv_cache.stride(0)\n        and kv_cache.stride(0) % 16 == 0\n        and ((kv_cache.shape[0] - 1) * kv_cache.stride(0) + 576 < 2**31 - 1024)\n    )\n    workers = min(rows, 1024)\n    counter = torch.empty((), device=query.device, dtype=torch.int32)\n    cache = kv_cache\n    cache_stride = kv_cache.stride(0)\n    cache_packed = False\n    rotary = kv_cache\n    if rows >= 4096 and 0 < kv_cache.shape[0] <= 2 * rows and (512 <= cache_stride < 2**31):\n        cache = torch.empty((kv_cache.shape[0], 512), device=kv_cache.device, dtype=kv_cache.dtype)\n        rotary = torch.empty((kv_cache.shape[0], 64), device=kv_cache.device, dtype=torch.bfloat16)\n        _pack_cache[triton.cdiv(kv_cache.shape[0], 64),](\n            kv_cache, cache, rotary, counter, kv_cache.shape[0], cache_stride, workers, num_warps=4\n        )\n        cache_packed = True\n        cache_stride = 512\n    else:\n        _reset_queue[1,](counter, workers, num_warps=1)\n    arguments = (\n        query.stride(0),\n        query.stride(1),\n        cache_stride,\n        selected_slots.stride(0),\n        selected_slots.shape[1],\n        rows >= 12288,\n        cache_packed,\n    )\n    _persistent_attention[workers,](\n        query,\n        cache,\n        rotary,\n        selected_slots,\n        output,\n        counter,\n        softmax_scale,\n        rows,\n        *arguments,\n        num_warps=2,\n        enable_fp_fusion=cache_packed,\n    )\n    return output\n\n\ndef run(*, q, kv_cache, topk_indices, sm_scale, output):\n    \"\"\"Writes ``output``: sparse_paged_mla on an exact bf16 copy of sglang's fp8 ``q``,\n    the dtype these kernels read the query in.\"\"\"\n    sparse_paged_mla(\n        q.to(torch.bfloat16), kv_cache, topk_indices, softmax_scale=sm_scale, output=output\n    )\n"
+      }
+    ]
+  }
+}

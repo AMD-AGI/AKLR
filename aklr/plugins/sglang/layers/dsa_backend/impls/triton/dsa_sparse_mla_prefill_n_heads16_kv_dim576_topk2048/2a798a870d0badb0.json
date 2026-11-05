@@ -1,0 +1,146 @@
+{
+  "schema_version": 5,
+  "name": "dsa_sparse_mla_prefill_n_heads16_kv_dim576_topk2048",
+  "contract_id": "dsa_sparse_mla_prefill@1.0",
+  "description": "sglang's DSA backend's sparse MLA prefill on one rank, kv_b_proj absorbed (triton_sparse_mla_fwd, which DeepseekSparseAttnBackend.forward_extend calls for the triton DSA prefill backend): each head of each token attends the KV pool rows its top-k slots name (-1: none) with scores q . row * sm_scale, q and the rows the fp8 values sglang holds, unscaled; the output is the softmax-weighted sum of the rows' latent parts, 0 for a token that reads no row.",
+  "op_type": "dsa_backend",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, one query each."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 16,
+      "description": "Query heads on this rank."
+    },
+    "kv_dim": {
+      "type": "const",
+      "value": 576,
+      "description": "A query head and a KV row: the latent, then 64 RoPE values."
+    },
+    "topk": {
+      "type": "const",
+      "value": 2048,
+      "description": "Top-k entries per token."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Rows of the KV pool."
+    },
+    "kv_lora_rank": {
+      "type": "const",
+      "value": 512,
+      "description": "The latent's width: a row's first part, and the output's."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "q": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "kv_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's query per head: q_nope times W_UK (the latent's basis), then the RoPE'd q_pe."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_slots",
+        "kv_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "This layer's KV pool: a row per slot, the latent then the RoPE part."
+    },
+    "topk_indices": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "The slots each token attends; -1: none."
+    },
+    "sm_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every score."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each head's output in the latent's basis: the rows' latent parts weighed by the softmax of their scores."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 8192,
+        "n_slots": 131072
+      },
+      "scalars": {
+        "sm_scale": 0.0625
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8192,
+        "n_slots": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.0625
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Sparse paged MLA prefill for GLM-5.2 on gfx950: TP4, 16 heads per rank, tuned for 8192 tokens.\n\nEach head attends the fp8 KV rows (512 latent values, then 64 RoPE values) its token's 2048\ntop-k slots name (-1: none), with scores q . row * softmax_scale; the output is the\nsoftmax-weighted sum of the rows' latent values, in bf16. The query is read in bf16. It first\ncopies the whole KV pool into scratch, the latent and RoPE parts apart, on every call.\n\"\"\"\n\nimport torch\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\nfrom triton.language.core import range as loop_range\n\n\n@gluon.constexpr_function\ndef _offset_layout():\n    return gl.SharedLinearLayout([[4], [8], [16], [32], [1], [2], [64], [128], [256], [512], [1024]])\n\n\n@gluon.jit\ndef _tile_bounds(bitmap, incomplete, limit: gl.constexpr):\n    first, prefix_end, last = gl.inline_asm_elementwise(\n        \"v_readfirstlane_b32 $2, $3;\\nv_readfirstlane_b32 $1, $4;\\ns_ff1_i32_b32 $0, $2;\\ns_min_u32 $0, $0, $5;\\ns_lshr_b32 $1, $1, $0;\\ns_ff1_i32_b32 $1, $1;\\ns_min_u32 $1, $1, $5;\\ns_add_u32 $1, $1, $0;\\ns_flbit_i32_b32 $2, $2;\\ns_min_u32 $2, $2, 32;\\ns_sub_u32 $2, 32, $2;\\ns_min_u32 $1, $1, $2;\\ns_max_u32 $1, $1, $0;\",\n        constraints=\"=s,=s,=s,v,v,n,~{scc}\",\n        args=[bitmap, incomplete, limit],\n        dtype=(gl.int32, gl.int32, gl.int32),\n        is_pure=True,\n        pack=1,\n    )\n    return (first, prefix_end, last)\n\n\n@gluon.jit\ndef _stage_panel(KV, offsets_shared, kv_shared, tile, copy_j, copy_d):\n    row_offsets = offsets_shared.gather(tile * 64 + copy_j, 0)\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(\n        kv_shared, KV, gl.multiple_of(row_offsets, 16)[:, None] + copy_d[None, :]\n    )\n    gl.amd.cdna4.async_copy.commit_group()\n\n\n@gluon.jit\ndef _stage_offsets(KV, kv_shared, row_offsets, copy_d, PRIORITY: gl.constexpr):\n    gl.inline_asm_elementwise(\n        \"s_setprio $1;\", constraints=\"=s,n\", args=[PRIORITY], dtype=gl.int32, is_pure=False, pack=1\n    )\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(kv_shared, KV, row_offsets[:, None] + copy_d[None, :])\n    gl.amd.cdna4.async_copy.commit_group()\n    gl.inline_asm_elementwise(\"s_setprio 0;\", constraints=\"=s\", args=[], dtype=gl.int32, is_pure=False, pack=1)\n\n\n@gluon.jit\ndef _mla(\n    Q,\n    KV,\n    S,\n    O,\n    scale,\n    M: gl.constexpr,\n    Q0: gl.constexpr,\n    Q1: gl.constexpr,\n    K0: gl.constexpr,\n    S0: gl.constexpr,\n    Q_CACHE: gl.constexpr = \"\",\n    PACK_N: gl.constexpr = 0,\n    S_CACHE: gl.constexpr = \"\",\n):\n    row = M - 1 - gl.program_id(0)\n    panel1_start: gl.constexpr = 0 if PACK_N else 256\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[1, 4])\n    dot_a: gl.constexpr = gl.DotOperandLayout(0, mma, 16)\n    dot_b: gl.constexpr = gl.DotOperandLayout(1, mma, 16)\n    q_layout: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [4, 1], [1, 0])\n    kv_layout: gl.constexpr = gl.BlockedLayout([4, 16], [4, 16], [4, 1], [1, 0])\n    scan_layout: gl.constexpr = gl.BlockedLayout([8], [64], [4], [0])\n    scan_tiles: gl.constexpr = 32\n    scan_pos = gl.arange(0, scan_tiles * 64, layout=scan_layout)\n    scan_ids = gl.amd.cdna4.buffer_load(S + row * S0, scan_pos, cache=S_CACHE)\n    tile_bit = gl.full([scan_tiles * 64], 1, gl.uint32, scan_layout) << scan_pos // 64\n    bitmap = gl.reduce_or(gl.where(scan_ids >= 0, tile_bit, 0), 0)\n    incomplete = gl.reduce_or(gl.where(scan_ids < 0, tile_bit, 0), 0)\n    first, prefix_end, last = _tile_bounds(bitmap, incomplete, scan_tiles)\n    bitmap = gl.inline_asm_elementwise(\n        \"v_readfirstlane_b32 $0, $1;\", constraints=\"=s,v\", args=[bitmap], dtype=gl.uint32, is_pure=True, pack=1\n    )\n    offsets_shared = gl.allocate_shared_memory(gl.int32, [scan_tiles * 64], _offset_layout())\n    offsets_shared.store(gl.where(scan_ids >= 0, scan_ids, -1) * K0)\n    qh = gl.arange(0, 16, layout=gl.SliceLayout(1, q_layout))\n    qd = gl.arange(0, 128, layout=gl.SliceLayout(0, q_layout))\n    qr = gl.arange(0, 64, layout=gl.SliceLayout(0, q_layout))\n    q_latent0 = gl.amd.cdna4.buffer_load(Q + row * Q0, qh[:, None] * Q1 + qd[None, :], cache=Q_CACHE)\n    q_latent1 = gl.amd.cdna4.buffer_load(Q + row * Q0, qh[:, None] * Q1 + 128 + qd[None, :], cache=Q_CACHE)\n    q_latent2 = gl.amd.cdna4.buffer_load(Q + row * Q0, qh[:, None] * Q1 + 256 + qd[None, :], cache=Q_CACHE)\n    q_latent3 = gl.amd.cdna4.buffer_load(Q + row * Q0, qh[:, None] * Q1 + 384 + qd[None, :], cache=Q_CACHE)\n    q_rotary = gl.amd.cdna4.buffer_load(Q + row * Q0, qh[:, None] * Q1 + 512 + qr[None, :], cache=Q_CACHE)\n    q_latent0 = gl.convert_layout(q_latent0, dot_a)\n    q_latent1 = gl.convert_layout(q_latent1, dot_a)\n    q_latent2 = gl.convert_layout(q_latent2, dot_a)\n    q_latent3 = gl.convert_layout(q_latent3, dot_a)\n    q_rotary = gl.convert_layout(q_rotary, dot_a)\n    kv_shared_layout: gl.constexpr = gl.PaddedSharedLayout(\n        [[1024, 32]],\n        [\n            [0, 1],\n            [0, 2],\n            [0, 4],\n            [0, 8],\n            [0, 16],\n            [0, 32],\n            [0, 64],\n            [0, 128],\n            [16, 0],\n            [32, 0],\n            [1, 0],\n            [2, 0],\n            [4, 0],\n            [8, 0],\n        ],\n        [],\n        [64, 256],\n    )\n    copy_layout: gl.constexpr = gl.DistributedLinearLayout(\n        reg_bases=[[0, 1], [0, 2], [0, 4], [0, 8], [4, 0], [8, 0]],\n        lane_bases=[[0, 16], [0, 32], [0, 64], [0, 128], [16, 0], [32, 0]],\n        warp_bases=[[1, 0], [2, 0]],\n        block_bases=[],\n        shape=[64, 256],\n    )\n    copy_j = gl.arange(0, 64, layout=gl.SliceLayout(1, copy_layout))\n    copy_d = gl.arange(0, 256, layout=gl.SliceLayout(0, copy_layout))\n    kv0_shared = gl.allocate_shared_memory(KV.dtype.element_ty, [64, 256], kv_shared_layout)\n    kv1_shared = gl.allocate_shared_memory(KV.dtype.element_ty, [64, 256], kv_shared_layout)\n    kj = gl.arange(0, 64, layout=gl.SliceLayout(1, kv_layout))\n    kd = gl.arange(0, 256, layout=gl.SliceLayout(0, kv_layout))\n    rot_d = gl.arange(0, 64, layout=gl.SliceLayout(1, dot_b))\n    rot_j = gl.arange(0, 64, layout=gl.SliceLayout(0, dot_b))\n    probability_shared = gl.allocate_shared_memory(gl.bfloat16, [16, 64], gl.SwizzledSharedLayout(8, 2, 8, [1, 0]))\n    max_shared = gl.allocate_shared_memory(gl.float32, [16, 4], gl.SwizzledSharedLayout(1, 1, 1, [1, 0]))\n    maximum = gl.full([16], -float(\"inf\"), gl.float32, gl.SliceLayout(1, mma))\n    denom_layout: gl.constexpr = gl.BlockedLayout([1, 1], [16, 4], [1, 4], [0, 1])\n    denominator = gl.full([16, 16], 0.0, gl.float32, denom_layout)\n    accumulator0 = gl.full([16, 64], 0.0, gl.float32, mma)\n    accumulator1 = gl.full([16, 64], 0.0, gl.float32, mma)\n    accumulator2 = gl.full([16, 64], 0.0, gl.float32, mma)\n    accumulator3 = gl.full([16, 64], 0.0, gl.float32, mma)\n    accumulator4 = gl.full([16, 64], 0.0, gl.float32, mma)\n    accumulator5 = gl.full([16, 64], 0.0, gl.float32, mma)\n    accumulator6 = gl.full([16, 64], 0.0, gl.float32, mma)\n    accumulator7 = gl.full([16, 64], 0.0, gl.float32, mma)\n    if first < prefix_end:\n        _stage_panel(KV, offsets_shared, kv0_shared, first, copy_j, copy_d)\n        _stage_panel(KV + PACK_N * 256, offsets_shared, kv1_shared, first, copy_j, copy_d + panel1_start)\n    for phase in gl.static_range(2):\n        if phase == 0:\n            begin = first\n            end = prefix_end\n        else:\n            begin = prefix_end\n            end = last\n        for tile in loop_range(begin, end, loop_unroll_factor=1):\n            if phase == 0:\n                occupied = True\n            else:\n                occupied = bitmap >> tile & 1 != 0\n            if occupied:\n                gl.inline_asm_elementwise(\n                    \"s_setprio 3;\", constraints=\"=s\", args=[], dtype=gl.int32, is_pure=False, pack=1\n                )\n                pos = tile * 64 + kj\n                latent_offset = offsets_shared.gather(pos, 0)\n                active = (pos < 2048) & (latent_offset >= 0)\n                rot_latent_offset = offsets_shared.gather(tile * 64 + rot_j, 0)\n                if phase == 0:\n                    valid = gl.full([64], True, gl.int1, gl.SliceLayout(0, mma))\n                    if PACK_N:\n                        rotary_base = KV + PACK_N * 512\n                        rotary_offsets = gl.multiple_of(rot_latent_offset >> 2, 64)[None, :] + rot_d[:, None]\n                    else:\n                        rotary_base = KV\n                        rotary_offsets = gl.multiple_of(rot_latent_offset, 16)[None, :] + 512 + rot_d[:, None]\n                    rotary = gl.amd.cdna4.buffer_load(rotary_base, rotary_offsets)\n                    gl.amd.cdna4.async_copy.wait_group(1)\n                else:\n                    valid = gl.convert_layout(active.to(gl.int32), gl.SliceLayout(0, mma)) != 0\n                    latent0 = gl.amd.cdna4.buffer_load(\n                        KV, gl.multiple_of(latent_offset, 16)[:, None] + kd[None, :], active[:, None], 0.0\n                    )\n                    kv0_shared.store(latent0)\n                    latent1 = gl.amd.cdna4.buffer_load(\n                        KV + PACK_N * 256,\n                        gl.multiple_of(latent_offset, 16)[:, None] + panel1_start + kd[None, :],\n                        active[:, None],\n                        0.0,\n                    )\n                    kv1_shared.store(latent1)\n                    if PACK_N:\n                        rotary_base = KV + PACK_N * 512\n                        rotary_offsets = gl.multiple_of(rot_latent_offset >> 2, 64)[None, :] + rot_d[:, None]\n                    else:\n                        rotary_base = KV\n                        rotary_offsets = gl.multiple_of(rot_latent_offset, 16)[None, :] + 512 + rot_d[:, None]\n                    rotary = gl.amd.cdna4.buffer_load(rotary_base, rotary_offsets, rot_latent_offset[None, :] >= 0, 0.0)\n                gl.inline_asm_elementwise(\n                    \"s_setprio 0;\", constraints=\"=s\", args=[], dtype=gl.int32, is_pure=False, pack=1\n                )\n                key0 = kv0_shared.slice(0, 128, 1).permute([1, 0]).load(dot_b).to(gl.bfloat16)\n                score = gl.amd.cdna4.mfma(q_latent0, key0, gl.full([16, 64], 0.0, gl.float32, mma))\n                key1 = kv0_shared.slice(128, 128, 1).permute([1, 0]).load(dot_b).to(gl.bfloat16)\n                score = gl.amd.cdna4.mfma(q_latent1, key1, score)\n                if phase == 0:\n                    gl.amd.cdna4.async_copy.wait_group(0)\n                key2 = kv1_shared.slice(0, 128, 1).permute([1, 0]).load(dot_b).to(gl.bfloat16)\n                score = gl.amd.cdna4.mfma(q_latent2, key2, score)\n                key3 = kv1_shared.slice(128, 128, 1).permute([1, 0]).load(dot_b).to(gl.bfloat16)\n                score = gl.amd.cdna4.mfma(q_latent3, key3, score)\n                score = gl.amd.cdna4.mfma(q_rotary, rotary.to(gl.bfloat16), score)\n                score = gl.where(valid[None, :], score * scale, -float(\"inf\"))\n                wave_max = gl.max(score.reshape([16, 4, 16]), 2)\n                max_shared.store(wave_max)\n                raw_value0 = kv0_shared.slice(0, 64, 1).load(dot_b)\n                raw_value1 = kv0_shared.slice(64, 64, 1).load(dot_b)\n                maxima = max_shared.load(gl.BlockedLayout([1, 4], [16, 4], [1, 4], [0, 1]))\n                tile_max = gl.convert_layout(gl.max(maxima, 1), gl.SliceLayout(1, mma))\n                next_max = gl.maximum(maximum, tile_max)\n                safe_max = next_max\n                alpha = gl.exp2((maximum - safe_max) * 1.4426950408889634)\n                probability = gl.where(valid[None, :], gl.exp2((score - safe_max[:, None]) * 1.4426950408889634), 0.0)\n                local_sum = gl.convert_layout(gl.sum(probability.reshape([16, 16, 4]), 2), denom_layout)\n                denom_alpha = gl.convert_layout(alpha, gl.SliceLayout(1, denom_layout))\n                denominator = denominator * denom_alpha[:, None] + local_sum\n                probability_shared.store(probability.to(gl.bfloat16))\n                if phase == 0:\n                    next_row_offsets = offsets_shared.gather((tile + 1 & 31) * 64 + copy_j, 0)\n                    next_offsets = gl.multiple_of(next_row_offsets, 16)\n                accumulator0 = accumulator0 * alpha[:, None]\n                accumulator1 = accumulator1 * alpha[:, None]\n                accumulator2 = accumulator2 * alpha[:, None]\n                accumulator3 = accumulator3 * alpha[:, None]\n                accumulator4 = accumulator4 * alpha[:, None]\n                accumulator5 = accumulator5 * alpha[:, None]\n                accumulator6 = accumulator6 * alpha[:, None]\n                accumulator7 = accumulator7 * alpha[:, None]\n                p = probability_shared.load(dot_a)\n                accumulator0 = gl.amd.cdna4.mfma(p, raw_value0.to(gl.bfloat16), accumulator0)\n                raw_value2 = kv0_shared.slice(128, 64, 1).load(dot_b)\n                accumulator1 = gl.amd.cdna4.mfma(p, raw_value1.to(gl.bfloat16), accumulator1)\n                raw_value3 = kv0_shared.slice(192, 64, 1).load(dot_b)\n                if phase == 0:\n                    if tile + 1 < end:\n                        _stage_offsets(KV, kv0_shared, next_offsets, copy_d, PRIORITY=1)\n                accumulator2 = gl.amd.cdna4.mfma(p, raw_value2.to(gl.bfloat16), accumulator2)\n                raw_value4 = kv1_shared.slice(0, 64, 1).load(dot_b)\n                accumulator3 = gl.amd.cdna4.mfma(p, raw_value3.to(gl.bfloat16), accumulator3)\n                raw_value5 = kv1_shared.slice(64, 64, 1).load(dot_b)\n                if phase != 0:\n                    accumulator4 = gl.amd.cdna4.mfma(p, raw_value4.to(gl.bfloat16), accumulator4)\n                raw_value6 = kv1_shared.slice(128, 64, 1).load(dot_b)\n                if phase != 0:\n                    accumulator5 = gl.amd.cdna4.mfma(p, raw_value5.to(gl.bfloat16), accumulator5)\n                raw_value7 = kv1_shared.slice(192, 64, 1).load(dot_b)\n                if phase != 0:\n                    accumulator6 = gl.amd.cdna4.mfma(p, raw_value6.to(gl.bfloat16), accumulator6)\n                if phase != 0:\n                    accumulator7 = gl.amd.cdna4.mfma(p, raw_value7.to(gl.bfloat16), accumulator7)\n                if phase == 0:\n                    if tile + 1 < end:\n                        _stage_offsets(KV + PACK_N * 256, kv1_shared, next_offsets, copy_d + panel1_start, PRIORITY=1)\n                    accumulator4 = gl.amd.cdna4.mfma(p, raw_value4.to(gl.bfloat16), accumulator4)\n                    accumulator5 = gl.amd.cdna4.mfma(p, raw_value5.to(gl.bfloat16), accumulator5)\n                    accumulator6 = gl.amd.cdna4.mfma(p, raw_value6.to(gl.bfloat16), accumulator6)\n                    accumulator7 = gl.amd.cdna4.mfma(p, raw_value7.to(gl.bfloat16), accumulator7)\n                maximum = next_max\n    total = gl.convert_layout(gl.sum(denominator, 1), gl.SliceLayout(1, mma))\n    reciprocal = 1.0 / gl.where(total > 0, total, 1.0)\n    result0 = accumulator0 * reciprocal[:, None]\n    result1 = accumulator1 * reciprocal[:, None]\n    result2 = accumulator2 * reciprocal[:, None]\n    result3 = accumulator3 * reciprocal[:, None]\n    result4 = accumulator4 * reciprocal[:, None]\n    result5 = accumulator5 * reciprocal[:, None]\n    result6 = accumulator6 * reciprocal[:, None]\n    result7 = accumulator7 * reciprocal[:, None]\n    offsets_shared._keep_alive()\n    kv0_shared._keep_alive()\n    kv1_shared._keep_alive()\n    probability_shared._keep_alive()\n    max_shared._keep_alive()\n    output_shared = gl.allocate_shared_memory(\n        gl.bfloat16, [16, 512], gl.PaddedSharedLayout.with_identity_for([[512, 8]], [16, 512], [1, 0])\n    )\n    output_shared.slice(0, 64, 1).store(result0.to(gl.bfloat16))\n    output_shared.slice(64, 64, 1).store(result1.to(gl.bfloat16))\n    output_shared.slice(128, 64, 1).store(result2.to(gl.bfloat16))\n    output_shared.slice(192, 64, 1).store(result3.to(gl.bfloat16))\n    output_shared.slice(256, 64, 1).store(result4.to(gl.bfloat16))\n    output_shared.slice(320, 64, 1).store(result5.to(gl.bfloat16))\n    output_shared.slice(384, 64, 1).store(result6.to(gl.bfloat16))\n    output_shared.slice(448, 64, 1).store(result7.to(gl.bfloat16))\n    output_layout: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [4, 1], [1, 0])\n    output_values = output_shared.load(output_layout)\n    oh = gl.arange(0, 16, gl.SliceLayout(1, output_layout))\n    od = gl.arange(0, 512, gl.SliceLayout(0, output_layout))\n    gl.amd.cdna4.buffer_store(output_values, O + row * 16 * 512, oh[:, None] * 512 + od[None, :], cache=\".cs\")\n\n\n@gluon.jit\ndef _pack_kv(KV, Packed, N: gl.constexpr, K0: gl.constexpr):\n    layout: gl.constexpr = gl.BlockedLayout([1, 16], [16, 4], [1, 1], [1, 0])\n    rows = gl.program_id(0) * 16 + gl.arange(0, 16, gl.SliceLayout(1, layout))\n    d = gl.arange(0, 512, gl.SliceLayout(0, layout))\n    latent = gl.load(KV + rows[:, None] * K0 + d[None, :], rows[:, None] < N, 0.0)\n    gl.store(Packed + d[None, :] // 256 * N * 256 + rows[:, None] * 256 + d[None, :] % 256, latent, rows[:, None] < N)\n    rd = gl.arange(0, 64, gl.SliceLayout(0, layout))\n    rotary = gl.load(KV + rows[:, None] * K0 + 512 + rd[None, :], rows[:, None] < N, 0.0)\n    gl.store(Packed + N * 512 + rows[:, None] * 64 + rd[None, :], rotary, rows[:, None] < N)\n\n\ndef sparse_paged_mla(\n    query: torch.Tensor,\n    kv_cache: torch.Tensor,\n    selected_slots: torch.Tensor,\n    *,\n    softmax_scale: float = 0.0625,\n    output: torch.Tensor,\n):\n    m, h, d = query.shape\n    assert m > 0 and h == 16 and (d == 576) and (query.dtype == torch.bfloat16)\n    assert kv_cache.ndim == 2 and kv_cache.shape[1] == 576\n    assert kv_cache.dtype == torch.float8_e4m3fn\n    assert selected_slots.shape == (m, 2048) and selected_slots.dtype == torch.int32\n    assert query.stride(-1) == kv_cache.stride(-1) == selected_slots.stride(-1) == 1\n    assert query.device == kv_cache.device == selected_slots.device\n    assert softmax_scale > 0\n    q0, q1 = (query.stride(0), query.stride(1))\n    k0, s0 = (kv_cache.stride(0), selected_slots.stride(0))\n    cache_bytes = (kv_cache.shape[0] - 1) * k0 + 576\n    assert 0 < k0 < 2**24 and kv_cache.shape[0] <= 2**24\n    assert cache_bytes < 2**31 - 2\n    assert k0 % 16 == 0 and kv_cache.storage_offset() % 16 == 0\n    assert 15 * q1 + 575 < 2**31 - 2\n    assert (m - 1) * q0 < 2**31 and (m - 1) * s0 < 2**31\n    n = kv_cache.shape[0]\n    if n * 576 < 2**31 - 2:\n        packed = torch.empty((n * 576,), device=query.device, dtype=kv_cache.dtype)\n        _pack_kv[(n + 15) // 16,](kv_cache, packed, n, k0, num_warps=1)\n        latent_stride = 256\n    else:\n        packed = kv_cache\n        latent_stride = k0\n        n = 0\n    packed_cache_bytes = n * 576 if n else cache_bytes\n    _mla[m,](\n        query,\n        packed,\n        selected_slots,\n        output,\n        softmax_scale,\n        m,\n        q0,\n        q1,\n        latent_stride,\n        s0,\n        PACK_N=n,\n        Q_CACHE=\".cg\" if packed_cache_bytes >= 8 * 1024 * 1024 else \"\",\n        S_CACHE=\".cg\" if 6 * 1024 * 1024 <= packed_cache_bytes < 8 * 1024 * 1024 else \"\",\n        num_warps=4,\n        waves_per_eu=3,\n        enable_fp_fusion=False,\n    )\n    return output\n\n\ndef run(*, q, kv_cache, topk_indices, sm_scale, output):\n    \"\"\"Writes ``output``: sparse_paged_mla on an exact bf16 copy of sglang's fp8 ``q``,\n    the dtype these kernels read the query in.\"\"\"\n    sparse_paged_mla(\n        q.to(torch.bfloat16), kv_cache, topk_indices, softmax_scale=sm_scale, output=output\n    )\n"
+      }
+    ]
+  }
+}
