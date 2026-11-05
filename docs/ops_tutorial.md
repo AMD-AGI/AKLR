@@ -114,7 +114,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 - Do not write `accuracy`/`speedup` in a submitted PR (writing them by hand reports `perf_edited`). After merge, main's push CI remeasures and `publish-measurement` updates the `aklr-perf/main` bot PR; only after that bot PR is squash-merged under its own title do the workloads carry `accuracy`/`speedup`.
 
 **CI rules**:
-- code-lint (CPU: pre-commit, `export check`, `validate --stages audit`) → unittest-aklr (GPU: all of pytest) → validation (GPU: `validate --base <merge base> --stages audit,bench`, run only when there are schemas to bench).
+- code-lint (CPU: pre-commit, `export check`, `validate --stages audit`) → unittest-aklr (GPU: all of pytest) → validation (GPU: `validate --base <merge base> --stages audit,bench,e2e`, run only when there are schemas to bench; e2e serves the models of `scenarios.yaml` AKLR off and on and compares their accuracy).
 - Only non-`.md` changes under `aklr/core/` test all schemas; any other change (schemas, docs, a new `aklr/ops/<op>`, and so on) tests only the schemas in the change set (`validation_scope.py`).
 
 ## 5. Runtime dispatch
