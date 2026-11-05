@@ -64,91 +64,91 @@
         "m": 8
       },
       "accuracy": "passed",
-      "speedup": 1.932
+      "speedup": 1.935
     },
     {
       "axes": {
         "m": 12
       },
       "accuracy": "passed",
-      "speedup": 2.391
+      "speedup": 2.392
     },
     {
       "axes": {
         "m": 16
       },
       "accuracy": "passed",
-      "speedup": 2.424
+      "speedup": 2.434
     },
     {
       "axes": {
         "m": 24
       },
       "accuracy": "passed",
-      "speedup": 2.482
+      "speedup": 2.49
     },
     {
       "axes": {
         "m": 32
       },
       "accuracy": "passed",
-      "speedup": 2.034
+      "speedup": 2.032
     },
     {
       "axes": {
         "m": 40
       },
       "accuracy": "passed",
-      "speedup": 1.844
+      "speedup": 1.823
     },
     {
       "axes": {
         "m": 48
       },
       "accuracy": "passed",
-      "speedup": 1.775
+      "speedup": 1.819
     },
     {
       "axes": {
         "m": 56
       },
       "accuracy": "passed",
-      "speedup": 1.769
+      "speedup": 1.748
     },
     {
       "axes": {
         "m": 60
       },
       "accuracy": "passed",
-      "speedup": 1.735
+      "speedup": 1.732
     },
     {
       "axes": {
         "m": 64
       },
       "accuracy": "passed",
-      "speedup": 1.687
+      "speedup": 1.675
     },
     {
       "axes": {
         "m": 80
       },
       "accuracy": "passed",
-      "speedup": 1.678
+      "speedup": 1.668
     },
     {
       "axes": {
         "m": 96
       },
       "accuracy": "passed",
-      "speedup": 1.716
+      "speedup": 1.708
     },
     {
       "axes": {
         "m": 112
       },
       "accuracy": "passed",
-      "speedup": 1.521
+      "speedup": 1.518
     },
     {
       "axes": {
@@ -169,14 +169,14 @@
         "m": 9397
       },
       "accuracy": "passed",
-      "speedup": 1.163
+      "speedup": 1.156
     },
     {
       "axes": {
         "m": 16384
       },
       "accuracy": "passed",
-      "speedup": 1.068
+      "speedup": 1.109
     }
   ],
   "layout_variants": {
