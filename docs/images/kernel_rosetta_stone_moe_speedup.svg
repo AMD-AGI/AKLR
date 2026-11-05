@@ -61,7 +61,7 @@
 <circle class="bd" cx="735.2" cy="129.0" r="3.5"/>
 <circle class="bd" cx="820.2" cy="125.5" r="3.5"/>
 <circle class="bd" cx="871.6" cy="114.6" r="3.5"/>
-<path class="a" d="M80.0,325.3 L227.9,204.8 L289.0,174.8 L341.2,150.4 L424.4,137.3 L473.1,104.5 L542.2,99.4"/>
+<path class="a" d="M80.0,325.3 L227.9,204.8 L289.0,174.8 L341.2,150.4 L424.4,137.3 L473.1,104.5 L542.2,99.4 L611.2,96.5"/>
 <circle class="ad" cx="80.0" cy="325.3" r="3.5"/>
 <circle class="ad" cx="227.9" cy="204.8" r="3.5"/>
 <circle class="ad" cx="289.0" cy="174.8" r="3.5"/>
@@ -69,12 +69,13 @@
 <circle class="ad" cx="424.4" cy="137.3" r="3.5"/>
 <circle class="ad" cx="473.1" cy="104.5" r="3.5"/>
 <circle class="ad" cx="542.2" cy="99.4" r="3.5"/>
+<circle class="ad" cx="611.2" cy="96.5" r="3.5"/>
 <line class="ref" x1="473.1" x2="473.1" y1="104.5" y2="360"/>
 <circle class="ad" cx="473.1" cy="104.5" r="6"/>
 <line class="ref" x1="871.6" x2="871.6" y1="114.6" y2="360"/>
 <circle class="bd" cx="871.6" cy="114.6" r="6"/>
 <text class="note na" x="483.1" y="141.0" text-anchor="start">1.165x at 7h24m, ~$87</text>
-<text class="note nb" x="861.6" y="268" text-anchor="end">1.165x at 14h54m, ~$170 (its best)</text>
+<text class="note nb" x="861.6" y="268" text-anchor="end">1.165x at 14h54m, ~$170</text>
 <line class="a" x1="520" x2="546" y1="304" y2="304"/>
 <text class="s" x="554" y="308">With AKLR knowledge base</text>
 <line class="b" x1="520" x2="546" y1="328" y2="328"/>

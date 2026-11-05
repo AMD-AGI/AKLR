@@ -82,8 +82,9 @@ Best score so far (higher is better):
 | 4 h | 1.105 | 1.027 |
 | 7h24m | 1.176 (past 1.165) | 1.037 |
 | 8 h | 1.176 | 1.047 |
+| 10 h | 1.184 | 1.056 |
 | 12 h | | 1.067 |
-| 14h54m | | 1.165 (its best; run ended) |
+| 14h54m | | 1.165 (run ended) |
 
 <p align="center"><img src="images/kernel_rosetta_stone_moe_speedup.svg" alt="Kernel Rosetta Stone: MoE comparison" width="820"></p>
 
