@@ -1,0 +1,154 @@
+{
+  "schema_version": 5,
+  "name": "gemm_a8w8_blockwise_scaled_n3072_k1536",
+  "contract_id": "gemm_a8w8_blockwise_scaled@1.0",
+  "description": "fp8 gemm dequantized per block: a fp32 scale per 128 x 128 of b, per 1 x 128 of a, K-major or MN-major. operand_format is '<a>:<b>'; 'none:preshuffled' is aiter's 16 x 16 shuffle_weight b with a raw column-major a_scale. Set a_scale.is_row_major to pass a row-major a_scale with a shuffled b.",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 3072,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 1536,
+      "description": "Reduction length."
+    },
+    "scale_rows": {
+      "type": "const",
+      "value": 24,
+      "description": "Weight-scale rows."
+    },
+    "scale_columns": {
+      "type": "const",
+      "value": 12,
+      "description": "Scale columns."
+    }
+  },
+  "attrs": {
+    "scale_major_mode": "K",
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    },
+    "a_scale": {
+      "shape": [
+        "m",
+        "scale_columns"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "Per 1 x 128 block of a."
+    },
+    "b_scale": {
+      "shape": [
+        "scale_rows",
+        "scale_columns"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "Per 128 x 128 block of b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T, scaled."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 64
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "operand_format",
+            "expected_value": "none:none"
+          },
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "author": "openai",
+    "entry_point": "main.py::run",
+    "sources": [
+      {
+        "path": "adapter.py",
+        "content": "\"\"\"Metadata checks shared by the gfx950 N3072/K1536 FP8 candidates.\"\"\"\n\nimport torch\n\n\ndef validate_inputs(a, b, a_scale, b_scale, supported_m):\n    tensors = (a, b, a_scale, b_scale)\n    if not all(isinstance(t, torch.Tensor) and t.ndim == 2 for t in tensors):\n        raise ValueError(\"expected four two-dimensional tensors\")\n    if any(t.layout != torch.strided or not t.is_contiguous() for t in tensors):\n        raise ValueError(\"expected contiguous K-major tensors\")\n    if any(t.is_conj() or t.is_neg() for t in tensors):\n        raise ValueError(\"conjugate and negative views are unsupported\")\n    if any(t.device != a.device for t in tensors):\n        raise ValueError(\"all tensors must be on the same device\")\n    m, k = a.shape\n    if m not in supported_m:\n        raise ValueError(f\"unsupported M={m}; expected one of {supported_m}\")\n    if k != 1536 or b.shape != (3072, 1536):\n        raise ValueError(\"expected N=3072 and K=1536\")\n    if a.dtype != torch.float8_e4m3fn or b.dtype != torch.float8_e4m3fn:\n        raise ValueError(\"expected E4M3FN operands\")\n    if a_scale.dtype != torch.float32 or b_scale.dtype != torch.float32:\n        raise ValueError(\"expected FP32 scales\")\n    if a_scale.shape != (m, 12) or b_scale.shape != (24, 12):\n        raise ValueError(\"expected activation 1x128 and weight 128x128 scales\")\n    if getattr(b, \"is_shuffled\", False):\n        raise ValueError(\"preshuffled weights are unsupported\")\n"
+      },
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\nfrom dataclasses import dataclass\n\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n\n@dataclass(frozen=True, slots=True)\nclass FP8PrecisionConfig:\n    dtype: torch.dtype\n    max_finite: float\n    group_quant_max: float\n\n\nFP8_E4M3_FN = FP8PrecisionConfig(torch.float8_e4m3fn, 448.0, 448.0)\n\n\n@gluon.jit\ndef _load_operand(shared, OPERAND: gl.constexpr, LAYOUT: gl.constexpr):\n\n    shared_read: gl.constexpr = gl.SharedLinearLayout(\n        [\n            [0, 1],\n            [0, 2],\n            [0, 4],\n            [0, 8],\n            [0, 16],\n            [0, 32],\n            [1, 0],\n            [2, 0],\n            [4, 0],\n            [8, 0],\n            [0, 64],\n        ]\n    )\n    view = shared._reinterpret(shape=(16, 128), layout=shared_read)\n    if OPERAND == 1:\n        view = view.permute((1, 0))\n    return gl.amd.cdna4.async_copy.load_shared_relaxed(\n        view, gl.DotOperandLayout(OPERAND, LAYOUT, 32)\n    )\n\n\n@gluon.jit\ndef _copy_group(\n    a_shared,\n    b_shared,\n    X,\n    W,\n    a_offsets,\n    b_offsets,\n    X_STRIDES: gl.constexpr,\n    W_STRIDES: gl.constexpr,\n    GROUP: gl.constexpr,\n    COPY_AABB: gl.constexpr,\n):\n\n    if COPY_AABB:\n        for half in gl.static_range(2):\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(\n                a_shared.index(half),\n                X,\n                a_offsets + (GROUP * 128 + half * 64) * X_STRIDES[1],\n            )\n\n        if GROUP >= 9:\n            gl.amd.cdna4.async_copy.commit_group()\n        for half in gl.static_range(2):\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(\n                b_shared.index(half),\n                W,\n                b_offsets + (GROUP * 128 + half * 64) * W_STRIDES[1],\n            )\n    else:\n        for half in gl.static_range(2):\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(\n                a_shared.index(half),\n                X,\n                a_offsets + (GROUP * 128 + half * 64) * X_STRIDES[1],\n            )\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(\n                b_shared.index(half),\n                W,\n                b_offsets + (GROUP * 128 + half * 64) * W_STRIDES[1],\n            )\n    gl.amd.cdna4.async_copy.commit_group()\n\n\n@gluon.jit\ndef _stage_scales(\n    XS,\n    WS,\n    XS_STRIDES: gl.constexpr,\n    WS_STRIDES: gl.constexpr,\n    xs_base,\n    ws_base,\n):\n\n    VECTOR_SCALES: gl.constexpr = (\n        XS_STRIDES[0] % 4 == 0 and XS_STRIDES[1] == 1 and WS_STRIDES[1] == 1\n    )\n    if VECTOR_SCALES:\n        xs_layout: gl.constexpr = gl.SharedLinearLayout(\n            [\n                [0, 1],\n                [0, 2],\n                [1, 0],\n                [2, 0],\n                [4, 0],\n                [8, 0],\n                [0, 4],\n                [0, 8],\n            ]\n        )\n        xs_copy: gl.constexpr = gl.BlockedLayout([1, 4], [16, 4], [1, 1], [0, 1])\n    else:\n        xs_layout: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, [0, 1])\n        xs_copy: gl.constexpr = gl.BlockedLayout([1, 1], [16, 4], [1, 1], [0, 1])\n    xs_shared = gl.allocate_shared_memory(gl.float32, (16, 16), xs_layout)\n    sr = gl.arange(0, 16, gl.SliceLayout(1, xs_copy))\n    sg = gl.arange(0, 16, gl.SliceLayout(0, xs_copy))\n    ws_layout: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, [1, 0])\n    ws_copy: gl.constexpr = gl.BlockedLayout([1, 1], [1, 64], [1, 1], [1, 0])\n    ws_shared = gl.allocate_shared_memory(gl.float32, (1, 64), ws_layout)\n    wg = gl.arange(0, 64, gl.SliceLayout(0, ws_copy))\n    if VECTOR_SCALES:\n\n        sg = gl.max_contiguous(gl.where(sg < 12, sg, sg - 4), 4)\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(\n        xs_shared,\n        XS,\n        xs_base + sr[:, None] * XS_STRIDES[0] + sg[None, :] * XS_STRIDES[1],\n        None if VECTOR_SCALES else sg[None, :] < 12,\n        other=None if VECTOR_SCALES else 0.0,\n    )\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(\n        ws_shared,\n        WS,\n        ws_base\n        + (gl.minimum(wg, 11) if VECTOR_SCALES else wg)[None, :] * WS_STRIDES[1],\n        None if VECTOR_SCALES else wg[None, :] < 12,\n        other=None if VECTOR_SCALES else 0.0,\n    )\n    gl.amd.cdna4.async_copy.commit_group()\n    return xs_shared, ws_shared\n\n\n@gluon.jit\ndef _block_scaled_gemm(\n    X,\n    XS,\n    W,\n    WS,\n    Y,\n    M: gl.constexpr,\n    X_STRIDES: gl.constexpr,\n    XS_STRIDES: gl.constexpr,\n    W_STRIDES: gl.constexpr,\n    WS_STRIDES: gl.constexpr,\n    STRIPES: gl.constexpr,\n    PREFETCH: gl.constexpr,\n    DENSE_SCALES: gl.constexpr,\n):\n    copy_layout: gl.constexpr = gl.BlockedLayout([1, 16], [16, 4], [1, 1], [1, 0])\n    shared_copy: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, [1, 0])\n    mfma_layout: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4,\n        instr_shape=[16, 16, 128],\n        transposed=True,\n        warps_per_cta=[1, 1],\n    )\n    DATA_FIRST: gl.constexpr = (1 if M == 32 else 2) if DENSE_SCALES else 0\n    LDS_SLOTS: gl.constexpr = (10 if M == 32 else 9) if DENSE_SCALES else 12\n    COPY_AABB: gl.constexpr = DENSE_SCALES and M == 64\n\n    commit_prefix: gl.constexpr = (\n        (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 13, 15)\n        if COPY_AABB\n        else (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)\n    )\n\n    pid = gl.program_id(0).to(gl.uint32)\n    if M == 64 and DENSE_SCALES:\n\n        local_pid = pid % 256\n        pid_m = (local_pid // STRIPES) % 4\n        pid_n = (\n            (pid // 256) * 64\n            + (local_pid % STRIPES) * (64 // STRIPES)\n            + local_pid // (STRIPES * 4)\n        )\n    else:\n        pid_m = (pid // STRIPES) % (M // 16)\n        pid_n = (pid % STRIPES) * (192 // STRIPES) + pid // (STRIPES * (M // 16))\n    X += pid_m * 16 * X_STRIDES[0]\n    if DENSE_SCALES:\n        xs_base = pid_m * 16 * XS_STRIDES[0]\n    else:\n        XS += pid_m * 16 * XS_STRIDES[0]\n        xs_base = 0\n    W += pid_n * 16 * W_STRIDES[0]\n    if DENSE_SCALES:\n        ws_base = (pid_n // 8) * WS_STRIDES[0]\n    else:\n        WS += (pid_n // 8) * WS_STRIDES[0]\n        ws_base = 0\n    r = gl.arange(0, 16, gl.SliceLayout(1, copy_layout))\n    k = gl.arange(0, 64, gl.SliceLayout(0, copy_layout))\n    a_offsets = r[:, None] * X_STRIDES[0] + k[None, :] * X_STRIDES[1]\n    b_offsets = r[:, None] * W_STRIDES[0] + k[None, :] * W_STRIDES[1]\n    a_buffers = ()\n    b_buffers = ()\n    for slot in gl.static_range(LDS_SLOTS):\n        a_buffers += (\n            gl.allocate_shared_memory(X.dtype.element_ty, (2, 16, 64), shared_copy),\n        )\n        b_buffers += (\n            gl.allocate_shared_memory(W.dtype.element_ty, (2, 16, 64), shared_copy),\n        )\n\n    for group in gl.static_range(DATA_FIRST):\n        _copy_group(\n            a_buffers[group],\n            b_buffers[group],\n            X,\n            W,\n            a_offsets,\n            b_offsets,\n            X_STRIDES,\n            W_STRIDES,\n            group,\n            COPY_AABB,\n        )\n    xs_shared, ws_shared = _stage_scales(\n        XS,\n        WS,\n        XS_STRIDES,\n        WS_STRIDES,\n        xs_base,\n        ws_base,\n    )\n    for group in gl.static_range(DATA_FIRST, PREFETCH):\n        _copy_group(\n            a_buffers[group],\n            b_buffers[group],\n            X,\n            W,\n            a_offsets,\n            b_offsets,\n            X_STRIDES,\n            W_STRIDES,\n            group,\n            COPY_AABB,\n        )\n\n    acc = gl.zeros((16, 16), gl.float32, mfma_layout)\n    if DENSE_SCALES:\n\n        gl.amd.cdna4.async_copy.wait_group(\n            commit_prefix[PREFETCH] - commit_prefix[DATA_FIRST]\n        )\n        a = _load_operand(a_buffers[0], 0, mfma_layout)\n        b = _load_operand(b_buffers[0], 1, mfma_layout)\n        if M == 64:\n\n            sx_queue = ()\n            for lookahead in gl.static_range(2):\n                sx_queue += (\n                    gl.amd.cdna4.async_copy.load_shared_relaxed(\n                        xs_shared.slice(lookahead, 1, dim=1),\n                        mfma_layout,\n                    ),\n                )\n            sw_pending = gl.amd.cdna4.async_copy.load_shared_relaxed(\n                ws_shared.slice(0, 1, dim=1),\n                mfma_layout,\n            )\n        for group in gl.static_range(12):\n            if M == 64:\n                sx = sx_queue[0]\n                sx_queue = sx_queue[1:]\n            else:\n                sx = gl.amd.cdna4.async_copy.load_shared_relaxed(\n                    xs_shared.slice(group, 1, dim=1),\n                    mfma_layout,\n                )\n            if M == 64:\n                sw = sw_pending\n                if group < 11:\n                    sw_pending = gl.amd.cdna4.async_copy.load_shared_relaxed(\n                        ws_shared.slice(group + 1, 1, dim=1),\n                        mfma_layout,\n                    )\n            else:\n                sw = gl.amd.cdna4.async_copy.load_shared_relaxed(\n                    ws_shared.slice(group, 1, dim=1),\n                    mfma_layout,\n                )\n            if M == 64 and group < 10:\n                sx_queue += (\n                    gl.amd.cdna4.async_copy.load_shared_relaxed(\n                        xs_shared.slice(group + 2, 1, dim=1),\n                        mfma_layout,\n                    ),\n                )\n            if group < 11:\n                gl.amd.cdna4.async_copy.wait_group(\n                    commit_prefix[min(PREFETCH + group, 12)]\n                    - commit_prefix[group + 2]\n                    + (1 if COPY_AABB and group >= 8 else 0)\n                )\n                next_a = _load_operand(\n                    a_buffers[(group + 1) % LDS_SLOTS], 0, mfma_layout\n                )\n                if M == 32:\n                    next_b = _load_operand(\n                        b_buffers[(group + 1) % LDS_SLOTS], 1, mfma_layout\n                    )\n            partial = gl.amd.cdna4.mfma_scaled(\n                a,\n                None,\n                \"e4m3\",\n                b,\n                None,\n                \"e4m3\",\n                gl.zeros((16, 16), gl.float32, mfma_layout),\n            )\n            if M == 64 and group < 11:\n\n                if group >= 8:\n                    gl.amd.cdna4.async_copy.wait_group(\n                        commit_prefix[min(PREFETCH + group, 12)]\n                        - commit_prefix[group + 2]\n                    )\n                next_b = _load_operand(\n                    b_buffers[(group + 1) % LDS_SLOTS], 1, mfma_layout\n                )\n            if group < 12 - PREFETCH:\n                if group + PREFETCH == LDS_SLOTS:\n\n                    gl.barrier()\n                _copy_group(\n                    a_buffers[(group + PREFETCH) % LDS_SLOTS],\n                    b_buffers[(group + PREFETCH) % LDS_SLOTS],\n                    X,\n                    W,\n                    a_offsets,\n                    b_offsets,\n                    X_STRIDES,\n                    W_STRIDES,\n                    group + PREFETCH,\n                    COPY_AABB,\n                )\n            acc = gl.fma(partial * sx, sw, acc)\n            if group < 11:\n                a = next_a\n                b = next_b\n    else:\n\n        for group in gl.static_range(12):\n            gl.amd.cdna4.async_copy.wait_group(min(PREFETCH - 1, 11 - group))\n            a = _load_operand(a_buffers[group], 0, mfma_layout)\n            b = _load_operand(b_buffers[group], 1, mfma_layout)\n            sx = gl.amd.cdna4.async_copy.load_shared_relaxed(\n                xs_shared.slice(group, 1, dim=1),\n                mfma_layout,\n            )\n            sw = gl.amd.cdna4.async_copy.load_shared_relaxed(\n                ws_shared.slice(group, 1, dim=1),\n                mfma_layout,\n            )\n            partial = gl.amd.cdna4.mfma_scaled(\n                a,\n                None,\n                \"e4m3\",\n                b,\n                None,\n                \"e4m3\",\n                gl.zeros((16, 16), gl.float32, mfma_layout),\n            )\n            if group < 12 - PREFETCH:\n                _copy_group(\n                    a_buffers[group + PREFETCH],\n                    b_buffers[group + PREFETCH],\n                    X,\n                    W,\n                    a_offsets,\n                    b_offsets,\n                    X_STRIDES,\n                    W_STRIDES,\n                    group + PREFETCH,\n                    COPY_AABB,\n                )\n            acc = gl.fma(partial * sx, sw, acc)\n\n    rows = gl.arange(0, 16, gl.SliceLayout(1, mfma_layout))\n    cols = gl.arange(0, 16, gl.SliceLayout(0, mfma_layout))\n    gl.amd.cdna4.buffer_store(\n        acc.to(gl.bfloat16),\n        Y + (pid_m * 16 * 3072 + pid_n * 16),\n        rows[:, None] * 3072 + cols[None, :],\n    )\n\n\ndef fp8_a8w8_block_scaled_gemm_fn(\n    x: torch.Tensor,\n    x_scales: torch.Tensor,\n    weight: torch.Tensor,\n    weight_scales: torch.Tensor,\n    *,\n    out: torch.Tensor,\n    group_n: int = 128,\n    group_k: int = 128,\n    block_m: int = 32,\n    precision_config: FP8PrecisionConfig = FP8_E4M3_FN,\n) -> None:\n\n    m, k = x.shape\n    n = weight.shape[0]\n    assert m in (32, 64)\n    assert n == 3072 and k == 1536 and weight.shape[1] == k\n    assert x.dtype == weight.dtype == torch.float8_e4m3fn\n    assert precision_config.dtype == torch.float8_e4m3fn\n    assert x_scales.dtype == weight_scales.dtype == torch.float32\n    assert group_n == 128 and group_k == 128\n    assert x_scales.shape == (m, triton.cdiv(k, group_k))\n    assert weight_scales.shape == (triton.cdiv(n, group_n), triton.cdiv(k, group_k))\n    x_stride = x.stride()\n    xs_stride = x_scales.stride()\n    w_stride = weight.stride()\n    ws_stride = weight_scales.stride()\n    dense_scales = xs_stride == (12, 1) and ws_stride == (12, 1)\n    if m == 32:\n        depth = 5\n        waves = 6 if dense_scales else 0\n        stripes = 16\n    else:\n        depth = 4 if dense_scales else 3\n        waves = 6 if dense_scales and x_stride[0] == 1536 else 5\n        stripes = 32\n    _block_scaled_gemm[(m // 16 * (n // 16),)](\n        x,\n        x_scales,\n        weight,\n        weight_scales,\n        out,\n        m,\n        x_stride,\n        xs_stride,\n        w_stride,\n        ws_stride,\n        STRIPES=stripes,\n        PREFETCH=depth,\n        DENSE_SCALES=dense_scales,\n        num_warps=1,\n        waves_per_eu=waves,\n    )\n"
+      },
+      {
+        "path": "main.py",
+        "content": "\"\"\"Canonical argument adapter for the m64 candidate.\"\"\"\n\nfrom .adapter import validate_inputs\n\nSUPPORTED_M = (64,)\n\n\ndef run(\n    *,\n    a,\n    b,\n    a_scale,\n    b_scale,\n    scale_major_mode,\n    trans_b,\n    operand_format,\n    bias,\n    out_dtype,\n    out,\n):\n    validate_inputs(a, b, a_scale, b_scale, SUPPORTED_M)\n    from .kernel import fp8_a8w8_block_scaled_gemm_fn\n\n    # Preserve this implementation's own precision default.\n    # Attrs, bias and out_dtype are fixed by this schema's Point; keep the old behaviour.\n    fp8_a8w8_block_scaled_gemm_fn(a, a_scale, b, b_scale, out=out)\n"
+      }
+    ]
+  }
+}
