@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Install AKLR from the repository root inside its CI image.
 set -euo pipefail
 
 cache=${1:?usage: install_aklr.sh <cache dir>}
@@ -20,11 +19,9 @@ print(";".join(sorted(archs)))
 PY
 )
 export GPU_ARCHS
-# Keep build caches in the managed cache directory.
 export AITER_JIT_DIR="$cache/aiter-jit" FLYDSL_RUNTIME_CACHE_DIR="$cache/flydsl-runtime" \
   FLYDSL_AUTOTUNE_CACHE_DIR="$cache/flydsl-autotune" TRITON_CACHE_DIR="$cache/triton" \
   AKLR_KERNEL_CACHE_DIR="$cache/aklr-kernels" PIP_CACHE_DIR="$cache/pip"
-# Keep the image's Triton when installing AITER.
 AITER_USE_SYSTEM_TRITON=1 python3 -m pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@$AKLR_BASELINE_AITER"
 python3 -m pip install -e .
 python3 - <<'PY'
