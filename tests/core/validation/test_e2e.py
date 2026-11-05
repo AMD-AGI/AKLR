@@ -180,7 +180,7 @@ class TestDeploymentPlan:
         assert process.argv == (
             "env", "A=1", "B=3", "S=stage", "AKLR_DISABLE=1", sys.executable, "-m", "sglang.launch_server",
             "--tp", "8", "--mem-fraction-static", "0.8", "--model-path", "org/Model",
-            "--tokenizer-path", "org/Model", "--host", "127.0.0.1", "--port", "30000",
+            "--tokenizer-path", "org/Model", "--revision", "main", "--host", "127.0.0.1", "--port", "30000",
         )  # fmt: skip
         assert process.log_path == Path("/run/unified-0.log")
 
@@ -188,7 +188,7 @@ class TestDeploymentPlan:
         args = {"--tp": 4, "--mem-fraction-static": None, "--enable-x": True, "--model-path": "local/dir"}
         (process,) = self._plan(_scenario({"unified": _UNIFIED}, args={"unified": args})).processes
         flags = process.argv[process.argv.index("sglang.launch_server") + 1 :]
-        assert flags == ("--model-path", "local/dir", "--tokenizer-path", "org/Model", "--tp", "4",
+        assert flags == ("--model-path", "local/dir", "--tokenizer-path", "org/Model", "--revision", "main", "--tp", "4",
             "--enable-x", "--host", "127.0.0.1", "--port", "30000")  # fmt: skip
 
     def test_multi_node_flags_and_shell_quoted_launch(self) -> None:
