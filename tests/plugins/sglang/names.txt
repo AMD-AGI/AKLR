@@ -22,3 +22,5 @@ qwen2_moe_fp8_experts_shuffled_16x16_model_dim#_n_experts#_inter_dim#_topk#
 qwen2_moe_fp8_router_experts_model_dim#_n_routed#_inter_dim#
 qwen2_moe_fp8_router_experts_shuffled_16x16_model_dim#_n_routed#_inter_dim#
 qwen2_moe_router_model_dim#_n_routed#_topk#
+qwen3_moe_fp8_moe_model_dim#_n_experts#_inter_dim#
+qwen3_moe_fp8_moe_shuffled_16x16_model_dim#_n_experts#_inter_dim#

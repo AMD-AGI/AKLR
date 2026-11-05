@@ -167,6 +167,23 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # Qwen3-Coder's MoE block shrunk: 16 experts of hidden and intermediate size 256, top-8,
+    # the experts fp8 and shuffled as sglang holds them
+    PointSpec(
+        contract_id="qwen3_moe_fp8_moe@1.0",
+        axes={"n_tokens": 4, "model_dim": 256, "n_experts": 16, "inter_dim": 256},
+        dtypes={
+            "hidden_states": "bfloat16",
+            "router_weight": "bfloat16",
+            "w1": "float8_e4m3fn",
+            "w1_scale": "float32",
+            "w2": "float8_e4m3fn",
+            "w2_scale": "float32",
+            "out": "bfloat16",
+        },
+        attrs={"topk": 8},
+        layout_variant_name="shuffled_16x16",
+    ),
     # a slot more than rows: the drawn indices hold one -1 padding row
     PointSpec(
         contract_id="gdn_decode_group_fp8_quant@1.0",
@@ -232,6 +249,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "qwen2_moe_fp8_experts@1.0",
         "qwen2_moe_fp8_router_experts@1.0",
         "qwen2_moe_router@1.0",
+        "qwen3_moe_fp8_moe@1.0",
         "gdn_decode_group_fp8_quant@1.0",
     }
 )
