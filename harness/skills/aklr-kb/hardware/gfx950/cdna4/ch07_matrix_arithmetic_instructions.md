@@ -10,6 +10,8 @@ Because these matrix instructions do not produce their output in a single cycle,
 
 Additional information can be found on the GPUOpen blog: https://gpuopen.com/learn/amd-lab-notes/amd-lab-notes-matrix-cores-README/
 
+This blog post relates to CDNA2 but may be helpful with understanding CDNA4.
+
 The AMD Matrix Instruction Calculator (https://github.com/RadeonOpenCompute/amd_matrix_instruction_calculator) contains a helper tool that allows developers to view detailed information about the MFMA instructions in the CDNA architecture. It allows users to query instruction-level information such as computational throughput and register usage. It also allows users to generate mappings between matrix element and hardware registers for each MFMA instruction and their modifiers.
 
 ## 7.1. Matrix fused-multiply-add (MFMA)

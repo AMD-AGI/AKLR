@@ -1,0 +1,199 @@
+name: AKLR-agentx-ci
+
+# See benchmarks/agentx/README.md.
+on:
+  schedule:
+    # Requires AGENTX_SCHEDULE_ENABLED=true.
+    - cron: '17 10 * * 5'
+  workflow_dispatch:
+    inputs:
+      models:
+        description: Enabled model ids, comma-separated, or all (models run serially)
+        type: string
+        default: all
+      inferencex_ref:
+        description: InferenceX branch, tag or sha (grid, serving config and client)
+        type: string
+        default: ''
+      arms:
+        description: Arms to run (filters require exactly one selected model)
+        type: string
+        default: all
+      points:
+        description: ARM:CONC points using generated ids from serving.json (single-model smoke runs)
+        type: string
+        default: ''
+      duration_s:
+        description: DURATION per point for a smoke run (empty = the recipe's)
+        type: string
+        default: ''
+      publish:
+        description: Deploy the report to GitHub Pages (scheduled runs always do)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agentx-weekly
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+    working-directory: benchmarks/agentx
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  plan:
+    if: github.event_name != 'schedule' || vars.AGENTX_SCHEDULE_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      image: ${{ steps.resolve.outputs.image }}
+      matrix: ${{ steps.resolve.outputs.matrix }}
+      count: ${{ steps.resolve.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python -m pip install pyyaml==6.0.3
+      - name: Resolve selected models in order
+        id: resolve
+        env:
+          MODELS: ${{ inputs.models || 'all' }}
+          INFERENCEX_REF: ${{ inputs.inferencex_ref }}
+          ARMS: ${{ inputs.arms || 'all' }}
+          POINTS: ${{ inputs.points }}
+          DURATION_S: ${{ inputs.duration_s }}
+        run: |
+          python3 -m agentx_bench plan --models "$MODELS" --arms "$ARMS" \
+            ${INFERENCEX_REF:+--inferencex-ref "$INFERENCEX_REF"} \
+            ${POINTS:+--points "$POINTS"} ${DURATION_S:+--duration "$DURATION_S"} \
+            --work "$RUNNER_TEMP/work" --out "$RUNNER_TEMP/plan"
+          { echo '### Model plan'; echo '```json'; cat "$RUNNER_TEMP/plan/manifest.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentx-plan
+          path: ${{ runner.temp }}/plan/
+
+  sweep:
+    needs: plan
+    if: ${{ needs.plan.outputs.count != '0' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ vars.AGENTX_RUNNER_LABEL || 'agentx-mi355x' }}
+    # Use AKLR's CI image and the read-only weights cache.
+    container:
+      image: ${{ needs.plan.outputs.image }}
+      options: >-
+        --env HOME=/github/home --env XDG_CACHE_HOME=/github/home/.cache
+        --device=/dev/kfd --device=/dev/dri --ipc=host
+        --security-opt=seccomp=unconfined --ulimit memlock=-1:-1
+      volumes:
+        - ${{ vars.AGENTX_HF_HUB_DIR }}:${{ vars.AGENTX_HF_HUB_DIR }}:ro
+      env:
+        HF_HUB_CACHE: ${{ vars.AGENTX_HF_HUB_DIR }}
+        HF_HUB_OFFLINE: '1'
+    timeout-minutes: 1260
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: agentx-plan
+          path: ${{ runner.temp }}/plan
+      - name: Install AKLR
+        working-directory: .
+        run: scripts/agentx/install_aklr.sh "$RUNNER_TEMP/aklr-cache"
+      - name: Sweep one model
+        env:
+          MODEL_ID: ${{ matrix.model }}
+        run: |
+          python3 -m agentx_bench sweep --in-container --serving "$RUNNER_TEMP/plan/models/$MODEL_ID/serving.json" \
+            --work "$RUNNER_TEMP/agentx/$MODEL_ID" --out "$RUNNER_TEMP/results/models/$MODEL_ID"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agentx-results-${{ matrix.model }}
+          path: ${{ runner.temp }}/results/
+          if-no-files-found: ignore
+      - name: Normalize this job's work permissions
+        if: always()
+        working-directory: /
+        run: chmod -R a+rwX /__w
+
+  report:
+    needs: [plan, sweep]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    outputs:
+      publish_ready: ${{ steps.pages_artifact.outcome == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Full history is needed for the report's commit comparison.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python -m pip install pyyaml==6.0.3
+      - uses: actions/download-artifact@v4
+        with:
+          name: agentx-plan
+          path: ${{ runner.temp }}/plan
+      - uses: actions/download-artifact@v4
+        if: needs.plan.outputs.count != '0'
+        continue-on-error: true # A model may fail before writing/uploading any result.
+        with:
+          pattern: agentx-results-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/results
+      - name: Render model reports and the combined index
+        env:
+          PAGES_URL: ${{ vars.AGENTX_PAGES_URL }}
+        run: |
+          owner=${GITHUB_REPOSITORY_OWNER,,}
+          url=${PAGES_URL:-https://$owner.github.io/${GITHUB_REPOSITORY#*/}}
+          python3 -m agentx_bench report --plan "$RUNNER_TEMP/plan/manifest.json" \
+            --results "$RUNNER_TEMP/results" --baseline-url "$url" --out "$RUNNER_TEMP/site"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentx-site
+          path: ${{ runner.temp }}/site/
+      - uses: actions/upload-pages-artifact@v3
+        id: pages_artifact
+        if: github.event_name == 'schedule' || inputs.publish
+        with:
+          path: ${{ runner.temp }}/site/
+      - name: Check model outcomes after saving reports
+        run: jq -e 'all(.models[]; .status == "ok" or .status == "not-run")' "$RUNNER_TEMP/site/manifest.json"
+
+  pages:
+    needs: report
+    if: ${{ !cancelled() && needs.report.outputs.publish_ready == 'true' && (github.event_name == 'schedule' || inputs.publish) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

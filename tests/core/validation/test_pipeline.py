@@ -9,6 +9,7 @@ import re
 import statistics
 import sys
 from collections.abc import Callable
+from concurrent.futures import Future
 from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
@@ -136,7 +137,13 @@ def _reruns(tmp_path: Path, *details: str) -> tuple[int, set[FindingCode]]:
     """``run_trial``'s candidate submits and finding codes, its candidate task failing
     with each of ``details`` in turn."""
     errors = iter(TaskExecutionFailed(d) for d in details)
-    executor = Mock(submit=Mock(side_effect=lambda *a, **k: Mock(result=Mock(side_effect=next(errors)))))
+
+    def failed(*args: object, **kwargs: object) -> Future:
+        future = Future()
+        future.set_exception(next(errors))
+        return future
+
+    executor = Mock(submit=Mock(side_effect=failed))
     scope = ValidationScope(Path.cwd(), "", "HEAD", (), ())
     batch, *_ = BenchStage(["cpu"])._workloads_to_run(scope, Path(_SCHEMA), ContractRegistry.default())
     context = ExecutionContext(device="cpu", log_path=tmp_path / "log")
@@ -1138,12 +1145,12 @@ def test_reference_compares_the_lent_outputs() -> None:
         for o, value in expected.items():
             outputs[step.output_key(o)].copy_(value)
     keys = [step.output_key(o) for step in request.steps for o in request.contract.mutable_tensors]
-    passed = WorkloadEvaluation(request, outputs, keys, "cpu").evaluate()
+    passed = WorkloadEvaluation(request, [outputs], [keys], ["cpu"]).evaluate()
     assert passed.findings == () and passed.is_complete
 
     bad = request.steps[3]
     outputs[bad.output_key("out")].view(-1)[0] = torch.nan
-    failed = WorkloadEvaluation(request, outputs, keys[:-1], "cpu").evaluate()
+    failed = WorkloadEvaluation(request, [outputs], [keys[:-1]], ["cpu"]).evaluate()
     assert [f.code for f in failed.findings] == [bad.mismatch_code]
     assert failed.findings[0].detail.startswith(bad.label) and not failed.is_complete
 
@@ -1161,8 +1168,8 @@ def test_reference_takes_float64_where_float32_overflows(monkeypatch: pytest.Mon
     request = OpCase.of("gemm@1.0").request
     compose_inputs = request.compose_inputs
 
-    def cancelling(step: Any, device: str) -> dict[str, Any]:
-        args = compose_inputs(step, device)
+    def cancelling(step: Any, device: str, rank: int = 0) -> dict[str, Any]:
+        args = compose_inputs(step, device, rank)
         rows, columns = torch.meshgrid(*(torch.arange(n) for n in args["b"].shape), indexing="ij")
         args["a"] = torch.full_like(args["a"], 2.0**64)
         args["b"] = (2.0**64 * (1 - 2 * ((rows + columns) % 2))).to(args["b"].dtype)
@@ -1170,12 +1177,14 @@ def test_reference_takes_float64_where_float32_overflows(monkeypatch: pytest.Mon
             args["bias"] = torch.zeros_like(args["bias"])
         return args
 
-    monkeypatch.setattr(type(request), "compose_inputs", lambda self, step, device: cancelling(step, device))
+    monkeypatch.setattr(
+        type(request), "compose_inputs", lambda self, step, device, rank=0: cancelling(step, device, rank)
+    )
     outputs = {k: v.zero_() for k, v in request.empty_outputs("cpu").items()}
-    assert WorkloadEvaluation(request, outputs, list(outputs), "cpu").evaluate().findings == ()
+    assert WorkloadEvaluation(request, [outputs], [list(outputs)], ["cpu"]).evaluate().findings == ()
     for v in outputs.values():
         v.fill_(torch.inf)
-    result = WorkloadEvaluation(request, outputs, list(outputs), "cpu").evaluate()
+    result = WorkloadEvaluation(request, [outputs], [list(outputs)], ["cpu"]).evaluate()
     mismatch_codes = {s.mismatch_code for s in request.steps}
     assert result.findings and all(f.code in mismatch_codes for f in result.findings), result.findings
 
