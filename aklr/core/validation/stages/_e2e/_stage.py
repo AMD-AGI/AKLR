@@ -49,7 +49,7 @@ GSM8K_N_QUESTIONS: Final = 1319
 # concurrent requests (run_eval's default is 512: a long-thinking model at 16384 tokens then
 # queues past its client's retries); failed requests tolerated, each scored wrong
 GSM8K_N_THREADS: Final = 64
-GSM8K_MAX_FAILED_REQUESTS: Final = 6
+GSM8K_MAX_FAILED_REQUESTS: Final = 2
 # enough for a thinking model; others stop far earlier
 MAX_TOKENS: Final = 16384
 # provisional, about 2.5 sigma of the on - off difference over 1314 shared questions; to be
@@ -246,8 +246,8 @@ class E2eStage(PipelineStage[E2eReport]):
                     raise RuntimeError(
                         f"run_eval exited with {done.returncode}, no score\n{done.stderr[-2000:]}"
                     )
-                # a few are a busy server's (each scored wrong, at most 0.005 of the score, well
-                # under GSM8K_MAX_DROP); more are a broken one
+                # a few are a busy server's; each is scored wrong, so off's lower its baseline by
+                # at most 2/1314 = 0.0015, under a tenth of GSM8K_MAX_DROP; more are a broken one
                 if n_failed > GSM8K_MAX_FAILED_REQUESTS:
                     raise RuntimeError(f"{n_failed} GSM8K requests failed\n{done.stdout[-2000:]}")
                 result["gsm8k_score"] = float(scores[-1])
@@ -295,6 +295,10 @@ class E2eStage(PipelineStage[E2eReport]):
                 calls = read_calls(calls_dir)
                 result["n_hit_calls"] = sum(c.n_calls for c in calls if c.fallback_reason is None)
                 result["n_fallback_calls"] = sum(c.n_calls for c in calls if c.fallback_reason is not None)
+                # no call at all, served or fallen back: AKLR hooked nothing (no route for this sglang,
+                # the plugin switched off), so on was off; all fallen back is only flagged (the RFC)
+                if not calls:
+                    failures.append("AKLR hooked no sglang call on the on side: no call recorded")
             except (OSError, ValueError) as error:
                 failures.append(f"call files: {error}")
         if failures:
