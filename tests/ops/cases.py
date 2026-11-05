@@ -311,6 +311,28 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         )
         for n_tokens, ep in ((4, False), (256, False), (4, True))
     ),
+    PointSpec(  # one rank's group: the baseline is aiter's fused_moe, at its DeepSeek-V4 Point
+        contract_id="mega_moe@1.0",
+        axes={
+            "n_tokens": 256,
+            "model_dim": 7168,
+            "n_experts": 8,
+            "topk": 6,
+            "inter_dim": 384,
+        },
+        dtypes={
+            "hidden_states": "bfloat16",
+            "w1": "float4_e2m1",
+            "w2": "float4_e2m1",
+            "topk_weights": "float32",
+            "topk_ids": "int32",
+            "w1_scale": "float8_e8m0",
+            "w2_scale": "float8_e8m0",
+            "out": "bfloat16",
+        },
+        attrs={"ep_size": 1},
+        layout_variant_name="gate_up_interleaved",
+    ),
     PointSpec(
         contract_id="gemm@1.0",
         axes={"m": 4, "n": 16, "k": 128},
@@ -563,6 +585,7 @@ GFX950_CONTRACT_IDS = frozenset(
     {
         "fused_moe@1.0",
         "gemm_a4w4_mxfp4@1.0",
+        "mega_moe@1.0",
         "flash_mla_with_kvcache@1.0",
         "fp8_paged_mqa_logits@1.0",  # gfx942 reads its fp8 bytes as e4m3fnuz
         "per_group_quant_fp8@1.0",
