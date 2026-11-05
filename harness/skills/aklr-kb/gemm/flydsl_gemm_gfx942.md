@@ -38,6 +38,7 @@ v0.3.2's source.
 | Bank conflicts in a trace | lds-optimization [Diagnosing LDS Bottlenecks from Trace](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/lds-optimization/SKILL.md) |
 | The combined VGPR budget (arch + accum share 512 per SIMD) and occupancy | prefetch-data-load [Register Budget](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/prefetch-data-load/SKILL.md), gemm-optimization [§10.2](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/gemm-optimization/SKILL.md), kernel-trace-analysis [Register pressure check](https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/kernel-trace-analysis/SKILL.md) |
 | Trace analysis on gfx942 | `../profile.md` § gfx942 (MI300X) |
+| What an instruction, encoding or wait state is on gfx942 | the CDNA3 ISA guide, `../hardware/gfx942/INDEX.md` |
 
 ## This repository's notes
 
