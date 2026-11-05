@@ -35,7 +35,7 @@ class Scenario(FrozenModel):
     # ``unified``, or ``prefill`` then ``decode``: the cell match of each role
     roles: dict[str, dict[str, MatchValue]]
     model_path: str
-    revision: str | None
+    revision: str
     nnodes: dict[str, PositiveInt]  # by role; a role not named has its cell's
     env: dict[str, dict[str, str]]  # by role
     args: dict[str, dict[str, ArgValue]]  # by role
@@ -43,7 +43,8 @@ class Scenario(FrozenModel):
 
 class _Weights(FrozenModel):
     repo: str
-    revision: str | None = None
+    # required: the launcher always sets --revision, so a cell's cannot choose the weights' code
+    revision: str = Field(min_length=1)
 
 
 class _CookbookEntry(FrozenModel):

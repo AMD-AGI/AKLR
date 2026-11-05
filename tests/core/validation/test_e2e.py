@@ -76,7 +76,7 @@ def _scenario(
         cookbook="vendor/model",
         roles=roles,
         model_path="org/Model",
-        revision=None,
+        revision="r0",
         nnodes=nnodes or {},
         env={r: (env or {}).get(r, {}) for r in names},
         args={r: (args or {}).get(r, {}) for r in names},
@@ -106,13 +106,13 @@ models:
         - {hw: mi355x, pdMode: unified, strategy: balanced}
         - prefill: {hw: a3, pdMode: prefill, strategy: default}
           decode: {hw: a3, pdMode: decode, strategy: balanced}
-    weights: {repo: moonshotai/Kimi-K3}
+    weights: {repo: moonshotai/Kimi-K3, revision: r0}
     nnodes: 2
     env: {X: 1}
   disabled:
     enabled: false
     cookbook: {config: a/b, matches: [{hw: mi355x}]}
-    weights: {repo: a/B}
+    weights: {repo: a/B, revision: r0}
     args: {prefill: {--tp: 4}}
 """,
             encoding="utf-8",
@@ -139,16 +139,21 @@ models:
         [
             pytest.param("models: {}", id="no-model"),
             pytest.param(
-                "models: {m: {cookbook: {config: a/b, matches: []}, weights: {repo: a/b}}}", id="no-match"
+                "models: {m: {cookbook: {config: a/b, matches: []}, weights: {repo: a/b, revision: r0}}}",
+                id="no-match",
             ),
             pytest.param("models: {m: {cookbook: {config: a/b, matches: [{hw: x}]}}}", id="no-weights"),
+            pytest.param(
+                "models: {m: {cookbook: {config: a/b, matches: [{hw: x}]}, weights: {repo: a/b}}}",
+                id="no-revision",
+            ),
             pytest.param("scenarios: []", id="old-format"),
             pytest.param(
-                "models: {m: {cookbook: {config: a/b, matches: [{hw: x}]}, weights: {repo: a/b}, nnodes: {decode: 2}}}",
+                "models: {m: {cookbook: {config: a/b, matches: [{hw: x}]}, weights: {repo: a/b, revision: r0}, nnodes: {decode: 2}}}",
                 id="nnodes-of-no-role",
             ),
             pytest.param(
-                "models: {m: {cookbook: {config: a/b, matches: [{hw: x}, {hw: x}]}, weights: {repo: a/b}}}",
+                "models: {m: {cookbook: {config: a/b, matches: [{hw: x}, {hw: x}]}, weights: {repo: a/b, revision: r0}}}",
                 id="repeated-name",
             ),
         ],
@@ -180,7 +185,7 @@ class TestDeploymentPlan:
         assert process.argv == (
             "env", "A=1", "B=3", "S=stage", "AKLR_DISABLE=1", sys.executable, "-m", "sglang.launch_server",
             "--tp", "8", "--mem-fraction-static", "0.8", "--model-path", "org/Model",
-            "--tokenizer-path", "org/Model", "--revision", "main", "--host", "127.0.0.1", "--port", "30000",
+            "--tokenizer-path", "org/Model", "--revision", "r0", "--host", "127.0.0.1", "--port", "30000",
         )  # fmt: skip
         assert process.log_path == Path("/run/unified-0.log")
 
@@ -188,7 +193,7 @@ class TestDeploymentPlan:
         args = {"--tp": 4, "--mem-fraction-static": None, "--enable-x": True, "--model-path": "local/dir"}
         (process,) = self._plan(_scenario({"unified": _UNIFIED}, args={"unified": args})).processes
         flags = process.argv[process.argv.index("sglang.launch_server") + 1 :]
-        assert flags == ("--model-path", "local/dir", "--tokenizer-path", "org/Model", "--revision", "main", "--tp", "4",
+        assert flags == ("--model-path", "local/dir", "--tokenizer-path", "org/Model", "--revision", "r0", "--tp", "4",
             "--enable-x", "--host", "127.0.0.1", "--port", "30000")  # fmt: skip
 
     def test_multi_node_flags_and_shell_quoted_launch(self) -> None:

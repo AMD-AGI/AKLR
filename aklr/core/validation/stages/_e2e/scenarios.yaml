@@ -15,7 +15,7 @@ models:
       config: zai-org/glm-5.2  # docs/src/snippets/configs/<this>.jsx
       matches:
         - {hw: mi355x, variant: default, quant: mxfp4, strategy: low-latency, nodes: single}
-    weights:  # the launcher sets --model-path (and {{MODEL_NAME}}) and --revision from these
+    weights:  # the launcher sets --model-path, --tokenizer-path and --revision (required) from these
       repo: amd/GLM-5.2-MXFP4
       revision: 386bd0e4ec821f7b07975701cec3c3b953a5576a
     env:
