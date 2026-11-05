@@ -37,10 +37,12 @@ _ENV_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 # what a cookbook's env may not set: the loader's, the interpreter's and the shell's own hooks
 # run code before sglang does (LD_PRELOAD, PYTHONWARNINGS naming a module to import, BASH_ENV,
 # PATH, a profiler library), Hugging Face's, ModelScope's, the caches', the certificates' and
-# the proxies' settings redirect what is downloaded or loaded, and AKLR's are the stage's
+# the proxies' settings redirect what is downloaded or loaded, and AKLR's and the device masks
+# are the stage's (HIP_VISIBLE_DEVICES indexes within ROCR_VISIBLE_DEVICES)
 _UNSAFE_ENV_NAME: Final = re.compile(
     r"LD_\w*|DYLD_\w*|PYTHON\w*|PATH|HOME|ENV|BASH_ENV|SHELL|IFS|GCONV_PATH|LOCPATH|NLSPATH|TMPDIR"
     r"|HF_\w*|HUGGINGFACE_\w*|\w*MODELSCOPE\w*|TRANSFORMERS_\w*|TORCH_HOME|XDG_\w*|TRITON_\w*"
+    r"|ROCR_VISIBLE_DEVICES|HIP_VISIBLE_DEVICES|CUDA_VISIBLE_DEVICES|GPU_DEVICE_ORDINAL"
     r"|AKLR_\w*|HSA_TOOLS_LIB|ROCP_\w*|OPENSSL_CONF|SSL_CERT_\w*|REQUESTS_CA_BUNDLE|CURL_CA_BUNDLE"
     r"|(?i:\w*_proxy)"
 )

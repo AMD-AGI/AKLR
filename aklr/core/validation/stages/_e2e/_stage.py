@@ -56,8 +56,9 @@ PROMPT: Final = "What is the capital of France? Answer with one word."
 EXPECTED_ANSWER: Final = "Paris"
 # below it, off is not the model answering (a broken recipe or grading), and on is not run
 MIN_OFF_GSM8K: Final = 0.5
-# a side, from its start to its stop
+# a side, from its start to its stop, and of it the start (weights, graph capture)
 SIDE_TIMEOUT_SECONDS: Final = 5400.0
+START_TIMEOUT_SECONDS: Final = 2400.0
 
 Side = Literal["off", "on"]
 
@@ -209,7 +210,8 @@ class E2eStage(PipelineStage[E2eReport]):
         failures: list[str] = []
         self.progress.write(f"{side}: starting {len(deployment.processes)} processes")
         try:
-            entry_url = deployment.start(timeout=SIDE_TIMEOUT_SECONDS)
+            # a slow weight load fails the start, not the grading it would leave no time for
+            entry_url = deployment.start(timeout=START_TIMEOUT_SECONDS)
             self.progress.write(
                 f"{side}: serving at {entry_url}; GSM8K, {GSM8K_N_QUESTIONS} questions less 5 shots"
             )
@@ -273,7 +275,8 @@ class E2eStage(PipelineStage[E2eReport]):
             failures.append(f"start: {error}")
         finally:
             log_tails = deployment.stop()
-        if side == "on":
+        # no call directory: no server ever served, which is no "AKLR served no call"
+        if side == "on" and calls_dir.exists():
             try:
                 calls = read_calls(calls_dir)
                 result["n_hit_calls"] = sum(c.n_calls for c in calls if c.fallback_reason is None)
