@@ -12,7 +12,9 @@
 #include <Config.h>
 #include <GenericTraceActivity.h>
 #include <IActivityProfiler.h>
+#include <dlfcn.h>
 #include <fmt/format.h>
+#include <hip/hip_version.h>
 #include <libkineto.h>
 #include <output_base.h>
 #include <rocprofiler-sdk/rocprofiler.h>
@@ -36,7 +38,26 @@ constexpr const char *kOptIn = "aklr_kernel_tracer";
 // one torch.profiler run
 class Session : public libkineto::IActivityProfilerSession {
 public:
-  void start() override { start_profile(); }
+  explicit Session(bool &hip_ops_off) : hip_ops_off_(hip_ops_off) {}
+
+  void start() override {
+    // WORKAROUND: below HIP 7.16 (ROCm 10.1) clr times each node of a graph
+    // launch into one vector from two threads unlocked
+    // (AccumulateCommand::addTimestamps), corrupting the heap. It does so for
+    // roctracer's HIP ops, which Kineto turns on with the CPU activity alone
+    // and keeps on, though its CPU-only runs drop them, as ours do: turn them
+    // off for the process. Delete with hip_ops_off_ when the images ship 7.16
+#if HIP_VERSION < 71600000
+    using Disable = int (*)(uint32_t);
+    constexpr uint32_t kHipOps = 2; // roctracer's ACTIVITY_DOMAIN_HIP_OPS
+    if (auto disable = reinterpret_cast<Disable>(
+            dlsym(RTLD_DEFAULT, "roctracer_disable_domain_activity"))) {
+      disable(kHipOps);
+      hip_ops_off_ = true;
+    }
+#endif
+    start_profile();
+  }
   void stop() override { profile_ = stop_profile(); }
 
   void pushCorrelationId(uint64_t id) override { push_op(id); }
@@ -158,6 +179,7 @@ public:
 private:
   Profile profile_;
   libkineto::TraceSpan span_{0, 0, kOptIn};
+  bool &hip_ops_off_;
 };
 
 class Child : public libkineto::IActivityProfiler {
@@ -171,8 +193,16 @@ public:
   std::unique_ptr<libkineto::IActivityProfilerSession>
   configure(const std::set<libkineto::ActivityType> &types,
             const libkineto::Config &config) override {
-    if (config.getCustomConfig().find(kOptIn) == std::string::npos)
+    const bool gpu = types.count(libkineto::ActivityType::CONCURRENT_KERNEL) ||
+                     types.count(libkineto::ActivityType::GPU_MEMCPY);
+    if (config.getCustomConfig().find(kOptIn) == std::string::npos) {
+      // Kineto's own GPU tracer would record nothing
+      if (gpu && hip_ops_off_)
+        throw std::runtime_error(
+            "aklr_kernel_tracer turned roctracer's HIP ops off in this "
+            "process: trace the GPU with Kineto in another process");
       return nullptr;
+    }
     // Kineto's own GPU tracer would record each kernel a second time
     if (types.count(libkineto::ActivityType::CONCURRENT_KERNEL)) {
       throw std::runtime_error(
@@ -180,7 +210,7 @@ public:
           "ProfilerActivity.CPU only");
     }
     attach(); // here, as Kineto drops a session's own errors
-    return std::make_unique<Session>();
+    return std::make_unique<Session>(hip_ops_off_);
   }
 
   std::unique_ptr<libkineto::IActivityProfilerSession>
@@ -190,6 +220,7 @@ public:
   }
 
 private:
+  bool hip_ops_off_ = false;
   std::string name_ = kOptIn;
   std::set<libkineto::ActivityType> types_{
       libkineto::ActivityType::CONCURRENT_KERNEL,

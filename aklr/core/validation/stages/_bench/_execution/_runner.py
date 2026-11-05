@@ -512,7 +512,8 @@ class DisposableExecutionRunner(ExecutionRunner):
                         os.environ.update(
                             HIP_VISIBLE_DEVICES=visible,
                             CUDA_VISIBLE_DEVICES=visible,
-                            GPU_FORCE_QUEUE_PROFILING="1",
+                            # no GPU_FORCE_QUEUE_PROFILING: below HIP 7.16 clr corrupts its heap timing a
+                            # graph launch's nodes, and it holds every dispatch to a ~4 µs floor
                             ROC_SIGNAL_POOL_SIZE="65536",
                             # tensors lent over KFD's own IPC handles: a dma-buf imported on the GPU it
                             # came from shares the exporter's GEM handle, which both frees delete, the

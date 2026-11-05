@@ -37,7 +37,8 @@ os.environ.setdefault("ROCP_TOOL_ATTACH", "1")
 def kernel_tracer():
     """A Kineto child profiler for torch.profiler runs that pass KERNEL_TRACER_CONFIG and ProfilerActivity.CPU only.
 
-    Its check() raises what the last run's tracing failed with: that run has no GPU events."""
+    Its check() raises what the last run's tracing failed with: that run has no GPU events. Below HIP 7.16 a process
+    it ran in can no longer trace the GPU with Kineto's own tracer."""
     from torch.utils.cpp_extension import ROCM_HOME, include_paths, load
 
     from aklr.core.platform.env import RuntimeEnv
@@ -61,6 +62,12 @@ def kernel_tracer():
         warnings.warn(
             "rocprofiler-sdk fixed ROCM-29087: delete the WORKAROUND in aklr/core/utils/_kernel_tracer.cpp",
             FutureWarning,  # Python's default filters hide a DeprecationWarning
+            stacklevel=2,
+        )
+    if tracer.hip_version >= (7, 16):  # HIP 7.16 (ROCm 10.1) times graph nodes into slots (ROCm/rocm-systems@1c1ab59)
+        warnings.warn(
+            "HIP fixed clr's graph timing race: delete the WORKAROUND in aklr/core/utils/_kineto_profiler.cpp",
+            FutureWarning,
             stacklevel=2,
         )
     return tracer

@@ -1628,6 +1628,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.attr("rocprofiler_sdk_version") = pybind11::make_tuple(
       ROCPROFILER_SDK_VERSION_MAJOR, ROCPROFILER_SDK_VERSION_MINOR,
       ROCPROFILER_SDK_VERSION_PATCH);
+  m.attr("hip_version") = pybind11::make_tuple(
+      HIP_VERSION_MAJOR, HIP_VERSION_MINOR, HIP_VERSION_PATCH);
   m.def("check", [] {
     if (!aklr::kernel_tracer::failure.empty())
       throw std::runtime_error(std::exchange(aklr::kernel_tracer::failure, {}));
