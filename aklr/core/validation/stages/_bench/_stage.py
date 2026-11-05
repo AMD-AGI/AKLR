@@ -55,7 +55,9 @@ EVALUATION_SECONDS_PER_OUTPUT_GIB: Final = 60.0
 
 def _evaluation_timeout_seconds(requests: Sequence[TrialRequest]) -> float:
     output_gib = sum(r.output_bytes for r in requests) / (1 << 30)
-    return WORKLOAD_TIMEOUT_SECONDS * len(requests) + EVALUATION_SECONDS_PER_OUTPUT_GIB * output_gib
+    # every rank's outputs, each against its own reference
+    seconds = WORKLOAD_TIMEOUT_SECONDS * len(requests) + EVALUATION_SECONDS_PER_OUTPUT_GIB * output_gib
+    return seconds * requests[0].n_ranks
 
 
 class UnreadableIncumbent(RuntimeError):
@@ -106,17 +108,26 @@ class BenchStage(PipelineStage[BenchReport]):
             range(len(batches)),
             key=lambda i: -sum(1 + r.input_bytes / 2**30 for r in batches[i]),
         )
-        with (
-            Executor.for_devices(self._devices) as executor,
-            ThreadPoolExecutor(len(self._devices)) as pool,
-        ):
-            started = list(
-                pool.map(
-                    lambda i: self._run_batch(scope, executor, batches[i], done, len(batches)),
-                    order,
-                )
-            )
-        outcomes = [started[order.index(i)] for i in range(len(batches))]
+        by_ranks: dict[int, list[int]] = {}
+        for i in order:
+            by_ranks.setdefault(batches[i][0].n_ranks, []).append(i)
+        by_index: dict[int, tuple[list[Finding], list[WorkloadRecord]]] = {}
+        # one phase per group size, the largest first: a group's devices are leased together
+        for n_ranks, indices in sorted(by_ranks.items(), reverse=True):
+            if n_ranks > len(self._devices):
+                detail = f"{n_ranks} ranks call the op together, {len(self._devices)} devices"
+                for i in indices:
+                    failure = Finding.unlocated(FindingCode.NO_MATCHING_DEVICE, detail)
+                    by_index[i] = self._judged_findings(scope, batches[i], [failure], None, None)
+                    self.progress.write(f"{next(done)}/{len(batches)} {batches[i][0].schema_path}: {detail}")
+                continue
+            with (
+                Executor.for_devices(self._devices, devices_per_task=n_ranks) as executor,
+                ThreadPoolExecutor(len(self._devices) // n_ranks) as pool,
+            ):
+                run = lambda i: self._run_batch(scope, executor, batches[i], done, len(batches))  # noqa: B023
+                by_index |= zip(indices, pool.map(run, indices), strict=True)
+        outcomes = [by_index[i] for i in range(len(batches))]
         findings = [*unreadable, *(f for found, _ in outcomes for f in found)]
         records = [r for _, batch_records in outcomes for r in batch_records]
         return BenchReport.from_findings(findings, workload_records=tuple(records))

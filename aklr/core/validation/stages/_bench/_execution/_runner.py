@@ -204,7 +204,7 @@ class DisposableExecutionRunner(ExecutionRunner):
             args=(
                 child_endpoint,
                 self._runner_id,
-                self._lease.resource.device,
+                self._lease.resource.devices,
                 self._engine,
                 self._directory,
                 self._n_resources,
@@ -470,14 +470,14 @@ class DisposableExecutionRunner(ExecutionRunner):
     def _run_child(
         endpoint: ChildRunnerEndpoint,
         runner_id: str,
-        device: str,
+        devices: tuple[str, ...],
         engine: ExecutionEngine,
         directory: Path,
         n_resources: int,
         parent_pid: int,
     ) -> None:
         task_id: str | None = None
-        is_gpu = device != "cpu"
+        is_gpu = devices[0] != "cpu"
         try:
             os.setsid()
             libc = ctypes.CDLL(None, use_errno=True)
@@ -508,7 +508,7 @@ class DisposableExecutionRunner(ExecutionRunner):
                                 "lending tensors takes KFD's legacy IPC (HSA_ENABLE_IPC_MODE_LEGACY), "
                                 "which only the ROCm DKMS amdgpu driver has; this host's amdgpu is in-tree"
                             )
-                        visible = physical_device(device)
+                        visible = ",".join(map(physical_device, devices))
                         os.environ.update(
                             HIP_VISIBLE_DEVICES=visible,
                             CUDA_VISIBLE_DEVICES=visible,
@@ -544,6 +544,7 @@ class DisposableExecutionRunner(ExecutionRunner):
                         engine.context_type(
                             device="cuda:0" if is_gpu else "cpu",
                             log_path=task_log.path,
+                            n_devices=len(devices),
                         ),
                     )
                     # the log is complete when the parent reads its tail

@@ -202,7 +202,11 @@ class TrialRequest:
             for o in semantics.mutable_tensor_declarations(self.schema_json).values()
         )
 
-    def compose_inputs(self, step: Step | None, device: str) -> dict[str, Any]:
+    @property
+    def n_ranks(self) -> int:
+        return self.contract.ranks_at(self.point)
+
+    def compose_inputs(self, step: Step | None, device: str, rank: int = 0) -> dict[str, Any]:
         input_set = "timing" if step is None else step.input_set
         row_major_args = semantics.row_major_inputs(
             self.schema_json,
@@ -210,6 +214,7 @@ class TrialRequest:
             self.distributions,
             input_set=input_set,
             device=device,
+            rank=rank,
         )
         if step is None:
             return row_major_args

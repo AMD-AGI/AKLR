@@ -85,6 +85,8 @@ class OpContract(FrozenModel):
     layout_variants: LayoutVariantsSpec
     compare: CompareSpec = CompareSpec()
     kernel: KernelSpec | None = None
+    # the attr whose value is how many ranks, one a device, call the op together; None: one
+    ranks: str | None = None
 
     @model_validator(mode="after")
     def _check_kind(self) -> OpContract:
@@ -322,6 +324,20 @@ class OpContract(FrozenModel):
             )
         return self
 
+    @model_validator(mode="after")
+    def _check_ranks(self) -> OpContract:
+        if self.ranks is None:
+            return self
+        attr = self.attrs.get(self.ranks)
+        if attr is None or not all(
+            isinstance(v, int) and not isinstance(v, bool) and v >= 1 for v in attr.values
+        ):
+            raise ValueError(f"ranks: {self.ranks!r} is not an attr of positive ints")
+        # the reference task runs on one device: it cannot call the group's baseline
+        if any(b.kind == "baseline_relative" for s in self.tensors().values() for _, b in s.error_bounds):
+            raise ValueError("ranks: a baseline_relative bound needs the baseline in the reference task")
+        return self
+
     def _axis_dims(self, axis: str, name: str) -> tuple[int, ...] | None:
         layouts = [v.layout_of(name) for v in self.layout_variants.by_name.values()]
         dims = []
@@ -414,6 +430,26 @@ class OpContract(FrozenModel):
     def mutable_tensors_by_name(self, values: Any) -> dict[str, Any]:
         """A reference's ``values`` (one tensor, else a tuple) by name in ``mutable_tensors``."""
         return _by_name(self.mutable_tensors, values)
+
+    def ranks_at(self, point: PointSpec) -> int:
+        """How many ranks call the op together at ``point``."""
+        return 1 if self.ranks is None else point.attrs[self.ranks]
+
+    def reference_outputs(
+        self,
+        point: PointSpec,
+        group_args: Sequence[Mapping[str, Any]],
+        rank: int,
+        decode: Callable,
+    ) -> dict[str, Any]:
+        """The reference of ``rank``'s call, its inputs read through ``decode``, by name in
+        ``mutable_tensors``; ``group_args`` holds every rank's row-major args in rank order,
+        each on its rank's device. A contract with ``ranks`` has a reference of ``(point,
+        group_args, rank, decode)``, any other one of ``(point, row_major_args, decode)``."""
+        reference_fn = getattr(op_module(self.op_package, "reference"), self.reference_name)
+        if self.ranks is None:
+            return self.mutable_tensors_by_name(reference_fn(point, group_args[rank], decode))
+        return self.mutable_tensors_by_name(reference_fn(point, group_args, rank, decode))
 
     def call_mutable_tensors(self, result: Any, call: Mapping[str, Any]) -> dict[str, Any]:
         """A call's mutable tensors by name: its api ``result``'s outputs, then the mutable
@@ -512,6 +548,17 @@ class OpContract(FrozenModel):
         return f"{contract_name(self.contract_id)}_reference"
 
     @property
+    def group_init_name(self) -> str:
+        """The group set-up function's name in the op's ``group.py``."""
+        return f"{contract_name(self.contract_id)}_group_init"
+
+    def group_init(self) -> Callable | None:
+        """The op's ``group.py`` function ``group_init_name``, if it has one: each rank
+        of a ``ranks`` group calls it once, its torch.distributed group up, to set up
+        what the op's calls take for granted (as an engine does before the first)."""
+        return self._optional_function("group", self.group_init_name)
+
+    @property
     def baseline_name(self) -> str:
         """The baseline function's name in the op's ``baseline.py``."""
         return f"{contract_name(self.contract_id)}_baseline"
@@ -520,13 +567,16 @@ class OpContract(FrozenModel):
         """The op's ``baseline.py`` function ``baseline_name``, if it has one: it takes the
         api's params and returns the outputs, as the api does, and raises
         ``NotImplementedError`` for a call it does not serve."""
+        return self._optional_function("baseline", self.baseline_name)
+
+    def _optional_function(self, submodule: str, name: str) -> Callable | None:
         try:
-            module = op_module(self.op_package, "baseline")
+            module = op_module(self.op_package, submodule)
         except ModuleNotFoundError as e:
-            if e.name != f"{self.op_package}.baseline":  # baseline.py exists but its own import failed
+            if e.name != f"{self.op_package}.{submodule}":  # the module exists but its own import failed
                 raise
             return None
-        return getattr(module, self.baseline_name, None)
+        return getattr(module, name, None)
 
     def check_point(self, point: PointSpec) -> None:
         """Raise ``ValueError`` unless ``point`` names exactly this contract's keys (no
