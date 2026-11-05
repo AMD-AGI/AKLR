@@ -220,6 +220,69 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # Qwen3-Next's GDN shrunk: two key heads, so that the grouped projections differ from
+    # contiguous ones
+    PointSpec(
+        contract_id="qwen3_next_gdn_prefill_group_fp8_quant@1.0",
+        axes={
+            "n_tokens": 4,
+            "n_sequences": 2,
+            "n_slots": 4,
+            "n_v_heads": 4,
+            "key_dim": 16,
+            "value_dim": 128,
+            "conv_dim": 576,
+            "n_starts": 3,
+        },
+        dtypes={
+            "projected_qkvz": "bfloat16",
+            "projected_ba": "bfloat16",
+            "conv_state": "bfloat16",
+            "delta_state": "float32",
+            "cache_indices": "int32",
+            "cu_seqlens": "int32",
+            "has_initial_state": "bool",
+            "conv_weight": "bfloat16",
+            "conv_bias": "bfloat16",
+            "a_log": "float32",
+            "dt_bias": "bfloat16",
+            "norm_weight": "bfloat16",
+            "normalized": "bfloat16",
+            "values": "float8_e4m3fn",
+            "scales": "float32",
+        },
+        attrs={"max_seq_len": 2},
+        layout_variant_name="row_major",
+    ),
+    # a slot more than rows: the drawn indices hold one -1 padding row
+    PointSpec(
+        contract_id="qwen3_next_gdn_decode_group_fp8_quant@1.0",
+        axes={
+            "n_tokens": 4,
+            "n_slots": 4,
+            "n_v_heads": 4,
+            "key_dim": 16,
+            "value_dim": 128,
+            "conv_dim": 576,
+        },
+        dtypes={
+            "projected_qkvz": "bfloat16",
+            "projected_ba": "bfloat16",
+            "conv_state": "bfloat16",
+            "delta_state": "float32",
+            "cache_indices": "int32",
+            "conv_weight": "bfloat16",
+            "conv_bias": "bfloat16",
+            "a_log": "float32",
+            "dt_bias": "bfloat16",
+            "norm_weight": "bfloat16",
+            "normalized": "bfloat16",
+            "values": "float8_e4m3fn",
+            "scales": "float32",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
@@ -233,5 +296,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "qwen2_moe_fp8_router_experts@1.0",
         "qwen2_moe_router@1.0",
         "gdn_decode_group_fp8_quant@1.0",
+        "qwen3_next_gdn_prefill_group_fp8_quant@1.0",
+        "qwen3_next_gdn_decode_group_fp8_quant@1.0",
     }
 )
