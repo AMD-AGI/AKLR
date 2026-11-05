@@ -64,63 +64,63 @@
         "m": 8
       },
       "accuracy": "passed",
-      "speedup": 1.107
+      "speedup": 1.145
     },
     {
       "axes": {
         "m": 12
       },
       "accuracy": "passed",
-      "speedup": 1.099
+      "speedup": 1.165
     },
     {
       "axes": {
         "m": 16
       },
       "accuracy": "passed",
-      "speedup": 1.098
+      "speedup": 1.176
     },
     {
       "axes": {
         "m": 24
       },
       "accuracy": "passed",
-      "speedup": 1.14
+      "speedup": 1.135
     },
     {
       "axes": {
         "m": 32
       },
       "accuracy": "passed",
-      "speedup": 1.184
+      "speedup": 1.23
     },
     {
       "axes": {
         "m": 40
       },
       "accuracy": "passed",
-      "speedup": 1.209
+      "speedup": 1.178
     },
     {
       "axes": {
         "m": 48
       },
       "accuracy": "passed",
-      "speedup": 1.266
+      "speedup": 1.324
     },
     {
       "axes": {
         "m": 56
       },
       "accuracy": "passed",
-      "speedup": 1.323
+      "speedup": 1.348
     },
     {
       "axes": {
         "m": 60
       },
       "accuracy": "passed",
-      "speedup": 1.329
+      "speedup": 1.359
     },
     {
       "axes": {
@@ -134,42 +134,42 @@
         "m": 80
       },
       "accuracy": "passed",
-      "speedup": 1.451
+      "speedup": 1.459
     },
     {
       "axes": {
         "m": 96
       },
       "accuracy": "passed",
-      "speedup": 1.424
+      "speedup": 1.415
     },
     {
       "axes": {
         "m": 112
       },
       "accuracy": "passed",
-      "speedup": 1.418
+      "speedup": 1.42
     },
     {
       "axes": {
         "m": 893
       },
       "accuracy": "passed",
-      "speedup": 1.302
+      "speedup": 1.304
     },
     {
       "axes": {
         "m": 2732
       },
       "accuracy": "passed",
-      "speedup": 0.933
+      "speedup": 0.947
     },
     {
       "axes": {
         "m": 9397
       },
       "accuracy": "passed",
-      "speedup": 1.005
+      "speedup": 0.961
     },
     {
       "axes": {
