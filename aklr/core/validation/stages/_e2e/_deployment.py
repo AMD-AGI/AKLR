@@ -119,7 +119,7 @@ class Deployment:
         run_dir: Path,
     ) -> Deployment:
         """Each role's processes from its cell with the scenario's overrides, over ``hosts``
-        in order, the router on node 0 (``env``, then the cell's and the scenario's, then
+        in order, the router on node 0 (the cell's env, then the scenario's, ``env`` and
         ``side_env``); ``ValueError`` when nodes are short or a placeholder is left."""
         cells = {role: cookbook.cell(match) for role, match in scenario.roles.items()}
         if (n_nodes := sum(c.nnodes for c in cells.values())) > len(hosts):
@@ -133,8 +133,10 @@ class Deployment:
         bootstrap_port = _DEFAULT_BOOTSTRAP_PORT
         for role, cell in cells.items():
             nodes = role_hosts[role]
+            # the stage's and the side's last: a cookbook commit cannot redirect the devices,
+            # PYTHONPATH or AKLR's switches
             role_env = (
-                dict(env) | dict(e.split("=", 1) for e in cell.env) | scenario.env[role] | dict(side_env)
+                dict(e.split("=", 1) for e in cell.env) | scenario.env[role] | dict(env) | dict(side_env)
             )
             flags = [shlex.split(f) for f in cell.flags]
             overrides = {"--revision": scenario.revision} if scenario.revision else {}
