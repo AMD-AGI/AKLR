@@ -133,7 +133,9 @@ class Role:
         weights = {
             "--model-path": scenario.model_path, "--tokenizer-path": scenario.model_path,
             "--model": None, "--tokenizer": None,
-        } | ({"--revision": scenario.revision} if scenario.revision else {})  # fmt: skip
+            # always set: unset, a cell's --revision (or --revis) would choose the weights' code
+            "--revision": scenario.revision or "main",
+        }  # fmt: skip
         roles = []
         for name, match in scenario.roles.items():
             cell = cookbook.cell(match)
