@@ -38,7 +38,7 @@ below). Where it differs on gfx950 with FlyDSL v0.3.2, and what this repository 
 
 - **§Register pressure check, reading the real counts**: `out_kernel_trace.csv` is not authoritative for registers
   either: rocprofv3's `VGPR_Count` has read half the true value and `Accum_VGPR_Count` 0
-  (`gemm/flydsl_gemm_attribution.md` §9). Read `.vgpr_count` and `.agpr_count` from the kernel's dumped ISA
+  (`gemm/attribution.md` §9). Read `.vgpr_count` and `.agpr_count` from the kernel's dumped ISA
   (`FLYDSL_DUMP_IR=1`, `NN_final_isa.s`). The analyzer's register counts are then a floor, so treat its
   register-based occupancy as an upper bound. The §Error Handling row "PMC `accum_vgpr=0` but kernel uses MFMA"
   has the same fix: the CSV reads `Accum_VGPR_Count` as 0, so read the two counts from the ISA rather than adding
@@ -46,9 +46,9 @@ below). Where it differs on gfx950 with FlyDSL v0.3.2, and what this repository 
 - **§Register pressure check, the warning**: in FlyDSL v0.3.2 `maxnreg` does not cap registers, and a cap set
   through the `amdgpu-num-vgpr` attribute turns into spills (`flydsl/language/limits.md`).
 - **§L2 / HBM efficiency analysis**: a 32B fraction ≈ 0% means full-size requests, not full 64B cache lines (the
-  gfx950 cache line is 128 B: `gemm/flydsl_gemm_datapath.md` §6). Judge the achieved bandwidth against a stream
+  gfx950 cache line is 128 B: `gemm/datapath.md` §6). Judge the achieved bandwidth against a stream
   bandwidth measured on the same machine with the same read/write ratio, not against the theoretical HBM peak
-  (`gemm/flydsl_gemm_measurement.md` §7).
+  (`gemm/measurement.md` §7).
 
 ## bisect-perf-regression
 

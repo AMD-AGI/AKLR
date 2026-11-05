@@ -251,6 +251,13 @@ jobs:
           # Not aiter's default, its site-packages tree or, if that is read-only, ~/.aiter,
           # which outlives the job.
           export AITER_JIT_DIR="$cache/aiter-jit"
+          # FIXME: workaround for mori (ROCm/mori main, f39fa765): its JIT compiles device bitcode
+          # without TheRock's sysdeps include dir, so rocm_smi's kfd_ioctl.h misses
+          # <libdrm/drm.h>; remove when mori/jit/core.py::_collect_include_dirs adds it.
+          # Only libdrm is exposed: sysdeps' zlib/elf headers would shadow the system ones.
+          mkdir -p "$AKLR_CI_STATE_DIR/include"
+          ln -sfn /opt/rocm/lib/rocm_sysdeps/include/libdrm "$AKLR_CI_STATE_DIR/include/libdrm"
+          export CPATH="$AKLR_CI_STATE_DIR/include${CPATH:+:$CPATH}"
           # Bench task directories need a local disk (peak len(devices) × 16 GiB): flock, atomic renames, real free space.
           export TMPDIR="$AKLR_CI_STATE_DIR"
           echo "📂 Checkout: $GITHUB_WORKSPACE (commit $(git rev-parse --short HEAD))"
@@ -311,6 +318,7 @@ jobs:
             printf 'XDG_CACHE_HOME=%s\n' "$XDG_CACHE_HOME"
             printf 'AKLR_KERNEL_CACHE_DIR=%s\n' "$AKLR_KERNEL_CACHE_DIR"
             printf 'AITER_JIT_DIR=%s\n' "$AITER_JIT_DIR"
+            printf 'CPATH=%s\n' "$CPATH"
             printf 'TMPDIR=%s\n' "$TMPDIR"
           } >> "$GITHUB_ENV"
           echo '✅ AKLR environment ready: checkout imports verified, GPU visible.'

@@ -49,9 +49,10 @@ The two numbers come from different rulers, and the description's number is a me
 - **The baseline is the contract's `<contract>_baseline`**, here `gemm_a8w8_blockwise_scaled_baseline`, which calls
   aiter's `gemm_a8w8_blockscale_bpreshuffle`; for the `b_shuffled_row_major_a_scale` variant, the timed baseline
   call also relayouts `a_scale` (S5).
-- **AKLR CI uses the FlyDSL of its CI image**: the GPU job installs the checkout with `--no-deps` (S6), and these
-  schemas declare no `requires`. That was FlyDSL 0.3.4.1 for run 40154665266 and 0.3.1 for the run of `cc6e3b96c`
-  (`../pitfalls/measured_a_different_build.md`). The PR's numbers were taken on FlyDSL 0.3.2.
+- **The CI of these runs used the FlyDSL of its CI image** (in the repository before this one): the GPU job installed
+  the checkout with `--no-deps` (S6), and these schemas declare no `requires`. That was FlyDSL 0.3.4.1 for run
+  40154665266 and 0.3.1 for the run of `cc6e3b96c` (`../pitfalls/measured_a_different_build.md`). The PR's numbers
+  were taken on FlyDSL 0.3.2.
 - **The PR's ruler** (AgentKernelArena) alternated baseline and candidate three times on one MI355X, took per-case
   medians and averaged 13 cases (E3); its baseline call, cache state and input handling for these kernels are not
   recorded. For another task of the same pipeline, commit `a7a8de605` describes the timing as one CUDA graph
@@ -78,7 +79,7 @@ The two numbers come from different rulers, and the description's number is a me
 - After a loop moves to another machine, read its rounds by the same-card comparison it keeps on, not by "vs best",
   and re-measure the best there before quoting any ratio.
 - Use another harness's number for direction only. How to build a ruler that resolves a given effect is in
-  `../gemm/flydsl_gemm_measurement.md` §1–2 and §4; pricing the competitor and the operating point in §7.
+  `../gemm/measurement.md` §1–2 and §4; pricing the competitor and the operating point in §7.
 
 ## Scope
 
