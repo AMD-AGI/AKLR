@@ -36,10 +36,13 @@ _LAUNCHER_FLAGS: Final = frozenset({"--host", "--port", "--nnodes", "--node-rank
 _ENV_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 # what a cookbook's env may not set: the loader's, the interpreter's and the shell's own hooks
 # run code before sglang does (LD_PRELOAD, PYTHONWARNINGS naming a module to import, BASH_ENV,
-# PATH), and Hugging Face's and the proxies' settings redirect what is downloaded or loaded
+# PATH, a profiler library), Hugging Face's, ModelScope's, the caches', the certificates' and
+# the proxies' settings redirect what is downloaded or loaded, and AKLR's are the stage's
 _UNSAFE_ENV_NAME: Final = re.compile(
     r"LD_\w*|DYLD_\w*|PYTHON\w*|PATH|HOME|ENV|BASH_ENV|SHELL|IFS|GCONV_PATH|LOCPATH|NLSPATH|TMPDIR"
-    r"|HF_\w*|HUGGINGFACE_\w*|(?i:\w*_proxy)"
+    r"|HF_\w*|HUGGINGFACE_\w*|\w*MODELSCOPE\w*|TRANSFORMERS_\w*|TORCH_HOME|XDG_\w*|TRITON_\w*"
+    r"|AKLR_\w*|HSA_TOOLS_LIB|ROCP_\w*|OPENSSL_CONF|SSL_CERT_\w*|REQUESTS_CA_BUNDLE|CURL_CA_BUNDLE"
+    r"|(?i:\w*_proxy)"
 )
 _KNOWN_PLACEHOLDER: Final = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 _PLACEHOLDER: Final = re.compile(r"\{\{.*?\}\}|<[A-Za-z][\w-]*>")
@@ -122,13 +125,15 @@ class Role:
     @classmethod
     def of(cls, scenario: Scenario, cookbook: Cookbook) -> tuple[Role, ...]:
         """The scenario's roles, in order; the launcher owns the weights (``--model-path``
-        and ``--revision`` from the scenario, no tokenizer of the cell's), which only the
-        scenario's ``args`` override."""
+        ``--tokenizer-path`` and ``--revision`` from the scenario, whatever the cell says), which
+        only the scenario's ``args`` override."""
+        # set, not only removed, and after the cell's flags: argparse takes the last value, and
+        # also reads a prefix (--tokenizer-p) as the flag; a tokenizer of another repository
+        # would run that repository's remote code
         weights = {
-            "--model-path": scenario.model_path, "--model": None, "--revision": scenario.revision,
-            # a tokenizer is the model's too: another repository's would run its own remote code
-            "--tokenizer-path": None, "--tokenizer": None,
-        }  # fmt: skip
+            "--model-path": scenario.model_path, "--tokenizer-path": scenario.model_path,
+            "--model": None, "--tokenizer": None,
+        } | ({"--revision": scenario.revision} if scenario.revision else {})  # fmt: skip
         roles = []
         for name, match in scenario.roles.items():
             cell = cookbook.cell(match)
