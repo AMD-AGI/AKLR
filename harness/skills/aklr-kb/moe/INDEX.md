@@ -196,6 +196,7 @@ techniques. Where a card disagrees with `aklr/ops/README.md` (§ The kernel sect
 | writing or trusting a correctness gate for grouped kernels | `grouped_correctness.md` (with `../gemm/correctness.md`) |
 | working on an inference MoE expert GEMM (sorted token ids, decode) | `grouped_moe_inference.md` |
 | working on the main loop, LDS, DMA, MFMA atoms or the epilogue itself | `../gemm/INDEX.md` |
+| choosing EP or TP for a MoE at decode, or working on the dispatch and combine between GPUs | `../communication/ep_dispatch_combine.md` |
 
 ### Kernel map
 

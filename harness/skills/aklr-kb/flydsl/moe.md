@@ -79,6 +79,7 @@ Turbo's dense kernels (`gemm.md` § INDEX Kernel map).
 | `moe_sorting_kernel.py` | token sorting by expert, tile-M as the unit | `moe_sorting_flydsl` (:2070) |
 
 FlyDSL's `kernels/mega_moe/` fuses dispatch, both GEMMs and combine across GPUs; the moe package does not cover it.
+What aiter's `MegaMoEV2` dispatch costs against TP: `../communication/ep_dispatch_combine.md`.
 
 The baseline aiter carries diverged copies of `mxfp_moe` and `moe_2stage_a16wmix`, none of `moe_gemm_2stage`,
 and MoE kernels FlyDSL lacks; the mapping is in § grouped_moe_inference §1 below.

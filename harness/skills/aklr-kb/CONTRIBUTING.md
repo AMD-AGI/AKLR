@@ -9,6 +9,8 @@ may have made it stale. `maintenance/kb_lint.py` enforces what can be checked me
 
 - Packages, one per op, each starting at its `INDEX.md`: `gemm/` dense GEMM · `moe/` fused MoE and its expert
   grouped GEMM · `attention/` attention
+- `communication/` the collectives between GPUs, before AKLR has a communication op (EP against TP, collectives in
+  traces); its pages are kept as an op package's are
 - `patterns/` symptom pages · `cases/` delivered kernels · `pitfalls/` traps
 - `profile.md` trace capture and analysis, and perf-regression bisection: links to FlyDSL's own skills, with what
   this repository adds
