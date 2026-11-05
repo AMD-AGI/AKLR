@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Final
@@ -24,8 +25,19 @@ _DATA_FIELDS: Final = {"kernel", "workloads"}
 
 
 @dataclass(frozen=True)
-class SchemaLayout:
+class SchemaLayout(ABC):
     root: Path
+
+    @abstractmethod
+    def paths(self) -> list[Path]: ...
+
+    @abstractmethod
+    def path(self, schema: Schema) -> Path: ...
+
+
+@dataclass(frozen=True)
+class TraceDumpLayout(SchemaLayout):
+    """Where tracing dumps schemas (AKLR_SCHEMA_PATH); dispatch reads its kernels from here too."""
 
     def paths(self) -> list[Path]:
         return sorted((self.root / "schemas").rglob("*.json"))
@@ -71,10 +83,10 @@ class SchemaCollection:
 
     @classmethod
     def from_path(cls: type[SchemaCollection], path: str | None = None) -> SchemaCollection:
-        """Load path, else AKLR_SCHEMA_PATH, as a SchemaLayout; with neither, aklr/ops as a DefaultLayout."""
+        """Load path, else AKLR_SCHEMA_PATH, as a TraceDumpLayout; with neither, aklr/ops as a DefaultLayout."""
         root = Path(path) if path else RuntimeEnv().schema_path
         checkout = Path(__file__).resolve().parents[3]
-        return cls.from_layout(SchemaLayout(root) if root else DefaultLayout(checkout / OPS_DIR))
+        return cls.from_layout(TraceDumpLayout(root) if root else DefaultLayout(checkout / OPS_DIR))
 
     @classmethod
     def from_layout(cls: type[SchemaCollection], layout: SchemaLayout) -> SchemaCollection:

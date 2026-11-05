@@ -10,7 +10,7 @@ from aklr.core.schema._check import (
     default_tolerances,
     standard_check,
 )
-from aklr.core.schema._collection import SchemaCollection, SchemaLayout
+from aklr.core.schema._collection import SchemaCollection, SchemaLayout, TraceDumpLayout
 from aklr.core.schema._frozen_model import frozen_dataclass
 from aklr.core.schema._json_utils import (
     append_jsonl_file,
@@ -36,6 +36,7 @@ __all__ = [
     "SourceFile",
     "Speedup",
     "Tensor",
+    "TraceDumpLayout",
     "Var",
     "Workload",
     "append_jsonl_file",
