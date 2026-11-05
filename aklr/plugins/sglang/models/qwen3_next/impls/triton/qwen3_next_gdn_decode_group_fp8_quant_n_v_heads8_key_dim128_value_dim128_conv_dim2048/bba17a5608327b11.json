@@ -1,0 +1,253 @@
+{
+  "schema_version": 5,
+  "name": "qwen3_next_gdn_decode_group_fp8_quant_n_v_heads8_key_dim128_value_dim128_conv_dim2048",
+  "contract_id": "qwen3_next_gdn_decode_group_fp8_quant@1.0",
+  "description": "Qwen3-Next GDN decode, one token per row, from Q/K/V/Z and B/A projections grouped by key head. A row whose cache index is -1 is padding: it changes no state, and its core output is zero. Every other row uses its distinct slot: the width-four causal convolution of the history and the token's Q/K/V channels adds the bias to the FP32 sum of the four products, oldest tap first, and its SiLU is rounded to BF16. beta, the sigmoid of B, is rounded to BF16, and the decay is exp(-exp(a_log) * softplus(A + dt_bias)). Each value head uses its key head's Q and K, L2-normalized with epsilon 1e-6; the gated delta rule updates the FP32 delta_state in [value,key] order, and the core output, Q times the state times scale, is rounded to BF16. The core is gated RMS-normalized with norm_weight and SiLU of the head's Z, rounded to BF16, and quantized per value head to E4M3FN with scale=max(amax,1e-10)/448. Q and K stay FP32 after their normalization, and the slot's history shifts the row in. Unindexed slots and all other inputs are preserved.",
+  "op_type": "qwen3_next",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Decode rows: one token each, padding rows included."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Allocated state slots."
+    },
+    "n_v_heads": {
+      "type": "const",
+      "value": 8,
+      "description": "Value heads on this rank."
+    },
+    "key_dim": {
+      "type": "const",
+      "value": 128,
+      "description": "Key head width."
+    },
+    "value_dim": {
+      "type": "const",
+      "value": 128,
+      "description": "FP8 group and value-head width."
+    },
+    "conv_dim": {
+      "type": "const",
+      "value": 2048,
+      "description": "Convolution channels: every Q, then every K, then every V."
+    },
+    "value_width": {
+      "type": "const",
+      "value": 1024,
+      "description": "Total value width."
+    },
+    "n_k_heads": {
+      "type": "const",
+      "value": 4,
+      "description": "Key heads on this rank."
+    },
+    "projection_dim": {
+      "type": "const",
+      "value": 3072,
+      "description": "Q/K/V/Z projection width: per key head, 2 * key_dim + 2 * value_dim * n_v_heads // n_k_heads."
+    },
+    "gate_dim": {
+      "type": "const",
+      "value": 16,
+      "description": "B/A projection width."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "projected_qkvz": {
+      "shape": [
+        "n_tokens",
+        "projection_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Q/K/V/Z projections grouped by key head: each key head's Q, its K, then the V and the Z of its value heads."
+    },
+    "projected_ba": {
+      "shape": [
+        "n_tokens",
+        "gate_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "B/A projections grouped by key head: the B, then the A, of its value heads."
+    },
+    "conv_state": {
+      "shape": [
+        "n_slots",
+        "conv_dim",
+        3
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Live three-token convolution histories, channels as conv_dim orders them."
+    },
+    "delta_state": {
+      "shape": [
+        "n_slots",
+        "n_v_heads",
+        "value_dim",
+        "key_dim"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Live recurrent matrices, value dimension first."
+    },
+    "cache_indices": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "Each row's distinct state slot, or -1 for a padding row."
+    },
+    "conv_weight": {
+      "shape": [
+        "conv_dim",
+        4
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Four causal convolution taps, oldest first."
+    },
+    "conv_bias": {
+      "shape": [
+        "conv_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Convolution bias."
+    },
+    "a_log": {
+      "shape": [
+        "n_v_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Log decay magnitude."
+    },
+    "dt_bias": {
+      "shape": [
+        "n_v_heads"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gate bias."
+    },
+    "norm_weight": {
+      "shape": [
+        "value_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gated RMSNorm weights."
+    },
+    "scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Query scale."
+    },
+    "eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Gated RMSNorm epsilon."
+    }
+  },
+  "outputs": {
+    "normalized": {
+      "shape": [
+        "n_tokens",
+        "n_v_heads",
+        "value_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Gated normalized BF16 values."
+    },
+    "values": {
+      "shape": [
+        "n_tokens",
+        "value_width"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "Grouped E4M3FN values."
+    },
+    "scales": {
+      "shape": [
+        "n_tokens",
+        "n_v_heads"
+      ],
+      "dtype": "float32",
+      "description": "One FP32 scale per token and value head."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 2,
+        "n_slots": 5
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Qwen3-Next GDN decode with grouped E4M3FN output for MI355X (gfx950), scheduled for 2\nrows.\n\nGDN decode for contiguous 128-wide heads with V:K ratio two on AMD CDNA4. Each\nrecurrent-state row has one writer; active cache indices must be distinct. Row tiles\nread old convolution history until a finishing launch advances it. A row whose cache\nindex is -1 is padding: it reads slot 0, stores no state or history, and its core\noutput is zero.\n\nShared helpers define the numerical contract, while kernels retain their tuned\nlayouts, state-address expressions, and operand lifetimes. Convolution, beta,\nrecurrent output, and normalized output have explicit BF16 rounding boundaries.\nThe convolution and beta use fast reciprocals.\n\"\"\"\n\nfrom dataclasses import dataclass\n\nimport torch\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n\n@dataclass(frozen=True)\nclass _FP8Config:\n    dtype: torch.dtype\n    max_finite: float\n    group_quant_max: float\n\n\n_DEFAULT_FP8 = _FP8Config(torch.float8_e4m3fn, 448.0, 448.0)\n\n\n@gluon.jit\ndef _native_exp(x):\n    return gl.inline_asm_elementwise(\n        \"v_exp_f32 $0, $1\", \"=v,v\", (x * 1.4426950408889634,),\n        dtype=gl.float32, is_pure=True, pack=1,\n    )\n\n\n@gluon.jit\ndef _sigmoid_denominator(x):\n    # Subnormal exp(-x) values cannot affect the subsequent addition to 1.0.\n    return 1.0 + _native_exp(-x)\n\n\n@gluon.jit\ndef _positive_reciprocal(denominator):\n    \"\"\"Reciprocal of a sigmoid denominator, including subnormal results.\n\n    A sigmoid denominator is at least one. Scaling by 2**-64 keeps both\n    the hardware reciprocal's input and output normal for every finite\n    denominator. The final multiplication restores the full FP32 range.\n    \"\"\"\n    scaled = denominator * 5.421010862427522e-20\n    inverse = gl.inline_asm_elementwise(\n        \"v_rcp_f32 $0, $1\", \"=v,v\", (scaled,),\n        dtype=gl.float32, is_pure=True, pack=1,\n    )\n    return inverse * 5.421010862427522e-20\n\n\n@gluon.jit\ndef _quantization_divide(value, scale):\n    # Finite E4M3 scales formed from BF16 maxima and the 1e-10 floor have\n    # normal reciprocals. Correct the product with its division residual.\n    inverse = gl.inline_asm_elementwise(\n        \"v_rcp_f32 $0, $1\", \"=v,v\", (scale,),\n        dtype=gl.float32, is_pure=True, pack=1,\n    )\n    quotient = value * inverse\n    residual = gl.fma(-quotient, scale, value)\n    corrected = gl.fma(residual, inverse, quotient)\n    # Do not refine infinities; preserve division's zero and NaN behavior.\n    finite_correction = (scale < float(\"inf\")) & (gl.abs(quotient) < float(\"inf\"))\n    corrected = gl.where(finite_correction, corrected, quotient)\n    result = gl.where(value == 0.0, quotient, corrected)\n    return gl.where((scale != scale) | (value != value), float(\"nan\"), result)\n\n\n@gluon.jit\ndef _convolve(\n    X, History, Weight, Bias, x_offset, channel, slot,\n    CHANNELS: gl.constexpr, ADVANCE: gl.constexpr,\n    FAST_SIGMOID: gl.constexpr = False,\n):\n    \"\"\"Four taps with packed, exactly widened BF16 weights.\"\"\"\n    x = gl.load(X + x_offset)\n    history_offset = (slot * CHANNELS + channel) * 3\n    h0 = gl.load(History + history_offset)\n    h1 = gl.load(History + history_offset + 1)\n    h2 = gl.load(History + history_offset + 2)\n    packed = gl.load(Weight.to(gl.pointer_type(gl.uint64)) + channel)\n    lo = packed.to(gl.uint32)\n    hi = (packed >> 32).to(gl.uint32)\n    w0 = (lo << 16).to(gl.float32, bitcast=True)\n    w1 = (lo & 0xFFFF0000).to(gl.float32, bitcast=True)\n    w2 = (hi << 16).to(gl.float32, bitcast=True)\n    w3 = (hi & 0xFFFF0000).to(gl.float32, bitcast=True)\n    acc = gl.load(Bias + channel).to(gl.float32)\n    acc = gl.fma(h0.to(gl.float32), w0, acc)\n    acc = gl.fma(h1.to(gl.float32), w1, acc)\n    acc = gl.fma(h2.to(gl.float32), w2, acc)\n    acc = gl.fma(x.to(gl.float32), w3, acc)\n    denominator = _sigmoid_denominator(acc)\n    if FAST_SIGMOID:\n        activated = (acc * _positive_reciprocal(denominator)).to(gl.bfloat16)\n    else:\n        activated = (acc / denominator).to(gl.bfloat16)\n    if ADVANCE:\n        gl.store(History + history_offset, h1)\n        gl.store(History + history_offset + 1, h2)\n        gl.store(History + history_offset + 2, x)\n    return activated.to(gl.float32)\n\n\n@gluon.jit\ndef _gate_operands(BA, ALog, DTBias, token, head, VH: gl.constexpr):\n    \"\"\"Issue gate reads before state traffic, without extending decay's lifetime.\"\"\"\n    base = token * (2 * VH) + (head // 2) * 4\n    b = gl.load(BA + base + head % 2).to(gl.float32)\n    a = gl.load(BA + base + 2 + head % 2).to(gl.float32)\n    dt = gl.load(DTBias + head).to(gl.float32)\n    a_log = gl.load(ALog + head)\n    return b, a, dt, a_log\n\n\n@gluon.jit\ndef _gate_values(b, a, dt, a_log, FAST_SIGMOID: gl.constexpr = False):\n    \"\"\"Shared gate arithmetic; callers control when operands become live.\"\"\"\n    argument = a + dt\n    # The log operand is in [1, 1 + exp(20)]; no subnormal log repair is needed.\n    exp_arg = 1.0 + _native_exp(gl.minimum(argument, 20.0))\n    log_arg = gl.inline_asm_elementwise(\n        \"v_log_f32 $0, $1\", \"=v,v\", (exp_arg,),\n        dtype=gl.float32, is_pure=True, pack=1,\n    ) * 0.6931471805599453\n    softplus = gl.where(argument <= 20.0, log_arg, argument)\n    # Decay retains full-range exponentials, including subnormal handling.\n    decay = gl.exp(-gl.exp(a_log) * softplus)\n    denominator = _sigmoid_denominator(b)\n    if FAST_SIGMOID:\n        beta = _positive_reciprocal(denominator).to(gl.bfloat16).to(gl.float32)\n    else:\n        beta = (1.0 / denominator).to(gl.bfloat16).to(gl.float32)\n    return decay, beta\n\n\n@gluon.jit\ndef _update_state(state, decay, k, value, beta):\n    \"\"\"Update owned rows; decay is already broadcast to the matrix layout.\"\"\"\n    prediction = gl.sum((state * decay) * k[None, :], 1)\n    residual = (value - prediction) * beta\n    return gl.fma(state, decay, residual[:, None] * k[None, :])\n\n\n@gluon.jit\ndef _store_output(\n    core, z, weight, Output, Quantized, Scales, token, base_head, heads, cols,\n    eps, fp8_max, VH: gl.constexpr, AXIS: gl.constexpr,\n    FAST_EPILOGUE: gl.constexpr = False,\n):\n    \"\"\"Gated RMSNorm and group FP8 quantization along the 128-wide head axis.\n\n    The BF16 output, not the unrounded accumulator, defines the FP8 scale.\n    AXIS is zero for one head and one for a head pair; weight is broadcastable.\n    \"\"\"\n    reciprocal_rms = gl.rsqrt(gl.sum(core * core, AXIS) * (1.0 / 128.0) + eps)\n    if AXIS == 1:\n        reciprocal_rms = reciprocal_rms[:, None]\n    if FAST_EPILOGUE:\n        output = (\n            core * reciprocal_rms * weight * z\n            * _positive_reciprocal(_sigmoid_denominator(z))\n        ).to(gl.bfloat16)\n    else:\n        output = (\n            core * reciprocal_rms * weight * z * (1.0 / _sigmoid_denominator(z))\n        ).to(gl.bfloat16)\n    rounded = output.to(gl.float32)\n    quant_scale = gl.maximum(gl.max(gl.abs(rounded), AXIS), 1.0e-10) / fp8_max\n    if AXIS == 1:\n        output_offset = (token * VH + base_head + heads[:, None]) * 128 + cols[None, :]\n    else:\n        output_offset = (token * VH + base_head + heads) * 128 + cols\n    gl.store(Output + output_offset, output)\n    gl.store(Scales + token * VH + base_head + heads, quant_scale)\n    if AXIS == 1:\n        quant_scale = quant_scale[:, None]\n    if FAST_EPILOGUE:\n        normalized = _quantization_divide(rounded, quant_scale)\n        gl.store(Quantized + output_offset, gl.clamp(normalized, -fp8_max, fp8_max))\n    else:\n        # Keep pointer construction ahead of division, as in the tuned epilogues.\n        gl.store(\n            Quantized + output_offset,\n            gl.clamp(rounded / quant_scale, -fp8_max, fp8_max),\n        )\n\n\n@gluon.jit\ndef _prepare_qk(\n    X, History, Weight, Bias, input_base, kh, slot, scale,\n    KH: gl.constexpr, CHANNELS: gl.constexpr, WAVES: gl.constexpr,\n):\n    \"\"\"Small-batch Q/K production; the caller consumes K now and Q after update.\"\"\"\n    prep_layout: gl.constexpr = gl.BlockedLayout(\n        [1, 2], [1, 64], [2, WAVES // 2], [1, 0]\n    )\n    kind = gl.arange(0, 2, layout=gl.SliceLayout(1, prep_layout))\n    c = gl.arange(0, 128, layout=gl.SliceLayout(0, prep_layout))\n    qk = _convolve(\n        X, History, Weight, Bias,\n        input_base + kind[:, None] * 128 + c[None, :],\n        (kind[:, None] * KH + kh) * 128 + c[None, :],\n        slot, CHANNELS, False, True,\n    )\n    inverse_norm = gl.rsqrt(gl.sum(qk * qk, 1) + 1.0e-6)\n    qk *= (inverse_norm * gl.where(kind == 0, scale, 1.0))[:, None]\n    return gl.allocate_shared_memory(\n        gl.float32, [256], gl.SwizzledSharedLayout(1, 1, 1, [0]),\n        qk.reshape((256,)),\n    )\n\n\n@gluon.jit\ndef _small_pair_rows(\n    X, BA, History, State, Indices, Weight, Bias, ALog, DTBias, Core, scale,\n    KH: gl.constexpr, VH: gl.constexpr, ROWS: gl.constexpr, WAVES: gl.constexpr,\n    COL_LANES: gl.constexpr = 16,\n    VEC: gl.constexpr = 4,\n):\n    \"\"\"B2/B4/B8: stage normalized Q/K and compute only locally owned V rows.\n\n    Late Q consumption shortens its live range across the buffered state update.\n    The separate finishing launch advances history after all old-history readers.\n    \"\"\"\n    gl.static_assert(VH == 2 * KH)\n    token = gl.program_id(0)\n    kh = gl.program_id(1)\n    tile = gl.program_id(2)\n    index = gl.load(Indices + token)\n    live = index >= 0\n    slot = gl.maximum(index, 0)\n    CHANNELS: gl.constexpr = 4 * KH * 128\n    matrix_layout: gl.constexpr = gl.BlockedLayout(\n        [1, VEC], [64 // COL_LANES, COL_LANES], [WAVES, 1], [1, 0]\n    )\n    row_layout: gl.constexpr = gl.SliceLayout(1, matrix_layout)\n    col_layout: gl.constexpr = gl.SliceLayout(0, matrix_layout)\n    rows = gl.arange(0, 2 * ROWS, layout=row_layout)\n    half = rows // ROWS\n    row = tile * ROWS + rows % ROWS\n    cols = gl.arange(0, 128, layout=col_layout)\n    head = kh * 2 + half\n    input_base = token * KH * 768 + kh * 768\n    gate_b, gate_a, gate_dt, gate_log = _gate_operands(\n        BA, ALog, DTBias, token, head, VH\n    )\n    state_base = State + (slot.to(gl.int64) * VH + kh * 2) * 16384\n    offsets = half[:, None] * 16384 + row[:, None] * 128 + cols[None, :]\n    state = gl.amd.cdna4.buffer_load(state_base, offsets, cache=\".cg\")\n    value = _convolve(\n        X, History, Weight, Bias, input_base + 256 + half * 128 + row,\n        (2 * KH + head) * 128 + row, slot, CHANNELS, False, True,\n    )\n    prepared = _prepare_qk(\n        X, History, Weight, Bias, input_base, kh, slot, scale, KH, CHANNELS, WAVES,\n    )\n    k = prepared.slice(128, 128).load(col_layout)\n    decay, beta = _gate_values(gate_b, gate_a, gate_dt, gate_log, True)\n    updated = _update_state(state, decay[:, None], k, value, beta)\n    if live:\n        gl.amd.cdna4.buffer_store(updated, state_base, offsets, cache=\".wt\")\n    q = prepared.slice(0, 128).load(col_layout)\n    core = gl.where(live, gl.sum(updated * q[None, :], 1), 0.0).to(gl.bfloat16)\n    gl.store(Core + (token * VH + head) * 128 + row, core)\n\n\n@gluon.jit\ndef _finish_pairs(\n    X, History, Indices, Core, NormWeight, Output, Quantized, Scales,\n    eps, fp8_max, KH: gl.constexpr, VH: gl.constexpr,\n):\n    \"\"\"Two independent waves finish a head pair and its four history vectors.\"\"\"\n    gl.static_assert(VH == 2 * KH)\n    token = gl.program_id(0)\n    kh = gl.program_id(1)\n    index = gl.load(Indices + token)\n    live = index >= 0\n    slot = gl.maximum(index, 0)\n    CHANNELS: gl.constexpr = 4 * KH * 128\n    layout: gl.constexpr = gl.BlockedLayout([1, 2], [1, 64], [2, 1], [1, 0])\n    heads = gl.arange(0, 2, layout=gl.SliceLayout(1, layout))\n    d = gl.arange(0, 128, layout=gl.SliceLayout(0, layout))\n    output_offset = (token * VH + kh * 2 + heads[:, None]) * 128 + d[None, :]\n    core = gl.load(Core + output_offset).to(gl.float32)\n    z = gl.load(\n        X + token * KH * 768 + kh * 768 + 512\n        + heads[:, None] * 128 + d[None, :]\n    ).to(gl.float32)\n    weight = gl.load(NormWeight + d).to(gl.float32)\n    kind = gl.arange(0, 4, layout=gl.SliceLayout(1, layout))\n    c = gl.arange(0, 128, layout=gl.SliceLayout(0, layout))\n    channel = gl.where(\n        kind[:, None] < 2,\n        (kind[:, None] * KH + kh) * 128 + c[None, :],\n        (2 * KH + kh * 2 + kind[:, None] - 2) * 128 + c[None, :],\n    )\n    x_offset = token * KH * 768 + kh * 768 + kind[:, None] * 128 + c[None, :]\n    history_offset = (slot * CHANNELS + channel) * 3\n    x = gl.load(X + x_offset)\n    h1 = gl.load(History + history_offset + 1)\n    h2 = gl.load(History + history_offset + 2)\n    if live:\n        gl.store(History + history_offset, h1)\n        gl.store(History + history_offset + 1, h2)\n        gl.store(History + history_offset + 2, x)\n    _store_output(\n        core, z, weight[None, :], Output, Quantized, Scales,\n        token, kh * 2, heads, d, eps, fp8_max, VH, 1,\n    )\n\n\ndef gdn_fused_decode_group_fp8_quant(\n    projected_qkvz: torch.Tensor,\n    projected_ba: torch.Tensor,\n    conv_state: torch.Tensor,\n    delta_state: torch.Tensor,\n    cache_indices: torch.Tensor,\n    conv_weight: torch.Tensor,\n    conv_bias: torch.Tensor,\n    a_log: torch.Tensor,\n    dt_bias: torch.Tensor,\n    norm_weight: torch.Tensor,\n    *,\n    scale: float,\n    eps: float,\n    normalized: torch.Tensor,\n    quantized: torch.Tensor,\n    scales: torch.Tensor,\n    precision_config=_DEFAULT_FP8,\n) -> None:\n    tokens = projected_qkvz.shape[0]\n    _, v_heads, head_v_dim, head_k_dim = delta_state.shape\n    assert tokens == 2\n    assert head_v_dim == head_k_dim == 128\n    channels = conv_state.shape[1]\n    k_heads = (channels - v_heads * 128) // 256\n    assert k_heads > 0 and v_heads == 2 * k_heads\n    assert conv_weight.shape == (channels, 4)\n    assert conv_state.shape[2] == 3 and delta_state.dtype == torch.float32\n    decode_args = (\n        projected_qkvz, projected_ba, conv_state, delta_state, cache_indices,\n        conv_weight, conv_bias, a_log, dt_bias,\n    )\n    core = torch.empty_like(normalized)\n    rows = 2 * tokens\n    waves = 2\n    _small_pair_rows[(tokens, k_heads, 128 // rows)](\n        *decode_args, core, scale,\n        KH=k_heads, VH=v_heads, ROWS=rows, WAVES=waves,\n        COL_LANES=16,\n        VEC=4,\n        num_warps=waves,\n    )\n    finish_args = (\n        projected_qkvz, conv_state, cache_indices, core, norm_weight,\n        normalized, quantized, scales, eps, precision_config.group_quant_max,\n    )\n    _finish_pairs[(tokens, k_heads)](\n        *finish_args, KH=k_heads, VH=v_heads, num_warps=2,\n    )\n\n\ndef run(\n    *,\n    projected_qkvz,\n    projected_ba,\n    conv_state,\n    delta_state,\n    cache_indices,\n    conv_weight,\n    conv_bias,\n    a_log,\n    dt_bias,\n    norm_weight,\n    scale,\n    eps,\n    normalized,\n    values,\n    scales,\n):\n    gdn_fused_decode_group_fp8_quant(\n        projected_qkvz,\n        projected_ba,\n        conv_state,\n        delta_state,\n        cache_indices,\n        conv_weight,\n        conv_bias,\n        a_log,\n        dt_bias,\n        norm_weight,\n        scale=scale,\n        eps=eps,\n        normalized=normalized,\n        quantized=values,\n        scales=scales,\n    )\n"
+      }
+    ]
+  }
+}

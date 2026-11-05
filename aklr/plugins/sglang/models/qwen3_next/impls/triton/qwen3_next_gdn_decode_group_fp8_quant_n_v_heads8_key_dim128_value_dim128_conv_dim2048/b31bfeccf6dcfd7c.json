@@ -1,0 +1,253 @@
+{
+  "schema_version": 5,
+  "name": "qwen3_next_gdn_decode_group_fp8_quant_n_v_heads8_key_dim128_value_dim128_conv_dim2048",
+  "contract_id": "qwen3_next_gdn_decode_group_fp8_quant@1.0",
+  "description": "Qwen3-Next GDN decode, one token per row, from Q/K/V/Z and B/A projections grouped by key head. A row whose cache index is -1 is padding: it changes no state, and its core output is zero. Every other row uses its distinct slot: the width-four causal convolution of the history and the token's Q/K/V channels adds the bias to the FP32 sum of the four products, oldest tap first, and its SiLU is rounded to BF16. beta, the sigmoid of B, is rounded to BF16, and the decay is exp(-exp(a_log) * softplus(A + dt_bias)). Each value head uses its key head's Q and K, L2-normalized with epsilon 1e-6; the gated delta rule updates the FP32 delta_state in [value,key] order, and the core output, Q times the state times scale, is rounded to BF16. The core is gated RMS-normalized with norm_weight and SiLU of the head's Z, rounded to BF16, and quantized per value head to E4M3FN with scale=max(amax,1e-10)/448. Q and K stay FP32 after their normalization, and the slot's history shifts the row in. Unindexed slots and all other inputs are preserved.",
+  "op_type": "qwen3_next",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Decode rows: one token each, padding rows included."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Allocated state slots."
+    },
+    "n_v_heads": {
+      "type": "const",
+      "value": 8,
+      "description": "Value heads on this rank."
+    },
+    "key_dim": {
+      "type": "const",
+      "value": 128,
+      "description": "Key head width."
+    },
+    "value_dim": {
+      "type": "const",
+      "value": 128,
+      "description": "FP8 group and value-head width."
+    },
+    "conv_dim": {
+      "type": "const",
+      "value": 2048,
+      "description": "Convolution channels: every Q, then every K, then every V."
+    },
+    "value_width": {
+      "type": "const",
+      "value": 1024,
+      "description": "Total value width."
+    },
+    "n_k_heads": {
+      "type": "const",
+      "value": 4,
+      "description": "Key heads on this rank."
+    },
+    "projection_dim": {
+      "type": "const",
+      "value": 3072,
+      "description": "Q/K/V/Z projection width: per key head, 2 * key_dim + 2 * value_dim * n_v_heads // n_k_heads."
+    },
+    "gate_dim": {
+      "type": "const",
+      "value": 16,
+      "description": "B/A projection width."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "projected_qkvz": {
+      "shape": [
+        "n_tokens",
+        "projection_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Q/K/V/Z projections grouped by key head: each key head's Q, its K, then the V and the Z of its value heads."
+    },
+    "projected_ba": {
+      "shape": [
+        "n_tokens",
+        "gate_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "B/A projections grouped by key head: the B, then the A, of its value heads."
+    },
+    "conv_state": {
+      "shape": [
+        "n_slots",
+        "conv_dim",
+        3
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Live three-token convolution histories, channels as conv_dim orders them."
+    },
+    "delta_state": {
+      "shape": [
+        "n_slots",
+        "n_v_heads",
+        "value_dim",
+        "key_dim"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Live recurrent matrices, value dimension first."
+    },
+    "cache_indices": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "Each row's distinct state slot, or -1 for a padding row."
+    },
+    "conv_weight": {
+      "shape": [
+        "conv_dim",
+        4
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Four causal convolution taps, oldest first."
+    },
+    "conv_bias": {
+      "shape": [
+        "conv_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Convolution bias."
+    },
+    "a_log": {
+      "shape": [
+        "n_v_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Log decay magnitude."
+    },
+    "dt_bias": {
+      "shape": [
+        "n_v_heads"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gate bias."
+    },
+    "norm_weight": {
+      "shape": [
+        "value_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gated RMSNorm weights."
+    },
+    "scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Query scale."
+    },
+    "eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Gated RMSNorm epsilon."
+    }
+  },
+  "outputs": {
+    "normalized": {
+      "shape": [
+        "n_tokens",
+        "n_v_heads",
+        "value_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Gated normalized BF16 values."
+    },
+    "values": {
+      "shape": [
+        "n_tokens",
+        "value_width"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "Grouped E4M3FN values."
+    },
+    "scales": {
+      "shape": [
+        "n_tokens",
+        "n_v_heads"
+      ],
+      "dtype": "float32",
+      "description": "One FP32 scale per token and value head."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1,
+        "n_slots": 2
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Qwen3-Next GDN decode with grouped E4M3FN output for MI355X (gfx950), scheduled for 1 row.\n\nMI355 Gluon GDN decode with indexed FP32 state and group-128 FP8: one-wave row\ntiles and a separate finish/history launch, in which each finishing wave owns its\nvalue head and disjoint Q/K/V history channels. Range-proved allocation-relative\nstate offsets, with 64-bit fallbacks for wide pools. A row whose cache index is -1\nis padding: it reads slot 0, stores no state or history, and its core output is zero.\n\nBF16 boundaries retain IEEE overflow behavior even alongside FP8 conversion: B1\ncorrects BF16 overflow explicitly. Floating scalar arguments remain runtime values.\n\"\"\"\n\nfrom dataclasses import dataclass\n\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n\n@dataclass(frozen=True)\nclass _FP8PrecisionConfig:\n    dtype: torch.dtype\n    group_quant_max: float\n\n\n_DEFAULT_PRECISION = _FP8PrecisionConfig(torch.float8_e4m3fn, 448.0)\n\n\n@gluon.jit\ndef _sigmoid(value):\n    # Subnormal exponentials round away when added to one, so the native\n    # exponential's output flushing does not affect this denominator.\n    exponential = gl.inline_asm_elementwise(\n        \"v_exp_f32 $0, $1\", \"=v,v\", (-value * 1.4426950408889634,),\n        dtype=gl.float32, is_pure=True, pack=1,\n    )\n    denominator = 1.0 + exponential\n    # The denominator is at least one. Power-of-two rescaling keeps both\n    # the native reciprocal's input and output normal for every finite value.\n    reciprocal = gl.inline_asm_elementwise(\n        \"v_rcp_f32 $0, $1\", \"=v,v\", (denominator * 5.421010862427522e-20,),\n        dtype=gl.float32, is_pure=True, pack=1,\n    )\n    return reciprocal * 5.421010862427522e-20\n\n\n@gluon.jit\ndef _convolve(\n    QKVZ, ConvState, Weight, Bias, token, slot, channel, source, valid,\n    CHANNELS: gl.constexpr, WIDTH: gl.constexpr, SPT: gl.constexpr,\n    PACK_HISTORY: gl.constexpr = False,\n    CUSTOM_WEIGHT_LAYOUT: gl.constexpr = None,\n):\n    history_base = ConvState + slot * CHANNELS * 3\n    history_offsets = channel * 3\n    value = gl.load(QKVZ + token * WIDTH + source, valid, other=0)\n    if PACK_HISTORY:\n        gl.static_assert(SPT >= 2)\n        # Adjacent channel pairs contain six BF16 history values. Loading\n        # them as three contiguous pairs avoids separate narrow tap loads.\n        paired_channel = gl.reshape(channel, (channel.shape[0] // 2, 2))\n        first_channel, _ = gl.split(paired_channel)\n        paired_valid = gl.reshape(valid, (channel.shape[0] // 2, 2))\n        pair_valid, _ = gl.split(paired_valid)\n        half = gl.arange(0, 2, layout=gl.SliceLayout(0, paired_channel.type.layout))\n        pair_offsets = first_channel[:, None] * 3 + half[None, :]\n        pair0 = gl.load(history_base + pair_offsets, pair_valid[:, None], other=0)\n        pair1 = gl.load(history_base + pair_offsets + 2, pair_valid[:, None], other=0)\n        pair2 = gl.load(history_base + pair_offsets + 4, pair_valid[:, None], other=0)\n        a0, a1 = gl.split(pair0)\n        a2, a3 = gl.split(pair1)\n        a4, a5 = gl.split(pair2)\n        h0 = gl.reshape(gl.join(a0, a3), channel.shape).to(gl.float32)\n        h1 = gl.reshape(gl.join(a1, a4), channel.shape)\n        h2 = gl.reshape(gl.join(a2, a5), channel.shape)\n    else:\n        h0 = gl.load(history_base + history_offsets, valid, other=0).to(gl.float32)\n        h1 = gl.load(history_base + history_offsets + 1, valid, other=0)\n        h2 = gl.load(history_base + history_offsets + 2, valid, other=0)\n    layout: gl.constexpr = (\n        gl.BlockedLayout([SPT, 4], [64, 1], [1, 1], [1, 0])\n        if CUSTOM_WEIGHT_LAYOUT is None else CUSTOM_WEIGHT_LAYOUT\n    )\n    c = gl.convert_layout(channel, gl.SliceLayout(1, layout))\n    mask = gl.convert_layout(valid, gl.SliceLayout(1, layout))\n    tap = gl.arange(0, 4, layout=gl.SliceLayout(0, layout))\n    weights = gl.load(Weight + c[:, None] * 4 + tap[None, :], mask[:, None], other=0)\n    even, odd = gl.split(gl.reshape(weights, (channel.shape[0], 2, 2)))\n    w0, w2 = gl.split(even)\n    w1, w3 = gl.split(odd)\n    w0 = gl.convert_layout(w0, channel.type.layout).to(gl.float32)\n    w1 = gl.convert_layout(w1, channel.type.layout).to(gl.float32)\n    w2 = gl.convert_layout(w2, channel.type.layout).to(gl.float32)\n    w3 = gl.convert_layout(w3, channel.type.layout).to(gl.float32)\n    acc = gl.load(Bias + channel, valid, other=0).to(gl.float32)\n    acc = gl.fma(h0, w0, acc)\n    acc = gl.fma(h1.to(gl.float32), w1, acc)\n    acc = gl.fma(h2.to(gl.float32), w2, acc)\n    acc = gl.fma(value.to(gl.float32), w3, acc)\n    return (acc * _sigmoid(acc)).to(gl.bfloat16)\n\n\n@gluon.jit\ndef _range_exp(value):\n    # The half-exponential is normal whenever the final FP32 result is\n    # finite and nonzero. Its square restores the full range, including\n    # gradual underflow, without a conditional exponent-rescaling sequence.\n    root = gl.inline_asm_elementwise(\n        \"v_exp_f32 $0, $1\", \"=v,v\", (value * 0.7213475204444817,),\n        dtype=gl.float32, is_pure=True, pack=1,\n    )\n    return root * root\n\n\n@gluon.jit\ndef _gate_parameters(\n    BA, ALog, DtBias, token, head, KH: gl.constexpr, VH: gl.constexpr,\n    FAST_EXP: gl.constexpr = 0,\n):\n    # Mode 1 squares both exponentials; mode 2 squares only the rate.\n    ratio: gl.constexpr = VH // KH\n    ba_base = token * 2 * VH + (head // ratio) * 2 * ratio + head % ratio\n    a = gl.load(BA + ba_base + ratio).to(gl.float32)\n    b = gl.load(BA + ba_base).to(gl.float32)\n    a_log = gl.load(ALog + head)\n    dt_bias = gl.load(DtBias + head).to(gl.float32)\n    softplus_arg = a + dt_bias\n    # Here exp's subnormals round away in 1 + exp(x), and log's input is\n    # always at least one. Both decay paths below preserve gradual underflow.\n    exponential = gl.inline_asm_elementwise(\n        \"v_exp_f32 $0, $1\", \"=v,v\", (softplus_arg * 1.4426950408889634,),\n        dtype=gl.float32, is_pure=True, pack=1,\n    )\n    logarithm = gl.inline_asm_elementwise(\n        \"v_log_f32 $0, $1\", \"=v,v\", (1.0 + exponential,),\n        dtype=gl.float32, is_pure=True, pack=1,\n    ) * 0.6931471805599453\n    softplus = gl.where(softplus_arg <= 20.0, logarithm, softplus_arg)\n    if FAST_EXP == 1 or FAST_EXP == 2:\n        rate = _range_exp(a_log)\n    else:\n        rate = gl.exp(a_log)\n    if FAST_EXP == 1:\n        decay = _range_exp(-rate * softplus)\n    else:\n        decay = gl.exp(-rate * softplus)\n    beta = _sigmoid(b).to(gl.bfloat16).to(gl.float32)\n    return decay, beta\n\n\n@gluon.jit\ndef _tile_value(\n    QKVZ, ConvState, ConvWeight, ConvBias, token, slot, tile, v_head,\n    KH: gl.constexpr, VH: gl.constexpr, KD: gl.constexpr, VD: gl.constexpr,\n    BV: gl.constexpr, STATE_LAYOUT: gl.constexpr,\n):\n    ratio: gl.constexpr = VH // KH\n    channels: gl.constexpr = 2 * KH * KD + VH * VD\n    group_width: gl.constexpr = 2 * KD + 2 * ratio * VD\n    # Convolve directly in the recurrent row layout, avoiding a V-lane shuffle.\n    layout: gl.constexpr = gl.SliceLayout(1, STATE_LAYOUT)\n    vv = tile * BV + gl.arange(0, BV, layout=layout)\n    gl.static_assert(VD % BV == 0)\n    valid = gl.full((BV,), True, gl.int1, layout)\n    v_value = _convolve(\n        QKVZ, ConvState, ConvWeight, ConvBias, token, slot,\n        2 * KH * KD + v_head * VD + vv,\n        (v_head // ratio) * group_width + 2 * KD + (v_head % ratio) * VD + vv, valid,\n        channels, KH * group_width, 1, False, STATE_LAYOUT,\n    )\n    return v_value\n\n\n@gluon.jit\ndef _tiny_update(\n    QKVZ, State, Indices, BA, ConvState, ConvWeight, ConvBias,\n    ALog, DtBias, Core, scale,\n    KH: gl.constexpr, VH: gl.constexpr, KD: gl.constexpr, VD: gl.constexpr,\n    BV: gl.constexpr, KEY_LANES: gl.constexpr,\n    QK_SPT: gl.constexpr, PRODUCER_NORM: gl.constexpr,\n    STORE_CACHE: gl.constexpr,\n    T: gl.constexpr, BOUNDED_STATE: gl.constexpr, BOUNDED_HISTORY: gl.constexpr,\n):\n    # Retain separate coordinates at B1; flatten head-before-row order above B1.\n    pid = gl.program_id(0).to(gl.uint32)\n    if T == 1:\n        token_head = pid\n        tile = gl.program_id(1).to(gl.uint32)\n    else:\n        token_head = pid % (T * VH)\n        tile = pid // (T * VH)\n    token = token_head // VH\n    v_head = token_head % VH\n    ratio: gl.constexpr = VH // KH\n    k_head = v_head // ratio\n    channels: gl.constexpr = 2 * KH * KD + VH * VD\n    group_width: gl.constexpr = 2 * KD + 2 * ratio * VD\n    layout: gl.constexpr = gl.BlockedLayout([1, 4], [64 // KEY_LANES, KEY_LANES], [1, 1], [1, 0])\n    v = tile * BV + gl.arange(0, BV, layout=gl.SliceLayout(1, layout))\n    k = gl.arange(0, KD, layout=gl.SliceLayout(0, layout))\n    if T <= 4:\n        # These bounds follow from the launch grid, not from tensor contents.\n        gl.assume(token < T)\n        gl.assume(tile < VD // BV)\n    index = gl.load(Indices + token)\n    live = index >= 0\n    slot = gl.maximum(index, 0).to(gl.uint32).to(gl.uint64)\n    if BOUNDED_STATE:\n        # The host proves the complete contiguous allocation fits in 2 GiB.\n        gl.assume(slot < (1 << 31) // (VH * VD * KD * 4))\n    elif BOUNDED_HISTORY:\n        gl.assume(slot < (1 << 31) // (channels * 3 * 2))\n    state_slot = slot.to(gl.uint32) if BOUNDED_STATE else slot\n    pool_offset = (state_slot * VH + v_head) * VD * KD\n    state_base = State if BOUNDED_STATE else State + pool_offset\n    offsets = v[:, None] * KD + k[None, :]\n    if BOUNDED_STATE:\n        offsets += pool_offset\n    slot = slot.to(gl.uint32) if BOUNDED_HISTORY else slot\n    state = gl.amd.cdna3.buffer_load(state_base, offsets, cache=\".ca\")\n    # Start the independent, small V convolution before Q/K's collective work.\n    v_value = _tile_value(\n        QKVZ, ConvState, ConvWeight, ConvBias, token, slot, tile, v_head,\n        KH, VH, KD, VD, BV, layout,\n    )\n    decay, beta = _gate_parameters(\n        BA, ALog, DtBias, token, v_head, KH, VH, 2 if T == 2 or T == 4 else 0,\n    )\n\n    # Pair Q and K in registers. Their history remains read-only in this launch.\n    qk_x = gl.arange(0, 2 * KD, layout=gl.BlockedLayout([QK_SPT], [64], [1], [0]))\n    channel = (qk_x // KD * KH + k_head) * KD + qk_x % KD\n    qk = _convolve(\n        QKVZ, ConvState, ConvWeight, ConvBias, token, slot, channel,\n        k_head * group_width + qk_x, qk_x < 2 * KD, channels, KH * group_width,\n        QK_SPT, True,\n    )\n    if PRODUCER_NORM:\n        paired = gl.reshape(qk.to(gl.float32), (2, KD))\n        magnitude = gl.rsqrt(gl.sum(paired * paired, 1) + 1.0e-6)\n        component = gl.arange(0, 2, layout=gl.SliceLayout(1, paired.type.layout))\n        magnitude *= gl.where(component == 0, scale, 1.0)\n        qk = gl.reshape(paired * magnitude[:, None], (2 * KD,))\n    # Redistribute both normalized vectors together at B4/B8.\n    if PRODUCER_NORM:\n        pair_layout: gl.constexpr = gl.BlockedLayout(\n            [4, 2], [KEY_LANES, 64 // KEY_LANES], [1, 1], [0, 1]\n        )\n        qk_pair = gl.convert_layout(gl.permute(gl.reshape(qk, (2, KD)), (1, 0)), pair_layout)\n        q_value, k_value = gl.split(qk_pair)\n    else:\n        q_value, k_value = gl.split(gl.permute(gl.reshape(qk.to(gl.float32), (2, KD)), (1, 0)))\n    q_value = gl.convert_layout(q_value, gl.SliceLayout(0, layout)).to(gl.float32)\n    k_value = gl.convert_layout(k_value, gl.SliceLayout(0, layout)).to(gl.float32)\n    if not PRODUCER_NORM:\n        q_value *= gl.rsqrt(gl.sum(q_value * q_value, 0) + 1.0e-6) * scale\n        k_value *= gl.rsqrt(gl.sum(k_value * k_value, 0) + 1.0e-6)\n\n    v_value = gl.convert_layout(v_value.to(gl.float32), gl.SliceLayout(1, layout))\n    state_dot_k = gl.sum((state * decay) * k_value[None, :], 1)\n    residual = (v_value - state_dot_k) * beta\n    updated = gl.fma(state, decay, residual[:, None] * k_value[None, :])\n    out = gl.where(live, gl.sum(updated * q_value[None, :], 1), 0.0)\n    if live:\n        gl.amd.cdna3.buffer_store(updated, state_base, offsets, cache=STORE_CACHE)\n    gl.store(Core + token_head * VD + v, out.to(gl.bfloat16))\n\n\n@gluon.jit\ndef _quantization_quotient(numerator, denominator):\n    # Finite BF16 maxima and the FP8 bounds keep scales and reciprocals normal.\n    # Share the refined reciprocal, then correct each quotient independently.\n    reciprocal = gl.inline_asm_elementwise(\n        \"v_rcp_f32 $0, $1\", \"=v,v\", (denominator,),\n        dtype=gl.float32, is_pure=True, pack=1,\n    )\n    refined = gl.fma(gl.fma(-denominator, reciprocal, 1.0), reciprocal, reciprocal)\n    reciprocal = gl.where(reciprocal == 0.0, reciprocal, refined)\n    quotient = numerator * reciprocal\n    residual = gl.fma(-denominator, quotient, numerator)\n    corrected = gl.fma(residual, reciprocal, quotient)\n    # Retain signed underflow/zero and infinity behavior before correction.\n    special = (quotient == 0.0) | (gl.abs(quotient) == float(\"inf\"))\n    return gl.where(special, quotient, corrected)\n\n\n@gluon.jit\ndef _fp8_group_scale(maximum, quant_max):\n    # Supported FP8 formats have a normal positive limit, and the scale floor\n    # keeps finite quotients normal. The reciprocal is independent of the\n    # row maximum and can overlap the reduction that produces it.\n    reciprocal = gl.inline_asm_elementwise(\n        \"v_rcp_f32 $0, $1\", \"=v,v\", (quant_max,),\n        dtype=gl.float32, is_pure=True, pack=1,\n    )\n    reciprocal = gl.fma(gl.fma(-quant_max, reciprocal, 1.0), reciprocal, reciprocal)\n    quotient = maximum * reciprocal\n    remainder = gl.fma(-quant_max, quotient, maximum)\n    corrected = gl.fma(remainder, reciprocal, quotient)\n    return gl.where(quotient == float(\"inf\"), quotient, corrected)\n\n\n@gluon.jit\ndef _round_bf16_ieee(value):\n    # FP8 lowering enables saturation in MODE.fp16_ovfl for the whole kernel.\n    # Convert overflowing finite values to signed FP32 infinity first, so the\n    # hardware BF16 instruction retains round-to-nearest-even overflow.\n    bits = value.to(gl.uint32, bitcast=True)\n    infinity = ((bits & 0x80000000) | 0x7f800000).to(gl.float32, bitcast=True)\n    value = gl.where(gl.abs(value) >= 3.39617752923046e38, infinity, value)\n    return value.to(gl.bfloat16)\n\n\n@gluon.jit\ndef _store_fp8(\n    Quantized, offsets, values, quant_max,\n    NUM_WARPS: gl.constexpr, NATIVE: gl.constexpr,\n):\n    if not NATIVE:\n        # B1/B64 explicitly correct all preceding BF16 rounding boundaries.\n        gl.store(Quantized + offsets, gl.clamp(values, -quant_max, quant_max))\n    elif Quantized.dtype.element_ty == gl.float8e4nv:\n        # The normal FP8 lowering changes MODE.fp16_ovfl for the entire wave,\n        # which also saturates BF16 conversions. Clamp FN overflow explicitly\n        # and emit the native conversion without changing that wave mode.\n        limit = gl.minimum(quant_max, 448.0)\n        values = gl.clamp(values, -limit, limit)\n        pair_layout: gl.constexpr = gl.BlockedLayout([2], [64], [NUM_WARPS], [0])\n        values = gl.convert_layout(values, pair_layout)\n        offsets = gl.convert_layout(offsets, pair_layout)\n        first, second = gl.split(gl.reshape(values, (values.shape[0] // 2, 2)))\n        pair_offsets, _ = gl.split(gl.reshape(offsets, (offsets.shape[0] // 2, 2)))\n        bits = gl.inline_asm_elementwise(\n            \"v_cvt_scalef32_pk_fp8_f32 $0, $1, $2, 1.0\",\n            \"=v,v,v\", (first, second), dtype=gl.uint32, is_pure=True, pack=1,\n        )\n        gl.store((Quantized + pair_offsets).to(gl.pointer_type(gl.uint16)), bits.to(gl.uint16))\n\n\n@gluon.jit\ndef _normalize_quantize(\n    Core, QKVZ, Weight, Normalized, Quantized, Scales, row, eps, quant_max,\n    KH: gl.constexpr, VH: gl.constexpr, KD: gl.constexpr, VD: gl.constexpr,\n    VECTOR: gl.constexpr = 1,\n    FAST_SCALE: gl.constexpr = False,\n    NATIVE_FP8: gl.constexpr = True,\n):\n    token = row // VH\n    head = row % VH\n    ratio: gl.constexpr = VH // KH\n    group_width: gl.constexpr = 2 * KD + 2 * ratio * VD\n    x = gl.arange(0, VD, layout=gl.BlockedLayout([VECTOR], [64], [1], [0]))\n    core = gl.load(Core + row * VD + x).to(gl.float32)\n    gate_base = token * KH * group_width + (head // ratio) * group_width + 2 * KD + ratio * VD\n    gate = gl.load(QKVZ + gate_base + (head % ratio) * VD + x).to(gl.float32)\n    weight = gl.load(Weight + x).to(gl.float32)\n    rms = gl.rsqrt(gl.sum(core * core, 0) / VD + eps)\n    sigmoid = _sigmoid(gate)\n    value = core * rms * weight * gate * sigmoid\n    if NATIVE_FP8:\n        normalized = value.to(gl.bfloat16)\n    else:\n        normalized = _round_bf16_ieee(value)\n    gl.store(Normalized + row * VD + x, normalized)\n    # Quantization must consume the BF16-rounded normalized output.\n    values = normalized.to(gl.float32)\n    maximum = gl.maximum(gl.max(gl.abs(values), 0), 1.0e-10)\n    if FAST_SCALE:\n        quant_scale = _fp8_group_scale(maximum, quant_max)\n    else:\n        quant_scale = maximum / quant_max\n    if VECTOR == 1:\n        scaled = values / quant_scale\n    else:\n        # Adjacent values share one refined reciprocal, with an independent\n        # quotient correction for each BF16-rounded numerator.\n        scaled = _quantization_quotient(values, quant_scale)\n    _store_fp8(Quantized, row * VD + x, scaled, quant_max, 1, NATIVE_FP8)\n    gl.store(Scales + row, quant_scale)\n\n\n@gluon.jit\ndef _finish_owned(\n    Core, QKVZ, Weight, Normalized, Quantized, Scales, ConvState, Indices,\n    eps, quant_max, T: gl.constexpr, KH: gl.constexpr, VH: gl.constexpr,\n    KD: gl.constexpr, VD: gl.constexpr,\n):\n    # B1: a head owns its V history and either Q (even head) or K (odd head).\n    # The preceding recurrence launch has completed all old-history reads.\n    gl.static_assert(T == 1 and KD == 128 and VD == 128 and VH == 2 * KH)\n    row = gl.program_id(0).to(gl.uint32)\n    token = row // VH\n    head = row % VH\n    group = head // 2\n    component = head % 2\n    channels: gl.constexpr = (2 * KH + VH) * 128\n    group_width: gl.constexpr = 768\n    layout: gl.constexpr = gl.BlockedLayout([2], [64], [1], [0])\n    c = gl.arange(0, 256, layout=layout)\n    channel = gl.where(\n        c < 128,\n        (component * KH + group) * 128 + c,\n        2 * KH * 128 + head * 128 + c - 128,\n    )\n    source = group * group_width + gl.where(\n        c < 128, component * 128 + c, 256 + component * 128 + c - 128\n    )\n    index = gl.load(Indices + token)\n    live = index >= 0\n    slot = gl.maximum(index, 0).to(gl.uint32).to(gl.uint64)\n    current = gl.load(QKVZ + token * KH * group_width + source)\n    paired_channel = gl.reshape(channel, (128, 2))\n    first, _ = gl.split(paired_channel)\n    half = gl.arange(0, 2, layout=gl.SliceLayout(0, paired_channel.type.layout))\n    history = ConvState + (slot * channels + first[:, None]) * 3 + half[None, :]\n    pair0 = gl.load(history)\n    pair1 = gl.load(history + 2)\n    pair2 = gl.load(history + 4)\n    _, h01 = gl.split(pair0)\n    h02, _ = gl.split(pair1)\n    h11, h12 = gl.split(pair2)\n    value0, value1 = gl.split(gl.reshape(current, (128, 2)))\n    _normalize_quantize(\n        Core, QKVZ, Weight, Normalized, Quantized, Scales,\n        row, eps, quant_max, KH, VH, KD, VD, 1, False, False,\n    )\n    if live:\n        gl.store(history, gl.join(h01, h02))\n        gl.store(history + 2, gl.join(value0, h11))\n        gl.store(history + 4, gl.join(h12, value1))\n\n\ndef gdn_fused_decode_group_fp8_quant(\n    projected_qkvz: torch.Tensor,\n    projected_ba: torch.Tensor,\n    conv_state: torch.Tensor,\n    delta_state: torch.Tensor,\n    cache_indices: torch.Tensor,\n    conv_weight: torch.Tensor,\n    conv_bias: torch.Tensor,\n    a_log: torch.Tensor,\n    dt_bias: torch.Tensor,\n    norm_weight: torch.Tensor,\n    *,\n    scale: float,\n    eps: float,\n    normalized: torch.Tensor,\n    quantized: torch.Tensor,\n    scales: torch.Tensor,\n    precision_config=_DEFAULT_PRECISION,\n) -> None:\n    \"\"\"Decode one token per valid, distinct state slot, as in the reference.\"\"\"\n    tokens = projected_qkvz.shape[0]\n    _, v_heads, head_v_dim, head_k_dim = delta_state.shape\n    channels = conv_state.shape[1]\n    k_heads = (channels - v_heads * head_v_dim) // (2 * head_k_dim)\n    assert tokens == 1 and head_v_dim == head_k_dim == 128 and v_heads == 2 * k_heads\n    assert delta_state.is_contiguous() and conv_state.is_contiguous()\n\n    core = torch.empty_like(normalized)\n    value_rows, key_lanes, producer_norm = 4, 16, False\n    grid = (v_heads, head_v_dim // value_rows)\n    scheduler = \"max-ilp\"\n    _tiny_update[grid](\n        projected_qkvz, delta_state, cache_indices, projected_ba, conv_state,\n        conv_weight, conv_bias, a_log, dt_bias, core, scale,\n        k_heads, v_heads, head_k_dim, head_v_dim,\n        value_rows, key_lanes, 2, producer_norm, \"\", tokens,\n        BOUNDED_STATE=delta_state.numel() * delta_state.element_size() < (1 << 31),\n        BOUNDED_HISTORY=conv_state.numel() * conv_state.element_size() < (1 << 31),\n        num_warps=1,\n        llvm_fn_attrs=[[\"amdgpu-sched-strategy\", scheduler]],\n    )\n    _finish_owned[(tokens * v_heads,)](\n        core, projected_qkvz, norm_weight, normalized, quantized, scales,\n        conv_state, cache_indices, eps, precision_config.group_quant_max,\n        tokens, k_heads, v_heads, head_k_dim, head_v_dim, num_warps=1,\n    )\n\n\ndef run(\n    *,\n    projected_qkvz,\n    projected_ba,\n    conv_state,\n    delta_state,\n    cache_indices,\n    conv_weight,\n    conv_bias,\n    a_log,\n    dt_bias,\n    norm_weight,\n    scale,\n    eps,\n    normalized,\n    values,\n    scales,\n):\n    gdn_fused_decode_group_fp8_quant(\n        projected_qkvz,\n        projected_ba,\n        conv_state,\n        delta_state,\n        cache_indices,\n        conv_weight,\n        conv_bias,\n        a_log,\n        dt_bias,\n        norm_weight,\n        scale=scale,\n        eps=eps,\n        normalized=normalized,\n        quantized=values,\n        scales=scales,\n    )\n"
+      }
+    ]
+  }
+}
