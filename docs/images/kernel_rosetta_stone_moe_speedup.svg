@@ -76,6 +76,8 @@
 <circle class="bd" cx="871.6" cy="114.6" r="6"/>
 <text class="note na" x="483.1" y="141.0" text-anchor="start">1.165x at 7h24m, ~$87</text>
 <text class="note nb" x="861.6" y="268" text-anchor="end">1.165x at 14h54m, ~$170</text>
+<circle class="ad" cx="611.2" cy="96.5" r="6"/>
+<text class="note na" x="623.2" y="100.5" text-anchor="start">1.184x at 10h, ~$114</text>
 <line class="a" x1="520" x2="546" y1="304" y2="304"/>
 <text class="s" x="554" y="308">With AKLR knowledge base</text>
 <line class="b" x1="520" x2="546" y1="328" y2="328"/>
