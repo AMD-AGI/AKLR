@@ -133,8 +133,7 @@ class Role:
         weights = {
             "--model-path": scenario.model_path, "--tokenizer-path": scenario.model_path,
             "--model": None, "--tokenizer": None,
-            # always set: unset, a cell's --revision (or --revis) would choose the weights' code
-            "--revision": scenario.revision or "main",
+            "--revision": scenario.revision,
         }  # fmt: skip
         roles = []
         for name, match in scenario.roles.items():
