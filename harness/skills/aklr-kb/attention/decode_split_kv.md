@@ -138,8 +138,8 @@ and gets hoisted. In the merged epilogue only the number of rounds and the store
   heuristic dropped `num_warps` when the split count rose: +21.8%; with `num_warps` pinned the same split read
   −0.4%.
 - **An output that is not a reduction splits with zero merge.** Index-score logits `[rows, Skv]` split
-  along KV write disjoint column ranges, bit-identical. *(field, E24)* 1 → 32 splits: 820 → 73 µs; with 1–2
-  waves per workgroup the optimum was about 4 workgroups per CU.
+  along KV write disjoint column ranges, bit-identical. *(field, E24)* In a Gluon kernel, 1 → 32 splits: 820 → 73
+  µs; with 1–2 waves per workgroup the optimum was about 4 workgroups per CU.
 - bf16 partials add merge error; gate every split count on accuracy (`../gemm/small_m.md` §4).
 - Changing the reduction order changes bits: compare against a reference whose order is shared by neither
   arm (`correctness.md`).
@@ -150,9 +150,9 @@ and gets hoisted. In the merged epilogue only the number of rounds and the store
   The fixed part is the dispatch plus the dependent first hop (index → KV address).
 - Confirm the fit on a clean axis: fix the group count, CTA count and tiles per CTA, and sweep only the
   number of real tiles. *(field, E26)* Within ±5% of the per-tile fit `2.83 µs + 6.81 ns × tile`.
-- A plain gather with the same row width and index pattern shows what the pattern allows (random rows 4.5 lines
-  wide reached only ~45% of a stream copy *(field, E27)*), but it is not a ceiling: a tuned decode producer ran
-  5.9–9.5% faster than the plain gather built to bound it *(field, E28)*.
+- A plain gather with the same row width and index pattern shows what the pattern allows (in Triton, random rows
+  4.5 lines wide reached only ~45% of a stream copy *(field, E27)*), but it is not a ceiling: a tuned decode
+  producer ran 5.9–9.5% faster than the plain gather built to bound it *(field, E28)*.
   - Use the marginal-bandwidth fit above and never HBM peak (`measurement.md` §5).
 - **Price the partial write by skipping it.** *(field, E44)* On an fp8 MLA decode, skipping it took 4.5% off the
   call. Staging the bf16 partials in LDS and storing them 16 B per lane, contiguous across lanes, in place of 8 B per
@@ -172,14 +172,14 @@ and gets hoisted. In the merged epilogue only the number of rounds and the store
 - **A row whose width is not a multiple of 128 B touches an extra line**: lines per row =
   ⌈(phase + width) / 128⌉, so a 4.5-line row starting at phase 0 or 64 always touches 5. Only a layout change
   reduces that, and it must be measured.
-  - *(field, E33)* In a gather-latency-bound sparse-MLA prefill kernel whose production indices
+  - *(field, E33)* In a gather-latency-bound Triton sparse-MLA prefill kernel whose production indices
     already overlapped heavily, padding rows to whole lines and splitting them into two line-aligned pools were
     all 2–5% slower.
 - **Benchmark with production index structure.** *(field, E34)* Adjacent tokens of one request overlapped
   0.69–0.92, different requests 0. With the same 9.4 MB footprint: 12.35 µs for an unstructured
   distribution, 15.44 µs for the production structure. *(field, E35)* An ownership remap that put a
   request's tokens on one XCD measured up to 9% slower (producer alone up to 11%) on uniform random indices
-  and 3–9% faster (producer alone 7–15%) on production indices. *(field, E33)* On a sparse-MLA prefill,
+  and 3–9% faster (producer alone 7–15%) on production indices. *(field, E33)* On a Triton sparse-MLA prefill,
   locality headroom of 26–29% seen on uniform sampling did not exist at production overlap. Re-measure ownership
   levers after any layout or grouping change.
 - **Check a carried-over patch's enabling condition on today's grid.** *(field, E36)* A remap gated on

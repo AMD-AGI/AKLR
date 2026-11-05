@@ -14,8 +14,10 @@ how to write it in FlyDSL is in `../flydsl/attention.md`, one section per card s
 
 - FlyDSL facts, here and in `../flydsl/attention.md`, are stated for v0.3.2. Instruction rates and MFMA timings
   were measured on gfx950 with microbenchmarks.
-- Numbers marked `*(field, E<n>)*` come from measured attention work (A/B on real kernels); their conditions are
-  listed under Evidence at the end of each card. Read them as magnitudes: they show how large an effect was where
+- Numbers marked `*(field, E<n>)*` come from measured attention work (A/B on real kernels), on FlyDSL kernels unless
+  the sentence names another language (Triton, Gluon, HIP); their conditions are listed under Evidence at the end
+  of each card. The mechanisms are stated in ISA and LLVM terms; the numbers have not been checked in other
+  languages. Read them as magnitudes: they show how large an effect was where
   it was measured, not what it will be on your kernel.
 - Signed percentages of wall time, throughput or a benchmark score are speed changes (+ = faster) unless the
   sentence says faster or slower or the card states otherwise; a sign next to a named quantity (cycles, sclk, a

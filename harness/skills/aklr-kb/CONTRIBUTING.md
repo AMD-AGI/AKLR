@@ -82,8 +82,10 @@ Front matter is YAML: quote a value that contains `: `. `flydsl` is the version 
   "always" or "never" in the paragraph that cites it. The reference is durable (a commit, `#<PR>`, a CI run or a
   URL) or `local:<absolute path>` for a file on one machine, which may not outlive it. `S` lines cite source as
   `file:line`. The text stays readable and every number stays checkable.
-- **A number measured on another kind of kernel says so in the sentence** ("on a grouped GEMM", "on an attention
-  kernel"), not only in its evidence line: readers do not read the evidence.
+- **A number measured on another kind of kernel, or in another language, says so in the sentence** ("on a grouped
+  GEMM", "on an attention kernel", "in Triton"), not only in its evidence line: readers do not read the evidence.
+  The op packages' numbers were measured on FlyDSL kernels unless a sentence says otherwise, and each package's
+  `INDEX.md` says so once.
 - **A number worked out rather than measured** says "estimated" and gets no `E` line.
 - **Speedups in AKLR are per Point** against the faster of the kernel AKLR serves at that Point and the op's
   baseline, the same yardstick dispatch uses; never a mean over Points.

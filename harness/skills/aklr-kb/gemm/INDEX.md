@@ -13,6 +13,10 @@ FlyDSL side (calls, FlyDSL's compiler, and the FlyDSL kernels of FlyDSL, aiter a
 `../flydsl/gemm.md`. Grouped and MoE expert GEMMs build on these cards and have their own package,
 `../moe/INDEX.md`.
 
+Unless a sentence names another language, the numbers in these cards were measured on FlyDSL kernels; each
+evidence line names its toolchain. The mechanisms are stated in ISA and LLVM terms and should carry over to
+Triton or HIP, but the numbers have not been checked there.
+
 **Three sources, used together.**
 - **FlyDSL's own GEMM guide and kernels.** `../flydsl/guides.md` § gemm-optimization walks through how a FlyDSL GEMM is
   built, on `preshuffle_gemm`: tiling, the 2-stage LDS ping-pong, the XOR swizzle, `hot_loop_scheduler`, direct

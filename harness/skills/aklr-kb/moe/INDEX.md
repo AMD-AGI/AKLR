@@ -15,6 +15,10 @@ which cards to read, which kernels to start from, and the AKLR files that govern
 GEMMs; their card is `grouped_moe_inference.md`, and the training grouped-GEMM cards apply as
 techniques (§ Expert GEMM (grouped GEMM) below). "m" is a Point's `n_tokens`; a route is one (token, expert) pair.
 
+Unless a sentence names another language, the numbers in these cards were measured on FlyDSL kernels; each
+evidence line names its toolchain. The mechanisms are stated in ISA and LLVM terms and should carry over to
+Triton or HIP, but the numbers have not been checked there.
+
 ## What it computes
 
 `fused_moe@1.0` (`aklr/ops/fused_moe/contract.py`, reference in `reference.py`): for each token and each of its top-k
