@@ -21,8 +21,8 @@ sources:
 
 > What fp8 with per-tensor scales, MXFP8 and MXFP4 add to a grouped GEMM: per-group scale tensors and their
 > preshuffle, scale packing, scale delivery, quantization cost, padding, the C store, and GLU/dGLU fusion. The
-> scale and MFMA mechanics that are the same as in a dense GEMM are in `../gemm/flydsl_gemm_datapath.md` §11 and
-> `../gemm/flydsl_gemm_mainloop.md` §5–§6 and are not repeated. "FP8", "MX8", "MX4", "FP8G", "MX8G", "MX4G" are
+> scale and MFMA mechanics that are the same as in a dense GEMM are in `../gemm/datapath.md` §11 and
+> `../gemm/mainloop.md` §5–§6 and are not repeated. "FP8", "MX8", "MX4", "FP8G", "MX8G", "MX4G" are
 > Primus-Turbo's `grouped_gemm_{fp8,mxfp8,mxfp4}{,_glu}_kernel.py` under `primus_turbo/flydsl/grouped_gemm/` and
 > "OPS8" its `pytorch/ops/grouped_gemm_fp8.py`, at main `ca1fdd67`.
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end. Use
@@ -51,7 +51,7 @@ sources:
 ## 2. The scale preshuffle is a per-call helper kernel
 Scales arrive per call (activations, gradients), so the repack into the MFMA layout runs every call. Launch it
 from the same `@flyc.jit` stub as the GEMM so it costs no Python dispatch (MX8:1101-1120;
-`../gemm/flydsl_gemm_datapath.md` §11). Then find out what bounds it.
+`../gemm/datapath.md` §11). Then find out what bounds it.
 - **E8M0 repack (MXFP8) is dispatch- and latency-bound.** *(field, E2)* On the measured build it took 0.8–1.5% of the
   call's wall time at an effective 2.6–2.9 TB/s, a third of HBM bandwidth. *(field, E3)* Only cutting the workgroup count
   paid: one workgroup taking two 64-row slabs halved the A-side workgroups, +1.04% on the scored total, 0.45 points
@@ -71,7 +71,7 @@ from the same `@flyc.jit` stub as the GEMM so it costs no Python dispatch (MX8:1
   in-stream cost (`flydsl_grouped_host_autotune.md` §7).
 
 ## 3. Pack four E8M0 per dword — per group on wgrad
-- `op_sel` picks one of four bytes, so four is the hardware ceiling (`../gemm/flydsl_gemm_datapath.md` §11).
+- `op_sel` picks one of four bytes, so four is the hardware ceiling (`../gemm/datapath.md` §11).
 - **NT (forward, dgrad).** The k-step's byte is `k % 4`, known at compile time. MX8 packs NT only
   (`_GG_SCALE_PACK = 4`, MX8:74-76). *(field, E7)* The repack took 32% less time (14.3 → 9.7 µs), the GEMM was
   unchanged and bit-exact, end to end an estimated ≈1%: on that build the repack was ~3.5% of the forward/dgrad time (§2
@@ -124,7 +124,7 @@ from the same `@flyc.jit` stub as the GEMM so it costs no Python dispatch (MX8:1
   faster than the HIP kernel; a Python loop over experts was 2.7–4.3× slower than HIP.
 
 ## 6. Padding goes on the contraction dimension
-- A row pitch ≡ 64 mod 128 B makes every other row straddle two lines (`../gemm/flydsl_gemm_datapath.md` §6, §10).
+- A row pitch ≡ 64 mod 128 B makes every other row straddle two lines (`../gemm/datapath.md` §6, §10).
   *(field, E17)* Tensorwise fp8 grouped forward, G=32 balanced, K and N both ≡ 64 mod 128: padding neither / K
   only / N only / both gave 2196 / 2554 / 2202 / 2554 TF/s. The whole +16% came from the contraction pad; the N
   pad matters for dgrad, where N becomes the contraction. Count FLOPs with the real dims.
@@ -133,12 +133,12 @@ from the same `@flyc.jit` stub as the GEMM so it costs no Python dispatch (MX8:1
 - **When the operand cannot be padded:** FP8's NN dgrad reads each row's enclosing line-aligned window when
   `K % 128 == 64` (`nn_kshear`, FP8:218, 277-280; its comment reports +25.7% L1→L2 read requests without it).
   For MX, pad only the scales: zero E8M0 past K makes over-read terms exactly zero, so the operand keeps its real
-  K (`k_real`, MX4:364-373; `../gemm/flydsl_gemm_mainloop.md` §6).
+  K (`k_real`, MX4:364-373; `../gemm/mainloop.md` §6).
 - Never re-pad a weight per call: `flydsl_grouped_host_autotune.md` §4. Free-dim padding for wgrad outputs:
   `flydsl_grouped_wgrad.md` §12.
 
 ## 7. The C store for grouped outputs
-The store classes and their measured prices are in `../gemm/flydsl_gemm_epilogue.md` §2–§4, cache bits in §5 and
+The store classes and their measured prices are in `../gemm/epilogue.md` §2–§4, cache bits in §5 and
 line-aligned column blocks in §1. "Folded" below names a store form, not a split-K fold.
 What grouped adds:
 - **The store is bytes, not VALU.** *(field, E19)* MXFP4 grouped NT: deleting the C-store epilogue saved 61% of the
@@ -161,7 +161,7 @@ What grouped adds:
     MX4:1164-1170).
   - *(field, E24)* `sc1` alone or added to `nt` cost 4–5% on six wgrad cells: it sends the writes past the per-XCD L2
     that merges them.
-- E8M0 scale stores are never non-temporal (`../gemm/flydsl_gemm_epilogue.md` §5).
+- E8M0 scale stores are never non-temporal (`../gemm/epilogue.md` §5).
 
 ## 8. Comparing MX with tensorwise
 - **A fair comparison.** Both on the same GEMM backend; the tensorwise path in its native layouts (an option that
@@ -176,20 +176,20 @@ What grouped adds:
   *(field, E26)* Cutting the MXFP4 grouped loop from 442 to 419 (NT) and 410 to 387 (wgrad) instructions, all SALU,
   changed wall time by 0: non-MFMA issue demand was 0.25–0.28 of the MFMA shadow. Below ~0.5, do not invest.
 - At the power cap a cycle saving converts to wall at a shape-dependent rate
-  (`../gemm/flydsl_gemm_attribution.md` §4).
+  (`../gemm/attribution.md` §4).
 
 ## 9. Why MXFP4 grouped does not reach 2× MXFP8
 - *(field, E27)* The fp4/fp8 grouped speed ratio was 1.32–1.69 (geomean 1.51 over 18 cells): lowest on shallow-K wide
   shapes, closest to 2 on deep K. The fp4 kernel ran 4-wave workgroups at one wave per SIMD (the fp8 kernel 8-wave
   workgroups at two) and its MFMA pipe starved for operands: MfmaUtil was 36.6% on the lowest-ratio cell and
   51.6% on the highest. Compare utilization counters across wave counts only after
-  `../gemm/flydsl_gemm_attribution.md` §9.
+  `../gemm/attribution.md` §9.
 - Raising fp4 occupancy by splitting the 256×256 tile over eight waves lost with both pipeline forms
   (`flydsl_grouped_tile_pricing.md` §2). Raise the per-wave feed at one wave per SIMD instead.
 
 ## 10. GLU and dGLU fused into the epilogue
 - **Accept on fused total against unfused total**, not on the fused kernel's TF/s against a bare GEMM
-  (`../gemm/flydsl_gemm_epilogue.md` §8). *(field, E28)* Fused glu (GEMM + SwiGLU) ran ~14–15% and fused dglu ~28–29%
+  (`../gemm/epilogue.md` §8). *(field, E28)* Fused glu (GEMM + SwiGLU) ran ~14–15% and fused dglu ~28–29%
   slower than a bare GEMM, and both were net wins on the total. The gap is structural: glu writes a third stream
   (the activation) that one workgroup per CU cannot hide; dglu must stream the pre-activation in and its gradient
   out, about twice the HBM traffic (an estimated 24% roofline floor at 8 TB/s). *(field, E33)* `waves_per_eu` 2/3/4
@@ -206,7 +206,7 @@ What grouped adds:
   consumes the activation gradient in registers so it never reaches HBM, both through the NT/NN mainloops behind
   `glu`/`dglu` flags (FP8G:14-21). MXFP8: GEMM, then a separate GLU + dual-quantization kernel, because folding
   the epilogue "pushes the tile past 128 VGPRs and into scratch" (MX8G:59-61). MXFP4: both directions NT
-  (MX4G:21-23). Operand pairing for gate/up in one lane: `../gemm/flydsl_gemm_epilogue.md` §8.
+  (MX4G:21-23). Operand pairing for gate/up in one lane: `../gemm/epilogue.md` §8.
 
 ## Verify
 - Packed-scale kernels are gated with unaligned group starts and random E8M0 exponents, against a reference.
@@ -218,8 +218,8 @@ What grouped adds:
 ## Related
 `flydsl_grouped_wgrad.md` · `flydsl_grouped_group_mapping.md` · `flydsl_grouped_tile_pricing.md` ·
 `flydsl_grouped_host_autotune.md` · `flydsl_grouped_correctness.md` · `flydsl_grouped_measurement.md` ·
-`../gemm/flydsl_gemm_datapath.md` · `../gemm/flydsl_gemm_epilogue.md` · `../gemm/flydsl_gemm_mainloop.md` ·
-`../gemm/flydsl_gemm_attribution.md`
+`../gemm/datapath.md` · `../gemm/epilogue.md` · `../gemm/mainloop.md` ·
+`../gemm/attribution.md`
 
 ## Evidence
 

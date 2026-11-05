@@ -18,8 +18,8 @@ sources:
 # Measuring a FlyDSL grouped GEMM
 
 > The shared protocol — ruler choice, arm order, warm-up, noise floors, statistics, closing a series of changes —
-> is in `../gemm/flydsl_gemm_measurement.md`; probes and power-cap pricing are in
-> `../gemm/flydsl_gemm_attribution.md`. This card is what the group dimension adds: the token distribution as an
+> is in `../gemm/measurement.md`; probes and power-cap pricing are in
+> `../gemm/attribution.md`. This card is what the group dimension adds: the token distribution as an
 > axis of the table, the deployment's operating point, FLOP accounting from training traces, and floors that
 > differ per cell. Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence
 > at the end. Use them for direction and order of magnitude.
@@ -47,7 +47,7 @@ sources:
 - **The extreme cells are real.** *(field, E1)* A one-hot bench cell reproduced the slowest wgrad call of a training
   trace within 1.4%.
 - Report each pass's skew-to-balanced ratio and every cell, not only the geometric mean
-  (`../gemm/flydsl_gemm_measurement.md` §4). The heavy-skew cells are usually the minimum, and they are where a
+  (`../gemm/measurement.md` §4). The heavy-skew cells are usually the minimum, and they are where a
   skew lever is accepted or rejected.
 
 ## 2. Lock the deployment's operating point
@@ -70,7 +70,7 @@ the deployment, not from a previous bench:
   of changes, every change the bench scored as a win was a loss on the deployed body; with two smaller causes (a
   bench bucket the deployment does not reach, and communication), the bench's 5.2% time saving was 0.84% in
   training.
-- **Per call, not per step** (`../gemm/flydsl_gemm_measurement.md` §7). *(field, E3)* A step ran four
+- **Per call, not per step** (`../gemm/measurement.md` §7). *(field, E3)* A step ran four
   micro-batches, so each call saw a quarter of the step's tokens per group; at that size the wide projection
   reached 23% (forward) and 36% (wgrad) less throughput than at the aggregate size. Confirm the size by
   comparing each kernel's launched grid in a trace with the bench's: the grid fields match exactly when the size
@@ -109,7 +109,7 @@ the deployment, not from a previous bench:
 
 - **Compile once and call the compiled object; compile beta=1 builds on a scratch output**
   (`../attention/flydsl_attn_measurement.md` §6, `flydsl_grouped_host_autotune.md` §2).
-- **Keep the host out of the GPU window** (`../gemm/flydsl_gemm_measurement.md` §6), and assert it: time the host
+- **Keep the host out of the GPU window** (`../gemm/measurement.md` §6), and assert it: time the host
   enqueue of the same R calls with a wall clock and require `t_host < 0.9 · t_gpu`. A slow wrapper looks normal
   until it is compared with a fast one.
 - **Give beta=1 a fresh accumulator every repetition.** *(field, E9)* Reusing one bf16 accumulator for 30 repetitions
@@ -119,7 +119,7 @@ the deployment, not from a previous bench:
   that the work cannot touch, measured in the same interleaved window, plus a live guard on the other point.
   Set the guard's tolerance from its measured spread: *(field, E10)* a min-of-four guard at 0.99 failed the baseline
   itself (its own spread reached 0.984); a geometric mean at 0.98 passed.
-- **Version A/B in one process** (`../gemm/flydsl_gemm_measurement.md` §1): load the old kernel as its own module.
+- **Version A/B in one process** (`../gemm/measurement.md` §1): load the old kernel as its own module.
   Two versions that define closures of the same name can collide in the JIT cache; bit-identical outputs with a
   ratio of ~1.0 mean "suspect one binary served both arms", not "no effect".
 - **A probe tree goes stale when the tree under test is refactored.** *(field, E11)* The wgrad half of a change,
@@ -137,17 +137,17 @@ the deployment, not from a previous bench:
   Decide on paired differences, not on one cell's reading.
 - **Detrend with an in-run control arm.** *(field, E14)* A control arm drifted 1.8% over six back-to-back runs; an
   order that looks balanced does not cancel a monotone drift. Normalize each run by the control arm of that run.
-- **Arm order** follows `../gemm/flydsl_gemm_measurement.md` §2: one process per arm runs `A B` (or `A B A B`);
+- **Arm order** follows `../gemm/measurement.md` §2: one process per arm runs `A B` (or `A B A B`);
   palindromes are only for two module instances interleaved inside one process. The first arm of a batch runs
-  cold (`../gemm/flydsl_gemm_measurement.md` §3). *(field, E15)* On grouped tables, cells a knob could not touch (the
+  cold (`../gemm/measurement.md` §3). *(field, E15)* On grouped tables, cells a knob could not touch (the
   NT cells under a wgrad-only change) read ~0.5 pp low in whichever arm ran first. Use the untouched pass's
-  cells as the batch's drift ruler (`../gemm/flydsl_gemm_measurement.md` §4) next to an inert arm (§2 there).
+  cells as the batch's drift ruler (`../gemm/measurement.md` §4) next to an inert arm (§2 there).
 
 ## 6. Small kernels and ISA statistics
 
 - **Price small kernels additively** — group-offset kernels, scale preshuffle, tail kernels, the split-K reduce —
   by launching them 0, 1, 2 and 4 extra times in one process, alternating arm order, and fitting the slope
-  (`../gemm/flydsl_gemm_attribution.md` §3). *(field, E16)* `rocprofv3` start→end gave an idle tail kernel 5.10 µs
+  (`../gemm/attribution.md` §3). *(field, E16)* `rocprofv3` start→end gave an idle tail kernel 5.10 µs
   against a marginal 1.58 µs, and a working preshuffle 20.3 µs against ~10.2; a candidate priced at +0.374% from
   the trace was worth an estimated +0.121% (+0.107% measured).
 - **Split ISA dumps per kernel.** A stage dump concatenates a module's kernels with no separator. *(field, E17)* Four
@@ -161,7 +161,7 @@ the deployment, not from a previous bench:
 ## 7. Power, clocks, and comparisons across precisions
 
 - **Read power per pass before ranking cycle-saving levers.** At ≥99% of board power, part of a cycle saving is lost
-  to a lower clock (`../gemm/flydsl_gemm_attribution.md` §4, whose 20% conversion case was the skewed worst cell of a
+  to a lower clock (`../gemm/attribution.md` §4, whose 20% conversion case was the skewed worst cell of a
   grouped MXFP8 NT kernel *(field, E19)*). *(field, E20)* A variable-K wgrad ran at its maximum clock (2400 MHz, about
   266 W), far below the cap, so cycle savings there are not handed back as clock. Prefer levers that remove bytes
   or requests on capped passes and skewed cells.
@@ -174,7 +174,7 @@ Turbo's fp8 NT/NN race scores candidates on balanced synthetic offsets at two ca
 tokens per group (`grouped_gemm_fp8_kernel.py:2453-2467`, `:2483-2484`), and its wgrad race on a balanced load
 only (`:4772-4777`). *(field, E21)* An NN dgrad arm that won at the deployed size could not pass the race's 1.5%
 adoption margin (`_NP_RACE_MARGIN`, `:2484`, `:2622`) at the two race points
-(`../gemm/flydsl_gemm_autotune.md` §2). Check what the race picks at the deployed size and under skew; the
+(`../gemm/autotune.md` §2). Check what the race picks at the deployed size and under skew; the
 remedies are in `flydsl_grouped_host_autotune.md`.
 
 ## Verify
@@ -187,7 +187,7 @@ remedies are in `flydsl_grouped_host_autotune.md`.
 - [ ] Small-kernel prices come from additive launches, not from trace durations.
 
 ## Related
-`../gemm/flydsl_gemm_measurement.md` · `../gemm/flydsl_gemm_attribution.md` · `flydsl_grouped_correctness.md` ·
+`../gemm/measurement.md` · `../gemm/attribution.md` · `flydsl_grouped_correctness.md` ·
 `flydsl_grouped_host_autotune.md` · `../attention/flydsl_attn_measurement.md`
 
 ## Evidence

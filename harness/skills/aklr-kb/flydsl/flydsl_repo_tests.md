@@ -40,7 +40,7 @@ sources:
   kernel test).
 
 **A AKLR kernel is judged by `python -m aklr validate` (`../SKILL.md` § In AKLR) and timed per
-`../gemm/flydsl_gemm_measurement.md`, not by FlyDSL's own suites or `run_benchmark.sh`.** AKLR kernel sources
+`../gemm/measurement.md`, not by FlyDSL's own suites or `run_benchmark.sh`.** AKLR kernel sources
 cannot import `tests.*` either; copy what you need.
 
 ## 1. Environment
@@ -227,7 +227,7 @@ matters. `.mlir` files carry no markers.
 elements outside `torch.isclose` (0 when all pass); `tol_err_ratio` only picks the log message.
 `verify_output(c_out, c_ref, atol=1e-2, rtol=1e-2, logits_diff_threshold=2e-3)` passes when under 5% of the
 elements mismatch, **or** when 1 − 2Σxy / Σ(x² + y²) ≤ 2e-3, so a few wrong tiles pass it; AKLR's gate is in
-`../gemm/flydsl_gemm_correctness.md`. `tests/utils.py`: `pertoken_quant(x, quant_dtype=...)` returns
+`../gemm/correctness.md`. `tests/utils.py`: `pertoken_quant(x, quant_dtype=...)` returns
 `(q, per_row_fp32_scale)` and scrubs NaN/Inf; `shuffle_weight(w, layout=(16, 16))` is the B preshuffle the
 preshuffle GEMMs expect.
 
@@ -259,8 +259,8 @@ iters=50, flush_l2=True, prep_fn=None)`: per-call events after zeroing a buffer 
 `bash scripts/dumpir.sh python3 <script.py> [args]` runs the command from the repository root with
 `FLYDSL_DUMP_IR=1` and `FLYDSL_DUMP_DIR` defaulting to `/tmp/flydsl_dump_ir` (`~/.flydsl/debug` without the
 script). Each kernel gets a subdirectory of numbered stages, `NN_<stage>.mlir` through `NN_final_isa.s`. How to
-read them: `../gemm/flydsl_gemm_mainloop.md` §10. Do not time a run with the dump on.
+read them: `../gemm/mainloop.md` §10. Do not time a run with the dump on.
 
 ## Related
-`../gemm/flydsl_gemm_measurement.md` · `../gemm/flydsl_gemm_correctness.md` · `debug-flydsl-kernel.md`
+`../gemm/measurement.md` · `../gemm/correctness.md` · `debug-flydsl-kernel.md`
 · `../profile.md` § bisect-perf-regression (an upstream test as the probe of a FlyDSL bisect)

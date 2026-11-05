@@ -76,7 +76,7 @@ are called here by their extra pool: "no extra" (window only), "extra 8256" (ext
   from the wrong base. The bench's pools start at offset 0; sglang's were not checked for this page.
 - **Not the shape the decode cards recommend**, and nothing here prices the differences: the combine is a second
   launch with 4 waves and an LDS merge (`../attention/flydsl_attn_decode_split_kv.md` §1 and
-  `../gemm/flydsl_gemm_grid_pricing.md` §2 found one wave per combine workgroup faster); a producer workgroup owns
+  `../gemm/grid_pricing.md` §2 found one wave per combine workgroup faster); a producer workgroup owns
   one 32-key tile, two above 1024 live keys, where §5 of the decode card asks for at least two per split; partials
   are bf16, which §5 says adds merge error.
 - **Each call goes through the `@flyc.jit` launcher** `launch_all`, which re-binds its arguments on every call

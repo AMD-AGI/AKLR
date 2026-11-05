@@ -15,7 +15,7 @@ flydsl: 0.3.2
 > and their helper kernels). It does not say which configuration wins. Numbers marked `*(field, E<n>)*` are
 > measured values; their conditions are listed under Evidence at the end. Use them for direction and order of
 > magnitude, not as targets. The round discipline — one change per
-> round, hypothesis before build, escalation after rollbacks — is in `../gemm/flydsl_gemm_workflow.md` and
+> round, hypothesis before build, escalation after rollbacks — is in `../gemm/workflow.md` and
 > applies unchanged.
 
 ## Route here when
@@ -175,7 +175,7 @@ changed.
   Rank with the counter that matches the change (`flydsl_attn_attribution.md` §2).
 
 ## Related
-`INDEX.md` · `../gemm/flydsl_gemm_workflow.md` (round discipline) · `../gemm/flydsl_gemm_attribution.md` ·
+`INDEX.md` · `../gemm/workflow.md` (round discipline) · `../gemm/attribution.md` ·
 `../flydsl/kernels/flydsl_authoring_method.md` · `../hardware/gfx950/matrix_core.md`
 
 ## Evidence

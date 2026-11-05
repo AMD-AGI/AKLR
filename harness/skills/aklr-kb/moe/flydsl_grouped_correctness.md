@@ -19,7 +19,7 @@ sources:
 > What a grouped GEMM's gate must add to a dense one. Most cases marked `*(field, E<n>)*` below passed a gate that
 > reported clean; use them to design the gate before trusting it. The general rules — gates that reach the changed
 > path, calling twice, races found by bitwise repetition at the timing shapes, waits and barriers, inline-asm
-> hazards, random E8M0 exponents — are in `../gemm/flydsl_gemm_correctness.md`. Debugging a kernel already known
+> hazards, random E8M0 exponents — are in `../gemm/correctness.md`. Debugging a kernel already known
 > to be wrong starts in `../flydsl/debug-flydsl-kernel.md`. Numbers marked `*(field, E<n>)*` are measured
 > values; their conditions are listed under Evidence at the end.
 
@@ -37,7 +37,7 @@ an fp32 reference built from the dequantized operands, with SNR, on skewed distr
   a balanced one.
   - Balanced groups end on tile boundaries, so an over-running tile never reaches the next group.
 - Keep the dense gate's mechanics: at least two calls, NaN-filled outputs between calls, bitwise repetition at
-  the shapes you time (`../gemm/flydsl_gemm_correctness.md` §1–§3).
+  the shapes you time (`../gemm/correctness.md` §1–§3).
 
 ## 2. The distribution set every gate runs
 
@@ -124,7 +124,7 @@ A boundary or tail body guarded by a runtime predicate can pass every gate becau
 - **A graded `vmcnt(N)` counts instructions, not bytes.** *(field, E11)* Narrowing a boundary tile's fill by dropping
   one half of it, with the wait unchanged, raced (0 of 10 repeats identical). Whether SNR sees it depends on
   whether the stale half reaches the scored output (§6). Narrow both halves (same issue count) or drain fully.
-- The safe in-flight tail and multi-pool counting are in `../gemm/flydsl_gemm_correctness.md` §4.
+- The safe in-flight tail and multi-pool counting are in `../gemm/correctness.md` §4.
 
 ## 9. Runtime splits: cover every split the policy can pick
 
@@ -135,7 +135,7 @@ part of the contraction when the table lacks a split the policy can reach — no
   force the high-split branch) caught a missing entry; small-M benchmarks did not leave the low splits, and the
   determinism gate passed the consistently truncated output.
 - Gate a split hand-off on a grid larger than one dispatch round: *(field, E13)* racy dense variants reported error 0
-  on grids that fit the device at once (`../gemm/flydsl_gemm_small_m.md` §4).
+  on grids that fit the device at once (`../gemm/small_m.md` §4).
 
 ## 10. Changes elsewhere break grouped kernels
 
@@ -148,7 +148,7 @@ part of the contraction when the table lacks a split the policy can reach — no
   - *(field, E16)* On a dense MXFP4 GEMM, a rule that took one operand's allocated row stride for both operands
     passed every contiguous probe.
 - **A fallback `except` in a race must record what it swallowed**, so that "never won" and "never built" look
-  different in the log (`../gemm/flydsl_gemm_autotune.md` §7, `flydsl_grouped_host_autotune.md` §8).
+  different in the log (`../gemm/autotune.md` §7, `flydsl_grouped_host_autotune.md` §8).
 
 ## Verify
 - [ ] The gate runs balanced, heavy-skew, one-hot and empty-group distributions against a dequantized fp32
@@ -160,7 +160,7 @@ part of the contraction when the table lacks a split the policy can reach — no
 - [ ] Dense or helper changes reran the grouped gates and the import smoke.
 
 ## Related
-`../gemm/flydsl_gemm_correctness.md` · `../flydsl/debug-flydsl-kernel.md` · `flydsl_grouped_group_mapping.md` ·
+`../gemm/correctness.md` · `../flydsl/debug-flydsl-kernel.md` · `flydsl_grouped_group_mapping.md` ·
 `flydsl_grouped_wgrad.md` · `flydsl_grouped_lowprec.md` · `flydsl_grouped_measurement.md`
 
 ## Evidence

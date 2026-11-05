@@ -20,7 +20,9 @@ may have made it stale. `maintenance/kb_lint.py` enforces what can be checked me
 - `flydsl/`, `triton/`, `hip/` a language's own pages, each starting at its `SKILL.md`. In `flydsl/`: `language/`
   what FlyDSL itself does (limits, compile errors, version differences), `guides.md` FlyDSL's own skills linked at
   `v0.3.2` with this repository's corrections, `debug-flydsl-kernel.md` debugging, `kernels/` aiter's FlyDSL
-  kernels, their knobs and how to write a new one
+  kernels, their knobs and how to write a new one, `<op>.md` (such as `gemm.md`) the FlyDSL side of an op
+  package's cards. A card states the mechanism and its numbers; how to write it in FlyDSL goes to that page, under
+  a heading named after the card's section (`mainloop §8`), and the card's section ends with a pointer to it
 
 ## Page kinds
 
@@ -46,7 +48,7 @@ because other pages cite them as `<card>.md §<n>`.
   change only when the page is rewritten, and that pull request fixes every link to it.
 - **Hardware**: `hardware/<arch>/` holds only an architecture's ISA guide and the guides to looking things up in
   it. What one architecture changes for an op goes to the op's package, with `gens: [<arch>]` (gfx942's GEMM
-  notes: `gemm/flydsl_gemm_gfx942.md`).
+  notes: `gemm/gfx942.md`).
 - **FlyDSL's own skills are linked, never copied**, pinned to `v0.3.2`: `https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/<skill>/SKILL.md`. What this
   repository adds to or corrects in one goes to `flydsl/guides.md`, or to `profile.md` for the trace and
   bisection skills. A card links that page (`flydsl/guides.md` § <skill>, `profile.md` § <skill>), not the
@@ -58,7 +60,7 @@ because other pages cite them as `<card>.md §<n>`.
 
 Front matter is YAML: quote a value that contains `: `. `flydsl` is the version the page was checked against
 (`0.3.2`), `gens` the architectures (`[gfx950]`; `[gfx942]` on a page about gfx942 only, such as
-`gemm/flydsl_gemm_gfx942.md`), `regimes` the M ranges or regimes it covers.
+`gemm/gfx942.md`), `regimes` the M ranges or regimes it covers.
 
 ## Evidence
 

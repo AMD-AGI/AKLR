@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL GEMM — per-shape autotune that cannot regress, and a launch path that costs nothing"
+title: "GEMM — per-shape autotune that cannot regress, and a launch path that costs nothing"
 kind: method
-lever: flydsl_gemm_autotune
+lever: gemm_autotune
 ops: [gemm]
 gens: [gfx950]
 dtypes: [fp8, mxfp4, mxfp8, bf16]
@@ -18,16 +18,15 @@ sources:
 # Per-shape autotune and the launch path
 
 > No single FlyDSL GEMM configuration is best across shapes. Two loop designs, tile shapes, L2 bands, store
-> policy and split-K all change sign between shapes (`flydsl_gemm_mainloop.md` §1,
-> `flydsl_gemm_epilogue.md` §5). Turbo's dense GEMMs therefore race a short candidate list on the first call
-> for each shape and cache the winner. FlyDSL's own kernels take their configuration from the caller; the
-> baseline aiter ships its own copies and picks their configuration from offline-tuned tables
-> (`flydsl_gemm_small_m.md` §7). FlyDSL also ships a general `flydsl.autotune`
-> decorator that benchmarks a config list per key (`python/flydsl/autotune.py`).
+> policy and split-K all change sign between shapes (`mainloop.md` §1,
+> `epilogue.md` §5). Turbo's dense GEMMs therefore race a short candidate list on the first call
+> for each shape and cache the winner.
 > "FP8", "FP4", "MX8" and "GH" are the files under
 > `primus_turbo/flydsl/{gemm,utils}` at Primus-Turbo main `7615a5a2`. Numbers marked `*(field, E<n>)*` are
 > measured values; their conditions are listed under Evidence at the end. Use them for direction and order of
 > magnitude, not as targets.
+
+In FlyDSL: `../flydsl/gemm.md` § autotune Per-shape autotune and the launch path.
 
 ## Route here when
 - You are adding a configuration axis, or a second kernel design, behind one entry point.
@@ -45,7 +44,7 @@ For each candidate `(cfg, factory)`:
    minimum (`_pick_dense_candidate`, FP8:3067). This fixed forward-plus-reversed order keeps the first
    candidate at both ends of every pass and the last candidate at the turn, twice in a row. With three or
    more candidates whose times sit within the slot effect, shuffle the order on each pass instead
-   (`flydsl_gemm_measurement.md` §2).
+   (`measurement.md` §2).
 4. Cache the winner per static shape key. Call `torch.cuda.empty_cache()` to release the race buffers.
 
 **Keep the race; do not replace it with a model.** *(field, E1)* Replacing the TN race with "sort by an
@@ -91,7 +90,7 @@ time.
   - Time base and candidate in one process, inside one window, as a palindrome `(base, cand, cand, base)` per
     rep, and take the median of `(c1+c2)/(b1+b2)` (`_robust_ab_ratio`, GH:2091). The DVFS ramp is odd in the
     slot index, so it cancels within a rep. This is the two-arm in-process case of
-    `flydsl_gemm_measurement.md` §2.
+    `measurement.md` §2.
   - *(field, E5)* On a grouped fp8 GEMM, with the palindrome, 48 of 48 re-runs (eight cells × six) picked the
     same configuration, in each cell the arm measured fastest.
   - Check stability itself repeatedly. One stable check is not evidence; use at least 6 cleared-cache
@@ -116,17 +115,11 @@ Search one axis family at a time, holding the earlier winners, instead of a full
 - MXFP4 (FP4:3170-3377 and the dispatch around it): swizzle × whole-loop depth; then the epilogue
   variants; then the launch mode (plain, uniform split, tail split over M or N). Launch modes are timed end
   to end, including the host reduce.
-  - **The epilogue-variant stage does not run at `7615a5a2`.** It looks the swizzle winner up under a 13-field
-    key (FP4:3294-3296), the swizzle stage stores its entries under 15 fields (FP4:3215-3231), and the
-    `KeyError` is swallowed (`except Exception: pass`, FP4:3374-3375), so every shape keeps
-    `(taccw, coop) = (False, False)` (FP4:3289). *(field, E13)* With the key fixed, none of the 18 shapes of a
-    dense MXFP4 table picked a variant.
-  - **Nor does the real launch reuse the race's compiled winners.** The race stores them under the 15-field key
-    (FP4:3215-3231), the launch looks them up under 14 fields, without `k_real` (FP4:4519), so the first real launch
-    of a shape compiles again, although the docstring says it does not (FP4:3188-3189).
 
 When a search stalls, change the family of the dimension you search (split-K, MFMA shape, cache modifier,
 `waves_per_eu`, scale prefetch). Do not re-sweep the same tile grid.
+
+In FlyDSL: `../flydsl/gemm.md` § autotune §3.
 
 ## 4. Representative probe data
 
@@ -137,7 +130,7 @@ When a search stalls, change the family of the dimension you search (split-K, MF
   shape, while operand entropy moved a microbenchmark's peak by only 10.7%; the rest of the gap is put,
   untested, on allocation history. Time on tensors the deployment path produced.
 - **Choose the beta the race ranks at.** Turbo's dense races time the beta=0 build on a scratch output and rebuild the
-  winner with the accumulate epilogue (`flydsl_gemm_epilogue.md` §7), so beta=0 and beta=1 callers of a shape share
+  winner with the accumulate epilogue (`epilogue.md` §7), so beta=0 and beta=1 callers of a shape share
   one configuration. *(field, E9)* Ranking at the caller's beta costs one more build per surviving candidate. On a
   grouped per-tensor wgrad, the beta=1 ranking had another winner than the beta=0 ranking on two of four shapes;
   ranked at beta=0, the race reached the beta=1 best on one of them in 2 of 6 runs, ranked at beta=1 in 6 of 6.
@@ -155,31 +148,22 @@ When a search stalls, change the family of the dimension you search (split-K, MF
   `row_bytes` (one logical shape, two allocations, two kernels) and `scales_prepacked` (the two builds
   differ in whether the launch runs the scale preshuffle) beyond the shape (FP4:4518-4519, FP4:4650-4651).
   Leave either out and one call is handed the other's module.
-- **A value used as a compile-time constant is part of the specialization.** Pass truly dynamic values as
-  `fx.Int32` arguments. Closure-captured Python dicts are *not* in FlyDSL's JIT cache key
-  (`../flydsl/debug-flydsl-kernel.md` § What the cache key sees).
+- **A value used as a compile-time constant is part of the specialization.**
 - Build knobs that select a code path (tile order, store policy) must be in the key. Otherwise two policies
   share one cache slot and silently run as one binary.
 
+In FlyDSL: `../flydsl/gemm.md` § autotune §5.
+
 ## 6. The launch path
 
-- **Call the `flyc.compile` object, not the `@flyc.jit` function.** The jit call re-binds the signature,
-  rebuilds the cache key and re-checks globals on every launch: *(field, E10)* 180 µs against 37 µs for a fused
-  MoE combine kernel's ~24-argument launch (`run_compiled`, GH:2049-2069). Compile once per key with
-  `_static_layout` (`flyc.from_torch_tensor` per tensor, FP8:2973) so the object does not re-read shapes and
-  strides.
 - **Skip no-op tensor ops on the hot path.** A no-op `.to()` or `.reshape()` still costs a dispatch
   (`_scalar_scale`, FP8:3098-3105). Turbo reads the stream through `torch._C._cuda_getCurrentRawStream`
   (FP8:2970).
-- **Under CUDA-graph capture: no timing, and call the raw closure.** A race cannot time inside capture, so
-  fall back to the static heuristic configuration. Launch the raw `@flyc.jit` closure, because "a
-  flyc.compile'd object regresses under CUDA-graph capture" (`_run_dense`, FP8:3081-3091). Warm up and
-  synchronize the kernel with the same constexpr key before capture starts.
-- **A dispatch layer that calls the `@flyc.jit` closure pays its host cost on every call.** *(field, E11)* On a grouped fp8 wgrad whose public entry
-  called the `@flyc.jit` closure behind a runtime split-K policy, host time was 77.9 µs per call (cache-key
-  build 54%, the globals-drift check 22%); moving the entry to the compiled object cut it to 19.1 µs and
-  gained 6.5% on a six-shape score that includes host time. Re-measure the host path after adding any
-  dispatch logic.
+- **Under CUDA-graph capture: no timing.** A race cannot time inside capture, so fall back to the static heuristic
+  configuration. Warm up and synchronize the kernel with the same constexpr key before capture starts.
+- Re-measure the host path after adding any dispatch logic.
+
+In FlyDSL: `../flydsl/gemm.md` § autotune §6.
 
 ## 7. Failures the race must not hide
 
@@ -201,14 +185,14 @@ When a search stalls, change the family of the dimension you search (split-K, MF
   timing only when the race and the scorer measure the same way.
 
 ## Related
-`flydsl_gemm_mainloop.md` · `flydsl_gemm_epilogue.md` · `flydsl_gemm_measurement.md` (rulers, null controls) ·
-`flydsl_gemm_correctness.md` · `../flydsl/debug-flydsl-kernel.md`
+`mainloop.md` · `epilogue.md` · `measurement.md` (rulers, null controls) ·
+`correctness.md` · `../flydsl/debug-flydsl-kernel.md`
 
 ## Evidence
 
 A FlyDSL version is given only where the cited run, or another round in the same container and venv, printed it
 (`flydsl.__version__`, an import path with its version, or a `pip install flydsl==` in the run's own setup); otherwise
-`FlyDSL ?`. The month is the run's: the round timestamps in each campaign's `run.jsonl`, the commit date (E1, E9, E10),
+`FlyDSL ?`. The month is the run's: the round timestamps in each campaign's `run.jsonl`, the commit date (E1, E9),
 the date the note gives (E8, E12) or the date of the commit that first records the note (E16). "Turbo" is Primus-Turbo.
 Each line names its kernel; "grouped" and "fused MoE" in a claim mark a number the card states for another kind of
 kernel.
@@ -222,8 +206,6 @@ kernel.
 - E7 [2026-08, gfx950, FlyDSL ?, N=2, race disabled and each config timed twice (repeatability under 0.15%); campaign score `gm_ratio` (geomean over 18 configs of the MXFP8 time over ours), one read per arm] the NT race scored candidates on synthetic balanced group offsets and did not pick `(2,8,0)`, which was in its list; timed per config, `(2,8,0)` was 7.0% and 7.8% faster on the two configs holding `min_ratio`; a hard-coded NT constant, the race code deleted with it: gm 1.3529 → 1.37619, min 1.1843 → 1.22707; the same constant on the wgrad path, which shared the default, collapsed wgrad to 0.38–0.55× (gpt-oss MXFP4 grouped GEMM `mxfp4_grouped_kernel.py`, round 2; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260803_155024/rounds/round-02/agent.txt:22; :24; memory.md:162)
 - E8 [2026-09, gfx950, FlyDSL ?, N=?, two probes in separate processes on one build and shape] `torch.zeros` operands 151–155 µs (`_occ.py`) against bf16 randn quantized through `QuantizedTensor.quantize` 205 µs (`_cst.py`), 32%; in a microbenchmark high-entropy operands lowered the peak 10.7% (4044 → 3614 TMAC/s) against constant ones; the note puts the rest on allocation history and page placement, untested (Turbo MXFP4 dense GEMM, out_proj_wgrad 4096×4096×32768; note, the probe runs are not recorded on this machine; local:/workspace/code/gpt_oss_docker/.claude/memory/reference_zero_operands_fake_gemm_timing.md:8; repeated as a ruler note in local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260915_160527/memory.md:78)
 - E9 [2026-09, gfx950, FlyDSL ?, N=?, each candidate pinned and timed at both betas on balanced draws; the race's choice observed over 6 scored runs] winners at beta=0 and beta=1: down G=24 (1,4) 2623.1 and (4,2) 2215.9 TF/s, gate_up G=24 (1,4) 2677.3 and (1,3) 2272.6, the same rectangle at G=32; beta=1 16% slower outright; ranked at beta=0 the race reached the beta=1 best on down in 2 of 6 runs, ranked at the caller's beta in 6 of 6; each surviving candidate is compiled twice, about doubling a cold autotune (gpt-oss-20b grouped per-tensor fp8 wgrad, variable K, down and gate_up at G=24 and G=32; Primus-Turbo d0cd4b00; local:/workspace/code/gpt_oss_docker/.claude/memory/project_b24_pad2944_merge.md:100)
-- E10 [2026-08, gfx950, FlyDSL ?, N=?, host time per call; method not stated] calling the `@flyc.jit` launch 180 µs per call against 37 µs through the `flyc.compile` object, for the fp8 combine's ~24-argument launch, called twice per MoE layer in a training step (fused MXFP8 MoE, FC2 + combine; Primus-Turbo 22e544d5 (#456), kept as the docstring of `run_compiled`, Primus-Turbo 7615a5a2:primus_turbo/flydsl/utils/gemm_helper.py:2054)
-- E11 [2026-08, gfx950, FlyDSL ?, N=3, campaign score `_bench_wgrad_vs_fwd.py` (wgrad FLOP rate over the same process's forward, CUDA events around the public call, so host time counts), three reads against one same-day baseline read] the wgrad public entry moved from the `@flyc.jit` closure to the `flyc.compile` object, as the forward entry already was: host 77.9 → 19.1 µs per call (`_resolve_and_make_cache_key` 54% and `_check_globals_drift` 22% of the old time), output byte-identical; gm 0.99043 → 1.05074 / 1.05483 / 1.05459, recorded +6.46%; this followed the runtime split-K policy kept the round before (gpt-oss per-tensor fp8 grouped wgrad, round 4; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260803_111756/memory.md:127; :131; :132; myskill methodology/08-splitk-crosslane-lowprec-wgrad.md:172)
 - E12 [2026-08, gfx950, FlyDSL ?, N=?, campaign bench that scored NN and TN only] `cands.append([launch, (bm, gm, gn, xcd, ag), c])` inside `for bm, gm, xcd, ag in _NT_CANDIDATES`: `gn` unbound, every NT candidate dropped by `except Exception: continue`, `NT autotune found no working cfg`; the dense fp8 forward was broken on the delivered commit while ten rounds of bench stayed green (Turbo dense fp8 GEMM, NT path, found after the NN dgrad campaign 20260809_051251; notes, no run record on this machine; local:/workspace/code/gpt_oss_docker/.claude/memory/feedback_bench_scope_blind_sibling_path.md:13; local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/06-autotune-dispatch.md:48)
 - E13 [2026-09, gfx950, FlyDSL 0.2.4, N=1, code reading, then one scored read per arm] the TACCW/COOP epilogue-twin stage looks its base up in `_MXFP4_AT_CACHE` under a 13-field key while entries are stored under 15 fields; the `KeyError` goes to `except Exception: pass`, so the twin axis had not run in the whole campaign; with the key fixed in a later campaign, all 18 cells of the `gemm18` table still picked `(taccw, coop) = (False, False)` (Turbo MXFP4 dense GEMM for gpt-oss, `_autotune_mxfp4_config`, round 16; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260923_085930/rounds/round-16/agent.txt:8; myskill pitfalls/06-autotune-dispatch.md:827; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260925_144843/memory.md:199)
 - E14 [2026-09, gfx950, FlyDSL 0.2.4, N=?, code reading and a probe of the race] the four kernel calls in `launch_mxfp4_tail` lacked the `ACT`/`PROBS` arguments, so launch modes 2 and 3 (tail split) raised `TypeError: missing a required argument: 'ACT'` and `except Exception: continue` dropped them: the tail-split leg had not been raced; myskill counts mode 2/3 as unbuilt through the whole preceding 16-round campaign `20260923_085930`; the two arguments came with `9f05cd85` (2026-09-17) (Turbo MXFP4 dense GEMM, 18-cell `gemm18` campaign, round 1; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260925_144843/rounds/round-01/agent.txt:11; myskill pitfalls/06-autotune-dispatch.md:50; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260923_085930/run.jsonl:74)

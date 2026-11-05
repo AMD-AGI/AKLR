@@ -43,10 +43,10 @@ called directly, not through AKLR:
 ## How to detect
 
 - Run the baseline through the gate you run your kernel through, at every Point you time, against an fp32
-  reference built from the dequantized operands (`../gemm/flydsl_gemm_correctness.md` §1, the fifth of the gate
+  reference built from the dequantized operands (`../gemm/correctness.md` §1, the fifth of the gate
   shapes).
 - Check which kernel the baseline launched, and that it is the path you meant to beat
-  (`../gemm/flydsl_gemm_measurement.md` §7).
+  (`../gemm/measurement.md` §7).
 - Flag MXFP4 and MXFP8 Points whose K is not a multiple of 256. AKLR's `gemm_a4w4_mxfp4` contract admits any K
   that is a multiple of 64, and its baseline calls aiter's `gemm_a4w4` (S3).
 - Do not take a hipBLASLt MX output as the reference for an MX kernel: it is itself 49.6 dB from the fp32 result

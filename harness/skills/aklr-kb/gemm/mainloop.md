@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL GEMM — the main loop: 2-stage ping-pong, 8-wave pipeline, 4-wave designs"
+title: "GEMM — the main loop: 2-stage ping-pong, 8-wave pipeline, 4-wave designs"
 kind: topic
-lever: flydsl_gemm_mainloop
+lever: gemm_mainloop
 ops: [gemm]
 gens: [gfx950]
 dtypes: [fp8, int8, mxfp4, mxfp8, bf16, fp16]
@@ -18,13 +18,13 @@ sources:
   - ROCm/FlyDSL@dd8373349:.claude/skills/gemm-optimization/SKILL.md
 ---
 
-# The FlyDSL GEMM main loop
+# The GEMM main loop
 
 > Three loop designs are in use for FlyDSL GEMMs on gfx950: FlyDSL's 2-stage LDS ping-pong
 > (`preshuffle_gemm`, explained step by step in `../flydsl/guides.md` § gemm-optimization (FlyDSL's §2 and §4–§6)), the 8-wave
 > pipeline (FlyDSL's `fp8_gemm_8wave.py`; Primus-Turbo's fp8 and MXFP8 GEMMs) and the 4-wave designs (FlyDSL's
 > `fp8_gemm_4wave.py` and `fp4_gemm_4wave.py`; Primus-Turbo's whole-loop inline asm). Primus-Turbo's kernels are
-> built for training shapes (large M; small M is in `flydsl_gemm_small_m.md`). "FP8" below means Turbo's
+> built for training shapes (large M; small M is in `small_m.md`). "FP8" below means Turbo's
 > `gemm/gemm_fp8_kernel.py`, "FP4" means `gemm/gemm_mxfp4_kernel.py` and "GH" means `utils/gemm_helper.py`, all
 > under `primus_turbo/flydsl/` at main `7615a5a2`; "PS" is FlyDSL's `kernels/gemm/preshuffle_gemm.py`. All of
 > them run on FlyDSL v0.3.2. What to know when calling FlyDSL's kernels is in §8.
@@ -37,9 +37,9 @@ sources:
 - An inline-asm MFMA or loop compiles and runs but produces wrong numbers on some shapes.
 - You are deciding between AGPR and VGPR accumulators, or between MFMA atoms.
 
-Grid, tile and split-K pricing are in `flydsl_gemm_grid_pricing.md`. Wait counts, priority and tile order
-are in `flydsl_gemm_schedule_and_locality.md`. LDS layout, global→LDS DMA and M0 are in
-`flydsl_gemm_datapath.md`. The C store is in `flydsl_gemm_epilogue.md`.
+Grid, tile and split-K pricing are in `grid_pricing.md`. Wait counts, priority and tile order
+are in `schedule_and_locality.md`. LDS layout, global→LDS DMA and M0 are in
+`datapath.md`. The C store is in `epilogue.md`.
 
 ## The baseline: FlyDSL's 2-stage ping-pong (`preshuffle_gemm`)
 
@@ -50,7 +50,7 @@ FlyDSL's guide walks through this design in detail (`../flydsl/guides.md` § gem
   buffer and the next B tile into registers, run the MFMAs on the current buffer, then `s_waitcnt` + barrier
   (guide §2.3, §4.4).
 - **`hot_loop_scheduler` spreads the loads over the MFMAs** with `sched_vmem` / `sched_dsrd` / `sched_dswr`
-  / `sched_mfma` groups whose counts come from this tile (guide §5; `flydsl_gemm_schedule_and_locality.md` §3).
+  / `sched_mfma` groups whose counts come from this tile (guide §5; `schedule_and_locality.md` §3).
 - **Async copy (gfx950).** `use_async_copy` moves A global→LDS by DMA and frees A's staging VGPRs (guide §11).
   *(field, E1)* Staging A or B through VGPRs + `ds_write` instead of DMA lost 10–15% on a bf16 8-wave loop at M=16384 (timing-only builds; their output was not checked).
 - Budget it with the guide's formulas: MFMAs per tile (§1.5), LDS per stage (§2.4), VGPRs (§10).
@@ -88,13 +88,13 @@ cycles, and ran 14–18% slower; with two waves per group (256 VGPRs, no spill),
 **Why it loses on short K.** At one wave per SIMD nothing overlaps the epilogue. Turbo therefore only
 offers the whole loop when `ceil(K/128) >= 16` (`_NT4_MIN_K_ITERS`, FP8:3203). Above that it compiles
 both designs and races them on the first call for each shape (`_autotune_nt_dispatch`, FP8:3210; see
-`flydsl_gemm_autotune.md`). Do the same in your own kernel: the crossover depends on the shape and on the
+`autotune.md`). Do the same in your own kernel: the crossover depends on the shape and on the
 epilogue, so no fixed rule works.
 
 ## 2. The 8-wave pipeline (FP8 `_compile_dense_nt`)
 
 - **LDS.** One `@fx.struct` with eight `fx.Array` fields: A/B × cur/next × two halves (FP8:134-142).
-  A 256×256×128 fp8 tile uses 128 KiB. Allocate it with `fx.SharedAllocator().allocate(...).peek()`.
+  A 256×256×128 fp8 tile uses 128 KiB.
 - **Quadrants.** Each wave owns four accumulator quadrants, c00/c01/c10/c11. One iteration interleaves
   four S2R fragment loads, the next tiles' G2S fills and four MFMA clusters (FP8:264-310):
   ```
@@ -112,7 +112,7 @@ epilogue, so no fixed rule works.
   LDS rendezvous, not out-of-order `vmcnt`.
 - **The end-of-iteration drain is a correctness knob, not a tuning knob.** `nt_vmcnt=3` is documented
   at FP8:92: N=3 gave bitwise-repeatable output at ≤1.1% cost, N≥4 raced, N<3 was slower *(field, E5)*.
-  - If you build this pipeline, sweep the drain with a bitwise repetition gate (`flydsl_gemm_correctness.md` §3),
+  - If you build this pipeline, sweep the drain with a bitwise repetition gate (`correctness.md` §3),
     never with SNR alone.
 - **`s_setprio(1)` … `s_setprio(0)` around each MFMA cluster.** At two waves per SIMD this lets the wave
   that reached its MFMAs keep the matrix pipe. Always drop priority afterwards. The whole-loop kernels at
@@ -123,17 +123,18 @@ epilogue, so no fixed rule works.
 - **If a third full stage overflows LDS, give one operand a third stage.** *(field, E10)* ~11% on a bf16
   192×256×64 tile at M=9397, against a ~13% ceiling with the loop-top wait removed; deepening A or B gained the same.
   *(field, E11)* On 224–352-row bf16 tiles of another kernel either operand's third stage was neutral to 4% slower: race it.
-  Do not halve the K tile to make room for more stages (`flydsl_gemm_datapath.md`).
+  Do not halve the K tile to make room for more stages (`datapath.md`).
 - **Edge cases the prologue must cover.** The prologue primes k=0 and k=1. When `K_ITERS == 2` the main
   loop is skipped, so the prologue's own wait must drain what the epilogue reads (FP8:257-262).
 - **Code size grows with K** because the loop is `range_constexpr`. That is acceptable for an 8-wave tile
   at moderate K. It is one reason the whole loop exists.
 
+In FlyDSL: `../flydsl/gemm.md` § mainloop §2.
+
 ## 3. The 4-wave whole loop: one inline-asm region for all of K
 
 The K loop is a Python-generated assembly string passed to one `_llvm.inline_asm` call. The loop label
 and back edge are part of the string (`s_add_u32 cnt; s_cmp_lt_u32; s_cbranch_scc1 1b`, FP8:2355-2359).
-Results come back through `llvm.extractvalue` on a struct return type.
 
 What this buys:
 - No FlyDSL/LLVM boundary per iteration, so the compiler cannot insert a conservative `vmcnt(0)` or
@@ -186,6 +187,8 @@ the first MFMA group gained 1.1%, while spreading all 12 over five groups lost 0
 After the order is right, the next gain comes from changing the work (tile shape, quadrants, boundary
 bodies), not from re-ordering.
 
+In FlyDSL: `../flydsl/gemm.md` § mainloop §3.
+
 ## 4. Register plan and inline-asm constraints
 
 **The plan.** Accumulators are `"=a"` outputs in AGPRs, up to 64 `vector<4xf32>` (256 AGPRs, FP8:1123).
@@ -209,8 +212,8 @@ at `v8` (FP8:1122). The loop counter and the per-pool soffsets are early-clobber
    `s_cmp`, giving a wrong trip count and a memory fault. Fully unrolled callers looked fine, so the bug
    stayed latent until a loop was rolled.
 5. **Waits that order an intrinsic DMA need `~{memory}`**, and asm `ds_read`s must drain their own
-   `lgkmcnt` before their consumer (`flydsl_gemm_datapath.md` §4).
-6. **An untied "pin" (`"=a,v"`) deletes the operand.** See `flydsl_gemm_correctness.md` §7.
+   `lgkmcnt` before their consumer (`datapath.md` §4).
+6. **An untied "pin" (`"=a,v"`) deletes the operand.** See `correctness.md` §7.
 
 **AGPR or VGPR accumulators.** Judge by the shuttle traffic (`v_accvgpr_read/write/mov` counts in the
 hot loop) and by wall time, not by `accum_offset` or register totals.
@@ -222,16 +225,15 @@ hot loop) and by wall time, not by `accum_offset` or register totals.
 - *(field, E17)* At unchanged occupancy, freed registers buy nothing on their own. In one attention kernel, releasing 72
   VGPRs and 72 AGPRs cost −2.05%. Name the specific gain the headroom is for before building it.
 
-**Setting `amdgpu-agpr-alloc` and friends.** Turbo passes these through `value_attrs`
-(`make_value_attrs`, GH:1580). Put them under `"llvm.passthrough": [...]`. A bare `"passthrough": [...]`
-key is silently dropped at `convert_gpu_to_rocdl`. A dropped attribute gives no error. An inline-asm AGPR
-accumulator then gets the default allocation, and the result is wrong. After setting any kernel attribute,
+**Setting `amdgpu-agpr-alloc` and friends.** Without the attribute, an inline-asm AGPR
+accumulator gets the default allocation, and the result is wrong. After setting any kernel attribute,
 read `.agpr_count`, `.vgpr_count` and the waves-per-eu fields from the ISA (`FLYDSL_DUMP_IR=1`, §10).
+
+In FlyDSL: `../flydsl/gemm.md` § mainloop §4.
 
 ## 5. MFMA atom choice
 
-- FlyDSL's guide lists the atom per dtype (`../flydsl/guides.md` § gemm-optimization (FlyDSL's §6.2)). On gfx950, PS switches
-  fp8 to the 16x16x128 form when `tile_k % 128 == 0` (`use_mfma_scale_128`, PS:159).
+- FlyDSL's guide lists the atom per dtype (`../flydsl/guides.md` § gemm-optimization (FlyDSL's §6.2)).
 - fp8 and MX formats on gfx950 use `v_mfma_f32_16x16x128_f8f6f4`, or its scaled form for MX. The
   operand formats come from `cbsz` (A) and `blgp` (B); the operand tuple width must match the format
   (fp4 takes 4 dwords).
@@ -244,11 +246,12 @@ read `.agpr_count`, `.vgpr_count` and the waves-per-eu fields from the ISA (`FLY
   `SQ_VALU_MFMA_BUSY_CYCLES` was bit-identical across the swap.
   - **Rank atoms on wall time and energy, never on utilization counters.**
 
+In FlyDSL: `../flydsl/gemm.md` § mainloop §5.
+
 ## 6. K tails inside the kernel
 
 Turbo's fp8 kernel accepts any K ≥ 129 without a padding copy; its MXFP4 kernel needs K % 64 == 0, and
-its MXFP8 kernel needs K % 128 == 0 and K ≥ 256. FlyDSL's shipped kernels require K to be a multiple of
-their K tile.
+its MXFP8 kernel needs K % 128 == 0 and K ≥ 256.
 An over-read past K is legal only when every term it contributes has a factor that is exactly zero by
 construction. The three ways to get that zero:
 - **K-contiguous operands** (stored `[·, K]`, as in NT). Run `ceil(K/128)` iterations. A partial last block over-reads into the
@@ -261,7 +264,9 @@ construction. The three ways to get that zero:
   and BF8 do (`../hardware/gfx950/cdna4/ch07_matrix_arithmetic_instructions.md`, Table 30). Drop a 128-K sub-step that is
   entirely padding rather than computing it.
 - Row strides that are not a multiple of the 128 B cache line cost bandwidth even when the tail is
-  correct. See `flydsl_gemm_datapath.md` §10.
+  correct. See `datapath.md` §10.
+
+In FlyDSL: `../flydsl/gemm.md` § mainloop §6.
 
 ## 7. Occupancy and allocation knobs
 
@@ -286,33 +291,7 @@ construction. The three ways to get that zero:
 
 ## 8. FlyDSL's own GEMM kernels (v0.3.2): what to know when calling or tuning them
 
-"PS" is `kernels/gemm/preshuffle_gemm.py` and "A16" is `kernels/gemm/gemm_a16w16_gfx950.py`. They handle no
-K tail (K must be a multiple of the K tile), and the caller picks the configuration. PS and the MXFP4 kernels need B pre-shuffled on the host; the fp8 4-/8-wave kernels take either
-layout (`b_preshuffled`).
-
-| Kernel | dtypes | Loop | Notes |
-|---|---|---|---|
-| PS `compile_preshuffle_gemm` | fp8, int8, fp16, bf16 | 4 waves along N; A through LDS, pre-shuffled B straight to VGPR | per-row × per-col scales; `use_async_copy` is gfx950-only |
-| A16 `gemm_a16w16` | bf16, fp16 | `m×n×k` waves (default 2×4×1), async DMA for A and B, `stages` deep | split-K by atomics (not bitwise reproducible), `group_m` XCD swizzle, half-tile interleave |
-| `fp8_gemm_8wave.py`, `fp8_gemm_4wave.py` | fp8 (row-wise scales) | the §2 pipeline / a 4-wave per-MFMA-asm loop | NT only, `K % 128 == 0` |
-| `fp4_gemm_4wave.py` | MXFP4 | 2×2 waves, 8-buffer LDS ping-pong, scales through LDS | host-side scale and weight preshuffle |
-| `mxfp4_preshuffle.py` | A MXFP4/MXFP6/MXFP8 × B MXFP4/MXFP8 | 4 waves along N; A by DMA into a 2-buffer LDS ring; preshuffled B and the scales loaded straight to registers | host-side scale and weight preshuffle |
-
-Facts about PS and A16 that matter when tuning them:
-- **PS tile algebra.** `tile_K_perm = 128 if mfma_scale else (64 if 8-bit else 32)` (PS:171). Four waves
-  split N. The A tile must be a multiple of 4096 B, or its tail is never loaded (PS:190).
-- **PS waits.** `rocdl.s_waitcnt(num_b_loads)` passes a raw bitfield, not a `vmcnt`. `s_waitcnt(8)`
-  emits `vmcnt(8) expcnt(0) lgkmcnt(0)`. In your own code write `rocdl.s_waitcnt(vmcnt=n)`.
-- **PS scheduler hints.** `sched_group_barrier` groups spread VMEM reads (mask `0x020`), DS reads and DS
-  writes over the MFMAs. Without `preload=`, 8-bit tiles on gfx950 look up `_TILE_PRELOAD_TABLE`
-  (PS:19), and every other dtype or tile gets `(0, 0)`.
-- **PS epilogue.** Ragged M is bounded by the descriptor (`max_size=False, num_records_bytes=...`), not
-  by a predicate.
-- **A16 waits.** A16 waits with `rocdl.asyncmark()` / `rocdl.wait_asyncmark(stages-2)` around
-  `cdna4.BufferLoadAsyncLDS128b`, which counts DMA groups instead of `vmcnt`. This is the in-DSL
-  alternative to hand-written waits.
-- **Configuration space.** The arguments are the entry-point signatures in `INDEX.md`'s kernel map; aiter's
-  tuned rows for its own bf16 GEMM are in `flydsl_gemm_small_m.md` §7.
+In FlyDSL: `../flydsl/gemm.md` § mainloop §8.
 
 ## 9. Throughput arithmetic
 
@@ -334,23 +313,22 @@ than M; compute the intensity for your shape rather than using either number.
 
 ## 10. Reading the ISA
 
-`FLYDSL_DUMP_IR=1` writes every pass to `<FLYDSL_DUMP_DIR or ~/.flydsl/debug>/<kernel>/`. It skips the
-disk-cache lookup, so the dump reflects the current source. Do not time a run with it on.
-`ARCH=gfx950 COMPILE_ONLY=1` compiles without launching.
 - Count instructions inside the hot loop's label range only. Compare them with the plan: MFMAs per phase,
   `ds_read`s per fragment, `buffer_load … lds` per fill, and one `s_waitcnt`/`s_barrier` per phase.
   FlyDSL's guide gives the expected per-tile counts for `preshuffle_gemm` and target ratios such as "MFMA ≥ 40%
   of the loop" (`../flydsl/guides.md` § gemm-optimization (FlyDSL's §9)). Use the ratios to spot a loop body far from its plan, not
   to rank changes: *(field, E20)* deleting 7.4% of a hot loop's instructions, all SALU and `s_nop`, gained 0% on one A6W4 GEMM (the same edit laid A out wave-major in LDS; LDS, VMEM-load and wait counts were unchanged)
-  (`flydsl_gemm_attribution.md` §4).
+  (`attribution.md` §4).
 - Check `.agpr_count`, `.vgpr_count`, `.amdhsa_next_free_vgpr` and the scratch size after every
   register-plan or attribute change (§4).
 - For a whole-loop kernel, check that the back edge has its `s_cmp` and that no compiler `s_waitcnt`
   sits between the asm phases.
 
+In FlyDSL: `../flydsl/gemm.md` § mainloop §10.
+
 ## Related
-`flydsl_gemm_grid_pricing.md` · `flydsl_gemm_schedule_and_locality.md` · `flydsl_gemm_datapath.md` ·
-`flydsl_gemm_epilogue.md` · `flydsl_gemm_autotune.md` · `flydsl_gemm_correctness.md` ·
+`grid_pricing.md` · `schedule_and_locality.md` · `datapath.md` ·
+`epilogue.md` · `autotune.md` · `correctness.md` ·
 `../flydsl/debug-flydsl-kernel.md`
 
 ## Evidence

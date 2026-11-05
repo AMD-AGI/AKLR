@@ -16,7 +16,7 @@ sources:
 # Measuring an attention kernel change
 
 > The shared protocol — ruler choice, arm order, warm-up and first-arm bias, noise floors, statistics, closing a
-> series of changes — is in `../gemm/flydsl_gemm_measurement.md`. This card is what attention adds: small
+> series of changes — is in `../gemm/measurement.md`. This card is what attention adds: small
 > workloads, multi-cell scores with guards, workspace-heavy backward cells, FLOP conventions, and launch-bound
 > decode kernels. Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence
 > at the end. Use them for direction and order of magnitude.
@@ -31,12 +31,12 @@ sources:
   - *(field, E1)* A B=1 dkdv kernel read 1024 TF/s cold, 727–969 with `sleep(0.3)` between calls, and a different
     value again under continuous load: a 40% swing that buried a 5–14% gap.
 - Warm with back-to-back calls and no sleep until the clock settles (60–90 s from an idle card,
-  `../gemm/flydsl_gemm_measurement.md` §3), then take the median of ≥7 back-to-back repetitions.
+  `../gemm/measurement.md` §3), then take the median of ≥7 back-to-back repetitions.
 - B=1 cells also drift with sweep order: *(field, E2)* one configuration read 482 TF/s inside a sweep and 759 when
   run alone. Decide on a cell large enough to hold the clock steady (B=4 on that kernel) and isolate sweeps (§4).
 
 ## 2. The bench mirrors the deployment
-- **Each arm at its own best configuration** (`../gemm/flydsl_gemm_measurement.md` §7). The attention form of the
+- **Each arm at its own best configuration** (`../gemm/measurement.md` §7). The attention form of the
   trap: a bench that calls the kernel builder with its defaults while the deployed launcher passes other values
   (`block_kv`, `waves_per_eu`, LSE folding). *(field, E3)* The two rulers differed by 1.3–1.4% on the same code,
   and the bench was optimising a configuration that did not ship.
@@ -66,7 +66,7 @@ A multi-cell score usually carries guard cells: cells the candidate does not cha
   sets the next cell's time. *(field, E8, E9)* The same cell read 11.23 and 6.64 ms depending on what ran before it, and
   `empty_cache()` did not help; forking a process per cell cut the cell swing from 69% to 0.29–2.50% and the
   score floor from 2.6% to 0.18%.
-- Arm order and when a palindrome applies: `../gemm/flydsl_gemm_measurement.md` §2 (palindromes only for two
+- Arm order and when a palindrome applies: `../gemm/measurement.md` §2 (palindromes only for two
   module instances interleaved in one process; one process per arm runs A B).
 - **Ratio rulers between two arms that share a body do not credit body changes.** For `bf16_ms / fp8_ms` with one
   shared backward body, an optimisation of that body speeds up both arms and the score does not move. Only
@@ -121,7 +121,7 @@ A multi-cell score usually carries guard cells: cells the candidate does not cha
   clearing a cache shared across code versions. What the cache key does and does not see is in
   `../flydsl/debug-flydsl-kernel.md` § What the cache key sees.
 - The first pass in a fresh cache directory includes compilation and any autotuning; discard it. Do not time with
-  `FLYDSL_DUMP_IR=1` (`../gemm/flydsl_gemm_measurement.md` §6).
+  `FLYDSL_DUMP_IR=1` (`../flydsl/gemm.md` § measurement §6).
 
 ## 8. Coverage traps
 - **A single scored shape gets traded against the others, silently.** *(field, E20)* With only full-causal S=16384
@@ -153,7 +153,7 @@ A multi-cell score usually carries guard cells: cells the candidate does not cha
   B=1 on the timeline. Rank helper-kernel work by exposed time; fusion pricing is in `flydsl_attn_backward.md` §7.
 
 ## Related
-`../gemm/flydsl_gemm_measurement.md` · `flydsl_attn_attribution.md` · `flydsl_attn_correctness.md` ·
+`../gemm/measurement.md` · `flydsl_attn_attribution.md` · `flydsl_attn_correctness.md` ·
 `flydsl_attn_decode_split_kv.md` §8 · `../flydsl/debug-flydsl-kernel.md`
 
 ## Evidence

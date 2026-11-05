@@ -30,7 +30,7 @@ sources:
 - A gather-based (sparse or paged) decode kernel does not respond to compute-side changes.
 
 **Somewhere else if:** timing kernels of a few µs → `flydsl_attn_measurement.md`; XCD order of the
-combine → `flydsl_attn_grid_dispatch.md` §3; GEMM-side split-K → `../gemm/flydsl_gemm_small_m.md` §4.
+combine → `flydsl_attn_grid_dispatch.md` §3; GEMM-side split-K → `../gemm/small_m.md` §4.
 
 ## 1. The combine is a fixed cost
 - *(field, E1)* One graph node cost 1.5–1.8 µs. *(field, E2)* Priced by repeated launches, the combine's body
@@ -38,8 +38,8 @@ combine → `flydsl_attn_grid_dispatch.md` §3; GEMM-side split-K → `../gemm/f
   larger row counts and 46% at the smallest, not a rounding error.
 - An empty kernel's duration is not what removing a launch saves: the producer's tail was overlapped by the next
   launch. Price a merge by launching the combine one extra time in the stream and reading the increase of the total
-  (`../gemm/flydsl_gemm_attribution.md` §3).
-- Run the combine with one wave per workgroup (`../gemm/flydsl_gemm_grid_pricing.md` §2) and number its
+  (`../gemm/attribution.md` §3).
+- Run the combine with one wave per workgroup (`../gemm/grid_pricing.md` §2) and number its
   workgroups like the producer's ownership (`flydsl_attn_grid_dispatch.md` §3), unless each output merges many
   partials. *(field, E42)* At 16–32 partials per (row, head), one 64-lane workgroup per (row, head) made the whole call
   10–32% slower than 512-lane workgroups whose waves split the partials; 1.5% slower at 11, level at 4.
@@ -140,7 +140,7 @@ and gets hoisted. In the merged epilogue only the number of rounds and the store
 - **An output that is not a reduction splits with zero merge.** Index-score logits `[rows, Skv]` split
   along KV write disjoint column ranges, bit-identical. *(field, E24)* 1 → 32 splits: 820 → 73 µs; with 1–2
   waves per workgroup the optimum was about 4 workgroups per CU.
-- bf16 partials add merge error; gate every split count on accuracy (`../gemm/flydsl_gemm_small_m.md` §4).
+- bf16 partials add merge error; gate every split count on accuracy (`../gemm/small_m.md` §4).
 - Changing the reduction order changes bits: compare against a reference whose order is shared by neither
   arm (`flydsl_attn_correctness.md`).
 
@@ -184,7 +184,7 @@ and gets hoisted. In the merged epilogue only the number of rounds and the store
   levers after any layout or grouping change.
 - **Check a carried-over patch's enabling condition on today's grid.** *(field, E36)* A remap gated on
   `(rows × n_groups) % 8 == 0` returned early on three of four shapes once groups became ragged. The
-  remainder-spreading form (`../gemm/flydsl_gemm_schedule_and_locality.md` §2) needs no gate.
+  remainder-spreading form (`../gemm/schedule_and_locality.md` §2) needs no gate.
 
 ## 8. Measuring
 Time decode kernels as graph replays with events, arms interleaved in one process. *(field, E37)* A
@@ -201,7 +201,7 @@ synchronize-bracketed wall carried ~27 µs of host time and turned a 16.8% kerne
 
 ## Related
 `flydsl_attn_grid_dispatch.md` · `flydsl_attn_backward.md` §6 · `flydsl_attn_measurement.md` ·
-`../gemm/flydsl_gemm_small_m.md` · `../gemm/flydsl_gemm_epilogue.md` §5 · `../hardware/gfx950/memory_and_sync.md`
+`../gemm/small_m.md` · `../gemm/epilogue.md` §5 · `../hardware/gfx950/memory_and_sync.md`
 
 ## Evidence
 

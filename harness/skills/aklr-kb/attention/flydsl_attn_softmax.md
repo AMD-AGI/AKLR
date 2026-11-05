@@ -63,7 +63,7 @@ sources:
 | `rocdl.exp2(T.f32, x)`, or `llvm.amdgcn.exp2.f32` | intrinsic | one `v_exp_f32` |
 
 - The afn rewrite covers f32 scalars and 1-D f32 vectors only. A denormal-mode function attribute is not a
-  switch for it: a bare `"passthrough"` key is dropped (`../gemm/INDEX.md` § FlyDSL version).
+  switch for it: a bare `"passthrough"` key is dropped (`../flydsl/gemm.md` § INDEX FlyDSL version).
 - The range reduction only exists to return denormal results; `v_exp_f32` flushes denormals to zero (ISA).
   After the max shift every argument is ≤ 0 and every result lies in (0, 1], where a denormal is worthless
   next to bf16 P, so the single instruction is enough. *(field, E5, E7)* Replacing the range-reduced exp with one

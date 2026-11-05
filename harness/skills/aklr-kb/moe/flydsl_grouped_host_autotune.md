@@ -21,7 +21,7 @@ sources:
 > The host side of a grouped GEMM: keeping the steady state free of device→host copies, launching under CUDA
 > graphs and in eager mode, what to cache and under which key, and how to race configurations when the token
 > distribution is unknown at dispatch. The dense rules (first-call race, margins, palindrome timing, cache keys,
-> the compiled-object launch path) are in `../gemm/flydsl_gemm_autotune.md` and are not repeated. "FP8", "MX8",
+> the compiled-object launch path) are in `../gemm/autotune.md` and are not repeated. "FP8", "MX8",
 > "MX4" are Primus-Turbo's `grouped_gemm_{fp8,mxfp8,mxfp4}_kernel.py` under `primus_turbo/flydsl/grouped_gemm/`
 > and "GH" its `utils/gemm_helper.py`, at main `ca1fdd67`. FlyDSL facts are v0.3.2.
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end. Use
@@ -53,7 +53,7 @@ sources:
 - **What a call costs (v0.3.2).** Calling a `@flyc.jit` launcher re-checks captured globals, binds the signature
   and rebuilds the cache key before it reaches the cached call state (`JitFunction.__call__`,
   `jit_function.py:1358-1400`). The object returned by `flyc.compile` goes straight to the call state
-  (`CompiledFunction.__call__`, `jit_function.py:1613-1635`). Measured gaps: `../gemm/flydsl_gemm_autotune.md` §6,
+  (`CompiledFunction.__call__`, `jit_function.py:1613-1635`). Measured gaps: `../gemm/autotune.md` §6,
   `../attention/flydsl_attn_measurement.md` §6.
 - **Mode split.** Eager calls the compiled object; under capture the raw `@flyc.jit` closure is launched, because
   in Turbo's measurement the compiled object "regresses under capture" (FP8:2743-2754, 5060-5074;
@@ -61,7 +61,7 @@ sources:
   as a measured property of that stack and re-measure on yours. *(field, E2)* On a small shape the split took the
   eager call from 18.4 to 17.2 µs.
 - **Compiling runs the kernel once** (`_compile_impl`, `jit_function.py:1662`): build a beta=1 launch against a
-  scratch output (`compile_with_scratch_out`, GH:86-95; `../gemm/flydsl_gemm_epilogue.md` §7).
+  scratch output (`compile_with_scratch_out`, GH:86-95; `../gemm/epilogue.md` §7).
 - **Pass the stream as an `fx.Stream` argument.** A launcher without one gets a NULL stream slot, i.e. the default
   stream, in its call state (`_build_call_state`, `jit_function.py:1123-1125`).
 - **Make the first call of every key eager.** Nothing can be timed during capture. A tuner reached under capture
@@ -69,10 +69,10 @@ sources:
 - **Launch helpers from the GEMM's stub.** Scale repack then GEMM (MX8:1101-1120), GEMM then split-K reduce
   (FP8:4617): one Python dispatch, stream order for free.
 - **A run-time dispatch layer costs host time**, as a device-side split policy for a wgrad did; re-measure the
-  host path after adding any dispatch logic (`../gemm/flydsl_gemm_autotune.md` §6).
+  host path after adding any dispatch logic (`../gemm/autotune.md` §6).
 
 ## 3. Cache compiled objects and launch closures, keyed on static shape
-- **Never key on tensor identity** (`../gemm/flydsl_gemm_autotune.md` §5). In grouped training every call brings new
+- **Never key on tensor identity** (`../gemm/autotune.md` §5). In grouped training every call brings new
   activations, gradients and `group_offs`, so an identity-keyed cache of quantized activations or derived offsets
   hits ~0 in training and returns stale data when an id is reused. A weight-side cache keyed on
   `(id(weight), weight._version)` holds within one step: the forward fills it, the backward reuses it, the
@@ -128,16 +128,16 @@ Turbo's backend dispatcher likewise tunes on load-balanced group lengths (`group
   candidate by the worse of a balanced and a skewed probe.
 - **Ties under balance flip between runs.** The config key has no distribution, so one cached choice serves both
   balanced and skewed calls; candidates within the race's noise flip across cleared-cache runs unless timed as a
-  palindrome (`../gemm/flydsl_gemm_autotune.md` §2).
+  palindrome (`../gemm/autotune.md` §2).
 - **Race points are tokens per group, and they are not the deployment's.** Turbo scores two spread points because
   "the swizzle is not M-invariant" (MX8:936-939). A candidate that wins only at the deployed token count becomes a
-  static lead (`../gemm/flydsl_gemm_autotune.md` §2; how the race misses it: `flydsl_grouped_measurement.md` §8).
+  static lead (`../gemm/autotune.md` §2; how the race misses it: `flydsl_grouped_measurement.md` §8).
   *(field, E6)* Check the lead at every token count its predicate covers: a wgrad lead measured +1.47 / +0.27 /
   +0.78–0.98 / +0.95% at 1024 / 2048 / 4096 / 8192 tokens per group, while an NN lead lost at 1024. Then check that
   the real entry lands on the lead, by timing the entry against both compiled candidates in one process.
 - **Separate defaults per path.** NT and wgrad must not share a default configuration (a shared one collapsed an
   MXFP4 wgrad, `flydsl_grouped_scheduling.md` §1); fixing each path's choice per shape family can beat a race on
-  synthetic data (`../gemm/flydsl_gemm_autotune.md` §2).
+  synthetic data (`../gemm/autotune.md` §2).
 - **Zero the probe output before each candidate.** Candidates share the buffer; one that skips some of its tiles
   would inherit the base's values there and pass the numeric gate (MX8:1040-1042).
 
@@ -153,7 +153,7 @@ per surviving candidate) are in `flydsl_grouped_wgrad.md` §10. The mechanics of
 
 ## 7. Price helper kernels by launching them once more
 A grouped call carries helper kernels: scale repack, quantizer, padded offsets, split-K reduce, output tail. Price
-each by adding 0/1/2/4 extra launches in one process and fitting the slope (`../gemm/flydsl_gemm_attribution.md`
+each by adding 0/1/2/4 extra launches in one process and fitting the slope (`../gemm/attribution.md`
 §3), not by its trace duration, which overstated such kernels 2–3× (`flydsl_grouped_measurement.md` §6).
 - *(field, E7)* On an MXFP4 grouped kernel the kernel trace put the scale repack at 2.1–2.6% and an output-tail kernel
   at 0.5–0.9% of each call, an overstatement of about 2× (repack) and 3× (tail); even so they outweigh the
@@ -163,13 +163,13 @@ each by adding 0/1/2/4 extra launches in one process and fitting the slope (`../
   pay (`flydsl_grouped_lowprec.md` §2).
 
 ## 8. Do not let a race swallow build errors
-- A catch-all around candidate builds turns a build bug into "no working config" (`../gemm/flydsl_gemm_autotune.md`
+- A catch-all around candidate builds turns a build bug into "no working config" (`../gemm/autotune.md`
   §7). Turbo's fp8 wgrad race collects `(config, error)` pairs and logs them with the winner (FP8:4866, 4950-4954).
 - Grouped geometry is derived from G and tiles per group (split pieces, slice heads, tiles per workgroup). Assert
   at build time that it fits the smallest G the callers use; otherwise a small expert count fails every fast
   candidate and the race silently settles on the fallback kernel.
 - A configuration over the LDS limit raises nothing: the launch fails on stderr only and the output is never
-  written (`../gemm/flydsl_gemm_autotune.md` §7). Check LDS bytes before timing.
+  written (`../gemm/autotune.md` §7). Check LDS bytes before timing.
 
 ## Verify
 - A trace of the steady state shows no host-side copy, and host enqueue time is below GPU time.
@@ -180,8 +180,8 @@ each by adding 0/1/2/4 extra launches in one process and fitting the slope (`../
 
 ## Related
 `flydsl_grouped_group_mapping.md` · `flydsl_grouped_wgrad.md` · `flydsl_grouped_lowprec.md` ·
-`flydsl_grouped_measurement.md` · `flydsl_grouped_correctness.md` · `../gemm/flydsl_gemm_autotune.md` ·
-`../gemm/flydsl_gemm_attribution.md` · `../attention/flydsl_attn_measurement.md` ·
+`flydsl_grouped_measurement.md` · `flydsl_grouped_correctness.md` · `../gemm/autotune.md` ·
+`../gemm/attribution.md` · `../attention/flydsl_attn_measurement.md` ·
 `../flydsl/debug-flydsl-kernel.md`
 
 ## Evidence

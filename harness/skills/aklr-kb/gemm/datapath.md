@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL GEMM — LDS, global feed and prefetch on gfx950"
+title: "GEMM — LDS, global feed and prefetch on gfx950"
 kind: topic
-lever: flydsl_gemm_datapath
+lever: gemm_datapath
 ops: [gemm]
 gens: [gfx950]
 dtypes: [fp8, bf16, fp16, mxfp4]
@@ -21,7 +21,7 @@ sources:
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/gemm/gemm_mxfp4_kernel.py
 ---
 
-# LDS, global feed and prefetch in a FlyDSL GEMM
+# LDS, global feed and prefetch in a GEMM
 
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end.
 > Use them for direction and order of magnitude, not as targets. "PS" is FlyDSL's
@@ -43,12 +43,7 @@ kernel. gfx950 has 160 KiB of LDS per CU in 64 banks of 4 bytes.
 
 ## 1. Allocate LDS the v0.3.2 way
 
-Declare the buffers as an `@fx.struct` of `fx.Array` fields and allocate them in the kernel with
-`fx.SharedAllocator().allocate(Storage).peek()` (PS:214, 283). With the default `static=True` each
-field becomes its own LDS global and the backend places it (`expr/gpu.py:157`): field order is not
-a layout you control, and a field an ablation arm stops using is pruned, which moves the others. An
-epilogue that reuses the operand buffers declares them as an `@fx.union` (A16's `SharedStorage`
-overlays `ab` and `c`). `SmemAllocator` / `SmemPtr` are legacy.
+In FlyDSL: `../flydsl/gemm.md` § datapath §1.
 
 ## 2. Swizzle at 16-byte granularity, composed into the layout
 
@@ -56,11 +51,6 @@ overlays `ab` and `c`). `SmemAllocator` / `SmemPtr` are legacy.
   `col ^ ((row % k_blocks16) * 16)` with `k_blocks16 = tile_k·elem_bytes / 16`
   (`mfma_preshuffle_pipeline.py:30`). XOR-ing at element granularity scrambles the lanes of a
   `ds_read_b64/b128`.
-- PS composes the swizzle into the LDS view instead of computing addresses:
-  `fx.make_composed_layout(fx.static(fx.SwizzleType.get(bits, base, bits)), ordered_layout)`, with
-  `bits = log2(k_blocks16)` and `base = log2(elements per 16 B)` for 8-bit or DMA-written tiles. The
-  writer and the reader then agree by construction — and the DMA path, which computes addresses by
-  hand, applies the same `k ^ ((m % k_blocks16)·elems_per_16b)` (PS:379).
 - The swizzle is per-lane VALU (or folded into the layout), not "one SALU": the row index lives in a
   VGPR.
 - PS keeps a fixed `Swizzle<3,3,3>` on the bf16 sync path; its source comment gives 1011 against 417 TF/s
@@ -72,6 +62,8 @@ overlays `ab` and `c`). `SmemAllocator` / `SmemPtr` are legacy.
 - **Transpose reads need a wave term too.** With a 1024 B per-wave chunk stride, every wave's
   transpose reads hit the same banks. Turbo XORs the chunk index with `W << 1` on both sides (`wswz`,
   GH:1809-1830, 1863). *(field, E2)* On a grouped GEMM with that stride, bank conflicts went from 14% to 0%.
+
+In FlyDSL: `../flydsl/gemm.md` § datapath §2.
 
 ## 3. Bank conflicts: compute the floor, then measure
 
@@ -101,14 +93,15 @@ stride keeps every phase on distinct banks.
 - Padding must keep the 8- or 16-byte alignment a `ds_read_b64/b128` needs. `+1 element` on fp16 breaks
   it; pad by whole 16-byte slots, or swizzle.
 - **Declare 16-byte alignment on a 16-byte LDS read** where LLVM cannot prove it; otherwise the read splits into
-  `ds_read2_b32` or `ds_read2_b64` and conflicts more. FlyDSL's `Vector.load` declares none
-  (`../flydsl/language/limits.md` § Unclassified has the lowering, the fix and its bank-conflict cost).
+  `ds_read2_b32` or `ds_read2_b64` and conflicts more.
 - Compare `SQ_LDS_BANK_CONFLICT` against the floor you computed by hand, not against zero.
 - **Zero conflicts is not a speedup and LDS is not the bound until a probe says so.** *(field, E3)* An
   attention kernel whose `WAIT_INST_LDS` came to 81% of its CU-cycle budget gained nothing measurable
   (−0.25%, −0.09% and −0.09%, all noise) when each of three LDS read classes was halved in turn; the
   stall counter could not say whether LDS bounded it. Use a halve-the-reads probe
-  (`flydsl_gemm_attribution.md`).
+  (`attribution.md`).
+
+In FlyDSL: `../flydsl/gemm.md` § datapath §3.
 
 ## 4. Waits around LDS
 
@@ -134,9 +127,10 @@ stride keeps every phase on distinct banks.
   GH:1783). *(field, E5)* At long K this drain removal gave +6.8% (2580 → 2768 TF/s on a dense fp8 TN GEMM,
   8192×8192×28672); `vmcnt(3)` was the deepest setting that stayed bitwise repeatable. An asm `ds_read`
   must also drain its own `lgkmcnt` before the consumer, because the compiler does not track it.
-  `cdna4.BufferLoadAsyncLDS*` with `rocdl.asyncmark()` / `wait_asyncmark(n)` is the in-DSL alternative (A16
-  uses it). Or keep the tracked DMA and emit the read as an `llvm.load` from `!llvm.ptr<3>` carrying an
+  Or keep the tracked DMA and emit the read as an `llvm.load` from `!llvm.ptr<3>` carrying an
   `alias_scopes` attribute: it got no compiler wait *(field, E29)*, so the counted wait is yours.
+
+In FlyDSL: `../flydsl/gemm.md` § datapath §4.
 
 ## 5. Global → LDS DMA
 
@@ -146,12 +140,7 @@ stride keeps every phase on distinct banks.
 | `buffer_load_dwordx4 … lds`, `global_load_lds_dwordx4` | yes (16 B/lane) |
 | `ds_read_b64_tr_b16` and the other transpose reads | yes |
 
-- FlyDSL atoms: `fx.rocdl.BufferCopyLDS128b` (PS's `dma_a_to_lds`, behind PS's `use_async_copy` flag) is
-  compiler-tracked — the compiler inserts the `vmcnt` wait before the staged LDS data is read (§4); FlyDSL's
-  docstring calls it the synchronous form. For `fx.rocdl.cdna4.BufferLoadAsyncLDS128b` (A16) the backend
-  inserts no such wait: you close groups with `rocdl.asyncmark()` and wait with `rocdl.wait_asyncmark(n)`
-  (`expr/rocdl/cdna4.py:42-55`). Either DMA is a VMEM load that writes LDS: it counts in `vmcnt` like any
-  other load.
+- An LDS DMA is a VMEM load that writes LDS: it counts in `vmcnt` like any other load.
 - The MUBUF immediate `offset` is 12 bits. `llvm-mc` encodes `offset:4096` as `offset:0` without an
   error (`0x1000` lands outside the field), so a hand-written `offset:4096` silently reads the wrong
   place. *(field, E7, E8, E9)* On gfx950 the LDS-DMA immediate applies to the LDS destination as well as
@@ -161,18 +150,18 @@ stride keeps every phase on distinct banks.
   issue slots and address registers, and price it per kernel.
 - In a hand-written LDS DMA, cache bits go before `lds`: gfx950's assembler rejects `offen lds nt`
   ("invalid operand for instruction") and accepts `offen nt lds`.
-- The M0 base of an LDS DMA must never go negative; see `flydsl_gemm_correctness.md` §5.
+- The M0 base of an LDS DMA must never go negative; see `correctness.md` §5.
 
 **How Turbo issues the DMA** (`G2SLoader`, GH:305-386):
-- One `fx.make_copy_atom(fx.rocdl.BufferCopyLDS128b(), 128)` per 16 B per lane; each wave writes 1 KiB per
-  step.
 - The per-lane global offsets are Python ints computed at trace time, so the hot loop has no address
-  VALU. The wave-uniform K offset rides the SGPR `soffset`: `fx.copy(atom, src, dst, soffset=...)`.
+  VALU. The wave-uniform K offset rides the SGPR `soffset`.
 - **M0.** In the whole-loop asm each fill is `s_add_u32 m0, <pool base>, <step·nwaves·1024>` followed by
   `buffer_load_dwordx4 … offen lds`. The MXFP4 kernel uses a **wave-major** layout instead: each wave's
   chunks are contiguous, so consecutive steps are 1 KiB apart and ride the 12-bit immediate. One M0 write
   then covers a 4 KiB window (`g2s_lds_imm`, GH:294; `_MXFP4_G2S_IMM`, FP4:583-586). The immediate applies
   to the memory address too, so pre-subtract it from the global voffset, which must stay ≥ 0.
+
+In FlyDSL: `../flydsl/gemm.md` § datapath §5.
 
 ## 6. What a global access costs
 
@@ -209,15 +198,12 @@ stride keeps every phase on distinct banks.
 
 ## 7. Prefetch inside the K loop
 
-- Carry the prefetched values through the loop: with `range(..., init=[...])` only yielded values
-  persist; a plain `range()` carries every name the body reassigns
-  (`../flydsl/debug-flydsl-kernel.md` § The three loop forms). Carry everything the next
-  iteration needs — scale values and addresses, not only the tiles.
+- Carry everything the next iteration needs — scale values and addresses, not only the tiles.
 - **Prefetch pays only when independent work can fill the latency it exposes**: next-tile loads, address
   arithmetic, MFMAs that do not depend on the load in flight, epilogue setup that touches no data in flight.
   The general transformation (prologue, loop-carried buffers, epilogue) is `../flydsl/guides.md` § prefetch-data-load.
 - **Prefetch hides latency, not capacity.** *(field, E21)* When a grouped GEMM's working set thrashed L2,
-  deeper prefetch bought nothing; fix the tile order (`flydsl_gemm_schedule_and_locality.md` §2) or the footprint.
+  deeper prefetch bought nothing; fix the tile order (`schedule_and_locality.md` §2) or the footprint.
 - **Bypassing LDS for an operand several waves share costs twice.** Each wave reloads it from global,
   and at one workgroup per CU nothing hides the longer L2 latency. *(field, E22, E23)* In an 8-wave kernel, B
   direct-to-VGPR reached 77.8% of the throughput of B through LDS; A direct-to-VGPR ran 2.5× slower on a
@@ -232,6 +218,8 @@ stride keeps every phase on distinct banks.
   load behind a mode flag (e.g. a scale load that only one quantization mode needs) that is gated
   differently in the two places feeds the consumer a value from the other branch.
 
+In FlyDSL: `../flydsl/gemm.md` § datapath §7.
+
 ## 8. Buffer descriptors: per-tile i64 rebase, pinned to SGPRs
 
 The buffer descriptor's `num_records` and the per-lane `voffset` are 32-bit, so one descriptor addresses
@@ -245,9 +233,10 @@ at most 4 GiB.
   them in VGPRs cost 16% (gate_up) and 13% (down).
 - When one operand's strided traversal spans 2³² bytes or more, rebase the descriptor per load (the
   `rebase` mode of `G2SLoader`). Clamp the shifted `num_records` at 0 for tiles past the end.
-- Pass tensors to the entry function at their full rank. A flat view of more than 2³¹ elements
-  overflows the int32 shape pack.
-- Check SNR on both sides of the 2³¹-element threshold. Equal SNR means there is no overflow break.
+- Check SNR on both sides of 2³¹ elements, where 32-bit index arithmetic overflows. Equal SNR means there is no
+  overflow break.
+
+In FlyDSL: `../flydsl/gemm.md` § datapath §8.
 
 ## 9. K-row operands: hardware transpose reads
 
@@ -276,7 +265,7 @@ There are two ways to get an operand into MFMA order without a runtime shuffle:
   once for weights that do not change, as in inference.
 - **Permute rows in the fill.** Changing only which global row each G2S load fetches reorders a lane's
   n-fragments with no runtime cost, and the LDS image, swizzle and reads stay the same
-  (`compute_global_swizzle_pair`, GH:256-267; epilogue use in `flydsl_gemm_epilogue.md` §3). Turbo's dense
+  (`compute_global_swizzle_pair`, GH:256-267; epilogue use in `epilogue.md` §3). Turbo's dense
   paths use this and need no offline step, which matters in training, where weights change every step.
 
 - **Keep every operand row on a 128 B line.** Take the row stride from the tensor, not from K, so a
@@ -297,15 +286,15 @@ There are two ways to get an operand into MFMA order without a runtime shuffle:
 - **Scales can skip LDS.** Turbo's MXFP4 loads them with `buffer_load_dwordx4` straight into pinned VGPRs
   (FP4:1393-1417). The LDS path delayed consumption by the refill-ahead distance, so a direct load
   must offset its K position by that lag.
-- **Do the scale preshuffle in the same host call.** One `@flyc.jit` host stub launches the preshuffle kernel
-  and then the GEMM, so the scales are repacked in stream order with no extra Python dispatch
-  (`build_preshuffle_ab_kernel`, GH:2115-2122, 2262). A caller that reuses weights can preshuffle their
+- **Do the scale preshuffle in the same host call.** A caller that reuses weights can preshuffle their
   scales once (`preshuffle_mxfp4_scales`, FP4:4877).
-- Never store E8M0 scales with a non-temporal hint (`flydsl_gemm_epilogue.md` §5).
+- Never store E8M0 scales with a non-temporal hint (`epilogue.md` §5).
+
+In FlyDSL: `../flydsl/gemm.md` § datapath §11.
 
 ## Related
-`flydsl_gemm_mainloop.md` · `flydsl_gemm_schedule_and_locality.md` · `flydsl_gemm_epilogue.md` · `flydsl_gemm_correctness.md` ·
-`flydsl_gemm_attribution.md`
+`mainloop.md` · `schedule_and_locality.md` · `epilogue.md` · `correctness.md` ·
+`attribution.md`
 
 ## Evidence
 

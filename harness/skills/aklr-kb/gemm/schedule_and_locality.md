@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL GEMM — wave placement, XCD order, scheduling fences and epilogue cost that are easy to get backwards"
+title: "GEMM — wave placement, XCD order, scheduling fences and epilogue cost that are easy to get backwards"
 kind: topic
-lever: flydsl_gemm_schedule_and_locality
+lever: gemm_schedule_and_locality
 ops: [gemm]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp4]
@@ -15,7 +15,7 @@ sources:
   - ROCm/FlyDSL@dd8373349:kernels/gemm/fp8_gemm_4wave.py:135
 ---
 
-# Wave placement, XCD order, scheduling and epilogue in a FlyDSL GEMM
+# Wave placement, XCD order, scheduling and epilogue in a GEMM
 
 > Each section here is a place where the obvious move measured in the wrong direction. Read the rule,
 > then check whether your kernel is in the regime it was measured in. "GH" is Primus-Turbo's
@@ -33,7 +33,7 @@ sources:
 - Accumulators no longer fit, or buffer loads sit inside a `v_readfirstlane` loop.
 
 **Somewhere else if:** the grid, tile size, split-K or a boundary variant is the question →
-`flydsl_gemm_grid_pricing.md`; the general order of operations → `flydsl_gemm_workflow.md`.
+`grid_pricing.md`; the general order of operations → `workflow.md`.
 
 ## 1. Co-resident waves must not read the same heavy fragment
 
@@ -79,7 +79,7 @@ contiguous run of tiles lands on one XCD. The GEMM-specific rules:
   fold removed, XCDs that each ran half of K (two K groups by XCD parity) made the main loop 3.5% faster than all of
   K at M = 256 (A 8 MiB). These orders were all timed with folds in which splits waited for each other, and on
   another such kernel, whose fold exchanged partials inside one XCD's L2 when a tile's splits shared it, one split per
-  XCD lost: race the order with the fold you ship (`flydsl_gemm_small_m.md` §4).
+  XCD lost: race the order with the fold you ship (`small_m.md` §4).
 
 *(field, E5)* On grouped fp8 GEMMs, porting one kernel's winning band/XCD setting to another kernel made it 0.8% to
 2.3% slower (the identity XCD order with GROUP_M = 4, recommended for grouped kernels in general, lost 5.7%). Predict
@@ -89,11 +89,6 @@ tried — 3, 4, 6, 7 at one shape, 2, 3, 4, 6, 7 at the other — by 1–4% on t
 differed by up to ~14% (9% paired).
 Re-sweep the group size after every tile change: *(field, E8)* at one shape, groups 4 and 8 lost up to 2.4% at one
 tile; at another, group 4 won 2.3% and group 2 3–4.4%, while groups 6 and 8 won about 0.4%.
-
-**FlyDSL's kernels expose the order as an argument:** `xcd_swizzle` in PS (`xcd_remap_bx_by`, in
-`kernels/common/mma/mfma_preshuffle_pipeline.py`), `use_xcd_remap` in `fp8_gemm_4wave`, and `group_m`
-(`BlockSwizzle`) in A16. A16's swizzle falls back to the plain order when `group_m` is 0 and for grids under
-256 workgroups or not a multiple of 8 (`kernels/gemm/gemm_a16w16_gfx950_utils.py:105, 123`).
 
 **How Turbo orders tiles** (Primus-Turbo main `7615a5a2`, `primus_turbo/flydsl/utils/gemm_helper.py` = GH):
 - `xcd_remap_pid` (GH:1639) gives each XCD a contiguous slice of logical tiles, for any total. It is a
@@ -127,8 +122,6 @@ the band; a 1D band is steadier there. Use 2D only when `GM · GN` is much large
 - Prove the remap is a bijection over every grid you actually launch (a chunked launch can be narrower
   than the deployment shape). `x*(G//8) + min(x, G%8) + block_id//8` with `x = block_id % 8` is a
   permutation for any G, so it needs no divisibility gate.
-- FlyDSL's own `_xcd_swizzle` (`kernels/gemm/fp8_gemm_4wave.py`) is a contiguous-chunk remap plus
-  `GROUP_M = 4`, used only when the grid has ≥ 4·256 workgroups and a multiple of 8; otherwise linear.
 
 **Judge by wall time; explain with stall counters, not L2 hit rate.** *(field, E10)* An XCD order that was 3% faster
 on a grouped fp8 GEMM under balanced routing (2.5% under heavy skew, 0.03% on the canonical distribution) left
@@ -140,28 +133,14 @@ reading was on a grouped NN dgrad; a later band sweep on the same pass improved 
 and the losing cell, and only on a grouped NT forward did it agree with wall time (the faster band, +1.7–2.6%, had
 6.4% less `MemUnitStalled` at the same L2 hit rate). Decide by wall time.
 
+In FlyDSL: `../flydsl/gemm.md` § schedule_and_locality §2.
+
 ## 3. Scheduling hints and fences
 
-FlyDSL's helpers are thin wrappers over `sched_group_barrier`:
-
-| Helper | Mask | Classes |
-|---|---|---|
-| `rocdl.sched_mfma(n)` | `0x008` | MFMA/WMMA |
-| `rocdl.sched_vmem(n)` | `0x020` | **VMEM reads only** |
-| `rocdl.sched_dsrd(n)` | `0x100` | DS reads |
-| `rocdl.sched_dswr(n)` | `0x200` | DS writes |
-
-`rocdl.sched_barrier(mask)` takes the same bit vocabulary — `0x001` non-memory/non-side-effect (this
+`rocdl.sched_barrier(mask)` takes the `sched_group_barrier` bit vocabulary — `0x001` non-memory/non-side-effect (this
 **includes VALU**), `0x002` VALU, `0x004` SALU, `0x008` MFMA, `0x010` all VMEM, `0x020`/`0x040` VMEM
 read/write, `0x080` all DS, `0x100`/`0x200` DS read/write, `0x400` transcendental, `0x800` LDS DMA. A set
 bit means that class **may cross** the fence; `0` pins everything.
-
-**FlyDSL's `hot_loop_scheduler` is the reference use.** `preshuffle_gemm` builds one hint table per tile.
-On gfx950 it spreads the LDS reads and VMEM loads evenly over all MFMAs,
-for both sync and async copy (`../flydsl/guides.md` § gemm-optimization (FlyDSL's §5.5));
-the sync path also places its LDS writes at the tail.
-`preload=(dsrd, dvmem)` sets how many go ahead of the first MFMA
-(PS:439-494).
 
 Fences inside a fully unrolled epilogue usually exist to stop the scheduler from hoisting work and
 lengthening live ranges. What must stay pinned is the arithmetic, not only the memory operations:
@@ -182,7 +161,7 @@ front cut the time 0.8–3.8% at M ≥ 893 and 1.4–1.7% at M = 64–96, and ad
 Gate any mask change on the ISA's `vgpr_spill_count` before benchmarking. Hint counts must come from the
 loop in front of you; constants copied from another kernel are worse than none.
 
-**Race LLVM's scheduler per tile:** `flyc.compile[{"llvm_options": {"amdgpu-sched-strategy": "iterative-ilp"}}]`
+**Race LLVM's scheduler per tile:** `amdgpu-sched-strategy=iterative-ilp`
 (or `max-ilp`, `max-memory-clause`, `iterative-minreg`, `iterative-maxocc`); a misspelled name silently compiles the default.
 *(field, E20)* On a 256-VGPR bf16 tile `iterative-ilp` cut spills 9 → 0 and ~2% of the time; `iterative-minreg` won <1% on another tile and doubled this one.
 *(field, E36)* On a fused-MoE fp8 × MXFP4 expert GEMM whose waits are placed by hand none paid: stage 2 ran 1–7% slower
@@ -200,7 +179,7 @@ Read the scheduled ISA after changing a hint table.
 
 **Kernels with hand-placed waits use none of this.** Turbo's dense kernels contain no
 `sched_group_barrier`. They use `rocdl.sched_barrier(0)` around hand-written waits, `s_setprio` at two
-waves per SIMD, and `s_nop` issue pads inside whole-loop asm (`flydsl_gemm_mainloop.md` §2–§3).
+waves per SIMD, and `s_nop` issue pads inside whole-loop asm (`mainloop.md` §2–§3).
 
 **Where each K step's fragment reads are fenced from its MFMAs by `sched_barrier(0)`** (aiter's `splitk_hgemm`
 loop), read step kk+1's fragments before step kk's MFMAs. *(field, E21, E22)* +0.5–4% on most bf16 tiles, up to ~1% worse
@@ -210,6 +189,8 @@ each of steps 0–1; thirds over steps 0–2 measured −2.4 to +1.7% by M.
 
 **Prefetching across the stage barrier can pay once the barrier moves before the last K step's final MFMA groups**, with
 the freed stage refilled under them. *(field, E24)* +~1% on an 8-wave bf16 2-stage loop; moving the barrier alone lost up to 4.4%.
+
+In FlyDSL: `../flydsl/gemm.md` § schedule_and_locality §3.
 
 ## 4. gfx950 has one memory counter for loads and stores
 
@@ -232,7 +213,7 @@ barrier, leave outstanding only the fills that nothing reads before a later phas
   stops being bitwise repeatable is per kernel: *(field, E25, E26)* another whole loop, on a grouped fp8 GEMM, was
   fastest at 12 on a score over balanced, moderate and heavy routing (15 within 0.1%) and at 15 under
   capacity-collapsed routing, and stayed bitwise repeatable at 15 over 4500 launches. Prove any deeper setting by
-  repetition (`flydsl_gemm_correctness.md` §3).
+  repetition (`correctness.md` §3).
 - *(field, E27)* The lgkm-side partial drain carried over between kernels and precisions (+0.3% on a grouped fp8
   GEMM, +0.6–0.7% with two further drain edits). A one-`s_nop` pad after the barrier helped MXFP4 and was worth
   0.00% on the grouped fp8 GEMM. Port the lgkm side first.
@@ -278,12 +259,10 @@ as parallel chains, cost 1.87× the GELU's time per added instruction on one sha
   explicit placement of a 256×384 tile ran at 500/512 registers with no spill. Check: count
   `v_accvgpr_read/write` and `scratch_` in the hot loop.
 - **Descriptor fields must be wave-uniform, and operands past 4 GiB need an i64 rebase.** See
-  `flydsl_gemm_datapath.md` §8. Signature of a non-uniform descriptor: `v_readfirstlane_b32` plus an
+  `datapath.md` §8. Signature of a non-uniform descriptor: `v_readfirstlane_b32` plus an
   `s_and_saveexec_b64` loop around the hot loop's `buffer_load`s.
-- **Ragged edges.** `fx.rocdl.make_buffer_tensor(t)` defaults to `max_size=True`, which sets
-  `num_records = 0xFFFFFFFF` — no out-of-range masking. To have out-of-range loads return zero and
-  out-of-range stores dropped, pass `max_size=False` or `num_records_bytes`, and derive the bound from
-  traced values (`../flydsl/debug-flydsl-kernel.md` § What the cache key sees).
+
+In FlyDSL: `../flydsl/gemm.md` § schedule_and_locality §7.
 
 ## Verify
 - The `wave_id → (wave_m, wave_n)` mapping and its co-resident pairs are written down for the kernel.
@@ -292,7 +271,7 @@ as parallel chains, cost 1.87× the GELU's time per added instruction on one sha
 - An XCD/order change is judged on wall time and stall counters across all shape classes.
 
 ## Related
-`flydsl_gemm_grid_pricing.md` · `flydsl_gemm_workflow.md` · `../flydsl/debug-flydsl-kernel.md`
+`grid_pricing.md` · `workflow.md` · `../flydsl/debug-flydsl-kernel.md`
 
 ## Evidence
 

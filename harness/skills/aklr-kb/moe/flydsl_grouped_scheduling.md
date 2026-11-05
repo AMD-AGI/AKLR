@@ -33,7 +33,7 @@ sources:
 > decide how a grouped GEMM behaves when the token counts per group are skewed. The levers here are pure
 > permutations of the tile index or of the grid; they leave every MFMA and every output byte unchanged, so
 > they are cheap to try and easy to get backwards. XCD basics, 2D bands and bijection proofs are in
-> `../gemm/flydsl_gemm_schedule_and_locality.md` §2; dispatch order as a list schedule is §5
+> `../gemm/schedule_and_locality.md` §2; dispatch order as a list schedule is §5
 > below and `../attention/flydsl_attn_grid_dispatch.md` §4. "FP8", "BF16" and "MX4" are Primus-Turbo's
 > `primus_turbo/flydsl/grouped_gemm/grouped_gemm_{fp8,bf16,mxfp4}_kernel.py` and "GH" is
 > `primus_turbo/flydsl/utils/gemm_helper.py`, at main `ca1fdd67`.
@@ -73,7 +73,7 @@ groups all have the same tile count.
 ## 2. XCD placement: which way the remap should run
 The rule from dense GEMM: a tile stream that reads **a slab of its own** wants its group's workgroups on one
 XCD; streams that read **a shared slice** want the hardware round-robin
-(`../gemm/flydsl_gemm_schedule_and_locality.md` §2). For grouped passes:
+(`../gemm/schedule_and_locality.md` §2). For grouped passes:
 - **Forward and dgrad read a private slab.** Every M tile of group g streams `B[g]`. When `B[g]` exceeds an
   XCD's 4 MB L2, co-resident workgroups that share a B column block should sit on the same XCD: contiguous
   slices with a narrow band. *(field, E2)* fp8 NN dgrad, 8.7 MB slab: the shared-slice recipe (identity XCD order)
@@ -166,7 +166,7 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
   on another K.
 - Key the choice on K: switch to the wider band when `GROUP_M × BLOCK_M × K` crosses 4 MiB, with K in the
   autotune key (`flydsl_grouped_host_autotune.md`). Sweep past 8 and again after any tile change: *(field, E20)* on
-  dense GEMMs 9 beat every value ≤ 8 by 1–4% (`../gemm/flydsl_gemm_schedule_and_locality.md` §2).
+  dense GEMMs 9 beat every value ≤ 8 by 1–4% (`../gemm/schedule_and_locality.md` §2).
 - It does not carry across layouts. *(field, E21)* The same K rule on fp8 NN dgrad cost 1.2 points: NN reuses an
   N stripe of `B[K,N]`, not an A slab.
 - On MXFP4, keeping B resident with a 2D band lost to a 1D band that sweeps all of N for each row pair. Turbo
@@ -203,8 +203,8 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
   (twice; the second time with an O(1) lookup, so decode cost was not the reason), variable-K wgrad 11–18%
   slower under skew. The NT attempts showed 23–25 spilled VGPRs in the ISA each time:
   the loop keeps the group table, block id, grid size and live count alive across the main loop at 246/256
-  arch VGPRs. At that wall, race the scheduler strategy (`../gemm/flydsl_gemm_schedule_and_locality.md` §3) and
-  check VGPR headroom before unrolling (`../gemm/flydsl_gemm_mainloop.md` §7).
+  arch VGPRs. At that wall, race the scheduler strategy (`../gemm/schedule_and_locality.md` §3) and
+  check VGPR headroom before unrolling (`../gemm/mainloop.md` §7).
 - *(field, E29)* bf16 wgrad: a persistent grid-stride loop was 8–18% slower and no flatter under skew.
 - *(field, E30)* Persistent across groups (one workgroup walks one tile position through all G groups; grid
   divided by G), MXFP8 variable-K wgrad: its time against the reference kernel went from ~1.02× to 1.23–2.00×.
@@ -217,7 +217,7 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
   where 2 and 4 tiles per workgroup compiled without spills and still lost (§7). *(field, E35)* On a dense
   GEMM at one workgroup per CU, pairing two tiles alone was 0.78% slower, and pairing with the peeled tail's
   prefetch aimed at the next tile was 0.69% faster than one tile per workgroup: the value of a persistent
-  worker is the next tile's fill overlapping this tile's epilogue (`../gemm/flydsl_gemm_mainloop.md` §3,
+  worker is the next tile's fill overlapping this tile's epilogue (`../gemm/mainloop.md` §3,
   persistent carry), not the launch it saves. Gate on a compile-only spill check
   (`flydsl_grouped_tile_pricing.md` §1).
 - Repeating a ping-pong tile body breaks barrier parity. A body in which one wave group issues an extra `s_barrier`
@@ -225,7 +225,7 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
   barrier and the output is noise. Balance the count at the tile boundary; Turbo's bf16 wgrad takes a full barrier
   there when persistent (BF16:263-268). Another persistent form worth racing: *(field, E36)* a dense persistent grid with
   no workgroup barrier between tiles (C staged per wave, the next tile's stages filled by the last K-blocks) beat
-  one tile per workgroup by 3–5% (`../gemm/flydsl_gemm_grid_pricing.md` §10).
+  one tile per workgroup by 3–5% (`../gemm/grid_pricing.md` §10).
 - Turbo's capped persistent grids (`cap_cu`, `num_cu > 0`) exist to leave CUs to a co-running kernel, not for
   speed (BF16:622-625; FP8:2669-2670).
 - Which variable-K loop body to run (chunked masked or exact-trip) is keyed on the per-group contraction
@@ -264,7 +264,7 @@ its paired rounds record the NT total 0.88% less time (better in 6 of 6 rounds),
 0.84% less time against the same ramp: over no skew, the 128-rank ramp is level on the total and differs only
 on single dgrad cells (MX4:102-115). Measure a launch skew against no delay, not against another ramp.
 *(field, E40)* On a dense persistent grid, delaying half of each XCD's workgroups paid 1–3% at 6–20 tiles per workgroup
-and nothing at ~60 (`../gemm/flydsl_gemm_grid_pricing.md` §10).
+and nothing at ~60 (`../gemm/grid_pricing.md` §10).
 
 ## 9. Why a grouped GEMM trails one large GEMM
 *(field, E41)* fp8 per-tensor forward on one shape: the grouped kernel at G = 1 reached 2966 TF/s against 3044 for
@@ -285,7 +285,7 @@ per-group launches of it gave 2836, and eight per-group launches of the vendor G
 ## Related
 `flydsl_grouped_group_mapping.md` · `flydsl_grouped_tile_pricing.md` · `flydsl_grouped_wgrad.md` ·
 `flydsl_grouped_host_autotune.md` · `flydsl_grouped_measurement.md` ·
-`../gemm/flydsl_gemm_schedule_and_locality.md` §2 · `../gemm/flydsl_gemm_grid_pricing.md` §1, §10 ·
+`../gemm/schedule_and_locality.md` §2 · `../gemm/grid_pricing.md` §1, §10 ·
 `../attention/flydsl_attn_grid_dispatch.md` §4
 
 ## Evidence

@@ -31,7 +31,7 @@ sources:
 
 **Somewhere else if:** split-KV decode and the combine → `flydsl_attn_decode_split_kv.md`; dQ/dK/dV
 workspace and fusion → `flydsl_attn_backward.md`; generic round counting and tile pricing →
-`../gemm/flydsl_gemm_grid_pricing.md`.
+`../gemm/grid_pricing.md`.
 
 ## 1. The audit, in order
 1. What do co-resident workgroups reuse? Make that axis adjacent inside an XCD (§2).
@@ -44,7 +44,7 @@ Judge changes at this layer by wall time, `SQ_WAIT_ANY` and `SQ_VALU_MFMA_COEXEC
 rate can rise sharply and buy nothing.
 
 ## 2. XCD-major mapping
-- Workgroup `i` runs on XCD `i % 8`, and each XCD has its own 4 MB L2 (`../gemm/flydsl_gemm_schedule_and_locality.md` §2).
+- Workgroup `i` runs on XCD `i % 8`, and each XCD has its own 4 MB L2 (`../gemm/schedule_and_locality.md` §2).
   FlyDSL's launcher states the same mapping for its forward grid (`flash_attn_interface.py:1075`).
 - **Give each XCD a whole `(batch, kv-head)` block**, so the GQA workgroups that read the same K/V share one
   L2. *(field, E3, E4)* dq: L2 hit 86.5% → 94.8%, misses −62%, wall within noise (+0.54% kept together with an
@@ -54,7 +54,7 @@ rate can rise sharply and buy nothing.
   adjacent q positions (q-split index fastest). *(field, E5)* The same remap with the inner order swapped:
   −2.5% instead of +2.4%. Do not copy the order from another kernel.
 - **Use the remainder-spreading permutation.** `x*(G//8) + min(x, G%8) + bid//8` with `x = bid % 8`
-  (`../gemm/flydsl_gemm_schedule_and_locality.md` §2) is a bijection for any grid size `G`, so the
+  (`../gemm/schedule_and_locality.md` §2) is a bijection for any grid size `G`, so the
   `num_kv_heads % 8 == 0` gate goes away. *(field, E6)* With 6 kv heads, falling back to the plain decode for head
   counts not divisible by 8 left 9.1% of a windowed dK/dV body on the table.
 - **Check bijectivity over every grid you launch.** The same binary is often launched on a narrower chunk
@@ -159,7 +159,7 @@ Read a pool from two or more points of a curve, never from an end point.
   workgroup (low wave bits pick the row group, high bits the head), sharing one K/V LDS tile and barrier.
   *(field, E23)* Forward at the power cap: 2.04% faster, `TCP_TCC_READ_REQ` −49.5%, clock +8.7% at unchanged
   power, cycles +6.6%. The whole gain came through the clock.
-- **Precondition: the merge must leave more than one workgroup per CU** (`../gemm/flydsl_gemm_grid_pricing.md` §4).
+- **Precondition: the merge must leave more than one workgroup per CU** (`../gemm/grid_pricing.md` §4).
   *(field, E24, E25)* In a VGPR-locked occupancy-2 backward, the same merge left one workgroup per CU with nothing
   to cover barriers and drains: dq −2.7% (the dq kernel itself an estimated −6.5%), an 8-wave dK/dV −4.3%, outputs
   bit-identical.
@@ -195,7 +195,7 @@ A backward body that loops over the q-heads sharing one kv-head has a second loo
 
 ## Related
 `flydsl_attn_backward.md` · `flydsl_attn_decode_split_kv.md` · `flydsl_attn_attribution.md` ·
-`../gemm/flydsl_gemm_schedule_and_locality.md` §2 · `../gemm/flydsl_gemm_grid_pricing.md`
+`../gemm/schedule_and_locality.md` §2 · `../gemm/grid_pricing.md`
 
 ## Evidence
 

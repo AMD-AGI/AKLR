@@ -19,7 +19,7 @@ sources:
 > The order in which to look at a grouped GEMM — forward (NT), dgrad (NN, or NT on a transposed weight) and
 > variable-K wgrad (TN) — in bf16, fp8 with per-tensor scales, MXFP8 and MXFP4. It does not say which
 > configuration wins. The round discipline (one change per round, hypothesis before build, escalation after
-> rollbacks, no benchmark-only gains) is in `../gemm/flydsl_gemm_workflow.md` and applies unchanged. Numbers
+> rollbacks, no benchmark-only gains) is in `../gemm/workflow.md` and applies unchanged. Numbers
 > marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end. Use them
 > for direction and order of magnitude, not as targets. Inference MoE expert GEMMs (sorted token ids) are in
 > `flydsl_grouped_moe_inference.md`.
@@ -120,8 +120,8 @@ counters across distributions with `GRBM_GUI_ACTIVE` apart: idle CUs, not memory
 
 ## 5. Step 3 — price the per-tile fixed cost against the steady state
 
-Fit `t_tile = F + n_kblocks · P` over a K sweep (`../gemm/flydsl_gemm_grid_pricing.md` §6; its systematic errors
-are in `../gemm/flydsl_gemm_attribution.md` §7). Then compare `P` with the dense kernel of the same dtype.
+Fit `t_tile = F + n_kblocks · P` over a K sweep (`../gemm/grid_pricing.md` §6; its systematic errors
+are in `../gemm/attribution.md` §7). Then compare `P` with the dense kernel of the same dtype.
 - In the measured grouped kernels `P` matched the dense rate and the loss sat in `F`; a kernel with the faster
   steady state still lost to a reference whose tiles ran several times as many K iterations
   (`flydsl_grouped_tile_pricing.md` §6).
@@ -130,7 +130,7 @@ are in `../gemm/flydsl_gemm_attribution.md` §7). Then compare `P` with the dens
   (measured utilization ÷ the share of time outside the per-tile fixed cost); the first misreads "tiles too short"
   as "the loop is 40% idle".
 - At the power cap, cycle savings convert to wall time at a shape-dependent rate
-  (`../gemm/flydsl_gemm_attribution.md` §4); on the grouped table where it was measured, the lower rate was the
+  (`../gemm/attribution.md` §4); on the grouped table where it was measured, the lower rate was the
   skewed worst cell (`flydsl_grouped_measurement.md` §7).
 
 Where `F` comes from and what removes it: `flydsl_grouped_tile_pricing.md`.
@@ -177,7 +177,7 @@ Each entry held where it was measured. Reopen one only with a probe that shows i
 - **LLVM scheduler options on a hand-scheduled grouped body** (`max-memory-clause`, `post-misched`,
   `lsr-drop-solution` on a body pinned by `s_setprio`, `sched_barrier` and explicit waits). *(field, E6)* +0.06% over
   24 samples; the ISA differed by 1 instruction of 4975. Diff the ISA before benchmarking any "zero-risk" compiler
-  option (`../gemm/flydsl_gemm_schedule_and_locality.md` §3). On a dense tile that spilled, the scheduler strategy
+  option (`../gemm/schedule_and_locality.md` §3). On a dense tile that spilled, the scheduler strategy
   `iterative-ilp` removed the spills (same section): race it where the body is not pinned.
 
 ## 8. Rules that save rounds
@@ -188,7 +188,7 @@ Each entry held where it was measured. Reopen one only with a probe that shows i
   absolute tile count. Score across several geometries (`flydsl_grouped_measurement.md` §1) and write gates as
   ratios.
 - **A gain larger than the structure allows** usually means the benchmark took a uniform-distribution shortcut
-  or reused tensor identities (`../gemm/flydsl_gemm_workflow.md` § The round discipline). A gain that vanishes
+  or reused tensor identities (`../gemm/workflow.md` § The round discipline). A gain that vanishes
   under skew is benchmark overfit; revert it.
 - **When the goal is to beat a specific kernel, dump its ISA and dispatch metadata first.** Compare waves per
   SIMD, accumulator class, K iterations per tile and synchronization instructions per MFMA (waits, barriers,
@@ -208,8 +208,8 @@ Each entry held where it was measured. Reopen one only with a probe that shows i
 - [ ] § Usually dead was read before the plan was written; a reopened entry names the precondition that changed.
 
 ## Related
-`INDEX.md` · `../gemm/flydsl_gemm_workflow.md` (round discipline) · `../gemm/flydsl_gemm_grid_pricing.md` ·
-`../gemm/flydsl_gemm_attribution.md` · `../gemm/flydsl_gemm_schedule_and_locality.md`
+`INDEX.md` · `../gemm/workflow.md` (round discipline) · `../gemm/grid_pricing.md` ·
+`../gemm/attribution.md` · `../gemm/schedule_and_locality.md`
 
 ## Evidence
 

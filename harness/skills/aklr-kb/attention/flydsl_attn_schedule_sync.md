@@ -23,8 +23,8 @@ sources:
 
 > An attention body interleaves MFMAs with a transcendental-heavy softmax, LDS reads and DMA, all between
 > barriers. The hint vocabulary (mask bits, greedy group filling, mask rules for unrolled epilogues), the
-> single `vmcnt` and LDS-DMA waits are in `../gemm/flydsl_gemm_schedule_and_locality.md` §3–§4 and
-> `../gemm/flydsl_gemm_datapath.md` §4; how to rank scheduling arms is in `flydsl_attn_attribution.md` §2
+> single `vmcnt` and LDS-DMA waits are in `../gemm/schedule_and_locality.md` §3–§4 and
+> `../gemm/datapath.md` §4; how to rank scheduling arms is in `flydsl_attn_attribution.md` §2
 > and §5. This card adds what attention adds. Regime first: when co-resident waves already fill the
 > MFMA shadow (no bare VALU between MFMAs), reordering rarely pays; where bare VALU remains it still can, and it
 > paid more at 2 waves/SIMD than at 3 (§4). At one workgroup per CU, interleaving inside the workgroup is the only
@@ -98,7 +98,7 @@ sources:
 - An MFMA-only fence makes MFMAs close ranks on both sides, leaving the fenced block with no cover.
 - **A source-level LDS read prefetch needs a fence per MFMA.** LLVM sinks each read beside its MFMA (depth 4 in
   source, 2 in flight); `sched_barrier(0)` after each MFMA kept 5, same VGPRs. *(field, E44)* +2.6% with
-  `s_setprio(1)` over the run, 1.2–1.8% without (`../gemm/flydsl_gemm_schedule_and_locality.md` §3).
+  `s_setprio(1)` over the run, 1.2–1.8% without (`../gemm/schedule_and_locality.md` §3).
 
 ## 5. `s_setprio`
 - Only bits [1:0] count: priorities 0–3. *(field, E13)* 1 vs 2 or 3 is byte-identical apart from the immediate
@@ -136,7 +136,7 @@ jitfn.compile_hints["llvm_options"] = {"amdgpu-sched-strategy": "max-ilp"}   # c
   threshold: 0 packed ops on the main path, +6.85% on an fp8 MLA decode (the threshold's own share unpriced).
 
 ## 7. Hazards
-- Inline-asm results are invisible to the hazard recognizer (`../gemm/flydsl_gemm_correctness.md` §7).
+- Inline-asm results are invisible to the hazard recognizer (`../gemm/correctness.md` §7).
   In v0.3.2 `rocdl.cvt_pk_bf16_f32` is inline asm. An f32 → bf16 `.to(fx.BFloat16)` on a scalar or a
   2-element vector lowers to the same `v_cvt_pk_bf16_f32` as an ordinary instruction; prefer it.
 - *(field, E23)* MFMAs consuming the asm pack directly got `s_nop 0` instead of the required wait states:
@@ -192,9 +192,9 @@ jitfn.compile_hints["llvm_options"] = {"amdgpu-sched-strategy": "max-ilp"}   # c
 - **One in-order `vmcnt` for loads and stores:** issue a prefetch before heavy partial stores, never after.
   *(field, E30)* Same prefetch, before the stores +3.4%, a few instructions after them −2.4%.
 - **An LDS DMA in flight forces `vmcnt(0)` before every `ds_read` of the same allocation** (mechanism in
-  `../gemm/flydsl_gemm_datapath.md` §4). *(field, E33)* With a second K/V buffer, drains 16 → 85 and 109. With
+  `../gemm/datapath.md` §4). *(field, E33)* With a second K/V buffer, drains 16 → 85 and 109. With
   compiler-visible reads, DMA overlaps only register-resident work; asm reads that carry their own waits avoid the
-  drain (`../gemm/flydsl_gemm_datapath.md` §4) at the price of hand-placed `lgkmcnt` (`flydsl_attn_lds.md` §2).
+  drain (`../gemm/datapath.md` §4) at the price of hand-placed `lgkmcnt` (`flydsl_attn_lds.md` §2).
 - **K/V double buffering usually loses: it hides latency; measured cost was throughput.** *(field, E34)* dq
   `BLOCK_KV` 96/64/32 double-buffered: −2.9/−3.2/−2.3%; *(field, E33)* a 256-VGPR body duplicated hoisted LDS
   addresses into 424 B of scratch: −16.5%. The winning form is a single buffer with a hand-off: issue the next DMA
@@ -214,7 +214,7 @@ jitfn.compile_hints["llvm_options"] = {"amdgpu-sched-strategy": "max-ilp"}   # c
 - **Cache bits:** the LDS-DMA atoms (`BufferCopyLDS*`, `cdna4.BufferLoadAsyncLDS*`, `GlobalLoadAsyncLDS*`)
   always emit `aux = 0`. For `nt`/`sc` bits call
   `rocdl.raw_ptr_buffer_load_lds(rsrc, lds_ptr, size, voffset, soffset, offset, aux=<python int>)`; any other
-  type is silently dropped (`../gemm/INDEX.md` § FlyDSL version).
+  type is silently dropped (`../flydsl/gemm.md` § INDEX FlyDSL version).
 - **Non-temporal hints on attention operand streams were negative.** *(field, E39)* Q `nt` −0.95% (waves of one
   workgroup share Q lines); dkdv Q/dO DMA `nt` −7.6% *(field, E33)* (reused across workgroups); O store `nt` +0.11%
   (noise). Before marking a stream `nt`, ask whether lanes or waves of one workgroup share its lines.
@@ -233,7 +233,7 @@ jitfn.compile_hints["llvm_options"] = {"amdgpu-sched-strategy": "max-ilp"}   # c
 ## Related
 `flydsl_attn_registers_occupancy.md` · `flydsl_attn_lds.md` · `flydsl_attn_attribution.md` ·
 `flydsl_attn_correctness.md` · `flydsl_attn_grid_dispatch.md` · `flydsl_attn_decode_split_kv.md` ·
-`../gemm/flydsl_gemm_schedule_and_locality.md` · `../gemm/flydsl_gemm_correctness.md` ·
+`../gemm/schedule_and_locality.md` · `../gemm/correctness.md` ·
 `../flydsl/guides.md` § prefetch-data-load · `../flydsl/debug-flydsl-kernel.md`
 
 ## Evidence

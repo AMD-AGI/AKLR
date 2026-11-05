@@ -37,7 +37,7 @@ the zeroing of the output moves into the same launch. Two graph nodes instead of
 - A call took 39.1–102.0 µs with three nodes and 34.4–95.7 µs folded *(field, E1)*.
 - Under AKLR's timer a node that does almost no work still reads about 4 µs: a fully empty kernel timed in place of
   a dense GEMM read 4.21 µs at m = 8 *(field, E2)*, and an add + RMSNorm kernel (a HIP kernel, not a MoE) read
-  3.93–4.04 µs at 1–256 rows of 6144 *(field, E3)*. More on that floor: `../gemm/flydsl_gemm_small_m.md` §1.
+  3.93–4.04 µs at 1–256 rows of 6144 *(field, E3)*. More on that floor: `../gemm/small_m.md` §1.
 - Removing the sort node saved 3.5–6.4 µs per call, 6–12% of the call *(field, E1)*.
 
 ### 2. Fold the routing sort into stage 1
@@ -134,7 +134,7 @@ _d = _base + _p2 + _inc2 - _x - _lo
   tokens of this shape and a pre-quantized-activation stage 1 at 1 and 2 (S6).
 - **A bitwise contract.** The atomic stage 2 adds a token's 9 rows in arrival order. Use a fixed-order stage 2 there,
   for example one wave per route and an LDS sum in route order, as `1fee59821837c26f.json` does at 1–2 tokens
-  (`flydsl_grouped_moe_inference.md` §6, `../gemm/flydsl_gemm_correctness.md` §8).
+  (`flydsl_grouped_moe_inference.md` §6, `../gemm/correctness.md` §8).
 
 ## How to confirm it took effect
 

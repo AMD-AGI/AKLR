@@ -29,16 +29,16 @@ decision rules, not a catalogue of kernels or configurations.
 | You are… | Read |
 |---|---|
 | starting on an attention kernel, or deciding what to try next | `flydsl_attn_workflow.md` |
-| finding out where the time goes (counters, probes, clocks) | `flydsl_attn_attribution.md` (with `../gemm/flydsl_gemm_attribution.md`) |
+| finding out where the time goes (counters, probes, clocks) | `flydsl_attn_attribution.md` (with `../gemm/attribution.md`) |
 | mapping the grid: XCD order, dispatch order, GQA head grouping | `flydsl_attn_grid_dispatch.md` |
 | choosing the MFMA atom, laying out fragments, using S^T | `flydsl_attn_mfma_layout.md` |
 | writing the softmax: exp, LSE, online rescale, numerics | `flydsl_attn_softmax.md` |
 | working on LDS: transpose reads, layouts, bank conflicts | `flydsl_attn_lds.md` (with `../flydsl/guides.md` § lds-optimization) |
 | fighting registers or occupancy, or overlapping MFMA with VALU | `flydsl_attn_registers_occupancy.md` |
-| placing barriers, waits, scheduling hints, prefetch | `flydsl_attn_schedule_sync.md` (with `../gemm/flydsl_gemm_schedule_and_locality.md`) |
+| placing barriers, waits, scheduling hints, prefetch | `flydsl_attn_schedule_sync.md` (with `../gemm/schedule_and_locality.md`) |
 | writing the backward pass: dQ/dK/dV accumulation, determinism, fusion | `flydsl_attn_backward.md` |
 | writing decode or split-KV with a combine step | `flydsl_attn_decode_split_kv.md` |
-| measuring an A/B on attention | `flydsl_attn_measurement.md` (with `../gemm/flydsl_gemm_measurement.md`) |
+| measuring an A/B on attention | `flydsl_attn_measurement.md` (with `../gemm/measurement.md`) |
 | writing or trusting a correctness gate | `flydsl_attn_correctness.md` (with `../flydsl/debug-flydsl-kernel.md`) |
 
 ## FlyDSL's own attention code (v0.3.2, `kernels/attention/`)

@@ -12,7 +12,7 @@ flydsl: 0.3.2
 # Attributing an attention kernel's time
 
 > Counters propose; probes decide. This card adds what attention bodies taught on top of
-> `../gemm/flydsl_gemm_attribution.md` (compute-additivity and byte-rate probes, drop/alias/identity/illegal
+> `../gemm/attribution.md` (compute-additivity and byte-rate probes, drop/alias/identity/illegal
 > arms, additive margins, the wave-cycle budget, readings you cannot trust), which it does not repeat. Trace
 > capture is in `../profile.md`. Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed
 > under Evidence at the end. Use them for direction and order of magnitude, not as targets.
@@ -23,7 +23,7 @@ flydsl: 0.3.2
 - A probe priced a pool and the built change did not deliver it.
 
 ## 1. Measure the real clock first
-- Derive sclk from `GRBM_GUI_ACTIVE / 8 XCDs / dispatch duration` (`../gemm/flydsl_gemm_attribution.md` §4).
+- Derive sclk from `GRBM_GUI_ACTIVE / 8 XCDs / dispatch duration` (`../gemm/attribution.md` §4).
   A `rocm-smi` sample taken while the benchmark runs can land after a cached kernel has already finished and
   report the idle clock, 158 MHz *(field, E1)*.
 - Profiling changes the clock it measures: *(field, E2, E3)* ~1.82 GHz derived under counter collection against ~2.07 GHz
@@ -79,11 +79,11 @@ stall' = 1/X − (MFMA% + VALU% − coexec%)    # as a share of today's timeline
   - *(field, E12)* A forward read `SQ_WAIT_ANY` 22%; deleting every `vmcnt` wait, every `lgkmcnt(0)` or every
     `s_barrier`, one class per arm, moved wall time ≤2.6% in total.
 - `SQ_VALU_MFMA_BUSY_CYCLES` at least 4–5× `SQ_LDS_IDX_ACTIVE` means the LDS port is not the limit, whatever
-  `SQ_WAIT_INST_LDS` says (`../gemm/flydsl_gemm_attribution.md` §6).
+  `SQ_WAIT_INST_LDS` says (`../gemm/attribution.md` §6).
 
 ## 5. Probe discipline
 Subtractive arms give a ceiling; additive arms give a marginal price; the two can disagree in sign
-(`../gemm/flydsl_gemm_attribution.md` §2–§3). What attention bodies add:
+(`../gemm/attribution.md` §2–§3). What attention bodies add:
 - **Do all three layers in one go**: instructions issued with addresses pointed out of bounds (memory only) →
   instructions and their consumers removed → the next stage removed. *(field, E13)* A "skip the partial store" arm
   also removed the GEMM whose accumulator the store read (dead-code elimination): 6.78 → 5.70 → 4.91 → 4.18 ms.
@@ -146,7 +146,7 @@ ISA gate (opcode histogram, spill, VGPR) before benchmarking, bracket the arms w
   cap, measure whether the cycle gain survives before assuming it does.
 
 ## 9. Per-kernel additive probes
-Run the compute-additivity probe (`../gemm/flydsl_gemm_attribution.md` §1) on each kernel of an operator, not once for
+Run the compute-additivity probe (`../gemm/attribution.md` §1) on each kernel of an operator, not once for
 the operator. *(field, E27)* Adding MFMA work to a sparse-MLA prefill changed wall time by 0.1% (fully hidden); quadrupling
 the PV MFMAs in its decode producer made it 7% slower (~6 wall cycles per 16-cycle `16x16x32` MFMA, about a third of
 its pipe time). One kernel of the family is fabric-bound, the other is not.
@@ -159,7 +159,7 @@ its pipe time). One kernel of the family is fabric-bound, the other is not.
   8-cycle exp fit a backward body's counter within 1%.
 
 ## Related
-`../gemm/flydsl_gemm_attribution.md` · `flydsl_attn_workflow.md` · `flydsl_attn_measurement.md` ·
+`../gemm/attribution.md` · `flydsl_attn_workflow.md` · `flydsl_attn_measurement.md` ·
 `flydsl_attn_schedule_sync.md` · `../profile.md` § kernel-trace-analysis
 
 ## Evidence

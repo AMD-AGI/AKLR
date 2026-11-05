@@ -129,7 +129,7 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
   copy only on its persistent path. Remapping before the exit would put all dead ids on one XCD
   (`flydsl_grouped_group_mapping.md` §4). The contiguous slice is not measured here; *(field, E1, E2)* on a dense
   read-once stream, one contiguous slice per XCD lost 2–10% where runs of 8 tiles gained
-  (`../gemm/flydsl_gemm_small_m.md` §6): race the remap against the hardware order.
+  (`../gemm/small_m.md` §6): race the remap against the hardware order.
 - **aiter's mixed builders remap tiles across XCDs before the validity test, and not one-to-one.** The remap runs
   over the padded bound, not `num_valid_ids` (`mixed_moe_gemm_2stage_common.py:540-574`, stage 2 :3741), the test
   `bx_m < num_valid` comes after it (:727, :3966), and with `num_workgroups // 8` per XCD the last `grid % 8` tiles
@@ -142,7 +142,7 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
   over-launch mostly empty workgroups (`a16wmix/gemm2.py:34-36`). A barrier at the top of the loop keeps the previous
   tile's epilogue LDS apart from the next tile's A DMA (`a16wmix/gemm2.py:630-641`). *(field, E3)* A persistent loop
   with no barrier between tiles, C staged per wave, beat one tile per workgroup by 3–5% on a dense GEMM
-  (`../gemm/flydsl_gemm_grid_pricing.md` §10): race that form too.
+  (`../gemm/grid_pricing.md` §10): race that form too.
 - **The non-persistent atomic stage 2 is HBM-bound**: each tile reads a full fp4 weight column block with about 4%
   L2 reuse; FlyDSL's `mxfp_moe` applies the XCD remap above to it to balance HBM channels (`gemm2.py:262-289`).
 - Per-expert 64-bit bases: `flydsl_grouped_group_mapping.md` §7.
@@ -158,7 +158,7 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
   M-blocks. *(field, E4)* On an a4w4 atomic stage 2 with tile-M 32, narrowing tile-N from 256 to 128 to 64 helped at
   each step (64 against 128: +0.84%, +0.88%, +0.96% in three pairs); 32, buildable only with an in-block K
   split, was slower than 64. Race tile-N downward until the per-block fixed cost wins, and count the workgroups
-  against the 256-CU dispatch round as you go (`../gemm/flydsl_gemm_small_m.md` §3, §5).
+  against the 256-CU dispatch round as you go (`../gemm/small_m.md` §3, §5).
 - **Wider channel blocks pay until the grid runs out.** FlyDSL's fp8/int8 stage 1 uses a 128-channel block (half
   the blocks and waves, less barrier and LDS-sync overhead) but caps it at 128 so tile-N 256 stays two blocks per
   row, because one 256-channel block made a 256-wide intermediate ~40% slower (grid too small, register pressure)
@@ -188,7 +188,7 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
   expert (§8). Its note: L2 hit ~34% streaming against ~59% cached, ~22% faster at an effective M of 8192
   (`host.py:125-138`). The `a16wmix` stage 2 defaults its B loads to the same non-temporal cache modifier (`b_cache_mod=2`,
   `gemm2.py:517`). aiter's host has no such switch: `use_nt` comes from the tuned row (§1). On dense small-M GEMMs
-  the B policy also coupled with the K tile (`../gemm/flydsl_gemm_small_m.md` §6).
+  the B policy also coupled with the K tile (`../gemm/small_m.md` §6).
 - **Non-temporal is a property of each load, not of the operand.** *(field, E8)* Choosing per M-block — cached when a
   neighbour in sorted order has the same expert (`sorted_expert_ids[blk ± 1] == expert`), non-temporal otherwise —
   gained 1.82% over all-non-temporal on an a4w4 decode score. Conditions:
@@ -250,7 +250,7 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
   contiguous channels of one row) and `e_vec = 2` on the atomic path, so the 32 lanes cover 64 contiguous
   channels; its note puts the wider form at 4.25× the atomic traffic and 4.8× slower (`gemm2.py:434-443`).
 - **Atomics are not bit-reproducible**; gate on a tolerance against an independent reference
-  (`../gemm/flydsl_gemm_correctness.md` §8). AKLR's `fused_moe` contracts are `determinism: bounded`, gated on
+  (`../gemm/correctness.md` §8). AKLR's `fused_moe` contracts are `determinism: bounded`, gated on
   output SQNR ≥ 13 dB with `max_violation_fraction` 1e-3 (`aklr/ops/fused_moe/contract.py`), so atomics are allowed
   there, unlike AKLR's GEMM contracts, all bitwise but `gemm_a8w8_blockwise_scaled`; a port's equivalence is judged
   by SQNR (`../moe/flydsl_moe_decode.md` §3). Four of AKLR's five MoE kernels still sum the routes in a fixed order
@@ -278,12 +278,12 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
   and the next overwrote the local experts' entries; the kernel boundary ordered the two. Once merged,
   `gpu.barrier()` is not guaranteed to order the global stores (it synchronizes the waves of one workgroup).
   Make the two writes disjoint (seed only the entries the scatter never writes). Replacing a kernel boundary with
-  a flag needs the polling rules of `../gemm/flydsl_gemm_correctness.md` §4.
+  a flag needs the polling rules of `../gemm/correctness.md` §4.
 
 ## 8. Measuring at decode sizes
 
 - Decode reads cold weights, runs under graph replay and pays a per-node floor: rotate weight copies past the
-  MALL, time a replayed graph, and price through the deployed entry (`../gemm/flydsl_gemm_small_m.md` §1). AKLR's
+  MALL, time a replayed graph, and price through the deployed entry (`../gemm/small_m.md` §1). AKLR's
   bench already replays a graph with a cache flush per call, and times aiter's MoE through `fused_moe_baseline`
   (`../flydsl/kernels/flydsl_kernel_library.md` § Other FlyDSL families in the baseline aiter).
 - *(field, E18)* A MoE decode scorer's in-batch noise was ~0.2%, but identical code drifted 0.3–0.4% between batches.
@@ -304,7 +304,7 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
 
 ## Related
 `../moe/flydsl_moe_decode.md` · `../flydsl/kernels/flydsl_kernel_library.md` ·
-`../gemm/flydsl_gemm_small_m.md` · `../gemm/flydsl_gemm_grid_pricing.md` · `flydsl_grouped_scheduling.md` ·
+`../gemm/small_m.md` · `../gemm/grid_pricing.md` · `flydsl_grouped_scheduling.md` ·
 `flydsl_grouped_measurement.md` · `INDEX.md`
 
 ## Evidence

@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL GEMM — attribution: price where the time goes before changing anything"
+title: "GEMM — attribution: price where the time goes before changing anything"
 kind: method
-lever: flydsl_gemm_attribution
+lever: gemm_attribution
 ops: [gemm]
 gens: [gfx950]
 dtypes: [fp8, mxfp4, mxfp8, bf16]
@@ -9,7 +9,7 @@ regimes: [compute-bound, feed-bound, power-capped]
 flydsl: 0.3.2
 ---
 
-# Attributing a FlyDSL GEMM's time
+# Attributing a GEMM's time
 
 > Counters propose; probes decide. Numbers marked `*(field, E<n>)*` are measured values; their conditions are
 > listed under Evidence at the end. Use them for direction and order of magnitude, not as targets.
@@ -54,7 +54,7 @@ that changes). Keep probe switches out of the delivered code.
 | **drop** | do not issue the fills (or reads, stores) of the main body | the whole cost of that stream |
 | **alias** | issue the same instructions, but point every address at one block that stays in L2 | instruction issue + LDS write, without the data movement |
 | **identity** | replace a new cross-lane helper with an identity that keeps the same return shape | the request-path gain of a change, without its VALU cost |
-| **illegal** | remove a wait or a step entirely (wrong results) | the ceiling of any change that shortens it (`flydsl_gemm_grid_pricing.md` §7) |
+| **illegal** | remove a wait or a step entirely (wrong results) | the ceiling of any change that shortens it (`grid_pricing.md` §7) |
 
 - Touch only the main loop body. Keep the prologue and K-tail as they are, so LDS always holds legal data
   and the kernel cannot hang.
@@ -148,7 +148,7 @@ near busy.
   stream.
 - **Trip-count additive probe.** Add 2 and 4 iterations to the loop count in the same process, with the
   rest of the ISA unchanged. Three points give the per-phase cost P and the fixed cost F directly.
-- **A K-sweep fit (`flydsl_gemm_grid_pricing.md` §6) has five systematic errors:**
+- **A K-sweep fit (`grid_pricing.md` §6) has five systematic errors:**
   1. Using the nominal clock instead of the measured one.
   2. Counting a neighbour kernel whose time also grows with K into P. Take the target kernel's row from a
      kernel trace.
@@ -167,8 +167,8 @@ near busy.
   16 was read on two attention kernels and by the microbenchmark; an A6W4 GEMM issuing the f8f6f4 atom on
   fp6 × fp4 operands also read 16 *(field, E26)*. Read the ratio for the MFMA
   and operand format your kernel issues: `v_mfma_f32_16x16x128_f8f6f4` with fp8 A and B reads 32 on a grouped
-  GEMM *(field, E27)* (`flydsl_gemm_grid_pricing.md` §5). Its fp4 form is shorter — LLVM's gfx950 hazard model
-  gives it fewer wait states (`flydsl_gemm_correctness.md` §7) — so read its ratio rather than assuming 32. The
+  GEMM *(field, E27)* (`grid_pricing.md` §5). Its fp4 form is shorter — LLVM's gfx950 hazard model
+  gives it fewer wait states (`correctness.md` §7) — so read its ratio rather than assuming 32. The
   ceiling for interleaving work is the pipe cycles less the issue block, per MFMA in the phase: `8 × MFMAs` for
   the bf16 atom above.
 - **The register allocator is the constraint.** *(field, E28)* An epilogue interleaved into the last chunk's MFMAs
@@ -190,7 +190,7 @@ near busy.
 ## 9. Readings you cannot trust
 
 - rocprof's `VGPR_Count` reports half the true value, and `Accum_VGPR_Count` reports 0 *(field, E33)*. Read
-  registers from the ISA (`flydsl_gemm_mainloop.md` §10).
+  registers from the ISA (`mainloop.md` §10).
 - `MfmaUtil` (`SQ_VALU_MFMA_BUSY_CYCLES` over `GRBM_GUI_ACTIVE`·SIMDs) is not reliably comparable across wave
   counts. On grouped GEMMs, a 1-wave-per-SIMD kernel read 32.2% against 63.8% for a 2-wave-per-SIMD kernel with
   the same MFMA count and wall time 4% apart *(field, E34)*, while one kernel built at 1 and 2 waves per SIMD
@@ -206,12 +206,12 @@ near busy.
   kernel's static instructions gained 0.2%, and the kernel that gained one spill slot lost 0.30–0.41% instead of
   gaining (about 0.45% per slot, estimated). Removing code can also create a spill, because the allocator's
   input changed.
-- Do not time with `FLYDSL_DUMP_IR=1` or a single repetition. *(field, E39)* On an attention kernel, a dumped run
-  read +15%; three normal runs read ±0.2%.
+
+In FlyDSL: `../flydsl/gemm.md` § attribution §9.
 
 ## Related
-`flydsl_gemm_measurement.md` (rulers, null controls, A/B design) · `flydsl_gemm_grid_pricing.md` (rounds,
-fixed cost, illegal arm) · `flydsl_gemm_mainloop.md` · `../profile.md` § kernel-trace-analysis
+`measurement.md` (rulers, null controls, A/B design) · `grid_pricing.md` (rounds,
+fixed cost, illegal arm) · `mainloop.md` · `../profile.md` § kernel-trace-analysis
 
 ## Evidence
 
@@ -258,6 +258,5 @@ A FlyDSL version is given only where the cited run, or another round in the same
 - E36 [2026-09, gfx950, FlyDSL 0.3.2, rocprofv3, N=?, rocprofv3 PMC] `SQ_LEVEL_WAVES` and `SQ_ACCUM_PREV_HIRES` always read 0 on that build (GLM-5.2 TP4/EP4 sparse-MLA decode attention; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260912_134949/rounds/round-02/agent.txt:30)
 - E37 [2026-06, gfx950, FlyDSL ?, N=1, ATT trace of one dispatch (rocprofv3, dispatch 538)] share of stall cycles: MFMA 89.5%, VMEM load 2.7%, barrier 2.5%, VMEM wait (`s_waitcnt vmcnt`) 1.8%, VMEM store 1.1%, LDS 1.0% (MXFP4 4-wave whole-loop dense GEMM, M=N=8192, K=28672, BN256 BK256; trace report of 2026-06-17, myskill /workspace/code/gpt_oss_docker/myskill commit 2fef875, mxfp4-4wave-optim/08-att-root-cause.md:28)
 - E38 [2026-09, gfx950, FlyDSL 0.2.2, N=7, palindrome, two arms] removing the duplicate tile bodies that never run (ISA −49%): gate_up +0.23% / +0.15% (7/7 draws), down −0.41% / −0.30% (0/7) with `vgpr_spill_count` 0 → 1; the round derives "+0.2% per halving, ≈ −0.45% per spill slot" (gpt-oss fp8 per-tensor grouped wgrad, occupancy 1, 4 waves; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260904_153457/rounds/round-15/agent.txt:15)
-- E39 [2026-09, gfx950, FlyDSL 0.3.2, N=3, same-process probe] an arm's first read under `FLYDSL_DUMP_IR=1` and `REPS=1`: +15.44%; three normal re-runs ±0.2% (sparse-MLA decode producer; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260911_143318/rounds/round-10/agent.txt:15)
 - E40 [2026-10, gfx950, hipcc inline asm (no FlyDSL kernel), N=7, s_memtime slope method, median of 7 launches] `v_mfma_f32_16x16x32_bf16` 16.000 and `v_mfma_f32_32x32x16_bf16` 32.000 cycles per instruction, dependent through srcC or independent; `v_mfma_f32_16x16x16_bf16` 16.0 at half the FLOP rate of 16x16x32; with k VALU after each MFMA, cycles = max(pipe, X + 8·k_exp + 4·k_mul), X = 8 for 16x16x32 and 32x32x16 and 4 for 16x16x16, so the shadow is 8 cycles (one exp or two mul), 24 and 12 (microbenchmark; local:/workspace/code/gpt_oss_docker/scratch/attn_kb/verify/gpu_probes.md:82)
 - E41 [2026-07, gfx950, FlyDSL ?, N=?, rocprofv3 PMC (`SQ_VALU_MFMA_BUSY_CYCLES`, `GRBM_GUI_ACTIVE`, `SQ_WAVES`)] one whole-loop kernel built with 4 waves (1 wave/SIMD) and 8 waves (2 waves/SIMD): MFMA busy cycles identical (612.0B), waves 20.2M → 40.5M, `GRBM_GUI_ACTIVE` 10.68B → 12.69B, MFMA util 57.3% → 48.2%, wall +19% (MXFP4 grouped GEMM `kern_1`, GEMM only, M=N=K=4096; KB note, no run record on this machine; local:/workspace/code/gpt_oss_docker/.claude/memory/project_mxfp4_grouped_fp4vs8_occ.md:46)

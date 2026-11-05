@@ -29,6 +29,7 @@ FlyDSL that the baseline aiter installs (`AKLR_BASELINE_AITER` in `.github/workf
 | Your first FlyDSL GEMM (FlyDSL's walkthrough), before `../gemm/INDEX.md` | `guides.md` § gemm-optimization |
 | The language: layouts, `@flyc.kernel` / `@flyc.jit`, copy atoms, MFMA, loops | `guides.md` § flydsl-kernel-authoring |
 | Author and optimize any other kernel, structure first | `kernels/flydsl_authoring_method.md` |
+| Write or call a FlyDSL GEMM: the FlyDSL side of `../gemm/` (API, FlyDSL's and Primus-Turbo's GEMM kernels and how to call or tune them) | `gemm.md` |
 | Read aiter's FlyDSL kernels (dense GEMM, MoE, attention and the rest) and their knobs | `kernels/flydsl_kernel_library.md` → `kernels/flydsl_knob_space.md` |
 | LDS bank conflicts, double buffering, swizzle | `guides.md` § lds-optimization |
 | Overlap loads with compute, prefetch, software pipelining; MFMAs wait on global loads | `guides.md` § prefetch-data-load |

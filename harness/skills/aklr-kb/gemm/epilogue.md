@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL GEMM — the epilogue: what a C store costs on gfx950 and how to make it cheaper"
+title: "GEMM — the epilogue: what a C store costs on gfx950 and how to make it cheaper"
 kind: topic
-lever: flydsl_gemm_epilogue
+lever: gemm_epilogue
 ops: [gemm]
 gens: [gfx950]
 dtypes: [fp8, mxfp4, mxfp8, bf16]
@@ -14,7 +14,7 @@ sources:
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/gemm/gemm_mxfp8_kernel.py
 ---
 
-# The FlyDSL GEMM epilogue
+# The GEMM epilogue
 
 > "GH" is `primus_turbo/flydsl/utils/gemm_helper.py`, and "FP8"/"FP4"/"MX8" are the dense fp8, MXFP4 and
 > MXFP8 kernels under `primus_turbo/flydsl/gemm/`, all at Primus-Turbo main `7615a5a2`. "PS" and "A16" are
@@ -72,9 +72,7 @@ NT GEMM with 5888 B output rows.
 
 FlyDSL's guide describes the two ends (`../flydsl/guides.md` § gemm-optimization (FlyDSL's §7)): a **direct store** from the MFMA
 layout, and **CShuffle**, which writes the accumulators to LDS row-major, re-reads them as `(MLane=8,
-NLane=32)` after a barrier and stores 4-element vectors, for `tile_n ≥ 128`. In FlyDSL v0.3.2, PS stores
-directly and can fuse a per-N bias with ReLU/SiLU/GELU (`epilogue=`); A16 and
-`kernels/common/mma/mfma_epilogues.py` carry the CShuffle store. Turbo keeps one store class per technique
+NLane=32)` after a barrier and stores 4-element vectors, for `tile_n ≥ 128`. Turbo keeps one store class per technique
 between those two ends (GH:778-1525). Prefer the cheapest class that reaches the 64 B floor.
 
 | Class | How a lane gets adjacent columns | Cost | Where |
@@ -124,9 +122,10 @@ How to choose:
   changes together, dropping the hard-coded `s_nop` and the two-phase order, took the count from 80 to 0.
 - **Never store the high half of an f32 accumulator as bf16.** That is truncation, not round-to-nearest-even.
   - *(field, E19)* It cost 5.8 dB SNR and made the store slower.
-  - Convert with `v_cvt_pk_bf16_f32`. FlyDSL's buffer store cannot emit `buffer_store_short_d16_hi`, so taking the
-    high half of a packed pair costs one `v_lshrrev_b32`.
+  - Convert with `v_cvt_pk_bf16_f32`.
 - On gfx950, a multi-dword MUBUF VGPR tuple must be 64-bit aligned.
+
+In FlyDSL: `../flydsl/gemm.md` § epilogue §3.
 
 ## 4. Overlap the store with the last MFMAs
 
@@ -135,7 +134,7 @@ At one wave per SIMD nothing overlaps the epilogue unless you put it inside MFMA
   MXFP8 laps two quadrants into the last K iteration. "Past 2 the store temporaries outlive an MFMA pair
   and VGPRs spill" (`_MX_EPI_LAP`, MX8:91-93).
 - **Whole loop.** Stop the asm loop one phase early and hand the last phase's MFMAs back as SSA values
-  (`flydsl_gemm_mainloop.md` §3). Issue them row-tile by row-tile and put each row-tile's store after the
+  (`mainloop.md` §3). Issue them row-tile by row-tile and put each row-tile's store after the
   *next* row-tile's MFMAs. *(field, E20)* Distance 1 was best on a grouped GEMM; 2 and 4 were worse.
   - The hazard recognizer cannot see asm MFMAs. Put a `sched_barrier(0)` before each store group and
     trailing `s_nop`s after the last row-tile. Otherwise a VALU reads a stale accumulator, and only the last
@@ -175,11 +174,8 @@ At one wave per SIMD nothing overlaps the epilogue unless you put it inside MFMA
 - Keep split-K partials cached only if the same XCD reduces them; reduced on other XCDs, `sc1` stores (aux=16) were
   *(field, E25)* 2–4% faster. Do not mark partials `nt`: aux 18/19 cost *(field, E26)* 3–6% against aux 17
   (`sc0|sc1`).
-- **Pass cache-policy bits (`aux`) as a Python int.** `rocdl.raw_ptr_buffer_load`,
-  `raw_ptr_buffer_load_lds` and the buffer atomics replace any `aux` that is neither an `int` nor an
-  MLIR attribute with `None`, without an error
-  (`python/flydsl/expr/rocdl/__init__.py:663-819`). A traced value there silently means "default
-  policy".
+
+In FlyDSL: `../flydsl/gemm.md` § epilogue §5.
 
 ## 6. Bounds without per-column masks
 
@@ -187,21 +183,23 @@ At one wave per SIMD nothing overlaps the epilogue unless you put it inside MFMA
   (`make_row_band_resource`, GH:2010). A wide store has no per-column mask, so a whole column span is
   dropped by giving its band 0 records. Store classes that span several fragments require
   `N % tile_n == 0` (`col_safe`).
-- FlyDSL applies `mask=` after the element→byte multiply, as `select(mask, off, 0x7FFFFFFF)`. Apply the
-  predicate to the part of the offset that does not depend on the sub-tile, then add the sub-tile row
+- Apply the predicate to the part of the offset that does not depend on the sub-tile, then add the sub-tile row
   delta. *(field, E27)* Otherwise `v_cndmask_b32` went from 14 to 64 in a grouped GEMM's fused epilogue.
 - One descriptor per tensor per tile is enough when sub-tiles differ only by a compile-time row offset.
   Carry the row delta in the offset instead of building a descriptor per sub-tile.
+
+In FlyDSL: `../flydsl/gemm.md` § epilogue §6.
 
 ## 7. beta = 1 (accumulate into C)
 
 - Pipeline the read-back: load quadrant i+1 of C while quadrant i's store is in flight (`_store_quadrants`, GH:1528).
   Add in f32 so the result is rounded once.
-- **Compile and race against a scratch output.** Compiling runs the kernel once, which would accumulate
-  into the caller's C twice (`compile_with_scratch_out`, GH:86-95). Turbo races at beta=0 and rebuilds the
+- **Compile and race against a scratch output.** Turbo races at beta=0 and rebuilds the
   winning configuration with the accumulate epilogue (FP8:3008-3027).
 - A persistent kernel that repeats its last tile for leftover workgroup ids is fine for overwrite stores
   but double-accumulates at beta=1. Turbo forces one tile per workgroup there.
+
+In FlyDSL: `../flydsl/gemm.md` § epilogue §7.
 
 ## 8. Fused epilogues (activation, GLU, quantization)
 
@@ -229,9 +227,9 @@ At one wave per SIMD nothing overlaps the epilogue unless you put it inside MFMA
   (`primus_turbo/flydsl/utils/gemm_epilogue_helper.py`).
 
 ## Related
-`flydsl_gemm_mainloop.md` (peeled phases, register plan) · `flydsl_gemm_datapath.md` (row-permuted
-fills, i64 descriptors) · `flydsl_gemm_schedule_and_locality.md` (L2 order the `nt` policy protects) ·
-`flydsl_gemm_autotune.md` (racing the store policy) · `flydsl_gemm_correctness.md`
+`mainloop.md` (peeled phases, register plan) · `datapath.md` (row-permuted
+fills, i64 descriptors) · `schedule_and_locality.md` (L2 order the `nt` policy protects) ·
+`autotune.md` (racing the store policy) · `correctness.md`
 
 ## Evidence
 

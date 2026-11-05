@@ -22,8 +22,8 @@ sources:
 > more ragged tiles, a per-tile prologue that looks up the group. This card prices the tile and the waves per
 > SIMD per pass, the small-M dgrad tile, boundary half tiles and tail bodies, and the per-tile fixed cost.
 > Round counting, split-K, the generic fixed-cost fit and the carry cost of a body variant are in
-> `../gemm/flydsl_gemm_grid_pricing.md`; register classes and the K loop are in
-> `../gemm/flydsl_gemm_mainloop.md`. "FP8" and "MX4" are Primus-Turbo's
+> `../gemm/grid_pricing.md`; register classes and the K loop are in
+> `../gemm/mainloop.md`. "FP8" and "MX4" are Primus-Turbo's
 > `primus_turbo/flydsl/grouped_gemm/grouped_gemm_{fp8,mxfp4}_kernel.py` at main `ca1fdd67`.
 >
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end. Use
@@ -40,7 +40,7 @@ sources:
 short-contraction wgrad → `flydsl_grouped_wgrad.md`; MX scale layout → `flydsl_grouped_lowprec.md`.
 
 ## 1. The register wall comes before LDS
-256×256 is the largest tile that fits, for both large-tile loop designs (`../gemm/flydsl_gemm_mainloop.md` §1):
+256×256 is the largest tile that fits, for both large-tile loop designs (`../gemm/mainloop.md` §1):
 - **8 waves, 2 waves per SIMD** (one 512-thread workgroup per CU, at most 256 registers per wave). *(field, E1)* bf16
   with a 2×4 wave grid: 128 accumulator VGPRs plus ~96 operand VGPRs is 224 (228 measured); doubling either
   tile side needs ~352. *(field, E2)* MXFP8 NT sat at 246–254 of 256 VGPRs depending on the build, with no spill: a 16-wave
@@ -50,7 +50,7 @@ short-contraction wgrad → `flydsl_grouped_wgrad.md`; MX scale layout → `flyd
   BM = 384 would need ~620 registers per lane (estimated) against 512. In the measured MXFP4 grouped kernel BM must also
   be a multiple of 128 because of its scale-slab layout (`flydsl_grouped_lowprec.md` §4).
 - **So the operand fill cannot shrink by tiling.** A `buffer_load … lds` costs the 128-byte lines it covers
-  (`../gemm/flydsl_gemm_datapath.md` §6); lines per unit of MFMA work go as `(BM + BN) / (BM · BN)` and do not
+  (`../gemm/datapath.md` §6); lines per unit of MFMA work go as `(BM + BN) / (BM · BN)` and do not
   depend on BLOCK_K. Only a larger tile lowers them, and the tile is at the wall. *(field, E3)* `BLOCK_N = 128` on
   an MXFP4 whole-loop NT body, tried to cut N padding, timed 4.9–10.2% slower on a build whose output was not
   yet correct: halving the N tile halves the reuse of each A tile, which cost more than the padding saved.
@@ -61,7 +61,7 @@ short-contraction wgrad → `flydsl_grouped_wgrad.md`; MX scale layout → `flyd
   spill, one full plus one paired body did.
 - **Gate on a compile-only ISA dump** (20–60 s *(field, E5)*): `.vgpr_count`, `.agpr_count`, `vgpr_spill_count`,
   `group_segment_fixed_size`, and the `s_barrier` count. Do not time a candidate that spills
-  (`../gemm/flydsl_gemm_mainloop.md` §10).
+  (`../gemm/mainloop.md` §10).
 
 ## 2. Waves per SIMD: decide per pass
 - On fp8 per-tensor, the 4-wave design (1 wave per SIMD) won every variable-K wgrad point against 8 waves (2
@@ -76,7 +76,7 @@ short-contraction wgrad → `flydsl_grouped_wgrad.md`; MX scale layout → `flyd
     `s_setprio`; if the gate fails, the attempt says nothing about 4 waves.
   - *(field, E8)* An MXFP8 grouped kernel at 32 groups of 4096 rows, moved to AGPR-tied accumulators (arch VGPRs
     246 → 184, no spill), measured 0.03–0.17% slower: no gain in that regime.
-  - Freed registers buy nothing by themselves (`../gemm/flydsl_gemm_mainloop.md` §4).
+  - Freed registers buy nothing by themselves (`../gemm/mainloop.md` §4).
 - **On MXFP4 NT, more waves per SIMD by splitting the tile lost.** *(field, E9)* An 8-wave kernel at 2 waves per
   SIMD ran at 0.83–0.98× of the 4-wave whole loop when built as a tiled software pipeline and 0.78–0.92× when
   built as a whole loop; in the whole-loop case MFMA busy cycles were identical and MFMA utilization fell from
@@ -88,7 +88,7 @@ short-contraction wgrad → `flydsl_grouped_wgrad.md`; MX scale layout → `flyd
   anything differs per kernel (`flydsl_grouped_correctness.md` §8). *(field, E10, E11)* MXFP8 NT: removing the pre-MFMA
   rendezvous barriers was 3.3% slower overall (2.6–6.9% on all 8 NT configs), removing a steady-state barrier 6.1%
   (worst config 8.7%), merging MFMA phases 1.6%, all with SNR and determinism intact. Before deleting a barrier, ask
-  whether it is an ordering constraint (`../gemm/flydsl_gemm_mainloop.md` §2) or a phase-alignment device. Deleting
+  whether it is an ordering constraint (`../gemm/mainloop.md` §2) or a phase-alignment device. Deleting
   the rendezvous of the last K steps, which issue no new fill but still make the fills issued two steps earlier
   visible across waves, raced (`flydsl_grouped_correctness.md` §8).
 
@@ -129,13 +129,13 @@ quadrants' MFMAs and LDS reads are dead. Pick the variant with a scalar branch o
     0.09% slower.
   - *(field, E23, E24)* fp8 NN dgrad (8 waves): the reduced counts raced at K = 1024. Keeping the loads and deleting only
     MFMAs and stores reused the full body's graded drain and beat the fully drained no-load body by 0.5 points.
-    Prove any changed count by repetition at small K and wide N (`../gemm/flydsl_gemm_correctness.md` §3).
+    Prove any changed count by repetition at small K and wide N (`../gemm/correctness.md` §3).
 - **The barrier pair around an empty phase can go with its quadrant.** *(field, E25, E26)* NT half-N body: 8 → 5
   barriers per K iteration, +1.0–1.5% on the down configs; on MXFP8 wgrad at 32 groups, the same change left the score
   flat (+0.01%) while the wgrad configurations read slower (geomean 1.1370 against 1.1393; the heavy gate_up one 1.320
   against 1.342–1.353).
 - **The two M halves of a tile sit on different waves.** Idling `wave_m == 1` does not shorten the tile;
-  re-assign the waves to live rows instead (`../gemm/flydsl_gemm_grid_pricing.md` §8). *(field, E27)* MXFP4 wgrad:
+  re-assign the waves to live rows instead (`../gemm/grid_pricing.md` §8). *(field, E27)* MXFP4 wgrad:
   +0.4–3.1% on the deployment-like configs (median +1.7%). Turbo's MXFP4 wgrad serves a block ragged in both
   dimensions with the N re-tile (MX4:1716-1722).
 - *(field, E28)* fp8 per-tensor wgrad, last M block with its upper `a` half all padding, `a_halves = 1`: +4.5–5.8%.
@@ -148,12 +148,12 @@ quadrants' MFMAs and LDS reads are dead. Pick the variant with a scalar branch o
   of the groups) cost 0.8–1.0 points of band locality. Peeling the boundary strip into a second dispatch was 2.9%
   slower overall and 4.6% on the worst config (MXFP8 NT): the strip loses the A slab it shared in L2. That is about
   edge strips. Running a ragged last dispatch round as a second launch of smaller tiles is a different lever, which
-  won and lost on dense GEMMs (`../gemm/flydsl_gemm_grid_pricing.md` §1–§2); *(field, E31)* under AKLR's timer a second
-  launch after a dense GEMM costs ~4 µs (`../gemm/flydsl_gemm_small_m.md` §1).
+  won and lost on dense GEMMs (`../gemm/grid_pricing.md` §1–§2); *(field, E31)* under AKLR's timer a second
+  launch after a dense GEMM costs ~4 µs (`../gemm/small_m.md` §1).
 
 ## 5. Tail bodies: compute the hit rate first
 The carry cost of a body variant (code size paid by every shape in the module) is in
-`../gemm/flydsl_gemm_grid_pricing.md` §8. What the group dimension adds is that the hit rate depends on the
+`../gemm/grid_pricing.md` §8. What the group dimension adds is that the hit rate depends on the
 pass and on the token histogram:
 - A ragged wgrad output (`OUT_M`, `OUT_N`) is a compile-time property: every call hits the tail body.
 - A ragged forward/dgrad M tail exists per group and depends on the group lengths. *(field, E32)* Under the scored
@@ -167,9 +167,9 @@ pass and on the token histogram:
   cells, 7 of 8 in the same direction); re-tiling it to quarter-N gained another 0.67–1.09 points per NT cell.
 
 ## 6. Short tiles: where grouped loses to dense
-Fit `T_tile = F + n · P` from a K sweep, n K iterations at P each (`../gemm/flydsl_gemm_grid_pricing.md` §6, which
+Fit `T_tile = F + n · P` from a K sweep, n K iterations at P each (`../gemm/grid_pricing.md` §6, which
 writes it `a · n_kblocks + F`; its pitfalls:
-`../gemm/flydsl_gemm_attribution.md` §7). For grouped kernels the answer has been the same every time:
+`../gemm/attribution.md` §7). For grouped kernels the answer has been the same every time:
 - *(field, E34)* MXFP4 grouped: P = 1.565 µs per K phase against an estimated 1.59 µs derived from the dense MXFP4 kernel's
   5405 TF/s. The steady state ran at dense speed; the whole loss against dense was in F = 7.81 µs per tile.
 - *(field, E35)* MXFP8 NT against the fastest fp8 wgrad: 6192 tiles of 23 K iterations against 1008 of 134; F was
@@ -182,11 +182,11 @@ writes it `a · n_kblocks + F`; its pitfalls:
   workgroups (§3 there), ragged tiles per group (§4 here), and a cold L2 for each group's slab
   (`flydsl_grouped_scheduling.md` §9).
 - So the levers are F (lookup, decode, store overlap, boundary bodies, kernel-argument preload:
-  `../gemm/flydsl_gemm_small_m.md` §6) or longer tiles per workgroup (`flydsl_grouped_scheduling.md` §6–§7), not
+  `../gemm/small_m.md` §6) or longer tiles per workgroup (`flydsl_grouped_scheduling.md` §6–§7), not
   the main loop.
 - For wgrad the grid is `G × tiles per group`, so G sets the last-round fill: 144 tiles per group fill 18.0
   rounds of 256 CUs at G = 32 and 13.5 at G = 24. Count rounds for every G you deploy
-  (`../gemm/flydsl_gemm_grid_pricing.md` §1).
+  (`../gemm/grid_pricing.md` §1).
 
 ## 7. Store-bound short contractions
 A variable-K wgrad writes G full output slices whatever the token split, so groups with few tokens make it
@@ -204,8 +204,8 @@ tiles per group rather than with a token count, are in `flydsl_grouped_wgrad.md`
 ## Related
 `flydsl_grouped_group_mapping.md` · `flydsl_grouped_scheduling.md` · `flydsl_grouped_wgrad.md` ·
 `flydsl_grouped_lowprec.md` · `flydsl_grouped_correctness.md` · `flydsl_grouped_measurement.md` ·
-`../gemm/flydsl_gemm_grid_pricing.md` · `../gemm/flydsl_gemm_mainloop.md` · `../gemm/flydsl_gemm_datapath.md` §6 ·
-`../gemm/flydsl_gemm_attribution.md` §7
+`../gemm/grid_pricing.md` · `../gemm/mainloop.md` · `../gemm/datapath.md` §6 ·
+`../gemm/attribution.md` §7
 
 ## Evidence
 

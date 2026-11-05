@@ -35,7 +35,7 @@ the shapes also have a Triton kernel under the same name: n2624_k6144 (the QKV p
   `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`, `max_violation_fraction` 0.0;
   `GEMM` in `aklr/ops/gemm/contract.py`). The served paths keep each output's whole K in one wave.
 - N × K = 2624 × 6144, 3072 × 6144, 6144 × 2048, 6144 × 3072: a weight of 30.75, 36, 24 and 36 MiB, a streaming
-  row bound by the read of `b` (`../gemm/flydsl_gemm_small_m.md` §2).
+  row bound by the read of `b` (`../gemm/small_m.md` §2).
 - m = 1 and 2 only. FlyDSL is served at n2624 m 1, n3072 m 1, 2, n6144_k2048 m 1, n6144_k3072 m 1, 2. The Triton
   kernels are served at n2624 m 2, 4, 8, 64 and n6144_k2048 m 2–64; no kernel serves the other Points.
 - The yardstick at a Point is the faster of the kernel AKLR serves there and aiter: aiter, except at the Points
@@ -53,7 +53,7 @@ the shapes also have a Triton kernel under the same name: n2624_k6144 (the QKV p
     of the pack alone is not measured: no arm runs the same GEMM without it.
   - The kernel cannot keep the packed copy between calls (`SKILL.md`, Stop table), and `gemm@1.0` has only the
     `row_major` variant, so no pre-shuffled weight can reach it; the host-side preshuffle of
-    `../gemm/flydsl_gemm_datapath.md` §10 pays only when done once. At these weight sizes, read `b` in its (n, k)
+    `../gemm/datapath.md` §10 pays only when done once. At these weight sizes, read `b` in its (n, k)
     layout.
 - **At m 2–64 the Triton kernels win on the two shapes that have one.** They read the unpacked weight once per
   call: n2624 m 2, 4, 8, 64 at 1.077–1.195 *(field, E5)* and n6144_k2048 m 2–64 at 1.078–1.285 *(field, E6)*. At
@@ -71,8 +71,8 @@ At every served FlyDSL Point: **one wave owns one output column and reads that c
 once.** Each lane issues 16 B buffer loads of the `b` row and of each `a` row straight into registers (no LDS, no
 MFMA), accumulates in a few independent fp32 chains, and the wave reduces them; one launch, no split across waves
 or workgroups, so the order of the sum is fixed. The weight is read once per call at full width, which is what a
-streaming row needs (`../gemm/flydsl_gemm_small_m.md` §2); the grid is N/4 or N/8 workgroups, 656–1536, more
-than the 256 CUs (`../gemm/flydsl_gemm_grid_pricing.md` §1). `../gemm/flydsl_gemm_small_m.md` §5 keeps `b`
+streaming row needs (`../gemm/small_m.md` §2); the grid is N/4 or N/8 workgroups, 656–1536, more
+than the 256 CUs (`../gemm/grid_pricing.md` §1). `../gemm/small_m.md` §5 keeps `b`
 on the LDS path for MFMA tiles; at m ≤ 2 these kernels issue no MFMA.
 
 | | n2624_k6144 m 1 | n3072_k6144 m 1, 2 | n6144_k2048 m 1 | n6144_k3072 m 1, 2 |

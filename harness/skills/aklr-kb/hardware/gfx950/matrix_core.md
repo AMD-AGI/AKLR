@@ -230,11 +230,11 @@ MACs per cycle *(derived: M·N·K·B ÷ Table 28 cycles)*:
 
 | Card section | Here |
 |---|---|
-| `../../gemm/flydsl_gemm_mainloop.md` §5 MFMA atom choice | §1 atom table, §4 rates |
+| `../../gemm/mainloop.md` §5 MFMA atom choice | §1 atom table, §4 rates |
 | mainloop §4 Register plan and inline-asm constraints | §2 register files and sources; §3 "VALU writes → MFMA reads: 2" (its constraint rule 1) |
 | mainloop §2 8-wave pipeline, §3 4-wave whole loop | §3: K chains need no padding; the peeled first phase's `src2=0` is the inline constant; an epilogue scheduled between the closing MFMAs must still cover 8 / 12 / 20 |
 | mainloop §7 Occupancy and allocation knobs | ch03 §3.6.4: granule 8, 256 + 256 per wave. The card's occupancy tiers and round-to-4 rule are not in the guide |
-| `../../gemm/flydsl_gemm_correctness.md` §6 Bounds (MFMA ignores EXEC) | §2 "forces it to 1 for all threads" |
+| `../../gemm/correctness.md` §6 Bounds (MFMA ignores EXEC) | §2 "forces it to 1 for all threads" |
 | correctness §7 Register classes and inline asm | §3: the card's 8 / 8 / 12 / 20 match the VALU row at 4 / 4 / 8 / 16 passes |
 
 ## 6. Gaps and inconsistencies in the chapter text
@@ -251,5 +251,5 @@ MACs per cycle *(derived: M·N·K·B ÷ Table 28 cycles)*:
   MODE's denorm control.
 
 ## Related
-`INDEX.md` · `lookup.md` · `memory_and_sync.md` · `../../gemm/flydsl_gemm_mainloop.md` ·
-`../../gemm/flydsl_gemm_correctness.md` · `../../gemm/flydsl_gemm_schedule_and_locality.md`
+`INDEX.md` · `lookup.md` · `memory_and_sync.md` · `../../gemm/mainloop.md` ·
+`../../gemm/correctness.md` · `../../gemm/schedule_and_locality.md`

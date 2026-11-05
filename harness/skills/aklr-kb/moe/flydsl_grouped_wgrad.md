@@ -49,7 +49,7 @@ race and cache mechanics → `flydsl_grouped_host_autotune.md`; gates → `flyds
   MFMA idle time at group boundaries (per-group prologue and epilogue, pipeline restarts), not bandwidth.
 - Layout. The token axis is the contraction axis, so the tensorwise/bf16 operands `[M_total, OUT]` are K-row on
   both sides and both go through transpose reads, which cost more LDS instructions per MAC than K-contiguous
-  reads (`../gemm/flydsl_gemm_datapath.md` §9). MX wgrad instead takes column-wise quantized operands
+  reads (`../gemm/datapath.md` §9). MX wgrad instead takes column-wise quantized operands
   `[OUT, M_total]`, because the E8M0 blocks run along the tokens; its loads are K-contiguous (MX8:1459-1460), at
   the price of §3.
 
@@ -62,7 +62,7 @@ Two forms are in use.
   descriptor (§3) or, in MX8, as a `range_constexpr(chunk)` tail whose steps sit under a wave-uniform
   `if k_abs < k_iters` (MX8:1574-1615). *(field, E3)* Chunk sizes 8, 4 and 2 were all neutral on a tensorwise masked
   wgrad: rounding up to a chunk is not where skew costs.
-- **Whole loop with a run-time count.** One inline-asm region (`../gemm/flydsl_gemm_mainloop.md` §3) takes the
+- **Whole loop with a run-time count.** One inline-asm region (`../gemm/mainloop.md` §3) takes the
   trip count in an SGPR. FP8's 4-wave wgrad runs the largest multiple of 6 K blocks (one pass of its pool
   depths) and the 0–5 remainder as a tail fused into the same asm block; a group shorter than one pass runs only
   the tail (`nval_can_be_zero`, FP8:2797-2798, 3434-3437). MX4 passes the raw 256-block count (MX4:1887).
@@ -91,7 +91,7 @@ carried name must flatten to IR values, i.e. be a DSL value or a list/tuple/dict
   group to the K block (128 tokens in MX8) so the step count is exact (MX8:1481), and guard the last chunk at
   run time (`k_abs < k_iters`). Only an unbalanced gate sees a missing guard: tile-aligned groups never over-run
   (`flydsl_grouped_correctness.md` §1).
-- Over-reading past K is legal only when every term it adds is exactly zero: `../gemm/flydsl_gemm_mainloop.md` §6.
+- Over-reading past K is legal only when every term it adds is exactly zero: `../gemm/mainloop.md` §6.
 
 ## 4. MX: the lever is when the scales are loaded
 - *(field, E4)* MXFP8 variable-K wgrad loaded the A/B scales in the same step as the MFMAs that use them, which put
@@ -166,15 +166,15 @@ the same tiles and skew changes what each costs. The mechanics of XCD orders are
   one tile per workgroup on balanced loads (±2%; under heavy skew one tile per workgroup won,
   `flydsl_grouped_scheduling.md` §6).
 - What paid *(field, E17)*: both B pools three buffers deep instead of only one of them, +2.1–3.8%. The partial drain
-  must count the in-flight fills of every deep pool (`../gemm/flydsl_gemm_correctness.md` §4). Also the wave
-  bank swizzle (`../gemm/flydsl_gemm_datapath.md` §2) and the lgkm-side partial drain
-  (`../gemm/flydsl_gemm_schedule_and_locality.md` §4).
+  must count the in-flight fills of every deep pool (`../gemm/correctness.md` §4). Also the wave
+  bank swizzle (`../gemm/datapath.md` §2) and the lgkm-side partial drain
+  (`../gemm/schedule_and_locality.md` §4).
 
 ## 9. Deep groups: deterministic split-K
 Under skew one group's contraction outlasts the rest and the launch ends with one window running while the other
-CUs idle. The device is full, so the dense wave-quantization gate (`../gemm/flydsl_gemm_grid_pricing.md` §2) never
+CUs idle. The device is full, so the dense wave-quantization gate (`../gemm/grid_pricing.md` §2) never
 fires; the trigger is the deepest group. Determinism by fixed-order reduce is the same idea as
-the in-launch split-K reduce of `../gemm/flydsl_gemm_grid_pricing.md` §2 and of
+the in-launch split-K reduce of `../gemm/grid_pricing.md` §2 and of
 `../attention/flydsl_attn_backward.md` §1.
 - **Decide on the device, from `group_offs`.** FP8 fixes the piece count from the static shape (tiles per group
   against CUs; `_wgrad_split_geom`, FP8:3688-3704) and cuts a group only if its own contraction clears a bar
@@ -184,15 +184,15 @@ the in-launch split-K reduce of `../gemm/flydsl_gemm_grid_pricing.md` §2 and of
 - **Layout.** The piece that starts at K=0 writes C; every later piece writes a scratch band at C's pitch, so the
   store only swaps the descriptor base (FP8:3425-3433). Swapping only the base keeps C's cache bits on the band;
   give the band its own: *(field, E19, E20)* on a dense split-K, `nt` partials cost 3–6% and `sc1` paid when another XCD
-  reduced them (`../gemm/flydsl_gemm_epilogue.md` §5). A reduce kernel launched from the same `@flyc.jit` stub, on
+  reduced them (`../gemm/epilogue.md` §5). A reduce kernel launched from the same `@flyc.jit` stub, on
   the same stream, folds the bands into C in ascending chunk order, in fp32, with no atomics: bit-reproducible
   (`kernel_grouped_tn_wgrad_reduce`, FP8:4450; launch FP8:4617). Its grid is the compile-time tile space, and a
   launch that cut nothing exits at once. *(field, E21)* ~4 µs on a balanced load, 46–75 µs when it folds.
 - **Dense split-K forms worth racing here:** the reduce in the same launch, done by the last split to arrive on a
-  per-tile counter, never by a workgroup that waits for another (`../gemm/flydsl_gemm_grid_pricing.md` §2); counters
+  per-tile counter, never by a workgroup that waits for another (`../gemm/grid_pricing.md` §2); counters
   in per-call scratch, zeroed before the GEMM launch, and fp32 partials packed to 24 bits
-  (`../gemm/flydsl_gemm_small_m.md` §4); and each XCD on a contiguous run of one split's tiles
-  (`../gemm/flydsl_gemm_schedule_and_locality.md` §2).
+  (`../gemm/small_m.md` §4); and each XCD on a contiguous run of one split's tiles
+  (`../gemm/schedule_and_locality.md` §2).
 - **Scratch for CUDA graphs.** Keep it persistent per (shape, device) and size it for the deepest geometry any
   candidate can pick, so replay sees fixed addresses (`_wgrad_split_ws`, FP8:3758-3775).
 - **What it buys.** *(field, E22)* One expert with 99.8% of the tokens: gate_up 3024 → 2389 µs (21% less time), down 1381
@@ -216,7 +216,7 @@ the in-launch split-K reduce of `../gemm/flydsl_gemm_grid_pricing.md` §2 and of
 - **Do not move the read-back into the main loop at one wave per SIMD.** One quadrant's read-back is 64 fp32
   VGPRs held across the loop. *(field, E25)* Hoisting one and then two quadrants raised the fp32 read-back cost from
   21% to 115% and 177% more time, bf16 from 9% to 37% and 142%: spills. Pipeline it in the epilogue
-  (`../gemm/flydsl_gemm_epilogue.md` §7).
+  (`../gemm/epilogue.md` §7).
 - **Fused still beats beta=0 plus a separate add.** *(field, E24, E26)* The add alone took 0.79 ms (fp32) and 0.27 ms (bf16),
   against 0.18 ms and 0.08 ms of read-back inside the fused kernel.
 - **Ranking: two measured facts.** *(field, E27)* Timing every candidate at both betas on a tensorwise wgrad (two
@@ -247,7 +247,7 @@ the in-launch split-K reduce of `../gemm/flydsl_gemm_grid_pricing.md` §2 and of
   fallback that can only write the padded pitch must refuse a tight C (FP8:4826-4828). *(field, E28)* Missing one
   site, the split band row, gave a relative error of 1.42 and non-reproducible output.
 - **Pad free dims in the producer.** A free dim that is 64 mod 128 elements leaves every other 1-byte operand row
-  straddling two 128 B lines (`../gemm/flydsl_gemm_datapath.md` §10) and the last output tile ragged. Padding
+  straddling two 128 B lines (`../gemm/datapath.md` §10) and the last output tile ragged. Padding
   that dim in the quantizer and slicing the result is byte-correct for any pad value, since the pad lands in
   sliced-off output columns, and lets the compile prove the per-column store bound dead (`_COL_SAFE`,
   FP8:3949). *(field, E29)* +3%.
@@ -267,7 +267,7 @@ the in-launch split-K reduce of `../gemm/flydsl_gemm_grid_pricing.md` §2 and of
 ## Related
 `flydsl_grouped_scheduling.md` · `flydsl_grouped_tile_pricing.md` · `flydsl_grouped_lowprec.md` ·
 `flydsl_grouped_host_autotune.md` · `flydsl_grouped_correctness.md` · `flydsl_grouped_measurement.md` ·
-`../gemm/flydsl_gemm_mainloop.md` · `../gemm/flydsl_gemm_grid_pricing.md` · `../gemm/flydsl_gemm_epilogue.md` ·
+`../gemm/mainloop.md` · `../gemm/grid_pricing.md` · `../gemm/epilogue.md` ·
 `../flydsl/debug-flydsl-kernel.md` · `../attention/flydsl_attn_backward.md`
 
 ## Evidence

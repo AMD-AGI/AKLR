@@ -16,7 +16,7 @@ flydsl: 0.3.2
 > the end. Use them for direction and order of magnitude.
 > The general GEMM rules — gates that reach the changed path, calling twice, races found by bitwise repetition,
 > waits and barriers, inline-asm hazards, a third reference after a reduction-order change — are in
-> `../gemm/flydsl_gemm_correctness.md`. Debugging a kernel already known to be wrong starts in
+> `../gemm/correctness.md`. Debugging a kernel already known to be wrong starts in
 > `../flydsl/debug-flydsl-kernel.md` (its §1 covers `-inf − -inf` and divide-by-zero NaNs).
 
 ## Route here when
@@ -62,7 +62,7 @@ For each output — O, LSE, dQ, dK, dV — against an fp32 reference:
   and at `BLOCK_KV=64`; the main shape passed. Cover at least the split and tile values the dispatcher can pick.
 - **Each path that applies a window needs its own test.** A window bound that admitted W+2 keys sat in a
   fold path that the D=64 tests did not take, while the mask-style path they did take was right.
-- Call at least twice and compare from the second call (`../gemm/flydsl_gemm_correctness.md` §2).
+- Call at least twice and compare from the second call (`../gemm/correctness.md` §2).
 
 ## 4. Poison workspaces
 A `torch.empty` workspace that is read before it is written returns whatever the allocator left there; unit
@@ -124,7 +124,7 @@ that accumulator must already be divided by c, or the scale applies twice.
   removed is firing often; one that never fires on real data but drops SNR when removed is carrying a hazard.
   - *(field, E17)* A `min(s, 0)` clamp did not fire (largest argument −5.7), yet removing it took SNR to 10.5 dB,
     against 50.5 dB for a correct build: it was the only compiler-visible VALU read of an MFMA result feeding an
-    inline-asm exp (`../gemm/flydsl_gemm_correctness.md` §7).
+    inline-asm exp (`../gemm/correctness.md` §7).
 
 ## 9. Mask conventions
 - **`window_size = (W, 0)` keeps W+1 keys**, `kv ∈ [q + off − W, q + off]`, diagonal included. A reference or a
@@ -137,7 +137,7 @@ that accumulator must already be divided by c, or the scale applies twice.
   backward: put the reference forward and backward inside the same out-of-memory guard.
 
 ## Related
-`../gemm/flydsl_gemm_correctness.md` · `../flydsl/debug-flydsl-kernel.md` · `flydsl_attn_softmax.md` ·
+`../gemm/correctness.md` · `../flydsl/debug-flydsl-kernel.md` · `flydsl_attn_softmax.md` ·
 `flydsl_attn_backward.md` · `flydsl_attn_measurement.md` · `flydsl_attn_schedule_sync.md`
 
 ## Evidence

@@ -22,7 +22,7 @@ sources:
 
 > Attention chains GEMMs through registers: S (or dP) leaves one MFMA as a C fragment and enters the next one
 > as an operand. The atom therefore fixes the softmax lane map, the reductions, the store and the register
-> footprint, not only the MAC rate. GEMM-side atom facts are in `../gemm/flydsl_gemm_mainloop.md` §5, per-lane
+> footprint, not only the MAC rate. GEMM-side atom facts are in `../gemm/mainloop.md` §5, per-lane
 > register counts per atom in `../hardware/gfx950/matrix_core.md`, transposed-read lane maps in
 > `flydsl_attn_lds.md` §3.
 >
@@ -132,7 +132,7 @@ the f32 accumulator elements of a lane.
 - **Decode P·V: `16x16x32`, not `16x16x16bf16_1k`** (half the MAC rate, §1). On an MLA decode producer the switch
   alone cut an estimated 8–14% of producer time, with the operand orientation unchanged.
 - The GEMM finding that a smaller atom moves fewer register-file bytes per MAC and can clock higher at the power
-  cap (`../gemm/flydsl_gemm_mainloop.md` §5) applies here too: rank atoms on wall time, sclk and power, never on
+  cap (`../gemm/mainloop.md` §5) applies here too: rank atoms on wall time, sclk and power, never on
   MFMA utilization.
 
 ## 6. Row sums on the matrix pipe
@@ -192,7 +192,7 @@ the f32 accumulator elements of a lane.
 ## Related
 `flydsl_attn_softmax.md` · `flydsl_attn_lds.md` · `flydsl_attn_registers_occupancy.md` ·
 `flydsl_attn_schedule_sync.md` · `flydsl_attn_backward.md` · `flydsl_attn_attribution.md` ·
-`../gemm/flydsl_gemm_mainloop.md` · `../hardware/gfx950/matrix_core.md`
+`../gemm/mainloop.md` · `../hardware/gfx950/matrix_core.md`
 
 ## Evidence
 

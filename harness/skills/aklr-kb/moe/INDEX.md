@@ -43,7 +43,7 @@ the output row is the sum over the token's k routes of `topk_weights` × that pr
 | m 8–64 with 257 experts | 72–576 routes over 257 experts, so most hit experts are read for one or two routes (estimated); each graph node adds a fixed cost (`../moe/flydsl_moe_decode.md` §1). Folding the sort into stage 1 saved 3.5–6.4 µs of 39–102 µs *(field, E2)* | `../moe/flydsl_moe_decode.md` §1–§2 |
 | Decode with tens of local experts | Measured on aiter's FlyDSL MXFP4 kernels: bandwidth. At 60 tokens a 75-layer step read 5.77 TB/s against a 6.27 TB/s read roof measured in the same run (92%); from 10 to 60 tokens the time grew 2.38× while the experts hit grew 2.6× *(field, E3)* | `flydsl_grouped_moe_inference.md` §3–§5 |
 | Kimi-K3 SiTUv2, fp8 × MXFP4, m 8–112: 896 experts (TP) or 112 of 896 local (EP8), top-16 | Bandwidth: the weights of the experts the routes touch, 2.19 MB each at inter 384 and 17.5 MB at inter 3072 (estimated from the layout); count the touched experts from AKLR's own inputs (`../patterns/memory_bound.md`, Rule out first). From 32–40 tokens up the delivered kernels read them at 6.0–6.45 TB/s against a 6.5 TB/s read roof, aiter at 5.0–5.97, so at most 5–8% is left; at 8–24 tokens the per-launch costs around the GEMMs weigh, and EP8 measured 1.28–1.59 there *(field, E5)* | `../patterns/memory_bound.md`; `flydsl_grouped_moe_inference.md` §2, §7; `../moe/flydsl_moe_decode.md` |
-| Kimi-K3 SiTUv2 at m 893–16384 | Every expert is touched; from ~9k tokens the GEMMs are compute-bound. At 16384 tokens the delivered kernels ran stage 1 at 1970 (TP) and 1889 (EP8) TF/s of useful FLOPs (padding rows not counted) and stage 2 at 1347 and 1764, where aiter ran 1431/1459 and 929/1267 *(field, E6)*; dense fp8 GEMMs of squat shapes reached ~2300–2550 TF/s on MI355X *(field, E7)*. TP's per-route rows and their reduce kernel took 190 of 1533 µs | `flydsl_grouped_moe_inference.md` §2, §6; `../gemm/flydsl_gemm_mainloop.md` §7 |
+| Kimi-K3 SiTUv2 at m 893–16384 | Every expert is touched; from ~9k tokens the GEMMs are compute-bound. At 16384 tokens the delivered kernels ran stage 1 at 1970 (TP) and 1889 (EP8) TF/s of useful FLOPs (padding rows not counted) and stage 2 at 1347 and 1764, where aiter ran 1431/1459 and 929/1267 *(field, E6)*; dense fp8 GEMMs of squat shapes reached ~2300–2550 TF/s on MI355X *(field, E7)*. TP's per-route rows and their reduce kernel took 190 of 1533 µs | `flydsl_grouped_moe_inference.md` §2, §6; `../gemm/mainloop.md` §7 |
 | m 64–4096 with 33 local experts | Rows repeat per expert: tile-M 32–128, several row tiles of one expert per weight sweep, activations staged through LDS. Served at 1.030–1.609 over aiter at every m from 64 *(field, E4)* | [fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md) |
 
 ## Techniques that apply
@@ -57,14 +57,14 @@ the output row is the sum over the token's k routes of `topk_weights` × that pr
 | Grid shape and tile-N at decode sizes | `flydsl_grouped_moe_inference.md` §3 |
 | Cache policy of the weight loads | `flydsl_grouped_moe_inference.md` §4 |
 | Tile-M against the sort unit | `flydsl_grouped_moe_inference.md` §5 |
-| Stage 2: atomics or a fixed-order reduce | `flydsl_grouped_moe_inference.md` §6, `../gemm/flydsl_gemm_correctness.md` §8 |
+| Stage 2: atomics or a fixed-order reduce | `flydsl_grouped_moe_inference.md` §6, `../gemm/correctness.md` §8 |
 | Sort and quantization kernels around the GEMMs | `flydsl_grouped_moe_inference.md` §7 |
-| Measuring at decode sizes | `flydsl_grouped_moe_inference.md` §8, `../gemm/flydsl_gemm_small_m.md` §1 |
-| Split K over the waves of one workgroup | `../gemm/flydsl_gemm_small_m.md` §5 |
-| Kernel-argument preload; rows bound by launch and latency | `../gemm/flydsl_gemm_small_m.md` §6, `../patterns/launch_floor_small_m.md` |
-| Preshuffled operands and MX scales | `../gemm/flydsl_gemm_datapath.md` §10, §11 |
-| MFMA atom: scaled fp4, or bf16 on dequantized fp4 | `../gemm/flydsl_gemm_mainloop.md` §5 |
-| Tile order across XCDs | `../gemm/flydsl_gemm_schedule_and_locality.md` §2 |
+| Measuring at decode sizes | `flydsl_grouped_moe_inference.md` §8, `../gemm/small_m.md` §1 |
+| Split K over the waves of one workgroup | `../gemm/small_m.md` §5 |
+| Kernel-argument preload; rows bound by launch and latency | `../gemm/small_m.md` §6, `../patterns/launch_floor_small_m.md` |
+| Preshuffled operands and MX scales | `../gemm/datapath.md` §10, §11 |
+| MFMA atom: scaled fp4, or bf16 on dequantized fp4 | `../gemm/mainloop.md` §5 |
+| Tile order across XCDs | `../gemm/schedule_and_locality.md` §2 |
 
 ## Kernels to start from
 
@@ -184,8 +184,8 @@ techniques. Where a card disagrees with `aklr/ops/README.md` (§ The kernel sect
 | working on wgrad with a per-group contraction length, split-K, beta=1 accumulation | `flydsl_grouped_wgrad.md` |
 | adding fp8, MXFP8 or MXFP4: scale preshuffle and packing, quantization, stores, GLU fusion | `flydsl_grouped_lowprec.md` |
 | launching without host syncs, CUDA graphs, caching, autotuning across distributions | `flydsl_grouped_host_autotune.md` |
-| benchmarking grouped kernels: shapes, distributions, deployment conditions, noise | `flydsl_grouped_measurement.md` (with `../gemm/flydsl_gemm_measurement.md`) |
-| writing or trusting a correctness gate for grouped kernels | `flydsl_grouped_correctness.md` (with `../gemm/flydsl_gemm_correctness.md`) |
+| benchmarking grouped kernels: shapes, distributions, deployment conditions, noise | `flydsl_grouped_measurement.md` (with `../gemm/measurement.md`) |
+| writing or trusting a correctness gate for grouped kernels | `flydsl_grouped_correctness.md` (with `../gemm/correctness.md`) |
 | working on an inference MoE expert GEMM (sorted token ids, decode) | `flydsl_grouped_moe_inference.md` |
 | working on the main loop, LDS, DMA, MFMA atoms or the epilogue itself | `../gemm/INDEX.md` |
 
@@ -203,7 +203,7 @@ techniques. Where a card disagrees with `aklr/ops/README.md` (§ The kernel sect
 | `../utils/gemm_helper.py` | shared | group scans and lookups, XCD remaps, super-tile decode, 64-bit descriptor bases |
 
 The bf16 kernels reuse Turbo's dense bf16 tile bodies; the fp8 and MX kernels share their main-loop design with
-Turbo's dense kernels (`../gemm/INDEX.md` § Kernel map).
+Turbo's dense kernels (`../flydsl/gemm.md` § INDEX Kernel map).
 
 #### FlyDSL v0.3.2, `kernels/moe/`
 

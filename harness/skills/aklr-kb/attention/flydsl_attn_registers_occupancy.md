@@ -19,9 +19,9 @@ sources:
 
 > Attention bodies carry an O accumulator, Q packs, a score tile and softmax state at once, so the
 > register file sets the occupancy and the occupancy decides which overlap tricks can pay. The register
-> model is in `../gemm/flydsl_gemm_mainloop.md` §7 (one 512-entry pool per SIMD shared by arch VGPRs and
+> model is in `../gemm/mainloop.md` §7 (one 512-entry pool per SIMD shared by arch VGPRs and
 > AGPRs, granule 8, arch rounded to 4 before AGPRs are added) and workgroup-quantized occupancy in
-> `../gemm/flydsl_gemm_grid_pricing.md` §4.
+> `../gemm/grid_pricing.md` §4.
 > This card adds the attention rules.
 >
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end.
@@ -34,11 +34,11 @@ sources:
 
 ## 1. Read the budget from the ISA
 - Waves per SIMD = `min(8, floor(512 / roundup8(align4(arch) + agpr)))`, then rounded down to whole workgroups
-  (steps: `../gemm/flydsl_gemm_grid_pricing.md` §4). In these cards *occupancy N* means N co-resident
+  (steps: `../gemm/grid_pricing.md` §4). In these cards *occupancy N* means N co-resident
   workgroups per CU, which is what decides whether sibling waves can cover each other. A wave
   addresses at most 256 arch VGPRs; AGPRs come out of the same pool.
 - Read `.vgpr_count`, `.agpr_count`, `vgpr_spill_count` and `private_segment_fixed_size` from the
-  `FLYDSL_DUMP_IR=1` dump. rocprof's register columns are wrong (`../gemm/flydsl_gemm_attribution.md` §9).
+  `FLYDSL_DUMP_IR=1` dump. rocprof's register columns are wrong (`../gemm/attribution.md` §9).
   *(field, E1)* A sparse-MLA backward dQ kernel reported as 172 VGPR / 0 AGPR was 256 + 81 = 337: one wave per SIMD.
 - For an 8-wave workgroup only 2/4/6/8 waves per SIMD are reachable. *(field, E2)* An 8-wave forward at 4
   waves/SIMD had to stay at ≤ 128 registers; at 3 waves/SIMD the second workgroup does not fit, so the
@@ -46,7 +46,7 @@ sources:
 - FlyDSL v0.3.2: the occupancy target is the `waves_per_eu` compile hint (`maxnreg` also exists).
   FlyDSL's gfx950 forward defaults to `waves_per_eu=2`; its D=128 causal kernel compiles to 246 VGPRs,
   0 AGPRs, no spills. Kernel attributes through `value_attrs` go under `"llvm.passthrough"`
-  (`../gemm/INDEX.md` § FlyDSL version).
+  (`../flydsl/gemm.md` § INDEX FlyDSL version).
 
 ## 2. Force occupancy with `waves_per_eu` only when the code already nearly fits
 - *(field, E3)* Allocation 130 → 128 registers with 2 spills: +8.5%, the deployed setting. Beyond that the allocator
@@ -70,7 +70,7 @@ sources:
 - **Registers saved without crossing a step are worth 0 or less.** *(field, E9)* At occupancy 1, dropping an
   AGPR tie that freed 14 registers: −0.80% at batch 4 (batch 1 inside noise). *(field, E10)* Sharing VOP3P splat
   constants (20 → 4 VGPRs, `.vgpr_count` unchanged): −0.9% at 3 waves/SIMD, −0.61% at 2. The 72+72-register
-  example is in `../gemm/flydsl_gemm_mainloop.md` §4.
+  example is in `../gemm/mainloop.md` §4.
 - Exception: while spills or a private segment exist, moving a value out of the loop carry pays without a
   step. *(field, E11)* A 16-dword loop-carried softmax seed rebuilt by scalar broadcast at each use: private
   segment 188 → 16 B, +0.40%; LICM hoists the broadcast, and the saving lands in prologue/epilogue spills.
@@ -122,7 +122,7 @@ sources:
   groups: +0.79% and +0.53%; two per-head-step groups: −3.4% and −2.6%.
 - VALU cannot read AGPRs, so every VALU use costs a `v_accvgpr_read`. Judge pins by the
   `v_accvgpr_*` count and wall time, not `accum_offset`; untied pins delete the operand
-  (`../gemm/flydsl_gemm_correctness.md` §7).
+  (`../gemm/correctness.md` §7).
 
 ## 8. MFMA–VALU co-execution
 What the rules below rest on (`flydsl_attn_mfma_layout.md` §1, `flydsl_attn_softmax.md` §1): *(field, E24)* a
@@ -140,7 +140,7 @@ Check whether the baseline already co-hosts two workgroups per CU before buildin
 
 **Hiding exp under MFMAs with two co-resident workgroups is worth ~0.** *(field, E28)* A `sched_barrier(0)`-forced
 interleave of the pack/dS VALU 0.00%; *(field, E29)* counted `sched_group_barrier` MFMA:TRANS 1:2, 2:4, 4:8: +0.26%,
-+0.04%, +0.05%, all inside noise. Only removing instructions moves wall there (`../gemm/flydsl_gemm_attribution.md`
++0.04%, +0.05%, all inside noise. Only removing instructions moves wall there (`../gemm/attribution.md`
 §8).
 
 **One workgroup per CU (forward) is the only regime where in-workgroup dual-wave scheduling can pay.** FlyDSL v0.3.2's
@@ -179,7 +179,7 @@ run length and pipe/slack models each failed to rank arms on at least one body.
 
 ## Related
 `flydsl_attn_schedule_sync.md` · `flydsl_attn_lds.md` · `flydsl_attn_attribution.md` · `flydsl_attn_softmax.md` ·
-`flydsl_attn_backward.md` · `../gemm/flydsl_gemm_mainloop.md` · `../gemm/flydsl_gemm_grid_pricing.md`
+`flydsl_attn_backward.md` · `../gemm/mainloop.md` · `../gemm/grid_pricing.md`
 
 ## Evidence
 

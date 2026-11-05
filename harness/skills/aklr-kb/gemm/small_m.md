@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL GEMM at small M (decode, skinny) — what sets the time and what to tune"
+title: "GEMM at small M (decode, skinny) — what sets the time and what to tune"
 kind: topic
-lever: flydsl_gemm_small_m
+lever: gemm_small_m
 ops: [gemm]
 gens: [gfx950]
 dtypes: [bf16]
@@ -16,7 +16,7 @@ sources:
   - csrc/gemm_a16w16/gemm_a16w16_tune.py
 ---
 
-# FlyDSL GEMM at small M
+# GEMM at small M
 
 > Scope: dense GEMM with M ≈ 1–256 (decode steps, speculative-decode verify), mostly bf16. MoE expert GEMMs at
 > decode are in `../moe/flydsl_grouped_moe_inference.md`. Primus-Turbo's FlyDSL
@@ -65,7 +65,7 @@ sources:
 - **Per-shape noise is large.** *(field, E16, E17, E18)* Per-shape drift of 3–7% while aggregates reproduced to 0.1–1.5%;
   the first arm of a probe read 1–2% slow after warm-up. Adopt a per-shape change only above that shape's
   measured spread. Within one process, run two arms as `A B B A` per rep and shuffle the order every rep
-  when there are three or more (`flydsl_gemm_measurement.md` §2).
+  when there are three or more (`measurement.md` §2).
 - **A memory-side headroom estimate needs a measured streaming ceiling**, e.g. a plain read of the same B
   buffer, not the datasheet bandwidth. *(field, E19)* 5.8 TB/s for a cold read of a 476 MB weight.
 
@@ -86,15 +86,13 @@ The lessons below flip sign between two regimes. Decide which one a call site is
 - **Count workgroups against the 256-CU dispatch round before anything else.** *(field, E23, E24)* Padding one grid
   from 246 to 264 workgroups (empty blocks exit at once) made the kernel 50% slower: one round became two. Cold,
   through the deployed entry, every winning configuration sat at exactly 256 workgroups and 288 lost by 1.16×.
-  `flydsl_gemm_grid_pricing.md` §1 has the arithmetic.
+  `grid_pricing.md` §1 has the arithmetic.
 - **"Fewer tiles than CUs" is necessary for starvation, not sufficient.** A cold, read-once B stream can be
   HBM-bound with ~200 blocks; then every way to more blocks loses (table above).
 - **Cover M with one M-block: `tile_m = align_up(M, 16)`.** Each M-block re-streams all of B. *(field, E25, E26)* At M=24
   on a 38720-wide weight, two M-blocks of 16 took 127.7 µs and one block of 32 took 90.4 µs; three or more
   M-blocks were 2–4× slower than the best kernel recorded for the row. Make sure the tuner's `tile_m` filter can produce `align_up(M, 16)` for every M it
-  covers. aiter's reaches one M-block only when M ≤ 16 or M is itself a catalog `tile_m` (32, 48, 64, 80, 96,
-  128, 256): it drops every `tile_m` above `max(M, 16)`, so M=24 keeps only 16 and M=72 only 16–64
-  (`../flydsl/kernels/flydsl_knob_space.md`).
+  covers.
 - **On short K, race two XCD-paired M-blocks against one.** *(field, E27, E28)* At M 80–112, K=768, both M-blocks of an
   N strip on one XCD at doubled `tile_n` (same grid) won 6.7–6.9% at M 96–112 (1.7% at M=80) on one kernel and lost up to ~14% on another.
 - **Odd tile widths can be the only way to reach a full round** (for N=6144 at small M, 256 workgroups need
@@ -104,6 +102,8 @@ The lessons below flip sign between two regimes. Decide which one a call site is
   columns (dead B rows offset past `num_records`, which reads zero). *(field, E29)* N/256 = 72 of 96: +0.5 to +7.1% at M ≥ 24, −1% at M ≤ 16; the readings at M ≤ 16, 24 and 40 sit inside that run's A/A spread.
 - **Wider tiles lose at small M even when they move fewer bytes.** *(field, E30)* A tile chosen as line-cost-optimal
   by a traffic model was the slowest by 40% on a latency-bound row. Do not prune candidates with a traffic model.
+
+In FlyDSL: `../flydsl/gemm.md` § small_m §3.
 
 ## 4. Split-K
 
@@ -130,7 +130,7 @@ an idle-device tuner (§1).
   adds them in split order, so the result is bitwise the same whichever split folds; the others exit. *(field, E33)* Against zero-C + spin + atomics, per-split
   planes, a last-arriving block summing them in f32 and one counter per 128 B line took a 2048×2048, M=1, split-K 8
   kernel from 4.66 to 3.85 µs (replayed, warm weight: the cost is latency and coherence, not bandwidth).
-  **Not in the current kernels.** How to write it, step by step: `flydsl_gemm_wait_free_fold.md`.
+  **Not in the current kernels.** How to write it, step by step: `wait_free_fold.md`.
 - **Give each counter its own 128 B line.** *(field, E34)* Packing the per-tile counters as adjacent dwords put a whole
   launch on two cache lines and cost 1.1–2.5 µs.
 - **Zero counters in per-call scratch before launching the GEMM.** AKLR kernels receive only their contract
@@ -147,15 +147,6 @@ an idle-device tuner (§1).
 - A per-split marginal cost does not show the reduction: price the whole kernel.
 
 **Constraints and correctness**
-- Split-K must divide K, each split must be whole `tile_k` steps and hold at least `stages` of them; the
-  catalog offers 1–13 (`gemm_kernels.py:216-226`).
-- **A 256-tile cap refuses split-K on larger grids** at launch (`gemm_kernels.py:712-724`); the tuner already
-  drops split-K candidates above 128 tiles (`csrc/gemm_a16w16/gemm_a16w16_tune.py:753`).
-- **The current split-K is not bitwise reproducible** at split-K ≥ 3, or at split-K 2 with a bias: partials
-  are added into C in arrival order. Measured, for both kernels: every one of 400 repeats differed at split-K 2
-  with a bias and at 3, 4 and 8 *(field, E49)*. Where
-  runs must match bitwise, use split-K 1 or 2 without a bias, or a fixed-order reduction
-  (`../flydsl/kernels/flydsl_kernel_library.md` § Split-K).
 - *(field, E50)* bf16 partials exceeded a 0.02 relative-error gate at split-K ≈ 12 (0.0241); f32 partials read 0.
   Gate every deep split-K row on accuracy, not only the first one tuned.
 - **Race fp32 partials rounded to their top 24 bits, four packed in three dwords** (25% fewer plane bytes, error
@@ -171,9 +162,11 @@ an idle-device tuner (§1).
   release cost ~3×, and the acquire made it slower still.
 - **A fully co-resident grid hides a broken split-K hand-off.** *(field, E57)* Racy variants reported error 0 on grids
   that fit the device at once. Test the reduction on a grid larger than one dispatch round and on a stream limited to
-  part of the CUs (`flydsl_gemm_correctness.md` §3).
+  part of the CUs (`correctness.md` §3).
 - If you pad a grid (for XCD alignment or a full round), padding blocks must exit before they touch the
   counter, workspace or swizzle.
+
+In FlyDSL: `../flydsl/gemm.md` § small_m §4.
 
 ## 5. Tile, warps and pipeline
 
@@ -210,8 +203,7 @@ an idle-device tuner (§1).
   - A wants to stay cached: `nt` on A cost 4.5% *(field, E77)*.
   - So does C: `nt` on the C store cost up to ~2% at M 16–112 (tie at M=8), while the same GEMM's M≈900 tile gained ~2% *(field, E78)*.
 
-  **Not in the current kernels**: the generic kernel's global→LDS copy is inline asm with `sc0` fixed
-  (`splitk_hgemm.py:542-557`).
+  **Not in the current kernels.**
 - **Race issuing each stage's A DMA before its B DMA.** *(field, E79)* 0.2–3.5% at M 21–98 on cold B, most at the largest M.
   On a second kernel it was within 0.1%; on a third, with L2 flushed per call, neutral to 1% slower at M 12–96
   (1.5–2.5% faster in a warm replay loop) and ~1% faster only on split-K tiles of ≥ 128 rows *(field, E80, E81)*.
@@ -238,22 +230,20 @@ an idle-device tuner (§1).
     some rows *(field, E94, E95, E96)*, neutral or harmful on others; race it.
   - *(field, E97, E98, E99)* On a read-once B with no reuse between tiles, runs of 8 adjacent tiles per XCD beat plain order by
     0.6–4.6%; one contiguous slice per XCD, or runs of 80+, lost 2–13% against runs of 8.
-  - The generic kernel always keeps the plain order (`swizzle_for_cache_reuse`, `splitk_hgemm.py:353-357`).
-- **Preload the leading kernel arguments into SGPRs**: `flyc.compile[{"llvm_options": {"amdgpu-kernarg-preload-count": <n args>}}]`;
-  the dumped ISA then shows `.amdhsa_user_sgpr_kernarg_preload_length` > 0.
-  - Pass the operands as `fx.Pointer` (`from_c_void_p`). A raw `torch.Tensor` lowers to a pointer plus a layout
-    struct, and preload stops at the first struct: only the first pointer is preloaded (length 2 at count 16).
+- **Preload the leading kernel arguments into SGPRs** (`amdgpu-kernarg-preload-count`); the dumped ISA then shows
+  `.amdhsa_user_sgpr_kernarg_preload_length` > 0.
   - This removes the `s_load` → `lgkmcnt(0)` round trip in front of the first B load.
   - `s_load`s + `s_branch` still open the ISA: a compatibility block; the body after its `.p2align 8` label reads
     the preloaded SGPRs. It does not mean the preload failed.
   - *(field, E100, E101, E102)* Kernel time −0.5 to −1.0% per shape, ~3% on every shape of a 6–10 µs kernel; the decode step got
     about 0.45% faster.
-  - **Not in aiter's bf16 GEMM kernels**; its FlyDSL MoE helpers set it. Eight of AKLR's
-    own bf16 GEMM kernels use it.
+  - **Not in aiter's bf16 GEMM kernels.**
 - **Fetch only the real A rows when M < 16**, but only where A is a large share of the bytes. *(field, E103)* −1.5% on
   one row, +11% on another where it made the A load wave-predicated and shortened the pipeline. Never predicate
   an LDS DMA per lane: a DMA under a partial exec mask does not land where the reader expects. **Not in the
-  generic kernel**: it clamps rows past M to row 0 and loads them (`splitk_hgemm.py:512-519`).
+  generic kernel.**
+
+In FlyDSL: `../flydsl/gemm.md` § small_m §6.
 
 ## 7. aiter's tuned table at small M
 
@@ -274,16 +264,8 @@ What it means at small M:
   serves M 65–128. M=72 tries 72, 80 and 128, not 96; M=3 tries 3, 16, 4. *(field, E104)* An arm of four tuned
   rows cost the step 2.6–3.4%; the one row that lost was a padded M=96 row, at M=84. Validate a row
   across every M that reaches it, and add it only if it beats what the pad fallback already gives.
-- **A row whose kernel name the catalog cannot parse falls through** to the next candidate or the default,
-  with only a logged warning, and every `flydsl` row falls through silently when FlyDSL is not importable
-  (`tuned_gemm.py:163-175`). This aiter parses only `flydsl_gemm{stages}_..._split_k{s}_...` names; a name in any
-  other format (e.g. `flydsl_hgemm_..._ks7_...`) logs a warning and falls through. Re-tune instead of copying
-  rows.
 - **Merging model tables keeps the row with the lowest `us`** across files written by different rulers, rewrites
   the source CSVs and raises. Edit the owning file in place.
-- **Tuner filters can delete the winner silently**: the `tile_m ≤ max(M, 16)` cut, `tile_n` having to divide N,
-  the 128-tile cap on split-K (`csrc/gemm_a16w16/gemm_a16w16_tune.py:740-755`). Read the candidate count the
-  tuner logs for a missing shape before concluding "no candidate".
 - **Tuning is compile-bound.** Compile candidates in parallel on the CPU, then time them.
 - **A process does not see a table edit after its first lookup.** The lookup reads the file
   `AITER_CONFIG_GEMM_BF16` names or, by default, a merged copy under `/tmp/aiter_configs/` built once per
@@ -291,6 +273,8 @@ What it means at small M:
   only in a new process. Measured, with `AITER_CONFIG_GEMM_BF16` naming the edited file: the edit showed only
   after both `get_GEMM_A16W16_config_` and `get_GEMM_A16W16_config` were cleared. Graph-captured decode never
   sees it: capture after the table is final.
+
+In FlyDSL: `../flydsl/gemm.md` § small_m §7.
 
 ## 8. Correctness traps specific to small M
 
@@ -302,11 +286,11 @@ What it means at small M:
 - **An empty error string is not a measurement:** some configurations fail to compile with an empty exception;
   record them as failures, not as slow.
 - Subtractive probes must keep the accumulators live and re-derive the pipeline waits, or they also remove the
-  throttle they did not mean to remove (`flydsl_gemm_attribution.md` §2).
+  throttle they did not mean to remove (`attribution.md` §2).
 
 ## Related
-`flydsl_gemm_grid_pricing.md` · `flydsl_gemm_epilogue.md` §5 (store cache policy) · `flydsl_gemm_autotune.md` ·
-`flydsl_gemm_measurement.md` · `../flydsl/kernels/flydsl_kernel_library.md` ·
+`grid_pricing.md` · `epilogue.md` §5 (store cache policy) · `autotune.md` ·
+`measurement.md` · `../flydsl/kernels/flydsl_kernel_library.md` ·
 `../flydsl/kernels/flydsl_knob_space.md`
 
 ## Evidence
@@ -349,7 +333,6 @@ setup); otherwise `FlyDSL ?`.
 - E32 [2026-09, gfx950, FlyDSL ?, aiter fork base 99a91e173, N=?, ?] split-K 2 to fill a 0.438-wave grid: +15.5% / +17.6% (kv_b draft GEMM, K=512; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260912_171610/memory.md:208)
 - E33 [2026-08, gfx950, FlyDSL ?, aiter fork base f464f2bd1, N=?, graph, hot (one weight replayed)] a timing-only plain store in place of zero-C + spin + atomics: split-K 8 4.657 → 2.194 µs, split-K 4 4.180 → 2.664 (the reduction 1.5–2.5 µs); planes + last arriver with one counter per 128 B line: split-K 8 3.854 µs (2048x2048, M=1; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260830_081239/memory.md:172)
 - E34 [2026-08, gfx950, FlyDSL ?, aiter fork base f464f2bd1, N=?, graph, hot (one weight replayed)] per-tile counters packed as adjacent dwords put a launch on two cache lines and cost 1.1–2.5 µs (2048x2048 split-K reduction; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260830_081239/memory.md:175)
-- E49 [2026-10, gfx950, FlyDSL 0.3.2, aiter a0e3cbea, N=400, eager calls, a side-stream matmul on alternate repeats] aiter's HGEMM and small-M split-K: with a bias at split-K 2, and at split-K 3, 4 and 8, 400/400 repeats differed from the first; split-K 1, and 2 without a bias, 0 (m,n,k = 16, 2048, 6144 (probe /workspace/code/gpt_oss_docker/work/sikl/skillenv/probes_sikl.py:165; its output is kept only in this note); local:/workspace/code/gpt_oss_docker/.claude/memory/project_sikl_flydsl_skill_port.md:30)
 - E50 [2026-09, gfx950, FlyDSL 0.3.2, aiter fork base 5a11152e2, N=?, aiter tuner run_perftest, rotated (cold)] the same configuration at split-K 12: bf16 partials err_ratio 0.0241 (gate 0.02), f32 partials 0.000000 (a camp23 GLM-5.2 decode point, not named in the record; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260904_151953/memory.md:181)
 - E51 [2026-10, gfx950, FlyDSL 0.3.2, N=1, driver flushed bench (--bench-case, warmup 3, 20 iterations)] 24-bit packed partials: m=112 29.22 µs against 30.66 (masking alone) and 30.59 (canonical); m ≤ 16 unchanged (22.60/21.83/21.80 vs 22.56/21.83/21.81 µs); output within 1 bf16 ulp of canonical. "Unless the sum cancels" comes from a numpy simulation whose output was not kept (gemm_n8448_k7168 forge run, iters 4–5; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n8448_k7168/forge_experiments/lessons/iter_004.md:32)
 - E52 [2026-09, gfx950, FlyDSL 0.3.2, aiter fork base 5a11152e2, N=?, ?] unifying the split-K partials' scope with sc0|sc1 (0x1|0x10): 4.2945/4.3467/4.4319 µs, +8.8/+5.1/+4.7% slower (1,32 / 1,128 / 48,32 split-K rows; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260904_151953/rounds/round-08/agent.txt:22)

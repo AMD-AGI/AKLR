@@ -108,7 +108,7 @@ Let `A` be the accumulator floats one workgroup holds.
   drops. A slightly smaller working set buys nothing.
 - **Size every buffer slice under 4 GiB.** `num_records` is 32-bit; a larger slice silently drops the
   out-of-range writes. *(field, E20)* An interleave sweep at ILV = 64 built an 8.6 GB slice and read a fake +18%.
-  See `../gemm/flydsl_gemm_datapath.md` §8.
+  See `../gemm/datapath.md` §8.
 - **Causal pair folding.** Under causal, band group `g` never writes the first `g/ng` of its slab, and group
   `ng − g` needs exactly that many rows, so the two share one slab: `ng → ng/2 + 1` slabs, no extra bytes,
   the minimum for this layout (`Sq · (ng + 1) / 2`). Remove the unpaired branch at compile time.
@@ -207,8 +207,8 @@ D64; band interleave paid at D128 only (§5); the D128 gap is the workspace (§2
 
 ## Related
 `flydsl_attn_grid_dispatch.md` · `flydsl_attn_decode_split_kv.md` · `flydsl_attn_registers_occupancy.md` ·
-`flydsl_attn_attribution.md` · `flydsl_attn_correctness.md` · `../gemm/flydsl_gemm_datapath.md` §8 ·
-`../gemm/flydsl_gemm_epilogue.md` §5 · `../gemm/flydsl_gemm_attribution.md` §2 · `../hardware/gfx950/memory_and_sync.md`
+`flydsl_attn_attribution.md` · `flydsl_attn_correctness.md` · `../gemm/datapath.md` §8 ·
+`../gemm/epilogue.md` §5 · `../gemm/attribution.md` §2 · `../hardware/gfx950/memory_and_sync.md`
 
 ## Evidence
 

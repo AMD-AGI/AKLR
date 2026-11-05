@@ -103,7 +103,7 @@ zero-row tile reads zeros and has its stores dropped, so it is correct, but it r
 - The dead share is at most `G / (ceil(M_total/BLOCK_M) + G)` of the M tiles, reached when every group is
   BLOCK_M-aligned: 32 of 544 M blocks (5.9%) for 32 groups of 4096 rows at BLOCK_M = 256. With zero-row tiles
   that share of workgroups runs the full K loop for nothing (dead quadrants likewise still issue their MFMAs,
-  `../gemm/flydsl_gemm_grid_pricing.md` §9).
+  `../gemm/grid_pricing.md` §9).
 - With the lane-resident table, `live` comes from the wave scan of §5, which needs a full EXEC mask; the exit
   compares wave-uniform SGPR values, so the whole wave leaves together. Put the exit before the first operand
   load.
@@ -125,7 +125,7 @@ bound from `cumsum[0]`, tests the raw `bx`, then, when `xcd_swizzle > 0`, applie
   requests within 0.007% (hit rate within 0.7 points) across token distributions, `GRBM_GUI_ACTIVE` 13% apart,
   `SQ_BUSY_CU_CYCLES` only 0.7% apart.
   CUs were idle, not slow.
-- Check the remap is a bijection for every `live` you can launch (`../gemm/flydsl_gemm_schedule_and_locality.md`
+- Check the remap is a bijection for every `live` you can launch (`../gemm/schedule_and_locality.md`
   §2). Which remap to use: `flydsl_grouped_scheduling.md` §2–§3.
 
 ## 5. Tile → group lookup: four forms and their price
@@ -193,7 +193,7 @@ then reads its group's two offsets (MX4:1878-1886).
   `total_tiles` (FP8:388-389), the row count its bf16 descriptors are sized by (BF16:654-657), and
   every rebased descriptor base and record count (GH:124-128).
 - Unpinned, a descriptor lands in VGPRs and every buffer access goes behind a waterfall loop
-  (`../gemm/flydsl_gemm_datapath.md` §8). Turbo's bf16 kernel records the other failure: a per-lane row count
+  (`../gemm/datapath.md` §8). Turbo's bf16 kernel records the other failure: a per-lane row count
   in a descriptor gave a non-deterministic wrong answer rather than a fault (BF16:654-656). Pin the record count
   as well as the base: *(field, E13)* pinning only the base gave different wrong rows on each run of one shape.
 - Choose a boundary-body variant with a scalar branch on `readfirstlane(block == last)`, so the whole wave
@@ -201,7 +201,7 @@ then reads its group's two offsets (MX4:1878-1886).
 
 ## 7. 64-bit group bases, 32-bit in-tile offsets
 The mechanism (fold the base into the descriptor's 64-bit base, bound `num_records` from it) is in
-`../gemm/flydsl_gemm_datapath.md` §8. What the group dimension adds:
+`../gemm/datapath.md` §8. What the group dimension adds:
 - The group base is `m_start × row_stride`, a cumulative offset that outgrows int32 long before one group
   does. *(field, E14)* At G = 256, 1536 rows per group and an 8192-wide output, `m_total × OUT_M` is 3.2e9 > 2^31,
   and the last groups' gradients came out wrong with no error.
@@ -237,8 +237,8 @@ The mechanism (fold the base into the descriptor's 64-bit base, bound `num_recor
 ## Related
 `flydsl_grouped_scheduling.md` · `flydsl_grouped_tile_pricing.md` · `flydsl_grouped_wgrad.md` ·
 `flydsl_grouped_correctness.md` · `flydsl_grouped_host_autotune.md` · `flydsl_grouped_moe_inference.md` ·
-`../gemm/flydsl_gemm_datapath.md` §8 · `../gemm/flydsl_gemm_schedule_and_locality.md` §2, §7 ·
-`../gemm/flydsl_gemm_grid_pricing.md`
+`../gemm/datapath.md` §8 · `../gemm/schedule_and_locality.md` §2, §7 ·
+`../gemm/grid_pricing.md`
 
 ## Evidence
 

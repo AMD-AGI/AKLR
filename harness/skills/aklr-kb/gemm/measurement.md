@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL GEMM — measuring a change so the number means something"
+title: "GEMM — measuring a change so the number means something"
 kind: method
-lever: flydsl_gemm_measurement
+lever: gemm_measurement
 ops: [gemm]
 gens: [gfx950]
 dtypes: [fp8, bf16, mxfp4, mxfp8]
@@ -11,7 +11,7 @@ sources:
   - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/jit_function.py:1414
 ---
 
-# Measuring a FlyDSL GEMM change
+# Measuring a GEMM change
 
 > The effects worth chasing on a tuned GEMM are 0.3–3%; the apparatus moves by that much on its own.
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end.
@@ -45,7 +45,7 @@ sources:
   doubles machine time.
 - **One process, two module instances interleaved per rep (§1): `A B B A` within each rep.** The
   palindrome cancels a linear drift inside the rep; take the median of the per-rep ratios
-  (`flydsl_gemm_autotune.md` §2).
+  (`autotune.md` §2).
 - **One process, three or more arms: shuffle the arm order randomly every rep.** On a power-capped card
   the slot an arm runs in changes its clock: *(field, E5)* on a grouped GEMM the last slot read +1.3% on one cell
   in three independent processes (−0.24% to +1.39% on the other cells); reversing the order moved the "gain"
@@ -122,10 +122,7 @@ sources:
   buffers across arms and pre-warm all of them; per-arm allocation in a tuning sweep biases the winner.
 - **Input placement moves a GEMM too.** *(field, E33)* Where B was allocated alone moved one bf16 GEMM binary from 91
   to 102 µs and reversed a K-chunk ranking. Rank address-sensitive settings on the mean over several allocation
-  offsets (`flydsl_gemm_small_m.md` §1).
-- **Do not time with `FLYDSL_DUMP_IR=1`** (it bypasses the cache and recompiles, `jit_function.py:1414`;
-  on an attention kernel, an arm's first read under `FLYDSL_DUMP_IR=1` with a single rep was +15% on a ±0.2%
-  ruler *(field, E22)*).
+  offsets (`small_m.md` §1).
 - **Keep the host out of the GPU window.** Time R consecutive calls inside one event pair; a
   `synchronize` per call puts Python into the measurement (on a grouped GEMM, 650 TF/s read for ~1150 real
   *(field, E23)*). If time is flat across sizes, you are measuring the host.
@@ -134,6 +131,8 @@ sources:
 - Give every arm an identity fingerprint — config, grid, kernel name, error signature, opcode counts —
   plus one arm that must lose (e.g. an injected `s_sleep`). Arms silently collapsing into one binary
   is the most common way a probe lies.
+
+In FlyDSL: `../flydsl/gemm.md` § measurement §6.
 
 ## 7. The operating point and the denominator
 
@@ -158,7 +157,7 @@ sources:
 ## 8. Autotune races
 
 A per-shape race is a measurement too, with its own noise and order bias. How to build one that cannot
-regress is in `flydsl_gemm_autotune.md`.
+regress is in `autotune.md`.
 
 ## 9. Closing a series of changes
 
@@ -175,7 +174,7 @@ regress is in `flydsl_gemm_autotune.md`.
   autotuning can change the ISA); never drop outliers or let sample counts differ between arms.
 
 ## Related
-`flydsl_gemm_attribution.md` (pricing a change before and after) · `flydsl_gemm_correctness.md`
+`attribution.md` (pricing a change before and after) · `correctness.md`
 
 ## Evidence
 
@@ -207,7 +206,6 @@ myskill or the auto-memory, with no run record on this machine.
 - E19 [2026-10, gfx950, FlyDSL ?, N=4, arms swapped by `cp` between benches, ABBA, four reads per arm] with the swapped file never imported, B read 4823.45 against 4804.64 TF/s (+0.391%, t 2.35, permutation p 0.043); with the file live +0.331% (MXFP4 dense GEMM linear2_dgrad 16384×15360×3072; KB note; local:/workspace/code/gpt_oss_docker/.claude/memory/reference_cp_swap_ab_thermal_bias.md:24)
 - E20 [2026-09, gfx950, FlyDSL ?, N=?, two probe scripts, same build, shape and GPU] all-zero operands (`torch.zeros`) read 151–155 µs; operands made from bf16 randn through `QuantizedTensor.quantize` read 205 µs (MXFP4 dense GEMM out_proj_wgrad 4096×4096×32768; KB note; local:/workspace/code/gpt_oss_docker/.claude/memory/reference_zero_operands_fake_gemm_timing.md:13)
 - E21 [2026-09, gfx950, FlyDSL ?, N=?, one compiled binary, fixed inputs and build knobs, only the output planes' byte offsets moved] 16384×21504 read 262.8–301.2 µs (14.6%), 16384×15360 191.6–220.6 µs (15.1%), three other shapes 10–11% (MXFP8 dual-cast quantization kernel; campaign 20260910_144607 round 8; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260910_144607/rounds/round-08/agent.txt:7)
-- E22 [2026-09, gfx950, FlyDSL 0.3.2, N=3, same-process probe] an arm's first read under `FLYDSL_DUMP_IR=1` and `REPS=1`: +15.44%; three normal re-runs ±0.2% (GLM-5.2 sparse-MLA decode attention producer; campaign 20260911_143318 round 10; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260911_143318/rounds/round-10/agent.txt:15)
 - E23 [2026-08, gfx950, FlyDSL ?, N=?, one CUDA event pair and a `synchronize` per call] a wrapper that rebuilt its launch on every call (2.52 ms of host time per call) made the forward read 650 TF/s, ~1150 once fixed (gpt-oss-20b MoE grouped bf16 GEMM forward, G=32; measurement note in the goal of campaign 20260824_152523; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260824_152523/goal.md:26)
 - E24 [2026-09, gfx950, FlyDSL ?, N=?, ruler not recorded] each kernel at its production `block_m`: old 1.806 ms at 128, new 1.848 ms at 64, 2.3% more time, reported as 2.4% slower; with both arms pinned to 64 the new kernel had been reported 1.8% faster; the new kernel at 128 took 2.909 ms (FlyDSL attention forward, gpt-oss d64 B4 Hq64 Hkv8 S8192 causal, Primus-Turbo #535; KB note; local:/workspace/code/gpt_oss_docker/.claude/memory/reference_ab_must_use_each_side_best_config.md:19)
 - E25 [2026-09, gfx950, FlyDSL ?, N=2, the competitor's own API and calling convention in the same harness, 200 s warmup, 60 iterations in one event pair, best of two passes] AITER `gemm_a4w4` read 1.0–3.4% below the frozen reference column on the 12 rows over two runs, i.e. 0.966–0.990 of it (myskill's table gives 0.966–0.992); the one per-row table kept reads 0.968–0.990; against the frozen column 10/12 rows were ahead, against measured AITER 12/12 (MXFP4 dense GEMM, 12 Llama training shapes; KB note; local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/20-verify-the-denominator.md:37)

@@ -21,7 +21,7 @@ sources:
 > P·V contracts over kv, and so do dV = Pᵀ·dO and dK = dSᵀ·Q in the backward pass. With K/V/Q/dO stored
 > `[row, d]` in LDS, one operand of each of these GEMMs is strided along the contraction and must be read
 > transposed. Generic LDS facts — 64 banks, read phases, swizzle vs padding, write-to-read distance, DMA
-> waits — are in `../gemm/flydsl_gemm_datapath.md` §2–§4 and §9 and `../flydsl/guides.md` § lds-optimization.
+> waits — are in `../gemm/datapath.md` §2–§4 and §9 and `../flydsl/guides.md` § lds-optimization.
 > This card adds what attention adds.
 >
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end.
@@ -61,9 +61,9 @@ atom = fx.make_copy_atom(rocdl.cdna4.LDSReadTrans16_64b(), bf16)   # copy atom
 - With a base pointer plus a compile-time constant, the op folds the constant into `offset:`; the ISA is
   identical to inline asm with an immediate.
 - **Use the op or the atom, not inline asm,** unless the reads sit in a hand-scheduled asm region that supplies its
-  own waits (`../gemm/flydsl_gemm_datapath.md` §4). The compiler does not track an asm read's destination, so
+  own waits (`../gemm/datapath.md` §4). The compiler does not track an asm read's destination, so
   every consumer needs a hand-written `lgkmcnt` drain, pinned with `sched_barrier(0)`, which cuts the
-  P·V cluster into fragments (`../gemm/flydsl_gemm_datapath.md` §4). *(field, E1)* Swapping asm for the op
+  P·V cluster into fragments (`../gemm/datapath.md` §4). *(field, E1)* Swapping asm for the op
   emitted the same 96 reads, let the backend place graded waits, cut the slowdown from split K/V reads
   at 3 waves/SIMD from 3.26% to 1.95%, dropped spills at a 128-register target from 14–105 to 2, and measured
   occupancy rose from 2.985 to 3.978 waves/SIMD; at the power cap the wall gained only 0.50% (sclk −3.3%).
@@ -103,7 +103,7 @@ atom = fx.make_copy_atom(rocdl.cdna4.LDSReadTrans16_64b(), bf16)   # copy atom
 
 ## 5. Bank-conflict counters are usually a red herring
 - Compare `SQ_LDS_BANK_CONFLICT / SQ_LDS_IDX_ACTIVE` with a floor computed by hand from the access widths
-  (`../gemm/flydsl_gemm_datapath.md` §3), then prove LDS bounds the kernel with a probe before touching
+  (`../gemm/datapath.md` §3), then prove LDS bounds the kernel with a probe before touching
   the layout (`flydsl_attn_attribution.md`).
 - *(field, E7)* On MFMA-latency-bound backward kernels, conflicts 19% → 0% (`LDSBankConflict`: `SQ_LDS_BANK_CONFLICT`
   per `GRBM_GUI_ACTIVE` cycle and CU, not the ratio above) and 21.7% → 4.4% bought no speed.
@@ -169,7 +169,7 @@ segments are sensitive to LDS port contention; schedule write bursts where the r
 
 ## Related
 `flydsl_attn_mfma_layout.md` · `flydsl_attn_schedule_sync.md` · `flydsl_attn_registers_occupancy.md` ·
-`flydsl_attn_attribution.md` · `flydsl_attn_correctness.md` · `../gemm/flydsl_gemm_datapath.md` ·
+`flydsl_attn_attribution.md` · `flydsl_attn_correctness.md` · `../gemm/datapath.md` ·
 `../flydsl/guides.md` § lds-optimization
 
 ## Evidence

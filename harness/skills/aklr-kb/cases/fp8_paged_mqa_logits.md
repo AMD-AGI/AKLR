@@ -80,10 +80,10 @@ is the Point's number of requests.
 
 **One page, one wave.** A page holds token t, dim d at byte (t // 16) · 2048 + (d // 16) · 256 + (t % 16) · 16 +
 d % 16, so two 16-byte loads give a lane the 32 contiguous dims of one token that a 16x16x128 fp8 operand takes
-(the preshuffled operand of `../gemm/flydsl_gemm_datapath.md` §10). Per page a wave issues one 4-byte scale load per
+(the preshuffled operand of `../gemm/datapath.md` §10). Per page a wave issues one 4-byte scale load per
 lane and eight 16-byte key loads per lane (`_issue_page`), then 16 `mfma_scale_f32_16x16x128_f8f6f4`: four 16-token
 tiles × four 16-head groups, A = q, B = keys, unit E8M0 scales (127) (`../attention/flydsl_attn_mfma_layout.md` §8,
-`../gemm/flydsl_gemm_mainloop.md` §5). C holds one token per lane and four heads per lane group. The request's
+`../gemm/mainloop.md` §5). C holds one token per lane and four heads per lane group. The request's
 query (64 heads × 128 fp8) and weights stay in registers for the workgroup's life.
 
 **Head sum in registers, no LDS** (`_page_compute`). relu, × weight, accumulated over the four head groups with
@@ -91,7 +91,7 @@ fma (the first group peeled, so no `+ 0.0`), summed over the lane's four heads, 
 `permlane16_swap` and `permlane32_swap` (`_lane_group_sum`): a fixed tree, no atomics. A `sched_barrier(0)` between
 token tiles keeps one tile's results live at a time. Lane group g keeps tile g, so lane l holds token l of the page;
 it multiplies by that token's scale, writes −inf past the context, and the wave stores the page's 64 logits as one
-256-byte non-temporal store (`../gemm/flydsl_gemm_epilogue.md` §5).
+256-byte non-temporal store (`../gemm/epilogue.md` §5).
 
 **A split over pages with no merge.** A logit depends on one page, so workgroups split each request's table into
 disjoint page ranges and each wave takes every fourth page of its range; nothing is combined
@@ -107,9 +107,9 @@ host picks one of three bodies from the batch (`_build`):
 The batch ≤ 4 body keeps two pages in flight through its whole loop at 2 workgroups per CU (512 on 256 CUs);
 `../attention/flydsl_attn_schedule_sync.md` §10 found depth 2 paying in the prologue at ≤ 2 workgroups per CU and a
 steady-state depth ≥ 2 slower on another decode kernel, so the depth is a per-kernel result. It drops out-of-range
-loads through the descriptor bound of `../gemm/flydsl_gemm_datapath.md` §8. The band path puts co-resident
+loads through the descriptor bound of `../gemm/datapath.md` §8. The band path puts co-resident
 workgroups on a few bands of the pool and keeps a band on one XCD (`../attention/flydsl_attn_grid_dispatch.md` §2,
-`../gemm/flydsl_gemm_schedule_and_locality.md` §2). The prepass's LDS atomics fix only the order of entries inside a
+`../gemm/schedule_and_locality.md` §2). The prepass's LDS atomics fix only the order of entries inside a
 bucket, which changes which wave computes a page, not any value.
 
 **Compile and launch.** `_build` is a module-level `functools.cache` on (batch, max_blocks, max_seq_len, n_pages,

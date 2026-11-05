@@ -90,8 +90,8 @@ or 12 routes: 768, 1536).
   dword of 8 fp4 values becomes 8 bf16 with the block scale applied by `cvt_scalef32_pk_bf16_fp4`; one scale dword
   holds the gate and up bytes of two chunks. Non-temporal loads under expert parallelism, cached otherwise (routes that
   share an expert then reuse it from L2, per the code's note) (`../moe/flydsl_grouped_moe_inference.md` §4).
-- `mfma_f32_16x16x32_bf16`, 4 per chunk for gate and 4 for up, into fp32 (`../gemm/flydsl_gemm_mainloop.md` §5).
-- `_reduce_waves`: the 4 waves' partials through LDS, summed in wave order (`../gemm/flydsl_gemm_small_m.md` §4).
+- `mfma_f32_16x16x32_bf16`, 4 per chunk for gate and 4 for up, into fp32 (`../gemm/mainloop.md` §5).
+- `_reduce_waves`: the 4 waves' partials through LDS, summed in wave order (`../gemm/small_m.md` §4).
   Wave 0 clamps, applies SiLU with `exp2` and `rcp`, rounds to bf16 and stores the route's 16 values to `Y`.
 
 **Stage 2 (`_stage2_tp`, `_stage2_ep`).** Grid (4096 / 16, m): one workgroup per (token, 16 output columns), 6 waves,
@@ -101,7 +101,7 @@ one per route; 256–2048 workgroups.
   before the block's first MFMA. Expert parallel, it always runs; all local, it runs when m × inter / 128 ≤ 8, and a
   runtime loop of one chunk at a time runs above (inter 256 at m 8, inter 512 at m 4, 8).
 - Row 0 of each wave's tile goes to LDS; 16 threads add the 6 routes × routing weight in route order, skipping routes
-  that are not local, and store bf16 (`../gemm/flydsl_gemm_correctness.md` §8).
+  that are not local, and store bf16 (`../gemm/correctness.md` §8).
 
 How this relates to the decode MoE cards: no sort and one route per workgroup set, as the 1–2-token kernels of
 [fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md); `../moe/flydsl_moe_decode.md` §1 on why the

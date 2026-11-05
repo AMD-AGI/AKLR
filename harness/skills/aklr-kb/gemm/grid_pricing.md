@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL GEMM — price the grid, the tile and each structural idea before building it"
+title: "GEMM — price the grid, the tile and each structural idea before building it"
 kind: topic
-lever: flydsl_gemm_grid_pricing
+lever: gemm_grid_pricing
 ops: [gemm]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp4, mxfp6]
@@ -14,7 +14,7 @@ sources:
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/gemm/gemm_fp8_kernel.py
 ---
 
-# Pricing a FlyDSL GEMM's grid and tile
+# Pricing a GEMM's grid and tile
 
 > Most GEMM wins on gfx950 — and most wasted attempts — are decided by arithmetic you can do before
 > writing code: how many workgroups there are, how full the last dispatch round is, what a split
@@ -29,10 +29,10 @@ sources:
 - You are considering split-K, stream-K, a tail/boundary body, or a K-padding change.
 - You are about to build a structural change and want its ceiling first.
 
-**Somewhere else if:** the loop structure is the question → `flydsl_gemm_mainloop.md`; wave placement,
-XCD order, scheduling hints or the epilogue → `flydsl_gemm_schedule_and_locality.md`; the arguments of a
+**Somewhere else if:** the loop structure is the question → `mainloop.md`; wave placement,
+XCD order, scheduling hints or the epilogue → `schedule_and_locality.md`; the arguments of a
 shipped kernel → the entry points in `INDEX.md`'s kernel map, and aiter's FlyDSL bf16 rows →
-`flydsl_gemm_small_m.md`.
+`small_m.md`.
 
 FlyDSL's guide starts the tile choice from `preshuffle_gemm`'s constraints and a table by M
 (`../flydsl/guides.md` § gemm-optimization (FlyDSL's §1.3–§1.5)), and its checklist asks for enough blocks to fill the GPU (§13).
@@ -51,7 +51,7 @@ eff        = tiles / (rounds * slots)             # fraction of CU slots busy ov
 
 `wg_per_cu` comes from the occupancy arithmetic (gfx950: 512 registers per SIMD in granules of 8,
 160 KiB LDS and 32 wave slots per CU; `W` = waves per workgroup; `regs_per_wave` is the arch VGPRs rounded up
-to 4 plus the AGPRs, `flydsl_gemm_mainloop.md` §7; LDS is allocated in 1280-byte blocks):
+to 4 plus the AGPRs, `mainloop.md` §7; LDS is allocated in 1280-byte blocks):
 
 ```
 waves_per_simd = min(8, floor(512 / round_up(regs_per_wave, 8)))
@@ -115,7 +115,7 @@ estimated ~42 µs ⇒ `s=1` is correct; the autotuner that picked it was right.
   when `eff > 0.95` or `K < 2048`; a split must raise `eff` by more than 0.05; the race gets `s = 1`
   plus the two best splits (`_ksplit_candidates`, `gemm_mxfp4_kernel.py:3489-3511`).
 - **Reduce with pairwise `torch.add(out=)` launched after the GEMM**, not inside it (not at small M:
-  `flydsl_gemm_small_m.md` §4). It "runs at the pure write floor where
+  `small_m.md` §4). It "runs at the pure write floor where
   `sum(dim=0)` reaches half of it, and the reduce is a sixth of a split launch -- the fold's form decides
   whether a split pays at all" (`_fold_mxfp4_partials`, `gemm_mxfp4_kernel.py:3540-3546`).
 - **A bandwidth reduce beats an atomic-fused one** here, "since same-address HBM atomics serialise"
@@ -138,12 +138,12 @@ Refinements, in the order they usually pay:
   256×256 plus a one-round split-K tail beat a near-full two-round launch of 160-row tiles by ~8%.
 - **Stream-K** when you want the idle slots without a full reduce: only boundary tiles need a fixup.
 - The split must cut K into whole K-blocks the kernel accepts; shipped kernels assert their own
-  constraints (for aiter's bf16 HGEMM split-K, `flydsl_gemm_small_m.md` §4).
+  constraints (for aiter's bf16 HGEMM split-K, `../flydsl/gemm.md` § small_m §4).
 - If the scoring harness rejects GPU work from kernels you did not write, the reduce has to be your own
   kernel in the same language, not a framework op.
 - **Or reduce in the same launch, without any workgroup waiting for another**: each split publishes its partial and
   counts in on its tile's counter, and the split that arrives last folds every partial in split order, which is
-  bitwise reproducible (`flydsl_gemm_small_m.md` §4). Forms that wait — reducer workgroups polling their tile's
+  bitwise reproducible (`small_m.md` §4). Forms that wait — reducer workgroups polling their tile's
   flags, or every split summing a share of the tile once all have arrived — rely on the whole grid being resident
   and can fail on a stream limited to part of the CUs. The arrival fold runs on one CU, so race it against a separate
   reduce kernel per shape.
@@ -180,7 +180,7 @@ Then check two things before building it:
 - **Divisibility.** `N % tile_n == 0` on your shapes. Non-power-of-two widths (192, 384) often divide model
   dimensions of the form `3·2^k` better than 512 does.
 - **Accumulator placement.** A wide tile can exceed the 256-dword AGPR file per lane; see
-  `flydsl_gemm_schedule_and_locality.md` §7.
+  `schedule_and_locality.md` §7.
 
 *(field, E17)* On two shapes run at `tile_m = 128`, widening only `tile_n` (128×256 → 128×384, which the traffic
 formula ranks better) made them 4–9% slower; *(field, E18)* the ratio's own tile, 256×384, cut the same two
@@ -241,7 +241,7 @@ time at K=2944 (11.5 blocks), 1.7% at K=32768, and the table's TF/s order was es
 share. By the fit, removing one K-block of `F` is worth ~4–5% over that table — a projection, not a measurement,
 but already larger than the 1–2% that swizzle and candidate-table changes returned *(field, E22)*.
 
-Kernel-argument preload (`flydsl_gemm_small_m.md` §6) trims `F` at any M: *(field, E23)* −0.2 to −0.6% at M ≈ 900–16k, not only at decode M.
+Kernel-argument preload (`small_m.md` §6) trims `F` at any M: *(field, E23)* −0.2 to −0.6% at M ≈ 900–16k, not only at decode M.
 
 Two traps when reading such a table:
 - **Compare absolute µs, not TF/s, across padded shapes.** TF/s counts useful FLOPs, so padding waste
@@ -301,11 +301,11 @@ A second tile shape trades arithmetic intensity for CU fill. Price both sides be
   workgroup count down, and the rest of the device never gets a wave. "This, not the tile count, is the
   signal" (`_nt4_resident`, `gemm_fp8_kernel.py:2089-2095`).
 - Leftover work ids may repeat the last tile. That is harmless for an overwriting store and wrong for
-  beta=1, which needs one tile per workgroup (`flydsl_gemm_epilogue.md` §7).
+  beta=1, which needs one tile per workgroup (`epilogue.md` §7).
 - Turbo's MXFP4 kernel walks up to 4 tiles per workgroup, and only when `tiles % (ncu · tpw) == 0` and
   K/256 ≤ 56; at longer K the per-tile launch is already amortized (`_MXFP4_TPW_*`,
   `gemm_mxfp4_kernel.py:3467-3485`). Stride the persistent loop by the grid
-  (`flydsl_gemm_schedule_and_locality.md` §2).
+  (`schedule_and_locality.md` §2).
 - **Passing that gate is not a win: race it.** *(field, E27)* A small-M bf16 GEMM at K=256 with 2560 tiles lost
   5.5–12.5% at 2 tiles per workgroup under every store placement (and 1–5% as a two-tile walk of another variant
   of the kernel), though a stores-off probe had priced an estimated ~7% gain.
@@ -323,9 +323,9 @@ A second tile shape trades arithmetic intensity for CU fill. Price both sides be
 - The win does not come from one shape while its neighbours regress.
 
 ## Related
-`flydsl_gemm_workflow.md` (order of operations) · `flydsl_gemm_schedule_and_locality.md` (wave
-placement, XCD order, scheduling) · `flydsl_gemm_autotune.md` (racing the candidates) ·
-`flydsl_gemm_small_m.md` (split-K and tile arguments of aiter's FlyDSL bf16 GEMM)
+`workflow.md` (order of operations) · `schedule_and_locality.md` (wave
+placement, XCD order, scheduling) · `autotune.md` (racing the candidates) ·
+`small_m.md` (split-K and tiles at decode sizes)
 
 ## Evidence
 

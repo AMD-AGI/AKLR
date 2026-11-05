@@ -68,7 +68,7 @@ enumerated M ≤ 16.
    makes (`aklr/ops/gemm/baseline.py`): time aiter through it.
 2. The lookup (`get_GEMM_A16W16_config`, `tuned_gemm.py:130`) matches `(gfx, cu_num, M, N, K, bias, dtype,
    outdtype, scaleAB, bpreshuffle)`, with M as is, then padded twice by `get_padded_m` (the padding is in
-   `../../gemm/flydsl_gemm_small_m.md` §7).
+   `../../gemm/small_m.md` §7).
 3. A `flydsl` row is used only if FlyDSL is importable on an architecture it supports
    (`is_flydsl_available`, `aiter/ops/flydsl/utils.py`) and its `kernelName` is in the catalog or parses with
    `_HGEMM_KERNEL_RE` (`gemm_kernels.py:45, 579`); otherwise the lookup moves on, with a logged warning when
@@ -225,5 +225,5 @@ Ahead-of-time compilation for the GEMM, MoE, mxmoe, FHMoE and GDN prefill kernel
 ## Related
 `flydsl_knob_space.md` (the arguments these families accept) ·
 `flydsl_authoring_method.md` (if none of them fit) ·
-`../../gemm/flydsl_gemm_small_m.md` (small-M use of the HGEMM kernels and the tuned table) ·
+`../../gemm/small_m.md` (small-M use of the HGEMM kernels and the tuned table) ·
 `../../moe/flydsl_grouped_moe_inference.md` (MoE expert GEMMs: mapping, cache policy, stage 2)

@@ -33,7 +33,7 @@ is larger than the buffer. The writing kernel exits cleanly; a later kernel that
 example as an index, faults, and the fault names that later kernel.
 
 - FlyDSL's `make_buffer_tensor` bounds nothing by default (`num_records = 0xFFFFFFFF`,
-  `../flydsl/language/limits.md` § By design; `../gemm/flydsl_gemm_correctness.md` §6).
+  `../flydsl/language/limits.md` § By design; `../gemm/correctness.md` §6).
 - The raw helper `create_buffer_resource(t, max_size=False)` falls back to the same 4 GiB bound, without a
   warning, when the memref's shape is dynamic. It is not in the wheel: FlyDSL's repository and the baseline
   aiter each carry a copy, and both do this (S1, S3). The wheel's `make_buffer_tensor(t, max_size=False)` derives
@@ -58,12 +58,12 @@ example as an index, faults, and the fault names that later kernel.
   clean on 280 cases while the write was there *(field, E6)*; ids from `torch.randint` repeat, which reaches the
   trigger, and in that session also set off canaries on buffers unrelated to the fault.
 - Remove the probes before timing anything: their host-side cost lands on every call
-  (`../gemm/flydsl_gemm_correctness.md` §6 discusses one such reading).
+  (`../gemm/correctness.md` §6 discusses one such reading).
 
 ## Fix or workaround
 
 - Bound every access whose index comes from data with the buffer's real size in the descriptor
-  (`num_records_bytes=`, which may be a runtime value), as `../gemm/flydsl_gemm_correctness.md` §6 describes.
+  (`num_records_bytes=`, which may be a runtime value), as `../gemm/correctness.md` §6 describes.
   With the helper of S1 and a dynamic shape, `max_size=False` is not enough.
 - Prove the bound works before trusting it: feed an input known to go out of bounds and see the write land before
   the change and get dropped after it. A bound you have not seen stop a write looks the same as no bound. In the
