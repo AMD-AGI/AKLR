@@ -147,6 +147,7 @@ MEGA_MOE = OpContract(
     ),
     # Bounded, not bitwise: the combine adds the top-k outputs in arrival order.
     compare=CompareSpec(max_violation_fraction=1e-3, determinism=DeterminismLevel.BOUNDED),
+    ranks="ep_size",
 )
 
 CONTRACTS = (MEGA_MOE,)

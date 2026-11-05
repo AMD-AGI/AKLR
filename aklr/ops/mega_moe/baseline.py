@@ -52,6 +52,7 @@ def mega_moe_baseline(
     ep_size=1,
     swiglu_limit=10.0,
     out_dtype=None,
+    out=None,
 ):
     """aiter's MoE as sglang runs it: MegaMoEV2's main path over an expert-parallel group,
     this layer's weights bound before the call; with one rank, aiter's local fused_moe on

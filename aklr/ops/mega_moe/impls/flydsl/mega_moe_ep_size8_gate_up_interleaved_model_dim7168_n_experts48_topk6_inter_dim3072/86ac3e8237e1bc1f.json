@@ -156,7 +156,7 @@
   "workloads": [
     {
       "axes": {
-        "n_tokens": 320
+        "n_tokens": 1
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -164,7 +164,7 @@
     },
     {
       "axes": {
-        "n_tokens": 384
+        "n_tokens": 2
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -172,7 +172,7 @@
     },
     {
       "axes": {
-        "n_tokens": 448
+        "n_tokens": 4
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -180,7 +180,63 @@
     },
     {
       "axes": {
-        "n_tokens": 512
+        "n_tokens": 7
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 32
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 128
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 192
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 256
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -246,7 +302,7 @@
     "sources": [
       {
         "path": "communication_ops_utils.py",
-        "content": "# SPDX-License-Identifier: Apache-2.0\n# Copyright (c) 2025 FlyDSL Project Contributors\n\n\"\"\"Cross-card (P2P) communication primitives for communication kernels.\n\nFlyDSL's generic memory and atomic APIs carry the required memory ordering,\nsyncscope, address space, and alignment for dispatch/combine synchronization.\n\nAlso hosts :class:`GeometryTuningTable`, the per-shape launch-geometry lookup\nshared by the dispatch/combine ops.\n\"\"\"\n\nfrom __future__ import annotations\n\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nfrom flydsl._mlir.dialects import llvm\nfrom flydsl.expr import arith\nfrom flydsl.expr.typing import T\n\n\n\ndef _to_ptr_global(v, dtype=fx.Int32, alignment=4):\n    \"\"\"Cast an integer address to an aligned global FlyDSL pointer.\"\"\"\n    ptr_type = fx.PointerType.get(dtype.ir_type, fx.AddressSpace.Global, alignment)\n    return fx.inttoptr(ptr_type, fx.Int64(v))\n\n\ndef _to_ptr_shared(v):\n    \"\"\"Cast an integer address to an aligned shared i32 pointer.\"\"\"\n    ptr_type = fx.PointerType.get(fx.Int32.ir_type, fx.AddressSpace.Shared, 4)\n    return fx.inttoptr(ptr_type, fx.Int64(v))\n\n\n_to_ptr_lds = _to_ptr_shared\n\n\n\n\n\n\n\n\n\n\n\n\n\n\ndef load_i32_acquire(addr_i64):\n    \"\"\"Volatile monotonic i32 load suitable for a spin-wait.\"\"\"\n    return fx.generic_load(\n        _to_ptr_global(addr_i64),\n        volatile=True,\n        memory_order=fx.AtomicOrdering.Monotonic,\n        syncscope=\"one-as\",\n    )\n\n\n\n\n\n\ndef load_i64_acquire(addr_i64):\n    \"\"\"Volatile monotonic i64 load suitable for a spin-wait.\"\"\"\n    return fx.generic_load(\n        _to_ptr_global(addr_i64, fx.Int64, 8),\n        volatile=True,\n        memory_order=fx.AtomicOrdering.Monotonic,\n        syncscope=\"one-as\",\n    )\n\n\n\n\n\n\n\n\n@flyc.jit\ndef spin_until_ge_i64(addr_i64, val):\n    \"\"\"Spin until a monotonic cross-device i64 flag is at least ``val``.\"\"\"\n    cur = fx.Int64(load_i64_acquire(addr_i64))\n    while cur < fx.Int64(val):\n        cur = fx.Int64(load_i64_acquire(addr_i64))\n    return cur\n\n\n\n\n\n\n@flyc.jit\ndef spin_until_eq_i32(addr_i64, val):\n    \"\"\"Spin until an i32 flag equals ``val``.\"\"\"\n    cur = fx.Int32(load_i32_acquire(addr_i64))\n    while cur != fx.Int32(val):\n        cur = fx.Int32(load_i32_acquire(addr_i64))\n    return cur\n\n\n@flyc.jit\ndef spin_until_gt_i32(addr_i64, val):\n    \"\"\"Spin until an i32 flag exceeds ``val`` and return the observed value.\"\"\"\n    cur = fx.Int32(load_i32_acquire(addr_i64))\n    while cur <= fx.Int32(val):\n        cur = fx.Int32(load_i32_acquire(addr_i64))\n    return cur\n\n\ndef wait_i32_until_equals(addr_i64, expected):\n    \"\"\"Compatibility wrapper for the historical MegaMoE wait helper.\"\"\"\n    spin_until_eq_i32(addr_i64, expected)\n\n\ndef wait_i32_until_greater_than(addr_i64, expected):\n    \"\"\"Compatibility wrapper returning the first i32 value above ``expected``.\"\"\"\n    return spin_until_gt_i32(addr_i64, expected)\n\n\n@flyc.jit\ndef wait_i64_until_equals(addr_i64, expected):\n    \"\"\"Spin until a system-visible i64 flag equals ``expected``.\"\"\"\n    cur = fx.Int64(load_i64_acquire(addr_i64))\n    while cur != fx.Int64(expected):\n        cur = fx.Int64(load_i64_acquire(addr_i64))\n\n\ndef store_i32_system(addr_i64, offset, val):\n    \"\"\"System-scope release i32 store at ``addr_i64 + offset*4``.\"\"\"\n    off = arith.unwrap(offset)\n    off64 = fx.Uint64(fx.Uint32(off)) if off.type == T.i32 else fx.Int64(off)\n    addr = fx.Int64(addr_i64) + fx.Int64(off64) * 4\n    fx.generic_store(\n        _to_ptr_global(addr),\n        fx.Int32(val),\n        memory_order=fx.AtomicOrdering.Release,\n        syncscope=\"one-as\",\n    )\n\n\ndef store_i64_global_system(addr_i64, val):\n    \"\"\"System-scope release i64 store to ``addr_i64``.\"\"\"\n    fx.generic_store(\n        _to_ptr_global(addr_i64, fx.Int64, 8),\n        fx.Int64(val),\n        memory_order=fx.AtomicOrdering.Release,\n        syncscope=\"one-as\",\n    )\n\n\ndef store_i64_global(addr_i64, val):\n    \"\"\"Plain (non-atomic) global i64 store to ``addr_i64``.\"\"\"\n    fx.ptr_store(fx.Int64(val), _to_ptr_global(addr_i64, fx.Int64, 8))\n\n\ndef atomic_umax_agent(addr_i64, val):\n    \"\"\"Agent-scope monotonic global unsigned fetch-and-max on an i32 word.\"\"\"\n    return fx.atomic_max(\n        _to_ptr_global(addr_i64, fx.Uint32, 4),\n        fx.Uint32(val),\n        syncscope=fx.rocdl.SyncScope.Agent,\n    )\n\n\n# FlyDSL has no wrapper for the two instructions below.\ndef hw_xcc_id():\n    \"\"\"Wave-uniform XCC (die) index of the executing wave.\"\"\"\n    return fx.Int32(\n        llvm.InlineAsmOp(\n            T.i32,\n            [],\n            \"s_getreg_b32 $0, hwreg(HW_REG_XCC_ID, 0, 4)\",\n            \"=s\",\n            has_side_effects=True,\n        ).result\n    )\n\n\ndef invalidate_l1():\n    \"\"\"Invalidate this CU's vector L1 only (the XCD's L2 is untouched).\"\"\"\n    llvm.InlineAsmOp(\n        None, [], \"buffer_inv sc0\\ns_waitcnt vmcnt(0)\", \"\", has_side_effects=True\n    )\n\n\n\n\n\n\n\n\ndef fence_acquire(syncscope):\n    \"\"\"Emit an acquire fence for the selected AMDGPU memory scope.\"\"\"\n    fx.memory_fence(ordering=fx.AtomicOrdering.Acquire, syncscope=syncscope)\n\n\ndef fence_release(syncscope):\n    \"\"\"Emit a release fence for the selected AMDGPU memory scope.\"\"\"\n    fx.memory_fence(ordering=fx.AtomicOrdering.Release, syncscope=syncscope)\n\n\ndef fence_system_acquire():\n    \"\"\"System-scope acquire fence.\"\"\"\n    fence_acquire(fx.rocdl.SyncScope.OneAs)\n\n\ndef fence_system_release():\n    \"\"\"System-scope release fence.\"\"\"\n    fence_release(fx.rocdl.SyncScope.OneAs)\n\n\ndef fence_agent_acquire():\n    \"\"\"Agent-scope acquire fence.\"\"\"\n    fence_acquire(fx.rocdl.SyncScope.AgentOneAs)\n\n\ndef fence_agent_release():\n    \"\"\"Agent-scope release fence.\"\"\"\n    fence_release(fx.rocdl.SyncScope.AgentOneAs)\n\n\ndef load_i64_global(addr_i64):\n    \"\"\"Relaxed global i64 load from ``addr_i64``.\"\"\"\n    return fx.ptr_load(_to_ptr_global(addr_i64, fx.Int64, 8))\n\n\ndef atomic_add_global_at(addr_i64, val, syncscope=\"one-as\"):\n    \"\"\"Monotonic global fetch-add with configurable agent/system visibility.\"\"\"\n    dtype = (\n        fx.Int32\n        if isinstance(val, int)\n        else fx.Int64 if fx.as_ir_value(val).type == T.i64 else fx.Int32\n    )\n    ptr = _to_ptr_global(addr_i64, dtype, dtype.width // 8)\n    return fx.atomic_add(ptr, dtype(val), syncscope=syncscope)\n\n\ndef atomic_add_agent(addr_i64, val):\n    \"\"\"Agent-scope monotonic global fetch-and-add.\"\"\"\n    return atomic_add_global_at(addr_i64, val, syncscope=fx.rocdl.SyncScope.Agent)\n\n\n\n\ndef atomic_add_system(addr_i64, val):\n    \"\"\"System-scope monotonic global fetch-and-add.\"\"\"\n    return atomic_add_global_at(addr_i64, val)\n"
+        "content": "# SPDX-License-Identifier: Apache-2.0\n# Copyright (c) 2025 FlyDSL Project Contributors\n\n\"\"\"Cross-card (P2P) communication primitives for communication kernels.\n\nThe ordered loads, stores, fences and atomics are LLVM-dialect ops: FlyDSL 0.3.2,\nwhich the baseline AITER pins, has no generic memory or atomic API that carries\nmemory ordering and syncscope.\n\nAlso hosts :class:`GeometryTuningTable`, the per-shape launch-geometry lookup\nshared by the dispatch/combine ops.\n\"\"\"\n\nfrom __future__ import annotations\n\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nfrom flydsl._mlir.dialects import llvm\nfrom flydsl.expr import arith\nfrom flydsl.expr.typing import T\n\n\n\ndef _to_ptr_global(v, dtype=fx.Int32, alignment=4):\n    \"\"\"Cast an integer address to an aligned global FlyDSL pointer.\"\"\"\n    ptr_type = fx.PointerType.get(dtype.ir_type, fx.AddressSpace.Global, alignment)\n    return fx.inttoptr(ptr_type, fx.Int64(v))\n\n\ndef _to_ptr_shared(v):\n    \"\"\"Cast an integer address to an aligned shared i32 pointer.\"\"\"\n    ptr_type = fx.PointerType.get(fx.Int32.ir_type, fx.AddressSpace.Shared, 4)\n    return fx.inttoptr(ptr_type, fx.Int64(v))\n\n\n_to_ptr_lds = _to_ptr_shared\n\n\ndef _llvm_ptr_global(v):\n    \"\"\"Cast an integer address to ``!llvm.ptr<1>`` (global address space).\"\"\"\n    return llvm.IntToPtrOp(\n        llvm.PointerType.get(address_space=1), fx.as_ir_value(fx.Int64(v))\n    ).result\n\n\ndef _load_monotonic(addr_i64, dtype):\n    \"\"\"Volatile monotonic global load of one ``dtype`` word.\"\"\"\n    return dtype(\n        llvm.LoadOp(\n            dtype.ir_type,\n            _llvm_ptr_global(addr_i64),\n            alignment=dtype.width // 8,\n            volatile_=True,\n            ordering=llvm.AtomicOrdering.monotonic,\n            syncscope=\"one-as\",\n        ).res\n    )\n\n\ndef _store_release(addr_i64, val):\n    \"\"\"System-scope release global store of ``val``.\"\"\"\n    llvm.StoreOp(\n        fx.as_ir_value(val),\n        _llvm_ptr_global(addr_i64),\n        alignment=type(val).width // 8,\n        ordering=llvm.AtomicOrdering.release,\n        syncscope=\"one-as\",\n    )\n\n\ndef _atomic_rmw(bin_op, addr_i64, val, syncscope):\n    \"\"\"Monotonic global read-modify-write of ``val``; returns the old value.\"\"\"\n    return type(val)(\n        llvm.AtomicRMWOp(\n            bin_op,\n            _llvm_ptr_global(addr_i64),\n            fx.as_ir_value(val),\n            llvm.AtomicOrdering.monotonic,\n            syncscope=syncscope,\n            alignment=type(val).width // 8,\n        ).res\n    )\n\n\n\n\n\n\n\n\n\n\n\n\n\n\ndef load_i32_acquire(addr_i64):\n    \"\"\"Volatile monotonic i32 load suitable for a spin-wait.\"\"\"\n    return _load_monotonic(addr_i64, fx.Int32)\n\n\n\n\n\n\ndef load_i64_acquire(addr_i64):\n    \"\"\"Volatile monotonic i64 load suitable for a spin-wait.\"\"\"\n    return _load_monotonic(addr_i64, fx.Int64)\n\n\n\n\n\n\n\n\n@flyc.jit\ndef spin_until_ge_i64(addr_i64, val):\n    \"\"\"Spin until a monotonic cross-device i64 flag is at least ``val``.\"\"\"\n    cur = fx.Int64(load_i64_acquire(addr_i64))\n    while cur < fx.Int64(val):\n        cur = fx.Int64(load_i64_acquire(addr_i64))\n    return cur\n\n\n\n\n\n\n@flyc.jit\ndef spin_until_eq_i32(addr_i64, val):\n    \"\"\"Spin until an i32 flag equals ``val``.\"\"\"\n    cur = fx.Int32(load_i32_acquire(addr_i64))\n    while cur != fx.Int32(val):\n        cur = fx.Int32(load_i32_acquire(addr_i64))\n    return cur\n\n\n@flyc.jit\ndef spin_until_gt_i32(addr_i64, val):\n    \"\"\"Spin until an i32 flag exceeds ``val`` and return the observed value.\"\"\"\n    cur = fx.Int32(load_i32_acquire(addr_i64))\n    while cur <= fx.Int32(val):\n        cur = fx.Int32(load_i32_acquire(addr_i64))\n    return cur\n\n\ndef wait_i32_until_equals(addr_i64, expected):\n    \"\"\"Compatibility wrapper for the historical MegaMoE wait helper.\"\"\"\n    spin_until_eq_i32(addr_i64, expected)\n\n\ndef wait_i32_until_greater_than(addr_i64, expected):\n    \"\"\"Compatibility wrapper returning the first i32 value above ``expected``.\"\"\"\n    return spin_until_gt_i32(addr_i64, expected)\n\n\n@flyc.jit\ndef wait_i64_until_equals(addr_i64, expected):\n    \"\"\"Spin until a system-visible i64 flag equals ``expected``.\"\"\"\n    cur = fx.Int64(load_i64_acquire(addr_i64))\n    while cur != fx.Int64(expected):\n        cur = fx.Int64(load_i64_acquire(addr_i64))\n\n\ndef store_i32_system(addr_i64, offset, val):\n    \"\"\"System-scope release i32 store at ``addr_i64 + offset*4``.\"\"\"\n    off = arith.unwrap(offset)\n    off64 = fx.Uint64(fx.Uint32(off)) if off.type == T.i32 else fx.Int64(off)\n    addr = fx.Int64(addr_i64) + fx.Int64(off64) * 4\n    _store_release(addr, fx.Int32(val))\n\n\ndef store_i64_global_system(addr_i64, val):\n    \"\"\"System-scope release i64 store to ``addr_i64``.\"\"\"\n    _store_release(addr_i64, fx.Int64(val))\n\n\ndef store_i64_global(addr_i64, val):\n    \"\"\"Plain (non-atomic) global i64 store to ``addr_i64``.\"\"\"\n    fx.ptr_store(fx.Int64(val), _to_ptr_global(addr_i64, fx.Int64, 8))\n\n\ndef atomic_umax_agent(addr_i64, val):\n    \"\"\"Agent-scope monotonic global unsigned fetch-and-max on an i32 word.\"\"\"\n    return _atomic_rmw(\n        llvm.AtomicBinOp.umax, addr_i64, fx.Int32(val), fx.rocdl.SyncScope.Agent\n    )\n\n\n# FlyDSL has no wrapper for the two instructions below.\ndef hw_xcc_id():\n    \"\"\"Wave-uniform XCC (die) index of the executing wave.\"\"\"\n    return fx.Int32(\n        llvm.InlineAsmOp(\n            T.i32,\n            [],\n            \"s_getreg_b32 $0, hwreg(HW_REG_XCC_ID, 0, 4)\",\n            \"=s\",\n            has_side_effects=True,\n        ).result\n    )\n\n\ndef invalidate_l1():\n    \"\"\"Invalidate this CU's vector L1 only (the XCD's L2 is untouched).\"\"\"\n    llvm.InlineAsmOp(\n        None, [], \"buffer_inv sc0\\ns_waitcnt vmcnt(0)\", \"\", has_side_effects=True\n    )\n\n\n\n\n\n\n\n\ndef fence_acquire(syncscope):\n    \"\"\"Emit an acquire fence for the selected AMDGPU memory scope.\"\"\"\n    llvm.FenceOp(llvm.AtomicOrdering.acquire, syncscope=syncscope)\n\n\ndef fence_release(syncscope):\n    \"\"\"Emit a release fence for the selected AMDGPU memory scope.\"\"\"\n    llvm.FenceOp(llvm.AtomicOrdering.release, syncscope=syncscope)\n\n\ndef fence_system_acquire():\n    \"\"\"System-scope acquire fence.\"\"\"\n    fence_acquire(fx.rocdl.SyncScope.OneAs)\n\n\ndef fence_system_release():\n    \"\"\"System-scope release fence.\"\"\"\n    fence_release(fx.rocdl.SyncScope.OneAs)\n\n\ndef fence_agent_acquire():\n    \"\"\"Agent-scope acquire fence.\"\"\"\n    fence_acquire(fx.rocdl.SyncScope.AgentOneAs)\n\n\ndef fence_agent_release():\n    \"\"\"Agent-scope release fence.\"\"\"\n    fence_release(fx.rocdl.SyncScope.AgentOneAs)\n\n\ndef load_i64_global(addr_i64):\n    \"\"\"Relaxed global i64 load from ``addr_i64``.\"\"\"\n    return fx.ptr_load(_to_ptr_global(addr_i64, fx.Int64, 8))\n\n\ndef atomic_add_global_at(addr_i64, val, syncscope=\"one-as\"):\n    \"\"\"Monotonic global fetch-add with configurable agent/system visibility.\"\"\"\n    dtype = (\n        fx.Int32\n        if isinstance(val, int)\n        else fx.Int64 if fx.as_ir_value(val).type == T.i64 else fx.Int32\n    )\n    return _atomic_rmw(llvm.AtomicBinOp.add, addr_i64, dtype(val), syncscope)\n\n\ndef atomic_add_agent(addr_i64, val):\n    \"\"\"Agent-scope monotonic global fetch-and-add.\"\"\"\n    return atomic_add_global_at(addr_i64, val, syncscope=fx.rocdl.SyncScope.Agent)\n\n\n\n\ndef atomic_add_system(addr_i64, val):\n    \"\"\"System-scope monotonic global fetch-and-add.\"\"\"\n    return atomic_add_global_at(addr_i64, val)\n"
       },
       {
         "path": "dispatch.py",
@@ -254,7 +310,7 @@
       },
       {
         "path": "kernel.py",
-        "content": "\"\"\"MegaMoE for DeepSeek-V4 expert parallelism (EP8, a8w4) at up to 512 tokens a rank.\n\nOne launch per rank runs the whole step: MXFP8 quantization of the tokens, fixed-slot\ndispatch to the ranks holding their experts, GEMM1 with the clamped SwiGLU, GEMM2, and\nthe combine of the top-k outputs back on the token's rank. The ranks exchange through\nmori symmetric memory and wait on each other inside the kernel, so every rank of the\ngroup calls it once per step, in the same order, on one stream.\n\nEach rank decides from its own routed rows whether GEMM1 and GEMM2 keep their weights\ncached and whether its GEMM2 rows travel in MXFP8 (the combine decodes each peer's\nformat), so a rank receiving a hot expert does not slow the group.\nsource: aiter MegaMoEV2 small-input path (aiter/ops/flydsl/kernels/mega_moe/mega_moe_small_m.py)\n\"\"\"\n\nimport functools\n\nimport mori.shmem as ms\n\nfrom .mega_moe_small_m import build_small_m_runtime\n\n# the runtime's token capacity a rank; its dispatch slots and launch geometry follow it\n_MAX_TOKENS_PER_RANK = 512\n\n\n@functools.cache\ndef _runtime(model_dim, inter_dim, n_experts, topk, ep_size, swiglu_limit):\n    \"\"\"This rank's buffers and protocol state, in mori symmetric memory, for every layer.\"\"\"\n    if ms.shmem_npes() != ep_size:\n        raise ValueError(\n            f\"mori's group has {ms.shmem_npes()} ranks, the call's ep_size is {ep_size}\"\n        )\n    return build_small_m_runtime(\n        rank=ms.shmem_mype(),\n        world_size=ep_size,\n        model_dim=model_dim,\n        inter_dim=inter_dim,\n        experts=n_experts * ep_size,\n        topk=topk,\n        quant=\"a8w4\",\n        max_tok_per_rank=_MAX_TOKENS_PER_RANK,\n        swiglu_limit=swiglu_limit,\n    )\n\n\ndef run(\n    *,\n    hidden_states,\n    w1,\n    w2,\n    topk_weights,\n    topk_ids,\n    w1_scale,\n    w2_scale,\n    ep_size,\n    swiglu_limit,\n    out_dtype,\n    out,\n):\n    runtime = _runtime(\n        hidden_states.shape[1],\n        w1.shape[1] // 2,\n        w1.shape[0],\n        topk_ids.shape[1],\n        ep_size,\n        float(swiglu_limit),\n    )\n    runtime.forward(hidden_states, topk_weights, topk_ids, w1, w1_scale, w2, w2_scale, out)\n"
+        "content": "\"\"\"MegaMoE for DeepSeek-V4 expert parallelism (EP8, a8w4) at up to 256 tokens a rank.\n\nOne launch per rank runs the whole step: MXFP8 quantization of the tokens, fixed-slot\ndispatch to the ranks holding their experts, GEMM1 with the clamped SwiGLU, GEMM2, and\nthe combine of the top-k outputs back on the token's rank. The ranks exchange through\nmori symmetric memory and wait on each other inside the kernel, so every rank of the\ngroup calls it once per step, in the same order, on one stream.\n\nEach rank decides from its own routed rows whether GEMM1 and GEMM2 keep their weights\ncached and whether its GEMM2 rows travel in MXFP8 (the combine decodes each peer's\nformat), so a rank receiving a hot expert does not slow the group.\nsource: aiter MegaMoEV2 small-input path (aiter/ops/flydsl/kernels/mega_moe/mega_moe_small_m.py)\n\"\"\"\n\nimport functools\n\nimport mori.shmem as ms\n\nfrom .mega_moe_small_m import build_small_m_runtime\n\n# the runtime's token capacity a rank; its dispatch slots and launch geometry follow it\n_MAX_TOKENS_PER_RANK = 256\n\n\n@functools.cache\ndef _runtime(model_dim, inter_dim, n_experts, topk, ep_size, swiglu_limit):\n    \"\"\"This rank's buffers and protocol state, in mori symmetric memory, for every layer.\"\"\"\n    if ms.shmem_npes() != ep_size:\n        raise ValueError(\n            f\"mori's group has {ms.shmem_npes()} ranks, the call's ep_size is {ep_size}\"\n        )\n    return build_small_m_runtime(\n        rank=ms.shmem_mype(),\n        world_size=ep_size,\n        model_dim=model_dim,\n        inter_dim=inter_dim,\n        experts=n_experts * ep_size,\n        topk=topk,\n        quant=\"a8w4\",\n        max_tok_per_rank=_MAX_TOKENS_PER_RANK,\n        swiglu_limit=swiglu_limit,\n    )\n\n\ndef run(\n    *,\n    hidden_states,\n    w1,\n    w2,\n    topk_weights,\n    topk_ids,\n    w1_scale,\n    w2_scale,\n    ep_size,\n    swiglu_limit,\n    out_dtype,\n    out,\n):\n    runtime = _runtime(\n        hidden_states.shape[1],\n        w1.shape[1] // 2,\n        w1.shape[0],\n        topk_ids.shape[1],\n        ep_size,\n        float(swiglu_limit),\n    )\n    runtime.forward(hidden_states, topk_weights, topk_ids, w1, w1_scale, w2, w2_scale, out)\n"
       },
       {
         "path": "kernels_common.py",
