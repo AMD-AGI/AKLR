@@ -1,0 +1,82 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="395" viewBox="0 0 960 395">
+<style>
+  .bg{fill:none}
+  text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans",Helvetica,Arial,"DejaVu Sans",sans-serif;fill:#1f2328}
+  .t{font-size:15px;font-weight:600}
+  .s{font-size:12.5px;fill:#59636e}
+  .grid{stroke:#d1d9e0;stroke-width:1}
+  .axis{stroke:#818b98;stroke-width:1}
+  .tick{font-size:12px;fill:#59636e}
+  .a{stroke:#0969da;stroke-width:2.5;fill:none}
+  .b{stroke:#8c959f;stroke-width:2.5;fill:none}
+  .ad{fill:#0969da}.bd{fill:#8c959f}
+  .ref{stroke:#59636e;stroke-width:1.2;stroke-dasharray:5 4}
+  .note{font-size:13px}
+  .na{fill:#0969da}.nb{fill:#59636e}
+  @media (prefers-color-scheme: dark){
+    text{fill:#f0f6fc}
+    .s,.tick{fill:#9198a1}
+    .axis{stroke:#9198a1}
+    .grid{stroke:#3d444d}
+    .a{stroke:#4493f8}.ad,.na{fill:#4493f8}
+    .b{stroke:#7d8590}.bd{fill:#7d8590}.nb{fill:#9198a1}
+    .ref{stroke:#9198a1}
+  }
+</style>
+<text class="t" x="480.0" y="26" text-anchor="middle">Kernel Rosetta Stone: MoE comparison</text>
+<text class="s" x="480.0" y="48" text-anchor="middle">The same agent tuned one MXFP4 MoE layer of GLM-5.2 (13 batch sizes) on MI355X, with and without AKLR knowledge base.</text>
+<text class="tick" x="18" y="220.0" text-anchor="middle" transform="rotate(-90 18 220.0)">speedup over AITER</text>
+<line class="grid" x1="80" x2="930" y1="330.0" y2="330.0"/>
+<text class="tick" x="72" y="334.0" text-anchor="end">0.95x</text>
+<line class="grid" x1="80" x2="930" y1="280.0" y2="280.0"/>
+<text class="tick" x="72" y="284.0" text-anchor="end">1.00x</text>
+<line class="grid" x1="80" x2="930" y1="230.0" y2="230.0"/>
+<text class="tick" x="72" y="234.0" text-anchor="end">1.05x</text>
+<line class="grid" x1="80" x2="930" y1="180.0" y2="180.0"/>
+<text class="tick" x="72" y="184.0" text-anchor="end">1.10x</text>
+<line class="grid" x1="80" x2="930" y1="115.0" y2="115.0"/>
+<text class="tick" x="72" y="119.0" text-anchor="end">1.165x</text>
+<line class="grid" x1="80" x2="930" y1="80.0" y2="80.0"/>
+<text class="tick" x="72" y="84.0" text-anchor="end">1.20x</text>
+<text class="tick" x="80.00" y="380" text-anchor="middle">0h</text>
+<text class="tick" x="186.25" y="380" text-anchor="middle">2h</text>
+<text class="tick" x="292.50" y="380" text-anchor="middle">4h</text>
+<text class="tick" x="398.75" y="380" text-anchor="middle">6h</text>
+<text class="tick" x="505.00" y="380" text-anchor="middle">8h</text>
+<text class="tick" x="611.25" y="380" text-anchor="middle">10h</text>
+<text class="tick" x="717.50" y="380" text-anchor="middle">12h</text>
+<text class="tick" x="823.75" y="380" text-anchor="middle">14h</text>
+<text class="tick" x="930.00" y="380" text-anchor="middle">16h</text>
+<line class="axis" x1="80" x2="930" y1="360" y2="360"/>
+<line class="ref" x1="80" x2="930" y1="115.0" y2="115.0"/>
+<path class="b" d="M80.0,322.1 L169.4,276.6 L230.5,252.9 L296.9,247.0 L357.1,243.2 L505.0,232.8 L553.7,224.4 L657.3,212.7 L735.2,129.0 L820.2,125.5 L871.6,114.6"/>
+<circle class="bd" cx="80.0" cy="322.1" r="3.5"/>
+<circle class="bd" cx="169.4" cy="276.6" r="3.5"/>
+<circle class="bd" cx="230.5" cy="252.9" r="3.5"/>
+<circle class="bd" cx="296.9" cy="247.0" r="3.5"/>
+<circle class="bd" cx="357.1" cy="243.2" r="3.5"/>
+<circle class="bd" cx="505.0" cy="232.8" r="3.5"/>
+<circle class="bd" cx="553.7" cy="224.4" r="3.5"/>
+<circle class="bd" cx="657.3" cy="212.7" r="3.5"/>
+<circle class="bd" cx="735.2" cy="129.0" r="3.5"/>
+<circle class="bd" cx="820.2" cy="125.5" r="3.5"/>
+<circle class="bd" cx="871.6" cy="114.6" r="3.5"/>
+<path class="a" d="M80.0,325.3 L227.9,204.8 L289.0,174.8 L341.2,150.4 L424.4,137.3 L473.1,104.5 L542.2,99.4"/>
+<circle class="ad" cx="80.0" cy="325.3" r="3.5"/>
+<circle class="ad" cx="227.9" cy="204.8" r="3.5"/>
+<circle class="ad" cx="289.0" cy="174.8" r="3.5"/>
+<circle class="ad" cx="341.2" cy="150.4" r="3.5"/>
+<circle class="ad" cx="424.4" cy="137.3" r="3.5"/>
+<circle class="ad" cx="473.1" cy="104.5" r="3.5"/>
+<circle class="ad" cx="542.2" cy="99.4" r="3.5"/>
+<line class="ref" x1="473.1" x2="473.1" y1="104.5" y2="360"/>
+<circle class="ad" cx="473.1" cy="104.5" r="6"/>
+<line class="ref" x1="871.6" x2="871.6" y1="114.6" y2="360"/>
+<circle class="bd" cx="871.6" cy="114.6" r="6"/>
+<text class="note na" x="483.1" y="141.0" text-anchor="start">1.165x at 7h24m, ~$87</text>
+<text class="note nb" x="861.6" y="268" text-anchor="end">1.165x at 14h54m, ~$170 (its best)</text>
+<line class="a" x1="520" x2="546" y1="304" y2="304"/>
+<text class="s" x="554" y="308">With AKLR knowledge base</text>
+<line class="b" x1="520" x2="546" y1="328" y2="328"/>
+<text class="s" x="554" y="332">Without AKLR knowledge base</text>
+</svg>
