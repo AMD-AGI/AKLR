@@ -19,7 +19,7 @@ sources:
 
 ## Route here when
 The question has narrowed to a dense GEMM, and you need to know where to start, what to change first,
-or how to run the next round. For a grouped GEMM start at `../moe/flydsl_grouped_workflow.md`.
+or how to run the next round. For a grouped GEMM start at `../moe/grouped_workflow.md`.
 
 | The open question | Card |
 |---|---|

@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL grouped GEMM — ordering and placing tiles across groups"
+title: "Grouped GEMM — ordering and placing tiles across groups"
 kind: topic
-lever: flydsl_grouped_scheduling
+lever: grouped_scheduling
 ops: [grouped_gemm]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp8, mxfp4]
@@ -27,7 +27,7 @@ sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_mxfp4_kernel.py:1866
 ---
 
-# Ordering and placing tiles across groups in a FlyDSL grouped GEMM
+# Ordering and placing tiles across groups in a grouped GEMM
 
 > Which XCD runs a tile, in which order the groups' tiles are dispatched, and how many tiles a workgroup walks
 > decide how a grouped GEMM behaves when the token counts per group are skewed. The levers here are pure
@@ -47,10 +47,10 @@ sources:
 - You are deciding between one tile per workgroup, a persistent grid and several tiles per workgroup.
 - A grouped GEMM trails a dense GEMM of the same total size.
 
-**Somewhere else if:** the device-side exit and lookup → `flydsl_grouped_group_mapping.md` (exit on the raw
+**Somewhere else if:** the device-side exit and lookup → `grouped_group_mapping.md` (exit on the raw
 id and remap over the live count is §4 there); tile size and boundary bodies →
-`flydsl_grouped_tile_pricing.md`; split-K for deep groups → `flydsl_grouped_wgrad.md`; ranking candidates on
-balanced and skewed data → `flydsl_grouped_host_autotune.md`.
+`grouped_tile_pricing.md`; split-K for deep groups → `grouped_wgrad.md`; ranking candidates on
+balanced and skewed data → `grouped_host_autotune.md`.
 
 ## 1. First ask where the skew lives
 
@@ -59,7 +59,7 @@ balanced and skewed data → `flydsl_grouped_host_autotune.md`.
 | forward, dgrad | tiles per group | none while rounds are full | group-aligned runs (§3) |
 | variable-K wgrad | contraction per tile | longest-first (§5), 1 tile per WG (§6) | round-robin (§2) |
 
-Forward and dgrad tiles all cost the same except ragged boundary tiles (`flydsl_grouped_tile_pricing.md` §4); wgrad
+Forward and dgrad tiles all cost the same except ragged boundary tiles (`grouped_tile_pricing.md` §4); wgrad
 groups all have the same tile count.
 
 - *(field, E1)* Copying the forward settings (GROUP_M = 2, eight contiguous XCD slices) to the variable-K wgrad of
@@ -93,7 +93,7 @@ XCD; streams that read **a shared slice** want the hardware round-robin
   still lost 0.6% overall and 2–3 points on two configs: round-robin keeps all eight XCDs on the same band.
   That measurement (G = 32, 144 tiles per group, ~18 rounds) is at the depth where Turbo's tuner leads with
   the affine rectangle (§3, last bullet); race both on the deployed shape.
-- **A contiguous remap also undoes a longest-first order** on variable-K wgrad (measured: `flydsl_grouped_wgrad.md`
+- **A contiguous remap also undoes a longest-first order** on variable-K wgrad (measured: `grouped_wgrad.md`
   §5). A race scored on balanced data alone picks the losing arm; score on the worse of balanced and skewed.
 - **Affinity that stays balanced.**
   - Renumber a group's tiles into XCD-affine rectangles only where the band does not already hand each XCD a
@@ -165,7 +165,7 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
   the worst point. One global GROUP_M = 8 cost 0.21% on the geomean: 1.1% faster on one config and 3.0% slower
   on another K.
 - Key the choice on K: switch to the wider band when `GROUP_M × BLOCK_M × K` crosses 4 MiB, with K in the
-  autotune key (`flydsl_grouped_host_autotune.md`). Sweep past 8 and again after any tile change: *(field, E20)* on
+  autotune key (`grouped_host_autotune.md`). Sweep past 8 and again after any tile change: *(field, E20)* on
   dense GEMMs 9 beat every value ≤ 8 by 1–4% (`../gemm/schedule_and_locality.md` §2).
 - It does not carry across layouts. *(field, E21)* The same K rule on fp8 NN dgrad cost 1.2 points: NN reuses an
   N stripe of `B[K,N]`, not an A slab.
@@ -209,7 +209,7 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
 - *(field, E30)* Persistent across groups (one workgroup walks one tile position through all G groups; grid
   divided by G), MXFP8 variable-K wgrad: its time against the reference kernel went from ~1.02× to 1.23–2.00×.
   276–448 tiles per group is 1.1–1.75 rounds on 256 CUs, and the 8× unrolled body thrashed the instruction cache.
-- *(field, E31)* fp8 forward/dgrad: non-persistent was ~11% faster than a persistent `scf.for` tile loop, but only
+- *(field, E31)* fp8 forward/dgrad: non-persistent was ~11% faster than a persistent tile loop, but only
   with the L2 tile swizzle kept (without it one small-K shape was 13% slower). *(field, E32)* fp8 4-wave wgrad at one wave per
   SIMD, balanced loads: within ±2% either way.
 - When it can pay: free registers and a loop that prefetches the next tile across the boundary. *(field, E33, E34)* 1
@@ -219,17 +219,17 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
   prefetch aimed at the next tile was 0.69% faster than one tile per workgroup: the value of a persistent
   worker is the next tile's fill overlapping this tile's epilogue (`../gemm/mainloop.md` §3,
   persistent carry), not the launch it saves. Gate on a compile-only spill check
-  (`flydsl_grouped_tile_pricing.md` §1).
+  (`grouped_tile_pricing.md` §1).
 - Repeating a ping-pong tile body breaks barrier parity. A body in which one wave group issues an extra `s_barrier`
   (`if wave_m == 1`) is consistent only once per workgroup; from the second tile the groups pair with the wrong
   barrier and the output is noise. Balance the count at the tile boundary; Turbo's bf16 wgrad takes a full barrier
   there when persistent (BF16:263-268). Another persistent form worth racing: *(field, E36)* a dense persistent grid with
   no workgroup barrier between tiles (C staged per wave, the next tile's stages filled by the last K-blocks) beat
   one tile per workgroup by 3–5% (`../gemm/grid_pricing.md` §10).
-- Turbo's capped persistent grids (`cap_cu`, `num_cu > 0`) exist to leave CUs to a co-running kernel, not for
-  speed (BF16:622-625; FP8:2669-2670).
+- A persistent grid capped below the CU count exists to leave CUs to a co-running kernel, not for speed (Turbo:
+  BF16:622-625; FP8:2669-2670).
 - Which variable-K loop body to run (chunked masked or exact-trip) is keyed on the per-group contraction
-  `m_total / G`, not on `m_total` (`flydsl_grouped_wgrad.md`).
+  `m_total / G`, not on `m_total` (`grouped_wgrad.md`).
 
 ## 7. Two tiles per workgroup
 - What it buys is the per-workgroup fixed cost (launch, decode, table load, pipeline fill) shared by WGT tiles
@@ -283,8 +283,8 @@ per-group launches of it gave 2836, and eight per-group launches of the vendor G
 - Order changes are checked bit-identical: they must not change a single output byte.
 
 ## Related
-`flydsl_grouped_group_mapping.md` · `flydsl_grouped_tile_pricing.md` · `flydsl_grouped_wgrad.md` ·
-`flydsl_grouped_host_autotune.md` · `flydsl_grouped_measurement.md` ·
+`grouped_group_mapping.md` · `grouped_tile_pricing.md` · `grouped_wgrad.md` ·
+`grouped_host_autotune.md` · `grouped_measurement.md` ·
 `../gemm/schedule_and_locality.md` §2 · `../gemm/grid_pricing.md` §1, §10 ·
 `../attention/flydsl_attn_grid_dispatch.md` §4
 
@@ -300,7 +300,7 @@ score; gpt-oss shapes are G=32 experts, 131072 routed tokens, hidden 2880 (padde
 - E2 [2026-08, gfx950, FlyDSL ?, N=?, isolated 20-arm sweep at the deployed 4096 tokens per expert, outputs bitwise identical] NN dgrad: identity XCD order with GROUP_M 4 (`x1g4`) −5.72% against the incumbent arm, over which `x8g4` read +2.48%; NT forward of the same chain, against its incumbent `x8g4`: `x1g2` −2.26%, `x1g1` −5.35% (Turbo fp8 per-tensor grouped GEMM, gpt-oss down projection padN chain, B[g] 8.67 MB; campaign 20260817_065611 round 6; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260817_065611/memory.md:166; NT arms local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260817_065611/goal.md:557)
 - E3 [2026-09, gfx950, FlyDSL ?, N=12, 3 pairs × both orders × 3 draws (11 of 12 reads negative on GateUP), no run reference] `xcd8_gm4` on NN dgrad: Down (K=2944, B[g] 8.67 MB) +0.79%, GateUP (K=5760, B[g] 16.96 MB) −1.91%; dated 2026-09-04 in the note (Turbo fp8 per-tensor grouped NN dgrad, gpt-oss; local:/workspace/code/gpt_oss_docker/myskill/optimizer/00-decision-index.md:394)
 - E4 [2026-07, gfx950, FlyDSL ?, N=1, campaign score: geomean of t_tw / t_mx over 14 configurations, kernel-only, against two same-session baseline runs] XCD affinity (xcd 8) for narrow bands: fwd down heavy 1.098 / 1.084 → 1.065, dgrad down heavy 1.089 / 1.094 → 1.059; gm 1.1065 against 1.11046 / 1.10536 (Turbo MXFP8 grouped NT, gpt-oss; campaign 20260729_093030 round 13; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260729_093030/memory.md:246)
-- E5 [2026-08, gfx950, FlyDSL ?, N=2, per-configuration timing (ms) with the race disabled, each value measured twice; then fast-probe ms screens and the campaign score] before the dead-id fix of `flydsl_grouped_group_mapping.md` §4: (GROUP_M 2, 8 slices, no N band) against (2, 1 slice, 4-wide N band) on the two worst heavy configurations 1.3447 against 1.4453 ms (−7.0%) and 1.1993 against 1.3005 (−7.8%); after it, one slice ran the balanced down configurations 2.3–3.2% slower than 8, 2 slices sped the heavy configurations of a four-configuration screen by 4.2–5.4%, and (2, 2, 0) over all 18 configurations scored 1.43661 against 1.4486 for 8 slices, with forward gate_up balanced falling from 1.373 to 1.223 (Turbo MXFP4 grouped NT, gpt-oss; campaign 20260803_155024 rounds 2 and 4; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260803_155024/goal.md:251; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260803_155024/memory.md:182)
+- E5 [2026-08, gfx950, FlyDSL ?, N=2, per-configuration timing (ms) with the race disabled, each value measured twice; then fast-probe ms screens and the campaign score] before the dead-id fix of `grouped_group_mapping.md` §4: (GROUP_M 2, 8 slices, no N band) against (2, 1 slice, 4-wide N band) on the two worst heavy configurations 1.3447 against 1.4453 ms (−7.0%) and 1.1993 against 1.3005 (−7.8%); after it, one slice ran the balanced down configurations 2.3–3.2% slower than 8, 2 slices sped the heavy configurations of a four-configuration screen by 4.2–5.4%, and (2, 2, 0) over all 18 configurations scored 1.43661 against 1.4486 for 8 slices, with forward gate_up balanced falling from 1.373 to 1.223 (Turbo MXFP4 grouped NT, gpt-oss; campaign 20260803_155024 rounds 2 and 4; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260803_155024/goal.md:251; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260803_155024/memory.md:182)
 - E6 [2026-08, gfx950, FlyDSL ?, N=?, isolated sweep of 25+ (num_xcd, GROUP_M) arms at the deployed 4096 tokens per expert, then three distributions, outputs bitwise identical] wgrad winner `x1g2` +0.78–0.98% over XCD-affine rectangles and wide bands; balanced +1.00, heavy +0.95, canon +0.76% (Turbo fp8 per-tensor grouped wgrad, gpt-oss down projection, 144 tiles per group; campaign 20260817_065611 round 7; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260817_065611/memory.md:178)
 - E7 [2026-08, gfx950, FlyDSL ?, N=?, ?] myskill records GROUP_M 1 at −5.06% in the sweep of E6; the campaign record does not give the arm (local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/05-lds-swizzle-prefetch-sched.md:159)
 - E8 [2026-08, gfx950, FlyDSL ?, N=1, campaign score `_bench_tw_vs_mx.py` (geomean of t_mx / t_tw over 14 configurations)] the XCD remap applied to the in-group tile index, group order kept: gm 0.99372 → 0.98762, wgrad down balanced 0.962 → 0.941, gate_up heavy 0.995 → 0.965 (Turbo fp8 per-tensor grouped wgrad, gpt-oss; campaign 20260731_073404 round 11; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260731_073404/memory.md:211)

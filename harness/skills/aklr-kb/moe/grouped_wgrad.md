@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL grouped GEMM — variable-K wgrad"
+title: "Grouped GEMM — variable-K wgrad"
 kind: topic
-lever: flydsl_grouped_wgrad
+lever: grouped_wgrad
 ops: [grouped_gemm]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp8, mxfp4]
@@ -12,19 +12,16 @@ sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_bf16_kernel.py
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_mxfp8_kernel.py
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_mxfp4_kernel.py
-  - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/utils/gemm_helper.py
-  - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/ast_rewriter.py
-  - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/protocol.py
 ---
 
-# Variable-K wgrad in FlyDSL
+# Variable-K wgrad
 
 > The weight gradient of a grouped GEMM is `out[g] = A_gᵀ · B_g`, where `A_g` and `B_g` are the rows
 > `[offs[g], offs[g+1])` of `A [M_total, OUT_M]` and `B [M_total, OUT_N]`. Every group has the same number of
 > output tiles; the contraction length of a tile is its group's token count. This card covers what that changes:
 > the loop, the K tail, MX scale timing, dispatch order, short and deep groups, split-K, beta=1 accumulation and
 > the output layout. "FP8", "BF16", "MX8", "MX4" are Primus-Turbo's `grouped_gemm_{fp8,bf16,mxfp8,mxfp4}_kernel.py`
-> and "GH" its `utils/gemm_helper.py`, under `primus_turbo/flydsl/` at main `ca1fdd67`. FlyDSL facts are v0.3.2.
+> under `primus_turbo/flydsl/grouped_gemm/` at main `ca1fdd67`. FlyDSL facts are v0.3.2.
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end. Use
 > them for direction and order of magnitude, not as targets.
 
@@ -34,9 +31,9 @@ sources:
 - One deep group, many tiny groups or empty groups dominate a skewed launch.
 - wgrad accumulates into an existing gradient buffer (beta=1), or its output layout differs from its operands'.
 
-**Somewhere else if:** XCD order and longest-first across all passes → `flydsl_grouped_scheduling.md`; tile and
-boundary bodies → `flydsl_grouped_tile_pricing.md`; scale packing and quantization → `flydsl_grouped_lowprec.md`;
-race and cache mechanics → `flydsl_grouped_host_autotune.md`; gates → `flydsl_grouped_correctness.md`.
+**Somewhere else if:** XCD order and longest-first across all passes → `grouped_scheduling.md`; tile and
+boundary bodies → `grouped_tile_pricing.md`; scale packing and quantization → `grouped_lowprec.md`;
+race and cache mechanics → `grouped_host_autotune.md`; gates → `grouped_correctness.md`.
 
 ## 1. Why the backward's gap sits in wgrad
 - Forward and dgrad parallelize over M: total M is fixed, so skew moves tile counts, not the cost of a tile.
@@ -55,62 +52,50 @@ race and cache mechanics → `flydsl_grouped_host_autotune.md`; gates → `flyds
 
 ## 2. A K loop with a run-time trip count
 Two forms are in use.
-- **Runtime chunk loop.** An outer `range(n_chunks)` becomes an `scf.for` with a run-time bound; the inner
-  `range_constexpr(CHUNK)` unrolls the distance-2, 4-buffer pipeline body. Keep CHUNK even so the Python-level
-  cur/next buffer names are back in their starting roles at every chunk boundary (MX8:1428 asserts it; BF16
-  uses CHUNK=4, BF16:277-343; FP8's masked kernel 8, FP8:2264-2300). The remainder either runs on zeros from the
-  descriptor (§3) or, in MX8, as a `range_constexpr(chunk)` tail whose steps sit under a wave-uniform
-  `if k_abs < k_iters` (MX8:1574-1615). *(field, E3)* Chunk sizes 8, 4 and 2 were all neutral on a tensorwise masked
-  wgrad: rounding up to a chunk is not where skew costs.
+- **Runtime chunk loop.** An outer loop over chunks with a run-time trip count, each chunk the unrolled
+  distance-2, 4-buffer pipeline body. Keep CHUNK even so the cur/next buffers are back in their starting roles at
+  every chunk boundary (MX8:1428 asserts it; BF16 uses CHUNK=4, BF16:277-343; FP8's masked kernel 8,
+  FP8:2264-2300). The remainder either runs on zeros from the descriptor (§3) or, in MX8, as an unrolled tail whose
+  steps sit under a wave-uniform `k_abs < k_iters` guard (MX8:1574-1615). *(field, E3)* Chunk sizes 8, 4 and 2 were
+  all neutral on a tensorwise masked wgrad: rounding up to a chunk is not where skew costs.
 - **Whole loop with a run-time count.** One inline-asm region (`../gemm/mainloop.md` §3) takes the
   trip count in an SGPR. FP8's 4-wave wgrad runs the largest multiple of 6 K blocks (one pass of its pool
   depths) and the 0–5 remainder as a tail fused into the same asm block; a group shorter than one pass runs only
   the tail (`nval_can_be_zero`, FP8:2797-2798, 3434-3437). MX4 passes the raw 256-block count (MX4:1887).
 
-**What a runtime loop body may contain (v0.3.2).** The rewriter turns a runtime `range` in a `@flyc.kernel`
-body into a body function plus `scf.for` and infers the carried state: every pre-loop name the body rebinds *and*
-every pre-loop name it calls a method on (`_collect_assigned_vars`, `compiler/ast_rewriter.py:156-222`). Each
-carried name must flatten to IR values, i.e. be a DSL value or a list/tuple/dict/SimpleNamespace of them
-(`compiler/protocol.py:97-108`); a helper object such as a loader raises `TypeError: Cannot extract IR values`.
-- Keep the body to calls of plain functions plus rebinding of DSL values. MX8's chunk body is one module-level
-  function that returns the eight swapped LDS buffer handles, and the loop carries only those (MX8:1571-1606);
-  BF16 hoists its tile bodies into free functions "for the same ast-rewriter reason" (BF16:429).
-- Accumulators in register memory (`fx.make_rmem_tensor`) are updated in place and are not carried.
-- BF16 emits its chunk loop through a helper, `emit_for`, that calls the rewriter's `scf_for_dispatch`
-  (`compiler/ast_rewriter.py:1006`) with no carried state (GH:2134-2143); the body is then a plain Python closure,
-  and its Python-level buffer rotation is resolved at trace time.
-- The three loop forms and what each carries: `../flydsl/debug-flydsl-kernel.md` § The three loop forms.
+In FlyDSL: `../flydsl/moe.md` § grouped_wgrad §2.
 
 ## 3. K tails: let the descriptor zero them, except where it cannot
 - **Token-outer operands (tensorwise, bf16).** Fold `m_start · OUT` into the 64-bit descriptor base and bound
   `num_records` to `max(M_g · OUT − tile_offset, 0)`: reads past the group's last row return zero, so the last
   chunk or tail needs no predicate (`_wgrad_rebase`, FP8:2072-2085; FP8:3443-3451). The clamp at zero is what
-  keeps an empty group legal (`flydsl_grouped_group_mapping.md` §7–§8).
+  keeps an empty group legal (`grouped_group_mapping.md` §7–§8).
 - **Token-inner operands (MX, `[OUT, M_total]`).** A record count bounds the whole row band, not a row's token
   range, so a tile that runs past its group reads the next group's real tokens and accumulates them. Pad each
   group to the K block (128 tokens in MX8) so the step count is exact (MX8:1481), and guard the last chunk at
   run time (`k_abs < k_iters`). Only an unbalanced gate sees a missing guard: tile-aligned groups never over-run
-  (`flydsl_grouped_correctness.md` §1).
+  (`grouped_correctness.md` §1).
 - Over-reading past K is legal only when every term it adds is exactly zero: `../gemm/mainloop.md` §6.
 
 ## 4. MX: the lever is when the scales are loaded
 - *(field, E4)* MXFP8 variable-K wgrad loaded the A/B scales in the same step as the MFMAs that use them, which put
-  the scale `ds_read` latency on the MFMA path. Prefetching them one step ahead, as the dense NT kernel does, took
-  four shapes from 930/1047/530/307 to 851/936/478/274 µs (about 9%). Keeping the accumulators in SSA alone gained
-  0; the scale prefetch alone gave all of it. Form: a chunk-local body with SSA accumulators and per-step scale
-  prefetch, touching register memory only at chunk boundaries (`_wgrad_ssa_chunk`, MX8:166).
+  the scale `ds_read` latency on the MFMA path. A change that prefetched them one step ahead, as the dense NT kernel
+  does, took four shapes from 930/1047/530/307 to 851/936/478/274 µs (about 9%). The change also reworked how the
+  accumulators are held, which alone gained nothing; the prefetch gave about all of it (`_wgrad_ssa_chunk`, MX8:166).
 - Scale loads must be few and wide. *(field, E5)* A whole-loop MXFP8 wgrad that fetched scales with 16 `buffer_load_ubyte`
   per phase into 16 scattered VGPRs ran 811 µs against 479 µs for the chunked kernel. From an 807 µs reading,
   removing those loads alone gave 448 µs; cutting the scale registers from 16 to 2 gave 506 µs. Byte loads are
-  issue-bound and prefetching does not hide them. Pack four E8M0 per dword, per group: `flydsl_grouped_lowprec.md` §3.
-- The scaled MFMA instruction itself is free (`flydsl_grouped_lowprec.md` §4).
+  issue-bound and prefetching does not hide them. Pack four E8M0 per dword, per group: `grouped_lowprec.md` §3.
+- The scaled MFMA instruction itself is free (`grouped_lowprec.md` §4).
+
+In FlyDSL: `../flydsl/moe.md` § grouped_wgrad §4.
 
 ## 5. Dispatch order: wgrad tiles are not equivalent
 In NT every tile of a launch costs the same and skew changes how many tiles a group has. In wgrad every group has
 the same tiles and skew changes what each costs. The mechanics of XCD orders are in
-`flydsl_grouped_scheduling.md`; what follows is specific to wgrad.
+`grouped_scheduling.md`; what follows is specific to wgrad.
 - **Never slice the tile list contiguously across XCDs.** That hands whole groups to one XCD
-  (`flydsl_grouped_scheduling.md` §1).
+  (`grouped_scheduling.md` §1).
 - **Keep the hardware round-robin (`bid % 8`, `num_xcd = 1`)**, which spreads every group evenly over the XCDs,
   and take L2 reuse from a `group_m`/`group_n` band inside a group. Turbo's tensorwise candidates are all
   `num_xcd = 1` ("xcd=1 keeps group-major LPT order", FP8:4654-4656); its XCD-affine variant keeps the hardware
@@ -118,11 +103,11 @@ the same tiles and skew changes what each costs. The mechanics of XCD orders are
   (FP8:3897-3902). *(field, E6)* On a tensorwise wgrad at G=32, `num_xcd=2` was 6.94% faster on a balanced load and
   22.07% slower under skew; `num_xcd=8` +3.72% and −42.84%.
 - **Group-major order is longest-first only if the token histogram decreases with the group index.** Choose the
-  walk direction or rank the groups on the device from the group table (`flydsl_grouped_scheduling.md` §5).
+  walk direction or rank the groups on the device from the group table (`grouped_scheduling.md` §5).
 - **Group-interleaved band order** (band b of every group, then band b+1) is a different mechanism from the XCD
   band-cyclic remap. It helped under skew at the hardware XCD order (`num_xcd = 1`) and caused the skew collapse
-  on top of a contiguous XCD remap (`flydsl_grouped_scheduling.md` §3).
-- **Do not copy NT dispatch parameters or defaults to wgrad** (`flydsl_grouped_scheduling.md` §1). Each path gets
+  on top of a contiguous XCD remap (`grouped_scheduling.md` §3).
+- **Do not copy NT dispatch parameters or defaults to wgrad** (`grouped_scheduling.md` §1). Each path gets
   its own candidates and constants.
 
 ## 6. Short contractions turn store-bound
@@ -164,7 +149,7 @@ the same tiles and skew changes what each costs. The mechanics of XCD orders are
   cost LDS), plain `ds_read_b64` instead of transpose reads (0), wider epilogue stores (−2 to −7.7%), cross-tile
   overlap (−5%), epilogue double buffering (−1 to −3.5%), swizzle × XCD × `vmcnt` sweeps (<2%), *(field, E16)* persistent vs
   one tile per workgroup on balanced loads (±2%; under heavy skew one tile per workgroup won,
-  `flydsl_grouped_scheduling.md` §6).
+  `grouped_scheduling.md` §6).
 - What paid *(field, E17)*: both B pools three buffers deep instead of only one of them, +2.1–3.8%. The partial drain
   must count the in-flight fills of every deep pool (`../gemm/correctness.md` §4). Also the wave
   bank swizzle (`../gemm/datapath.md` §2) and the lgkm-side partial drain
@@ -180,11 +165,11 @@ the in-launch split-K reduce of `../gemm/grid_pricing.md` §2 and of
   against CUs; `_wgrad_split_geom`, FP8:3688-3704) and cuts a group only if its own contraction clears a bar
   (`_wgrad_is_cut`, FP8:3747). A variant chose one window and its slice count S at run time. *(field, E18)* That
   variant gained 7.57% on a six-cell score (two projections × balanced, moderate and heavy skew) of a tensorwise
-  wgrad; the dispatch layer it added had to win its host cost back (`flydsl_grouped_host_autotune.md` §2).
+  wgrad; the dispatch layer it added had to win its host cost back (`grouped_host_autotune.md` §2).
 - **Layout.** The piece that starts at K=0 writes C; every later piece writes a scratch band at C's pitch, so the
   store only swaps the descriptor base (FP8:3425-3433). Swapping only the base keeps C's cache bits on the band;
   give the band its own: *(field, E19, E20)* on a dense split-K, `nt` partials cost 3–6% and `sc1` paid when another XCD
-  reduced them (`../gemm/epilogue.md` §5). A reduce kernel launched from the same `@flyc.jit` stub, on
+  reduced them (`../gemm/epilogue.md` §5). A reduce kernel launched by the same host launcher, on
   the same stream, folds the bands into C in ascending chunk order, in fp32, with no atomics: bit-reproducible
   (`kernel_grouped_tn_wgrad_reduce`, FP8:4450; launch FP8:4617). Its grid is the compile-time tile space, and a
   launch that cut nothing exits at once. *(field, E21)* ~4 µs on a balanced load, 46–75 µs when it folds.
@@ -207,7 +192,9 @@ the in-launch split-K reduce of `../gemm/grid_pricing.md` §2 and of
 - **A run-time divisor needs full coverage.** When the slice count is chosen at run time and the division uses a
   precomputed reciprocal table, the table must cover every S the policy can reach, and its exactness check must use
   the true dividend range. Assert the coverage at compile time; the gate that catches a gap is in
-  `flydsl_grouped_correctness.md` §9.
+  `grouped_correctness.md` §9.
+
+In FlyDSL: `../flydsl/moe.md` § grouped_wgrad §9.
 
 ## 10. beta = 1: accumulating into the gradient buffer
 - **The read-back is a physical cost and scales with the accumulator dtype.** *(field, E24)* Tensorwise 4-wave wgrad,
@@ -226,7 +213,7 @@ the in-launch split-K reduce of `../gemm/grid_pricing.md` §2 and of
   autotune about doubled). The other side: ranking at the caller's beta lets a beta=0 caller and a beta=1 caller
   run different configurations of one shape. Which a race uses is the owner's choice. FP8 ranks at the caller's
   beta and keeps its numeric gate at beta=0 (FP8:4934-4945); race mechanics are in
-  `flydsl_grouped_host_autotune.md` §6.
+  `grouped_host_autotune.md` §6.
 - beta can change code paths beyond the epilogue: the empty-group zero pass exists only at beta=0 (§11).
 
 ## 11. Empty groups
@@ -237,7 +224,7 @@ the in-launch split-K reduce of `../gemm/grid_pricing.md` §2 and of
   zero store has no MFMA to hide under; Turbo's note puts that burst at ~0.27 µs/MB against a 0.17 µs/MB write
   roofline (FP8:3996-4000).
 - At beta=1 an empty group's output is left as it was, so FP8 keeps its tiles in the GEMM. Descriptor clamps for
-  empty groups: `flydsl_grouped_group_mapping.md` §8; gates: `flydsl_grouped_correctness.md`.
+  empty groups: `grouped_group_mapping.md` §8; gates: `grouped_correctness.md`.
 
 ## 12. Output layout
 - **Decouple C's pitch from the operands'.** Operands stay padded for the fill addressing; C gets the real
@@ -260,13 +247,15 @@ the in-launch split-K reduce of `../gemm/grid_pricing.md` §2 and of
 - The gate includes skewed, one-hot and empty-group distributions and a large-M shape that forces the deepest
   split branch, compared with an fp32 reference, not only bitwise run-to-run.
 - Dispatch order and `num_xcd` were judged on skewed cells as well as balanced ones.
-- The runtime loop body carries only DSL values; the MX last chunk is guarded.
+- The MX last chunk is guarded.
 - beta=1 was timed at the accumulator dtype the caller uses, with the read-back in the epilogue.
 - A tight-C or fp32 output reaches the same split path as the default output.
 
+In FlyDSL: `../flydsl/moe.md` § grouped_wgrad Verify.
+
 ## Related
-`flydsl_grouped_scheduling.md` · `flydsl_grouped_tile_pricing.md` · `flydsl_grouped_lowprec.md` ·
-`flydsl_grouped_host_autotune.md` · `flydsl_grouped_correctness.md` · `flydsl_grouped_measurement.md` ·
+`grouped_scheduling.md` · `grouped_tile_pricing.md` · `grouped_lowprec.md` ·
+`grouped_host_autotune.md` · `grouped_correctness.md` · `grouped_measurement.md` ·
 `../gemm/mainloop.md` · `../gemm/grid_pricing.md` · `../gemm/epilogue.md` ·
 `../flydsl/debug-flydsl-kernel.md` · `../attention/flydsl_attn_backward.md`
 

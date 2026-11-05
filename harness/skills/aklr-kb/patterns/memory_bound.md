@@ -64,7 +64,7 @@ basis: source-semantics
 - Other kernel families: attention gathers, unique lines and the index distribution —
   `attention/flydsl_attn_decode_split_kv.md` §7; bytes per score and GQA sharer merging —
   `attention/flydsl_attn_grid_dispatch.md` §9; cache policy on MoE weights at decode sizes —
-  `moe/flydsl_grouped_moe_inference.md` §4.
+  `moe/grouped_moe_inference.md` §4.
 
 ## Evidence
 

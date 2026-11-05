@@ -20,7 +20,7 @@ may have made it stale. `maintenance/kb_lint.py` enforces what can be checked me
 - `flydsl/`, `triton/`, `hip/` a language's own pages, each starting at its `SKILL.md`. In `flydsl/`: `language/`
   what FlyDSL itself does (limits, compile errors, version differences), `guides.md` FlyDSL's own skills linked at
   `v0.3.2` with this repository's corrections, `debug-flydsl-kernel.md` debugging, `kernels/` aiter's FlyDSL
-  kernels, their knobs and how to write a new one, `<op>.md` (such as `gemm.md`) the FlyDSL side of an op
+  kernels, their knobs and how to write a new one, `<op>.md` (such as `gemm.md`, `moe.md`) the FlyDSL side of an op
   package's cards. A card states the mechanism and its numbers; how to write it in FlyDSL goes to that page, under
   a heading named after the card's section (`mainloop §8`), and the card's section ends with a pointer to it
 

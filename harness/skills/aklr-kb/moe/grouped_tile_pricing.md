@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL grouped GEMM — tile, occupancy and boundary bodies per pass, priced before building"
+title: "Grouped GEMM — tile, occupancy and boundary bodies per pass, priced before building"
 kind: topic
-lever: flydsl_grouped_tile_pricing
+lever: grouped_tile_pricing
 ops: [grouped_gemm]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp8, mxfp4]
@@ -15,7 +15,7 @@ sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_mxfp4_kernel.py:1716
 ---
 
-# Pricing the tile, the occupancy and the boundary bodies of a FlyDSL grouped GEMM
+# Pricing the tile, the occupancy and the boundary bodies of a grouped GEMM
 
 > Grouped GEMMs on gfx950 reuse the dense 256×256 tile, and where it was measured their main loop ran at dense
 > speed. What the group dimension changes is the price of everything around the loop: more tiles per FLOP,
@@ -36,8 +36,8 @@ sources:
 - A grouped kernel runs its main loop at dense speed and still trails dense by 10% or more.
 
 **Somewhere else if:** the lookup and the dead workgroups that add to the per-tile cost →
-`flydsl_grouped_group_mapping.md`; tile order and tiles per workgroup → `flydsl_grouped_scheduling.md`;
-short-contraction wgrad → `flydsl_grouped_wgrad.md`; MX scale layout → `flydsl_grouped_lowprec.md`.
+`grouped_group_mapping.md`; tile order and tiles per workgroup → `grouped_scheduling.md`;
+short-contraction wgrad → `grouped_wgrad.md`; MX scale layout → `grouped_lowprec.md`.
 
 ## 1. The register wall comes before LDS
 256×256 is the largest tile that fits, for both large-tile loop designs (`../gemm/mainloop.md` §1):
@@ -48,7 +48,7 @@ short-contraction wgrad → `flydsl_grouped_wgrad.md`; MX scale layout → `flyd
 - **4 waves, 1 wave per SIMD** (one 256-thread workgroup per CU). The fp32 accumulators of a tile are
   `BM × BN ≤ 4 waves × 64 lanes × 256 AGPRs = 65536`: 256×256 is exactly the AGPR file. An MXFP4
   BM = 384 would need ~620 registers per lane (estimated) against 512. In the measured MXFP4 grouped kernel BM must also
-  be a multiple of 128 because of its scale-slab layout (`flydsl_grouped_lowprec.md` §4).
+  be a multiple of 128 because of its scale-slab layout (`grouped_lowprec.md` §4).
 - **So the operand fill cannot shrink by tiling.** A `buffer_load … lds` costs the 128-byte lines it covers
   (`../gemm/datapath.md` §6); lines per unit of MFMA work go as `(BM + BN) / (BM · BN)` and do not
   depend on BLOCK_K. Only a larger tile lowers them, and the tile is at the wall. *(field, E3)* `BLOCK_N = 128` on
@@ -65,8 +65,8 @@ short-contraction wgrad → `flydsl_grouped_wgrad.md`; MX scale layout → `flyd
 
 ## 2. Waves per SIMD: decide per pass
 - On fp8 per-tensor, the 4-wave design (1 wave per SIMD) won every variable-K wgrad point against 8 waves (2
-  per SIMD), a minority of the NN dgrad points and almost no forward points (`flydsl_grouped_wgrad.md` §8). It
-  pays where both operands are transpose-read (`ds_read_b64_tr_b8`; mechanism in `flydsl_grouped_wgrad.md` §8);
+  per SIMD), a minority of the NN dgrad points and almost no forward points (`grouped_wgrad.md` §8). It
+  pays where both operands are transpose-read (`ds_read_b64_tr_b8`; mechanism in `grouped_wgrad.md` §8);
   the forward pass reads both operands K-contiguous.
 - The fastest grouped kernel measured is that wgrad: 4 waves, 1 wave per SIMD, 256 AGPR accumulators, a full
   160 KB of LDS, 0.13 synchronization instructions per MFMA against 0.93 for an 8-wave MXFP8 NT *(field, E6)*.
@@ -85,12 +85,12 @@ short-contraction wgrad → `flydsl_grouped_wgrad.md`; MX scale layout → `flyd
 - **The 8-wave NT barriers that look removable are load-bearing for speed.** On MXFP8 NT the pre-MFMA rendezvous
   added no ordering the gates could see (the barrier after the MFMAs guards LDS reuse), but it kept the waves' MFMA
   bursts in phase; without it they drift and contend for issue and LDS. Whether an opening rendezvous orders
-  anything differs per kernel (`flydsl_grouped_correctness.md` §8). *(field, E10, E11)* MXFP8 NT: removing the pre-MFMA
+  anything differs per kernel (`grouped_correctness.md` §8). *(field, E10, E11)* MXFP8 NT: removing the pre-MFMA
   rendezvous barriers was 3.3% slower overall (2.6–6.9% on all 8 NT configs), removing a steady-state barrier 6.1%
   (worst config 8.7%), merging MFMA phases 1.6%, all with SNR and determinism intact. Before deleting a barrier, ask
   whether it is an ordering constraint (`../gemm/mainloop.md` §2) or a phase-alignment device. Deleting
   the rendezvous of the last K steps, which issue no new fill but still make the fills issued two steps earlier
-  visible across waves, raced (`flydsl_grouped_correctness.md` §8).
+  visible across waves, raced (`grouped_correctness.md` §8).
 
 ## 3. Small-M dgrad: when BLOCK_M = 128 pays
 - With few tokens per group a dgrad grid of 256-row tiles leaves CUs idle. Halving BLOCK_M doubles the M tiles,
@@ -104,7 +104,7 @@ short-contraction wgrad → `flydsl_grouped_wgrad.md`; MX scale layout → `flyd
 - Recompute the grid bound from BLOCK_M. *(field, E15)* An MXFP8 NT sweep whose bound was hard-coded for 256 rows
   launched half the tiles at BLOCK_M = 128 and read 9–35% "faster"; with `ceil(M_pad / BM) + G` it was 1.55×
   slower than the per-tensor reference kernel (1666 vs 2576 TF/s). Before believing a tile change, show the
-  full grid ran (`flydsl_grouped_correctness.md`).
+  full grid ran (`grouped_correctness.md`).
 
 ## 4. Boundary half tiles: what to delete, what to keep
 When `OUT % BLOCK ≠ 0` and `OUT % BLOCK ≤ BLOCK / 2`, the back half of the last block is padding: its
@@ -178,11 +178,11 @@ writes it `a · n_kblocks + F`; its pitfalls:
   same table carried the control: two of the three cells with 45 K iterations per tile passed, none of the
   nine with 23.
 - *(field, E36)* That F split into launch 1.39, group decode 0.85, C store 2.37 and cold fill 0.80 µs.
-- What the group dimension puts into F: the group lookup (`flydsl_grouped_group_mapping.md` §5), dead
+- What the group dimension puts into F: the group lookup (`grouped_group_mapping.md` §5), dead
   workgroups (§3 there), ragged tiles per group (§4 here), and a cold L2 for each group's slab
-  (`flydsl_grouped_scheduling.md` §9).
+  (`grouped_scheduling.md` §9).
 - So the levers are F (lookup, decode, store overlap, boundary bodies, kernel-argument preload:
-  `../gemm/small_m.md` §6) or longer tiles per workgroup (`flydsl_grouped_scheduling.md` §6–§7), not
+  `../gemm/small_m.md` §6) or longer tiles per workgroup (`grouped_scheduling.md` §6–§7), not
   the main loop.
 - For wgrad the grid is `G × tiles per group`, so G sets the last-round fill: 144 tiles per group fill 18.0
   rounds of 256 CUs at G = 32 and 13.5 at G = 24. Count rounds for every G you deploy
@@ -191,7 +191,7 @@ writes it `a · n_kblocks + F`; its pitfalls:
 ## 7. Store-bound short contractions
 A variable-K wgrad writes G full output slices whatever the token split, so groups with few tokens make it
 store-bound. The short-contraction blocking with non-temporal C stores, and its crossover, which scales with
-tiles per group rather than with a token count, are in `flydsl_grouped_wgrad.md` §6.
+tiles per group rather than with a token count, are in `grouped_wgrad.md` §6.
 
 ## Verify
 - The compile-only dump shows no spill and the expected barrier count before any timing.
@@ -202,8 +202,8 @@ tiles per group rather than with a token count, are in `flydsl_grouped_wgrad.md`
 - A K sweep separates F from P before work on the main loop.
 
 ## Related
-`flydsl_grouped_group_mapping.md` · `flydsl_grouped_scheduling.md` · `flydsl_grouped_wgrad.md` ·
-`flydsl_grouped_lowprec.md` · `flydsl_grouped_correctness.md` · `flydsl_grouped_measurement.md` ·
+`grouped_group_mapping.md` · `grouped_scheduling.md` · `grouped_wgrad.md` ·
+`grouped_lowprec.md` · `grouped_correctness.md` · `grouped_measurement.md` ·
 `../gemm/grid_pricing.md` · `../gemm/mainloop.md` · `../gemm/datapath.md` §6 ·
 `../gemm/attribution.md` §7
 

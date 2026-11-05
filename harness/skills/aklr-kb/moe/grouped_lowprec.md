@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL grouped GEMM — fp8 tensorwise, MXFP8 and MXFP4"
+title: "Grouped GEMM — fp8 tensorwise, MXFP8 and MXFP4"
 kind: topic
-lever: flydsl_grouped_lowprec
+lever: grouped_lowprec
 ops: [grouped_gemm]
 gens: [gfx950]
 dtypes: [fp8, mxfp8, mxfp4]
@@ -17,7 +17,7 @@ sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/pytorch/ops/grouped_gemm_fp8.py
 ---
 
-# Low precision in a FlyDSL grouped GEMM
+# Low precision in a grouped GEMM
 
 > What fp8 with per-tensor scales, MXFP8 and MXFP4 add to a grouped GEMM: per-group scale tensors and their
 > preshuffle, scale packing, scale delivery, quantization cost, padding, the C store, and GLU/dGLU fusion. The
@@ -43,14 +43,14 @@ sources:
 - **MX dgrad runs as NT on a column-quantized weight** (OPS8:806): the preshuffled block scale of B is "only
   walkable by the NT addressing" (MX4G:21-23). Tensorwise dgrad stays NN with transpose reads.
 - **MX wgrad takes column-quantized operands `[OUT, M_total]`**; K tails then need a run-time guard
-  (`flydsl_grouped_wgrad.md` §3).
+  (`grouped_wgrad.md` §3).
 - **Quantization runs every call for activations and gradients.** Weights quantize once per optimizer step and
   the backward reuses them; a benchmark that passes high-precision weights re-quantizes them per call. *(field, E1)*
   Pre-quantizing weights took one fused MoE MLP forward from 4.28 to 3.47 ms; the backward did not change.
 
 ## 2. The scale preshuffle is a per-call helper kernel
 Scales arrive per call (activations, gradients), so the repack into the MFMA layout runs every call. Launch it
-from the same `@flyc.jit` stub as the GEMM so it costs no Python dispatch (MX8:1101-1120;
+from the GEMM's host launcher, so the pair costs one launcher call and runs in stream order (MX8:1101-1120;
 `../gemm/datapath.md` §11). Then find out what bounds it.
 - **E8M0 repack (MXFP8) is dispatch- and latency-bound.** *(field, E2)* On the measured build it took 0.8–1.5% of the
   call's wall time at an effective 2.6–2.9 TB/s, a third of HBM bandwidth. *(field, E3)* Only cutting the workgroup count
@@ -63,12 +63,14 @@ from the same `@flyc.jit` stub as the GEMM so it costs no Python dispatch (MX8:1
   re-sweep it after a pitch change.
 - **MXFP4 repack can be VALU-bound.** *(field, E4)* A per-thread O(G) group scan to map 64-row slabs back to source
   rows ran 759 VALU per wave for 8 useful dwords per thread; the lane-resident group table of
-  `flydsl_grouped_group_mapping.md` §5 cut it to ~206 and the kernel from 35.3 to 16.3 µs, +1.1% geomean over 18
+  `grouped_group_mapping.md` §5 cut it to ~206 and the kernel from 35.3 to 16.3 µs, +1.1% geomean over 18
   cells. Rule: more than ~10 VALU per useful dword means index arithmetic owns the kernel; widening stores or
   staging in LDS will not help.
 - **Its cost is not what removing it saves.** *(field, E5)* Turning the MXFP8 repack off made the call 6 µs slower: it
   had warmed the scale workspace in L2 for the GEMM. *(field, E6)* A trace overstates such kernels 2–3× against their
-  in-stream cost (`flydsl_grouped_host_autotune.md` §7).
+  in-stream cost (`grouped_host_autotune.md` §7).
+
+In FlyDSL: `../flydsl/moe.md` § grouped_lowprec §2.
 
 ## 3. Pack four E8M0 per dword — per group on wgrad
 - `op_sel` picks one of four bytes, so four is the hardware ceiling (`../gemm/datapath.md` §11).
@@ -107,7 +109,7 @@ from the same `@flyc.jit` stub as the GEMM so it costs no Python dispatch (MX8:1
   807 → 807 µs with the scale operand removed. Scale cost is load issue and registers, not the instruction.
 - MX tile heights are fixed by the scale layout. In an MXFP4 grouped kernel whose A-scale repack groups
   64 rows and whose wave regions walk 128, `BLOCK_M` must be a multiple of 128: a 288-row tile puts a wave at row
-  144 and selects the wrong byte. Re-lay the scale slab before trying odd tile heights.
+  144 and selects the wrong byte (S1). Re-lay the scale slab before trying odd tile heights.
 
 ## 5. Quantization: a large share of the forward, a small lever
 - *(field, E15)* Grouped MX quantization was 35–42% of the forward's absolute time on four shapes at 4096 tokens per
@@ -116,12 +118,14 @@ from the same `@flyc.jit` stub as the GEMM so it costs no Python dispatch (MX8:1
   and the difference between two speed ratios is neither.
 - **Fuse the per-call metadata into one prologue kernel.** *(field, E16)* Each quantizer workgroup ran an O(G) group search over
   three offset tables; in a short memory-bound kernel that exposed ~42 µs. One prologue thread per M block does
-  the search once and writes the block's row base, offset and end, launched back to back in the same `@flyc.jit`
-  stub. *(field, E16)* Kernel 155 µs, call 181 µs, faster than the HIP quantizer. Moving the search to host-side torch
-  ops gave a 153 µs kernel and a 236 µs call: ~10 tiny launches added 80–120 µs.
+  the search once and writes the block's row base, offset and end, launched back to back from the same host
+  launcher as the quantizer. *(field, E16)* Kernel 155 µs, call 181 µs, faster than the HIP quantizer. Moving the
+  search to host-side torch ops gave a 153 µs kernel and a 236 µs call: ~10 tiny launches added 80–120 µs.
 - **Quantize all expert weights in one launch.** Batch the dense quantizer over `[G, N, K]` with a per-batch scale
   byte base, dword-aligned so neighbouring experts' packed scales do not share a dword. *(field, E31)* 1.3–1.54×
   faster than the HIP kernel; a Python loop over experts was 2.7–4.3× slower than HIP.
+
+In FlyDSL: `../flydsl/moe.md` § grouped_lowprec §5.
 
 ## 6. Padding goes on the contraction dimension
 - A row pitch ≡ 64 mod 128 B makes every other row straddle two lines (`../gemm/datapath.md` §6, §10).
@@ -134,8 +138,8 @@ from the same `@flyc.jit` stub as the GEMM so it costs no Python dispatch (MX8:1
   `K % 128 == 64` (`nn_kshear`, FP8:218, 277-280; its comment reports +25.7% L1→L2 read requests without it).
   For MX, pad only the scales: zero E8M0 past K makes over-read terms exactly zero, so the operand keeps its real
   K (`k_real`, MX4:364-373; `../gemm/mainloop.md` §6).
-- Never re-pad a weight per call: `flydsl_grouped_host_autotune.md` §4. Free-dim padding for wgrad outputs:
-  `flydsl_grouped_wgrad.md` §12.
+- Never re-pad a weight per call: `grouped_host_autotune.md` §4. Free-dim padding for wgrad outputs:
+  `grouped_wgrad.md` §12.
 
 ## 7. The C store for grouped outputs
 The store classes and their measured prices are in `../gemm/epilogue.md` §2–§4, cache bits in §5 and
@@ -143,7 +147,7 @@ line-aligned column blocks in §1. "Folded" below names a store form, not a spli
 What grouped adds:
 - **The store is bytes, not VALU.** *(field, E19)* MXFP4 grouped NT: deleting the C-store epilogue saved 61% of the
   per-tile fixed cost (4.87 of ~7.9 µs per tile, fitted on that build; the F/P fit is in
-  `flydsl_grouped_tile_pricing.md` §6); deleting 254 `v_accvgpr_read` and 254 conversions while keeping every
+  `grouped_tile_pricing.md` §6); deleting 254 `v_accvgpr_read` and 254 conversions while keeping every
   store saved 0.5–1.0%, hidden behind the store drain.
 - **With narrow (2-byte) folded stores, do not issue consecutive stores to the same 128 B line.** *(field, E20)*
   MXFP4 grouped at one wave per SIMD: grouping folded stores by output row so four in a row fill one line:
@@ -170,7 +174,7 @@ What grouped adds:
 - **Find what the gap is made of before attacking it.** Compare memory instructions per MFMA, steady-state time per
   K iteration, synchronization instructions per MFMA and K iterations per tile. *(field, E25)* An MXFP8 8-wave NT kernel
   against the tensorwise 4-wave wgrad it had to beat led on the first two and lost on the last two
-  (`flydsl_grouped_tile_pricing.md` §2, §6); DRAM bytes, L1→L2 requests and power were level. Its extra
+  (`grouped_tile_pricing.md` §2, §6); DRAM bytes, L1→L2 requests and power were level. Its extra
   synchronization is not free to delete: the 8-wave barriers keep the waves in phase (§2 there).
 - **Instruction trimming in the steady state pays only when non-MFMA issue demand approaches the MFMA shadow.**
   *(field, E26)* Cutting the MXFP4 grouped loop from 442 to 419 (NT) and 410 to 387 (wgrad) instructions, all SALU,
@@ -185,7 +189,7 @@ What grouped adds:
   51.6% on the highest. Compare utilization counters across wave counts only after
   `../gemm/attribution.md` §9.
 - Raising fp4 occupancy by splitting the 256×256 tile over eight waves lost with both pipeline forms
-  (`flydsl_grouped_tile_pricing.md` §2). Raise the per-wave feed at one wave per SIMD instead.
+  (`grouped_tile_pricing.md` §2). Raise the per-wave feed at one wave per SIMD instead.
 
 ## 10. GLU and dGLU fused into the epilogue
 - **Accept on fused total against unfused total**, not on the fused kernel's TF/s against a bare GEMM
@@ -210,14 +214,14 @@ What grouped adds:
 
 ## Verify
 - Packed-scale kernels are gated with unaligned group starts and random E8M0 exponents, against a reference.
-- Each helper kernel (repack, quantizer, padding) was priced in the stream and launches from the GEMM's stub.
+- Each helper kernel (repack, quantizer, padding) was priced in the stream and launches from the GEMM's host launcher.
 - The padded dimension of every operand is its contraction dimension, checked per pass.
 - `nt` on C is enabled only for whole-row stores and was measured at the deployed group count.
 - Fused GLU/dGLU was accepted on total time, with pre-quantized weights.
 
 ## Related
-`flydsl_grouped_wgrad.md` · `flydsl_grouped_group_mapping.md` · `flydsl_grouped_tile_pricing.md` ·
-`flydsl_grouped_host_autotune.md` · `flydsl_grouped_correctness.md` · `flydsl_grouped_measurement.md` ·
+`grouped_wgrad.md` · `grouped_group_mapping.md` · `grouped_tile_pricing.md` ·
+`grouped_host_autotune.md` · `grouped_correctness.md` · `grouped_measurement.md` ·
 `../gemm/datapath.md` · `../gemm/epilogue.md` · `../gemm/mainloop.md` ·
 `../gemm/attribution.md`
 

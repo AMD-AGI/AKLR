@@ -1,7 +1,7 @@
 ---
-title: "FlyDSL grouped GEMM — inference MoE expert GEMMs: sorted-token mapping, persistence, cache policy, stage 2"
+title: "Grouped GEMM — inference MoE expert GEMMs: sorted-token mapping, persistence, cache policy, stage 2"
 kind: topic
-lever: flydsl_grouped_moe_inference
+lever: grouped_moe_inference
 ops: [grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [bf16, fp8, int8, int4, mxfp4]
@@ -24,71 +24,44 @@ sources:
   - ROCm/FlyDSL@dd8373349:kernels/moe/mxfp_moe/gemm2.py:105
   - ROCm/FlyDSL@dd8373349:kernels/moe/mxfp_moe/gemm2.py:230-289
   - ROCm/FlyDSL@dd8373349:kernels/moe/mxfp_moe/gemm2.py:315-319
-  - ROCm/FlyDSL@dd8373349:kernels/moe/mxfp_moe/host.py:21-48
   - ROCm/FlyDSL@dd8373349:kernels/moe/mxfp_moe/host.py:110
   - ROCm/FlyDSL@dd8373349:kernels/moe/mxfp_moe/host.py:125-138
-  - ROCm/FlyDSL@dd8373349:kernels/moe/mxfp_moe/host.py:202-209
   - ROCm/FlyDSL@dd8373349:kernels/moe/moe_2stage_a16wmix/gemm2.py:34-41
-  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/numeric.py:502-505
   - ROCm/FlyDSL@dd8373349:kernels/moe/moe_2stage_a16wmix/gemm2.py:495-505
-  - ROCm/FlyDSL@dd8373349:kernels/moe/moe_2stage_a16wmix/gemm2.py:517
   - ROCm/FlyDSL@dd8373349:kernels/moe/moe_2stage_a16wmix/gemm2.py:630-641
 ---
 
-# FlyDSL MoE expert GEMMs for inference
+# MoE expert GEMMs for inference
 
 > The one card on inference MoE expert GEMMs: tokens are sorted by expert into blocks of tile-M rows, and each
 > workgroup runs one (M-block, N-block) of one expert — stage 1 is gate + up with the activation, stage 2 the down
 > projection with the routing weights. FlyDSL facts are for v0.3.2 (`kernels/moe/`); this repository does not
-> contain that tree, and the copies the baseline aiter ships differ in places (§1). "BM" in FlyDSL's code is tile-M.
+> contain that tree, and the copies the baseline aiter ships differ in places (`../flydsl/moe.md`
+> § grouped_moe_inference §1). "BM" in FlyDSL's code is tile-M.
 > Numbers marked `*(field, E<n>)*` are measured values from MoE kernels of this family at decode batch sizes (a4w4,
-> and a8w4 for the comm-fused stage 2 and E24–E29's 112-of-896-expert MoE), except where a sentence names another kernel; their conditions are listed
+> and a8w4 for the comm-fused stage 2 and E24–E28's 112-of-896-expert MoE), except where a sentence names another kernel; their conditions are listed
 > under Evidence at the end. Use them for direction and order of magnitude. aiter's FlyDSL
 > MoE families, their entry points and knobs, and AKLR's own MoE kernels are in
-> `../flydsl/kernels/flydsl_kernel_library.md`; a worked AKLR case is `../moe/flydsl_moe_decode.md`. Training
+> `../flydsl/kernels/flydsl_kernel_library.md`; a worked AKLR case is `decode.md`. Training
 > grouped GEMMs (variable-K wgrad, group offsets) are the rest of this package (`INDEX.md`).
 
 ## Route here when
-- You are writing, calling or tuning a FlyDSL MoE stage 1 or stage 2, or the token sort in front of them.
+- You are writing, calling or tuning a MoE stage 1 or stage 2, or the token sort in front of them.
 - You are choosing tile-M, tile-N, grid order, the weights' cache policy, atomics or a reduce, or a persistent
   stage 2.
 - A MoE GEMM is fast at one batch size and slow at another.
 
 ## 1. What FlyDSL v0.3.2 ships
 
-| Path | Operands | Stage 2 | Grid |
-|---|---|---|---|
-| `moe_gemm_2stage/` | fp8 E4M3, int8, int8smooth, int4 W (W4A8) | atomics, or partials + reduce | 2D: x = N, y = M-block |
-| `mxfp_moe/` | a4w4, a8w4 (fp8 A × MXFP4 W), gfx950 | atomic, non-atomic, CShuffle, MXFP4-/fp8-out | 1D, N fastest |
-| `moe_2stage_a16wmix/` | bf16 A × MXFP4, int4 or bf16 W | atomic scatter, optional persistent | 1D, N fastest |
-| `moe_sorting_kernel.py` | token sort by expert | — | — |
+FlyDSL v0.3.2's `kernels/moe/` has three MoE GEMM families, which the sections below name bare: `moe_gemm_2stage`
+(fp8, int8 or int4 weights; stage 2 by atomics, or by partials plus a reduce), `mxfp_moe` (a4w4 and a8w4 on gfx950,
+with its own sort contract, `mxfp_moe/__init__.py:4-17`) and `moe_2stage_a16wmix` (`a16wmix`: bf16 activations ×
+MXFP4, int4 or bf16 weights). Its token sort is `moe_sorting_kernel.py`. The baseline aiter's `flydsl_moe1_*` and
+non-layout `flydsl_moe2_*` rows run aiter's *mixed builders* (`mixed_moe_gemm_2stage_common.py`, which v0.3.2 no
+longer ships), except its bf16-activation rows (`_abf16_wfp4`, `_abf16_wint4`), which run aiter's copy of
+`moe_2stage_a16wmix`. CShuffle is the epilogue that stages C through LDS to reshuffle it into wide, coalesced stores.
 
-`moe_gemm_2stage` has f16/bf16/f32 outputs. `mxfp_moe` stage 1 fuses gate+up, SiLU
-and an fp4 re-quantization of the intermediate; its MXFP4-out stage 2 is persistent. `moe_2stage_a16wmix` issues
-one K=32 MFMA (`mfma_f32_16x16x32_bf16`) per K step (`moe_2stage_a16wmix/utils.py:26-38`).
-
-`mxfp_moe` uses its own sorting contract (`cumsum` plus `m_indices`, `__init__.py:4-17`). CShuffle is the
-epilogue that stages C through LDS to reshuffle it into wide, coalesced stores. FlyDSL also ships a fused
-dispatch + GEMMs + combine kernel (`kernels/mega_moe/`); it is not covered here.
-
-**In the baseline aiter** (`aiter/ops/flydsl/kernels/`): the FlyDSL code that aiter's `fused_moe`, AKLR's
-baseline, may dispatch to by tuned row (other rows run CK or HIP kernels):
-
-| FlyDSL v0.3.2 | baseline aiter | How they relate |
-|---|---|---|
-| `mxfp_moe/` | `mxfp4_gemm1.py` (`compile_gemm1_a4w4_port` :775), `mxfp4_gemm2.py` (`compile_gemm2_a4w4_port` :86); hosts `aiter/ops/flydsl/mxfp4_gemm{1,2}_kernels.py` | one pipeline, "ported back from aiter" into FlyDSL (`mxfp_moe/__init__.py:6`); the copies have diverged since |
-| `moe_2stage_a16wmix/` | `moe_2stage_a16wmix/` (`compile_gemm1_a16w4_port` `gemm1.py:375`, `compile_gemm2_a16w4_port` `gemm2.py:304`) | the same design (persistent above `4 · NUM_CU`, `b_cache_mod=2`); line numbers differ |
-| `moe_gemm_2stage/` | no copy; only `moe_reduce.py` corresponds (`compile_moe_reduction` :206) | aiter's `flydsl_moe1_*` and non-layout `flydsl_moe2_*` rows run the parametric `mixed_moe_gemm_2stage_common.py` instead, which v0.3.2 no longer ships (`mxfp_moe/__init__.py:16`) |
-| `moe_sorting_kernel.py` | `moe_sorting_kernel.py` (`moe_sorting_flydsl` :1934), `UNIT_SIZE = 32` | the same algorithm; aiter sorts with Opus unless `AITER_USE_FLYDSL_MOE_SORTING=1` (`aiter/fused_moe.py:64-66`), and its MXFP4 path with the HIP `aiter.mxfp4_moe_sort` (`aiter/fused_moe.py:161`) |
-| — | v2 stage 2: `mxmoe_dispatcher.py` (`mxfp4_moe_gemm2` :616), `mxmoe_gemm_v2.py` (:221) | aiter only |
-
-Most FlyDSL rows in aiter's tuned fused-MoE tables are `flydsl_moe1_*` and `flydsl_moe2_*` (the mixed builders, and
-the v2 stage 2 for `flydsl_moe2_layout_*`); `flydsl_mxmoe_*` rows are a small minority. Where aiter's
-`mxfp4_gemm{1,2}` differ from what this card cites: stage 2 is persistent for the plain non-atomic and the MXFP4-out
-epilogues, not CShuffle (`_persistent`, `mxfp4_gemm2.py:113`); the non-persistent atomic path keeps the hardware XCD
-order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel name (`aiter/fused_moe.py:1646`,
-`:1833`) instead of the automatic switch of §4; and the hosts build a4w4 only, with no fp8-out epilogue
-(`_SUPPORTED` in both host files).
+In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §1.
 
 ## 2. How the work is mapped
 
@@ -124,10 +97,9 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
   decodes to token 0 and piles garbage onto it (`gemm1.py:412-423`).
 - **Exit on the raw id, then remap.** `mxfp_moe` tests `bx < bound` first; only then does it map `bx` through a
   bijection over `[0, bound)` that gives each of the 8 XCDs a contiguous slice of the tile order, followed by an
-  M-group swizzle of `xcd_swizzle` blocks. Stage 1 applies this only when `xcd_swizzle > 0` (default 0,
-  `gemm1.py:752-774`, `host.py:110`); stage 2 always applies the XCD part (`gemm2.py:230-254`, `:273-289`), aiter's
-  copy only on its persistent path. Remapping before the exit would put all dead ids on one XCD
-  (`flydsl_grouped_group_mapping.md` §4). The contiguous slice is not measured here; *(field, E1, E2)* on a dense
+  M-group swizzle of `xcd_swizzle` blocks. Stage 1 does this only when `xcd_swizzle > 0` (off by default); stage 2
+  always applies the XCD part. Remapping before the exit would put all dead ids on one XCD
+  (`grouped_group_mapping.md` §4). The contiguous slice is not measured here; *(field, E1, E2)* on a dense
   read-once stream, one contiguous slice per XCD lost 2–10% where runs of 8 tiles gained
   (`../gemm/small_m.md` §6): race the remap against the hardware order.
 - **aiter's mixed builders remap tiles across XCDs before the validity test, and not one-to-one.** The remap runs
@@ -145,12 +117,9 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
   (`../gemm/grid_pricing.md` §10): race that form too.
 - **The non-persistent atomic stage 2 is HBM-bound**: each tile reads a full fp4 weight column block with about 4%
   L2 reuse; FlyDSL's `mxfp_moe` applies the XCD remap above to it to balance HBM channels (`gemm2.py:262-289`).
-- Per-expert 64-bit bases: `flydsl_grouped_group_mapping.md` §7.
-- **A guard inside a helper needs `@flyc.jit`.** `a16wmix`'s atomic epilogue helper is a `@flyc.jit` function so
-  that `if token_id < M` is rewritten into a device branch. As a plain Python function the `if` runs at trace
-  time: on a `Numeric` value it raises, but on a raw `ArithValue` (e.g. an `llvm.load` result) it is always true,
-  so the guard disappears silently, the atomic scatter fires on padded rows, and stage 2 ran ~13× slower at a
-  very large expert count (`gemm2.py:39-41`; `Numeric.__bool__`, `python/flydsl/expr/numeric.py:502-505`).
+- Per-expert 64-bit bases: `grouped_group_mapping.md` §7.
+
+In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §2.
 
 ## 3. Grid shape at decode sizes
 
@@ -177,8 +146,8 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
   zero (`../hardware/gfx950/memory_and_sync.md` §2.3; the bounded descriptor, `../flydsl/language/limits.md`). A stage 2 that reads A by
   sorted row gained: +1.0%, 0.9–1.0 µs at 8 and 12 tokens *(field, E26)*; 58.7 → 57.0 µs at 40 tokens *(field, E31)*.
   A stage 1 that maps padding to token 0 gained nothing: every padding row already hits one cached row.
-- **aiter's v2 stage 2: stage C in fp32.** With `g2_kstatic` the bf16 default leaves 2 A slots and a barrier per K tile
-  (`mxmoe_dispatcher.py:187–201`, `mxmoe_gemm_v2.py:734`); *(field, E29)* `g2_bf16_lds=False` won every pair, +0.37%.
+
+In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §3.
 
 ## 4. Cache policy on the weights
 
@@ -186,8 +155,7 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
   reuses another's weights, and switches to cached loads once total M-blocks ≥ experts (on average at least one
   padded block per expert); consecutive M-blocks of one expert reuse weight columns only past tile-M rows per
   expert (§8). Its note: L2 hit ~34% streaming against ~59% cached, ~22% faster at an effective M of 8192
-  (`host.py:125-138`). The `a16wmix` stage 2 defaults its B loads to the same non-temporal cache modifier (`b_cache_mod=2`,
-  `gemm2.py:517`). aiter's host has no such switch: `use_nt` comes from the tuned row (§1). On dense small-M GEMMs
+  (`host.py:125-138`). On dense small-M GEMMs
   the B policy also coupled with the K tile (`../gemm/small_m.md` §6).
 - **Non-temporal is a property of each load, not of the operand.** *(field, E8)* Choosing per M-block — cached when a
   neighbour in sorted order has the same expert (`sorted_expert_ids[blk ± 1] == expert`), non-temporal otherwise —
@@ -212,6 +180,8 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
 - **Warming stage 2's weights from an earlier launch.** *(field, E28)* Spare stage-1 workgroups reading w2 slowed stage 1
   more than stage 2 sped up at every share of w2 tried (¼: +7.6 against −2.6 µs at 8 tokens).
 
+In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §4.
+
 ## 5. Tile-M equals the sort unit
 
 - Each sorted block holds one expert's rows. A tile-M smaller than the block splits it into several M-tiles, and
@@ -230,17 +200,17 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
 
 ## 6. Stage 2: atomics or split + reduce
 
-- **`moe_gemm_2stage`** (`gemm2.py:595-619`): `accumulate=True` adds into the output with atomics — f16 half2
-  atomics are fast but can overflow to ±inf, bf16 uses buffer atomics, f32 scalar atomics are slower and
-  avoid the overflow. `accumulate=False` writes per-(token, slot) partials (f16/bf16 only) for
-  `compile_moe_reduction`, launched over `(tokens, model_dim blocks)` (`moe_reduce.py:164-203`).
+- **`moe_gemm_2stage`: atomics by output dtype, or partials and a reduce** (`gemm2.py:595-619`). f16 packed (half2)
+  atomics are fast but can overflow to ±inf; bf16 uses buffer atomics; f32 scalar atomics are slower and avoid the
+  overflow. The non-atomic form writes per-(token, slot) partials, and a separate reduce kernel sums them over a
+  (tokens, model_dim blocks) grid (`moe_reduce.py:164-203`).
 - **Count the local routes per token before choosing.** With all 16 of a token's routes local (TP, 896 experts, 9–16k
   tokens), the atomic stage 2 made the whole MoE 31–42% slower than split + reduce *(field, E23)*. With about 2 local
   routes per token (EP8, 112 of 896 experts local, 893 and 2732 tokens), fp8 route rows plus a reduce kernel took
   123 / 153 µs where the atomic stage 2 took 110 / 125–127 *(field, E36)*. That contention per output element decides
   it is estimated, not measured.
 - **Where the compare block bounds output SQNR, the route rows can be MXFP4.** Stage 2 packs each row to e2m1 with
-  an E8M0 scale per 32 (`rocdl.cvt_scalef32_pk_fp4_bf16`), the reduce unpacks it (`cvt_scalef32_pk_f32_fp4`). With all
+  an E8M0 scale per 32 (`v_cvt_scalef32_pk_fp4_bf16`), the reduce unpacks it (`v_cvt_scalef32_pk_f32_fp4`). With all
   16 routes per token local, rows shrank 3712 → 1920 B, the reduce 190 → 104 µs at 16384 tokens, and the call gained
   10.35%; the output read 17.97 dB SQNR against the fp8-row kernel's, against a 13 dB bound *(field, E39)*.
 - **Keep the reduce its own launch on the same stream.** Folding it into stage 2, the last workgroup of a token to
@@ -253,16 +223,14 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
   (`../gemm/correctness.md` §8). AKLR's `fused_moe` contracts are `determinism: bounded`, gated on
   output SQNR ≥ 13 dB with `max_violation_fraction` 1e-3 (`aklr/ops/fused_moe/contract.py`), so atomics are allowed
   there, unlike AKLR's GEMM contracts, all bitwise but `gemm_a8w8_blockwise_scaled`; a port's equivalence is judged
-  by SQNR (`../moe/flydsl_moe_decode.md` §3). Four of AKLR's five MoE kernels still sum the routes in a fixed order
+  by SQNR (`decode.md` §3). Four of AKLR's five MoE kernels still sum the routes in a fixed order
   without atomics (`../flydsl/kernels/flydsl_kernel_library.md` § AKLR's own FlyDSL MoE kernels).
-- **`mxfp_moe` stage 2 variants** (`host.py:21-48`): atomic at BM 16/32/64 with or without non-temporal B,
-  non-atomic, CShuffle, MXFP4-out and fp8-out at BM 128 (CShuffle also at 32/64). FlyDSL's host defaults
-  `xcd_swizzle = 3` for the non-atomic and fp8-out epilogues and routes BM-128 non-atomic to CShuffle
-  (`host.py:202-209`); aiter's takes these from the tuned row (§1).
+
+In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §6.
 
 ## 7. The small kernels around the GEMMs
 
-- **Price sorting and quantization kernels by launching them again** (`flydsl_grouped_measurement.md` §6).
+- **Price sorting and quantization kernels by launching them again** (`grouped_measurement.md` §6).
   *(field, E15)* One sorting phase cost 2.3–2.4 µs per extra launch under graph replay; shortening the loops inside it
   moved the score by 0.03%, inside the noise; merging two sorting phases into one kernel gained 1.08%. Removing a
   whole kernel pays most; trimming inside one pays only above the ~4 µs node floor, so price each phase by deleting
@@ -271,12 +239,12 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
   floor *(field, E32)*. FlyDSL v0.3.2's mid-size sorting path runs two kernels (`moe_sorting_kernel.py:12-14`).
   *(field, E16, E17)* Under AKLR's timer a graph node costs ~4 µs (measured on an empty kernel and on add + RMSNorm;
   that is the timer's floor for any dispatch, since its bench runner forces `GPU_FORCE_QUEUE_PROFILING`,
-  `aklr/core/validation/stages/_bench/_execution/_runner.py:475`), and folding the sort into stage 1 removed one (`../moe/flydsl_moe_decode.md` §1–§2).
+  `aklr/core/validation/stages/_bench/_execution/_runner.py:475`), and folding the sort into stage 1 removed one (`decode.md` §1–§2).
 - **Or fold the per-token kernels into the sort launch.** *(field, E24)* Token quantization and the sorted-scale scatter
   as extra sort blocks, one per token, removed two nodes: 6.9–8.0 µs per call at 8–32 tokens.
 - **Merging kernels turns an inter-kernel order into an intra-kernel race.** One phase seeded a table with −1
-  and the next overwrote the local experts' entries; the kernel boundary ordered the two. Once merged,
-  `gpu.barrier()` is not guaranteed to order the global stores (it synchronizes the waves of one workgroup).
+  and the next overwrote the local experts' entries; the kernel boundary ordered the two. Once merged, a workgroup
+  barrier (`s_barrier`) does not order the global stores: it synchronizes the waves of one workgroup.
   Make the two writes disjoint (seed only the entries the scatter never writes). Replacing a kernel boundary with
   a flag needs the polling rules of `../gemm/correctness.md` §4.
 
@@ -303,9 +271,9 @@ order; the host takes `use_nt` and `xcd_swizzle` from the tuned row's kernel nam
 - [ ] Small kernels were priced by extra launches, and merged kernels write disjoint regions.
 
 ## Related
-`../moe/flydsl_moe_decode.md` · `../flydsl/kernels/flydsl_kernel_library.md` ·
-`../gemm/small_m.md` · `../gemm/grid_pricing.md` · `flydsl_grouped_scheduling.md` ·
-`flydsl_grouped_measurement.md` · `INDEX.md`
+`decode.md` · `../flydsl/kernels/flydsl_kernel_library.md` ·
+`../gemm/small_m.md` · `../gemm/grid_pricing.md` · `grouped_scheduling.md` ·
+`grouped_measurement.md` · `INDEX.md`
 
 ## Evidence
 
@@ -338,7 +306,7 @@ records do not give. The Kimi-K3 forge runs installed FlyDSL 0.3.2.
 - E22 [2026-10, gfx950, FlyDSL 0.3.2, N=1, torch-profiler stage-1 median over 10 calls; driver bench for the op; the run's ablation, paired] stage 1 765.6 → 673.9 µs at 9397 tokens and 1007.3 → 946.5 µs at 16384; op 1.229 → 1.150 / 1.835 → 1.790 ms; ablation +4.71% (bounds +4.48% … +4.94%); the bijection `x·(n//8) + min(x, n%8) + id//8` over `ceil(num_valid_ids / BM)` M-blocks, the tail keeping its id and exiting (fused MoE, fp8 activations × MXFP4 experts, 896 experts, top-k 16, inter 384, model dim 3584, stage 1 tile 64×128×256, `xcd_swizzle` 4; local:/shared_nfs/kyle/moe/kf/runs/tp8_cmp/workspace/forge_experiments/lessons/iter_001.md:17; ../ablation.md:13)
 - E23 [2026-10, gfx950, FlyDSL 0.3.2, N=2 rounds, one driver bench (warmup 3, 20 iterations) per arm per round] the v2 stage 2 with its `atomic` epilogue against `reduce` + `moe_reduce`: 1.4022 / 2.3576 against 1.0717 / 1.6639 ms (round 3), 1.388 / 2.308 against 1.0556 / 1.6441 ms (round 5) at 9397 / 16384 tokens (same MoE as E19, stage 2 64×256×128; local:/shared_nfs/kyle/moe/kf/runs/tp8_cmp/workspace/forge_experiments/lessons/iter_003.md:13; lessons/iter_003.md:3; lessons/iter_005.md:12; lessons/iter_005.md:5)
 
-E24–E29: a8w4 SiTUv2 fused MoE, 112 of 896 experts local, top-16, model dim 3584, inter 3072, at 8 / 12 / 16 / 24 / 32
+E24–E28: a8w4 SiTUv2 fused MoE, 112 of 896 experts local, top-16, model dim 3584, inter 3072, at 8 / 12 / 16 / 24 / 32
 tokens; the ruler is AKLR's graph timer (bench_cudagraph, L2 flushed per replay), median of the readings.
 
 - E24 [2026-10, gfx950, FlyDSL 0.3.2, N=1, AKLR graph timer] token quant and sorted-scale scatter folded into the one-shot sort launch: 55.4 / 72.0 / 107.0 / 131.0 / 180.0 → 48.5 / 64.5 / 99.4 / 123.0 / 172.1 µs (local:/shared_nfs/kyle/moe/kf/runs/ep8_bw_s/workspace/forge_experiments/lessons/iter_002.md:8; :26)
@@ -346,7 +314,6 @@ tokens; the ruler is AKLR's graph timer (bench_cudagraph, L2 flushed per replay)
 - E26 [2026-10, gfx950, FlyDSL 0.3.2, N=? pairs, AKLR graph timer, the kept version beside the one before it, remeasured] stage-2 refills of padding rows pointed past the A buffer (prologue preload unchanged): +1.02% [+0.92, +1.13], 5 of 5 cases up; 44.23 / 59.79 → 43.34 / 58.77 µs at 8 / 12 tokens, level at 16–32 (local:/shared_nfs/kyle/moe/kf/runs/ep8_bw_s/workspace/forge_experiments/ablation.md:21; lessons/iter_013.md:3; :9)
 - E27 [2026-10, gfx950, FlyDSL 0.3.2, N=1, AKLR graph timer] stage-1 `xcd_swizzle` {4, 2, 8, 4, 2}: 147.13 / 156.26 / 174.18 / 186.33 / 214.19 against 43.36 / 58.77 / 93.70 / 116.59 / 167.39 µs; that the live tiles land on one XCD is estimated from the source, not measured (local:/shared_nfs/kyle/moe/kf/runs/ep8_bw_s/workspace/forge_experiments/lessons/iter_014.md:53; :61)
 - E28 [2026-10, gfx950, FlyDSL 0.3.2, N=1, probe with random inputs, torch profiler, cache flushed per call] w2 DMA'd from 512 extra stage-1 workgroups: stage 1 / stage 2 at 8 / 16 / 32 tokens 36.9 / 19.0, 71.1 / 37.0, 114.7 / 60.0 µs without; with ¼ of w2 44.5 / 16.4, 82.6 / 30.1, 137.9 / 44.9; with all of it 61.4 / 12.7, 127.6 / 24.2, 203.9 / 41.6 (local:/shared_nfs/kyle/moe/kf/runs/ep8_bw_s/workspace/forge_experiments/lessons/iter_014.md:21–29)
-- E29 [2026-10, gfx950, FlyDSL 0.3.2, N=? pairs, AKLR graph timer, the kept version beside the one before it, remeasured] `g2_bf16_lds=False` at BM 32, BK 256, BN 128/256: +0.37% [+0.31, +0.44], 5 of 5 cases up; faster by 0.15–0.8 µs in every interleaved pair (local:/shared_nfs/kyle/moe/kf/runs/ep8_bw_s/workspace/forge_experiments/ablation.md:17; lessons/iter_005.md:44–46)
 - E30 [2026-10, gfx950, FlyDSL 0.3.2, N=1, Kineto kernel times over 20 calls, staging-only arms] sort sized by 896 global experts: padded rows 30,448, stage-1 grid 48 × 952 = 45,696 workgroups, 4,224 (9%) with a valid M-block; topk_ids remapped to the 112 local ids (remap outside the timed window): sort 24.48 → 9.47 µs, stage 1 174.38 → 160.64 µs, kernel sum 285.53 → 256.97 µs (−10.0%) at 112 tokens; −11.3% at 40; stage-1 grid alone cut to the valid blocks: 175.7 → 157.9 µs (fused MoE fp8 × MXFP4, SiTUv2, EP8: 112 of 896 experts, top-16, model 3584, inter 3072; local:/shared_nfs/kyle/moe/kf/runs/ep8_bw_m/workspace/forge_experiments/analysis/84daab2233e5d344ebf8e0242e221f58ba95feb9/generation-001/cases/n_tokens_112-115301ba/analysis.md:12; :18; :21; :32)
 - E31 [2026-10, gfx950, FlyDSL 0.3.2, N=3 pairs, Kineto median over 40 calls, L2 flushed per call] stage 2 (BM 32, BN 128, fp8 A read by sorted row, ~4.5% of 32-row tile rows real) with the padding rows' A DMA sent out of range: 57.0 against 58.7 µs at 40 tokens; 79.6 against 79.9 at 112 with BN 256. Stage 1 (padding gathers token 0) with padding rows pointed out of range, graph medians of 3: 151.9 against 152.8 µs at 112 tokens, equal at 40, 60, 96 (EP8 fused MoE as E19; local:/shared_nfs/kyle/moe/kf/runs/ep8_bw_m/workspace/forge_experiments/lessons/iter_004.md:31; local:/shared_nfs/kyle/moe/kf/runs/ep8_bw_m/workspace/forge_experiments/analysis/84daab2233e5d344ebf8e0242e221f58ba95feb9/generation-001/cases/n_tokens_40-52bd03b6/analysis.md:9; local:/shared_nfs/kyle/moe/kf/runs/ep8_bw_m/workspace/forge_experiments/lessons/iter_005.md:20)
 - E32 [2026-10, gfx950, FlyDSL 0.3.2, N=3, AKLR-style graph median, L2 flushed per call] one-launch sort + token-quant kernel at 112 tokens: 7.65 µs; its column scan deleted 5.96; only loads, quant and zeroing kept (wrong outputs) 4.4; after replacing the scan with per-expert bitmasks (LDS atomic OR, popcount), one packed prefix sum, batched lookups and loads hoisted before stores: 5.32 µs (6.29 → 5.04 at 40 tokens); that round, with a 0.24–0.56 µs stage-1 change, paid +0.97% (one-sided 95% +0.90 … +1.03%, 8 of 8 token counts) (EP8 fused MoE as E19; local:/shared_nfs/kyle/moe/kf/runs/ep8_bw_m/workspace/forge_experiments/lessons/iter_005.md:7; local:/shared_nfs/kyle/moe/kf/runs/ep8_bw_m/workspace/forge_experiments/ablation.md:17)

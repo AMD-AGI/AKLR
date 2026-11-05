@@ -60,7 +60,7 @@ basis: source-semantics
   a cap through the `amdgpu-num-vgpr` attribute turns into spills (S29).
 - Other kernel families: attention's occupancy steps, spill scale, code shapes that spill and AGPRs —
   `attention/flydsl_attn_registers_occupancy.md` §3, §5–7; grouped GEMM's register wall and waves per SIMD per pass —
-  `moe/flydsl_grouped_tile_pricing.md` §1–2.
+  `moe/grouped_tile_pricing.md` §1–2.
 
 ## Evidence
 

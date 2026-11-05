@@ -53,8 +53,8 @@ basis: source-semantics
 - Other kernel families: attention's XCD-major mapping and live `(batch, kv-head)` slices per XCD —
   `attention/flydsl_attn_grid_dispatch.md` §2, §7; decode grid size and split rules —
   `attention/flydsl_attn_decode_split_kv.md` §4–5; grouped GEMM skew, longest-first and persistent grids —
-  `moe/flydsl_grouped_scheduling.md` §1, §5–6; MoE grids at decode sizes —
-  `moe/flydsl_grouped_moe_inference.md` §3.
+  `moe/grouped_scheduling.md` §1, §5–6; MoE grids at decode sizes —
+  `moe/grouped_moe_inference.md` §3.
 
 ## Evidence
 
