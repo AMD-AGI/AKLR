@@ -441,6 +441,11 @@ def test_an_off_failure_under_another_sglang_is_a_warning(
     assert "warning: off failed" in record.table_row()[-1]
 
 
+def test_no_enabled_scenario_skips_the_stage(tmp_path: Path) -> None:
+    stage = E2eStage([], ["cuda:0"], cookbook_repo="r", cookbook_source="main")
+    assert stage.run(ValidationScope(tmp_path, "", None, (), ()), Mock()).status == "skipped"
+
+
 class TestStage:
     def _stage(self) -> E2eStage:
         return E2eStage(
@@ -497,6 +502,10 @@ class TestStage:
             lambda *a, **k: io.BytesIO(json.dumps({"choices": [{"message": {"content": answer}}]}).encode()),
         )
         scenario = _scenario({"unified": _UNIFIED})
+        on = self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path)
+        assert "AKLR never started on the on side" in on.failure
+        (tmp_path / "on-calls").mkdir()
+        (tmp_path / "on-calls" / "calls.pid1.x.jsonl").write_text("")
         on = self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path)
         assert (on.gsm8k_score, on.answer_matches, on.n_hit_calls, on.failure) == (0.81365, False, 0, "")
         answer = "Paris."

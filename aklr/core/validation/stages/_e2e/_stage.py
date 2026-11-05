@@ -78,8 +78,6 @@ class E2eStage(PipelineStage[E2eReport]):
         launch: str | None = None,
         work_dir: Path | None = None,
     ) -> None:
-        if not scenarios:
-            raise ValueError("e2e needs at least one scenario")
         if not devices:
             raise ValueError("e2e needs at least one device")
         if not hosts:
@@ -104,6 +102,8 @@ class E2eStage(PipelineStage[E2eReport]):
 
     def run(self, scope: ValidationScope, earlier: PipelineReport) -> E2eReport:
         """Run every scenario; only a ``RunNotKilledError`` ends the stage."""
+        if not self._scenarios:  # every model disabled: no reason to fail the run
+            return E2eReport.skipped("no enabled scenario in scenarios.yaml")
         findings: list[Finding] = []
         records: list[E2eRecord] = []
         cookbooks: dict[str, Cookbook] = {}
@@ -278,8 +278,11 @@ class E2eStage(PipelineStage[E2eReport]):
         finally:
             log_tails = deployment.stop()
         # a server that never became ready served nothing: no count, not "AKLR served no call";
-        # a ready one with no call file (AKLR never started in it) counts 0
-        if side == "on" and is_ready:
+        # AKLR writes its call file as it starts, so a ready one with none never started AKLR (a
+        # plugin that failed to import, sglang told to load other plugins): on is off then
+        if side == "on" and is_ready and not (calls_dir.is_dir() and any(calls_dir.iterdir())):
+            failures.append("AKLR never started on the on side: no call file")
+        elif side == "on" and is_ready:
             try:
                 calls = read_calls(calls_dir)
                 result["n_hit_calls"] = sum(c.n_calls for c in calls if c.fallback_reason is None)
