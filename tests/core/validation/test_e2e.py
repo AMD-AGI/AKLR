@@ -528,6 +528,7 @@ class TestStage:
         off = self._stage()._run_side(scenario, _COOKBOOK, "off", {}, tmp_path)
         assert off.gsm8k_score is None
         assert "3 GSM8K requests failed" in off.failure
+        assert off.n_failed_requests == 3
         assert "during the phases: unified-0 exited with -9" in off.failure
         monkeypatch.setattr(
             Deployment, "start", lambda self, timeout: (_ for _ in ()).throw(RuntimeError("no"))
