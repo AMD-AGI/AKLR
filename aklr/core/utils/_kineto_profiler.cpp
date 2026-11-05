@@ -132,12 +132,19 @@ public:
       activity.addMetadata("correlation", dispatch.correlation);
       activity.addMetadataQuoted("kind",
                                  copy ? kKinds[kind] : "Dispatch Kernel");
-      if (copy)
+      if (copy) {
         activity.addMetadata("bytes", dispatch.bytes);
-      if (a.launch >= 0) {
-        activity.addMetadata("graph launch", a.launch);
-        activity.addMetadata("graph ordinal", a.ordinal);
-        activity.addMetadata("graph kernels", a.kernels);
+      } else {
+        activity.addMetadata("grid",
+                             fmt::format("[{}, {}, {}]", dispatch.grid[0],
+                                         dispatch.grid[1], dispatch.grid[2]));
+        activity.addMetadata(
+            "block", fmt::format("[{}, {}, {}]", dispatch.workgroup[0],
+                                 dispatch.workgroup[1], dispatch.workgroup[2]));
+      }
+      if (a.exec >= 0) {
+        activity.addMetadata("graph exec", a.exec);
+        activity.addMetadata("graph node", a.node);
         if (a.call)
           activity.addMetadata("capture correlation", a.call);
         if (a.scope)

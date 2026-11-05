@@ -30,7 +30,7 @@ struct Call {
 // a kernel dispatch or memory copy of the window
 struct Dispatch {
   uint64_t correlation; // the HIP call's that enqueued it
-  uint64_t external;    // its graph launch and ordinal; 0 for none
+  uint64_t tag;         // the graph exec plan and node it replays; 0 for none
   uint64_t dispatch_id;
   uint64_t kernel_id;
   uint64_t start;
@@ -38,18 +38,17 @@ struct Dispatch {
   uint64_t queue;
   rocprofiler_memory_copy_operation_t copy; // NONE for a kernel
   uint64_t bytes;
+  uint32_t grid[3];      // in work-items
+  uint32_t workgroup[3]; // in work-items
 };
 
-// a dispatch's graph launch in the window (-1 for none), its ordinal there,
-// the HIP call and scope that captured it (0 when unknown or added by hand),
-// and the launched graph's kernel nodes (-1 for a graph not captured)
+// the graph exec plan and node a dispatch replays (-1 for none), and the HIP
+// call and scope that captured the node (0 for a node added by hand)
 struct Attribution {
-  int64_t launch = -1;
-  uint64_t ordinal = 0;
+  int64_t exec = -1;
+  int64_t node = -1;
   uint64_t call = 0;
   uint64_t scope = 0;
-  int64_t kernels = -1;
-  bool node = false; // it replays a node of its launch's plan
 };
 
 // what torch.profiler's window recorded, the dispatches' kernels demangled
