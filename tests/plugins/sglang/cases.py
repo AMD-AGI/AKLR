@@ -32,6 +32,30 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         },
         layout_variant_name="shuffled_16x16",
     ),
+    # GLM-5.3's DeepseekV2MoE, its fp8 experts at a scale per 128 x 128 block; more experts than
+    # topk, so routing leaves some out
+    PointSpec(
+        contract_id="deepseek_v2_fp8_moe@1.0",
+        axes={"n_tokens": 4, "model_dim": 256, "n_routed": 16, "inter_dim": 256},
+        dtypes={
+            "hidden_states": "bfloat16",
+            "router_weight": "bfloat16",
+            "correction_bias": "float32",
+            "w1": "float8_e4m3fn",
+            "w1_scale": "float32",
+            "w2": "float8_e4m3fn",
+            "w2_scale": "float32",
+            "out": "bfloat16",
+        },
+        attrs={
+            "topk": 8,
+            "num_expert_group": 1,
+            "topk_group": 1,
+            "renormalize": True,
+            "scoring_func": "sigmoid",
+        },
+        layout_variant_name="shuffled_16x16",
+    ),
     # GLM-5.2's RoPE part; four heads (16 at TP4) and a short top-k
     PointSpec(
         contract_id="dsa_sparse_mla_decode@1.0",
@@ -425,6 +449,7 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
     {
+        "deepseek_v2_fp8_moe@1.0",
         "deepseek_v2_mxfp4_moe@1.0",
         "dsa_indexer_key_prepare@1.0",
         "dsa_indexer_prepare@1.0",

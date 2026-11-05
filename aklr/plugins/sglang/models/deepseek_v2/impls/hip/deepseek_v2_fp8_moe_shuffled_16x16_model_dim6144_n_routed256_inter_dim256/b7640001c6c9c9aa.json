@@ -1,0 +1,334 @@
+{
+  "schema_version": 5,
+  "name": "deepseek_v2_fp8_moe_shuffled_16x16_model_dim6144_n_routed256_inter_dim256",
+  "contract_id": "deepseek_v2_fp8_moe@1.0",
+  "description": "sglang's DeepseekV2MoE on one rank, with fp8 experts and the shared expert in their last slot: on hidden_states, each token's topk experts by sigmoid score plus correction_bias, the scores those of the router's logits in hidden_states' dtype (as sglang's MoEGate returns them on ROCm), weighed by the renormalized unbiased scores times routed_scaling_factor, and the shared expert at weight 1, each expert down(silu(gate(x)) * up(x)) of its fp8 weights at a scale per 128 x 128 block, each of its two linears taking its input as the checkpoint's FP8 scheme quantizes it: in bf16, then each 1 x 128 group in fp8 at a scale of its amax / 448; out is their output on this rank, which sglang sums over the ranks.",
+  "op_type": "deepseek_v2",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 6144,
+      "description": "Hidden size."
+    },
+    "n_routed": {
+      "type": "const",
+      "value": 256,
+      "description": "Routed experts: the router's rows."
+    },
+    "inter_dim": {
+      "type": "const",
+      "value": 256,
+      "description": "Expert intermediate size on this rank."
+    },
+    "n_experts": {
+      "type": "const",
+      "value": 257,
+      "description": "Expert slots: the routed experts, then the shared one."
+    },
+    "gate_up_rows": {
+      "type": "const",
+      "value": 512,
+      "description": "w1 rows: gate and up concatenated."
+    },
+    "model_blocks": {
+      "type": "const",
+      "value": 48,
+      "description": "128-blocks of the hidden size."
+    },
+    "gate_up_blocks": {
+      "type": "const",
+      "value": 4,
+      "description": "128-blocks of w1's rows."
+    },
+    "inter_blocks": {
+      "type": "const",
+      "value": 2,
+      "description": "128-blocks of the intermediate size."
+    }
+  },
+  "attrs": {
+    "topk": 8,
+    "num_expert_group": 1,
+    "topk_group": 1,
+    "renormalize": true,
+    "scoring_func": "sigmoid"
+  },
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The MoE's input: post_attention_layernorm's output."
+    },
+    "router_weight": {
+      "shape": [
+        "n_routed",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 6144
+      },
+      "description": "Router projection."
+    },
+    "correction_bias": {
+      "shape": [
+        "n_routed"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": "2.99",
+        "log2_hi": "3.01"
+      },
+      "description": "Added to the scores to pick experts; never weighs them."
+    },
+    "w1": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 6144
+      },
+      "description": "Gate-up projection per expert: gate rows, then up rows."
+    },
+    "w1_scale": {
+      "shape": [
+        "n_experts",
+        "gate_up_blocks",
+        "model_blocks"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "w1's dequant scale per 128 x 128 block."
+    },
+    "w2": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 256
+      },
+      "description": "Down projection per expert."
+    },
+    "w2_scale": {
+      "shape": [
+        "n_experts",
+        "model_blocks",
+        "inter_blocks"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "w2's dequant scale per 128 x 128 block."
+    },
+    "routed_scaling_factor": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies the routed weights only: GLM-5's."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "The experts' output on this rank, before sglang's all-reduce sums the ranks'."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 9
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 10
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 11
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 12
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "shuffled_16x16": {
+        "layouts": {
+          "w1": {
+            "kind": "preshuffle",
+            "tile": [16, 16]
+          },
+          "w2": {
+            "kind": "preshuffle",
+            "tile": [16, 16]
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "w1.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w2.is_shuffled",
+            "expected_value": true
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "hip",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "author": "xiaobochen-amd",
+    "entry_point": "kernel.hip::run",
+    "sources": [
+      {
+        "path": "common/device.h",
+        "content": "// Device primitives: vector types, 16 B loads and stores, the fp8 MFMA, wave and block\n// reductions.\n#pragma once\n\n#include <hip/hip_runtime.h>\n\n#include \"common/hw.h\"\n\nnamespace infera_flash {\n\nusing bfloat16 = __bf16; // not hip_bfloat16: it rounds in software, with a branch per value\n\nusing uint32x4 = uint32_t __attribute__((ext_vector_type(4)));\nusing int32x4  = int __attribute__((ext_vector_type(4)));\nusing int32x8  = int __attribute__((ext_vector_type(8)));\nusing floatx2  = float __attribute__((ext_vector_type(2)));\nusing floatx4  = float __attribute__((ext_vector_type(4)));\n\ntemplate <typename T, int N> __device__ inline void load_data(const T *src, T *dst) {\n    static_assert(N * sizeof(T) == 16, \"Only 16 bytes are supported.\");\n    *reinterpret_cast<uint4 *>(dst) = *reinterpret_cast<const uint4 *>(src);\n}\n\ntemplate <typename T, int N> __device__ inline void store_data(T *dst, const T *src) {\n    static_assert(N * sizeof(T) == 16, \"Only 16 bytes are supported.\");\n    *reinterpret_cast<uint4 *>(dst) = *reinterpret_cast<const uint4 *>(src);\n}\n\n// __syncthreads also waits for every global load in flight; this waits for LDS accesses only.\n__device__ inline void block_sync_lds() {\n    asm volatile(\"s_waitcnt lgkmcnt(0)\" ::: \"memory\");\n    __builtin_amdgcn_s_barrier();\n}\n\n// One lane's 32 B of an fp8 MFMA 16x16x128 operand: K bytes 16g..16g+15 and 64+16g..64+16g+15 of\n// row (A) or column (B) l % 16, for g = l / 16 (ISA layout).\n__device__ inline int32x8 load_fragment(const uint8_t *first, const uint8_t *second) {\n    const int32x4 lo = *reinterpret_cast<const int32x4 *>(first);\n    const int32x4 hi = *reinterpret_cast<const int32x4 *>(second);\n    return __builtin_shufflevector(lo, hi, 0, 1, 2, 3, 4, 5, 6, 7);\n}\n\n// load_fragment with nt, for weights read once a call: they stream through L2 and the MALL instead\n// of pushing out what is read again\n__device__ inline int32x8 load_fragment_nt(const uint8_t *first, const uint8_t *second) {\n    const int32x4 lo = __builtin_nontemporal_load(reinterpret_cast<const int32x4 *>(first));\n    const int32x4 hi = __builtin_nontemporal_load(reinterpret_cast<const int32x4 *>(second));\n    return __builtin_shufflevector(lo, hi, 0, 1, 2, 3, 4, 5, 6, 7);\n}\n\n// D = A B for 16x16 fp8 e4m3 tiles over K = 128; lane l gets D[4 (l / 16) + i][l % 16] in element\n// i. Zero scales make the compiler emit the instruction without block scaling.\n__device__ inline floatx4 mfma_16x16x128_fp8(int32x8 a, int32x8 b) {\n    return __builtin_amdgcn_mfma_scale_f32_16x16x128_f8f6f4(a, b, floatx4{}, 0, 0, 0, 0, 0, 0);\n}\n\ntemplate <typename T> struct SumOp {\n    __device__ static T op(const T &x, const T &y) { return x + y; }\n};\n\ntemplate <typename T> struct MaxOp {\n    __device__ static T op(const T &x, const T &y) { return x > y ? x : y; }\n};\n\n// Orders like the float, as an unsigned integer.\n__device__ __forceinline__ uint32_t ordered_bits(float x) {\n    const uint32_t bits = __float_as_uint(x);\n    return (bits & 0x80000000u) ? ~bits : bits | 0x80000000u;\n}\n\n// Each lane gets the value of the lane that DPP_CTRL picks within its 16-lane row. bound_ctrl lets\n// the compiler fold the move into the instruction that uses it.\ntemplate <int DPP_CTRL, typename T> __device__ inline T dpp_mov(T val) {\n    static_assert(sizeof(T) == 4);\n    return __builtin_bit_cast(\n        T, __builtin_amdgcn_mov_dpp(__builtin_bit_cast(int, val), DPP_CTRL, 0xF, 0xF, true));\n}\n\ntemplate <typename T> __device__ inline T readlane(T val, int lane) {\n    static_assert(sizeof(T) == 4);\n    return __builtin_bit_cast(T, __builtin_amdgcn_readlane(__builtin_bit_cast(int, val), lane));\n}\n\n// Reduces over each aligned group of WIDTH lanes; every lane gets its group's result. DPP within\n// a 16-lane row; across rows, row 3 adds row 2 and then rows 0 + 1, and lane 63 is read out. No\n// LDS round trip.\ntemplate <template <class> class Func, typename T, int WIDTH = THREADS_PER_WARP>\n__device__ inline T WarpReduce(T val) {\n    static_assert(WIDTH == 4 || WIDTH == 16 || WIDTH == THREADS_PER_WARP);\n    val = Func<T>::op(dpp_mov<0xB1>(val), val); // quad_perm [1,0,3,2]\n    val = Func<T>::op(dpp_mov<0x4E>(val), val); // quad_perm [2,3,0,1]\n    if constexpr (WIDTH == 4) {\n        return val;\n    }\n    val = Func<T>::op(dpp_mov<0x141>(val), val); // row_half_mirror\n    val = Func<T>::op(dpp_mov<0x140>(val), val); // row_mirror\n    if constexpr (WIDTH == THREADS_PER_WARP) {\n        val = Func<T>::op(val, dpp_mov<0x142>(val)); // row_bcast:15, row r gets row r - 1\n        val = Func<T>::op(val, dpp_mov<0x143>(val)); // row_bcast:31, rows 2, 3 get row 1\n        val = readlane(val, 63);\n    }\n    return val;\n}\n\n// Every thread gets the result. Warps are combined in a fixed order so all blocks get the same\n// bits. smem holds NUM_WARPS * N elements and can be reused as soon as this returns. LDS_ONLY\n// syncs on LDS alone, leaving global loads in flight.\ntemplate <template <class> class Func, int BLOCK_SIZE, bool LDS_ONLY = false, typename T, int N>\n__device__ inline void BlockReduce(T (&vals)[N], T *smem) {\n    const auto sync = [] {\n        if constexpr (LDS_ONLY) {\n            block_sync_lds();\n        } else {\n            __syncthreads();\n        }\n    };\n    constexpr int NUM_WARPS = BLOCK_SIZE / THREADS_PER_WARP;\n    const int     warp_id   = threadIdx.x / THREADS_PER_WARP;\n    const int     lane_id   = threadIdx.x % THREADS_PER_WARP;\n\n#pragma unroll\n    for (int n = 0; n < N; ++n) {\n        vals[n] = WarpReduce<Func>(vals[n]);\n    }\n    // not inside the loop above: a branch there would serialize the N independent reductions\n    if (lane_id == 0) {\n#pragma unroll\n        for (int n = 0; n < N; ++n) {\n            smem[warp_id * N + n] = vals[n];\n        }\n    }\n    sync();\n#pragma unroll\n    for (int n = 0; n < N; ++n) {\n        vals[n] = smem[n];\n#pragma unroll\n        for (int w = 1; w < NUM_WARPS; ++w) {\n            vals[n] = Func<T>::op(vals[n], smem[w * N + n]);\n        }\n    }\n    sync();\n}\n\n} // namespace infera_flash\n"
+      },
+      {
+        "path": "common/hw.h",
+        "content": "// MI355X as these kernels use it: block b runs on XCD b % NUM_XCDS.\n#pragma once\n\nnamespace infera_flash {\n\nconstexpr int THREADS_PER_WARP = 64;\n\nstruct Hw {\n    static constexpr int NUM_BLOCKS = 256; // one per CU\n    static constexpr int NUM_XCDS   = 8;\n    static constexpr int BLOCK_SIZE = 256;\n    // all of a CU's LDS\n    static constexpr int SMEM_SIZE = 160 * 1024;\n};\n\nconstexpr int WAVES = Hw::BLOCK_SIZE / THREADS_PER_WARP; // a block's\n\n} // namespace infera_flash\n"
+      },
+      {
+        "path": "common/math.h",
+        "content": "// Math the kernels share, rounded as HF rounds: bf16 pairs, fp8 quant, silu(gate) * up.\n#pragma once\n\n#include \"common/device.h\"\n#include \"common/hw.h\"\n\nnamespace infera_flash {\n\nusing bfloat16x2 = bfloat16 __attribute__((ext_vector_type(2)));\n\n// bf16 pairs to floats, exactly, for packed floatx2 math\n__device__ inline floatx2 to_float2(bfloat16x2 v) { return __builtin_convertvector(v, floatx2); }\n\nconstexpr float FP8_MAX = 448.0f; // largest finite e4m3fn\n\n// HF finegrained-fp8 quant of a 1x128 group held by 16 consecutive lanes, 8 values each: stores\n// this lane's 8 fp8 values to q and returns the group's scale. A multiply and v_rcp where HF\n// divides move a few values by one fp8 step.\n__device__ inline float quant_fp8(const bfloat16 (&x)[8], uint8_t *q) {\n    const auto *x2 = reinterpret_cast<const bfloat16x2 *>(x);\n    floatx2     v[4];\n    float       amax = 0.0f;\n#pragma unroll\n    for (int j = 0; j < 4; ++j) {\n        v[j] = to_float2(x2[j]);\n        amax = fmaxf(amax, fmaxf(fabsf(v[j].x), fabsf(v[j].y)));\n    }\n    // amax >= 0 orders like its bits: an integer max, whose DPP moves fold into it\n    amax = __uint_as_float(WarpReduce<MaxOp, uint32_t, 16>(__float_as_uint(amax)));\n    // at least the smallest normal float, so a group of tiny values keeps them\n    const float scale     = fmaxf(amax * (1.0f / FP8_MAX), __FLT_MIN__);\n    const float inv_scale = __builtin_amdgcn_rcpf(scale);\n    uint32_t    fp8[2];\n#pragma unroll\n    for (int j = 0; j < 2; ++j) {\n        const floatx2 lo = v[2 * j] * inv_scale; // packed: two values per instruction\n        const floatx2 hi = v[2 * j + 1] * inv_scale;\n        // the second convert overwrites the half the first keeps: no need to zero it\n        const int any    = __builtin_bit_cast(int, lo.x);\n        fp8[j]           = __builtin_amdgcn_cvt_pk_fp8_f32(\n            hi.x, hi.y, __builtin_amdgcn_cvt_pk_fp8_f32(lo.x, lo.y, any, false), true);\n    }\n    *reinterpret_cast<uint2 *>(q) = *reinterpret_cast<const uint2 *>(fp8);\n    return scale;\n}\n\n// HF's act_fn(gate) * up of the linears' bf16 outputs: silu and the product each round to bf16\n__device__ __forceinline__ bfloat16 silu_mul(bfloat16 gate, bfloat16 up) {\n    const float g    = gate;\n    const float silu = static_cast<bfloat16>(g / (1.0f + expf(-g)));\n    return static_cast<bfloat16>(silu * static_cast<float>(up));\n}\n\n} // namespace infera_flash\n"
+      },
+      {
+        "path": "glm5/config.h",
+        "content": "// GLM-5.3's MoE on one rank of 8 (TP8): the sizes the kernels are written for, per card where noted.\n#pragma once\n\n#include \"common/hw.h\"\n\nnamespace infera_flash::glm5 {\n\nstruct Config : Hw {\n    static constexpr int HIDDEN_SIZE       = 6144;\n    static constexpr int QUANT_GROUP_SIZE  = 128; // one fp8 scale per 1x128 of activations\n    static constexpr int NUM_GROUPS        = HIDDEN_SIZE / QUANT_GROUP_SIZE;\n    static constexpr int NUM_EXPERTS       = 256;\n    static constexpr int INTERMEDIATE_SIZE = 256; // per card: 2048 / TP8\n    static constexpr int TOP_K             = 8;\n    // rows a call takes: decode and MTP drafts and verify, up to 2 requests of 7 drafts\n    static constexpr int MAX_NUM_TOKENS    = 16;\n    // ExpertTable slots: the shared expert, then the most distinct experts M tokens can pick\n    static constexpr int MAX_SLOTS         = MAX_NUM_TOKENS * TOP_K + 1;\n    // the shared expert's id: its weights come after the routed ones\n    static constexpr int SHARED_EXPERT     = NUM_EXPERTS;\n    // down: block k writes output rows ROWS_PER_BLOCK k ..\n    static constexpr int ROWS_PER_BLOCK    = HIDDEN_SIZE / NUM_BLOCKS;\n};\n\n// each thread's 16 B chunks of a HIDDEN_SIZE row, a block's threads covering it\nconstexpr int ROW_LOADS = Config::HIDDEN_SIZE / (Config::BLOCK_SIZE * 8);\nstatic_assert(ROW_LOADS * Config::BLOCK_SIZE * 8 == Config::HIDDEN_SIZE);\n\n} // namespace infera_flash::glm5\n"
+      },
+      {
+        "path": "glm5/moe.h",
+        "content": "// GLM-5.3-FP8's MoE on one TP8 rank for M <= 16 tokens, in three launches of one block per CU in\n// which no block waits for another: each launch reads only what the launches before it wrote.\n//   router_kernel: block b's router logit of expert b for every token, and block m < M token m's\n//     fp8 quant per 1x128.\n//   gate_up_kernel: every block picks each token's top-8 from the logits and groups the picks into\n//     the expert table, then computes its share of the table's gate_up rows into act; block 0\n//     writes the table.\n//   down_kernel: block k's output rows 24k .. 24k + 23, the down of every expert in the table times\n//     its routing weight, summed in table order.\n#pragma once\n\n#include <type_traits>\n\n#include \"common/device.h\"\n#include \"common/math.h\"\n#include \"glm5/config.h\"\n\nnamespace infera_flash::glm5 {\n\n// aiter-preshuffled weights come in groups of 16 rows; a group's 128-K block is a contiguous 2 KB\nconstexpr int K_BLOCK_BYTES = 16 * 128;\n\n// The experts to run: the shared one first, then the picked routed ones in id order, with each\n// token's weight (1 for the shared expert, 0 where a token didn't pick a routed one). Weights come\n// first so each row is 16 B aligned.\nstruct alignas(16) ExpertTable {\n    float w[Config::MAX_SLOTS][Config::MAX_NUM_TOKENS];\n    int   ids[Config::MAX_SLOTS]; // -1 past count in the copy written out\n    int   count;\n};\n\n// Shapes use M = num_tokens.\nstruct MoeParams {\n    const bfloat16 *x;             // [M, HIDDEN_SIZE] the MoE's input\n    const bfloat16 *router_weight; // [NUM_EXPERTS, HIDDEN_SIZE]\n    const float    *router_bias;   // [NUM_EXPERTS]\n    float           routed_scaling_factor;\n    // [NUM_EXPERTS + 1, 2 * INTERMEDIATE_SIZE, HIDDEN_SIZE], gate rows then up rows, preshuffled by\n    // aiter shuffle_weight(w, (16, 16)), with fp32 scales [NUM_EXPERTS + 1, 4, NUM_GROUPS], one per\n    // 128 x 128 block\n    const uint8_t *gate_up_weight;\n    const float   *gate_up_scale;\n    // [NUM_EXPERTS + 1, HIDDEN_SIZE, INTERMEDIATE_SIZE], preshuffled the same, with scales\n    // [NUM_EXPERTS + 1, NUM_GROUPS, 2]\n    const uint8_t *down_weight;\n    const float   *down_scale;\n    // this call's scratch, each written by one launch and read by the next\n    float       *logits; // [MAX_NUM_TOKENS][NUM_EXPERTS], rounded to bf16\n    uint8_t     *x_q;    // [MAX_NUM_TOKENS][HIDDEN_SIZE] fp8\n    float       *x_s;    // [MAX_NUM_TOKENS][NUM_GROUPS]\n    ExpertTable *table;\n    // gate_up's h = silu(x gate^T) * (x up^T), rounded as HF does: [MAX_SLOTS, MAX_NUM_TOKENS,\n    // INTERMEDIATE_SIZE], table slot order\n    bfloat16 *act;\n    bfloat16 *out; // [M, HIDDEN_SIZE] this rank's share\n};\n\n__device__ inline float sigmoid(float x) {\n    return 1.0f / (1.0f + expf(-x));\n}\n\n// router: block b's logit of expert b for every token, as HF's F.linear(x.float(), W.float()) in\n// fp32, rounded to bf16 as sglang's MoEGate returns it; block m < M also quantizes token m to fp8,\n// a scale per 128.\ntemplate <int NUM_TOKENS>\n__global__ __launch_bounds__(Config::BLOCK_SIZE) void router_kernel(const MoeParams p) {\n    __shared__ float reduce_smem[WAVES * NUM_TOKENS];\n    const int bid = blockIdx.x;\n    const int tid = threadIdx.x;\n    static_assert(Config::NUM_BLOCKS == Config::NUM_EXPERTS);\n\n    bfloat16 router_regs[ROW_LOADS][8];\n    bfloat16 x_regs[NUM_TOKENS][ROW_LOADS][8];\n#pragma unroll\n    for (int i = 0; i < ROW_LOADS; ++i) {\n        load_data<bfloat16, 8>(\n            p.router_weight + bid * Config::HIDDEN_SIZE + (i * Config::BLOCK_SIZE + tid) * 8,\n            router_regs[i]);\n    }\n#pragma unroll\n    for (int m = 0; m < NUM_TOKENS; ++m) {\n#pragma unroll\n        for (int i = 0; i < ROW_LOADS; ++i) {\n            load_data<bfloat16, 8>(p.x + m * Config::HIDDEN_SIZE + (i * Config::BLOCK_SIZE + tid) * 8,\n                                   x_regs[m][i]);\n        }\n    }\n\n    float logits[NUM_TOKENS];\n#pragma unroll\n    for (int m = 0; m < NUM_TOKENS; ++m) {\n        logits[m] = 0.0f;\n#pragma unroll\n        for (int i = 0; i < ROW_LOADS; ++i) {\n            const auto *x2 = reinterpret_cast<const bfloat16x2 *>(x_regs[m][i]);\n            const auto *w2 = reinterpret_cast<const bfloat16x2 *>(router_regs[i]);\n#pragma unroll\n            for (int j = 0; j < 4; ++j) {\n                logits[m] = __builtin_amdgcn_fdot2_f32_bf16(x2[j], w2[j], logits[m], false);\n            }\n        }\n    }\n    BlockReduce<SumOp, Config::BLOCK_SIZE>(logits, reduce_smem);\n#pragma unroll\n    for (int m = 0; m < NUM_TOKENS; ++m) {\n        if (tid == m) {\n            p.logits[m * Config::NUM_EXPERTS + bid] =\n                static_cast<float>(static_cast<bfloat16>(logits[m]));\n        }\n    }\n\n    // x quant for the expert GEMMs: a 1x128 group is 16 consecutive lanes\n#pragma unroll\n    for (int m = 0; m < NUM_TOKENS; ++m) {\n        if (bid == m) {\n#pragma unroll\n            for (int i = 0; i < ROW_LOADS; ++i) {\n                const int   col   = (i * Config::BLOCK_SIZE + tid) * 8;\n                const float scale = quant_fp8(x_regs[m][i], p.x_q + m * Config::HIDDEN_SIZE + col);\n                if (tid % 16 == 0) {\n                    p.x_s[m * Config::NUM_GROUPS + col / Config::QUANT_GROUP_SIZE] = scale;\n                }\n            }\n        }\n    }\n}\n\n// gate_up: an item is 8 gate rows and the matching 8 up rows of one expert, one 16-row MFMA tile.\n// Table slot r owns items 32r .. 32r + 31 and block b takes items b, b + 256, ...; the 4 waves\n// split K, 12 blocks of 128 each.\nconstexpr int WAVE_K_BLOCKS    = Config::NUM_GROUPS / WAVES;\nconstexpr int ITEMS_PER_EXPERT = Config::INTERMEDIATE_SIZE / 8;\n// a block's items at most, M tokens picking 8 experts each besides the shared one\ntemplate <int NUM_TOKENS>\nconstexpr int MAX_ITEMS =\n    ((NUM_TOKENS * Config::TOP_K + 1) * ITEMS_PER_EXPERT + Config::NUM_BLOCKS - 1) / Config::NUM_BLOCKS;\n// a 16-row group of preshuffled weights\nconstexpr int GROUP_BYTES = 16 * Config::HIDDEN_SIZE;\n// LDS: each wave's 16x16 fp32 result per item [MAX_ITEMS][4][64 lanes][4], then the items' weight\n// scales [MAX_ITEMS][gate, up][NUM_GROUPS] padded to whole rounds of threads, so every thread\n// stores without a branch: the compiler moves the load that feeds such a store into the branch,\n// after the weight loads, and then waits for all of them\nconstexpr int ITEM_SCALES = 2 * Config::NUM_GROUPS;\ntemplate <int NUM_TOKENS>\nconstexpr int SCALES_PER_THREAD =\n    (MAX_ITEMS<NUM_TOKENS> * ITEM_SCALES + Config::BLOCK_SIZE - 1) / Config::BLOCK_SIZE;\nconstexpr int SMEM_SCALES_OFFSET =\n    MAX_ITEMS<Config::MAX_NUM_TOKENS> * Config::BLOCK_SIZE * sizeof(floatx4);\nconstexpr int SMEM_GATE_UP_SIZE = SMEM_SCALES_OFFSET + SCALES_PER_THREAD<Config::MAX_NUM_TOKENS> *\n                                                          Config::BLOCK_SIZE * sizeof(float);\n// the bf16 results staged in the scales' LDS before they go out\nstatic_assert(MAX_ITEMS<Config::MAX_NUM_TOKENS> * 8 * Config::MAX_NUM_TOKENS * sizeof(bfloat16) <=\n              SCALES_PER_THREAD<Config::MAX_NUM_TOKENS> * Config::BLOCK_SIZE * sizeof(float));\n\n// Calls run(integral_constant<N>) for n in 1 .. N, so each item count gets straight-line code.\ntemplate <int N, typename Run> __device__ __forceinline__ void with_count(int n, Run &&run) {\n    if constexpr (N > 0) {\n        if (n == N) {\n            run(std::integral_constant<int, N>{});\n        } else {\n            with_count<N - 1>(n, run);\n        }\n    }\n}\n\n// This block's gate_up items, x and its scales from the router launch, the table in LDS; smem\n// takes the partial sums and the items' weight scales.\ntemplate <int NUM_TOKENS>\n__device__ __forceinline__ void gate_up_block(const uint8_t *x_q, const float *x_s,\n                                              const ExpertTable &table, const uint8_t *weight,\n                                              const float *weight_scale, bfloat16 *h,\n                                              uint8_t *smem) {\n    constexpr int ITEMS       = MAX_ITEMS<NUM_TOKENS>;\n    constexpr int SCALE_LOADS = SCALES_PER_THREAD<NUM_TOKENS>;\n    floatx4      *partials    = reinterpret_cast<floatx4 *>(smem);\n    float        *scales      = reinterpret_cast<float *>(smem + SMEM_SCALES_OFFSET);\n    const int     tid         = threadIdx.x;\n    const int lane      = tid % THREADS_PER_WARP;\n    const int kb0       = tid / THREADS_PER_WARP * WAVE_K_BLOCKS;\n    const int first     = blockIdx.x;\n    const int count     = __builtin_amdgcn_readfirstlane(table.count);\n    const int num_items = (count * ITEMS_PER_EXPERT - first + Config::NUM_BLOCKS - 1) /\n                          Config::NUM_BLOCKS;\n    if (num_items <= 0) {\n        return;\n    }\n    // 256 is a multiple of 32: all of this block's items are the same chunk\n    const int  chunk   = first % ITEMS_PER_EXPERT;\n    const auto slot_of = [&](int n) {\n        return min((first + n * Config::NUM_BLOCKS) / ITEMS_PER_EXPERT, NUM_TOKENS * Config::TOP_K);\n    };\n\n    // everything but the weights first: global loads complete in issue order, so waiting for one\n    // issued after the weights would wait for all of them. Past count, ids are 0.\n    int experts[ITEMS];\n#pragma unroll\n    for (int n = 0; n < ITEMS; ++n) {\n        experts[n] = __builtin_amdgcn_readfirstlane(table.ids[slot_of(n)]);\n    }\n    float item_scales[SCALE_LOADS];\n#pragma unroll\n    for (int k = 0; k < SCALE_LOADS; ++k) {\n        const int i     = tid + k * Config::BLOCK_SIZE;\n        const int n     = min(i / ITEM_SCALES, ITEMS - 1);\n        const int block = table.ids[slot_of(n)] * 4 + i / Config::NUM_GROUPS % 2 * 2 + chunk / 16;\n        item_scales[k]  = weight_scale[block * Config::NUM_GROUPS + i % Config::NUM_GROUPS];\n    }\n    // x is every item's B operand, with its scales; columns past M repeat token M - 1 and are\n    // dropped\n    const int token = min(lane % 16, NUM_TOKENS - 1);\n    int32x8   x[WAVE_K_BLOCKS];\n    float     x_scale[WAVE_K_BLOCKS];\n#pragma unroll\n    for (int j = 0; j < WAVE_K_BLOCKS; ++j) {\n        const uint8_t *src = x_q + token * Config::HIDDEN_SIZE + (kb0 + j) * 128 + lane / 16 * 16;\n        x[j]               = load_fragment(src, src + 64);\n        x_scale[j]         = x_s[token * Config::NUM_GROUPS + kb0 + j];\n    }\n\n    // lanes l % 16 < 8 take gate rows, the others the matching up rows; their results land in C\n    // rows 0-7 (lanes 0-31) and 8-15 (lanes 32-63), in different 128-row scale blocks\n    const int  row      = 8 * (chunk % 2) + lane % 8; // of its 16-row group\n    const auto group_of = [&](int n) {\n        return experts[n] * 2 * Config::INTERMEDIATE_SIZE / 16 +\n               (lane % 16 < 8 ? 0 : Config::INTERMEDIATE_SIZE / 16) + chunk / 2;\n    };\n    const auto weight_of = [&](int n) {\n        return weight + static_cast<size_t>(group_of(n)) * GROUP_BYTES + kb0 * K_BLOCK_BYTES +\n               lane / 16 * 256 + row * 16;\n    };\n    // w[j] holds this wave's K block j of item n; it loads the next item's as soon as its MFMA has\n    // read it\n    int32x8    w[WAVE_K_BLOCKS];\n    const auto load_w = [&](int j, int n) {\n        const uint8_t *item = weight_of(n);\n        w[j] = load_fragment_nt(item + j * K_BLOCK_BYTES, item + j * K_BLOCK_BYTES + 1024);\n    };\n#pragma unroll\n    for (int j = 0; j < WAVE_K_BLOCKS; ++j) {\n        load_w(j, 0);\n    }\n#pragma unroll\n    for (int k = 0; k < SCALE_LOADS; ++k) {\n        scales[tid + k * Config::BLOCK_SIZE] = item_scales[k];\n    }\n    block_sync_lds();\n\n    const auto item = [&](int n, auto prefetch) {\n        floatx4      acc     = {};\n        const float *w_scale = scales + n * ITEM_SCALES + (lane < 32 ? 0 : Config::NUM_GROUPS) + kb0;\n#pragma unroll\n        for (int j = 0; j < WAVE_K_BLOCKS; ++j) {\n            acc += mfma_16x16x128_fp8(w[j], x[j]) * (w_scale[j] * x_scale[j]);\n            if constexpr (prefetch) {\n                load_w(j, n + 1);\n            }\n        }\n        partials[n * Config::BLOCK_SIZE + tid] = acc;\n    };\n    // straight-line code per item count, so the compiler can count the loads in flight exactly\n    with_count<ITEMS>(num_items, [&](auto items) {\n#pragma unroll\n        for (int n = 0; n < items - 1; ++n) {\n            item(n, std::true_type{});\n        }\n        item(items - 1, std::false_type{});\n    });\n    __syncthreads();\n\n    // (n, j, m): gate row j and up row j of token m in item n, summed over the 4 waves in a fixed\n    // order; C row r of a wave's tile is at lane 16 (r / 4) + m, element r % 4\n    for (int i = tid; i < num_items * 8 * NUM_TOKENS; i += Config::BLOCK_SIZE) {\n        const int      n    = i / (8 * NUM_TOKENS);\n        const int      j    = i / NUM_TOKENS % 8;\n        const int      m    = i % NUM_TOKENS;\n        const floatx4 *tile = partials + n * Config::BLOCK_SIZE + 16 * (j / 4) + m;\n        float          gate = 0.0f;\n        float          up   = 0.0f;\n#pragma unroll\n        for (int v = 0; v < WAVES; ++v) {\n            gate += tile[v * THREADS_PER_WARP][j % 4];\n            up += tile[v * THREADS_PER_WARP + 32][j % 4];\n        }\n        // HF: g and u are bf16 outputs of the linears\n        reinterpret_cast<bfloat16 *>(scales)[i] =\n            silu_mul(static_cast<bfloat16>(gate), static_cast<bfloat16>(up));\n    }\n    // (n, m): token m's 8 values of item n, from the scales' LDS, now free\n    block_sync_lds();\n    for (int i = tid; i < num_items * NUM_TOKENS; i += Config::BLOCK_SIZE) {\n        const int   n   = i / NUM_TOKENS;\n        const int   m   = i % NUM_TOKENS;\n        const int   row = slot_of(n) * Config::MAX_NUM_TOKENS + m;\n        const auto *v   = reinterpret_cast<const uint16_t *>(scales) + n * 8 * NUM_TOKENS + m;\n        uint32x4    val;\n#pragma unroll\n        for (int j = 0; j < 4; ++j) {\n            val[j] = v[2 * j * NUM_TOKENS] |\n                     static_cast<uint32_t>(v[(2 * j + 1) * NUM_TOKENS]) << 16;\n        }\n        *reinterpret_cast<uint32x4 *>(h + row * Config::INTERMEDIATE_SIZE + 8 * chunk) = val;\n    }\n}\n\n// gate_up_kernel's LDS: logits fp32 [MAX_NUM_TOKENS][NUM_EXPERTS], top-k expert ids int32 and\n// weights fp32, each [MAX_NUM_TOKENS][TOP_K], a bit per expert picked by any token, the table,\n// then gate_up_block's\nconstexpr int SMEM_LOGITS_OFFSET   = 0;\nconstexpr int SMEM_TOPK_IDS_OFFSET =\n    SMEM_LOGITS_OFFSET + Config::MAX_NUM_TOKENS * Config::NUM_EXPERTS * sizeof(float);\nconstexpr int SMEM_TOPK_W_OFFSET =\n    SMEM_TOPK_IDS_OFFSET + Config::MAX_NUM_TOKENS * Config::TOP_K * sizeof(int);\nconstexpr int SMEM_PICKED_MASK_OFFSET =\n    SMEM_TOPK_W_OFFSET + Config::MAX_NUM_TOKENS * Config::TOP_K * sizeof(float);\nconstexpr int SMEM_TABLE_OFFSET   = SMEM_PICKED_MASK_OFFSET + Config::NUM_EXPERTS / 8;\nconstexpr int SMEM_GATE_UP_OFFSET = SMEM_TABLE_OFFSET + (sizeof(ExpertTable) + 15) / 16 * 16;\nconstexpr int GATE_UP_SMEM_SIZE   = SMEM_GATE_UP_OFFSET + SMEM_GATE_UP_SIZE;\nstatic_assert(SMEM_TABLE_OFFSET % 16 == 0 && GATE_UP_SMEM_SIZE <= Config::SMEM_SIZE);\n\n// top-k as in HF noaux_tc (n_group = topk_group = 1), on the logits rounded to bf16: wave w picks\n// the experts of tokens w, w + 4, ... by sigmoid(logit) + bias, one wave-wide max per pick; ties go\n// to the lower expert id. Then the grouping: the shared expert, then the picked ones in id order.\ntemplate <int NUM_TOKENS>\n__global__ __launch_bounds__(Config::BLOCK_SIZE) __attribute__((amdgpu_waves_per_eu(1, 1))) void\ngate_up_kernel(const MoeParams p) {\n    extern __shared__ __align__(16) uint8_t smem[];\n    const int tid     = threadIdx.x;\n    const int warp_id = tid / THREADS_PER_WARP;\n    const int lane_id = tid % THREADS_PER_WARP;\n    // lane l scores experts l * EXPERTS_PER_LANE onward\n    constexpr int EXPERTS_PER_LANE = Config::NUM_EXPERTS / THREADS_PER_WARP;\n    static_assert(EXPERTS_PER_LANE == 4 && Config::BLOCK_SIZE == Config::NUM_EXPERTS);\n\n    float    *logits      = reinterpret_cast<float *>(smem + SMEM_LOGITS_OFFSET);\n    int      *topk_ids    = reinterpret_cast<int *>(smem + SMEM_TOPK_IDS_OFFSET);\n    float    *topk_w      = reinterpret_cast<float *>(smem + SMEM_TOPK_W_OFFSET);\n    uint32_t *picked_mask = reinterpret_cast<uint32_t *>(smem + SMEM_PICKED_MASK_OFFSET);\n    ExpertTable &table    = *reinterpret_cast<ExpertTable *>(smem + SMEM_TABLE_OFFSET);\n\n    float bias[EXPERTS_PER_LANE];\n    load_data<float, 4>(p.router_bias + lane_id * EXPERTS_PER_LANE, bias);\n#pragma unroll\n    for (int m = 0; m < NUM_TOKENS; ++m) {\n        logits[m * Config::NUM_EXPERTS + tid] = p.logits[m * Config::NUM_EXPERTS + tid];\n    }\n    // zero the mask and the table: LDS starts with garbage, the top-k ORs its picks into the mask,\n    // the grouping writes only the picked slots and the weights of tokens that picked them, and\n    // gate_up reads scales for every slot it might take\n    constexpr int ZERO_PACKETS = (SMEM_GATE_UP_OFFSET - SMEM_PICKED_MASK_OFFSET) / 16;\n    for (int i = tid; i < ZERO_PACKETS; i += Config::BLOCK_SIZE) {\n        reinterpret_cast<uint32x4 *>(smem + SMEM_PICKED_MASK_OFFSET)[i] = uint32x4{};\n    }\n    __syncthreads();\n\n    for (int m = warp_id; m < NUM_TOKENS; m += WAVES) {\n        const float *token_logits = logits + m * Config::NUM_EXPERTS;\n        // this lane's experts, sorted by key and then e, so a pick only compares the lanes' heads\n        // and only the picked lane moves on; ties go to the lowest lane, so the lowest expert id\n        uint32_t key[EXPERTS_PER_LANE];\n        int      eid[EXPERTS_PER_LANE];\n#pragma unroll\n        for (int e = 0; e < EXPERTS_PER_LANE; ++e) {\n            key[e] = ordered_bits(sigmoid(token_logits[lane_id * EXPERTS_PER_LANE + e]) + bias[e]);\n            eid[e] = e;\n        }\n        const auto order = [&](int a, int b) {\n            const bool     swap = key[b] > key[a] || (key[b] == key[a] && eid[b] < eid[a]);\n            const uint32_t ka   = key[a];\n            const int      ea   = eid[a];\n            key[a]              = swap ? key[b] : ka;\n            eid[a]              = swap ? eid[b] : ea;\n            key[b]              = swap ? ka : key[b];\n            eid[b]              = swap ? ea : eid[b];\n        };\n        order(0, 1);\n        order(2, 3);\n        order(0, 2);\n        order(1, 3);\n        order(1, 2);\n        int ids[Config::TOP_K];\n#pragma unroll\n        for (int k = 0; k < Config::TOP_K; ++k) {\n            const uint32_t best   = WarpReduce<MaxOp, uint32_t>(key[0]);\n            const int      lane   = __builtin_ctzll(__ballot(key[0] == best));\n            ids[k]                = lane * EXPERTS_PER_LANE + readlane(eid[0], lane);\n            const bool     picked = lane_id == lane;\n#pragma unroll\n            for (int e = 0; e + 1 < EXPERTS_PER_LANE; ++e) {\n                key[e] = picked ? key[e + 1] : key[e];\n                eid[e] = picked ? eid[e + 1] : eid[e];\n            }\n            key[EXPERTS_PER_LANE - 1] = picked ? 0 : key[EXPERTS_PER_LANE - 1];\n        }\n        // weights as in HF: sigmoid without the bias, normalized, then scaled; lane k keeps pick k,\n        // so the stores and the mask OR below are one LDS instruction each for all 8 picks\n        int   pick_id    = 0;\n        float pick_score = 0.0f;\n        float sum        = 0.0f;\n#pragma unroll\n        for (int k = 0; k < Config::TOP_K; ++k) {\n            const float score = sigmoid(token_logits[ids[k]]);\n            sum += score;\n            pick_id    = lane_id == k ? ids[k] : pick_id;\n            pick_score = lane_id == k ? score : pick_score;\n        }\n        const float norm = __builtin_amdgcn_rcpf(sum + 1e-20f) * p.routed_scaling_factor;\n        if (lane_id < Config::TOP_K) {\n            topk_ids[m * Config::TOP_K + lane_id] = pick_id;\n            topk_w[m * Config::TOP_K + lane_id]   = pick_score * norm;\n            atomicOr(picked_mask + pick_id / 32, 1u << pick_id % 32);\n        }\n    }\n    __syncthreads();\n\n    // thread t places pick t: its slot is 1 + how many picked ids are below it\n    static_assert(Config::MAX_NUM_TOKENS * Config::TOP_K <= Config::BLOCK_SIZE);\n    if (tid < NUM_TOKENS * Config::TOP_K) {\n        const int pick_id = topk_ids[tid];\n        uint32_t  mask[Config::NUM_EXPERTS / 32];\n#pragma unroll\n        for (int i = 0; i < Config::NUM_EXPERTS / 32; i += 4) {\n            load_data<uint32_t, 4>(picked_mask + i, mask + i);\n        }\n        int rank  = 0;\n        int count = 0;\n#pragma unroll\n        for (int i = 0; i < Config::NUM_EXPERTS / 32; ++i) {\n            const int below = min(max(pick_id - 32 * i, 0), 32);\n            rank += __popc(mask[i] & static_cast<uint32_t>((1ull << below) - 1));\n            count += __popc(mask[i]);\n        }\n        table.ids[1 + rank]                    = pick_id;\n        table.w[1 + rank][tid / Config::TOP_K] = topk_w[tid];\n        if (tid == 0) {\n            table.ids[0] = Config::SHARED_EXPERT;\n#pragma unroll\n            for (int m = 0; m < Config::MAX_NUM_TOKENS; ++m) {\n                table.w[0][m] = 1.0f;\n            }\n            table.count = 1 + count;\n        }\n    }\n    __syncthreads();\n\n    // the table for the down launch: ids past count become -1\n    if (blockIdx.x == 0) {\n        if (tid < Config::MAX_SLOTS) {\n            const int id = table.ids[tid];\n#pragma unroll\n            for (int j = 0; j < Config::MAX_NUM_TOKENS; j += 4) {\n                store_data<float, 4>(p.table->w[tid] + j, table.w[tid] + j);\n            }\n            p.table->ids[tid] = tid < table.count ? id : -1;\n        }\n        if (tid == 0) {\n            p.table->count = table.count;\n        }\n    }\n\n    gate_up_block<NUM_TOKENS>(p.x_q, p.x_s, table, p.gate_up_weight, p.gate_up_scale, p.act,\n                              smem + SMEM_GATE_UP_OFFSET);\n}\n\n// The row split of down: block k owns output rows 24k .. 24k + 23. Blocks 2j and 2j + 1 share\n// 16-row groups 3j .. 3j + 2, the even one taking group 3j and rows 0-7 of 3j + 1, the odd one rows\n// 8-15 of 3j + 1 and group 3j + 2. Waves 0 and 1 take the full group, waves 2 and 3 the half group,\n// each pair splitting K; in the half group lanes 8-15 repeat the rows of lanes 0-7 and their C rows\n// are dropped.\nstatic_assert(Config::ROWS_PER_BLOCK == 24);\n__device__ inline int split_group(int wave) {\n    return blockIdx.x / 2 * 3 + (wave < 2 ? 2 * (blockIdx.x & 1) : 1);\n}\n// the row of its 16-row group this lane loads\n__device__ inline int split_row(int wave, int lane) {\n    return wave < 2 ? lane % 16 : lane % 8 + 8 * (blockIdx.x & 1);\n}\n\n// down: every expert of the table, wave w taking 128-K block w % 2 of its group; each wave keeps\n// the next DOWN_DEPTH experts' weights in flight.\nconstexpr int DOWN_DEPTH       = 8;\nconstexpr int DOWN_GROUP_BYTES = 16 * Config::INTERMEDIATE_SIZE;\n// a round's h: its 8 slots' 1x128 groups, (slot of the round, token, K block)\nconstexpr int H_GROUPS = DOWN_DEPTH * Config::MAX_NUM_TOKENS * 2;\n// a round's h of one token is the block's 256 threads: its 8 slots' 2 groups of 16 lanes\nstatic_assert(DOWN_DEPTH * 2 * 16 == Config::BLOCK_SIZE);\n\nstruct DownSmem {\n    uint8_t     h[2][H_GROUPS * 128]; // fp8, by round parity\n    float       coef[2][H_GROUPS];    // h's scale times the routing weight\n    float       w_scale[Config::MAX_SLOTS][WAVES];\n    floatx4     tiles[Config::BLOCK_SIZE]; // each wave's 16x16 result\n    ExpertTable table;\n};\nstatic_assert(sizeof(DownSmem) <= Config::SMEM_SIZE);\n\ntemplate <int NUM_TOKENS>\n__global__ __launch_bounds__(Config::BLOCK_SIZE) __attribute__((amdgpu_waves_per_eu(1, 1))) void\ndown_kernel(const MoeParams p) {\n    extern __shared__ __align__(16) uint8_t smem[];\n    DownSmem &s    = *reinterpret_cast<DownSmem *>(smem);\n    const int tid  = threadIdx.x;\n    const int lane = tid % THREADS_PER_WARP;\n    const int wave = tid / THREADS_PER_WARP;\n    const int group = split_group(wave);\n    const int row   = split_row(wave, lane);\n    const int kb    = wave % 2;\n\n    constexpr int TABLE_PACKETS = sizeof(ExpertTable) / sizeof(uint32x4);\n    for (int i = tid; i < TABLE_PACKETS; i += Config::BLOCK_SIZE) {\n        reinterpret_cast<uint32x4 *>(&s.table)[i] = reinterpret_cast<const uint32x4 *>(p.table)[i];\n    }\n    __syncthreads();\n    const ExpertTable &table = s.table;\n    const int          count = __builtin_amdgcn_readfirstlane(table.count);\n\n    // the weight scales first, those of slot i / WAVES (past count, the last again) and wave\n    // i % WAVES for thread i\n    constexpr int SCALE_ITERS =\n        (Config::MAX_SLOTS * WAVES + Config::BLOCK_SIZE - 1) / Config::BLOCK_SIZE;\n    float w_scale[SCALE_ITERS];\n#pragma unroll\n    for (int k = 0; k < SCALE_ITERS; ++k) {\n        const int i    = tid + k * Config::BLOCK_SIZE;\n        const int slot = min(i / WAVES, count - 1);\n        const int wv   = i % WAVES;\n        w_scale[k] = p.down_scale[(table.ids[slot] * Config::NUM_GROUPS + split_group(wv) / 8) * 2 +\n                                  wv % 2];\n    }\n    // h of round r (slots 8r .. 8r + 7; past count, the last slot again) into LDS as fp8, a scale\n    // per 1x128 group, while the round before computes: thread t takes slot 8r + t / 32, K block\n    // t / 16 % 2 of each token\n    const auto h_slot = [&](int round) { return min(round * DOWN_DEPTH + tid / 32, count - 1); };\n    // the group's index in act, and in the round's LDS\n    const auto act_group = [&](int round, int m) {\n        return (h_slot(round) * Config::MAX_NUM_TOKENS + m) * 2 + tid / 16 % 2;\n    };\n    const auto lds_group = [&](int round, int m) {\n        return ((h_slot(round) % DOWN_DEPTH) * Config::MAX_NUM_TOKENS + m) * 2 + tid / 16 % 2;\n    };\n    bfloat16   h[NUM_TOKENS][8];\n    const auto load_h = [&](int round) {\n#pragma unroll\n        for (int m = 0; m < NUM_TOKENS; ++m) {\n            load_data<bfloat16, 8>(p.act + act_group(round, m) * 128 + tid % 16 * 8, h[m]);\n        }\n    };\n    const auto quant_h = [&](int round) {\n        float scale[NUM_TOKENS];\n#pragma unroll\n        for (int m = 0; m < NUM_TOKENS; ++m) {\n            scale[m] = quant_fp8(h[m], s.h[round % 2] + lds_group(round, m) * 128 + tid % 16 * 8);\n        }\n        // kept out of the loop above so that loop has no branches\n        if (tid % 16 == 0) {\n#pragma unroll\n            for (int m = 0; m < NUM_TOKENS; ++m) {\n                s.coef[round % 2][lds_group(round, m)] = scale[m] * table.w[h_slot(round)][m];\n            }\n        }\n    };\n    int32x8    w[DOWN_DEPTH];\n    const auto load_w = [&](int d, int r) {\n        const int      expert = __builtin_amdgcn_readfirstlane(table.ids[min(r, count - 1)]);\n        const uint8_t *src =\n            p.down_weight +\n            (static_cast<size_t>(expert) * Config::HIDDEN_SIZE / 16 + group) * DOWN_GROUP_BYTES +\n            kb * K_BLOCK_BYTES + lane / 16 * 256 + row * 16;\n        w[d] = load_fragment_nt(src, src + 1024);\n    };\n    // round 0's h before its weights: global loads complete in issue order, so its quant waits\n    // for h alone\n    load_h(0);\n#pragma unroll\n    for (int d = 0; d < DOWN_DEPTH; ++d) {\n        load_w(d, d);\n    }\n    quant_h(0);\n#pragma unroll\n    for (int k = 0; k < SCALE_ITERS; ++k) {\n        const int i = tid + k * Config::BLOCK_SIZE;\n        if (i < Config::MAX_SLOTS * WAVES) {\n            s.w_scale[i / WAVES][i % WAVES] = w_scale[k];\n        }\n    }\n    block_sync_lds();\n\n    // columns past M repeat token M - 1 and are dropped\n    const int  token  = min(lane % 16, NUM_TOKENS - 1);\n    floatx4    acc    = {};\n    const auto expert = [&](int r, int d) {\n        if (r < count) {\n            const int      g = (d * Config::MAX_NUM_TOKENS + token) * 2 + kb;\n            const uint8_t *h = s.h[r / DOWN_DEPTH % 2] + g * 128 + lane / 16 * 16;\n            acc += mfma_16x16x128_fp8(w[d], load_fragment(h, h + 64)) *\n                   (s.w_scale[r][wave] * s.coef[r / DOWN_DEPTH % 2][g]);\n        }\n        // past count, the last expert's weights again: unused, but loading them keeps every\n        // round's load count fixed for the compiler\n        load_w(d, r + DOWN_DEPTH);\n    };\n    const int rounds = (count + DOWN_DEPTH - 1) / DOWN_DEPTH;\n    for (int r = 0; r < rounds; ++r) {\n        const bool has_next = r + 1 < rounds;\n        if (has_next) {\n            load_h(r + 1);\n        }\n#pragma unroll\n        for (int d = 0; d < DOWN_DEPTH; ++d) {\n            expert(r * DOWN_DEPTH + d, d);\n        }\n        if (has_next) {\n            quant_h(r + 1);\n            block_sync_lds();\n        }\n    }\n\n    // block k's rows from its 4 waves' 16x16 tiles, split as above: even CUs the full group's 16\n    // rows, then the half group's 8; odd CUs the other way round\n    constexpr int ROWS = Config::ROWS_PER_BLOCK;\n    s.tiles[tid]       = acc;\n    block_sync_lds();\n    for (int i = tid; i < ROWS * NUM_TOKENS; i += Config::BLOCK_SIZE) {\n        const int      odd  = blockIdx.x & 1;\n        const int      m    = i / ROWS;\n        const int      q    = i % ROWS;\n        const bool     full = odd ? q >= 8 : q < 16;\n        const int      c    = full ? q - 8 * odd : q - 16 + 16 * odd;\n        const floatx4 *tile = s.tiles + (full ? 0 : 2) * THREADS_PER_WARP + 16 * (c / 4) + m;\n        p.out[m * Config::HIDDEN_SIZE + ROWS * blockIdx.x + q] =\n            static_cast<bfloat16>(tile[0][c % 4] + tile[THREADS_PER_WARP][c % 4]);\n    }\n}\n\nconstexpr int DOWN_SMEM_SIZE = sizeof(DownSmem);\n\ntemplate <int NUM_TOKENS> void launch_moe(const MoeParams &p, hipStream_t stream) {\n    router_kernel<NUM_TOKENS><<<Config::NUM_BLOCKS, Config::BLOCK_SIZE, 0, stream>>>(p);\n    gate_up_kernel<NUM_TOKENS>\n        <<<Config::NUM_BLOCKS, Config::BLOCK_SIZE, GATE_UP_SMEM_SIZE, stream>>>(p);\n    down_kernel<NUM_TOKENS><<<Config::NUM_BLOCKS, Config::BLOCK_SIZE, DOWN_SMEM_SIZE, stream>>>(p);\n}\n\n// the launches for num_tokens in 1 .. MAX_NUM_TOKENS\ntemplate <int NUM_TOKENS = Config::MAX_NUM_TOKENS>\nvoid moe_launch(const MoeParams &p, int num_tokens, hipStream_t stream) {\n    if constexpr (NUM_TOKENS > 0) {\n        if (num_tokens == NUM_TOKENS) {\n            launch_moe<NUM_TOKENS>(p, stream);\n        } else {\n            moe_launch<NUM_TOKENS - 1>(p, num_tokens, stream);\n        }\n    }\n}\n\n} // namespace infera_flash::glm5\n"
+      },
+      {
+        "path": "kernel.hip",
+        "content": "// GLM-5.3-FP8's DeepseekV2MoE on one TP8 rank for 1 to 16 tokens (decode, MTP drafts and verify):\n// the router's logits in fp32 rounded to bf16, the sigmoid top-8 of the 256 routed experts with the\n// fp32 correction bias added, their weights renormalized times routed_scaling_factor, and the\n// shared expert in slot 256 at weight 1; each expert's gate_up and down GEMMs on sglang's\n// preshuffled fp8 weights at a scale per 128 x 128 block, their inputs quantized to fp8 per 1 x 128,\n// and the weighted sum written to out, this rank's share. Three launches of one block per CU, none\n// waiting for another (glm5/moe.h): the router, the top-k with gate_up, then down.\n#include <ATen/ATen.h>\n#include <ATen/hip/HIPContext.h>\n#include <ATen/hip/impl/HIPGuardImplMasqueradingAsCUDA.h>\n#include <c10/hip/HIPException.h>\n#include <optional>\n#include <torch/library.h>\n\n#include \"glm5/moe.h\"\n\nnamespace infera_flash::glm5 {\nnamespace {\n\n// this call's scratch, at 256 B offsets into one allocation\nconstexpr int64_t align(int64_t bytes) { return (bytes + 255) / 256 * 256; }\nconstexpr int64_t LOGITS_BYTES =\n    align(Config::MAX_NUM_TOKENS * Config::NUM_EXPERTS * sizeof(float));\nconstexpr int64_t X_Q_BYTES = align(Config::MAX_NUM_TOKENS * Config::HIDDEN_SIZE);\nconstexpr int64_t X_S_BYTES = align(Config::MAX_NUM_TOKENS * Config::NUM_GROUPS * sizeof(float));\nconstexpr int64_t TABLE_BYTES = align(sizeof(ExpertTable));\nconstexpr int64_t ACT_BYTES   = align(static_cast<int64_t>(Config::MAX_SLOTS) *\n                                      Config::MAX_NUM_TOKENS * Config::INTERMEDIATE_SIZE *\n                                      sizeof(bfloat16));\n\nvoid run(const at::Tensor &hidden_states, const at::Tensor &router_weight,\n         const at::Tensor &correction_bias, const at::Tensor &w1, const at::Tensor &w1_scale,\n         const at::Tensor &w2, const at::Tensor &w2_scale, int64_t topk, int64_t num_expert_group,\n         int64_t topk_group, bool renormalize, c10::string_view scoring_func,\n         double routed_scaling_factor, std::optional<at::ScalarType> out_dtype, at::Tensor &out) {\n    const int64_t num_tokens = hidden_states.size(0);\n    TORCH_CHECK(num_tokens >= 1 && num_tokens <= Config::MAX_NUM_TOKENS &&\n                    topk == Config::TOP_K && num_expert_group == 1 && topk_group == 1 &&\n                    renormalize && scoring_func == \"sigmoid\",\n                \"1 to \", Config::MAX_NUM_TOKENS, \" tokens and GLM-5's routing only\");\n    TORCH_CHECK(hidden_states.is_contiguous() && router_weight.is_contiguous() &&\n                    correction_bias.is_contiguous() && w1.is_contiguous() &&\n                    w1_scale.is_contiguous() && w2.is_contiguous() && w2_scale.is_contiguous() &&\n                    out.is_contiguous(),\n                \"contiguous tensors only\");\n    const at::hip::OptionalHIPGuardMasqueradingAsCUDA guard(hidden_states.device());\n    at::Tensor scratch = at::empty({LOGITS_BYTES + X_Q_BYTES + X_S_BYTES + TABLE_BYTES + ACT_BYTES},\n                                   hidden_states.options().dtype(at::kByte));\n    uint8_t   *base    = scratch.data_ptr<uint8_t>();\n\n    MoeParams p{};\n    p.x                     = static_cast<const bfloat16 *>(hidden_states.data_ptr());\n    p.router_weight         = static_cast<const bfloat16 *>(router_weight.data_ptr());\n    p.router_bias           = correction_bias.data_ptr<float>();\n    p.routed_scaling_factor = static_cast<float>(routed_scaling_factor);\n    p.gate_up_weight        = static_cast<const uint8_t *>(w1.data_ptr());\n    p.gate_up_scale         = w1_scale.data_ptr<float>();\n    p.down_weight           = static_cast<const uint8_t *>(w2.data_ptr());\n    p.down_scale            = w2_scale.data_ptr<float>();\n    p.logits                = reinterpret_cast<float *>(base);\n    p.x_q                   = base + LOGITS_BYTES;\n    p.x_s                   = reinterpret_cast<float *>(base + LOGITS_BYTES + X_Q_BYTES);\n    p.table = reinterpret_cast<ExpertTable *>(base + LOGITS_BYTES + X_Q_BYTES + X_S_BYTES);\n    p.act   = reinterpret_cast<bfloat16 *>(base + LOGITS_BYTES + X_Q_BYTES + X_S_BYTES +\n                                         TABLE_BYTES);\n    p.out   = static_cast<bfloat16 *>(out.data_ptr());\n    moe_launch(p, static_cast<int>(num_tokens), at::hip::getCurrentHIPStream());\n    C10_HIP_CHECK(hipGetLastError());\n}\n\n} // namespace\n} // namespace infera_flash::glm5\n\n#define TORCH_LIBRARY_EXPAND(ns, m) TORCH_LIBRARY(ns, m)\nTORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {\n    m.def(\"run(Tensor hidden_states, Tensor router_weight, Tensor correction_bias, Tensor w1, \"\n          \"Tensor w1_scale, Tensor w2, Tensor w2_scale, int topk, int num_expert_group, \"\n          \"int topk_group, bool renormalize, str scoring_func, float routed_scaling_factor, \"\n          \"ScalarType? out_dtype, Tensor(a!) out) -> ()\",\n          &infera_flash::glm5::run);\n}\n"
+      }
+    ]
+  }
+}

@@ -1,3 +1,5 @@
+deepseek_v2_fp8_moe_model_dim#_n_routed#_inter_dim#
+deepseek_v2_fp8_moe_shuffled_16x16_model_dim#_n_routed#_inter_dim#
 deepseek_v2_mxfp4_moe_model_dim#_n_routed#_inter_dim#
 deepseek_v2_mxfp4_moe_shuffled_16x16_model_dim#_n_routed#_inter_dim#
 dsa_indexer_key_prepare_model_dim#

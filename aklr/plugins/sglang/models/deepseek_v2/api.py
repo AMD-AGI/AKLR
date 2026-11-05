@@ -6,9 +6,30 @@ from __future__ import annotations
 from aklr.core.runtime.dispatch import FallbackReason, api
 from aklr.plugins.sglang.hook import sglang_route
 from aklr.plugins.sglang.models import moe_blocks
-from aklr.plugins.sglang.models.deepseek_v2.contract import DEEPSEEK_V2_MXFP4_MOE
+from aklr.plugins.sglang.models.deepseek_v2.contract import (
+    DEEPSEEK_V2_FP8_MOE,
+    DEEPSEEK_V2_MXFP4_MOE,
+)
 
-__all__ = ["deepseek_v2_mxfp4_moe"]
+__all__ = ["deepseek_v2_fp8_moe", "deepseek_v2_mxfp4_moe"]
+
+
+@api(DEEPSEEK_V2_FP8_MOE)
+def deepseek_v2_fp8_moe(
+    hidden_states,
+    router_weight,
+    correction_bias,
+    w1,
+    w1_scale,
+    w2,
+    w2_scale,
+    topk,
+    num_expert_group,
+    topk_group,
+    renormalize,
+    scoring_func,
+    routed_scaling_factor,
+): ...
 
 
 @api(DEEPSEEK_V2_MXFP4_MOE)
@@ -47,7 +68,8 @@ def _moe_forward_normal(
         self, skip_shared_experts, num_token_non_padded, use_vision_topk, return_moe_output
     ):
         return FallbackReason.OUT_OF_CONTRACT
-    out = deepseek_v2_mxfp4_moe(**_moe_arguments(self, hidden_states))
+    op, arguments = _moe_call(self)
+    out = op(hidden_states=hidden_states, **arguments)
     if isinstance(out, FallbackReason) or not self.reduce_results:
         return out
     from sglang.srt.layers.moe import post_experts_all_reduce
@@ -66,24 +88,22 @@ def _forward_normal_falls_back(
         or use_vision_topk
         or return_moe_output
         or moe_blocks.runtime_falls_back()
-        or moe_blocks.experts_fall_back(mlp.experts, ("QuarkW4A4MXFp4MoE",))
+        or moe_blocks.experts_fall_back(mlp.experts, ("Fp8MoEMethod", "QuarkW4A4MXFp4MoE"))
         or mlp._fuse_shared_experts_inside_sbo
         or mlp.is_hash
         or mlp.gate.e_score_correction_bias_vl is not None
     )
 
 
-def _moe_arguments(mlp, hidden_states):
+def _moe_call(mlp):
+    """The op for the experts' format, and its arguments but the input."""
     experts, routing = mlp.experts, mlp.topk.topk_config
     grouped = routing.use_grouped_topk
-    return {
-        "hidden_states": hidden_states,
+    arguments = {
         "router_weight": mlp.gate.weight,
         "correction_bias": routing.correction_bias,
         "w1": experts.w13_weight,
-        "w1_scale": experts.w13_weight_scale,
         "w2": experts.w2_weight,
-        "w2_scale": experts.w2_weight_scale,
         "topk": routing.top_k - routing.num_fused_shared_experts,
         "num_expert_group": routing.num_expert_group if grouped else 1,
         "topk_group": routing.topk_group if grouped else 1,
@@ -91,3 +111,17 @@ def _moe_arguments(mlp, hidden_states):
         "scoring_func": routing.scoring_func,
         "routed_scaling_factor": mlp.routed_scaling_factor,
     }
+    experts_format = moe_blocks.experts_format(experts)
+    if experts_format == "Fp8MoEMethod":
+        return deepseek_v2_fp8_moe, {
+            **arguments,
+            "w1_scale": experts.w13_weight_scale_inv,
+            "w2_scale": experts.w2_weight_scale_inv,
+        }
+    elif experts_format == "QuarkW4A4MXFp4MoE":
+        return deepseek_v2_mxfp4_moe, {
+            **arguments,
+            "w1_scale": experts.w13_weight_scale,
+            "w2_scale": experts.w2_weight_scale,
+        }
+    raise ValueError(f"{experts_format}: _forward_normal_falls_back admits fp8 and MXFP4 experts only")

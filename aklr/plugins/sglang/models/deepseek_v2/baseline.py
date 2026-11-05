@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-__all__ = ["deepseek_v2_mxfp4_moe_baseline"]
+__all__ = ["deepseek_v2_fp8_moe_baseline", "deepseek_v2_mxfp4_moe_baseline"]
 
 
 def _check_aiter_path() -> None:
@@ -60,7 +60,8 @@ def _route(
     return weights, ids
 
 
-def deepseek_v2_mxfp4_moe_baseline(
+def _shared_slot_moe(
+    quant_type,
     hidden_states,
     router_weight,
     correction_bias,
@@ -72,15 +73,12 @@ def deepseek_v2_mxfp4_moe_baseline(
     num_expert_group,
     topk_group,
     renormalize,
-    scoring_func,
     routed_scaling_factor,
-    out_dtype=None,
-    out=None,
 ):
     """forward_normal on one rank: _route's top-k, sglang's shared-slot append and aiter's
-    fused_moe on the MXFP4 experts at sglang's sorting dispatch policy."""
+    fused_moe at ``quant_type`` and sglang's sorting dispatch policy."""
     _check_aiter_path()
-    from aiter import ActivationType, QuantType
+    from aiter import ActivationType
     from aiter.fused_moe import fused_moe
     from sglang.kernels.ops.moe.fused_moe_triton_kernels import fused_append_shared_experts
     from sglang.srt.layers.moe.moe_runner.aiter import _MOE_SORTING_DISPATCH_POLICY
@@ -103,8 +101,24 @@ def deepseek_v2_mxfp4_moe_baseline(
         weights,
         ids,
         activation=ActivationType.Silu,
-        quant_type=QuantType.per_1x32,
+        quant_type=quant_type,
         w1_scale=w1_scale,
         w2_scale=w2_scale,
         moe_sorting_dispatch_policy=_MOE_SORTING_DISPATCH_POLICY,
     )
+
+
+def deepseek_v2_fp8_moe_baseline(*, scoring_func, out_dtype=None, out=None, **call):
+    """forward_normal with fp8 experts (Fp8MoEMethod's block quant): fused_moe at
+    per_128x128, which quantizes the activations per 1 x 128. Its small-M kernel
+    (smallm_moe_gfx950) is built for hidden 4096 only, so sglang never takes it here."""
+    from aiter import QuantType
+
+    return _shared_slot_moe(QuantType.per_128x128, **call)
+
+
+def deepseek_v2_mxfp4_moe_baseline(*, scoring_func, out_dtype=None, out=None, **call):
+    """forward_normal with MXFP4 experts: fused_moe at per_1x32."""
+    from aiter import QuantType
+
+    return _shared_slot_moe(QuantType.per_1x32, **call)
