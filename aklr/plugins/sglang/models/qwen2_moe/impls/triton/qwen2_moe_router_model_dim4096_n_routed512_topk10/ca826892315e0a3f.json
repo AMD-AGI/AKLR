@@ -1,0 +1,112 @@
+{
+  "schema_version": 5,
+  "name": "qwen2_moe_router_model_dim4096_n_routed512_topk10",
+  "contract_id": "qwen2_moe_router@1.0",
+  "description": "sglang's Qwen2MoeSparseMoeBlock router, its gate and TopK with renormalize: the logits hidden_states router_weight^T, rounded to bf16, pick each token's topk experts by descending logit, a tie going to the lower expert id, weighed by the softmax of their logits (the softmax over every expert, renormalized over the chosen ones).",
+  "op_type": "qwen2_moe",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 4096,
+      "description": "Hidden size."
+    },
+    "n_routed": {
+      "type": "const",
+      "value": 512,
+      "description": "Routed experts: the router's rows."
+    },
+    "topk": {
+      "type": "const",
+      "value": 10,
+      "description": "Routed experts per token."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The tokens' hidden states, the MoE block's input."
+    },
+    "router_weight": {
+      "shape": [
+        "n_routed",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 4096
+      },
+      "description": "The router (the block's gate) projection."
+    }
+  },
+  "outputs": {
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "float32",
+      "description": "The chosen experts' weights, in topk_ids' order."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "description": "The chosen experts, by descending logit."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 4096
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"BF16 router projection and stable selected-logit softmax for AMD MI355.\"\"\"\n\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\nfrom triton.runtime.jit import constexpr_function\n\n\n@constexpr_function\ndef _copy_layout(shared):\n    \"\"\"Map 128-bit async copies onto the operand's padded LDS layout.\"\"\"\n    bases = shared.offset_bases\n    return gl.DistributedLinearLayout(\n        bases[:3] + bases[11:], bases[3:9], bases[9:11], [], shared.shape,\n    )\n\n\n@gluon.jit\ndef _pipeline_step(\n    hidden, weight, a_buffer, b_buffer, a_offsets, b_offsets,\n    acc, tile, slot,\n    STAGES: gl.constexpr, BK: gl.constexpr,\n    A_LAYOUT: gl.constexpr, B_LAYOUT: gl.constexpr,\n):\n    # Complete the current tile and the previous shared-memory consumers\n    # before issuing a copy into the slot freed by the previous iteration.\n    gl.amd.cdna4.async_copy.wait_group(STAGES - 2)\n    gl.barrier()\n    future = tile + STAGES - 1\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(\n        a_buffer.index((slot + STAGES - 1) % STAGES),\n        hidden, a_offsets + future * BK,\n    )\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(\n        b_buffer.index((slot + STAGES - 1) % STAGES),\n        weight, b_offsets + future * BK,\n    )\n    gl.amd.cdna4.async_copy.commit_group()\n    a = gl.amd.cdna4.async_copy.load_shared_relaxed(a_buffer.index(slot), A_LAYOUT)\n    b = gl.amd.cdna4.async_copy.load_shared_relaxed(b_buffer.index(slot), B_LAYOUT)\n    return gl.amd.cdna4.mfma(a, b, acc)\n\n\n@gluon.jit\ndef _prefetch_step(\n    hidden, weight, a_buffer, b_buffer, a_offsets, b_offsets,\n    acc, a, b, tile, slot,\n    STAGES: gl.constexpr, BK: gl.constexpr,\n    A_LAYOUT: gl.constexpr, B_LAYOUT: gl.constexpr,\n):\n    future = tile + STAGES - 1\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(\n        a_buffer.index((slot + STAGES - 1) % STAGES),\n        hidden, a_offsets + future * BK,\n    )\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(\n        b_buffer.index((slot + STAGES - 1) % STAGES),\n        weight, b_offsets + future * BK,\n    )\n    gl.amd.cdna4.async_copy.commit_group()\n    gl.amd.cdna4.async_copy.wait_group(STAGES - 2)\n    gl.barrier()\n    next_a = gl.amd.cdna4.async_copy.load_shared_relaxed(\n        a_buffer.index((slot + 1) % STAGES), A_LAYOUT,\n    )\n    next_b = gl.amd.cdna4.async_copy.load_shared_relaxed(\n        b_buffer.index((slot + 1) % STAGES), B_LAYOUT,\n    )\n    acc = gl.amd.cdna4.mfma(a, b, acc)\n    return acc, next_a, next_b\n\n\n@gluon.jit\ndef _router_projection(\n    hidden, weight, logits,\n    M: gl.constexpr, K: gl.constexpr,\n    BM: gl.constexpr, BN: gl.constexpr, BK: gl.constexpr,\n    STAGES: gl.constexpr,\n    GROUP_M: gl.constexpr = 1,\n    SPLIT_K: gl.constexpr = 1,\n    PREFETCH: gl.constexpr = False,\n    WARPS_M: gl.constexpr = 2,\n    EARLY_CAST: gl.constexpr = False,\n    UNROLL: gl.constexpr = 1,\n):\n    mma_layout: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4, instr_shape=[16, 16, 32], transposed=True,\n        warps_per_cta=[WARPS_M, 4 // WARPS_M],\n    )\n    a_layout: gl.constexpr = gl.DotOperandLayout(0, mma_layout, 8)\n    b_layout: gl.constexpr = gl.DotOperandLayout(1, mma_layout, 8)\n    shared_a: gl.constexpr = gl.amd.cdna4.compute_efficient_padded_shared_layout(\n        a_layout, [BM, BK], gl.bfloat16,\n    )\n    shared_b: gl.constexpr = gl.amd.cdna4.compute_efficient_padded_shared_layout(\n        b_layout, [BK, BN], gl.bfloat16,\n    )\n    load_a: gl.constexpr = _copy_layout(shared_a)\n    load_b: gl.constexpr = _copy_layout(shared_b)\n\n    pid = gl.program_id(0)\n    tiles_m = gl.cdiv(M, BM)\n    tiles_n = 512 // BN\n    group = pid // (GROUP_M * tiles_n)\n    first_m = group * GROUP_M\n    tile_in_group = pid % (GROUP_M * tiles_n)\n    tail_m: gl.constexpr = ((M + BM - 1) // BM) % GROUP_M\n    if tail_m == 0:\n        row_in_group = tile_in_group % GROUP_M\n        col_tile = tile_in_group // GROUP_M\n    else:\n        # Both divisors are shape constants, including the last short group.\n        is_tail = group == tiles_m // GROUP_M\n        row_in_group = gl.where(is_tail, tile_in_group % tail_m, tile_in_group % GROUP_M)\n        col_tile = gl.where(is_tail, tile_in_group // tail_m, tile_in_group // GROUP_M)\n    row_start = (first_m + row_in_group) * BM\n    col_start = col_tile * BN\n    split_offset = gl.program_id(1) * (K // SPLIT_K)\n    rows = row_start + gl.arange(0, BM, gl.SliceLayout(1, load_a))\n    cols = col_start + gl.arange(0, BN, gl.SliceLayout(0, load_b))\n    ak = gl.arange(0, BK, gl.SliceLayout(0, load_a))\n    bk = gl.arange(0, BK, gl.SliceLayout(1, load_b))\n    # Invalid output rows are never stored. Reusing the last valid input row\n    # for padding keeps every read in bounds and avoids predicated async copies.\n    read_rows = rows if M % BM == 0 else gl.minimum(rows, M - 1)\n    a_offsets = read_rows[:, None] * K + ak[None, :] + split_offset\n    b_offsets = cols[None, :] * K + bk[:, None] + split_offset\n    a_buffer = gl.allocate_shared_memory(gl.bfloat16, [STAGES, BM, BK], shared_a)\n    b_buffer = gl.allocate_shared_memory(gl.bfloat16, [STAGES, BK, BN], shared_b)\n\n    # Each committed group contains one K tile of both operands.\n    # Every shared slot is initialized before its first read.\n    for stage in gl.static_range(STAGES - 1):\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(\n            a_buffer.index(stage), hidden, a_offsets + stage * BK,\n        )\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(\n            b_buffer.index(stage), weight, b_offsets + stage * BK,\n        )\n        gl.amd.cdna4.async_copy.commit_group()\n\n    acc = gl.zeros((BM, BN), gl.float32, mma_layout)\n    MAIN_TILES: gl.constexpr = K // SPLIT_K // BK - (STAGES - 1)\n    if PREFETCH:\n        gl.amd.cdna4.async_copy.wait_group(STAGES - 2)\n        gl.barrier()\n        a = gl.amd.cdna4.async_copy.load_shared_relaxed(a_buffer.index(0), a_layout)\n        b = gl.amd.cdna4.async_copy.load_shared_relaxed(b_buffer.index(0), b_layout)\n        # Carry one operand tile in registers while loading the next. The\n        # preceding barrier has finished readers of the slot being overwritten.\n        for block in range(MAIN_TILES // UNROLL):\n            for inner in gl.static_range(UNROLL):\n                tile = block * UNROLL + inner\n                acc, a, b = _prefetch_step(\n                    hidden, weight, a_buffer, b_buffer, a_offsets, b_offsets,\n                    acc, a, b, tile, tile % STAGES,\n                    STAGES, BK, a_layout, b_layout,\n                )\n        for inner in gl.static_range(MAIN_TILES % UNROLL):\n            tile = MAIN_TILES // UNROLL * UNROLL + inner\n            acc, a, b = _prefetch_step(\n                hidden, weight, a_buffer, b_buffer, a_offsets, b_offsets,\n                acc, a, b, tile, tile % STAGES,\n                STAGES, BK, a_layout, b_layout,\n            )\n        for tail in gl.static_range(STAGES - 2):\n            gl.amd.cdna4.async_copy.wait_group(STAGES - 3 - tail)\n            gl.barrier()\n            tile = MAIN_TILES + 1 + tail\n            next_a = gl.amd.cdna4.async_copy.load_shared_relaxed(a_buffer.index(tile % STAGES), a_layout)\n            next_b = gl.amd.cdna4.async_copy.load_shared_relaxed(b_buffer.index(tile % STAGES), b_layout)\n            acc = gl.amd.cdna4.mfma(a, b, acc)\n            a, b = next_a, next_b\n        acc = gl.amd.cdna4.mfma(a, b, acc)\n    else:\n        # Constant ring indices remove dynamic LDS address calculations.\n        for group in range(MAIN_TILES // STAGES):\n            for slot in gl.static_range(STAGES):\n                acc = _pipeline_step(\n                    hidden, weight, a_buffer, b_buffer, a_offsets, b_offsets,\n                    acc, group * STAGES + slot, slot,\n                    STAGES, BK, a_layout, b_layout,\n                )\n        for tail in gl.static_range(MAIN_TILES % STAGES):\n            acc = _pipeline_step(\n                hidden, weight, a_buffer, b_buffer, a_offsets, b_offsets,\n                acc, MAIN_TILES // STAGES * STAGES + tail,\n                tail, STAGES, BK, a_layout, b_layout,\n            )\n\n        for tail in gl.static_range(STAGES - 1):\n            tile = K // SPLIT_K // BK - (STAGES - 1) + tail\n            gl.amd.cdna4.async_copy.wait_group(STAGES - 2 - tail)\n            gl.barrier()\n            a = gl.amd.cdna4.async_copy.load_shared_relaxed(a_buffer.index(tile % STAGES), a_layout)\n            b = gl.amd.cdna4.async_copy.load_shared_relaxed(b_buffer.index(tile % STAGES), b_layout)\n            acc = gl.amd.cdna4.mfma(a, b, acc)\n\n    out_layout: gl.constexpr = gl.BlockedLayout([1, 4], [4, 16], [4, 1], [1, 0])\n    if EARLY_CAST:\n        # Narrow unsplit logits before redistribution to reduce LDS traffic.\n        # A split-K destination is FP32 and therefore retains full precision.\n        out = gl.convert_layout(acc.to(logits.dtype.element_ty), out_layout)\n    else:\n        out = gl.convert_layout(acc, out_layout).to(logits.dtype.element_ty)\n    rr = row_start + gl.arange(0, BM, gl.SliceLayout(1, out_layout))\n    cc = col_start + gl.arange(0, BN, gl.SliceLayout(0, out_layout))\n    gl.store(\n        logits + gl.program_id(1) * M * 512 + rr[:, None] * 512 + cc[None, :],\n        out, rr[:, None] < M,\n    )\n\n\n@gluon.jit\ndef _select_and_normalize(\n    partial, logits, weights, ids, M: gl.constexpr, TOPK: gl.constexpr,\n    SPLIT_K: gl.constexpr,\n    ROWS: gl.constexpr, LANES: gl.constexpr, VEC: gl.constexpr = 1,\n):\n    layout: gl.constexpr = gl.BlockedLayout(\n        [1, VEC], [64 // LANES, LANES], [4, 1], [1, 0],\n    )\n    rows = gl.program_id(0) * ROWS + gl.arange(0, ROWS, gl.SliceLayout(1, layout))\n    experts = gl.arange(0, 512, gl.SliceLayout(0, layout))\n    offsets = rows[:, None] * 512 + experts[None, :]\n    values = gl.load(partial + offsets, rows[:, None] < M, other=0).to(gl.float32)\n    if SPLIT_K > 1:\n        for split in gl.static_range(1, SPLIT_K):\n            values += gl.load(\n                partial + split * M * 512 + offsets, rows[:, None] < M, other=0,\n            )\n        # Selection must consume precisely the BF16 logits returned to callers.\n        rounded = values.to(gl.bfloat16)\n        gl.store(logits + offsets, rounded, rows[:, None] < M)\n        values = rounded.to(gl.float32)\n    slots = gl.arange(0, 16, gl.SliceLayout(0, layout))\n    selected = gl.full((ROWS, 16), -float(\"inf\"), gl.float32, layout)\n    selected_ids = gl.full((ROWS, 16), 0, gl.int32, layout)\n    for slot in gl.static_range(TOPK):\n        value = gl.max(values, 1)\n        if slot == 0:\n            row_max = value\n        expert = gl.min(\n            gl.where(values == value[:, None], experts[None, :], 0x7fffffff), 1,\n        )\n        selected = gl.where(slots[None, :] == slot, value[:, None], selected)\n        selected_ids = gl.where(slots[None, :] == slot, expert[:, None], selected_ids)\n        values = gl.where(experts[None, :] == expert[:, None], -float(\"inf\"), values)\n\n    probabilities = gl.exp(selected - row_max[:, None])\n    probabilities = probabilities / gl.sum(probabilities, 1)[:, None]\n    mask = (rows[:, None] < M) & (slots[None, :] < TOPK)\n    gl.store(weights + rows[:, None] * TOPK + slots[None, :], probabilities, mask)\n    gl.store(ids + rows[:, None] * TOPK + slots[None, :], selected_ids, mask)\n\n\ndef fused_router_projection_topk_softmax(\n    hidden: torch.Tensor, router_weight: torch.Tensor, *, topk: int = 10, weights: torch.Tensor, ids: torch.Tensor,\n) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:\n    \"\"\"Return BF16 logits, FP32 selected probabilities, and stable int32 IDs.\"\"\"\n    assert hidden.ndim == 2\n    rows, width = hidden.shape\n    assert router_weight.shape == (512, width)\n    assert rows > 0 and width in (2048, 4096) and topk == 10\n    assert hidden.dtype is torch.bfloat16 and router_weight.dtype is torch.bfloat16\n    assert hidden.is_contiguous() and router_weight.is_contiguous()\n\n    logits = torch.empty((rows, 512), dtype=torch.bfloat16, device=hidden.device)\n\n    # The K=4096 prefill schedules balance CTA count against operand reuse.\n    # Keep the established K=2048 schedules for the shorter reduction.\n    prefetch = False\n    warps_m = 2\n    unroll = 1\n    early_cast = width == 4096 and rows > 1024\n    if rows == 1024 and width == 4096:\n        bm, bn, bk, stages, group_m, split_k = 64, 64, 64, 4, 4, 2\n        prefetch, unroll = True, 16\n    elif rows <= 1024:\n        bm, bn, bk, stages, group_m, split_k = 32, 64, 128, 3, 4, 1\n    elif rows <= 2048:\n        bm, bn, bk, stages, group_m, split_k = 64, 64, 64, 5, 4, 1\n    elif rows <= 4096 and width == 4096:\n        bm, bn, bk, stages, group_m, split_k = 64, 128, 64, 4, 8, 1\n        prefetch, warps_m, unroll = True, 1, 32\n    elif rows <= 2560:\n        bm, bn, bk, stages, group_m, split_k = 64, 128, 64, 3, 8, 2\n    elif rows <= 4096:\n        bm, bn, bk, stages, group_m, split_k = 128, 64, 64, 4, 8, 1\n        prefetch = True\n    else:\n        bm, bn, bk, stages, group_m, split_k = 128, 128, 32, 5, 8, 1\n\n    if split_k > 1:\n        partial = torch.empty(\n            (split_k, rows, 512), dtype=torch.float32, device=hidden.device,\n        )\n    else:\n        partial = logits\n    _router_projection[(triton.cdiv(rows, bm) * (512 // bn), split_k)](\n        hidden, router_weight, partial, rows, width,\n        bm, bn, bk, stages, group_m, split_k, prefetch,\n        warps_m, early_cast, unroll, num_warps=4,\n    )\n\n    selection_rows = 4 if rows <= 3072 else (8 if rows <= 6144 else 16)\n    _select_and_normalize[(triton.cdiv(rows, selection_rows),)](\n        partial, logits, weights, ids, rows, topk, split_k,\n        selection_rows, 256 // selection_rows, 2 if selection_rows == 16 else 1, num_warps=4,\n    )\n    return logits, weights, ids\n\n\ndef run(*, hidden_states, router_weight, topk_weights, topk_ids):\n    \"\"\"Route ``hidden_states`` into the caller's ``topk_weights`` and ``topk_ids``.\"\"\"\n    fused_router_projection_topk_softmax(\n        hidden_states,\n        router_weight,\n        topk=topk_ids.shape[1],\n        weights=topk_weights,\n        ids=topk_ids,\n    )\n"
+      }
+    ]
+  }
+}
