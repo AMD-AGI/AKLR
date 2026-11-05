@@ -29,8 +29,8 @@ sources:
 - Few output columns and a long K: N = 512, 1024 or 1536 with K = 4096 (32 scale blocks along K). Each (N, K)
   pair is its own schema; each serves m = 1, 2, 4, …, 4096.
 - At m ≤ 16 a grid of 16×16 output tiles has 32 (N 512), 64 (N 1024) or 96 (N 1536) workgroups for 256 CUs,
-  so splitting K is what puts work on the rest of the GPU (`../gemm/flydsl_gemm_grid_pricing.md` §1,
-  `../gemm/flydsl_gemm_small_m.md` §3).
+  so splitting K is what puts work on the rest of the GPU (`../gemm/grid_pricing.md` §1,
+  `../gemm/small_m.md` §3).
 - Compare: each schema's `compare` block is `determinism: bounded`, `max_violation_fraction: 0.0`, against the
   contract's tolerance (atol = rtol = 1e-2 for bf16 out; `aklr/ops/gemm/contract.py`). Every reduction in these
   three kernels runs in a fixed order with no atomics on data; run-to-run bit equality is not measured.
@@ -58,20 +58,20 @@ What the three kernels share:
 - **One 16×16×128 fp8 MFMA per 128-wide K block**, into a zeroed fp32 partial (`v_mfma_scale_f32_16x16x128_f8f6f4`
   with unit E8M0 scales, or the same intrinsic with zero scale operands, which n1536_k4096's source notes is lowered
   to the unscaled opcode), then `acc = fma(partial, S_a·S_b, acc)`: the block scales are applied once per
-  K block on the fp32 partial (`../gemm/flydsl_gemm_mainloop.md` §5).
+  K block on the fp32 partial (`../gemm/mainloop.md` §5).
 - **B straight to registers.** The 16×16 preshuffled weight is already in MFMA operand order: each lane issues two
-  16-byte loads per K block into the B operand, and B does not go through LDS (`../gemm/flydsl_gemm_datapath.md` §10;
+  16-byte loads per K block into the B operand, and B does not go through LDS (`../gemm/datapath.md` §10;
   §7 on why that suits an operand each wave owns alone).
 - **K split across the waves of one workgroup.** Each wave runs its own share of the 32 K blocks into its own
   accumulators; after one barrier the partials are summed through LDS in a fixed wave order and stored. No
-  workspace, no counter, one launch (`../gemm/flydsl_gemm_grid_pricing.md` §2, `../gemm/flydsl_gemm_small_m.md` §4,
-  `../gemm/flydsl_gemm_correctness.md` §8).
+  workspace, no counter, one launch (`../gemm/grid_pricing.md` §2, `../gemm/small_m.md` §4,
+  `../gemm/correctness.md` §8).
 - **A through a wave-private LDS area for most Points**, XOR-swizzled or padded so the operand reads are
-  conflict-free (`../gemm/flydsl_gemm_datapath.md` §2, §3), filled by DMA at large m
-  (`../gemm/flydsl_gemm_datapath.md` §5).
+  conflict-free (`../gemm/datapath.md` §2, §3), filled by DMA at large m
+  (`../gemm/datapath.md` §5).
 - **Configuration per m from a table**, compiled in an `lru_cache` function on a Point's first call (`../SKILL.md`,
   Stop table). Tile order across XCDs is remapped at mid and large m
-  (`../gemm/flydsl_gemm_schedule_and_locality.md` §2).
+  (`../gemm/schedule_and_locality.md` §2).
 
 Per file (functions are in the `kernel.py` each schema embeds):
 
@@ -87,7 +87,7 @@ Per file (functions are in the `kernel.py` each schema embeds):
   S_a·S_b products of the wave's K range are formed once and picked per block with `ds_bpermute`; at m ≥ 1024 the
   wave's a-scales are staged once into LDS and the fold trails the MFMAs by 3 (m 1024, 4096) or 5 (m 2048) MFMAs.
 - The MFMA is issued with B as the first operand, so the accumulator is Cᵀ: a lane holds 4 adjacent output columns,
-  stored as one 8-byte bf16 store (`../gemm/flydsl_gemm_epilogue.md` §3).
+  stored as one 8-byte bf16 store (`../gemm/epilogue.md` §3).
 - Reduction: partials to LDS, barrier, wave w sums accumulators w, w + KW, … over the waves in wave order; m 1024
   and 2048 use a fixed pairwise tree; at m = 512 each wave keeps the accumulator it reduces in registers.
 - XCD order: each XCD gets an 8×4 block of tiles at m 512 and 1024, 4×8 at 2048.

@@ -68,7 +68,7 @@ enumerated M ≤ 16.
    makes (`aklr/ops/gemm/baseline.py`): time aiter through it.
 2. The lookup (`get_GEMM_A16W16_config`, `tuned_gemm.py:130`) matches `(gfx, cu_num, M, N, K, bias, dtype,
    outdtype, scaleAB, bpreshuffle)`, with M as is, then padded twice by `get_padded_m` (the padding is in
-   `../../gemm/flydsl_gemm_small_m.md` §7).
+   `../../gemm/small_m.md` §7).
 3. A `flydsl` row is used only if FlyDSL is importable on an architecture it supports
    (`is_flydsl_available`, `aiter/ops/flydsl/utils.py`) and its `kernelName` is in the catalog or parses with
    `_HGEMM_KERNEL_RE` (`gemm_kernels.py:45, 579`); otherwise the lookup moves on, with a logged warning when
@@ -138,13 +138,13 @@ once for all of them) and pass AKLR's audit. Copy their techniques, not their ho
 `1fee5982…` reads its own file there, which `aklr/ops/README.md` does not allow (a `functools` compile function, no
 I/O in launch code). Four sum the top-k routes in a fixed order without atomics on the output; the 257-expert
 `4fbd9d02…` kernel adds into it with atomics. How the kernels map work and what moved them:
-`../../moe/flydsl_grouped_moe_inference.md`. Several items below run only at Points their file does not
+`../../moe/grouped_moe_inference.md`. Several items below run only at Points their file does not
 serve; which run where: `../../moe/INDEX.md` § Kernels to start from.
 
 | Kernel | Read it for |
 |---|---|
 | `fused_moe_interleave_…_model_dim4096_…` (`df5c661e…`, `5db89e7d…`, `a5a34343…`, `9dcb4d79…`: one `kernel.py`) | when M·topk ≤ 64, no routing launch: each route finds its local expert from `expert_mask` with `ballot` + `ctpop` (`_local_expert`), and K is split over 4 waves and summed in LDS (`_reduce_waves`); bf16 MFMA on fp4 weights converted with `cvt_scalef32_pk_bf16_fp4`; non-temporal stage-1 weight loads only under expert parallelism; stage 2 sums the routes in LDS |
-| `fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/4fbd9d02…` | the routing sort folded into stage 1, rebuilt per workgroup with an LDS histogram and a DPP scan (`_lds_atomic_add`, `_dpp_scan_wave`; `../../moe/flydsl_moe_decode.md`); MXFP4 quantization of the activations inside stage 1; a bf16x2 atomic stage 2 ported from aiter's `mxfp4_gemm2.py`, with kernel arguments preloaded into SGPRs |
+| `fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/4fbd9d02…` | the routing sort folded into stage 1, rebuilt per workgroup with an LDS histogram and a DPP scan (`_lds_atomic_add`, `_dpp_scan_wave`; `../../moe/decode.md`); MXFP4 quantization of the activations inside stage 1; a bf16x2 atomic stage 2 ported from aiter's `mxfp4_gemm2.py`, with kernel arguments preloaded into SGPRs |
 | `…_n_experts257_topk9_inter_dim256/1fee5982…` | the route that takes slot `% BM == 0` writes its tile's descriptor, so no tile-building kernel at M ≤ 256 (`group_routes`, `fuse_tiles`); `ds_bpermute` gathering packed MXFP4 activations into MFMA lane order; a loop-carried prefetch through `range(..., init=...)` |
 | `…_n_experts33_topk9_inter_dim2048/ef15e878…` | one XCD remap for every GEMM (`_chiplet_order`) with `GROUP_M` row tiles inside an expert; route ranks from ballot and popcount with one atomic per wave or workgroup (`_route_block`); one aligned scale dword reused across column halves and K slices (`PACKED_SCALES1`/`PACKED_SCALES2`); stage-2 partials stored as unscaled fp8 and summed in a fixed order (`_reduce_fp8x4`) |
 | `…_n_experts65_topk9_inter_dim2048/1bf41ccb…` | at m = 1, split-K over the waves of one workgroup with SiLU and requantization after the LDS sum (`FUSE_SPLIT_QUANT`); routing by one workgroup's LDS histogram while the launch's other workgroups quantize the input (`_make_small_route`); the whole stage-2 K panel in LDS so the MFMA loop needs no cross-wave barrier (`FULL_STAGE_A`) |
@@ -158,8 +158,8 @@ through it. Everything here runs on gfx950 unless § Not for gfx950 lists it.
 
 ### MoE (grouped GEMM)
 
-How these kernels map work, what moved them and where FlyDSL's own copies differ:
-`../../moe/flydsl_grouped_moe_inference.md`.
+How these kernels map work and what moved them: `../../moe/grouped_moe_inference.md`; how they relate to FlyDSL
+v0.3.2's own `kernels/moe/`: `../moe.md` § grouped_moe_inference §1.
 
 | Family | Computes | Entry → body | Reached from |
 |---|---|---|---|
@@ -225,5 +225,6 @@ Ahead-of-time compilation for the GEMM, MoE, mxmoe, FHMoE and GDN prefill kernel
 ## Related
 `flydsl_knob_space.md` (the arguments these families accept) ·
 `flydsl_authoring_method.md` (if none of them fit) ·
-`../../gemm/flydsl_gemm_small_m.md` (small-M use of the HGEMM kernels and the tuned table) ·
-`../../moe/flydsl_grouped_moe_inference.md` (MoE expert GEMMs: mapping, cache policy, stage 2)
+`../../gemm/small_m.md` (small-M use of the HGEMM kernels and the tuned table) ·
+`../../moe/grouped_moe_inference.md` (MoE expert GEMMs: mapping, cache policy, stage 2) ·
+`../moe.md` (the FlyDSL side of the MoE cards)

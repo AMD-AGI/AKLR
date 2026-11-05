@@ -20,7 +20,7 @@ Arms that should differ read the same, a fix seems to take with no effect, or a 
 reported correct. Nothing fails: every number looks like a normal reading.
 
 - Six reads meant as three versions of an MXFP4 dense GEMM all fell in 0.985–0.991 because a harness synced the
-  local tree over the remote one before each run (`../gemm/flydsl_gemm_measurement.md` §1, its E2). Run without
+  local tree over the remote one before each run (`../gemm/measurement.md` §1, its E2). Run without
   the sync, main read 0.9601 / 0.9597 and the branch head 0.9724: +1.30% *(field, E1)*.
 - A `BLOCK_N=128` variant of the same kernel was recorded as correct; with the cache cleared it failed an
   assertion, and the earlier pass had come from the cached `BLOCK_N=256` binary (E1).
@@ -63,10 +63,10 @@ Each channel puts a different build under the ruler.
 - **On a remote machine, hash the source there right after the run** and compare it with the file you meant to
   time.
 - **Read back the binary.** Take the kernel names from a kernel trace of the timed run (register counts there are
-  half the true value, `../gemm/flydsl_gemm_attribution.md` §9) and compare them with an ISA dump of the source you meant (`FLYDSL_DUMP_IR=1`, which skips the disk cache,
-  `../gemm/flydsl_gemm_mainloop.md` §10) made in a separate run: do not time with the dump on
-  (`../gemm/flydsl_gemm_measurement.md` §6). A compile-time switch that shows in the kernel name makes the arms
-  tell apart in a trace (`../gemm/flydsl_gemm_attribution.md` §3). Break the kernel on purpose once
+  half the true value, `../gemm/attribution.md` §9) and compare them with an ISA dump of the source you meant (`FLYDSL_DUMP_IR=1`, which skips the disk cache,
+  `../flydsl/gemm.md` § mainloop §10) made in a separate run: do not time with the dump on
+  (`../flydsl/gemm.md` § measurement §6). A compile-time switch that shows in the kernel name makes the arms
+  tell apart in a trace (`../gemm/attribution.md` §3). Break the kernel on purpose once
   (`../flydsl/debug-flydsl-kernel.md` § What the cache key sees).
 - **In AKLR, check what was served.** Compare the schema's `content` with your file. Call the op's api with
   `AKLR_EXPORT=1`: every call record carries `fallback_reason`, empty when the kernel served it (S4).

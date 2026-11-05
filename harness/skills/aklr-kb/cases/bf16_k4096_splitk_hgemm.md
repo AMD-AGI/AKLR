@@ -54,9 +54,9 @@ file. "m" is the Point's M.
   n256's are allocated on the first call inside `launch` and kept in a closure list (with per-address pointer
   caches). The reducing block resets each counter, so the next call finds zeros. `SKILL.md`'s Stop table asks
   for scratch rewritten by every call before it is read: for a new kernel, zero counters on every call
-  (`../gemm/flydsl_gemm_small_m.md` §4).
+  (`../gemm/small_m.md` §4).
 - **System-scope partials.** n2048 stores and reloads its fp32 partials with `sc0 sc1` (`CPOL_SYS`);
-  `../gemm/flydsl_gemm_small_m.md` §4 found agent scope sufficient across XCDs on other kernels. Not raced here.
+  `../gemm/small_m.md` §4 found agent scope sufficient across XCDs on other kernels. Not raced here.
 - **Code that no Point runs:** n512's cross-workgroup split-K with a separate reduce kernel (`_build_reduce`; the
   in-workgroup split sets `SPLITK = 1` at m ≤ 1024 and m 2048, 4096 have split 1), although its docstring
   describes it; n1024's cross-workgroup last-arriver path (`_build_splitk_launcher`); n256's bf16-atomic split-K
@@ -67,16 +67,16 @@ file. "m" is the Point's M.
 
 Shared by the four kernels:
 
-- **MFMA `mfma_f32_16x16x32_bf16` into fp32 accumulators** wherever an MFMA runs (`../gemm/flydsl_gemm_mainloop.md`
+- **MFMA `mfma_f32_16x16x32_bf16` into fp32 accumulators** wherever an MFMA runs (`../gemm/mainloop.md`
   §5); n1024 at m 1 and 2 runs none.
 - **Operands into LDS by buffer→LDS DMA** (`buffer_load_dwordx4 … lds`, 16 B per lane) in XOR-swizzled 16 B
-  chunks, read back as 16 B fragments (`../gemm/flydsl_gemm_datapath.md` §2, §5).
+  chunks, read back as 16 B fragments (`../gemm/datapath.md` §2, §5).
 - **K split for parallelism at small M, partials kept in fp32 and summed in a fixed order, one bf16 rounding**
-  (`../gemm/flydsl_gemm_grid_pricing.md` §2, `../gemm/flydsl_gemm_small_m.md` §4, §5,
-  `../gemm/flydsl_gemm_correctness.md` §8). n2048 ports aiter's split-K HGEMM but replaces its bf16 atomic
+  (`../gemm/grid_pricing.md` §2, `../gemm/small_m.md` §4, §5,
+  `../gemm/correctness.md` §8). n2048 ports aiter's split-K HGEMM but replaces its bf16 atomic
   adds into C, which follow arrival order, with an fp32 workspace and a last-arriver fold.
-- **Every served Point runs 64, 256 or 512 workgroups** (`../gemm/flydsl_gemm_grid_pricing.md` §1,
-  `../gemm/flydsl_gemm_small_m.md` §3).
+- **Every served Point runs 64, 256 or 512 workgroups** (`../gemm/grid_pricing.md` §1,
+  `../gemm/small_m.md` §3).
 - **A per-m configuration table**, compiled on a Point's first call inside the `functools.lru_cache` function
   `_aklr_launch`.
 
@@ -89,7 +89,7 @@ At the served Points:
 | Workgroups | 256 (m ≤ 32), 512 (m 64–256) | 256 at each served Point | 64 (m 4–64), 256 (m 256, 1024–4096), 512 (m 512) | 256 at each served Point |
 | Tile order | m 32: the two workgroups that share a `b` tile on one XCD. Otherwise linear; the split-K path asserts no remap | linear | m ≥ 512: each XCD a contiguous eighth of the M tiles with all N tiles (`swizzle_for_cache_reuse`) | m 128–512: each XCD a box of 8 M tiles × 4 N tiles (`_XCD_REMAP`); m 2048, 4096 linear |
 
-XCD order: `../gemm/flydsl_gemm_schedule_and_locality.md` §2, `../gemm/flydsl_gemm_small_m.md` §6.
+XCD order: `../gemm/schedule_and_locality.md` §2, `../gemm/small_m.md` §6.
 
 ## Result
 

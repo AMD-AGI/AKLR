@@ -65,7 +65,7 @@ sources:
   split stores its fp32 partial, bumps an agent-scope counter, and the last to arrive adds its own partial first and
   then the others from split index (own + 1) mod 4 onwards. The association depends on which split arrives last, so
   the output bits can differ between runs. The contract is `bounded`, so this passes; under `bitwise` these Points
-  need a fixed order (`../gemm/flydsl_gemm_correctness.md` §8, `../gemm/flydsl_gemm_small_m.md` §4). At m = 256
+  need a fixed order (`../gemm/correctness.md` §8, `../gemm/small_m.md` §4). At m = 256
   (split 2) the two-term sum does not depend on the order.
 - **The same split-K keeps its counters between calls**: the builder zeroes them once per shape (`torch.zeros`) and
   the last arriver subtracts the split count. No AKLR call may depend on what an earlier call left (`../SKILL.md`,
@@ -76,20 +76,20 @@ sources:
 What the eight kernels share:
 
 - **One 16×16×128 fp8 MFMA per 128-wide K block**, into a zeroed fp32 partial, folded into the fp32 accumulator
-  with S_a·S_b, by one FMA in most bodies (`../gemm/flydsl_gemm_mainloop.md` §5). n4096_k256 keeps its two K-block partials
+  with S_a·S_b, by one FMA in most bodies (`../gemm/mainloop.md` §5). n4096_k256 keeps its two K-block partials
   apart and combines them once at the end.
 - **B straight to registers** from the 16×16 preshuffled layout, two 16-byte loads per lane per K block
-  (`../gemm/flydsl_gemm_datapath.md` §10), except where noted below (n4096_k4096 at m ≥ 64 and n32768_k1024 at
-  m ≥ 128 DMA B into LDS, where several waves share it: `../gemm/flydsl_gemm_datapath.md` §7).
-- **A through XOR-swizzled LDS** for most Points (`../gemm/flydsl_gemm_datapath.md` §2), written from registers
-  or by DMA (`../gemm/flydsl_gemm_datapath.md` §5).
+  (`../gemm/datapath.md` §10), except where noted below (n4096_k4096 at m ≥ 64 and n32768_k1024 at
+  m ≥ 128 DMA B into LDS, where several waves share it: `../gemm/datapath.md` §7).
+- **A through XOR-swizzled LDS** for most Points (`../gemm/datapath.md` §2), written from registers
+  or by DMA (`../gemm/datapath.md` §5).
 - **S_a·S_b staged in LDS once per workgroup**, in the prologue, at some or all Points of five files (k512, k2048,
   k8192, n8192, n32768), so the K loop reads scales with LDS loads only.
 - **No K split at K ≤ 2048** except n4096_k1024 at m 4–16. K 4096 splits inside the workgroup at m ≤ 256; K 8192
   splits inside the workgroup at m ≤ 32 and 256–512, and across workgroups at m 64–256
-  (`../gemm/flydsl_gemm_grid_pricing.md` §2).
+  (`../gemm/grid_pricing.md` §2).
 - **Configuration per m from a table**, compiled in an `lru_cache` function on a Point's first call (`../SKILL.md`,
-  Stop table); XCD-aware tile order in five files (`../gemm/flydsl_gemm_schedule_and_locality.md` §2).
+  Stop table); XCD-aware tile order in five files (`../gemm/schedule_and_locality.md` §2).
 
 Per file (functions are in the `kernel.py` each schema embeds):
 
@@ -101,7 +101,7 @@ Per file (functions are in the `kernel.py` each schema embeds):
   S_a is staged in LDS behind the A tile and S_b read by scalar loads.
 - Stores: m ≤ 64 direct 8-byte stores of 4 columns; above, C transposed through XOR-swizzled LDS (its own LDS tile
   at m 512, 1024) and written as row-contiguous 16-byte stores; cache policy sc0|sc1 up to m = 1024, nt above
-  (`../gemm/flydsl_gemm_epilogue.md` §3, §5). From m = 2048 consecutive workgroups take adjacent column tiles.
+  (`../gemm/epilogue.md` §3, §5). From m = 2048 consecutive workgroups take adjacent column tiles.
 
 **n4096_k512** (`_pick_tiles`, `_pick_g3_opts`) — no K split at any m.
 - m ≤ 64: 16×64 tile holding all of K in one LDS stage (64, 128, 256 workgroups at m ≤ 16, 32, 64). m = 128:
@@ -119,8 +119,8 @@ Per file (functions are in the `kernel.py` each schema embeds):
   m = 16 stores 2 bytes per value.
 - Other m: four waves along N, A written from registers into a 2-stage XOR-swizzled LDS ping-pong (async DMA,
   `BufferLoadAsyncLDS128b`, at m = 256), B into registers double-buffered, FlyDSL `preshuffle_gemm`-style
-  MFMA/VMEM/DS interleave hints (`../gemm/flydsl_gemm_schedule_and_locality.md` §3,
-  `../gemm/flydsl_gemm_mainloop.md` §8). Tiles 16×64×256 (m ≤ 32), 16×128×256 (64, 128), 32×128×256 (256),
+  MFMA/VMEM/DS interleave hints (`../gemm/schedule_and_locality.md` §3,
+  `../flydsl/gemm.md` § mainloop §8). Tiles 16×64×256 (m ≤ 32), 16×128×256 (64, 128), 32×128×256 (256),
   64×128×256 (512), 64×256×128 (m ≥ 1024); 64 to 1024 workgroups; 2-byte stores.
 
 **n4096_k2048** (`_choose_tiles`) — no K split.
@@ -130,7 +130,7 @@ Per file (functions are in the `kernel.py` each schema embeds):
   blocks in LDS; interleave hints at m ≤ 1024. At 32 ≤ m ≤ 1024 the N tiles run along grid x, so workgroups
   sharing a B panel land on one XCD.
 - Epilogue: lane pairs swap bf16 halves with one DPP `quad_perm`, then each lane stores 4 bytes (2 adjacent
-  columns) per row (`../gemm/flydsl_gemm_epilogue.md` §3).
+  columns) per row (`../gemm/epilogue.md` §3).
 
 **n4096_k4096** (`_pick_config`, `_SK2_CFG_SMALL`, `_SK2_CFG`, `_pick_large_config`) — every path issues the MFMA
 transposed and stores 8 bytes (4 adjacent columns).
@@ -175,7 +175,7 @@ transposed and stores 8 bytes (4 adjacent columns).
 - From m = 128 both operands are DMA'd into LDS (`BufferCopyLDS128b`): activations XOR-swizzled, weights in their
   preshuffled order. S_a·S_b for the workgroup tile is folded into an LDS table at kernel start. Swapped tiles pair
   adjacent tiles across lanes (`permlane16_swap`) into 16-byte stores of 8 columns
-  (`../gemm/flydsl_gemm_epilogue.md` §3).
+  (`../gemm/epilogue.md` §3).
 
 ## Result
 

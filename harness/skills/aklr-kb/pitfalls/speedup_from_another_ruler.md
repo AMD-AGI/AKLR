@@ -78,7 +78,7 @@ The two numbers come from different rulers, and the description's number is a me
 - After a loop moves to another machine, read its rounds by the same-card comparison it keeps on, not by "vs best",
   and re-measure the best there before quoting any ratio.
 - Use another harness's number for direction only. How to build a ruler that resolves a given effect is in
-  `../gemm/flydsl_gemm_measurement.md` §1–2 and §4; pricing the competitor and the operating point in §7.
+  `../gemm/measurement.md` §1–2 and §4; pricing the competitor and the operating point in §7.
 
 ## Scope
 

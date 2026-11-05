@@ -4,8 +4,8 @@
     waves per SIMD     = min(8, floor(512 / roundup8(align4(arch VGPRs) + AGPRs)))
     workgroups per CU  = min(floor(4 * waves per SIMD / W), floor(163840 / LDS bytes))   W = waves per workgroup
 
-The register rule is `gemm/flydsl_gemm_mainloop.md` §7 (one 512-entry pool per SIMD, granule 8, arch rounded
-to 4 before the AGPRs); the workgroup step is `gemm/flydsl_gemm_grid_pricing.md` §4; the 160 KiB LDS limit and
+The register rule is `gemm/mainloop.md` §7 (one 512-entry pool per SIMD, granule 8, arch rounded
+to 4 before the AGPRs); the workgroup step is `gemm/grid_pricing.md` §4; the 160 KiB LDS limit and
 the fact that a larger allocation still compiles are in `../flydsl/language/limits.md`. The compiler's `; Occupancy:`
 comment skips the workgroup step. Also lists the register ceiling of every reachable occupancy. Other per-CU
 limits (workgroup slots, SGPRs, barriers) are not modelled.
