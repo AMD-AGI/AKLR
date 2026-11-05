@@ -208,10 +208,12 @@ class E2eStage(PipelineStage[E2eReport]):
         deadline = time.monotonic() + SIDE_TIMEOUT_SECONDS
         result: dict[str, object] = {"argvs": deployment.argvs}
         failures: list[str] = []
+        is_ready = False
         self.progress.write(f"{side}: starting {len(deployment.processes)} processes")
         try:
             # a slow weight load fails the start, not the grading it would leave no time for
             entry_url = deployment.start(timeout=START_TIMEOUT_SECONDS)
+            is_ready = True
             self.progress.write(
                 f"{side}: serving at {entry_url}; GSM8K, {GSM8K_N_QUESTIONS} questions less 5 shots"
             )
@@ -275,8 +277,9 @@ class E2eStage(PipelineStage[E2eReport]):
             failures.append(f"start: {error}")
         finally:
             log_tails = deployment.stop()
-        # no call directory: no server ever served, which is no "AKLR served no call"
-        if side == "on" and calls_dir.exists():
+        # a server that never became ready served nothing: no count, not "AKLR served no call";
+        # a ready one with no call file (AKLR never started in it) counts 0
+        if side == "on" and is_ready:
             try:
                 calls = read_calls(calls_dir)
                 result["n_hit_calls"] = sum(c.n_calls for c in calls if c.fallback_reason is None)
