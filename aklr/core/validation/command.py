@@ -87,8 +87,11 @@ def main(argv: Sequence[str]) -> int:
     try:
         scope = ValidationScope.of_working_tree(args.base, args.paths or None)
         stages: list[PipelineStage] = [AuditStage(allow_measured_edits=args.allow_measured_edits)]
+        config = E2eConfig.read() if "e2e" in names else None
+        scenarios = config.selected(args.scenarios) if config is not None else ()
         devices: list[str] = []
-        if {"bench", "e2e"} & set(names):
+        # e2e with no enabled scenario is skipped, and needs no device
+        if "bench" in names or scenarios:
             if args.devices is None:
                 indices = range(PlatformRecord.current().n_visible_devices)
             else:
@@ -103,11 +106,10 @@ def main(argv: Sequence[str]) -> int:
             devices = [f"cuda:{i}" for i in indices]
         if "bench" in names:
             stages.append(BenchStage(devices))
-        if "e2e" in names:
-            config = E2eConfig.read()
+        if config is not None:
             stages.append(
                 E2eStage(
-                    config.selected(args.scenarios),
+                    scenarios,
                     devices,
                     cookbook_repo=config.cookbook_repo,
                     cookbook_source=args.e2e_cookbook_source or config.cookbook_ref,
