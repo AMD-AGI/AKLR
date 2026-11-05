@@ -122,8 +122,8 @@ MLA_KC_ROPE_CACHE = OpContract(
             lifetime="weight",
         ),
         "w_scale": TensorSpec(
-            description="kv_b_proj's scale, one per tensor.",
-            shape=(),
+            description="kv_b_proj's per-tensor scale, one element: sglang's 0-d w_scale, viewed.",
+            shape=(1,),
             dtype=_FP32,
             distribution=_W_SCALE,
             lifetime="weight",
@@ -217,8 +217,8 @@ MLA_VC = OpContract(
             lifetime="weight",
         ),
         "w_scale": TensorSpec(
-            description="kv_b_proj's scale, one per tensor.",
-            shape=(),
+            description="kv_b_proj's per-tensor scale, one element: sglang's 0-d w_scale, viewed.",
+            shape=(1,),
             dtype=_FP32,
             distribution=_W_SCALE,
             lifetime="weight",

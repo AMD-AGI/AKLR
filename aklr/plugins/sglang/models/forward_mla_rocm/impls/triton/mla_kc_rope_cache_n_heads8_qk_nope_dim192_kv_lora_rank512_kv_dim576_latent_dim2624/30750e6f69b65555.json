@@ -107,14 +107,14 @@
       "description": "kv_b_proj's key part per head, absorbed (sglang's w_kc, transposed): row c maps the position-free query part to latent channel c."
     },
     "w_scale": {
-      "shape": [],
+      "shape": [1],
       "dtype": "float32",
       "distribution": {
         "kind": "log_uniform",
         "log2_lo": -6,
         "log2_hi": 0
       },
-      "description": "kv_b_proj's scale, one per tensor."
+      "description": "kv_b_proj's per-tensor scale, one element: sglang's 0-d w_scale, viewed."
     },
     "cos_cache": {
       "shape": [

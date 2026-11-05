@@ -171,8 +171,9 @@ def _rows(tensor):
 
 
 def _scale(w_scale):
-    """kv_b_proj's per-tensor scale, sglang's 0-d tensor; None for another value."""
-    return w_scale if isinstance(w_scale, torch.Tensor) and w_scale.dim() == 0 else None
+    """kv_b_proj's per-tensor scale, sglang's 0-d tensor, as the contracts' one element (a
+    view of it); None for another value."""
+    return w_scale.view(1) if isinstance(w_scale, torch.Tensor) and w_scale.dim() == 0 else None
 
 
 def _attention_stand_in(attn, q_pe):

@@ -38,13 +38,14 @@ def mla_kc_rope_cache_baseline(
 ):
     """_fused_bmm_rope_cat_and_cache as forward_absorb_rocm_core calls it in a DSA decode:
     aiter's fused fp8 BMM, RoPE and KV write, q in fp8 for the fp8 pool, no k_scale (the
-    layer has none). sglang hands it w_kc.transpose(-1, -2), these bytes."""
+    layer has none). sglang hands it w_kc.transpose(-1, -2), these bytes, and its 0-d
+    w_scale, this one element viewed back."""
     rocm = _forward_mla_rocm()
     nope, rope = w_kc.shape[-1], cos_cache.shape[-1] * 2
     out, _, _, _ = rocm.fused_fp8_bmm_rope_cat_and_cache_mla(
         q[..., :nope].transpose(0, 1),
         w_kc,
-        w_scale,
+        w_scale.view(()),
         q[..., nope:],
         kv_latent.unsqueeze(1),
         qkv_latent[:, -rope:].unsqueeze(1),
@@ -64,7 +65,8 @@ def mla_kc_rope_cache_baseline(
 def mla_vc_baseline(attn_output, w_vc, w_scale, attn_bmm_output=None):
     """rocm_absorb_v_bmm for fp8 w_vc and a bf16 o_proj: aiter's a8w8 batched GEMM with
     per-token-group prequant into [tokens, heads, v_head_dim], at sglang's decode tile
-    config, then flattened. sglang hands it w_vc.transpose(-1, -2), these bytes."""
+    config, then flattened. sglang hands it w_vc.transpose(-1, -2), these bytes, and its 0-d
+    w_scale, this one element viewed back."""
     import torch
 
     rocm = _forward_mla_rocm()
@@ -74,7 +76,7 @@ def mla_vc_baseline(attn_output, w_vc, w_scale, attn_bmm_output=None):
     rocm.batched_gemm_a8w8_a_per_token_group_prequant_w_per_batched_tensor_quant(
         X=attn_output,
         WQ=w_vc,
-        w_scale=w_scale,
+        w_scale=w_scale.view(()),
         group_size=FP8_GROUP,
         YQ=out,
         transpose_bm=True,
