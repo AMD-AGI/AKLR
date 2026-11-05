@@ -448,7 +448,7 @@ def test_an_off_failure_under_another_sglang_is_a_warning(
 
 
 def test_no_enabled_scenario_skips_the_stage(tmp_path: Path) -> None:
-    stage = E2eStage([], ["cuda:0"], cookbook_repo="r", cookbook_source="main")
+    stage = E2eStage([], [], cookbook_repo="r", cookbook_source="main")
     assert stage.run(ValidationScope(tmp_path, "", None, (), ()), Mock()).status == "skipped"
 
 
@@ -519,7 +519,7 @@ class TestStage:
         monkeypatch.setattr(_stage, "read_calls", lambda directory: [record])
         on = self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path)
         assert (on.n_hit_calls, on.n_fallback_calls, on.failure) == (0, 3, "")
-        answer = "Paris."
+        answer = "Paris_."
         assert self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path).answer_matches
         stdout += "Bad Request Error\n" * 2
         assert self._stage()._run_side(scenario, _COOKBOOK, "off", {}, tmp_path).n_failed_requests == 2

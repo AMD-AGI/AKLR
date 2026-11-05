@@ -82,7 +82,7 @@ class E2eStage(PipelineStage[E2eReport]):
         launch: str | None = None,
         work_dir: Path | None = None,
     ) -> None:
-        if not devices:
+        if scenarios and not devices:
             raise ValueError("e2e needs at least one device")
         if not hosts:
             raise ValueError("e2e needs at least one host")
@@ -274,7 +274,7 @@ class E2eStage(PipelineStage[E2eReport]):
                         raise TypeError(f"content is not a string: {answer!r}")
                     result["prompt_answer"] = answer
                     # the whole answer, less surrounding whitespace and trailing punctuation
-                    normalized = re.sub(r"\W+$", "", answer).strip().casefold()
+                    normalized = re.sub(r"[\W_]+$", "", answer).strip().casefold()
                     result["answer_matches"] = normalized == EXPECTED_ANSWER.casefold()
                 except (OSError, ValueError, LookupError, TypeError, http.client.HTTPException) as error:
                     failures.append(f"prompt: {type(error).__name__}: {error}")
