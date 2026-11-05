@@ -1,4 +1,7 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Created by OpenAI
+# Applies to the GDN baselines.
 """SGLang 0.5.22 Triton prefill and native block-128 FP8 activation quantization.
 
 Projection GEMMs and the output projection are outside this op on both paths.
@@ -8,7 +11,21 @@ geometry without a timed device-to-host read.
 
 Decode replays SGLang 0.5.22's ROCm decode kernels between the projections; the
 FP8 decode op adds the AITER quantization its output projection would run.
+
+The gated attention decode replays what Qwen3_5AttentionDecoderLayer.self_attention runs
+between qkv_proj and o_proj on HIP with an FP8 KV cache on the aiter backend, then the
+AITER quantization of the block-FP8 o_proj.
 """
+
+import functools
+
+from aklr.plugins.sglang.models.qwen3_5.contract import MROPE_SECTION, ROTARY_DIM
+
+# sglang's aiter backend sizes its decode partitions for the served context
+# (--context-length): 131072 here, half of Qwen3.5's 262144-token default, which launches
+# fewer of them
+_SERVED_CONTEXT = 131072
+_PARTITION_SIZE = 256  # sglang's _AITER_PARTITION_SIZE_ROCM
 
 
 def gdn_prefill_group_fp8_quant_baseline(
@@ -242,3 +259,113 @@ def gdn_decode_baseline(
         scale,
         eps,
     )
+
+
+@functools.cache
+def _unit_scale(device):
+    """The aiter backend's KV scale tensor, 1.0, which an FP8 checkpoint's own unit
+    KV scales equal."""
+    import torch
+
+    return torch.ones(1, dtype=torch.float32, device=device)
+
+
+@functools.cache
+def _last_page_lengths(rows, device):
+    """The aiter backend's kv_last_page_len: one-token pages."""
+    import torch
+
+    return torch.ones(rows, dtype=torch.int32, device=device)
+
+
+def gated_attention_decode_group_fp8_quant_baseline(
+    projected_qkv,
+    q_norm_weight,
+    k_norm_weight,
+    positions,
+    cos_sin_cache,
+    cache_locations,
+    key_cache,
+    value_cache,
+    kv_indptr,
+    kv_indices,
+    eps=1e-6,
+    scale=256**-0.5,
+    values=None,
+    scales=None,
+):
+    """forward_prepare_fused_gate's fused Gemma QK norm and gate split, the rotary
+    module's Triton mRoPE, the aiter backend's forward_decode (its fused FP8 KV write,
+    then paged_attention_ragged over one-token pages at unit KV scales), fused_sigmoid_mul,
+    then the per-1x128 AITER quantization the block-FP8 o_proj applies to its BF16 input
+    (row-major scales)."""
+    import aiter
+    import torch
+    from sglang.kernels.ops.attention.rotary_triton import triton_mrope_fused
+    from sglang.kernels.ops.elementwise.elementwise import fused_sigmoid_mul
+    from sglang.kernels.ops.kvcache.cache_ops import launch_reshape_and_cache_flash
+    from sglang.srt.models.utils import fused_qk_gemma_rmsnorm_with_gate
+
+    rows, device = projected_qkv.shape[0], projected_qkv.device
+    _, kv_heads, head_dim = key_cache.shape
+    heads = (projected_qkv.shape[1] - 2 * kv_heads * head_dim) // (2 * head_dim)
+    width, kv_width = heads * head_dim, kv_heads * head_dim
+    query_gate, key, value = projected_qkv.split([2 * width, kv_width, kv_width], dim=-1)
+    query, key, gate = fused_qk_gemma_rmsnorm_with_gate(
+        query_gate, key, q_norm_weight, k_norm_weight, eps, head_dim, heads
+    )
+    query, key, gate = (t.view(rows, -1) for t in (query, key, gate))
+    triton_mrope_fused(
+        query,
+        key,
+        cos_sin_cache,
+        positions,
+        list(MROPE_SECTION),
+        head_dim,
+        ROTARY_DIM,
+        True,
+        False,
+        True,
+        None,
+    )
+    unit = _unit_scale(device)
+    key_pages = key_cache.view(-1, 1, kv_heads, head_dim)
+    value_pages = value_cache.view(-1, 1, kv_heads, head_dim)
+    launch_reshape_and_cache_flash(
+        key.view(-1, kv_heads, head_dim),
+        value.view(-1, kv_heads, head_dim),
+        key_pages,
+        value_pages,
+        cache_locations,
+        k_scale=unit,
+        v_scale=unit,
+    )
+    partitions = -(-_SERVED_CONTEXT // _PARTITION_SIZE)
+    # the backend's float32 workspace: partial outputs, then exp sums and max logits
+    workspace = torch.empty(rows * heads * partitions * (head_dim + 2) * 4, dtype=torch.uint8, device=device)
+    attended = torch.empty((rows, width), dtype=torch.bfloat16, device=device)
+    aiter.paged_attention_ragged(
+        attended.view(-1, heads, head_dim),
+        workspace,
+        query.view(-1, heads, head_dim),
+        key_pages,
+        value_pages,
+        scale,
+        kv_indptr,
+        kv_indices,
+        _last_page_lengths(rows, device),
+        1,
+        partitions,
+        None,
+        "fp8_e4m3",
+        "NHD",
+        0.0,
+        unit,
+        unit,
+        None,
+        _PARTITION_SIZE,
+    )
+    fused_sigmoid_mul(attended, gate, inplace=True)
+    quantize = aiter.get_hip_quant(aiter.QuantType.per_1x128)
+    quantized, factors = quantize(attended, quant_dtype=aiter.dtypes.fp8)
+    return quantized.view(rows, heads, head_dim), factors

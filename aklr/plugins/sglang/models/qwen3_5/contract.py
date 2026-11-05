@@ -1,9 +1,15 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Created by OpenAI
-"""GDN convolution, recurrent state update, gated RMSNorm and grouped FP8 output."""
+# Applies to the GDN contracts.
+"""GDN convolution, recurrent state update, gated RMSNorm and grouped FP8 output; the
+full-attention layers' gated decode attention over their FP8 KV cache."""
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
+    DTYPE_TRAITS,
     BoundedCuSeqlensDistribution,
+    CuSeqlensDistribution,
     DType,
     FiniteDistribution,
     IntRangeDistribution,
@@ -21,12 +27,21 @@ from aklr.core.contract.spec import (
     derived_axis,
 )
 
-__all__ = ["CONTRACTS", "GDN_DECODE", "GDN_DECODE_GROUP_FP8_QUANT", "GDN_PREFILL_GROUP_FP8_QUANT"]
+__all__ = [
+    "CONTRACTS",
+    "GATED_ATTENTION_DECODE_GROUP_FP8_QUANT",
+    "GDN_DECODE",
+    "GDN_DECODE_GROUP_FP8_QUANT",
+    "GDN_PREFILL_GROUP_FP8_QUANT",
+    "MROPE_SECTION",
+    "ROTARY_DIM",
+]
 
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
 _FP32 = DTypeSpec(any_of=(DType.FLOAT32,))
 _FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
 _INT32 = DTypeSpec(any_of=(DType.INT32,))
+_INT64 = DTypeSpec(any_of=(DType.INT64,))
 _FINITE = FiniteDistribution()
 
 
@@ -264,4 +279,145 @@ GDN_DECODE = OpContract(
     compare=CompareSpec(determinism="bitwise"),
 )
 
-CONTRACTS = (GDN_PREFILL_GROUP_FP8_QUANT, GDN_DECODE_GROUP_FP8_QUANT, GDN_DECODE)
+# A full-attention head's rotary part: NeoX RoPE on its first 64 channels, whose 32
+# frequencies Qwen3.5's interleaved mRoPE splits over the temporal, height and width positions
+ROTARY_DIM = 64
+MROPE_SECTION = (11, 11, 10)
+_POSITIVE_FLOAT32 = (2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value)
+# The FP8 pools' bytes that the kernels' 32-bit offsets address: larger pools stay on sglang.
+_POOL_BYTES = 2**31
+# A cache slot a correct kernel writes may round its BF16 key one FP8 step away
+_CACHE_BOUND = ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=0.125)
+
+GATED_ATTENTION_DECODE_GROUP_FP8_QUANT = OpContract(
+    contract_id="gated_attention_decode_group_fp8_quant@1.0",
+    op_type="qwen3_5",
+    description=(
+        "Qwen3.5 full-attention decode on one rank, between qkv_proj and o_proj, one token "
+        "per row. projected_qkv holds each query head's query then its output gate, then "
+        "the KV heads' keys, then their values. Q and K are RMS-normalized per head with "
+        "weight 1 + norm weight and rounded to BF16; each head's first 64 channels take NeoX "
+        "RoPE, rounded to BF16, whose frequency f in [0, 32) reads positions[1] when "
+        "f % 3 == 1 and f < 33, positions[2] when f % 3 == 2 and f < 30, else positions[0], "
+        "in cos_sin_cache's row of 32 cosines then 32 sines. Each row writes its K and V, "
+        "cast to E4M3FN, at its cache_locations slot of key_cache and value_cache; rows "
+        "sharing a slot leave one of their values there. Query head h then attends, through "
+        "KV head h // (n_heads // n_kv_heads), the written slots "
+        "kv_indices[kv_indptr[r]:kv_indptr[r + 1]] with scores q . k * scale; the "
+        "softmax-weighted sum of their values is rounded to BF16, multiplied by sigmoid of "
+        "the gate and rounded to BF16, then quantized in groups of 128 channels to E4M3FN "
+        "with scale=max(amax,1e-10)/448. Unwritten slots and all other inputs are preserved."
+    ),
+    axes={
+        "n_tokens": axis("Decode rows: one token each, padding rows included.", 1, 2048, is_var=True),
+        "qkv_dim": axis("qkv_proj's output width on this rank.", 256, 81920),
+        "n_kv_heads": axis("KV heads on this rank.", 1, 16),
+        "head_dim": axis("Query, key and value head width.", 64, 512, multiple_of=64),
+        "n_slots": axis("Rows of the KV pools.", 1, 2**31 - 1, is_var=True, any_size=True),
+        "n_positions": axis("Rows of the cos/sin table.", 1, 2**25, is_var=True, any_size=True),
+        "n_offsets": axis("Offsets in kv_indptr: n_tokens + 1.", 2, 2049, is_var=True),
+        "n_kv_tokens": axis("Entries of kv_indices.", 1, 2**29 - 1, is_var=True, any_size=True),
+        "n_heads": derived_axis(
+            "Query heads on this rank.", "(qkv_dim - 2 * n_kv_heads * head_dim) // (2 * head_dim)"
+        ),
+        "n_groups": derived_axis("FP8 groups of 128 channels in a row.", "n_heads * head_dim // 128"),
+    },
+    constraints=(
+        "(qkv_dim - 2 * n_kv_heads * head_dim) % (2 * head_dim) == 0",
+        "n_heads >= 1",
+        "n_heads % n_kv_heads == 0",
+        "(n_heads * head_dim) % 128 == 0",
+        "n_offsets == n_tokens + 1",
+        # every row attends at least one slot, and each row writes its own slot
+        "n_kv_tokens >= n_tokens",
+        "n_slots >= n_tokens",
+        f"n_slots * n_kv_heads * head_dim < {_POOL_BYTES}",
+    ),
+    inputs={
+        "projected_qkv": _tensor(
+            "qkv_proj's output: each query head's query then gate, then keys, then values.",
+            ("n_tokens", "qkv_dim"),
+            _BF16,
+        ),
+        "q_norm_weight": _tensor("Query RMSNorm weight, applied as 1 + weight.", ("head_dim",), _BF16),
+        "k_norm_weight": _tensor("Key RMSNorm weight, applied as 1 + weight.", ("head_dim",), _BF16),
+        "positions": _tensor(
+            "Each row's temporal, height and width positions.",
+            (3, "n_tokens"),
+            _INT64,
+            distribution=IntRangeDistribution(lo=0, hi="n_positions - 1"),
+        ),
+        "cos_sin_cache": _tensor(
+            "Per position, the 32 rotary cosines then the 32 sines.", ("n_positions", ROTARY_DIM), _FP32
+        ),
+        "cache_locations": _tensor(
+            "Each row's KV pool slot.",
+            ("n_tokens",),
+            _INT64,
+            distribution=IntRangeDistribution(lo=0, hi="n_slots - 1", distinct=True),
+        ),
+        "key_cache": _tensor(
+            "This layer's key pool.",
+            ("n_slots", "n_kv_heads", "head_dim"),
+            _FP8,
+            mutable=True,
+            bound=_CACHE_BOUND,
+        ),
+        "value_cache": _tensor(
+            "This layer's value pool.",
+            ("n_slots", "n_kv_heads", "head_dim"),
+            _FP8,
+            mutable=True,
+            bound=_CACHE_BOUND,
+        ),
+        "kv_indptr": _tensor(
+            "Where each row's slots start in kv_indices, then where the last row's end.",
+            ("n_offsets",),
+            _INT32,
+            distribution=CuSeqlensDistribution(min_seqlen=1, total="n_kv_tokens"),
+        ),
+        "kv_indices": _tensor(
+            "The pool slots each row attends, row after row.",
+            ("n_kv_tokens",),
+            _INT32,
+            distribution=IntRangeDistribution(lo=0, hi="n_slots - 1"),
+        ),
+        "eps": ScalarSpec(
+            description="Q and K RMSNorm epsilon.",
+            dtype=DType.FLOAT32,
+            interval=(9.999999974752427e-7, 1e-6),
+            default=1e-6,
+        ),
+        "scale": ScalarSpec(
+            description="Multiplies every score.",
+            dtype=DType.FLOAT32,
+            interval=_POSITIVE_FLOAT32,
+            default=256**-0.5,
+        ),
+    },
+    outputs={
+        "values": TensorSpec(
+            description="Each query head's gated attention, grouped E4M3FN values.",
+            shape=("n_tokens", "n_heads", "head_dim"),
+            dtype=_FP8,
+            error_bounds=ToleranceBound(absolute_tolerance=2, relative_tolerance=0.125),
+        ),
+        "scales": TensorSpec(
+            description="One FP32 scale per row and group of 128 channels.",
+            shape=("n_tokens", "n_groups"),
+            dtype=_FP32,
+            # a correct kernel may keep its split partials and the sigmoid in BF16 too: with
+            # the attention and gated roundings, a group's maximum moves up to ~2.3%
+            error_bounds=ToleranceBound(absolute_tolerance=1e-7, relative_tolerance=0.03),
+        ),
+    },
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism="bitwise"),
+)
+
+CONTRACTS = (
+    GDN_PREFILL_GROUP_FP8_QUANT,
+    GDN_DECODE_GROUP_FP8_QUANT,
+    GDN_DECODE,
+    GATED_ATTENTION_DECODE_GROUP_FP8_QUANT,
+)

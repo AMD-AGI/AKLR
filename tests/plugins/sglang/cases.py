@@ -220,6 +220,37 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # Qwen3.5's full-attention heads at TP8: four query heads and one KV head of 256, a few
+    # dozen pool slots and context tokens
+    PointSpec(
+        contract_id="gated_attention_decode_group_fp8_quant@1.0",
+        axes={
+            "n_tokens": 4,
+            "qkv_dim": 2560,
+            "n_kv_heads": 1,
+            "head_dim": 256,
+            "n_slots": 64,
+            "n_positions": 64,
+            "n_offsets": 5,
+            "n_kv_tokens": 40,
+        },
+        dtypes={
+            "projected_qkv": "bfloat16",
+            "q_norm_weight": "bfloat16",
+            "k_norm_weight": "bfloat16",
+            "positions": "int64",
+            "cos_sin_cache": "float32",
+            "cache_locations": "int64",
+            "key_cache": "float8_e4m3fn",
+            "value_cache": "float8_e4m3fn",
+            "kv_indptr": "int32",
+            "kv_indices": "int32",
+            "values": "float8_e4m3fn",
+            "scales": "float32",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
@@ -233,5 +264,6 @@ GFX950_CONTRACT_IDS = frozenset(
         "qwen2_moe_fp8_router_experts@1.0",
         "qwen2_moe_router@1.0",
         "gdn_decode_group_fp8_quant@1.0",
+        "gated_attention_decode_group_fp8_quant@1.0",
     }
 )
