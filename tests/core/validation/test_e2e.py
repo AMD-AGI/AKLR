@@ -212,6 +212,8 @@ class TestDeploymentPlan:
         args = {"unified": {"--nic": "<network-interface>"}}
         with pytest.raises(ValueError, match=r"placeholders \['<network-interface>'\]"):
             self._plan(_scenario({"unified": _UNIFIED}, args=args))
+        with pytest.raises(ValueError, match="not environment variable names"):
+            self._plan(_scenario({"unified": _UNIFIED}, env={"unified": {"-S": "sh -c id"}}))
         env = {"unified": {"NCCL_SOCKET_IFNAME": "{{NETWORK_IFACE}}"}}
         with pytest.raises(ValueError, match="NETWORK_IFACE"):
             self._plan(_scenario({"unified": _UNIFIED}, env=env))

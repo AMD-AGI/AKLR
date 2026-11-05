@@ -32,6 +32,7 @@ _DIST_INIT_PORT: Final = 20000
 _DEFAULT_BOOTSTRAP_PORT: Final = "8998"
 # the flags the launcher sets on every process itself
 _LAUNCHER_FLAGS: Final = frozenset({"--host", "--port", "--nnodes", "--node-rank", "--dist-init-addr"})
+_ENV_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _KNOWN_PLACEHOLDER: Final = re.compile(r"\{\{(\w+)\}\}")
 _PLACEHOLDER: Final = re.compile(r"\{\{\w+\}\}|<[a-z0-9][a-z0-9-]*>")
 _READY_POLL_SECONDS: Final = 5.0
@@ -138,6 +139,9 @@ class Deployment:
             role_env = (
                 dict(e.split("=", 1) for e in cell.env) | scenario.env[role] | dict(env) | dict(side_env)
             )
+            # a name `env` would read as an option (-S runs a command line) or as the command
+            if bad := [name for name in role_env if not _ENV_NAME.fullmatch(name)]:
+                raise ValueError(f"{scenario.name}: {role}: not environment variable names: {bad}")
             flags = [shlex.split(f) for f in cell.flags]
             overrides = {"--revision": scenario.revision} if scenario.revision else {}
             for name, value in (overrides | scenario.args[role]).items():
