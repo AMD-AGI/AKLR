@@ -1,0 +1,120 @@
+{
+  "schema_version": 5,
+  "name": "mla_vc_n_heads16_kv_lora_rank512_v_head_dim256",
+  "contract_id": "mla_vc@1.0",
+  "description": "sglang's absorbed MLA value projection on one rank, kv_b_proj in fp8 at one scale per tensor, for a bf16 o_proj (rocm_absorb_v_bmm): each head's attention output, quantized per 128-wide group to fp8 at max(amax, 1e-10) / 448, times w_vc and w_scale; the heads side by side, o_proj's input.",
+  "op_type": "forward_mla_rocm",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, padding rows included."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 16,
+      "description": "Query heads on this rank."
+    },
+    "kv_lora_rank": {
+      "type": "const",
+      "value": 512,
+      "description": "The latent: the attention output's width per head."
+    },
+    "v_head_dim": {
+      "type": "const",
+      "value": 256,
+      "description": "A head's value channels."
+    },
+    "out_dim": {
+      "type": "const",
+      "value": 4096,
+      "description": "The heads' value channels side by side."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "attn_output": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each head's attention output, in the latent's basis."
+    },
+    "w_vc": {
+      "shape": [
+        "n_heads",
+        "v_head_dim",
+        "kv_lora_rank"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "kv_b_proj's value part per head, absorbed (sglang's w_vc, transposed): row v maps the latent to value channel v."
+    },
+    "w_scale": {
+      "shape": [],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -6,
+        "log2_hi": 0
+      },
+      "description": "kv_b_proj's scale, one per tensor."
+    }
+  },
+  "outputs": {
+    "attn_bmm_output": {
+      "shape": [
+        "n_tokens",
+        "out_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's value channels, head by head."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 256
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Absorbed MLA value projection for GLM-5.2 on gfx950: TP4, 16 heads per rank, scheduled for 256 tokens.\n\nEach head's 512-wide attention output is quantized per 128-wide group to fp8 at\nmax(amax, 1e-10) / 448 and multiplied by the fp8 w_vc and its per-tensor scale into the\nhead's 256 value channels, written in bf16 with the heads side by side.\n\"\"\"\n\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n\n@gluon.jit\ndef _group128_scale(x):\n    return gl.maximum(gl.max(gl.abs(x), 2), 1e-10) * (1.0 / 448.0)\n\n\n@gluon.jit\ndef _store_output(\n    result, output, row_tile, head, col_tile, M: gl.constexpr, H: gl.constexpr, N: gl.constexpr, BM: gl.constexpr\n):\n    finish: gl.constexpr = gl.BlockedLayout([1, 8], [16, 4], [BM // 16, 4], [1, 0])\n    result = gl.reshape(gl.permute(gl.reshape(result, [BM, 2, 16, 4]), [0, 2, 1, 3]), [BM, 128])\n    result = gl.convert_layout(result, finish)\n    if M < 128:\n        rows = row_tile * BM + gl.arange(0, BM, gl.SliceLayout(1, finish))\n        cols = col_tile * 128 + gl.arange(0, 128, gl.SliceLayout(0, finish))\n        offsets = (rows[:, None] * H + head) * N + cols[None, :]\n        mask = True if M % BM == 0 else rows[:, None] < M\n        gl.store(output + offsets, result, mask, cache_modifier=\".wt\")\n    else:\n        rows = gl.arange(0, BM, gl.SliceLayout(1, finish))\n        cols = gl.arange(0, 128, gl.SliceLayout(0, finish))\n        out_mask = True if M % BM == 0 else row_tile * BM + rows[:, None] < M\n        if BM == 32:\n            output_base = (row_tile * BM * H + head) * N + col_tile * 128\n            offsets = rows[:, None] * H * N + cols[None, :]\n            gl.amd.cdna4.buffer_store(result, output + output_base, offsets, mask=out_mask, cache=\".wt\")\n        else:\n            offsets = ((row_tile * BM + rows[:, None]) * H + head) * N + col_tile * 128 + cols[None, :]\n            gl.store(output + offsets, result, out_mask, cache_modifier=\".wt\")\n\n\n@gluon.jit\ndef _copy_weight_panel(weight, base, GROUP: gl.constexpr, WARPS: gl.constexpr, WN: gl.constexpr):\n    copy_layout: gl.constexpr = gl.BlockedLayout([16], [64], [WARPS], [0])\n    index = gl.arange(0, 16384, copy_layout)\n    col = index // 128\n    physical_col = col & 3 | (col & 64) >> 4 | (col & 60) << 1\n    k = (index // 16 & 7 ^ col & 7) * 16 + index % 16\n    offsets = physical_col * WN + k\n    panel = gl.allocate_shared_memory(gl.float8e4nv, [16384], gl.SwizzledSharedLayout(1, 1, 1, [0]))\n    if WARPS == 8:\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(panel, weight + base, offsets + GROUP * 128)\n    else:\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(panel, weight + base + GROUP * 128, offsets)\n    return panel._reinterpret(shape=[128, 128], layout=gl.SwizzledSharedLayout(16, 1, 8, [1, 0]))\n\n\n@gluon.jit\ndef _gather_stride2_weight_panel(\n    weight, base, last_panel, GROUP: gl.constexpr, WARPS: gl.constexpr, WN: gl.constexpr, USE_QWORDS: gl.constexpr\n):\n    layout: gl.constexpr = gl.BlockedLayout([1], [64], [WARPS], [0])\n    index = gl.arange(0, 4096, layout)\n    col = index // 32\n    physical_col = col & 3 | (col & 64) >> 4 | (col & 60) << 1\n    k = (index // 4 & 7 ^ col & 7) * 16 + index % 4 * 4\n    offsets = physical_col * WN + (GROUP * 128 + k) * 2\n    ptr = weight + base + offsets\n    if USE_QWORDS:\n        if GROUP == 3:\n            tail = (k == 124) & (physical_col == 127) & last_panel\n            packet = gl.load(ptr.to(gl.pointer_type(gl.uint64)), ~tail, other=0)\n            a_tail = gl.load(ptr.to(gl.pointer_type(gl.uint32)), tail, other=0)\n            low = gl.load((ptr + 4).to(gl.pointer_type(gl.uint16)), tail, other=0).to(gl.uint32)\n            high = gl.load((ptr + 6).to(gl.pointer_type(gl.uint8)), tail, other=0).to(gl.uint32)\n            a = packet.to(gl.uint32) | a_tail\n            b = (packet >> 32).to(gl.uint32) | low | high << 16\n        else:\n            packet = gl.load(ptr.to(gl.pointer_type(gl.uint64)))\n            a = packet.to(gl.uint32)\n            b = (packet >> 32).to(gl.uint32)\n    else:\n        a = gl.load(ptr.to(gl.pointer_type(gl.uint32)))\n        if GROUP == 3:\n            tail = (k == 124) & (physical_col == 127) & last_panel\n            b = gl.load((ptr + 4).to(gl.pointer_type(gl.uint32)), ~tail, other=0)\n            low = gl.load((ptr + 4).to(gl.pointer_type(gl.uint16)), tail, other=0).to(gl.uint32)\n            high = gl.load((ptr + 6).to(gl.pointer_type(gl.uint8)), tail, other=0).to(gl.uint32)\n            b = b | low | high << 16\n        else:\n            b = gl.load((ptr + 4).to(gl.pointer_type(gl.uint32)))\n    packed = gl.inline_asm_elementwise(\n        \"v_perm_b32 $0, $2, $1, $3;\",\n        constraints=\"=v,v,v,s\",\n        args=[a, b, 100925952],\n        dtype=gl.uint32,\n        is_pure=True,\n        pack=1,\n    )\n    panel = gl.allocate_shared_memory(gl.uint32, [4096], gl.SwizzledSharedLayout(1, 1, 1, [0]), packed)\n    return panel._reinterpret(dtype=gl.float8e4nv, shape=[128, 128], layout=gl.SwizzledSharedLayout(16, 1, 8, [1, 0]))\n\n\n@gluon.jit\ndef _project_dense_group(q_shared, panel, scale_shared, GROUP: gl.constexpr, BM: gl.constexpr):\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4, instr_shape=[16, 16, 128], transposed=True, warps_per_cta=[BM // 16, 4]\n    )\n    if BM == 32:\n        a = gl.amd.cdna4.async_copy.load_shared_relaxed(\n            q_shared.slice(GROUP * BM, BM, 0), gl.DotOperandLayout(0, mma, 16)\n        )\n        b = gl.amd.cdna4.async_copy.load_shared_relaxed(panel.permute([1, 0]), gl.DotOperandLayout(1, mma, 16))\n    else:\n        b = gl.amd.cdna4.async_copy.load_shared_relaxed(panel.permute([1, 0]), gl.DotOperandLayout(1, mma, 16))\n        a = gl.amd.cdna4.async_copy.load_shared_relaxed(\n            q_shared.slice(GROUP * BM, BM, 0), gl.DotOperandLayout(0, mma, 16)\n        )\n    scale = gl.amd.cdna4.async_copy.load_shared_relaxed(scale_shared.slice(GROUP * BM, BM, 0), gl.SliceLayout(1, mma))\n    partial = gl.amd.cdna4.mfma_scaled(a, None, \"e4m3\", b, None, \"e4m3\", gl.zeros([BM, 128], gl.float32, mma))\n    product = partial * scale[:, None]\n    return product\n\n\n@gluon.jit\ndef _load_stride2_activation_groups(\n    latent, row_tile, head, M: gl.constexpr, H: gl.constexpr, BM: gl.constexpr, XM: gl.constexpr, XH: gl.constexpr\n):\n    layout: gl.constexpr = gl.BlockedLayout([1, 1, 1], [1, 4, 16], [4, BM // 16, 1], [2, 1, 0])\n    group = gl.arange(0, 4, gl.SliceLayout(1, gl.SliceLayout(2, layout)))\n    row = row_tile * BM + gl.arange(0, BM, gl.SliceLayout(0, gl.SliceLayout(2, layout)))\n    pair = gl.arange(0, 64, gl.SliceLayout(0, gl.SliceLayout(1, layout)))\n    offsets = row[None, :, None] * XM + head * XH + group[:, None, None] * 256 + pair[None, None, :] * 4\n    ptr = latent + offsets\n    valid = row[None, :, None] < M\n    tail = (row[None, :, None] == M - 1) & (head == H - 1) & (group[:, None, None] == 3) & (pair[None, None, :] == 63)\n    packet = gl.load(ptr.to(gl.pointer_type(gl.uint64)), valid & ~tail, other=0)\n    low_tail = gl.load(ptr.to(gl.pointer_type(gl.uint32)), tail, other=0)\n    high_tail = gl.load((ptr + 2).to(gl.pointer_type(gl.uint16)), tail, other=0)\n    low = (packet.to(gl.uint32) | low_tail).to(gl.uint16).to(gl.bfloat16, bitcast=True)\n    high = ((packet >> 32).to(gl.uint16) | high_tail).to(gl.bfloat16, bitcast=True)\n    return gl.reshape(gl.join(low, high), [4, BM, 128]).to(gl.float32)\n\n\n@gluon.jit\ndef _load_activation_groups(\n    latent,\n    row_tile,\n    head,\n    M: gl.constexpr,\n    H: gl.constexpr,\n    BM: gl.constexpr,\n    XM: gl.constexpr,\n    XH: gl.constexpr,\n    XK: gl.constexpr,\n):\n    if XK == 2 and XM % 16 == 0 and (XH % 16 == 0):\n        return _load_stride2_activation_groups(latent, row_tile, head, M, H, BM, XM, XH)\n    if XK == 1:\n        x_layout: gl.constexpr = gl.BlockedLayout(\n            [1, 1, 8 if BM == 32 else 16], [1, 16, 4], [4, BM // 16, 1], [2, 1, 0]\n        )\n    else:\n        x_layout: gl.constexpr = gl.BlockedLayout([1, 1, 2], [1, 4, 16], [4, BM // 16, 1], [2, 1, 0])\n    xg = gl.arange(0, 4, gl.SliceLayout(1, gl.SliceLayout(2, x_layout)))\n    xm = gl.arange(0, BM, gl.SliceLayout(0, gl.SliceLayout(2, x_layout)))\n    xk = gl.arange(0, 128, gl.SliceLayout(0, gl.SliceLayout(1, x_layout)))\n    x_mask = True if M % BM == 0 else row_tile * BM + xm[None, :, None] < M\n    if BM == 32:\n        if XK == 1:\n            x_offsets = xm[None, :, None] * XM + xg[:, None, None] * 128 + xk[None, None, :]\n        else:\n            x_offsets = xm[None, :, None] * XM + (xg[:, None, None] * 128 + xk[None, None, :]) * XK\n        x = gl.load(latent + (head * XH + row_tile * BM * XM + x_offsets), x_mask, other=0.0).to(gl.float32)\n    else:\n        x_offsets = (\n            head * XH + (row_tile * BM + xm[None, :, None]) * XM + (xg[:, None, None] * 128 + xk[None, None, :]) * XK\n        )\n        x = gl.load(latent + x_offsets, x_mask, other=0.0).to(gl.float32)\n    return x\n\n\n@gluon.jit\ndef _quantize_group128(x, scale):\n    return gl.clamp(x * (1.0 / scale[:, :, None]), -448.0, 448.0).to(gl.float8e4nv)\n\n\n@gluon.jit\ndef _stage_activation_groups(x, scale, BM: gl.constexpr):\n    q = _quantize_group128(x, scale)\n    if BM == 16:\n        q_layout: gl.constexpr = gl.SwizzledSharedLayout(16, 1, 8, [1, 0])\n    else:\n        q_layout: gl.constexpr = gl.PaddedSharedLayout(\n            [[1024, 32]],\n            [\n                [0, 1],\n                [0, 2],\n                [0, 4],\n                [0, 8],\n                [0, 16],\n                [0, 32],\n                [0, 64],\n                [16, 0],\n                [32, 0],\n                [64, 0],\n                [1, 0],\n                [2, 0],\n                [4, 0],\n                [8, 0],\n            ],\n            [],\n            [128, 128],\n        )\n    q_shared = gl.allocate_shared_memory(gl.float8e4nv, [4 * BM, 128], q_layout, gl.reshape(q, [4 * BM, 128]))\n    scale_shared = gl.allocate_shared_memory(\n        gl.float32, [4 * BM], gl.SwizzledSharedLayout(1, 1, 1, [0]), gl.reshape(scale, [4 * BM])\n    )\n    return (q_shared, scale_shared)\n\n\n@gluon.jit\ndef _reconstruct_dense(\n    latent,\n    weight,\n    weight_scale,\n    output,\n    M: gl.constexpr,\n    H: gl.constexpr,\n    N: gl.constexpr,\n    XM: gl.constexpr,\n    XH: gl.constexpr,\n    XK: gl.constexpr,\n    WH: gl.constexpr,\n    WN: gl.constexpr,\n    WK: gl.constexpr,\n    BM: gl.constexpr,\n):\n    gl.static_assert(N == 256 and (WK == 2 or (WK == 1 and WN % 16 == 0 and (WH % 16 == 0))))\n    weight_factor = gl.load(weight_scale)\n    tile = gl.program_id(0).to(gl.uint32)\n    row_tiles: gl.constexpr = gl.cdiv(M, BM)\n    if row_tiles % 4 == 0:\n        paired_row = tile // (H * 4) * 4 + tile % 4\n        row_tile = paired_row % row_tiles\n        head = tile // 4 % H\n        col_tile = paired_row // row_tiles\n    else:\n        row_tile = tile % row_tiles\n        head = tile // row_tiles % H\n        col_tile = tile // (row_tiles * H)\n    x = _load_activation_groups(latent, row_tile, head, M, H, BM, XM, XH, XK)\n    weight_base = head * WH + col_tile * 128 * WN\n    if WK != 1:\n        last_panel = (head == H - 1) & (col_tile == 1)\n        use_qwords: gl.constexpr = BM == 32 and M % BM != 0\n        w0 = _gather_stride2_weight_panel(weight, weight_base, last_panel, 0, BM // 4, WN, use_qwords)\n        w1 = _gather_stride2_weight_panel(weight, weight_base, last_panel, 1, BM // 4, WN, use_qwords)\n        w2 = _gather_stride2_weight_panel(weight, weight_base, last_panel, 2, BM // 4, WN, use_qwords)\n        w3 = _gather_stride2_weight_panel(weight, weight_base, last_panel, 3, BM // 4, WN, use_qwords)\n    elif BM == 16:\n        w0 = _copy_weight_panel(weight, weight_base, 0, BM // 4, WN)\n        w1 = _copy_weight_panel(weight, weight_base, 1, BM // 4, WN)\n        w2 = _copy_weight_panel(weight, weight_base, 2, BM // 4, WN)\n        w3 = _copy_weight_panel(weight, weight_base, 3, BM // 4, WN)\n    scale = _group128_scale(x)\n    if BM == 32 and WK == 1:\n        w0 = _copy_weight_panel(weight, weight_base, 0, BM // 4, WN)\n        w1 = _copy_weight_panel(weight, weight_base, 1, BM // 4, WN)\n        w3 = _copy_weight_panel(weight, weight_base, 3, BM // 4, WN)\n        w2 = _copy_weight_panel(weight, weight_base, 2, BM // 4, WN)\n    q_shared, scale_shared = _stage_activation_groups(x, scale, BM)\n    gl.amd.cdna4.async_copy.commit_group()\n    gl.amd.cdna4.async_copy.wait_group(0)\n    gl.barrier()\n    p2 = _project_dense_group(q_shared, w2, scale_shared, 2, BM)\n    p3 = _project_dense_group(q_shared, w3, scale_shared, 3, BM)\n    p0 = _project_dense_group(q_shared, w0, scale_shared, 0, BM)\n    p1 = _project_dense_group(q_shared, w1, scale_shared, 1, BM)\n    if BM == 32:\n        p2, p3 = gl.inline_asm_elementwise(\n            \"\", \"=v,=v,=v,=v,0,1,2,3\", [p2, p3], dtype=(gl.float32, gl.float32), is_pure=True, pack=2\n        )\n        p0, p1 = gl.inline_asm_elementwise(\n            \"\", \"=v,=v,=v,=v,0,1,2,3\", [p0, p1], dtype=(gl.float32, gl.float32), is_pure=True, pack=2\n        )\n    acc = p0 + p1 + (p2 + p3)\n    result = (acc * weight_factor).to(gl.bfloat16)\n    _store_output(result, output, row_tile, head, col_tile, M, H, N, BM)\n\n\ndef vc_reconstruct(\n    latent: torch.Tensor, weight: torch.Tensor, weight_scale: torch.Tensor, output: torch.Tensor\n) -> torch.Tensor:\n    m, h, k = latent.shape\n    n = weight.shape[1]\n    assert k == 512 and n == 256\n    block_m = 16 if m <= 128 else 32\n    tiles = triton.cdiv(m, block_m) * 2 * h\n    _reconstruct_dense[tiles,](\n        latent,\n        weight,\n        weight_scale,\n        output,\n        m,\n        h,\n        n,\n        *latent.stride(),\n        *weight.stride(),\n        block_m,\n        num_warps=block_m // 4,\n        waves_per_eu=4 if m == 256 else 0,\n        enable_fp_fusion=False,\n    )\n    return output\n\n\ndef run(*, attn_output, w_vc, w_scale, attn_bmm_output):\n    \"\"\"Writes attn_bmm_output: vc_reconstruct on sglang's tensors.\"\"\"\n    vc_reconstruct(attn_output, w_vc, w_scale, attn_bmm_output)\n"
+      }
+    ]
+  }
+}

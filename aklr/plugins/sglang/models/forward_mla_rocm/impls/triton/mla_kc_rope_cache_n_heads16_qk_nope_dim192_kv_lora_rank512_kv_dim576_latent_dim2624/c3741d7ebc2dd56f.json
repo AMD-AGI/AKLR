@@ -1,0 +1,236 @@
+{
+  "schema_version": 5,
+  "name": "mla_kc_rope_cache_n_heads16_qk_nope_dim192_kv_lora_rank512_kv_dim576_latent_dim2624",
+  "contract_id": "mla_kc_rope_cache@1.0",
+  "description": "sglang's absorbed MLA query and KV-cache write on one rank, kv_b_proj in fp8 at one scale per tensor (_fused_bmm_rope_cat_and_cache in forward_absorb_rocm_core): each head's position-free query part, quantized per 128-wide group to fp8 at max(amax, 1e-10) / 448, times w_kc and w_scale, then the head's RoPE part rotated, as q_cat; each token's KV latent and rotated RoPE key written to its KV pool row in the pool's fp8, unscaled. RoPE rotates GPT-J pairs (2i, 2i + 1) by the token's position's cos and sin. A row whose slot is 0 is padding: it writes nothing and its q_cat is 0.",
+  "op_type": "forward_mla_rocm",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, one query each, padding rows included."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 16,
+      "description": "Query heads on this rank."
+    },
+    "qk_nope_dim": {
+      "type": "const",
+      "value": 192,
+      "description": "A query head's position-free part: the absorb's reduction."
+    },
+    "kv_lora_rank": {
+      "type": "const",
+      "value": 512,
+      "description": "The KV latent: a KV row's first part, and q_cat's."
+    },
+    "kv_dim": {
+      "type": "const",
+      "value": 576,
+      "description": "A KV row and a q_cat head: the latent, then the RoPE part."
+    },
+    "latent_dim": {
+      "type": "const",
+      "value": 2624,
+      "description": "A qkv latent row: q's latent, the KV latent, then the RoPE key."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Rows of the KV pool."
+    },
+    "n_positions": {
+      "type": "var",
+      "description": "Rows of the rotary tables."
+    },
+    "rope_dim": {
+      "type": "const",
+      "value": 64,
+      "description": "The RoPE part of a query head and of a KV row."
+    },
+    "qk_head_dim": {
+      "type": "const",
+      "value": 256,
+      "description": "A query head: its position-free part, then its RoPE part."
+    },
+    "rope_pairs": {
+      "type": "const",
+      "value": 32,
+      "description": "The RoPE part's pairs, one rotary angle each."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "q": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "qk_head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's query per head, q_b_proj's output: the position-free part, then the RoPE part."
+    },
+    "qkv_latent": {
+      "shape": [
+        "n_tokens",
+        "latent_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's qkv_a projection, sglang's qkv latent: q's latent, the KV latent, then the RoPE key, of which only the RoPE key is read."
+    },
+    "kv_latent": {
+      "shape": [
+        "n_tokens",
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's KV latent after kv_a_layernorm."
+    },
+    "w_kc": {
+      "shape": [
+        "n_heads",
+        "kv_lora_rank",
+        "qk_nope_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "kv_b_proj's key part per head, absorbed (sglang's w_kc, transposed): row c maps the position-free query part to latent channel c."
+    },
+    "w_scale": {
+      "shape": [],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -6,
+        "log2_hi": 0
+      },
+      "description": "kv_b_proj's scale, one per tensor."
+    },
+    "cos_cache": {
+      "shape": [
+        "n_positions",
+        "rope_pairs"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -8,
+        "log2_hi": 0
+      },
+      "description": "cos of each position's rotary angles, one per pair."
+    },
+    "sin_cache": {
+      "shape": [
+        "n_positions",
+        "rope_pairs"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -8,
+        "log2_hi": 0
+      },
+      "description": "sin of each position's rotary angles, one per pair."
+    },
+    "positions": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_positions - 1",
+        "distinct": false
+      },
+      "description": "Each token's position."
+    },
+    "out_cache_loc": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "Each token's KV pool row, distinct but for 0: a padding row's (sglang's graph padding, which several rows may hold)."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_slots",
+        "kv_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "This layer's KV pool: a row per slot, the latent then the RoPE part."
+    }
+  },
+  "outputs": {
+    "q_cat": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "kv_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "Each head's absorbed query in the latent's basis, then its rotated RoPE part, in the pool's dtype; 0 for a padding row."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1,
+        "n_slots": 2,
+        "n_positions": 65536
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Absorbed MLA query, RoPE and fp8 KV-cache write for GLM-5.2 on gfx950: TP4, 16 heads per rank, scheduled for 1 token.\n\nEach head's 192-wide position-free query part is quantized per 128-wide group to fp8 at\nmax(amax, 1e-10) / 448 and multiplied by the fp8 w_kc and its per-tensor scale into the\n512-wide latent; the head's 64-wide RoPE part and the token's RoPE key are rotated in GPT-J\npairs in bf16 arithmetic. The query is written in bf16 (run rounds it to q_cat's fp8), the\nKV latent and the rotated key to the token's fp8 pool row, unscaled. A row whose slot is 0\nis padding: it writes nothing and its query is 0.\n\"\"\"\n\nfrom triton.runtime.jit import ConstexprFunction\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\nfrom triton.language.core import PropagateNan\n\n# next_power_of_2 as a constexpr function, for host code and compile-time expressions alike\n_ceil_power_of_two = triton.next_power_of_2\nif not isinstance(_ceil_power_of_two, ConstexprFunction):\n    _ceil_power_of_two = triton.constexpr_function(_ceil_power_of_two)\n\n_PROPAGATE_NAN = gl.constexpr(PropagateNan.ALL)\n\n\n@gluon.jit\ndef _maximum_finite(a, b):\n    return gl.maximum(a, b, propagate_nan=_PROPAGATE_NAN)\n\n\n@gluon.jit\ndef _quantize_group(x, NATIVE_MAX: gl.constexpr):\n    if NATIVE_MAX:\n        amax = gl.reduce(gl.abs(x), 1, _maximum_finite)\n    else:\n        amax = gl.max(gl.abs(x), 1)\n    scale = gl.maximum(amax, 1e-10) * (1.0 / 448.0)\n    encoded = gl.clamp(x * (1.0 / scale[:, None]), -448.0, 448.0).to(gl.float8e4nv)\n    return (encoded, scale)\n\n\n@gluon.jit\ndef _project(\n    query,\n    weight,\n    weight_scale,\n    positions,\n    locations,\n    output,\n    head,\n    tile,\n    row_tile,\n    M: gl.constexpr,\n    H: gl.constexpr,\n    Q_STRIDES: gl.constexpr,\n    W_STRIDES: gl.constexpr,\n    ZERO_PADDING: gl.constexpr,\n    BM: gl.constexpr,\n):\n    QM: gl.constexpr = Q_STRIDES[0]\n    QH: gl.constexpr = Q_STRIDES[1]\n    QD: gl.constexpr = Q_STRIDES[2]\n    WH: gl.constexpr = W_STRIDES[0]\n    WN: gl.constexpr = W_STRIDES[1]\n    WK: gl.constexpr = W_STRIDES[2]\n    BN: gl.constexpr = 16 if BM == 8 else 32\n    MIXED: gl.constexpr = BM < 8\n    COMPACT: gl.constexpr = BM >= 2 and BM <= 8\n    full_mma: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4, instr_shape=[16, 16, 128 if MIXED else 32], transposed=True, warps_per_cta=[1, 1]\n    )\n    tail_mma: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[1, 1]\n    )\n    full_k_width: gl.constexpr = 32 if MIXED else 8\n    if COMPACT:\n        full_query_layout: gl.constexpr = gl.BlockedLayout([1, 4], [BM, 64 // BM], [1, 1], [1, 0])\n        tail_query_layout: gl.constexpr = full_query_layout\n    elif BM == 16:\n        full_query_layout: gl.constexpr = gl.BlockedLayout([1, full_k_width], [16, 4], [1, 1], [0, 1])\n        tail_query_layout: gl.constexpr = gl.BlockedLayout([1, 8], [16, 4], [1, 1], [0, 1])\n    else:\n        full_query_layout: gl.constexpr = gl.BlockedLayout([1, 1], [1, 64], [1, 1], [1, 0])\n        tail_query_layout: gl.constexpr = full_query_layout\n    full_weight_layout: gl.constexpr = gl.DotOperandLayout(1, full_mma, full_k_width)\n    tail_weight_layout: gl.constexpr = gl.DotOperandLayout(1, tail_mma, 8)\n    output_rows = row_tile * BM + gl.arange(0, BM, layout=gl.SliceLayout(1, tail_mma))\n    output_columns = tile * BN + gl.arange(0, BN, layout=gl.SliceLayout(0, tail_mma))\n    slot = gl.load(locations + output_rows, output_rows < M, other=-1)\n    position = gl.load(positions + output_rows, output_rows < M, other=-1)\n    runtime_weight_scale = gl.load(weight_scale)\n    full_rows = row_tile * BM + gl.arange(0, BM, layout=gl.SliceLayout(1, full_query_layout))\n    tail_rows = row_tile * BM + gl.arange(0, BM, layout=gl.SliceLayout(1, tail_query_layout))\n    full_columns = tile * BN + gl.arange(0, BN, layout=gl.SliceLayout(0, full_weight_layout))\n    tail_columns = tile * BN + gl.arange(0, BN, layout=gl.SliceLayout(0, tail_weight_layout))\n    full_query_k = gl.arange(0, 128, layout=gl.SliceLayout(0, full_query_layout))\n    tail_query_k = 128 + gl.arange(0, 64, layout=gl.SliceLayout(0, tail_query_layout))\n    full_weight_k = gl.arange(0, 128, layout=gl.SliceLayout(1, full_weight_layout))\n    tail_weight_k = 128 + gl.arange(0, 64, layout=gl.SliceLayout(1, tail_weight_layout))\n    query_head = head\n    QUERY_WIDE: gl.constexpr = 2 * (((M + BM - 1) // BM * BM - 1) * QM + (H - 1) * QH + 255 * QD + 1) >= 2147483648\n    if QUERY_WIDE:\n        query_head = head.to(gl.int64)\n        full_rows = full_rows.to(gl.int64)\n        tail_rows = tail_rows.to(gl.int64)\n        full_query_k = full_query_k.to(gl.int64)\n        tail_query_k = tail_query_k.to(gl.int64)\n    full_query = gl.load(\n        query + full_rows[:, None] * QM + query_head * QH + full_query_k[None, :] * QD, full_rows[:, None] < M, other=0\n    ).to(gl.float32)\n    tail_query = gl.load(\n        query + tail_rows[:, None] * QM + query_head * QH + tail_query_k[None, :] * QD, tail_rows[:, None] < M, other=0\n    ).to(gl.float32)\n    if BM >= 8 and (BN - 1) * WN + 191 * WK + 1 < 2147483648:\n        weight_base = weight + head.to(gl.int64) * WH + tile.to(gl.int64) * BN * WN\n        local_full_n = gl.arange(0, BN, layout=gl.SliceLayout(0, full_weight_layout))\n        local_tail_n = gl.arange(0, BN, layout=gl.SliceLayout(0, tail_weight_layout))\n        full_weight = gl.amd.cdna4.buffer_load(weight_base, full_weight_k[:, None] * WK + local_full_n[None, :] * WN)\n        if BM == 16:\n            tail_weight = gl.amd.cdna4.buffer_load(\n                weight_base + 128 * WK, (tail_weight_k[:, None] - 128) * WK + local_tail_n[None, :] * WN\n            )\n        else:\n            tail_weight = gl.amd.cdna4.buffer_load(\n                weight_base, tail_weight_k[:, None] * WK + local_tail_n[None, :] * WN\n            )\n    else:\n        weight_head = head\n        WEIGHT_WIDE: gl.constexpr = (H - 1) * WH + 511 * WN + 191 * WK + 1 >= 2147483648\n        if WEIGHT_WIDE:\n            weight_head = head.to(gl.int64)\n            full_weight_k = full_weight_k.to(gl.int64)\n            tail_weight_k = tail_weight_k.to(gl.int64)\n            full_columns = full_columns.to(gl.int64)\n            tail_columns = tail_columns.to(gl.int64)\n        full_weight = gl.load(weight + weight_head * WH + full_weight_k[:, None] * WK + full_columns[None, :] * WN)\n        tail_weight = gl.load(weight + weight_head * WH + tail_weight_k[:, None] * WK + tail_columns[None, :] * WN)\n    full_quantized, full_scale = _quantize_group(full_query, BM != 2)\n    tail_quantized, tail_scale = _quantize_group(tail_query, BM != 2)\n    full_operand = gl.convert_layout(full_quantized, gl.DotOperandLayout(0, full_mma, full_k_width))\n    if MIXED:\n        full_dot = gl.amd.cdna4.mfma_scaled(\n            full_operand, None, \"e4m3\", full_weight, None, \"e4m3\", gl.full((BM, BN), 0, gl.float32, full_mma)\n        )\n    else:\n        full_dot = gl.amd.cdna4.mfma(full_operand, full_weight, gl.full((BM, BN), 0, gl.float32, full_mma))\n    tail_operand = gl.convert_layout(tail_quantized, gl.DotOperandLayout(0, tail_mma, 8))\n    tail_dot = gl.amd.cdna4.mfma(tail_operand, tail_weight, gl.full((BM, BN), 0, gl.float32, tail_mma))\n    full_dot = gl.convert_layout(full_dot, tail_mma)\n    full_scale = gl.convert_layout(full_scale, gl.SliceLayout(1, tail_mma))\n    tail_scale = gl.convert_layout(tail_scale, gl.SliceLayout(1, tail_mma))\n    if BM == 2 or BM == 4 or BM == 16:\n        acc = full_dot * full_scale[:, None]\n    else:\n        acc = gl.full((BM, BN), 0, gl.float32, tail_mma)\n        acc = acc + full_dot * full_scale[:, None]\n    acc = acc + tail_dot * tail_scale[:, None]\n    active = (slot >= (1 if ZERO_PADDING else 0)) & (position >= 0)\n    value = (acc * runtime_weight_scale).to(gl.bfloat16)\n    value = gl.where(active[:, None], value, 0)\n    if BM == 4:\n        store_layout: gl.constexpr = gl.BlockedLayout([1, 2], [BM, 64 // BM], [1, 1], [1, 0])\n        value = gl.convert_layout(value, store_layout)\n        output_rows = row_tile * BM + gl.arange(0, BM, layout=gl.SliceLayout(1, store_layout))\n        output_columns = tile * BN + gl.arange(0, BN, layout=gl.SliceLayout(0, store_layout))\n    OUTPUT_WIDE: gl.constexpr = (M + BM - 1) // BM * BM * H * 576 * 2 >= 2147483648\n    if OUTPUT_WIDE:\n        output_rows = output_rows.to(gl.int64)\n        head = head.to(gl.int64)\n    if COMPACT and (M + BM - 1) // BM * BM * H * 576 * 2 < 2147483648:\n        gl.amd.cdna4.buffer_store(\n            value, output, (output_rows[:, None] * H + head) * 576 + output_columns[None, :], output_rows[:, None] < M\n        )\n    elif BM == 16 and (M + BM - 1) // BM * BM * H * 576 * 2 < 2147483648:\n        gl.store(\n            output + ((output_rows[:, None] * H + head) * 576 + output_columns[None, :]),\n            value,\n            output_rows[:, None] < M,\n        )\n    else:\n        gl.store(\n            output + (output_rows[:, None] * H + head) * 576 + output_columns[None, :], value, output_rows[:, None] < M\n        )\n\n\n@gluon.jit\ndef _rotate_bf16(value, mate, cosine, sine, negative):\n    direct = (value * cosine).to(gl.bfloat16).to(gl.float32)\n    rotated = (gl.where(negative, -mate, mate) * sine).to(gl.bfloat16).to(gl.float32)\n    return (direct + rotated).to(gl.bfloat16)\n\n\n@gluon.jit\ndef _rotary_cache(\n    query,\n    latent,\n    key_rope,\n    cos,\n    sin,\n    positions,\n    locations,\n    cache,\n    output,\n    row,\n    head,\n    M: gl.constexpr,\n    H: gl.constexpr,\n    K: gl.constexpr,\n    Q_STRIDES: gl.constexpr,\n    L_STRIDES: gl.constexpr,\n    K_STRIDES: gl.constexpr,\n    C_STRIDES: gl.constexpr,\n    NEOX: gl.constexpr,\n    ZERO_PADDING: gl.constexpr,\n    ACTIVE_GUARD: gl.constexpr,\n    CACHE_PACK: gl.constexpr,\n):\n    QM: gl.constexpr = Q_STRIDES[0]\n    QH: gl.constexpr = Q_STRIDES[1]\n    QD: gl.constexpr = Q_STRIDES[2]\n    LM: gl.constexpr = L_STRIDES[0]\n    LD: gl.constexpr = L_STRIDES[1]\n    KM: gl.constexpr = K_STRIDES[0]\n    KD: gl.constexpr = K_STRIDES[1]\n    CM: gl.constexpr = C_STRIDES[0]\n    CD: gl.constexpr = C_STRIDES[1]\n    WIDE: gl.constexpr = (\n        2 * ((M - 1) * QM + (H - 1) * QH + (K + 63) * QD + 1) >= 2147483648\n        or 2 * ((M - 1) * LM + 511 * LD + 1) >= 2147483648\n        or 2 * ((M - 1) * KM + 63 * KD + 1) >= 2147483648\n        or (575 * CD + 1 >= 2147483648)\n        or (2 * M * H * 576 >= 2147483648)\n    )\n    if WIDE:\n        row = gl.to_tensor(row).to(gl.int64)\n        head = head.to(gl.int64)\n    layout: gl.constexpr = gl.BlockedLayout([1], [64], [1], [0])\n    latent_layout: gl.constexpr = gl.BlockedLayout([CACHE_PACK], [64], [1], [0])\n    slot = gl.load(locations + row).to(gl.int64)\n    position = gl.load(positions + row).to(gl.int64)\n    active = (slot >= (1 if ZERO_PADDING else 0)) & (position >= 0)\n    r = gl.arange(0, 64, layout=layout)\n    mate = (r + 32) % 64 if NEOX else r ^ 1\n    pair = r % 32 if NEOX else r // 2\n    negative = r < 32 if NEOX else r % 2 == 0\n    if WIDE:\n        r = r.to(gl.int64)\n        mate = mate.to(gl.int64)\n    if ACTIVE_GUARD:\n        if active:\n            c = gl.load(cos + position * 32 + pair).to(gl.float32)\n            s = gl.load(sin + position * 32 + pair).to(gl.float32)\n            q = gl.load(query + row * QM + head * QH + (K + r) * QD).to(gl.float32)\n            other = gl.load(query + row * QM + head * QH + (K + mate) * QD).to(gl.float32)\n            qr = _rotate_bf16(q, other, c, s, negative)\n            gl.store(output + (row * H + head) * 576 + 512 + r, qr)\n            if head == 0:\n                d = gl.arange(0, 512, layout=latent_layout)\n                if WIDE:\n                    d = d.to(gl.int64)\n                kv = gl.load(latent + row * LM + d * LD)\n                k = gl.load(key_rope + row * KM + r * KD).to(gl.float32)\n                other_k = gl.load(key_rope + row * KM + mate * KD).to(gl.float32)\n                kr = _rotate_bf16(k, other_k, c, s, negative)\n                gl.store(cache + slot * CM + d * CD, kv.to(gl.float32))\n                gl.store(cache + slot * CM + (512 + r) * CD, kr.to(gl.float32))\n        else:\n            gl.store(output + (row * H + head) * 576 + 512 + r, gl.full((64,), 0, gl.bfloat16, layout))\n    else:\n        c = gl.load(cos + position * 32 + pair, active, other=0).to(gl.float32)\n        s = gl.load(sin + position * 32 + pair, active, other=0).to(gl.float32)\n        q = gl.load(query + row * QM + head * QH + (K + r) * QD, active, other=0).to(gl.float32)\n        other = gl.load(query + row * QM + head * QH + (K + mate) * QD, active, other=0).to(gl.float32)\n        qr = _rotate_bf16(q, other, c, s, negative)\n        gl.store(output + (row * H + head) * 576 + 512 + r, qr)\n        if head == 0:\n            d = gl.arange(0, 512, layout=latent_layout)\n            if WIDE:\n                d = d.to(gl.int64)\n            kv = gl.load(latent + row * LM + d * LD, active, other=0)\n            k = gl.load(key_rope + row * KM + r * KD, active, other=0).to(gl.float32)\n            other_k = gl.load(key_rope + row * KM + mate * KD, active, other=0).to(gl.float32)\n            kr = _rotate_bf16(k, other_k, c, s, negative)\n            gl.store(cache + slot * CM + d * CD, kv.to(gl.float32), active)\n            gl.store(cache + slot * CM + (512 + r) * CD, kr.to(gl.float32), active)\n\n\n@gluon.jit\ndef _fused_kernel(\n    query,\n    latent,\n    key_rope,\n    weight,\n    weight_scale,\n    cos,\n    sin,\n    positions,\n    locations,\n    cache,\n    output,\n    M: gl.constexpr,\n    H: gl.constexpr,\n    K: gl.constexpr,\n    Q_STRIDES: gl.constexpr,\n    L_STRIDES: gl.constexpr,\n    K_STRIDES: gl.constexpr,\n    W_STRIDES: gl.constexpr,\n    C_STRIDES: gl.constexpr,\n    NEOX: gl.constexpr,\n    ZERO_PADDING: gl.constexpr,\n    BM: gl.constexpr,\n    HEAD_GROUP: gl.constexpr,\n):\n    if BM == 1 or BM == 16:\n        pid = gl.program_id(0).to(gl.uint32)\n    else:\n        pid = gl.program_id(0)\n    NT: gl.constexpr = 32 if BM == 8 else 16\n    projection_ctas: gl.constexpr = triton.cdiv(M, BM) * H * NT\n    projection_id = pid\n    if (projection_id >= 0) & (projection_id < projection_ctas):\n        head = projection_id % HEAD_GROUP + projection_id // (NT * HEAD_GROUP) % (H // HEAD_GROUP) * HEAD_GROUP\n        tile = projection_id // HEAD_GROUP % NT\n        _project(\n            query,\n            weight,\n            weight_scale,\n            positions,\n            locations,\n            output,\n            head,\n            tile,\n            projection_id // (NT * H),\n            M,\n            H,\n            Q_STRIDES,\n            W_STRIDES,\n            ZERO_PADDING,\n            BM,\n        )\n    else:\n        task = pid - projection_ctas\n        if M == 1:\n            row = 0\n            head = task\n        else:\n            row = task // H\n            head = task % H\n        _rotary_cache(\n            query,\n            latent,\n            key_rope,\n            cos,\n            sin,\n            positions,\n            locations,\n            cache,\n            output,\n            row,\n            head,\n            M,\n            H,\n            K,\n            Q_STRIDES,\n            L_STRIDES,\n            K_STRIDES,\n            C_STRIDES,\n            NEOX,\n            ZERO_PADDING,\n            BM == 1 or BM == 16,\n            8 if BM == 8 else 2 if BM == 16 else 1,\n        )\n\n\ndef kc_rope_cache(\n    query: torch.Tensor,\n    kv_latent: torch.Tensor,\n    k_rope: torch.Tensor,\n    weight: torch.Tensor,\n    weight_scale: torch.Tensor,\n    cos: torch.Tensor,\n    sin: torch.Tensor,\n    positions: torch.Tensor,\n    cache_locations: torch.Tensor,\n    cache: torch.Tensor,\n    *,\n    is_neox_style: bool = False,\n    native_zero_padding: bool = False,\n) -> torch.Tensor:\n    m, h, width = query.shape\n    output = torch.empty((m, h, 576), device=query.device, dtype=torch.bfloat16)\n    block_m = min(16, _ceil_power_of_two(m))\n    head_group = 8\n    if h % head_group:\n        head_group = 1\n    column_tiles = 32 if block_m == 8 else 16\n    grid = (triton.cdiv(m, block_m) * h * column_tiles + m * h,)\n    _fused_kernel[grid](\n        query,\n        kv_latent,\n        k_rope,\n        weight,\n        weight_scale,\n        cos,\n        sin,\n        positions,\n        cache_locations,\n        cache,\n        output,\n        m,\n        h,\n        width - 64,\n        query.stride(),\n        kv_latent.stride(),\n        k_rope.stride(),\n        weight.stride(),\n        cache.stride(),\n        is_neox_style,\n        native_zero_padding,\n        block_m,\n        head_group,\n        num_warps=1,\n        enable_fp_fusion=False,\n    )\n    return output\n\n\ndef run(*, q, qkv_latent, kv_latent, w_kc, w_scale, cos_cache, sin_cache, positions, out_cache_loc, kv_cache, q_cat):\n    \"\"\"Writes q_cat and kv_cache: kc_rope_cache on sglang's tensors, the RoPE key the qkv\n    latent's last columns, padding rows at slot 0; its bf16 query rounded to q_cat's dtype.\"\"\"\n    rope = kv_cache.shape[1] - w_kc.shape[1]\n    query = kc_rope_cache(\n        q,\n        kv_latent,\n        qkv_latent[:, -rope:],\n        w_kc,\n        w_scale,\n        cos_cache,\n        sin_cache,\n        positions,\n        out_cache_loc,\n        kv_cache,\n        is_neox_style=False,\n        native_zero_padding=True,\n    )\n    q_cat.copy_(query)\n"
+      }
+    ]
+  }
+}
