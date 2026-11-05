@@ -119,6 +119,7 @@ def _moe_call(mlp, hidden_states):
     if moe_blocks.experts_format(experts) == "Fp8MoEMethod":
         return deepseek_v2_fp8_moe, {
             **arguments,
+            "correction_bias": _topk_bias(routing, hidden_states.dtype),
             "w1_scale": experts.w13_weight_scale_inv,
             "w2_scale": experts.w2_weight_scale_inv,
         }
@@ -127,3 +128,15 @@ def _moe_call(mlp, hidden_states):
         "w1_scale": experts.w13_weight_scale,
         "w2_scale": experts.w2_weight_scale,
     }
+
+
+def _topk_bias(routing, logits_dtype):
+    """``routing``'s correction bias as sglang's select_experts hands it to the top-k: in the
+    router logits' dtype to aiter's grouped top-k (the copy TopKConfig keeps), else as held.
+    GLM-5.2 holds its bias in fp32, which aiter's top-k reads in bf16."""
+    from sglang.srt.environ import envs
+    from sglang.srt.layers.moe.topk import _use_aiter
+
+    if _use_aiter and routing.use_grouped_topk and not envs.SGLANG_OPT_USE_JIT_KERNEL_GROUPED_TOPK.get():
+        return routing.correction_bias_for_dtype(logits_dtype)
+    return routing.correction_bias

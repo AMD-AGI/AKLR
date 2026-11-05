@@ -215,8 +215,9 @@ DEEPSEEK_V2_FP8_MOE = OpContract(
     },
     attrs={
         "topk": attr("Routed experts per token.", 8, param_name="topk"),
-        "num_expert_group": attr("Expert groups.", 8, param_name="num_expert_group"),
-        "topk_group": attr("Groups each token's experts come from.", 4, param_name="topk_group"),
+        # DeepSeek-V3/R1's 8 groups, then GLM-5.2's one: its experts ungrouped
+        "num_expert_group": attr("Expert groups.", 8, 1, param_name="num_expert_group"),
+        "topk_group": attr("Groups each token's experts come from.", 4, 1, param_name="topk_group"),
         "renormalize": attr(
             "Whether the routed weights are divided by their sum.",
             True,
@@ -228,6 +229,7 @@ DEEPSEEK_V2_FP8_MOE = OpContract(
         "n_routed % num_expert_group == 0",
         # a group's score sums its two best experts
         "n_routed // num_expert_group >= 2",
+        "topk_group <= num_expert_group",
         "topk <= topk_group * (n_routed // num_expert_group)",
     ),
     inputs={
@@ -247,7 +249,8 @@ DEEPSEEK_V2_FP8_MOE = OpContract(
         "correction_bias": TensorSpec(
             description="Added to the scores to pick experts; never weighs them.",
             shape=("n_routed",),
-            # bf16, as sglang keeps it on aiter for fp8 checkpoints
+            # bf16, as sglang's aiter top-k reads it for fp8 checkpoints: DeepSeek-R1 holds it in
+            # bf16, GLM-5.2 in fp32, which top-k reads through a bf16 copy (the route passes that)
             dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
             # centred on 0 and narrow beside the scores' spread: it moves most tokens' picks,
             # yet keeps the routes spread over the experts, as a balanced model's are
