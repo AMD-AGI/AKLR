@@ -31,7 +31,7 @@ REPO_ROOT = _repository_of(SKILL_ROOT)
 # Where the skill sits in its repository: SKILL_ROOT, unless SKILL_ROOT is a copy outside REPO_ROOT.
 HOME_ROOT = SKILL_ROOT
 # The architectures a page may cover, and every name each goes by (ISA family, product). A page names only the
-# architectures of its own `gens` (gfx950 when it has none); SKILL.md and CONTRIBUTING.md may name any.
+# architectures of its own `gens` (gfx950 when it has none); SKILL.md, CONTRIBUTING.md and index pages may name any.
 ARCH_NAMES = {
     "gfx950": frozenset({"gfx950", "CDNA4", "MI350", "MI355"}),
     "gfx942": frozenset({"gfx942", "CDNA3", "MI300", "MI308", "MI325"}),
@@ -45,7 +45,7 @@ SKILL_MD_MAX_BYTES = 12_000  # of the body it inlines; the front matter is strip
 CARD_MAX_LINES = 600
 
 # Not knowledge pages: the ISA chapters, code snapshots, review notes and the scripts.
-SKIP_PARTS = ("gfx950/cdna4/", "reference/", "maintenance/", "analysis/")
+SKIP_PARTS = ("gfx950/cdna4/", "gfx942/cdna3/", "reference/", "maintenance/", "analysis/")
 
 NEW_KINDS = (
     "technique",
@@ -526,7 +526,7 @@ def check_arch(page: Page) -> Iterable[Issue]:
         yield Issue("error", page.rel, 1, f"gens {gens}: a list of {', '.join(ARCH_NAMES)}")
         return
     own = [str(g) for g in gens or DEFAULT_GENS]
-    covered = ARCH_NAMES if page.kind in ("entry", "guide") else own
+    covered = ARCH_NAMES if page.kind in ("entry", "guide", "index") else own
     names = frozenset().union(*(ARCH_NAMES[g] for g in covered))
     for match in ARCH_TOKEN_RE.finditer(page.text):
         token = match.group(0).replace(" ", "").rstrip("X")

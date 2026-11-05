@@ -13,7 +13,7 @@ may have made it stale. `maintenance/kb_lint.py` enforces what can be checked me
 - `profile.md` trace capture and analysis, and perf-regression bisection: links to FlyDSL's own skills, with what
   this repository adds
 - `hardware/<arch>/` an architecture's ISA guide, and the guides to looking things up in it (`hardware/gfx950/`:
-  CDNA4)
+  CDNA4; `hardware/gfx942/`: CDNA3)
 - `maintenance/` the scripts that keep this knowledge base consistent (lint, indexes, gaps, citations) · `analysis/`
   scripts an agent runs on its own kernel (trace hotspots, L2/HBM counters, ISA diffs, register and LDS budget);
   § Scripts lists both
