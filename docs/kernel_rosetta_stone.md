@@ -53,7 +53,7 @@ Best score so far (higher is better):
 | 12 h | 1.300 (run ended at 11h36m) | 1.258 |
 | 15h50m | (ended) | 1.289 (its best) |
 
-<p align="center"><img src="images/kernel_rosetta_stone_speedup.svg" alt="Kernel Rosetta Stone: GEMM comparison" width="560"></p>
+<p align="center"><img src="images/kernel_rosetta_stone_speedup.svg" alt="Kernel Rosetta Stone: GEMM comparison" width="820"></p>
 
 - **To reach 1.28x:** 5h20m and about $52 with AKLR's help; 14h46m and about $205 without. About $150 saved (spend estimated, see below).
 - **After the same 8 hours:** 1.286x against 1.177x, a score about 9% higher.
@@ -85,7 +85,7 @@ Best score so far (higher is better):
 | 10 h | 1.184 | 1.056 |
 | 14h54m | | 1.165 (run ended) |
 
-<p align="center"><img src="images/kernel_rosetta_stone_moe_speedup.svg" alt="Kernel Rosetta Stone: MoE comparison" width="560"></p>
+<p align="center"><img src="images/kernel_rosetta_stone_moe_speedup.svg" alt="Kernel Rosetta Stone: MoE comparison" width="820"></p>
 
 - **To reach 1.165x**, the best the run without help reached: 7h24m and about $87 with AKLR's help; 14h54m and $170 without. About half the time and half the spend.
 - **After the same 8 hours:** 1.176x against 1.047x.

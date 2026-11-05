@@ -36,9 +36,13 @@ An engine calls an AKLR operator. AKLR checks the inputs and picks a kernel that
 
 The **Kernel Rosetta Stone** is a guide for agents writing AMD kernels. It brings together tips from handwritten kernels, AMD architecture and CDNA4 ISA documents, and real examples. Start at [`SKILL.md`](../harness/skills/aklr-kb/SKILL.md). As of 2026-11-05, it has **123 pages** and **1,204 findings with sources**.
 
-It aims to help agents reach the same speed sooner, use fewer tokens, and find faster kernels. In our first two measurements, on one GEMM and on GLM-5.2's MoE layer, an agent with the knowledge base reached the same speedup in a third to a half of the time and a quarter to a half of the spend. The setup, the numbers and the limits are in [the details](../docs/kernel_rosetta_stone.md).
+It aims to help agents reach the same speed sooner, use fewer tokens, and find faster kernels. Below is our first measurement on one GEMM ([details](../docs/kernel_rosetta_stone.md)):
 
-<p align="center"><img src="../docs/images/kernel_rosetta_stone_speedup.svg" alt="Kernel Rosetta Stone: GEMM comparison" width="49%"> <img src="../docs/images/kernel_rosetta_stone_moe_speedup.svg" alt="Kernel Rosetta Stone: MoE comparison" width="49%"></p>
+<p align="center"><img src="../docs/images/kernel_rosetta_stone_speedup.svg" alt="Kernel Rosetta Stone: GEMM comparison" width="820"></p>
+
+- **Same 1.28x speedup: 5h20m and ~$52 with the AKLR knowledge base, against 14h46m and ~$205 without**, about a third of the time and a quarter of the spend.
+- **After 8 hours: 1.286x against 1.177x.**
+- **At the end: 1.300x for ~$133 with the AKLR knowledge base; without, the best was 1.289x for ~$230.**
 
 ## Install
 
