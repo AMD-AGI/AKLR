@@ -34,9 +34,13 @@ _DEFAULT_BOOTSTRAP_PORT: Final = "8998"
 # the flags the launcher sets on every process itself
 _LAUNCHER_FLAGS: Final = frozenset({"--host", "--port", "--nnodes", "--node-rank", "--dist-init-addr"})
 _ENV_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-# what a cookbook's env may not set: the loader's and the interpreter's own hooks run code
-# before sglang does (LD_PRELOAD, PYTHONWARNINGS naming a module to import, ...)
-_UNSAFE_ENV_NAME: Final = re.compile(r"LD_\w*|DYLD_\w*|PYTHON\w*")
+# what a cookbook's env may not set: the loader's, the interpreter's and the shell's own hooks
+# run code before sglang does (LD_PRELOAD, PYTHONWARNINGS naming a module to import, BASH_ENV,
+# PATH), and Hugging Face's and the proxies' settings redirect what is downloaded or loaded
+_UNSAFE_ENV_NAME: Final = re.compile(
+    r"LD_\w*|DYLD_\w*|PYTHON\w*|PATH|HOME|ENV|BASH_ENV|SHELL|IFS|GCONV_PATH|LOCPATH|NLSPATH|TMPDIR"
+    r"|HF_\w*|HUGGINGFACE_\w*|(?i:\w*_proxy)"
+)
 _KNOWN_PLACEHOLDER: Final = re.compile(r"\{\{\s*(\w+)\s*\}\}")
 _PLACEHOLDER: Final = re.compile(r"\{\{.*?\}\}|<[A-Za-z][\w-]*>")
 _READY_POLL_SECONDS: Final = 5.0
@@ -118,8 +122,13 @@ class Role:
     @classmethod
     def of(cls, scenario: Scenario, cookbook: Cookbook) -> tuple[Role, ...]:
         """The scenario's roles, in order; the launcher owns the weights (``--model-path``
-        and ``--revision`` from the scenario, whatever the cell says)."""
-        weights = {"--model-path": scenario.model_path, "--model": None, "--revision": scenario.revision}
+        and ``--revision`` from the scenario, no tokenizer of the cell's), which only the
+        scenario's ``args`` override."""
+        weights = {
+            "--model-path": scenario.model_path, "--model": None, "--revision": scenario.revision,
+            # a tokenizer is the model's too: another repository's would run its own remote code
+            "--tokenizer-path": None, "--tokenizer": None,
+        }  # fmt: skip
         roles = []
         for name, match in scenario.roles.items():
             cell = cookbook.cell(match)

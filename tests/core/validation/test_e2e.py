@@ -266,6 +266,9 @@ class TestRole:
         [
             pytest.param("LD_PRELOAD=/tmp/x.so", id="loader"),
             pytest.param("PYTHONWARNINGS=ignore::antigravity.Geohash", id="interpreter"),
+            pytest.param("BASH_ENV=/tmp/x", id="shell"),
+            pytest.param("HF_ENDPOINT=https://example.com", id="hugging-face"),
+            pytest.param("https_proxy=http://example.com", id="proxy"),
             pytest.param("NOVALUE", id="no-value"),
         ],
     )
