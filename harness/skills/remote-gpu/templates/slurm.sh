@@ -2,7 +2,7 @@
 # shellcheck shell=bash disable=SC2016,SC2034
 # Adapted: <list the scheduler hooks changed, and why>
 #
-# Contract (also linked from references/add-cluster.md): cluster.sh defines CLUSTER_RLIB,
+# Contract (also linked from remote-gpu-setup/references/add-cluster.md): cluster.sh defines CLUSTER_RLIB,
 # a Bash library evaluated remotely after the manifest and shared library (C=cluster,
 # REL=work root, B=state dir). It contains these functions; stdout is data, stderr diagnostics.
 # All hooks return 0 on success, nonzero on failure, except where specified below.

@@ -29,7 +29,8 @@ rather than a person at a terminal.
 The campaign needs one gfx950 card that nobody else uses, for hours. First look at this machine
 (`rocm-smi --showpids`, `rocm-smi --showmeminfo vram`): if it has such a card, run the campaign here and skip
 everything about cluster nodes below. Only if it has none, get a node with the `remote-gpu` skill and run the
-campaign there (`$RG` below is its script).
+campaign there, allocated for `--max-hours` plus the steps after the loop (`$RG` below is its script,
+`harness/skills/remote-gpu/scripts/remote-gpu` from the clone's root).
 
 ## Before step 1
 

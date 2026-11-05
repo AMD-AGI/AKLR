@@ -996,7 +996,6 @@ race_clusters() {
 # No-wait selection uses the same request and capacity pair that cmd_alloc will use.
 pick_cluster() {
   local cluster free burst line tmp best='' best_free=-1 best_line='' seen=() pids=()
-  ((${#CLUSTERS[@]})) || err PROBE_FAILED 'msg="no cluster under ~/.remote-gpu/clusters/" hint="add one as references/add-cluster.md says"'
   tmp=$(mktemp -d)
   for cluster in "${CLUSTERS[@]}"; do
     timeout 60 "$SELF" --cluster "$cluster" free >"$tmp/$cluster" 2>&1 & pids+=($!)
@@ -1095,13 +1094,13 @@ remote-gpu — whole GPU nodes on the clusters under ~/.remote-gpu/clusters/, on
 Exit codes: CMD's own rc for exec/wait | 200 USAGE/UNSUPPORTED | 201 QUOTA_FULL |
 202 PENDING_TIMEOUT | 203 JOB_GONE | 204 BAD_NODE | 205 task still running / job still pending |
 206 SUBMIT_FAILED/UNSCHEDULABLE/NODES_UNKNOWN/INSTALL_FAILED | 207 NO_TASK/TASK_START_FAILED |
-208 EXTEND_FAILED | 209 RSYNC_FAILED | 210 NO_FREE_NODES | 255 ssh failure / PROBE_FAILED.
+208 EXTEND_FAILED | 209 RSYNC_FAILED | 210 NO_FREE_NODES | 255 ssh failure / PROBE_FAILED / NO_CLUSTER.
 -j may also come from $REMOTE_GPU_JOB.
 
 Clusters (~/.remote-gpu/clusters/<name>/cluster.env; HOST is the login node, overridable by its variable):
 EOF
   local c
-  ((${#CLUSTERS[@]})) || echo '  none yet: add one as references/add-cluster.md says'
+  ((${#CLUSTERS[@]})) || echo '  none yet: add one with the remote-gpu-setup skill'
   for c in "${CLUSTERS[@]}"; do (. "$CDIRS/$c/cluster.env"; printf '  %-10s %s; login %s\n' "$c" "$DESCRIPTION" "$HOST"); done
 }
 
@@ -1152,6 +1151,9 @@ session_job() {
   echo "using job=$JOB, the one this session allocated" >&2
 }
 
+case $sub in alloc | free | ls | info)
+  ((${#CLUSTERS[@]})) || err NO_CLUSTER 'msg="no cluster under ~/.remote-gpu/clusters/" hint="add one with the remote-gpu-setup skill"' ;;
+esac
 case $sub in
   help | -h | --help) usage; exit 0 ;;
   alloc)

@@ -1,6 +1,6 @@
 ---
 name: report-progress
-description: Write a short progress report on long-running AKLR work, and start a `/loop` timer so an unattended run reports every N minutes (default 15). A subagent reads the run's artifacts; the report says what changed, the key numbers with their baseline and revision, what is still running, and whether the user must decide anything. Use whenever another AKLR skill asks for a watch or 15-minute report, when the user asks "进展/汇报/状态/how is it going/status update/handoff", or before ending a session that leaves AKLR work, nodes or PRs in flight.
+description: Write a short progress report on long-running AKLR work (what changed, key numbers against their baseline, what is still running, what the user must decide), and start a `/loop` timer so an unattended run reports every N minutes (default 15). Use when another AKLR skill asks for a watch or 15-minute report, when the user asks for status, progress or a handoff, or before ending a session that leaves AKLR work, nodes or PRs in flight.
 ---
 
 # AKLR progress report
