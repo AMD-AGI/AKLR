@@ -3,8 +3,7 @@
 
 """A torch.profiler run that opts in gets its GPU events from the kernel tracer: the same kernels Kineto's own
 tracer records, each tied to the op that launched it, and a graph replay's to the node and call that captured it,
-which calibrating the graph's exec binds without running any of it. A run that does not opt in is Kineto's alone, but
-for its GPU tracer, which below HIP 7.16 is refused in a process the tracer ran in."""
+which calibrating the graph's exec binds without running any of it. A run that does not opt in is Kineto's alone."""
 
 import collections
 import json
@@ -57,11 +56,7 @@ def _kinetos_then_ours_then_kinetos() -> list:
     torch.ones(1, device="cuda")  # the GPU runs before the tracer loads
     kinetos = _kernels_of_a_step(_KINETOS)
     kernel_tracer()
-    ours = _kernels_of_a_step(_opted_in())
-    try:
-        return [kinetos, ours, _kernels_of_a_step(_KINETOS)]
-    except RuntimeError as error:
-        return [kinetos, ours, str(error)]
+    return [kinetos, _kernels_of_a_step(_opted_in()), _kernels_of_a_step(_KINETOS)]
 
 
 def _trace_of_a_graph_replay() -> list:
@@ -394,11 +389,10 @@ gpu = pytest.mark.skipif(torch.version.hip is None, reason="rocprofiler-sdk trac
 
 @pytest.mark.gpu
 @gpu
-def test_an_opted_in_run_records_kinetos_kernels_and_refuses_kinetos_gpu_tracer_after_it():
+def test_an_opted_in_run_records_kinetos_kernels_and_leaves_kinetos_runs_alone():
     kinetos, ours, kinetos_after = _in_a_fresh_process(_kinetos_then_ours_then_kinetos)
-    assert ours == kinetos
+    assert ours == kinetos == kinetos_after
     assert all(n == 3 for n in ours[1].values()), ours[1]
-    assert "trace the GPU with Kineto in another process" in kinetos_after
 
 
 @pytest.mark.gpu

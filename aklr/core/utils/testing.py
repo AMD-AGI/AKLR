@@ -37,8 +37,7 @@ os.environ.setdefault("ROCP_TOOL_ATTACH", "1")
 def kernel_tracer():
     """A Kineto child profiler for torch.profiler runs that pass KERNEL_TRACER_CONFIG and ProfilerActivity.CPU only.
 
-    Its check() raises what the last run's tracing failed with: that run has no GPU events. Below HIP 7.16 a process
-    it ran in can no longer trace the GPU with Kineto's own tracer."""
+    Its check() raises what the last run's tracing failed with: that run has no GPU events."""
     from torch.utils.cpp_extension import ROCM_HOME, include_paths, load
 
     from aklr.core.platform.env import RuntimeEnv
