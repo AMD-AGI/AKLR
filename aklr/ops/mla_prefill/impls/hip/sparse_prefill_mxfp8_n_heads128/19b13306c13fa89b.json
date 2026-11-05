@@ -196,7 +196,7 @@
         "softmax_scale": 0.04419417306780815
       },
       "accuracy": "passed",
-      "speedup": 1.893
+      "speedup": 1.905
     },
     {
       "axes": {
@@ -211,7 +211,7 @@
         "softmax_scale": 0.04419417306780815
       },
       "accuracy": "passed",
-      "speedup": 1.968
+      "speedup": 1.964
     },
     {
       "axes": {
@@ -241,7 +241,7 @@
         "softmax_scale": 0.04419417306780815
       },
       "accuracy": "passed",
-      "speedup": 1.93
+      "speedup": 1.923
     }
   ],
   "layout_variants": {
