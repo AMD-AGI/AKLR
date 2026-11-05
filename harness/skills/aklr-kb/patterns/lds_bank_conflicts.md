@@ -79,18 +79,18 @@ basis: source-semantics
 - S16 gemm/attribution.md:139 halve-the-reads probe; SQ_LDS_IDX_ACTIVE vs SQ_VALU_MFMA_BUSY_CYCLES
 - S17 gemm/datapath.md:93 zero conflicts is not a speedup; LDS is not the bound until a probe says so
 - S18 hardware/gfx950/memory_and_sync.md:271 the card's per-width lane phases are not from the ISA
-- S19 flydsl/gemm.md:412 reordering @fx.struct fields does not move LDS; each leaf is its own symbol placed by the backend
+- S19 flydsl/gemm.md:442 reordering @fx.struct fields does not move LDS; each leaf is its own symbol placed by the backend
 - S20 ROCm/FlyDSL@dd8373349:.claude/skills/lds-optimization/SKILL.md:384 Method 3: increase write-read distance
-- S21 gemm/schedule_and_locality.md:220 when VGPR headroom is small, any insertion lengthens a live range
+- S21 gemm/schedule_and_locality.md:225 when VGPR headroom is small, any insertion lengthens a live range
 - S22 gemm/datapath.md:54 one function computes the swizzle key for both sides
-- S23 gemm/datapath.md:52 re-measure a swizzle change; derived is not automatically better
+- S23 gemm/datapath.md:51 re-measure a swizzle change; derived is not automatically better
 - S24 gemm/datapath.md:84 padding when a small stride bump removes the conflict
 - S25 gemm/datapath.md:88 padding must keep the 8- or 16-byte alignment; pad by whole 16-byte slots
 - S26 ../flydsl/guides.md:44 column-wise reads such as MFMA fragments: padding hard to use, prefer XOR
 - S27 gemm/datapath.md:57 transpose reads need a wave term: per-wave chunk stride hits the same banks
-- S28 gemm/datapath.md:251 the transpose instruction and the LDS layout must change together
+- S28 gemm/datapath.md:252 the transpose instruction and the LDS layout must change together
 - S29 gemm/schedule_and_locality.md:54 state the wave_id → (wave_m, wave_n) mapping explicitly
-- S30 gemm/mainloop.md:79 why the 2×2-wave tile wins on long K: fewer LDS reads per MAC
+- S30 gemm/mainloop.md:78 why the 2×2-wave tile wins on long K: fewer LDS reads per MAC
 - S31 gemm/mainloop.md:89 compile both designs and race them; the crossover depends on the shape
 - S32 ../flydsl/language/limits.md:103 a 16-byte LDS load declared 4- or 8-byte aligned becomes `ds_read2_b32` / `ds_read2_b64`; `Vector.load` passes no alignment; declaring 16 cut a MoE epilogue's bank conflicts 4.2–4.9×
 - S33 gemm/correctness.md:147 separate LDS buffers are laid out by the backend; read group_segment_fixed_size first

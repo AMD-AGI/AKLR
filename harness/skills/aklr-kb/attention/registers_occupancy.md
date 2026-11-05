@@ -35,7 +35,7 @@ sources:
   (steps: `../gemm/grid_pricing.md` §4). In these cards *occupancy N* means N co-resident
   workgroups per CU, which is what decides whether sibling waves can cover each other. A wave
   addresses at most 256 arch VGPRs; AGPRs come out of the same pool.
-- Read `.vgpr_count`, `.agpr_count`, `vgpr_spill_count` and `private_segment_fixed_size` from the kernel's
+- Read `.vgpr_count`, `.agpr_count`, `.vgpr_spill_count` and `.private_segment_fixed_size` from the kernel's
   ISA metadata. rocprof's register columns are wrong (`../gemm/attribution.md` §9).
   *(field, E1)* A sparse-MLA backward dQ kernel reported as 172 VGPR / 0 AGPR was 256 + 81 = 337: one wave per SIMD.
 - For an 8-wave workgroup only 2/4/6/8 waves per SIMD are reachable. *(field, E2)* An 8-wave forward at 4
@@ -122,7 +122,8 @@ In FlyDSL: `../flydsl/attention.md` § registers_occupancy §6.
   (`../gemm/correctness.md` §7).
 
 ## 8. MFMA–VALU co-execution
-What the rules below rest on (`mfma_layout.md` §1, `softmax.md` §1): *(field, E24)* a
+What the rules below rest on, measured with HIP inline-asm microbenchmarks (`mfma_layout.md` §1, `softmax.md` §1):
+*(field, E24)* a
 `16x16x32` bf16 MFMA leaves an 8-cycle VALU shadow and a `32x32x16` 24, shared by every wave on the SIMD; an exp uses
 it twice as fast as a multiply and gains nothing over other VALU work from MFMA overlap.
 - Read coexec / MFMA busy and the stall pool as in `attribution.md` §2–§3.

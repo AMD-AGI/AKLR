@@ -33,10 +33,12 @@ sources:
 - A backward output is all NaN, or an accuracy gate fails for one exp mode only.
 
 ## 1. What one exp costs on gfx950
-- *(field, E1)* `v_exp_f32` (also `v_log_f32`, `v_rcp_f32`, `v_sqrt_f32`) takes 8 cycles per wave64
-  instruction; `v_mul_f32`, `v_add_f32` and `v_fmac_f32` take 4 from one wave and reach 2 per SIMD once two or more
-  waves issue them. The exp stays at 8, so at SIMD level one exp costs as much VALU time as four multiplies.
-- *(field, E1)* A transcendental never runs beside other VALU work: exp + mul in one wave take 12 cycles, and
+- *(field, E1)* On a HIP inline-asm microbenchmark, `v_exp_f32` (also `v_log_f32`, `v_rcp_f32`, `v_sqrt_f32`) takes
+  8 cycles per wave64 instruction; `v_mul_f32`, `v_add_f32` and `v_fmac_f32` take 4 from one wave and reach 2 per
+  SIMD once two or more waves issue them. The exp stays at 8, so at SIMD level one exp costs as much VALU time as
+  four multiplies.
+- *(field, E1)* A transcendental never runs beside other VALU work: on the same microbenchmark exp + mul in one wave
+  take 12 cycles, and
   while one wave streams exps no other wave on that SIMD issues VALU. It draws on the same MFMA shadow as every
   other VALU op, twice as fast as a multiply.
 - It is a trans op (CDNA4 ISA Table 12): a non-trans VALU consumer of its result needs one wait state. The
@@ -51,11 +53,13 @@ sources:
   that keeps the consumers alive (`attribution.md` §5).
 
 ## 2. exp2: one `v_exp_f32` is enough
-- An exp2 that keeps f32 denormal results — `__ocml_exp2_f32`, or `llvm.exp2.f32` without `afn` while f32
-  denormals are enabled — is about 8 VALU (a compare with −126, a +64 bias, `v_exp_f32`, `v_ldexp_f32`). The
-  `llvm.amdgcn.exp2.f32` intrinsic, or exp2 under fast-math `afn`, is one `v_exp_f32`. Which of the two a
-  language's default exp2 reaches depends on the language and its denormal mode: read it from the ISA (FlyDSL:
-  `../flydsl/attention.md` § softmax §2).
+- `__ocml_exp2_f32` and `llvm.exp2.f32` keep f32 denormal results while the function's f32 denormal mode is IEEE
+  (LLVM's default): about 8 VALU (a compare with −126, a +64 bias, `v_exp_f32`, `v_ldexp_f32`). The AMDGPU backend
+  chooses that sequence by the f32 denormal mode, not by fast-math flags: `afn` or `fast` on `llvm.exp2.f32` leaves
+  it in place (LLVM `AMDGPUTargetLowering::lowerFEXP2`, `needsDenormHandlingF32`). One `v_exp_f32` comes from the
+  `llvm.amdgcn.exp2.f32` intrinsic, or from `llvm.exp2.f32` in a function whose f32 input denormals are flushed
+  (`preserve-sign`). Which of these a language's exp2 reaches depends on the language: read it from the ISA
+  (FlyDSL rewrites an `afn` exp2 to the intrinsic itself: `../flydsl/attention.md` § softmax §2).
 - The range reduction of `__ocml_exp2_f32` only exists to return denormal results; `v_exp_f32` flushes denormals to zero (ISA).
   After the max shift every argument is ≤ 0 and every result lies in (0, 1], where a denormal is worthless
   next to bf16 P, so the single instruction is enough. *(field, E5, E7)* Replacing the range-reduced exp with one
@@ -104,8 +108,8 @@ In FlyDSL: `../flydsl/attention.md` § softmax §3.
 | polynomial `2^n·P(f)` | round, subtract, convert, shift-add, 2–3 FMAs | degree 3 bit-identical to hardware, degree 2 ~1 dB lower; never higher |
 
 - An accurate software exp2 needs six or more VALU instructions against one `v_exp_f32` worth two plain VALU
-  ops from one wave, four with ≥ 2 waves *(field, E1)*. It cannot win on gfx950. *(field, E12)* Degree 2: −11 to
-  −18%; degree 3: worse. `v_exp_f16` is a trans op too and the ISA has no packed transcendental; the f32↔f16 round
+  ops from one wave, four with ≥ 2 waves (the §1 microbenchmark) *(field, E1)*. It cannot win on gfx950.
+  *(field, E12)* Degree 2: −11 to −18%; degree 3: worse. `v_exp_f16` is a trans op too and the ISA has no packed transcendental; the f32↔f16 round
   trip only adds VALU (−8 to −39%) *(field, E13)*.
 - Pick the exp by the accuracy gate. The bit trick is ~2–9% faster than hardware exp *(field, E5, E6, E14)* and passes
   only gates below ~35 dB *(field, E10)*.

@@ -113,8 +113,10 @@ Search one axis family at a time, holding the earlier winners, instead of a full
 - MXFP8 (`_autotune_mxfp8`, MX8:865-981): `(BLOCK_M, GROUP_M, num_xcd)` at the seed band width; then the 2D
   N-band width, adopted only above 1.5%; then the C-store cache policy; then the split plan.
 - MXFP4 (FP4:3170-3377 and the dispatch around it): swizzle × whole-loop depth; then the epilogue
-  variants; then the launch mode (plain, uniform split, tail split over M or N). Launch modes are timed end
-  to end, including the host reduce.
+  variants (at `7615a5a2` this stage never runs: its lookup key does not match the stored one, and
+  `except Exception: pass` swallows the `KeyError`; details: `../flydsl/gemm.md` § autotune §3); then the
+  launch mode (plain, uniform split, tail split over M or N). Launch modes are timed end to end, including the
+  host reduce.
 
 When a search stalls, change the family of the dimension you search (split-K, MFMA shape, cache modifier,
 `waves_per_eu`, scale prefetch). Do not re-sweep the same tile grid.

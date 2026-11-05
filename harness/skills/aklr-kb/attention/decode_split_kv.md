@@ -33,8 +33,8 @@ sources:
 combine → `grid_dispatch.md` §3; GEMM-side split-K → `../gemm/small_m.md` §4.
 
 ## 1. The combine is a fixed cost
-- *(field, E1)* One graph node cost 1.5–1.8 µs. *(field, E2)* Priced by repeated launches, the combine's body
-  was 0.13–0.53 µs, so ~88% of the combine was dispatch. *(field, E3)* It was 13–16% of the attention call at the
+- *(field, E1)* One graph node (an empty HIP kernel or a 1-element `torch.add`) cost 1.5–1.8 µs. *(field, E2)*
+  Priced by repeated launches, the combine's body was 0.13–0.53 µs, so ~88% of the combine was dispatch. *(field, E3)* It was 13–16% of the attention call at the
   larger row counts and 46% at the smallest, not a rounding error.
 - An empty kernel's duration is not what removing a launch saves: the producer's tail was overlapped by the next
   launch. Price a merge by launching the combine one extra time in the stream and reading the increase of the total
@@ -151,8 +151,8 @@ and gets hoisted. In the merged epilogue only the number of rounds and the store
 - Confirm the fit on a clean axis: fix the group count, CTA count and tiles per CTA, and sweep only the
   number of real tiles. *(field, E26)* Within ±5% of the per-tile fit `2.83 µs + 6.81 ns × tile`.
 - A plain gather with the same row width and index pattern shows what the pattern allows (in Triton, random rows
-  4.5 lines wide reached only ~45% of a stream copy *(field, E27)*), but it is not a ceiling: a tuned decode
-  producer ran 5.9–9.5% faster than the plain gather built to bound it *(field, E28)*.
+  4.5 lines wide reached only ~45% of a stream copy *(field, E27)*), but it is not a ceiling: a tuned FlyDSL decode
+  producer ran 5.9–9.5% faster than the plain Triton gather built to bound it *(field, E28)*.
   - Use the marginal-bandwidth fit above and never HBM peak (`measurement.md` §5).
 - **Price the partial write by skipping it.** *(field, E44)* On an fp8 MLA decode, skipping it took 4.5% off the
   call. Staging the bf16 partials in LDS and storing them 16 B per lane, contiguous across lanes, in place of 8 B per
@@ -187,8 +187,9 @@ and gets hoisted. In the merged epilogue only the number of rounds and the store
   remainder-spreading form (`../gemm/schedule_and_locality.md` §2) needs no gate.
 
 ## 8. Measuring
-Time decode kernels as graph replays with events, arms interleaved in one process. *(field, E37)* A
-synchronize-bracketed wall carried ~27 µs of host time and turned a 16.8% kernel gap into 38%. Protocol:
+Time decode kernels as graph replays with events, arms interleaved in one process. *(field, E37)* Between a FlyDSL
+decode and a Triton one, a synchronize-bracketed wall carried ~27 µs of host time on the FlyDSL side and more on the
+Triton side (a slower Python launcher), and turned a 16.8% kernel gap into 38%. Protocol:
 `measurement.md`.
 
 ## Verify
@@ -249,7 +250,7 @@ language, or bare graph nodes. "Decode-step score" is that campaign's ruler: the
 - E34 [2026-09, gfx950, FlyDSL 0.3.2, N=?, live-server index capture (read-only overlay, CUDA graph off) and a same-process ABBA producer probe, min, spread ≤3.5%] production top-2048 sets: adjacent-token overlap 0.69–0.71 entering decode, 0.80–0.92 at steady state, cross-request overlap 0.000; producer seq48 at the same 9.4 MB footprint 12.35 µs (unstructured) against 15.44 µs (production structure) (GLM-5.2-MXFP4 TP4/EP4, EAGLE 6 draft tokens, 8 requests; r3; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260912_134949/memory.md:141; overlap table in myskill pitfalls/12-dsv4-sparse-mla-attn.md:308-312)
 - E35 [2026-09, gfx950, FlyDSL 0.3.2, N=?, same-block ABBA with a lazy control arm (−0.46…+0.58%), outputs `torch.equal`] request-to-XCD ownership remap on the ragged layout, full call / producer: uniform random +8.46/+9.65% (seq48), +5.13/+5.46% (seq84), +9.18/+10.65% (seq42), +1.76/−0.97% (seq18); production structure −5.60/−12.17%, −8.93/−13.71%, −6.97/−15.05%, −2.81/−6.96% (r11; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260912_134949/rounds/round-11/agent.txt:9)
 - E36 [2026-09, gfx950, FlyDSL 0.3.2, N=?, host-gate check on the r9 grids] the remap's gate `(seq * n_groups) % 8` returned early on 3 of the 4 directive shapes (grids 240/240/252/198 CTAs) (r11; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260912_134949/memory.md:282; myskill pitfalls/12-dsv4-sparse-mla-attn.md:928-932)
-- E37 [2026-09, gfx950, FlyDSL ? (aiter FlyDSL decode) against Triton (sglang), N=?, rocprofv3 kernel trace against a `synchronize()`-bracketed perf_counter wall] decode seq=48: FlyDSL 21.54 µs (partial 17.94 + combine 3.60) against Triton 25.88 µs (split 20.64 + reduce 5.24), a 16.8% kernel gap; the wall read 48.7 µs and a 38% gap, ~27 µs of constant host time on both (GLM-5.2 TP4, H=16, topk 2048; auto-memory note dated 2026-09-11, no run record; local:/workspace/code/gpt_oss_docker/.claude/memory/reference_sparse_mla_flydsl_vs_triton.md:18)
+- E37 [2026-09, gfx950, FlyDSL ? (aiter FlyDSL decode) against Triton (sglang), N=?, rocprofv3 kernel trace against a `synchronize()`-bracketed perf_counter wall] decode seq=48: FlyDSL 21.54 µs (partial 17.94 + combine 3.60) against Triton 25.88 µs (split 20.64 + reduce 5.24), a 16.8% kernel gap; the wall read 48.7 µs and a 38% gap, ~27 µs of constant host time on both, the Triton Python launcher slower (GLM-5.2 TP4, H=16, topk 2048; auto-memory note dated 2026-09-11, no run record; local:/workspace/code/gpt_oss_docker/.claude/memory/reference_sparse_mla_flydsl_vs_triton.md:18)
 - E38 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop ablation ladder: each round against the version before it, the paired AKLR graph-timer timing it was kept on] a `(rows, ⌈2048/rows⌉)` grid with chunks sized per row → one chunk size for all rows, computed on the device from the summed `cache_seqlens`, over 256·m CTAs: gain +52.73% (time without it over time with it; one-sided 95% bounds +52.68…+52.78%), 20.5–45.6% less time per shape, 34.5% on the mean; that chunked grid → the exact even split of all rows' steps over 256 persistent CTAs (one per CU): gain +3.32% (+3.29…+3.36%), 0.3–6.9% less time per shape, 3.2% on the mean (dense MLA decode over paged fp8 KV, 96 heads, D 576/512, batch 8–112, cache_seqlens random 15–110k keys; local:/shared_nfs/kyle/aklr_mla/runs/L1/workspace/forge_experiments/ablation.md:13; local:/shared_nfs/kyle/aklr_mla/runs/L1/workspace/forge_experiments/ablation.md:18)
 - E39 [2026-10, gfx950, FlyDSL 0.3.2, N=3–5, paired in-process Kineto A/B, median of per-round ratios of 10 calls; outputs passed the contract on 11 batch sizes] equal-block stream-K over 256 CTAs against per-row splits with in-kernel longest-row-first ranking: 0.907 / 0.928 / 0.938 at batch 8 / 32 / 112; 512 CTAs against the same base 1.022 / 0.942 / 0.960 (dense MLA decode, 96 heads, one query, fp8 KV in 576 B rows, page size 1, `cache_seqlens` uniform in [1, 112431]; MI355X, 256 CUs; local:/shared_nfs/kyle/aklr_mla/runs/L4/workspace/forge_experiments/lessons/iter_006.md:14; :15)
 - E40 [2026-10, gfx950, FlyDSL 0.3.2, N=1 per arm for the per-batch times (driver --bench-mode, warmup 3, iters 20, cache cleared); the gain from the campaign's 3-pair ablation] persistent partial kernel (256 CTAs, one per CU, each owning an equal contiguous range of the 32-key steps of all rows; partial slot `cta + row`; combine merges in CTA order) against a (row, split) grid of per-row chunks sized from each row's length: b8 0.441 → 0.289 ms, b112 3.768 → 3.147 ms, total 19.56 → 15.08 ms; ablation +32.31% when kept, +32.87% measured by the ablation (one-sided 95% bounds +32.80…+32.93%), 11/11 cases faster (96-head MLA decode, query length 1, fp8 KV, page size 1, batch 8–112, per-row lengths uniform in [1, 112431]; local:/shared_nfs/kyle/aklr_mla/runs/L2/workspace/forge_experiments/lessons/iter_002.md:22; local:/shared_nfs/kyle/aklr_mla/runs/L2/workspace/forge_experiments/ablation.md:14)

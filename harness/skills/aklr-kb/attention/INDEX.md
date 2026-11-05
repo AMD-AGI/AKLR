@@ -10,15 +10,15 @@ How to make an attention kernel fast and correct on gfx950 (MI350/MI355X): flash
 backward (dQ, dK, dV) and decode with split KV. The cards hold measured lessons — what moved wall time, what
 did not, and how to tell which is which before spending a week on it. They are mechanisms, diagnostics and
 decision rules, not a catalogue of kernels or configurations. Each card states the mechanism and its numbers;
-how to write it in FlyDSL is in `../flydsl/attention.md`, one section per card section.
+how to write it in FlyDSL is in `../flydsl/attention.md`, under the card section it serves.
 
 - FlyDSL facts, here and in `../flydsl/attention.md`, are stated for v0.3.2. Instruction rates and MFMA timings
-  were measured on gfx950 with microbenchmarks.
-- Numbers marked `*(field, E<n>)*` come from measured attention work (A/B on real kernels), on FlyDSL kernels unless
-  the sentence names another language (Triton, Gluon, HIP); their conditions are listed under Evidence at the end
-  of each card. The mechanisms are stated in ISA and LLVM terms; the numbers have not been checked in other
-  languages. Read them as magnitudes: they show how large an effect was where
-  it was measured, not what it will be on your kernel.
+  were measured on gfx950 with HIP inline-asm microbenchmarks, not inside a kernel.
+- Numbers marked `*(field, E<n>)*` were measured on FlyDSL attention kernels unless the sentence names another
+  language (Triton, Gluon, HIP) or another kind of measurement (an inline-asm microbenchmark, a PyTorch model, a
+  simulator); their conditions are listed under Evidence at the end of each card. The mechanisms are stated in ISA
+  and LLVM terms; each number was measured in one language and not re-checked in the others. Read them as
+  magnitudes: they show how large an effect was where it was measured, not what it will be on your kernel.
 - Signed percentages of wall time, throughput or a benchmark score are speed changes (+ = faster) unless the
   sentence says faster or slower or the card states otherwise; a sign next to a named quantity (cycles, sclk, a
   counter, bytes, registers, an error norm) is the change of that quantity.

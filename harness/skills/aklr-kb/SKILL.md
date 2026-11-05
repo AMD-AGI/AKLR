@@ -17,10 +17,11 @@ gens: [gfx950, gfx942]
 
 # AKLR kernel knowledge base
 
-What makes a kernel fast on AMD GPUs inside AKLR, by op and by symptom. The `flydsl_` cards and the cases come
-from FlyDSL kernels: their mechanisms carry to other languages, their numbers were measured on FlyDSL code (re-derive
-them: § Rules that hold everywhere), and their code is FlyDSL. How to write it in
-a language is in that language's folder: `flydsl/SKILL.md`, `triton/SKILL.md`, `hip/SKILL.md`.
+What makes a kernel fast on AMD GPUs inside AKLR, by op and by symptom. The op cards (`gemm/`, `moe/`,
+`attention/`) and the cases come from FlyDSL kernels: their mechanisms carry to other languages, their numbers were
+measured on FlyDSL code unless a sentence says otherwise (re-derive them: § Rules that hold everywhere). How to write
+it in a language is in that language's folder: `flydsl/SKILL.md` (with the FlyDSL side of each op card in
+`flydsl/<op>.md`), `triton/SKILL.md`, `hip/SKILL.md`.
 
 Paths below are relative to this folder, except those starting with `aklr/`, relative to the repository root, and
 `aiter/` or `csrc/`, relative to aiter's. File and line citations are to ROCm/FlyDSL `v0.3.2` (`dd8373349`),

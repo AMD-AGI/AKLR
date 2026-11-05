@@ -38,9 +38,10 @@ sources:
 > projection with the routing weights. FlyDSL facts are for v0.3.2 (`kernels/moe/`); this repository does not
 > contain that tree, and the copies the baseline aiter ships differ in places (`../flydsl/moe.md`
 > § grouped_moe_inference §1). "BM" in FlyDSL's code is tile-M.
-> Numbers marked `*(field, E<n>)*` are measured values from MoE kernels of this family at decode batch sizes (a4w4,
-> and a8w4 for the comm-fused stage 2 and E24–E28's 112-of-896-expert MoE), except where a sentence names another kernel; their conditions are listed
-> under Evidence at the end. Use them for direction and order of magnitude. aiter's FlyDSL
+> Numbers marked `*(field, E<n>)*` are measured values from MoE kernels of this family, except where a sentence
+> names another kernel: a4w4 at decode sizes in the GLM-5.2 runs (E4–E12, E15, E18), 8-bit activations × MXFP4
+> in the comm-fused stage 2 (E13–E14) and in the Kimi-K3 MoEs at 8–16384 tokens (E19–E41). Their conditions are
+> listed under Evidence at the end. Use them for direction and order of magnitude. aiter's FlyDSL
 > MoE families, their entry points and knobs, and AKLR's own MoE kernels are in
 > `../flydsl/kernels/flydsl_kernel_library.md`; a worked AKLR case is `decode.md`. Training
 > grouped GEMMs (variable-K wgrad, group offsets) are the rest of this package (`INDEX.md`).
@@ -53,7 +54,8 @@ sources:
 
 ## 1. What FlyDSL v0.3.2 ships
 
-FlyDSL v0.3.2's `kernels/moe/` has three MoE GEMM families, which the sections below name bare: `moe_gemm_2stage`
+FlyDSL v0.3.2's `kernels/moe/` has three MoE GEMM families for gfx950 (a fourth file, `moe_a8w4_mxscale_gfx1250.py`,
+targets another architecture), which the sections below name bare: `moe_gemm_2stage`
 (fp8, int8 or int4 weights; stage 2 by atomics, or by partials plus a reduce), `mxfp_moe` (a4w4 and a8w4 on gfx950,
 with its own sort contract, `mxfp_moe/__init__.py:4-17`) and `moe_2stage_a16wmix` (`a16wmix`: bf16 activations ×
 MXFP4, int4 or bf16 weights). Its token sort is `moe_sorting_kernel.py`. The baseline aiter's `flydsl_moe1_*` and
@@ -117,6 +119,9 @@ In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §1.
   (`../gemm/grid_pricing.md` §10): race that form too.
 - **The non-persistent atomic stage 2 is HBM-bound**: each tile reads a full fp4 weight column block with about 4%
   L2 reuse; FlyDSL's `mxfp_moe` applies the XCD remap above to it to balance HBM channels (`gemm2.py:262-289`).
+- **Mask the padding rows out of the atomic scatter.** Padding ids decode to token M (above). *(field, E42)* By its
+  source comment, FlyDSL's `a16wmix` stage 2 ran ~13× slower at 896 experts, 39 → ~490 µs, when that guard was
+  lost and its atomics fired on the padding rows (`moe_2stage_a16wmix/gemm2.py:39-41`).
 - Per-expert 64-bit bases: `grouped_group_mapping.md` §7.
 
 In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §2.
@@ -326,3 +331,4 @@ tokens; the ruler is AKLR's graph timer (bench_cudagraph, L2 flushed per replay)
 - E39 [2026-10, gfx950, FlyDSL 0.3.2, N=? pairs, AKLR graph timer (forge ablation, the kept version beside the one before it, as recorded); per-kernel torch.profiler medians, one session] stage-2 route rows packed to e2m1 with an E8M0 scale per 32 (`cvt_scalef32_pk_fp4_bf16`) and unpacked in the reduce, in place of fp8 rows: +10.35% (one-sided 95% +10.30 … +10.40%, 2 of 2 cases); rows 3712 → 1920 B; reduce 107.7 / 189.5 → 57.7 / 104.1 µs and stage 2 312.4 / 497.7 → 277.9 / 447.1 µs at 9397 / 16384 tokens; output 17.97 dB SQNR against the fp8-row kernel's, AKLR validate passed; a torch emulation put the noise e2m1 rows add at 18.15 dB with each scale's exponent that of the block amax minus 2 (15.85 dB with minus 1), against the definition's 13 dB bound (fused MoE SiTUv2, fp8 activations × MXFP4 weights, TP: 896 experts, top-16, model dim 3584, inter 384; commit 20fe49315948; local:/shared_nfs/kyle/moe/k3six/runs/tp8cmp/workspace/forge_experiments/ablation.md:13; local:/shared_nfs/kyle/moe/k3six/runs/tp8cmp/workspace/forge_experiments/lessons/iter_007.md:3; :49–58)
 - E40 [2026-10, gfx950, FlyDSL 0.3.2, N=1 per arm, torch.profiler kernel times (fold, 9397 tokens only) and per-call sums (streams)] fold: incumbent stage 2 300–309 µs plus a 61.5 µs reduce; stage 2 with a per-(token, N-tile) agent-scope atomic counter whose last arriver sums the 16 fp4 rows in slot order 526–547 µs, counters and sc1 stores without the sum 364, counters alone 345; two streams (stage 2 and the reduce, overlap seen in the trace): 818.0 → 833.1 µs at 9397 and 1267.5 → 1275.1–1278.4 µs at 16384, stage 2 about 508 µs during the overlap against 425 alone (same MoE as E39; local:/shared_nfs/kyle/moe/k3six/runs/tp8cmp/workspace/forge_experiments/lessons/iter_027.md:15–19; local:/shared_nfs/kyle/moe/k3six/runs/tp8cmp/workspace/forge_experiments/lessons/iter_029.md:11–15)
 - E41 [2026-10, gfx950, FlyDSL 0.3.2, N=6 pairs per arm, AKLR graph timer, arms interleaved in one process, ratio base / candidate; the two A/Bs ran at the same time on one GPU] W1 buffer loads non-temporal (cache modifier 2) in stage 1: 0.791 / 0.795; W2 non-temporal in stage 2 (`use_nt=True`): 0.942 / 0.914; W1 with modifier 1: 0.9984 / 0.9978; at n_tokens 9397 / 16384, 3 / 5 64-row blocks per expert for 110 / 109 of the 112 local experts (fused MoE SiTUv2, fp8 × MXFP4, 112 of 896 experts local, top-16, model dim 3584, inter 3072, stage 1 64×256×256, stage 2 64×256×128; local:/shared_nfs/kyle/moe/k3six/runs/ep8cmp/workspace/forge_experiments/lessons/iter_012.md:12–14; block counts local:/shared_nfs/kyle/moe/k3six/runs/ep8cmp/workspace/forge_experiments/lessons/iter_019.md:21)
+- E42 [2026-08, gfx950 (the source does not name the GPU; its `NUM_CU = 256` is commented as gfx950's), FlyDSL ?, N=?, ruler not stated] FlyDSL's own source comment: without `@flyc.jit` on the atomic bf16 epilogue helper, its `token_id < M` guard runs at trace time and is dropped, so the atomic scatter fires on padded and out-of-range rows: stage 2 ~13× slower, 39 → ~490 µs at 896 experts (FlyDSL `moe_2stage_a16wmix` stage 2, shape not stated; ROCm/FlyDSL #948, commit 47ed57a6, read at dd8373349:kernels/moe/moe_2stage_a16wmix/gemm2.py:39-41)

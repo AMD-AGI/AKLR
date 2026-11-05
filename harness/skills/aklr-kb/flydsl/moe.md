@@ -15,6 +15,10 @@ sources:
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/__init__.py
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/utils/gemm_helper.py
+  - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/quantization/
+  - aiter/fused_moe.py
+  - aiter/ops/flydsl/
+  - aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/4fbd9d02b4c053c7.json
 ---
 
 # MoE in FlyDSL
@@ -29,8 +33,10 @@ Names used on this page:
 - "FP8", "BF16", "MX8" and "MX4" are Primus-Turbo's
   `primus_turbo/flydsl/grouped_gemm/grouped_gemm_{fp8,bf16,mxfp8,mxfp4}_kernel.py` and "GH" its
   `primus_turbo/flydsl/utils/gemm_helper.py`, at main `ca1fdd67`; "Turbo" is Primus-Turbo.
-- `moe_gemm_2stage`, `mxfp_moe` and `moe_2stage_a16wmix` (`a16wmix`) are the three MoE GEMM families in FlyDSL
-  v0.3.2's `kernels/moe/` (§ grouped_moe_inference §1 below).
+- `moe_gemm_2stage`, `mxfp_moe` and `moe_2stage_a16wmix` (`a16wmix`) are the three MoE GEMM families for gfx950 in
+  FlyDSL v0.3.2's `kernels/moe/` (§ grouped_moe_inference §1 below); a fourth file,
+  `moe_a8w4_mxscale_gfx1250.py`, targets another architecture.
+- Paths under `aiter/` are files of the baseline aiter, `dbd8bf5`.
 - "BM" in FlyDSL's code is tile-M. CShuffle is the epilogue that stages C through LDS to reshuffle it into wide,
   coalesced stores.
 - Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end.
@@ -105,7 +111,8 @@ _d = _base + _p2 + _inc2 - _x - _lo
 
 `moe_gemm_2stage` has f16/bf16/f32 outputs. `mxfp_moe` stage 1 fuses gate+up, SiLU
 and an fp4 re-quantization of the intermediate; its MXFP4-out stage 2 is persistent. `moe_2stage_a16wmix` issues
-one K=32 MFMA (`mfma_f32_16x16x32_bf16`) per K step (`moe_2stage_a16wmix/utils.py:26-38`).
+one K=32 MFMA (`mfma_f32_16x16x32_bf16`) per K step on gfx950 and two K=16 MFMAs on any other target
+(`a16wmix_use_k16`, `moe_2stage_a16wmix/utils.py:26-38`).
 
 `mxfp_moe` uses its own sorting contract (`cumsum` plus `m_indices`, `mxfp_moe/__init__.py:4-17`).
 
@@ -115,9 +122,9 @@ baseline, may dispatch to by tuned row (other rows run CK or HIP kernels):
 | FlyDSL v0.3.2 | baseline aiter | How they relate |
 |---|---|---|
 | `mxfp_moe/` | `mxfp4_gemm1.py` (`compile_gemm1_a4w4_port` :775), `mxfp4_gemm2.py` (`compile_gemm2_a4w4_port` :86); hosts `aiter/ops/flydsl/mxfp4_gemm{1,2}_kernels.py` | one pipeline, "ported back from aiter" into FlyDSL (`mxfp_moe/__init__.py:6`); the copies have diverged since |
-| `moe_2stage_a16wmix/` | `moe_2stage_a16wmix/` (`compile_gemm1_a16w4_port` `gemm1.py:375`, `compile_gemm2_a16w4_port` `gemm2.py:304`) | the same design (persistent above `4 · NUM_CU`, opt-in); the builder defaults `b_cache_mod=2`, but aiter's stage-2 host passes the row's `b_nt`, 0 when unset; line numbers differ |
+| `moe_2stage_a16wmix/` | `moe_2stage_a16wmix/` (`compile_gemm1_a16w4_port` `gemm1.py:375`, `compile_gemm2_a16w4_port` `gemm2.py:304`) | the same design (persistent above `4 · NUM_CU`, opt-in; aiter's `fused_moe` never passes `persist` to it, `moe_kernels.py:552-553`, `:2048-2074`); the builder defaults `b_cache_mod=2`, but aiter's stage-2 host passes the row's `b_nt`, 0 when unset; line numbers differ |
 | `moe_gemm_2stage/` | no copy; only `moe_reduce.py` corresponds (`compile_moe_reduction` :206) | aiter's `flydsl_moe1_*` and non-layout `flydsl_moe2_*` rows run the parametric `mixed_moe_gemm_2stage_common.py` instead, which v0.3.2 no longer ships (`mxfp_moe/__init__.py:16`); its `_abf16_wfp4` and `_abf16_wint4` rows run the `moe_2stage_a16wmix` copy (`aiter/ops/flydsl/moe_kernels.py:641`, `:664`, `:728`, `:747`) |
-| `moe_sorting_kernel.py` | `moe_sorting_kernel.py` (`moe_sorting_flydsl` :1934), `UNIT_SIZE = 32` | the same algorithm; aiter sorts with Opus unless `AITER_USE_FLYDSL_MOE_SORTING=1` (`aiter/fused_moe.py:64-66`), and its MXFP4 path with the HIP `aiter.mxfp4_moe_sort` (`aiter/fused_moe.py:161`) |
+| `moe_sorting_kernel.py` | `moe_sorting_kernel.py` (`moe_sorting_flydsl` :1934), `UNIT_SIZE = 32` | the same algorithm; aiter sorts with Opus unless `AITER_USE_CK_MOE_SORTING=1` or `AITER_USE_FLYDSL_MOE_SORTING=1` (CK first; `aiter/fused_moe.py:63-66`), and its MXFP4 path with the HIP `aiter.mxfp4_moe_sort` (`aiter/fused_moe.py:161`) |
 | — | v2 stage 2: `mxmoe_dispatcher.py` (`mxfp4_moe_gemm2` :616), `mxmoe_gemm_v2.py` (:221) | aiter only |
 
 Most FlyDSL rows in aiter's tuned fused-MoE tables are `flydsl_moe1_*` and `flydsl_moe2_*` (the mixed builders of
@@ -162,7 +169,7 @@ epilogue (`_SUPPORTED` in both host files).
   "bf16" or "f32" picks the atomic form; `accumulate=True`, the default, adds into the output with atomics, and
   `accumulate=False` writes the per-(token, slot) partials, f16/bf16 only, for `compile_moe_reduction`
   (`moe_gemm_2stage/moe_reduce.py:164-203`).
-- **`mxfp_moe` stage 2 variants** (`mxfp_moe/host.py:21-48`): atomic at BM 16/32/64 with or without non-temporal
+- **`mxfp_moe` stage 2 variants** (`mxfp_moe/host.py:34-48`): atomic at BM 16/32/64 with or without non-temporal
   B, non-atomic, CShuffle, MXFP4-out and fp8-out at BM 128 (CShuffle also at 32/64). FlyDSL's host defaults
   `xcd_swizzle = 3` for the non-atomic and fp8-out epilogues and routes BM-128 non-atomic to CShuffle
   (`mxfp_moe/host.py:202-209`); aiter's takes these from the tuned row (§ grouped_moe_inference §1 above).
@@ -182,9 +189,10 @@ epilogue (`_SUPPORTED` in both host files).
 - **Compile once and call the compiled object; compile beta=1 builds on a scratch output.** The object
   `flyc.compile` returns skips the per-call work of a `@flyc.jit` launcher, and compiling runs the kernel once
   (§ grouped_host_autotune §2 below; `attention.md` § measurement §6).
-- In an in-process A/B (`../moe/grouped_measurement.md` §4), load each version as its own module: two versions that
-  define `@flyc.jit` closures of the same name can collide in FlyDSL's JIT cache, and one binary then serves both
-  arms.
+- In an in-process A/B (`../moe/grouped_measurement.md` §4), load each version as its own module. FlyDSL's cache key
+  hashes the launcher's source, the kernels it reaches and plain helpers from its own directory, not plain helpers
+  read as globals from another directory or non-scalar closure values (`debug-flydsl-kernel.md` § What the cache
+  key sees): two versions that differ only there get one key, and one binary then serves both arms.
 
 ## grouped_measurement Verify
 
@@ -242,8 +250,10 @@ epilogue (`_SUPPORTED` in both host files).
 
 ## grouped_lowprec §5 Quantization: a large share of the forward, a small lever
 
-- The quantizer's host launcher is a `@flyc.jit` stub: the metadata prologue kernel and the quantizer are launched
-  back to back from it.
+- Turbo's grouped MXFP4 quantizer launches its metadata kernel (`pre`) and the quantizer back to back from one
+  `@flyc.jit` stub (`primus_turbo/flydsl/quantization/mxfp4_grouped_quant.py:575-597`). Its grouped MXFP8 quantizer,
+  the one the card's E16 measured, has no prologue kernel at `ca1fdd67`: each workgroup scans the offsets itself
+  (`mxfp8_quant_flydsl.py:884-886`, `:1176`).
 
 ## grouped_wgrad §2 A K loop with a run-time trip count
 
@@ -254,14 +264,17 @@ boundary (MX8:1428). MX8's tail is a `range_constexpr(chunk)` loop whose steps s
 (MX8:1574-1615).
 
 **What a runtime loop body may contain (v0.3.2).** The rewriter turns a runtime `range` in a `@flyc.kernel`
-body into a body function plus `scf.for` and infers the carried state: every pre-loop name the body rebinds *and*
-every pre-loop name it calls a method on (`_collect_assigned_vars`, `compiler/ast_rewriter.py:156-222`). Each
-carried name must flatten to IR values, i.e. be a DSL value or a list/tuple/dict/SimpleNamespace of them
-(`compiler/protocol.py:97-108`); a helper object such as a loader raises `TypeError: Cannot extract IR values`.
+body into a body function plus `scf.for` and infers the carried state: every pre-loop name the body assigns,
+subscript-assigns (`acc[i] = …`) or calls a method on (`_collect_assigned_vars`,
+`compiler/ast_rewriter.py:156-222`). Each carried name must flatten to IR values, i.e. be a DSL value or a
+list/tuple/dict/SimpleNamespace of them (`compiler/protocol.py:97-108`); a helper object such as a loader raises
+`TypeError: Cannot extract IR values`.
 - Keep the body to calls of plain functions plus rebinding of DSL values. MX8's chunk body is one module-level
   function that returns the eight swapped LDS buffer handles, and the loop carries only those (MX8:1571-1606);
   BF16 hoists its tile bodies into free functions "for the same ast-rewriter reason" (BF16:429).
-- Accumulators in register memory (`fx.make_rmem_tensor`) are updated in place and are not carried.
+- Accumulators in register memory (`fx.make_rmem_tensor`) are not carried when the body only passes them to
+  functions that update them in place (MX8:1576-1608); writing `acc[i] = …` or calling a method on them in the body
+  makes them carried.
 - BF16 emits its chunk loop through a helper, `emit_for`, that calls the rewriter's `scf_for_dispatch`
   (`compiler/ast_rewriter.py:1006`) with no carried state (GH:2134-2143); the body is then a plain Python closure,
   and its Python-level buffer rotation is resolved at trace time.

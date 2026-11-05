@@ -49,9 +49,9 @@ for shapes that do not divide the tile.
 
 **Shapes every GEMM gate needs.** Each one forces a path that only runs at an edge:
 1. **The minimum trip count.** Take a K where the main loop runs zero times (e.g. `K = 2·BLOCK_K` for a
-   `range_constexpr(K_ITERS-2)` loop). A loose prologue wait that relies on "the loop will drain it later"
-   then has nothing after it, and the epilogue reads LDS that is still being filled. `s_barrier` orders
-   waves; it does not drain DMA. Turbo's dense fp8 8-wave kernel special-cases exactly this
+   loop of `K_ITERS-2` iterations after a two-tile prologue). A loose prologue wait that relies on "the loop
+   will drain it later" then has nothing after it, and the epilogue reads LDS that is still being filled.
+   `s_barrier` orders waves; it does not drain DMA. Turbo's dense fp8 8-wave kernel special-cases exactly this
    (`gemm_fp8_kernel.py:257-262`).
 2. **More tiles than CUs.** Only the second tile on a CU can read what the first one left in LDS; the
    first tile finds an empty slot and computes the right answer. Turbo's MXFP4 kernel leaves the k=1 prologue
@@ -117,7 +117,7 @@ workspaces) must be warmed before a probe starts counting.
 - **An inline-asm `s_waitcnt vmcnt(0)` does not stop LLVM from moving an earlier load below it,** where
   the wait no longer covers it. *(field, E8)* In a grouped MXFP4 GEMM, two drains before an epilogue that
   reused the operand LDS still let the next tile's global→LDS prefetch sink past them and land on staged data,
-  only on the deepest-K shape. `rocdl.sched_barrier(0)` after the drains fixed it (0/10 bad reads vs 3/30) at
+  only on the deepest-K shape. `sched_barrier(0)` after the drains fixed it (0/10 bad reads vs 3/30) at
   about 0.7% of time. A mask that let ALU/MFMA cross (`0x40F`) made it worse on one token distribution (6/11
   bad, against 1/15 for the clean tree; 0/11 on the other).
 - `s_barrier` does not drain `vmcnt`; `lgkmcnt` is 4 bits (max 15), `vmcnt` 6 bits (max 63).
@@ -129,7 +129,7 @@ workspaces) must be warmed before a probe starts counting.
   A default or `sc0` load hits the CU's stale copy (`../hardware/gfx950/memory_and_sync.md` §2.4), even when both workgroups
   are on one XCD; `buffer_inv sc0` is a no-op outside TG-split mode.
 - **Reading a kernel that polls** (aiter's generic split-K kernel spins): LLVM deletes a bounded poll loop whose
-  body has no `rocdl.s_sleep` and reads an unbounded one's flag once, `sc` bits notwithstanding. The volatile aux bit
+  body has no `s_sleep` and reads an unbounded one's flag once, `sc` bits notwithstanding. The volatile aux bit
   (bit 31) keeps the loop but waits `vmcnt(0)` after every load (10.3–15.1 µs against 5.15–9.41 µs at M = 8–112
   *(field, E9)*); a monotonic, agent-scope atomic load keeps it as one `global_load … sc1` per pass.
 
@@ -202,9 +202,9 @@ In FlyDSL: `../flydsl/gemm.md` § correctness §6.
 
 ## 8. Reproducibility and tolerance
 
-- **Split-K with atomics is not bitwise reproducible.** FlyDSL's bf16 GEMM accumulates splits with
-  `BufferAtomicPkAdd` into the bf16 output (A16:362): the order is arrival order and each partial is
-  rounded to bf16 as it lands. Gate it on a calibrated tolerance against an independent reference,
+- **Split-K with atomics is not bitwise reproducible.** A split-K that adds its partials into the bf16 output
+  with packed atomics (`buffer_atomic_pk_add_bf16`) sums in arrival order and rounds each partial to bf16 as it
+  lands. Gate it on a calibrated tolerance against an independent reference,
   not on bit equality with the previous build. In AKLR, check the schema's `compare.determinism`
   (`aklr/ops/README.md` § Schema fields): under `bitwise`, atomic split-K fails outright, so reduce the splits
   in a fixed order.
@@ -213,6 +213,8 @@ In FlyDSL: `../flydsl/gemm.md` § correctness §6.
 - Timed autotuning that picks configurations per run makes outputs differ across runs; pin the
   configuration for determinism checks.
 - Compare only the region the kernel contract writes, using the harness's own input tensors.
+
+In FlyDSL: `../flydsl/gemm.md` § correctness §8.
 
 ## 9. Low precision: validate in order
 

@@ -13,9 +13,9 @@ FlyDSL side (calls, FlyDSL's compiler, and the FlyDSL kernels of FlyDSL, aiter a
 `../flydsl/gemm.md`. Grouped and MoE expert GEMMs build on these cards and have their own package,
 `../moe/INDEX.md`.
 
-Unless a sentence names another language, the numbers in these cards were measured on FlyDSL kernels; each
-evidence line names its toolchain. The mechanisms are stated in ISA and LLVM terms and should carry over to
-Triton or HIP, but the numbers have not been checked there.
+Unless a sentence names another language or a microbenchmark, the measured numbers (`*(field, E<n>)*`) come
+from FlyDSL kernels; the evidence lines name the toolchain where it was recorded. The mechanisms are stated in ISA
+and LLVM terms and should carry over to Triton or HIP, but the numbers have not been checked there.
 
 **Three sources, used together.**
 - **FlyDSL's own GEMM guide and kernels.** `../flydsl/guides.md` § gemm-optimization walks through how a FlyDSL GEMM is
@@ -24,7 +24,7 @@ Triton or HIP, but the numbers have not been checked there.
   `../flydsl/guides.md` § prefetch-data-load cover the general LDS and prefetch transformations.
 - **Primus-Turbo's FlyDSL GEMMs** (`primus_turbo/flydsl/{gemm,utils}` at main `7615a5a2`), built for training
   shapes (large M). Their comments record why each choice was made, and the cards cite them by file and line.
-- **Measured FlyDSL GEMM work**, marked `*(field)*`: what moved wall time and what did not.
+- **Measured FlyDSL GEMM work**, marked `*(field, E<n>)*`: what moved wall time and what did not.
 
 What each code base's kernels cover, and how they differ: `../flydsl/gemm.md` § INDEX Kernel map.
 
@@ -34,7 +34,7 @@ you have not built a FlyDSL GEMM before.
 **Small M (decode, M ≤ 256)** is in `small_m.md`: the kernels there are the baseline aiter's bf16
 FlyDSL GEMMs (`splitk_hgemm`, `small_m_hgemm`). Primus-Turbo does not target small M.
 
-Numbers marked `*(field)*` or `*(field, E<n>)*` are measured values; `E<n>` names the line under the card's `## Evidence` that gives the conditions. Use them for direction and order of magnitude, not as targets.
+Numbers marked `*(field, E<n>)*` are measured values; `E<n>` names the line under the card's `## Evidence` that gives the conditions. Use them for direction and order of magnitude, not as targets.
 
 ## Start here
 

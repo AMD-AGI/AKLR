@@ -82,8 +82,8 @@ is the Point's number of requests.
 d % 16, so two 16-byte loads give a lane the 32 contiguous dims of one token that a 16x16x128 fp8 operand takes
 (the preshuffled operand of `../gemm/datapath.md` §10). Per page a wave issues one 4-byte scale load per
 lane and eight 16-byte key loads per lane (`_issue_page`), then 16 `mfma_scale_f32_16x16x128_f8f6f4`: four 16-token
-tiles × four 16-head groups, A = q, B = keys, unit E8M0 scales (127) (`../attention/mfma_layout.md` §8; FlyDSL
-spelling and E8M0 scales: `../flydsl/attention.md` § mfma_layout §8, `../gemm/mainloop.md` §5). C
+tiles × four 16-head groups, A = q, B = keys, unit E8M0 scales (127) (`../attention/mfma_layout.md` §8,
+`../gemm/mainloop.md` §5; FlyDSL spelling: `../flydsl/attention.md` § mfma_layout §8). C
 holds one token per lane and four heads per lane group. The request's
 query (64 heads × 128 fp8) and weights stay in registers for the workgroup's life.
 

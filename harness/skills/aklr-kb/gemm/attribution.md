@@ -40,7 +40,7 @@ only). Check in the ISA that the instructions really were added and not removed 
   not the problem; look at what the barrier protects.
 
 **Apparent byte rate.** Divide the kernel's bytes by its wall time and compare with the stream bandwidth
-you measured on the same box. *(field, E2)* `copy_` 4.98 TB/s, `add(out=)` 6.25 TB/s, `sum` 3.74,
+you measured on the same box. *(field, E2)* torch's `copy_` 4.98 TB/s, `add(out=)` 6.25 TB/s, `sum` 3.74,
 `amax` 2.01 (a reduction is not a bandwidth ruler). A rate above stream bandwidth means caches are serving
 part of the traffic; the kernel is not at the HBM limit.
 
@@ -181,10 +181,10 @@ near busy.
 - **Price a bare VALU chain with a deletion probe before covering it.** *(field, E30, E31)* On an attention
   kernel, a chain that looked like a bubble was on the critical path: covering it with MFMAs lost 1.5%, while
   deleting the scaling step's 32 packed FMAs saved 11.25%. Count `v_exp_f32` at 8 cycles in any per-pipe
-  census *(field, E32)*.
+  census, as an inline-asm microbenchmark measured it *(field, E32)*.
 - `v_exp_f32` (also `v_log_f32`, `v_rcp_f32`, `v_sqrt_f32`) takes 8 cycles per wave64 instruction on gfx950,
   against 4 for `v_mul_f32` from one wave; at two or more waves per SIMD plain VALU reaches 2 cycles per SIMD
-  and exp stays at 8 *(field, E32)*
+  and exp stays at 8, in an inline-asm microbenchmark *(field, E32)*
   (`../attention/softmax.md` §1). Check a per-class model against `SQ_ACTIVE_INST_VALU`.
 
 ## 9. Readings you cannot trust

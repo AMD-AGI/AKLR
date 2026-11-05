@@ -65,16 +65,15 @@ In FlyDSL: `../flydsl/gemm.md` § mainloop The baseline: FlyDSL's 2-stage ping-p
 |---|---|---|
 | Threads / wave grid | 512, waves 2×4 (`wave_m = wid//4`, `wave_n = wid%4`) | 256, waves 2×2 |
 | Occupancy | 2 waves per SIMD | 1 wave per SIMD (the whole 512-register file is one wave's) |
-| K loop | FlyDSL code, `range_constexpr(K_ITERS-2)` | one inline-asm region with a hardware loop |
+| K loop | compiler-scheduled, fully unrolled (`K_ITERS-2` iterations) | one inline-asm region with a hardware loop |
 | LDS | 8 buffers: A/B × cur/next × two halves | operand pools of mixed depth (A 2-deep, B 3-deep) |
 | Where it wins | short K, where the epilogue is a large share of the time and the second wave per SIMD overlaps it | long K, where the steady state amortizes an epilogue that nothing overlaps |
 | Turbo source | FP8 `_compile_dense_nt` (:85) | FP8 `_dense_nt_wave4_asm` (:2187), `_dense_tn_wave4_asm` (:1401); FP4 `MfmaScaleFp4` |
 
-FlyDSL's `fp8_gemm_8wave.py` has the same 8-wave structure (512 threads, eight LDS buffers). FlyDSL's
-`fp8_gemm_4wave.py` and `fp4_gemm_4wave.py` use the same 2×2 wave split (a 128×128 block per wave, quadrants
-c00/c01/c10/c11) but keep the K loop in FlyDSL code with an 8-buffer, depth-2 ping-pong, and use one
-inline-asm block per MFMA to keep the accumulator in AGPRs. Turbo's 4-wave design runs all of K as one asm
-region (§3). The LDS argument below holds for every 2×2 split.
+A 4-wave design can also keep a compiled K loop: the same 2×2 wave split (a 128×128 block per wave, quadrants
+c00/c01/c10/c11) with an 8-buffer, depth-2 LDS ping-pong, and one inline-asm block per MFMA to keep the
+accumulator in AGPRs. Turbo's 4-wave design runs all of K as one asm region (§3). The LDS argument below holds
+for every 2×2 split.
 
 **Why the 4-wave tile wins on long K.** A 2×2-wave split of a 256×256 tile gives each wave a 128×128
 block. That is 64 MACs per operand element per K step, against 42.7 for the 8-wave's 128×64 wave blocks,
@@ -91,6 +90,8 @@ offers the whole loop when `ceil(K/128) >= 16` (`_NT4_MIN_K_ITERS`, FP8:3203). A
 both designs and races them on the first call for each shape (`_autotune_nt_dispatch`, FP8:3210; see
 `autotune.md`). Do the same in your own kernel: the crossover depends on the shape and on the
 epilogue, so no fixed rule works.
+
+In FlyDSL: `../flydsl/gemm.md` § mainloop §1.
 
 ## 2. The 8-wave pipeline (FP8 `_compile_dense_nt`)
 
@@ -127,7 +128,7 @@ epilogue, so no fixed rule works.
   Do not halve the K tile to make room for more stages (`datapath.md`).
 - **Edge cases the prologue must cover.** The prologue primes k=0 and k=1. When `K_ITERS == 2` the main
   loop is skipped, so the prologue's own wait must drain what the epilogue reads (FP8:257-262).
-- **Code size grows with K** because the loop is `range_constexpr`. That is acceptable for an 8-wave tile
+- **Code size grows with K** because the loop is fully unrolled. That is acceptable for an 8-wave tile
   at moderate K. It is one reason the whole loop exists.
 
 In FlyDSL: `../flydsl/gemm.md` § mainloop §2.
@@ -138,11 +139,11 @@ The K loop is one inline-asm region. The loop label and back edge are part of th
 (`s_add_u32 cnt; s_cmp_lt_u32; s_cbranch_scc1 1b`, FP8:2355-2359).
 
 What this buys:
-- No FlyDSL/LLVM boundary per iteration, so the compiler cannot insert a conservative `vmcnt(0)` or
+- No compiler-generated code between iterations, so the compiler cannot insert a conservative `vmcnt(0)` or
   move instructions across the phases. Every wait is the one you wrote.
 - Code size does not grow with K. The trip count can be a compile-time constant or a runtime SGPR.
-- FlyDSL's own fp4 kernel avoids full unrolling for that reason: "full unroll -> 111KB > 32KB I-cache"
-  (`kernels/gemm/fp4_gemm_4wave.py:651`).
+- A fully unrolled K loop can outgrow the instruction cache: a source comment puts one 4-wave MXFP4 loop at
+  "full unroll -> 111KB > 32KB I-cache" (FlyDSL's `kernels/gemm/fp4_gemm_4wave.py:651`).
 - *(field, E12)* On Turbo's MXFP4 4-wave dense kernel, the whole-loop rewrite was a key lever.
 
 How Turbo structures it (FP8:1133-1230, 2187-2412):
@@ -279,7 +280,7 @@ In FlyDSL: `../flydsl/gemm.md` § mainloop §6.
   `waves_per_eu=3` on the old loop spilled 210 VGPRs and ran 2.4× slower *(field, E23)*; 202 → 148 VGPRs and
   −6.1/−6.8% MoE time *(field, E22)*; 146 → 122 VGPRs, after which `waves_per_eu` 4 built at 128 VGPRs with no spill
   where it had spilled 19–43 *(field, E21)*.
-- **Fully unrolling a short K loop (`range_constexpr`) pays only with VGPR headroom.** *(field, E19)* At 12–24 K steps:
+- **Fully unrolling a short K loop pays only with VGPR headroom.** *(field, E19)* At 12–24 K steps:
   ~1–5% faster on ~100-VGPR tiles, ~40% slower on one 256-VGPR tile (spills 9 → 59) and about 1% slower on another (its ISA was not read).
 - The 4-wave whole loop runs at `waves_per_eu=1` and uses the full register file (FP8:1992). FP4 also sets
   `amdgpu-agpr-alloc=256` (FP4:3095).

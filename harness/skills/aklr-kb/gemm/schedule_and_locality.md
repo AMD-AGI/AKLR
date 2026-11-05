@@ -24,7 +24,7 @@ sources:
 ## Route here when
 - A change that should be neutral (re-labelling waves, a new swizzle, a relaxed fence) moved wall time.
 - You are choosing a tile order across XCDs, or porting one kernel's order to another.
-- You are writing `rocdl.sched_*` hints or `sched_barrier` fences.
+- You are writing scheduling-group hints (`sched_group_barrier`) or `sched_barrier` fences.
 - You want to fuse work into the epilogue of a register-heavy GEMM.
 - Accumulators no longer fit, or buffer loads sit inside a `v_readfirstlane` loop.
 
@@ -133,10 +133,10 @@ In FlyDSL: `../flydsl/gemm.md` § schedule_and_locality §2.
 
 ## 3. Scheduling hints and fences
 
-`rocdl.sched_barrier(mask)` takes the `sched_group_barrier` bit vocabulary — `0x001` non-memory/non-side-effect (this
-**includes VALU**), `0x002` VALU, `0x004` SALU, `0x008` MFMA, `0x010` all VMEM, `0x020`/`0x040` VMEM
-read/write, `0x080` all DS, `0x100`/`0x200` DS read/write, `0x400` transcendental, `0x800` LDS DMA. A set
-bit means that class **may cross** the fence; `0` pins everything.
+`sched_barrier(mask)` (`llvm.amdgcn.sched.barrier`) takes the `sched_group_barrier` bit vocabulary — `0x001`
+non-memory/non-side-effect (this **includes VALU**), `0x002` VALU, `0x004` SALU, `0x008` MFMA, `0x010` all VMEM,
+`0x020`/`0x040` VMEM read/write, `0x080` all DS, `0x100`/`0x200` DS read/write, `0x400` transcendental, `0x800`
+LDS DMA. A set bit means that class **may cross** the fence; `0` pins everything.
 
 Fences inside a fully unrolled epilogue usually exist to stop the scheduler from hoisting work and
 lengthening live ranges. What must stay pinned is the arithmetic, not only the memory operations:
@@ -148,7 +148,7 @@ lengthening live ranges. What must stay pinned is the arithmetic, not only the m
   instructions per shape and was net negative; on a dense MXFP4 GEMM's fused dGELU epilogue any relaxation was 2.3%
   slower. Race the mask on the current code whenever the region changes.
 
-**LLVM also moves work across waits you place by hand; pin it with `rocdl.sched_barrier(0)`.** Loads issued up
+**LLVM also moves work across waits you place by hand; pin it with `sched_barrier(0)`.** Loads issued up
 front for latency sink behind the MFMAs to save VGPRs (a fence after them was +0.6–2.6% on rows with ≥ 12 loads
 *(field, E18)*). MFMAs issued before an inline-asm `s_waitcnt` + `s_barrier` sank past it, 8 of 28 (a fence in
 front cut the time 0.8–3.8% at M ≥ 893 and 1.4–1.7% at M = 64–96, and added 1.1–2.4% at M = 56, 60 and 112
@@ -173,8 +173,13 @@ order. For 4 independent MFMAs and 4 global loads:
 - the compiler prints no warning in any case.
 Read the scheduled ISA after changing a hint table.
 
+**A hint table for a 2-stage loop interleaves each class with the MFMAs:** the LDS reads spread over all of
+them; the global loads one per MFMA from the first (more per MFMA when they outnumber the MFMAs); with a
+synchronous copy, the LDS writes that fill the next stage at the tail, after the last LDS read; and a
+tile-specific number of LDS reads and global loads ahead of the first MFMA.
+
 **Kernels with hand-placed waits use none of this.** Turbo's dense kernels contain no
-`sched_group_barrier`. They use `rocdl.sched_barrier(0)` around hand-written waits, `s_setprio` at two
+`sched_group_barrier`. They use `sched_barrier(0)` around hand-written waits, `s_setprio` at two
 waves per SIMD, and `s_nop` issue pads inside whole-loop asm (`mainloop.md` §2–§3).
 
 **Where each K step's fragment reads are fenced from its MFMAs by `sched_barrier(0)`** (aiter's `splitk_hgemm`
@@ -251,7 +256,7 @@ as parallel chains, cost 1.87× the GELU's time per added instruction on one sha
 
 - **Accumulators beyond the AGPR file.** A wide tile can need more than 256 accumulator dwords per lane.
   Place them yourself (part AGPR, part VGPR). *(field, E31)* Leaving a 128×512 tile's accumulators to the
-  compiler through `fx.gemm` produced 613 `v_accvgpr_*` moves and 18 scratch loads in the hot loop;
+  compiler produced 613 `v_accvgpr_*` moves and 18 scratch loads in the hot loop;
   explicit placement of a 256×384 tile ran at 500/512 registers with no spill. Check: count
   `v_accvgpr_read/write` and `scratch_` in the hot loop.
 - **Descriptor fields must be wave-uniform, and operands past 4 GiB need an i64 rebase.** See

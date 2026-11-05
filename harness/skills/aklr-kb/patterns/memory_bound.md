@@ -78,7 +78,7 @@ basis: source-semantics
 - S7 gemm/grid_pricing.md:160 bytes a workgroup moves per K element against the MACs it produces
 - S8 gemm/grid_pricing.md:68 last round full: no idle slot, intensity is the limit, widen
 - S9 gemm/datapath.md:166 the cost unit is unique 128-byte lines touched per instruction
-- S10 gemm/datapath.md:268 keep every operand row on a 128 B line
+- S10 gemm/datapath.md:270 keep every operand row on a 128 B line
 - S11 gemm/schedule_and_locality.md:60 round-robin ids spread tiles sharing a panel over all 8 L2s
 - S12 gemm/epilogue.md:61 only "delete the whole store" moving means the store is byte-bound
 - S13 gemm/small_m.md:39 B is cold in decode; a benchmark replaying one weight keeps it in the MALL/L2
@@ -94,7 +94,7 @@ basis: source-semantics
 - S23 gemm/schedule_and_locality.md:122 judge by wall time and stall counters (`MemUnitStalled`), not hit rate
 - S24 gemm/datapath.md:200 prefetch pays only when independent work can fill the latency
 - S25 gemm/datapath.md:203 prefetch hides latency, not capacity; L2 thrash
-- S26 gemm/datapath.md:213 a prefetch over a register tier costs more than it hides
+- S26 gemm/datapath.md:214 a prefetch over a register tier costs more than it hides
 - S27 gemm/small_m.md:202 B's cache policy is a raced, per-configuration axis
-- S28 gemm/epilogue.md:169 the store cache-policy sign is shape-dependent, race it
+- S28 gemm/epilogue.md:170 the store cache-policy sign is shape-dependent, race it
 - S29 gemm/small_m.md:81 streaming rows: split-K and more blocks lose

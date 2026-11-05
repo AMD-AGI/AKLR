@@ -36,7 +36,7 @@ async DMA, B preshuffled straight to VGPRs, the XOR swizzle and its write/read p
 swizzle vs padding, write-to-read distance and the prologue/loop/epilogue prefetch transformation, for any
 kernel. gfx950 has 160 KiB of LDS per CU in 64 banks of 4 bytes.
 
-## 1. Allocate LDS the v0.3.2 way
+## 1. Allocating LDS
 
 In FlyDSL: `../flydsl/gemm.md` § datapath §1.
 
@@ -48,9 +48,9 @@ In FlyDSL: `../flydsl/gemm.md` § datapath §1.
   `ds_read_b64/b128`.
 - The swizzle is per-lane VALU (or folded into the layout), not "one SALU": the row index lives in a
   VGPR.
-- PS keeps a fixed `Swizzle<3,3,3>` on the bf16 sync path; its source comment gives 1011 against 417 TF/s
-  for the derived swizzle at `tile_k=256` *(field, E1)* (PS:284-288). Re-measure a swizzle change; "derived
-  from the tile width" is not automatically better.
+- **Re-measure a swizzle change; one derived from the tile width is not automatically better.** *(field, E1)* On
+  a bf16 GEMM that fills LDS by synchronous copy, at `tile_k=256`, a fixed XOR swizzle ran 1011 TF/s against 417
+  for the one derived from `tile_k` (a source comment of FlyDSL's `preshuffle_gemm`, PS:284-288).
 - **One function computes the key for both sides.** Turbo's `lds_row_swizzle(row, chunks) =
   ((row % 16) // 2) & (chunks - 1)` (in 16 B chunks) is called by the G2S writer (`swizzle_128`) and by
   the transpose reader, "so the two cannot drift" (GH:220-231).
@@ -205,7 +205,8 @@ In FlyDSL: `../flydsl/gemm.md` § datapath §5.
 - **Bypassing LDS for an operand several waves share costs twice.** Each wave reloads it from global,
   and at one workgroup per CU nothing hides the longer L2 latency. *(field, E22, E23)* In an 8-wave kernel, B
   direct-to-VGPR reached 77.8% of the throughput of B through LDS; A direct-to-VGPR ran 2.5× slower on a
-  long K. PS can load B straight to VGPR because B is pre-shuffled and each wave owns its own N slice.
+  long K. B can go straight to VGPRs when it is preshuffled and each wave owns its own N slice, as in the
+  2-stage baseline of `mainloop.md`.
   Private rows do not rescue a row-major A: it must then be loaded in the MFMA lane layout, which touches more lines
   per instruction (§6), or permuted in registers. *(field, E30)* With 8×1 waves, each owning its A rows, both lost
   8–32% to A through LDS on a bf16 GEMM, while contiguous loads of the same rows (wrong output by design) were as
@@ -257,8 +258,9 @@ In FlyDSL: `../flydsl/gemm.md` § datapath §8.
 ## 10. Operand layout: preshuffle or permute in the fill; keep rows on cache lines
 
 There are two ways to get an operand into MFMA order without a runtime shuffle:
-- **Preshuffle it on the host.** FlyDSL's PS takes B as `[N/16, K/kpack, 4, 16, kpack_bytes]`, so each
-  `buffer_load_dwordx4` lands in MFMA register layout and B skips LDS (`../flydsl/guides.md` § gemm-optimization (FlyDSL's §12)).
+- **Preshuffle it on the host.** With B preshuffled to `[N/16, K/kpack, 4, 16, kpack_bytes]`, each
+  `buffer_load_dwordx4` lands in MFMA register layout and B skips LDS (FlyDSL's `preshuffle_gemm` takes this
+  layout: `../flydsl/guides.md` § gemm-optimization (FlyDSL's §12)).
   The cost is a host-side pass, paid once for weights that do not change, as in inference.
 - **Permute rows in the fill.** Changing only which global row each G2S load fetches reorders a lane's
   n-fragments with no runtime cost, and the LDS image, swizzle and reads stay the same

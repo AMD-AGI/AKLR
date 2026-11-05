@@ -67,7 +67,7 @@ sources:
   measured spread. Within one process, run two arms as `A B B A` per rep and shuffle the order every rep
   when there are three or more (`measurement.md` §2).
 - **A memory-side headroom estimate needs a measured streaming ceiling**, e.g. a plain read of the same B
-  buffer, not the datasheet bandwidth. *(field, E19)* 5.8 TB/s for a cold read of a 476 MB weight.
+  buffer, not the datasheet bandwidth. *(field, E19)* 5.8 TB/s for a torch row sum over a 476 MB weight.
 
 ## 2. Classify each call site first: streaming or latency-bound
 

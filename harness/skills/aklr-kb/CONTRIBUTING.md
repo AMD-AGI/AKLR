@@ -45,8 +45,9 @@ Pages written before these rules — `kind: language`, `index` and `reference` �
 card of numbered sections becomes a `topic` or `method` page where it is: its path and section numbers stay,
 because other pages cite them as `<card>.md §<n>`.
 
-- **Names**: no type prefix; `flydsl_` only on a card whose code is FlyDSL. A page's path and its section numbers
-  change only when the page is rewritten, and that pull request fixes every link to it.
+- **Names**: no type or language prefix; a language's own pages go in its folder (`flydsl/`, `triton/`, `hip/`). A
+  page's path and its section numbers change only when the page is rewritten, and that pull request fixes every link
+  to it.
 - **Hardware**: `hardware/<arch>/` holds only an architecture's ISA guide and the guides to looking things up in
   it. What one architecture changes for an op goes to the op's package, with `gens: [<arch>]` (gfx942's GEMM
   notes: `gemm/gfx942.md`).

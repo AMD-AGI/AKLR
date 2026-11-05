@@ -35,6 +35,8 @@ sources:
 - You are considering fp8 for one of the GEMMs.
 
 ## 1. MFMA timing on gfx950 (measured)
+The timings of this section were measured with HIP inline-asm microbenchmarks, not inside a kernel.
+
 | Instruction | Pipe cycles | Issue blocked | VALU shadow per MFMA |
 |---|---|---|---|
 | `v_mfma_f32_16x16x32_bf16` | 16 | 8 | 8: one `v_exp_f32` or two `v_mul_f32` *(field, E1, E2)* |
@@ -42,7 +44,7 @@ sources:
 | `v_mfma_f32_16x16x16_bf16` | 16 | 4 | 12: one exp or three multiplies *(field, E1, E2)* |
 
 - An MFMA followed by k VALU ops takes `max(pipe cycles, X + 8·k_exp + 4·k_mul)` cycles in one wave, with
-  X = 8 for the two 128-bit-operand atoms and 4 for 16x16x16; every measured point fit exactly *(field, E2)*. Each exp or
+  X = 8 for the two 128-bit-operand atoms and 4 for 16x16x16; every microbenchmark point fit exactly *(field, E2)*. Each exp or
   multiply beyond the shadow adds its full cost.
 - A chain dependent through srcC (srcC = previous vdst) runs at the pipe rate: the compiler inserts no `s_nop`,
   and the chain costs nothing extra. Two or four independent accumulators run at the same 16 or 32 cycles per
@@ -62,9 +64,9 @@ sources:
   (`registers_occupancy.md` §8).
 
 ## 2. An MFMA ignores EXEC
-- On gfx950 an MFMA computes and writes all 64 lanes whatever EXEC holds. With EXEC = 0, one lane or half the
-  lanes, `v_mfma_f32_16x16x32_bf16` still wrote its full result to every lane, and the operands of masked-off
-  lanes contributed to it; a `v_mov_b32` in the same region honoured EXEC *(field, E4)*.
+- On gfx950 an MFMA computes and writes all 64 lanes whatever EXEC holds. In a HIP inline-asm microbenchmark, with
+  EXEC = 0, one lane or half the lanes, `v_mfma_f32_16x16x32_bf16` still wrote its full result to every lane, and
+  the operands of masked-off lanes contributed to it; a `v_mov_b32` in the same region honoured EXEC *(field, E4)*.
 - A lane mask or a divergent `if` neither skips an MFMA nor protects its destination. Skip MFMA work with a
   wave-uniform branch, and mask scores with `-inf` (exp2 then gives exactly 0). Per-wave classification of
   diagonal blocks: `backward.md` §8.
@@ -122,9 +124,9 @@ the f32 accumulator elements of a lane.
   - its 4 consecutive values per lane store without a permlane;
   - the accumulator registers for a given output block are the same for both atoms.
   Independent-chain latency ILP is not a reason (§1).
-- **Forward: 32x32x16.** FlyDSL's gfx950 forward uses `v_mfma_f32_32x32x16_bf16` for QK and P·V
-  (`flash_attn_utils.py:3500`). It leaves 1.5× the VALU shadow per MAC (§1), needs one swap per row reduction (§4)
-  and keeps one q row per lane.
+- **Forward: 32x32x16.** FlyDSL's gfx950 forward uses `v_mfma_f32_32x32x16_bf16` (`…_f16` for f16 inputs) for QK
+  and P·V (`flash_attn_utils.py:3500`). It leaves 1.5× the VALU shadow per MAC (§1), needs one swap per row
+  reduction (§4) and keeps one q row per lane.
   *(field, E11)* A D=64 forward ported to 16x16x32, spill-free and numerically exact, ran 8.4% slower;
   *(field, E12)* a spill-free arm with part of the O accumulator removed read 2.4% slower on the scorer and 1.2%
   faster in a sustained loop, where it clocked higher.
@@ -168,6 +170,10 @@ In FlyDSL: `../flydsl/attention.md` § mfma_layout §5.
   is quoted. *(field, E17)* Moving a forward's P·V to the legacy fp8 form bought no MFMA throughput.
 - The scaled forms (`v_mfma_scale_f32_16x16x128_f8f6f4`, `…_32x32x64_…`) take E8M0 scales (bias 127): scale bytes
   of 127 (×1.0) give the unscaled product (`../hardware/gfx950/matrix_core.md` §2).
+- In LLVM the wide-K forms exist only as the scale intrinsics `llvm.amdgcn.mfma.scale.f32.16x16x128.f8f6f4` and
+  `llvm.amdgcn.mfma.scale.f32.32x32x64.f8f6f4` (`IntrinsicsAMDGPU.td:3732-3733`); when both scale operands are the
+  constant 0, the backend selects the unscaled `v_mfma_f32_16x16x128_f8f6f4` / `…_32x32x64_…` encoding
+  (`UnscaledMFMAOptimizationPat`, `SIInstrInfo.td:316-327`; LLVM `e2a39f50`, the one FlyDSL v0.3.2 pins).
 - A GEMM qualifies only with a contraction ≥ 128. At D = 64, QK and dP (contraction D) and dV and dK
   (contraction BLOCK_Q = 64) do not; dQ (contraction BLOCK_KV) can. *(field, E18)* Storing only the dQ partials in
   fp8 saved bytes, not MFMA time: +3.5–4.1% with dq SNR 47.9 → 31.3 dB.
@@ -177,10 +183,11 @@ In FlyDSL: `../flydsl/attention.md` § mfma_layout §5.
 - fp8 operands do not shrink the f32 accumulators; the S/dP register peak stays where it was.
 - Converting e4m3 to bf16 for a bf16 MFMA: `v_cvt_scalef32_pk_bf16_fp8` with scale 1.0 is one bit-exact
   instruction per pair, half the VALU of `v_cvt_pk_f32_fp8` plus `v_cvt_pk_bf16_f32` *(field, E21)*.
-- Treat accuracy as a budget: error powers of independent quantizations add. *(field, E19)* Q and K dominate (an S
-  error is amplified by the exponential), P and dS are the cheapest; finer scales recover only ~0.5–0.9 dB
-  because the e4m3 mantissa dominates; *(field, E20)* e5m2 is ~6 dB worse; fp8 P at D = 64 is estimated near 27.6 dB, below the
-  forward's 48 dB gate.
+- Treat accuracy as a budget: error powers of independent quantizations add. *(field, E19)* In a PyTorch model of
+  the D=64 backward, Q and K dominate (an S error is amplified by the exponential), P and dS are the cheapest;
+  finer scales recover only ~0.5–0.9 dB because the e4m3 mantissa dominates; *(field, E20)* in a PyTorch model of
+  the forward's P, e5m2 is ~6 dB worse than e4m3; fp8 P at D = 64 is estimated near 27.6 dB, below the forward's
+  48 dB gate.
 - fp8 P also constrains the softmax shift (`softmax.md` §6.1, §6.5).
 
 In FlyDSL: `../flydsl/attention.md` § mfma_layout §8.

@@ -26,7 +26,7 @@ flydsl: 0.3.2
 - **Never sleep between repetitions on a small workload.**
   - *(field, E1)* A B=1 dkdv kernel read 1024 TF/s cold, 727–969 with `sleep(0.3)` between calls, and a different
     value again under continuous load: a 40% swing that buried a 5–14% gap.
-- Warm with back-to-back calls and no sleep until the clock settles (60–90 s from an idle card,
+- Warm with back-to-back calls and no sleep until the clock settles (at least 90 s from an idle card,
   `../gemm/measurement.md` §3), then take the median of ≥7 back-to-back repetitions.
 - B=1 cells also drift with sweep order: *(field, E2)* one configuration read 482 TF/s inside a sweep and 759 when
   run alone. Decide on a cell large enough to hold the clock steady (B=4 on that kernel) and isolate sweeps (§4).
@@ -92,8 +92,8 @@ A multi-cell score usually carries guard cells: cells the candidate does not cha
   that the dense path did not read cost a 4.6–5.6 µs fill kernel per backward call, ~0.4% of a 1.22 ms call.
   Look for `fill_`/`zero_` entries that match no kernel of yours in the profiler table.
 - **For kernels of 20–200 µs, a `synchronize()`-bracketed wall time is not a kernel ruler.** *(field, E15)* ~27 µs
-  of host time per call on one side and more on the other (a slower Python launcher) turned a 16.8% kernel gap into
-  38% on wall, and the
+  of host time per call on the FlyDSL side and more on the Triton side (a slower Python launcher) turned a 16.8%
+  kernel gap between the two into 38% on wall, and the
   wall ruler produced three false scaling conclusions. Rulers for launch-bound kernels, worst to best:
   1. `synchronize()`-bracketed wall time;
   2. event timing without a graph — measures the Python launch rate (a 21 µs kernel read 33.9 µs and

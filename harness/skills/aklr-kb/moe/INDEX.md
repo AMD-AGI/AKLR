@@ -10,14 +10,15 @@ basis: measured N=1
 
 # MoE — package map: fused MoE and the expert grouped GEMM
 
-Where to start on a fused MoE kernel in FlyDSL for AKLR: what the op computes, what bounds it at each token count,
-which cards to read, which kernels to start from, and the AKLR files that govern it. The expert GEMMs are grouped
-GEMMs; their card is `grouped_moe_inference.md`, and the training grouped-GEMM cards apply as
-techniques (§ Expert GEMM (grouped GEMM) below). "m" is a Point's `n_tokens`; a route is one (token, expert) pair.
+Where to start on a fused MoE kernel for AKLR (its FlyDSL side: `../flydsl/moe.md`): what the op computes, what
+bounds it at each token count, which cards to read, which kernels to start from, and the AKLR files that govern
+it. The expert GEMMs are grouped GEMMs; their card is `grouped_moe_inference.md`, and the training grouped-GEMM
+cards apply as techniques (§ Expert GEMM (grouped GEMM) below). "m" is a Point's `n_tokens`; a route is one
+(token, expert) pair.
 
-Unless a sentence names another language, the numbers in these cards were measured on FlyDSL kernels; each
-evidence line names its toolchain. The mechanisms are stated in ISA and LLVM terms and should carry over to
-Triton or HIP, but the numbers have not been checked there.
+Unless a sentence names another language or a vendor library, the measured numbers (`*(field, E<n>)*`) come from
+FlyDSL kernels; each evidence line names its toolchain. The mechanisms, stated in ISA and LLVM terms or by the
+FlyDSL, aiter or Turbo source they cite, should carry over to Triton or HIP; the numbers have not been checked there.
 
 ## What it computes
 
@@ -47,7 +48,7 @@ the output row is the sum over the token's k routes of `topk_weights` × that pr
 | m 8–64 with 257 experts | 72–576 routes over 257 experts, so most hit experts are read for one or two routes (estimated); each graph node adds a fixed cost (`decode.md` §1). Folding the sort into stage 1 saved 3.5–6.4 µs of 39–102 µs *(field, E2)* | `decode.md` §1–§2 |
 | Decode with tens of local experts | Measured on aiter's FlyDSL MXFP4 kernels: bandwidth. At 60 tokens a 75-layer step read 5.77 TB/s against a 6.27 TB/s read roof measured in the same run (92%); from 10 to 60 tokens the time grew 2.38× while the experts hit grew 2.6× *(field, E3)* | `grouped_moe_inference.md` §3–§5 |
 | Kimi-K3 SiTUv2, fp8 × MXFP4, m 8–112: 896 experts (TP) or 112 of 896 local (EP8), top-16 | Bandwidth: the weights of the experts the routes touch, 2.19 MB each at inter 384 and 17.5 MB at inter 3072 (estimated from the layout); count the touched experts from AKLR's own inputs (`../patterns/memory_bound.md`, Rule out first). From 32–40 tokens up the delivered kernels read them at 6.0–6.45 TB/s against a 6.5 TB/s read roof, aiter at 5.0–5.97, so at most 5–8% is left; at 8–24 tokens the per-launch costs around the GEMMs weigh, and EP8 measured 1.28–1.59 there *(field, E5)* | `../patterns/memory_bound.md`; `grouped_moe_inference.md` §2, §7; `decode.md` |
-| Kimi-K3 SiTUv2 at m 893–16384 | Every expert is touched; from ~9k tokens the GEMMs are compute-bound. At 16384 tokens the delivered kernels ran stage 1 at 1970 (TP) and 1889 (EP8) TF/s of useful FLOPs (padding rows not counted) and stage 2 at 1347 and 1764, where aiter ran 1431/1459 and 929/1267 *(field, E6)*; dense fp8 GEMMs of squat shapes reached ~2300–2550 TF/s on MI355X *(field, E7)*. TP's per-route rows and their reduce kernel took 190 of 1533 µs | `grouped_moe_inference.md` §2, §6; `../gemm/mainloop.md` §7 |
+| Kimi-K3 SiTUv2 at m 893–16384 | Every expert is touched; from ~9k tokens the GEMMs are compute-bound. At 16384 tokens the delivered kernels ran stage 1 at 1970 (TP) and 1889 (EP8) TF/s of useful FLOPs (padding rows not counted) and stage 2 at 1347 and 1764, where aiter ran 1431/1459 and 929/1267 *(field, E6)*; dense fp8 GEMMs of squat shapes reached ~2170–2400 TF/s in FlyDSL and ~2470–2660 in hipBLASLt on MI355X *(field, E7)*. TP's per-route rows and their reduce kernel took 190 of 1533 µs | `grouped_moe_inference.md` §2, §6; `../gemm/mainloop.md` §7 |
 | m 64–4096 with 33 local experts | Rows repeat per expert: tile-M 32–128, several row tiles of one expert per weight sweep, activations staged through LDS. Served at 1.030–1.609 over aiter at every m from 64 *(field, E4)* | [fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md) |
 
 ## Techniques that apply

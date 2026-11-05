@@ -311,10 +311,12 @@ A second tile shape trades arithmetic intensity for CU fill. Price both sides be
   of the kernel), though a stores-off probe had priced an estimated ~7% gain.
   *(field, E28)* At K=512 a 1-per-CU grid walking 6–60 tiles each, whose last two K-blocks fill the next tile's stages
   and with no workgroup barrier between tiles (C staged per wave), beat one tile per workgroup by 3–5%.
-- **Race a start delay on half of each XCD's workgroups** (`rocdl.s_sleep` before the first fill when
+- **Race a start delay on half of each XCD's workgroups** (`s_sleep` before the first fill when
   `pid // 8` is odd; a few thousand clocks). *(field, E29, E30)* +1–3% at 6–20 tiles per workgroup, null at ~60.
 - **Keeping B resident in LDS does not pay when B already sits in L2.** *(field, E31)* At K=128 with a sub-MB B, a
   persistent kernel holding each workgroup's B slice gained ~1% at M=16384 and lost 10–22% at M=9397.
+
+In FlyDSL: `../flydsl/gemm.md` § grid_pricing §10.
 
 ## Verify
 - The tile/round table for every scored shape exists before the first build.

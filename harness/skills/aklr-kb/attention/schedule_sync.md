@@ -150,8 +150,11 @@ In FlyDSL: `../flydsl/attention.md` § schedule_sync §7.
   a single-slot LDS barrier took the waits that retired the previous head's reads with them; an
   `s_waitcnt lgkmcnt(0)` before the barrier restored it at zero cost.
 - **A hand-written `lgkmcnt(0)` right before a barrier is a tax** when every read it drains already has a
-  consumer before the barrier: the consumers' graded waits retire them and the backend re-emits its own drain
-  at `s_barrier` (check the ISA). That drain gives visibility, not write-after-read safety: delete the
+  consumer before the barrier: the consumers' graded waits retire them. A barrier that carries workgroup-scope
+  fences (`fence syncscope("workgroup") release` before `s_barrier` in the LLVM IR) also gets its own
+  `s_waitcnt lgkmcnt(0)` from the backend; a bare `llvm.amdgcn.s.barrier` gets none on gfx950 (LLVM adds a full
+  wait before `s_barrier` only on targets without barrier back-off, `SIInsertWaitcnts.cpp`; check the ISA). That
+  drain gives visibility, not write-after-read safety: delete the
   hand-written one only after checking, per buffer, that the LDS each read targets is overwritten no earlier
   than two barriers later. *(field, E28)* +0.54%; the same removal in prologue and
   epilogues another +0.19–0.32%.

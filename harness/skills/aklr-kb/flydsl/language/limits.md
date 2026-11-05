@@ -92,14 +92,14 @@ tensors, no GPU): IR, ISA and code-object metadata, no timings. Error texts are 
 - **`FLYDSL_DEBUG_DUMP_ASM=1` writes nothing** with the built-in codegen, though documented as "Dump final AMD
   ISA assembly" (S14); it is read only to raise under `FLYDSL_COMPILE_LLVM_DIR` (S11) *(field, E9)*. Use
   `FLYDSL_DUMP_IR=1` and read `NN_final_isa.s`.
-- **`range(..., init=)` stays a runtime loop with Python-int bounds.** `kernel_tuning_guide.md` says constant
-  Python-int bounds make the rewriter unroll the loop and drop `init=` (S23); any `range` with `init=` is rewritten to
-  `scf_range` (S24), which converts the bounds to `index` constants and emits an `scf.for` carrying the `init` values
-  (S25). `range_constexpr` is the form that unrolls.
-- **`fx.Index` is not deprecated.** `kernel_authoring_guide.md` calls it deprecated (S26); `api_stability.md` names
-  `fx.Index(x)` as the replacement for the deprecated `fx.index_cast` (S27), and only `index_cast` is marked
-  deprecated in the source (S28). `fx.Index` is an unsigned 64-bit integer (S29): use `fx.Int64` for an offset that
-  can be negative.
+- **`range(..., init=)` stays a runtime loop with Python-int bounds.** FlyDSL's `docs/kernel_tuning_guide.md` says
+  constant Python-int bounds make the rewriter unroll the loop and drop `init=` (S23); any `range` with `init=` is
+  rewritten to `scf_range` (S24), which converts the bounds to `index` constants and emits an `scf.for` carrying the
+  `init` values (S25). `range_constexpr` is the form that unrolls.
+- **`fx.Index` is not deprecated.** `docs/kernel_authoring_guide.md` calls it deprecated (S26);
+  `docs/api_stability.md` names `fx.Index(x)` as the replacement for the deprecated `fx.index_cast` (S27), and only
+  `index_cast` is marked deprecated in the source (S28). `fx.Index` is an unsigned 64-bit integer (S29): use
+  `fx.Int64` for an offset that can be negative.
 - **A 16-byte LDS load declared 4- or 8-byte aligned is split.** At an address with a runtime offset, alignment 4
   gave two `ds_read2_b32`, 8 one `ds_read2_b64` and 16 one `ds_read_b128`; at an address provably 16-byte aligned,
   alignment 4 also gave `ds_read_b128` *(field, E19, E20)*. `Vector.load` passes no alignment to `vector.LoadOp`

@@ -19,7 +19,8 @@ sources:
 > The host side of a grouped GEMM: keeping the steady state free of device→host copies, launching under CUDA
 > graphs and in eager mode, what to cache and under which key, and how to race configurations when the token
 > distribution is unknown at dispatch. The dense rules (first-call race, margins, palindrome timing, cache keys,
-> the compiled-object launch path) are in `../gemm/autotune.md` and are not repeated. "FP8", "MX8",
+> the compiled-object launch path) are in `../gemm/autotune.md` (the compiled-object launch path:
+> `../flydsl/gemm.md` § autotune §6) and are not repeated. "FP8", "MX8",
 > "MX4" are Primus-Turbo's `grouped_gemm_{fp8,mxfp8,mxfp4}_kernel.py` under `primus_turbo/flydsl/grouped_gemm/`,
 > at main `ca1fdd67`. FlyDSL facts are v0.3.2.
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end. Use
@@ -155,7 +156,7 @@ each by adding 0/1/2/4 extra launches in one process and fitting the slope (`../
 - Grouped geometry is derived from G and tiles per group (split pieces, slice heads, tiles per workgroup). Assert
   at build time that it fits the smallest G the callers use; otherwise a small expert count fails every fast
   candidate and the race silently settles on the fallback kernel.
-- Check every candidate's LDS bytes against the 160 KB limit before timing it (`../gemm/autotune.md` §7).
+- Check every candidate's LDS bytes against the 160 KiB limit before timing it (`../gemm/autotune.md` §7).
 
 In FlyDSL: `../flydsl/moe.md` § grouped_host_autotune §8.
 

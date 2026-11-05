@@ -109,6 +109,10 @@ dict is not in the JIT cache key. See § mainloop §4 below and `debug-flydsl-ke
 
 Both run on FlyDSL v0.3.2.
 
+## grid_pricing §10 Persistent tiles per workgroup
+
+The start delay on half of each XCD's workgroups is `rocdl.s_sleep(n)` before the first fill.
+
 ## mainloop The baseline: FlyDSL's 2-stage ping-pong (`preshuffle_gemm`)
 
 - PS's `hot_loop_scheduler` spreads the loads over the MFMAs with `rocdl.sched_vmem` / `sched_dsrd` / `sched_dswr`
@@ -117,8 +121,16 @@ Both run on FlyDSL v0.3.2.
 - FlyDSL's 8-wave and fp8 4-wave kernels default to 256×256 tiles (`BLOCK_M`, `BLOCK_N`); `fp4_gemm_4wave.py` fixes
   256×256.
 
+## mainloop §1 Two large-tile loop designs — race them, do not pick by rule
+
+FlyDSL's `fp8_gemm_8wave.py` has the 8-wave structure (512 threads, eight LDS buffers). Its `fp8_gemm_4wave.py` and
+`fp4_gemm_4wave.py` are the 4-wave design with a compiled K loop: 2×2 waves, an 8-buffer, depth-2 LDS ping-pong, and
+one inline-asm block per MFMA to keep the accumulator in AGPRs.
+
 ## mainloop §2 The 8-wave pipeline (FP8 `_compile_dense_nt`)
 
+- **K loop.** `for k in range_constexpr(K_ITERS - 2)` (FP8:264) unrolls at trace time, which is why the card's
+  code size grows with K.
 - **LDS.** One `@fx.struct` with eight `fx.Array` fields (FP8:134-142), allocated with
   `fx.SharedAllocator().allocate(...).peek()`.
 
@@ -126,6 +138,10 @@ Both run on FlyDSL v0.3.2.
 
 The asm string is generated in Python and passed to one `_llvm.inline_asm` call; results come back through
 `llvm.extractvalue` on a struct return type.
+
+FlyDSL's `fp4_gemm_4wave.py`, whose comment the card quotes, runs its K loop as a runtime
+`range(2, K_ITERS - 2, UNROLL, init=...)` with a `range_constexpr(UNROLL)` body, 2 or 4 steps deep (:652, :913,
+:937).
 
 ## mainloop §4 Register plan and inline-asm constraints
 
@@ -150,6 +166,9 @@ The fp8 4-wave whole loop gets `waves_per_eu=1` and the full register file from
 `make_value_attrs(1, 0, "256,256")` (FP8:1992); the MXFP4 one passes `amdgpu-agpr-alloc=256` under
 `llvm.passthrough` (FP4:3095), as § mainloop §4 above requires.
 
+A fully unrolled K loop is a `range_constexpr` loop; a `range()` stays a runtime `scf.for`
+(`debug-flydsl-kernel.md` § The three loop forms).
+
 ## mainloop §8 FlyDSL's own GEMM kernels (v0.3.2): what to know when calling or tuning them
 
 "PS" is `kernels/gemm/preshuffle_gemm.py` and "A16" is `kernels/gemm/gemm_a16w16_gfx950.py`. They handle no
@@ -166,7 +185,8 @@ layout (`b_preshuffled`).
 
 Facts about PS and A16 that matter when tuning them:
 - **PS tile algebra.** `tile_K_perm = 128 if mfma_scale else (64 if 8-bit else 32)` (PS:171). Four waves
-  split N. The A tile must be a multiple of 4096 B, or its tail is never loaded (PS:190).
+  split N. The A tile (`tile_m·tile_k·elem_bytes`) must be a multiple of 4096 B; PS raises `ValueError`
+  otherwise (PS:190), since the copy would leave the tail unloaded.
 - **PS waits.** `rocdl.s_waitcnt(num_b_loads)` passes a raw bitfield, not a `vmcnt`. `s_waitcnt(8)`
   emits `vmcnt(8) expcnt(0) lgkmcnt(0)`. In your own code write `rocdl.s_waitcnt(vmcnt=n)`.
 - **PS scheduler hints.** `sched_group_barrier` groups spread VMEM reads (mask `0x020`), DS reads and DS
@@ -186,7 +206,7 @@ Facts about PS and A16 that matter when tuning them:
 disk-cache lookup, so the dump reflects the current source. Do not time a run with it on.
 `ARCH=gfx950 COMPILE_ONLY=1` compiles without launching.
 
-## datapath §1 Allocate LDS the v0.3.2 way
+## datapath §1 Allocating LDS
 
 Declare the buffers as an `@fx.struct` of `fx.Array` fields and allocate them in the kernel with
 `fx.SharedAllocator().allocate(Storage).peek()` (PS:214, 283). With the default `static=True` each
@@ -202,6 +222,8 @@ overlays `ab` and `c`). `SmemAllocator` / `SmemPtr` are legacy.
   `bits = log2(k_blocks16)` and `base = log2(elements per 16 B)` for 8-bit or DMA-written tiles. The
   writer and the reader then agree by construction — and the DMA path, which computes addresses by
   hand, applies the same `k ^ ((m % k_blocks16)·elems_per_16b)` (PS:379).
+- The bf16/fp16 sync path keeps the fixed `fx.SwizzleType.get(3, 3, 3)` (`Swizzle<3,3,3>`, PS:302), the fixed
+  swizzle of the card's E1.
 
 ## datapath §3 Bank conflicts: compute the floor, then measure
 
@@ -271,6 +293,8 @@ FlyDSL's helpers are thin wrappers over `sched_group_barrier`:
 | `rocdl.sched_dsrd(n)` | `0x100` | DS reads |
 | `rocdl.sched_dswr(n)` | `0x200` | DS writes |
 
+The fence is `rocdl.sched_barrier(mask)`, which takes the int mask (`expr/rocdl/__init__.py:142`).
+
 **FlyDSL's `hot_loop_scheduler` is the reference use.** `preshuffle_gemm` builds one hint table per tile.
 On gfx950 it spreads the LDS reads and VMEM loads evenly over all MFMAs,
 for both sync and async copy (`guides.md` § gemm-optimization (FlyDSL's §5.5));
@@ -283,6 +307,8 @@ the sync path also places its LDS writes at the tail.
 
 ## schedule_and_locality §7 Accumulators, descriptors and large operands
 
+- **Accumulators.** `fx.gemm` (`expr/primitive.py:1114`) leaves where the accumulators live to the compiler; for
+  a tile wider than the AGPR file, place them yourself (`../gemm/mainloop.md` §4).
 - **Ragged edges.** `fx.rocdl.make_buffer_tensor(t)` defaults to `max_size=True`, which sets
   `num_records = 0xFFFFFFFF` — no out-of-range masking. To have out-of-range loads return zero and
   out-of-range stores dropped, pass `max_size=False` or `num_records_bytes`, and derive the bound from
@@ -292,6 +318,9 @@ the sync path also places its LDS writes at the tail.
 
 In FlyDSL v0.3.2, PS stores directly and can fuse a per-N bias with ReLU/SiLU/GELU (`epilogue=`); A16 and
 `kernels/common/mma/mfma_epilogues.py` carry the CShuffle store.
+
+The cross-lane swaps are `rocdl.permlane16_swap` and `rocdl.permlane32_swap`, the ROCDL ops that
+`flydsl.expr.rocdl` re-exports.
 
 After `v_cvt_pk_bf16_f32`, storing the pair's high half needs `buffer_store_short_d16_hi`, which FlyDSL's buffer
 store cannot emit, so taking the high half of a packed pair costs one `v_lshrrev_b32`.
@@ -322,7 +351,7 @@ aiter's tuner `tile_m` filter reaches one M-block only when M ≤ 16 or M is its
 ## small_m §4 Split-K
 
 - Split-K must divide K, each split must be whole `tile_k` steps and hold at least `stages` of them; the
-  catalog offers 1–13 (`gemm_kernels.py:216-226`).
+  catalog offers 1–13 (`gemm_kernels.py:80-81, 216-226`; the `stages` floor is asserted in `splitk_hgemm.py:155`).
 - **A 256-tile cap refuses split-K on larger grids** at launch (`gemm_kernels.py:712-724`); the tuner already
   drops split-K candidates above 128 tiles (`csrc/gemm_a16w16/gemm_a16w16_tune.py:753`).
 
@@ -336,8 +365,8 @@ aiter's tuner `tile_m` filter reaches one M-block only when M ≤ 16 or M is its
   the dumped ISA then shows `.amdhsa_user_sgpr_kernarg_preload_length` > 0.
   - Pass the operands as `fx.Pointer` (`from_c_void_p`): a raw `torch.Tensor` lowers to a pointer plus a layout
     struct, so only the first pointer is preloaded (length 2 at count 16).
-  - **Not in aiter's bf16 GEMM kernels**; its FlyDSL MoE helpers set it. Eight of AKLR's
-    own bf16 GEMM kernels use it.
+  - **Not in aiter's bf16 GEMM kernels**; its FlyDSL MoE helpers set it. Several of AKLR's own bf16 GEMM
+    kernels use it (`grep -l kernarg-preload-count aklr/ops/gemm/impls/flydsl/*/*`).
 - aiter's generic kernel does not skip A rows past M: it clamps them to row 0 and loads them
   (`splitk_hgemm.py:512-519`).
 
@@ -375,7 +404,7 @@ In Turbo's MXFP4 staged search (FP4:3170-3377):
   dense MXFP4 table picked a variant.
 - **Nor does the real launch reuse the race's compiled winners.** The race stores them under the 15-field key
   (FP4:3215-3231), the launch looks them up under 14 fields, without `k_real` (FP4:4519), so the first real launch
-  of a shape compiles again, although the docstring says it does not (FP4:3188-3189).
+  of a shape compiles again, although the docstring says it does not (FP4:3189-3190).
 
 ## autotune §5 Cache keys
 
@@ -405,7 +434,8 @@ launch fails with `hipErrorIllegalState` on stderr only, and the output is never
 ## correctness §4 Waits, barriers and the scheduler
 
 The monotonic, agent-scope atomic load that keeps a poll loop is
-`llvm.LoadOp(…, ordering=llvm.AtomicOrdering.monotonic, syncscope="agent")`.
+`llvm.LoadOp(…, ordering=llvm.AtomicOrdering.monotonic, syncscope="agent")`. The fence is
+`rocdl.sched_barrier(0)`, and the sleep in a poll loop `rocdl.s_sleep(n)`.
 
 ## correctness §5 LDS placement and DMA
 
@@ -427,9 +457,15 @@ The monotonic, agent-scope atomic load that keeps a poll loop is
   kernel and reused for the next shape (`debug-flydsl-kernel.md` § A bound or address
   baked from a host integer).
 
+## correctness §8 Reproducibility and tolerance
+
+A16's split-K adds its partials into the bf16 output with `fx.rocdl.BufferAtomicPkAdd` (A16:362), so it is not
+bitwise reproducible.
+
 ## measurement §6 Apparatus traps
 
-- **Do not time with `FLYDSL_DUMP_IR=1`** (it bypasses the cache and recompiles, `jit_function.py:1414`;
+- **Do not time with `FLYDSL_DUMP_IR=1`** (it skips the disk-cache lookup, so the first call in a process
+  recompiles, `jit_function.py:1414`;
   on an attention kernel, an arm's first read under `FLYDSL_DUMP_IR=1` with a single rep was +15% on a ±0.2%
   ruler *(field, E7)*; a single rep is reason enough to distrust a first read, `../gemm/measurement.md` §6).
 
@@ -451,7 +487,7 @@ tail so they land before the barrier (gemm-optimization §5.3–5.4; PS:402-438)
 
 **FlyDSL's bf16-activation MoE takes the K=16 path on gfx942.** `moe_2stage_a16wmix` picks it in
 `a16wmix_use_k16` (`kernels/moe/moe_2stage_a16wmix/utils.py:26-38`). The two 16x16x16 MFMAs per K32 step are at
-`gemm1.py:507-509` of that folder, the per-value int4 dequant at `utils.py:132-138`, and A's staging through VGPRs
+`gemm1.py:507-510` of that folder, the per-value int4 dequant at `utils.py:132-138`, and A's staging through VGPRs
 at `gemm1.py:282-291`.
 
 ## Evidence

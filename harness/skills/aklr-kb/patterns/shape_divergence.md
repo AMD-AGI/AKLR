@@ -70,8 +70,8 @@ basis: source-semantics
 - S10 gemm/grid_pricing.md:264 each extra body variant adds code even when it does not run
 - S11 flydsl/gemm.md:84 constants in both code bases were tuned on specific shapes
 - S12 gemm/small_m.md:259 the lookup tries M as is, then padded at granularity 0 and 1
-- S13 flydsl/gemm.md:346 a row whose kernel name the catalog cannot parse falls through
-- S14 flydsl/gemm.md:351 tuner filters can delete the winner silently
+- S13 flydsl/gemm.md:375 a row whose kernel name the catalog cannot parse falls through
+- S14 flydsl/gemm.md:380 tuner filters can delete the winner silently
 - S15 ../flydsl/kernels/flydsl_knob_space.md:155 a tuned row regressed: CSV raced on another build or machine
 - S16 gemm/small_m.md:66 adopt a per-shape change only above that shape's measured spread
 - S17 gemm/autotune.md:90 time base and candidate in one process as a palindrome per rep
@@ -79,15 +79,15 @@ basis: source-semantics
 - S19 gemm/measurement.md:141 each arm at its own best configuration
 - S20 gemm/measurement.md:75 cache, residency, swizzle, placement levers do not transfer from isolated loops
 - S21 gemm/autotune.md:65 incumbent first; a challenger must beat it by more than the race's noise
-- S22 gemm/autotune.md:52 a model is a cheap way to find suspect shapes; validate off the scoring set
+- S22 gemm/autotune.md:53 a static analysis is a cheap way to find suspect shapes; validate off the scoring set
 - S23 aklr/ops/README.md:193 compilation happens on a Point's first call; later calls may be inside a graph capture
 - S24 gemm/autotune.md:100 give a known shape family a static lead under a predicate
 - S25 gemm/autotune.md:103 hard-coding beats a race that scores the wrong point
-- S26 gemm/mainloop.md:89 the crossover depends on the shape and on the epilogue
-- S27 gemm/grid_pricing.md:320 the tile/round table for every scored shape exists before the first build
-- S28 gemm/grid_pricing.md:321 judged per shape, with s = 1 / the old tile still in the race
+- S26 gemm/mainloop.md:91 the crossover depends on the shape and on the epilogue
+- S27 gemm/grid_pricing.md:322 the tile/round table for every scored shape exists before the first build
+- S28 gemm/grid_pricing.md:323 judged per shape, with s = 1 / the old tile still in the race
 - S29 gemm/small_m.md:273 validate a row across every M that reaches it; add it only if it beats the pad
-- S30 flydsl/gemm.md:349 re-tune instead of copying rows
+- S30 flydsl/gemm.md:378 re-tune instead of copying rows
 - S31 gemm/measurement.md:164 ablate every component on the full table, including an all-off arm
 - S32 gemm/measurement.md:169 keep a change only if it beats BASE-to-BASE drift and its sign agrees
 - S33 aklr/ops/README.md:21 dispatch serves each Point with the best measured file

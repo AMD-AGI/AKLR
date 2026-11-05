@@ -114,7 +114,7 @@ How to choose:
 **Instruction-level rules for cross-lane stores**
 - A `permlane16_swap` result consumed only by a `buffer_store` (VMEM) needs no `s_nop`. That hazard covers a
   following VALU read (FP4:500-502).
-- When a VALU consumes the result, use the `rocdl.permlane16_swap` / `permlane32_swap` intrinsics, not inline
+- When a VALU consumes the result, use the `llvm.amdgcn.permlane16.swap` / `permlane32.swap` intrinsics, not inline
   asm. The hazard recognizer cannot see asm, so asm forces an `s_nop` on both sides. *(field, E17)* Switching to the
   intrinsic cut `s_nop` from 412 to 174 in a fused bias + GELU epilogue (683 to 24 with FP6 row quantization fused
   as well).
@@ -122,7 +122,8 @@ How to choose:
   changes together, dropping the hard-coded `s_nop` and the two-phase order, took the count from 80 to 0.
 - **Never store the high half of an f32 accumulator as bf16.** That is truncation, not round-to-nearest-even.
   - *(field, E19)* It cost 5.8 dB SNR and made the store slower.
-  - Convert with `v_cvt_pk_bf16_f32`.
+  - Convert with `v_cvt_pk_bf16_f32`, and store the pair's high half with `buffer_store_short_d16_hi` where the
+    toolchain can emit it; otherwise it costs one `v_lshrrev_b32`.
 - On gfx950, a multi-dword MUBUF VGPR tuple must be 64-bit aligned.
 
 In FlyDSL: `../flydsl/gemm.md` § epilogue §3.

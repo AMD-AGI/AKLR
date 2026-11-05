@@ -63,11 +63,11 @@ basis: source-semantics
 
 ## Evidence
 
-- S3 gemm/small_m.md:46 one graph node's floor; at small M on a small weight more than half is the node
+- S3 gemm/small_m.md:47 one graph node's floor; at small M on a small weight more than half is the node
 - S4 gemm/small_m.md:243 preload removes the s_load → lgkmcnt(0) round trip before the first B load
 - S5 gemm/small_m.md:48 AKLR timer: empty kernel and a second launch each cost; keep the fold in the launch
-- S6 flydsl/gemm.md:388 the jit call re-binds the signature, rebuilds the key, re-checks globals
-- S7 flydsl/gemm.md:395 a dispatch layer calling the @flyc.jit closure pays host cost per call
+- S6 flydsl/gemm.md:417 the jit call re-binds the signature, rebuilds the key, re-checks globals
+- S7 flydsl/gemm.md:424 a dispatch layer calling the @flyc.jit closure pays host cost per call
 - S8 gemm/grid_pricing.md:237 F is prologue, epilogue, tail peel, setup, drain; share grows as K shrinks
 - S9 gemm/small_m.md:115 the reduction is a fixed cost that dominates at M=1
 - S10 gemm/small_m.md:80 streaming rows bound by HBM read of B; latency-bound by launch/reduction/latency
@@ -82,11 +82,11 @@ basis: source-semantics
 - S19 gemm/attribution.md:149 trip-count additive probe gives P and F
 - S20 gemm/attribution.md:145 same FLOPs, different tile counts: swap N and K
 - S21 gemm/grid_pricing.md:244 kernel-argument preload trims F at any M
-- S22 flydsl/gemm.md:337 pass operands as fx.Pointer; a raw torch.Tensor stops the preload
+- S22 flydsl/gemm.md:366 pass operands as fx.Pointer; a raw torch.Tensor stops the preload
 - S23 gemm/small_m.md:239 the dumped ISA shows .amdhsa_user_sgpr_kernarg_preload_length > 0
 - S24 gemm/small_m.md:121 no workgroup may wait for another; the last split to arrive folds
 - S26 gemm/small_m.md:110 split-K pays on a single N-block and on latency-bound rows
 - S27 gemm/small_m.md:111 split-K does not pay on streaming rows or short K
-- S28 flydsl/gemm.md:388 call the flyc.compile object, not the @flyc.jit function
-- S29 flydsl/gemm.md:393 under CUDA-graph capture call the raw closure
+- S28 flydsl/gemm.md:417 call the flyc.compile object, not the @flyc.jit function
+- S29 flydsl/gemm.md:422 under CUDA-graph capture call the raw closure
 - S30 ../flydsl/kernels/flydsl_authoring_method.md:50 latency-bound (small shapes): reduce launch count, fusion

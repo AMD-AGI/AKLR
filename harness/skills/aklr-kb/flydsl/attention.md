@@ -23,7 +23,10 @@ sources:
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:3500
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/cdna4.py:80
   - ROCm/FlyDSL@dd8373349:lib/Dialect/FlyROCDL/CDNA4/MmaAtom.cpp:245
+  - ROCm/FlyDSL@dd8373349:lib/Dialect/FlyROCDL/CDNA4/MmaAtom.cpp:67
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_gfx950.py:73
+  - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_gfx950.py:970
+  - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:66
   - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/backends/rocm.py:52
   - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/ast_rewriter.py:670
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/gpu.py:73
@@ -63,7 +66,7 @@ Anchors for the API and patterns the cards refer to; read the source for anythin
 
 | File | What it is |
 |---|---|
-| `flash_attn_gfx950.py`, `flash_attn_utils.py`, `flash_attn_interface.py` | bf16 flash forward for gfx950: 8 waves in two phase-staggered groups (load/compute ping-pong), 32x32x16 MFMA, QK computed as S^T, causal loop stopping at the diagonal, per-wave lazy rescale |
+| `flash_attn_gfx950.py`, `flash_attn_utils.py`, `flash_attn_interface.py` | bf16/f16 flash forward for gfx950: 8 waves in two phase-staggered groups (load/compute ping-pong), 32x32x16 MFMA, QK computed as S^T, causal loop stopping at the diagonal, per-wave lazy rescale |
 | `flash_attn_fp8_gfx950.py` | fp8 flash forward with the same dual-wave structure |
 | `flash_attn_generic.py` | f16/bf16 flash-forward builder keeping Q, P and the O accumulators in 32x32 MFMA registers |
 | `swa_gfx950.py` | GQA sliding-window forward |
@@ -122,19 +125,22 @@ atom = fx.make_copy_atom(rocdl.cdna4.LDSReadTrans16_64b(), bf16)   # copy atom
 
 ## mfma_layout §8 fp8 MFMAs
 
-- FlyDSL v0.3.2 reaches the wide-K forms only in scaled form: `rocdl.mfma_scale_f32_16x16x128_f8f6f4`,
-  `rocdl.mfma_scale_f32_32x32x64_f8f6f4`, or the atom `rocdl.cdna4.MFMA_Scale(16, 16, 128, …)`, with E8M0
-  scales (bias 127). The unscaled wide-K intrinsics have no ROCDL binding.
-- e4m3 → bf16 for a bf16 MFMA: `rocdl.cvt_scalef32_pk_bf16_fp8(T.vec(2, T.bf16), word, 1.0, hi)` (`word`: an i32
-  holding four e4m3; `hi`: whether the low or the high pair is converted; scale 1.0 gives the card's bit-exact
-  conversion).
+- FlyDSL v0.3.2 spells the wide-K forms as the scale intrinsics: `rocdl.mfma_scale_f32_16x16x128_f8f6f4`,
+  `rocdl.mfma_scale_f32_32x32x64_f8f6f4`, or the atom `rocdl.cdna4.MFMA_Scale(16, 16, 128, …)`, whose two scales
+  start at 0 (`cdna4.py:80`, `CDNA4/MmaAtom.cpp:67`). There is no unscaled spelling because LLVM has no unscaled
+  wide-K intrinsic (`../attention/mfma_layout.md` §8).
+- e4m3 → bf16 for a bf16 MFMA: `rocdl.cvt_scalef32_pk_bf16_fp8(T.vec(2, T.bf16), word, one, hi)`, the generated
+  MLIR builder: `word` (an i32 holding four e4m3) and `one` (f32 1.0) must be MLIR values, e.g.
+  `fx.Float32(1.0).ir_value()`; a Python float or a FlyDSL number raises (`language/compile_errors.md`). `hi` is a
+  Python bool, whether the low or the high pair is converted; scale 1.0 gives the card's bit-exact conversion.
 
 ## registers_occupancy §1 Read the budget from the ISA
 
-- FlyDSL v0.3.2: the occupancy target is the `waves_per_eu` compile hint, passed to LLVM as `amdgpu-waves-per-eu`
-  (`backends/rocm.py:58-59`; `maxnreg` also exists). FlyDSL's gfx950 forward defaults to `waves_per_eu=2`; its
-  D=128 causal kernel compiles to 246 VGPRs, 0 AGPRs, no spills. Kernel attributes through `value_attrs` go under
-  `"llvm.passthrough"` (`gemm.md` § INDEX FlyDSL version).
+- FlyDSL v0.3.2: the occupancy target is the `waves_per_eu` compile hint (`backends/rocm.py:58-59`; `maxnreg`
+  also exists) or the kernel attribute `"rocdl.waves_per_eu"` in `value_attrs`; both reach LLVM as
+  `amdgpu-waves-per-eu`. FlyDSL's gfx950 forward sets the attribute, default 2 (`flash_attn_gfx950.py:73, 1001`);
+  built for D=128 causal bf16 with 32 q heads and 8 kv heads it compiles to 246 VGPRs, 0 AGPRs, no spills. Other
+  kernel attributes through `value_attrs` go under `"llvm.passthrough"` (`gemm.md` § INDEX FlyDSL version).
 - The register fields the card reads are in the `NN_final_isa.s` that `FLYDSL_DUMP_IR=1` writes under
   `$FLYDSL_DUMP_DIR/<kernel>/` (`debug-flydsl-kernel.md` § What the cache key sees).
 
@@ -167,8 +173,9 @@ atom = fx.make_copy_atom(rocdl.cdna4.LDSReadTrans16_64b(), bf16)   # copy atom
 ```python
 jitfn.compile_hints["llvm_options"] = {"amdgpu-sched-strategy": "max-ilp"}   # changes the ISA
 ```
-- `llvm_options` sets LLVM options by name: an unknown option name or a wrong value type raises. The card's SLP
-  threshold is `"slp-threshold": 100000` in the same dict.
+- `llvm_options` sets LLVM options by name: an unknown option name raises, and so does a string for an int option;
+  an int for a string option such as `amdgpu-sched-strategy` is accepted without an error, so pass each value with
+  the option's own type. The card's SLP threshold is `"slp-threshold": 100000` in the same dict.
 - Hint layers merge shallowly and a `CompilationContext.compile_hints(...)` context wins over `jitfn.compile_hints`: the
   context's `llvm_options` replaces yours whole. FlyDSL's forward launcher sets its own in such a context, so
   for that kernel add the option to the launcher's hint dict and keep
@@ -181,7 +188,10 @@ jitfn.compile_hints["llvm_options"] = {"amdgpu-sched-strategy": "max-ilp"}   # c
 
 ## schedule_sync §8 Waits and barriers
 
-- `gpu.barrier()` is only `s_barrier`.
+- `gpu.barrier()` lowers (MLIR `convert-gpu-to-rocdl`) to `fence syncscope("workgroup") release`, `s_barrier`,
+  `fence syncscope("workgroup") acquire`; on gfx950 that is `s_waitcnt lgkmcnt(0)` then `s_barrier`, with no
+  `vmcnt` wait for a global load still in flight. `rocdl.s_barrier()` is the bare instruction with no wait;
+  FlyDSL's gfx950 forward uses it (`_s_barrier`, `_dualwave_sync_barrier`, `flash_attn_utils.py:66-76`).
 
 ## schedule_sync §10 Pipelining and DMA
 
@@ -199,8 +209,14 @@ jitfn.compile_hints["llvm_options"] = {"amdgpu-sched-strategy": "max-ilp"}   # c
 | `rocdl.exp2(T.f32, x)` | `llvm.amdgcn.exp2.f32` |
 
 What each lowering costs in ISA: `../attention/softmax.md` §2.
-- The afn rewrite covers f32 scalars and 1-D f32 vectors only. A denormal-mode function attribute is not a
-  switch for it: a bare `"passthrough"` key is dropped (`gemm.md` § INDEX FlyDSL version).
+- The afn rewrite is FlyDSL's own MLIR pass (`FastMathOps.cpp:35`), run before LLVM; LLVM itself lowers an `afn`
+  `llvm.exp2.f32` to the same range-reduced sequence as a plain one (`../attention/softmax.md` §2). It covers f32
+  scalars and 1-D f32 vectors only.
+- A denormal-mode function attribute does not turn the range-reduced lowering (`__ocml_exp2_f32`, or a direct
+  `llvm.exp2.f32`) into one `v_exp_f32` in v0.3.2: a bare `"passthrough"` key is dropped
+  (`gemm.md` § INDEX FlyDSL version), and `"denormal-fp-math-f32"` under `"llvm.passthrough"` reaches the LLVM IR,
+  but v0.3.2's LLVM reads the denormal mode only from its `denormal_fpenv` attribute. FlyDSL's own forward passes its DAZ entries under a bare `"passthrough"`
+  (`flash_attn_gfx950.py:970-1003`), so they are dropped; its single `v_exp_f32` comes from `rocdl.exp2`.
 - FlyDSL's gfx950 forward (the card's reference pattern) writes every softmax exp as `rocdl.exp2`
   (`_exp2_score_slice`, `flash_attn_utils.py:432`) and compiles with `fast_fp_math` and `unsafe_fp_math` in its
   hints (`_dualwave_swp_compile_hints`, `flash_attn_gfx950.py:1018`).
