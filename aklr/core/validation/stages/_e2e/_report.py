@@ -55,6 +55,8 @@ class E2eRecord(FrozenModel):
     cookbook_images: tuple[str, ...] = ()
     installed_sglang: str
     notes: str = ""  # the cells' cautions
+    # a fault that is no finding: off failing where the cookbook names another sglang
+    warning: str = ""
     off: SideResult | None = None
     on: SideResult | None = None
 
@@ -68,6 +70,17 @@ class E2eRecord(FrozenModel):
         tags = (re.search(r":v(\d+(?:\.\d+)+)", image) for image in self.cookbook_images)
         return any(tag is not None and Version(tag[1]).release != installed for tag in tags)
 
+    def off_fault(self, min_off_score: float) -> str:
+        """Why off is no baseline (it failed, or scored below ``min_off_score``); empty when it is one."""
+        off = self.off
+        if off is None or (
+            not off.failure and off.gsm8k_score is not None and off.gsm8k_score >= min_off_score
+        ):
+            return ""
+        return (
+            off.failure or f"GSM8K {off.gsm8k_score}, below {min_off_score}: the recipe or grading is broken"
+        )
+
     def findings(self, *, max_drop: float, min_off_score: float) -> list[Finding]:
         """The verdict: off failing is the platform's (only a warning when the cookbook names
         another sglang), on crashing, scoring more than ``max_drop`` below off, or answering
@@ -75,14 +88,11 @@ class E2eRecord(FrozenModel):
         off, on = self.off, self.on
         if off is None:
             return []
-        if off.failure or off.gsm8k_score is None or off.gsm8k_score < min_off_score:
+        if fault := self.off_fault(min_off_score):
+            # the warning (``warning``) says it instead
             if self.is_other_sglang:
                 return []
-            why = (
-                off.failure
-                or f"GSM8K {off.gsm8k_score}, below {min_off_score}: the recipe or grading is broken"
-            )
-            return [Finding.unlocated(FindingCode.PLATFORM_FAILURE, f"{self.scenario} off: {why}")]
+            return [Finding.unlocated(FindingCode.PLATFORM_FAILURE, f"{self.scenario} off: {fault}")]
         if on is None:
             return []
         findings = []
@@ -124,6 +134,7 @@ class E2eRecord(FrozenModel):
                     filter(
                         None,
                         [
+                            f"warning: {self.warning}" if self.warning else "",
                             self.notes,
                             *self.cookbook_images,
                             "AKLR served no call" if on.n_hit_calls == 0 else "",
@@ -137,6 +148,8 @@ class E2eRecord(FrozenModel):
     def console_line(self) -> str:
         off, on = self.off or SideResult(), self.on or SideResult()
         parts = [f"GSM8K off {off.gsm8k_score}", f"on {on.gsm8k_score}"]
+        if self.warning:
+            parts.append(f"warning: {one_line(self.warning)}")
         if on.answer_matches is not None:
             parts.append(
                 f"answer {'matched' if on.answer_matches else 'differs'}: {one_line(on.prompt_answer or '')!r}"
