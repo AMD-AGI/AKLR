@@ -234,13 +234,14 @@ def _gemma_norm_rope(x, weight, eps, cos, sin):
     return torch.cat((_rounded(rotated, torch.bfloat16), normalized[..., ROTARY_DIM:]), dim=-1)
 
 
-def gated_attention_decode_group_fp8_quant_reference(point, row_major_args, decode):
-    """The contract's decode in ``decode``'s float dtype; the grouped FP8 values (before
-    their E4M3FN rounding) and scales, then both pools as the call leaves them.
+def _gated_attention(point, row_major_args, decode):
+    """The gated attention decode in ``decode``'s float dtype: each query head's attention
+    output rounded to BF16 times sigmoid of its gate, before that product's own rounding,
+    as (rows, heads, head_dim); then both pools as the call leaves them.
 
     Rounding points: the normalized and the rotated Q and K to BF16 (the tensors sglang
-    keeps between its kernels), the keys and values to E4M3FN in the pools, the attention
-    output and the gated output to BF16. Rows write their slots before any row attends.
+    keeps between its kernels), the keys and values to E4M3FN in the pools, and the
+    attention output to BF16. Rows write their slots before any row attends.
     """
     args, dtypes = row_major_args, point.dtypes
     qkv_dim, kv_heads, head_dim = (point.axes[n] for n in ("qkv_dim", "n_kv_heads", "head_dim"))
@@ -281,9 +282,33 @@ def gated_attention_decode_group_fp8_quant_reference(point, row_major_args, deco
         scores = torch.einsum("kgd,tkd->kgt", q, key_cache[read]) * scale
         attention[row] = torch.einsum("kgt,tkd->kgd", scores.softmax(-1), value_cache[read])
     attention = _rounded(attention.reshape(rows, heads, head_dim), torch.bfloat16)
-    gated = _rounded(attention * torch.sigmoid(query_gate[:, :, 1]), torch.bfloat16)
+    return attention * torch.sigmoid(query_gate[:, :, 1]), key_cache, value_cache
 
+
+def gated_attention_decode_group_fp8_quant_reference(point, row_major_args, decode):
+    """The contract's decode in ``decode``'s float dtype; the grouped FP8 values (before
+    their E4M3FN rounding) and scales, then both pools as the call leaves them.
+
+    Rounding points: the normalized and the rotated Q and K to BF16 (the tensors sglang
+    keeps between its kernels), the keys and values to E4M3FN in the pools, the attention
+    output and the gated output to BF16. Rows write their slots before any row attends.
+    """
+    product, key_cache, value_cache = _gated_attention(point, row_major_args, decode)
+    gated = _rounded(product, torch.bfloat16)
+    rows = gated.shape[0]
     groups = gated.reshape(rows, -1, 128)
     scales = groups.abs().amax(-1).clamp_min(1e-10) / 448.0
-    quantized = (groups / scales[..., None]).clamp(-448.0, 448.0).reshape(rows, heads, head_dim)
+    quantized = (groups / scales[..., None]).clamp(-448.0, 448.0).reshape(gated.shape)
     return quantized, scales, key_cache, value_cache
+
+
+def gated_attention_decode_reference(point, row_major_args, decode):
+    """The contract's decode in ``decode``'s float dtype; the gated output before its BF16
+    rounding, each row's heads side by side, then both pools as the call leaves them.
+
+    Rounding points: the normalized and the rotated Q and K to BF16 (the tensors sglang
+    keeps between its kernels), the keys and values to E4M3FN in the pools, and the
+    attention output to BF16. Rows write their slots before any row attends.
+    """
+    product, key_cache, value_cache = _gated_attention(point, row_major_args, decode)
+    return product.reshape(product.shape[0], -1), key_cache, value_cache

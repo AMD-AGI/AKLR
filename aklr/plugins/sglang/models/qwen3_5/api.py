@@ -6,6 +6,7 @@ import torch
 from aklr.core.runtime.dispatch import FallbackReason, api
 from aklr.plugins.sglang.hook import sglang_route
 from aklr.plugins.sglang.models.qwen3_5.contract import (
+    GATED_ATTENTION_DECODE,
     GATED_ATTENTION_DECODE_GROUP_FP8_QUANT,
     GDN_DECODE,
     GDN_DECODE_GROUP_FP8_QUANT,
@@ -15,6 +16,7 @@ from aklr.plugins.sglang.models.qwen3_5.contract import (
 )
 
 __all__ = [
+    "gated_attention_decode",
     "gated_attention_decode_group_fp8_quant",
     "gdn_decode",
     "gdn_decode_group_fp8_quant",
@@ -76,6 +78,23 @@ def gdn_decode(
 
 @api(GATED_ATTENTION_DECODE_GROUP_FP8_QUANT)
 def gated_attention_decode_group_fp8_quant(
+    projected_qkv,
+    q_norm_weight,
+    k_norm_weight,
+    positions,
+    cos_sin_cache,
+    cache_locations,
+    key_cache,
+    value_cache,
+    kv_indptr,
+    kv_indices,
+    eps=1e-6,
+    scale=256**-0.5,
+): ...
+
+
+@api(GATED_ATTENTION_DECODE)
+def gated_attention_decode(
     projected_qkv,
     q_norm_weight,
     k_norm_weight,
@@ -250,8 +269,8 @@ def _no_bias(size, dtype, device):
 @sglang_route("sglang.srt.models.qwen3_5.Qwen3_5AttentionDecoderLayer.self_attention", versions=("0.5.22",))
 def _attention_self_attention(self, positions, hidden_states, forward_batch):
     """Decode as HIP runs it (forward_prepare_fused_gate, the aiter backend's forward_decode,
-    fused_sigmoid_mul), graph capture too: sglang's qkv_proj, the op, then sglang's o_proj
-    on the op's FP8 values and scales."""
+    fused_sigmoid_mul), graph capture too: sglang's qkv_proj, an op (_attention_op), then
+    sglang's o_proj on the FP8 op's values and scales or on the BF16 op's gated rows."""
     from sglang.srt.model_executor.forward_context import get_attn_backend
     from sglang.srt.models import qwen3_5 as model
 
@@ -267,6 +286,9 @@ def _attention_self_attention(self, positions, hidden_states, forward_batch):
         hidden_states = model._select_fused_ar_input_for_linear(hidden_states, self.qkv_proj)
     hidden = hidden_states[0] if isinstance(hidden_states, tuple) else hidden_states
     rows = hidden.shape[0]
+    op = _attention_op(self.o_proj, rows)
+    if op is None:
+        return FallbackReason.OUT_OF_CONTRACT
     key_cache, value_cache = backend.token_to_kv_pool.get_kv_buffer(self.attn.layer_id)
     metadata = backend.forward_metadata
     arguments = {
@@ -281,7 +303,6 @@ def _attention_self_attention(self, positions, hidden_states, forward_batch):
         "eps": self.q_norm.variance_epsilon,
         "scale": backend.scale,
     }
-    op = gated_attention_decode_group_fp8_quant
     reason = op.fallback_reason(**_attention_stand_ins(self, hidden, positions), **arguments)
     if reason is not None:
         return reason
@@ -290,18 +311,33 @@ def _attention_self_attention(self, positions, hidden_states, forward_batch):
     result = op(projected_qkv=qkv, positions=positions.contiguous(), **arguments)
     if isinstance(result, FallbackReason):
         return result
+    if op is gated_attention_decode:
+        return self.o_proj(result)[0]
     values, scales = result
     return self.o_proj((values.view(rows, -1), scales))[0]
 
 
+def _attention_op(o_proj, rows):
+    """The op whose output o_proj takes: the FP8 op where o_proj takes its FP8 groups
+    (_takes_fp8_groups, and no row-wise FP8 copy for its small-M path, which only BF16
+    inputs take); else the BF16 op where sglang hands o_proj the gated BF16 rows, that is
+    where _fp8_tuple_input is false (an unquantized o_proj, for one); else None, as sglang
+    then quantizes the gated rows per token itself."""
+    from sglang.srt.models import qwen3_5 as model
+
+    if _takes_fp8_groups(o_proj) and getattr(o_proj.weight, "_ptpc_weight", None) is None:
+        return gated_attention_decode_group_fp8_quant
+    if not model._fp8_tuple_input(o_proj, rows):
+        return gated_attention_decode
+    return None
+
+
 def _attention_falls_back(layer, backend) -> bool:
-    """Whether sglang computes other than the op: LoRA or sequence parallelism; another
+    """Whether sglang computes other than the ops: LoRA or sequence parallelism; another
     backend or decode path than paged_attention_ragged over one-token pages (MLA, unified or
     sliding-window attention, a 5-D pool, context parallelism, a logit cap); KV scales other
     than 1 (sglang writes at the layer's and reads at 1); another rotary embedding than
-    interleaved NeoX mRoPE on the op's sections; norm epsilons that differ; or an o_proj
-    that cannot take the op's FP8 groups (_takes_fp8_groups, and no row-wise FP8 copy for
-    its small-M path, which only BF16 inputs take)."""
+    interleaved NeoX mRoPE on the ops' sections; or norm epsilons that differ."""
     from sglang.srt.layers.attention.aiter_backend import AiterAttnBackend
     from sglang.srt.layers.layernorm import GemmaRMSNorm
     from sglang.srt.layers.rotary_embedding.mrope import MRotaryEmbedding
@@ -336,8 +372,6 @@ def _attention_falls_back(layer, backend) -> bool:
         or rope.head_size != layer.head_dim
         or not (type(layer.q_norm) is type(layer.k_norm) is GemmaRMSNorm)
         or layer.k_norm.variance_epsilon != layer.q_norm.variance_epsilon
-        or not _takes_fp8_groups(layer.o_proj)
-        or getattr(layer.o_proj.weight, "_ptpc_weight", None) is not None
     )
 
 
