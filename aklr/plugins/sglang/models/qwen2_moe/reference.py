@@ -4,7 +4,10 @@
 """What the contracts say, in torch, in the dtype the inputs decode to: nothing rounded
 or quantized in between (the kernels' bf16 steps are theirs) but the router's logits,
 rounded once to bf16 as the block's gate returns them, which pick the experts, and what
-the checkpoint's FP8 scheme quantizes: each expert linear's input (_fp8_input)."""
+the checkpoint's FP8 scheme quantizes: each expert linear's input (_fp8_input). The MXFP4
+experts' activations stay unquantized: kernels round a block's scale from its maximum in
+different ways (to nearest or up) and sglang's own small-M kernel keeps them bf16, so that
+error is left to the bound."""
 
 from __future__ import annotations
 
@@ -19,10 +22,12 @@ if TYPE_CHECKING:
 __all__ = [
     "qwen2_moe_fp8_experts_reference",
     "qwen2_moe_fp8_router_experts_reference",
+    "qwen2_moe_mxfp4_moe_reference",
     "qwen2_moe_router_reference",
 ]
 
 _BLOCK = 128  # the FP8 scheme's block: 128 x 128 of a weight, 1 x 128 of an input
+_MXFP4_BLOCK = 32  # an MXFP4 weight's block: 1 x 32
 
 
 def _router_logits(
@@ -135,3 +140,40 @@ def qwen2_moe_fp8_router_experts_reference(
     weights, ids = _routed(logits, point.attrs["topk"])
     shared_slot = point.axes["n_routed"]
     return _experts(point, row_major_args, decode, weights, ids, shared_slot)
+
+
+def _silu_mlp(x: Tensor, gate_up: Tensor, down: Tensor) -> Tensor:
+    """down(silu(gate) * up), gate and up the halves of x gate_up^T."""
+    import torch
+
+    gate, up = (x @ gate_up.T).chunk(2, dim=-1)
+    return (torch.nn.functional.silu(gate) * up) @ down.T
+
+
+def qwen2_moe_mxfp4_moe_reference(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+    decode: Callable[[Tensor, str], Tensor],
+) -> Tensor:
+    """The router's experts (_router_logits, _routed) weighed and summed, each on its MXFP4
+    weights dequantized per 32 values and the unquantized input, plus the BF16 shared expert
+    weighed by sigmoid(hidden_states shared_gate_weight^T). Rounding point: the router's
+    logits alone (_router_logits)."""
+    import torch
+
+    def f(name: str, e: int | None = None) -> Tensor:
+        tensor = row_major_args[name]
+        return decode(tensor if e is None else tensor[e], point.dtypes[name])
+
+    def mxfp4(name: str, e: int) -> Tensor:
+        return f(name, e) * f(f"{name}_scale", e).repeat_interleave(_MXFP4_BLOCK, dim=-1)
+
+    x = f("hidden_states")
+    weights, ids = _routed(_router_logits(point, row_major_args, decode), point.attrs["topk"])
+    out = torch.zeros_like(x)
+    for e in ids.unique().tolist():
+        tokens, slots = (ids == e).nonzero(as_tuple=True)
+        routed = _silu_mlp(x[tokens], mxfp4("w1", e), mxfp4("w2", e))
+        out.index_add_(0, tokens, weights[tokens, slots, None] * routed)
+    shared_weight = (x @ f("shared_gate_weight")[0]).sigmoid()
+    return out + shared_weight[:, None] * _silu_mlp(x, f("shared_w1"), f("shared_w2"))
