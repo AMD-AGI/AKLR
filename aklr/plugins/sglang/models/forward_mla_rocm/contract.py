@@ -233,7 +233,7 @@ MLA_VC = OpContract(
             # same way); the sums are not: gfx950's fp8 MFMA adds a group's 128 products below
             # fp32 (see gemm's contract), an absolute error that shows where an output cancels
             # to near 0. Under absolute 2**-12, CI run 41962335788 (MI355X) failed 14 of 17
-            # kernels on it: 1 to 133 elements in 22 of 102 input sets (violation fraction
+            # kernels on it: 1 to 133 elements in 21 of 108 input sets (violation fraction
             # 3.8e-6 to 2.5e-4), peak 2.85x, unbiased. An MFMA keeping 14 bits below a group's
             # largest product reproduces that (21 to 30 of 108 simulated sets, peak 3.6x to
             # 4.4x) and stays under 2**-9 (peak 0.73x), where a code of 128 or more one fp8
