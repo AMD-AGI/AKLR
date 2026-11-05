@@ -39,6 +39,7 @@ __all__ = [
     "GEMM_A4W4_MXFP4",
     "GEMM_A8W8",
     "GEMM_A8W8_BLOCKWISE_SCALED",
+    "GEMM_A8W8_MXFP8",
 ]
 
 _Q8 = (DType.INT8, DType.FLOAT8_E4M3FN, DType.FLOAT8_E5M2)
@@ -298,6 +299,60 @@ GEMM_A8W8_BLOCKWISE_SCALED = OpContract(
 )
 
 
+GEMM_A8W8_MXFP8 = OpContract(
+    contract_id="gemm_a8w8_mxfp8@1.0",
+    description="mxfp8 gemm: (a * a_scale) @ (b * b_scale).T + bias, e8m0 scales per 32.",
+    op_type="gemm",
+    axes={
+        "m": _M,
+        "n": _N,
+        "k": _K,
+        "scale_columns": derived_axis("Scale columns.", "k // 32"),
+    },
+    attrs={
+        "trans_b": attr("b is (n, k).", True, default=True, param_name="trans_b"),
+        "has_bias": _HAS_BIAS,
+    },
+    inputs={
+        "a": TensorSpec(
+            description="Activations.",
+            shape=("m", "k"),
+            dtype=DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,)),
+            distribution=_FINITE_DISTRIBUTION,
+        ),
+        "b": TensorSpec(
+            description="Weights.",
+            shape=("n", "k"),
+            dtype=DTypeSpec(same_as_tensor="a"),
+            distribution=_FINITE_DISTRIBUTION,
+            lifetime="weight",
+        ),
+        "a_scale": TensorSpec(
+            description="Per 1 x 32 block of a.",
+            shape=("m", "scale_columns"),
+            dtype=_E8M0,
+            distribution=_E8M0_SCALE_DISTRIBUTION,
+        ),
+        "b_scale": TensorSpec(
+            description="Per 1 x 32 block of b.",
+            shape=("n", "scale_columns"),
+            dtype=_E8M0,
+            distribution=_E8M0_SCALE_DISTRIBUTION,
+            lifetime="weight",
+        ),
+        "bias": _bias("Added to every output row.", ("n",), _F32),
+    },
+    outputs=_out(
+        "a @ b.T, scaled.",
+        ("m", "n"),
+        any_of=_F16,
+        default=DType.BFLOAT16,
+        error_bounds=((None, _dot_k(max_split_k=1)),),
+    ),
+    layout_variants=_UNSHUFFLED_VARIANTS,
+)
+
+
 # aiter's scales come from dynamic_mxfp4_quant(shuffle=True): padded, then shuffled.
 _SHUFFLED_SCALES = E8M0Scales(block_size=32, pad_to=(256, 8), shuffled=True)
 
@@ -409,4 +464,4 @@ BMM = OpContract(
     layout_variants=_UNSHUFFLED_VARIANTS,
 )
 
-CONTRACTS = (GEMM, GEMM_A8W8, GEMM_A8W8_BLOCKWISE_SCALED, GEMM_A4W4_MXFP4, BMM)
+CONTRACTS = (GEMM, GEMM_A8W8, GEMM_A8W8_BLOCKWISE_SCALED, GEMM_A8W8_MXFP8, GEMM_A4W4_MXFP4, BMM)

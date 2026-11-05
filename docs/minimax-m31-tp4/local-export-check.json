@@ -1,0 +1,28 @@
+{
+  "command": [
+    "python3",
+    "-B",
+    "-m",
+    "aklr",
+    "export",
+    "check"
+  ],
+  "cwd": "/tmp/aklr-m31-intercept-20261105/AKLR",
+  "exit_code": 0,
+  "pydantic_version": "2.12.5",
+  "scope": "Production AKLR repository audit after installing the 10 generated definitions in the isolated checkout.",
+  "schemas": {
+    "fused_moe/impls/flydsl/fused_moe_swiglu_has_swiglu_limit_shuffled_16x16_model_dim6144_n_experts128_topk4_inter_dim768/9b4802c967de53f9.json": "ee1c0b0292a53eb066d65f57cba17787ed2047dda2ba8610296d7a9ce919bd99",
+    "gemm/impls/flydsl/gemm_n200064_k256/69cc30902c5b4f8a.json": "99857f0925889d74c9b6ed7762d45cd2da004d009535f891258878454c0998a3",
+    "gemm/impls/flydsl/gemm_n6144_k30720/be082e22c749d95f.json": "d977b6451eab68c15d7497386d8b3d0c7c0593f3134ed416c0e35fc6f39631a1",
+    "gemm/impls/flydsl/gemm_a8w8_mxfp8_n1280_k6144/e1964d79107fd6e4.json": "c1bc05f1abfe58c04d8a552f86b6de504c9b6935769573b4e1287d07bf0de0e5",
+    "gemm/impls/flydsl/gemm_a8w8_mxfp8_n1536_k6144/c72746d8aae22e24.json": "e31ed0811d713ae156999178f5926881fee8c737104ba9584c5e4094d67becb4",
+    "gemm/impls/flydsl/gemm_a8w8_mxfp8_n2560_k6144/b6ed977fd10e992b.json": "3a9ea2668b3fbf89b90830d310ca9bbc9519f37b6a043cc7c04dfbf126b46d53",
+    "gemm/impls/flydsl/gemm_a8w8_mxfp8_n6144_k2048/5895fc6d7c70a996.json": "56a7fce6dea2e2e2c1fb0d74f590906ac32ce5a3bd70019ca4ca479313fefc2b",
+    "gemm/impls/flydsl/gemm_a8w8_mxfp8_n6144_k3072/8c369b14abe6461e.json": "98b8235e7c9d73caa6400f53553a2a13af4342b9bc1707d02897e9eb79971c72",
+    "gemm/impls/flydsl/gemm_a8w8_mxfp8_n6144_k6144/117607496a05eeb8.json": "69cdef7bb16d8db06dbcd3614043111508ebd4a5a3f1c6a534a1442f43cd0b9d",
+    "gemm/impls/flydsl/gemm_a8w8_mxfp8_n6144_k768/daf9cc42dd4bc9e9.json": "9d88d77b1eed05630216a2618a3482d9817e01f27e38fe5a0b87d86313077b19"
+  },
+  "stdout": "",
+  "stderr": ""
+}

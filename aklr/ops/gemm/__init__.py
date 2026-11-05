@@ -7,6 +7,7 @@ from aklr.ops.gemm.api import (
     gemm_a4w4_mxfp4,
     gemm_a8w8,
     gemm_a8w8_blockwise_scaled,
+    gemm_a8w8_mxfp8,
 )
 
 __all__ = [
@@ -15,4 +16,5 @@ __all__ = [
     "gemm_a4w4_mxfp4",
     "gemm_a8w8",
     "gemm_a8w8_blockwise_scaled",
+    "gemm_a8w8_mxfp8",
 ]

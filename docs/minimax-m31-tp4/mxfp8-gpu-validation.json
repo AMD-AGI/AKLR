@@ -1,0 +1,5400 @@
+{
+  "evidence_version": 1,
+  "scope": "Mathematical validation of the existing pinned vLLM MXFP8 implementation; no new kernel or speedup measurement.",
+  "started_utc": "2026-11-05T10:37:54.646100+00:00",
+  "complete": true,
+  "all_passed": false,
+  "command": [
+    "/probe/schema_probe/validate_mxfp8_gpu.py"
+  ],
+  "script": {
+    "path": "/probe/schema_probe/validate_mxfp8_gpu.py",
+    "sha256": "5810999358a3a6781cb7af9d2d86eee5d2bce73b204182ac3462adf9466cea9d"
+  },
+  "hostname": "cv350-rck-g03-e18-18.rck.dcgpu",
+  "platform": "Linux-6.9.0-0_fbk12_brcmrdma24_192_g70625a3a35e9-x86_64-with-glibc2.35",
+  "versions": {
+    "torch": "2.13.0+rocm10.0.0",
+    "triton": "3.8.0+git669b31ac",
+    "vllm": "0.32.0rc1.dev364+g8d0f05a0c.d20261023.rocm100",
+    "aklr": "0.1.dev0+g0f2036bc",
+    "pydantic": "2.14.1"
+  },
+  "torch_hip_version": "7.15.26333",
+  "aklr_git_head": null,
+  "sources": {
+    "contract": {
+      "path": "/aklr/aklr/ops/gemm/contract.py",
+      "sha256": "12d71b71d1958c1622b660eab0c1292079afc8aa7c2ccdd172286bd46fee4c88"
+    },
+    "reference": {
+      "function": "aklr.ops.gemm.reference.gemm_a8w8_mxfp8_reference",
+      "path": "/aklr/aklr/ops/gemm/reference.py",
+      "line": 105,
+      "sha256": "60cb98129f4080b0709d3b2b890f49f6ec9293a390fd39003317b0985f3d3ada"
+    },
+    "comparison": {
+      "function": "aklr.core.contract.semantics._compare.compare_outputs",
+      "path": "/aklr/aklr/core/contract/semantics/_compare.py",
+      "line": 95,
+      "sha256": "543fb924b264c9386e15be3e954bf8670065238bc72d4dc25c0cb30bdf09b223"
+    },
+    "decoding": {
+      "function": "aklr.core.contract.semantics._dtypes.to_float64",
+      "path": "/aklr/aklr/core/contract/semantics/_dtypes.py",
+      "line": 92,
+      "sha256": "0bdf89a8dd990767d00bfa454af873c586805f7cef6323f5a36e31482a7a89b4"
+    },
+    "backend": {
+      "function": "vllm.model_executor.kernels.linear.mxfp8.rocm_native._mxfp8_dot_scaled_gemm",
+      "path": "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mxfp8/rocm_native.py",
+      "line": 94,
+      "sha256": "aae572bf7ac7235d0c22b8a80adbd9c4a6af73b5437120d2cad39c36b4c2a9e9"
+    },
+    "quantizer": {
+      "function": "vllm.model_executor.layers.quantization.utils.mxfp8_utils.mxfp8_e4m3_quantize",
+      "path": "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/utils/mxfp8_utils.py",
+      "line": 224,
+      "sha256": "82a1a2f893b0d9d9e60297098d35a25f9cd41a526b1ef6076cfb35a2c63c149e"
+    }
+  },
+  "device": {
+    "name": "AMD Instinct MI350X",
+    "arch": "gfx950:sramecc+:xnack-",
+    "total_memory_bytes": 309220868096,
+    "uuid": "30663639-3265-6332-6466-306632333837",
+    "HIP_VISIBLE_DEVICES": "4",
+    "logical_device": "cuda:0",
+    "visible_device_count": 1
+  },
+  "input_recipe": {
+    "source": "Seeded FP32 Gaussian, scaled by per-row/per-32-block powers of two, rounded to BF16, then vLLM MXFP8 quantization.",
+    "block_exponent": "((5*row + 3*block + seed%11)%11)-5",
+    "a_normalization": 1.0,
+    "b_normalization": "1/sqrt(K)",
+    "reference_operands": "Quantized E4M3 values multiplied by decoded per-32 E8M0 scales in float64."
+  },
+  "planned_shapes_n_k": [
+    [
+      1536,
+      6144
+    ],
+    [
+      6144,
+      768
+    ],
+    [
+      6144,
+      6144
+    ],
+    [
+      6144,
+      3072
+    ],
+    [
+      2560,
+      6144
+    ],
+    [
+      6144,
+      2048
+    ]
+  ],
+  "planned_m_values": [
+    1,
+    32,
+    37,
+    256,
+    4096
+  ],
+  "planned_case_count": 30,
+  "output_dtype": "bfloat16",
+  "repeat_count": 3,
+  "cases": [
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 1,
+          "n": 1536,
+          "k": 6144
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20451582,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          1,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "8e63d5864b67ef7e540b41997d5871bac8d4d8bb531cb8c77ca75ba59b6dab65",
+        "scales_shape": [
+          1,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "7c1f6283ad0d181f097c953faa4c4a13addd7152971ae6cc5dce2ea42b4a9bb0",
+        "positive_values": 3004,
+        "negative_values": 3140,
+        "zero_values": 0,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": null
+      },
+      "b": {
+        "seed": 21293364,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.012757759076995721,
+        "values_shape": [
+          1536,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "447cd48add248f34dc4d2fc015a2de6c0dad5b9757d988a2fb97a48a303a04d3",
+        "scales_shape": [
+          1536,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "87a4740692f2ba0184fe53a146ad78e102af11a3c1c389c0acf1c6971d81ab3d",
+        "positive_values": 4719873,
+        "negative_values": 4717244,
+        "zero_values": 67,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        16,
+        16,
+        1024,
+        2,
+        3
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n1536_k6144",
+      "comparison_schema_sha256": "eee56262e1ffb28929f9227c42a4015c8055c3afc3531c55ee268984f2d302ec",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 6144,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.015797232116943196,
+      "allowed_absolute_error_max": 4.118588487709281,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8661711250120179,
+          "bias_z_score": 0.01122289758395178,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8661711250120179,
+          "bias_z_score": 0.01122289758395178,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8661711250120179,
+          "bias_z_score": 0.01122289758395178,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 1.9775840424699709,
+      "relative_l2_error": 0.0017202174764793172,
+      "rounded_reference_equal_fraction": 0.9889322916666666,
+      "output_sha256": "0ef7bcec80220cf7e520970e5cda7179089a04f4dcd2c00a9c6e5e99ba1fc007",
+      "elapsed_seconds_including_reference_and_compilation": 1.2144450380001217
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 32,
+          "n": 1536,
+          "k": 6144
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20451985,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          32,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "9c124f62c3c92fac539ead9479596438f0f0de0bfb49dacc5b51d1853f1e9cd4",
+        "scales_shape": [
+          32,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "d5f9be0281361c41c9bc3a1b1bd02483ee1fd729c9fe142acc80456ee1ea14f5",
+        "positive_values": 98541,
+        "negative_values": 98067,
+        "zero_values": 0,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21293364,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.012757759076995721,
+        "values_shape": [
+          1536,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "447cd48add248f34dc4d2fc015a2de6c0dad5b9757d988a2fb97a48a303a04d3",
+        "scales_shape": [
+          1536,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "87a4740692f2ba0184fe53a146ad78e102af11a3c1c389c0acf1c6971d81ab3d",
+        "positive_values": 4719873,
+        "negative_values": 4717244,
+        "zero_values": 67,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        16,
+        16,
+        1024,
+        2,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n1536_k6144",
+      "comparison_schema_sha256": "931292cdef4a79d4576e2c533d709fb8d33ef2ecd10a1279cc95e32799a8ad19",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 6144,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.015233266561204217,
+      "allowed_absolute_error_max": 4.775138172924491,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8614685934661285,
+          "bias_z_score": 0.005807041394860383,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8614685934661285,
+          "bias_z_score": 0.005807041394860383,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8614685934661285,
+          "bias_z_score": 0.005807041394860383,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 2.000970977685938,
+      "relative_l2_error": 0.0016267249851571813,
+      "rounded_reference_equal_fraction": 0.9875895182291666,
+      "output_sha256": "6333fa49f17f6a2e3d9caf1bfefd926255963e260141d317f3960ce597b74b8f",
+      "elapsed_seconds_including_reference_and_compilation": 0.008697587996721268
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 37,
+          "n": 1536,
+          "k": 6144
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20452050,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          37,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "e56c63d525b59a0f9b17fcff1d303a60742afb922284fe8be5f691d9135fc7a3",
+        "scales_shape": [
+          37,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "277b4391604fa0836c88b33f89aeae27c875010e9118269f3280d385554e09fb",
+        "positive_values": 113886,
+        "negative_values": 113441,
+        "zero_values": 1,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21293364,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.012757759076995721,
+        "values_shape": [
+          1536,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "447cd48add248f34dc4d2fc015a2de6c0dad5b9757d988a2fb97a48a303a04d3",
+        "scales_shape": [
+          1536,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "87a4740692f2ba0184fe53a146ad78e102af11a3c1c389c0acf1c6971d81ab3d",
+        "positive_values": 4719873,
+        "negative_values": 4717244,
+        "zero_values": 67,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        16,
+        16,
+        1024,
+        2,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n1536_k6144",
+      "comparison_schema_sha256": "8c4fc7c8e6d6219e1ec2ce4ed51ecd8b82604fc214ab99ed3a3905fe29976f87",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 6144,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.015297690891551266,
+      "allowed_absolute_error_max": 4.915166822450709,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9169766385825764,
+          "bias_z_score": 0.0003568387472693615,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9169766385825764,
+          "bias_z_score": 0.0003568387472693615,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9169766385825764,
+          "bias_z_score": 0.0003568387472693615,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 2.5115808301925426,
+      "relative_l2_error": 0.0016627106102767124,
+      "rounded_reference_equal_fraction": 0.9890202702702703,
+      "output_sha256": "7473da67314150c8f3d379ae3dce04c9bbe1d71107dcf7716ee3dca097562ede",
+      "elapsed_seconds_including_reference_and_compilation": 0.0089391830842942
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 256,
+          "n": 1536,
+          "k": 6144
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20454897,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          256,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "7054e973a5875027496c63f4c824173025996ca4c06156671af17ba3d6db7d07",
+        "scales_shape": [
+          256,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "4073e5ac1bd67759e7fb65ae1be0b800a38bc8b075bf8ac2d6fa0af973041823",
+        "positive_values": 786869,
+        "negative_values": 785985,
+        "zero_values": 10,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21293364,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.012757759076995721,
+        "values_shape": [
+          1536,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "447cd48add248f34dc4d2fc015a2de6c0dad5b9757d988a2fb97a48a303a04d3",
+        "scales_shape": [
+          1536,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "87a4740692f2ba0184fe53a146ad78e102af11a3c1c389c0acf1c6971d81ab3d",
+        "positive_values": 4719873,
+        "negative_values": 4717244,
+        "zero_values": 67,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        64,
+        64,
+        512,
+        8,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n1536_k6144",
+      "comparison_schema_sha256": "11550bb785068df57ffaa7aa845edb7ae6e7a4801276e8fefa41d0138610e897",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 6144,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.015073050174924224,
+      "allowed_absolute_error_max": 5.1094732106173035,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9056728855882109,
+          "bias_z_score": 0.0004148136124127492,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9056728855882109,
+          "bias_z_score": 0.0004148136124127492,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9056728855882109,
+          "bias_z_score": 0.0004148136124127492,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 3.9735466906568035,
+      "relative_l2_error": 0.0016665327846045713,
+      "rounded_reference_equal_fraction": 0.9884236653645833,
+      "output_sha256": "1d65d34215cd1c11fc8b9c9ba2022fec9ab6e9824489793c2f269dd42cf5326c",
+      "elapsed_seconds_including_reference_and_compilation": 0.008167015155777335
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 4096,
+          "n": 1536,
+          "k": 6144
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20504817,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          4096,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "1090615f5a543048c0f0ea376389df0cc42af9d047622c7440d426c742064a2a",
+        "scales_shape": [
+          4096,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "98fd654398d539503e5841c6f2b2073cbdf3cc34b8e892a09c0af94abae52eaa",
+        "positive_values": 12583720,
+        "negative_values": 12581954,
+        "zero_values": 150,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21293364,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.012757759076995721,
+        "values_shape": [
+          1536,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "447cd48add248f34dc4d2fc015a2de6c0dad5b9757d988a2fb97a48a303a04d3",
+        "scales_shape": [
+          1536,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "87a4740692f2ba0184fe53a146ad78e102af11a3c1c389c0acf1c6971d81ab3d",
+        "positive_values": 4719873,
+        "negative_values": 4717244,
+        "zero_values": 67,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        128,
+        128,
+        256,
+        8,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n1536_k6144",
+      "comparison_schema_sha256": "601d085678cada8b574a09c549c1b8d56b9413d333cf781072def7f001e81ca2",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 6144,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.01471551065459799,
+      "allowed_absolute_error_max": 6.544740228362181,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9180185065180174,
+          "bias_z_score": 0.0002598037480281032,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9180185065180174,
+          "bias_z_score": 0.0002598037480281032,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9180185065180174,
+          "bias_z_score": 0.0002598037480281032,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 4.002804515796015,
+      "relative_l2_error": 0.0016592047065463172,
+      "rounded_reference_equal_fraction": 0.9884894688924153,
+      "output_sha256": "b730f3e8c90ab1ac758e80001288cfe7cd9691775a8a567b10e5dc646a57219c",
+      "elapsed_seconds_including_reference_and_compilation": 0.04886947711929679
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 1,
+          "n": 6144,
+          "k": 768
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20284926,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          1,
+          768
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          768,
+          1
+        ],
+        "values_sha256": "5f921b0ea663e530bedd4006216f055d6731a2c9b022473407c3b6c90714ee7d",
+        "scales_shape": [
+          1,
+          24
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          24,
+          1
+        ],
+        "scales_sha256": "ba2f072de5613ab23809dd86aad7c3ca7ccac0fc32a7ac745844fbc3a2ef9ffa",
+        "positive_values": 390,
+        "negative_values": 378,
+        "zero_values": 0,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": null
+      },
+      "b": {
+        "seed": 21366324,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.036084391824351615,
+        "values_shape": [
+          6144,
+          768
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          768,
+          1
+        ],
+        "values_sha256": "40094c306ac0f609b154e582b000afebda3e099827c771b82a8e02dfcd69f51b",
+        "scales_shape": [
+          6144,
+          24
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          24,
+          1
+        ],
+        "scales_sha256": "0d3a59ad2b1b9776124b1b6b5c9d328ae7028b14fc3d0fa66b7ffeeaa4c35d2c",
+        "positive_values": 2360628,
+        "negative_values": 2357937,
+        "zero_values": 27,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        16,
+        16,
+        256,
+        2,
+        3
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k768",
+      "comparison_schema_sha256": "97ab996ea36d8d2939b032f5b0736e4b5933a7299bc251f82d6448ea46c333eb",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 768,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.002114832294704855,
+      "allowed_absolute_error_max": 3.5528519110360213,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9537958170250503,
+          "bias_z_score": 0.00354930435841986,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9537958170250503,
+          "bias_z_score": 0.00354930435841986,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9537958170250503,
+          "bias_z_score": 0.00354930435841986,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 1.9221443608403206,
+      "relative_l2_error": 0.001675658084895119,
+      "rounded_reference_equal_fraction": 0.9928385416666666,
+      "output_sha256": "2a73e3994ee4d8314c7dcc53ae0985848c5f96833ab9fb030d95d2e17a8fb981",
+      "elapsed_seconds_including_reference_and_compilation": 0.013303504092618823
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 32,
+          "n": 6144,
+          "k": 768
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20285329,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          32,
+          768
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          768,
+          1
+        ],
+        "values_sha256": "8dcf850c1b48c556f9733d79eceaa699823c0f97ab703dda697c58e32964433c",
+        "scales_shape": [
+          32,
+          24
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          24,
+          1
+        ],
+        "scales_sha256": "206df7266f933a62f82a955795f23380f363563e6be7415a91d9c0bc15c42bdb",
+        "positive_values": 12238,
+        "negative_values": 12338,
+        "zero_values": 0,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21366324,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.036084391824351615,
+        "values_shape": [
+          6144,
+          768
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          768,
+          1
+        ],
+        "values_sha256": "40094c306ac0f609b154e582b000afebda3e099827c771b82a8e02dfcd69f51b",
+        "scales_shape": [
+          6144,
+          24
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          24,
+          1
+        ],
+        "scales_sha256": "0d3a59ad2b1b9776124b1b6b5c9d328ae7028b14fc3d0fa66b7ffeeaa4c35d2c",
+        "positive_values": 2360628,
+        "negative_values": 2357937,
+        "zero_values": 27,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        16,
+        32,
+        256,
+        4,
+        3
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k768",
+      "comparison_schema_sha256": "4c2212838d400f101b72dfc7a60eb0974aac6c56e77e8e9501c2ec7788647697",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 768,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.0016235064799706306,
+      "allowed_absolute_error_max": 5.2058649800299115,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9754295884919089,
+          "bias_z_score": 0.002332871915474224,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9754295884919089,
+          "bias_z_score": 0.002332871915474224,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9754295884919089,
+          "bias_z_score": 0.002332871915474224,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 3.9806014765053988,
+      "relative_l2_error": 0.0016463980478638727,
+      "rounded_reference_equal_fraction": 0.9903004964192708,
+      "output_sha256": "f1671c72745cbeaffe6ed79a8859119a3b2c873fb1151c8b4ad23cf48d7a63f9",
+      "elapsed_seconds_including_reference_and_compilation": 0.00658806599676609
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 37,
+          "n": 6144,
+          "k": 768
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20285394,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          37,
+          768
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          768,
+          1
+        ],
+        "values_sha256": "1188af6ebeac2e56000007610b005823893ddee4dd09825790899f3e1ef94f78",
+        "scales_shape": [
+          37,
+          24
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          24,
+          1
+        ],
+        "scales_sha256": "e7f8617cd8587fa44e963d368d12c0b342dc3d3355add01344c474095e6f610a",
+        "positive_values": 14123,
+        "negative_values": 14293,
+        "zero_values": 0,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21366324,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.036084391824351615,
+        "values_shape": [
+          6144,
+          768
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          768,
+          1
+        ],
+        "values_sha256": "40094c306ac0f609b154e582b000afebda3e099827c771b82a8e02dfcd69f51b",
+        "scales_shape": [
+          6144,
+          24
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          24,
+          1
+        ],
+        "scales_sha256": "0d3a59ad2b1b9776124b1b6b5c9d328ae7028b14fc3d0fa66b7ffeeaa4c35d2c",
+        "positive_values": 2360628,
+        "negative_values": 2357937,
+        "zero_values": 27,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        16,
+        32,
+        256,
+        4,
+        3
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k768",
+      "comparison_schema_sha256": "2c3b482e4f87ac6b076cb4315db7ad33d1b97e88a531df56d35ad15fc0443edb",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 768,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.0016676576948691068,
+      "allowed_absolute_error_max": 7.096002759737717,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9761052804675195,
+          "bias_z_score": 0.0019848404022669284,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9761052804675195,
+          "bias_z_score": 0.0019848404022669284,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9761052804675195,
+          "bias_z_score": 0.0019848404022669284,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 4.002196876099333,
+      "relative_l2_error": 0.0016766136267783512,
+      "rounded_reference_equal_fraction": 0.9903179546734234,
+      "output_sha256": "d1d009d1719639fd6722818470b9509bed663fc2078b9611624579961e848207",
+      "elapsed_seconds_including_reference_and_compilation": 0.008126453030854464
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 256,
+          "n": 6144,
+          "k": 768
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20288241,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          256,
+          768
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          768,
+          1
+        ],
+        "values_sha256": "ba679339b81bd4c7a994609aa0740279d3308907cc94f223e6f3413f2dadfe42",
+        "scales_shape": [
+          256,
+          24
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          24,
+          1
+        ],
+        "scales_sha256": "cb669787bd85e33b7e64ff113f3d8cb99ed370512e22baff3950d8434f8d3dd2",
+        "positive_values": 98146,
+        "negative_values": 98461,
+        "zero_values": 1,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21366324,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.036084391824351615,
+        "values_shape": [
+          6144,
+          768
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          768,
+          1
+        ],
+        "values_sha256": "40094c306ac0f609b154e582b000afebda3e099827c771b82a8e02dfcd69f51b",
+        "scales_shape": [
+          6144,
+          24
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          24,
+          1
+        ],
+        "scales_sha256": "0d3a59ad2b1b9776124b1b6b5c9d328ae7028b14fc3d0fa66b7ffeeaa4c35d2c",
+        "positive_values": 2360628,
+        "negative_values": 2357937,
+        "zero_values": 27,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        64,
+        64,
+        256,
+        8,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k768",
+      "comparison_schema_sha256": "6b3adc874a57ae19e502b5f7943686946135f1bc0f2dbdfdb2e30c3a947c204a",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 768,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.0015615173181734473,
+      "allowed_absolute_error_max": 6.019108811829026,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9768364295281915,
+          "bias_z_score": 0.0011200296406755994,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9768364295281915,
+          "bias_z_score": 0.0011200296406755994,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9768364295281915,
+          "bias_z_score": 0.0011200296406755994,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 3.97699411585927,
+      "relative_l2_error": 0.0016601357809827657,
+      "rounded_reference_equal_fraction": 0.9901231129964192,
+      "output_sha256": "9607fcbb0e495147d07ad454b92bceee058706a847bca0f2a37d86dd5cbc8eaa",
+      "elapsed_seconds_including_reference_and_compilation": 0.009149530902504921
+    },
+    {
+      "status": "failed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 4096,
+          "n": 6144,
+          "k": 768
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20338161,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          4096,
+          768
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          768,
+          1
+        ],
+        "values_sha256": "bcef5371e76537ac9cbcbff2006e8298605e13a74e5312c65de68c80cf032e0e",
+        "scales_shape": [
+          4096,
+          24
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          24,
+          1
+        ],
+        "scales_sha256": "fd0d552998916e8a59cf07f59554760ce08156a229049a4af46cb11517a28718",
+        "positive_values": 1573440,
+        "negative_values": 1572266,
+        "zero_values": 22,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21366324,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.036084391824351615,
+        "values_shape": [
+          6144,
+          768
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          768,
+          1
+        ],
+        "values_sha256": "40094c306ac0f609b154e582b000afebda3e099827c771b82a8e02dfcd69f51b",
+        "scales_shape": [
+          6144,
+          24
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          24,
+          1
+        ],
+        "scales_sha256": "0d3a59ad2b1b9776124b1b6b5c9d328ae7028b14fc3d0fa66b7ffeeaa4c35d2c",
+        "positive_values": 2360628,
+        "negative_values": 2357937,
+        "zero_values": 27,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        128,
+        128,
+        128,
+        8,
+        3
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k768",
+      "comparison_schema_sha256": "db030d1fa6bb965b0a7fd9ac52cdfbc453f12f4ecab1dc6093bd94f8d2a164b0",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 768,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.0014104069386634188,
+      "allowed_absolute_error_max": 7.195703344828085,
+      "comparisons": [
+        {
+          "is_passed": false,
+          "is_bound_exceeded": true,
+          "violation_fraction": 7.947285970052083e-08,
+          "peak_bound_multiple": 1.0332424649496745,
+          "bias_z_score": 0.00012422609018909376,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": false,
+          "is_bound_exceeded": true,
+          "violation_fraction": 7.947285970052083e-08,
+          "peak_bound_multiple": 1.0332424649496745,
+          "bias_z_score": 0.00012422609018909376,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": false,
+          "is_bound_exceeded": true,
+          "violation_fraction": 7.947285970052083e-08,
+          "peak_bound_multiple": 1.0332424649496745,
+          "bias_z_score": 0.00012422609018909376,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 4.007600041106343,
+      "relative_l2_error": 0.00165995788295165,
+      "rounded_reference_equal_fraction": 0.9900641441345215,
+      "output_sha256": "410ecccc2dd55930de71894af806acffe98f32ab4f23f23aab26cec863ea4b4e",
+      "elapsed_seconds_including_reference_and_compilation": 0.06716197007335722
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 1,
+          "n": 6144,
+          "k": 6144
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20451582,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          1,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "8e63d5864b67ef7e540b41997d5871bac8d4d8bb531cb8c77ca75ba59b6dab65",
+        "scales_shape": [
+          1,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "7c1f6283ad0d181f097c953faa4c4a13addd7152971ae6cc5dce2ea42b4a9bb0",
+        "positive_values": 3004,
+        "negative_values": 3140,
+        "zero_values": 0,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": null
+      },
+      "b": {
+        "seed": 21371700,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.012757759076995721,
+        "values_shape": [
+          6144,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "19c975f5f3b32b3c62b7fc0bb951eb03a53099581490d3a65ef046d989f12d93",
+        "scales_shape": [
+          6144,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "9f818754d225a8e6c4493e15090c38456a5612132d7259414f93c89c6d886c9d",
+        "positive_values": 18873250,
+        "negative_values": 18875263,
+        "zero_values": 223,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        16,
+        16,
+        1024,
+        2,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k6144",
+      "comparison_schema_sha256": "16d7aee3d3a3c805986fdf1c0ca6d8b04116d42da1a96a0f63b23173b0db3b6f",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 6144,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.015257155743638288,
+      "allowed_absolute_error_max": 4.503238481856147,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8152758970325229,
+          "bias_z_score": 0.02296206594375058,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8152758970325229,
+          "bias_z_score": 0.02296206594375058,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8152758970325229,
+          "bias_z_score": 0.02296206594375058,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 3.6311358278617263,
+      "relative_l2_error": 0.0016033935596519394,
+      "rounded_reference_equal_fraction": 0.9879557291666666,
+      "output_sha256": "2e27a88bb9980654940907807ccfa6c50cc11e7f8bc1b72ccd1baedac82f88f1",
+      "elapsed_seconds_including_reference_and_compilation": 0.04158253478817642
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 32,
+          "n": 6144,
+          "k": 6144
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20451985,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          32,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "9c124f62c3c92fac539ead9479596438f0f0de0bfb49dacc5b51d1853f1e9cd4",
+        "scales_shape": [
+          32,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "d5f9be0281361c41c9bc3a1b1bd02483ee1fd729c9fe142acc80456ee1ea14f5",
+        "positive_values": 98541,
+        "negative_values": 98067,
+        "zero_values": 0,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21371700,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.012757759076995721,
+        "values_shape": [
+          6144,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "19c975f5f3b32b3c62b7fc0bb951eb03a53099581490d3a65ef046d989f12d93",
+        "scales_shape": [
+          6144,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "9f818754d225a8e6c4493e15090c38456a5612132d7259414f93c89c6d886c9d",
+        "positive_values": 18873250,
+        "negative_values": 18875263,
+        "zero_values": 223,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        16,
+        16,
+        1024,
+        2,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k6144",
+      "comparison_schema_sha256": "72adc3ec0e7b67fa67e27dd451dd183953d5f7b4b257d5af3067fcbbea4d7d27",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 6144,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.0148608907179488,
+      "allowed_absolute_error_max": 5.6676428176491465,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8485545426023189,
+          "bias_z_score": 0.0005208924120441104,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8485545426023189,
+          "bias_z_score": 0.0005208924120441104,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8485545426023189,
+          "bias_z_score": 0.0005208924120441104,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 3.7262754898692947,
+      "relative_l2_error": 0.001659622096108226,
+      "rounded_reference_equal_fraction": 0.9884389241536458,
+      "output_sha256": "dab7bb7e13877cd48ef5b410da0ba40aa417997b49d9c3091991769290a23d6e",
+      "elapsed_seconds_including_reference_and_compilation": 0.008261146955192089
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 37,
+          "n": 6144,
+          "k": 6144
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20452050,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          37,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "e56c63d525b59a0f9b17fcff1d303a60742afb922284fe8be5f691d9135fc7a3",
+        "scales_shape": [
+          37,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "277b4391604fa0836c88b33f89aeae27c875010e9118269f3280d385554e09fb",
+        "positive_values": 113886,
+        "negative_values": 113441,
+        "zero_values": 1,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21371700,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.012757759076995721,
+        "values_shape": [
+          6144,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "19c975f5f3b32b3c62b7fc0bb951eb03a53099581490d3a65ef046d989f12d93",
+        "scales_shape": [
+          6144,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "9f818754d225a8e6c4493e15090c38456a5612132d7259414f93c89c6d886c9d",
+        "positive_values": 18873250,
+        "negative_values": 18875263,
+        "zero_values": 223,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        16,
+        16,
+        1024,
+        2,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k6144",
+      "comparison_schema_sha256": "2ef562a8ebf179f5d253017365fcc60eeeddfe3551adaac017de512705a9fc1c",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 6144,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.01515815870396148,
+      "allowed_absolute_error_max": 6.072661879506104,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8772955194586299,
+          "bias_z_score": 0.001085807925726028,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8772955194586299,
+          "bias_z_score": 0.001085807925726028,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8772955194586299,
+          "bias_z_score": 0.001085807925726028,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 3.857886221987428,
+      "relative_l2_error": 0.0016567741376984427,
+      "rounded_reference_equal_fraction": 0.988549584740991,
+      "output_sha256": "552dd047bea279d8931c06f8286469d3d81232580a8e65e9c809527078fb8382",
+      "elapsed_seconds_including_reference_and_compilation": 0.00841558095999062
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 256,
+          "n": 6144,
+          "k": 6144
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20454897,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          256,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "7054e973a5875027496c63f4c824173025996ca4c06156671af17ba3d6db7d07",
+        "scales_shape": [
+          256,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "4073e5ac1bd67759e7fb65ae1be0b800a38bc8b075bf8ac2d6fa0af973041823",
+        "positive_values": 786869,
+        "negative_values": 785985,
+        "zero_values": 10,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21371700,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.012757759076995721,
+        "values_shape": [
+          6144,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "19c975f5f3b32b3c62b7fc0bb951eb03a53099581490d3a65ef046d989f12d93",
+        "scales_shape": [
+          6144,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "9f818754d225a8e6c4493e15090c38456a5612132d7259414f93c89c6d886c9d",
+        "positive_values": 18873250,
+        "negative_values": 18875263,
+        "zero_values": 223,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        64,
+        64,
+        512,
+        8,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k6144",
+      "comparison_schema_sha256": "b43374606b9606b6527d2eb212002c334341e7c070afd552018635a48270b4fe",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 6144,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.014612697811373811,
+      "allowed_absolute_error_max": 7.057559226827774,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9091195645046231,
+          "bias_z_score": 0.001457290958815265,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9091195645046231,
+          "bias_z_score": 0.001457290958815265,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9091195645046231,
+          "bias_z_score": 0.001457290958815265,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 3.9982884666824248,
+      "relative_l2_error": 0.0016578329098274845,
+      "rounded_reference_equal_fraction": 0.9886105855305989,
+      "output_sha256": "f4063f412794e266711f8c99796a0d7d64bf5160c2ebbd3656f2888120a3c169",
+      "elapsed_seconds_including_reference_and_compilation": 0.010732335969805717
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 4096,
+          "n": 6144,
+          "k": 6144
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20504817,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          4096,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "1090615f5a543048c0f0ea376389df0cc42af9d047622c7440d426c742064a2a",
+        "scales_shape": [
+          4096,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "98fd654398d539503e5841c6f2b2073cbdf3cc34b8e892a09c0af94abae52eaa",
+        "positive_values": 12583720,
+        "negative_values": 12581954,
+        "zero_values": 150,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21371700,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.012757759076995721,
+        "values_shape": [
+          6144,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "19c975f5f3b32b3c62b7fc0bb951eb03a53099581490d3a65ef046d989f12d93",
+        "scales_shape": [
+          6144,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "9f818754d225a8e6c4493e15090c38456a5612132d7259414f93c89c6d886c9d",
+        "positive_values": 18873250,
+        "negative_values": 18875263,
+        "zero_values": 223,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          107,
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        128,
+        128,
+        256,
+        8,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k6144",
+      "comparison_schema_sha256": "102ea34b1e3c778f81b7aeebe6813635cfbfdc79e3487c81a90e59623ec86b09",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 6144,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.014483151738643313,
+      "allowed_absolute_error_max": 6.938679923385117,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9173394439799145,
+          "bias_z_score": 7.459175519348726e-05,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9173394439799145,
+          "bias_z_score": 7.459175519348726e-05,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9173394439799145,
+          "bias_z_score": 7.459175519348726e-05,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 4.006814995285822,
+      "relative_l2_error": 0.0016579824722636049,
+      "rounded_reference_equal_fraction": 0.9884570042292277,
+      "output_sha256": "abf67b15ad0ec51ea7ca9b1d51fd4478ad3b05d4448bd2f13abe5117da48daa3",
+      "elapsed_seconds_including_reference_and_compilation": 0.09404678014107049
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 1,
+          "n": 6144,
+          "k": 3072
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20356350,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          1,
+          3072
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          3072,
+          1
+        ],
+        "values_sha256": "8c40d33c7e8f66484bc0bc10f7f7074494668ab0944c7f4b2f0f591172a75288",
+        "scales_shape": [
+          1,
+          96
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          96,
+          1
+        ],
+        "scales_sha256": "c400887e086a94ee8eed0ed17005dbf2feb0d49920635e07f3cdf17038fdd9aa",
+        "positive_values": 1488,
+        "negative_values": 1584,
+        "zero_values": 0,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": null
+      },
+      "b": {
+        "seed": 21368628,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.018042195912175808,
+        "values_shape": [
+          6144,
+          3072
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          3072,
+          1
+        ],
+        "values_sha256": "3da290feff83cddb882dd9a82a8ba896da36085c14128f6ba323af0ae2666f1d",
+        "scales_shape": [
+          6144,
+          96
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          96,
+          1
+        ],
+        "scales_sha256": "61e9330697b3c9abb4b1cc1ede9a54d5085fc90e8508de6c04d515a46bf4bce6",
+        "positive_values": 9437368,
+        "negative_values": 9436875,
+        "zero_values": 125,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        16,
+        16,
+        1024,
+        2,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k3072",
+      "comparison_schema_sha256": "98c96958d447569074cd2e777aab6f8dd9b5a9413574a31be0da3e9ff75fd2ae",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 3072,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.007502197013581904,
+      "allowed_absolute_error_max": 4.960786439202271,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9384334672996227,
+          "bias_z_score": 0.011448711325424509,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9384334672996227,
+          "bias_z_score": 0.011448711325424509,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9384334672996227,
+          "bias_z_score": 0.011448711325424509,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 3.327372724597808,
+      "relative_l2_error": 0.0016705599588610416,
+      "rounded_reference_equal_fraction": 0.98779296875,
+      "output_sha256": "023f8b5854943d18c32a7cd237005f5265785b4304e72b30939a39f42efd7af5",
+      "elapsed_seconds_including_reference_and_compilation": 0.026559378020465374
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 32,
+          "n": 6144,
+          "k": 3072
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20356753,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          32,
+          3072
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          3072,
+          1
+        ],
+        "values_sha256": "6d43013d166e19087478eadd671c53234ed04789ec45431681e3de3da1ea0f2a",
+        "scales_shape": [
+          32,
+          96
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          96,
+          1
+        ],
+        "scales_sha256": "cb61d634e4b7b35d89ddd46f2e9e76bc9fc0930406449765e6d7c9f3c9addca3",
+        "positive_values": 49253,
+        "negative_values": 49050,
+        "zero_values": 1,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21368628,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.018042195912175808,
+        "values_shape": [
+          6144,
+          3072
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          3072,
+          1
+        ],
+        "values_sha256": "3da290feff83cddb882dd9a82a8ba896da36085c14128f6ba323af0ae2666f1d",
+        "scales_shape": [
+          6144,
+          96
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          96,
+          1
+        ],
+        "scales_sha256": "61e9330697b3c9abb4b1cc1ede9a54d5085fc90e8508de6c04d515a46bf4bce6",
+        "positive_values": 9437368,
+        "negative_values": 9436875,
+        "zero_values": 125,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        16,
+        16,
+        1024,
+        2,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k3072",
+      "comparison_schema_sha256": "6f110631dd703dcfac97654b1da63bb0beccbb2bf54b1cfdb684e3b846d8ed4b",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 3072,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.007372748394897892,
+      "allowed_absolute_error_max": 5.428816291139799,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9474075420010125,
+          "bias_z_score": 0.004638047693211143,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9474075420010125,
+          "bias_z_score": 0.004638047693211143,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9474075420010125,
+          "bias_z_score": 0.004638047693211143,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 3.7389583298681828,
+      "relative_l2_error": 0.0016664931702124045,
+      "rounded_reference_equal_fraction": 0.989227294921875,
+      "output_sha256": "d065038695d1416dac3ba38c2e7ac5410e3938a143c3d33ead543527559d399e",
+      "elapsed_seconds_including_reference_and_compilation": 0.009532178984954953
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 37,
+          "n": 6144,
+          "k": 3072
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20356818,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          37,
+          3072
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          3072,
+          1
+        ],
+        "values_sha256": "ceaeea839ce9320ec441ddc7c9b189f5f714928e90bd79e73a6ea607c68fa93b",
+        "scales_shape": [
+          37,
+          96
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          96,
+          1
+        ],
+        "scales_sha256": "d408c916105dec37c422ae9652afe91183cc1f9b976696d6c73f7aefc065fa97",
+        "positive_values": 56697,
+        "negative_values": 56967,
+        "zero_values": 0,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21368628,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.018042195912175808,
+        "values_shape": [
+          6144,
+          3072
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          3072,
+          1
+        ],
+        "values_sha256": "3da290feff83cddb882dd9a82a8ba896da36085c14128f6ba323af0ae2666f1d",
+        "scales_shape": [
+          6144,
+          96
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          96,
+          1
+        ],
+        "scales_sha256": "61e9330697b3c9abb4b1cc1ede9a54d5085fc90e8508de6c04d515a46bf4bce6",
+        "positive_values": 9437368,
+        "negative_values": 9436875,
+        "zero_values": 125,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        16,
+        16,
+        1024,
+        2,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k3072",
+      "comparison_schema_sha256": "a8dc85df313116e1cc188abf6c54cbf36cf73846cd77096119b3e7fba0353327",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 3072,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.007225525524893215,
+      "allowed_absolute_error_max": 5.477331804220678,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.946151117652838,
+          "bias_z_score": 0.00041980137546941747,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.946151117652838,
+          "bias_z_score": 0.00041980137546941747,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.946151117652838,
+          "bias_z_score": 0.00041980137546941747,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 4.001772423274815,
+      "relative_l2_error": 0.0016541005293261998,
+      "rounded_reference_equal_fraction": 0.9887343398085585,
+      "output_sha256": "8087b32916dcbf9f3efee7ff79861c83d318d3e0f4a6921eaa5392b318a6b8be",
+      "elapsed_seconds_including_reference_and_compilation": 0.00928982300683856
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 256,
+          "n": 6144,
+          "k": 3072
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20359665,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          256,
+          3072
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          3072,
+          1
+        ],
+        "values_sha256": "f733b938e8fbf258f90bedf28803f790ef694a0bb8f854ddd4196d252ac5c330",
+        "scales_shape": [
+          256,
+          96
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          96,
+          1
+        ],
+        "scales_sha256": "6e796a85ae2c8a98af49972a8538e9fc2fb5358ffe256129efe068f76b67d8ae",
+        "positive_values": 392758,
+        "negative_values": 393670,
+        "zero_values": 4,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21368628,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.018042195912175808,
+        "values_shape": [
+          6144,
+          3072
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          3072,
+          1
+        ],
+        "values_sha256": "3da290feff83cddb882dd9a82a8ba896da36085c14128f6ba323af0ae2666f1d",
+        "scales_shape": [
+          6144,
+          96
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          96,
+          1
+        ],
+        "scales_sha256": "61e9330697b3c9abb4b1cc1ede9a54d5085fc90e8508de6c04d515a46bf4bce6",
+        "positive_values": 9437368,
+        "negative_values": 9436875,
+        "zero_values": 125,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        64,
+        64,
+        512,
+        8,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k3072",
+      "comparison_schema_sha256": "133d305ea0b540fdab6e534adecf5c19c1bf8bca1b0dd1f8c9a759494c5dce9e",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 3072,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.0071909192781019985,
+      "allowed_absolute_error_max": 5.943938568625891,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9440885208665383,
+          "bias_z_score": 0.00022430658481664863,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9440885208665383,
+          "bias_z_score": 0.00022430658481664863,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9440885208665383,
+          "bias_z_score": 0.00022430658481664863,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 4.002194327535108,
+      "relative_l2_error": 0.0016604856118418462,
+      "rounded_reference_equal_fraction": 0.9887237548828125,
+      "output_sha256": "235eba4b11022982668f958bb27938b0bfdab7c6cb567770b90b241297e44561",
+      "elapsed_seconds_including_reference_and_compilation": 0.010869632940739393
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 4096,
+          "n": 6144,
+          "k": 3072
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20409585,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          4096,
+          3072
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          3072,
+          1
+        ],
+        "values_sha256": "3fb0f368a96f9268de574347ba43d99ea401e813a29edd33415a08efdde5b720",
+        "scales_shape": [
+          4096,
+          96
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          96,
+          1
+        ],
+        "scales_sha256": "e86ee5c893067f5ae1dd62d8e568de03daa1d7b297497302b36870278db2b308",
+        "positive_values": 6295017,
+        "negative_values": 6287819,
+        "zero_values": 76,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21368628,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.018042195912175808,
+        "values_shape": [
+          6144,
+          3072
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          3072,
+          1
+        ],
+        "values_sha256": "3da290feff83cddb882dd9a82a8ba896da36085c14128f6ba323af0ae2666f1d",
+        "scales_shape": [
+          6144,
+          96
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          96,
+          1
+        ],
+        "scales_sha256": "61e9330697b3c9abb4b1cc1ede9a54d5085fc90e8508de6c04d515a46bf4bce6",
+        "positive_values": 9437368,
+        "negative_values": 9436875,
+        "zero_values": 125,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        128,
+        128,
+        256,
+        8,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k3072",
+      "comparison_schema_sha256": "80685432d73de970594eeec73da1c063db09358c32e3e4c38767d52b8d3f1c5b",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 3072,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.006801796293631582,
+      "allowed_absolute_error_max": 6.7156343487743815,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9554047478337722,
+          "bias_z_score": 2.2463866737075193e-05,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9554047478337722,
+          "bias_z_score": 2.2463866737075193e-05,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9554047478337722,
+          "bias_z_score": 2.2463866737075193e-05,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 4.007314560294617,
+      "relative_l2_error": 0.0016594101583041283,
+      "rounded_reference_equal_fraction": 0.9886602560679117,
+      "output_sha256": "e74202766e080244ecfe53461d2cd1c6bf1f8dbc2550c9aa3a73762468e58682",
+      "elapsed_seconds_including_reference_and_compilation": 0.07547858101315796
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 1,
+          "n": 2560,
+          "k": 6144
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20451582,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          1,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "8e63d5864b67ef7e540b41997d5871bac8d4d8bb531cb8c77ca75ba59b6dab65",
+        "scales_shape": [
+          1,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "7c1f6283ad0d181f097c953faa4c4a13addd7152971ae6cc5dce2ea42b4a9bb0",
+        "positive_values": 3004,
+        "negative_values": 3140,
+        "zero_values": 0,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": null
+      },
+      "b": {
+        "seed": 21310772,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.012757759076995721,
+        "values_shape": [
+          2560,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "e178e6e5887c92d7f05e28c0e6bc34867833d3b64ff1ebe541e592425df28f22",
+        "scales_shape": [
+          2560,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "0fdcdbf1e753427f226f586d2d491dee9ab9d0917d3f0432867e330f72ae309d",
+        "positive_values": 7866135,
+        "negative_values": 7862404,
+        "zero_values": 101,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        16,
+        16,
+        1024,
+        2,
+        3
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n2560_k6144",
+      "comparison_schema_sha256": "2c08e1f084224713b99ac54993e8c86e7005e3eba6642725fb1f1e04d1f262aa",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 6144,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.015802151725057056,
+      "allowed_absolute_error_max": 3.8568567253723995,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8054541843650463,
+          "bias_z_score": 0.0016642920342386145,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8054541843650463,
+          "bias_z_score": 0.0016642920342386145,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8054541843650463,
+          "bias_z_score": 0.0016642920342386145,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 1.851089911069721,
+      "relative_l2_error": 0.0016353962942218634,
+      "rounded_reference_equal_fraction": 0.9875,
+      "output_sha256": "477a6d79a7a245d13960fec616683e8fbd50d1ee5f2b0a824ca184f905a96a2e",
+      "elapsed_seconds_including_reference_and_compilation": 0.016266386955976486
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 32,
+          "n": 2560,
+          "k": 6144
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20451985,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          32,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "9c124f62c3c92fac539ead9479596438f0f0de0bfb49dacc5b51d1853f1e9cd4",
+        "scales_shape": [
+          32,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "d5f9be0281361c41c9bc3a1b1bd02483ee1fd729c9fe142acc80456ee1ea14f5",
+        "positive_values": 98541,
+        "negative_values": 98067,
+        "zero_values": 0,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21310772,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.012757759076995721,
+        "values_shape": [
+          2560,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "e178e6e5887c92d7f05e28c0e6bc34867833d3b64ff1ebe541e592425df28f22",
+        "scales_shape": [
+          2560,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "0fdcdbf1e753427f226f586d2d491dee9ab9d0917d3f0432867e330f72ae309d",
+        "positive_values": 7866135,
+        "negative_values": 7862404,
+        "zero_values": 101,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        16,
+        16,
+        1024,
+        2,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n2560_k6144",
+      "comparison_schema_sha256": "aab9b420328421b92964c0d5a7420e5e2e33036e5b34c4b47499f2059d03b8a4",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 6144,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.015300998986882879,
+      "allowed_absolute_error_max": 5.451287383543116,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9123748356290012,
+          "bias_z_score": 0.0019368909066968646,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9123748356290012,
+          "bias_z_score": 0.0019368909066968646,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9123748356290012,
+          "bias_z_score": 0.0019368909066968646,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 3.9742694796877913,
+      "relative_l2_error": 0.0016785132389265062,
+      "rounded_reference_equal_fraction": 0.9882568359375,
+      "output_sha256": "235a923feb742473b5a6ab2dff61d349bbc0e25f19ff4bdde2a4492784f17f16",
+      "elapsed_seconds_including_reference_and_compilation": 0.008580150082707405
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 37,
+          "n": 2560,
+          "k": 6144
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20452050,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          37,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "e56c63d525b59a0f9b17fcff1d303a60742afb922284fe8be5f691d9135fc7a3",
+        "scales_shape": [
+          37,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "277b4391604fa0836c88b33f89aeae27c875010e9118269f3280d385554e09fb",
+        "positive_values": 113886,
+        "negative_values": 113441,
+        "zero_values": 1,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21310772,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.012757759076995721,
+        "values_shape": [
+          2560,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "e178e6e5887c92d7f05e28c0e6bc34867833d3b64ff1ebe541e592425df28f22",
+        "scales_shape": [
+          2560,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "0fdcdbf1e753427f226f586d2d491dee9ab9d0917d3f0432867e330f72ae309d",
+        "positive_values": 7866135,
+        "negative_values": 7862404,
+        "zero_values": 101,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        16,
+        16,
+        1024,
+        2,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n2560_k6144",
+      "comparison_schema_sha256": "4ef2e9aa3a955959657ebadf3ca8aaec796a735dba9b814e0740e0a6fdc03568",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 6144,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.015327414340495706,
+      "allowed_absolute_error_max": 5.969376025289245,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8916852423051117,
+          "bias_z_score": 0.004094771311662898,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8916852423051117,
+          "bias_z_score": 0.004094771311662898,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.8916852423051117,
+          "bias_z_score": 0.004094771311662898,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 3.9044963901601477,
+      "relative_l2_error": 0.0016669313229640075,
+      "rounded_reference_equal_fraction": 0.9879222972972973,
+      "output_sha256": "1d224ea4ddefb425f5d958a244a69b31c569e86f6701866662d3adf6af9ebc07",
+      "elapsed_seconds_including_reference_and_compilation": 0.008320927154272795
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 256,
+          "n": 2560,
+          "k": 6144
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20454897,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          256,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "7054e973a5875027496c63f4c824173025996ca4c06156671af17ba3d6db7d07",
+        "scales_shape": [
+          256,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "4073e5ac1bd67759e7fb65ae1be0b800a38bc8b075bf8ac2d6fa0af973041823",
+        "positive_values": 786869,
+        "negative_values": 785985,
+        "zero_values": 10,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21310772,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.012757759076995721,
+        "values_shape": [
+          2560,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "e178e6e5887c92d7f05e28c0e6bc34867833d3b64ff1ebe541e592425df28f22",
+        "scales_shape": [
+          2560,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "0fdcdbf1e753427f226f586d2d491dee9ab9d0917d3f0432867e330f72ae309d",
+        "positive_values": 7866135,
+        "negative_values": 7862404,
+        "zero_values": 101,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        64,
+        64,
+        512,
+        8,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n2560_k6144",
+      "comparison_schema_sha256": "2533ba8e85de5702512e0bd0f459f1286bcfd133c787435f2540f7702d5cdbac",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 6144,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.014684713334583963,
+      "allowed_absolute_error_max": 5.811029860707019,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9095391756026602,
+          "bias_z_score": 0.0002479666386861863,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9095391756026602,
+          "bias_z_score": 0.0002479666386861863,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9095391756026602,
+          "bias_z_score": 0.0002479666386861863,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 3.975640720967931,
+      "relative_l2_error": 0.0016632673235053145,
+      "rounded_reference_equal_fraction": 0.9887222290039063,
+      "output_sha256": "bb2b11cab0ae07a92c6a8b1ad6a8e8333d72638ef5692384fdcb233eb51f8343",
+      "elapsed_seconds_including_reference_and_compilation": 0.010934079997241497
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 4096,
+          "n": 2560,
+          "k": 6144
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20504817,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          4096,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "1090615f5a543048c0f0ea376389df0cc42af9d047622c7440d426c742064a2a",
+        "scales_shape": [
+          4096,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "98fd654398d539503e5841c6f2b2073cbdf3cc34b8e892a09c0af94abae52eaa",
+        "positive_values": 12583720,
+        "negative_values": 12581954,
+        "zero_values": 150,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21310772,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.012757759076995721,
+        "values_shape": [
+          2560,
+          6144
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          6144,
+          1
+        ],
+        "values_sha256": "e178e6e5887c92d7f05e28c0e6bc34867833d3b64ff1ebe541e592425df28f22",
+        "scales_shape": [
+          2560,
+          192
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          192,
+          1
+        ],
+        "scales_sha256": "0fdcdbf1e753427f226f586d2d491dee9ab9d0917d3f0432867e330f72ae309d",
+        "positive_values": 7866135,
+        "negative_values": 7862404,
+        "zero_values": 101,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "backend_tile_config": [
+        128,
+        128,
+        256,
+        8,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n2560_k6144",
+      "comparison_schema_sha256": "7b98044f580bfb831c123a9d76f7f39ab1e26dde4b69bcc7d26b955caeea406d",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 6144,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.014518505408504866,
+      "allowed_absolute_error_max": 7.017779649612244,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9196398742706834,
+          "bias_z_score": 0.00015633095831497435,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9196398742706834,
+          "bias_z_score": 0.00015633095831497435,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9196398742706834,
+          "bias_z_score": 0.00015633095831497435,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 4.006188896149979,
+      "relative_l2_error": 0.0016609674007639743,
+      "rounded_reference_equal_fraction": 0.988451099395752,
+      "output_sha256": "13cf069804bd5a5acdc4f0f93dee0ff57aad13057a44e23506fcc0132cc067a9",
+      "elapsed_seconds_including_reference_and_compilation": 0.06137630809098482
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 1,
+          "n": 6144,
+          "k": 2048
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20324606,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          1,
+          2048
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          2048,
+          1
+        ],
+        "values_sha256": "0203a2ea2b80432b73e49193e53502d388febb73b640bbc9b74af0a759d39f13",
+        "scales_shape": [
+          1,
+          64
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          64,
+          1
+        ],
+        "scales_sha256": "df44ec4ec13da4780b66fd6ab21d016e91a497c239b23c79562379df8c124308",
+        "positive_values": 1017,
+        "negative_values": 1031,
+        "zero_values": 0,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": null
+      },
+      "b": {
+        "seed": 21367604,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.022097086912079608,
+        "values_shape": [
+          6144,
+          2048
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          2048,
+          1
+        ],
+        "values_sha256": "0ea8769368d2d85f55308bedcfcee69d59e66bf7ff36979aeef9e5e63e2f9151",
+        "scales_shape": [
+          6144,
+          64
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          64,
+          1
+        ],
+        "scales_sha256": "aa2a7336a183e5a85af28624baf81bb1536c0ee233d9d85fc38587cc4fb51c00",
+        "positive_values": 6290571,
+        "negative_values": 6292286,
+        "zero_values": 55,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121
+        ],
+        "adjacent_block_scale_change_fraction": 0.9999999403953552,
+        "adjacent_row_scale_change_fraction": 0.9999999403953552
+      },
+      "backend_tile_config": [
+        16,
+        16,
+        1024,
+        2,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k2048",
+      "comparison_schema_sha256": "b7f59d9bb01ca36f0fe1f199e77e3ee07546db9fb1a4f36dda4f245ddc9972ce",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 2048,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.005252237325589065,
+      "allowed_absolute_error_max": 3.982283636157768,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9060283161823492,
+          "bias_z_score": 0.024152484911501453,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9060283161823492,
+          "bias_z_score": 0.024152484911501453,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9060283161823492,
+          "bias_z_score": 0.024152484911501453,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 1.9167225271230564,
+      "relative_l2_error": 0.0016798277087920058,
+      "rounded_reference_equal_fraction": 0.9895833333333333,
+      "output_sha256": "08273c9edd22f36b0df86df158978647a9bf40c5a4671355cd06b74d327e2144",
+      "elapsed_seconds_including_reference_and_compilation": 0.20130609604530036
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 32,
+          "n": 6144,
+          "k": 2048
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20325009,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          32,
+          2048
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          2048,
+          1
+        ],
+        "values_sha256": "505f8ae79f8c93fbb2fcc9ea589ac4f353518ddaa746000fbcd5ef99b19026bb",
+        "scales_shape": [
+          32,
+          64
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          64,
+          1
+        ],
+        "scales_sha256": "df2d8b3ab5136f0e77f603df2c7de0e567c5436d024d0b8a310029611ed96777",
+        "positive_values": 32683,
+        "negative_values": 32851,
+        "zero_values": 2,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21367604,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.022097086912079608,
+        "values_shape": [
+          6144,
+          2048
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          2048,
+          1
+        ],
+        "values_sha256": "0ea8769368d2d85f55308bedcfcee69d59e66bf7ff36979aeef9e5e63e2f9151",
+        "scales_shape": [
+          6144,
+          64
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          64,
+          1
+        ],
+        "scales_sha256": "aa2a7336a183e5a85af28624baf81bb1536c0ee233d9d85fc38587cc4fb51c00",
+        "positive_values": 6290571,
+        "negative_values": 6292286,
+        "zero_values": 55,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121
+        ],
+        "adjacent_block_scale_change_fraction": 0.9999999403953552,
+        "adjacent_row_scale_change_fraction": 0.9999999403953552
+      },
+      "backend_tile_config": [
+        16,
+        16,
+        1024,
+        2,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k2048",
+      "comparison_schema_sha256": "e082f6af015f1887bbac4e62361b864fae70f9c29b6374030cfa8bd5e8094dc4",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 2048,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.00474713926633334,
+      "allowed_absolute_error_max": 5.352277111576615,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9411235037632768,
+          "bias_z_score": 0.0009143875429778361,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9411235037632768,
+          "bias_z_score": 0.0009143875429778361,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9411235037632768,
+          "bias_z_score": 0.0009143875429778361,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 3.9975965851917863,
+      "relative_l2_error": 0.0016557101180723925,
+      "rounded_reference_equal_fraction": 0.9890034993489583,
+      "output_sha256": "821a2020787e047a4466aa3ce9905fd3335068ce6132d050e2b7a7a84059a74f",
+      "elapsed_seconds_including_reference_and_compilation": 0.18804313312284648
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 37,
+          "n": 6144,
+          "k": 2048
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20325074,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          37,
+          2048
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          2048,
+          1
+        ],
+        "values_sha256": "8bbedb23482543e7852e6f76cf020a4e5b07fd20fbc1f192d03f18500f306572",
+        "scales_shape": [
+          37,
+          64
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          64,
+          1
+        ],
+        "scales_sha256": "84e1f67c7d26b6dd663543f35cd82519050416ef3e8249463a8f9d1f4186c8ac",
+        "positive_values": 37784,
+        "negative_values": 37992,
+        "zero_values": 0,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21367604,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.022097086912079608,
+        "values_shape": [
+          6144,
+          2048
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          2048,
+          1
+        ],
+        "values_sha256": "0ea8769368d2d85f55308bedcfcee69d59e66bf7ff36979aeef9e5e63e2f9151",
+        "scales_shape": [
+          6144,
+          64
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          64,
+          1
+        ],
+        "scales_sha256": "aa2a7336a183e5a85af28624baf81bb1536c0ee233d9d85fc38587cc4fb51c00",
+        "positive_values": 6290571,
+        "negative_values": 6292286,
+        "zero_values": 55,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121
+        ],
+        "adjacent_block_scale_change_fraction": 0.9999999403953552,
+        "adjacent_row_scale_change_fraction": 0.9999999403953552
+      },
+      "backend_tile_config": [
+        16,
+        16,
+        1024,
+        2,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k2048",
+      "comparison_schema_sha256": "8181e016cef2093b9a732eb45b2155c6922e10f6ea2754dd9df8d3e055b9758e",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 2048,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.0047046856631862725,
+      "allowed_absolute_error_max": 5.9265706681983055,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9637513066787043,
+          "bias_z_score": 0.0018548550449897783,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9637513066787043,
+          "bias_z_score": 0.0018548550449897783,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9637513066787043,
+          "bias_z_score": 0.0018548550449897783,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 3.78592855646275,
+      "relative_l2_error": 0.0016550233105263755,
+      "rounded_reference_equal_fraction": 0.9892138231981982,
+      "output_sha256": "b11ffb33f260c8075184c791453efe5c7974012bb9dee533f0248f554e64cae9",
+      "elapsed_seconds_including_reference_and_compilation": 0.19324056594632566
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 256,
+          "n": 6144,
+          "k": 2048
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20327921,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          256,
+          2048
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          2048,
+          1
+        ],
+        "values_sha256": "313bb25d7c6b8786514944ea6721d30fa9a5651e2e273ba125b65bd3eb8c3481",
+        "scales_shape": [
+          256,
+          64
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          64,
+          1
+        ],
+        "scales_sha256": "7018e9b2c6b1c68590ab0abd73c7f7bd6dadcf539719ecf606223386857e67bd",
+        "positive_values": 261506,
+        "negative_values": 262779,
+        "zero_values": 3,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21367604,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.022097086912079608,
+        "values_shape": [
+          6144,
+          2048
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          2048,
+          1
+        ],
+        "values_sha256": "0ea8769368d2d85f55308bedcfcee69d59e66bf7ff36979aeef9e5e63e2f9151",
+        "scales_shape": [
+          6144,
+          64
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          64,
+          1
+        ],
+        "scales_sha256": "aa2a7336a183e5a85af28624baf81bb1536c0ee233d9d85fc38587cc4fb51c00",
+        "positive_values": 6290571,
+        "negative_values": 6292286,
+        "zero_values": 55,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121
+        ],
+        "adjacent_block_scale_change_fraction": 0.9999999403953552,
+        "adjacent_row_scale_change_fraction": 0.9999999403953552
+      },
+      "backend_tile_config": [
+        64,
+        64,
+        512,
+        8,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k2048",
+      "comparison_schema_sha256": "3470beb4b988ac61ec916f7fc51b5d577ace22066f66fd3803cbd56e3bf0b867",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 2048,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.004473538389510886,
+      "allowed_absolute_error_max": 6.494068428325772,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9609989115778519,
+          "bias_z_score": 0.0006321954762393288,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9609989115778519,
+          "bias_z_score": 0.0006321954762393288,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9609989115778519,
+          "bias_z_score": 0.0006321954762393288,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 3.9913991414941847,
+      "relative_l2_error": 0.0016614783855782042,
+      "rounded_reference_equal_fraction": 0.98895263671875,
+      "output_sha256": "be5ca992eb49ef32727e7e235fc0d4662bff4f610d0cdf82413b054ada42bd06",
+      "elapsed_seconds_including_reference_and_compilation": 0.23491511889733374
+    },
+    {
+      "status": "passed",
+      "point": {
+        "contract_id": "gemm_a8w8_mxfp8@1.0",
+        "axes": {
+          "m": 4096,
+          "n": 6144,
+          "k": 2048
+        },
+        "dtypes": {
+          "a": "float8_e4m3fn",
+          "b": "float8_e4m3fn",
+          "a_scale": "float8_e8m0",
+          "b_scale": "float8_e8m0",
+          "bias": null,
+          "out": "bfloat16"
+        },
+        "attrs": {
+          "trans_b": true,
+          "has_bias": false
+        },
+        "layout_variant_name": "row_major"
+      },
+      "a": {
+        "seed": 20377841,
+        "source_dtype": "bfloat16",
+        "source_normalization": 1.0,
+        "values_shape": [
+          4096,
+          2048
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          2048,
+          1
+        ],
+        "values_sha256": "c6cea2c799f209c303b30f02ee0a3a58afb2f10fe0f8ad8ace2cb896b133c362",
+        "scales_shape": [
+          4096,
+          64
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          64,
+          1
+        ],
+        "scales_sha256": "03f1436886562abe04a126ba70bd8f1cd259c0074d124b60305fb62be3c2a8b3",
+        "positive_values": 4192688,
+        "negative_values": 4195874,
+        "zero_values": 46,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121,
+          122,
+          123,
+          124,
+          125,
+          126
+        ],
+        "adjacent_block_scale_change_fraction": 1.0,
+        "adjacent_row_scale_change_fraction": 1.0
+      },
+      "b": {
+        "seed": 21367604,
+        "source_dtype": "bfloat16",
+        "source_normalization": 0.022097086912079608,
+        "values_shape": [
+          6144,
+          2048
+        ],
+        "values_dtype": "torch.float8_e4m3fn",
+        "values_stride": [
+          2048,
+          1
+        ],
+        "values_sha256": "0ea8769368d2d85f55308bedcfcee69d59e66bf7ff36979aeef9e5e63e2f9151",
+        "scales_shape": [
+          6144,
+          64
+        ],
+        "scales_dtype": "torch.uint8",
+        "scales_stride": [
+          64,
+          1
+        ],
+        "scales_sha256": "aa2a7336a183e5a85af28624baf81bb1536c0ee233d9d85fc38587cc4fb51c00",
+        "positive_values": 6290571,
+        "negative_values": 6292286,
+        "zero_values": 55,
+        "nonfinite_values": 0,
+        "scale_codes": [
+          108,
+          109,
+          110,
+          111,
+          112,
+          113,
+          114,
+          115,
+          116,
+          117,
+          118,
+          119,
+          120,
+          121
+        ],
+        "adjacent_block_scale_change_fraction": 0.9999999403953552,
+        "adjacent_row_scale_change_fraction": 0.9999999403953552
+      },
+      "backend_tile_config": [
+        128,
+        128,
+        256,
+        8,
+        2
+      ],
+      "reference_dtype": "torch.float64",
+      "comparison_schema_name": "gemm_a8w8_mxfp8_n6144_k2048",
+      "comparison_schema_sha256": "67c23f58f32cf47964d80d7fbabd2f013c6fe33c451cec4f514357f8ae0dcdc9",
+      "comparison_configuration": {
+        "max_violation_fraction": 0.0,
+        "determinism": "bitwise",
+        "element_order": "fixed"
+      },
+      "error_bound": {
+        "kind": "dot_product",
+        "length": 2048,
+        "accumulate_dtype": "float32",
+        "max_split_k": 1
+      },
+      "allowed_absolute_error_min": 0.004288047882289465,
+      "allowed_absolute_error_max": 6.9405012415443466,
+      "comparisons": [
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9674444878864081,
+          "bias_z_score": 0.00015363286235299783,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9674444878864081,
+          "bias_z_score": 0.00015363286235299783,
+          "n_nonfinite_mismatches": 0
+        },
+        {
+          "is_passed": true,
+          "is_bound_exceeded": false,
+          "violation_fraction": 0.0,
+          "peak_bound_multiple": 0.9674444878864081,
+          "bias_z_score": 0.00015363286235299783,
+          "n_nonfinite_mismatches": 0
+        }
+      ],
+      "repeat_count": 3,
+      "bitwise_equal_across_repeats": true,
+      "repeat_differing_element_fractions": [
+        0.0,
+        0.0
+      ],
+      "max_absolute_error": 4.004681192687713,
+      "relative_l2_error": 0.001658555189692911,
+      "rounded_reference_equal_fraction": 0.9890135924021403,
+      "output_sha256": "5237ce4934bbb04e8665161cccdb972ae5cb585b98fa245ea181bbc875c58b24",
+      "elapsed_seconds_including_reference_and_compilation": 0.07441939786076546
+    }
+  ],
+  "completed_utc": "2026-11-05T10:37:57.375745+00:00",
+  "passed_cases": 29
+}

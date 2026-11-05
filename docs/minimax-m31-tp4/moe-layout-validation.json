@@ -1,0 +1,60 @@
+{
+  "passed": true,
+  "scope": "Synthetic data at actual TP4 weight dimensions; layout equivalence only",
+  "target": "gfx950/MI350X",
+  "seed": 19,
+  "checks": [
+    {
+      "name": "w13",
+      "storage_shape": [
+        128,
+        1536,
+        3072
+      ],
+      "byte_equal": true,
+      "native_is_shuffled": true
+    },
+    {
+      "name": "w2",
+      "storage_shape": [
+        128,
+        6144,
+        384
+      ],
+      "byte_equal": true,
+      "native_is_shuffled": true
+    },
+    {
+      "name": "w13_scale",
+      "storage_shape": [
+        128,
+        1536,
+        192
+      ],
+      "byte_equal": true
+    },
+    {
+      "name": "w2_scale",
+      "storage_shape": [
+        128,
+        6144,
+        24
+      ],
+      "byte_equal": true
+    }
+  ],
+  "swiglu_bf16_activation_threshold": 256,
+  "versions": {
+    "torch": "2.13.0+rocm10.0.0",
+    "triton": "3.8.0+git669b31ac",
+    "vllm": "0.32.0rc1.dev364+g8d0f05a0c.d20261023.rocm100",
+    "aklr": "0.1.dev0+g0f2036bc"
+  },
+  "source_sha256": {
+    "/aklr/aklr/core/contract/semantics/_layouts.py": "8bb3a869cb17c618c3abb77d5f72fa4ea4a1deb696a0ab89d0b97f778b109f4b",
+    "/probe/schema_probe/verify_moe_layout.py": "7973ca4bd37cc6ac36de5bfe7e4e5987ce50e1b36b96080adb86d6ebacc02b03",
+    "/usr/local/lib/python3.12/dist-packages/aiter/fused_moe.py": "52f07c7637c050a347e48739240da20562b369f113ce68741738f7e3d2e086b9",
+    "/usr/local/lib/python3.12/dist-packages/aiter/ops/shuffle.py": "7831eb1e0a2b8e5e10d900e973b03e27d2e265a84b555f358b8f8be8f487b54a",
+    "/usr/local/lib/python3.12/dist-packages/aiter/utility/fp4_utils.py": "5a2c7623aa51813dbf94dce0f4030ab2a0ff05324438ecb9b09f784755664fea"
+  }
+}

@@ -383,6 +383,20 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         layout_variant_name="b_shuffled",
     ),
     PointSpec(
+        contract_id="gemm_a8w8_mxfp8@1.0",
+        axes={"m": 2, "n": 16, "k": 128},
+        dtypes={
+            "a": "float8_e4m3fn",
+            "b": "float8_e4m3fn",
+            "a_scale": "float8_e8m0",
+            "b_scale": "float8_e8m0",
+            "bias": None,
+            "out": "bfloat16",
+        },
+        attrs={"trans_b": True, "has_bias": False},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
         contract_id="mhc_fused_post_pre@1.0",
         axes={"n_tokens": 4, "hidden_size": 512},
         dtypes={

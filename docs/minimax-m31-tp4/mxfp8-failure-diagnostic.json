@@ -1,0 +1,350 @@
+{
+  "scope": "Diagnostic of two strict AKLR bound violations in the existing pinned vLLM backend; no acceptance rule is changed.",
+  "completed_utc": "2026-11-05T10:45:04.847042+00:00",
+  "script": {
+    "path": "/probe/schema_probe/diagnose_mxfp8_failure.py",
+    "sha256": "d88ef08942ec345fa8f8238e707e761d3c5e03e86ff438685cfff8d759e344a7"
+  },
+  "validation_script_sha256": "5810999358a3a6781cb7af9d2d86eee5d2bce73b204182ac3462adf9466cea9d",
+  "validation_evidence": {
+    "path": "/results/m31-schema-mxfp8-validation.json",
+    "sha256": "f5f6aceb19692f19d5a0b0c6d319fb26fcaeed868330766d7c0f5bce235c0526"
+  },
+  "source_backend": {
+    "function": "vllm.model_executor.kernels.linear.mxfp8.rocm_native._mxfp8_dot_scaled_gemm",
+    "path": "/usr/local/lib/python3.12/dist-packages/vllm/model_executor/kernels/linear/mxfp8/rocm_native.py",
+    "line": 94,
+    "sha256": "aae572bf7ac7235d0c22b8a80adbd9c4a6af73b5437120d2cad39c36b4c2a9e9"
+  },
+  "device": {
+    "name": "AMD Instinct MI350X",
+    "arch": "gfx950:sramecc+:xnack-",
+    "total_memory_bytes": 309220868096,
+    "uuid": "30663639-3265-6332-6466-306632333837",
+    "HIP_VISIBLE_DEVICES": "4",
+    "logical_device": "cuda:0",
+    "visible_device_count": 1
+  },
+  "versions": {
+    "torch": "2.13.0+rocm10.0.0",
+    "triton": "3.8.0+git669b31ac",
+    "vllm": "0.32.0rc1.dev364+g8d0f05a0c.d20261023.rocm100",
+    "aklr": "0.1.dev0+g0f2036bc",
+    "pydantic": "2.14.1"
+  },
+  "HIP_VISIBLE_DEVICES": "4",
+  "allow_tf32": false,
+  "float32_matmul_precision": "highest",
+  "point": {
+    "contract_id": "gemm_a8w8_mxfp8@1.0",
+    "axes": {
+      "m": 4096,
+      "n": 6144,
+      "k": 768
+    },
+    "dtypes": {
+      "a": "float8_e4m3fn",
+      "b": "float8_e4m3fn",
+      "a_scale": "float8_e8m0",
+      "b_scale": "float8_e8m0",
+      "bias": null,
+      "out": "bfloat16"
+    },
+    "attrs": {
+      "trans_b": true,
+      "has_bias": false
+    },
+    "layout_variant_name": "row_major"
+  },
+  "input_hashes_match_validation": {
+    "a": {
+      "values_sha256": "bcef5371e76537ac9cbcbff2006e8298605e13a74e5312c65de68c80cf032e0e",
+      "scales_sha256": "fd0d552998916e8a59cf07f59554760ce08156a229049a4af46cb11517a28718"
+    },
+    "b": {
+      "values_sha256": "40094c306ac0f609b154e582b000afebda3e099827c771b82a8e02dfcd69f51b",
+      "scales_sha256": "0d3a59ad2b1b9776124b1b6b5c9d328ae7028b14fc3d0fa66b7ffeeaa4c35d2c"
+    }
+  },
+  "output_sha256_matches_validation": "410ecccc2dd55930de71894af806acffe98f32ab4f23f23aab26cec863ea4b4e",
+  "native_fp32_variant_rounding_matches_bfloat16_fraction": 1.0,
+  "error_bound": {
+    "kind": "dot_product",
+    "length": 768,
+    "accumulate_dtype": "float32",
+    "max_split_k": 1
+  },
+  "comparison_configuration": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "violating_elements": [
+    {
+      "row": 2198,
+      "column": 5051,
+      "native_bfloat16": 0.197265625,
+      "reference_float64": 0.20962749049067497,
+      "exact_dot_fraction": {
+        "numerator": "56271451",
+        "denominator": "268435456"
+      },
+      "float64_reference_is_exact_dyadic_sum": true,
+      "math_fsum_products": 0.20962749049067497,
+      "every_product_exactly_representable_in_fp32": true,
+      "rounded_bfloat16_reference": 0.2099609375,
+      "exact_rounded_bfloat16_reference": 0.2099609375,
+      "error": -0.012361865490674973,
+      "bound": 0.01234274998861622,
+      "error_over_bound": 1.0015487231027431,
+      "magnitude_sum": 574.4664335884154,
+      "aklr_accumulation_component": 0.011523892603887021,
+      "aklr_bfloat16_rounding_component": 0.0008188573847291991,
+      "fp32_comparisons": {
+        "native_fp32_output_variant": {
+          "fp32_value": 0.1975879669189453,
+          "accumulation_error_vs_exact": -0.01203952357172966,
+          "rounded_bfloat16": 0.197265625,
+          "rounds_to_native_bfloat16": true,
+          "rounded_error_vs_exact": -0.012361865490674973,
+          "rounded_error_over_aklr_bound": 1.0015487231027431
+        },
+        "aklr_full_reference_fp32_matmul": {
+          "fp32_value": 0.20961254835128784,
+          "accumulation_error_vs_exact": -1.4942139387130737e-05,
+          "rounded_bfloat16": 0.2099609375,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": 0.00033344700932502747,
+          "rounded_error_over_aklr_bound": 0.027015617235427055
+        },
+        "torch_gpu_fp32_dot": {
+          "fp32_value": 0.20961761474609375,
+          "accumulation_error_vs_exact": -9.875744581222534e-06,
+          "rounded_bfloat16": 0.2099609375,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": 0.00033344700932502747,
+          "rounded_error_over_aklr_bound": 0.027015617235427055
+        },
+        "torch_gpu_fp32_1x1_matmul": {
+          "fp32_value": 0.20961356163024902,
+          "accumulation_error_vs_exact": -1.3928860425949097e-05,
+          "rounded_bfloat16": 0.2099609375,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": 0.00033344700932502747,
+          "rounded_error_over_aklr_bound": 0.027015617235427055
+        },
+        "torch_cpu_fp32_dot": {
+          "fp32_value": 0.209625244140625,
+          "accumulation_error_vs_exact": -2.246350049972534e-06,
+          "rounded_bfloat16": 0.2099609375,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": 0.00033344700932502747,
+          "rounded_error_over_aklr_bound": 0.027015617235427055
+        },
+        "torch_cpu_fp32_1x1_matmul": {
+          "fp32_value": 0.20961084961891174,
+          "accumulation_error_vs_exact": -1.664087176322937e-05,
+          "rounded_bfloat16": 0.2099609375,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": 0.00033344700932502747,
+          "rounded_error_over_aklr_bound": 0.027015617235427055
+        },
+        "sequential_fp32_forward": {
+          "fp32_value": 0.20961084961891174,
+          "accumulation_error_vs_exact": -1.664087176322937e-05,
+          "rounded_bfloat16": 0.2099609375,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": 0.00033344700932502747,
+          "rounded_error_over_aklr_bound": 0.027015617235427055
+        },
+        "sequential_fp32_reverse": {
+          "fp32_value": 0.2096118927001953,
+          "accumulation_error_vs_exact": -1.5597790479660034e-05,
+          "rounded_bfloat16": 0.2099609375,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": 0.00033344700932502747,
+          "rounded_error_over_aklr_bound": 0.027015617235427055
+        },
+        "pairwise_tree_fp32": {
+          "fp32_value": 0.209625244140625,
+          "accumulation_error_vs_exact": -2.246350049972534e-06,
+          "rounded_bfloat16": 0.2099609375,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": 0.00033344700932502747,
+          "rounded_error_over_aklr_bound": 0.027015617235427055
+        },
+        "sequential_fp32_in_blocks_32": {
+          "fp32_value": 0.2096334993839264,
+          "accumulation_error_vs_exact": 6.008893251419067e-06,
+          "rounded_bfloat16": 0.2099609375,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": 0.00033344700932502747,
+          "rounded_error_over_aklr_bound": 0.027015617235427055
+        },
+        "sequential_fp32_in_blocks_64": {
+          "fp32_value": 0.20961371064186096,
+          "accumulation_error_vs_exact": -1.377984881401062e-05,
+          "rounded_bfloat16": 0.2099609375,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": 0.00033344700932502747,
+          "rounded_error_over_aklr_bound": 0.027015617235427055
+        },
+        "sequential_fp32_in_blocks_128": {
+          "fp32_value": 0.20960593223571777,
+          "accumulation_error_vs_exact": -2.1558254957199097e-05,
+          "rounded_bfloat16": 0.2099609375,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": 0.00033344700932502747,
+          "rounded_error_over_aklr_bound": 0.027015617235427055
+        },
+        "sequential_fp32_in_blocks_256": {
+          "fp32_value": 0.2096099853515625,
+          "accumulation_error_vs_exact": -1.7505139112472534e-05,
+          "rounded_bfloat16": 0.2099609375,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": 0.00033344700932502747,
+          "rounded_error_over_aklr_bound": 0.027015617235427055
+        }
+      },
+      "natural_fp32_orders_rounding_to_native": [],
+      "conservative_ieee_fp32_accumulation_limit": 0.026298190236449515,
+      "native_fp32_within_conservative_ieee_limit": true,
+      "conservative_ieee_plus_bfloat16_rounding_limit": 0.027219774926789845,
+      "native_bfloat16_within_conservative_ieee_limit": true
+    },
+    {
+      "row": 3708,
+      "column": 5195,
+      "native_bfloat16": -0.030029296875,
+      "reference_float64": -0.024642542004585266,
+      "exact_dot_fraction": {
+        "numerator": "-1653733",
+        "denominator": "67108864"
+      },
+      "float64_reference_is_exact_dyadic_sum": true,
+      "math_fsum_products": -0.024642542004585266,
+      "every_product_exactly_representable_in_fp32": true,
+      "rounded_bfloat16_reference": -0.024658203125,
+      "exact_rounded_bfloat16_reference": -0.024658203125,
+      "error": -0.005386754870414734,
+      "bound": 0.005213447039923106,
+      "error_over_bound": 1.0332424649496745,
+      "magnitude_sum": 255.09194941818714,
+      "aklr_accumulation_component": 0.005117187110217695,
+      "aklr_bfloat16_rounding_component": 9.62599297054112e-05,
+      "fp32_comparisons": {
+        "native_fp32_output_variant": {
+          "fp32_value": -0.03006124496459961,
+          "accumulation_error_vs_exact": -0.005418702960014343,
+          "rounded_bfloat16": -0.030029296875,
+          "rounds_to_native_bfloat16": true,
+          "rounded_error_vs_exact": -0.005386754870414734,
+          "rounded_error_over_aklr_bound": 1.0332424649496745
+        },
+        "aklr_full_reference_fp32_matmul": {
+          "fp32_value": -0.024639129638671875,
+          "accumulation_error_vs_exact": 3.4123659133911133e-06,
+          "rounded_bfloat16": -0.024658203125,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": -1.5661120414733887e-05,
+          "rounded_error_over_aklr_bound": 0.0030039857113355996
+        },
+        "torch_gpu_fp32_dot": {
+          "fp32_value": -0.024643898010253906,
+          "accumulation_error_vs_exact": -1.3560056686401367e-06,
+          "rounded_bfloat16": -0.024658203125,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": -1.5661120414733887e-05,
+          "rounded_error_over_aklr_bound": 0.0030039857113355996
+        },
+        "torch_gpu_fp32_1x1_matmul": {
+          "fp32_value": -0.0246429443359375,
+          "accumulation_error_vs_exact": -4.023313522338867e-07,
+          "rounded_bfloat16": -0.024658203125,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": -1.5661120414733887e-05,
+          "rounded_error_over_aklr_bound": 0.0030039857113355996
+        },
+        "torch_cpu_fp32_dot": {
+          "fp32_value": -0.024638652801513672,
+          "accumulation_error_vs_exact": 3.889203071594238e-06,
+          "rounded_bfloat16": -0.024658203125,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": -1.5661120414733887e-05,
+          "rounded_error_over_aklr_bound": 0.0030039857113355996
+        },
+        "torch_cpu_fp32_1x1_matmul": {
+          "fp32_value": -0.02463972568511963,
+          "accumulation_error_vs_exact": 2.816319465637207e-06,
+          "rounded_bfloat16": -0.024658203125,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": -1.5661120414733887e-05,
+          "rounded_error_over_aklr_bound": 0.0030039857113355996
+        },
+        "sequential_fp32_forward": {
+          "fp32_value": -0.02463972568511963,
+          "accumulation_error_vs_exact": 2.816319465637207e-06,
+          "rounded_bfloat16": -0.024658203125,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": -1.5661120414733887e-05,
+          "rounded_error_over_aklr_bound": 0.0030039857113355996
+        },
+        "sequential_fp32_reverse": {
+          "fp32_value": -0.02464008331298828,
+          "accumulation_error_vs_exact": 2.4586915969848633e-06,
+          "rounded_bfloat16": -0.024658203125,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": -1.5661120414733887e-05,
+          "rounded_error_over_aklr_bound": 0.0030039857113355996
+        },
+        "pairwise_tree_fp32": {
+          "fp32_value": -0.024642467498779297,
+          "accumulation_error_vs_exact": 7.450580596923828e-08,
+          "rounded_bfloat16": -0.024658203125,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": -1.5661120414733887e-05,
+          "rounded_error_over_aklr_bound": 0.0030039857113355996
+        },
+        "sequential_fp32_in_blocks_32": {
+          "fp32_value": -0.024643540382385254,
+          "accumulation_error_vs_exact": -9.98377799987793e-07,
+          "rounded_bfloat16": -0.024658203125,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": -1.5661120414733887e-05,
+          "rounded_error_over_aklr_bound": 0.0030039857113355996
+        },
+        "sequential_fp32_in_blocks_64": {
+          "fp32_value": -0.024642467498779297,
+          "accumulation_error_vs_exact": 7.450580596923828e-08,
+          "rounded_bfloat16": -0.024658203125,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": -1.5661120414733887e-05,
+          "rounded_error_over_aklr_bound": 0.0030039857113355996
+        },
+        "sequential_fp32_in_blocks_128": {
+          "fp32_value": -0.024641036987304688,
+          "accumulation_error_vs_exact": 1.5050172805786133e-06,
+          "rounded_bfloat16": -0.024658203125,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": -1.5661120414733887e-05,
+          "rounded_error_over_aklr_bound": 0.0030039857113355996
+        },
+        "sequential_fp32_in_blocks_256": {
+          "fp32_value": -0.024640560150146484,
+          "accumulation_error_vs_exact": 1.9818544387817383e-06,
+          "rounded_bfloat16": -0.024658203125,
+          "rounds_to_native_bfloat16": false,
+          "rounded_error_vs_exact": -1.5661120414733887e-05,
+          "rounded_error_over_aklr_bound": 0.0030039857113355996
+        }
+      },
+      "natural_fp32_orders_rounding_to_native": [],
+      "conservative_ieee_fp32_accumulation_limit": 0.01167771730661745,
+      "native_fp32_within_conservative_ieee_limit": true,
+      "conservative_ieee_plus_bfloat16_rounding_limit": 0.011819593319551836,
+      "native_bfloat16_within_conservative_ieee_limit": true
+    }
+  ],
+  "strict_validation_status": "failed",
+  "ieee_limit_interpretation": "The conservative IEEE bound is a diagnostic ceiling, not a replacement AKLR acceptance rule and not proof of the backend's exact reduction order."
+}

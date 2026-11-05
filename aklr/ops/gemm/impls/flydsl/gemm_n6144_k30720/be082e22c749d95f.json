@@ -1,0 +1,503 @@
+{
+  "schema_version": 5,
+  "name": "gemm_n6144_k30720",
+  "contract_id": "gemm@1.0",
+  "description": "16-bit gemm: out = a @ b.T + bias (b is (k, n) unless trans_b).",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 6144,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 30720,
+      "description": "Reduction length."
+    }
+  },
+  "attrs": {
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 1
+      }
+    },
+    {
+      "axes": {
+        "m": 2
+      }
+    },
+    {
+      "axes": {
+        "m": 4
+      }
+    },
+    {
+      "axes": {
+        "m": 5
+      }
+    },
+    {
+      "axes": {
+        "m": 8
+      }
+    },
+    {
+      "axes": {
+        "m": 9
+      }
+    },
+    {
+      "axes": {
+        "m": 12
+      }
+    },
+    {
+      "axes": {
+        "m": 16
+      }
+    },
+    {
+      "axes": {
+        "m": 24
+      }
+    },
+    {
+      "axes": {
+        "m": 32
+      }
+    },
+    {
+      "axes": {
+        "m": 40
+      }
+    },
+    {
+      "axes": {
+        "m": 44
+      }
+    },
+    {
+      "axes": {
+        "m": 48
+      }
+    },
+    {
+      "axes": {
+        "m": 56
+      }
+    },
+    {
+      "axes": {
+        "m": 64
+      }
+    },
+    {
+      "axes": {
+        "m": 76
+      }
+    },
+    {
+      "axes": {
+        "m": 80
+      }
+    },
+    {
+      "axes": {
+        "m": 88
+      }
+    },
+    {
+      "axes": {
+        "m": 96
+      }
+    },
+    {
+      "axes": {
+        "m": 104
+      }
+    },
+    {
+      "axes": {
+        "m": 108
+      }
+    },
+    {
+      "axes": {
+        "m": 112
+      }
+    },
+    {
+      "axes": {
+        "m": 120
+      }
+    },
+    {
+      "axes": {
+        "m": 128
+      }
+    },
+    {
+      "axes": {
+        "m": 140
+      }
+    },
+    {
+      "axes": {
+        "m": 144
+      }
+    },
+    {
+      "axes": {
+        "m": 152
+      }
+    },
+    {
+      "axes": {
+        "m": 160
+      }
+    },
+    {
+      "axes": {
+        "m": 168
+      }
+    },
+    {
+      "axes": {
+        "m": 172
+      }
+    },
+    {
+      "axes": {
+        "m": 176
+      }
+    },
+    {
+      "axes": {
+        "m": 184
+      }
+    },
+    {
+      "axes": {
+        "m": 192
+      }
+    },
+    {
+      "axes": {
+        "m": 204
+      }
+    },
+    {
+      "axes": {
+        "m": 205
+      }
+    },
+    {
+      "axes": {
+        "m": 206
+      }
+    },
+    {
+      "axes": {
+        "m": 208
+      }
+    },
+    {
+      "axes": {
+        "m": 209
+      }
+    },
+    {
+      "axes": {
+        "m": 210
+      }
+    },
+    {
+      "axes": {
+        "m": 212
+      }
+    },
+    {
+      "axes": {
+        "m": 216
+      }
+    },
+    {
+      "axes": {
+        "m": 224
+      }
+    },
+    {
+      "axes": {
+        "m": 232
+      }
+    },
+    {
+      "axes": {
+        "m": 236
+      }
+    },
+    {
+      "axes": {
+        "m": 240
+      }
+    },
+    {
+      "axes": {
+        "m": 248
+      }
+    },
+    {
+      "axes": {
+        "m": 256
+      }
+    },
+    {
+      "axes": {
+        "m": 268
+      }
+    },
+    {
+      "axes": {
+        "m": 272
+      }
+    },
+    {
+      "axes": {
+        "m": 280
+      }
+    },
+    {
+      "axes": {
+        "m": 288
+      }
+    },
+    {
+      "axes": {
+        "m": 296
+      }
+    },
+    {
+      "axes": {
+        "m": 300
+      }
+    },
+    {
+      "axes": {
+        "m": 312
+      }
+    },
+    {
+      "axes": {
+        "m": 320
+      }
+    },
+    {
+      "axes": {
+        "m": 332
+      }
+    },
+    {
+      "axes": {
+        "m": 336
+      }
+    },
+    {
+      "axes": {
+        "m": 344
+      }
+    },
+    {
+      "axes": {
+        "m": 352
+      }
+    },
+    {
+      "axes": {
+        "m": 364
+      }
+    },
+    {
+      "axes": {
+        "m": 368
+      }
+    },
+    {
+      "axes": {
+        "m": 384
+      }
+    },
+    {
+      "axes": {
+        "m": 408
+      }
+    },
+    {
+      "axes": {
+        "m": 416
+      }
+    },
+    {
+      "axes": {
+        "m": 424
+      }
+    },
+    {
+      "axes": {
+        "m": 428
+      }
+    },
+    {
+      "axes": {
+        "m": 440
+      }
+    },
+    {
+      "axes": {
+        "m": 448
+      }
+    },
+    {
+      "axes": {
+        "m": 464
+      }
+    },
+    {
+      "axes": {
+        "m": 472
+      }
+    },
+    {
+      "axes": {
+        "m": 480
+      }
+    },
+    {
+      "axes": {
+        "m": 492
+      }
+    },
+    {
+      "axes": {
+        "m": 496
+      }
+    },
+    {
+      "axes": {
+        "m": 512
+      }
+    },
+    {
+      "axes": {
+        "m": 576
+      }
+    },
+    {
+      "axes": {
+        "m": 640
+      }
+    },
+    {
+      "axes": {
+        "m": 2856
+      }
+    },
+    {
+      "axes": {
+        "m": 3672
+      }
+    },
+    {
+      "axes": {
+        "m": 12896
+      }
+    },
+    {
+      "axes": {
+        "m": 19992
+      }
+    },
+    {
+      "axes": {
+        "m": 19996
+      }
+    },
+    {
+      "axes": {
+        "m": 32768
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI350X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": []
+  }
+}

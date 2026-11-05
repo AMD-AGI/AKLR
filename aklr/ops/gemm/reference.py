@@ -13,6 +13,7 @@ __all__ = [
     "bmm_reference",
     "gemm_a4w4_mxfp4_reference",
     "gemm_a8w8_blockwise_scaled_reference",
+    "gemm_a8w8_mxfp8_reference",
     "gemm_a8w8_reference",
     "gemm_reference",
 ]
@@ -99,6 +100,24 @@ def gemm_a8w8_blockwise_scaled_reference(
     b_scale = b_scale.repeat_interleave(block, dim=0).repeat_interleave(block, dim=1)
     out = (a * a_scale[:, :k]) @ (b * b_scale[:n, :k]).mT
     return _out(out, _decoded(point, row_major_args, "bias", decode))
+
+
+def gemm_a8w8_mxfp8_reference(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+    decode: Callable[[Tensor, str], Tensor],
+) -> Tensor:
+    """One e8m0 scale per 32 e4m3 values along ``k``, both operands row-major."""
+
+    def scaled(name: str) -> Tensor:
+        scale = _decoded(point, row_major_args, f"{name}_scale", decode)
+        values = _decoded(point, row_major_args, name, decode)
+        return values * scale.repeat_interleave(32, dim=-1)
+
+    return _out(
+        scaled("a") @ scaled("b").mT,
+        _decoded(point, row_major_args, "bias", decode),
+    )
 
 
 def gemm_a4w4_mxfp4_reference(

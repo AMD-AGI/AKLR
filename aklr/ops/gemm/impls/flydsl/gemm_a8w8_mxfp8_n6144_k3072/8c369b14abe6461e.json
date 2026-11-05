@@ -1,0 +1,444 @@
+{
+  "schema_version": 5,
+  "name": "gemm_a8w8_mxfp8_n6144_k3072",
+  "contract_id": "gemm_a8w8_mxfp8@1.0",
+  "description": "mxfp8 gemm: (a * a_scale) @ (b * b_scale).T + bias, e8m0 scales per 32.",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 6144,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 3072,
+      "description": "Reduction length."
+    },
+    "scale_columns": {
+      "type": "const",
+      "value": 96,
+      "description": "Scale columns."
+    }
+  },
+  "attrs": {
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights."
+    },
+    "a_scale": {
+      "shape": [
+        "m",
+        "scale_columns"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -8,
+        "log2_hi": 8
+      },
+      "description": "Per 1 x 32 block of a."
+    },
+    "b_scale": {
+      "shape": [
+        "n",
+        "scale_columns"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -8,
+        "log2_hi": 8
+      },
+      "description": "Per 1 x 32 block of b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T, scaled."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 1
+      }
+    },
+    {
+      "axes": {
+        "m": 2
+      }
+    },
+    {
+      "axes": {
+        "m": 4
+      }
+    },
+    {
+      "axes": {
+        "m": 5
+      }
+    },
+    {
+      "axes": {
+        "m": 8
+      }
+    },
+    {
+      "axes": {
+        "m": 9
+      }
+    },
+    {
+      "axes": {
+        "m": 16
+      }
+    },
+    {
+      "axes": {
+        "m": 24
+      }
+    },
+    {
+      "axes": {
+        "m": 32
+      }
+    },
+    {
+      "axes": {
+        "m": 40
+      }
+    },
+    {
+      "axes": {
+        "m": 48
+      }
+    },
+    {
+      "axes": {
+        "m": 56
+      }
+    },
+    {
+      "axes": {
+        "m": 64
+      }
+    },
+    {
+      "axes": {
+        "m": 72
+      }
+    },
+    {
+      "axes": {
+        "m": 80
+      }
+    },
+    {
+      "axes": {
+        "m": 88
+      }
+    },
+    {
+      "axes": {
+        "m": 96
+      }
+    },
+    {
+      "axes": {
+        "m": 104
+      }
+    },
+    {
+      "axes": {
+        "m": 112
+      }
+    },
+    {
+      "axes": {
+        "m": 120
+      }
+    },
+    {
+      "axes": {
+        "m": 128
+      }
+    },
+    {
+      "axes": {
+        "m": 136
+      }
+    },
+    {
+      "axes": {
+        "m": 144
+      }
+    },
+    {
+      "axes": {
+        "m": 152
+      }
+    },
+    {
+      "axes": {
+        "m": 160
+      }
+    },
+    {
+      "axes": {
+        "m": 168
+      }
+    },
+    {
+      "axes": {
+        "m": 176
+      }
+    },
+    {
+      "axes": {
+        "m": 184
+      }
+    },
+    {
+      "axes": {
+        "m": 192
+      }
+    },
+    {
+      "axes": {
+        "m": 200
+      }
+    },
+    {
+      "axes": {
+        "m": 208
+      }
+    },
+    {
+      "axes": {
+        "m": 213
+      }
+    },
+    {
+      "axes": {
+        "m": 214
+      }
+    },
+    {
+      "axes": {
+        "m": 216
+      }
+    },
+    {
+      "axes": {
+        "m": 220
+      }
+    },
+    {
+      "axes": {
+        "m": 224
+      }
+    },
+    {
+      "axes": {
+        "m": 232
+      }
+    },
+    {
+      "axes": {
+        "m": 240
+      }
+    },
+    {
+      "axes": {
+        "m": 248
+      }
+    },
+    {
+      "axes": {
+        "m": 256
+      }
+    },
+    {
+      "axes": {
+        "m": 272
+      }
+    },
+    {
+      "axes": {
+        "m": 288
+      }
+    },
+    {
+      "axes": {
+        "m": 304
+      }
+    },
+    {
+      "axes": {
+        "m": 320
+      }
+    },
+    {
+      "axes": {
+        "m": 336
+      }
+    },
+    {
+      "axes": {
+        "m": 352
+      }
+    },
+    {
+      "axes": {
+        "m": 368
+      }
+    },
+    {
+      "axes": {
+        "m": 384
+      }
+    },
+    {
+      "axes": {
+        "m": 400
+      }
+    },
+    {
+      "axes": {
+        "m": 416
+      }
+    },
+    {
+      "axes": {
+        "m": 424
+      }
+    },
+    {
+      "axes": {
+        "m": 432
+      }
+    },
+    {
+      "axes": {
+        "m": 448
+      }
+    },
+    {
+      "axes": {
+        "m": 464
+      }
+    },
+    {
+      "axes": {
+        "m": 480
+      }
+    },
+    {
+      "axes": {
+        "m": 496
+      }
+    },
+    {
+      "axes": {
+        "m": 512
+      }
+    },
+    {
+      "axes": {
+        "m": 576
+      }
+    },
+    {
+      "axes": {
+        "m": 640
+      }
+    },
+    {
+      "axes": {
+        "m": 3112
+      }
+    },
+    {
+      "axes": {
+        "m": 3816
+      }
+    },
+    {
+      "axes": {
+        "m": 10000
+      }
+    },
+    {
+      "axes": {
+        "m": 13152
+      }
+    },
+    {
+      "axes": {
+        "m": 32768
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI350X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": []
+  }
+}

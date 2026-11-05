@@ -42,9 +42,12 @@ class TestReference:
     def test_backend_matches_reference(self, op_case: OpCase) -> None:
         if op_case.needs_gfx950 and DeviceTarget.current().arch != "gfx950":
             pytest.skip("the backend runs the Point only on gfx950")
+        baseline = op_case.contract.baseline()
+        if baseline is None:
+            pytest.skip("the contract has no baseline")
         args = op_case.inputs()
         call = op_case.call(args, "cuda")
-        outputs = op_case.contract.call_mutable_tensors(op_case.contract.baseline()(**call), call)
+        outputs = op_case.contract.call_mutable_tensors(baseline(**call), call)
         results = op_case.compare(outputs, args, baseline_outputs=outputs)
         output_specs = semantics.mutable_tensor_declarations(op_case.request.schema_json)
         baseline_relative = {

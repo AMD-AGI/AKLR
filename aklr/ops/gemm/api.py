@@ -10,6 +10,7 @@ from aklr.ops.gemm.contract import (
     GEMM_A4W4_MXFP4,
     GEMM_A8W8,
     GEMM_A8W8_BLOCKWISE_SCALED,
+    GEMM_A8W8_MXFP8,
 )
 
 __all__ = [
@@ -18,6 +19,7 @@ __all__ = [
     "gemm_a4w4_mxfp4",
     "gemm_a8w8",
     "gemm_a8w8_blockwise_scaled",
+    "gemm_a8w8_mxfp8",
 ]
 
 
@@ -44,6 +46,10 @@ def gemm_a8w8_blockwise_scaled(
     *,
     operand_format="none:none",
 ): ...
+
+
+@api(GEMM_A8W8_MXFP8)
+def gemm_a8w8_mxfp8(a, b, a_scale, b_scale, trans_b=True, bias=None, out_dtype=None, out=None): ...
 
 
 @api(GEMM_A4W4_MXFP4)
