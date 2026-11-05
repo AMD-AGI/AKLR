@@ -100,13 +100,32 @@ def test_several_matching_cells_fail() -> None:
     ("old", "new"),
     [
         pytest.param("env: [],", "env: [...base],", id="spread"),
-        pytest.param("env: [],", "env: baseEnv,", id="variable"),
-        pytest.param("env: [],", "env: [`A=1`],", id="template"),
+        pytest.param("[\n    {\n      // Same", "[\n    baseCell,\n    {\n      // Same", id="variable"),
+        pytest.param("env: [],", "env: (s) => [],", id="function-where-a-literal-is-needed"),
+        pytest.param("env: [],", 'env: ["A=\\u{1F600}"],', id="escape-python-has-not"),
     ],
 )
 def test_a_format_change_fails_the_parse(old: str, new: str) -> None:
-    with pytest.raises(ValueError, match="not a plain literal"):
+    assert old in _KIMI_K3
+    with pytest.raises(ValueError, match="cookbook moonshotai/kimi-k3"):
         _parse(_KIMI_K3.replace(old, new))
+
+
+def test_a_function_value_reads_as_null() -> None:
+    """A key the launch does not read (glm-5.3-flash's verificationStatus) may hold a function."""
+    text = _KIMI_K3.replace(
+        'verificationStatus: "in-progress",',
+        'verificationStatus: (s) => s.bcg !== "off" ? `a, ${s.x}` : { label: "b", hint: [1, 2] },',
+    )
+    assert _parse(text).cell(_MI355X).flags == _parse().cell(_MI355X).flags
+
+
+def test_a_ref_named_like_a_directory_stays_a_ref(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "docs").mkdir()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: (_ for _ in ()).throw(OSError("network")))
+    with pytest.raises(ValueError, match="network"):
+        Cookbook.fetch("docs", "moonshotai/kimi-k3")
 
 
 def test_local_checkout_source(tmp_path: Path) -> None:

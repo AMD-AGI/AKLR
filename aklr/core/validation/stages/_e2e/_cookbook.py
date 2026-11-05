@@ -14,7 +14,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Final
 
-from pydantic import ConfigDict, ValidationError
+from pydantic import ConfigDict, Field, ValidationError
 
 from aklr.core.contract.spec import FrozenModel
 
@@ -23,15 +23,24 @@ __all__ = ["COOKBOOK_REPO", "Cookbook", "CookbookCell", "MatchValue"]
 COOKBOOK_REPO: Final = "sgl-project/sglang"
 _CONFIG_DIR: Final = "docs/src/snippets/configs"
 _FETCH_TIMEOUT_SECONDS: Final = 60
-# a JavaScript literal of plain values: whitespace, comments, strings, keys, true/false/null,
-# numbers and punctuation; anything else (a spread, a call, a template, a variable) fails
+# a JavaScript literal of plain values: whitespace, comments, strings (a template with no
+# substitution or escape, strings joined by +), keys, true/false/null, numbers and
+# punctuation; a value of anything else (a function, a template with a substitution) reads as
+# null, and anything else elsewhere (a spread, a variable) fails
 _JS_TOKEN: Final = re.compile(
     r"""(?P<skip>\s+|//[^\n]*|/\*.*?\*/)"""
     r"""|(?P<string>"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')"""
+    r"""|(?P<template>`[^`\\$]*`)"""
     r"""|(?P<key>[A-Za-z_$][\w$]*(?=\s*:))"""
     r"""|(?P<word>(?:true|false|null)\b)"""
     r"""|(?P<number>-?\d[\w.+-]*)"""
-    r"""|(?P<punct>[\[\]{},:])""",
+    r"""|(?P<punct>[\[\]{},:+])""",
+    re.S,
+)
+# a non-literal value's tokens, to find where it ends: a `,`, `]` or `}` outside its brackets
+_JS_ANY_TOKEN: Final = re.compile(
+    r"""\s+|//[^\n]*|/\*.*?\*/|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`"""
+    r"""|[\[\](){},]|[^\s"'`\[\](){},]+""",
     re.S,
 )
 
@@ -45,7 +54,7 @@ class CookbookCell(FrozenModel):
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     match: dict[str, MatchValue]
-    nnodes: int = 1
+    nnodes: int = Field(default=1, ge=1)
     env: tuple[str, ...] = ()
     flags: tuple[str, ...] = ()
     verified: bool | None = None
@@ -77,7 +86,8 @@ class Cookbook(FrozenModel):
         branch, tag or SHA ``source``; a fetch or format fault raises ``ValueError``."""
         relative_path = f"{_CONFIG_DIR}/{config}.jsx"
         try:
-            if Path(source).is_dir():
+            # a directory only when it is an sglang checkout: a ref named like a local directory stays a ref
+            if (Path(source) / _CONFIG_DIR).is_dir():
                 text = (Path(source) / relative_path).read_text(encoding="utf-8")
                 done = subprocess.run(
                     ["git", "-C", source, "rev-parse", "HEAD"], capture_output=True, text=True, check=False
@@ -118,7 +128,8 @@ class Cookbook(FrozenModel):
                 cells=tuple(CookbookCell.model_validate(cell) for cell in cells or ()),
                 docker_images=docker_images,
             )
-        except (ValueError, TypeError, ValidationError) as error:
+        # SyntaxError: a JavaScript string escape Python has not, such as \u{1F600}
+        except (ValueError, TypeError, SyntaxError, ValidationError) as error:
             raise ValueError(f"{where}: {error}") from error
 
     @staticmethod
@@ -134,6 +145,15 @@ class Cookbook(FrozenModel):
         depth, position = 0, starts[0].end()
         while True:
             token = _JS_TOKEN.match(text, position)
+            if token is None and parts[-1] == ":":
+                n_open = 0
+                while (token := _JS_ANY_TOKEN.match(text, position)) is not None:
+                    if n_open == 0 and token.group() in ",]}":
+                        break
+                    n_open += (token.group() in "([{") - (token.group() in ")]}")
+                    position = token.end()
+                parts.append("null")
+                continue
             if token is None:
                 line = text.count("\n", 0, position) + 1
                 raise ValueError(
@@ -143,8 +163,11 @@ class Cookbook(FrozenModel):
             value, kind = token.group(), token.lastgroup
             if kind == "skip":
                 continue
-            if kind == "string":
-                value = json.dumps(ast.literal_eval(value))
+            if kind in ("string", "template"):
+                value = json.dumps(value[1:-1] if kind == "template" else ast.literal_eval(value))
+                if parts[-1] == "+":
+                    parts.pop()
+                    value = json.dumps(json.loads(parts.pop()) + json.loads(value))
             elif kind == "key":
                 value = json.dumps(value)
             elif value in "]}":
@@ -156,6 +179,11 @@ class Cookbook(FrozenModel):
             parts.append(value)
             if depth == 0:
                 return json.loads("".join(parts))
+
+    @property
+    def source_at_sha(self) -> str:
+        """The source that fetches this cookbook again: its SHA, or its local checkout."""
+        return self.source if (Path(self.source) / _CONFIG_DIR).is_dir() else self.sha
 
     def cell(self, match: Mapping[str, MatchValue]) -> CookbookCell:
         """The one cell whose ``match`` equals ``match``."""

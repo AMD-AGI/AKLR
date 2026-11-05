@@ -61,7 +61,8 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument(
         "--e2e-launch",
         metavar="PREFIX",
-        help="the command prefix that starts a process on another node, e.g. 'ssh {host}'",
+        help="how to start a command on another node, {cmd} its one shell-quoted word:"
+        " 'ssh {host} {cmd}' or 'srun -w {host} --overlap sh -c {cmd}'",
     )
     parser.add_argument(
         "--e2e-work-dir",

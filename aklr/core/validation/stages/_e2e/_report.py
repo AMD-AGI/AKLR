@@ -5,9 +5,14 @@
 
 from __future__ import annotations
 
+import re
 from typing import Final, Literal
 
+from packaging.version import InvalidVersion, Version
+
 from aklr.core.contract.spec import FrozenModel
+from aklr.core.validation.stages._e2e._cookbook import MatchValue
+from aklr.core.validation.stages._report._finding import Finding, FindingCode
 from aklr.core.validation.stages._report._markdown import (
     Block,
     BulletList,
@@ -41,13 +46,59 @@ class SideResult(FrozenModel):
 
 
 class E2eRecord(FrozenModel):
-    """One scenario, AKLR off against on: facts only."""
+    """One scenario, AKLR off against on, and what decides it."""
 
     scenario: str
+    cookbook: str  # <vendor>/<model>
     cookbook_sha: str
-    notes: str = ""  # the cells' cautions, the images the cookbook names
+    matches: dict[str, dict[str, MatchValue]]  # the cell of each role
+    cookbook_images: tuple[str, ...] = ()
+    installed_sglang: str
+    notes: str = ""  # the cells' cautions
     off: SideResult | None = None
     on: SideResult | None = None
+
+    @property
+    def is_other_sglang(self) -> bool:
+        """Whether an image the cookbook names has another sglang release than the installed one."""
+        try:
+            installed = Version(self.installed_sglang).release
+        except InvalidVersion:
+            return False
+        tags = (re.search(r":v(\d+(?:\.\d+)+)", image) for image in self.cookbook_images)
+        return any(tag is not None and Version(tag[1]).release != installed for tag in tags)
+
+    def findings(self, *, max_drop: float, min_off_score: float) -> list[Finding]:
+        """The verdict: off failing is the platform's (only a warning when the cookbook names
+        another sglang), on crashing, scoring more than ``max_drop`` below off, or answering
+        the prompt wrongly is AKLR's."""
+        off, on = self.off, self.on
+        if off is None:
+            return []
+        if off.failure or off.gsm8k_score is None or off.gsm8k_score < min_off_score:
+            if self.is_other_sglang:
+                return []
+            why = (
+                off.failure
+                or f"GSM8K {off.gsm8k_score}, below {min_off_score}: the recipe or grading is broken"
+            )
+            return [Finding.unlocated(FindingCode.PLATFORM_FAILURE, f"{self.scenario} off: {why}")]
+        if on is None:
+            return []
+        findings = []
+        if on.failure:
+            findings.append(Finding.unlocated(FindingCode.E2E_CRASH, f"{self.scenario} on: {on.failure}"))
+        # rounded: a drop of exactly max_drop is not more than it
+        if (difference := self.difference) is not None and round(difference, 9) < -max_drop:
+            detail = (
+                f"{self.scenario}: GSM8K on {on.gsm8k_score:.4f} is {-difference:.4f} below"
+                f" off {off.gsm8k_score:.4f}, more than {max_drop}"
+            )
+            findings.append(Finding.unlocated(FindingCode.E2E_ACCURACY_DROP, detail))
+        if on.answer_matches is False:
+            detail = f"{self.scenario}: answered {on.prompt_answer!r}"
+            findings.append(Finding.unlocated(FindingCode.E2E_WRONG_ANSWER, detail))
+        return findings
 
     @property
     def difference(self) -> float | None:
@@ -68,7 +119,19 @@ class E2eRecord(FrozenModel):
             {True: "matched", False: "differs", None: "-"}[on.answer_matches],
             "-" if on.n_hit_calls is None else str(on.n_hit_calls),
             "-" if on.n_fallback_calls is None else str(on.n_fallback_calls),
-            detail_text(self.notes) or "-",
+            detail_text(
+                "; ".join(
+                    filter(
+                        None,
+                        [
+                            self.notes,
+                            *self.cookbook_images,
+                            "AKLR served no call" if on.n_hit_calls == 0 else "",
+                        ],
+                    )
+                )
+            )
+            or "-",  # fmt: skip
         )
 
     def console_line(self) -> str:
@@ -104,6 +167,13 @@ class E2eReport(StageReport):
                 if side.failure:
                     items.append(f"{side_name} failed: {detail_text(side.failure)}")
                 items += [f"{side_name}: `{escape(argv)}`" for argv in side.argvs]
-            blocks += [Heading(4, escape(record.scenario)), Paragraph(f"cookbook {record.cookbook_sha}")]
+            cells = "; ".join(f"{role} {escape(match)}" for role, match in record.matches.items())
+            blocks += [
+                Heading(4, escape(record.scenario)),
+                Paragraph(
+                    f"cookbook {escape(record.cookbook)} at {record.cookbook_sha or '-'}, cells: {cells};"
+                    f" installed sglang {escape(record.installed_sglang)}"
+                ),
+            ]
             blocks.append(BulletList(tuple(items)))
         return blocks

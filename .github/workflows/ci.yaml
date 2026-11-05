@@ -385,11 +385,11 @@ jobs:
     container:
       image: *ci_image
       options: *gpu_container_options
-      # e2e serves real weights from the read-only weights cache, as agentx-ci does
+      # e2e serves real weights from the shared, read-only Hugging Face cache
       volumes:
-        - ${{ vars.AGENTX_HF_HUB_DIR }}:${{ vars.AGENTX_HF_HUB_DIR }}:ro
+        - ${{ vars.AKLR_SHARED_HF_HUB_DIR }}:${{ vars.AKLR_SHARED_HF_HUB_DIR }}:ro
       env:
-        HF_HUB_CACHE: ${{ vars.AGENTX_HF_HUB_DIR }}
+        HF_HUB_CACHE: ${{ vars.AKLR_SHARED_HF_HUB_DIR }}
         HF_HUB_OFFLINE: '1'
     # A full validation (no base: a force push, a replaced run, a dispatch) benches every schema:
     # 247 schemas need about 225 minutes on 8 MI355X (170 of 257 batches ran in 150).
