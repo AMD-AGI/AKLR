@@ -133,14 +133,14 @@ def _stored_cache(
     pages = decode(cache, point.dtypes["index_k_cache"]).double().reshape(-1, _PAGE_BYTES).clone()
     slots = args["out_cache_loc"].long()
     page, key = slots // PAGE_SIZE, slots % PAGE_SIZE
-    d = torch.arange(HEAD_DIM)
+    d = torch.arange(HEAD_DIM, device=slots.device)
     # aiter's preshuffled page: [key // 16, d // 16, key % 16, d % 16], then the scales
     columns = (key // _TILE * (_TILE * HEAD_DIM) + key % _TILE * _TILE)[:, None] + (
         d // _TILE * (_TILE * _TILE) + d % _TILE
     )[None, :]
     pages[page[:, None], columns] = keys / scales[:, None]
     scale_bytes = scales.to(torch.float32)[:, None].view(torch.uint8).view(torch.float8_e4m3fn).double()
-    scale_columns = (PAGE_SIZE * HEAD_DIM + key * 4)[:, None] + torch.arange(4)[None, :]
+    scale_columns = (PAGE_SIZE * HEAD_DIM + key * 4)[:, None] + torch.arange(4, device=slots.device)[None, :]
     pages[page[:, None], scale_columns] = scale_bytes
     return pages.reshape(cache.shape)
 
@@ -181,4 +181,4 @@ def dsa_indexer_key_prepare_reference(
 
     keys, key_scales = _keys(point, row_major_args, decode)
     cache = _stored_cache(point, row_major_args, decode, keys, key_scales)
-    return torch.zeros(0, dtype=torch.float64), cache
+    return torch.zeros(0, dtype=torch.float64, device=cache.device), cache
