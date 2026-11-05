@@ -21,7 +21,7 @@ from aklr.core.contract.spec import (
     derived_axis,
 )
 
-__all__ = ["CONTRACTS", "DSA_SPARSE_MLA_DECODE", "ROPE_DIM"]
+__all__ = ["CONTRACTS", "DSA_SPARSE_MLA_DECODE", "DSA_SPARSE_MLA_PREFILL", "ROPE_DIM"]
 
 _FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
 _FINITE = FiniteDistribution()
@@ -105,4 +105,24 @@ DSA_SPARSE_MLA_DECODE = OpContract(
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
 )
 
-CONTRACTS = (DSA_SPARSE_MLA_DECODE,)
+# The decode's attention, called from sglang's prefill: its own contract, because its baseline
+# is the kernel sglang runs there.
+DSA_SPARSE_MLA_PREFILL = OpContract(
+    contract_id="dsa_sparse_mla_prefill@1.0",
+    description=(
+        "sglang's DSA backend's sparse MLA prefill on one rank, kv_b_proj absorbed "
+        "(triton_sparse_mla_fwd, which DeepseekSparseAttnBackend.forward_extend calls for the "
+        "triton DSA prefill backend): each head of each token attends the KV pool rows its "
+        "top-k slots name (-1: none) with scores q . row * sm_scale, q and the rows the fp8 "
+        "values sglang holds, unscaled; the output is the softmax-weighted sum of the rows' "
+        "latent parts, 0 for a token that reads no row."
+    ),
+    op_type="dsa_backend",
+    axes=DSA_SPARSE_MLA_DECODE.axes,
+    constraints=DSA_SPARSE_MLA_DECODE.constraints,
+    inputs=DSA_SPARSE_MLA_DECODE.inputs,
+    outputs=DSA_SPARSE_MLA_DECODE.outputs,
+    layout_variants=DSA_SPARSE_MLA_DECODE.layout_variants,
+)
+
+CONTRACTS = (DSA_SPARSE_MLA_DECODE, DSA_SPARSE_MLA_PREFILL)

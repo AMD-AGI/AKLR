@@ -51,6 +51,25 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # the same attention from sglang's prefill: more tokens than the decode's
+    PointSpec(
+        contract_id="dsa_sparse_mla_prefill@1.0",
+        axes={
+            "n_tokens": 32,
+            "n_heads": 4,
+            "kv_dim": 192,
+            "topk": 64,
+            "n_slots": 512,
+        },
+        dtypes={
+            "q": "float8_e4m3fn",
+            "kv_cache": "float8_e4m3fn",
+            "topk_indices": "int32",
+            "output": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
     # MiniMax-M2's MoE shrunk: every routed expert on the rank, then half of them (expert
     # parallelism); the experts as sglang holds them for aiter
     *(
@@ -226,6 +245,7 @@ GFX950_CONTRACT_IDS = frozenset(
     {
         "deepseek_v2_mxfp4_moe@1.0",
         "dsa_sparse_mla_decode@1.0",
+        "dsa_sparse_mla_prefill@1.0",
         "gdn_prefill_group_fp8_quant@1.0",
         "minimax_m2_fp8_moe@1.0",
         "minimax_m2_mxfp4_moe@1.0",

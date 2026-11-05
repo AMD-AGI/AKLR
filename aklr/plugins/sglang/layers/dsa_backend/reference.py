@@ -14,7 +14,7 @@ from aklr.plugins.sglang.layers.dsa_backend.contract import ROPE_DIM
 if TYPE_CHECKING:
     from torch import Tensor
 
-__all__ = ["dsa_sparse_mla_decode_reference"]
+__all__ = ["dsa_sparse_mla_decode_reference", "dsa_sparse_mla_prefill_reference"]
 
 # tokens a step: a chunk gathers [tokens, topk, kv_dim] rows
 _CHUNK_TOKENS = 16
@@ -48,3 +48,12 @@ def dsa_sparse_mla_decode_reference(
         weights = scores.softmax(-1).nan_to_num(0.0)
         output[chunk] = torch.einsum("thk,tkr->thr", weights, rows[..., :latent])
     return output
+
+
+def dsa_sparse_mla_prefill_reference(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+    decode: Callable[[Tensor, str], Tensor],
+) -> Tensor:
+    """The decode's attention: the prefill's contract shares its inputs and its math."""
+    return dsa_sparse_mla_decode_reference(point, row_major_args, decode)
