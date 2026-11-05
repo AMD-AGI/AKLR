@@ -160,7 +160,7 @@ class TestDeploymentPlan:
         (process,) = deployment.processes
         assert deployment.entry_url == "http://127.0.0.1:30000"
         assert process.argv == (
-            "env", "S=stage", "A=1", "B=3", "AKLR_DISABLE=1", sys.executable, "-m", "sglang.launch_server",
+            "env", "A=1", "B=3", "S=stage", "AKLR_DISABLE=1", sys.executable, "-m", "sglang.launch_server",
             "--model-path", "org/Model", "--tp", "8", "--mem-fraction-static", "0.8",
             "--host", "127.0.0.1", "--port", "30000",
         )  # fmt: skip
