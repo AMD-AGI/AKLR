@@ -9,6 +9,7 @@ import http.client
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -42,11 +43,12 @@ if TYPE_CHECKING:
 
 __all__ = ["E2eStage"]
 
-# phase 1, GSM8K on both sides: every test question
+# phase 1, GSM8K on both sides: every test question; run_eval takes its 5 few-shot examples
+# from them, so 1314 are graded
 GSM8K_N_QUESTIONS: Final = 1319
 # enough for a thinking model; others stop far earlier
 MAX_TOKENS: Final = 16384
-# provisional, about 2.5 sigma of the on - off difference over 1319 shared questions; to be
+# provisional, about 2.5 sigma of the on - off difference over 1314 shared questions; to be
 # set from measured off-against-off noise
 GSM8K_MAX_DROP: Final = 0.02
 # phase 2, the on side only: one prompt with a short, unique answer
@@ -85,6 +87,9 @@ class E2eStage(PipelineStage[E2eReport]):
         self._cookbook_repo = cookbook_repo
         self._cookbook_source = cookbook_source
         self._hosts = tuple(hosts)
+        # one {cmd} word: the remote shell reads the command back from it unchanged
+        if launch is not None and shlex.split(launch).count("{cmd}") != 1:
+            raise ValueError(f"--e2e-launch {launch!r}: needs one {{cmd}} word, e.g. 'ssh {{host}} {{cmd}}'")
         self._launch = launch
         self._work_dir = work_dir
         # every process gets these on its command line, so a remote node gets them too;
@@ -101,7 +106,11 @@ class E2eStage(PipelineStage[E2eReport]):
         findings: list[Finding] = []
         records: list[E2eRecord] = []
         cookbooks: dict[str, Cookbook] = {}
-        source = self._cookbook_source
+        # one commit for every scenario of the run
+        try:
+            source: str | ValueError = Cookbook.pinned(self._cookbook_source, self._cookbook_repo)
+        except ValueError as error:
+            source = error
         try:
             installed_sglang = metadata.version("sglang")
         except metadata.PackageNotFoundError:
@@ -122,11 +131,12 @@ class E2eStage(PipelineStage[E2eReport]):
                     installed_sglang=installed_sglang,
                 )
                 try:
+                    if isinstance(source, ValueError):
+                        raise source
                     if scenario.cookbook not in cookbooks:
                         cookbooks[scenario.cookbook] = Cookbook.fetch(
                             source, scenario.cookbook, self._cookbook_repo
                         )
-                        source = cookbooks[scenario.cookbook].source_at_sha  # one commit for the run
                     cookbook = cookbooks[scenario.cookbook]
                     # each role's cell cautions, and the images the cookbook names
                     notes = [cookbook.cell(match).notes for match in scenario.roles.values()]
@@ -153,9 +163,13 @@ class E2eStage(PipelineStage[E2eReport]):
                     run_dir = Path(work_dir, str(index))
                     off = self._run_side(scenario, cookbook, "off", env, run_dir)
                     record = record.model_copy(update={"off": off})
-                    if not off.failure and off.gsm8k_score is not None and off.gsm8k_score >= MIN_OFF_GSM8K:
+                    if not (fault := record.off_fault(MIN_OFF_GSM8K)):
                         on = self._run_side(scenario, cookbook, "on", env, run_dir)
                         record = record.model_copy(update={"on": on})
+                    elif record.is_other_sglang:
+                        # the RFC's non-blocking warning: no finding, but on was not compared
+                        warning = f"off failed, on not compared; the cookbook names another sglang: {fault}"
+                        record = record.model_copy(update={"warning": warning})
                 except RunNotKilledError as error:
                     findings.append(
                         Finding.unlocated(FindingCode.PLATFORM_FAILURE, f"{scenario.name}: {error}")
@@ -196,7 +210,9 @@ class E2eStage(PipelineStage[E2eReport]):
         self.progress.write(f"{side}: starting {len(deployment.processes)} processes")
         try:
             entry_url = deployment.start(timeout=SIDE_TIMEOUT_SECONDS)
-            self.progress.write(f"{side}: serving at {entry_url}; GSM8K, {GSM8K_N_QUESTIONS} questions")
+            self.progress.write(
+                f"{side}: serving at {entry_url}; GSM8K, {GSM8K_N_QUESTIONS} questions less 5 shots"
+            )
             argv = [
                 sys.executable, "-m", "sglang.test.run_eval", "--eval-name", "gsm8k", "--base-url", entry_url,
                 "--num-examples", str(GSM8K_N_QUESTIONS), "--max-tokens", str(MAX_TOKENS), "--temperature", "0",
@@ -242,6 +258,8 @@ class E2eStage(PipelineStage[E2eReport]):
                         request, timeout=max(1.0, deadline - time.monotonic())
                     ) as response:
                         answer = json.load(response)["choices"][0]["message"]["content"] or ""
+                    if not isinstance(answer, str):
+                        raise TypeError(f"content is not a string: {answer!r}")
                     result["prompt_answer"] = answer
                     # the whole answer, less surrounding whitespace and trailing punctuation
                     normalized = re.sub(r"\W+$", "", answer).strip().casefold()

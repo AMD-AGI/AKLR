@@ -45,7 +45,7 @@ _UNSAFE_ENV_NAME: Final = re.compile(
     r"|(?i:\w*_proxy)"
 )
 _KNOWN_PLACEHOLDER: Final = re.compile(r"\{\{\s*(\w+)\s*\}\}")
-_PLACEHOLDER: Final = re.compile(r"\{\{.*?\}\}|<[A-Za-z][\w-]*>")
+_PLACEHOLDER: Final = re.compile(r"\{\{.*?\}\}|<[A-Za-z][\w.:-]*>")
 _READY_POLL_SECONDS: Final = 5.0
 _HEALTH_TIMEOUT_SECONDS: Final = 60.0
 _LOG_TAIL_BYTES: Final = 2 << 10
@@ -282,7 +282,9 @@ class Deployment:
             return NodeProcess(name=name, argv=tuple(command), log_path=run_dir / f"{name}.log")
         if launch is None:
             raise ValueError(f"{name}: {host} is not this node, and no --e2e-launch reaches it")
-        prefix = [shlex.join(command) if t == "{cmd}" else t.format(host=host) for t in shlex.split(launch)]
+        prefix = [
+            shlex.join(command) if t == "{cmd}" else t.replace("{host}", host) for t in shlex.split(launch)
+        ]
         if prefix.count(shlex.join(command)) != 1:
             raise ValueError(f"--e2e-launch {launch!r}: needs one {{cmd}} word")
         return NodeProcess(name=name, argv=tuple(prefix), log_path=run_dir / f"{name}.log")
@@ -304,7 +306,8 @@ class Deployment:
             with contextlib.suppress(OSError, http.client.HTTPException):
                 url = f"{self.entry_url}/health_generate"
                 with urllib.request.urlopen(url, timeout=min(_HEALTH_TIMEOUT_SECONDS, remaining)) as response:
-                    if response.status == 200:
+                    # a server that answers only after the deadline is not ready in time
+                    if response.status == 200 and time.monotonic() < deadline:
                         return self.entry_url
             time.sleep(min(_READY_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
         raise RuntimeError(f"{self.entry_url} not ready after {timeout:g} s")

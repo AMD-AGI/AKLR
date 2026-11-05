@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import ast
 import json
 import re
 import subprocess
@@ -43,6 +42,12 @@ _JS_ANY_TOKEN: Final = re.compile(
     r"""|[\[\](){},]|[^\s"'`\[\](){},]+""",
     re.S,
 )
+
+# an escape of a JavaScript string: \xHH, \uHHHH, \u{H...}, or one character
+# any other one-character escape (\\/, \\q) is the character itself; a backslash-newline continues the line
+_JS_ONE_CHARACTER_ESCAPES: Final = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v",
+    "0": "\0", "\n": ""}  # fmt: skip
+_JS_ESCAPE: Final = re.compile(r"\\(x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|[\s\S])")
 
 MatchValue = str | int | float | bool
 
@@ -94,19 +99,7 @@ class Cookbook(FrozenModel):
                 )
                 sha = done.stdout.strip() if done.returncode == 0 else "local"
             else:
-                sha = source
-                if not re.fullmatch(r"[0-9a-f]{40}", source):
-                    done = subprocess.run(
-                        ["git", "ls-remote", f"https://github.com/{repo}", f"refs/heads/{source}",
-                         f"refs/tags/{source}^{{}}", f"refs/tags/{source}"],
-                        capture_output=True, text=True, timeout=_FETCH_TIMEOUT_SECONDS, check=False,
-                    )  # fmt: skip
-                    refs = {name: sha for sha, name in (line.split() for line in done.stdout.splitlines())}
-                    # an annotated tag's commit is its peeled ref
-                    names = (f"refs/heads/{source}", f"refs/tags/{source}^{{}}", f"refs/tags/{source}")
-                    sha = next((refs[name] for name in names if name in refs), "")
-                    if done.returncode != 0 or not sha:
-                        raise ValueError(f"{repo}: no branch or tag {source}: {done.stderr.strip()}")
+                sha = cls.pinned(source, repo)
                 url = f"https://raw.githubusercontent.com/{repo}/{sha}/{relative_path}"
                 with urllib.request.urlopen(url, timeout=_FETCH_TIMEOUT_SECONDS) as response:
                     text = response.read().decode()
@@ -114,26 +107,47 @@ class Cookbook(FrozenModel):
             raise ValueError(f"cookbook {config} at {source}: {error}") from error
         return cls.parse(text, source=source, sha=sha, config=config)
 
+    @staticmethod
+    def pinned(source: str, repo: str = COOKBOOK_REPO) -> str:
+        """``source`` with a branch or tag resolved to its commit, so every fetch reads one
+        commit; a local checkout or a SHA as it is. ``ValueError`` when it resolves to none."""
+        if (Path(source) / _CONFIG_DIR).is_dir() or re.fullmatch(r"[0-9a-f]{40}", source):
+            return source
+        try:
+            done = subprocess.run(
+                ["git", "ls-remote", f"https://github.com/{repo}", f"refs/heads/{source}",
+                 f"refs/tags/{source}^{{}}", f"refs/tags/{source}"],
+                capture_output=True, text=True, timeout=_FETCH_TIMEOUT_SECONDS, check=False,
+            )  # fmt: skip
+        except (OSError, subprocess.SubprocessError) as error:
+            raise ValueError(f"{repo}: {source}: {error}") from error
+        refs = {name: sha for sha, name in (line.split() for line in done.stdout.splitlines())}
+        # an annotated tag's commit is its peeled ref
+        names = (f"refs/heads/{source}", f"refs/tags/{source}^{{}}", f"refs/tags/{source}")
+        if done.returncode != 0 or not (sha := next((refs[n] for n in names if n in refs), "")):
+            raise ValueError(f"{repo}: no branch or tag {source}: {done.stderr.strip()}")
+        return sha
+
     @classmethod
     def parse(cls, text: str, *, source: str, sha: str, config: str) -> Cookbook:
         """The cookbook of a ``.jsx`` config's text; a format it does not know raises ``ValueError``."""
         where = f"cookbook {config} at {sha}"
         try:
-            cells = cls._literal(text, "cells")
+            if (cells := cls._literal(text, "cells")) is None:
+                raise ValueError("no `cells: [` at the start of a line")
             docker_images = cls._literal(text, "dockerImages") or {}
             return cls(
                 source=source,
                 sha=sha,
                 config=config,
-                cells=tuple(CookbookCell.model_validate(cell) for cell in cells or ()),
+                cells=tuple(CookbookCell.model_validate(cell) for cell in cells),
                 docker_images=docker_images,
             )
-        # SyntaxError: a JavaScript string escape Python has not, such as \u{1F600}
-        except (ValueError, TypeError, SyntaxError, ValidationError) as error:
+        except (ValueError, TypeError, ValidationError) as error:
             raise ValueError(f"{where}: {error}") from error
 
-    @staticmethod
-    def _literal(text: str, key: str) -> object:
+    @classmethod
+    def _literal(cls, text: str, key: str) -> object:
         """The value of the ``key: [...]`` or ``key: {...}`` that starts a line; ``None`` if
         no line does."""
         starts = list(re.finditer(rf"^[ \t]*{key}[ \t]*:[ \t]*(?=[\[{{])", text, re.M))
@@ -164,7 +178,17 @@ class Cookbook(FrozenModel):
             if kind == "skip":
                 continue
             if kind in ("string", "template"):
-                value = json.dumps(value[1:-1] if kind == "template" else ast.literal_eval(value))
+                # JavaScript's escapes, not Python's: \/ is /, \q is q, \a is a
+                value = json.dumps(
+                    _JS_ESCAPE.sub(
+                        lambda m: (
+                            chr(int(m[1][1:].strip("{}"), 16))
+                            if m[1][0] in "xu"
+                            else _JS_ONE_CHARACTER_ESCAPES.get(m[1], m[1])
+                        ),
+                        value[1:-1],
+                    )
+                )
                 if parts[-1] == "+":
                     parts.pop()
                     value = json.dumps(json.loads(parts.pop()) + json.loads(value))
@@ -179,11 +203,6 @@ class Cookbook(FrozenModel):
             parts.append(value)
             if depth == 0:
                 return json.loads("".join(parts))
-
-    @property
-    def source_at_sha(self) -> str:
-        """The source that fetches this cookbook again: its SHA, or its local checkout."""
-        return self.source if (Path(self.source) / _CONFIG_DIR).is_dir() else self.sha
 
     def cell(self, match: Mapping[str, MatchValue]) -> CookbookCell:
         """The one cell whose ``match`` equals ``match``."""

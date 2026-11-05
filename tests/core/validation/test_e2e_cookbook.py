@@ -102,13 +102,22 @@ def test_several_matching_cells_fail() -> None:
         pytest.param("env: [],", "env: [...base],", id="spread"),
         pytest.param("[\n    {\n      // Same", "[\n    baseCell,\n    {\n      // Same", id="variable"),
         pytest.param("env: [],", "env: (s) => [],", id="function-where-a-literal-is-needed"),
-        pytest.param("env: [],", 'env: ["A=\\u{1F600}"],', id="escape-python-has-not"),
     ],
 )
 def test_a_format_change_fails_the_parse(old: str, new: str) -> None:
     assert old in _KIMI_K3
     with pytest.raises(ValueError, match="cookbook moonshotai/kimi-k3"):
         _parse(_KIMI_K3.replace(old, new))
+
+
+def test_no_cells_literal_fails() -> None:
+    with pytest.raises(ValueError, match="no `cells"):
+        _parse(_KIMI_K3.replace("  cells: [", '  "cells": ['))
+
+
+def test_javascript_escapes() -> None:
+    text = _KIMI_K3.replace('"SGLANG_USE_AITER=1"', r'"A=https:\/\/x.org\q\a \u{1F600} \x41\u0042"')
+    assert _parse(text).cell(_MI355X).env[0] == "A=https://x.org" + "qa \U0001f600 AB"
 
 
 def test_a_function_value_reads_as_null() -> None:

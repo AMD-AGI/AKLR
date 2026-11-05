@@ -213,6 +213,14 @@ class TestDeploymentPlan:
         scenario = _scenario({"unified": {"hw": "mi355x", "strategy": "multi"}})
         with pytest.raises(ValueError, match=r"needs one \{cmd\} word"):
             self._plan(scenario, hosts=("n0", "n1"), launch="ssh {host}")
+        for launch in ("ssh {host}", 'bash -lc "cd /x && {cmd}"'):
+            with pytest.raises(ValueError, match=r"needs one \{cmd\} word"):
+                E2eStage([scenario], ["cuda:0"], cookbook_repo="r", cookbook_source="main", launch=launch)
+        # braces other than {host} and {cmd} are the launcher's own
+        deployment = self._plan(
+            scenario, hosts=("n0", "n1"), launch='ssh -o ProxyCommand="nc {proxy} 22" {host} {cmd}'
+        )
+        assert deployment.processes[1].argv[:4] == ("ssh", "-o", "ProxyCommand=nc {proxy} 22", "n1")
 
     def test_nnodes_overrides_the_cell(self) -> None:
         deployment = self._plan(
@@ -254,6 +262,8 @@ class TestDeploymentPlan:
             pytest.param("args", {"--nic": "<NETWORK_INTERFACE>"}, id="angle-upper"),
             pytest.param("env", {"IFNAME": "{{NETWORK_IFACE}}"}, id="braces"),
             pytest.param("env", {"IFNAME": "{{ NETWORK-IFACE }}"}, id="braces-odd"),
+            pytest.param("env", {"ADDR": "<node0-ip:port>"}, id="angle-colon"),
+            pytest.param("env", {"ADDR": "<node_0.ip>"}, id="angle-dot"),
         ],
     )
     def test_a_placeholder_left_fails(self, kind: str, value: dict[str, str]) -> None:
@@ -410,6 +420,26 @@ class TestVerdicts:
         assert [f.code for f in findings] == codes
 
 
+def test_an_off_failure_under_another_sglang_is_a_warning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    cookbook = _COOKBOOK.model_copy(
+        update={"docker_images": {"mi355x": "lmsysorg/sglang-rocm:v0.5.19-rocm720"}}
+    )
+    monkeypatch.setattr(Cookbook, "pinned", staticmethod(lambda source, repo: "0" * 40))
+    monkeypatch.setattr(Cookbook, "fetch", classmethod(lambda cls, *args: cookbook))
+    monkeypatch.setattr("importlib.metadata.version", lambda name: "0.5.22")
+    monkeypatch.setattr(E2eStage, "_run_side", lambda self, *args: SideResult(gsm8k_score=0.1))
+    stage = E2eStage(
+        [_scenario({"unified": _UNIFIED})], ["cuda:0"], cookbook_repo="r", cookbook_source="main"
+    )
+    report = stage.run(ValidationScope(tmp_path, "", None, (), ()), Mock())
+    (record,) = report.scenario_records
+    assert report.findings == ()
+    assert record.warning.startswith("off failed, on not compared")
+    assert "warning: off failed" in record.table_row()[-1]
+
+
 class TestStage:
     def _stage(self) -> E2eStage:
         return E2eStage(
@@ -427,6 +457,7 @@ class TestStage:
     def test_on_runs_only_after_a_sound_off(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, off: SideResult, sides: list[str]
     ) -> None:
+        monkeypatch.setattr(Cookbook, "pinned", staticmethod(lambda source, repo: "0" * 40))
         monkeypatch.setattr(Cookbook, "fetch", classmethod(lambda cls, *args: _COOKBOOK))
         ran: list[str] = []
 
@@ -475,3 +506,6 @@ class TestStage:
         assert off.gsm8k_score is None
         assert "1 GSM8K requests failed" in off.failure
         assert "during the phases: unified-0 exited with -9" in off.failure
+        answer = 42  # type: ignore[assignment]
+        on = self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path)
+        assert "content is not a string" in on.failure
