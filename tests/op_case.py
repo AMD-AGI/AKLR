@@ -11,7 +11,7 @@ import torch
 
 from aklr.core.contract import semantics
 from aklr.core.contract.fastkey import CallArgs
-from aklr.core.contract.locate import op_dir, op_module
+from aklr.core.contract.locate import op_dir
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.semantics import CompareResult
@@ -164,10 +164,12 @@ class OpCase:
         self, row_major_args: Mapping[str, Any], decode: Callable[[Any, str], Any] = semantics.to_float32
     ) -> dict[str, Any]:
         """The op's reference of ``row_major_args``, in float32 as validation computes it unless
-        ``decode`` says otherwise, by name in ``contract.mutable_tensors``."""
-        reference_module = op_module(self.contract.op_package, "reference")
-        reference_fn = getattr(reference_module, self.contract.reference_name)
-        return self.contract.mutable_tensors_by_name(reference_fn(self.point, row_major_args, decode))
+        ``decode`` says otherwise, by name in ``contract.mutable_tensors``: one rank's call."""
+        # shortcut: one rank's inputs only, so no group of more; draw every rank's (rank= of
+        # row_major_inputs) when a ranks contract gets a Small Point
+        if (n_ranks := self.contract.ranks_at(self.point)) > 1:
+            raise NotImplementedError(f"{self.contract.contract_id}: a group of {n_ranks} ranks")
+        return self.contract.reference_outputs(self.point, [row_major_args], 0, decode)
 
     def compare(
         self,

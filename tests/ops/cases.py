@@ -514,11 +514,59 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
     ),
 )
 # whose backend runs only on gfx950 (fp4, dsv4 MLA, e4m3fn bytes)
+SMALL_POINTS += (
+    PointSpec(
+        contract_id="sparse_prefill_mxfp8@1.0",
+        axes={
+            "n_tokens": 2,
+            "n_heads": 16,
+            "prefix_rows": 7,
+            "extend_rows": 8,
+            "prefix_nnz": 6,
+            "extend_nnz": 4,
+            "n_offsets": 3,
+        },
+        dtypes={
+            "q_nope": "uint8",
+            "q_rope": "bfloat16",
+            "prefix_nope": "uint8",
+            "prefix_rope": "bfloat16",
+            "prefix_indices": "int32",
+            "prefix_indptr": "int32",
+            "extend_nope": "uint8",
+            "extend_rope": "bfloat16",
+            "extend_indices": "int32",
+            "extend_indptr": "int32",
+            "sinks": "float32",
+            "output": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
+        contract_id="per_group_quant_fp8@1.0",
+        axes={"n_tokens": 3, "hidden_size": 256},
+        dtypes={"x": "bfloat16", "quantized": "float8_e4m3fn", "scales": "float32"},
+        attrs={},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
+        contract_id="per_group_quant_mxfp8@1.0",
+        axes={"n_tokens": 3, "hidden_size": 256},
+        dtypes={"x": "bfloat16", "quantized": "float8_e4m3fn", "scales": "uint8"},
+        attrs={},
+        layout_variant_name="row_major",
+    ),
+)
+
 GFX950_CONTRACT_IDS = frozenset(
     {
         "fused_moe@1.0",
         "gemm_a4w4_mxfp4@1.0",
         "flash_mla_with_kvcache@1.0",
         "fp8_paged_mqa_logits@1.0",  # gfx942 reads its fp8 bytes as e4m3fnuz
+        "per_group_quant_fp8@1.0",
+        "per_group_quant_mxfp8@1.0",
+        "sparse_prefill_mxfp8@1.0",
     }
 )

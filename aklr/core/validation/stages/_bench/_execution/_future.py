@@ -69,7 +69,7 @@ class ExecutionFuture(Future, Generic[T]):
         self._task_id = task_id
         self._task_state = TaskState.PENDING
         self._resource_id: str | None = None
-        self._device: str | None = None
+        self._devices: tuple[str, ...] | None = None
         self._metadata_lock = threading.Lock()
         self._callbacks: list[Callable[[ExecutionFuture[T]], None]] = []
         self._callback_lock = threading.Lock()
@@ -98,16 +98,16 @@ class ExecutionFuture(Future, Generic[T]):
             return self._resource_id
 
     @property
-    def device(self) -> str | None:
+    def devices(self) -> tuple[str, ...] | None:
         with self._metadata_lock:
-            return self._device
+            return self._devices
 
-    def assign(self, resource_id: str, device: str | None = None) -> bool:
+    def assign(self, resource_id: str, devices: tuple[str, ...] | None = None) -> bool:
         if self.cancelled():
             return False
         with self._metadata_lock:
             self._resource_id = resource_id
-            self._device = device
+            self._devices = devices
             self._task_state = TaskState.ASSIGNED
         return True
 

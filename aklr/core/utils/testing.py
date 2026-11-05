@@ -149,8 +149,10 @@ def _kineto_replay_times_ms(events, calls_per_graph, replays, flush_name):
     return [ms / calls_per_graph for ms in times.values()]
 
 
-def bench_cudagraph(fn, rep: float = 20) -> float:
-    """Return the median per-call GPU time in milliseconds, cache flush excluded."""
+def bench_cudagraph(fn, rep: float = 20, group=None) -> float:
+    """Return the median per-call GPU time in milliseconds, cache flush excluded; with a
+    torch.distributed ``group``, every rank of which times its share of one collective
+    ``fn``, each captures as many calls."""
     if not math.isfinite(rep) or rep <= 0:
         raise ValueError("rep must be a finite positive millisecond budget")
 
@@ -174,6 +176,10 @@ def bench_cudagraph(fn, rep: float = 20) -> float:
     estimate_ms = start_event.elapsed_time(end_event) / 5
     affordable = KERNEL_RECORD_BUDGET // (12 * _records_per_call(fn, stream))
     count = max(1, min(int(rep / estimate_ms), affordable))
+    if group is not None:
+        agreed = torch.tensor([count], device=stream.device)
+        torch.distributed.all_reduce(agreed, op=torch.distributed.ReduceOp.MIN, group=group)
+        count = int(agreed.item())
 
     graph, capture = _capture(stream)
     try:

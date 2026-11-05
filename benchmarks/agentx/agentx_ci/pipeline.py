@@ -1,0 +1,154 @@
+# SPDX-License-Identifier: MIT
+"""Plan and test exactly one model locally, then generate its report."""
+
+from __future__ import annotations
+
+import argparse
+import shutil
+import sys
+import uuid
+from pathlib import Path
+
+from agentx_ci import plan, report_all, sweep
+from agentx_ci.model_config import model_config, validate_model_id
+from agentx_ci.recipe_resolve import add_arguments, validate_options
+from agentx_ci.utils import DEFAULT_CONFIG, REPO_ROOT, load_config, utc_now
+
+
+def cleanup(root: Path, args: argparse.Namespace) -> bool:
+    ok = True
+    persistent = [Path(value).resolve() for value in (args.work, args.cache) if value is not None]
+    for name in ("work", "cache"):
+        if getattr(args, name) is not None:
+            continue
+        path = root / name
+        if any(value == path or path in value.parents for value in persistent):
+            continue
+        try:
+            if path.is_symlink():
+                path.unlink()
+            elif path.exists():
+                shutil.rmtree(path)
+        except OSError as error:
+            ok = False
+            print(f"ERROR: unable to remove temporary directory {path}: {error}", file=sys.stderr)
+    return ok
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="python -m agentx_bench pipeline", description=__doc__)
+    parser.add_argument("--config", default=DEFAULT_CONFIG)
+    parser.add_argument(
+        "--model", required=True, help="One enabled model id; all and model lists are not accepted"
+    )
+    parser.add_argument("--hub", type=Path, required=True, help="Host HF hub cache with the pinned weights")
+    parser.add_argument(
+        "--out", type=Path, required=True, help="Fresh run directory containing plan/, results/ and site/"
+    )
+    parser.add_argument(
+        "--work", type=Path, help="Persistent resolver/runtime workspace; default is deleted after the run"
+    )
+    parser.add_argument(
+        "--cache", type=Path, help="Persistent kernel cache root; default cache is deleted after the run"
+    )
+    parser.add_argument("--run-id", help="Shared run identifier for all stages; generated if omitted")
+    parser.add_argument("--inferencex-ref")
+    parser.add_argument("--run-image", help="Image used by both the plan and local Docker execution")
+    parser.add_argument("--arms", default="all")
+    parser.add_argument("--points")
+    parser.add_argument("--duration", type=int, help="Optional per-point smoke duration override")
+    parser.add_argument("--model-path", help="Optional model path visible inside the container")
+    parser.add_argument("--git-dir", type=Path, default=REPO_ROOT, help="Checkout used for report history")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--baseline-dir", type=Path)
+    source.add_argument("--baseline-url")
+    add_arguments(parser)
+    args = parser.parse_args(argv)
+    root = args.out.resolve()
+    created = False
+    try:
+        validate_options(args)
+        validate_model_id(args.model)
+        model_config(load_config(args.config), args.model)
+        if args.duration is not None and args.duration <= 0:
+            raise ValueError("--duration must be positive")
+        if root.exists():
+            raise ValueError(f"pipeline output already exists: {root}; choose a fresh directory")
+        if not args.hub.is_dir():
+            raise ValueError(f"HF hub directory does not exist: {args.hub}")
+        if args.run_id is not None and not args.run_id.strip():
+            raise ValueError("--run-id cannot be empty")
+        run_id = args.run_id or f"local-{uuid.uuid4().hex[:12]}"
+        work = (args.work or root / "work").resolve()
+        cache = (args.cache or root / "cache").resolve()
+        plan_args = argparse.Namespace(**vars(args), models=args.model)
+        plan_args.out, plan_args.work, plan_args.run_id = root / "plan", work, run_id
+        root.mkdir(parents=True, exist_ok=False)
+        created = True
+        print(f"[{utc_now()}] pipeline {run_id}: creating plan in {root / 'plan'}", flush=True)
+        manifest = plan.build(plan_args)
+        if len(manifest["models"]) != 1 or manifest["models"][0]["id"] != args.model:
+            raise ValueError("pipeline plan must contain exactly the requested model")
+    except (ValueError, OSError, plan.rr.ResolveError) as error:
+        print(f"ERROR: pipeline planning failed: {error}", file=sys.stderr)
+        if created:
+            cleanup(root, args)
+        return 1
+
+    failed = False
+    interrupted = False
+    model = manifest["models"][0]
+    model_id = model["id"]
+    if model["status"] != "resolved":
+        failed = True
+        print(f"ERROR [{model_id}]: {model.get('error') or 'model plan was not resolved'}", file=sys.stderr)
+    else:
+        print(f"[{utc_now()}] pipeline {run_id}: testing {model_id}", flush=True)
+        command = [
+            "--serving",
+            str(root / "plan/models" / model_id / "serving.json"),
+            "--hub",
+            str(args.hub.resolve()),
+            "--out",
+            str(root / "results/models" / model_id),
+            "--cache",
+            str(cache / model_id),
+            "--work",
+            str(work / "sweeps" / model_id),
+            "--run-id",
+            run_id,
+        ]
+        if args.model_path is not None:
+            command.extend(["--model-path", args.model_path])
+        try:
+            code = sweep.main(command)
+            if code:
+                failed = True
+                print(f"ERROR [{model_id}]: local benchmark exited with {code}", file=sys.stderr)
+                interrupted = code in (130, -2)
+        except KeyboardInterrupt:
+            interrupted = True
+        except Exception as error:
+            failed = True
+            print(f"ERROR [{model_id}]: {error}", file=sys.stderr)
+
+    print(f"[{utc_now()}] pipeline {run_id}: generating report", flush=True)
+    try:
+        site = report_all.build(
+            root / "plan/manifest.json",
+            root / "results",
+            root / "site",
+            config=args.config,
+            git_dir=args.git_dir,
+            baseline_dir=args.baseline_dir,
+            baseline_url=args.baseline_url,
+        )
+        failed |= any(model["status"] not in ("ok", "not-run") for model in site["models"])
+        print(f"Report: {root / 'site/index.html'}", flush=True)
+    except Exception as error:
+        failed = True
+        print(f"ERROR: pipeline report failed: {error}", file=sys.stderr)
+    # An interrupted Docker client may leave its container using the mounted cache.
+    if not interrupted:
+        failed |= not cleanup(root, args)
+    return 130 if interrupted else 1 if failed else 0

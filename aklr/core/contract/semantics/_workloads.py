@@ -58,9 +58,11 @@ def row_major_inputs(
     *,
     input_set: str,
     device: str,
+    rank: int = 0,
 ) -> dict[str, Any]:
-    """Every present input of ``workload`` row-major, drawn on ``device``, in schema order.
-    The values depend on the device's generator: a GPU's differ from the CPU's and between
+    """Every present input of ``workload`` row-major, drawn on ``device``, in schema order;
+    ``rank`` > 0 draws another rank's own inputs, rank 0 those of a one-rank call. The
+    values depend on the device's generator: a GPU's differ from the CPU's and between
     GPU models."""
     import torch
 
@@ -71,7 +73,7 @@ def row_major_inputs(
     }
     symbols.update(workload["axes"])
     root_hash = workload_hash(schema["name"], workload)
-    input_set_seed = derive_seed(root_hash, input_set)
+    input_set_seed = derive_seed(root_hash, input_set, *([rank] if rank else []))
     scalars = workload.get("scalars", {})
     inputs = {}
     for name, declaration in schema["inputs"].items():
