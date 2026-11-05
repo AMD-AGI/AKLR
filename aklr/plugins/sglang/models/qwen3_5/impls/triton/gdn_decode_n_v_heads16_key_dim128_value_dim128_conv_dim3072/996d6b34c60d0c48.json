@@ -1,0 +1,227 @@
+{
+  "schema_version": 5,
+  "name": "gdn_decode_n_v_heads16_key_dim128_value_dim128_conv_dim3072",
+  "contract_id": "gdn_decode@1.0",
+  "description": "Qwen3.5 GDN decode, one token per row, from contiguous Q/K/V/Z and B/A projections. A row whose cache index is -1 is padding: it reads and changes no state, and its core output is zero. Every other row uses its distinct slot: the causal width-four convolution of the slot's three-token history and the row's Q/K/V channels rounds each tap's product to BF16 and sums the four in FP32, oldest first; its SiLU is rounded to BF16, and the history shifts the row in. Q and K are L2-normalized in FP32 and Q is multiplied by scale; the gated delta rule with BF16 beta updates the slot's FP32 delta_state in [value,key] order, and the core output is rounded to BF16. The core is gated RMS-normalized with norm_weight and SiLU of the row's Z, then rounded to BF16. Unindexed state slots and all other inputs are preserved.",
+  "op_type": "qwen3_5",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Decode rows: one token each, padding rows included."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Allocated state slots."
+    },
+    "n_v_heads": {
+      "type": "const",
+      "value": 16,
+      "description": "Value heads on this rank."
+    },
+    "key_dim": {
+      "type": "const",
+      "value": 128,
+      "description": "Key head width."
+    },
+    "value_dim": {
+      "type": "const",
+      "value": 128,
+      "description": "FP8 group and value-head width."
+    },
+    "conv_dim": {
+      "type": "const",
+      "value": 3072,
+      "description": "Convolution channels."
+    },
+    "value_width": {
+      "type": "const",
+      "value": 2048,
+      "description": "Total value width."
+    },
+    "n_k_heads": {
+      "type": "const",
+      "value": 4,
+      "description": "Key heads on this rank."
+    },
+    "projection_dim": {
+      "type": "const",
+      "value": 5120,
+      "description": "Q/K/V/Z projection width."
+    },
+    "gate_dim": {
+      "type": "const",
+      "value": 32,
+      "description": "B/A projection width."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "projected_qkvz": {
+      "shape": [
+        "n_tokens",
+        "projection_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Contiguous Q, K, V, Z columns."
+    },
+    "projected_ba": {
+      "shape": [
+        "n_tokens",
+        "gate_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Contiguous B then A columns."
+    },
+    "conv_state": {
+      "shape": [
+        "n_slots",
+        "conv_dim",
+        3
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Live three-token convolution histories."
+    },
+    "delta_state": {
+      "shape": [
+        "n_slots",
+        "n_v_heads",
+        "value_dim",
+        "key_dim"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Live recurrent matrices, value dimension first."
+    },
+    "cache_indices": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "Each row's distinct state slot, or -1 for a padding row."
+    },
+    "conv_weight": {
+      "shape": [
+        "conv_dim",
+        4
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Four causal convolution taps."
+    },
+    "a_log": {
+      "shape": [
+        "n_v_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Log decay magnitude."
+    },
+    "dt_bias": {
+      "shape": [
+        "n_v_heads"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gate bias."
+    },
+    "norm_weight": {
+      "shape": [
+        "value_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gated RMSNorm weights."
+    },
+    "scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Query scale."
+    },
+    "eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Gated RMSNorm epsilon."
+    }
+  },
+  "outputs": {
+    "normalized": {
+      "shape": [
+        "n_tokens",
+        "n_v_heads",
+        "value_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Gated normalized BF16 values."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 256,
+        "n_slots": 511
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Qwen3.5 GDN decode with BF16 output for MI355X (gfx950), scheduled for 256 rows.\n\nGluon GDN decode with vectorized value rows and four-wave head ownership.\"\"\"\n\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n\n@gluon.jit\ndef _sigmoid(x):\n    return 1.0 / (1.0 + gl.exp(-x))\n\n\n@gluon.jit\ndef _conv_decode(\n    projection, history, indices, weight, convolved, output,\n    CHANNELS: gl.constexpr,\n    PROJECTION_WIDTH: gl.constexpr,\n    BLOCK: gl.constexpr,\n):\n    token = gl.program_id(0)\n    channel = gl.program_id(1) * BLOCK + gl.arange(\n        0, BLOCK, layout=gl.BlockedLayout([2], [64], [4], [0])\n    )\n    valid = channel < CHANNELS\n    slot = gl.load(indices + token).to(gl.int64)\n    if slot < 0:\n        output_width: gl.constexpr = PROJECTION_WIDTH - CHANNELS\n        gl.store(output + token * output_width + channel, 0.0,\n                 channel < output_width)\n        return\n\n    state_offset = (slot * CHANNELS + channel) * 3\n    weight_offset = channel * 4\n    x = gl.load(projection + token * PROJECTION_WIDTH + channel, valid, other=0)\n    h0 = gl.load(history + state_offset, valid, other=0)\n    h1 = gl.load(history + state_offset + 1, valid, other=0)\n    h2 = gl.load(history + state_offset + 2, valid, other=0)\n    w0 = gl.load(weight + weight_offset, valid, other=0)\n    w1 = gl.load(weight + weight_offset + 1, valid, other=0)\n    w2 = gl.load(weight + weight_offset + 2, valid, other=0)\n    w3 = gl.load(weight + weight_offset + 3, valid, other=0)\n\n    # Each convolution product is rounded to BF16 before FP32 accumulation.\n    acc = gl.full((BLOCK,), 0.0, gl.float32, channel.type.layout)\n    acc += (h0 * w0).to(gl.bfloat16).to(gl.float32)\n    acc += (h1 * w1).to(gl.bfloat16).to(gl.float32)\n    acc += (h2 * w2).to(gl.bfloat16).to(gl.float32)\n    acc += (x * w3).to(gl.bfloat16).to(gl.float32)\n    activated = acc / (1.0 + gl.exp(-acc))\n    gl.store(convolved + token * CHANNELS + channel, activated, valid)\n    gl.store(history + state_offset, h1, valid)\n    gl.store(history + state_offset + 1, h2, valid)\n    gl.store(history + state_offset + 2, x, valid)\n\n\n@gluon.jit\ndef _recurrent_norm(\n    convolved, projection, ba, state_pool, indices,\n    a_log, dt_bias, norm_weight, output, scale, eps,\n    K_HEADS: gl.constexpr,\n    V_HEADS: gl.constexpr,\n    K_DIM: gl.constexpr,\n    V_DIM: gl.constexpr,\n    CHANNELS: gl.constexpr,\n    PROJECTION_WIDTH: gl.constexpr,\n    BLOCK_K: gl.constexpr,\n    BLOCK_V: gl.constexpr,\n    TOKENS: gl.constexpr,\n):\n    TOKEN_GROUP: gl.constexpr = 8 if TOKENS % 8 == 0 else 1\n    # Program IDs are nonnegative; unsigned arithmetic avoids signed divides.\n    head_row = gl.program_id(0).to(gl.uint32)\n    # Interleave independent tokens before advancing the value head. This\n    # spreads the large state transfers while retaining full-head ownership.\n    if TOKEN_GROUP > 1:\n        group = head_row // (V_HEADS * TOKEN_GROUP)\n        within_group = head_row % (V_HEADS * TOKEN_GROUP)\n        head_row = (\n            (group * TOKEN_GROUP + within_group % TOKEN_GROUP) * V_HEADS\n            + within_group // TOKEN_GROUP\n        )\n    token = head_row // V_HEADS\n    v_head = head_row % V_HEADS\n    k_head = v_head // (V_HEADS // K_HEADS)\n    # Eight adjacent value rows per thread vectorize V loads and the BF16\n    # core handoff, without changing K reductions or full-head ownership.\n    layout: gl.constexpr = gl.BlockedLayout([8, 4], [4, 16], [4, 1], [1, 0])\n    k_col = gl.arange(0, BLOCK_K, layout=gl.SliceLayout(0, layout))\n    v_col = gl.arange(0, BLOCK_V, layout=gl.SliceLayout(1, layout))\n    k_mask = k_col < K_DIM\n    v_mask = v_col < V_DIM\n    slot = gl.load(indices + token)\n    if slot < 0:\n        return\n\n    # The host checks the pool's byte range. Keep one scalar buffer base and\n    # unsigned 32-bit offsets for all heads; each CTA owns a complete head.\n    state_offset = (\n        (slot.to(gl.uint32) * V_HEADS + v_head) * V_DIM * K_DIM\n        + v_col[:, None] * K_DIM + k_col[None, :]\n    )\n    state_mask = v_mask[:, None] & k_mask[None, :]\n\n    q = gl.load(convolved + token * CHANNELS + k_head * K_DIM + k_col,\n                k_mask, other=0).to(gl.float32)\n    k = gl.load(convolved + token * CHANNELS + (K_HEADS + k_head) * K_DIM + k_col,\n                k_mask, other=0).to(gl.float32)\n    v = gl.load(convolved + token * CHANNELS + 2 * K_HEADS * K_DIM\n                + v_head * V_DIM + v_col, v_mask, other=0).to(gl.float32)\n    # Reuse one scalar reciprocal per head instead of dividing every element.\n    q_reciprocal = 1.0 / gl.sqrt(gl.sum(q * q, 0) + 1.0e-6)\n    k_reciprocal = 1.0 / gl.sqrt(gl.sum(k * k, 0) + 1.0e-6)\n    q = q * q_reciprocal\n    k = k * k_reciprocal\n    q = q * scale\n\n    a = gl.load(ba + token * (2 * V_HEADS) + V_HEADS + v_head).to(gl.float32)\n    b = gl.load(ba + token * (2 * V_HEADS) + v_head).to(gl.float32)\n    bias = gl.load(dt_bias + v_head).to(gl.float32)\n    log_a = gl.load(a_log + v_head).to(gl.float32)\n    softplus_input = a + bias\n    softplus = gl.where(softplus_input <= 20.0,\n                        gl.log(1.0 + gl.exp(softplus_input)), softplus_input)\n    decay = gl.exp(-gl.exp(log_a) * softplus)\n    beta = _sigmoid(b).to(gl.bfloat16).to(gl.float32)\n\n    # Delayed loads and the two-waves/EU hint give the scheduler more room\n    # for outstanding state transfers without spilling registers.\n    state = gl.amd.cdna3.buffer_load(\n        state_pool, state_offset, state_mask, other=0, cache=\".cg\"\n    )\n    state *= decay\n    residual = v - gl.sum(state * k[None, :], 1)\n    residual *= beta\n    state += residual[:, None] * k[None, :]\n    core = gl.sum(state * q[None, :], 1)\n    gl.amd.cdna3.buffer_store(state, state_pool, state_offset, state_mask, cache=\".wt\")\n\n    # Keep the BF16 core boundary, then gather each head into a wave-local\n    # layout. This avoids repeating eight scalar gates in every state lane.\n    norm_layout: gl.constexpr = gl.BlockedLayout([2], [64], [4], [0])\n    core = gl.convert_layout(core.to(gl.bfloat16), norm_layout).to(gl.float32)\n    v_col = gl.arange(0, BLOCK_V, layout=norm_layout)\n    v_mask = v_col < V_DIM\n    core = gl.where(v_mask, core, 0.0)\n    reciprocal_rms = gl.rsqrt(gl.sum(core * core, 0) / V_DIM + eps)\n    weight = gl.load(norm_weight + v_col, v_mask, other=0).to(gl.float32)\n    gate = gl.load(projection + token * PROJECTION_WIDTH + CHANNELS\n                   + v_head * V_DIM + v_col, v_mask, other=0).to(gl.float32)\n    normalized = core * reciprocal_rms\n    normalized *= weight\n    normalized *= gate * _sigmoid(gate)\n    gl.store(output + head_row * V_DIM + v_col, normalized, v_mask)\n\n\ndef gdn_fused_decode(\n    projected_qkvz: torch.Tensor,\n    projected_ba: torch.Tensor,\n    conv_state: torch.Tensor,\n    delta_state: torch.Tensor,\n    cache_indices: torch.Tensor,\n    conv_weight: torch.Tensor,\n    a_log: torch.Tensor,\n    dt_bias: torch.Tensor,\n    norm_weight: torch.Tensor,\n    *,\n    scale: float,\n    eps: float,\n    output: torch.Tensor,\n) -> None:\n    \"\"\"Update the selected state rows in place and return gated normalized values.\"\"\"\n    tokens, projection_width = projected_qkvz.shape\n    _, v_heads, head_v_dim, head_k_dim = delta_state.shape\n    # The supported 1,440-row FP32 pools fit in signed 32-bit byte offsets.\n    assert delta_state.numel() * delta_state.element_size() < 2**31\n    channels = projection_width - v_heads * head_v_dim\n    k_heads = (channels - v_heads * head_v_dim) // (2 * head_k_dim)\n    convolved = torch.empty(\n        (tokens, channels), device=projected_qkvz.device, dtype=torch.bfloat16\n    )\n    _conv_decode[(tokens, triton.cdiv(channels, 512))](\n        projected_qkvz, conv_state, cache_indices, conv_weight, convolved, output,\n        channels, projection_width, 512, num_warps=4,\n    )\n    # The smaller batch benefits from ILP scheduling; the larger batch keeps\n    # the default occupancy-oriented scheduler. Both use full-head ownership.\n    _recurrent_norm[(tokens * v_heads,)](\n        convolved, projected_qkvz, projected_ba, delta_state, cache_indices,\n        a_log, dt_bias, norm_weight, output, scale, eps,\n        k_heads, v_heads, head_k_dim, head_v_dim, channels, projection_width,\n        triton.next_power_of_2(head_k_dim), triton.next_power_of_2(head_v_dim),\n        tokens,\n        num_warps=4, waves_per_eu=2,\n        llvm_fn_attrs=[[\"amdgpu-sched-strategy\", \"max-ilp\"]] if tokens == 128 else [],\n    )\n\n\ndef run(\n    *,\n    projected_qkvz,\n    projected_ba,\n    conv_state,\n    delta_state,\n    cache_indices,\n    conv_weight,\n    a_log,\n    dt_bias,\n    norm_weight,\n    scale,\n    eps,\n    normalized,\n):\n    gdn_fused_decode(\n        projected_qkvz,\n        projected_ba,\n        conv_state,\n        delta_state,\n        cache_indices,\n        conv_weight,\n        a_log,\n        dt_bias,\n        norm_weight,\n        scale=scale,\n        eps=eps,\n        output=normalized,\n    )\n"
+      }
+    ]
+  }
+}
