@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Final
 
-from pydantic import Field
+from pydantic import Field, PositiveInt
 
 from aklr.core.contract.spec import FrozenModel
 from aklr.core.validation.stages._e2e._cookbook import COOKBOOK_REPO, MatchValue
@@ -36,6 +36,7 @@ class Scenario(FrozenModel):
     roles: dict[str, dict[str, MatchValue]]
     model_path: str
     revision: str | None
+    nnodes: dict[str, PositiveInt]  # by role; a role not named has its cell's
     env: dict[str, dict[str, str]]  # by role
     args: dict[str, dict[str, ArgValue]]  # by role
 
@@ -55,6 +56,8 @@ class _ModelEntry(FrozenModel):
     display_name: str = ""
     cookbook: _CookbookEntry
     weights: _Weights
+    # a cell may leave it out (GLM-5.2's multi-2 cells): one count, or one per PD role
+    nnodes: PositiveInt | dict[str, PositiveInt] | None = None
     env: dict[str, Any] = {}  # noqa: RUF012
     args: dict[str, Any] = {}  # noqa: RUF012
 
@@ -92,6 +95,13 @@ class E2eConfig(FrozenModel):
                 where = f"{path}: {model}: match {index}"
                 is_pd = set(match) == set(PD_ROLES) and all(isinstance(m, dict) for m in match.values())
                 roles = {role: match[role] for role in PD_ROLES} if is_pd else {UNIFIED_ROLE: match}
+                nnodes = (
+                    entry.nnodes if isinstance(entry.nnodes, dict) else dict.fromkeys(roles, entry.nnodes)
+                )
+                if entry.nnodes is None:
+                    nnodes = {}
+                if unknown := set(nnodes) - set(roles):
+                    raise ValueError(f"{where}: nnodes of roles it has not: {sorted(unknown)}")
                 values = [str(v) for role_match in roles.values() for v in role_match.values()]
                 try:
                     scenario = Scenario(
@@ -103,6 +113,7 @@ class E2eConfig(FrozenModel):
                         roles=roles,
                         model_path=entry.weights.repo,
                         revision=entry.weights.revision,
+                        nnodes=nnodes,
                         env={
                             role: {k: str(v) for k, v in env.items()}
                             for role, env in cls._by_role(entry.env, tuple(roles)).items()

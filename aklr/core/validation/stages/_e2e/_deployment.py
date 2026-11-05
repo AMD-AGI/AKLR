@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import contextlib
+import http.client
 import os
 import re
 import shlex
@@ -20,10 +21,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
-from aklr.core.validation.stages._e2e._config import UNIFIED_ROLE, Scenario
-from aklr.core.validation.stages._e2e._cookbook import Cookbook
+from aklr.core.validation.stages._e2e._config import UNIFIED_ROLE, ArgValue, Scenario
+from aklr.core.validation.stages._e2e._cookbook import Cookbook, CookbookCell
 
-__all__ = ["Deployment", "NodeProcess", "RunNotKilledError"]
+__all__ = ["Deployment", "NodeProcess", "Role", "RunNotKilledError"]
 
 _SERVER_PORT: Final = 30000
 _ROUTER_PORT: Final = 30080
@@ -33,9 +34,13 @@ _DEFAULT_BOOTSTRAP_PORT: Final = "8998"
 # the flags the launcher sets on every process itself
 _LAUNCHER_FLAGS: Final = frozenset({"--host", "--port", "--nnodes", "--node-rank", "--dist-init-addr"})
 _ENV_NAME: Final = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
-_KNOWN_PLACEHOLDER: Final = re.compile(r"\{\{(\w+)\}\}")
-_PLACEHOLDER: Final = re.compile(r"\{\{\w+\}\}|<[a-z0-9][a-z0-9-]*>")
+# what a cookbook's env may not set: the loader's and the interpreter's own hooks run code
+# before sglang does (LD_PRELOAD, PYTHONWARNINGS naming a module to import, ...)
+_UNSAFE_ENV_NAME: Final = re.compile(r"LD_\w*|DYLD_\w*|PYTHON\w*")
+_KNOWN_PLACEHOLDER: Final = re.compile(r"\{\{\s*(\w+)\s*\}\}")
+_PLACEHOLDER: Final = re.compile(r"\{\{.*?\}\}|<[A-Za-z][\w-]*>")
 _READY_POLL_SECONDS: Final = 5.0
+_HEALTH_TIMEOUT_SECONDS: Final = 60.0
 _LOG_TAIL_BYTES: Final = 2 << 10
 _KILL_WAIT_SECONDS: Final = 5.0
 
@@ -101,6 +106,77 @@ class NodeProcess:
 
 
 @dataclass(frozen=True)
+class Role:
+    """One role of a deployment: its cookbook cell with the scenario's overrides."""
+
+    name: str
+    cell: CookbookCell
+    env: Mapping[str, str]  # the scenario's, over the cell's
+    args: Mapping[str, ArgValue]  # the scenario's, over the cell's flags
+    nnodes: int
+
+    @classmethod
+    def of(cls, scenario: Scenario, cookbook: Cookbook) -> tuple[Role, ...]:
+        """The scenario's roles, in order; the launcher owns the weights (``--model-path``
+        and ``--revision`` from the scenario, whatever the cell says)."""
+        weights = {"--model-path": scenario.model_path, "--model": None, "--revision": scenario.revision}
+        roles = []
+        for name, match in scenario.roles.items():
+            cell = cookbook.cell(match)
+            roles.append(
+                cls(
+                    name=name,
+                    cell=cell,
+                    env=scenario.env[name],
+                    args=weights | scenario.args[name],
+                    nnodes=scenario.nnodes.get(name, cell.nnodes),
+                )
+            )
+        return tuple(roles)
+
+    def server_env(self) -> dict[str, str]:
+        """The cell's env, then the scenario's; ``ValueError`` for a name ``env`` would read
+        as an option (-S runs a command line) or a name the cookbook may not set."""
+        env: dict[str, str] = {}
+        for entry in self.cell.env:
+            # shell syntax: GLOO_SOCKET_IFNAME="<network-interface>"
+            (token,) = shlex.split(entry) or [""]
+            name, has_value, value = token.partition("=")
+            if not has_value or _UNSAFE_ENV_NAME.fullmatch(name):
+                raise ValueError(f"{self.name}: the cookbook's env {entry!r} is not allowed")
+            env[name] = value
+        env |= self.env
+        if bad := [name for name in env if not _ENV_NAME.fullmatch(name)]:
+            raise ValueError(f"{self.name}: not environment variable names: {bad}")
+        return env
+
+    def flags(self) -> list[list[str]]:
+        """The cell's flags, each a name and its values, with ``args`` applied (replaced by
+        name, null or false removes, true is a switch) and the launcher's own removed."""
+        flags = [shlex.split(f) for f in self.cell.flags]
+        if not all(flags):
+            raise ValueError(f"{self.name}: an empty flag in the cookbook")
+        for name, value in self.args.items():
+            flags = [f for f in flags if f[0].split("=", 1)[0] != name]
+            if value is True:
+                flags.append([name])
+            elif value is not None and value is not False:
+                flags.append([name, str(value)])
+        return [f for f in flags if f[0].split("=", 1)[0] not in _LAUNCHER_FLAGS]
+
+    @property
+    def bootstrap_port(self) -> str:
+        """The ``--disaggregation-bootstrap-port`` a prefill role serves its KV on."""
+        for name, *values in self.flags():
+            flag, has_value, value = name.partition("=")
+            if flag == "--disaggregation-bootstrap-port":
+                if not (has_value or values):
+                    raise ValueError(f"{self.name}: --disaggregation-bootstrap-port has no value")
+                return value if has_value else values[0]
+        return _DEFAULT_BOOTSTRAP_PORT
+
+
+@dataclass(frozen=True)
 class Deployment:
     """The processes of one side (AKLR on or off) of a scenario, and where to send requests."""
 
@@ -119,46 +195,28 @@ class Deployment:
         side_env: Mapping[str, str],
         run_dir: Path,
     ) -> Deployment:
-        """Each role's processes from its cell with the scenario's overrides, over ``hosts``
-        in order, the router on node 0 (the cell's env, then the scenario's, ``env`` and
-        ``side_env``); ``ValueError`` when nodes are short or a placeholder is left."""
-        cells = {role: cookbook.cell(match) for role, match in scenario.roles.items()}
-        if (n_nodes := sum(c.nnodes for c in cells.values())) > len(hosts):
+        """Each role's processes over ``hosts`` in order, the router on node 0; ``env`` and
+        ``side_env`` over each role's own, so a cookbook cannot redirect the devices,
+        PYTHONPATH or AKLR's switches. ``ValueError`` when nodes are short, a cookbook entry is
+        not allowed or a placeholder is left."""
+        roles = Role.of(scenario, cookbook)
+        if (n_nodes := sum(r.nnodes for r in roles)) > len(hosts):
             raise ValueError(f"{scenario.name}: needs {n_nodes} nodes, --e2e-hosts gives {len(hosts)}")
         local_names = {"localhost", "127.0.0.1", socket.gethostname(), socket.getfqdn()}
         role_hosts: dict[str, Sequence[str]] = {}
-        for role, cell in cells.items():
+        for role in roles:
             n_assigned = sum(map(len, role_hosts.values()))
-            role_hosts[role] = hosts[n_assigned : n_assigned + cell.nnodes]
+            role_hosts[role.name] = hosts[n_assigned : n_assigned + role.nnodes]
         processes: list[NodeProcess] = []
-        bootstrap_port = _DEFAULT_BOOTSTRAP_PORT
-        for role, cell in cells.items():
-            nodes = role_hosts[role]
-            # the stage's and the side's last: a cookbook commit cannot redirect the devices,
-            # PYTHONPATH or AKLR's switches
-            role_env = (
-                dict(e.split("=", 1) for e in cell.env) | scenario.env[role] | dict(env) | dict(side_env)
-            )
-            # a name `env` would read as an option (-S runs a command line) or as the command
-            if bad := [name for name in role_env if not _ENV_NAME.fullmatch(name)]:
-                raise ValueError(f"{scenario.name}: {role}: not environment variable names: {bad}")
-            flags = [shlex.split(f) for f in cell.flags]
-            overrides = {"--revision": scenario.revision} if scenario.revision else {}
-            for name, value in (overrides | scenario.args[role]).items():
-                flags = [f for f in flags if f[0].split("=", 1)[0] != name]
-                if value is True:
-                    flags.append([name])
-                elif value is not None and value is not False:
-                    flags.append([name, str(value)])
-            flags = [f for f in flags if f[0].split("=", 1)[0] not in _LAUNCHER_FLAGS]
-            for f in flags:
-                if f[0].split("=", 1)[0] == "--disaggregation-bootstrap-port":
-                    bootstrap_port = f[0].split("=", 1)[1] if "=" in f[0] else f[1]
+        for role in roles:
+            nodes = role_hosts[role.name]
+            role_env = role.server_env() | dict(env) | dict(side_env)
+            flags = role.flags()
             for rank, host in enumerate(nodes):
                 node_flags = [*flags, ["--host", host], ["--port", str(_SERVER_PORT)]]
-                if cell.nnodes > 1:
+                if role.nnodes > 1:
                     node_flags += [
-                        ["--nnodes", str(cell.nnodes)],
+                        ["--nnodes", str(role.nnodes)],
                         ["--node-rank", str(rank)],
                         ["--dist-init-addr", f"{nodes[0]}:{_DIST_INIT_PORT}"],
                     ]
@@ -175,17 +233,16 @@ class Deployment:
                     _KNOWN_PLACEHOLDER.sub(lambda m, values=values: values.get(m[1], m[0]), t) for t in argv
                 ]
                 processes.append(
-                    cls._node_process(f"{role}-{rank}", host, argv, launch, local_names, run_dir)
+                    cls._node_process(f"{role.name}-{rank}", host, argv, launch, local_names, run_dir)
                 )
         if UNIFIED_ROLE in role_hosts:
             entry_url = f"http://{role_hosts[UNIFIED_ROLE][0]}:{_SERVER_PORT}"
         else:
             prefill, decode = role_hosts["prefill"][0], role_hosts["decode"][0]
-            router_env = dict(env) | dict(side_env)
             argv = [
-                *(f"{k}={v}" for k, v in router_env.items()),
+                *(f"{k}={v}" for k, v in (dict(env) | dict(side_env)).items()),
                 sys.executable, "-m", "sglang_router.launch_router", "--pd-disaggregation",
-                "--prefill", f"http://{prefill}:{_SERVER_PORT}", bootstrap_port,
+                "--prefill", f"http://{prefill}:{_SERVER_PORT}", roles[0].bootstrap_port,
                 "--decode", f"http://{decode}:{_SERVER_PORT}",
                 "--host", hosts[0], "--port", str(_ROUTER_PORT),
             ]  # fmt: skip
@@ -202,15 +259,18 @@ class Deployment:
     def _node_process(
         name: str, host: str, argv: list[str], launch: str | None, local_names: set[str], run_dir: Path
     ) -> NodeProcess:
-        """``env K=V ... argv`` on ``host``: a node other than this one through ``launch``."""
-        prefix: list[str] = []
-        if host not in local_names:
-            if launch is None:
-                raise ValueError(f"{name}: {host} is not this node, and no --e2e-launch reaches it")
-            # shortcut: ssh joins its argv with spaces, so a value with a space splits there;
-            # quote per launcher once a recipe needs one
-            prefix = shlex.split(launch.format(host=host))
-        return NodeProcess(name=name, argv=(*prefix, "env", *argv), log_path=run_dir / f"{name}.log")
+        """``env K=V ... argv`` on ``host``; on another node, through ``launch`` with ``{cmd}``
+        replaced by the whole command as one shell-quoted word (``ssh {host} {cmd}``, or
+        ``srun -w {host} --overlap sh -c {cmd}``), so a remote shell parses it back unchanged."""
+        command = ["env", *argv]
+        if host in local_names:
+            return NodeProcess(name=name, argv=tuple(command), log_path=run_dir / f"{name}.log")
+        if launch is None:
+            raise ValueError(f"{name}: {host} is not this node, and no --e2e-launch reaches it")
+        prefix = [shlex.join(command) if t == "{cmd}" else t.format(host=host) for t in shlex.split(launch)]
+        if prefix.count(shlex.join(command)) != 1:
+            raise ValueError(f"--e2e-launch {launch!r}: needs one {{cmd}} word")
+        return NodeProcess(name=name, argv=tuple(prefix), log_path=run_dir / f"{name}.log")
 
     @property
     def argvs(self) -> tuple[str, ...]:
@@ -223,17 +283,20 @@ class Deployment:
         deadline = time.monotonic() + timeout
         for process in self.processes:
             process.start()
-        while True:
-            for process in self.processes:
-                if process.exit_code is not None:
-                    raise RuntimeError(f"{process.name} exited with {process.exit_code} before it was ready")
-            with contextlib.suppress(OSError):
-                with urllib.request.urlopen(f"{self.entry_url}/health_generate", timeout=60) as response:
+        while (remaining := deadline - time.monotonic()) > 0:
+            if exited := self.exited():
+                raise RuntimeError(f"{', '.join(exited)} before it was ready")
+            with contextlib.suppress(OSError, http.client.HTTPException):
+                url = f"{self.entry_url}/health_generate"
+                with urllib.request.urlopen(url, timeout=min(_HEALTH_TIMEOUT_SECONDS, remaining)) as response:
                     if response.status == 200:
                         return self.entry_url
-            if time.monotonic() >= deadline:
-                raise RuntimeError(f"{self.entry_url} not ready after {timeout:g} s")
-            time.sleep(_READY_POLL_SECONDS)
+            time.sleep(min(_READY_POLL_SECONDS, max(0.0, deadline - time.monotonic())))
+        raise RuntimeError(f"{self.entry_url} not ready after {timeout:g} s")
+
+    def exited(self) -> list[str]:
+        """Each process that has exited, and its exit code."""
+        return [f"{p.name} exited with {p.exit_code}" for p in self.processes if p.exit_code is not None]
 
     def stop(self) -> str:
         """Stop every process and return their log tails; ``RunNotKilledError`` once all

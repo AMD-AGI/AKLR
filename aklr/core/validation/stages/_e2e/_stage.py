@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import os
 import re
@@ -51,6 +52,8 @@ GSM8K_MAX_DROP: Final = 0.02
 # phase 2, the on side only: one prompt with a short, unique answer
 PROMPT: Final = "What is the capital of France? Answer with one word."
 EXPECTED_ANSWER: Final = "Paris"
+# below it, off is not the model answering (a broken recipe or grading), and on is not run
+MIN_OFF_GSM8K: Final = 0.5
 # a side, from its start to its stop
 SIDE_TIMEOUT_SECONDS: Final = 5400.0
 
@@ -111,54 +114,48 @@ class E2eStage(PipelineStage[E2eReport]):
             env = self._env | {"PYTHONPATH": python_path, ENV_MEASURED_DIR: str(measured_dir)}
             for index, scenario in enumerate(self._scenarios):
                 where = f"scenario {index + 1}/{len(self._scenarios)} {scenario.name}"
+                record = E2eRecord(
+                    scenario=scenario.name,
+                    cookbook=scenario.cookbook,
+                    cookbook_sha="",
+                    matches=scenario.roles,
+                    installed_sglang=installed_sglang,
+                )
                 try:
                     if scenario.cookbook not in cookbooks:
                         cookbooks[scenario.cookbook] = Cookbook.fetch(
                             source, scenario.cookbook, self._cookbook_repo
                         )
-                        if not Path(source).is_dir():  # one commit for every scenario of the run
-                            source = cookbooks[scenario.cookbook].sha
+                        source = cookbooks[scenario.cookbook].source_at_sha  # one commit for the run
                     cookbook = cookbooks[scenario.cookbook]
-                    # each role's cell cautions, and the sglang of the image the cookbook names
-                    notes = [f"installed sglang {installed_sglang}"]
-                    image_versions: set[str] = set()
-                    for role, match in scenario.roles.items():
-                        cell, image = cookbook.cell(match), cookbook.docker_image(match)
-                        if version := re.search(r":v(\d+(?:\.\d+)+(?:\.post\d+)?)", image or ""):
-                            image_versions.add(version[1])
-                        notes += [f"{role}: cookbook image {image}"] if image else []
-                        notes += [f"{role}: {cell.notes}"] if cell.notes else []
+                    # each role's cell cautions, and the images the cookbook names
+                    notes = [cookbook.cell(match).notes for match in scenario.roles.values()]
+                    images = tuple(filter(None, map(cookbook.docker_image, scenario.roles.values())))
                 except ValueError as error:
                     findings.append(
                         Finding.unlocated(FindingCode.PLATFORM_FAILURE, f"{scenario.name}: {error}")
                     )
-                    records.append(E2eRecord(scenario=scenario.name, cookbook_sha=""))
+                    records.append(record)
                     self.progress.write(f"{where}: {error}")
                     continue
-                self.progress.write(
-                    f"{where} ({scenario.display_name}): cookbook {cookbook.sha[:12]}; {'; '.join(notes)}"
+                record = record.model_copy(
+                    update={
+                        "cookbook_sha": cookbook.sha,
+                        "cookbook_images": images,
+                        "notes": "; ".join(filter(None, notes)),
+                    }
                 )
-                record = E2eRecord(scenario=scenario.name, cookbook_sha=cookbook.sha, notes="; ".join(notes))
+                self.progress.write(
+                    f"{where} ({scenario.display_name}): cookbook {cookbook.sha[:12]},"
+                    f" images {', '.join(images) or '-'}, installed sglang {installed_sglang}; {record.notes}"
+                )
                 try:
                     run_dir = Path(work_dir, str(index))
-                    record = record.model_copy(
-                        update={"off": self._run_side(scenario, cookbook, "off", env, run_dir)}
-                    )
-                    if record.off.failure:
-                        if image_versions - {installed_sglang}:
-                            note = f"{record.notes}; off failed on a different sglang, a warning only"
-                            record = record.model_copy(update={"notes": note})
-                            self.progress.write(
-                                f"{where}: warning: off failed: {record.off.failure.splitlines()[0]}"
-                            )
-                        else:
-                            detail = f"{scenario.name} off: {record.off.failure}"
-                            findings.append(Finding.unlocated(FindingCode.PLATFORM_FAILURE, detail))
-                        records.append(record)
-                        continue
-                    record = record.model_copy(
-                        update={"on": self._run_side(scenario, cookbook, "on", env, run_dir)}
-                    )
+                    off = self._run_side(scenario, cookbook, "off", env, run_dir)
+                    record = record.model_copy(update={"off": off})
+                    if not off.failure and off.gsm8k_score is not None and off.gsm8k_score >= MIN_OFF_GSM8K:
+                        on = self._run_side(scenario, cookbook, "on", env, run_dir)
+                        record = record.model_copy(update={"on": on})
                 except RunNotKilledError as error:
                     findings.append(
                         Finding.unlocated(FindingCode.PLATFORM_FAILURE, f"{scenario.name}: {error}")
@@ -166,22 +163,8 @@ class E2eStage(PipelineStage[E2eReport]):
                     records.append(record)
                     self.progress.write(f"{where}: no result")
                     break
-                on, difference = record.on, record.difference
-                if on.failure:
-                    findings.append(
-                        Finding.unlocated(FindingCode.E2E_CRASH, f"{scenario.name} on: {on.failure}")
-                    )
-                if difference is not None and difference < -GSM8K_MAX_DROP:
-                    detail = (
-                        f"{scenario.name}: GSM8K on {on.gsm8k_score:.3f} is {-difference:.3f} below"
-                        f" off {record.off.gsm8k_score:.3f}, more than {GSM8K_MAX_DROP}"
-                    )
-                    findings.append(Finding.unlocated(FindingCode.E2E_ACCURACY_DROP, detail))
-                if on.answer_matches is False:
-                    detail = f"{scenario.name}: answered {on.prompt_answer!r} to {PROMPT!r}, expected {EXPECTED_ANSWER!r}"
-                    findings.append(Finding.unlocated(FindingCode.E2E_WRONG_ANSWER, detail))
-                if on.n_hit_calls == 0:
-                    record = record.model_copy(update={"notes": f"{record.notes}; AKLR served no call"})
+                findings += record.findings(max_drop=GSM8K_MAX_DROP, min_off_score=MIN_OFF_GSM8K)
+                if record.on is not None and record.on.n_hit_calls == 0:
                     self.progress.write(f"{where}: AKLR served no call, every call fell back")
                 records.append(record)
                 self.progress.write(f"{where}: {record.console_line()}")
@@ -212,7 +195,7 @@ class E2eStage(PipelineStage[E2eReport]):
         failures: list[str] = []
         self.progress.write(f"{side}: starting {len(deployment.processes)} processes")
         try:
-            entry_url = deployment.start(timeout=deadline - time.monotonic())
+            entry_url = deployment.start(timeout=SIDE_TIMEOUT_SECONDS)
             self.progress.write(f"{side}: serving at {entry_url}; GSM8K, {GSM8K_N_QUESTIONS} questions")
             argv = [
                 sys.executable, "-m", "sglang.test.run_eval", "--eval-name", "gsm8k", "--base-url", entry_url,
@@ -220,15 +203,28 @@ class E2eStage(PipelineStage[E2eReport]):
             ]  # fmt: skip
             try:
                 done = subprocess.run(
-                    argv, capture_output=True, text=True, timeout=deadline - time.monotonic(), check=False
+                    argv,
+                    capture_output=True,
+                    text=True,
+                    timeout=max(1.0, deadline - time.monotonic()),
+                    check=False,
                 )
-                scores = re.findall(r"^Score: ([0-9.]+)$", done.stdout, re.M)
+                # run_eval scores a request that failed (a 400, retries exhausted) as a wrong
+                # answer and exits 0: its sampler's messages count them
+                n_failed = done.stdout.count("Bad Request Error") + done.stdout.count(
+                    "All retry attempts exhausted"
+                )
+                # full precision: the metrics dict it prints (numpy 2 shows np.float64(...)), not its
+                # rounded "Score:" line
+                scores = re.findall(r"'score': (?:np\.float64\()?([0-9.eE+-]+)", done.stdout)
                 if done.returncode != 0 or not scores:
                     raise RuntimeError(
                         f"run_eval exited with {done.returncode}, no score\n{done.stderr[-2000:]}"
                     )
+                if n_failed:
+                    raise RuntimeError(f"{n_failed} GSM8K requests failed\n{done.stdout[-2000:]}")
                 result["gsm8k_score"] = float(scores[-1])
-            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                 failures.append(f"GSM8K: {error}")
             if side == "on":
                 request = urllib.request.Request(
@@ -248,11 +244,13 @@ class E2eStage(PipelineStage[E2eReport]):
                         answer = json.load(response)["choices"][0]["message"]["content"] or ""
                     result["prompt_answer"] = answer
                     # the whole answer, less surrounding whitespace and trailing punctuation
-                    result["answer_matches"] = (
-                        re.sub(r"\W+$", "", answer).strip().casefold() == EXPECTED_ANSWER.casefold()
-                    )
-                except (OSError, ValueError, LookupError, TypeError) as error:
+                    normalized = re.sub(r"\W+$", "", answer).strip().casefold()
+                    result["answer_matches"] = normalized == EXPECTED_ANSWER.casefold()
+                except (OSError, ValueError, LookupError, TypeError, http.client.HTTPException) as error:
                     failures.append(f"prompt: {type(error).__name__}: {error}")
+            # a server that died during the phases fails the side, whatever they scored
+            if exited := deployment.exited():
+                failures.append(f"during the phases: {', '.join(exited)}")
         except (OSError, RuntimeError) as error:
             failures.append(f"start: {error}")
         finally:
