@@ -118,11 +118,16 @@ jobs:
             if git merge-base --is-ancestor "$base" HEAD && [[ $replaced != true ]]; then validation_base=$base; fi
             # A push of the one commit that merged the bot PR: the PR run at the PR's last head,
             # whose AKLR_BOT_PR also checked who pushed it, passed the audit as the bot's.
+            # A failed lookup leaves measured_by_bot=false: the audit stays strict.
             if [[ -n $validation_base && -n $AKLR_BOT_LOGIN && $(git rev-list --count "$base..HEAD") == 1 ]]; then
               pr_head=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head/pulls" | jq -r --arg sha "$head" --arg bot "$AKLR_BOT_LOGIN" --arg repo "$GITHUB_REPOSITORY" \
-                'first(.[] | select(.merge_commit_sha == $sha and .user.login == $bot and .head.ref == "aklr-perf/main" and .head.repo.full_name == $repo) | .head.sha) // ""')
+                'first(.[] | select(.merge_commit_sha == $sha and .user.login == $bot and .head.ref == "aklr-perf/main" and .head.repo.full_name == $repo) | .head.sha) // ""') ||
+                { echo '::warning::Could not look up the PR that merged this push; measured fields stay audited'; pr_head=; }
               if [[ -n $pr_head ]]; then
-                pr_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yaml/runs?head_sha=$pr_head&event=pull_request" --jq '.workflow_runs[0] | "\(.conclusion) \(.html_url)"')
+                # A run is matched by its branch, not head_sha alone: another PR can share the bot's commit.
+                pr_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yaml/runs?head_sha=$pr_head&event=pull_request" | jq -r --arg repo "$GITHUB_REPOSITORY" \
+                  'first(.workflow_runs[] | select(.head_branch == "aklr-perf/main" and .head_repository.full_name == $repo)) | "\(.conclusion) \(.html_url)"') ||
+                  { echo '::warning::Could not look up the bot PR run; measured fields stay audited'; pr_run=; }
                 echo "🤖 Merged the bot PR at $pr_head; its latest PR run: $pr_run" | tee -a "$GITHUB_STEP_SUMMARY"
                 [[ $pr_run != success\ * ]] || measured_by_bot=true
               fi
