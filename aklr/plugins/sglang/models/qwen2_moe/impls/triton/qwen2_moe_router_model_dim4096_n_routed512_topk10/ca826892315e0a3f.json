@@ -73,7 +73,9 @@
     {
       "axes": {
         "n_tokens": 4096
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.226
     }
   ],
   "layout_variants": {
