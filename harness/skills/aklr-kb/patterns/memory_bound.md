@@ -74,27 +74,27 @@ basis: source-semantics
 - S3 gemm/attribution.md:33 compute additivity: wall time does not move, compute is fully hidden
 - S4 gemm/workflow.md:76 `vmcnt(0)` in front of the MFMAs: exposed global latency or a conservative drain
 - S5 ROCm/FlyDSL@dd8373349:.claude/skills/kernel-trace-analysis/SKILL.md:336 hotspots dominated by VMEM-load at a high stall rate: memory-bound
-- S6 gemm/small_m.md:184 at decode M the MFMA side is not the lever; the time is the B stream
-- S7 gemm/grid_pricing.md:155 bytes a workgroup moves per K element against the MACs it produces
+- S6 gemm/small_m.md:197 at decode M the MFMA side is not the lever; the time is the B stream
+- S7 gemm/grid_pricing.md:160 bytes a workgroup moves per K element against the MACs it produces
 - S8 gemm/grid_pricing.md:68 last round full: no idle slot, intensity is the limit, widen
-- S9 gemm/datapath.md:168 the cost unit is unique 128-byte lines touched per instruction
-- S10 gemm/datapath.md:264 keep every operand row on a 128 B line
-- S11 gemm/schedule_and_locality.md:64 round-robin ids spread tiles sharing a panel over all 8 L2s
+- S9 gemm/datapath.md:166 the cost unit is unique 128-byte lines touched per instruction
+- S10 gemm/datapath.md:268 keep every operand row on a 128 B line
+- S11 gemm/schedule_and_locality.md:60 round-robin ids spread tiles sharing a panel over all 8 L2s
 - S12 gemm/epilogue.md:61 only "delete the whole store" moving means the store is byte-bound
 - S13 gemm/small_m.md:39 B is cold in decode; a benchmark replaying one weight keeps it in the MALL/L2
-- S14 gemm/small_m.md:42 rotate enough distinct copies of B to exceed the MALL, explicit count
-- S15 gemm/measurement.md:147 measured ceilings with the kernel's read/write ratio, not the datasheet
+- S14 gemm/small_m.md:43 rotate enough distinct copies of B to exceed the MALL, explicit count
+- S15 gemm/measurement.md:150 measured ceilings with the kernel's read/write ratio, not the datasheet
 - S16 gemm/workflow.md:86 TF/s rising with K is not proof of memory-bound; fixed per-tile cost
 - S17 gemm/grid_pricing.md:67 tiles < NCU: every workgroup walks all of K serially
-- S18 gemm/attribution.md:202 ATT charges an MFMA waiting for its operand to the MFMA
+- S18 gemm/attribution.md:203 ATT charges an MFMA waiting for its operand to the MFMA
 - S19 gemm/grid_pricing.md:170 traffic per MAC is minimized at tile_m : tile_n = B_col_bytes : A_row_bytes
 - S20 gemm/grid_pricing.md:69 partial last round: narrow the tile (or split)
-- S21 gemm/datapath.md:173 merging requests pays only when it also cuts unique lines
-- S22 gemm/schedule_and_locality.md:99 gate the band on L2 bytes
-- S23 gemm/schedule_and_locality.md:124 judge by wall time and stall counters (`MemUnitStalled`), not hit rate
-- S24 gemm/datapath.md:202 prefetch pays only when independent work can fill the latency
-- S25 gemm/datapath.md:202 prefetch hides latency, not capacity; L2 thrash
-- S26 gemm/datapath.md:208 a prefetch over a register tier costs more than it hides
-- S27 gemm/small_m.md:189 B's cache policy is a raced, per-configuration axis
-- S28 gemm/epilogue.md:166 the store cache-policy sign is shape-dependent, race it
-- S29 gemm/small_m.md:79 streaming rows: split-K and more blocks lose
+- S21 gemm/datapath.md:171 merging requests pays only when it also cuts unique lines
+- S22 gemm/schedule_and_locality.md:95 gate the band on L2 bytes
+- S23 gemm/schedule_and_locality.md:122 judge by wall time and stall counters (`MemUnitStalled`), not hit rate
+- S24 gemm/datapath.md:200 prefetch pays only when independent work can fill the latency
+- S25 gemm/datapath.md:203 prefetch hides latency, not capacity; L2 thrash
+- S26 gemm/datapath.md:213 a prefetch over a register tier costs more than it hides
+- S27 gemm/small_m.md:202 B's cache policy is a raced, per-configuration axis
+- S28 gemm/epilogue.md:169 the store cache-policy sign is shape-dependent, race it
+- S29 gemm/small_m.md:81 streaming rows: split-K and more blocks lose

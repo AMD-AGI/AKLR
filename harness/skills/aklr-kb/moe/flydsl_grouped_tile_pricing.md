@@ -61,7 +61,7 @@ short-contraction wgrad → `flydsl_grouped_wgrad.md`; MX scale layout → `flyd
   spill, one full plus one paired body did.
 - **Gate on a compile-only ISA dump** (20–60 s *(field, E5)*): `.vgpr_count`, `.agpr_count`, `vgpr_spill_count`,
   `group_segment_fixed_size`, and the `s_barrier` count. Do not time a candidate that spills
-  (`../gemm/mainloop.md` §10).
+  (`../gemm/mainloop.md` §10; how to dump without running: `../flydsl/gemm.md` § mainloop §10).
 
 ## 2. Waves per SIMD: decide per pass
 - On fp8 per-tensor, the 4-wave design (1 wave per SIMD) won every variable-K wgrad point against 8 waves (2

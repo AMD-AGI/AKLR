@@ -31,7 +31,7 @@ sources:
 
 **Somewhere else if:** the loop structure is the question → `mainloop.md`; wave placement,
 XCD order, scheduling hints or the epilogue → `schedule_and_locality.md`; the arguments of a
-shipped kernel → the entry points in `INDEX.md`'s kernel map, and aiter's FlyDSL bf16 rows →
+shipped kernel → the entry points in `../flydsl/gemm.md` § INDEX Kernel map, and aiter's FlyDSL bf16 rows →
 `small_m.md`.
 
 FlyDSL's guide starts the tile choice from `preshuffle_gemm`'s constraints and a table by M

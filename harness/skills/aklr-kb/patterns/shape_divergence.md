@@ -59,35 +59,35 @@ basis: source-semantics
 ## Evidence
 
 - S1 gemm/grid_pricing.md:92 a geometry change that helps one shape moves others the other way
-- S2 gemm/measurement.md:93 report per cell: a gm can sit still while one cell moved
-- S3 gemm/autotune.md:83 race noise above the margin makes the winner flip between runs
-- S4 gemm/small_m.md:262 a row serves every M that pads to it
+- S2 gemm/measurement.md:91 report per cell: a gm can sit still while one cell moved
+- S3 gemm/autotune.md:86 race noise above the margin makes the winner flip between runs
+- S4 gemm/small_m.md:270 a row serves every M that pads to it
 - S5 gemm/autotune.md:20 loop designs, tiles, L2 bands, store policy, split-K change sign between shapes
-- S6 gemm/small_m.md:72 the lessons flip sign between two regimes
+- S6 gemm/small_m.md:74 the lessons flip sign between two regimes
 - S7 gemm/grid_pricing.md:75 narrowing gained only on the shapes whose last round was partial
 - S8 gemm/grid_pricing.md:68 last round full: intensity is the limit, widen
-- S9 gemm/grid_pricing.md:244 "divisible ⇒ fast" is not a rule; evaluate the kernel's own gates
-- S10 gemm/grid_pricing.md:259 each extra body variant adds code even when it does not run
-- S11 gemm/INDEX.md:86 constants in both code bases were tuned on specific shapes
-- S12 gemm/small_m.md:237 the lookup tries M as is, then padded at granularity 0 and 1
-- S13 gemm/small_m.md:254 a row whose kernel name the catalog cannot parse falls through
-- S14 gemm/small_m.md:261 tuner filters can delete the winner silently
+- S9 gemm/grid_pricing.md:249 "divisible ⇒ fast" is not a rule; evaluate the kernel's own gates
+- S10 gemm/grid_pricing.md:264 each extra body variant adds code even when it does not run
+- S11 flydsl/gemm.md:84 constants in both code bases were tuned on specific shapes
+- S12 gemm/small_m.md:259 the lookup tries M as is, then padded at granularity 0 and 1
+- S13 flydsl/gemm.md:346 a row whose kernel name the catalog cannot parse falls through
+- S14 flydsl/gemm.md:351 tuner filters can delete the winner silently
 - S15 ../flydsl/kernels/flydsl_knob_space.md:155 a tuned row regressed: CSV raced on another build or machine
-- S16 gemm/small_m.md:64 adopt a per-shape change only above that shape's measured spread
-- S17 gemm/autotune.md:87 time base and candidate in one process as a palindrome per rep
+- S16 gemm/small_m.md:66 adopt a per-shape change only above that shape's measured spread
+- S17 gemm/autotune.md:90 time base and candidate in one process as a palindrome per rep
 - S18 gemm/measurement.md:139 benchmark the deployment's per-call shape
 - S19 gemm/measurement.md:141 each arm at its own best configuration
-- S20 gemm/measurement.md:77 cache, residency, swizzle, placement levers do not transfer from isolated loops
+- S20 gemm/measurement.md:75 cache, residency, swizzle, placement levers do not transfer from isolated loops
 - S21 gemm/autotune.md:65 incumbent first; a challenger must beat it by more than the race's noise
 - S22 gemm/autotune.md:52 a model is a cheap way to find suspect shapes; validate off the scoring set
 - S23 aklr/ops/README.md:193 compilation happens on a Point's first call; later calls may be inside a graph capture
-- S24 gemm/autotune.md:97 give a known shape family a static lead under a predicate
-- S25 gemm/autotune.md:100 hard-coding beats a race that scores the wrong point
-- S26 gemm/mainloop.md:88 the crossover depends on the shape and on the epilogue
-- S27 gemm/grid_pricing.md:315 the tile/round table for every scored shape exists before the first build
-- S28 gemm/grid_pricing.md:316 judged per shape, with s = 1 / the old tile still in the race
-- S29 gemm/small_m.md:265 validate a row across every M that reaches it; add it only if it beats the pad
-- S30 flydsl/gemm.md:311 re-tune instead of copying rows
+- S24 gemm/autotune.md:100 give a known shape family a static lead under a predicate
+- S25 gemm/autotune.md:103 hard-coding beats a race that scores the wrong point
+- S26 gemm/mainloop.md:89 the crossover depends on the shape and on the epilogue
+- S27 gemm/grid_pricing.md:320 the tile/round table for every scored shape exists before the first build
+- S28 gemm/grid_pricing.md:321 judged per shape, with s = 1 / the old tile still in the race
+- S29 gemm/small_m.md:273 validate a row across every M that reaches it; add it only if it beats the pad
+- S30 flydsl/gemm.md:349 re-tune instead of copying rows
 - S31 gemm/measurement.md:164 ablate every component on the full table, including an all-off arm
-- S32 gemm/measurement.md:166 keep a change only if it beats BASE-to-BASE drift and its sign agrees
+- S32 gemm/measurement.md:169 keep a change only if it beats BASE-to-BASE drift and its sign agrees
 - S33 aklr/ops/README.md:21 dispatch serves each Point with the best measured file

@@ -21,7 +21,8 @@ sources:
 > The host side of a grouped GEMM: keeping the steady state free of device→host copies, launching under CUDA
 > graphs and in eager mode, what to cache and under which key, and how to race configurations when the token
 > distribution is unknown at dispatch. The dense rules (first-call race, margins, palindrome timing, cache keys,
-> the compiled-object launch path) are in `../gemm/autotune.md` and are not repeated. "FP8", "MX8",
+> the compiled-object launch path) are in `../gemm/autotune.md` (the compiled-object launch path:
+> `../flydsl/gemm.md` § autotune §6) and are not repeated. "FP8", "MX8",
 > "MX4" are Primus-Turbo's `grouped_gemm_{fp8,mxfp8,mxfp4}_kernel.py` under `primus_turbo/flydsl/grouped_gemm/`
 > and "GH" its `utils/gemm_helper.py`, at main `ca1fdd67`. FlyDSL facts are v0.3.2.
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end. Use
@@ -53,7 +54,7 @@ sources:
 - **What a call costs (v0.3.2).** Calling a `@flyc.jit` launcher re-checks captured globals, binds the signature
   and rebuilds the cache key before it reaches the cached call state (`JitFunction.__call__`,
   `jit_function.py:1358-1400`). The object returned by `flyc.compile` goes straight to the call state
-  (`CompiledFunction.__call__`, `jit_function.py:1613-1635`). Measured gaps: `../gemm/autotune.md` §6,
+  (`CompiledFunction.__call__`, `jit_function.py:1613-1635`). Measured gaps: `../flydsl/gemm.md` § autotune §6,
   `../attention/flydsl_attn_measurement.md` §6.
 - **Mode split.** Eager calls the compiled object; under capture the raw `@flyc.jit` closure is launched, because
   in Turbo's measurement the compiled object "regresses under capture" (FP8:2743-2754, 5060-5074;
@@ -61,7 +62,8 @@ sources:
   as a measured property of that stack and re-measure on yours. *(field, E2)* On a small shape the split took the
   eager call from 18.4 to 17.2 µs.
 - **Compiling runs the kernel once** (`_compile_impl`, `jit_function.py:1662`): build a beta=1 launch against a
-  scratch output (`compile_with_scratch_out`, GH:86-95; `../gemm/epilogue.md` §7).
+  scratch output (`compile_with_scratch_out`, GH:86-95; `../gemm/epilogue.md` §7,
+  `../flydsl/gemm.md` § epilogue §7).
 - **Pass the stream as an `fx.Stream` argument.** A launcher without one gets a NULL stream slot, i.e. the default
   stream, in its call state (`_build_call_state`, `jit_function.py:1123-1125`).
 - **Make the first call of every key eager.** Nothing can be timed during capture. A tuner reached under capture
@@ -169,7 +171,8 @@ each by adding 0/1/2/4 extra launches in one process and fitting the slope (`../
   at build time that it fits the smallest G the callers use; otherwise a small expert count fails every fast
   candidate and the race silently settles on the fallback kernel.
 - A configuration over the LDS limit raises nothing: the launch fails on stderr only and the output is never
-  written (`../gemm/autotune.md` §7). Check LDS bytes before timing.
+  written (`../flydsl/gemm.md` § autotune §7; the check itself: `../gemm/autotune.md` §7). Check LDS bytes before
+  timing.
 
 ## Verify
 - A trace of the steady state shows no host-side copy, and host enqueue time is below GPU time.

@@ -20,19 +20,19 @@ sources:
 
 # The GEMM main loop
 
-> Three loop designs are in use for FlyDSL GEMMs on gfx950: FlyDSL's 2-stage LDS ping-pong
+> Three loop designs are in use for GEMMs on gfx950: FlyDSL's 2-stage LDS ping-pong
 > (`preshuffle_gemm`, explained step by step in `../flydsl/guides.md` § gemm-optimization (FlyDSL's §2 and §4–§6)), the 8-wave
 > pipeline (FlyDSL's `fp8_gemm_8wave.py`; Primus-Turbo's fp8 and MXFP8 GEMMs) and the 4-wave designs (FlyDSL's
 > `fp8_gemm_4wave.py` and `fp4_gemm_4wave.py`; Primus-Turbo's whole-loop inline asm). Primus-Turbo's kernels are
 > built for training shapes (large M; small M is in `small_m.md`). "FP8" below means Turbo's
 > `gemm/gemm_fp8_kernel.py`, "FP4" means `gemm/gemm_mxfp4_kernel.py` and "GH" means `utils/gemm_helper.py`, all
-> under `primus_turbo/flydsl/` at main `7615a5a2`; "PS" is FlyDSL's `kernels/gemm/preshuffle_gemm.py`. All of
-> them run on FlyDSL v0.3.2. What to know when calling FlyDSL's kernels is in §8.
+> under `primus_turbo/flydsl/` at main `7615a5a2`. All of them run on FlyDSL v0.3.2. What to know when calling
+> FlyDSL's kernels is in `../flydsl/gemm.md` § mainloop §8.
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end.
 > Use them for direction and order of magnitude, not as targets.
 
 ## Route here when
-- You are choosing or writing the K loop of a FlyDSL GEMM: wave count, LDS buffering, where the waits go,
+- You are choosing or writing the K loop of a GEMM: wave count, LDS buffering, where the waits go,
   and whether the loop should be one inline-asm region.
 - An inline-asm MFMA or loop compiles and runs but produces wrong numbers on some shapes.
 - You are deciding between AGPR and VGPR accumulators, or between MFMA atoms.
@@ -49,14 +49,15 @@ FlyDSL's guide walks through this design in detail (`../flydsl/guides.md` § gem
 - **Each loop iteration covers two K tiles, one per buffer.** For each: load the next A tile into the idle
   buffer and the next B tile into registers, run the MFMAs on the current buffer, then `s_waitcnt` + barrier
   (guide §2.3, §4.4).
-- **`hot_loop_scheduler` spreads the loads over the MFMAs** with `sched_vmem` / `sched_dsrd` / `sched_dswr`
-  / `sched_mfma` groups whose counts come from this tile (guide §5; `schedule_and_locality.md` §3).
-- **Async copy (gfx950).** `use_async_copy` moves A global→LDS by DMA and frees A's staging VGPRs (guide §11).
+- **Scheduling-group hints spread the loads over the MFMAs**, one group per instruction class (VMEM reads, LDS
+  reads, LDS writes, MFMAs), with counts that come from this tile (guide §5; `schedule_and_locality.md` §3).
+- **Async copy (gfx950).** Moving A global→LDS by DMA frees A's staging VGPRs (guide §11).
   *(field, E1)* Staging A or B through VGPRs + `ds_write` instead of DMA lost 10–15% on a bf16 8-wave loop at M=16384 (timing-only builds; their output was not checked).
 - Budget it with the guide's formulas: MFMAs per tile (§1.5), LDS per stage (§2.4), VGPRs (§10).
 
-The 8-wave and 4-wave designs below put both operands through LDS and use larger tiles (FlyDSL's defaults are
-256×256).
+The 8-wave and 4-wave designs below put both operands through LDS and use larger tiles.
+
+In FlyDSL: `../flydsl/gemm.md` § mainloop The baseline: FlyDSL's 2-stage ping-pong (`preshuffle_gemm`).
 
 ## 1. Two large-tile loop designs — race them, do not pick by rule
 
@@ -93,7 +94,7 @@ epilogue, so no fixed rule works.
 
 ## 2. The 8-wave pipeline (FP8 `_compile_dense_nt`)
 
-- **LDS.** One `@fx.struct` with eight `fx.Array` fields: A/B × cur/next × two halves (FP8:134-142).
+- **LDS.** Eight LDS buffers: A/B × cur/next × two halves (FP8:134-142).
   A 256×256×128 fp8 tile uses 128 KiB.
 - **Quadrants.** Each wave owns four accumulator quadrants, c00/c01/c10/c11. One iteration interleaves
   four S2R fragment loads, the next tiles' G2S fills and four MFMA clusters (FP8:264-310):
@@ -133,8 +134,8 @@ In FlyDSL: `../flydsl/gemm.md` § mainloop §2.
 
 ## 3. The 4-wave whole loop: one inline-asm region for all of K
 
-The K loop is a Python-generated assembly string passed to one `_llvm.inline_asm` call. The loop label
-and back edge are part of the string (`s_add_u32 cnt; s_cmp_lt_u32; s_cbranch_scc1 1b`, FP8:2355-2359).
+The K loop is one inline-asm region. The loop label and back edge are part of the asm string
+(`s_add_u32 cnt; s_cmp_lt_u32; s_cbranch_scc1 1b`, FP8:2355-2359).
 
 What this buys:
 - No FlyDSL/LLVM boundary per iteration, so the compiler cannot insert a conservative `vmcnt(0)` or
@@ -227,7 +228,7 @@ hot loop) and by wall time, not by `accum_offset` or register totals.
 
 **Setting `amdgpu-agpr-alloc` and friends.** Without the attribute, an inline-asm AGPR
 accumulator gets the default allocation, and the result is wrong. After setting any kernel attribute,
-read `.agpr_count`, `.vgpr_count` and the waves-per-eu fields from the ISA (`FLYDSL_DUMP_IR=1`, §10).
+read `.agpr_count`, `.vgpr_count` and the waves-per-eu fields from the ISA (§10).
 
 In FlyDSL: `../flydsl/gemm.md` § mainloop §4.
 
@@ -280,14 +281,15 @@ In FlyDSL: `../flydsl/gemm.md` § mainloop §6.
   where it had spilled 19–43 *(field, E21)*.
 - **Fully unrolling a short K loop (`range_constexpr`) pays only with VGPR headroom.** *(field, E19)* At 12–24 K steps:
   ~1–5% faster on ~100-VGPR tiles, ~40% slower on one 256-VGPR tile (spills 9 → 59) and about 1% slower on another (its ISA was not read).
-- The 4-wave whole loop runs at `waves_per_eu=1` and uses the full register file
-  (`make_value_attrs(1, 0, "256,256")`, FP8:1992). FP4 sets `amdgpu-agpr-alloc=256` through
-  `llvm.passthrough` (FP4:3095).
+- The 4-wave whole loop runs at `waves_per_eu=1` and uses the full register file (FP8:1992). FP4 also sets
+  `amdgpu-agpr-alloc=256` (FP4:3095).
 - Arch VGPRs and AGPRs share one 512-entry file per SIMD. Allocation is in granules of 8, and the
   occupancy tiers are 64/72/80/96/128/168/256 total registers (8 down to 2 waves per SIMD).
   Arch registers are rounded up to 4 before the AGPRs are added: 101 arch + 21 AGPR is 125 total.
   FlyDSL's guide has the same model with a worked VGPR estimate for a `preshuffle_gemm` tile
   (`../flydsl/guides.md` § gemm-optimization (FlyDSL's §10)).
+
+In FlyDSL: `../flydsl/gemm.md` § mainloop §7.
 
 ## 8. FlyDSL's own GEMM kernels (v0.3.2): what to know when calling or tuning them
 

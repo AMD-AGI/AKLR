@@ -8,19 +8,15 @@ dtypes: [bf16, fp8, mxfp4]
 regimes: [compute-bound, register-saturated]
 flydsl: 0.3.2
 sources:
-  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/__init__.py:99
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/__init__.py:142
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/__init__.py:877
-  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/universal.py:266
-  - ROCm/FlyDSL@dd8373349:kernels/gemm/fp8_gemm_4wave.py:135
 ---
 
 # Wave placement, XCD order, scheduling and epilogue in a GEMM
 
 > Each section here is a place where the obvious move measured in the wrong direction. Read the rule,
 > then check whether your kernel is in the regime it was measured in. "GH" is Primus-Turbo's
-> `primus_turbo/flydsl/utils/gemm_helper.py` at main `7615a5a2`; "PS" and "A16" are FlyDSL's
-> `kernels/gemm/preshuffle_gemm.py` and `kernels/gemm/gemm_a16w16_gfx950.py`.
+> `primus_turbo/flydsl/utils/gemm_helper.py` at main `7615a5a2`.
 >
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end.
 > Use them for direction and order of magnitude, not as targets.

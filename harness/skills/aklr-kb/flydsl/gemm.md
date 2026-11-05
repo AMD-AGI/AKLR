@@ -8,7 +8,18 @@ gens: [gfx950, gfx942]
 flydsl: 0.3.2
 sources:
   - ROCm/FlyDSL@dd8373349:kernels/gemm/
+  - ROCm/FlyDSL@dd8373349:kernels/moe/moe_2stage_a16wmix/
+  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/gpu.py:157
+  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/__init__.py:99
+  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/universal.py:59
+  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/universal.py:266
+  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/cdna4.py:42
+  - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/jit_function.py:1414
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/
+  - aiter/ops/flydsl/kernels/splitk_hgemm.py
+  - aiter/ops/flydsl/gemm_kernels.py
+  - aiter/tuned_gemm.py
+  - csrc/gemm_a16w16/gemm_a16w16_tune.py
 ---
 
 # GEMM in FlyDSL
@@ -19,9 +30,13 @@ you call or tune them. Each section is named after the card section it serves (`
 package's main-loop card) and holds only the FlyDSL part: read the card for the mechanism and the numbers.
 
 "PS" is FlyDSL's `kernels/gemm/preshuffle_gemm.py` and "A16" its `kernels/gemm/gemm_a16w16_gfx950.py` (FlyDSL
-v0.3.2). "GH", "PR", "FP8", "FP4" and "MX8" are Primus-Turbo's `utils/gemm_helper.py`, `utils/prims.py`,
-`gemm/gemm_fp8_kernel.py`, `gemm/gemm_mxfp4_kernel.py` and `gemm/gemm_mxfp8_kernel.py` under `primus_turbo/flydsl/`
-at main `7615a5a2`. Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence.
+v0.3.2). "GH", "FP8" and "FP4" are Primus-Turbo's `utils/gemm_helper.py`, `gemm/gemm_fp8_kernel.py` and
+`gemm/gemm_mxfp4_kernel.py` under `primus_turbo/flydsl/` at main `7615a5a2`. In the small_m sections, "aiter's
+generic kernel" is the baseline aiter's split-K bf16 GEMM `aiter/ops/flydsl/kernels/splitk_hgemm.py`, and "the
+catalog" is the list of configurations its tuner enumerates (`get_flydsl_splitk_hgemm_kernels`,
+`aiter/ops/flydsl/gemm_kernels.py:589`); the bare paths there (`gemm_kernels.py`, `tuned_gemm.py`,
+`splitk_hgemm.py`, `csrc/gemm_a16w16/…`) are files of the baseline aiter. Numbers marked `*(field, E<n>)*` are
+measured values; their conditions are listed under Evidence.
 
 ## Route here when
 
@@ -60,14 +75,20 @@ and split-K reductions are in `kernels/flydsl_kernel_library.md`, their argument
 | `utils/gemm_epilogue_helper.py` | shared | fused activation and quantization epilogues | — |
 | `utils/prims.py` | shared | `readfirstlane`, unsigned index math, wave scans | — |
 
+Next to FlyDSL's kernels, Primus-Turbo's add fp8 NN/TN layouts (FlyDSL's bf16/fp16 `gemm_a16w16` already takes
+NN/NT/TN/TT), K tails without a padding copy (fp8 at any K ≥ 129, MXFP4 at K % 64 == 0), a whole-loop inline-asm
+design, a per-shape race inside the entry point (FlyDSL ships a general `flydsl.autotune` decorator; its GEMM
+kernels take the configuration from the caller), and fused GLU/dGLU + MXFP4-quantization epilogues (FlyDSL's
+`preshuffle_gemm` fuses bias + ReLU/SiLU/GELU).
+
 Constants in both code bases (tile and preload tables, wait counts, adoption margins, L2 and burst thresholds)
 were tuned on specific shapes. Reuse the mechanism and re-derive the number.
 
 ## INDEX FlyDSL version
 
-All API statements in this package are for FlyDSL v0.3.2. Turbo main `7615a5a2` runs unmodified on it. The
-raw buffer helpers (`create_buffer_resource`, …) are not in the wheel: they live in `kernels/common/buffer_ops.py`
-in the FlyDSL repo, and Turbo vendors its own copy in `utils/buffer_ops.py`. In the wheel,
+All API statements in the gemm package and on this page are for FlyDSL v0.3.2. Turbo main `7615a5a2` runs
+unmodified on it. The raw buffer helpers (`create_buffer_resource`, …) are not in the wheel: they live in
+`kernels/common/buffer_ops.py` in the FlyDSL repo, and Turbo vendors its own copy in `utils/buffer_ops.py`. In the wheel,
 `rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(ptr, num_records_bytes))` turns an `fx.Pointer` into the raw
 resource the `rocdl.raw_ptr_buffer_*` wrappers take. Kernel attributes passed through
 `value_attrs`, such as `amdgpu-agpr-alloc`, must go under `"llvm.passthrough"`; a bare `"passthrough"` key is
@@ -88,19 +109,30 @@ dict is not in the JIT cache key. See § mainloop §4 below and `debug-flydsl-ke
 
 Both run on FlyDSL v0.3.2.
 
+## mainloop The baseline: FlyDSL's 2-stage ping-pong (`preshuffle_gemm`)
+
+- PS's `hot_loop_scheduler` spreads the loads over the MFMAs with `rocdl.sched_vmem` / `sched_dsrd` / `sched_dswr`
+  / `sched_mfma` groups whose counts come from the tile (§ schedule_and_locality §3 below).
+- PS's `use_async_copy` flag moves A global→LDS by DMA (gfx950 only).
+- FlyDSL's 8-wave and fp8 4-wave kernels default to 256×256 tiles (`BLOCK_M`, `BLOCK_N`); `fp4_gemm_4wave.py` fixes
+  256×256.
+
 ## mainloop §2 The 8-wave pipeline (FP8 `_compile_dense_nt`)
 
-- **LDS.** Allocate it with `fx.SharedAllocator().allocate(...).peek()`.
+- **LDS.** One `@fx.struct` with eight `fx.Array` fields (FP8:134-142), allocated with
+  `fx.SharedAllocator().allocate(...).peek()`.
 
 ## mainloop §3 The 4-wave whole loop: one inline-asm region for all of K
 
-Results come back through `llvm.extractvalue` on a struct return type.
+The asm string is generated in Python and passed to one `_llvm.inline_asm` call; results come back through
+`llvm.extractvalue` on a struct return type.
 
 ## mainloop §4 Register plan and inline-asm constraints
 
 **Setting `amdgpu-agpr-alloc` and friends.** Turbo passes these through `value_attrs`
 (`make_value_attrs`, GH:1580). Put them under `"llvm.passthrough": [...]`. A bare `"passthrough": [...]`
-key is silently dropped at `convert_gpu_to_rocdl`. A dropped attribute gives no error.
+key is silently dropped at `convert_gpu_to_rocdl`. A dropped attribute gives no error. Read the counts back from
+an ISA dump (`FLYDSL_DUMP_IR=1`, § mainloop §10 below).
 
 ## mainloop §5 MFMA atom choice
 
@@ -112,6 +144,12 @@ key is silently dropped at `convert_gpu_to_rocdl`. A dropped attribute gives no 
 FlyDSL's shipped kernels require K to be a multiple of
 their K tile.
 
+## mainloop §7 Occupancy and allocation knobs
+
+The fp8 4-wave whole loop gets `waves_per_eu=1` and the full register file from
+`make_value_attrs(1, 0, "256,256")` (FP8:1992); the MXFP4 one passes `amdgpu-agpr-alloc=256` under
+`llvm.passthrough` (FP4:3095), as § mainloop §4 above requires.
+
 ## mainloop §8 FlyDSL's own GEMM kernels (v0.3.2): what to know when calling or tuning them
 
 "PS" is `kernels/gemm/preshuffle_gemm.py` and "A16" is `kernels/gemm/gemm_a16w16_gfx950.py`. They handle no
@@ -122,7 +160,7 @@ layout (`b_preshuffled`).
 |---|---|---|---|
 | PS `compile_preshuffle_gemm` | fp8, int8, fp16, bf16 | 4 waves along N; A through LDS, pre-shuffled B straight to VGPR | per-row × per-col scales; `use_async_copy` is gfx950-only |
 | A16 `gemm_a16w16` | bf16, fp16 | `m×n×k` waves (default 2×4×1), async DMA for A and B, `stages` deep | split-K by atomics (not bitwise reproducible), `group_m` XCD swizzle, half-tile interleave |
-| `fp8_gemm_8wave.py`, `fp8_gemm_4wave.py` | fp8 (row-wise scales) | the §2 pipeline / a 4-wave per-MFMA-asm loop | NT only, `K % 128 == 0` |
+| `fp8_gemm_8wave.py`, `fp8_gemm_4wave.py` | fp8 (row-wise scales) | the 8-wave pipeline of `../gemm/mainloop.md` §2 / a 4-wave per-MFMA-asm loop | NT only, `K % 128 == 0` |
 | `fp4_gemm_4wave.py` | MXFP4 | 2×2 waves, 8-buffer LDS ping-pong, scales through LDS | host-side scale and weight preshuffle |
 | `mxfp4_preshuffle.py` | A MXFP4/MXFP6/MXFP8 × B MXFP4/MXFP8 | 4 waves along N; A by DMA into a 2-buffer LDS ring; preshuffled B and the scales loaded straight to registers | host-side scale and weight preshuffle |
 
@@ -167,25 +205,27 @@ overlays `ab` and `c`). `SmemAllocator` / `SmemPtr` are legacy.
 
 ## datapath §3 Bank conflicts: compute the floor, then measure
 
-FlyDSL's `Vector.load` declares none
+FlyDSL's `Vector.load` passes no alignment, so the read carries only its element's alignment
 (`language/limits.md` § Unclassified has the lowering, the fix and its bank-conflict cost).
 
 ## datapath §4 Waits around LDS
 
-`cdna4.BufferLoadAsyncLDS*` with `rocdl.asyncmark()` / `wait_asyncmark(n)` is the in-DSL alternative (A16
-uses it).
+- `fx.gpu.barrier()` lowers to `s_barrier`.
+- `cdna4.BufferLoadAsyncLDS*` with `rocdl.asyncmark()` / `wait_asyncmark(n)` is the in-DSL alternative (A16
+  uses it).
 
 ## datapath §5 Global → LDS DMA
 
 - FlyDSL atoms: `fx.rocdl.BufferCopyLDS128b` (PS's `dma_a_to_lds`, behind PS's `use_async_copy` flag) is
-  compiler-tracked — the compiler inserts the `vmcnt` wait before the staged LDS data is read (§4); FlyDSL's
+  compiler-tracked — the compiler inserts the `vmcnt` wait before the staged LDS data is read
+  (`../gemm/datapath.md` §4); FlyDSL's
   docstring calls it the synchronous form. For `fx.rocdl.cdna4.BufferLoadAsyncLDS128b` (A16) the backend
   inserts no such wait: you close groups with `rocdl.asyncmark()` and wait with `rocdl.wait_asyncmark(n)`
   (`expr/rocdl/cdna4.py:42-55`).
 
 **How Turbo issues the DMA** (`G2SLoader`, GH:305-386):
-- One `fx.make_copy_atom(fx.rocdl.BufferCopyLDS128b(), 128)` per 16 B per lane; each wave writes 1 KiB per
-  step.
+- One `fx.make_copy_atom(fx.rocdl.BufferCopyLDS128b(), 128)` per 16 B per lane.
+- The per-lane global offsets are Python ints computed at trace time.
 - The wave-uniform K offset rides the SGPR `soffset`: `fx.copy(atom, src, dst, soffset=...)`.
 
 ## datapath §7 Prefetch inside the K loop
@@ -199,11 +239,16 @@ persist; a plain `range()` carries every name the body reassigns
 - Pass tensors to the entry function at their full rank. A flat view of more than 2³¹ elements
   overflows the int32 shape pack.
 
+## datapath §10 Operand layout: preshuffle or permute in the fill; keep rows on cache lines
+
+FlyDSL's MXFP4 kernels (`fp4_gemm_4wave.py`, `mxfp4_preshuffle.py`) take B as `shuffle_weight_w4(b, 16)` and the
+scales as `shuffle_scale_w4`.
+
 ## datapath §11 MX scales
 
-One `@flyc.jit` host stub launches the preshuffle kernel
-and then the GEMM, so the scales are repacked in stream order with no extra Python dispatch
-(`build_preshuffle_ab_kernel`, GH:2115-2122, 2262).
+Turbo's host call is one `@flyc.jit` stub that launches the preshuffle kernel and then the GEMM
+(`build_preshuffle_ab_kernel`, GH:2115-2122, 2262). A caller that reuses weights can preshuffle their scales once
+with `preshuffle_mxfp4_scales` (FP4:4877).
 
 ## schedule_and_locality §2 Tile order across XCDs
 
@@ -233,8 +278,8 @@ the sync path also places its LDS writes at the tail.
 `preload=(dsrd, dvmem)` sets how many go ahead of the first MFMA
 (PS:439-494).
 
-**Race LLVM's scheduler per tile:** `flyc.compile[{"llvm_options": {"amdgpu-sched-strategy": "iterative-ilp"}}]`
-(or `max-ilp`, `max-memory-clause`, `iterative-minreg`, `iterative-maxocc`); a misspelled name silently compiles the default.
+**Race LLVM's scheduler per tile** (the strategies are in `../gemm/schedule_and_locality.md` §3):
+`flyc.compile[{"llvm_options": {"amdgpu-sched-strategy": "iterative-ilp"}}]`.
 
 ## schedule_and_locality §7 Accumulators, descriptors and large operands
 
@@ -248,8 +293,8 @@ the sync path also places its LDS writes at the tail.
 In FlyDSL v0.3.2, PS stores directly and can fuse a per-N bias with ReLU/SiLU/GELU (`epilogue=`); A16 and
 `kernels/common/mma/mfma_epilogues.py` carry the CShuffle store.
 
-FlyDSL's buffer store cannot emit `buffer_store_short_d16_hi`, so taking the high half of a packed pair costs one
-`v_lshrrev_b32`.
+After `v_cvt_pk_bf16_f32`, storing the pair's high half needs `buffer_store_short_d16_hi`, which FlyDSL's buffer
+store cannot emit, so taking the high half of a packed pair costs one `v_lshrrev_b32`.
 
 ## epilogue §5 Cache policy on the store
 
@@ -270,9 +315,9 @@ GH:86-95).
 
 ## small_m §3 Grid size at small M
 
-aiter's reaches one M-block only when M ≤ 16 or M is itself a catalog `tile_m` (32, 48, 64, 80, 96,
-  128, 256): it drops every `tile_m` above `max(M, 16)`, so M=24 keeps only 16 and M=72 only 16–64
-  (`kernels/flydsl_knob_space.md`).
+aiter's tuner `tile_m` filter reaches one M-block only when M ≤ 16 or M is itself a catalog `tile_m` (32, 48, 64,
+80, 96, 128, 256): it drops every `tile_m` above `max(M, 16)`, so M=24 keeps only 16 and M=72 only 16–64
+(`kernels/flydsl_knob_space.md`).
 
 ## small_m §4 Split-K
 
@@ -280,28 +325,21 @@ aiter's reaches one M-block only when M ≤ 16 or M is itself a catalog `tile_m`
   catalog offers 1–13 (`gemm_kernels.py:216-226`).
 - **A 256-tile cap refuses split-K on larger grids** at launch (`gemm_kernels.py:712-724`); the tuner already
   drops split-K candidates above 128 tiles (`csrc/gemm_a16w16/gemm_a16w16_tune.py:753`).
-- **The current split-K is not bitwise reproducible** at split-K ≥ 3, or at split-K 2 with a bias: partials
-  are added into C in arrival order. Measured, for both kernels: every one of 400 repeats differed at split-K 2
-  with a bias and at 3, 4 and 8 *(field, E1)*. Where
-  runs must match bitwise, use split-K 1 or 2 without a bias, or a fixed-order reduction
-  (`kernels/flydsl_kernel_library.md` § Split-K).
 
 ## small_m §6 Memory-side knobs
 
-**Not in the current kernels**: the generic kernel's global→LDS copy is inline asm with `sc0` fixed
-  (`splitk_hgemm.py:542-557`).
-
-  - The generic kernel always keeps the plain order (`swizzle_for_cache_reuse`, `splitk_hgemm.py:353-357`).
-
+- **B's cache policy cannot be raced in aiter's generic kernel**: its global→LDS copy is inline asm with `sc0`
+  fixed (`splitk_hgemm.py:542-557`).
+- aiter's generic kernel has no XCD band remap: it always keeps the plain order (`swizzle_for_cache_reuse`,
+  `splitk_hgemm.py:353-357`).
 - **Preload the leading kernel arguments into SGPRs**: `flyc.compile[{"llvm_options": {"amdgpu-kernarg-preload-count": <n args>}}]`;
   the dumped ISA then shows `.amdhsa_user_sgpr_kernarg_preload_length` > 0.
-  - Pass the operands as `fx.Pointer` (`from_c_void_p`). A raw `torch.Tensor` lowers to a pointer plus a layout
-    struct, and preload stops at the first struct: only the first pointer is preloaded (length 2 at count 16).
+  - Pass the operands as `fx.Pointer` (`from_c_void_p`): a raw `torch.Tensor` lowers to a pointer plus a layout
+    struct, so only the first pointer is preloaded (length 2 at count 16).
   - **Not in aiter's bf16 GEMM kernels**; its FlyDSL MoE helpers set it. Eight of AKLR's
     own bf16 GEMM kernels use it.
-
-**Not in the
-  generic kernel**: it clamps rows past M to row 0 and loads them (`splitk_hgemm.py:512-519`).
+- aiter's generic kernel does not skip A rows past M: it clamps them to row 0 and loads them
+  (`splitk_hgemm.py:512-519`).
 
 ## small_m §7 aiter's tuned table at small M
 
@@ -314,6 +352,12 @@ aiter's reaches one M-block only when M ≤ 16 or M is itself a catalog `tile_m`
   the 128-tile cap on split-K (`csrc/gemm_a16w16/gemm_a16w16_tune.py:740-755`). Read the candidate count the
   tuner logs for a missing shape before concluding "no candidate".
 
+## wait_free_fold How to write it
+
+In FlyDSL the wait before a split counts in is `rocdl.s_waitcnt(vmcnt=0)` followed by a barrier, and the arrival is
+`llvm.atomicrmw(add, …, syncscope="agent")`, which returns the old count (lines 426 and 430 of the kernel
+`../gemm/wait_free_fold.md` cites).
+
 ## autotune Per-shape autotune and the launch path
 
 > FlyDSL's own kernels take their configuration from the caller; the
@@ -323,14 +367,15 @@ aiter's reaches one M-block only when M ≤ 16 or M is itself a catalog `tile_m`
 
 ## autotune §3 Staged searches
 
-  - **The epilogue-variant stage does not run at `7615a5a2`.** It looks the swizzle winner up under a 13-field
-    key (FP4:3294-3296), the swizzle stage stores its entries under 15 fields (FP4:3215-3231), and the
-    `KeyError` is swallowed (`except Exception: pass`, FP4:3374-3375), so every shape keeps
-    `(taccw, coop) = (False, False)` (FP4:3289). *(field, E2)* With the key fixed, none of the 18 shapes of a
-    dense MXFP4 table picked a variant.
-  - **Nor does the real launch reuse the race's compiled winners.** The race stores them under the 15-field key
-    (FP4:3215-3231), the launch looks them up under 14 fields, without `k_real` (FP4:4519), so the first real launch
-    of a shape compiles again, although the docstring says it does not (FP4:3188-3189).
+In Turbo's MXFP4 staged search (FP4:3170-3377):
+- **The epilogue-variant stage does not run at `7615a5a2`.** It looks the swizzle winner up under a 13-field
+  key (FP4:3294-3296), the swizzle stage stores its entries under 15 fields (FP4:3215-3231), and the
+  `KeyError` is swallowed (`except Exception: pass`, FP4:3374-3375), so every shape keeps
+  `(taccw, coop) = (False, False)` (FP4:3289). *(field, E2)* With the key fixed, none of the 18 shapes of a
+  dense MXFP4 table picked a variant.
+- **Nor does the real launch reuse the race's compiled winners.** The race stores them under the 15-field key
+  (FP4:3215-3231), the launch looks them up under 14 fields, without `k_real` (FP4:4519), so the first real launch
+  of a shape compiles again, although the docstring says it does not (FP4:3188-3189).
 
 ## autotune §5 Cache keys
 
@@ -352,22 +397,32 @@ aiter's reaches one M-block only when M ≤ 16 or M is itself a catalog `tile_m`
   build 54%, the globals-drift check 22%); moving the entry to the compiled object cut it to 19.1 µs and
   gained 6.5% on a six-shape score that includes host time.
 
+## autotune §7 Failures the race must not hide
+
+**A configuration over the LDS limit raises nothing in FlyDSL.** LLVM prints `local memory (N) exceeds limit`, the
+launch fails with `hipErrorIllegalState` on stderr only, and the output is never written.
+
+## correctness §4 Waits, barriers and the scheduler
+
+The monotonic, agent-scope atomic load that keeps a poll loop is
+`llvm.LoadOp(…, ordering=llvm.AtomicOrdering.monotonic, syncscope="agent")`.
+
 ## correctness §5 LDS placement and DMA
 
 - **Reordering `@fx.struct` fields does not move LDS.** With `SharedAllocator(static=True)` every leaf
-  is its own symbol placed by the backend (`expr/gpu.py:157`); an arm that stops using a leaf lets
-  the others be re-packed.
+  is its own symbol placed by the backend (`expr/gpu.py:157`).
 - **Buffers that must be contiguous go in one field, or use `static=False`.** The default static
   allocator places fields by size, largest first, and equal sizes by symbol name (declared
   `a4k, b16k, c8k, d256, e1k` land as `b16k, c8k, a4k, e1k, d256`). `SharedAllocator(static=False)` keeps
-  declaration order. A pool addressed as one base plus immediates must not rely on the static order.
+  declaration order.
 
 ## correctness §6 Bounds
 
+- Bound ragged edges with `make_buffer_tensor(..., max_size=False, num_records_bytes=...)`, as PS does for A and C
+  (PS:263).
 - The default `max_size=True` sets `num_records = 0xFFFFFFFF` — no masking.
-- `mask=` of aiter's `buffer_ops.buffer_store` / `buffer_load` does not mask on such a descriptor: its byte offset
-  0x7FFFFFFF is in range, so a masked lane writes 2 GiB past the base *(field, E5)*; in a fused MoE sort kernel such a store faulted,
-  and an out-of-range index in its place ran correct *(field, E6)*.
+- `mask=` of aiter's `buffer_ops.buffer_store` / `buffer_load` does not mask on such a descriptor: it selects the byte
+  offset 0x7FFFFFFF, which is in range (`../gemm/correctness.md` §6 has what that did).
 - Derive every shape-dependent bound from traced arguments; a host integer can be baked into a cached
   kernel and reused for the next shape (`debug-flydsl-kernel.md` § A bound or address
   baked from a host integer).
@@ -376,29 +431,37 @@ aiter's reaches one M-block only when M ≤ 16 or M is itself a catalog `tile_m`
 
 - **Do not time with `FLYDSL_DUMP_IR=1`** (it bypasses the cache and recompiles, `jit_function.py:1414`;
   on an attention kernel, an arm's first read under `FLYDSL_DUMP_IR=1` with a single rep was +15% on a ±0.2%
-  ruler *(field, E7)*).
+  ruler *(field, E7)*; a single rep is reason enough to distrust a first read, `../gemm/measurement.md` §6).
 
 ## attribution §9 Readings you cannot trust
 
-- Do not time with `FLYDSL_DUMP_IR=1` or a single repetition. *(field, E7)* On an attention kernel, a dumped run
-  read +15%; three normal runs read ±0.2%.
+- Do not time with `FLYDSL_DUMP_IR=1`. *(field, E7)* On an attention kernel, a dumped run read +15%; three normal
+  runs read ±0.2%. That run was also a single repetition, which the card warns about on its own
+  (`../gemm/attribution.md` §9).
 
 ## gfx942 This repository's notes
 
-**No async copy on gfx942 in this GEMM.** `preshuffle_gemm` raises `ValueError` for `use_async_copy=True` on
-gfx942 (PS:154-157). The DMA instruction itself also lowers on gfx942, at 4 B per op.
+**`preshuffle_gemm` has no async copy on gfx942.** `preshuffle_gemm` raises `ValueError` for `use_async_copy=True` on
+gfx942 (PS:154-157).
 
-**FlyDSL's `hot_loop_scheduler` is the reference use.** `preshuffle_gemm` builds one hint table per tile. On
-gfx942 it uses the sync-copy pattern of FlyDSL's guide: a prologue places the first LDS reads, then each step is
+**FlyDSL's `hot_loop_scheduler` is the reference use of the hint helpers on gfx942 too.** `preshuffle_gemm` builds
+one hint table per tile. On gfx942 it uses the sync-copy pattern of FlyDSL's guide: a prologue places the first LDS reads, then each step is
 one VMEM load, a group of MFMAs, one LDS read and a second group of MFMAs, with the next tile's LDS writes at the
 tail so they land before the barrier (gemm-optimization §5.3–5.4; PS:402-438).
 
+**FlyDSL's bf16-activation MoE takes the K=16 path on gfx942.** `moe_2stage_a16wmix` picks it in
+`a16wmix_use_k16` (`kernels/moe/moe_2stage_a16wmix/utils.py:26-38`). The two 16x16x16 MFMAs per K32 step are at
+`gemm1.py:507-509` of that folder, the per-value int4 dequant at `utils.py:132-138`, and A's staging through VGPRs
+at `gemm1.py:282-291`.
+
 ## Evidence
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.2, aiter a0e3cbea, N=400, eager calls, a side-stream matmul on alternate repeats] aiter's HGEMM and small-M split-K: with a bias at split-K 2, and at split-K 3, 4 and 8, 400/400 repeats differed from the first; split-K 1, and 2 without a bias, 0 (m,n,k = 16, 2048, 6144 (probe /workspace/code/gpt_oss_docker/work/sikl/skillenv/probes_sikl.py:165; its output is kept only in this note); local:/workspace/code/gpt_oss_docker/.claude/memory/project_sikl_flydsl_skill_port.md:30)
+A FlyDSL version is given only where the cited run, or another round in the same container and venv, printed it
+(`flydsl.__version__`, an import path with its version, or a `pip install flydsl==` in the run's own setup); otherwise
+`FlyDSL ?`. The month is the run's where the record dates it; E3's is the date of the commit that recorded the number.
+"Turbo" is Primus-Turbo.
+
 - E2 [2026-09, gfx950, FlyDSL 0.2.4, N=1, code reading, then one scored read per arm] the TACCW/COOP epilogue-twin stage looks its base up in `_MXFP4_AT_CACHE` under a 13-field key while entries are stored under 15 fields; the `KeyError` goes to `except Exception: pass`, so the twin axis had not run in the whole campaign; with the key fixed in a later campaign, all 18 cells of the `gemm18` table still picked `(taccw, coop) = (False, False)` (Turbo MXFP4 dense GEMM for gpt-oss, `_autotune_mxfp4_config`, round 16; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260923_085930/rounds/round-16/agent.txt:8; myskill pitfalls/06-autotune-dispatch.md:827; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260925_144843/memory.md:199)
 - E3 [2026-08, gfx950, FlyDSL ?, N=?, host time per call; method not stated] calling the `@flyc.jit` launch 180 µs per call against 37 µs through the `flyc.compile` object, for the fp8 combine's ~24-argument launch, called twice per MoE layer in a training step (fused MXFP8 MoE, FC2 + combine; Primus-Turbo 22e544d5 (#456), kept as the docstring of `run_compiled`, Primus-Turbo 7615a5a2:primus_turbo/flydsl/utils/gemm_helper.py:2054)
 - E4 [2026-08, gfx950, FlyDSL ?, N=3, campaign score `_bench_wgrad_vs_fwd.py` (wgrad FLOP rate over the same process's forward, CUDA events around the public call, so host time counts), three reads against one same-day baseline read] the wgrad public entry moved from the `@flyc.jit` closure to the `flyc.compile` object, as the forward entry already was: host 77.9 → 19.1 µs per call (`_resolve_and_make_cache_key` 54% and `_check_globals_drift` 22% of the old time), output byte-identical; gm 0.99043 → 1.05074 / 1.05483 / 1.05459, recorded +6.46%; this followed the runtime split-K policy kept the round before (gpt-oss per-tensor fp8 grouped wgrad, round 4; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260803_111756/memory.md:127; :131; :132; myskill methodology/08-splitk-crosslane-lowprec-wgrad.md:172)
-- E5 [2026-10, gfx950, FlyDSL 0.3.2, N=1, GPU probe: one 64-lane uint8 `buffer_store` with every lane masked off, into a 64-byte view of a 3 GiB tensor] `create_buffer_resource(max_size=True)`: the byte at base + 0x7FFFFFFF was written; `max_size=False, num_records_bytes=64`: nothing written (aiter/ops/flydsl/kernels/buffer_ops.py:370, :674; range rule `../hardware/gfx950/memory_and_sync.md` §2; a fused MoE sort + quant kernel's first form hit `HSA_STATUS_ERROR_MEMORY_FAULT` with masked stores; local:/shared_nfs/kyle/moe/kf/runs/tp8_bw_m/knowledge_patch_v2/probe/mask_probe.py; local:/shared_nfs/kyle/moe/kf/runs/tp8_bw_m/workspace/forge_experiments/lessons/iter_001.md:18)
-- E6 [2026-10, gfx950, FlyDSL 0.3.2, N=1, one run] a scatter fused into a MoE sorting kernel, storing through a max-size descriptor with `buffer_store(mask=)`: GPU memory fault, a write to a read-only page; the same kernel with an out-of-range element index instead ran and matched (max_diff 0) (fused MoE EP8 prefill, n_tokens 9397 and 16384; local:/shared_nfs/kyle/moe/kf/runs/ep8_cmp/workspace/forge_experiments/lessons/iter_018.md:11; :34)
-- E7 [2026-09, gfx950, FlyDSL 0.3.2, N=3, same-process probe] an arm's first read under `FLYDSL_DUMP_IR=1` and `REPS=1`: +15.44%; three normal re-runs ±0.2% (GLM-5.2 sparse-MLA decode attention producer; campaign 20260911_143318 round 10; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260911_143318/rounds/round-10/agent.txt:15)
+- E7 [2026-09, gfx950, FlyDSL 0.3.2, N=3, same-process probe] an arm's first read under `FLYDSL_DUMP_IR=1` and `REPS=1`: +15.44%; three normal re-runs ±0.2%; the read had both the IR dump on and a single repetition, so it does not tell which of the two caused the gap (GLM-5.2 sparse-MLA decode attention producer; campaign 20260911_143318 round 10; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260911_143318/rounds/round-10/agent.txt:15)

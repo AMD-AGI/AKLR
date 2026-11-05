@@ -17,7 +17,7 @@ sources:
 
 # Per-shape autotune and the launch path
 
-> No single FlyDSL GEMM configuration is best across shapes. Two loop designs, tile shapes, L2 bands, store
+> No single GEMM configuration is best across shapes. Two loop designs, tile shapes, L2 bands, store
 > policy and split-K all change sign between shapes (`mainloop.md` §1,
 > `epilogue.md` §5). Turbo's dense GEMMs therefore race a short candidate list on the first call
 > for each shape and cache the winner.
@@ -148,7 +148,8 @@ In FlyDSL: `../flydsl/gemm.md` § autotune §3.
   `row_bytes` (one logical shape, two allocations, two kernels) and `scales_prepacked` (the two builds
   differ in whether the launch runs the scale preshuffle) beyond the shape (FP4:4518-4519, FP4:4650-4651).
   Leave either out and one call is handed the other's module.
-- **A value used as a compile-time constant is part of the specialization.**
+- **A value used as a compile-time constant is part of the specialization**, so pass values that vary per call as
+  runtime arguments, and put every compile-time value in the key.
 - Build knobs that select a code path (tile order, store policy) must be in the key. Otherwise two policies
   share one cache slot and silently run as one binary.
 
@@ -160,8 +161,8 @@ In FlyDSL: `../flydsl/gemm.md` § autotune §5.
   (`_scalar_scale`, FP8:3098-3105). Turbo reads the stream through `torch._C._cuda_getCurrentRawStream`
   (FP8:2970).
 - **Under CUDA-graph capture: no timing.** A race cannot time inside capture, so fall back to the static heuristic
-  configuration. Warm up and synchronize the kernel with the same constexpr key before capture starts.
-- Re-measure the host path after adding any dispatch logic.
+  configuration. Warm up and synchronize the kernel with the same compile-time key before capture starts.
+- Dispatch logic in front of a launch adds host time to every call: re-measure the host path after adding any.
 
 In FlyDSL: `../flydsl/gemm.md` § autotune §6.
 
@@ -175,14 +176,17 @@ In FlyDSL: `../flydsl/gemm.md` § autotune §6.
   - Record `(candidate, repr(exception))` in a module-level list that a verbose path prints.
   - Add a smoke test that builds every launch mode once without timing.
   - Assert the derived knobs (tiles per workgroup, split factor, block_n) on one host-known shape.
-- **A configuration over the LDS limit raises nothing.** LLVM prints `local memory (N) exceeds limit`, the launch
-  fails with `hipErrorIllegalState` on stderr only, and the output is never written; check LDS bytes before timing.
+- **Check a configuration's LDS bytes against 160 KiB before timing it.** Depending on the toolchain, one over the
+  limit may fail only at launch, without an exception, and leave the output unwritten (the signature: LLVM's
+  `local memory (N) exceeds limit` on stderr, `hipErrorIllegalState` at launch).
 - **A backend that raised once is disqualified for that shape.** Do not retry it on later calls.
 - **A timing defect in the race can be load-bearing.** It may compensate for a cache-state difference
   between the race and the scored step. *(field, E15)* Fixing the race's warm-up and ordering lost 0.68% in one
   read of a six-shape score that ran the quantization kernels before each GEMM, per shape from −3.2% (QKV_fwd)
   to +2.0% (QKV_wgrad); on a GEMM-only score a related change to the race's timing read flat. Change race
   timing only when the race and the scorer measure the same way.
+
+In FlyDSL: `../flydsl/gemm.md` § autotune §7.
 
 ## Related
 `mainloop.md` · `epilogue.md` · `measurement.md` (rulers, null controls) ·

@@ -40,7 +40,7 @@ basis: source-semantics
 - **A wait count is not a bound.** Co-resident waves can hide `SQ_WAIT_INST_LDS`; decide with a halve-the-reads probe
   and compare `SQ_LDS_IDX_ACTIVE` with `SQ_VALU_MFMA_BUSY_CYCLES` (S5, S16). Zero conflicts is not a speedup (S17).
 - **The floor's lane phases** for `b64` / `b128` are the card's, not the ISA's (S18).
-- **LDS placement.** Reordering `@fx.struct` fields does not move LDS: read `group_segment_fixed_size` first (S19).
+- **LDS placement.** Reordering `@fx.struct` fields does not move LDS: read `group_segment_fixed_size` first (S19, S33).
 
 ## Candidate techniques
 
@@ -62,34 +62,35 @@ basis: source-semantics
 
 ## Evidence
 
-- S1 gemm/datapath.md:95 compare SQ_LDS_BANK_CONFLICT against the floor computed by hand, not zero
+- S1 gemm/datapath.md:92 compare SQ_LDS_BANK_CONFLICT against the floor computed by hand, not zero
 - S2 ROCm/FlyDSL@dd8373349:.claude/skills/lds-optimization/SKILL.md:143 Type A bank conflicts: high stall on ds_read/ds_write themselves
 - S3 ROCm/FlyDSL@dd8373349:.claude/skills/lds-optimization/SKILL.md:157 Type B write-read latency exposed: lgkmcnt(0) stall after ds_write
 - S4 ROCm/FlyDSL@dd8373349:.claude/skills/lds-optimization/SKILL.md:155 gfx950: ds_read2 offsets that are multiples of 64 hit the same bank
 - S5 gemm/attribution.md:137 SQ_WAIT_INST_LDS counts dependent waits; co-resident waves can hide them
-- S6 gemm/datapath.md:70 tell the three LDS failure modes apart; each has a different fix
-- S7 gemm/datapath.md:78 check the write-to-read distance before the layout
-- S8 gemm/datapath.md:81 64 banks of 4 bytes; bank = (byte_addr / 4) mod 64
-- S9 gemm/datapath.md:85 64 / gcd(s, 64) banks; a 128-byte row stride lands every lane on two banks
-- S11 gemm/datapath.md:52 XOR at element granularity scrambles the lanes of ds_read_b64/b128
-- S12 gemm/datapath.md:116 a long lgkmcnt(0) stall may be an s_load; keep scalar loads out of that window
-- S13 gemm/schedule_and_locality.md:41 co-resident pair reading the same heavy fragment: in phase
-- S14 gemm/schedule_and_locality.md:55 counters bit-identical; only SQ_WAIT_ANY / SQ_WAVE_CYCLES moved
-- S15 gemm/datapath.md:74 capacity: LDS per workgroup caps occupancy
+- S6 gemm/datapath.md:65 tell the three LDS failure modes apart; each has a different fix
+- S7 gemm/datapath.md:73 check the write-to-read distance before the layout
+- S8 gemm/datapath.md:76 64 banks of 4 bytes; bank = (byte_addr / 4) mod 64
+- S9 gemm/datapath.md:80 64 / gcd(s, 64) banks; a 128-byte row stride lands every lane on two banks
+- S11 gemm/datapath.md:47 XOR at element granularity scrambles the lanes of ds_read_b64/b128
+- S12 gemm/datapath.md:113 a long lgkmcnt(0) stall may be an s_load; keep scalar loads out of that window
+- S13 gemm/schedule_and_locality.md:37 co-resident pair reading the same heavy fragment: in phase
+- S14 gemm/schedule_and_locality.md:51 counters bit-identical; only SQ_WAIT_ANY / SQ_WAVE_CYCLES moved
+- S15 gemm/datapath.md:69 capacity: LDS per workgroup caps occupancy
 - S16 gemm/attribution.md:139 halve-the-reads probe; SQ_LDS_IDX_ACTIVE vs SQ_VALU_MFMA_BUSY_CYCLES
-- S17 gemm/datapath.md:98 zero conflicts is not a speedup; LDS is not the bound until a probe says so
+- S17 gemm/datapath.md:93 zero conflicts is not a speedup; LDS is not the bound until a probe says so
 - S18 hardware/gfx950/memory_and_sync.md:271 the card's per-width lane phases are not from the ISA
-- S19 gemm/correctness.md:144 reordering @fx.struct fields does not move LDS; read group_segment_fixed_size
+- S19 flydsl/gemm.md:412 reordering @fx.struct fields does not move LDS; each leaf is its own symbol placed by the backend
 - S20 ROCm/FlyDSL@dd8373349:.claude/skills/lds-optimization/SKILL.md:384 Method 3: increase write-read distance
-- S21 gemm/schedule_and_locality.md:217 when VGPR headroom is small, any insertion lengthens a live range
-- S22 gemm/datapath.md:59 one function computes the swizzle key for both sides
-- S23 gemm/datapath.md:57 re-measure a swizzle change; derived is not automatically better
-- S24 gemm/datapath.md:89 padding when a small stride bump removes the conflict
-- S25 gemm/datapath.md:93 padding must keep the 8- or 16-byte alignment; pad by whole 16-byte slots
+- S21 gemm/schedule_and_locality.md:220 when VGPR headroom is small, any insertion lengthens a live range
+- S22 gemm/datapath.md:54 one function computes the swizzle key for both sides
+- S23 gemm/datapath.md:52 re-measure a swizzle change; derived is not automatically better
+- S24 gemm/datapath.md:84 padding when a small stride bump removes the conflict
+- S25 gemm/datapath.md:88 padding must keep the 8- or 16-byte alignment; pad by whole 16-byte slots
 - S26 ../flydsl/guides.md:44 column-wise reads such as MFMA fragments: padding hard to use, prefer XOR
-- S27 gemm/datapath.md:62 transpose reads need a wave term: per-wave chunk stride hits the same banks
-- S28 gemm/datapath.md:246 the transpose instruction and the LDS layout must change together
-- S29 gemm/schedule_and_locality.md:58 state the wave_id → (wave_m, wave_n) mapping explicitly
-- S30 gemm/mainloop.md:78 why the 2×2-wave tile wins on long K: fewer LDS reads per MAC
-- S31 gemm/mainloop.md:88 compile both designs and race them; the crossover depends on the shape
+- S27 gemm/datapath.md:57 transpose reads need a wave term: per-wave chunk stride hits the same banks
+- S28 gemm/datapath.md:251 the transpose instruction and the LDS layout must change together
+- S29 gemm/schedule_and_locality.md:54 state the wave_id → (wave_m, wave_n) mapping explicitly
+- S30 gemm/mainloop.md:79 why the 2×2-wave tile wins on long K: fewer LDS reads per MAC
+- S31 gemm/mainloop.md:89 compile both designs and race them; the crossover depends on the shape
 - S32 ../flydsl/language/limits.md:103 a 16-byte LDS load declared 4- or 8-byte aligned becomes `ds_read2_b32` / `ds_read2_b64`; `Vector.load` passes no alignment; declaring 16 cut a MoE epilogue's bank conflicts 4.2–4.9×
+- S33 gemm/correctness.md:147 separate LDS buffers are laid out by the backend; read group_segment_fixed_size first

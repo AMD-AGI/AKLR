@@ -48,13 +48,13 @@ basis: source-semantics
 - Measure `F` — `gemm/grid_pricing.md` §6, `gemm/attribution.md` §7 — a K-sweep fit (S18),
   a trip-count additive probe (S19), or N and K swapped at equal FLOPs (S20).
 - Kernel-argument preload — `gemm/small_m.md` §6 — trims `F` at any M (S21); pass operands as
-  `fx.Pointer` (S22) and confirm `.amdhsa_user_sgpr_kernarg_preload_length` > 0 in the ISA (S23).
+  `fx.Pointer` (`flydsl/gemm.md` § small_m §6, S22) and confirm `.amdhsa_user_sgpr_kernarg_preload_length` > 0 in the ISA (S23).
 - Keep the split-K fold in the GEMM launch, in a fixed order, done by the last split to arrive on an atomic counter
   — `gemm/small_m.md` §4 — so that no workgroup waits for another (S24).
 - Split-K on latency-bound rows and single N-blocks — `gemm/small_m.md` §4 — not on streaming rows or
   short K (S26, S27).
 - Launch the `flyc.compile` object, not the `@flyc.jit` function, except under graph capture, where the raw
-  `@flyc.jit` closure is the one to launch — `gemm/autotune.md` §6 (S28, S29).
+  `@flyc.jit` closure is the one to launch — `flydsl/gemm.md` § autotune §6 (S28, S29).
 - Fewer launches by fusion — `../flydsl/kernels/flydsl_authoring_method.md` — for latency-bound small shapes (S30).
 - Other kernel families: drop a graph node by folding a small kernel into its consumer — `moe/flydsl_moe_decode.md`
   §1–2; a decode attention's combine is a fixed cost, and when merging it into the producer pays —
@@ -64,29 +64,29 @@ basis: source-semantics
 ## Evidence
 
 - S3 gemm/small_m.md:46 one graph node's floor; at small M on a small weight more than half is the node
-- S4 gemm/small_m.md:225 preload removes the s_load → lgkmcnt(0) round trip before the first B load
+- S4 gemm/small_m.md:243 preload removes the s_load → lgkmcnt(0) round trip before the first B load
 - S5 gemm/small_m.md:48 AKLR timer: empty kernel and a second launch each cost; keep the fold in the launch
-- S6 gemm/autotune.md:152 the jit call re-binds the signature, rebuilds the key, re-checks globals
-- S7 flydsl/gemm.md:350 a dispatch layer calling the @flyc.jit closure pays host cost per call
+- S6 flydsl/gemm.md:388 the jit call re-binds the signature, rebuilds the key, re-checks globals
+- S7 flydsl/gemm.md:395 a dispatch layer calling the @flyc.jit closure pays host cost per call
 - S8 gemm/grid_pricing.md:237 F is prologue, epilogue, tail peel, setup, drain; share grows as K shrinks
-- S9 gemm/small_m.md:113 the reduction is a fixed cost that dominates at M=1
+- S9 gemm/small_m.md:115 the reduction is a fixed cost that dominates at M=1
 - S10 gemm/small_m.md:80 streaming rows bound by HBM read of B; latency-bound by launch/reduction/latency
 - S11 gemm/measurement.md:126 keep the host out of the GPU window; flat time across sizes = host
 - S12 gemm/measurement.md:129 one call per CUDA/HIP graph measures the launch floor
 - S13 gemm/attribution.md:89 rocprofv3 kernel-trace start→end overstated a small kernel
-- S14 gemm/small_m.md:50 price aiter through the deployed entry; time your kernel through `run`
-- S15 gemm/small_m.md:84 count workgroups against the 256-CU dispatch round before anything else
+- S14 gemm/small_m.md:52 price aiter through the deployed entry; time your kernel through `run`
+- S15 gemm/small_m.md:86 count workgroups against the 256-CU dispatch round before anything else
 - S16 gemm/attribution.md:151 a K-sweep fit has five systematic errors
-- S17 gemm/small_m.md:72 the lessons flip sign between streaming and latency-bound
-- S18 gemm/grid_pricing.md:226 at fixed M and N, sweep K and fit t_tile = a · n_kblocks + F
+- S17 gemm/small_m.md:74 the lessons flip sign between streaming and latency-bound
+- S18 gemm/grid_pricing.md:231 at fixed M and N, sweep K and fit t_tile = a · n_kblocks + F
 - S19 gemm/attribution.md:149 trip-count additive probe gives P and F
 - S20 gemm/attribution.md:145 same FLOPs, different tile counts: swap N and K
-- S21 gemm/grid_pricing.md:239 kernel-argument preload trims F at any M
-- S22 gemm/small_m.md:223 pass operands as fx.Pointer; a raw torch.Tensor stops the preload
-- S23 gemm/small_m.md:222 the dumped ISA shows .amdhsa_user_sgpr_kernarg_preload_length > 0
+- S21 gemm/grid_pricing.md:244 kernel-argument preload trims F at any M
+- S22 flydsl/gemm.md:337 pass operands as fx.Pointer; a raw torch.Tensor stops the preload
+- S23 gemm/small_m.md:239 the dumped ISA shows .amdhsa_user_sgpr_kernarg_preload_length > 0
 - S24 gemm/small_m.md:121 no workgroup may wait for another; the last split to arrive folds
-- S26 gemm/small_m.md:108 split-K pays on a single N-block and on latency-bound rows
+- S26 gemm/small_m.md:110 split-K pays on a single N-block and on latency-bound rows
 - S27 gemm/small_m.md:111 split-K does not pay on streaming rows or short K
-- S28 gemm/autotune.md:152 call the flyc.compile object, not the @flyc.jit function
-- S29 flydsl/gemm.md:348 under CUDA-graph capture call the raw closure
+- S28 flydsl/gemm.md:388 call the flyc.compile object, not the @flyc.jit function
+- S29 flydsl/gemm.md:393 under CUDA-graph capture call the raw closure
 - S30 ../flydsl/kernels/flydsl_authoring_method.md:50 latency-bound (small shapes): reduce launch count, fusion

@@ -64,7 +64,7 @@ Each channel puts a different build under the ruler.
   time.
 - **Read back the binary.** Take the kernel names from a kernel trace of the timed run (register counts there are
   half the true value, `../gemm/attribution.md` §9) and compare them with an ISA dump of the source you meant (`FLYDSL_DUMP_IR=1`, which skips the disk cache,
-  `../gemm/mainloop.md` §10) made in a separate run: do not time with the dump on
+  `../flydsl/gemm.md` § mainloop §10) made in a separate run: do not time with the dump on
   (`../flydsl/gemm.md` § measurement §6). A compile-time switch that shows in the kernel name makes the arms
   tell apart in a trace (`../gemm/attribution.md` §3). Break the kernel on purpose once
   (`../flydsl/debug-flydsl-kernel.md` § What the cache key sees).

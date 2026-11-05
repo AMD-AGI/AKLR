@@ -8,12 +8,7 @@ dtypes: [fp8, bf16, fp16, mxfp4]
 regimes: [compute-bound, feed-bound]
 flydsl: 0.3.2
 sources:
-  - ROCm/FlyDSL@dd8373349:kernels/gemm/preshuffle_gemm.py:283
   - ROCm/FlyDSL@dd8373349:kernels/common/mma/mfma_preshuffle_pipeline.py:30
-  - ROCm/FlyDSL@dd8373349:kernels/gemm/gemm_a16w16_gfx950.py:489
-  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/gpu.py:157
-  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/universal.py:59
-  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/cdna4.py:42
   - https://rocm.blogs.amd.com/software-tools-optimization/cdna4-gemm-kernels/README.html
   - https://github.com/nod-ai/amd-shark-ai/blob/main/docs/amdgpu_kernel_optimization_guide.md
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/utils/gemm_helper.py
@@ -27,7 +22,7 @@ sources:
 > Use them for direction and order of magnitude, not as targets. "PS" is FlyDSL's
 > `kernels/gemm/preshuffle_gemm.py`; "GH", "PR" and "FP4" are Primus-Turbo's
 > `utils/gemm_helper.py`, `utils/prims.py` and `gemm/gemm_mxfp4_kernel.py` under `primus_turbo/flydsl/` at
-> main `7615a5a2`. "A16" is FlyDSL's `kernels/gemm/gemm_a16w16_gfx950.py`.
+> main `7615a5a2`.
 
 ## Route here when
 - An LDS, bank-conflict, swizzle or `lgkmcnt` question in a GEMM.
@@ -109,7 +104,7 @@ In FlyDSL: `../flydsl/gemm.md` § datapath §3.
   `llc -mcpu=gfx950` emits `ds_write_b32` directly followed by `ds_read_b32` of a neighbouring lane's
   slot.
 - **Another wave reads what you wrote:** the writer waits `lgkmcnt(0)`, then everyone meets at
-  `s_barrier` — which is what `fx.gpu.barrier()` lowers to.
+  `s_barrier`.
 - **A FLAT (generic-address) access counts in both `vmcnt` and `lgkmcnt`.** *(field, E4)* Waiting
   `lgkmcnt(0)` after a flat load from global took 96 ticks against 56 after a `global_load`, and both
   took about 250 to `vmcnt(0)` on a line read before (about 1000 on first touch). The lgkm count retires
@@ -127,8 +122,10 @@ In FlyDSL: `../flydsl/gemm.md` § datapath §3.
   GH:1783). *(field, E5)* At long K this drain removal gave +6.8% (2580 → 2768 TF/s on a dense fp8 TN GEMM,
   8192×8192×28672); `vmcnt(3)` was the deepest setting that stayed bitwise repeatable. An asm `ds_read`
   must also drain its own `lgkmcnt` before the consumer, because the compiler does not track it.
-  Or keep the tracked DMA and emit the read as an `llvm.load` from `!llvm.ptr<3>` carrying an
-  `alias_scopes` attribute: it got no compiler wait *(field, E29)*, so the counted wait is yours.
+  Or issue the untracked async LDS DMA and wait by group count (`asyncmark` / `wait.asyncmark`): the backend
+  inserts no wait for it. Or keep the compiler-issued DMA (the one it inserts waits for) and emit the read as an
+  `llvm.load` from `!llvm.ptr<3>` carrying an `alias_scopes` attribute: it got no compiler wait *(field, E29)*, so
+  the counted wait is yours.
 
 In FlyDSL: `../flydsl/gemm.md` § datapath §4.
 
@@ -153,7 +150,8 @@ In FlyDSL: `../flydsl/gemm.md` § datapath §4.
 - The M0 base of an LDS DMA must never go negative; see `correctness.md` §5.
 
 **How Turbo issues the DMA** (`G2SLoader`, GH:305-386):
-- The per-lane global offsets are Python ints computed at trace time, so the hot loop has no address
+- One 16 B DMA per lane: each wave writes 1 KiB per step.
+- The per-lane global offsets are compile-time constants, so the hot loop has no address
   VALU. The wave-uniform K offset rides the SGPR `soffset`.
 - **M0.** In the whole-loop asm each fill is `s_add_u32 m0, <pool base>, <step·nwaves·1024>` followed by
   `buffer_load_dwordx4 … offen lds`. The MXFP4 kernel uses a **wave-major** layout instead: each wave's
@@ -233,8 +231,8 @@ at most 4 GiB.
   them in VGPRs cost 16% (gate_up) and 13% (down).
 - When one operand's strided traversal spans 2³² bytes or more, rebase the descriptor per load (the
   `rebase` mode of `G2SLoader`). Clamp the shifted `num_records` at 0 for tiles past the end.
-- Check SNR on both sides of 2³¹ elements, where 32-bit index arithmetic overflows. Equal SNR means there is no
-  overflow break.
+- Check SNR on both sides of any 2³¹-element limit the toolchain has, such as an int32 shape pack. Equal SNR
+  means there is no overflow break.
 
 In FlyDSL: `../flydsl/gemm.md` § datapath §8.
 
@@ -260,9 +258,8 @@ In FlyDSL: `../flydsl/gemm.md` § datapath §8.
 
 There are two ways to get an operand into MFMA order without a runtime shuffle:
 - **Preshuffle it on the host.** FlyDSL's PS takes B as `[N/16, K/kpack, 4, 16, kpack_bytes]`, so each
-  `buffer_load_dwordx4` lands in MFMA register layout and B skips LDS (`../flydsl/guides.md` § gemm-optimization (FlyDSL's §12));
-  the MXFP4 kernels take `shuffle_weight_w4` / `shuffle_scale_w4` layouts. The cost is a host-side pass, paid
-  once for weights that do not change, as in inference.
+  `buffer_load_dwordx4` lands in MFMA register layout and B skips LDS (`../flydsl/guides.md` § gemm-optimization (FlyDSL's §12)).
+  The cost is a host-side pass, paid once for weights that do not change, as in inference.
 - **Permute rows in the fill.** Changing only which global row each G2S load fetches reorders a lane's
   n-fragments with no runtime cost, and the LDS image, swizzle and reads stay the same
   (`compute_global_swizzle_pair`, GH:256-267; epilogue use in `epilogue.md` §3). Turbo's dense
@@ -272,6 +269,8 @@ There are two ways to get an operand into MFMA order without a runtime shuffle:
   caller can pad rows (`row_bytes`, FP4). For MXFP4, `K % 256 == 0` is what puts the row stride `K/2` on
   a 128 B line; it is not a kernel constraint. *(field, E26)* With the block count fixed, row phases of 64,
   32 and 96 B cost +8.4%, +11.6% and +12.0%. Pad K when memory allows.
+
+In FlyDSL: `../flydsl/gemm.md` § datapath §10.
 
 ## 11. MX scales
 
@@ -286,8 +285,9 @@ There are two ways to get an operand into MFMA order without a runtime shuffle:
 - **Scales can skip LDS.** Turbo's MXFP4 loads them with `buffer_load_dwordx4` straight into pinned VGPRs
   (FP4:1393-1417). The LDS path delayed consumption by the refill-ahead distance, so a direct load
   must offset its K position by that lag.
-- **Do the scale preshuffle in the same host call.** A caller that reuses weights can preshuffle their
-  scales once (`preshuffle_mxfp4_scales`, FP4:4877).
+- **Do the scale preshuffle in the same host call.** One host call launches the preshuffle kernel and then the
+  GEMM, so the repack runs in stream order with no extra host dispatch. A caller that reuses weights can instead
+  preshuffle their scales once.
 - Never store E8M0 scales with a non-temporal hint (`epilogue.md` §5).
 
 In FlyDSL: `../flydsl/gemm.md` § datapath §11.

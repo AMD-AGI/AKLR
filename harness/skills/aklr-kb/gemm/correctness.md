@@ -11,8 +11,6 @@ sources:
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/gemm/gemm_fp8_kernel.py
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/gemm/gemm_mxfp4_kernel.py
   - ROCm/FlyDSL@dd8373349:kernels/gemm/gemm_a16w16_gfx950.py:362
-  - ROCm/FlyDSL@dd8373349:kernels/gemm/preshuffle_gemm.py:263
-  - ROCm/FlyDSL@dd8373349:python/flydsl/expr/gpu.py:157
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/__init__.py:142
 ---
 
@@ -22,8 +20,7 @@ sources:
 > a gate that reported clean. Use them to design the gate before trusting it. Numbers marked `*(field, E<n>)*`
 > are measured values; their conditions are listed under Evidence at the end. Use them for direction and order
 > of magnitude, not as targets. Debugging a kernel that is already known wrong starts in
-> `../flydsl/debug-flydsl-kernel.md`. "PS" is FlyDSL's `kernels/gemm/preshuffle_gemm.py` and "A16" is
-> `kernels/gemm/gemm_a16w16_gfx950.py`.
+> `../flydsl/debug-flydsl-kernel.md`. "A16" is FlyDSL's `kernels/gemm/gemm_a16w16_gfx950.py`.
 
 ## Route here when
 - You changed the pipeline, a wait, a barrier, the LDS layout, register classes or inline asm.
@@ -134,8 +131,9 @@ workspaces) must be warmed before a probe starts counting.
 - **Reading a kernel that polls** (aiter's generic split-K kernel spins): LLVM deletes a bounded poll loop whose
   body has no `rocdl.s_sleep` and reads an unbounded one's flag once, `sc` bits notwithstanding. The volatile aux bit
   (bit 31) keeps the loop but waits `vmcnt(0)` after every load (10.3–15.1 µs against 5.15–9.41 µs at M = 8–112
-  *(field, E9)*); an atomic `llvm.LoadOp(…, ordering=llvm.AtomicOrdering.monotonic, syncscope="agent")` keeps it as
-  one `global_load … sc1` per pass.
+  *(field, E9)*); a monotonic, agent-scope atomic load keeps it as one `global_load … sc1` per pass.
+
+In FlyDSL: `../flydsl/gemm.md` § correctness §4.
 
 ## 5. LDS placement and DMA
 
@@ -146,7 +144,9 @@ workspaces) must be warmed before a probe starts counting.
     one tile index wrong (55.5 → 14.8 dB), or, with a static rotation, rows 0–31 of every tile wrong
     *(field, E12)*.
   - Keep any skewed role off the slot at offset 0.
-- Read `group_segment_fixed_size` before interpreting an LDS-placement result.
+- **Separate LDS buffers are laid out by the backend, not in declaration order.** An arm that stops using
+  one lets the others be re-packed, so read `group_segment_fixed_size` before interpreting an LDS-placement result.
+  A pool addressed as one base plus immediates must be one allocation.
 
 In FlyDSL: `../flydsl/gemm.md` § correctness §5.
 
@@ -154,17 +154,20 @@ In FlyDSL: `../flydsl/gemm.md` § correctness §5.
 
 - **MFMA ignores EXEC.** With EXEC set by inline asm to lanes 0–31, 32–63, lane 0 only, or none,
   `v_mfma_f32_16x16x32_bf16` writes full results in all 64 lanes, while a `v_mov` in the same asm block
-  is masked as expected. A divergent `if tid < 32:` around an MFMA in FlyDSL
+  is masked as expected. A divergent `if tid < 32:` around an MFMA
   therefore overwrites the accumulators of the "inactive" lanes; when the operand loads were only used
   inside the branch, LLVM sank them into it and every lane came out as garbage. Bound ragged tiles through
   the buffer descriptor (operands read as zero) or select whole tiles; never mask an MFMA with a branch.
 
-- Bound ragged edges in the buffer descriptor (`make_buffer_tensor(..., max_size=False,
-  num_records_bytes=...)`, as PS does for A and C at PS:263): out-of-range loads return zero and
+- Bound ragged edges with the descriptor's `num_records`: out-of-range loads return zero and
   stores are dropped at no instruction cost. *(field, E13)* On a MoE scale-scatter kernel the descriptor bound
   cost nothing measurable (MoE operator score 1.13583 against 1.13511 unbounded); a software predicate in its
   store loop has been timed only with debug instrumentation in place, so its own cost is not known.
-- Indices derived from data need the real size.
+- Bound indices derived from data with the buffer's real size in the descriptor, not a maximal `num_records`.
+- **A store masked by swapping in a sentinel byte offset (0x7FFFFFFF) is dropped only when `num_records` really
+  bounds it.** Under a maximal `num_records` (`0xFFFFFFFF`) that offset is in range, so a "masked" lane writes 2 GiB past the base
+  *(field, E16)*; in a fused MoE sort kernel such a store faulted, and an out-of-range index in its place ran
+  correct *(field, E19)*.
 - **Guard a load by its offset, not by `if`.** Each `if`-guarded load gets its own branch and `s_waitcnt vmcnt(0)`
   *(field, E17)*; on a MoE sort kernel 8 such row loads took 14.3–18.3 µs, 9.2–10.5 with an offset past the bound *(field, E18)*.
 - Prove a grid or index decode is an in-bounds permutation offline before timing it: an
@@ -246,8 +249,10 @@ sits in the directory of the line's `local:` path.
 - E13 [2026-09, gfx950, FlyDSL ?, N=1, operator-level score of the MoE bench (`_bench_moe_ep4.py`, noise 0.2%), arms in the same period on the same GPU, one reading each for HEAD and the descriptor arm] the bound `(packed_row >= 0) & (row < sorted_len)` in the buffer descriptor (`num_records_bytes`) 1.13583 against unbounded HEAD 1.13511; the same bound as a software predicate in the store loop 1.10337 / 1.10294 / 1.10228 (1.1029), which the campaign goal's ruler rules give as the reading with debug instrumentation in place; the descriptor arm also read 1.102 with the instrumentation in; no reading of the predicate without it is recorded. The same note, those ruler rules and the fault-attribution note put the 1.1029 → 1.1358 gap on the instrumentation's host overhead; the goal's bounds rule and myskill charge it to the predicate (GLM-5.2 TP4/EP4 MoE operator, the quantization scale scatter; local:/workspace/code/gpt_oss_docker/.claude/memory/project_glm52_moe_rowinv_oob.md:110; :111; /workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260912_145335/goal.md:67; :65; :52; /workspace/code/gpt_oss_docker/.claude/memory/reference_gpu_fault_attribution.md:93; /workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/04-race-vmcnt-correctness.md:348; /workspace/code/gpt_oss_docker/myskill/optimizer/00-decision-index.md:778)
 - E14 [2026-09, gfx950, FlyDSL ?, N=1, first correctness test of six shapes, then a per-K-iteration probe (`--keep-ki`)] inline-asm MFMAs writing their accumulators to AGPRs with no wait states before `v_accvgpr_read`: all six shapes failed at SNR 37–45 dB; the errors sat in 2 accumulator quads per wave, and only the tail K iteration's contribution was lost; with 18 wait states after the tail iteration's MFMAs, five shapes were bitwise equal to the baseline and the sixth within the baseline's own split-K nondeterminism (MXFP8 dense NT GEMM, five production linears with activation quantization; campaign 20260911_112728, round 8; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260911_112728/rounds/round-08/agent.txt:10)
 - E15 [2026-08, gfx950, FlyDSL ?, N=1, the agent's SNR probe (`_probe_snr_real.py`), same session, md5-gated, interleaved with the baseline] a folded tail phase (`emit_peel_fold`) that never re-issued the trailing half K block's scales: 49.60 dB with scales quantized from `randn` data; with random E8M0 exponents (`torch.randint(122, 132)`) 10.98 / 11.04 / 11.13 / 14.00 dB on the four scored fwd/dgrad shapes; the bench's SNR shapes (K=1024 and 256) never ran the fold (gpt-oss MXFP4 grouped GEMM, fwd/dgrad; campaign 20260804_140240, round 28; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260804_140240/rounds/round-28/agent.txt:32; :11)
+- E16 [2026-10, gfx950, FlyDSL 0.3.2, N=1, GPU probe: one 64-lane uint8 `buffer_store` with every lane masked off, into a 64-byte view of a 3 GiB tensor] `create_buffer_resource(max_size=True)`: the byte at base + 0x7FFFFFFF was written; `max_size=False, num_records_bytes=64`: nothing written (aiter/ops/flydsl/kernels/buffer_ops.py:370, :674; range rule `../hardware/gfx950/memory_and_sync.md` §2; a fused MoE sort + quant kernel's first form hit `HSA_STATUS_ERROR_MEMORY_FAULT` with masked stores; local:/shared_nfs/kyle/moe/kf/runs/tp8_bw_m/knowledge_patch_v2/probe/mask_probe.py; local:/shared_nfs/kyle/moe/kf/runs/tp8_bw_m/workspace/forge_experiments/lessons/iter_001.md:18)
 - E17 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only, `21_final_isa.s`] 8 row loads under per-row `if`: 8 `s_and_saveexec` / `s_cbranch_execz` blocks, each load followed by `s_waitcnt vmcnt(0)` before the next branch; the same loads with an out-of-range offset selected: 8 `buffer_load_dword` back to back, then `vmcnt(6)`…`vmcnt(0)` (local:/shared_nfs/kyle/moe/kf/runs/tp8_bw_m/knowledge_patch_v2/probe/guard_probe.py)
 - E18 [2026-10, gfx950, FlyDSL 0.3.2, N=?, per-kernel Kineto median, 1 GiB read flush before each call] a fused MoE sort + quant kernel prefetching 8 rows per thread at 40 / 64 / 112 tokens: loads guarded by per-row `if` 14.26 / 15.96 / 18.32 µs, unguarded 9.52 / 10.34 / 10.64, out-of-range offset for missing rows 9.16 / 10.22 / 10.48 (896 experts, top-16, model dim 3584; local:/shared_nfs/kyle/moe/kf/runs/tp8_bw_m/workspace/forge_experiments/lessons/iter_002.md:17)
+- E19 [2026-10, gfx950, FlyDSL 0.3.2, N=1, one run] a scatter fused into a MoE sorting kernel, storing through a max-size descriptor with `buffer_store(mask=)`: GPU memory fault, a write to a read-only page; the same kernel with an out-of-range element index instead ran and matched (max_diff 0) (fused MoE EP8 prefill, n_tokens 9397 and 16384; local:/shared_nfs/kyle/moe/kf/runs/ep8_cmp/workspace/forge_experiments/lessons/iter_018.md:11; :34)
 - E21 [2026-10, gfx950, FlyDSL 0.3.2, N=1, single observation, the fix session's correctness check] `_pack16e` reading MFMA results through inline-asm `v_max3_f32` / `v_max_f32_e64`, once the pack ran straight after the main loop: about 1.5% of elements wrong, off by exact powers of two; the same max written as `math_d.absf` + `arith.MaxNumFOp` compiled to `v_max3_f32` with the wait states and passed (bf16 split-K GEMM n6144 k16384; local:/shared_nfs/kyle/moe/k3six/fix/gemm_l_session.md:13; commit af3ec32 in local:/shared_nfs/kyle/moe/k3six/runs/gemm_l_fixwork/workspace, kernel.py comment "plain ops, not inline asm")
 - E22 [2026-10, gfx950, FlyDSL 0.3.2, N=?, the campaign's stress test: CU-masked streams of 16/32/64/128 CUs and a second launch beside the kernel] splits that polled flags and planes up to `_MAX_POLLS`, then wrote NaN: up to 4.7 M NaN at m=256 and m=512, calls of up to 140 ms on 16 CUs; the arrival-fold rewrite passed every mask (bf16 split-K GEMM n6144 k16384; local:/shared_nfs/kyle/moe/k3six/fix/gemm_l_session.md:19; local:/workspace/code/gpt_oss_docker/.claude/memory/project_k3_six_remaining.md:122)
 - E23 [2026-10, gfx950, FlyDSL 0.3.2, N=340 launches, ordering test: two input sets alternating, full, 64-CU and 16-CU streams, a second launch of the kernel alongside] the arrival fold: 0 differing launches of 340; with the partial stores' `sc0 sc1` removed, every launch differed; without the `vmcnt(0)` before the counter, or without the fold loads' cache bits, no launch differed (bf16 split-K GEMM n6144 k16384; local:/shared_nfs/kyle/moe/k3six/fix/gemm_l_session.md:15)

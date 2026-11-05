@@ -1,30 +1,28 @@
 ---
-title: FlyDSL dense GEMM on gfx950 — package map
+title: Dense GEMM on gfx950 — package map
 kind: index
 gens: [gfx950, gfx942]
 pinned_source: ROCm/FlyDSL@dd8373349 (v0.3.2; kernels/gemm, .claude/skills/gemm-optimization); AMD-AGI/Primus-Turbo@7615a5a2 (primus_turbo/flydsl/{gemm,utils})
 ---
 
-# FlyDSL dense GEMM — package map
+# Dense GEMM — package map
 
-How to write and optimize a dense GEMM in FlyDSL on gfx950 (MI350/MI355X): fp8 (per-tensor and per-row
-scales), MXFP4, MXFP8, bf16/fp16 and int8, layouts NT/NN/TN. Grouped and MoE expert GEMMs build on these cards
-and have their own package, `../moe/INDEX.md`.
+What makes a dense GEMM fast on gfx950 (MI350/MI355X), whatever the language: fp8 (per-tensor and per-row
+scales), MXFP4, MXFP8, bf16/fp16 and int8, layouts NT/NN/TN. The cards state the mechanisms and their numbers; the
+FlyDSL side (calls, FlyDSL's compiler, and the FlyDSL kernels of FlyDSL, aiter and Primus-Turbo) is in
+`../flydsl/gemm.md`. Grouped and MoE expert GEMMs build on these cards and have their own package,
+`../moe/INDEX.md`.
 
 **Three sources, used together.**
 - **FlyDSL's own GEMM guide and kernels.** `../flydsl/guides.md` § gemm-optimization walks through how a FlyDSL GEMM is
   built, on `preshuffle_gemm`: tiling, the 2-stage LDS ping-pong, the XOR swizzle, `hot_loop_scheduler`, direct
   and CShuffle epilogues, B preshuffle, register budget. `../flydsl/guides.md` § lds-optimization and
-  `../flydsl/guides.md` § prefetch-data-load cover the general LDS and prefetch transformations. The kernels are in
-  FlyDSL's `kernels/gemm/` (map below).
+  `../flydsl/guides.md` § prefetch-data-load cover the general LDS and prefetch transformations.
 - **Primus-Turbo's FlyDSL GEMMs** (`primus_turbo/flydsl/{gemm,utils}` at main `7615a5a2`), built for training
-  shapes (large M). They add fp8 NN/TN layouts (FlyDSL's bf16/fp16 `gemm_a16w16` already takes NN/NT/TN/TT),
-  K tails without a padding copy (fp8 at any K ≥ 129, MXFP4 at K % 64 == 0), a whole-loop inline-asm design, a
-  per-shape race inside the entry point (FlyDSL ships a general `flydsl.autotune` decorator; its GEMM kernels
-  take the configuration from the caller), and fused GLU/dGLU + MXFP4-quantization epilogues (FlyDSL's
-  `preshuffle_gemm` fuses bias + ReLU/SiLU/GELU). Their comments record why each choice was made, and the cards
-  cite them by file and line.
+  shapes (large M). Their comments record why each choice was made, and the cards cite them by file and line.
 - **Measured FlyDSL GEMM work**, marked `*(field)*`: what moved wall time and what did not.
+
+What each code base's kernels cover, and how they differ: `../flydsl/gemm.md` § INDEX Kernel map.
 
 The cards in this package start from what FlyDSL's guide already says and add the rest. Read the guide first if
 you have not built a FlyDSL GEMM before.
@@ -81,5 +79,5 @@ In FlyDSL: `../flydsl/gemm.md` § INDEX FlyDSL version.
 
 `gfx942.md`: where FlyDSL's own skills cover gfx942 (CDNA3: MI300X, MI308) — the LDS budget and its
 32 banks, the combined register budget, the synchronous-copy schedule, BF16/FP16 MFMA forms, peak figures — as
-links, with this repository's notes from FlyDSL v0.3.2's source (async copy, the K=16 path of the bf16-activation
-MoE, DMA and transpose reads). Not re-measured here.
+links, with this repository's notes from FlyDSL v0.3.2's source (the K=16 path of a bf16-activation kernel, DMA
+and transpose reads). Not re-measured here.

@@ -147,6 +147,11 @@ an idle-device tuner (§1).
 - A per-split marginal cost does not show the reduction: price the whole kernel.
 
 **Constraints and correctness**
+- **The current split-K is not bitwise reproducible** at split-K ≥ 3, or at split-K 2 with a bias: partials
+  are added into C in arrival order. Measured, for both kernels: every one of 400 repeats differed at split-K 2
+  with a bias and at 3, 4 and 8 *(field, E49)*. Where
+  runs must match bitwise, use split-K 1 or 2 without a bias, or a fixed-order reduction
+  (`../flydsl/kernels/flydsl_kernel_library.md` § Split-K).
 - *(field, E50)* bf16 partials exceeded a 0.02 relative-error gate at split-K ≈ 12 (0.0241); f32 partials read 0.
   Gate every deep split-K row on accuracy, not only the first one tuned.
 - **Race fp32 partials rounded to their top 24 bits, four packed in three dwords** (25% fewer plane bytes, error
@@ -230,9 +235,12 @@ In FlyDSL: `../flydsl/gemm.md` § small_m §4.
     some rows *(field, E94, E95, E96)*, neutral or harmful on others; race it.
   - *(field, E97, E98, E99)* On a read-once B with no reuse between tiles, runs of 8 adjacent tiles per XCD beat plain order by
     0.6–4.6%; one contiguous slice per XCD, or runs of 80+, lost 2–13% against runs of 8.
+  - **Not in the generic kernel.**
 - **Preload the leading kernel arguments into SGPRs** (`amdgpu-kernarg-preload-count`); the dumped ISA then shows
   `.amdhsa_user_sgpr_kernarg_preload_length` > 0.
-  - This removes the `s_load` → `lgkmcnt(0)` round trip in front of the first B load.
+  - Preload is sequential and stops at the first aggregate (struct) argument: put the pointers and scalars first,
+    and read `.amdhsa_user_sgpr_kernarg_preload_length` (in SGPRs) to see how far it got.
+  - Preloading removes the `s_load` → `lgkmcnt(0)` round trip in front of the first B load.
   - `s_load`s + `s_branch` still open the ISA: a compatibility block; the body after its `.p2align 8` label reads
     the preloaded SGPRs. It does not mean the preload failed.
   - *(field, E100, E101, E102)* Kernel time −0.5 to −1.0% per shape, ~3% on every shape of a 6–10 µs kernel; the decode step got
@@ -333,6 +341,7 @@ setup); otherwise `FlyDSL ?`.
 - E32 [2026-09, gfx950, FlyDSL ?, aiter fork base 99a91e173, N=?, ?] split-K 2 to fill a 0.438-wave grid: +15.5% / +17.6% (kv_b draft GEMM, K=512; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260912_171610/memory.md:208)
 - E33 [2026-08, gfx950, FlyDSL ?, aiter fork base f464f2bd1, N=?, graph, hot (one weight replayed)] a timing-only plain store in place of zero-C + spin + atomics: split-K 8 4.657 → 2.194 µs, split-K 4 4.180 → 2.664 (the reduction 1.5–2.5 µs); planes + last arriver with one counter per 128 B line: split-K 8 3.854 µs (2048x2048, M=1; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260830_081239/memory.md:172)
 - E34 [2026-08, gfx950, FlyDSL ?, aiter fork base f464f2bd1, N=?, graph, hot (one weight replayed)] per-tile counters packed as adjacent dwords put a launch on two cache lines and cost 1.1–2.5 µs (2048x2048 split-K reduction; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260830_081239/memory.md:175)
+- E49 [2026-10, gfx950, FlyDSL 0.3.2, aiter a0e3cbea, N=400, eager calls, a side-stream matmul on alternate repeats] aiter's HGEMM and small-M split-K: with a bias at split-K 2, and at split-K 3, 4 and 8, 400/400 repeats differed from the first; split-K 1, and 2 without a bias, 0 (m,n,k = 16, 2048, 6144 (probe /workspace/code/gpt_oss_docker/work/sikl/skillenv/probes_sikl.py:165; its output is kept only in this note); local:/workspace/code/gpt_oss_docker/.claude/memory/project_sikl_flydsl_skill_port.md:30)
 - E50 [2026-09, gfx950, FlyDSL 0.3.2, aiter fork base 5a11152e2, N=?, aiter tuner run_perftest, rotated (cold)] the same configuration at split-K 12: bf16 partials err_ratio 0.0241 (gate 0.02), f32 partials 0.000000 (a camp23 GLM-5.2 decode point, not named in the record; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260904_151953/memory.md:181)
 - E51 [2026-10, gfx950, FlyDSL 0.3.2, N=1, driver flushed bench (--bench-case, warmup 3, 20 iterations)] 24-bit packed partials: m=112 29.22 µs against 30.66 (masking alone) and 30.59 (canonical); m ≤ 16 unchanged (22.60/21.83/21.80 vs 22.56/21.83/21.81 µs); output within 1 bf16 ulp of canonical. "Unless the sum cancels" comes from a numpy simulation whose output was not kept (gemm_n8448_k7168 forge run, iters 4–5; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n8448_k7168/forge_experiments/lessons/iter_004.md:32)
 - E52 [2026-09, gfx950, FlyDSL 0.3.2, aiter fork base 5a11152e2, N=?, ?] unifying the split-K partials' scope with sc0|sc1 (0x1|0x10): 4.2945/4.3467/4.4319 µs, +8.8/+5.1/+4.7% slower (1,32 / 1,128 / 48,32 split-K rows; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260904_151953/rounds/round-08/agent.txt:22)

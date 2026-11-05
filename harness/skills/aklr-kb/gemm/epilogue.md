@@ -183,8 +183,9 @@ In FlyDSL: `../flydsl/gemm.md` § epilogue §5.
   (`make_row_band_resource`, GH:2010). A wide store has no per-column mask, so a whole column span is
   dropped by giving its band 0 records. Store classes that span several fragments require
   `N % tile_n == 0` (`col_safe`).
-- Apply the predicate to the part of the offset that does not depend on the sub-tile, then add the sub-tile row
-  delta. *(field, E27)* Otherwise `v_cndmask_b32` went from 14 to 64 in a grouped GEMM's fused epilogue.
+- When a store is bounded by selecting an out-of-range byte offset (one `v_cndmask` per offset), apply that select
+  to the part of the offset that does not depend on the sub-tile, then add the sub-tile row delta.
+  *(field, E27)* Otherwise `v_cndmask_b32` went from 14 to 64 in a grouped GEMM's fused epilogue.
 - One descriptor per tensor per tile is enough when sub-tiles differ only by a compile-time row offset.
   Carry the row delta in the offset instead of building a descriptor per sub-tile.
 
@@ -194,8 +195,9 @@ In FlyDSL: `../flydsl/gemm.md` § epilogue §6.
 
 - Pipeline the read-back: load quadrant i+1 of C while quadrant i's store is in flight (`_store_quadrants`, GH:1528).
   Add in f32 so the result is rounded once.
-- **Compile and race against a scratch output.** Turbo races at beta=0 and rebuilds the
-  winning configuration with the accumulate epilogue (FP8:3008-3027).
+- **Compile and race against a scratch output.** If building the kernel also runs it, a beta=1 build against the
+  caller's C accumulates into it twice. Turbo races at beta=0 and rebuilds the winning configuration with the
+  accumulate epilogue (FP8:3008-3027).
 - A persistent kernel that repeats its last tile for leftover workgroup ids is fine for overwrite stores
   but double-accumulates at beta=1. Turbo forces one tile per workgroup there.
 

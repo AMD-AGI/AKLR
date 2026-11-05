@@ -30,9 +30,9 @@ In the kernel above (line numbers of `kernel.py`):
 
 1. Each split stores its packed partial into its own plane with `sc0 sc1` (`_SC01 = 17`, line 49), which bypasses
    the non-coherent caches so the data meets across XCDs (S1).
-2. `rocdl.s_waitcnt(vmcnt=0)` and a barrier: the stores are acknowledged before the split counts in (line 426, S2).
-3. Thread 0 adds 1 to the tile's counter, `llvm.atomicrmw(add, …, syncscope="agent")`, and passes the old count to
-   its workgroup through LDS (line 430, S3).
+2. `s_waitcnt vmcnt(0)` and a barrier: the stores are acknowledged before the split counts in (line 426, S2).
+3. Thread 0 adds 1 to the tile's counter with an agent-scope atomic add that returns the old count, and passes the
+   old count to its workgroup through LDS (line 430, S3).
 4. The split that read `SPLIT - 1` folds: it loads every plane, its own included, with `sc0 sc1` and adds them in
    split order (line 440, S4). Its own partial goes through the same packing as the published ones, so the sum is
    bitwise the same whichever split folds.
@@ -40,9 +40,11 @@ In the kernel above (line numbers of `kernel.py`):
    resets its tile's counter with an `xchg` (S5), but no later call relies on that reset. The planes sit in the
    call's own `torch.empty` workspace, written before they are read. AKLR no longer provides kernel state.
 
+In FlyDSL: `../flydsl/gemm.md` § wait_free_fold How to write it.
+
 ## When it applies
 
-- Any FlyDSL kernel whose workgroups combine results through global memory: split-K GEMM folds, split-KV attention
+- Any kernel whose workgroups combine results through global memory: split-K GEMM folds, split-KV attention
   merges, cross-workgroup reductions.
 - The result stays bitwise reproducible if the fold adds in a fixed order (split index), never in arrival order.
 
@@ -57,7 +59,7 @@ In the kernel above (line numbers of `kernel.py`):
 
 ## How to confirm it took effect
 
-- `final_isa.s` has no loop around the flag or plane loads, and no `s_sleep`.
+- The final ISA has no loop around the flag or plane loads, and no `s_sleep`.
 - On streams limited to 16 and 64 CUs (`hipExtStreamCreateWithCUMask`), and beside a second call of its own on
   another stream, every workload's output is bit for bit its output alone; forge_task's `driver.py --stress` runs
   this. A fold that waits failed it with millions of NaN at m=256 and 512 *(field, E3)*.
