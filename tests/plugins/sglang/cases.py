@@ -262,6 +262,29 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # GLM-5.2's qkv_a projection shrunk: a 512-wide hidden state into a 512-wide q latent, a
+    # 128-wide KV latent and its 64-wide RoPE key
+    PointSpec(
+        contract_id="mla_qkv_a_norm@1.0",
+        axes={
+            "n_tokens": 4,
+            "hidden_dim": 512,
+            "q_lora_rank": 512,
+            "kv_lora_rank": 128,
+            "latent_dim": 704,
+        },
+        dtypes={
+            "hidden_states": "bfloat16",
+            "w_qkv_a": "bfloat16",
+            "q_norm_weight": "bfloat16",
+            "kv_norm_weight": "bfloat16",
+            "q_latent": "bfloat16",
+            "kv_latent": "bfloat16",
+            "k_rope": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
@@ -272,6 +295,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "minimax_m2_fp8_moe@1.0",
         "minimax_m2_mxfp4_moe@1.0",
         "mla_kc_rope_cache@1.0",
+        "mla_qkv_a_norm@1.0",
         "mla_vc@1.0",
         "qwen2_moe_fp8_experts@1.0",
         "qwen2_moe_fp8_router_experts@1.0",

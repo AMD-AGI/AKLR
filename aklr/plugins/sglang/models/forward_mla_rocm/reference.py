@@ -3,8 +3,8 @@
 
 """What the contracts say, in torch, in the dtype ``decode`` returns: the inputs decoded
 exactly, nothing rounded in between but what sglang's fp8 absorb quantizes, the activation
-it multiplies by the fp8 weights (_group_fp8). RoPE and the absorbed products stay
-unrounded (the kernels' bf16 steps are theirs, left to the bounds)."""
+it multiplies by the fp8 weights (_group_fp8). RoPE, the absorbed products and the qkv
+latent stay unrounded (the kernels' bf16 steps are theirs, left to the bounds)."""
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from aklr.plugins.sglang.models.forward_mla_rocm.contract import FP8_GROUP
 if TYPE_CHECKING:
     from torch import Tensor
 
-__all__ = ["mla_kc_rope_cache_reference", "mla_vc_reference"]
+__all__ = ["mla_kc_rope_cache_reference", "mla_qkv_a_norm_reference", "mla_vc_reference"]
 
 # fp8 e4m3fn's largest finite value
 _FP8_MAX = 448.0
@@ -40,6 +40,36 @@ def _absorbed(x: Tensor, weight: Tensor, scale: Tensor) -> Tensor:
         part = part * group_scale.to(x.dtype)
         out = part if out is None else out + part
     return out * scale
+
+
+def _rms_normalized(x: Tensor, weight: Tensor, eps: float) -> Tensor:
+    """x times the reciprocal rms of its row, plus eps under the root, times weight; the mean
+    square in float64, where a float32 square of large finite inputs overflows."""
+    mean_square = x.double().square().mean(dim=-1, keepdim=True)
+    return x * (mean_square + eps).rsqrt().to(x.dtype) * weight
+
+
+def mla_qkv_a_norm_reference(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+    decode: Callable[[Tensor, str], Tensor],
+) -> tuple[Tensor, Tensor, Tensor]:
+    """(q_latent, kv_latent, k_rope): each token's hidden state times w_qkv_a, its q and KV
+    parts RMS-normalized and scaled by their weights, its RoPE part as projected.
+    Rounding points: none (sglang's bf16 qkv latent, before the norms, is left to the bounds)."""
+    args = row_major_args
+
+    def get(name: str) -> Tensor:
+        return decode(args[name], point.dtypes[name])
+
+    q_rank, kv_rank = point.axes["q_lora_rank"], point.axes["kv_lora_rank"]
+    latent = get("hidden_states") @ get("w_qkv_a").T
+    eps = args["eps"]
+    return (
+        _rms_normalized(latent[:, :q_rank], get("q_norm_weight"), eps),
+        _rms_normalized(latent[:, q_rank : q_rank + kv_rank], get("kv_norm_weight"), eps),
+        latent[:, q_rank + kv_rank :],
+    )
 
 
 def _rotated(x: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
