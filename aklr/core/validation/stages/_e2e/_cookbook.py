@@ -43,10 +43,11 @@ _JS_ANY_TOKEN: Final = re.compile(
     re.S,
 )
 
-# an escape of a JavaScript string: \xHH, \uHHHH, \u{H...}, or one character
-# any other one-character escape (\\/, \\q) is the character itself; a backslash-newline continues the line
+# any other one-character escape (\/, \q) is the character itself; a backslash-newline
+# continues the line
 _JS_ONE_CHARACTER_ESCAPES: Final = {"n": "\n", "t": "\t", "r": "\r", "b": "\b", "f": "\f", "v": "\v",
     "0": "\0", "\n": ""}  # fmt: skip
+# an escape of a JavaScript string: \xHH, \uHHHH, \u{H...}, or one character
 _JS_ESCAPE: Final = re.compile(r"\\(x[0-9a-fA-F]{2}|u\{[0-9a-fA-F]+\}|u[0-9a-fA-F]{4}|[\s\S])")
 
 MatchValue = str | int | float | bool
