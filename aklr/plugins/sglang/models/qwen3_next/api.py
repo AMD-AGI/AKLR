@@ -10,11 +10,16 @@ from aklr.plugins.sglang.hook import sglang_route
 from aklr.plugins.sglang.models.qwen3_5.api import gated_attention_decode_group_fp8_quant
 from aklr.plugins.sglang.models.qwen3_5.contract import ROTARY_DIM
 from aklr.plugins.sglang.models.qwen3_next.contract import (
+    QWEN3_NEXT_GATED_ATTENTION_DECODE_GROUP_FP8_QUANT,
     QWEN3_NEXT_GDN_DECODE_GROUP_FP8_QUANT,
     QWEN3_NEXT_GDN_PREFILL_GROUP_FP8_QUANT,
 )
 
-__all__ = ["qwen3_next_gdn_decode_group_fp8_quant", "qwen3_next_gdn_prefill_group_fp8_quant"]
+__all__ = [
+    "qwen3_next_gated_attention_decode_group_fp8_quant",
+    "qwen3_next_gdn_decode_group_fp8_quant",
+    "qwen3_next_gdn_prefill_group_fp8_quant",
+]
 
 
 @api(QWEN3_NEXT_GDN_PREFILL_GROUP_FP8_QUANT)
@@ -51,6 +56,24 @@ def qwen3_next_gdn_decode_group_fp8_quant(
     norm_weight,
     scale=128**-0.5,
     eps=1e-6,
+): ...
+
+
+@api(QWEN3_NEXT_GATED_ATTENTION_DECODE_GROUP_FP8_QUANT)
+def qwen3_next_gated_attention_decode_group_fp8_quant(
+    projected_qkv,
+    q_norm_weight,
+    k_norm_weight,
+    positions,
+    cos_sin_cache,
+    cache_locations,
+    key_cache,
+    value_cache,
+    kv_indptr,
+    kv_indices,
+    eps=1e-6,
+    scale=256**-0.5,
+    max_context=8192,
 ): ...
 
 
@@ -218,8 +241,8 @@ def _no_bias(size, dtype, device):
 def _attention_self_attention(self, positions, hidden_states, forward_batch):
     """Decode as HIP runs it (forward_prepare_native, the aiter backend's forward_decode,
     sigmoid_gate_mul, then o_proj's own FP8 quantization of its BF16 input), graph capture
-    too: sglang's qkv_proj, qwen3_5's gated attention op, then sglang's o_proj on the op's
-    FP8 values and scales."""
+    too: sglang's qkv_proj, an op (_attention_ops), then sglang's o_proj on the op's FP8
+    values and scales."""
     from sglang.srt.model_executor.forward_context import get_attn_backend
     from sglang.srt.models import qwen3_next as model
 
@@ -241,31 +264,62 @@ def _attention_self_attention(self, positions, hidden_states, forward_batch):
         "key_cache": key_cache,
         "value_cache": value_cache,
         "kv_indptr": metadata.kv_indptr,
-        "kv_indices": metadata.kv_indices,
         "eps": self.q_norm.variance_epsilon,
         "scale": backend.scale,
     }
-    op = gated_attention_decode_group_fp8_quant
-    reason = op.fallback_reason(**_attention_stand_ins(self, hidden, positions), **arguments)
-    if reason is not None:
-        return reason
-    qkv, _ = self.qkv_proj(hidden_states)
-    # the op's temporal, height and width rows, each the one row Qwen3-Next rotates by, which
-    # makes its interleaved mRoPE plain NeoX RoPE; row-major, as the op reads them
-    result = op(projected_qkv=qkv, positions=positions.expand(3, -1).contiguous(), **arguments)
-    if isinstance(result, FallbackReason):
-        return result
-    values, scales = result
-    return self.o_proj((values.view(rows, -1), scales))[0]
+    reasons, qkv = [], None
+    for op, asked, made in _attention_ops(positions, metadata.kv_indices, rows, backend.max_context_len):
+        reason = op.fallback_reason(projected_qkv=_qkv_stand_in(self, hidden), **arguments, **asked)
+        if reason is not None:
+            reasons.append(reason)
+            continue
+        if qkv is None:
+            qkv, _ = self.qkv_proj(hidden_states)
+        result = op(projected_qkv=qkv, **arguments, **made())
+        if not isinstance(result, FallbackReason):
+            values, scales = result
+            return self.o_proj((values.view(rows, -1), scales))[0]
+        reasons.append(result)
+    return reasons[0]
+
+
+def _attention_ops(positions, kv_indices, rows, context_len):
+    """The ops the route asks, in order, each with the arguments to ask it with and a function
+    making those it is called with:
+    - Qwen3-Next's own, at the capacity sglang's context length rounds up to, which bounds
+      every row; its kv_indices are the first rows * capacity entries, which hold every row's
+      slots (a decode graph's buffer runs longer);
+    - qwen3_5's, on the one position row Qwen3-Next rotates by, given as its temporal, height
+      and width rows, which makes its interleaved mRoPE plain NeoX RoPE (row-major, as the
+      op reads them; asked with an empty stand-in, a temporary)."""
+    capacity = _capacity(context_len)
+    if capacity is not None:
+        own = {"positions": positions, "kv_indices": kv_indices[: rows * capacity], "max_context": capacity}
+        yield qwen3_next_gated_attention_decode_group_fp8_quant, own, lambda: own
+    rows_of_three = (3, positions.shape[0])
+    stand_in = torch.empty(rows_of_three, dtype=positions.dtype, device=positions.device)
+    yield (
+        gated_attention_decode_group_fp8_quant,
+        {"positions": stand_in, "kv_indices": kv_indices},
+        lambda: {"positions": positions.expand(rows_of_three).contiguous(), "kv_indices": kv_indices},
+    )
+
+
+def _capacity(context_len):
+    """The least max_context of Qwen3-Next's op at or above ``context_len``, or None."""
+    if context_len is None:
+        return None
+    capacities = QWEN3_NEXT_GATED_ATTENTION_DECODE_GROUP_FP8_QUANT.attrs["max_context"].values
+    return min((c for c in capacities if c >= context_len), default=None)
 
 
 def _attention_falls_back(layer, backend) -> bool:
-    """Whether sglang computes other than the op: LoRA or sequence parallelism; another
+    """Whether sglang computes other than the ops: LoRA or sequence parallelism; another
     backend or decode path than paged_attention_ragged over one-token pages (MLA, unified or
     sliding-window attention, a 5-D pool, context parallelism, a logit cap); KV scales other
     than 1 (sglang writes at the layer's and reads at 1); another rotary embedding than NeoX
-    RoPE on the op's 64 channels; norm epsilons that differ; or an o_proj that cannot take
-    the op's FP8 groups (_takes_fp8_groups, and no row-wise FP8 copy for its small-M path,
+    RoPE on the ops' 64 channels; norm epsilons that differ; or an o_proj that cannot take
+    the ops' FP8 groups (_takes_fp8_groups, and no row-wise FP8 copy for its small-M path,
     which only BF16 inputs take)."""
     from sglang.srt.layers.attention.aiter_backend import AiterAttnBackend
     from sglang.srt.layers.layernorm import GemmaRMSNorm
@@ -303,13 +357,8 @@ def _attention_falls_back(layer, backend) -> bool:
     )
 
 
-def _attention_stand_ins(layer, hidden, positions):
-    """Empty stand-ins of qkv_proj's output and of the op's three position rows, to ask the
-    op before they are made; passed as a temporary, so that the allocator hands their memory on."""
+def _qkv_stand_in(layer, hidden):
+    """An empty stand-in of qkv_proj's output, to ask an op before it is made; passed as a
+    temporary, so that the allocator hands its memory on."""
     width = 2 * layer.q_size + 2 * layer.kv_size
-    return {
-        "projected_qkv": torch.empty(
-            (hidden.shape[0], width), dtype=layer.q_norm.weight.dtype, device=hidden.device
-        ),
-        "positions": torch.empty((3, positions.shape[0]), dtype=positions.dtype, device=positions.device),
-    }
+    return torch.empty((hidden.shape[0], width), dtype=layer.q_norm.weight.dtype, device=hidden.device)
