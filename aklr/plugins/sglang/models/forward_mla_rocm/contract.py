@@ -229,8 +229,16 @@ MLA_VC = OpContract(
             description="Each token's value channels, head by head.",
             shape=("n_tokens", "out_dim"),
             dtype=_BF16,
-            # the codes are the reference's: fp32 sums in another order, and bf16 rounding
-            error_bounds=ToleranceBound(absolute_tolerance=2**-12, relative_tolerance=2**-8),
+            # The codes are the reference's bit for bit (aiter's prequant kernel quantizes the
+            # same way); the sums are not: gfx950's fp8 MFMA adds a group's 128 products below
+            # fp32 (see gemm's contract), an absolute error that shows where an output cancels
+            # to near 0. Under absolute 2**-12, CI run 41962335788 (MI355X) failed 14 of 17
+            # kernels on it: 1 to 133 elements in 22 of 102 input sets (violation fraction
+            # 3.8e-6 to 2.5e-4), peak 2.85x, unbiased. An MFMA keeping 14 bits below a group's
+            # largest product reproduces that (21 to 30 of 108 simulated sets, peak 3.6x to
+            # 4.4x) and stays under 2**-9 (peak 0.73x), where a code of 128 or more one fp8
+            # step off, or a missing scale, quantization or row, still fails every set.
+            error_bounds=ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=2**-8),
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
