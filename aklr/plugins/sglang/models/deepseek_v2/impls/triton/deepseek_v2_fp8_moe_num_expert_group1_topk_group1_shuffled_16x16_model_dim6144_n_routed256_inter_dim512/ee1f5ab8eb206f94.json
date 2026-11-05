@@ -1,0 +1,332 @@
+{
+  "schema_version": 5,
+  "name": "deepseek_v2_fp8_moe_num_expert_group1_topk_group1_shuffled_16x16_model_dim6144_n_routed256_inter_dim512",
+  "contract_id": "deepseek_v2_fp8_moe@1.0",
+  "description": "sglang's DeepseekV2MoE on one rank, with fp8 experts at a scale per 128 x 128 block and the shared expert in their last slot: on hidden_states, the router's logits in hidden_states' dtype (as sglang's MoEGate returns them on ROCm) and their sigmoid scores; the scores plus correction_bias rank the experts, which fall into num_expert_group equal groups, each scored by its two best biased scores summed; each token's topk experts are its best biased scores within its topk_group best groups (the lower index first among equals), weighed by the renormalized unbiased scores times routed_scaling_factor, and the shared expert at weight 1; each expert down(silu(gate(x)) * up(x)) of its fp8 weights, each of its two linears taking its input as the checkpoint's FP8 scheme quantizes it: in bf16, then each 1 x 128 group in fp8 at a scale of its amax / 448; out is their output on this rank, which sglang sums over the ranks.",
+  "op_type": "deepseek_v2",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 6144,
+      "description": "Hidden size."
+    },
+    "n_routed": {
+      "type": "const",
+      "value": 256,
+      "description": "Routed experts: the router's rows."
+    },
+    "inter_dim": {
+      "type": "const",
+      "value": 512,
+      "description": "Expert intermediate size on this rank."
+    },
+    "n_experts": {
+      "type": "const",
+      "value": 257,
+      "description": "Expert slots: the routed experts, then the shared one."
+    },
+    "gate_up_rows": {
+      "type": "const",
+      "value": 1024,
+      "description": "w1 rows: gate and up concatenated."
+    },
+    "model_blocks": {
+      "type": "const",
+      "value": 48,
+      "description": "128-blocks of the hidden size."
+    },
+    "gate_up_blocks": {
+      "type": "const",
+      "value": 8,
+      "description": "128-blocks of w1's rows."
+    },
+    "inter_blocks": {
+      "type": "const",
+      "value": 4,
+      "description": "128-blocks of the intermediate size."
+    }
+  },
+  "attrs": {
+    "topk": 8,
+    "num_expert_group": 1,
+    "topk_group": 1,
+    "renormalize": true,
+    "scoring_func": "sigmoid"
+  },
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The MoE's input: post_attention_layernorm's output."
+    },
+    "router_weight": {
+      "shape": [
+        "n_routed",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 6144
+      },
+      "description": "Router projection."
+    },
+    "correction_bias": {
+      "shape": [
+        "n_routed"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 6144
+      },
+      "description": "Added to the scores to pick experts; never weighs them."
+    },
+    "w1": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 6144
+      },
+      "description": "Gate-up projection per expert: gate rows, then up rows."
+    },
+    "w1_scale": {
+      "shape": [
+        "n_experts",
+        "gate_up_blocks",
+        "model_blocks"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "w1's dequant scale per 128 x 128 block."
+    },
+    "w2": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 512
+      },
+      "description": "Down projection per expert."
+    },
+    "w2_scale": {
+      "shape": [
+        "n_experts",
+        "model_blocks",
+        "inter_blocks"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "w2's dequant scale per 128 x 128 block."
+    },
+    "routed_scaling_factor": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies the routed weights only: DeepSeek-V3's and R1's."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "The experts' output on this rank, before sglang's all-reduce sums the ranks'."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 144
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 152
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 160
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 168
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 176
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 184
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 192
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 200
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 208
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 216
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 232
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 240
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 248
+      },
+      "scalars": {
+        "routed_scaling_factor": 2.5
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "shuffled_16x16": {
+        "layouts": {
+          "w1": {
+            "kind": "preshuffle",
+            "tile": [16, 16]
+          },
+          "w2": {
+            "kind": "preshuffle",
+            "tile": [16, 16]
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "w1.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w2.is_shuffled",
+            "expected_value": true
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "_common.py",
+        "content": "# Created by OpenAI\n\"\"\"Shared MoE arithmetic, tile-layout, asynchronous-copy, and reduction primitives.\"\"\"\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n@gluon.jit\ndef _sum(a, b):\n    return a + b\n\n@gluon.jit\ndef _combine_owned_routes(Y, Weights, Out, Ids, H: gl.constexpr, TOPK: gl.constexpr, EP: gl.constexpr, E: gl.constexpr, OFFSET: gl.constexpr, B: gl.constexpr, SPT: gl.constexpr, NW: gl.constexpr):\n    row = gl.program_id(0)\n    ly: gl.constexpr = gl.BlockedLayout([SPT], [64], [NW], [0])\n    h = gl.program_id(1) * B + gl.arange(0, B, ly)\n    acc = gl.full((B,), 0, gl.float32, ly)\n    for slot in gl.static_range(TOPK):\n        owned = True\n        if EP:\n            expert = gl.load(Ids + row * TOPK + slot) - OFFSET\n            owned = (expert >= 0) & (expert < E)\n        val = gl.load(Y + (row * TOPK + slot) * H + h, (h < H) & owned, 0).to(gl.float32)\n        weight = gl.load(Weights + row * TOPK + slot)\n        acc += val * weight\n    gl.store(Out + row * H + h, acc, h < H)\n"
+      },
+      {
+        "path": "_decode.py",
+        "content": "# Created by OpenAI\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n@gluon.jit\ndef _select(Logits, Bias, Ids, Weights, E: gl.constexpr, TOPK: gl.constexpr, B: gl.constexpr, SHARED: gl.constexpr, ROUTING_SCALE: gl.constexpr, M: gl.constexpr, SPLIT: gl.constexpr, Total):\n    row = gl.program_id(0)\n    ly: gl.constexpr = gl.BlockedLayout([4], [64], [1], [0])\n    expert = gl.arange(0, B, ly)\n    value = gl.full((B,), 0, gl.float32, ly)\n    for split in gl.static_range(SPLIT):\n        value += gl.load(Logits + split * M * E + row * E + expert, expert < E, 0)\n    value = value.to(gl.bfloat16).to(gl.float32)\n    p = 1.0 / (1.0 + gl.exp(-value))\n    score = p + gl.load(Bias + expert, expert < E, 0).to(gl.float32)\n    available = expert < E\n    slot = gl.arange(0, TOPK, ly)\n    selected = gl.full((TOPK,), 0, gl.int32, ly)\n    weight = gl.full((TOPK,), 0, gl.float32, ly)\n    for i in gl.static_range(TOPK):\n        maximum = gl.max(gl.where(available, score, -float('inf')), 0)\n        winner = gl.min(gl.where(available & (score == maximum), expert, B), 0)\n        prob = gl.sum(gl.where(expert == winner, p, 0), 0)\n        selected = gl.where(slot == i, winner, selected)\n        weight = gl.where(slot == i, prob, weight)\n        available &= expert != winner\n    stride: gl.constexpr = TOPK + int(SHARED)\n    gl.store(Ids + row * stride + slot, selected)\n    gl.store(Weights + row * stride + slot, weight / gl.sum(weight, 0) * ROUTING_SCALE)\n    if SHARED:\n        gl.store(Ids + row * stride + TOPK, E)\n        gl.store(Weights + row * stride + TOPK, 1.0)\n    if row == 0:\n        gl.store(Total, 0)\n"
+      },
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"GLM-5.2 FP8 MoE, TP4 (512 intermediate rows per expert on this rank), for 144, 152, 160, 168,\n176, 184, 192, 200, 208, 216, 232, 240 and 248 tokens.\n\ndeepseek_v2_fp8_moe for GLM-5.2's fp8 experts on gfx950: the router's logits rounded to bf16,\ntheir sigmoid scores plus the bf16 correction bias ranking the 256 routed experts in one group,\neach token's top 8 (the lower index first among equals), their weights renormalized times 2.5,\nand the shared expert in slot 256 at weight 1; the activations quantized to fp8 per 1 x 128\ngroup, each expert's gate-up and down GEMMs on sglang's preshuffled fp8 weights and fp32\n128 x 128 block scales, and their weighted sum written to out, this rank's share.\n\nSeven launches: the router GEMM beside the input's fp8 quantization; route selection; a\ncounting sort of the routes into per-expert jobs; a gate-up GEMM per job; the activation's fp8\nquantization; a down GEMM per job; the routes' weighted sum into out.\n\"\"\"\n\nfrom ._common import _combine_owned_routes as _combine, _sum as _add_scan\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\nfrom ._decode import _select\nimport torch\nimport triton\nfrom triton.runtime.jit import ConstexprFunction\n\n# triton.next_power_of_2 as a constexpr function: sglang replaces it with a plain one, which\n# a jit body cannot call\n_next_power_of_2 = triton.next_power_of_2\nif not isinstance(_next_power_of_2, ConstexprFunction):\n    _next_power_of_2 = triton.constexpr_function(_next_power_of_2)\n\n@gluon.jit\ndef _router(X, W, Y, M: gl.constexpr, H: gl.constexpr, E: gl.constexpr, SPLIT: gl.constexpr, NW: gl.constexpr, BN: gl.constexpr, task):\n    rt = task % gl.cdiv(M, 16)\n    nt = task // gl.cdiv(M, 16) % gl.cdiv(E, BN)\n    split = task // (gl.cdiv(M, 16) * gl.cdiv(E, BN))\n    ld: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [NW, 1], [1, 0])\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 32], warps_per_cta=[1, NW], transposed=True)\n    r = rt * 16 + gl.arange(0, 16, gl.SliceLayout(1, ld))\n    n = nt * BN + gl.arange(0, BN, gl.SliceLayout(1, ld))\n    k = gl.arange(0, 128, gl.SliceLayout(0, ld))\n    acc = gl.full((16, BN), 0, gl.float32, mma)\n    for start in range(H // (128 * SPLIT)):\n        inner = split * (H // SPLIT) + start * 128 + k\n        a = gl.load(X + r[:, None] * H + inner[None, :], r[:, None] < M, 0)\n        b = gl.load(W + n[:, None] * H + inner[None, :], n[:, None] < E, 0)\n        a = gl.convert_layout(a, gl.DotOperandLayout(0, mma, 8))\n        b = gl.convert_layout(b.trans(), gl.DotOperandLayout(1, mma, 8))\n        acc = gl.amd.cdna4.mfma(a, b, acc)\n    rr = rt * 16 + gl.arange(0, 16, gl.SliceLayout(1, mma))\n    nn = nt * BN + gl.arange(0, BN, gl.SliceLayout(0, mma))\n    gl.store(Y + split * M * E + rr[:, None] * E + nn[None, :], acc, (rr[:, None] < M) & (nn[None, :] < E))\n\n@gluon.jit\ndef _quantize_tile(X, Q, S, Ids, rt, group, M: gl.constexpr, K: gl.constexpr, FP8_MAX: gl.constexpr, ACTIVATE: gl.constexpr, EP: gl.constexpr, E: gl.constexpr, OFFSET: gl.constexpr, BR: gl.constexpr, LANES: gl.constexpr, NW: gl.constexpr):\n    ly: gl.constexpr = gl.BlockedLayout([1, 128 // LANES], [64 // LANES, LANES], [NW, 1], [1, 0])\n    row = rt * BR + gl.arange(0, BR, gl.SliceLayout(1, ly))\n    col = group * 128 + gl.arange(0, 128, gl.SliceLayout(0, ly))\n    owned = row < M\n    if ACTIVATE:\n        if EP:\n            expert = gl.load(Ids + row, row < M, -1) - OFFSET\n            owned &= (expert >= 0) & (expert < E)\n        gate = gl.load(X + row[:, None] * 2 * K + col[None, :], owned[:, None], 0).to(gl.float32)\n        up = gl.load(X + row[:, None] * 2 * K + K + col[None, :], owned[:, None], 0).to(gl.float32)\n        x = (gate * (1.0 / (1.0 + gl.exp(-gate))) * up).to(gl.bfloat16).to(gl.float32)\n    else:\n        x = gl.load(X + row[:, None] * K + col[None, :], owned[:, None], 0).to(gl.float32)\n    scale = gl.div_rn(gl.maximum(gl.max(gl.abs(x), 1), 1e-10), FP8_MAX)\n    q = (x * gl.div_rn(1.0, scale)[:, None]).to(Q.dtype.element_ty)\n    gl.store(Q + row[:, None] * K + col[None, :], q, row[:, None] < M)\n    gl.store(S + row * (K // 128) + group, scale, row < M)\n\n@gluon.jit\ndef _prepare(X, W, Y, Q, S, M: gl.constexpr, H: gl.constexpr, E: gl.constexpr, SPLIT: gl.constexpr, NW: gl.constexpr, BN: gl.constexpr, FP8_MAX: gl.constexpr, Q_LANES: gl.constexpr):\n    router_tasks: gl.constexpr = gl.cdiv(M, 16) * gl.cdiv(E, BN) * SPLIT\n    task = gl.program_id(0)\n    if task < router_tasks:\n        _router(X, W, Y, M, H, E, SPLIT, NW, BN, task)\n    else:\n        qt = task - router_tasks\n        _quantize_tile(X, Q, S, None, qt % gl.cdiv(M, 16), qt // gl.cdiv(M, 16), M, H, FP8_MAX, False, False, E, 0, 16, Q_LANES, NW)\n\n@gluon.jit\ndef _activate_quantize(X, Q, S, Ids, R: gl.constexpr, F: gl.constexpr, FP8_MAX: gl.constexpr, EP: gl.constexpr, E: gl.constexpr, OFFSET: gl.constexpr):\n    _quantize_tile(X, Q, S, Ids, gl.program_id(0), gl.program_id(1), R, F, FP8_MAX, True, EP, E, OFFSET, 4, 16, 1)\n\n@gluon.jit\ndef _pack_compact(Ids, Sorted, Jobs, Total, R: gl.constexpr, B: gl.constexpr, OFFSET: gl.constexpr, SPACE: gl.constexpr, BM: gl.constexpr):\n    expert = gl.program_id(0)\n    ly: gl.constexpr = gl.BlockedLayout([1], [64], [4], [0])\n    r = gl.arange(0, B, ly)\n    ids = gl.load(Ids + r, r < R, -1)\n    match = (r < R) & (ids == expert + OFFSET)\n    count = gl.sum(match.to(gl.int32), 0)\n    if count > 0:\n        tiles = gl.cdiv(count, BM)\n        base = gl.atomic_add(Total, tiles, sem='relaxed')\n        pos = gl.associative_scan(match.to(gl.int32), 0, _add_scan) - 1\n        gl.store(Sorted + expert * R + pos, r, match)\n        j = gl.arange(0, _next_power_of_2(triton.cdiv(R, BM)), ly)\n        desc = (expert * SPACE + j) * (2 * BM) + gl.minimum(BM, count - j * BM)\n        gl.store(Jobs + base + j, desc, j < tiles)\n\n@gluon.jit\ndef _weight_load(W, offset, stream):\n    if stream:\n        value = gl.amd.cdna4.buffer_load(W, offset, cache='.cg')\n    else:\n        value = gl.amd.cdna4.buffer_load(W, offset)\n    return value\n\n@gluon.jit\ndef _project(X, XS, W, WS, Sorted, Jobs, Total, Y, N: gl.constexpr, K: gl.constexpr, WN: gl.constexpr, WK: gl.constexpr, F: gl.constexpr, R: gl.constexpr, TOPK: gl.constexpr, SPACE: gl.constexpr, BM: gl.constexpr, BN: gl.constexpr, NW: gl.constexpr, PAIRED: gl.constexpr, STAGE_SCALES: gl.constexpr, CACHE_MODE: gl.constexpr, A_LANES: gl.constexpr, DOT_WIDTH: gl.constexpr, WM: gl.constexpr=1):\n    gl.static_assert(not PAIRED or BN == 128, 'Paired fragments share one N128 scale')\n    gl.static_assert(not STAGE_SCALES or PAIRED, 'Scale staging needs the paired scale row')\n    pid = gl.program_id(0).to(gl.uint32)\n    tile, ct = (pid // gl.cdiv(N, BN), pid % gl.cdiv(N, BN))\n    if tile >= gl.load(Total).to(gl.uint32):\n        return\n    desc = gl.load(Jobs + tile)\n    job = desc // (BM * 2)\n    expert = (job // SPACE).to(gl.int64)\n    rs = expert.to(gl.int32) * R + job % SPACE * BM\n    live = desc % (BM * 2)\n    if CACHE_MODE == 2:\n        stream = (job % SPACE == 0) & (live < BM)\n    else:\n        stream = CACHE_MODE == 1\n    NF: gl.constexpr = BN // 2 if PAIRED else BN\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 32], warps_per_cta=[WM, NW // WM], transposed=True)\n    la: gl.constexpr = gl.BlockedLayout([1, 128 // A_LANES], [64 // A_LANES, A_LANES], [NW, 1], [1, 0])\n    lb: gl.constexpr = gl.BlockedLayout([1, 16], [16, 4], [NW, 1], [0, 1])\n    r = gl.load(Sorted + rs + gl.arange(0, BM, gl.SliceLayout(1, la)), gl.arange(0, BM, gl.SliceLayout(1, la)) < live, R)\n    rr = gl.load(Sorted + rs + gl.arange(0, BM, gl.SliceLayout(1, mma)), gl.arange(0, BM, gl.SliceLayout(1, mma)) < live, R)\n    k = gl.arange(0, 128, gl.SliceLayout(0, la))\n    kb = gl.arange(0, 128, gl.SliceLayout(0, lb))\n    n = gl.arange(0, NF, gl.SliceLayout(1, lb))\n    nn = ct * BN + gl.arange(0, NF, gl.SliceLayout(0, mma))\n    if PAIRED:\n        wn0 = ct * BN\n        if F:\n            wn0 = gl.where(wn0 < F, wn0, wn0 + WN // 2 - F)\n        wb = W + expert * WN * WK + wn0 * WK\n        sbp = WS + (expert * gl.cdiv(WN, 128) + wn0 // 128) * (WK // 128)\n    else:\n        n += ct * BN\n        n = gl.where(n < F, n, n + WN // 2 - F) if F else n\n        wnn = gl.where(nn < F, nn, nn + WN // 2 - F) if F else nn\n        wb = W + expert * WN * WK\n        sbp = WS + (expert * gl.cdiv(WN, 128) + wnn // 128) * (WK // 128)\n    bo = n[:, None] // 16 * WK * 16 + kb[None, :] // 16 * 256 + n[:, None] % 16 * 16 + kb[None, :] % 16\n    acc0 = gl.full((BM, NF), 0, gl.float32, mma)\n    if PAIRED:\n        acc1 = gl.full((BM, NF), 0, gl.float32, mma)\n    if STAGE_SCALES:\n        sg: gl.constexpr = _next_power_of_2(K // 128)\n        sl: gl.constexpr = gl.BlockedLayout([1, 4], [8, 8], [NW, 1], [1, 0])\n        sr = gl.convert_layout(r, gl.SliceLayout(1, sl))\n        si = gl.arange(0, sg, gl.SliceLayout(0, sl))\n        sav = gl.load(XS + (sr // TOPK)[:, None] * (K // 128) + si[None, :], (sr[:, None] < R) & (si[None, :] < K // 128), 0.0)\n        asd = gl.allocate_shared_memory(gl.float32, (BM, sg), gl.SwizzledSharedLayout(1, 1, 1, [1, 0]), sav)\n        sly: gl.constexpr = gl.BlockedLayout([1], [64], [NW], [0])\n        sbi = gl.arange(0, sg, sly)\n        sbv = gl.load(sbp + sbi, sbi < K // 128, 0.0)\n        bsd = gl.allocate_shared_memory(gl.float32, (sg,), gl.SwizzledSharedLayout(1, 1, 1, [0]), sbv)\n        sli: gl.constexpr = gl.BlockedLayout([1, 1], [16, 4], [NW, 1], [0, 1])\n        gl.barrier()\n    for step in range(K // 128):\n        a = gl.amd.cdna4.buffer_load(X, (r // TOPK)[:, None] * K + step * 128 + k[None, :], r[:, None] < R, 0.0)\n        b0 = _weight_load(wb, bo + step * 2048, stream)\n        a = gl.convert_layout(a.to(gl.bfloat16), gl.DotOperandLayout(0, mma, 8))\n        b0 = gl.convert_layout(b0.trans().to(gl.bfloat16), gl.DotOperandLayout(1, mma, 8))\n        p0 = gl.amd.cdna4.mfma(a, b0, gl.full((BM, NF), 0, gl.float32, mma))\n        if STAGE_SCALES:\n            ai = gl.full((BM, 1), step, gl.int32, sli)\n            sa = gl.convert_layout(gl.reshape(asd.gather(ai, 1), (BM,)), gl.SliceLayout(1, mma))\n            bi = gl.full((1,), step, gl.int32, sly)\n            sb = gl.sum(bsd.gather(bi, 0), 0)\n        else:\n            sa = gl.load(XS + rr // TOPK * (K // 128) + step, rr < R, 0.0)\n            sb = gl.load(sbp + step)\n        if PAIRED:\n            acc0 += p0 * sa[:, None] * sb\n            b1 = _weight_load(wb, bo + NF * WK + step * 2048, stream)\n            b1 = gl.convert_layout(b1.trans().to(gl.bfloat16), gl.DotOperandLayout(1, mma, 8))\n            p1 = gl.amd.cdna4.mfma(a, b1, gl.full((BM, NF), 0, gl.float32, mma))\n            acc1 += p1 * sa[:, None] * sb\n        else:\n            acc0 += p0 * sa[:, None] * sb[None, :]\n    gl.store(Y + rr[:, None] * N + nn[None, :], acc0, rr[:, None] < R)\n    if PAIRED:\n        gl.store(Y + rr[:, None] * N + nn[None, :] + NF, acc1, rr[:, None] < R)\n\n\ndef _job_storage(routes, experts, rows_per_job, device):\n    capacity = triton.cdiv(min(routes * rows_per_job, routes + experts * (rows_per_job - 1)), rows_per_job)\n    space = _next_power_of_2(triton.cdiv(routes, rows_per_job))\n    jobs = torch.empty((capacity,), device=device, dtype=torch.int32)\n    return (jobs, capacity, space)\n\ndef sigmoid_router_quantized_moe(hidden: torch.Tensor, router: torch.Tensor, correction_bias: torch.Tensor, w13: torch.Tensor, w13_scales: torch.Tensor, w2: torch.Tensor, w2_scales: torch.Tensor, *, precision: str='fp8', topk: int=8, mx_scale_mode: str='ceil', intermediate_dim: int | None=None, expert_offset: int=0, shared_expert: bool=False, routed_scaling_factor: float=1.0, out: torch.Tensor) -> torch.Tensor:\n    m, h = hidden.shape\n    e, f2, _ = w13.shape\n    global_e = router.shape[0]\n    f = f2 // 2 if intermediate_dim is None else intermediate_dim\n    rpr = topk + int(shared_expert)\n    routes = m * rpr\n    ep = e != global_e + int(shared_expert)\n    fpmax = 448.0 if precision == 'fp8' else 240.0\n    splits = 1\n    rbn, rnw = (32, 1) if m <= 128 else (64, 2)\n    qlanes = 8 if m <= 128 else 16\n    logits = torch.empty((splits, m, global_e), device=hidden.device, dtype=torch.float32)\n    ids = torch.empty((m, rpr), device=hidden.device, dtype=torch.int32)\n    weights = torch.empty((m, rpr), device=hidden.device, dtype=torch.float32)\n    sorted_routes = torch.empty((e * routes,), device=hidden.device, dtype=torch.int32)\n    paired = f % 128 == 0 and f2 // 2 % 128 == 0\n    job_bm = 32 if paired else 16\n    jobs, job_capacity, space = _job_storage(routes, e, job_bm, hidden.device)\n    total = torch.empty((), device=hidden.device, dtype=torch.int32)\n    xq = torch.empty((m, h), device=hidden.device, dtype=w13.dtype)\n    xs = torch.empty((m, h // 128), device=hidden.device, dtype=torch.float32)\n    router_tasks = triton.cdiv(m, 16) * triton.cdiv(global_e, rbn) * splits\n    quant_tasks = triton.cdiv(m, 16) * (h // 128)\n    _prepare[router_tasks + quant_tasks,](hidden, router, logits, xq, xs, m, h, global_e, splits, rnw, rbn, fpmax, qlanes, num_warps=rnw)\n    _select[m,](logits, correction_bias, ids, weights, global_e, topk, _next_power_of_2(global_e), shared_expert, routed_scaling_factor, m, splits, total, num_warps=1)\n    _pack_compact[e,](ids, sorted_routes, jobs, total, routes, _next_power_of_2(routes), expert_offset, space, job_bm, num_warps=4)\n    gate_up = torch.empty((routes, 2 * f), device=hidden.device, dtype=torch.bfloat16)\n    up_policy = dict(BN=128, NW=1, PAIRED=paired, STAGE_SCALES=paired, CACHE_MODE=(1 if m <= 128 else 2) if paired else 0, A_LANES=4 if paired and m > 128 else 16, DOT_WIDTH=32 if paired and m > 128 else 16)\n    _project[job_capacity * triton.cdiv(2 * f, up_policy['BN']),](xq, xs, w13, w13_scales, sorted_routes, jobs, total, gate_up, 2 * f, h, f2, h, f, routes, rpr, space, BM=job_bm, **up_policy, num_warps=up_policy['NW'])\n    aq = torch.empty((routes, f), device=hidden.device, dtype=w13.dtype)\n    asc = torch.empty((routes, f // 128), device=hidden.device, dtype=torch.float32)\n    _activate_quantize[triton.cdiv(routes, 4), f // 128](gate_up, aq, asc, ids, routes, f, fpmax, ep, e, expert_offset, num_warps=1)\n    down = torch.empty((routes, h), device=hidden.device, dtype=torch.bfloat16)\n    down_policy = dict(BN=256, NW=4, WM=2 if job_bm == 32 and m <= 128 else 1, PAIRED=False, STAGE_SCALES=False, CACHE_MODE=2 if paired and m > 128 else 0, A_LANES=8 if paired else 16, DOT_WIDTH=32 if paired else 16)\n    _project[job_capacity * triton.cdiv(h, down_policy['BN']),](aq, asc, w2, w2_scales, sorted_routes, jobs, total, down, h, f, h, f2 // 2, 0, routes, 1, space, BM=job_bm, **down_policy, num_warps=down_policy['NW'])\n    _combine[m, triton.cdiv(h, 2048)](down, weights, out, ids, h, rpr, ep, e, expert_offset, 2048, 8, 4, num_warps=4)\n    return out\n\n\ndef run(\n    *,\n    hidden_states,\n    router_weight,\n    correction_bias,\n    w1,\n    w1_scale,\n    w2,\n    w2_scale,\n    topk,\n    num_expert_group,\n    topk_group,\n    renormalize,\n    scoring_func,\n    routed_scaling_factor,\n    out_dtype,\n    out,\n):\n    # The Point fixes the routing (the top 8 of 256 experts in one group, renormalized\n    # sigmoid scores times routed_scaling_factor), the shared expert in the last slot and\n    # out's dtype; w2's last dimension is this rank's share of the intermediate size.\n    sigmoid_router_quantized_moe(\n        hidden_states,\n        router_weight,\n        correction_bias,\n        w1,\n        w1_scale,\n        w2,\n        w2_scale,\n        precision=\"fp8\",\n        topk=topk,\n        intermediate_dim=w2.shape[2],\n        shared_expert=True,\n        routed_scaling_factor=routed_scaling_factor,\n        out=out,\n    )\n"
+      }
+    ]
+  }
+}
