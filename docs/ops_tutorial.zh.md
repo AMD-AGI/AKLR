@@ -114,7 +114,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 - 提交 PR 不写 `accuracy`/`speedup`（手写会报 `perf_edited`）。合入后，main 的 push CI 重新测量，`publish-measurement` 更新 `aklr-perf/main` bot PR；这个 bot PR 以它自己的标题 squash merge 后，workload 才带上 `accuracy`/`speedup`。
 
 **CI 规则**：
-- code-lint（CPU：pre-commit、`export check`、`validate --stages audit`）→ unittest-aklr（GPU：全部 pytest）→ validation（GPU：`validate --base <合并基> --stages audit,bench`，只在有要 bench 的 schema 时运行）。
+- code-lint（CPU：pre-commit、`export check`、`validate --stages audit`）→ unittest-aklr（GPU：全部 pytest）→ validation（GPU：`validate --base <合并基> --stages audit,bench,e2e`，只在有要 bench 的 schema 时运行；e2e 按 `scenarios.yaml` 分别在 AKLR 关、开时起服务，比较准确率）。
 - 只有 `aklr/core/` 下的非 `.md` 改动才测全部 schema，其他改动（schema、文档、新建 `aklr/ops/<op>` 等）只测改动集合里的 schema（`validation_scope.py`）。
 
 ## 5. 运行时分发

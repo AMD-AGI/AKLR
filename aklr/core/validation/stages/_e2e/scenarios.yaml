@@ -1,0 +1,21 @@
+# The e2e stage's scenarios: which sglang cookbook recipes to serve, AKLR off and on.
+# Each item of a model's cookbook.matches is a scenario of its own, named
+# <model>-<the match values>; a PD item gives a prefill and a decode match.
+# env and args apply over each cell's own (args: replaced by name, null removes, true is a
+# switch); written as {prefill: ..., decode: ...} they apply per role.
+cookbook:
+  repo: sgl-project/sglang
+  ref: main  # the latest each run; --e2e-cookbook-source overrides it
+models:
+  glm52-fp4:
+    enabled: true
+    display_name: GLM-5.2 MXFP4
+    cookbook:
+      config: zai-org/glm-5.2  # docs/src/snippets/configs/<this>.jsx
+      matches:
+        - {hw: mi355x, variant: default, quant: mxfp4, strategy: low-latency, nodes: single}
+    weights:  # repo replaces {{MODEL_NAME}}; revision is passed as --revision
+      repo: amd/GLM-5.2-MXFP4
+      revision: 386bd0e4ec821f7b07975701cec3c3b953a5576a
+    env:
+      AKLR_SGLANG_PLUGIN: "1"

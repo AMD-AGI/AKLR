@@ -55,7 +55,7 @@ Validation (`python -m aklr validate`) checks each kernel in two stages:
 - audit: checks the kernel code against the rules, for example that it keeps no state between calls and does not modify read-only inputs.
 - bench: draws several sets of inputs from the contract, and compares the kernel's results with the reference for correctness and with the baseline for performance. After a PR merges, CI writes these results into its JSON files; at runtime, only kernels that passed and are faster than SGLang are used.
 
-In CI, audit always runs, and bench needs the PR to carry the `ci:gpu` label (a push to main always qualifies). Validation does not run the model, so it does not check routes: check a route by running the model with the plugin on (step 7 of the plugin tutorial).
+In CI, audit always runs, and bench needs the PR to carry the `ci:gpu` label (a push to main always qualifies). Validation's e2e stage then serves each model of `aklr/core/validation/stages/_e2e/scenarios.yaml` from its latest sglang cookbook recipe, AKLR off and on, and fails when on scores more than 0.02 below off on GSM8K or answers a fixed prompt wrongly; so a route is checked only for the models listed there: check another by running it with the plugin on (step 7 of the plugin tutorial).
 
 Unit tests:
 
