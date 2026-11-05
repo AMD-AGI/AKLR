@@ -60,6 +60,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
     env:
       GPU_ENABLED: >-
         ${{ github.event_name != 'pull_request' ||
@@ -69,6 +70,7 @@ jobs:
       gpu_enabled: ${{ env.GPU_ENABLED }}
       has_bench_paths: ${{ steps.audit.outputs.has_bench_paths }}
       validation_base: ${{ steps.lint.outputs.validation_base }}
+      measured_by_bot: ${{ steps.lint.outputs.measured_by_bot }}
     steps:
       - name: Report whether GPU jobs run
         run: |
@@ -95,27 +97,43 @@ jobs:
           PUSH_BEFORE: ${{ github.event.before }}
           FULL_LINT: ${{ inputs.full_lint }}
           GH_TOKEN: ${{ github.token }}
+          AKLR_BOT_LOGIN: ${{ vars.AKLR_BOT_LOGIN }}
         run: |
           head=$(git rev-parse HEAD)
           # The validation base: incumbents and the change set start here; empty validates everything.
           validation_base=
+          # Whether the bot wrote the change's measured fields (speedup, accuracy).
+          measured_by_bot=false
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             # Checkout tests the PR merge commit; its first parent is the
             # base the merge was made on (the merge-base rule), not the payload's base.sha.
             base=$(git rev-parse HEAD^1)
             validation_base=$base
+            measured_by_bot=$AKLR_BOT_PR
           elif [[ -n "$PUSH_BEFORE" ]] && git cat-file -e "${PUSH_BEFORE}^{commit}" 2>/dev/null; then
             base=$PUSH_BEFORE
             # A replaced (cancelled) run benched nothing; [skip ci] commits have no run; an unknown status benches everything.
             replaced=$(gh run list -R "$GITHUB_REPOSITORY" -w ci.yaml -e push -c "$base" --json conclusion --jq 'length > 0 and all(.[]; .conclusion == "cancelled")') || replaced=true
             # A force push or a replaced run validates everything.
             if git merge-base --is-ancestor "$base" HEAD && [[ $replaced != true ]]; then validation_base=$base; fi
+            # A push of the one commit that merged the bot PR: the PR run at the PR's last head,
+            # whose AKLR_BOT_PR also checked who pushed it, passed the audit as the bot's.
+            if [[ -n $validation_base && -n $AKLR_BOT_LOGIN && $(git rev-list --count "$base..HEAD") == 1 ]]; then
+              pr_head=$(gh api "repos/$GITHUB_REPOSITORY/commits/$head/pulls" | jq -r --arg sha "$head" --arg bot "$AKLR_BOT_LOGIN" --arg repo "$GITHUB_REPOSITORY" \
+                'first(.[] | select(.merge_commit_sha == $sha and .user.login == $bot and .head.ref == "aklr-perf/main" and .head.repo.full_name == $repo) | .head.sha) // ""')
+              if [[ -n $pr_head ]]; then
+                pr_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yaml/runs?head_sha=$pr_head&event=pull_request" --jq '.workflow_runs[0] | "\(.conclusion) \(.html_url)"')
+                echo "🤖 Merged the bot PR at $pr_head; its latest PR run: $pr_run" | tee -a "$GITHUB_STEP_SUMMARY"
+                [[ $pr_run != success\ * ]] || measured_by_bot=true
+              fi
+            fi
           elif git rev-parse --verify HEAD^ >/dev/null 2>&1; then
             base=$(git rev-parse HEAD^)
           else
             base=$(git hash-object -t tree /dev/null)
           fi
           echo "validation_base=$validation_base" >> "$GITHUB_OUTPUT"
+          echo "measured_by_bot=$measured_by_bot" >> "$GITHUB_OUTPUT"
           if [[ "$FULL_LINT" == true ]]; then
             echo '🔎 Lint scope: all files, including inherited formatting debt.' | tee -a "$GITHUB_STEP_SUMMARY"
             echo 'args=--all-files --show-diff-on-failure' >> "$GITHUB_OUTPUT"
@@ -160,10 +178,11 @@ jobs:
         env:
           BASE: ${{ steps.lint.outputs.validation_base }}
           AUDIT_REPORT_DIR: ${{ runner.temp }}/audit-report
+          MEASURED_BY_BOT: ${{ steps.lint.outputs.measured_by_bot }}
         run: |
           report="$AUDIT_REPORT_DIR/report.json"
           flags=(${BASE:+--base "$BASE"})
-          [[ $AKLR_BOT_PR != true ]] || flags+=(--allow-measured-edits)
+          [[ $MEASURED_BY_BOT != true ]] || flags+=(--allow-measured-edits)
           if python -m aklr validate "${flags[@]}" --stages audit --out "$AUDIT_REPORT_DIR"; then
             has_bench_paths=$(jq '.bench_paths | length > 0' "$report")
             echo "audit passed, $(jq '.schema_paths | length' "$report") schemas, $(jq '.bench_paths | length' "$report") to bench" >> "$GITHUB_STEP_SUMMARY"
@@ -368,9 +387,10 @@ jobs:
       - name: Validate (${{ env.STAGES }})
         env:
           BASE: ${{ needs.code-lint.outputs.validation_base }}
+          MEASURED_BY_BOT: ${{ needs.code-lint.outputs.measured_by_bot }}
         run: |
           flags=(${BASE:+--base "$BASE"})
-          [[ $AKLR_BOT_PR != true ]] || flags+=(--allow-measured-edits)
+          [[ $MEASURED_BY_BOT != true ]] || flags+=(--allow-measured-edits)
           python -m aklr validate "${flags[@]}" --stages "$STAGES" \
             --out "$RUNNER_TEMP/validation-report"
       # The PR head the reviewer signs; the checkout is the merge commit.
