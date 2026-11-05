@@ -103,6 +103,8 @@ class E2eStage(PipelineStage[E2eReport]):
             self._env[ENV_KERNEL_CACHE_DIR] = str(Path(cache_dir).absolute())
         if min_speedup := os.environ.get(ENV_MIN_SPEEDUP):  # on serves at the bench's threshold
             self._env[ENV_MIN_SPEEDUP] = min_speedup
+        # where the weights are, and that they are not downloaded: a remote node inherits nothing
+        self._env |= {k: v for k in ("HF_HOME", "HF_HUB_CACHE", "HF_HUB_OFFLINE") if (v := os.environ.get(k))}
 
     def run(self, scope: ValidationScope, earlier: PipelineReport) -> E2eReport:
         """Run every scenario; only a ``RunNotKilledError`` ends the stage."""
@@ -248,10 +250,10 @@ class E2eStage(PipelineStage[E2eReport]):
                     )
                 # a few are a busy server's; each is scored wrong, so off's lower its baseline by
                 # at most 2/1314 = 0.0015, under a tenth of GSM8K_MAX_DROP; more are a broken one
+                result["n_failed_requests"] = n_failed
                 if n_failed > GSM8K_MAX_FAILED_REQUESTS:
                     raise RuntimeError(f"{n_failed} GSM8K requests failed\n{done.stdout[-2000:]}")
                 result["gsm8k_score"] = float(scores[-1])
-                result["n_failed_requests"] = n_failed
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                 failures.append(f"GSM8K: {error}")
             if side == "on":
