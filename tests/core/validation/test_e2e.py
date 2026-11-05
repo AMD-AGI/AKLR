@@ -294,6 +294,12 @@ class TestRole:
         with pytest.raises(ValueError, match="not allowed"):
             self._role(CookbookCell(match={}, env=(entry,))).server_env()
 
+    def test_the_scenario_may_replace_a_denied_name(self) -> None:
+        cell = CookbookCell(match={}, env=("SGLANG_USE_MODELSCOPE=1",))
+        assert self._role(cell, env={"SGLANG_USE_MODELSCOPE": "0"}).server_env() == {
+            "SGLANG_USE_MODELSCOPE": "0"
+        }
+
     def test_env_names_and_shell_quotes(self) -> None:
         cell = CookbookCell(match={}, env=('GLOO_SOCKET_IFNAME="eth 0"',))
         assert self._role(cell).server_env() == {"GLOO_SOCKET_IFNAME": "eth 0"}
@@ -510,11 +516,13 @@ class TestStage:
         assert (on.gsm8k_score, on.answer_matches, on.n_hit_calls, on.failure) == (0.81365, False, 0, "")
         answer = "Paris."
         assert self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path).answer_matches
+        stdout += "Bad Request Error\n" * 6
+        assert self._stage()._run_side(scenario, _COOKBOOK, "off", {}, tmp_path).n_failed_requests == 6
         stdout += "All retry attempts exhausted for request. Returning empty response.\n"
         exited.append("unified-0 exited with -9")
         off = self._stage()._run_side(scenario, _COOKBOOK, "off", {}, tmp_path)
         assert off.gsm8k_score is None
-        assert "1 GSM8K requests failed" in off.failure
+        assert "7 GSM8K requests failed" in off.failure
         assert "during the phases: unified-0 exited with -9" in off.failure
         monkeypatch.setattr(
             Deployment, "start", lambda self, timeout: (_ for _ in ()).throw(RuntimeError("no"))
