@@ -513,16 +513,21 @@ class TestStage:
         (tmp_path / "on-calls").mkdir()
         (tmp_path / "on-calls" / "calls.pid1.x.jsonl").write_text("")
         on = self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path)
-        assert (on.gsm8k_score, on.answer_matches, on.n_hit_calls, on.failure) == (0.81365, False, 0, "")
+        assert (on.gsm8k_score, on.answer_matches, on.n_hit_calls) == (0.81365, False, 0)
+        assert "AKLR hooked no sglang call" in on.failure
+        record = Mock(fallback_reason="unknown_shape", n_calls=3)
+        monkeypatch.setattr(_stage, "read_calls", lambda directory: [record])
+        on = self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path)
+        assert (on.n_hit_calls, on.n_fallback_calls, on.failure) == (0, 3, "")
         answer = "Paris."
         assert self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path).answer_matches
-        stdout += "Bad Request Error\n" * 6
-        assert self._stage()._run_side(scenario, _COOKBOOK, "off", {}, tmp_path).n_failed_requests == 6
+        stdout += "Bad Request Error\n" * 2
+        assert self._stage()._run_side(scenario, _COOKBOOK, "off", {}, tmp_path).n_failed_requests == 2
         stdout += "All retry attempts exhausted for request. Returning empty response.\n"
         exited.append("unified-0 exited with -9")
         off = self._stage()._run_side(scenario, _COOKBOOK, "off", {}, tmp_path)
         assert off.gsm8k_score is None
-        assert "7 GSM8K requests failed" in off.failure
+        assert "3 GSM8K requests failed" in off.failure
         assert "during the phases: unified-0 exited with -9" in off.failure
         monkeypatch.setattr(
             Deployment, "start", lambda self, timeout: (_ for _ in ()).throw(RuntimeError("no"))
