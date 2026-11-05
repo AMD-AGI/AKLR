@@ -10,6 +10,7 @@ from aklr.core.contract.semantics import (
     DType,
     FiniteDistribution,
     IntRangeDistribution,
+    SqnrBound,
     ToleranceBound,
 )
 from aklr.core.contract.spec import (
@@ -392,20 +393,29 @@ GATED_ATTENTION_DECODE_GROUP_FP8_QUANT = OpContract(
             default=256**-0.5,
         ),
     },
+    # sglang's own decode is lossier than the reference: on an FP8 cache, aiter's
+    # paged_attention_ragged rounds Q and each 256-token partition's softmax weights to E4M3
+    # (flushing the smallest to zero) and keeps the partitions' outputs in BF16. On the small
+    # test Point, CI's unittest-aklr (run 41950785417) found it 6.3x past a per-element bound
+    # of 2 + 0.125|y| on 3.1% of the values and 1.9x past 3% on 25% of the scales; an FP64
+    # emulation of those roundings, which gives the same numbers there, comes to 25.7-27.6 dB
+    # (values) and 31.7-32.5 dB (scales) on it, 21.8-23.1 dB and 26.7-34.1 dB at the schemas'
+    # Points, with scales up to 30% off. The bounds sit some 6-7 dB under that, as
+    # baseline_relative's twice the baseline's error; kernels wrong on purpose (no gate,
+    # sequential mRoPE sections, no Q norm, a 128**-0.5 scale, 240 for E4M3FNUZ) stay under
+    # 9 dB (values) and 10 dB (scales) at those Points, at most 16.4 and 16.8 dB on the small one.
     outputs={
         "values": TensorSpec(
             description="Each query head's gated attention, grouped E4M3FN values.",
             shape=("n_tokens", "n_heads", "head_dim"),
             dtype=_FP8,
-            error_bounds=ToleranceBound(absolute_tolerance=2, relative_tolerance=0.125),
+            error_bounds=SqnrBound(min_sqnr_db=15.0),
         ),
         "scales": TensorSpec(
             description="One FP32 scale per row and group of 128 channels.",
             shape=("n_tokens", "n_groups"),
             dtype=_FP32,
-            # a correct kernel may keep its split partials and the sigmoid in BF16 too: with
-            # the attention and gated roundings, a group's maximum moves up to ~2.3%
-            error_bounds=ToleranceBound(absolute_tolerance=1e-7, relative_tolerance=0.03),
+            error_bounds=SqnrBound(min_sqnr_db=20.0),
         ),
     },
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
