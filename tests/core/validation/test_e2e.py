@@ -286,6 +286,7 @@ class TestRole:
             pytest.param("https_proxy=http://example.com", id="proxy"),
             pytest.param("SGLANG_USE_MODELSCOPE=1", id="modelscope"),
             pytest.param("AKLR_SGLANG_PLUGIN=0", id="aklr"),
+            pytest.param("ROCR_VISIBLE_DEVICES=0,1,2,3,4,5,6,7", id="device-mask"),
             pytest.param("NOVALUE", id="no-value"),
         ],
     )
@@ -497,7 +498,7 @@ class TestStage:
         )
         scenario = _scenario({"unified": _UNIFIED})
         on = self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path)
-        assert (on.gsm8k_score, on.answer_matches, on.n_hit_calls, on.failure) == (0.81365, False, 0, "")
+        assert (on.gsm8k_score, on.answer_matches, on.n_hit_calls, on.failure) == (0.81365, False, None, "")
         answer = "Paris."
         assert self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path).answer_matches
         stdout += "All retry attempts exhausted for request. Returning empty response.\n"
