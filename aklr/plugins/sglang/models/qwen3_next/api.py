@@ -7,6 +7,8 @@ import torch
 
 from aklr.core.runtime.dispatch import FallbackReason, api
 from aklr.plugins.sglang.hook import sglang_route
+from aklr.plugins.sglang.models.qwen3_5.api import gated_attention_decode_group_fp8_quant
+from aklr.plugins.sglang.models.qwen3_5.contract import ROTARY_DIM
 from aklr.plugins.sglang.models.qwen3_next.contract import (
     QWEN3_NEXT_GDN_DECODE_GROUP_FP8_QUANT,
     QWEN3_NEXT_GDN_PREFILL_GROUP_FP8_QUANT,
@@ -73,18 +75,12 @@ def _gdn_forward(self, hidden_states, forward_batch):
 def _layer_falls_back(layer) -> bool:
     """Whether the layer computes other than the ops (LoRA, other activations or another
     gated norm), or its out_proj cannot take the ops' values and row-major per-head
-    scales: block-FP8 on aiter's CK GEMM only, since sglang hands aiter's Triton GEMM
-    those scales transposed."""
+    scales (_takes_fp8_groups)."""
     from sglang.kernels.ops.attention.fla.fused_norm_gate import FusedRMSNormGated
     from sglang.kernels.ops.attention.fla.layernorm_gated import RMSNorm as RMSNormGated
-    from sglang.srt.layers.quantization.fp8 import Fp8LinearMethod
-    from sglang.srt.layers.quantization.fp8_utils import (
-        aiter_w8a8_block_fp8_linear,
-        use_aiter_triton_gemm_w8a8_tuned_gfx950,
-    )
     from sglang.srt.runtime_context import get_lora
 
-    norm, method = layer.norm, layer.out_proj.quant_method
+    norm = layer.norm
     gated_rms_norm = (
         type(norm) is FusedRMSNormGated and norm.bias is None
         if type(norm) is not RMSNormGated
@@ -95,14 +91,27 @@ def _layer_falls_back(layer) -> bool:
         or layer.attn.activation != "silu"
         or not gated_rms_norm
         or norm.activation not in ("silu", "swish")
-        or not (
-            type(method) is Fp8LinearMethod
-            and method.block_quant
-            and not method.use_mxfp8
-            and not method.block_fp8_as_mxfp8
-            and method.w8a8_block_fp8_linear is aiter_w8a8_block_fp8_linear
-        )
-        or use_aiter_triton_gemm_w8a8_tuned_gfx950(*layer.out_proj.weight.shape)
+        or not _takes_fp8_groups(layer.out_proj)
+    )
+
+
+def _takes_fp8_groups(linear) -> bool:
+    """Whether ``linear`` takes FP8 values with row-major per-1x128 scales: block-FP8 on
+    aiter's CK GEMM only, since sglang hands aiter's Triton GEMM those scales transposed."""
+    from sglang.srt.layers.quantization.fp8 import Fp8LinearMethod
+    from sglang.srt.layers.quantization.fp8_utils import (
+        aiter_w8a8_block_fp8_linear,
+        use_aiter_triton_gemm_w8a8_tuned_gfx950,
+    )
+
+    method = linear.quant_method
+    return (
+        type(method) is Fp8LinearMethod
+        and method.block_quant
+        and not method.use_mxfp8
+        and not method.block_fp8_as_mxfp8
+        and method.w8a8_block_fp8_linear is aiter_w8a8_block_fp8_linear
+        and not use_aiter_triton_gemm_w8a8_tuned_gfx950(*linear.weight.shape)
     )
 
 
@@ -201,3 +210,106 @@ def _projection_stand_ins(arguments, hidden):
 def _no_bias(size, dtype, device):
     """The convolution bias the ops take: the layer has none."""
     return torch.zeros(size, dtype=dtype, device=device)
+
+
+@sglang_route(
+    "sglang.srt.models.qwen3_next.Qwen3HybridAttentionDecoderLayer.self_attention", versions=("0.5.22",)
+)
+def _attention_self_attention(self, positions, hidden_states, forward_batch):
+    """Decode as HIP runs it (forward_prepare_native, the aiter backend's forward_decode,
+    sigmoid_gate_mul, then o_proj's own FP8 quantization of its BF16 input), graph capture
+    too: sglang's qkv_proj, qwen3_5's gated attention op, then sglang's o_proj on the op's
+    FP8 values and scales."""
+    from sglang.srt.model_executor.forward_context import get_attn_backend
+    from sglang.srt.models import qwen3_next as model
+
+    if not model._is_hip or not forward_batch.forward_mode.is_decode() or forward_batch.spec_info is not None:
+        return FallbackReason.OUT_OF_CONTRACT
+    backend = get_attn_backend()
+    backend = getattr(backend, "full_attn_backend", backend)
+    if positions.dim() != 1 or _attention_falls_back(self, backend):
+        return FallbackReason.OUT_OF_CONTRACT
+    hidden = hidden_states[0] if isinstance(hidden_states, tuple) else hidden_states
+    rows = hidden.shape[0]
+    key_cache, value_cache = backend.token_to_kv_pool.get_kv_buffer(self.attn.layer_id)
+    metadata = backend.forward_metadata
+    arguments = {
+        "q_norm_weight": self.q_norm.weight,
+        "k_norm_weight": self.k_norm.weight,
+        "cos_sin_cache": self.rotary_emb.cos_sin_cache,
+        "cache_locations": forward_batch.out_cache_loc[:rows],
+        "key_cache": key_cache,
+        "value_cache": value_cache,
+        "kv_indptr": metadata.kv_indptr,
+        "kv_indices": metadata.kv_indices,
+        "eps": self.q_norm.variance_epsilon,
+        "scale": backend.scale,
+    }
+    op = gated_attention_decode_group_fp8_quant
+    reason = op.fallback_reason(**_attention_stand_ins(self, hidden, positions), **arguments)
+    if reason is not None:
+        return reason
+    qkv, _ = self.qkv_proj(hidden_states)
+    # the op's temporal, height and width rows, each the one row Qwen3-Next rotates by, which
+    # makes its interleaved mRoPE plain NeoX RoPE; row-major, as the op reads them
+    result = op(projected_qkv=qkv, positions=positions.expand(3, -1).contiguous(), **arguments)
+    if isinstance(result, FallbackReason):
+        return result
+    values, scales = result
+    return self.o_proj((values.view(rows, -1), scales))[0]
+
+
+def _attention_falls_back(layer, backend) -> bool:
+    """Whether sglang computes other than the op: LoRA or sequence parallelism; another
+    backend or decode path than paged_attention_ragged over one-token pages (MLA, unified or
+    sliding-window attention, a 5-D pool, context parallelism, a logit cap); KV scales other
+    than 1 (sglang writes at the layer's and reads at 1); another rotary embedding than NeoX
+    RoPE on the op's 64 channels; norm epsilons that differ; or an o_proj that cannot take
+    the op's FP8 groups (_takes_fp8_groups, and no row-wise FP8 copy for its small-M path,
+    which only BF16 inputs take)."""
+    from sglang.srt.layers.attention.aiter_backend import AiterAttnBackend
+    from sglang.srt.layers.layernorm import GemmaRMSNorm
+    from sglang.srt.layers.rotary_embedding import RotaryEmbedding
+    from sglang.srt.runtime_context import get_forward, get_lora
+
+    attn, rope = layer.attn, layer.rotary_emb
+    unit_scales = all(
+        scale is None or as_float == 1.0
+        for scale, as_float in ((attn.k_scale, attn.k_scale_float), (attn.v_scale, attn.v_scale_float))
+    )
+    return (
+        get_lora().enable_lora
+        or get_forward().sp_active
+        or not layer.attn_output_gate
+        or type(backend) is not AiterAttnBackend
+        or backend.use_mla
+        or backend.use_triton_unified_attention
+        or backend.kv_cache_is_vectorized_5d
+        or backend.use_sliding_window_kv_pool
+        or backend.dcp_world_size > 1
+        or bool(attn.logit_cap)
+        or attn.sliding_window_size != -1
+        or attn.qk_head_dim != attn.v_head_dim
+        or not unit_scales
+        or type(rope) is not RotaryEmbedding
+        or rope._force_native
+        or not rope.is_neox_style
+        or rope.rotary_dim != ROTARY_DIM
+        or rope.head_size != layer.head_dim
+        or not (type(layer.q_norm) is type(layer.k_norm) is GemmaRMSNorm)
+        or layer.k_norm.variance_epsilon != layer.q_norm.variance_epsilon
+        or not _takes_fp8_groups(layer.o_proj)
+        or getattr(layer.o_proj.weight, "_ptpc_weight", None) is not None
+    )
+
+
+def _attention_stand_ins(layer, hidden, positions):
+    """Empty stand-ins of qkv_proj's output and of the op's three position rows, to ask the
+    op before they are made; passed as a temporary, so that the allocator hands their memory on."""
+    width = 2 * layer.q_size + 2 * layer.kv_size
+    return {
+        "projected_qkv": torch.empty(
+            (hidden.shape[0], width), dtype=layer.q_norm.weight.dtype, device=hidden.device
+        ),
+        "positions": torch.empty((3, positions.shape[0]), dtype=positions.dtype, device=positions.device),
+    }
