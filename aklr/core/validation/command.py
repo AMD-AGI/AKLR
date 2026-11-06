@@ -54,8 +54,9 @@ def main(argv: Sequence[str]) -> int:
     try:
         scope = ValidationScope.of_working_tree(args.base, args.paths or None)
         stages: list[PipelineStage] = [AuditStage(allow_measured_edits=args.allow_measured_edits)]
-        devices: list[str] = []
-        if "bench" in names or "e2e" in names:
+        device_stages = {stage.name: stage for stage in (BenchStage, E2eStage)}
+        selected = [device_stages[name] for name in names[1:]]
+        if selected:
             if args.devices is None:
                 indices = range(PlatformRecord.current().n_visible_devices)
             else:
@@ -65,13 +66,8 @@ def main(argv: Sequence[str]) -> int:
                     for first, _, last in [part.partition("-")]
                     for index in range(int(first), int(last or first) + 1)
                 ]
-            if not indices and "bench" in names:
-                raise ValueError("no visible device and no --devices")
             devices = [f"cuda:{i}" for i in indices]
-        if "bench" in names:
-            stages.append(BenchStage(devices))
-        if "e2e" in names:
-            stages.append(E2eStage(devices))
+            stages.extend(stage(devices) for stage in selected)
         pipeline = Pipeline(stages)
     except ValueError as error:
         parser.error(str(error))

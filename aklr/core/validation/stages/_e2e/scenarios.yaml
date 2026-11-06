@@ -1,9 +1,4 @@
-# E2E scenarios: which sglang cookbook recipes to serve, AKLR off and on.
-# Each item of a model's cookbook.matches is a scenario of its own, named
-# <model>-<the match values>; a PD item gives a prefill and a decode match.
-# env and args apply over each cell's own (args: replaced by name, null removes, true is a
-# switch); written as {prefill: ..., decode: ...} they apply per role. nnodes (one count, or one
-# per role) replaces a cell's, which some multi-node cells leave out.
+# Each cookbook match defines an e2e scenario, with optional model and launch overrides.
 cookbook:
   repo: sgl-project/sglang
   source: main  # branch, tag, SHA, or a local sglang checkout
@@ -20,6 +15,7 @@ models:
         - {hw: mi355x, variant: default, quant: mxfp4, strategy: low-latency, nodes: single}
     weights:  # the launcher sets --model-path, --tokenizer-path and --revision (required) from these
       repo: amd/GLM-5.2-MXFP4
+      # Pin the Hugging Face model revision so both runs use the same weights.
       revision: 386bd0e4ec821f7b07975701cec3c3b953a5576a
     env:
       AKLR_SGLANG_PLUGIN: "1"

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""One deployment of a scenario's side: its server processes over nodes, and a PD router."""
+"""Print and start server commands, wait for readiness, and clean up their process groups."""
 
 from __future__ import annotations
 

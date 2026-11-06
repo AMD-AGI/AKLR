@@ -14,10 +14,7 @@ from pydantic import Field, PositiveInt
 from aklr.core.contract.spec import FrozenModel
 from aklr.core.validation.stages._e2e._cookbook import MatchValue
 
-__all__ = ["ArgValue", "E2eConfig", "Scenario"]
-
-# a server flag's override: a value, a switch (true), or removed (null or false)
-ArgValue = str | int | float | bool | None
+__all__ = ["E2eConfig", "Scenario"]
 
 
 class Scenario(FrozenModel):
@@ -34,7 +31,7 @@ class Scenario(FrozenModel):
     revision: str
     nnodes: dict[str, PositiveInt]  # by role; a role not named has its cell's
     env: dict[str, dict[str, str]]  # by role
-    args: dict[str, dict[str, ArgValue]]  # by role
+    args: dict[str, dict[str, str | int | float | bool | None]]  # by role
 
 
 class _Weights(FrozenModel):
