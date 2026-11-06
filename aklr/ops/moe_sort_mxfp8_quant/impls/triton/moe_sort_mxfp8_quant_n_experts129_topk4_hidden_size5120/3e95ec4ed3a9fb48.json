@@ -1,0 +1,328 @@
+{
+  "schema_version": 5,
+  "name": "moe_sort_mxfp8_quant_n_experts129_topk4_hidden_size5120",
+  "contract_id": "moe_sort_mxfp8_quant@1.0",
+  "description": "What aiter's fused_moe runs before stage 1 for MXFP8 activations (a8w4/a8w8, per_1x32, no expert parallelism) while stage 1 takes the fused sort-and-quant: the moe sorting and fused_dynamic_mxfp8_quant_moe_sort. The n_tokens * topk routed pairs (token t, slot k, expert topk_ids[t, k]) are ordered by expert, then by t * topk + k, into blocks of block_size rows, each expert's rows in whole blocks from row 0 in increasing expert order; a row holds (k << 24) | t and the pair's weight, a block's unused rows (topk << 24) | n_tokens and weight 0. sorted_expert_ids holds each block's expert, num_valid_ids [rows of the blocks, n_tokens]; moe_buf is zeroed. Each token row is quantized to E4M3FN in groups of 32 with an E8M0 scale 2**ceil(log2(max(amax, 1e-10) * (1/448))), its exponent byte written for each sorted row of a pair at aiter's mx_scale_shuffle_idx address (0 for a pair of weight 0); a token whose weights are all 0 gets a zero row. Rows past the blocks, a block's unused rows' scales and the scale padding columns keep their contents.",
+  "op_type": "moe_sort_mxfp8_quant",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens routed in this call."
+    },
+    "n_sorted_rows": {
+      "type": "var",
+      "description": "Rows of the sorted buffers (aiter allocates n_tokens * topk + n_experts * block_size - topk, rounded up to whole blocks)."
+    },
+    "n_blocks": {
+      "type": "var",
+      "description": "Entries of sorted_expert_ids: n_sorted_rows // block_size."
+    },
+    "topk": {
+      "type": "const",
+      "value": 4,
+      "description": "Experts per token."
+    },
+    "hidden_size": {
+      "type": "const",
+      "value": 5120,
+      "description": "Elements per token row, divisible by 32."
+    },
+    "n_groups": {
+      "type": "const",
+      "value": 160,
+      "description": "MXFP8 groups of 32 elements per row."
+    },
+    "scale_cols": {
+      "type": "const",
+      "value": 160,
+      "description": "Bytes per sorted row in sorted_scales: n_groups rounded up to 8."
+    }
+  },
+  "attrs": {
+    "n_experts": 129,
+    "block_size": 32
+  },
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Token activations."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": 128,
+        "distinct": true
+      },
+      "description": "Chosen experts per token, distinct within a row."
+    },
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Routing weight of each chosen expert."
+    },
+    "sorted_ids": {
+      "shape": [
+        "n_sorted_rows"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -2147483648,
+        "hi": 2147483647,
+        "distinct": false
+      },
+      "description": "Per sorted row: (slot << 24) | token, or (topk << 24) | n_tokens on an unused row."
+    },
+    "sorted_weights": {
+      "shape": [
+        "n_sorted_rows"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Per sorted row: the pair's weight, 0 on an unused row."
+    },
+    "sorted_expert_ids": {
+      "shape": [
+        "n_blocks"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -2147483648,
+        "hi": 2147483647,
+        "distinct": false
+      },
+      "description": "Per block: its expert."
+    },
+    "sorted_scales": {
+      "shape": [
+        "n_sorted_rows",
+        "scale_cols"
+      ],
+      "dtype": "uint8",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "E8M0 exponent bytes of each sorted row's groups, 32-row tiles of 32 * scale_cols bytes; row r, group g at byte (r // 32) * 32 * scale_cols + (g // 8) * 256 + (g % 4) * 64 + (r % 16) * 4 + (g % 8) // 4 * 2 + (r % 32) // 16."
+    }
+  },
+  "outputs": {
+    "num_valid_ids": {
+      "shape": [2],
+      "dtype": "int32",
+      "description": "[rows of the experts' blocks, n_tokens]."
+    },
+    "moe_buf": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The stage-2 accumulator, zeroed."
+    },
+    "quantized": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "E4M3FN activations per token, zero for a token whose weights are all 0."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 10,
+        "n_sorted_rows": 4192,
+        "n_blocks": 131
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 20,
+        "n_sorted_rows": 4224,
+        "n_blocks": 132
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 30,
+        "n_sorted_rows": 4256,
+        "n_blocks": 133
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 40,
+        "n_sorted_rows": 4288,
+        "n_blocks": 134
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 50,
+        "n_sorted_rows": 4352,
+        "n_blocks": 136
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 60,
+        "n_sorted_rows": 4384,
+        "n_blocks": 137
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 70,
+        "n_sorted_rows": 4416,
+        "n_blocks": 138
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 80,
+        "n_sorted_rows": 4448,
+        "n_blocks": 139
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 100,
+        "n_sorted_rows": 4544,
+        "n_blocks": 142
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 120,
+        "n_sorted_rows": 4608,
+        "n_blocks": 144
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 140,
+        "n_sorted_rows": 4704,
+        "n_blocks": 147
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 160,
+        "n_sorted_rows": 4768,
+        "n_blocks": 149
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 180,
+        "n_sorted_rows": 4864,
+        "n_blocks": 152
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 200,
+        "n_sorted_rows": 4928,
+        "n_blocks": 154
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 220,
+        "n_sorted_rows": 5024,
+        "n_blocks": 157
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 240,
+        "n_sorted_rows": 5088,
+        "n_blocks": 159
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 260,
+        "n_sorted_rows": 5184,
+        "n_blocks": 162
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 280,
+        "n_sorted_rows": 5248,
+        "n_blocks": 164
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 300,
+        "n_sorted_rows": 5344,
+        "n_blocks": 167
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 320,
+        "n_sorted_rows": 5408,
+        "n_blocks": 169
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "GEAK",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"MoE pair sort, moe_buf zeroing and stage-1 MXFP8 quantization in one Triton launch, one\nprogram per token (4 warps).\n\nEvery program loads its token's activation row (split into two power-of-two tiles of 32-wide\ngroups, 128 + 32 for 5120 columns), its top-k ids and weights and all n_tokens * topk routed ids,\nthen rebuilds in registers the per-expert pair counts (tl.histogram), their whole blocks and the\nexclusive block prefix (tl.cumsum): no workspace and no second phase. It quantizes its row once\n(E8M0 scale 2**ceil(log2(max(amax, 1e-10) / 448)), the value times the exact reciprocal power of\ntwo, clamped to +-448, E4M3FN), zeroes its moe_buf row, and places its pairs at\nblocks_before(expert) * block + stable rank within the expert. The rank is counted over half\nof the pair list: tokens of the lower half count the same-expert pairs before them, tokens of\nthe upper half those after them (rank = count - 1 - after). Each pair's sorted id, weight and\nE8M0 bytes (0 for a pair of weight 0) go to its sorted row; a token whose weights are all 0\ngets a zero row. Program t also owns experts [t * EPC, (t + 1) * EPC): their block expert ids\nand the unused rows of their last block. Each written byte has one writer, so programs need no\nordering, atomics or workspace; program 0 writes num_valid_ids.\n\"\"\"\n\nimport functools\n\nimport triton\nimport triton.language as tl\n\n\n@triton.jit\ndef _quant_part(x, quant_row, C0: tl.constexpr, NG: tl.constexpr, zero_row):\n    \"\"\"MXFP8 quantization of NG 32-wide groups (x = row columns [C0, C0 + NG * 32)); returns\n    their E8M0 exponents.\"\"\"\n    offs = C0 + tl.arange(0, NG * 32)\n    x2 = tl.reshape(x.to(tl.float32), (NG, 32))\n    amax = tl.maximum(tl.max(tl.abs(x2), axis=1), 1e-10)\n    bits = (amax * (1.0 / 448.0)).to(tl.int32, bitcast=True)\n    ex = (bits >> 23) & 0xFF\n    ex = tl.where(((bits & 0x7FFFFF) != 0) & (ex < 0xFF), ex + 1, ex)\n    inv = ((254 - ex) << 23).to(tl.float32, bitcast=True)  # 1 / scale, exact: scale is a power of two\n    q = tl.clamp(x2 * inv[:, None], -448.0, 448.0)\n    q = tl.where(zero_row, 0.0, q)\n    tl.store(quant_row + offs, tl.reshape(q, (NG * 32,)).to(quant_row.dtype.element_ty))\n    return ex\n\n\n@triton.jit\ndef _scale_part(scale_ptr, base_k, kmask, zero_k, ex, Y0: tl.constexpr, NG: tl.constexpr):\n    \"\"\"The E8M0 bytes of groups [Y0, Y0 + NG) of each pair's sorted row, at aiter's\n    mx_scale_shuffle_idx address.\"\"\"\n    y = Y0 + tl.arange(0, NG)\n    sw = base_k[:, None] + ((y // 8) * 256 + (y % 4) * 64 + ((y % 8) // 4) * 2)[None, :]\n    sv = tl.where(zero_k[:, None], 0, ex[None, :])\n    tl.store(scale_ptr + sw, sv.to(tl.uint8), mask=kmask[:, None])\n\n\n@triton.jit(do_not_specialize=[\"hzero\"])\ndef _moe_sort_quant_kernel(\n    topk_ids_ptr,  # [M, TOPK] i32\n    topk_w_ptr,  # [M, TOPK] f32\n    hidden_ptr,  # [M, N] bf16, row stride hidden_stride\n    sorted_ids_ptr,\n    sorted_w_ptr,\n    sorted_eids_ptr,\n    nvalid_ptr,  # [2] i32\n    moebuf_ptr,  # [M, N]\n    quant_ptr,  # [M, N] e4m3fn\n    scale_ptr,  # [rows, SCALEN_PAD] u8\n    M,\n    hidden_stride,\n    hzero,  # a runtime 0: keeps the compiler from folding compares on tl.histogram's result\n    TOPK: tl.constexpr,\n    TOPK_P2: tl.constexpr,\n    P_POW2: tl.constexpr,\n    H_POW2: tl.constexpr,  # >= ceil(M / 2) * TOPK\n    E_POW2: tl.constexpr,  # > n_experts; bin E_POW2 - 1 collects the inactive lanes\n    BLOCK: tl.constexpr,\n    EPC: tl.constexpr,  # experts owned per program, a power of two <= E_POW2\n    N: tl.constexpr,\n    GA: tl.constexpr,  # groups of quantization part A (a power of two)\n    GB: tl.constexpr,  # groups of part B (a power of two or 0); GA + GB = N / 32\n    SCALEN_PAD: tl.constexpr,\n):\n    t = tl.program_id(0)\n    t64 = t.to(tl.int64)\n    P = M * TOPK\n\n    # loads: this token's pairs, all routed ids, the activation row\n    offs_k = tl.arange(0, TOPK_P2)\n    kmask = offs_k < TOPK\n    p_k = t * TOPK + offs_k\n    e_k = tl.load(topk_ids_ptr + p_k, mask=kmask, other=E_POW2 - 1)\n    w_k = tl.load(topk_w_ptr + p_k, mask=kmask, other=1.0)\n    offs_p = tl.arange(0, P_POW2)\n    e_all = tl.load(topk_ids_ptr + offs_p, mask=offs_p < P, other=E_POW2 - 1)\n    # the half of the pair list the rank is counted on: tokens [0, MH) scan the lower half,\n    # tokens [MH, M) the upper half, so each program compares against <= MH * TOPK pairs\n    MH = (M + 1) // 2\n    S = MH * TOPK\n    upper = t >= MH\n    hbase = tl.where(upper, S, 0)\n    offs_h = tl.arange(0, H_POW2)\n    q_h = hbase + offs_h\n    e_h = tl.load(topk_ids_ptr + q_h, mask=q_h < tl.where(upper, P, S), other=E_POW2 - 1)\n    hid_row = hidden_ptr + t64 * hidden_stride\n    xA = tl.load(hid_row + tl.arange(0, GA * 32))\n    if GB > 0:\n        xB = tl.load(hid_row + GA * 32 + tl.arange(0, GB * 32))\n\n    # per-expert pair counts, whole blocks and the exclusive block prefix\n    offs_e = tl.arange(0, E_POW2)\n    # Triton 3.8 on gfx950 folds a compare applied to tl.histogram's result (cnt > 0) to\n    # false while its arithmetic stays right; an opaque runtime zero keeps it\n    cnt = tl.histogram(e_all, E_POW2) + hzero\n    cnt = tl.where(offs_e < E_POW2 - 1, cnt, 0)\n    blocks = (cnt + BLOCK - 1) // BLOCK\n    incl = tl.cumsum(blocks, 0)\n    excl = incl - blocks\n    total_blocks = tl.sum(blocks, 0)\n    zero_k = (w_k == 0.0) & kmask\n    zero_row = tl.sum((kmask & (w_k != 0.0)).to(tl.int32), axis=0) == 0\n\n    # the token's quantized row and its zeroed moe_buf row\n    quant_row = quant_ptr + t64 * N\n    exA = _quant_part(xA, quant_row, 0, GA, zero_row)\n    if GB > 0:\n        exB = _quant_part(xB, quant_row, GA * 32, GB, zero_row)\n    ZC: tl.constexpr = 2048\n    offs_z = tl.arange(0, ZC)\n    for c in tl.static_range((N + ZC - 1) // ZC):\n        oz = c * ZC + offs_z\n        tl.store(moebuf_ptr + t64 * N + oz, tl.zeros([ZC], moebuf_ptr.dtype.element_ty), mask=oz < N)\n\n    # the token's pairs: row = blocks of the smaller experts * BLOCK + stable rank\n    packed = excl * 8192 + cnt  # cnt <= P < 8192\n    pk = tl.sum(tl.where(offs_e[None, :] == e_k[:, None], packed[None, :], 0), axis=1)\n    bb_k = pk >> 13\n    cnt_k = pk & 8191\n    # lower tokens count same-expert pairs before them, upper tokens those after them\n    qq = tl.where(upper, -q_h, q_h)\n    pp = tl.where(upper, -p_k, p_k)\n    n_side = tl.sum(((e_h[None, :] == e_k[:, None]) & (qq[None, :] < pp[:, None])).to(tl.int32), axis=1)\n    rank_k = tl.where(upper, cnt_k - 1 - n_side, n_side)\n    dest_k = bb_k * BLOCK + rank_k\n    tl.store(sorted_ids_ptr + dest_k, (offs_k << 24) | t, mask=kmask)\n    tl.store(sorted_w_ptr + dest_k, w_k, mask=kmask)\n    base_k = (dest_k // 32) * (SCALEN_PAD * 32) + (dest_k % 16) * 4 + (dest_k % 32) // 16\n    _scale_part(scale_ptr, base_k, kmask, zero_k, exA, 0, GA)\n    if GB > 0:\n        _scale_part(scale_ptr, base_k, kmask, zero_k, exB, GA, GB)\n\n    # experts [t * EPC, (t + 1) * EPC): their block expert ids and their last block's unused rows\n    NR: tl.constexpr = E_POW2 // EPC\n    rsel = (tl.arange(0, NR) == t)[:, None]\n    g_cnt = tl.sum(tl.where(rsel, tl.reshape(cnt, (NR, EPC)), 0), axis=0)\n    g_excl = tl.sum(tl.where(rsel, tl.reshape(excl, (NR, EPC)), 0), axis=0)\n    g_blk = (g_cnt + BLOCK - 1) // BLOCK\n    ee = t * EPC + tl.arange(0, EPC)\n    offs_r = tl.arange(0, BLOCK)\n    tail = g_cnt - (g_blk - 1) * BLOCK  # used rows of the expert's last block (1..BLOCK)\n    padm = (g_blk > 0)[:, None] & (offs_r[None, :] >= tail[:, None])\n    rows = (g_excl + g_blk - 1)[:, None] * BLOCK + offs_r[None, :]\n    pad_val = (TOPK << 24) | M\n    tl.store(sorted_ids_ptr + rows, tl.zeros([EPC, BLOCK], tl.int32) + pad_val, mask=padm)\n    tl.store(sorted_w_ptr + rows, tl.zeros([EPC, BLOCK], tl.float32), mask=padm)\n    nb = tl.max(g_blk, axis=0)\n    for j in range(0, nb):\n        tl.store(sorted_eids_ptr + g_excl + j, ee, mask=j < g_blk)\n    if t == 0:\n        o2 = tl.arange(0, 2)\n        tl.store(nvalid_ptr + o2, tl.where(o2 == 0, total_blocks * BLOCK, M))\n\n\ndef _npow2(x):\n    return 1 << max(0, int(x) - 1).bit_length()\n\n\n@functools.cache\ndef _config(n_tokens, topk, n_experts, hidden_size):\n    \"\"\"The launch's constexprs: the column split into two power-of-two group tiles, the pair\n    and expert tiles, and the experts each program owns.\"\"\"\n    n_groups = hidden_size // 32\n    ga = 1 << (n_groups.bit_length() - 1)\n    gb = n_groups - ga\n    if gb & (gb - 1):\n        raise ValueError(f\"{n_groups} groups are not the sum of two powers of two\")\n    return {\n        \"TOPK\": topk,\n        \"TOPK_P2\": _npow2(topk),\n        \"P_POW2\": _npow2(n_tokens * topk),\n        \"H_POW2\": _npow2((n_tokens + 1) // 2 * topk),\n        \"E_POW2\": _npow2(n_experts + 1),\n        \"EPC\": _npow2(max(1, (n_experts + n_tokens - 1) // n_tokens)),\n        \"N\": hidden_size,\n        \"GA\": ga,\n        \"GB\": gb,\n        \"SCALEN_PAD\": (n_groups + 7) // 8 * 8,\n    }\n\n\ndef run(\n    *,\n    hidden_states,\n    topk_ids,\n    topk_weights,\n    sorted_ids,\n    sorted_weights,\n    sorted_expert_ids,\n    sorted_scales,\n    n_experts,\n    block_size,\n    num_valid_ids,\n    moe_buf,\n    quantized,\n):\n    n_tokens, topk = topk_ids.shape\n    hidden_size = hidden_states.shape[1]\n    _moe_sort_quant_kernel[(n_tokens,)](\n        topk_ids,\n        topk_weights,\n        hidden_states,\n        sorted_ids,\n        sorted_weights,\n        sorted_expert_ids,\n        num_valid_ids,\n        moe_buf,\n        quantized,\n        sorted_scales,\n        n_tokens,\n        hidden_states.stride(0),\n        0,\n        BLOCK=block_size,\n        num_warps=4,\n        **_config(n_tokens, topk, n_experts, hidden_size),\n    )\n"
+      }
+    ]
+  }
+}
