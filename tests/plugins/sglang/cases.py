@@ -32,6 +32,54 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         },
         layout_variant_name="shuffled_16x16",
     ),
+    # DeepSeek-R1-FP8's DeepseekV2MoE shrunk: its 8 expert groups of 4 experts, the shared
+    # expert fused last, the experts fp8 and shuffled as sglang holds them for aiter
+    PointSpec(
+        contract_id="deepseek_v2_fp8_moe@1.0",
+        axes={"n_tokens": 4, "model_dim": 256, "n_routed": 32, "inter_dim": 256},
+        dtypes={
+            "hidden_states": "bfloat16",
+            "router_weight": "bfloat16",
+            "correction_bias": "bfloat16",
+            "w1": "float8_e4m3fn",
+            "w1_scale": "float32",
+            "w2": "float8_e4m3fn",
+            "w2_scale": "float32",
+            "out": "bfloat16",
+        },
+        attrs={
+            "topk": 8,
+            "num_expert_group": 8,
+            "topk_group": 4,
+            "renormalize": True,
+            "scoring_func": "sigmoid",
+        },
+        layout_variant_name="shuffled_16x16",
+    ),
+    # GLM-5.2-FP8's DeepseekV2MoE shrunk: its routed experts in one group, the shared expert
+    # fused last, the experts fp8 and shuffled as sglang holds them for aiter
+    PointSpec(
+        contract_id="deepseek_v2_fp8_moe@1.0",
+        axes={"n_tokens": 4, "model_dim": 256, "n_routed": 32, "inter_dim": 256},
+        dtypes={
+            "hidden_states": "bfloat16",
+            "router_weight": "bfloat16",
+            "correction_bias": "bfloat16",
+            "w1": "float8_e4m3fn",
+            "w1_scale": "float32",
+            "w2": "float8_e4m3fn",
+            "w2_scale": "float32",
+            "out": "bfloat16",
+        },
+        attrs={
+            "topk": 8,
+            "num_expert_group": 1,
+            "topk_group": 1,
+            "renormalize": True,
+            "scoring_func": "sigmoid",
+        },
+        layout_variant_name="shuffled_16x16",
+    ),
     # GLM-5.2's RoPE part; four heads (16 at TP4) and a short top-k
     PointSpec(
         contract_id="dsa_sparse_mla_decode@1.0",
@@ -349,6 +397,7 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
     {
+        "deepseek_v2_fp8_moe@1.0",
         "deepseek_v2_mxfp4_moe@1.0",
         "dsa_sparse_mla_decode@1.0",
         "gdn_prefill_group_fp8_quant@1.0",

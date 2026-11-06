@@ -27,7 +27,7 @@ from aklr.core.contract.spec import (
     derived_axis,
 )
 
-__all__ = ["CONTRACTS", "DEEPSEEK_V2_MXFP4_MOE"]
+__all__ = ["CONTRACTS", "DEEPSEEK_V2_FP8_MOE", "DEEPSEEK_V2_MXFP4_MOE"]
 
 _SAME_AS_HIDDEN = DTypeSpec(same_as_tensor="hidden_states")
 
@@ -172,4 +172,149 @@ DEEPSEEK_V2_MXFP4_MOE = OpContract(
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
 )
 
-CONTRACTS = (DEEPSEEK_V2_MXFP4_MOE,)
+_FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
+_FLOAT32 = DTypeSpec(any_of=(DType.FLOAT32,))
+# the 128 x 128 block scales of an fp8 linear, as gemm_a8w8_blockwise_scaled draws them
+_BLOCK_SCALE = LogUniformDistribution(log2_lo="-3", log2_hi="0")
+
+
+def _fp8_facts(shuffled: bool) -> tuple[LayoutFact, ...]:
+    return tuple(
+        LayoutFact(location="tensor_attr", name=f"{w}.is_shuffled", expected_value=shuffled)
+        for w in ("w1", "w2")
+    )
+
+
+DEEPSEEK_V2_FP8_MOE = OpContract(
+    contract_id="deepseek_v2_fp8_moe@1.0",
+    description=(
+        "sglang's DeepseekV2MoE on one rank, with fp8 experts at a scale per 128 x 128 "
+        "block and the shared expert in their last slot: on hidden_states, the router's "
+        "logits in hidden_states' dtype (as sglang's MoEGate returns them on ROCm) and "
+        "their sigmoid scores; the scores plus correction_bias rank the experts, which "
+        "fall into num_expert_group equal groups, each scored by its two best biased "
+        "scores summed; each token's topk experts are its best biased scores within its "
+        "topk_group best groups (the lower index first among equals), weighed by the "
+        "renormalized unbiased scores times routed_scaling_factor, and the shared expert "
+        "at weight 1; each expert down(silu(gate(x)) * up(x)) of its fp8 weights, each of "
+        "its two linears taking its input as the checkpoint's FP8 scheme quantizes it: in "
+        "bf16, then each 1 x 128 group in fp8 at a scale of its amax / 448; out is their "
+        "output on this rank, which sglang sums over the ranks."
+    ),
+    op_type="deepseek_v2",
+    axes={
+        "n_tokens": axis("Tokens in this call.", 1, 65536, is_var=True),
+        "model_dim": axis("Hidden size.", 128, 16384, multiple_of=128),
+        "n_routed": axis("Routed experts: the router's rows.", 1, 1024),
+        "inter_dim": axis("Expert intermediate size on this rank.", 128, 16384, multiple_of=128),
+        "n_experts": derived_axis("Expert slots: the routed experts, then the shared one.", "n_routed + 1"),
+        "gate_up_rows": derived_axis("w1 rows: gate and up concatenated.", "2 * inter_dim"),
+        "model_blocks": derived_axis("128-blocks of the hidden size.", "model_dim // 128"),
+        "gate_up_blocks": derived_axis("128-blocks of w1's rows.", "gate_up_rows // 128"),
+        "inter_blocks": derived_axis("128-blocks of the intermediate size.", "inter_dim // 128"),
+    },
+    attrs={
+        "topk": attr("Routed experts per token.", 8, param_name="topk"),
+        # DeepSeek-V3/R1's 8 groups, then GLM-5.2's one: its experts ungrouped
+        "num_expert_group": attr("Expert groups.", 8, 1, param_name="num_expert_group"),
+        "topk_group": attr("Groups each token's experts come from.", 4, 1, param_name="topk_group"),
+        "renormalize": attr(
+            "Whether the routed weights are divided by their sum.",
+            True,
+            param_name="renormalize",
+        ),
+        "scoring_func": attr("Router score.", "sigmoid", param_name="scoring_func"),
+    },
+    constraints=(
+        "n_routed % num_expert_group == 0",
+        # a group's score sums its two best experts
+        "n_routed // num_expert_group >= 2",
+        "topk_group <= num_expert_group",
+        "topk <= topk_group * (n_routed // num_expert_group)",
+    ),
+    inputs={
+        "hidden_states": TensorSpec(
+            description="The MoE's input: post_attention_layernorm's output.",
+            shape=("n_tokens", "model_dim"),
+            dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
+            distribution=FiniteDistribution(),
+        ),
+        "router_weight": TensorSpec(
+            description="Router projection.",
+            shape=("n_routed", "model_dim"),
+            dtype=_SAME_AS_HIDDEN,
+            distribution=LecunNormalDistribution(fan_in="model_dim"),
+            lifetime="weight",
+        ),
+        "correction_bias": TensorSpec(
+            description="Added to the scores to pick experts; never weighs them.",
+            shape=("n_routed",),
+            # bf16, as sglang's aiter top-k reads it for fp8 checkpoints: DeepSeek-R1 holds it in
+            # bf16, GLM-5.2 in fp32, which top-k reads through a bf16 copy (the route passes that)
+            dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
+            # centred on 0 and narrow beside the scores' spread: it moves most tokens' picks,
+            # yet keeps the routes spread over the experts, as a balanced model's are
+            distribution=LecunNormalDistribution(fan_in="model_dim"),
+            lifetime="weight",
+        ),
+        "w1": TensorSpec(
+            description="Gate-up projection per expert: gate rows, then up rows.",
+            shape=("n_experts", "gate_up_rows", "model_dim"),
+            dtype=_FP8,
+            distribution=LecunNormalDistribution(fan_in="model_dim"),
+            lifetime="weight",
+        ),
+        "w1_scale": TensorSpec(
+            description="w1's dequant scale per 128 x 128 block.",
+            shape=("n_experts", "gate_up_blocks", "model_blocks"),
+            dtype=_FLOAT32,
+            distribution=_BLOCK_SCALE,
+            lifetime="weight",
+        ),
+        "w2": TensorSpec(
+            description="Down projection per expert.",
+            shape=("n_experts", "model_dim", "inter_dim"),
+            dtype=_FP8,
+            distribution=LecunNormalDistribution(fan_in="inter_dim"),
+            lifetime="weight",
+        ),
+        "w2_scale": TensorSpec(
+            description="w2's dequant scale per 128 x 128 block.",
+            shape=("n_experts", "model_blocks", "inter_blocks"),
+            dtype=_FLOAT32,
+            distribution=_BLOCK_SCALE,
+            lifetime="weight",
+        ),
+        "routed_scaling_factor": ScalarSpec(
+            description="Multiplies the routed weights only: DeepSeek-V3's and R1's.",
+            dtype=DType.FLOAT32,
+            values=(2.5,),
+            default=2.5,
+        ),
+    },
+    outputs={
+        "out": TensorSpec(
+            description=("The experts' output on this rank, before sglang's all-reduce sums the ranks'."),
+            shape=("n_tokens", "model_dim"),
+            dtype=_SAME_AS_HIDDEN,
+            # implementations round the second linear's input to fp8 from values they round
+            # at other points than the reference does, which flips some fp8 codes: a CPU
+            # emulation of the kernels' rounding comes to 35 to 36 dB on the bench's inputs
+            error_bounds=SqnrBound(min_sqnr_db=30.0),
+        )
+    },
+    # row-major, or as sglang holds the experts for aiter: shuffle_weight's 16 x 16 tiles,
+    # the scales as the checkpoint stores them
+    layout_variants=LayoutVariantsSpec(
+        by_name={
+            "row_major": LayoutVariant(detect_facts=_fp8_facts(False)),
+            "shuffled_16x16": LayoutVariant(
+                layouts=dict.fromkeys(("w1", "w2"), Preshuffle(tile=(16, 16))),
+                detect_facts=_fp8_facts(True),
+            ),
+        }
+    ),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+)
+
+CONTRACTS = (DEEPSEEK_V2_MXFP4_MOE, DEEPSEEK_V2_FP8_MOE)
