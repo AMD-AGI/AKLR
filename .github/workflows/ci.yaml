@@ -385,13 +385,16 @@ jobs:
     # e2e adds two servers per scenario, each capped at 90 minutes (E2eStage's SIDE_TIMEOUT_SECONDS):
     # raise this with each scenario scenarios.yaml enables.
     timeout-minutes: 480
+    env:
+      STAGES: audit,bench,e2e
     steps:
       - *checkout_source
       - *setup_aklr_step
       - name: Show untracked files
         run: git status --porcelain | tee -a "$GITHUB_STEP_SUMMARY"
       # The exit code is the conclusion; report.md's first line says which failure.
-      - name: Validate (audit,bench,e2e)
+      # review-tier reads the stages from this name (ValidationGate.e2e_step).
+      - name: Validate (${{ env.STAGES }})
         env:
           # e2e's weights: each scenario's pinned revision must be in this cache
           HF_HUB_CACHE: ${{ vars.AKLR_SHARED_HF_HUB_DIR }}
@@ -401,7 +404,7 @@ jobs:
         run: |
           flags=(${BASE:+--base "$BASE"})
           [[ $MEASURED_BY_BOT != true ]] || flags+=(--allow-measured-edits)
-          python -m aklr validate "${flags[@]}" --stages audit,bench,e2e \
+          python -m aklr validate "${flags[@]}" --stages "$STAGES" \
             --out "$RUNNER_TEMP/validation-report"
       # The PR head the reviewer signs; the checkout is the merge commit.
       - name: Summarize
