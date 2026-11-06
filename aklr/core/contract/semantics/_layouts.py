@@ -228,6 +228,43 @@ class Deepseekv4KvPages(Layout):
         )
 
 
+class KvSplitPages(Layout):
+    """vLLM's paged KV cache: a ``(blocks, block_size, heads, head_dim)`` side is the
+    first or second half of each row of a row-major ``(blocks, heads, block_size, 2 *
+    head_dim)`` buffer, the key and the value sharing each row."""
+
+    kind: Literal["kv_split_pages"] = "kv_split_pages"
+
+    def encode(self, tensor):
+        blocks, block_size, heads, head_dim = tensor.shape
+        stored = tensor.new_zeros(blocks, heads, block_size, 2 * head_dim)
+        stored[..., :head_dim] = tensor.transpose(1, 2)
+        return stored.transpose(1, 2)[..., :head_dim]
+
+    def storage_test(self):
+        return (
+            "T.stride() == (T.shape[1] * T.shape[2] * 2 * T.shape[3],"
+            " 2 * T.shape[3], T.shape[1] * 2 * T.shape[3], 1)"
+        )
+
+
+class StridedRows(Layout):
+    """A ``(rows, heads, head_dim)`` tensor whose rows are dense and any distance apart,
+    at least a row: rows of a wider row-major buffer, as a query sliced from a fused
+    projection's output. A row-major tensor is one too."""
+
+    kind: Literal["strided_rows"] = "strided_rows"
+
+    def encode(self, tensor):
+        rows = tensor.flatten(1)
+        stored = rows.new_zeros(rows.shape[0], 2 * rows.shape[1])
+        stored[:, : rows.shape[1]] = rows
+        return stored[:, : rows.shape[1]].unflatten(1, tensor.shape[1:])
+
+    def storage_test(self):
+        return "T.stride()[1:] == (T.shape[2], 1) and T.stride(0) >= T.shape[1] * T.shape[2]"
+
+
 LayoutUnion = Annotated[
     RowMajor
     | ColumnMajor
@@ -235,7 +272,9 @@ LayoutUnion = Annotated[
     | E8M0Scales
     | GateUpInterleavedWeight
     | GateUpInterleavedScales
-    | Deepseekv4KvPages,
+    | Deepseekv4KvPages
+    | KvSplitPages
+    | StridedRows,
     Field(discriminator="kind"),
 ]
 _LAYOUT_ADAPTER = TypeAdapter(LayoutUnion)
