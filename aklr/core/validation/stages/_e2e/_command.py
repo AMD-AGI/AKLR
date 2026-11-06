@@ -79,16 +79,14 @@ class ServerRecipe:
 
     @classmethod
     def of(cls, scenario: Scenario, cookbook: Cookbook) -> tuple[ServerRecipe, ...]:
-        """The scenario's roles, in order; the launcher owns the weights (``--model-path``
-        ``--tokenizer-path`` and ``--revision`` from the scenario, whatever the cell says), which
-        only the scenario's ``args`` override."""
+        """Build each role from its cookbook cell, model path and scenario overrides."""
         # set, not only removed, and after the cell's flags: argparse takes the last value, and
         # also reads a prefix (--tokenizer-p) as the flag; a tokenizer of another repository
         # would run that repository's remote code
         weights = {
             "--model-path": scenario.model_path, "--tokenizer-path": scenario.model_path,
             "--model": None, "--tokenizer": None,
-            "--revision": scenario.revision,
+            "--revision": None,
         }  # fmt: skip
         roles = []
         for name, match in scenario.roles.items():
@@ -98,7 +96,9 @@ class ServerRecipe:
                     name=name,
                     cell=cell,
                     env=scenario.env[name],
-                    args=weights | scenario.args[name],
+                    args=cookbook.parser_args(scenario.features[name].parsers)
+                    | weights
+                    | scenario.args[name],
                     nnodes=scenario.nnodes.get(name, cell.nnodes),
                 )
             )

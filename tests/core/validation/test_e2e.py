@@ -11,6 +11,7 @@ import os
 import shlex
 import subprocess
 import urllib.request
+from copy import deepcopy
 from pathlib import Path
 from unittest.mock import Mock
 
@@ -26,19 +27,30 @@ def serving(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.Capt
     cookbook = tmp_path / "sglang/docs/src/snippets/configs/vendor"
     cookbook.mkdir(parents=True)
     (cookbook / "model.jsx").write_text("""export default {
+  playgroundFeatures: {
+    parsers: {
+      showWhen: (s) => s.hw !== "a3",
+      items: [
+        {id: "reasoning", flag: "--reasoning-parser cookbook-reasoning"},
+        {id: "toolCall", flag: "--tool-call-parser=cookbook-tool"},
+      ],
+    },
+  },
   cells: [{match: {hw: "mi355x"}, env: ["COOKBOOK_SETTING=1"],
-    flags: ["--model-path {{MODEL_NAME}}", "--tp 8", "--host {{HOST_IP}}", "--port {{PORT}}"]}],
+    flags: ["--model-path {{MODEL_NAME}}", "--tp 8", "--host {{HOST_IP}}", "--port {{PORT}}",
+      "--reasoning-parser=inherited-reasoning", "--tool-call-parser inherited-tool"]}],
 };
 """)
     config = {
         "cookbook": {"source": str(tmp_path / "sglang")},
-        "models": {
-            "test": {
-                "cookbook": {"config": "vendor/model", "matches": [{"hw": "mi355x"}]},
-                "weights": {"repo": "vendor/Model", "revision": "weights-revision"},
-                "args": {"--reasoning-parser": "glm45"},
+        "scenarios": [
+            {
+                "cookbook": "vendor/model",
+                "model_path": "vendor/Model",
+                "matches": [{"hw": "mi355x"}],
+                "args": {"--revision": "weights-revision", "--reasoning-parser": "glm45"},
             }
-        },
+        ],
     }
     state = {
         "config": config,
@@ -69,7 +81,7 @@ def serving(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.Capt
         state["env"] = dict(arg.split("=", 1) for arg in argv[1:] if not arg.startswith("--") and "=" in arg)
         if state["env"]["AKLR_DISABLE"] == "0" and state["write_calls"]:
             calls = Path(state["env"]["AKLR_EXPORT_DIR"])
-            calls.mkdir(parents=True)
+            calls.mkdir(parents=True, exist_ok=True)
             record = {
                 "contract_id": "gemm@1.0",
                 "point": None,
@@ -135,7 +147,8 @@ def test_stage_prints_and_serves_both_modes(serving: dict, tmp_path: Path) -> No
     assert record.cookbook_sha == "a" * 40
     assert record.on.answer_matches is True
     assert record.on.n_fallback_calls == 3
-    assert "test-mi355x" in "".join(serving["console"])
+    assert record.scenario == "model-mi355x"
+    assert "model-mi355x" in "".join(serving["console"])
     platform = PlatformRecord(
         **(dict.fromkeys(PlatformRecord.model_fields, "unknown") | {"n_visible_devices": 0})
     )
@@ -187,7 +200,7 @@ def test_stage_reports_server_exit_and_cleans_up(serving: dict, tmp_path: Path) 
 
 
 def test_disabled_scenarios_need_no_devices_or_servers(serving: dict, tmp_path: Path) -> None:
-    serving["config"]["models"]["test"]["enabled"] = False
+    serving["config"]["scenarios"][0]["enabled"] = False
     assert evaluate(tmp_path, devices=()).status == "skipped"
     assert serving["commands"] == []
 
@@ -199,4 +212,158 @@ def test_stage_reports_remote_git_failure(serving: dict, tmp_path: Path) -> None
     assert report.status == "aborted"
     assert "git ls-remote failed" in report.findings[0].detail
     assert "authentication failed" in report.findings[0].detail
+    assert serving["commands"] == []
+
+
+def test_entry_expands_matches_in_yaml_order(serving: dict, tmp_path: Path) -> None:
+    entry = serving["config"]["scenarios"][0]
+    matches = [
+        {"hw": "mi355x", "strategy": "balanced"},
+        {"strategy": "low-latency", "hw": "mi355x"},
+    ]
+    entry["matches"] = matches
+    cookbook = tmp_path / "sglang/docs/src/snippets/configs/vendor/model.jsx"
+    cells = [{"match": match, "flags": ["--model-path {{MODEL_NAME}}"]} for match in matches]
+    cookbook.write_text("export default {\n  cells: " + json.dumps(cells) + "\n};\n")
+
+    report = evaluate(tmp_path)
+
+    assert report.status == "passed"
+    assert [record.scenario for record in report.scenario_records] == [
+        "model-mi355x-balanced",
+        "model-low-latency-mi355x",
+    ]
+    assert len(serving["commands"]) == len(serving["killed"]) == 4
+    for argv in serving["commands"]:
+        assert argv[argv.index("--model-path") + 1] == "vendor/Model"
+        assert argv[argv.index("--revision") + 1] == "weights-revision"
+
+
+def test_pd_match_uses_role_overrides_and_prefill_then_decode_name(serving: dict, tmp_path: Path) -> None:
+    entry = serving["config"]["scenarios"][0]
+    prefill = {"hw": "mi355x", "pdMode": "prefill"}
+    decode = {"hw": "mi355x", "pdMode": "decode"}
+    entry["matches"] = [{"decode": decode, "prefill": prefill}]
+    entry["env"] = {"prefill": {"ROLE": "prefill"}, "decode": {"ROLE": "decode"}}
+    entry["features"] = {
+        "prefill": {"parsers": {"reasoning": True}},
+        "decode": {"parsers": {"reasoning": False}},
+    }
+    entry["args"] = {
+        "prefill": {"--revision": "weights-revision", "--mem-fraction-static": 0.7},
+        "decode": {"--revision": "weights-revision", "--mem-fraction-static": 0.8},
+    }
+    serving["config"]["hosts"] = ["127.0.0.1", "localhost"]
+    cookbook = tmp_path / "sglang/docs/src/snippets/configs/vendor/model.jsx"
+    cells = [
+        {"match": match, "flags": ["--model-path {{MODEL_NAME}}", "--reasoning-parser inherited"]}
+        for match in (prefill, decode)
+    ]
+    cookbook.write_text(
+        "export default {\n  playgroundFeatures: {parsers: {items: "
+        '[{id: "reasoning", flag: "--reasoning-parser cookbook-reasoning"}]}},\n  cells: '
+        + json.dumps(cells)
+        + "\n};\n"
+    )
+
+    report = evaluate(tmp_path)
+
+    assert report.status == "passed"
+    assert report.scenario_records[0].scenario == "model-mi355x-prefill-mi355x-decode"
+    assert len(serving["commands"]) == len(serving["killed"]) == 6
+    for prefill_argv, decode_argv, router_argv in (serving["commands"][:3], serving["commands"][3:]):
+        assert "ROLE=prefill" in prefill_argv
+        assert "ROLE=decode" in decode_argv
+        assert prefill_argv[prefill_argv.index("--mem-fraction-static") + 1] == "0.7"
+        assert decode_argv[decode_argv.index("--mem-fraction-static") + 1] == "0.8"
+        assert prefill_argv[prefill_argv.index("--reasoning-parser") + 1] == "cookbook-reasoning"
+        assert "--reasoning-parser" not in decode_argv
+        assert "sglang_router.launch_router" in router_argv
+
+
+def test_duplicate_scenario_names_fail_before_starting_servers(serving: dict, tmp_path: Path) -> None:
+    serving["config"]["scenarios"].append(deepcopy(serving["config"]["scenarios"][0]))
+    with pytest.raises(ValueError, match="the scenario name model-mi355x is repeated"):
+        evaluate(tmp_path)
+    assert serving["commands"] == []
+
+
+@pytest.mark.parametrize("field", ["cookbook", "model_path", "matches"])
+def test_missing_scenario_fields_fail_before_starting_servers(serving: dict, tmp_path: Path, field) -> None:
+    del serving["config"]["scenarios"][0][field]
+    with pytest.raises(ValueError, match=field):
+        evaluate(tmp_path)
+    assert serving["commands"] == []
+
+
+def test_empty_scenarios_skip_without_devices(serving: dict, tmp_path: Path) -> None:
+    serving["config"]["scenarios"] = []
+    assert evaluate(tmp_path, devices=()).status == "skipped"
+    assert serving["commands"] == []
+
+
+@pytest.mark.parametrize(
+    ("features", "args", "reasoning", "tool_call"),
+    [
+        ({}, {}, "inherited-reasoning", "inherited-tool"),
+        ({"parsers": {"reasoning": True}}, {}, "cookbook-reasoning", "inherited-tool"),
+        ({"parsers": {"reasoning": False}}, {}, None, "inherited-tool"),
+        ({"parsers": {"toolCall": True}}, {}, "inherited-reasoning", "cookbook-tool"),
+        ({"parsers": {"reasoning": True, "toolCall": False}}, {}, "cookbook-reasoning", None),
+        ({"parsers": {"reasoning": True}}, {"--reasoning-parser": "override"}, "override", "inherited-tool"),
+        ({"parsers": {"reasoning": True}}, {"--reasoning-parser": None}, None, "inherited-tool"),
+        ({"parsers": {"reasoning": False}}, {"--reasoning-parser": "override"}, "override", "inherited-tool"),
+    ],
+)
+def test_parser_features_inherit_toggle_and_allow_final_args(
+    serving: dict, tmp_path: Path, features, args, reasoning, tool_call
+) -> None:
+    entry = serving["config"]["scenarios"][0]
+    entry["features"], entry["args"] = features, args
+    report = evaluate(tmp_path)
+    assert report.status == "passed"
+    for argv in serving["commands"]:
+        for flag, expected in (("--reasoning-parser", reasoning), ("--tool-call-parser", tool_call)):
+            values = [
+                token.split("=", 1)[1] if "=" in token else argv[index + 1]
+                for index, token in enumerate(argv)
+                if token.split("=", 1)[0] == flag
+            ]
+            assert values == ([] if expected is None else [expected])
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+def test_unknown_parser_fails_before_starting_servers(serving: dict, tmp_path: Path, enabled) -> None:
+    serving["config"]["scenarios"][0]["features"] = {"parsers": {"missing": enabled}}
+    report = evaluate(tmp_path)
+    assert report.status == "aborted"
+    assert "features.parsers.missing: no such parser" in report.findings[0].detail
+    assert serving["commands"] == []
+
+
+@pytest.mark.parametrize("features", [{"attention": {"tp": 4}}, {"parsers": {"reasoning": "false"}}])
+def test_invalid_features_fail_configuration(serving: dict, tmp_path: Path, features) -> None:
+    serving["config"]["scenarios"][0]["features"] = features
+    with pytest.raises(ValueError):
+        evaluate(tmp_path)
+    assert serving["commands"] == []
+
+
+def test_parser_value_tracks_the_cookbook(serving: dict, tmp_path: Path) -> None:
+    entry = serving["config"]["scenarios"][0]
+    entry["features"], entry["args"] = {"parsers": {"reasoning": True}}, {}
+    path = tmp_path / "sglang/docs/src/snippets/configs/vendor/model.jsx"
+    path.write_text(path.read_text().replace("cookbook-reasoning", "new-parser"))
+    report = evaluate(tmp_path)
+    assert report.status == "passed"
+    for argv in serving["commands"]:
+        assert argv[argv.index("--reasoning-parser") + 1] == "new-parser"
+
+
+def test_duplicate_parser_ids_fail_before_starting_servers(serving: dict, tmp_path: Path) -> None:
+    path = tmp_path / "sglang/docs/src/snippets/configs/vendor/model.jsx"
+    path.write_text(path.read_text().replace('id: "toolCall"', 'id: "reasoning"'))
+    report = evaluate(tmp_path)
+    assert report.status == "aborted"
+    assert "duplicate playground parser IDs" in report.findings[0].detail
     assert serving["commands"] == []

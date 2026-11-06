@@ -8,6 +8,7 @@ from __future__ import annotations
 import http.client
 import json
 import re
+import shlex
 import subprocess
 import urllib.request
 from collections.abc import Mapping
@@ -145,6 +146,15 @@ class CookbookCell(FrozenModel):
         return "; ".join(notes)
 
 
+class CookbookParser(FrozenModel):
+    """One parser toggle declared by the cookbook's playground."""
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
+
+    id: str
+    flag: str
+
+
 class Cookbook(FrozenModel):
     """The cells of one model configuration (``<vendor>/<model>``) at commit ``sha``."""
 
@@ -153,6 +163,7 @@ class Cookbook(FrozenModel):
     config: str
     cells: tuple[CookbookCell, ...]
     docker_images: dict[str, str]
+    parsers: tuple[CookbookParser, ...] = ()
 
     @classmethod
     def fetch(cls, source: str, config: str, repo: str = "sgl-project/sglang") -> Cookbook:
@@ -215,12 +226,21 @@ class Cookbook(FrozenModel):
             if (cells := parser.read(text, "cells")) is None:
                 raise ValueError("no `cells: [` at the start of a line")
             docker_images = parser.read(text, "dockerImages") or {}
+            features = parser.read(text, "playgroundFeatures")
+            if features is None:
+                features = {}
+            if not isinstance(features, dict) or not isinstance(parsers := features.get("parsers", {}), dict):
+                raise ValueError("playgroundFeatures and its parsers must be objects")
+            items = tuple(CookbookParser.model_validate(item) for item in parsers.get("items", []))
+            if len({item.id for item in items}) != len(items):
+                raise ValueError("duplicate playground parser IDs")
             return cls(
                 source=source,
                 sha=sha,
                 config=config,
                 cells=tuple(CookbookCell.model_validate(cell) for cell in cells),
                 docker_images=docker_images,
+                parsers=items,
             )
         except (ValueError, TypeError, ValidationError) as error:
             raise ValueError(f"{where}: {error}") from error
@@ -231,6 +251,29 @@ class Cookbook(FrozenModel):
         if len(cells) != 1:
             raise ValueError(f"cookbook {self.config} at {self.sha}: {len(cells)} cells match {dict(match)}")
         return cells[0]
+
+    def parser_args(self, choices: Mapping[str, bool]) -> dict[str, str | bool | None]:
+        """Resolve explicit parser toggles to cookbook flags, or reject unknown choices."""
+        args: dict[str, str | bool | None] = {}
+        for name, enabled in choices.items():
+            where = f"cookbook {self.config} at {self.sha}: features.parsers.{name}"
+            item = next((item for item in self.parsers if item.id == name), None)
+            if item is None:
+                raise ValueError(f"{where}: no such parser")
+            tokens = shlex.split(item.flag)
+            if not tokens:
+                raise ValueError(f"{where}: empty flag")
+            flag, equals, value = tokens[0].partition("=")
+            if (
+                not re.fullmatch(r"--[A-Za-z][\w-]*", flag)
+                or len(tokens) > 2
+                or (equals and len(tokens) != 1)
+            ):
+                raise ValueError(f"{where}: expected one flag with at most one value: {item.flag!r}")
+            if len(tokens) == 2 and tokens[1].startswith("--"):
+                raise ValueError(f"{where}: expected a value, got {tokens[1]!r}")
+            args[flag] = (value if equals else tokens[1] if len(tokens) == 2 else True) if enabled else None
+        return args
 
     def docker_image(self, match: Mapping[str, MatchValue]) -> str | None:
         """The image the cookbook names for ``match``: the ``dockerImages`` key of most
