@@ -393,7 +393,6 @@ jobs:
       - name: Show untracked files
         run: git status --porcelain | tee -a "$GITHUB_STEP_SUMMARY"
       # The exit code is the conclusion; report.md's first line says which failure.
-      # review-tier reads the stages from this name (ValidationGate.e2e_step).
       - name: Validate (${{ env.STAGES }})
         env:
           # e2e's weights: each scenario's pinned revision must be in this cache
