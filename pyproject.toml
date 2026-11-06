@@ -21,6 +21,7 @@ dependencies = [
     "ninja",
     "packaging",
     "pydantic>=2.12",
+    "PyYAML>=6",
 ]
 
 [project.entry-points."sglang.srt.plugins"]

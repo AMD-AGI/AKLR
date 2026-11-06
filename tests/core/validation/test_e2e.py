@@ -63,6 +63,11 @@ def serving(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.Capt
         "write_calls": True,
         "git_failure": False,
         "server_failure": None,
+        "controls": [],
+        "control_failures": {},
+        "real_run": subprocess.run,
+        "real_popen": subprocess.Popen,
+        "real_killpg": os.killpg,
     }
     read_text = Path.read_text
 
@@ -78,7 +83,10 @@ def serving(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.Capt
         assert shlex.join(argv) in output.out
         assert kwargs["start_new_session"] is True
         state["commands"].append(argv)
-        state["env"] = dict(arg.split("=", 1) for arg in argv[1:] if not arg.startswith("--") and "=" in arg)
+        command = shlex.split(argv[-1]) if argv[0] == "ssh" else argv
+        state["env"] = dict(
+            arg.split("=", 1) for arg in command[1:] if not arg.startswith("--") and "=" in arg
+        )
         if state["env"]["AKLR_DISABLE"] == "0" and state["write_calls"]:
             calls = Path(state["env"]["AKLR_EXPORT_DIR"])
             calls.mkdir(parents=True, exist_ok=True)
@@ -94,6 +102,12 @@ def serving(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.Capt
         return Mock(pid=2**30 + len(state["commands"]), poll=Mock(return_value=state["server_failure"]))
 
     def run(argv, **kwargs):
+        command = shlex.split(argv[-1]) if argv[0] == "ssh" else argv
+        if len(command) > 1 and command[1].endswith("/_worker.py"):
+            action = command[2]
+            state["controls"].append((argv, action))
+            failure = state["control_failures"].get(action, "")
+            return subprocess.CompletedProcess(argv, int(bool(failure)), "", failure)
         if argv[0] == "git":
             assert 0 < kwargs.get("timeout", 0) <= 60, "Git lookup must be bounded"
             if state["git_failure"]:
@@ -282,6 +296,7 @@ def test_pd_match_uses_role_overrides_and_prefill_then_decode_name(serving: dict
         assert prefill_argv[prefill_argv.index("--reasoning-parser") + 1] == "cookbook-reasoning"
         assert "--reasoning-parser" not in decode_argv
         assert "sglang_router.launch_router" in router_argv
+        assert router_argv[router_argv.index("--worker-startup-timeout-secs") + 1] == "2400"
 
 
 def test_duplicate_scenario_names_fail_before_starting_servers(serving: dict, tmp_path: Path) -> None:
@@ -416,3 +431,138 @@ def test_duplicate_parser_ids_fail_before_starting_servers(serving: dict, tmp_pa
     assert report.status == "aborted"
     assert "duplicate playground parser IDs" in report.findings[0].detail
     assert serving["commands"] == []
+
+
+@pytest.mark.parametrize("override", [False, True])
+def test_hf_defaults_allow_role_overrides_but_device_controls_do_not(
+    serving: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, override: bool
+) -> None:
+    inherited = {"HF_HOME": "/parent", "HF_HUB_CACHE": "/parent/hub", "HF_HUB_OFFLINE": "1"}
+    selected = {"HF_HOME": "/role", "HF_HUB_CACHE": "/role/hub", "HF_HUB_OFFLINE": "0"}
+    for key, value in inherited.items():
+        monkeypatch.setenv(key, value)
+    entry = serving["config"]["scenarios"][0]
+    entry["env"] = (selected if override else {}) | {
+        "HIP_VISIBLE_DEVICES": "7",
+        "CUDA_VISIBLE_DEVICES": "7",
+        "AKLR_DISABLE": "1",
+    }
+    assert evaluate(tmp_path).status == "passed"
+    for argv in serving["commands"]:
+        assert all(f"{key}={value}" in argv for key, value in (selected if override else inherited).items())
+        assert "HIP_VISIBLE_DEVICES=0" in argv and "CUDA_VISIBLE_DEVICES=0" in argv
+    assert "AKLR_DISABLE=0" in serving["commands"][1]
+
+
+@pytest.mark.parametrize("action", ["available", "owns-port"])
+def test_occupied_or_unowned_listener_is_never_graded(serving: dict, tmp_path: Path, action: str) -> None:
+    serving["control_failures"][action] = "port is occupied by another deployment"
+    report = evaluate(tmp_path)
+    assert report.status == "aborted"
+    assert "port is occupied" in report.scenario_records[0].off.failure
+    assert not serving["evaluations"]
+    assert len(serving["commands"]) == len(serving["killed"]) == (0 if action == "available" else 1)
+
+
+def test_unverified_remote_cleanup_stops_the_run(serving: dict, tmp_path: Path) -> None:
+    serving["config"]["hosts"] = ["remote-node"]
+    serving["config"]["scenarios"][0]["matches"].append(
+        {
+            "hw": "mi355x",
+            "parsers": {"reasoning": True},
+        }
+    )
+    serving["control_failures"]["stop"] = "SSH unreachable"
+    report = evaluate(tmp_path)
+    assert report.status == "aborted"
+    assert "remote cleanup was not verified" in report.findings[0].detail
+    assert len(serving["commands"]) == len(serving["killed"]) == 1
+    assert len(report.scenario_records) == 1
+    assert report.scenario_records[0].on is None
+    cleanup = [argv for argv, action in serving["controls"] if action == "stop"]
+    assert len(cleanup) == 1 and cleanup[0][0] == "ssh"
+
+
+@pytest.mark.parametrize("remote", [False, True])
+@pytest.mark.parametrize("foreign_listener", [False, True])
+def test_real_worker_ownership_and_cleanup_through_stage(
+    serving: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, remote: bool, foreign_listener: bool
+) -> None:
+    """Use real Linux processes/sockets; emulate only SSH transport and the model API."""
+    import socket
+    import sys
+    import time
+
+    if remote:
+        serving["config"]["hosts"] = ["remote-node"]
+    fake_popen, fake_run = subprocess.Popen, subprocess.run
+    real_popen, real_run = serving["real_popen"], serving["real_run"]
+    processes = []
+    foreign = []
+
+    def popen(argv, **kwargs):
+        command = shlex.split(argv[-1]) if argv[0] == "ssh" else list(argv)
+        if "sglang.launch_server" not in command:
+            return real_popen(command, **kwargs)
+        fake_popen(argv, **kwargs)  # capture printed command, evaluation state and call records
+        side = str(len(processes))
+        ready = tmp_path / f"ready-{side}"
+        code = (
+            "import socket, time; from pathlib import Path; "
+            "s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); "
+            "s.bind(('127.0.0.1', 30000)); s.listen(); "
+            f"Path({str(ready)!r}).touch(); time.sleep(60)"
+        )
+        if foreign_listener:
+            # An unrelated server races into the endpoint after the preflight check.
+            foreign.append(real_popen([sys.executable, "-c", code], start_new_session=True))
+            code = "import time; time.sleep(60)"
+        env_index = command.index("env")
+        python_index = command.index(sys.executable, env_index)
+        command = [*command[:python_index], sys.executable, "-c", code]
+        process = real_popen(command, **kwargs)
+        processes.append(process)
+        deadline = time.monotonic() + 5
+        while not ready.exists():
+            assert process.poll() is None, "test server exited before binding"
+            assert time.monotonic() < deadline, "test server did not bind"
+            time.sleep(0.01)
+        return process
+
+    def run(argv, **kwargs):
+        command = shlex.split(argv[-1]) if argv[0] == "ssh" else list(argv)
+        if len(command) > 1 and command[1].endswith("/_worker.py"):
+            if command[2] == "available":
+                command[3] = "127.0.0.1"
+            result = real_run(command, **kwargs)
+            if remote and command[2] == "stop" and result.returncode == 0:
+                late = real_run(
+                    [*command[:2], "start", command[3], sys.executable, "-c", "raise SystemExit(0)"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+                assert late.returncode == 1 and "already stopped" in late.stderr
+            return result
+        return fake_run(argv, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", popen)
+    monkeypatch.setattr(subprocess, "run", run)
+    monkeypatch.setattr(os, "killpg", serving["real_killpg"])
+    try:
+        report = evaluate(tmp_path)
+        assert report.status == ("aborted" if foreign_listener else "passed"), report
+        assert len(processes) == (1 if foreign_listener else 2)
+        assert all(process.poll() is not None for process in processes)
+        if foreign_listener:
+            assert not serving["evaluations"]
+            assert all(process.poll() is None for process in foreign)
+        else:
+            with socket.socket() as probe:
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                probe.bind(("127.0.0.1", 30000))
+    finally:
+        for process in [*processes, *foreign]:
+            if process.poll() is None:
+                serving["real_killpg"](process.pid, 9)
+                process.wait()

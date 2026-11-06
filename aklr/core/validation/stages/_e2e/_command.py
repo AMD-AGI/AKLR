@@ -144,6 +144,7 @@ def export_commands(
     hosts: Sequence[str],
     env: Mapping[str, str],
     side_env: Mapping[str, str],
+    startup_timeout: float,
 ) -> tuple[dict[str, tuple[str, ...]], str]:
     """Build server commands for the scenario using its cookbook recipe and launch settings."""
     server_port, router_port = 30000, 30080
@@ -161,7 +162,9 @@ def export_commands(
     commands: dict[str, tuple[str, ...]] = {}
     for role in roles:
         nodes = role_hosts[role.name]
-        role_env = role.server_env() | dict(env) | dict(side_env)
+        inherited_hf = {k: v for k, v in env.items() if k in {"HF_HOME", "HF_HUB_CACHE", "HF_HUB_OFFLINE"}}
+        authoritative = {k: v for k, v in env.items() if k not in inherited_hf}
+        role_env = inherited_hf | role.server_env() | authoritative | dict(side_env)
         flags = role.flags()
         for rank, host in enumerate(nodes):
             node_flags = [*flags, ["--host", host], ["--port", str(server_port)]]
@@ -192,6 +195,7 @@ def export_commands(
             "--prefill", f"http://{prefill}:{server_port}", roles[0].bootstrap_port,
             "--decode", f"http://{decode}:{server_port}",
             "--host", hosts[0], "--port", str(router_port),
+            "--worker-startup-timeout-secs", str(int(startup_timeout)),
         ]  # fmt: skip
         commands["router"] = _host_command(hosts[0], argv, local_names)
         entry_url = f"http://{hosts[0]}:{router_port}"

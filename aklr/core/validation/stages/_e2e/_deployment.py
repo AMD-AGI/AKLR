@@ -9,11 +9,14 @@ import contextlib
 import http.client
 import os
 import shlex
-import signal
 import subprocess
+import sys
 import time
 import urllib.request
+import uuid
 from pathlib import Path
+
+from aklr.core.validation.stages._e2e._worker import stop_group
 
 
 class RunNotKilledError(RuntimeError):
@@ -25,10 +28,19 @@ class NodeProcess:
 
     def __init__(self, name: str, argv: tuple[str, ...], log_path: Path) -> None:
         self.name = name
-        self.argv = argv
         self.log_path = log_path
+        self._remote_host = argv[2] if argv[0] == "ssh" else None
+        self._worker = (sys.executable, str(Path(__file__).with_name("_worker.py").resolve()))
+        self._remote_state = log_path.with_name(f"{name}-{uuid.uuid4().hex}.pid")
+        command = shlex.split(argv[3]) if self._remote_host else list(argv)
+        self._host = command[command.index("--host") + 1]
+        self._port = command[command.index("--port") + 1]
+        self.argv = (
+            self._on_host((*self._worker, "start", str(self._remote_state), *command))
+            if self._remote_host
+            else argv
+        )
         self._process: subprocess.Popen[bytes] | None = None
-        self._kill_wait_seconds = 5.0
         self._log_tail_bytes = 2 << 10
 
     def start(self) -> None:
@@ -47,35 +59,66 @@ class NodeProcess:
         raises ``RunNotKilledError``."""
         if self._process is None:
             return ""
-        group = self._process.pid
-        with contextlib.suppress(ProcessLookupError, PermissionError):
-            os.killpg(group, signal.SIGKILL)
-        deadline = time.monotonic() + self._kill_wait_seconds
-        while True:
-            # a zombie (an orphan no init reaps, as in a container) holds nothing
-            is_alive = False
-            for stat_path in Path("/proc").glob("[0-9]*/stat"):
-                try:
-                    state, _, process_group = stat_path.read_text().rpartition(")")[2].split()[:3]
-                except (OSError, ValueError):
-                    continue
-                if int(process_group) == group and state != "Z":
-                    is_alive = True
-                    break
-            if not is_alive or time.monotonic() >= deadline:
-                break
-            time.sleep(0.01)
-        if not is_alive:  # a leader stuck past its SIGKILL never exits
+        failures = []
+        if self._remote_host:
+            try:
+                # Shared state prevents a delayed start even if SSH cannot reach the host.
+                self._remote_state.with_suffix(".stopped").touch()
+                self._control("stop", str(self._remote_state))
+            except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+                failures.append(f"remote cleanup was not verified: {error}")
+        try:
+            stop_group(self._process.pid)
             self._process.wait()
+        except (OSError, RuntimeError) as error:
+            failures.append(str(error))
         try:
             with open(self.log_path, "rb") as log:
                 log.seek(max(0, log.seek(0, os.SEEK_END) - self._log_tail_bytes))
                 log_tail = log.read().decode(errors="replace")
         except OSError:
             log_tail = ""
-        if is_alive:
-            raise RunNotKilledError(f"{self.name}: the process group outlived its kill\n{log_tail}")
+        if failures:
+            raise RunNotKilledError(f"{self.name}: {'; '.join(failures)}\n{log_tail}")
         return log_tail
+
+    def _on_host(self, argv: tuple[str, ...]) -> tuple[str, ...]:
+        return (
+            (
+                "ssh",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ConnectTimeout=10",
+                "--",
+                self._remote_host,
+                shlex.join(argv),
+            )
+            if self._remote_host
+            else argv
+        )
+
+    def _control(self, *args: str) -> None:
+        try:
+            done = subprocess.run(
+                self._on_host((*self._worker, *args)),
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            raise RuntimeError(f"{self.name}: {args[0]} could not be verified: {error}") from error
+        if done.returncode:
+            raise RuntimeError(f"{self.name}: {' '.join(args)}: {done.stderr.strip()}")
+
+    def check_available(self) -> None:
+        self._control("available", self._host, self._port)
+
+    def check_owner(self) -> None:
+        assert self._process is not None
+        group = str(self._remote_state) if self._remote_host else str(self._process.pid)
+        self._control("owns-port", group, self._port)
 
 
 class Deployment:
@@ -99,6 +142,10 @@ class Deployment:
         an exit or ``timeout`` seconds without an answer raises ``RuntimeError``."""
         deadline = time.monotonic() + timeout
         for process in self.processes:
+            process.check_available()
+        for process in self.processes:
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"{self.entry_url} startup deadline exceeded")
             print(f"Command ({process.name}):", flush=True)
             print(shlex.join(process.argv), flush=True)
             process.start()
@@ -112,6 +159,13 @@ class Deployment:
                 ) as response:
                     # a server that answers only after the deadline is not ready in time
                     if response.status == 200 and time.monotonic() < deadline:
+                        for process in self.processes:
+                            if process.name == "router" or process.name.endswith("-0"):
+                                process.check_owner()
+                        if exited := self.exited():
+                            raise RuntimeError(f"{', '.join(exited)} during readiness check")
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError(f"{self.entry_url} startup deadline exceeded")
                         return self.entry_url
             time.sleep(min(self._ready_poll_seconds, max(0.0, deadline - time.monotonic())))
         raise RuntimeError(f"{self.entry_url} not ready after {timeout:g} s")
