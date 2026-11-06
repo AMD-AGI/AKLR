@@ -51,6 +51,25 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # the same shrunk, a new sequence longer than the top-k
+    PointSpec(
+        contract_id="dsa_sparse_mla_prefill@1.0",
+        axes={
+            "n_tokens": 96,
+            "n_heads": 4,
+            "kv_dim": 192,
+            "topk": 64,
+            "n_slots": 512,
+        },
+        dtypes={
+            "q": "float8_e4m3fn",
+            "kv_cache": "float8_e4m3fn",
+            "topk_indices": "int32",
+            "output": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
     # GLM-5.2's DSA indexer shrunk: 16 heads (32 on GLM-5.2) and narrow projections, its
     # 128-value heads and keys, 64-value RoPE part and one index-K page as sglang holds them on
     # aiter
@@ -403,6 +422,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "dsa_indexer_key_prepare@1.0",
         "dsa_indexer_prepare@1.0",
         "dsa_sparse_mla_decode@1.0",
+        "dsa_sparse_mla_prefill@1.0",
         "gdn_prefill_group_fp8_quant@1.0",
         "minimax_m2_fp8_moe@1.0",
         "minimax_m2_mxfp4_moe@1.0",
