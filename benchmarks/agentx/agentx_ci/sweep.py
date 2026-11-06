@@ -1,24 +1,22 @@
 # SPDX-License-Identifier: MIT
-"""Run a serving plan in Docker, or directly inside an already prepared CI container."""
+"""Run one planned model target in its verified Docker image."""
 
 from __future__ import annotations
 
 import argparse
-import subprocess
-import sys
 from pathlib import Path
-
-from agentx_ci.utils import REPO_ROOT
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m agentx_bench sweep", description=__doc__)
-    parser.add_argument("--serving", type=Path, required=True, help="serving.json from plan or resolve")
+    parser.add_argument(
+        "--serving", type=Path, required=True, help="serving.json for one model target from plan or resolve"
+    )
     parser.add_argument("--hub", type=Path, help="Host HF hub cache; required unless --in-container")
     parser.add_argument(
         "--in-container",
         action="store_true",
-        help="Execute in the prepared container without starting Docker",
+        help="Execute inside the prepared container using the launcher's verified execution metadata",
     )
     parser.add_argument("--out", type=Path, required=True, help="Host directory for results and logs")
     parser.add_argument("--image", help="Must match the plan's image; use plan --run-image to change it")
@@ -37,17 +35,8 @@ def main(argv: list[str] | None = None) -> int:
         if any(value is not None for value in (args.hub, args.image, args.cache)):
             parser.error("--hub, --image and --cache configure Docker and cannot be used with --in-container")
         args.work = args.work or args.out / "work"
-    elif args.hub is None:
-        parser.error("--hub is required when starting Docker")
-    command = [] if args.in_container else ["bash", str(REPO_ROOT / "scripts/agentx/sweep.sh")]
-    # The shell launcher consumes its own options before forwarding the sweep options.
+    command = []
     for name in (
-        "serving",
-        "hub",
-        "out",
-        "image",
-        "cache",
-        "work",
         "run_id",
         "duration",
         "arms",
@@ -61,9 +50,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.in_container:
         from agentx_ci import runtime
 
+        command.extend(["--serving", str(args.serving), "--out", str(args.out), "--work", str(args.work)])
         return runtime.main(command)
-    try:
-        return subprocess.call(command)
-    except OSError as error:
-        print(f"ERROR: unable to start local benchmark: {error}", file=sys.stderr)
-        return 1
+    from agentx_ci import docker_launch
+
+    return docker_launch.run(args, command)

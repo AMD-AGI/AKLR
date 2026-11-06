@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Plan and test exactly one model locally, then generate its report."""
+"""Plan, run and report one model target locally."""
 
 from __future__ import annotations
 
@@ -10,9 +10,9 @@ import uuid
 from pathlib import Path
 
 from agentx_ci import plan, report_all, sweep
-from agentx_ci.model_config import model_config, validate_model_id
+from agentx_ci.model_config import model_config, validate_model_id, validate_target_id
 from agentx_ci.recipe_resolve import add_arguments, validate_options
-from agentx_ci.utils import DEFAULT_CONFIG, REPO_ROOT, load_config, utc_now
+from agentx_ci.utils import DEFAULT_CONFIG, REPO_ROOT, load_config, read_json, target_path, utc_now
 
 
 def cleanup(root: Path, args: argparse.Namespace) -> bool:
@@ -41,6 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--model", required=True, help="One enabled model id; all and model lists are not accepted"
     )
+    parser.add_argument("--target", help="One enabled target id; optional only when the model has one target")
     parser.add_argument("--hub", type=Path, required=True, help="Host HF hub cache with the pinned weights")
     parser.add_argument(
         "--out", type=Path, required=True, help="Fresh run directory containing plan/, results/ and site/"
@@ -69,7 +70,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         validate_options(args)
         validate_model_id(args.model)
-        model_config(load_config(args.config), args.model)
+        if args.target is not None:
+            validate_target_id(args.target)
+        definition = model_config(load_config(args.config), args.model, args.target)
+        target_id = definition["target"]["id"]
+        relative = target_path(args.model, target_id)
         if args.duration is not None and args.duration <= 0:
             raise ValueError("--duration must be positive")
         if root.exists():
@@ -81,14 +86,21 @@ def main(argv: list[str] | None = None) -> int:
         run_id = args.run_id or f"local-{uuid.uuid4().hex[:12]}"
         work = (args.work or root / "work").resolve()
         cache = (args.cache or root / "cache").resolve()
-        plan_args = argparse.Namespace(**vars(args), models=args.model)
+        if any(path.is_relative_to(REPO_ROOT.resolve()) for path in (root, work, cache)):
+            raise ValueError("run, work and cache directories must be outside the source checkout")
+        plan_args = argparse.Namespace(**vars(args), models=args.model, targets=target_id)
         plan_args.out, plan_args.work, plan_args.run_id = root / "plan", work, run_id
         root.mkdir(parents=True, exist_ok=False)
         created = True
         print(f"[{utc_now()}] pipeline {run_id}: creating plan in {root / 'plan'}", flush=True)
         manifest = plan.build(plan_args)
-        if len(manifest["models"]) != 1 or manifest["models"][0]["id"] != args.model:
-            raise ValueError("pipeline plan must contain exactly the requested model")
+        targets = manifest.get("targets", [])
+        if (
+            len(targets) != 1
+            or targets[0]["model"]["id"] != args.model
+            or targets[0]["target"]["id"] != target_id
+        ):
+            raise ValueError("pipeline plan must contain exactly the requested model and target")
     except (ValueError, OSError, plan.rr.ResolveError) as error:
         print(f"ERROR: pipeline planning failed: {error}", file=sys.stderr)
         if created:
@@ -96,25 +108,26 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     failed = False
-    interrupted = False
-    model = manifest["models"][0]
-    model_id = model["id"]
-    if model["status"] != "resolved":
+    interrupt_code = 0
+    cleanup_safe = True
+    target = targets[0]
+    label = f"{args.model}/{target_id}"
+    if target["status"] != "resolved":
         failed = True
-        print(f"ERROR [{model_id}]: {model.get('error') or 'model plan was not resolved'}", file=sys.stderr)
+        print(f"ERROR [{label}]: {target.get('error') or 'target plan was not resolved'}", file=sys.stderr)
     else:
-        print(f"[{utc_now()}] pipeline {run_id}: testing {model_id}", flush=True)
+        print(f"[{utc_now()}] pipeline {run_id}: testing {label}", flush=True)
         command = [
             "--serving",
-            str(root / "plan/models" / model_id / "serving.json"),
+            str(root / "plan" / relative / "serving.json"),
             "--hub",
             str(args.hub.resolve()),
             "--out",
-            str(root / "results/models" / model_id),
+            str(root / "results" / relative),
             "--cache",
-            str(cache / model_id),
+            str(cache / relative),
             "--work",
-            str(work / "sweeps" / model_id),
+            str(work / "sweeps" / relative),
             "--run-id",
             run_id,
         ]
@@ -124,13 +137,16 @@ def main(argv: list[str] | None = None) -> int:
             code = sweep.main(command)
             if code:
                 failed = True
-                print(f"ERROR [{model_id}]: local benchmark exited with {code}", file=sys.stderr)
-                interrupted = code in (130, -2)
+                print(f"ERROR [{label}]: local benchmark exited with {code}", file=sys.stderr)
+                if code in (130, 143, -2, -15):
+                    interrupt_code = 128 - code if code < 0 else code
         except KeyboardInterrupt:
-            interrupted = True
+            interrupt_code = 130
+            cleanup_safe = False
         except Exception as error:
             failed = True
-            print(f"ERROR [{model_id}]: {error}", file=sys.stderr)
+            cleanup_safe = False
+            print(f"ERROR [{label}]: {error}", file=sys.stderr)
 
     print(f"[{utc_now()}] pipeline {run_id}: generating report", flush=True)
     try:
@@ -143,12 +159,24 @@ def main(argv: list[str] | None = None) -> int:
             baseline_dir=args.baseline_dir,
             baseline_url=args.baseline_url,
         )
-        failed |= any(model["status"] not in ("ok", "not-run") for model in site["models"])
+        failed |= any(item["status"] not in ("ok", "not-run") for item in site["targets"])
         print(f"Report: {root / 'site/index.html'}", flush=True)
     except Exception as error:
         failed = True
         print(f"ERROR: pipeline report failed: {error}", file=sys.stderr)
-    # An interrupted Docker client may leave its container using the mounted cache.
-    if not interrupted:
+    results_path = root / "results" / relative / "results.json"
+    try:
+        if results_path.is_file():
+            run = read_json(results_path)["run"]
+            cleanup_safe &= isinstance(run, dict) and not run.get("container_cleanup_failed")
+    except (OSError, ValueError, KeyError, TypeError):
+        cleanup_safe = False
+    if cleanup_safe:
         failed |= not cleanup(root, args)
-    return 130 if interrupted else 1 if failed else 0
+    else:
+        failed = True
+        print(
+            f"ERROR: temporary work and cache retained because container cleanup could not be confirmed: {root}",
+            file=sys.stderr,
+        )
+    return interrupt_code or (1 if failed else 0)

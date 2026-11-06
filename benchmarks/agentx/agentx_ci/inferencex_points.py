@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Generate and bind points using the pinned InferenceX checkout and dependencies."""
+"""Bind points using the pinned InferenceX checkout."""
 
 from __future__ import annotations
 

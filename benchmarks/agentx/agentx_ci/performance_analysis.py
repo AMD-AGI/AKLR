@@ -1,10 +1,12 @@
 # SPDX-License-Identifier: MIT
-"""Compute Pareto frontiers and compare complete runs with matching configurations."""
+"""Compute Pareto frontiers and compare runs."""
 
 from __future__ import annotations
 
+import copy
 import math
 
+from agentx_ci.preflight import comparison_identity
 from agentx_ci.utils import complete_measurement, valid_metrics
 
 X, Y = "p90_e2e_norm_intvty", "tput_per_gpu"
@@ -19,7 +21,7 @@ def measured(results: dict, arm: str | None = None) -> list[dict]:
 
 
 def frontier(points: list[dict]) -> list[dict]:
-    """Points no other point beats on both axes, ordered by rising interactivity."""
+    """Return non-dominated points by increasing interactivity."""
     best_y, keep = -math.inf, []
     for point in sorted(points, key=lambda p: (-p[X], -p[Y])):
         if point[Y] > best_y:
@@ -95,7 +97,7 @@ def compare_arm(arm: str, current: dict, baseline: dict) -> dict:
 
 
 def compare(current: dict, baseline: dict | None) -> dict:
-    """Week-over-week view of ``current`` against ``baseline`` (the previous published run)."""
+    """Compare a run with its previous published baseline."""
     if not complete_measurement(current) or (baseline is not None and not complete_measurement(baseline)):
         return {
             "status": "incomplete",
@@ -132,24 +134,36 @@ def compare(current: dict, baseline: dict | None) -> dict:
             "arms": {},
             "notes": [],
         }
-    if current.get("model", {}).get("id") != baseline.get("model", {}).get("id"):
-        return {
-            "status": "no-baseline",
-            "reason": "model identity differs or is missing",
-            "arms": {},
-            "notes": [],
-        }
+    for kind in ("model", "target"):
+        identity = current.get(kind, {}).get("id")
+        if not identity or identity != baseline.get(kind, {}).get("id"):
+            return {
+                "status": "no-baseline",
+                "reason": f"{kind} identity differs or is missing",
+                "arms": {},
+                "notes": [],
+            }
     if baseline["run"]["mode"] != current["run"]["mode"]:
         reason = f"previous run is {baseline['run']['mode']}, this one is {current['run']['mode']}"
         return {"status": "no-baseline", "reason": reason, "arms": {}, "notes": []}
+    current_identity, baseline_identity = comparison_identity(current), comparison_identity(baseline)
+    if current_identity is None or baseline_identity is None:
+        return {
+            "status": "no-baseline",
+            "reason": "execution identity is missing or unverified",
+            "arms": {},
+            "notes": [],
+        }
+    if current_identity != baseline_identity:
+        return {
+            "status": "no-baseline",
+            "reason": "execution image, InferenceX source, dependencies, hardware or traces changed",
+            "arms": {},
+            "notes": [],
+        }
     notes = []
     if baseline["run"]["image"]["run"] != current["run"]["image"]["run"]:
         notes.append("run image changed")
-    if baseline["run"]["inferencex"]["sha"] != current["run"]["inferencex"]["sha"]:
-        notes.append(
-            "InferenceX moved "
-            f"{baseline['run']['inferencex']['sha'][:10]} → {current['run']['inferencex']['sha'][:10]}"
-        )
     if baseline["serving"]["grid_sha256"] != current["serving"]["grid_sha256"]:
         notes.append("concurrency grid changed")
     arms = {arm: compare_arm(arm, current, baseline) for arm in current["serving"]["arms"]}
@@ -159,4 +173,56 @@ def compare(current: dict, baseline: dict | None) -> dict:
         "baseline_aklr_sha": baseline["run"]["aklr_sha"],
         "arms": arms,
         "notes": notes,
+    }
+
+
+def compare_aklr(results: dict) -> dict:
+    control = results.get("control")
+    unavailable = {"status": "unavailable", "points": [], "tput_geomean_ratio": None}
+    if not control or not complete_measurement(results):
+        return {**unavailable, "reason": "Both AKLR modes must finish every selected point successfully."}
+    for kind in ("model", "target"):
+        identity = results.get(kind, {}).get("id")
+        if not identity or identity != control.get(kind, {}).get("id"):
+            return {**unavailable, "reason": f"AKLR modes have different or missing {kind} identities."}
+    identity = comparison_identity(results)
+    if identity is None or identity != comparison_identity(control):
+        return {**unavailable, "reason": "AKLR modes have different or unverified execution identities."}
+    for key in ("id", "attempt_id", "aklr_sha", "serving_sha256", "source_dirty"):
+        if results["run"].get(key) is None or results["run"].get(key) != control["run"].get(key):
+            return {
+                **unavailable,
+                "reason": "AKLR modes do not belong to the same source and execution attempt.",
+            }
+    if results["run"].get("aklr_mode") != "enabled" or control["run"].get("aklr_mode") != "disabled":
+        return {**unavailable, "reason": "AKLR mode labels are missing or invalid."}
+    before = {(p["arm"], p["conc"]): p for p in control["points"]}
+    if set(before) != {(p["arm"], p["conc"]) for p in results["points"]}:
+        return {**unavailable, "reason": "AKLR modes selected different points."}
+    rows = []
+    for point in results["points"]:
+        old = before[(point["arm"], point["conc"])]
+        settings = []
+        for record, plugin, disable in ((point, "1", "0"), (old, "0", "1")):
+            measurement = copy.deepcopy(record.get("measurement", {}))
+            env = measurement.get("launch", {}).get("env", {})
+            if env.pop("AKLR_SGLANG_PLUGIN", None) != plugin or env.pop("AKLR_DISABLE", None) != disable:
+                return {**unavailable, "reason": "AKLR mode switches do not match their labels."}
+            settings.append(measurement)
+        if settings[0] != settings[1]:
+            return {**unavailable, "reason": "Settings other than the AKLR switches differ between modes."}
+        rows.append(
+            {
+                "arm": point["arm"],
+                "conc": point["conc"],
+                "enabled": point,
+                "disabled": old,
+                "tput_ratio": ratio(point[Y], old[Y]),
+                "intvty_ratio": ratio(point[X], old[X]),
+            }
+        )
+    return {
+        "status": "ok",
+        "points": rows,
+        "tput_geomean_ratio": geomean([row["tput_ratio"] for row in rows]),
     }

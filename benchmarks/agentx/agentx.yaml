@@ -1,4 +1,4 @@
-# Models run serially. InferenceX supplies the grid, runtime budgets and client settings.
+# InferenceX provides sweep points and runtime settings.
 inferencex:
   repo: SemiAnalysisAI/InferenceX
   ref: main
@@ -6,19 +6,26 @@ models:
   glm52-fp4:
     enabled: true
     display_name: GLM-5.2 MXFP4
-    inferencex:
-      config_key: glm5.2-fp4-mi355x-sglang-agentic-mtp
-      expect:
-        config_file: inferencex-e2e/configs/amd-master.yaml
-        recipe: inferencex-e2e/benchmarks/single_node/srt-slurm-recipes/glm5.2/sglang/mi355x-fp4-mtp/agentic.yaml
-        model: amd/GLM-5.2-MXFP4
-        model-prefix: glm5.2
-        framework: sglang
-        precision: mxfp4
-        runner_pattern: mi355x
     weights:
       repo: amd/GLM-5.2-MXFP4
       revision: 386bd0e4ec821f7b07975701cec3c3b953a5576a
+    targets:
+      mi355x-8:
+        hardware:
+          gpu_name_pattern: '\bMI355X\b'
+          gpu_arch: gfx950
+          gpu_count: 8
+        runner_label: agentx-mi355x
+        inferencex:
+          config_key: glm5.2-fp4-mi355x-sglang-agentic-mtp
+          expect:
+            config_file: inferencex-e2e/configs/amd-master.yaml
+            recipe: inferencex-e2e/benchmarks/single_node/srt-slurm-recipes/glm5.2/sglang/mi355x-fp4-mtp/agentic.yaml
+            model: amd/GLM-5.2-MXFP4
+            model-prefix: glm5.2
+            framework: sglang
+            precision: mxfp4
+            runner_pattern: mi355x
 report:
   repo_url: https://github.com/AMD-AGI/AKLR
 advisory_env:

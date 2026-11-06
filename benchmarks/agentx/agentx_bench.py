@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Command-line entry point for the AgentX benchmark tools."""
+"""AgentX benchmark CLI."""
 
 from __future__ import annotations
 
