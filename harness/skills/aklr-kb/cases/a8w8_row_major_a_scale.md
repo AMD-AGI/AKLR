@@ -62,9 +62,9 @@ LDS table the K loop reads; n4096_k512's register body loads one 16-byte vector 
 four K blocks of K = 512.
 
 Shared with the column-major kernels: B straight from the 16×16 preshuffled layout into MFMA operand registers on
-most paths (`../gemm/flydsl_gemm_datapath.md` §10); one MFMA step per 128-wide K block folded with S_a·S_b
-(`../gemm/flydsl_gemm_mainloop.md` §5); A through XOR-swizzled LDS (`../gemm/flydsl_gemm_datapath.md` §2), by DMA
-on some paths (`../gemm/flydsl_gemm_datapath.md` §5); a configuration per m from a table (`../SKILL.md`, Stop
+most paths (`../gemm/datapath.md` §10); one MFMA step per 128-wide K block folded with S_a·S_b
+(`../gemm/mainloop.md` §5); A through XOR-swizzled LDS (`../gemm/datapath.md` §2), by DMA
+on some paths (`../gemm/datapath.md` §5); a configuration per m from a table (`../SKILL.md`, Stop
 table).
 
 Per file (functions are in the `kernel.py` each schema embeds):
@@ -77,7 +77,7 @@ Per file (functions are in the `kernel.py` each schema embeds):
 - K split across workgroups: 8 ways at m ≤ 128, 4 at m = 256 (64–256 workgroups). Each thread stores its fp32 partial
   to its own workspace slot with sc0|sc1, bumps its own counter (`raw_ptr_buffer_atomic_fadd` of 1.0), and the thread
   that arrives last for its slot sums the partials in split order, writes bf16 and resets the counter
-  (`../gemm/flydsl_gemm_grid_pricing.md` §2, `../gemm/flydsl_gemm_small_m.md` §4).
+  (`../gemm/grid_pricing.md` §2, `../gemm/small_m.md` §4).
 - K split inside the workgroup: two groups of waves at m = 512, 2048, 4096, summed through LDS in group order.
 
 **n1024_k4096** (`_select_decode` for m ≤ 128, `_select_tiles` / `_select_ngroups` / `_select_mgroups` above).
@@ -85,7 +85,7 @@ Per file (functions are in the `kernel.py` each schema embeds):
   contiguous ranges; A and B loaded up front, A hopping through per-wave LDS at m ≥ 4; wave 0 sums the partials from
   LDS in wave order; no workspace, counter or atomic; XCD remap at m = 128; 64 to 256 workgroups.
 - m ≥ 256: MFMA issued with B as the first operand, so a lane holds one row's 4 adjacent columns: one a-scale per
-  16-row block and 8-byte bf16 stores (`../gemm/flydsl_gemm_epilogue.md` §3). Two 256-thread groups per workgroup
+  16-row block and 8-byte bf16 stores (`../gemm/epilogue.md` §3). Two 256-thread groups per workgroup
   split K (m 256–2048) and exchange halves of their rows through LDS; at m = 4096 two groups stacked along N share one
   A ring (a 64×256 tile). A through a 4-stage swizzled LDS ring: async DMA at m 256, 512, 2048, register-staged at
   1024 and 4096. B into registers two K tiles ahead. Each XCD gets a compact block of tiles. 256 workgroups.

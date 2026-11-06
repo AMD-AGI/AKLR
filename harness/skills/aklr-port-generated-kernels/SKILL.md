@@ -1,6 +1,6 @@
 ---
 name: aklr-port-generated-kernels
-description: Port agent-generated GPU kernels into AKLR with their provenance, dispatch, fallbacks, and review evidence. Use for kernels produced in OpenAI or other generator repositories.
+description: Port agent-generated GPU kernels into AKLR with their provenance, dispatch, fallbacks, and review evidence. Use for kernels produced in generator repositories.
 ---
 
 # Port Generated Kernels

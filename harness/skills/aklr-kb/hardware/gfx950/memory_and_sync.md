@@ -268,11 +268,11 @@ independent instructions." (ch04 §4.5 Table 11, PDF pp.28–29). The rows that 
 
 | Card | What the ISA adds |
 |---|---|
-| `../../gemm/flydsl_gemm_datapath.md` §2–§4 (swizzle, banks, LDS waits) | §4.2: 64 banks × 4 B, serial dword placement; the card's per-width lane phases are not from the ISA. §1: LDS ops in order by type; FLAT needs both counters at zero; SMEM out of order. |
-| `../../gemm/flydsl_gemm_datapath.md` §5–§6 (DMA, M0, offsets) | §3: byte/short/dword/x3/x4 only, no x2; the immediate moves both addresses; the M0 width statements disagree; §6 M0 row. §4.3 DS offset windows. Request sizes and per-line cost are not in the ISA. |
-| `../../gemm/flydsl_gemm_datapath.md` §8–§9 (descriptors, transpose) | §2.1–§2.3: `soffset` is outside the raw range check; x2/x3/x4 are checked per dword; §6: 5 wait states after `readfirstlane`. §4.4 transpose rules. |
-| `../../gemm/flydsl_gemm_schedule_and_locality.md` §2–§4 (XCD order, hints, waits) | §5: `sched_*` are compiler directives. §1: one VM_CNT for loads and stores. XCD count and L2 size are not in the ISA. |
-| `../../gemm/flydsl_gemm_epilogue.md` §3–§5 (stores, permlanes, cache policy) | §6: 1–2 wait states before overwriting x3/x4 store data, and the permlane rows. §1: stores share VM_CNT. §2.4: scope tables; `aux` integers are the compiler's encoding, not ISA fields. |
+| `../../gemm/datapath.md` §2–§4 (swizzle, banks, LDS waits) | §4.2: 64 banks × 4 B, serial dword placement; the card's per-width lane phases are not from the ISA. §1: LDS ops in order by type; FLAT needs both counters at zero; SMEM out of order. |
+| `../../gemm/datapath.md` §5–§6 (DMA, M0, offsets) | §3: byte/short/dword/x3/x4 only, no x2; the immediate moves both addresses; the M0 width statements disagree; §6 M0 row. §4.3 DS offset windows. Request sizes and per-line cost are not in the ISA. |
+| `../../gemm/datapath.md` §8–§9 (descriptors, transpose) | §2.1–§2.3: `soffset` is outside the raw range check; x2/x3/x4 are checked per dword; §6: 5 wait states after `readfirstlane`. §4.4 transpose rules. |
+| `../../gemm/schedule_and_locality.md` §2–§4 (XCD order, hints, waits) | §5: `sched_*` are compiler directives. §1: one VM_CNT for loads and stores. XCD count and L2 size are not in the ISA. |
+| `../../gemm/epilogue.md` §3–§5 (stores, permlanes, cache policy) | §6: 1–2 wait states before overwriting x3/x4 store data, and the permlane rows. §1: stores share VM_CNT. §2.4: scope tables; `aux` integers are the compiler's encoding, not ISA fields. |
 
 ## Related
 `lookup.md` (encodings, operands, limits) · `matrix_core.md` (MFMA and its hazards) · `cdna4/ch04_program_flow_control.md` ·

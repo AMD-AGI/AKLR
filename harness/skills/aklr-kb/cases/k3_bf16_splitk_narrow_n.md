@@ -38,8 +38,8 @@ The same fold forms at N 6016–8448 and at K 35840 are in [k3_bf16_splitk_wide_
   the `CompareSpec` defaults), with the fp32 dot-product error bound of `_dot_k()` (`max_split_k` 16; `GEMM` in
   `aklr/ops/gemm/contract.py`). Every fold these kernels run adds its terms in an order fixed by index.
 - K = 7168 with N = 144, 768, 1280, 1536, 2112 or 3584 (a weight of 2–49 MiB). At m ≤ 112 the output has 9–224
-  column tiles for 256 CUs, so K is split across workgroups to fill the device (`../gemm/flydsl_gemm_small_m.md`
-  §3, §4; `../gemm/flydsl_gemm_grid_pricing.md` §1, §2).
+  column tiles for 256 CUs, so K is split across workgroups to fill the device (`../gemm/small_m.md`
+  §3, §4; `../gemm/grid_pricing.md` §1, §2).
 - Points: n768 and n3584 m 7–98 (11); n144, n1536 and n2112 m 8–16384 (17); n1280 m 8–16384 (15).
 - Each schema name has only this file (no file of another language or an older kernel under the same name on
   main), so at every Point the yardstick is aiter.
@@ -65,7 +65,7 @@ The same fold forms at N 6016–8448 and at K 35840 are in [k3_bf16_splitk_wide_
 
   A grid that is not resident at once (another kernel holding CUs, or fewer CUs) turns these waits into a hang
   (n144), NaN, or a silently wrong sum (n1536). n1536's comment calls the bound a guard against a hang, not a path
-  that runs. A fully resident grid, as on an idle GPU, hides a broken hand-off (`../gemm/flydsl_gemm_small_m.md` §4).
+  that runs. A fully resident grid, as on an idle GPU, hides a broken hand-off (`../gemm/small_m.md` §4).
 - **Flags read before this call writes them.** Where the tag is the same every call, the workspace comes from
   `torch.empty` and each fold clears its flags (or tags) at the end "for the next call" (n3584's comment): a call
   depends on the previous call having cleared them, and a fold that timed out leaves late producers' flags set
@@ -92,7 +92,7 @@ Shared by the six kernels:
 - **At m ≤ 112, K is split S ways across workgroups** (S = 14 or 7 in n144, 16 in n768 and n1280, 8 in n1536,
   7 in n2112, 4 in n3584), most of them also across the waves of a workgroup; partials go in fp32 (or 24-bit) to a
   workspace allocated by `torch.empty` per call, and are folded in the same launch, in split order, then rounded
-  once to bf16 (`../gemm/flydsl_gemm_small_m.md` §4, `../gemm/flydsl_gemm_correctness.md` §8). No atomics on data.
+  once to bf16 (`../gemm/small_m.md` §4, `../gemm/correctness.md` §8). No atomics on data.
 - **Hand-off through scoped stores and loads:** producers store partials with `sc1` or `sc0 sc1`, wait
   `vmcnt(0)` (and a barrier where the workgroup publishes together), then store a flag; waiters poll with `sc1`
   loads (n144 with agent-scope atomic 64-bit loads); no fences. n3584 stores its planes and flags with no cache
@@ -100,7 +100,7 @@ Shared by the six kernels:
 - **Splits placed on XCDs:** n144 (m ≤ 112), n2112 (m 893) and n1280 (m 893) give each XCD a contiguous
   split-major run;
   n768 gives each XCD a contiguous eighth of K; n3584 puts all four splits of a tile on one XCD
-  (`../gemm/flydsl_gemm_schedule_and_locality.md` §2).
+  (`../gemm/schedule_and_locality.md` §2).
 - **A per-m configuration table** compiled in a `functools.cache` function on a Point's first call.
 
 | | m ≤ 112 | m 893 | m 2732 | m 9397 | m 16384 |
@@ -113,8 +113,8 @@ Shared by the six kernels:
 | n3584 | m 7, 14: 256 workgroups of 14 columns, K over 4 waves, no cross-workgroup split. m 21–98: 56 tiles of 64 columns × S 4 = 224 workgroups; each wave owns 16 columns, so no in-workgroup fold; split s folds rows s·⌈m/4⌉… of the tile from planes laid out on whole 128-byte lines, its own rows from LDS; m 21–56 poll tags stored inside 24-bit-packed partials, m 70–98 per-reader flags | – | – | – | – |
 
 At m ≥ 893 (n1280, n1536, n2112) A and B go by buffer→LDS DMA into XOR-swizzled multi-stage rings
-(`../gemm/flydsl_gemm_datapath.md` §2, §5), in an XCD-grouped tile order; n1280's 8-wave loop raises `s_setprio`
-around its first MFMA group (`../gemm/flydsl_gemm_mainloop.md` §2).
+(`../gemm/datapath.md` §2, §5), in an XCD-grouped tile order; n1280's 8-wave loop raises `s_setprio`
+around its first MFMA group (`../gemm/mainloop.md` §2).
 
 **What each part bought** (campaign ablations; each kept round timed beside the version before it):
 
@@ -177,7 +177,7 @@ The report goes to `aklr_validation/report.md`; a local run checks the file, the
 bench measures only schemas that are not at the base, so on an unchanged checkout it skips the bench
 (`aklr/core/validation/stages/validation_scope.py`, `of_working_tree`). Validate's bitwise check runs the kernel on
 an otherwise idle GPU, where every split is resident; test the folds also with a grid that is not
-(`../gemm/flydsl_gemm_small_m.md` §4). To read a kernel:
+(`../gemm/small_m.md` §4). To read a kernel:
 `git show <rev>:<schema> | python3 -c 'import json,sys; print(json.load(sys.stdin)["kernel"]["sources"][0]["content"])'`.
 
 ## Rollback

@@ -66,9 +66,9 @@ None of the four splits K across workgroups.
 Shared by the four kernels:
 
 - **MFMA `mfma_f32_16x16x32_bf16` with B as the first operand**, so a lane holds four consecutive output columns
-  of one row (`../gemm/flydsl_gemm_epilogue.md` §3), fp32 accumulators.
+  of one row (`../gemm/epilogue.md` §3), fp32 accumulators.
 - **Kernel pointer arguments preloaded into SGPRs** (`amdgpu-kernarg-preload-count` 6 or 16;
-  `../gemm/flydsl_gemm_small_m.md` §6).
+  `../gemm/small_m.md` §6).
 - **A per-m configuration** compiled in a `functools.cache` function on a Point's first call.
 
 Per file:
@@ -76,7 +76,7 @@ Per file:
 **n1536_k128** (`_build_tiled` at every m).
 - The whole K = 128 is one LDS tile: one round of buffer→LDS DMAs for A and B (`buffer_load_dwordx4 … lds`,
   XOR-swizzled 16-byte chunks), one `s_waitcnt vmcnt(0)` + barrier, four MFMA K steps; no ring, no K loop
-  (`../gemm/flydsl_gemm_datapath.md` §2, §5).
+  (`../gemm/datapath.md` §2, §5).
 - m ≤ 112: a TILE_M × 16 tile with TILE_M the m bucket (16 … 112), one wave, 96 workgroups, B `nt`.
 - m 893: 32×192, 4 waves, grouped XCD order (`GROUP_M` 4), 224 workgroups. m 2732: 64×96, 4 waves, `GROUP_M` 8,
   688 workgroups. m 9397: 128×128, `GROUP_M` 16, 888 workgroups. m 16384: 128×192, `GROUP_M` 8, 1024 workgroups.
@@ -94,7 +94,7 @@ Per file:
   feeds one wave, so LDS would add no reuse. A goes to registers directly at m ≤ 3 and through LDS (row stride
   padded by 8 elements) from m 4.
 - Adjacent column tiles are dealt to one XCD in groups of 8 (`_grouped_tile`), so a C row's neighbouring tiles
-  finish in one L2 (`../gemm/flydsl_gemm_small_m.md` §6); C leaves as 16-byte row stores from m 2.
+  finish in one L2 (`../gemm/small_m.md` §6); C leaves as 16-byte row stores from m 2.
 
 **n2304_k1536** (`_build`, per-m keyword table).
 
@@ -105,8 +105,8 @@ Per file:
 | 9397 | 448×192, 8 (4×2) | 2, 64 | 252, one round | C staged and stored in two passes, `sc1`; LLVM scheduler `iterative-ilp` |
 | 16384 | 256×288, 8 (4×2) | 2, 64 | 256 for 512 tiles | two tiles per workgroup: the second walks K in reverse, starting on the slices the first just left in L2; tile 0's C leaves through stage 1 while stage 0 loads tile 1; scheduler `iterative-minreg`; C `sc1` |
 
-Grids sized to whole rounds of the 256 CUs (`../gemm/flydsl_gemm_grid_pricing.md` §1, §10); the scheduler
-strategy goes in through `amdgpu-sched-strategy` (`../gemm/flydsl_gemm_schedule_and_locality.md` §3).
+Grids sized to whole rounds of the 256 CUs (`../gemm/grid_pricing.md` §1, §10); the scheduler
+strategy goes in through `amdgpu-sched-strategy` (`../gemm/schedule_and_locality.md` §3).
 
 **n3072_k512** (`_build`, one configuration for every m).
 - 256×256 tiles, 8 waves (2×4), two LDS stages of K 64, `GROUP_M` 2 grouped order, `waves_per_eu` 2.
@@ -119,7 +119,7 @@ strategy goes in through `amdgpu-sched-strategy` (`../gemm/flydsl_gemm_schedule_
 - No workgroup barrier between items: each K block's barrier sits mid-block, the block after next is filled behind
   it, and each wave stages its own C rows (32 per pass) through a private LDS area and stores them `nt`.
 - At m ≤ 200000, odd workgroups of each XCD sleep before their first fill, so the two halves reach their
-  epilogues out of phase (`../gemm/flydsl_gemm_grid_pricing.md` §10).
+  epilogues out of phase (`../gemm/grid_pricing.md` §10).
 
 **What each part bought** (campaign ablations; each kept round timed beside the version before it):
 

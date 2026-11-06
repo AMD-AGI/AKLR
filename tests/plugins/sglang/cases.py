@@ -314,6 +314,37 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # Qwen3-Next-80B's full-attention heads at TP4, the same widths; at the 8192-token
+    # capacity, its longest row at it and the other three a few dozen tokens
+    PointSpec(
+        contract_id="qwen3_next_gated_attention_decode_group_fp8_quant@1.0",
+        axes={
+            "n_tokens": 4,
+            "qkv_dim": 2560,
+            "n_kv_heads": 1,
+            "head_dim": 256,
+            "n_slots": 64,
+            "n_positions": 64,
+            "n_offsets": 5,
+            "n_kv_tokens": 8288,
+        },
+        dtypes={
+            "projected_qkv": "bfloat16",
+            "q_norm_weight": "bfloat16",
+            "k_norm_weight": "bfloat16",
+            "positions": "int64",
+            "cos_sin_cache": "float32",
+            "cache_locations": "int64",
+            "key_cache": "float8_e4m3fn",
+            "value_cache": "float8_e4m3fn",
+            "kv_indptr": "int32",
+            "kv_indices": "int32",
+            "values": "float8_e4m3fn",
+            "scales": "float32",
+        },
+        attrs={"max_context": 8192},
+        layout_variant_name="row_major",
+    ),
     # GLM-5.2's absorbed MLA shrunk: its 192-wide position-free query part (a full and a
     # half fp8 group) and 64-wide RoPE part, four heads, a 128-wide latent
     PointSpec(
@@ -395,6 +426,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "qwen3_next_gdn_prefill_group_fp8_quant@1.0",
         "qwen3_next_gdn_decode_group_fp8_quant@1.0",
         "gated_attention_decode_group_fp8_quant@1.0",
+        "qwen3_next_gated_attention_decode_group_fp8_quant@1.0",
         "mla_kc_rope_cache@1.0",
         "mla_qkv_a_norm@1.0",
         "mla_vc@1.0",
