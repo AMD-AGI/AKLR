@@ -8,7 +8,10 @@ Rounding points: the convolution's SiLU to BF16; in prefill, the L2-normalized Q
 to BF16 too; beta and the core output to BF16; the gated RMS-normalized output to BF16,
 then the per-head E4M3FN values. The convolution sums the bias and the four products
 exactly, oldest tap first. The recurrence runs in float64 and the final states round
-to FP32."""
+to FP32.
+
+The gated attention decode reference computes in the float dtype ``decode`` gives, with
+the rounding points its docstring lists."""
 
 import inspect
 import itertools
@@ -16,7 +19,10 @@ import itertools
 import torch
 import torch.nn.functional as F
 
+from aklr.plugins.sglang.models.qwen3_5.contract import ROTARY_DIM
+
 __all__ = [
+    "qwen3_next_gated_attention_decode_group_fp8_quant_reference",
     "qwen3_next_gdn_decode_group_fp8_quant_reference",
     "qwen3_next_gdn_prefill_group_fp8_quant_reference",
     "reference_decode",
@@ -223,3 +229,75 @@ def qwen3_next_gdn_prefill_group_fp8_quant_reference(point, row_major_args, deco
 def qwen3_next_gdn_decode_group_fp8_quant_reference(point, row_major_args, decode):
     """The outputs, then both final state pools."""
     return _reference(reference_decode, point, row_major_args, decode)
+
+
+def _rounded(x, dtype):
+    """``x`` rounded to ``dtype``, kept in its own float dtype."""
+    return x.to(dtype).to(x.dtype)
+
+
+def _gemma_norm_rope(x, weight, eps, cos, sin):
+    """Per-head RMSNorm with weight 1 + weight, rounded to BF16, then NeoX RoPE on the
+    first ROTARY_DIM channels, rounded to BF16; ``x`` (rows, heads, head_dim), ``cos`` and
+    ``sin`` (rows, ROTARY_DIM // 2)."""
+    normalized = x * torch.rsqrt(x.square().mean(-1, keepdim=True) + eps) * (1 + weight)
+    normalized = _rounded(normalized, torch.bfloat16)
+    half = ROTARY_DIM // 2
+    first, second = normalized[..., :half], normalized[..., half:ROTARY_DIM]
+    cos, sin = cos[:, None, :], sin[:, None, :]
+    rotated = torch.cat((first * cos - second * sin, second * cos + first * sin), dim=-1)
+    return torch.cat((_rounded(rotated, torch.bfloat16), normalized[..., ROTARY_DIM:]), dim=-1)
+
+
+def qwen3_next_gated_attention_decode_group_fp8_quant_reference(point, row_major_args, decode):
+    """The contract's decode in ``decode``'s float dtype; the grouped FP8 values (before
+    their E4M3FN rounding) and scales, then both pools as the call leaves them.
+
+    Rounding points: the normalized and the rotated Q and K to BF16 (the tensors sglang
+    keeps between its kernels), the keys and values to E4M3FN in the pools, the attention
+    output and the gated output to BF16. Rows write their slots before any row attends.
+    max_context bounds how many slots a row attends and does not change the result.
+    """
+    args, dtypes = row_major_args, point.dtypes
+    qkv_dim, kv_heads, head_dim = (point.axes[n] for n in ("qkv_dim", "n_kv_heads", "head_dim"))
+    kv_width = kv_heads * head_dim
+    heads = (qkv_dim - 2 * kv_width) // (2 * head_dim)
+    width = heads * head_dim
+    eps, scale = args["eps"], args["scale"]
+    qkv = decode(args["projected_qkv"], dtypes["projected_qkv"])
+    rows, device = qkv.shape[0], qkv.device
+    query_gate = qkv[:, : 2 * width].reshape(rows, heads, 2, head_dim)
+    keys = qkv[:, 2 * width : 2 * width + kv_width].reshape(rows, kv_heads, head_dim)
+    values = qkv[:, 2 * width + kv_width :].reshape(rows, kv_heads, head_dim)
+
+    # each row's cosines and sines, at its one position
+    angles = decode(args["cos_sin_cache"], dtypes["cos_sin_cache"])[args["positions"]]
+    cos, sin = angles[:, : ROTARY_DIM // 2], angles[:, ROTARY_DIM // 2 : ROTARY_DIM]
+    q_weight = decode(args["q_norm_weight"], dtypes["q_norm_weight"])
+    k_weight = decode(args["k_norm_weight"], dtypes["k_norm_weight"])
+    query = _gemma_norm_rope(query_gate[:, :, 0], q_weight, eps, cos, sin)
+    keys = _gemma_norm_rope(keys, k_weight, eps, cos, sin)
+
+    # decode may return its input itself: the pools are written in copies
+    key_cache = decode(args["key_cache"], dtypes["key_cache"]).clone()
+    value_cache = decode(args["value_cache"], dtypes["value_cache"]).clone()
+    slots = args["cache_locations"]
+    key_cache[slots] = _rounded(keys, torch.float8_e4m3fn)
+    value_cache[slots] = _rounded(values, torch.float8_e4m3fn)
+
+    starts = args["kv_indptr"].tolist()
+    indices = args["kv_indices"]
+    group = heads // kv_heads
+    attention = torch.empty((rows, kv_heads, group, head_dim), dtype=qkv.dtype, device=device)
+    for row in range(rows):
+        read = indices[starts[row] : starts[row + 1]]
+        q = query[row].reshape(kv_heads, group, head_dim)
+        scores = torch.einsum("kgd,tkd->kgt", q, key_cache[read]) * scale
+        attention[row] = torch.einsum("kgt,tkd->kgd", scores.softmax(-1), value_cache[read])
+    attention = _rounded(attention.reshape(rows, heads, head_dim), torch.bfloat16)
+    gated = _rounded(attention * torch.sigmoid(query_gate[:, :, 1]), torch.bfloat16)
+
+    groups = gated.reshape(rows, -1, 128)
+    scales = groups.abs().amax(-1).clamp_min(1e-10) / 448.0
+    quantized = (groups / scales[..., None]).clamp(-448.0, 448.0).reshape(rows, heads, head_dim)
+    return quantized, scales, key_cache, value_cache

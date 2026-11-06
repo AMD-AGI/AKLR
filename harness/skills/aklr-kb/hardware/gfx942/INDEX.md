@@ -17,7 +17,7 @@ Use it to settle what an instruction does on gfx942, which encoding and operands
 state requires, and what the hardware limits are. There are no guides to looking things up here yet; the chapters
 have the same layout as the CDNA4 guide's, so `../gfx950/lookup.md`, `../gfx950/matrix_core.md` and
 `../gfx950/memory_and_sync.md` show where to look, with gfx942's own chapter in place of CDNA4's. What gfx942
-changes for a GEMM is in `../../gemm/flydsl_gemm_gfx942.md`.
+changes for a GEMM is in `../../gemm/gfx942.md`.
 
 ## File map
 

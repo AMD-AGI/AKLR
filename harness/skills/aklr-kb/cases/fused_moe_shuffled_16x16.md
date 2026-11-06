@@ -55,7 +55,7 @@ names below are in those sources. "m" is the Point's `n_tokens`; a route is one 
   0.184–0.903 there *(field, E1)*, so `4fbd9d02…` is 1.25–5.9× faster (estimated from the two CI ratios).
 - **`4fbd9d02…` adds each token's 9 weighted rows into `out` with bf16x2 atomics in arrival order**, so its output bits
   differ between runs: run-to-run SQNR 48.4–51.9 dB *(field, E8)*. Under a bitwise contract it would need a
-  fixed-order stage 2 (`../moe/flydsl_moe_decode.md`, Counter-signals).
+  fixed-order stage 2 (`../moe/decode.md`, Counter-signals).
 - **33 experts: m 8 (1.019) and m 32 (0.991) are not served, and m 64 is served at exactly 1.030** *(field, E3)*.
   Across the five committed measurements: m 8 0.994, 1.031, 1.009, 1.012, 1.019; m 32 0.974, 1.024, 1.003, 1.002,
   0.991; m 64 1.008, 1.033, 1.025, 1.022, 1.030; m 2 1.011, 1.039, 1.033, 1.046, 1.049; m 16 0.983, 1.045, 1.036,
@@ -93,8 +93,8 @@ What the four kernels share:
 
 - **Scaled fp4 MFMA.** `mfma_scale_f32_16x16x128_f8f6f4` with fp4 on both operands and the E8M0 scale bytes as
   operands (`ef15e878…` also its 32×32×64 form in stage 2 at m 64, 256, 512), fp32 accumulation
-  (`../gemm/flydsl_gemm_mainloop.md` §5). The preshuffled weights go from global straight into MFMA operand
-  registers with 16-byte loads (`../gemm/flydsl_gemm_datapath.md` §10, §11).
+  (`../gemm/mainloop.md` §5). The preshuffled weights go from global straight into MFMA operand
+  registers with 16-byte loads (`../gemm/datapath.md` §10, §11).
 - **Activations quantized twice on the GPU:** the input rows to MXFP4 (amax of each 32-value group across lanes, an
   E8M0 exponent from it, `cvt_scalef32_pk_fp4_*`), and the SiLU(gate)·up intermediate again before stage 2: in stage
   1's epilogue, or, in `1fee5982…` at m 1 and 2, at the start of stage 2.
@@ -102,7 +102,7 @@ What the four kernels share:
   workgroups, so the expert is read straight from `topk_ids`; the token row is quantized inside each stage-1
   workgroup; stage 1 splits K over waves or workgroups and adds the parts in a fixed order; stage 2 runs one wave per
   route and adds the 9 weighted rows of a token in LDS in route order. Every row of the 16-row MFMA tile is the same
-  token and only row 0 is kept. This is the decode shape of `../moe/flydsl_grouped_moe_inference.md` §3
+  token and only row 0 is kept. This is the decode shape of `../moe/grouped_moe_inference.md` §3
   (the N blocks are the parallelism) taken to one route per workgroup.
 - **Configuration per m from constants in the source**, compiled on a Point's first call.
 
@@ -120,21 +120,21 @@ Per file (functions are in the sources each schema embeds):
   launches; none of those Points is served (Counter-signals).
 
 **`4fbd9d02…`, 257 experts, inter 256 — served at m 8, 16, 32, 64.** Two launches with the routing sort folded into
-stage 1: `../moe/flydsl_moe_decode.md` describes the fold.
+stage 1: `../moe/decode.md` describes the fold.
 - Stage 1 (`g1_fold.py`): 16-row expert blocks × 2 blocks of 128 gate + 128 up columns, 4 waves of 4 16-column
   tiles; K = 6144 in 24 tiles of 256. Weights non-temporal into a 2-stage register ring; the 16 hidden rows gathered
   by token id two loop bodies ahead, quantized inline into a 3-stage XOR-swizzled LDS ring; 8 scaled MFMAs per tile
   and wave at raised priority (`s_setprio`); accumulators through LDS, SiLU·up, MXFP4 with shuffled E8M0 scales in
   sorted-row order. At m = 32 the tile order is grouped per XCD after the bound test
-  (`../gemm/flydsl_gemm_schedule_and_locality.md` §2). 144–554 workgroups.
+  (`../gemm/schedule_and_locality.md` §2). 144–554 workgroups.
 - Stage 2 (`g2_port.py`, aiter's `mxfp4_gemm2.py` with a CK-style tile remap `_g2_spart_tile`, the expert id read
-  before the A loads, and `amdgpu-kernarg-preload-count` 16, `../gemm/flydsl_gemm_small_m.md` §6): per 16-row block,
+  before the A loads, and `amdgpu-kernarg-preload-count` 16, `../gemm/small_m.md` §6): per 16-row block,
   24 workgroups of 256 output columns, K = 256 in one tile, the MXFP4 intermediate by buffer→LDS DMA, weights
   non-temporal into registers, × routing weight, bf16x2 `atomicrmw fadd` into `out`. Upper-bound grids of
-  1728–6648 workgroups; those past the device bound exit (`../moe/flydsl_grouped_moe_inference.md` §2, §6).
+  1728–6648 workgroups; those past the device bound exit (`../moe/grouped_moe_inference.md` §2, §6).
 
 **`ef15e878…`, 33 experts, inter 2048 — served at m 1, 2, 4, 16, 64–4096.** Every GEMM maps its workgroup id with
-`_chiplet_order`, a contiguous slice of the tile order per XCD (`../gemm/flydsl_gemm_schedule_and_locality.md` §2);
+`_chiplet_order`, a contiguous slice of the tile order per XCD (`../gemm/schedule_and_locality.md` §2);
 one aligned scale dword serves two 16-column halves and two K slices (`PACKED_SCALES1/2`); the intermediate is
 rounded to bf16 before its MXFP4 quantization. Stage-1 weights load non-temporal at m 2–256, cached at m 1 and
 m ≥ 512 (`CACHE1`). Per m (`build_mxfp4_moe_e33_i1024_module`):

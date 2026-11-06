@@ -30,7 +30,7 @@ the Point's M.
   `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`, `max_violation_fraction` 0.0;
   `GEMM` in `aklr/ops/gemm/contract.py`). Every reduction these kernels run at a served Point adds in a fixed order.
 - K = 6144 with N = 32, 128 or 256: a weight of 384 KiB, 1.5 MiB or 3 MiB, a narrow-N row bound by launch,
-  reduction and memory latency rather than by reading `b` (`../gemm/flydsl_gemm_small_m.md` §2).
+  reduction and memory latency rather than by reading `b` (`../gemm/small_m.md` §2).
 - Served Points: n128 m 2, 4; n256 m 2, 4, 8, 2048, 4096; n32 m 4, 8, 2048. Each file holds 13 Points,
   m = 1, 2, 4, …, 4096.
 - Each schema name has only this file, so at every Point the yardstick is aiter.
@@ -49,7 +49,7 @@ the Point's M.
   workspace with `BufferAtomicAdd(Float64)` (`_epilogue_atomic_sum`); the last producer converts to bf16. Adding
   fp32 partials in fp64 is exact only while all partials and running sums fit one 53-bit window, which
   cancellation or a wide magnitude spread breaks (estimated), so the output can depend on arrival order under a
-  bitwise contract (`../gemm/flydsl_gemm_correctness.md` §8). CI's check passed at that Point, which is not
+  bitwise contract (`../gemm/correctness.md` §8). CI's check passed at that Point, which is not
   served (0.631 *(field, E1)*). Do not copy it.
 - **Counters that live across calls.** n32's split paths (m = 2 and m ≥ 16, the served m = 2048 included) zero
   their arrival counters once per shape and rely on `atomicrmw uinc_wrap` returning each to 0 at its last
@@ -74,9 +74,9 @@ registers, fp32 accumulation, one launch:
 | Inner product | each thread loads its 24 bf16 of the `b` row once and reuses them for the workgroup's rows; m 2: fp32 products summed in the thread; m 4: `v_dot2_f32_bf16` in 4 independent chains | 3 steps of 16 B of `a` and `b` per thread; `v_dot2_f32_bf16` into 4 fp32 accumulators | 12 steps of 16 B per lane; `v_dot2_f32_bf16` into 4 fp32 accumulators |
 | Fold | 6-step xor shuffle per wave, then thread 0 sums the 4 waves' partials from LDS in wave order | the same | 6-step xor shuffle; lane 0 stores |
 
-With N this narrow, an MFMA tile covers few columns and the grid is small (`../gemm/flydsl_gemm_grid_pricing.md` §1,
-`../gemm/flydsl_gemm_small_m.md` §3); here every output element gets its own wave or workgroup and the fold never
-leaves it (`../gemm/flydsl_gemm_small_m.md` §5: splitting N across warps needs no LDS reduction, splitting K
+With N this narrow, an MFMA tile covers few columns and the grid is small (`../gemm/grid_pricing.md` §1,
+`../gemm/small_m.md` §3); here every output element gets its own wave or workgroup and the fold never
+leaves it (`../gemm/small_m.md` §5: splitting N across warps needs no LDS reduction, splitting K
 does).
 
 **m ≥ 2048: split-K MFMA with a fold in a fixed order.**
@@ -91,9 +91,9 @@ does).
   counter (`atomicrmw uinc_wrap`, agent scope); the last of the 4 sums planes 0–3 in order and stores bf16, all in
   the GEMM launch.
 
-Fold forms: a separate reduce launch against an in-launch last-arriver (`../gemm/flydsl_gemm_grid_pricing.md` §2,
-`../gemm/flydsl_gemm_small_m.md` §4); both are bitwise-stable because the order is fixed
-(`../gemm/flydsl_gemm_correctness.md` §8).
+Fold forms: a separate reduce launch against an in-launch last-arriver (`../gemm/grid_pricing.md` §2,
+`../gemm/small_m.md` §4); both are bitwise-stable because the order is fixed
+(`../gemm/correctness.md` §8).
 
 ## Result
 

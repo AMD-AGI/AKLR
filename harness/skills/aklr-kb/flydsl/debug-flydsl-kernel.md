@@ -84,7 +84,7 @@ Three checks that settle "did my change run?":
 - **Read what was compiled.** In a fresh process, `FLYDSL_DUMP_IR=1` skips the disk cache and writes every
   pass and `NN_final_isa.s` under `$FLYDSL_DUMP_DIR/<kernel>/` (default `~/.flydsl/debug`;
   `python/flydsl/utils/env.py:249-251`, `python/flydsl/compiler/jit_function.py:1414`). How to read the dump:
-  `../gemm/flydsl_gemm_mainloop.md` §10.
+  `../gemm/mainloop.md` §10.
 
 ## Start from the symptom
 | What you observe | Most likely cause | Section |

@@ -77,6 +77,8 @@ Two forms, both silent about which kernels went missing.
   as on a FlyDSL GEMM in the same checks *(field, E8)*: there, a high fault rate was no sign of a kernel bug.
 - For kernel shares from a serving trace, use a trace whose kernel time matches the step period, or time the
   kernel's exact call in a microbenchmark. `rocprofv3 --pid` attached to that server wrote nothing.
+- A trace taken with graphs off, to see every kernel, bills each GPU's wait for the others to the
+  collectives: `nograph_trace_inflates_collectives.md`.
 
 ## Scope
 

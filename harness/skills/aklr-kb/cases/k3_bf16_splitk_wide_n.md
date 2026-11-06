@@ -39,7 +39,7 @@ large-m paths of the four K 7168 kernels come from one further campaign over the
   two terms.
 - K = 7168 with N = 6016, 6144, 6288 or 8448 (a weight of 82–115.5 MiB), and N 7168 × K 35840 (490 MiB). At
   m ≤ 112 a grid of 48- to 256-wide column tiles already has 28–128 tiles per row block, so a split of 2–8 fills
-  the 256 CUs (`../gemm/flydsl_gemm_small_m.md` §3, §4).
+  the 256 CUs (`../gemm/small_m.md` §3, §4).
 - Points: m 8–16384 (17) for n6016, n6144, n8448; m 8–60 and 893–16384 (13) for n6288; 15 for k35840.
 - Each schema name has only this file (no file of another language or an older kernel under the same name on
   main), so at every Point the yardstick is aiter.
@@ -67,7 +67,7 @@ large-m paths of the four K 7168 kernels come from one further campaign over the
   A grid that is not resident at once (another kernel holding CUs, or fewer CUs) turns the last two into silently
   wrong sums. Both kernels call the bound a guard against a hang; n6288's comment says a split that gives up writes
   "an unfolded value", but the code adds the stale slot to its own term. A fully resident grid, as on an idle GPU,
-  hides a broken hand-off (`../gemm/flydsl_gemm_small_m.md` §4).
+  hides a broken hand-off (`../gemm/small_m.md` §4).
 - **Flags read before this call writes them.** Where the tag is the same every call (n6016 above m 32, n6144,
   n8448), the workspace comes from `torch.empty` and the fold clears the flags at the end: a call depends on the
   previous call having cleared them, and a timed-out fold leaves late producers' flags set for the next call
@@ -87,15 +87,15 @@ large-m paths of the four K 7168 kernels come from one further campaign over the
 Shared by the five kernels:
 
 - **MFMA `mfma_f32_16x16x32_bf16` into fp32**; A and B by buffer→LDS DMA into XOR-swizzled multi-stage rings
-  (`../gemm/flydsl_gemm_datapath.md` §2, §5).
+  (`../gemm/datapath.md` §2, §5).
 - **Splits at m ≤ 112 are few (at most 8; none in n6288 at m ≤ 24)**, partials in fp32 (n8448: 24-bit at m 24–112) in a workspace allocated by
   `torch.empty` per call, folded in the same launch and rounded once to bf16; no atomics on data
-  (`../gemm/flydsl_gemm_small_m.md` §4, `../gemm/flydsl_gemm_correctness.md` §8).
+  (`../gemm/small_m.md` §4, `../gemm/correctness.md` §8).
 - **XCD-aware orders:** grouped tile runs per XCD at large m (3–9 block rows, or 5–6 column blocks, per group);
   n8448's producers in split-major runs; n6288's two K halves of a strip on one XCD; k35840's K slices one per XCD
-  at split 8 (four XCDs per slice at split 2) (`../gemm/flydsl_gemm_schedule_and_locality.md` §2).
+  at split 8 (four XCDs per slice at split 2) (`../gemm/schedule_and_locality.md` §2).
 - **Kernel pointer arguments preloaded into SGPRs** in n6016, n6144 and n8448 (8–16 dwords) and in n6288's
-  large-m kernel (`../gemm/flydsl_gemm_small_m.md` §6); k35840 does not.
+  large-m kernel (`../gemm/small_m.md` §6); k35840 does not.
 
 | | m ≤ 112 | m 893 | m 2732 | m 9397 | m 16384 |
 |---|---|---|---|---|---|
@@ -107,7 +107,7 @@ Shared by the five kernels:
 
 k35840's fold: every split stores the fragments it does not own (agent-scope `sc1`), waits `vmcnt(0)` and a
 barrier, stores its flag, polls all S flags, and each fragment's owner sums planes 0 … S−1 in order, its own from
-registers. Its 8-wave tiles use the pipeline of `../gemm/flydsl_gemm_mainloop.md` §2.
+registers. Its 8-wave tiles use the pipeline of `../gemm/mainloop.md` §2.
 
 **What each part bought** (campaign ablations; each kept round timed beside the version before it; the large-m
 rounds come from a second campaign over the four K 7168 kernels):

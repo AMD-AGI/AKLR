@@ -40,7 +40,7 @@ kernel as `kernel.sources[0].content` (`kernel.py`); function names below are in
   `aklr/ops/gemm/contract.py`).
 - N × K = 7168 × 768, 1536, 1792, 3584, 4224 (a weight of 10.5–57.75 MiB), 18432 × 1536 (54 MiB) and
   20480 × 7168 (280 MiB): at m ≤ 112 each call streams the whole weight once
-  (`../gemm/flydsl_gemm_small_m.md` §2). k1792 and n18432 / n20480 have only decode Points (m ≤ 112); the other
+  (`../gemm/small_m.md` §2). k1792 and n18432 / n20480 have only decode Points (m ≤ 112); the other
   four also have m 893, 2732, 9397, 16384.
 - Each schema name has only this file (no file of another language or an older kernel under the same name on
   main), so at every Point the yardstick is aiter.
@@ -65,7 +65,7 @@ kernel as `kernel.sources[0].content` (`kernel.py`); function names below are in
   with plain stores. The fold order is fixed (planes 0, 1, … then its own), so the result is bitwise stable, but a
   flag word is read before this call writes it: correctness depends on the previous call having cleared it.
   `aklr/ops/README.md` § The kernel section and ABI asks for scratch rewritten before it is read; zeroing
-  flags on every call (`../gemm/flydsl_gemm_small_m.md` §4) removes the dependency. Its docstring
+  flags on every call (`../gemm/small_m.md` §4) removes the dependency. Its docstring
   (`_sk_count_ready`) says "this call's tag".
 - **A cross-workgroup split lost on k1792's grid.** A one-launch split-K 2 with a flag hand-off measured 9.89 µs at
   m 7 to 15.76 µs at m 98, worse at every Point than the single-pass kernel (6.13–11.55 µs) *(field, E18)*.
@@ -90,10 +90,10 @@ kernel as `kernel.sources[0].content` (`kernel.py`); function names below are in
 Shared by the seven kernels:
 
 - **MFMA `mfma_f32_16x16x32_bf16` with B as the first operand**, so a lane's four fp32 results are four
-  consecutive output columns of one row and C leaves as 8- or 16-byte stores (`../gemm/flydsl_gemm_epilogue.md`
+  consecutive output columns of one row and C leaves as 8- or 16-byte stores (`../gemm/epilogue.md`
   §3); k4224's split-K path keeps A first.
 - **A and B into LDS by buffer→LDS DMA** (inline `buffer_load_dwordx4 … lds`, 16 B per lane), XOR-swizzled by
-  16-byte chunk, in multi-stage rings (`../gemm/flydsl_gemm_datapath.md` §2, §5); k768's skinny path (m ≤ 16) is
+  16-byte chunk, in multi-stage rings (`../gemm/datapath.md` §2, §5); k768's skinny path (m ≤ 16) is
   the exception: A staged once in LDS from registers, B straight from global into registers.
 - **No K split across workgroups** except k4224 at m 56–112. Where waves of one workgroup split K, an owner wave
   adds the partials from LDS in wave order; every output is one fp32 sum in an order fixed per output.
@@ -112,9 +112,9 @@ Shared by the seven kernels:
 | Other | K start staggered per band (×3 mod K tiles) from m 35 / 40; partials placed clear of the last tile's ring slots so the fold needs no extra barrier; kernel pointers preloaded into SGPRs | — | operand-swapped stores | K start staggered per workgroup; waves with no rows below m skip the last A DMA at m 33–64; kernel pointers preloaded |
 
 The L2-prefetch workgroups DMA later B tiles of their XCD's bands into LDS and discard them, so the compute
-workgroups find them in L2 (`../gemm/flydsl_gemm_small_m.md` §6). k4224 at m 56–112 instead splits K 3 ways
+workgroups find them in L2 (`../gemm/small_m.md` §6). k4224 at m 56–112 instead splits K 3 ways
 (64×96 or 96×96 tiles, 225 workgroups) or 2 ways (112×64, 224 workgroups) with the last-split fold described
-under Counter-signals (`../gemm/flydsl_gemm_grid_pricing.md` §2).
+under Counter-signals (`../gemm/grid_pricing.md` §2).
 
 **m 893–16384 (k768, k1536, k3584, k4224): a tiled async-LDS HGEMM, persistent at the two largest m.**
 
@@ -128,14 +128,14 @@ under Counter-signals (`../gemm/flydsl_gemm_grid_pricing.md` §2).
 
 - **The 8-wave pipeline** interleaves the next stage's DMAs with the MFMA clusters of the first K step, reads
   each fragment one cluster ahead, raises `s_setprio` around the clusters and pins the order with a
-  `sched_group_barrier` table (`../gemm/flydsl_gemm_mainloop.md` §2, `../gemm/flydsl_gemm_schedule_and_locality.md`
+  `sched_group_barrier` table (`../gemm/mainloop.md` §2, `../gemm/schedule_and_locality.md`
   §3).
 - **The persistent walk:** 256 workgroups take tiles 256 apart; after the last K stage's barrier each loads the
   next tile's first stage, then finishes the current tile, and each wave stages its C sub-tile through a private
   LDS slice past the operand ring, so the epilogue needs no workgroup barrier
-  (`../gemm/flydsl_gemm_grid_pricing.md` §10).
+  (`../gemm/grid_pricing.md` §10).
 - **Tile order:** each XCD takes a contiguous run of tiles, walked a few block rows (`GROUP_M` 3–7) at a time
-  (`../gemm/flydsl_gemm_schedule_and_locality.md` §2); k768 and k1536 keep the linear order at m 893.
+  (`../gemm/schedule_and_locality.md` §2); k768 and k1536 keep the linear order at m 893.
 
 **What each part bought** (campaign ablations; each kept round timed beside the version before it):
 

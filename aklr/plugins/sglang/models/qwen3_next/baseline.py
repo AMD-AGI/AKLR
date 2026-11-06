@@ -8,7 +8,15 @@ per-1x128 FP8 quantization that the block-FP8 out_proj applies to its BF16 input
 
 The prefill gives fresh slots a zero state itself, to implement the contract
 independently of sglang's allocator, and hands the convolution the host maximum as its
-launch geometry, as sglang's own lengths give it, without a timed device-to-host read."""
+launch geometry, as sglang's own lengths give it, without a timed device-to-host read.
+
+The gated attention decode replays what Qwen3HybridAttentionDecoderLayer.self_attention runs
+between qkv_proj and o_proj on HIP with an FP8 KV cache on the aiter backend, then the AITER
+quantization of the block-FP8 o_proj."""
+
+import functools
+
+_PARTITION_SIZE = 256  # sglang's _AITER_PARTITION_SIZE_ROCM
 
 
 def _heads(conv_state, delta_state):
@@ -160,3 +168,103 @@ def qwen3_next_gdn_decode_group_fp8_quant_baseline(
         use_qk_l2norm_in_kernel=True,
     )
     return _normalize_quantize(core, z, norm_weight, eps, rows)
+
+
+@functools.cache
+def _unit_scale(device):
+    """The aiter backend's KV scale tensor, 1.0, which an FP8 checkpoint's own unit KV
+    scales equal."""
+    import torch
+
+    return torch.ones(1, dtype=torch.float32, device=device)
+
+
+@functools.cache
+def _last_page_lengths(rows, device):
+    """The aiter backend's kv_last_page_len: one-token pages."""
+    import torch
+
+    return torch.ones(rows, dtype=torch.int32, device=device)
+
+
+def qwen3_next_gated_attention_decode_group_fp8_quant_baseline(
+    projected_qkv,
+    q_norm_weight,
+    k_norm_weight,
+    positions,
+    cos_sin_cache,
+    cache_locations,
+    key_cache,
+    value_cache,
+    kv_indptr,
+    kv_indices,
+    eps=1e-6,
+    scale=256**-0.5,
+    max_context=8192,
+    values=None,
+    scales=None,
+):
+    """forward_prepare_native's query and gate split, GemmaRMSNorm's ROCm Triton norm of Q
+    and K, the rotary module's sgl_kernel rotary_embedding (BF16 arithmetic), the aiter
+    backend's forward_decode (its fused FP8 KV write, then paged_attention_ragged over
+    one-token pages at unit KV scales, its partitions sized for a max_context-token server),
+    sigmoid_gate_mul, then the per-1x128 AITER quantization the block-FP8 o_proj applies to
+    its BF16 input (row-major scales)."""
+    import aiter
+    import torch
+    from sgl_kernel import rotary_embedding
+    from sglang.kernels.ops.kvcache.cache_ops import launch_reshape_and_cache_flash
+    from sglang.kernels.ops.layernorm.minimax_m3_rmsnorm import gemma_rmsnorm
+    from sglang.kernels.ops.moe.triton_sigmoid_gate_mul import sigmoid_gate_mul
+
+    rows, device = projected_qkv.shape[0], projected_qkv.device
+    _, kv_heads, head_dim = key_cache.shape
+    heads = (projected_qkv.shape[1] - 2 * kv_heads * head_dim) // (2 * head_dim)
+    width, kv_width = heads * head_dim, kv_heads * head_dim
+    query_gate, key, value = projected_qkv.split([2 * width, kv_width, kv_width], dim=-1)
+    query, gate = torch.chunk(query_gate.view(rows, heads, -1), 2, dim=-1)
+    query, gate = query.reshape(rows, -1), gate.reshape(rows, -1)
+    query = gemma_rmsnorm(query.reshape(-1, head_dim), q_norm_weight, eps).view(rows, -1)
+    key = gemma_rmsnorm(key.reshape(-1, head_dim), k_norm_weight, eps).view(rows, -1)
+    rotary_embedding(positions, query, key, head_dim, cos_sin_cache, True)
+    unit = _unit_scale(device)
+    key_pages = key_cache.view(-1, 1, kv_heads, head_dim)
+    value_pages = value_cache.view(-1, 1, kv_heads, head_dim)
+    launch_reshape_and_cache_flash(
+        key.view(-1, kv_heads, head_dim),
+        value.view(-1, kv_heads, head_dim),
+        key_pages,
+        value_pages,
+        cache_locations,
+        k_scale=unit,
+        v_scale=unit,
+    )
+    partitions = -(-max_context // _PARTITION_SIZE)
+    # the backend's float32 workspace: partial outputs, then exp sums and max logits
+    workspace = torch.empty(rows * heads * partitions * (head_dim + 2) * 4, dtype=torch.uint8, device=device)
+    attended = torch.empty((rows, width), dtype=torch.bfloat16, device=device)
+    aiter.paged_attention_ragged(
+        attended.view(-1, heads, head_dim),
+        workspace,
+        query.view(-1, heads, head_dim),
+        key_pages,
+        value_pages,
+        scale,
+        kv_indptr,
+        kv_indices,
+        _last_page_lengths(rows, device),
+        1,
+        partitions,
+        None,
+        "fp8_e4m3",
+        "NHD",
+        0.0,
+        unit,
+        unit,
+        None,
+        _PARTITION_SIZE,
+    )
+    gated = sigmoid_gate_mul(attended, gate)
+    quantize = aiter.get_hip_quant(aiter.QuantType.per_1x128)
+    quantized, factors = quantize(gated, quant_dtype=aiter.dtypes.fp8)
+    return quantized.view(rows, heads, head_dim), factors

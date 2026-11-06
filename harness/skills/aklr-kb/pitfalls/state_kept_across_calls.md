@@ -57,8 +57,8 @@ The README's rule that nothing derived from an argument is kept across calls is 
 
 - **Time on inputs that change.** Write new values into the input buffers between timed calls (in place, as a
   weight reload does) and, separately, pass fresh buffers. A kernel without kept state reads the same within the
-  ruler's noise floor (`../gemm/flydsl_gemm_measurement.md` §4).
-- **Compare each shape's throughput with the ceiling** (`../gemm/flydsl_gemm_measurement.md` §7). A reading above
+  ruler's noise floor (`../gemm/measurement.md` §4).
+- **Compare each shape's throughput with the ceiling** (`../gemm/measurement.md` §7). A reading above
   the peak means the work was not done.
 - **Read the source; timing is not enough.** In one loop, timing missed three kernels whose machinery a dispatch
   constant switched off at the timed shapes; a source read found them (commit `0b6e82fd9`). Search launch code
@@ -83,7 +83,7 @@ The README's rule that nothing derived from an argument is kept across calls is 
 
 - Launch code and device code in any AKLR language; the observed kernels are FlyDSL bf16 GEMMs and MXFP4 fused MoE
   on MI355X.
-- Not this trap: kernels whose first call differs from later ones (`../gemm/flydsl_gemm_correctness.md` §2).
+- Not this trap: kernels whose first call differs from later ones (`../gemm/correctness.md` §2).
 
 ## Evidence
 

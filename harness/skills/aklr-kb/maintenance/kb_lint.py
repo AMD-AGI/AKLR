@@ -311,11 +311,8 @@ def _skill_local(target: str) -> bool:
     """A `code` path meant as a page of this skill; other `.md` paths in code spans name files in other repositories."""
     first = target.split("/", 1)[0]
     if "/" not in target:
-        return target.startswith("flydsl_") or target in (
-            "SKILL.md",
-            "CONTRIBUTING.md",
-            "INDEX.md",
-        )
+        # A bare name is a page of this skill; name another repository's file by its path (`docs/x.md`).
+        return True
     return (SKILL_ROOT / first).is_dir()
 
 
