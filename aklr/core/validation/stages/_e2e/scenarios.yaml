@@ -5,19 +5,13 @@ cookbook:
 hosts: [127.0.0.1]  # node 0 first; local processes on the runner, SSH for remote hosts
 work_dir: null  # temporary files under this existing directory; null uses the system temp directory
 # For multiple hosts, work_dir and the checkout must be shared at the same paths.
-models:
-  glm52-fp4:
-    enabled: true
-    display_name: GLM-5.2 MXFP4
-    cookbook:
-      config: zai-org/glm-5.2  # docs/src/snippets/configs/<this>.jsx
-      matches:
-        - {hw: mi355x, variant: default, quant: mxfp4, strategy: low-latency, nodes: single}
-    weights:  # the launcher sets --model-path, --tokenizer-path and --revision (required) from these
-      repo: amd/GLM-5.2-MXFP4
-      # Pin the Hugging Face model revision so both runs use the same weights.
-      revision: 386bd0e4ec821f7b07975701cec3c3b953a5576a
+scenarios:
+  - cookbook: zai-org/glm-5.2  # docs/src/snippets/configs/<this>.jsx
+    model_path: amd/GLM-5.2-MXFP4
     env:
       AKLR_SGLANG_PLUGIN: "1"
-    args:  # a page toggle in the cookbook, not in the cell: the reasoning stays out of content
-      --reasoning-parser: glm45
+    features:  # Omitted switches inherit the cell; args take precedence.
+      parsers:
+        reasoning: true  # Use the reasoning parser declared by the cookbook.
+    matches:
+      - {hw: mi355x, variant: default, quant: mxfp4, strategy: low-latency, nodes: single}

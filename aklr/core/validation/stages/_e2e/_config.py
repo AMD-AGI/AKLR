@@ -9,12 +9,18 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field, PositiveInt
+from pydantic import Field, PositiveInt, StrictBool
 
 from aklr.core.contract.spec import FrozenModel
 from aklr.core.validation.stages._e2e._cookbook import MatchValue
 
 __all__ = ["E2eConfig", "Scenario"]
+
+
+class ScenarioFeatures(FrozenModel):
+    """Explicit cookbook feature choices; omitted switches inherit the cell."""
+
+    parsers: dict[str, StrictBool] = {}  # noqa: RUF012
 
 
 class Scenario(FrozenModel):
@@ -28,31 +34,22 @@ class Scenario(FrozenModel):
     # ``unified``, or ``prefill`` then ``decode``: the cell match of each role
     roles: dict[str, dict[str, MatchValue]]
     model_path: str
-    revision: str
     nnodes: dict[str, PositiveInt]  # by role; a role not named has its cell's
     env: dict[str, dict[str, str]]  # by role
+    features: dict[str, ScenarioFeatures]  # by role
     args: dict[str, dict[str, str | int | float | bool | None]]  # by role
 
 
-class _Weights(FrozenModel):
-    repo: str
-    # required: the launcher always sets --revision, so a cell's cannot choose the weights' code
-    revision: str = Field(min_length=1)
-
-
-class _CookbookEntry(FrozenModel):
-    config: str
-    matches: tuple[dict[str, Any], ...] = Field(min_length=1)
-
-
-class _ModelEntry(FrozenModel):
+class _ScenarioEntry(FrozenModel):
     enabled: bool = True
     display_name: str = ""
-    cookbook: _CookbookEntry
-    weights: _Weights
+    cookbook: str = Field(min_length=1)
+    model_path: str = Field(min_length=1)
+    matches: tuple[dict[str, Any], ...] = Field(min_length=1)
     # a cell may leave it out (GLM-5.2's multi-2 cells): one count, or one per PD role
     nnodes: PositiveInt | dict[str, PositiveInt] | None = None
     env: dict[str, Any] = {}  # noqa: RUF012
+    features: dict[str, Any] = {}  # noqa: RUF012
     args: dict[str, Any] = {}  # noqa: RUF012
 
 
@@ -65,7 +62,7 @@ class _ConfigFile(FrozenModel):
     cookbook: _CookbookSource = _CookbookSource()
     hosts: tuple[str, ...] = Field(default=("127.0.0.1",), min_length=1)
     work_dir: Path | None = None
-    models: dict[str, _ModelEntry] = Field(min_length=1)
+    scenarios: tuple[_ScenarioEntry, ...]
 
 
 class E2eConfig(FrozenModel):
@@ -90,8 +87,9 @@ class E2eConfig(FrozenModel):
         except (OSError, yaml.YAMLError, ValidationError) as error:
             raise ValueError(f"{path}: {error}") from error
         scenarios: list[Scenario] = []
-        for model, entry in document.models.items():
-            for index, match in enumerate(entry.cookbook.matches):
+        for entry in document.scenarios:
+            model = entry.cookbook.rsplit("/", 1)[-1]
+            for index, match in enumerate(entry.matches):
                 where = f"{path}: {model}: match {index}"
                 is_pd = set(match) == set(pd_roles) and all(isinstance(m, dict) for m in match.values())
                 roles = {role: match[role] for role in pd_roles} if is_pd else {"unified": match}
@@ -109,14 +107,19 @@ class E2eConfig(FrozenModel):
                         model=model,
                         display_name=entry.display_name or model,
                         enabled=entry.enabled,
-                        cookbook=entry.cookbook.config,
+                        cookbook=entry.cookbook,
                         roles=roles,
-                        model_path=entry.weights.repo,
-                        revision=entry.weights.revision,
+                        model_path=entry.model_path,
                         nnodes=nnodes,
                         env={
                             role: {k: str(v) for k, v in env.items()}
                             for role, env in cls._expand_server_settings(entry.env, tuple(roles)).items()
+                        },
+                        features={
+                            role: ScenarioFeatures.model_validate(features)
+                            for role, features in cls._expand_server_settings(
+                                entry.features, tuple(roles)
+                            ).items()
                         },
                         args=cls._expand_server_settings(entry.args, tuple(roles)),
                     )
