@@ -165,7 +165,11 @@ class Cookbook(FrozenModel):
             if (Path(source) / config_dir).is_dir():
                 text = (Path(source) / relative_path).read_text(encoding="utf-8")
                 done = subprocess.run(
-                    ["git", "-C", source, "rev-parse", "HEAD"], capture_output=True, text=True, check=False
+                    ["git", "-C", source, "rev-parse", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
                 )
                 sha = done.stdout.strip() if done.returncode == 0 else "local"
             else:
@@ -191,10 +195,14 @@ class Cookbook(FrozenModel):
             )  # fmt: skip
         except (OSError, subprocess.SubprocessError) as error:
             raise ValueError(f"{repo}: {source}: {error}") from error
+        if done.returncode != 0:
+            raise ValueError(
+                f"{repo}: {source}: git ls-remote failed ({done.returncode}): {done.stderr.strip()}"
+            )
         refs = {name: sha for sha, name in (line.split() for line in done.stdout.splitlines())}
         # an annotated tag's commit is its peeled ref
         names = (f"refs/heads/{source}", f"refs/tags/{source}^{{}}", f"refs/tags/{source}")
-        if done.returncode != 0 or not (sha := next((refs[n] for n in names if n in refs), "")):
+        if not (sha := next((refs[n] for n in names if n in refs), "")):
             raise ValueError(f"{repo}: no branch or tag {source}: {done.stderr.strip()}")
         return sha
 

@@ -88,12 +88,6 @@ pytest tests                                                # unit tests
 python -m aklr validate --stages audit,bench,e2e --devices 0-7  # full validation, as CI runs it
 ```
 
-The e2e stage reads `aklr/core/validation/stages/_e2e/scenarios.yaml`, prints the scenario,
-cookbook SHA, AKLR mode and full command, then starts each server directly with subprocess.
-It compares AKLR off/on accuracy using this run's measured schemas over committed schemas.
-E2E results and executed commands are included in `aklr_validation/report.{json,md}`.
-Weights must already be available in the configured Hugging Face cache, as in CI.
-
 ## Contributing
 
 - Commit hooks and the baseline: [CONTRIBUTING.md](../CONTRIBUTING.md)

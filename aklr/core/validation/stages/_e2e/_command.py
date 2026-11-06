@@ -11,7 +11,7 @@ import socket
 import sys
 from collections.abc import Mapping, Sequence
 
-from aklr.core.validation.stages._e2e._config import ArgValue, Scenario
+from aklr.core.validation.stages._e2e._config import Scenario
 from aklr.core.validation.stages._e2e._cookbook import Cookbook, CookbookCell
 
 
@@ -63,7 +63,12 @@ class ServerRecipe:
     """A unified, prefill or decode server recipe with scenario overrides applied."""
 
     def __init__(
-        self, name: str, cell: CookbookCell, env: Mapping[str, str], args: Mapping[str, ArgValue], nnodes: int
+        self,
+        name: str,
+        cell: CookbookCell,
+        env: Mapping[str, str],
+        args: Mapping[str, str | int | float | bool | None],
+        nnodes: int,
     ) -> None:
         self.name = name
         self.cell = cell
@@ -140,10 +145,7 @@ def export_commands(
     env: Mapping[str, str],
     side_env: Mapping[str, str],
 ) -> tuple[dict[str, tuple[str, ...]], str]:
-    """Each role's processes over ``hosts`` in order, the router on node 0; ``env`` and
-    ``side_env`` over each role's own, so a cookbook cannot redirect the devices,
-    PYTHONPATH or AKLR's switches. ``ValueError`` when nodes are short, a cookbook entry is
-    not allowed or a placeholder is left."""
+    """Build server commands for the scenario using its cookbook recipe and launch settings."""
     server_port, router_port = 30000, 30080
     # The cookbook uses node 0 port 20000 for distributed initialization.
     dist_init_port = 20000
