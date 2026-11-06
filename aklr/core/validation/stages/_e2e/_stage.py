@@ -208,6 +208,7 @@ class E2eStage(PipelineStage[E2eReport]):
                 hosts=self._hosts,
                 env=env,
                 side_env=side_env,
+                startup_timeout=self._startup_timeout,
             )
             deployment = Deployment(commands, entry_url, run_dir / side)
         except ValueError as error:
