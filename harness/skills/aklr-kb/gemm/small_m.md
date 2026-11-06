@@ -47,7 +47,9 @@ sources:
   against kernels of 4.6–8 µs. One graph node cost 1.75–1.95 µs even for a 1-element op, so at
   M ≤ 16 on a small weight more than half the measured time is the node. *(field, E7, E8, E9)* Under AKLR's timer (L2
   flushed before each call) an empty kernel read ~4 µs and a second launch added ~4 µs (a separate split-K fold
-  took M=8 from ~8 to ~11 µs): keep the fold in the GEMM launch. That ~4 µs is the timer's floor for any
+  took M=8 from ~8 to ~11 µs): keep the fold in the GEMM launch only where it needs no per-call counter zeroing
+  (§4). *(field, E110)* At M=64, K=7168, a separate fixed-order reduce over fp32 planes beat a one-launch in-workgroup
+  K split, 14.06 → 12.85 µs. That ~4 µs is the timer's floor for any
   dispatch, not the kernel (`../SKILL.md` § Also in AKLR).
 - **Price aiter's rows through the deployed entry** (`aiter.tuned_gemm.gemm_a16w16`, the call `gemm_baseline`
   makes), not a direct kernel call; time your own kernel through its `run` entry, as
@@ -93,8 +95,9 @@ The lessons below flip sign between two regimes. Decide which one a call site is
   on a 38720-wide weight, two M-blocks of 16 took 127.7 µs and one block of 32 took 90.4 µs; three or more
   M-blocks were 2–4× slower than the best kernel recorded for the row. Make sure the tuner's `tile_m` filter can produce `align_up(M, 16)` for every M it
   covers.
-- **On short K, race two XCD-paired M-blocks against one.** *(field, E27, E28)* At M 80–112, K=768, both M-blocks of an
+- **Race two XCD-paired M-blocks against one.** *(field, E27, E28)* At M 80–112, K=768, both M-blocks of an
   N strip on one XCD at doubled `tile_n` (same grid) won 6.7–6.9% at M 96–112 (1.7% at M=80) on one kernel and lost up to ~14% on another.
+  *(field, E112)* At M=32, K=7168, two paired 16×16 blocks beat one 32×8 block at the same 256 workgroups by 15–18%.
 - **Odd tile widths can be the only way to reach a full round** (for N=6144 at small M, 256 workgroups need
   `tile_n` 48 with split-K 2, 96 with 4 or 192 with 8; aiter's catalog offers none of these widths), but they
   lost on other rows in deployment. Race them; do not adopt them by arithmetic.
@@ -136,7 +139,7 @@ an idle-device tuner (§1).
 - **Zero counters in per-call scratch before launching the GEMM.** AKLR kernels receive only their contract
   call keys and keep no state between calls. Allocate counters with `torch.zeros` on the input device on every
   call; the partial planes may use `torch.empty` because each is written before it is read. The zeroing adds
-  one kernel to each split-K call. A launch tag in the counter word (`llvm.amdgcn.dispatch.id` xor `llvm.amdgcn.queue.ptr`) is 32
+  one kernel to each split-K call; a `hipMemsetAsync` instead costs the same ~4.3 µs *(field, E111)*. A launch tag in the counter word (`llvm.amdgcn.dispatch.id` xor `llvm.amdgcn.queue.ptr`) is 32
   bits and repeats: dispatch ids 1 and 2^32 on one queue give the same tag, and a stale word that reads as
   this launch's, already complete, leaves its tile unwritten.
 - **Price split-K with this fold.** The last split to arrive reads every partial through one CU, and arrival skew
@@ -402,3 +405,6 @@ setup); otherwise `FlyDSL ?`.
 - E107 [2026-10, gfx950, FlyDSL 0.3.2, N=2–6 interleaved rounds, forge driver bench on AKLR's graph timer, the kernel before the wait-free commit against after] arrival fold against a fold in which every split waited and summed a share of the tile: m=1–16 within 0.1%, m=32 +0.6%, m=64 +1.8%, m=128 37.95 → 44.00 µs (+15.9%) on one GEMM; m=256 0.0551 → 0.0686 ms (+24.3%), m=512 0.0875 → 0.0947 (+8.3%) on the other; a pairwise tree of per-pair counters: m=128 43.79, m=256 0.0702, m=512 0.0959 (bf16 GEMM n6144 k16384, m=1–128 and m=256–512 lanes; local:/shared_nfs/kyle/moe/k3six/fix/gemm_s_session.md:26; local:/shared_nfs/kyle/moe/k3six/fix/gemm_l_session.md:24; :25; local:/shared_nfs/kyle/moe/k3six/fix/gemm_s_tree.md:20; local:/shared_nfs/kyle/moe/k3six/fix/gemm_l_tree.md:19)
 - E108 [2026-10, gfx950, FlyDSL 0.3.2, N=5 readings per arm, AKLR bench_cudagraph (1 GiB flush per call), one process per set with a fresh FlyDSL cache, two GPUs; placement alone moved a case about ±1 µs between processes] per-block K start `(bid·R) mod loops` against none (B `sc0 nt`): GPU 3 m=1/2/4/8/16/32/64/128 32.98/33.10/31.89/32.71/33.09/33.81/38.28/43.91 against 34.93/36.85/34.81/35.50/36.28/35.99/39.77/48.71 µs; GPU 6 the same sign on every case, 2.4–5.5 µs; HBM read 202–244 MB per call with and without it, request stalls lower with it (bf16 GEMM n6144 k16384; local:/shared_nfs/kyle/moe/k3six/runs/gemm_s/workspace/forge_experiments/analysis/236ca0f0c864d119d1b61ee6ca9f60fea6b03734/generation-001/ablation/summary.md:111; :40; local:/shared_nfs/kyle/moe/k3six/runs/gemm_s/workspace/forge_experiments/analysis/236ca0f0c864d119d1b61ee6ca9f60fea6b03734/generation-001/pmc_compare.md:7)
 - E109 [2026-10, gfx950, FlyDSL 0.3.2, N=5 readings per arm, as E108] m=128 (A 128 × 16384 bf16 = 4 MiB, every split of a tile on XCD `bid mod 8`): per-block starts R=1 61.72 µs (R=3 and 5 61.8–63.4 on GPU 6) against R=16, one start per XCD, 43.91; with the A loads removed R=1 34.59 against 37.08; m=64 (A 2 MiB) R=1 38.93 < R=3 39.54 < R=16 42.01 (GPU 6); with each XCD on one K split, R=1 41.96–42.00 against R=16 42.46 (bf16 GEMM n6144 k16384; local:/shared_nfs/kyle/moe/k3six/runs/gemm_s/workspace/forge_experiments/analysis/236ca0f0c864d119d1b61ee6ca9f60fea6b03734/generation-001/ablation/summary.md:129; :89; :66; local:/shared_nfs/kyle/moe/k3six/runs/gemm_s/workspace/forge_experiments/lessons/iter_003.md:32; :38)
+- E110 [2026-11, gfx950, FlyDSL 0.3.2, N=?, forge driver on AKLR's graph timer] m=64: K split over the 4 waves of each workgroup (32×16 tiles, 256 workgroups, one launch) 14.06 µs; K split over 16 workgroups writing fp32 planes (64×64 tiles, 512 one-wave workgroups) plus a reduce kernel summing the planes in order 12.85 µs; m=128 the two-launch form 16.25 against torch 16.75 (bf16 GEMM n2048 k7168; local:/shared_nfs/zhuang12/aklr-kopt/kopt-20261106-gemm-n2048-k7168-5f3e2d/run/task/workspace/forge_experiments/lessons/iter_002.md:42; iter_001.md:30)
+- E111 [2026-11, gfx950, FlyDSL 0.3.2, N=?, probe on AKLR bench_cudagraph, L2 flushed per call] `x.zero_()`, `hipMemsetAsync` and `hipMemsetD32Async` alone 4.33–4.35 µs each; a trivial `out.add_(0)` after the GEMM took m=64 from 14.06 to 18.16 µs on the driver (bf16 GEMM n2048 k7168; local:/shared_nfs/zhuang12/aklr-kopt/kopt-20261106-gemm-n2048-k7168-5f3e2d/run/task/workspace/forge_experiments/lessons/iter_002.md:8-9)
+- E112 [2026-11, gfx950, FlyDSL 0.3.2, N=?, probes: graph-batched with warm L2, and AKLR bench_cudagraph with L2 flushed] m=32, K split over the workgroup's 4 waves, 256 workgroups either way: two 16-row M-blocks of 16-wide tiles on one XCD 7.03–7.16 warm, 10.62 cold; one 32-row block of 8-wide tiles 8.50–8.55 warm, 12.54 cold (bf16 GEMM n2048 k7168; local:/shared_nfs/zhuang12/aklr-kopt/kopt-20261106-gemm-n2048-k7168-5f3e2d/run/task/workspace/forge_experiments/lessons/iter_001.md:15; iter_002.md:55; :60)
