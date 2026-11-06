@@ -10,8 +10,12 @@ scenarios:
     model_path: amd/GLM-5.2-MXFP4
     env:
       AKLR_SGLANG_PLUGIN: "1"
-    features:  # Omitted switches inherit the cell; args take precedence.
-      parsers:
-        reasoning: true  # Use the reasoning parser declared by the cookbook.
     matches:
-      - {hw: mi355x, variant: default, quant: mxfp4, strategy: low-latency, nodes: single}
+      - hw: mi355x
+        variant: default
+        quant: mxfp4
+        strategy: low-latency
+        nodes: single
+        # Applied after cell lookup. Omitted switches inherit the cell; args take precedence.
+        parsers:
+          reasoning: true  # Use the reasoning parser declared by the cookbook.

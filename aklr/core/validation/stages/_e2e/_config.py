@@ -18,7 +18,7 @@ __all__ = ["E2eConfig", "Scenario"]
 
 
 class ScenarioFeatures(FrozenModel):
-    """Explicit cookbook feature choices; omitted switches inherit the cell."""
+    """Feature choices extracted from one match; omitted switches inherit the cell."""
 
     parsers: dict[str, StrictBool] = {}  # noqa: RUF012
 
@@ -49,7 +49,6 @@ class _ScenarioEntry(FrozenModel):
     # a cell may leave it out (GLM-5.2's multi-2 cells): one count, or one per PD role
     nnodes: PositiveInt | dict[str, PositiveInt] | None = None
     env: dict[str, Any] = {}  # noqa: RUF012
-    features: dict[str, Any] = {}  # noqa: RUF012
     args: dict[str, Any] = {}  # noqa: RUF012
 
 
@@ -100,8 +99,27 @@ class E2eConfig(FrozenModel):
                     nnodes = {}
                 if unknown := set(nnodes) - set(roles):
                     raise ValueError(f"{where}: nnodes of roles it has not: {sorted(unknown)}")
-                values = [str(v) for role_match in roles.values() for v in role_match.values()]
                 try:
+                    # Features belong to each match, but do not participate in the cell lookup.
+                    feature_keys = ScenarioFeatures.model_fields
+                    features = {
+                        role: ScenarioFeatures.model_validate(
+                            {k: v for k, v in selection.items() if k in feature_keys}
+                        )
+                        for role, selection in roles.items()
+                    }
+                    roles = {
+                        role: {k: v for k, v in selection.items() if k not in feature_keys}
+                        for role, selection in roles.items()
+                    }
+                    values = []
+                    for role, cell_match in roles.items():
+                        values.extend(str(v) for v in cell_match.values())
+                        # Distinguish different feature combinations of the same base cell.
+                        values.extend(
+                            f"parsers-{parser}-{'on' if enabled else 'off'}"
+                            for parser, enabled in sorted(features[role].parsers.items())
+                        )
                     scenario = Scenario(
                         name="-".join([model, *values]),
                         model=model,
@@ -115,12 +133,7 @@ class E2eConfig(FrozenModel):
                             role: {k: str(v) for k, v in env.items()}
                             for role, env in cls._expand_server_settings(entry.env, tuple(roles)).items()
                         },
-                        features={
-                            role: ScenarioFeatures.model_validate(features)
-                            for role, features in cls._expand_server_settings(
-                                entry.features, tuple(roles)
-                            ).items()
-                        },
+                        features=features,
                         args=cls._expand_server_settings(entry.args, tuple(roles)),
                     )
                 except (ValueError, ValidationError) as error:
