@@ -395,6 +395,38 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"max_context": 8192},
         layout_variant_name="row_major",
     ),
+    # DeepSeek-V4's mHC boundary and the RMSNorm after it, at a quarter of hc_boundary's 64-wide
+    # slices per stream: with the deferred hc_post (bf16 norm, then with its MXFP8 operand), and
+    # without one (the DSpark draft stage's attention input)
+    *(
+        PointSpec(
+            contract_id=contract_id,
+            axes={"n_tokens": 5, "hidden_size": 256},
+            dtypes={
+                **({"x": "bfloat16"} if pending_post else {}),
+                "residual": "bfloat16",
+                **({"post_in": "float32", "comb_in": "float32"} if pending_post else {}),
+                "pre_prev": "float32",
+                "hc_fn": "float32",
+                "hc_scale": "float32",
+                "hc_base": "float32",
+                "norm_weight": "bfloat16",
+                **({"residual_out": "bfloat16"} if pending_post else {}),
+                "norm": "bfloat16",
+                **({"quantized": "float8_e4m3fn", "scales": "float8_e8m0"} if mxfp8 else {}),
+                "pre": "float32",
+                "post": "float32",
+                "comb": "float32",
+            },
+            attrs={},
+            layout_variant_name="row_major",
+        )
+        for contract_id, pending_post, mxfp8 in (
+            ("deepseek_v4_hc_boundary_norm@1.0", True, False),
+            ("deepseek_v4_hc_boundary_norm_mxfp8@1.0", True, True),
+            ("deepseek_v4_hc_pre_norm@1.0", False, False),
+        )
+    ),
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
@@ -414,5 +446,8 @@ GFX950_CONTRACT_IDS = frozenset(
         "qwen3_next_gdn_decode_group_fp8_quant@1.0",
         "gated_attention_decode_group_fp8_quant@1.0",
         "qwen3_next_gated_attention_decode_group_fp8_quant@1.0",
+        "deepseek_v4_hc_boundary_norm@1.0",
+        "deepseek_v4_hc_boundary_norm_mxfp8@1.0",
+        "deepseek_v4_hc_pre_norm@1.0",
     }
 )
