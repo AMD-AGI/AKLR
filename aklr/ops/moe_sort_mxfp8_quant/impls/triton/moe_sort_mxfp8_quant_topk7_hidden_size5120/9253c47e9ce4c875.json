@@ -1,0 +1,300 @@
+{
+  "schema_version": 5,
+  "name": "moe_sort_mxfp8_quant_topk7_hidden_size5120",
+  "contract_id": "moe_sort_mxfp8_quant@1.0",
+  "description": "What aiter's fused_moe runs before stage 1 for MXFP8 activations (a8w4/a8w8, per_1x32, no expert parallelism) while stage 1 takes the fused sort-and-quant: the moe sorting and fused_dynamic_mxfp8_quant_moe_sort. The n_tokens * topk routed pairs (token t, slot k, expert topk_ids[t, k]) are ordered by expert, then by t * topk + k, into blocks of block_size rows, each expert's rows in whole blocks from row 0 in increasing expert order; a row holds (k << 24) | t and the pair's weight, a block's unused rows (topk << 24) | n_tokens and weight 0. sorted_expert_ids holds each block's expert, num_valid_ids [rows of the blocks, n_tokens]; moe_buf is zeroed. Each token row is quantized to E4M3FN in groups of 32 with an E8M0 scale 2**ceil(log2(max(amax, 1e-10) * (1/448))), its exponent byte written for each sorted row of a pair at aiter's mx_scale_shuffle_idx address (0 for a pair of weight 0); a token whose weights are all 0 gets a zero row. Rows past the blocks, a block's unused rows' scales and the scale padding columns keep their contents.",
+  "op_type": "moe_sort_mxfp8_quant",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens routed in this call."
+    },
+    "n_sorted_rows": {
+      "type": "var",
+      "description": "Rows of the sorted buffers (aiter allocates n_tokens * topk + n_experts * block_size - topk, rounded up to whole blocks)."
+    },
+    "n_blocks": {
+      "type": "var",
+      "description": "Entries of sorted_expert_ids: n_sorted_rows // block_size."
+    },
+    "topk": {
+      "type": "const",
+      "value": 7,
+      "description": "Experts per token."
+    },
+    "hidden_size": {
+      "type": "const",
+      "value": 5120,
+      "description": "Elements per token row, divisible by 32."
+    },
+    "n_groups": {
+      "type": "const",
+      "value": 160,
+      "description": "MXFP8 groups of 32 elements per row."
+    },
+    "scale_cols": {
+      "type": "const",
+      "value": 160,
+      "description": "Bytes per sorted row in sorted_scales: n_groups rounded up to 8."
+    }
+  },
+  "attrs": {
+    "n_experts": 385,
+    "block_size": 32
+  },
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Token activations."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": 384,
+        "distinct": true
+      },
+      "description": "Chosen experts per token, distinct within a row."
+    },
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Routing weight of each chosen expert."
+    },
+    "sorted_ids": {
+      "shape": [
+        "n_sorted_rows"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -2147483648,
+        "hi": 2147483647,
+        "distinct": false
+      },
+      "description": "Per sorted row: (slot << 24) | token, or (topk << 24) | n_tokens on an unused row."
+    },
+    "sorted_weights": {
+      "shape": [
+        "n_sorted_rows"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Per sorted row: the pair's weight, 0 on an unused row."
+    },
+    "sorted_expert_ids": {
+      "shape": [
+        "n_blocks"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -2147483648,
+        "hi": 2147483647,
+        "distinct": false
+      },
+      "description": "Per block: its expert."
+    },
+    "sorted_scales": {
+      "shape": [
+        "n_sorted_rows",
+        "scale_cols"
+      ],
+      "dtype": "uint8",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "E8M0 exponent bytes of each sorted row's groups, 32-row tiles of 32 * scale_cols bytes; row r, group g at byte (r // 32) * 32 * scale_cols + (g // 8) * 256 + (g % 4) * 64 + (r % 16) * 4 + (g % 8) // 4 * 2 + (r % 32) // 16."
+    }
+  },
+  "outputs": {
+    "num_valid_ids": {
+      "shape": [2],
+      "dtype": "int32",
+      "description": "[rows of the experts' blocks, n_tokens]."
+    },
+    "moe_buf": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The stage-2 accumulator, zeroed."
+    },
+    "quantized": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "E4M3FN activations per token, zero for a token whose weights are all 0."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 6,
+        "n_sorted_rows": 12384,
+        "n_blocks": 387
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 12,
+        "n_sorted_rows": 12416,
+        "n_blocks": 388
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 18,
+        "n_sorted_rows": 12448,
+        "n_blocks": 389
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 24,
+        "n_sorted_rows": 12512,
+        "n_blocks": 391
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 30,
+        "n_sorted_rows": 12544,
+        "n_blocks": 392
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 36,
+        "n_sorted_rows": 12576,
+        "n_blocks": 393
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 42,
+        "n_sorted_rows": 12608,
+        "n_blocks": 394
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 48,
+        "n_sorted_rows": 12672,
+        "n_blocks": 396
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 60,
+        "n_sorted_rows": 12736,
+        "n_blocks": 398
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 72,
+        "n_sorted_rows": 12832,
+        "n_blocks": 401
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 84,
+        "n_sorted_rows": 12928,
+        "n_blocks": 404
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 96,
+        "n_sorted_rows": 12992,
+        "n_blocks": 406
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 104,
+        "n_sorted_rows": 13056,
+        "n_blocks": 408
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 120,
+        "n_sorted_rows": 13184,
+        "n_blocks": 412
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 128,
+        "n_sorted_rows": 13216,
+        "n_blocks": 413
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 144,
+        "n_sorted_rows": 13344,
+        "n_blocks": 417
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "GEAK",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"MoE pair sort, moe_buf zeroing and stage-1 MXFP8 quantization in one Triton launch, split\ninto expert-chunk programs and token-slice programs (4 warps each).\n\nEvery program histograms the n_tokens * topk routed ids (tl.histogram) into per-expert pair\ncounts and whole blocks. Programs [0, NE) own ECH experts each: at the exclusive block prefix\nof each expert they write its block expert ids and the unused rows of its last block; the last\nof them writes num_valid_ids. Program NE + t * NPROG + c quantizes slice c of token t's row\n(GPP groups of 32: E8M0 scale 2**ceil(log2(max(amax, 1e-10) / 448)), the value divided by it,\nclamped to +-448, E4M3FN; a zero slice for a token whose weights are all 0), zeroes the same\nmoe_buf slice, then places the token's pairs at blocks of the smaller experts * block + stable\nrank of the pair within its expert and writes the slice's E8M0 bytes of each pair's sorted row\n(0 for a pair of weight 0) at aiter's mx_scale_shuffle_idx address; slice 0 also writes the\npairs' sorted ids and weights. Used and unused rows are disjoint, so programs need no ordering.\n\"\"\"\n\nimport functools\n\nimport triton\nimport triton.language as tl\n\n\n@triton.jit\ndef _load_experts(topk_ids_ptr, P, P_POW2: tl.constexpr, E_POW2: tl.constexpr):\n    # inactive lanes land in bin E_POW2 - 1, which no expert uses\n    offs_p = tl.arange(0, P_POW2)\n    return tl.load(topk_ids_ptr + offs_p, mask=offs_p < P, other=E_POW2 - 1)\n\n\n@triton.jit\ndef _expert_counts(e, E_POW2: tl.constexpr):\n    hist = tl.histogram(e, E_POW2)\n    # an opaque copy: Triton's AMD integer-range folding takes tl.histogram's result for 0 and\n    # folds compares on it (masks built from the counts come out all false)\n    hist = tl.inline_asm_elementwise(\"v_mov_b32 $0, $1\", \"=v,v\", [hist], dtype=tl.int32, is_pure=True, pack=1)\n    offs_e = tl.arange(0, E_POW2)\n    return tl.where(offs_e < E_POW2 - 1, hist, 0)\n\n\n@triton.jit(do_not_specialize=[\"M\"])\ndef _sort_mxquant_kernel(\n    topk_ids_ptr,  # [M, TOPK] i32\n    topk_weights_ptr,  # [M, TOPK] f32\n    sorted_ids_ptr,\n    sorted_weights_ptr,\n    sorted_expert_ids_ptr,\n    num_valid_ids_ptr,  # [2] i32\n    moe_buf_ptr,  # [M, N_COLS]\n    qx_ptr,  # [M, N_COLS] bf16\n    qout_ptr,  # [M, N_COLS] e4m3fn\n    qscale_ptr,  # [rows, SCALEN_PAD] u8\n    M,\n    TOPK: tl.constexpr,\n    TOPK_POW2: tl.constexpr,\n    BLOCK_SIZE: tl.constexpr,\n    P_POW2: tl.constexpr,  # >= M * TOPK\n    E_POW2: tl.constexpr,  # > n_experts; bin E_POW2 - 1 holds the inactive lanes\n    ECH: tl.constexpr,  # experts per expert-chunk program (divides E_POW2)\n    MAXB_POW2: tl.constexpr,  # >= the most blocks of one expert, cdiv(P, BLOCK_SIZE)\n    N_COLS: tl.constexpr,\n    GPP: tl.constexpr,  # 32-column groups per token program\n    GPP_POW2: tl.constexpr,\n    NPROG: tl.constexpr,  # programs per token: N_COLS // (32 * GPP)\n    SCALEN_PAD: tl.constexpr,\n):\n    pid = tl.program_id(0)\n    P = M * TOPK\n    NE: tl.constexpr = E_POW2 // ECH\n\n    if pid < NE:\n        cnt = _expert_counts(_load_experts(topk_ids_ptr, P, P_POW2, E_POW2), E_POW2)\n        blocks = (cnt + BLOCK_SIZE - 1) // BLOCK_SIZE\n        bb = tl.cumsum(blocks, 0) - blocks\n        # this program's ECH experts\n        sel = tl.arange(0, NE)[:, None] == pid\n        cnt_c = tl.sum(tl.where(sel, tl.reshape(cnt, (NE, ECH)), 0), axis=0)\n        blocks_c = tl.sum(tl.where(sel, tl.reshape(blocks, (NE, ECH)), 0), axis=0)\n        bb_c = tl.sum(tl.where(sel, tl.reshape(bb, (NE, ECH)), 0), axis=0)\n        offs_x = pid * ECH + tl.arange(0, ECH)\n        offs_j = tl.arange(0, BLOCK_SIZE)\n        npad = blocks_c * BLOCK_SIZE - cnt_c\n        pos = (bb_c * BLOCK_SIZE + cnt_c)[:, None] + offs_j[None, :]\n        pm = offs_j[None, :] < npad[:, None]\n        tl.store(sorted_ids_ptr + pos, tl.full((ECH, BLOCK_SIZE), (TOPK << 24) | M, tl.int32), mask=pm)\n        tl.store(sorted_weights_ptr + pos, tl.zeros((ECH, BLOCK_SIZE), tl.float32), mask=pm)\n        offs_b = tl.arange(0, MAXB_POW2)\n        tl.store(\n            sorted_expert_ids_ptr + bb_c[:, None] + offs_b[None, :],\n            tl.broadcast_to(offs_x[:, None], (ECH, MAXB_POW2)),\n            mask=offs_b[None, :] < blocks_c[:, None],\n        )\n        if pid == NE - 1:\n            num_valid = tl.sum(blocks, 0) * BLOCK_SIZE\n            tl.store(num_valid_ids_ptr + tl.arange(0, 2), tl.where(tl.arange(0, 2) == 0, num_valid, M))\n        return\n\n    q = pid - NE\n    t = q // NPROG\n    g0 = (q % NPROG) * GPP  # the program's first 32-column group\n    row = t.to(tl.int64) * N_COLS\n    offs_g = tl.arange(0, GPP_POW2)\n    mask_g = offs_g < GPP\n    offs_c = (g0 + offs_g)[:, None] * 32 + tl.arange(0, 32)[None, :]\n    mask_c = mask_g[:, None]\n    # independent loads first: the activation slice, the token's routing, all expert ids\n    x2 = tl.load(qx_ptr + row + offs_c, mask=mask_c, other=0.0).to(tl.float32)\n    offs_k = tl.arange(0, TOPK_POW2)\n    mask_k = offs_k < TOPK\n    p_k = t * TOPK + offs_k\n    e_k = tl.load(topk_ids_ptr + p_k, mask=mask_k, other=E_POW2 - 1)\n    w_k = tl.load(topk_weights_ptr + p_k, mask=mask_k, other=0.0)\n    e = _load_experts(topk_ids_ptr, P, P_POW2, E_POW2)\n\n    # MXFP8 quantization of the slice (E8M0 scale rounded up)\n    amax = tl.maximum(tl.max(tl.abs(x2), axis=1), 1e-10)\n    sf = amax * (1.0 / 448.0)\n    bits = sf.to(tl.int32, bitcast=True)\n    ex = (bits >> 23) & 0xFF\n    ex = tl.where(((bits & 0x7FFFFF) != 0) & (ex < 0xFF), ex + 1, ex)\n    scale = (ex << 23).to(tl.float32, bitcast=True)\n    all_zero = tl.sum((mask_k & (w_k != 0.0)).to(tl.int32), axis=0) == 0\n    qv = tl.clamp(x2 / scale[:, None], -448.0, 448.0)\n    qv = tl.where(all_zero, 0.0, qv)\n    tl.store(qout_ptr + row + offs_c, qv.to(qout_ptr.dtype.element_ty), mask=mask_c)\n    tl.store(moe_buf_ptr + row + offs_c, tl.zeros((GPP_POW2, 32), moe_buf_ptr.dtype.element_ty), mask=mask_c)\n\n    # the sorted row of each of the token's pairs\n    cnt = _expert_counts(e, E_POW2)\n    blocks = (cnt + BLOCK_SIZE - 1) // BLOCK_SIZE\n    offs_e = tl.arange(0, E_POW2)\n    offs_p = tl.arange(0, P_POW2)\n    bb_k = tl.sum(tl.where(offs_e[None, :] < e_k[:, None], blocks[None, :], 0), axis=1)\n    rank_k = tl.sum(((e[None, :] == e_k[:, None]) & (offs_p[None, :] < p_k[:, None])).to(tl.int32), axis=1)\n    dest_k = bb_k * BLOCK_SIZE + rank_k\n    if g0 == 0:\n        tl.store(sorted_ids_ptr + dest_k, (offs_k << 24) | t, mask=mask_k)\n        tl.store(sorted_weights_ptr + dest_k, w_k, mask=mask_k)\n    base_sw = (dest_k // 32) * (SCALEN_PAD * 32) + (dest_k % 16) * 4 + (dest_k % 32) // 16\n    y = g0 + offs_g\n    ycol = (y // 8) * 256 + (y % 4) * 64 + ((y % 8) // 4) * 2\n    sval = tl.where((w_k == 0.0)[:, None], 0, ex[None, :])\n    tl.store(\n        qscale_ptr + base_sw[:, None] + ycol[None, :],\n        sval.to(tl.uint8),\n        mask=mask_k[:, None] & mask_g[None, :],\n    )\n\n\n@functools.cache\ndef _config(n_tokens, topk, n_experts, hidden_size, block_size):\n    \"\"\"The grid and constexprs, tuned on gfx950 (5120 columns, E_POW2 256 or 512, <= 1024\n    pairs): 1024-column token slices while n_tokens * slices fits one wave of programs, else\n    half rows.\"\"\"\n    groups = hidden_size // 32\n    gpp = 32\n    if n_tokens * (groups // 32) > 256 and groups % 2 == 0 and groups // 2 <= 256:\n        gpp = groups // 2\n    e_pow2 = triton.next_power_of_2(n_experts + 1)\n    ech = min(64, e_pow2)\n    nprog = hidden_size // (32 * gpp)\n    p = n_tokens * topk\n    grid = (e_pow2 // ech + n_tokens * nprog,)\n    meta = {\n        \"TOPK\": topk,\n        \"TOPK_POW2\": max(triton.next_power_of_2(topk), 2),\n        \"BLOCK_SIZE\": block_size,\n        \"P_POW2\": max(triton.next_power_of_2(p), 16),\n        \"E_POW2\": e_pow2,\n        \"ECH\": ech,\n        \"MAXB_POW2\": max(triton.next_power_of_2((p + block_size - 1) // block_size), 2),\n        \"N_COLS\": hidden_size,\n        \"GPP\": gpp,\n        \"GPP_POW2\": triton.next_power_of_2(gpp),\n        \"NPROG\": nprog,\n        \"SCALEN_PAD\": (groups + 7) // 8 * 8,\n    }\n    return grid, meta\n\n\ndef run(\n    *,\n    hidden_states,\n    topk_ids,\n    topk_weights,\n    sorted_ids,\n    sorted_weights,\n    sorted_expert_ids,\n    sorted_scales,\n    n_experts,\n    block_size,\n    num_valid_ids,\n    moe_buf,\n    quantized,\n):\n    n_tokens, topk = topk_ids.shape\n    grid, meta = _config(n_tokens, topk, n_experts, hidden_states.shape[1], block_size)\n    _sort_mxquant_kernel[grid](\n        topk_ids,\n        topk_weights,\n        sorted_ids,\n        sorted_weights,\n        sorted_expert_ids,\n        num_valid_ids,\n        moe_buf,\n        hidden_states,\n        quantized,\n        sorted_scales,\n        n_tokens,\n        num_warps=4,\n        **meta,\n    )\n"
+      }
+    ]
+  }
+}
