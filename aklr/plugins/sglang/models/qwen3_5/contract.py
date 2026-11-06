@@ -27,6 +27,7 @@ from aklr.core.contract.spec import (
 
 __all__ = [
     "CONTRACTS",
+    "GATED_ATTENTION_DECODE",
     "GATED_ATTENTION_DECODE_GROUP_FP8_QUANT",
     "GDN_DECODE",
     "GDN_DECODE_GROUP_FP8_QUANT",
@@ -286,24 +287,27 @@ _POSITIVE_FLOAT32 = (2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value)
 _POOL_BYTES = 2**31
 # A cache slot a correct kernel writes may round its BF16 key one FP8 step away
 _CACHE_BOUND = ToleranceBound(absolute_tolerance=2**-9, relative_tolerance=0.125)
+_ATTENTION_TEXT = (
+    "Qwen3.5 full-attention decode on one rank, between qkv_proj and o_proj, one token "
+    "per row. projected_qkv holds each query head's query then its output gate, then "
+    "the KV heads' keys, then their values. Q and K are RMS-normalized per head with "
+    "weight 1 + norm weight and rounded to BF16; each head's first 64 channels take NeoX "
+    "RoPE, rounded to BF16, whose frequency f in [0, 32) reads positions[1] when "
+    "f % 3 == 1 and f < 33, positions[2] when f % 3 == 2 and f < 30, else positions[0], "
+    "in cos_sin_cache's row of 32 cosines then 32 sines. Each row writes its K and V, "
+    "cast to E4M3FN, at its cache_locations slot of key_cache and value_cache; rows "
+    "sharing a slot leave one of their values there. Query head h then attends, through "
+    "KV head h // (n_heads // n_kv_heads), the written slots "
+    "kv_indices[kv_indptr[r]:kv_indptr[r + 1]] with scores q . k * scale; the "
+    "softmax-weighted sum of their values is rounded to BF16, multiplied by sigmoid of "
+    "the gate and rounded to BF16"
+)
 
 GATED_ATTENTION_DECODE_GROUP_FP8_QUANT = OpContract(
     contract_id="gated_attention_decode_group_fp8_quant@1.0",
     op_type="qwen3_5",
     description=(
-        "Qwen3.5 full-attention decode on one rank, between qkv_proj and o_proj, one token "
-        "per row. projected_qkv holds each query head's query then its output gate, then "
-        "the KV heads' keys, then their values. Q and K are RMS-normalized per head with "
-        "weight 1 + norm weight and rounded to BF16; each head's first 64 channels take NeoX "
-        "RoPE, rounded to BF16, whose frequency f in [0, 32) reads positions[1] when "
-        "f % 3 == 1 and f < 33, positions[2] when f % 3 == 2 and f < 30, else positions[0], "
-        "in cos_sin_cache's row of 32 cosines then 32 sines. Each row writes its K and V, "
-        "cast to E4M3FN, at its cache_locations slot of key_cache and value_cache; rows "
-        "sharing a slot leave one of their values there. Query head h then attends, through "
-        "KV head h // (n_heads // n_kv_heads), the written slots "
-        "kv_indices[kv_indptr[r]:kv_indptr[r + 1]] with scores q . k * scale; the "
-        "softmax-weighted sum of their values is rounded to BF16, multiplied by sigmoid of "
-        "the gate and rounded to BF16, then quantized in groups of 128 channels to E4M3FN "
+        f"{_ATTENTION_TEXT}, then quantized in groups of 128 channels to E4M3FN "
         "with scale=max(amax,1e-10)/448. Unwritten slots and all other inputs are preserved."
     ),
     axes={
@@ -422,9 +426,61 @@ GATED_ATTENTION_DECODE_GROUP_FP8_QUANT = OpContract(
     compare=CompareSpec(determinism="bitwise"),
 )
 
+# The same decode where sglang hands o_proj the gated output in BF16, as for an unquantized
+# o_proj (Qwen3.5's MXFP4 checkpoint keeps its attention projections in BF16).
+_FP8_ATTENTION = GATED_ATTENTION_DECODE_GROUP_FP8_QUANT
+
+GATED_ATTENTION_DECODE = OpContract(
+    contract_id="gated_attention_decode@1.0",
+    op_type="qwen3_5",
+    description=f"{_ATTENTION_TEXT}. Unwritten slots and all other inputs are preserved.",
+    axes={
+        **{n: _FP8_ATTENTION.axes[n] for n in ("n_tokens", "qkv_dim", "n_kv_heads", "head_dim", "n_slots")},
+        # the kernels' buffer loads address the FP32 table by 32-bit byte offsets: its 2**30
+        # bytes at most
+        "n_positions": axis("Rows of the cos/sin table.", 1, 2**22, is_var=True, any_size=True),
+        **{n: _FP8_ATTENTION.axes[n] for n in ("n_offsets", "n_kv_tokens", "n_heads")},
+        "attention_width": derived_axis("Channels of a row: n_heads * head_dim.", "n_heads * head_dim"),
+    },
+    constraints=(
+        "(qkv_dim - 2 * n_kv_heads * head_dim) % (2 * head_dim) == 0",
+        "n_heads >= 1",
+        "n_heads % n_kv_heads == 0",
+        "n_offsets == n_tokens + 1",
+        # every row attends at least one slot, and each row writes its own slot
+        "n_kv_tokens >= n_tokens",
+        "n_slots >= n_tokens",
+        # the pool elements that the kernels' 32-bit offsets address
+        f"n_slots * n_kv_heads * head_dim < {2**32}",
+    ),
+    inputs=_FP8_ATTENTION.inputs,
+    # sglang's own decode is lossier than the reference (see the FP8 op): aiter's
+    # paged_attention_ragged rounds Q and each 256-token partition's softmax weights to E4M3
+    # and keeps the partitions' outputs in BF16. An FP64 emulation of those roundings gives
+    # 25.2-30.6 dB on the small test Point (16 draws) and mostly 21-27 dB at the schemas'
+    # Points (64 draws at 1, 2, 4 and 8 rows, two at each other count, 23-25 dB on rows of
+    # 32768-131072 tokens), down to 15.0 dB on the draws where the E4M3 Q moves one peaked
+    # head; the bound admits them all. The kernels round Q to E4M3 only on rows past 8192
+    # (8 rows) or 16384 tokens (1 and 4 rows), as sglang, and their PV weights to FP16 or BF16:
+    # 49.8 dB and up at those Points otherwise. Kernels wrong on purpose (no gate, the gate
+    # without its sigmoid, sequential mRoPE sections, no Q norm, a 128**-0.5 scale) stay under
+    # 8 dB at the schemas' Points and at 12.6 dB at most on the small one.
+    outputs={
+        "gated": TensorSpec(
+            description="Each query head's gated attention, the heads side by side: o_proj's input.",
+            shape=("n_tokens", "attention_width"),
+            dtype=_BF16,
+            error_bounds=SqnrBound(min_sqnr_db=14.0),
+        ),
+    },
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism="bitwise"),
+)
+
 CONTRACTS = (
     GDN_PREFILL_GROUP_FP8_QUANT,
     GDN_DECODE_GROUP_FP8_QUANT,
     GDN_DECODE,
     GATED_ATTENTION_DECODE_GROUP_FP8_QUANT,
+    GATED_ATTENTION_DECODE,
 )

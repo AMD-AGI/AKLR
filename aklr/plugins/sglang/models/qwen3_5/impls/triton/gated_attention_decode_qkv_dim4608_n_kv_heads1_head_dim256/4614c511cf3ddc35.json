@@ -1,0 +1,251 @@
+{
+  "schema_version": 5,
+  "name": "gated_attention_decode_qkv_dim4608_n_kv_heads1_head_dim256",
+  "contract_id": "gated_attention_decode@1.0",
+  "description": "Qwen3.5 full-attention decode on one rank, between qkv_proj and o_proj, one token per row. projected_qkv holds each query head's query then its output gate, then the KV heads' keys, then their values. Q and K are RMS-normalized per head with weight 1 + norm weight and rounded to BF16; each head's first 64 channels take NeoX RoPE, rounded to BF16, whose frequency f in [0, 32) reads positions[1] when f % 3 == 1 and f < 33, positions[2] when f % 3 == 2 and f < 30, else positions[0], in cos_sin_cache's row of 32 cosines then 32 sines. Each row writes its K and V, cast to E4M3FN, at its cache_locations slot of key_cache and value_cache; rows sharing a slot leave one of their values there. Query head h then attends, through KV head h // (n_heads // n_kv_heads), the written slots kv_indices[kv_indptr[r]:kv_indptr[r + 1]] with scores q . k * scale; the softmax-weighted sum of their values is rounded to BF16, multiplied by sigmoid of the gate and rounded to BF16. Unwritten slots and all other inputs are preserved.",
+  "op_type": "qwen3_5",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Decode rows: one token each, padding rows included."
+    },
+    "qkv_dim": {
+      "type": "const",
+      "value": 4608,
+      "description": "qkv_proj's output width on this rank."
+    },
+    "n_kv_heads": {
+      "type": "const",
+      "value": 1,
+      "description": "KV heads on this rank."
+    },
+    "head_dim": {
+      "type": "const",
+      "value": 256,
+      "description": "Query, key and value head width."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Rows of the KV pools."
+    },
+    "n_positions": {
+      "type": "var",
+      "description": "Rows of the cos/sin table."
+    },
+    "n_offsets": {
+      "type": "var",
+      "description": "Offsets in kv_indptr: n_tokens + 1."
+    },
+    "n_kv_tokens": {
+      "type": "var",
+      "description": "Entries of kv_indices."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 8,
+      "description": "Query heads on this rank."
+    },
+    "attention_width": {
+      "type": "const",
+      "value": 2048,
+      "description": "Channels of a row: n_heads * head_dim."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "projected_qkv": {
+      "shape": [
+        "n_tokens",
+        "qkv_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "qkv_proj's output: each query head's query then gate, then keys, then values."
+    },
+    "q_norm_weight": {
+      "shape": [
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Query RMSNorm weight, applied as 1 + weight."
+    },
+    "k_norm_weight": {
+      "shape": [
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Key RMSNorm weight, applied as 1 + weight."
+    },
+    "positions": {
+      "shape": [
+        3,
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_positions - 1",
+        "distinct": false
+      },
+      "description": "Each row's temporal, height and width positions."
+    },
+    "cos_sin_cache": {
+      "shape": [
+        "n_positions",
+        64
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Per position, the 32 rotary cosines then the 32 sines."
+    },
+    "cache_locations": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "Each row's KV pool slot."
+    },
+    "key_cache": {
+      "shape": [
+        "n_slots",
+        "n_kv_heads",
+        "head_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "This layer's key pool."
+    },
+    "value_cache": {
+      "shape": [
+        "n_slots",
+        "n_kv_heads",
+        "head_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "This layer's value pool."
+    },
+    "kv_indptr": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "cu_seqlens",
+        "min_seqlen": 1,
+        "total": "n_kv_tokens"
+      },
+      "description": "Where each row's slots start in kv_indices, then where the last row's end."
+    },
+    "kv_indices": {
+      "shape": [
+        "n_kv_tokens"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_slots - 1",
+        "distinct": false
+      },
+      "description": "The pool slots each row attends, row after row."
+    },
+    "eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Q and K RMSNorm epsilon."
+    },
+    "scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every score."
+    }
+  },
+  "outputs": {
+    "gated": {
+      "shape": [
+        "n_tokens",
+        "attention_width"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each query head's gated attention, the heads side by side: o_proj's input."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1,
+        "n_slots": 4097,
+        "n_positions": 262144,
+        "n_offsets": 2,
+        "n_kv_tokens": 4096
+      },
+      "scalars": {
+        "eps": 9.999999974752427e-07,
+        "scale": 0.0625
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "attention.py",
+        "content": "# Created by OpenAI\n\"\"\"Replay-safe CDNA4 split attention with the native BF16 output gate.\n\nLong FP8-QK producers retain only the eight live heads. Initial K/V copying\nstarts before query conversion; M1 B256 reuses LDS with a wider V swizzle.\nRagged FP8 gathers repeat a valid slot to permit vectorized unmasked copies,\nwhile the softmax still excludes every position outside the live length.\nThe M8 cyclic bulk schedule retains its original masked gather policy.\n\nMedium M2 merges assign each wave complete reductions for four channels.\nOther context bands retain their tuned prefix/tail and striped merge layouts.\nFP16 PV operands, BF16 partials, BF16 attention, and the FP32 gate are unchanged.\nAll lengths, indices, scales, and gates are reread on every graph replay.\n\"\"\"\nimport torch\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n_PV = gl.constexpr(gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[1, 4]))\n_QK = gl.constexpr(gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 128], transposed=True, warps_per_cta=[1, 4]))\n_KL = gl.constexpr(gl.BlockedLayout([1, 16], [4, 16], [4, 1], [1, 0]))\n_PV_A = gl.constexpr(gl.DotOperandLayout(0, _PV, 8))\n_PV_B = gl.constexpr(gl.DotOperandLayout(1, _PV, 8))\n_FP8_K = gl.constexpr(gl.DotOperandLayout(1, _QK, 16))\n\n\n@gluon.jit\ndef _scales(KS, VS, USE_SCALE: gl.constexpr):\n    if USE_SCALE:\n        return gl.load(KS), gl.load(VS)\n    return 1.0, 1.0\n\n\n@gluon.jit\ndef _load_query(Q, row, QS0: gl.constexpr, QS1: gl.constexpr, H: gl.constexpr = 16):\n    QL: gl.constexpr = gl.BlockedLayout([1, 8], [16, 4], [1, 4], [1, 0])\n    h = gl.arange(0, H, gl.SliceLayout(1, QL))\n    d = gl.arange(0, 256, gl.SliceLayout(0, QL))\n    q = gl.load(Q + row * QS0 + h[:, None] * QS1 + d[None, :], h[:, None] < 8, 0).to(gl.float8e4nv)\n    return gl.convert_layout(q, gl.DotOperandLayout(0, _QK, 16))\n\n\n@gluon.jit\ndef _copy(shared, CACHE, slots, valid, STRIDE: gl.constexpr,\n          CG: gl.constexpr, FULL: gl.constexpr = False,\n          NARROW: gl.constexpr = False, PHYSICAL: gl.constexpr = False):\n    d = gl.arange(0, 256, gl.SliceLayout(0, _KL))\n    if PHYSICAL:\n        t = gl.arange(0, shared.shape[0], gl.SliceLayout(1, _KL))\n        channels = ((d[None, :] // 16) ^ (t[:, None] % shared.layout.max_phase)) * 16 + d[None, :] % 16\n        shared = shared._reinterpret(layout=gl.SwizzledSharedLayout(16, 1, 1, [1, 0]))\n    else:\n        channels = d[None, :]\n    if NARROW:\n        offset = slots.to(gl.uint32)[:, None] * STRIDE + channels.to(gl.uint32)\n        ptrs = CACHE + offset.to(gl.uint64)\n    else:\n        ptrs = CACHE + slots[:, None] * STRIDE + channels\n    if FULL:\n        gl.amd.cdna4.async_copy.global_load_to_shared(shared, ptrs, cache_modifier=\".cg\" if CG else \"\")\n    else:\n        gl.amd.cdna4.async_copy.global_load_to_shared(shared, ptrs, valid, 0.0, cache_modifier=\".cg\" if CG else \"\")\n\n\n@gluon.jit\ndef _qk(q, k, scale, ks, B: gl.constexpr):\n    scores = gl.amd.cdna4.mfma_scaled(q, None, \"e4m3\", k, None, \"e4m3\", gl.full((q.shape[0], B), 0.0, gl.float32, _QK))\n    return gl.convert_layout(scores, _PV) * (scale * ks)\n\n\n@gluon.jit\ndef _softmax(scores, maximum, total, base, length,\n             B: gl.constexpr, SINGLE: gl.constexpr, FULL: gl.constexpr = False):\n    if not FULL:\n        t = base + gl.arange(0, B, gl.SliceLayout(0, _PV))\n        valid = t[None, :] < length\n        scores = gl.where(valid, scores, -float('inf'))\n    if SINGLE:\n        next_max = gl.max(scores, 1)\n        alpha = 1.0\n    else:\n        next_max = gl.maximum(maximum, gl.max(scores, 1))\n        alpha = gl.exp2((maximum - next_max) * 1.4426950408889634)\n    if FULL:\n        p = gl.exp2(gl.fma(scores, 1.4426950408889634, -next_max[:, None] * 1.4426950408889634))\n    else:\n        p = gl.where(valid, gl.exp2(gl.fma(scores, 1.4426950408889634, -next_max[:, None] * 1.4426950408889634)), 0.0)\n    if SINGLE:\n        total = gl.sum(p, 1)\n    else:\n        total = total * alpha + gl.sum(p, 1)\n    return p, next_max, total, alpha\n\n\n@gluon.jit\ndef _partial_offset(head, split, channel, CAP: gl.constexpr, STRIPE: gl.constexpr):\n    if STRIPE == 0:\n        STRIPE = 256 if CAP == 512 else 64\n    if STRIPE == 256:\n        return (head * CAP + split) * 256 + channel\n    return head * CAP * 256 + (channel // STRIPE) * CAP * STRIPE + split * STRIPE + channel % STRIPE\n\n\n@gluon.jit\ndef _store(PART, STATS, acc, maximum, total, vs, row, hs, split, CAP: gl.constexpr, HG: gl.constexpr, STRIPE: gl.constexpr = 0):\n    if STRIPE == 0:\n        STRIPE = 256 if CAP == 512 else 64\n    h = gl.arange(0, acc.shape[0], gl.SliceLayout(1, _PV))\n    d = gl.arange(0, 256, gl.SliceLayout(0, _PV))\n    record = (row * 8 + hs + h) * CAP + split\n    if STRIPE == 256:\n        gl.store(PART + record[:, None] * 256 + d[None, :], acc * vs, h[:, None] < HG)\n    else:\n        OL: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [2, 2], [1, 0]) if CAP == 512 else gl.BlockedLayout([1, 8], [8, 8], [1, 4], [1, 0])\n        ho = gl.arange(0, acc.shape[0], gl.SliceLayout(1, OL))\n        do = gl.arange(0, 256, gl.SliceLayout(0, OL))\n        offset = _partial_offset(row * 8 + hs + ho[:, None], split, do[None, :], CAP, STRIPE)\n        gl.store(PART + offset, gl.convert_layout((acc * vs).to(gl.bfloat16), OL), ho[:, None] < HG)\n    gl.store(STATS + record * 2, maximum, h < HG)\n    gl.store(STATS + record * 2 + 1, total, h < HG)\n\n\n@gluon.jit\ndef _grouped_tile(Q, K, V, IX, KS, VS, PART, STATS, scale,\n                  QS0: gl.constexpr, QS1: gl.constexpr,\n                  KS0: gl.constexpr, VS0: gl.constexpr, USE_SCALE: gl.constexpr,\n                  CAP: gl.constexpr, B: gl.constexpr,\n                  row, start, length, CG: gl.constexpr = True, SW: gl.constexpr = 8):\n    split = gl.program_id(1)\n    lo = split * B\n    step = CAP * B\n    q = _load_query(Q, row, QS0, QS1, 8)\n    t = gl.arange(0, B, gl.SliceLayout(1, _KL))\n    ks, vs = _scales(KS, VS, USE_SCALE)\n    maximum = gl.full((8,), -float('inf'), gl.float32, gl.SliceLayout(1, _PV))\n    total = gl.full((8,), 0.0, gl.float32, gl.SliceLayout(1, _PV))\n    acc = gl.full((8, 256), 0.0, gl.float32, _PV)\n    SL: gl.constexpr = gl.SwizzledSharedLayout(16, 1, SW, [1, 0])\n    sk = gl.allocate_shared_memory(K.dtype.element_ty, [B, 256], SL)\n    sv = gl.allocate_shared_memory(V.dtype.element_ty, [B, 256], SL)\n    for iteration in range(gl.cdiv(length - lo, step)):\n        base = lo + iteration * step\n        slots = gl.load(IX + start + base + t, base + t < length, 0).to(gl.int64)\n        _copy(sk, K, slots, base + t[:, None] < length, KS0, False)\n        _copy(sv, V, slots, base + t[:, None] < length, VS0, CG)\n        gl.amd.cdna4.async_copy.commit_group()\n        gl.amd.cdna4.async_copy.wait_group(0)\n        k = sk.permute((1, 0)).load(_FP8_K).to(gl.float8e4nv)\n        scores = _qk(q, k, scale, ks, B)\n        p, next_max, total, alpha = _softmax(scores, maximum, total, base, length, B, False)\n        acc = acc * alpha[:, None]\n        v = sv.load(_PV_B).to(gl.float16)\n        acc = gl.amd.cdna4.mfma(gl.convert_layout(p.to(gl.float16), _PV_A), v, acc)\n        maximum = next_max\n        gl.barrier()\n    _store(PART, STATS, acc, maximum, total, vs, row, 0, split, CAP, 8)\n\n\n@gluon.jit\ndef _prefetch_next(sk, sv, K, V, IX, slots, start, base, length,\n                   KS0: gl.constexpr, VS0: gl.constexpr, STEP: gl.constexpr,\n                   SERIAL: gl.constexpr, SINGLE: gl.constexpr, CG: gl.constexpr, FULL: gl.constexpr = False):\n    PAD: gl.constexpr = K.dtype.element_ty == gl.float8e4nv and V.dtype.element_ty == gl.float8e4nv\n    if not SINGLE:\n        # All waves finish reading both operands before the LDS tile is reused.\n        gl.barrier()\n        if base + STEP < length:\n            pos = base + STEP + gl.arange(0, sk.shape[0], gl.SliceLayout(1, _KL))\n            if FULL:\n                slots = gl.load(IX + start + pos).to(gl.int64)\n            elif PAD:\n                slots = gl.load(IX + start + gl.minimum(pos, length - 1)).to(gl.int64)\n            else:\n                slots = gl.load(IX + start + pos, pos < length, 0).to(gl.int64)\n            _copy(sk, K, slots, pos[:, None] < length, KS0, False, FULL or PAD, PHYSICAL=True)\n            if not SERIAL:\n                _copy(sv, V, slots, pos[:, None] < length, VS0, CG, FULL or PAD, PHYSICAL=True)\n            gl.amd.cdna4.async_copy.commit_group()\n    return slots\n\n\n@gluon.jit\ndef _prefetch_tile(Q, K, V, IX, KS, VS, PART, STATS, scale,\n                   QS0: gl.constexpr, QS1: gl.constexpr,\n                   KS0: gl.constexpr, VS0: gl.constexpr, USE_SCALE: gl.constexpr,\n                   CAP: gl.constexpr, B: gl.constexpr, SERIAL: gl.constexpr, row, start, length,\n                   SINGLE: gl.constexpr = False, FULL: gl.constexpr = False, CG: gl.constexpr = True, SW: gl.constexpr = 8, BF16_QK: gl.constexpr = False):\n    PAD: gl.constexpr = K.dtype.element_ty == gl.float8e4nv and V.dtype.element_ty == gl.float8e4nv\n    split = gl.program_id(1)\n    H: gl.constexpr = 16 if BF16_QK else 8\n    if BF16_QK:\n        QL: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [2, 2], [1, 0])\n        hq = gl.arange(0, 16, gl.SliceLayout(1, QL))\n        dq = gl.arange(0, 256, gl.SliceLayout(0, QL))\n        q = gl.load(Q + row * QS0 + hq[:, None] * QS1 + dq[None, :], hq[:, None] < 8, 0).to(gl.bfloat16)\n        q = gl.convert_layout(q, _PV_A)\n    t = gl.arange(0, B, gl.SliceLayout(1, _KL))\n    ks, vs = _scales(KS, VS, USE_SCALE)\n    maximum = gl.full((H,), -float('inf'), gl.float32, gl.SliceLayout(1, _PV))\n    total = gl.full((H,), 0.0, gl.float32, gl.SliceLayout(1, _PV))\n    acc = gl.full((H, 256), 0.0, gl.float32, _PV)\n    SL: gl.constexpr = gl.SwizzledSharedLayout(16, 1, SW, [1, 0])\n    sk = gl.allocate_shared_memory(K.dtype.element_ty, [B, 256], SL)\n    if SERIAL:\n        # K and V share storage, but B256 V benefits from a distinct swizzle.\n        sv = sk._reinterpret(layout=gl.SwizzledSharedLayout(16, 1, 16 if CAP == 512 and B == 256 else SW, [1, 0]))\n    else:\n        sv = gl.allocate_shared_memory(V.dtype.element_ty, [B, 256], SL)\n    pos = split * B + t\n    if FULL:\n        slots = gl.load(IX + start + pos).to(gl.int64)\n    elif PAD:\n        # The dispatcher guarantees a nonempty tile. Repeated FP8 values are\n        # finite in FP16; their zero softmax probabilities exclude them.\n        slots = gl.load(IX + start + gl.minimum(pos, length - 1)).to(gl.int64)\n    else:\n        slots = gl.load(IX + start + pos, pos < length, 0).to(gl.int64)\n    _copy(sk, K, slots, pos[:, None] < length, KS0, False, FULL or PAD, PHYSICAL=True)\n    if not SERIAL:\n        _copy(sv, V, slots, pos[:, None] < length, VS0, CG, FULL or PAD, PHYSICAL=True)\n    gl.amd.cdna4.async_copy.commit_group()\n    if not BF16_QK:\n        # Hide query conversion behind the initial asynchronous cache copy.\n        q = _load_query(Q, row, QS0, QS1, H)\n    if SINGLE:\n        loop_begin = 0\n        loop_end = 1\n        loop_step = 1\n    else:\n        loop_begin = split * B\n        loop_end = length\n        loop_step = CAP * B\n    for iteration in range(loop_begin, loop_end, loop_step):\n        base = split * B if SINGLE else iteration\n        gl.amd.cdna4.async_copy.wait_group(0)\n        if BF16_QK:\n            k = sk.permute((1, 0)).load(_PV_B).to(gl.bfloat16)\n        else:\n            k = sk.permute((1, 0)).load(_FP8_K).to(gl.float8e4nv)\n        if SERIAL:\n            gl.barrier()\n            _copy(sv, V, slots, base + t[:, None] < length, VS0, CG, FULL or PAD, PHYSICAL=True)\n            gl.amd.cdna4.async_copy.commit_group()\n        else:\n            v = sv.load(_PV_B).to(gl.float16)\n            slots = _prefetch_next(sk, sv, K, V, IX, slots, start, base, length,\n                                   KS0, VS0, CAP * B, SERIAL, SINGLE, CG, FULL)\n        if BF16_QK:\n            scores = gl.amd.cdna4.mfma(q, k, gl.full((16, B), 0.0, gl.float32, _PV)) * (scale * ks)\n        else:\n            scores = _qk(q, k, scale, ks, B)\n        p, next_max, total, alpha = _softmax(scores, maximum, total, base, length, B, SINGLE, FULL)\n        if SINGLE:\n            pa = gl.convert_layout(p.to(gl.float16), _PV_A)\n        if SERIAL:\n            gl.amd.cdna4.async_copy.wait_group(0)\n            v = sv.load(_PV_B).to(gl.float16)\n            slots = _prefetch_next(sk, sv, K, V, IX, slots, start, base, length,\n                                   KS0, VS0, CAP * B, SERIAL, SINGLE, CG, FULL)\n        if not SINGLE:\n            acc = acc * alpha[:, None]\n        if not SINGLE:\n            pa = gl.convert_layout(p.to(gl.float16), _PV_A)\n        acc = gl.amd.cdna4.mfma(pa, v, acc)\n        maximum = next_max\n    _store(PART, STATS, acc, maximum, total, vs, row, 0, split, CAP, 8, STRIPE=32 if CAP == 512 and SINGLE else 256 if CAP == 512 else 64)\n\n\n@gluon.jit\ndef _short_tile(Q, K, V, IX, KS, VS, PART, STATS, scale,\n                QS0: gl.constexpr, QS1: gl.constexpr,\n                KS0: gl.constexpr, VS0: gl.constexpr,\n                USE_SCALE: gl.constexpr, CAP: gl.constexpr,\n                B: gl.constexpr, HG: gl.constexpr, SW: gl.constexpr, CG: gl.constexpr,\n                row, start, length, FULL: gl.constexpr, STAGE_Q: gl.constexpr, PIPE: gl.constexpr, NARROW: gl.constexpr):\n    PAD: gl.constexpr = K.dtype.element_ty == gl.float8e4nv and V.dtype.element_ty == gl.float8e4nv\n    TUNED8: gl.constexpr = CAP == 128 and B == 64 and STAGE_Q\n    split = gl.program_id(1) // (8 // HG)\n    hs = (gl.program_id(1) % (8 // HG)) * HG\n    if STAGE_Q:\n        QL: gl.constexpr = gl.BlockedLayout([1, 8], [2, 32], [4, 1], [1, 0])\n    else:\n        QL: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [2, 2], [1, 0])\n    t = split * B + gl.arange(0, B, gl.SliceLayout(1, _KL))\n    if FULL:\n        slots = gl.load(IX + start + t).to(gl.int64)\n    elif PAD:\n        slots = gl.load(IX + start + gl.minimum(t, length - 1)).to(gl.int64)\n    else:\n        slots = gl.load(IX + start + t, t < length, 0).to(gl.int64)\n    SL: gl.constexpr = gl.SwizzledSharedLayout(16, 1, SW, [1, 0])\n    sk = gl.allocate_shared_memory(K.dtype.element_ty, [B, 256], SL)\n    sv = gl.allocate_shared_memory(V.dtype.element_ty, [B, 256], gl.SwizzledSharedLayout(16, 1, 8 if TUNED8 else SW, [1, 0]))\n    _copy(sk, K, slots, t[:, None] < length, KS0, TUNED8, FULL or PAD, NARROW, PHYSICAL=True)\n    if not PIPE:\n        _copy(sv, V, slots, t[:, None] < length, VS0, CG, FULL or PAD, NARROW, PHYSICAL=True)\n    if not STAGE_Q:\n        gl.amd.cdna4.async_copy.commit_group()\n    hq = gl.arange(0, 16, gl.SliceLayout(1, QL))\n    dq = gl.arange(0, 256, gl.SliceLayout(0, QL))\n    if STAGE_Q:\n        SQ: gl.constexpr = gl.SwizzledSharedLayout(8, 1, 16 if CAP == 256 or TUNED8 else 8, [1, 0])\n        sq = gl.allocate_shared_memory(Q.dtype.element_ty, [16, 256], SQ)\n        gl.amd.cdna4.async_copy.global_load_to_shared(\n            sq, Q + row * QS0 + (hs + hq[:, None]) * QS1 + dq[None, :], hq[:, None] < HG, 0.0)\n        gl.amd.cdna4.async_copy.commit_group()\n    else:\n        q = gl.load(Q + row * QS0 + (hs + hq[:, None]) * QS1 + dq[None, :], hq[:, None] < HG, 0).to(gl.bfloat16)\n        q = gl.convert_layout(q, _PV_A)\n    if PIPE:\n        _copy(sv, V, slots, t[:, None] < length, VS0, CG, FULL or PAD, NARROW, PHYSICAL=True)\n        gl.amd.cdna4.async_copy.commit_group()\n    ks, vs = _scales(KS, VS, USE_SCALE)\n    gl.amd.cdna4.async_copy.wait_group(1 if PIPE else 0)\n    if STAGE_Q:\n        q = sq.load(_PV_A).to(gl.bfloat16)\n    k = sk.permute((1, 0)).load(_PV_B).to(gl.bfloat16)\n    if not PIPE:\n        v = sv.load(_PV_B).to(gl.float16)\n    scores = gl.amd.cdna4.mfma(q, k, gl.full((16, B), 0.0, gl.float32, _PV)) * (scale * ks)\n    p, maximum, total, _ = _softmax(scores, 0.0, 0.0, split * B, length, B, True, FULL)\n    if PIPE:\n        gl.amd.cdna4.async_copy.wait_group(0)\n        v = sv.load(_PV_B).to(gl.float16)\n    acc = gl.amd.cdna4.mfma(gl.convert_layout(p.to(gl.float16), _PV_A), v, gl.full((16, 256), 0.0, gl.float32, _PV))\n    _store(PART, STATS, acc, maximum, total, vs, row, hs, split, CAP, HG)\n\n\n@gluon.jit\ndef _dispatch_short(Q, K, V, IX, KS, VS, PART, STATS, scale,\n                    QS0: gl.constexpr, QS1: gl.constexpr,\n                    KS0: gl.constexpr, VS0: gl.constexpr,\n                    USE_SCALE: gl.constexpr, CAP: gl.constexpr,\n                    B: gl.constexpr, HG: gl.constexpr, SW: gl.constexpr, CG: gl.constexpr,\n                    row, start, length, STAGE_Q: gl.constexpr = False, PIPE: gl.constexpr = False, NARROW: gl.constexpr = False):\n    split = gl.program_id(1) // (8 // HG)\n    if length - split * B == 1:\n        if gl.program_id(1) % (8 // HG) == 0:\n            _one_token(Q, K, V, IX, KS, VS, PART, STATS, scale, QS0, QS1,\n                       KS0, VS0, USE_SCALE, CAP, row, start, length, split)\n    elif (split + 1) * B <= length:\n        _short_tile(Q, K, V, IX, KS, VS, PART, STATS, scale, QS0, QS1, KS0, VS0,\n                    USE_SCALE, CAP, B, HG, SW, CG, row, start, length, True, STAGE_Q, PIPE, NARROW)\n    else:\n        _short_tile(Q, K, V, IX, KS, VS, PART, STATS, scale, QS0, QS1, KS0, VS0,\n                    USE_SCALE, CAP, B, HG, SW, CG, row, start, length, False, STAGE_Q, PIPE, NARROW)\n\n\n@gluon.jit\ndef _one_token(Q, K, V, IX, KS, VS, PART, STATS, scale,\n               QS0: gl.constexpr, QS1: gl.constexpr,\n               KS0: gl.constexpr, VS0: gl.constexpr,\n               USE_SCALE: gl.constexpr, CAP: gl.constexpr, row, start, length, split):\n    L: gl.constexpr = gl.BlockedLayout([1, 4], [1, 64], [4, 1], [1, 0])\n    h = gl.arange(0, 8, gl.SliceLayout(1, L))\n    d = gl.arange(0, 256, gl.SliceLayout(0, L))\n    slot = gl.load(IX + start + length - 1).to(gl.int64)\n    q = gl.load(Q + row * QS0 + h[:, None] * QS1 + d[None, :]).to(gl.float32)\n    k = gl.load(K + slot * KS0 + d).to(gl.float32)\n    v = gl.load(V + slot * VS0 + d).to(gl.float32)\n    ks, vs = _scales(KS, VS, USE_SCALE)\n    maximum = gl.sum(q * k[None, :], 1) * (scale * ks)\n    r = (row * 8 + h) * CAP + split\n    offset = _partial_offset(row * 8 + h[:, None], split, d[None, :], CAP, 0)\n    gl.store(PART + offset, v[None, :] * vs)\n    gl.store(STATS + r * 2, maximum)\n    gl.store(STATS + r * 2 + 1, 1.0)\n\n\n@gluon.jit\ndef _dispatch_independent(Q, K, V, IX, KS, VS, PART, STATS, scale,\n                          QS0: gl.constexpr, QS1: gl.constexpr,\n                          KS0: gl.constexpr, VS0: gl.constexpr, USE_SCALE: gl.constexpr,\n                          CAP: gl.constexpr, B: gl.constexpr, CG: gl.constexpr,\n                          SW: gl.constexpr, row, start, length):\n    split = gl.program_id(1)\n    if length - split * B == 1:\n        _one_token(Q, K, V, IX, KS, VS, PART, STATS, scale, QS0, QS1,\n                   KS0, VS0, USE_SCALE, CAP, row, start, length, split)\n    elif (split + 1) * B <= length:\n        _prefetch_tile(Q, K, V, IX, KS, VS, PART, STATS, scale, QS0, QS1,\n                       KS0, VS0, USE_SCALE, CAP, B, True, row, start, length,\n                       SINGLE=True, FULL=True, CG=CG, SW=SW, BF16_QK=B == 64)\n    else:\n        _prefetch_tile(Q, K, V, IX, KS, VS, PART, STATS, scale, QS0, QS1,\n                       KS0, VS0, USE_SCALE, CAP, B, True, row, start, length,\n                       SINGLE=True, CG=CG, SW=SW, BF16_QK=B == 64)\n\n\n@gluon.jit\ndef _grouped_dispatch(Q, K, V, IP, IX, KS, VS, PART, STATS, scale: gl.constexpr,\n                      QS0: gl.constexpr, QS1: gl.constexpr,\n                      KS0: gl.constexpr, VS0: gl.constexpr, USE_SCALE: gl.constexpr,\n                      CAP: gl.constexpr, ROWS: gl.constexpr, NARROW: gl.constexpr):\n    row = gl.program_id(0)\n    split = gl.program_id(1)\n    start = gl.load(IP + row)\n    length = gl.load(IP + row + 1) - start\n    if length <= 2048:\n        HG: gl.constexpr = 4 if ROWS == 1 else 8\n        SB: gl.constexpr = 16 if ROWS <= 2 else 64\n        if ROWS == 4 and length > 1025 and length <= 1152:\n            if split * 32 < length:\n                _dispatch_short(Q, K, V, IX, KS, VS, PART, STATS, scale,\n                                QS0, QS1, KS0, VS0, USE_SCALE, CAP, 32, 8, 8,\n                                False, row, start, length, PIPE=True, NARROW=NARROW)\n        elif ROWS == 8:\n            if split * 64 < length:\n                _dispatch_short(Q, K, V, IX, KS, VS, PART, STATS, scale,\n                                QS0, QS1, KS0, VS0, USE_SCALE, CAP, 64, 8, 16,\n                                False, row, start, length, STAGE_Q=True, PIPE=False, NARROW=NARROW)\n        elif (split < (2048 // SB) * (8 // HG)) & ((split // (8 // HG)) * SB < length):\n            _dispatch_short(Q, K, V, IX, KS, VS, PART, STATS, scale,\n                            QS0, QS1, KS0, VS0, USE_SCALE, CAP, SB, HG, 16 if ROWS >= 2 else 8,\n                            ROWS == 1, row, start, length, STAGE_Q=ROWS != 2, PIPE=ROWS == 4, NARROW=NARROW and ROWS >= 2)\n    elif length <= 8192:\n        if ROWS == 8:\n            if split * 64 < length:\n                _dispatch_independent(Q, K, V, IX, KS, VS, PART, STATS, scale,\n                                      QS0, QS1, KS0, VS0, USE_SCALE, CAP,\n                                      64, False, 8, row, start, length)\n        else:\n            MH: gl.constexpr = 4 if ROWS == 1 else 8\n            if (split < 128 * (8 // MH)) & ((split // (8 // MH)) * 64 < length):\n                _dispatch_short(Q, K, V, IX, KS, VS, PART, STATS, scale,\n                                QS0, QS1, KS0, VS0, USE_SCALE, CAP, 64, MH,\n                                16 if ROWS == 2 or ROWS == 4 else 8,\n                                ROWS != 4, row, start, length, NARROW=NARROW)\n    elif length <= 16384:\n        if ROWS == 8:\n            if split * 128 < length:\n                _dispatch_independent(Q, K, V, IX, KS, VS, PART, STATS, scale,\n                                      QS0, QS1, KS0, VS0, USE_SCALE, CAP,\n                                      128, True, 16, row, start, length)\n        elif ROWS == 2:\n            if split * 64 < length:\n                _dispatch_independent(Q, K, V, IX, KS, VS, PART, STATS, scale,\n                                      QS0, QS1, KS0, VS0, USE_SCALE, CAP,\n                                      64, False, 8, row, start, length)\n        elif (split < min(CAP, 256)) & (split * 64 < length):\n            _dispatch_short(Q, K, V, IX, KS, VS, PART, STATS, scale,\n                            QS0, QS1, KS0, VS0, USE_SCALE, CAP, 64, 8,\n                            8 if ROWS == 2 else 16, ROWS != 4, row, start, length, NARROW=NARROW)\n    elif ROWS == 1 and length <= 65536:\n        if split * 128 < length:\n            if (split + 1) * 128 <= length:\n                _prefetch_tile(Q, K, V, IX, KS, VS, PART, STATS, scale, QS0, QS1,\n                               KS0, VS0, USE_SCALE, CAP, 128, True, row, start, length, SINGLE=True, FULL=True)\n            else:\n                _prefetch_tile(Q, K, V, IX, KS, VS, PART, STATS, scale, QS0, QS1,\n                               KS0, VS0, USE_SCALE, CAP, 128, True, row, start, length, SINGLE=True)\n    elif ROWS == 1 and length <= 131072:\n        if split * 256 < length:\n            if (split + 1) * 256 <= length:\n                _prefetch_tile(Q, K, V, IX, KS, VS, PART, STATS, scale, QS0, QS1,\n                               KS0, VS0, USE_SCALE, CAP, 256, True, row, start, length, SINGLE=True, FULL=True)\n            else:\n                _prefetch_tile(Q, K, V, IX, KS, VS, PART, STATS, scale, QS0, QS1,\n                               KS0, VS0, USE_SCALE, CAP, 256, True, row, start, length, SINGLE=True)\n    elif ROWS == 1 or (ROWS == 2 and length <= 65536):\n        if split * 64 < length:\n            _prefetch_tile(Q, K, V, IX, KS, VS, PART, STATS, scale, QS0, QS1,\n                           KS0, VS0, USE_SCALE, CAP, 64, False, row, start, length)\n    elif ROWS == 2:\n        if split * 128 < length:\n            if length % 128 == 0 or split != ((length - 1) // 128) % CAP:\n                _prefetch_tile(Q, K, V, IX, KS, VS, PART, STATS, scale, QS0, QS1,\n                               KS0, VS0, USE_SCALE, CAP, 128, True, row, start, length, CG=False, FULL=True)\n            else:\n                _prefetch_tile(Q, K, V, IX, KS, VS, PART, STATS, scale, QS0, QS1,\n                               KS0, VS0, USE_SCALE, CAP, 128, True, row, start, length, CG=False)\n    elif ROWS == 4:\n        if split * 64 < length:\n            _prefetch_tile(Q, K, V, IX, KS, VS, PART, STATS, scale, QS0, QS1,\n                           KS0, VS0, USE_SCALE, CAP, 64, True, row, start, length, CG=False)\n    elif ROWS == 8 and length <= 65536:\n        if split * 64 < length:\n            _grouped_tile(Q, K, V, IX, KS, VS, PART, STATS, scale, QS0, QS1,\n                          KS0, VS0, USE_SCALE, CAP, 64, row, start, length, CG=False)\n    else:\n        if split * 64 < length:\n            _grouped_tile(Q, K, V, IX, KS, VS, PART, STATS, scale, QS0, QS1,\n                          KS0, VS0, USE_SCALE, CAP, 64, row, start, length, SW=4)\n\n\n@gluon.jit\ndef _merge_tile(NW: gl.constexpr, PART, STATS, G, OUT, row, head, active,\n                GS: gl.constexpr, CAP: gl.constexpr, S: gl.constexpr,\n                BD: gl.constexpr, STRIPE: gl.constexpr = 0, TAIL: gl.constexpr = 0, DENSE: gl.constexpr = False, MID: gl.constexpr = False):\n    VEC: gl.constexpr = 4 if BD == 64 or (BD == 8 and S == 512) or (BD == 32 and S >= 256) else 1\n    LANES: gl.constexpr = 2 if BD == 8 and S == 512 else 8 if BD == 8 or (BD == 16 and S >= 128) or (BD == 32 and S >= 256) else 16\n    if MID and CAP == 256 and BD == 16 and S == 256:\n        # Each wave owns four channels and their complete medium-row reduction.\n        L: gl.constexpr = gl.BlockedLayout([1, 1], [16, 4], [1, 4], [1, 0])\n    elif NW == 2 and S <= 64:\n        L: gl.constexpr = gl.BlockedLayout([1, 1], [4, 16], [1, 2], [1, 0])\n    elif NW == 2 and S == 128:\n        L: gl.constexpr = gl.BlockedLayout([1, 4], [16, 4], [1, 2], [1, 0])\n    elif NW == 2:\n        L: gl.constexpr = gl.BlockedLayout([1, VEC], [64 // LANES, LANES], [2, 1], [1, 0])\n    elif TAIL or (CAP == 256 and BD == 16 and S == 128):\n        L: gl.constexpr = gl.BlockedLayout([1, 1], [256 // BD, BD // 4], [1, 4], [1, 0])\n    elif S == 32 and BD == 64:\n        L: gl.constexpr = gl.BlockedLayout([1, 1], [4, 16], [1, 4], [1, 0])\n    else:\n        L: gl.constexpr = gl.BlockedLayout([1, VEC], [64 // LANES, LANES], [4, 1], [1, 0])\n    s = gl.arange(0, S, gl.SliceLayout(1, L))\n    d = gl.program_id(2) * BD + gl.arange(0, BD, gl.SliceLayout(0, L))\n    r = (row * 8 + head) * CAP + s\n    valid = gl.full((S,), True, gl.int1, gl.SliceLayout(1, L)) if DENSE else s < active\n    gate = gl.load(G + row * GS + head * 256 + d).to(gl.float32)\n    offset = _partial_offset(row * 8 + head, s[:, None], d[None, :], CAP, STRIPE)\n    values = gl.load(PART + offset, valid[:, None], 0.0).to(gl.float32)\n    if TAIL:\n        if TAIL == 1:\n            t = S\n            rt = (row * 8 + head) * CAP + t\n            tail_offset = _partial_offset(row * 8 + head, t, d, CAP, STRIPE)\n            tail_values = gl.load(PART + tail_offset, (True if DENSE else active > S), 0.0).to(gl.float32)\n        else:\n            t = S + gl.arange(0, TAIL, gl.SliceLayout(1, L))\n            rt = (row * 8 + head) * CAP + t\n            tail_offset = _partial_offset(row * 8 + head, t[:, None], d[None, :], CAP, STRIPE)\n            tail_values = gl.load(PART + tail_offset, (True if DENSE else t[:, None] < active), 0.0).to(gl.float32)\n    maximum = gl.load(STATS + r * 2, valid, -float('inf'))\n    total = gl.load(STATS + r * 2 + 1, valid, 0.0)\n    if TAIL:\n        tail_max = gl.load(STATS + rt * 2, (True if DENSE else t < active), -float('inf'))\n        tail_total = gl.load(STATS + rt * 2 + 1, (True if DENSE else t < active), 0.0)\n        all_max = gl.maximum(gl.max(maximum, 0), tail_max if TAIL == 1 else gl.max(tail_max, 0))\n    else:\n        all_max = gl.max(maximum, 0)\n    alpha = gl.exp2((maximum - all_max) * 1.4426950408889634)\n    if TAIL:\n        tail_alpha = gl.exp2((tail_max - all_max) * 1.4426950408889634)\n    denom = gl.sum(total * alpha, 0)\n    numer = gl.sum(values * alpha[:, None], 0)\n    if TAIL:\n        if TAIL == 1:\n            denom += tail_total * tail_alpha\n            numer += tail_values * tail_alpha\n        else:\n            denom += gl.sum(tail_total * tail_alpha, 0)\n            numer += gl.sum(tail_values * tail_alpha[:, None], 0)\n    attention = (numer / denom).to(gl.bfloat16).to(gl.float32)\n    result = attention * (1.0 / (1.0 + gl.exp2((-gate) * 1.4426950408889634)))\n    gl.store(OUT + (row * 8 + head) * 256 + d, result)\n\n\n@gluon.jit\ndef _merge_live(PART, STATS, IP, G, OUT, GS: gl.constexpr,\n                CAP: gl.constexpr, ROWS: gl.constexpr, BD: gl.constexpr, NW: gl.constexpr):\n    row = gl.program_id(0)\n    head = gl.program_id(1)\n    length = gl.load(IP + row + 1) - gl.load(IP + row)\n    if ROWS == 4 and length > 1025 and length <= 1152:\n        if length > 1120:\n            _merge_tile(NW, PART, STATS, G, OUT, row, head, 36, GS, CAP, 32, BD, TAIL=4, DENSE=True)\n        else:\n            _merge_tile(NW, PART, STATS, G, OUT, row, head, gl.cdiv(length, 32), GS, CAP, 32, BD, TAIL=4)\n    elif ROWS == 8 and length > 1024 and length <= 1088:\n        _merge_tile(NW, PART, STATS, G, OUT, row, head, 17, GS, CAP, 16, BD, TAIL=1, DENSE=True)\n    elif length <= 2048:\n        SB: gl.constexpr = 16 if ROWS <= 2 else 64\n        if ROWS <= 2 and length <= 1152:\n            _merge_tile(NW, PART, STATS, G, OUT, row, head, gl.cdiv(length, SB), GS, CAP, 64, BD, TAIL=8)\n        elif ROWS >= 4 and length <= 1024 + SB:\n            _merge_tile(NW, PART, STATS, G, OUT, row, head, gl.cdiv(length, SB), GS, CAP, 1024 // SB, BD, TAIL=1)\n        else:\n            _merge_tile(NW, PART, STATS, G, OUT, row, head, gl.cdiv(length, SB), GS, CAP, 2048 // SB, BD)\n    elif length <= 8192:\n        if ROWS == 2 and length <= 6144:\n            _merge_tile(NW, PART, STATS, G, OUT, row, head, gl.cdiv(length, 64), GS, CAP, 64, BD, TAIL=32)\n        else:\n            _merge_tile(NW, PART, STATS, G, OUT, row, head, gl.cdiv(length, 64), GS, CAP, 128, BD)\n    elif length <= 16384:\n        if ROWS == 8:\n            _merge_tile(NW, PART, STATS, G, OUT, row, head, gl.cdiv(length, 128), GS, CAP, 128, BD)\n        else:\n            _merge_tile(NW, PART, STATS, G, OUT, row, head, gl.minimum(CAP, gl.cdiv(length, 64)), GS, CAP, min(CAP, 256), BD, MID=True)\n    else:\n        if ROWS == 1:\n            active = gl.where(length <= 65536, gl.cdiv(length, 128), gl.where(length <= 131072, gl.cdiv(length, 256), CAP))\n            if length <= 131072:\n                _merge_tile(NW, PART, STATS, G, OUT, row, head, active, GS, CAP, CAP, BD, STRIPE=32)\n            else:\n                _merge_tile(NW, PART, STATS, G, OUT, row, head, active, GS, CAP, CAP, BD)\n        else:\n            _merge_tile(NW, PART, STATS, G, OUT, row, head, CAP, GS, CAP, CAP, BD)\n\n\ndef paged_attention_output_gate(query: torch.Tensor, key_cache: torch.Tensor,\n                                value_cache: torch.Tensor, kv_indptr: torch.Tensor,\n                                kv_indices: torch.Tensor, gate: torch.Tensor, *,\n                                scale: float, max_context: int,\n                                k_scale: torch.Tensor | None = None,\n                                v_scale: torch.Tensor | None = None,\n                                output: torch.Tensor) -> torch.Tensor:\n    rows, heads, dim = query.shape\n    assert heads == 8 and dim == 256 and key_cache.shape[1] == 1\n    splits = 512 if rows == 1 else 256 if rows <= 4 else 128\n    partial = torch.empty((rows, heads, splits, dim), device=query.device, dtype=torch.bfloat16)\n    stats = torch.empty((rows, heads, splits, 2), device=query.device, dtype=torch.float32)\n    key_extent = (key_cache.shape[0] - 1) * key_cache.stride(0) + dim\n    value_extent = (value_cache.shape[0] - 1) * value_cache.stride(0) + dim\n    narrow = key_extent <= 2**32 and value_extent <= 2**32\n    _grouped_dispatch[(rows, splits)](\n        query, key_cache, value_cache, kv_indptr, kv_indices,\n        query if k_scale is None else k_scale, query if v_scale is None else v_scale,\n        partial, stats, scale, query.stride(0), query.stride(1),\n        key_cache.stride(0), value_cache.stride(0), k_scale is not None,\n        splits, rows, narrow, num_warps=4)\n    merge_bd = 8 if rows == 1 else 16 if rows == 2 else 32 if rows == 4 else 64\n    merge_warps = 2 if rows == 4 else 4\n    _merge_live[(rows, heads, 256 // merge_bd)](\n        partial, stats, kv_indptr, gate, output, gate.stride(0), splits, rows, merge_bd, merge_warps, num_warps=merge_warps)\n    return output\n"
+      },
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Qwen3.5 gated attention decode with a BF16 output for MI355X (gfx950), scheduled for\n1 row.\n\nprologue.py RMS-normalizes Q and K, applies the interleaved mRoPE and writes each row's FP8\nkey and value slots; attention.py then attends each query head over its paged FP8 cache in\nsplit partitions and merges them with the output gate into the BF16 rows o_proj takes. Both\nread unit KV scales.\n\"\"\"\n\nimport functools\n\nimport torch\n\nfrom .attention import paged_attention_output_gate\nfrom .prologue import fused_attention_qk_norm_rope_kv_cache\n\n\n@functools.cache\ndef _unit_scale(device):\n    \"\"\"The FP32 KV scale both kernels read: the pools hold unscaled values.\"\"\"\n    return torch.ones(1, dtype=torch.float32, device=device)\n\n\ndef run(\n    *,\n    projected_qkv,\n    q_norm_weight,\n    k_norm_weight,\n    positions,\n    cos_sin_cache,\n    cache_locations,\n    key_cache,\n    value_cache,\n    kv_indptr,\n    kv_indices,\n    eps,\n    scale,\n    gated,\n):\n    unit = _unit_scale(projected_qkv.device)\n    query, gate, _, _, _, _ = fused_attention_qk_norm_rope_kv_cache(\n        projected_qkv,\n        q_norm_weight,\n        k_norm_weight,\n        positions,\n        cos_sin_cache,\n        cache_locations,\n        key_cache,\n        value_cache,\n        eps=eps,\n        rotary_dim=64,\n        k_scale=unit,\n        v_scale=unit,\n        mrope_section=(11, 11, 10),\n    )\n    paged_attention_output_gate(\n        query,\n        key_cache,\n        value_cache,\n        kv_indptr,\n        kv_indices,\n        gate,\n        scale=scale,\n        max_context=key_cache.shape[0],\n        k_scale=unit,\n        v_scale=unit,\n        output=gated,\n    )\n"
+      },
+      {
+        "path": "prologue.py",
+        "content": "# Created by OpenAI\n\"\"\"One-wave Q/K normalization and mRoPE, plus independent V/gate copies.\n\nQ/K payloads use scalar-base buffer loads with bounded channel offsets.\nLane-striped reductions and four-channel copy vectors keep the roles independent.\nPositions, cache locations, and scales are always read on-device.\n\"\"\"\n\nimport torch\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n\n@gluon.jit\ndef _store(value, base, d):\n    gl.amd.cdna3.buffer_store(value.to(base.dtype.element_ty), base, d, cache=\".wt\")\n\n\n@gluon.jit\ndef _norm_rope(source, weight, positions, rope, token, d,\n               EPS: gl.constexpr, POS_STRIDE: gl.constexpr, SECTIONS: gl.constexpr,\n               SMALL_ROPE: gl.constexpr):\n    # Only the channel offset is narrow; source and weight bases remain full-width.\n    x = gl.amd.cdna3.buffer_load(source, d).to(gl.float32)\n    w = gl.amd.cdna3.buffer_load(weight, d).to(gl.float32)\n    variance = gl.sum(x * x, 0) / 256.0\n    # Gemma RMSNorm rounds to BF16 before any rotary arithmetic.\n    n = (x * gl.rsqrt(variance + EPS) * (1.0 + w)).to(gl.bfloat16).to(gl.float32)\n    partner = gl.gather(n, d ^ 32, 0)\n    f = (d % 32).to(gl.uint32)\n    if SECTIONS is None:\n        position = gl.load(positions + token)\n    else:\n        height_mask: gl.constexpr = 0x92492492 & ((1 << (3 * SECTIONS[1])) - 1)\n        width_mask: gl.constexpr = 0x24924924 & ((1 << (3 * SECTIONS[2])) - 1)\n        axis = ((height_mask >> f) & 1) + 2 * ((width_mask >> f) & 1)\n        position = gl.load(positions + token + axis * POS_STRIDE)\n    if SMALL_ROPE:\n        index = (position.to(gl.uint32) * 64 + f).to(gl.int64)\n    else:\n        index = position.to(gl.int64) * 64 + f\n    cosine = gl.load(rope + index).to(gl.float32)\n    sine = gl.load(rope + index + 32).to(gl.float32)\n    rotated = gl.where(d < 32, n * cosine - partner * sine, n * cosine + partner * sine)\n    return gl.where(d < 64, rotated, n).to(gl.bfloat16)\n\n\n@gluon.jit\ndef _uniform32(value):\n    return gl.inline_asm_elementwise(\n        \"v_readfirstlane_b32 $0, $1\", \"=s,v\", [value],\n        dtype=gl.uint32, is_pure=True, pack=1,\n    )\n\n\n@gluon.jit\ndef _cache_row(cache, locations, token, LOC_STRIDE: gl.constexpr, SMALL_CACHE: gl.constexpr):\n    slot = gl.load(locations + token * LOC_STRIDE).to(gl.int64)\n    # Keep buffer descriptors scalar, and the row address full-width (>2 GiB).\n    low = _uniform32(slot.to(gl.uint32)).to(gl.int64)\n    if SMALL_CACHE:\n        slot = low\n    else:\n        high = _uniform32((slot >> 32).to(gl.uint32)).to(gl.int64)\n        slot = (high << 32) | low\n    return cache + slot * 256\n\n\n@gluon.jit\ndef _write_kv(value, output, cache_row, scale, d):\n    _store(value, output, d)\n    scaled = value\n    if scale is not None:\n        if cache_row.dtype.element_ty == gl.float8e4nv:\n            if scale != 1.0:\n                # OCP FP8 requires correctly rounded division, then BF16 rounding.\n                scaled = gl.div_rn(value.to(gl.float32), scale).to(gl.bfloat16)\n        else:\n            scaled = value.to(gl.float32) / scale\n    _store(scaled, cache_row, d)\n\n\n@gluon.jit\ndef _prologue(packed, qw, kw, positions, rope, locations, key_cache, value_cache,\n              query, gate_out, key_out, value_out, key_scale, value_scale,\n              H: gl.constexpr, EPS: gl.constexpr,\n              POS_STRIDE: gl.constexpr, LOC_STRIDE: gl.constexpr, SECTIONS: gl.constexpr,\n              SMALL_ROPE: gl.constexpr, SMALL_CACHE: gl.constexpr):\n    token = gl.program_id(0)\n    role = gl.program_id(1)\n    row = packed + token * (H * 512 + 512)\n    norm_d = gl.arange(0, 256, gl.BlockedLayout([1], [64], [1], [0]))\n    copy_d = gl.arange(0, 256, gl.BlockedLayout([4], [64], [1], [0]))\n    if role < H:\n        q = _norm_rope(row + role * 512, qw, positions, rope, token, norm_d,\n                       EPS, POS_STRIDE, SECTIONS, SMALL_ROPE)\n        _store(q, query + (token * H + role) * 256, norm_d)\n    elif role == H:\n        cache_row = _cache_row(key_cache, locations, token, LOC_STRIDE, SMALL_CACHE)\n        scale = gl.load(key_scale).to(gl.float32) if key_scale is not None else None\n        k = _norm_rope(row + H * 512, kw, positions, rope, token, norm_d,\n                       EPS, POS_STRIDE, SECTIONS, SMALL_ROPE)\n        _write_kv(k, key_out + token * 256, cache_row, scale, norm_d)\n    elif role == H + 1:\n        cache_row = _cache_row(value_cache, locations, token, LOC_STRIDE, SMALL_CACHE)\n        scale = gl.load(value_scale).to(gl.float32) if value_scale is not None else None\n        v = gl.load(row + H * 512 + 256 + copy_d)\n        _write_kv(v, value_out + token * 256, cache_row, scale, copy_d)\n    else:\n        head = role - H - 2\n        gate = gl.load(row + head * 512 + 256 + copy_d)\n        _store(gate, gate_out + (token * H + head) * 256, copy_d)\n\n\ndef fused_attention_qk_norm_rope_kv_cache(\n    projected_qkv_gate: torch.Tensor, q_norm_weight: torch.Tensor, k_norm_weight: torch.Tensor,\n    positions: torch.Tensor, cos_sin_cache: torch.Tensor, cache_locations: torch.Tensor,\n    key_cache: torch.Tensor, value_cache: torch.Tensor, *, eps: float = 1.0e-6,\n    rotary_dim: int = 64, k_scale: torch.Tensor | None = None,\n    v_scale: torch.Tensor | None = None, mrope_section: tuple[int, int, int] | None = None,\n) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:\n    rows, width = projected_qkv_gate.shape\n    heads = (width - 512) // 512\n    assert rotary_dim == 64\n    query = projected_qkv_gate.new_empty((rows, heads, 256))\n    gate = projected_qkv_gate.new_empty((rows, heads * 256))\n    key = projected_qkv_gate.new_empty((rows, 1, 256))\n    value = projected_qkv_gate.new_empty((rows, 1, 256))\n    _prologue[(rows, 2 * heads + 2)](\n        projected_qkv_gate, q_norm_weight, k_norm_weight, positions,\n        cos_sin_cache, cache_locations, key_cache, value_cache,\n        query, gate, key, value, k_scale, v_scale,\n        H=heads, EPS=eps,\n        POS_STRIDE=positions.stride(0) if positions.ndim == 2 else 0,\n        LOC_STRIDE=cache_locations.stride(0), SECTIONS=mrope_section,\n        SMALL_ROPE=cos_sin_cache.shape[0] <= 2**25,\n        SMALL_CACHE=key_cache.shape[0] <= 2**32, num_warps=1,\n    )\n    return query, gate, key, value, key_cache, value_cache\n"
+      }
+    ]
+  }
+}
