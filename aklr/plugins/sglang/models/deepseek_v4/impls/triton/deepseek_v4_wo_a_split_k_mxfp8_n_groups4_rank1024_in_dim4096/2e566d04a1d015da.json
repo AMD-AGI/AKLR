@@ -1,0 +1,168 @@
+{
+  "schema_version": 5,
+  "name": "deepseek_v4_wo_a_split_k_mxfp8_n_groups4_rank1024_in_dim4096",
+  "contract_id": "deepseek_v4_wo_a_split_k_mxfp8@1.0",
+  "description": "sglang's gfx950 split-K wo_a GEMM of DeepSeek-V4 (_batched_gemm_split_k) handing wo_b MXFP8: y[t, g * rank + r] = sum_d x[t, g, d] * w[g, r, d] rounded to bf16, then quantized by the fp8-grid rule of wo_b's operand: per 32 columns, e = the exponent of the smallest power of two >= max(amax, 1e-10) / 448 (in float32), and each value / 2**e rounded to fp8 e4m3, saturating at 448; the fp8 codes and each group's 2**e.",
+  "op_type": "deepseek_v4",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Rows of this call; sglang takes its split-K regime up to 64."
+    },
+    "n_groups": {
+      "type": "const",
+      "value": 4,
+      "description": "Output groups on this rank: o_groups over the attention TP size."
+    },
+    "rank": {
+      "type": "const",
+      "value": 1024,
+      "description": "Output columns per group (o_lora_rank)."
+    },
+    "in_dim": {
+      "type": "const",
+      "value": 4096,
+      "description": "Reduction length per group, n_heads * head_dim / o_groups; split eight ways in 256-wide steps."
+    },
+    "out_dim": {
+      "type": "const",
+      "value": 4096,
+      "description": "Output columns, every group's rank columns in group order."
+    },
+    "n_scales": {
+      "type": "const",
+      "value": 128,
+      "description": "One scale per 32 output columns."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "x": {
+      "shape": [
+        "n_tokens",
+        "n_groups",
+        "in_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The attention output, in_dim columns per group."
+    },
+    "w": {
+      "shape": [
+        "n_groups",
+        "rank",
+        "in_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 4096
+      },
+      "description": "wo_a's weight of each group, (rank, in_dim)."
+    }
+  },
+  "outputs": {
+    "quantized": {
+      "shape": [
+        "n_tokens",
+        "out_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "y / 2**e of its 32-column group, rounded to fp8 e4m3."
+    },
+    "scales": {
+      "shape": [
+        "n_tokens",
+        "n_scales"
+      ],
+      "dtype": "float8_e8m0",
+      "description": "2**e of each 32-column group of y; sglang holds the e8m0 byte as uint8."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 6
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 12
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 18
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 24
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 30
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 36
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 42
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 48
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 60
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.001,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "GEAK",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"DeepSeek-V4's gfx950 wo_a GEMM in sglang's split-K regime, as wo_b's MXFP8 operand, in one Triton launch.\n\ny[t, g * R + r] = x[t, g] @ w[g, r] for T <= 64 rows: eight 512-wide K splits per output tile, each a\nfloat32 partial in a per-call scratch buffer; the last split to arrive at the tile's semaphore sums\nthe eight partials in split order, rounds to bf16 and quantizes each 32 columns to fp8 e4m3 codes and their\ne8m0 exponent byte. The partials and their sum are those of sglang's two-kernel _batched_gemm_split_k, so\nboth outputs equal it bit for bit.\n\nThe semaphores are cached per device and shape, zeroed once, and every launch leaves them at 0: a deviation\nfrom aklr's scratch rule (\"rewritten whole by every call before it is read\"), described in wo_a_split_k.py.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport torch\n\nfrom .wo_a_split_k import wo_a_split_k\n\n\ndef run(*, x, w, quantized, scales) -> None:\n    wo_a_split_k(x, w, quantized, scales.view(torch.uint8), False)\n"
+      },
+      {
+        "path": "wo_a_split_k.py",
+        "content": "\"\"\"The split-K partials and their ordered reduce of DeepSeek-V4's gfx950 wo_a GEMM, in one Triton launch.\n\ny[t, g * R + r] = sum_d x[t, g, d] * w[g, r, d], for T <= 64 rows. Grid (G, row tiles x N tiles, 8): each\nprogram accumulates one 512-wide K slice of one output tile in float32 (16x16 MFMA, K ascending), as sglang's\n_batched_gemm_bf16_split_k_partial_kernel does, and stores it to a per-call scratch buffer. It then counts its\narrival on the tile's semaphore (one int32 per output tile) once its partial stores have reached the device\ncoherence point. The program that arrives last re-reads the eight partials and sums them in split order 0..7\nstarting from zero, rounds to bf16, applies the epilogue of sglang's _batched_gemm_split_k_reduce_kernel (none,\nthe fp8-grid rounding (FP8_GRID), or fp8 e4m3 codes with one ue8m0 exponent per 32 columns (EMIT_FP8)) and sets\nthe semaphore back to 0. One row tile covers every row, so each weight column is read once per call.\n\nDeviation from the scratch rule of aklr/ops/README.md (\"rewritten whole by every call before it is read\"): the\nsemaphore buffer is allocated and zeroed once per device and shape (in the cached _semaphores, on the Point's\nfirst call, which aklr makes eagerly, outside any graph capture) and every launch leaves it at 0 again, so\nthe next launch reads what the previous one left. Zeroing it per call is one more launch (about 1.8 us on\nMI355X), most of the gain at small row counts. It assumes every launch runs to completion and that no two\nlaunches of one shape share the buffer concurrently (sglang makes these calls on one stream).\n\"\"\"\n\nfrom __future__ import annotations\n\nimport functools\n\nimport torch\nimport triton\nimport triton.language as tl\n\n_AMAX_FLOOR = tl.constexpr(1e-10)\n\nSPLIT_K = 8\n# (largest T, BLOCK_M, BLOCK_N, BLOCK_K, num_warps, num_stages) for up to 4096 output columns, then\n# for more (8 groups of 1024 without attention TP), tuned on MI355X; every one keeps the per-element\n# float32 chain of sglang's partial kernel (16x16 MFMA, K ascending in each 512-wide split)\n_CONFIGS = (\n    (8, (16, 128, 64, 8, 3), (16, 64, 64, 4, 3)),\n    (16, (32, 64, 128, 8, 3), (16, 64, 64, 4, 3)),\n    (32, (32, 64, 128, 8, 3), (32, 128, 64, 16, 3)),\n    (64, (64, 64, 64, 16, 3), (64, 64, 64, 8, 3)),\n)\n\n\n@triton.jit\ndef _fp8_grid_quant(xg):\n    \"\"\"sglang's fp8_grid_quant: float32 [G, 32] -> e4m3 codes and the ue8m0 exponent of each 32-group.\"\"\"\n    amax = tl.maximum(tl.max(tl.abs(xg), axis=1), _AMAX_FLOOR)\n    bits = (amax * (1.0 / 448.0)).to(tl.int32, bitcast=True)\n    exp = ((bits >> 23) & 0xFF) + ((bits & 0x7FFFFF) != 0).to(tl.int32)\n    exp = tl.minimum(tl.maximum(exp, 1), 254)\n    scale = (exp << 23).to(tl.float32, bitcast=True)\n    scaled = tl.clamp(xg / scale[:, None], -448.0, 448.0)\n    return scaled.to(tl.float8e4nv), exp\n\n\n@triton.jit\ndef _wo_a_split_k_kernel(\n    a_ptr,\n    b_ptr,\n    part_ptr,\n    sem_ptr,\n    c_ptr,\n    scale_ptr,\n    M,\n    N,\n    K,\n    stride_ab,\n    stride_am,\n    stride_bb,\n    stride_bn,\n    stride_cm,\n    stride_sm,\n    BLOCK_SIZE_M: tl.constexpr,\n    BLOCK_SIZE_N: tl.constexpr,\n    BLOCK_SIZE_K: tl.constexpr,\n    SPLIT_K: tl.constexpr,\n    FP8_GRID: tl.constexpr,\n    EMIT_FP8: tl.constexpr,\n):\n    batch_id = tl.cast(tl.program_id(axis=0), tl.int64)\n    pid = tl.program_id(axis=1)\n    pid_k = tl.program_id(axis=2)\n    num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)\n    num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)\n    pid_m = pid // num_pid_n\n    pid_n = pid % num_pid_n\n    k_per_split = K // SPLIT_K\n    offs_k = pid_k * k_per_split + tl.arange(0, BLOCK_SIZE_K)\n    offs_m = pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)\n    offs_n = tl.cast(pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N), tl.int64)\n    row_mask = offs_m < M\n    a_ptrs = a_ptr + (\n        batch_id * tl.cast(stride_ab, tl.int64)\n        + tl.cast(offs_m, tl.int64)[:, None] * stride_am\n        + offs_k[None, :]\n    )\n    b_ptrs = b_ptr + (batch_id * tl.cast(stride_bb, tl.int64) + offs_k[:, None] + offs_n[None, :] * stride_bn)\n    acc = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)\n    for _ in range(k_per_split // BLOCK_SIZE_K):\n        a = tl.load(a_ptrs, mask=row_mask[:, None], other=0.0)\n        b = tl.load(b_ptrs, cache_modifier=\".cg\")\n        acc = tl.dot(a, b, acc=acc)\n        a_ptrs += BLOCK_SIZE_K\n        b_ptrs += BLOCK_SIZE_K\n\n    # this split's partial, part[g, split, m, n]; padded rows are neither stored nor read\n    part_rows = tl.arange(0, BLOCK_SIZE_M)[:, None] * N + offs_n[None, :]\n    tile = ((batch_id * SPLIT_K + pid_k) * num_pid_m + pid_m) * BLOCK_SIZE_M\n    # write-through: the partial lands at the device coherence point, not only in this XCD's L2\n    tl.store(part_ptr + tile * N + part_rows, acc, mask=row_mask[:, None], cache_modifier=\".wt\")\n    # every wave waits until its partial stores are acknowledged, then the workgroup syncs before\n    # one arrival is counted (the release half, without the whole-L2 writeback of an acq_rel atomic)\n    tl.inline_asm_elementwise(\"s_waitcnt vmcnt(0)\", \"=r,r\", [pid], dtype=tl.int32, is_pure=False, pack=1)\n    tl.debug_barrier()\n    sem = sem_ptr + batch_id * (num_pid_m * num_pid_n) + pid\n    arrived = tl.atomic_add(sem, 1, sem=\"relaxed\", scope=\"gpu\")\n    if arrived == SPLIT_K - 1:\n        # the last arrival sums the partials as sglang's reduce does: 0 + p0 + p1 + ... + p7\n        red = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)\n        for s in tl.static_range(SPLIT_K):\n            tile_s = ((batch_id * SPLIT_K + s) * num_pid_m + pid_m) * BLOCK_SIZE_M\n            # coherent reads (sc0 sc1) of the other programs' partials\n            red += tl.load(\n                part_ptr + tile_s * N + part_rows, mask=row_mask[:, None], other=0.0, cache_modifier=\".cv\"\n            )\n        c_mask = row_mask[:, None] & (offs_n[None, :] < N)\n        c_ptrs = c_ptr + batch_id * N + stride_cm * tl.cast(offs_m, tl.int64)[:, None] + offs_n[None, :]\n        if EMIT_FP8:\n            q8, e8 = _fp8_grid_quant(\n                tl.reshape(red.to(tl.bfloat16).to(tl.float32), (BLOCK_SIZE_M * (BLOCK_SIZE_N // 32), 32))\n            )\n            tl.store(c_ptrs, tl.reshape(q8, (BLOCK_SIZE_M, BLOCK_SIZE_N)), mask=c_mask)\n            offs_sn = pid_n * (BLOCK_SIZE_N // 32) + tl.arange(0, BLOCK_SIZE_N // 32)\n            tl.store(\n                scale_ptr\n                + batch_id * (N // 32)\n                + stride_sm * tl.cast(offs_m, tl.int64)[:, None]\n                + offs_sn[None, :],\n                tl.reshape(e8, (BLOCK_SIZE_M, BLOCK_SIZE_N // 32)).to(tl.uint8),\n                mask=row_mask[:, None] & (offs_sn[None, :] < N // 32),\n            )\n        else:\n            c = red.to(tl.bfloat16)\n            if FP8_GRID:\n                q8, e8 = _fp8_grid_quant(\n                    tl.reshape(c.to(tl.float32), (BLOCK_SIZE_M * (BLOCK_SIZE_N // 32), 32))\n                )\n                g = q8.to(tl.float32) * (e8 << 23).to(tl.float32, bitcast=True)[:, None]\n                c = tl.reshape(g, (BLOCK_SIZE_M, BLOCK_SIZE_N)).to(tl.bfloat16)\n            tl.store(c_ptrs, c, mask=c_mask)\n        # all eight arrivals are in: leave the semaphore at 0 for the next launch\n        tl.atomic_xchg(sem, 0, sem=\"relaxed\", scope=\"gpu\")\n\n\ndef _tiles(T, G, D, R):\n    narrow, wide = next(cfgs for max_m, *cfgs in _CONFIGS if T <= max_m)\n    cfg = narrow if G * R <= 4096 else wide\n    return triton.cdiv(T, cfg[0]) * triton.cdiv(R, cfg[1]), cfg\n\n\n@functools.cache\ndef _semaphores(device, shape):\n    \"\"\"The int32 semaphores of one device and (T, G, D, R), zeroed once; every launch leaves them at 0.\"\"\"\n    return torch.zeros((_tiles(*shape)[0] * shape[1],), dtype=torch.int32, device=device)\n\n\ndef wo_a_split_k(x, w, out, scale, fp8_grid):\n    \"\"\"out[t, g * R:(g + 1) * R] = x[t, g] @ w[g].T with sglang's split-K reduction order and epilogue;\n    scale given: out holds e4m3 codes and scale the ue8m0 exponents. x [T, G, D], w [G, R, D] bf16,\n    contiguous, T <= 64, D % (8 * 128) == 0, R % 128 == 0.\"\"\"\n    T, G, D = x.shape\n    R = w.shape[1]\n    tiles, (bm, bn, bk, nw, ns) = _tiles(T, G, D, R)\n    partials = torch.empty((G, SPLIT_K, triton.cdiv(T, bm) * bm, R), dtype=torch.float32, device=x.device)\n    semaphores = _semaphores(x.device, (T, G, D, R))\n    _wo_a_split_k_kernel[(G, tiles, SPLIT_K)](\n        x,\n        w,\n        partials,\n        semaphores,\n        out,\n        out if scale is None else scale,\n        T,\n        R,\n        D,\n        x.stride(1),\n        x.stride(0),\n        w.stride(0),\n        w.stride(1),\n        G * R,\n        G * R // 32,\n        BLOCK_SIZE_M=bm,\n        BLOCK_SIZE_N=bn,\n        BLOCK_SIZE_K=bk,\n        SPLIT_K=SPLIT_K,\n        FP8_GRID=bool(fp8_grid),\n        EMIT_FP8=scale is not None,\n        num_warps=nw,\n        num_stages=ns,\n        matrix_instr_nonkdim=16,\n    )\n"
+      }
+    ]
+  }
+}
