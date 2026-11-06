@@ -1,0 +1,839 @@
+{
+  "schema_version": 5,
+  "name": "deepseek_v4_attention_q_prep_n_heads32_q_lora_rank1280",
+  "contract_id": "deepseek_v4_attention_q_prep@1.0",
+  "description": "What sglang's MQALayer._forward_prepare runs on ROCm gfx950 between wqkv_a and attention when the K store also ropes the queries: the q_lora_rank columns of qkv_a are RMS-normalized with q_norm_weight, rounded to BF16 and quantized per 32 columns to E4M3FN with a UE8M0 scale 2**ceil(log2(max(amax, 1e-10) * float32(1 / 448))) (q_lora_quant, q_lora_scale); q is that operand times wq_b (E4M3FN, one UE8M0 scale per 32 x 32 block) transposed, rounded to BF16, whose last 64 dims of each head take RoPE: pair (2j, 2j + 1) times (cos, sin) = freqs[positions, 2j], freqs[positions, 2j + 1]. The last 512 columns of qkv_a (the KV row) are RMS-normalized with kv_norm_weight; dims 0-447 are quantized per 64 to E4M3FN with a UE8M0 scale 2**ceil(log2(max(amax, 1e-4) / 448)), dims 448-511 take the same RoPE in BF16, and the row is written at slot swa_loc of kv_cache (sglang's V4 layout: page p's slot s holds its 448 codes then its 64 BF16 values at byte 576 * s of row p, and its 7 scale bytes at byte 576 * page_size + 8 * s); a negative slot writes nothing. All other bytes of kv_cache are preserved.",
+  "op_type": "deepseek_v4",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, padding rows included."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 32,
+      "description": "Query heads on this rank."
+    },
+    "q_lora_rank": {
+      "type": "const",
+      "value": 1280,
+      "description": "Width of the query LoRA rank, wq_b's input."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Pages of kv_cache."
+    },
+    "n_positions": {
+      "type": "var",
+      "description": "Rows of the cos/sin table."
+    },
+    "qkv_dim": {
+      "type": "const",
+      "value": 1792,
+      "description": "Columns of qkv_a: the query LoRA rank, then the KV row."
+    },
+    "q_dim": {
+      "type": "const",
+      "value": 16384,
+      "description": "Output columns of wq_b."
+    },
+    "q_lora_groups": {
+      "type": "const",
+      "value": 40,
+      "description": "Scales of a quantized q_lora row: one per 32 columns."
+    },
+    "wq_b_scale_rows": {
+      "type": "const",
+      "value": 512,
+      "description": "Rows of wq_b's scales: one per 32 output columns."
+    },
+    "page_bytes": {
+      "type": "const",
+      "value": 149760,
+      "description": "Bytes of a kv_cache page: 584 a slot, padded to a multiple of 576."
+    }
+  },
+  "attrs": {
+    "page_size": 256
+  },
+  "inputs": {
+    "qkv_a": {
+      "shape": [
+        "n_tokens",
+        "qkv_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "wqkv_a's output: the query LoRA rank's columns, then the KV row."
+    },
+    "q_norm_weight": {
+      "shape": [
+        "q_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "q_norm's weight."
+    },
+    "kv_norm_weight": {
+      "shape": [512],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "kv_norm's weight."
+    },
+    "wq_b": {
+      "shape": [
+        "q_dim",
+        "q_lora_rank"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "wq_b's weight, output columns by input columns."
+    },
+    "wq_b_scale": {
+      "shape": [
+        "wq_b_scale_rows",
+        "q_lora_groups"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -8,
+        "log2_hi": 8
+      },
+      "description": "wq_b's scales, one per 32 x 32 block."
+    },
+    "freqs": {
+      "shape": [
+        "n_positions",
+        64
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Per position, the 32 RoPE pairs' (cos, sin), interleaved."
+    },
+    "positions": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_positions - 1",
+        "distinct": false
+      },
+      "description": "Each token's position, a row of freqs."
+    },
+    "swa_loc": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_pages * page_size - 1",
+        "distinct": true
+      },
+      "description": "Each token's kv_cache slot, page * page_size + slot; negative: not written. Rows sharing a slot leave one of their rows there."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_pages",
+        "page_bytes"
+      ],
+      "dtype": "uint8",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "This layer's SWA pool in sglang's V4 layout, a page a row."
+    },
+    "q_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "RMSNorm epsilon."
+    },
+    "kv_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "RMSNorm epsilon."
+    }
+  },
+  "outputs": {
+    "q": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        512
+      ],
+      "dtype": "bfloat16",
+      "description": "The queries, the last 64 dims of each head roped."
+    },
+    "q_lora_quant": {
+      "shape": [
+        "n_tokens",
+        "q_lora_rank"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "The normalized q_lora on the E4M3FN grid, what wq_b and the indexer read."
+    },
+    "q_lora_scale": {
+      "shape": [
+        "n_tokens",
+        "q_lora_groups"
+      ],
+      "dtype": "float8_e8m0",
+      "description": "q_lora_quant's scales, one per 32 columns."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 6,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 12,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 12,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 18,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 18,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 24,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 24,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 30,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 30,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 36,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 36,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 42,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 42,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 48,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 48,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 52,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 60,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 60,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 72,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 72,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 84,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 84,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 96,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 96,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 104,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 108,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 108,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 120,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 120,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 132,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 132,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 144,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 144,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 156,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 156,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 168,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 168,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 180,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 180,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 192,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 192,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 219,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 240,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 256,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 264,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 288,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 312,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 336,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 360,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 364,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 384,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 416,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 512,
+        "n_pages": 64,
+        "n_positions": 262144
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 572,
+        "n_pages": 3493,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "q_eps": 9.999999682655225e-21,
+        "kv_eps": 9.999999682655225e-21
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "GEAK",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"DeepSeek-V4 MQA prepare on gfx950 in two Triton launches: q_norm and the K store, then wq_b\nwith the query RoPE in its epilogue.\n\nLaunch 1, ``_qkv_prep_rows_kernel``, grid 2 * n_tokens. Programs [0, n_tokens) are the query rows:\nRMSNorm of qkv_a's first q_lora_rank columns, rounded to BF16 and quantized per 32 columns to\nE4M3FN with UE8M0 scales (sglang's rmsnorm_fake_quant row, op for op), into q_lora_quant and\nq_lora_scale. Programs [n_tokens, 2 * n_tokens) are the KV rows: RMSNorm of the last 512 columns\nwith the sum of squares in the order of sglang's fused_k_norm_rope_flashmla (pairs, then\nxor-butterflies over 8 groups of 32, then the 8 group sums), nf = 1 / sqrt(mean + eps) with the\nsquare root and the quotient each rounded to nearest; dims 0-447 quantized per 64 to E4M3FN with\na UE8M0 scale, dims 448-511 roped in BF16, stored at the token's slot of the V4 paged SWA pool\n(skipped for a negative slot). Each KV program also hands its token's (cos, sin) row to launch 2.\n\nLaunch 2, ``_gemm_rope_kernel``: q = q_lora_quant @ wq_b^T with 1 x 32 activation and 32 x 32\nweight UE8M0 scales (aiter's afp8wfp8 Triton GEMM, unsplit K walked in order), BF16 out; the N\ntile ending a head ropes that head's last 64 columns on the BF16-rounded accumulator (rot = the\ncross product rounded, then one fma with the cosine). Tile parameters come from a table by row\ncount and output width. Shape-stable and free of host syncs.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport functools\n\nimport torch\nimport triton\nimport triton.language as tl\n\n_FP8_GRID_AMAX_FLOOR = tl.constexpr(1e-10)\n\n\n@triton.jit\ndef _fp8_grid_quant(xg):\n    amax = tl.max(tl.abs(xg), axis=1)\n    amax = tl.maximum(amax, _FP8_GRID_AMAX_FLOOR)\n    raw = amax * (1.0 / 448.0)\n    bits = raw.to(tl.int32, bitcast=True)\n    exp = (bits >> 23) & 0xFF\n    exp = exp + ((bits & 0x7FFFFF) != 0).to(tl.int32)\n    exp = tl.minimum(tl.maximum(exp, 1), 254)\n    scale = (exp << 23).to(tl.float32, bitcast=True)\n    scaled = tl.clamp(xg / scale[:, None], -448.0, 448.0)\n    return scaled.to(tl.float8e4nv), exp\n\n\n@triton.jit\ndef _q_row(\n    row,\n    x_ptr,\n    w_ptr,\n    out_fq_ptr,\n    out_scale_ptr,\n    K,\n    stride_xm,\n    stride_fm,\n    stride_sm,\n    eps,\n    CHUNK: tl.constexpr,\n    NUM_CHUNKS: tl.constexpr,\n):\n    base = tl.arange(0, CHUNK)\n    x_row = x_ptr + row * stride_xm\n    if NUM_CHUNKS == 1:\n        # the weight load issued with the row load (placement only: the arithmetic is the row's)\n        mask = base < K\n        x = tl.load(x_row + base, mask=mask, other=0.0).to(tl.float32)\n        w = tl.load(w_ptr + base, mask=mask, other=0.0).to(tl.float32)\n        acc = tl.zeros((CHUNK,), dtype=tl.float32)\n        acc += x * x\n        var = tl.sum(acc, axis=0) / K\n        rstd = 1.0 / tl.sqrt_rn(var + eps)\n        y = (x * rstd * w).to(tl.bfloat16)\n        yg = tl.reshape(y.to(tl.float32), (CHUNK // 32, 32))\n        q8, e8 = _fp8_grid_quant(yg)\n        tl.store(out_fq_ptr + row * stride_fm + base, tl.reshape(q8, (CHUNK,)), mask=mask)\n        goffs = tl.arange(0, CHUNK // 32)\n        tl.store(out_scale_ptr + row * stride_sm + goffs, e8.to(tl.uint8), mask=goffs < K // 32)\n    else:\n        acc = tl.zeros((CHUNK,), dtype=tl.float32)\n        for c in tl.static_range(NUM_CHUNKS):\n            offs = c * CHUNK + base\n            mask = offs < K\n            x = tl.load(x_row + offs, mask=mask, other=0.0).to(tl.float32)\n            acc += x * x\n        var = tl.sum(acc, axis=0) / K\n        rstd = 1.0 / tl.sqrt_rn(var + eps)\n        for c in tl.static_range(NUM_CHUNKS):\n            offs = c * CHUNK + base\n            mask = offs < K\n            x = tl.load(x_row + offs, mask=mask, other=0.0).to(tl.float32)\n            w = tl.load(w_ptr + offs, mask=mask, other=0.0).to(tl.float32)\n            y = (x * rstd * w).to(tl.bfloat16)\n            yg = tl.reshape(y.to(tl.float32), (CHUNK // 32, 32))\n            q8, e8 = _fp8_grid_quant(yg)\n            tl.store(out_fq_ptr + row * stride_fm + offs, tl.reshape(q8, (CHUNK,)), mask=mask)\n            goffs = c * (CHUNK // 32) + tl.arange(0, CHUNK // 32)\n            tl.store(out_scale_ptr + row * stride_sm + goffs, e8.to(tl.uint8), mask=goffs < K // 32)\n\n\n@triton.jit\ndef _kv_row(\n    row,\n    kv_ptr,\n    stride_kv,\n    kvw_ptr,\n    freqs_ptr,\n    pos_ptr,\n    loc_ptr,\n    cache_u8_ptr,\n    cache_bf16_ptr,\n    ftok_ptr,\n    eps,\n    PAGE_BITS: tl.constexpr,\n    PAGE_BYTES: tl.constexpr,\n):\n    # every global load first, so that their latencies overlap the reduction\n    r = tl.arange(0, 32)\n    pos = tl.load(pos_ptr + row).to(tl.int32).to(tl.int64)\n    loc = tl.load(loc_ptr + row)\n    offs = tl.arange(0, 512)\n    x = tl.load(kv_ptr + row * stride_kv + offs).to(tl.float32)\n    g = tl.arange(0, 8)\n    e = tl.arange(0, 64)\n    idx = g[:, None] * 64 + e[None, :]\n    gm = (g < 7)[:, None]\n    xn = tl.load(kv_ptr + row * stride_kv + idx, mask=gm, other=0.0).to(tl.float32)\n    wn = tl.load(kvw_ptr + idx, mask=gm, other=0.0).to(tl.float32)\n    xr = tl.load(kv_ptr + row * stride_kv + 448 + 2 * r).to(tl.float32)\n    xi = tl.load(kv_ptr + row * stride_kv + 449 + 2 * r).to(tl.float32)\n    wr = tl.load(kvw_ptr + 448 + 2 * r).to(tl.float32)\n    wi = tl.load(kvw_ptr + 449 + 2 * r).to(tl.float32)\n    fr = tl.load(freqs_ptr + pos * 64 + 2 * r)\n    fi = tl.load(freqs_ptr + pos * 64 + 2 * r + 1)\n    # this token's (cos, sin) row, for the GEMM's query RoPE\n    tl.store(ftok_ptr + row * 64 + 2 * r, fr)\n    tl.store(ftok_ptr + row * 64 + 2 * r + 1, fi)\n\n    # sum of squares: the exact squares of each pair (2t, 2t + 1), then xor-butterflies over the\n    # 8 groups of 32 pairs (strides 16, 8, 4, 2, 1), then over the 8 group sums (4, 2, 1)\n    s = tl.sum(tl.reshape(x * x, (256, 2)), axis=1)\n    s = tl.sum(tl.reshape(s, (8, 2, 16)), axis=1)\n    s = tl.sum(tl.reshape(s, (8, 2, 8)), axis=1)\n    s = tl.sum(tl.reshape(s, (8, 2, 4)), axis=1)\n    s = tl.sum(tl.reshape(s, (8, 2, 2)), axis=1)\n    s = tl.sum(tl.reshape(s, (8, 2)), axis=1)\n    s = tl.sum(tl.reshape(s, (2, 4)), axis=0)\n    s = tl.sum(tl.reshape(s, (2, 2)), axis=0)\n    s = tl.sum(s, axis=0)\n    nf = tl.math.div_rn(1.0, tl.sqrt_rn(s * (1.0 / 512.0) + eps))\n\n    do_store = loc >= 0\n    loc_c = tl.maximum(loc, 0).to(tl.int64)\n    page = loc_c >> PAGE_BITS\n    slot = loc_c & ((1 << PAGE_BITS) - 1)\n    data_off = page * PAGE_BYTES + slot * 576\n    scale_off = page * PAGE_BYTES + (576 << PAGE_BITS) + slot * 8\n\n    # no-RoPE dims: 7 groups of 64, scale 2 ** ceil(log2(max(amax, 1e-4) / 448)), E4M3FN codes of\n    # the clamped scaled values\n    dn = xn * nf * wn\n    amax = tl.max(tl.abs(dn), axis=1)\n    scale_raw = tl.math.div_rn(tl.maximum(amax, 1e-4), tl.full(amax.shape, 448.0, tl.float32))\n    bits = scale_raw.to(tl.int32, bitcast=True)\n    ex = ((bits >> 23) & 0xFF) + ((bits & 0x7FFFFF) != 0).to(tl.int32)\n    inv = ((254 - ex) << 23).to(tl.float32, bitcast=True)\n    qv = tl.clamp(dn * inv[:, None], -448.0, 448.0).to(tl.float8e4nv).to(tl.uint8, bitcast=True)\n    tl.store(cache_u8_ptr + data_off + idx, qv, mask=gm & do_store)\n    tl.store(cache_u8_ptr + scale_off + g, ex.to(tl.uint8), mask=(g < 7) & do_store)\n\n    # RoPE dims 448..511: pairs (2l, 2l + 1) with (cos, sin) at pos * 64 + 2l, BF16 out\n    dr = xr * nf * wr\n    di = xi * nf * wi\n    o_r = tl.fma(dr, fr, -(di * fi))\n    o_i = tl.fma(dr, fi, di * fr)\n    rb = (data_off + 448) // 2\n    tl.store(cache_bf16_ptr + rb + 2 * r, o_r.to(tl.bfloat16), mask=do_store)\n    tl.store(cache_bf16_ptr + rb + 2 * r + 1, o_i.to(tl.bfloat16), mask=do_store)\n\n\n@triton.jit\ndef _qkv_prep_rows_kernel(\n    qkv_ptr,\n    T,\n    stride_qkv,\n    qw_ptr,\n    q_eps,\n    out_fq_ptr,\n    out_scale_ptr,\n    stride_fm,\n    stride_sm,\n    kvw_ptr,\n    kv_eps,\n    freqs_ptr,\n    pos_ptr,\n    loc_ptr,\n    cache_u8_ptr,\n    cache_bf16_ptr,\n    ftok_ptr,\n    K: tl.constexpr,\n    CHUNK: tl.constexpr,\n    NUM_CHUNKS: tl.constexpr,\n    PAGE_BITS: tl.constexpr,\n    PAGE_BYTES: tl.constexpr,\n):\n    pid = tl.program_id(0).to(tl.int64)\n    if pid < T:\n        _q_row(\n            pid,\n            qkv_ptr,\n            qw_ptr,\n            out_fq_ptr,\n            out_scale_ptr,\n            K,\n            stride_qkv,\n            stride_fm,\n            stride_sm,\n            q_eps,\n            CHUNK=CHUNK,\n            NUM_CHUNKS=NUM_CHUNKS,\n        )\n    else:\n        _kv_row(\n            pid - T,\n            qkv_ptr + K,\n            stride_qkv,\n            kvw_ptr,\n            freqs_ptr,\n            pos_ptr,\n            loc_ptr,\n            cache_u8_ptr,\n            cache_bf16_ptr,\n            ftok_ptr,\n            kv_eps,\n            PAGE_BITS=PAGE_BITS,\n            PAGE_BYTES=PAGE_BYTES,\n        )\n\n\n@triton.jit\ndef _remap_xcd(pid, GRID_MN, NUM_XCDS: tl.constexpr = 8):\n    pids_per_xcd = (GRID_MN + NUM_XCDS - 1) // NUM_XCDS\n    tall_xcds = GRID_MN % NUM_XCDS\n    if tall_xcds == 0:\n        tall_xcds = tl.cast(NUM_XCDS, tall_xcds.type)\n    xcd = pid % NUM_XCDS\n    local_pid = pid // NUM_XCDS\n    if xcd < tall_xcds:\n        pid = xcd * pids_per_xcd + local_pid\n    else:\n        pid = tall_xcds * pids_per_xcd + (xcd - tall_xcds) * (pids_per_xcd - 1) + local_pid\n    return pid\n\n\n@triton.jit\ndef _pid_grid(pid, num_pid_m, num_pid_n, GROUP_SIZE_M: tl.constexpr = 1):\n    if GROUP_SIZE_M == 1:\n        pid_m = pid // num_pid_n\n        pid_n = pid % num_pid_n\n    else:\n        num_pid_in_group = GROUP_SIZE_M * num_pid_n\n        group_id = pid // num_pid_in_group\n        first_pid_m = group_id * GROUP_SIZE_M\n        group_size_m = min(num_pid_m - first_pid_m, GROUP_SIZE_M)\n        tl.assume(group_size_m >= 0)\n        pid_m = first_pid_m + (pid % group_size_m)\n        pid_n = (pid % num_pid_in_group) // group_size_m\n    return pid_m, pid_n\n\n\n@triton.jit\ndef _rope_prefetch(ftok_ptr, row0, M, is_rope, BM: tl.constexpr):\n    \"\"\"The tile's (cos, sin) as flat [BM * 32] vectors, loaded before the K loop and reshaped only\n    in the epilogue; masked off on tiles without RoPE columns.\"\"\"\n    idx = tl.arange(0, BM * 32)\n    r = row0 + idx // 32\n    m = (r < M) & is_rope\n    fptr = ftok_ptr + r.to(tl.int64) * 64 + 2 * (idx % 32)\n    cs = tl.load(fptr, mask=m, other=1.0)\n    sn = tl.load(fptr + 1, mask=m, other=0.0)\n    return cs, sn\n\n\n@triton.jit\ndef _rope_tile(acc, cs, sn, BM: tl.constexpr, BN: tl.constexpr):\n    \"\"\"A [BM, BN] tile (BN 64 or 128) whose last 64 columns are a head's RoPE dims: the accumulator\n    rounded to BF16, then RoPE of those 64 columns (rot = -(odd * sin) or even * sin rounded, one\n    fma with cos, BF16 out); the other columns pass through.\"\"\"\n    cf = acc.to(tl.bfloat16).to(tl.float32)\n    if BN == 64:\n        rope = cf\n    else:\n        tl.static_assert(BN == 128)\n        main, rope = tl.split(tl.permute(tl.reshape(cf, (BM, 2, 64)), (0, 2, 1)))\n    xe, xo = tl.split(tl.reshape(rope, (BM, 32, 2)))\n    cs = tl.reshape(cs, (BM, 32))\n    sn = tl.reshape(sn, (BM, 32))\n    oe = tl.fma(xe, cs, -(xo * sn))\n    oo = tl.fma(xo, cs, xe * sn)\n    rope = tl.reshape(tl.join(oe, oo), (BM, 64))\n    if BN == 64:\n        out = rope\n    else:\n        out = tl.reshape(tl.permute(tl.join(main, rope), (0, 2, 1)), (BM, BN))\n    return out.to(tl.bfloat16)\n\n\n@triton.jit\ndef _gemm_rope_kernel(\n    a_ptr,\n    b_ptr,\n    c_ptr,\n    a_scales_ptr,\n    b_scales_ptr,\n    ftok_ptr,\n    M,\n    N: tl.constexpr,\n    K: tl.constexpr,\n    stride_am,\n    stride_ak,\n    stride_bk,\n    stride_bn,\n    stride_cm,\n    stride_cn,\n    stride_asm,\n    stride_ask,\n    stride_bsn,\n    stride_bsk,\n    BLOCK_SIZE_M: tl.constexpr,\n    BLOCK_SIZE_N: tl.constexpr,\n    BLOCK_SIZE_K: tl.constexpr,\n    GROUP_SIZE_M: tl.constexpr,\n    BROADCAST_A: tl.constexpr,\n    N_FIRST: tl.constexpr,\n    cache_modifier: tl.constexpr,\n    HEAD_D: tl.constexpr,\n):\n    tl.assume(stride_am > 0)\n    tl.assume(stride_ak > 0)\n    tl.assume(stride_bk > 0)\n    tl.assume(stride_bn > 0)\n    tl.assume(stride_cm > 0)\n    tl.assume(stride_cn > 0)\n    tl.assume(stride_asm > 0)\n    tl.assume(stride_ask > 0)\n    tl.assume(stride_bsk > 0)\n    tl.assume(stride_bsn > 0)\n\n    GRID_MN = tl.cdiv(M, BLOCK_SIZE_M) * tl.cdiv(N, BLOCK_SIZE_N)\n    pid = tl.program_id(axis=0)\n    num_pid_m = tl.cdiv(M, BLOCK_SIZE_M)\n    num_pid_n = tl.cdiv(N, BLOCK_SIZE_N)\n    if N_FIRST:\n        pid_m = pid // num_pid_n\n        pid_n = pid % num_pid_n\n    else:\n        pid = _remap_xcd(pid, GRID_MN, NUM_XCDS=8)\n        pid_m, pid_n = _pid_grid(pid, num_pid_m, num_pid_n, GROUP_SIZE_M=GROUP_SIZE_M)\n    tl.assume(pid_m >= 0)\n    tl.assume(pid_n >= 0)\n\n    SCALE_GROUP_SIZE: tl.constexpr = 32\n    tl.static_assert(BLOCK_SIZE_K >= 64 and BLOCK_SIZE_K % 32 == 0)\n    tl.static_assert(K % BLOCK_SIZE_K == 0)\n\n    offs_k = tl.arange(0, BLOCK_SIZE_K)\n    if BROADCAST_A:\n        offs_am = tl.full((BLOCK_SIZE_M,), 0, tl.int32)\n    else:\n        offs_am = pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)\n    is_rope = ((pid_n + 1) * BLOCK_SIZE_N) % HEAD_D == 0\n    cs, sn = _rope_prefetch(ftok_ptr, pid_m * BLOCK_SIZE_M, M, is_rope, BLOCK_SIZE_M)\n    offs_bn = pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)\n    a_ptrs = a_ptr + (offs_am[:, None] * stride_am + offs_k[None, :] * stride_ak)\n    b_ptrs = b_ptr + (offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn)\n    offs_asm = offs_am * stride_asm\n    # one weight scale row per 32 output columns, one per 32 K columns\n    offs_bsn = offs_bn // 32\n\n    accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)\n    offs_scale_k = tl.arange(0, BLOCK_SIZE_K // SCALE_GROUP_SIZE)\n\n    for k in range(0, K // BLOCK_SIZE_K):\n        offs_sk = k * (BLOCK_SIZE_K // SCALE_GROUP_SIZE) + offs_scale_k\n        a_scales = tl.load(\n            a_scales_ptr + offs_asm[:, None] + offs_sk[None, :] * stride_ask,\n            mask=offs_am[:, None] < M,\n            other=0,\n        )\n        b_scales = tl.load(\n            b_scales_ptr + offs_bsn[:, None] * stride_bsn + offs_sk[None, :] * stride_bsk,\n            mask=offs_bn[:, None] < N,\n            other=0,\n            cache_modifier=cache_modifier,\n        )\n        a = tl.load(a_ptrs, mask=offs_am[:, None] < M, other=0.0)\n        b = tl.load(b_ptrs, mask=offs_bn[None, :] < N, other=0.0, cache_modifier=cache_modifier)\n        accumulator = tl.dot_scaled(a, a_scales, \"e4m3\", b, b_scales, \"e4m3\", accumulator)\n        a_ptrs += BLOCK_SIZE_K * stride_ak\n        b_ptrs += BLOCK_SIZE_K * stride_bk\n\n    c = accumulator.to(tl.bfloat16)\n    offs_cm = pid_m * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M).to(tl.int64)\n    offs_cn = pid_n * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N).to(tl.int64)\n    if is_rope:\n        c = _rope_tile(accumulator, cs, sn, BLOCK_SIZE_M, BLOCK_SIZE_N)\n    c_ptrs = c_ptr + stride_cm * offs_cm[:, None] + stride_cn * offs_cn[None, :]\n    c_mask = (offs_cm[:, None] < M) & (offs_cn[None, :] < N)\n    tl.store(c_ptrs, c, mask=c_mask)\n\n\n# GEMM launch parameters by output width and the largest row count each serves:\n# (BLOCK_SIZE_M, BLOCK_SIZE_N, BLOCK_SIZE_K, GROUP_SIZE_M, num_warps, num_stages, waves_per_eu,\n#  matrix_instr_nonkdim, cache_modifier, N_FIRST)\n_SMALL = (\n    (16, (16, 64, 256, 1, 4, 2, 2, 16, \".cg\", True)),\n    (32, (32, 64, 256, 1, 4, 2, 2, 16, \".cg\", True)),\n)\n_TABLES = {\n    16384: _SMALL\n    + (\n        (64, (64, 64, 256, 1, 4, 3, 1, 32, \".cg\", False)),\n        (112, (128, 128, 256, 1, 8, 2, 0, 32, \".cg\", True)),\n        (128, (128, 64, 256, 1, 8, 3, 0, 32, None, True)),\n        (200, (128, 128, 128, 1, 4, 2, 0, 32, None, True)),\n        (208, (128, 128, 256, 1, 4, 2, 1, 32, \".cg\", True)),\n        (224, (128, 128, 256, 1, 8, 2, 0, 32, \".cg\", True)),\n        (256, (128, 128, 256, 1, 4, 2, 1, 32, \".cg\", True)),\n        (288, (128, 128, 128, 1, 4, 2, 0, 32, None, True)),\n        (320, (128, 128, 128, 1, 8, 2, 0, 32, None, True)),\n        (352, (128, 128, 128, 1, 4, 2, 0, 32, None, True)),\n        (384, (256, 128, 128, 1, 4, 2, 0, 32, \".cg\", True)),\n        (416, (256, 128, 128, 1, 4, 2, 0, 32, None, True)),\n        (480, (256, 128, 128, 1, 4, 2, 0, 32, \".cg\", True)),\n        (608, (128, 128, 128, 1, 8, 2, 0, 32, None, True)),\n        (640, (128, 128, 128, 1, 8, 2, 1, 32, None, True)),\n        (704, (128, 128, 128, 1, 8, 2, 0, 32, None, True)),\n        (736, (128, 128, 128, 1, 8, 2, 1, 32, None, True)),\n        (768, (128, 128, 128, 1, 8, 2, 0, 32, None, True)),\n        (800, (128, 128, 128, 1, 8, 2, 1, 32, None, True)),\n        (832, (128, 128, 128, 1, 8, 2, 0, 32, None, True)),\n        (864, (128, 128, 128, 1, 8, 2, 1, 32, None, True)),\n        (928, (128, 128, 128, 1, 8, 2, 0, 32, None, True)),\n        (960, (128, 128, 128, 1, 8, 2, 1, 32, None, True)),\n        (1216, (128, 128, 128, 1, 8, 2, 0, 32, None, True)),\n        (1280, (128, 128, 128, 1, 8, 2, 1, 32, None, True)),\n        (1344, (128, 128, 128, 1, 8, 2, 0, 32, None, True)),\n        (1472, (128, 128, 128, 1, 8, 2, 1, 32, None, True)),\n        (1664, (128, 128, 128, 1, 8, 2, 0, 32, None, True)),\n        (1728, (128, 128, 128, 1, 8, 2, 1, 32, None, True)),\n        (1856, (128, 128, 128, 1, 8, 2, 0, 32, None, True)),\n        (1920, (128, 128, 128, 1, 8, 2, 1, 32, None, True)),\n        (1984, (128, 128, 128, 1, 8, 2, 0, 32, None, True)),\n        (2047, (128, 128, 128, 1, 8, 2, 1, 32, None, True)),\n    ),\n    32768: _SMALL\n    + (\n        (64, (64, 64, 256, 1, 4, 2, 0, 32, \".cg\", True)),\n        (128, (128, 128, 256, 1, 8, 2, 0, 32, \".cg\", True)),\n        (200, (128, 128, 128, 1, 4, 2, 0, 32, None, True)),\n        (256, (128, 128, 128, 1, 8, 2, 0, 32, None, True)),\n        (384, (128, 128, 128, 1, 8, 2, 0, 16, None, True)),\n        (768, (128, 128, 128, 1, 8, 2, 0, 32, None, True)),\n        (800, (128, 128, 128, 1, 4, 2, 2, 32, None, True)),\n        (864, (128, 128, 128, 1, 8, 2, 0, 32, None, True)),\n        (1216, (128, 128, 128, 1, 4, 2, 2, 32, None, True)),\n        (1280, (128, 128, 128, 1, 4, 2, 0, 32, None, True)),\n        (1600, (128, 128, 128, 1, 4, 2, 2, 32, None, True)),\n        (1664, (128, 128, 128, 1, 4, 2, 0, 32, None, True)),\n        (1920, (128, 128, 128, 1, 4, 2, 2, 32, None, True)),\n        (1984, (128, 128, 256, 8, 4, 1, 0, 0, None, False)),\n        (2047, (128, 128, 128, 1, 4, 2, 2, 32, None, True)),\n    ),\n}\n\n\n@functools.cache\ndef _gemm_config(n_tokens: int, n: int) -> tuple:\n    \"\"\"The GEMM's launch parameters for n_tokens rows and n output columns (the 32768 table for\n    another width; its last row past 2047 rows).\"\"\"\n    table = _TABLES.get(n, _TABLES[32768])\n    for rows, config in table:\n        if n_tokens <= rows:\n            return config\n    return table[-1][1]\n\n\ndef run(\n    *,\n    qkv_a,\n    q_norm_weight,\n    kv_norm_weight,\n    wq_b,\n    wq_b_scale,\n    freqs,\n    positions,\n    swa_loc,\n    kv_cache,\n    q,\n    page_size,\n    q_eps,\n    kv_eps,\n    q_lora_quant,\n    q_lora_scale,\n) -> None:\n    n_tokens, rank = q_lora_quant.shape\n    n = wq_b.shape[0]\n    device = qkv_a.device\n    q_scale = q_lora_scale.view(torch.uint8)\n    # each token's (cos, sin) row, written by launch 1 and read by launch 2\n    ftok = torch.empty((n_tokens, 64), dtype=torch.float32, device=device)\n    chunk = min(max(32, triton.next_power_of_2(rank)), 2048)\n    _qkv_prep_rows_kernel[(2 * n_tokens,)](\n        qkv_a,\n        n_tokens,\n        qkv_a.stride(0),\n        q_norm_weight,\n        q_eps,\n        q_lora_quant,\n        q_scale,\n        q_lora_quant.stride(0),\n        q_scale.stride(0),\n        kv_norm_weight,\n        kv_eps,\n        freqs,\n        positions,\n        swa_loc,\n        kv_cache,\n        kv_cache.view(torch.bfloat16),\n        ftok,\n        K=rank,\n        CHUNK=chunk,\n        NUM_CHUNKS=triton.cdiv(rank, chunk),\n        PAGE_BITS=page_size.bit_length() - 1,\n        PAGE_BYTES=kv_cache.stride(0),\n        num_warps=4,\n    )\n    bm, bn, bk, group_m, warps, stages, waves, nonkdim, modifier, n_first = _gemm_config(n_tokens, n)\n    w = wq_b.T\n    w_scale = wq_b_scale.view(torch.uint8)\n    y = q.view(n_tokens, n)\n    _gemm_rope_kernel[(triton.cdiv(n_tokens, bm) * triton.cdiv(n, bn),)](\n        q_lora_quant,\n        w,\n        y,\n        q_scale,\n        w_scale,\n        ftok,\n        n_tokens,\n        n,\n        rank,\n        q_lora_quant.stride(0),\n        q_lora_quant.stride(1),\n        w.stride(0),\n        w.stride(1),\n        y.stride(0),\n        y.stride(1),\n        q_scale.stride(0),\n        q_scale.stride(1),\n        w_scale.stride(0),\n        w_scale.stride(1),\n        BLOCK_SIZE_M=bm,\n        BLOCK_SIZE_N=bn,\n        BLOCK_SIZE_K=bk,\n        GROUP_SIZE_M=group_m,\n        BROADCAST_A=n_tokens == 1,\n        N_FIRST=n_first,\n        cache_modifier=modifier,\n        HEAD_D=512,\n        num_warps=warps,\n        num_stages=stages,\n        waves_per_eu=waves,\n        matrix_instr_nonkdim=nonkdim,\n    )\n"
+      }
+    ]
+  }
+}
