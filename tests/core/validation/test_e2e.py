@@ -15,12 +15,12 @@ from unittest.mock import Mock
 
 import pytest
 
-from aklr.core.validation.stages._e2e import _deployment, _stage
+from aklr.core.validation.stages._e2e import E2eStage, _deployment, _stage, export_commands
+from aklr.core.validation.stages._e2e._command import ServerRecipe
 from aklr.core.validation.stages._e2e._config import E2eConfig, Scenario
 from aklr.core.validation.stages._e2e._cookbook import Cookbook, CookbookCell
-from aklr.core.validation.stages._e2e._deployment import Deployment, NodeProcess, Role, RunNotKilledError
-from aklr.core.validation.stages._e2e._report import E2eRecord, SideResult
-from aklr.core.validation.stages._e2e._stage import EXPECTED_ANSWER, E2eStage
+from aklr.core.validation.stages._e2e._deployment import Deployment, NodeProcess, RunNotKilledError
+from aklr.core.validation.stages._e2e._report import E2eRecord, ModelEvaluationResult
 from aklr.core.validation.stages._report._finding import FindingCode
 from aklr.core.validation.stages.validation_scope import ValidationScope
 
@@ -87,12 +87,30 @@ class TestConfig:
     def test_reads_the_shipped_file(self) -> None:
         config = E2eConfig.read()
         assert config.cookbook_repo == "sgl-project/sglang"
-        assert config.selected([]) == config.selected(["glm52-fp4"])
-        (scenario,) = config.selected(["glm52-fp4-mi355x-default-mxfp4-low-latency-single"])
+        assert config.cookbook_source == "main"
+        assert config.hosts == ("127.0.0.1",)
+        assert config.work_dir is None
+        (scenario,) = config.enabled_scenarios
         assert scenario.roles == {"unified": {"hw": "mi355x", "variant": "default", "quant": "mxfp4",
             "strategy": "low-latency", "nodes": "single"}}  # fmt: skip
-        with pytest.raises(ValueError, match="no e2e scenario or model"):
-            config.selected(["glm"])
+
+    def test_deployment_settings_come_from_yaml(self, tmp_path: Path) -> None:
+        path = tmp_path / "scenarios.yaml"
+        path.write_text(
+            "cookbook: {repo: custom/sglang, source: /shared/sglang}\n"
+            "hosts: [gpu0, gpu1]\n"
+            "work_dir: /shared/e2e\n"
+            "models: {m: {cookbook: {config: a/b, matches: [{hw: x}]}, "
+            "weights: {repo: a/b, revision: r0}}}\n"
+        )
+        config = E2eConfig.read(path)
+        assert config.cookbook_repo == "custom/sglang"
+        assert config.cookbook_source == "/shared/sglang"
+        assert config.hosts == ("gpu0", "gpu1")
+        assert config.work_dir == Path("/shared/e2e")
+        path.write_text(path.read_text().replace("hosts: [gpu0, gpu1]", "hosts: []"))
+        with pytest.raises(ValueError, match="hosts"):
+            E2eConfig.read(path)
 
     def test_expands_matches_and_per_role_settings(self, tmp_path: Path) -> None:
         path = tmp_path / "scenarios.yaml"
@@ -131,8 +149,7 @@ models:
         assert pd.nnodes == {"prefill": 2, "decode": 2}
         assert off.nnodes == {}
         assert off.args == {"unified": {"--tp": 4, "--x": None}}
-        assert config.selected([]) == (unified, pd)
-        assert config.selected(["disabled"]) == (off,)
+        assert config.enabled_scenarios == (unified, pd)
 
     @pytest.mark.parametrize(
         "text",
@@ -165,34 +182,33 @@ models:
             E2eConfig.read(path)
 
 
-class TestDeploymentPlan:
+class TestCommandBuilder:
     @staticmethod
     def _plan(
-        scenario: Scenario, hosts: tuple[str, ...] = ("127.0.0.1",), launch: str | None = None
-    ) -> Deployment:
-        return Deployment.plan(
-            scenario, _COOKBOOK, hosts=hosts, launch=launch, env={"S": "stage"}, side_env={"AKLR_DISABLE": "1"},
-            run_dir=Path("/run"),
+        scenario: Scenario, hosts: tuple[str, ...] = ("127.0.0.1",)
+    ) -> tuple[dict[str, tuple[str, ...]], str]:
+        return export_commands(
+            scenario, _COOKBOOK, hosts=hosts, env={"S": "stage"}, side_env={"AKLR_DISABLE": "1"},
         )  # fmt: skip
 
     def test_unified_on_one_node(self) -> None:
-        deployment = self._plan(
+        commands, entry_url = self._plan(
             _scenario({"unified": _UNIFIED}, env={"unified": {"B": "3", "S": "scenario"}})
         )
-        (process,) = deployment.processes
-        assert deployment.entry_url == "http://127.0.0.1:30000"
+        (argv,) = commands.values()
+        assert entry_url == "http://127.0.0.1:30000"
         # the stage's and the side's env last; the launcher's --model-path
-        assert process.argv == (
+        assert argv == (
             "env", "A=1", "B=3", "S=stage", "AKLR_DISABLE=1", sys.executable, "-m", "sglang.launch_server",
             "--tp", "8", "--mem-fraction-static", "0.8", "--model-path", "org/Model",
             "--tokenizer-path", "org/Model", "--revision", "r0", "--host", "127.0.0.1", "--port", "30000",
         )  # fmt: skip
-        assert process.log_path == Path("/run/unified-0.log")
 
     def test_args_replace_remove_and_switch(self) -> None:
         args = {"--tp": 4, "--mem-fraction-static": None, "--enable-x": True, "--model-path": "local/dir"}
-        (process,) = self._plan(_scenario({"unified": _UNIFIED}, args={"unified": args})).processes
-        flags = process.argv[process.argv.index("sglang.launch_server") + 1 :]
+        commands, _ = self._plan(_scenario({"unified": _UNIFIED}, args={"unified": args}))
+        (argv,) = commands.values()
+        flags = argv[argv.index("sglang.launch_server") + 1 :]
         assert flags == ("--model-path", "local/dir", "--tokenizer-path", "org/Model", "--revision", "r0", "--tp", "4",
             "--enable-x", "--host", "127.0.0.1", "--port", "30000")  # fmt: skip
 
@@ -200,60 +216,39 @@ class TestDeploymentPlan:
         scenario = _scenario(
             {"unified": {"hw": "mi355x", "strategy": "multi"}}, env={"unified": {"V": "$(id)"}}
         )
-        deployment = self._plan(scenario, hosts=("n0", "n1"), launch="ssh {host} {cmd}")
-        node0, node1 = deployment.processes
-        assert node1.argv[:2] == ("ssh", "n1")
-        (command,) = node1.argv[2:]
+        commands, entry_url = self._plan(scenario, hosts=("n0", "n1"))
+        node0, node1 = commands.values()
+        assert node1[:3] == ("ssh", "--", "n1")
+        (command,) = node1[3:]
         # the remote shell reads back the very argv, $(id) not run
         assert shlex.split(command)[:3] == ["env", "V=$(id)", "S=stage"]
         assert command.endswith("--host n1 --port 30000 --nnodes 2 --node-rank 1 --dist-init-addr n0:20000")
-        assert deployment.entry_url == "http://n0:30000"
-
-    def test_launch_needs_a_cmd_word(self) -> None:
-        scenario = _scenario({"unified": {"hw": "mi355x", "strategy": "multi"}})
-        with pytest.raises(ValueError, match=r"needs one \{cmd\} word"):
-            self._plan(scenario, hosts=("n0", "n1"), launch="ssh {host}")
-        for launch in ("ssh {host}", 'bash -lc "cd /x && {cmd}"'):
-            with pytest.raises(ValueError, match=r"needs one \{cmd\} word"):
-                E2eStage([scenario], ["cuda:0"], cookbook_repo="r", cookbook_source="main", launch=launch)
-        # braces other than {host} and {cmd} are the launcher's own
-        deployment = self._plan(
-            scenario, hosts=("n0", "n1"), launch='ssh -o ProxyCommand="nc {proxy} 22" {host} {cmd}'
-        )
-        assert deployment.processes[1].argv[:4] == ("ssh", "-o", "ProxyCommand=nc {proxy} 22", "n1")
+        assert entry_url == "http://n0:30000"
 
     def test_nnodes_overrides_the_cell(self) -> None:
-        deployment = self._plan(
+        commands, entry_url = self._plan(
             _scenario({"unified": _UNIFIED}, nnodes={"unified": 2}),
             hosts=("n0", "n1"),
-            launch="ssh {host} {cmd}",
         )
-        assert len(deployment.processes) == 2
-        assert "--nnodes 2" in deployment.processes[1].argv[-1]
+        assert len(commands) == 2
+        assert "--nnodes 2" in commands["unified-1"][-1]
 
     def test_pd_router_takes_the_prefill_bootstrap_port(self) -> None:
         scenario = _scenario(
             {"prefill": _PREFILL, "decode": _DECODE},
             args={"decode": {"--disaggregation-bootstrap-port": 9001}},
         )
-        deployment = self._plan(scenario, hosts=("127.0.0.1", "localhost"))
-        prefill, decode, router = deployment.processes
-        assert "SGLANG_HOST_IP=127.0.0.1" in prefill.argv
-        assert router.argv[-11:] == ("sglang_router.launch_router", "--pd-disaggregation",
+        commands, entry_url = self._plan(scenario, hosts=("127.0.0.1", "localhost"))
+        prefill, decode, router = commands.values()
+        assert "SGLANG_HOST_IP=127.0.0.1" in prefill
+        assert router[-11:] == ("sglang_router.launch_router", "--pd-disaggregation",
             "--prefill", "http://127.0.0.1:30000", "9000", "--decode", "http://localhost:30000",
             "--host", "127.0.0.1", "--port", "30080")  # fmt: skip
-        assert deployment.entry_url == "http://127.0.0.1:30080"
+        assert entry_url == "http://127.0.0.1:30080"
 
-    @pytest.mark.parametrize(
-        ("hosts", "launch", "message"),
-        [
-            pytest.param(("n0",), "ssh {host} {cmd}", "needs 2 nodes, --e2e-hosts gives 1", id="few-nodes"),
-            pytest.param(("n0", "n1"), None, "no --e2e-launch", id="no-launch"),
-        ],
-    )
-    def test_nodes_must_suffice(self, hosts: tuple[str, ...], launch: str | None, message: str) -> None:
-        with pytest.raises(ValueError, match=message):
-            self._plan(_scenario({"prefill": _PREFILL, "decode": _DECODE}), hosts=hosts, launch=launch)
+    def test_nodes_must_suffice(self) -> None:
+        with pytest.raises(ValueError, match="needs 2 nodes, scenarios.yaml hosts gives 1"):
+            self._plan(_scenario({"prefill": _PREFILL, "decode": _DECODE}), hosts=("n0",))
 
     @pytest.mark.parametrize(
         ("kind", "value"),
@@ -271,10 +266,10 @@ class TestDeploymentPlan:
             self._plan(_scenario({"unified": _UNIFIED}, **{kind: {"unified": value}}))
 
 
-class TestRole:
+class TestServerRecipe:
     @staticmethod
-    def _role(cell: CookbookCell, env: dict[str, str] | None = None) -> Role:
-        return Role(name="unified", cell=cell, env=env or {}, args={}, nnodes=1)
+    def _recipe(cell: CookbookCell, env: dict[str, str] | None = None) -> ServerRecipe:
+        return ServerRecipe(name="unified", cell=cell, env=env or {}, args={}, nnodes=1)
 
     @pytest.mark.parametrize(
         "entry",
@@ -292,25 +287,27 @@ class TestRole:
     )
     def test_cookbook_env_is_limited(self, entry: str) -> None:
         with pytest.raises(ValueError, match="not allowed"):
-            self._role(CookbookCell(match={}, env=(entry,))).server_env()
+            self._recipe(CookbookCell(match={}, env=(entry,))).server_env()
 
     def test_the_scenario_may_replace_a_denied_name(self) -> None:
         cell = CookbookCell(match={}, env=("SGLANG_USE_MODELSCOPE=1",))
-        assert self._role(cell, env={"SGLANG_USE_MODELSCOPE": "0"}).server_env() == {
+        assert self._recipe(cell, env={"SGLANG_USE_MODELSCOPE": "0"}).server_env() == {
             "SGLANG_USE_MODELSCOPE": "0"
         }
 
     def test_env_names_and_shell_quotes(self) -> None:
         cell = CookbookCell(match={}, env=('GLOO_SOCKET_IFNAME="eth 0"',))
-        assert self._role(cell).server_env() == {"GLOO_SOCKET_IFNAME": "eth 0"}
+        assert self._recipe(cell).server_env() == {"GLOO_SOCKET_IFNAME": "eth 0"}
         with pytest.raises(ValueError, match="not environment variable names"):
-            self._role(cell, env={"-S": "sh -c id"}).server_env()
+            self._recipe(cell, env={"-S": "sh -c id"}).server_env()
 
     def test_bad_flags_fail(self) -> None:
         with pytest.raises(ValueError, match="empty flag"):
-            self._role(CookbookCell(match={}, flags=("",))).flags()
+            self._recipe(CookbookCell(match={}, flags=("",))).flags()
         with pytest.raises(ValueError, match="has no value"):
-            _ = self._role(CookbookCell(match={}, flags=("--disaggregation-bootstrap-port",))).bootstrap_port
+            _ = self._recipe(
+                CookbookCell(match={}, flags=("--disaggregation-bootstrap-port",))
+            ).bootstrap_port
 
 
 def test_unkillable_process_raises_instead_of_hanging(
@@ -319,10 +316,10 @@ def test_unkillable_process_raises_instead_of_hanging(
     """A group leader that outlives its SIGKILL (a GPU hang in D state) raises
     RunNotKilledError rather than blocking on its exit."""
     monkeypatch.setattr(_deployment.os, "killpg", lambda *args: None)
-    monkeypatch.setattr(_deployment, "_KILL_WAIT_SECONDS", 0.2)
     process = NodeProcess(
         "unified-0", (sys.executable, "-c", "import time; time.sleep(5)"), tmp_path / "p.log"
     )
+    monkeypatch.setattr(process, "_kill_wait_seconds", 0.2)
     process.start()
     raised: list[RunNotKilledError] = []
 
@@ -353,63 +350,71 @@ def test_stop_kills_the_group_and_returns_the_log(tmp_path: Path) -> None:
 
 
 class TestVerdicts:
-    _OK = SideResult(gsm8k_score=0.95, answer_matches=True)
+    _OK = ModelEvaluationResult(gsm8k_score=0.95, answer_matches=True)
 
     @pytest.mark.parametrize(
         ("off", "on", "images", "codes"),
         [
-            pytest.param(SideResult(gsm8k_score=0.95), _OK, (), [], id="pass"),
+            pytest.param(ModelEvaluationResult(gsm8k_score=0.95), _OK, (), [], id="pass"),
             pytest.param(
-                SideResult(gsm8k_score=0.96),
-                SideResult(gsm8k_score=0.94, answer_matches=True),
+                ModelEvaluationResult(gsm8k_score=0.96),
+                ModelEvaluationResult(gsm8k_score=0.94, answer_matches=True),
                 (),
                 [],
                 id="drop-of-exactly-the-threshold",
             ),  # fmt: skip
             pytest.param(
-                SideResult(gsm8k_score=1073 / 1319),
-                SideResult(gsm8k_score=1046 / 1319, answer_matches=True),
+                ModelEvaluationResult(gsm8k_score=1073 / 1319),
+                ModelEvaluationResult(gsm8k_score=1046 / 1319, answer_matches=True),
                 (),
                 [FindingCode.E2E_ACCURACY_DROP],
                 id="drop-just-past-the-threshold",
             ),  # fmt: skip
             pytest.param(
-                SideResult(failure="no server"), None, (), [FindingCode.PLATFORM_FAILURE], id="off-fails"
+                ModelEvaluationResult(failure="no server"),
+                None,
+                (),
+                [FindingCode.PLATFORM_FAILURE],
+                id="off-fails",
             ),
             pytest.param(
-                SideResult(failure="no server"),
+                ModelEvaluationResult(failure="no server"),
                 None,
                 ("lmsysorg/sglang-rocm:v0.5.22-rocm720",),
                 [FindingCode.PLATFORM_FAILURE],
                 id="off-fails-same-release",
             ),  # fmt: skip
             pytest.param(
-                SideResult(failure="no server"),
+                ModelEvaluationResult(failure="no server"),
                 None,
                 ("lmsysorg/sglang-rocm:v0.5.13.post1-x",),
                 [],
                 id="off-fails-other-sglang",
             ),  # fmt: skip
             pytest.param(
-                SideResult(gsm8k_score=0.0), None, (), [FindingCode.PLATFORM_FAILURE], id="off-scores-nothing"
+                ModelEvaluationResult(gsm8k_score=0.0),
+                None,
+                (),
+                [FindingCode.PLATFORM_FAILURE],
+                id="off-scores-nothing",
             ),
             pytest.param(
-                SideResult(gsm8k_score=0.95),
-                SideResult(failure="crash", answer_matches=True),
+                ModelEvaluationResult(gsm8k_score=0.95),
+                ModelEvaluationResult(failure="crash", answer_matches=True),
                 (),
                 [FindingCode.E2E_CRASH],
                 id="on-crashes",
             ),  # fmt: skip
             pytest.param(
-                SideResult(gsm8k_score=0.95),
-                SideResult(gsm8k_score=0.92, answer_matches=True),
+                ModelEvaluationResult(gsm8k_score=0.95),
+                ModelEvaluationResult(gsm8k_score=0.92, answer_matches=True),
                 (),
                 [FindingCode.E2E_ACCURACY_DROP],
                 id="accuracy-drops",
             ),  # fmt: skip
             pytest.param(
-                SideResult(gsm8k_score=0.95),
-                SideResult(gsm8k_score=0.95, answer_matches=False),
+                ModelEvaluationResult(gsm8k_score=0.95),
+                ModelEvaluationResult(gsm8k_score=0.95, answer_matches=False),
                 (),
                 [FindingCode.E2E_WRONG_ANSWER],
                 id="wrong-answer",
@@ -417,7 +422,11 @@ class TestVerdicts:
         ],
     )
     def test_findings(
-        self, off: SideResult, on: SideResult | None, images: tuple[str, ...], codes: list[FindingCode]
+        self,
+        off: ModelEvaluationResult,
+        on: ModelEvaluationResult | None,
+        images: tuple[str, ...],
+        codes: list[FindingCode],
     ) -> None:
         record = E2eRecord(
             scenario="s", cookbook="v/m", cookbook_sha="0" * 40, matches={}, cookbook_images=images,
@@ -427,6 +436,17 @@ class TestVerdicts:
         assert [f.code for f in findings] == codes
 
 
+@pytest.fixture
+def stage_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    config = E2eConfig(
+        cookbook_repo="r", cookbook_source="main", scenarios=(_scenario({"unified": _UNIFIED}),)
+    )
+    monkeypatch.setattr(E2eConfig, "read", classmethod(lambda cls: config))
+    monkeypatch.setattr(Cookbook, "pinned", staticmethod(lambda source, repo: "0" * 40))
+    monkeypatch.setattr(Cookbook, "fetch", classmethod(lambda cls, *args: _COOKBOOK))
+
+
+@pytest.mark.usefixtures("stage_config")
 def test_an_off_failure_under_another_sglang_is_a_warning(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -436,10 +456,10 @@ def test_an_off_failure_under_another_sglang_is_a_warning(
     monkeypatch.setattr(Cookbook, "pinned", staticmethod(lambda source, repo: "0" * 40))
     monkeypatch.setattr(Cookbook, "fetch", classmethod(lambda cls, *args: cookbook))
     monkeypatch.setattr("importlib.metadata.version", lambda name: "0.5.22")
-    monkeypatch.setattr(E2eStage, "_run_side", lambda self, *args: SideResult(gsm8k_score=0.1))
-    stage = E2eStage(
-        [_scenario({"unified": _UNIFIED})], ["cuda:0"], cookbook_repo="r", cookbook_source="main"
+    monkeypatch.setattr(
+        E2eStage, "_evaluate_model", lambda self, *args, **kwargs: ModelEvaluationResult(gsm8k_score=0.1)
     )
+    stage = E2eStage(["cuda:0"])
     report = stage.run(ValidationScope(tmp_path, "", None, (), ()), Mock())
     (record,) = report.scenario_records
     assert report.findings == ()
@@ -447,48 +467,52 @@ def test_an_off_failure_under_another_sglang_is_a_warning(
     assert "warning: off failed" in record.table_row()[-1]
 
 
-def test_no_enabled_scenario_skips_the_stage(tmp_path: Path) -> None:
-    stage = E2eStage([], [], cookbook_repo="r", cookbook_source="main")
-    assert stage.run(ValidationScope(tmp_path, "", None, (), ()), Mock()).status == "skipped"
+def test_no_enabled_scenario_skips_evaluation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = E2eConfig(cookbook_repo="r", cookbook_source="main", scenarios=())
+    monkeypatch.setattr(E2eConfig, "read", classmethod(lambda cls: config))
+    assert E2eStage([]).run(ValidationScope(tmp_path, "", None, (), ()), Mock()).status == "skipped"
 
 
-class TestStage:
-    def _stage(self) -> E2eStage:
-        return E2eStage(
-            [_scenario({"unified": _UNIFIED})], ["cuda:0"], cookbook_repo="r", cookbook_source="main"
-        )
+@pytest.mark.usefixtures("stage_config")
+class TestEvaluator:
+    def _evaluator(self) -> E2eStage:
+        return E2eStage(["cuda:0"])
 
     @pytest.mark.parametrize(
         ("off", "sides"),
         [
-            pytest.param(SideResult(gsm8k_score=0.9), ["off", "on"], id="sound-off"),
-            pytest.param(SideResult(failure="x"), ["off"], id="failed-off"),
-            pytest.param(SideResult(gsm8k_score=0.1), ["off"], id="off-below-the-floor"),
+            pytest.param(ModelEvaluationResult(gsm8k_score=0.9), [False, True], id="sound-off"),
+            pytest.param(ModelEvaluationResult(failure="x"), [False], id="failed-off"),
+            pytest.param(ModelEvaluationResult(gsm8k_score=0.1), [False], id="off-below-the-floor"),
         ],
     )
     def test_on_runs_only_after_a_sound_off(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, off: SideResult, sides: list[str]
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+        off: ModelEvaluationResult,
+        sides: list[bool],
     ) -> None:
         monkeypatch.setattr(Cookbook, "pinned", staticmethod(lambda source, repo: "0" * 40))
         monkeypatch.setattr(Cookbook, "fetch", classmethod(lambda cls, *args: _COOKBOOK))
-        ran: list[str] = []
+        ran: list[bool] = []
 
-        def run_side(
-            self: E2eStage, scenario: Scenario, cookbook: Cookbook, side: str, *args: Any
-        ) -> SideResult:
-            ran.append(side)
-            return off if side == "off" else SideResult(gsm8k_score=0.9, answer_matches=True)
+        def evaluate_model(
+            self: E2eStage, scenario: Scenario, *args: Any, aklr_enabled: bool
+        ) -> ModelEvaluationResult:
+            ran.append(aklr_enabled)
+            return off if not aklr_enabled else ModelEvaluationResult(gsm8k_score=0.9, answer_matches=True)
 
-        monkeypatch.setattr(E2eStage, "_run_side", run_side)
-        report = self._stage().run(ValidationScope(tmp_path, "", None, (), ()), Mock())
+        monkeypatch.setattr(E2eStage, "_evaluate_model", evaluate_model)
+        report = self._evaluator().run(ValidationScope(tmp_path, "", None, (), ()), Mock())
         assert ran == sides
         (record,) = report.scenario_records
         assert (record.cookbook, record.cookbook_sha, record.matches) == (
             "vendor/model", "0" * 40, {"unified": _UNIFIED},
         )  # fmt: skip
-        assert report.expected_answer == EXPECTED_ANSWER
+        assert report.expected_answer == "Paris"
 
-    def test_run_side_grades_the_server(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    def test_evaluate_model_grades_the_server(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         """GSM8K's full-precision score and its failed requests, the answer as the RFC
         compares it, and a server that died during the phases."""
         monkeypatch.setattr(Deployment, "start", lambda self, timeout: "http://h:1")
@@ -508,24 +532,33 @@ class TestStage:
             lambda *a, **k: io.BytesIO(json.dumps({"choices": [{"message": {"content": answer}}]}).encode()),
         )
         scenario = _scenario({"unified": _UNIFIED})
-        on = self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path)
+        on = self._evaluator()._evaluate_model(scenario, _COOKBOOK, {}, tmp_path, aklr_enabled=True)
         assert "AKLR never started on the on side" in on.failure
         (tmp_path / "on-calls").mkdir()
         (tmp_path / "on-calls" / "calls.pid1.x.jsonl").write_text("")
-        on = self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path)
+        on = self._evaluator()._evaluate_model(scenario, _COOKBOOK, {}, tmp_path, aklr_enabled=True)
         assert (on.gsm8k_score, on.answer_matches, on.n_hit_calls) == (0.81365, False, 0)
         assert "AKLR hooked no sglang call" in on.failure
         record = Mock(fallback_reason="unknown_shape", n_calls=3)
         monkeypatch.setattr(_stage, "read_calls", lambda directory: [record])
-        on = self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path)
+        on = self._evaluator()._evaluate_model(scenario, _COOKBOOK, {}, tmp_path, aklr_enabled=True)
         assert (on.n_hit_calls, on.n_fallback_calls, on.failure) == (0, 3, "")
         answer = "Paris_."
-        assert self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path).answer_matches
+        assert (
+            self._evaluator()
+            ._evaluate_model(scenario, _COOKBOOK, {}, tmp_path, aklr_enabled=True)
+            .answer_matches
+        )
         stdout += "Bad Request Error\n" * 2
-        assert self._stage()._run_side(scenario, _COOKBOOK, "off", {}, tmp_path).n_failed_requests == 2
+        assert (
+            self._evaluator()
+            ._evaluate_model(scenario, _COOKBOOK, {}, tmp_path, aklr_enabled=False)
+            .n_failed_requests
+            == 2
+        )
         stdout += "All retry attempts exhausted for request. Returning empty response.\n"
         exited.append("unified-0 exited with -9")
-        off = self._stage()._run_side(scenario, _COOKBOOK, "off", {}, tmp_path)
+        off = self._evaluator()._evaluate_model(scenario, _COOKBOOK, {}, tmp_path, aklr_enabled=False)
         assert off.gsm8k_score is None
         assert "3 GSM8K requests failed" in off.failure
         assert off.n_failed_requests == 3
@@ -533,8 +566,129 @@ class TestStage:
         monkeypatch.setattr(
             Deployment, "start", lambda self, timeout: (_ for _ in ()).throw(RuntimeError("no"))
         )
-        assert self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path).n_hit_calls is None
+        assert (
+            self._evaluator()
+            ._evaluate_model(scenario, _COOKBOOK, {}, tmp_path, aklr_enabled=True)
+            .n_hit_calls
+            is None
+        )
         monkeypatch.setattr(Deployment, "start", lambda self, timeout: "http://h:1")
         answer = 42  # type: ignore[assignment]
-        on = self._stage()._run_side(scenario, _COOKBOOK, "on", {}, tmp_path)
+        on = self._evaluator()._evaluate_model(scenario, _COOKBOOK, {}, tmp_path, aklr_enabled=True)
         assert "content is not a string" in on.failure
+
+
+def test_export_returns_argv_without_starting_processes(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(subprocess, "Popen", Mock(side_effect=AssertionError("export started a process")))
+    commands, url = export_commands(
+        _scenario({"unified": _UNIFIED}),
+        _COOKBOOK,
+        hosts=("127.0.0.1",),
+        env={},
+        side_env={"AKLR_DISABLE": "1"},
+    )
+    assert url == "http://127.0.0.1:30000"
+    argv = commands["unified-0"]
+    assert "AKLR_DISABLE=1" in argv
+    assert argv[argv.index("--revision") + 1] == "r0"
+
+
+def test_prints_command_before_executing_and_cleans_up(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    argv = (sys.executable, "-c", "import time; time.sleep(60)")
+    deployment = Deployment({"unified-0": argv}, "http://localhost:1", tmp_path)
+    start = NodeProcess.start
+
+    def checked_start(process: NodeProcess) -> None:
+        output = capsys.readouterr().out
+        assert "Command (unified-0):" in output
+        assert shlex.join(argv) in output
+        start(process)
+
+    monkeypatch.setattr(NodeProcess, "start", checked_start)
+    response = Mock()
+    response.__enter__ = Mock(return_value=Mock(status=200))
+    response.__exit__ = Mock(return_value=False)
+    monkeypatch.setattr(_deployment.urllib.request, "urlopen", lambda *a, **kw: response)
+    try:
+        assert deployment.start(timeout=1) == "http://localhost:1"
+        assert deployment.processes[0].exit_code is None
+    finally:
+        deployment.stop()
+    assert deployment.processes[0].exit_code is not None
+
+
+@pytest.mark.usefixtures("stage_config")
+def test_cleanup_on_start_timeout(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    scenario = _scenario({"unified": _UNIFIED})
+    argv = (sys.executable, "-c", "import time; time.sleep(60)")
+    monkeypatch.setattr(
+        _stage, "export_commands", lambda *a, **kw: ({"unified-0": argv}, "http://localhost:1")
+    )
+    started = []
+    original = NodeProcess.start
+
+    def start(process: NodeProcess) -> None:
+        started.append(process)
+        original(process)
+
+    monkeypatch.setattr(NodeProcess, "start", start)
+    monkeypatch.setattr(_deployment.urllib.request, "urlopen", Mock(side_effect=OSError("not ready")))
+    stage = E2eStage(["cuda:0"])
+    stage._startup_timeout = 0.05
+    result = stage._evaluate_model(scenario, _COOKBOOK, {}, tmp_path, aklr_enabled=False)
+    assert "not ready" in result.failure
+    assert started and all(p.exit_code is not None for p in started)
+
+
+def test_direct_subprocess_preserves_literal_arguments(tmp_path: Path) -> None:
+    marker = tmp_path / "not-executed"
+    value = f"spaces ' quotes $(touch {marker}) `touch {marker}`"
+    process = NodeProcess(
+        "literal", (sys.executable, "-c", "import sys; print(sys.argv[1])", value), tmp_path / "literal.log"
+    )
+    process.start()
+    try:
+        process._process.wait(timeout=5)
+    finally:
+        log = process.stop()
+    assert log == value + "\n"
+    assert not marker.exists()
+
+
+@pytest.mark.usefixtures("stage_config")
+def test_validate_reports_e2e_server_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from aklr.core.validation import command
+    from aklr.core.validation.pipeline import PlatformRecord
+    from aklr.core.validation.stages import AuditStage, BenchReport, BenchStage
+    from aklr.core.validation.stages._audit._report import AuditReport
+
+    scope = ValidationScope(tmp_path, "head", None, (tmp_path / "schema.json",), ())
+    monkeypatch.setattr(command.ValidationScope, "of_working_tree", Mock(return_value=scope))
+    platform = PlatformRecord(
+        **(dict.fromkeys(PlatformRecord.model_fields, "unknown") | {"n_visible_devices": 1})
+    )
+    monkeypatch.setattr(PlatformRecord, "current", Mock(return_value=platform))
+    monkeypatch.setattr(AuditStage, "run", lambda *args: AuditReport(status="passed"))
+    monkeypatch.setattr(BenchStage, "run", lambda *args: BenchReport(status="passed"))
+    argv = (sys.executable, "-c", "print('startup-failed', flush=True); raise SystemExit(7)")
+    monkeypatch.setattr(
+        _stage, "export_commands", lambda *a, **kw: ({"unified-0": argv}, "http://localhost:1")
+    )
+    monkeypatch.setattr(_deployment.urllib.request, "urlopen", Mock(side_effect=OSError("not ready")))
+    output = tmp_path / "report"
+    assert command.main(["--stages", "audit,bench,e2e", "--devices", "0", "--out", str(output)]) == 3
+    captured = capsys.readouterr()
+    assert shlex.join(argv) in captured.out
+    assert "model-x" in captured.err
+    report = json.loads((output / "report.json").read_text())
+    assert [stage["stage_name"] for stage in report["stages"]] == ["audit", "bench", "e2e"]
+    e2e = report["stages"][-1]
+    assert e2e["status"] == "aborted"
+    assert "exited with 7" in e2e["scenario_records"][0]["off"]["failure"]
+    assert "startup-failed" in e2e["scenario_records"][0]["off"]["failure"]
+    assert e2e["scenario_records"][0]["on"] is None
+    assert "e2e" in (output / "report.md").read_text()

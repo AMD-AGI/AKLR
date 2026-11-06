@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import re
-from typing import Final, Literal
+from typing import Literal
 
 from packaging.version import InvalidVersion, Version
 
@@ -25,14 +25,11 @@ from aklr.core.validation.stages._report._markdown import (
 )
 from aklr.core.validation.stages.stage import StageReport
 
-__all__ = ["E2eRecord", "E2eReport", "SideResult"]
-
-_E2E_COLUMNS: Final = ("scenario", "cookbook", "GSM8K off", "GSM8K on", "on - off", "answer",
-    "hit calls", "fallback calls", "notes")  # fmt: skip
+__all__ = ["E2eRecord", "E2eReport", "ModelEvaluationResult"]
 
 
-class SideResult(FrozenModel):
-    """One side (AKLR off or on) of a scenario: what it scored and how it was served."""
+class ModelEvaluationResult(FrozenModel):
+    """A model evaluation with AKLR enabled or disabled: scores, answers and serving failures."""
 
     argvs: tuple[str, ...] = ()
     gsm8k_score: float | None = None
@@ -58,8 +55,8 @@ class E2eRecord(FrozenModel):
     notes: str = ""  # the cells' cautions
     # a fault that is no finding: off failing where the cookbook names another sglang
     warning: str = ""
-    off: SideResult | None = None
-    on: SideResult | None = None
+    off: ModelEvaluationResult | None = None
+    on: ModelEvaluationResult | None = None
 
     @property
     def is_other_sglang(self) -> bool:
@@ -119,7 +116,7 @@ class E2eRecord(FrozenModel):
         return self.on.gsm8k_score - self.off.gsm8k_score
 
     def table_row(self) -> tuple[str, ...]:
-        off, on = self.off or SideResult(), self.on or SideResult()
+        off, on = self.off or ModelEvaluationResult(), self.on or ModelEvaluationResult()
         difference = self.difference
         return (
             escape(self.scenario),
@@ -147,7 +144,7 @@ class E2eRecord(FrozenModel):
         )
 
     def console_line(self) -> str:
-        off, on = self.off or SideResult(), self.on or SideResult()
+        off, on = self.off or ModelEvaluationResult(), self.on or ModelEvaluationResult()
         parts = [f"GSM8K off {off.gsm8k_score}", f"on {on.gsm8k_score}"]
         if failed := off.n_failed_requests + on.n_failed_requests:
             parts.append(
@@ -171,7 +168,18 @@ class E2eReport(StageReport):
     scenario_records: tuple[E2eRecord, ...] = ()
 
     def record_blocks(self) -> list[Block]:
-        blocks: list[Block] = [Table(_E2E_COLUMNS, tuple(r.table_row() for r in self.scenario_records))]
+        columns = (
+            "scenario",
+            "cookbook",
+            "GSM8K off",
+            "GSM8K on",
+            "on - off",
+            "answer",
+            "hit calls",
+            "fallback calls",
+            "notes",
+        )
+        blocks: list[Block] = [Table(columns, tuple(r.table_row() for r in self.scenario_records))]
         for record in self.scenario_records:
             items: list[str] = []
             for side_name, side in (("off", record.off), ("on", record.on)):
