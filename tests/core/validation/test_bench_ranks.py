@@ -37,7 +37,7 @@ from aklr.core.validation.stages._bench._execution import (
 from aklr.core.validation.stages._bench._execution._resources import (
     LocalAcceleratorCatalog,
 )
-from aklr.core.validation.stages._measure import Clock, RoundTimes
+from aklr.core.validation.stages._measure import GRAPH_BUDGET_MILLISECONDS, Clock, RoundTimes
 from aklr.core.validation.stages._report._finding import Finding, FindingCode
 from tests.op_case import OpCase
 
@@ -78,8 +78,8 @@ def _time_collective(rank: int, rendezvous: str) -> None:
                 value.fill_(rank + 1)
                 dist.all_reduce(value, group=group)
 
-            # Different local budgets must still capture the same number of calls.
-            ms = clock.bench_cudagraph(collective, rep=0.001 if rank == 0 else 10, group=group)
+            # Every rank must capture the same number of calls, whatever its own estimate.
+            ms = clock.graph_reading(collective)
             assert math.isfinite(ms) and ms > 0
             assert captured == 1
             assert executions.item() == 16  # six eager calls and ten replays
@@ -89,7 +89,7 @@ def _time_collective(rank: int, rendezvous: str) -> None:
 
 
 @pytest.mark.gpu
-def test_group_clock_times_collectives_with_an_agreed_capture_count(tmp_path: Path) -> None:
+def test_group_clock_captures_one_collective_per_rank(tmp_path: Path) -> None:
     import torch
 
     if torch.version.hip is None or torch.cuda.device_count() < 2:
@@ -248,19 +248,19 @@ def test_a_group_rank_never_retries_a_tracer_fault_alone() -> None:
     bench reruns it whole), else the rank would repeat a call its peers moved past."""
     calls = []
 
-    def flaky(call, rep, **kwargs):
-        calls.append(kwargs)
+    def flaky(call, rep):
+        calls.append(rep)
         if len(calls) == 1:
             raise RuntimeError("rocprofiler-sdk dropped 1 records")
         return 1.0
 
     assert Clock(lambda: None, flaky).graph_reading(lambda: None) == 1.0
-    assert calls == [{}, {}]
+    assert calls == [GRAPH_BUDGET_MILLISECONDS, GRAPH_BUDGET_MILLISECONDS]
     calls.clear()
     group = object()
     with pytest.raises(RuntimeError, match="rocprofiler-sdk"):
         Clock(lambda: None, flaky, group).graph_reading(lambda: None)
-    assert calls == [{"group": group}]
+    assert calls == [0]
 
 
 @pytest.mark.parametrize("milliseconds", [float("nan"), float("inf"), -float("inf"), 0.0, -1.0])

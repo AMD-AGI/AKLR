@@ -81,9 +81,7 @@ class CandidateResult(FrozenModel):
         elif caused_by_the_task(error):
             # a tracer fault crashes the timing by itself; only the last line is
             # aklr's text, the log and traceback above it are the candidate's
-            is_tracer = ": timing: " in detail and (
-                _measure.is_tracer_fault(detail) or _measure.is_tracer_refusal(detail)
-            )
+            is_tracer = ": timing: " in detail and _measure.is_tracer_fault(detail)
             code = FindingCode.PLATFORM_FAILURE if is_tracer else FindingCode.CANDIDATE_CRASH
         elif isinstance(error, ValueError):
             code = FindingCode.CANDIDATE_CRASH

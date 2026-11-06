@@ -37,7 +37,6 @@ __all__ = [
     "compare_performance",
     "gate",
     "is_tracer_fault",
-    "is_tracer_refusal",
     "ratio_lower_bound",
     "timing_records",
 ]
@@ -260,9 +259,8 @@ class Clock(NamedTuple):
 
     def graph_reading(self, call: Callable[[], object]) -> float:
         if self.group is not None:
-            # no rank retries alone, its peers would go on to the next call: a tracer fault
-            # fails the group's task, which the bench reruns whole
-            return self.bench_cudagraph(call, rep=GRAPH_BUDGET_MILLISECONDS, group=self.group)
+            # rep=0: every rank captures one call, so equal collectives; a fault reruns the whole task
+            return self.bench_cudagraph(call, rep=0)
         try:
             return self.bench_cudagraph(call, rep=GRAPH_BUDGET_MILLISECONDS)
         except Exception as e:
@@ -339,9 +337,6 @@ def bind_clock(group: Any = None) -> Clock:
 
     from aklr.core.utils.testing import bench_cudagraph
 
-    if group is not None:
-        from aklr.core.validation.stages._group_timing import bench_cudagraph
-
     return Clock(
         synchronize=torch.cuda.synchronize,
         bench_cudagraph=bench_cudagraph,
@@ -358,10 +353,5 @@ _TRACER_FAULT_MESSAGES = (
 
 
 def is_tracer_fault(text: str) -> bool:
-    """A failure of the kernel tracer's reading that another reading, or a fresh process, may not repeat."""
+    """A kernel tracer failure that a retry may not repeat."""
     return any(message in text for message in _TRACER_FAULT_MESSAGES)
-
-
-def is_tracer_refusal(text: str) -> bool:
-    """The kernel tracer cannot bind the call's graph to its nodes: the platform's failure, every reading's."""
-    return "cannot attribute the replays" in text

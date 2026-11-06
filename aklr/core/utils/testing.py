@@ -161,10 +161,7 @@ def _collect_scope_times(database, prefix):
 
 @graph_kernel_timing_environment()
 def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="median"):
-    """The per-call GPU time in milliseconds of fn's kernels, replayed in a CUDA graph, cache flushes excluded.
-
-    If inputs initialize the GPU first, create them inside graph_kernel_timing_environment().
-    """
+    """Time fn's kernels per call in a CUDA graph, in milliseconds, without the cache flushes."""
     assert return_mode in ["min", "max", "mean", "median", "all"]
 
     kernel_tracer()
