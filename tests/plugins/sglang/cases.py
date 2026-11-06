@@ -413,6 +413,14 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         )
         for padded in (False, True)
     ),
+    # a DP-attention rank's MoE gather input shrunk: a few rows of a narrow hidden size
+    PointSpec(
+        contract_id="deepseek_v4_dp_moe_gather@1.0",
+        axes={"n_rows": 6, "hidden": 256},
+        dtypes={"hidden_states": "bfloat16", "num_token_non_padded": "int32", "out": "bfloat16"},
+        attrs={},
+        layout_variant_name="row_major",
+    ),
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
