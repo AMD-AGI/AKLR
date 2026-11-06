@@ -1,0 +1,120 @@
+{
+  "schema_version": 5,
+  "name": "mla_vc_n_heads16_kv_lora_rank512_v_head_dim256",
+  "contract_id": "mla_vc@1.0",
+  "description": "sglang's absorbed MLA value projection on one rank, kv_b_proj in fp8 at one scale per tensor, for a bf16 o_proj (rocm_absorb_v_bmm): each head's attention output, quantized per 128-wide group to fp8 at max(amax, 1e-10) / 448, times w_vc and w_scale; the heads side by side, o_proj's input.",
+  "op_type": "forward_mla_rocm",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, padding rows included."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 16,
+      "description": "Query heads on this rank."
+    },
+    "kv_lora_rank": {
+      "type": "const",
+      "value": 512,
+      "description": "The latent: the attention output's width per head."
+    },
+    "v_head_dim": {
+      "type": "const",
+      "value": 256,
+      "description": "A head's value channels."
+    },
+    "out_dim": {
+      "type": "const",
+      "value": 4096,
+      "description": "The heads' value channels side by side."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "attn_output": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each head's attention output, in the latent's basis."
+    },
+    "w_vc": {
+      "shape": [
+        "n_heads",
+        "v_head_dim",
+        "kv_lora_rank"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "kv_b_proj's value part per head, absorbed (sglang's w_vc, transposed): row v maps the latent to value channel v."
+    },
+    "w_scale": {
+      "shape": [1],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -6,
+        "log2_hi": 0
+      },
+      "description": "kv_b_proj's per-tensor scale, one element: sglang's 0-d w_scale, viewed."
+    }
+  },
+  "outputs": {
+    "attn_bmm_output": {
+      "shape": [
+        "n_tokens",
+        "out_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's value channels, head by head."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Absorbed MLA value projection for GLM-5.2 on gfx950: TP4, 16 heads per rank, scheduled for 1 token.\n\nEach head's 512-wide attention output is quantized per 128-wide group to fp8 at\nmax(amax, 1e-10) / 448 and multiplied by the fp8 w_vc and its per-tensor scale into the\nhead's 256 value channels, written in bf16 with the heads side by side.\n\"\"\"\n\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\nfrom triton.language import core\n\n\n@gluon.jit\ndef _finite_max(a, b):\n    return gl.maximum(a, b, propagate_nan=core.PropagateNan.ALL)\n\n\n@gluon.jit\ndef _column_group(values, GROUP: gl.constexpr):\n    quarters = gl.reshape(gl.permute(gl.reshape(values, (4, 16)), (1, 0)), (16, 2, 2))\n    evens, odds = gl.split(quarters)\n    if GROUP % 2 == 0:\n        low, high = gl.split(evens)\n    else:\n        low, high = gl.split(odds)\n    return low if GROUP < 2 else high\n\n\n@gluon.jit\ndef _reconstruct_one_wave(\n    X,\n    W,\n    WEIGHT_SCALE,\n    Y,\n    H: gl.constexpr,\n    N: gl.constexpr,\n    XM: gl.constexpr,\n    XH: gl.constexpr,\n    XK: gl.constexpr,\n    WH: gl.constexpr,\n    WN: gl.constexpr,\n    WK: gl.constexpr,\n):\n    tile = gl.program_id(0)\n    gl.assume(tile >= 0)\n    gl.assume(tile < H * gl.cdiv(N, 16))\n    if N % 128 == 0:\n        head = tile // 8 % H\n        column_tile = tile % 8 + tile // (H * 8) * 8\n    else:\n        head = tile // gl.cdiv(N, 16)\n        column_tile = tile % gl.cdiv(N, 16)\n    weight_scale_value = gl.load(WEIGHT_SCALE)\n    activation_layout: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [1, 1], [1, 0])\n    group = gl.arange(0, 4, gl.SliceLayout(1, activation_layout))\n    channel = gl.arange(0, 128, gl.SliceLayout(0, activation_layout))\n    if 2 * ((H - 1) * XH + 511 * XK) < 2**31 and max(XH, XK) < 2**31:\n        x_offsets = head * XH + (group[:, None] * 128 + channel[None, :]) * XK\n        values = gl.load(X + x_offsets).to(gl.float32)\n    else:\n        x_offsets = head.to(gl.int64) * XH + (group[:, None].to(gl.int64) * 128 + channel[None, :]) * XK\n        values = gl.load(X + x_offsets).to(gl.float32)\n    absmax = gl.reduce(gl.abs(values), 1, _finite_max)\n    scales = gl.maximum(absmax, 1e-10, propagate_nan=core.PropagateNan.ALL) * (1.0 / 448.0)\n    quantized = gl.clamp(values * (1.0 / scales[:, None]), -448.0, 448.0).to(gl.float8e4nv)\n    weight_layout: gl.constexpr = gl.BlockedLayout([32, 1], [4, 16], [1, 1], [1, 0])\n    kk = gl.arange(0, 128, gl.SliceLayout(1, weight_layout))\n    packed_column = gl.arange(0, 64, gl.SliceLayout(0, weight_layout))\n    column = column_tile * 16 + packed_column % 16\n    weight_group = packed_column // 16\n    if (H - 1) * WH + (N - 1) * WN + 511 * WK < 2**31 and max(WH, WN, WK) < 2**31:\n        w_offsets = head * WH + column[None, :] * WN + (weight_group[None, :] * 128 + kk[:, None]) * WK\n        weights = gl.amd.cdna4.buffer_load(W, w_offsets, column[None, :] < N, other=0.0)\n    else:\n        w_offsets = (\n            head.to(gl.int64) * WH\n            + column[None, :].to(gl.int64) * WN\n            + (weight_group[None, :].to(gl.int64) * 128 + kk[:, None]) * WK\n        )\n        weights = gl.load(W + w_offsets, column[None, :] < N, other=0.0)\n    matrix_layout: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4, instr_shape=[16, 16, 128], transposed=False, warps_per_cta=[1, 1]\n    )\n    shared_a = gl.allocate_shared_memory(gl.float8e4nv, (4, 128), gl.SwizzledSharedLayout(16, 1, 8, [1, 0]), quantized)\n    a = shared_a.load(gl.DotOperandLayout(0, matrix_layout, 32))\n    b = gl.convert_layout(weights, gl.DotOperandLayout(1, matrix_layout, 32))\n    partials = gl.amd.cdna4.mfma_scaled(\n        a, None, \"e4m3\", b, None, \"e4m3\", gl.full((4, 64), 0, gl.float32, matrix_layout)\n    )\n    scales = gl.convert_layout(scales, gl.SliceLayout(1, matrix_layout))\n    scaled = partials * scales[:, None]\n    evens, odds = gl.split(gl.reshape(gl.permute(scaled, (1, 0)), (64, 2, 2)))\n    row0, row2 = gl.split(evens)\n    row1, row3 = gl.split(odds)\n    group0 = _column_group(row0, 0)\n    group1 = _column_group(row1, 1)\n    group2 = _column_group(row2, 2)\n    group3 = _column_group(row3, 3)\n    result = (group0 + group2 + (group1 + group3)) * weight_scale_value\n    column = column_tile * 16 + gl.arange(0, 16, result.type.layout)\n    gl.store(Y + head * N + column, result.to(gl.bfloat16), column < N, cache_modifier=\".wt\")\n\n\ndef vc_reconstruct(\n    latent: torch.Tensor, weight: torch.Tensor, weight_scale: torch.Tensor, output: torch.Tensor\n) -> torch.Tensor:\n    m, h, k = latent.shape\n    n = weight.shape[1]\n    assert k == 512\n    _reconstruct_one_wave[h * triton.cdiv(n, 16),](\n        latent, weight, weight_scale, output, h, n, *latent.stride(), *weight.stride(), num_warps=1\n    )\n    return output\n\n\ndef run(*, attn_output, w_vc, w_scale, attn_bmm_output):\n    \"\"\"Writes attn_bmm_output: vc_reconstruct on sglang's tensors, w_scale's one element\n    viewed as the 0-d scale it takes.\"\"\"\n    vc_reconstruct(attn_output, w_vc, w_scale.view(()), attn_bmm_output)\n"
+      }
+    ]
+  }
+}

@@ -345,6 +345,71 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"max_context": 8192},
         layout_variant_name="row_major",
     ),
+    # GLM-5.2's absorbed MLA shrunk: its 192-wide position-free query part (a full and a
+    # half fp8 group) and 64-wide RoPE part, four heads, a 128-wide latent
+    PointSpec(
+        contract_id="mla_kc_rope_cache@1.0",
+        axes={
+            "n_tokens": 4,
+            "n_heads": 4,
+            "qk_nope_dim": 192,
+            "kv_lora_rank": 128,
+            "kv_dim": 192,
+            "latent_dim": 448,
+            "n_slots": 64,
+            "n_positions": 128,
+        },
+        dtypes={
+            "q": "bfloat16",
+            "qkv_latent": "bfloat16",
+            "kv_latent": "bfloat16",
+            "w_kc": "float8_e4m3fn",
+            "w_scale": "float32",
+            "cos_cache": "bfloat16",
+            "sin_cache": "bfloat16",
+            "positions": "int64",
+            "out_cache_loc": "int64",
+            "kv_cache": "float8_e4m3fn",
+            "q_cat": "float8_e4m3fn",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
+        contract_id="mla_vc@1.0",
+        axes={"n_tokens": 4, "n_heads": 4, "kv_lora_rank": 256, "v_head_dim": 64},
+        dtypes={
+            "attn_output": "bfloat16",
+            "w_vc": "float8_e4m3fn",
+            "w_scale": "float32",
+            "attn_bmm_output": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
+    # GLM-5.2's qkv_a projection shrunk: a 512-wide hidden state into a 512-wide q latent, a
+    # 128-wide KV latent and its 64-wide RoPE key
+    PointSpec(
+        contract_id="mla_qkv_a_norm@1.0",
+        axes={
+            "n_tokens": 4,
+            "hidden_dim": 512,
+            "q_lora_rank": 512,
+            "kv_lora_rank": 128,
+            "latent_dim": 704,
+        },
+        dtypes={
+            "hidden_states": "bfloat16",
+            "w_qkv_a": "bfloat16",
+            "q_norm_weight": "bfloat16",
+            "kv_norm_weight": "bfloat16",
+            "q_latent": "bfloat16",
+            "kv_latent": "bfloat16",
+            "k_rope": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
@@ -362,5 +427,8 @@ GFX950_CONTRACT_IDS = frozenset(
         "qwen3_next_gdn_decode_group_fp8_quant@1.0",
         "gated_attention_decode_group_fp8_quant@1.0",
         "qwen3_next_gated_attention_decode_group_fp8_quant@1.0",
+        "mla_kc_rope_cache@1.0",
+        "mla_qkv_a_norm@1.0",
+        "mla_vc@1.0",
     }
 )

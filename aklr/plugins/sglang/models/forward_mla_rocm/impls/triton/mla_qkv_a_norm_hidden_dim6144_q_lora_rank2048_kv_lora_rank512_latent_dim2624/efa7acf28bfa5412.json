@@ -1,0 +1,161 @@
+{
+  "schema_version": 5,
+  "name": "mla_qkv_a_norm_hidden_dim6144_q_lora_rank2048_kv_lora_rank512_latent_dim2624",
+  "contract_id": "mla_qkv_a_norm@1.0",
+  "description": "sglang's qkv_a projection and latent RMSNorms of an MLA attention with a compressed query, on one rank (the qkv latent forward_absorb_rocm_prepare fetches, and its norms): each token's hidden state times w_qkv_a, the qkv latent; its first q_lora_rank columns, q's latent, and its next kv_lora_rank columns, the KV latent, each times rsqrt(mean(x**2) + eps) of its own columns and its norm weight; its last columns, the RoPE key, as projected.",
+  "op_type": "forward_mla_rocm",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call."
+    },
+    "hidden_dim": {
+      "type": "const",
+      "value": 6144,
+      "description": "The hidden size: the projection's reduction."
+    },
+    "q_lora_rank": {
+      "type": "const",
+      "value": 2048,
+      "description": "q's latent: the qkv latent's first part."
+    },
+    "kv_lora_rank": {
+      "type": "const",
+      "value": 512,
+      "description": "The KV latent: the qkv latent's next part."
+    },
+    "latent_dim": {
+      "type": "const",
+      "value": 2624,
+      "description": "A qkv latent row: q's latent, the KV latent, then the RoPE key."
+    },
+    "rope_dim": {
+      "type": "const",
+      "value": 64,
+      "description": "The RoPE key: the qkv latent's last part."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "hidden_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's hidden state, the attention's input."
+    },
+    "w_qkv_a": {
+      "shape": [
+        "latent_dim",
+        "hidden_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "fused_qkv_a_proj_with_mqa's weight: row c gives the qkv latent's column c."
+    },
+    "q_norm_weight": {
+      "shape": [
+        "q_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": "0.58"
+      },
+      "description": "q_a_layernorm's weight, one per column of q's latent."
+    },
+    "kv_norm_weight": {
+      "shape": [
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": "0.58"
+      },
+      "description": "kv_a_layernorm's weight, one per column of the KV latent."
+    },
+    "eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to each mean square: both norms' variance_epsilon."
+    }
+  },
+  "outputs": {
+    "q_latent": {
+      "shape": [
+        "n_tokens",
+        "q_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's q latent, normalized: q_b_proj's and the indexer's input."
+    },
+    "kv_latent": {
+      "shape": [
+        "n_tokens",
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's KV latent, normalized: its KV cache row's latent part."
+    },
+    "k_rope": {
+      "shape": [
+        "n_tokens",
+        "rope_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's RoPE key as projected, before RoPE."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 128
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"qkv_a projection and latent RMSNorms for GLM-5.2 decode on gfx950, tuned at TP8 for 128 tokens.\n\nEach token's 6144-wide hidden state times the bf16 fused_qkv_a_proj_with_mqa weight (replicated:\nthe same on every rank, at any TP size) into its 2624-wide qkv latent, split-K into fp32 partials\nsummed in a fixed order and rounded to bf16; its first 2048 columns (q's latent) and next 512 (the\nKV latent) each times rsqrt(mean(x**2) + eps) and their norm weight in fp32, written in bf16; its\nlast 64 (the RoPE key) written as projected.\n\"\"\"\n\nimport triton\nfrom triton.runtime.jit import ConstexprFunction\nimport torch\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\nfrom triton.experimental.gluon.language.amd.cdna4 import async_copy\n\n# next_power_of_2 as a constexpr function, for host code and compile-time expressions alike\n_ceil_power_of_two = triton.next_power_of_2\nif not isinstance(_ceil_power_of_two, ConstexprFunction):\n    _ceil_power_of_two = triton.constexpr_function(_ceil_power_of_two)\n\n\n@gluon.constexpr_function\ndef _padded_copy_layout(shared):\n    bases = shared.offset_bases\n    return gl.DistributedLinearLayout(\n        reg_bases=bases[:3] + bases[11:],\n        lane_bases=bases[3:9],\n        warp_bases=bases[9:11],\n        block_bases=[],\n        shape=shared.shape,\n    )\n\n\n@gluon.jit\ndef _projection_work(M: gl.constexpr):\n    pid = gl.program_id(0).to(gl.uint32)\n    xcd = pid % 8\n    local = pid // 8\n    pair = xcd * 15 + gl.minimum(xcd, 3) + local // 2\n    row_tile = local % 2\n    multiplier: gl.constexpr = 33 if M == 128 else 5\n    panel = pair % 41 * multiplier % 41\n    split = pair // 41\n    active = local < 30 + 2 * (xcd < 3)\n    return (row_tile, panel, split, active)\n\n\n@gluon.jit\ndef _copy_tile(a_slots, b_slots, X, W, ax, bw, panel, split, step, slot: gl.constexpr, REVERSE: gl.constexpr):\n    if REVERSE:\n        tile = 7 * panel + 32 - step & 31\n    else:\n        tile = 4 * panel + 4 * split + step & 31\n    X += tile * 64\n    W += tile * 64\n    async_copy.buffer_load_to_shared(a_slots[slot], X, ax, cache_modifier=\".ca\")\n    async_copy.buffer_load_to_shared(b_slots[slot], W, bw, cache_modifier=\".ca\")\n    async_copy.commit_group()\n\n\n@gluon.jit\ndef _wait_ready(OUTSTANDING: gl.constexpr, M: gl.constexpr):\n    if M == 128:\n        gl.inline_asm_elementwise(\n            \"s_waitcnt lgkmcnt(0)\\n s_mov_b32 $0, 0\",\n            constraints=\"=s,~{memory}\",\n            args=[],\n            dtype=gl.int32,\n            is_pure=False,\n            pack=1,\n        )\n    async_copy.wait_group(OUTSTANDING)\n    gl.barrier()\n\n\n@gluon.jit\ndef _load_operands(a_slot, b_slot, acc, M: gl.constexpr):\n    a_shared: gl.constexpr = gl.SwizzledSharedLayout(8, 2, 8, [1, 0])\n    b_shared: gl.constexpr = gl.SwizzledSharedLayout(8, 2, 8, [0, 1])\n    a_operand: gl.constexpr = gl.DotOperandLayout(0, acc.type.layout, 8)\n    b_operand: gl.constexpr = gl.DotOperandLayout(1, acc.type.layout, 8)\n    if M == 128:\n        a = async_copy.load_shared_relaxed(a_slot, a_operand)\n        b = async_copy.load_shared_relaxed(b_slot, b_operand)\n    else:\n        a = async_copy.load_shared_relaxed(a_slot._reinterpret(shape=(acc.shape[0], 64), layout=a_shared), a_operand)\n        b = async_copy.load_shared_relaxed(b_slot._reinterpret(shape=(64, 64), layout=b_shared), b_operand)\n    return (a, b)\n\n\n@gluon.jit\ndef _project(X, W, P, M: gl.constexpr, SX: gl.constexpr, SW: gl.constexpr, BM: gl.constexpr, WAVES: gl.constexpr):\n    row_tile, panel, split, active = _projection_work(M)\n    if active:\n        mma: gl.constexpr = gl.amd.AMDMFMALayout(\n            version=4, instr_shape=[16, 16, 32], transposed=False, warps_per_cta=[WAVES // 2, 2], tiles_per_warp=[2, 2]\n        )\n        flat: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, [0])\n        if M == 128:\n            sa: gl.constexpr = gl.amd.cdna4.compute_efficient_padded_shared_layout(\n                gl.DotOperandLayout(0, mma, 8), [BM, 64], gl.bfloat16\n            )\n            sb: gl.constexpr = gl.amd.cdna4.compute_efficient_padded_shared_layout(\n                gl.DotOperandLayout(1, mma, 8), [64, 64], gl.bfloat16\n            )\n            ca: gl.constexpr = _padded_copy_layout(sa)\n            cb: gl.constexpr = _padded_copy_layout(sb)\n            ar = gl.arange(0, BM, gl.SliceLayout(1, ca))\n            ak = gl.arange(0, 64, gl.SliceLayout(0, ca))\n            bk = gl.arange(0, 64, gl.SliceLayout(1, cb))\n            bn = gl.arange(0, 64, gl.SliceLayout(0, cb))\n            ax = (row_tile * BM + ar[:, None]) * SX + ak[None, :]\n            bw = (panel * 64 + bn[None, :]) * SW + bk[:, None]\n        else:\n            copy_layout: gl.constexpr = gl.BlockedLayout([8], [64], [WAVES], [0])\n            ai = gl.arange(0, BM * 64, copy_layout)\n            bi = gl.arange(0, 64 * 64, copy_layout)\n            ar, br = (ai // 64, bi // 64)\n            rows = row_tile * BM + ar\n            if M % BM:\n                rows = gl.minimum(rows, M - 1)\n            ax = rows * SX + (ai % 64 ^ ar // 2 % 8 * 8)\n            bw = (panel * 64 + br) * SW + (bi % 64 ^ br // 2 % 8 * 8)\n            ax = gl.max_contiguous(gl.multiple_of(ax, 8), 8)\n            bw = gl.max_contiguous(gl.multiple_of(bw, 8), 8)\n        xp, wp = (X + split * 2048, W + split * 2048)\n        a_slots = ()\n        b_slots = ()\n        for slot in gl.static_range(4):\n            if M == 128:\n                a_slots += (gl.allocate_shared_memory(gl.bfloat16, (BM, 64), sa),)\n                b_slots += (gl.allocate_shared_memory(gl.bfloat16, (64, 64), sb),)\n            else:\n                a_slots += (gl.allocate_shared_memory(gl.bfloat16, (BM * 64,), flat),)\n                b_slots += (gl.allocate_shared_memory(gl.bfloat16, (64 * 64,), flat),)\n        acc = gl.full((BM, 64), 0, gl.float32, mma)\n        for i in gl.static_range(3):\n            _copy_tile(a_slots, b_slots, xp, wp, ax, bw, panel, split, i, i, M == 128)\n        for cycle in gl.static_range(7):\n            for slot in gl.static_range(4):\n                _wait_ready(2, M)\n                if M == 128:\n                    a, b = _load_operands(a_slots[slot], b_slots[slot], acc, M)\n                _copy_tile(\n                    a_slots, b_slots, xp, wp, ax, bw, panel, split, cycle * 4 + slot + 3, (slot + 3) % 4, M == 128\n                )\n                if M != 128:\n                    a, b = _load_operands(a_slots[slot], b_slots[slot], acc, M)\n                acc = gl.amd.cdna4.mfma(a, b, acc)\n        for i in gl.static_range(28, 32):\n            _wait_ready(min(2, 31 - i), M)\n            if M == 128:\n                a, b = _load_operands(a_slots[i % 4], b_slots[i % 4], acc, M)\n            if i == 28:\n                _copy_tile(a_slots, b_slots, xp, wp, ax, bw, panel, split, 31, 3, M == 128)\n            if M != 128:\n                a, b = _load_operands(a_slots[i % 4], b_slots[i % 4], acc, M)\n            acc = gl.amd.cdna4.mfma(a, b, acc)\n        store_layout: gl.constexpr = gl.amd.AMDMFMALayout(\n            version=4, instr_shape=[32, 32, 16], transposed=False, warps_per_cta=[WAVES // 2, 2]\n        )\n        acc = gl.convert_layout(acc, store_layout)\n        pm = row_tile * BM + gl.arange(0, BM, gl.SliceLayout(1, acc.type.layout))\n        pn = panel * 64 + gl.arange(0, 64, gl.SliceLayout(0, acc.type.layout))\n        if M == 128:\n            p_base = P + split * M * 2624 + row_tile * BM * 2624 + panel * 64\n            offsets = (pm - row_tile * BM)[:, None] * 2624 + (pn - panel * 64)[None, :]\n            gl.amd.cdna4.buffer_store(ptr=p_base, offsets=offsets, stored_value=acc, mask=None, cache=\".wt\")\n        else:\n            gl.amd.cdna4.buffer_store(\n                ptr=P,\n                offsets=split * M * 2624 + pm[:, None] * 2624 + pn[None, :],\n                stored_value=acc,\n                mask=pm[:, None] < M,\n                cache=\".wt\",\n            )\n\n\n@gluon.jit\ndef _merge_norm(\n    P,\n    G,\n    Y,\n    RO,\n    row,\n    eps,\n    M: gl.constexpr,\n    N: gl.constexpr,\n    WIDTH: gl.constexpr,\n    ROPE: gl.constexpr,\n    OFFSET: gl.constexpr,\n    BLOCK: gl.constexpr,\n    WAVES: gl.constexpr,\n):\n    elements: gl.constexpr = 8 if M == 128 and ROPE == 0 else 4\n    layout: gl.constexpr = gl.BlockedLayout([elements], [64], [WAVES], [0])\n    d = gl.arange(0, BLOCK, layout)\n    gamma = gl.load(G + d, d < WIDTH, 0)\n    p = P + row * N + OFFSET\n    x = gl.amd.cdna4.buffer_load(p, d, d < WIDTH + ROPE, 0, cache=\".cg\")\n    for split in gl.static_range(1, 3):\n        x += gl.amd.cdna4.buffer_load(p, d + split * M * N, d < WIDTH + ROPE, 0, cache=\".cg\")\n    x = x.to(gl.bfloat16).to(gl.float32)\n    norm_x = gl.where(d < WIDTH, x, 0)\n    inv = gl.rsqrt(gl.sum(norm_x * norm_x, 0) / WIDTH + eps)\n    y = x * inv * gamma.to(gl.float32)\n    gl.amd.cdna4.buffer_store(\n        ptr=Y + row * WIDTH, offsets=d, stored_value=y.to(gl.bfloat16), mask=d < WIDTH, cache=\".wt\"\n    )\n    if ROPE:\n        gl.amd.cdna4.buffer_store(\n            ptr=RO + row * ROPE,\n            offsets=d - WIDTH,\n            stored_value=x.to(gl.bfloat16),\n            mask=(d >= WIDTH) & (d < WIDTH + ROPE),\n            cache=\".wt\",\n        )\n\n\n@gluon.jit\ndef _normalize(\n    P,\n    QG,\n    KG,\n    QO,\n    KO,\n    RO,\n    eps,\n    M: gl.constexpr,\n    N: gl.constexpr,\n    Q: gl.constexpr,\n    KV: gl.constexpr,\n    R: gl.constexpr,\n    BQ: gl.constexpr,\n    BKR: gl.constexpr,\n    WAVES: gl.constexpr,\n):\n    if M == 128:\n        pid = gl.program_id(0).to(gl.uint32)\n        row = pid // 2\n        is_q = pid % 2 == 0\n    else:\n        row = gl.program_id(0) % M\n        is_q = gl.program_id(0) < M\n    if is_q:\n        _merge_norm(P, QG, QO, RO, row, eps, M, N, Q, 0, 0, BQ, WAVES)\n    else:\n        _merge_norm(P, KG, KO, RO, row, eps, M, N, KV, R, Q, BKR, WAVES)\n\n\ndef qkv_a_norm(\n    hidden: torch.Tensor,\n    weight: torch.Tensor,\n    q_gamma: torch.Tensor,\n    kv_gamma: torch.Tensor,\n    *,\n    rope_dim: int = 64,\n    eps: float = 1e-05,\n    qo: torch.Tensor,\n    ko: torch.Tensor,\n    ro: torch.Tensor,\n):\n    m, h = hidden.shape\n    q, kv = (q_gamma.numel(), kv_gamma.numel())\n    n = q + kv + rope_dim\n    sx, sw = (hidden.stride(0), weight.stride(0))\n    assert 128 <= m <= 256 and h == 6144 and (n == 2624)\n    assert sx % 8 == 0 and sw % 8 == 0\n    storage = torch.empty((7 * m * n // 2,), device=hidden.device, dtype=torch.float32)\n    partials = storage[: 3 * m * n]\n    bm, waves = (64, 4) if m == 128 else (128, 8)\n    _project[256,](hidden, weight, partials, m, sx, sw, bm, waves, num_warps=waves)\n    norm_waves = 4 if m == 128 else 2\n    _normalize[m * 2,](\n        partials,\n        q_gamma,\n        kv_gamma,\n        qo,\n        ko,\n        ro,\n        eps,\n        m,\n        n,\n        q,\n        kv,\n        rope_dim,\n        _ceil_power_of_two(q),\n        _ceil_power_of_two(kv + rope_dim),\n        norm_waves,\n        num_warps=norm_waves,\n        enable_fp_fusion=False,\n    )\n    return (qo, ko, ro)\n\n\ndef run(*, hidden_states, w_qkv_a, q_norm_weight, kv_norm_weight, eps, q_latent, kv_latent, k_rope):\n    \"\"\"Writes q_latent, kv_latent and k_rope: qkv_a_norm on sglang's tensors.\"\"\"\n    qkv_a_norm(\n        hidden_states,\n        w_qkv_a,\n        q_norm_weight,\n        kv_norm_weight,\n        rope_dim=k_rope.shape[1],\n        eps=eps,\n        qo=q_latent,\n        ko=kv_latent,\n        ro=k_rope,\n    )\n"
+      }
+    ]
+  }
+}
