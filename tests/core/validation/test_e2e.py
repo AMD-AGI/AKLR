@@ -243,12 +243,13 @@ def test_pd_match_uses_role_overrides_and_prefill_then_decode_name(serving: dict
     entry = serving["config"]["scenarios"][0]
     prefill = {"hw": "mi355x", "pdMode": "prefill"}
     decode = {"hw": "mi355x", "pdMode": "decode"}
-    entry["matches"] = [{"decode": decode, "prefill": prefill}]
+    entry["matches"] = [
+        {
+            "decode": decode | {"parsers": {"reasoning": False}},
+            "prefill": prefill | {"parsers": {"reasoning": True}},
+        }
+    ]
     entry["env"] = {"prefill": {"ROLE": "prefill"}, "decode": {"ROLE": "decode"}}
-    entry["features"] = {
-        "prefill": {"parsers": {"reasoning": True}},
-        "decode": {"parsers": {"reasoning": False}},
-    }
     entry["args"] = {
         "prefill": {"--revision": "weights-revision", "--mem-fraction-static": 0.7},
         "decode": {"--revision": "weights-revision", "--mem-fraction-static": 0.8},
@@ -269,7 +270,9 @@ def test_pd_match_uses_role_overrides_and_prefill_then_decode_name(serving: dict
     report = evaluate(tmp_path)
 
     assert report.status == "passed"
-    assert report.scenario_records[0].scenario == "model-mi355x-prefill-mi355x-decode"
+    assert report.scenario_records[0].scenario == (
+        "model-mi355x-prefill-parsers-reasoning-on-mi355x-decode-parsers-reasoning-off"
+    )
     assert len(serving["commands"]) == len(serving["killed"]) == 6
     for prefill_argv, decode_argv, router_argv in (serving["commands"][:3], serving["commands"][3:]):
         assert "ROLE=prefill" in prefill_argv
@@ -319,7 +322,8 @@ def test_parser_features_inherit_toggle_and_allow_final_args(
     serving: dict, tmp_path: Path, features, args, reasoning, tool_call
 ) -> None:
     entry = serving["config"]["scenarios"][0]
-    entry["features"], entry["args"] = features, args
+    entry["matches"][0].update(features)
+    entry["args"] = args
     report = evaluate(tmp_path)
     assert report.status == "passed"
     for argv in serving["commands"]:
@@ -334,16 +338,16 @@ def test_parser_features_inherit_toggle_and_allow_final_args(
 
 @pytest.mark.parametrize("enabled", [True, False])
 def test_unknown_parser_fails_before_starting_servers(serving: dict, tmp_path: Path, enabled) -> None:
-    serving["config"]["scenarios"][0]["features"] = {"parsers": {"missing": enabled}}
+    serving["config"]["scenarios"][0]["matches"][0]["parsers"] = {"missing": enabled}
     report = evaluate(tmp_path)
     assert report.status == "aborted"
-    assert "features.parsers.missing: no such parser" in report.findings[0].detail
+    assert "matches.parsers.missing: no such parser" in report.findings[0].detail
     assert serving["commands"] == []
 
 
 @pytest.mark.parametrize("features", [{"attention": {"tp": 4}}, {"parsers": {"reasoning": "false"}}])
 def test_invalid_features_fail_configuration(serving: dict, tmp_path: Path, features) -> None:
-    serving["config"]["scenarios"][0]["features"] = features
+    serving["config"]["scenarios"][0]["matches"][0].update(features)
     with pytest.raises(ValueError):
         evaluate(tmp_path)
     assert serving["commands"] == []
@@ -351,13 +355,58 @@ def test_invalid_features_fail_configuration(serving: dict, tmp_path: Path, feat
 
 def test_parser_value_tracks_the_cookbook(serving: dict, tmp_path: Path) -> None:
     entry = serving["config"]["scenarios"][0]
-    entry["features"], entry["args"] = {"parsers": {"reasoning": True}}, {}
+    entry["matches"][0]["parsers"] = {"reasoning": True}
+    entry["args"] = {}
     path = tmp_path / "sglang/docs/src/snippets/configs/vendor/model.jsx"
     path.write_text(path.read_text().replace("cookbook-reasoning", "new-parser"))
     report = evaluate(tmp_path)
     assert report.status == "passed"
     for argv in serving["commands"]:
         assert argv[argv.index("--reasoning-parser") + 1] == "new-parser"
+
+
+def test_same_cell_with_different_parsers_runs_separate_scenarios(serving: dict, tmp_path: Path) -> None:
+    entry = serving["config"]["scenarios"][0]
+    entry["matches"] = [
+        {"hw": "mi355x", "parsers": {"reasoning": True}},
+        {"hw": "mi355x", "parsers": {"reasoning": False}},
+        {"hw": "mi355x"},
+    ]
+    entry["args"] = {}
+
+    report = evaluate(tmp_path)
+
+    assert report.status == "passed"
+    assert [record.scenario for record in report.scenario_records] == [
+        "model-mi355x-parsers-reasoning-on",
+        "model-mi355x-parsers-reasoning-off",
+        "model-mi355x",
+    ]
+    assert len(serving["commands"]) == len(serving["killed"]) == 6
+    for argv in serving["commands"][:2]:
+        assert argv[argv.index("--reasoning-parser") + 1] == "cookbook-reasoning"
+    for argv in serving["commands"][2:4]:
+        assert "--reasoning-parser" not in argv
+        assert not any(token.startswith("--reasoning-parser=") for token in argv)
+    for argv in serving["commands"][4:]:
+        assert "--reasoning-parser=inherited-reasoning" in argv
+
+
+def test_duplicate_parser_selection_ignores_key_order(serving: dict, tmp_path: Path) -> None:
+    serving["config"]["scenarios"][0]["matches"] = [
+        {"hw": "mi355x", "parsers": {"reasoning": True, "toolCall": False}},
+        {"parsers": {"toolCall": False, "reasoning": True}, "hw": "mi355x"},
+    ]
+    with pytest.raises(ValueError, match="is repeated"):
+        evaluate(tmp_path)
+    assert serving["commands"] == []
+
+
+def test_entry_level_features_rejected(serving: dict, tmp_path: Path) -> None:
+    serving["config"]["scenarios"][0]["features"] = {"parsers": {"reasoning": True}}
+    with pytest.raises(ValueError, match="features"):
+        evaluate(tmp_path)
+    assert serving["commands"] == []
 
 
 def test_duplicate_parser_ids_fail_before_starting_servers(serving: dict, tmp_path: Path) -> None:

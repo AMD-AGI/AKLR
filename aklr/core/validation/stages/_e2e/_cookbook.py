@@ -256,7 +256,7 @@ class Cookbook(FrozenModel):
         """Resolve explicit parser toggles to cookbook flags, or reject unknown choices."""
         args: dict[str, str | bool | None] = {}
         for name, enabled in choices.items():
-            where = f"cookbook {self.config} at {self.sha}: features.parsers.{name}"
+            where = f"cookbook {self.config} at {self.sha}: matches.parsers.{name}"
             item = next((item for item in self.parsers if item.id == name), None)
             if item is None:
                 raise ValueError(f"{where}: no such parser")
