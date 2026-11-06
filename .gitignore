@@ -15,3 +15,6 @@ test-reports/
 aklr_validation/
 # forge_task prepare's default run directories
 aklr-runs/
+
+# Local kernel automation deployment configuration
+.cursor/kernel-optimizer/configuration.yaml

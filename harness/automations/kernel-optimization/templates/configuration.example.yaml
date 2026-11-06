@@ -1,0 +1,53 @@
+# Configuration template; this file is not read by runtime rounds.
+# Copy to .cursor/kernel-optimizer/configuration.yaml on first setup.
+# Fill in the environment, model, budgets, and permissions; keep secrets elsewhere.
+# Keep actual deployment details in the Git-ignored user configuration.
+# Preserve the existing user configuration when updating the pack.
+
+schema_version: 1
+mode: observe  # observe: inspect only; run: admit work; drain: finish existing work
+repository: AMD-AGI/AKLR
+base_branch: main
+automation:
+  name: aklr-kernel-optimizer
+  interval_minutes: 15
+  cursor_model: null  # Choose a model supported by the Cursor account.
+  reasoning_effort: null  # Verify that the selected model and provider support this setting.
+  owner: null  # Maintainer for reported blockers; no automatic direct messages.
+execution:
+  control_host: null  # The same Linux control host must be reachable on every round.
+  checkout: null  # Absolute path to the trusted AKLR checkout on that host.
+  state_dir: null  # Persistent absolute path outside the checkout; do not use temporary storage.
+  cluster: null  # Configured remote-gpu cluster with gfx950 nodes.
+  image: null  # Verified ROCm image pinned by digest.
+  runtime_revision: null  # Toolchain revision covered by the readiness checks.
+  readiness_record: null  # Evidence for environment, spending limits, isolation, and recovery checks.
+policy:
+  strategies:  # Apply strategies in this order.
+    - type: manual
+      schemas: []  # Full repository-relative paths to schema JSON files.
+    - type: kernel-less
+  batch_size: 10
+  allowed_ops: [gemm]
+  backend: flydsl  # One tested backend for the first version.
+  max_active_campaigns: 1
+  max_open_prs: 2
+  cooldown_hours: 72
+campaign:
+  model: null  # Supported and authorized model used by KernelForge.
+  reasoning_effort: null  # Verify that the selected model and provider support this setting.
+  loop_hours: null
+  total_node_hours: null  # Includes setup, optimization, ablate, finalize, stress, and validation.
+  max_model_usd: null  # Entire campaign, including finalize and distill.
+  max_auto_resumes: 1
+budget:
+  authorization: null  # Recorded spending authorization, not a credential.
+  total_model_usd: null  # Cumulative campaign commitments in this state directory.
+  total_node_hours: null  # Count whole-node hours, even when using only one GPU.
+  model_hard_limit_ref: null  # Reference to the provider-side hard spending limit.
+  cursor_limit_ref: null  # Reference to limits on the outer Cursor Automation usage.
+publication:
+  allow_draft_pr: false
+  allow_pr_comments: false
+  allow_ci_gpu_label: false  # GPU CI spending needs separate authorization.
+  branch_prefix: automation/kernel-
