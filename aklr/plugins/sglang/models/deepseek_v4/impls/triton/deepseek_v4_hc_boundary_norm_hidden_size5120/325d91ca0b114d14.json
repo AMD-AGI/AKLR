@@ -1,0 +1,591 @@
+{
+  "schema_version": 5,
+  "name": "deepseek_v4_hc_boundary_norm_hidden_size5120",
+  "contract_id": "deepseek_v4_hc_boundary_norm@1.0",
+  "description": "DeepSeek-V4 mHC sublayer boundary (deferred hc_post, collapse with the previous pre, mix statistics, reduce and Sinkhorn) and the RMSNorm of the collapsed row.",
+  "op_type": "deepseek_v4",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "hidden_size": {
+      "type": "const",
+      "value": 5120,
+      "description": "Hidden size of one stream."
+    },
+    "projection_size": {
+      "type": "const",
+      "value": 20480,
+      "description": "Mix projection input: the four streams."
+    },
+    "n_groups": {
+      "type": "const",
+      "value": 160,
+      "description": "MXFP8 groups of 32 per row."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "x": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The previous sublayer's output, whose hc_post was deferred to this boundary."
+    },
+    "residual": {
+      "shape": [
+        "n_tokens",
+        4,
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The four residual streams before that hc_post."
+    },
+    "post_in": {
+      "shape": [
+        "n_tokens",
+        4
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": "-2.32",
+        "log2_hi": "0.9"
+      },
+      "description": "The previous sublayer's post mix: weight of x in new stream k."
+    },
+    "comb_in": {
+      "shape": [
+        "n_tokens",
+        4,
+        4
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -4,
+        "log2_hi": 0
+      },
+      "description": "The previous sublayer's combination mix: weight of stream j in new stream k, at [j, k]."
+    },
+    "pre_prev": {
+      "shape": [
+        "n_tokens",
+        4
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": "-3.32",
+        "log2_hi": 0
+      },
+      "description": "The previous boundary's pre mix: weight of new stream k in this sublayer's input."
+    },
+    "hc_fn": {
+      "shape": [
+        24,
+        "projection_size"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 20480
+      },
+      "description": "Projects the flattened new streams to 24 mix logits: pre, post, then comb."
+    },
+    "hc_scale": {
+      "shape": [3],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": 1
+      },
+      "description": "Scale of the pre, post and comb logits."
+    },
+    "hc_base": {
+      "shape": [24],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Bias of the 24 mix logits."
+    },
+    "norm_weight": {
+      "shape": [
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": "0.58"
+      },
+      "description": "Weight of the RMSNorm of y."
+    },
+    "rms_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to the mean square of the new streams (DeepSeek-V4: rms_norm_eps)."
+    },
+    "norm_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to the mean square of y (the norm's variance_epsilon)."
+    },
+    "hc_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to each pre mix after its sigmoid and in each Sinkhorn normalization."
+    },
+    "sinkhorn_iters": {
+      "shape": null,
+      "dtype": "int32",
+      "description": "Sinkhorn normalizations of the combination mix."
+    }
+  },
+  "outputs": {
+    "residual_out": {
+      "shape": [
+        "n_tokens",
+        4,
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The new streams: the deferred hc_post applied, in residual's dtype."
+    },
+    "norm": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "RMSNorm of y, the next sublayer's input."
+    },
+    "pre": {
+      "shape": [
+        "n_tokens",
+        4
+      ],
+      "dtype": "float32",
+      "description": "This boundary's pre mix: sigmoid(...) + hc_eps."
+    },
+    "post": {
+      "shape": [
+        "n_tokens",
+        4
+      ],
+      "dtype": "float32",
+      "description": "This boundary's post mix: 2 * sigmoid(...)."
+    },
+    "comb": {
+      "shape": [
+        "n_tokens",
+        4,
+        4
+      ],
+      "dtype": "float32",
+      "description": "This boundary's combination mix after Sinkhorn, at [j, k]."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 12
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 18
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 24
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 30
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 34
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 36
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 42
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 48
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 60
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 72
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 84
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 96
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 108
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 120
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 128
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 132
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 144
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 156
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 168
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 180
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 192
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 219
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 240
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 244
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 264
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 288
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 312
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 336
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 360
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 384
+      },
+      "scalars": {
+        "rms_eps": 9.999999682655225e-21,
+        "norm_eps": 9.999999682655225e-21,
+        "hc_eps": 9.999999974752427e-07,
+        "sinkhorn_iters": 20
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0001,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "GEAK",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "boundary.py",
+        "content": "\"\"\"Device code and launch of one DeepSeek-V4 mHC sublayer boundary with the RMSNorm after it, as a\nsingle Triton launch per boundary on gfx950.\n\nGrid (H / 64 + 16, cdiv(M, 16)), the hidden-slice axis fastest so that a row tile's CTAs are dispatched\ntogether:\n  slice CTAs (H / 64 per 16-row tile) apply the deferred hc_post to a [16, 64] slice of the four\n  streams (stored bf16), collapse them under the previous pre mix, accumulate the mix-logit and\n  sum-of-squares partials (the fp32 hc_fn split into three bf16 MFMA products), then wait on a\n  row-tile barrier and RMS-normalize their own slice (with the MXFP8 codes and E8M0 scales);\n  sinkhorn CTAs (16 per tile) wait on the same barrier, reduce the partials of one row and run\n  the sigmoid / Sinkhorn mixes.\nThe barrier counters are per-shape scratch zeroed once; the last arriver of a tile resets them, so\nevery launch finds them at zero.\n\"\"\"\n\nimport functools\n\nimport torch\nimport triton\nimport triton.language as tl\n\n_BLOCK_M = 16\n_BLOCK_K = 64\n_NUM_WARPS = 2\n_SYNC_STRIDE = 64\n\n# ---------------------------------------------------------------- device helpers\n@triton.jit\ndef _fp8_grid_quant(xg):\n    \"\"\"fp32 [G, 32] -> (fp8 e4m3 codes, ue8m0 exponent per group); mxfp8_amd_gfx95.fp8_grid_quant.\"\"\"\n    amax = tl.max(tl.abs(xg), axis=1)\n    amax = tl.maximum(amax, 1e-10)\n    raw = amax * (1.0 / 448.0)\n    bits = raw.to(tl.int32, bitcast=True)\n    exp = (bits >> 23) & 0xFF\n    exp = exp + ((bits & 0x7FFFFF) != 0).to(tl.int32)\n    exp = tl.minimum(tl.maximum(exp, 1), 254)\n    scale = (exp << 23).to(tl.float32, bitcast=True)\n    scaled = tl.clamp(xg / scale[:, None], -448.0, 448.0)\n    return scaled.to(tl.float8e4nv), exp\n\n\n@triton.jit\ndef _arrive_and_wait(cnt_ptr, TOTAL: tl.constexpr):\n    \"\"\"Row-tile barrier with no cache maintenance: callers write what they share through to memory\n    (.wt) and wait for the acks before arriving; readers use coherent .cv loads afterwards. cnt\n    counts arrivals; the last arriver resets it and bumps the generation flag (a separate 128-byte\n    line) the others spin on with relaxed coherent loads. Self-resetting: every launch starts at 0.\n    The generation is read (relaxed, coherent) before arriving: it can only advance after this\n    CTA's own arrival.\"\"\"\n    flag_ptr = cnt_ptr + 32\n    gen = tl.atomic_add(flag_ptr, 0, sem=\"relaxed\", scope=\"gpu\")\n    old = tl.atomic_add(cnt_ptr, 1, sem=\"relaxed\", scope=\"gpu\")\n    if old == TOTAL - 1:\n        tl.atomic_xchg(cnt_ptr, 0, sem=\"relaxed\", scope=\"gpu\")\n        tl.atomic_add(flag_ptr, 1, sem=\"relaxed\", scope=\"gpu\")\n    cur = tl.atomic_add(flag_ptr, 0, sem=\"relaxed\", scope=\"gpu\")\n    while cur == gen:\n        cur = tl.atomic_add(flag_ptr, 0, sem=\"relaxed\", scope=\"gpu\")\n    tl.debug_barrier()\n\n\n@triton.jit\ndef _sinkhorn_row(\n    row, part_mix_ptr, part_sq_ptr, scale_ptr, base_ptr, pre_ptr, post_ptr, comb_ptr,\n    M, inv_k, rms_eps,\n    MIX: tl.constexpr, HC: tl.constexpr, NUM_SLICES: tl.constexpr, SLICES_PAD: tl.constexpr,\n    ITERS: tl.constexpr, EPS: tl.constexpr,\n):\n    \"\"\"mhc_boundary_hip._hc_mix_reduce_sinkhorn_row: the split-K partials read as ONE\n    [slices, 32] tile with coherent .cv loads (other CTAs wrote them through), the pre / post /\n    comb mixes picked from the reduced row by exact one-hot sums (stock: a scratch round trip);\n    the sigmoid / softmax / sinkhorn arithmetic after that is the stock one.\"\"\"\n    j = tl.arange(0, HC)\n    jj = j[:, None]\n    kk = j[None, :]\n    if row < M:\n        s_idx = tl.arange(0, SLICES_PAD)\n        s_ok = s_idx < NUM_SLICES\n        c = tl.arange(0, 32)\n        v = tl.load(\n            part_mix_ptr + (s_idx[:, None] * M + row) * MIX + c[None, :],\n            mask=s_ok[:, None] & (c[None, :] < MIX),\n            other=0.0,\n            cache_modifier=\".cv\",\n        )\n        sq = tl.sum(\n            tl.load(part_sq_ptr + s_idx * M + row, mask=s_ok, other=0.0, cache_modifier=\".cv\"),\n            axis=0,\n        )\n        s0 = tl.load(scale_ptr + 0)\n        s1 = tl.load(scale_ptr + 1)\n        s2 = tl.load(scale_ptr + 2)\n        b_pre = tl.load(base_ptr + j)\n        b_post = tl.load(base_ptr + HC + j)\n        b_comb = tl.load(base_ptr + 2 * HC + jj * HC + kk)\n        red = tl.sum(v, axis=0)\n        a_pre = tl.sum(tl.where(c[None, :] == j[:, None], red[None, :], 0.0), axis=1)\n        a_post = tl.sum(tl.where(c[None, :] == (j[:, None] + HC), red[None, :], 0.0), axis=1)\n        cidx = 2 * HC + jj * HC + kk\n        a_comb = tl.sum(\n            tl.where(c[None, None, :] == cidx[:, :, None], red[None, None, :], 0.0), axis=2\n        )\n        rsqrt = 1.0 / tl.sqrt(sq * inv_k + rms_eps)\n        pre = tl.sigmoid(a_pre * rsqrt * s0 + b_pre) + EPS\n        tl.store(pre_ptr + row * HC + j, pre)\n        post = 2.0 * tl.sigmoid(a_post * rsqrt * s1 + b_post)\n        tl.store(post_ptr + row * HC + j, post)\n        comb = a_comb * rsqrt * s2 + b_comb\n        comb = tl.exp(comb - tl.max(comb, axis=1)[:, None])\n        comb = comb / tl.sum(comb, axis=1)[:, None] + EPS\n        comb = comb / (tl.sum(comb, axis=0)[None, :] + EPS)\n        for _ in tl.static_range(ITERS - 1):\n            comb = comb / (tl.sum(comb, axis=1)[:, None] + EPS)\n            comb = comb / (tl.sum(comb, axis=0)[None, :] + EPS)\n        tl.store(comb_ptr + row * HC * HC + jj * HC + kk, comb)\n\n\n# ---------------------------------------------------------------- the fused kernel\n@triton.jit\ndef _hc_boundary_norm_fused_kernel(\n    x_ptr,\n    res_ptr,\n    post_in_ptr,\n    comb_in_ptr,\n    pre_prev_ptr,\n    w_ptr,\n    res_out_ptr,\n    part_mix_ptr,\n    part_sq_ptr,\n    part_ysq_ptr,\n    nw_ptr,\n    out_norm_ptr,\n    out_fq_ptr,\n    out_scale_ptr,\n    scale_ptr,\n    base_ptr,\n    pre_ptr,\n    post_ptr,\n    comb_ptr,\n    sync_ptr,\n    M,\n    H,\n    x_stride_m,\n    res_stride_m,\n    w_stride_n,\n    stride_nm,\n    stride_fm,\n    stride_sm,\n    inv_k,\n    rms_eps,\n    norm_eps,\n    inv_h,\n    HC: tl.constexpr,\n    MIX: tl.constexpr,\n    MIX_PAD: tl.constexpr,\n    BLOCK_M: tl.constexpr,\n    BLOCK_K: tl.constexpr,\n    NUM_SLICES: tl.constexpr,\n    SLICES_PAD: tl.constexpr,\n    HAS_POST: tl.constexpr,\n    HAS_COMBINE: tl.constexpr,\n    FAKE_QUANT: tl.constexpr,\n    EMIT_FP8: tl.constexpr,\n    ITERS: tl.constexpr,\n    EPS: tl.constexpr,\n    SYNC_STRIDE: tl.constexpr,\n):\n    tl.static_assert(HC == 4)\n    tl.static_assert(BLOCK_K % 32 == 0)\n    TOTAL: tl.constexpr = NUM_SLICES + BLOCK_M\n    pid_t = tl.program_id(0)  # fastest grid axis: a tile's CTAs are dispatched together\n    pid_m = tl.program_id(1)\n    cnt_ptr = sync_ptr + pid_m * SYNC_STRIDE\n    if pid_t < NUM_SLICES:\n        offs_m = (pid_m * BLOCK_M + tl.arange(0, BLOCK_M)).to(tl.int64)\n        mask_m = offs_m < M\n        offs_h = pid_t * BLOCK_K + tl.arange(0, BLOCK_K)\n        offs_n = tl.arange(0, MIX_PAD)\n        mask_n = offs_n < MIX\n        m2 = mask_m[:, None]\n\n        # ---------- phase 1: the stock boundary body, every global load issued up front\n        w_off = offs_n[None, :] * w_stride_n + offs_h[:, None]\n        w0 = tl.load(w_ptr + w_off + 0 * H, mask=mask_n[None, :], other=0.0)\n        w1 = tl.load(w_ptr + w_off + 1 * H, mask=mask_n[None, :], other=0.0)\n        w2 = tl.load(w_ptr + w_off + 2 * H, mask=mask_n[None, :], other=0.0)\n        w3 = tl.load(w_ptr + w_off + 3 * H, mask=mask_n[None, :], other=0.0)\n        if HAS_POST:\n            xa = tl.load(\n                x_ptr + offs_m[:, None] * x_stride_m + offs_h[None, :], mask=m2, other=0.0\n            ).to(tl.float32)\n            cj = tl.arange(0, HC)\n            post_tile = tl.load(\n                post_in_ptr + offs_m[:, None] * HC + cj[None, :], mask=m2, other=0.0\n            ).to(tl.float32)\n            cc = tl.arange(0, HC * HC)\n            comb_tile = tl.load(\n                comb_in_ptr + offs_m[:, None] * (HC * HC) + cc[None, :], mask=m2, other=0.0\n            ).to(tl.float32)\n        r_off = offs_m[:, None] * res_stride_m + offs_h[None, :]\n        r0 = tl.load(res_ptr + r_off + 0 * H, mask=m2, other=0.0).to(tl.float32)\n        r1 = tl.load(res_ptr + r_off + 1 * H, mask=m2, other=0.0).to(tl.float32)\n        r2 = tl.load(res_ptr + r_off + 2 * H, mask=m2, other=0.0).to(tl.float32)\n        r3 = tl.load(res_ptr + r_off + 3 * H, mask=m2, other=0.0).to(tl.float32)\n        if HAS_COMBINE:\n            pj = tl.arange(0, HC)\n            pre_tile = tl.load(\n                pre_prev_ptr + offs_m[:, None] * HC + pj[None, :], mask=m2, other=0.0\n            ).to(tl.float32)\n        nw = tl.load(nw_ptr + offs_h).to(tl.float32)\n        y = tl.zeros([BLOCK_M, BLOCK_K], dtype=tl.float32)\n        acc = tl.zeros([BLOCK_M, MIX_PAD], dtype=tl.float32)\n        sq = tl.zeros([BLOCK_M], dtype=tl.float32)\n        for k in tl.static_range(HC):\n            if k == 0:\n                w_tile = w0\n            elif k == 1:\n                w_tile = w1\n            elif k == 2:\n                w_tile = w2\n            else:\n                w_tile = w3\n            if HAS_POST:\n                # res_out[k] = post[k]*x + sum_j comb[j,k]*res[j] in aiter::mhc_post's order\n                pk = tl.sum(tl.where((cj == k)[None, :], post_tile, 0.0), axis=1)\n                c0 = tl.sum(tl.where((cc == 0 * HC + k)[None, :], comb_tile, 0.0), axis=1)\n                c1 = tl.sum(tl.where((cc == 1 * HC + k)[None, :], comb_tile, 0.0), axis=1)\n                c2 = tl.sum(tl.where((cc == 2 * HC + k)[None, :], comb_tile, 0.0), axis=1)\n                c3 = tl.sum(tl.where((cc == 3 * HC + k)[None, :], comb_tile, 0.0), axis=1)\n                v = xa * pk[:, None]\n                v += r0 * c0[:, None]\n                v += r1 * c1[:, None]\n                v += r2 * c2[:, None]\n                v += r3 * c3[:, None]\n                vb = v.to(res_out_ptr.dtype.element_ty)\n                tl.store(\n                    res_out_ptr + offs_m[:, None] * (HC * H) + k * H + offs_h[None, :],\n                    vb,\n                    mask=m2,\n                )\n                xt = vb.to(tl.float32)\n            else:\n                if k == 0:\n                    xt = r0\n                elif k == 1:\n                    xt = r1\n                elif k == 2:\n                    xt = r2\n                else:\n                    xt = r3\n            if HAS_COMBINE:\n                pp = tl.sum(tl.where((pj == k)[None, :], pre_tile, 0.0), axis=1)\n                y += pp[:, None] * xt\n            else:\n                if k == 0:\n                    y = xt  # the norm input is copy 0 (stock: new_residual[:, 0, :])\n            # xt is bf16-exact; hc_fn = w1 + w2 + w3 exactly in bf16 (24 mantissa bits): three bf16\n            # MFMA products accumulate in fp32, smallest first\n            xb = xt.to(tl.bfloat16)\n            wb1 = w_tile.to(tl.bfloat16)\n            wr = w_tile - wb1.to(tl.float32)\n            wb2 = wr.to(tl.bfloat16)\n            wb3 = (wr - wb2.to(tl.float32)).to(tl.bfloat16)\n            acc = tl.dot(xb, wb3, acc)\n            acc = tl.dot(xb, wb2, acc)\n            acc = tl.dot(xb, wb1, acc)\n            sq += tl.sum(xt * xt, axis=1)\n        # the norm reads y as bf16 (stock: y stored bf16, then loaded by the norm row)\n        yf = y.to(out_norm_ptr.dtype.element_ty).to(tl.float32)\n        # what other CTAs of the tile read is written through to memory\n        tl.store(\n            part_mix_ptr + (pid_t * M + offs_m[:, None]) * MIX + offs_n[None, :],\n            acc,\n            mask=m2 & mask_n[None, :],\n            cache_modifier=\".wt\",\n        )\n        tl.store(part_sq_ptr + pid_t * M + offs_m, sq, mask=mask_m, cache_modifier=\".wt\")\n        tl.store(\n            part_ysq_ptr + pid_t * M + offs_m,\n            tl.sum(yf * yf, axis=1),\n            mask=mask_m,\n            cache_modifier=\".wt\",\n        )\n        # every wave's write-through stores are acknowledged before the CTA arrives\n        tl.inline_asm_elementwise(\n            \"s_waitcnt vmcnt(0)\", \"=r,r\", [pid_t], dtype=tl.int32, is_pure=False, pack=1\n        )\n        tl.debug_barrier()\n        _arrive_and_wait(cnt_ptr, TOTAL)\n\n        # ---------- phase 2: RMSNorm (+ MXFP8 / fp8-grid) of this CTA's [BLOCK_M, BLOCK_K] slice\n        s_idx = tl.arange(0, SLICES_PAD)\n        s_ok = s_idx < NUM_SLICES\n        ysq = tl.load(\n            part_ysq_ptr + s_idx[:, None] * M + offs_m[None, :],\n            mask=s_ok[:, None] & mask_m[None, :],\n            other=0.0,\n            cache_modifier=\".cv\",\n        )\n        var = tl.sum(ysq, axis=0) * inv_h\n        rstd = 1.0 / tl.sqrt_rn(var + norm_eps)\n        yn = (yf * rstd[:, None] * nw[None, :]).to(out_norm_ptr.dtype.element_ty)\n        tl.store(out_norm_ptr + offs_m[:, None] * stride_nm + offs_h[None, :], yn, mask=m2)\n        if FAKE_QUANT:\n            G: tl.constexpr = BLOCK_K // 32\n            yg = tl.reshape(yn.to(tl.float32), (BLOCK_M * G, 32))\n            q8, e8 = _fp8_grid_quant(yg)\n            if EMIT_FP8:\n                tl.store(\n                    out_fq_ptr + offs_m[:, None] * stride_fm + offs_h[None, :],\n                    tl.reshape(q8, (BLOCK_M, BLOCK_K)),\n                    mask=m2,\n                )\n                goffs = pid_t * G + tl.arange(0, G)\n                tl.store(\n                    out_scale_ptr + offs_m[:, None] * stride_sm + goffs[None, :],\n                    tl.reshape(e8.to(tl.uint8), (BLOCK_M, G)),\n                    mask=m2,\n                )\n            else:\n                qd = q8.to(tl.float32) * (e8 << 23).to(tl.float32, bitcast=True)[:, None]\n                tl.store(\n                    out_fq_ptr + offs_m[:, None] * stride_fm + offs_h[None, :],\n                    tl.reshape(qd, (BLOCK_M, BLOCK_K)).to(out_fq_ptr.dtype.element_ty),\n                    mask=m2,\n                )\n    else:\n        # ---------- split-K reduce + sinkhorn of one row of the tile\n        _arrive_and_wait(cnt_ptr, TOTAL)\n        _sinkhorn_row(\n            (pid_m * BLOCK_M + (pid_t - NUM_SLICES)).to(tl.int64),\n            part_mix_ptr, part_sq_ptr, scale_ptr, base_ptr, pre_ptr, post_ptr, comb_ptr,\n            M, inv_k, rms_eps, MIX=MIX, HC=HC, NUM_SLICES=NUM_SLICES,\n            SLICES_PAD=SLICES_PAD, ITERS=ITERS, EPS=EPS,\n        )\n\n\n@functools.cache\ndef _barrier_counters(tiles, device):\n    \"\"\"Per-shape barrier counters, zeroed once outside any capture; every launch leaves them at zero\n    again (the last arriver of each tile resets its counter).\"\"\"\n    return torch.zeros(tiles * _SYNC_STRIDE, dtype=torch.int32, device=device)\n\n\ndef launch(\n    *,\n    x,\n    residual,\n    post_in,\n    comb_in,\n    pre_prev,\n    hc_fn,\n    hc_scale,\n    hc_base,\n    norm_weight,\n    rms_eps,\n    norm_eps,\n    hc_eps,\n    sinkhorn_iters,\n    residual_out,\n    norm,\n    quantized,\n    scales,\n    pre,\n    post,\n    comb,\n):\n    \"\"\"One launch: residual_out, norm (and, when quantized is given, its MXFP8 codes and scales),\n    pre, post and comb of the boundary, written into the given outputs.\"\"\"\n    m, hc, h = residual.shape\n    mix = hc_fn.shape[0]\n    num_slices = h // _BLOCK_K\n    tiles = triton.cdiv(m, _BLOCK_M)\n    dev = residual.device\n    part_mix = torch.empty((num_slices, m, mix), dtype=torch.float32, device=dev)\n    part_sq = torch.empty((num_slices, m), dtype=torch.float32, device=dev)\n    part_ysq = torch.empty((num_slices, m), dtype=torch.float32, device=dev)\n    sync = _barrier_counters(tiles, dev)\n    emit = quantized is not None\n    _hc_boundary_norm_fused_kernel[(num_slices + _BLOCK_M, tiles)](\n        x,\n        residual,\n        post_in,\n        comb_in,\n        pre_prev,\n        hc_fn,\n        residual_out,\n        part_mix,\n        part_sq,\n        part_ysq,\n        norm_weight,\n        norm,\n        quantized if emit else norm,\n        scales.view(torch.uint8) if emit else norm,\n        hc_scale,\n        hc_base,\n        pre,\n        post,\n        comb,\n        sync,\n        m,\n        h,\n        x.stride(0),\n        residual.stride(0),\n        hc_fn.stride(0),\n        norm.stride(0),\n        quantized.stride(0) if emit else 0,\n        scales.stride(0) if emit else 0,\n        1.0 / (hc * h),\n        rms_eps,\n        norm_eps,\n        1.0 / h,\n        HC=hc,\n        MIX=mix,\n        MIX_PAD=max(16, triton.next_power_of_2(mix)),\n        BLOCK_M=_BLOCK_M,\n        BLOCK_K=_BLOCK_K,\n        NUM_SLICES=num_slices,\n        SLICES_PAD=triton.next_power_of_2(num_slices),\n        HAS_POST=True,\n        HAS_COMBINE=True,\n        FAKE_QUANT=emit,\n        EMIT_FP8=emit,\n        ITERS=sinkhorn_iters,\n        EPS=hc_eps,\n        SYNC_STRIDE=_SYNC_STRIDE,\n        num_warps=_NUM_WARPS,\n        num_stages=1,\n        enable_fp_fusion=False,\n    )\n"
+      },
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"DeepSeek-V4 mHC sublayer boundary and the bf16 RMSNorm after it in one Triton launch (gfx950).\"\"\"\n\nfrom .boundary import launch\n\n\ndef run(\n    *,\n    x,\n    residual,\n    post_in,\n    comb_in,\n    pre_prev,\n    hc_fn,\n    hc_scale,\n    hc_base,\n    norm_weight,\n    rms_eps,\n    norm_eps,\n    hc_eps,\n    sinkhorn_iters,\n    residual_out,\n    norm,\n    pre,\n    post,\n    comb,\n) -> None:\n    launch(\n        x=x,\n        residual=residual,\n        post_in=post_in,\n        comb_in=comb_in,\n        pre_prev=pre_prev,\n        hc_fn=hc_fn,\n        hc_scale=hc_scale,\n        hc_base=hc_base,\n        norm_weight=norm_weight,\n        rms_eps=rms_eps,\n        norm_eps=norm_eps,\n        hc_eps=hc_eps,\n        sinkhorn_iters=sinkhorn_iters,\n        residual_out=residual_out,\n        norm=norm,\n        quantized=None,\n        scales=None,\n        pre=pre,\n        post=post,\n        comb=comb,\n    )\n"
+      }
+    ]
+  }
+}
