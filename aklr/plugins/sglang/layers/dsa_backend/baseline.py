@@ -1,9 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What sglang 0.5.22 runs on HIP by default for the DSA's sparse MLA: in decode,
-DeepseekSparseAttnBackend._forward_triton_decode's triton split-K decode; in prefill,
-forward_extend's triton_sparse_mla_fwd."""
+"""What sglang 0.5.22 runs on HIP by default for the DSA's sparse MLA decode and prefill."""
 
 from __future__ import annotations
 
@@ -34,9 +32,7 @@ def dsa_sparse_mla_decode_baseline(q, kv_cache, topk_indices, sm_scale, output=N
 
 
 def dsa_sparse_mla_prefill_baseline(q, kv_cache, topk_indices, sm_scale, output=None):
-    """triton_sparse_mla_fwd as forward_extend calls it, with no max_topk_length: what it runs
-    for any max_topk_length past 512, as every sparse prefill's is (sglang runs dense attention
-    unless a sequence holds more than topk tokens)."""
+    """triton_sparse_mla_fwd as forward_extend calls it (sparse prefill: max_topk_length > 512)."""
     from sglang.kernels.ops.attention.dsa.triton_sparse_mla import triton_sparse_mla_fwd
 
     latent = q.shape[-1] - ROPE_DIM

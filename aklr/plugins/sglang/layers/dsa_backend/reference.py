@@ -55,5 +55,5 @@ def dsa_sparse_mla_prefill_reference(
     row_major_args: Mapping[str, Any],
     decode: Callable[[Tensor, str], Tensor],
 ) -> Tensor:
-    """The decode's computation: a prefill token attends the rows its slots name the same way."""
+    """The decode's computation."""
     return dsa_sparse_mla_decode_reference(point, row_major_args, decode)

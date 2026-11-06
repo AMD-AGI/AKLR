@@ -51,7 +51,7 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
-    # the same shrunk, a new sequence longer than the top-k: rows short of it, then full ones
+    # the same shrunk, a new sequence longer than the top-k
     PointSpec(
         contract_id="dsa_sparse_mla_prefill@1.0",
         axes={

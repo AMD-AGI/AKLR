@@ -193,19 +193,14 @@ class IntRangeDistribution(Distribution):
         return bool((ordered[..., 1:] != ordered[..., :-1]).all())
 
 
-# rows a step of CausalTopkDistribution.sample: a step scores [rows, positions]
+# rows per step of CausalTopkDistribution.sample
 _CAUSAL_TOPK_ROWS = 256
 
 
 class CausalTopkDistribution(Distribution):
-    """Sparse attention's top-k KV slots of a causal sequence's tokens, -1 for none: any
-    distinct slots in [0, hi] and any number of -1s per row (a batch of sequences mixes
-    rows). Drawn as one sequence of ``prefix`` cached tokens and the rows' tokens, its
-    slots a run of the pool at a random offset: a row whose token sees no more positions
-    than a row holds names them all, in order, then -1; any other row the top of its
-    positions under a random permutation of them, in a random order. A seed's draws agree
-    bit for bit: the keys are distinct and the shuffle sorts stably, where a GPU sort may
-    break ties differently from run to run (and a kernel sums a row in its order)."""
+    """Top-k KV slots of a causal sequence's tokens: distinct slots in [0, hi], -1 for none.
+    Drawn as one new sequence: a row names every position it sees, in order, while they fit,
+    else k of them in a random order. Bit-exact per seed (distinct keys, stable sort)."""
 
     kind: Literal["causal_topk"] = "causal_topk"
     hi: str | int
@@ -239,7 +234,7 @@ class CausalTopkDistribution(Distribution):
             picked = scores.topk(width, dim=-1).indices
             order = torch.rand(picked.shape, generator=generator).argsort(dim=-1, stable=True)
             picked = picked.gather(-1, order)
-            # a row that sees at most k positions: all of them, in order
+            # rows that fit: all positions, in order
             in_order = torch.where(column[:width] < seen[:, None], column[:width], -1)
             picked = torch.where((seen <= k)[:, None], in_order, picked)
             out[:, start : start + seen.numel(), :width] = torch.where(picked >= 0, picked + base, -1)

@@ -9,7 +9,7 @@ from aklr.plugins.sglang.layers.dsa_backend.contract import DSA_SPARSE_MLA_DECOD
 
 __all__ = ["dsa_sparse_mla_decode", "dsa_sparse_mla_prefill"]
 
-# triton_sparse_mla_fwd's max_topk_length at or below which sglang runs its own short-sequence path
+# sglang's short-sequence path in triton_sparse_mla_fwd
 _SGLANG_SHORT_TOPK = 512
 
 
@@ -47,9 +47,7 @@ def _forward_triton_decode(self, q_nope, q_rope, kv_cache, v_head_dim, page_tabl
     return output.unsqueeze(0)
 
 
-# The DSA prefill on HIP (dsa_prefill_impl "triton"): forward_extend imports this function at each
-# call. Speculative decoding's target_verify and draft_extend_v2 reach it too, through
-# dsa_decode_impl.
+# HIP's DSA prefill; forward_extend imports it at each call.
 @sglang_route(
     "sglang.kernels.ops.attention.dsa.triton_sparse_mla.triton_sparse_mla_fwd",
     versions=("0.5.22",),
@@ -57,9 +55,7 @@ def _forward_triton_decode(self, q_nope, q_rope, kv_cache, v_head_dim, page_tabl
 def _triton_sparse_mla_fwd(
     q_nope, q_rope, kv, indices, sm_scale, d_v=512, topk_length=None, max_topk_length=None
 ):
-    """New sequences' prefill as one op call on the whole q, returned as sglang's kernel returns
-    it, [1, tokens, heads, d_v]. Tokens after a cached prefix stay on sglang: each of them names
-    topk slots, where the op's kernels gain nothing."""
+    """New sequences' prefill as one op call; tokens after a cached prefix stay on sglang."""
     import torch
     from sglang.srt.runtime_context import get_spec
 
@@ -70,7 +66,6 @@ def _triton_sparse_mla_fwd(
         or get_spec().speculative_algorithm is not None
         or topk_length is not None
         or (max_topk_length is not None and max_topk_length <= _SGLANG_SHORT_TOPK)
-        # a capture would replay this call's sequences
         or torch.cuda.is_current_stream_capturing()
         or not _is_new_sequences(q.shape[0])
     ):
@@ -87,8 +82,7 @@ def _triton_sparse_mla_fwd(
 
 
 def _is_new_sequences(tokens):
-    """Whether the running forward's sequences have no cached prefix and the call's ``tokens``
-    are theirs: the DSA backend's host lengths, read without a device sync."""
+    """Whether this forward's sequences have no cached prefix (host lengths, no device sync)."""
     from sglang.srt.layers.attention.dsa_backend import DeepseekSparseAttnBackend
     from sglang.srt.model_executor.forward_context import get_attn_backend, has_forward_context
 
@@ -98,7 +92,6 @@ def _is_new_sequences(tokens):
     if not isinstance(backend, DeepseekSparseAttnBackend):
         return False
     metadata = backend.forward_metadata
-    # seq_lens_sum counts the prefixes too; decode's is None
     return metadata.seq_lens_sum == sum(metadata.dsa_extend_seq_lens_list) == tokens
 
 

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""A causal sequence's top-k slots: the rows sglang's DSA indexer hands its sparse attention."""
+"""CausalTopkDistribution: a causal sequence's top-k slots."""
 
 import pytest
 import torch
@@ -19,7 +19,7 @@ def test_rows_name_their_visible_positions(rows, k, prefix):
     assert counts.equal(seen.clamp(max=k))
     # -1 only after a row's slots
     assert ((sampled >= 0) == (torch.arange(k) < counts[:, None])).all()
-    # every slot one of the sequence's run of prefix + rows slots
+    # slots within the sequence's run
     slots = sampled[sampled >= 0]
     assert slots.max() - slots.min() < prefix + rows
     base = int(sampled[0, 0]) if prefix == 0 else None
@@ -30,8 +30,6 @@ def test_rows_name_their_visible_positions(rows, k, prefix):
 
 
 def test_full_rows_change_slowly():
-    """Positions keep one key for the whole sequence, so a row adds the new token's position or
-    keeps its neighbour's slots."""
     sampled = CausalTopkDistribution(hi=4095).sample((400, 64), "int32", torch.Generator().manual_seed(0))
     for r in range(65, 400):
         before, after = set(sampled[r - 1].tolist()), set(sampled[r].tolist())
@@ -39,7 +37,6 @@ def test_full_rows_change_slowly():
 
 
 def test_a_seed_draws_the_same_rows():
-    """Bench compares two runs of one input set bit for bit; a row's order is part of it."""
     distribution = CausalTopkDistribution(hi=1 << 20)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     with torch.device(device):
