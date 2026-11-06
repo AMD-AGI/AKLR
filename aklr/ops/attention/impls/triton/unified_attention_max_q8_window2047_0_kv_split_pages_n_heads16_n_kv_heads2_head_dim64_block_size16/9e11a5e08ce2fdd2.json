@@ -1,0 +1,1869 @@
+{
+  "schema_version": 5,
+  "name": "unified_attention_max_q8_window2047_0_kv_split_pages_n_heads16_n_kv_heads2_head_dim64_block_size16",
+  "contract_id": "unified_attention@1.0",
+  "description": "Causal varlen attention of a batch of requests' new tokens over a paged KV cache, vLLM's multi-token decode: request i owns query rows cu_seqlens_q[i] to cu_seqlens_q[i + 1] and the first seqused_k[i] tokens its block_table row names, block_size tokens a block, its new tokens last. Query j of a request of L new tokens sits at position seqused_k - L + j and reads the tokens at or before it; with window_size[0] >= 0 only those at most window_size[0] before it (causal: window_size[1] is not read). Query head h reads KV head h // (n_heads / n_kv_heads); logits are q . k * softmax_scale.",
+  "op_type": "attention",
+  "axes": {
+    "total_q": {
+      "type": "var",
+      "description": "Query rows of every request."
+    },
+    "batch": {
+      "type": "var",
+      "description": "Requests."
+    },
+    "n_offsets": {
+      "type": "var",
+      "description": "Offsets in cu_seqlens_q: batch + 1."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 16,
+      "description": "Query heads."
+    },
+    "n_kv_heads": {
+      "type": "const",
+      "value": 2,
+      "description": "KV heads."
+    },
+    "head_dim": {
+      "type": "const",
+      "value": 64,
+      "description": "Values per head."
+    },
+    "n_blocks": {
+      "type": "var",
+      "description": "Blocks of the KV cache."
+    },
+    "block_size": {
+      "type": "const",
+      "value": 16,
+      "description": "Tokens per block."
+    },
+    "max_blocks": {
+      "type": "var",
+      "description": "Blocks per request in the block table."
+    }
+  },
+  "attrs": {
+    "max_seqlen_q": 8,
+    "window_size": [2047, 0],
+    "causal": true,
+    "has_q_descale": false,
+    "has_k_descale": false,
+    "has_v_descale": false
+  },
+  "inputs": {
+    "q": {
+      "shape": [
+        "total_q",
+        "n_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The new tokens' queries, request after request."
+    },
+    "k": {
+      "shape": [
+        "n_blocks",
+        "block_size",
+        "n_kv_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The keys of every cached token, block by block."
+    },
+    "v": {
+      "shape": [
+        "n_blocks",
+        "block_size",
+        "n_kv_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The values of every cached token, block by block."
+    },
+    "cu_seqlens_q": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "bounded_cu_seqlens",
+        "total": "total_q",
+        "max_seqlen": 8
+      },
+      "description": "Where each request's query rows start, then total_q."
+    },
+    "seqused_k": {
+      "shape": [
+        "batch"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 8,
+        "hi": "max_blocks * block_size",
+        "distinct": false
+      },
+      "description": "Cached tokens of each request, its new tokens included."
+    },
+    "block_table": {
+      "shape": [
+        "batch",
+        "max_blocks"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_blocks - 1",
+        "distinct": false
+      },
+      "description": "The blocks of each request, in context order."
+    },
+    "softmax_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every logit."
+    },
+    "softcap": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Logit soft cap; 0 is none."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "total_q",
+        "n_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Softmax-weighted sum of the read values, per query row."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "total_q": 8,
+        "batch": 1,
+        "n_offsets": 2,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 16,
+        "batch": 2,
+        "n_offsets": 3,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 24,
+        "batch": 3,
+        "n_offsets": 4,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 32,
+        "batch": 4,
+        "n_offsets": 5,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 40,
+        "batch": 5,
+        "n_offsets": 6,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 48,
+        "batch": 6,
+        "n_offsets": 7,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 56,
+        "batch": 7,
+        "n_offsets": 8,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 64,
+        "batch": 8,
+        "n_offsets": 9,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 72,
+        "batch": 9,
+        "n_offsets": 10,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 80,
+        "batch": 10,
+        "n_offsets": 11,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 88,
+        "batch": 11,
+        "n_offsets": 12,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 96,
+        "batch": 12,
+        "n_offsets": 13,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 104,
+        "batch": 13,
+        "n_offsets": 14,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 112,
+        "batch": 14,
+        "n_offsets": 15,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 120,
+        "batch": 15,
+        "n_offsets": 16,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 128,
+        "batch": 16,
+        "n_offsets": 17,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 136,
+        "batch": 17,
+        "n_offsets": 18,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 144,
+        "batch": 18,
+        "n_offsets": 19,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 152,
+        "batch": 19,
+        "n_offsets": 20,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 160,
+        "batch": 20,
+        "n_offsets": 21,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 168,
+        "batch": 21,
+        "n_offsets": 22,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 176,
+        "batch": 22,
+        "n_offsets": 23,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 184,
+        "batch": 23,
+        "n_offsets": 24,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 192,
+        "batch": 24,
+        "n_offsets": 25,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 200,
+        "batch": 25,
+        "n_offsets": 26,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 208,
+        "batch": 26,
+        "n_offsets": 27,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 216,
+        "batch": 27,
+        "n_offsets": 28,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 224,
+        "batch": 28,
+        "n_offsets": 29,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 232,
+        "batch": 29,
+        "n_offsets": 30,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 240,
+        "batch": 30,
+        "n_offsets": 31,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 248,
+        "batch": 31,
+        "n_offsets": 32,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 256,
+        "batch": 32,
+        "n_offsets": 33,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 264,
+        "batch": 33,
+        "n_offsets": 34,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 272,
+        "batch": 34,
+        "n_offsets": 35,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 280,
+        "batch": 35,
+        "n_offsets": 36,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 288,
+        "batch": 36,
+        "n_offsets": 37,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 296,
+        "batch": 37,
+        "n_offsets": 38,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 304,
+        "batch": 38,
+        "n_offsets": 39,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 312,
+        "batch": 39,
+        "n_offsets": 40,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 320,
+        "batch": 40,
+        "n_offsets": 41,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 328,
+        "batch": 41,
+        "n_offsets": 42,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 336,
+        "batch": 42,
+        "n_offsets": 43,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 344,
+        "batch": 43,
+        "n_offsets": 44,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 352,
+        "batch": 44,
+        "n_offsets": 45,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 360,
+        "batch": 45,
+        "n_offsets": 46,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 368,
+        "batch": 46,
+        "n_offsets": 47,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 376,
+        "batch": 47,
+        "n_offsets": 48,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 384,
+        "batch": 48,
+        "n_offsets": 49,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 392,
+        "batch": 49,
+        "n_offsets": 50,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 400,
+        "batch": 50,
+        "n_offsets": 51,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 408,
+        "batch": 51,
+        "n_offsets": 52,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 416,
+        "batch": 52,
+        "n_offsets": 53,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 424,
+        "batch": 53,
+        "n_offsets": 54,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 432,
+        "batch": 54,
+        "n_offsets": 55,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 440,
+        "batch": 55,
+        "n_offsets": 56,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 448,
+        "batch": 56,
+        "n_offsets": 57,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 456,
+        "batch": 57,
+        "n_offsets": 58,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 464,
+        "batch": 58,
+        "n_offsets": 59,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 472,
+        "batch": 59,
+        "n_offsets": 60,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 480,
+        "batch": 60,
+        "n_offsets": 61,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 488,
+        "batch": 61,
+        "n_offsets": 62,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 496,
+        "batch": 62,
+        "n_offsets": 63,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 504,
+        "batch": 63,
+        "n_offsets": 64,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 512,
+        "batch": 64,
+        "n_offsets": 65,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 520,
+        "batch": 65,
+        "n_offsets": 66,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 528,
+        "batch": 66,
+        "n_offsets": 67,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 536,
+        "batch": 67,
+        "n_offsets": 68,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 544,
+        "batch": 68,
+        "n_offsets": 69,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 552,
+        "batch": 69,
+        "n_offsets": 70,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 560,
+        "batch": 70,
+        "n_offsets": 71,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 568,
+        "batch": 71,
+        "n_offsets": 72,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 576,
+        "batch": 72,
+        "n_offsets": 73,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 584,
+        "batch": 73,
+        "n_offsets": 74,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 592,
+        "batch": 74,
+        "n_offsets": 75,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 600,
+        "batch": 75,
+        "n_offsets": 76,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 608,
+        "batch": 76,
+        "n_offsets": 77,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 616,
+        "batch": 77,
+        "n_offsets": 78,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 624,
+        "batch": 78,
+        "n_offsets": 79,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 632,
+        "batch": 79,
+        "n_offsets": 80,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 640,
+        "batch": 80,
+        "n_offsets": 81,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 648,
+        "batch": 81,
+        "n_offsets": 82,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 656,
+        "batch": 82,
+        "n_offsets": 83,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 664,
+        "batch": 83,
+        "n_offsets": 84,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 672,
+        "batch": 84,
+        "n_offsets": 85,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 680,
+        "batch": 85,
+        "n_offsets": 86,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 688,
+        "batch": 86,
+        "n_offsets": 87,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 696,
+        "batch": 87,
+        "n_offsets": 88,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 704,
+        "batch": 88,
+        "n_offsets": 89,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 712,
+        "batch": 89,
+        "n_offsets": 90,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 720,
+        "batch": 90,
+        "n_offsets": 91,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 728,
+        "batch": 91,
+        "n_offsets": 92,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 736,
+        "batch": 92,
+        "n_offsets": 93,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 744,
+        "batch": 93,
+        "n_offsets": 94,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 752,
+        "batch": 94,
+        "n_offsets": 95,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 760,
+        "batch": 95,
+        "n_offsets": 96,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 768,
+        "batch": 96,
+        "n_offsets": 97,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 776,
+        "batch": 97,
+        "n_offsets": 98,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 784,
+        "batch": 98,
+        "n_offsets": 99,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 792,
+        "batch": 99,
+        "n_offsets": 100,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 800,
+        "batch": 100,
+        "n_offsets": 101,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 808,
+        "batch": 101,
+        "n_offsets": 102,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 816,
+        "batch": 102,
+        "n_offsets": 103,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 824,
+        "batch": 103,
+        "n_offsets": 104,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 832,
+        "batch": 104,
+        "n_offsets": 105,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 840,
+        "batch": 105,
+        "n_offsets": 106,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 848,
+        "batch": 106,
+        "n_offsets": 107,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 856,
+        "batch": 107,
+        "n_offsets": 108,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 864,
+        "batch": 108,
+        "n_offsets": 109,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 872,
+        "batch": 109,
+        "n_offsets": 110,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 880,
+        "batch": 110,
+        "n_offsets": 111,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 888,
+        "batch": 111,
+        "n_offsets": 112,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 896,
+        "batch": 112,
+        "n_offsets": 113,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 904,
+        "batch": 113,
+        "n_offsets": 114,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 912,
+        "batch": 114,
+        "n_offsets": 115,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 920,
+        "batch": 115,
+        "n_offsets": 116,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 928,
+        "batch": 116,
+        "n_offsets": 117,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 936,
+        "batch": 117,
+        "n_offsets": 118,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 944,
+        "batch": 118,
+        "n_offsets": 119,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 952,
+        "batch": 119,
+        "n_offsets": 120,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 960,
+        "batch": 120,
+        "n_offsets": 121,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 968,
+        "batch": 121,
+        "n_offsets": 122,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 976,
+        "batch": 122,
+        "n_offsets": 123,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 984,
+        "batch": 123,
+        "n_offsets": 124,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 992,
+        "batch": 124,
+        "n_offsets": 125,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 1000,
+        "batch": 125,
+        "n_offsets": 126,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 1008,
+        "batch": 126,
+        "n_offsets": 127,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 1016,
+        "batch": 127,
+        "n_offsets": 128,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    },
+    {
+      "axes": {
+        "total_q": 1024,
+        "batch": 128,
+        "n_offsets": 129,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "scalars": {
+        "softmax_scale": 0.125,
+        "softcap": 0.0
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "kv_split_pages": {
+        "layouts": {
+          "q": {
+            "kind": "strided_rows"
+          },
+          "k": {
+            "kind": "kv_split_pages"
+          },
+          "v": {
+            "kind": "kv_split_pages"
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "kv_cache_storage",
+            "expected_value": "kv_split_pages"
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "author": "fanxingran (agent attn-unified)",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"unified_attention for vLLM's multi-token (speculative) decode on gfx950: split-KV, GQA-packed.\n\nOne program per (request, kv head, KV segment) loads each K/V tile once for all of the request's\nqueries and the n_heads / n_kv_heads query heads sharing that kv head (BLOCK_Q * GROUP rows), runs\nan online softmax over its segment and writes fp32 partials; a second kernel merges the segments\n(with one segment the first kernel writes the output itself).\n\nSegments are cut in CHUNK-token units of each request's own length, read on the device, so the\nlaunch depends only on the batch size (graph-safe, no host sync). A segment walks TILE-token tiles,\nthen its tail in CHUNK-token tiles; only tiles crossing the causal / window edge or the segment end\nare masked. A sliding window restricts the walk to [L - qlen - window_size[0], L).\n\"\"\"\n\nimport torch\nimport triton\nimport triton.language as tl\n\n_LOG2E = 1.4426950408889634\n\n\n@triton.jit\ndef _tile_step(q, k_ptr, v_ptr, bt_row, start, seg_hi, at, full_lo, full_hi, m_i, l_i, acc, qk_scale, h,\n               sk0, sk1, sk2, sv0, sv1, sv2,\n               WINDOW: tl.constexpr, HEAD: tl.constexpr, BS: tl.constexpr, TILE: tl.constexpr):\n    d = tl.arange(0, HEAD)\n    pos = start + tl.arange(0, TILE)\n    in_seg = pos < seg_hi\n    blk = tl.load(bt_row + pos // BS, mask=in_seg, other=0).to(tl.int64)\n    slot = pos % BS\n    kk = tl.load(k_ptr + (blk * sk0 + slot * sk1 + h * sk2)[:, None] + d[None, :], mask=in_seg[:, None], other=0.0)\n    vv = tl.load(v_ptr + (blk * sv0 + slot * sv1 + h * sv2)[:, None] + d[None, :], mask=in_seg[:, None], other=0.0)\n    sc = tl.dot(q, tl.trans(kk))\n    if (start < full_lo) | (start + TILE > full_hi):\n        vis = (pos[None, :] <= at[:, None]) & in_seg[None, :]\n        if WINDOW >= 0:\n            vis = vis & (pos[None, :] >= at[:, None] - WINDOW)\n        sc = tl.where(vis, sc, float(\"-inf\"))\n    m_new = tl.maximum(m_i, tl.max(sc, 1) * qk_scale)\n    m_safe = tl.where(m_new == float(\"-inf\"), 0.0, m_new)\n    p = tl.math.exp2(sc * qk_scale - m_safe[:, None])\n    alpha = tl.math.exp2(m_i - m_safe)\n    l_i = l_i * alpha + tl.sum(p, 1)\n    acc = acc * alpha[:, None] + tl.dot(p.to(vv.dtype), vv)\n    return m_new, l_i, acc\n\n\n@triton.jit\ndef _attn_segment(\n    q_ptr, k_ptr, v_ptr, out_ptr, part_acc_ptr, part_ml_ptr,\n    cu_ptr, lens_ptr, bt_ptr,\n    qk_scale,\n    sq0, sq1, sk0, sk1, sk2, sv0, sv1, sv2, so0, so1, bt_stride,\n    WINDOW: tl.constexpr, BLOCK_Q: tl.constexpr, GROUP: tl.constexpr, HEAD: tl.constexpr,\n    BS: tl.constexpr, TILE: tl.constexpr, CHUNK: tl.constexpr, NUM_SEG: tl.constexpr,\n    N_HEADS: tl.constexpr,\n):\n    b = tl.program_id(0)\n    h = tl.program_id(1)\n    s = tl.program_id(2)\n    M: tl.constexpr = BLOCK_Q * GROUP\n    q_start = tl.load(cu_ptr + b)\n    qlen = tl.load(cu_ptr + b + 1) - q_start\n    if qlen <= 0:\n        return\n    L = tl.load(lens_ptr + b)\n    first = L - qlen  # position of query 0\n    lo = 0\n    if WINDOW >= 0:\n        lo = tl.maximum(first - WINDOW, 0)\n    lo = (lo // CHUNK) * CHUNK\n    n_chunks = tl.cdiv(L - lo, CHUNK)\n    per_seg = tl.cdiv(n_chunks, NUM_SEG)\n    seg_lo = lo + s * per_seg * CHUNK\n    seg_hi = tl.minimum(seg_lo + per_seg * CHUNK, L)\n    if seg_lo >= seg_hi:\n        return\n\n    rows = tl.arange(0, M)\n    qi = rows // GROUP\n    head = h * GROUP + rows % GROUP\n    row_ok = qi < qlen\n    d = tl.arange(0, HEAD)\n    tok = (q_start + qi).to(tl.int64)\n    q = tl.load(q_ptr + (tok * sq0 + head * sq1)[:, None] + d[None, :], mask=row_ok[:, None], other=0.0)\n    at = first + qi  # each row's own position\n    # keys in [full_lo, full_hi) are visible to every row\n    full_hi = tl.minimum(first + 1, seg_hi)\n    full_lo = 0\n    if WINDOW >= 0:\n        full_lo = L - 1 - WINDOW\n\n    m_i = tl.full([M], float(\"-inf\"), tl.float32)\n    l_i = tl.zeros([M], tl.float32)\n    acc = tl.zeros([M, HEAD], tl.float32)\n    bt_row = bt_ptr + b.to(tl.int64) * bt_stride\n    big_end = seg_hi\n    if CHUNK < TILE:\n        big_end = seg_lo + ((seg_hi - seg_lo) // TILE) * TILE\n    for start in range(seg_lo, big_end, TILE):\n        m_i, l_i, acc = _tile_step(\n            q, k_ptr, v_ptr, bt_row, start, seg_hi, at, full_lo, full_hi, m_i, l_i, acc, qk_scale, h,\n            sk0, sk1, sk2, sv0, sv1, sv2, WINDOW, HEAD, BS, TILE,\n        )\n    if CHUNK < TILE:\n        for start in range(big_end, seg_hi, CHUNK):\n            m_i, l_i, acc = _tile_step(\n                q, k_ptr, v_ptr, bt_row, start, seg_hi, at, full_lo, full_hi, m_i, l_i, acc, qk_scale, h,\n                sk0, sk1, sk2, sv0, sv1, sv2, WINDOW, HEAD, BS, CHUNK,\n            )\n\n    if NUM_SEG == 1:\n        o = acc / tl.where(l_i == 0.0, 1.0, l_i)[:, None]\n        tl.store(out_ptr + (tok * so0 + head * so1)[:, None] + d[None, :], o.to(out_ptr.dtype.element_ty), mask=row_ok[:, None])\n    else:\n        idx = (tok * N_HEADS + head) * NUM_SEG + s\n        tl.store(part_acc_ptr + idx[:, None] * HEAD + d[None, :], acc, mask=row_ok[:, None])\n        tl.store(part_ml_ptr + idx * 2, m_i, mask=row_ok)\n        tl.store(part_ml_ptr + idx * 2 + 1, l_i, mask=row_ok)\n\n\n@triton.jit\ndef _merge_segments(\n    out_ptr, part_acc_ptr, part_ml_ptr, cu_ptr, lens_ptr, so0, so1,\n    WINDOW: tl.constexpr, CHUNK: tl.constexpr, NUM_SEG: tl.constexpr, N_HEADS: tl.constexpr,\n    HEAD: tl.constexpr, HB: tl.constexpr,\n):\n    b = tl.program_id(0)\n    qi = tl.program_id(1)\n    q_start = tl.load(cu_ptr + b)\n    qlen = tl.load(cu_ptr + b + 1) - q_start\n    if qi >= qlen:\n        return\n    L = tl.load(lens_ptr + b)\n    lo = 0\n    if WINDOW >= 0:\n        lo = tl.maximum(L - qlen - WINDOW, 0)\n    lo = (lo // CHUNK) * CHUNK\n    n_chunks = tl.cdiv(L - lo, CHUNK)\n    n_act = tl.cdiv(n_chunks, tl.cdiv(n_chunks, NUM_SEG))\n    tok = (q_start + qi).to(tl.int64)\n    heads = tl.program_id(2) * HB + tl.arange(0, HB)\n    segs = tl.arange(0, NUM_SEG)\n    seg_ok = segs < n_act\n    idx = (tok * N_HEADS + heads[:, None]) * NUM_SEG + segs[None, :]\n    m = tl.load(part_ml_ptr + idx * 2, mask=seg_ok[None, :], other=float(\"-inf\"))\n    l = tl.load(part_ml_ptr + idx * 2 + 1, mask=seg_ok[None, :], other=0.0)\n    d = tl.arange(0, HEAD)\n    acc = tl.load(part_acc_ptr + idx[:, :, None] * HEAD + d[None, None, :], mask=seg_ok[None, :, None], other=0.0)\n    mx = tl.max(m, 1)\n    mx = tl.where(mx == float(\"-inf\"), 0.0, mx)\n    w = tl.math.exp2(m - mx[:, None])\n    denom = tl.sum(l * w, 1)\n    o = tl.sum(acc * w[:, :, None], 1) / tl.where(denom == 0.0, 1.0, denom)[:, None]\n    tl.store(out_ptr + (tok * so0 + heads * so1)[:, None] + d[None, :], o.to(out_ptr.dtype.element_ty))\n\n\n# (batch upper bound, tile, chunk, segments), tuned on MI355X at 16 Q / 2 KV heads, head_dim 64,\n# query length 8, contexts 1k-32k; a batch takes the row of the largest tuned batch <= it.\n_PLAN_GLOBAL = ((1, 64, 64, 128), (2, 64, 64, 128), (4, 64, 64, 128), (8, 128, 128, 32),\n                (16, 128, 128, 16), (24, 128, 128, 16), (32, 64, 64, 16), (48, 128, 128, 8),\n                (64, 64, 64, 8))\n_PLAN_WINDOW = ((1, 64, 32, 64), (2, 64, 32, 64), (4, 32, 32, 32), (8, 64, 64, 32),\n                (16, 128, 128, 32), (24, 128, 128, 16), (32, 128, 128, 16), (48, 128, 128, 8),\n                (64, 128, 128, 8))\n\n\ndef plan(batch, window_left):\n    \"\"\"(tile, chunk, segments) for a batch: a pure function of the launch shape.\"\"\"\n    rows = _PLAN_WINDOW if window_left >= 0 else _PLAN_GLOBAL\n    if batch > rows[-1][0]:\n        return 128, 128, 1 << max(0, (512 // batch).bit_length() - 1)\n    pick = rows[0]\n    for row in rows:\n        if row[0] <= batch:\n            pick = row\n    return pick[1:]\n\n\ndef _pow2_divisor(n, cap):\n    hb = 1\n    while hb * 2 <= cap and n % (hb * 2) == 0:\n        hb *= 2\n    return hb\n\n\ndef _check(q, k, v, cu_seqlens_q, seqused_k, block_table, out):\n    if q.dtype not in (torch.bfloat16, torch.float16) or k.dtype != q.dtype or v.dtype != q.dtype:\n        raise ValueError(\"expected bf16/fp16 q, k, v of one dtype\")\n    if q.ndim != 3 or k.ndim != 4 or v.shape != k.shape or out.shape != q.shape:\n        raise ValueError(\"expected q/out (tokens, heads, dim) and k/v (blocks, block_size, kv_heads, dim)\")\n    if q.stride(2) != 1 or k.stride(3) != 1 or v.stride(3) != 1 or out.stride(2) != 1:\n        raise ValueError(\"expected a unit-stride head_dim\")\n    if cu_seqlens_q.dtype != torch.int32 or seqused_k.dtype != torch.int32 or block_table.dtype != torch.int32:\n        raise ValueError(\"expected int32 cu_seqlens_q, seqused_k and block_table\")\n    if block_table.stride(1) != 1:\n        raise ValueError(\"expected a row-major block_table\")\n    if q.shape[1] % k.shape[2] or q.shape[2] not in (64, 128, 256):\n        raise ValueError(\"unsupported head layout\")\n\n\ndef unified_attention(q, k, v, cu_seqlens_q, seqused_k, block_table, softmax_scale, max_seqlen_q,\n                      window_left, out, *, tile=None, chunk=None, num_seg=None):\n    total_q, n_heads, head = q.shape\n    batch = seqused_k.shape[0]\n    n_kv = k.shape[2]\n    if tile is None:\n        tile, chunk, num_seg = plan(batch, window_left)\n    block_q = triton.next_power_of_2(max_seqlen_q)\n    if num_seg > 1:\n        part_acc = torch.empty(total_q * n_heads * num_seg * head, dtype=torch.float32, device=q.device)\n        part_ml = torch.empty(total_q * n_heads * num_seg * 2, dtype=torch.float32, device=q.device)\n    else:\n        part_acc = part_ml = out\n    _attn_segment[(batch, n_kv, num_seg)](\n        q, k, v, out, part_acc, part_ml, cu_seqlens_q, seqused_k, block_table, softmax_scale * _LOG2E,\n        q.stride(0), q.stride(1), k.stride(0), k.stride(1), k.stride(2),\n        v.stride(0), v.stride(1), v.stride(2), out.stride(0), out.stride(1), block_table.stride(0),\n        WINDOW=window_left, BLOCK_Q=block_q, GROUP=n_heads // n_kv, HEAD=head, BS=k.shape[1],\n        TILE=tile, CHUNK=chunk, NUM_SEG=num_seg, N_HEADS=n_heads, num_warps=4, num_stages=1,\n    )\n    if num_seg > 1:\n        hb = _pow2_divisor(n_heads, max(1, 4096 // (num_seg * head)))\n        _merge_segments[(batch, block_q, n_heads // hb)](\n            out, part_acc, part_ml, cu_seqlens_q, seqused_k, out.stride(0), out.stride(1),\n            WINDOW=window_left, CHUNK=chunk, NUM_SEG=num_seg, N_HEADS=n_heads, HEAD=head, HB=hb,\n            num_warps=4,\n        )\n    return out\n\n\ndef run(*, q, k, v, cu_seqlens_q, seqused_k, block_table, softmax_scale, max_seqlen_q, window_size,\n        causal, kv_cache_storage, softcap, q_descale, k_descale, v_descale, out_dtype, out):\n    # causal, kv_cache_storage, softcap (0), the absent descales and out_dtype are fixed by the\n    # schema's Point; strides carry the layout; causal masking leaves window_size[1] unread\n    _check(q, k, v, cu_seqlens_q, seqused_k, block_table, out)\n    unified_attention(q, k, v, cu_seqlens_q, seqused_k, block_table, softmax_scale, max_seqlen_q,\n                      window_size[0], out)\n"
+      }
+    ]
+  }
+}
