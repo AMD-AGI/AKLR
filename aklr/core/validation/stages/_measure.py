@@ -37,6 +37,7 @@ __all__ = [
     "compare_performance",
     "gate",
     "is_tracer_fault",
+    "is_tracer_refusal",
     "ratio_lower_bound",
     "timing_records",
 ]
@@ -67,7 +68,7 @@ MEASUREMENT_PROFILE: Mapping[str, Any] = MappingProxyType(
         "capture_warmup_runs": 1,
         "execution_mode": "cuda_graph",
         "metric": "gpu_duration_sum",
-        "profiler": "rocprofiler_sdk_graph_capture_attribution",
+        "profiler": "aklr_kernel_tracer",
         "calls_per_graph": "adaptive",
         "cache_policy": "flush_before_each_call_in_graph",
         "cache_flush_bytes": 1 << 30,
@@ -346,10 +347,18 @@ def bind_clock(group: Any = None) -> Clock:
 
 
 _TRACER_FAULT_MESSAGES = (
-    "rocprofiler-sdk dropped",
+    "rocprofiler-sdk",
     "graph replays",
+    "the kernel tracer failed",
+    "calibration could not restore",
 )
 
 
 def is_tracer_fault(text: str) -> bool:
+    """A failure of the kernel tracer's reading that another reading, or a fresh process, may not repeat."""
     return any(message in text for message in _TRACER_FAULT_MESSAGES)
+
+
+def is_tracer_refusal(text: str) -> bool:
+    """The kernel tracer cannot bind the call's graph to its nodes: the platform's failure, every reading's."""
+    return "cannot attribute the replays" in text

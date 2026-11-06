@@ -527,6 +527,13 @@ class TestPipeline:
                 id="tracer-reruns-once",
             ),
             pytest.param(
+                lambda tmp_path: _reruns(
+                    tmp_path, "x: timing: cannot attribute the replays of a graph with a node"
+                ),
+                (1, {FindingCode.PLATFORM_FAILURE}),
+                id="tracer-refusal-no-rerun",
+            ),
+            pytest.param(
                 lambda tmp_path: _reruns(tmp_path, "boom"),
                 (1, {FindingCode.CANDIDATE_CRASH}),
                 id="crash-no-rerun",

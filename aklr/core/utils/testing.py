@@ -1,26 +1,17 @@
-###############################################################################
 # SPDX-License-Identifier: Apache-2.0 AND MIT
-#
 # Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Copyright 2018-2020 Philippe Tillet
 # Copyright 2020-2022 OpenAI
-#
-# Adapted from Triton (https://github.com/triton-lang/triton), MIT License
-# Source: python/triton/testing.py@1887644 (_quantile, _summarize_statistics,
-#         cuda_graph_without_gc, _collect_proton_scope_times, do_bench_cudagraph_proton)
-# Modified by Advanced Micro Devices, Inc. for the AKLR project.
-###############################################################################
 
 from __future__ import annotations
 
-import bisect
 import functools
 import gc
 import math
 import os
 import statistics
+import tempfile
 import uuid
-import warnings
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -28,17 +19,28 @@ import torch
 import triton
 import triton.language as tl
 
-# read once, at the process's first GPU call: the ROCm runtime then lets the kernel tracer attach later
-os.environ.setdefault("ROCP_TOOL_ATTACH", "1")
+
+@contextmanager
+def graph_kernel_timing_environment():
+    """Enable tracer attachment without forced queue timing before the process's first GPU call."""
+    previous = {name: os.environ.get(name) for name in ("ROCP_TOOL_ATTACH", "GPU_FORCE_QUEUE_PROFILING")}
+    try:
+        os.environ["ROCP_TOOL_ATTACH"] = "1"
+        # Forced queue timing adds overhead and corrupts graph replay's heap below HIP 7.16.
+        os.environ.pop("GPU_FORCE_QUEUE_PROFILING", None)
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
 
-# shortcut: no ROCm profiler attributes graph replays yet; retire with ROCm/rocm-systems #14204, #14211
 @functools.cache
 def kernel_tracer():
-    """A Kineto child profiler for torch.profiler runs that pass KERNEL_TRACER_CONFIG and ProfilerActivity.CPU only.
-
-    Its check() raises what the last run's tracing failed with: that run has no GPU events."""
-    from torch.utils.cpp_extension import ROCM_HOME, include_paths, load
+    """Load AKLR's rocprofiler-sdk collector and graph node attribution fix."""
+    from torch.utils.cpp_extension import ROCM_HOME, load
 
     from aklr.core.platform.env import RuntimeEnv
 
@@ -48,31 +50,13 @@ def kernel_tracer():
         build.mkdir(parents=True, exist_ok=True)
     tracer = load(
         name="aklr_kernel_tracer",
-        sources=[
-            str(Path(__file__).with_name(name)) for name in ("_kernel_tracer.cpp", "_kineto_profiler.cpp")
-        ],
-        # Kineto's headers use fmt, whose compiled half libtorch does not export
-        extra_cflags=["-D__HIP_PLATFORM_AMD__", "-DFMT_HEADER_ONLY"],
-        extra_include_paths=[f"{ROCM_HOME}/include", str(Path(include_paths()[0]) / "kineto")],
+        sources=[str(Path(__file__).with_name("_kernel_tracer.cpp"))],
+        extra_cflags=["-D__HIP_PLATFORM_AMD__"],
+        extra_include_paths=[f"{ROCM_HOME}/include"],
         extra_ldflags=[f"-L{ROCM_HOME}/lib", "-lrocprofiler-sdk", "-lamdhip64", "-ldl"],
         build_directory=None if build is None else str(build),
     )
-    if tracer.rocprofiler_sdk_version >= (1, 4, 2):  # rocprofiler-sdk 1.4.2 (ROCm 10.2) fixed ROCM-29087
-        warnings.warn(
-            "rocprofiler-sdk fixed ROCM-29087: delete the WORKAROUND in aklr/core/utils/_kernel_tracer.cpp",
-            FutureWarning,  # Python's default filters hide a DeprecationWarning
-            stacklevel=2,
-        )
-    if tracer.hip_version >= (7, 16):  # HIP 7.16 (ROCm 10.1) times graph nodes into slots (ROCm/rocm-systems@1c1ab59)
-        warnings.warn(
-            "HIP fixed clr's graph timing race: delete the WORKAROUND in aklr/core/utils/_kineto_profiler.cpp",
-            FutureWarning,
-            stacklevel=2,
-        )
     return tracer
-
-
-KERNEL_TRACER_CONFIG = "aklr_kernel_tracer"  # torch.profiler's custom_profiler_config
 
 
 @triton.jit
@@ -82,12 +66,9 @@ def _flush_l2_cache_kernel(cache, sums, N: tl.constexpr, BLOCK: tl.constexpr):
     tl.store(sums + pid, tl.sum(tl.load(cache + offset, offset < N, other=0)))
 
 
-CACHE_FLUSH_BYTES = 1024 * 1024 * 1024
-
-
 def flush_l2_cache() -> None:
     """Flush L2 and MALL by reading 1 GiB: written lines would stay dirty for the next kernel."""
-    cache = torch.empty(CACHE_FLUSH_BYTES // 4, dtype=torch.int32, device="cuda")
+    cache = torch.empty(1_073_741_824 // 4, dtype=torch.int32, device="cuda")
     blocks = triton.cdiv(cache.numel(), 4096)
     sums = torch.empty(blocks, dtype=torch.int32, device="cuda")
     _flush_l2_cache_kernel[(blocks,)](cache, sums, cache.numel(), 4096)
@@ -141,34 +122,52 @@ def cuda_graph_without_gc(*args, **kwargs):
             gc.enable()
 
 
-# Kineto's raw events: torch's FunctionEvent tree costs up to 100 ms per call
-def _collect_scope_times(events, prefix):
-    cpu = {e.correlation_id(): e for e in events if e.device_type() == torch.autograd.DeviceType.CPU}
-    scopes = sorted(
-        (e.start_ns(), e.end_ns(), e.start_thread_id(), e.name())
-        for e in cpu.values()
-        if e.name().startswith(prefix)
-    )
-    starts = [scope[0] for scope in scopes]
-    scope_times = {scope[3]: 0.0 for scope in scopes}
-    for event in events:
-        # inclusive, as proton's scopes: a kernel the subject's own annotation or op launched is the scope's too
-        op = (
-            cpu.get(event.linked_correlation_id())
-            if event.device_type() == torch.autograd.DeviceType.CUDA
-            else None
-        )
-        i = bisect.bisect_right(starts, op.start_ns()) - 1 if op else -1
-        if i >= 0 and op.end_ns() <= scopes[i][1] and op.start_thread_id() == scopes[i][2]:
-            scope_times[scopes[i][3]] += event.duration_ns() / 1e6
-    return [time for _, time in sorted(scope_times.items()) if time > 0]
+@contextmanager
+def _kernel_bench_session():
+    from aklr.core.utils import _kernel_profiler as profiler
+
+    with tempfile.TemporaryDirectory(prefix="aklr-bench-") as tmpdir:
+        session = profiler.start(os.path.join(tmpdir, "profile"), context="shadow", data="tree")
+        try:
+            yield profiler, session
+        finally:
+            if session is not None:
+                profiler.finalize(session)
 
 
+def _collect_scope_times(database, prefix):
+    scope_times = []
+
+    def kernel_time_ms(node):
+        children = node.get("children", [])
+        if len(children) == 0:
+            return node.get("metrics", {}).get("time (ns)", 0) / 1e6
+        return sum(kernel_time_ms(child) for child in children)
+
+    def visit(node):
+        name = node.get("frame", {}).get("name", "")
+        if name.startswith(prefix):
+            time_ms = kernel_time_ms(node)
+            if time_ms > 0:
+                scope_times.append((name, time_ms))
+            return
+        for child in node.get("children", []):
+            visit(child)
+
+    for node in database:
+        visit(node)
+    return [time for _, time in sorted(scope_times)]
+
+
+@graph_kernel_timing_environment()
 def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="median"):
-    """The per-call GPU time in milliseconds of fn's kernels, replayed in a CUDA graph, cache flushes excluded."""
+    """The per-call GPU time in milliseconds of fn's kernels, replayed in a CUDA graph, cache flushes excluded.
+
+    If inputs initialize the GPU first, create them inside graph_kernel_timing_environment().
+    """
     assert return_mode in ["min", "max", "mean", "median", "all"]
 
-    tracer = kernel_tracer()
+    kernel_tracer()
     stream = torch.cuda.Stream()
     stream.wait_stream(torch.cuda.current_stream())  # the inputs are written on the caller's stream
     with torch.cuda.stream(stream):
@@ -190,12 +189,7 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
         estimate_ms = start_event.elapsed_time(end_event) / 5
         n_repeat = 1000 if estimate_ms == 0 else max(1, int(rep / estimate_ms))
 
-        with torch.profiler.profile(
-            activities=[torch.profiler.ProfilerActivity.CPU],
-            experimental_config=torch.profiler._ExperimentalConfig(
-                custom_profiler_config=KERNEL_TRACER_CONFIG
-            ),
-        ) as session:
+        with _kernel_bench_session() as (profiler, session):
             g = torch.cuda.CUDAGraph()
             scope_prefix = f"aklr.{uuid.uuid4().hex}."
             # on the warmed stream, where fn's per-stream state exists
@@ -205,18 +199,17 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
                         for x in grad_to_none:
                             x.grad = None
                     flush_l2_cache()
-                    with torch.profiler.record_function(f"{scope_prefix}{i:08d}"):
+                    with profiler.scope(f"{scope_prefix}{i:08d}"):
                         fn()
             torch.cuda.synchronize()
             n_retries = 10
-            for i in range(n_retries):
-                g.replay()
-            torch.cuda.synchronize()
-        tracer.check()
+            try:
+                for i in range(n_retries):
+                    g.replay()
+                torch.cuda.synchronize()
+            finally:
+                profiler.deactivate(session, flushing=True)
 
-        times = [
-            t / n_retries
-            for t in _collect_scope_times(session.profiler.kineto_results.events(), scope_prefix)
-        ]
+            times = [t / n_retries for t in _collect_scope_times(profiler.get_data(session), scope_prefix)]
 
     return _summarize_statistics(times, quantiles, return_mode)

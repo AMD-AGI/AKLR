@@ -4,21 +4,11 @@
  * Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
  **************************************************************************************************/
 
-// Kernel dispatch timestamps from rocprofiler-sdk, each replayed graph dispatch
-// bound to the graph node, HIP call and scope that captured it, with the HIP
-// calls and copies, collected as Kineto's rocprofiler-sdk backend
-// (pytorch/kineto RocprofLogger, BSD-3-Clause) collects them, for
-// torch.profiler runs that opt in (_kineto_profiler.cpp). The tool attaches to
-// the process at the first run, through rocprofiler-register, which the process
-// loads rocprofiler-sdk's attach library for at startup (ROCP_TOOL_ATTACH=1).
-//
-// A graph exec dispatches each kernel, copy and memset node from a kernel
-// packet the HIP runtime forms at instantiation, its kernel arguments at an
-// address fixed for the exec's life. The tool reads every packet from an HSA
-// queue interceptor, and binds each address to its node by launching the exec
-// with chosen nodes enabled, every kernel packet of those launches swallowed.
-#include "_kernel_tracer.h"
-
+// Kernel dispatch timestamps from rocprofiler-sdk, with replayed graph dispatches
+// bound to the node and scope that captured them. A graph exec forms its kernel
+// arguments at fixed addresses. Calibration identifies each node's addresses by
+// toggling nodes and swallowing every kernel packet of the calibration launches.
+// The Python session adapter consumes these records directly, without Kineto.
 #include <cxxabi.h>
 #include <dlfcn.h>
 #include <hip/hip_runtime_api.h>
@@ -34,8 +24,6 @@
 #include <rocprofiler-sdk/registration.h>
 #include <rocprofiler-sdk/rocprofiler.h>
 #include <rocprofiler-sdk/version.h>
-#include <sys/syscall.h>
-#include <unistd.h>
 // ROCr's tool table, the only holder of hsa_amd_queue_intercept_register; its
 // includes resolve beside it only in this mode
 #define AMD_INTERNAL_BUILD
@@ -69,6 +57,38 @@
 namespace aklr::kernel_tracer {
 namespace {
 
+// a kernel dispatch or memory copy of the window
+struct Dispatch {
+  uint64_t correlation; // the HIP call's that enqueued it
+  uint64_t tag;         // the graph exec plan and node it replays; 0 for none
+  uint64_t dispatch_id;
+  uint64_t kernel_id;
+  uint64_t start;
+  uint64_t end;
+  uint64_t queue;
+  rocprofiler_memory_copy_operation_t copy; // NONE for a kernel
+  uint64_t bytes;
+  uint32_t grid[3];      // in work-items
+  uint32_t workgroup[3]; // in work-items
+};
+
+// the graph exec plan and node a dispatch replays (-1 for none), and the HIP
+// call and scope that captured the node (0 for a node added by hand)
+struct Attribution {
+  int64_t exec = -1;
+  int64_t node = -1;
+  uint64_t call = 0;
+  uint64_t scope = 0;
+};
+
+// The completed window, with dispatch names and node ownership.
+struct Profile {
+  std::vector<Dispatch> dispatches;
+  std::vector<Attribution> attribution;
+  std::vector<std::string> kernels;
+};
+
+
 // a dispatch's external correlation id: its window above, the plan and node
 // that dispatched it below
 constexpr int kNodeBits = 24;
@@ -76,11 +96,11 @@ constexpr int kTagBits = 48;
 constexpr uint64_t kNodeMask = (1ull << kNodeBits) - 1;
 constexpr uint64_t kPlanMask = (1ull << (kTagBits - kNodeBits)) - 1;
 
-// a node of a graph exec, and the HIP call and scope a capture made it in
+// a node of a graph exec, and the HIP call and scope that made it: a capture's,
+// or the call that added it by hand
 struct Node {
   uint64_t call = 0;
   uint64_t scope = 0;
-  bool captured = false; // a capture made it; one added by hand has no call
 };
 
 // what a graph exec dispatches: each kernel packet's kernel argument address,
@@ -143,14 +163,6 @@ thread_local Batch t_batch;
 thread_local auto *t_tags = new std::vector<uint64_t>();
 thread_local auto *t_rewritten =
     new std::vector<hsa_kernel_dispatch_packet_t>();
-
-// torch.profiler's op correlation ids, of this thread. Whatever a callback
-// reaches is never destroyed, here and below: the runtime still submits work,
-// and so calls the tool, as the process exits
-std::vector<uint64_t> &ops() {
-  thread_local auto *ids = new std::vector<uint64_t>();
-  return *ids;
-}
 
 // a kernel dispatch packet's kernel argument address; nullopt for any other
 // packet. AMD's extended dispatch packet lays it out as the standard one does
@@ -218,7 +230,8 @@ public:
     if (status == 9) { // ROCP_REG_ATTACHMENT_NOT_AVAILABLE
       throw std::runtime_error(
           "aklr kernel tracer: start the process with ROCP_TOOL_ATTACH=1 "
-          "(import aklr.core.utils.testing before its first GPU call)");
+          "(enter aklr.core.utils.testing.graph_kernel_timing_environment() "
+          "before its first GPU call)");
     }
     if (status || dispatches_.handle == 0) {
       throw std::runtime_error(
@@ -237,7 +250,7 @@ public:
     {
       std::lock_guard<std::mutex> lock(mutex_);
       window_.clear();
-      calls_.clear();
+      call_scopes_.clear();
       launched_.clear();
       unattributable_.clear();
       dropped_ = 0;
@@ -260,7 +273,6 @@ public:
     window_serial_ = window_serial_ % 0xffff + 1;
     check(rocprofiler_start_context(hip_), "start");
     check(rocprofiler_start_context(dispatches_), "start");
-    timing_ = true;
   }
 
   // the HIP calls a thread makes between push and pop capture their graph nodes
@@ -280,10 +292,9 @@ public:
   void stop() {
     check(rocprofiler_stop_context(dispatches_), "stop");
     check(rocprofiler_stop_context(hip_), "stop");
-    timing_ = false;
   }
 
-  // torch.profiler's window, after stop()
+  // The completed window, after stop().
   Profile profile() {
     await_dispatches();
     std::lock_guard<std::mutex> lock(mutex_);
@@ -294,7 +305,6 @@ public:
       profile.kernels.push_back(name == names_.end() ? "<unknown kernel>"
                                                      : demangle(name->second));
     }
-    profile.calls.swap(calls_);
     profile.dispatches.swap(window_);
     return profile;
   }
@@ -365,8 +375,12 @@ private:
     std::map<uint64_t, uint64_t> bound; // plan -> its window dispatches
     for (size_t i = 0; i < window_.size(); ++i) {
       const uint64_t tag = window_[i].tag;
-      if (!tag)
+      if (!tag) {
+        auto scope = call_scopes_.find(window_[i].correlation);
+        if (scope != call_scopes_.end())
+          attribution[i].scope = scope->second;
         continue;
+      }
       const uint64_t serial = tag >> kNodeBits, node = tag & kNodeMask;
       auto plan = planned_.find(serial);
       if (plan == planned_.end() || node >= plan->second->info.size()) {
@@ -374,7 +388,7 @@ private:
             "a dispatch of the graph replays matched no graph node");
       }
       const auto &info = plan->second->info[node];
-      if (info.captured && !info.call) {
+      if (!info.call) {
         throw std::runtime_error("a dispatch of the graph replays matched a "
                                  "node no traced HIP call captured");
       }
@@ -680,24 +694,26 @@ private:
   }
 
   static void on_hip(rocprofiler_callback_tracing_record_t record,
-                     rocprofiler_user_data_t *user_data, void *data) {
+                     rocprofiler_user_data_t *, void *data) {
     if (t_in_tool)
       return;
     Entered entered(t_in_tool);
     auto &tracer = *static_cast<KernelTracer *>(data);
-    tracer.guarded([&] { tracer.hip_call(record, *user_data); });
+    tracer.guarded([&] { tracer.hip_call(record); });
   }
 
-  void hip_call(const rocprofiler_callback_tracing_record_t &record,
-                rocprofiler_user_data_t &user_data) {
+  void hip_call(const rocprofiler_callback_tracing_record_t &record) {
     auto &tracer = *this;
-    tracer.time_call(record, user_data);
     const auto *api =
         static_cast<const rocprofiler_callback_tracing_hip_api_data_t *>(
             record.payload);
     const auto &args = api->args;
     const bool ok = api->retval.hipError_t_retval == hipSuccess;
     if (record.phase == ROCPROFILER_CALLBACK_PHASE_ENTER) {
+      if (record.correlation_id.external.value) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        call_scopes_[record.correlation_id.internal] = record.correlation_id.external.value;
+      }
       // the runtime frees an exec's kernel arguments with it
       if (record.operation ==
           ROCPROFILER_HIP_RUNTIME_API_ID_hipGraphExecDestroy)
@@ -705,6 +721,14 @@ private:
       return;
     }
     switch (record.operation) {
+    case ROCPROFILER_HIP_RUNTIME_API_ID_hipStreamDestroy:
+      if (ok) {
+        std::lock_guard<std::mutex> lock(captures_mutex_);
+        for (auto &[graph, capture] : captures_)
+          capture.leaves.erase(args.hipStreamDestroy.stream);
+      }
+      // Querying a destroyed stream would overwrite the caller's HIP last error.
+      return;
     // a replay owes its nodes' packets once it is launched; one that failed
     // dispatched none
     case ROCPROFILER_HIP_RUNTIME_API_ID_hipGraphLaunch:
@@ -742,8 +766,8 @@ private:
         tracer.captured_.erase(args.hipGraphDestroy.graph);
       }
       break;
-    // a node added by hand to a graph under capture is its call's; a node
-    // destroyed leaves its address to another
+    // a node added by hand is its call's; a node destroyed leaves its address
+    // to another
     case ROCPROFILER_HIP_RUNTIME_API_ID_hipDrvGraphAddMemFreeNode:
     case ROCPROFILER_HIP_RUNTIME_API_ID_hipDrvGraphAddMemcpyNode:
     case ROCPROFILER_HIP_RUNTIME_API_ID_hipDrvGraphAddMemsetNode:
@@ -765,8 +789,7 @@ private:
     case ROCPROFILER_HIP_RUNTIME_API_ID_hipGraphAddMemsetNode:
     case ROCPROFILER_HIP_RUNTIME_API_ID_hipGraphAddNode:
       // the new node and its graph are the first two arguments of each
-      if (ok && tracer.capturing_.load() &&
-          args.hipGraphAddKernelNode.pGraphNode)
+      if (ok && args.hipGraphAddKernelNode.pGraphNode)
         tracer.own(*args.hipGraphAddKernelNode.pGraphNode,
                    args.hipGraphAddKernelNode.graph, record.correlation_id);
       break;
@@ -778,11 +801,10 @@ private:
     // capture of the exec's own graph owns
     case ROCPROFILER_HIP_RUNTIME_API_ID_hipGraphExecUpdate:
       if (ok)
-        tracer.replan(args.hipGraphExecUpdate.hGraphExec,
+        tracer.refuse(args.hipGraphExecUpdate.hGraphExec,
                       "an exec updated from another graph");
       break;
-    // a changed exec may dispatch from other kernel arguments: bound again
-    // before its caller can launch it
+    // a changed node may dispatch from other kernel arguments, or by DMA
     case ROCPROFILER_HIP_RUNTIME_API_ID_hipGraphExecKernelNodeSetParams:
     case ROCPROFILER_HIP_RUNTIME_API_ID_hipGraphExecChildGraphNodeSetParams:
     case ROCPROFILER_HIP_RUNTIME_API_ID_hipGraphExecNodeSetParams:
@@ -793,7 +815,8 @@ private:
     case ROCPROFILER_HIP_RUNTIME_API_ID_hipGraphExecMemsetNodeSetParams:
       if (ok) // a failed change leaves the exec as it was
         // the exec is the first argument of each
-        tracer.replan(args.hipGraphExecDestroy.graphExec);
+        tracer.refuse(args.hipGraphExecDestroy.graphExec,
+                      "an exec whose node was changed after instantiation");
       break;
     case ROCPROFILER_HIP_RUNTIME_API_ID_hipGraphNodeSetEnabled:
       if (ok) {
@@ -833,49 +856,6 @@ private:
   }
 
   // Kineto leaves these out of its traces: frequent, and no GPU work
-  static bool untimed(rocprofiler_tracing_operation_t op) {
-    switch (op) {
-    case ROCPROFILER_HIP_RUNTIME_API_ID_hipGetDevice:
-    case ROCPROFILER_HIP_RUNTIME_API_ID_hipSetDevice:
-    case ROCPROFILER_HIP_RUNTIME_API_ID_hipGetLastError:
-    case ROCPROFILER_HIP_RUNTIME_API_ID_hipCtxSetCurrent:
-    case ROCPROFILER_HIP_RUNTIME_API_ID_hipEventRecord:
-    case ROCPROFILER_HIP_RUNTIME_API_ID_hipEventQuery:
-    case ROCPROFILER_HIP_RUNTIME_API_ID_hipGetDevicePropertiesR0600:
-    case ROCPROFILER_HIP_RUNTIME_API_ID_hipPeekAtLastError:
-    case ROCPROFILER_HIP_RUNTIME_API_ID_hipModuleGetFunction:
-    case ROCPROFILER_HIP_RUNTIME_API_ID_hipEventCreateWithFlags:
-      return true;
-    default:
-      return false;
-    }
-  }
-
-  // a call's enter keeps its start in the call's user data
-  void time_call(const rocprofiler_callback_tracing_record_t &record,
-                 rocprofiler_user_data_t &start) {
-    if (record.phase == ROCPROFILER_CALLBACK_PHASE_ENTER) {
-      start.value = 0;
-      if (timing_ && !untimed(record.operation))
-        rocprofiler_get_timestamp(&start.value);
-      return;
-    }
-    if (start.value == 0 || !timing_)
-      return;
-    // the system thread id torch stamps the thread's ops with
-    Call call{record.operation,
-              record.correlation_id.internal,
-              ops().empty() ? 0 : ops().back(),
-              start.value,
-              0,
-              static_cast<int32_t>(syscall(SYS_gettid)),
-              0};
-    rocprofiler_get_timestamp(&call.end);
-    (void)hipGetDevice(&call.device); // on failure, device 0
-    std::lock_guard<std::mutex> lock(mutex_);
-    calls_.push_back(call);
-  }
-
   // the hipStream_t argument of a HIP call, if it has one
   static std::optional<hipStream_t>
   stream_of(const rocprofiler_callback_tracing_record_t &record) {
@@ -1089,14 +1069,21 @@ private:
     capturing_ = true;
   }
 
-  // a node a call added by hand to a graph under capture is the call's
+  // a node a call added by hand is the call's
   void own(hipGraphNode_t node, hipGraph_t graph,
            const rocprofiler_correlation_id_t &call) {
-    std::lock_guard<std::mutex> lock(captures_mutex_);
-    auto capture = captures_.find(graph);
-    if (capture != captures_.end() && capture->second.known.insert(node).second)
-      capture->second.captured.push_back(
-          {node, call.internal, call.external.value});
+    const Captured owned{node, call.internal, call.external.value};
+    {
+      std::lock_guard<std::mutex> lock(captures_mutex_);
+      auto capture = captures_.find(graph);
+      if (capture != captures_.end()) {
+        if (capture->second.known.insert(node).second)
+          capture->second.captured.push_back(owned);
+        return;
+      }
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    captured_[graph].push_back(owned);
   }
 
   // a destroyed node's address may come back as another node
@@ -1143,7 +1130,8 @@ private:
         capture.captured.push_back({node, 0, 0});
     }
     std::lock_guard<std::mutex> lock(mutex_);
-    captured_[graph] = std::move(capture.captured);
+    auto &owned = captured_[graph]; // a capture into a graph adds to it
+    owned.insert(owned.end(), capture.captured.begin(), capture.captured.end());
   }
 
   // memory of the current device, which the runtime copies and fills with
@@ -1196,6 +1184,13 @@ private:
             !on_this_device(params.dstPtr.ptr))
           return "a memcpy node with an end off this device's memory, which "
                  "the runtime may copy by DMA";
+        // the runtime forms a kernel for a copy at instantiation only for a 1D
+        // copy, unpitched, or one of kind DeviceToDevice; NoCU asks for DMA
+        if (params.kind == hipMemcpyDeviceToDeviceNoCU ||
+            ((params.srcPtr.pitch || params.dstPtr.pitch) &&
+             params.kind != hipMemcpyDeviceToDevice))
+          return "a memcpy node of a kind the runtime may copy by DMA or "
+                 "dispatch anew each launch";
         break;
       }
       case hipGraphNodeTypeGraph:
@@ -1221,6 +1216,7 @@ private:
   void plan(hipGraphExec_t exec, hipGraph_t graph) {
     auto plan = new_plan();
     plan->nodes = graph_nodes(graph);
+    bool unowned = false;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       std::unordered_map<hipGraphNode_t, const Captured *> captured;
@@ -1230,40 +1226,34 @@ private:
       }
       for (size_t i = 0; i < plan->nodes.size(); ++i) {
         auto c = captured.find(plan->nodes[i]);
-        plan->info.push_back(
-            c == captured.end()
-                ? Node{}
-                : Node{c->second->call, c->second->scope, true});
+        unowned = unowned || c == captured.end();
+        plan->info.push_back(c == captured.end()
+                                 ? Node{}
+                                 : Node{c->second->call, c->second->scope});
         plan->index.emplace(plan->nodes[i], i);
       }
     }
     plan->unattributable = plan->nodes.size() > kNodeMask
                                ? "more than 2^24 nodes"
                                : unattributable(graph);
+    // a graph cloned, or made before the window, has nodes of unknown scope
+    if (plan->unattributable.empty() && unowned)
+      plan->unattributable = "a node no capture or HIP call in the profiling "
+                             "window made";
     if (plan->unattributable.empty())
       calibrate(*plan, exec);
     install(exec, std::move(plan));
   }
 
-  // after an exec changes: the same nodes, bound to its packets again, unless
-  // the change leaves them unattributable
-  void replan(hipGraphExec_t exec, const char *unattributable = "") {
-    std::shared_ptr<const Plan> old;
+  // after a planned exec changes: its packets bound to no node
+  void refuse(hipGraphExec_t exec, const char *why) {
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      auto found = plans_.find(exec);
-      if (found == plans_.end())
+      if (!plans_.count(exec))
         return;
-      old = found->second;
     }
     auto plan = new_plan();
-    plan->nodes = old->nodes;
-    plan->info = old->info;
-    plan->index = old->index;
-    plan->unattributable =
-        old->unattributable.empty() ? unattributable : old->unattributable;
-    if (plan->unattributable.empty())
-      calibrate(*plan, exec);
+    plan->unattributable = why;
     install(exec, std::move(plan));
   }
 
@@ -1437,6 +1427,14 @@ private:
       plan.slots[kernarg] = static_cast<uint32_t>(found->second);
       ++plan.packets[found->second];
     }
+    // a node with no kernel ran by DMA or anew, beyond binding
+    for (size_t i : toggled) {
+      if (!plan.packets[i]) {
+        plan.unattributable = "a node that dispatches no kernel packet";
+        plan.slots.clear();
+        return;
+      }
+    }
   }
 
   // a stream of the tool's own on the device, so calibration waits on no
@@ -1535,10 +1533,9 @@ private:
   std::string unattributable_; // why a replayed exec cannot be bound
   std::unordered_map<int, hipStream_t> streams_;
   std::vector<Dispatch> window_;
-  std::vector<Call> calls_;
+  std::unordered_map<uint64_t, uint64_t> call_scopes_;
   uint64_t dropped_ = 0;
   uint64_t next_plan_ = 1;
-  std::atomic<bool> timing_{false};   // HIP calls, for torch.profiler
   std::atomic<uint64_t> enqueued_{0}; // the window's kernel dispatches
   std::atomic<uint16_t> window_serial_{0};
   std::atomic<bool> misaligned_{false};
@@ -1563,47 +1560,8 @@ private:
 
 } // namespace
 
-void attach() { KernelTracer::instance().attach(); }
-
-void start_profile() { KernelTracer::instance().start(); }
-
-// a window's error, for check(): one thrown into Kineto's stop would leave
-// Kineto unable to start the next window
-std::string &failure = *new std::string(), &next_failure = *new std::string();
-
-Profile stop_profile() {
-  auto &tracer = KernelTracer::instance();
-  try {
-    tracer.stop();
-    if (!next_failure.empty())
-      throw std::runtime_error(std::exchange(next_failure, {}));
-    return tracer.profile();
-  } catch (const std::exception &error) {
-    failure = error.what();
-    return {};
-  }
-}
-
-void push_op(uint64_t correlation) { ops().push_back(correlation); }
-
-void push_scope(uint64_t correlation) {
-  KernelTracer::instance().push(correlation);
-}
-
-void pop_scope() { KernelTracer::instance().pop(); }
-
-void pop_op() {
-  if (!ops().empty())
-    ops().pop_back();
-}
-
-std::string hip_api_name(rocprofiler_tracing_operation_t op) {
-  const char *name = nullptr;
-  uint64_t length = 0;
-  rocprofiler_query_callback_tracing_kind_operation_name(
-      ROCPROFILER_CALLBACK_TRACING_HIP_RUNTIME_API, op, &name, &length);
-  return name ? std::string(name, length) : "<unknown HIP call>";
-}
+// Only tests inject a failure. Real callback/attribution errors propagate from stop().
+std::string &next_failure = *new std::string();
 
 } // namespace aklr::kernel_tracer
 
@@ -1616,8 +1574,7 @@ rocprofiler_configure(uint32_t version, const char *runtime_version,
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
-  // WORKAROUND: ROCM-29087, fixed in rocprofiler-sdk 1.4.2 (ROCm 10.2);
-  // delete when the images ship it
+  // SDK 1.4.2 fixes queue interposition deadlocks (ROCM-29087), not node attribution.
 #if ROCPROFILER_SDK_VERSION < 10402
   // below 1.4.2 the default queue interposition deadlocks a HIP graph whose
   // streams fork and join, and traces no queue made after an attach; set here,
@@ -1630,13 +1587,33 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
       ROCPROFILER_SDK_VERSION_PATCH);
   m.attr("hip_version") = pybind11::make_tuple(
       HIP_VERSION_MAJOR, HIP_VERSION_MINOR, HIP_VERSION_PATCH);
-  m.def("check", [] {
-    if (!aklr::kernel_tracer::failure.empty())
-      throw std::runtime_error(std::exchange(aklr::kernel_tracer::failure, {}));
+  using namespace aklr::kernel_tracer;
+  m.def("start", [] {
+    auto &tracer = KernelTracer::instance();
+    tracer.attach();
+    tracer.start();
   });
-  // for tests: the next window fails with this error
+  m.def("stop", [] {
+    auto &tracer = KernelTracer::instance();
+    tracer.stop();
+    auto profile = tracer.profile();
+    if (!next_failure.empty())
+      throw std::runtime_error(std::exchange(next_failure, {}));
+    pybind11::list records;
+    for (size_t i = 0; i < profile.dispatches.size(); ++i) {
+      const auto &d = profile.dispatches[i];
+      if (d.copy != ROCPROFILER_MEMORY_COPY_NONE)
+        continue; // only kernels contribute to the benchmark
+      const auto &a = profile.attribution[i];
+      records.append(pybind11::make_tuple(
+          a.scope, profile.kernels[i], d.end - d.start, a.exec, a.node,
+          d.workgroup[0] ? d.grid[0] / d.workgroup[0] : 0));
+    }
+    return records;
+  });
+  m.def("push_scope", [](uint64_t id) { KernelTracer::instance().push(id); });
+  m.def("pop_scope", [] { KernelTracer::instance().pop(); });
   m.def("fail_next_window", [](std::string error) {
-    aklr::kernel_tracer::next_failure = std::move(error);
+    next_failure = std::move(error);
   });
-  aklr::kernel_tracer::register_kineto_profiler();
 }
