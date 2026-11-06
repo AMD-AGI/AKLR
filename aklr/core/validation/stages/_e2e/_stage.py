@@ -18,7 +18,7 @@ import urllib.request
 from collections.abc import Sequence
 from importlib import metadata
 from pathlib import Path
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING
 
 from aklr.core.contract.export import read_calls
 from aklr.core.platform.device import physical_device
@@ -30,10 +30,11 @@ from aklr.core.platform.env import (
     ENV_MEASURED_DIR,
     ENV_MIN_SPEEDUP,
 )
-from aklr.core.validation.stages._e2e._config import Scenario
+from aklr.core.validation.stages._e2e._command import export_commands
+from aklr.core.validation.stages._e2e._config import E2eConfig, Scenario
 from aklr.core.validation.stages._e2e._cookbook import Cookbook
 from aklr.core.validation.stages._e2e._deployment import Deployment, RunNotKilledError
-from aklr.core.validation.stages._e2e._report import E2eRecord, E2eReport, SideResult
+from aklr.core.validation.stages._e2e._report import E2eRecord, E2eReport, ModelEvaluationResult
 from aklr.core.validation.stages._report._finding import Finding, FindingCode
 from aklr.core.validation.stages.stage import PipelineStage
 
@@ -43,58 +44,40 @@ if TYPE_CHECKING:
 
 __all__ = ["E2eStage"]
 
-# phase 1, GSM8K on both sides: every test question; run_eval takes its 5 few-shot examples
-# from them, so 1314 are graded
-GSM8K_N_QUESTIONS: Final = 1319
-# concurrent requests (run_eval's default is 512: a long-thinking model at 16384 tokens then
-# queues past its client's retries); failed requests tolerated, each scored wrong
-GSM8K_N_THREADS: Final = 64
-GSM8K_MAX_FAILED_REQUESTS: Final = 2
-# enough for a thinking model; others stop far earlier
-MAX_TOKENS: Final = 16384
-# provisional, about 2.5 sigma of the on - off difference over 1314 shared questions; to be
-# set from measured off-against-off noise
-GSM8K_MAX_DROP: Final = 0.02
-# phase 2, the on side only: one prompt with a short, unique answer
-PROMPT: Final = "What is the capital of France? Answer with one word."
-EXPECTED_ANSWER: Final = "Paris"
-# below it, off is not the model answering (a broken recipe or grading), and on is not run
-MIN_OFF_GSM8K: Final = 0.5
-# a side, from its start to its stop, and of it the start (weights, graph capture)
-SIDE_TIMEOUT_SECONDS: Final = 5400.0
-START_TIMEOUT_SECONDS: Final = 2400.0
-
-Side = Literal["off", "on"]
-
 
 class E2eStage(PipelineStage[E2eReport]):
     name = "e2e"
     report_type = E2eReport
 
-    def __init__(
-        self,
-        scenarios: Sequence[Scenario],
-        devices: Sequence[str],
-        *,
-        cookbook_repo: str,
-        cookbook_source: str,
-        hosts: Sequence[str] = ("127.0.0.1",),
-        launch: str | None = None,
-        work_dir: Path | None = None,
-    ) -> None:
-        if scenarios and not devices:
+    def __init__(self, devices: Sequence[str]) -> None:
+        # phase 1, GSM8K on both sides: every test question; run_eval takes its 5 few-shot examples
+        # from them, so 1314 are graded
+        self._gsm8k_questions = 1319
+        # concurrent requests (run_eval's default is 512: a long-thinking model at 16384 tokens then
+        # queues past its client's retries); failed requests tolerated, each scored wrong
+        self._gsm8k_concurrency = 64
+        self._max_failed_requests = 2
+        # enough for a thinking model; others stop far earlier
+        self._max_tokens = 16384
+        # provisional, about 2.5 sigma of the on - off difference over 1314 shared questions; to be
+        # set from measured off-against-off noise
+        self._max_accuracy_drop = 0.02
+        # phase 2, the on side only: one prompt with a short, unique answer
+        self._prompt = "What is the capital of France? Answer with one word."
+        self._expected_answer = "Paris"
+        # below it, off is not the model answering (a broken recipe or grading), and on is not run
+        self._min_baseline_accuracy = 0.5
+        # a side, from its start to its stop, and of it the start (weights, graph capture)
+        self._evaluation_timeout = 5400.0
+        self._startup_timeout = 2400.0
+        config = E2eConfig.read()
+        self._scenarios = config.enabled_scenarios
+        if self._scenarios and not devices:
             raise ValueError("e2e needs at least one device")
-        if not hosts:
-            raise ValueError("e2e needs at least one host")
-        self._scenarios = tuple(scenarios)
-        self._cookbook_repo = cookbook_repo
-        self._cookbook_source = cookbook_source
-        self._hosts = tuple(hosts)
-        # one {cmd} word: the remote shell reads the command back from it unchanged
-        if launch is not None and shlex.split(launch).count("{cmd}") != 1:
-            raise ValueError(f"--e2e-launch {launch!r}: needs one {{cmd}} word, e.g. 'ssh {{host}} {{cmd}}'")
-        self._launch = launch
-        self._work_dir = work_dir
+        self._cookbook_repo = config.cookbook_repo
+        self._cookbook_source = config.cookbook_source
+        self._hosts = config.hosts
+        self._work_dir = config.work_dir
         # every process gets these on its command line, so a remote node gets them too;
         # ROCR_VISIBLE_DEVICES is left as it is: HIP indexes within it
         visible = ",".join(map(physical_device, devices))
@@ -168,10 +151,10 @@ class E2eStage(PipelineStage[E2eReport]):
                 )
                 try:
                     run_dir = Path(work_dir, str(index))
-                    off = self._run_side(scenario, cookbook, "off", env, run_dir)
+                    off = self._evaluate_model(scenario, cookbook, env, run_dir, aklr_enabled=False)
                     record = record.model_copy(update={"off": off})
-                    if not (fault := record.off_fault(MIN_OFF_GSM8K)):
-                        on = self._run_side(scenario, cookbook, "on", env, run_dir)
+                    if not (fault := record.off_fault(self._min_baseline_accuracy)):
+                        on = self._evaluate_model(scenario, cookbook, env, run_dir, aklr_enabled=True)
                         record = record.model_copy(update={"on": on})
                     elif record.is_other_sglang:
                         # the RFC's non-blocking warning: no finding, but on was not compared
@@ -184,50 +167,69 @@ class E2eStage(PipelineStage[E2eReport]):
                     records.append(record)
                     self.progress.write(f"{where}: no result")
                     break
-                findings += record.findings(max_drop=GSM8K_MAX_DROP, min_off_score=MIN_OFF_GSM8K)
+                findings += record.findings(
+                    max_drop=self._max_accuracy_drop, min_off_score=self._min_baseline_accuracy
+                )
                 if record.on is not None and record.on.n_hit_calls == 0:
                     self.progress.write(f"{where}: AKLR served no call, every call fell back")
                 records.append(record)
                 self.progress.write(f"{where}: {record.console_line()}")
         return E2eReport.from_findings(
-            findings, prompt=PROMPT, expected_answer=EXPECTED_ANSWER, scenario_records=tuple(records)
+            findings,
+            prompt=self._prompt,
+            expected_answer=self._expected_answer,
+            scenario_records=tuple(records),
         )
 
-    def _run_side(
-        self, scenario: Scenario, cookbook: Cookbook, side: Side, env: dict[str, str], run_dir: Path
-    ) -> SideResult:
-        """Serve ``scenario`` on ``side``, run GSM8K, and on the on side the prompt and the call
-        count; a failure is the result's, only a ``RunNotKilledError`` raises."""
+    def _evaluate_model(
+        self,
+        scenario: Scenario,
+        cookbook: Cookbook,
+        env: dict[str, str],
+        run_dir: Path,
+        *,
+        aklr_enabled: bool,
+    ) -> ModelEvaluationResult:
+        """Start the model, evaluate GSM8K and check the answer and calls when AKLR is enabled.
+
+        Failures are recorded in the result; only ``RunNotKilledError`` raises.
+        """
+        side = "on" if aklr_enabled else "off"
         calls_dir = run_dir / f"{side}-calls"
         side_env = {
-            ENV_DISABLE: "1" if side == "off" else "0",
-            ENV_EXPORT: "0" if side == "off" else "1",
+            ENV_DISABLE: "0" if aklr_enabled else "1",
+            ENV_EXPORT: "1" if aklr_enabled else "0",
             ENV_EXPORT_DIR: str(calls_dir),
         }
         try:
-            deployment = Deployment.plan(
-                scenario, cookbook, hosts=self._hosts, launch=self._launch, env=env, side_env=side_env,
-                run_dir=run_dir / side,
-            )  # fmt: skip
+            commands, entry_url = export_commands(
+                scenario,
+                cookbook,
+                hosts=self._hosts,
+                env=env,
+                side_env=side_env,
+            )
+            deployment = Deployment(commands, entry_url, run_dir / side)
         except ValueError as error:
-            return SideResult(failure=str(error))
-        deadline = time.monotonic() + SIDE_TIMEOUT_SECONDS
+            return ModelEvaluationResult(failure=str(error))
+        deadline = time.monotonic() + self._evaluation_timeout
         result: dict[str, object] = {"argvs": deployment.argvs}
         failures: list[str] = []
         is_ready = False
         self.progress.write(f"{side}: starting {len(deployment.processes)} processes")
         try:
             # a slow weight load fails the start, not the grading it would leave no time for
-            entry_url = deployment.start(timeout=START_TIMEOUT_SECONDS)
+            entry_url = deployment.start(timeout=self._startup_timeout)
             is_ready = True
             self.progress.write(
-                f"{side}: serving at {entry_url}; GSM8K, {GSM8K_N_QUESTIONS} questions less 5 shots"
+                f"{side}: serving at {entry_url}; GSM8K, {self._gsm8k_questions} questions less 5 shots"
             )
             argv = [
                 sys.executable, "-m", "sglang.test.run_eval", "--eval-name", "gsm8k", "--base-url", entry_url,
-                "--num-examples", str(GSM8K_N_QUESTIONS), "--max-tokens", str(MAX_TOKENS), "--temperature", "0",
-                "--num-threads", str(GSM8K_N_THREADS),
+                "--num-examples", str(self._gsm8k_questions), "--max-tokens", str(self._max_tokens), "--temperature", "0",
+                "--num-threads", str(self._gsm8k_concurrency),
             ]  # fmt: skip
+            print(f"Evaluation command: {shlex.join(argv)}", flush=True)
             try:
                 done = subprocess.run(
                     argv,
@@ -249,21 +251,21 @@ class E2eStage(PipelineStage[E2eReport]):
                         f"run_eval exited with {done.returncode}, no score\n{done.stderr[-2000:]}"
                     )
                 # a few are a busy server's; each is scored wrong, so off's lower its baseline by
-                # at most 2/1314 = 0.0015, under a tenth of GSM8K_MAX_DROP; more are a broken one
+                # at most 2/1314 = 0.0015, under a tenth of the allowed accuracy drop; more are a broken one
                 result["n_failed_requests"] = n_failed
-                if n_failed > GSM8K_MAX_FAILED_REQUESTS:
+                if n_failed > self._max_failed_requests:
                     raise RuntimeError(f"{n_failed} GSM8K requests failed\n{done.stdout[-2000:]}")
                 result["gsm8k_score"] = float(scores[-1])
             except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
                 failures.append(f"GSM8K: {error}")
-            if side == "on":
+            if aklr_enabled:
                 request = urllib.request.Request(
                     f"{entry_url}/v1/chat/completions",
                     data=json.dumps({
                         "model": scenario.model_path,
-                        "messages": [{"role": "user", "content": PROMPT}],
+                        "messages": [{"role": "user", "content": self._prompt}],
                         "temperature": 0,
-                        "max_tokens": MAX_TOKENS,
+                        "max_tokens": self._max_tokens,
                     }).encode(),
                     headers={"Content-Type": "application/json"},
                 )  # fmt: skip
@@ -277,7 +279,7 @@ class E2eStage(PipelineStage[E2eReport]):
                     result["prompt_answer"] = answer
                     # the whole answer, less surrounding whitespace and trailing punctuation
                     normalized = re.sub(r"[\W_]+$", "", answer).strip().casefold()
-                    result["answer_matches"] = normalized == EXPECTED_ANSWER.casefold()
+                    result["answer_matches"] = normalized == self._expected_answer.casefold()
                 except (OSError, ValueError, LookupError, TypeError, http.client.HTTPException) as error:
                     failures.append(f"prompt: {type(error).__name__}: {error}")
             # a server that died during the phases fails the side, whatever they scored
@@ -290,9 +292,9 @@ class E2eStage(PipelineStage[E2eReport]):
         # a server that never became ready served nothing: no count, not "AKLR served no call";
         # AKLR writes its call file as it starts, so a ready one with none never started AKLR (a
         # plugin that failed to import, sglang told to load other plugins): on is off then
-        if side == "on" and is_ready and not (calls_dir.is_dir() and any(calls_dir.iterdir())):
+        if aklr_enabled and is_ready and not (calls_dir.is_dir() and any(calls_dir.iterdir())):
             failures.append("AKLR never started on the on side: no call file")
-        elif side == "on" and is_ready:
+        elif aklr_enabled and is_ready:
             try:
                 calls = read_calls(calls_dir)
                 result["n_hit_calls"] = sum(c.n_calls for c in calls if c.fallback_reason is None)
@@ -305,4 +307,4 @@ class E2eStage(PipelineStage[E2eReport]):
                 failures.append(f"call files: {error}")
         if failures:
             result["failure"] = "\n".join([*failures, log_tails])
-        return SideResult.model_validate(result)
+        return ModelEvaluationResult.model_validate(result)

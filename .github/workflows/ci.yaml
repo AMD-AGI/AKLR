@@ -382,7 +382,7 @@ jobs:
         - ${{ vars.AKLR_SHARED_HF_HUB_DIR }}:${{ vars.AKLR_SHARED_HF_HUB_DIR }}:ro
     # A full validation (no base: a force push, a replaced run, a dispatch) benches every schema:
     # 247 schemas need about 225 minutes on 8 MI355X (170 of 257 batches ran in 150).
-    # e2e adds two servers per scenario, each capped at 90 minutes (E2eStage's SIDE_TIMEOUT_SECONDS):
+    # e2e evaluates each scenario with AKLR off and on, each capped at 90 minutes:
     # raise this with each scenario scenarios.yaml enables.
     timeout-minutes: 480
     env:
@@ -395,7 +395,6 @@ jobs:
       # The exit code is the conclusion; report.md's first line says which failure.
       - name: Validate (${{ env.STAGES }})
         env:
-          # e2e's weights: each scenario's pinned revision must be in this cache
           HF_HUB_CACHE: ${{ vars.AKLR_SHARED_HF_HUB_DIR }}
           HF_HUB_OFFLINE: '1'
           BASE: ${{ needs.code-lint.outputs.validation_base }}

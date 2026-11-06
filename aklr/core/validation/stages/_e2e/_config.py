@@ -5,20 +5,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Final
+from typing import Any
 
 from pydantic import Field, PositiveInt
 
 from aklr.core.contract.spec import FrozenModel
-from aklr.core.validation.stages._e2e._cookbook import COOKBOOK_REPO, MatchValue
+from aklr.core.validation.stages._e2e._cookbook import MatchValue
 
-__all__ = ["DEFAULT_CONFIG_PATH", "PD_ROLES", "UNIFIED_ROLE", "ArgValue", "E2eConfig", "Scenario"]
-
-DEFAULT_CONFIG_PATH: Final = Path(__file__).with_name("scenarios.yaml")
-UNIFIED_ROLE: Final = "unified"
-PD_ROLES: Final = ("prefill", "decode")
+__all__ = ["ArgValue", "E2eConfig", "Scenario"]
 
 # a server flag's override: a value, a switch (true), or removed (null or false)
 ArgValue = str | int | float | bool | None
@@ -64,12 +60,14 @@ class _ModelEntry(FrozenModel):
 
 
 class _CookbookSource(FrozenModel):
-    repo: str = COOKBOOK_REPO
-    ref: str = "main"
+    repo: str = "sgl-project/sglang"
+    source: str = "main"
 
 
 class _ConfigFile(FrozenModel):
     cookbook: _CookbookSource = _CookbookSource()
+    hosts: tuple[str, ...] = Field(default=("127.0.0.1",), min_length=1)
+    work_dir: Path | None = None
     models: dict[str, _ModelEntry] = Field(min_length=1)
 
 
@@ -77,15 +75,19 @@ class E2eConfig(FrozenModel):
     """The cookbook to read and the scenarios of an e2e configuration file, in its order."""
 
     cookbook_repo: str
-    cookbook_ref: str
+    cookbook_source: str
+    hosts: tuple[str, ...] = ("127.0.0.1",)
+    work_dir: Path | None = None
     scenarios: tuple[Scenario, ...]
 
     @classmethod
-    def read(cls, path: Path = DEFAULT_CONFIG_PATH) -> E2eConfig:
+    def read(cls, path: Path | None = None) -> E2eConfig:
         """Read the YAML file at ``path``, one scenario per item of a model's ``matches``."""
         import yaml
         from pydantic import ValidationError
 
+        path = path or Path(__file__).with_name("scenarios.yaml")
+        pd_roles = ("prefill", "decode")
         try:
             document = _ConfigFile.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
         except (OSError, yaml.YAMLError, ValidationError) as error:
@@ -94,8 +96,8 @@ class E2eConfig(FrozenModel):
         for model, entry in document.models.items():
             for index, match in enumerate(entry.cookbook.matches):
                 where = f"{path}: {model}: match {index}"
-                is_pd = set(match) == set(PD_ROLES) and all(isinstance(m, dict) for m in match.values())
-                roles = {role: match[role] for role in PD_ROLES} if is_pd else {UNIFIED_ROLE: match}
+                is_pd = set(match) == set(pd_roles) and all(isinstance(m, dict) for m in match.values())
+                roles = {role: match[role] for role in pd_roles} if is_pd else {"unified": match}
                 nnodes = (
                     entry.nnodes if isinstance(entry.nnodes, dict) else dict.fromkeys(roles, entry.nnodes)
                 )
@@ -117,9 +119,9 @@ class E2eConfig(FrozenModel):
                         nnodes=nnodes,
                         env={
                             role: {k: str(v) for k, v in env.items()}
-                            for role, env in cls._by_role(entry.env, tuple(roles)).items()
+                            for role, env in cls._expand_server_settings(entry.env, tuple(roles)).items()
                         },
-                        args=cls._by_role(entry.args, tuple(roles)),
+                        args=cls._expand_server_settings(entry.args, tuple(roles)),
                     )
                 except (ValueError, ValidationError) as error:
                     raise ValueError(f"{where}: {error}") from error
@@ -128,26 +130,28 @@ class E2eConfig(FrozenModel):
                 scenarios.append(scenario)
         return cls(
             cookbook_repo=document.cookbook.repo,
-            cookbook_ref=document.cookbook.ref,
+            cookbook_source=document.cookbook.source,
+            hosts=document.hosts,
+            work_dir=document.work_dir,
             scenarios=tuple(scenarios),
         )
 
     @staticmethod
-    def _by_role(value: Mapping[str, Any], roles: tuple[str, ...]) -> dict[str, dict[str, Any]]:
-        """``env`` or ``args`` per role: written per PD role, or one mapping for every role."""
+    def _expand_server_settings(
+        value: Mapping[str, Any], roles: tuple[str, ...]
+    ) -> dict[str, dict[str, Any]]:
+        """Expand shared or separate prefill/decode settings into each server's env or args."""
+        pd_roles = ("prefill", "decode")
         is_per_role = (
-            bool(value) and set(value) <= set(PD_ROLES) and all(isinstance(v, dict) for v in value.values())
+            bool(value) and set(value) <= set(pd_roles) and all(isinstance(v, dict) for v in value.values())
         )
         if not is_per_role:
             return dict.fromkeys(roles, dict(value))
-        if roles != PD_ROLES:
+        if roles != pd_roles:
             raise ValueError(f"{sorted(value)}: per-role settings of a scenario with no PD roles")
         return {role: dict(value.get(role, {})) for role in roles}
 
-    def selected(self, names: Sequence[str]) -> tuple[Scenario, ...]:
-        """The scenarios named, or of the models named; with no name, every enabled one."""
-        if unknown := [n for n in names if not any(n in (s.name, s.model) for s in self.scenarios)]:
-            raise ValueError(f"no e2e scenario or model named {unknown}")
-        if not names:
-            return tuple(s for s in self.scenarios if s.enabled)
-        return tuple(s for s in self.scenarios if s.name in names or s.model in names)
+    @property
+    def enabled_scenarios(self) -> tuple[Scenario, ...]:
+        """Every scenario whose model is enabled in scenarios.yaml."""
+        return tuple(s for s in self.scenarios if s.enabled)
