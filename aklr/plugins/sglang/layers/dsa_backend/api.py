@@ -5,13 +5,20 @@ from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason, api
 from aklr.plugins.sglang.hook import sglang_route
-from aklr.plugins.sglang.layers.dsa_backend.contract import DSA_SPARSE_MLA_DECODE
+from aklr.plugins.sglang.layers.dsa_backend.contract import DSA_SPARSE_MLA_DECODE, DSA_SPARSE_MLA_PREFILL
 
-__all__ = ["dsa_sparse_mla_decode"]
+__all__ = ["dsa_sparse_mla_decode", "dsa_sparse_mla_prefill"]
+
+# triton_sparse_mla_fwd's max_topk_length at or below which sglang runs its own short-sequence path
+_SGLANG_SHORT_TOPK = 512
 
 
 @api(DSA_SPARSE_MLA_DECODE)
 def dsa_sparse_mla_decode(q, kv_cache, topk_indices, sm_scale): ...
+
+
+@api(DSA_SPARSE_MLA_PREFILL)
+def dsa_sparse_mla_prefill(q, kv_cache, topk_indices, sm_scale): ...
 
 
 # _forward_triton_decode, not forward_decode: sglang still picks the DSA decode
@@ -38,6 +45,61 @@ def _forward_triton_decode(self, q_nope, q_rope, kv_cache, v_head_dim, page_tabl
     if isinstance(output, FallbackReason):
         return output
     return output.unsqueeze(0)
+
+
+# The DSA prefill on HIP (dsa_prefill_impl "triton"): forward_extend imports this function at each
+# call. Speculative decoding's target_verify and draft_extend_v2 reach it too, through
+# dsa_decode_impl.
+@sglang_route(
+    "sglang.kernels.ops.attention.dsa.triton_sparse_mla.triton_sparse_mla_fwd",
+    versions=("0.5.22",),
+)
+def _triton_sparse_mla_fwd(
+    q_nope, q_rope, kv, indices, sm_scale, d_v=512, topk_length=None, max_topk_length=None
+):
+    """New sequences' prefill as one op call on the whole q, returned as sglang's kernel returns
+    it, [1, tokens, heads, d_v]. Tokens after a cached prefix stay on sglang: each of them names
+    topk slots, where the op's kernels gain nothing."""
+    import torch
+    from sglang.srt.runtime_context import get_spec
+
+    q = _whole_query(q_nope, q_rope)
+    if (
+        q is None
+        or d_v != q_nope.shape[-1]
+        or get_spec().speculative_algorithm is not None
+        or topk_length is not None
+        or (max_topk_length is not None and max_topk_length <= _SGLANG_SHORT_TOPK)
+        # a capture would replay this call's sequences
+        or torch.cuda.is_current_stream_capturing()
+        or not _is_new_sequences(q.shape[0])
+    ):
+        return FallbackReason.OUT_OF_CONTRACT
+    output = dsa_sparse_mla_prefill(
+        q=q,
+        kv_cache=kv.view(-1, kv.shape[-1]),
+        topk_indices=indices.squeeze(1),
+        sm_scale=sm_scale,
+    )
+    if isinstance(output, FallbackReason):
+        return output
+    return output.unsqueeze(0)
+
+
+def _is_new_sequences(tokens):
+    """Whether the running forward's sequences have no cached prefix and the call's ``tokens``
+    are theirs: the DSA backend's host lengths, read without a device sync."""
+    from sglang.srt.layers.attention.dsa_backend import DeepseekSparseAttnBackend
+    from sglang.srt.model_executor.forward_context import get_attn_backend, has_forward_context
+
+    if not has_forward_context():
+        return False
+    backend = get_attn_backend()
+    if not isinstance(backend, DeepseekSparseAttnBackend):
+        return False
+    metadata = backend.forward_metadata
+    # seq_lens_sum counts the prefixes too; decode's is None
+    return metadata.seq_lens_sum == sum(metadata.dsa_extend_seq_lens_list) == tokens
 
 
 def _whole_query(q_nope, q_rope):

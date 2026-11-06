@@ -193,6 +193,65 @@ class IntRangeDistribution(Distribution):
         return bool((ordered[..., 1:] != ordered[..., :-1]).all())
 
 
+# rows a step of CausalTopkDistribution.sample: a step scores [rows, positions]
+_CAUSAL_TOPK_ROWS = 256
+
+
+class CausalTopkDistribution(Distribution):
+    """Sparse attention's top-k KV slots of a causal sequence's tokens, -1 for none: any
+    distinct slots in [0, hi] and any number of -1s per row (a batch of sequences mixes
+    rows). Drawn as one sequence of ``prefix`` cached tokens and the rows' tokens, its
+    slots a run of the pool at a random offset: a row whose token sees no more positions
+    than a row holds names them all, in order, then -1; any other row the top of its
+    positions under a random permutation of them, in a random order. A seed's draws agree
+    bit for bit: the keys are distinct and the shuffle sorts stably, where a GPU sort may
+    break ties differently from run to run (and a kernel sums a row in its order)."""
+
+    kind: Literal["causal_topk"] = "causal_topk"
+    hi: str | int
+    prefix: int = 0
+    expr_fields = ("hi",)
+
+    def accepts_dtype(self, dtype):
+        import torch
+
+        if not DTYPE_TRAITS[dtype].is_integral or torch_dtypes(dtype)[0] == torch.bool:
+            return False
+        limits = torch.iinfo(torch_dtypes(dtype)[0])
+        hi = self.constant_value("hi")
+        return limits.min <= -1 and (hi is None or hi <= limits.max)
+
+    def sample(self, shape, dtype, generator):
+        import torch
+
+        *batch, rows, k = shape
+        positions = self.prefix + rows
+        if positions > self.hi + 1:
+            raise ValueError(f"{positions} positions hold no run of slots in [0, {self.hi}]")
+        base = int(torch.randint(self.hi + 2 - positions, (), generator=generator))
+        keys = torch.randperm(positions, generator=generator)
+        out = torch.full((math.prod(batch), rows, k), -1, dtype=torch.int64)
+        for start in range(0, rows, _CAUSAL_TOPK_ROWS):
+            seen = torch.arange(start, min(rows, start + _CAUSAL_TOPK_ROWS)) + self.prefix + 1
+            width = min(int(seen[-1]), k)
+            column = torch.arange(int(seen[-1]))
+            scores = torch.where(column < seen[:, None], keys[: int(seen[-1])], -1)
+            picked = scores.topk(width, dim=-1).indices
+            order = torch.rand(picked.shape, generator=generator).argsort(dim=-1, stable=True)
+            picked = picked.gather(-1, order)
+            # a row that sees at most k positions: all of them, in order
+            in_order = torch.where(column[:width] < seen[:, None], column[:width], -1)
+            picked = torch.where((seen <= k)[:, None], in_order, picked)
+            out[:, start : start + seen.numel(), :width] = torch.where(picked >= 0, picked + base, -1)
+        return out.reshape(shape).to(torch_dtypes(dtype)[0])
+
+    def contains(self, tensor, dtype):
+        if not bool(((tensor >= -1) & (tensor <= self.hi)).all()):
+            return False
+        ordered = tensor.sort(dim=-1).values
+        return bool(((ordered[..., 1:] != ordered[..., :-1]) | (ordered[..., 1:] < 0)).all())
+
+
 class ExpertMaskDistribution(Distribution):
     """One expert-parallel rank's mask: 1 for ``local_experts`` experts, 0 elsewhere;
     drawn as one block at a random multiple of ``local_experts``, as sglang assigns."""
@@ -521,6 +580,7 @@ DistributionUnion = Annotated[
     FiniteDistribution
     | LogUniformDistribution
     | IntRangeDistribution
+    | CausalTopkDistribution
     | ExpertMaskDistribution
     | CuSeqlensDistribution
     | BoundedCuSeqlensDistribution

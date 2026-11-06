@@ -20,6 +20,7 @@ from ._compare import (
 )
 from ._distributions import (
     BoundedCuSeqlensDistribution,
+    CausalTopkDistribution,
     CuSeqlensDistribution,
     Deepseekv4Fp8KvCacheDistribution,
     Distribution,
@@ -69,6 +70,7 @@ __all__ = [
     "DTYPE_TRAITS",
     "BaselineRelativeBound",
     "BoundedCuSeqlensDistribution",
+    "CausalTopkDistribution",
     "ColumnMajor",
     "CompareResult",
     "CuSeqlensDistribution",
