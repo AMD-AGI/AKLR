@@ -395,6 +395,32 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"max_context": 8192},
         layout_variant_name="row_major",
     ),
+    # DeepSeek-V4's sqrtsoftplus router shrunk to aiter topk_gating's smallest expert count:
+    # three routed experts and the fused shared one, then with padded rows (DP attention)
+    *(
+        PointSpec(
+            contract_id="deepseek_v4_router@1.0",
+            axes={"n_tokens": 5, "n_experts": 64, "n_slots": 4},
+            dtypes={
+                "router_logits": "bfloat16",
+                "correction_bias": "bfloat16",
+                "num_token_non_padded": "int32" if padded else None,
+                "topk_weights": "float32",
+                "topk_ids": "int32",
+            },
+            attrs={"n_shared": 1, "renormalize": True, "has_num_token_non_padded": padded},
+            layout_variant_name="row_major",
+        )
+        for padded in (False, True)
+    ),
+    # a DP-attention rank's MoE gather input shrunk: a few rows of a narrow hidden size
+    PointSpec(
+        contract_id="deepseek_v4_dp_moe_gather@1.0",
+        axes={"n_rows": 6, "hidden": 256},
+        dtypes={"hidden_states": "bfloat16", "num_token_non_padded": "int32", "out": "bfloat16"},
+        attrs={},
+        layout_variant_name="row_major",
+    ),
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
@@ -414,5 +440,6 @@ GFX950_CONTRACT_IDS = frozenset(
         "qwen3_next_gdn_decode_group_fp8_quant@1.0",
         "gated_attention_decode_group_fp8_quant@1.0",
         "qwen3_next_gated_attention_decode_group_fp8_quant@1.0",
+        "deepseek_v4_router@1.0",
     }
 )
