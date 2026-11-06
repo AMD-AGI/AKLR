@@ -1,0 +1,532 @@
+{
+  "schema_version": 5,
+  "name": "deepseek_v4_sparse_mla_decode_inv_rope_extra_extra_idx_padded_pages_n_heads32_page_size256_n_indices128_extra_page_size128_n_extra_indices512",
+  "contract_id": "deepseek_v4_sparse_mla_decode_inv_rope@1.0",
+  "description": "sglang's aiter_sparse_decode_fwd on DeepSeek-V4's fp8 KV pools with inv_rope: each head of each query row attends the slots its sparse_indices name in the SWA pool and, when given, its extra_sparse_indices in the extra (compressed) pool (negative: none), scores q . row * sm_scale, the head's sink joining the normalisation only; the output is the softmax-weighted sum of the whole 512-wide rows (0 for a row that reads no slot), its last 64 lanes then rotated back by the row's position: per (cos, sin) pair of rope_freqs[positions], even * cos + odd * sin and odd * cos - even * sin.",
+  "op_type": "deepseek_v4",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Query rows in this call: requests times tokens per request."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 32,
+      "description": "Query heads on this rank."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Pages of the SWA pool."
+    },
+    "page_size": {
+      "type": "const",
+      "value": 256,
+      "description": "Slots per page of the SWA pool."
+    },
+    "n_indices": {
+      "type": "const",
+      "value": 128,
+      "description": "SWA slots per query row."
+    },
+    "n_extra_pages": {
+      "type": "var",
+      "description": "Pages of the extra pool."
+    },
+    "extra_page_size": {
+      "type": "const",
+      "value": 128,
+      "description": "Slots per page of the extra pool."
+    },
+    "n_extra_indices": {
+      "type": "const",
+      "value": 512,
+      "description": "Extra-pool slots per query row."
+    },
+    "n_positions": {
+      "type": "var",
+      "description": "Rows of the RoPE table."
+    }
+  },
+  "attrs": {
+    "has_extra_kv_cache": true,
+    "has_extra_sparse_indices": true
+  },
+  "inputs": {
+    "q": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        512
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each query row's heads: q_nope in the latent's basis, then the RoPE'd q_pe."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_pages",
+        "page_size",
+        1,
+        584
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "deepseekv4_fp8_kv_cache"
+      },
+      "description": "This layer's SWA pool, packed fp8 slots."
+    },
+    "sparse_indices": {
+      "shape": [
+        "n_tokens",
+        "n_indices"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_pages * page_size - 1",
+        "distinct": false
+      },
+      "description": "The SWA slots each query row reads; negative: skipped."
+    },
+    "extra_kv_cache": {
+      "shape": [
+        "n_extra_pages",
+        "extra_page_size",
+        1,
+        584
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "deepseekv4_fp8_kv_cache"
+      },
+      "description": "This layer's extra (compressed) pool, packed fp8 slots."
+    },
+    "extra_sparse_indices": {
+      "shape": [
+        "n_tokens",
+        "n_extra_indices"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_extra_pages * extra_page_size - 1",
+        "distinct": false
+      },
+      "description": "The extra-pool slots each query row reads; negative: skipped."
+    },
+    "sinks": {
+      "shape": [
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Per-head logit added to the normalisation only."
+    },
+    "sm_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every score."
+    },
+    "rope_freqs": {
+      "shape": [
+        "n_positions",
+        64
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Per position, the 32 (cos, sin) pairs of the RoPE, interleaved."
+    },
+    "positions": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_positions - 1",
+        "distinct": false
+      },
+      "description": "Each query row's position: its row of rope_freqs."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        512
+      ],
+      "dtype": "bfloat16",
+      "description": "Each head's softmax-weighted sum of the rows it reads, the last 64 lanes inverse-rotated by the row's position."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 132,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 132,
+        "n_pages": 6420,
+        "n_extra_pages": 111953,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 144,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 144,
+        "n_pages": 6420,
+        "n_extra_pages": 111953,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 156,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 156,
+        "n_pages": 6420,
+        "n_extra_pages": 111953,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 168,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 168,
+        "n_pages": 6420,
+        "n_extra_pages": 111953,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 180,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 180,
+        "n_pages": 6420,
+        "n_extra_pages": 111953,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 192,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 192,
+        "n_pages": 6420,
+        "n_extra_pages": 111953,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 219,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 240,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 256,
+        "n_pages": 6420,
+        "n_extra_pages": 111953,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 264,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 288,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 312,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 336,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 360,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 364,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 384,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 416,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 572,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 780,
+        "n_pages": 3493,
+        "n_extra_pages": 129630,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 1024,
+        "n_pages": 6420,
+        "n_extra_pages": 111953,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2048,
+        "n_pages": 6420,
+        "n_extra_pages": 111953,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4096,
+        "n_pages": 6420,
+        "n_extra_pages": 111953,
+        "n_positions": 1048576
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "padded_pages": {
+        "layouts": {
+          "kv_cache": {
+            "kind": "deepseekv4_kv_pages"
+          },
+          "extra_kv_cache": {
+            "kind": "deepseekv4_kv_pages"
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "kv_cache_layout",
+            "expected_value": "padded_pages"
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "GEAK",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"DeepSeek-V4 sparse MLA decode with the inverse RoPE in its epilogue, one Gluon launch\non gfx950.\n\nEach program takes one query row and a block of 16, 32 or 64 heads, walks the SWA\npool's slots and then the top-k pool's (fp8 NoPE values dequantized with their UE8M0\nexponents, bf16 RoPE values, -1 slots skipped) with one online softmax, folds the sink\ninto the normalisation, rounds the output to bf16, inverse-rotates its last 64 lanes\nwith the position's (cos, sin) pairs and stores it. aiter's gfx950 pa_decode_sparse\nwithout split-K, followed by sglang's flat-row inverse RoPE, computes the same bits in\ntwo launches.\n\nThe launch configuration (heads per program, prefetch depth, XCD remapping, buffer or\n64-bit gathers per pool) follows aiter's pa_decode_sparse driver for a single split\n(aiter/ops/triton/attention/pa_decode_sparse.py, MIT, Copyright (C) 2024-2026,\nAdvanced Micro Devices, Inc.).\n\"\"\"\n\nimport functools\n\nimport torch\n\nfrom .sparse_mla import sparse_mla_inv_rope_kernel\n\n_BLOCK_K = 64\n_NOPE_DIM, _ROPE_DIM = 448, 64\n_PREFILL_MIN_ROWS = 2048\n_MAX_BUFFER_BYTES = 2**31 - 1\n_NUM_XCDS = 8\n\n\n@functools.cache\ndef _num_sms(device_index):\n    return torch.cuda.get_device_properties(device_index).multi_processor_count\n\n\ndef _addressable_bytes(t):\n    span = 1\n    for size, stride in zip(t.shape, t.stride()):\n        if size > 1:\n            span += (size - 1) * stride\n    return span * t.element_size()\n\n\ndef _last_round_fills(programs, num_sms):\n    \"\"\"The grid's last round of programs is full or more than half full.\"\"\"\n    left = programs % num_sms\n    return left == 0 or 2 * left > num_sms\n\n\ndef _block_m(num_heads, num_queries, row_tiles, has_extra, num_sms):\n    \"\"\"Heads per program at 32 or 64 heads: 64 for top-k launches from one full round of\n    rows (up to four rounds, the last more than half full); else 32 past one tile per\n    program when the 32-head grid ends on a well-filled round; else 16.\"\"\"\n    if num_heads not in (32, 64):\n        return 16\n    rows_fill = num_queries >= num_sms and (\n        _last_round_fills(num_queries, num_sms) or num_queries > 4 * num_sms\n    )\n    if num_heads == 64 and has_extra and rows_fill:\n        return 64\n    if row_tiles > 1:\n        programs = num_queries * (num_heads // 32)\n        suits = _last_round_fills(programs, num_sms) if programs <= 4 * num_sms else row_tiles >= 4\n        if suits:\n            return 32\n    return 16\n\n\ndef run(\n    *,\n    q,\n    kv_cache,\n    sparse_indices,\n    extra_kv_cache,\n    extra_sparse_indices,\n    sinks,\n    sm_scale,\n    rope_freqs,\n    positions,\n    kv_cache_layout,\n    output,\n):\n    # the page pitch is read from the strides: padded or packed pools alike\n    del kv_cache_layout\n    num_queries, num_heads, head_dim = q.shape\n    cache = kv_cache.view(torch.uint8).squeeze(2)\n    main_width = sparse_indices.shape[-1]\n    has_extra = extra_kv_cache is not None\n    if has_extra:\n        extra_cache = extra_kv_cache.view(torch.uint8).squeeze(2)\n        extra_indices = extra_sparse_indices\n        extra_width = extra_sparse_indices.shape[-1]\n    else:\n        # unread placeholders\n        extra_cache, extra_indices, extra_width = cache, sparse_indices, 0\n    num_sms = _num_sms(q.device.index)\n\n    s0, s1 = cache.stride(0), extra_cache.stride(0)\n    cs0_align = next((a for a in (16, 8, 4, 2) if s0 % a == 0 and s1 % a == 0), 1)\n    main_buffer = _addressable_bytes(cache) < _MAX_BUFFER_BYTES\n    extra_buffer = _addressable_bytes(extra_cache) < _MAX_BUFFER_BYTES\n    idx_buffer = (\n        _addressable_bytes(sparse_indices) < _MAX_BUFFER_BYTES\n        and _addressable_bytes(extra_indices) < _MAX_BUFFER_BYTES\n    )\n    prefill = num_queries >= _PREFILL_MIN_ROWS\n    row_tiles = max(main_width, extra_width) / _BLOCK_K\n    block_m = _block_m(num_heads, num_queries, row_tiles, has_extra, num_sms)\n    num_warps = 8 if block_m > 16 else 4\n    heads_blocks = (num_heads + block_m - 1) // block_m\n    # 16 rows per dequant piece, at least 4 per warp for the 16-lane row gather\n    nope_chunk = max(_BLOCK_K // (8 if prefill else 4), 4 * num_warps)\n    waves_per_eu = 1 if main_buffer and extra_buffer and num_queries * heads_blocks <= num_sms else 2\n    # one XCD (and L2) for the head blocks of a row, which read the same KV rows\n    xcd_remap = _NUM_XCDS if heads_blocks > 1 and (has_extra or not prefill) else 0\n\n    sparse_mla_inv_rope_kernel[(num_queries, heads_blocks)](\n        q,\n        cache,\n        cache.view(torch.bfloat16),\n        sparse_indices,\n        extra_cache,\n        extra_cache.view(torch.bfloat16),\n        extra_indices,\n        sinks,\n        output,\n        positions,\n        rope_freqs,\n        sm_scale,\n        q.stride(0),\n        q.stride(1),\n        output.stride(0),\n        output.stride(1),\n        rope_freqs.stride(0),\n        s0,\n        s1,\n        main_width,\n        extra_width,\n        num_heads,\n        HAS_EXTRA=has_extra,\n        MAIN_BLOCK_SIZE=cache.shape[1],\n        EXTRA_BLOCK_SIZE=extra_cache.shape[1],\n        CS0_ALIGN=cs0_align,\n        NOPE_DIM=_NOPE_DIM,\n        ROPE_DIM=_ROPE_DIM,\n        HEAD_SIZE=head_dim,\n        BLOCK_M=block_m,\n        BLOCK_K=_BLOCK_K,\n        HEAD_ALIGNED=num_heads % block_m == 0,\n        NOPE_CHUNK=nope_chunk,\n        MAIN_USE_BUFFER_LOAD=main_buffer,\n        EXTRA_USE_BUFFER_LOAD=extra_buffer,\n        IDX_BUFFER_LOAD=idx_buffer,\n        SLOT_U32=prefill and max(s0, s1) < (1 << 24),\n        XCD_REMAP=xcd_remap,\n        # gather a tile ahead only for 32-head programs below prefill size\n        DSV4_PREFETCH=block_m == 32 and not prefill,\n        num_warps=num_warps,\n        waves_per_eu=waves_per_eu,\n    )\n"
+      },
+      {
+        "path": "sparse_mla.py",
+        "content": "\"\"\"Gluon (gfx950) sparse MLA decode over DeepSeek-V4's packed fp8 KV pools, with the\nmodel's inverse RoPE applied to the output in the store epilogue.\n\nDerived from aiter's aiter/ops/triton/_gluon_kernels/gfx950/attention/sparse_mla.py\n(MIT, Copyright (C) 2024-2026, Advanced Micro Devices, Inc.) and remap_xcd of\naiter/ops/triton/_triton_kernels/common/pid_preprocessing.py (MIT), keeping only the\nfp8_dsv4_mla walk without split-K. The inverse RoPE evaluates the rotation of sglang's\napply_rotary_emb_flat_kernel (sglang/kernels/ops/attention/dsv4/rope.py, Apache-2.0) on\nthe bf16-rounded output row, reading sglang's interleaved (cos, sin) table.\n\nA pool row (584 bytes per token): 448 fp8 e4m3 NoPE values and 64 bf16 RoPE values\n(576 bytes), the page's rows back to back, then an 8-byte trailer per token after the\npage's rows: 7 UE8M0 exponents, one per 64 NoPE values, and a pad byte.\n\nOne program = (query, head block). The SWA segment (main) and the top-k segment\n(extra) are walked in turn with one online softmax; -1 slots are skipped. A tile's slot\nids are read a tile ahead of its gathers (DSV4_PREFETCH also issues the gathers a tile\nahead); each tile is dequantized into LDS, then QK -> softmax -> PV.\n\"\"\"\n\nimport triton\nimport triton.language as tl\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\nfrom triton.language.core import PropagateNan\nfrom triton.language.core import _aggregate as aggregate\n\n\ndef _strip_annotate(cls):\n    \"\"\"Drop the compiler-generated __annotate__ (Python 3.14, PEP 649), which Triton's\n    aggregate hash walker rejects.\"\"\"\n    for name in (\"__annotate__\", \"__annotate_func__\"):\n        if name in cls.__dict__:\n            try:\n                delattr(cls, name)\n            except (AttributeError, TypeError):\n                pass\n    return cls\n\n\n@triton.jit\ndef _remap_xcd(pid, GRID_MN, NUM_XCDS: tl.constexpr = 8):\n    \"\"\"Consecutive program ids onto one XCD (aiter's remap_xcd).\"\"\"\n    pids_per_xcd = (GRID_MN + NUM_XCDS - 1) // NUM_XCDS\n    tall_xcds = GRID_MN % NUM_XCDS\n    if tall_xcds == 0:\n        tall_xcds = tl.cast(NUM_XCDS, tall_xcds.type)\n    xcd = pid % NUM_XCDS\n    local_pid = pid // NUM_XCDS\n    if xcd < tall_xcds:\n        pid = xcd * pids_per_xcd + local_pid\n    else:\n        pid = tall_xcds * pids_per_xcd + (xcd - tall_xcds) * (pids_per_xcd - 1) + local_pid\n    return pid\n\n\n# Nothing here produces NaN (masked lanes are -inf and the all-masked row is guarded),\n# so max propagates instead of paying a canonicalize per operand.\n_MAX_PROP_NAN: gl.constexpr = gl.constexpr(PropagateNan.ALL)\n\n\n@gluon.jit\ndef _max2(a, b):\n    return gl.maximum(a, b, propagate_nan=_MAX_PROP_NAN)\n\n\n@gluon.jit\ndef _rmax(x, axis):\n    return gl.reduce(x, axis, _max2)\n\n\n@gluon.constexpr_function\ndef _row_partials_layout(lin, n_warps):\n    \"\"\"Layout that reads per-warp row partials back from LDS.\"\"\"\n    reg = [[0, 1 << i] for i in range(n_warps.bit_length() - 1)]\n    reg += [[b[0], 0] for b in lin.reg_bases if b[0] != 0]\n    lane = [[b[0], 0] for b in lin.lane_bases]\n    warp = [[b[0], 0] for b in lin.warp_bases]\n    return gl.DistributedLinearLayout(\n        reg_bases=reg,\n        lane_bases=lane,\n        warp_bases=warp,\n        block_bases=[],\n        shape=[lin.shape[0], n_warps],\n    )\n\n\n@gluon.jit\ndef _row_reduce_lds(cfg, x, red_smem, IS_MAX: gl.constexpr):\n    \"\"\"Row max or sum across the key warps through red_smem: one barrier, and\n    gl.reduce's summation order.\"\"\"\n    NW: gl.constexpr = cfg.N_WARPS\n    BM: gl.constexpr = cfg.BLOCK_M\n    BK: gl.constexpr = cfg.BLOCK_K\n    # The 16-key MFMA columns are dealt to the key warps in turn: key = (rep, warp, 16).\n    REP: gl.constexpr = BK // (16 * NW)\n    gl.static_assert(BK == 16 * NW * REP, \"16-key MFMA columns per key warp\")\n    lin: gl.constexpr = gl.to_linear_layout(cfg.qk_layout, [BM, BK])\n    if REP == 1:\n        x3 = gl.reshape(gl.convert_layout(x, lin), [BM, NW, BK // NW])\n        if IS_MAX:\n            part = _rmax(x3, 2)\n        else:\n            part = gl.sum(x3, axis=2)\n    else:\n        x4 = gl.reshape(gl.convert_layout(x, lin), [BM, REP, NW, 16])\n        if IS_MAX:\n            part = _rmax(_rmax(x4, 3), 1)\n        else:\n            part = gl.sum(gl.sum(x4, axis=3), axis=1)\n    red_smem.store(part)\n    LD: gl.constexpr = _row_partials_layout(lin, NW)\n    allp = red_smem.load(LD)\n    if IS_MAX:\n        r = _rmax(allp, 1)\n    else:\n        r = gl.sum(allp, axis=1)\n    return gl.convert_layout(r, gl.SliceLayout(1, cfg.qk_layout))\n\n\n@gluon.jit\ndef _cache_load(ptr, row, col, USE_BUFFER_LOAD: gl.constexpr):\n    \"\"\"Gather rows[i] + col[j]; row is the per-token offset in ptr's element units, col\n    a small compile-time arange. Keeping them apart resolves one pointer per token on\n    the 64-bit path (the column offset folds into the load's immediate).\"\"\"\n    if USE_BUFFER_LOAD:\n        return gl.amd.cdna4.buffer_load(\n            ptr=ptr,\n            offsets=row.to(gl.int32)[:, None] + col.to(gl.int32)[None, :],\n            cache=\"\",\n        )\n    row_ptr = ptr + row.to(gl.int64)\n    return gl.load(row_ptr[:, None] + col[None, :], cache_modifier=\"\")\n\n\n@gluon.jit\ndef _widen_scales(sc, gather_l: gl.constexpr, NG: gl.constexpr, W_FULL: gl.constexpr):\n    \"\"\"Broadcast [BLOCK_K, NG] group scales to [BLOCK_K, W_FULL] in gather_l (a register\n    rename).\"\"\"\n    wide = gl.expand_dims(sc, 2).broadcast_to([sc.shape[0], NG, W_FULL // NG])\n    return gl.convert_layout(wide.reshape([sc.shape[0], W_FULL]), gather_l, assert_trivial=True)\n\n\n@gluon.jit\ndef _split_rows(x):\n    \"\"\"Register split along dim 0: [A, B] -> two [A//2, B] in the input's own layout.\n    Free only while the row direction is a per-lane register repeat; assert_trivial\n    turns anything else into a compile error.\"\"\"\n    layout: gl.constexpr = x.type.layout\n    x_r = x.reshape(2, x.shape[0] // 2, x.shape[1]).permute(1, 2, 0)\n    x0, x1 = gl.split(x_r)\n    x0 = gl.convert_layout(x0, layout, assert_trivial=True)\n    x1 = gl.convert_layout(x1, layout, assert_trivial=True)\n    return x0, x1\n\n\n@aggregate\n@_strip_annotate\nclass Cfg:\n    \"\"\"Compile-time geometry and layouts shared by both segments.\"\"\"\n\n    BLOCK_M: gl.constexpr\n    BLOCK_K: gl.constexpr\n    KV_DIM: gl.constexpr  # KV buffer width = LDS tile width = V width\n    ROPE_DIM: gl.constexpr  # the bf16 tail inside the row\n    NUM_WARPS: gl.constexpr\n    N_WARPS: gl.constexpr  # warps along the dots' N (keys for QK)\n    GATHER_TW1: gl.constexpr  # lanes per gathered row: 16 x 32 B\n    GSPT: gl.constexpr  # bytes per lane per gathered row span\n    SCL_DWORD: gl.constexpr  # page pitch 4-aligned: exponents readable as dwords\n    HEAD_ALIGNED: gl.constexpr\n    IDX_BUFFER_LOAD: gl.constexpr\n    SLOT_U32: gl.constexpr  # pitches < 16 MB\n    qk_layout: gl.constexpr\n    pv_layout: gl.constexpr\n    q_layout: gl.constexpr\n    k_layout: gl.constexpr\n    p_layout: gl.constexpr\n    v_layout: gl.constexpr\n    gather_l: gl.constexpr\n    gather_rope_l: gl.constexpr\n    slot_l: gl.constexpr\n    blocked_q: gl.constexpr\n    kv_shared: gl.constexpr\n    Q_LDS: gl.constexpr\n    q_shared: gl.constexpr\n\n    @gluon.constexpr_function\n    def __init__(\n        self,\n        BLOCK_M,\n        BLOCK_K,\n        KV_DIM,\n        ROPE_DIM,\n        NUM_WARPS,\n        HEAD_ALIGNED,\n        IDX_BUFFER_LOAD,\n        SLOT_U32,\n        SCL_DWORD,\n    ):\n        self.BLOCK_M = gl.constexpr(BLOCK_M)\n        self.BLOCK_K = gl.constexpr(BLOCK_K)\n        self.KV_DIM = gl.constexpr(KV_DIM)\n        self.ROPE_DIM = gl.constexpr(ROPE_DIM)\n        self.NUM_WARPS = gl.constexpr(NUM_WARPS)\n        GATHER_TW1 = 16\n        self.GATHER_TW1 = gl.constexpr(GATHER_TW1)\n        GSPT = 16 * (32 // GATHER_TW1)\n        self.GSPT = gl.constexpr(GSPT)\n        self.SCL_DWORD = gl.constexpr(SCL_DWORD)\n        self.HEAD_ALIGNED = gl.constexpr(HEAD_ALIGNED)\n        self.IDX_BUFFER_LOAD = gl.constexpr(IDX_BUFFER_LOAD)\n        self.SLOT_U32 = gl.constexpr(SLOT_U32)\n        # bf16 dots on 16x16x32 (gfx950's full rate)\n        MFMA_K = 32\n        # Warps tile N; past 16 heads they also tile M, 16 heads per warp.\n        M_WARPS = max(1, min(BLOCK_M // 16, NUM_WARPS))\n        self.N_WARPS = gl.constexpr(NUM_WARPS // M_WARPS)\n        self.qk_layout = gl.constexpr(\n            gl.amd.AMDMFMALayout(\n                version=4,\n                instr_shape=[16, 16, MFMA_K],\n                transposed=True,\n                warps_per_cta=[M_WARPS, NUM_WARPS // M_WARPS],\n            )\n        )\n        self.pv_layout = gl.constexpr(\n            gl.amd.AMDMFMALayout(\n                version=4,\n                instr_shape=[16, 16, MFMA_K],\n                transposed=True,\n                warps_per_cta=[M_WARPS, NUM_WARPS // M_WARPS],\n            )\n        )\n        KW = MFMA_K // 2\n        self.q_layout = gl.constexpr(gl.DotOperandLayout(0, self.qk_layout, KW))\n        self.k_layout = gl.constexpr(gl.DotOperandLayout(1, self.qk_layout, KW))\n        self.p_layout = gl.constexpr(gl.DotOperandLayout(0, self.pv_layout, KW))\n        self.v_layout = gl.constexpr(gl.DotOperandLayout(1, self.pv_layout, KW))\n        # GSPT bytes per lane: two 128-bit loads on the 16-lane row gather.\n        self.gather_l = gl.constexpr(\n            gl.BlockedLayout(\n                size_per_thread=[1, GSPT],\n                threads_per_warp=[64 // GATHER_TW1, GATHER_TW1],\n                warps_per_cta=[NUM_WARPS, 1],\n                order=[1, 0],\n            )\n        )\n        # One warp already covers all rope columns; warps on dim 1 would re-gather the\n        # same tile NUM_WARPS times.\n        self.gather_rope_l = gl.constexpr(\n            gl.BlockedLayout(\n                size_per_thread=[1, 8],\n                threads_per_warp=[8, 8],\n                warps_per_cta=[NUM_WARPS, 1],\n                order=[1, 0],\n            )\n        )\n        self.slot_l = gl.constexpr(gl.SliceLayout(1, self.gather_l.value))\n        self.blocked_q = gl.constexpr(\n            gl.BlockedLayout(\n                size_per_thread=[1, 8],\n                threads_per_warp=[8, 8],\n                warps_per_cta=[1, NUM_WARPS],\n                order=[1, 0],\n            )\n        )\n        # Pad 8 (16 B, keeps 128-bit accesses aligned) every 128 elements: spreads the\n        # 64 B-per-lane row stores and the 16x16x32 K / V reads over the banks.\n        self.kv_shared = gl.constexpr(\n            gl.PaddedSharedLayout.with_identity_for([[128, 8]], [BLOCK_K, KV_DIM], [1, 0])\n        )\n        # 64-head programs keep Q in LDS (one copy per program).\n        Q_LDS = BLOCK_M >= 64\n        self.Q_LDS = gl.constexpr(Q_LDS)\n        self.q_shared = gl.constexpr(\n            gl.PaddedSharedLayout.with_identity_for([[128, 8]], [BLOCK_M, KV_DIM], [1, 0])\n        )\n\n\n@aggregate\n@_strip_annotate\nclass Fmt:\n    \"\"\"Compile-time description of one segment's pool.\"\"\"\n\n    BLOCK_SIZE: gl.constexpr  # rows per page, a power of two\n    USE_BUFFER_LOAD: gl.constexpr  # the pool spans < 2 GB: 32-bit buffer offsets\n    NOPE_CHUNK: gl.constexpr  # rows per dequant piece\n    NOPE_DIM: gl.constexpr  # fp8 payload width (448)\n    NG: gl.constexpr  # scale groups per row (KV_DIM // 64)\n    scl_l: gl.constexpr\n    TOK_U8: gl.constexpr  # bytes per token row inside a page (576)\n    TOK_U16: gl.constexpr  # the same row in bf16-view units\n    ROPE_U16_OFF: gl.constexpr  # bf16-view offset of the rope tail in a row\n    SCL_TRAILER_U8: gl.constexpr  # scale bytes per token in the page trailer\n\n    @gluon.constexpr_function\n    def __init__(self, cfg, BLOCK_SIZE, USE_BUFFER_LOAD, NOPE_DIM, NOPE_CHUNK):\n        self.BLOCK_SIZE = gl.constexpr(BLOCK_SIZE)\n        self.USE_BUFFER_LOAD = gl.constexpr(USE_BUFFER_LOAD)\n        self.NOPE_CHUNK = gl.constexpr(NOPE_CHUNK)\n        self.NOPE_DIM = gl.constexpr(NOPE_DIM)\n        KV_DIM = cfg.KV_DIM.value\n        ROPE_DIM = cfg.ROPE_DIM.value\n        GROUP = 64\n        NG = KV_DIM // GROUP\n        self.NG = gl.constexpr(NG)\n        # 3-D companion of gather_l for the narrow scale gather: dim 1 carries the NG\n        # scale groups, dim 2 the columns inside a group, so the [BLOCK_K, NG, GROUP]\n        # -> 2-D reshape reproduces gather_l exactly.\n        GSPT = cfg.GSPT.value\n        TW1 = cfg.GATHER_TW1.value\n        assert TW1 % NG == 0 and GSPT * (TW1 // NG) == GROUP, \"a group fills whole lanes\"\n        scl_l3 = gl.BlockedLayout(\n            size_per_thread=[1, 1, GSPT],\n            threads_per_warp=[64 // TW1, NG, TW1 // NG],\n            warps_per_cta=[cfg.NUM_WARPS.value, 1, 1],\n            order=[2, 1, 0],\n        )\n        self.scl_l = gl.constexpr(gl.SliceLayout(2, scl_l3))\n        TOK_U8 = NOPE_DIM + 2 * ROPE_DIM  # 448 + 128 = 576\n        self.TOK_U8 = gl.constexpr(TOK_U8)\n        self.TOK_U16 = gl.constexpr(TOK_U8 // 2)\n        self.ROPE_U16_OFF = gl.constexpr(NOPE_DIM // 2)\n        self.SCL_TRAILER_U8 = gl.constexpr(8)\n\n\n@aggregate\n@_strip_annotate\nclass Seg:\n    \"\"\"Runtime context of one segment: the pool as bytes (cache_ptr) and as bf16\n    (alt_ptr), its slot list from seg_start, the page pitch in bytes, and the slot the\n    -1 sentinels gather (target).\"\"\"\n\n    fmt: Fmt\n    cache_ptr: gl.tensor\n    alt_ptr: gl.tensor\n    indices_ptr: gl.tensor\n    seg_start: gl.tensor\n    cs0: gl.tensor\n    target: gl.tensor\n\n    @gluon.constexpr_function\n    def __init__(self, fmt, cache_ptr, alt_ptr, indices_ptr, seg_start, cs0, target):\n        self.fmt = fmt\n        self.cache_ptr = cache_ptr\n        self.alt_ptr = alt_ptr\n        self.indices_ptr = indices_ptr\n        self.seg_start = seg_start\n        self.cs0 = cs0\n        self.target = target\n\n\n@gluon.jit\ndef _deq_store(x_u8, sc, kv_smem, off):\n    \"\"\"Dequant one fp8 slab (rows off..) into kv_smem with the fused fp8 x E8M0 -> bf16\n    upcast; sc is the raw exponent byte, already in x_u8's shape and layout.\"\"\"\n    val = gl.amd.cdna4.scaled_upcast(x_u8.to(gl.float8e4nv, bitcast=True), sc, gl.bfloat16)\n    kv_smem.slice(off, x_u8.shape[0], dim=0).store(val)\n\n\n@gluon.jit\ndef _deq_store_tile(x_u8, sc, kv_smem, fmt):\n    \"\"\"Dequant a gathered fp8 tile into kv_smem in NOPE_CHUNK-row pieces. The splits are\n    register renames, and each piece's converts feed its LDS writes and die.\"\"\"\n    NOPE_CHUNK: gl.constexpr = fmt.NOPE_CHUNK\n    W: gl.constexpr = x_u8.shape[0]\n    if NOPE_CHUNK >= W:\n        _deq_store(x_u8, sc, kv_smem, 0)\n    else:\n        x0, x1 = _split_rows(x_u8)\n        s0, s1 = _split_rows(sc)\n        W2: gl.constexpr = W // 2\n        if NOPE_CHUNK >= W2:\n            _deq_store(x0, s0, kv_smem, 0)\n            _deq_store(x1, s1, kv_smem, W2)\n        else:\n            gl.static_assert(NOPE_CHUNK >= W // 4, \"at most four dequant pieces\")\n            x00, x01 = _split_rows(x0)\n            s00, s01 = _split_rows(s0)\n            x10, x11 = _split_rows(x1)\n            s10, s11 = _split_rows(s1)\n            W4: gl.constexpr = W // 4\n            _deq_store(x00, s00, kv_smem, 0)\n            _deq_store(x01, s01, kv_smem, W4)\n            _deq_store(x10, s10, kv_smem, 2 * W4)\n            _deq_store(x11, s11, kv_smem, 3 * W4)\n\n\n@gluon.jit\ndef _read_slots_at(cfg, base, off):\n    \"\"\"Slot ids base[off], base = indices_ptr + the segment's start.\"\"\"\n    if cfg.IDX_BUFFER_LOAD:\n        return gl.amd.cdna4.buffer_load(ptr=base, offsets=off, cache=\"\")\n    return gl.load(base + off, cache_modifier=\"\")\n\n\n@gluon.jit\ndef _first_valid_slot(cfg, seg, target, k, hi):\n    \"\"\"While target < 0, read the slot ids from k on a tile at a time: the largest id\n    of the first tile holding a valid one, or -1.\"\"\"\n    SEARCH_L: gl.constexpr = gl.BlockedLayout([1], [64], [cfg.NUM_WARPS], [0])\n    rng_s = gl.arange(0, cfg.BLOCK_K, layout=SEARCH_L)\n    while (target < 0) & (k < hi):\n        first = _read_slots_at(cfg, seg.indices_ptr + seg.seg_start, gl.minimum(k + rng_s, hi - 1))\n        target = gl.max(first, axis=0)\n        k += cfg.BLOCK_K\n    return target\n\n\n@gluon.jit\ndef _with_target(seg, target):\n    \"\"\"seg with the slot its -1 sentinels gather.\"\"\"\n    return Seg(seg.fmt, seg.cache_ptr, seg.alt_ptr, seg.indices_ptr, seg.seg_start, seg.cs0, target)\n\n\n@gluon.jit\ndef _qk_scores(cfg, q_dot, kv_smem):\n    \"\"\"QK scores for one tile.\"\"\"\n    S = gl.zeros([cfg.BLOCK_M, cfg.BLOCK_K], gl.float32, layout=cfg.qk_layout)\n    if cfg.Q_LDS:\n        # 128-dim chunks of Q and the matching K slice.\n        QC: gl.constexpr = min(128, cfg.KV_DIM)\n        gl.static_assert(cfg.KV_DIM % QC == 0, \"Q_LDS chunks must tile KV_DIM\")\n        for c in gl.static_range(cfg.KV_DIM // QC):\n            q_c = q_dot.slice(c * QC, QC, dim=1).load(cfg.q_layout)\n            k_c = kv_smem.slice(c * QC, QC, dim=1).permute([1, 0]).load(cfg.k_layout)\n            S = gl.amd.cdna4.mfma(q_c, k_c, S)\n    else:\n        k = kv_smem.permute([1, 0]).load(cfg.k_layout)  # [KV_DIM, BLOCK_K]\n        S = gl.amd.cdna4.mfma(q_dot, k, S)\n    return S\n\n\n@gluon.jit\ndef _qkpv_lds(cfg, valid, q_dot, m_i, l_i, acc, head_mask, qk_scale, kv_smem, red_smem):\n    \"\"\"QK -> softmax -> PV over a tile resident in LDS; the row max / sum exchanges go\n    through red_smem.\"\"\"\n    neg_inf = float(\"-inf\")\n    S = _qk_scores(cfg, q_dot, kv_smem)\n    # the tile's range test and the -1 sentinels fold into the score mask\n    col_mask = gl.convert_layout(valid, gl.SliceLayout(0, cfg.qk_layout))[None, :]\n    if not cfg.HEAD_ALIGNED:\n        col_mask = gl.convert_layout(head_mask, gl.SliceLayout(1, cfg.qk_layout))[:, None] & col_mask\n    S = gl.where(col_mask, S, neg_inf)\n    # Online softmax in the base-2 exponent domain; m_i carries qk_scale\n    # (= scale * log2e). max commutes with a positive scale, so scale the row max\n    # instead of every element of S; S * qk_scale - m_new lowers to one FMA.\n    m_block = _row_reduce_lds(cfg, S, red_smem.slice(0, cfg.BLOCK_M), True) * qk_scale\n    m_new = _max2(m_i, m_block)\n    m_new = gl.where(m_new > neg_inf, m_new, 0.0)\n    p = gl.exp2(S * qk_scale - m_new[:, None])\n    alpha = gl.exp2(m_i - m_new)\n    l_new = l_i * alpha + _row_reduce_lds(cfg, p, red_smem.slice(cfg.BLOCK_M, cfg.BLOCK_M), False)\n    v = kv_smem.load(cfg.v_layout)\n    p_dot = gl.convert_layout(p.to(gl.bfloat16), cfg.p_layout)\n    alpha_pv = gl.convert_layout(alpha, gl.SliceLayout(1, cfg.pv_layout))\n    acc = acc * alpha_pv[:, None]\n    acc = gl.amd.cdna4.mfma(p_dot, v, acc)\n    return m_new, l_new, acc\n\n\n@gluon.jit\ndef _dsv4_slot_ids(cfg, base, k_start, seg_hi, k_rng_slot, k_rng_rope, k_rng_col):\n    \"\"\"Slot ids of one tile in every layout it uses, in one round trip. Clamped into\n    range; the score mask drops the duplicates.\"\"\"\n    last = seg_hi - 1\n    s_g = _read_slots_at(cfg, base, gl.minimum(k_start + k_rng_slot, last))\n    s_r = _read_slots_at(cfg, base, gl.minimum(k_start + k_rng_rope, last))\n    s_c = _read_slots_at(cfg, base, gl.minimum(k_start + k_rng_col, last))\n    return s_g, s_r, s_c\n\n\n@gluon.jit\ndef _split_slot_pow2(cfg, slot, SHIFT: gl.constexpr):\n    \"\"\"(page, row) of non-negative slot ids, by shifts.\"\"\"\n    if cfg.SLOT_U32:\n        slot = slot.to(gl.uint32)\n    blk = slot >> SHIFT\n    return blk.to(gl.int32), (slot - (blk << SHIFT)).to(gl.int32)\n\n\n@gluon.jit\ndef _dsv4_gather(cfg, seg, k_start, seg_hi, offs_full, offs_rope, k_rng_slot, k_rng_rope, k_rng_col, slots):\n    \"\"\"Issue one tile's gathers from slot ids read a tile earlier. Returns\n    (x, sc, k_rope, valid), valid in the score-column layout.\"\"\"\n    SHIFT: gl.constexpr = seg.fmt.BLOCK_SIZE.bit_length() - 1\n    gl.static_assert(seg.fmt.BLOCK_SIZE == 1 << SHIFT, \"pages must be a power of two\")\n    fmt = seg.fmt\n    cache_ptr = seg.cache_ptr\n    cs0 = seg.cs0\n    s_g, s_r, s_c = slots\n    if not fmt.USE_BUFFER_LOAD:\n        cs0 = cs0.to(gl.int64)  # >2 GB pool: 64-bit gather offsets\n    # sentinels gather the target, the score mask drops them\n    v_g = (k_start + k_rng_slot < seg_hi) & (s_g >= 0)\n    s_g = gl.where(v_g, s_g, seg.target)\n    v_r = (k_start + k_rng_rope < seg_hi) & (s_r >= 0)\n    s_r = gl.where(v_r, s_r, seg.target)\n    valid = (k_start + k_rng_col < seg_hi) & (s_c >= 0)\n    # carried as i32: a loop-carried i1 vector is repacked every iteration\n    valid = valid.to(gl.int32)\n    bg, pg = _split_slot_pow2(cfg, s_g, SHIFT)\n    bgr, pgr = _split_slot_pow2(cfg, s_r, SHIFT)\n    nope_row = bg * cs0 + pg * fmt.TOK_U8\n    scl_row = bg * cs0 + (fmt.TOK_U8 << SHIFT) + pg * fmt.SCL_TRAILER_U8\n    # Scales first (vmcnt counts in order). On the 64-bit path they come as the dwords\n    # holding each exponent byte (_dsv4_scales extracts it; carried i8 would be repacked).\n    if fmt.USE_BUFFER_LOAD:\n        sc = _cache_load(cache_ptr, scl_row, offs_full // 64, True)\n    else:\n        cols = gl.arange(0, fmt.NG, layout=gl.SliceLayout(0, fmt.scl_l))\n        rows = gl.convert_layout(scl_row, gl.SliceLayout(1, fmt.scl_l))\n        p32 = cache_ptr.to(gl.pointer_type(gl.int32), bitcast=True)\n        sc = gl.load(p32 + ((rows[:, None] + (cols & -4)[None, :]) >> 2), cache_modifier=\"\")\n    x_u8 = _cache_load(cache_ptr, nope_row, offs_full, fmt.USE_BUFFER_LOAD)\n    k_rope = _cache_load(\n        seg.alt_ptr,\n        bgr * (cs0 // 2) + pgr * fmt.TOK_U16 + fmt.ROPE_U16_OFF,\n        offs_rope,\n        fmt.USE_BUFFER_LOAD,\n    )\n    return x_u8, sc, k_rope, valid\n\n\n@gluon.jit\ndef _dsv4_scales(cfg, seg, sc):\n    \"\"\"A gathered tile's exponents as u8 in gather_l: the 64-bit path's [BLOCK_K, NG]\n    dwords are unpacked and widened; the buffer-load gather is already wide.\"\"\"\n    fmt = seg.fmt\n    if not fmt.USE_BUFFER_LOAD:\n        cols = gl.arange(0, fmt.NG, layout=gl.SliceLayout(0, fmt.scl_l))\n        sc = ((sc >> ((cols & 3) * 8)[None, :]) & 0xFF).to(gl.uint8)\n        sc = _widen_scales(sc, cfg.gather_l, fmt.NG, cfg.KV_DIM)\n    return sc\n\n\n@gluon.jit\ndef _stage(cfg, seg, x_u8, sc, k_rope, kv_smem):\n    \"\"\"Write one gathered tile into LDS. The KV buffer is the full KV_DIM-wide dequant:\n    the gather reads KV_DIM bytes, the last 64 being bf16 rope read as garbage fp8 and\n    overwritten by the slice-store, so the gather stays pow-2 wide.\"\"\"\n    _deq_store_tile(x_u8, sc, kv_smem, seg.fmt)\n    kv_smem.slice(seg.fmt.NOPE_DIM, cfg.ROPE_DIM, dim=1).store(k_rope)\n\n\n@gluon.jit\ndef _dsv4_segment(\n    cfg,\n    seg,\n    q_dot,\n    hi,\n    m_i,\n    l_i,\n    acc,\n    head_mask,\n    qk_scale,\n    kv_smem,\n    red_smem,\n    PREFETCH: gl.constexpr,\n):\n    \"\"\"Walk keys [0, hi) of one segment. A tile's slot ids are read a tile ahead of its\n    gathers; PREFETCH also issues the gathers a tile ahead, after staging the current\n    tile, so the in-flight tile needs no back-edge copy.\"\"\"\n    BK: gl.constexpr = cfg.BLOCK_K\n    offs_full = gl.arange(0, cfg.KV_DIM, layout=gl.SliceLayout(0, cfg.gather_l))\n    offs_rope = gl.arange(0, cfg.ROPE_DIM, layout=gl.SliceLayout(0, cfg.gather_rope_l))\n    k_rng_slot = gl.arange(0, BK, layout=cfg.slot_l)\n    k_rng_rope = gl.arange(0, BK, layout=gl.SliceLayout(1, cfg.gather_rope_l))\n    k_rng_col = gl.arange(0, BK, layout=gl.SliceLayout(0, cfg.qk_layout))\n    lo = 0\n    n = (hi + BK - 1) // BK\n    if n > 0:\n        base = seg.indices_ptr + seg.seg_start\n        ids = _dsv4_slot_ids(cfg, base, lo, hi, k_rng_slot, k_rng_rope, k_rng_col)\n        if PREFETCH:\n            ids1 = _dsv4_slot_ids(cfg, base, lo + BK, hi, k_rng_slot, k_rng_rope, k_rng_col)\n        # Sentinels gather the first tile's largest slot id; only an all-sentinel first\n        # tile searches further.\n        target = _first_valid_slot(cfg, seg, gl.max(ids[0], axis=0), lo + BK, hi)\n        n = gl.where(target < 0, 0, n)\n        seg = _with_target(seg, target)\n        if n > 0:\n            if PREFETCH:\n                tile = _dsv4_gather(\n                    cfg, seg, lo, hi, offs_full, offs_rope, k_rng_slot, k_rng_rope, k_rng_col, ids\n                )\n                ids = ids1\n            for t in range(n):\n                k_t = lo + t * BK\n                if not PREFETCH:\n                    tile = _dsv4_gather(\n                        cfg, seg, k_t, hi, offs_full, offs_rope, k_rng_slot, k_rng_rope, k_rng_col, ids\n                    )\n                _stage(cfg, seg, tile[0], _dsv4_scales(cfg, seg, tile[1]), tile[2], kv_smem)\n                valid = tile[3] != 0\n                # In flight during this tile's dots; past the range the ids clamp to the\n                # last one.\n                if PREFETCH:\n                    tile = _dsv4_gather(\n                        cfg,\n                        seg,\n                        k_t + BK,\n                        hi,\n                        offs_full,\n                        offs_rope,\n                        k_rng_slot,\n                        k_rng_rope,\n                        k_rng_col,\n                        ids,\n                    )\n                    ids = _dsv4_slot_ids(cfg, base, k_t + 2 * BK, hi, k_rng_slot, k_rng_rope, k_rng_col)\n                else:\n                    ids = _dsv4_slot_ids(cfg, base, k_t + BK, hi, k_rng_slot, k_rng_rope, k_rng_col)\n                m_i, l_i, acc = _qkpv_lds(\n                    cfg, valid, q_dot, m_i, l_i, acc, head_mask, qk_scale, kv_smem, red_smem\n                )\n    return m_i, l_i, acc\n\n\n@gluon.jit\ndef _inv_rope(x, cs_row, ROPE_DIM: gl.constexpr):\n    \"\"\"Inverse GPT-J RoPE on the trailing ROPE_DIM lanes of x [M, D] f32, with the row's\n    (cos, sin) pairs interleaved at cs_row: even' = fma(even, cos, odd * sin),\n    odd' = fma(odd, cos, -(even * sin)), as sglang's flat-row kernel evaluates it; the\n    NoPE lanes pass through.\"\"\"\n    M: gl.constexpr = x.shape[0]\n    D: gl.constexpr = x.shape[1]\n    even, odd = gl.split(gl.reshape(x, [M, D // 2, 2]))\n    k = gl.arange(0, D // 2, layout=gl.SliceLayout(0, even.type.layout))\n    k = k - (D - ROPE_DIM) // 2\n    is_rope = k >= 0\n    kk = gl.where(is_rope, k, 0)\n    # buffer_load folds the mask into the offset; a masked gl.load branches on exec.\n    cos = gl.amd.cdna4.buffer_load(ptr=cs_row, offsets=2 * kk, mask=is_rope, other=1.0)\n    sin = gl.amd.cdna4.buffer_load(ptr=cs_row, offsets=2 * kk + 1, mask=is_rope, other=0.0)\n    cos, sin = cos[None, :], sin[None, :]\n    e_sin = even * sin\n    o_sin = odd * sin\n    new_e = gl.fma(even, cos, o_sin)\n    new_o = gl.fma(odd, cos, -e_sin)\n    rmask = is_rope[None, :]\n    new_e = gl.where(rmask, new_e, even)\n    new_o = gl.where(rmask, new_o, odd)\n    return gl.reshape(gl.join(new_e, new_o), [M, D])\n\n\n@gluon.jit\ndef sparse_mla_inv_rope_kernel(\n    q_ptr,  # [C, H, S] bf16\n    main_cache_ptr,  # SWA pool, u8 view [pages, page rows, 584] (page pitch main_cs0)\n    main_cache_bf16_ptr,  # bf16 view of it\n    main_indices_ptr,  # [C, main_width] int32 slot ids, -1: none\n    extra_cache_ptr,  # top-k pool; aliases main when HAS_EXTRA=False\n    extra_cache_bf16_ptr,\n    extra_indices_ptr,  # [C, extra_width] int32\n    attn_sink_ptr,  # [H] f32\n    out_ptr,  # [C, H, S] bf16\n    pos_ptr,  # [C] int32 / int64\n    cos_sin_ptr,  # [P, ROPE_DIM] f32: (cos, sin) per pair\n    scale: gl.constexpr,\n    q_stride0: gl.constexpr,\n    q_stride1: gl.constexpr,\n    out_stride0: gl.constexpr,\n    out_stride1: gl.constexpr,\n    cs_stride: gl.constexpr,\n    main_cs0,\n    extra_cs0,\n    main_width,\n    extra_width,\n    num_heads: gl.constexpr,\n    HAS_EXTRA: gl.constexpr,\n    MAIN_BLOCK_SIZE: gl.constexpr,\n    EXTRA_BLOCK_SIZE: gl.constexpr,\n    CS0_ALIGN: gl.constexpr,\n    NOPE_DIM: gl.constexpr,\n    ROPE_DIM: gl.constexpr,\n    HEAD_SIZE: gl.constexpr,\n    BLOCK_M: gl.constexpr,\n    BLOCK_K: gl.constexpr,\n    HEAD_ALIGNED: gl.constexpr,\n    NOPE_CHUNK: gl.constexpr,\n    MAIN_USE_BUFFER_LOAD: gl.constexpr,\n    EXTRA_USE_BUFFER_LOAD: gl.constexpr,\n    IDX_BUFFER_LOAD: gl.constexpr,\n    SLOT_U32: gl.constexpr,\n    XCD_REMAP: gl.constexpr,\n    DSV4_PREFETCH: gl.constexpr,\n):\n    \"\"\"One program = (query, head block): the main (SWA) segment, then the extra (top-k)\n    one, the sink folded into the normalisation, the output rounded to bf16, its\n    trailing ROPE_DIM lanes inverse-rotated, stored.\"\"\"\n    NUM_WARPS: gl.constexpr = gl.num_warps()\n    gl.static_assert(CS0_ALIGN >= 4, \"page pitches are 4-byte aligned\")\n    if SLOT_U32:\n        # No-op given the pitch guarantee; lets block * cs0 use a 24-bit multiply.\n        main_cs0 = main_cs0 & 0xFFFFFF\n        extra_cs0 = extra_cs0 & 0xFFFFFF\n    # Row bases are block*cs0 + pos*TOK with runtime block/pos, so divisibility\n    # analysis sees 1-byte alignment unless the driver vouches for cs0.\n    main_cs0 = gl.multiple_of(main_cs0, CS0_ALIGN)\n    extra_cs0 = gl.multiple_of(extra_cs0, CS0_ALIGN)\n    if XCD_REMAP > 0:\n        # the head blocks of a row (which read the same KV rows) on one XCD\n        nq = gl.num_programs(0)\n        nh = gl.num_programs(1)\n        w = _remap_xcd(gl.program_id(0) + nq * gl.program_id(1), nq * nh, XCD_REMAP)\n        query_idx = w // nh\n        pid_h = w % nh\n    else:\n        query_idx = gl.program_id(0)\n        pid_h = gl.program_id(1)\n\n    cfg = Cfg(BLOCK_M, BLOCK_K, HEAD_SIZE, ROPE_DIM, NUM_WARPS, HEAD_ALIGNED, IDX_BUFFER_LOAD, SLOT_U32, True)\n    main_fmt = Fmt(cfg, MAIN_BLOCK_SIZE, MAIN_USE_BUFFER_LOAD, NOPE_DIM, NOPE_CHUNK)\n    extra_fmt = Fmt(cfg, EXTRA_BLOCK_SIZE, EXTRA_USE_BUFFER_LOAD, NOPE_DIM, NOPE_CHUNK)\n\n    h_off = pid_h * BLOCK_M\n    main_start = query_idx * main_width\n    if HAS_EXTRA:\n        extra_start = query_idx * extra_width\n    else:\n        extra_start = 0\n\n    # exp2 softmax\n    RCP_LN2: gl.constexpr = 1.4426950408889634\n    qk_scale = scale * RCP_LN2\n\n    offs_m_q = gl.arange(0, BLOCK_M, layout=gl.SliceLayout(1, cfg.blocked_q))\n    offs_d_q = gl.arange(0, HEAD_SIZE, layout=gl.SliceLayout(0, cfg.blocked_q))\n    h_q = h_off + offs_m_q\n    h_mask_q = h_q < num_heads\n    q_off = (query_idx * q_stride0 + h_q[:, None] * q_stride1 + offs_d_q[None, :]).to(gl.int32)\n    # Q is read once per query\n    q = gl.amd.cdna4.buffer_load(ptr=q_ptr, offsets=q_off, mask=h_mask_q[:, None], other=0.0, cache=\".cg\")\n    if cfg.Q_LDS:\n        q_dot = gl.allocate_shared_memory(gl.bfloat16, [BLOCK_M, HEAD_SIZE], cfg.q_shared)\n        q_dot.store(q.to(gl.bfloat16))\n    else:\n        q_dot = gl.convert_layout(q, cfg.q_layout)\n\n    offs_m_pv = gl.arange(0, BLOCK_M, layout=gl.SliceLayout(1, cfg.pv_layout))\n    h_pv = h_off + offs_m_pv\n    head_mask_pv = h_pv < num_heads\n    # The store's table row, by the query's position: issued now, its latency hides\n    # under the tile loop.\n    cs_row = cos_sin_ptr + gl.load(pos_ptr + query_idx).to(gl.int64) * cs_stride\n\n    # online-softmax state\n    m_i = gl.full([BLOCK_M], float(\"-inf\"), gl.float32, layout=gl.SliceLayout(1, cfg.qk_layout))\n    l_i = gl.zeros([BLOCK_M], gl.float32, layout=gl.SliceLayout(1, cfg.qk_layout))\n    acc = gl.zeros([BLOCK_M, HEAD_SIZE], gl.float32, layout=cfg.pv_layout)\n\n    kv_smem = gl.allocate_shared_memory(gl.bfloat16, [BLOCK_K, HEAD_SIZE], cfg.kv_shared)\n    # the row max / sum exchange\n    red_smem = gl.allocate_shared_memory(\n        gl.float32,\n        [2 * BLOCK_M, cfg.N_WARPS],\n        gl.SwizzledSharedLayout(vec=1, per_phase=1, max_phase=1, order=[1, 0]),\n    )\n\n    main_seg = Seg(\n        main_fmt,\n        main_cache_ptr,\n        main_cache_bf16_ptr,\n        main_indices_ptr,\n        main_start,\n        main_cs0,\n        main_start,\n    )\n    m_i, l_i, acc = _dsv4_segment(\n        cfg,\n        main_seg,\n        q_dot,\n        main_width,\n        m_i,\n        l_i,\n        acc,\n        head_mask_pv,\n        qk_scale,\n        kv_smem,\n        red_smem,\n        DSV4_PREFETCH,\n    )\n    if HAS_EXTRA:\n        extra_seg = Seg(\n            extra_fmt,\n            extra_cache_ptr,\n            extra_cache_bf16_ptr,\n            extra_indices_ptr,\n            extra_start,\n            extra_cs0,\n            extra_start,\n        )\n        m_i, l_i, acc = _dsv4_segment(\n            cfg,\n            extra_seg,\n            q_dot,\n            extra_width,\n            m_i,\n            l_i,\n            acc,\n            head_mask_pv,\n            qk_scale,\n            kv_smem,\n            red_smem,\n            DSV4_PREFETCH,\n        )\n\n    m_pv = gl.convert_layout(m_i, gl.SliceLayout(1, cfg.pv_layout))\n    l_pv = gl.convert_layout(l_i, gl.SliceLayout(1, cfg.pv_layout))\n    # m_pv is in the base-2 exponent domain; lift the sink into it.\n    sink = (\n        gl.amd.cdna4.buffer_load(ptr=attn_sink_ptr, offsets=h_pv, mask=head_mask_pv, other=float(\"-inf\")).to(\n            gl.float32\n        )\n        * RCP_LN2\n    )\n    m_final = _max2(m_pv, sink)\n    alpha = gl.exp2(m_pv - m_final)\n    l_final = l_pv * alpha + gl.exp2(sink - m_final)\n    acc = acc * alpha[:, None]\n    one_over_l = 1.0 / l_final\n    out = acc * one_over_l[:, None]\n    # Inverse RoPE on the MFMA accumulator layout (transposed 16x16 MFMA: each lane holds\n    # 4 consecutive output columns, so every (even, odd) pair is in one thread's\n    # registers), on the output rounded to bf16 as the unfused path stores it.\n    xr = _inv_rope(out.to(out_ptr.dtype.element_ty).to(gl.float32), cs_row, ROPE_DIM)\n    xr = gl.convert_layout(xr, cfg.pv_layout)\n    offs_d_o = gl.arange(0, HEAD_SIZE, layout=gl.SliceLayout(0, cfg.pv_layout))\n    o_off = (query_idx * out_stride0 + h_pv[:, None] * out_stride1 + offs_d_o[None, :]).to(gl.int32)\n    gl.amd.cdna4.buffer_store(\n        xr.to(out_ptr.dtype.element_ty),\n        ptr=out_ptr,\n        offsets=o_off,\n        mask=head_mask_pv[:, None],\n    )\n"
+      }
+    ]
+  }
+}
