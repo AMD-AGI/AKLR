@@ -16,7 +16,7 @@ import torch
 import aklr.plugins.vllm as plugin
 from aklr.core.platform.env import ENV_DISABLE, ENV_VLLM_PLUGIN
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.plugins.vllm import hook
+from aklr.plugins.vllm import hook, warmup
 
 # at collection, as the plugin does in each worker: before any test empties hook._ROUTES
 importlib.import_module("aklr.plugins.vllm.layers")
@@ -161,9 +161,13 @@ def worker(monkeypatch):
         def init_device(self):
             calls.append("device bound")
 
+        def compile_or_warm_up_model(self):
+            calls.append("vllm warms up")
+
     module = ModuleType("vllm.v1.worker.gpu_worker")
     module.Worker = Worker
     monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setattr(warmup, "warm_up", lambda worker: calls.append("aklr warms up"))
     monkeypatch.setattr(plugin, "register_vllm_plugin", lambda: calls.append("aklr starts"))
     monkeypatch.setattr(plugin, "op_packages", lambda: ("aklr.ops.gemm", "aklr.plugins.vllm.x.y"))
     monkeypatch.setattr(plugin.importlib, "import_module", calls.append)
@@ -184,7 +188,7 @@ def worker(monkeypatch):
 )
 def test_only_1_turns_the_routes_on(monkeypatch, worker, env, hooked):
     """The routes hook only with AKLR_VLLM_PLUGIN=1, not with AKLR_DISABLE=1, and only in a
-    worker, once its device is bound."""
+    worker, once its device is bound; AKLR warms up after vLLM does."""
     Worker, calls = worker
     for name, value in env.items():
         monkeypatch.setenv(name, value)
@@ -192,8 +196,10 @@ def test_only_1_turns_the_routes_on(monkeypatch, worker, env, hooked):
     assert calls == ["aklr starts"]
     Worker().init_device()
     Worker().init_device()
+    Worker().compile_or_warm_up_model()
     routes = ["aklr.plugins.vllm.layers", "aklr.plugins.vllm.x.y.api", "install"] if hooked else []
-    assert calls == ["aklr starts", "device bound", *routes, "device bound"]
+    warmed = ["aklr warms up"] if hooked else []
+    assert calls == ["aklr starts", "device bound", *routes, "device bound", "vllm warms up", *warmed]
 
 
 def test_any_other_switch_value_ends_the_process(monkeypatch, worker):

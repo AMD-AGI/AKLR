@@ -43,6 +43,18 @@ def _register() -> None:
 
     Worker.init_device = wrapper
 
+    compile_or_warm_up_model = Worker.compile_or_warm_up_model
+
+    @functools.wraps(compile_or_warm_up_model)
+    def warm_up(self, *args, **kwargs):
+        result = compile_or_warm_up_model(self, *args, **kwargs)
+        from aklr.plugins.vllm.warmup import warm_up
+
+        warm_up(self)
+        return result
+
+    Worker.compile_or_warm_up_model = warm_up
+
 
 @functools.cache
 def _install_once() -> None:
