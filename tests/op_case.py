@@ -19,6 +19,7 @@ from aklr.core.contract.spec import SOURCE_SUFFIXES, Language, PointSpec
 from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
 from tests.ops import cases as ops_cases
 from tests.plugins.sglang import cases as sglang_cases
+from tests.plugins.vllm import cases as vllm_cases
 
 # the gemm@1.0 kernel the CPU tests serve: out = a @ b.T
 GEMM_KERNEL_SOURCE = "def run(*, a, b, out, **_):\n    out.copy_(a @ b.mT)\n"
@@ -65,11 +66,13 @@ _NO_OP_KERNEL_SOURCE = "def run(**call): ...\n"  # a schema's kernel no test run
 # contract order: each contract's base Point first
 _SMALL_POINTS: tuple[PointSpec, ...] = tuple(
     sorted(
-        (*ops_cases.SMALL_POINTS, *sglang_cases.SMALL_POINTS),
+        (*ops_cases.SMALL_POINTS, *sglang_cases.SMALL_POINTS, *vllm_cases.SMALL_POINTS),
         key=lambda point: point.contract_id,
     )
 )
-_GFX950_CONTRACT_IDS = ops_cases.GFX950_CONTRACT_IDS | sglang_cases.GFX950_CONTRACT_IDS
+_GFX950_CONTRACT_IDS = (
+    ops_cases.GFX950_CONTRACT_IDS | sglang_cases.GFX950_CONTRACT_IDS | vllm_cases.GFX950_CONTRACT_IDS
+)
 
 
 class OpCase:
