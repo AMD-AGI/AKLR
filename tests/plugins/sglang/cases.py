@@ -51,6 +51,56 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # GLM-5.2's DSA indexer shrunk: 16 heads (32 on GLM-5.2) and narrow projections, its
+    # 128-value heads and keys, 64-value RoPE part and one index-K page as sglang holds them on
+    # aiter
+    PointSpec(
+        contract_id="dsa_indexer_prepare@1.0",
+        axes={
+            "n_tokens": 4,
+            "model_dim": 256,
+            "n_positions": 64,
+            "n_pages": 1,
+            "q_lora_rank": 256,
+            "n_heads": 16,
+        },
+        dtypes={
+            "x": "bfloat16",
+            "q_lora": "bfloat16",
+            "wq_b": "bfloat16",
+            "wk": "bfloat16",
+            "weights_proj": "bfloat16",
+            "k_norm_weight": "bfloat16",
+            "k_norm_bias": "bfloat16",
+            "cos_cache": "bfloat16",
+            "sin_cache": "bfloat16",
+            "positions": "int64",
+            "out_cache_loc": "int64",
+            "index_k_cache": "float8_e4m3fn",
+            "q_fp8": "float8_e4m3fn",
+            "head_weights": "float32",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
+        contract_id="dsa_indexer_key_prepare@1.0",
+        axes={"n_tokens": 4, "model_dim": 256, "n_positions": 64, "n_pages": 1},
+        dtypes={
+            "x": "bfloat16",
+            "wk": "bfloat16",
+            "k_norm_weight": "bfloat16",
+            "k_norm_bias": "bfloat16",
+            "cos_cache": "bfloat16",
+            "sin_cache": "bfloat16",
+            "positions": "int64",
+            "out_cache_loc": "int64",
+            "index_k_cache": "float8_e4m3fn",
+            "no_values": "float32",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
     # MiniMax-M2's MoE shrunk: every routed expert on the rank, then half of them (expert
     # parallelism); the experts as sglang holds them for aiter
     *(
@@ -350,6 +400,8 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
 GFX950_CONTRACT_IDS = frozenset(
     {
         "deepseek_v2_mxfp4_moe@1.0",
+        "dsa_indexer_key_prepare@1.0",
+        "dsa_indexer_prepare@1.0",
         "dsa_sparse_mla_decode@1.0",
         "gdn_prefill_group_fp8_quant@1.0",
         "minimax_m2_fp8_moe@1.0",

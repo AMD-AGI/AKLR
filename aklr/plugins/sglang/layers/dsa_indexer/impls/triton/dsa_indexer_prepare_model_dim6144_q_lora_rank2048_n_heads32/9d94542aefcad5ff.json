@@ -1,0 +1,253 @@
+{
+  "schema_version": 5,
+  "name": "dsa_indexer_prepare_model_dim6144_q_lora_rank2048_n_heads32",
+  "contract_id": "dsa_indexer_prepare@1.0",
+  "description": "sglang's DSA indexer before its scores on one rank (Indexer.forward_cuda on HIP, the Hadamard-rotated index-K format). Each query head is a head of q_lora wq_b^T, rounded to bf16, turned and transformed as the key, and quantized to q_fp8 at its own scale as the key is; its head weight is bf16(bf16(x weights_proj^T) * n_heads^-0.5) times that scale times 128^-0.5. Each token's key is LayerNorm(x wk^T) (k_norm_weight, k_norm_bias, k_norm_eps), its first 64 values turned by RoPE in interleaved pairs (2i, 2i + 1) by cos_cache and sin_cache at the token's position, then the Hadamard transform over its 128 values (Sylvester order) times 128^-0.5, each step rounded to bf16 as sglang rounds it; it is stored into index_k_cache at its out_cache_loc slot as fp8 values at a scale of 2^ceil(log2(max(amax, 0.0001) / 448)) of its values, and that scale in fp32.",
+  "op_type": "dsa_indexer",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, padding rows included."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 6144,
+      "description": "The hidden states' width: wk's and weights_proj's input."
+    },
+    "n_positions": {
+      "type": "var",
+      "description": "Rows of the rotary tables."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Pages of the index-K cache."
+    },
+    "q_lora_rank": {
+      "type": "const",
+      "value": 2048,
+      "description": "q_lora's width: wq_b's input."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 32,
+      "description": "Indexer heads."
+    },
+    "index_cols": {
+      "type": "const",
+      "value": 4096,
+      "description": "wq_b's rows: the heads side by side."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "x": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's hidden states, the layer's input."
+    },
+    "q_lora": {
+      "shape": [
+        "n_tokens",
+        "q_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's query latent after q_a_layernorm: wq_b's input."
+    },
+    "wq_b": {
+      "shape": [
+        "index_cols",
+        "q_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 2048
+      },
+      "description": "wq_b: the query heads' projection, each head's rows in turn."
+    },
+    "wk": {
+      "shape": [
+        128,
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 6144
+      },
+      "description": "wk: the key's projection."
+    },
+    "weights_proj": {
+      "shape": [
+        "n_heads",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 6144
+      },
+      "description": "weights_proj: each head's weight, a row per head."
+    },
+    "k_norm_weight": {
+      "shape": [128],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "k_norm's (LayerNorm) weight."
+    },
+    "k_norm_bias": {
+      "shape": [128],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "k_norm's bias."
+    },
+    "cos_cache": {
+      "shape": [
+        "n_positions",
+        32
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The rotary cosines, a row per position and a column per RoPE pair."
+    },
+    "sin_cache": {
+      "shape": [
+        "n_positions",
+        32
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The rotary sines, as cos_cache."
+    },
+    "positions": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_positions - 1",
+        "distinct": false
+      },
+      "description": "Each token's position: its row of the rotary tables."
+    },
+    "out_cache_loc": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "64 * n_pages - 1",
+        "distinct": true
+      },
+      "description": "Each token's slot of the index-K cache (page slot // 64, key slot % 64), distinct but for sglang's graph padding rows, which all write slot 0, a slot no sequence reads."
+    },
+    "index_k_cache": {
+      "shape": [
+        "n_pages",
+        64,
+        132
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": 6,
+        "log2_hi": 8
+      },
+      "description": "This layer's index-K cache, as sglang views it: pages of 64 keys, their 128 fp8 values in 16 x 16 tiles (16 keys by 16 values) and then their fp32 scales, each page's bytes compared as fp8 values. The tokens' keys are stored into it."
+    },
+    "k_norm_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "k_norm's epsilon."
+    }
+  },
+  "outputs": {
+    "q_fp8": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        128
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "Each token's query heads, turned and transformed, in fp8 at their scales."
+    },
+    "head_weights": {
+      "shape": [
+        "n_tokens",
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "description": "Each token's head weights, each with its head's fp8 scale folded in."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 256,
+        "n_positions": 131072,
+        "n_pages": 4
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0003,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "decode_project_tile.py",
+        "content": "# Created by OpenAI\n\"\"\"Indexer prepare: shared project tile.\"\"\"\n\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n\n@gluon.jit\ndef _project_load(\n    X,\n    W,\n    rows,\n    cols,\n    ak,\n    bk,\n    start,\n    M: gl.constexpr,\n    N: gl.constexpr,\n    K: gl.constexpr,\n    SX: gl.constexpr,\n    SW: gl.constexpr,\n    BK: gl.constexpr,\n    BUFFER: gl.constexpr,\n):\n    ka = start * BK + ak\n    kb = start * BK + bk\n    if BUFFER:\n        a = gl.amd.cdna4.buffer_load(X, rows[:, None] * SX + ka[None, :], (rows[:, None] < M) & (ka[None, :] < K), 0)\n        b = gl.amd.cdna4.buffer_load(W, cols[None, :] * SW + kb[:, None], (cols[None, :] < N) & (kb[:, None] < K), 0)\n    else:\n        a = gl.load(X + rows[:, None] * SX + ka[None, :], (rows[:, None] < M) & (ka[None, :] < K), 0)\n        b = gl.load(W + cols[None, :] * SW + kb[:, None], (cols[None, :] < N) & (kb[:, None] < K), 0)\n    return (a, b)\n\n\n@gluon.jit\ndef _project_tile(\n    X,\n    W,\n    Y,\n    tile,\n    M: gl.constexpr,\n    N: gl.constexpr,\n    K: gl.constexpr,\n    SX: gl.constexpr,\n    SW: gl.constexpr,\n    BM: gl.constexpr,\n    BN: gl.constexpr,\n    BK: gl.constexpr,\n    PREFETCH: gl.constexpr = False,\n    BUFFER: gl.constexpr = False,\n):\n    waves: gl.constexpr = gl.num_warps()\n    a_layout: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [waves, 1], [1, 0])\n    b_layout: gl.constexpr = gl.BlockedLayout([8, 1], [16, 4], [1, waves], [0, 1])\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[waves // 2, 2]\n    )\n    pm = tile // gl.cdiv(N, BN)\n    pn = tile % gl.cdiv(N, BN)\n    rows = pm * BM + gl.arange(0, BM, gl.SliceLayout(1, a_layout))\n    cols = pn * BN + gl.arange(0, BN, gl.SliceLayout(0, b_layout))\n    ak = gl.arange(0, BK, gl.SliceLayout(0, a_layout))\n    bk = gl.arange(0, BK, gl.SliceLayout(1, b_layout))\n    acc = gl.zeros((BM, BN), gl.float32, mma)\n    if PREFETCH:\n        a, b = _project_load(X, W, rows, cols, ak, bk, 0, M, N, K, SX, SW, BK, BUFFER)\n        for start in range(1, gl.cdiv(K, BK)):\n            next_a, next_b = _project_load(X, W, rows, cols, ak, bk, start, M, N, K, SX, SW, BK, BUFFER)\n            operand_a = gl.convert_layout(a, gl.DotOperandLayout(0, mma, 8))\n            operand_b = gl.convert_layout(b, gl.DotOperandLayout(1, mma, 8))\n            acc = gl.amd.cdna4.mfma(operand_a, operand_b, acc)\n            a, b = (next_a, next_b)\n        a = gl.convert_layout(a, gl.DotOperandLayout(0, mma, 8))\n        b = gl.convert_layout(b, gl.DotOperandLayout(1, mma, 8))\n        acc = gl.amd.cdna4.mfma(a, b, acc)\n    else:\n        for start in range(gl.cdiv(K, BK)):\n            a, b = _project_load(X, W, rows, cols, ak, bk, start, M, N, K, SX, SW, BK, BUFFER)\n            a = gl.convert_layout(a, gl.DotOperandLayout(0, mma, 8))\n            b = gl.convert_layout(b, gl.DotOperandLayout(1, mma, 8))\n            acc = gl.amd.cdna4.mfma(a, b, acc)\n    mr = pm * BM + gl.arange(0, BM, gl.SliceLayout(1, mma))\n    nc = pn * BN + gl.arange(0, BN, gl.SliceLayout(0, mma))\n    gl.store(Y + mr[:, None] * N + nc[None, :], acc, (mr[:, None] < M) & (nc[None, :] < N))\n"
+      },
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"DSA indexer preparation for GLM-5.2 on gfx950, tuned in its TP4 deployment for 256 tokens.\n\nProjects each token's query heads (q_lora wq_b^T), key (x wk^T) and head gates (x\nweights_proj^T) in Gluon tiles; then the key's LayerNorm, RoPE on its first 64 values in\ninterleaved pairs and the 128-point Hadamard transform, each rounded to bf16, quantized to fp8\nat a power-of-two scale and stored with that fp32 scale into its preshuffled index-K page; each\nquery head turned and transformed alike, quantized to fp8, its head weight carrying its scale.\nIts first kernel stages each token's rotary row into scratch.\n\"\"\"\n\nfrom .decode_project_tile import _project_tile\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\nfrom triton.language.core import extern\nfrom triton.language.core import extern_elementwise\n\n\n@gluon.jit\ndef _copy_projection_pair(A, B, X, W, ao, bo, am, bm, ak, bk, start, K: gl.constexpr, BK: gl.constexpr):\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(\n        A,\n        X + start * BK,\n        ao,\n        am & (ak[None, :] < BK if K % BK == 0 else ak[None, :] + start * BK < K),\n        None if K % BK == 0 else 0,\n    )\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(\n        B,\n        W + start * BK,\n        bo,\n        bm & (bk[:, None] < BK if K % BK == 0 else bk[:, None] + start * BK < K),\n        None if K % BK == 0 else 0,\n    )\n    gl.amd.cdna4.async_copy.commit_group()\n\n\n@gluon.jit\ndef _async_project_tile(\n    X,\n    W,\n    Y,\n    tile,\n    M: gl.constexpr,\n    N: gl.constexpr,\n    K: gl.constexpr,\n    SX: gl.constexpr,\n    SW: gl.constexpr,\n    BM: gl.constexpr,\n    BN: gl.constexpr,\n    BK: gl.constexpr,\n    QUERY: gl.constexpr,\n):\n    a_layout: gl.constexpr = gl.BlockedLayout([1, 8], [512 // BK, BK // 8], [4, 1], [1, 0])\n    b_layout: gl.constexpr = gl.BlockedLayout([8, 1], [BK // 8, 512 // BK], [1, 4], [0, 1])\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4, instr_shape=[32, 32, 16] if QUERY else [16, 16, 32], transposed=not QUERY, warps_per_cta=[2, 2]\n    )\n    ROW_GROUP: gl.constexpr = 4\n    tile = tile.to(gl.uint32)\n    if QUERY:\n        pm = tile // gl.cdiv(N, BN) % gl.cdiv(M, BM)\n        pn = tile % gl.cdiv(N, BN)\n    else:\n        gl.static_assert(gl.cdiv(M, BM) % ROW_GROUP == 0)\n        pm = (tile // (gl.cdiv(N, BN) * ROW_GROUP) * ROW_GROUP + tile % ROW_GROUP) % gl.cdiv(M, BM)\n        pn = tile // ROW_GROUP % gl.cdiv(N, BN)\n    rows = gl.arange(0, BM, gl.SliceLayout(1, a_layout))\n    cols = gl.arange(0, BN, gl.SliceLayout(0, b_layout))\n    ak = gl.arange(0, BK, gl.SliceLayout(0, a_layout))\n    bk = gl.arange(0, BK, gl.SliceLayout(1, b_layout))\n    x_base = X + pm * BM * SX\n    w_base = W + pn * BN * SW\n    ao = rows[:, None] * SX + ak[None, :]\n    bo = cols[None, :] * SW + bk[:, None]\n    am = pm * BM + rows[:, None] < M\n    bm = pn * BN + cols[None, :] < N\n    sa0 = gl.allocate_shared_memory(X.dtype.element_ty, (BM, BK), gl.SwizzledSharedLayout(8, 1, 16, [1, 0]))\n    sb0 = gl.allocate_shared_memory(W.dtype.element_ty, (BK, BN), gl.SwizzledSharedLayout(8, 1, 16, [0, 1]))\n    sa1 = gl.allocate_shared_memory(X.dtype.element_ty, (BM, BK), gl.SwizzledSharedLayout(8, 1, 16, [1, 0]))\n    sb1 = gl.allocate_shared_memory(W.dtype.element_ty, (BK, BN), gl.SwizzledSharedLayout(8, 1, 16, [0, 1]))\n    steps: gl.constexpr = gl.cdiv(K, BK)\n    gl.static_assert(steps >= 2 and steps % 2 == 0)\n    _copy_projection_pair(sa0, sb0, x_base, w_base, ao, bo, am, bm, ak, bk, 0, K, BK)\n    _copy_projection_pair(sa1, sb1, x_base, w_base, ao, bo, am, bm, ak, bk, 1, K, BK)\n    acc = gl.zeros((BM, BN), gl.float32, mma)\n    aa = (sa0, sa1)\n    bb = (sb0, sb1)\n    for step in gl.static_range(steps):\n        gl.amd.cdna4.async_copy.wait_group(min(1, steps - step - 1))\n        gl.barrier()\n        a = gl.amd.cdna4.async_copy.load_shared_relaxed(aa[step % 2], gl.DotOperandLayout(0, mma, 8))\n        b = gl.amd.cdna4.async_copy.load_shared_relaxed(bb[step % 2], gl.DotOperandLayout(1, mma, 8))\n        if step + 2 < steps:\n            gl.barrier()\n            _copy_projection_pair(aa[step % 2], bb[step % 2], x_base, w_base, ao, bo, am, bm, ak, bk, step + 2, K, BK)\n        acc = gl.amd.cdna4.mfma(a, b, acc)\n    mr = gl.arange(0, BM, gl.SliceLayout(1, mma))\n    nc = gl.arange(0, BN, gl.SliceLayout(0, mma))\n    gl.amd.cdna4.buffer_store(\n        ptr=Y + pm * BM * N + pn * BN,\n        offsets=mr[:, None] * N + nc[None, :],\n        stored_value=acc.to(Y.dtype.element_ty),\n        mask=(pm * BM + mr[:, None] < M) & (pn * BN + nc[None, :] < N),\n    )\n\n\n@gluon.jit\ndef _stage_rotary_rows(Cos, Sin, Positions, Rotary, first_row, M: gl.constexpr, SC: gl.constexpr):\n    layout: gl.constexpr = gl.BlockedLayout([1, 4], [4, 16], [4, 1], [1, 0])\n    rows = first_row + gl.arange(0, 16, gl.SliceLayout(1, layout))\n    cols = gl.arange(0, 64, gl.SliceLayout(0, layout))\n    position = gl.load(Positions + rows, rows < M, 0)\n    values = gl.where(\n        cols[None, :] < 32,\n        gl.load(Cos + position[:, None] * SC + cols[None, :] % 32, (rows[:, None] < M) & (cols[None, :] < 32), 0),\n        gl.load(Sin + position[:, None] * SC + cols[None, :] % 32, (rows[:, None] < M) & (cols[None, :] >= 32), 0),\n    )\n    gl.store(Rotary + rows[:, None] * 64 + cols[None, :], values, rows[:, None] < M)\n\n\n@gluon.jit\ndef _grouped_projection(\n    X,\n    QLatent,\n    WK,\n    WGate,\n    WQ,\n    Key,\n    Gate,\n    Query,\n    Cos,\n    Sin,\n    Positions,\n    Rotary,\n    M: gl.constexpr,\n    HEADS: gl.constexpr,\n    K: gl.constexpr,\n    R: gl.constexpr,\n    SX: gl.constexpr,\n    SQ: gl.constexpr,\n    SWK: gl.constexpr,\n    SWG: gl.constexpr,\n    SWQ: gl.constexpr,\n    KC: gl.constexpr,\n    QC: gl.constexpr,\n    SC: gl.constexpr,\n    STAGE_ROTARY: gl.constexpr,\n):\n    tile = gl.program_id(0)\n    key_tiles: gl.constexpr = gl.cdiv(M, KC[0]) * gl.cdiv(128, KC[1])\n    gate_tiles: gl.constexpr = gl.cdiv(M, KC[0]) * gl.cdiv(HEADS, KC[1])\n    if tile < key_tiles:\n        if STAGE_ROTARY:\n            if tile // 4 % 8 == 0:\n                first_row = (tile // 32 * 4 + tile % 4) * 16\n                _stage_rotary_rows(Cos, Sin, Positions, Rotary, first_row, M, SC)\n        if M == 256:\n            _async_project_tile(X, WK, Key, tile, M, 128, K, SX, SWK, *KC, False)\n        else:\n            _project_tile(X, WK, Key, tile, M, 128, K, SX, SWK, *KC, True, True)\n    elif tile < key_tiles + gate_tiles:\n        if M == 256:\n            _async_project_tile(X, WGate, Gate, tile - key_tiles, M, HEADS, K, SX, SWG, *KC, False)\n        else:\n            _project_tile(X, WGate, Gate, tile - key_tiles, M, HEADS, K, SX, SWG, *KC, True, True)\n    elif M == 256:\n        _async_project_tile(QLatent, WQ, Query, tile - key_tiles - gate_tiles, M, HEADS * 128, R, SQ, SWQ, *QC, True)\n    else:\n        _project_tile(QLatent, WQ, Query, tile - key_tiles - gate_tiles, M, HEADS * 128, R, SQ, SWQ, *QC)\n\n\n@extern\ndef _dpp_intrinsic(bits, control, _semantic=None):\n    return extern_elementwise(\n        \"\",\n        \"\",\n        [bits, bits, control, 15, 15, True],\n        {(gl.int32, gl.int32, gl.int32, gl.int32, gl.int32, gl.int1): (\"llvm.amdgcn.update.dpp.i32\", gl.int32)},\n        is_pure=True,\n        _semantic=_semantic,\n    )\n\n\n@gluon.jit\ndef _dpp_move(x, control: gl.constexpr):\n    bits = x.to(gl.int32, bitcast=True)\n    moved = _dpp_intrinsic(bits, control)\n    return moved.to(gl.float32, bitcast=True)\n\n\n@gluon.jit\ndef _lane_xor(x, bit: gl.constexpr):\n    if bit == 0:\n        return _dpp_move(x, 177)\n    elif bit == 1:\n        return _dpp_move(x, 78)\n    elif bit == 2:\n        return _dpp_move(_dpp_move(x, 321), 27)\n    else:\n        return _dpp_move(x, 296)\n\n\n@gluon.jit\ndef _store_key(quant, scale, d, slot, Cache, PAGE: gl.constexpr, CACHE_INT32: gl.constexpr):\n    address_slot = slot.to(gl.int32) if CACHE_INT32 else slot\n    page = address_slot // PAGE\n    offset = address_slot % PAGE\n    dst = page * PAGE * 132 + offset // 16 * 2048 + d // 16 * 256 + offset % 16 * 16 + d % 16\n    gl.store(Cache + dst, quant.to(gl.uint8, bitcast=True), slot >= 0)\n    scales = gl.cast(Cache, gl.pointer_type(gl.float32))\n    gl.store(scales + page * PAGE * 33 + PAGE * 32 + offset, scale, slot >= 0)\n\n\n@gluon.jit\ndef _normalize_key(x, Gamma, Beta, d, eps):\n    gamma = gl.load(Gamma + d).to(gl.float32)\n    beta = gl.load(Beta + d).to(gl.float32)\n    mean = gl.sum(gl.sum(x.reshape((2, 64)), 1), 0) / 128\n    delta = x - mean\n    variance = gl.sum(gl.sum((delta * delta).reshape((2, 64)), 1), 0) / 128\n    inv = gl.rsqrt(variance + eps)\n    return (delta * inv * gamma + beta).to(gl.bfloat16).to(gl.float32)\n\n\n@gluon.jit\ndef _key_local_butterfly(x, bit: gl.constexpr, pair_layout: gl.constexpr):\n    paired = gl.convert_layout(x, pair_layout)\n    pairs = paired.reshape((128 >> bit + 1, 2, 1 << bit))\n    low, high = pairs.permute((0, 2, 1)).split()\n    return gl.join(low + high, low - high).permute((0, 2, 1)).reshape((128,))\n\n\n@gluon.jit\ndef _rotate_hadamard(x, d, Cos, Sin, position, SC: gl.constexpr):\n    partner = _lane_xor(x, 0)\n    cosine = gl.load(Cos + position * SC + d // 2, d < 64, 1).to(gl.float32)\n    sine = gl.load(Sin + position * SC + d // 2, d < 64, 0).to(gl.float32)\n    rotated = (\n        gl.where(d < 64, x * cosine + gl.where(d % 2 == 0, -partner, partner) * sine, x).to(gl.bfloat16).to(gl.float32)\n    )\n    for bit in gl.static_range(4):\n        other = _lane_xor(rotated, bit)\n        rotated = other + gl.where(d & 1 << bit == 0, rotated, -rotated)\n    layout16: gl.constexpr = gl.DistributedLinearLayout(\n        reg_bases=[[16]], lane_bases=[[1], [2], [4], [8], [64], [32]], warp_bases=[], block_bases=[], shape=[128]\n    )\n    layout32: gl.constexpr = gl.DistributedLinearLayout(\n        reg_bases=[[32]], lane_bases=[[1], [2], [4], [8], [64], [16]], warp_bases=[], block_bases=[], shape=[128]\n    )\n    layout64: gl.constexpr = gl.DistributedLinearLayout(\n        reg_bases=[[64]], lane_bases=[[1], [2], [4], [8], [32], [16]], warp_bases=[], block_bases=[], shape=[128]\n    )\n    rotated = _key_local_butterfly(rotated, 4, layout16)\n    rotated = _key_local_butterfly(rotated, 5, layout32)\n    rotated = _key_local_butterfly(rotated, 6, layout64)\n    return (rotated * 0.08838834764831845).to(gl.bfloat16).to(gl.float32)\n\n\n@gluon.jit\ndef _quantize_fp8(x):\n    maximum = gl.maximum(gl.max(gl.abs(x), 0), 0.0001)\n    exponent = gl.ceil(gl.log2(maximum / 448.0))\n    scale = gl.exp2(exponent)\n    inverse = gl.exp2(-exponent)\n    return ((x * inverse).to(gl.float8e4nv), scale)\n\n\n@gluon.jit\ndef _key_kernel(\n    Key,\n    Gamma,\n    Beta,\n    Cos,\n    Sin,\n    Positions,\n    Slots,\n    Cache,\n    eps,\n    SC: gl.constexpr,\n    PAGE: gl.constexpr,\n    CACHE_INT32: gl.constexpr,\n    STAGED_ROTARY: gl.constexpr = False,\n    METADATA_ROWS: gl.constexpr = 0,\n):\n    row = gl.program_id(0)\n    d = gl.arange(0, 128, layout=gl.BlockedLayout([1], [64], [1], [0]))\n    position = row if STAGED_ROTARY else gl.load(Positions + row)\n    if STAGED_ROTARY and METADATA_ROWS > 0:\n        metadata = gl.cast(Cos + METADATA_ROWS * 64, gl.pointer_type(gl.int64))\n        key_base = gl.load(metadata + row * 2)\n        scale_offset = gl.load(metadata + row * 2 + 1)\n    else:\n        slot = gl.load(Slots + row)\n    key = gl.load(Key + row * 128 + d).to(gl.float32)\n    key = _normalize_key(key, Gamma, Beta, d, eps)\n    key = _rotate_hadamard(key, d, Cos, Sin, position, SC)\n    d = gl.arange(0, 128, layout=key.type.layout)\n    quant, scale = _quantize_fp8(key)\n    if STAGED_ROTARY and METADATA_ROWS > 0:\n        gl.store(Cache + key_base + d // 16 * 256 + d % 16, quant.to(gl.uint8, bitcast=True), key_base >= 0)\n        scales = gl.cast(Cache, gl.pointer_type(gl.float32))\n        gl.store(scales + scale_offset, scale, key_base >= 0)\n    else:\n        _store_key(quant, scale, d, slot, Cache, PAGE, CACHE_INT32)\n\n\n@gluon.jit\ndef _head_transforms(\n    Key,\n    Q,\n    Gate,\n    Gamma,\n    Beta,\n    Cos,\n    Sin,\n    Positions,\n    Slots,\n    Cache,\n    Out,\n    Weights,\n    eps,\n    SC: gl.constexpr,\n    PAGE: gl.constexpr,\n    HEADS: gl.constexpr,\n    M: gl.constexpr,\n    SPLITS: gl.constexpr,\n    CACHE_INT32: gl.constexpr,\n    STAGED_ROTARY: gl.constexpr = False,\n):\n    BATCH: gl.constexpr = 8 if M == 256 else 4\n    LOCAL_BITS: gl.constexpr = 3 if M == 256 else 2\n    row = gl.program_id(0)\n    group = gl.program_id(1)\n    if group == 0:\n        _key_kernel(\n            Key,\n            Gamma,\n            Beta,\n            Cos,\n            Sin,\n            Positions,\n            Slots,\n            Cache,\n            eps,\n            SC,\n            PAGE,\n            CACHE_INT32,\n            STAGED_ROTARY,\n            M if SPLITS == 4 else 0,\n        )\n    else:\n        layout: gl.constexpr = gl.BlockedLayout([1, 1 << LOCAL_BITS], [BATCH, 64 // BATCH], [1, 1], [1, 0])\n        d = gl.arange(0, 128, gl.SliceLayout(0, layout))\n        h = (group - 1) * BATCH + gl.arange(0, BATCH, gl.SliceLayout(1, layout))\n        valid = h < HEADS if HEADS % BATCH else gl.full((BATCH,), True, gl.int1, gl.SliceLayout(1, layout))\n        index = row * HEADS + h\n        if SPLITS == 4:\n            HEAD_BLOCK: gl.constexpr = 16\n            query_index = h // HEAD_BLOCK * M * HEAD_BLOCK + row * HEAD_BLOCK + h % HEAD_BLOCK\n        else:\n            query_index = index\n        query = gl.load(Q + query_index[:, None] * 128 + d[None, :], valid[:, None], 0).to(gl.float32)\n        gate = gl.load(Gate + index, valid, 0).to(gl.float32)\n        for part in gl.static_range(1, SPLITS):\n            gate = gate + gl.load(Gate + part * M * HEADS + index, valid, 0)\n        gate = gate.to(gl.bfloat16).to(gl.float32)\n        gate = (gate * HEADS ** (-0.5)).to(gl.bfloat16).to(gl.float32)\n        even, odd = query.reshape((BATCH, 64, 2)).split()\n        partner = gl.join(odd, even).reshape((BATCH, 128))\n        position = row if STAGED_ROTARY else gl.load(Positions + row)\n        cosine = gl.load(Cos + position * SC + d // 2, d < 64, 1).to(gl.float32)\n        sine = gl.load(Sin + position * SC + d // 2, d < 64, 0).to(gl.float32)\n        rotated = (\n            gl.where(\n                d[None, :] < 64,\n                query * cosine[None, :] + gl.where(d[None, :] % 2 == 0, -partner, partner) * sine[None, :],\n                query,\n            )\n            .to(gl.bfloat16)\n            .to(gl.float32)\n        )\n        for bit in gl.static_range(LOCAL_BITS):\n            pairs = rotated.reshape((BATCH, 128 >> bit + 1, 2, 1 << bit))\n            low, high = pairs.permute((0, 1, 3, 2)).split()\n            rotated = gl.join(low + high, low - high).permute((0, 1, 3, 2)).reshape((BATCH, 128))\n        for bit in gl.static_range(LOCAL_BITS, 6):\n            other = _lane_xor(rotated, bit - LOCAL_BITS)\n            rotated = other + gl.where(d[None, :] & 1 << bit == 0, rotated, -rotated)\n        for bit in gl.static_range(6, 7):\n            pairs = rotated.reshape((BATCH, 128 >> bit + 1, 2, 1 << bit))\n            low, high = pairs.permute((0, 1, 3, 2)).split()\n            rotated = gl.join(low + high, low - high).permute((0, 1, 3, 2)).reshape((BATCH, 128))\n        rotated = (rotated * 0.08838834764831845).to(gl.bfloat16).to(gl.float32)\n        maximum = gl.maximum(gl.max(gl.abs(rotated), 1), 0.0001)\n        exponent = gl.ceil(gl.log2(maximum / 448.0))\n        scale = gl.exp2(exponent)\n        inverse = gl.exp2(-exponent)\n        quant = (rotated * inverse[:, None]).to(gl.float8e4nv)\n        gl.store(Out + index[:, None] * 128 + d[None, :], quant, valid[:, None])\n        gl.store(Weights + index, gate * scale * 0.08838834764831845, valid)\n\n\ndef indexer_prepare(\n    x,\n    q_latent,\n    wq,\n    wk,\n    wgate,\n    k_gamma,\n    k_beta,\n    cos,\n    sin,\n    positions,\n    slots,\n    cache: torch.Tensor,\n    *,\n    key_only: bool = False,\n    eps: float = 1e-06,\n    out: torch.Tensor,\n    weights: torch.Tensor,\n):\n    rows = x.shape[0]\n    heads = wgate.shape[0]\n    key = torch.empty((rows, 128), device=x.device, dtype=torch.bfloat16)\n    stage_rotary = rows in (128, 256)\n    rotary = (\n        torch.empty(\n            (rows, 68 if rows == 128 else 64), device=x.device, dtype=torch.float32 if rows == 128 else cos.dtype\n        )\n        if stage_rotary\n        else cos\n    )\n    rotary_sin = rotary[:, 32:] if stage_rotary else sin\n    rotary_stride = 64 if stage_rotary else cos.stride(0)\n    gate = torch.empty((rows, heads), device=x.device, dtype=torch.bfloat16)\n    query = torch.empty((rows, heads * 128), device=x.device, dtype=torch.bfloat16)\n    key_config = (16, 16, 256)\n    query_config = (64, 64, 128) if rows == 256 else (32, 64, 256)\n    grid = triton.cdiv(rows, key_config[0]) * (\n        triton.cdiv(128, key_config[1]) + triton.cdiv(heads, key_config[1])\n    ) + triton.cdiv(rows, query_config[0]) * triton.cdiv(heads * 128, query_config[1])\n    _grouped_projection[grid,](\n        x,\n        q_latent,\n        wk,\n        wgate,\n        wq,\n        key,\n        gate,\n        query,\n        cos,\n        sin,\n        positions,\n        rotary,\n        rows,\n        heads,\n        x.shape[1],\n        q_latent.shape[1],\n        x.stride(0),\n        q_latent.stride(0),\n        wk.stride(0),\n        wgate.stride(0),\n        wq.stride(0),\n        key_config,\n        query_config,\n        cos.stride(0),\n        stage_rotary,\n        num_warps=4,\n    )\n    output = out\n    _head_transforms[rows, triton.cdiv(heads, 8 if rows == 256 else 4) + 1](\n        key,\n        query,\n        gate,\n        k_gamma,\n        k_beta,\n        rotary,\n        rotary_sin,\n        positions,\n        slots,\n        cache,\n        output,\n        weights,\n        eps,\n        rotary_stride,\n        cache.shape[1],\n        heads,\n        rows,\n        1,\n        cache.numel() < 2**31,\n        stage_rotary,\n        num_warps=1,\n        enable_fp_fusion=False,\n    )\n    return (output, weights)\n\n\ndef run(\n    *,\n    x,\n    q_lora,\n    wq_b,\n    wk,\n    weights_proj,\n    k_norm_weight,\n    k_norm_bias,\n    cos_cache,\n    sin_cache,\n    positions,\n    out_cache_loc,\n    index_k_cache,\n    k_norm_eps,\n    q_fp8,\n    head_weights,\n):\n    \"\"\"Writes q_fp8 and head_weights and stores the keys: indexer_prepare on sglang's tensors,\n    the index-K pages as their bytes.\"\"\"\n    indexer_prepare(\n        x,\n        q_lora,\n        wq_b,\n        wk,\n        weights_proj,\n        k_norm_weight,\n        k_norm_bias,\n        cos_cache,\n        sin_cache,\n        positions,\n        out_cache_loc,\n        index_k_cache.view(torch.uint8),\n        eps=k_norm_eps,\n        out=q_fp8,\n        weights=head_weights,\n    )\n"
+      }
+    ]
+  }
+}
