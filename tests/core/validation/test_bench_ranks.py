@@ -6,6 +6,7 @@ group's timing, its child task a rank, and a group the devices cannot hold."""
 
 import itertools
 import math
+import multiprocessing
 from concurrent.futures import Future
 from contextlib import contextmanager, nullcontext
 from dataclasses import replace
@@ -41,7 +42,63 @@ from aklr.core.validation.stages._report._finding import Finding, FindingCode
 from tests.op_case import OpCase
 
 _SCHEMA = "aklr/ops/gemm/impls/flydsl/gemm_n512_k4096/09c4acd65577d824.json"
-_TRACER_FAULT = "x: timing: Kineto recorded no kernels for a single call"
+_TRACER_FAULT = "x: timing: rocprofiler-sdk dropped 1 records"
+
+
+def _time_collective(rank: int, rendezvous: str) -> None:
+    import datetime
+
+    import torch
+    import torch.distributed as dist
+
+    from aklr.core.utils.testing import graph_kernel_timing_environment
+    from aklr.core.validation.stages._measure import bind_clock
+
+    with graph_kernel_timing_environment():
+        torch.cuda.set_device(rank)
+        dist.init_process_group(
+            "nccl",
+            init_method=rendezvous,
+            rank=rank,
+            world_size=2,
+            timeout=datetime.timedelta(seconds=120),
+        )
+        try:
+            group = dist.group.WORLD
+            clock = bind_clock(group)
+            value = torch.zeros(16, device="cuda")
+            executions = torch.zeros(1, dtype=torch.int64, device="cuda")
+            captured = 0
+
+            def collective():
+                nonlocal captured
+                if torch.cuda.is_current_stream_capturing():
+                    captured += 1
+                executions.add_(1)
+                value.fill_(rank + 1)
+                dist.all_reduce(value, group=group)
+
+            # Different local budgets must still capture the same number of calls.
+            ms = clock.bench_cudagraph(collective, rep=0.001 if rank == 0 else 10, group=group)
+            assert math.isfinite(ms) and ms > 0
+            assert captured == 1
+            assert executions.item() == 16  # six eager calls and ten replays
+            torch.testing.assert_close(value, torch.full_like(value, 3))
+        finally:
+            dist.destroy_process_group()
+
+
+@pytest.mark.gpu
+def test_group_clock_times_collectives_with_an_agreed_capture_count(tmp_path: Path) -> None:
+    import torch
+
+    if torch.version.hip is None or torch.cuda.device_count() < 2:
+        pytest.skip("requires two ROCm GPUs")
+    rendezvous = (tmp_path / "store").as_uri()
+    with multiprocessing.get_context("spawn").Pool(2) as pool:
+        jobs = [pool.apply_async(_time_collective, (rank, rendezvous)) for rank in range(2)]
+        for job in jobs:
+            job.get(timeout=300)
 
 
 def test_catalog_leases_devices_in_groups() -> None:
@@ -194,14 +251,14 @@ def test_a_group_rank_never_retries_a_tracer_fault_alone() -> None:
     def flaky(call, rep, **kwargs):
         calls.append(kwargs)
         if len(calls) == 1:
-            raise RuntimeError("Kineto recorded no kernels for a single call")
+            raise RuntimeError("rocprofiler-sdk dropped 1 records")
         return 1.0
 
     assert Clock(lambda: None, flaky).graph_reading(lambda: None) == 1.0
     assert calls == [{}, {}]
     calls.clear()
     group = object()
-    with pytest.raises(RuntimeError, match="Kineto"):
+    with pytest.raises(RuntimeError, match="rocprofiler-sdk"):
         Clock(lambda: None, flaky, group).graph_reading(lambda: None)
     assert calls == [{"group": group}]
 

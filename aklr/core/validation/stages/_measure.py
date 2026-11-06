@@ -339,6 +339,9 @@ def bind_clock(group: Any = None) -> Clock:
 
     from aklr.core.utils.testing import bench_cudagraph
 
+    if group is not None:
+        from aklr.core.validation.stages._group_timing import bench_cudagraph
+
     return Clock(
         synchronize=torch.cuda.synchronize,
         bench_cudagraph=bench_cudagraph,
