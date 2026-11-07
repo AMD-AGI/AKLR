@@ -62,15 +62,15 @@ class E2eStage(PipelineStage[E2eReport]):
         # provisional, about 2.5 sigma of the on - off difference over 1314 shared questions; to be
         # set from measured off-against-off noise
         self._max_accuracy_drop = 0.02
-        # phase 2, the on side only: one prompt with a short, unique answer
-        self._prompt = "What is the capital of France? Answer with one word."
-        self._expected_answer = "Paris"
         # below it, off is not the model answering (a broken recipe or grading), and on is not run
         self._min_baseline_accuracy = 0.5
         # a side, from its start to its stop, and of it the start (weights, graph capture)
         self._evaluation_timeout = 5400.0
         self._startup_timeout = 2400.0
         config = E2eConfig.read()
+        # phase 2, the on side only: the configured prompt and its short, unique answer
+        self._prompt = config.prompt
+        self._expected_answer = config.expected_answer
         self._scenarios = config.enabled_scenarios
         if self._scenarios and not devices:
             raise ValueError("e2e needs at least one device")
@@ -278,9 +278,8 @@ class E2eStage(PipelineStage[E2eReport]):
                     if not isinstance(answer, str):
                         raise TypeError(f"content is not a string: {answer!r}")
                     result["prompt_answer"] = answer
-                    # the whole answer, less surrounding whitespace and trailing punctuation
-                    normalized = re.sub(r"[\W_]+$", "", answer).strip().casefold()
-                    result["answer_matches"] = normalized == self._expected_answer.casefold()
+                    # Keys are case- and punctuation-sensitive; ignore only surrounding whitespace.
+                    result["answer_matches"] = answer.strip() == self._expected_answer.strip()
                 except (OSError, ValueError, LookupError, TypeError, http.client.HTTPException) as error:
                     failures.append(f"prompt: {type(error).__name__}: {error}")
             # a server that died during the phases fails the side, whatever they scored

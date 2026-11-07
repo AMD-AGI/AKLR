@@ -188,7 +188,8 @@ class E2eReport(StageReport):
                 if side.prompt_answer is not None:
                     items.append(
                         f"{side_name} answer `{escape(one_line(side.prompt_answer))}`,"
-                        f" expected `{escape(self.expected_answer)}` to {escape(self.prompt)}"
+                        f" expected `{escape(self.expected_answer)}`;"
+                        f" prompt ({len(self.prompt):,} characters): {detail_text(self.prompt)}"
                     )
                 if side.failure:
                     items.append(f"{side_name} failed: {detail_text(side.failure)}")

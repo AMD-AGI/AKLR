@@ -5,6 +5,28 @@ cookbook:
 hosts: [127.0.0.1]  # node 0 first; local processes on the runner, SSH for remote hosts
 work_dir: null  # temporary files under this existing directory; null uses the system temp directory
 # For multiple hosts, work_dir and the checkout must be shared at the same paths.
+# Shared by every scenario. A plain string is also accepted for a custom prompt.
+# length_chars counts the entire rendered prompt in characters, not model tokens.
+# The synthetic test key appears once, centered at 50% of the prompt.
+prompt:
+  length_chars: 100000
+  prefix: |
+    Read the following archive and find the secret key recorded in it.
+    Remember the key exactly, including capitalization and punctuation.
+    <archive>
+  filler: |
+    The archive describes ordinary activities in a quiet town. The library opens in the morning.
+    Residents walk through the park, visit the market, and return books in the afternoon.
+    These background records contain no secret key. Continue reading the archive.
+  needle: |
+
+    The secret key is: AKLR-7qN2-vR9x-K4mP
+
+  suffix: |
+
+    </archive>
+    What is the secret key recorded in the archive? Reply with only the exact key, without explanation.
+expected_answer: AKLR-7qN2-vR9x-K4mP
 scenarios:
   - cookbook: zai-org/glm-5.2  # docs/src/snippets/configs/<this>.jsx
     model_path: amd/GLM-5.2-MXFP4
