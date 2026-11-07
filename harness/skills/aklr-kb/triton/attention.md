@@ -112,7 +112,7 @@ but exponent/denormal behavior and actual attention accuracy must be checked (`n
 
 - **Lay the records out for both launches.** Simplest, Qwen3.5's: numerators `[rows, heads, splits, 256]` bf16 and
   statistics `[rows, heads, splits, 2]` fp32, the numerator converted to
-  `BlockedLayout([1, 8], [8, 8], [1, gl.num_warps], [1, 0])` so each lane stores 16 bytes (S1). The 64-head DSA
+  `BlockedLayout([1, 8], [8, 8], [1, gl.num_warps()], [1, 0])` so each lane stores 16 bytes (S1). The 64-head DSA
   producers store straight from the transposed 32 × 32 accumulator in `[channel // 8][head][channel % 8]` order, read
   back 8 channels per lane, and at 64 heads XOR the channel group with `split * 4`, for a reason the source does not
   state (S2). The 12- and 16-token files pad a record to 544 channels (S6), the 16-token one keeping the statistics in

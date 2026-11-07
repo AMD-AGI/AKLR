@@ -252,7 +252,7 @@ replays aiter's router GEMM, `biased_grouped_topk` and `fused_moe`. Triton side:
 
 ```python
 def _expert_at_rank(Logits, Bias, row, rank, SPLITS: gl.constexpr):
-    layout: gl.constexpr = gl.BlockedLayout([4], [64], [gl.num_warps], [0])
+    layout: gl.constexpr = gl.BlockedLayout([4], [64], [gl.num_warps()], [0])
     e, _, score = _routing_scores(Logits, Bias, row, SPLITS)
     available = gl.full((256,), True, gl.int1, layout)
     idx = _next_expert(score, available, e)

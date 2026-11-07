@@ -232,7 +232,7 @@ Below one per CU the m = 16 GEMM's 192 one-wave programs lean on each wave's dep
 - **It is part of the layouts.** Gluon sets the module's warp count from the launch option before it verifies the
   layouts, and rejects a layout whose `warps_per_cta` multiplies to another count (S20, S21). Changing `num_warps` at
   launch is a code change unless the layouts read `gl.num_warps`, a constexpr of the launch option (S22), as the
-  gated-attention files do: `gl.BlockedLayout([1, 16], [4, 16], [gl.num_warps, 1], [1, 0])` (S36).
+  gated-attention files do: `gl.BlockedLayout([1, 16], [4, 16], [gl.num_warps(), 1], [1, 0])` (S36).
 - It must be a power of two, defaults to 4 and sets the work-group size LLVM schedules for (S23).
 - **Choosing it.** One wave when a program's work fits a wave (a GEMV row, a per-token selection): the work-group then
   has 64 lanes and LLVM drops `s_barrier` (0 in the one-wave m=16 GEMM, 16 in the four-wave router projection ). More waves when they split an MFMA tile (8 warps halve each wave's `v_mfma` on a 32 × 256 tile, not a 32 × 32

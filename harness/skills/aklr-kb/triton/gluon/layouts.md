@@ -439,7 +439,7 @@ coalesced layout and converting, or loading in the operand layout's slices (comp
 @gluon.jit
 def tile16(x_ptr, w_ptr, y_ptr, K: gl.constexpr, N: gl.constexpr, BK: gl.constexpr,
            CONVERT_A: gl.constexpr, CONVERT_B: gl.constexpr, CONVERT_C: gl.constexpr):
-    W: gl.constexpr = gl.num_warps
+    W: gl.constexpr = gl.num_warps()
     mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 32], transposed=True,
                                              warps_per_cta=[1, W])
     a_dot: gl.constexpr = gl.DotOperandLayout(operand_index=0, parent=mma, k_width=8)

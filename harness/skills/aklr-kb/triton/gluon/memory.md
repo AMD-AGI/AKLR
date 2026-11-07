@@ -388,7 +388,7 @@ for stage in gl.static_range(-AHEAD, STAGES):
         _prefetch_stage(a_buffers[(stage + AHEAD) % DEPTH], b_buffers[(stage + AHEAD) % DEPTH],...)
     if stage >= 0:
         gl.amd.cdna4.async_copy.wait_group(min(AHEAD, STAGES - stage - 1))
-        gl.barrier
+        gl.barrier()
         a = gl.amd.cdna4.async_copy.load_shared_relaxed(a_buffers[stage % DEPTH], a_dot)
 ```
 

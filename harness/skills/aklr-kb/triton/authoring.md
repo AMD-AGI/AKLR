@@ -142,7 +142,7 @@ row-major e4m3 codes and uint8 e8m0 bytes (S45). A standalone SwiGLU + MXFP4 req
 `run` takes exactly the schema's `kernel_call_keys`, keyword-only: its tensors and scalars (an absent optional key is `None`; inputs hidden by schema-default optional attrs are omitted),
 attrs that have a parameter, layout arguments such as `operand_format`, `out_dtype` when the one output is `out`, and
 every output, preallocated (`aklr/ops/README.md` § The kernel section and ABI); from the repository root,
-`ContractRegistry.default.parse_schema(Path(p).read_bytes(), p).kernel_call_keys` (`aklr.core.contract.registry`)
+`ContractRegistry.default().parse_schema(Path(p).read_bytes(), p).kernel_call_keys` (`aklr.core.contract.registry`)
 lists them for the schema at `p`. The Point's logical sizes are derived from the tensors' stored shapes under the contract's layout and packing rules; a packed 4-bit last dimension holds two logical elements per stored element. It must write every output; leaving a row unwritten violates the contract. Mutable inputs, no return value, no output kept, and support for every value of a scalar's range are specified in the
 same README, § Schema fields. MXFP4 and e8m0 tensors may arrive as `uint8` or
 `torch.float4_e2m1fn_x2` / `torch.float8_e8m0fnu`; the latter are dtypes which

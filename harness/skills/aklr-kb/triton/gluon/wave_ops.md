@@ -246,7 +246,7 @@ MiniMax's `_wave_ballot_2` (S1) is `_ballot` of §2.5 without the `s_nop`: `"=s,
   register. Lay the ballot axis on the 64 lanes, one element per lane (`BlockedLayout([1], [64], …)`; DSA: one
   `[TILES, 64]` row per register, S11). A layout that holds an element in several lanes sets several bits for it.
 - **Per wave.** The mask covers the 64 lanes of the wave that runs it: give each wave its own rows, or replicate the
-  data in every wave, as DeepSeek's `BlockedLayout([1], [64], [gl.num_warps], [0])` does for 64 routing keys (S43).
+  data in every wave, as DeepSeek's `BlockedLayout([1], [64], [gl.num_warps()], [0])` does for 64 routing keys (S43).
 - **Every lane votes.** Lanes holding masked-out elements are active: fold validity into the predicate (DSA:
   `selected >= 0`, S11; MiniMax: `(r < R) & (ids >= 0) & (ids < 64)`, S44).
 - The mask is wave-uniform and lives in an SGPR pair: `&`, `>> 32`, `.to(gl.uint32)` on it are scalar.
