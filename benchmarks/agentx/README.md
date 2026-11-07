@@ -192,6 +192,24 @@ advisory_env:
 | `models.<id>.advisory_env` | Model-level environment overriding global values; conflicts with environment keys already set by the upstream recipe are rejected |
 | `report.repo_url` | Repository URL used for AKLR commit and history links; not the Pages site URL |
 
+The server inherits defaults from the planned image's verified Docker `Config.Env`. The allowed
+infrastructure environment (cache paths, certificates, proxies, and similar settings) overrides those
+defaults, and the point's explicit `launch.env` overrides both. Arbitrary tuning variables in the
+launcher's environment are not inherited. Image metadata is read and validated once before GPU
+inspection; missing or malformed environment metadata fails the run before serving starts.
+
+Results record the image defaults, with credential-like values redacted, under
+`run.execution.server_environment`. Its canonical `defaults_sha256` and the
+`paired-aklr-image-env-v2` policy participate in measurement identity, separating these runs from
+older runs that filtered out image defaults. Both AKLR modes use the same defaults and differ only
+in their explicit AKLR switches. Trace preparation, client package inspection, and the AgentX client
+retain their separate infrastructure allowlist and planned client environment; they do not inherit
+the server's image defaults or `advisory_env`.
+
+The model hub's `refs/main` must contain exactly the pinned revision, without a trailing newline or
+whitespace. Hugging Face uses that content verbatim for the client's offline tokenizer; the runtime
+checks it before preparing traces or starting the server.
+
 ### 3.2 Add a Model
 
 Confirm the model's `config_key`, configuration path, recipe, model name, precision, and runner at the target InferenceX ref. The executor currently targets single-node SGLang; changing `framework` alone does not add support for another serving framework.

@@ -190,6 +190,20 @@ advisory_env:
 | `models.<id>.advisory_env` | 模型级补充环境，覆盖同名全局值；若与上游 recipe 已设置的环境变量同名，会报冲突 |
 | `report.repo_url` | 报告中 AKLR commit 与历史链接的仓库 URL；不是 Pages 站点地址 |
 
+服务器继承计划镜像经 Docker 身份校验后的 `Config.Env` 默认值。允许的基础环境（缓存路径、
+证书、代理等）覆盖镜像默认值，点的显式 `launch.env` 再覆盖两者；启动器环境中的任意调优
+变量不会被继承。镜像元数据只读取并验证一次，先于 GPU 检查；环境元数据缺失或格式错误会
+在启动服务前使运行失败。
+
+结果在 `run.execution.server_environment` 中记录镜像默认值，并对凭据类值脱敏。
+规范化的 `defaults_sha256` 与 `paired-aklr-image-env-v2` 策略进入测量身份，使这些结果与
+过去过滤镜像默认值的运行分段。AKLR 两组使用相同默认值，仅显式 AKLR 开关不同。trace
+准备、客户端包版本检查和 AgentX 客户端继续使用各自的基础环境白名单及计划客户端环境，
+不会继承服务端镜像默认值或 `advisory_env`。
+
+模型 hub 的 `refs/main` 必须恰好包含固定 revision，不能带末尾换行或空白。Hugging Face
+会将该内容原样用于客户端离线 tokenizer；运行时会在准备 trace 和启动服务器前检查它。
+
 ### 3.2 新增模型
 
 先在目标 InferenceX ref 中确认模型的 `config_key`、配置路径、recipe、模型名称、精度和 runner。当前执行器面向单机 SGLang；仅修改 `framework` 不能使其支持其他服务框架。

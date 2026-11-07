@@ -9,6 +9,7 @@ import importlib.metadata
 import json
 import math
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -44,7 +45,8 @@ def metrics_of(aggregate: dict) -> dict:
     return metrics
 
 
-# Tuning variables must come from the hashed plan.
+# Tuning variables come from the hashed plan or the verified image defaults.
+ENVIRONMENT_POLICY = "paired-aklr-image-env-v2"
 INFRA_ENV = (
     "PATH",
     "HOME",
@@ -80,8 +82,53 @@ INFRA_ENV = (
 )
 
 
-def execution_env() -> dict[str, str]:
-    return {name: os.environ[name] for name in INFRA_ENV if name in os.environ}
+def execution_env(image_defaults: dict[str, str] | None = None) -> dict[str, str]:
+    """Use verified image defaults only when explicitly requested by the server."""
+    return {
+        **(image_defaults or {}),
+        **{name: os.environ[name] for name in INFRA_ENV if name in os.environ},
+    }
+
+
+def image_environment(inspection: dict) -> dict[str, str]:
+    """Parse Config.Env after the inspection has passed image identity verification."""
+    config = inspection.get("Config")
+    if not isinstance(config, dict) or "Env" not in config:
+        raise ValueError("Docker image inspection has no Config.Env")
+    entries = config["Env"]
+    if entries is None:
+        return {}
+    if not isinstance(entries, list):
+        raise ValueError("Docker image Config.Env must be a list or null")
+    defaults = {}
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, str) or "=" not in entry:
+            raise ValueError(f"Docker image Config.Env entry {index} must be NAME=VALUE")
+        name, value = entry.split("=", 1)
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) or "\0" in value:
+            raise ValueError(f"Docker image Config.Env entry {index} has an invalid name or value")
+        if name in defaults:
+            raise ValueError(f"Docker image Config.Env entry {index} repeats a variable name")
+        defaults[name] = value
+    return defaults
+
+
+def image_environment_evidence(defaults: dict[str, str]) -> dict:
+    """Record image defaults without copying live infrastructure credentials."""
+    protected_name = re.compile(r"token|secret|password|passwd|credential|auth|key|cookie|proxy", re.I)
+    protected_url = re.compile(
+        r"://[^/\s]*@|[?&][^=]*(?:token|secret|password|credential|signature|auth|key)[^=]*=", re.I
+    )
+    return {
+        "policy": ENVIRONMENT_POLICY,
+        "scope": "server",
+        "source": "docker-image-inspect.Config.Env",
+        "defaults_sha256": sha256_json(defaults),
+        "defaults": {
+            name: "<redacted>" if protected_name.search(name) or protected_url.search(value) else value
+            for name, value in sorted(defaults.items())
+        },
+    }
 
 
 def http_ok(url: str) -> bool:
@@ -244,7 +291,7 @@ def run_live(point: dict, out: Path, host: dict) -> dict:
     with (out / "server.log").open("w") as log:
         server = subprocess.Popen(
             command,
-            env={**execution_env(), **point["launch"]["env"]},
+            env={**execution_env(host["server_image_env"]), **point["launch"]["env"]},
             stdout=log,
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -354,11 +401,18 @@ def observed_hardware() -> dict:
     }
 
 
-def execution_identity(serving: dict) -> dict:
+def execution_identity(serving: dict) -> tuple[dict, dict[str, str]]:
+    """Return public identity and server defaults from one verified inspection."""
     path = os.environ.get("AGENTX_EXECUTION_FILE")
     if not path:
         raise RuntimeError("execution image is unverified; start the run with the Docker sweep launcher")
-    return verify_image(serving["image"]["run"], read_json(path))
+    inspection = read_json(path)
+    if not isinstance(inspection, dict):
+        raise ValueError("Docker image inspection must be an object")
+    identity = verify_image(serving["image"]["run"], inspection)
+    defaults = image_environment(inspection)
+    identity["server_environment"] = image_environment_evidence(defaults)
+    return identity, defaults
 
 
 def client_packages(host: dict) -> dict:
@@ -400,11 +454,12 @@ def host_settings(args: argparse.Namespace, serving: dict) -> dict:
                 f"{main} is missing; prepare refs/main at the pinned {weights['revision']} "
                 "for the AgentX client's offline tokenizer"
             )
-        main_revision = main.read_text().strip()
+        main_revision = main.read_text()
         if main_revision != weights["revision"]:
             raise RuntimeError(
-                f"{main} is {main_revision}, not the pinned {weights['revision']}; "
-                "the AgentX client's tokenizer would come from another revision"
+                f"{main} must contain exactly the pinned revision {weights['revision']}, "
+                "with no trailing newline or whitespace; the AgentX client's offline tokenizer "
+                "uses the ref contents verbatim"
             )
         # Reuse pinned weights in the writable trace hub.
         model_link = trace_hub / model_dir.name
@@ -500,7 +555,7 @@ def main(argv: list[str] | None = None) -> int:
         write_json(args.out / "selection.json", selection)
     try:
         validate_runtime(points)
-        execution = execution_identity(serving)
+        execution, image_defaults = execution_identity(serving)
         hardware = observed_hardware()
         validate_hardware(hardware, serving["hardware"])
         if any(p["gpus"] > len(hardware["devices"]) for p in points):
@@ -508,6 +563,7 @@ def main(argv: list[str] | None = None) -> int:
         for target in (results, results["control"]):
             target["run"].update(execution=execution, hardware=hardware)
         host = host_settings(args, serving)
+        host["server_image_env"] = image_defaults
         print(f"[{utc_now()}] preparing the AgentX traces", flush=True)
         prepare_traces(host, points, args.out / "prepare_traces.log")
         packages = client_packages(host)
@@ -538,7 +594,8 @@ def main(argv: list[str] | None = None) -> int:
                 AKLR_DISABLE="0" if mode == "enabled" else "1",
             )
             measurement = {
-                "environment_policy": "paired-aklr-v1",
+                "environment_policy": ENVIRONMENT_POLICY,
+                "server_image_env_sha256": execution["server_environment"]["defaults_sha256"],
                 "weights": serving["weights"],
                 "launch": point["launch"],
                 "client_env": {**point["client_env"], **host["client_env_overrides"]},
