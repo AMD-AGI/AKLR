@@ -156,6 +156,47 @@ def test_bench_cudagraph(scenario):
         pool.apply_async(_run_scenario, (scenario,)).get(timeout=300)
 
 
+def _group_rank(rank, rendezvous):
+    import datetime
+
+    import torch.distributed as dist
+
+    with graph_kernel_timing_environment():
+        torch.cuda.set_device(rank)
+    dist.init_process_group(
+        "nccl", init_method=rendezvous, rank=rank, world_size=2, timeout=datetime.timedelta(seconds=120)
+    )
+    try:
+        value = torch.zeros(1 << 16, device="cuda")
+
+        def collective():
+            value.fill_(rank + 1)
+            dist.all_reduce(value)
+
+        # rank 1's budget alone would capture far more calls than rank 0's
+        times = bench_cudagraph(
+            collective, rep=0 if rank == 0 else 5, group=dist.group.WORLD, return_mode="all"
+        )
+        torch.testing.assert_close(value, torch.full_like(value, 3))
+        return times
+    finally:
+        dist.destroy_process_group()
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(torch.version.hip is None, reason="requires ROCm PyTorch")
+def test_bench_cudagraph_group(tmp_path):
+    if torch.cuda.device_count() < 2:
+        pytest.skip("requires two GPUs")
+    rendezvous = (tmp_path / "store").as_uri()
+    with multiprocessing.get_context("spawn").Pool(2) as pool:
+        jobs = [pool.apply_async(_group_rank, (rank, rendezvous)) for rank in range(2)]
+        rank0, rank1 = (job.get(timeout=300) for job in jobs)
+    assert len(rank0) == 1  # the fewest calls any rank's budget allows
+    assert rank0 == rank1  # each call reads as its slowest rank's time
+    _assert_milliseconds(rank0[0])
+
+
 @pytest.mark.parametrize("original", [None, "0", "1"])
 @pytest.mark.parametrize("fail", [False, True], ids=["normal_exit", "exception"])
 def test_timing_environment_restores_settings(monkeypatch, original, fail):

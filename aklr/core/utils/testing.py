@@ -16,6 +16,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 import torch
+import torch.distributed as dist
 import triton
 import triton.language as tl
 
@@ -160,9 +161,10 @@ def _collect_scope_times(database, prefix):
 
 
 @graph_kernel_timing_environment()
-def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="median"):
-    """Time fn's kernels per call in a CUDA graph, in milliseconds, without the cache flushes."""
+def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="median", *, group=None):
+    """fn's kernel ms per call in a CUDA graph, minus cache flushes; with group, the slowest rank's."""
     assert return_mode in ["min", "max", "mean", "median", "all"]
+    distributed = group is not None and dist.get_world_size(group) > 1
 
     kernel_tracer()
     stream = torch.cuda.Stream()
@@ -185,6 +187,12 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
         torch.cuda.synchronize()
         estimate_ms = start_event.elapsed_time(end_event) / 5
         n_repeat = 1000 if estimate_ms == 0 else max(1, int(rep / estimate_ms))
+        if distributed:
+            # equal collectives on every rank; also sets up the communicator before capture
+            agreed = torch.tensor([n_repeat], device="cuda")
+            dist.all_reduce(agreed, dist.ReduceOp.MIN, group=group)
+            n_repeat = int(agreed.item())
+            ready = torch.ones(1, device="cuda")
 
         with _kernel_bench_session() as (profiler, session):
             g = torch.cuda.CUDAGraph()
@@ -196,6 +204,8 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
                         for x in grad_to_none:
                             x.grad = None
                     flush_l2_cache()
+                    if distributed:
+                        dist.all_reduce(ready, group=group)  # the ranks start each call together
                     with profiler.scope(f"{scope_prefix}{i:08d}"):
                         fn()
             torch.cuda.synchronize()
@@ -209,4 +219,14 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
 
             times = [t / n_retries for t in _collect_scope_times(profiler.get_data(session), scope_prefix)]
 
+    if distributed:
+        # a rank missing a call's time still joins the reduction, so no rank waits on it
+        timed_calls = len(times)
+        slowest = torch.tensor(
+            times if timed_calls == n_repeat else [math.inf] * n_repeat, dtype=torch.float64, device="cuda"
+        )
+        dist.all_reduce(slowest, dist.ReduceOp.MAX, group=group)
+        if timed_calls != n_repeat:
+            raise RuntimeError(f"bench_cudagraph: {timed_calls} of {n_repeat} calls timed on this rank")
+        times = slowest.tolist()
     return _summarize_statistics(times, quantiles, return_mode)

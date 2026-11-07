@@ -258,13 +258,11 @@ class Clock(NamedTuple):
     group: Any = None
 
     def graph_reading(self, call: Callable[[], object]) -> float:
-        if self.group is not None:
-            # rep=0: every rank captures one call, so equal collectives; a fault reruns the whole task
-            return self.bench_cudagraph(call, rep=0)
         try:
-            return self.bench_cudagraph(call, rep=GRAPH_BUDGET_MILLISECONDS)
+            return self.bench_cudagraph(call, rep=GRAPH_BUDGET_MILLISECONDS, group=self.group)
         except Exception as e:
-            if not is_tracer_fault(str(e)):
+            # a rank reading again alone would wait on its peers; the bench reruns the group's task
+            if self.group is not None or not is_tracer_fault(str(e)):
                 raise
         return self.bench_cudagraph(call, rep=GRAPH_BUDGET_MILLISECONDS)
 
@@ -301,30 +299,11 @@ class Clock(NamedTuple):
                             )
                         )
                     if round_index + 1 in ROUND_LOOKS[:-1]:  # the last look ends the rounds anyway
-                        looked = rounds
-                        if self.group is not None:
-                            # every rank decides on the group's rounds, the slowest rank's time of
-                            # each (CandidateResult.of_ranks), so that all stop at the same look
-                            import torch
-
-                            slowest = torch.tensor(
-                                [[r.milliseconds[p] for p in participants] for r in rounds],
-                                dtype=torch.float64,
-                                device=torch.cuda.current_device(),
-                            )
-                            torch.distributed.all_reduce(
-                                slowest, torch.distributed.ReduceOp.MAX, group=self.group
-                            )
-                            looked = [
-                                r.model_copy(
-                                    update={"milliseconds": dict(zip(participants, row, strict=True))}
-                                )
-                                for r, row in zip(rounds, slowest.tolist(), strict=True)
-                            ]
-                        times = [ms for r in looked for ms in r.milliseconds.values()]
+                        # a group's ranks read the same times, so all stop at the same look
+                        times = [ms for r in rounds for ms in r.milliseconds.values()]
                         if not all(math.isfinite(ms) and ms > 0 for ms in times):
                             break  # rounds unusable now stay so: compare_performance reports them
-                        if all(r.is_decided(min_speedup) for r in timing_records(looked, thresholds)):
+                        if all(r.is_decided(min_speedup) for r in timing_records(rounds, thresholds)):
                             break
         finally:
             if is_gc_enabled:

@@ -576,7 +576,7 @@ class TestTimeRounds:
         qualifies early runs on while whether dispatch serves it at ``min_speedup`` is open."""
         jitter = itertools.cycle([1.0, 1.01, 0.99, 1.02, 0.98])
         fns = {"candidate": lambda: 1.0, "baseline": lambda: baseline_ms}
-        clock = Clock(synchronize=lambda: None, bench_cudagraph=lambda fn, rep: fn() * next(jitter))
+        clock = Clock(synchronize=lambda: None, bench_cudagraph=lambda fn, rep, group: fn() * next(jitter))
         rounds = clock.time_rounds(fns, seed=0, thresholds={"baseline": threshold}, min_speedup=min_speedup)
         assert len(rounds) == n_rounds
 
@@ -584,7 +584,7 @@ class TestTimeRounds:
         """Only unusable times end the timing early; a threshold naming a participant that
         was not timed is the bench's own error."""
         fns = {"candidate": lambda: 1.0, "baseline": lambda: 2.0}
-        clock = Clock(synchronize=lambda: None, bench_cudagraph=lambda fn, rep: fn())
+        clock = Clock(synchronize=lambda: None, bench_cudagraph=lambda fn, rep, group: fn())
         with pytest.raises(ValueError, match="without incumbent times"):
             clock.time_rounds(fns, seed=0, thresholds={"incumbent": "retain"}, min_speedup=0)
 
