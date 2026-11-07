@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""Exercise the e2e package through its stage interface and external I/O boundaries."""
+"""Functional tests through the stage API, with process, network and host-probing I/O mocked."""
 
 from __future__ import annotations
 
+import html
 import io
 import json
 import os
@@ -16,6 +17,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
+import yaml
 
 from aklr.core.validation import PipelineReport, ValidationScope
 from aklr.core.validation.pipeline import PlatformRecord
@@ -43,6 +45,8 @@ def serving(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.Capt
 """)
     config = {
         "cookbook": {"source": str(tmp_path / "sglang")},
+        "prompt": "What is the capital of France? Answer with one word.",
+        "expected_answer": "Paris",
         "scenarios": [
             {
                 "cookbook": "vendor/model",
@@ -55,7 +59,8 @@ def serving(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.Capt
     state = {
         "config": config,
         "scores": [0.9, 0.9],
-        "answer": "Paris_.",
+        "answer": "Paris",
+        "requests": [],
         "commands": [],
         "killed": [],
         "evaluations": [],
@@ -65,11 +70,15 @@ def serving(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.Capt
         "server_failure": None,
         "controls": [],
         "control_failures": {},
-        "real_run": subprocess.run,
-        "real_popen": subprocess.Popen,
-        "real_killpg": os.killpg,
     }
     read_text = Path.read_text
+    glob = Path.glob
+
+    def paths(path: Path, pattern: str):
+        # Fake process groups have no host processes; do not scan the real /proc tree.
+        if path == Path("/proc"):
+            return iter(())
+        return glob(path, pattern)
 
     def read(path: Path, *args, **kwargs):
         if path.name == "scenarios.yaml" and path.parent.name == "_e2e":
@@ -125,9 +134,11 @@ def serving(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.Capt
             response.status = 200
             return response
         assert request.full_url.endswith("/v1/chat/completions")
+        state["requests"].append(json.loads(request.data))
         return io.BytesIO(json.dumps({"choices": [{"message": {"content": state["answer"]}}]}).encode())
 
     monkeypatch.setattr(Path, "read_text", read)
+    monkeypatch.setattr(Path, "glob", paths)
     monkeypatch.setattr(subprocess, "Popen", start)
     monkeypatch.setattr(subprocess, "run", run)
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
@@ -142,6 +153,89 @@ def evaluate(tmp_path: Path, devices=("cuda:0",)) -> E2eReport:
     # The earlier pipeline report is the stage's other public input.
     earlier = Mock(spec=PipelineReport)
     return E2eStage(devices).execute(scope, earlier)
+
+
+def pipeline_report(report: E2eReport) -> PipelineReport:
+    platform = PlatformRecord(
+        **(dict.fromkeys(PlatformRecord.model_fields, "unknown") | {"n_visible_devices": 0})
+    )
+    return PipelineReport(
+        head_sha="head",
+        base_sha=None,
+        measurement_profile={},
+        platform=platform,
+        schema_paths=(),
+        bench_paths=(),
+        stages=(report,),
+    )
+
+
+def test_stage_sends_committed_prompt_with_one_key_at_100k_midpoint(serving: dict, tmp_path: Path) -> None:
+    path = Path(__file__).resolve().parents[3] / "aklr/core/validation/stages/_e2e/scenarios.yaml"
+    # Use the shipped prompt, with the fixture's local recipe and mocked server I/O.
+    with path.open(encoding="utf-8") as stream:
+        config = yaml.safe_load(stream)
+    serving["config"].update({key: config[key] for key in ("prompt", "expected_answer")})
+    serving["answer"] = config["expected_answer"]
+
+    report = evaluate(tmp_path)
+
+    assert report.status == "passed"
+    (request,) = serving["requests"]
+    prompt = request["messages"][0]["content"]
+    assert len(prompt) == 100000
+    assert prompt.count(serving["answer"]) == 1
+    assert abs(prompt.index(serving["answer"]) - 50000) < 100
+    assert report.prompt == prompt
+    assert report.scenario_records[0].on.answer_matches is True
+
+
+@pytest.mark.parametrize("answer", [" kEy_9!\n", "key_9!", "kEy_9", "kEy_9! extra"])
+def test_configured_long_prompt_is_sent_and_key_is_graded_exactly(
+    serving: dict, tmp_path: Path, answer: str
+) -> None:
+    serving["config"]["prompt"] = {
+        "length_chars": 100000,
+        "prefix": "Read the archive.\n",
+        "filler": "Ordinary background text.\n",
+        "needle": "\nSecret key: kEy_9!\n",
+        "suffix": "\nReturn only the secret key.",
+    }
+    serving["config"]["expected_answer"] = "kEy_9!"
+    serving["answer"] = answer
+    report = evaluate(tmp_path)
+    (request,) = serving["requests"]
+    prompt = request["messages"][0]["content"]
+    assert len(prompt) == 100000
+    assert prompt.count("kEy_9!") == 1
+    assert abs(prompt.index("kEy_9!") - 50000) < 20
+    assert report.prompt == prompt
+    assert report.expected_answer == "kEy_9!"
+    assert report.status == ("passed" if answer.strip() == "kEy_9!" else "failed")
+    assert report.scenario_records[0].on.answer_matches == (answer.strip() == "kEy_9!")
+    # JSON preserves the full input; Markdown stays readable.
+    pipeline = pipeline_report(report)
+    assert pipeline.model_dump()["stages"][0]["prompt"] == prompt
+    markdown = pipeline.markdown_text()
+    assert "100,000 characters" in markdown
+    assert "expected `kEy_9!`" in html.unescape(markdown)
+    assert len(markdown) < 10000
+
+
+@pytest.mark.parametrize(
+    "prompt",
+    [
+        "",
+        "  ",
+        {"length_chars": 10, "prefix": "too long", "filler": "x", "needle": "KEY", "suffix": "end"},
+        {"length_chars": 100000, "prefix": "", "filler": "", "needle": "KEY", "suffix": ""},
+    ],
+)
+def test_invalid_prompt_fails_before_servers_start(serving: dict, tmp_path: Path, prompt) -> None:
+    serving["config"]["prompt"] = prompt
+    with pytest.raises(ValueError, match="prompt"):
+        evaluate(tmp_path)
+    assert not serving["commands"]
 
 
 def test_stage_prints_and_serves_both_modes(serving: dict, tmp_path: Path) -> None:
@@ -163,18 +257,7 @@ def test_stage_prints_and_serves_both_modes(serving: dict, tmp_path: Path) -> No
     assert record.on.n_fallback_calls == 3
     assert record.scenario == "model-mi355x"
     assert "model-mi355x" in "".join(serving["console"])
-    platform = PlatformRecord(
-        **(dict.fromkeys(PlatformRecord.model_fields, "unknown") | {"n_visible_devices": 0})
-    )
-    pipeline = PipelineReport(
-        head_sha="head",
-        base_sha=None,
-        measurement_profile={},
-        platform=platform,
-        schema_paths=(),
-        bench_paths=(),
-        stages=(report,),
-    )
+    pipeline = pipeline_report(report)
     assert pipeline.exit_code == 0
     assert "GSM8K" in pipeline.markdown_text()
     assert pipeline.model_dump()["stages"][0]["stage_name"] == "e2e"
@@ -485,84 +568,22 @@ def test_unverified_remote_cleanup_stops_the_run(serving: dict, tmp_path: Path) 
 
 @pytest.mark.parametrize("remote", [False, True])
 @pytest.mark.parametrize("foreign_listener", [False, True])
-def test_real_worker_ownership_and_cleanup_through_stage(
-    serving: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, remote: bool, foreign_listener: bool
+def test_stage_checks_ownership_and_cleans_up(
+    serving: dict, tmp_path: Path, remote: bool, foreign_listener: bool
 ) -> None:
-    """Use real Linux processes/sockets; emulate only SSH transport and the model API."""
-    import socket
-    import sys
-    import time
-
     if remote:
         serving["config"]["hosts"] = ["remote-node"]
-    fake_popen, fake_run = subprocess.Popen, subprocess.run
-    real_popen, real_run = serving["real_popen"], serving["real_run"]
-    processes = []
-    foreign = []
+    if foreign_listener:
+        serving["control_failures"]["owns-port"] = "port is owned by another deployment"
 
-    def popen(argv, **kwargs):
-        command = shlex.split(argv[-1]) if argv[0] == "ssh" else list(argv)
-        if "sglang.launch_server" not in command:
-            return real_popen(command, **kwargs)
-        fake_popen(argv, **kwargs)  # capture printed command, evaluation state and call records
-        side = str(len(processes))
-        ready = tmp_path / f"ready-{side}"
-        code = (
-            "import socket, time; from pathlib import Path; "
-            "s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); "
-            "s.bind(('127.0.0.1', 30000)); s.listen(); "
-            f"Path({str(ready)!r}).touch(); time.sleep(60)"
-        )
-        if foreign_listener:
-            # An unrelated server races into the endpoint after the preflight check.
-            foreign.append(real_popen([sys.executable, "-c", code], start_new_session=True))
-            code = "import time; time.sleep(60)"
-        env_index = command.index("env")
-        python_index = command.index(sys.executable, env_index)
-        command = [*command[:python_index], sys.executable, "-c", code]
-        process = real_popen(command, **kwargs)
-        processes.append(process)
-        deadline = time.monotonic() + 5
-        while not ready.exists():
-            assert process.poll() is None, "test server exited before binding"
-            assert time.monotonic() < deadline, "test server did not bind"
-            time.sleep(0.01)
-        return process
+    report = evaluate(tmp_path)
 
-    def run(argv, **kwargs):
-        command = shlex.split(argv[-1]) if argv[0] == "ssh" else list(argv)
-        if len(command) > 1 and command[1].endswith("/_worker.py"):
-            if command[2] == "available":
-                command[3] = "127.0.0.1"
-            result = real_run(command, **kwargs)
-            if remote and command[2] == "stop" and result.returncode == 0:
-                late = real_run(
-                    [*command[:2], "start", command[3], sys.executable, "-c", "raise SystemExit(0)"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                assert late.returncode == 1 and "already stopped" in late.stderr
-            return result
-        return fake_run(argv, **kwargs)
-
-    monkeypatch.setattr(subprocess, "Popen", popen)
-    monkeypatch.setattr(subprocess, "run", run)
-    monkeypatch.setattr(os, "killpg", serving["real_killpg"])
-    try:
-        report = evaluate(tmp_path)
-        assert report.status == ("aborted" if foreign_listener else "passed"), report
-        assert len(processes) == (1 if foreign_listener else 2)
-        assert all(process.poll() is not None for process in processes)
-        if foreign_listener:
-            assert not serving["evaluations"]
-            assert all(process.poll() is None for process in foreign)
-        else:
-            with socket.socket() as probe:
-                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                probe.bind(("127.0.0.1", 30000))
-    finally:
-        for process in [*processes, *foreign]:
-            if process.poll() is None:
-                serving["real_killpg"](process.pid, 9)
-                process.wait()
+    assert report.status == ("aborted" if foreign_listener else "passed")
+    sides = 1 if foreign_listener else 2
+    assert len(serving["commands"]) == len(serving["killed"]) == sides
+    assert len(serving["evaluations"]) == (0 if foreign_listener else 2)
+    actions = [action for _, action in serving["controls"]]
+    assert actions.count("available") == actions.count("owns-port") == sides
+    assert actions.count("stop") == (sides if remote else 0)
+    if remote:
+        assert all(argv[0] == "ssh" for argv, _ in serving["controls"])

@@ -57,10 +57,35 @@ class _CookbookSource(FrozenModel):
     source: str = "main"
 
 
+class _LongPrompt(FrozenModel):
+    """A reproducible long prompt with the needle centered between repeated filler."""
+
+    length_chars: PositiveInt
+    prefix: str
+    filler: str = Field(min_length=1)
+    needle: str = Field(min_length=1)
+    suffix: str
+
+    def render(self) -> str:
+        # Center the needle in the complete prompt, including its instructions.
+        left = (self.length_chars - len(self.needle)) // 2 - len(self.prefix)
+        right = self.length_chars - len(self.prefix + self.needle + self.suffix) - left
+        if min(left, right) < 0:
+            raise ValueError("prompt.length_chars is too short to center the needle with prefix and suffix")
+
+        def padding(length: int) -> str:
+            repeats, remainder = divmod(length, len(self.filler))
+            return self.filler * repeats + self.filler[:remainder]
+
+        return self.prefix + padding(left) + self.needle + padding(right) + self.suffix
+
+
 class _ConfigFile(FrozenModel):
     cookbook: _CookbookSource = _CookbookSource()
     hosts: tuple[str, ...] = Field(default=("127.0.0.1",), min_length=1)
     work_dir: Path | None = None
+    prompt: str | _LongPrompt = Field(union_mode="left_to_right")
+    expected_answer: str = Field(min_length=1)
     scenarios: tuple[_ScenarioEntry, ...]
 
 
@@ -71,6 +96,8 @@ class E2eConfig(FrozenModel):
     cookbook_source: str
     hosts: tuple[str, ...] = ("127.0.0.1",)
     work_dir: Path | None = None
+    prompt: str
+    expected_answer: str
     scenarios: tuple[Scenario, ...]
 
     @classmethod
@@ -83,7 +110,10 @@ class E2eConfig(FrozenModel):
         pd_roles = ("prefill", "decode")
         try:
             document = _ConfigFile.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
-        except (OSError, yaml.YAMLError, ValidationError) as error:
+            prompt = document.prompt if isinstance(document.prompt, str) else document.prompt.render()
+            if not prompt.strip() or not document.expected_answer.strip():
+                raise ValueError("prompt and expected_answer must not be blank")
+        except (OSError, yaml.YAMLError, ValueError) as error:
             raise ValueError(f"{path}: {error}") from error
         scenarios: list[Scenario] = []
         for entry in document.scenarios:
@@ -146,6 +176,8 @@ class E2eConfig(FrozenModel):
             cookbook_source=document.cookbook.source,
             hosts=document.hosts,
             work_dir=document.work_dir,
+            prompt=prompt,
+            expected_answer=document.expected_answer,
             scenarios=tuple(scenarios),
         )
 
