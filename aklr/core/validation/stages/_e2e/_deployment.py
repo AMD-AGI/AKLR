@@ -45,6 +45,9 @@ class NodeProcess:
 
     def start(self) -> None:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
+        if self._remote_host:
+            self._remote_state.with_suffix(".lock").touch(exist_ok=False)
+            self._remote_state.with_suffix(".ready").touch(exist_ok=False)
         with open(self.log_path, "wb") as log:
             self._process = subprocess.Popen(
                 self.argv, start_new_session=True, stdin=subprocess.DEVNULL, stdout=log, stderr=log

@@ -28,6 +28,15 @@ from aklr.core.validation.stages.stage import StageReport
 __all__ = ["E2eRecord", "E2eReport", "ModelEvaluationResult"]
 
 
+def _code_span(text: str) -> str:
+    """Keep code literal, including shell quoting and repeated spaces."""
+    text = text.replace("\r", " ").replace("\n", " ")
+    fence = "`" * (1 + max((len(m[0]) for m in re.finditer(r"`+", text)), default=0))
+    if text.startswith(("`", " ")) or text.endswith(("`", " ")):
+        text = f" {text} "
+    return f"{fence}{text}{fence}"
+
+
 class ModelEvaluationResult(FrozenModel):
     """A model evaluation with AKLR enabled or disabled: scores, answers and serving failures."""
 
@@ -187,13 +196,13 @@ class E2eReport(StageReport):
                     continue
                 if side.prompt_answer is not None:
                     items.append(
-                        f"{side_name} answer `{escape(one_line(side.prompt_answer))}`,"
-                        f" expected `{escape(self.expected_answer)}`;"
+                        f"{side_name} answer {_code_span(side.prompt_answer)},"
+                        f" expected {_code_span(self.expected_answer)};"
                         f" prompt ({len(self.prompt):,} characters): {detail_text(self.prompt)}"
                     )
                 if side.failure:
                     items.append(f"{side_name} failed: {detail_text(side.failure)}")
-                items += [f"{side_name}: `{escape(argv)}`" for argv in side.argvs]
+                items += [f"{side_name}: {_code_span(argv)}" for argv in side.argvs]
             cells = "; ".join(f"{role} {escape(match)}" for role, match in record.matches.items())
             blocks += [
                 Heading(4, escape(record.scenario)),

@@ -69,6 +69,17 @@ class CookbookLiteralParser:
         depth, position = 0, starts[0].end()
         while True:
             token = self._token.match(text, position)
+            if (
+                token is None
+                and parts[-1] in ("{", ",")
+                and re.match(r"(?:get|set)\s+[A-Za-z_$][\w$]*\s*\(", text[position:])
+            ):
+                # Playground accessors are UI code, never launch data. Skip their
+                # balanced bodies without executing JavaScript.
+                position = self._skip_expression(text, position)
+                if text[position : position + 1] == ",":
+                    position += 1
+                continue
             if token is None and parts[-1] == ":":
                 position = self._skip_expression(text, position)
                 parts.append("null")

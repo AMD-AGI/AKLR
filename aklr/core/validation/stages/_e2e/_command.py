@@ -113,7 +113,8 @@ class ServerRecipe:
     def flags(self) -> list[list[str]]:
         """The cell's flags, each a name and its values, with ``args`` applied (replaced by
         name, null or false removes, true is a switch) and the launcher's own removed."""
-        flags = [shlex.split(f) for f in self.cell.flags]
+        # Keep placeholders in one token, including unknown names that must be rejected.
+        flags = [shlex.split(re.sub(r"\{\{\s*(\w+)\s*\}\}", r"{{\1}}", f)) for f in self.cell.flags]
         if not all(flags):
             raise ValueError(f"{self.name}: an empty flag in the cookbook")
         for name, value in self.args.items():

@@ -69,9 +69,10 @@ def available(host: str, port: int) -> None:
 
 
 @contextlib.contextmanager
-def locked(state: Path):
-    state.parent.mkdir(parents=True, exist_ok=True)
-    with state.with_suffix(".lock").open("a") as lock:
+def locked(state: Path, *, create: bool = True):
+    if create:
+        state.parent.mkdir(parents=True, exist_ok=True)
+    with state.with_suffix(".lock").open("a" if create else "r+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         yield
 
@@ -80,6 +81,7 @@ def stop_remote(state: Path) -> None:
     with locked(state):
         # Serialize with start: even a delayed SSH command must not launch after stop.
         state.with_suffix(".stopped").touch()
+        state.with_suffix(".ready").unlink(missing_ok=True)
         if state.exists():
             stop_group(int(state.read_text()))
             state.unlink()
@@ -99,9 +101,13 @@ def start_remote(state: Path, argv: list[str]) -> int:
     for sig in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, interrupted)
     try:
-        with locked(state):
-            if interrupted_by or state.with_suffix(".stopped").exists():
-                raise RuntimeError("deployment was already stopped")
+        # Only the controller authorizes a start. A removed directory must never
+        # be recreated by a delayed SSH request, nor may a start be replayed.
+        with locked(state, create=False):
+            ready = state.with_suffix(".ready")
+            if interrupted_by or state.with_suffix(".stopped").exists() or not ready.exists():
+                raise RuntimeError("deployment was already stopped or has no startup authorization")
+            ready.unlink()
             child = subprocess.Popen(argv, start_new_session=True, stdin=subprocess.DEVNULL)
             state.write_text(str(child.pid))
         if interrupted_by:

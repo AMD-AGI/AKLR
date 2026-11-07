@@ -14,7 +14,7 @@ env:
     github.head_ref == 'aklr-perf/main' && github.event.pull_request.head.repo.full_name == github.repository }}
   # The one "still current" rule, run by main's own code: a measurement taken at commit
   # argv[1] stands iff the working tree differs from it only in what the bench
-  # re-measures nothing for (all but aklr/core's code, ValidationScope.path_kind).
+  # re-measures nothing for (all but core/plugin code, ValidationScope.path_kind).
   # Callers keep scratch files under $RUNNER_TEMP: an untracked file counts as a change.
   AKLR_MEASUREMENT_CURRENT: |
     import sys
@@ -171,7 +171,7 @@ jobs:
           for sha in $shas; do
             [[ $sha =~ ^[0-9a-f]{40}$ ]] || { printf '::error::Malformed Measured-SHA %q\n' "$sha"; exit 1; }
             PYTHONPATH=. python -c "$AKLR_MEASUREMENT_CURRENT" "$sha" ||
-              { echo "::error::Measured at $sha, before aklr/core changes on main; a later publish-measurement rebuilds this PR without it"; exit 1; }
+              { echo "::error::Measured at $sha, before core/plugin code changes on main; a later publish-measurement rebuilds this PR without it"; exit 1; }
           done
       # CI only checks; authors export the schemas locally.
       - name: Check exported files
@@ -394,6 +394,10 @@ jobs:
     env:
       STAGES: audit,bench,e2e
     steps:
+      - name: Set the validation deadline
+        # Reserve 15 minutes for upload/permissions and job overhead. This clock
+        # includes checkout, environment setup, audit and bench, not just e2e.
+        run: echo "E2E_DEADLINE=$(( $(date +%s) + 365 * 60 ))" >> "$GITHUB_ENV"
       - *checkout_source
       - *setup_aklr_step
       - name: Show untracked files
@@ -409,6 +413,7 @@ jobs:
           flags=(${BASE:+--base "$BASE"})
           [[ $MEASURED_BY_BOT != true ]] || flags+=(--allow-measured-edits)
           python -m aklr validate "${flags[@]}" --stages "$STAGES" \
+            --e2e-deadline "$E2E_DEADLINE" \
             --out "$RUNNER_TEMP/validation-report"
       # The PR head the reviewer signs; the checkout is the merge commit.
       - name: Summarize
@@ -574,7 +579,7 @@ jobs:
       # export check and the current rule run main's aklr.
       - *setup_python
       - *install_cpu_deps
-      # A missed measurement is not retried; the next aklr/core change on main re-benches every schema.
+      # A missed measurement is not retried; the next core/plugin code change on main re-benches every schema.
       # validation can fail before write_schemas: no artifact is nothing to write.
       - name: Download the validation report (validation-report-<attempt>)
         continue-on-error: true
@@ -582,6 +587,13 @@ jobs:
         with:
           name: validation-report-${{ github.run_attempt }}
           path: ${{ runner.temp }}/validation-report
+      - name: Require a completed e2e accuracy gate
+        run: |
+          report=$RUNNER_TEMP/validation-report/report.json
+          if ! jq -e '[.stages[] | select(.stage_name == "e2e") | .status] == ["passed"]' "$report"; then
+            echo '::error::Measurements cannot be published without a passed e2e gate.'
+            exit 1
+          fi
       # Carries the bot branch's still-current measurements, then this run's; the newest
       # measurement of a file wins. The commit body lists "<sha> <path>" per published
       # file (the next run's carry) and one Measured-SHA trailer per sha (lint's check).
@@ -631,7 +643,7 @@ jobs:
             while read -r sha path; do
               [[ $sha =~ ^[0-9a-f]{40}$ && $path =~ $schema_path ]] || continue
               if ! current "$sha"; then
-                printf '::warning::Dropped %q: measured at %s, before aklr/core changes on main\n' "$path" "$sha"
+                printf '::warning::Dropped %q: measured at %s, before core/plugin code changes on main\n' "$path" "$sha"
                 continue
               fi
               git show "$prev:$path" > "$RUNNER_TEMP/carried.json"
@@ -643,7 +655,7 @@ jobs:
               accept "$new" "${new#"$schemas/"}" "$GITHUB_SHA"
             done < <(find "$schemas" -mindepth 1 \( -type f -o -type l \) -print0)
           else
-            echo "::warning::Dropped this run's measurements: main has aklr/core changes since $GITHUB_SHA"
+            echo "::warning::Dropped this run's measurements: main has core/plugin code changes since $GITHUB_SHA"
           fi
           if git diff --quiet; then
             echo 'No measured schema to publish.' >> "$GITHUB_STEP_SUMMARY"
