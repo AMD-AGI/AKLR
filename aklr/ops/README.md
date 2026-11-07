@@ -55,7 +55,7 @@ aklr/ops/
    `python -m aklr export check` names (the uuid hashes the kernel). To change a committed kernel, edit its
    `content` or `requires`, delete `accuracy` and `speedup` from every workload (only CI writes them:
    `PERF_EDITED`), and rename the file the same way. Audit checks every committed kernel's sources, changed or not.
-5. Self-test: `python -m aklr export check`, then `python -m aklr validate --base origin/main`. The result does
+5. Self-test: `python -m aklr export check`, then `python -m aklr validate --base origin/main --stages audit,bench`. The result does
    not count; CI decides.
 6. Open a PR.
 
@@ -324,7 +324,7 @@ A schema file carries no semantics stamp. After a change to the schema format, r
 |---|---|---|
 | `python -m aklr export [--from DIR] [--to DIR] [--language L]` | export (`--from` and `--to` default to `AKLR_EXPORT_DIR`, else `./aklr_export`; `--language` required); fails with `no calls.*.jsonl in DIR` when there are no calls | 0 done, 1 error, 2 usage |
 | `python -m aklr export check` | checks every committed schema and `impls/`; no GPU, no environment | 0 clean, 1 problems on stderr, 2 usage |
-| `python -m aklr validate [PATH ...] [--base REV] [--stages audit,bench] ...` | audit and bench stages (default: both); writes `aklr_validation/report.json` and `report.md` | 0 passed, 1 failed, 2 usage, 3 aborted |
+| `python -m aklr validate [PATH ...] [--base REV] [--stages audit,bench,e2e] ...` | audit, bench and e2e stages by default; writes `aklr_validation/report.json` and `report.md` | 0 passed, 1 failed, 2 usage, 3 aborted |
 
 Options and stages of `validate`: `python -m aklr validate --help`.
 

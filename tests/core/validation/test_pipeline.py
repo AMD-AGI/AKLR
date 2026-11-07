@@ -1246,3 +1246,43 @@ def test_importing_validation_loads_no_torch() -> None:
 
     code = "import sys, aklr.core.validation; sys.exit('torch' in sys.modules)"
     assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
+
+
+def test_pipeline_persists_bench_before_interrupted_e2e(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from aklr.core.validation.stages._e2e import E2eReport
+    from aklr.core.validation.stages.stage import PipelineStage
+
+    schema = ContractRegistry.default().parse_schema(Path(_SCHEMA).read_bytes(), _SCHEMA)
+    path = tmp_path / _SCHEMA
+    path.parent.mkdir(parents=True)
+    path.write_text(schema.schema_text())
+    out = tmp_path / "report"
+    scope = ValidationScope(tmp_path, "head", None, (path,), (path,))
+    monkeypatch.setattr(PlatformRecord, "current", classmethod(lambda cls: PlatformRecord(**_PLATFORM)))
+
+    class Bench(_FixedBench):
+        def run(self, scope, earlier):
+            return BenchReport.from_findings(
+                [],
+                workload_records=tuple(
+                    _workload(w.axes, 123.0, 0.0).model_copy(update={"baseline": None})
+                    for w in schema.workloads
+                ),
+            )
+
+    class InterruptedE2e(PipelineStage[E2eReport]):
+        name = "e2e"
+        report_type = E2eReport
+
+        def run(self, scope, earlier):
+            saved = json.loads((out / "report.json").read_text())
+            assert [s["status"] for s in saved["stages"]] == ["passed", "passed", "aborted"]
+            assert (out / "schemas" / _SCHEMA).is_file()
+            raise KeyboardInterrupt("simulated job termination")
+
+    with pytest.raises(KeyboardInterrupt, match="simulated"):
+        Pipeline([_FixedAudit("passed"), Bench("passed"), InterruptedE2e()]).run(scope, out=out)
+    assert (out / "schemas" / _SCHEMA).is_file()
+    assert "aborted (e2e)" in (out / "report.md").read_text()

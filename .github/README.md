@@ -85,7 +85,7 @@ For reference: [aklr/ops/README.md](../aklr/ops/README.md) (schema fields, the k
 
 ```bash
 pytest tests                                                # unit tests
-python -m aklr validate --stages audit,bench --devices 0-7  # full validation
+python -m aklr validate --stages audit,bench,e2e --devices 0-7  # full validation, as CI runs it
 ```
 
 ## Contributing

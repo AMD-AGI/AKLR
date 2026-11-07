@@ -78,7 +78,7 @@ E=$(python -c "import json, sys; print(json.load(open(sys.argv[1]))['eval_dir'])
 cp $(ls $E/optimized/*.py | grep -v '/driver\.py$') $RUN/workspace/
 HIP_VISIBLE_DEVICES=0 python $RUN/workspace/driver.py --stress
 python harness/scripts/forge_task publish $RUN
-python -m aklr export check && python -m aklr validate --base origin/main <the path publish printed>
+python -m aklr export check && python -m aklr validate --base origin/main --stages audit,bench <the path publish printed>
 ```
 
 - Deliver only when `validation_status` in `geak_result.json` is `accepted` and `--stress` ends with `stress: PASS`.
