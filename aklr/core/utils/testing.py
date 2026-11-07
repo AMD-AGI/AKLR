@@ -210,23 +210,36 @@ def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="
                         fn()
             torch.cuda.synchronize()
             n_retries = 10
+            error = None
             try:
-                for i in range(n_retries):
-                    g.replay()
-                torch.cuda.synchronize()
-            finally:
-                profiler.deactivate(session, flushing=True)
+                try:
+                    for i in range(n_retries):
+                        g.replay()
+                    torch.cuda.synchronize()
+                finally:
+                    profiler.deactivate(session, flushing=True)
 
-            times = [t / n_retries for t in _collect_scope_times(profiler.get_data(session), scope_prefix)]
+                times = [
+                    t / n_retries for t in _collect_scope_times(profiler.get_data(session), scope_prefix)
+                ]
+                if distributed and len(times) != n_repeat:
+                    raise RuntimeError(f"bench_cudagraph: {len(times)} of {n_repeat} calls timed")
+            except Exception as e:
+                if not distributed:
+                    raise
+                error = e
+            del g  # its captured collectives would outlive the call in a raised error's traceback
 
     if distributed:
-        # a rank missing a call's time still joins the reduction, so no rank waits on it
-        timed_calls = len(times)
-        slowest = torch.tensor(
-            times if timed_calls == n_repeat else [math.inf] * n_repeat, dtype=torch.float64, device="cuda"
-        )
+        # every rank learns each rank's failure, so all fail together and none waits on a collective
+        errors = [None] * dist.get_world_size(group)
+        dist.all_gather_object(errors, None if error is None else str(error), group=group)
+        if error is not None:
+            raise error
+        for rank, message in enumerate(errors):
+            if message is not None:
+                raise RuntimeError(f"rank {rank}: {message}")
+        slowest = torch.tensor(times, dtype=torch.float64, device="cuda")
         dist.all_reduce(slowest, dist.ReduceOp.MAX, group=group)
-        if timed_calls != n_repeat:
-            raise RuntimeError(f"bench_cudagraph: {timed_calls} of {n_repeat} calls timed on this rank")
         times = slowest.tolist()
     return _summarize_statistics(times, quantiles, return_mode)

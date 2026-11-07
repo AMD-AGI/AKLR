@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 import torch
 
-from aklr.core.utils.testing import bench_cudagraph, graph_kernel_timing_environment
+from aklr.core.utils.testing import bench_cudagraph, graph_kernel_timing_environment, kernel_tracer
 
 
 def _assert_milliseconds(value):
@@ -156,7 +156,7 @@ def test_bench_cudagraph(scenario):
         pool.apply_async(_run_scenario, (scenario,)).get(timeout=300)
 
 
-def _group_rank(rank, rendezvous):
+def _group_rank(rank, rendezvous, fault=False):
     import datetime
 
     import torch.distributed as dist
@@ -173,6 +173,12 @@ def _group_rank(rank, rendezvous):
             value.fill_(rank + 1)
             dist.all_reduce(value)
 
+        if fault:
+            if rank == 0:
+                kernel_tracer().fail_next_window("rocprofiler-sdk dropped 1 records")
+            with pytest.raises(RuntimeError) as error:  # its traceback stays alive until the group ends
+                bench_cudagraph(collective, group=dist.group.WORLD)
+            return str(error.value)
         # rank 1's budget alone would capture far more calls than rank 0's
         times = bench_cudagraph(
             collective, rep=0 if rank == 0 else 5, group=dist.group.WORLD, return_mode="all"
@@ -195,6 +201,20 @@ def test_bench_cudagraph_group(tmp_path):
     assert len(rank0) == 1  # the fewest calls any rank's budget allows
     assert rank0 == rank1  # each call reads as its slowest rank's time
     _assert_milliseconds(rank0[0])
+
+
+@pytest.mark.gpu
+@pytest.mark.skipif(torch.version.hip is None, reason="requires ROCm PyTorch")
+def test_bench_cudagraph_group_fails_together(tmp_path):
+    """A rank's tracer fault fails every rank with its message, instead of leaving a peer waiting."""
+    if torch.cuda.device_count() < 2:
+        pytest.skip("requires two GPUs")
+    rendezvous = (tmp_path / "store").as_uri()
+    with multiprocessing.get_context("spawn").Pool(2) as pool:
+        jobs = [pool.apply_async(_group_rank, (rank, rendezvous, True)) for rank in range(2)]
+        rank0, rank1 = (job.get(timeout=200) for job in jobs)
+    assert rank0 == "rocprofiler-sdk dropped 1 records"
+    assert rank1 == "rank 0: rocprofiler-sdk dropped 1 records"
 
 
 @pytest.mark.parametrize("original", [None, "0", "1"])
