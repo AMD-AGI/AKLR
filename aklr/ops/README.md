@@ -55,7 +55,7 @@ aklr/ops/
    `python -m aklr export check` names (the uuid hashes the kernel). To change a committed kernel, edit its
    `content` or `requires`, delete `accuracy` and `speedup` from every workload (only CI writes them:
    `PERF_EDITED`), and rename the file the same way. Audit checks every committed kernel's sources, changed or not.
-5. Self-test: `python -m aklr export check`, then `python -m aklr validate --base origin/main`. The result does
+5. Self-test: `python -m aklr export check`, then `python -m aklr validate --base origin/main --stages audit,bench`. The result does
    not count; CI decides.
 6. Open a PR.
 

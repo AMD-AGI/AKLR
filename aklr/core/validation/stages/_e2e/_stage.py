@@ -49,7 +49,8 @@ class E2eStage(PipelineStage[E2eReport]):
     name = "e2e"
     report_type = E2eReport
 
-    def __init__(self, devices: Sequence[str]) -> None:
+    def __init__(self, devices: Sequence[str], *, deadline: float | None = None) -> None:
+        self._deadline = float("inf") if deadline is None else deadline
         # phase 1, GSM8K on both sides: every test question; run_eval takes its 5 few-shot examples
         # from them, so 1314 are graded
         self._gsm8k_questions = 1319
@@ -77,6 +78,7 @@ class E2eStage(PipelineStage[E2eReport]):
         self._cookbook_repo = config.cookbook_repo
         self._cookbook_source = config.cookbook_source
         self._hosts = config.hosts
+        self._cleanup_budget = 60.0 * (len(self._hosts) + 1)
         self._work_dir = config.work_dir
         # every process gets these on its command line, so a remote node gets them too;
         # ROCR_VISIBLE_DEVICES is left as it is: HIP indexes within it
@@ -90,9 +92,11 @@ class E2eStage(PipelineStage[E2eReport]):
         self._env |= {k: v for k in ("HF_HOME", "HF_HUB_CACHE", "HF_HUB_OFFLINE") if (v := os.environ.get(k))}
 
     def run(self, scope: ValidationScope, earlier: PipelineReport) -> E2eReport:
-        """Run every scenario; only a ``RunNotKilledError`` ends the stage."""
+        """Run scenarios until done, out of time, or unable to verify cleanup."""
         if not self._scenarios:  # every model disabled: no reason to fail the run
             return E2eReport.skipped("no enabled scenario in scenarios.yaml")
+        if time.monotonic() >= self._deadline - self._cleanup_budget:
+            return E2eReport.aborted("e2e deadline exhausted before startup")
         findings: list[Finding] = []
         records: list[E2eRecord] = []
         cookbooks: dict[str, Cookbook] = {}
@@ -112,6 +116,9 @@ class E2eStage(PipelineStage[E2eReport]):
             python_path = os.pathsep.join(filter(None, (str(scope.root), os.environ.get("PYTHONPATH"))))
             env = self._env | {"PYTHONPATH": python_path, ENV_MEASURED_DIR: str(measured_dir)}
             for index, scenario in enumerate(self._scenarios):
+                if time.monotonic() >= self._deadline - self._cleanup_budget:
+                    findings.append(Finding.unlocated(FindingCode.PLATFORM_FAILURE, "e2e deadline exhausted"))
+                    break
                 where = f"scenario {index + 1}/{len(self._scenarios)} {scenario.name}"
                 record = E2eRecord(
                     scenario=scenario.name,
@@ -174,6 +181,9 @@ class E2eStage(PipelineStage[E2eReport]):
                     self.progress.write(f"{where}: AKLR served no call, every call fell back")
                 records.append(record)
                 self.progress.write(f"{where}: {record.console_line()}")
+                if time.monotonic() >= self._deadline - self._cleanup_budget:
+                    findings.append(Finding.unlocated(FindingCode.PLATFORM_FAILURE, "e2e deadline exhausted"))
+                    break
         return E2eReport.from_findings(
             findings,
             prompt=self._prompt,
@@ -201,26 +211,38 @@ class E2eStage(PipelineStage[E2eReport]):
             ENV_EXPORT: "1" if aklr_enabled else "0",
             ENV_EXPORT_DIR: str(calls_dir),
         }
+        # Bound the entire side by the CI deadline, retaining time for every
+        # remote stop (30s control timeout + group cleanup) and the local client.
+        deadline = min(time.monotonic() + self._evaluation_timeout, self._deadline - self._cleanup_budget)
+
+        def remaining() -> float:
+            seconds = deadline - time.monotonic()
+            if seconds <= 0:
+                raise TimeoutError("e2e evaluation deadline exhausted")
+            return seconds
+
         try:
+            startup_timeout = min(self._startup_timeout, remaining())
+            if startup_timeout < 1:
+                raise TimeoutError("e2e deadline leaves no startup budget")
             commands, entry_url = export_commands(
                 scenario,
                 cookbook,
                 hosts=self._hosts,
                 env=env,
                 side_env=side_env,
-                startup_timeout=self._startup_timeout,
+                startup_timeout=startup_timeout,
             )
             deployment = Deployment(commands, entry_url, run_dir / side)
-        except ValueError as error:
+        except (ValueError, TimeoutError) as error:
             return ModelEvaluationResult(failure=str(error))
-        deadline = time.monotonic() + self._evaluation_timeout
         result: dict[str, object] = {"argvs": deployment.argvs}
         failures: list[str] = []
         is_ready = False
         self.progress.write(f"{side}: starting {len(deployment.processes)} processes")
         try:
             # a slow weight load fails the start, not the grading it would leave no time for
-            entry_url = deployment.start(timeout=self._startup_timeout)
+            entry_url = deployment.start(timeout=min(startup_timeout, remaining()))
             is_ready = True
             self.progress.write(
                 f"{side}: serving at {entry_url}; GSM8K, {self._gsm8k_questions} questions less 5 shots"
@@ -236,9 +258,10 @@ class E2eStage(PipelineStage[E2eReport]):
                     argv,
                     capture_output=True,
                     text=True,
-                    timeout=max(1.0, deadline - time.monotonic()),
+                    timeout=remaining(),
                     check=False,
                 )
+                remaining()
                 # run_eval scores a request that failed (a 400, retries exhausted) as a wrong
                 # answer and exits 0: its sampler's messages count them
                 n_failed = done.stdout.count("Bad Request Error") + done.stdout.count(
@@ -271,10 +294,9 @@ class E2eStage(PipelineStage[E2eReport]):
                     headers={"Content-Type": "application/json"},
                 )  # fmt: skip
                 try:
-                    with urllib.request.urlopen(
-                        request, timeout=max(1.0, deadline - time.monotonic())
-                    ) as response:
+                    with urllib.request.urlopen(request, timeout=remaining()) as response:
                         answer = json.load(response)["choices"][0]["message"]["content"] or ""
+                    remaining()
                     if not isinstance(answer, str):
                         raise TypeError(f"content is not a string: {answer!r}")
                     result["prompt_answer"] = answer

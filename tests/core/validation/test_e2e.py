@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import html
 import io
 import json
 import os
@@ -64,6 +63,7 @@ def serving(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.Capt
         "commands": [],
         "killed": [],
         "evaluations": [],
+        "evaluation_timeouts": [],
         "console": [],
         "write_calls": True,
         "git_failure": False,
@@ -124,6 +124,8 @@ def serving(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.Capt
             return subprocess.CompletedProcess(argv, 0, "a" * 40 + "\n", "")
         assert "sglang.test.run_eval" in argv
         state["evaluations"].append(argv)
+        state["evaluation_timeouts"].append(kwargs["timeout"])
+        state.get("after_evaluation", lambda: None)()
         score = state["scores"][int(state["env"]["AKLR_DISABLE"] == "0")]
         return subprocess.CompletedProcess(argv, 0, f"{{'score': {score}}}\n", "")
 
@@ -218,7 +220,7 @@ def test_configured_long_prompt_is_sent_and_key_is_graded_exactly(
     assert pipeline.model_dump()["stages"][0]["prompt"] == prompt
     markdown = pipeline.markdown_text()
     assert "100,000 characters" in markdown
-    assert "expected `kEy_9!`" in html.unescape(markdown)
+    assert "expected `kEy_9!`" in markdown
     assert len(markdown) < 10000
 
 
@@ -587,3 +589,207 @@ def test_stage_checks_ownership_and_cleans_up(
     assert actions.count("stop") == (sides if remote else 0)
     if remote:
         assert all(argv[0] == "ssh" for argv, _ in serving["controls"])
+
+
+@pytest.mark.parametrize("placeholder", ["MODEL_NAME", "NETWORK_INTERFACE"])
+def test_stage_handles_whitespace_in_placeholders(serving: dict, tmp_path: Path, placeholder: str) -> None:
+    path = tmp_path / "sglang/docs/src/snippets/configs/vendor/model.jsx"
+    text = path.read_text().replace('"--tp 8"', '"--tp 8", "--served-model-name {{ ' + placeholder + ' }}"')
+    path.write_text(text)
+    report = evaluate(tmp_path)
+    if placeholder == "MODEL_NAME":
+        assert report.status == "passed"
+        for argv in serving["commands"]:
+            assert argv[argv.index("--served-model-name") + 1] == "vendor/Model"
+    else:
+        assert report.status == "aborted"
+        assert "NETWORK_INTERFACE" in report.findings[0].detail
+        assert not serving["commands"]
+
+
+@pytest.mark.parametrize("parsers", [{}, {"reasoning": True}])
+def test_stage_ignores_unrelated_playground_accessors(serving: dict, tmp_path: Path, parsers: dict) -> None:
+    path = tmp_path / "sglang/docs/src/snippets/configs/vendor/model.jsx"
+    path.write_text(
+        path.read_text().replace(
+            "  playgroundFeatures: {",
+            "  playgroundFeatures: {\n    hicache: {get disable() { return true; }},",
+        )
+    )
+    serving["config"]["scenarios"][0]["matches"][0]["parsers"] = parsers
+    assert evaluate(tmp_path).status == "passed"
+
+
+def test_report_preserves_code_span_text(serving: dict, tmp_path: Path) -> None:
+    key = "kEy_9!`ok``"
+    serving["answer"] = serving["config"]["expected_answer"] = key
+    serving["config"]["scenarios"][0]["args"]["--served-model-name"] = "model  with `ticks`"
+    report = evaluate(tmp_path)
+    markdown = pipeline_report(report).markdown_text()
+    assert f"``` {key} ```" in markdown
+    assert report.scenario_records[0].on.argvs[0] in markdown
+    assert "&#95;" not in markdown.split("expected", 1)[1].split(";", 1)[0]
+
+
+@pytest.mark.parametrize("authorization", ["missing", "stopped", "removed", "ready"])
+def test_worker_cli_rejects_delayed_start_after_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, authorization: str
+) -> None:
+    import runpy
+    import shutil
+    import signal
+    import sys
+
+    worker = Path(__file__).resolve().parents[3] / "aklr/core/validation/stages/_e2e/_worker.py"
+    state = tmp_path / "deployment/worker.pid"
+    state.parent.mkdir()
+    state.with_suffix(".lock").touch()
+    if authorization != "missing":
+        state.with_suffix(".ready").touch()
+    process = Mock(pid=2**30, wait=Mock(return_value=0))
+    launch = Mock(return_value=process)
+    monkeypatch.setattr(subprocess, "Popen", launch)
+    monkeypatch.setattr(signal, "signal", lambda *args: None)
+    monkeypatch.setattr(os, "killpg", Mock())
+    monkeypatch.setattr(Path, "glob", lambda *args: iter(()))
+
+    def invoke(*args):
+        monkeypatch.setattr(sys, "argv", [str(worker), *map(str, args)])
+        with pytest.raises(SystemExit) as stopped:
+            runpy.run_path(str(worker), run_name="__main__")
+        return stopped.value.code
+
+    if authorization in {"stopped", "removed"}:
+        assert invoke("stop", state) == 0
+        if authorization == "removed":
+            shutil.rmtree(state.parent)
+    assert invoke("start", state, "fake-server") == (0 if authorization == "ready" else 1)
+    assert launch.call_count == (1 if authorization == "ready" else 0)
+
+
+@pytest.mark.parametrize("budget", [0, 100, 300])
+def test_stage_respects_remaining_budget_and_cleans_up(
+    serving: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, budget: int
+) -> None:
+    import time
+
+    now = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    serving["after_evaluation"] = lambda: now.__setitem__(0, now[0] + 400)
+    scope = ValidationScope(tmp_path, "head", None, (), ())
+    stage = E2eStage(["cuda:0"], deadline=now[0] + budget)
+    report = stage.execute(scope, Mock(spec=PipelineReport))
+    assert report.status == "aborted"
+    assert len(serving["commands"]) == len(serving["killed"]) == (1 if budget == 300 else 0)
+    assert not serving["requests"]
+    assert all(0 < seconds < budget for seconds in serving["evaluation_timeouts"])
+    assert "deadline" in report.model_dump_json()
+
+
+def test_stage_shares_budget_between_off_and_on(
+    serving: dict, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    now = [1000.0]
+    monkeypatch.setattr(time, "monotonic", lambda: now[0])
+    serving["after_evaluation"] = lambda: now.__setitem__(0, now[0] + 60)
+    scope = ValidationScope(tmp_path, "head", None, (), ())
+    report = E2eStage(["cuda:0"], deadline=1300).execute(scope, Mock(spec=PipelineReport))
+    assert report.status == "passed"
+    off, on = serving["evaluation_timeouts"]
+    assert 0 < on < off < 300
+    assert off - on == 60
+    assert len(serving["commands"]) == len(serving["killed"]) == 2
+
+
+@pytest.mark.parametrize("family", ["tcp", "tcp6"])
+@pytest.mark.parametrize("owned", [False, True])
+def test_worker_cli_checks_listener_ownership_from_os_data(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, family: str, owned: bool
+) -> None:
+    import runpy
+    import sys
+
+    worker = Path(__file__).resolve().parents[3] / "aklr/core/validation/stages/_e2e/_worker.py"
+    process = tmp_path / "123"
+    process.mkdir()
+    (process / "stat").write_text("123 (worker) S 1 123 0")
+    (process / "fd").mkdir()
+    (process / "fd/3").touch()
+    glob, read, exists = Path.glob, Path.read_text, Path.exists
+    monkeypatch.setattr(
+        Path, "glob", lambda p, pattern: iter([process / "stat"]) if p == Path("/proc") else glob(p, pattern)
+    )
+    monkeypatch.setattr(Path, "exists", lambda p: True if str(p).startswith("/proc/net/") else exists(p))
+    monkeypatch.setattr(
+        Path,
+        "read_text",
+        lambda p, *a, **kw: (
+            "header\n0: 00000000:7530 00000000:0000 0A 0 0 0 0 0 42\n"
+            if p == Path("/proc/net") / family
+            else "header\n"
+            if str(p).startswith("/proc/net/")
+            else read(p, *a, **kw)
+        ),
+    )
+    monkeypatch.setattr(os, "readlink", lambda p: "socket:[42]" if owned else "socket:[99]")
+    monkeypatch.setattr(sys, "argv", [str(worker), "owns-port", "123", "30000"])
+    with pytest.raises(SystemExit) as stopped:
+        runpy.run_path(str(worker), run_name="__main__")
+    assert stopped.value.code == (0 if owned else 1)
+
+
+def test_worker_cli_verifies_group_termination(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import runpy
+    import signal
+    import sys
+
+    worker = Path(__file__).resolve().parents[3] / "aklr/core/validation/stages/_e2e/_worker.py"
+    state = tmp_path / "worker.pid"
+    state.write_text("123")
+    stat = tmp_path / "stat"
+    stat.write_text("123 (worker) S 1 123 0")
+    monkeypatch.setattr(Path, "glob", lambda *args: iter([stat]))
+    signals = []
+
+    def kill(group, signum):
+        signals.append((group, signum))
+        stat.write_text("123 (worker) Z 1 123 0")
+
+    monkeypatch.setattr(os, "killpg", kill)
+    monkeypatch.setattr(sys, "argv", [str(worker), "stop", str(state)])
+    with pytest.raises(SystemExit) as stopped:
+        runpy.run_path(str(worker), run_name="__main__")
+    assert stopped.value.code == 0
+    assert signals == [(123, signal.SIGKILL)]
+    assert not state.exists()
+    assert state.with_suffix(".stopped").exists()
+
+
+@pytest.mark.parametrize("ipv6", [False, True])
+@pytest.mark.parametrize("occupied", [False, True])
+def test_worker_cli_checks_port_availability_without_real_sockets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, ipv6: bool, occupied: bool
+) -> None:
+    import runpy
+    import socket
+    import sys
+    from unittest.mock import MagicMock
+
+    worker = Path(__file__).resolve().parents[3] / "aklr/core/validation/stages/_e2e/_worker.py"
+    family = socket.AF_INET6 if ipv6 else socket.AF_INET
+    address = ("::1", 30000, 0, 0) if ipv6 else ("127.0.0.1", 30000)
+    sock = MagicMock()
+    sock.__enter__.return_value = sock
+    if occupied:
+        sock.bind.side_effect = OSError("port occupied")
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda *a, **kw: [(family, socket.SOCK_STREAM, 0, "", address)]
+    )
+    monkeypatch.setattr(socket, "socket", lambda *a: sock)
+    monkeypatch.setattr(sys, "argv", [str(worker), "available", address[0], "30000"])
+    with pytest.raises(SystemExit) as stopped:
+        runpy.run_path(str(worker), run_name="__main__")
+    assert stopped.value.code == (1 if occupied else 0)
+    sock.bind.assert_called_once_with(address)

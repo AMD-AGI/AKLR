@@ -124,11 +124,13 @@ class ValidationScope:
 
     @staticmethod
     def path_kind(path: str) -> PathKind:
-        """aklr/core's code is the only change that re-benches every schema."""
+        """Core and plugin code both require validation of every schema and model routes."""
         match = _SCHEMA_PATH_PATTERN.fullmatch(path)
         is_schema_json = match is not None and match["language"] in spec.LANGUAGES
         if is_schema_json:
             return "schema_data"
-        if path.startswith("aklr/core/") and not path.endswith(".md"):
+        if (path.startswith("aklr/core/") and not path.endswith(".md")) or (
+            path.startswith("aklr/plugins/") and path.endswith(".py")
+        ):
             return "core"
         return "other"
