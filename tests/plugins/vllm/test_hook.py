@@ -164,6 +164,10 @@ def worker(monkeypatch):
         def compile_or_warm_up_model(self):
             calls.append("vllm warms up")
 
+        def execute_model(self, step):
+            calls.append(step)
+            return step
+
     module = ModuleType("vllm.v1.worker.gpu_worker")
     module.Worker = Worker
     monkeypatch.setitem(sys.modules, module.__name__, module)
@@ -200,6 +204,8 @@ def test_only_1_turns_the_routes_on(monkeypatch, worker, env, hooked):
     routes = ["aklr.plugins.vllm.layers", "aklr.plugins.vllm.x.y.api", "install"] if hooked else []
     warmed = ["aklr warms up"] if hooked else []
     assert calls == ["aklr starts", "device bound", *routes, "device bound", "vllm warms up", *warmed]
+    assert Worker().execute_model(step="step") == "step"
+    assert calls[-1] == "step"
 
 
 def test_any_other_switch_value_ends_the_process(monkeypatch, worker):

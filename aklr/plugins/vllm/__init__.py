@@ -12,6 +12,7 @@ from aklr.core.contract.locate import op_packages
 from aklr.core.platform.env import RuntimeEnv
 from aklr.core.runtime.dispatch import register_vllm_plugin
 from aklr.plugins.vllm import hook
+from aklr.plugins.vllm.stack import roomy
 
 __all__ = ["register"]
 
@@ -54,6 +55,15 @@ def _register() -> None:
         return result
 
     Worker.compile_or_warm_up_model = warm_up
+
+    # the routes' frames move CPython's frame-chunk boundary onto aiter's hot launch calls
+    execute_model = Worker.execute_model
+
+    @functools.wraps(execute_model)
+    def execute(self, *args, **kwargs):
+        return roomy(execute_model, self, *args, **kwargs)
+
+    Worker.execute_model = execute
 
 
 @functools.cache
