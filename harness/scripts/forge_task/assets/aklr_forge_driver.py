@@ -277,14 +277,7 @@ def _measure_candidate(warmup: int, rounds: int) -> dict[str, float]:
     """Per workload, the candidate's median time over ``rounds`` readings of AKLR's graph timer on the call
     validate's bench times."""
     budget, bind_clock, is_tracer_fault = _aklr_timer()
-
-    # Validate counts only an empty trace as the tracer's fault; a process that times one candidate fresh also
-    # sees Kineto drop some of a replay's events ("expected 56 L2 flushes per replay, got 54"), which is no more
-    # the kernel's doing.
-    def is_fault(text: str) -> bool:
-        return is_tracer_fault(text) or text.startswith("Incomplete Kineto trace")
-
-    clock = bind_clock()
+    clock = bind_clock()  # imports the timer's module before the candidate's first GPU call
     candidate = _load_candidate()
     times = {}
     profiler_warm = False
@@ -298,10 +291,12 @@ def _measure_candidate(warmup: int, rounds: int) -> dict[str, float]:
             call_once()
         clock.synchronize()
         if not profiler_warm:
-            # Validate's Kineto warm-up: one unrecorded profile before the first recorded one in the process.
-            graph_reading(clock.bench_cudagraph, call_once, budget, is_fault)
+            # Validate's profiler warm-up: one unrecorded profile before the first recorded one in the process.
+            graph_reading(clock.bench_cudagraph, call_once, budget, is_tracer_fault)
             profiler_warm = True
-        readings = [graph_reading(clock.bench_cudagraph, call_once, budget, is_fault) for _ in range(rounds)]
+        readings = [
+            graph_reading(clock.bench_cudagraph, call_once, budget, is_tracer_fault) for _ in range(rounds)
+        ]
         times[case_id] = statistics.median(readings)
     return times
 
