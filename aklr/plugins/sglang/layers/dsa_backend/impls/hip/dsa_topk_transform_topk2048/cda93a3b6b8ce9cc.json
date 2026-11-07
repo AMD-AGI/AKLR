@@ -1,0 +1,264 @@
+{
+  "schema_version": 5,
+  "name": "dsa_topk_transform_topk2048",
+  "contract_id": "dsa_topk_transform@1.0",
+  "description": "sglang's DSA indexer top-k on HIP (sgl_kernel.fast_topk_transform_fused): each row selects the topk highest of its first lengths scores and writes their slots in the page_size=1 page table of its sequence, the cu_seqlens_q range holding the row; a row of at most topk scores writes all of its slots in order, then -1.",
+  "op_type": "dsa_backend",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Rows, one per token."
+    },
+    "n_candidates": {
+      "type": "var",
+      "description": "Scores per row."
+    },
+    "n_seqs": {
+      "type": "var",
+      "description": "Sequences."
+    },
+    "n_starts": {
+      "type": "var",
+      "description": "Sequence boundaries: n_seqs + 1."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Page table columns."
+    },
+    "topk": {
+      "type": "const",
+      "value": 2048,
+      "description": "Slots per row, 2048: all sglang's kernel takes."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "score": {
+      "shape": [
+        "n_tokens",
+        "n_candidates"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "permutation"
+      },
+      "description": "Candidate scores per row."
+    },
+    "lengths": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "min(n_candidates, n_slots)",
+        "distinct": false
+      },
+      "description": "Valid candidates per row, a prefix its page table covers."
+    },
+    "page_table_size_1": {
+      "shape": [
+        "n_seqs",
+        "n_slots"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "Each sequence's slot of each candidate position, distinct within a row."
+    },
+    "cu_seqlens_q": {
+      "shape": [
+        "n_starts"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "cu_seqlens",
+        "min_seqlen": 1,
+        "total": "n_tokens"
+      },
+      "description": "Each sequence's first row, then n_tokens."
+    }
+  },
+  "outputs": {
+    "out_page_indices": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "description": "Selected slots; -1 after a short row's entries."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1,
+        "n_candidates": 310080,
+        "n_seqs": 1,
+        "n_starts": 2,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2,
+        "n_candidates": 310080,
+        "n_seqs": 2,
+        "n_starts": 3,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3,
+        "n_candidates": 310080,
+        "n_seqs": 3,
+        "n_starts": 4,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4,
+        "n_candidates": 310080,
+        "n_seqs": 4,
+        "n_starts": 5,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5,
+        "n_candidates": 310080,
+        "n_seqs": 5,
+        "n_starts": 6,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6,
+        "n_candidates": 310080,
+        "n_seqs": 6,
+        "n_starts": 7,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7,
+        "n_candidates": 310080,
+        "n_seqs": 7,
+        "n_starts": 8,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 12,
+        "n_candidates": 310080,
+        "n_seqs": 12,
+        "n_starts": 13,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16,
+        "n_candidates": 310080,
+        "n_seqs": 16,
+        "n_starts": 17,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 18,
+        "n_candidates": 310080,
+        "n_seqs": 18,
+        "n_starts": 19,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 24,
+        "n_candidates": 310080,
+        "n_seqs": 24,
+        "n_starts": 25,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 30,
+        "n_candidates": 310080,
+        "n_seqs": 30,
+        "n_starts": 31,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 36,
+        "n_candidates": 310080,
+        "n_seqs": 36,
+        "n_starts": 37,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 42,
+        "n_candidates": 310080,
+        "n_seqs": 42,
+        "n_starts": 43,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 48,
+        "n_candidates": 310080,
+        "n_seqs": 48,
+        "n_starts": 49,
+        "n_slots": 310075
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "any_in_full_rows"
+  },
+  "kernel": {
+    "language": "hip",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "author": "xiaobochen-amd",
+    "entry_point": "kernel.hip::run",
+    "sources": [
+      {
+        "path": "kernel.hip",
+        "content": "// sglang's DSA indexer top-k on gfx950: each row's 2048 highest of its first lengths scores, as the\n// slots of its sequence's page_size=1 page table (the cu_seqlens_q range holding the row); a row of\n// at most 2048 scores takes all of them in order, then -1. A radix select on each score's\n// order-preserving 32-bit key. Tables up to ROW_MAX wide take a block a row (row_kernel); wider ones\n// launches that never wait on one another: a histogram of the top 12 bits; one of the next 12 inside\n// the bin holding the 2048th; the keys above that 24-bit threshold written, and those on it counted by\n// their last 8 bits and kept as candidates; then the rest of the 2048 picked among them, by a block from\n// the kept candidates, or, past CAP, by every block of the row from its slice.\n#include <ATen/ATen.h>\n#include <ATen/hip/HIPContext.h>\n#include <ATen/hip/impl/HIPGuardImplMasqueradingAsCUDA.h>\n#include <c10/hip/HIPException.h>\n#include <hip/hip_runtime.h>\n#include <torch/library.h>\n\nnamespace dsa_topk {\nnamespace {\n\nconstexpr int TOPK    = 2048;\nconstexpr int THREADS = 256;\nconstexpr int WAVES   = THREADS / 64;\nconstexpr int BINS    = 4096;  // a 12-bit digit\nconstexpr int PER     = BINS / THREADS;  // the bins a thread sums\nconstexpr int CAP     = 16384;  // candidates a row keeps; past them refine rescans the row's slices\nconstexpr int TIES    = 1024;   // candidates a scatter block stages\nconstexpr int BLOCKS  = 1024;   // blocks a pass spreads over its rows\nconstexpr int ITEMS   = 32;     // scores a pass thread loads at once\n\n// zeroed each call\nstruct RowState {\n    unsigned hist0[BINS];  // the keys' top 12 bits, exact from the threshold's bin up\n    unsigned hist1[BINS];  // the next 12, of the keys in the threshold's top bin\n    unsigned hist2[256];   // the last 8, of the keys on the 24-bit threshold\n    unsigned winners;      // keys above the 24-bit threshold, written\n    unsigned candidates;   // keys on it\n    unsigned taken, ties;  // keys on it refine has written: above the 32-bit threshold, and on it\n    unsigned pad[60];\n};\n\nstruct Params {\n    const float *score;\n    const int   *lengths;\n    const int   *table;  // [n_seqs, n_slots]\n    const int   *cu_seqlens;\n    int         *out;    // [rows, TOPK]\n    RowState    *state;  // [rows]\n    uint2       *cands;  // [rows, CAP]: key, position\n    int          n_candidates;\n    int          n_seqs;\n    int          n_slots;\n    unsigned     per_block;   // a pass block's positions\n    unsigned     per_block0;  // hist0's\n};\n\n// a block of W waves' scan scratch\ntemplate <int W> struct Sums {\n    unsigned wave[W];\n    unsigned result[2];\n};\nusing Shared = Sums<WAVES>;\n\n// larger floats, larger keys\n__device__ __forceinline__ uint32_t key_of(float x) {\n    const uint32_t b = __float_as_uint(x);\n    return (b & 0x80000000u) ? ~b : (b | 0x80000000u);\n}\n\n// the lane's slot among the wave's lanes where on holds, past counter, which grows by their count: one\n// atomic a wave; whole waves call it\n__device__ __forceinline__ unsigned wave_slot(unsigned *counter, bool on) {\n    const uint64_t m = __ballot(on);\n    if (!m) return 0;\n    const int lane = threadIdx.x & 63, first = __builtin_ctzll(m);\n    unsigned  base = 0;\n    if (lane == first) base = atomicAdd(counter, static_cast<unsigned>(__popcll(m)));\n    return __shfl(base, first) + static_cast<unsigned>(__popcll(m & ((1ull << lane) - 1)));\n}\n\n// the sum of own over the block's threads above this one\ntemplate <int W> __device__ __forceinline__ unsigned above_of(unsigned own, Sums<W> &s) {\n    const int lane = threadIdx.x & 63, wave = threadIdx.x >> 6;\n    unsigned  v    = own;\n#pragma unroll\n    for (int d = 1; d < 64; d <<= 1) {\n        const unsigned u = __shfl_down(v, d);\n        if (lane + d < 64) v += u;\n    }\n    if (lane == 0) s.wave[wave] = v;\n    __syncthreads();\n    unsigned above = v - own;\n    for (int w = wave + 1; w < W; ++w) above += s.wave[w];\n    __syncthreads();\n    return above;\n}\n\n// thread t's bins of a histogram, [4 N t, 4 N t + 4 N)\ntemplate <int N> __device__ __forceinline__ void load_bins(const unsigned *hist, uint4 (&bins)[N]) {\n#pragma unroll\n    for (int i = 0; i < N; ++i) bins[i] = reinterpret_cast<const uint4 *>(hist + threadIdx.x * 4 * N)[i];\n}\n\n// The bin holding the need-th largest key of a histogram whose thread t holds bins [4 N t, 4 N t + 4 N),\n// and the count of keys above it (bin 0 and 0 when it holds fewer); every thread of the block returns\n// them.\ntemplate <int N, int W> __device__ uint2 threshold(const uint4 (&bins)[N], unsigned need, Sums<W> &s) {\n    constexpr int   P   = 4 * N;\n    if (threadIdx.x == 0) s.result[0] = s.result[1] = 0;\n    const unsigned *b   = reinterpret_cast<const unsigned *>(bins);\n    unsigned        own = 0;\n#pragma unroll\n    for (int i = 0; i < P; ++i) own += b[i];\n    unsigned above = above_of(own, s);\n    if (above < need && above + own >= need) {\n#pragma unroll\n        for (int i = P - 1; i >= 0; --i) {\n            if (above < need && above + b[i] >= need) {\n                s.result[0] = threadIdx.x * P + i;\n                s.result[1] = above;\n            }\n            above += b[i];\n        }\n    }\n    __syncthreads();\n    const uint2 r = {s.result[0], s.result[1]};\n    __syncthreads();\n    return r;\n}\n\n// the 24-bit threshold of the row's top TOPK and the keys above it\n__device__ __forceinline__ uint2 threshold24(const RowState &st, Shared &s) {\n    uint4 bins0[PER / 4], bins1[PER / 4];\n    load_bins(st.hist0, bins0);\n    load_bins(st.hist1, bins1);\n    const uint2 t0 = threshold(bins0, TOPK, s);\n    const uint2 t1 = threshold(bins1, TOPK - t0.y, s);\n    return {(t0.x << 12) | t1.x, t0.y + t1.y};\n}\n\n__device__ __forceinline__ int sequence_of(const Params &p, int row) {\n    int lo = 0, hi = p.n_seqs - 1;\n    while (lo < hi) {\n        const int mid = (lo + hi + 1) >> 1;\n        if (p.cu_seqlens[mid] <= row) lo = mid;\n        else hi = mid - 1;\n    }\n    return lo;\n}\n\n// A pass block's slice of its row's live positions, empty when the row takes all of them, walked\n// ITEMS scores a thread at a time; its first scores load when it is made.\n// unsigned positions: a row of up to 2^31 - 1 scores, plus a pass's stride, stays below 2^32\nstruct Slice {\n    const float *score;\n    unsigned     begin, end;\n    float        v[ITEMS];\n\n    __device__ Slice(const Params &p, int row, unsigned per_block) {\n        const unsigned len = p.lengths[row];\n        score              = p.score + static_cast<size_t>(row) * p.n_candidates;\n        begin              = len <= TOPK ? 0 : blockIdx.y * per_block;\n        end                = len <= TOPK ? 0 : min(begin + per_block, len);\n        load(begin);\n    }\n    __device__ __forceinline__ void load(unsigned base) {\n#pragma unroll\n        for (int j = 0; j < ITEMS; ++j) {\n            const unsigned i = base + j * THREADS + threadIdx.x;\n            v[j]             = i < end ? score[i] : 0.f;\n        }\n    }\n    // f(i, key) for each position; whole waves call it (i >= end past the slice) so that its ballots\n    // see all 64 lanes\n    template <typename F> __device__ __forceinline__ void walk(F f) {\n        for (unsigned base = begin; base < end; base += THREADS * ITEMS) {\n            if (base != begin) load(base);\n#pragma unroll\n            for (int j = 0; j < ITEMS; ++j) f(base + j * THREADS + threadIdx.x, key_of(v[j]));\n        }\n    }\n};\n\n__global__ __launch_bounds__(THREADS) void hist0_kernel(Params p) {\n    __shared__ __attribute__((aligned(16))) unsigned s_hist[BINS];\n    __shared__ Shared   s;\n    Slice sl(p, blockIdx.x, p.per_block0);\n    if (sl.begin >= sl.end) return;\n    for (int i = threadIdx.x; i < BINS; i += THREADS) s_hist[i] = 0;\n    __syncthreads();\n    sl.walk([&](unsigned i, uint32_t k) {\n        if (i < sl.end) atomicAdd(&s_hist[k >> 20], 1u);\n    });\n    __syncthreads();\n    // only the block's bins from its own threshold up: the row's threshold bin and those above it\n    // are among them, and the bins below never matter\n    uint4 bins[PER / 4];\n    load_bins(s_hist, bins);\n    const unsigned low  = threshold(bins, TOPK, s).x;\n    unsigned      *hist = p.state[blockIdx.x].hist0;\n    for (int i = threadIdx.x; i < BINS; i += THREADS)\n        if (i >= low && s_hist[i]) atomicAdd(&hist[i], s_hist[i]);\n}\n\n__global__ __launch_bounds__(THREADS) void hist1_kernel(Params p) {\n    __shared__ __attribute__((aligned(16))) unsigned s_hist[BINS];\n    __shared__ Shared   s;\n    Slice sl(p, blockIdx.x, p.per_block);\n    if (sl.begin >= sl.end) return;\n    RowState &st = p.state[blockIdx.x];\n    uint4     bins[PER / 4];\n    load_bins(st.hist0, bins);\n    for (int i = threadIdx.x; i < BINS; i += THREADS) s_hist[i] = 0;\n    const uint2 t0 = threshold(bins, TOPK, s);\n    sl.walk([&](unsigned i, uint32_t k) {\n        if (i < sl.end && (k >> 20) == t0.x) atomicAdd(&s_hist[(k >> 8) & (BINS - 1)], 1u);\n    });\n    __syncthreads();\n    for (int i = threadIdx.x; i < BINS; i += THREADS)\n        if (s_hist[i]) atomicAdd(&st.hist1[i], s_hist[i]);\n}\n\n__global__ __launch_bounds__(THREADS) void scatter_kernel(Params p) {\n    __shared__ Shared s;\n    // the block's winners and candidates, staged so that it reserves their space with one atomic\n    __shared__ unsigned s_win[TOPK];\n    __shared__ uint2    s_tie[TIES];\n    __shared__ unsigned s_low[256];  // the candidates' last 8 bits\n    __shared__ unsigned s_n_win, s_n_tie, s_win_base, s_tie_base;\n    const int row = blockIdx.x;\n    Slice     sl(p, row, p.per_block);\n    if (sl.begin >= sl.end) return;\n    RowState &st = p.state[row];\n    if (threadIdx.x == 0) s_n_win = s_n_tie = 0;\n    for (int i = threadIdx.x; i < 256; i += THREADS) s_low[i] = 0;\n    const uint2 t     = threshold24(st, s);\n    uint2      *cands = p.cands + static_cast<size_t>(row) * CAP;\n    sl.walk([&](unsigned i, uint32_t k) {\n        if (i >= sl.end) return;\n        if ((k >> 8) > t.x) {\n            s_win[atomicAdd(&s_n_win, 1u)] = i;  // fewer than TOPK in the row\n        } else if ((k >> 8) == t.x) {\n            atomicAdd(&s_low[k & 0xFF], 1u);\n            const unsigned slot = atomicAdd(&s_n_tie, 1u);\n            if (slot < TIES) s_tie[slot] = {k, i};\n        }\n    });\n    __syncthreads();\n    for (int i = threadIdx.x; i < 256; i += THREADS)\n        if (s_low[i]) atomicAdd(&st.hist2[i], s_low[i]);\n    // a block past TIES keeps none, and pushes the row past CAP: refine then rescans it\n    const unsigned n_tie = s_n_tie <= TIES ? s_n_tie : 0;\n    if (threadIdx.x == 0) {\n        s_win_base = s_n_win ? atomicAdd(&st.winners, s_n_win) : 0;\n        s_tie_base = s_n_tie ? atomicAdd(&st.candidates, n_tie ? n_tie : CAP + 1) : 0;\n    }\n    __syncthreads();\n    const int *table = p.table + static_cast<size_t>(sequence_of(p, row)) * p.n_slots;\n    int       *out   = p.out + static_cast<size_t>(row) * TOPK;\n    for (unsigned j = threadIdx.x; j < s_n_win; j += THREADS) out[s_win_base + j] = table[s_win[j]];\n    for (unsigned j = threadIdx.x; j < n_tie; j += THREADS)\n        if (s_tie_base + j < CAP) cands[s_tie_base + j] = s_tie[j];\n}\n\n__global__ __launch_bounds__(THREADS) void refine_kernel(Params p) {\n    __shared__ Shared   s;\n    __shared__ unsigned s_taken, s_ties;\n    const int      row  = blockIdx.x;\n    RowState      &st   = p.state[row];\n    const unsigned n    = st.candidates;  // 0 for a short row\n    const bool     kept = n <= CAP;\n    // a short row and the kept candidates are one block's; past CAP every block rescans its slice\n    if (kept && blockIdx.y) return;\n    const int  len   = p.lengths[row];\n    int       *out   = p.out + static_cast<size_t>(row) * TOPK;\n    const int *table = p.table + static_cast<size_t>(sequence_of(p, row)) * p.n_slots;\n    if (len <= TOPK) {\n        for (int i = threadIdx.x; i < TOPK; i += THREADS) out[i] = i < len ? table[i] : -1;\n        return;\n    }\n    if (threadIdx.x == 0) s_taken = s_ties = 0;\n    const uint2    t    = threshold24(st, s);\n    const unsigned need = TOPK - t.y;  // >= 1, taken among the keys on the threshold\n    uint4 bins[PER / 4] = {};  // bins 0 .. 255: the last 8 bits\n    if (threadIdx.x < 256 / PER) load_bins(st.hist2, bins);\n    const uint2 t2 = threshold(bins, need, s);\n    // keys above t2 all go; of those on it, equal keys, any need - t2.y\n    auto take = [&](unsigned *taken, unsigned *ties, bool on, uint32_t k, unsigned pos) {\n        const bool     above = on && (k & 0xFF) > t2.x, tie = on && (k & 0xFF) == t2.x;\n        const unsigned a = wave_slot(taken, above), b = wave_slot(ties, tie);\n        if (above) out[t.y + a] = table[pos];\n        if (tie && b < need - t2.y) out[t.y + t2.y + b] = table[pos];\n    };\n    if (kept) {\n        const uint2 *cands = p.cands + static_cast<size_t>(row) * CAP;\n        for (unsigned j0 = 0; j0 < n; j0 += THREADS) {\n            const unsigned j = j0 + threadIdx.x;\n            const uint2    c = j < n ? cands[j] : uint2{0, 0};\n            take(&s_taken, &s_ties, j < n, c.x, c.y);\n        }\n    } else {\n        Slice sl(p, row, p.per_block);\n        sl.walk([&](unsigned i, uint32_t k) { take(&st.taken, &st.ties, i < sl.end && (k >> 8) == t.x, k, i); });\n    }\n}\n\n// Narrow tables: a block a row. A pass over the row histograms the top 12 bits; a second writes the keys\n// above the bin holding the 2048th and keeps those in it as candidates in LDS, their next 12 bits\n// histogrammed; the rest of the 2048 are picked among the candidates by the last 20 bits. One launch,\n// nothing to zero: what the wide tables' passes cost a short row is more than its whole time here.\nconstexpr int ROW_THREADS = 1024;\nconstexpr int ROW_ITEMS   = 8;      // scores a thread loads at once\nconstexpr int ROW_MAX     = 16384;  // the widest table a block a row takes, all of it candidates in LDS\n\nstruct RowShared {\n    unsigned               hist[BINS];\n    uint2                  cand[ROW_MAX];  // key, position\n    Sums<ROW_THREADS / 64> sums;\n    unsigned               n_cand, taken, ties;\n};\n\n// the bin of s.hist holding the need-th largest key and the keys above it, s.hist zeroed for the next digit\n__device__ __forceinline__ uint2 hist_threshold(unsigned need, RowShared &s) {\n    uint4 bins[BINS / ROW_THREADS / 4];\n    load_bins(s.hist, bins);\n    reinterpret_cast<uint4 *>(s.hist)[threadIdx.x] = uint4{0, 0, 0, 0};\n    return threshold(bins, need, s.sums);\n}\n\n// f(i, key) for each of the row's first len positions, ROW_ITEMS loads in flight a thread\ntemplate <typename F> __device__ __forceinline__ void walk_row(const float *score, unsigned len, F f) {\n    for (unsigned base = 0; base < len; base += ROW_THREADS * ROW_ITEMS) {\n        float v[ROW_ITEMS];\n#pragma unroll\n        for (int j = 0; j < ROW_ITEMS; ++j) {\n            const unsigned i = base + j * ROW_THREADS + threadIdx.x;\n            v[j]             = i < len ? score[i] : 0.f;\n        }\n#pragma unroll\n        for (int j = 0; j < ROW_ITEMS; ++j) {\n            const unsigned i = base + j * ROW_THREADS + threadIdx.x;\n            if (i < len) f(i, key_of(v[j]));\n        }\n    }\n}\n\n__global__ __launch_bounds__(ROW_THREADS) void row_kernel(Params p) {\n    __shared__ __attribute__((aligned(16))) RowShared s;\n    const int      row   = blockIdx.x;\n    const unsigned len   = p.lengths[row];\n    int           *out   = p.out + static_cast<size_t>(row) * TOPK;\n    const int     *table = p.table + static_cast<size_t>(sequence_of(p, row)) * p.n_slots;\n    if (len <= TOPK) {\n        for (int i = threadIdx.x; i < TOPK; i += ROW_THREADS) out[i] = i < static_cast<int>(len) ? table[i] : -1;\n        return;\n    }\n    const float *score = p.score + static_cast<size_t>(row) * p.n_candidates;\n    for (int i = threadIdx.x; i < BINS; i += ROW_THREADS) s.hist[i] = 0;\n    if (threadIdx.x == 0) s.n_cand = s.taken = s.ties = 0;\n    __syncthreads();\n\n    // the top 12 bits\n    walk_row(score, len, [&](unsigned, uint32_t k) { atomicAdd(&s.hist[k >> 20], 1u); });\n    __syncthreads();\n    const uint2 t0 = hist_threshold(TOPK, s);\n    // the keys above t0's bin written; those in it kept, their next 12 bits counted\n    walk_row(score, len, [&](unsigned i, uint32_t k) {\n        if ((k >> 20) > t0.x) {\n            out[atomicAdd(&s.taken, 1u)] = table[i];\n        } else if ((k >> 20) == t0.x) {\n            atomicAdd(&s.hist[(k >> 8) & (BINS - 1)], 1u);\n            s.cand[atomicAdd(&s.n_cand, 1u)] = {k, i};\n        }\n    });\n    __syncthreads();\n    const unsigned n_cand = s.n_cand;\n    unsigned       need   = TOPK - t0.y;\n    const uint2    t1     = hist_threshold(need, s);\n    need -= t1.y;\n    auto candidates = [&](auto f) {\n        for (unsigned j = threadIdx.x; j < n_cand; j += ROW_THREADS) f(s.cand[j].y, s.cand[j].x);\n    };\n    // those above t1 written; those on it counted by their last 8 bits\n    candidates([&](unsigned i, uint32_t k) {\n        const unsigned d = (k >> 8) & (BINS - 1);\n        if (d > t1.x) out[atomicAdd(&s.taken, 1u)] = table[i];\n        else if (d == t1.x) atomicAdd(&s.hist[k & 0xFF], 1u);\n    });\n    __syncthreads();\n    const uint2 t2 = hist_threshold(need, s);\n    // those on t1 above t2 written; of those on t2, equal keys, any need - t2.y, after every other\n    candidates([&](unsigned i, uint32_t k) {\n        if (((k >> 8) & (BINS - 1)) != t1.x) return;\n        if ((k & 0xFF) > t2.x) {\n            out[atomicAdd(&s.taken, 1u)] = table[i];\n        } else if ((k & 0xFF) == t2.x) {\n            const unsigned slot = atomicAdd(&s.ties, 1u);\n            if (slot < need - t2.y) out[TOPK - need + t2.y + slot] = table[i];\n        }\n    });\n}\n\nvoid run(const at::Tensor &score, const at::Tensor &lengths, const at::Tensor &page_table_size_1,\n         const at::Tensor &cu_seqlens_q, at::Tensor &out_page_indices) {\n    TORCH_CHECK(out_page_indices.size(1) == TOPK, \"top-2048 only\");\n    TORCH_CHECK(score.is_contiguous() && lengths.is_contiguous() && page_table_size_1.is_contiguous() &&\n                    cu_seqlens_q.is_contiguous() && out_page_indices.is_contiguous(),\n                \"contiguous tensors only\");\n    const int rows = static_cast<int>(score.size(0));\n    const at::hip::OptionalHIPGuardMasqueradingAsCUDA guard(score.device());\n    const hipStream_t stream = at::hip::getCurrentHIPStream();\n    Params            p{};\n    p.score        = score.data_ptr<float>();\n    p.lengths      = lengths.data_ptr<int>();\n    p.table        = page_table_size_1.data_ptr<int>();\n    p.cu_seqlens   = cu_seqlens_q.data_ptr<int>();\n    p.out          = out_page_indices.data_ptr<int>();\n    p.n_candidates = static_cast<int>(score.size(1));\n    p.n_seqs       = static_cast<int>(page_table_size_1.size(0));\n    p.n_slots      = static_cast<int>(page_table_size_1.size(1));\n    if (p.n_candidates <= ROW_MAX) {\n        hipLaunchKernelGGL(row_kernel, dim3(rows), dim3(ROW_THREADS), 0, stream, p);\n        C10_HIP_CHECK(hipGetLastError());\n        return;\n    }\n    const int64_t state_bytes = static_cast<int64_t>(rows) * static_cast<int64_t>(sizeof(RowState));\n    const int64_t cands_bytes = static_cast<int64_t>(rows) * CAP * static_cast<int64_t>(sizeof(uint2));\n    at::Tensor    scratch     = at::empty({state_bytes + cands_bytes}, score.options().dtype(at::kByte));\n    p.state                   = reinterpret_cast<RowState *>(scratch.data_ptr<uint8_t>());\n    p.cands                   = reinterpret_cast<uint2 *>(scratch.data_ptr<uint8_t>() + state_bytes);\n    // BLOCKS a pass over the rows, 21 to 85 a row, each at least TOPK positions; hist0 half as many,\n    // so that fewer blocks flush their bins\n    const int64_t n       = p.n_candidates;\n    const int     per_row = std::clamp(BLOCKS / rows, 21, 85);\n    const int     split   = static_cast<int>(std::clamp<int64_t>((n + TOPK - 1) / TOPK, 1, per_row));\n    p.per_block           = static_cast<unsigned>((n + split - 1) / split);\n    const int split0      = std::max(1, split / 2);\n    p.per_block0          = static_cast<unsigned>((n + split0 - 1) / split0);\n    C10_HIP_CHECK(hipMemsetAsync(p.state, 0, state_bytes, stream));\n    const dim3 grid(rows, split);\n    hipLaunchKernelGGL(hist0_kernel, dim3(rows, split0), dim3(THREADS), 0, stream, p);\n    hipLaunchKernelGGL(hist1_kernel, grid, dim3(THREADS), 0, stream, p);\n    hipLaunchKernelGGL(scatter_kernel, grid, dim3(THREADS), 0, stream, p);\n    hipLaunchKernelGGL(refine_kernel, grid, dim3(THREADS), 0, stream, p);\n    C10_HIP_CHECK(hipGetLastError());\n}\n\n} // namespace\n} // namespace dsa_topk\n\n#define TORCH_LIBRARY_EXPAND(ns, m) TORCH_LIBRARY(ns, m)\nTORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {\n    m.def(\"run(Tensor score, Tensor lengths, Tensor page_table_size_1, Tensor cu_seqlens_q, \"\n          \"Tensor(a!) out_page_indices) -> ()\",\n          &dsa_topk::run);\n}\n"
+      }
+    ]
+  }
+}
