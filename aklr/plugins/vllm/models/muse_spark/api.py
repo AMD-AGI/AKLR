@@ -12,6 +12,15 @@ __all__ = ["muse_spark_moe"]
 _VERSIONS = ("0.33.0rc1.dev910",)
 # set on the pooled rows whose pre-expert norm the experts apply: (weight, eps, gain_center)
 _DEFERRED_NORM = "_aklr_muse_deferred_norm"
+# _defer_norm defers only where the op serves: materializing the norm in _experts_apply when
+# it falls back costs the eager steps host time vLLM's own path does not.
+# A layer (the id of its norm weight) to the experts' tensors the op takes, None if it never
+# serves the layer; absent until _experts_apply first runs for it.
+_EXPERTS: dict[int, tuple | None] = {}
+# (layer, n_tokens) to whether the op serves it
+_SERVES: dict[tuple[int, int], bool] = {}
+# zeros as topk_ids, sliced to n_tokens rows for fallback_reason
+_TOPK_IDS: dict[tuple, object] = {}
 
 
 @api(MUSE_SPARK_MOE)
@@ -43,8 +52,37 @@ def _defer_norm(x, weight, eps, gain_center, input_scale, repeats):
 
     if weight is None or input_scale or x.dtype != torch.bfloat16 or x.shape[0] == 0:
         return FallbackReason.OUT_OF_CONTRACT
+    layer = id(weight)
+    serves = _SERVES.get((layer, x.shape[0]))
+    if serves is None and layer in _EXPERTS:
+        serves = _would_serve(x, weight, eps, gain_center, layer)
+    if serves is False:
+        return FallbackReason.OUT_OF_CONTRACT
     setattr(x, _DEFERRED_NORM, (weight, eps, gain_center))
     return x
+
+
+def _would_serve(x, weight, eps, gain_center, layer) -> bool | None:
+    """Whether the op serves the layer's experts on ``x``, remembered unless it depends on
+    the moment (a graph capture before the first eager call)."""
+    import torch
+
+    experts = _EXPERTS[layer]
+    if experts is None:
+        return False
+    topk, ids_dtype, expert_map, w1, w1_scale, w2, w2_scale = experts
+    n_tokens = x.shape[0]
+    spec = (x.device, ids_dtype, topk)
+    ids = _TOPK_IDS.get(spec)
+    if ids is None or ids.shape[0] < n_tokens:
+        ids = _TOPK_IDS[spec] = torch.zeros((max(n_tokens, 8192), topk), dtype=ids_dtype, device=x.device)
+    reason = muse_spark_moe.fallback_reason(
+        x, weight, ids[:n_tokens], expert_map, w1, w1_scale, w2, w2_scale, eps=float(eps), gain_center=float(gain_center)
+    )
+    if reason is FallbackReason.NOT_WARMED:
+        return None
+    _SERVES[(layer, n_tokens)] = reason is None
+    return reason is None
 
 
 @vllm_route(
@@ -77,8 +115,10 @@ def _experts_apply(
         return FallbackReason.OUT_OF_CONTRACT
     delattr(hidden_states, _DEFERRED_NORM)
     weight, eps, gain_center = deferred
+    layer = id(weight)
     moe, quant = self.moe_config, self.quant_config
     route_output = FallbackReason.OUT_OF_CONTRACT
+    _EXPERTS[layer] = None
     # what vLLM's apply does other than the op: no expert parallelism, rows another rank
     # sent, router weights on the input, another activation or padded experts
     if not (
@@ -95,6 +135,7 @@ def _experts_apply(
         or moe.intermediate_pad not in (None, 0)
         or not output.is_contiguous()
     ):
+        _EXPERTS[layer] = (topk_ids.shape[1], topk_ids.dtype, expert_map, w1, quant.w1_scale, w2, quant.w2_scale)
         route_output = muse_spark_moe(
             hidden_states,
             weight,
@@ -109,6 +150,8 @@ def _experts_apply(
             out=output,
         )
     if isinstance(route_output, FallbackReason):
+        if route_output is not FallbackReason.NOT_WARMED:
+            _SERVES[(layer, hidden_states.shape[0])] = False
         from vllm.models.muse_spark.amd.muse_moe_runner import MuseSparkAiterExperts
         from vllm.models.muse_spark.amd.ops.fused_norm_expand import fused_rmsnorm_expand
 
