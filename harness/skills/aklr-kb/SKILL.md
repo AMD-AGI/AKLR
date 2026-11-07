@@ -72,6 +72,7 @@ wins. Check a plan against this table before writing code.
 | EP dispatch/combine against TP at decode, or a collective's time in a multi-GPU trace | `communication/INDEX.md` |
 | What an instruction, encoding, counter, wait state or hardware limit really is | `hardware/gfx950/INDEX.md` → `hardware/gfx950/lookup.md`, `hardware/gfx950/matrix_core.md`, `hardware/gfx950/memory_and_sync.md`; gfx942 (MI300X): `hardware/gfx942/INDEX.md` |
 | The language: its API, compile errors, debugging, its own guides | the language's folder: `flydsl/SKILL.md`, `triton/SKILL.md`, `hip/SKILL.md` |
+| A Triton or Gluon kernel: authoring, debugging, tuning, numerics, Gluon layouts, memory, MFMA and inline asm, AKLR's 154 Triton kernels by family, its GEMM, MoE, attention and GatedDeltaNet kernels | `triton/SKILL.md` → the page its task table names |
 
 ## By symptom
 
