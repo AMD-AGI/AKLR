@@ -1,6 +1,9 @@
 name: AKLR-agentx-ci
 
 on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled]
   schedule:
     - cron: '17 10 * * 5'
   workflow_dispatch:
@@ -38,7 +41,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: agentx-weekly
+  # Ignored PR events must not replace a requested run waiting for the GPU runner.
+  group: >-
+    ${{ github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        contains(github.event.pull_request.labels.*.name, 'ci:agentx-mi355x') &&
+        (github.event.action != 'labeled' || github.event.label.name == 'ci:agentx-mi355x') &&
+        format('agentx-pr-{0}', github.event.pull_request.number) ||
+        github.event_name == 'pull_request' && format('agentx-ignored-{0}', github.run_id) ||
+        'agentx-weekly' }}
   cancel-in-progress: false
 
 defaults:
@@ -51,7 +62,12 @@ env:
 
 jobs:
   plan:
-    if: github.event_name != 'schedule' || vars.AGENTX_SCHEDULE_ENABLED == 'true'
+    if: >-
+      (github.event_name != 'schedule' || vars.AGENTX_SCHEDULE_ENABLED == 'true') &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        contains(github.event.pull_request.labels.*.name, 'ci:agentx-mi355x') &&
+        (github.event.action != 'labeled' || github.event.label.name == 'ci:agentx-mi355x')))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     outputs:
@@ -71,14 +87,24 @@ jobs:
         env:
           MODELS: ${{ inputs.models || 'all' }}
           TARGETS: ${{ inputs.targets || 'all' }}
+          RUNNER_LABEL: ${{ github.event_name != 'workflow_dispatch' && 'agentx-mi355x' || '' }}
           INFERENCEX_REF: ${{ inputs.inferencex_ref }}
+          POINT_POLICY: ${{ github.event_name == 'pull_request' && 'inferencex-pareto' || 'all' }}
+          INFERENCEX_MODEL: ${{ github.event_name == 'pull_request' && 'auto' || '' }}
+          INFERENCEX_HARDWARE: ${{ github.event_name == 'pull_request' && 'mi355x' || '' }}
           ARMS: ${{ inputs.arms || 'all' }}
           POINTS: ${{ inputs.points }}
-          DURATION_S: ${{ inputs.duration_s }}
+          DURATION_S: ${{ github.event_name == 'pull_request' && '600' || inputs.duration_s }}
+          # Verify the upstream duration without a smoke override, preserving baseline eligibility.
+          REQUIRE_RECIPE_DURATION: ${{ github.event_name == 'schedule' && '3600' || '' }}
         run: |
           python3 -m agentx_bench plan --models "$MODELS" --targets "$TARGETS" --arms "$ARMS" \
+            ${RUNNER_LABEL:+--runner-label "$RUNNER_LABEL"} \
             ${INFERENCEX_REF:+--inferencex-ref "$INFERENCEX_REF"} \
+            --point-policy "$POINT_POLICY" ${INFERENCEX_HARDWARE:+--inferencex-hardware "$INFERENCEX_HARDWARE"} \
+            ${INFERENCEX_MODEL:+--inferencex-model "$INFERENCEX_MODEL"} \
             ${POINTS:+--points "$POINTS"} ${DURATION_S:+--duration "$DURATION_S"} \
+            ${REQUIRE_RECIPE_DURATION:+--require-recipe-duration "$REQUIRE_RECIPE_DURATION"} \
             --work "$RUNNER_TEMP/work" --out "$RUNNER_TEMP/plan"
       - uses: actions/upload-artifact@v4
         with:
