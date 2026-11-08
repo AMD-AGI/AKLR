@@ -197,8 +197,11 @@ jobs:
         if: github.event_name == 'schedule' || inputs.publish
         with:
           path: ${{ runner.temp }}/site/
-      - name: Check target outcomes after saving reports
-        run: jq -e 'all(.targets[]; .status == "ok" or .status == "not-run")' "$RUNNER_TEMP/site/manifest.json"
+      - name: Summarize target outcomes after saving reports
+        # Measurement failures stay visible in sweep and in the saved reports.
+        run: |
+          jq -r '.targets[] | "\(.model.id)/\(.target.id): \(.status), \(.points_ok)/\(.points_total) paired points OK"' \
+            "$RUNNER_TEMP/site/manifest.json"
 
   pages:
     needs: report
