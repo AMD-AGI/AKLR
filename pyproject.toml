@@ -23,6 +23,9 @@ dependencies = [
     "pydantic>=2.12",
 ]
 
+[project.entry-points."aiter.plugins"]
+aklr = "aklr.plugins.aiter:provider"
+
 [project.entry-points."sglang.srt.plugins"]
 aklr = "aklr.plugins.sglang:register"
 
