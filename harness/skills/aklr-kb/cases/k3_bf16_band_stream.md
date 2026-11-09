@@ -35,6 +35,8 @@ sources:
 Seven of this page's nine FlyDSL `gemm@1.0` files are the Kimi-K3 set (definitions #69, kernels #115, merge
 a8fe490b1), one schema file per shape, written by forge-loop campaigns and reviewed. Each schema embeds its
 kernel as `kernel.sources[0].content` (`kernel.py`); function names below are in that file. "m" is the Point's M.
+k1536's `_build_tiled` and k768's `_build_large` and `_build_pipe` also run `gemm_n6144_k1536` and `gemm_n7168_k512`
+at m 256–4096: [bf16_large_m_whole_k_tiles.md](bf16_large_m_whole_k_tiles.md).
 
 ## Applies when
 
