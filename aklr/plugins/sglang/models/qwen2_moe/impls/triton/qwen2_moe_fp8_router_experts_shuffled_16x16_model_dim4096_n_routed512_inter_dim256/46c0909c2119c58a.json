@@ -159,55 +159,64 @@
       "axes": {
         "n_tokens": 4097
       },
-      "accuracy": "failed"
+      "accuracy": "passed",
+      "speedup": 1.284
     },
     {
       "axes": {
         "n_tokens": 5000
       },
-      "accuracy": "failed"
+      "accuracy": "passed",
+      "speedup": 1.223
     },
     {
       "axes": {
         "n_tokens": 8192
       },
-      "accuracy": "failed"
+      "accuracy": "passed",
+      "speedup": 1.157
     },
     {
       "axes": {
         "n_tokens": 8193
       },
-      "accuracy": "failed"
+      "accuracy": "passed",
+      "speedup": 1.168
     },
     {
       "axes": {
         "n_tokens": 10000
       },
-      "accuracy": "failed"
+      "accuracy": "passed",
+      "speedup": 1.224
     },
     {
       "axes": {
         "n_tokens": 15000
       },
-      "accuracy": "failed"
+      "accuracy": "passed",
+      "speedup": 1.304
     },
     {
       "axes": {
         "n_tokens": 15360
       },
-      "accuracy": "failed"
+      "accuracy": "passed",
+      "speedup": 1.312
     },
     {
       "axes": {
         "n_tokens": 15361
       },
-      "accuracy": "failed"
+      "accuracy": "passed",
+      "speedup": 1.31
     },
     {
       "axes": {
         "n_tokens": 16384
       },
-      "accuracy": "failed"
+      "accuracy": "passed",
+      "speedup": 1.292
     }
   ],
   "layout_variants": {
