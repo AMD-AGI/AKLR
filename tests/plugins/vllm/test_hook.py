@@ -8,6 +8,8 @@ import importlib.metadata
 import inspect
 import pkgutil
 import sys
+import tomllib
+from pathlib import Path
 from types import ModuleType
 
 import pytest
@@ -23,6 +25,12 @@ importlib.import_module("aklr.plugins.vllm.layers")
 importlib.import_module("aklr.plugins.vllm.models")
 DECLARED = list(hook._ROUTES)
 INSTALLED = "0.33.0rc1.dev910"
+
+
+def test_the_entry_point_is_the_plugins():
+    pyproject = tomllib.loads((Path(__file__).parents[3] / "pyproject.toml").read_text())
+    entry = pyproject["project"]["entry-points"]["vllm.general_plugins"]["aklr"]
+    assert pkgutil.resolve_name(entry.replace(":", ".")) is plugin.register
 
 
 def test_no_two_routes_take_one_callee():
@@ -176,9 +184,10 @@ def worker(monkeypatch):
     monkeypatch.setattr(plugin, "register_vllm_plugin", lambda: calls.append("aklr starts"))
     monkeypatch.setattr(plugin, "op_packages", lambda: ("aklr.ops.gemm", "aklr.plugins.vllm.x.y"))
     monkeypatch.setattr(plugin.importlib, "import_module", calls.append)
-    monkeypatch.setattr(hook, "install", lambda: calls.append("install"))
+    hooked = ["aiter.tuned_gemm.tgemm.mm"]
+    monkeypatch.setattr(hook, "install", lambda: calls.append("install") or hooked)
     plugin._install_once.cache_clear()
-    yield Worker, calls
+    yield Worker, calls, hooked
     plugin._install_once.cache_clear()
 
 
@@ -194,7 +203,7 @@ def worker(monkeypatch):
 def test_only_1_turns_the_routes_on(monkeypatch, worker, env, hooked):
     """The routes hook only with AKLR_VLLM_PLUGIN=1, not with AKLR_DISABLE=1, and only in a
     worker, once its device is bound; AKLR warms up after vLLM does."""
-    Worker, calls = worker
+    Worker, calls, _ = worker
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     plugin.register()
@@ -216,6 +225,17 @@ def test_only_1_turns_the_routes_on(monkeypatch, worker, env, hooked):
     assert calls == ["aklr starts", "device bound", *routes, "device bound", "vllm warms up", *warmed]
     assert Worker().execute_model(step="step") == "step"
     assert calls[-1] == "step"
+
+
+def test_no_warmup_where_no_route_hooked(monkeypatch, worker):
+    """On a vLLM no route was tested on, AKLR leaves vLLM's model runner alone."""
+    Worker, calls, hooked = worker
+    hooked.clear()
+    monkeypatch.setenv(ENV_VLLM_PLUGIN, "1")
+    plugin.register()
+    Worker().init_device()
+    Worker().compile_or_warm_up_model()
+    assert calls[-1] == "vllm warms up"
 
 
 def test_any_other_switch_value_ends_the_process(monkeypatch, worker):

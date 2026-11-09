@@ -49,9 +49,11 @@ def _register() -> None:
     @functools.wraps(compile_or_warm_up_model)
     def warm_up(self, *args, **kwargs):
         result = compile_or_warm_up_model(self, *args, **kwargs)
-        from aklr.plugins.vllm.warmup import warm_up
+        # it calls the model runner's private API of the vLLM releases the routes were tested on
+        if _install_once():
+            from aklr.plugins.vllm.warmup import warm_up
 
-        warm_up(self)
+            warm_up(self)
         return result
 
     Worker.compile_or_warm_up_model = warm_up
@@ -67,11 +69,11 @@ def _register() -> None:
 
 
 @functools.cache
-def _install_once() -> None:
+def _install_once() -> list[str]:
     # imports the modules that declare the routes: the layers', the models' and the plugin ops' api
     importlib.import_module(f"{__name__}.layers")
     importlib.import_module(f"{__name__}.models")
     for package in op_packages():
         if package.startswith(f"{__name__}."):
             importlib.import_module(f"{package}.api")
-    hook.install()
+    return hook.install()

@@ -48,8 +48,8 @@ def vllm_version() -> str:
     return Version(version("vllm")).public
 
 
-def install() -> None:
-    """Wrap the callees of the routes tested on the installed vLLM."""
+def install() -> list[str]:
+    """Wrap the callees of the routes tested on the installed vLLM; returns them."""
     installed = vllm_version()
     hooked, untested = [], []
     for caller, callees, versions, route in _ROUTES:
@@ -75,6 +75,7 @@ def install() -> None:
         installed,
         f"; not those of {', '.join(untested)}, untested on it" if untested else "",
     )
+    return hooked
 
 
 def _around(route: Callable, orig: Callable) -> Callable:

@@ -47,8 +47,9 @@ def warm_up(worker: Any) -> None:
     tokens = _served_gemm_tokens()
     runner = worker.model_runner
     model = runner.get_model()
+    # a pipeline stage without the LM head holds a placeholder without weight
     lm_head = getattr(model, "lm_head", None)
-    lm_head_nk = None if lm_head is None else tuple(lm_head.weight.shape)
+    lm_head_nk = None if getattr(lm_head, "weight", None) is None else tuple(lm_head.weight.shape)
     graph_tokens = worker.vllm_config.compilation_config.max_cudagraph_capture_size or 0
     max_tokens = worker.scheduler_config.max_num_batched_tokens
     steps = sorted(
