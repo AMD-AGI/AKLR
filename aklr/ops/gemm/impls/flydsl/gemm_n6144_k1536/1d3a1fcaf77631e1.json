@@ -1,0 +1,138 @@
+{
+  "schema_version": 5,
+  "name": "gemm_n6144_k1536",
+  "contract_id": "gemm@1.0",
+  "description": "16-bit gemm: out = a @ b.T + bias (b is (k, n) unless trans_b).",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 6144,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 1536,
+      "description": "Reduction length."
+    }
+  },
+  "attrs": {
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 1
+      }
+    },
+    {
+      "axes": {
+        "m": 2
+      }
+    },
+    {
+      "axes": {
+        "m": 4
+      }
+    },
+    {
+      "axes": {
+        "m": 8
+      }
+    },
+    {
+      "axes": {
+        "m": 16
+      }
+    },
+    {
+      "axes": {
+        "m": 32
+      }
+    },
+    {
+      "axes": {
+        "m": 64
+      }
+    },
+    {
+      "axes": {
+        "m": 128
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Skinny-m BF16 NT GEMM ``out = a @ b.T`` in FlyDSL: each workgroup streams one column band of\n``b`` once through LDS DMA rings and sums its waves' K partials in a fixed order, so the result is\nbitwise reproducible; workgroups on the CUs left idle pull later ``b`` tiles into L2.\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import llvm, vector\nfrom flydsl.compiler import from_c_void_p\nfrom flydsl.expr import arith, const_expr, gpu, range_constexpr, rocdl\nfrom flydsl.expr.typing import T\n\n_N = 6144\n_K = 1536\n_CUS = 256\n_XCDS = 8\n_LDS_BYTES = 160 * 1024\n_OOB = 0x40000000\n\n\ndef _raw(value):\n    return value.ir_value() if hasattr(value, \"ir_value\") else value\n\n\ndef _resource(ptr, nbytes, byte_offset=None):\n    addr = fx.Int64(fx.ptrtoint(ptr))\n    if byte_offset is not None:\n        addr = addr + fx.Int64(byte_offset)\n    base = llvm.IntToPtrOp(ir.Type.parse(\"!llvm.ptr\"), _raw(addr)).result\n    size = arith.constant(nbytes, type=T.i64) if isinstance(nbytes, int) else fx.Int64(nbytes)\n    return rocdl.MakeBufferRsrcOp(\n        ir.Type.parse(\"!llvm.ptr<8>\"),\n        base,\n        _raw(arith.constant(0, type=T.i16)),\n        _raw(size),\n        _raw(arith.constant((7 << 12) | (4 << 15), type=T.i32)),\n    ).result\n\n\ndef _ptr(tensor, dtype):\n    return from_c_void_p(dtype, tensor.data_ptr(), assumed_align=16)\n\n\ndef _config(m):\n    \"\"\"Tuned (BN, BK, waves, A stages, first L2-prefetched K tile or 0, K-tile stagger, M split,\n    wave layout, B stages[, issue A before B]) for one m; the layout (wm, wn, wk) splits the waves\n    over row tiles, column tiles and K steps of a tile; only wk > 1 reduces partials through LDS.\"\"\"\n    if m >= 96:\n        return 64, 128, 16, 3, 4, 11, 1, (2, 4, 2), 4, 1\n    if m > 32:\n        return 64, 128, 8, 4, 5, 7, 1, (2, 2, 2), 4\n    if m <= 8:\n        return 32, 128, 2, 8, 0, 0, 0, (1, 2, 1), 8, 1\n    if m <= 16:\n        return 32, 128, 4, 6, 9, 0, 0, (1, 2, 2), 5\n    return 32, 128, 4, 6, 6, 7, 0, (1, 2, 2), 5, 1\n\n\n@functools.cache\ndef _kernels(m, bn, bk, waves, sa, pf_t0, stagger, msplit, wl, sb, af=0):\n    n, k = _N, _K\n    wm, wn, wk = wl\n    h0 = (m + 1) // 2 if msplit else m\n    bm = (h0 + 15) // 16 * 16\n    rm, rn = bm // 16, bn // 16\n    threads = waves * 64\n    tiles = k // bk\n    compute_wgs = n // bn * (2 if msplit else 1)\n    # Workgroups for the CUs the compute grid leaves idle, an equal number per XCD.\n    pf_wgs = _CUS - compute_wgs if pf_t0 else 0\n    per_pf = compute_wgs // pf_wgs if pf_wgs else 0\n    assert pf_wgs == 0 or (pf_wgs % _XCDS == 0 and compute_wgs % pf_wgs == 0)\n    pf_depth = 48\n    pbn = bn // 2 if msplit else bn\n    pnb = -(-pbn * bk // (threads * 8))\n    ksteps = bk // 32\n    chunks = bk // 8\n    assert k % bk == 0 and n % bn == 0 and bn * bk % (threads * 8) == 0\n    assert wm * wn * wk == waves and rm % wm == 0 and rn % wn == 0 and ksteps % wk == 0\n    rmw, rnw = rm // wm, rn // wn\n    nloc = rmw * rnw\n    # A loads only its real rows (padded rows feed no stored output); DMAs past them fall out of range.\n    na = -(-(bm if msplit else min(bm, m)) * bk // (threads * 8))\n    nb = bn * bk // (threads * 8)\n    # A is an L2 hit and B comes cold from HBM, so each has its own ring depth.\n    a_elems = max(bm * bk, na * threads * 8)\n    b_elems = bn * bk\n    b_ring = sa * a_elems\n    # Replay the DMA issue order to find how many DMAs may stay in flight before each tile.\n    order = (\"A\", \"B\") if af else (\"B\", \"A\")\n\n    def step(i, lim_a, lim_b):\n        return [(x, i) for x in order if i < (lim_a if x == \"A\" else lim_b)]\n\n    events = []\n    for i in range(max(sa, sb) - 1):\n        events += step(i, min(sa - 1, tiles), min(sb - 1, tiles))\n    waits = []\n    for t in range(tiles):\n        need = max(events.index((\"B\", t)), events.index((\"A\", t)))\n        later = events[need + 1 :]\n        waits.append(sum(nb if e[0] == \"B\" else na for e in later))\n        assert waits[-1] <= 63\n        events += [\n            (x, t + (sa if x == \"A\" else sb) - 1) for x in order if t + (sa if x == \"A\" else sb) - 1 < tiles\n        ]\n    part_elems = waves * nloc * 64 * 8 if wk > 1 else 0\n    ring_elems = sa * a_elems + sb * b_elems\n    # Place the K partials clear of the ring slots the last tile reads, so a wave can write them\n    # while the others still run their last MFMAs; failing that they sit behind a barrier.\n    live = (\n        (((tiles - 1) % sa) * a_elems, ((tiles - 1) % sa + 1) * a_elems),\n        (\n            b_ring + ((tiles - 1) % sb) * b_elems,\n            b_ring + ((tiles - 1) % sb + 1) * b_elems,\n        ),\n    )\n    part_base, part_barrier = 0, wk > 1\n    if wk > 1:\n        starts = sorted(\n            {0, ring_elems} | {i * a_elems for i in range(sa)} | {b_ring + i * b_elems for i in range(sb)}\n        )\n        for c in starts:\n            if (c + part_elems) * 2 <= _LDS_BYTES and all(c + part_elems <= lo or c >= hi for lo, hi in live):\n                part_base, part_barrier = c, False\n                break\n    lds_elems = max(ring_elems, part_base + part_elems)\n    assert lds_elems * 2 <= _LDS_BYTES\n\n    @fx.struct\n    class Storage:\n        buf: fx.Array[fx.BFloat16, lds_elems, 16]\n\n    @flyc.kernel(known_block_size=[threads, 1, 1])\n    def gemm(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer):\n        tid = fx.thread_idx.x\n        lane = tid % 64\n        wave = tid // 64\n        bid = fx.block_idx.x\n        if const_expr(msplit):\n            # Partners one XCD round apart share an XCD and a column band; each owns half the rows.\n            band = (bid // (2 * _XCDS)) * _XCDS + bid % _XCDS\n            half = (bid // _XCDS) % 2\n            hrows = arith.select(half == fx.Int32(0), fx.Int32(h0), fx.Int32(m - h0))\n            r0 = half * h0\n        else:\n            band = bid\n        no = band * bn\n        shared = fx.SharedAllocator().allocate(Storage).peek()\n        sp = shared.buf.ptr\n        lds_base = fx.Int32(fx.ptrtoint(sp))\n        if const_expr(msplit):\n            ar = _resource(A, hrows * (k * 2), r0 * (k * 2))\n        else:\n            ar = _resource(A, m * k * 2)\n        br = _resource(B, n * k * 2)\n\n        # Per-thread global byte offsets (tile 0) of every DMA this thread issues.\n        def offsets(origin, count, rows=None):\n            result = []\n            for j in range_constexpr(count):\n                linear = j * threads + tid\n                row = linear // chunks\n                off = (origin + row) * (k * 2) + ((linear % chunks) ^ (row % chunks)) * 16\n                if const_expr(rows is not None and (j + 1) * threads > rows * chunks):\n                    # Rows past the tile belong to the next band: send them out of range.\n                    off = arith.select(row < fx.Int32(rows), off, fx.Int32(_OOB))\n                result.append(off)\n            return result\n\n        a_off = offsets(0, na)\n        b_off = offsets(no, nb)\n\n        def dma(rsrc, voff, lds_addr, pol=\"\"):\n            \"\"\"One 16-byte-per-lane LDS DMA; ``pol`` is an optional cache-policy modifier.\"\"\"\n            uniform_addr = rocdl.readfirstlane(T.i32, _raw(lds_addr))\n            llvm.InlineAsmOp(\n                None,\n                [uniform_addr, _raw(fx.Int32(voff)), rsrc],\n                \"s_mov_b32 m0, $0\\n\\tbuffer_load_dwordx4 $1, $2, 0 offen\" + pol + \" lds\",\n                \"s,v,s,~{memory}\",\n                has_side_effects=True,\n            )\n\n        def tile_byte(t, start):\n            \"\"\"Byte offset of the t-th K tile visited from tile ``start``; staggered starts keep the\n            workgroups of an XCD from requesting the same A lines from L2 at once.\"\"\"\n            if const_expr(stagger == 0):\n                return t * bk * 2\n            tt = start + t\n            tt = arith.select(tt >= fx.Int32(tiles), tt - tiles, tt)\n            return tt * (bk * 2)\n\n        def start_tile(band):\n            # band // _XCDS indexes the workgroup within its XCD, so phases differ inside an XCD.\n            return ((band // _XCDS) * stagger) % tiles if stagger else 0\n\n        def issue_b(t):\n            b_lds = lds_base + (b_ring + (t % sb) * b_elems) * 2 + wave * (64 * 16)\n            tb = tile_byte(t, start_tile(band))\n            # B is read once per CU, so load it non-temporally; A is re-read by every CU.\n            for j in range_constexpr(nb):\n                dma(br, b_off[j] + tb, b_lds + j * threads * 16, \" nt\")\n\n        def issue_a(t):\n            a_lds = lds_base + (t % sa) * (a_elems * 2) + wave * (64 * 16)\n            tb = tile_byte(t, start_tile(band))\n            for j in range_constexpr(na):\n                dma(ar, a_off[j] + tb, a_lds + j * threads * 16)\n\n        def wait(outstanding):\n            llvm.InlineAsmOp(\n                None,\n                [],\n                f\"s_waitcnt vmcnt({outstanding})\",\n                \"~{memory}\",\n                has_side_effects=True,\n            )\n\n        row16 = lane % 16\n        quad = lane // 16\n        wi = wave // (wn * wk)\n        wj = (wave // wk) % wn\n        wq = wave % wk\n\n        def compute(t, acc):\n            a_base = (t % sa) * a_elems\n            b_base = b_ring + (t % sb) * b_elems\n            out = [v for v in acc]\n            for s in range_constexpr(ksteps // wk):\n                kk = wq + s * wk\n                chunk = kk * 4 + quad\n                sw = (chunk ^ row16) * 8\n                bv = []\n                av = []\n                for j in range_constexpr(rnw):\n                    off = b_base + ((wj * rnw + j) * 16 + row16) * bk + sw\n                    bv.append(fx.ptr_load(sp + off, result_type=fx.Vector.make_type(8, fx.BFloat16)))\n                for i in range_constexpr(rmw):\n                    off = a_base + ((wi * rmw + i) * 16 + row16) * bk + sw\n                    av.append(fx.ptr_load(sp + off, result_type=fx.Vector.make_type(8, fx.BFloat16)))\n                for i in range_constexpr(rmw):\n                    for j in range_constexpr(rnw):\n                        p = i * rnw + j\n                        out[p] = rocdl.mfma_f32_16x16x32_bf16(\n                            T.vec(4, T.f32), [bv[j], av[i], out[p], 0, 0, 0]\n                        )\n            return out\n\n        if bid >= fx.Int32(compute_wgs):\n            # Pull later K tiles of the B bands of this XCD into L2; the LDS copies are discarded.\n            pidx = bid - compute_wgs\n            xcd = pidx % _XCDS\n            grp = pidx // _XCDS\n            p_off = []\n            p_start = []\n            for jj in range_constexpr(per_pf):\n                if const_expr(msplit):\n                    i = grp * per_pf + jj\n                    cbb = xcd + _XCDS * (i // 2)\n                    p_off.append(offsets((cbb * 2 + i % 2) * pbn, pnb, pbn))\n                    p_start.append(start_tile(cbb))\n                else:\n                    cb = xcd + _XCDS * (grp * per_pf + jj)\n                    p_off.append(offsets(cb * bn, nb))\n                    p_start.append(start_tile(cb))\n            issued = 0\n            for t in range_constexpr(pf_t0, tiles):\n                for jj in range_constexpr(per_pf):\n                    tb = tile_byte(t, p_start[jj])\n                    for j in range_constexpr(pnb):\n                        dma(\n                            br,\n                            p_off[jj][j] + tb,\n                            lds_base + wave * (64 * 16) + j * threads * 16,\n                        )\n                        issued += 1\n                if const_expr(issued > pf_depth):\n                    wait(pf_depth)\n            wait(0)\n        else:\n            zero = arith.constant_vector(0.0, T.vec(4, T.f32))\n            acc = [zero] * nloc\n            issuers = {\"A\": issue_a, \"B\": issue_b}\n            for i in range_constexpr(max(sa, sb) - 1):\n                for x, ti in step(i, min(sa - 1, tiles), min(sb - 1, tiles)):\n                    issuers[x](ti)\n            for t in range_constexpr(tiles):\n                wait(waits[t])\n                gpu.barrier()\n                for x in order:\n                    ti = t + (sa if x == \"A\" else sb) - 1\n                    if const_expr(ti < tiles):\n                        issuers[x](ti)\n                acc = compute(t, acc)\n\n            # Fixed-order reduction of the wk K-partials of each tile through LDS (none if wk == 1).\n            if const_expr(wk > 1):\n                if const_expr(part_barrier):\n                    gpu.barrier()\n                for p in range_constexpr(nloc):\n                    if wq != p % wk:\n                        off = part_base + ((wave * nloc + p) * 64 + lane) * 8\n                        fx.ptr_store(vector.bitcast(T.vec(8, T.bf16), _raw(acc[p])), sp + off)\n                gpu.barrier()\n\n            if const_expr(msplit):\n                cr = _resource(C, hrows * (n * 2), r0 * (n * 2))\n            else:\n                cr = _resource(C, m * n * 2)\n\n            def store(p, total):\n                i = wi * rmw + p // rnw\n                j = wj * rnw + p % rnw\n                row = i * 16 + row16\n                col = no + j * 16 + quad * 4\n                packed = vector.bitcast(T.vec(2, T.i32), _raw(arith.truncf(T.vec(4, T.bf16), total)))\n                rocdl.raw_ptr_buffer_store(\n                    packed,\n                    cr,\n                    _raw(fx.Int32((row * n + col) * 2)),\n                    _raw(fx.Int32(0)),\n                    aux=ir.IntegerAttr.get(T.i32, 0),\n                )\n\n            for p in range_constexpr(nloc):\n                if const_expr(wk == 1):\n                    store(p, acc[p])\n                else:\n                    owner = p % wk\n                    if wq == owner:\n                        total = None\n                        for s in range_constexpr(wk):\n                            if const_expr(s == owner):\n                                v = acc[p]\n                            else:\n                                src = wave - wq + s\n                                off = part_base + ((src * nloc + p) * 64 + lane) * 8\n                                v = fx.ptr_load(\n                                    sp + off,\n                                    result_type=fx.Vector.make_type(8, fx.BFloat16),\n                                )\n                                v = vector.bitcast(T.vec(4, T.f32), _raw(v))\n                            total = v if total is None else arith.addf(total, v)\n                        store(p, total)\n\n    @flyc.jit\n    def launch(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer, stream: fx.Stream):\n        gemm(C, A, B).launch(grid=(compute_wgs + pf_wgs,), block=(threads,), stream=stream)\n\n    return launch\n\n\n@functools.cache\ndef _launch_for(shape, device):\n    m = shape[0]\n    cfg = _config(m)\n    out_example = torch.empty((m, _N), device=device, dtype=torch.bfloat16)\n    a_example = torch.empty((m, _K), device=device, dtype=torch.bfloat16)\n    b_example = torch.empty((_N, _K), device=device, dtype=torch.bfloat16)\n    # Preload the pointer arguments into SGPRs so the first DMA need not wait on kernarg loads.\n    compiled = flyc.compile[{\"llvm_options\": {\"amdgpu-kernarg-preload-count\": 6}}](\n        _kernels(m, *cfg),\n        _ptr(out_example, fx.BFloat16),\n        _ptr(a_example, fx.BFloat16),\n        _ptr(b_example, fx.BFloat16),\n        fx.Stream(torch.cuda.current_stream(device)),\n    )\n\n    def launch(a, b, out):\n        compiled(\n            _ptr(out, fx.BFloat16),\n            _ptr(a, fx.BFloat16),\n            _ptr(b, fx.BFloat16),\n            fx.Stream(torch.cuda.current_stream(a.device)),\n        )\n\n    return launch\n\n\ndef run(*, a, b, trans_b, bias, out_dtype, out):\n    \"\"\"Compute ``out = a @ b.T`` for bf16 ``a`` [m, k] and ``b`` [n, k]; ``bias`` is absent.\"\"\"\n    if not trans_b or bias is not None:\n        raise ValueError(\"only trans_b=True without bias is supported\")\n    launch = _launch_for(tuple(a.shape), a.device)\n    launch(a, b, out)\n"
+      }
+    ]
+  }
+}

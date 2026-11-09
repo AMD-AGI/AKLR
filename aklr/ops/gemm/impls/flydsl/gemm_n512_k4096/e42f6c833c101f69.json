@@ -1,0 +1,133 @@
+{
+  "schema_version": 5,
+  "name": "gemm_n512_k4096",
+  "contract_id": "gemm@1.0",
+  "description": "16-bit gemm: out = a @ b.T + bias (b is (k, n) unless trans_b).",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 512,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 4096,
+      "description": "Reduction length."
+    }
+  },
+  "attrs": {
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 1
+      }
+    },
+    {
+      "axes": {
+        "m": 2
+      }
+    },
+    {
+      "axes": {
+        "m": 4
+      }
+    },
+    {
+      "axes": {
+        "m": 8
+      }
+    },
+    {
+      "axes": {
+        "m": 16
+      }
+    },
+    {
+      "axes": {
+        "m": 32
+      }
+    },
+    {
+      "axes": {
+        "m": 64
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"BF16 GEMM ``out = a @ b.T`` for fixed n and k and small m, in one launch: waves split K, MFMA operands pack\nreal rows with K slices, and partials are folded in a fixed order so the result is bitwise reproducible.\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import arith as std_arith\nfrom flydsl._mlir.dialects import llvm, scf, vector\nfrom flydsl._mlir.dialects import rocdl as rocdl_d\nfrom flydsl.expr import arith, const_expr, gpu, range_constexpr, rocdl\nfrom flydsl.expr.typing import T, as_ir_value\n\nN_DIM = 512\nK_DIM = 4096\nWARP = 64\n_RSRC_FLOAT32_FORMAT = (7 << 12) | (4 << 15)\n\n\ndef _rsrc(base_i64, nbytes):\n    base_ptr = llvm.IntToPtrOp(ir.Type.parse(\"!llvm.ptr\"), as_ir_value(base_i64)).result\n    return rocdl_d.MakeBufferRsrcOp(\n        ir.Type.parse(\"!llvm.ptr<8>\"),\n        base_ptr,\n        arith.constant(0, type=T.i16),\n        arith.constant(nbytes, type=T.i64),\n        arith.constant(_RSRC_FLOAT32_FORMAT, type=T.i32),\n    ).result\n\n\ndef _lds_ptr(base_i64, off_index):\n    return llvm.IntToPtrOp(\n        ir.Type.parse(\"!llvm.ptr<3>\"),\n        as_ir_value(base_i64 + fx.Int64(arith.index_cast(T.i64, off_index))),\n    ).result\n\n\ndef _ptr_arg(t):\n    return flyc.from_c_void_p(fx.Uint8, t.data_ptr())\n\n\n# m -> (TM, M-blocks, TN, waves, R): each MFMA operand holds R real rows times S = 16 // R K slices, so every\n# loaded byte is real; only the diagonal D[i][j] with i % S == j % S holds valid partials.\n_PTABLE = {\n    1: (1, 1, 2, 2, 1),\n    2: (2, 1, 2, 2, 2),\n    4: (4, 1, 2, 2, 2),\n    8: (4, 2, 4, 2, 4),\n    16: (8, 2, 4, 2, 4),\n    32: (8, 4, 8, 2, 4),\n    64: (16, 4, 8, 2, 4),\n}\n\n\n@functools.cache\ndef _compile_packed(m: int):\n    TM, MB, TN, W, R = _PTABLE[m]\n    n, k = N_DIM, K_DIM\n    THREADS = WARP * W\n    S = 16 // R\n    KWIN = S * 32\n    KW = k // W\n    NWIN = KW // KWIN\n    assert NWIN * KWIN == KW and TM % R == 0 and TN % R == 0\n    SUBM, SUBN = TM // R, TN // R\n    NACC = SUBM * SUBN\n    NB = n // TN\n    GRID = NB * MB\n    assert GRID % 8 == 0 or MB == 1\n    assert m - (MB - 1) * TM == TM\n    VEC = min(TN, 4)\n    NCG = TN // VEC\n    P = TM * TN * W  # (output, wave) pairs folded over the S slices\n    NP_IT = (P + THREADS - 1) // THREADS\n    N1 = W * NACC * WARP * 4\n    N2 = P\n    NAME = f\"fly_n{n}k{k}_pk_m{m}_{TM}x{TN}x{MB}_W{W}_R{R}\"\n\n    @fx.struct\n    class Red:\n        red: fx.Array[fx.Float32, N1 + N2, 16]\n\n    @flyc.kernel(known_block_size=[THREADS, 1, 1])\n    def gemm_kernel(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer):\n        tid = fx.thread_idx.x\n        wid = tid // WARP\n        l = tid % WARP\n        pid = fx.block_idx.x\n        if const_expr(MB == 1):\n            n_tile = pid\n            m_blk = 0\n        else:\n            n_tile = (pid // (8 * MB)) * 8 + pid % 8\n            m_blk = (pid // 8) % MB\n\n        a_base = fx.Int64(fx.ptrtoint(A)) + fx.Int64(arith.index_cast(T.i64, fx.Index(m_blk) * (TM * k * 2)))\n        b_base = fx.Int64(fx.ptrtoint(B)) + fx.Int64(arith.index_cast(T.i64, fx.Index(n_tile) * (TN * k * 2)))\n        a_rsrc = _rsrc(a_base, TM * k * 2)\n        b_rsrc = _rsrc(b_base, TN * k * 2)\n        c_rsrc = _rsrc(fx.Int64(fx.ptrtoint(C)), m * n * 2)\n\n        lr = l % 16\n        g = l // 16\n        q = lr // S\n        sg = lr % S\n        voff = arith.index_cast(\n            T.i32, (fx.Index(q) * k + fx.Index(wid) * KW + fx.Index(g) * (S * 8) + fx.Index(sg) * 8) * 2\n        )\n        bv = [[None] * SUBN for _ in range(NWIN)]\n        av = [[None] * SUBM for _ in range(NWIN)]\n        for win in range_constexpr(NWIN):\n            for sb in range_constexpr(SUBN):\n                off = (\n                    std_arith.AddIOp(voff, arith.constant(win * KWIN * 2, type=T.i32)).result if win else voff\n                )\n                bv[win][sb] = rocdl_d.RawPtrBufferLoadOp(\n                    T.vec(8, T.bf16), b_rsrc, off, arith.constant(sb * R * k * 2, type=T.i32)\n                ).result\n        for win in range_constexpr(NWIN):\n            for sa in range_constexpr(SUBM):\n                off = (\n                    std_arith.AddIOp(voff, arith.constant(win * KWIN * 2, type=T.i32)).result if win else voff\n                )\n                av[win][sa] = rocdl_d.RawPtrBufferLoadOp(\n                    T.vec(8, T.bf16), a_rsrc, off, arith.constant(sa * R * k * 2, type=T.i32)\n                ).result\n        rocdl.sched_barrier(0)\n        zero = arith.constant_vector(0.0, T.vec(4, T.f32))\n        acc = [[zero] * SUBN for _ in range(SUBM)]\n        for win in range_constexpr(NWIN):\n            for sa in range_constexpr(SUBM):\n                for sb in range_constexpr(SUBN):\n                    acc[sa][sb] = rocdl.mfma_f32_16x16x32_bf16(\n                        T.vec(4, T.f32), [bv[win][sb], av[win][sa], acc[sa][sb], 0, 0, 0]\n                    )\n\n        lds = fx.SharedAllocator().allocate(Red)\n        red_i64 = fx.Int64(fx.ptrtoint(lds.red.peek().ptr))\n        for sa in range_constexpr(SUBM):\n            for sb in range_constexpr(SUBN):\n                idx = ((fx.Index(wid) * NACC + (sa * SUBN + sb)) * WARP + fx.Index(l)) * 16\n                llvm.StoreOp(as_ir_value(acc[sa][sb]), _lds_ptr(red_i64, idx), alignment=16)\n        gpu.barrier()\n\n        # Stage 1: pair t = o * W + w sums its S slices in ascending order.\n        for it in range_constexpr(NP_IT):\n            t = fx.Index(tid) + it * THREADS\n            ok1 = arith.cmpi(arith.CmpIPredicate.ult, t, fx.Index(P))\n            if1 = scf.IfOp(as_ir_value(ok1), results_=[], has_else=False)\n            with ir.InsertionPoint(if1.then_block):\n                w = t % W\n                o = t // W\n                a_row = o // TN\n                b_col = o % TN\n                sa_ = a_row // R\n                qj = a_row % R\n                sb_ = b_col // R\n                qi = b_col % R\n                base = (w * NACC + sa_ * SUBN + sb_) * WARP\n                s_ = None\n                for sig in range_constexpr(S):\n                    i = qi * S + sig\n                    j = qj * S + sig\n                    fidx = (base + j + (i // 4) * 16) * 4 + i % 4\n                    v = llvm.LoadOp(T.f32, _lds_ptr(red_i64, fidx * 4), alignment=4).result\n                    s_ = v if s_ is None else std_arith.AddFOp(s_, v).result\n                llvm.StoreOp(s_, _lds_ptr(red_i64, (fx.Index(N1) + t) * 4), alignment=4)\n                scf.YieldOp([])\n        gpu.barrier()\n\n        # Stage 2: thread (a_row, column group) sums waves in ascending order.\n        ok2 = arith.cmpi(arith.CmpIPredicate.ult, fx.Index(tid), fx.Index(TM * NCG))\n        if2 = scf.IfOp(as_ir_value(ok2), results_=[], has_else=False)\n        with ir.InsertionPoint(if2.then_block):\n            a_row = fx.Index(tid) // NCG\n            cg = fx.Index(tid) % NCG\n            vals = []\n            for c in range_constexpr(VEC):\n                o = a_row * TN + cg * VEC + c\n                s_ = None\n                for w in range_constexpr(W):\n                    v = llvm.LoadOp(\n                        T.f32, _lds_ptr(red_i64, (fx.Index(N1) + o * W + w) * 4), alignment=4\n                    ).result\n                    s_ = v if s_ is None else std_arith.AddFOp(s_, v).result\n                vals.append(s_)\n            fv = vector.FromElementsOp(T.vec(VEC, T.f32), vals).result\n            outv = std_arith.TruncFOp(T.vec(VEC, T.bf16), fv).result\n            row = fx.Index(m_blk) * TM + a_row\n            coff = arith.index_cast(T.i32, (row * n + fx.Index(n_tile) * TN + cg * VEC) * 2)\n            rocdl_d.RawPtrBufferStoreOp(outv, c_rsrc, coff, arith.constant(0, type=T.i32))\n            scf.YieldOp([])\n\n    @flyc.jit\n    def launch(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer, stream: fx.Stream):\n        gemm_kernel._func.__name__ = NAME\n        gemm_kernel(C, A, B).launch(\n            grid=(GRID, 1, 1),\n            block=(THREADS, 1, 1),\n            stream=stream,\n            value_attrs={\"rocdl.flat_work_group_size\": f\"{THREADS},{THREADS}\"},\n        )\n\n    return launch\n\n\n@functools.cache\ndef _compile_m64():\n    \"\"\"Variant for the largest m: loads run D K windows ahead of the MFMAs, the S slices are summed in\n    registers with quad DPP broadcasts, and the two waves meet in a small LDS buffer.\"\"\"\n    m = 64\n    TM, MB, TN, W, R = _PTABLE[m]\n    D = 10\n    n, k = N_DIM, K_DIM\n    THREADS = WARP * W\n    S = 16 // R\n    KWIN = S * 32\n    KW = k // W\n    NWIN = KW // KWIN\n    SUBM, SUBN = TM // R, TN // R\n    NACC = SUBM * SUBN\n    NB = n // TN\n    GRID = NB * MB\n    NT = (NACC + 3) // 4\n    N1 = WARP * NT\n    NAME = f\"fly_n{n}k{k}_pk_m{m}_{TM}x{TN}x{MB}_W{W}_R{R}_pq\"\n\n    @fx.struct\n    class Red:\n        red: fx.Array[fx.Float32, N1, 16]\n\n    @flyc.kernel(known_block_size=[THREADS, 1, 1])\n    def gemm_kernel(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer):\n        tid = fx.thread_idx.x\n        wid = tid // WARP\n        l = tid % WARP\n        pid = fx.block_idx.x\n        n_tile = (pid // (8 * MB)) * 8 + pid % 8\n        m_blk = (pid // 8) % MB\n\n        a_base = fx.Int64(fx.ptrtoint(A)) + fx.Int64(arith.index_cast(T.i64, fx.Index(m_blk) * (TM * k * 2)))\n        b_base = fx.Int64(fx.ptrtoint(B)) + fx.Int64(arith.index_cast(T.i64, fx.Index(n_tile) * (TN * k * 2)))\n        a_rsrc = _rsrc(a_base, TM * k * 2)\n        b_rsrc = _rsrc(b_base, TN * k * 2)\n        c_rsrc = _rsrc(fx.Int64(fx.ptrtoint(C)), m * n * 2)\n\n        lr = l % 16\n        g = l // 16\n        q = lr // S\n        sg = lr % S\n        voff = arith.index_cast(\n            T.i32, (fx.Index(q) * k + fx.Index(wid) * KW + fx.Index(g) * (S * 8) + fx.Index(sg) * 8) * 2\n        )\n        bv = [[None] * SUBN for _ in range(NWIN)]\n        av = [[None] * SUBM for _ in range(NWIN)]\n        zero = arith.constant_vector(0.0, T.vec(4, T.f32))\n        acc = [[zero] * SUBN for _ in range(SUBM)]\n\n        # Odd M-blocks start half-way through the wave's K range and wrap, so M-blocks sharing a B tile read\n        # different lines at any moment. One VGPR base per wrap side keeps the window offset an immediate.\n        rot32 = arith.index_cast(T.i32, (fx.Index(m_blk) % 2) * (NWIN // 2))\n        v1 = std_arith.AddIOp(\n            voff, std_arith.MulIOp(rot32, arith.constant(KWIN * 2, type=T.i32)).result\n        ).result\n        v2 = std_arith.SubIOp(v1, arith.constant(NWIN * KWIN * 2, type=T.i32)).result\n        wvo = []\n        for win in range_constexpr(NWIN):\n            wrap = std_arith.CmpIOp(\n                std_arith.CmpIPredicate.sge, rot32, arith.constant(NWIN - win, type=T.i32)\n            ).result\n            base_ = std_arith.SelectOp(wrap, v2, v1).result\n            wvo.append(\n                std_arith.AddIOp(base_, arith.constant(win * KWIN * 2, type=T.i32)).result if win else base_\n            )\n\n        def issue_b(win):\n            for sb in range_constexpr(SUBN):\n                bv[win][sb] = rocdl_d.RawPtrBufferLoadOp(\n                    T.vec(8, T.bf16), b_rsrc, wvo[win], arith.constant(sb * R * k * 2, type=T.i32)\n                ).result\n\n        def issue_a(win):\n            for sa in range_constexpr(SUBM):\n                av[win][sa] = rocdl_d.RawPtrBufferLoadOp(\n                    T.vec(8, T.bf16), a_rsrc, wvo[win], arith.constant(sa * R * k * 2, type=T.i32)\n                ).result\n\n        def mma(win):\n            for sa in range_constexpr(SUBM):\n                for sb in range_constexpr(SUBN):\n                    acc[sa][sb] = rocdl.mfma_f32_16x16x32_bf16(\n                        T.vec(4, T.f32), [bv[win][sb], av[win][sa], acc[sa][sb], 0, 0, 0]\n                    )\n\n        for win in range_constexpr(min(D, NWIN)):\n            issue_b(win)\n            issue_a(win)\n        rocdl.sched_barrier(0)\n        for win in range_constexpr(NWIN):\n            if const_expr(win + D < NWIN):\n                issue_b(win + D)\n                issue_a(win + D)\n            mma(win)\n            rocdl.sched_barrier(0)\n\n        lds = fx.SharedAllocator().allocate(Red)\n        red_i64 = fx.Int64(fx.ptrtoint(lds.red.peek().ptr))\n\n        # Lane 16*qi + 4*qj + sig holds D[4*qi + sig][4*qj + sig] in element sig: the S slices of one output\n        # sit in one quad, element kk in lane kk, and every lane of the quad sums them in ascending order.\n        sums = []\n        for a in range_constexpr(NACC):\n            v_ = as_ir_value(acc[a // SUBN][a % SUBN])\n            s_ = None\n            for kk in range_constexpr(4):\n                e = vector.extract(v_, [], [kk])\n                y = rocdl_d.update_dpp(T.f32, e, e, kk * 0x55, 0xF, 0xF, True)\n                s_ = y if s_ is None else std_arith.AddFOp(s_, y).result\n            sums.append(s_)\n        sig = fx.Index(l) % 4\n        sig32 = arith.index_cast(T.i32, sig)\n        sel = []\n        for t in range_constexpr(NT):\n            v = sums[4 * t]\n            for kk in range_constexpr(1, 4):\n                c = std_arith.CmpIOp(std_arith.CmpIPredicate.eq, sig32, arith.constant(kk, type=T.i32)).result\n                v = std_arith.SelectOp(c, sums[4 * t + kk], v).result\n            sel.append(v)\n        lptr = _lds_ptr(red_i64, fx.Index(l) * (NT * 4))\n        is1 = arith.cmpi(arith.CmpIPredicate.eq, fx.Index(wid), fx.Index(1))\n        ifw = scf.IfOp(as_ir_value(is1), results_=[], has_else=False)\n        with ir.InsertionPoint(ifw.then_block):\n            llvm.StoreOp(vector.FromElementsOp(T.vec(NT, T.f32), sel).result, lptr, alignment=4 * NT)\n            scf.YieldOp([])\n        gpu.barrier()\n        is0 = arith.cmpi(arith.CmpIPredicate.eq, fx.Index(wid), fx.Index(0))\n        ifr = scf.IfOp(as_ir_value(is0), results_=[], has_else=False)\n        with ir.InsertionPoint(ifr.then_block):\n            other = llvm.LoadOp(T.vec(NT, T.f32), lptr, alignment=4 * NT).result\n            qi = fx.Index(l) // 16\n            qj = (fx.Index(l) % 16) // 4\n            for t in range_constexpr(NT):\n                o1 = vector.extract(other, [], [t])\n                tot = std_arith.AddFOp(sel[t], o1).result  # wave 0 + wave 1\n                a = sig + 4 * t\n                sa = a // SUBN\n                sb = a % SUBN\n                row = fx.Index(m_blk) * TM + sa * R + qj\n                col = fx.Index(n_tile) * TN + sb * R + qi\n                coff = arith.index_cast(T.i32, (row * n + col) * 2)\n                ov = std_arith.TruncFOp(T.bf16, tot).result\n                rocdl_d.RawPtrBufferStoreOp(ov, c_rsrc, coff, arith.constant(0, type=T.i32))\n            scf.YieldOp([])\n\n    @flyc.jit\n    def launch(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer, stream: fx.Stream):\n        gemm_kernel._func.__name__ = NAME\n        gemm_kernel(C, A, B).launch(\n            grid=(GRID, 1, 1),\n            block=(THREADS, 1, 1),\n            stream=stream,\n            value_attrs={\"rocdl.flat_work_group_size\": f\"{THREADS},{THREADS}\"},\n        )\n\n    return launch\n\n\ndef _run_compiled(exe, *args):\n    cf = getattr(exe, \"_cf\", None)\n    if cf is not None:\n        cf(*args)\n        return\n    try:\n        # Preload the three 64-bit pointer arguments into SGPRs.\n        cf = flyc.compile[{\"llvm_options\": {\"amdgpu-kernarg-preload-count\": 6}}](exe, *args)\n        exe._cf = cf\n    except Exception:\n        try:\n            while ir.Context.current is not None:\n                ir.Context.current.__exit__(None, None, None)\n        except Exception:  # noqa: BLE001\n            pass\n        raise\n\n\ndef run(*, a, b, trans_b, bias, out_dtype, out):\n    \"\"\"out = a @ b.T for bf16 a (m, K_DIM) and b (N_DIM, K_DIM); an m with no tile plan uses torch.\"\"\"\n    m = a.shape[0]\n    if m not in _PTABLE:\n        torch.matmul(a, b.t() if trans_b else b, out=out)\n        return\n    exe = _compile_m64() if m == 64 else _compile_packed(m)\n    stream = fx.Stream(torch._C._cuda_getCurrentRawStream(a.device.index))\n    _run_compiled(exe, _ptr_arg(out), _ptr_arg(a), _ptr_arg(b), stream)\n"
+      }
+    ]
+  }
+}
