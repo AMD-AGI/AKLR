@@ -98,7 +98,9 @@
       },
       "scalars": {
         "sm_scale": 0.0625
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.411
     }
   ],
   "layout_variants": {

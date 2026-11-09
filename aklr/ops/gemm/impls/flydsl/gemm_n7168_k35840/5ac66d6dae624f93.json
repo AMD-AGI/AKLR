@@ -63,106 +63,91 @@
       "axes": {
         "m": 8
       },
-      "accuracy": "passed",
-      "speedup": 1.025
+      "accuracy": "failed"
     },
     {
       "axes": {
         "m": 16
       },
-      "accuracy": "passed",
-      "speedup": 1.049
+      "accuracy": "failed"
     },
     {
       "axes": {
         "m": 24
       },
-      "accuracy": "passed",
-      "speedup": 1.049
+      "accuracy": "failed"
     },
     {
       "axes": {
         "m": 32
       },
-      "accuracy": "passed",
-      "speedup": 1.035
+      "accuracy": "failed"
     },
     {
       "axes": {
         "m": 40
       },
-      "accuracy": "passed",
-      "speedup": 1.049
+      "accuracy": "failed"
     },
     {
       "axes": {
         "m": 48
       },
-      "accuracy": "passed",
-      "speedup": 1.054
+      "accuracy": "failed"
     },
     {
       "axes": {
         "m": 56
       },
-      "accuracy": "passed",
-      "speedup": 1.029
+      "accuracy": "failed"
     },
     {
       "axes": {
         "m": 64
       },
-      "accuracy": "passed",
-      "speedup": 1.018
+      "accuracy": "failed"
     },
     {
       "axes": {
         "m": 80
       },
-      "accuracy": "passed",
-      "speedup": 1.064
+      "accuracy": "failed"
     },
     {
       "axes": {
         "m": 96
       },
-      "accuracy": "passed",
-      "speedup": 1.315
+      "accuracy": "failed"
     },
     {
       "axes": {
         "m": 112
       },
-      "accuracy": "passed",
-      "speedup": 1.03
+      "accuracy": "failed"
     },
     {
       "axes": {
         "m": 893
       },
-      "accuracy": "passed",
-      "speedup": 0.906
+      "accuracy": "failed"
     },
     {
       "axes": {
         "m": 2732
       },
-      "accuracy": "passed",
-      "speedup": 1.229
+      "accuracy": "failed"
     },
     {
       "axes": {
         "m": 9397
       },
-      "accuracy": "passed",
-      "speedup": 1.003
+      "accuracy": "failed"
     },
     {
       "axes": {
         "m": 16384
       },
-      "accuracy": "passed",
-      "speedup": 0.895
+      "accuracy": "failed"
     }
   ],
   "layout_variants": {
