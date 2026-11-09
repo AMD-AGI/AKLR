@@ -114,11 +114,12 @@ tokens per call. Reuse the mechanism and re-derive the number.
 
 ## Kernels to start from
 
-- **AKLR's own.** `../flydsl/kernels/flydsl_kernel_library.md` § AKLR's own FlyDSL MoE kernels lists the five
-  kernels (eight schema files) and what to read each for. Which Points each file serves, and how it gets there:
-  [fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md) (257, 65 and 33 experts) and
-  [fused_moe_interleave_swiglu.md](../cases/fused_moe_interleave_swiglu.md) (clamped SwiGLU). Where the library's items
-  run on main:
+- **AKLR's own.** `../flydsl/kernels/flydsl_kernel_library.md` § AKLR's own FlyDSL MoE kernels describes several of
+  AKLR's FlyDSL MoE kernels and what to read each for. Which Points each file serves, and how it gets there:
+  [fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md) (257, 65 and 33 experts),
+  [fused_moe_interleave_swiglu.md](../cases/fused_moe_interleave_swiglu.md) (clamped SwiGLU, hidden 4096) and
+  [fused_moe_interleave_swiglu_hidden7168.md](../cases/fused_moe_interleave_swiglu_hidden7168.md) (clamped SwiGLU,
+  hidden 7168). Where the library's items run on main:
   - `1fee5982…`: the tile descriptors written by the slot-`% BM` route run at m 32–256 and the loop-carried
     prefetch at m 128, 256, 2048, Points the file does not serve; at its served m 1, 2 the `ds_bpermute` gather runs.
   - `ef15e878…`: `_route_block` runs at no Point (routing is `_quantize_route_fused` at m 2–32, `_route_expert` at
