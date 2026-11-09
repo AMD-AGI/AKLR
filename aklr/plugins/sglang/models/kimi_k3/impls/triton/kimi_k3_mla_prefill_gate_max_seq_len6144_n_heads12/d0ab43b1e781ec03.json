@@ -112,15 +112,6 @@
       "scalars": {
         "sm_scale": 0.07216878235340118
       }
-    },
-    {
-      "axes": {
-        "n_tokens": 8192,
-        "n_offsets": 3
-      },
-      "scalars": {
-        "sm_scale": 0.07216878235340118
-      }
     }
   ],
   "layout_variants": {
