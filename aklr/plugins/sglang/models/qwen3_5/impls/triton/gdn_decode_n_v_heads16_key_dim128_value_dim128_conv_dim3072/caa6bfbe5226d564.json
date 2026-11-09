@@ -1,0 +1,229 @@
+{
+  "schema_version": 5,
+  "name": "gdn_decode_n_v_heads16_key_dim128_value_dim128_conv_dim3072",
+  "contract_id": "gdn_decode@1.0",
+  "description": "Qwen3.5 GDN decode, one token per row, from contiguous Q/K/V/Z and B/A projections. A row whose cache index is -1 is padding: it reads and changes no state, and its core output is zero. Every other row uses its distinct slot: the causal width-four convolution of the slot's three-token history and the row's Q/K/V channels rounds each tap's product to BF16 and sums the four in FP32, oldest first; its SiLU is rounded to BF16, and the history shifts the row in. Q and K are L2-normalized in FP32 and Q is multiplied by scale; the gated delta rule with BF16 beta updates the slot's FP32 delta_state in [value,key] order, and the core output is rounded to BF16. The core is gated RMS-normalized with norm_weight and SiLU of the row's Z, then rounded to BF16. Unindexed state slots and all other inputs are preserved.",
+  "op_type": "qwen3_5",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Decode rows: one token each, padding rows included."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Allocated state slots."
+    },
+    "n_v_heads": {
+      "type": "const",
+      "value": 16,
+      "description": "Value heads on this rank."
+    },
+    "key_dim": {
+      "type": "const",
+      "value": 128,
+      "description": "Key head width."
+    },
+    "value_dim": {
+      "type": "const",
+      "value": 128,
+      "description": "FP8 group and value-head width."
+    },
+    "conv_dim": {
+      "type": "const",
+      "value": 3072,
+      "description": "Convolution channels."
+    },
+    "value_width": {
+      "type": "const",
+      "value": 2048,
+      "description": "Total value width."
+    },
+    "n_k_heads": {
+      "type": "const",
+      "value": 4,
+      "description": "Key heads on this rank."
+    },
+    "projection_dim": {
+      "type": "const",
+      "value": 5120,
+      "description": "Q/K/V/Z projection width."
+    },
+    "gate_dim": {
+      "type": "const",
+      "value": 32,
+      "description": "B/A projection width."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "projected_qkvz": {
+      "shape": [
+        "n_tokens",
+        "projection_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Contiguous Q, K, V, Z columns."
+    },
+    "projected_ba": {
+      "shape": [
+        "n_tokens",
+        "gate_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Contiguous B then A columns."
+    },
+    "conv_state": {
+      "shape": [
+        "n_slots",
+        "conv_dim",
+        3
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Live three-token convolution histories."
+    },
+    "delta_state": {
+      "shape": [
+        "n_slots",
+        "n_v_heads",
+        "value_dim",
+        "key_dim"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Live recurrent matrices, value dimension first."
+    },
+    "cache_indices": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "Each row's distinct state slot, or -1 for a padding row."
+    },
+    "conv_weight": {
+      "shape": [
+        "conv_dim",
+        4
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Four causal convolution taps."
+    },
+    "a_log": {
+      "shape": [
+        "n_v_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Log decay magnitude."
+    },
+    "dt_bias": {
+      "shape": [
+        "n_v_heads"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gate bias."
+    },
+    "norm_weight": {
+      "shape": [
+        "value_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gated RMSNorm weights."
+    },
+    "scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Query scale."
+    },
+    "eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Gated RMSNorm epsilon."
+    }
+  },
+  "outputs": {
+    "normalized": {
+      "shape": [
+        "n_tokens",
+        "n_v_heads",
+        "value_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Gated normalized BF16 values."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 64,
+        "n_slots": 127
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 2.993
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Qwen3.5 GDN decode with BF16 output for MI355X (gfx950), scheduled for 64 rows.\n\nExact MI355 GDN decode with batch-specialized state schedules.\n\nB16 uses eight-token recurrent groups. B32/B96 retain two 64-row state tiles.\nB64 fuses four value heads and precomputes FP32 SiLU gates alongside convolution,\nthen stages the gates in LDS until the final readout. This overlaps gate work\nwith the first state fetch without keeping the gates live across state updates.\n\nSlot lookup remains device-side on every invocation, including graph replay.\nNegative slots write zero output without accessing history, scratch or state.\nState-store suppression compares exact bits, including the sign of zero.\n\"\"\"\nfrom typing import NamedTuple\n\nimport torch\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n\nclass _StateSchedule(NamedTuple):\n    rows: int\n    row_pack: int\n    columns: int\n    load_cache: str\n    store_cache: str\n    dirty_words: int\n    readout_first: bool = True\n    asm_dirty: bool = False\n    global_loads: bool = False\n    waves: int = 0\n\n\n_SCHEDULES = {\n    16: _StateSchedule(rows=128, row_pack=1, columns=8,\n                       load_cache=\".cv\", store_cache=\".wb\", dirty_words=4,\n                       readout_first=False, asm_dirty=True),\n    32: _StateSchedule(rows=64, row_pack=2, columns=16,\n                       load_cache=\".cv\", store_cache=\".wt\", dirty_words=4, waves=2),\n    96: _StateSchedule(rows=64, row_pack=2, columns=16,\n                       load_cache=\".cg\", store_cache=\".wb\", dirty_words=16,\n                       global_loads=True),\n}\n\n\n@gluon.jit\ndef _bf16_low(x):\n    return x.to(gl.uint16).to(gl.bfloat16, bitcast=True).to(gl.float32)\n\n\n@gluon.jit\ndef _bf16_high(x):\n    return (x >> 16).to(gl.uint16).to(gl.bfloat16, bitcast=True).to(gl.float32)\n\n\n@gluon.jit\ndef _conv4(h0, h1, h2, x, w0, w1, w2, w3):\n    y = (h0 * w0).to(gl.bfloat16).to(gl.float32)\n    y += (h1 * w1).to(gl.bfloat16).to(gl.float32)\n    y += (h2 * w2).to(gl.bfloat16).to(gl.float32)\n    y += (x * w3).to(gl.bfloat16).to(gl.float32)\n    return (y / (1.0 + gl.exp(-y))).to(gl.bfloat16).to(gl.float32)\n\n\n@gluon.jit\ndef _convolve_packed(QKVZ, W, token, pairs, hist, owned,\n                     JOIN: gl.constexpr, OUTPUT: gl.constexpr):\n    wp = W.to(gl.pointer_type(gl.uint32)) + pairs * 4\n    # Padding waves read immutable weights, not another wave's live history.\n    read_hist = gl.where(owned, hist, wp)\n    h0 = gl.load(read_hist)\n    h1 = gl.load(read_hist + 1)\n    h2 = gl.load(read_hist + 2)\n    x = gl.load(QKVZ.to(gl.pointer_type(gl.uint32)) + token * 2560 + pairs)\n    w0 = gl.load(wp)\n    w1 = gl.load(wp + 1)\n    w2 = gl.load(wp + 2)\n    w3 = gl.load(wp + 3)\n    ya = _conv4(_bf16_low(h0), _bf16_high(h0), _bf16_low(h1), _bf16_low(x),\n                _bf16_low(w0), _bf16_high(w0), _bf16_low(w1), _bf16_high(w1))\n    yb = _conv4(_bf16_high(h1), _bf16_low(h2), _bf16_high(h2), _bf16_high(x),\n                _bf16_low(w2), _bf16_high(w2), _bf16_low(w3), _bf16_high(w3))\n    ya = gl.convert_layout(ya, gl.SliceLayout(2, JOIN))\n    yb = gl.convert_layout(yb, gl.SliceLayout(2, JOIN))\n    y = gl.join(ya, yb).reshape((h0.shape[0], 2 * h0.shape[1]))\n    y = gl.convert_layout(y, OUTPUT)\n    return y, (hist, h0, h1, h2, x)\n\n\n@gluon.jit\ndef _commit_history(history, owned):\n    hist, h0, h1, h2, x = history\n    n0 = (h0 >> 16) | (h1 << 16)\n    n1 = (x & 0xFFFF) | (h2 << 16)\n    n2 = (h2 >> 16) | (x & 0xFFFF0000)\n    dirty = owned & ((n0 != h0) | (n1 != h1) | (n2 != h2))\n    gl.store(hist, n0, dirty)\n    gl.store(hist + 1, n1, dirty)\n    gl.store(hist + 2, n2, dirty)\n\n\n@gluon.jit\ndef _packed_conv(QKVZ, CS, IDX, W, C, scale, TOKENS: gl.constexpr,\n                 PREGATE: gl.constexpr):\n    CHANNELS: gl.constexpr = 3072\n    WIDTH: gl.constexpr = 5120\n    K: gl.constexpr = 128\n    KH: gl.constexpr = 4\n    TC: gl.constexpr = 4\n    token = gl.program_id(0)\n    group = gl.program_id(1)\n    L: gl.constexpr = gl.BlockedLayout([1, 1], [1, 64], [TC, 1], [1, 0])\n    JO: gl.constexpr = gl.BlockedLayout([1, 1, 2], [1, 64, 1], [TC, 1, 1], [1, 0, 2])\n    O: gl.constexpr = gl.BlockedLayout([1, 2], [1, 64], [TC, 1], [1, 0])\n    tile = group * TC + gl.arange(0, TC, gl.SliceLayout(1, L))\n    pair = gl.arange(0, K // 2, gl.SliceLayout(0, L))\n    pidx = tile[:, None] * (K // 2) + pair[None, :]\n    slot = gl.load(IDX + token).to(gl.int64)\n    if slot >= 0:\n        hist = CS.to(gl.pointer_type(gl.uint32)) + (slot * 1536 + pidx) * 3\n        y, history = _convolve_packed(\n            QKVZ, W, token, pidx, hist, True, JO, O,\n        )\n        ot = group * TC + gl.arange(0, TC, gl.SliceLayout(1, O))\n        if group * TC < 2 * KH:\n            y = y / gl.sqrt(gl.sum(y * y, 1)[:, None] + 1.0e-6)\n            y = gl.where(ot[:, None] < KH, y * scale, y)\n        ki = gl.arange(0, K, gl.SliceLayout(0, O))\n        cp = C + token * 1024\n        if group * TC < 2 * KH:\n            offset = (ot[:, None] % KH) * (TOKENS * 1024)\n            offset += gl.where(ot[:, None] < KH, 0, K)\n            gl.store(cp + offset + ki[None, :], y)\n        else:\n            hv = ot[:, None] - 2 * KH\n            vp = cp.to(gl.pointer_type(gl.bfloat16))\n            offset = (hv // 4) * (2 * TOKENS * 1024) + 4 * K + (hv % 4) * K\n            gl.store(vp + offset + ki[None, :], y)\n            if PREGATE:\n                z = gl.load(QKVZ + token * WIDTH + CHANNELS + hv * K + ki[None, :]).to(gl.float32)\n                gate = z * (1.0 / (1.0 + gl.exp(-z)))\n                gl.store(cp + (hv // 4) * (TOKENS * 1024) + 512 + (hv % 4) * K + ki[None, :], gate)\n        _commit_history(history, True)\n\n\n@gluon.jit\ndef _decay_beta(BA, AL, DT, token, head, BETA_FIRST: gl.constexpr = True):\n    a = gl.load(BA + token * 32 + 16 + head).to(gl.float32)\n    b = gl.load(BA + token * 32 + head).to(gl.float32)\n    al = gl.load(AL + head)\n    dt = gl.load(DT + head).to(gl.float32)\n    x = a + dt\n    sp = gl.where(x <= 20.0, gl.log(1.0 + gl.exp(x)), x)\n    decay_log = -gl.exp(al) * sp\n    if not BETA_FIRST:\n        decay = gl.exp(decay_log)\n    beta = (1.0 / (1.0 + gl.exp(-b))).to(BA.dtype.element_ty).to(gl.float32)\n    if BETA_FIRST:\n        decay = gl.exp(decay_log)\n    return decay, beta\n\n\n@gluon.jit\ndef _load_state(DS, offsets, P: gl.constexpr):\n    if P.global_loads:\n        return gl.load(DS + offsets, cache_modifier=P.load_cache)\n    return gl.amd.cdna3.buffer_load(DS, offsets, cache=P.load_cache)\n\n\n@gluon.jit\ndef _load_gate(QKVZ, W, token, head, E: gl.constexpr):\n    eo = gl.arange(0, 128, E)\n    z = gl.load(QKVZ + token * 5120 + 3072 + head * 128 + eo).to(gl.float32)\n    gate = z * (1.0 / (1.0 + gl.exp(-z)))\n    w = gl.load(W + eo).to(gl.float32)\n    return gate, w\n\n\n@gluon.jit\ndef _gated_rms(core, gate, weight, eps: gl.constexpr):\n    axis: gl.constexpr = len(core.shape) - 1\n    r = gl.rsqrt(gl.sum(core * core, axis) / 128 + eps)\n    if axis > 0:\n        r = gl.expand_dims(r, axis)\n    y = core * r\n    y *= weight\n    y *= gate\n    return y\n\n\n@gluon.jit\ndef _store_changed_state(DS, offsets, old_bits, state, CACHE: gl.constexpr,\n                         WORDS: gl.constexpr, ASM_DIRTY: gl.constexpr = False):\n    gl.static_assert(WORDS >= 2 and 128 % WORDS == 0)\n    rows: gl.constexpr = state.numel // 128\n    state = state.reshape((rows, 128))\n    offsets = offsets.reshape((rows, 128))\n    old_bits = old_bits.reshape((rows, 128))\n    new_bits = state.to(gl.uint32, bitcast=True)\n    ol, oh = gl.split(old_bits.reshape((rows, 64, 2)))\n    nl, nh = gl.split(new_bits.reshape((rows, 64, 2)))\n    old_pairs = ol.to(gl.uint64) | (oh.to(gl.uint64) << 32)\n    new_pairs = nl.to(gl.uint64) | (nh.to(gl.uint64) << 32)\n    if ASM_DIRTY:\n        gl.static_assert(WORDS == 4)\n        op0, op1 = gl.split(old_pairs.reshape((rows, 32, 2)))\n        np0, np1 = gl.split(new_pairs.reshape((rows, 32, 2)))\n        dirty = gl.inline_asm_elementwise(\n            \"v_cmp_ne_u64_e64 vcc, $1, $3\\n\"\n            \"v_cndmask_b32 $0, 0, 1, vcc\\n\"\n            \"v_cmp_ne_u64_e64 vcc, $2, $4\\n\"\n            \"v_cndmask_b32 $0, $0, 1, vcc\",\n            \"=&v,v,v,v,v,~{vcc}\", [op0, op1, np0, np1],\n            dtype=gl.int32, is_pure=True, pack=1,\n        ) != 0\n    else:\n        dirty = gl.max((old_pairs != new_pairs).reshape((rows, 128 // WORDS, WORDS // 2)).to(gl.int32), 2) != 0\n    groups = old_bits.reshape((rows, 128 // WORDS, WORDS))\n    dirty = gl.convert_layout(dirty, gl.SliceLayout(2, groups.type.layout))\n    mask, _ = gl.broadcast(dirty[:, :, None], groups)\n    gl.amd.cdna3.buffer_store(state, DS, offsets, mask.reshape((rows, 128)), cache=CACHE)\n\n\n@gluon.jit\ndef _advance_state(DS, offsets, state, q, k, v, decay, beta,\n                   READOUT_FIRST: gl.constexpr, STORE_CACHE: gl.constexpr,\n                   DIRTY_WORDS: gl.constexpr, ASM_DIRTY: gl.constexpr = False):\n    axis: gl.constexpr = len(state.shape) - 1\n    old_bits = state.to(gl.uint32, bitcast=True)\n    state *= decay\n    v -= gl.sum(state * k, axis)\n    v *= beta\n    state += gl.expand_dims(v, axis) * k\n    if READOUT_FIRST:\n        core = gl.sum(state * q, axis).to(gl.bfloat16)\n    _store_changed_state(DS, offsets, old_bits, state, STORE_CACHE, DIRTY_WORDS, ASM_DIRTY)\n    if not READOUT_FIRST:\n        core = gl.sum(state * q, axis).to(gl.bfloat16)\n    return core\n\n\n@gluon.jit\ndef _recurrent(C, BA, AL, DT, DS, IDX, OUT, QKVZ, W, eps: gl.constexpr,\n               TOKENS: gl.constexpr, P: gl.constexpr):\n    ROWS: gl.constexpr = P.rows\n    th = gl.program_id(0).to(gl.uint32)\n    if ROWS == 128:\n        token = (th // 128) * 8 + th % 8\n        head = (th // 8) % 16\n    else:\n        token = th\n        head = gl.program_id(1).to(gl.uint32)\n    th = token * 16 + head\n    kh = head // 4\n    COLS: gl.constexpr = P.columns\n    L: gl.constexpr = gl.BlockedLayout([P.row_pack, 4], [64 // COLS, COLS], [4, 1], [1, 0])\n    gl.static_assert(ROWS == 64 or ROWS == 128)\n    gl.static_assert(P.row_pack * (64 // COLS) * 4 <= ROWS)\n    E: gl.constexpr = gl.BlockedLayout([2], [64], [4], [0])\n    ko = gl.arange(0, 128, gl.SliceLayout(0, L))\n    vo = gl.arange(0, ROWS, gl.SliceLayout(1, L))\n    slot = gl.load(IDX + token)\n    if slot < 0:\n        zero = gl.full((ROWS,), 0, gl.float32, gl.SliceLayout(1, L))\n        gl.store(OUT + th * 128 + vo, zero)\n        if ROWS == 64:\n            gl.store(OUT + th * 128 + 64 + vo, zero)\n    else:\n        so = vo[:, None] * 128 + ko[None, :]\n        if P.global_loads:\n            state_base = DS + slot * 262144 + head * 16384\n        else:\n            state_base = DS\n            so += slot * 262144 + head * 16384\n        state = _load_state(state_base, so, P)\n        qp = C + token * 1024 + kh * (TOKENS * 1024)\n        q = gl.load(qp + ko)\n        k = gl.load(qp + 128 + ko)\n        vp = (qp + 256).to(gl.pointer_type(gl.bfloat16)) + (head % 4) * 128\n        v = gl.load(vp + vo).to(gl.float32)\n        decay, beta = _decay_beta(BA, AL, DT, token, head)\n        if ROWS == 128:\n            eo = gl.arange(0, 128, E)\n            gate = gl.load(qp + 512 + (head % 4) * 128 + eo)\n            w = gl.load(W + eo).to(gl.float32)\n        if ROWS == 64:\n            readout = gl.allocate_shared_memory(gl.bfloat16, [128], gl.SwizzledSharedLayout(1, 1, 1, [0]))\n        for chunk in gl.static_range(128 // ROWS):\n            if chunk > 0:\n                gate, w = _load_gate(QKVZ, W, token, head, E)\n                so += ROWS * 128\n                state = _load_state(state_base, so, P)\n                v = gl.load(vp + ROWS + vo).to(gl.float32)\n            core = _advance_state(\n                state_base, so, state, q[None, :], k[None, :], v, decay, beta,\n                P.readout_first, P.store_cache, P.dirty_words, P.asm_dirty,\n            )\n            if ROWS == 64:\n                readout.slice(chunk * ROWS, ROWS, 0).store(core)\n        if ROWS == 64:\n            core = readout.load(E)\n        core = gl.convert_layout(core.to(gl.float32), E)\n        eo = gl.arange(0, 128, E)\n        y = _gated_rms(core, gate, w, eps)\n        gl.store(OUT + th * 128 + eo, y)\n\n\n@gluon.jit\ndef _grouped_fused64(\n    QKVZ, BA, CS, DS, IDX, CW, AL, DT, W, OUT, scale: gl.constexpr, eps: gl.constexpr\n):\n    token = gl.program_id(0)\n    kh = gl.program_id(1)\n    ROWS: gl.constexpr = 32\n    CHUNKS: gl.constexpr = 128 // ROWS\n    NW: gl.constexpr = 8\n    COLS: gl.constexpr = 8\n    RP: gl.constexpr = 1\n    P: gl.constexpr = gl.BlockedLayout([1, 1], [1, 64], [NW, 1], [1, 0])\n    J: gl.constexpr = gl.BlockedLayout([1, 1, 2], [1, 64, 1], [NW, 1, 1], [1, 0, 2])\n    O: gl.constexpr = gl.BlockedLayout([1, 2], [1, 64], [NW, 1], [1, 0])\n    L: gl.constexpr = gl.BlockedLayout([1, RP, 4], [1, 64 // COLS, COLS], [4, NW // 4, 1], [2, 1, 0])\n    H: gl.constexpr = gl.SliceLayout(1, gl.SliceLayout(2, L))\n    K: gl.constexpr = gl.SliceLayout(0, gl.SliceLayout(1, L))\n    V: gl.constexpr = gl.SliceLayout(2, L)\n    E: gl.constexpr = gl.BlockedLayout([1, 2], [1, 64], [4, NW // 4], [1, 0])\n    heads = kh * 4 + gl.arange(0, 4, H)\n    eo = gl.arange(0, 128, gl.SliceLayout(0, E))\n    eh = kh * 4 + gl.arange(0, 4, gl.SliceLayout(1, E))\n    slot = gl.load(IDX + token)\n    if slot < 0:\n        gl.store(OUT + token * 2048 + eh[:, None] * 128 + eo[None, :], gl.full((4, 128), 0, gl.bfloat16, E))\n    else:\n        ko = gl.arange(0, 128, K)\n        vr = gl.arange(0, ROWS, gl.SliceLayout(0, V))\n        first_offsets = (slot * 262144 + heads[:, None, None] * 16384\n                         + vr[None, :, None] * 128 + ko[None, None, :])\n        state = gl.amd.cdna3.buffer_load(DS, first_offsets, cache=\".cg\")\n        ch = gl.arange(0, 8, gl.SliceLayout(1, P))\n        tile = gl.where(ch < 4, 8 + kh * 4 + ch, gl.where(ch % 2 == 0, kh, 4 + kh))\n        pair = gl.arange(0, 64, gl.SliceLayout(0, P))\n        pidx = tile[:, None] * 64 + pair[None, :]\n        hist = CS.to(gl.pointer_type(gl.uint32)) + (slot.to(gl.int64) * 1536 + pidx) * 3\n        owned = (ch[:, None] < 4) | (ch[:, None] >= 6)\n        y, history = _convolve_packed(\n            QKVZ, CW, token, pidx, hist, owned, J, O,\n        )\n        cy = gl.arange(0, 8, gl.SliceLayout(1, O))\n        normalized = y / gl.sqrt(gl.sum(y * y, 1)[:, None] + 1.0e-6)\n        normalized = gl.where(cy[:, None] == 6, normalized * scale, normalized)\n        y = gl.where(cy[:, None] >= 6, normalized, y)\n        sm = gl.allocate_shared_memory(gl.float32, [8, 128], gl.SwizzledSharedLayout(1, 1, 1, [1, 0]), y)\n        z = gl.load(QKVZ + token * 5120 + 3072 + eh[:, None] * 128 + eo[None, :]).to(gl.float32)\n        gate_value = z * (1.0 / (1.0 + gl.exp(-z)))\n        # Shared descriptors insert the required cross-wave visibility barriers.\n        gate_mem = gl.allocate_shared_memory(gl.float32,[4,128],gl.SwizzledSharedLayout(1,1,1,[1,0]),gate_value)\n        _commit_history(history, owned)\n        q = sm.slice(6, 1, 0).load(gl.SliceLayout(1, L)).reshape((128,))\n        q = gl.convert_layout(q, K)\n        k = sm.slice(7, 1, 0).load(gl.SliceLayout(1, L)).reshape((128,))\n        k = gl.convert_layout(k, K)\n        decay, beta = _decay_beta(BA, AL, DT, token, heads, BETA_FIRST=False)\n        cores = gl.allocate_shared_memory(gl.bfloat16, [4, 128], gl.SwizzledSharedLayout(1, 1, 1, [1, 0]))\n        for chunk in gl.static_range(CHUNKS):\n            rows = chunk * ROWS + vr\n            offsets = (slot * 262144 + heads[:, None, None] * 16384\n                       + rows[None, :, None] * 128 + ko[None, None, :])\n            current = state\n            if chunk + 1 < CHUNKS:\n                state = gl.amd.cdna3.buffer_load(DS, offsets + ROWS * 128, cache=\".cg\")\n            with gl.amd.warp_pipeline_stage(\"state_load\"):\n                pass\n            v = sm.slice(0, 4, 0).slice(chunk * ROWS, ROWS, 1).load(V)\n            core = _advance_state(\n                DS, offsets, current, q[None, None, :], k[None, None, :], v,\n                decay[:, None, None], beta[:, None], True, \".wb\", 16,\n            )\n            cores.slice(chunk * ROWS, ROWS, 1).store(core)\n            with gl.amd.warp_pipeline_stage(\"state_update\"):\n                pass\n        core = cores.load(E).to(gl.float32)\n        gate = gate_mem.load(E)\n        w = gl.load(W + eo).to(gl.float32)\n        y = _gated_rms(core, gate, w[None, :], eps)\n        gl.store(OUT + token * 2048 + eh[:, None] * 128 + eo[None, :], y)\n\n\ndef gdn_fused_decode(\n    projected_qkvz: torch.Tensor,\n    projected_ba: torch.Tensor,\n    conv_state: torch.Tensor,\n    delta_state: torch.Tensor,\n    cache_indices: torch.Tensor,\n    conv_weight: torch.Tensor,\n    a_log: torch.Tensor,\n    dt_bias: torch.Tensor,\n    norm_weight: torch.Tensor,\n    *,\n    scale: float,\n    eps: float,\n    out: torch.Tensor,\n) -> None:\n    tokens = projected_qkvz.shape[0]\n    if tokens == 64:\n        _grouped_fused64[(tokens, 4)](\n            projected_qkvz, projected_ba, conv_state, delta_state, cache_indices,\n            conv_weight, a_log, dt_bias, norm_weight, out, scale, eps,\n            num_warps=8, waves_per_eu=0,\n        )\n        return\n\n    policy = _SCHEDULES[tokens]\n    conv = torch.empty((4, tokens, 1024), device=projected_qkvz.device, dtype=torch.float32)\n    _packed_conv[(tokens, 6)](\n        projected_qkvz, conv_state, cache_indices, conv_weight, conv, scale,\n        TOKENS=tokens, PREGATE=policy.rows == 128, num_warps=4,\n    )\n    grid = (tokens * 16,) if policy.rows == 128 else (tokens, 16)\n    _recurrent[grid](\n        conv, projected_ba, a_log, dt_bias, delta_state, cache_indices, out,\n        projected_qkvz, norm_weight, eps, TOKENS=tokens, P=policy,\n        num_warps=4, waves_per_eu=policy.waves,\n    )\n\n\ndef run(\n    *,\n    projected_qkvz,\n    projected_ba,\n    conv_state,\n    delta_state,\n    cache_indices,\n    conv_weight,\n    a_log,\n    dt_bias,\n    norm_weight,\n    scale,\n    eps,\n    normalized,\n):\n    gdn_fused_decode(\n        projected_qkvz,\n        projected_ba,\n        conv_state,\n        delta_state,\n        cache_indices,\n        conv_weight,\n        a_log,\n        dt_bias,\n        norm_weight,\n        scale=scale,\n        eps=eps,\n        out=normalized,\n    )\n"
+      }
+    ]
+  }
+}

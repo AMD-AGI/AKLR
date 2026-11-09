@@ -120,6 +120,27 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # the DSA indexer's top-k over a short pool: two sequences, rows above and below topk
+    PointSpec(
+        contract_id="dsa_topk_transform@1.0",
+        axes={
+            "n_tokens": 4,
+            "n_candidates": 4096,
+            "n_seqs": 2,
+            "n_starts": 3,
+            "n_slots": 4096,
+            "topk": 2048,
+        },
+        dtypes={
+            "score": "float32",
+            "lengths": "int32",
+            "page_table_size_1": "int32",
+            "cu_seqlens_q": "int32",
+            "out_page_indices": "int32",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
     # MiniMax-M2's MoE shrunk: every routed expert on the rank, then half of them (expert
     # parallelism); the experts as sglang holds them for aiter
     *(
@@ -219,6 +240,32 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
             "w1_scale": "float32",
             "w2": "float8_e4m3fn",
             "w2_scale": "float32",
+            "out": "bfloat16",
+        },
+        attrs={"topk": 10},
+        layout_variant_name="shuffled_16x16",
+    ),
+    # Qwen3.5's MXFP4 MoE block shrunk: 16 routed experts of hidden and intermediate size
+    # 256, shuffled as sglang holds them, and a narrower BF16 shared expert apart from them
+    PointSpec(
+        contract_id="qwen2_moe_mxfp4_moe@1.0",
+        axes={
+            "n_tokens": 4,
+            "model_dim": 256,
+            "n_routed": 16,
+            "inter_dim": 256,
+            "shared_inter_dim": 128,
+        },
+        dtypes={
+            "hidden_states": "bfloat16",
+            "router_weight": "bfloat16",
+            "w1": "float4_e2m1",
+            "w1_scale": "float8_e8m0",
+            "w2": "float4_e2m1",
+            "w2_scale": "float8_e8m0",
+            "shared_w1": "bfloat16",
+            "shared_w2": "bfloat16",
+            "shared_gate_weight": "bfloat16",
             "out": "bfloat16",
         },
         attrs={"topk": 10},
@@ -423,11 +470,13 @@ GFX950_CONTRACT_IDS = frozenset(
         "dsa_indexer_prepare@1.0",
         "dsa_sparse_mla_decode@1.0",
         "dsa_sparse_mla_prefill@1.0",
+        "dsa_topk_transform@1.0",
         "gdn_prefill_group_fp8_quant@1.0",
         "minimax_m2_fp8_moe@1.0",
         "minimax_m2_mxfp4_moe@1.0",
         "qwen2_moe_fp8_experts@1.0",
         "qwen2_moe_fp8_router_experts@1.0",
+        "qwen2_moe_mxfp4_moe@1.0",
         "qwen2_moe_router@1.0",
         "gdn_decode_group_fp8_quant@1.0",
         "qwen3_next_gdn_prefill_group_fp8_quant@1.0",

@@ -1,0 +1,267 @@
+{
+  "schema_version": 5,
+  "name": "fp8_paged_mqa_logits_page_size64_n_heads32",
+  "contract_id": "fp8_paged_mqa_logits@1.0",
+  "description": "DeepSeek-V4 indexer logits: for each request and each cached token t, sum over heads h of weights[h] * relu(q[h] . k_t) * scale_t, over a paged pool of fp8 keys with an fp32 scale per token.",
+  "op_type": "mla",
+  "axes": {
+    "batch": {
+      "type": "var",
+      "description": "Requests, one decode query each."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 32,
+      "description": "Indexer heads."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Pages of the key pool."
+    },
+    "max_blocks": {
+      "type": "var",
+      "description": "Pages per request in the block table."
+    },
+    "max_seq_len": {
+      "type": "var",
+      "description": "Logits per request: every token of its block table row."
+    }
+  },
+  "attrs": {
+    "page_size": 64,
+    "preshuffled": true
+  },
+  "inputs": {
+    "q": {
+      "shape": [
+        "batch",
+        1,
+        "n_heads",
+        128
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The decode query of each request."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_pages",
+        64,
+        1,
+        132
+      ],
+      "dtype": "uint8",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": 63,
+        "distinct": false
+      },
+      "description": "The key pool, a page a row: page_size x 128 fp8 keys in 16 x 16 tiles, then page_size fp32 scales."
+    },
+    "weights": {
+      "shape": [
+        "batch",
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Per-head weight of each request."
+    },
+    "context_lens": {
+      "shape": [
+        "batch"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": "max_seq_len",
+        "hi": "max_seq_len",
+        "distinct": false
+      },
+      "description": "Cached tokens of each request."
+    },
+    "block_tables": {
+      "shape": [
+        "batch",
+        "max_blocks"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_pages - 1",
+        "distinct": false
+      },
+      "description": "The pages of each request, in context order."
+    }
+  },
+  "outputs": {
+    "logits": {
+      "shape": [
+        "batch",
+        "max_seq_len"
+      ],
+      "dtype": "float32",
+      "description": "The logits of each request's cached tokens."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 3,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 5,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 6,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 7,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 12,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 18,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 24,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 30,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 36,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 42,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    },
+    {
+      "axes": {
+        "batch": 48,
+        "n_pages": 50264,
+        "max_blocks": 4845,
+        "max_seq_len": 310080
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "hip",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.hip::run",
+    "sources": []
+  }
+}

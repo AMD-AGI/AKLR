@@ -1,13 +1,19 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What sglang 0.5.22 runs on HIP by default for the DSA's sparse MLA decode and prefill."""
+"""What sglang 0.5.22 runs on HIP by default: for DeepseekSparseAttnBackend._forward_triton_decode,
+its triton split-K sparse MLA decode; for forward_extend's sparse MLA prefill, triton_sparse_mla_fwd;
+for the DSA indexer's decode top-k, sgl_kernel's."""
 
 from __future__ import annotations
 
 from aklr.plugins.sglang.layers.dsa_backend.contract import ROPE_DIM
 
-__all__ = ["dsa_sparse_mla_decode_baseline", "dsa_sparse_mla_prefill_baseline"]
+__all__ = [
+    "dsa_sparse_mla_decode_baseline",
+    "dsa_sparse_mla_prefill_baseline",
+    "dsa_topk_transform_baseline",
+]
 
 
 def dsa_sparse_mla_decode_baseline(q, kv_cache, topk_indices, sm_scale, output=None):
@@ -46,3 +52,14 @@ def dsa_sparse_mla_prefill_baseline(q, kv_cache, topk_indices, sm_scale, output=
     )
     # [1, tokens, heads, latent], as the backend returns it
     return attended.squeeze(0)
+
+
+def dsa_topk_transform_baseline(score, lengths, page_table_size_1, cu_seqlens_q, out_page_indices):
+    """sgl_kernel's fast_topk_transform_fused, into the caller's out_page_indices."""
+    import sgl_kernel  # noqa: F401, registers torch.ops.sgl_kernel
+    import torch
+
+    torch.ops.sgl_kernel.fast_topk_transform_fused(
+        score, lengths, out_page_indices, page_table_size_1, cu_seqlens_q, None
+    )
+    return out_page_indices

@@ -346,9 +346,9 @@ def test_driver_is_importable_without_a_gpu(run):
 
 
 def test_a_reading_the_profiler_dropped_is_taken_again_once(run):
-    """A Kineto trace that lost events says nothing about the kernel; a second loss, or any other error, still fails."""
+    """A trace that lost replays says nothing about the kernel; a second loss, or any other error, still fails."""
     driver = _import_driver(run)
-    dropped = RuntimeError("Incomplete Kineto trace: expected 56 L2 flushes per replay, got 54")
+    dropped = RuntimeError("rocprofiler-sdk recorded 9 of 10 graph replays")
 
     def bench_failing(*failures):
         queue = list(failures)
@@ -361,10 +361,10 @@ def test_a_reading_the_profiler_dropped_is_taken_again_once(run):
         return bench
 
     def is_fault(text):
-        return text.startswith("Incomplete Kineto trace")
+        return "graph replays" in text
 
     assert driver.graph_reading(bench_failing(dropped), None, 20.0, is_fault) == 0.01
-    with pytest.raises(RuntimeError, match="got 54"):
+    with pytest.raises(RuntimeError, match="9 of 10"):
         driver.graph_reading(bench_failing(dropped, dropped), None, 20.0, is_fault)
     with pytest.raises(RuntimeError, match="HIP error"):
         driver.graph_reading(
