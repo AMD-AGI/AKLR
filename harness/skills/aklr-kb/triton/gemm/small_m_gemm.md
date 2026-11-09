@@ -1,14 +1,14 @@
 ---
-title: "Decode GEMM in plain Triton: bf16, M ≤ 64, the weight read once (gfx950)"
+title: "Small-M GEMM in plain Triton: bf16, M ≤ 64, the weight read once (gfx950)"
 kind: topic
 ops: [gemm]
 dtypes: [bf16]
-regimes: [decode]
+regimes: ["M 1-64", weight-stream, split-k]
 gens: [gfx950]
 triton: 3.8.0
 ---
 
-# Decode GEMM in Triton (bf16, M ≤ 64, gfx950)
+# Small-M GEMM in Triton (bf16, M ≤ 64, gfx950)
 
 How AKLR's two plain-Triton `gemm@1.0` kernels (`trans_b`, no bias: n = 6144, k = 2048, a 25 MB weight, `f806`; n = 2624,
 k = 6144, 32 MB, `b88c`; S13) read their weight once per call, and what was measured to move them, on MI355X with Triton

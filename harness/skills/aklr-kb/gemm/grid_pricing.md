@@ -2,7 +2,7 @@
 title: "GEMM — price the grid, the tile and each structural idea before building it"
 kind: topic
 lever: gemm_grid_pricing
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp4, mxfp6]
 regimes: [small-M, "M 256-4096 (bf16)", ragged-last-round, large-K, padded-K]
@@ -298,7 +298,7 @@ time at K=2944 (11.5 blocks), 1.7% at K=32768, and the table's TF/s order was es
 share. By the fit, removing one K-block of `F` is worth ~4–5% over that table — a projection, not a measurement,
 but already larger than the 1–2% that swizzle and candidate-table changes returned *(field, E22)*.
 
-Kernel-argument preload (`small_m.md` §6) trims `F` at any M: *(field, E23)* −0.2 to −0.6% at M ≈ 900–16k, not only at decode M.
+Kernel-argument preload (`small_m.md` §6) trims `F` at any M: *(field, E23)* −0.2 to −0.6% at M ≈ 900–16k, not only at small M.
 *(field, E40)* At M 256–4096 the ablation rows that carried it paid +0.7% to +2.8% on each of eight bf16 GEMMs
 (several bundled other changes: an XCD remap at N=256, a constant tile map at N=3584, a new m=2048 tile route at
 N=2048; at N=7168, K=512 +1.0% at m=4096 to +4.8% at m=256), but at N=28672, K=512, m=2048 it
@@ -404,7 +404,7 @@ In FlyDSL: `../flydsl/gemm.md` § grid_pricing §10.
 ## Related
 `workflow.md` (order of operations) · `schedule_and_locality.md` (wave
 placement, XCD order, scheduling) · `autotune.md` (racing the candidates) ·
-`small_m.md` (split-K and tiles at decode sizes)
+`small_m.md` (split-K and tiles at M ≤ 256)
 
 ## Evidence
 

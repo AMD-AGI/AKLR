@@ -2,10 +2,10 @@
 title: "Grouped GEMM — correctness gates: skewed and empty groups, large G, proven bodies, runtime splits"
 kind: method
 lever: grouped_correctness
-ops: [grouped_gemm]
+ops: [grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp8, mxfp4]
-regimes: [forward, dgrad, wgrad, variable-k, skew, split-k]
+regimes: ["M split per group", variable-k, skew, split-k]
 flydsl: 0.3.2
 sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_bf16_kernel.py:651-657
@@ -28,6 +28,7 @@ sources:
   runtime split policy in a grouped kernel.
 - A gate passes on balanced inputs and you have not run it on skewed ones, with empty groups, or at large G.
 - You changed a dense kernel or a helper that grouped kernels import.
+- You are building inputs that gate a MoE expert GEMM: skewed routing, experts with no route, many experts.
 
 ## 1. Determinism is not correctness
 

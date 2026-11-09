@@ -1,10 +1,10 @@
 ---
-title: "MXFP4 fused MoE at decode sizes: count the graph nodes, fold the routing sort into stage 1"
+title: "MXFP4 fused MoE at 8–64 tokens per call: count the graph nodes, fold the routing sort into stage 1"
 kind: technique
 lever: moe_few_tokens
-ops: [moe]
+ops: [moe, fused_moe]
 dtypes: [mxfp4]
-regimes: [decode, "tokens 8-64"]
+regimes: ["tokens 8-64", small-m, launch-bound]
 gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1
@@ -12,7 +12,7 @@ sources:
   - aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/4fbd9d02b4c053c7.json
 ---
 
-# MXFP4 fused MoE at decode sizes: one graph node less
+# MXFP4 fused MoE at 8–64 tokens: one graph node less
 
 The kernel this page reads from is the schema file `4fbd9d02b4c053c7.json` of
 `fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256`: `fused_moe@1.0` with MXFP4 weights and
@@ -24,7 +24,8 @@ aiter's MoE kernels, their names and knobs: `../flydsl/kernels/flydsl_kernel_lib
 
 ## What it does
 
-A decode-sized MoE call lasts a few tens of µs, and every launch in it costs a fixed amount under graph replay. The
+A MoE call of 8–64 tokens (as a decode step makes) lasts a few tens of µs, and every launch in it costs a fixed
+amount under graph replay. The
 kernel drops the routing-sort launch: every stage-1 workgroup rebuilds, in LDS, the part of the sort it needs, and
 the zeroing of the output moves into the same launch. Two graph nodes instead of three.
 
@@ -92,11 +93,11 @@ The head is in `gemm1_kernel_fold` (`g1_fold.py:1870`), before and just after th
   144, 288, 518 and 554 workgroups at 8, 16, 32 and 64 tokens.
 - Stage 1 asserts tile-M 16 with inline quantization for the fold (:1829).
 
-In FlyDSL: `../flydsl/moe.md` § decode How to write it.
+In FlyDSL: `../flydsl/moe.md` § few_tokens How to write it.
 
 ## When it applies
 
-- Decode token counts where a call lasts tens of µs and the sort is a node of its own: 8–64 tokens here, 34.4–95.7
+- Token counts where a call lasts tens of µs and the sort is a node of its own: 8–64 tokens here, 34.4–95.7
   µs folded *(field, E1)*.
 - The sort fits one 256-thread workgroup: 9M items (72–576 here); one thread per expert in the scan, with expert
   256 counted apart (:2011–2014), so up to 256 + 1 experts as written.

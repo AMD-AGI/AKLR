@@ -355,6 +355,33 @@ def check_links(page: Page, level: str) -> Iterable[Issue]:
                 )
 
 
+# A page says when it applies by mechanism and shape, never by training or inference phase: the same kernels run in
+# both. Titles, file names and `regimes` must not carry a phase word.
+PHASE_WORDS = ("training", "inference", "forward", "backward", "fwd", "bwd", "dgrad", "wgrad", "prefill", "decode")
+PHASE_RE = re.compile(r"(?<![a-z0-9])(" + "|".join(PHASE_WORDS) + r")(?![a-z0-9])", re.IGNORECASE)
+
+
+def check_phase(page: Page) -> Iterable[Issue]:
+    stem = Path(page.rel).stem.replace("_", " ")
+    hit = PHASE_RE.search(stem)
+    if hit:
+        yield Issue("error", page.rel, 1, f"file name scopes the page by phase (`{hit.group(1)}`); name the mechanism")
+    front = page.front or {}
+    hit = PHASE_RE.search(str(front.get("title") or ""))
+    if hit:
+        yield Issue("error", page.rel, 1, f"title scopes the page by phase (`{hit.group(1)}`); state the mechanism or shape")
+    regimes = front.get("regimes") or []
+    for regime in regimes if isinstance(regimes, list) else [regimes]:
+        hit = PHASE_RE.search(str(regime))
+        if hit:
+            yield Issue(
+                "error",
+                page.rel,
+                1,
+                f"`regimes` entry `{regime}` is a phase; give the shape or mechanism it stands for",
+            )
+
+
 def check_front(page: Page) -> Iterable[Issue]:
     kind, front = page.kind, page.front or {}
     triton_page = page.rel.startswith("triton/")
@@ -571,7 +598,7 @@ def duplicate_levers(paths: Iterable[Path]) -> list[Issue]:
 
 def lint_page(page: Page) -> list[Issue]:
     kind = page.kind
-    issues: list[Issue] = list(check_arch(page))
+    issues: list[Issue] = list(check_arch(page)) + list(check_phase(page))
     if page.front_error:
         level = "error" if kind in NEW_KINDS else "warn"
         issues.append(

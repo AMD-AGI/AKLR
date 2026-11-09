@@ -1,9 +1,9 @@
 ---
 title: "MoE layer plugins in Gluon on gfx950: decomposition by token count, routing, sorting, expert GEMMs, combine"
 kind: topic
-ops: [moe]
+ops: [moe, fused_moe, grouped_gemm]
 dtypes: [mxfp4, fp8, bf16]
-regimes: [decode, prefill]
+regimes: ["tokens 1-16", "tokens 32-256", "tokens 1024-16384", sorted-tokens]
 gens: [gfx950]
 triton: 3.8.0
 ---
@@ -13,14 +13,14 @@ triton: 3.8.0
 How AKLR's Gluon kernels compute a rank's router-and-expert portion of a SGLang MoE layer call in a few launches, and which design to copy at which
 token count: the Triton side of [../moe/INDEX.md](../moe/INDEX.md), whose measured MoE-kernel numbers are from FlyDSL unless it explicitly names another language or a vendor-library comparison; the numbers here
 are these Gluon kernels' on MI355X; the times on AKLR's timer were measured under Kineto, before #33. The page covers the 65 MoE files AKLR held at 43e112e and quotes the CI speedups stored then *(field, E1)*. Added since, none storing a speedup at 0e02a81: Qwen3-Next's FP8 router+experts scenario at model dim 2048, inter 128 (11 files, #55), seven more files in the scenario at model dim 4096 (11, #74) and a fourth contract, `qwen2_moe_mxfp4_moe` (10 files, #77, on `Qwen2MoeSparseMoeBlock.forward`, S2). Per file:
-[kernels/kernel_library.md](kernels/kernel_library.md) §7–§10. m is a Point's `n_tokens`, a route one (token, expert)
-pair; files go by their uuid's first four hex digits (Evidence).
+[kernels/kernel_library.md](kernels/kernel_library.md) §7–§10. m is a Point's `n_tokens`, a route one (token, expert) pair; files go by their uuid's first four hex digits (Evidence).
 
 ## Route here when
 
 - You write or tune a kernel for `deepseek_v2_mxfp4_moe@1.0`, `minimax_m2_fp8_moe@1.0`, `minimax_m2_mxfp4_moe@1.0`
   or one of the `qwen2_moe_*` contracts (three at 43e112e, four since #77).
 - You decide a MoE call's launches per token count and where top-k, sort, activation, combine and shared expert go.
+- You write expert GEMMs as a grouped GEMM: per-route or per-expert jobs at few tokens (§4), sorted, padded expert segments at many (§6, §7, §9), low-precision weights and scales (§7, §8).
 - You port a `../moe/` mechanism to Gluon, or need the Gluon form of atomic tickets, a device-side job list or a
   recomputed top-k (preshuffled MXFP4 weights and shuffled E8M0 scales: [gluon/mfma.md](gluon/mfma.md) §7,
   [gluon/memory.md](gluon/memory.md) §13).
@@ -89,7 +89,7 @@ The token count for a given r is N = r·E/k; this converts the coordinate, not a
 - **32–256 tokens: group routes per expert.** Take a relaxed atomic ticket per route in the selection launch and either open a job every 16 (or BM, the tile height) tickets there, or let each GEMM program derive its job from the counts (§6, §4.2; neither form timed); sum the routes in a separate fixed-order launch *(field, E4)*. Uniform top-8-of-256 routing touches about 40 % of the experts at 16 tokens, 64 % at 32, 87 % at 64, 98 % from 128 (estimated for uniform routing: 1 − (31/32)^m). With the schema's router distribution, d861's 64-token call touched 77.2% of the experts on average (74.6% at the least), not 86.9%, and read those 495 MB at 4.87–5.00 TB/s, the baseline at 3.88–3.90 *(field, E19)*.
 - **≥ 1024 tokens: a sorted grouped GEMM.** Counting sort into tile-padded segments (DeepSeek: variable-height tails, tallest first), a down GEMM that reuses one operand across tiles, a fixed-order combine (§6, §7, §9, §10); none timed against another design.
 - **What a launch costs.** AKLR's timer read each kernel at about 4 µs or more under Kineto, before #33, a bare graph replay about 1.8 µs per extra kernel *(field, E11)* ([../pitfalls/aklr_dispatch_floor.md](../pitfalls/aklr_dispatch_floor.md), [authoring.md](authoring.md) §7). The FlyDSL trade: `../moe/few_tokens.md` §1–2.
-- **Price the Point before you design.** At 2 tokens d3bb touches about 17 experts, 42 MB of weights and scales, a 6–7 µs read (estimated from the layouts and the 1 GiB stream rates, 6.0 TB/s plain and 6.8 TB/s with the `nt` bit a load's `.cg` sets), yet the call took 19.06–19.61 µs in 4 kernel launches, 4.76–4.90 µs per launch on average (4 runs of 2 validates; whole-call time, before #33) *(field, E11)* against the separately measured 4.03–4.07 µs launch floor (3 runs) *(field, E10)*: the per-launch reading fits a launch or latency cost but does not isolate it; fusion is a candidate to measure on the whole call, not a guaranteed speedup. At 256 tokens 2422 reads all experts' weights, about 1.29 GB, in 225.5–236.8 µs, MiniMax 1d27 its 64 experts', about 481 MB, in 103.6–105.4 µs (4 runs) *(field, E11)*: about 80–95% and 67–77% of the cited 6.0–6.8 TB/s stream rate (estimated), little left over a stream the baseline pays too. At prefill price each stage: MiniMax MXFP4 51ae takes 505.7–518.6 µs at 8192 tokens (4 runs) *(field, E11)*. An earlier batch of runs read 225.8, 102.9 and 515.6 µs for 2422, 1d27 and 51ae *(field, E11)*. At the rates of [tuning.md](tuning.md) §13 `51ae`'s expert GEMMs (0.62 TFLOP) need about 66 µs, its fp32 router (12.9 GFLOP) 82 µs on fp32 MFMAs or 16 µs as three bf16 MFMAs (§5.1), its 642 MB of weights and scales 94–107 µs, and the 403 MB of bf16 route rows its down writes and its combine reads 118–134 µs (all estimated): the fp32 router and that round trip each exceed the expert GEMMs' MFMA floor.
+- **Price the Point before you design.** At 2 tokens d3bb touches about 17 experts, 42 MB of weights and scales, a 6–7 µs read (estimated from the layouts and the 1 GiB stream rates, 6.0 TB/s plain and 6.8 TB/s with the `nt` bit a load's `.cg` sets), yet the call took 19.06–19.61 µs in 4 kernel launches, 4.76–4.90 µs per launch on average (4 runs of 2 validates; whole-call time, before #33) *(field, E11)* against the separately measured 4.03–4.07 µs launch floor (3 runs) *(field, E10)*: the per-launch reading fits a launch or latency cost but does not isolate it; fusion is a candidate to measure on the whole call, not a guaranteed speedup. At 256 tokens 2422 reads all experts' weights, about 1.29 GB, in 225.5–236.8 µs, MiniMax 1d27 its 64 experts', about 481 MB, in 103.6–105.4 µs (4 runs) *(field, E11)*: about 80–95% and 67–77% of the cited 6.0–6.8 TB/s stream rate (estimated), little left over a stream the baseline pays too. At thousands of tokens price each stage: MiniMax MXFP4 51ae takes 505.7–518.6 µs at 8192 tokens (4 runs) *(field, E11)*. An earlier batch of runs read 225.8, 102.9 and 515.6 µs for 2422, 1d27 and 51ae *(field, E11)*. At the rates of [tuning.md](tuning.md) §13 `51ae`'s expert GEMMs (0.62 TFLOP) need about 66 µs, its fp32 router (12.9 GFLOP) 82 µs on fp32 MFMAs or 16 µs as three bf16 MFMAs (§5.1), its 642 MB of weights and scales 94–107 µs, and the 403 MB of bf16 route rows its down writes and its combine reads 118–134 µs (all estimated): the fp32 router and that round trip each exceed the expert GEMMs' MFMA floor.
 
 ## 3. Put independent work in one grid
 
@@ -124,7 +124,7 @@ A toy router GEMV (64 programs, 2 rows, K2048) beside a 4-program elementwise ph
 
 Recomputing a small decision is a candidate, not an unconditional rule. In the toy MoE (32 experts, top-4) it saved 2.89–3.40 µs at m=2 and 3.22–3.87 µs at m=16 on AKLR's timer before #33, and 1.24–1.80 µs replayed at m=2 (4 runs). In the synthetic fp8 VALU shapes (256 experts, top-8; H6144 with inter 256, H3072 with inter 512; m = 1, 2, 8, 16; one run, 16 rotated rounds per Point), recomputation in every gate-up, down and combine consumer was slower on both rulers. Recomputing only in the gate-up, which publishes ids and weights in that launch, helped at H6144 m = 1 and 8 (replay savings 2.87 and 2.45 µs, AKLR's timer 2.06 and 2.44 µs; the A/A CIs of both include zero); the apparent replay savings at m = 2 matched the bias of A/A controls in both shapes, H3072/m1 also had replay bias, m = 16 was slower in both shapes, and at H3072/m8 the two rulers disagreed in sign. These are paired CIs within one run, not 16 independent experiments; deriving GEMM jobs from counts (§4.2) was not timed *(field, E10, E13)*.
 
-### 4.1 Top-k in every gate-up program (decode)
+### 4.1 Top-k in every gate-up program (≤ 16 tokens)
 
 At 1 token 5751 runs 1153 programs in `_select_and_up`: program 0 publishes `Ids`/`Weights` for the down launch, the
 1024 routed-route programs (8 routes × 4 K splits × 32 column tiles) each recompute their route's expert, the 128
@@ -156,7 +156,7 @@ def _expert_at_rank_peeled(Logits, Bias, row, rank, SPLITS: gl.constexpr):
 - **Cost and order.** A program pays slot + 1 rounds. At 1 token 5751 maps job j to slot `7 - j`, so the costliest
   selections start first (`route = gl.where(job < 8, 7 - job, 8)`, S3); d3bb at 2 tokens and 96e5 at 4–16
   (`RANK_MAJOR`) run slot 0 first, equal-slot routes adjacent (S4, S37). No file says why; no Point compares them.
-- **Where.** The DeepSeek and MiniMax decode files, and the Qwen2 router+experts files at 1–4 tokens, whose W13
+- **Where.** The DeepSeek and MiniMax files at 1–16 tokens, and the Qwen2 router+experts files at 1–4 tokens, whose W13
   programs replay the top-k pops on the 512 router keys (S26). Variants at 8–16 tokens: the MiniMax MXFP4 64-expert
   rank runs one program per local expert that keeps the tokens for which fewer than 8 experts beat it (S21), the FP8
   one adds a selection launch and runs one gate-up program per local expert (S30); DeepSeek `inter_dim512` at 16 builds
@@ -224,7 +224,7 @@ The FlyDSL `4fbd` analog repeats the full M×9 route scan, expert histogram and 
 | | at 2 tokens a full-K dot per expert with `gl.dot_fma`, both tokens sharing the weight load (read from the source); `_router_pair_packet` compiles to 48 `v_dot2c_f32_bf16` and no MFMA *(field, E8)* | d3bb (S4) |
 | Qwen2: bf16 logits, top-10 by logit, the lower id on a tie | the same split-order sum and one bf16 rounding | c388 (S9) |
 | | router+experts: float64 products (f64 VALU and no f64 MFMA at 1–4 tokens, `v_mfma_f64_16x16x4_f64` at 32 *(field, E8)*), rounded once to bf16 with a midpoint fix against double rounding (on 512 crafted near-midpoint logits f64 → f32 → bf16 erred on 260, 7d7e's helper on none *(field, E4)*) | 7d7e (S26), 99f4 (S11) |
-| MiniMax: fp32 router weight, fp32 logits | fp32 multiply and `gl.sum` at decode (read from the source; FP8's e75e `_prepare_keys`, 1–16 tokens, compiles to no MFMA); the fp32 weight split into three bf16 terms on bf16 MFMAs (the bf16 hidden makes each product exact; the split read from the sources): the routers of MXFP4's 64-expert prefill files (cb88, b94f, 62df, f839, 8b22: 1.318–1.735 at 43e112e) and FP8's f770, 82e9 run bf16 MFMAs and no fp32 MFMA; or fp32 MFMA: 5cac's `_prepare` (32–64 tokens) `v_mfma_f32_16x16x4_f32`, 8411's `_router_projection_7` `v_mfma_f32_32x32x2_f32`, the MXFP4 256-expert prefill files' routers 16×16×4 (bb66, 147b) or 32×32×2 (e6fc, 51ae, 8411: 1.261–1.423 for the five) *(field, E1, E8)*; much else differs between these files: no ablation. On 13 of these router branches, each with a random and a cancellation input, the logits' error against fp64 was no larger than an fp32 computation's in L2 on 25 of the 26 inputs (e6fc's cancellation input 1.00009×) and in max abs on 23 of 26; on two more inputs with a nonzero residual, 62df's and f839's fp64 correction ran and both errors were 0 *(field, E20)*. | e75e (S27), 8a5a (S10); 5cac, 8411 |
+| MiniMax: fp32 router weight, fp32 logits | fp32 multiply and `gl.sum` at 1–16 tokens (read from the source; FP8's e75e `_prepare_keys`, 1–16 tokens, compiles to no MFMA); the fp32 weight split into three bf16 terms on bf16 MFMAs (the bf16 hidden makes each product exact; the split read from the sources): the routers of MXFP4's 64-expert files at 2048–16384 tokens (cb88, b94f, 62df, f839, 8b22: 1.318–1.735 at 43e112e) and FP8's f770, 82e9 run bf16 MFMAs and no fp32 MFMA; or fp32 MFMA: 5cac's `_prepare` (32–64 tokens) `v_mfma_f32_16x16x4_f32`, 8411's `_router_projection_7` `v_mfma_f32_32x32x2_f32`, the MXFP4 256-expert files' routers at 1024–16384 tokens 16×16×4 (bb66, 147b) or 32×32×2 (e6fc, 51ae, 8411: 1.261–1.423 for the five) *(field, E1, E8)*; much else differs between these files: no ablation. On 13 of these router branches, each with a random and a cancellation input, the logits' error against fp64 was no larger than an fp32 computation's in L2 on 25 of the 26 inputs (e6fc's cancellation input 1.00009×) and in max abs on 23 of 26; on two more inputs with a nonzero residual, 62df's and f839's fp64 correction ran and both errors were 0 *(field, E20)*. | e75e (S27), 8a5a (S10); 5cac, 8411 |
 
 Check the reference's rounding points first ([numerics.md](numerics.md) §5), then compare each output against its
 contract. On `qwen2_moe_router@1.0`, c388 at m = 256 (one input set): swapping only token 0's first two ids, every other
@@ -241,7 +241,7 @@ reference without that rounding rose from 0.003233 to 0.003269, a paired differe
 
 At 5751 (1 token), on four saved inputs with near or exact ties, replacing only slot 7's expert in both gate-up and down moved `out` 6.21, 112.2, 6.13 and 9.47 times as far (L2) as removing only the bf16 rounding of the activation product; against the reference, the two total errors differed by 1.22, 3.03, 1.23 and 1.28× *(field, E21)*: on these inputs a wrong expert cost more than a skipped rounding.
 
-**Three bf16 terms are a candidate, not a prefill preference rule.** Eight fixed register-MFMA probes
+**Three bf16 terms are a candidate, not a preference rule at many tokens.** Eight fixed register-MFMA probes
 (grid 1536, 3072 iterations) give estimated fp32/router-to-MXFP4-expert matrix-core time ratios of 1.244–1.263,
 and three-bf16 ratios of 0.244–0.246, for K=3072, 256 experts, top-8 and inter=512. These omit memory and weight
 splitting costs, are not router or expert GEMM latencies and do not establish performance at other token counts
@@ -263,7 +263,7 @@ AITER, complete-router and whole-MoE performance remain unmeasured *(field, E17)
 
 ### 5.2 Size the router grid for bytes in flight
 
-At decode and mid sizes the router streams a 3–4 MB weight (estimated), and a streaming probe approximately tracked bytes in
+At up to 256 tokens the router streams a 3–4 MB weight (estimated), and a streaming probe approximately tracked bytes in
 flight across its main 256–8192-program matrix; it also measured 64/96/128-program controls and 192-program
 held-out arms, where matching nominal bytes did not reproduce the larger-grid rate *(field, E10)* ([tuning.md](tuning.md) §4;
 inferred for a router). One design splits K over small MFMA tiles whose fp32 partials every consumer sums in split
@@ -271,7 +271,7 @@ order: 5751's 192 one-wave tiles at 1 token, 1024 one-wave programs in a1c4 and 
 CTAs at 128–256 (01ce, 4da3, 8a5a, 94af), the Qwen2 router's 256 CTAs from 8 to 256 tokens (4801 at 8: 1 × 8 splits × 32
 expert tiles of one wave; c388 at 256: 8 token tiles × 8 expert tiles × 4 splits of four waves, S9). The other gives
 each expert (each token block and expert in e75e, fbd9, 3df5 above 1 token) one full-K program that writes a finished
-probability or ordered key, sparing every top-k consumer of §4.1 the split sum (d3bb and the MiniMax decode files e75e,
+probability or ordered key, sparing every top-k consumer of §4.1 the split sum (d3bb and the MiniMax files at 1–16 tokens e75e,
 1c17, 6557, fbd9, b065, f82c, 3df5; e75e `_prepare_keys`, S27) *(field, E11)*. No Point compares the two router forms. Among half/committed/double splits, the committed
 256 four-wave CTAs were fastest or tied on three Qwen2 routers: c388/m256 half 1.33–1.34× call time, double
 1.02–1.04× (N=8 runs); cd47/m128 1.22×/1.03×; a878/m64 1.04×/0.99× (double tied; N=1 each).
@@ -281,7 +281,7 @@ took 1.26×, and 512 CTAs one ahead 1.03× (N=1, 4 alternated rounds). At 256 CT
 Not speed knobs here: the
 `amdgpu-sched-strategy` attribute, `amdgpu-ieee false` (accuracy unchanged) and, at 8 tokens (4801), the file's register
 path for the hidden tile in place of async staging through LDS (it also changes the weight-load form) *(field, E6)*. At
-prefill K is split fewer ways or not at all (DeepSeek full-K, Qwen2 2 splits at 2232 tokens and none at 4096).
+1024 tokens and up K is split fewer ways or not at all (DeepSeek full-K, Qwen2 2 splits at 2232 tokens and none at 4096).
 
 ### 5.3 Top-k with cross-lane operations
 
@@ -353,7 +353,7 @@ renormalizes weights and, in the ticket designs, takes each route's ticket (§6)
   (complete 16-program route tiles assigned in 256-program cohorts, S36); its down stage uses a separate
   4096-program grid; MiniMax FP8 94af at 256 runs
   `_w13_persistent` on a 48 × 96 grid (S29), the only kernel named persistent at the 96 Points *(field, E11)*.
-- **Sorts without global atomics.** The MiniMax MXFP4 64-expert rank at prefill gives lane j the 64-bit mask of the
+- **Sorts without global atomics.** The MiniMax MXFP4 64-expert rank at ≥ 1024 tokens gives lane j the 64-bit mask of the
   routes in its stripe whose expert is j with seven wave ballots, then popcounts (abc7, S8); the FP8 64-expert rank
   packs four 8-bit counters per word. Both fix the row order; Qwen2's LDS atomics at 64 and 128 tokens
   (`atomic_scatter_add` in LDS, one CTA) do not (8698, S36). No Point compares them with a ticket sort.
@@ -373,7 +373,7 @@ A gate-up program loads its expert's preshuffled weight words straight into the 
 (`assert_trivial=True` compiles for 7e9c: no data moves between lanes *(field, E9)*; S12, S24) and issues `mfma_scaled`.
 Its E8M0 scale words go through LDS (7e9c's gate-up; 8411's activation scales, preloaded per tile and gathered per K
 step, S6), are shifted out of their word per element and converted to the scale layout (d3bb, S4), or load in the scale
-layout directly (7e9c's down, S12). At prefill the activation tile the CTA's waves share goes through padded LDS (8411).
+layout directly (7e9c's down, S12). At ≥ 1024 tokens the activation tile the CTA's waves share goes through padded LDS (8411).
 Writing those loads, the `shuffled_16x16` offsets and the scale layout: [gluon/mfma.md](gluon/mfma.md) §7,
 [gluon/memory.md](gluon/memory.md) §13, [gluon/layouts.md](gluon/layouts.md) §6.3. Particular to MoE:
 
@@ -399,7 +399,7 @@ Writing those loads, the `shuffled_16x16` offsets and the scale layout: [gluon/m
 - **Gate-up grid at 1–2 tokens: not simply wider.** d3bb sums split-K partials in `_activate_quantize` (S4). At m=2, splits 4→1 (2306→578 one-wave programs) took 1.079× call time; 4→8 (4610) 1.050×. At m=1, 5751 1153→577 took 1.020×, →2305 1.028×; 7e9c 1728→864 took 1.035×; e75e column tile 8→16 (385→193 four-wave programs) 1.031× (one run, 4 alternated rounds per arm; scratch and reducing launches changed with the split, every arm accurate) *(field, E14)*. An earlier d3bb comparison of 4 → 2 splits (2306 → 1154 programs) took 1.004× (speedup 2.183 → 2.175; paired 95% CI of the reciprocal ratio 0.991–1.001), unresolved *(field, E11)*. These Points set neither a widest-grid rule nor a bytes-in-flight sizing for MoE; the bytes in flight were counted only up to the expert-selection loads *(field, E14)*.
 - **Tile height at run time (DeepSeek).** A descriptor carries the live row count and the program branches to a body compiled for 16, 32, 64 or 128 rows; the job list puts full tiles first, then the tails by height, tallest first (2422, S16). c524 pairs two bodies instead of padding to the next height: 65–96 rows as 64 + 16 or 32 at 1024 tokens, 129–192 as 128 + 16, 32 or 64 at 3072 (S32). MiniMax 01ce and 4da3 (128–256 tokens) drop to 16- or 32-row bodies for short tails, f770 runs a 128-row tile with an empty second half as 64 rows from 4096 tokens (S33); the other MiniMax or Qwen2 gate-ups do not select a different compiled tile height from their live rows. MiniMax b94f, cb88, f839, 8b22 and 62df still branch on `live == 64` to select an unmasked full-tile path versus a masked tail path at the same 64-row height. No Point compares variable and padded heights. Over 100 calls on one fixed input 2422's tile stayed in its 16-row body with one bit pattern, and on tiles of 15–17 and 31–33 live rows the neighbouring body sizes gave the same bits *(field, E22)*.
 - **The weights' cache policy is per Point.** Dropping `.cg` from d3bb at m=2 cost 0.9–1.2% in two of three runs (every pair; speedup 2.205→2.180, 2.217→2.195), but nothing in the third (2.171→2.171, pairs both ways). Dropping it from 1d27/m256 cost 2.6–3.5% (1.177–1.189→1.144–1.150); adding it to 2422/m256 cost 0.2–0.7% (1.012–1.040→1.009–1.034), each in every pair of four runs *(field, E7, E16)*. 2422 leaves `.cg` off its 128-row gate-up tiles above 128 tokens, at 256 the shared expert's two tiles (256 rows; a routed expert's about 8, estimated), whose weight address has no row-tile term (S16), so both read the same columns; a cache hit on the second is inferred (a toy in which two programs read each block ran 4 % faster without `.cg` *(field, E7)*). Put `.cg` (`cache_modifier=".cg"` on `gl.load`, `cache=".cg"` on `buffer_load`; it sets `nt`) on weights the call reads once, leave it off weights a second tile re-reads, settle it per Point ([gluon/memory.md](gluon/memory.md) §6). In one run over 12 Points of seven kernels, `.cg` won at seven of ten predominantly read-once Points (1.6–9.6%; six had every pair favorable on both rulers, e75e/m2 only the aggregate direction), with no consistent effect at three m=1 Points and no measured loss. It lost at both re-read Points: 2422/m256 (0.2–0.7%, N=4) and 8411/m16384 (17%, N=1). Reuse was classified from the schedule and measured routing, not cache-hit counters; the reuse side covers only two Points *(field, E16)*. Store hints are unmeasured here: c524 writes cross-launch partials `.wt` and its output `.cs` at 2048 and 3072 tokens (S32), the Qwen2 routers their partials `.wt`, 4801 through `gl.store` (S9), which, unlike `buffer_store`, waits after each `.wt` store *(field, E9)*.
-- **Program order.** e9fd's decode down at 8–16 tokens makes a column tile's program ids congruent mod 8 (S38), so with round-robin dispatch they share an XCD on any stream (the absolute XCD index rotates on a non-default stream). 8a5a walks its job list in 8 contiguous stripes (S10); f770 keeps an M tile's N tiles on one XCD (S33). All placement here is derived from the formulas; none was measured on MoE kernels: [gluon/memory.md](gluon/memory.md) §14.
+- **Program order.** e9fd's down at 8–16 tokens makes a column tile's program ids congruent mod 8 (S38), so with round-robin dispatch they share an XCD on any stream (the absolute XCD index rotates on a non-default stream). 8a5a walks its job list in 8 contiguous stripes (S10); f770 keeps an M tile's N tiles on one XCD (S33). All placement here is derived from the formulas; none was measured on MoE kernels: [gluon/memory.md](gluon/memory.md) §14.
 - **`waves_per_eu` did not change the time where measured.** The gate-up of 51ae and 8411 (MiniMax MXFP4, 256 experts) sets 3 above 3072 tokens (S15); removing 51ae's at 8192 tokens left the speedup at 1.44 (1.441 → 1.440) *(field, E7)*; 146 VGPRs with it, 150 without, no spills *(field, E9)* ([tuning.md](tuning.md) §8, [debugging.md](debugging.md) §2).
 - **A Point's constants are coupled.** Changing 6557's `gate_fold` from 4 to 1 alone at 1 token crashed every bench run *(field, E7)*: LLVM's code generation dies with SIGSEGV on `gate_fold` 1 with 4 warps, a 128-wide K tile and the `amdgpu-sched-strategy=iterative-ilp` attribute the file sets at m ≤ 2 (S14); `gate_fold` 1 compiles with 1 warp, with a 256-wide K tile, or without that attribute *(field, E9)*. Change constants together, from a combination that compiles elsewhere (here 6557's 16-token branch) ([debugging.md](debugging.md) §6).
 
@@ -438,7 +438,7 @@ b94f's epilogue rounds the accumulator and the SwiGLU product to bf16 and quanti
 
 ## 9. Down GEMM
 
-- **Decode: down+combine is a candidate, not a uniform win.** In the toy top-4/32 MoE at m = 2 and 16, fusing down and combine saved 2.94–3.73 µs on AKLR's timer before #33 (4 runs; its replay saving and output equality alone not measured; all fusions against none: §2) *(field, E10)*. In the synthetic fp8 VALU shapes at m = 1, 2, 8, 16 (one run, 16 rotated rounds per Point; slot order as the reference sums), it added 0.25–8.18 µs of replay time on average (savings −8.18 to −0.25 µs); at H6144/m2 the CI crossed zero and some small differences fell within the bias of A/A controls, at H3072/m8 and m16 it was slower on AKLR's timer too, and at none of the Points did all fusions together reach 0.85× the unfused time *(field, E13)*. Neither shows how MXFP4 MFMA kernels fare. The source form in 7e9c (S12) puts routes in MFMA A rows and experts' column slices side by side in B, keeps the diagonal blocks and sums them weighted in slot order, without partials or atomics:
+- **≤ 16 tokens: down+combine is a candidate, not a uniform win.** In the toy top-4/32 MoE at m = 2 and 16, fusing down and combine saved 2.94–3.73 µs on AKLR's timer before #33 (4 runs; its replay saving and output equality alone not measured; all fusions against none: §2) *(field, E10)*. In the synthetic fp8 VALU shapes at m = 1, 2, 8, 16 (one run, 16 rotated rounds per Point; slot order as the reference sums), it added 0.25–8.18 µs of replay time on average (savings −8.18 to −0.25 µs); at H6144/m2 the CI crossed zero and some small differences fell within the bias of A/A controls, at H3072/m8 and m16 it was slower on AKLR's timer too, and at none of the Points did all fusions together reach 0.85× the unfused time *(field, E13)*. Neither shows how MXFP4 MFMA kernels fare. The source form in 7e9c (S12) puts routes in MFMA A rows and experts' column slices side by side in B, keeps the diagonal blocks and sums them weighted in slot order, without partials or atomics:
 
   ```python
       acc = _tiny_projection(X, XS, W, WS, Ids, token, column, N, K, BN, BK, WARPS, False, CACHE)
@@ -454,7 +454,7 @@ b94f's epilogue rounds the accumulator and the SwiGLU product to bf16 and quanti
 
   d3bb puts all 9 routes (shared expert included) into one 16 × 256 MFMA tile per program; MiniMax FP8 (256 experts)
   gives each of 8 waves one route (`AMDMFMALayout(..., warps_per_cta=[8, 1, 1])`, e75e) on plain fp8 `mfma` (§7).
-- **Prefill: operand reuse across tiles (no gain where ablated).** MiniMax 8411 holds a 64-row activation tile in
+- **≥ 1024 tokens: operand reuse across tiles (no gain where ablated).** MiniMax 8411 holds a 64-row activation tile in
   registers across a strip of column tiles (`_down_reuse_fp4_2`); DeepSeek loads one expert's weight panel and scales
   once and streams activation tiles through it (`_paired_down`, `_routed_down`). c524's schedule leaves that off at 2048
   tokens, which stored 1.329 against 1.402 at 1024 and 1.407 at 3072 at 43e112e *(field, E1)*; turning it on changed the time by
@@ -466,15 +466,15 @@ b94f's epilogue rounds the accumulator and the SwiGLU product to bf16 and quanti
 - **Combine in slot order.** `out[t] = Σ_slot w[t, slot] · down[route]`, slot 0 to 7, from bf16 route rows (8411
   `_combine_rows_3`, S6). The route rows are a `routes × H` bf16 scratch the down writes and the combine reads: 805 MB
   each way at 16384 tokens for MiniMax MXFP4 with 256 experts (estimated from its `torch.empty` shape). Other files
-  reorder it: the MiniMax MXFP4 64-expert prefill files store the down rows in sorted order, read through an inverse
+  reorder it: the MiniMax MXFP4 64-expert files at ≥ 1024 tokens store the down rows in sorted order, read through an inverse
   map kept in the ids buffer (b94f, S13); e6fc writes them by sorted row in 256-column chunks, read through a position
-  map; DeepSeek's prefill stores dense expert-sorted rows and points each route's record at its row (3432) (S35). No
-  Point compares the hand-offs. Decode designs fuse the combine into the down (§9); 1c17 and 3c6e keep a launch for it.
+  map; DeepSeek at ≥ 1024 tokens stores dense expert-sorted rows and points each route's record at its row (3432) (S35). No
+  Point compares the hand-offs. Designs at ≤ 16 tokens fuse the combine into the down (§9); 1c17 and 3c6e keep a launch for it.
 - **No float atomics** in the 65 files *(field, E8)*: integer counters, cursors, job indices, bitmasks, LDS markers.
   Qwen2's 8698 and d425 reorder rows across calls, yet they and 29 global-ticket files repeat outputs *(field, E11)*.
-- **DeepSeek's shared expert (id 256, weight 1)** changes the plan by size: at decode it is the token's ninth
+- **DeepSeek's shared expert (id 256, weight 1)** changes the plan by size: at ≤ 16 tokens it is the token's ninth
   route; at 32–256 tokens its jobs run first, its down result is stored straight into `out`, and the reduce adds the
-  8 routed partials on top of it (1204, S5); at prefill the shared expert's down epilogue gathers the 8 routed
+  8 routed partials on top of it (1204, S5); at ≥ 1024 tokens the shared expert's down epilogue gathers the 8 routed
   partials of each token and writes `out`, so there is no combine launch (699f, S18).
 - **Qwen2's shared expert (id 512)** is weighted by `sigmoid(hidden · shared_gate_weight)`; its dot products come
   from the shared expert's own gate-up programs (slot 10, tile 0), which add one partial dot per K group (5c35, S19).
@@ -513,7 +513,7 @@ inferred). 51ae (8192 tokens, 1.423) and 8411 (16384, 1.389) share their kernel 
   (`harness/skills/aklr-port-generated-kernels/references/porting-notes.md`).
 - **Scenario constants are baked in, and `run` checks few of them.** DeepSeek multiplies the routed weights by 2.5 in
   device code, e9fd sums 12 router splits in `_rank_expert`; the MiniMax 256-expert files ignore `expert_offset`
-  (right while the rank holds all 256); the MXFP4 64-expert prefill files read an expert from 6 bits
+  (right while the rank holds all 256); the MXFP4 64-expert files at ≥ 1024 tokens read an expert from 6 bits
   (`descriptor & 63`); Qwen2's router+experts `run` ignores `topk` and `out_dtype`; cd47's `(256,)` router grid with
   `split = 8 if rows == 64 else 4` holds for 64, 128 and 256 rows only (S39). Re-derive them for another scenario.
 - **Write every token's row at a 64-expert rank.** About 10 % of tokens have no route to a held expert (estimated,

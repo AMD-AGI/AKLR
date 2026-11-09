@@ -103,7 +103,7 @@ one per route; 256–2048 workgroups.
 - Row 0 of each wave's tile goes to LDS; 16 threads add the 6 routes × routing weight in route order, skipping routes
   that are not local, and store bf16 (`../gemm/correctness.md` §8).
 
-How this relates to the decode MoE cards: no sort and one route per workgroup set, as the 1–2-token kernels of
+How this relates to the few-token MoE cards: no sort and one route per workgroup set, as the 1–2-token kernels of
 [fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md); `../moe/few_tokens.md` §1 on why the
 launch count matters at these sizes.
 

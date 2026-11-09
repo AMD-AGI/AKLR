@@ -2,10 +2,10 @@
 title: "Attention — grid, dispatch order and XCD placement, audited before the kernel body"
 kind: topic
 lever: attn_grid_dispatch
-ops: [attention]
+ops: [attention, mla]
 gens: [gfx950]
 dtypes: [bf16]
-regimes: [prefill, backward, causal, sliding-window, gqa]
+regimes: [many query rows, dQ dK dV, split-kv combine, causal, sliding-window, rectangular, gqa]
 flydsl: 0.3.2
 sources:
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:1000
@@ -18,7 +18,7 @@ sources:
 > Which workgroup gets which `(batch, head, tile)`, in what order, and where the padding falls is index
 > arithmetic outside the kernel body. On attention it often pays more than the body: *(field, E1, E2)* three
 > index-only, bit-identical changes (XCD-major decode, LPT order, padding origin), kept together with an LDS
-> hand-over and an LSE fold, gave +7% on a backward pass whose body tuning had returned ~1%.
+> hand-over and an LSE fold, gave +7% on a set of dQ/dK/dV kernels whose body tuning had returned ~1%.
 >
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end.
 > Use them for direction and order of magnitude, not as targets.
@@ -29,7 +29,7 @@ sources:
 - You are merging GQA heads into one workgroup, or changing the number of waves per workgroup.
 - A consumer kernel (combine, reduce) reads what a producer kernel wrote.
 
-**Somewhere else if:** split-KV decode and the combine → `split_kv.md`; dQ/dK/dV
+**Somewhere else if:** few query rows per head, split KV and the combine → `split_kv.md`; dQ/dK/dV
 workspace and fusion → `gradients.md`; generic round counting and tile pricing →
 `../gemm/grid_pricing.md`.
 
@@ -84,7 +84,7 @@ over `min(blocks_per_row, 8)` L2 domains, while the producer owned `split * seq 
 `(seq, blocks_per_row, 1)` makes the flat id `b * seq + row`, the producer's form: 18.6% and 7.0% faster on
 two decode shapes, ~0.5% faster where the producer's own traffic had already evicted the partials. It is a pure
 permutation. Before splitting any grid finer, check that the low 3 bits of the flat id did not change
-with it. The decode grid-size cliff is in `split_kv.md` §4.
+with it. The grid-size cliff of a split-KV grid is in `split_kv.md` §4.
 
 ## 4. Dispatch order is a list schedule
 - The dispatcher issues workgroups in block-id order, so the grid order is the schedule. Under a causal
@@ -177,7 +177,8 @@ Read a pool from two or more points of a curve, never from an end point.
   was written as an instruction count.
 
 ## 10. Pipeline along the GQA head axis
-A backward body that loops over the q-heads sharing one kv-head has a second loop axis to pipeline.
+A body that loops over the q-heads sharing one kv-head (measured on dK/dV bodies) has a second loop axis to
+pipeline.
 - Issue head `h+1`'s exp2/pack work inside head `h`'s GEMM2 MFMA run. *(field, E29)* +1.4% along the head
   axis; the same pipelining along the d-tile axis was negative.
 - Issue the next head's LSE/delta loads at the last d-tile of the current head's GEMM2. *(field, E30)* +1.81%,

@@ -1,7 +1,7 @@
 ---
 title: "AKLR's Triton and Gluon kernels on gfx950: the family map"
 kind: topic
-ops: [gemm, moe, attention, gdn, norm]
+ops: [gemm, grouped_gemm, moe, fused_moe, attention, mla, gdn, norm]
 dtypes: [fp8, mxfp4, bf16, fp32]
 regimes: [all]
 gens: [gfx950]
@@ -35,31 +35,31 @@ Directories are under `aklr/`; a leading `…/` stands for `plugins/sglang/model
 | Family (§) | Schema directories | Replaces | Points | Files per schema | Launches | Language | Contract |
 |---|---|---|---|---|---|---|---|
 | fp8 block-scaled GEMM (§5) | `ops/gemm/impls/triton/gemm_a8w8_blockwise_scaled_n3072_k1536/`, `…_n7168_k2048/` | aiter `gemm_a8w8_blockscale` | 15 + 9: M 1–8193, 1–256 | 3 (`main.py`, `adapter.py`, `kernel.py`) at N 3072, 1 at N 7168 | 1 | Gluon | bounded |
-| bf16 decode GEMM (§6) | `ops/gemm/impls/triton/gemm_n6144_k2048/`, `gemm_n2624_k6144/` | aiter `gemm_a16w16` | 6 + 4: M 2–64 | 1 | 1; 2 at N 2624, M 64 | Triton | bitwise |
+| bf16 GEMM, M ≤ 64 (§6) | `ops/gemm/impls/triton/gemm_n6144_k2048/`, `gemm_n2624_k6144/` | aiter `gemm_a16w16` | 6 + 4: M 2–64 | 1 | 1; 2 at N 2624, M 64 | Triton | bitwise |
 | RMSNorm, add + RMSNorm (§6) | `ops/rms_norm/impls/triton/rms_norm_hidden_size6144/`, `add_rms_norm_hidden_size6144/` | aiter `rmsnorm2d_fwd`, `rmsnorm2d_fwd_with_add` | 14: 3–4096; 7: 4–256 | 1 | 1 | Triton | bitwise |
 | DeepSeek-V2/GLM MXFP4 MoE (§7) | `…/deepseek_v2/impls/triton/deepseek_v2_mxfp4_moe_…_inter_dim{256,512}/` | SGLang `DeepseekV2MoE.forward_normal` | 24: 1–4192 | 1–5 | 3–6 | Gluon | bounded |
 | MiniMax-M2 MXFP4 MoE (§8) | `…/minimax_m2/impls/triton/minimax_m2_mxfp4_moe_…/` | SGLang `MiniMaxM2MoE.forward_normal` | 30: 1–16384 | 1 | 3–8 | Gluon | bounded |
 | MiniMax-M2 FP8 MoE (§9) | `…/minimax_m2/impls/triton/minimax_m2_fp8_moe_…/` | SGLang `MiniMaxM2MoE.forward_normal` | 28: 1–16384 | 1 | 3–8 | Gluon | bounded |
 | Qwen2-MoE router, fp8 experts, fp8 router + experts (§10) | `…/qwen2_moe/impls/triton/qwen2_moe_{router,fp8_experts,fp8_router_experts}_…/` | SGLang `Qwen2MoeSparseMoeBlock._forward_router_experts` | 7: 8–4096; 3: 8–128; 4: 1–32 | 1 | 2; 3–5; 4–7 | Gluon | bounded |
-| DSA sparse MLA decode (§11) | `plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads{64,8}_kv_dim576_topk2048/` | SGLang `DeepseekSparseAttnBackend._forward_triton_decode` | 5 + 3: 8–32, 32–256 | 1–2 | 2–3 | Gluon | bitwise |
-| Qwen3.5 gated attention decode (§12) | `…/qwen3_5/impls/triton/gated_attention_decode_group_fp8_quant_…/` | SGLang `Qwen3_5AttentionDecoderLayer.self_attention` | 9: 1–256 | 3 | 3 | Gluon | bitwise |
-| GatedDeltaNet decode (§13) | `…/qwen3_5/impls/triton/gdn_decode[_group_fp8_quant]_…/`, `…/qwen3_next/impls/triton/qwen3_next_gdn_decode_group_fp8_quant_…/` | SGLang `Qwen3_5GatedDeltaNet.forward`, `Qwen3GatedDeltaNet.forward` at decode | 8 + 1: 1–256; 9: 1–256 | 1 (3 in `f440`) | 2; 1–2 | Gluon | bitwise |
-| GatedDeltaNet chunked prefill (§14) | `…/qwen3_5/impls/triton/gdn_prefill_group_fp8_quant[_max_seq_len<L>]_…/`, `…/qwen3_next/impls/triton/qwen3_next_gdn_prefill_group_fp8_quant[_max_seq_len<L>]_…/` | the same two `forward` at prefill | 21: 512–16384 tokens in 1–8 sequences; 13: 1024–16384 in 1–16 | 2–3 | 5–8 | Gluon | bitwise |
+| DSA sparse MLA, one query token (§11) | `plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads{64,8}_kv_dim576_topk2048/` | SGLang `DeepseekSparseAttnBackend._forward_triton_decode` | 5 + 3: 8–32, 32–256 | 1–2 | 2–3 | Gluon | bitwise |
+| Qwen3.5 gated attention, one query token (§12) | `…/qwen3_5/impls/triton/gated_attention_decode_group_fp8_quant_…/` | SGLang `Qwen3_5AttentionDecoderLayer.self_attention` | 9: 1–256 | 3 | 3 | Gluon | bitwise |
+| GatedDeltaNet, one token per step (§13) | `…/qwen3_5/impls/triton/gdn_decode[_group_fp8_quant]_…/`, `…/qwen3_next/impls/triton/qwen3_next_gdn_decode_group_fp8_quant_…/` | SGLang `Qwen3_5GatedDeltaNet.forward`, `Qwen3GatedDeltaNet.forward` at decode | 8 + 1: 1–256; 9: 1–256 | 1 (3 in `f440`) | 2; 1–2 | Gluon | bitwise |
+| GatedDeltaNet, chunked sequences (§14) | `…/qwen3_5/impls/triton/gdn_prefill_group_fp8_quant[_max_seq_len<L>]_…/`, `…/qwen3_next/impls/triton/qwen3_next_gdn_prefill_group_fp8_quant[_max_seq_len<L>]_…/` | the same two `forward` at prefill | 21: 512–16384 tokens in 1–8 sequences; 13: 1024–16384 in 1–16 | 2–3 | 5–8 | Gluon | bitwise |
 
 **Added or grown since `43e112e`** (all Gluon; files at `43e112e` → `0e02a81`). The schemas, not this page, describe them; at `0e02a81` none of the files added since stores a CI speedup.
 
 | Family | Directory | Files | Points | Contract | PR |
 |---|---|---|---|---|---|
 | GLM-5.2 DSA indexer: key prepare; query and key prepare | `plugins/sglang/layers/dsa_indexer/impls/triton/dsa_indexer_key_prepare_…/`, `dsa_indexer_prepare_…/` | 0 → 17; 0 → 16 | 1–256 tokens, 9 each, two files per Point | bitwise, `max_violation_fraction` 0.0003 | #58 |
-| DSA sparse MLA decode, 16 heads; 8 heads (§11) | `plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads{16,8}_…/` | 0 → 8; 3 → 12 | 36 each, 1–256 tokens (8 heads: 32, 128, 256 in two files) | bitwise | #66 |
-| Qwen3-Next gated attention decode | `…/qwen3_next/impls/triton/qwen3_next_gated_attention_decode_group_fp8_quant[_max_context<C>]_…/` (4) | 0 → 31 | 1–256 rows (1–32 at 131072, 1–64 at 65536) | bitwise | #78 |
+| DSA sparse MLA, one query token, 16 heads; 8 heads (§11) | `plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads{16,8}_…/` | 0 → 8; 3 → 12 | 36 each, 1–256 tokens (8 heads: 32, 128, 256 in two files) | bitwise | #66 |
+| Qwen3-Next gated attention, one query token | `…/qwen3_next/impls/triton/qwen3_next_gated_attention_decode_group_fp8_quant[_max_context<C>]_…/` (4) | 0 → 31 | 1–256 rows (1–32 at 131072, 1–64 at 65536) | bitwise | #78 |
 | Qwen3-Next fp8 router + experts, dim 2048, inter 128 | `…/qwen2_moe/impls/triton/qwen2_moe_fp8_router_experts_…_model_dim2048_…_inter_dim128/` | 0 → 11 | 16: 1–16384 tokens | bounded | #55 |
 | Qwen3.5 fp8 router + experts (§10) | `…/qwen2_moe/impls/triton/qwen2_moe_fp8_router_experts_…_model_dim4096_…_inter_dim256/` | 4 → 11 | 4 → 24: 1–16384 tokens | bounded | #74 |
 | Qwen3.5 MXFP4 MoE block, one op on `Qwen2MoeSparseMoeBlock.forward` | `…/qwen2_moe/impls/triton/qwen2_moe_mxfp4_moe_…/` | 0 → 10 | 11: 1–256 tokens | bounded | #77 |
-| Qwen3.5 GatedDeltaNet decode (§13): fp8 op; bf16 op | `…/qwen3_5/impls/triton/gdn_decode[_group_fp8_quant]_…/` | 8 → 9; 1 → 12 | 9; 12 (64 rows twice): 1–256 rows | bitwise | #75 |
-| Qwen3-Next GatedDeltaNet decode (§13) | `…/qwen3_next/impls/triton/qwen3_next_gdn_decode_group_fp8_quant_…/` | 9 → 14 | 9 → 36: 1–256 rows | bitwise | #65 |
+| Qwen3.5 GatedDeltaNet, one token per step (§13): fp8 op; bf16 op | `…/qwen3_5/impls/triton/gdn_decode[_group_fp8_quant]_…/` | 8 → 9; 1 → 12 | 9; 12 (64 rows twice): 1–256 rows | bitwise | #75 |
+| Qwen3-Next GatedDeltaNet, one token per step (§13) | `…/qwen3_next/impls/triton/qwen3_next_gdn_decode_group_fp8_quant_…/` | 9 → 14 | 9 → 36: 1–256 rows | bitwise | #65 |
 
-Since #76 the Qwen3.5 bf16 decode op alone serves layers whose projections are unquantized (`aklr/plugins/sglang/models/qwen3_5/api.py`).
+Since #76 the Qwen3.5 bf16 op `gdn_decode@1.0` alone serves layers whose projections are unquantized (`aklr/plugins/sglang/models/qwen3_5/api.py`).
 
 ## 3. Which family to start from
 
@@ -76,10 +76,10 @@ Since #76 the Qwen3.5 bf16 decode op alone serves layers whose projections are u
 | MoE layer, fp8 experts with 128 × 128 block scales | §9; with a sigmoid-gated shared expert, §10's router + experts | gate-up host paths per Point *(field, E20)*; relaxed-atomic job queues, an atomic-free SWAR counting sort in `82e9` (S19); the job counts and the shared gate untested |
 | MoE experts, routing given | §10 fp8 experts | per-route split-K (`5c35`), an LDS `atomic_scatter_add` sort (in one CTA in `8698`; also in `d425`), persistent grid-stride stages (`8698`) |
 | SwiGLU + requantization as its own launch | `d3bb`'s `_activate_quantize` (§7: K-split gate-up partials summed in order, SwiGLU, MXFP4 per 32; S10); fp8 per 1 × 128: `_activate_quantize` of `5cac` (§9) or `5c35` (§10) (S44) | no standalone op on main: these are launches inside the MoE files ([moe](../moe.md) §8) |
-| Decode attention over gathered rows (top-k indices) | §11 | key splits merged by a separate atomic-free launch (7 of 8 files; `fbe6` runs one workgroup per token, no merge), LDS-staged K and V |
-| Decode attention over a paged KV cache the op writes, fp8 output | §12 | a prologue task grid, split-KV partials, a finish that writes the fp8 values and their scales: three launches at all 9 Points |
+| Attention of one query token per sequence over gathered rows (top-k indices) | §11 | key splits merged by a separate atomic-free launch (7 of 8 files; `fbe6` runs one workgroup per token, no merge), LDS-staged K and V |
+| Attention of one query token per sequence over a paged KV cache the op writes, fp8 output | §12 | a prologue task grid, split-KV partials, a finish that writes the fp8 values and their scales: three launches at all 9 Points |
 | Q/K RMSNorm, RoPE or mRoPE, fp8 paged KV-cache write | §12's `prologue.py` (`_qk_norm_rope_cache` in `d9cb`, `dfb1`) | a task grid of one-wave CTAs, a whole number per token (320 at 32 rows, 1,024 at 256; [attention](../attention.md) §11) |
-| A per-slot recurrent state stepped once per decode token | §13 | the state split over CTAs or owned by one, an in-place history shift |
+| A per-slot recurrent state stepped once per token, one token per sequence | §13 | the state split over CTAs or owned by one, an in-place history shift |
 | A chunked linear recurrence over long sequences | §14 | parallel chunk phases, one sequential launch, then a parallel epilogue |
 | Row-wise normalization | §6 RMSNorm (plain Triton; `rms_norm` is not served at 3–18 tokens, nor at 64 at `43e112e` (1.024), where `d908d01`'s CI run stored 1.040 *(field, E5)*); in Gluon only fused: the Q/K RMSNorm of §12's prologue, the gated RMSNorm of §13 and §14 | one row per program, grid-stride from 1024 rows |
 | Many Points from one source | a host branch per Point (`cf63`: 14 Points, `f806`: 6), or `f440`'s table (§13): in CI run 42000899019 (stored from `d908d01` on) the per-size files beat it at 7 of 9 Points *(field, E13)* | one configuration row per token count; an unlisted count raises |
@@ -95,7 +95,7 @@ Since #76 the Qwen3.5 bf16 decode op alone serves layers whose projections are u
 | `per_group_quant_mxfp8@1.0` (HIP) | `d3bb`'s `_quantize_groups` (S10) as its routed experts call it (`shared=False`): the e8m0 exponent rounded up from the bits of peak / 6 (MXFP4; `shared=True` takes the even rule); the op's reference rounds amax × (1/448) up the same way (`aklr/ops/quant/reference.py`) |
 | `biased_grouped_topk@1.0` (FlyDSL) | §7's selection: sigmoid plus fp32 correction bias, top-8 of 256, renormalized × 2.5 (`d3bb`'s `_select_routes`, S10) |
 | `fused_moe@1.0`, `mega_moe@1.0` (FlyDSL) | the MXFP4 expert GEMMs and layers of §7–§8: `fused_moe@1.0` is `per_1x32` only (33 schemas) and shares their `shuffled_16x16` layout |
-| `flash_mla_with_kvcache@1.0` (FlyDSL), `sparse_prefill_mxfp8@1.0` (HIP) | §11's gathered-row decode; no Triton softmax-attention kernel attends over a prompt (§14's GatedDeltaNet prefill runs a linear recurrence over it) |
+| `flash_mla_with_kvcache@1.0` (FlyDSL), `sparse_prefill_mxfp8@1.0` (HIP) | §11's gathered-row attention of one query token; no Triton softmax-attention kernel attends many query rows over a prompt (§14's chunked GatedDeltaNet runs a linear recurrence over it) |
 | `gemm_a8w8@1.0` (none), `bmm@1.0`, `fp8_paged_mqa_logits@1.0`, `topk_transform_paged@1.0`, `mhc_*@1.0` | nothing close |
 
 Price an uncovered Point before you implement it: time the op's baseline at the Point you target (a bf16 GEMM at N 16, K 128 took 1.924 µs at M = 1 and 2.787 µs at M = 64 *(field, E31)*); no saving of effort from this order was measured.
@@ -124,7 +124,7 @@ Counts are files whose sources use the construct (a text scan of the 154 files a
 | `mfma_scaled` on e4m3 with `None` scales | fp8 GEMM 24 (each 128-K group's product multiplied by the fp32 block scales), MiniMax FP8 9, Qwen2 router + experts 4 | `584a` (S1) | [gluon/mfma](../gluon/mfma.md) §2, [numerics](../numerics.md) §4 |
 | `mfma_scaled` on e4m3 with `None` scales into a running accumulator | DSA 5 (`0bb2`, `1148`, `2ee5`, `2f70`, `f60f`) | `2ee5` (S24) | [attention](../attention.md) §10 |
 | `mfma_scaled` on e2m1 with e8m0 scales | MiniMax MXFP4 23, DeepSeek 19 | `6557` (S42) | [gluon/mfma](../gluon/mfma.md) §2, §3, [numerics](../numerics.md) §3 |
-| K groups folded into the MFMA rows at tiny M | all 8 fp8 GEMM files at M ≤ 8; the MiniMax MXFP4 decode file `6557` (`gate_fold`) | `b11f` (S2), `6557` (S42) | [gluon/mfma](../gluon/mfma.md) §8, [gemm](../gemm.md) §4 |
+| K groups folded into the MFMA rows at tiny M | all 8 fp8 GEMM files at M ≤ 8; the MiniMax MXFP4 1-token file `6557` (`gate_fold`) | `b11f` (S2), `6557` (S42) | [gluon/mfma](../gluon/mfma.md) §8, [gemm](../gemm.md) §4 |
 | `gl.inline_asm_elementwise` | 83: MiniMax MXFP4 22, DeepSeek 19, Qwen3.5 GDN decode 8, Qwen3-Next GDN decode 7, fp8 GEMM 6, MiniMax FP8 6, Qwen2 router 5, Qwen3.5 GDN prefill 4, DSA 3, Qwen2 router + experts 3 | `d3bb`'s `_next_expert` (S10) | [gluon/wave_ops](../gluon/wave_ops.md) §1, §2 |
 | relaxed global integer atomics (tickets, job counters, bitmasks); LDS `atomic_scatter_*` | DeepSeek 12, MiniMax MXFP4 11, MiniMax FP8 6; LDS: Qwen2 experts 2, MiniMax FP8 1 | `8411` (S15), `8698` (S23) | [moe](../moe.md) §6, [numerics](../numerics.md) §8 |
 | fixed-grid graph capture/replay | MiniMax `8411`, `51ae`, `147b`, `82e9`: replayed with new inputs accurately, eager grids identical at two input sets (6, 6, 6 and 8 launches) *(field, E24)*; other routings, worst-case sizing and the device early exit untested | `8411` (S15) | [authoring](../authoring.md) §8 |
@@ -187,13 +187,13 @@ K 1536 and 9 at N 7168, K 2048, one Point each. Op card: [../../gemm/INDEX.md](.
   AGPRs in 8 (8–32); LDS 9–72 KiB; no spills; `v_mfma_scale_f32_16x16x128_f8f6f4` in 21, `…_32x32x64_…` in 3.
 - **CI speedups** stored at `43e112e` *(field, E3)*: 1.114 (N 7168, M 128) to 1.840 (N 7168, M 8) over the 24 Points.
 
-## 6. Plain Triton: bf16 decode GEMM and RMSNorm
+## 6. Plain Triton: bf16 GEMM at M ≤ 64 and RMSNorm
 
 The four `@triton.jit` files. Why plain Triton fits them, and what its compiler adds (coalescing, `num_stages`
 pipelining, buffer instructions): [authoring](../authoring.md) §2. Each GEMM kernel but the split-K reduce holds
 `buffer_load_dwordx4 … lds`; the 6 RMSNorm kernels load with `buffer_load_dwordx4`, no `global_load` *(field, E2)*.
 
-- **bf16 decode GEMM**, `trans_b`, no bias: `gemm_n6144_k2048/` (`f806`, M = 2, 4, 8, 16, 32, 64) and `gemm_n2624_k6144/`
+- **bf16 GEMM at M ≤ 64**, `trans_b`, no bias: `gemm_n6144_k2048/` (`f806`, M = 2, 4, 8, 16, 32, 64) and `gemm_n2624_k6144/`
   (`b88c`, M = 2, 4, 8, 64). One workgroup per N tile (192 at N 6144, 164 at N 2624), each `tl.dot` accumulating in fp32,
   the weight loaded with `.cg`; each XCD streams one contiguous run of N tiles in `b88c` at M ≤ 8 and `f806` at M ≤ 16,
   8-tile chunks (3 runs per XCD) in `f806` at M 32, 64 (`b88c`'s `_xcd_remap` is a permutation for any grid size); at
@@ -246,7 +246,7 @@ replays aiter's router GEMM, `biased_grouped_topk` and `fused_moe`. Triton side:
   [moe](../moe.md) §3). At 1–16 tokens every file but `3c6e` selects experts in the kernel with a rank loop; in `d3bb`
   each gate-up program recomputes its route's expert with rank + 1 argmax rounds instead of waiting for a top-k launch
   (S10; [moe](../moe.md) §4, [../../moe/few_tokens.md](../../moe/few_tokens.md)). A gate-up N tile holds matching gate and up
-  rows; in full-K gate-up designs such as `1204`, SwiGLU and the MXFP4 requantization run in its epilogue (S11; [moe](../moe.md) §7, §8). The decode down
+  rows; in full-K gate-up designs such as `1204`, SwiGLU and the MXFP4 requantization run in its epilogue (S11; [moe](../moe.md) §7, §8). At 1–16 tokens the down
   multiplies a token's routes (MFMA rows) by their experts' column bands and keeps the diagonal, weighted and summed in
   slot order in registers (S12; [moe](../moe.md) §9). At 32–256 tokens, `1204`'s gate-up programs scan the per-expert
   counts with `gl.associative_scan` and make the job descriptor wave-uniform with `v_readfirstlane_b32` (S13;
@@ -356,7 +356,7 @@ followed by the experts op (`aklr/plugins/sglang/models/qwen2_moe/api.py`).
 
 | Contract, directory `qwen2_moe_…` | Tokens: files | Launches | Decomposition |
 |---|---|---|---|
-| `router_model_dim4096_n_routed512_topk10/` | 8 `4801`, 16 `5f20`, 64 `a878`, 128 `cd47`, 256 `c388`, 2232 `4c2b`, 4096 `ca82` | 2 | a split-K projection (S20), exactly 256 programs at 8–256 tokens, then per-row selection over the stored bf16 logits: top-10 with lower-id ties, softmax weights within 2.3e-8 of those 10 logits, outputs bitwise identical over 20 repeats at 8–256 tokens *(field, E25)* (whether the split sums round once is untested); at 2232 and 4096 a prefill GEMM with multi-row selection (read from source, untested) |
+| `router_model_dim4096_n_routed512_topk10/` | 8 `4801`, 16 `5f20`, 64 `a878`, 128 `cd47`, 256 `c388`, 2232 `4c2b`, 4096 `ca82` | 2 | a split-K projection (S20), exactly 256 programs at 8–256 tokens, then per-row selection over the stored bf16 logits: top-10 with lower-id ties, softmax weights within 2.3e-8 of those 10 logits, outputs bitwise identical over 20 repeats at 8–256 tokens *(field, E25)* (whether the split sums round once is untested); at 2232 and 4096 a large-M GEMM with multi-row selection (read from source, untested) |
 | `fp8_experts_shuffled_16x16_…_n_experts513_…/` | 8 `5c35`, 64 `8698`, 128 `d425` | 3; 5; 5 | routing given; 8 tokens: per-route split-K gate-up, activation quantization, down with the ordered 11-route sum; 64 and 128: a route sort in LDS (by one CTA in `8698`), then gate-up, quantization, down, ordered reduce (`8698`: persistent stages over device-counted tasks) |
 | `fp8_router_experts_shuffled_16x16_…/` | 1 `7d7e`, 2 `04e9`, 4 `ddb8`, 32 `99f4` | 4; 4; 4; 7 | router logits in fp64 (VALU), rounded once to bf16; every gate-up CTA replays the top-k of its row; activation quantization; one CTA per output tile multiplies all of a token's routes in one MFMA and keeps the diagonal; at 32 tokens fp64 MFMA router partials, a counting sort, sparse gate-up, quantization, grouped down, ordered sum |
 
@@ -373,7 +373,7 @@ followed by the experts op (`aklr/plugins/sglang/models/qwen2_moe/api.py`).
 - **CI speedups** stored at `43e112e` *(field, E9)*: router 1.074 (8 tokens) to 1.967 (256); experts 1.076 (128) to 1.208 (8); router +
   experts 1.063 (32) to 1.172 (1).
 
-## 11. DSA sparse MLA decode
+## 11. DSA sparse MLA, one query token per sequence
 
 Each token's 64 or 8 heads attend 2048 rows of an fp8 latent cache (576 values: 512 latent and 64 RoPE) named by
 top-k indices, q in e4m3, `kv_b_proj` absorbed, bf16 out; 8 files at `43e112e`, one Point each (main adds 9 8-head files
@@ -400,7 +400,7 @@ and a 16-head scenario, §2). The baseline is SGLang's
   16 × 16 × 32 in 3, scaled 16 × 16 × 128 in 1, fp16 32 × 32 × 16 in 1.
 - **CI speedups** stored at `43e112e` *(field, E10)*: 1.030 (64 heads, 8 tokens) to 2.188 (64 heads, 24 tokens).
 
-## 12. Qwen3.5 gated attention decode
+## 12. Qwen3.5 gated attention, one query token per sequence
 
 One token per row, 8 query heads on 1 KV head of dim 256: Q and K RMS-normalized, mRoPE on 64 channels, K and V written
 to the e4m3 paged cache, attention over the row's slots, `sigmoid(gate)`, then e4m3 per 128 channels with fp32 scales; 9
@@ -445,7 +445,7 @@ quantization. Triton side: [attention](../attention.md) §6, §7, §8, §9.
 - **CI speedups** stored at `43e112e`: 1.066 (256 rows) to 2.182 (1 row); CI run 42000899019 stored 1.085 to 2.221
   *(field, E11)*.
 
-## 13. GatedDeltaNet decode
+## 13. GatedDeltaNet, one token per sequence step
 
 Per row: a width-4 causal convolution over the projected Q, K, V with the conv history shifted in place, the gates, the gated delta-rule update of a 128 × 128 fp32 state per (slot, value head), a gated RMSNorm and e4m3 per 128 with fp32 scales. At `43e112e`, Qwen3.5 (16 value heads): 8 files, 1–256 rows, plus `gdn_decode_…/cd00` (64 rows, bf16 output); Qwen3-Next (8 value heads, grouped projections): 9 files over 9 Points, `f440` listing all of them. Main holds 9, 12 and 14 files (§2). The baseline chains a conv update, the recurrence, the norm and the quantization *(field, E20)*. No kernel uses MFMA *(field, E2)*. Triton side: [gdn](../gdn.md) §2–6.
 
@@ -477,7 +477,7 @@ Per row: a width-4 causal convolution over the projected Q, K, V with the conv h
   file per Point 1.457 (256 rows) to 3.350, and the per-size files above `f440` at 7 of 9 Points (equal at 4 rows,
   `f440` ahead at 256) *(field, E13)*.
 
-## 14. GatedDeltaNet chunked prefill
+## 14. GatedDeltaNet, chunked sequences of many tokens
 
 Packed sequences of the same layer: Qwen3.5, 15 files over 21 Points (512–16384 tokens in 1–8 sequences); Qwen3-Next, 11 files over 13 Points (1024–16384 in 1–16). Files: `kernel.py`, `initial_state.py` and, in 9 Qwen3.5 files, `packing.py`. The baseline chains `causal_conv1d_fn`, `fused_gdn_gating`, `chunk_gated_delta_rule`, the norm and the quantization (`per_token_group_quant_fp8` in Qwen3.5) *(field, E20)*. Triton side: [gdn](../gdn.md) §7–12.
 

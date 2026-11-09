@@ -2,16 +2,16 @@
 title: "Attention — LDS layout and transposed reads on gfx950"
 kind: topic
 lever: attn_lds
-ops: [attention]
+ops: [attention, mla]
 gens: [gfx950]
 dtypes: [bf16, fp8]
-regimes: [prefill, backward, decode]
+regimes: [many query rows, few query rows, dQ dK dV, transposed operand, sparse]
 flydsl: 0.3.2
 ---
 
 # LDS layout and transposed reads in an attention kernel
 
-> P·V contracts over kv, and so do dV = Pᵀ·dO and dK = dSᵀ·Q in the backward pass. With K/V/Q/dO stored
+> P·V contracts over kv, and so do dV = Pᵀ·dO and dK = dSᵀ·Q in the gradient kernels. With K/V/Q/dO stored
 > `[row, d]` in LDS, one operand of each of these GEMMs is strided along the contraction and must be read
 > transposed. Generic LDS facts — 64 banks, read phases, swizzle vs padding, write-to-read distance, DMA
 > waits — are in `../gemm/datapath.md` §2–§4 and §9 and `../flydsl/guides.md` § lds-optimization.
@@ -21,7 +21,7 @@ flydsl: 0.3.2
 > Use them for direction and order of magnitude, not as targets.
 
 ## Route here when
-- You are deciding how V (forward) or dO, Q, K, dS (backward) reach the MFMA transposed.
+- You are deciding how V (for P·V) or dO, Q, K, dS (for dQ, dK, dV) reach the MFMA transposed.
 - A bank-conflict counter or `SQ_WAIT_INST_LDS` is high on an attention kernel.
 - You are changing an LDS row stride, padding or swizzle phase.
 - You are considering a register transpose, a write-side pre-transpose or a "wider" transposed read.

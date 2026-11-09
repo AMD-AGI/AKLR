@@ -2,10 +2,10 @@
 title: "Grouped GEMM — fp8 tensorwise, MXFP8 and MXFP4"
 kind: topic
 lever: grouped_lowprec
-ops: [grouped_gemm]
+ops: [grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [fp8, mxfp8, mxfp4]
-regimes: [forward, dgrad, wgrad, skew, fused-epilogue, quantization]
+regimes: ["M split per group", transposed-operand, variable-k, skew, fused-epilogue, quantization]
 flydsl: 0.3.2
 sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_fp8_kernel.py
@@ -33,6 +33,8 @@ sources:
   tensorwise sibling.
 - A scale preshuffle, quantizer or padding kernel shows up next to the GEMM in a trace.
 - You are choosing the C store or cache policy for grouped outputs, or fusing a gated activation.
+- A MoE expert GEMM with fp8 or MX operands: the activations' per-call quantization and scales, the NT scale
+  layout, the gate/up activation in stage 1's epilogue (the sort-side kernels: `grouped_sorted_tokens.md` §7).
 
 ## 1. What the group dimension adds
 - **Tensorwise fp8**: two scalars per GEMM, applied once in the epilogue (`a_scale * b_scale`); nothing per group.
@@ -44,8 +46,9 @@ sources:
   walkable by the NT addressing" (MX4G:21-23). Tensorwise dgrad stays NN with transpose reads.
 - **MX wgrad takes column-quantized operands `[OUT, M_total]`**; K tails then need a run-time guard
   (`grouped_variable_k.md` §3).
-- **Quantization runs every call for activations and gradients.** Weights quantize once per optimizer step and
-  the backward reuses them; a benchmark that passes high-precision weights re-quantizes them per call. *(field, E1)*
+- **Quantization runs every call for activations and gradients.** Weights quantize once per weight update, and
+  every call until the next update reuses them (the backward reuses the forward's); a benchmark that passes
+  high-precision weights re-quantizes them per call. *(field, E1)*
   Pre-quantizing weights took one fused MoE MLP forward from 4.28 to 3.47 ms; the backward did not change.
 
 ## 2. The scale preshuffle is a per-call helper kernel
@@ -72,13 +75,15 @@ from the GEMM's host launcher, so the pair costs one launcher call and runs in s
 
 In FlyDSL: `../flydsl/moe.md` § grouped_lowprec §2.
 
-## 3. Pack four E8M0 per dword — per group on wgrad
+## 3. Pack four E8M0 per dword — per group where K varies per group
 - `op_sel` picks one of four bytes, so four is the hardware ceiling (`../gemm/datapath.md` §11).
-- **NT (forward, dgrad).** The k-step's byte is `k % 4`, known at compile time. MX8 packs NT only
+- **NT (M split per group: MoE expert GEMMs, forward, dgrad).** The k-step's byte is `k % 4`, known at compile
+  time. MX8 packs NT only
   (`_GG_SCALE_PACK = 4`, MX8:74-76). *(field, E7)* The repack took 32% less time (14.3 → 9.7 µs), the GEMM was
   unchanged and bit-exact, end to end an estimated ≈1%: on that build the repack was ~3.5% of the forward/dgrad time (§2
   has another build's share).
-- **Variable-K wgrad.** A group's contraction starts at any 128-element boundary, so a global `k % 4` byte select
+- **K varying per group (wgrad).** A group's contraction starts at any 128-element boundary, so a global `k % 4`
+  byte select
   is wrong for most groups; Turbo's MXFP8 wgrad stays unpacked for that reason. Pack each group from its own
   start instead: base `ks0 // 4 + g` for a group starting at 128-block `ks0`, row-group stride `K128 // 4 + G` (the
   `+g` / `+G` is the at most one partial dword per group; `floor(a/p) + ceil(n/p) ≤ floor((a+n)/p) + 1` keeps the
@@ -111,7 +116,7 @@ In FlyDSL: `../flydsl/moe.md` § grouped_lowprec §2.
   64 rows and whose wave regions walk 128, `BLOCK_M` must be a multiple of 128: a 288-row tile puts a wave at row
   144 and selects the wrong byte (S1). Re-lay the scale slab before trying odd tile heights.
 
-## 5. Quantization: a large share of the forward, a small lever
+## 5. Quantization: a large share of the time, a small lever
 - *(field, E15)* Grouped MX quantization was 35–42% of the forward's absolute time on four shapes at 4096 tokens per
   group. A bit-exact fused dual-cast quantizer still left the backward unchanged and moved the forward little: 60%
   of the forward's gap and 90% of the backward's gap sat in the GEMMs. A share of time is not a share of the gap,

@@ -3,7 +3,7 @@ title: "Register pressure: VGPR / AGPR spills, or occupancy below the plan"
 kind: pattern
 signals: ["vgpr_spill_count > 0", "scratch_ loads and stores in the hot loop", "v_accvgpr_read / v_accvgpr_write in the hot loop",
   ".vgpr_count + .agpr_count above a reachable occupancy tier", ".private_segment_fixed_size > 0", "one wave per SIMD"]
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe, attention]
 gens: [gfx950]
 flydsl: 0.3.2
 basis: source-semantics

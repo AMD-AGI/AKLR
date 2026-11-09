@@ -40,7 +40,7 @@ kernel as `kernel.sources[0].content` (`kernel.py`); function names below are in
   `aklr/ops/gemm/contract.py`).
 - N × K = 7168 × 768, 1536, 1792, 3584, 4224 (a weight of 10.5–57.75 MiB), 18432 × 1536 (54 MiB) and
   20480 × 7168 (280 MiB): at m ≤ 112 each call streams the whole weight once
-  (`../gemm/small_m.md` §2). k1792 and n18432 / n20480 have only decode Points (m ≤ 112); the other
+  (`../gemm/small_m.md` §2). k1792 and n18432 / n20480 have only Points at m ≤ 112; the other
   four also have m 893, 2732, 9397, 16384.
 - Each schema name has only this file (no file of another language or an older kernel under the same name on
   main), so at every Point the yardstick is aiter.
@@ -56,7 +56,7 @@ kernel as `kernel.sources[0].content` (`kernel.py`); function names below are in
   - k1536 at m 32 (1.005), 893 (1.025) and 16384 (0.999) *(field, E2)*; k3584 at 16384 (0.945) *(field, E4)*;
     k4224 at 2732 (1.020) and 16384 (0.935) *(field, E5, E6)*. At m 16384 all three run the persistent
     256×256 grid below.
-  - Decode Points this close to 1.03 cross it between runs: k768's m 32 read 1.002 in one run and 1.029 and 1.038
+  - Points at m ≤ 112 this close to 1.03 cross it between runs: k768's m 32 read 1.002 in one run and 1.029 and 1.038
     in the two arms of another, all three with the same final ISA at that Point (the large-m rework was delivered
     with the ISA at m ≤ 893 unchanged) *(field, E1)*.
 - **k4224 at m 56–112 folds a cross-workgroup split-K through flags whose tag does not change between calls.**

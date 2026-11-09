@@ -2,7 +2,7 @@
 title: "GEMM — LDS, global feed and prefetch on gfx950"
 kind: topic
 lever: gemm_datapath
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [fp8, bf16, fp16, mxfp4]
 regimes: [compute-bound, feed-bound]
@@ -261,11 +261,11 @@ There are two ways to get an operand into MFMA order without a runtime shuffle:
 - **Preshuffle it on the host.** With B preshuffled to `[N/16, K/kpack, 4, 16, kpack_bytes]`, each
   `buffer_load_dwordx4` lands in MFMA register layout and B skips LDS (FlyDSL's `preshuffle_gemm` takes this
   layout: `../flydsl/guides.md` § gemm-optimization (FlyDSL's §12)).
-  The cost is a host-side pass, paid once for weights that do not change, as in inference.
+  The cost is a host-side pass, paid once for weights that do not change between calls.
 - **Permute rows in the fill.** Changing only which global row each G2S load fetches reorders a lane's
   n-fragments with no runtime cost, and the LDS image, swizzle and reads stay the same
   (`compute_global_swizzle_pair`, GH:256-267; epilogue use in `epilogue.md` §3). Turbo's dense
-  paths use this and need no offline step, which matters in training, where weights change every step.
+  paths use this and need no offline step, which matters where weights change between calls.
 
 - **Keep every operand row on a 128 B line.** Take the row stride from the tensor, not from K, so a
   caller can pad rows (`row_bytes`, FP4). For MXFP4, `K % 256 == 0` is what puts the row stride `K/2` on

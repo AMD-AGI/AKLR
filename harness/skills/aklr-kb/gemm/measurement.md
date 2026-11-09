@@ -2,7 +2,7 @@
 title: "GEMM — measuring a change so the number means something"
 kind: method
 lever: gemm_measurement
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [fp8, bf16, mxfp4, mxfp8]
 regimes: [kernel-A/B, autotune, campaign]

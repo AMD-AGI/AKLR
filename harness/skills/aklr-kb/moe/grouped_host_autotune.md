@@ -2,10 +2,10 @@
 title: "Grouped GEMM — host path, launch modes and autotune"
 kind: method
 lever: grouped_host_autotune
-ops: [grouped_gemm]
+ops: [grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp8, mxfp4]
-regimes: [forward, dgrad, wgrad, skew, cuda-graph, autotune, beta-accumulate]
+regimes: ["M split per group", variable-k, skew, cuda-graph, autotune, beta-accumulate]
 flydsl: 0.3.2
 sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_fp8_kernel.py
@@ -59,11 +59,12 @@ sources:
 In FlyDSL: `../flydsl/moe.md` § grouped_host_autotune §2.
 
 ## 3. Cache compiled objects and launch closures, keyed on static shape
-- **Never key on tensor identity** (`../gemm/autotune.md` §5). In grouped training every call brings new
-  activations, gradients and `group_offs`, so an identity-keyed cache of quantized activations or derived offsets
-  hits ~0 in training and returns stale data when an id is reused. A weight-side cache keyed on
-  `(id(weight), weight._version)` holds within one step: the forward fills it, the backward reuses it, the
-  optimizer bumps the version. Its gain is capped at quantization time over step time.
+- **Never key on tensor identity** (`../gemm/autotune.md` §5). Every grouped call brings new activations and
+  `group_offs` (and gradients, where it computes one), so an identity-keyed cache of quantized activations or
+  derived offsets hits ~0 and returns stale data when an id is reused. A weight-side cache keyed on
+  `(id(weight), weight._version)` holds until the weight is updated: where an optimizer step updates it, the
+  forward fills it, the backward reuses it, the optimizer bumps the version. Its gain is capped at quantization
+  time over the time between updates.
 - **Key the race on the static shape plus, at most, a coarse regime derived from M; never on `M_total` itself.**
   The token count is a run-time argument (`m_total`, an int32). The static part is op, N, K, G, dtypes, beta and
   strides/padding. Add an M-derived regime only where M changes which body is right, as a rule rather than a
@@ -73,8 +74,9 @@ In FlyDSL: `../flydsl/moe.md` § grouped_host_autotune §2.
   `(op, N, K, G, out dtype, operand dtypes, regime, persistent mode, capped CU count, beta, n_stride)`, the CU
   count entering only when the grid is capped (`num_cu if capped else 0`, FP8:2674-2687). Its wgrad key is "never
   per m_total" (FP8:4759); MX8's NT key has no `M_pad` (MX8:933).
-- **Why it matters.** `M_total` changes every step in MoE training; a compile cache keyed on it compiles per step and
-  keeps growing. *(field, E8)* One quantizer cache keyed on the total token count ran the host out of memory in a
+- **Why it matters.** `M_total` changes from call to call wherever the token count does (every step in MoE
+  training, for one); a compile cache keyed on it compiles per distinct count and keeps growing. *(field, E8)* One
+  quantizer cache keyed on the total token count ran the host out of memory in a
   sweep of token counts. Bound every compile cache anyway: MX4 clears its caches past 32 entries
   (`_bound_caches`, `_GMXFP4_CACHE_CAP`, MX4:1153-1163).
 - **A host plan cache keyed on `M_total` grows the same way.** A per-call plan (output shape, workspace,

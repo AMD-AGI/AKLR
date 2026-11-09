@@ -46,7 +46,7 @@ None of the four splits K across workgroups.
 
 ## Counter-signals
 
-- **n1536_k128 at m ≤ 112 sits on the threshold.** Its 13 decode Points read 1.023–1.038 in the latest local run,
+- **n1536_k128 at m ≤ 112 sits on the threshold.** Its 13 Points there read 1.023–1.038 in the latest local run,
   5 of them below 1.03 *(field, E1)*; the same code read 1.010–1.038 in the commit's run and 1.021–1.123 in a third
   run's two arms *(field, E2)*. Which of them CI serves will depend on its run. These Points run a 16-column,
   one-wave tile on 96 workgroups for 256 CUs (code read).

@@ -5,16 +5,17 @@ lever: attn_workflow
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16]
-regimes: [prefill, backward, causal, sliding-window, gqa]
+regimes: [many query rows, dQ dK dV, causal, sliding-window, gqa]
 flydsl: 0.3.2
 ---
 
 # Working on an attention kernel
 
-> The order in which to look at a flash-attention forward or backward kernel (fwd, dq, dkdv, fused dq+dkdv,
-> and their helper kernels). It does not say which configuration wins. Numbers marked `*(field, E<n>)*` are
-> measured values; their conditions are listed under Evidence at the end. Use them for direction and order of
-> magnitude, not as targets. The round discipline — one change per
+> The order in which to look at a flash-attention kernel: the one that computes O and the LSE (fwd), the gradient
+> kernels (dq, dkdv, fused dq+dkdv), and their helper kernels. With few query rows per head the grid comes from
+> splitting the KV range: `split_kv.md`. It does not say which configuration wins. Numbers marked
+> `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end. Use them for
+> direction and order of magnitude, not as targets. The round discipline — one change per
 > round, hypothesis before build, escalation after rollbacks — is in `../gemm/workflow.md` and
 > applies unchanged.
 
@@ -32,7 +33,7 @@ layer you have not audited.
 | VGPR budget, occupancy steps, spills, AGPR | `registers_occupancy.md` |
 | `sched_group_barrier`, fences, `s_setprio`, waits, barriers | `schedule_sync.md` |
 | dQ/dK/dV accumulation, determinism, workspaces, fusion, masked q-loops | `gradients.md` |
-| Decode, split-KV, the combine | `split_kv.md` |
+| Few query rows per head against a long KV: split KV, the combine, gathers from a sparse or paged KV | `split_kv.md` |
 | Rulers, noise floors, FLOP accounting, host-bound shapes | `measurement.md` |
 | Gates, spike inputs, mask conventions | `correctness.md` |
 | The kernel is wrong, not slow | `../flydsl/debug-flydsl-kernel.md` |
@@ -132,7 +133,8 @@ changed.
   compiler spills (`registers_occupancy.md` §2). *(field, E13)* One more wave
   per SIMD made a backward 32% slower and two more 5× slower; *(field, E14)* forcing AGPR splits took a forward's
   spills from 31 to 52–77.
-- **Dual-wave, 8-wave, warp specialisation or stagger in a backward that already runs two workgroups per CU.** Those
+- **Dual-wave, 8-wave, warp specialisation or stagger in a kernel that already runs two workgroups per CU**
+  (measured on dK/dV bodies). Those
   co-resident workgroups already overlap with no barrier; the rebuilt version adds a barrier tax. Its best stagger,
   which raced (NaN, not deterministic), reached 1029 TF/s against a 1116 TF/s baseline *(field, E15)*.
 - **Pushing exp into MFMA shadows with two co-resident workgroups per CU**: 0.00% and noise-level results; raising

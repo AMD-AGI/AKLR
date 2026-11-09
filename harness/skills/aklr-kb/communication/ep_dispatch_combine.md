@@ -1,9 +1,9 @@
 ---
-title: "EP against TP for a MoE at decode: what EP's dispatch costs, and what removed part of it"
+title: "EP against TP for a MoE layer at a few tokens per GPU: what EP's dispatch costs, and what removed part of it"
 kind: topic
 ops: [moe]
 dtypes: [mxfp4, fp8]
-regimes: [decode]
+regimes: ["few tokens per GPU", "tokens per GPU 1-96"]
 gens: [gfx950]
 flydsl: 0.3.2
 sources:
@@ -12,11 +12,12 @@ sources:
   - xiaobochen-amd/aiter@40ae5ad7f (branch kyle/megamoe-ep8-campaign-20260910)
 ---
 
-# EP dispatch and combine at decode
+# EP dispatch and combine at a few tokens per GPU
 
 ## Route here when
 
-- Choosing expert parallelism (EP) or tensor parallelism (TP) for a MoE layer at decode batch sizes.
+- Choosing expert parallelism (EP) or tensor parallelism (TP) for a MoE layer at a few tokens per GPU (decode
+  batch sizes, for instance).
 - An EP MoE layer is slower than its GEMMs explain.
 - Writing or changing a dispatch between GPUs. `MegaMoEV2`'s stage 1 runs producers and consumers in one launch
   (workgroups wait on flags that other workgroups of the launch write), which an AKLR kernel may not do
@@ -39,7 +40,8 @@ the MoE GEMMs in `../moe/INDEX.md`.
 - With 32 prompts of fixed length, concurrency 14 runs as about 14 + 14 + 4 requests, so E1's and E2's gaps mix 14
   requests in flight with a tail of 4; 8 and 16 divide the 32 evenly. That third wave is likely the issue's "cliff" at
   14 between 8 and 16 (estimated). TP8 was not measured at 8 or 16.
-- Not measured: other concurrencies, prefill, DP attention, EP across nodes, and dispatch kernels other than
+- Not measured: other concurrencies, calls of many tokens per GPU (a long prompt's prefill), DP attention, EP
+  across nodes, and dispatch kernels other than
   `MegaMoEV2`'s.
 
 ## 1. What EP costs against TP
@@ -113,7 +115,8 @@ the fork's `MegaMoEV2.set_weights`, which the baseline lacks.
     It allowed fixed slots above 255 reserved tokens at eight GPUs and up to 64 experts per GPU, while experts × GPUs
     × tokens per GPU × row bytes ≤ 512 MiB, a bound that trades buffer size against handshakes (S17).
   - Cost: fixed slots reserve room for the worst case on every destination, twice with the parity halves below
-    (for GLM-5.2's decode about 384 MiB per half, estimated); at prefill token counts that does not fit.
+    (for GLM-5.2's decode about 384 MiB per half, estimated); at token counts far above the 256 reserved per GPU
+    there (a long prompt's prefill) it does not fit.
 - **A barrier between the eight GPUs opens every launch.** At each stage-1 launch one owner workgroup posts its
   epoch to every peer and spins until theirs arrive, and the launch's other workgroups wait at its gate (S3), so that
   the launch does not overwrite rows a peer is still reading from the previous one. Two parity halves remove the

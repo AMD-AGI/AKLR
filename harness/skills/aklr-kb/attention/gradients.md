@@ -1,17 +1,17 @@
 ---
-title: "Attention backward — dQ/dK/dV accumulation, determinism, workspace, masking and fusion"
+title: "Attention gradients — dQ/dK/dV accumulation, determinism, workspace, masking and fusion"
 kind: topic
 lever: attn_gradients
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16]
-regimes: [backward, causal, sliding-window, gqa]
+regimes: [dQ dK dV, split-k workspace, causal, sliding-window, gqa]
 flydsl: 0.3.2
 ---
 
-# The attention backward pass
+# Attention gradients: dQ, dK and dV
 
-> This card is what measured backward kernels taught: a KV-outer dK/dV body that emits dQ as split-K partials,
+> This card is what measured dQ/dK/dV kernels taught: a KV-outer dK/dV body that emits dQ as split-K partials,
 > a Q-outer dq kernel, a delta (`dO·O`) kernel, and the reduce that folds the partials.
 >
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end.
@@ -19,9 +19,9 @@ flydsl: 0.3.2
 
 ## Route here when
 - You decide how dQ, dK and dV are accumulated, and whether the result must be bit-reproducible.
-- The dQ workspace, its reduce, or an atomic alternative dominates the backward time.
+- The dQ workspace, its reduce, or an atomic alternative dominates the time of the dQ/dK/dV kernels.
 - You consider fusing dq with dK/dV, fusing the delta kernel, or splitting a kernel.
-- A causal or windowed backward is slower than its FLOPs suggest.
+- A causal or windowed dQ/dK/dV kernel is slower than its FLOPs suggest.
 
 **Somewhere else if:** grid order, XCD placement, GQA merging → `grid_dispatch.md`;
 occupancy and spills → `registers_occupancy.md`; gates → `correctness.md`.
@@ -123,7 +123,7 @@ Let `A` be the accumulator floats one workgroup holds.
   and the sum taken in ascending band order regardless of who arrives last.
 - `s_waitcnt` covers only the issuing wave. After a multi-wave store phase, the order is `s_waitcnt(0)` in
   every wave → workgroup barrier → the one atomic announcement.
-- With few rows per launch (decode) the same shape also serializes the reduce; see
+- With few query rows per launch (as in decode) the same shape also serializes the reduce; see
   `split_kv.md` §3.
 
 ## 7. Fusion

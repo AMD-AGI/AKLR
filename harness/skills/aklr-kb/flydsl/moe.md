@@ -1,9 +1,9 @@
 ---
 title: "MoE in FlyDSL: the FlyDSL side of the moe/ cards"
 kind: topic
-ops: [moe]
+ops: [moe, fused_moe, grouped_gemm]
 dtypes: [mxfp4, mxfp8, fp8, bf16]
-regimes: [decode, training]
+regimes: [sorted-token-ids, "few tokens per expert", group-offsets, variable-k]
 gens: [gfx950]
 flydsl: 0.3.2
 sources:
@@ -25,9 +25,9 @@ sources:
 
 How to write in FlyDSL what the cards of `../moe/` describe: which FlyDSL calls to use, what FlyDSL's compiler and
 JIT do with them, and how FlyDSL's own MoE kernels, aiter's FlyDSL MoE kernels and Primus-Turbo's FlyDSL grouped
-GEMMs behave when you call or tune them. Each section is named after the card section it serves (`grouped_variable_k §2`
-is § 2 of the moe package's wgrad card, `../moe/grouped_variable_k.md`) and holds only the FlyDSL part: read the card
-for the mechanism and the numbers.
+GEMMs behave when you call or tune them. Each section is named after the card section it serves
+(`grouped_variable_k §2` is § 2 of the moe package's variable-K card, `../moe/grouped_variable_k.md`) and holds only
+the FlyDSL part: read the card for the mechanism and the numbers.
 
 Names used on this page:
 - "FP8", "BF16", "MX8" and "MX4" are Primus-Turbo's
@@ -50,7 +50,7 @@ Names used on this page:
 ## INDEX Expert GEMM (grouped GEMM)
 
 - Turbo pins a newer FlyDSL, and every API named on this page and in the cards exists in v0.3.2.
-- FlyDSL v0.3.2 ships no variable-K grouped GEMM and no wgrad.
+- FlyDSL v0.3.2 ships no grouped GEMM with K varying per group, so no weight-gradient kernel.
 - FlyDSL facts are stated for v0.3.2.
 
 ## INDEX Kernel map
@@ -84,7 +84,7 @@ What aiter's `MegaMoEV2` dispatch costs against TP: `../communication/ep_dispatc
 The baseline aiter carries diverged copies of `mxfp_moe` and `moe_2stage_a16wmix`, none of `moe_gemm_2stage`,
 and MoE kernels FlyDSL lacks; the mapping is in § grouped_sorted_tokens §1 below.
 
-## decode How to write it
+## few_tokens How to write it
 
 Steps c and f of the head (`../moe/few_tokens.md` § How to write it), in `g1_fold.py` of the schema file
 `4fbd9d02b4c053c7.json`:
@@ -151,7 +151,7 @@ epilogue (`_SUPPORTED` in both host files).
   very large expert count (`moe_2stage_a16wmix/gemm2.py:39-41`; `Numeric.__bool__`,
   `python/flydsl/expr/numeric.py:502-505`).
 
-## grouped_sorted_tokens §3 Grid shape at decode sizes
+## grouped_sorted_tokens §3 Grid shape when the tokens fill only a few M-blocks
 
 - **aiter's v2 stage 2: stage C in fp32.** With `g2_kstatic` the bf16 default leaves 2 A slots and a barrier per K tile
   (`mxmoe_dispatcher.py:187–201`, `mxmoe_gemm_v2.py:734`); *(field, E1)* `g2_bf16_lds=False` won every pair, +0.37%.
@@ -180,9 +180,10 @@ epilogue (`_SUPPORTED` in both host files).
 
 ## grouped_workflow §2 Step 0 — reference kernels and the body the benchmark reaches
 
-- **FlyDSL v0.3.2 ships no training grouped GEMM.** Its grouped kernels are inference MoE GEMMs over sorted
-  token ids (FlyDSL's `kernels/moe/`, `../moe/grouped_sorted_tokens.md`). The training references are
-  Primus-Turbo's FlyDSL grouped kernels (§ INDEX Kernel map above). Turbo pins a newer FlyDSL: copy the technique,
+- **FlyDSL v0.3.2's grouped kernels are all MoE GEMMs over sorted token ids** (FlyDSL's `kernels/moe/`,
+  `../moe/grouped_sorted_tokens.md`): it ships no NN and no variable-K grouped GEMM. Their references, and the
+  kernels most of the other cards measured, are Primus-Turbo's FlyDSL grouped kernels (§ INDEX Kernel map above).
+  Turbo pins a newer FlyDSL: copy the technique,
   and check every API you use against v0.3.2.
 
 ## grouped_measurement §4 Timing hygiene
@@ -249,7 +250,7 @@ epilogue (`_SUPPORTED` in both host files).
 - In FlyDSL the GEMM's host launcher is its `@flyc.jit` stub: launch the scale repack from it, so the repack costs
   no extra Python dispatch (MX8:1101-1120).
 
-## grouped_lowprec §5 Quantization: a large share of the forward, a small lever
+## grouped_lowprec §5 Quantization: a large share of the time, a small lever
 
 - Turbo's grouped MXFP4 quantizer launches its metadata kernel (`pre`) and the quantizer back to back from one
   `@flyc.jit` stub (`primus_turbo/flydsl/quantization/mxfp4_grouped_quant.py:575-597`). Its grouped MXFP8 quantizer,

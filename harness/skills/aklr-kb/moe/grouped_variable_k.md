@@ -1,11 +1,11 @@
 ---
-title: "Grouped GEMM — variable-K wgrad"
+title: "Grouped GEMM with K varying per group: run-time K loops, split-K over deep groups, beta=1 accumulation"
 kind: topic
 lever: grouped_variable_k
 ops: [grouped_gemm]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp8, mxfp4]
-regimes: [wgrad, variable-k, skew, split-k, beta-accumulate]
+regimes: ["contraction over tokens", variable-k, skew, split-k, beta-accumulate]
 flydsl: 0.3.2
 sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_fp8_kernel.py
@@ -14,10 +14,11 @@ sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_mxfp4_kernel.py
 ---
 
-# Variable-K wgrad
+# Grouped GEMM with K varying per group
 
-> The weight gradient of a grouped GEMM is `out[g] = A_gᵀ · B_g`, where `A_g` and `B_g` are the rows
-> `[offs[g], offs[g+1])` of `A [M_total, OUT_M]` and `B [M_total, OUT_N]`. Every group has the same number of
+> A grouped GEMM whose contraction runs over each group's own rows: `out[g] = A_gᵀ · B_g`, where `A_g` and `B_g`
+> are the rows `[offs[g], offs[g+1])` of `A [M_total, OUT_M]` and `B [M_total, OUT_N]` (the weight gradient of a
+> grouped GEMM, wgrad, has this form). Every group has the same number of
 > output tiles; the contraction length of a tile is its group's token count. This card covers what that changes:
 > the loop, the K tail, MX scale timing, dispatch order, short and deep groups, split-K, beta=1 accumulation and
 > the output layout. "FP8", "BF16", "MX8", "MX4" are Primus-Turbo's `grouped_gemm_{fp8,bf16,mxfp8,mxfp4}_kernel.py`
@@ -26,18 +27,21 @@ sources:
 > them for direction and order of magnitude, not as targets.
 
 ## Route here when
-- wgrad is the slowest pass of a grouped backward, or the only one that degrades under token skew.
+- A grouped GEMM whose K varies per group (a weight gradient) is the slowest of a set, or the only one that
+  degrades under token skew.
 - You are writing a K loop whose trip count is a run-time per-group value.
 - One deep group, many tiny groups or empty groups dominate a skewed launch.
-- wgrad accumulates into an existing gradient buffer (beta=1), or its output layout differs from its operands'.
+- The output accumulates into an existing buffer (beta=1, as a gradient accumulation does), or its output layout
+  differs from its operands'.
 
-**Somewhere else if:** XCD order and longest-first across all passes → `grouped_scheduling.md`; tile and
+**Somewhere else if:** XCD order and longest-first across all layouts → `grouped_scheduling.md`; tile and
 boundary bodies → `grouped_tile_pricing.md`; scale packing and quantization → `grouped_lowprec.md`;
 race and cache mechanics → `grouped_host_autotune.md`; gates → `grouped_correctness.md`.
 
-## 1. Why the backward's gap sits in wgrad
-- Forward and dgrad parallelize over M: total M is fixed, so skew moves tile counts, not the cost of a tile.
-  wgrad is the one pass whose per-tile cost follows the token distribution. *(field, E1)* With forward and dgrad
+## 1. Why the gap sits where K varies per group
+- M-split layouts (MoE expert GEMMs, forward, dgrad) parallelize over M: total M is fixed, so skew moves tile
+  counts, not the cost of a tile. A per-group contraction (wgrad) is the one layout whose per-tile cost follows
+  the token distribution. *(field, E1)* With forward and dgrad
   byte-identical between two builds and robust to skew (skewed/balanced 0.92–0.99), a tensorwise fp8 wgrad ran a
   one-hot distribution at 0.34 (down projection; 0.66 on gate_up) of its balanced speed.
 - *(field, E2)* On MXFP8 at 32768 total tokens, wgrad took 1.16–1.35× the time of the dense wgrad with the same FLOPs
@@ -90,10 +94,10 @@ In FlyDSL: `../flydsl/moe.md` § grouped_variable_k §2.
 
 In FlyDSL: `../flydsl/moe.md` § grouped_variable_k §4.
 
-## 5. Dispatch order: wgrad tiles are not equivalent
-In NT every tile of a launch costs the same and skew changes how many tiles a group has. In wgrad every group has
-the same tiles and skew changes what each costs. The mechanics of XCD orders are in
-`grouped_scheduling.md`; what follows is specific to wgrad.
+## 5. Dispatch order: variable-K tiles are not equivalent
+In NT every tile of a launch costs the same and skew changes how many tiles a group has. With K varying per group
+every group has the same tiles and skew changes what each costs. The mechanics of XCD orders are in
+`grouped_scheduling.md`; what follows is specific to K varying per group.
 - **Never slice the tile list contiguously across XCDs.** That hands whole groups to one XCD
   (`grouped_scheduling.md` §1).
 - **Keep the hardware round-robin (`bid % 8`, `num_xcd = 1`)**, which spreads every group evenly over the XCDs,
@@ -107,7 +111,7 @@ the same tiles and skew changes what each costs. The mechanics of XCD orders are
 - **Group-interleaved band order** (band b of every group, then band b+1) is a different mechanism from the XCD
   band-cyclic remap. It helped under skew at the hardware XCD order (`num_xcd = 1`) and caused the skew collapse
   on top of a contiguous XCD remap (`grouped_scheduling.md` §3).
-- **Do not copy NT dispatch parameters or defaults to wgrad** (`grouped_scheduling.md` §1). Each path gets
+- **Do not copy NT dispatch parameters or defaults to the variable-K path** (`grouped_scheduling.md` §1). Each path gets
   its own candidates and constants.
 
 ## 6. Short contractions turn store-bound
@@ -137,7 +141,7 @@ the same tiles and skew changes what each costs. The mechanics of XCD orders are
   for every length and keeps the masked kernel as the fallback for 64-bit traversal and for a
   candidate that fails to build.
 
-## 8. Four waves beat eight on per-tensor fp8 wgrad
+## 8. Four waves beat eight on per-tensor fp8 with K varying per group
 - *(field, E13)* Tensorwise fp8 grouped, 28 points (4 token counts × 7 shapes): the 4-wave whole loop (256 threads, one
   wave per SIMD, 256×256 tile, AGPR accumulators) won 28/28 on wgrad (+3–17%), 6/28 on dgrad and 1/28 on the
   forward NT. At 1024 tokens per group it still beat the exact-trip 8-wave body on 5 of 7 shapes and the masked
@@ -196,7 +200,7 @@ the in-launch split-K reduce of `../gemm/grid_pricing.md` §2 and of
 
 In FlyDSL: `../flydsl/moe.md` § grouped_variable_k §9.
 
-## 10. beta = 1: accumulating into the gradient buffer
+## 10. beta = 1: accumulating into an existing output
 - **The read-back is a physical cost and scales with the accumulator dtype.** *(field, E24)* Tensorwise 4-wave wgrad,
   one square tight-C shape, time beta=0 → beta=1: fp32 0.842 → 1.020 ms (21% more time), bf16 0.854 → 0.933 ms
   (9% more), fp16 0.847 → 0.907 ms (7% more). An fp32 accumulator is read at twice the bytes of a 16-bit one.

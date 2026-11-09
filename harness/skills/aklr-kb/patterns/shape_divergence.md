@@ -3,7 +3,7 @@ title: "Shape divergence: one kernel or configuration wins on some shapes and lo
 kind: pattern
 signals: ["per-shape deltas of opposite sign under one change", "geometric mean flat while single cells move",
   "race winner flips between cleared-cache re-runs", "a tuned row serving every M that pads to it"]
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe, attention]
 gens: [gfx950]
 flydsl: 0.3.2
 basis: source-semantics

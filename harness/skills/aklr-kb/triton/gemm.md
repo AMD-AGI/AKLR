@@ -1,15 +1,15 @@
 ---
-title: "GEMM in Triton and Gluon on gfx950: AKLR's fp8 block-scaled GEMMs and bf16 decode GEMMs"
+title: "GEMM in Triton and Gluon on gfx950: AKLR's fp8 block-scaled GEMMs (M 1-8193) and bf16 GEMMs at M ≤ 64"
 kind: topic
 ops: [gemm]
 dtypes: [fp8, bf16]
-regimes: [decode, prefill]
+regimes: ["M 1-64", "M 128-8193", tiny-M K-group folding, ragged-M, split-k]
 gens: [gfx950]
 triton: 3.8.0
 ---
 # GEMM in Triton and Gluon (gfx950)
 The Triton side of [`../gemm/`](../gemm/INDEX.md): how AKLR's 24 Gluon fp8 block-scaled (a8w8 blockwise) GEMMs and
-its two plain-Triton bf16 decode GEMMs are cut by M, how their K loops feed the matrix core, and what was measured
+its two plain-Triton bf16 GEMMs for M ≤ 64 are cut by M, how their K loops feed the matrix core, and what was measured
 on them. The `../gemm/` cards cover the related mechanisms. The CI speedups quoted are the values stored at AKLR
 43e112e; later CI runs on main rewrote most of them (n7168 m = 1: 1.664 then, 1.728 since d908d01) *(field, E1)*.
 ## Route here when
@@ -18,7 +18,7 @@ on them. The `../gemm/` cards cover the related mechanisms. The CI speedups quot
 - You need a tile and grid for an M or a new (N, K), tiny-M K-group folding, an async direct-to-LDS K loop, an LDS
   layout for fp8 operands, a tile order, ragged M, the epilogue, or split-K under a `bitwise` contract.
 - You want the knobs a measurement backs (§11).
-Elsewhere: the bf16 decode GEMM, `gemm/small_m_gemm.md`; Gluon API facts, `gluon/memory.md`, `gluon/layouts.md`,
+Elsewhere: the bf16 GEMM at M ≤ 64, `gemm/small_m_gemm.md`; Gluon API facts, `gluon/memory.md`, `gluon/layouts.md`,
 `gluon/mfma.md`; A/B method and launch options, `tuning.md`; reading the compiled kernel, `debugging.md` §1–§3;
 rounding, `numerics.md`; files, entry and validation, `authoring.md`; loop designs and throughput arithmetic,
 `../gemm/mainloop.md` §1, §9; MoE expert GEMMs, `moe.md`; every family on main, `kernels/kernel_library.md`.
@@ -378,7 +378,7 @@ dispatched fastest, measured on the same 10 grids *(field, E22)*):
 - **The locality mechanism is unknown.** An eight-reader probe favored congruent ids by 1.76–2.17× (3 runs)
   *(field, E22)*, but real-kernel timing and CPU maps do not isolate L2 as the cause. Prove each launched grid's
   permutation (`gemm/small_m_gemm.md` §3).
-## 9. The bf16 decode GEMMs and split-K under a bitwise contract
+## 9. The bf16 GEMMs at M ≤ 64 and split-K under a bitwise contract
 The two plain-Triton files, against aiter's tuned `gemm_a16w16` (S1), give a workgroup one N tile across all rows of
 `a` (S20, S22): over all of K at n6144 (192 workgroups) and at n2624 m ≤ 8 (164), over a sixth of K at n2624 m = 64 (41
 tiles × 6 splits = 246, then a reduce launch; counts traced). They read the weight once with `.cg`, remap workgroups

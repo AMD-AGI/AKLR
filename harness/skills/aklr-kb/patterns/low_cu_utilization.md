@@ -3,7 +3,7 @@ title: "Low CU utilization: too few workgroups for 256 CUs, or a mostly empty la
 kind: pattern
 signals: ["tiles < NCU (256 on gfx950)", "last_round < slots in the dispatch-round arithmetic",
   "time flat across M while the launched grid is unchanged", "launched grid read from a kernel trace"]
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe, attention]
 gens: [gfx950]
 flydsl: 0.3.2
 basis: source-semantics
@@ -51,9 +51,9 @@ basis: source-semantics
 - Idle CUs load later K-tiles of B into L2 — `gemm/small_m.md` §6 — when the grid leaves CUs idle;
   race the first prefetched tile per M (S33).
 - Other kernel families: attention's XCD-major mapping and live `(batch, kv-head)` slices per XCD —
-  `attention/grid_dispatch.md` §2, §7; decode grid size and split rules —
+  `attention/grid_dispatch.md` §2, §7; split-KV grid size and split rules —
   `attention/split_kv.md` §4–5; grouped GEMM skew, longest-first and persistent grids —
-  `moe/grouped_scheduling.md` §1, §5–6; MoE grids at decode sizes —
+  `moe/grouped_scheduling.md` §1, §5–6; MoE grids that fill only a few M-blocks —
   `moe/grouped_sorted_tokens.md` §3.
 
 ## Evidence

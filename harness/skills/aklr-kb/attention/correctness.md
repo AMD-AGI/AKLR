@@ -5,7 +5,7 @@ lever: attn_correctness
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16]
-regimes: [prefill, backward, causal, sliding-window, rectangular]
+regimes: [many query rows, dQ dK dV, causal, sliding-window, rectangular]
 flydsl: 0.3.2
 ---
 

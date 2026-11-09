@@ -2,10 +2,10 @@
 title: "Attention — register budget, occupancy steps and MFMA–VALU overlap"
 kind: topic
 lever: attn_registers_occupancy
-ops: [attention]
+ops: [attention, mla]
 gens: [gfx950]
 dtypes: [bf16]
-regimes: [prefill, backward, causal, gqa]
+regimes: [many query rows, few query rows, dQ dK dV, occupancy-1, occupancy-2, causal, gqa]
 flydsl: 0.3.2
 sources:
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_gfx950.py:427
@@ -128,7 +128,8 @@ What the rules below rest on, measured with HIP inline-asm microbenchmarks (`mfm
 it twice as fast as a multiply and gains nothing over other VALU work from MFMA overlap.
 - Read coexec / MFMA busy and the stall pool as in `attribution.md` §2–§3.
 
-**Two co-resident workgroups per CU (backward): the overlap is already free.** Two independent workgroups sharing each
+**Two co-resident workgroups per CU (as in the measured dK/dV bodies): the overlap is already free.** Two
+independent workgroups sharing each
 SIMD fill each other's barrier and drain bubbles with no barrier between them. In-workgroup overlap trades that for a
 barrier tax. *(field, E25)* 8-wave single workgroup: MFMA utilization 53 → 40%, −11%; adding a phase stagger recovered
 only to 1029, in a build with a WAR race (NaN output), against the 4-wave baseline's 1116; *(field, E26)*
@@ -141,7 +142,7 @@ interleave of the pack/dS VALU 0.00%; *(field, E29)* counted `sched_group_barrie
 +0.04%, +0.05%, all inside noise. Only removing instructions moves wall there (`../gemm/attribution.md`
 §8).
 
-**One workgroup per CU (forward) is the only regime where in-workgroup dual-wave scheduling can pay.** FlyDSL v0.3.2's
+**One workgroup per CU is the only regime where in-workgroup dual-wave scheduling can pay.** FlyDSL v0.3.2's
 gfx950 forward is the reference: 8 waves, split into two groups by `wave_id // 4`; group B issues one extra
 `s_barrier` at entry and group A one at exit, so the groups run one cluster apart, one loading while the other
 computes. Each loop iteration is 8 clusters separated by `sched_barrier(0); s_barrier; sched_barrier(0)`, alternating

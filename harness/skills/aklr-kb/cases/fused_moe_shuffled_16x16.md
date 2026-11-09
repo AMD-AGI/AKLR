@@ -102,7 +102,7 @@ What the four kernels share:
   workgroups, so the expert is read straight from `topk_ids`; the token row is quantized inside each stage-1
   workgroup; stage 1 splits K over waves or workgroups and adds the parts in a fixed order; stage 2 runs one wave per
   route and adds the 9 weighted rows of a token in LDS in route order. Every row of the 16-row MFMA tile is the same
-  token and only row 0 is kept. This is the decode shape of `../moe/grouped_sorted_tokens.md` §3
+  token and only row 0 is kept. This is the few-M-block shape of `../moe/grouped_sorted_tokens.md` §3
   (the N blocks are the parallelism) taken to one route per workgroup.
 - **Configuration per m from constants in the source**, compiled on a Point's first call.
 

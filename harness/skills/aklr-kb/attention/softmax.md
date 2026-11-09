@@ -2,10 +2,10 @@
 title: "Attention — exp2, scale and shift, row reductions and the online-softmax rescale"
 kind: topic
 lever: attn_softmax
-ops: [attention]
+ops: [attention, mla]
 gens: [gfx950]
 dtypes: [bf16, fp8]
-regimes: [prefill, decode, backward, causal]
+regimes: [many query rows, few query rows, dQ dK dV, causal]
 flydsl: 0.3.2
 sources:
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:432
@@ -30,7 +30,7 @@ sources:
 - `v_exp_f32` is the largest VALU class, or `v_ldexp_f32` / an `__ocml_exp2_f32` call sits next to it.
 - You are deciding where the softmax scale, the max shift or a clamp is applied.
 - A fixed reference max, a skipped or lazy rescale, or a cheaper exp is proposed.
-- A backward output is all NaN, or an accuracy gate fails for one exp mode only.
+- A gradient output (dQ, dK or dV) is all NaN, or an accuracy gate fails for one exp mode only.
 
 ## 1. What one exp costs on gfx950
 - *(field, E1)* On a HIP inline-asm microbenchmark, `v_exp_f32` (also `v_log_f32`, `v_rcp_f32`, `v_sqrt_f32`) takes
@@ -205,7 +205,7 @@ In FlyDSL: `../flydsl/attention.md` § softmax §6.3.
   reduce exactly; the reference still updates online. *(field, E35)* NaN-free to spike 96 and bit-identical to the
   kernel without the skip.
 
-### 6.5 fp8 P in decode: fold the rescale into the P·V MFMA
+### 6.5 fp8 P with a fresh accumulator per tile: fold the rescale into the P·V MFMA
 - If each tile's P·V goes into a fresh accumulator merged as `O·alpha + tile·beta`, exponentiate the tile
   against `max(m_running, m_tile)` (beta then sits inside P and its sum) and pass `O·alpha` as the P·V MFMA's C.
   *(field, E36)* On a sparse-MLA decode producer: 16 `v_pk_mul_f32` + 16 `v_pk_add_f32` fewer per tile and wave
