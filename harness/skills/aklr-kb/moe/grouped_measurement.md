@@ -46,7 +46,7 @@ sources:
   - empty groups (`grouped_correctness.md` §2);
   - the deployment's measured histogram.
 - **The extreme cells are real.** *(field, E1)* A one-hot bench cell reproduced the slowest wgrad call of a training
-  trace within 1.4%.
+  trace within 1%.
 - Report each pass's skew-to-balanced ratio and every cell, not only the geometric mean
   (`../gemm/measurement.md` §4). The heavy-skew cells are usually the minimum, and they are where a
   skew lever is accepted or rejected.
@@ -69,17 +69,16 @@ the deployment, not from a previous bench:
 - **Copy the call site's arguments, not only its shapes.** *(field, E2)* A bench passed a CU count and ran the
   persistent body; the deployment's call site passed none and ran the non-persistent one. Over a long series
   of changes, every change the bench scored as a win was a loss on the deployed body; with two smaller causes (a
-  bench bucket the deployment does not reach, and communication), the bench's 5.2% time saving was 0.84% in
+  bench bucket the deployment does not reach, and communication), the bench's 4.3% time saving was 0.84% in
   training.
-- **Per call, not per step** (`../gemm/measurement.md` §7). *(field, E3)* A step ran four
-  micro-batches, so each call saw a quarter of the step's tokens per group; at that size the wide projection
-  reached 23% (forward) and 36% (wgrad) less throughput than at the aggregate size. Confirm the size by
+- **Per call, not per step** (`../gemm/measurement.md` §7). A step that runs several micro-batches gives
+  each call only one micro-batch's tokens per group; bench at that size. Confirm the size by
   comparing each kernel's launched grid in a trace with the bench's: the grid fields match exactly when the size
   is right, which is a harder check than durations.
 - **Pad the contraction axis the way the deployment does** (`grouped_lowprec.md` §6: padding only the
   output axis left a forward on its misaligned slow path). Count useful FLOPs from the unpadded sizes.
-- **Accumulator dtype.** *(field, E4)* A wgrad timed with an fp32 accumulator where the deployment used bf16 took
-  8–14% more time on one shape (beta=0 and beta=1). The beta=1 read-back itself is priced in
+- **Accumulator dtype.** Time a wgrad with the accumulator dtype the deployment uses, not fp32 by default.
+  The beta=1 read-back itself is priced in
   `grouped_variable_k.md` §10.
 - **Graph replay hides host enqueue, not kernel boundaries.** *(field, E5)* On a MoE path at 64 and 128 tokens per
   call, one extra small kernel on the dependency chain still cost a full launch on every call under graph replay
@@ -101,7 +100,7 @@ the deployment, not from a previous bench:
   so a per-name aggregate merges two GEMMs with different N. Split the calls by per-call duration clusters, compute
   each GEMM's rate, and check that the parts sum back to the aggregate.
 - **A running model's trace carries contention.** *(field, E7)* The median of one profiled training step read
-  5–9% low from overlap with other work, and *(field, E8)* the long-tail calls were the ones overlapping collectives. Compare with a bench using
+  4–8% low from overlap with other work, and *(field, E8)* the long-tail calls were the ones overlapping collectives. Compare with a bench using
   the minimum or the calls without overlap.
 - A trace's per-kernel rate must land on the bench at the same operating point. A miss of an order of magnitude
   is FLOP accounting, not the kernel.
@@ -112,8 +111,8 @@ the deployment, not from a previous bench:
 - **Keep the host out of the GPU window** (`../gemm/measurement.md` §6), and assert it: time the host
   enqueue of the same R calls with a wall clock and require `t_host < 0.9 · t_gpu`. A slow wrapper looks normal
   until it is compared with a fast one.
-- **Give beta=1 a fresh accumulator every repetition.** *(field, E9)* Reusing one bf16 accumulator for 30 repetitions
-  overflowed it and read 3200 µs for a 1814 µs kernel.
+- **Give beta=1 a fresh accumulator every repetition.** Reusing one accumulator across repetitions keeps adding
+  into it, so later repetitions run on values the deployment never sees; a bf16 accumulator can overflow.
 - **Freeze the denominator.** When a score compares two operating points of the same kernel (two group counts,
   or a wgrad against its own forward), a live denominator rewards slowing it down. Use a copy of the base kernel
   that the work cannot touch, measured in the same interleaved window, plus a live guard on the other point.
@@ -200,17 +199,14 @@ A FlyDSL version is given only where the cited run, or another round in the same
 (`flydsl.__version__`, an import path with its version, or a `pip install flydsl==` in the run's own setup); otherwise
 `FlyDSL ?`. `Turbo fork <rev>` names the Primus-Turbo fork commit that ran, where the record gives one.
 
-- E1 [2026-08, gfx950, FlyDSL ?, Turbo fork 527e62c7, N=?, bench one-hot cell against the slowest trace call] the frozen wgrad's down projection read 808 TF/s on the bench's one-hot cell; the slowest wgrad down call of the training trace read 797 TF/s (gpt-oss-20b tensorwise fp8, G=32; local:/workspace/code/gpt_oss_docker/.claude/memory/project_gptoss_wgrad_skew_campaign.md:88)
-- E2 [2026-09, gfx950, FlyDSL ?, Turbo fork rev ?, N=? (two training A/B pairs), training step wall; per commit the same shapes timed on both grids] the bench scored the campaign −5.2% (spd 1.0453), training −0.84% (750.90 → 744.60 ms); on the deployed grid (`num_cu` not passed) its commits read 1.0107 / 1.0156 / 1.0165 of the base time, on the bench's `num_cu=256` grid 0.9945 / 0.9782 / 0.9656 (gpt-oss-20b fp8 grouped MLP step; local:/workspace/code/gpt_oss_docker/.claude/memory/project_gptoss_stepfuse_campaign.md:137)
-- E3 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, kernel-only bench at 8192 and 32768 tokens per expert; the trace's grids nt[3036] / nn[1584] / tn[1008] matched at 8192] forward gate_up 2083 against 2722 TF/s (−23%), wgrad gate_up 1890 against 2945 (−36%), down −5% (gpt-oss-20b EP8, four micro-batches per step; local:/workspace/code/gpt_oss_docker/.claude/memory/project_gptoss_e2e_trace_grouped_flops.md:14)
-- E4 [2026-09, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, ?] gate_up wgrad at B=32: beta=0 bf16 1676 µs against fp32 1808 µs (+7.9%), beta=1 bf16 1814 µs against fp32 2067 µs (+13.9%) (gpt-oss tensorwise fp8 wgrad, 4096 tokens per group; local:/workspace/code/gpt_oss_docker/.claude/memory/project_gptoss_b24_wgrad_campaign.md:39)
+- E1 [2026-08, gfx950, FlyDSL ?, Turbo fork 527e62c7, N=?, bench one-hot cell against the slowest trace call] the frozen wgrad's down projection read 800–804 TF/s on the bench's one-hot cell (three baseline reads); the slowest wgrad down call of the training trace read 797 TF/s (2726.6 µs) (gpt-oss-20b tensorwise fp8, G=32; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260811_131937/run.jsonl:2-4; local:/workspace/code/gpt_oss_docker/trace/huangwei_0812/gptoss_pr436_wgradfix_job67562_rank0_step30-32.pt.trace.json.gz, whose kernel file is that of 527e62c7: commit:/workspace/code/gpt_oss_docker/sync/syncv3/Primus-Turbo@c932b278)
+- E2 [2026-09, gfx950, FlyDSL ?, Turbo fork rev ?, N=? (two training A/B pairs), training step wall; per commit the same shapes timed on both grids] the bench scored the campaign at spd 1.0453 (−4.3% time), training −0.84% (750.90 → 744.60 ms); on the deployed grid (`num_cu` not passed) its commits read 1.0107 / 1.0156 / 1.0165 of the base time, on the bench's `num_cu=256` grid 0.9945 / 0.9782 / 0.9656 (gpt-oss-20b fp8 grouped MLP step; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260901_154357/run.log:121; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260901_154357/goal.md:15-16 (spd = 707.1 / step_ms); local:/workspace/code/gpt_oss_docker/trace/ab_0902/t_153139.pt.trace.json.gz and local:/workspace/code/gpt_oss_docker/trace/ab_0902/t_070665.pt.trace.json.gz read with local:/workspace/code/gpt_oss_docker/trace/ab_0902/_diff.py; local:/workspace/code/gpt_oss_docker/sync/syncv4/Primus-Turbo/_bench_gptoss_e2e.py:9-13)
 - E5 [2026-09, gfx950, FlyDSL ?, aiter fork rev ?, N=?, MoE decode score under graph replay] launching a MoE sorting kernel once more cost +2.29 µs at 64 tokens and +2.41 µs at 128; the batch sizes that do not run it did not move (a MoE sorting kernel, GLM-5.2 TP4/EP4 a4w4 MoE decode; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260911_155754/rounds/round-11/agent.txt:7)
-- E6 [2026-09, gfx950, FlyDSL ?, Turbo fork rev ?, N=? (two training A/B pairs), training step wall] compute kernels −7.78 ms per step gave −6.31 ms of wall (81%); with the grouped GEMM files reverted, the deployed-grid single-GPU probe read 0.5% faster and training 0.71% slower (734.29 → 739.52 ms) (gpt-oss-20b; local:/workspace/code/gpt_oss_docker/.claude/memory/project_gptoss_stepfuse_campaign.md:164)
-- E7 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=1 profiled step (24 calls per shape), training trace] the per-shape median read 5–9% low from concurrent work; the minimum, a call without contention, gives the kernel's speed (gpt-oss-20b fp8 training trace fp8-49457, EP1, G=32; local:/workspace/code/gpt_oss_docker/.claude/memory/project_gptoss_teacher_trace_fp8_49457.md:27)
-- E8 [2026-08, gfx950, FlyDSL ?, Turbo fork 527e62c7, N=? (one rank-0 trace, steps 30–32), training trace, kernels paired with ops by External id] in every layout the long-tail calls (duration above 1.3× the median) overlapped NCCL kernels 192–200%, the other calls 0–3% (gpt-oss-20b training trace; local:/workspace/code/gpt_oss_docker/.claude/memory/project_gptoss_wgrad_skew_campaign.md:82)
-- E9 [2026-09, gfx950, FlyDSL ?, Turbo fork rev ?, N=30 repetitions on one accumulator, ?] the probe read 3200 µs for a kernel whose time was 1814 µs (gate_up wgrad at B=32, beta=1, bf16 accumulator; local:/workspace/code/gpt_oss_docker/.claude/memory/project_gptoss_b24_wgrad_campaign.md:37)
-- E10 [2026-09, gfx950, FlyDSL ?, Turbo fork rev ?, N=4 probes per guard reading, a live B=32 guard beside a frozen kernel copy] a min-of-four guard at 0.99 failed the baseline, the leg's own spread reaching 0.984; a geometric-mean guard at 0.98 passed (gpt-oss tensorwise fp8 wgrad, B=24 against B=32; local:/workspace/code/gpt_oss_docker/.claude/memory/project_gptoss_b24_wgrad_campaign.md:49)
-- E11 [2026-08, gfx950, FlyDSL ?, Turbo fork 16ce4959 with commit 702d9881, N=3 reads, the campaign's scoring script] the wgrad half of a band remap, +4.8% on a probe tree copied before a refactor, read 1118.24 / 1115.72 / 1119.97 with one of three changed files synced; with all three, gm 1161.93 → 1165.93 (+0.34%), min 1031.2 → 1042.0 (+1.05%) (gpt-oss bf16 grouped GEMM; local:/workspace/code/gpt_oss_docker/.claude/memory/project_bf16_flydsl_grouped_campaign.md:402)
+- E6 [2026-09, gfx950, FlyDSL ?, Turbo fork rev ?, N=? (two training A/B pairs), training step wall] compute kernels −7.78 ms per step gave −6.31 ms of wall (81%); with the grouped GEMM files reverted, the deployed-grid single-GPU probe read 0.5% faster and training 0.71% slower (gpt-oss-20b; local:/workspace/code/gpt_oss_docker/trace/ab_0902/t_153139.pt.trace.json.gz and local:/workspace/code/gpt_oss_docker/trace/ab_0902/t_070665.pt.trace.json.gz read with local:/workspace/code/gpt_oss_docker/trace/ab_0902/_diff.py; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/_goal_gptoss_e2e.txt:32)
+- E7 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=1 profiled step (24 calls per shape), training trace] the per-shape median took 4–9% longer than the minimum (throughput 4–8% low) from concurrent work; the minimum, a call without contention, gives the kernel's speed (gpt-oss-20b fp8 training trace fp8-49457, EP1, G=32, six grouped GEMM shapes; local:/workspace/code/gpt_oss_docker/trace/huangwei_0807/ex/fp8-49457/primus-output/amd/root/gpt_oss_20b/tensorboard/primus-megatron-exp[gpt_oss_20b]-rank[0].1786090595851014932.pt.trace.json.gz)
+- E8 [2026-08, gfx950, FlyDSL ?, Turbo fork 527e62c7, N=? (one rank-0 trace, steps 30–32), training trace, kernels paired with ops by External id] in every layout the long-tail calls (duration above 1.3× the median) overlapped NCCL kernels for 96–100% of their duration on average, the other calls 0–7% (gpt-oss-20b training trace; local:/workspace/code/gpt_oss_docker/trace/huangwei_0812/gptoss_pr436_wgradfix_job67562_rank0_step30-32.pt.trace.json.gz; commit:/workspace/code/gpt_oss_docker/sync/syncv3/Primus-Turbo@c932b278)
+- E10 [2026-09, gfx950, FlyDSL ?, Turbo fork rev ?, N=4 probes per guard reading, a live B=32 guard beside a frozen kernel copy] a min-of-four guard at 0.99 failed the baseline, the leg's own spread reaching 0.984; a geometric-mean guard at 0.98 passed (gpt-oss tensorwise fp8 wgrad, B=24 against B=32; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260904_152450/run.jsonl:2; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260904_152450/run.log:5; local:/workspace/code/gpt_oss_docker/sync/syncv4/Primus-Turbo/_bench_gptoss_b24_wgrad.py:52-55; :232-242; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260904_153457/run.jsonl:2-6)
+- E11 [2026-08, gfx950, FlyDSL ?, Turbo fork 16ce4959 with commit 702d9881, N=3 reads, the campaign's scoring script] the wgrad half of a band remap, +4.8% on a probe tree copied before a refactor, read 1118.24 / 1115.72 / 1119.97 with one of three changed files synced; with all three, gm 1161.93 → 1165.93 (+0.34%), min 1031.2 → 1042.0 (+1.05%) (gpt-oss bf16 grouped GEMM; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260824_153611/inbox_archive.md:32-33; commit:/workspace/code/gpt_oss_docker/sync/mxfp4/Primus-Turbo@702d9881)
 - E12 [2026-09, gfx950, FlyDSL 0.2.4, Turbo fork rev ?, N=4+4 samples, `--diag` gemm-only arms in one run, A-vs-A on a code-identical control arm] the control arm read −0.02% on the balanced cell and +1.39% on the skewed cell (gpt-oss fused GLU/dGLU grouped GEMMs, fc2_dglu; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260923_120547/memory.md:227)
 - E13 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=5 bench runs, identical code] wgrad down balanced read 1.563 / 1.606 / 1.644 / 1.650 / 1.657 (±2.5%), the NT cells ±0.4% (gpt-oss MXFP4 grouped GEMM, campaign bench; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260803_155024/memory.md:171)
 - E14 [2026-09, gfx950, FlyDSL 0.2.4, Turbo fork rev ?, N=6 back-to-back runs, code-identical control arm] the control arm drifted from 1.2731 to 1.2505 (−1.8%) (gpt-oss fused GLU/dGLU grouped GEMMs; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260923_120547/memory.md:238)

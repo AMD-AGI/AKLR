@@ -148,8 +148,8 @@ changed.
   slot that removes a write-after-read barrier can pay, but not as a rule (`schedule_sync.md` §10).
 - **A fixed reference max for the softmax shift** as a general lever: exact only inside a data-dependent window,
   silently wrong outside it (`softmax.md`).
-- **Lazy (threshold) O-rescale ported into a P-store pipeline**: the branch broke its overlap; −31% on one path,
-  neutral on another *(field, E19)*; on dense decodes with no such pipeline it paid (`softmax.md`
+- **Lazy (threshold) O-rescale ported into a P-store pipeline**: the branch broke its overlap; −31% on one path
+  *(field, E19)*; on dense decodes with no such pipeline it paid (`softmax.md`
   §6.3).
 - **Q-outer fused dq+dkdv**: reducing dK/dV over q takes float atomics (not deterministic) or a dK/dV partial
   workspace that saves no bytes (`gradients.md` §2). A KV-outer fusion with a narrow KV band
@@ -185,7 +185,7 @@ changed.
 Every workload below is an attention kernel. A FlyDSL version is given only where the cited run, or another round in the
 same container and venv, printed it (`flydsl.__version__`, an import path with its version, or a `pip install flydsl==`
 in the run's own setup); otherwise `FlyDSL ?`. Months are those of the round timestamps (`run.jsonl`), or of the dated
-entry where only myskill or memory records the number. A sign on a wall-time change is the record's own.
+entry where only myskill records the number. A sign on a wall-time change is the record's own.
 
 - E1 [2026-08, gfx950, FlyDSL ?, N=?, issued MFMA FLOPs ÷ wall over the clock band measured under load (2078–2377 MHz), checked against PMC] issued MFMA 5.669e12 / 5.2924 ms = 1071 TF/s ⇒ MFMA-pipe busy ≈ 44–49%, against the PMC's 44.0% (gpt-oss D=64 attention backward, b4; campaign 20260829_150647, round-14 replan; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260829_150647/goal.md:339)
 - E2 [2026-09, gfx950, FlyDSL 0.2.4, N=?, rocprofv3 PMC, clock from `GRBM_GUI_ACTIVE` (~1823 MHz under profiling)] `MFMA_BUSY` per trip 20,626 cycles of a ≈36,350-cycle trip ⇒ duty ≈52–57% at that clock; the same campaign's replan, at the sustained unprofiled 2070 MHz, put the duty at ≈50% (b4 1073–1086 / b2 1095 / b1 1102–1110 TF against a 2171 TF on-clock peak) and called 52–57% slightly high (local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260911_114527/goal.md:168) (gpt-oss D=64 attention backward, b4; campaign 20260911_114527 round 7; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260911_114527/memory.md:364)
@@ -205,7 +205,7 @@ entry where only myskill or memory records the number. A sign on a wall-time cha
 - E16 [2026-07, gfx950, FlyDSL ?, N=?, campaign bench, ISA-verified] `sched_group_barrier` MFMA:TRANS at 1:2 / 2:4 / 4:8 (applied, `nop_cyc` 222 → 85): +0.26 / −0.04 / −0.07%; dkdv GEMM1 `s_setprio(1)`: 799.7, −3.3% (same campaign as E11, round 8; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260728_123346/rounds/round-08/agent.txt:13)
 - E17 [2026-09, gfx950, FlyDSL ?, N=3, instruction-identical pair, three batches reproduced to 0.01%] pure reorders paid 0 ± 2% on a forward whose coexec covered 43.64% of SIMD cycles (52% of MFMA busy, computed from the two counters) (gpt-oss D=64 attention forward; campaign 20260901_123110 round 2; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260901_123110/rounds/round-02/agent.txt:24; table in local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/03-profiling-utilization.md:768)
 - E18 [2026-07, gfx950, FlyDSL ?, N=?, ?] skipping the per-tile K/V DMA +8.7%; the built double-buffered prefetch −4.3~4.7%; no run record was found; the entry is dated 2026-07-21 (Meta hd64 attention backward, dq kernel, fast-exp path; local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/13-meta-hd64-flash-bwd.md:158)
-- E19 [2026-07, gfx950, FlyDSL ?, N=?, ?] lazy O-rescale ported on its own: flash cr4 654 → ~450 TF (−31%), pro cr4 neutral; recorded in a memory note dated 2026-07-12 (DeepSeek-V4 sparse-MLA attention forward, K32 path; local:/workspace/code/gpt_oss_docker/.claude/memory/project_dsv4_fwd_lazy_rescale.md:13)
+- E19 [2026-07, gfx950, FlyDSL ?, N=?, ?] lazy O-rescale ported on its own: cr4 −31%, the branch conflicting with the P-store pipeline; no run record found, the month is that of the myskill commit that recorded it, 0fb6f5e (DeepSeek-V4 sparse-MLA attention forward; local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/15-attention-optimize.md:38)
 - E20 [2026-07, gfx950, FlyDSL ?, N=?, campaign bench] fused dq+dkdv with a transient dQ: 1.95–2.55× slower; myskill records it as the KV-outer fusion at BLOCK_KV=64 (local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/13-meta-hd64-flash-bwd.md:139) (Meta hd64 deterministic attention backward; campaign 20260715_142909, measured earlier in the session and listed in round 11; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260715_142909/memory.md:130)
 - E21 [2026-08, gfx950, FlyDSL 0.2.4, N=?, campaign bench] the real fp32-atomic dQ (512 `buffer_atomic_add_f32`, 486 VGPR, 0 scratch): 105.5 ms against 6.34 ms, versus 1.229 ms for the whole dQ split-K round trip (D=128 attention backward, cell d128_70b_b2 (B=2); campaign 20260822_152617 round 4; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260822_152617/rounds/round-04/agent.txt:5)
 - E22 [2026-07, gfx950, FlyDSL ?, N=?, campaign bench] dkdv BLOCK_Q=128 → 254 (−67%, register-walled) (same campaign as E12, round 11; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260715_142909/memory.md:127)

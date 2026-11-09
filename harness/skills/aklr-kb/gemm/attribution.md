@@ -193,8 +193,7 @@ near busy.
   registers from the ISA (`mainloop.md` §10).
 - `MfmaUtil` (`SQ_VALU_MFMA_BUSY_CYCLES` over `GRBM_GUI_ACTIVE`·SIMDs) is not reliably comparable across wave
   counts. On grouped GEMMs, a 1-wave-per-SIMD kernel read 32.2% against 63.8% for a 2-wave-per-SIMD kernel with
-  the same MFMA count and wall time 4% apart *(field, E34)*, while one kernel built at 1 and 2 waves per SIMD
-  reported identical MFMA busy cycles for the same work (MfmaUtil 57.3% → 48.2%) *(field, E41)*. Before comparing
+  the same MFMA count and wall time 4% apart *(field, E34)*. Before comparing
   kernels with different waves per SIMD, check busy cycles against `SQ_INSTS_MFMA`, or compare time per K
   iteration.
 - `SQ_LEVEL_WAVES` and `SQ_ACCUM_PREV_HIRES` read 0 in rocprofv3 on gfx950 (`SQ_ACCUM_PREV_HIRES` on an
@@ -262,4 +261,3 @@ A FlyDSL version is given only where the cited run, or another round in the same
 - E38 [2026-09, gfx950, FlyDSL 0.2.2, N=7, palindrome, two arms] removing the duplicate tile bodies that never run (ISA −49%): gate_up +0.23% / +0.15% (7/7 draws), down −0.41% / −0.30% (0/7) with `vgpr_spill_count` 0 → 1; the round derives "+0.2% per halving, ≈ −0.45% per spill slot" (gpt-oss fp8 per-tensor grouped wgrad, occupancy 1, 4 waves; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260904_153457/rounds/round-15/agent.txt:15)
 - E39 [2026-09, gfx950, FlyDSL 0.3.2, N=3, same-process probe] an arm's first read under `FLYDSL_DUMP_IR=1` and `REPS=1`: +15.44%; three normal re-runs ±0.2%; the read had both the IR dump on and a single repetition, so it does not tell which of the two caused the gap (sparse-MLA decode producer; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260911_143318/rounds/round-10/agent.txt:15)
 - E40 [2026-10, gfx950, hipcc inline asm (no FlyDSL kernel), N=7, s_memtime slope method, median of 7 launches] `v_mfma_f32_16x16x32_bf16` 16.000 and `v_mfma_f32_32x32x16_bf16` 32.000 cycles per instruction, dependent through srcC or independent; `v_mfma_f32_16x16x16_bf16` 16.0 at half the FLOP rate of 16x16x32; with k VALU after each MFMA, cycles = max(pipe, X + 8·k_exp + 4·k_mul), X = 8 for 16x16x32 and 32x32x16 and 4 for 16x16x16, so the shadow is 8 cycles (one exp or two mul), 24 and 12 (microbenchmark; local:/workspace/code/gpt_oss_docker/scratch/attn_kb/verify/gpu_probes.md:82)
-- E41 [2026-07, gfx950, FlyDSL ?, N=?, rocprofv3 PMC (`SQ_VALU_MFMA_BUSY_CYCLES`, `GRBM_GUI_ACTIVE`, `SQ_WAVES`)] one whole-loop kernel built with 4 waves (1 wave/SIMD) and 8 waves (2 waves/SIMD): MFMA busy cycles identical (612.0B), waves 20.2M → 40.5M, `GRBM_GUI_ACTIVE` 10.68B → 12.69B, MFMA util 57.3% → 48.2%, wall +19% (MXFP4 grouped GEMM `kern_1`, GEMM only, M=N=K=4096; KB note, no run record on this machine; local:/workspace/code/gpt_oss_docker/.claude/memory/project_mxfp4_grouped_fp4vs8_occ.md:46)

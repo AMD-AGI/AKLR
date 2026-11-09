@@ -71,13 +71,13 @@ called directly, not through AKLR:
 
 ## Evidence
 
-The SNR values in E1, E2 and E4 are written down only in the notes of the adapter and the KB note that came out of
-the same session; the raw probe output was not kept. E3 is in the run's own records.
+The SNR values in E1, E2 and E4 are written down only in the notes of the adapter; the raw probe output was not
+kept. E3 is in the run's own records.
 
 - E1 [2026-10, gfx950, torch 2.11.0+rocm7.2 aiter c16d44b93, N=?, adapter validation: SNR against the dequantized fp32 reference] aiter a4w4 asm 5.9 / 7.7 / 10.9 dB at K = 2880 / 2944 / 3008 (MXFP4 dense GEMM; local:/workspace/code/gpt_oss_docker/work/gemm_h2h/code/h2h_adapter_vendor.py:398)
 - E2 [2026-10, gfx950, torch 2.11.0+rocm7.2 hipBLASLt, N=?, adapter validation, repeated calls] torch._scaled_mm MXFP8 26–49 dB varying from call to call at 8192×5120×2944, 4096×4096×2944, 8192×5120×4224; MXFP4 unaffected (MX dense GEMM; local:/workspace/code/gpt_oss_docker/work/gemm_h2h/code/h2h_adapter_vendor.py:262)
 - E3 [2026-10, gfx950, torch 2.11.0+rocm7.2 FlyDSL 0.3.2 aiter c16d44b93, N=2, head-to-head smoke run on GPU 4 of crsuse2-m2m-v3-023, SNR of two calls] torch._scaled_mm MXFP4 8192³ 49.603 / 49.603 dB and aiter a4w4 55.600 / 55.600 dB on the same problem; torch._scaled_mm MXFP8 16384×4096×4096 49.605 / 49.605 dB (MX dense GEMM; local:/workspace/code/gpt_oss_docker/work/gemm_h2h/partial_1019/smoke/gpu4/V.jsonl:14; :15; :19)
-- E4 [2026-10, gfx950, torch 2.11.0+rocm7.2 hipBLASLt, N=?, element-wise comparison with the fp32 reference] |out| ≤ |ref| on 99.4–100% of the elements of the MX bf16 outputs (KB note; local:/workspace/code/gpt_oss_docker/.claude/memory/reference_vendor_gemm_silent_wrong_gfx950.md:17)
+- E4 [2026-10, gfx950, torch 2.11.0+rocm7.2 hipBLASLt, N=?, element-wise comparison with the fp32 reference] |out| ≤ |ref| on 99.4–100% of the elements of the MX bf16 outputs (the adapter's accuracy note; local:/workspace/code/gpt_oss_docker/work/gemm_h2h/code/h2h_adapter_vendor.py:288)
 - S1 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:231 `run_baseline` calls `contract.baseline()` (:232) and discards its output; only `NotImplementedError` becomes `baseline_failed` (:121-122)
 - S2 aklr/core/contract/semantics/_compare.py:295 at 0cef4f2e3: `BaselineRelativeBound` allows a multiple of the baseline's error; no contract under aklr/ops uses it
 - S3 aklr/ops/gemm/contract.py:312: `k` axis 64..65536, `multiple_of=64`; `gemm_a4w4_mxfp4_baseline` calls `aiter.ops.gemm_op_a4w4.gemm_a4w4` at aklr/ops/gemm/baseline.py:82
