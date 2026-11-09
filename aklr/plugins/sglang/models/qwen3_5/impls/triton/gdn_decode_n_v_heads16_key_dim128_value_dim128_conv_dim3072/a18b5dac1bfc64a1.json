@@ -1,0 +1,227 @@
+{
+  "schema_version": 5,
+  "name": "gdn_decode_n_v_heads16_key_dim128_value_dim128_conv_dim3072",
+  "contract_id": "gdn_decode@1.0",
+  "description": "Qwen3.5 GDN decode, one token per row, from contiguous Q/K/V/Z and B/A projections. A row whose cache index is -1 is padding: it reads and changes no state, and its core output is zero. Every other row uses its distinct slot: the causal width-four convolution of the slot's three-token history and the row's Q/K/V channels rounds each tap's product to BF16 and sums the four in FP32, oldest first; its SiLU is rounded to BF16, and the history shifts the row in. Q and K are L2-normalized in FP32 and Q is multiplied by scale; the gated delta rule with BF16 beta updates the slot's FP32 delta_state in [value,key] order, and the core output is rounded to BF16. The core is gated RMS-normalized with norm_weight and SiLU of the row's Z, then rounded to BF16. Unindexed state slots and all other inputs are preserved.",
+  "op_type": "qwen3_5",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Decode rows: one token each, padding rows included."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Allocated state slots."
+    },
+    "n_v_heads": {
+      "type": "const",
+      "value": 16,
+      "description": "Value heads on this rank."
+    },
+    "key_dim": {
+      "type": "const",
+      "value": 128,
+      "description": "Key head width."
+    },
+    "value_dim": {
+      "type": "const",
+      "value": 128,
+      "description": "FP8 group and value-head width."
+    },
+    "conv_dim": {
+      "type": "const",
+      "value": 3072,
+      "description": "Convolution channels."
+    },
+    "value_width": {
+      "type": "const",
+      "value": 2048,
+      "description": "Total value width."
+    },
+    "n_k_heads": {
+      "type": "const",
+      "value": 4,
+      "description": "Key heads on this rank."
+    },
+    "projection_dim": {
+      "type": "const",
+      "value": 5120,
+      "description": "Q/K/V/Z projection width."
+    },
+    "gate_dim": {
+      "type": "const",
+      "value": 32,
+      "description": "B/A projection width."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "projected_qkvz": {
+      "shape": [
+        "n_tokens",
+        "projection_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Contiguous Q, K, V, Z columns."
+    },
+    "projected_ba": {
+      "shape": [
+        "n_tokens",
+        "gate_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Contiguous B then A columns."
+    },
+    "conv_state": {
+      "shape": [
+        "n_slots",
+        "conv_dim",
+        3
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Live three-token convolution histories."
+    },
+    "delta_state": {
+      "shape": [
+        "n_slots",
+        "n_v_heads",
+        "value_dim",
+        "key_dim"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Live recurrent matrices, value dimension first."
+    },
+    "cache_indices": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "Each row's distinct state slot, or -1 for a padding row."
+    },
+    "conv_weight": {
+      "shape": [
+        "conv_dim",
+        4
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Four causal convolution taps."
+    },
+    "a_log": {
+      "shape": [
+        "n_v_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Log decay magnitude."
+    },
+    "dt_bias": {
+      "shape": [
+        "n_v_heads"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gate bias."
+    },
+    "norm_weight": {
+      "shape": [
+        "value_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gated RMSNorm weights."
+    },
+    "scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Query scale."
+    },
+    "eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Gated RMSNorm epsilon."
+    }
+  },
+  "outputs": {
+    "normalized": {
+      "shape": [
+        "n_tokens",
+        "n_v_heads",
+        "value_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Gated normalized BF16 values."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 8,
+        "n_slots": 15
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Qwen3.5 GDN decode with BF16 output for MI355X (gfx950), scheduled for 8 rows.\n\nTwo-launch Gluon GDN decode for MI355.\n\nB8 uses two prefetched 32-row state fragments per CTA, sharing Q/K/V preparation\nwithout keeping a whole 64-row update live. Other batches retain their own\nschedules. The launch boundary protects old history reads; state tiles have\nexclusive writers and exact bitwise store elision. Slots remain live on replay.\n\"\"\"\nfrom typing import NamedTuple\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\nclass _Schedule(NamedTuple):\n    rows: int\n    key_lanes: int\n    warps: int\n    history_chunk: int\n    history_vector: int\n    norm_vector: int\n    state_store: str = '.cs'\n    wide_conv: bool = True\n    state_group: int = 0\n    pool_offsets: bool = False\n\n_SCHEDULES = {\n    1: _Schedule(8, 16, 2, 64, 4, 1, wide_conv=False, state_group=16, pool_offsets=True),\n    2: _Schedule(16, 16, 4, 128, 2, 1, state_group=16, pool_offsets=True),\n    4: _Schedule(32, 8, 4, 256, 2, 2, state_store='', state_group=16, pool_offsets=True),\n    8: _Schedule(64, 8, 4, 256, 2, 2, state_group=16, pool_offsets=True),\n}\n\n@gluon.jit\ndef _exp(x):\n    return gl.exp2(x * 1.4426950408889634)\n\n@gluon.jit\ndef _or_bits(a, b):\n    return a | b\n\n@gluon.jit\ndef _convolve_read(X, History, Weight, token, slot, channel, valid,\n                   CHANNELS: gl.constexpr, Z_CHANNELS: gl.constexpr, WIDE: gl.constexpr):\n    if WIDE:\n        hist = History + slot.to(gl.int64) * (CHANNELS * 3) + channel.to(gl.int64) * 3\n        weight = Weight + channel.to(gl.int64) * 4\n        xp = X + token.to(gl.int64) * (CHANNELS + Z_CHANNELS) + channel.to(gl.int64)\n    else:\n        hist = History + (slot * CHANNELS + channel) * 3\n        weight = Weight + channel * 4\n        xp = X + token * (CHANNELS + Z_CHANNELS) + channel\n    x = gl.load(xp, valid, other=0)\n    h0 = gl.load(hist, valid, other=0)\n    h1 = gl.load(hist + 1, valid, other=0)\n    h2 = gl.load(hist + 2, valid, other=0)\n    w0 = gl.load(weight, valid, other=0)\n    w1 = gl.load(weight + 1, valid, other=0)\n    w2 = gl.load(weight + 2, valid, other=0)\n    w3 = gl.load(weight + 3, valid, other=0)\n    acc = gl.full(channel.shape, 0, gl.float32, channel.type.layout)\n    acc += (h0.to(gl.float32) * w0.to(gl.float32)).to(gl.bfloat16)\n    acc += (h1.to(gl.float32) * w1.to(gl.float32)).to(gl.bfloat16)\n    acc += (h2.to(gl.float32) * w2.to(gl.float32)).to(gl.bfloat16)\n    acc += (x.to(gl.float32) * w3.to(gl.float32)).to(gl.bfloat16)\n    value = acc * (1.0 / (1.0 + _exp(-acc)))\n    return value.to(gl.bfloat16).to(gl.float32)\n\n@gluon.jit\ndef _gate_values(BA, ALog, DtBias, token, head, VH: gl.constexpr):\n    a = gl.load(BA + token * 2 * VH + VH + head).to(gl.float32)\n    b = gl.load(BA + token * 2 * VH + head).to(gl.float32)\n    a_log = gl.load(ALog + head)\n    bias = gl.load(DtBias + head).to(gl.float32)\n    softplus_in = a + bias\n    softplus = gl.where(softplus_in <= 20.0, gl.log(1.0 + _exp(softplus_in)), softplus_in)\n    decay = _exp(-_exp(a_log) * softplus)\n    beta = (1.0 / (1.0 + _exp(-b))).to(gl.bfloat16).to(gl.float32)\n    return (decay, beta)\n\n@gluon.jit\ndef _normalize_columns(values):\n    invnorm = 1.0 / gl.sqrt(gl.sum(values * values, 0) + 1e-06)\n    return values * invnorm[None, :]\n\n@gluon.jit\ndef _stage_columns(values):\n    SIZE: gl.constexpr = values.shape[0] * values.shape[1]\n    return gl.allocate_shared_memory(gl.float32, (SIZE,), gl.SwizzledSharedLayout(1, 1, 1, [0]),\n                                    values.permute((1, 0)).reshape((SIZE,)))\n\n@gluon.jit\ndef _prepare_tiled_qkv(X, BA, History, Weight, ALog, DtBias, token, slot, head,\n                       vidx, vmask, scale, KH: gl.constexpr, VH: gl.constexpr,\n                       K: gl.constexpr, V: gl.constexpr, BK: gl.constexpr, S: gl.constexpr):\n    khead = head // (VH // KH)\n    NW: gl.constexpr = gl.num_warps()\n    QW: gl.constexpr = min(NW, max(1, gl.cdiv(BK, 128)))\n    layout: gl.constexpr = gl.BlockedLayout([2, 1], [64, 1], [QW, NW // QW], [0, 1])\n    ki = gl.arange(0, BK, gl.SliceLayout(1, layout))\n    kind = gl.arange(0, 2, gl.SliceLayout(0, layout))\n    channels = (khead + kind[None, :] * KH) * K + ki[:, None]\n    C: gl.constexpr = 2 * KH * K + VH * V\n    v = _convolve_read(X, History, Weight, token, slot, 2 * KH * K + head * V + vidx,\n                       vmask, C, VH * V, S.wide_conv)\n    decay, beta = _gate_values(BA, ALog, DtBias, token, head, VH)\n    qk = _convolve_read(X, History, Weight, token, slot, channels, ki[:, None] < K,\n                        C, VH * V, S.wide_conv)\n    qk = _normalize_columns(qk)\n    return (qk, v, decay, beta)\n\n@gluon.jit\ndef _stage_qkv(X, History, Weight, token, slot, head, KH: gl.constexpr, VH: gl.constexpr,\n               K: gl.constexpr, V: gl.constexpr, BK: gl.constexpr, S: gl.constexpr):\n    conv_layout: gl.constexpr = gl.BlockedLayout([2, 1], [64, 1], [1, 4], [0, 1])\n    ci = gl.arange(0, BK, gl.SliceLayout(1, conv_layout))\n    kind = gl.arange(0, 4, gl.SliceLayout(0, conv_layout))\n    khead = head // (VH // KH)\n    C: gl.constexpr = 2 * KH * K + VH * V\n    channel_base = gl.where(kind[None, :] < 2, (khead + kind[None, :] * KH) * K, 2 * KH * K + head * V)\n    channel_base = gl.multiple_of(channel_base, [K, K])\n    channels = channel_base + ci[:, None]\n    qkv = _convolve_read(X, History, Weight, token, slot, channels, ci[:, None] < K, C, VH * V, True)\n    qkv = gl.where(kind[None, :] < 2, _normalize_columns(qkv), qkv)\n    return _stage_columns(qkv)\n\n@gluon.jit\ndef _recurrent_small(X, BA, History, State, Slots, Weight, ALog, DtBias, Core,\n                     scale: gl.constexpr, T: gl.constexpr, KH: gl.constexpr,\n                     VH: gl.constexpr, K: gl.constexpr, V: gl.constexpr,\n                     BK: gl.constexpr, S: gl.constexpr):\n    BV: gl.constexpr = S.rows\n    KL: gl.constexpr = S.key_lanes\n    NW: gl.constexpr = gl.num_warps()\n    CACHE: gl.constexpr = ''\n    pid = gl.program_id(0)\n    tile = gl.program_id(1)\n    gl.assume(pid >= 0)\n    gl.assume(tile >= 0)\n    token = pid % T\n    head = pid // T\n    row = token * VH + head\n    layout: gl.constexpr = gl.BlockedLayout([1, 4], [64 // KL, KL], [NW, 1], [1, 0])\n    kidx = gl.arange(0, BK, gl.SliceLayout(0, layout))\n    vidx = tile * BV + gl.arange(0, BV, gl.SliceLayout(1, layout))\n    gl.static_assert(V % BV == 0, 'Each CTA must own complete value tiles')\n    vmask = gl.full((BV,), True, gl.int1, gl.SliceLayout(1, layout))\n    slot = gl.load(Slots + token)\n    if slot < 0:\n        gl.store(Core + row * V + vidx, 0.0, vmask)\n        return\n    state_base = State + (slot.to(gl.int64) * VH + head) * (V * K)\n    offsets = vidx[:, None] * K + kidx[None, :]\n    if S.pool_offsets:\n        state_base = State\n        offsets += (slot * VH + head) * (V * K)\n    mask = vmask[:, None] & (kidx[None, :] < K)\n    state = gl.amd.cdna4.buffer_load(state_base, offsets, mask, other=0, cache=CACHE)\n    qk, v, decay, beta = _prepare_tiled_qkv(X, BA, History, Weight, ALog, DtBias,\n        token, slot, head, vidx, vmask, scale, KH, VH, K, V, BK, S)\n    split_layout: gl.constexpr = gl.BlockedLayout([4, 2], [KL, 64 // KL], [1, NW], [0, 1])\n    q, k = gl.split(gl.convert_layout(qk, split_layout))\n    q *= scale\n    q = gl.convert_layout(q, gl.SliceLayout(0, layout))\n    k = gl.convert_layout(k, gl.SliceLayout(0, layout))\n    original_bits = state.to(gl.uint32, bitcast=True)\n    state *= decay\n    v = (v - gl.sum(state * k[None, :], 1)) * beta\n    state += v[:, None] * k[None, :]\n    GROUP: gl.constexpr = S.state_group\n    gl.static_assert(BK % GROUP == 0)\n    changed = state.to(gl.uint32, bitcast=True) ^ original_bits\n    changed = gl.reduce(changed.reshape((BV, BK // GROUP, GROUP)), 2, _or_bits)\n    mask = ((changed[:, :, None] != 0) & mask.reshape((BV, BK // GROUP, GROUP))).reshape((BV, BK))\n    result = gl.sum(state * q[None, :], 1)\n    gl.amd.cdna4.buffer_store(state, state_base, offsets, mask, cache=S.state_store)\n    gl.store(Core + row * V + vidx, result.to(gl.bfloat16), vmask)\n\n@gluon.jit\ndef _recurrent(X, BA, History, State, Slots, Weight, ALog, DtBias, Core,\n               scale, T: gl.constexpr, KH: gl.constexpr, VH: gl.constexpr,\n               K: gl.constexpr, V: gl.constexpr, BK: gl.constexpr, S: gl.constexpr):\n    BV: gl.constexpr = S.rows\n    KL: gl.constexpr = S.key_lanes\n    NW: gl.constexpr = gl.num_warps()\n    CACHE: gl.constexpr = '.cg'\n    pid = gl.program_id(0)\n    tile = gl.program_id(1)\n    gl.assume(pid >= 0)\n    gl.assume(tile >= 0)\n    token = pid % T\n    head = pid // T\n    row = token * VH + head\n    layout: gl.constexpr = gl.BlockedLayout([1, 4], [64 // KL, KL], [NW, 1], [1, 0])\n    kidx = gl.arange(0, BK, gl.SliceLayout(0, layout))\n    vidx = tile * BV + gl.arange(0, BV, gl.SliceLayout(1, layout))\n    gl.static_assert(V % BV == 0, 'Each CTA must own complete value tiles')\n    vmask = gl.full((BV,), True, gl.int1, gl.SliceLayout(1, layout))\n    slot = gl.load(Slots + token)\n    result = gl.full((BV,), 0, gl.float32, gl.SliceLayout(1, layout))\n    if slot >= 0:\n        state_base = State + (slot.to(gl.int64) * VH + head) * (V * K)\n        offsets = vidx[:, None] * K + kidx[None, :]\n        if S.pool_offsets:\n            state_base = State\n            offsets += (slot * VH + head) * (V * K)\n        mask = vmask[:, None] & (kidx[None, :] < K)\n        state = gl.amd.cdna4.buffer_load(state_base, offsets, mask, other=0, cache=CACHE)\n        gl.static_assert(NW == 4 and BK == K and (K == V) and (BK % BV == 0))\n        staged = _stage_qkv(X, History, Weight, token, slot, head, KH, VH, K, V, BK, S)\n        decay, beta = _gate_values(BA, ALog, DtBias, token, head, VH)\n        k = staged.slice(BK, BK).load(gl.SliceLayout(0, layout))\n        v = (staged._reinterpret(shape=(4 * BK // BV, BV), layout=gl.SwizzledSharedLayout(1, 1, 1, [0]))\n             .index(2 * BK // BV + tile).load(gl.SliceLayout(1, layout)))\n        original_bits = state.to(gl.uint32, bitcast=True)\n        state *= decay\n        v = (v - gl.sum(state * k[None, :], 1)) * beta\n        state += v[:, None] * k[None, :]\n        GROUP: gl.constexpr = S.state_group\n        gl.static_assert(BK % GROUP == 0)\n        changed = state.to(gl.uint32, bitcast=True) ^ original_bits\n        changed = gl.reduce(changed.reshape((BV, BK // GROUP, GROUP)), 2, _or_bits)\n        mask = ((changed[:, :, None] != 0) & mask.reshape((BV, BK // GROUP, GROUP))).reshape((BV, BK))\n        gl.amd.cdna4.buffer_store(state, state_base, offsets, mask, cache=S.state_store)\n        q = staged.slice(0, BK).load(gl.SliceLayout(0, layout))\n        result = gl.sum(state * q[None, :], 1)\n        result *= scale\n    gl.store(Core + row * V + vidx, result.to(gl.bfloat16), vmask)\n\n@gluon.jit\ndef _recurrent_split(X, BA, History, State, Slots, Weight, ALog, DtBias, Core,\n               scale, T: gl.constexpr, KH: gl.constexpr, VH: gl.constexpr,\n               K: gl.constexpr, V: gl.constexpr, BK: gl.constexpr, S: gl.constexpr):\n    # Two fragments share preparation; the next state load overlaps the first update.\n    BV: gl.constexpr = S.rows // 2\n    gl.static_assert(V % S.rows == 0 and BK == K and K == V)\n    KL: gl.constexpr = S.key_lanes\n    NW: gl.constexpr = gl.num_warps()\n    pid = gl.program_id(0)\n    tile = gl.program_id(1)\n    gl.assume(pid >= 0)\n    gl.assume(tile >= 0)\n    token = pid % T\n    head = pid // T\n    row = token * VH + head\n    layout: gl.constexpr = gl.BlockedLayout([1, 4], [64 // KL, KL], [NW, 1], [1, 0])\n    kidx = gl.arange(0, BK, gl.SliceLayout(0, layout))\n    vidx = tile * (2 * BV) + gl.arange(0, BV, gl.SliceLayout(1, layout))\n    vmask = gl.full((BV,), True, gl.int1, gl.SliceLayout(1, layout))\n    slot = gl.load(Slots + token)\n    if slot < 0:\n        gl.store(Core + row * V + vidx, 0, vmask)\n        gl.store(Core + row * V + vidx + BV, 0, vmask)\n        return\n    state_base = State + (slot.to(gl.int64) * VH + head) * (V * K)\n    offsets = vidx[:, None] * K + kidx[None, :]\n    if S.pool_offsets:\n        state_base = State\n        offsets += (slot * VH + head) * (V * K)\n    mask = vmask[:, None] & (kidx[None, :] < K)\n    first = gl.amd.cdna4.buffer_load(state_base, offsets, mask, other=0, cache='.cg')\n    staged = _stage_qkv(X, History, Weight, token, slot, head, KH, VH, K, V, BK, S)\n    decay, beta = _gate_values(BA, ALog, DtBias, token, head, VH)\n    k = staged.slice(BK, BK).load(gl.SliceLayout(0, layout))\n    second = gl.amd.cdna4.buffer_load(state_base, offsets + BV * K, mask, other=0, cache='.cg')\n    GROUP: gl.constexpr = S.state_group\n    for f in gl.static_range(2):\n        if f == 0:\n            state = first\n        else:\n            state = second\n        v = (staged._reinterpret(shape=(4 * BK // BV, BV), layout=gl.SwizzledSharedLayout(1, 1, 1, [0]))\n             .index(2 * BK // BV + tile * 2 + f).load(gl.SliceLayout(1, layout)))\n        original_bits = state.to(gl.uint32, bitcast=True)\n        state *= decay\n        v = (v - gl.sum(state * k[None, :], 1)) * beta\n        state += v[:, None] * k[None, :]\n        changed = state.to(gl.uint32, bitcast=True) ^ original_bits\n        changed = gl.reduce(changed.reshape((BV, BK // GROUP, GROUP)), 2, _or_bits)\n        smask = ((changed[:, :, None] != 0) & mask.reshape((BV, BK // GROUP, GROUP))).reshape((BV, BK))\n        gl.amd.cdna4.buffer_store(state, state_base, offsets + f * BV * K, smask, cache=S.state_store)\n        q = staged.slice(0, BK).load(gl.SliceLayout(0, layout))\n        result = gl.sum(state * q[None, :], 1) * scale\n        gl.store(Core + row * V + vidx + f * BV, result.to(gl.bfloat16), vmask)\n\n@gluon.jit\ndef _commit_history(X, History, token, slot, role, C: gl.constexpr,\n                    VH: gl.constexpr, V: gl.constexpr, S: gl.constexpr):\n    CHUNK: gl.constexpr = S.history_chunk\n    HP: gl.constexpr = S.history_vector\n    idx = gl.arange(0, CHUNK, gl.BlockedLayout([HP], [64], [1], [0]))\n    channel = (role - VH) * CHUNK + idx\n    gl.static_assert(C % CHUNK == 0, 'History workers own complete chunks')\n    valid = gl.full((CHUNK,), True, gl.int1, gl.BlockedLayout([HP], [64], [1], [0]))\n    hp = History + (slot * C + channel) * 3\n    x = gl.load(X + token * (C + VH * V) + channel, valid, other=0)\n    h1 = gl.load(hp + 1, valid, other=0)\n    h2 = gl.load(hp + 2, valid, other=0)\n    h0 = gl.load(hp, valid, other=0)\n    old0 = h0.to(gl.uint16, bitcast=True)\n    old1 = h1.to(gl.uint16, bitcast=True)\n    old2 = h2.to(gl.uint16, bitcast=True)\n    new2 = x.to(gl.uint16, bitcast=True)\n    valid = valid & ((old0 != old1) | (old1 != old2) | (old2 != new2))\n    gl.store(hp, h1, valid)\n    gl.store(hp + 1, h2, valid)\n    gl.store(hp + 2, x, valid)\n\n@gluon.jit\ndef _finish(X, History, Slots, Core, NormWeight, Out, eps,\n            C: gl.constexpr, VH: gl.constexpr, V: gl.constexpr, BLOCK: gl.constexpr, S: gl.constexpr):\n    NP: gl.constexpr = S.norm_vector\n    token = gl.program_id(0)\n    role = gl.program_id(1)\n    slot = gl.load(Slots + token)\n    if role < VH:\n        idx = gl.arange(0, BLOCK, gl.BlockedLayout([NP], [64], [1], [0]))\n        row = token * VH + role\n        if slot < 0:\n            gl.store(Out + row * V + idx, 0, idx < V)\n        else:\n            core = gl.load(Core + row * V + idx, idx < V, other=0).to(gl.float32)\n            variance = gl.sum(core * core, 0) / V\n            normalized = core * gl.rsqrt(variance + eps)\n            normalized *= gl.load(NormWeight + idx, idx < V, other=0).to(gl.float32)\n            z = gl.load(X + token * (C + VH * V) + C + role * V + idx, idx < V, other=0).to(gl.float32)\n            normalized *= z * (1.0 / (1.0 + gl.exp(-z)))\n            gl.store(Out + row * V + idx, normalized, idx < V)\n    elif slot >= 0:\n        _commit_history(X, History, token, slot, role, C, VH, V, S)\n\ndef gdn_fused_decode(projected_qkvz: torch.Tensor, projected_ba: torch.Tensor,\n                     conv_state: torch.Tensor, delta_state: torch.Tensor,\n                     cache_indices: torch.Tensor, conv_weight: torch.Tensor,\n                     a_log: torch.Tensor, dt_bias: torch.Tensor, norm_weight: torch.Tensor,\n                     *, scale: float, eps: float, output: torch.Tensor) -> None:\n    tokens = projected_qkvz.shape[0]\n    _, v_heads, v_dim, k_dim = delta_state.shape\n    channels = conv_state.shape[1]\n    k_heads = (channels - v_heads * v_dim) // (2 * k_dim)\n    schedule = _SCHEDULES[tokens]\n    if delta_state.numel() * delta_state.element_size() >= 2**31:\n        schedule = schedule._replace(pool_offsets=False)\n    recurrent = _recurrent_small if tokens == 1 else _recurrent_split if tokens == 8 else _recurrent\n    recurrent[tokens * v_heads, triton.cdiv(v_dim, schedule.rows)](\n        projected_qkvz, projected_ba, conv_state, delta_state, cache_indices,\n        conv_weight, a_log, dt_bias, output, scale, tokens, k_heads, v_heads,\n        k_dim, v_dim, triton.next_power_of_2(k_dim), schedule,\n        num_warps=schedule.warps, num_stages=1)\n    _finish[tokens, v_heads + triton.cdiv(channels, schedule.history_chunk)](\n        projected_qkvz, conv_state, cache_indices, output, norm_weight, output, eps,\n        channels, v_heads, v_dim, triton.next_power_of_2(v_dim), schedule, num_warps=1)\n\n\ndef run(\n    *,\n    projected_qkvz,\n    projected_ba,\n    conv_state,\n    delta_state,\n    cache_indices,\n    conv_weight,\n    a_log,\n    dt_bias,\n    norm_weight,\n    scale,\n    eps,\n    normalized,\n):\n    gdn_fused_decode(\n        projected_qkvz,\n        projected_ba,\n        conv_state,\n        delta_state,\n        cache_indices,\n        conv_weight,\n        a_log,\n        dt_bias,\n        norm_weight,\n        scale=scale,\n        eps=eps,\n        output=normalized,\n    )\n"
+      }
+    ]
+  }
+}

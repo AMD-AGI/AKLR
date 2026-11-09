@@ -1,0 +1,137 @@
+{
+  "schema_version": 5,
+  "name": "dsa_sparse_mla_decode_n_heads16_kv_dim576_topk2048",
+  "contract_id": "dsa_sparse_mla_decode@1.0",
+  "description": "sglang's DSA backend's sparse MLA decode on one rank, kv_b_proj absorbed (DeepseekSparseAttnBackend._forward_triton_decode): each head of each token attends the KV pool rows its top-k slots name (-1: none) with scores q . row * sm_scale, q and the rows the fp8 values sglang holds, unscaled; the output is the softmax-weighted sum of the rows' latent parts, 0 for a token that reads no row.",
+  "op_type": "dsa_backend",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, one query each."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 16,
+      "description": "Query heads on this rank."
+    },
+    "kv_dim": {
+      "type": "const",
+      "value": 576,
+      "description": "A query head and a KV row: the latent, then 64 RoPE values."
+    },
+    "topk": {
+      "type": "const",
+      "value": 2048,
+      "description": "Top-k entries per token."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Rows of the KV pool."
+    },
+    "kv_lora_rank": {
+      "type": "const",
+      "value": 512,
+      "description": "The latent's width: a row's first part, and the output's."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "q": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "kv_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's query per head: q_nope times W_UK (the latent's basis), then the RoPE'd q_pe."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_slots",
+        "kv_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "This layer's KV pool: a row per slot, the latent then the RoPE part."
+    },
+    "topk_indices": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "The slots each token attends; -1: none."
+    },
+    "sm_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every score."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each head's output in the latent's basis: the rows' latent parts weighed by the softmax of their scores."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 32,
+        "n_slots": 65536
+      },
+      "scalars": {
+        "sm_scale": 0.0625
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Sparse paged MLA decode for GLM-5.2 on gfx950: TP4, 16 heads per rank.\n\nScheduled for 32 tokens.\n\nEach head attends the fp8 KV rows (512 latent values, then 64 RoPE values) its token's 2048\ntop-k slots name (-1: none), with scores q . row * softmax_scale on the fp8 query as sglang\nholds it; the output is the softmax-weighted sum of the rows' latent values, in bf16.\n\"\"\"\n\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n@gluon.jit\ndef _load_query(Q, row, head_base, HEADS: gl.constexpr, QUANTIZE: gl.constexpr, KV_TYPE: gl.constexpr, FP8_Q: gl.constexpr, NATIVE_ROPE: gl.constexpr, A: gl.constexpr, SA: gl.constexpr):\n    qw: gl.constexpr = min(gl.num_warps(), 4)\n    qload: gl.constexpr = gl.BlockedLayout([1, 16], [4, 16], [qw, gl.num_warps() // qw], [1, 0])\n    rload: gl.constexpr = gl.BlockedLayout([1, 2], [16, 4], [1, gl.num_warps()], [1, 0])\n    hq = head_base + gl.arange(0, 16, gl.SliceLayout(1, qload))\n    dq = gl.arange(0, 512, gl.SliceLayout(0, qload))\n    hr = head_base + gl.arange(0, 16, gl.SliceLayout(1, rload))\n    R: gl.constexpr = 128 if NATIVE_ROPE else 64\n    rq = gl.arange(0, R, gl.SliceLayout(0, rload))\n    q = gl.load(Q + (row * HEADS + hq[:, None]) * 576 + dq[None, :], hq[:, None] < HEADS, 0.0)\n    qr = gl.load(Q + (row * HEADS + hr[:, None]) * 576 + 512 + rq[None, :], (hr[:, None] < HEADS) & (rq[None, :] < 64), 0.0)\n    if QUANTIZE:\n        q = q.to(KV_TYPE)\n        qr = qr.to(KV_TYPE)\n    q = gl.convert_layout(q, SA)\n    if NATIVE_ROPE:\n        qr = gl.convert_layout(qr, SA)\n    else:\n        if FP8_Q:\n            qr = qr.to(gl.float16)\n        qr = gl.convert_layout(qr, A)\n    return (q, qr)\n\n@gluon.jit\ndef _softmax(scores, valid, maximum, denom, SINGLE_TILE: gl.constexpr):\n    valid = gl.convert_layout(valid, gl.SliceLayout(0, scores.type.layout))\n    scores = gl.where(valid[None, :], scores, -float('inf'))\n    tile_max = gl.max(scores, 1)\n    if SINGLE_TILE:\n        next_max = tile_max\n    else:\n        next_max = gl.maximum(maximum, tile_max)\n    safe_max = gl.where(next_max == -float('inf'), 0.0, next_max)\n    p = gl.where(valid[None, :], gl.exp(scores - safe_max[:, None]), 0.0)\n    if SINGLE_TILE:\n        alpha = 0.0\n        next_denom = gl.sum(p, 1)\n    else:\n        alpha = gl.exp(maximum - safe_max)\n        next_denom = denom * alpha + gl.sum(p, 1)\n    return (next_max, next_denom, p, alpha)\n\n@gluon.jit\ndef _write_split(Part, Stats, acc, maximum, denom, row, split, head_base, HEADS: gl.constexpr, SPLITS: gl.constexpr, PACKED: gl.constexpr, BUFFERED: gl.constexpr):\n    mat: gl.constexpr = acc.type.layout\n    ho = head_base + gl.arange(0, 16, gl.SliceLayout(1, mat))\n    if PACKED:\n        hw: gl.constexpr = min(gl.num_warps(), 4)\n        store: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [hw, gl.num_warps() // hw], [1, 0])\n        hp = head_base + gl.arange(0, 16, gl.SliceLayout(1, store))\n        dp = gl.arange(0, 512, gl.SliceLayout(0, store))\n        partial = gl.convert_layout(acc.to(Part.dtype.element_ty), store)\n        if BUFFERED:\n            gl.amd.cdna4.buffer_store(partial, Part + (row * SPLITS + split) * HEADS * 512, hp[:, None] * 512 + dp[None, :], hp[:, None] < HEADS, cache='.wt')\n        else:\n            gl.store(Part + ((row * SPLITS + split) * HEADS + hp[:, None]) * 512 + dp[None, :], partial, hp[:, None] < HEADS)\n    else:\n        vo = gl.arange(0, 512, gl.SliceLayout(0, mat))\n        gl.store(Part + ((row * SPLITS + split) * HEADS + ho[:, None]) * 512 + vo[None, :], acc, ho[:, None] < HEADS)\n    gl.store(Stats + ((row * SPLITS + split) * HEADS + ho) * 2, maximum, ho < HEADS)\n    gl.store(Stats + ((row * SPLITS + split) * HEADS + ho) * 2 + 1, denom, ho < HEADS)\n\n@gluon.jit\ndef _mla_direct(Q, KV, Slots, Part, Stats, HEADS: gl.constexpr, TOPK: gl.constexpr, SCALE: gl.constexpr, QUANTIZE_QUERY: gl.constexpr, SPLITS: gl.constexpr, BLOCK: gl.constexpr, WIDE: gl.constexpr, FP8_Q: gl.constexpr, ROW_GROUP: gl.constexpr):\n    linear = gl.program_id(0)\n    row = linear // (SPLITS * ROW_GROUP) * ROW_GROUP + linear % ROW_GROUP\n    split = linear // ROW_GROUP % SPLITS\n    head_base = 0 if HEADS <= 16 else gl.program_id(1) * 16\n    mat: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[1, gl.num_warps()])\n    a: gl.constexpr = gl.DotOperandLayout(0, mat, 8)\n    b: gl.constexpr = gl.DotOperandLayout(1, mat, 8)\n    if FP8_Q:\n        score_mat: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 128], transposed=True, warps_per_cta=[1, gl.num_warps()])\n        sa: gl.constexpr = gl.DotOperandLayout(0, score_mat, 32)\n        sb: gl.constexpr = gl.DotOperandLayout(1, score_mat, 32)\n    else:\n        score_mat: gl.constexpr = mat\n        sa: gl.constexpr = a\n        sb: gl.constexpr = b\n    maximum = gl.full((16,), -float('inf'), gl.float32, gl.SliceLayout(1, mat))\n    denom = gl.zeros((16,), gl.float32, gl.SliceLayout(1, mat))\n    acc = gl.zeros((16, 512), gl.float32, mat)\n    q, qr = _load_query(Q, row, head_base, HEADS, QUANTIZE_QUERY, KV.dtype.element_ty, FP8_Q, False, a, sa)\n    SPHASE: gl.constexpr = 16 if gl.num_warps() == 8 else 8\n    latent = gl.allocate_shared_memory(KV.dtype.element_ty, [BLOCK, 512], gl.SwizzledSharedLayout(16, 1, SPHASE, [1, 0]))\n    i = gl.arange(0, BLOCK, gl.SliceLayout(0, sb))\n    dk = gl.arange(0, 512, gl.SliceLayout(1, sb))\n    rk = gl.arange(0, 64, gl.SliceLayout(1, b))\n    TILES: gl.constexpr = gl.cdiv(TOPK, SPLITS * BLOCK)\n    for tile in range(TILES):\n        index = (split * TILES + tile) * BLOCK + i\n        slot = gl.load(Slots + row * TOPK + index, index < TOPK, -1)\n        valid = (slot >= 0) & (index < TOPK)\n        base = gl.maximum(slot, 0)\n        if WIDE:\n            base = base.to(gl.int64)\n        base = base * 576\n        if WIDE:\n            key = gl.load(KV + base[None, :] + dk[:, None], valid[None, :], 0.0)\n        else:\n            key = gl.amd.cdna4.buffer_load(KV, base[None, :] + dk[:, None], valid[None, :], 0.0, cache='.ca')\n        latent.store(key.permute((1, 0)))\n        key = key.to(q.dtype)\n        br = gl.convert_layout(base, gl.SliceLayout(0, b))\n        vr = gl.convert_layout(valid, gl.SliceLayout(0, b))\n        if WIDE:\n            key_r = gl.load(KV + br[None, :] + 512 + rk[:, None], vr[None, :], 0.0)\n        else:\n            key_r = gl.amd.cdna4.buffer_load(KV, br[None, :] + 512 + rk[:, None], vr[None, :], 0.0, cache='.ca')\n        key_r = key_r.to(qr.dtype)\n        scores = gl.zeros((16, BLOCK), gl.float32, score_mat)\n        if FP8_Q:\n            scores = gl.amd.cdna4.mfma_scaled(q, None, 'e4m3', key, None, 'e4m3', scores)\n        else:\n            scores = gl.amd.cdna4.mfma(q, key, scores)\n        scores = gl.convert_layout(scores, mat)\n        scores = gl.amd.cdna4.mfma(qr, key_r, scores) * SCALE\n        next_max, denom, p, alpha = _softmax(scores, valid, maximum, denom, False)\n        acc = acc * alpha[:, None]\n        prob = gl.convert_layout(p.to(gl.float16), a)\n        values = latent.load(b).to(gl.float16)\n        acc = gl.amd.cdna4.mfma(prob, values, acc)\n        maximum = next_max\n    _write_split(Part, Stats, acc, maximum, denom, row, split, head_base, HEADS, SPLITS, gl.num_warps() == 4, gl.num_warps() == 4)\n\n@gluon.jit\ndef _mla_async(Q, KV, Slots, Part, Stats, HEADS: gl.constexpr, TOPK: gl.constexpr, SCALE: gl.constexpr, QUANTIZE_QUERY: gl.constexpr, SPLITS: gl.constexpr, BLOCK: gl.constexpr):\n    row = gl.program_id(0)\n    split = gl.program_id(1)\n    mat: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[1, gl.num_warps()])\n    a: gl.constexpr = gl.DotOperandLayout(0, mat, 8)\n    b: gl.constexpr = gl.DotOperandLayout(1, mat, 8)\n    score_mat: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 128], transposed=True, warps_per_cta=[1, gl.num_warps()])\n    sa: gl.constexpr = gl.DotOperandLayout(0, score_mat, 32)\n    sb: gl.constexpr = gl.DotOperandLayout(1, score_mat, 32)\n    latent = gl.allocate_shared_memory(KV.dtype.element_ty, [BLOCK, 512], gl.SwizzledSharedLayout(16, 1, 16, [1, 0]))\n    copy_layout: gl.constexpr = gl.BlockedLayout([1, 16], [2, 32], [gl.num_warps(), 1], [1, 0])\n    il = gl.arange(0, BLOCK, gl.SliceLayout(1, copy_layout))\n    dl = gl.arange(0, 512, gl.SliceLayout(0, copy_layout))\n    first_slot = gl.load(Slots + row * TOPK + split * BLOCK + il)\n    first_valid = first_slot >= 0\n    first_base = gl.maximum(first_slot, 0) * 576\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(latent, KV, first_base[:, None] + dl[None, :], first_valid[:, None])\n    gl.amd.cdna4.async_copy.commit_group()\n    q, qr = _load_query(Q, row, 0, HEADS, QUANTIZE_QUERY, KV.dtype.element_ty, True, True, a, sa)\n    i = gl.arange(0, BLOCK, gl.SliceLayout(0, sb))\n    rk = gl.arange(0, 128, gl.SliceLayout(1, sb))\n    slot = gl.load(Slots + row * TOPK + split * BLOCK + i)\n    valid = slot >= 0\n    base = gl.maximum(slot, 0) * 576\n    gl.amd.cdna4.async_copy.wait_group(0)\n    key = gl.amd.cdna4.async_copy.load_shared_relaxed(latent.permute((1, 0)), sb)\n    key = key.to(q.dtype)\n    key_r = gl.amd.cdna4.buffer_load(KV, base[None, :] + 512 + rk[:, None], valid[None, :] & (rk[:, None] < 64), 0.0)\n    key_r = key_r.to(qr.dtype)\n    scores = gl.zeros((16, BLOCK), gl.float32, score_mat)\n    scores = gl.amd.cdna4.mfma_scaled(q, None, 'e4m3', key, None, 'e4m3', scores)\n    scores = gl.amd.cdna4.mfma_scaled(qr, None, 'e4m3', key_r, None, 'e4m3', scores)\n    scores = gl.convert_layout(scores, mat) * SCALE\n    maximum, denom, p, _ = _softmax(scores, valid, 0.0, 0.0, True)\n    prob = gl.convert_layout(p.to(gl.float16), a)\n    values = latent.load(b).to(gl.float16)\n    acc = gl.amd.cdna4.mfma(prob, values, gl.zeros((16, 512), gl.float32, mat))\n    _write_split(Part, Stats, acc, maximum, denom, row, split, 0, HEADS, SPLITS, True, False)\n\n@gluon.jit\ndef _mla_merge(Part, Stats, Out, HEADS: gl.constexpr, SPLITS: gl.constexpr, GROUP: gl.constexpr, CHANNELS: gl.constexpr):\n    LAYOUT: gl.constexpr = gl.BlockedLayout([1, 1, 4], [2, 1, 32], [1, 1, gl.num_warps()], [2, 1, 0])\n    row = gl.program_id(0)\n    h = gl.program_id(1) * GROUP + gl.arange(0, GROUP, gl.SliceLayout(1, gl.SliceLayout(2, LAYOUT)))\n    s = gl.arange(0, SPLITS, gl.SliceLayout(0, gl.SliceLayout(2, LAYOUT)))\n    d = gl.program_id(2) * CHANNELS + gl.arange(0, CHANNELS, gl.SliceLayout(0, gl.SliceLayout(1, LAYOUT)))\n    if HEADS % GROUP == 0:\n        hvalid = gl.full((GROUP,), True, gl.int1, gl.SliceLayout(1, gl.SliceLayout(2, LAYOUT)))\n    else:\n        hvalid = h < HEADS\n    record = s[None, :] * HEADS + h[:, None]\n    base_record = row * SPLITS * HEADS\n    maximum = gl.amd.cdna4.buffer_load(Stats + base_record * 2, record * 2, hvalid[:, None], -float('inf'))\n    denom = gl.amd.cdna4.buffer_load(Stats + base_record * 2, record * 2 + 1, hvalid[:, None], 0.0)\n    mx = gl.max(maximum, 1)\n    mx = gl.where(mx == -float('inf'), 0.0, mx)\n    weight = gl.exp(maximum - mx[:, None])\n    record = gl.convert_layout(record, gl.SliceLayout(2, LAYOUT))\n    valid = gl.convert_layout(hvalid, gl.SliceLayout(1, gl.SliceLayout(2, LAYOUT)))\n    numerator = gl.amd.cdna4.buffer_load(Part + base_record * 512, record[:, :, None] * 512 + d[None, None, :], valid[:, None, None], 0.0)\n    num = gl.sum(numerator.to(gl.float32) * weight[:, :, None], 1)\n    den = gl.sum(denom * weight, 1)\n    den = gl.convert_layout(den, gl.SliceLayout(1, gl.SliceLayout(1, LAYOUT)))\n    d_out = gl.convert_layout(d, gl.SliceLayout(0, gl.SliceLayout(1, LAYOUT)))\n    h_out = gl.convert_layout(h, gl.SliceLayout(1, gl.SliceLayout(1, LAYOUT)))\n    gl.store(Out + (row * HEADS + h_out[:, None]) * 512 + d_out[None, :], num / gl.where(den[:, None] > 0.0, den[:, None], 1.0), h_out[:, None] < HEADS)\n\ndef sparse_paged_mla(query: torch.Tensor, cache: torch.Tensor, slots: torch.Tensor, *, softmax_scale: float=0.0625, value_dim: int=512, quantize_query: bool=True, out: torch.Tensor):\n    m, heads, width = query.shape\n    assert m > 0 and heads > 0 and (width == 576) and (value_dim == 512)\n    assert query.dtype in (torch.bfloat16, torch.float8_e4m3fn)\n    assert cache.ndim == 2 and cache.shape[1] == width and (cache.dtype == torch.float8_e4m3fn)\n    assert slots.ndim == 2 and slots.shape[0] == m and (slots.dtype == torch.int32)\n    assert slots.shape[1] > 0 and softmax_scale > 0\n    assert all((t.is_contiguous() and t.device == query.device for t in (query, cache, slots)))\n    splits = 8\n    topk = slots.shape[1]\n    small = m <= 32\n    block, warps = (256, 8) if small else (128, 4)\n    wide = cache.numel() >= 2 ** 31\n    fp8_query = quantize_query or query.dtype == torch.float8_e4m3fn\n    full_geometry = heads == 16 and topk == 2048 and (not wide) and fp8_query\n    part = torch.empty((m, splits, heads, 512), dtype=torch.bfloat16, device=query.device)\n    stats = torch.empty((m, splits, heads, 2), dtype=torch.float32, device=query.device)\n    if m == 32 and full_geometry:\n        _mla_async[m, splits](query, cache, slots, part, stats, heads, topk, softmax_scale, quantize_query, splits, block, num_warps=8, num_stages=1)\n    else:\n        row_group = 8 if m == 64 and full_geometry else m\n        _mla_direct[m * splits, triton.cdiv(heads, 16)](query, cache, slots, part, stats, heads, topk, softmax_scale, quantize_query, splits, block, wide, fp8_query, row_group, num_warps=warps, num_stages=1)\n    _mla_merge[m, triton.cdiv(heads, 2), 1](part, stats, out, heads, splits, 2, 512, num_warps=4)\n    return out\n\ndef run(*, q, kv_cache, topk_indices, sm_scale, output):\n    \"\"\"Writes ``output``: sparse_paged_mla on sglang's fp8 ``q``; quantize_query=True, the\n    default, keeps the query's fp8 values and the fp8 schedule.\"\"\"\n    sparse_paged_mla(q, kv_cache, topk_indices, softmax_scale=sm_scale, quantize_query=True, out=output)\n"
+      }
+    ]
+  }
+}
