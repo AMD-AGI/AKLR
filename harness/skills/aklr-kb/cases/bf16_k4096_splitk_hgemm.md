@@ -1,5 +1,5 @@
 ---
-title: "bf16 GEMM, N 256–2048 × K 4096 — K split over waves or workgroups, folded in a fixed order"
+title: "bf16 GEMM, N 256–2048 × K 4096, and later files built from the same kernels for other N, K and m — K split over waves or workgroups, folded in a fixed order"
 kind: case
 ops: [gemm]
 dtypes: [bf16]
@@ -13,18 +13,24 @@ measured:
   - {metric: "speedup over aiter, CI, per Point", value: "0.584–1.290; 5 of 13 Points ≥ 1.03 (m 1, 2, 64, 128, 256)", gpu: MI355X, workload: "gemm_n1024_k4096, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "5571f4589 (CI run 40613440602); file added by 97d5eb0b3 (#81)", date: "2026-10-28"}
   - {metric: "speedup over aiter, CI, per Point", value: "0.992–1.207; 10 of 13 Points ≥ 1.03 (m 4–64, 256–4096)", gpu: MI355X, workload: "gemm_n256_k4096, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "5571f4589 (CI run 40613440602); file added by fdac7c716 (#52)", date: "2026-10-28"}
   - {metric: "speedup over aiter, CI, per Point", value: "0.793–1.237; 5 of 13 Points ≥ 1.03 (m 128, 256, 512, 2048, 4096)", gpu: MI355X, workload: "gemm_n512_k4096, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "5571f4589 (CI run 40613440602); file added by fdac7c716 (#52)", date: "2026-10-28"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point; no CI measurement yet", value: "1.153–1.269; 7 of 7 Points at or above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n512_k4096 file e42f6c833c101f69, m 1, 2, 4, 8, 16, 32, 64", run_ref: "local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/bf16_small/bf16_small_e42f6c833c101f69/report.json", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point; no CI measurement yet", value: "1.433–1.886; 8 of 8 Points at or above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n2048_k2048 file 697eeb2233f25b25, m 1, 2, 4, 8, 16, 32, 64, 128", run_ref: "local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/bf16_small/bf16_small_697eeb2233f25b25/report.json", date: "2026-11-09"}
 sources:
   - aklr/ops/gemm/impls/flydsl/gemm_n2048_k4096/095a7d687f48faac.json
   - aklr/ops/gemm/impls/flydsl/gemm_n1024_k4096/4f306c3bd2f6b0c1.json
   - aklr/ops/gemm/impls/flydsl/gemm_n256_k4096/9200d6d7a56e5076.json
   - aklr/ops/gemm/impls/flydsl/gemm_n512_k4096/09c4acd65577d824.json
+  - aklr/ops/gemm/impls/flydsl/gemm_n512_k4096/e42f6c833c101f69.json
+  - aklr/ops/gemm/impls/flydsl/gemm_n2048_k2048/697eeb2233f25b25.json
 ---
 
-# bf16 GEMM at N 256–2048, K 4096: split K, fold in a fixed order
+# bf16 GEMM at N 256–2048 × K 4096, and files built from the same kernels: split K, fold in a fixed order
 
-Four FlyDSL kernels for the `gemm@1.0` contract on DeepSeek-V4 shapes (PR #49), one schema file per N. Each
-schema embeds its kernel as `kernel.sources[0].content` (`kernel.py`); the function names below are in that
-file. "m" is the Point's M.
+Four FlyDSL kernels for the `gemm@1.0` contract on DeepSeek-V4 shapes (PR #49), one schema file per N, are described
+in § Applies when through § Result; § Reproduce and § Rollback hold for every file on this page. Each other section
+adds files built from the same kernels for other shapes or m ranges, with its own Points, numbers and
+counter-signals. Each schema embeds its kernel as `kernel.sources[0].content` (`kernel.py`); the function names below
+are in that file. "m" is the Point's M.
 
 ## Applies when
 
@@ -32,10 +38,12 @@ file. "m" is the Point's M.
   `trans_b`, no bias, bf16 `out`. `compare` is bitwise: `determinism: bitwise`, `max_violation_fraction` 0.0
   (`CompareSpec` defaults, `GEMM` in `aklr/ops/gemm/contract.py`). Every reduction these kernels run at a served
   Point adds in a fixed order.
-- K = 4096 with N = 256, 512, 1024 or 2048: a weight of 2, 4, 8 or 16 MiB. Each file holds 13 Points,
-  m = 1, 2, 4, …, 4096.
-- Served Points: n2048 m 1–256; n1024 m 1, 2, 64–256; n256 m 4–64 and 256–4096; n512 m 128–512, 2048, 4096.
-- Each schema name has only this file, so at every Point the yardstick is aiter.
+- The four files of PR #49: K = 4096 with N = 256, 512, 1024 or 2048, a weight of 2, 4, 8 or 16 MiB; each lists 13
+  Points, m = 1, 2, 4, …, 4096.
+- Their served Points on main as of #102 (6d7cfec, CI run 42549655045, measurement profile 19): n2048 m 1–256; n1024
+  m 1, 2, 64–256; n256 m 4–4096; n512 m 128–512 and 2048. #102 left n512's values as #71 measured them: m 4096 at
+  1.004, below the threshold, where the run in § Result had it above.
+- No other file serves those Points, so the yardstick there is aiter.
 
 ## Counter-signals
 
@@ -138,9 +146,77 @@ whole contract, every other bf16 GEMM schema included. A re-measured Point below
 without a rollback, and a `failed` accuracy is never served. Roll back for a wrong result CI does not catch, for
 example after a FlyDSL or LLVM upgrade, or a split-K counter left non-zero by an aborted launch.
 
+## N 512 at m 1–64: both operands in registers, K split over two waves
+
+`gemm_n512_k4096/e42f6c833c101f69.json` lists m 1–64 of the same name, where `09c4acd6…` (16×16 tiles, four waves
+splitting K through LDS rings, 32–128 workgroups) stays below aiter (§ Counter-signals). Until CI writes its
+`speedup`, dispatch does not serve it (`qualifies()` in `aklr/core/contract/spec/_workloads.py`; `AKLR_MIN_SPEEDUP`,
+default 1.03, `aklr/ops/README.md` § Environment variables). Its `run` sends an m outside `_PTABLE` to
+`torch.matmul`; no listed Point reaches that.
+
+- **One round of small tiles.** Every Point launches 256 workgroups of two waves: m 1–4 one M-block with 2-column
+  tiles, m 8 and 16 two M-blocks of 4 or 8 rows with 4-column tiles, m 32 and 64 four M-blocks of 8 or 16 rows with
+  8-column tiles. The M-blocks of one B tile get workgroup ids 8 apart, so that they share an XCD
+  (`../gemm/small_m.md` §3, `../gemm/schedule_and_locality.md` §2).
+- **Packed MFMA operands.** Each 16-row operand of `mfma_f32_16x16x32_bf16` holds R real rows (of A, or B's columns)
+  times S = 16 / R K slices, so no loaded byte is padding; of the 16×16 result only the entries (i, j) with
+  i mod S = j mod S are partials of real outputs. B is the first operand.
+- **No LDS ring.** Each wave loads its half of K for A and B with 16 B `buffer_load`s straight into registers. This
+  departs from `../gemm/small_m.md` §5, where B straight to registers was 2.6× slower than B through LDS on o_proj
+  (m 8, N 6144, K 16384). Here no full LDS ring was built; at m 64, DMA-ing A into a per-wave LDS ring instead of
+  registers, without reading it back, read 5.11 against 4.90 µs *(field, E9)*. At m ≤ 32 (`_compile_packed`) every
+  load is issued before the first MFMA; at m = 64 (`_compile_m64`) the loads run 10 of the wave's 16 K windows ahead
+  of the MFMAs, and odd M-blocks start 8 windows later than even ones, so that the even and odd M-blocks of a B tile
+  do not read the same lines at once.
+- **Fold in a fixed order.** At m ≤ 32 the partials go through LDS: one pass adds each output's K slices in
+  ascending order, a second adds the two waves in order, then one bf16 rounding and a 4 or 8 B store. At m = 64 the
+  K slices of an output sit in one lane quad and are added in registers with DPP broadcasts; wave 1 passes its sums
+  to wave 0 through LDS, and wave 0 adds and stores 2-byte values (`../gemm/correctness.md` §8).
+- The three pointer arguments are preloaded into SGPRs (`amdgpu-kernarg-preload-count` 6; `../gemm/small_m.md` §6).
+
+AKLR validate (measurement profile 19) on one MI355X at main 0e02a81, not CI: 1.153–1.269 over aiter at the seven
+Points, highest at m = 32 *(field, E5)*. At m 1–8 the kernel read 4.20–4.38 µs per round and aiter 4.86–5.33
+*(field, E6)*; whether profile 19 has a floor near there was not measured (`../pitfalls/aklr_dispatch_floor.md`).
+Under stress every listed Point gave the output of the call alone *(field, E8)*. Reproduce with
+`python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n512_k4096/e42f6c833c101f69.json` (§ Reproduce). To roll
+back, delete that file: m 1–64 are then served by no file, since `09c4acd6…` is below the threshold there, and the
+caller runs its own path.
+
+## N 2048 × K 2048 at m 1–128: n2048's in-workgroup K split at K 2048
+
+`gemm_n2048_k2048/697eeb2233f25b25.json` lists m 1, 2, 4, …, 128 and runs n2048's `_compile_skw8` (m ≤ 8) and
+`_compile_skw_av` (m 16–128) at K = 2048, 8 MiB of weight. No other file serves these Points, so the yardstick is
+aiter; until CI writes its `speedup`, dispatch does not serve it. Every Point is one launch of
+256 workgroups of four waves, each wave owning a 512-wide quarter of K. B is the MFMA's first operand, so a lane holds
+four adjacent output columns and stores them in one 8 B write; the partials meet in LDS and are added in wave order
+before one bf16 rounding, by wave 0 at m ≤ 8 and, at m 16–128, by wave f mod 4 for fragment f. Other m go to
+`torch.matmul`.
+
+- m ≤ 8, `_compile_skw8`: 8×8 output tiles (MFMA rows 8–15 repeat rows 0–7). No ring: each wave DMAs its whole K
+  quarter of A and B (16 `buffer_load_dwordx4 … lds`) into its own LDS area before the loop and waits for it line by
+  line; the partials meet in a separate LDS array and wave 0 adds them.
+- m 16–128, `_compile_skw_av`: each wave streams its quarter line by line (64 bf16 per row) through a private ring,
+  refills a slot once its `ds_read`s of it retire, and waits only on its own `vmcnt`, with no `s_barrier` in the K
+  loop. Tile and slots: 16×8 and 8 (m 16), 16×16 and 8 (m 32), 16×32 and 3 (m 64), 32×32 and 2 (m 128). The M-tiles
+  of one B tile get workgroup ids 8 apart. At m 64 and 128, workgroup (m-tile, n-group) starts at K line
+  2·m-tile + 3·n-group mod 8 (`../gemm/small_m.md` §6). Kernel arguments are preloaded only where a B tile has
+  several M-tiles (m 32–128).
+
+AKLR validate (profile 19), not CI: 1.433–1.886 over aiter, highest at m = 32 *(field, E7)*. Under stress every listed
+Point gave the output of the call alone *(field, E8)*. Reproduce with
+`python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n2048_k2048/697eeb2233f25b25.json`; to roll back, delete
+it: its Points are then served by no file.
+
 ## Evidence
 
 - E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter per Point 0.858–1.400, 9 of 13 Points ≥ 1.03 (m 1–256) (gemm_n2048_k4096, m 1–4096; 5571f4589, CI run 40613440602)
 - E2 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter per Point 0.584–1.290, 5 of 13 Points ≥ 1.03 (m 1, 2, 64, 128, 256) (gemm_n1024_k4096, m 1–4096; 5571f4589, CI run 40613440602)
 - E3 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter per Point 0.992–1.207, 10 of 13 Points ≥ 1.03 (m 4–64, 256–4096) (gemm_n256_k4096, m 1–4096; 5571f4589, CI run 40613440602)
 - E4 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter per Point 0.793–1.237, 5 of 13 Points ≥ 1.03 (m 128, 256, 512, 2048, 4096) (gemm_n512_k4096, m 1–4096; 5571f4589, CI run 40613440602)
+- E5 [2026-11, gfx950, FlyDSL 0.3.2, N=16, AKLR validate at 0e02a81, measurement profile 19: one-sided lower bound of the aiter / kernel time ratio over 16 rounds of CUDA-graph replays with L2 flushed before each call, one MI355X, aiter 0.1.21.dev66+gdbd8bf5bd] e42f6c833c101f69: 1.166, 1.153, 1.158, 1.189, 1.210, 1.269, 1.263 at m 1, 2, 4, 8, 16, 32, 64; accuracy passed at every Point (gemm_n512_k4096; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/bf16_small/bf16_small_e42f6c833c101f69/report.json)
+- E6 [2026-11, gfx950, FlyDSL 0.3.2, N=16, the run of E5] per-round times at m 1, 2, 4, 8: kernel 4.20–4.31, 4.22–4.38, 4.21–4.36, 4.23–4.38 µs; aiter 4.97–5.07, 4.86–5.20, 4.88–5.15, 4.98–5.33 µs (`candidate_milliseconds`, `versus_milliseconds`; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/bf16_small/bf16_small_e42f6c833c101f69/report.json)
+- E7 [2026-11, gfx950, FlyDSL 0.3.2, N=16, the ruler of E5] 697eeb2233f25b25: 1.485, 1.561, 1.567, 1.583, 1.596, 1.886, 1.748, 1.433 at m 1, 2, 4, 8, 16, 32, 64, 128; accuracy passed (gemm_n2048_k2048; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/bf16_small/bf16_small_697eeb2233f25b25/report.json)
+- E8 [2026-11, gfx950, FlyDSL 0.3.2, N=20, eager and op-level CUDA-graph stress on one MI355X, main 0e02a81 with each schema, each try compared byte for byte with an eager call alone] e42f6c833c101f69 and 697eeb2233f25b25, every listed Point: the forge driver's conditions (streams limited to 16 and 64 CUs; a second concurrent call on the same inputs) and one captured graph replayed on the same inputs, 20 tries each; one graph replayed 24 times with three AKLR input sets rotated into its buffers; two calls at once on two streams with different inputs, unrestricted and both on the same 64 CUs, 20 tries each: 0 tries differ; a full model's decode graph was not run (local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/stress/README.txt; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/stress/results/g2/bf16_small_e42f6c833c101f69/stress.log:29; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/stress/graph/results/g1/bf16_small_e42f6c833c101f69/graph.log:8; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/stress/concurrent/results/g0/bf16_small_e42f6c833c101f69/concurrent.log:15; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/stress/results/g0/bf16_small_697eeb2233f25b25/stress.log:33; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/stress/graph/results/g0/bf16_small_697eeb2233f25b25/graph.log:9; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/stress/concurrent/results/g1/bf16_small_697eeb2233f25b25/concurrent.log:17)
+- E9 [2026-11, gfx950, FlyDSL 0.3.2, N=3, the campaign's in-process probe, 2–3 alternating rounds, each the median of 10 graph readings; outputs wrong by design, not shipped] gemm_n512_k4096 m 64, the `_compile_m64` of that round: base 4.901–4.905 µs; A DMA'd into a per-wave LDS ring (`buffer_load_dwordx4 … lds`, 10 deep) instead of registers, never read back, 5.109–5.113 (local:/workspace/code/gpt_oss_docker/work/sikl/kb_distill/gemm8b/gn512_k4096/run/workspace/forge_experiments/lessons/iter_007.md:3; :9; :16-18)
+- S1 aklr/ops/gemm/impls/flydsl/gemm_n512_k4096/e42f6c833c101f69.json#kernel.py:46 `_PTABLE` (TM, M-blocks, TN, waves, R) per m; tile numbering at :95-96; `_compile_m64` loads D = 10 windows ahead (:215, :297-305) and starts odd M-blocks NWIN / 2 windows later (:263); kernarg preload count 6 at :377
+- S2 aklr/ops/gemm/impls/flydsl/gemm_n2048_k2048/697eeb2233f25b25.json#kernel.py:132 `_compile_skw_av` (XCD numbering at :175-185, line rotation at :206-215, fold at :300-319, fragment f to wave f mod W at :307); `_compile_skw8` at :335 (whole K quarter DMA'd at :377-380); `_select_config` at :435; preload only where MT > 1 at :456; `torch.matmul` for other m at :462-467

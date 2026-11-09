@@ -1,0 +1,138 @@
+{
+  "schema_version": 5,
+  "name": "gemm_n2048_k2048",
+  "contract_id": "gemm@1.0",
+  "description": "16-bit gemm: out = a @ b.T + bias (b is (k, n) unless trans_b).",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 2048,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 2048,
+      "description": "Reduction length."
+    }
+  },
+  "attrs": {
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 1
+      }
+    },
+    {
+      "axes": {
+        "m": 2
+      }
+    },
+    {
+      "axes": {
+        "m": 4
+      }
+    },
+    {
+      "axes": {
+        "m": 8
+      }
+    },
+    {
+      "axes": {
+        "m": 16
+      }
+    },
+    {
+      "axes": {
+        "m": 32
+      }
+    },
+    {
+      "axes": {
+        "m": 64
+      }
+    },
+    {
+      "axes": {
+        "m": 128
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"FlyDSL BF16 GEMM ``out = a @ b.T`` for small M by in-workgroup split-K: each wave DMAs its K slice\ninto private LDS and runs the MFMAs, and the partials are summed in fixed wave order through LDS\nbefore one BF16 rounding. No workspace and one launch per call; other shapes use ``torch.matmul``.\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import arith as std_arith\nfrom flydsl._mlir.dialects import llvm, scf\nfrom flydsl._mlir.dialects import rocdl as rocdl_d\nfrom flydsl.expr import arith, const_expr, gpu, range_constexpr, rocdl\nfrom flydsl.expr.typing import T\n\n_WARP = 64\n_FRAG = 8  # bf16 per 16 B chunk\n_LINE = 64  # bf16 per 128 B line\n_LINE_BYTES = _LINE * 2\n_GROUP_BYTES = 8 * _LINE_BYTES  # one line of 8 rows: one DMA instruction\n_FRAG_BYTES = 16 * _LINE_BYTES  # one line of a 16-row MFMA operand\n_XCDS = 8\n_XCD_BITS = _XCDS.bit_length() - 1\n_LDS_BYTES = 160 * 1024\n_RSRC_FLAGS = (7 << 12) | (4 << 15)\n_MAX_RECORDS = 0xFFFFFFFF\n\n\ndef _unwrap(value):\n    return value.ir_value() if hasattr(value, \"ir_value\") and not isinstance(value, ir.Value) else value\n\n\ndef _i32c(value):\n    return std_arith.ConstantOp(T.i32, ir.IntegerAttr.get(T.i32, value)).result\n\n\ndef _i64c(value):\n    return std_arith.ConstantOp(T.i64, ir.IntegerAttr.get(T.i64, value)).result\n\n\ndef _idxc(value):\n    return std_arith.ConstantOp(ir.IndexType.get(), ir.IntegerAttr.get(ir.IndexType.get(), value)).result\n\n\ndef _ushr(x, s):\n    return std_arith.ShRUIOp(x, _idxc(s)).result\n\n\ndef _ushl(x, s):\n    return std_arith.ShLIOp(x, _idxc(s)).result\n\n\ndef _uand(x, v):\n    return std_arith.AndIOp(x, _idxc(v)).result\n\n\ndef _uor(x, y):\n    return std_arith.OrIOp(x, y).result\n\n\ndef _lds_ptr(addr_i64):\n    return llvm.IntToPtrOp(ir.Type.parse(\"!llvm.ptr<3>\"), _unwrap(addr_i64)).result\n\n\ndef _gep(base_ptr, byte_offset):\n    if isinstance(byte_offset, int):\n        dyn, const = [], [byte_offset]\n    else:\n        dyn, const = [_unwrap(byte_offset)], [-(2**31)]\n    return llvm.GEPOp(base_ptr.type, base_ptr, dyn, const, T.i8, None).result\n\n\ndef _buffer_rsrc(ptr, rows=None, row_bytes=0):\n    \"\"\"Raw buffer descriptor over ``ptr``; given ``rows`` it ends after that many rows, so loads past\n    them return zero and fetch nothing.\"\"\"\n    base = llvm.IntToPtrOp(ir.Type.parse(\"!llvm.ptr\"), _unwrap(fx.Int64(fx.ptrtoint(ptr)))).result\n    if rows is None:\n        records = _i64c(_MAX_RECORDS)\n    else:\n        records = std_arith.MulIOp(std_arith.ExtUIOp(T.i64, _unwrap(rows)).result, _i64c(row_bytes)).result\n    stride = std_arith.ConstantOp(T.i16, ir.IntegerAttr.get(T.i16, 0)).result\n    return rocdl_d.MakeBufferRsrcOp(\n        ir.Type.parse(\"!llvm.ptr<8>\"), base, stride, records, _i32c(_RSRC_FLAGS)\n    ).result\n\n\ndef _buffer_store(data, rsrc, elem_offset):\n    data = _unwrap(data)\n    offset = std_arith.IndexCastOp(T.i32, _unwrap(elem_offset)).result\n    offset = std_arith.MulIOp(offset, _i32c(data.type.element_type.width // 8)).result\n    rocdl_d.RawPtrBufferStoreOp(data, rsrc, offset, _i32c(0), aux=None)\n\n\ndef _dma(rsrc, lds_ptr, goff, imm, pre=\"\"):\n    # The instruction offset is added to both the global and the LDS address (M0).\n    llvm.InlineAsmOp(\n        None,\n        [lds_ptr, goff, rsrc],\n        f\"{pre}s_mov_b32 m0, $0\\n\\tbuffer_load_dwordx4 $1, $2, 0 offen offset:{imm} sc0 lds\",\n        \"s,v,s\",\n        has_side_effects=True,\n    )\n\n\ndef _wait_vmcnt(count):\n    llvm.InlineAsmOp(None, [], f\"s_waitcnt vmcnt({count})\", \"\", has_side_effects=True)\n\n\ndef mfma_bf16_16x16x32(a_frag, b_frag, c_frag):\n    return rocdl.mfma_f32_16x16x32_bf16(T.vec(4, T.f32), [a_frag, b_frag, c_frag, 0, 0, 0])\n\n\ndef ptr_arg(t):\n    return flyc.from_c_void_p(fx.Uint8, t.data_ptr())\n\n\n# Kernarg preload into SGPRs lets the first DMA skip the kernarg s_load; it pays only on the\n# multi-row-tile kernels, so it is chosen per kernel.\n_HINTS_PRELOAD = {\"llvm_options\": {\"amdgpu-kernarg-preload-count\": 16}}\n\n\ndef _run_compiled(exe, preload, *args):\n    cf = getattr(exe, \"_cf\", None)\n    if cf is None:\n        cf = (flyc.compile[_HINTS_PRELOAD] if preload else flyc.compile)(exe, *args)\n        exe._cf = cf\n    cf(*args)\n\n\n@functools.lru_cache(maxsize=64)\ndef _compile_skw_av(n: int, k: int, W: int, TM: int, TN: int, MT: int, R: int, lrot: tuple):\n    \"\"\"TMxTN output tile per workgroup, K split over W waves; each wave streams its K slice line by\n    line through an R-slot LDS ring. ``lrot = (ra, rb)`` starts workgroup (m_tile, n_group) at line\n    ra*m_tile + rb*n_group so co-resident workgroups do not read the same columns in lockstep.\"\"\"\n    THREADS = _WARP * W\n    FR = TM // 16\n    FN = max(1, TN // 16)\n    NF = FR * FN\n    assert TM in (16, 32) and TN in (8, 16, 32)\n    assert n % TN == 0 and k % (W * _LINE) == 0\n    NB = n // TN\n    assert MT == 1 or (NB % _XCDS == 0 and MT & (MT - 1) == 0)\n    KW = k // W\n    J = KW // _LINE  # lines per wave\n    R = min(R, J)\n    DA, DB = TM // 8, TN // 8  # DMA instructions per line\n    DL = DA + DB\n    B_OFF = TM * _LINE_BYTES\n    LB = (TM + TN) * _LINE_BYTES  # LDS bytes per ring slot\n    WAVE_BYTES = R * LB\n    assert NF * _WARP * 16 <= WAVE_BYTES\n    assert W * WAVE_BYTES <= _LDS_BYTES\n    ROT = lrot != (0, 0)\n    assert not ROT or (MT > 1 and J & (J - 1) == 0)\n    KERNEL_NAME = f\"fly_skw_bf16_{TM}x{TN}_W{W}_R{R}_MT{MT}\" + (f\"_lr{lrot[0]}_{lrot[1]}\" if ROT else \"\")\n\n    @fx.struct\n    class SkwAvStorage:\n        ops: fx.Array[fx.BFloat16, W * WAVE_BYTES // 2, 16]\n\n    @flyc.kernel(known_block_size=[THREADS, 1, 1])\n    def skw_av_kernel(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer, m: fx.Int32):\n        b_rsrc = _buffer_rsrc(B)\n        c_rsrc = _buffer_rsrc(C)\n        a_rsrc = _buffer_rsrc(A, m, k * 2)\n\n        lds = fx.SharedAllocator().allocate(SkwAvStorage)\n        ops_i64 = fx.Int64(fx.ptrtoint(lds.ops.peek().ptr))\n\n        tid = fx.thread_idx.x\n        wid = tid // _WARP\n        l = tid % _WARP\n        pid = fx.block_idx.x\n        if const_expr(MT == 1):\n            n_tile = pid\n            m_tile = 0\n        else:\n            # Workgroups sharing a B tile land on the same XCD (dispatch is pid % _XCDS); pid is\n            # non-negative and MT a power of two, so unsigned shifts and masks decode it.\n            pid_u = _unwrap(fx.Index(pid))\n            mt_u = _uand(_ushr(pid_u, _XCD_BITS), MT - 1)\n            ng_u = _ushr(pid_u, _XCD_BITS + MT.bit_length() - 1)\n            n_tile = fx.Index(_uor(_ushl(ng_u, _XCD_BITS), _uand(pid_u, _XCDS - 1)))\n            m_tile = fx.Index(mt_u)\n        n0 = n_tile * TN\n        m0 = m_tile * TM\n\n        wave_off = rocdl.readfirstlane(T.i64, arith.index_cast(T.i64, fx.Index(wid) * WAVE_BYTES))\n        wave_ptr = _gep(_lds_ptr(ops_i64), wave_off)\n\n        # DMA (line jj, 8-row group d): lane l -> row d*8 + l//8, 16 B chunk\n        # (l%8) ^ (l//8); LDS chunk slot l%8 of that row holds chunk slot^row.\n        drow = l // 8\n        dchunk = (l % 8) ^ drow\n        k_lane = fx.Index(wid * KW + dchunk * _FRAG)\n        a_goff = [\n            arith.index_cast(T.i32, (fx.Index(m0 + d * 8 + drow) * k + k_lane) * 2)\n            for d in range_constexpr(DA)\n        ]\n        b_goff = [\n            arith.index_cast(T.i32, (fx.Index(n0 + d * 8 + drow) * k + k_lane) * 2)\n            for d in range_constexpr(DB)\n        ]\n\n        if const_expr(ROT):\n            ra, rb = lrot\n            ph_src = std_arith.AddIOp(\n                std_arith.MulIOp(mt_u, _idxc(ra)).result, std_arith.MulIOp(ng_u, _idxc(rb)).result\n            ).result\n            ph = arith.index_cast(T.i32, fx.Index(_uand(ph_src, J - 1)))\n\n        def line_goff(jj):\n            q = std_arith.AndIOp(std_arith.AddIOp(ph, _i32c(jj)).result, _i32c(J - 1)).result\n            return std_arith.MulIOp(q, _i32c(_LINE_BYTES)).result\n\n        def issue_line(jj, pre=\"\"):\n            sl = jj % R\n            lgo = line_goff(jj) if ROT else None\n            for d in range_constexpr(DL):\n                is_a = d < DA\n                dd = d if is_a else d - DA\n                lds_off = sl * LB + (0 if is_a else B_OFF) + dd * _GROUP_BYTES\n                goff = (a_goff if is_a else b_goff)[dd]\n                if const_expr(ROT):\n                    imm = 0\n                    goff = std_arith.AddIOp(goff, lgo).result\n                else:\n                    # Keep the M0 base non-negative: the excess goes into the VGPR offset.\n                    imm = min(jj * _LINE_BYTES, lds_off)\n                    rest = jj * _LINE_BYTES - imm\n                    if const_expr(rest != 0):\n                        goff = std_arith.AddIOp(goff, _i32c(rest)).result\n                _dma(\n                    a_rsrc if is_a else b_rsrc,\n                    _gep(wave_ptr, lds_off - imm),\n                    goff,\n                    imm,\n                    pre if d == 0 else \"\",\n                )\n\n        for jj in range_constexpr(R):\n            issue_line(jj)\n\n        # MFMA fragment reads: lane l needs row l%16 of a 16-row group, K chunk h*4 + l//16.\n        lr = l % 16\n        g = l // 16\n        rr = lr % 8\n        sw = [(rr * 8 + ((g + 4 * h) ^ rr)) * 16 for h in range(2)]\n        a_ptr = [\n            _gep(wave_ptr, arith.index_cast(T.i64, fx.Index((lr // 8) * _GROUP_BYTES + sw[h])))\n            for h in range_constexpr(2)\n        ]\n        if const_expr(TN >= 16):\n            b_ptr = [\n                _gep(wave_ptr, arith.index_cast(T.i64, fx.Index((lr // 8) * _GROUP_BYTES + sw[h] + B_OFF)))\n                for h in range_constexpr(2)\n            ]\n        else:\n            # TN = 8: rows 8..15 of the B fragment duplicate rows 0..7.\n            b_ptr = [\n                _gep(wave_ptr, arith.index_cast(T.i64, fx.Index(sw[h] + B_OFF))) for h in range_constexpr(2)\n            ]\n        frag_t = T.vec(_FRAG, T.bf16)\n        acc = [arith.constant_vector(0.0, T.vec(4, T.f32)) for _ in range_constexpr(NF)]\n        for jj in range_constexpr(J):\n            _wait_vmcnt(DL * (min(J, jj + R) - jj - 1))\n            rocdl.sched_barrier(0)\n            sl_off = (jj % R) * LB\n            bfs = []\n            afs = []\n            for h in range_constexpr(2):\n                bfs.append(\n                    [\n                        llvm.LoadOp(frag_t, _gep(b_ptr[h], sl_off + fn * _FRAG_BYTES), alignment=16).result\n                        for fn in range_constexpr(FN)\n                    ]\n                )\n                afs.append(\n                    [\n                        llvm.LoadOp(frag_t, _gep(a_ptr[h], sl_off + fr * _FRAG_BYTES), alignment=16).result\n                        for fr in range_constexpr(FR)\n                    ]\n                )\n            if const_expr(jj + R < J):\n                # This line's ds_reads must land before the DMA reuses its slot.\n                issue_line(jj + R, pre=\"s_waitcnt lgkmcnt(0)\\n\\t\")\n            for h in range_constexpr(2):\n                # B is the MFMA \"A\" operand: lane l owns row l%16, columns (l//16)*4 + 0..3.\n                for fr in range_constexpr(FR):\n                    for fn in range_constexpr(FN):\n                        f = fr * FN + fn\n                        acc[f] = mfma_bf16_16x16x32(bfs[h][fn], afs[h][fr], acc[f])\n\n        # Partials go into each wave's own ring, dead by now.\n        def red_ptr(w, fr):\n            off = fx.Index(w) * WAVE_BYTES + fr * _WARP * 16 + fx.Index(l) * 16\n            return _lds_ptr(ops_i64 + fx.Int64(arith.index_cast(T.i64, off)))\n\n        for f in range_constexpr(NF):\n            llvm.StoreOp(_unwrap(acc[f]), red_ptr(wid, f), alignment=16)\n        gpu.barrier()\n        for f in range_constexpr(NF):\n            fr = f // FN\n            fn = f % FN\n            a_row = fx.Index(m0 + fr * 16 + lr)\n            ok = arith.cmpi(arith.CmpIPredicate.eq, fx.Index(wid), fx.Index(f % W))\n            if const_expr(TN == 8):\n                ok = arith.andi(ok, arith.cmpi(arith.CmpIPredicate.ult, fx.Index(g), fx.Index(TN // 4)))\n            ok = arith.andi(ok, arith.cmpi(arith.CmpIPredicate.ult, a_row, fx.Index(m)))\n            st_if = scf.IfOp(ok, results_=[], has_else=False)\n            with ir.InsertionPoint(st_if.then_block):\n                s = llvm.LoadOp(T.vec(4, T.f32), red_ptr(0, f), alignment=16).result\n                for w in range_constexpr(1, W):\n                    part = llvm.LoadOp(T.vec(4, T.f32), red_ptr(w, f), alignment=16).result\n                    s = std_arith.AddFOp(s, part).result\n                outv = std_arith.TruncFOp(T.vec(4, T.bf16), s).result\n                _buffer_store(outv, c_rsrc, a_row * n + fx.Index(n0 + fn * 16 + g * 4))\n                scf.YieldOp([])\n\n    @flyc.jit\n    def launch_skw_av(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer, m: fx.Int32, stream: fx.Stream):\n        skw_av_kernel._func.__name__ = KERNEL_NAME\n        skw_av_kernel(C, A, B, m).launch(\n            grid=(MT * NB, 1, 1),\n            block=(THREADS, 1, 1),\n            stream=stream,\n            value_attrs={\"rocdl.flat_work_group_size\": f\"{THREADS},{THREADS}\"},\n        )\n\n    return launch_skw_av\n\n\n@functools.lru_cache(maxsize=64)\ndef _compile_skw8(n: int, k: int, W: int):\n    \"\"\"ROWSxROWS output tile per workgroup (m <= ROWS), K split over W waves; each wave holds its\n    whole K slice of A and B in LDS and the partials are summed through a separate LDS array.\"\"\"\n    THREADS = _WARP * W\n    ROWS = 8  # rows of A (M) and of B (N) per tile\n    assert n % ROWS == 0 and k % (W * _LINE) == 0\n    NB = n // ROWS\n    KW = k // W\n    J = KW // _LINE  # DMA instructions per operand per wave\n    OPB = ROWS * KW * 2  # bytes per operand per wave\n    WAVE_BYTES = 2 * OPB\n    KERNEL_NAME = f\"fly_skw_bf16_{ROWS}x{ROWS}_W{W}\"\n\n    @fx.struct\n    class SkwStorage:\n        ops: fx.Array[fx.BFloat16, W * WAVE_BYTES // 2, 16]\n        red: fx.Array[fx.Float32, W * _WARP * 4, 16]\n\n    @flyc.kernel(known_block_size=[THREADS, 1, 1])\n    def skw_kernel(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer, m: fx.Int32):\n        b_rsrc = _buffer_rsrc(B)\n        c_rsrc = _buffer_rsrc(C)\n        a_rsrc = _buffer_rsrc(A, m, k * 2)\n\n        lds = fx.SharedAllocator().allocate(SkwStorage)\n        ops_i64 = fx.Int64(fx.ptrtoint(lds.ops.peek().ptr))\n        red_i64 = fx.Int64(fx.ptrtoint(lds.red.peek().ptr))\n\n        tid = fx.thread_idx.x\n        wid = tid // _WARP\n        l = tid % _WARP\n        n0 = fx.block_idx.x * ROWS\n\n        wave_off = rocdl.readfirstlane(T.i64, arith.index_cast(T.i64, fx.Index(wid) * WAVE_BYTES))\n        wave_ptr = _gep(_lds_ptr(ops_i64), wave_off)\n\n        # Same swizzled line layout as _compile_skw_av, one 8-row group per line.\n        drow = l // 8\n        dchunk = (l % 8) ^ drow\n        k_lane = fx.Index(wid * KW + dchunk * _FRAG)\n        a_goff = arith.index_cast(T.i32, (fx.Index(drow) * k + k_lane) * 2)\n        b_goff = arith.index_cast(T.i32, (fx.Index(n0 + drow) * k + k_lane) * 2)\n        for j in range_constexpr(J):\n            imm = j * _LINE_BYTES\n            _dma(a_rsrc, _gep(wave_ptr, j * _GROUP_BYTES - imm), a_goff, imm)\n            _dma(b_rsrc, _gep(wave_ptr, OPB + j * _GROUP_BYTES - imm), b_goff, imm)\n\n        rr = (l % 16) % 8\n        g = l // 16\n        rd_ptr = [\n            _gep(wave_ptr, arith.index_cast(T.i64, fx.Index((rr * 8 + ((g + 4 * h) ^ rr)) * 16)))\n            for h in range_constexpr(2)\n        ]\n        frag_t = T.vec(_FRAG, T.bf16)\n        acc = arith.constant_vector(0.0, T.vec(4, T.f32))\n        for jj in range_constexpr(J):\n            _wait_vmcnt(2 * (J - 1 - jj))\n            rocdl.sched_barrier(0)\n            for h in range_constexpr(2):\n                af = llvm.LoadOp(frag_t, _gep(rd_ptr[h], jj * _GROUP_BYTES), alignment=16).result\n                bf = llvm.LoadOp(frag_t, _gep(rd_ptr[h], OPB + jj * _GROUP_BYTES), alignment=16).result\n                acc = mfma_bf16_16x16x32(bf, af, acc)\n\n        def red_ptr(w):\n            off = (fx.Index(w) * _WARP + fx.Index(l)) * 16\n            return _lds_ptr(red_i64 + fx.Int64(arith.index_cast(T.i64, off)))\n\n        llvm.StoreOp(_unwrap(acc), red_ptr(wid), alignment=16)\n        gpu.barrier()\n        lr = l % 16\n        a_row = fx.Index(lr)\n        ok = arith.cmpi(arith.CmpIPredicate.eq, fx.Index(wid), fx.Index(0))\n        ok = arith.andi(ok, arith.cmpi(arith.CmpIPredicate.ult, fx.Index(lr), fx.Index(ROWS)))\n        ok = arith.andi(ok, arith.cmpi(arith.CmpIPredicate.ult, fx.Index(g), fx.Index(ROWS // 4)))\n        ok = arith.andi(ok, arith.cmpi(arith.CmpIPredicate.ult, a_row, fx.Index(m)))\n        st_if = scf.IfOp(ok, results_=[], has_else=False)\n        with ir.InsertionPoint(st_if.then_block):\n            s = _unwrap(acc)\n            for w in range_constexpr(1, W):\n                part = llvm.LoadOp(T.vec(4, T.f32), red_ptr(w), alignment=16).result\n                s = std_arith.AddFOp(s, part).result\n            outv = std_arith.TruncFOp(T.vec(4, T.bf16), s).result\n            _buffer_store(outv, c_rsrc, a_row * n + fx.Index(n0 + g * 4))\n            scf.YieldOp([])\n\n    @flyc.jit\n    def launch_skw(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer, m: fx.Int32, stream: fx.Stream):\n        skw_kernel._func.__name__ = KERNEL_NAME\n        skw_kernel(C, A, B, m).launch(\n            grid=(NB, 1, 1),\n            block=(THREADS, 1, 1),\n            stream=stream,\n            value_attrs={\"rocdl.flat_work_group_size\": f\"{THREADS},{THREADS}\"},\n        )\n\n    return launch_skw\n\n\n# (W, TM, TN, R, lrot) per m: W waves split K over a TMxTN tile, R-slot LDS ring per wave,\n# per-workgroup line-order rotation only where it pays.\ndef _select_config(m: int):\n    if m <= 16:\n        return (4, 16, 8, 8, (0, 0))\n    if m <= 32:\n        return (4, 16, 16, 8, (0, 0))\n    if m <= 64:\n        return (4, 16, 32, 3, (2, 3))\n    if m <= 128:\n        return (4, 32, 32, 2, (2, 3))\n    return None\n\n\n@functools.cache\ndef _launcher(m: int, n: int, k: int):\n    if m <= 8:\n        return _compile_skw8(n, k, 4), False\n    cfg = _select_config(m)\n    if cfg is None:\n        return None\n    W, TM, TN, R, lrot = cfg\n    MT = (m + TM - 1) // TM\n    return _compile_skw_av(n, k, W, TM, TN, MT, R, lrot), MT > 1\n\n\ndef run(*, a, b, trans_b, bias, out_dtype, out):\n    m, k = a.shape\n    n = b.shape[0]\n    sel = _launcher(m, n, k) if (trans_b and bias is None and n == 2048 and k == 2048) else None\n    if sel is None:\n        torch.matmul(a, b.t() if trans_b else b, out=out)\n        if bias is not None:\n            out.add_(bias)\n        return\n    stream = fx.Stream(torch._C._cuda_getCurrentRawStream(a.device.index))\n    exe, preload = sel\n    _run_compiled(exe, preload, ptr_arg(out), ptr_arg(a), ptr_arg(b), m, stream)\n"
+      }
+    ]
+  }
+}
