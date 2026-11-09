@@ -1,5 +1,8 @@
 deepseek_v2_mxfp4_moe_model_dim#_n_routed#_inter_dim#
 deepseek_v2_mxfp4_moe_shuffled_16x16_model_dim#_n_routed#_inter_dim#
+deepseek_v4_hc_boundary_norm_hidden_size#
+deepseek_v4_hc_boundary_norm_mxfp8_hidden_size#
+deepseek_v4_hc_pre_norm_hidden_size#
 dsa_indexer_key_prepare_model_dim#
 dsa_indexer_prepare_model_dim#_q_lora_rank#_n_heads#
 dsa_sparse_mla_decode_n_heads#_kv_dim#_topk#
