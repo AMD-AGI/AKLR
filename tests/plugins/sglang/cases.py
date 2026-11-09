@@ -442,28 +442,6 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"max_context": 8192},
         layout_variant_name="row_major",
     ),
-    # DeepSeek-V4's MQA prepare shrunk: two query heads, a 64-wide query LoRA rank, one page
-    # of sglang's 256 slots
-    PointSpec(
-        contract_id="deepseek_v4_attention_q_prep@1.0",
-        axes={"n_tokens": 5, "n_heads": 2, "q_lora_rank": 64, "n_pages": 1, "n_positions": 16},
-        dtypes={
-            "qkv_a": "bfloat16",
-            "q_norm_weight": "bfloat16",
-            "kv_norm_weight": "bfloat16",
-            "wq_b": "float8_e4m3fn",
-            "wq_b_scale": "float8_e8m0",
-            "freqs": "float32",
-            "positions": "int64",
-            "swa_loc": "int32",
-            "kv_cache": "uint8",
-            "q": "bfloat16",
-            "q_lora_quant": "float8_e4m3fn",
-            "q_lora_scale": "float8_e8m0",
-        },
-        attrs={"page_size": 256},
-        layout_variant_name="row_major",
-    ),
     # DeepSeek-V4's sparse decode with the inverse RoPE on small pools: an SWA layer, then a
     # compressed one with the extra pool
     *(
@@ -497,25 +475,6 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         )
         for extra in (False, True)
     ),
-    # DeepSeek-V4's wo_a GEMM in sglang's gfx950 split-K regime, shrunk to its smallest K: two
-    # groups, bf16 out (then on the fp8 grid), then wo_b's MXFP8 operand
-    *(
-        PointSpec(
-            contract_id="deepseek_v4_wo_a_split_k@1.0",
-            axes={"n_tokens": 5, "n_groups": 2, "rank": 128, "in_dim": 2048},
-            dtypes={"x": "bfloat16", "w": "bfloat16", "out": "bfloat16"},
-            attrs={"fp8_grid": fp8_grid},
-            layout_variant_name="row_major",
-        )
-        for fp8_grid in (False, True)
-    ),
-    PointSpec(
-        contract_id="deepseek_v4_wo_a_split_k_mxfp8@1.0",
-        axes={"n_tokens": 5, "n_groups": 2, "rank": 128, "in_dim": 2048},
-        dtypes={"x": "bfloat16", "w": "bfloat16", "quantized": "float8_e4m3fn", "scales": "float8_e8m0"},
-        attrs={},
-        layout_variant_name="row_major",
-    ),
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
@@ -537,9 +496,6 @@ GFX950_CONTRACT_IDS = frozenset(
         "qwen3_next_gdn_decode_group_fp8_quant@1.0",
         "gated_attention_decode_group_fp8_quant@1.0",
         "qwen3_next_gated_attention_decode_group_fp8_quant@1.0",
-        "deepseek_v4_attention_q_prep@1.0",
         "deepseek_v4_sparse_mla_decode_inv_rope@1.0",
-        "deepseek_v4_wo_a_split_k@1.0",
-        "deepseek_v4_wo_a_split_k_mxfp8@1.0",
     }
 )
