@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 
+import torch
 from aiter import plugin
 
 from aklr.ops.gemm.api import gemm_a8w8_blockwise_scaled
@@ -125,15 +126,13 @@ def _run_gemm_bpreshuffle(XQ, WQ, x_scale, w_scale, dtype=None, out=None):
     )
 
 
-def _gemm_is_out_of_contract(x_scale, w_scale, split_k=None) -> str | None:
+def _gemm_is_out_of_contract(x_scale, w_scale, split_k) -> str | None:
     """Why this GEMM call is outside AKLR's contract, or None.
 
     Two limits AITER's signature allows and AKLR's contract does not:
     AITER also accepts E8M0 group32 scales, where AKLR declares fp32 per
     128x128 of b and 1x128 of a; and AITER's split_k has no counterpart here.
     """
-
-    import torch
 
     if x_scale.dtype != torch.float32 or w_scale.dtype != torch.float32:
         return "scales are not fp32"
@@ -142,15 +141,71 @@ def _gemm_is_out_of_contract(x_scale, w_scale, split_k=None) -> str | None:
     return None
 
 
+# --------------------------------------------------------------------------
+# One selector per contract. AITER applies the contract's defaults before
+# calling, so each unpacks the full positional list by name: a contract that
+# grew a parameter fails loudly here -- recorded as a select error, routed
+# native -- instead of reading the wrong index quietly.
+
+
+def _select_rmsnorm(args):
+    value, weight, epsilon, _sensitive = args
+    if rms_norm.fallback_reason(value, weight, epsilon):
+        return None
+    return _candidate("rms_norm@1.0", _run_rmsnorm)
+
+
+def _select_rmsnorm_with_add(args):
+    out, value, residual_in, residual_out, weight, epsilon, gemma_norm, _s = args
+    if gemma_norm:
+        return None  # gemma_norm is not in AKLR's contract
+    if add_rms_norm.fallback_reason(
+        value, residual_in, weight, epsilon, out, residual_out
+    ):
+        return None
+    return _candidate("add_rms_norm@1.0", _run_rmsnorm_with_add)
+
+
+def _select_gemm(args):
+    XQ, WQ, x_scale, w_scale, dtype, is_bpreshuffled, split_k = args
+    return _gemm_candidate(
+        XQ, WQ, x_scale, w_scale, dtype, bool(is_bpreshuffled), split_k
+    )
+
+
+def _select_gemm_bpreshuffle(args):
+    XQ, WQ, x_scale, w_scale, dtype, _out = args
+    return _gemm_candidate(XQ, WQ, x_scale, w_scale, dtype, True, None)
+
+
+def _gemm_candidate(XQ, WQ, x_scale, w_scale, dtype, bpreshuffled, split_k):
+    # Both AITER entries reach one AKLR contract, but keep separate run
+    # functions: each must accept its own contract's call, which AITER checks.
+    operand_format = "none:preshuffled" if bpreshuffled else "none:none"
+    if _gemm_is_out_of_contract(x_scale, w_scale, split_k):
+        return None
+    if gemm_a8w8_blockwise_scaled.fallback_reason(
+        XQ, WQ, x_scale, w_scale, out_dtype=dtype, operand_format=operand_format
+    ):
+        return None
+    return _candidate(
+        "gemm_a8w8_blockwise_scaled@1.0",
+        _run_gemm_bpreshuffle if bpreshuffled else _run_gemm_blockscale,
+    )
+
+
+_SELECTORS = {
+    "rmsnorm": _select_rmsnorm,
+    "rmsnorm_with_add": _select_rmsnorm_with_add,
+    "gemm_a8w8_blockscale": _select_gemm,
+    "gemm_a8w8_blockscale_bpreshuffle": _select_gemm_bpreshuffle,
+}
+
+
 class Provider:
     name = "aklr"
     api_versions = {plugin.API_VERSION}
-    op_versions = {
-        "rmsnorm",
-        "rmsnorm_with_add",
-        "gemm_a8w8_blockscale",
-        "gemm_a8w8_blockscale_bpreshuffle",
-    }
+    op_versions = set(_SELECTORS)
 
     def select(self, op, args, kwargs):
         """Answer for this call, cheaply, without running anything.
@@ -162,49 +217,10 @@ class Provider:
         rather than by failing later.
         """
 
-        if not _up():
+        selector = _SELECTORS.get(op.name)
+        if selector is None or not _up():
             return None
-
-        if op.name == "rmsnorm":
-            value, weight, epsilon = args[0], args[1], args[2]
-            if rms_norm.fallback_reason(value, weight, epsilon) is not None:
-                return None
-            return _candidate("rms_norm@1.0", _run_rmsnorm)
-
-        if op.name == "rmsnorm_with_add":
-            out, value, residual_in, residual_out, weight, epsilon = args[:6]
-            if len(args) > 6 and args[6]:
-                return None  # gemma_norm is not in AKLR's contract
-            if add_rms_norm.fallback_reason(
-                value, residual_in, weight, epsilon, out, residual_out
-            ) is not None:
-                return None
-            return _candidate("add_rms_norm@1.0", _run_rmsnorm_with_add)
-
-        if op.name in ("gemm_a8w8_blockscale", "gemm_a8w8_blockscale_bpreshuffle"):
-            XQ, WQ, x_scale, w_scale = args[:4]
-            bpreshuffled = op.name.endswith("_bpreshuffle")
-            split_k = args[6] if len(args) > 6 and not bpreshuffled else None
-            if not bpreshuffled and len(args) > 5 and args[5]:
-                bpreshuffled = True  # isBpreshuffled=True
-            outside = _gemm_is_out_of_contract(x_scale, w_scale, split_k)
-            if outside is not None:
-                return None
-            if gemm_a8w8_blockwise_scaled.fallback_reason(
-                XQ,
-                WQ,
-                x_scale,
-                w_scale,
-                out_dtype=args[4] if len(args) > 4 else None,
-                operand_format="none:preshuffled" if bpreshuffled else "none:none",
-            ) is not None:
-                return None
-            return _candidate(
-                "gemm_a8w8_blockwise_scaled@1.0",
-                _run_gemm_bpreshuffle if bpreshuffled else _run_gemm_blockscale,
-            )
-
-        return None
+        return selector(args)
 
 
 provider = Provider()
