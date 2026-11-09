@@ -69,7 +69,7 @@ The timings of this section were measured with HIP inline-asm microbenchmarks, n
   the operands of masked-off lanes contributed to it; a `v_mov_b32` in the same region honoured EXEC *(field, E4)*.
 - A lane mask or a divergent `if` neither skips an MFMA nor protects its destination. Skip MFMA work with a
   wave-uniform branch, and mask scores with `-inf` (exp2 then gives exactly 0). Per-wave classification of
-  diagonal blocks: `backward.md` §8.
+  diagonal blocks: `gradients.md` §8.
 
 ## 3. Fragment layouts (bf16, wave64)
 `D[m][n] = Σ_k A[m][k]·B[k][n] + C[m][n]`; s indexes the 8 bf16 values of an operand register group, t and e
@@ -200,7 +200,7 @@ In FlyDSL: `../flydsl/attention.md` § mfma_layout §8.
 
 ## Related
 `softmax.md` · `lds.md` · `registers_occupancy.md` ·
-`schedule_sync.md` · `backward.md` · `attribution.md` ·
+`schedule_sync.md` · `gradients.md` · `attribution.md` ·
 `../gemm/mainloop.md` · `../hardware/gfx950/matrix_core.md`
 
 ## Evidence

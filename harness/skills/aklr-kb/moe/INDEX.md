@@ -12,7 +12,7 @@ basis: measured N=1
 
 Where to start on a fused MoE kernel for AKLR (its FlyDSL side: `../flydsl/moe.md`): what the op computes, what
 bounds it at each token count, which cards to read, which kernels to start from, and the AKLR files that govern
-it. The expert GEMMs are grouped GEMMs; their card is `grouped_moe_inference.md`, and the training grouped-GEMM
+it. The expert GEMMs are grouped GEMMs; their card is `grouped_sorted_tokens.md`, and the training grouped-GEMM
 cards apply as techniques (§ Expert GEMM (grouped GEMM) below). "m" is a Point's `n_tokens`; a route is one
 (token, expert) pair.
 
@@ -45,26 +45,26 @@ the output row is the sum over the token's k routes of `topk_weights` × that pr
 | Regime | What bounds the time | Read |
 |---|---|---|
 | m 1–2 (6–18 routes) | Little work per call, so the launches and the sort weigh (estimated). At m 1 every AKLR kernel runs two launches, no sort and a workgroup set per route, and all four are served, at 1.26–3.36× *(field, E1)*; at m 2 the 33-expert kernel is served with four launches | the two cases |
-| m 8–64 with 257 experts | 72–576 routes over 257 experts, so most hit experts are read for one or two routes (estimated); each graph node adds a fixed cost (`decode.md` §1). Folding the sort into stage 1 saved 3.5–6.4 µs of 39–102 µs *(field, E2)* | `decode.md` §1–§2 |
-| Decode with tens of local experts | Measured on aiter's FlyDSL MXFP4 kernels: bandwidth. At 60 tokens a 75-layer step read 5.77 TB/s against a 6.27 TB/s read roof measured in the same run (92%); from 10 to 60 tokens the time grew 2.38× while the experts hit grew 2.6× *(field, E3)* | `grouped_moe_inference.md` §3–§5 |
-| Kimi-K3 SiTUv2, fp8 × MXFP4, m 8–112: 896 experts (TP) or 112 of 896 local (EP8), top-16 | Bandwidth: the weights of the experts the routes touch, 2.19 MB each at inter 384 and 17.5 MB at inter 3072 (estimated from the layout); count the touched experts from AKLR's own inputs (`../patterns/memory_bound.md`, Rule out first). From 32–40 tokens up the delivered kernels read them at 6.0–6.45 TB/s against a 6.5 TB/s read roof, aiter at 5.0–5.97, so at most 5–8% is left; at 8–24 tokens the per-launch costs around the GEMMs weigh, and EP8 measured 1.28–1.59 there *(field, E5)* | `../patterns/memory_bound.md`; `grouped_moe_inference.md` §2, §7; `decode.md` |
-| Kimi-K3 SiTUv2 at m 893–16384 | Every expert is touched; from ~9k tokens the GEMMs are compute-bound. At 16384 tokens the delivered kernels ran stage 1 at 1970 (TP) and 1889 (EP8) TF/s of useful FLOPs (padding rows not counted) and stage 2 at 1347 and 1764, where aiter ran 1431/1459 and 929/1267 *(field, E6)*; dense fp8 GEMMs of squat shapes reached ~2170–2400 TF/s in FlyDSL and ~2470–2660 in hipBLASLt on MI355X *(field, E7)*. TP's per-route rows and their reduce kernel took 190 of 1533 µs | `grouped_moe_inference.md` §2, §6; `../gemm/mainloop.md` §7 |
+| m 8–64 with 257 experts | 72–576 routes over 257 experts, so most hit experts are read for one or two routes (estimated); each graph node adds a fixed cost (`few_tokens.md` §1). Folding the sort into stage 1 saved 3.5–6.4 µs of 39–102 µs *(field, E2)* | `few_tokens.md` §1–§2 |
+| Decode with tens of local experts | Measured on aiter's FlyDSL MXFP4 kernels: bandwidth. At 60 tokens a 75-layer step read 5.77 TB/s against a 6.27 TB/s read roof measured in the same run (92%); from 10 to 60 tokens the time grew 2.38× while the experts hit grew 2.6× *(field, E3)* | `grouped_sorted_tokens.md` §3–§5 |
+| Kimi-K3 SiTUv2, fp8 × MXFP4, m 8–112: 896 experts (TP) or 112 of 896 local (EP8), top-16 | Bandwidth: the weights of the experts the routes touch, 2.19 MB each at inter 384 and 17.5 MB at inter 3072 (estimated from the layout); count the touched experts from AKLR's own inputs (`../patterns/memory_bound.md`, Rule out first). From 32–40 tokens up the delivered kernels read them at 6.0–6.45 TB/s against a 6.5 TB/s read roof, aiter at 5.0–5.97, so at most 5–8% is left; at 8–24 tokens the per-launch costs around the GEMMs weigh, and EP8 measured 1.28–1.59 there *(field, E5)* | `../patterns/memory_bound.md`; `grouped_sorted_tokens.md` §2, §7; `few_tokens.md` |
+| Kimi-K3 SiTUv2 at m 893–16384 | Every expert is touched; from ~9k tokens the GEMMs are compute-bound. At 16384 tokens the delivered kernels ran stage 1 at 1970 (TP) and 1889 (EP8) TF/s of useful FLOPs (padding rows not counted) and stage 2 at 1347 and 1764, where aiter ran 1431/1459 and 929/1267 *(field, E6)*; dense fp8 GEMMs of squat shapes reached ~2170–2400 TF/s in FlyDSL and ~2470–2660 in hipBLASLt on MI355X *(field, E7)*. TP's per-route rows and their reduce kernel took 190 of 1533 µs | `grouped_sorted_tokens.md` §2, §6; `../gemm/mainloop.md` §7 |
 | m 64–4096 with 33 local experts | Rows repeat per expert: tile-M 32–128, several row tiles of one expert per weight sweep, activations staged through LDS. Served at 1.030–1.609 over aiter at every m from 64 *(field, E4)* | [fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md) |
 
 ## Techniques that apply
 
 | Task | Read |
 |---|---|
-| Decide the launch structure of a decode-sized call; count graph nodes | `decode.md` §1 |
-| Remove the sort launch at 8–64 tokens | `decode.md` §2 |
-| Judge a port whose stage 2 uses atomics against its source | `decode.md` §3 |
-| Map sorted tokens to expert blocks, exit on the device, persistent stage 2 | `grouped_moe_inference.md` §2 |
-| Grid shape and tile-N at decode sizes | `grouped_moe_inference.md` §3 |
-| Cache policy of the weight loads | `grouped_moe_inference.md` §4 |
-| Tile-M against the sort unit | `grouped_moe_inference.md` §5 |
-| Stage 2: atomics or a fixed-order reduce | `grouped_moe_inference.md` §6, `../gemm/correctness.md` §8 |
-| Sort and quantization kernels around the GEMMs | `grouped_moe_inference.md` §7 |
-| Measuring at decode sizes | `grouped_moe_inference.md` §8, `../gemm/small_m.md` §1 |
+| Decide the launch structure of a decode-sized call; count graph nodes | `few_tokens.md` §1 |
+| Remove the sort launch at 8–64 tokens | `few_tokens.md` §2 |
+| Judge a port whose stage 2 uses atomics against its source | `few_tokens.md` §3 |
+| Map sorted tokens to expert blocks, exit on the device, persistent stage 2 | `grouped_sorted_tokens.md` §2 |
+| Grid shape and tile-N at decode sizes | `grouped_sorted_tokens.md` §3 |
+| Cache policy of the weight loads | `grouped_sorted_tokens.md` §4 |
+| Tile-M against the sort unit | `grouped_sorted_tokens.md` §5 |
+| Stage 2: atomics or a fixed-order reduce | `grouped_sorted_tokens.md` §6, `../gemm/correctness.md` §8 |
+| Sort and quantization kernels around the GEMMs | `grouped_sorted_tokens.md` §7 |
+| Measuring at decode sizes | `grouped_sorted_tokens.md` §8, `../gemm/small_m.md` §1 |
 | Split K over the waves of one workgroup | `../gemm/small_m.md` §5 |
 | Kernel-argument preload; rows bound by launch and latency | `../gemm/small_m.md` §6, `../patterns/launch_floor_small_m.md` |
 | Preshuffled operands and MX scales | `../gemm/datapath.md` §10, §11 |
@@ -88,8 +88,8 @@ the output row is the sum over the token's k routes of `topk_weights` × that pr
   - `4fbd9d02…`: one stage-2 binary serves all four token counts; stage 1 compiles per count.
 - **aiter's FlyDSL MoE families** and their knobs: `../flydsl/kernels/flydsl_kernel_library.md` § Other
   FlyDSL families in the baseline aiter (MoE). aiter is the baseline; price it through `fused_moe_baseline`, which
-  calls `aiter.fused_moe.fused_moe` (`grouped_moe_inference.md` §8).
-- **FlyDSL v0.3.2's `kernels/moe/`** and how aiter's copies differ: `../flydsl/moe.md` § grouped_moe_inference
+  calls `aiter.fused_moe.fused_moe` (`grouped_sorted_tokens.md` §8).
+- **FlyDSL v0.3.2's `kernels/moe/`** and how aiter's copies differ: `../flydsl/moe.md` § grouped_sorted_tokens
   §1.
 
 ## In AKLR
@@ -158,7 +158,7 @@ In FlyDSL: `../flydsl/moe.md` § INDEX Expert GEMM (grouped GEMM).
 ### In AKLR
 
 AKLR has no grouped-GEMM op. Its MoE op is `fused_moe` (the sglang plugin's MoE ops take a whole MoE block): start
-at `decode.md`, then `grouped_moe_inference.md`; AKLR's own FlyDSL MoE kernels are listed
+at `few_tokens.md`, then `grouped_sorted_tokens.md`; AKLR's own FlyDSL MoE kernels are listed
 in `../flydsl/kernels/flydsl_kernel_library.md` § AKLR's own FlyDSL MoE kernels. The training cards apply as
 techniques. Where a card disagrees with `aklr/ops/README.md` (§ The kernel section and ABI), the README wins
 (`../SKILL.md` § In AKLR). What it changes here:
@@ -176,7 +176,7 @@ techniques. Where a card disagrees with `aklr/ops/README.md` (§ The kernel sect
   §1) are not available: repack on every call. The harness overwrites weights with `.data.copy_()`, which keeps
   both the address and `_version`. Handle ragged dimensions in the kernel (`grouped_host_autotune.md` §4).
 - **Scratch.** Per-shape scratch must be "rewritten whole by every call before it is read" (README). The persistent
-  split-K bands of `grouped_wgrad.md` §9, sized for the deepest geometry, do not meet that as written:
+  split-K bands of `grouped_variable_k.md` §9, sized for the deepest geometry, do not meet that as written:
   allocate them per call, or have every call write every band the kernel can read.
 - **Every output element is checked.** Write all of the output, zeros for empty groups included; the "fingerprint
   only the region the contract writes" workaround of `grouped_correctness.md` §3 does not apply.
@@ -189,12 +189,12 @@ techniques. Where a card disagrees with `aklr/ops/README.md` (§ The kernel sect
 | mapping tiles to groups: grid size, group lookup, empty groups, 64-bit offsets | `grouped_group_mapping.md` |
 | ordering tiles across XCDs and groups, handling token skew, choosing persistent or not | `grouped_scheduling.md` |
 | choosing a tile, occupancy or boundary body per pass; pricing small groups | `grouped_tile_pricing.md` |
-| working on wgrad with a per-group contraction length, split-K, beta=1 accumulation | `grouped_wgrad.md` |
+| working on wgrad with a per-group contraction length, split-K, beta=1 accumulation | `grouped_variable_k.md` |
 | adding fp8, MXFP8 or MXFP4: scale preshuffle and packing, quantization, stores, GLU fusion | `grouped_lowprec.md` |
 | launching without host syncs, CUDA graphs, caching, autotuning across distributions | `grouped_host_autotune.md` |
 | benchmarking grouped kernels: shapes, distributions, deployment conditions, noise | `grouped_measurement.md` (with `../gemm/measurement.md`) |
 | writing or trusting a correctness gate for grouped kernels | `grouped_correctness.md` (with `../gemm/correctness.md`) |
-| working on an inference MoE expert GEMM (sorted token ids, decode) | `grouped_moe_inference.md` |
+| working on an inference MoE expert GEMM (sorted token ids, decode) | `grouped_sorted_tokens.md` |
 | working on the main loop, LDS, DMA, MFMA atoms or the epilogue itself | `../gemm/INDEX.md` |
 | choosing EP or TP for a MoE at decode, or working on the dispatch and combine between GPUs | `../communication/ep_dispatch_combine.md` |
 
@@ -210,12 +210,12 @@ In FlyDSL: `../flydsl/moe.md` § INDEX Kernel map.
 | `grouped_group_mapping.md` | device-side group metadata, upper-bound grids, tile→group lookups and their cost, empty groups, 64-bit bases |
 | `grouped_scheduling.md` | XCD and L2 order across groups, where the skew lives, longest-first, persistent vs one tile per workgroup |
 | `grouped_tile_pricing.md` | tile and occupancy per pass, boundary and tail bodies, the per-tile fixed cost of small groups |
-| `grouped_wgrad.md` | variable-K loops, scale timing, store-bound short groups, deterministic split-K, beta=1 accumulation |
+| `grouped_variable_k.md` | variable-K loops, scale timing, store-bound short groups, deterministic split-K, beta=1 accumulation |
 | `grouped_lowprec.md` | fp8/MX scale preshuffle and packing, quantization share, K padding, store forms, GLU/dGLU fusion |
 | `grouped_host_autotune.md` | no host syncs, graph vs eager launch, caching, races on balanced data, beta and ranking |
 | `grouped_measurement.md` | shapes and distributions, deployment conditions, FLOP accounting, per-cell noise |
 | `grouped_correctness.md` | skewed and empty groups in the gate, out-of-bounds reads, MX probes, determinism vs correctness |
-| `grouped_moe_inference.md` | sorted-token MoE expert GEMMs: work mapping, persistent stage 2, cache policy, decode |
+| `grouped_sorted_tokens.md` | sorted-token MoE expert GEMMs: work mapping, persistent stage 2, cache policy, decode |
 
 ## Evidence
 

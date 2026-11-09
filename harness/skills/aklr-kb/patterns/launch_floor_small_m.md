@@ -56,10 +56,10 @@ basis: source-semantics
 - Launch the `flyc.compile` object, not the `@flyc.jit` function, except under graph capture, where the raw
   `@flyc.jit` closure is the one to launch — `flydsl/gemm.md` § autotune §6 (S28, S29).
 - Fewer launches by fusion — `../flydsl/kernels/flydsl_authoring_method.md` — for latency-bound small shapes (S30).
-- Other kernel families: drop a graph node by folding a small kernel into its consumer — `moe/decode.md`
+- Other kernel families: drop a graph node by folding a small kernel into its consumer — `moe/few_tokens.md`
   §1–2; a decode attention's combine is a fixed cost, and when merging it into the producer pays —
-  `attention/decode_split_kv.md` §1–2; the small kernels around MoE expert GEMMs —
-  `moe/grouped_moe_inference.md` §7.
+  `attention/split_kv.md` §1–2; the small kernels around MoE expert GEMMs —
+  `moe/grouped_sorted_tokens.md` §7.
 
 ## Evidence
 

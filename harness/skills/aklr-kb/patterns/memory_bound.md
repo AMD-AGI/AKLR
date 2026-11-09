@@ -70,9 +70,9 @@ basis: source-semantics
   lose (S29).
 - The C store — `gemm/epilogue.md` §2 — run its three ablations before changing it (S12).
 - Other kernel families: attention gathers, unique lines and the index distribution —
-  `attention/decode_split_kv.md` §7; bytes per score and GQA sharer merging —
+  `attention/split_kv.md` §7; bytes per score and GQA sharer merging —
   `attention/grid_dispatch.md` §9; cache policy on MoE weights at decode sizes —
-  `moe/grouped_moe_inference.md` §4.
+  `moe/grouped_sorted_tokens.md` §4.
 
 ## Evidence
 

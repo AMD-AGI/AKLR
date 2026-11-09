@@ -104,7 +104,7 @@ it multiplies by that token's scale, writes −inf past the context, and the wav
 
 **A split over pages with no merge.** A logit depends on one page, so workgroups split each request's table into
 disjoint page ranges and each wave takes every fourth page of its range; nothing is combined
-(`../attention/decode_split_kv.md` §5: an output that is not a reduction splits with zero merge). The
+(`../attention/split_kv.md` §5: an output that is not a reduction splits with zero merge). The
 host picks one of three bodies from the batch (`_build`):
 
 | Batch | Body | Grid | How a wave gets its next page |

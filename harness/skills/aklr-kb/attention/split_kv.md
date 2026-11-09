@@ -1,7 +1,7 @@
 ---
 title: "Attention decode — split-KV grids, the combine, merging them, and pricing gathers"
 kind: topic
-lever: attn_decode_split_kv
+lever: attn_split_kv
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16, fp8]
@@ -95,7 +95,7 @@ and gets hoisted. In the merged epilogue only the number of rounds and the store
   invalidates the XCD's L2. *(field, E12)* Decode-step benchmark −62%; *(field, E13)* release 5.1 µs + acquire
   1.3 µs, 3–4× the whole epilogue. Get cross-CU visibility from per-instruction scope bits.
 - In a backward pass, where thousands of output tiles reduce in parallel, the same pattern also lost to a separate
-  reduce kernel (`backward.md` §6).
+  reduce kernel (`gradients.md` §6).
 
 ## 4. Grid size: fill the CUs once, with fat workgroups
 - **Ragged groups.** Allow any `n_groups` with `ceil(n_tiles / n_groups)` tiles per workgroup; in the last
@@ -201,7 +201,7 @@ Triton side (a slower Python launcher), and turned a 16.8% kernel gap into 38%. 
 - The benchmark's indices reproduce production adjacency.
 
 ## Related
-`grid_dispatch.md` · `backward.md` §6 · `measurement.md` ·
+`grid_dispatch.md` · `gradients.md` §6 · `measurement.md` ·
 `../gemm/small_m.md` · `../gemm/epilogue.md` §5 · `../hardware/gfx950/memory_and_sync.md`
 
 ## Evidence

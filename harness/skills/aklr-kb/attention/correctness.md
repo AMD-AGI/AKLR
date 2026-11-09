@@ -138,7 +138,7 @@ that accumulator must already be divided by c, or the scale applies twice.
 
 ## Related
 `../gemm/correctness.md` · `../flydsl/debug-flydsl-kernel.md` · `softmax.md` ·
-`backward.md` · `measurement.md` · `schedule_sync.md`
+`gradients.md` · `measurement.md` · `schedule_sync.md`
 
 ## Evidence
 

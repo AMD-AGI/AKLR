@@ -49,7 +49,7 @@ sources:
 
 **Somewhere else if:** the device-side exit and lookup → `grouped_group_mapping.md` (exit on the raw
 id and remap over the live count is §4 there); tile size and boundary bodies →
-`grouped_tile_pricing.md`; split-K for deep groups → `grouped_wgrad.md`; ranking candidates on
+`grouped_tile_pricing.md`; split-K for deep groups → `grouped_variable_k.md`; ranking candidates on
 balanced and skewed data → `grouped_host_autotune.md`.
 
 ## 1. First ask where the skew lives
@@ -93,7 +93,7 @@ XCD; streams that read **a shared slice** want the hardware round-robin
   still lost 0.6% overall and 2–3 points on two configs: round-robin keeps all eight XCDs on the same band.
   That measurement (G = 32, 144 tiles per group, ~18 rounds) is at the depth where Turbo's tuner leads with
   the affine rectangle (§3, last bullet); race both on the deployed shape.
-- **A contiguous remap also undoes a longest-first order** on variable-K wgrad (measured: `grouped_wgrad.md`
+- **A contiguous remap also undoes a longest-first order** on variable-K wgrad (measured: `grouped_variable_k.md`
   §5). A race scored on balanced data alone picks the losing arm; score on the worse of balanced and skewed.
 - **Affinity that stays balanced.**
   - Renumber a group's tiles into XCD-affine rectangles only where the band does not already hand each XCD a
@@ -229,7 +229,7 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
 - A persistent grid capped below the CU count exists to leave CUs to a co-running kernel, not for speed (Turbo:
   BF16:622-625; FP8:2669-2670).
 - Which variable-K loop body to run (chunked masked or exact-trip) is keyed on the per-group contraction
-  `m_total / G`, not on `m_total` (`grouped_wgrad.md`).
+  `m_total / G`, not on `m_total` (`grouped_variable_k.md`).
 
 ## 7. Two tiles per workgroup
 - What it buys is the per-workgroup fixed cost (launch, decode, table load, pipeline fill) shared by WGT tiles
@@ -283,7 +283,7 @@ per-group launches of it gave 2836, and eight per-group launches of the vendor G
 - Order changes are checked bit-identical: they must not change a single output byte.
 
 ## Related
-`grouped_group_mapping.md` · `grouped_tile_pricing.md` · `grouped_wgrad.md` ·
+`grouped_group_mapping.md` · `grouped_tile_pricing.md` · `grouped_variable_k.md` ·
 `grouped_host_autotune.md` · `grouped_measurement.md` ·
 `../gemm/schedule_and_locality.md` §2 · `../gemm/grid_pricing.md` §1, §10 ·
 `../attention/grid_dispatch.md` §4

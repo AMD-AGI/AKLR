@@ -28,7 +28,7 @@ DSA files at 16 heads (8) and at 8 heads (9 more, #66); `kernels/kernel_library.
 bf16 KV pools; start those from `../attention/INDEX.md` (measured on FlyDSL kernels). Linear attention: `gdn.md`.
 
 **Somewhere else if:** the mechanisms, with numbers measured on FlyDSL kernels → `../attention/INDEX.md`, first
-`../attention/decode_split_kv.md`; a launch's cost under each ruler → `authoring.md` §7; loads, async copies, waits,
+`../attention/split_kv.md`; a launch's cost under each ruler → `authoring.md` §7; loads, async copies, waits,
 barriers → `gluon/memory.md`; layouts → `gluon/layouts.md`; MFMA → `gluon/mfma.md`; inline assembly →
 `gluon/wave_ops.md`; the contracts' numerics → `numerics.md`; the ruler and A/B protocol → `tuning.md`; every AKLR
 Triton kernel → `kernels/kernel_library.md`. Numbers here were measured on AKLR's Gluon kernels unless the sentence
@@ -104,7 +104,7 @@ Merged so in float64, the 32-row Qwen3.5 file's records give the softmax over al
 per lane, compiled with Triton 3.8.0 for gfx950 (`numerics.md` §6). The gated-attention files use `gl.exp`; no Point compares the two.
 
 - **Merge in a later launch.** None of the 17 files (8 DSA, 9 Qwen3.5) makes one workgroup wait for another or
-  reduces in the last workgroup to arrive (why: `../attention/decode_split_kv.md` §2, §3). What a separate merge launch
+  reduces in the last workgroup to arrive (why: `../attention/split_kv.md` §2, §3). What a separate merge launch
   costs depends on who times it (`authoring.md` §7): CI sums the per-kernel device durations of the call's kernels, from
   AKLR's rocprofiler-sdk collector since #33 (Kineto before), gaps between graph nodes excluded (S3), and there an added
   launch reads at least AKLR's dispatch floor (`../pitfalls/aklr_dispatch_floor.md`), about 4.05 µs for a trivial
@@ -164,7 +164,7 @@ CI's stored speedups, 64 heads at 43e112e, 8 heads at a29581b *(field, E1)*; sin
 entry (`aklr/ops/README.md` § The kernel section and ABI). The 8-token file and the three 8-head files add a
 `q.to(torch.bfloat16)` launch in `run` (S17, S11, S18, S19).
 
-- **Measured DSA grids, not an isolated CU-residency rule.** At 12/16/32 tokens the accurate committed 64-head files' 192/256/256 eight-wave producers beat modified 96/128/512: modified/committed call times 1.414/1.456/1.098, paired-log 99% CIs 1.402751–1.425598/1.441523–1.470504/1.094254–1.102277 (one session, 6 counterbalanced rounds per arm, 3 forward and 3 reverse) *(field, E18)*. At 24 tokens, in three earlier runs, 384 same-head producers ran 1.08–1.09× slower than 192 *(field, E2)*. Splits change tiles and merge width; the 16-token variant also changes `pv_mode` (`"panels64"`) and the packed statistics, the 32-token variant `pv_mode` (`"serial32"`) and the refill. LDS predicts at most one such workgroup per CU, but residency and its timing contribution were not measured, nor were four-wave or Qwen3.5 residency and untested Points (`../attention/decode_split_kv.md` §4).
+- **Measured DSA grids, not an isolated CU-residency rule.** At 12/16/32 tokens the accurate committed 64-head files' 192/256/256 eight-wave producers beat modified 96/128/512: modified/committed call times 1.414/1.456/1.098, paired-log 99% CIs 1.402751–1.425598/1.441523–1.470504/1.094254–1.102277 (one session, 6 counterbalanced rounds per arm, 3 forward and 3 reverse) *(field, E18)*. At 24 tokens, in three earlier runs, 384 same-head producers ran 1.08–1.09× slower than 192 *(field, E2)*. Splits change tiles and merge width; the 16-token variant also changes `pv_mode` (`"panels64"`) and the packed statistics, the 32-token variant `pv_mode` (`"serial32"`) and the refill. LDS predicts at most one such workgroup per CU, but residency and its timing contribution were not measured, nor were four-wave or Qwen3.5 residency and untested Points (`../attention/split_kv.md` §4).
 - **Do not start a 64-head kernel from the 8-token file.** It differs from the 12–32-token files in many choices:
   16-head groups of 4 warps, rows async-copied into LDS, bf16 hi + lo P, fp32 partials and the extra `q` cast. It
   stores 1.030 *(field, E1)*, at the edge of what dispatch serves (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` §
@@ -244,7 +244,7 @@ entry (`aklr/ops/README.md` § The kernel section and ABI). The 8-token file and
   *(field, E8)*; allocated before the second key reduction, P takes it to 165,888 B with the 2 KiB scratch (compiled).
 - **The bench has no index locality.** Each token's 2048 entries are distinct and uniformly sampled from −1 and the pool's slots (S12),
   so the 8-head files' live-tile skipping does no work on the bench. Test the locality levers of
-  `../attention/decode_split_kv.md` §7 (measured on FlyDSL and Triton kernels) with production-like indices.
+  `../attention/split_kv.md` §7 (measured on FlyDSL and Triton kernels) with production-like indices.
 
 ## 6. Qwen3.5 gated attention decode: plugin, Points, launches
 

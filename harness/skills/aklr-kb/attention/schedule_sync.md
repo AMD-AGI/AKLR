@@ -211,11 +211,11 @@ In FlyDSL: `../flydsl/attention.md` § schedule_sync §8.
 - **Non-temporal hints on attention operand streams were negative.** *(field, E39)* Q `nt` −0.95% (waves of one
   workgroup share Q lines); dkdv Q/dO DMA `nt` −7.6% *(field, E33)* (reused across workgroups); O store `nt` +0.11%
   (noise). Before marking a stream `nt`, ask whether lanes or waves of one workgroup share its lines.
-  Workspace partials are in `backward.md` §5.
+  Workspace partials are in `gradients.md` §5.
 - **Decode prefetch depth:** a prologue depth of 2 pays only at ≤ 2 CTAs per CU. *(field, E40)* It was 1.7–2.7%
   faster up to 512 CTAs (2 per CU on 256 CUs) and 2.0–2.5% slower from 576 up; *(field, E41)* a steady-state depth
   ≥ 2 was 4.6–6.6% slower. Account the extra prologue tile so the first iteration consumes it, or it becomes the
-  steady-state depth (`decode_split_kv.md`).
+  steady-state depth (`split_kv.md`).
 
 In FlyDSL: `../flydsl/attention.md` § schedule_sync §10.
 
@@ -227,7 +227,7 @@ In FlyDSL: `../flydsl/attention.md` § schedule_sync §10.
 
 ## Related
 `registers_occupancy.md` · `lds.md` · `attribution.md` ·
-`correctness.md` · `grid_dispatch.md` · `decode_split_kv.md` ·
+`correctness.md` · `grid_dispatch.md` · `split_kv.md` ·
 `../gemm/schedule_and_locality.md` · `../gemm/correctness.md` ·
 `../flydsl/guides.md` § prefetch-data-load · `../flydsl/debug-flydsl-kernel.md`
 

@@ -79,10 +79,10 @@ the deployment, not from a previous bench:
   output axis left a forward on its misaligned slow path). Count useful FLOPs from the unpadded sizes.
 - **Accumulator dtype.** *(field, E4)* A wgrad timed with an fp32 accumulator where the deployment used bf16 took
   8–14% more time on one shape (beta=0 and beta=1). The beta=1 read-back itself is priced in
-  `grouped_wgrad.md` §10.
+  `grouped_variable_k.md` §10.
 - **Graph replay hides host enqueue, not kernel boundaries.** *(field, E5)* On an inference MoE decode path, one extra
   small kernel on the dependency chain still cost a full launch on every call under graph replay
-  (`grouped_moe_inference.md` §7). Measure launch-count changes on the scoring bench, in the mode the
+  (`grouped_sorted_tokens.md` §7). Measure launch-count changes on the scoring bench, in the mode the
   deployment runs.
 - **Screen with kernel-only, decide in the step.** *(field, E6)* Kernel time saved converted to step time at 81% over
   one series of changes; a probe 0.5% faster on the deployed grid was 0.71% slower in training.

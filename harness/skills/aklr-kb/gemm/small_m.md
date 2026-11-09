@@ -19,7 +19,7 @@ sources:
 # GEMM at small M
 
 > Scope: dense GEMM with M ≈ 1–256 (decode steps, speculative-decode verify), mostly bf16. MoE expert GEMMs at
-> decode are in `../moe/grouped_moe_inference.md`. Primus-Turbo's FlyDSL
+> decode are in `../moe/grouped_sorted_tokens.md`. Primus-Turbo's FlyDSL
 > GEMMs (the exemplar elsewhere in this package) are built for training shapes and do not target small M.
 > "The current kernels" are the baseline aiter's bf16 FlyDSL GEMMs behind `flydsl_hgemm`: the generic split-K
 > kernel `aiter/ops/flydsl/kernels/splitk_hgemm.py` and the small-M kernel `kernels/small_m_hgemm.py`, which no

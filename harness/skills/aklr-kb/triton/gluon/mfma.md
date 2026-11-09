@@ -411,7 +411,7 @@ Why the residual pays: [../numerics.md](../numerics.md) §5, [../attention.md](.
   validation with `candidate_crash`, exit −11, in 4 of 4 rounds *(field, E8)*: the Triton 3.8.0 compiler segfaults in
   LLVM's code generation (compiled with Triton 3.8.0 for gfx950). Which combinations compile:
   [../moe.md](../moe.md) §7, [../debugging.md](../debugging.md) §6. Change the constants together.
-- For a bf16 plain-Triton decode GEMM, a 16-row tile carrying one row lost to AKLR's FlyDSL M = 1 dot / vector kernels at both of its shapes in one A/B ([../gemm/decode_gemm.md](../gemm/decode_gemm.md) §7); the kernels above differ in operand format, loading and fusion. Decode GEMM and MoE design: [../gemm.md](../gemm.md) §3, §4, [../moe.md](../moe.md) §7, §9.
+- For a bf16 plain-Triton decode GEMM, a 16-row tile carrying one row lost to AKLR's FlyDSL M = 1 dot / vector kernels at both of its shapes in one A/B ([../gemm/small_m_gemm.md](../gemm/small_m_gemm.md) §7); the kernels above differ in operand format, loading and fusion. Decode GEMM and MoE design: [../gemm.md](../gemm.md) §3, §4, [../moe.md](../moe.md) §7, §9.
 
 ## 9. Epilogues
 

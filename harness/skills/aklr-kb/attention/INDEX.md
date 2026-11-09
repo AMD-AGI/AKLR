@@ -39,8 +39,8 @@ how to write it in FlyDSL is in `../flydsl/attention.md`, under the card section
 | working on LDS: transpose reads, layouts, bank conflicts | `lds.md` (with `../flydsl/guides.md` § lds-optimization) |
 | fighting registers or occupancy, or overlapping MFMA with VALU | `registers_occupancy.md` |
 | placing barriers, waits, scheduling hints, prefetch | `schedule_sync.md` (with `../gemm/schedule_and_locality.md`) |
-| writing the backward pass: dQ/dK/dV accumulation, determinism, fusion | `backward.md` |
-| writing decode or split-KV with a combine step | `decode_split_kv.md` |
+| writing the backward pass: dQ/dK/dV accumulation, determinism, fusion | `gradients.md` |
+| writing decode or split-KV with a combine step | `split_kv.md` |
 | measuring an A/B on attention | `measurement.md` (with `../gemm/measurement.md`) |
 | writing or trusting a correctness gate | `correctness.md` (with `../flydsl/debug-flydsl-kernel.md`) |
 | writing it in FlyDSL: API spellings, the JIT and its cache, FlyDSL's own attention kernels | `../flydsl/attention.md` |
@@ -61,7 +61,7 @@ In FlyDSL: `../flydsl/attention.md` § INDEX FlyDSL's own attention code (v0.3.2
 | `lds.md` | gfx950 transpose reads and their lane maps, 16-element blocks, row alignment, bank-conflict counters |
 | `registers_occupancy.md` | the 512-register pool, occupancy steps, spills, MFMA–VALU co-execution and when dual-wave pays |
 | `schedule_sync.md` | sched_barrier and sched_group_barrier (TRANS mask for exp), setprio, LLVM scheduler options, hazards, waits, prefetch, barriers |
-| `backward.md` | determinism by construction, the D/A law for dQ partials, atomics, workspace layout, fusion forms that win and lose, masked loops |
-| `decode_split_kv.md` | combine as a fixed cost, cooperative rendezvous, the CTA/CU cliff, split-K rules, gather locality |
+| `gradients.md` | determinism by construction, the D/A law for dQ partials, atomics, workspace layout, fusion forms that win and lose, masked loops |
+| `split_kv.md` | combine as a fixed cost, cooperative rendezvous, the CTA/CU cliff, split-K rules, gather locality |
 | `measurement.md` | attention-specific A/B protocol, FLOP accounting, host-bound small shapes, coverage traps |
 | `correctness.md` | SNR + determinism gates, spike inputs, shared-LSE end-to-end gates, window conventions, probes |

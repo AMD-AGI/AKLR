@@ -52,9 +52,9 @@ basis: source-semantics
   race the first prefetched tile per M (S33).
 - Other kernel families: attention's XCD-major mapping and live `(batch, kv-head)` slices per XCD —
   `attention/grid_dispatch.md` §2, §7; decode grid size and split rules —
-  `attention/decode_split_kv.md` §4–5; grouped GEMM skew, longest-first and persistent grids —
+  `attention/split_kv.md` §4–5; grouped GEMM skew, longest-first and persistent grids —
   `moe/grouped_scheduling.md` §1, §5–6; MoE grids at decode sizes —
-  `moe/grouped_moe_inference.md` §3.
+  `moe/grouped_sorted_tokens.md` §3.
 
 ## Evidence
 

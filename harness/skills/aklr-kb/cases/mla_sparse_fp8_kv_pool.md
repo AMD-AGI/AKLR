@@ -57,7 +57,7 @@ are called here by their extra pool: "no extra" (window only), "extra 8256" (ext
 - **The bench draws lengths and indices uniformly.** `sparse_lens` and `extra_sparse_lens` are uniform in
   [0, width] and the indices uniform over the whole pool (`IntRangeDistribution`). In serving they follow the
   model's top-k selection, whose index structure moved gather cost on another sparse kernel
-  (`../attention/decode_split_kv.md` §7); the speedup on serving inputs is not measured. At batch 1 one
+  (`../attention/split_kv.md` §7); the speedup on serving inputs is not measured. At batch 1 one
   row's drawn lengths set the work: the nine batch-1 Points of extra 8256 read 2.809–5.845 *(field, E2)*, and each
   reproduces within 4.1% in the other committed run *(field, E4)*, so the spread follows each Point's inputs
   (seeded by its workload hash, `aklr/ops/README.md` § Inputs and workloads), not run noise.
@@ -75,7 +75,7 @@ are called here by their extra pool: "no extra" (window only), "extra 8256" (ext
   (`aklr/core/contract/semantics/_layouts.py`). A pool view that starts inside a larger allocation would be read
   from the wrong base. The bench's pools start at offset 0; sglang's were not checked for this page.
 - **Not the shape the decode cards recommend**, and nothing here prices the differences: the combine is a second
-  launch with 4 waves and an LDS merge (`../attention/decode_split_kv.md` §1 and
+  launch with 4 waves and an LDS merge (`../attention/split_kv.md` §1 and
   `../gemm/grid_pricing.md` §2 found one wave per combine workgroup faster); a producer workgroup owns
   one 32-key tile, two above 1024 live keys, where §5 of the decode card asks for at least two per split; partials
   are bf16, which §5 says adds merge error.
@@ -101,7 +101,7 @@ loads plus that block's UE8M0 exponent, and build bf16 values by integer bit ass
 shifted into place, exponent + scale − 7 added in one integer add per pair, sign moved to bit 15. The eighth
 thread copies the 64 bf16 rope values. Everything lands in one bf16 LDS tile of 32 keys × 512 dims (32 KiB), stored
 as 16 blocks of 32 keys × 32 dims. A key with a negative index or past the live length reads slot 0 and gets a
-−1e30 bias in LDS, so its exp2 is 0 (the masking of `../attention/decode_split_kv.md` §4). A payload is
+−1e30 bias in LDS, so its exp2 is 0 (the masking of `../attention/split_kv.md` §4). A payload is
 4.5 lines of 128 bytes at phase 0 or 64, so each key touches 5 lines plus its scale (from the layout; §7 of the same
 card).
 

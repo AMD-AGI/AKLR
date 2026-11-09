@@ -1,7 +1,7 @@
 ---
 title: "Grouped GEMM — variable-K wgrad"
 kind: topic
-lever: grouped_wgrad
+lever: grouped_variable_k
 ops: [grouped_gemm]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp8, mxfp4]
@@ -63,7 +63,7 @@ Two forms are in use.
   depths) and the 0–5 remainder as a tail fused into the same asm block; a group shorter than one pass runs only
   the tail (`nval_can_be_zero`, FP8:2797-2798, 3434-3437). MX4 passes the raw 256-block count (MX4:1887).
 
-In FlyDSL: `../flydsl/moe.md` § grouped_wgrad §2.
+In FlyDSL: `../flydsl/moe.md` § grouped_variable_k §2.
 
 ## 3. K tails: let the descriptor zero them, except where it cannot
 - **Token-outer operands (tensorwise, bf16).** Fold `m_start · OUT` into the 64-bit descriptor base and bound
@@ -88,7 +88,7 @@ In FlyDSL: `../flydsl/moe.md` § grouped_wgrad §2.
   issue-bound and prefetching does not hide them. Pack four E8M0 per dword, per group: `grouped_lowprec.md` §3.
 - The scaled MFMA instruction itself is free (`grouped_lowprec.md` §4).
 
-In FlyDSL: `../flydsl/moe.md` § grouped_wgrad §4.
+In FlyDSL: `../flydsl/moe.md` § grouped_variable_k §4.
 
 ## 5. Dispatch order: wgrad tiles are not equivalent
 In NT every tile of a launch costs the same and skew changes how many tiles a group has. In wgrad every group has
@@ -160,7 +160,7 @@ Under skew one group's contraction outlasts the rest and the launch ends with on
 CUs idle. The device is full, so the dense wave-quantization gate (`../gemm/grid_pricing.md` §2) never
 fires; the trigger is the deepest group. Determinism by fixed-order reduce is the same idea as
 the in-launch split-K reduce of `../gemm/grid_pricing.md` §2 and of
-`../attention/backward.md` §1.
+`../attention/gradients.md` §1.
 - **Decide on the device, from `group_offs`.** FP8 fixes the piece count from the static shape (tiles per group
   against CUs; `_wgrad_split_geom`, FP8:3688-3704) and cuts a group only if its own contraction clears a bar
   (`_wgrad_is_cut`, FP8:3747). A variant chose one window and its slice count S at run time. *(field, E18)* That
@@ -194,7 +194,7 @@ the in-launch split-K reduce of `../gemm/grid_pricing.md` §2 and of
   the true dividend range. Assert the coverage at compile time; the gate that catches a gap is in
   `grouped_correctness.md` §9.
 
-In FlyDSL: `../flydsl/moe.md` § grouped_wgrad §9.
+In FlyDSL: `../flydsl/moe.md` § grouped_variable_k §9.
 
 ## 10. beta = 1: accumulating into the gradient buffer
 - **The read-back is a physical cost and scales with the accumulator dtype.** *(field, E24)* Tensorwise 4-wave wgrad,
@@ -251,13 +251,13 @@ In FlyDSL: `../flydsl/moe.md` § grouped_wgrad §9.
 - beta=1 was timed at the accumulator dtype the caller uses, with the read-back in the epilogue.
 - A tight-C or fp32 output reaches the same split path as the default output.
 
-In FlyDSL: `../flydsl/moe.md` § grouped_wgrad Verify.
+In FlyDSL: `../flydsl/moe.md` § grouped_variable_k Verify.
 
 ## Related
 `grouped_scheduling.md` · `grouped_tile_pricing.md` · `grouped_lowprec.md` ·
 `grouped_host_autotune.md` · `grouped_correctness.md` · `grouped_measurement.md` ·
 `../gemm/mainloop.md` · `../gemm/grid_pricing.md` · `../gemm/epilogue.md` ·
-`../flydsl/debug-flydsl-kernel.md` · `../attention/backward.md`
+`../flydsl/debug-flydsl-kernel.md` · `../attention/gradients.md`
 
 ## Evidence
 

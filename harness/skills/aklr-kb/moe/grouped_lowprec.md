@@ -43,7 +43,7 @@ sources:
 - **MX dgrad runs as NT on a column-quantized weight** (OPS8:806): the preshuffled block scale of B is "only
   walkable by the NT addressing" (MX4G:21-23). Tensorwise dgrad stays NN with transpose reads.
 - **MX wgrad takes column-quantized operands `[OUT, M_total]`**; K tails then need a run-time guard
-  (`grouped_wgrad.md` §3).
+  (`grouped_variable_k.md` §3).
 - **Quantization runs every call for activations and gradients.** Weights quantize once per optimizer step and
   the backward reuses them; a benchmark that passes high-precision weights re-quantizes them per call. *(field, E1)*
   Pre-quantizing weights took one fused MoE MLP forward from 4.28 to 3.47 ms; the backward did not change.
@@ -139,7 +139,7 @@ In FlyDSL: `../flydsl/moe.md` § grouped_lowprec §5.
   For MX, pad only the scales: zero E8M0 past K makes over-read terms exactly zero, so the operand keeps its real
   K (`k_real`, MX4:364-373; `../gemm/mainloop.md` §6).
 - Never re-pad a weight per call: `grouped_host_autotune.md` §4. Free-dim padding for wgrad outputs:
-  `grouped_wgrad.md` §12.
+  `grouped_variable_k.md` §12.
 
 ## 7. The C store for grouped outputs
 The store classes and their measured prices are in `../gemm/epilogue.md` §2–§4, cache bits in §5 and
@@ -220,7 +220,7 @@ What grouped adds:
 - Fused GLU/dGLU was accepted on total time, with pre-quantized weights.
 
 ## Related
-`grouped_wgrad.md` · `grouped_group_mapping.md` · `grouped_tile_pricing.md` ·
+`grouped_variable_k.md` · `grouped_group_mapping.md` · `grouped_tile_pricing.md` ·
 `grouped_host_autotune.md` · `grouped_correctness.md` · `grouped_measurement.md` ·
 `../gemm/datapath.md` · `../gemm/epilogue.md` · `../gemm/mainloop.md` ·
 `../gemm/attribution.md`

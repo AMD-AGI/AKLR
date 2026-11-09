@@ -139,11 +139,11 @@ In FlyDSL: `../flydsl/attention.md` § measurement §7.
   extra work.
 - **Kernel-time share is not wall share.** *(field, E26)* A helper was 14.95% of the summed kernel time of a B=4
   backward, while all exposed helper time (that helper, lset and the tail fold) was 1.9% of wall at B=4 and 3.9% at
-  B=1 on the timeline. Rank helper-kernel work by exposed time; fusion pricing is in `backward.md` §7.
+  B=1 on the timeline. Rank helper-kernel work by exposed time; fusion pricing is in `gradients.md` §7.
 
 ## Related
 `../gemm/measurement.md` · `attribution.md` · `correctness.md` ·
-`decode_split_kv.md` §8 · `../flydsl/debug-flydsl-kernel.md`
+`split_kv.md` §8 · `../flydsl/debug-flydsl-kernel.md`
 
 ## Evidence
 

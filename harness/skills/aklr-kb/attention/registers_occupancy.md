@@ -179,7 +179,7 @@ In FlyDSL: `../flydsl/attention.md` § registers_occupancy §8.
 
 ## Related
 `schedule_sync.md` · `lds.md` · `attribution.md` · `softmax.md` ·
-`backward.md` · `../gemm/mainloop.md` · `../gemm/grid_pricing.md`
+`gradients.md` · `../gemm/mainloop.md` · `../gemm/grid_pricing.md`
 
 ## Evidence
 

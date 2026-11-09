@@ -79,7 +79,7 @@ In FlyDSL: `../flydsl/attention.md` § softmax §2.
   the forward, `-log2e·lse` in the backward) makes the subtraction free. Build the seed inside the QK step from
   a scalar; a seed vector materialized outside the loop stays resident (16 VGPRs for a 32x32 C fragment). The
   measured price of carrying it is in `registers_occupancy.md` §3; fold it in the masked loop too
-  (`backward.md` §8).
+  (`gradients.md` §8).
 - **Choose where the scale goes.** Pre-scaling Q costs nothing but rounds `q·sm·log2e` to bf16; the backward must
   then reproduce that rounded operand (`correctness.md` §5). Scaling the accumulator leaves no residual
   (it removed a dQ correction pass that cost up to 8.5× when triggered, for an 8–13% slower forward, 4.1 points
@@ -222,7 +222,7 @@ In FlyDSL: `../flydsl/attention.md` § softmax §6.3.
 
 ## Related
 `mfma_layout.md` · `registers_occupancy.md` · `schedule_sync.md` ·
-`correctness.md` · `backward.md` · `decode_split_kv.md` ·
+`correctness.md` · `gradients.md` · `split_kv.md` ·
 `attribution.md` · `../flydsl/debug-flydsl-kernel.md` · `../flydsl/guides.md` § prefetch-data-load
 
 ## Evidence

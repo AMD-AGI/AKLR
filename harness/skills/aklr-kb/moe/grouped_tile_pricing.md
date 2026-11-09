@@ -37,7 +37,7 @@ sources:
 
 **Somewhere else if:** the lookup and the dead workgroups that add to the per-tile cost →
 `grouped_group_mapping.md`; tile order and tiles per workgroup → `grouped_scheduling.md`;
-short-contraction wgrad → `grouped_wgrad.md`; MX scale layout → `grouped_lowprec.md`.
+short-contraction wgrad → `grouped_variable_k.md`; MX scale layout → `grouped_lowprec.md`.
 
 ## 1. The register wall comes before LDS
 256×256 is the largest tile that fits, for both large-tile loop designs (`../gemm/mainloop.md` §1):
@@ -65,8 +65,8 @@ short-contraction wgrad → `grouped_wgrad.md`; MX scale layout → `grouped_low
 
 ## 2. Waves per SIMD: decide per pass
 - On fp8 per-tensor, the 4-wave design (1 wave per SIMD) won every variable-K wgrad point against 8 waves (2
-  per SIMD), a minority of the NN dgrad points and almost no forward points (`grouped_wgrad.md` §8). It
-  pays where both operands are transpose-read (`ds_read_b64_tr_b8`; mechanism in `grouped_wgrad.md` §8);
+  per SIMD), a minority of the NN dgrad points and almost no forward points (`grouped_variable_k.md` §8). It
+  pays where both operands are transpose-read (`ds_read_b64_tr_b8`; mechanism in `grouped_variable_k.md` §8);
   the forward pass reads both operands K-contiguous.
 - The fastest grouped kernel measured is that wgrad: 4 waves, 1 wave per SIMD, 256 AGPR accumulators, a full
   160 KB of LDS, 0.13 synchronization instructions per MFMA against 0.93 for an 8-wave MXFP8 NT *(field, E6)*.
@@ -192,7 +192,7 @@ writes it `a · n_kblocks + F`; its pitfalls:
 ## 7. Store-bound short contractions
 A variable-K wgrad writes G full output slices whatever the token split, so groups with few tokens make it
 store-bound. The short-contraction blocking with non-temporal C stores, and its crossover, which scales with
-tiles per group rather than with a token count, are in `grouped_wgrad.md` §6.
+tiles per group rather than with a token count, are in `grouped_variable_k.md` §6.
 
 ## Verify
 - The compile-only dump shows no spill and the expected barrier count before any timing.
@@ -203,7 +203,7 @@ tiles per group rather than with a token count, are in `grouped_wgrad.md` §6.
 - A K sweep separates F from P before work on the main loop.
 
 ## Related
-`grouped_group_mapping.md` · `grouped_scheduling.md` · `grouped_wgrad.md` ·
+`grouped_group_mapping.md` · `grouped_scheduling.md` · `grouped_variable_k.md` ·
 `grouped_lowprec.md` · `grouped_correctness.md` · `grouped_measurement.md` ·
 `../gemm/grid_pricing.md` · `../gemm/mainloop.md` · `../gemm/datapath.md` §6 ·
 `../gemm/attribution.md` §7

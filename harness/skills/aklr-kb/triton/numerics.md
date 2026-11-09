@@ -406,7 +406,7 @@ The fusion switch can matter for speed: Qwen3-Next prefill `11f6` with fusion on
 
 ## 8. Determinism and atomics
 
-- **Bitwise kernels use no atomics.** At `43e112e` none of the 65 `bitwise` kernels contains a global or LDS atomic; having no atomic does not by itself fix a reduction order, which the code must. The plain-Triton decode GEMM `gemm_n2624_k6144` splits K six ways only for 16 < m ≤ 64 (of its Points, m = 64): each split writes an fp32 partial tile, and "a second kernel adds the six partials in a fixed order before rounding to bf16, so the result is bitwise reproducible" (S58), as it was at all its Points *(field, E9)*; when that split pays: [gemm/decode_gemm.md](gemm/decode_gemm.md) §6.
+- **Bitwise kernels use no atomics.** At `43e112e` none of the 65 `bitwise` kernels contains a global or LDS atomic; having no atomic does not by itself fix a reduction order, which the code must. The plain-Triton decode GEMM `gemm_n2624_k6144` splits K six ways only for 16 < m ≤ 64 (of its Points, m = 64): each split writes an fp32 partial tile, and "a second kernel adds the six partials in a fixed order before rounding to bf16, so the result is bitwise reproducible" (S58), as it was at all its Points *(field, E9)*; when that split pays: [gemm/small_m_gemm.md](gemm/small_m_gemm.md) §6.
 - **Bounded kernels use integer atomics, for positions only.** 31 of the 89 `bounded` kernels (DeepSeek-V2 12,
   MiniMax-M2 MXFP4 11, MiniMax-M2 fp8 6, Qwen2-MoE fp8 experts 2) contain an atomic. Their 42 global atomic calls are
   all `sem="relaxed"` integer adds or ors that hand out tickets, job slots, cursors and token masks; three kernels also

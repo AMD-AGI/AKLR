@@ -22,7 +22,7 @@ sources:
 > rollbacks, no benchmark-only gains) is in `../gemm/workflow.md` and applies unchanged. Numbers
 > marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end. Use them
 > for direction and order of magnitude, not as targets. Inference MoE expert GEMMs (sorted token ids) are in
-> `grouped_moe_inference.md`.
+> `grouped_sorted_tokens.md`.
 
 ## Route here when
 You are starting on a grouped GEMM, or a run of rounds has stopped paying and you need to know which layer you
@@ -33,7 +33,7 @@ have not audited yet.
 | Upper-bound grid, tile → group lookup, empty groups, 64-bit offsets | `grouped_group_mapping.md` |
 | XCD partition, band order, longest-first, persistent or one tile per workgroup | `grouped_scheduling.md` |
 | Per-tile fixed cost, tile and occupancy per pass, boundary and tail bodies | `grouped_tile_pricing.md` |
-| Contraction length per group, hot-group split-K, beta=1 accumulation | `grouped_wgrad.md` |
+| Contraction length per group, hot-group split-K, beta=1 accumulation | `grouped_variable_k.md` |
 | fp8 and MX scales, preshuffle, quantization, store forms, GLU/dGLU | `grouped_lowprec.md` |
 | Launch path, CUDA graphs, cache keys, the per-shape race | `grouped_host_autotune.md` |
 | Shapes, distributions, deployment conditions, per-cell noise, trace FLOPs | `grouped_measurement.md` |
@@ -48,11 +48,11 @@ have not audited yet.
   `grouped_gemm_fp8_kernel.py:386-396`, `:906-911`). A variable-K wgrad's plain grid is exact
   (`G × tiles_per_group`) and the offsets set each tile's trip count; a deterministic split-K adds a fixed head
   of split ids that the offsets enable or retire (`grouped_gemm_fp8_kernel.py:3959-3965`,
-  `grouped_wgrad.md` §9). No host read of the offsets is needed (`grouped_group_mapping.md` §2–§3).
+  `grouped_variable_k.md` §9). No host read of the offsets is needed (`grouped_group_mapping.md` §2–§3).
 - **Fixed costs per tile and per group.** Every tile finds its group; a variable-K wgrad restarts its prologue and
   pipeline at every group; a group with a handful of tokens still pays a whole tile. Dense GEMMs have none of
   this, and it is often the whole gap: where it was measured, the grouped main loop ran at dense speed and the
-  loss was MFMA idle time around tiles and group boundaries (`grouped_wgrad.md` §1,
+  loss was MFMA idle time around tiles and group boundaries (`grouped_variable_k.md` §1,
   `grouped_tile_pricing.md` §6).
 - **Skew.** Real routing is uneven, changes per batch and leaves some groups empty. A kernel that is fast on a
   balanced distribution is a hypothesis until the skewed cells agree.
@@ -67,14 +67,14 @@ have not audited yet.
 Turbo's MXFP8 dgrad is the NT form on a transposed weight copy (`grouped_gemm_fp8.py:806-815`).
 
 *(field, E1)* With an fp8 per-tensor kernel set, forward and dgrad stayed close to their balanced throughput under
-skew; only wgrad lost a large share of it (`grouped_wgrad.md` §1). *(field, E2)* The long tails of forward
+skew; only wgrad lost a large share of it (`grouped_variable_k.md` §1). *(field, E2)* The long tails of forward
 and dgrad calls in a training trace came from overlap with collectives, not from skew
 (`grouped_measurement.md` §3).
 
 ## 2. Step 0 — reference kernels and the body the benchmark reaches
 
 - **Start from a reference kernel**: for training, Primus-Turbo's grouped GEMMs (`INDEX.md` § Expert GEMM (grouped
-  GEMM)); inference MoE GEMMs over sorted token ids are a different mapping (`grouped_moe_inference.md`).
+  GEMM)); inference MoE GEMMs over sorted token ids are a different mapping (`grouped_sorted_tokens.md`).
 - **Know which body each scored cell runs** before the first timing: persistent or one tile per workgroup,
   masked or whole-loop wgrad, split-K or not. A benchmark that passes one optional argument the deployment
   does not pass can optimize a different kernel (`grouped_measurement.md` §2).
@@ -141,7 +141,7 @@ Where `F` comes from and what removes it: `grouped_tile_pricing.md`.
   per-tile `F` (`grouped_group_mapping.md`, `grouped_scheduling.md`,
   `grouped_tile_pricing.md`).
 - **Wgrad:** group-major order, longest-first direction, splitting the hot group's contraction, scale timing, the
-  store cost of short groups, beta=1 (`grouped_wgrad.md`, `grouped_scheduling.md`).
+  store cost of short groups, beta=1 (`grouped_variable_k.md`, `grouped_scheduling.md`).
 - **fp8 and MX:** scale delivery and packing, preshuffle, quantization share, K padding, fused GLU/dGLU
   (`grouped_lowprec.md`).
 - **Any pass:** host launch path, graph or eager, the race's scoring points (`grouped_host_autotune.md`).
@@ -169,11 +169,11 @@ Each entry held where it was measured. Reopen one only with a probe that shows i
   tile halves each wave's MFMA stream. This does not make the opposite (1 wave per SIMD with AGPR
   accumulators) a rule; that move measured both ways (`grouped_tile_pricing.md` §2).
 - **A hand-written whole-loop wgrad.** *(field, E4)* On an MXFP8 variable-K wgrad it lost to the production
-  chunked body once scales were applied (`grouped_wgrad.md` §4); *(field, E5)* without scales it won only
+  chunked body once scales were applied (`grouped_variable_k.md` §4); *(field, E5)* without scales it won only
   5–7% on three shapes (K 4096 and 2048) and lost 51–59% at K=7168 and 2880×2880 (on one, a 16×28 tile grid turned
   its per-phase barrier and drain into stalls).
 - **Moving the beta=1 read-back of C into the main loop** at one wave per SIMD spills
-  (`grouped_wgrad.md` §10).
+  (`grouped_variable_k.md` §10).
 - **LLVM scheduler options on a hand-scheduled grouped body** (`max-memory-clause`, `post-misched`,
   `lsr-drop-solution` on a body pinned by `s_setprio`, `sched_barrier` and explicit waits). *(field, E6)* +0.06% over
   24 samples; the ISA differed by 1 instruction of 4975. Diff the ISA before benchmarking any "zero-risk" compiler

@@ -1,7 +1,7 @@
 ---
 title: "Attention backward — dQ/dK/dV accumulation, determinism, workspace, masking and fusion"
 kind: topic
-lever: attn_backward
+lever: attn_gradients
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16]
@@ -124,7 +124,7 @@ Let `A` be the accumulator floats one workgroup holds.
 - `s_waitcnt` covers only the issuing wave. After a multi-wave store phase, the order is `s_waitcnt(0)` in
   every wave → workgroup barrier → the one atomic announcement.
 - With few rows per launch (decode) the same shape also serializes the reduce; see
-  `decode_split_kv.md` §3.
+  `split_kv.md` §3.
 
 ## 7. Fusion
 - **Drop removable GEMMs first.** *(field, E23)* Removing a redundant GEMM and the global rho/R renormalization
@@ -204,7 +204,7 @@ D64; band interleave paid at D128 only (§5); the D128 gap is the workspace (§2
 - The masked q-loop and the window bounds have their own ISA census and accuracy gate.
 
 ## Related
-`grid_dispatch.md` · `decode_split_kv.md` · `registers_occupancy.md` ·
+`grid_dispatch.md` · `split_kv.md` · `registers_occupancy.md` ·
 `attribution.md` · `correctness.md` · `../gemm/datapath.md` §8 ·
 `../gemm/epilogue.md` §5 · `../gemm/attribution.md` §2 · `../hardware/gfx950/memory_and_sync.md`
 

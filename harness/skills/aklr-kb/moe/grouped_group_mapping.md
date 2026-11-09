@@ -49,7 +49,7 @@ sources:
 
 **Somewhere else if:** the order and XCD placement of tiles across groups → `grouped_scheduling.md`;
 tile size, occupancy and boundary bodies → `grouped_tile_pricing.md`; variable-K wgrad →
-`grouped_wgrad.md`; MoE inference with sorted token ids → `grouped_moe_inference.md`.
+`grouped_variable_k.md`; MoE inference with sorted token ids → `grouped_sorted_tokens.md`.
 
 ## 1. Group metadata stays on the device
 - The kernel takes `group_offs[G+1]` (exclusive prefix of the group lengths) as a device tensor and derives
@@ -80,7 +80,7 @@ tile size, occupancy and boundary bodies → `grouped_tile_pricing.md`; variable
   row-major for a group with fewer M blocks than `group_m` (FP8:1886-1935). Band widths:
   `grouped_scheduling.md` §4.
 - Variable-K wgrad is cut the other way: every group owns the same output tiles, and the skew sits in each
-  tile's contraction length (`grouped_wgrad.md`).
+  tile's contraction length (`grouped_variable_k.md`).
 
 ## 3. A static upper-bound grid, trimmed on the device
 
@@ -220,7 +220,7 @@ In FlyDSL: `../flydsl/moe.md` § grouped_group_mapping §7.
 - Forward and dgrad: an empty group contributes zero M tiles. The prefix scan and the ballot lookup skip it
   with no special case (§5), and the record-count clamp of §7 keeps its descriptors bounded.
 - Variable-K wgrad: an empty group still owns its whole output slice (zeros at beta=0, untouched at beta=1);
-  how Turbo writes it and what the store costs: `grouped_wgrad.md` §11.
+  how Turbo writes it and what the store costs: `grouped_variable_k.md` §11.
 - Put empty groups at the start, middle and end, and one group holding almost all tokens, into every gate
   (`grouped_correctness.md`).
 
@@ -233,8 +233,8 @@ In FlyDSL: `../flydsl/moe.md` § grouped_group_mapping §7.
 - Record counts are clamped at zero and bounded per group; G ≥ 256 and empty groups are in the gate.
 
 ## Related
-`grouped_scheduling.md` · `grouped_tile_pricing.md` · `grouped_wgrad.md` ·
-`grouped_correctness.md` · `grouped_host_autotune.md` · `grouped_moe_inference.md` ·
+`grouped_scheduling.md` · `grouped_tile_pricing.md` · `grouped_variable_k.md` ·
+`grouped_correctness.md` · `grouped_host_autotune.md` · `grouped_sorted_tokens.md` ·
 `../gemm/datapath.md` §8 · `../gemm/schedule_and_locality.md` §2, §7 ·
 `../gemm/grid_pricing.md`
 

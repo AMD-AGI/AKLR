@@ -41,7 +41,7 @@ sources:
   so per-call choices may use `M_total // G`: MX4 picks its NT and wgrad blocking from it (MX4:1164-1170,
   2083-2091), and FP8 adds a coarse M-derived regime to its key (`_np_regime`, FP8:2487; §3).
 - **Decisions that need the distribution are made in the kernel.** Reading `group_offs` on the device to choose a
-  walk direction or a split (`grouped_wgrad.md` §5, §9) keeps the host path sync-free and graph-safe.
+  walk direction or a split (`grouped_variable_k.md` §5, §9) keeps the host path sync-free and graph-safe.
 - **Derived offsets are one device kernel, not a chain of torch ops.** *(field, E1)* Computing an MX quantizer's padded
   group lengths and offsets with ~7 small torch kernels cost ~31 µs per call (each ~4.4 µs, launch-bound); a
   single-thread device kernel that derives them from the tight int64 offsets (the HIP reference's form) takes
@@ -130,7 +130,7 @@ Turbo's backend dispatcher likewise tunes on load-balanced group lengths (`group
 
 ## 6. beta in the race
 The measured facts (read-back cost by dtype, ranking differences between beta=0 and beta=1, the extra compile
-per surviving candidate) are in `grouped_wgrad.md` §10. The mechanics of timing at beta=1:
+per surviving candidate) are in `grouped_variable_k.md` §10. The mechanics of timing at beta=1:
 - Run beta=1 candidates on scratch: every timed launch adds another product into the buffer.
 - A beta=1 probe on an uninitialized buffer reads garbage and fails a finiteness gate, and a rel-MSE comparison
   against a reference fails once results accumulate. Either zero the probe output before every launch so
@@ -147,7 +147,7 @@ each by adding 0/1/2/4 extra launches in one process and fitting the slope (`../
   at 0.5–0.9% of each call, an overstatement of about 2× (repack) and 3× (tail); even so they outweigh the
   whole family of steady-state SALU trims (~0.15%).
 - Removing a whole helper launch pays. Shrinking the work inside a launch-bound helper does not
-  (`grouped_moe_inference.md` §7); a helper bound by its own work, like a VALU-bound scale repack, does
+  (`grouped_sorted_tokens.md` §7); a helper bound by its own work, like a VALU-bound scale repack, does
   pay (`grouped_lowprec.md` §2).
 
 ## 8. Do not let a race swallow build errors
@@ -170,7 +170,7 @@ In FlyDSL: `../flydsl/moe.md` § grouped_host_autotune §8.
 In FlyDSL: `../flydsl/moe.md` § grouped_host_autotune Verify.
 
 ## Related
-`grouped_group_mapping.md` · `grouped_wgrad.md` · `grouped_lowprec.md` ·
+`grouped_group_mapping.md` · `grouped_variable_k.md` · `grouped_lowprec.md` ·
 `grouped_measurement.md` · `grouped_correctness.md` · `../gemm/autotune.md` ·
 `../gemm/attribution.md` · `../attention/measurement.md` ·
 `../flydsl/debug-flydsl-kernel.md`

@@ -109,7 +109,7 @@ over: they give each 128-K group its own LDS slot (S6), 48 and 49 KiB at K 1536 
 *(field, E2)*, about 224 KiB at K 7168 (estimated), above the 160 KiB one work-group may request ([gfx950
 memory](../../hardware/gfx950/memory_and_sync.md) §4). Longer K and a preshuffled `b` exist only as FlyDSL kernels
 (`aklr/ops/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_*`, K 256–16384); long-K evidence in plain Triton is
-the bf16 K 6144 GEMM ([gemm/decode_gemm](../gemm/decode_gemm.md) §5). bf16 GEMMs exist at N 6144 / K 2048 and N 2624 /
+the bf16 K 6144 GEMM ([gemm/small_m_gemm](../gemm/small_m_gemm.md) §5). bf16 GEMMs exist at N 6144 / K 2048 and N 2624 /
 K 6144, norms at hidden 6144 only.
 
 ## 4. Techniques across the families
@@ -198,9 +198,9 @@ pipelining, buffer instructions): [authoring](../authoring.md) §2. Each GEMM ke
   the weight loaded with `.cg`; each XCD streams one contiguous run of N tiles in `b88c` at M ≤ 8 and `f806` at M ≤ 16,
   8-tile chunks (3 runs per XCD) in `f806` at M 32, 64 (`b88c`'s `_xcd_remap` is a permutation for any grid size); at
   some M a per-workgroup K phase. One launch, except `b88c` at M = 64: split-K 6 into fp32 scratch (246 workgroups), then
-  a second kernel adds the six partials in a fixed order (6 against 4 splits is unresolved: [gemm/decode_gemm](../gemm/decode_gemm.md) §6). The configuration comes from a `@functools.cache` compile
+  a second kernel adds the six partials in a fixed order (6 against 4 splits is unresolved: [gemm/small_m_gemm](../gemm/small_m_gemm.md) §6). The configuration comes from a `@functools.cache` compile
   function, `_launch_for(a_shape, b_shape)`, that returns the launch closure (S7). Tiles by M, split-K under the bitwise
-  contract, M = 1 and re-tuning for cold-cache timing: [gemm/decode_gemm](../gemm/decode_gemm.md).
+  contract, M = 1 and re-tuning for cold-cache timing: [gemm/small_m_gemm](../gemm/small_m_gemm.md).
 - **RMSNorm**: `rms_norm_hidden_size6144/` (`cf63`, 3–4096 tokens), `add_rms_norm_hidden_size6144/` (`b391`, 4–256
   tokens). The 6144-wide row as three 2048-wide chunks in registers, the sum of squares in fp32, `.cg` loads, `.wt`
   stores, one program per row *(field, E2)*; `rms_norm` from 1024 rows gives each program `m // 512` rows, the next
@@ -245,7 +245,7 @@ replays aiter's router GEMM, `biased_grouped_topk` and `fused_moe`. Triton side:
 - **Techniques.** Router tiles and the MXFP4 quantization of the hidden states share one launch, split by program id (S9;
   [moe](../moe.md) §3). At 1–16 tokens every file but `3c6e` selects experts in the kernel with a rank loop; in `d3bb`
   each gate-up program recomputes its route's expert with rank + 1 argmax rounds instead of waiting for a top-k launch
-  (S10; [moe](../moe.md) §4, [../../moe/decode.md](../../moe/decode.md)). A gate-up N tile holds matching gate and up
+  (S10; [moe](../moe.md) §4, [../../moe/few_tokens.md](../../moe/few_tokens.md)). A gate-up N tile holds matching gate and up
   rows; in full-K gate-up designs such as `1204`, SwiGLU and the MXFP4 requantization run in its epilogue (S11; [moe](../moe.md) §7, §8). The decode down
   multiplies a token's routes (MFMA rows) by their experts' column bands and keeps the diagonal, weighted and summed in
   slot order in registers (S12; [moe](../moe.md) §9). At 32–256 tokens, `1204`'s gate-up programs scan the per-expert
@@ -389,7 +389,7 @@ and a 16-head scenario, §2). The baseline is SGLang's
 | 256 (8) | `fbe6` | 2 | `q.to`; one workgroup per token over all 2048 keys, no merge |
 
 - **Techniques.** Head tile and split count follow the token count; at 64 heads the grid is 192–256 programs, one
-  LDS-heavy workgroup per CU (S24; [../../attention/decode_split_kv.md](../../attention/decode_split_kv.md) §4, §5).
+  LDS-heavy workgroup per CU (S24; [../../attention/split_kv.md](../../attention/split_kv.md) §4, §5).
   Partials merged by a separate launch in a fixed order, scaled by `exp(m_s - max)` with a guarded `1 / den` (S25;
   bitwise contract, [attention](../attention.md) §2); enough tokens to fill the machine drop the merge (S26). Four files
   (`0bb2`, `43ff`, `ae32`, `fbe6`) convert `q` in `run`, one more kernel per call (S27).
@@ -418,7 +418,7 @@ quantization. Triton side: [attention](../attention.md) §6, §7, §8, §9.
 
 - **Techniques.** The prologue is a per-token task grid of one-wave CTAs (K norm, RoPE and cache write; V cache write; Q
   heads and the gate copy; `10df`, `14e9`, `d9cb`, `f5ba` and `42a2` give the cache-write tasks the low program ids). The
-  attention launch is flash-decoding ([../../attention/decode_split_kv.md](../../attention/decode_split_kv.md) §5): per
+  attention launch is flash-decoding ([../../attention/split_kv.md](../../attention/split_kv.md) §5): per
   split an unnormalized numerator with its (max, sum); the finish merges in a fixed order, rounds to bf16, applies the
   gate and quantizes, bit for bit as emulated in the 32-row file ([numerics](../numerics.md) §2). At 256 rows the 1-D
   grid is a bijection whose blocks of 128 CTAs hold both splits of 64 rows (S29). Enumerated for rows 1–1024 and 2,

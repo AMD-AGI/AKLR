@@ -1,7 +1,7 @@
 ---
 title: "MXFP4 fused MoE at decode sizes: count the graph nodes, fold the routing sort into stage 1"
 kind: technique
-lever: moe_decode
+lever: moe_few_tokens
 ops: [moe]
 dtypes: [mxfp4]
 regimes: [decode, "tokens 8-64"]
@@ -83,7 +83,7 @@ The head is in `gemm1_kernel_fold` (`g1_fold.py:1870`), before and just after th
 
 - The device then computes `bound = total_m_blocks × 2` n-blocks (:2048); a workgroup at or past it exits, and at 32
   tokens the tile id is remapped per XCD only after that test (:2091–2097;
-  `grouped_moe_inference.md` §2).
+  `grouped_sorted_tokens.md` §2).
 - The first two weight and weight-scale prologue stages are issued as soon as step e has the expert id, before the
   LDS-only steps f and g, so the head runs under the weight stream (`_BEF`, :219, :966–980). Its effect is not
   measured here.
@@ -125,7 +125,7 @@ In FlyDSL: `../flydsl/moe.md` § decode How to write it.
   tokens of this shape and a pre-quantized-activation stage 1 at 1 and 2 (S6).
 - **A bitwise contract.** The atomic stage 2 adds a token's 9 rows in arrival order. Use a fixed-order stage 2 there,
   for example one wave per route and an LDS sum in route order, as `1fee59821837c26f.json` does at 1–2 tokens
-  (`grouped_moe_inference.md` §6, `../gemm/correctness.md` §8).
+  (`grouped_sorted_tokens.md` §6, `../gemm/correctness.md` §8).
 
 ## How to confirm it took effect
 
@@ -177,6 +177,6 @@ contents' lines.
 
 ## Related
 
-`grouped_moe_inference.md` (how MoE expert GEMMs map work; cache policy; stage 2) ·
+`grouped_sorted_tokens.md` (how MoE expert GEMMs map work; cache policy; stage 2) ·
 `../flydsl/kernels/flydsl_kernel_library.md` § AKLR's own FlyDSL MoE kernels ·
 [fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md) · `INDEX.md`

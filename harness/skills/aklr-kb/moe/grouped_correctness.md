@@ -60,7 +60,7 @@ an fp32 reference built from the dequantized operands, with SNR, on skewed distr
 - **Every path that builds a descriptor needs the clamp.** *(field, E3)* Fixing the shared helper did not fix a kernel
   that built its descriptor inline. Search for every descriptor construction before declaring the fix done.
 - **Check the empty group's output block.** Zero for beta=0; unchanged for beta=1 (C += 0). The mechanisms,
-  Turbo's included, are in `grouped_group_mapping.md` §8 and `grouped_wgrad.md` §11.
+  Turbo's included, are in `grouped_group_mapping.md` §8 and `grouped_variable_k.md` §11.
 - **An uninitialized output fakes nondeterminism.** With a `torch.empty` output, empty groups and padding leave
   regions the kernel never writes, and an output fingerprint picks up whatever the allocator left there.
   *(field, E4)* 5–6 of 24 fingerprint cells changed across six runs of one binary with one seed, on different cells
@@ -80,7 +80,7 @@ an fp32 reference built from the dequantized operands, with SNR, on skewed distr
 
 - **Operand layout decides whether the descriptor can clamp an over-run.** With tokens as the inner dimension
   (MX wgrad operands `[OUT, M_total]`) it cannot, and an over-running K step accumulates the next group's real
-  tokens; the guard is a run-time K check (`grouped_wgrad.md` §3). Only an unbalanced gate sees it (§1).
+  tokens; the guard is a run-time K check (`grouped_variable_k.md` §3). Only an unbalanced gate sees it (§1).
 - Values that feed a descriptor, the record count as well as the base, must be wave-uniform
   (`grouped_group_mapping.md` §6, with the base-only case). A per-lane value gives "a non-deterministic
   wrong answer rather than a fault" (Turbo's comment, `grouped_gemm_bf16_kernel.py:651-657`): gate with SNR on
@@ -161,7 +161,7 @@ part of the contraction when the table lacks a split the policy can reach — no
 
 ## Related
 `../gemm/correctness.md` · `../flydsl/debug-flydsl-kernel.md` · `grouped_group_mapping.md` ·
-`grouped_wgrad.md` · `grouped_lowprec.md` · `grouped_measurement.md`
+`grouped_variable_k.md` · `grouped_lowprec.md` · `grouped_measurement.md`
 
 ## Evidence
 
