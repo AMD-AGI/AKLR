@@ -1,0 +1,600 @@
+---
+title: "Gluon layouts on gfx950 (Triton 3.8.0)"
+kind: language-note
+gens: [gfx950]
+triton: 3.8.0
+basis: source-semantics
+sources:
+  - triton-lang/triton@c01b677:python/triton/experimental/gluon/language/_layouts.py
+  - triton-lang/triton@c01b677:python/triton/experimental/gluon/language/_core.py
+  - triton-lang/triton@c01b677:python/triton/experimental/gluon/language/_semantic.py
+  - triton-lang/triton@c01b677:python/triton/experimental/gluon/language/amd/_layouts.py
+  - triton-lang/triton@c01b677:python/triton/experimental/gluon/language/amd/cdna4/__init__.py
+  - triton-lang/triton@c01b677:python/triton/experimental/gluon/language/amd/slice.py
+  - triton-lang/triton@c01b677:python/src/gluon_ir.cc
+  - triton-lang/triton@c01b677:third_party/amd/backend/compiler.py
+  - triton-lang/triton@c01b677:lib/Dialect/Gluon/Transforms/Canonicalize.cpp
+  - triton-lang/triton@c01b677:lib/Dialect/TritonGPU/IR/LinearLayoutConversions.cpp
+  - triton-lang/triton@c01b677:lib/Dialect/TritonGPU/IR/Dialect.cpp
+  - triton-lang/triton@c01b677:lib/Dialect/TritonGPU/IR/Types.cpp
+  - triton-lang/triton@c01b677:lib/Dialect/TritonGPU/IR/Ops.cpp
+  - triton-lang/triton@c01b677:lib/Dialect/Triton/IR/Ops.cpp
+  - triton-lang/triton@c01b677:include/triton/Dialect/TritonGPU/IR/TritonGPUAttrDefs.td
+  - triton-lang/triton@c01b677:lib/Conversion/TritonGPUToLLVM/ConvertLayoutOpToLLVM.cpp
+  - triton-lang/triton@c01b677:lib/Conversion/TritonGPUToLLVM/ReduceOpToLLVM.cpp
+  - triton-lang/triton@c01b677:lib/Analysis/Utility.cpp
+  - triton-lang/triton@c01b677:lib/Tools/LinearLayout.cpp
+  - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/ConvertLayoutOpToLLVM.cpp
+  - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/TritonGPUToLLVM.cpp
+  - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/DotOpToLLVM/MFMA.cpp
+  - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/LoadStoreOpToLLVM.cpp
+  - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/Utility.cpp
+  - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUTransforms/Utility.cpp
+  - triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUTransforms/LowerLoops.cpp
+  - triton-lang/triton@c01b677:third_party/amd/lib/Analysis/AMDGPUAllocation.cpp
+  - triton-lang/triton@c01b677:third_party/amd/lib/Dialect/TritonAMDGPU/IR/TargetFeatures.cpp
+---
+
+# Gluon layouts on gfx950 (Triton 3.8.0)
+
+A Gluon tensor lives in the layout its code gives it: which lane and which register of which wave holds each element.
+This page gives the layout classes of Triton 3.8.0 that matter on gfx950, as AKLR's Gluon kernels use them, how to pick
+one for each role in a kernel, and what `gl.convert_layout` costs; moving data is `memory.md`, the matrix-core
+instructions `mfma.md`, reading the compiled kernel `../debugging.md`. Counts of AKLR directories, occurrences and
+compiled kernels were taken at AKLR `43e112e` (154 Triton schemas; main `0e02a81` has 280). "Compiled" marks what a
+kernel compiled with Triton 3.8.0 for gfx950 (no GPU run) showed in its ISA.
+
+## 1. Ground rules
+- **The layout you write is the layout you get.** `gluon_to_ttgir` runs `resolve_auto_encodings` and none of the
+  coalesce, remove-layout-conversions and accelerate-matmul passes that plain `tl.*` kernels get (S1, S2): compiled, a
+  copy written in `BlockedLayout([1, 1], [1, 64], ...)` keeps it and loads with `global_load_ushort`. The Gluon
+  canonicalizer leaves `convert_layout` alone (S3): A → B → A stays two conversions (a 64×64 fp32 tile flipped to
+  `order=[0, 1]` and back: 32 `ds_bpermute_b32`). View ops, `expand_dims` and reductions infer their result layouts
+  (S4); two layouts in one op are not reconciled (table).
+- **Pass a layout to every `arange`, `zeros` and `full`.** Without one they get `AutoLayout` (S4), taken from the
+  concrete layouts the value meets; where nothing gives it one, the compile fails (table).
+- **What Gluon checks, and what it leaves to you:**
+  | Rejected at compile time | Accepted without a word |
+  |---|---|
+  | an add of two different BlockedLayouts: "Layout mismatch in broadcast"; `expand_dims` of a tensor not in `SliceLayout(axis, ·)` (S4) | a layout larger than the tensor: extra lanes or waves hold copies (§2) |
+  | lanes ≠ 64 or waves ≠ `num_warps` (`[1]` at 4 waves, `[4]` at 8): "Layout has 32 threads per warp, but the module specifies 64 threads per warp" (S5); `num_warps=3`: "num_warps must be a power of 2" | a load whose layout or proven contiguity gives a lane less than 16 bytes (§6.1) |
+  | `mfma` operands both in a BlockedLayout: "Dot's a/b's encoding should be of DotOperandEncodingAttr" (S5); `mfma_scaled` operands whose parent differs from the accumulator's MFMA layout (`transposed` False against True): "Expected lhs layout to be a DotOperandLayout with parent matching MFMA layout" (S6); unequal `k_width` in `mfma` (S5) | unequal `k_width` in `mfma_scaled` (S7) |
+  | an `instr_shape` `mfma` has no intrinsic for, e.g. e4m3 `[16, 16, 128]` (`[16, 16, 32]` compiles): "no matching matrix core intrinsic for mfma version 4 …" (`mfma.md` §1); a 4×64 layout (`instr_shape=[4, 64, 64]`) with `transposed=True`, or a 64×4 one with `False`, both past `verify` (§3) | bank conflicts of a shared layout (§5) |
+  | `gl.split` whose size-2 axis is not in registers (S5); a non-power-of-two extent (`gl.arange(0, 96, L)`: "Shape element 0 must be a power of 2"), or a non-power-of-two last LDS dimension (`[2, 16, 3]`: "shape must have power-of-2 and non-zero dimensions") (S28, §2) | a `convert_layout` through LDS: only the ISA shows it (§8) |
+  | a rank-3 shared layout under `.index()` (§4); `convert_layout(..., assert_trivial=True)` that moves data across lanes or waves, and `gl.amd.slice` off the layout's tile (§7) | a reduction or gather whose axis spans waves: an LDS round trip and a barrier (§6.7) |
+  | `gl.associative_scan` over any layout but a `BlockedLayout` (a slice, MFMA or linear layout): "TODO: unsupported scan layout" (S8); convert to a 1-D or 2-D BlockedLayout first | |
+  | `gl.gather` whose index has another rank, or another extent off the axis, than its source (S4); a layout-less `arange`, `zeros` or `full` that nothing resolves: `PassManager::run failed` (`arange`: "'tt.make_range' op Failed to infer return type"); `gl.CoalescedLayout()`: no infer-coalesced pass in the AMD pipeline (S1), the lowering asserts "cast<Ty>() argument of incompatible type!" | |
+  An MLIR-level rejection is a bare `RuntimeError` naming the stage (`error encountered during parsing`,
+  `PassManager::run failed`, `failed to translate module to LLVM IR`) below an `error:` line with the cause, at
+  translation only the failing op (`../debugging.md` §4). A non-transposed 64×4 layout aborts the process (exit 134).
+- **A wave is 64 lanes** on gfx950 (S2): `threads_per_warp` multiplies to 64 and a `DistributedLinearLayout` has 6 lane
+  bases (all 94 literal lane-basis lists in AKLR's kernels at 43e112e do); waves match `num_warps`, a power of two
+  (table). Write `gl.num_warps()` into a layout so one source serves several launch widths, as 26 kernel directories did
+  at 43e112e (S9).
+- **Look at a layout before you use it.** `L.format_hardware_view(shape)` prints, register by register, the element
+  each lane holds, from plain Python without a GPU (S10); inside a kernel, `gl.static_print(gl.to_linear_layout(L,
+  shape))` prints its bases at compile time (S4). The bases in this page come from there.
+- **Declare** layouts as `gl.constexpr` locals in the jit body, or derive them in `@gluon.constexpr_function` helpers
+  (`_copy_layout`, §6.4). A module-level layout, plain or `gl.constexpr(...)` (S11), compiles used directly or bound as
+  `L: gl.constexpr = MOD_L`; bound to a plain local, `L = MOD_L`, it fails: "cannot convert BlockedLayout".
+## 2. Distributed layouts: BlockedLayout, SliceLayout, DistributedLinearLayout
+| Class (3.8.0 signature) | What the parameters say | Use it for |
+|---|---|---|
+| `BlockedLayout(size_per_thread, threads_per_warp, warps_per_cta, order, cga_layout=[])` (S10) | per dimension: contiguous elements per lane, lanes, waves; `order` lists dimensions fastest first; `cga_layout` stays `[]` (one CTA per program) | global loads and stores, element-wise math, reductions |
+| `SliceLayout(dim, parent)` (S10) | `parent` without dimension `dim`; lanes that differed only along `dim` hold the same element | index vectors; per-row or per-column values that broadcast back into `parent` |
+| `DistributedLinearLayout(reg_bases, lane_bases, warp_bases, block_bases, shape)` (S10) | one basis per bit of the register, lane and wave index; an element's coordinates are the XOR of the bases of the set bits; a zero basis means a copy | ownerships no BlockedLayout expresses: copy layouts derived from a shared layout (§6.4), per-row scale tiles that keep 4 K groups in a lane's registers (`_scale_window_layout`, S27), MX scale layouts (`get_mfma_scale_layout` returns one, §3) |
+- A BlockedLayout covers `size_per_thread × threads_per_warp × warps_per_cta` per dimension: `BlockedLayout([1, 8], [8,
+  8], [4, 1], [1, 0])` covers 32×64; on 64×64 it gains register basis `[32, 0]` (two 8-element runs 32 rows apart per
+  lane), on 16×64 its second warp basis becomes `[0, 0]` (waves 2 and 3 copy waves 0 and 1). The lowering masks copies
+  on other lanes and waves out of stores and atomics (S33); compiled, in the 16×64 example waves 2 and 3 branch past
+  loads, adds, stores and atomics. Over the 15 layouts whose copies were only on lanes or waves (21 tested, 2 without
+  copies), stores wrote each active address once and the atomic adds of 4096 programs summed to 4096, with no mask, an
+  all-true and an even-element mask; in the four register-copy layouts, atomics counted every copy (8192) and
+  `buffer_store` wrote twice in 8 of 153 store cases, `gl.store` once *(field, E1)*. The MiniMax-M2 E256 combine at
+  4096 tokens runs a `[1, 4] × [1, 64] × [1, 4]` layout, 1024 columns wide, over 512-column blocks (S12); compiled, its
+  4-wave kernel sends waves 2 and 3 past every data-memory operation (waves 0 and 1 reach 9 loads and 1 store)
+  *(field, E1)*. Copies placed on purpose can keep reductions wave-local (§6.7).
+- **Index vectors are built in a slice of the layout the data must land in**: `gl.arange(0, BN, gl.SliceLayout(0, L))`
+  for columns and `SliceLayout(1, L)` for rows; `[None, :]` and `[:, None]` broadcast them back into `L`, and a load
+  through those offsets lands in `L` with no conversion, whatever `L` is (blocked, MFMA, dot operand, scale). All 150
+  Gluon kernel directories at 43e112e use `SliceLayout`; deeper tensors nest slices (`SliceLayout(1, SliceLayout(2, L))`).
+- **A non-power-of-two extent** is split into power-of-two pieces, as the plain-Triton RMSNorm at hidden 6144 holds a
+  row in three 2048-wide chunks (S55) and the fp8 GEMM's 96- and 192-column tiles are a `[GROUP_K, 2·BN]` LDS buffer
+  sliced in two plus a `[GROUP_K, BN]` one (S56), or padded: that RMSNorm padded to 8192 stayed accurate, took
+  1.022–1.037× the split time at 1024–4096 tokens and 0.988–1.023× at 3–512 (faster in one of 3 runs; AKLR's bench,
+  Kineto timer, before #33) *(field, E2)*. A `[SLOTS, M, K]` buffer under a rank-2 layout takes any slot count
+  (`[n, 16, 64]`: n = 3, 5, 6, 7 compile) (S28).
+## 3. AMDMFMALayout and DotOperandLayout
+`gl.amd.AMDMFMALayout(version, instr_shape, transposed, warps_per_cta, element_bitwidth=None, tiles_per_warp=None,
+cga_layout=[])` (S13) is the accumulator's layout, `gl.DotOperandLayout(operand_index, parent, k_width)` (S10) an
+operand's, with the MFMA layout as `parent`. `version=4` is gfx950; `instr_shape` is the logical MFMA tile (M, N, K): the 16×16 and 32×32 forms map to one intrinsic, while the 4×64 and 64×4 forms are lowered as a broadcast sequence of 4×4 instructions, and
+`verify` accepts M×N of 32×32, 16×16, 64×4 and 4×64; it also checks the version range, the three-element instruction shape, accumulator bitwidth and CGA basis rank, but not whether K has an intrinsic or the orientation is supported (instructions and rates: `mfma.md`; plain
+`mfma` takes fp8 only at 16×16×32 and 32×32×16, K = 128 / 64 only through `mfma_scaled`, `mfma.md` §1). `gl.dot_fma`
+takes `DotOperandLayout`s of a `BlockedLayout` parent with `k_width` 0 (`mfma.md` §2.6). Who holds what, from
+`to_linear_layout`, for one wave:
+| Layout | Registers of a lane | Lanes 0–15 | Lane bits 4, 5 |
+|---|---|---|---|
+| accumulator 16×16, `transposed=True` | 4 consecutive columns | rows 0–15 | columns +4, +8 |
+| accumulator 16×16, `transposed=False` | 4 consecutive rows | columns 0–15 | rows +4, +8 |
+| accumulator 32×32, `transposed=True` | columns +1, +2, +8, +16 (16 registers) | rows (lanes 0–31) | bit 5: column +4 |
+| accumulator 16×16, `element_bitwidth=64` (fp64), `transposed=True` | columns +4, +8 | rows 0–15 | columns +1, +2 |
+| A of 16×16×32 bf16, `k_width=8` | K 0–7 (16 bytes) | rows 0–15 | K +8, +16 |
+| B of 16×16×32 bf16, `k_width=8` | K 0–7 | columns 0–15 | K +8, +16 |
+| A of 16×16×128 fp8 (`mfma_scaled`), `k_width=16` | K 0–15, then K +64 | rows 0–15 | K +16, +32 |
+| A of 16×16×128 fp8 (`mfma_scaled`), `k_width=32` | K 0–31 | rows 0–15 | K +32, +64 |
+- **`transposed`** chooses which accumulator dimension a lane's 4 registers run along (S14); the lowering realises
+  `True` by swapping A and B in the instruction (S15). With `True` (122 directories passed a literal `True` at 43e112e)
+  a per-row scale in `SliceLayout(1, mma)` is one value per lane and a lane's bf16 row segment one
+  `global_store_dwordx2` (compiled, one-wave `[16, 16, 32]`; `False`: 4 row-scale values per lane, 2-byte stores).
+  Choose `False` when rows must sit in one lane's registers: the K-group-folded decode GEMMs of n7168 pick each token's
+  4 K-group rows out of registers with `reshape`/`permute`/`split` (S16; `../gemm.md` §4); gated attention keeps a row
+  and its bf16 residual row in one lane so one softmax serves both (S17); the Qwen2-MoE router stores straight from a
+  non-transposed accumulator at its 2232-row Point (S18). A 4×64 layout (fp16 `instr_shape=[4, 64, 64]`, `k_width=4`:
+  compiled, 16 `v_mfma_f32_4x4x4_16b_f16` for `[4, 64] × [64, 64]` and 32 for `[4, 64] × [64, 128]` *(field, E3)*;
+  `[4, 64, 4]` has no instruction) must be `False`, a 64×4 one `True`: a transposed 4×64 stops at the lowering's
+  assertion, a non-transposed 64×4 aborts the process (S14, S15, S19).
+- **`warps_per_cta`** places waves along N first, then M (S14): with `[1, 4]` on a 16×128 accumulator wave w owns
+  columns 16w to 16w + 15 and 64 + 16w to 64 + 16w + 15. An operand covers its whole K in lanes and registers, so wave
+  bits on its K become copies (S14): with `[1, W]` every wave holds all of A (warp bases `[0, 0]`) and B is split, with
+  `[W, 1]` all of B; `[2, 2]` splits each operand in half only when its non-K extent spans at least two instruction
+  tiles, and an extent of one instruction tile is still replicated. Replicate the small operand where it is one
+  instruction tile: compiled at M = 16, N = K = 128 (bf16 `[16, 16, 32]`, 4 waves), `[4, 1]` issues 32 MFMAs a wave,
+  `[1, 4]` 8. MiniMax-M2's MXFP4 experts run `[1, 4]` (S20), DeepSeek-V2's switch from `[1, 4]` to `[2, 2]` above 32
+  rows (S21); the replicated rows are staged once through LDS (§6.5) or loaded by every wave (§6.3). A rank-3
+  `[4, 1, 1]` puts one batch slice on each wave (warp bases `[1, 0, 0], [2, 0, 0]`) and takes plain `mfma`;
+  `mfma_scaled` (e4m3 `[16, 16, 128]`, no scales) aborts on it (`mfma.md` §10). MiniMax-M2 FP8's in-CTA split-K sums
+  such slices (§6.7).
+- **`tiles_per_warp`** gives a wave adjacent MFMA tiles before the next wave starts (S14): `[1, 2]` with
+  `[1, 4]` on 16×256 makes column +16 a register bit and +32, +64 wave bits. Mind it before `gl.split`: an epilogue that
+  splits gate and up columns BN/2 apart (S22) needs column BN/2 in registers. At BN = 128, `[1, 2]` puts
+  column 64 on a wave and the split fails ("Fp4ToFpOp/SplitOp requires at least 2 elements per thread"); `[1, 1]` at
+  128 and `[1, 2]` at 256 compile. The MXFP4 gate-up kernels guard exactly this (S20). 22 directories set it at 43e112e.
+- **`element_bitwidth=64`** selects the fp64 accumulator: with `transposed=True` a lane's values are 4 columns apart
+  instead of 4 consecutive, with `False` 4 rows apart (S14, S19).
+- **Fewer rows than the instruction**: 8 rows on a 16-row accumulator turn lane bit 3 into a copy with
+  `transposed=True`, lane bit 5 (rows +8) with `False`; the MFMA still computes 16 rows, so 8-row decode tiles save no
+  matrix work (`mfma.md` §8 puts the spare rows to use).
+- **`k_width` is the number of consecutive K elements a lane holds**, not "elements per 32 bits" as the docstring says
+  (S10, S14). Each compiles to its instruction: 8 for bf16 `[16, 16, 32]` (16 bytes), 16 where 16 fp8 bytes per lane
+  become bf16 or fp16 (DSA's QK product, the Qwen2-MoE fp8 experts; S57, S19), 4 on fp16 `[4, 64, 64]` (S19), 16 or 32
+  for e4m3 and 16 for e2m1 bytes in `mfma_scaled` `[16, 16, 128]`, 1 or 4 for fp32 `[16, 16, 4]`. It decides which K
+  indices each register holds (table above), so give A and B the same value; `mfma` rejects a mismatch (S5),
+  `mfma_scaled` does not (S7), `mfma.md` §5.
+- **An fp32 accumulator is already the next operand when no wave splits its columns** (one wave, or waves on M): the
+  transposed 16×16×4 fp32 accumulator and `DotOperandLayout(0, mma, 4)` own the same elements, so `convert_layout(acc,
+  a_dot, assert_trivial=True)` moves nothing, also for 64×64 on `[4, 1]` waves; with `k_width=1` it goes through LDS,
+  while a transposed 32×32×2 accumulator reaches its `k_width=1` A by permlane swaps (§7). With waves along N the next A
+  (K = this N) is replicated while C is split: on `[1, 4]` (16×64 or 64×64) `assert_trivial` into the `k_width=4` A
+  fails, and unasserted a 16×64 tile costs 1 `ds_write_b128`, 4 `ds_read_b128` and 1 `s_barrier` (4 KB of LDS).
+  Avoiding LDS did not make this chain faster: a 64×64, 256-step fp32 chain with 64 MFMAs per wave per step took
+  1.369× as long on `[4, 1]` waves (trivial conversion) as on `[1, 4]` (through LDS) at 4 programs per CU, 1.213× at
+  16 *(field, E4)*. Staging C yourself is §6.5 (`../gdn.md` §12).
+- **MX scales** take `gl.amd.cdna4.get_mfma_scale_layout(dot_layout, shape)`, `shape` `[M, K // 32]` for A and `[N, K //
+  32]` for B (N first, though B is `[K, N]`), K in elements, not packed bytes (S6); an A scale passed as `[K // 32, M]`
+  fails while traced: "scale factor must be 16 or 32. Got 8" (K = 128; S7). For 16×16×128, lanes 0–15 are rows and lane
+  bits 4–5 the four 32-wide K groups of one instruction (`mfma.md` §3). Under a `[1, W]` MFMA the A scales are
+  replicated in every wave, as A is: compiled in a K loop under `[1, 4]`, A's `[32, 8]` table loaded in the scale
+  layout's slices puts no LDS access in the loop; converting it every step from rows split over the waves, as MiniMax-M2
+  E64 does (S20), costs 4 byte writes, 1 `ds_read_b32` and an `s_barrier` (not timed). Indexed in the slices, a
+  row-major table takes 4 `global_load_ubyte` per lane (`mfma.md` §3 makes it one `global_load_dword`).
+## 4. Shared layouts
+| Class (3.8.0 signature) | Layout of the bytes | AKLR uses it for (counts at 43e112e) |
+|---|---|---|
+| `SwizzledSharedLayout(vec, per_phase, max_phase, order, cga_layout=[])` (S23) | rows along `order[1]`; in row r the `vec`-element chunks are XORed with `(r // per_phase) % max_phase`, wrapped to the row's chunk count (S24); `max_phase=1` is plain row-major | XOR-swizzled operand tiles; `(1, 1, 1, order)` flat views, scratch and scale tables (95 directories in all); among about 40 parameter sets, occurrences / directories: `(16, 1, 8, [1, 0])` 54 / 30, `(4, 1, 8, [1, 0])` 40 / 10, `(16, 1, 16, [1, 0])` 17 / 9, `(8, 1, 8, [1, 0])` 16 / 13, `(16, 1, 8, [0, 1])` 10 / 8, `(16, 1, 4, [1, 0])` 9 / 6, `(8, 2, 8, [1, 0])` 4 / 4, `(16, 4, 4, ·)` 4 / 2 |
+| `PaddedSharedLayout(interval_padding_pairs, offset_bases, cga_layout, shape)` (S23) | `offset_bases` map offset bits to (row, col) (row permutation); `padding` elements are inserted after every `interval`; powers of two; `cga_layout` is required (`[]`); `PaddedSharedLayout.with_identity_for([[interval, padding]], shape, order)` builds the plain case: identity offsets, `order` fastest dimension first | async-copy destinations and MFMA operand tiles (30 directories through the helper below, 13 through `with_identity_for`, 6 spelled out) |
+| `SharedLinearLayout(offset_bases, block_bases=[], alignment=16)` (S23) | offset bit i holds `offset_bases[i]`; coordinates XOR; shape from the largest basis; `alignment` is the buffer's byte alignment | preshuffled weights read as an operand (§6.3), hand-built bank swizzles, scale tables in the reader's register order (§6.5) (35 directories) |
+- **`gl.amd.cdna4.compute_efficient_padded_shared_layout(dot_operand_layout, shape, dtype, is_k_contig=True)`** returns
+  a padded layout for an async-copied MFMA operand, or `None` (S6). Compiled, the plain-Triton pipeliner gave all 74
+  padded operands of 40 `tl.dot` builds (2 stages; bf16 and fp8e4nv; 16- and 32-wide MFMA; 4 and 8 waves; five shapes
+  from 32×32×64 to 256×128×64) the helper's intervals, padding, offset bases and shape; six A `[32, 64]` operands
+  (32-wide bf16, fp8 at either width) it swizzled instead, where the helper returns `None` *(field, E5)*. An interval
+  is one wave instruction's 1 KiB: a K-contiguous A at `k_width` 8 (bf16) or 16 (fp8) gets `[[512, 16]]` or
+  `[[1024, 32]]` with a 16-wide instruction, half that padding with a 32-wide one (bf16 at `k_width` 4 or 16:
+  `[[512, 4]]`). The 16 rows of one MFMA read start in 16 four-bank groups with a 32-wide instruction, in 8 with a
+  16-wide one (rows r and r + 8 share one), in 2 when unpadded. Read through it, a K-contiguous operand compiles to
+  `ds_read_b128`, a B stored `[K, N]` to `ds_read_b64_tr_b16` (fp8: `_b8`) (S25), in all 48 bf16 and fp8 reads
+  compiled at 64×64 and 128×128 *(field, E6)*. It returns `None` for 4-byte elements, `k_width` outside 4, 8, 16, an
+  instruction whose M (for A) or N (for B) is not 16 or 32 (the 4×64 shapes), and tiles with too few rows to stagger
+  (reasons for refusal not tested): evaluated, for fp8 A `[16, 128]` (`k_width=16`), bf16 A `[16, 64]` (`k_width=8`),
+  any `k_width=32` and fp32, but not for fp8 A `[32, 128]`, bf16 A `[64, 64]`, bf16 B `[64, 256]` and packed fp4 B as
+  `gl.uint8`. For a 16-row tile AKLR stages 32 rows and takes 16 with `gl.amd.slice` (S26); for a `k_width=32` operand
+  it asks for `k_width=16`, and the n3072 fp8 GEMMs' hand-written layouts at BLOCK_M = 32 (the m=128 schema, S27, and
+  m=256) equal the helper's output. The helper is not in Triton 3.7.0: a kernel that calls it declares
+  `"requires": {"triton": ">=3.8"}` (`aklr/ops/README.md`, The kernel section and ABI), as 22 of the 30 directories
+  that called it did at 43e112e (27 of 35 on main `0e02a81`); the eight n3072_k1536 fp8 GEMMs (S26, S27 among them) do
+  not (`../gemm.md` §1): do not copy their header.
+- **A multi-slot buffer takes the layout of one slot**: `gl.allocate_shared_memory(dtype, [SLOTS, M, K], layout_2d)`,
+  then `.index(i)`. A shared layout's rank equals the shape's or is one less, and `.index` keeps the parent's layout
+  (S28), so a rank-3 layout fails at `.index` (`[2, 16, 64]`: "rank must be equal to or one less than the shape size.
+  Got 3 and 2"). The Qwen2 router allocates `[STAGES, BM, BK]` with the rank-2 padded layout (S18), DeepSeek-V2 a `[2,
+  n]` word buffer with a rank-1 layout (S21).
+- **One buffer, several views**: `_reinterpret(dtype, shape, layout)` (27 directories at 43e112e), `.permute`,
+  `.reshape`, `.slice` and `.index` change the view, not the bytes; §6.4's flat alias and §6.3's operand view are such views.
+- **Swizzle parameters**: at 43e112e, of the 212 source occurrences whose `max_phase` expression is not the literal
+  `1`, 185 have `per_phase` 1 (it repeats each phase over that many rows) and `vec` 16, 8 or 4, a 16-byte chunk of fp8,
+  bf16 or fp32 (not matched to each buffer's type); a `max_phase` beyond the 16-byte chunks in a row adds no phase, the
+  XOR wrapping at the row's chunk count. Compiled at 1 stage and 4 waves, Triton's own swizzle for 72 bf16 and fp8
+  `tl.dot` operands (16- and 32-wide MFMA, 32–512-byte rows) had `per_phase = max(1, 256 // row_bytes)`,
+  `max_phase = max(1, min(16 // per_phase, row_bytes // 16))` and `vec` equal to `kWidth`: 16 bytes in 64, 8 in eight
+  (bf16 `kWidth=4`: `(4, 8, 2)`, `(4, 2, 8)`; fp8 `kWidth=8`: `(8, 8, 2)`, `(8, 4, 4)`); at full `kWidth` 128-byte rows
+  give `(8, 2, 8)` bf16 / `(16, 2, 8)` fp8, 64-byte rows `(8, 4, 4)` / `(16, 4, 4)` *(field, E7)*, as the n7168 K
+  halves use (S54). §5 times the helper's padding against the swizzle only for bf16 64×64 reads of 128-byte rows.
+- **`gl.bank_conflicts(distributed_type, shared_type)` aborts the compiler process on gfx950** for swizzled, linear and
+  padded layouts: `toLinearLayout` has no padded case ("unknown layout"), for the others an input-dimension lookup
+  asserts ("inDim not found in layout"), per the source the AMD branch's `vector` dimension (S29). Hardware counters
+  through rocprofv3 (`../../patterns/lds_bank_conflicts.md`) were not tried on these layouts.
+## 5. Shared layouts and bank conflicts, timed
+One wave per program stored a 64×64 bf16 tile (128-byte rows) into LDS and read it 2048 times as an MFMA operand
+(`AMDMFMALayout(4, [16, 16, 32], True, [1, 1])`, `k_width=8`): operand 0 with `ds_read_b128`, operand 1 (B of a
+row-major [K, N] tile) with the transposing `ds_read_b64_tr_b16`. Over four runs, with a cheap XOR between reads the
+layout changed the time 1.70–1.77× *(field, E8)*: LDS reads set it. With fp32 converts and adds the loop ran 1.54–1.71×
+slower and the layout changed it 1.10–1.17× *(field, E9)*: ALU work mostly sets it. Medians, range over the four runs:
+| Shared layout | LDS-bound, operand 0 / 1 | ALU-bound, operand 0 / 1 |
+|---|---|---|
+| `SwizzledSharedLayout(1, 1, 1, [1, 0])`, plain row-major | 907–916 / 894–909 µs | 948–958 / 947–965 µs |
+| `SwizzledSharedLayout(8, 1, 8, [1, 0])`, XOR | 529–534 / 510–515 µs | 821–832 / 861–871 µs |
+| `PaddedSharedLayout.with_identity_for([[64, 8]], [64, 64], [1, 0])`, 16 bytes per row | 631–642 / 515–520 µs | 845–857 / 860–878 µs |
+| the padded helper's layout (§4), `[[512, 16]]` | 525–530 / 396–398 µs | not reported |
+- A plain tile whose rows are 128 bytes apart reads at 0.57–0.59 of the swizzled rate when LDS reads dominate
+  *(field, E8)*: the lanes of one read share banks. Of plain, XOR and row padding the XOR swizzle was fastest for both
+  operands; the padding matched it on the transposed operand-1 read and left operand 0 at 0.82–0.84 of its rate. The
+  helper's layout read operand 0 at the swizzle's time (0.98–1.00×) and operand 1 in 0.77–0.78× of it *(field, E8)*.
+- With ALU work the plain tile loses 12–14% of the rate on operand 0 and 9–10% on operand 1; the swizzle beat row
+  padding by 2–4% on operand 0 in every run (inside single rounds' 11–13% spread, but of one sign) and operand-1 median
+  times differed by −0.4% to +0.8% *(field, E9)*. In this bf16 64×64, 128-byte-row test, both operand reads gained
+  1.70–1.77× with the swizzle in the LDS-bound loop, 1.10–1.17× with ALU work *(field, E8, E9)*; other sizes need A/B.
+  On the one kernel Point tried, flipping `BANK_XOR`, one XOR basis of the m=16 fp8 GEMM's `SharedLinearLayout` (S30),
+  moved its speedup by −0.5% to +1.4% over five A/Bs in AKLR's bench (Kineto timer, before #33) *(field, E10)*;
+  whether its reads conflict was not measured.
+## 6. Choosing a layout for each role
+### 6.1 Global loads and stores: 16 bytes per lane, and the contiguity hints
+- Give each lane 16 contiguous bytes along the contiguous dimension: `size_per_thread` `[1, 16]` fp8, `[1, 8]` bf16,
+  `[1, 4]` fp32 compile to `dwordx4` loads; on the MI355X a 1 GiB bf16 read with `[1, 8]` per lane ran 1.36× the
+  bandwidth of `[1, 1]` (1.28–1.46× over two timings of each) *(field, E11)*. Small scale tables load 4 bytes per
+  lane instead (S20).
+- The width a load gets is the layout's contiguous run, cut down to what axis analysis proves about the offsets.
+  In three compilations of a 64×64 bf16 tile in `BlockedLayout([1, 8], [8, 8], [4, 1], [1, 0])` with offsets that are
+  contiguous and aligned in runs of 8, `c ^ 8` and `c ^ (r % 8 * 8)` gave 16 `global_load_ushort` and two `// 3` /
+  `% 3` recombinations mixed narrow loads, while `// 8`, `// 16` recombinations and `(c + 8) % 64` kept 2
+  `global_load_dwordx4`; `gl.max_contiguous(gl.multiple_of(offs, [1, 8]), [1, 8])` restored 2 `global_load_dwordx4`
+  in all 11 forms *(field, E12)*. Division and modulo do not by themselves hide runs. A hint promises contiguity and
+  alignment for every Point; masks: `memory.md` §5, direct-to-LDS copies: §6.4.
+### 6.2 The accumulator
+Take `AMDMFMALayout(version=4, instr_shape=..., transposed=True, warps_per_cta=...)` with waves along the large
+dimension and the small operand replicated (§3); keep the accumulator in that layout through scaling, bias and
+activation (index the per-row and per-column factors in `SliceLayout(1, mma)` and `SliceLayout(0, mma)`), and leave it
+only for the store (§6.6) or for the next MFMA (§3, §7). Waves on M can make a `k_width=4` A conversion trivial,
+though in the chain timed in §3 that was the slower choice; reductions: §6.7.
+### 6.3 Operands straight from global memory into the operand layout
+Four ways AKLR's kernels load an operand from global memory with no conversion before the MFMA:
+
+| Way | In AKLR | What it rests on |
+|---|---|---|
+| 1. Index in the slices of the operand layout | MiniMax-M2 E64 builds its weight indices in `SliceLayout(0, bd)` and `SliceLayout(1, bd)` and passes the loaded `b` to `mfma_scaled` as it is (S20) | the weight is preshuffled in 16×16 blocks (`n // 16 * KB * 16 + k // 16 * 256 + n % 16 * 16 + k % 16`, bytes, `KB` the weight row's length in bytes), so the 64 lanes × 16 bytes one wave loads for B are one contiguous kilobyte (derived from the offset and the operand layout): the operand layout is also the coalesced one. For §9's bf16 B operand (`k_width=8`) one wave's load is sixteen 64-byte runs of a row-major weight and one 1 KiB run of a preshuffled one (§9's `b_load` reads 128-byte runs). §9's kernel at BK = 64 and 4 waves took 1.049× (BN = 64) and 1.267× (BN = 256) the preshuffled time with the row-major weight when a 256 MiB weight was flushed, 1.469× and 1.585× when a 2 MiB weight was reused (1024 rows, N = K = 1024) *(field, E13)*: whole-kernel times, not bandwidth counters |
+| 2. Load in the operand's linear form, then assert | MiniMax-M2 E256 has every wave load the whole replicated A tile and the weight in `gl.to_linear_layout(ad, (BM, BK // 2))` and `gl.to_linear_layout(bd, (BK // 2, BN))`, then `gl.convert_layout(a, ad, assert_trivial=True)` and the same for `b` (S12) | compiled, the assert passes with no conversion instruction |
+| 3. A BlockedLayout twin: a blocked layout with the operand's ownership, closed by `assert_trivial` | the DeepSeek-V2 router projection loads B in `BlockedLayout([8, 1], [4, 16], [1, 1], [1, 0])` for `DotOperandLayout(1, mma, 8)` of a one-wave `[16, 16, 32]` MFMA (S47; compiled on a `[32, 16]` tile, no conversion instruction); DSA's RoPE keys are another (`../attention.md` §5) | a twin holds only for the shape and MFMA options it was checked for: compiled, `BlockedLayout([16, 1], [4, 16], [1, 4], [1, 0])` is `DotOperandLayout(1, mma, 16)` of a `[16, 16, 128]` MFMA on `[128, 256]` with `warps_per_cta=[1, 4]` at `tiles_per_warp=[1, 1]` and fails `assert_trivial` at `[1, 2]`. Prefer 1 or 2 |
+| 4. Preshuffled bytes from LDS through a `SharedLinearLayout` view | DeepSeek-V2 writes raw weight words into a flat uint32 buffer, by async copy when `PIPE` (`UP and TM <= 64`) and by `buffer_load` + `.store` otherwise, and loads them in `bd` as the B operand through `_packed_b_layout` (S21) | the view's offset bits are K bytes 1–8 (bits 0–3), N 1–8 (4–7), K + 16 (8), then the K blocks from 32 and the N blocks from 16 (evaluated at four tile shapes): the byte order of way 1's 16×16 shuffle |
+### 6.4 Async copies into LDS: a copy layout derived from the destination
+A direct-to-LDS load writes a wave's lanes one after another (`../../hardware/gfx950/memory_and_sync.md` §3), in Triton
+3.8.0 16 or 4 bytes per lane (8, 2 or 1 do not compile; S31), so the copy layout must hand each lane the bytes landing
+at its slot. Two ways need no extra instruction (copy, waits, destinations, pipelining: `memory.md` §8, §11, §9, §12):
+
+- **Padded destination, copy layout from its bases.** Take the helper's padded layout and read the copy layout off its
+  `offset_bases`: the first bases are one lane's 16 bytes, the next 6 the 64 lanes, the next log2(num_warps) the waves,
+  the rest registers (S18). Compiled at 4 waves, each wave instruction fills one 1 KiB interval, with no `ds_bpermute`
+  or `ds_write` (bf16 64×64: 2 `buffer_load_dwordx4 … lds` per wave), and a GEMM through it matched torch:
+
+  ```python
+  @constexpr_function
+  def _copy_layout(shared, num_warps):
+      """Map 128-bit async copies onto the operand's padded LDS layout."""
+      bases = shared.offset_bases
+      wave_end = 9 + num_warps.bit_length() - 1
+      return gl.DistributedLinearLayout(
+          bases[:3] + bases[wave_end:], bases[3:9], bases[9:wave_end], [], shared.shape,
+      )
+  ```
+
+  `bases[:3]` is 8 bf16 elements; the fp8 GEMMs take `bases[:4]`, `bases[4:10]`, `bases[10:12]` (S27). The decorator
+  is `triton.runtime.jit.constexpr_function`, which `gluon.constexpr_function` re-exports. Call it in the jit body,
+  `load_a: gl.constexpr = _copy_layout(shared_a, gl.num_warps())`, build the copy's offsets in its slices and pass
+  them to `buffer_load_to_shared(a_buffer.index(stage), hidden, offsets)` (S18). The tile must give every wave a whole
+  1 KiB interval (rows × columns × element bytes ≥ 1024 × `num_warps`): compiled, a bf16 32×64 tile works at 4 waves
+  and at 8 fails with "Layout has 4 warps per CTA, but the context requires 8 warps per CTA". Of 770 helper layouts
+  (bf16, fp8, uint8; 1–16 waves), the 603 meeting the bound copied with exactly the expected `buffer_load_dwordx4 … lds`
+  count and read back bitwise, the 167 below it failed to compile, and the helper gave `None` for 51 others *(field, E14)*.
+- **Flat alias, XOR on the global side.** Copy into a `max_phase=1` view of the swizzled buffer and permute the source's
+  16-byte chunks; the consumer reads through the swizzled layout, XOR being its own inverse (S11, S32; excerpt and cost:
+  `memory.md` §9). The XOR must be the consumer's: `SwizzledSharedLayout(vec, per_phase, max_phase, [1, 0])` keeps
+  logical column `c` of row `r` at physical column `c ^ (r // per_phase % max_phase * vec)`, modulo the row length
+  (S24), so the copy filling physical column `p` reads global column `p ^ (r // per_phase % max_phase * vec)`: DSA's fp8
+  rows under `(16, 1, WIDTH // 16)` read `columns ^ rows % (WIDTH // 16) * 16` (S11), bf16 under `(8, 1, 8)` `columns ^
+  rows % 8 * 8`. Nothing checks it: for this bf16 64×64 tile, `rows % 4` in place of `rows % 8` compiles silently and
+  puts 2048 of the 4096 elements in the wrong column (mapped from the compiled layouts, not read back on a GPU).
+- **Not this**: an async copy straight into a swizzled layout makes the compiler move each lane's source offset to
+  another lane, a `ds_bpermute_b32` per copy instruction (S33): compiled, bf16 64×64 into `(8, 1, 8, [1, 0])` carries 2,
+  fp8 64×256 into `(16, 1, 8, [1, 0])` 4, the flat-alias versions none.
+- **What does not compile.** A direct-to-LDS copy has no narrower fallback: a copy layout that does not follow a padded
+  destination's lane order (the coalesced `BlockedLayout([1, 8], [8, 8], [4, 1], [1, 0])` into the helper's layout for
+  a bf16 64×64 A tile), or flat-alias offsets without their hints, stop the compile with `LLVM Translation failed for
+  operation: builtin.unrealized_conversion_cast` and `failed to translate module to LLVM IR` (`memory.md` §5).
+### 6.5 Register-staged operands
+- **Stage through registers** with `gl.allocate_shared_memory(..., value)` or `.store`: for §5's bf16 64×64 tile, into
+  the XOR swizzle or the helper's padding, both compile to 8 `ds_write_b128`; §5 timed only the reads *(field, E8)*.
+  MiniMax-M2 E64 stages replicated A in the helper layout and reads it with `.load(ad)` (S34). The helper returns
+  `None` for fp32; the hand padding `PaddedSharedLayout.with_identity_for([[BK, 4]], [BM, BK], [1, 0])` (S12) read an
+  fp32 64×64 tile in 0.36× the plain layout's time as A, 0.95–0.96× as a `[K, N]` B *(field, E8)*; other shapes need A/B.
+- **A small table read many times: list the reader's register bases first.** `_register_first_shared_layout(layout)` is
+  a `SharedLinearLayout` of `layout.reg_bases + layout.lane_bases + layout.warp_bases` without the zero bases, keeping
+  each lane's values side by side (S48). Compiled, a `[32, 16]` e8m0 table read in the A-scale layout of a `[16, 16,
+  128]` MFMA takes 8 `ds_read_u8` per lane from row-major and 1 `ds_read_b64` from this one; writing it, 4 byte stores
+  instead of 1 `ds_write_b32` (not timed). MiniMax-M2 E256 makes it a per-Point option (`SCALE_LDS`, S48).
+- Instead of the compiler's conversion you can stage an accumulator yourself in a shared layout of your choice and load
+  it in the operand layout: AKLR's GDN prefill moves its fp32 state into operand ownership "through vector-preserving,
+  bank-swizzled LDS", a hand-written `SharedLinearLayout` with XOR bases such as `[8, 8]` (S35; `../gdn.md` §12).
+### 6.6 The store
+Four routes, compiled for a bf16 `[32, 64]` accumulator on `[2, 2]` waves and writing identical values on the MI355X:
+convert it, rounded first, to a row-blocked layout of 16 bytes per lane, e.g. `BlockedLayout([1, 8], [8, 8], [4, 1], [1,
+0])` (S36), or stage it through LDS yourself in a shared layout you choose and load it back in the store layout, as the
+n3072 GEMMs do through `SwizzledSharedLayout(8, 2, 8, [1, 0])` at BLOCK_M = 32 and an XOR `SharedLinearLayout` otherwise
+(S27): either gives one `buffer_store_dwordx4` per lane after one LDS round trip; store straight from the transposed
+MFMA layout, 8 bytes per lane and no LDS, as the one-wave fp8 GEMMs do (S37); or from a non-transposed one, as the
+Qwen2-MoE router at its 2232-row Point (S18), which into a row-major output is 2-byte stores. §9 shows what the
+conversion compiles to; the store itself is in `memory.md` §15.
+### 6.7 Reductions, gathers and vectors every wave needs
+- **Whether a wave-local reduction is faster depends on the shape.** Over 400 dependent fp32 reductions per program,
+  2048 programs, tiles from 16×64 to 128×128, 4 and 8 waves, sum and max on both axes (40 combinations), each arm's
+  lane split chosen on the first half of the run and timed on the second, wave-local over cross-wave time was 0.813
+  for the 16×64 row sum at 4 waves but 1.298 for the 32×256 axis-0 sum at 8 waves, and wave-local was more than 2%
+  slower in 11 combinations (whole run, best against best; ratios near 1 unresolved), all on axis 0 *(field, E15)*;
+  an earlier run of the 16×64 row sum gave 0.830 *(field, E16)*. `gl.sum`, `gl.max` and `gl.reduce` return
+  `SliceLayout(axis, L)`: register reduction, then in-wave lanes, then LDS plus `s_barrier` if the axis spans waves
+  (S49); compiled, the 16×64 row sum is 5 DPP instructions in `BlockedLayout([1, 4], [4, 16], [4, 1], [1, 0])`, and
+  `([1, 4], [16, 4], [1, 4], [1, 0])` adds 256 B of LDS, a write, a read and a barrier. GDN decode (`../gdn.md` §4) and gated attention (`../attention.md` §9) reduce wave-locally.
+- **MFMA row reductions:** a one-wave 16×64 `transposed=True` row max compiled to in-lane work and one each
+  `v_permlane32_swap` / `v_permlane16_swap`; `False` to 20 DPP instructions. Compiled, converting DSA scores once to
+  `BlockedLayout([1, 4], [2, 32], [4, 1], [1, 0])` (S11) cut an 8×128 max and sum from 3 barriers to 1 (LDS from 128 B
+  to 4 KB). In 256-step online softmax, 1024 programs, the converted scores took 0.875× the in-place time at DSA's
+  8×64 shape and 0.849× at 8×128, but 1.200× at 16×128 and 1.188× at 16×256, with equal outputs and max and
+  denominator within 2.86e-6 of fp64 *(field, E17)*: do not infer speed from barrier counts.
+- **Replicate a small vector in every wave on purpose** so its reductions never leave the wave: MiniMax-M2 FP8 keeps 256
+  expert scores in `SliceLayout(0, BlockedLayout([1, 1], [1, 64], [WARPS, 1], [1, 0]))` (S50); GDN decode normalizes a
+  128-value row in `BlockedLayout([4], [64], [2], [0])`, "The 128-element reduction stays wave-local and needs no LDS
+  exchange" (S51). Copies repeat loads and ALU work without LDS (stores and atomics: §2), but a copy's global load is
+  not ordered with another copy's store to the same data: assume no barrier between them, nor that every replicated
+  load survives LLVM's dead-copy elimination (`../gdn.md` §3 shows the wrong state). MiniMax-M2 FP8's in-CTA split-K
+  sums over waves: one K slice per wave in a rank-3 `[SK, 1, 1]` MFMA layout, then `gl.sum(acc, 0)` (S52).
+- **`gl.gather(src, index, axis)` returns the index's shape and layout** (S4): build the index in the layout the result
+  must land in, as MiniMax-M2 picks column `slot` of a register tile with `gl.full((ROWS, 1), slot, gl.int32, layout)`
+  as the index, then `gl.sum(..., 1)` (S22). It stays in the wave when index and source share a layout with the gather
+  axis off the waves, at one index shuffle (§7) per index register and per source register a lane holds along the axis
+  (a runtime index), else it goes through LDS (S39). Compiled, a `[64, 64]` fp32 gather along axis 1 with both tensors
+  in `BlockedLayout([1, 1], [1, 64], [4, 1], [1, 0])` is 16 `ds_bpermute_b32` per lane, in `([1, 4], [4, 16], [4, 1],
+  [1, 0])` 64, in `([1, 4], [1, 64], [4, 1], [1, 0])`, four times the tensor's width with copies that all gather, 256;
+  with the axis over the waves, or the index's rows on other lanes and waves than the source's, 16 KB of LDS, 8–9
+  writes, 16 `ds_read_b32` and an `s_barrier`.
+## 7. `convert_layout`: what it lowers to, and how to avoid it
+Triton 3.8.0 lowers the minimal conversion between the two linear layouts by what it moves (S38, S39, S40):
+
+| The conversion moves | Lowered to on gfx950 | Visible in the ISA as |
+|---|---|---|
+| nothing (equivalent layouts) | no code | nothing |
+| registers within a lane | a renaming for 32-bit data; for 8-bit data, a renaming or byte permutes when packed bytes must move | nothing, or `v_perm_b32` |
+| one register bit with lane bit 4 or 5 | a permlane swap | `v_permlane16_swap_b32` / `v_permlane32_swap_b32` |
+| lanes exchanged by an xor of lane bits, with fewer than two register–lane transpositions (a register bit and a lane bit that trade places between the two layouts) | xor shuffles: DPP for lane bits 0–3, a permlane swap for bits 4 and 5 | `v_mov_b32_dpp`, `v_permlane16_swap_b32` / `v_permlane32_swap_b32` |
+| lanes in any other order, with fewer than two transpositions | index shuffles | `ds_bpermute_b32`, no LDS allocated |
+| lanes with two or more transpositions, or any wave | an LDS round trip, with an `s_barrier` between stores and loads when waves move (none in a 1-wave kernel) | `ds_write_*` + `ds_read_*`, `s_barrier`, `shared` > 0 |
+
+The rows classify movement, not cost. In a 64×64 int32 A → B → A test, 1024 programs, 1023 iterations, DPP, permlane16
+and permlane32 cost 0.0788, 0.0730 and 0.0730 ns per moved 32-bit value above their controls, a 4-wave LDS b128
+conversion 0.1273 and an index shuffle (`ds_bpermute`) 0.1654 *(field, E18)*, different conversions rather than
+instruction throughputs; §8's 16 KB order flip by index shuffles took longer than a trip through LDS *(field, E19)*.
+Compiled at 4 waves, two transpositions within each wave went through 16 KB of LDS with no barrier, moving waves too
+took 32 KB and 3 `s_barrier`; a transposed 32×32×2 fp32 accumulator into its `k_width=1` A (one transposition) took
+32 `v_permlane32_swap` and no LDS, the 16×16×4 (two) and non-transposed 32×32×2 (four) went through LDS *(field, E3)*.
+- **Make it trivial and assert it.** `convert_layout(x, L, assert_trivial=True)` raises a `TypeError` that prints both
+  linear layouts unless the conversion moves data only within a lane (S29); at 43e112e, 46 directories asserted 182
+  conversions with a literal `True`, one more with `M > 128`. Trivial is a register renaming for 32-bit data and may
+  need byte permutes for packed 8-bit data. MFMA layouts that differ only in `instr_shape[2]` own the same elements: a
+  bf16 `[16, 16, 32]` result converts to an fp32 `[16, 16, 4]` accumulator for free (`mfma.md` §6).
+- **Relabel K instead of moving data.** A product is unchanged if A's columns and B's rows are permuted the same way.
+  With fp32 `k_width=1` operands, AKLR's GDN prefill permutes K inside every 16-block (`k = 4y + z → 4z + y`, a
+  `reshape`/`permute`/`reshape` of each operand) so the transposed accumulator becomes the A operand with no data
+  movement, asserted (S41); the code and its compiled cost are in `../gdn.md` §11.
+- **Two permlane steps can avoid LDS; whether they are faster depends on the case.** For the 16×16 fp32 accumulator →
+  `DotOperandLayout(0, mma, 1)`, two register–lane transpositions go through LDS; the middle `DistributedLinearLayout`
+  compiles to 2 `v_permlane32_swap` + 2 `v_permlane16_swap`, no LDS, with or without the empty asm (S42, `../gdn.md`
+  §11). Over 256 dependent conversion + MFMA steps, two steps took 0.892× the direct time for one wave on 16×16 at 4
+  programs per CU (0.876× in an earlier run *(field, E21)*) but 1.259× at 16, and 1.137× and 1.212× for four waves on
+  64×16 (within 1.6e-6 of fp64) *(field, E20)*: no general replacement for the direct conversion.
+- **At a required bf16 rounding boundary, round first, then redistribute**: the exchange then moves half the data it
+  moves in fp32 (S43, S44); do not add a bf16 rounding where the consumer requires fp32.
+- **Keep the split bit in registers** (§3 `tiles_per_warp`): `gl.split` of a `BlockedLayout([1, 1], [32, 2], [4, 1], [1,
+  0])` tile, its size-2 axis on lanes, is rejected; with that axis on a register bit (a `DistributedLinearLayout` here)
+  it moves nothing. Qwen3-Next's GDN decode writes one where a BlockedLayout cannot (S45). To learn the layout a chain
+  of `reshape`/`permute`/`split` produces, apply it to a zero tensor of the same layout and index in the result's slices
+  (S16). `gl.join(a, b)` adds its size-2 axis as a register bit (S5), so stacking two tiles moves nothing: the m=16 fp8
+  GEMM joins two rounded accumulators and permutes and reshapes them into one stripe (S26).
+- **`gl.amd.slice(x, shape, offsets)`** (21 directories at 43e112e) takes a sub-tile without moving anything when the
+  slice keeps all of the layout's lane and wave bases: each dimension at least the extent one round of lanes and waves
+  spans (`size_per_thread × threads_per_warp × warps_per_cta` for a BlockedLayout), and `offsets` multiples of it (S46).
+  Otherwise the compile stops with "Lane and warp dim basis must match between source and destination layout." or
+  "No source register holds the element for destination index […]". Compiled with Triton 3.8.0 for gfx950, on a
+  64×64 `BlockedLayout([1, 8], [8, 8], [4, 1], [1, 0])` a 32×64 slice at row 0 or 32 compiles; 16×64, 64×32, and
+  32×64 at row 16 do not. AKLR takes 16 rows of a 32-row padded tile this way (S26).
+- **Do not chain conversions**: Gluon does not fold them (§1). Convert once, to the layout of the consumer.
+## 8. What a conversion costs, and how to read its path from the ISA
+1024 programs (4 per CU) converted a 64×64 32-bit tile (16 KB) A → B → A 1024 times *(field, E19)*; the ISA column is
+one loop iteration, compiled with Triton 3.8.0 for gfx950 (outside a loop the 16 KB LDS row has 3 `s_barrier`, not 4):
+
+| A → B | Waves | ISA per A → B → A iteration | LDS | ns per conversion, 3 runs |
+|---|---|---|---|---|
+| `([1,4],[8,8],[4,1],[1,0])` → itself | 4 | none | 0 | 73–74 (the loop alone) |
+| same → `order=[0, 1]` | 4 | 32 `ds_bpermute_b32` (16 per conversion) | 0 | 661–663 |
+| same → `([4,1],[8,8],[1,4],[0,1])` | 4 | 8 `ds_write_b128` + 8 `ds_read_b128` + 4 `s_barrier` | 16 KB | 574–581 |
+| `([1,4],[4,16],[1,1],[1,0])` → `([4,1],[16,4],[1,1],[0,1])` | 1 | 128 `ds_write_b32` + 128 `ds_read_b32` | 16 KB | 1518–1522 |
+| `([1,4],[8,8],[4,1],[1,0])` → `([1,4],[8,8],[1,4],[1,0])` (B is 128 columns wide: waves 2–3 hold copies, 32 values per lane) | 4 | 12 `ds_write_b128` + 12 `ds_read_b128` + 8 `s_barrier` | 8 KB | 1058–1060 |
+
+- A 16 KB tile moved between lanes, with 4 programs per CU converting at once, took 0.5–1.45 µs per step beyond the
+  73–74 ns loop in a test kernel *(field, E19)*; the `ds_bpermute` flip was not cheaper than a vectorized trip through
+  LDS, and the 1-wave case (one wave moving the whole tile 4 bytes at a time, a quarter of the waves per CU) was the
+  slowest in each run. In a served kernel the difference did not show: the 8-token Qwen2-MoE router loading A and B with
+  `gl.load` and converting them (24 `ds_write_b128` and 32 `ds_read_b128` once per program, no K loop, no `s_barrier`
+  in its one-wave CTA) took 8.45 µs against 8.447 µs with async copies, in one A/B of four alternated rounds per arm
+  in AKLR's bench (Kineto timer, before #33) *(field, E22)*; why was not measured. §9's `tile16` converting B from a
+  coalesced load took 1.002× (BN = 64) and 1.496× (BN = 256) the time with a preshuffled weight loaded in the operand
+  layout with a 256 MiB weight flushed, 0.997× and 1.295× with a 2 MiB weight reused (1024 rows, N = K = 1024)
+  *(field, E23)*; the weight's coalescing changes too, so these do not isolate the conversion, and whether memory waits hide it was not measured.
+- **Read the path**: compile the kernel (`../debugging.md` §1) and count `ds_bpermute_b32`, `v_mov_b32_dpp`,
+  `v_permlane16_swap`/`v_permlane32_swap`, `ds_write_*`/`ds_read_*` with `s_barrier`, and `v_perm_b32` in its amdgcn;
+  the TTGIR keeps one `ttg.convert_layout` per conversion, `metadata.shared` the LDS bytes. Your own LDS buffers,
+  reductions, gathers, swizzled async copies (§6.4) and inline assembly emit the same instructions (of the 897 kernels
+  AKLR compiled at 43e112e, `ds_bpermute_b32` appears in 291, `v_permlane16_swap` in 129, `v_permlane32_swap` in 113,
+  `v_perm_b32` in 215) *(field, E24)*: attribute them by compiling once with the conversion replaced by a load in the
+  target layout (on §9's `tile16` that removes exactly `CONVERT_A`'s 1 `ds_write_b128`, 2 `ds_read_b128` and 2
+  `s_barrier` per K step) or asserting it trivial (the compile then stops: "is not trivial").
+## 9. Worked example: a 16×N bf16 tile
+`y[16, N] = x[16, K] @ w[N, K]ᵀ`, 4 waves side by side along N, BK = 64; this unmasked example requires K to be a multiple of BK, N to be a power of two, and complete contiguous input/output storage. The flags choose between loading in a
+coalesced layout and converting, or loading in the operand layout's slices (compiles with Triton 3.8.0 for gfx950):
+
+```python
+@gluon.jit
+def tile16(x_ptr, w_ptr, y_ptr, K: gl.constexpr, N: gl.constexpr, BK: gl.constexpr,
+           CONVERT_A: gl.constexpr, CONVERT_B: gl.constexpr, CONVERT_C: gl.constexpr):
+    W: gl.constexpr = gl.num_warps()
+    mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 32], transposed=True,
+                                             warps_per_cta=[1, W])
+    a_dot: gl.constexpr = gl.DotOperandLayout(operand_index=0, parent=mma, k_width=8)
+    b_dot: gl.constexpr = gl.DotOperandLayout(operand_index=1, parent=mma, k_width=8)
+    a_load: gl.constexpr = gl.BlockedLayout([1, 8], [8, 8], [W, 1], [1, 0])    # 16 B per lane along K
+    b_load: gl.constexpr = gl.BlockedLayout([8, 1], [8, 8], [1, W], [0, 1])    # 16 B per lane along K
+    c_store: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [W, 1], [1, 0])  # 16 B per lane along N
+    acc = gl.zeros([16, N], gl.float32, mma)
+    for k0 in range(0, K, BK):
+        if CONVERT_A:   # coalesced load, then a layout conversion
+            m = gl.arange(0, 16, gl.SliceLayout(1, a_load))
+            ka = k0 + gl.arange(0, BK, gl.SliceLayout(0, a_load))
+            a = gl.convert_layout(gl.load(x_ptr + m[:, None] * K + ka[None, :]), a_dot)
+        else:           # indices in the slices of the operand layout: the load lands in a_dot
+            m = gl.arange(0, 16, gl.SliceLayout(1, a_dot))
+            ka = k0 + gl.arange(0, BK, gl.SliceLayout(0, a_dot))
+            a = gl.load(x_ptr + m[:, None] * K + ka[None, :])
+        if CONVERT_B:
+            kb = k0 + gl.arange(0, BK, gl.SliceLayout(1, b_load))
+            n = gl.arange(0, N, gl.SliceLayout(0, b_load))
+            b = gl.convert_layout(gl.load(w_ptr + n[None, :] * K + kb[:, None]), b_dot)
+        else:
+            kb = k0 + gl.arange(0, BK, gl.SliceLayout(1, b_dot))
+            n = gl.arange(0, N, gl.SliceLayout(0, b_dot))
+            b = gl.load(w_ptr + n[None, :] * K + kb[:, None])
+        acc = gl.amd.cdna4.mfma(a, b, acc)
+    out = acc.to(gl.bfloat16)
+    if CONVERT_C:       # 16-byte stores after an exchange
+        out = gl.convert_layout(out, c_store)
+        m = gl.arange(0, 16, gl.SliceLayout(1, c_store))
+        n = gl.arange(0, N, gl.SliceLayout(0, c_store))
+    else:               # store from the accumulator: 4 consecutive columns (8 B) per lane
+        m = gl.arange(0, 16, gl.SliceLayout(1, mma))
+        n = gl.arange(0, N, gl.SliceLayout(0, mma))
+    gl.store(y_ptr + m[:, None] * N + n[None, :], out)
+```
+
+Compiled with K = 2048, N = 256, `num_warps=4`, pointers 16-byte aligned; instructions per wave and K step (8 MFMAs):
+
+| Variant | Global loads per K step | LDS per K step | LDS scratch | VGPRs |
+|---|---|---|---|---|
+| all flags 0 | 10 `global_load_dwordx4` | none | 0 | 74 |
+| `CONVERT_A=1` | 9 | 1 `ds_write_b128`, 2 `ds_read_b128`, 2 `s_barrier` | 2 KB | 76 |
+| `CONVERT_B=1` | 10 | 8 `ds_write_b128`, 8 `ds_read_b128`, 8 `s_barrier` | 8 KB | 86 |
+| `CONVERT_C=1` (once, at the end) | — | 2 `ds_write_b128`, 2 `ds_read_b128`, 1 `s_barrier`; 2 `global_store_dwordx4` instead of 4 `global_store_dwordx2` | 8 KB | 74 |
+
+Loading in the operand layout keeps 16-byte loads and removes every LDS round trip and barrier from the loop; what it
+gives up is coalescing of the weight (64-byte runs per row instead of 128), which a 16×16 preshuffled weight restores
+(§6.3). The table is compiled, not timed. Timed as complete variants at BN = 64, `CONVERT_B=1` took 0.957× the time of
+all flags 0 with a 256 MiB weight flushed (0.9545–0.9593 over the run's clusters) and 0.68× with a 2 MiB weight
+reused (1024 rows, N = K = 1024, not this 16-row tile), despite its 6 LDS and barrier instructions per K step against
+none *(field, E23)*: the load layout changes too, so instruction counts do not isolate a conversion's cost.
+## Evidence
+
+AKLR paths and line numbers are on `0e02a81` unless a line names another commit (#64 renamed the 15 n3072_k1536 GEMM schemas after `43e112e`); Triton paths are `triton-lang/triton@c01b677`. Measured numbers name their commit or CI run in their E lines; `#89` marks measurements made in 2026-11 for this page (its AKLR-bench runs before #33).
+- E1 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, write addresses enumerated in the optimized LLVM IR, atomic results read back] 21 layouts (2 without copies, 15 with copies on lanes or waves only, 4 with register copies), 504 cells of `gl.store`, `buffer_store`, atomics and buffer atomics with no mask, an all-true and an even-element mask: lane and wave copies wrote once (atomic adds of 4096 programs summed to 4096); the four register-copy layouts were off in 48 cells (atomic adds 8192 for 4096 programs), and in a separate count of 153 store cells `buffer_store` wrote each address twice in 8, all of them register-copy layouts, `gl.store` once; 135 plain-Triton cells once; the MiniMax-M2 E256 combine at 4096 tokens (hidden 3072, top-k 8), compiled offline and through AKLR's launcher to the same instructions: waves 2 and 3 reach no data-memory operation, waves 0 and 1 reach 9 loads and 1 store, plus 2 kernel-argument loads (test kernels and the combine of minimax_m2_mxfp4_moe_shuffled_16x16_model_dim3072_n_routed256_n_experts256_inter_dim512/147b861bd4c406d2; #89)
+- E2 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=3, `aklr validate` bench with the Kineto timer before #33, one GPU, 4 alternated rounds per arm] plain-Triton RMSNorm at hidden 6144 with the row padded to one 8192 chunk instead of three 2048 chunks: accurate at all 14 Points in every run; padded over split kernel time in the three runs 1.024–1.037, 1.022–1.033, 1.028–1.036 at n_tokens 1024–4096; 0.988–0.992, 1.010–1.016, 1.007–1.011 at 3–128; 0.998–1.005, 1.021–1.023, 1.016–1.019 at 256–512 (rms_norm_hidden_size6144/cf637bff0784c454; #89)
+- E3 [2026-11, gfx950, Triton 3.8.0, N=1, compile-only] fp16 `instr_shape=[4, 64, 64]`, `k_width=4`, one wave: 16 `v_mfma_f32_4x4x4_16b_f16` (cbsz 4, abid 0–15) for N = 64, 32 for N = 128; seven 4-wave fp32 conversions: identity, no code; two register–lane transpositions inside each wave of a 128×128 tile, 16 KB of LDS, 16 writes and 16 reads, no barrier; three with a wave change, 32 KB, 3 `s_barrier`; a `[16, 16, 4]` accumulator on `[4, 1]` waves into `DotOperandLayout(0, mma, 1)`, either orientation, 2 transpositions, 16 KB; `[32, 32, 2]` transposed, 1 transposition, 32 `v_permlane32_swap`, no LDS; non-transposed, 4 transpositions, 64 KB (test kernels; #89)
+- E4 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, one run of 8 balanced-order clusters of 9 blocks × 5 launches per arm with an A-vs-A twin arm] a 64×64 fp32 accumulator chained into a `k_width=4` A for 256 steps, 64 MFMAs per wave per step: `[4, 1]` waves (trivial conversion) 1374.9 µs, `[1, 4]` (through LDS) 1004.0 µs, ratio 1.369 at 4 programs per CU; 4948.4 and 4078.4 µs, 1.213 at 16; max relative error 2.6e-6 (test kernels; #89)
+- E5 [2026-11, gfx950, Triton 3.8.0, N=1, compile-only] 40 plain-Triton `tl.dot` builds, 2 stages, bf16 and fp8e4nv, 16- and 32-wide MFMA, 4 and 8 waves, 32×32×64, 64×64×64, 128×128×64, 128×64×128 and 256×128×64: all 74 padded async-copied operands equal to `compute_efficient_padded_shared_layout` in intervals, padding, offset bases and shape; 6 A `[32, 64]` operands swizzled, the helper `None` for them (32-wide bf16, fp8 at both widths) (test kernels; #89)
+- E6 [2026-11, gfx950, Triton 3.8.0, N=1, compile-only] 48 operand reads through the helper's padded layout (bf16 and fp8; 16- and 32-wide MFMA; A, K-contiguous B and `[K, N]` B; 4 and 8 waves; 64×64 and 128×128): K-contiguous operands only `ds_read_b128`, `[K, N]` B only `ds_read_b64_tr_b16` (bf16) or `ds_read_b64_tr_b8` (fp8), e.g. 4 `ds_read_b128` for a bf16 64×64 A at 4 waves (test kernels; #89)
+- E7 [2026-11, gfx950, Triton 3.8.0, N=1, compile-only] Triton's swizzle for the 72 operands of 36 `tl.dot` builds (1 stage, 4 waves, bf16 and fp8, 16- and 32-wide MFMA, rows of 32–512 bytes): `per_phase` and `max_phase` as the formula in all 72; `vec` equal to `kWidth`, 16 bytes in 64 and 8 bytes in 8 (bf16 `kWidth=4`: `(4, 8, 2)`, `(4, 2, 8)`; fp8 `kWidth=8`: `(8, 8, 2)`, `(8, 4, 4)`) (test kernels; #89)
+- E8 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=4, torch events, median of 7 rounds × 3 launches] 2048 one-wave programs, a 64×64 bf16 LDS tile read 2048 times as MFMA operand 0 / 1 with an int16 XOR between reads, range over the four runs: plain 906.8–915.6 / 894.0–908.6 µs, `SwizzledSharedLayout(8, 1, 8)` 529.0–533.9 / 510.5–514.8, row padding `[[64, 8]]` 630.7–642.0 / 515.5–519.7, the helper's padded layout 524.6–529.5 / 395.6–397.8; plain over XOR 1.701–1.731 / 1.748–1.765, XOR over plain 0.578–0.588 / 0.567–0.572, XOR over padding 0.824–0.841 / 0.985–0.996, helper over XOR 0.984–1.001 / 0.769–0.777; XOR within 0.4% of the fastest of plain, XOR and padding in both loops; `gl.bank_conflicts` aborted (exit −6) for the XOR and padded layouts in every run; the XOR and helper stagings, by value and by `.store`, 8 `ds_write_b128` each (compiled); fp32 64×64 with hand padding `[[64, 4]]` over plain 0.363–0.365 / 0.950–0.957, the helper `None` for fp32 (test kernels; #89)
+- E9 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=4, torch events, median of 7 rounds × 3 launches] the same reads summed in fp32, range over the four runs (operand 0 / 1): plain 947.9–957.7 / 947.3–965.3 µs, XOR 821.0–831.8 / 861.3–871.2, padding 845.5–857.4 / 860.4–877.6; plain over XOR 1.142–1.167 / 1.097–1.109; fp32 over int16 with XOR 1.538–1.565 / 1.683–1.707; padding over XOR 1.018–1.036 / 0.996–1.008, padding slower on operand 0 in every run; XOR and padding 14.7–29.7 / 0.9–6.9 µs apart against a min–max spread of the rounds of 95.7–111.0 / 102.1–110.5 µs (11.5–13.4% / 11.9–12.7% of the XOR median) (test kernels; #89)
+- E10 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=5, `aklr validate` bench with the Kineto timer before #33, one GPU, 4 alternated rounds per arm in each A/B] `BANK_XOR` False → True at m = 16: kernel 4.245 → 4.263 µs (time ratio 1.004), speedup against the baseline 1.460 → 1.453 (B/A −0.5%), outputs bitwise equal; in four further A/Bs B/A speedup +0.25%, −0.22%, +1.44%, +0.29% (gemm_a8w8_blockwise_scaled_n3072_k1536/f3970decacc97225; #89)
+- E11 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, CUDA events, median of 7 rounds × 5 launches, each arm timed twice] a 1 GiB bf16 read, 4 waves per program: `size_per_thread` `[1, 8]` 6373 and 6437 GB/s, `[1, 1]` 4372 and 5043 GB/s, ratio of the sums 1.36; compiled, `[1, 16]` u8, `[1, 8]` bf16 and `[1, 4]` fp32 load with `dwordx4` only, `[1, 1]` bf16 with 16 `ushort` (test kernels; #89)
+- E12 [2026-11, gfx950, Triton 3.8.0, N=3, compile-only] 11 offset forms of a 64×64 bf16 tile in `BlockedLayout([1, 8], [8, 8], [4, 1], [1, 0])`, each contiguous and aligned in runs of 8: unhinted, `c ^ 8` and `c ^ (r % 8 * 8)` 16 `global_load_ushort`, `(c // 3) * 3 + c % 3` and `c % 3 + (c // 3) * 3` one `dword`, one `dwordx2`, one `dwordx4` and 2 `ushort`; plain `c`, `(c // 8) * 8 + c % 8`, `(c // 16) * 16 + c % 16`, `(c + 8) % 64`, `where(c < 32, c + 32, c - 32)`, `(c // 8 * 3 % 8) * 8 + c % 8` and a loaded permutation of 8-blocks 2 `global_load_dwordx4` (the last plus its index load); with `gl.max_contiguous(gl.multiple_of(offs, [1, 8]), [1, 8])` 2 `global_load_dwordx4` in all 11 (test kernels; #89)
+- E13 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, one run of 8 balanced-order clusters of 10 blocks × 5 launches per arm with an A-vs-A twin arm] §9's `tile16` (16 rows, BK 64, 4 waves) with B loaded in the operand layout from a row-major weight (F0) or a 16×16-preshuffled one (PS): 66.3 and 63.2 µs, F0/PS 1.049 at BN 64, 79.2 and 62.5 µs, 1.267 at BN 256 with a 256 MiB weight flushed (16 rows, N 32768, K 4096); F0/PS 1.469 and 1.585 with a 2 MiB weight reused (1024 rows, N 1024, K 1024); one wave's B load 16 runs of 64 bytes row-major, 1 run of 1024 bytes preshuffled (test kernels; #89)
+- E14 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, compiled, copied tiles read back against the source] 900 combinations of bf16 `k_width=8`, fp8 e4m3 and uint8 `k_width=16`; A, K-contiguous B and `[K, N]` B; 16- and 32-wide MFMA; 1, 2, 4, 8 and 16 waves; 16–256 rows × 64 or 128 columns: 770 helper padded layouts; the 603 with rows × columns × bytes ≥ 1024 × waves copied through `_copy_layout` with exactly the predicted `buffer_load_dwordx4 … lds` count (bf16 64×64: 2 per wave; fp8 128×128: 4), no `ds_bpermute`, `ds_write` or other LDS load, read back bitwise; the 167 below failed to compile ("Layout has k warps per CTA, but the context requires n warps per CTA"); the helper `None` for 130, 51 of them at or above the bound; the bf16 `_copy_layout` of §6.4 equal to the general recipe on all 229 bf16 layouts (test kernels; #89)
+- E15 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, one run of 8 balanced-order clusters of 9–16 blocks × 5 launches per arm with an A-vs-A twin arm, lane split chosen on clusters 1–4 and compared on 5–8] 400 dependent fp32 reductions per program, 2048 programs, tiles 16×64, 64×64, 32×256, 64×256 and 128×128, 4 and 8 waves, sum and max, both axes (40 combinations): wave-local over cross-wave 0.813 for the 16×64 row sum at 4 waves, 1.298 for the 32×256 axis-0 sum at 8 waves; over the whole run, best against best 0.580–1.300, at most 0.90 in 23 combinations, above 1.02 in 11, all of those axis 0; the A-vs-A twin differed from 1 in 5 of the 40, so ratios near 1 are unresolved; worst relative error 3.5e-7 (test kernels; #89)
+- E16 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, CUDA events, median of 7 rounds × 5 launches] 2048 programs of 4 waves, 400 dependent row sums of a 16×64 fp32 tile: `BlockedLayout([1, 4], [4, 16], [4, 1], [1, 0])` 67.0 µs, `([1, 4], [16, 4], [1, 4], [1, 0])` 80.7 µs, ratio 0.830 (test kernels; #89)
+- E17 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, one run of 8 balanced-order clusters of 9 blocks × 5 launches per arm with an A-vs-A twin arm] 256-step online softmax, 1024 programs, scores converted once to `BlockedLayout([1, 4], [2, 32], [4, 1], [1, 0])` against reduced in the MFMA layout: 183.5 and 209.6 µs, 0.875 at 8×64; 261.6 and 308.0, 0.849 at 8×128; 371.9 and 309.9, 1.200 at 16×128; 613.5 and 516.3, 1.188 at 16×256; LDS instructions and barriers in the ISA 7 + 4 against 7 + 6, 10 + 4 against 9 + 6, 11 + 4 against 9 + 6, 20 + 6 against 14 + 6; equal outputs, max and denominator within 2.86e-6 of fp64 (test kernels; #89)
+- E18 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, one run of 8 balanced-order clusters of 13 blocks × 5 launches per arm with an A-vs-A twin arm] a 64×64 int32 tile A → B → A, 1024 programs, 1023 iterations, ns per conversion: register renaming 66.3 (its control 66.9), DPP 228.3, permlane16 216.3, permlane32 216.5, `ds_bpermute` 659.8, 4-wave LDS b128 572.4, 1-wave LDS b32 1522.7; above each control, ns per moved 32-bit value: DPP 0.0788, permlane16 0.0730, permlane32 0.0730, `ds_bpermute` 0.1654, 4-wave LDS b128 0.1273, 1-wave LDS b32 0.3412 (2048, 2048, 2048, 3584, 3968 and 4032 values moved) (test kernels; #89)
+- E19 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=3, torch events, median of 7 rounds × 3 launches] 1024 programs of 1 or 4 waves, a 64×64 32-bit tile A → B → A 1024 times, ns per conversion over the three runs: loop alone 73.1–74.1, order flip by index shuffles 661.4–662.8, 4-wave LDS b128 573.9–580.8, 1-wave LDS b32 1518–1522, waves `[4, 1]` → `[1, 4]` (B 128 columns wide, waves 2–3 copies) 1058–1060, i.e. 500.8–1449 ns beyond the loop; flip over 4-wave LDS 1.141–1.153; 1-wave LDS b32 the slowest in every run, 1.43–1.44× the next; per-iteration instruction counts and the 3 `s_barrier` outside a loop from compiled listings (test kernels; #89)
+- E20 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, one run of 8 balanced-order clusters of 10 blocks × 5 launches per arm with an A-vs-A twin arm] 256 dependent steps of an fp32 accumulator → `DotOperandLayout(0, mma, 1)` conversion and an MFMA, two permlane steps against direct (LDS): one wave on 16×16 25.8 and 28.9 µs, 0.892 at 4 programs per CU; 80.9 and 64.3 µs, 1.259 at 16; four waves on 64×16 80.9 and 71.1 µs, 1.137 at 4; 311.3 and 256.8 µs, 1.212 at 16; relative error against fp64 at most 1.6e-6 (test kernels; #89)
+- E21 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, CUDA events, median of 9 rounds × 5 launches, timed twice] 1024 one-wave programs, 256 dependent 16×16 fp32 accumulator → `DotOperandLayout(0, mma, 1)` conversions and MFMAs: direct (LDS) 29.98 µs (30.1, 29.8), two permlane steps 26.26 µs (26.5, 26.0), ratio 0.876 (test kernels; #89)
+- E22 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, `aklr validate` bench with the Kineto timer before #33, one GPU, 4 alternated rounds per arm] Qwen2-MoE router at n_tokens = 8, `ASYNC_HIDDEN = ROWS <= 8` → `ROWS <= 0` (A and B by `gl.load`, converted to the operands; one K step per program at 8 tokens, no loop in either ISA): kernel 8.447 → 8.45 µs (time ratio 1.000), speedup against the baseline 1.186 → 1.178 (B/A 0.993); B accurate (max abs error 0.0296, reference absmax 11.67); compiled, B 24 `global_load_dwordx4`, 24 `ds_write_b128`, 32 `ds_read_b128`, 4 KiB LDS, no `s_barrier` (one wave), A 8 async copies and 16 `buffer_load_dwordx4`, 16 `ds_read_b128`, 8 KiB LDS (qwen2_moe_router_model_dim4096_n_routed512_topk10/4801e216dcff290f; #89)
+- E23 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, one run of 8 balanced-order clusters of 10 blocks × 5 launches per arm with an A-vs-A twin arm] §9's `tile16` (16 rows, BK 64, 4 waves) as complete variants: no conversion (F0), B converted from a coalesced load (CB), A converted (CA), a preshuffled B loaded in the operand layout (PS); µs with a 256 MiB weight flushed (16 rows, N 32768, K 4096): F0 66.25, CB 63.33, CA 67.81, PS 63.18 at BN 64, F0 79.25, CB 93.55, CA 100.23, PS 62.54 at BN 256; with a 2 MiB weight reused (1024 rows, N 1024, K 1024): F0 31.14, CB 21.13, CA 19.42, PS 21.20 at BN 64, F0 21.01, CB 17.16, CA 19.70, PS 13.25 at BN 256; CB/PS 1.002 and 1.496 flushed, 0.997 and 1.295 reused; CB/F0 0.957 at BN 64 flushed (95% interval over the clusters 0.9545–0.9593), 0.679 reused; LDS and barrier instructions per K step F0 0, CB 6 (24 at BN 256), CA 5, PS 0; max relative error 3.2e-3 (test kernels; #89)
+- E24 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, opcode census of every kernel AKLR compiles at its Points] of 897 compiled kernels, `ds_bpermute_b32` in 291, `v_permlane16_swap` in 129, `v_permlane32_swap` in 113, `v_perm_b32` in 215; a census keeping only each kernel's 60 most frequent opcodes had undercounted them as 272, 81, 70 and 186 (AKLR@43e112e; #89)
+- S1 triton-lang/triton@c01b677:third_party/amd/backend/compiler.py:327 `gluon_to_ttgir` runs inliner, `resolve_auto_encodings` (:333; it assigns `AutoLayout` values only, lib/Dialect/Gluon/Transforms/ResolveAutoEncodings.cpp:21-37), SCCP, loop-aware CSE, the Gluon canonicalizer, loop unroll, select/if combine, warp pipeline and warp groups (:332-340); `add_infer_coalesced_encodings` is bound (python/src/passes.cc:153) and called by no AMD pipeline
+- S2 triton-lang/triton@c01b677:third_party/amd/backend/compiler.py:269 `make_ttgir`, the plain-Triton path, runs coalesce (:269), remove-layout-conversions (:271, :274) and accelerate-matmul (:273); 64 threads per warp for gfx950 (:114), num_warps a power of two (:116-117)
+- S3 triton-lang/triton@c01b677:lib/Dialect/Gluon/Transforms/Canonicalize.cpp:53 the Gluon canonicalizer excludes the patterns "that modify layouts, especially `ConvertLayoutOp` patterns"
+- S4 triton-lang/triton@c01b677:python/triton/experimental/gluon/language/_semantic.py:220 Gluon rejects `can_reorder`; view ops infer their result layout; `arange` without a layout gets AutoLayout (:215; `full` :234); a binary op between two layouts raises "Layout mismatch in broadcast" (:206); `expand_dims` needs a SliceLayout sliced on the expanded axis (:145); `to_linear_layout` returns a DistributedLinearLayout (SharedLinearLayout for a shared layout) constexpr (:383); `gather` (:559): same rank (:566), other extents equal (:571-577), result in the index's shape and layout (:579)
+- S5 triton-lang/triton@c01b677:lib/Dialect/TritonGPU/IR/Dialect.cpp:3863 a layout's lanes must equal the module's threads per warp, its warps (:3877) the context's num_warps; a dot whose operands are not dot-operand encodings fails ("Dot's a/b's encoding should be of DotOperandEncodingAttr", :3182; "mismatching encoding between A and B operands", :3196), as do unequal kWidths ("mismatching kWidth between A and B operands", :3199); `tryJoinOnAxis` (:697): a join adds a size-2 register basis (:701-704), a split needs one, "requires at least 2 elements per thread" (:726-729); the MFMA operand swizzle `composeSharedLayoutForOperand` (:2652): 64 banks on version 4 (:2681), `perPhase` (:2689), `maxPhase` (:2690-2691)
+- S6 triton-lang/triton@c01b677:python/triton/experimental/gluon/language/amd/cdna4/__init__.py:50 `mfma_scaled` asserts an AMDMFMALayout accumulator and DotOperandLayout operands whose parent is that layout (:51-54); `get_mfma_scale_layout(dot_operand_layout, shape, scale_factor=32)` returns a DistributedLinearLayout (:94; lib/Dialect/TritonGPU/IR/LinearLayoutConversions.cpp:1673); `compute_efficient_padded_shared_layout(dot_operand_layout, shape, dtype, is_k_contig=True)` (:122), whose binding python/src/gluon_ir.cc:1326 calls `composePaddedLayoutForAsyncCopyCDNA4(..., useAsyncCopy=true, warpSize=64)` (:1366), the function the plain-Triton pipeliner calls (third_party/amd/lib/TritonAMDGPUTransforms/LowerLoops.cpp:286, Utility.cpp:519)
+- S7 triton-lang/triton@c01b677:lib/Dialect/Triton/IR/Ops.cpp:326 `DotScaledOp::verify` checks scale shapes only, deducing the scale factor from them ("scale factor must be 16 or 32. Got …", :391)
+- S8 triton-lang/triton@c01b677:lib/Conversion/TritonGPUToLLVM/ScanOpToLLVM.cpp:474 "TODO: unsupported scan layout" unless `ScanLoweringHelper::isSupported`, which accepts a BlockedLayout only (lib/Analysis/Utility.cpp:526-531)
+- S9 aklr/plugins/sglang/models/deepseek_v2/impls/triton/deepseek_v2_mxfp4_moe_shuffled_16x16_model_dim6144_n_routed256_inter_dim256/1204f286c55bb56e.json#kernel.py:345 `WARPS = gl.num_warps()` inside a layout (:348)
+- S10 triton-lang/triton@c01b677:python/triton/experimental/gluon/language/_layouts.py:60 BlockedLayout(size_per_thread, threads_per_warp, warps_per_cta, order, cga_layout=[]) (fields :71-75); SliceLayout(dim, parent) (:122), rank = parent rank - 1 (:151); DistributedLinearLayout(reg_bases, lane_bases, warp_bases, block_bases, shape) (:165); DotOperandLayout(operand_index, parent, k_width) (:223), docstring "Number of elements per 32-bits" (:230); `format_tensor_view` and `format_hardware_view` print a layout (:24)
+- S11 aklr/plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads8_kv_dim576_topk2048/ae32cc132679692c.json#kernel.py:13 module-level `gl.constexpr(gl.amd.AMDMFMALayout(...))` layouts, the `[1, 4]` MFMA (:13-15); consumers `SwizzledSharedLayout(16, 1, 8)` and `(16, 1, 4)` (:16-17) filled through a flat alias with the XOR on the global column and contiguity hints (:77-81); scores converted to `_DIRECT_SOFTMAX` (:18) at :124 before `gl.max` (:126) and `gl.sum` (:132)
+- S12 aklr/plugins/sglang/models/minimax_m2/impls/triton/minimax_m2_mxfp4_moe_shuffled_16x16_model_dim3072_n_routed256_n_experts256_inter_dim512/147b861bd4c406d2.json#kernel.py:57 combine layout `[1, V] x [1, 64] x [1, WAVES]`, 4 waves at 3072 < m <= 5120 with a 512-column block (:1099-1103); operand loads in `gl.to_linear_layout(ad, ...)` (:145-146), asserted trivial (:289-290); fp32 tiles in `PaddedSharedLayout.with_identity_for([[BK, 4]], ...)` (:951)
+- S13 triton-lang/triton@c01b677:python/triton/experimental/gluon/language/amd/_layouts.py:16 AMDMFMALayout(version, instr_shape, transposed, warps_per_cta, element_bitwidth=None, tiles_per_warp=None, cga_layout=[]); version 4 is gfx950 (:34); defaults 32 and all-ones (:53-56); `verify` (:81-89) checks only version, the M x N pair, bitwidth and rank
+- S14 triton-lang/triton@c01b677:lib/Dialect/TritonGPU/IR/LinearLayoutConversions.cpp:486 accumulator tile: 4 registers along M (not transposed) or N (transposed), lanes over the other dimension (:473 height 4 for 32-bit, 1 for 64-bit), 64x4 must be transposed (:481); tiles_per_warp[N] registers, then N warps, then remaining N tiles, then tiles_per_warp[M], then M warps (:539-557); operand layout (:749): k_width K-consecutive registers, lanes over the non-K dimension then K (:753), K repeats in registers (:768), tiles_per_warp (:774), then the MFMA's warps (:785)
+- S15 triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/DotOpToLLVM/MFMA.cpp:375 a transposed layout swaps A and B in the instruction; the 4x64 broadcast asserts a non-transposed layout (:360)
+- S16 aklr/ops/gemm/impls/triton/gemm_a8w8_blockwise_scaled_n7168_k2048/362ce3bb6200382e.json#kernel.py:155 `transposed=False` for K-group folding; `_unpack_group` (:108); a zero tensor as layout carrier (:180)
+- S17 aklr/plugins/sglang/models/qwen3_5/impls/triton/gated_attention_decode_group_fp8_quant_qkv_dim4608_n_kv_heads1_head_dim256/10df1ae2dc9d3c69.json#attention.py:44 "Non-transposed ownership puts adjacent high/residual rows in registers"
+- S18 aklr/plugins/sglang/models/qwen2_moe/impls/triton/qwen2_moe_router_model_dim4096_n_routed512_topk10/4c2bed7e3e8c1e94.json#kernel.py:146 `out_layout = mma_layout` when NATIVE_STORE, `native_store = rows == 2232` (:323); `compute_efficient_padded_shared_layout` for both operands (:68), `[STAGES, BM, BK]` buffers with the rank-2 layout (:102-103); `_copy_layout` (:11), `constexpr_function` from `triton.runtime.jit` (:8), called with `gl.num_warps()` (:74), copy offsets in its slices (:94), `buffer_load_to_shared(a_buffer.index(stage), …)` (:106-107)
+- S19 aklr/plugins/sglang/models/qwen2_moe/impls/triton/qwen2_moe_fp8_router_experts_shuffled_16x16_model_dim4096_n_routed512_inter_dim256/99f47a166d6d62fc.json#kernel.py:73 `element_bitwidth=64` fp64 accumulator; `k_width` 16 for fp16 parts of fp8 on 16x16x32 (:323), 4 on the non-transposed 4x64 (:327-330)
+- S20 aklr/plugins/sglang/models/minimax_m2/impls/triton/minimax_m2_mxfp4_moe_shuffled_16x16_model_dim3072_n_routed256_n_experts64_inter_dim1536/62df6de0b64b800d.json#kernel.py:498 `tiles_per_warp=[1, N_TILES if not FIRST or BN >= 256 else 1]` with `warps_per_cta=[1, 4]` (:497); activation scales loaded 4 bytes per lane in `BlockedLayout([1, 4], [16, 4], [4, 1], [0, 1])` (:507), converted to the A-scale layout every K step (:577); weight indices in `SliceLayout(0/1, bd)` (:516, :525), `b` to `mfma_scaled` unconverted (:576), preshuffled offsets `_weight_offset_8` (:30)
+- S21 aklr/plugins/sglang/models/deepseek_v2/impls/triton/deepseek_v2_mxfp4_moe_shuffled_16x16_model_dim6144_n_routed256_inter_dim512/3432dd09808b8428.json#kernel.py:403 `warps_per_cta=[1, 4] if TM <= 32 else [2, 2]`; `_packed_b_layout` replays the 16x16 weight shuffle (:364-370); `PIPE` (:410): a `[2, BN * BK // 8]` buffer with a rank-1 layout (:414) filled by `buffer_load_to_shared` (:336), viewed (:438) and read with `load_shared_relaxed` (:446); otherwise `buffer_load` + `B.store` (prefill_stage_packed_weight.py:36-37), viewed (:418) and read with `load(bd)` (:476)
+- S22 aklr/plugins/sglang/models/minimax_m2/impls/triton/minimax_m2_mxfp4_moe_shuffled_16x16_model_dim3072_n_routed256_n_experts64_inter_dim1536/b94f5777fd5d2d88.json#kernel.py:238 gate and up split from one accumulator by reshape, permute, split; a column of a register tile by `gl.gather` and `gl.sum` (:580-582)
+- S23 triton-lang/triton@c01b677:python/triton/experimental/gluon/language/_layouts.py:456 SwizzledSharedLayout(vec, per_phase, max_phase, order, cga_layout=[]); PaddedSharedLayout(interval_padding_pairs, offset_bases, cga_layout, shape) (:505), powers of two (:590-602), `with_identity_for(pairs, shape, order)` with identity bases in `order` (:608-623), padding after every interval (include/triton/Dialect/TritonGPU/IR/TritonGPUAttrDefs.td:223); SharedLinearLayout(offset_bases, block_bases=[], alignment=16) (:631), shape from the largest basis (:660), `alignment` the allocation's byte alignment (lib/Dialect/TritonGPU/IR/Ops.cpp:765)
+- S24 triton-lang/triton@c01b677:include/triton/Dialect/TritonGPU/IR/TritonGPUAttrDefs.td:85 with vec=2 "the element at (r,c) has value ((c / 2) ^ r) * 2 + (c % 2)" (:88); the linear form reduces the XOR modulo the row (LinearLayoutConversions.cpp:83)
+- S25 triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUTransforms/Utility.cpp:152 the padded layout: 1- or 2-byte elements (:177), the instruction's non-K size (:185) 16 or 32 (:194), k_width 4, 8 or 16 (:198), `ds_read_b128` or `ds_read_b64_tr` (:223-224), padding 2·k_width or k_width (:234-236), no conflict tolerated for b128 (:259), one interval per wave instruction (:288)
+- S26 aklr/ops/gemm/impls/triton/gemm_a8w8_blockwise_scaled_n3072_k1536/3045bc7c9725aa4d.json#kernel.py:89 a 32-row padded A tile, 16 rows taken with `gl.amd.slice` (:164); SharedLinearLayout with `alignment=256` (:288-290); two accumulators joined, permuted and reshaped (:472-473)
+- S27 aklr/ops/gemm/impls/triton/gemm_a8w8_blockwise_scaled_n3072_k1536/01110d0a95abc9f6.json#kernel.py:189 the helper called with `k_width` 16 while the operands use 32 at BLOCK_M != 32 (:143-145); a PaddedSharedLayout spelled out by hand, equal to the helper's result (:148); fp8 `_copy_layout` (:20): registers `bases[:4] + bases[12:]`, lanes `bases[4:10]`, waves `bases[10:12]`; `_scale_window_layout`: 4 scale columns in registers, rows on lanes and waves (:33-50); a `[BLOCK_M, 64]` bf16 exchange in `SwizzledSharedLayout(8, 2, 8, [1, 0])` at BLOCK_M = 32 (:316-323), an XOR SharedLinearLayout otherwise (:326-350)
+- S28 triton-lang/triton@c01b677:lib/Dialect/TritonGPU/IR/Types.cpp:160 a shared layout's rank equals the shape's or is one less, and `.index` keeps the parent's layout (python/triton/experimental/gluon/language/_semantic.py:428-430); every LDS dimension but the first is a power of two (:98-105); so is every tensor dimension (python/triton/_utils.py:63, :68-69)
+- S29 triton-lang/triton@c01b677:python/src/gluon_ir.cc:803 the AMD branch of `get_shared_bank_conflicts` asks the shared layout for a `vector` input dimension (assertion at lib/Tools/LinearLayout.cpp:292); a padded layout aborts earlier, in `toLinearLayout` (:792; lib/Dialect/TritonGPU/IR/LinearLayoutConversions.cpp:1379 "unknown layout"); trivial means identical encodings or a minimal conversion over registers only (:196), and the TypeError prints both linear layouts (python/triton/experimental/gluon/language/_semantic.py:246)
+- S30 aklr/ops/gemm/impls/triton/gemm_a8w8_blockwise_scaled_n3072_k1536/f3970decacc97225.json#kernel.py:66 SharedLinearLayout read view; BANK_XOR toggles one basis (:73); committed `BANK_XOR=False` (:1024)
+- S31 triton-lang/triton@c01b677:third_party/amd/lib/Dialect/TritonAMDGPU/IR/TargetFeatures.cpp:204 direct-to-LDS lanes are 128 or 32 bits
+- S32 aklr/plugins/sglang/models/qwen3_5/impls/triton/gated_attention_decode_group_fp8_quant_qkv_dim4608_n_kv_heads1_head_dim256/14e91857b4038e02.json#attention.py:110 "XOR is self-inverse: linear physical copies fill the consumer swizzle"
+- S33 triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/LoadStoreOpToLLVM.cpp:788 a swizzled async-copy destination (max_phase not 1) needs source swizzling: a per-lane `shuffleIdx` (:419), a `ds_bpermute` (Utility.cpp:121); stores predicate off redundant threads (`getFreeVariableMasks`, `emitRedundantThreadPredicate`, :1646-1648), as do buffer stores (:1971-1973) and atomics (:2278-2280); loads do not
+- S34 aklr/plugins/sglang/models/minimax_m2/impls/triton/minimax_m2_mxfp4_moe_shuffled_16x16_model_dim3072_n_routed256_n_experts64_inter_dim1536/f83985dc8066c00c.json#kernel.py:652 the replicated A tile staged through the padded helper layout (`store` :686, `load(ad)` :687)
+- S35 aklr/plugins/sglang/models/qwen3_5/impls/triton/gdn_prefill_group_fp8_quant_n_v_heads16_key_dim128_value_dim128_conv_dim3072/0a07f9f9342c6cf1.json#kernel.py:993 fp32 state exchanged through a hand-written XOR SharedLinearLayout
+- S36 aklr/ops/gemm/impls/triton/gemm_a8w8_blockwise_scaled_n3072_k1536/aef7bbb04ccbe710.json#kernel.py:589 accumulator converted to `BlockedLayout([1, 8], [8, 8], [4, 1], [1, 0])` for the store
+- S37 aklr/ops/gemm/impls/triton/gemm_a8w8_blockwise_scaled_n3072_k1536/4d4cb3c49f122deb.json#kernel.py:398 a one-wave 16x16 tile stored from the MFMA layout
+- S38 triton-lang/triton@c01b677:lib/Conversion/TritonGPUToLLVM/ConvertLayoutOpToLLVM.cpp:62 warps or CTAs move: through LDS; lanes (:68): shuffles or LDS (:72); registers (:77): reorder; equivalent layouts (:82): no code; the LDS path stores and loads the tile in rounds with a barrier between (:230; a wave sync when no warp moves, :218-222); scratch size third_party/amd/lib/Analysis/AMDGPUAllocation.cpp:15
+- S39 triton-lang/triton@c01b677:lib/Analysis/Utility.cpp:1311 in-warp shuffles only with fewer than two mixed register-lane transpositions; they are `shuffleXor` when the lane permutation is trivial, else `shuffleIdx` (lib/Conversion/TritonGPUToLLVM/ConvertLayoutOpToLLVM.cpp:526-531), on CDNA4 DPP for xor mask bits 0-3 and permlane swaps for 16 and 32, or a `ds_bpermute` (third_party/amd/lib/TritonAMDGPUToLLVM/Utility.cpp:161, :221); a gather is warp-local only with the gather axis off the warps in both layouts (:1128) and the same warp (:1143) and lane (:1155) mapping of the other dimensions (`isWarpLocal`, :1096), else through shared memory (lib/Conversion/TritonGPUToLLVM/GatherOpToLLVM.cpp:43-46; warp-local, one `shuffleIdx` per index register and per source register of its column, then a select, :297-333); a shuffle of data up to 32 bits is one `ds_bpermute`, of 64-bit data two (third_party/amd/lib/TritonAMDGPUToLLVM/Utility.cpp:84-113)
+- S40 triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/ConvertLayoutOpToLLVM.cpp:44 one transposition of a register bit with lane bit 4 or 5 (:69) becomes `permlane16.swap`/`permlane32.swap` (:92), ahead of the generic path (TritonGPUToLLVM.cpp:157); a register-only conversion of 8-bit elements becomes `llvm.amdgcn.perm` byte permutes (:739, :301)
+- S41 aklr/plugins/sglang/models/qwen3_5/impls/triton/gdn_prefill_group_fp8_quant_n_v_heads16_key_dim128_value_dim128_conv_dim3072/24ede969ed66a87a.json#kernel.py:246 `_permute_columns_for_a`; asserted trivial into `DotOperandLayout(0, mma, 1)` (:554-557)
+- S42 aklr/plugins/sglang/models/qwen3_5/impls/triton/gdn_prefill_group_fp8_quant_n_v_heads16_key_dim128_value_dim128_conv_dim3072/2ecece9650b95f71.json#kernel.py:694 `_inverse_left_operand`: accumulator to operand through a middle DistributedLinearLayout, one wave (`warps_per_cta=[1, 1]`, :698), the `SHORT` and long middles (:700-715), an empty asm between the converts (:717-719)
+- S43 aklr/plugins/sglang/models/qwen3_5/impls/triton/gdn_decode_group_fp8_quant_n_v_heads16_key_dim128_value_dim128_conv_dim3072/4f257a3e566b20d1.json#kernel.py:162 "halve the cross-wave LDS transfer"
+- S44 aklr/plugins/sglang/models/qwen2_moe/impls/triton/qwen2_moe_fp8_experts_shuffled_16x16_model_dim4096_n_experts513_inter_dim256_topk10/86987a66c0cdba39.json#kernel.py:282 "Round in the accumulator layout before redistributing for 128-bit stores"
+- S45 aklr/plugins/sglang/models/qwen3_next/impls/triton/qwen3_next_gdn_decode_group_fp8_quant_n_v_heads8_key_dim128_value_dim128_conv_dim2048/f44007374038041f.json#kernel.py:572 "A blocked layout cannot be used here ... gl.split needs two"
+- S46 triton-lang/triton@c01b677:python/triton/experimental/gluon/language/amd/slice.py:12 `gl.amd.slice(source, shape, offsets)` keeps the layout; extent and offsets align to its CTA tile; `ExtractSliceOp::verify` (third_party/amd/lib/Dialect/TritonAMDGPU/IR/Dialect.cpp:143): every destination element held by a source register (:209-214), equal lane and warp bases (:218-222)
+- S47 aklr/plugins/sglang/models/deepseek_v2/impls/triton/deepseek_v2_mxfp4_moe_shuffled_16x16_model_dim6144_n_routed256_inter_dim512/3c6e26ffcce7196d.json#kernel.py:58 B loaded in `BlockedLayout([8, 1], [4, 16], [1, 1], [1, 0])`, converted to `DotOperandLayout(1, mma, 8)` with `assert_trivial=True` (:74); one-wave `[16, 16, 32]` MFMA (:56)
+- S48 aklr/plugins/sglang/models/minimax_m2/impls/triton/minimax_m2_mxfp4_moe_shuffled_16x16_model_dim3072_n_routed256_n_experts256_inter_dim512/bb663e5b0cf55a10.json#kernel.py:381 `_register_first_shared_layout` (:381-384), chosen when `SCALE_LDS` is 2 (:506-512)
+- S49 triton-lang/triton@c01b677:lib/Conversion/TritonGPUToLLVM/ReduceOpToLLVM.cpp:54 a reduction works within each thread, then within the warp (:58), then, while warps remain on the axis, through a layout conversion and another warp step (:78-92); result `SliceLayout(axis, ·)` (lib/Dialect/TritonGPU/IR/Dialect.cpp:2971); LDS scratch third_party/amd/lib/Analysis/AMDGPUAllocation.cpp:55; on CDNA4 lane bit 5, or bits 4-5, by permlane swaps (third_party/amd/lib/TritonAMDGPUToLLVM/TargetInfo.cpp:342-379)
+- S50 aklr/plugins/sglang/models/minimax_m2/impls/triton/minimax_m2_fp8_moe_shuffled_16x16_model_dim3072_n_routed256_n_experts256_inter_dim384/e75e553b34178760.json#kernel.py:335 every wave holds all 256 experts (:335-340)
+- S51 aklr/plugins/sglang/models/qwen3_5/impls/triton/gdn_decode_group_fp8_quant_n_v_heads16_key_dim128_value_dim128_conv_dim3072/2c2a09e220f2706c.json#kernel.py:214 "The 128-element reduction stays wave-local and needs no LDS exchange"; `BlockedLayout([4], [64], [2], [0])` (:215)
+- S52 aklr/plugins/sglang/models/minimax_m2/impls/triton/minimax_m2_fp8_moe_shuffled_16x16_model_dim3072_n_routed256_n_experts256_inter_dim384/5cac8212f51edf84.json#kernel.py:622 `warps_per_cta=[SK, 1, 1]`; `gl.sum(acc, 0)` (:713)
+- S53 aklr/plugins/sglang/models/qwen2_moe/impls/triton/qwen2_moe_router_model_dim4096_n_routed512_topk10/4801e216dcff290f.json#kernel.py:29 `ASYNC_HIDDEN = ROWS <= 8`; the register path converts A and B in the K loop (:71-72)
+- S54 aklr/ops/gemm/impls/triton/gemm_a8w8_blockwise_scaled_n7168_k2048/1bbf98a368b3fcba.json#kernel.py:131 `SwizzledSharedLayout(16, 4, 4)` for A and B (:131-132) on `[BLOCK_M, GROUP_K // 2]` fp8 slots (:140-142)
+- S55 aklr/ops/rms_norm/impls/triton/rms_norm_hidden_size6144/cf637bff0784c454.json#kernel.py:11 three chunks when `CHUNK * 3 == H`; the host picks `h // 3` when it is a power of two (:39)
+- S56 aklr/ops/gemm/impls/triton/gemm_a8w8_blockwise_scaled_n3072_k1536/e5af2435eab17788.json#kernel.py:603 `TILE_N = BN * 3`, BN 32 or 64 (:590); a `[GROUP_K, 2 * BN]` buffer sliced in two (:635-641), a third `[GROUP_K, BN]` one (:645)
+- S57 aklr/plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads8_kv_dim576_topk2048/43ffd5e3e5b67298.json#kernel.py:138 fp8 keys converted to bf16 for `DotOperandLayout(1, …, 16)` of a `[16, 16, 32]` MFMA (:138-143); the query with `k_width` 16 (:174)

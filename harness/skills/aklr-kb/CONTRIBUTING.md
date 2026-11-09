@@ -25,7 +25,10 @@ may have made it stale. `maintenance/kb_lint.py` enforces what can be checked me
   kernels, their knobs and how to write a new one, `<op>.md` (`gemm.md`, `moe.md`, `attention.md`) the FlyDSL side
   of an op package's cards. A card states the mechanism and its numbers; how to write it in FlyDSL goes to that
   page, under a heading named after the card's section (`mainloop §8`), and the card's section ends with a pointer
-  to it
+  to it. In `triton/` (front matter `triton: 3.8.0` in place of `flydsl`): `authoring.md`, `debugging.md`,
+  `tuning.md`, `numerics.md` for any Triton or Gluon kernel, `gluon/` Gluon's layouts, data movement, MFMA and inline
+  assembly, `kernels/kernel_library.md` AKLR's Triton kernels by family, `<op>.md` (`gemm.md` with `gemm/`, `moe.md`,
+  `attention.md`, `gdn.md`) the Triton side of an op
 
 ## Page kinds
 
