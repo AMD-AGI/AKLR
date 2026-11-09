@@ -30,6 +30,8 @@ def flash_mla_with_kvcache(
     kv_scale=1.0,
     return_lse=False,
     kv_cache_layout="row_major",
+    rope_freqs=None,
+    positions=None,
 ): ...
 
 

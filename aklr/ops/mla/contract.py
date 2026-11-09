@@ -120,6 +120,7 @@ FLASH_MLA_WITH_KVCACHE = OpContract(
             is_var=True,
         ),
         "n_offsets": axis("Offsets in cu_seqlens_k: batch + 1.", 2, 65537, is_var=True),
+        "n_positions": axis("Rows of the RoPE table.", 1, _SLOT_LIMIT, is_var=True, any_size=True),
     },
     attrs={
         "causal": attr(
@@ -153,9 +154,33 @@ FLASH_MLA_WITH_KVCACHE = OpContract(
         "has_cache_seqlens": _presence("cache_seqlens"),
         "has_cu_seqlens_k": _presence("cu_seqlens_k"),
         "has_sinks": _presence("sinks", "sinks"),
+        # DeepSeek-V4's inverse RoPE on the output, as sglang's aiter decode applies it
+        "has_inv_rope": attr(
+            "Whether rope_freqs is passed: the output's last 64 lanes are rotated back.",
+            False,
+            True,
+            default=False,
+            abbrev="inv_rope",
+            optional=True,
+        ),
+        "has_positions": attr(
+            "Whether positions is passed, with rope_freqs.",
+            False,
+            True,
+            default=False,
+            abbrev="pos",
+            optional=True,
+        ),
     },
     constraints=(
-        "return_lse",  # an output is never optional: output alone is not modelled
+        # an output is never optional: without lse, lse is empty (the inverse RoPE's caller,
+        # sglang's aiter decode, returns none)
+        "return_lse != has_inv_rope",
+        # the inverse RoPE: rows of the sparse dsv4 pools that read every index (sglang folds
+        # the lengths into the indices first), with sinks
+        "has_inv_rope == has_positions",
+        "(not has_inv_rope) or (has_sparse_indices and has_sinks)",
+        "(not has_inv_rope) or (not (has_sparse_lens or has_extra_sparse_lens))",
         # sparse indices read the dsv4 pool, a block table a dense one
         "has_sparse_indices == (kv_cache_format == 'dsv4_fp8')",
         "has_sparse_indices != has_block_table",
@@ -174,7 +199,7 @@ FLASH_MLA_WITH_KVCACHE = OpContract(
         f"n_extra_pages * extra_page_size <= {_SLOT_LIMIT}",
         # aiter's fp8 kernel takes 16-head blocks; 64 and 128 heads take a bf16-only path
         "has_sparse_indices or (n_heads <= 96 and n_heads != 64)",
-        "(not has_sparse_indices) or n_heads == 64 or n_heads == 128",
+        "(not has_sparse_indices) or has_inv_rope or n_heads == 64 or n_heads == 128",
         # only a causal flat table takes several queries; fp8 decodes, bf16 verifies
         "query_length == 1 or (causal and has_cu_seqlens_k)",
         "not (causal and has_sparse_indices)",
@@ -292,20 +317,49 @@ FLASH_MLA_WITH_KVCACHE = OpContract(
             interval=_POSITIVE_FLOAT32,
             default=1.0,
         ),
+        "rope_freqs": TensorSpec(
+            description=(
+                "Per position, the RoPE's 32 (cos, sin) pairs, interleaved: the output's last "
+                "64 lanes become even * cos + odd * sin and odd * cos - even * sin."
+            ),
+            shape=("n_positions", 64),
+            dtype=_FLOAT32,
+            present_when="has_inv_rope",
+            distribution=_FINITE_DISTRIBUTION,
+            lifetime="weight",
+        ),
+        "positions": TensorSpec(
+            description="Each row's position: its row of rope_freqs.",
+            shape=("batch",),
+            dtype=DTypeSpec(any_of=(DType.INT64, DType.INT32)),
+            present_when="has_positions",
+            distribution=IntRangeDistribution(lo="0", hi="n_positions - 1"),
+        ),
     },
     outputs={
         "output": TensorSpec(
+            # with has_inv_rope, rotated back as rope_freqs says
             description="Softmax-weighted sum of the read values; 0 for no row read.",
             shape=("batch", "query_length", "n_heads", 512),
             dtype=DTypeSpec(same_as_tensor="q"),
-            error_bounds=ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2),
+            error_bounds=(
+                # The rotation multiplies the bf16 rounding of the output before it (sglang
+                # stores the output, then rotates it) by the drawn (cos, sin) values, which
+                # are not of unit modulus: sglang's own path, bit-identical to the kernel,
+                # peaks at 3x the tolerance in the rotated lanes at about 56 dB SQNR.
+                ("has_inv_rope", SqnrBound(min_sqnr_db=40.0)),
+                (None, ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2)),
+            ),
         ),
         "lse": TensorSpec(
             description=(
                 "Log-sum-exp of the scaled logits, sinks excluded; for no row read "
                 "+inf (sparse) or -inf (dense)."
             ),
-            shape=("batch", "query_length", "n_heads"),
+            shape=ShapeByAttrSpec(
+                attr_name="return_lse",
+                cases={"true": ("batch", "query_length", "n_heads"), "false": ("batch", "query_length", 0)},
+            ),
             dtype=_FLOAT32,
             error_bounds=ToleranceBound(absolute_tolerance=1e-3, relative_tolerance=1e-3),
         ),
