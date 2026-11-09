@@ -57,8 +57,11 @@ DEEPSEEK_V4_ROUTER = OpContract(
             "Whether num_token_non_padded is passed.", False, True, default=False, abbrev="padded"
         ),
     },
-    # aiter's wave64 topk_gating holds n_experts / 64 experts per lane
-    constraints=("n_slots - n_shared <= n_experts", "n_experts % 64 == 0"),
+    # aiter's wave64 topk_gating sorts 1, 2, 4 or 6 experts per lane
+    constraints=(
+        "n_slots - n_shared <= n_experts",
+        "n_experts == 64 or n_experts == 128 or n_experts == 256 or n_experts == 384",
+    ),
     inputs={
         "router_logits": TensorSpec(
             description="Router logits per token.",
@@ -77,6 +80,8 @@ DEEPSEEK_V4_ROUTER = OpContract(
         "num_token_non_padded": TensorSpec(
             description="Rows that are real tokens; later rows are padding.",
             shape=(1,),
+            # sglang's eager calls pass a 0-d tensor, its graphs a (1,) buffer
+            can_squeeze=True,
             dtype=DTypeSpec(any_of=(DType.INT32, DType.INT64)),
             present_when="has_num_token_non_padded",
             distribution=IntRangeDistribution(lo=0, hi="n_tokens"),
