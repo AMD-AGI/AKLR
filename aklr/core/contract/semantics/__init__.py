@@ -51,9 +51,11 @@ from ._layouts import (
     E8M0Scales,
     GateUpInterleavedScales,
     GateUpInterleavedWeight,
+    KvSplitPages,
     Layout,
     Preshuffle,
     RowMajor,
+    StridedRows,
     stored_inputs,
 )
 from ._workloads import (
@@ -87,6 +89,7 @@ __all__ = [
     "GateUpInterleavedScales",
     "GateUpInterleavedWeight",
     "IntRangeDistribution",
+    "KvSplitPages",
     "Layout",
     "LecunNormalDistribution",
     "LogUniformDistribution",
@@ -96,6 +99,7 @@ __all__ = [
     "Preshuffle",
     "RowMajor",
     "SqnrBound",
+    "StridedRows",
     "ToleranceBound",
     "TopkStaticPlanDistribution",
     "absolute_value",

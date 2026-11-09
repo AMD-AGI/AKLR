@@ -7,7 +7,7 @@ in the file it names; when the two disagree, the named file wins.
 aklr/ops/
   __init__.py                  re-exports op apis
   README.md                    this file
-  <op>/                        biased_grouped_topk, gemm, fused_moe, mhc, mla, rms_norm, topk
+  <op>/                        attention, biased_grouped_topk, gemm, fused_moe, mhc, mla, rms_norm, topk
     __init__.py                re-exports api.py's apis
     contract.py                OpContract constants, CONTRACTS
     reference.py               one <contract>_reference per contract
@@ -287,6 +287,7 @@ A name is unique per variant, across every contract (`tests/ops/test_contracts.p
 |---|---|---|
 | bool attr | `values[0]` | `<label>` when true, `no_<label>` when false |
 | int attr | `values[0]` | `<label><value>` |
+| int tuple attr (an entry point's int-pair argument, such as a window) | `values[0]` | `<label><v0>_<v1>...` |
 | str attr | `values[0]` | the value, lowercased |
 | dtype of a tensor holding its own (not another tensor's via `same_as_tensor` alone) | `any_of[0]`, or the `same_as_tensor` dtype when both are set | `<tensor>_<dtype>`; none when absent |
 | layout variant | the first (`row_major`) | its name |

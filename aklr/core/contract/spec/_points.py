@@ -26,7 +26,8 @@ def contract_name(contract_id: ContractId) -> str:
     return match.group(1)
 
 
-AttrValue = str | int | bool
+# a tuple of ints is an entry point's int-pair argument, such as a window's (left, right)
+AttrValue = str | int | bool | tuple[int, ...]
 
 
 def attr_membership_key(value: AttrValue | None) -> tuple[bool, AttrValue | None]:
@@ -43,8 +44,11 @@ def case_key(value: AttrValue) -> str:
 
 def attr_value(raw: Any) -> AttrValue | None:
     """An api argument as an attr value: an enum by its lower-case name, ``None``/
-    bool/int/str as is. Unhashable: ``TypeError`` (a generated closure declines)."""
+    bool/int/str and a tuple of ints as is. Unhashable: ``TypeError`` (a generated
+    closure declines)."""
     if raw is None or type(raw) in (bool, int, str):
+        return raw
+    if type(raw) is tuple and all(type(v) is int for v in raw):
         return raw
     return _enum_name(raw)
 
@@ -113,7 +117,8 @@ class AttrSpec(FrozenModel):
     def in_name(self, name: str, value: AttrValue) -> str:
         """Attr ``name``'s part of a schema name at ``value``: ``""`` at
         ``values[0]``, else ``<label>``/``no_<label>`` (bool), ``<label><value>``
-        (int) or the lowercased str, ``<label>`` being ``abbrev`` or ``name``."""
+        (int), ``<label><v0>_<v1>...`` (tuple) or the lowercased str, ``<label>``
+        being ``abbrev`` or ``name``."""
         if attr_membership_key(value) == attr_membership_key(self.values[0]):
             return ""
         label = self.abbrev or name
@@ -121,6 +126,8 @@ class AttrSpec(FrozenModel):
             return label if value else f"no_{label}"
         if isinstance(value, int):
             return f"{label}{value}"
+        if isinstance(value, tuple):
+            return label + "_".join(map(str, value))
         return value.lower()
 
 

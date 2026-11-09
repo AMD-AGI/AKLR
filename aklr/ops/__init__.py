@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
+from aklr.ops.attention import paged_attention_decode, unified_attention
 from aklr.ops.gemm import bmm, gemm_a4w4_mxfp4, gemm_a8w8, gemm_a8w8_blockwise_scaled
 from aklr.ops.mhc import mhc_fused_post_pre, mhc_post, mhc_pre
 from aklr.ops.mla import flash_mla_with_kvcache, fp8_paged_mqa_logits
@@ -18,8 +19,10 @@ __all__ = [
     "mhc_fused_post_pre",
     "mhc_post",
     "mhc_pre",
+    "paged_attention_decode",
     "per_group_quant_fp8",
     "per_group_quant_mxfp8",
     "sparse_prefill_mxfp8",
     "topk_transform_paged",
+    "unified_attention",
 ]
