@@ -238,13 +238,14 @@ In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §6.
 - **Price sorting and quantization kernels by launching them again** (`grouped_measurement.md` §6).
   *(field, E15)* One sorting phase cost 2.3–2.4 µs per extra launch under graph replay; shortening the loops inside it
   moved the score by 0.03%, inside the noise; merging two sorting phases into one kernel gained 1.08%. Removing a
-  whole kernel pays most; trimming inside one pays only above the ~4 µs node floor, so price each phase by deleting
-  it. One wave per expert instead of one workgroup each (936 → 152 workgroups) took a sort kernel from 7.3–7.8 to
+  whole kernel pays most; trimming inside one paid only above the ~4 µs node floor of AKLR's profile-18 timer, so
+  price each phase by deleting it. One wave per expert instead of one workgroup each (936 → 152 workgroups) took a sort kernel from 7.3–7.8 to
   6.5 µs, +0.54% of the MoE call *(field, E20)*; deleting phases took another from 7.65 to 5.32 µs against a 4.4 µs
   floor *(field, E32)*. FlyDSL v0.3.2's mid-size sorting path runs two kernels (`moe_sorting_kernel.py:12-14`).
-  *(field, E16, E17)* Under AKLR's timer a graph node costs ~4 µs (measured on an empty kernel and on add + RMSNorm;
-  that is the timer's floor for any dispatch, since its bench runner forces `GPU_FORCE_QUEUE_PROFILING`,
-  `aklr/core/validation/stages/_bench/_execution/_runner.py:475`), and folding the sort into stage 1 removed one (`decode.md` §1–§2).
+  *(field, E16, E17)* Under AKLR's timer up to measurement profile 18 a graph node cost ~4 µs (measured on an empty
+  kernel and on add + RMSNorm; that timer read Kineto with the bench runner forcing `GPU_FORCE_QUEUE_PROFILING`,
+  `AMD-AGI/AKLR@a29581b2d:aklr/core/validation/stages/_bench/_execution/_runner.py:475`), and folding the sort into
+  stage 1 removed one (`decode.md` §1–§2). Profile 19 on current main no longer forces it: recheck the node cost there.
 - **Or fold the per-token kernels into the sort launch.** *(field, E24)* Token quantization and the sorted-scale scatter
   as extra sort blocks, one per token, removed two nodes: 6.9–8.0 µs per call at 8–32 tokens.
 - **Merging kernels turns an inter-kernel order into an intra-kernel race.** One phase seeded a table with −1
