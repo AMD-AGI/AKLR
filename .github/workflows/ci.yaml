@@ -553,6 +553,10 @@ jobs:
     permissions:
       contents: read
       actions: read
+      # gh pr checks reads the bot PR's checks with GITHUB_TOKEN.
+      checks: read
+      pull-requests: read
+      statuses: read
     steps:
       - name: Mint the bot token
         id: token
@@ -673,6 +677,7 @@ jobs:
         if: steps.commit.outputs.committed == 'true'
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
+          GITHUB_TOKEN: ${{ github.token }}
           PREV: ${{ steps.commit.outputs.prev }}
         run: |
           if ! git push --force-with-lease="refs/heads/aklr-perf/main:$PREV" origin HEAD:refs/heads/aklr-perf/main; then
@@ -686,4 +691,13 @@ jobs:
               --body "Measurements published by $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID. Squash-merge with the PR title."
           else
             gh pr edit aklr-perf/main --title "$title"
+          fi
+          # The bot bypasses main's review but not its required checks: merge once they pass,
+          # and only the head this run pushed (a newer run may have pushed since).
+          sleep 30  # shortcut: lets the checks register; a slower start just leaves the PR to the next run
+          if GH_TOKEN=$GITHUB_TOKEN gh pr checks aklr-perf/main --required --watch --fail-fast; then
+            gh pr merge aklr-perf/main --squash --subject "$title" --match-head-commit "$(git rev-parse HEAD)" ||
+              echo '::warning::Bot PR not merged; the next publish-measurement retries'
+          else
+            echo '::warning::Bot PR checks did not pass; left open for review'
           fi
