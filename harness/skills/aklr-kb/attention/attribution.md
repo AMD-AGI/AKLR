@@ -148,7 +148,7 @@ ISA gate (opcode histogram, spill, VGPR) before benchmarking, bracket the arms w
 ## 9. Per-kernel additive probes
 Run the compute-additivity probe (`../gemm/attribution.md` §1) on each kernel of an operator, not once for
 the operator. *(field, E27)* Adding MFMA work to a sparse-MLA kernel with many query rows (a prefill) changed wall
-time by 0.1% (fully hidden); quadrupling the PV MFMAs in its split-KV producer with few query rows (a decode) made it
+time by 0.1% (fully hidden); quadrupling the PV MFMAs in the same family's split-KV producer with few query rows (a decode) made it
 7% slower (~6 wall cycles per 16-cycle `16x16x32` MFMA, about a third of
 its pipe time). One kernel of the family is fabric-bound, the other is not.
 

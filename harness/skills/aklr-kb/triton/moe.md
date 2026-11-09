@@ -271,7 +271,7 @@ order: 5751's 192 one-wave tiles at 1 token, 1024 one-wave programs in a1c4 and 
 CTAs at 128–256 (01ce, 4da3, 8a5a, 94af), the Qwen2 router's 256 CTAs from 8 to 256 tokens (4801 at 8: 1 × 8 splits × 32
 expert tiles of one wave; c388 at 256: 8 token tiles × 8 expert tiles × 4 splits of four waves, S9). The other gives
 each expert (each token block and expert in e75e, fbd9, 3df5 above 1 token) one full-K program that writes a finished
-probability or ordered key, sparing every top-k consumer of §4.1 the split sum (d3bb and the MiniMax files at 1–16 tokens e75e,
+probability or ordered key, sparing every top-k consumer of §4.1 the split sum (d3bb and the MiniMax files at 1–16 tokens: e75e,
 1c17, 6557, fbd9, b065, f82c, 3df5; e75e `_prepare_keys`, S27) *(field, E11)*. No Point compares the two router forms. Among half/committed/double splits, the committed
 256 four-wave CTAs were fastest or tied on three Qwen2 routers: c388/m256 half 1.33–1.34× call time, double
 1.02–1.04× (N=8 runs); cd47/m128 1.22×/1.03×; a878/m64 1.04×/0.99× (double tied; N=1 each).

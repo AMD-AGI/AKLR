@@ -5,7 +5,7 @@ lever: attn_lds
 ops: [attention, mla]
 gens: [gfx950]
 dtypes: [bf16, fp8]
-regimes: [many query rows, few query rows, dQ dK dV, transposed operand, sparse]
+regimes: [many query rows, dQ dK dV, transposed operand, sparse]
 flydsl: 0.3.2
 ---
 

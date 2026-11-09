@@ -19,7 +19,7 @@ in a later launch. Added since: Qwen3-Next gated attention (31 files, #78) and D
 
 ## Route here when
 
-- You write or tune a Triton or Gluon attention kernel with few query rows per sequence for an AKLR schema: gathered
+- You write or tune a Triton or Gluon attention kernel with one query token per sequence for an AKLR schema: gathered
   (sparse) MLA, paged GQA, or attention with a fused prologue or epilogue.
 - You choose the split count, the head tile, the producer grid or the merge of a split-KV attention; you gather KV rows
   by slot and stage them in LDS for the MFMA; you choose the precision of QK, of P·V or of the split partials.

@@ -4,7 +4,7 @@ kind: pattern
 signals: ["bytes moved / wall time near the stream bandwidth measured on the same box",
   "wall time unchanged when MFMA work is added (compute-additivity probe)",
   "s_waitcnt vmcnt(0) in front of the MFMAs", "VMEM-load stalls (hotspot_analyzer.py)", "MemUnitStalled"]
-ops: [gemm, moe, grouped_gemm, attention]
+ops: [gemm, moe, fused_moe, grouped_gemm, attention]
 gens: [gfx950]
 flydsl: 0.3.2
 basis: source-semantics

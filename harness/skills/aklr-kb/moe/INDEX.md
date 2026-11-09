@@ -59,7 +59,7 @@ Problem → card section, for the expert GEMMs of a fused MoE (stage 1 and stage
 them. A row applies at every token count unless its problem names a range or a shape. The grouped cards other than
 `grouped_sorted_tokens.md` were measured mostly on Primus-Turbo's kernels over contiguous rows, at hundreds to tens
 of thousands of tokens per group (most at 4096, G = 32); `grouped_sorted_tokens.md` on MoE kernels at 8–16384
-tokens. Reuse the mechanism and re-derive the number.
+tokens per call. Reuse the mechanism and re-derive the number.
 
 | Area | Problem | Read |
 |---|---|---|
@@ -76,7 +76,7 @@ tokens. Reuse the mechanism and re-derive the number.
 | Sorted-token mapping | Experts that receive no route (most of them at a few tokens) | `grouped_group_mapping.md` §8; record-count clamp: `grouped_correctness.md` §3 |
 | Per-size configuration | Grid shape and tile-N when the tokens fill only a few M-blocks | `grouped_sorted_tokens.md` §3 |
 | Per-size configuration | Tile-M against the sort unit; halving a 256-row tile paid only while its grid fit one dispatch round | `grouped_sorted_tokens.md` §5, `grouped_tile_pricing.md` §3 |
-| Per-size configuration | Split K over the waves of one workgroup | `../gemm/small_m.md` §5, `grouped_sorted_tokens.md` §3 |
+| Per-size configuration | Split K over the waves of one workgroup (few tokens per expert) | `../gemm/small_m.md` §5, `grouped_sorted_tokens.md` §3 |
 | Per-size configuration | Cache policy of the weight loads: one block per expert against repeated blocks | `grouped_sorted_tokens.md` §4, §8 |
 | Per-size configuration | A configuration per token count: race offline on balanced and skewed routing at every token count it covers; where one compile serves many token counts, key on the static shape | `grouped_host_autotune.md` §3, §5; § In AKLR below |
 | Tile and occupancy | Tile size and waves per SIMD for the NT layout; the register wall at 256×256 | `grouped_tile_pricing.md` §1–§2 |
@@ -110,7 +110,7 @@ tokens. Reuse the mechanism and re-derive the number.
 | Host path | No device→host reads, graph capture, caches, ragged dims handled in the kernel instead of per-call padding | `grouped_host_autotune.md` §1–§4; § In AKLR below |
 | K varying per group | A grouped GEMM that contracts over each group's tokens (a per-expert weight gradient; not part of `fused_moe`): run-time K loop, K tails, split-K over deep groups, beta = 1 | `grouped_variable_k.md` |
 | Working order | Where to start on a grouped kernel, and what is usually dead | `grouped_workflow.md` |
-| Between GPUs | EP or TP for the MoE layer; the dispatch and combine | `../communication/ep_dispatch_combine.md` |
+| Between GPUs | EP or TP for the MoE layer at a few tokens per GPU (1–96 measured); the dispatch and combine | `../communication/ep_dispatch_combine.md` |
 
 ## Kernels to start from
 
@@ -257,7 +257,7 @@ In FlyDSL: `../flydsl/moe.md` § INDEX Kernel map.
 
 | Card | One line |
 |---|---|
-| `grouped_workflow.md` | what the group dimension changes, working order per pass, what is usually dead |
+| `grouped_workflow.md` | what the group dimension changes, working order per layout, what is usually dead |
 | `grouped_group_mapping.md` | device-side group metadata, upper-bound grids, tile→group lookups and their cost, empty groups, 64-bit bases |
 | `grouped_scheduling.md` | XCD and L2 order across groups, where the skew lives, longest-first, persistent vs one tile per workgroup |
 | `grouped_tile_pricing.md` | tile and occupancy per layout, boundary and tail bodies, the per-tile fixed cost of small groups |

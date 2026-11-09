@@ -181,7 +181,7 @@ epilogue (`_SUPPORTED` in both host files).
 ## grouped_workflow §2 Step 0 — reference kernels and the body the benchmark reaches
 
 - **FlyDSL v0.3.2's grouped kernels are all MoE GEMMs over sorted token ids** (FlyDSL's `kernels/moe/`,
-  `../moe/grouped_sorted_tokens.md`): it ships no NN and no variable-K grouped GEMM. Their references, and the
+  `../moe/grouped_sorted_tokens.md`): it ships no NN and no variable-K grouped GEMM. References for those, and the
   kernels most of the other cards measured, are Primus-Turbo's FlyDSL grouped kernels (§ INDEX Kernel map above).
   Turbo pins a newer FlyDSL: copy the technique,
   and check every API you use against v0.3.2.

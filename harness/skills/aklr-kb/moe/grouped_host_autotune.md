@@ -62,9 +62,9 @@ In FlyDSL: `../flydsl/moe.md` § grouped_host_autotune §2.
 - **Never key on tensor identity** (`../gemm/autotune.md` §5). Every grouped call brings new activations and
   `group_offs` (and gradients, where it computes one), so an identity-keyed cache of quantized activations or
   derived offsets hits ~0 and returns stale data when an id is reused. A weight-side cache keyed on
-  `(id(weight), weight._version)` holds until the weight is updated: where an optimizer step updates it, the
-  forward fills it, the backward reuses it, the optimizer bumps the version. Its gain is capped at quantization
-  time over the time between updates.
+  `(id(weight), weight._version)` holds until the weight is updated. Where an optimizer step updates it every step, the forward fills it,
+  the backward reuses it and the optimizer bumps the version; its gain there is capped at quantization time over
+  step time.
 - **Key the race on the static shape plus, at most, a coarse regime derived from M; never on `M_total` itself.**
   The token count is a run-time argument (`m_total`, an int32). The static part is op, N, K, G, dtypes, beta and
   strides/padding. Add an M-derived regime only where M changes which body is right, as a rule rather than a

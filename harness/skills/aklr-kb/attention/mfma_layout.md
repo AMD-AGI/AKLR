@@ -133,7 +133,7 @@ the f32 accumulator elements of a lane.
   *(field, E12)* a spill-free arm with part of the O accumulator removed read 2.4% slower on the scorer and 1.2%
   faster in a sustained loop, where it clocked higher.
 - **P·V with few query rows per head (an MLA decode producer): `16x16x32`, not `16x16x16bf16_1k`** (half the MAC
-  rate, §1). On an MLA decode producer the switch
+  rate, §1). There the switch
   alone cut an estimated 8–14% of producer time, with the operand orientation unchanged.
 - The GEMM finding that a smaller atom moves fewer register-file bytes per MAC and can clock higher at the power
   cap (`../gemm/mainloop.md` §5) applies here too: rank atoms on wall time, sclk and power, never on

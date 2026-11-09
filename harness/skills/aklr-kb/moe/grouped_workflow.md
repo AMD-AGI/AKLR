@@ -1,5 +1,5 @@
 ---
-title: "Grouped GEMM — working order: pass and skew, mapping and order, fixed cost, then the body"
+title: "Grouped GEMM — working order: layout and skew, mapping and order, fixed cost, then the body"
 kind: method
 lever: grouped_workflow
 ops: [grouped_gemm, fused_moe]
@@ -33,7 +33,7 @@ have not audited yet.
 |---|---|
 | Upper-bound grid, tile → group lookup, empty groups, 64-bit offsets | `grouped_group_mapping.md` |
 | XCD partition, band order, longest-first, persistent or one tile per workgroup | `grouped_scheduling.md` |
-| Per-tile fixed cost, tile and occupancy per pass, boundary and tail bodies | `grouped_tile_pricing.md` |
+| Per-tile fixed cost, tile and occupancy per layout, boundary and tail bodies | `grouped_tile_pricing.md` |
 | Contraction length per group, hot-group split-K, beta=1 accumulation | `grouped_variable_k.md` |
 | fp8 and MX scales, preshuffle, quantization, store forms, GLU/dGLU | `grouped_lowprec.md` |
 | Launch path, CUDA graphs, cache keys, the per-shape race | `grouped_host_autotune.md` |
@@ -86,7 +86,7 @@ and dgrad calls in a training trace came from overlap with collectives, not from
 
 In FlyDSL: `../flydsl/moe.md` § grouped_workflow §2.
 
-## 3. Step 1 — name the pass and where its skew lives
+## 3. Step 1 — name the layout and where its skew lives
 
 1. **Is the skew in the tile count or in the cost per tile?** In the tile count (NT/NN), a group-aware XCD order
    absorbs it: a group-aligned band deal removed most of an MXFP4 NT kernel's heavy-skew penalty
@@ -114,7 +114,7 @@ Ask, in order:
 3. **Does the XCD partition match where the skew lives** (Step 1)? On a variable-K wgrad, group-major order with
    the hardware round-robin, in place of a group-interleaved order under a contiguous XCD remap, removed a skew
    collapse (`grouped_scheduling.md` §3).
-4. **Do the passes share a configuration they should not?** NT and wgrad want opposite orders; give each its
+4. **Do the layouts share a configuration they should not?** NT and wgrad want opposite orders; give each its
    own default and its own race.
 
 **Judge this layer by balance counters, not by L2 hit rate.** A static partition shows as identical MFMA and L2
@@ -206,7 +206,7 @@ Each entry held where it was measured. Reopen one only with a probe that shows i
   (`grouped_measurement.md` §4).
 
 ## Verify
-- [ ] The pass, its layout and where its skew lands are written down for every scored cell.
+- [ ] The layout and where its skew lands are written down for every scored cell.
 - [ ] The body each cell runs (persistent or not, masked or whole-loop, split or not) is logged.
 - [ ] `F` and `P` are fitted before any main-loop work.
 - [ ] Every kept change was measured on balanced and heavy-skew inputs and on more than one model geometry.

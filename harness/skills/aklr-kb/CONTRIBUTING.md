@@ -108,7 +108,7 @@ Front matter is YAML: quote a value that contains `: `. `flydsl` is the version 
 - **No training-only or inference-only scope.** The same GEMM, attention and MoE kernels run in training and
   inference, so a page says when it applies by mechanism and shape: the M range, rows per group, whether K varies
   per group, query rows against KV length, causal or sparse access. Titles, file names and `regimes` carry no phase
-  word (training, inference, forward, backward, dgrad, wgrad, prefill, decode; `maintenance/kb_lint.py` reports
+  word (training, inference, forward, backward, fwd, bwd, dgrad, wgrad, prefill, decode; `maintenance/kb_lint.py` reports
   them), and an index or "Route here when" line routes by the problem, not by the phase. A measurement may still say
   what it was measured on.
 - **No unchecked claim.** Every statement is checked against source, the ISA or a GPU run before it goes in.

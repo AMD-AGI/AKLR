@@ -126,7 +126,7 @@ takes `DotOperandLayout`s of a `BlockedLayout` parent with `k_width` 0 (`mfma.md
   `True` by swapping A and B in the instruction (S15). With `True` (122 directories passed a literal `True` at 43e112e)
   a per-row scale in `SliceLayout(1, mma)` is one value per lane and a lane's bf16 row segment one
   `global_store_dwordx2` (compiled, one-wave `[16, 16, 32]`; `False`: 4 row-scale values per lane, 2-byte stores).
-  Choose `False` when rows must sit in one lane's registers: the K-group-folded fp8 GEMMs of n7168 at M ≤ 8 pick each token's
+  Choose `False` when rows must sit in one lane's registers: the K-group-folded fp8 GEMMs of n7168 at M ≤ 4 pick each token's
   4 K-group rows out of registers with `reshape`/`permute`/`split` (S16; `../gemm.md` §4); gated attention keeps a row
   and its bf16 residual row in one lane so one softmax serves both (S17); the Qwen2-MoE router stores straight from a
   non-transposed accumulator at its 2232-row Point (S18). A 4×64 layout (fp16 `instr_shape=[4, 64, 64]`, `k_width=4`:

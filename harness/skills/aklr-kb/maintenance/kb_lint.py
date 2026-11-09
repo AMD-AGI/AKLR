@@ -357,7 +357,18 @@ def check_links(page: Page, level: str) -> Iterable[Issue]:
 
 # A page says when it applies by mechanism and shape, never by training or inference phase: the same kernels run in
 # both. Titles, file names and `regimes` must not carry a phase word.
-PHASE_WORDS = ("training", "inference", "forward", "backward", "fwd", "bwd", "dgrad", "wgrad", "prefill", "decode")
+PHASE_WORDS = (
+    "training",
+    "inference",
+    "forward",
+    "backward",
+    "fwd",
+    "bwd",
+    "dgrad",
+    "wgrad",
+    "prefill",
+    "decode",
+)
 PHASE_RE = re.compile(r"(?<![a-z0-9])(" + "|".join(PHASE_WORDS) + r")(?![a-z0-9])", re.IGNORECASE)
 
 
@@ -365,11 +376,18 @@ def check_phase(page: Page) -> Iterable[Issue]:
     stem = Path(page.rel).stem.replace("_", " ")
     hit = PHASE_RE.search(stem)
     if hit:
-        yield Issue("error", page.rel, 1, f"file name scopes the page by phase (`{hit.group(1)}`); name the mechanism")
+        yield Issue(
+            "error", page.rel, 1, f"file name scopes the page by phase (`{hit.group(1)}`); name the mechanism"
+        )
     front = page.front or {}
     hit = PHASE_RE.search(str(front.get("title") or ""))
     if hit:
-        yield Issue("error", page.rel, 1, f"title scopes the page by phase (`{hit.group(1)}`); state the mechanism or shape")
+        yield Issue(
+            "error",
+            page.rel,
+            1,
+            f"title scopes the page by phase (`{hit.group(1)}`); state the mechanism or shape",
+        )
     regimes = front.get("regimes") or []
     for regime in regimes if isinstance(regimes, list) else [regimes]:
         hit = PHASE_RE.search(str(regime))

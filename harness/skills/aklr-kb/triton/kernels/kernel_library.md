@@ -246,7 +246,7 @@ replays aiter's router GEMM, `biased_grouped_topk` and `fused_moe`. Triton side:
   [moe](../moe.md) §3). At 1–16 tokens every file but `3c6e` selects experts in the kernel with a rank loop; in `d3bb`
   each gate-up program recomputes its route's expert with rank + 1 argmax rounds instead of waiting for a top-k launch
   (S10; [moe](../moe.md) §4, [../../moe/few_tokens.md](../../moe/few_tokens.md)). A gate-up N tile holds matching gate and up
-  rows; in full-K gate-up designs such as `1204`, SwiGLU and the MXFP4 requantization run in its epilogue (S11; [moe](../moe.md) §7, §8). At 1–16 tokens the down
+  rows; in full-K gate-up designs such as `1204`, SwiGLU and the MXFP4 requantization run in its epilogue (S11; [moe](../moe.md) §7, §8). In `7e9c` (1–2 tokens) the down
   multiplies a token's routes (MFMA rows) by their experts' column bands and keeps the diagonal, weighted and summed in
   slot order in registers (S12; [moe](../moe.md) §9). At 32–256 tokens, `1204`'s gate-up programs scan the per-expert
   counts with `gl.associative_scan` and make the job descriptor wave-uniform with `v_readfirstlane_b32` (S13;

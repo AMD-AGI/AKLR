@@ -27,8 +27,8 @@ sources:
 > them for direction and order of magnitude, not as targets.
 
 ## Route here when
-- A grouped GEMM whose K varies per group (a weight gradient) is the slowest of a set, or the only one that
-  degrades under token skew.
+- A grouped GEMM whose K varies per group (a weight gradient) is the slowest of the grouped GEMMs run with it (the
+  dgrad and wgrad of a backward, for instance), or the only one that degrades under token skew.
 - You are writing a K loop whose trip count is a run-time per-group value.
 - One deep group, many tiny groups or empty groups dominate a skewed launch.
 - The output accumulates into an existing buffer (beta=1, as a gradient accumulation does), or its output layout
