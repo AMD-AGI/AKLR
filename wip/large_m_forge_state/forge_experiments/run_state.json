@@ -1,0 +1,204 @@
+{
+  "agent_availability_snapshot": {
+    "checked_at": "2026-11-06T12:31:02Z",
+    "profiles": {
+      "claude": {
+        "available": true,
+        "model": "claude-opus-5-5",
+        "model_available": true,
+        "provider": "claude",
+        "provider_available": true,
+        "reason": ""
+      },
+      "codex": {
+        "available": false,
+        "model": "gpt-6-astra",
+        "model_available": false,
+        "provider": "codex",
+        "provider_available": true,
+        "reason": "the other configured gateway did not answer on this protocol at https://llm-api.amd.com/anthropic/v1; set OPENAI_BASE_URL and OPENAI_API_KEY if it routes this protocol elsewhere: CodexUnavailableError: Codex gateway precheck failed: unexpected status 404 Not Found: { \"statusCode\": 404, \"message\": \"Resource not found\" }, url: https://llm-api.amd.com/anthropic/v1/responses"
+      }
+    },
+    "providers": {
+      "claude": {
+        "available": true,
+        "reason": ""
+      },
+      "codex": {
+        "available": true,
+        "reason": ""
+      }
+    },
+    "session_index": 4
+  },
+  "agent_relay": {
+    "active_no_improvement_streak": 0,
+    "active_profile_id": "claude",
+    "blockage_epoch": 0,
+    "intervention_kind": "",
+    "previous_profile_id": "",
+    "switch_iteration": 0,
+    "switch_reason": ""
+  },
+  "analysis": {
+    "evidence_commit": "5bfbea64c0d72d191756b25f14d171e78e120703",
+    "evidence_mean_case_speedup": 1.0673514534925792,
+    "evidence_status": "profiled",
+    "last_attempt_commit": "5bfbea64c0d72d191756b25f14d171e78e120703",
+    "last_attempt_iteration": 6,
+    "last_attempt_status": "success"
+  },
+  "baseline_case_times": {
+    "n_tokens=10000": 0.9573404166666666,
+    "n_tokens=13152": 1.1521179642857144,
+    "n_tokens=256": 0.17918253125,
+    "n_tokens=272": 0.18085290625,
+    "n_tokens=288": 0.18148878124999998,
+    "n_tokens=304": 0.18222676041666672,
+    "n_tokens=3112": 0.3319979166666666,
+    "n_tokens=320": 0.18254759375000001,
+    "n_tokens=32768": 2.4569683571428564,
+    "n_tokens=336": 0.18269381250000005,
+    "n_tokens=352": 0.18429340625,
+    "n_tokens=368": 0.18549929166666665,
+    "n_tokens=3816": 0.38398773333333325,
+    "n_tokens=384": 0.18629421875000002,
+    "n_tokens=400": 0.18771143750000008,
+    "n_tokens=416": 0.18773096874999998,
+    "n_tokens=424": 0.18791803125,
+    "n_tokens=432": 0.18801050000000002,
+    "n_tokens=448": 0.18920145833333332,
+    "n_tokens=464": 0.18910808333333334,
+    "n_tokens=480": 0.18981596875,
+    "n_tokens=496": 0.19003219791666665,
+    "n_tokens=512": 0.19125801041666668,
+    "n_tokens=576": 0.1908705952380952,
+    "n_tokens=640": 0.19239723809523807
+  },
+  "baseline_wall_ms": 501.40193999999997,
+  "best": {
+    "commit_hash": "5bfbea64c0d72d191756b25f14d171e78e120703",
+    "iteration": 5,
+    "mean_case_speedup": 1.0673514534925792,
+    "plan": "Stream stage-2 W2 weights non-temporally at small token counts.",
+    "source": "iteration",
+    "wall_ms": 8.4092
+  },
+  "best_case_times": {
+    "n_tokens=10000": 0.841602,
+    "n_tokens=13152": 1.091637,
+    "n_tokens=256": 0.170514,
+    "n_tokens=272": 0.171583,
+    "n_tokens=288": 0.171118,
+    "n_tokens=304": 0.171817,
+    "n_tokens=3112": 0.315038,
+    "n_tokens=320": 0.172705,
+    "n_tokens=32768": 2.294237,
+    "n_tokens=336": 0.173591,
+    "n_tokens=352": 0.173738,
+    "n_tokens=368": 0.174335,
+    "n_tokens=3816": 0.364929,
+    "n_tokens=384": 0.174276,
+    "n_tokens=400": 0.173991,
+    "n_tokens=416": 0.17497,
+    "n_tokens=424": 0.175044,
+    "n_tokens=432": 0.17552,
+    "n_tokens=448": 0.176018,
+    "n_tokens=464": 0.17663,
+    "n_tokens=480": 0.177333,
+    "n_tokens=496": 0.177524,
+    "n_tokens=512": 0.177352,
+    "n_tokens=576": 0.179744,
+    "n_tokens=640": 0.182003
+  },
+  "campaign_id": "db97d5b1dcc444bcab41222e17933a1b",
+  "ceiling_report_path": "",
+  "cumulative": {
+    "iterations": 5,
+    "kept": 4,
+    "reverted": 1
+  },
+  "diversification_cycle_completed": false,
+  "git_branch": "forge-optimize",
+  "head_commit": "5bfbea64c0d72d191756b25f14d171e78e120703",
+  "intervention_count": 0,
+  "iteration": 6,
+  "kernel_path": "kernel.py",
+  "last_critic": {
+    "review_path": "/home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace/forge_experiments/orchestration/iter_006/critic_review.md",
+    "verdict": "ACCEPT"
+  },
+  "last_experiment_id": "2abb24e1",
+  "next_iteration": 6,
+  "orchestration_circuit_state": "closed",
+  "orchestration_error_streak": 0,
+  "phase": "exploit_best_lineage",
+  "pinned_iterations": [
+    2,
+    3,
+    4,
+    5
+  ],
+  "pristine_baseline_wall_ms": 9.011546179761904,
+  "round_costs": {
+    "campaign_sec": 12636.479622602463,
+    "planning_total_sec": 1625.3000326156616,
+    "recent": [
+      {
+        "iteration": 1,
+        "lanes": 1,
+        "measurement_sec": 0.0,
+        "planning_sec": 0.0016531944274902344,
+        "total_sec": 887.8483300209045
+      },
+      {
+        "iteration": 2,
+        "lanes": 1,
+        "measurement_sec": 1482.3409934043884,
+        "planning_sec": 459.07755494117737,
+        "total_sec": 2923.8888416290283
+      },
+      {
+        "iteration": 3,
+        "lanes": 1,
+        "measurement_sec": 671.9120123386383,
+        "planning_sec": 0.0016498565673828125,
+        "total_sec": 2322.512283563614
+      },
+      {
+        "iteration": 4,
+        "lanes": 1,
+        "measurement_sec": 1768.8300468921661,
+        "planning_sec": 623.8207619190216,
+        "total_sec": 4126.46316409111
+      },
+      {
+        "iteration": 5,
+        "lanes": 1,
+        "measurement_sec": 862.6569664478302,
+        "planning_sec": 542.3984127044678,
+        "total_sec": 2375.554166316986
+      }
+    ],
+    "rounds": 5,
+    "total_sec": 12636.266785621643
+  },
+  "search_mode": "EXPLOIT",
+  "search_mode_residence_remaining": 0,
+  "search_objective": "IMMEDIATE_CANONICAL_GAIN",
+  "search_reason_codes": [
+    "CANONICAL_GAIN_AVAILABLE"
+  ],
+  "search_start_mean_case_speedup": 0.014490173973418353,
+  "session_index": 4,
+  "session_status": "running",
+  "stall": {
+    "last_supervisor_attempt_iter": 0,
+    "last_supervisor_iter": 0,
+    "no_improvement_iters": 0,
+    "unresolved_stall_iters": 0
+  },
+  "task_fingerprint": "607afc9b061793bb5d6ed83c6f468df12cad743655bb090b612b0253218246c8",
+  "termination_reason": "",
+  "unscored_cases": []
+}

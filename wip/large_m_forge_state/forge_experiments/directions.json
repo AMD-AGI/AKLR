@@ -1,0 +1,359 @@
+{
+  "directions": [
+    {
+      "id": "replace-the-torch-path-with-a-fused-flyd",
+      "title": "Replace the torch path with a fused FlyDSL a4w4 MoE: route/sort, x\u2192MXFP4 quant, stage 1 (gate+up, clamped SwiGLU, MXFP4 requant), stage 2 (down \u00d7 routing weight), using native scaled fp4 MFMA on the 16x16-preshuffled weights",
+      "category": "structure / fusion",
+      "hypothesis": "The 12.5 ms all-expert bf16 dequant, the ~20-pass torch _mxfp4 and the glue (slab gathers, fp32 combine matmul) make up 95%+ of the 16\u201363 ms. A 3\u20134 launch FlyDSL pipeline that reads the shuffled fp4 weights straight into mfma_scale_f32_16x16x128_f8f6f4 operands should reach about the baseline's 0.18\u20132.5 ms. It must reproduce the reference rounding exactly: x rounded to MXFP4 per 1\u00d732, E8M0 = floor(log2 amax) \u2212 2 (+1 if mantissa > 0.75), round-to-nearest-even on e2m1, and y rounded to bf16 then MXFP4. Port aiter's mxfp4_gemm1/mxfp4_gemm2/moe_sorting as the starting point.",
+      "evidence": [
+        "/home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace/forge_experiments/analysis/24ef1b73a85fa4e24d2a0e695e0e1c919b8f81c6/generation-002/report.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/cases/fused_moe_shuffled_16x16.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/moe/flydsl_grouped_moe_inference.md"
+      ],
+      "source": "survey",
+      "added_iteration": 1,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 50.0,
+      "priority_reason": "Report \u00a75: 26\u201390\u00d7 headroom against the candidate. A structurally correct fused kernel takes the score from ~0.016 to ~0.8\u20131.1. Native fp4 MFMA is needed to match or beat aiter at 3112\u201332768, where the bf16-dequant practical floor is at or above the baseline."
+    },
+    {
+      "id": "stepping-stone-replace-unpack-s-6-pass-d",
+      "title": "Stepping stone: replace _unpack's 6-pass dequant chain and the ~20-pass torch _mxfp4 with one vectorized FlyDSL kernel each, keeping the rest of the torch path",
+      "category": "fusion (stepping stone / hedge)",
+      "hypothesis": "One FlyDSL dequant kernel at \u22654 TB/s instead of six torch passes at 1\u20132 TB/s saves about 11 ms per call. A single-pass fused MXFP4 quant kernel with exact reference rounding saves 1\u201324 ms. Together they cut 16\u2192~5 ms at n=256 and 63\u2192~25 ms at 32768. The quant kernel is reusable as stage (b) of direction 1, and its bit-exact rounding test de-risks direction 1.",
+      "evidence": [
+        "/home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace/forge_experiments/analysis/24ef1b73a85fa4e24d2a0e695e0e1c919b8f81c6/generation-002/report.md"
+      ],
+      "source": "survey",
+      "added_iteration": 1,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 2.0,
+      "priority_reason": "Report \u00a76.5: each piece is a 3\u20135\u00d7 gain at most. It does not reach 0.1 speedup but is a quick, low-risk landing if the fused kernel slips."
+    },
+    {
+      "id": "per-regime-tile-m-equal-to-the-sort-unit",
+      "title": "Per-regime tile-M equal to the sort unit: BM=32 at n\u2264640, BM=128 at 3112/3816, BM=128\u2013256 at \u226510000",
+      "category": "grid / tile-M",
+      "hypothesis": "Weight traffic is M-tiles \u00d7 weight slab. At n\u2264640, BM=32 gives exactly one 0.96 GB sweep (\u226431 routes per expert), while BM=16 sweeps up to 1.68 GB. At 3816, BM=128 sweeps 1.15 GB against 2.11 GB at BM=64, and at 32768 8.2 GB against 15.9 GB. aiter runs untuned heuristic BM (t32/t128/t64) everywhere, notably BM=64 at 32768.",
+      "evidence": [
+        "/home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace/forge_experiments/analysis/24ef1b73a85fa4e24d2a0e695e0e1c919b8f81c6/generation-002/evidence/expert_tile_counts.txt",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/moe/flydsl_grouped_moe_inference.md"
+      ],
+      "source": "survey",
+      "added_iteration": 1,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.06,
+      "priority_reason": "Neutral on S (aiter is already at BM=32). Large on the 5 M/L Points, where halving weight sweeps against a 2\u20136.6\u00d7-off-roof baseline could give 1.2\u20132\u00d7 on each. That is ~5\u20138% of the mean score."
+    },
+    {
+      "id": "s-regime-grid-shape-race-tile-n-downward",
+      "title": "S-regime grid shape: race tile-N downward (256\u2192128\u219264) in both stages so 128 experts \u00d7 (N/BN) blocks fill \u2265256 CUs with enough bytes in flight",
+      "category": "grid / N-split",
+      "hypothesis": "At n\u2264640 every expert has about one 32-row block, so the N blocks are the parallelism. Narrower tile-N gave +0.8\u20131.0% per halving on an a4w4 atomic stage 2. Count workgroups against the 256-CU dispatch round to avoid a mostly empty last round.",
+      "evidence": [
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/moe/flydsl_grouped_moe_inference.md",
+        "/home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace/forge_experiments/analysis/24ef1b73a85fa4e24d2a0e695e0e1c919b8f81c6/generation-002/report.md"
+      ],
+      "source": "survey",
+      "added_iteration": 1,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.02,
+      "priority_reason": "The S regime has at most 1.16\u20131.24\u00d7 to the hard roof. Grid fill is one of the few levers left on 20 of 25 Points."
+    },
+    {
+      "id": "weight-load-cache-policy-per-regime-and-",
+      "title": "Weight-load cache policy per regime and per M-block: non-temporal at n\u2264640, cached when a sorted neighbour block has the same expert, scale loads always cached",
+      "category": "data path",
+      "hypothesis": "At S nothing reuses weights, so non-temporal streaming frees L2 and MALL for activations. At M/L (3\u20139 blocks per expert), non-temporal W1/W2 cost 26% and 6\u20139% in the field, so cached loads with same-expert neighbours on one XCD are better. Per-block selection gained 1.8% on an a4w4 decode score.",
+      "evidence": [
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/moe/flydsl_grouped_moe_inference.md"
+      ],
+      "source": "survey",
+      "added_iteration": 1,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.02,
+      "priority_reason": "Field numbers: +1.8% per-block selection, a 6\u201326% loss if set wrong at multi-block. This is a correctness-free knob with a clear regime flip."
+    },
+    {
+      "id": "xcd-aware-tile-order-plus-group-m-keep-a",
+      "title": "XCD-aware tile order plus GROUP_M: keep an expert's row tiles and an M-block's N tiles on one XCD, several row tiles of one expert per column sweep",
+      "category": "scheduling / locality",
+      "hypothesis": "At 10000\u201332768 each expert has 272\u20131110 routes (3\u20139 BM=128 tiles), so expert slabs are re-read through L2. Dealing M-blocks round-robin over XCDs with their N tiles together, and grouping 2\u20139 row tiles per expert as the 33-expert kernel does at m\u2265512, turns repeats into L2 hits. Exit on the raw id before the remap.",
+      "evidence": [
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/moe/flydsl_grouped_moe_inference.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/gemm/flydsl_gemm_schedule_and_locality.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/cases/fused_moe_shuffled_16x16.md"
+      ],
+      "source": "survey",
+      "added_iteration": 1,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.03,
+      "priority_reason": "Field result: 511\u2192475 \u00b5s (\u22127%) on a fused-MoE stage 1 from the XCD placement. Applies mainly to 5 M/L Points."
+    },
+    {
+      "id": "compute-leaning-main-loop-for-large-n-ga",
+      "title": "Compute-leaning main loop for large n: gathered A rows through an XOR-swizzled multi-stage LDS ring prefetched two K-steps ahead, B straight to VGPR, 32x32x64 vs 16x16x128 scaled MFMA, s_setprio around the MFMA block",
+      "category": "main loop / LDS",
+      "hypothesis": "At 32768 aiter is at 1.5 PF/s against ~4 PF practical MXFP4. A loop that hides the gathered-A latency and the B stream behind back-to-back scaled MFMAs (32x32 atom halves the A/B register traffic per FLOP) should lift stage throughput toward 2\u20133 PF/s. The delivered K3 MoE ran stage 1 at 1.38\u00d7 aiter's TF/s.",
+      "evidence": [
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/gemm/flydsl_gemm_mainloop.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/moe/INDEX.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/cases/fused_moe_shuffled_16x16.md"
+      ],
+      "source": "survey",
+      "added_iteration": 1,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.05,
+      "priority_reason": "L Points have 2.6\u20133.4\u00d7 paper headroom (report \u00a75). Even 1.3\u00d7 on 3\u20135 Points is ~4\u20136% of the mean."
+    },
+    {
+      "id": "stage-2-combine-race-bf16x2-coalesced-at",
+      "title": "Stage-2 combine: race bf16x2 coalesced atomics into out against fixed-order per-route bf16/fp32 rows plus a separate reduce launch, per regime",
+      "category": "epilogue / stage 2 reduction",
+      "hypothesis": "With topk=4 every route is local. With 16 local routes the atomic stage 2 was 31\u201342% slower than split+reduce, but with about 2 routes it was faster. topk=4 sits between, and the answer likely flips between S (a launch matters at ~180 \u00b5s) and L (contention on 32768\u00d76144 outputs). Rows must stay bf16/fp32 because of the per-element BaselineRelativeBound, so no fp8 or MXFP4 rows.",
+      "evidence": [
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/moe/flydsl_grouped_moe_inference.md",
+        "/home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace/forge_experiments/analysis/24ef1b73a85fa4e24d2a0e695e0e1c919b8f81c6/generation-002/report.md"
+      ],
+      "source": "survey",
+      "added_iteration": 1,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.03,
+      "priority_reason": "Field numbers show a 10\u201340% swing in stage-2 cost depending on routes per token. Stage 2 is about a third of the call."
+    },
+    {
+      "id": "stage-1-fused-epilogue-clamp-swiglu-in-f",
+      "title": "Stage-1 fused epilogue: clamp/SwiGLU in fp32, bf16 round, MXFP4 quantize with shuffled E8M0 in sorted-row order, staged through LDS for 16-byte stores",
+      "category": "epilogue",
+      "hypothesis": "Writing y as fp4 plus scales (\u2248R\u00b7408 B), produced in registers and stored with wide coalesced stores, keeps the intermediate off the critical path. Writing it in the exact layout stage 2's A DMA consumes removes any relayout. Poorly vectorized stores of y cost noticeably at large R.",
+      "evidence": [
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/gemm/flydsl_gemm_epilogue.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/moe/flydsl_grouped_lowprec.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/cases/fused_moe_shuffled_16x16.md"
+      ],
+      "source": "survey",
+      "added_iteration": 1,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.015,
+      "priority_reason": "The y traffic is small next to the weights, but at L (R=131k routes) store efficiency and the per-lane quant cost become visible."
+    },
+    {
+      "id": "cut-graph-nodes-fold-x-quantization-and-",
+      "title": "Cut graph nodes: fold x quantization and the output zeroing into the sort launch (or the sort into stage 1), preload kernargs, read the expert id before the A loads",
+      "category": "launch overhead / small kernels",
+      "hypothesis": "Each graph node costs ~4 \u00b5s under AKLR's timer, about 2% of a ~180 \u00b5s S-regime call. aiter runs sort + quant + stage1 + stage2. Folding per-token quant and zeroing into the sort launch removed 6.9\u20138.0 \u00b5s in the field, and merging sort phases gained 1.1%. The route kernel must scale past R=1024 (multi-CTA or looping), unlike the prior art.",
+      "evidence": [
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/moe/flydsl_moe_decode.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/moe/flydsl_grouped_moe_inference.md"
+      ],
+      "source": "survey",
+      "added_iteration": 1,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.03,
+      "priority_reason": "On 20 S Points with \u22641.16\u20131.24\u00d7 headroom, saving 1\u20132 nodes (4\u20138 \u00b5s of 180\u2013190 \u00b5s) is 2\u20134%, which may decide serving at 1.03."
+    },
+    {
+      "id": "persistent-or-capped-grids-at-large-n-la",
+      "title": "Persistent or capped grids at large n: launch min(work, k\u00b7NUM_CU) workgroups that stride over the device-side tile bound instead of the padded upper-bound grid",
+      "category": "grid / persistence",
+      "hypothesis": "The padded upper bound (routes + experts\u00b7(BM\u22121))/BM \u00d7 N blocks over-launches many empty workgroups at 10000\u201332768. A persistent loop with a per-tile barrier (or C staged per wave) avoids dispatch waste and tail rounds, and beat one tile per workgroup by 3\u20135% on a dense GEMM.",
+      "evidence": [
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/moe/flydsl_grouped_moe_inference.md"
+      ],
+      "source": "survey",
+      "added_iteration": 1,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.015,
+      "priority_reason": "A field gain of 3\u20135% on the stage it applies to, restricted to the 3\u20135 large Points."
+    },
+    {
+      "id": "offline-raced-per-shape-configuration-ta",
+      "title": "Offline-raced per-shape configuration table (BM, BN, waves, cache policy, atomic vs reduce, MFMA atom) chosen from n_tokens inside the functools.cache compile function",
+      "category": "tuning",
+      "hypothesis": "aiter runs untuned heuristic configs at every Point. The best tile, cache and reduce choice flips between S, M and L, and across the 256\u2013640 band as the >16-route expert count grows 0\u219296. A table raced offline per Point, with no timing in run, captures the per-Point optimum without a shape-divergence loss.",
+      "evidence": [
+        "/home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace/forge_experiments/analysis/24ef1b73a85fa4e24d2a0e695e0e1c919b8f81c6/generation-002/report.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/gemm/INDEX.md"
+      ],
+      "source": "survey",
+      "added_iteration": 1,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.03,
+      "priority_reason": "Tune last. Per-Point picks typically add 2\u20135% over one config per regime, and it guards against wins on some Points losing on others (a lost workload rejects the candidate)."
+    },
+    {
+      "id": "skip-padding-work-send-padding-rows-a-lo",
+      "title": "Skip padding work: send padding rows' A loads out of range (buffer bound returns zero) and skip MFMAs on all-padding sub-tiles",
+      "category": "data path / main loop",
+      "hypothesis": "With BM=32 at n\u2264640, experts have 2\u201331 routes, so a large fraction of tile rows are padding. Out-of-range A loads for padding rows gained ~1% and 1.7 \u00b5s on a stage 2. Skipping MFMAs on padding rows gained 1.6% on a stage 1.",
+      "evidence": [
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/moe/flydsl_grouped_moe_inference.md",
+        "/home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace/forge_experiments/analysis/24ef1b73a85fa4e24d2a0e695e0e1c919b8f81c6/generation-002/evidence/expert_tile_counts.txt"
+      ],
+      "source": "survey",
+      "added_iteration": 1,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.01,
+      "priority_reason": "Small field gains of 1\u20133% per stage, but cheap and helpful on the near-roof S Points."
+    },
+    {
+      "id": "parallel-routing-sort-for-n-1024-first-t",
+      "title": "parallel routing sort for n > 1024 (first), then per-regime-tile-m-equal-to-the-sort-unit (a time-boxed race)",
+      "category": "dispatch / routing sort",
+      "hypothesis": "",
+      "evidence": [],
+      "source": "planner",
+      "added_iteration": 4,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": null,
+      "priority_reason": ""
+    },
+    {
+      "id": "small-n-stage-2-as-a-streaming-persisten",
+      "title": "Small-n stage 2 as a streaming persistent kernel: resident-slot grid (6 WG/CU \u00d7 256) looping over the 6144 tiles, with the next tile's W2 loads issued before the current tile's epilogue/atomics, so the W2 stream never drains between tiles",
+      "category": "grid / persistence (S regime, stage 2 streaming)",
+      "hypothesis": "At n\u2264640, stage 2 runs 6144 short-lived workgroups in exactly 4 rounds (48 KB of W2 each, persist_m=1). It reads W2 at 6.0\u20136.4 TB/s while stage 1 reaches 6.5\u20136.6. Each workgroup's ramp-up and epilogue leaves the HBM queue empty, and the round boundaries add tail time. A persistent loop with cross-tile B prefetch (no barrier, C staged per wave, the form that beat one-tile-per-WG by 3\u20135% on a dense GEMM) should bring W2 up to stage 1's rate: \u22123 to \u22125 \u00b5s on ~55 \u00b5s. This is the opposite axis to the ledger's tile-N-downward race, and both should be raced against the current setting.",
+      "evidence": [
+        "/home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace/forge_experiments/analysis/5bfbea64c0d72d191756b25f14d171e78e120703/generation-001/report.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/moe/flydsl_grouped_moe_inference.md"
+      ],
+      "source": "survey",
+      "added_iteration": 6,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.015,
+      "priority_reason": "Report \u00a76.2 estimates \u22123 to \u22125 \u00b5s of a ~170\u2013180 \u00b5s call (+2\u20133%) on all 20 S Points. Discounted because the stage is already near the stream rate."
+    },
+    {
+      "id": "parallel-routing-sort-at-n-640-replace-t",
+      "title": "Parallel routing sort at n\u2264640: replace the one-workgroup serial sort (7.6\u20139.1 \u00b5s on one CU) with a wave-per-expert / bitmask-popcount sort spread over many workgroups",
+      "category": "dispatch / routing sort (S regime)",
+      "hypothesis": "The S-regime sort is a single workgroup looping over R/1024 routes and writing 31 padding rows per expert serially while 255 CUs idle. It sits on the critical path in front of x-quant and stage 1. Field data: a wave per expert instead of a workgroup took a sort from 7.3\u20137.8 to 6.5 \u00b5s, and per-expert bitmasks (LDS atomic OR + popcount + one packed prefix scan) took another from 7.65 to 5.32 \u00b5s against a ~4.4 \u00b5s node floor. Doing the same here should cut 2\u20134 \u00b5s per call. The kept multi-WG sort for n>1024 is a starting point, but it must not add a launch at small n.",
+      "evidence": [
+        "/home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace/forge_experiments/analysis/5bfbea64c0d72d191756b25f14d171e78e120703/generation-001/report.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/moe/flydsl_grouped_moe_inference.md"
+      ],
+      "source": "survey",
+      "added_iteration": 6,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.012,
+      "priority_reason": "2\u20134 \u00b5s of 168\u2013182 \u00b5s is 1\u20132% on 20 of 25 Points. Capped by the ~4 \u00b5s per-node floor."
+    },
+    {
+      "id": "stage-2-register-plan-for-m-l-issue-a-ds",
+      "title": "Stage-2 register plan for M/L: issue A ds_reads one 16-row group ahead to cut VGPRs below 124, then raise resident workgroups from 2 to 3\u20134 per CU to hide atomic and B latency",
+      "category": "register pressure / occupancy (stage 2)",
+      "hypothesis": "Stage 2 at large n uses 124 VGPRs and runs 2 WG/CU (cu_num_mul 2) where LDS (16.6 KB) would allow 4. It reaches only 0.96 PF/s, and ~25\u201330% of its time is waiting on atomics that miss L2. The KB-matched mechanism (A read per 16-row slice one phase ahead) took a fused-MoE MXFP4 stage 2 from 146 to 122 VGPRs at \u22123%, and gave \u22128% on another. Raising cu_num_mul alone did nothing (1278.5 vs 1285.9 \u00b5s), so registers are the binding limit. With registers freed, more waves can cover the atomic and B-load latency.",
+      "evidence": [
+        "/home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace/forge_experiments/analysis/5bfbea64c0d72d191756b25f14d171e78e120703/generation-001/report.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/gemm/flydsl_gemm_mainloop.md"
+      ],
+      "source": "survey",
+      "added_iteration": 6,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.012,
+      "priority_reason": "Report \u00a76.3 estimates \u22128 to \u221215% of stage 2, which is 40\u201355% of the call at 10000\u201332768 and ~45% at 3112/3816. That is ~4\u20137% on 5 Points."
+    },
+    {
+      "id": "stage-1-occupancy-at-m-l-bring-the-t128-",
+      "title": "Stage-1 occupancy at M/L: bring the t128 build from 324 VGPRs / 99 KB LDS (1 WG per CU) to 2 WG per CU, and choose tiles so 3112/3816 fill whole dispatch rounds",
+      "category": "register pressure / occupancy (stage 1) / wave quantization",
+      "hypothesis": "Stage 1 at n>1024 runs one wave per SIMD at 2.0\u20132.9 PF/s (31% of nominal). At 3816 its 918 WGs take 3.59 rounds with the last 59% full, which is why stage 1 there loses 10.5 \u00b5s to aiter. Reading A per 16-row slice one phase ahead (KB-matched: 202\u2192148 VGPRs, +7.5% on a t64 MXFP4 stage 1) plus a shallower or narrower LDS stage would let 2 WGs share a CU and overlap one's epilogue with the other's MFMAs. A tile choice that makes WGs a multiple of resident slots removes the partial round at 3816.",
+      "evidence": [
+        "/home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace/forge_experiments/analysis/5bfbea64c0d72d191756b25f14d171e78e120703/generation-001/report.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/gemm/flydsl_gemm_grid_pricing.md"
+      ],
+      "source": "survey",
+      "added_iteration": 6,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.009000000000000001,
+      "priority_reason": "Report \u00a76.4 estimates \u22125 to \u221210% of stage 1, which is ~45% of the call, on 5 Points: ~2\u20134.5% each."
+    },
+    {
+      "id": "stage-2-tile-order-for-output-atomic-loc",
+      "title": "Stage-2 tile order for output-atomic locality at L: sweep column slabs outermost (all experts' M-blocks for one band of N tiles), so the bf16 read-modify-write working set of out fits in L2/MALL instead of HBM",
+      "category": "scheduling / locality (output side)",
+      "hypothesis": "At 32768 the atomic RMW into a 402 MB out (bigger than the 256 MB MALL and the 4 MB per-XCD L2) costs ~390 \u00b5s, 30% of stage 2. Each token's 4 routes sit in 4 distinct expert blocks far apart in the N-fastest order, so every RMW line is fetched from HBM up to 4 times. With an outer band of 1\u20138 N tiles, the out slab touched is 8\u201364 MB (32768\u00d7BN\u00d72 B), the W2 band per expert is small, and the gathered A (50 MB total) stays in MALL, so the atomics hit cache. Race band widths against the current order and check that error stays within bounds.",
+      "evidence": [
+        "/home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace/forge_experiments/analysis/5bfbea64c0d72d191756b25f14d171e78e120703/generation-001/report.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/gemm/flydsl_gemm_schedule_and_locality.md"
+      ],
+      "source": "survey",
+      "added_iteration": 6,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.008,
+      "priority_reason": "Recovering half the measured atomic cost is ~8% at 32768, ~5% at 13152, ~4% at 10000 and ~1\u20132% at M. That is ~0.8% of the mean."
+    },
+    {
+      "id": "stage-2-a-stationary-n-sweep-each-workgr",
+      "title": "Stage-2 A-stationary N sweep: each workgroup keeps its gathered A tile (\u226464\u00d7768 fp4 + scales, ~25 KB) in LDS and walks several N tiles, double-buffering B across tile boundaries, to amortize the short-K per-tile fixed cost",
+      "category": "main loop / stage-2 per-tile overhead",
+      "hypothesis": "With K=768 a 64\u00d7128 stage-2 tile has only 3 k-steps of 256, so the A gather, B fill, LDS c-shuffle and epilogue dominate. Even without atomics stage 2 reaches only 1.38 PF/s vs stage 1's 2.9. Today the gathered A rows are re-fetched for each of the 48 N tiles (~2.4 GB of gather traffic at 32768). Loading A once per workgroup and sweeping 4\u20138 N tiles, with the next B tile's loads issued during the current tile's atomics, removes the repeated gathers and the pipeline drain. This differs from the ledger's persistent-grid item, which targets dispatch waste, not A reuse or cross-tile pipelining.",
+      "evidence": [
+        "/home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace/forge_experiments/analysis/5bfbea64c0d72d191756b25f14d171e78e120703/generation-001/report.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/gemm/flydsl_gemm_epilogue.md"
+      ],
+      "source": "survey",
+      "added_iteration": 6,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.01,
+      "priority_reason": "Report \u00a74.3 puts the per-tile overhead as the larger portable share of stage 2. A 10\u201320% stage-2 cut on 5 M/L Points is ~4\u20138% each, discounted for occupancy risk."
+    },
+    {
+      "id": "hide-the-out-zero-fill-at-m-l-move-it-fr",
+      "title": "Hide the out zero-fill at M/L: move it from the x-quant kernel into compute-bound stage 1 (each workgroup zeroes a slice after its main loop), and vectorize x-quant's 1-byte E8M0 scale stores",
+      "category": "data path / small kernels (large n)",
+      "hypothesis": "At large n, x-quant plus zero-fill is 7\u20139% of the call at 4.0\u20134.6 TB/s, and the zero-fill is half its writes (402 MB at 32768, ~80 \u00b5s). It exists only for the atomic stage 2. Stage 1 runs before stage 2 on the same stream and is compute-bound at 2\u20132.9 PF/s, so streaming stores issued there overlap MFMA work at nearly no cost. Packing the four 1-byte scale stores per 32-element block into wider stores trims the rest. The order stays correct because stage 1 finishes before stage 2 starts, and nothing waits across workgroups.",
+      "evidence": [
+        "/home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace/forge_experiments/analysis/5bfbea64c0d72d191756b25f14d171e78e120703/generation-001/report.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/moe/flydsl_grouped_moe_inference.md"
+      ],
+      "source": "survey",
+      "added_iteration": 6,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.005,
+      "priority_reason": "~2.5\u20133.5% on 3 L Points and ~2% on 2 M Points, ~0 at S. That is ~0.5% of the mean."
+    },
+    {
+      "id": "s-regime-stage-1-memory-level-parallelis",
+      "title": "S-regime stage-1 memory-level parallelism: deepen W1 prefetch (more outstanding 16-byte buffer_loads per wave, an extra B stage) in the single-round 768-WG grid to push 6.3\u20136.6 TB/s toward ~7 TB/s",
+      "category": "data path / bytes in flight (S regime, stage 1)",
+      "hypothesis": "At n\u2264640, stage 1 is exactly one round (768 WGs at 3 WG/CU, 142 VGPRs), so the grid cannot add parallelism. The only way to keep more HBM requests in flight is more outstanding loads per wave. Stage 1 is ~100 \u00b5s of a ~175 \u00b5s call against a 146 \u00b5s practical floor. A 5% rate gain is ~5 \u00b5s per Point. Check against waitcnt stalls in the ISA and the VGPR count, so the change does not drop occupancy.",
+      "evidence": [
+        "/home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace/forge_experiments/analysis/5bfbea64c0d72d191756b25f14d171e78e120703/generation-001/report.md",
+        "/home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/gemm/flydsl_gemm_mainloop.md"
+      ],
+      "source": "survey",
+      "added_iteration": 6,
+      "retired_reason": "",
+      "retired_iteration": 0,
+      "priority": 0.008,
+      "priority_reason": "Up to ~2\u20133% per S Point if the rate rises 5%. Discounted because 6.6 TB/s already beats every stream kernel measured here (\u22645.8 TB/s)."
+    }
+  ],
+  "surveyed_commits": [
+    "24ef1b73a85fa4e24d2a0e695e0e1c919b8f81c6",
+    "5bfbea64c0d72d191756b25f14d171e78e120703"
+  ],
+  "audits": []
+}

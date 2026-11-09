@@ -1,0 +1,104 @@
+{
+  "experiment_id": "7a7d7aba",
+  "task_id": "kernel",
+  "backend": "flydsl",
+  "kernel_backend": "flydsl",
+  "description": "Autonomous optimization of /home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace/kernel.py",
+  "target_wall_ms": null,
+  "baseline_wall_ms": null,
+  "created_at": "2026-11-06T09:00:52.826967",
+  "campaign_id": "db97d5b1dcc444bcab41222e17933a1b",
+  "segment_index": 2,
+  "parent_experiment_id": "0482255b",
+  "status": "interrupted",
+  "started_at": "2026-11-06T09:00:52.826947",
+  "ended_at": "2026-11-06T10:42:43.344259",
+  "changes_reverted": [],
+  "llm_usage": {
+    "input_tokens": 252,
+    "output_tokens": 193370,
+    "cache_creation_input_tokens": 1021536,
+    "cache_read_input_tokens": 9993228,
+    "total_cost_usd": 13.495269,
+    "cost_available": true,
+    "cost_source": "provider",
+    "calls": 10,
+    "by_role": {
+      "analysis": {
+        "input_tokens": 160,
+        "output_tokens": 93066,
+        "cache_creation_input_tokens": 293760,
+        "cache_read_input_tokens": 8008773,
+        "total_cost_usd": 5.040043,
+        "calls": 2
+      },
+      "orchestration revision": {
+        "input_tokens": 8,
+        "output_tokens": 12882,
+        "cache_creation_input_tokens": 137522,
+        "cache_read_input_tokens": 255204,
+        "total_cost_usd": 2.151414,
+        "calls": 1
+      },
+      "orchestration synthesis": {
+        "input_tokens": 10,
+        "output_tokens": 10927,
+        "cache_creation_input_tokens": 111355,
+        "cache_read_input_tokens": 272661,
+        "total_cost_usd": 1.155091,
+        "calls": 1
+      },
+      "specialist compute": {
+        "input_tokens": 18,
+        "output_tokens": 27353,
+        "cache_creation_input_tokens": 79592,
+        "cache_read_input_tokens": 383827,
+        "total_cost_usd": 1.103701,
+        "calls": 1
+      },
+      "plan critic": {
+        "input_tokens": 10,
+        "output_tokens": 6765,
+        "cache_creation_input_tokens": 109266,
+        "cache_read_input_tokens": 294544,
+        "total_cost_usd": 1.088587,
+        "calls": 1
+      },
+      "specialist algorithm": {
+        "input_tokens": 14,
+        "output_tokens": 15139,
+        "cache_creation_input_tokens": 90629,
+        "cache_read_input_tokens": 336436,
+        "total_cost_usd": 0.967816,
+        "calls": 1
+      },
+      "specialist memory": {
+        "input_tokens": 12,
+        "output_tokens": 14320,
+        "cache_creation_input_tokens": 78171,
+        "cache_read_input_tokens": 202437,
+        "total_cost_usd": 0.84615,
+        "calls": 1
+      },
+      "direction_audit": {
+        "input_tokens": 14,
+        "output_tokens": 11147,
+        "cache_creation_input_tokens": 70519,
+        "cache_read_input_tokens": 192030,
+        "total_cost_usd": 0.656181,
+        "calls": 1
+      },
+      "orchestration": {
+        "input_tokens": 6,
+        "output_tokens": 1771,
+        "cache_creation_input_tokens": 50722,
+        "cache_read_input_tokens": 47316,
+        "total_cost_usd": 0.486285,
+        "calls": 1
+      }
+    }
+  },
+  "kb_experience": {},
+  "checkpoint": {},
+  "iterations": []
+}

@@ -1,0 +1,45 @@
+{
+  "agent_relay": {
+    "blockage_threshold": 3,
+    "primary_profile_id": "claude",
+    "profiles": [
+      {
+        "profile_id": "claude",
+        "provider": "claude"
+      },
+      {
+        "profile_id": "codex",
+        "provider": "codex"
+      }
+    ]
+  },
+  "base_commit": "24ef1b73a85fa4e24d2a0e695e0e1c919b8f81c6",
+  "bench_repeat": 1,
+  "commit_new_paths": [],
+  "driver_path": "driver.py",
+  "driver_sha256": "15bd9a1cb4866d48d1ab165cc068947d313f3bcd52922db0d90df517dc98dc49",
+  "framework": "unknown",
+  "git_branch": "forge-optimize",
+  "gpu_target": "gfx950",
+  "gpu_type": "mi355x",
+  "implementation_identity": {
+    "implementation_symbols": [],
+    "source_paths": [
+      "kernel.py"
+    ]
+  },
+  "implementation_signature": "860a9aeed0ba4a93b3018a991d10bb22aadd44f5637758312ed120825e05373f",
+  "kernel_backend": "flydsl",
+  "kernel_path": "kernel.py",
+  "nproc_per_node": 1,
+  "operator_name": "kernel",
+  "producer": "",
+  "program_md_path": "forge_experiments/program.md",
+  "program_md_sha256": "ca1f22baaea852a018b8c94795e8476aa254e064393c0f7346c2d9474ba6aa06",
+  "snr_threshold": 30.0,
+  "source_files": [
+    "kernel.py"
+  ],
+  "target_functions": [],
+  "task_type": ""
+}

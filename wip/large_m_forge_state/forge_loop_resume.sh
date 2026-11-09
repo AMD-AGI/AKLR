@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /home/ruibzhan/aklr-moe-m31-20261105/venv/bin/python -m kernelforge.cli forge-loop --resume --workspace /home/ruibzhan/aklr-moe-m31-20261105/run-large/workspace --gpu-target gfx950 --paired-keep --early-stop --skill-dir /home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb --skill-dir /home/ruibzhan/AKLR-wt-minimax-moe/harness/skills/aklr-kb/flydsl --baseline-json /home/ruibzhan/aklr-moe-m31-20261105/run-large/baseline.json "$@"

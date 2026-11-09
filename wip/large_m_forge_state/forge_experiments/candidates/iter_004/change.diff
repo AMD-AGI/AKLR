@@ -1,0 +1,284 @@
+diff --git a/kernel.py b/kernel.py
+index 1bffebd..0fde64a 100644
+--- a/kernel.py
++++ b/kernel.py
+@@ -1,10 +1,12 @@
+ """MXFP4 fused MoE with clamped SwiGLU on gfx950, in FlyDSL.
+ 
+-Four launches. A one-workgroup routing sort groups routes expert-major into blocks of tile_m rows. A quantization
++A routing sort groups routes expert-major into blocks of tile_m rows: one workgroup up to 1024 tokens, above that a
++per-chunk histogram launch and a scatter launch over many workgroups. A quantization
+ kernel rounds x to MXFP4 per 1 x 32 (packed e2m1 codes in token order, E8M0 scales scattered to each route's sorted
+ row in the shuffled layout) and zeroes the output. Stage 1 is a scaled-fp4 MFMA gate/up GEMM over the
+ 16x16-preshuffled w1 whose clamped SwiGLU epilogue writes MXFP4 directly; stage 2 is the scaled-fp4 down GEMM over
+-w2, routing-weighted and accumulated atomically into the bf16 output. The FlyDSL GEMM builders are aiter's MoE
++w2, routing-weighted and accumulated atomically into the bf16 output; above 1024 tokens stage 1 runs 128-row tiles
++with async A copies and cached B loads, and stage 2 splits each sort block into two 64-row tiles. The FlyDSL GEMM builders are aiter's MoE
+ 2-stage builders (buffer ops, preshuffle pipeline, epilogues, mixed MoE GEMM), each kept in its own namespace.
+ """
+ 
+@@ -8617,12 +8619,12 @@ _INTER_DIM = 768
+ 
+ 
+ def _config(n_tokens):
+-    # (tile_m, stage-1 tile_n, stage-1 waves_per_eu, stage-2 tile_n); one sort block serves both stages.
++    # (sort / stage-1 tile_m, stage-1 tile_n, stage-1 waves_per_eu, stage-1 async copy, stage-1 b_nt,
++    #  stage-2 tile_m, stage-2 tile_n, stage-2 waves_per_eu, stage-2 async copy, stage-2 persistent workgroups
++    #  per CU). Stage 2 may split each sort block into several of its own tiles.
+     if n_tokens <= 1024:
+-        return 32, 128, 3, 128
+-    if n_tokens <= 8192:
+-        return 64, 128, 3, 128
+-    return 64, 128, 3, 128
++        return 32, 128, 3, False, 2, 32, 128, None, False, 1
++    return 128, 128, 2, True, 0, 64, 128, None, True, 2
+ 
+ 
+ def _build_xquant(n_tokens, topk, scale_rows):
+@@ -8895,28 +8897,213 @@ def _build_sort(n_tokens, topk, experts, tile_m, m_blocks):
+     return launch_sort
+ 
+ 
++def _build_sort_mw(n_tokens, topk, experts, tile_m, m_blocks, chunk):
++    """Routing sort over many workgroups, for large n_tokens; same outputs as `_build_sort`. Kernel 1 counts each
++    chunk's routes per expert. Kernel 2 (one workgroup per chunk) sums those counts into each expert's padded range
++    and this chunk's offset inside it, scatters the chunk's routes, and fills the padding rows, the tail and each
++    block's expert, spread over all workgroups."""
++    from flydsl.expr import arith, gpu
++    from flydsl.expr.typing import T
++
++    buffer_ops = _M_buffer_ops
++    threads = 256
++    R = n_tokens * topk
++    G = (R + chunk - 1) // chunk
++    n_sorted = m_blocks * tile_m
++    fill = (topk << 24) | n_tokens
++    allocator = SmemAllocator(None, arch=get_hip_arch(), global_sym_name="smem_sort_mw")
++    allocator.ptr = 3 * experts * 4
++    search_steps = tuple(experts >> k for k in range(1, experts.bit_length()) if experts >> k)
++    fill_iters = (n_sorted + G * threads - 1) // (G * threads)
++
++    def _raw(v):
++        return v._value if hasattr(v, "_value") else v
++
++    @contextmanager
++    def _if(cond):
++        op = scf.IfOp(_raw(cond))
++        with ir.InsertionPoint(op.then_block):
++            yield
++            scf.YieldOp([])
++
++    def rsrc(ptr, nbytes):
++        addr = arith.index_cast(T.i64, fx.ptrtoint(ptr))
++        return buffer_ops.create_buffer_resource_from_addr(addr, num_records_bytes=int(nbytes))
++
++    def lt(a, b):
++        return arith.cmpi(CmpIPredicate.slt, a, b)
++
++    @flyc.kernel(name=f"moe_route_hist_m{n_tokens}_t{tile_m}", known_block_size=[threads, 1, 1])
++    def hist_k(arg_ids: fx.Pointer, arg_hist: fx.Pointer):
++        i32 = T.i32
++        idx_t = ir.IndexType.get()
++        ids_rs = rsrc(arg_ids, R * 4)
++        hist_rs = rsrc(arg_hist, G * experts * 4)
++        base = allocator.get_base()
++        cnt = SmemPtr(base, 0, i32, shape=(experts,)).get()
++        tid_idx = gpu.thread_id("x")
++        tid = arith.index_cast(i32, tid_idx)
++        g = arith.index_cast(i32, gpu.block_id("x"))
++        c0 = arith.constant(0, type=i32)
++        c1 = arith.constant(1, type=i32)
++        addi = std_arith.AtomicRMWKind.addi
++        with _if(lt(tid, arith.constant(experts, type=i32))):
++            memref.store(_raw(c0), cnt, [_raw(tid_idx)])
++        gpu.barrier()
++        g0 = g * arith.constant(chunk, type=i32)
++        for it in range_constexpr(chunk // threads):
++            i = g0 + tid + arith.constant(it * threads, type=i32)
++            with _if(lt(i, arith.constant(R, type=i32))):
++                e = buffer_ops.buffer_load(ids_rs, i, vec_width=1, dtype=i32)
++                memref.atomic_rmw(addi, _raw(c1), cnt, [_raw(arith.index_cast(idx_t, e))])
++        gpu.barrier()
++        with _if(lt(tid, arith.constant(experts, type=i32))):
++            v = memref.load(cnt, [_raw(tid_idx)])
++            buffer_ops.buffer_store(v, hist_rs, g * arith.constant(experts, type=i32) + tid)
++
++    @flyc.kernel(name=f"moe_route_scatter_m{n_tokens}_t{tile_m}", known_block_size=[threads, 1, 1])
++    def scatter_k(arg_ids: fx.Pointer, arg_w: fx.Pointer, arg_hist: fx.Pointer, arg_sids: fx.Pointer,
++                  arg_sw: fx.Pointer, arg_eids: fx.Pointer, arg_nv: fx.Pointer, arg_pos: fx.Pointer):
++        i32 = T.i32
++        f32 = T.f32
++        idx_t = ir.IndexType.get()
++        ids_rs = rsrc(arg_ids, R * 4)
++        w_rs = rsrc(arg_w, R * 4)
++        hist_rs = rsrc(arg_hist, G * experts * 4)
++        sids_rs = rsrc(arg_sids, n_sorted * 4)
++        sw_rs = rsrc(arg_sw, n_sorted * 4)
++        eids_rs = rsrc(arg_eids, m_blocks * 4)
++        nv_rs = rsrc(arg_nv, 8)
++        pos_rs = rsrc(arg_pos, R * 4)
++
++        base = allocator.get_base()
++        cnt = SmemPtr(base, 0, i32, shape=(experts,)).get()
++        ends = SmemPtr(base, experts * 4, i32, shape=(experts,)).get()
++        cur = SmemPtr(base, experts * 8, i32, shape=(experts,)).get()
++
++        tid_idx = gpu.thread_id("x")
++        tid = arith.index_cast(i32, tid_idx)
++        g = arith.index_cast(i32, gpu.block_id("x"))
++        c0 = arith.constant(0, type=i32)
++        c1 = arith.constant(1, type=i32)
++        c2 = arith.constant(2, type=i32)
++        c3 = arith.constant(3, type=i32)
++        c24 = arith.constant(24, type=i32)
++        tm1 = arith.constant(tile_m - 1, type=i32)
++        tmask = arith.constant(-tile_m, type=i32)
++        fill_c = arith.constant(fill, type=i32)
++        zero_f = arith.constant(0.0, type=f32)
++        addi = std_arith.AtomicRMWKind.addi
++        is_e = lt(tid, arith.constant(experts, type=i32))
++
++        def ld(mem, i):
++            return memref.load(mem, [_raw(arith.index_cast(idx_t, i))])
++
++        def padded(cv):
++            return (cv + tm1) & tmask
++
++        # Totals per expert, and the routes of earlier chunks for this one.
++        with _if(is_e):
++            tot = c0
++            pre = c0
++            for gp in range_constexpr(G):
++                h = buffer_ops.buffer_load(hist_rs, tid + arith.constant(gp * experts, type=i32), vec_width=1,
++                                           dtype=i32)
++                tot = tot + h
++                pre = pre + arith.select(lt(arith.constant(gp, type=i32), g), h, c0)
++            memref.store(_raw(tot), cnt, [_raw(tid_idx)])
++            memref.store(_raw(pre), cur, [_raw(tid_idx)])
++        gpu.barrier()
++
++        with _if(is_e):
++            acc = c0
++            for j in range_constexpr(experts):
++                pj = padded(memref.load(cnt, [_raw(arith.constant(j, index=True))]))
++                take = arith.cmpi(CmpIPredicate.sle, arith.constant(j, type=i32), tid)
++                acc = acc + arith.select(take, pj, c0)
++            memref.store(_raw(acc), ends, [_raw(tid_idx)])
++            ce = memref.load(cnt, [_raw(tid_idx)])
++            pr = memref.load(cur, [_raw(tid_idx)])
++            memref.store(_raw(acc - padded(ce) + pr), cur, [_raw(tid_idx)])
++        gpu.barrier()
++
++        g0 = g * arith.constant(chunk, type=i32)
++        for it in range_constexpr(chunk // threads):
++            i = g0 + tid + arith.constant(it * threads, type=i32)
++            with _if(lt(i, arith.constant(R, type=i32))):
++                e = buffer_ops.buffer_load(ids_rs, i, vec_width=1, dtype=i32)
++                w = buffer_ops.buffer_load(w_rs, i, vec_width=1, dtype=f32)
++                p = memref.atomic_rmw(addi, _raw(c1), cur, [_raw(arith.index_cast(idx_t, e))])
++                packed = ((i & c3) << c24) | (i >> c2)
++                buffer_ops.buffer_store(packed, sids_rs, p)
++                buffer_ops.buffer_store(w, sw_rs, p)
++                buffer_ops.buffer_store(p, pos_rs, i)
++
++        # Padding rows, tail rows and block experts: row s belongs to the first expert whose end exceeds s.
++        for it in range_constexpr(fill_iters):
++            s = g * arith.constant(threads, type=i32) + tid + arith.constant(it * G * threads, type=i32)
++            with _if(lt(s, arith.constant(n_sorted, type=i32))):
++                lo = c0
++                for step in search_steps:
++                    v = ld(ends, lo + arith.constant(step - 1, type=i32))
++                    lo = arith.select(arith.cmpi(CmpIPredicate.sle, v, s), lo + arith.constant(step, type=i32), lo)
++                v = ld(ends, lo)
++                lo = arith.select(arith.cmpi(CmpIPredicate.sle, v, s), lo + c1, lo)
++                lo = arith.minsi(lo, arith.constant(experts - 1, type=i32))
++                ce = ld(cnt, lo)
++                first_pad = ld(ends, lo) - padded(ce) + ce
++                with _if(arith.cmpi(CmpIPredicate.sge, s, first_pad)):
++                    buffer_ops.buffer_store(fill_c, sids_rs, s)
++                    buffer_ops.buffer_store(zero_f, sw_rs, s)
++                with _if(arith.cmpi(CmpIPredicate.eq, s & tm1, c0)):
++                    buffer_ops.buffer_store(lo, eids_rs, s >> arith.constant(tile_m.bit_length() - 1, type=i32))
++
++        with _if(arith.cmpi(CmpIPredicate.eq, tid + g, c0)):
++            total = memref.load(ends, [_raw(arith.constant(experts - 1, index=True))])
++            buffer_ops.buffer_store(total, nv_rs, c0)
++            buffer_ops.buffer_store(arith.constant(n_tokens, type=i32), nv_rs, c1)
++
++    @flyc.jit
++    def launch_sort_mw(arg_ids: fx.Pointer, arg_w: fx.Pointer, arg_hist: fx.Pointer, arg_sids: fx.Pointer,
++                       arg_sw: fx.Pointer, arg_eids: fx.Pointer, arg_nv: fx.Pointer, arg_pos: fx.Pointer,
++                       stream: fx.Stream):
++        allocator.finalized = False
++        ctx = CompilationContext.get_current()
++        with ir.InsertionPoint(ctx.gpu_module_body):
++            allocator.finalize()
++        hist_k(arg_ids, arg_hist).launch(grid=(G, 1, 1), block=(threads, 1, 1), stream=stream)
++        scatter_k(arg_ids, arg_w, arg_hist, arg_sids, arg_sw, arg_eids, arg_nv, arg_pos).launch(
++            grid=(G, 1, 1), block=(threads, 1, 1), stream=stream)
++
++    return launch_sort_mw, G
++
++
+ @_functools.cache
+ def _compiled(n_tokens, experts, topk):
+-    tile_m, s1_tn, s1_wpe, s2_tn = _config(n_tokens)
++    tile_m, s1_tn, s1_wpe, s1_async, s1_bnt, s2_tm, s2_tn, s2_wpe, s2_async, s2_cumul = _config(n_tokens)
+     common = _M_mixed_moe_gemm_2stage_common
+     exe1 = common.compile_mixed_moe_gemm1_common(
+         model_dim=_MODEL_DIM, inter_dim=_INTER_DIM, experts=experts, topk=topk, tile_m=tile_m, tile_n=s1_tn,
+         tile_k=256, doweight_stage1=False, a_dtype="fp4", b_dtype="fp4", out_dtype="fp4", act="swiglu",
+         use_cshuffle_epilog=None, enable_bias=False, model_dim_pad=0, inter_dim_pad=0, persist_m=1,
+-        use_async_copy=False, waves_per_eu=s1_wpe, k_batch=1, b_nt=2, gate_mode=_GateMode.SEPARATED,
++        use_async_copy=s1_async, waves_per_eu=s1_wpe, k_batch=1, b_nt=s1_bnt, gate_mode=_GateMode.SEPARATED,
+         a_scale_one=False, xcd_swizzle=0, k_wave=1, v2_output_layout=False)
+     max_sorted = n_tokens * topk + experts * (tile_m - 1)
+     m_blocks = (max_sorted + tile_m - 1) // tile_m
+-    s2_blocks = min(m_blocks, n_tokens * topk)
++    s2_blocks = min(m_blocks * (tile_m // s2_tm), n_tokens * topk)
+     exe2 = common.compile_mixed_moe_gemm2_common(
+-        model_dim=_MODEL_DIM, inter_dim=_INTER_DIM, experts=experts, topk=topk, tile_m=tile_m, tile_n=s2_tn,
++        model_dim=_MODEL_DIM, inter_dim=_INTER_DIM, experts=experts, topk=topk, tile_m=s2_tm, tile_n=s2_tn,
+         tile_k=256, doweight_stage2=True, a_dtype="fp4", b_dtype="fp4", out_dtype="bf16",
+         use_cshuffle_epilog=None, accumulate=True, enable_bias=False, model_dim_pad=0, inter_dim_pad=0,
+-        persist_m=(-1 if s2_blocks > 256 else 1), sort_block_m=0, waves_per_eu=None, use_async_copy=False,
+-        cu_num_mul=1, b_nt=0, xcd_swizzle=0)
++        persist_m=(-1 if s2_blocks > 256 else 1), sort_block_m=(0 if s2_tm == tile_m else tile_m), waves_per_eu=s2_wpe, use_async_copy=s2_async,
++        cu_num_mul=s2_cumul, b_nt=0, xcd_swizzle=0)
+     exe_xq = _build_xquant(n_tokens, topk, (m_blocks * tile_m + 255) // 256 * 256)
+-    exe_sort = _build_sort(n_tokens, topk, experts, tile_m, m_blocks)
+-    return tile_m, m_blocks, s2_blocks, exe1, exe2, exe_xq, exe_sort
++    if n_tokens <= 1024:
++        exe_sort, sort_groups = _build_sort(n_tokens, topk, experts, tile_m, m_blocks), 0
++    else:
++        exe_sort, sort_groups = _build_sort_mw(n_tokens, topk, experts, tile_m, m_blocks,
++                                                   512 if n_tokens <= 16384 else 1024)
++    return tile_m, m_blocks, s2_blocks, exe1, exe2, exe_xq, exe_sort, sort_groups
+ 
+ 
+ def _launch(exe, args):
+@@ -8939,7 +9126,7 @@ def run(*, hidden_states, w1, w2, topk_weights, topk_ids, w1_scale, w2_scale, ac
+     top = topk_ids.shape[1]
+     R = M * top
+     dev = hidden_states.device
+-    tile_m, m_blocks, s2_blocks, exe1, exe2, exe_xq, exe_sort = _compiled(M, E, top)
++    tile_m, m_blocks, s2_blocks, exe1, exe2, exe_xq, exe_sort, sort_groups = _compiled(M, E, top)
+     n_sorted = m_blocks * tile_m
+     stream = _torch.cuda.current_stream()
+ 
+@@ -8949,8 +9136,13 @@ def run(*, hidden_states, w1, w2, topk_weights, topk_ids, w1_scale, w2_scale, ac
+     sorted_eids = _torch.empty((m_blocks,), dtype=_torch.int32, device=dev)
+     num_valid = _torch.empty((2,), dtype=_torch.int32, device=dev)
+     pos32 = _torch.empty((R,), dtype=_torch.int32, device=dev)
+-    _launch(exe_sort, (_ptr(topk_ids), _ptr(topk_weights), _ptr(sorted_ids), _ptr(sorted_w), _ptr(sorted_eids),
+-                       _ptr(num_valid), _ptr(pos32), stream))
++    if sort_groups:
++        hist = _torch.empty((sort_groups * E,), dtype=_torch.int32, device=dev)
++        _launch(exe_sort, (_ptr(topk_ids), _ptr(topk_weights), _ptr(hist), _ptr(sorted_ids), _ptr(sorted_w),
++                           _ptr(sorted_eids), _ptr(num_valid), _ptr(pos32), stream))
++    else:
++        _launch(exe_sort, (_ptr(topk_ids), _ptr(topk_weights), _ptr(sorted_ids), _ptr(sorted_w),
++                           _ptr(sorted_eids), _ptr(num_valid), _ptr(pos32), stream))
+ 
+     # x quantized in token order with its scales in sorted order, and out zeroed, in one launch.
+     xq = _torch.empty((M, _MODEL_DIM // 2), dtype=_torch.uint8, device=dev)

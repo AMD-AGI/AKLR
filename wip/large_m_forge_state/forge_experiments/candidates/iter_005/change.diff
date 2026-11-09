@@ -1,0 +1,63 @@
+diff --git a/kernel.py b/kernel.py
+index 0fde64a..a08642d 100644
+--- a/kernel.py
++++ b/kernel.py
+@@ -6345,7 +6345,7 @@ def _mod_mixed_moe_gemm_2stage_common():
+                 "FHMoE stage2 requires shared_expert_id == experts - 1; "
+                 f"got {shared_expert_id=} and {experts=}"
+             )
+-        del b_nt
++        b_nt = int(b_nt)
+         _sort_block_m = tile_m if sort_block_m <= 0 else sort_block_m
+         if const_expr(_sort_block_m != tile_m and _sort_block_m % tile_m != 0):
+             raise ValueError(
+@@ -6529,7 +6529,7 @@ def _mod_mixed_moe_gemm_2stage_common():
+             )
+         module_name = (
+             f"mfma_moe2_a{a_dtype}_w{b_dtype}_{out_s}_{epilog_tag}"
+-            f"_t{tile_m}x{tile_n}x{tile_k}{variant_tags}"
++            f"_t{tile_m}x{tile_n}x{tile_k}{variant_tags}_bnt{b_nt}"
+         ).replace("-", "_")
+         lds_x_bytes = 2 * int(tile_m) * int(lds_stride) * int(a_elem_bytes)
+         lds_out_bytes = 2 * int(tile_m) * int(tile_n) if _use_cshuffle_epilog else 0
+@@ -7152,6 +7152,7 @@ def _mod_mixed_moe_gemm_2stage_common():
+                                 vec_elems=vec_elems,
+                                 elem_bytes=b_elem_bytes,
+                                 offset_in_bytes=(b_elem_bytes == 1),
++                                cache_modifier=b_nt,
+                             )
+                             b_i64x2 = vector.bitcast(vec2_i64, b16)
+                             return (
+@@ -8621,10 +8622,11 @@ _INTER_DIM = 768
+ def _config(n_tokens):
+     # (sort / stage-1 tile_m, stage-1 tile_n, stage-1 waves_per_eu, stage-1 async copy, stage-1 b_nt,
+     #  stage-2 tile_m, stage-2 tile_n, stage-2 waves_per_eu, stage-2 async copy, stage-2 persistent workgroups
+-    #  per CU). Stage 2 may split each sort block into several of its own tiles.
++    #  per CU, stage-2 b_nt). Stage 2 may split each sort block into several of its own tiles. At small n each
++    #  expert has one stage-2 block, so W2 is a read-once stream and loads it non-temporally.
+     if n_tokens <= 1024:
+-        return 32, 128, 3, False, 2, 32, 128, None, False, 1
+-    return 128, 128, 2, True, 0, 64, 128, None, True, 2
++        return 32, 128, 3, False, 2, 32, 128, None, False, 1, 2
++    return 128, 128, 2, True, 0, 64, 128, None, True, 2, 0
+ 
+ 
+ def _build_xquant(n_tokens, topk, scale_rows):
+@@ -9080,7 +9082,7 @@ def _build_sort_mw(n_tokens, topk, experts, tile_m, m_blocks, chunk):
+ 
+ @_functools.cache
+ def _compiled(n_tokens, experts, topk):
+-    tile_m, s1_tn, s1_wpe, s1_async, s1_bnt, s2_tm, s2_tn, s2_wpe, s2_async, s2_cumul = _config(n_tokens)
++    tile_m, s1_tn, s1_wpe, s1_async, s1_bnt, s2_tm, s2_tn, s2_wpe, s2_async, s2_cumul, s2_bnt = _config(n_tokens)
+     common = _M_mixed_moe_gemm_2stage_common
+     exe1 = common.compile_mixed_moe_gemm1_common(
+         model_dim=_MODEL_DIM, inter_dim=_INTER_DIM, experts=experts, topk=topk, tile_m=tile_m, tile_n=s1_tn,
+@@ -9096,7 +9098,7 @@ def _compiled(n_tokens, experts, topk):
+         tile_k=256, doweight_stage2=True, a_dtype="fp4", b_dtype="fp4", out_dtype="bf16",
+         use_cshuffle_epilog=None, accumulate=True, enable_bias=False, model_dim_pad=0, inter_dim_pad=0,
+         persist_m=(-1 if s2_blocks > 256 else 1), sort_block_m=(0 if s2_tm == tile_m else tile_m), waves_per_eu=s2_wpe, use_async_copy=s2_async,
+-        cu_num_mul=s2_cumul, b_nt=0, xcd_swizzle=0)
++        cu_num_mul=s2_cumul, b_nt=s2_bnt, xcd_swizzle=0)
+     exe_xq = _build_xquant(n_tokens, topk, (m_blocks * tile_m + 255) // 256 * 256)
+     if n_tokens <= 1024:
+         exe_sort, sort_groups = _build_sort(n_tokens, topk, experts, tile_m, m_blocks), 0

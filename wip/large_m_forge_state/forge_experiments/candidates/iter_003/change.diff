@@ -1,0 +1,450 @@
+diff --git a/kernel.py b/kernel.py
+index 71fd53f..1bffebd 100644
+--- a/kernel.py
++++ b/kernel.py
+@@ -1,11 +1,11 @@
+ """MXFP4 fused MoE with clamped SwiGLU on gfx950, in FlyDSL.
+ 
+-Routes are sorted expert-major into blocks of tile_m rows (torch, sync-free, fixed upper bound on the row count).
+-Activations are rounded to MXFP4 per 1 x 32 (packed e2m1 codes plus E8M0 scales laid out in sorted, shuffled order).
+-Stage 1 is a scaled-fp4 MFMA gate/up GEMM over the 16x16-preshuffled w1 with the clamped SwiGLU epilogue, writing
+-bf16; its output is rounded to MXFP4 and stage 2 is the scaled-fp4 down GEMM over w2, routing-weighted and
+-accumulated atomically into the bf16 output. The FlyDSL kernel builders below are aiter's MoE 2-stage builders
+-(buffer ops, preshuffle pipeline, epilogues, mixed MoE GEMM), each kept in its own namespace.
++Four launches. A one-workgroup routing sort groups routes expert-major into blocks of tile_m rows. A quantization
++kernel rounds x to MXFP4 per 1 x 32 (packed e2m1 codes in token order, E8M0 scales scattered to each route's sorted
++row in the shuffled layout) and zeroes the output. Stage 1 is a scaled-fp4 MFMA gate/up GEMM over the
++16x16-preshuffled w1 whose clamped SwiGLU epilogue writes MXFP4 directly; stage 2 is the scaled-fp4 down GEMM over
++w2, routing-weighted and accumulated atomically into the bf16 output. The FlyDSL GEMM builders are aiter's MoE
++2-stage builders (buffer ops, preshuffle pipeline, epilogues, mixed MoE GEMM), each kept in its own namespace.
+ """
+ 
+ from __future__ import annotations
+@@ -5303,6 +5303,9 @@ def _mod_mixed_moe_gemm_2stage_common():
+                             if const_expr(apply_weight):
+                                 v = v * tw
+                             if const_expr(need_quant):
++                                if const_expr(need_fp4):
++                                    # AMD modification: quantize the bf16-rounded activation, as the reference does.
++                                    v = arith.extf(f32, arith.trunc_f(T.bf16, v))
+                                 lds_idx = row_base_lds + col_local
+                                 vec1_f32 = T.vec(1, f32)
+                                 v1 = vector.from_elements(vec1_f32, [v])
+@@ -5439,7 +5442,8 @@ def _mod_mixed_moe_gemm_2stage_common():
+                                 local_max = arith.maximumf(local_max, peer)
+ 
+                             max_i32 = local_max.bitcast(T.i32)
+-                            max_rounded = (max_i32 + c0x400000_i32) & c0xFF800000_i32
++                            # AMD modification: round the E8M0 exponent up only above 1.5x (strict), as the reference.
++                            max_rounded = (max_i32 + (c0x400000_i32 - c1_i32)) & c0xFF800000_i32
+                             exp_field = max_rounded >> c23_i32
+                             e8m0_biased = arith.maxsi(exp_field - c_headroom_i32, c0_i32)
+ 
+@@ -8621,13 +8625,283 @@ def _config(n_tokens):
+     return 64, 128, 3, 128
+ 
+ 
++def _build_xquant(n_tokens, topk, scale_rows):
++    """x (n_tokens, 6144) bf16 -> MXFP4 codes in token order, E8M0 scales scattered to each route's sorted row in
++    the shuffled [rows/32][cols/8][4][16][2][2] layout, and `out` zeroed for the atomic stage 2. One workgroup of
++    256 lanes per token; four adjacent lanes hold one 32-element block."""
++    from flydsl.expr import arith, gpu, rocdl
++    from flydsl.expr.typing import T
++
++    buffer_ops = _M_buffer_ops
++    vector = _M_vector
++    K = _MODEL_DIM
++    chunks = K // 8
++    threads = 256
++    iters = chunks // threads
++    cols = K // 32
++    n32 = cols * 32
++
++    def _raw(v):
++        return v._value if hasattr(v, "_value") else v
++
++    @flyc.kernel(name=f"moe_xquant_fp4_k{K}_m{n_tokens}", known_block_size=[threads, 1, 1])
++    def xquant(arg_x: fx.Pointer, arg_xq: fx.Pointer, arg_out: fx.Pointer, arg_pos: fx.Pointer,
++               arg_xs: fx.Pointer):
++        f32 = T.f32
++        i32 = T.i32
++
++        def rsrc(ptr, nbytes):
++            addr = arith.index_cast(T.i64, fx.ptrtoint(ptr))
++            return buffer_ops.create_buffer_resource_from_addr(addr, num_records_bytes=int(nbytes))
++
++        x_rs = rsrc(arg_x, n_tokens * K * 2)
++        xq_rs = rsrc(arg_xq, n_tokens * K // 2)
++        out_rs = rsrc(arg_out, n_tokens * K * 2)
++        pos_rs = rsrc(arg_pos, n_tokens * topk * 4)
++        xs_rs = rsrc(arg_xs, scale_rows * cols)
++
++        tid = arith.index_cast(i32, gpu.thread_id("x"))
++        row = arith.index_cast(i32, gpu.block_id("x"))
++        c0 = arith.constant(0, type=i32)
++        c1 = arith.constant(1, type=i32)
++        c2 = arith.constant(2, type=i32)
++        c3 = arith.constant(3, type=i32)
++        c4 = arith.constant(4, type=i32)
++        c5 = arith.constant(5, type=i32)
++        c15 = arith.constant(15, type=i32)
++        c16 = arith.constant(16, type=i32)
++        c23 = arith.constant(23, type=i32)
++        c64 = arith.constant(64, type=i32)
++        c256 = arith.constant(256, type=i32)
++        hi_mask = arith.constant(-65536, type=i32)
++        round_add = arith.constant(0x3FFFFF, type=i32)
++        exp_mask = arith.constant(0x7F800000, type=i32)
++        c254 = arith.constant(254, type=i32)
++        zero_f32 = arith.constant(0.0, type=f32)
++        zero_v4 = arith.constant_vector(0, T.vec(4, i32))
++        n32_c = arith.constant(n32, type=i32)
++
++        pos_v = buffer_ops.buffer_load(pos_rs, row * c4, vec_width=4, dtype=i32)
++        pos_s = [vector.extract(pos_v, static_position=[k], dynamic_position=[]) for k in range(topk)]
++
++        for j in range_constexpr(iters):
++            c = tid + arith.constant(j * threads, type=i32)
++            elem_off = row * arith.constant(K // 2, type=i32) + c * c4
++            words = buffer_ops.buffer_load(x_rs, elem_off, vec_width=4, dtype=i32)
++            vals = []
++            for w in range_constexpr(4):
++                wv = vector.extract(words, static_position=[w], dynamic_position=[])
++                vals.append((wv << c16).bitcast(f32))
++                vals.append((wv & hi_mask).bitcast(f32))
++            amax = zero_f32
++            for v in vals:
++                amax = arith.maximumf(amax, llvm.call_intrinsic(f32, "llvm.fabs.f32", [_raw(v)], [], []))
++            for d in (1, 2):
++                peer = amax.shuffle_xor(arith.constant(d, type=i32), c64)
++                amax = arith.maximumf(amax, peer)
++            bits = amax.bitcast(i32)
++            e = ((bits + round_add) & exp_mask) >> c23
++            e = arith.minsi(arith.maxsi(e - c2, c0), c254)
++            scale = (e << c23).bitcast(f32)
++            packed = c0
++            for k in range_constexpr(4):
++                packed = rocdl.cvt_scalef32_pk_fp4_f32(
++                    i32, _raw(packed), _raw(vals[2 * k]), _raw(vals[2 * k + 1]), _raw(scale), k)
++            buffer_ops.buffer_store(packed, xq_rs, row * arith.constant(chunks, type=i32) + c)
++            buffer_ops.buffer_store(zero_v4, out_rs, elem_off)
++
++            is_writer = arith.cmpi(CmpIPredicate.eq, c & c3, c0)
++            if_w = scf.IfOp(_raw(is_writer))
++            with ir.InsertionPoint(if_w.then_block):
++                col = c >> c2
++                d3 = col >> c3
++                d4 = (col >> c2) & c1
++                d5 = col & c3
++                col_off = d3 * c256 + d5 * c64 + d4 * c2
++                e_i8 = arith.TruncIOp(T.i8, _raw(e))
++                for k in range_constexpr(topk):
++                    pr = pos_s[k]
++                    d0 = pr >> c5
++                    d1 = (pr >> c4) & c1
++                    d2 = pr & c15
++                    off = d0 * n32_c + col_off + d2 * c4 + d1
++                    buffer_ops.buffer_store(e_i8, xs_rs, off, offset_is_bytes=True)
++                scf.YieldOp([])
++
++    @flyc.jit
++    def launch_xquant(arg_x: fx.Pointer, arg_xq: fx.Pointer, arg_out: fx.Pointer, arg_pos: fx.Pointer,
++                      arg_xs: fx.Pointer, stream: fx.Stream):
++        xquant(arg_x, arg_xq, arg_out, arg_pos, arg_xs).launch(
++            grid=(n_tokens, 1, 1), block=(threads, 1, 1), stream=stream)
++
++    return launch_xquant
++
++
++def _build_sort(n_tokens, topk, experts, tile_m, m_blocks):
++    """Routing sort in one workgroup: routes grouped by expert, each expert padded to tile_m rows. Writes packed
++    (slot << 24 | token) ids, their weights, each block's expert, [valid rows, tokens], and each route's row."""
++    from flydsl.expr import arith, gpu
++    from flydsl.expr.typing import T
++
++    buffer_ops = _M_buffer_ops
++    threads = 1024
++    R = n_tokens * topk
++    n_sorted = m_blocks * tile_m
++    fill = (topk << 24) | n_tokens
++    allocator = SmemAllocator(None, arch=get_hip_arch(), global_sym_name="smem_sort")
++    allocator.ptr = 3 * experts * 4
++    search_steps = tuple(experts >> k for k in range(1, experts.bit_length()) if experts >> k)
++
++    def _raw(v):
++        return v._value if hasattr(v, "_value") else v
++
++    @contextmanager
++    def _if(cond):
++        op = scf.IfOp(_raw(cond))
++        with ir.InsertionPoint(op.then_block):
++            yield
++            scf.YieldOp([])
++
++    @flyc.kernel(name=f"moe_route_sort_m{n_tokens}_t{tile_m}", known_block_size=[threads, 1, 1])
++    def sort_k(arg_ids: fx.Pointer, arg_w: fx.Pointer, arg_sids: fx.Pointer, arg_sw: fx.Pointer,
++               arg_eids: fx.Pointer, arg_nv: fx.Pointer, arg_pos: fx.Pointer):
++        i32 = T.i32
++        f32 = T.f32
++        idx_t = ir.IndexType.get()
++
++        def rsrc(ptr, nbytes):
++            addr = arith.index_cast(T.i64, fx.ptrtoint(ptr))
++            return buffer_ops.create_buffer_resource_from_addr(addr, num_records_bytes=int(nbytes))
++
++        ids_rs = rsrc(arg_ids, R * 4)
++        w_rs = rsrc(arg_w, R * 4)
++        sids_rs = rsrc(arg_sids, n_sorted * 4)
++        sw_rs = rsrc(arg_sw, n_sorted * 4)
++        eids_rs = rsrc(arg_eids, m_blocks * 4)
++        nv_rs = rsrc(arg_nv, 8)
++        pos_rs = rsrc(arg_pos, R * 4)
++
++        base = allocator.get_base()
++        cnt = SmemPtr(base, 0, i32, shape=(experts,)).get()
++        ends = SmemPtr(base, experts * 4, i32, shape=(experts,)).get()
++        cur = SmemPtr(base, experts * 8, i32, shape=(experts,)).get()
++
++        tid_idx = gpu.thread_id("x")
++        tid = arith.index_cast(i32, tid_idx)
++        c0 = arith.constant(0, type=i32)
++        c1 = arith.constant(1, type=i32)
++        c2 = arith.constant(2, type=i32)
++        c3 = arith.constant(3, type=i32)
++        c24 = arith.constant(24, type=i32)
++        tm1 = arith.constant(tile_m - 1, type=i32)
++        tmask = arith.constant(-tile_m, type=i32)
++        fill_c = arith.constant(fill, type=i32)
++        zero_f = arith.constant(0.0, type=f32)
++        addi = std_arith.AtomicRMWKind.addi
++
++        def lt(a, b):
++            return arith.cmpi(CmpIPredicate.slt, a, b)
++
++        def ld(mem, i):
++            return memref.load(mem, [_raw(arith.index_cast(idx_t, i))])
++
++        def padded(cv):
++            return (cv + tm1) & tmask
++
++        with _if(lt(tid, arith.constant(experts, type=i32))):
++            memref.store(_raw(c0), cnt, [_raw(tid_idx)])
++            memref.store(_raw(c0), cur, [_raw(tid_idx)])
++        gpu.barrier()
++
++        r_iters = (R + threads - 1) // threads
++        for it in range_constexpr(r_iters):
++            i = tid + arith.constant(it * threads, type=i32)
++            with _if(lt(i, arith.constant(R, type=i32))):
++                e = buffer_ops.buffer_load(ids_rs, i, vec_width=1, dtype=i32)
++                memref.atomic_rmw(addi, _raw(c1), cnt, [_raw(arith.index_cast(idx_t, e))])
++        gpu.barrier()
++
++        with _if(lt(tid, arith.constant(experts, type=i32))):
++            acc = c0
++            for j in range_constexpr(experts):
++                pj = padded(memref.load(cnt, [_raw(arith.constant(j, index=True))]))
++                take = arith.cmpi(CmpIPredicate.sle, arith.constant(j, type=i32), tid)
++                acc = acc + arith.select(take, pj, c0)
++            memref.store(_raw(acc), ends, [_raw(tid_idx)])
++        gpu.barrier()
++
++        for it in range_constexpr(r_iters):
++            i = tid + arith.constant(it * threads, type=i32)
++            with _if(lt(i, arith.constant(R, type=i32))):
++                e = buffer_ops.buffer_load(ids_rs, i, vec_width=1, dtype=i32)
++                w = buffer_ops.buffer_load(w_rs, i, vec_width=1, dtype=f32)
++                e_idx = _raw(arith.index_cast(idx_t, e))
++                rank = memref.atomic_rmw(addi, _raw(c1), cur, [e_idx])
++                ce = memref.load(cnt, [e_idx])
++                end_e = memref.load(ends, [e_idx])
++                p = end_e - padded(ce) + rank
++                packed = ((i & c3) << c24) | (i >> c2)
++                buffer_ops.buffer_store(packed, sids_rs, p)
++                buffer_ops.buffer_store(w, sw_rs, p)
++                buffer_ops.buffer_store(p, pos_rs, i)
++
++        # Padding rows of each expert.
++        with _if(lt(tid, arith.constant(experts, type=i32))):
++            ce = memref.load(cnt, [_raw(tid_idx)])
++            end_e = memref.load(ends, [_raw(tid_idx)])
++            first = end_e - padded(ce) + ce
++            for j in range_constexpr(tile_m - 1):
++                s = first + arith.constant(j, type=i32)
++                with _if(lt(s, end_e)):
++                    buffer_ops.buffer_store(fill_c, sids_rs, s)
++                    buffer_ops.buffer_store(zero_f, sw_rs, s)
++
++        total = memref.load(ends, [_raw(arith.constant(experts - 1, index=True))])
++        for it in range_constexpr((n_sorted + threads - 1) // threads):
++            s = tid + arith.constant(it * threads, type=i32)
++            tail = arith.andi(_raw(lt(s, arith.constant(n_sorted, type=i32))),
++                              _raw(arith.cmpi(CmpIPredicate.sge, s, total)))
++            with _if(tail):
++                buffer_ops.buffer_store(fill_c, sids_rs, s)
++                buffer_ops.buffer_store(zero_f, sw_rs, s)
++
++        for it in range_constexpr((m_blocks + threads - 1) // threads):
++            b = tid + arith.constant(it * threads, type=i32)
++            with _if(lt(b, arith.constant(m_blocks, type=i32))):
++                bs = b * arith.constant(tile_m, type=i32)
++                lo = c0
++                for step in search_steps:
++                    v = ld(ends, lo + arith.constant(step - 1, type=i32))
++                    lo = arith.select(arith.cmpi(CmpIPredicate.sle, v, bs), lo + arith.constant(step, type=i32), lo)
++                v = ld(ends, lo)
++                lo = arith.select(arith.cmpi(CmpIPredicate.sle, v, bs), lo + c1, lo)
++                lo = arith.minsi(lo, arith.constant(experts - 1, type=i32))
++                buffer_ops.buffer_store(lo, eids_rs, b)
++
++        with _if(arith.cmpi(CmpIPredicate.eq, tid, c0)):
++            buffer_ops.buffer_store(total, nv_rs, c0)
++            buffer_ops.buffer_store(arith.constant(n_tokens, type=i32), nv_rs, c1)
++
++    @flyc.jit
++    def launch_sort(arg_ids: fx.Pointer, arg_w: fx.Pointer, arg_sids: fx.Pointer, arg_sw: fx.Pointer,
++                    arg_eids: fx.Pointer, arg_nv: fx.Pointer, arg_pos: fx.Pointer, stream: fx.Stream):
++        allocator.finalized = False
++        ctx = CompilationContext.get_current()
++        with ir.InsertionPoint(ctx.gpu_module_body):
++            allocator.finalize()
++        sort_k(arg_ids, arg_w, arg_sids, arg_sw, arg_eids, arg_nv, arg_pos).launch(
++            grid=(1, 1, 1), block=(threads, 1, 1), stream=stream)
++
++    return launch_sort
++
++
+ @_functools.cache
+ def _compiled(n_tokens, experts, topk):
+     tile_m, s1_tn, s1_wpe, s2_tn = _config(n_tokens)
+     common = _M_mixed_moe_gemm_2stage_common
+     exe1 = common.compile_mixed_moe_gemm1_common(
+         model_dim=_MODEL_DIM, inter_dim=_INTER_DIM, experts=experts, topk=topk, tile_m=tile_m, tile_n=s1_tn,
+-        tile_k=256, doweight_stage1=False, a_dtype="fp4", b_dtype="fp4", out_dtype="bf16", act="swiglu",
++        tile_k=256, doweight_stage1=False, a_dtype="fp4", b_dtype="fp4", out_dtype="fp4", act="swiglu",
+         use_cshuffle_epilog=None, enable_bias=False, model_dim_pad=0, inter_dim_pad=0, persist_m=1,
+         use_async_copy=False, waves_per_eu=s1_wpe, k_batch=1, b_nt=2, gate_mode=_GateMode.SEPARATED,
+         a_scale_one=False, xcd_swizzle=0, k_wave=1, v2_output_layout=False)
+@@ -8640,7 +8914,9 @@ def _compiled(n_tokens, experts, topk):
+         use_cshuffle_epilog=None, accumulate=True, enable_bias=False, model_dim_pad=0, inter_dim_pad=0,
+         persist_m=(-1 if s2_blocks > 256 else 1), sort_block_m=0, waves_per_eu=None, use_async_copy=False,
+         cu_num_mul=1, b_nt=0, xcd_swizzle=0)
+-    return tile_m, m_blocks, s2_blocks, exe1, exe2
++    exe_xq = _build_xquant(n_tokens, topk, (m_blocks * tile_m + 255) // 256 * 256)
++    exe_sort = _build_sort(n_tokens, topk, experts, tile_m, m_blocks)
++    return tile_m, m_blocks, s2_blocks, exe1, exe2, exe_xq, exe_sort
+ 
+ 
+ def _launch(exe, args):
+@@ -8656,40 +8932,6 @@ def _ptr(t):
+     return flyc.from_c_void_p(fx.Uint8, t.data_ptr())
+ 
+ 
+-def _quant(x, grid_t):
+-    # MXFP4 per 1 x 32 as the reference rounds: E8M0 exponent from the block amax (rounded at 1.5x), round to
+-    # nearest e2m1 with ties to even code. Returns packed codes (rows, K/2) and E8M0 bytes (rows, K/32).
+-    rows, K = x.shape
+-    blocks = x.float().view(rows, K // 32, 32)
+-    amax = blocks.abs().amax(dim=-1, keepdim=True)
+-    mantissa, exponent = _torch.frexp(amax.clamp_min(1e-10))
+-    exponent = (exponent - 3 + (mantissa > 0.75).int()).clamp(-127, 127)
+-    scaled = blocks * _torch.exp2(-exponent.float())
+-    m = scaled.abs()
+-    lo = _torch.bucketize(m, grid_t, right=True) - 1
+-    hi = (lo + 1).clamp_max(7)
+-    glo, ghi = grid_t[lo], grid_t[hi]
+-    below, above = m - glo, ghi - m
+-    up = (above < below) | ((above == below) & (hi % 2 == 0))
+-    code = _torch.where(up, hi, lo)
+-    code = code | ((scaled < 0).long() << 3)
+-    code = code.view(rows, K // 2, 2)
+-    packed = (code[..., 0] | (code[..., 1] << 4)).to(_torch.uint8)
+-    e8m0 = (exponent + 127).to(_torch.uint8).view(rows, K // 32)
+-    return packed, e8m0
+-
+-
+-def _sorted_scales(e8m0, pos, n_rows):
+-    # E8M0 rows placed at their sorted positions, then shuffled [rows/32][cols/8][4][16][2 col half][2 row half].
+-    cols = e8m0.shape[1]
+-    rows_pad = (n_rows + 255) // 256 * 256
+-    cols_pad = (cols + 7) // 8 * 8
+-    s = _torch.zeros((rows_pad, cols_pad), dtype=_torch.uint8, device=e8m0.device)
+-    s[pos, :cols] = e8m0
+-    s = s.view(rows_pad // 32, 2, 16, cols_pad // 8, 2, 4).permute(0, 3, 5, 2, 4, 1).contiguous()
+-    return s.view(-1)
+-
+-
+ def run(*, hidden_states, w1, w2, topk_weights, topk_ids, w1_scale, w2_scale, activation, quant_type,
+         doweight_stage1, gate_mode, act_quant, expert_mask, beta, linear_beta, swiglu_limit, out_dtype, out):
+     M, D = hidden_states.shape
+@@ -8697,47 +8939,36 @@ def run(*, hidden_states, w1, w2, topk_weights, topk_ids, w1_scale, w2_scale, ac
+     top = topk_ids.shape[1]
+     R = M * top
+     dev = hidden_states.device
+-    tile_m, m_blocks, s2_blocks, exe1, exe2 = _compiled(M, E, top)
+-    grid_t = _torch.arange(8, device=dev, dtype=_torch.float32)
+-    grid_t = _torch.where(grid_t < 4, 0.5 * grid_t, _torch.where(grid_t < 7, grid_t - 2.0, grid_t * 0 + 6.0))
+-
+-    # Routing sort: expert-major, each expert padded to tile_m rows, routes in input order within an expert.
+-    ids = topk_ids.reshape(-1).long()
+-    counts = _torch.zeros(E, dtype=_torch.int64, device=dev).scatter_add(0, ids, _torch.ones_like(ids))
+-    padded = (counts + tile_m - 1) // tile_m * tile_m
+-    ends = _torch.cumsum(padded, 0)
+-    order = _torch.argsort(ids, stable=True)
+-    cstart = _torch.cumsum(counts, 0) - counts
+-    rank = _torch.empty_like(ids)
+-    rank[order] = _torch.arange(R, device=dev) - cstart[ids[order]]
+-    pos = (ends - padded)[ids] + rank
++    tile_m, m_blocks, s2_blocks, exe1, exe2, exe_xq, exe_sort = _compiled(M, E, top)
+     n_sorted = m_blocks * tile_m
+-    r = _torch.arange(R, device=dev)
+-    sorted_ids = _torch.full((n_sorted,), (top << 24) | M, dtype=_torch.int32, device=dev)
+-    sorted_ids[pos] = (((r % top) << 24) | (r // top)).to(_torch.int32)
+-    sorted_w = _torch.zeros((n_sorted,), dtype=_torch.float32, device=dev)
+-    sorted_w[pos] = topk_weights.reshape(-1).float()
+-    block_start = _torch.arange(m_blocks, device=dev) * tile_m
+-    sorted_eids = _torch.searchsorted(ends, block_start, right=True).clamp_max(E - 1).to(_torch.int32)
+-    num_valid = _torch.stack([ends[-1], _torch.full_like(ends[-1], M)]).to(_torch.int32)
+-
+-    # Stage 1: x quantized in token order, its scales in sorted order; gate/up GEMM with clamped SwiGLU, bf16 out.
+-    xq, xs = _quant(hidden_states, grid_t)
+-    xs_sorted = _sorted_scales(xs[r // top], pos, n_sorted)
+-    y = _torch.empty((M, top, _INTER_DIM), dtype=_torch.bfloat16, device=dev)
++    stream = _torch.cuda.current_stream()
++
++    # Routing sort: expert-major, each expert padded to tile_m rows.
++    sorted_ids = _torch.empty((n_sorted,), dtype=_torch.int32, device=dev)
++    sorted_w = _torch.empty((n_sorted,), dtype=_torch.float32, device=dev)
++    sorted_eids = _torch.empty((m_blocks,), dtype=_torch.int32, device=dev)
++    num_valid = _torch.empty((2,), dtype=_torch.int32, device=dev)
++    pos32 = _torch.empty((R,), dtype=_torch.int32, device=dev)
++    _launch(exe_sort, (_ptr(topk_ids), _ptr(topk_weights), _ptr(sorted_ids), _ptr(sorted_w), _ptr(sorted_eids),
++                       _ptr(num_valid), _ptr(pos32), stream))
++
++    # x quantized in token order with its scales in sorted order, and out zeroed, in one launch.
++    xq = _torch.empty((M, _MODEL_DIM // 2), dtype=_torch.uint8, device=dev)
++    xs_sorted = _torch.empty(((n_sorted + 255) // 256 * 256) * (_MODEL_DIM // 32), dtype=_torch.uint8, device=dev)
++    _launch(exe_xq, (_ptr(hidden_states), _ptr(xq), _ptr(out), _ptr(pos32), _ptr(xs_sorted),
++                     _torch.cuda.current_stream()))
++    # Stage 1: gate/up GEMM with clamped SwiGLU, quantized to MXFP4 per route with scales in sorted order.
++    yq = _torch.empty((R, _INTER_DIM // 2), dtype=_torch.uint8, device=dev)
++    ys_sorted = _torch.empty(((n_sorted + 255) // 256 * 256) * (_INTER_DIM // 32), dtype=_torch.uint8, device=dev)
+     empty_f32 = _torch.empty(1, dtype=_torch.float32, device=dev)
+-    empty_u8 = _torch.empty(1, dtype=_torch.uint8, device=dev)
+     lim = float(swiglu_limit) if swiglu_limit else 7.0
+     s1_blocks = min(m_blocks, R)
+     _launch(exe1, (
+-        _ptr(y), _ptr(xq), _ptr(w1), _ptr(xs_sorted), _ptr(w1_scale), _ptr(sorted_ids), _ptr(sorted_eids),
+-        _ptr(sorted_w), _ptr(num_valid), _ptr(empty_f32), _ptr(empty_u8), M, 2 * _INTER_DIM, _MODEL_DIM,
++        _ptr(yq), _ptr(xq), _ptr(w1), _ptr(xs_sorted), _ptr(w1_scale), _ptr(sorted_ids), _ptr(sorted_eids),
++        _ptr(sorted_w), _ptr(num_valid), _ptr(empty_f32), _ptr(ys_sorted), M, 2 * _INTER_DIM, _MODEL_DIM,
+         s1_blocks, 1.0, 1.0, 1.0, 1.0, lim, _torch.cuda.current_stream()))
+ 
+-    # Stage 2: y quantized per route, scales in sorted order; down GEMM weighted and accumulated atomically.
+-    yq, ys = _quant(y.view(R, _INTER_DIM), grid_t)
+-    ys_sorted = _sorted_scales(ys, pos, n_sorted)
+-    out.zero_()
++    # Stage 2: down GEMM, weighted and accumulated atomically into out.
+     _launch(exe2, (
+         _ptr(out), _ptr(yq), _ptr(w2), _ptr(ys_sorted), _ptr(w2_scale), _ptr(sorted_ids), _ptr(sorted_eids),
+         _ptr(sorted_w), _ptr(num_valid), _ptr(empty_f32), M, _MODEL_DIM, _INTER_DIM, s2_blocks,

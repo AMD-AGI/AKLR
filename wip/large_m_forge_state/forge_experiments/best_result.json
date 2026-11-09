@@ -1,0 +1,38 @@
+{
+  "aggregate_regression": "",
+  "artifact_dir": "best/iter_005",
+  "baseline_wall_ms": 9.011546179761904,
+  "benchmark_path": "best/iter_005/benchmark.json",
+  "best_wall_ms": 8.4092,
+  "campaign_id": "db97d5b1dcc444bcab41222e17933a1b",
+  "changed_files": [
+    "kernel.py"
+  ],
+  "commit_hash": "5bfbea64c0d72d191756b25f14d171e78e120703",
+  "correctness_passed": true,
+  "experiment_id": "2abb24e1",
+  "improved_during_search": true,
+  "incremental_improved": true,
+  "incremental_speedup": 73.660362,
+  "iteration": 5,
+  "mean_case_speedup": 1.0673514534925792,
+  "patch_path": "best/iter_005/forge.patch",
+  "plan": "Stream stage-2 W2 weights non-temporally at small token counts.",
+  "pristine_baseline_ms": 9.011546179761904,
+  "published_at": "2026-11-06 14:57:53",
+  "round_budget": {
+    "campaign_sec": 12622.577,
+    "planning_share_pct": 8.6,
+    "planning_total_sec": 1082.902,
+    "rounds": 4,
+    "total_sec": 10260.713
+  },
+  "search_start_mean_case_speedup": 0.014490173973418353,
+  "search_start_ms": 501.40193999999997,
+  "session_index": 4,
+  "snr_db": null,
+  "speedup": 1.067351,
+  "total_improved": true,
+  "total_speedup": 1.067351,
+  "validation_path": "best/iter_005/validation.txt"
+}
