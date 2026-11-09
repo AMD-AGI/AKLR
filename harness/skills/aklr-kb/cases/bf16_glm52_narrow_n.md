@@ -36,9 +36,12 @@ the Point's M.
   `GEMM` in `aklr/ops/gemm/contract.py`). Every reduction these kernels run at a served Point adds in a fixed order.
 - K = 6144 with N = 32, 128 or 256: a weight of 384 KiB, 1.5 MiB or 3 MiB, a narrow-N row bound by launch,
   reduction and memory latency rather than by reading `b` (`../gemm/small_m.md` §2).
-- Served Points: n128 m 2, 4; n256 m 2, 4, 8, 2048, 4096; n32 m 4, 8, 2048. Each file holds 13 Points,
-  m = 1, 2, 4, …, 4096.
-- Each schema name has only this file, so at every Point the yardstick is aiter.
+- Served Points on main as of #102 (6d7cfec, CI run 42549655045, measurement profile 19): n128 m 2, 4; n256 m 2, 4,
+  8, 4096; n32 m 4, 8, 128, 2048. § Result shows an earlier run. Each file lists 13 Points, m = 1, 2, 4, …, 4096.
+- The yardstick is aiter, except where a second file is served: `gemm_n128_k6144` and `gemm_n256_k6144` each have
+  one, listing m 256–2048 and m 256–1024 and served only where CI measures it at the threshold or above. They, and
+  `gemm_n64_k4096` at m 256–4096, are in [bf16_k4096_splitk_hgemm.md](bf16_k4096_splitk_hgemm.md) § N 64–256 at
+  m 256–4096.
 
 ## Counter-signals
 
