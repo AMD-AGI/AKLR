@@ -17,6 +17,7 @@ The initial layout is intentionally small: the skills are usable guidance, and
 
 `aklr-open-pr` opens the pull request of any step, with the evidence its kinds need.
 `aklr-read-validation` reads a validation result, local or from CI, per Point.
+`aklr-bad-cases` lists mistakes agents have made in AKLR, checked when reviewing a change or opening a pull request.
 
 The lifecycle is governed by [rules.md](rules.md), [gates.md](gates.md), and
 [gate-config.md](gate-config.md).

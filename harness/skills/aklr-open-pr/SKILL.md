@@ -11,8 +11,9 @@ reviewer has when GPU CI did not run. Write it from runs on the PR's head, never
 ## Required Context
 
 Read [.github/pull_request_template.md](../../../.github/pull_request_template.md) (sections and
-what each kind needs) and [.github/scripts/review_tier/policy.py](../../../.github/scripts/review_tier/policy.py)
-(what the `review-tier` status asks of each kind).
+what each kind needs), [.github/scripts/review_tier/policy.py](../../../.github/scripts/review_tier/policy.py)
+(what the `review-tier` status asks of each kind) and [aklr-bad-cases](../aklr-bad-cases/SKILL.md);
+check the change against it before opening the pull request.
 
 ## Procedure
 
