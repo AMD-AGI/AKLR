@@ -175,6 +175,7 @@ jobs:
           name: agentx-plan
           path: ${{ runner.temp }}/plan
       - uses: actions/download-artifact@v4
+        id: download_results
         if: needs.plan.outputs.count != '0'
         continue-on-error: true # Early failures may produce no artifact.
         with:
@@ -198,11 +199,15 @@ jobs:
         if: github.event_name == 'schedule' || inputs.publish
         with:
           path: ${{ runner.temp }}/site/
-      - name: Summarize target outcomes after saving reports
-        # Measurement failures stay visible in sweep and in the saved reports.
+      - name: Summarize and check target outcomes after saving reports
+        # Sweep owns measurement failures; plan and report errors must still fail CI.
+        env:
+          RESULTS_DOWNLOAD_OUTCOME: ${{ steps.download_results.outcome }}
         run: |
           jq -r '.targets[] | "\(.model.id)/\(.target.id): \(.status), \(.points_ok)/\(.points_total) paired points OK"' \
             "$RUNNER_TEMP/site/manifest.json"
+          jq -e 'all(.targets[]; .failure_stage == null)' "$RUNNER_TEMP/site/manifest.json"
+          test "$RESULTS_DOWNLOAD_OUTCOME" != failure
 
   pages:
     needs: report

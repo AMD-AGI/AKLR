@@ -200,8 +200,16 @@ def collect(
         relative = target_path(model_id, target_id)
         planned = selected.get(key)
         item = dict(planned or prior[key])
+        # Only plan/report failures fail the report job; sweep owns measurement failures.
         item.update(
-            report=False, baselines={}, points_ok=0, points_total=0, error=None, mode="—", measured_at="—"
+            report=False,
+            baselines={},
+            points_ok=0,
+            points_total=0,
+            error=None,
+            failure_stage=None,
+            mode="—",
+            measured_at="—",
         )
         current = None
         if planned:
@@ -264,13 +272,14 @@ def collect(
                             current["run"].get("error")
                             or "测量未全部完成或有失败点 / Measurement incomplete or points failed"
                         )
-                except (ValueError, KeyError, TypeError) as error:
+                except (OSError, ValueError, KeyError, TypeError) as error:
                     current = None
-                    item.update(status="failed", error=str(error))
+                    item.update(status="failed", error=str(error), failure_stage="report")
             else:
                 item.update(
                     status="resolve-failed" if planned["status"] != "resolved" else "failed",
                     error=planned.get("error") or "没有测量结果 / No measurement results",
+                    failure_stage="plan" if planned["status"] != "resolved" else "report",
                 )
         else:
             item["status"] = "not-run"

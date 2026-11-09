@@ -176,6 +176,57 @@ class AgentXEnvironmentTests(unittest.TestCase):
         self.assertTrue(results["run"]["completed"])
         self.assertTrue(results["control"]["run"]["completed"])
 
+    def test_process_cleanup_failure_stops_the_sweep_and_keeps_earlier_measurements(self):
+        second = copy.deepcopy(self.point)
+        second.update(conc=2, exp_name="tp1-c2")
+        self.serving["points"].append(second)
+
+        def client(*_args, **kwargs):
+            env = kwargs["env"]
+            path = Path(env["AGENTIC_OUTPUT_DIR"]) / f"{env['RESULT_FILENAME']}.json"
+            path.write_text(json.dumps(self.aggregate))
+            return 0
+
+        for failed_index in (1, 2):
+            with (
+                self.subTest(failed_mode="disabled" if failed_index == 1 else "enabled"),
+                mock.patch.object(runtime, "port_free", return_value=True),
+                mock.patch.object(runtime, "wait_ready"),
+                mock.patch.object(runtime.subprocess, "Popen") as server,
+                mock.patch.object(runtime, "run_client", side_effect=client),
+                mock.patch.object(
+                    runtime.os,
+                    "killpg",
+                    side_effect=[ProcessLookupError()] * failed_index
+                    + [PermissionError("cannot terminate process group")],
+                ) as kill,
+            ):
+                code, results, calls = self.run_main(measurements=runtime.run_live)
+            points = results["control"]["points"] + results["points"]
+            self.assertEqual(code, 1)
+            self.assertEqual(len(points), failed_index + 1)
+            self.assertEqual(sum(point["status"] == "ok" for point in points), failed_index)
+            self.assertEqual(points[-1]["status"], "failed")
+            self.assertTrue(points[-1]["cleanup_failed"])
+            self.assertIn("PermissionError: cannot terminate process group", points[-1]["error"])
+            self.assertFalse(results["run"]["completed"])
+            self.assertTrue(results["run"]["cleanup_failed"])
+            self.assertIn("cannot terminate process group", results["run"]["error"])
+            self.assertEqual(results["control"]["run"]["completed"], failed_index == 2)
+            self.assertEqual(calls["run_live"].call_count, failed_index + 1)
+            self.assertEqual(server.call_count, failed_index + 1)
+            self.assertEqual(kill.call_count, failed_index + 1)
+            self.assertNotEqual(analysis.compare_aklr(results)["status"], "ok")
+
+    def test_client_cleanup_failure_is_distinct_from_a_measurement_failure(self):
+        with (
+            mock.patch.object(runtime.subprocess, "Popen") as process,
+            mock.patch.object(runtime.os, "killpg", side_effect=PermissionError("cannot stop client")),
+        ):
+            process.return_value.wait.return_value = 0
+            with self.assertRaisesRegex(runtime.CleanupError, "PermissionError: cannot stop client"):
+                runtime.run_client(["fixture-client"], timeout=1)
+
     def test_verified_defaults_are_read_once_and_not_taken_from_ambient_values(self):
         self.write_inspection()
         with (

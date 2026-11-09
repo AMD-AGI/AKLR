@@ -23,6 +23,8 @@ Solid arrows show job execution order; dashed arrows show artifact uploads and r
 
 After sweep finishes the selected points, at least one successful measurement lets the job complete successfully. When other points fail, its summary says **Partial success** and lists the successful, failed, and missing measurements across AKLR off/on. All failed measurements make sweep fail; setup, container, and cleanup errors also remain failures. Each point retains its original status and error in the saved results. GitHub Actions has no separate partial-success conclusion, so a partial sweep has a green job status.
 
+If process cleanup fails during a measurement, sweep saves that point and the earlier results, stops before the next point, and returns a failure. After uploading reports, CI separately checks plan resolution, result download, missing results, and result validation errors. Measurement failures alone do not fail the report job. Pages can still publish an uploaded artifact when publishing is enabled.
+
 A model target's baseline is updated only when all points complete a formal measurement successfully and the source tree is clean. Failed, incomplete, dirty, or unknown-source runs do not update the baseline.
 
 The report opens in English. Use the **EN / 中文** buttons at the top right to switch languages on the index and target pages. Hover over a chart point, or focus it with the keyboard, to see its full serving configuration, concurrency, AKLR mode, and metrics. The index shows the target status and counts; point errors remain in the target report and JSON artifacts.

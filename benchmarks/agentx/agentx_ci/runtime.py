@@ -150,19 +150,28 @@ def wait_ready(base_url: str, server: subprocess.Popen, timeout_s: float, interv
     raise RuntimeError(f"server not ready after {timeout_s:.0f} s")
 
 
+class CleanupError(RuntimeError):
+    """A child process could not be stopped safely; the sweep must abort."""
+
+
 def stop(server: subprocess.Popen, grace_s: float = 120) -> None:
     """Stop the process group even if its leader has exited."""
     deadline = time.monotonic() + grace_s
     try:
-        os.killpg(server.pid, signal.SIGTERM)
-        while time.monotonic() < deadline:
-            server.poll()
-            os.killpg(server.pid, 0)
-            time.sleep(min(0.1, max(0, deadline - time.monotonic())))
-        os.killpg(server.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    server.wait()
+        try:
+            os.killpg(server.pid, signal.SIGTERM)
+            while time.monotonic() < deadline:
+                server.poll()
+                os.killpg(server.pid, 0)
+                time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+            os.killpg(server.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        server.wait()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        raise CleanupError(
+            f"Could not stop process group {server.pid}: {type(error).__name__}: {error}"
+        ) from error
 
 
 def run_client(command: list[str], *, timeout: float, **kwargs) -> int:
@@ -353,6 +362,8 @@ def run_point(point: dict, out: Path, host: dict) -> dict:
         record["raw_data"] = aggregate
     except (RuntimeError, OSError, KeyError, ValueError, TypeError, subprocess.TimeoutExpired) as error:
         record.update(status="failed", error=f"{type(error).__name__}: {error}"[:500])
+        if isinstance(error, CleanupError):
+            record["cleanup_failed"] = True
     record["elapsed_s"] = round(time.monotonic() - began, 1)
     return record
 
@@ -613,6 +624,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  -> {record['status']} {record.get('error') or ''}", flush=True)
             target["points"].append(record)
             target["run"]["finished_at"] = utc_now()
+            if record.get("cleanup_failed"):
+                error = f"AKLR {mode} {point['arm']} c{point['conc']}: {record['error']}"
+                for interrupted in (target, results):
+                    interrupted["run"].update(
+                        completed=False, cleanup_failed=True, error=error, finished_at=utc_now()
+                    )
+                write_json(args.out / "results.json", results)
+                print(f"ERROR: {error}", file=sys.stderr)
+                return 1
             write_json(args.out / "results.json", results)
         for arm, spec in target["serving"]["arms"].items():
             spec["arm_measurement_sha256"] = sha256_json(
