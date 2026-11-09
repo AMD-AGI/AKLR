@@ -115,7 +115,7 @@ class AgentXEnvironmentTests(unittest.TestCase):
     def write_inspection(self, inspection=None):
         self.inspection_path.write_text(json.dumps(self.inspection if inspection is None else inspection))
 
-    def run_main(self, inspection=None):
+    def run_main(self, inspection=None, *, measurements=None):
         self.write_inspection(inspection)
         serving_path = self.root / "serving.json"
         serving_path.write_text(json.dumps(self.serving))
@@ -142,8 +142,39 @@ class AgentXEnvironmentTests(unittest.TestCase):
                 name: stack.enter_context(mock.patch.object(runtime, name, return_value=value))
                 for name, value in patches.items()
             }
+            if measurements is not None:
+                calls["run_live"].side_effect = measurements
             code = runtime.main(["--serving", str(serving_path), "--out", str(out), "--run-id", "fixture"])
         return code, json.loads((out / "results.json").read_text()), calls
+
+    def test_partial_sweep_succeeds_and_retains_point_failures_in_both_modes(self):
+        for measurements in (
+            [RuntimeError("server failed"), self.aggregate],
+            [self.aggregate, RuntimeError("server failed")],
+        ):
+            with self.subTest(first_measurement=type(measurements[0]).__name__):
+                code, results, calls = self.run_main(measurements=measurements)
+                self.assertEqual(code, 0)
+                self.assertEqual(calls["run_live"].call_count, 2)
+                points = results["control"]["points"] + results["points"]
+                self.assertEqual(sum(point["status"] == "ok" for point in points), 1)
+                failure = next(point for point in points if point["status"] == "failed")
+                self.assertEqual(failure["error"], "RuntimeError: server failed")
+                for target in (results, results["control"]):
+                    self.assertTrue(target["run"]["completed"])
+                    self.assertNotIn("error", target["run"])
+                self.assertNotEqual(analysis.compare_aklr(results)["status"], "ok")
+
+    def test_sweep_fails_when_neither_mode_has_a_successful_point(self):
+        code, results, calls = self.run_main(
+            measurements=[RuntimeError("disabled failed"), RuntimeError("enabled failed")]
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(calls["run_live"].call_count, 2)
+        self.assertEqual(results["control"]["points"][0]["error"], "RuntimeError: disabled failed")
+        self.assertEqual(results["points"][0]["error"], "RuntimeError: enabled failed")
+        self.assertTrue(results["run"]["completed"])
+        self.assertTrue(results["control"]["run"]["completed"])
 
     def test_verified_defaults_are_read_once_and_not_taken_from_ambient_values(self):
         self.write_inspection()

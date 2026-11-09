@@ -621,11 +621,14 @@ def main(argv: list[str] | None = None) -> int:
         target["run"]["completed"] = True
         write_json(args.out / "results.json", results)
     all_records = results["control"]["points"] + records
-    failed = sum(r["status"] != "ok" for r in all_records)
+    successful = sum(r["status"] == "ok" and valid_metrics(r) for r in all_records)
+    failed = len(all_records) - successful
+    status = "Failed" if not successful else "Partial success" if failed else "Success"
     print(
-        f"{len(all_records) - failed}/{len(all_records)} paired points ok; wrote {args.out / 'results.json'}"
+        f"{status}: {successful}/{len(all_records)} measurement points successful; "
+        f"{failed} failed; wrote {args.out / 'results.json'}"
     )
-    return 1 if failed else 0
+    return 0 if successful else 1
 
 
 if __name__ == "__main__":

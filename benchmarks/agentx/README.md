@@ -12,7 +12,7 @@ This guide covers the AKLR AgentX performance pipeline, GitHub triggers, local C
 flowchart TD
     T["Manual, PR label, or scheduled trigger"] --> P["plan: resolve models and pin upstream code and configuration"]
     P --> S["sweep: prepare the environment, test models and points serially, save results"]
-    S --> R["report: validate results, generate reports and baselines, then check status"]
+    S --> R["report: validate results, generate reports and baselines, summarize outcomes"]
     R -->|"Publishing enabled"| D["pages: deploy the uploaded Pages artifact"]
     P -.->|"Upload"| A["agentx-plan artifact"]
     A -.->|"Read serving.json"| S
@@ -21,7 +21,13 @@ flowchart TD
 
 Solid arrows show job execution order; dashed arrows show artifact uploads and reads. `agentx-plan` is uploaded once and read by both sweep and report. The report job waits for plan and sweep to finish; it can use the plan to report failures even when sweep fails.
 
+After sweep finishes the selected points, at least one successful measurement lets the job complete successfully. When other points fail, its summary says **Partial success** and lists the successful, failed, and missing measurements across AKLR off/on. All failed measurements make sweep fail; setup, container, and cleanup errors also remain failures. Each point retains its original status and error in the saved results. GitHub Actions has no separate partial-success conclusion, so a partial sweep has a green job status.
+
 A model target's baseline is updated only when all points complete a formal measurement successfully and the source tree is clean. Failed, incomplete, dirty, or unknown-source runs do not update the baseline.
+
+The report opens in English. Use the **EN / 中文** buttons at the top right to switch languages on the index and target pages. Hover over a chart point, or focus it with the keyboard, to see its full serving configuration, concurrency, AKLR mode, and metrics. The index shows the target status and counts; point errors remain in the target report and JSON artifacts.
+
+Throughput is **input + output tokens per second per GPU**, including cached input tokens. P90 E2E interactivity is `1 / P90(request latency in seconds / output tokens)` and includes time to first token. It differs from decode-only interactivity, `1 / P90(inter-token latency)`. Short smoke runs can cover different trace segments and input/output lengths at each concurrency or AKLR mode; their aggregate metrics alone do not establish concurrency scaling or an AKLR speedup. Use formal durations and check the recorded request distributions when comparing performance.
 
 ### 1.1 Trigger with a GitHub Runner
 

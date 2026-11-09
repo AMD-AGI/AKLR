@@ -12,7 +12,7 @@ from pathlib import Path
 from agentx_ci.model_config import validate_model_id, validate_target_id
 from agentx_ci.performance_analysis import compare_aklr
 from agentx_ci.recipe_resolve import POLICY, SelectionError, point_id, validate_manifest
-from agentx_ci.report import STYLE, write_report
+from agentx_ci.report import LANGS, language_switch, render_document, status_label, tr, write_report
 from agentx_ci.utils import (
     DEFAULT_CONFIG,
     REPO_ROOT,
@@ -102,41 +102,83 @@ class PreviousSite:
 
 
 def render_index(manifest: dict) -> str:
-    labels = {
-        "ok": "成功 / OK",
-        "partial": "部分失败 / Partial",
-        "failed": "失败 / Failed",
-        "resolve-failed": "解析失败 / Resolve failed",
-        "not-run": "本轮未选择 / Not selected",
+    titles = {lang: "AgentX · " + tr(lang, "Model targets", "模型与测试目标") for lang in LANGS}
+    pages = "\n".join(index_page(manifest, lang, titles[lang]) for lang in LANGS)
+    return render_document(titles, pages)
+
+
+def index_page(manifest: dict, lang: str, title: str) -> str:
+    modes = {
+        "live": tr(lang, "Live", "实测"),
+        "live / inferencex-pareto": tr(lang, "Live · Pareto-selected", "实测 · Pareto 选点"),
+    }
+    baseline_labels = {
+        "live": tr(lang, "Full grid", "全量"),
+        "pareto": tr(lang, "Pareto-selected", "前沿选点"),
     }
     rows = []
     for item in manifest["targets"]:
         model_id, target_id = target_key(item)
         label = escape(item["model"]["display_name"])
         if item.get("report"):
-            label = f'<a href="{target_path(model_id, target_id).as_posix()}/index.html">{label}</a>'
+            label = (
+                f'<a href="{target_path(model_id, target_id).as_posix()}/index.html?lang={lang}">{label}</a>'
+            )
         baselines = (
-            "<br>".join(f"{mode}: {escape(date)}" for mode, date in item.get("baselines", {}).items()) or "—"
+            "<br>".join(
+                f"{escape(baseline_labels.get(mode, mode))}: {escape(date)}"
+                for mode, date in item.get("baselines", {}).items()
+            )
+            or "—"
         )
+        mode = item.get("mode", "—")
         rows.append(
             f"<tr><td>{label}<br><code>{model_id}</code></td><td><code>{target_id}</code></td>"
-            f"<td>{labels[item['status']]}</td><td>{escape(item.get('mode', '—'))}</td>"
+            f"<td>{escape(status_label(lang, item['status']))}</td><td>{escape(modes.get(mode, mode))}</td>"
             f"<td>{item.get('points_ok', 0)}/{item.get('points_total', 0)}</td>"
-            f"<td>{escape(item.get('measured_at', '—'))}</td><td>{baselines}</td>"
-            f"<td>{escape(item.get('error') or '')}</td></tr>"
+            f"<td>{escape(item.get('measured_at', '—'))}</td><td>{baselines}</td></tr>"
         )
-    return f"""<!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AgentX · 模型与测试目标 / Model targets</title><style>{STYLE}</style></head><body>
-<header><h1>AgentX · 模型与测试目标 / Model targets</h1><div class="meta">Run {escape(manifest["run_id"])} · {escape(manifest["generated_at"])}</div></header>
-<main><p>测试目标按串行运行，性能只与同一模型、同一目标的历史基线比较。失败或未选择的目标如有历史报告，会明确标注测量时间。</p>
-<p>Targets run serially and are compared only with baselines for the same model and target. Historical reports retain their measurement date.</p>
-<p>只有源码干净、执行环境经校验且全部 AKLR 开关配对测量成功的正式运行更新基线；smoke 保留原基线。<br>
-Only formal runs from a clean source tree with verified execution environments and successful matched AKLR off/on measurements update baselines; smoke runs preserve them.
-全量与前沿选点分别保存基线。 / Full-grid and Pareto-selected runs keep separate baselines.</p>
-<div class="card" style="overflow-x:auto"><table><thead><tr><th>模型 / Model</th><th>测试目标 / Target</th><th>本轮状态 / Status</th>
-<th>模式 / Mode</th><th>成功点 / Points OK</th><th>测量时间 / Measured</th><th>有效基线 / Baselines</th><th>说明 / Details</th>
-</tr></thead><tbody>{"".join(rows)}</tbody></table></div></main></body></html>"""
+    headers = (
+        tr(lang, "Model", "模型"),
+        tr(lang, "Target", "测试目标"),
+        tr(lang, "Status", "本轮状态"),
+        tr(lang, "Mode", "模式"),
+        tr(lang, "Points OK", "成功点"),
+        tr(lang, "Measured", "测量时间"),
+        tr(lang, "Baselines", "有效基线"),
+    )
+    return f"""<div class="page" data-page="{lang}" lang="{tr(lang, "en", "zh-CN")}">
+<header><div class="top"><h1>{escape(title)}</h1>{language_switch(lang)}</div>
+<div class="meta">{tr(lang, "Run", "运行")} {escape(manifest["run_id"])} · {
+        escape(manifest["generated_at"])
+    }</div></header>
+<main><p>{
+        tr(
+            lang,
+            "Targets run serially and are compared only with baselines for the same model and target. "
+            "Historical reports retain their measurement date.",
+            "测试目标按串行运行，性能只与同一模型、同一目标的历史基线比较。"
+            "失败或未选择的目标如有历史报告，会明确标注测量时间。",
+        )
+    }</p><p>{
+        tr(
+            lang,
+            "Only formal runs from a clean source tree with verified execution environments and successful "
+            "matched AKLR off/on measurements update baselines; smoke runs preserve them.",
+            "只有源码干净、执行环境经校验且全部 AKLR 开关配对测量成功的正式运行更新基线；"
+            "冒烟验证保留原基线。",
+        )
+    }</p><p>{
+        tr(
+            lang,
+            "Full-grid and Pareto-selected runs keep separate baselines.",
+            "全量与前沿选点分别保存基线。",
+        )
+    }</p>
+<div class="card" style="overflow-x:auto"><table><thead><tr>{
+        "".join(f"<th>{label}</th>" for label in headers)
+    }</tr>
+</thead><tbody>{"".join(rows)}</tbody></table></div></main></div>"""
 
 
 def collect(
@@ -206,8 +248,13 @@ def collect(
                             or current["run"]["points_expected"] != len(selection["points"])
                         ):
                             raise ValueError("result points do not match the selected plan")
-                    ok = sum(p["status"] == "ok" for p in current["points"])
-                    total = current["run"]["points_expected"]
+                    ok = sum(
+                        p["status"] == "ok"
+                        for p in current["points"] + current.get("control", {}).get("points", [])
+                    )
+                    total = current["run"]["points_expected"] + current.get("control", {}).get("run", {}).get(
+                        "points_expected", 0
+                    )
                     complete = complete_measurement(current)
                     item["status"] = (
                         "ok" if complete and ok == total and total else "partial" if ok else "failed"
@@ -252,7 +299,16 @@ def collect(
             mode = shown["run"]["mode"]
             notice = None
             if current is None:
-                notice = f"Historical measurement / 历史测量：本轮状态 {item['status']}；测量时间 {shown['run']['finished_at']}"
+                notice = {
+                    lang: tr(
+                        lang,
+                        f"Historical measurement: this run is {status_label(lang, item['status'])}; "
+                        f"measured at {shown['run']['finished_at']}.",
+                        f"历史测量：本轮状态为{status_label(lang, item['status'])}；"
+                        f"测量时间 {shown['run']['finished_at']}。",
+                    )
+                    for lang in LANGS
+                }
             shown = validated_results(shown)
             item.update(
                 report=True,

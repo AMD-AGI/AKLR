@@ -135,6 +135,7 @@ jobs:
           name: agentx-plan
           path: ${{ runner.temp }}/plan
       - name: Sweep one model target
+        # Partial measurements succeed; the step summary retains failed point counts.
         env:
           MODEL_ID: ${{ matrix.model }}
           TARGET_ID: ${{ matrix.target }}
