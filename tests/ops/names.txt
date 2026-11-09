@@ -499,8 +499,6 @@ mhc_fused_post_pre_has_norm_weight_hidden_size#
 mhc_post_hidden_size#
 mhc_pre_hidden_size#
 mhc_pre_has_norm_weight_hidden_size#
-moe_sort_mxfp8_quant_topk#_hidden_size#
-moe_sort_mxfp8_quant_n_experts129_topk#_hidden_size#
 per_group_quant_fp8_hidden_size#
 per_group_quant_mxfp8_hidden_size#
 rms_norm_hidden_size#

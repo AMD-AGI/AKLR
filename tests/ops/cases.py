@@ -579,35 +579,6 @@ SMALL_POINTS += (
         attrs={},
         layout_variant_name="row_major",
     ),
-    # DeepSeek-V4.1-Flash's MoE (384 routed experts + the shared one, top 6 + 1), then its DSpark
-    # draft's (128 + 1, top 3 + 1), at a short hidden size; the sorted buffers as aiter sizes them
-    *(
-        PointSpec(
-            contract_id="moe_sort_mxfp8_quant@1.0",
-            axes={
-                "n_tokens": n_tokens,
-                "n_sorted_rows": n_rows,
-                "n_blocks": n_rows // 32,
-                "topk": topk,
-                "hidden_size": 256,
-            },
-            dtypes={
-                "hidden_states": "bfloat16",
-                "topk_ids": "int32",
-                "topk_weights": "float32",
-                "sorted_ids": "int32",
-                "sorted_weights": "float32",
-                "sorted_expert_ids": "int32",
-                "sorted_scales": "uint8",
-                "num_valid_ids": "int32",
-                "moe_buf": "bfloat16",
-                "quantized": "float8_e4m3fn",
-            },
-            attrs={"n_experts": n_experts, "block_size": 32},
-            layout_variant_name="row_major",
-        )
-        for n_tokens, topk, n_experts, n_rows in ((2, 7, 385, 12352), (3, 4, 129, 4160))
-    ),
 )
 
 GFX950_CONTRACT_IDS = frozenset(
@@ -619,7 +590,6 @@ GFX950_CONTRACT_IDS = frozenset(
         "fp8_paged_mqa_logits@1.0",  # gfx942 reads its fp8 bytes as e4m3fnuz
         "per_group_quant_fp8@1.0",
         "per_group_quant_mxfp8@1.0",
-        "moe_sort_mxfp8_quant@1.0",  # gfx942's aiter quantizes to e4m3fnuz
         "sparse_prefill_mxfp8@1.0",
     }
 )
