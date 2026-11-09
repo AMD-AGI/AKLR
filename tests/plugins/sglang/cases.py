@@ -205,6 +205,32 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"topk": 10},
         layout_variant_name="shuffled_16x16",
     ),
+    # Qwen3.5's MXFP4 MoE block shrunk: 16 routed experts of hidden and intermediate size
+    # 256, shuffled as sglang holds them, and a narrower BF16 shared expert apart from them
+    PointSpec(
+        contract_id="qwen2_moe_mxfp4_moe@1.0",
+        axes={
+            "n_tokens": 4,
+            "model_dim": 256,
+            "n_routed": 16,
+            "inter_dim": 256,
+            "shared_inter_dim": 128,
+        },
+        dtypes={
+            "hidden_states": "bfloat16",
+            "router_weight": "bfloat16",
+            "w1": "float4_e2m1",
+            "w1_scale": "float8_e8m0",
+            "w2": "float4_e2m1",
+            "w2_scale": "float8_e8m0",
+            "shared_w1": "bfloat16",
+            "shared_w2": "bfloat16",
+            "shared_gate_weight": "bfloat16",
+            "out": "bfloat16",
+        },
+        attrs={"topk": 10},
+        layout_variant_name="shuffled_16x16",
+    ),
     PointSpec(
         contract_id="qwen2_moe_router@1.0",
         axes={"n_tokens": 4, "model_dim": 256, "n_routed": 16, "topk": 10},
@@ -408,6 +434,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "minimax_m2_mxfp4_moe@1.0",
         "qwen2_moe_fp8_experts@1.0",
         "qwen2_moe_fp8_router_experts@1.0",
+        "qwen2_moe_mxfp4_moe@1.0",
         "qwen2_moe_router@1.0",
         "gdn_decode_group_fp8_quant@1.0",
         "qwen3_next_gdn_prefill_group_fp8_quant@1.0",
