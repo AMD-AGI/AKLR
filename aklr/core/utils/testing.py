@@ -1,39 +1,63 @@
-###############################################################################
-# SPDX-License-Identifier: Apache-2.0
-#
+# SPDX-License-Identifier: Apache-2.0 AND MIT
 # Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
-###############################################################################
+# Copyright 2018-2020 Philippe Tillet
+# Copyright 2020-2022 OpenAI
 
 from __future__ import annotations
 
 import functools
+import gc
 import math
+import os
 import statistics
-from collections import Counter
-from typing import Any
+import tempfile
+import uuid
+from contextlib import contextmanager
+from pathlib import Path
 
 import torch
+import torch.distributed as dist
 import triton
 import triton.language as tl
 
-KERNEL_RECORD_BUDGET = 2048
 
-TRACE_ROW_RESERVE = 24 * KERNEL_RECORD_BUDGET
+@contextmanager
+def graph_kernel_timing_environment():
+    """Enable tracer attachment without forced queue timing before the process's first GPU call."""
+    previous = {name: os.environ.get(name) for name in ("ROCP_TOOL_ATTACH", "GPU_FORCE_QUEUE_PROFILING")}
+    try:
+        os.environ["ROCP_TOOL_ATTACH"] = "1"
+        # Forced queue timing adds overhead and corrupts graph replay's heap below HIP 7.16.
+        os.environ.pop("GPU_FORCE_QUEUE_PROFILING", None)
+        yield
+    finally:
+        for name, value in previous.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
 
-_trace_rows_reserved = False
 
+@functools.cache
+def kernel_tracer():
+    """Load AKLR's rocprofiler-sdk collector and graph node attribution fix."""
+    from torch.utils.cpp_extension import ROCM_HOME, load
 
-def _reserve_trace_rows() -> None:
-    """Grow Kineto's activity list once per process, inside an open session, so a record
-    the roctracer backend appends after the stop cannot reallocate the list it walks
-    unlocked. Each stream query adds one host-side row and no GPU record."""
-    global _trace_rows_reserved
-    if _trace_rows_reserved:
-        return
-    stream = torch.cuda.current_stream()
-    for _ in range(TRACE_ROW_RESERVE):
-        stream.query()
-    _trace_rows_reserved = True
+    from aklr.core.platform.env import RuntimeEnv
+
+    build = RuntimeEnv().build_cache_path
+    if build is not None:
+        build = build / "kernel_tracer"
+        build.mkdir(parents=True, exist_ok=True)
+    tracer = load(
+        name="aklr_kernel_tracer",
+        sources=[str(Path(__file__).with_name("_kernel_tracer.cpp"))],
+        extra_cflags=["-D__HIP_PLATFORM_AMD__"],
+        extra_include_paths=[f"{ROCM_HOME}/include"],
+        extra_ldflags=[f"-L{ROCM_HOME}/lib", "-lrocprofiler-sdk", "-lamdhip64", "-ldl"],
+        build_directory=None if build is None else str(build),
+    )
+    return tracer
 
 
 @triton.jit
@@ -43,163 +67,179 @@ def _flush_l2_cache_kernel(cache, sums, N: tl.constexpr, BLOCK: tl.constexpr):
     tl.store(sums + pid, tl.sum(tl.load(cache + offset, offset < N, other=0)))
 
 
-CACHE_FLUSH_BYTES = 1024 * 1024 * 1024
-
-
 def flush_l2_cache() -> None:
-    """Flush L2 and MALL by reading a 1 GiB GPU buffer, not writing it: written lines
-    stay dirty, and the next kernel pays their write-back."""
-    cache = torch.empty(CACHE_FLUSH_BYTES // 4, dtype=torch.int32, device="cuda")
+    """Flush L2 and MALL by reading 1 GiB: written lines would stay dirty for the next kernel."""
+    cache = torch.empty(1_073_741_824 // 4, dtype=torch.int32, device="cuda")
     blocks = triton.cdiv(cache.numel(), 4096)
     sums = torch.empty(blocks, dtype=torch.int32, device="cuda")
     _flush_l2_cache_kernel[(blocks,)](cache, sums, cache.numel(), 4096)
 
 
-@functools.cache
-def _capture_stream(device: int) -> torch.cuda.Stream:
-    """The stream a process both warms subjects on and captures them on, so per-stream
-    state a subject may only create eagerly exists on the stream it is captured on."""
-    return torch.cuda.Stream(device=device)
+def _quantile(a, q):
+    n = len(a)
+    a = sorted(a)
+
+    def get_quantile(q):
+        if not (0 <= q <= 1):
+            raise ValueError("Quantiles must be in the range [0, 1]")
+        point = q * (n - 1)
+        lower = math.floor(point)
+        upper = math.ceil(point)
+        t = point - lower
+        return (1 - t) * a[lower] + t * a[upper]
+
+    return [get_quantile(qi) for qi in q]
 
 
-# ROCm 7.2 HIP bug (fixed in 10.0): a traced graph launch reads its graph exec's kernel
-# names on the HSA signal thread after synchronize returns, so freeing the graph can
-# crash (SIGSEGV/SIGABRT in ReportActivity). Keep timed graphs alive, in one shared
-# pool. Remove once the CI image ships ROCm >= 10.0.
-_kept_graphs: list[torch.cuda.CUDAGraph] = []
+def _summarize_statistics(times, quantiles, return_mode):
+    if quantiles is not None:
+        ret = _quantile(times, quantiles)
+        if len(ret) == 1:
+            ret = ret[0]
+        return ret
+    if return_mode == "all":
+        return times
+    elif return_mode == "min":
+        return min(times)
+    elif return_mode == "max":
+        return max(times)
+    elif return_mode == "mean":
+        return statistics.mean(times)
+    elif return_mode == "median":
+        return statistics.median(times)
 
 
-@functools.cache
-def _graph_pool(device: int) -> tuple[int, int]:
-    return torch.cuda.graph_pool_handle()
+@contextmanager
+def cuda_graph_without_gc(*args, **kwargs):
+    # GC finalizing a Triton kernel unloads its module, which invalidates a capture
+    gc_was_enabled = gc.isenabled()
+    if gc_was_enabled:
+        gc.disable()
+    try:
+        with torch.cuda.graph(*args, **kwargs) as graph:
+            yield graph
+    finally:
+        if gc_was_enabled:
+            gc.enable()
 
 
-def _capture(stream: torch.cuda.Stream) -> tuple[torch.cuda.CUDAGraph, Any]:
-    """A kept graph and its capture context."""
-    graph = torch.cuda.CUDAGraph()
-    _kept_graphs.append(graph)
-    pool = _graph_pool(stream.device.index)
-    return graph, torch.cuda.graph(graph, stream=stream, pool=pool)
+@contextmanager
+def _kernel_bench_session():
+    from aklr.core.utils import _kernel_profiler as profiler
+
+    with tempfile.TemporaryDirectory(prefix="aklr-bench-") as tmpdir:
+        session = profiler.start(os.path.join(tmpdir, "profile"), context="shadow", data="tree")
+        try:
+            yield profiler, session
+        finally:
+            if session is not None:
+                profiler.finalize(session)
 
 
-def _records_per_call(fn, stream: torch.cuda.Stream):
-    graph, capture = _capture(stream)
-    with capture:
-        flush_l2_cache()
-        fn()
+def _collect_scope_times(database, prefix):
+    scope_times = []
 
-    with torch.profiler.profile(
-        activities=[torch.profiler.ProfilerActivity.CUDA],
-        schedule=torch.profiler.schedule(wait=0, warmup=1, active=1, repeat=1),
-    ) as profiler:
-        _reserve_trace_rows()
-        for replays in (1, 6):
-            for _ in range(replays):
-                graph.replay()
-            torch.cuda.synchronize()
-            profiler.step()
+    def kernel_time_ms(node):
+        children = node.get("children", [])
+        if len(children) == 0:
+            return node.get("metrics", {}).get("time (ns)", 0) / 1e6
+        return sum(kernel_time_ms(child) for child in children)
 
-    records = Counter()
-    for event in profiler.profiler.kineto_results.events():
-        if event.device_type() == torch.autograd.DeviceType.CUDA and not event.is_user_annotation():
-            records[event.correlation_id()] += 1
-    if not records:
-        raise RuntimeError("Kineto recorded no kernels for a single call")
-    return max(records.values())
+    def visit(node):
+        name = node.get("frame", {}).get("name", "")
+        if name.startswith(prefix):
+            time_ms = kernel_time_ms(node)
+            if time_ms > 0:
+                scope_times.append((name, time_ms))
+            return
+        for child in node.get("children", []):
+            visit(child)
+
+    for node in database:
+        visit(node)
+    return [time for _, time in sorted(scope_times)]
 
 
-def _kineto_replay_times_ms(events, calls_per_graph, replays, flush_name):
-    launches = sorted(
-        (
-            event
-            for event in events
-            if event.device_type() == torch.autograd.DeviceType.CPU
-            and event.name().startswith(("hipGraphLaunch", "cudaGraphLaunch"))
-        ),
-        key=lambda event: event.start_ns(),
-    )
-    if len(launches) != replays + 2:
-        raise RuntimeError("Kineto did not record every graph launch")
-    # Exclude the warmup and drain replays by launch ID: the tracer's trace of them may be incomplete.
-    times = dict.fromkeys((event.correlation_id() for event in launches[1 : replays + 1]), 0.0)
-    counts = {replay_id: Counter() for replay_id in times}
-    for event in events:
-        if event.device_type() != torch.autograd.DeviceType.CUDA or event.is_user_annotation():
-            continue
-        replay_id, name = event.correlation_id(), event.name()
-        if replay_id not in times:
-            continue
-        counts[replay_id][name] += 1
-        if name != flush_name:
-            ms = event.duration_ns() / 1e6
-            if not math.isfinite(ms) or ms <= 0:
-                raise RuntimeError("Kineto recorded an invalid kernel duration")
-            times[replay_id] += ms
-    expected = next(iter(counts.values()))
-    for names in counts.values():
-        if names.get(flush_name) != calls_per_graph:
-            raise RuntimeError(
-                f"Incomplete Kineto trace: expected {calls_per_graph} L2 flushes per replay, "
-                f"got {names.get(flush_name, 0)}"
-            )
-        if len(names) == 1:
-            raise RuntimeError("Kineto recorded no target kernels")
-        if names != expected or any(count % calls_per_graph for count in names.values()):
-            raise RuntimeError("Kineto recorded incomplete or inconsistent kernels")
-    return [ms / calls_per_graph for ms in times.values()]
+@graph_kernel_timing_environment()
+def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="median", *, group=None):
+    """fn's kernel ms per call in a CUDA graph, minus cache flushes; with group, the slowest rank's."""
+    assert return_mode in ["min", "max", "mean", "median", "all"]
+    distributed = group is not None and dist.get_world_size(group) > 1
 
-
-def bench_cudagraph(fn, rep: float = 20, group=None) -> float:
-    """Return the median per-call GPU time in milliseconds, cache flush excluded; with a
-    torch.distributed ``group``, every rank of which times its share of one collective
-    ``fn``, each captures as many calls."""
-    if not math.isfinite(rep) or rep <= 0:
-        raise ValueError("rep must be a finite positive millisecond budget")
-
-    stream = _capture_stream(torch.cuda.current_device())
-    stream.wait_stream(torch.cuda.current_stream())
+    kernel_tracer()
+    stream = torch.cuda.Stream()
+    stream.wait_stream(torch.cuda.current_stream())  # the inputs are written on the caller's stream
     with torch.cuda.stream(stream):
-        # warmup
-        flush_l2_cache()
         fn()
-        torch.cuda.synchronize()
+        if grad_to_none is not None:
+            for x in grad_to_none:
+                x.detach_()
+                x.requires_grad_(True)
+                x.grad = None
 
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
         start_event.record()
         for _ in range(5):
-            flush_l2_cache()
+            flush_l2_cache()  # the graph replays it too
             fn()
         end_event.record()
         torch.cuda.synchronize()
+        estimate_ms = start_event.elapsed_time(end_event) / 5
+        n_repeat = 1000 if estimate_ms == 0 else max(1, int(rep / estimate_ms))
+        if distributed:
+            # equal collectives on every rank; also sets up the communicator before capture
+            agreed = torch.tensor([n_repeat], device="cuda")
+            dist.all_reduce(agreed, dist.ReduceOp.MIN, group=group)
+            n_repeat = int(agreed.item())
+            ready = torch.ones(1, device="cuda")
 
-    estimate_ms = start_event.elapsed_time(end_event) / 5
-    affordable = KERNEL_RECORD_BUDGET // (12 * _records_per_call(fn, stream))
-    count = max(1, min(int(rep / estimate_ms), affordable))
-    if group is not None:
-        agreed = torch.tensor([count], device=stream.device)
-        torch.distributed.all_reduce(agreed, op=torch.distributed.ReduceOp.MIN, group=group)
-        count = int(agreed.item())
-
-    graph, capture = _capture(stream)
-    try:
-        with capture:
-            for _ in range(count):
-                flush_l2_cache()
-                fn()
-    except Exception as error:
-        raise RuntimeError(f"CUDA Graph capture failed: {error}") from error
-
-    with torch.profiler.profile(
-        activities=[torch.profiler.ProfilerActivity.CUDA],
-        schedule=torch.profiler.schedule(wait=0, warmup=1, active=1, repeat=1),
-    ) as profiler:
-        for replays in (1, 12):
-            for _ in range(replays):
-                graph.replay()
+        with _kernel_bench_session() as (profiler, session):
+            g = torch.cuda.CUDAGraph()
+            scope_prefix = f"aklr.{uuid.uuid4().hex}."
+            # on the warmed stream, where fn's per-stream state exists
+            with cuda_graph_without_gc(g, stream=stream):
+                for i in range(n_repeat):
+                    if grad_to_none is not None:
+                        for x in grad_to_none:
+                            x.grad = None
+                    flush_l2_cache()
+                    if distributed:
+                        dist.all_reduce(ready, group=group)  # the ranks start each call together
+                    with profiler.scope(f"{scope_prefix}{i:08d}"):
+                        fn()
             torch.cuda.synchronize()
-            profiler.step()
-    samples = _kineto_replay_times_ms(
-        profiler.profiler.kineto_results.events(), count, 10, "_flush_l2_cache_kernel"
-    )
-    return statistics.median(samples)
+            n_retries = 10
+            error = None
+            try:
+                try:
+                    for i in range(n_retries):
+                        g.replay()
+                    torch.cuda.synchronize()
+                finally:
+                    profiler.deactivate(session, flushing=True)
+
+                times = [
+                    t / n_retries for t in _collect_scope_times(profiler.get_data(session), scope_prefix)
+                ]
+                if distributed and len(times) != n_repeat:
+                    raise RuntimeError(f"bench_cudagraph: {len(times)} of {n_repeat} calls timed")
+            except Exception as e:
+                if not distributed:
+                    raise
+                error = e
+            del g  # its captured collectives would outlive the call in a raised error's traceback
+
+    if distributed:
+        # every rank learns each rank's failure, so all fail together and none waits on a collective
+        errors = [None] * dist.get_world_size(group)
+        dist.all_gather_object(errors, None if error is None else str(error), group=group)
+        if error is not None:
+            raise error
+        for rank, message in enumerate(errors):
+            if message is not None:
+                raise RuntimeError(f"rank {rank}: {message}")
+        slowest = torch.tensor(times, dtype=torch.float64, device="cuda")
+        dist.all_reduce(slowest, dist.ReduceOp.MAX, group=group)
+        times = slowest.tolist()
+    return _summarize_statistics(times, quantiles, return_mode)
