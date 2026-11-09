@@ -4,11 +4,13 @@
 """What vLLM 0.33.0rc1.dev910 runs on aiter on gfx950 from MuseSpark1xMoE._pool's norm to
 the experts' per-route output: fused_rmsnorm_expand, then MuseSparkAiterExperts.apply's
 routes paired with the always-masked slot and its cached unit weights, into aiter's
-fused_moe at per_1x32 (rocm_aiter_fused_experts' arguments for MXFP4 w4a4 experts)."""
+fused_moe at per_1x32 (rocm_aiter_fused_experts' arguments for MXFP4 w4a4 experts).
+Without vLLM: its norm kernel is copied in ``_norm_expand``."""
 
 from __future__ import annotations
 
 import functools
+import os
 
 __all__ = ["muse_spark_moe_baseline"]
 
@@ -39,15 +41,11 @@ def muse_spark_moe_baseline(
     from aiter import ActivationType, QuantType
     from aiter.fused_moe import fused_moe
     from aiter.ops.flydsl.moe_common import GateMode
-    from vllm._aiter_ops import rocm_aiter_ops
-    from vllm.models.muse_spark.amd.ops.fused_norm_expand import (
-        fused_rmsnorm_expand,
-        take_expanded,
-    )
+
+    from aklr.plugins.vllm.models.muse_spark._norm_expand import rmsnorm_expand
 
     n_tokens, topk = topk_ids.shape
-    first = fused_rmsnorm_expand(hidden_states, norm_weight, eps, gain_center, False, topk)
-    expanded = take_expanded(first, topk)
+    expanded = rmsnorm_expand(hidden_states, norm_weight, eps, gain_center, False, topk)
     flat_ids = topk_ids.view(n_tokens * topk, 1)
     masked_slot = flat_ids.new_full((n_tokens * topk, 1), expert_mask.shape[0] - 1)
     route_output = fused_moe(
@@ -61,7 +59,8 @@ def muse_spark_moe_baseline(
         quant_type=QuantType.per_1x32,
         w1_scale=w1_scale,
         w2_scale=w2_scale,
-        moe_sorting_dispatch_policy=rocm_aiter_ops.get_moe_dispatch_policy(),
+        # rocm_aiter_ops.get_moe_dispatch_policy(): vLLM's env, default 0
+        moe_sorting_dispatch_policy=int(os.environ.get("VLLM_ROCM_AITER_MOE_DISPATCH_POLICY", "0")),
         dtype=hidden_states.dtype,
         gate_mode=GateMode.SEPARATED.value,
     )

@@ -21,6 +21,8 @@ _EXPERTS: dict[int, tuple | None] = {}
 _SERVES: dict[tuple[int, int], bool] = {}
 # zeros as topk_ids, sliced to n_tokens rows for fallback_reason
 _TOPK_IDS: dict[tuple, object] = {}
+# the layers whose norm _defer_norm left and _experts_apply has not applied yet
+_PENDING: set[int] = set()
 
 
 @api(MUSE_SPARK_MOE)
@@ -59,6 +61,7 @@ def _defer_norm(x, weight, eps, gain_center, input_scale, repeats):
     if serves is False:
         return FallbackReason.OUT_OF_CONTRACT
     setattr(x, _DEFERRED_NORM, (weight, eps, gain_center))
+    _PENDING.add(layer)
     return x
 
 
@@ -77,7 +80,16 @@ def _would_serve(x, weight, eps, gain_center, layer) -> bool | None:
     if ids is None or ids.shape[0] < n_tokens:
         ids = _TOPK_IDS[spec] = torch.zeros((max(n_tokens, 8192), topk), dtype=ids_dtype, device=x.device)
     reason = muse_spark_moe.fallback_reason(
-        x, weight, ids[:n_tokens], expert_map, w1, w1_scale, w2, w2_scale, eps=float(eps), gain_center=float(gain_center)
+        x,
+        weight,
+        ids[:n_tokens],
+        expert_map,
+        w1,
+        w1_scale,
+        w2,
+        w2_scale,
+        eps=float(eps),
+        gain_center=float(gain_center),
     )
     if reason is FallbackReason.NOT_WARMED:
         return None
@@ -112,10 +124,15 @@ def _experts_apply(
     apply, and where the op falls back, vLLM's norm, then its apply."""
     deferred = getattr(hidden_states, _DEFERRED_NORM, None)
     if deferred is None:
+        if _PENDING:
+            # vLLM's prepare handed the experts other rows than the pooled ones (an all-to-all,
+            # a copy): their norm, left to here, is lost, and vLLM's apply would run unnormalized
+            raise RuntimeError("aklr: Muse Spark's experts got rows other than the pooled ones")
         return FallbackReason.OUT_OF_CONTRACT
     delattr(hidden_states, _DEFERRED_NORM)
     weight, eps, gain_center = deferred
     layer = id(weight)
+    _PENDING.discard(layer)
     moe, quant = self.moe_config, self.quant_config
     route_output = FallbackReason.OUT_OF_CONTRACT
     _EXPERTS[layer] = None
@@ -135,7 +152,15 @@ def _experts_apply(
         or moe.intermediate_pad not in (None, 0)
         or not output.is_contiguous()
     ):
-        _EXPERTS[layer] = (topk_ids.shape[1], topk_ids.dtype, expert_map, w1, quant.w1_scale, w2, quant.w2_scale)
+        _EXPERTS[layer] = (
+            topk_ids.shape[1],
+            topk_ids.dtype,
+            expert_map,
+            w1,
+            quant.w1_scale,
+            w2,
+            quant.w2_scale,
+        )
         route_output = muse_spark_moe(
             hidden_states,
             weight,
