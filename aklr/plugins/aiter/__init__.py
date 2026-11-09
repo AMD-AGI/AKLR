@@ -169,18 +169,31 @@ def _select_rmsnorm_with_add(args):
 def _select_gemm(args):
     XQ, WQ, x_scale, w_scale, dtype, is_bpreshuffled, split_k = args
     return _gemm_candidate(
-        XQ, WQ, x_scale, w_scale, dtype, bool(is_bpreshuffled), split_k
+        _run_gemm_blockscale,
+        XQ,
+        WQ,
+        x_scale,
+        w_scale,
+        dtype,
+        bool(is_bpreshuffled),
+        split_k,
     )
 
 
 def _select_gemm_bpreshuffle(args):
     XQ, WQ, x_scale, w_scale, dtype, _out = args
-    return _gemm_candidate(XQ, WQ, x_scale, w_scale, dtype, True, None)
+    return _gemm_candidate(
+        _run_gemm_bpreshuffle, XQ, WQ, x_scale, w_scale, dtype, True, None
+    )
 
 
-def _gemm_candidate(XQ, WQ, x_scale, w_scale, dtype, bpreshuffled, split_k):
-    # Both AITER entries reach one AKLR contract, but keep separate run
-    # functions: each must accept its own contract's call, which AITER checks.
+def _gemm_candidate(run, XQ, WQ, x_scale, w_scale, dtype, bpreshuffled, split_k):
+    # Both AITER entries reach one AKLR contract, but the run function follows
+    # the contract, not the layout: each must accept its own contract's call,
+    # which AITER checks and refuses. The shuffled layout is a flag inside the
+    # blockscale contract and a separate entry point of its own; serving the
+    # first with the second's run function offers a six-argument kernel for a
+    # seven-argument call.
     operand_format = "none:preshuffled" if bpreshuffled else "none:none"
     if _gemm_is_out_of_contract(x_scale, w_scale, split_k):
         return None
@@ -188,10 +201,7 @@ def _gemm_candidate(XQ, WQ, x_scale, w_scale, dtype, bpreshuffled, split_k):
         XQ, WQ, x_scale, w_scale, out_dtype=dtype, operand_format=operand_format
     ):
         return None
-    return _candidate(
-        "gemm_a8w8_blockwise_scaled@1.0",
-        _run_gemm_bpreshuffle if bpreshuffled else _run_gemm_blockscale,
-    )
+    return _candidate("gemm_a8w8_blockwise_scaled@1.0", run)
 
 
 _SELECTORS = {
