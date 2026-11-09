@@ -112,9 +112,11 @@ wins. Check a plan against this table before writing code.
   `python -m aklr export check` and `python -m aklr validate --base origin/main`. The local result does not
   count; CI measures. A `platform_failure` "Kineto recorded no kernels for a single call" is a tracer fault: on a
   busy node, wait a few minutes before you rerun (`pitfalls/profiler_misses_kernels.md`).
-- **AKLR does not time below about 4 µs.** Its bench runner forces `GPU_FORCE_QUEUE_PROFILING`, and a profiled
-  dispatch costs about that however little it does, so a short kernel and its baseline read about the same. A
-  Point whose baseline sits near that floor shows no gain in CI: check `baseline.json` before working on it.
+- **Recheck the short-kernel floor on current main.** Up to measurement profile 18 (Kineto, with
+  `GPU_FORCE_QUEUE_PROFILING` forced) AKLR read about 4 µs per kernel however little it did, so a short kernel and
+  its baseline read about the same. Main now reads kernel times from its own rocprofiler-sdk tracer (profile 19)
+  without forcing queue profiling: time an empty kernel, the baseline and your candidate there before deciding a
+  Point has no headroom (`pitfalls/aklr_dispatch_floor.md`).
 
 ## Folders and adding a page
 

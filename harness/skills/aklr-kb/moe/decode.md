@@ -35,9 +35,10 @@ the zeroing of the output moves into the same launch. Two graph nodes instead of
   and stage 2 (down GEMM, weighted accumulation into the output) (S1, S2; read from the source and the commit, not
   from a trace).
 - A call took 39.1–102.0 µs with three nodes and 34.4–95.7 µs folded *(field, E1)*.
-- Under AKLR's timer a node that does almost no work still reads about 4 µs: a fully empty kernel timed in place of
-  a dense GEMM read 4.21 µs at m = 8 *(field, E2)*, and an add + RMSNorm kernel (a HIP kernel, not a MoE) read
-  3.93–4.04 µs at 1–256 rows of 6144 *(field, E3)*. More on that floor: `../gemm/small_m.md` §1.
+- Under AKLR's timer up to measurement profile 18 (Kineto, queue profiling forced) a node that did almost no work
+  still read about 4 µs: a fully empty kernel timed in place of a dense GEMM read 4.21 µs at m = 8 *(field, E2)*, and
+  an add + RMSNorm kernel (a HIP kernel, not a MoE) read 3.93–4.04 µs at 1–256 rows of 6144 *(field, E3)*. Recheck
+  it under profile 19 on current main; more on that floor: `../gemm/small_m.md` §1.
 - Removing the sort node saved 3.5–6.4 µs per call, 6–12% of the call *(field, E1)*.
 
 ### 2. Fold the routing sort into stage 1

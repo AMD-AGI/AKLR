@@ -148,8 +148,9 @@ quadrants' MFMAs and LDS reads are dead. Pick the variant with a scalar branch o
   of the groups) cost 0.8–1.0 points of band locality. Peeling the boundary strip into a second dispatch was 2.9%
   slower overall and 4.6% on the worst config (MXFP8 NT): the strip loses the A slab it shared in L2. That is about
   edge strips. Running a ragged last dispatch round as a second launch of smaller tiles is a different lever, which
-  won and lost on dense GEMMs (`../gemm/grid_pricing.md` §1–§2); *(field, E31)* under AKLR's timer a second
-  launch after a dense GEMM costs ~4 µs (`../gemm/small_m.md` §1).
+  won and lost on dense GEMMs (`../gemm/grid_pricing.md` §1–§2); *(field, E31)* under AKLR's timer up to
+  measurement profile 18 a second launch after a dense GEMM cost ~4 µs; recheck it under profile 19
+  (`../gemm/small_m.md` §1).
 
 ## 5. Tail bodies: compute the hit rate first
 The carry cost of a body variant (code size paid by every shape in the module) is in
