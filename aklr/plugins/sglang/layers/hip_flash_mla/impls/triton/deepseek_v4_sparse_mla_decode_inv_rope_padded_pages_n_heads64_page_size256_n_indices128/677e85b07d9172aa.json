@@ -1,9 +1,9 @@
 {
   "schema_version": 5,
-  "name": "deepseek_v4_sparse_mla_decode_inv_rope_padded_pages_n_heads32_page_size256_n_indices128",
+  "name": "deepseek_v4_sparse_mla_decode_inv_rope_padded_pages_n_heads64_page_size256_n_indices128",
   "contract_id": "deepseek_v4_sparse_mla_decode_inv_rope@1.0",
   "description": "sglang's aiter_sparse_decode_fwd on DeepSeek-V4's fp8 KV pools with inv_rope: each head of each query row attends the slots its sparse_indices name in the SWA pool and, when given, its extra_sparse_indices in the extra (compressed) pool (negative: none), scores q . row * sm_scale, the head's sink joining the normalisation only; the output is the softmax-weighted sum of the whole 512-wide rows (0 for a row that reads no slot), its last 64 lanes then rotated back by the row's position: per (cos, sin) pair of rope_freqs[positions], even * cos + odd * sin and odd * cos - even * sin.",
-  "op_type": "deepseek_v4",
+  "op_type": "hip_flash_mla",
   "axes": {
     "n_tokens": {
       "type": "var",
@@ -11,7 +11,7 @@
     },
     "n_heads": {
       "type": "const",
-      "value": 32,
+      "value": 64,
       "description": "Query heads on this rank."
     },
     "n_pages": {
@@ -332,16 +332,6 @@
     {
       "axes": {
         "n_tokens": 4096,
-        "n_pages": 6420,
-        "n_positions": 1048576
-      },
-      "scalars": {
-        "sm_scale": 0.04419417306780815
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 8192,
         "n_pages": 6420,
         "n_positions": 1048576
       },

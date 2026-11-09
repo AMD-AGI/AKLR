@@ -1,9 +1,9 @@
 {
   "schema_version": 5,
-  "name": "deepseek_v4_wo_a_split_k_n_groups8_rank1024_in_dim4096",
-  "contract_id": "deepseek_v4_wo_a_split_k@1.0",
-  "description": "sglang's gfx950 split-K wo_a GEMM of DeepSeek-V4 (_batched_gemm_split_k) with a bf16 output: out[t, g * rank + r] = sum_d x[t, g, d] * w[g, r, d] rounded to bf16, then, with fp8_grid, onto the fp8-grid rule of wo_b's operand: per 32 columns, e = the exponent of the smallest power of two >= max(amax, 1e-10) / 448 (in float32), and each value / 2**e rounded to fp8 e4m3, saturating at 448, times 2**e.",
-  "op_type": "deepseek_v4",
+  "name": "deepseek_v4_wo_a_split_k_mxfp8_n_groups8_rank1024_in_dim4096",
+  "contract_id": "deepseek_v4_wo_a_split_k_mxfp8@1.0",
+  "description": "sglang's gfx950 split-K wo_a GEMM of DeepSeek-V4 (_batched_gemm_split_k) handing wo_b MXFP8: y[t, g * rank + r] = sum_d x[t, g, d] * w[g, r, d] rounded to bf16, then quantized by the fp8-grid rule of wo_b's operand: per 32 columns, e = the exponent of the smallest power of two >= max(amax, 1e-10) / 448 (in float32), and each value / 2**e rounded to fp8 e4m3, saturating at 448; the fp8 codes and each group's 2**e.",
+  "op_type": "gfx95_batched_gemm_bf16_fp8_grid",
   "axes": {
     "n_tokens": {
       "type": "var",
@@ -28,11 +28,14 @@
       "type": "const",
       "value": 8192,
       "description": "Output columns, every group's rank columns in group order."
+    },
+    "n_scales": {
+      "type": "const",
+      "value": 256,
+      "description": "One scale per 32 output columns."
     }
   },
-  "attrs": {
-    "fp8_grid": false
-  },
+  "attrs": {},
   "inputs": {
     "x": {
       "shape": [
@@ -61,39 +64,42 @@
     }
   },
   "outputs": {
-    "out": {
+    "quantized": {
       "shape": [
         "n_tokens",
         "out_dim"
       ],
-      "dtype": "bfloat16",
-      "description": "x @ w.T per group, the groups side by side; on the fp8 grid when fp8_grid."
+      "dtype": "float8_e4m3fn",
+      "description": "y / 2**e of its 32-column group, rounded to fp8 e4m3."
+    },
+    "scales": {
+      "shape": [
+        "n_tokens",
+        "n_scales"
+      ],
+      "dtype": "float8_e8m0",
+      "description": "2**e of each 32-column group of y; sglang holds the e8m0 byte as uint8."
     }
   },
   "workloads": [
     {
       "axes": {
-        "n_tokens": 5
+        "n_tokens": 6
       }
     },
     {
       "axes": {
-        "n_tokens": 10
+        "n_tokens": 12
       }
     },
     {
       "axes": {
-        "n_tokens": 15
+        "n_tokens": 18
       }
     },
     {
       "axes": {
-        "n_tokens": 20
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 25
+        "n_tokens": 24
       }
     },
     {
@@ -103,17 +109,17 @@
     },
     {
       "axes": {
-        "n_tokens": 35
+        "n_tokens": 36
       }
     },
     {
       "axes": {
-        "n_tokens": 40
+        "n_tokens": 42
       }
     },
     {
       "axes": {
-        "n_tokens": 50
+        "n_tokens": 48
       }
     },
     {
@@ -151,7 +157,7 @@
     "sources": [
       {
         "path": "kernel.py",
-        "content": "\"\"\"DeepSeek-V4's gfx950 wo_a GEMM in sglang's split-K regime, bf16 out, in one Triton launch.\n\nout[t, g * R + r] = x[t, g] @ w[g, r] for T <= 64 rows: eight 512-wide K splits per output tile, each a\nfloat32 partial in a per-call scratch buffer; the last split to arrive at the tile's semaphore sums\nthe eight partials in split order, rounds to bf16 and, with fp8_grid, onto wo_b's fp8 grid. The partials and\ntheir sum are those of sglang's two-kernel _batched_gemm_split_k, so the output equals it bit for bit.\n\nThe semaphores are cached per device and shape, zeroed once, and every launch leaves them at 0: a deviation\nfrom aklr's scratch rule (\"rewritten whole by every call before it is read\"), described in wo_a_split_k.py.\n\"\"\"\n\nfrom __future__ import annotations\n\nfrom .wo_a_split_k import wo_a_split_k\n\n\ndef run(*, x, w, fp8_grid, out_dtype, out) -> None:\n    wo_a_split_k(x, w, out, None, fp8_grid)\n"
+        "content": "\"\"\"DeepSeek-V4's gfx950 wo_a GEMM in sglang's split-K regime, as wo_b's MXFP8 operand, in one Triton launch.\n\ny[t, g * R + r] = x[t, g] @ w[g, r] for T <= 64 rows: eight 512-wide K splits per output tile, each a\nfloat32 partial in a per-call scratch buffer; the last split to arrive at the tile's semaphore sums\nthe eight partials in split order, rounds to bf16 and quantizes each 32 columns to fp8 e4m3 codes and their\ne8m0 exponent byte. The partials and their sum are those of sglang's two-kernel _batched_gemm_split_k, so\nboth outputs equal it bit for bit.\n\nThe semaphores are cached per device and shape, zeroed once, and every launch leaves them at 0: a deviation\nfrom aklr's scratch rule (\"rewritten whole by every call before it is read\"), described in wo_a_split_k.py.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport torch\n\nfrom .wo_a_split_k import wo_a_split_k\n\n\ndef run(*, x, w, quantized, scales) -> None:\n    wo_a_split_k(x, w, quantized, scales.view(torch.uint8), False)\n"
       },
       {
         "path": "wo_a_split_k.py",
