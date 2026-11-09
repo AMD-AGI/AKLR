@@ -267,7 +267,9 @@ FlyDSL's `Vector.load` passes no alignment, so the read carries only its element
 **How Turbo issues the DMA** (`G2SLoader`, GH:305-386):
 - One `fx.make_copy_atom(fx.rocdl.BufferCopyLDS128b(), 128)` per 16 B per lane.
 - The per-lane global offsets are Python ints computed at trace time.
-- The wave-uniform K offset rides the SGPR `soffset`: `fx.copy(atom, src, dst, soffset=...)`.
+- The wave-uniform K offset rides the SGPR `soffset`: `fx.copy(atom, src, dst, soffset=...)`. The buffer's range
+  check leaves `soffset` out (`../gemm/datapath.md` §8): an offset that can run past the tensor, such as a pass
+  over padded rows, goes into the slice instead, `fx.slice(src, (None, lane_off + pass_off))`.
 
 ## datapath §7 Prefetch inside the K loop
 

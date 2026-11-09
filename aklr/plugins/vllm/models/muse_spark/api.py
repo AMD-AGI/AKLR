@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason, api
+from aklr.ops.gemm.api import gemm
 from aklr.plugins.vllm.hook import vllm_route
 from aklr.plugins.vllm.models.muse_spark.contract import MUSE_SPARK_MOE
 
@@ -40,6 +41,17 @@ def muse_spark_moe(
     out_dtype=None,
     out=None,
 ): ...
+
+
+@vllm_route(
+    "vllm.model_executor.layers.linear.ReplicatedLinear.forward",
+    "vllm.models.muse_spark.amd.model.MuseSparkTorchLinearMethod.apply",
+    versions=_VERSIONS,
+)
+def _torch_linear(self, layer, x, bias=None):
+    """The MoE pooler and unpooler, which vLLM keeps off aiter's tuned GEMM (its split-K
+    kernels for these shapes accumulate in bf16) and runs through F.linear."""
+    return gemm(x, layer.weight, bias=bias)
 
 
 @vllm_route(
