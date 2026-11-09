@@ -3,7 +3,7 @@
   "name": "deepseek_v4_router_n_experts384_n_slots7",
   "contract_id": "deepseek_v4_router@1.0",
   "description": "sglang's select_experts on ROCm for a sqrtsoftplus router whose shared experts are fused into the top-k (DeepSeek-V4): each token's n_slots - n_shared experts by sqrt(softplus(router_logits)) + correction_bias, weighed with the unbiased scores, divided by their sum when renormalize, times routed_scaling_factor; then n_shared columns of shared experts n_experts + s at weight shared_scale. Rows at or past num_token_non_padded, when given, keep the shared ids and take routed ids 0 and weights 0.",
-  "op_type": "deepseek_v4",
+  "op_type": "moe_topk",
   "axes": {
     "n_tokens": {
       "type": "var",

@@ -3,7 +3,7 @@
   "name": "deepseek_v4_dp_moe_gather_hidden5120",
   "contract_id": "deepseek_v4_dp_moe_gather@1.0",
   "description": "The local rows a DP-attention rank contributes to the TP MoE's all-gather, as sglang's MoeRowTransport prepares them on ROCm (DeepSeek-V4): rows at or past num_token_non_padded are padding, set to zero in hidden_states, and out takes hidden_states' rows, the padding ones zero, as the gather's input buffer holds them.",
-  "op_type": "deepseek_v4",
+  "op_type": "moe_transport",
   "axes": {
     "n_rows": {
       "type": "var",
