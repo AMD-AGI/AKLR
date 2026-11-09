@@ -102,7 +102,9 @@
         "n_seqs": 1,
         "n_starts": 2,
         "n_slots": 310075
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.066
     },
     {
       "axes": {
@@ -111,7 +113,9 @@
         "n_seqs": 2,
         "n_starts": 3,
         "n_slots": 310075
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.131
     },
     {
       "axes": {
@@ -120,7 +124,9 @@
         "n_seqs": 3,
         "n_starts": 4,
         "n_slots": 310075
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.181
     },
     {
       "axes": {
@@ -129,7 +135,9 @@
         "n_seqs": 4,
         "n_starts": 5,
         "n_slots": 310075
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.107
     },
     {
       "axes": {
@@ -138,7 +146,9 @@
         "n_seqs": 5,
         "n_starts": 6,
         "n_slots": 310075
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.031
     },
     {
       "axes": {
@@ -147,7 +157,9 @@
         "n_seqs": 6,
         "n_starts": 7,
         "n_slots": 310075
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.054
     },
     {
       "axes": {
@@ -156,7 +168,9 @@
         "n_seqs": 7,
         "n_starts": 8,
         "n_slots": 310075
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.056
     },
     {
       "axes": {
@@ -165,7 +179,9 @@
         "n_seqs": 12,
         "n_starts": 13,
         "n_slots": 310075
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.099
     },
     {
       "axes": {
@@ -174,7 +190,9 @@
         "n_seqs": 16,
         "n_starts": 17,
         "n_slots": 310075
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.099
     },
     {
       "axes": {
@@ -183,7 +201,9 @@
         "n_seqs": 18,
         "n_starts": 19,
         "n_slots": 310075
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.155
     },
     {
       "axes": {
@@ -192,7 +212,9 @@
         "n_seqs": 24,
         "n_starts": 25,
         "n_slots": 310075
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.089
     },
     {
       "axes": {
@@ -201,7 +223,9 @@
         "n_seqs": 30,
         "n_starts": 31,
         "n_slots": 310075
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.093
     },
     {
       "axes": {
@@ -210,7 +234,9 @@
         "n_seqs": 36,
         "n_starts": 37,
         "n_slots": 310075
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.13
     },
     {
       "axes": {
@@ -219,7 +245,9 @@
         "n_seqs": 42,
         "n_starts": 43,
         "n_slots": 310075
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.078
     },
     {
       "axes": {
@@ -228,7 +256,9 @@
         "n_seqs": 48,
         "n_starts": 49,
         "n_slots": 310075
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.246
     }
   ],
   "layout_variants": {
