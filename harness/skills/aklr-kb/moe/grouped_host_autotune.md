@@ -2,10 +2,10 @@
 title: "Grouped GEMM — host path, launch modes and autotune"
 kind: method
 lever: grouped_host_autotune
-ops: [grouped_gemm]
+ops: [grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp8, mxfp4]
-regimes: [forward, dgrad, wgrad, skew, cuda-graph, autotune, beta-accumulate]
+regimes: ["M split per group", variable-k, skew, cuda-graph, autotune, beta-accumulate]
 flydsl: 0.3.2
 sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_fp8_kernel.py
@@ -41,7 +41,7 @@ sources:
   so per-call choices may use `M_total // G`: MX4 picks its NT and wgrad blocking from it (MX4:1164-1170,
   2083-2091), and FP8 adds a coarse M-derived regime to its key (`_np_regime`, FP8:2487; §3).
 - **Decisions that need the distribution are made in the kernel.** Reading `group_offs` on the device to choose a
-  walk direction or a split (`grouped_wgrad.md` §5, §9) keeps the host path sync-free and graph-safe.
+  walk direction or a split (`grouped_variable_k.md` §5, §9) keeps the host path sync-free and graph-safe.
 - **Derived offsets are one device kernel, not a chain of torch ops.** *(field, E1)* Computing an MX quantizer's padded
   group lengths and offsets with ~7 small torch kernels cost ~31 µs per call (each ~4.4 µs, launch-bound); a
   single-thread device kernel that derives them from the tight int64 offsets (the HIP reference's form) takes
@@ -59,11 +59,12 @@ sources:
 In FlyDSL: `../flydsl/moe.md` § grouped_host_autotune §2.
 
 ## 3. Cache compiled objects and launch closures, keyed on static shape
-- **Never key on tensor identity** (`../gemm/autotune.md` §5). In grouped training every call brings new
-  activations, gradients and `group_offs`, so an identity-keyed cache of quantized activations or derived offsets
-  hits ~0 in training and returns stale data when an id is reused. A weight-side cache keyed on
-  `(id(weight), weight._version)` holds within one step: the forward fills it, the backward reuses it, the
-  optimizer bumps the version. Its gain is capped at quantization time over step time.
+- **Never key on tensor identity** (`../gemm/autotune.md` §5). Every grouped call brings new activations and
+  `group_offs` (and gradients, where it computes one), so an identity-keyed cache of quantized activations or
+  derived offsets hits ~0 and returns stale data when an id is reused. A weight-side cache keyed on
+  `(id(weight), weight._version)` holds until the weight is updated. Where an optimizer step updates it every step, the forward fills it,
+  the backward reuses it and the optimizer bumps the version; its gain there is capped at quantization time over
+  step time.
 - **Key the race on the static shape plus, at most, a coarse regime derived from M; never on `M_total` itself.**
   The token count is a run-time argument (`m_total`, an int32). The static part is op, N, K, G, dtypes, beta and
   strides/padding. Add an M-derived regime only where M changes which body is right, as a rule rather than a
@@ -73,8 +74,9 @@ In FlyDSL: `../flydsl/moe.md` § grouped_host_autotune §2.
   `(op, N, K, G, out dtype, operand dtypes, regime, persistent mode, capped CU count, beta, n_stride)`, the CU
   count entering only when the grid is capped (`num_cu if capped else 0`, FP8:2674-2687). Its wgrad key is "never
   per m_total" (FP8:4759); MX8's NT key has no `M_pad` (MX8:933).
-- **Why it matters.** `M_total` changes every step in MoE training; a compile cache keyed on it compiles per step and
-  keeps growing. *(field, E8)* One quantizer cache keyed on the total token count ran the host out of memory in a
+- **Why it matters.** `M_total` changes from call to call wherever the token count does (every step in MoE
+  training, for one); a compile cache keyed on it compiles per distinct count and keeps growing. *(field, E8)* One
+  quantizer cache keyed on the total token count ran the host out of memory in a
   sweep of token counts. Bound every compile cache anyway: MX4 clears its caches past 32 entries
   (`_bound_caches`, `_GMXFP4_CACHE_CAP`, MX4:1153-1163).
 - **A host plan cache keyed on `M_total` grows the same way.** A per-call plan (output shape, workspace,
@@ -130,7 +132,7 @@ Turbo's backend dispatcher likewise tunes on load-balanced group lengths (`group
 
 ## 6. beta in the race
 The measured facts (read-back cost by dtype, ranking differences between beta=0 and beta=1, the extra compile
-per surviving candidate) are in `grouped_wgrad.md` §10. The mechanics of timing at beta=1:
+per surviving candidate) are in `grouped_variable_k.md` §10. The mechanics of timing at beta=1:
 - Run beta=1 candidates on scratch: every timed launch adds another product into the buffer.
 - A beta=1 probe on an uninitialized buffer reads garbage and fails a finiteness gate, and a rel-MSE comparison
   against a reference fails once results accumulate. Either zero the probe output before every launch so
@@ -147,7 +149,7 @@ each by adding 0/1/2/4 extra launches in one process and fitting the slope (`../
   at 0.5–0.9% of each call, an overstatement of about 2× (repack) and 3× (tail); even so they outweigh the
   whole family of steady-state SALU trims (~0.15%).
 - Removing a whole helper launch pays. Shrinking the work inside a launch-bound helper does not
-  (`grouped_moe_inference.md` §7); a helper bound by its own work, like a VALU-bound scale repack, does
+  (`grouped_sorted_tokens.md` §7); a helper bound by its own work, like a VALU-bound scale repack, does
   pay (`grouped_lowprec.md` §2).
 
 ## 8. Do not let a race swallow build errors
@@ -170,7 +172,7 @@ In FlyDSL: `../flydsl/moe.md` § grouped_host_autotune §8.
 In FlyDSL: `../flydsl/moe.md` § grouped_host_autotune Verify.
 
 ## Related
-`grouped_group_mapping.md` · `grouped_wgrad.md` · `grouped_lowprec.md` ·
+`grouped_group_mapping.md` · `grouped_variable_k.md` · `grouped_lowprec.md` ·
 `grouped_measurement.md` · `grouped_correctness.md` · `../gemm/autotune.md` ·
 `../gemm/attribution.md` · `../attention/measurement.md` ·
 `../flydsl/debug-flydsl-kernel.md`

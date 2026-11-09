@@ -2,7 +2,7 @@
 title: "A split-K fold in which no workgroup waits for another: the last split to arrive folds"
 kind: technique
 lever: wait_free_split_k_fold
-ops: [gemm]
+ops: [gemm, grouped_gemm]
 dtypes: [bf16]
 regimes: ["M 1-512", "M 512-4096 (bf16, N 64-256)", split-k]
 gens: [gfx950]

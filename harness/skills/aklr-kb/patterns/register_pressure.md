@@ -3,7 +3,7 @@ title: "Register pressure: VGPR / AGPR spills, or occupancy below the plan"
 kind: pattern
 signals: ["vgpr_spill_count > 0", "scratch_ loads and stores in the hot loop", "v_accvgpr_read / v_accvgpr_write in the hot loop",
   ".vgpr_count + .agpr_count above a reachable occupancy tier", ".private_segment_fixed_size > 0", "one wave per SIMD"]
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe, attention]
 gens: [gfx950]
 flydsl: 0.3.2
 basis: source-semantics
@@ -59,7 +59,7 @@ basis: source-semantics
 - Not a register cap to make room — `../flydsl/language/limits.md` — in FlyDSL v0.3.2 `maxnreg` does not cap registers, and
   a cap through the `amdgpu-num-vgpr` attribute turns into spills (S29).
 - Other kernel families: attention's occupancy steps, spill scale, code shapes that spill and AGPRs —
-  `attention/registers_occupancy.md` §3, §5–7; grouped GEMM's register wall and waves per SIMD per pass —
+  `attention/registers_occupancy.md` §3, §5–7; grouped GEMM's register wall and waves per SIMD per layout —
   `moe/grouped_tile_pricing.md` §1–2.
 
 ## Evidence

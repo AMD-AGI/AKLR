@@ -2,10 +2,10 @@
 title: "Grouped GEMM — mapping tiles to groups on the device"
 kind: topic
 lever: grouped_group_mapping
-ops: [grouped_gemm]
+ops: [grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp8, mxfp4]
-regimes: [forward, dgrad, wgrad, variable-k, skew, empty-groups, large-g]
+regimes: ["M split per group", variable-k, skew, empty-groups, large-g]
 flydsl: 0.3.2
 sources:
   - ROCm/FlyDSL@dd8373349:kernels/moe/mxfp_moe/gemm1.py:122
@@ -46,10 +46,13 @@ sources:
 - A grouped kernel issues the same MFMAs as a reference but runs slower, worst on narrow-N or high-G shapes.
 - A grouped kernel faults or returns garbage only when a group is empty, or only at large G.
 - You are choosing between a pre-built tile table, an SGPR table and a lane-resident table for the lookup.
+- You are sizing the grid of a MoE stage 1 or stage 2, deciding which workgroups exit, or finding a tile's expert
+  on the device (the sorted-token form: `grouped_sorted_tokens.md` §2).
 
 **Somewhere else if:** the order and XCD placement of tiles across groups → `grouped_scheduling.md`;
-tile size, occupancy and boundary bodies → `grouped_tile_pricing.md`; variable-K wgrad →
-`grouped_wgrad.md`; MoE inference with sorted token ids → `grouped_moe_inference.md`.
+tile size, occupancy and boundary bodies → `grouped_tile_pricing.md`; K varying per group →
+`grouped_variable_k.md`; the sort, cache policy and stage 2 of MoE expert GEMMs over sorted token ids →
+`grouped_sorted_tokens.md`.
 
 ## 1. Group metadata stays on the device
 - The kernel takes `group_offs[G+1]` (exclusive prefix of the group lengths) as a device tensor and derives
@@ -68,8 +71,9 @@ tile size, occupancy and boundary bodies → `grouped_tile_pricing.md`; variable
   compile-time constant, or an `assert M_g % BLOCK_M == 0`, is wrong for MoE.
 
 ## 2. Tiles are cut per group
-- A forward or dgrad tile is a BLOCK_M slice of **one** group's rows and reads that group's weights. A row
-  block that crosses a group boundary multiplies the second group's rows by the first group's weights: wrong
+- A tile of an M-split grouped GEMM (NT or NN: MoE expert GEMMs, forward, dgrad) is a BLOCK_M slice of **one**
+  group's rows and reads that group's weights. A row block that crosses a group boundary multiplies the second
+  group's rows by the first group's weights: wrong
   results, no fault. A kernel that assigns one group per fixed BLOCK_M row block silently requires every
   group to start on that grid. Turbo's bf16 kernels build one `(group, first row, rows)` entry per M tile
   instead (BF16:513-526).
@@ -79,8 +83,8 @@ tile size, occupancy and boundary bodies → `grouped_tile_pricing.md`; variable
   spans two weight slabs. Turbo's `_grouped_block_mn` decodes `local = tile - tile_start` and falls back to
   row-major for a group with fewer M blocks than `group_m` (FP8:1886-1935). Band widths:
   `grouped_scheduling.md` §4.
-- Variable-K wgrad is cut the other way: every group owns the same output tiles, and the skew sits in each
-  tile's contraction length (`grouped_wgrad.md`).
+- K varying per group (wgrad) is cut the other way: every group owns the same output tiles, and the skew sits in
+  each tile's contraction length (`grouped_variable_k.md`).
 
 ## 3. A static upper-bound grid, trimmed on the device
 
@@ -217,10 +221,11 @@ The mechanism (fold the base into the descriptor's 64-bit base, bound `num_recor
 In FlyDSL: `../flydsl/moe.md` § grouped_group_mapping §7.
 
 ## 8. Empty groups
-- Forward and dgrad: an empty group contributes zero M tiles. The prefix scan and the ballot lookup skip it
-  with no special case (§5), and the record-count clamp of §7 keeps its descriptors bounded.
-- Variable-K wgrad: an empty group still owns its whole output slice (zeros at beta=0, untouched at beta=1);
-  how Turbo writes it and what the store costs: `grouped_wgrad.md` §11.
+- M split per group (NT/NN: MoE expert GEMMs, forward, dgrad): an empty group contributes zero M tiles. The
+  prefix scan and the ballot lookup skip it with no special case (§5), and the record-count clamp of §7 keeps its
+  descriptors bounded.
+- K varying per group (wgrad): an empty group still owns its whole output slice (zeros at beta=0, untouched at
+  beta=1); how Turbo writes it and what the store costs: `grouped_variable_k.md` §11.
 - Put empty groups at the start, middle and end, and one group holding almost all tokens, into every gate
   (`grouped_correctness.md`).
 
@@ -233,8 +238,8 @@ In FlyDSL: `../flydsl/moe.md` § grouped_group_mapping §7.
 - Record counts are clamped at zero and bounded per group; G ≥ 256 and empty groups are in the gate.
 
 ## Related
-`grouped_scheduling.md` · `grouped_tile_pricing.md` · `grouped_wgrad.md` ·
-`grouped_correctness.md` · `grouped_host_autotune.md` · `grouped_moe_inference.md` ·
+`grouped_scheduling.md` · `grouped_tile_pricing.md` · `grouped_variable_k.md` ·
+`grouped_correctness.md` · `grouped_host_autotune.md` · `grouped_sorted_tokens.md` ·
 `../gemm/datapath.md` §8 · `../gemm/schedule_and_locality.md` §2, §7 ·
 `../gemm/grid_pricing.md`
 

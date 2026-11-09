@@ -70,7 +70,7 @@ How far the number moves with no change to the kernel:
   faster of the kernel main serves there and the baseline (`aklr/ops/README.md`: files sharing a name, § Environment
   variables; `../CONTRIBUTING.md` § Evidence); §2 step 3 times both in the same rounds.
 - **A benchmark of your own is not a substitute for `validate`.** In one comparison of 7 A/B pairs (router split-K, fp8 GEMM prefetch / tile order, MoE `.cg`), hot eager, flushed eager and graph replay without the flush missed its recorded B/A by >1% on 6, 4 and 5 pairs. AKLR's `bench_cudagraph` came within 0.9% on 6, but read 0.930 versus `validate`'s 0.871–0.905 for m = 16 `PREFETCH` 5 → 3: A read 4.49 µs versus 4.23–4.33 *(field, E47)* ([debugging.md](debugging.md) §11).
-  Settle 1–2% with `validate` (the ruler page, "Sweeps are not the gate"). It times each Point on one fixed input set; another fixed set moved routed kernels' B/A by 0.04–1.5% (one run). At k = 2048, m = 64 a source tier lost to the re-tuned tier both flushed (1.05–1.08× time) and hot (1.08–1.13×, 5 runs); hot and flushed sweeps picked the same fastest tested configuration at m = 16 and 64 (one run), so a hot cache did not explain that loss (`gemm/decode_gemm.md` §8) *(field, E40, E47)*.
+  Settle 1–2% with `validate` (the ruler page, "Sweeps are not the gate"). It times each Point on one fixed input set; another fixed set moved routed kernels' B/A by 0.04–1.5% (one run). At k = 2048, m = 64 a source tier lost to the re-tuned tier both flushed (1.05–1.08× time) and hot (1.08–1.13×, 5 runs); hot and flushed sweeps picked the same fastest tested configuration at m = 16 and 64 (one run), so a hot cache did not explain that loss (`gemm/small_m_gemm.md` §8) *(field, E40, E47)*.
 
 ## 2. How to A/B one change
 
@@ -153,14 +153,14 @@ What to do with it:
   `bitwise` across runs (S61); an atomic sum's order changes the bits ([numerics.md](numerics.md) §8).
 - **Reduce in a launch the call already has**, as the three splits above do (routing, attention finish, activation launch: S62). A separate reduce adds a launch (§1): measured under Kineto before #33, the n2624 k6144 split-K GEMM at m = 64 read 12.57 µs with its reduce launch and 8.37 without, while an extra kernel cost 1.8 µs in a bare CUDA graph ([authoring.md](authoring.md) §7) *(field, E35)*.
   At (M, N, K) = (64, 2624, 6144) a separate split + reduce graph with split 6 was faster than the pilot-selected splits 1, 2, 3, 8 and 12; split 6 against 4 stayed unresolved, neither faster nor shown equivalent (one cold-cache run, 32 confirmation pairs per comparison, BM64/BK128 and backend options fixed). Its whole-minus-partial estimate, 1.868 µs, is neither the reduce's own time nor an allocation-inclusive cost; AITER and M = 2/4/8/16 were not tested *(field, E49)*.
-- **A decode-size search starting point, not a universal optimum:** at three Qwen2 router Points (64, 128, 256 tokens) and gated attention (32 rows), the fastest measured half / committed / double split had 256 or 512 four-wave programs (one or two per CU); at 64 tokens double was observed 0.7% ahead, the difference not resolved. Half lost 4–37% of speedup, double changed it by −6% to +1%.
+- **A search starting point at small token or row counts, not a universal optimum:** at three Qwen2 router Points (64, 128, 256 tokens) and gated attention (32 rows), the fastest measured half / committed / double split had 256 or 512 four-wave programs (one or two per CU); at 64 tokens double was observed 0.7% ahead, the difference not resolved. Half lost 4–37% of speedup, double changed it by −6% to +1%.
   Try neighbours and prefetch depth: router look-ahead 2 → 4 reduced call time 3% at 256 tokens (one run), → 1 lost 11–13% speedup; fp8 GEMM m = 16 `PREFETCH` 3 lost 9.5–13% of speedup (B/A 0.871–0.905), 4 and 7 stayed within 3.3% of 5. These measurements do not establish a floor-reaching rule or §5's knobs for other Points *(field, E7, E8, E9, E10, E48)*.
-- **At a Point of several dispatch rounds** (prefill, M ≥ 1024) the knobs measured here moved little: tile order
+- **At a Point of several dispatch rounds** (M ≥ 1024) the knobs measured here moved little: tile order
   (`group_m` 4 → 1) 1.2–2.1% at m = 4096 in four runs of 4 alternated rounds (fp8 GEMM `aef7bbb0`, §12), removing
   `waves_per_eu` 0.0–0.15% at 8192 tokens in two (MiniMax gate-up `51ae4994`) *(field, E3, E25)*. Tile by M:
   [gemm.md](gemm.md) §3, §7, [moe.md](moe.md) §2, [gluon/mfma.md](gluon/mfma.md) §4; occupancy: §8.
 
-## 4. Why (inferred): bytes in flight set a decode kernel's bandwidth
+## 4. Why (inferred): bytes in flight set a small memory-bound kernel's bandwidth
 
 In the stream curve below, MB of bytes in flight means MiB; the router and GEMM estimates later use decimal MB. On a Gluon stream of 1 GiB (`buffer_load`, `.cg`, 16 bytes per lane) the bandwidth followed the bytes in flight
 (programs × waves × independent load instructions per lane × 1 KiB per wave-load), not the program count, for 256 to 8192
@@ -271,7 +271,7 @@ Below one per CU the m = 16 GEMM's 192 one-wave programs lean on each wave's dep
   and at N=7168 M ≤ 8 (10 Points); 8 in 27 kernels: DSA 4, Qwen3-Next GDN decode 9, MiniMax-M2 MoE 8, Qwen3.5 GDN
   prefill 4 (`_chunk_boundaries`, `_propagate_chunks`), Qwen2-MoE experts 1, bf16 GEMM 1; 16 for the Qwen3.5 GDN decode
   recurrence from 64 rows and the Qwen2 router projection at 2232 tokens (`4c2bed7e3e8c1e94`). Router selection and
-  decode GEMVs: not checked. At 43e112e no Point had two committed files that differ only in `num_warps`, so no committed pair
+  small-M GEMVs: not checked. At 43e112e no Point had two committed files that differ only in `num_warps`, so no committed pair
   isolates the warp count's effect: when you vary it, vary the layouts with it and A/B it.
 
 ## 8. `waves_per_eu`: a register cap
@@ -314,7 +314,7 @@ When to try it:
   instructions), and the call ran 1.60× slower at both (speedup ratio 0.62–0.63; its comment says ~19%, S27) *(field, E13)*. On FlyDSL attention kernels `../attention/registers_occupancy.md` §2 records a forward kernel 5.47× slower under a cap and a sparse-MLA backward dQ kernel 2× and 4× slower (repeat counts unknown there). No committed AKLR A/B shows a cap helping (§5) *(field, E13)*: measure every cap.
 
 Read the compiled count first (`debugging.md`) at every Point the setting applies to. At 43e112e the committed kernels set 1 to 8
-on the fp8 GEMM's decode Points but none at N = 7168, M = 2 (N = 3072, m = 1 to 64: 8, 4, 4, 2, 3, 8, 6), 2 on every
+on the fp8 GEMM's m ≤ 64 Points but none at N = 7168, M = 2 (N = 3072, m = 1 to 64: 8, 4, 4, 2, 3, 8, 6), 2 on every
 bf16 GEMM tile kernel (not the split-K reduce), 6 and 8 on the 16-wave GDN decode recurrence, none in any DeepSeek-V2
 MoE or Qwen3-Next file ([kernels/kernel_library.md](kernels/kernel_library.md) §5–§14): each Point's search result.
 
@@ -327,7 +327,7 @@ MoE or Qwen3-Next file ([kernels/kernel_library.md](kernels/kernel_library.md) �
 | `allow_flush_denorm=True` (on the split and merge launches of four of the five DSA 64-head files, 12 to 32 tokens; not the 8-token one) | `denormal-fp-math-f32` becomes `preserve-sign` in the LLVM IR (S29), but the gfx950 code does not change: the same instructions and `.amdhsa_float_denorm_mode_32` 3 with and without it, on a kernel of exp, log, division, sqrt, exp2 and a multiply-add (compiles with Triton 3.8.0 for gfx950; [numerics.md](numerics.md) §6) | removing it at 12/16/24/32 tokens gave B/A 1.0007/1.0033/0.9986/0.9970; all compared arms passed accuracy *(field, E18)* |
 | `enable_fp_fusion` (default on; `False` on at least one launch in 42 of the 154 schema files at 43e112e, chosen per Point in 4 more, 3 of which turn it off at one of their Points: `96e51c1f85a71b7e` at 16 tokens, `61ed32f62fa797df` and `1d5568a78971fb62` at 512) | on: LLVM may contract a multiply and an add into one FMA, one rounding (S31); off: `v_pk_mul_f32` + `v_pk_add_f32` instead of `v_pk_fma_f32` (compiles with Triton 3.8.0 for gfx950); 23.5% of 10^6 random `a * b + c` differed fused against unfused *(field, E42)* | off → on at DeepSeek-V2 inter_dim 512, 8 tokens: same gfx950 code on all 3 launches; B/A 1.00, 56.27 → 56.34 µs, accuracy still ok *(field, E18)* |
 | `num_stages` | nothing in Gluon: `gluon_to_ttgir` has no `num_stages`-driven pipeliner (S32); a Gluon loop compiled at 1 and 3 gives identical code *(field, E21)*. In plain Triton it drives the software pipeliner (S33): a 128 × 128 × 64 bf16 GEMM with 8 warps issued 0, 8 and 12 direct-to-LDS loads at 1, 2 and 3; the block ping-pong pass, added above 1, changed that GEMM only at 3 (2 `amdg.cond_barrier`, no `s_setprio`; compiles with Triton 3.8.0 for gfx950) | — |
-| `schedule_hint` | nothing: "Experimental; right now no effect" (S29); identical code with and without (compiles with Triton 3.8.0 for gfx950). The n6144 decode GEMM passes it (S45); Triton 3.7.0 turned `schedule_hint="memory-bound-attention"` into the `iterative-ilp` scheduler ([gemm.md](gemm.md) §9): on 3.8.0 `llvm_fn_attrs=[["amdgpu-sched-strategy", "iterative-ilp"]]` sets the same attribute | — |
+| `schedule_hint` | nothing: "Experimental; right now no effect" (S29); identical code with and without (compiles with Triton 3.8.0 for gfx950). The n6144 bf16 GEMM passes it (S45); Triton 3.7.0 turned `schedule_hint="memory-bound-attention"` into the `iterative-ilp` scheduler ([gemm.md](gemm.md) §9): on 3.8.0 `llvm_fn_attrs=[["amdgpu-sched-strategy", "iterative-ilp"]]` sets the same attribute | — |
 | `matrix_instr_nonkdim` | plain Triton only: the dot lowering picks the MFMA with it (S58); Gluon picks the instruction in the layout (`gluon/mfma.md`) | — |
 | `waves_per_eu`, `num_warps` | §8, §7 | §5 |
 | any option, even one that compiles to nothing | enters the JIT's in-memory cache key before backend normalization (S57): `kpack=2` after `kpack=1` creates another raw-options entry, but gfx950 normalizes both to 1, so this does not prove a second distinct compiled binary; flipping back reuses the first entry | — |
@@ -351,7 +351,7 @@ Gluon has no `num_stages` pipeliner (S32): the depth is in the code, as in the r
   decode template (not measured at 43e112e) issues the state load early at 1 and 32 rows, late at 128 and 256 (S37):
   early costs 7, 0, 77 and 12 more VGPRs (compiles with Triton 3.8.0 for gfx950), and at 32 rows late ran 10.28 µs
   against 8.39 at equal VGPRs *(field, E43)*.
-- **Latency-bound programs: issue order and live ranges.** Where a decode program is one chain of loads and dependent
+- **Latency-bound programs: issue order and live ranges.** Where a program at a few rows is one chain of loads and dependent
   math, the committed files reorder it rather than cut work. No item below was timed in a kernel: compare the variants'
   VGPRs, spills and `s_waitcnt` order ([debugging.md](debugging.md) §2–3), then A/B them (§2).
   - Issue the large load first: "Expose the large state fetch before preparing scalar gates" (S51).
@@ -400,7 +400,7 @@ Workgroups are dealt to the 8 XCDs round-robin, each with its own L2 (`../gemm/s
 m=4096 fp8 GEMM's grouped tile order (`group_m` 4 → 1, leaving M-major order with the 4-way N interleave, S43) cost
 1.2–2.1% in four runs (25.38 → 25.87 µs, all 4 B runs slower than all 4 A runs, in one) *(field, E3, E25)*; removing the
 N=7168 m=64 GEMM's permutation (S44), where each tile has one reader, did nothing (§5). Remap when several programs read
-the same data; a remap must be a permutation of the grid for every grid size (`gemm/decode_gemm.md` §3).
+the same data; a remap must be a permutation of the grid for every grid size (`gemm/small_m_gemm.md` §3).
 
 ## 13. Budget a Point before designing: matrix-core and memory rates
 
@@ -410,7 +410,7 @@ it supplies fewer than 1024 waves; actual SIMD placement and residency were not 
 flight set (§4), and about 4 µs per launch behind the flush, whatever the work (under Kineto, §1) *(field, E35)*. Below 64 MB, where
 the Triton GEMMs' weights lie (4.7 to 32 MB), a plain read stream under AKLR's bench read 25–34 MB at 4.48–4.83 TB/s, 14–16 MiB
 at 3.16–3.72 and 4.5 MiB at 1.04–1.11 (4.24–4.64 µs for the smaller streams, 4 runs) *(field, E44)*; whole calls read the bf16 n6144 GEMM's 25 MB in
-5.94–6.37 µs at m ≤ 16 ([gemm/decode_gemm.md](gemm/decode_gemm.md) §1), the N = 7168 fp8 GEMM's 15.7 MB at m = 64 in
+5.94–6.37 µs at m ≤ 16 ([gemm/small_m_gemm.md](gemm/small_m_gemm.md) §1), the N = 7168 fp8 GEMM's 15.7 MB at m = 64 in
 6.24–6.36 µs ([gemm.md](gemm.md) §11), 3 runs *(field, E36)*: use the measured-size plain-read budgets as starting estimates, then measure;
 64 MB was not tested with this stream, and smaller weights do not obey a general 4–4.5 TB/s rule. The matrix cores ran bf16 `mfma` at 2447–2468 TFLOP/s, e4m3 `mfma_scaled` at 4899–4934 and e2m1
 (MXFP4) at 9382–9591 in the 16 × 16 shape (one-wave programs at 2 waves per SIMD on all 1024 SIMDs, chained MFMAs, 4
@@ -431,7 +431,7 @@ from its tile and MFMA shape ([gemm.md](gemm.md) §3, [gluon/mfma.md](gluon/mfma
 **How it is written.** With shapes as constexprs each Point compiles its own binary on its first call; a runtime int
 shares one across the Points of one specialization class (§1). The configuration is Python; of the 154 files at 43e112e, 131
 branch on the token count (`if m == …` or a threshold) to choose a kernel and its constexprs (S14), 71 use dataclass or NamedTuple
-configuration records, such as a MiniMax MXFP4 prefill policy switching at 1536, 3072, 5120 and 6656 tokens and a Qwen3-Next
+configuration records, such as a MiniMax MXFP4 many-token policy switching at 1536, 3072, 5120 and 6656 tokens and a Qwen3-Next
 decode config per row count (S56), 51 contain a `@gluon.constexpr_function`; some helpers are shared by kernel and launch code (§3), 11 a
 `functools` cache, such as the plain-Triton GEMMs' launch builder keyed by the shapes (S45). How each keys Triton's
 binaries: [authoring.md](authoring.md) §5. Constexpr against runtime token counts was measured once: the Qwen3-Next
@@ -449,7 +449,7 @@ producer carries (`"amdgpu-waves-per-eu"="2,2"`, Triton 3.8.0). Resolve the bran
 |---|---|---|
 | fp8 block-scaled GEMM, N=3072 (15 files, one per Point) | m ≤ 64: one- or two-wave programs over narrow N tiles, 4 of the 12 K groups to all of them in flight; 128 to 256: four-wave tiles with a 4-slot LDS ring; ≥ 1024: four-wave tiles, single-buffered (64 rows at m = 1024, 128 at 8192) | 1.307–1.435 at m ≤ 64; 1.199, 1.477 at 256, 128; 1.191–1.486 from 1024 *(field, E27)* |
 | fp8 block-scaled GEMM, N=7168 (9 files) | 448 one-wave programs at M ≤ 8; 224 programs of 2 to 4 waves at 16 to 64; four-wave at 128 and 256 | 1.664–1.840 at M ≤ 32; 1.488 at 64; 1.114–1.138 at 128 and 256 *(field, E27)* |
-| bf16 decode GEMMs, plain Triton (2 files, 10 Points) | one N tile per workgroup over all of K; split-K plus a fixed-order reduce only at n=2624 m=64 (`gemm/decode_gemm.md`) | 1.048–1.292 *(field, E28)* |
+| bf16 GEMMs at M ≤ 64, plain Triton (2 files, 10 Points) | one N tile per workgroup over all of K; split-K plus a fixed-order reduce only at n=2624 m=64 (`gemm/small_m_gemm.md`) | 1.048–1.292 *(field, E28)* |
 | MoE layers: DeepSeek-V2, MiniMax-M2 FP8 and MXFP4, Qwen2-MoE experts | 3 or 4 launches at 1 to 4 tokens; 3, 5 or 6 at 8 to 16; 5 to 7 at 32 to 256; 6 to 8 at ≥ 1024, where at least 26 of the 32 Points launch a kernel that allocates LDS (`moe.md`) | 1.097–4.115 at ≤ 16 tokens (34 Points); 1.030–1.275 at 32 to 256 (23); 1.152–1.785 at ≥ 1024 (32) *(field, E29)* |
 | DSA sparse MLA decode | 64 heads: head tile and split count chosen together to keep 192 to 256 programs; 8 heads: split at 32 and 128 tokens, one program per token without a merge at 256 | 64 heads 1.030–2.188; 8 heads 1.050–1.196 *(field, E30)* |
 | Qwen3.5 gated attention decode | FMA dot products per (row, head, split) at 1 and 2 rows; all 8 heads in one MFMA tile from 4 rows; splits shrink as rows grow (rows × splits = 512 from 16 rows) | 2.182 at 1 row; 1.671–1.803 at 2 to 32; 1.401, 1.204, 1.066 at 64, 128, 256 *(field, E31)* |

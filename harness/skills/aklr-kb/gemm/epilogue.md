@@ -2,10 +2,10 @@
 title: "GEMM — the epilogue: what a C store costs on gfx950 and how to make it cheaper"
 kind: topic
 lever: gemm_epilogue
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [fp8, mxfp4, mxfp8, bf16]
-regimes: [prefill, training, "M 256-4096 (bf16)", beta-accumulate, fused-epilogue]
+regimes: [large-M, "M 256-4096 (bf16)", beta-accumulate, fused-epilogue]
 flydsl: 0.3.2
 sources:
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/utils/gemm_helper.py
@@ -195,11 +195,11 @@ At one wave per SIMD nothing overlaps the epilogue unless you put it inside MFMA
   fixed inputs per M it sometimes changed sign between the inputs. Those inputs ran in separate time windows, so
   neither pool such a reversal away nor put it on the input alone: race the policy per M bucket on your own inputs,
   and again after the loop changes.
-  - Decode M (1–128), K=512, N=7168: *(field, E35)* `sc1` with paired 16 B stores gained 5.39% [+4.19, +6.60],
+  - M 1–128, K=512, N=7168: *(field, E35)* `sc1` with paired 16 B stores gained 5.39% [+4.19, +6.60],
     all 8 M faster, and `sc1` alone was 0.10–0.20 µs faster at every M but m=64. *(field, E48)* On the campaign's
     final source, paired sessions with the C-store aux the only edit put `sc1` 2.115–5.470% ahead of the default at
     all 8 M on both inputs, m=64 included; the A/A intervals of those sessions spanned −0.227% to +0.240%.
-  - Decode M, K=512, N=28672: `sc1` lost. *(field, E36)* An earlier campaign build put `sc1` slower than the
+  - M 1–128, K=512, N=28672: `sc1` lost. *(field, E36)* An earlier campaign build put `sc1` slower than the
     default at 7 of 8 M in single paired readings (+0.3% to +5.5%, four of them above 1%; m=2 −0.4%).
     *(field, E44)* On a later small-M campaign build (source `827136159797…`), with the C-store aux the only edit
     and the ISA otherwise identical, `sc1` minus default for the two inputs was: m=1 +2.935%/+10.183%;

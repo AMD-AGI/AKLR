@@ -89,7 +89,7 @@ or 12 routes: 768, 1536).
 - Weights: one 16-byte load per lane per chunk for the gate tile and one for the up tile of the interleaved pair; each
   dword of 8 fp4 values becomes 8 bf16 with the block scale applied by `cvt_scalef32_pk_bf16_fp4`; one scale dword
   holds the gate and up bytes of two chunks. Non-temporal loads under expert parallelism, cached otherwise (routes that
-  share an expert then reuse it from L2, per the code's note) (`../moe/grouped_moe_inference.md` §4).
+  share an expert then reuse it from L2, per the code's note) (`../moe/grouped_sorted_tokens.md` §4).
 - `mfma_f32_16x16x32_bf16`, 4 per chunk for gate and 4 for up, into fp32 (`../gemm/mainloop.md` §5).
 - `_reduce_waves`: the 4 waves' partials through LDS, summed in wave order (`../gemm/small_m.md` §4).
   Wave 0 clamps, applies SiLU with `exp2` and `rcp`, rounds to bf16 and stores the route's 16 values to `Y`.
@@ -103,8 +103,8 @@ one per route; 256–2048 workgroups.
 - Row 0 of each wave's tile goes to LDS; 16 threads add the 6 routes × routing weight in route order, skipping routes
   that are not local, and store bf16 (`../gemm/correctness.md` §8).
 
-How this relates to the decode MoE cards: no sort and one route per workgroup set, as the 1–2-token kernels of
-[fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md); `../moe/decode.md` §1 on why the
+How this relates to the few-token MoE cards: no sort and one route per workgroup set, as the 1–2-token kernels of
+[fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md); `../moe/few_tokens.md` §1 on why the
 launch count matters at these sizes.
 
 ## Result

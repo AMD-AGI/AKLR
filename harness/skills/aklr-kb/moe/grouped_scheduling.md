@@ -2,10 +2,10 @@
 title: "Grouped GEMM — ordering and placing tiles across groups"
 kind: topic
 lever: grouped_scheduling
-ops: [grouped_gemm]
+ops: [grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp8, mxfp4]
-regimes: [forward, dgrad, wgrad, variable-k, skew, persistent]
+regimes: ["M split per group", transposed-operand, variable-k, skew, persistent]
 flydsl: 0.3.2
 sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/utils/gemm_helper.py:688
@@ -43,23 +43,25 @@ sources:
 
 ## Route here when
 - A grouped kernel is fast on balanced token counts and slow under skew, or the other way round.
-- You are choosing an XCD remap, a band width or a dispatch order, or porting one from dense or another pass.
+- You are choosing an XCD remap, a band width or a dispatch order, or porting one from dense or another layout.
+- You are placing the tiles of a MoE expert GEMM with several M-blocks per expert, or with thin experts
+  (sorted-token specifics: `grouped_sorted_tokens.md` §2–§4).
 - You are deciding between one tile per workgroup, a persistent grid and several tiles per workgroup.
 - A grouped GEMM trails a dense GEMM of the same total size.
 
 **Somewhere else if:** the device-side exit and lookup → `grouped_group_mapping.md` (exit on the raw
 id and remap over the live count is §4 there); tile size and boundary bodies →
-`grouped_tile_pricing.md`; split-K for deep groups → `grouped_wgrad.md`; ranking candidates on
+`grouped_tile_pricing.md`; split-K for deep groups → `grouped_variable_k.md`; ranking candidates on
 balanced and skewed data → `grouped_host_autotune.md`.
 
 ## 1. First ask where the skew lives
 
-| Pass | Skew changes | Order lever | XCD lever |
+| Layout | Skew changes | Order lever | XCD lever |
 |---|---|---|---|
-| forward, dgrad | tiles per group | none while rounds are full | group-aligned runs (§3) |
+| M split per group (MoE expert GEMMs; forward, dgrad) | tiles per group | none while rounds are full | group-aligned runs (§3) |
 | variable-K wgrad | contraction per tile | longest-first (§5), 1 tile per WG (§6) | round-robin (§2) |
 
-Forward and dgrad tiles all cost the same except ragged boundary tiles (`grouped_tile_pricing.md` §4); wgrad
+M-split tiles all cost the same except ragged boundary tiles (`grouped_tile_pricing.md` §4); variable-K
 groups all have the same tile count.
 
 - *(field, E1)* Copying the forward settings (GROUP_M = 2, eight contiguous XCD slices) to the variable-K wgrad of
@@ -68,13 +70,15 @@ groups all have the same tile count.
 - On wgrad, any partition coarser than one tile leaves up to one run of the heaviest group as imbalance. With
   276 tiles per group and runs of 8 tiles, one run per XCD is 23% of a group's tiles; times a hot group's 62%
   share of the work that is 14% of the launch. Only the hardware's own `bid % 8` (run length 1) is exact.
-- Do not share one default configuration, or one race, between the forward/dgrad path and wgrad.
+- Do not share one default configuration, or one race, between the M-split path (forward, dgrad) and the
+  variable-K path (wgrad).
 
 ## 2. XCD placement: which way the remap should run
 The rule from dense GEMM: a tile stream that reads **a slab of its own** wants its group's workgroups on one
 XCD; streams that read **a shared slice** want the hardware round-robin
-(`../gemm/schedule_and_locality.md` §2). For grouped passes:
-- **Forward and dgrad read a private slab.** Every M tile of group g streams `B[g]`. When `B[g]` exceeds an
+(`../gemm/schedule_and_locality.md` §2). For grouped layouts:
+- **M-split tiles (MoE expert GEMMs, forward, dgrad) read a private slab.** Every M tile of group g streams
+  `B[g]`. When `B[g]` exceeds an
   XCD's 4 MB L2, co-resident workgroups that share a B column block should sit on the same XCD: contiguous
   slices with a narrow band. *(field, E2)* fp8 NN dgrad, 8.7 MB slab: the shared-slice recipe (identity XCD order)
   lost 5.7% at GROUP_M = 4; on the NT forward of the same projection it lost 2.3% at GROUP_M = 2 and 5.4% at
@@ -84,7 +88,7 @@ XCD; streams that read **a shared slice** want the hardware round-robin
   configs 2.8–3.0% slower, balanced unchanged. *(field, E5)* MXFP4 NT: 8 slices without an N band beat 1 slice
   with a 4-wide N band by 7–8% on the two worst (skewed) configs, and 1 slice ran the balanced down configs
   2.3–3.2% slower than 8; 2 slices sped the heavy configs of a four-config screen by 4.2–5.4% but dropped one
-  wide-N short-K forward config from 1.373 to 1.223. Sweep per pass, and put both a narrow-N and a wide-N
+  wide-N short-K forward config from 1.373 to 1.223. Sweep per layout, and put both a narrow-N and a wide-N
   short-K shape in the screen: a screen with only a long-K shape missed that collapse.
 - **Variable-K wgrad reads a shared slice.** Both operands are token-major slices of the group, shared by all
   of its output tiles, so XCD clustering fragments the sharing. *(field, E6, E7)* fp8 wgrad: identity order with
@@ -93,7 +97,7 @@ XCD; streams that read **a shared slice** want the hardware round-robin
   still lost 0.6% overall and 2–3 points on two configs: round-robin keeps all eight XCDs on the same band.
   That measurement (G = 32, 144 tiles per group, ~18 rounds) is at the depth where Turbo's tuner leads with
   the affine rectangle (§3, last bullet); race both on the deployed shape.
-- **A contiguous remap also undoes a longest-first order** on variable-K wgrad (measured: `grouped_wgrad.md`
+- **A contiguous remap also undoes a longest-first order** on variable-K wgrad (measured: `grouped_variable_k.md`
   §5). A race scored on balanced data alone picks the losing arm; score on the worse of balanced and skewed.
 - **Affinity that stays balanced.**
   - Renumber a group's tiles into XCD-affine rectangles only where the band does not already hand each XCD a
@@ -176,7 +180,7 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
 - *(field, E22)* bf16 forward/dgrad: GROUP_M 1/2/4/8 within 1% once the XCD band deal was in.
 
 ## 5. Longest-first inside a wave
-- Forward and dgrad tiles cost the same: order changes are estimated at exactly 0 where every dispatch round
+- M-split tiles cost the same: order changes are estimated at exactly 0 where every dispatch round
   was full. Variable-K wgrad tiles cost what their group's tokens cost, so the dispatch order is a list
   schedule (`../attention/grid_dispatch.md` §4).
 - Three ways to put the deepest group first, all computed on the device from the offsets:
@@ -229,7 +233,7 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
 - A persistent grid capped below the CU count exists to leave CUs to a co-running kernel, not for speed (Turbo:
   BF16:622-625; FP8:2669-2670).
 - Which variable-K loop body to run (chunked masked or exact-trip) is keyed on the per-group contraction
-  `m_total / G`, not on `m_total` (`grouped_wgrad.md`).
+  `m_total / G`, not on `m_total` (`grouped_variable_k.md`).
 
 ## 7. Two tiles per workgroup
 - What it buys is the per-workgroup fixed cost (launch, decode, table load, pipeline fill) shared by WGT tiles
@@ -283,7 +287,7 @@ per-group launches of it gave 2836, and eight per-group launches of the vendor G
 - Order changes are checked bit-identical: they must not change a single output byte.
 
 ## Related
-`grouped_group_mapping.md` · `grouped_tile_pricing.md` · `grouped_wgrad.md` ·
+`grouped_group_mapping.md` · `grouped_tile_pricing.md` · `grouped_variable_k.md` ·
 `grouped_host_autotune.md` · `grouped_measurement.md` ·
 `../gemm/schedule_and_locality.md` §2 · `../gemm/grid_pricing.md` §1, §10 ·
 `../attention/grid_dispatch.md` §4

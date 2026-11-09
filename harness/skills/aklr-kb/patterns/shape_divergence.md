@@ -3,7 +3,7 @@ title: "Shape divergence: one kernel or configuration wins on some shapes and lo
 kind: pattern
 signals: ["per-shape deltas of opposite sign under one change", "geometric mean flat while single cells move",
   "race winner flips between cleared-cache re-runs", "a tuned row serving every M that pads to it"]
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe, attention]
 gens: [gfx950]
 flydsl: 0.3.2
 basis: source-semantics
@@ -52,7 +52,7 @@ basis: source-semantics
 - Close with a full-table ablation that has an all-off arm — `gemm/measurement.md` §9 — keep a change
   only if its sign agrees across cells (S31, S32). In AKLR a speedup is judged per Point (S33).
 - Other kernel families: in a grouped GEMM, find where the skew lives before reading a per-shape result —
-  `moe/grouped_scheduling.md` §1 — and decide waves per SIMD per pass —
+  `moe/grouped_scheduling.md` §1 — and decide waves per SIMD per layout —
   `moe/grouped_tile_pricing.md` §2; in attention, key the tile heuristic on the axis the grid spreads
   over — `attention/grid_dispatch.md` §6.
 

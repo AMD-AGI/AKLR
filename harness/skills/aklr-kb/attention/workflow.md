@@ -5,16 +5,17 @@ lever: attn_workflow
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16]
-regimes: [prefill, backward, causal, sliding-window, gqa]
+regimes: [many query rows, dQ dK dV, causal, sliding-window, gqa]
 flydsl: 0.3.2
 ---
 
 # Working on an attention kernel
 
-> The order in which to look at a flash-attention forward or backward kernel (fwd, dq, dkdv, fused dq+dkdv,
-> and their helper kernels). It does not say which configuration wins. Numbers marked `*(field, E<n>)*` are
-> measured values; their conditions are listed under Evidence at the end. Use them for direction and order of
-> magnitude, not as targets. The round discipline — one change per
+> The order in which to look at a flash-attention kernel: the one that computes O and the LSE (fwd), the gradient
+> kernels (dq, dkdv, fused dq+dkdv), and their helper kernels. With few query rows per head the grid comes from
+> splitting the KV range: `split_kv.md`. It does not say which configuration wins. Numbers marked
+> `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end. Use them for
+> direction and order of magnitude, not as targets. The round discipline — one change per
 > round, hypothesis before build, escalation after rollbacks — is in `../gemm/workflow.md` and
 > applies unchanged.
 
@@ -31,8 +32,8 @@ layer you have not audited.
 | Transposed LDS reads, row stride, bank-conflict readings | `lds.md` (with `../flydsl/guides.md` § lds-optimization) |
 | VGPR budget, occupancy steps, spills, AGPR | `registers_occupancy.md` |
 | `sched_group_barrier`, fences, `s_setprio`, waits, barriers | `schedule_sync.md` |
-| dQ/dK/dV accumulation, determinism, workspaces, fusion, masked q-loops | `backward.md` |
-| Decode, split-KV, the combine | `decode_split_kv.md` |
+| dQ/dK/dV accumulation, determinism, workspaces, fusion, masked q-loops | `gradients.md` |
+| Few query rows per head against a long KV: split KV, the combine, gathers from a sparse or paged KV | `split_kv.md` |
 | Rulers, noise floors, FLOP accounting, host-bound shapes | `measurement.md` |
 | Gates, spike inputs, mask conventions | `correctness.md` |
 | The kernel is wrong, not slow | `../flydsl/debug-flydsl-kernel.md` |
@@ -96,10 +97,10 @@ redundancy          = issued / causal-exact − 1
   diagonal band at tile granularity. That caps every "fewer MFMA" idea on that body at 3.1%.
 - Above ~15%, this is the first lever; under ~5%, go to Step 4.
 - With redundancy to remove, audit droppable GEMMs and global correction terms first: dropping one GEMM from a
-  dq kernel gained 9.8% *(field, E9)*. Fusion and drop rules are in `backward.md` §7.
+  dq kernel gained 9.8% *(field, E9)*. Fusion and drop rules are in `gradients.md` §7.
 - Redundancy that buys a constraint is not free. A deterministic two-kernel backward recomputes S and dP in
   both kernels (7 GEMM-equivalents against the 5 the FLOP convention counts, ~29% of MACs); removing
-  it needs float atomics or a per-trip dQ partial store (`backward.md` §1–§4).
+  it needs float atomics or a per-trip dQ partial store (`gradients.md` §1–§4).
 
 ## Step 4 — price the stall pool, then hide latency
 - Every route to a speed-up goes through the stall pool; only some routes also need more co-execution. Price
@@ -120,7 +121,7 @@ redundancy          = issued / causal-exact − 1
 ## Step 5 — numerics, occupancy, determinism
 Check these in order once the structure is settled: exp mode and LSE format (`softmax.md`),
 whether an occupancy step is reachable without spills (`registers_occupancy.md`), and whether the
-target requires bit-reproducible outputs (`backward.md` §1). A determinism requirement closes
+target requires bit-reproducible outputs (`gradients.md` §1). A determinism requirement closes
 every "relax determinism to drop MFMAs" option; decide it before Step 3, not after.
 
 ## Usually dead
@@ -132,7 +133,8 @@ changed.
   compiler spills (`registers_occupancy.md` §2). *(field, E13)* One more wave
   per SIMD made a backward 32% slower and two more 5× slower; *(field, E14)* forcing AGPR splits took a forward's
   spills from 31 to 52–77.
-- **Dual-wave, 8-wave, warp specialisation or stagger in a backward that already runs two workgroups per CU.** Those
+- **Dual-wave, 8-wave, warp specialisation or stagger in a kernel that already runs two workgroups per CU**
+  (measured on dK/dV bodies). Those
   co-resident workgroups already overlap with no barrier; the rebuilt version adds a barrier tax. Its best stagger,
   which raced (NaN, not deterministic), reached 1029 TF/s against a 1116 TF/s baseline *(field, E15)*.
 - **Pushing exp into MFMA shadows with two co-resident workgroups per CU**: 0.00% and noise-level results; raising
@@ -150,11 +152,11 @@ changed.
   neutral on another *(field, E19)*; on dense decodes with no such pipeline it paid (`softmax.md`
   §6.3).
 - **Q-outer fused dq+dkdv**: reducing dK/dV over q takes float atomics (not deterministic) or a dK/dV partial
-  workspace that saves no bytes (`backward.md` §2). A KV-outer fusion with a narrow KV band
+  workspace that saves no bytes (`gradients.md` §2). A KV-outer fusion with a narrow KV band
   (`BLOCK_KV = 64`) was 1.95–2.55× slower *(field, E20)*; the working fused structure is a KV-outer single pass with a
-  wide band (`backward.md` §7).
+  wide band (`gradients.md` §7).
 - **fp32 atomic dQ**: each dQ element takes ~Skv/(2·BLOCK_KV) contributions; 105.5 ms against 6.34 ms
-  *(field, E21)* (`backward.md` §3).
+  *(field, E21)* (`gradients.md` §3).
 - **Bigger tiles past the register wall**: a dkdv `BLOCK_Q` of 128 lost 67% *(field, E22)*.
 - **Tuning hand-written `vmcnt` drain levels**: removing every one of them priced at +0.3% on one forward
   *(field, E23)*; the barrier family, not the wait family, held the time.

@@ -22,8 +22,8 @@ and LLVM terms and should carry over to Triton or HIP, but the numbers have not 
   built, on `preshuffle_gemm`: tiling, the 2-stage LDS ping-pong, the XOR swizzle, `hot_loop_scheduler`, direct
   and CShuffle epilogues, B preshuffle, register budget. `../flydsl/guides.md` § lds-optimization and
   `../flydsl/guides.md` § prefetch-data-load cover the general LDS and prefetch transformations.
-- **Primus-Turbo's FlyDSL GEMMs** (`primus_turbo/flydsl/{gemm,utils}` at main `7615a5a2`), built for training
-  shapes (large M). Their comments record why each choice was made, and the cards cite them by file and line.
+- **Primus-Turbo's FlyDSL GEMMs** (`primus_turbo/flydsl/{gemm,utils}` at main `7615a5a2`), built for large-M
+  shapes. Their comments record why each choice was made, and the cards cite them by file and line.
 - **Measured FlyDSL GEMM work**, marked `*(field, E<n>)*`: what moved wall time and what did not.
 
 What each code base's kernels cover, and how they differ: `../flydsl/gemm.md` § INDEX Kernel map.
@@ -31,7 +31,7 @@ What each code base's kernels cover, and how they differ: `../flydsl/gemm.md` §
 The cards in this package start from what FlyDSL's guide already says and add the rest. Read the guide first if
 you have not built a FlyDSL GEMM before.
 
-**Small M (decode, M ≤ 256)** is in `small_m.md`: the kernels there are the baseline aiter's bf16
+**Small M (M ≤ 256, as in decode)** is in `small_m.md`: the kernels there are the baseline aiter's bf16
 FlyDSL GEMMs (`splitk_hgemm`, `small_m_hgemm`). Primus-Turbo does not target small M.
 
 Numbers marked `*(field, E<n>)*` are measured values; `E<n>` names the line under the card's `## Evidence` that gives the conditions. Use them for direction and order of magnitude, not as targets.
@@ -43,7 +43,7 @@ Numbers marked `*(field, E<n>)*` are measured values; `E<n>` names the line unde
 | building your first FlyDSL GEMM, or learning how the pieces fit | `../flydsl/guides.md` § gemm-optimization, then `workflow.md` |
 | starting work on a GEMM, or deciding what to do next | `workflow.md` |
 | about to choose a tile, split-K or boundary body, or wanting the ceiling of an idea | `grid_pricing.md` |
-| working on a GEMM with M ≤ 256 (decode, speculative verify), or aiter's FlyDSL bf16 tuned rows | `small_m.md` |
+| working on a GEMM with M ≤ 256 (as in decode or speculative verify), or aiter's FlyDSL bf16 tuned rows | `small_m.md` |
 | designing or editing the K loop (2-stage ping-pong, 8-wave pipeline, 4-wave designs, waits, registers) | `mainloop.md` |
 | working on LDS, swizzle, global→LDS DMA, B preshuffle, descriptors, transpose reads, MX scales | `datapath.md` (with `../flydsl/guides.md` § lds-optimization) |
 | ordering tiles across XCDs, writing scheduling hints, mapping waves | `schedule_and_locality.md` |
@@ -76,7 +76,7 @@ In FlyDSL: `../flydsl/gemm.md` § INDEX FlyDSL version.
 | `attribution.md` | regime probes, subtractive and additive arms, energy at the power cap, wave-cycle budget |
 | `correctness.md` | gates that reach the changed path, races, waits, bounds, register classes |
 | `measurement.md` | rulers, arm order, warm-up, noise floors, statistics, closing a series of changes |
-| `small_m.md` | decode-shape GEMM: cold rulers, dispatch rounds, split-K reduction cost, tile/stage/cache-policy choices, aiter tuned rows |
+| `small_m.md` | GEMM with M ≤ 256: cold rulers, dispatch rounds, split-K reduction cost, tile/stage/cache-policy choices, aiter tuned rows |
 | `wait_free_fold.md` | a split-K fold in which no workgroup waits: the last split to arrive folds, in split order |
 
 ## gfx942 (MI300X)

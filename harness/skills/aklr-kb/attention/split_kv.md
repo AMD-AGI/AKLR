@@ -1,20 +1,21 @@
 ---
-title: "Attention decode — split-KV grids, the combine, merging them, and pricing gathers"
+title: "Attention with few query rows per head — split-KV grids, the combine, merging them, and pricing gathers"
 kind: topic
-lever: attn_decode_split_kv
-ops: [attention]
+lever: attn_split_kv
+ops: [attention, mla, indexer_logits]
 gens: [gfx950]
 dtypes: [bf16, fp8]
-regimes: [decode, split-kv, mla, sparse]
+regimes: [few query rows, long KV, split-kv, mla, sparse, paged]
 flydsl: 0.3.2
 sources:
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_gfx950.py:1010
   - ROCm/FlyDSL@dd8373349:kernels/attention/mla_fwd_decode.py:63
 ---
 
-# Split-KV decode
+# Split KV for few query rows per head
 
-> A decode step has few query rows, so the grid comes from splitting the KV range: a producer writes one
+> With few query rows per head against a long KV (one query token per sequence, or a few, as in decode), the
+> grid comes from splitting the KV range: a producer writes one
 > partial output and LSE per split, and a combine merges them. FlyDSL's forward does this with a second
 > launch (`flash_attn_gfx950.py:1010-1016`); its MLA decode takes the partial buffers as arguments
 > (`mla_fwd_decode.py:63-64`). The rules below are general; constants from one model's shapes are left out.
@@ -24,10 +25,11 @@ sources:
 > Kernel deltas are time (negative = faster); decode-step benchmark deltas are score (positive = better).
 
 ## Route here when
-- A decode attention call is a producer plus a combine, and the pair is a visible share of the step.
+- An attention call with few query rows per head is a producer plus a combine, and the pair is a visible share of
+  the step.
 - You choose the number of splits, tiles per workgroup, or the combine's grid.
 - You want to merge the combine into the producer.
-- A gather-based (sparse or paged) decode kernel does not respond to compute-side changes.
+- A kernel that gathers KV rows (sparse/top-k indices or a paged pool) does not respond to compute-side changes.
 
 **Somewhere else if:** timing kernels of a few µs → `measurement.md`; XCD order of the
 combine → `grid_dispatch.md` §3; GEMM-side split-K → `../gemm/small_m.md` §4.
@@ -94,8 +96,8 @@ and gets hoisted. In the merged epilogue only the number of rounds and the store
 - **No agent-scope fence in a kernel that lives on L2 reuse.** A release/acquire fence writes back and
   invalidates the XCD's L2. *(field, E12)* Decode-step benchmark −62%; *(field, E13)* release 5.1 µs + acquire
   1.3 µs, 3–4× the whole epilogue. Get cross-CU visibility from per-instruction scope bits.
-- In a backward pass, where thousands of output tiles reduce in parallel, the same pattern also lost to a separate
-  reduce kernel (`backward.md` §6).
+- Where thousands of output tiles reduce in parallel (the dQ partials of the gradient kernels), the same pattern also
+  lost to a separate reduce kernel (`gradients.md` §6).
 
 ## 4. Grid size: fill the CUs once, with fat workgroups
 - **Ragged groups.** Allow any `n_groups` with `ceil(n_tiles / n_groups)` tiles per workgroup; in the last
@@ -187,7 +189,8 @@ and gets hoisted. In the merged epilogue only the number of rounds and the store
   remainder-spreading form (`../gemm/schedule_and_locality.md` §2) needs no gate.
 
 ## 8. Measuring
-Time decode kernels as graph replays with events, arms interleaved in one process. *(field, E37)* Between a FlyDSL
+Time these short producer and combine kernels as graph replays with events, arms interleaved in one process.
+*(field, E37)* Between a FlyDSL
 decode and a Triton one, a synchronize-bracketed wall carried ~27 µs of host time on the FlyDSL side and more on the
 Triton side (a slower Python launcher), and turned a 16.8% kernel gap into 38%. Protocol:
 `measurement.md`.
@@ -201,7 +204,7 @@ Triton side (a slower Python launcher), and turned a 16.8% kernel gap into 38%. 
 - The benchmark's indices reproduce production adjacency.
 
 ## Related
-`grid_dispatch.md` · `backward.md` §6 · `measurement.md` ·
+`grid_dispatch.md` · `gradients.md` §6 · `measurement.md` ·
 `../gemm/small_m.md` · `../gemm/epilogue.md` §5 · `../hardware/gfx950/memory_and_sync.md`
 
 ## Evidence

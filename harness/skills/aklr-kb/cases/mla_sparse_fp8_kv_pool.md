@@ -1,9 +1,9 @@
 ---
-title: "Sparse MLA decode on DeepSeek-V4's padded fp8 KV pool, 64 heads, 128 window slots plus 0, 512 or 8256 compressed-cache slots — one dequantised 32-key LDS tile feeds both GEMMs for all 64 heads; a second launch merges the partials"
+title: "Sparse MLA with one query token per sequence on DeepSeek-V4's padded fp8 KV pool, 64 heads, 128 window slots plus 0, 512 or 8256 compressed-cache slots — one dequantised 32-key LDS tile feeds both GEMMs for all 64 heads; a second launch merges the partials"
 kind: case
 ops: [mla, attention]
 dtypes: [fp8, bf16]
-regimes: ["decode batch 1-16", "decode batch 32-64", "decode batch 128-256"]
+regimes: ["one query token per sequence", "sparse top-k", "batch 1-16", "batch 32-64", "batch 128-256"]
 contract: bounded
 gens: [gfx950]
 flydsl: 0.3.2
@@ -18,12 +18,13 @@ sources:
   - aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_extra_extra_idx_extra_lens_sinks_kv_cache_float8_e4m3fn_extra_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128_extra_page_size64_n_extra_indices512/7afdc9a6fcb42ad3.json
 ---
 
-# Sparse MLA decode on the DeepSeek-V4 fp8 pool: one dequantised tile for all 64 heads
+# Sparse MLA with one query token per sequence on the DeepSeek-V4 fp8 pool: one dequantised tile for all 64 heads
 
-One FlyDSL source serves three schemas of `flash_mla_with_kvcache@1.0` for DeepSeek-V4-Flash decode (PR #71): the
+One FlyDSL source serves three schemas of `flash_mla_with_kvcache@1.0` for DeepSeek-V4-Flash with one query token per
+sequence, as in decode (PR #71): the
 three files embed the same `kernel.py` as `kernel.sources[0].content`, and the function names below are in it. They
 are called here by their extra pool: "no extra" (window only), "extra 8256" (extra page size 2, 8256 indices) and
-"extra 512" (extra page size 64, 512 indices). "batch" is the Point's rows, one decode token each.
+"extra 512" (extra page size 64, 512 indices). "batch" is the Point's rows, one query token each.
 
 ## Applies when
 
@@ -57,7 +58,7 @@ are called here by their extra pool: "no extra" (window only), "extra 8256" (ext
 - **The bench draws lengths and indices uniformly.** `sparse_lens` and `extra_sparse_lens` are uniform in
   [0, width] and the indices uniform over the whole pool (`IntRangeDistribution`). In serving they follow the
   model's top-k selection, whose index structure moved gather cost on another sparse kernel
-  (`../attention/decode_split_kv.md` §7); the speedup on serving inputs is not measured. At batch 1 one
+  (`../attention/split_kv.md` §7); the speedup on serving inputs is not measured. At batch 1 one
   row's drawn lengths set the work: the nine batch-1 Points of extra 8256 read 2.809–5.845 *(field, E2)*, and each
   reproduces within 4.1% in the other committed run *(field, E4)*, so the spread follows each Point's inputs
   (seeded by its workload hash, `aklr/ops/README.md` § Inputs and workloads), not run noise.
@@ -74,10 +75,10 @@ are called here by their extra pool: "no extra" (window only), "extra 8256" (ext
   of the storage, not `data_ptr()`, and the layout's storage test checks strides only
   (`aklr/core/contract/semantics/_layouts.py`). A pool view that starts inside a larger allocation would be read
   from the wrong base. The bench's pools start at offset 0; sglang's were not checked for this page.
-- **Not the shape the decode cards recommend**, and nothing here prices the differences: the combine is a second
-  launch with 4 waves and an LDS merge (`../attention/decode_split_kv.md` §1 and
+- **Not the shape the split-KV and grid-pricing cards recommend**, and nothing here prices the differences: the
+  combine is a second launch with 4 waves and an LDS merge (`../attention/split_kv.md` §1 and
   `../gemm/grid_pricing.md` §2 found one wave per combine workgroup faster); a producer workgroup owns
-  one 32-key tile, two above 1024 live keys, where §5 of the decode card asks for at least two per split; partials
+  one 32-key tile, two above 1024 live keys, where §5 of the split-KV card asks for at least two per split; partials
   are bf16, which §5 says adds merge error.
 - **Each call goes through the `@flyc.jit` launcher** `launch_all`, which re-binds its arguments on every call
   (`../flydsl/attention.md` § measurement §6, on FlyDSL 0.3.2). CI's ratio is GPU time in graph replays, so that
@@ -101,7 +102,7 @@ loads plus that block's UE8M0 exponent, and build bf16 values by integer bit ass
 shifted into place, exponent + scale − 7 added in one integer add per pair, sign moved to bit 15. The eighth
 thread copies the 64 bf16 rope values. Everything lands in one bf16 LDS tile of 32 keys × 512 dims (32 KiB), stored
 as 16 blocks of 32 keys × 32 dims. A key with a negative index or past the live length reads slot 0 and gets a
-−1e30 bias in LDS, so its exp2 is 0 (the masking of `../attention/decode_split_kv.md` §4). A payload is
+−1e30 bias in LDS, so its exp2 is 0 (the masking of `../attention/split_kv.md` §4). A payload is
 4.5 lines of 128 bytes at phase 0 or 64, so each key touches 5 lines plus its scale (from the layout; §7 of the same
 card).
 

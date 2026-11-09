@@ -14,7 +14,7 @@ sources:
 
 ## Symptom
 
-A per-kernel table from a multi-GPU decode trace puts a large share of the step on the allreduce
+A per-kernel table from a multi-GPU trace puts a large share of the step on the allreduce
 (`cross_device_reduce_1stage`, `allreduce_fusion_kernel_1stage` and the like). Expect the kernel's per-call times to
 have a long tail: most calls near what the kernel takes on its own, a few far longer. Concluding from the summed
 time that communication dominates, or that the allreduce kernel is slow, is not supported by the sum alone.

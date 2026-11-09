@@ -37,7 +37,7 @@ data movement in [memory.md](memory.md), quantization and rounding recipes in [.
   `k_width`, for an operand format.
 - An fp8 block-scaled or MXFP4 kernel must get its operands, e8m0 scales or preshuffled weights into the matrix
   core, or must write its activations in the format an MXFP4 consumer reads.
-- A decode GEMM leaves most rows of the 16-row instruction idle.
+- A GEMM with few rows (M ≤ 8) leaves most rows of the 16-row instruction idle.
 - A matrix call fails to compile, or you want the instruction it became and its rate.
 
 ## 1. The instruction menu on gfx950 (`version=4`)
@@ -57,7 +57,7 @@ The accumulator's `gl.amd.AMDMFMALayout(version=4, instr_shape=[M, N, K], ...)` 
 | `gl.dot_fma`, bf16 into fp32 | `BlockedLayout` accumulator, `k_width` 0 | `v_dot2c_f32_bf16` (VALU) | | not measured | 1 |
 
 At 43e112e, 22 schemas use no matrix instruction (18 GDN decode, gated attention at n = 1 and 2, two RMSNorm); the two
-plain-Triton bf16 decode GEMMs reach `v_mfma_f32_16x16x32_bf16` through `tl.dot` *(field, E2)*. The 84
+plain-Triton bf16 small-M GEMMs reach `v_mfma_f32_16x16x32_bf16` through `tl.dot` *(field, E2)*. The 84
 `mfma_scaled` schemas split into 42 e4m3 (a8w8 GEMM 24, MiniMax-M2 fp8 MoE 9, DSA 64-head 5, Qwen2-MoE fp8
 router+experts 4), every call with both scales `None`, and 42 e2m1 (DeepSeek-V2/GLM MXFP4 MoE 19, MiniMax-M2
 MXFP4 MoE 23), every call with two scale tensors; no kernel uses e5m2 or mixes formats (read in the sources).
@@ -107,7 +107,7 @@ instructions: chain two calls on one zero-started partial, then fold once (`part
   1.995–2.008× in 4 runs of the register-operand microbenchmark with unit scales *(field, E1)*; the two routes were
   not compared at an AKLR Point.
 - Counter-signal: a rank-3 (batched) MFMA layout, on which `mfma_scaled` with `None` scales failed (§4, §10).
-  MiniMax-M2 fp8's 8-route decode down runs plain fp8 `mfma` on a rank-3 [16,16,32] layout with the same
+  MiniMax-M2 fp8's 8-route down at 1–16 tokens runs plain fp8 `mfma` on a rank-3 [16,16,32] layout with the same
   per-group fold (S10). The E64 down runs plain fp8 [16,16,32] at 64 tokens and `mfma_scaled` [16,16,128] at 32
   (`NATIVE=m == 64`, S56); why it switches, and what the switch costs at a fixed Point, was not measured.
 
@@ -116,7 +116,7 @@ instructions: chain two calls on one zero-started partial, then fold once (`part
 MXFP4 weights (e2m1 values, an e8m0 scale per 32) arrive with bf16 activations in AKLR's MoE schemas. The DeepSeek-V2 implementation cited in S11 quantizes its activations to MXFP4 internally (the recipe and the contract's margin: [../numerics.md](../numerics.md)
 §1, §3) and feeds both packed operands and their scale bytes to the instruction, which decodes fp4 and applies the
 scales in hardware, at 3.82–3.92× bf16 in 4 runs, timed with unit scales only *(field, E1)*. A compiled tile: §3; the
-DeepSeek-V2 decode expert GEMM converts both operands and scales into their layouts at the call (S11). The rules:
+DeepSeek-V2 2-token expert GEMM converts both operands and scales into their layouts at the call (S11). The rules:
 
 - **Operands** are `uint8`, two e2m1 per byte along K: A is `[M, K/2]`, B is `[K/2, N]` (S12). `run` passes fp4
   weights and e8m0 scales as `.view(torch.uint8)` (S11): Triton 3.8.0's type table has no entry for them (S62).
@@ -165,7 +165,7 @@ The bf16 convert is two `v_cvt_scalef32_pk_bf16_fp8` per four values with scale 
 
 `[16,16,32]` or `[32,32,16]` with `DotOperandLayout(i, mma, 8)`: eight consecutive K per lane is the
 instruction's kBase, the K elements one instruction takes from each lane (§5; S1). Routers, Gram products and P·V
-use it, e.g. the DeepSeek-V2 decode router (S20).
+use it, e.g. the DeepSeek-V2 1-token router (S20).
 
 ### 2.5 fp32-accurate products
 
@@ -274,7 +274,7 @@ s_nop 7
   *(field, E6)* and saved no instruction against [16,16]. §8 puts the spare rows to use.
 - **Rank-3 (batched) layouts** (`warps_per_cta=[B, 1, 1]`) give each warp one slice of a leading axis: a K split
   inside the CTA, reduced with `gl.sum(acc, 0)` (MiniMax-M2 fp8 gate-up: `[8, 1, 1]` at 64 tokens, S55;
-  `[4, 1, 1]` at 1–2 tokens, §8), or one route per warp (the 8-route decode down, S10). `mfma_scaled` (`None` scales)
+  `[4, 1, 1]` at 1–2 tokens, §8), or one route per warp (the 8-route down at 1–16 tokens, S10). `mfma_scaled` (`None` scales)
   failed on them (§10), so fp8 runs plain [16,16,32] at half the F8F6F4 MACs per cycle (Table 28); that cost was not isolated in a complete kernel.
 - **4x64 and 64x4**: `[4, 64, K]` must be `transposed=False` and `[64, 4, K]` `transposed=True`; the lowering
   broadcasts the narrow operand to 16 blocks (S29). Qwen2-MoE fp8 router+experts uses `[4, 64, 64]` in fp16 (S24).
@@ -354,7 +354,7 @@ loads (all compiled with Triton 3.8.0 for gfx950). The committed kernels use:
 - load in a layout that is the operand layout and prove it with `assert_trivial=True` (S41, S42), or build the
   indices from `gl.to_linear_layout(DotOperandLayout(...), shape)` slices (S40);
 - load each scale's enclosing word and shift out its byte, `bx = (scale_words >> scale_shift).to(gl.uint8)` with
-  `scale_shift = sn[:, None] // 16 % 2 * 8 + sg[None, :] // 4 % 2 * 16`, then convert (DeepSeek-V2 decode, S11);
+  `scale_shift = sn[:, None] // 16 % 2 * 8 + sg[None, :] // 4 % 2 * 16`, then convert (DeepSeek-V2 at 2 tokens, S11);
 - load whole scale words, split each into its four bytes with two `gl.join` levels and permute them back to
   `[BN, BK // 32]` (`_unpack_bytes`, a 6-D permute, S41); only reshaped, relative error 0.94 *(field, E5)*;
 - one word, two K steps: it holds groups g and g + 4, so load it on even K steps and shift by 16 on odd ones (S59);
@@ -382,7 +382,7 @@ per lane; converting a row-per-lane tile cost an LDS round trip (all compiled wi
 
 ## 8. Small M on a 16-row instruction
 
-A decode GEMM with M ≤ 8 fills few of the 16 rows, and the instruction runs in full either way (§4). AKLR's
+A GEMM with M ≤ 8 fills few of the 16 rows, and the instruction runs in full either way (§4). AKLR's
 kernels choose what the spare rows carry. Each design is part of a whole kernel; the speedups are that kernel's CI
 values at its Points, stored at AKLR 43e112e, and do not isolate the trick:
 
@@ -411,7 +411,7 @@ Why the residual pays: [../numerics.md](../numerics.md) §5, [../attention.md](.
   validation with `candidate_crash`, exit −11, in 4 of 4 rounds *(field, E8)*: the Triton 3.8.0 compiler segfaults in
   LLVM's code generation (compiled with Triton 3.8.0 for gfx950). Which combinations compile:
   [../moe.md](../moe.md) §7, [../debugging.md](../debugging.md) §6. Change the constants together.
-- For a bf16 plain-Triton decode GEMM, a 16-row tile carrying one row lost to AKLR's FlyDSL M = 1 dot / vector kernels at both of its shapes in one A/B ([../gemm/decode_gemm.md](../gemm/decode_gemm.md) §7); the kernels above differ in operand format, loading and fusion. Decode GEMM and MoE design: [../gemm.md](../gemm.md) §3, §4, [../moe.md](../moe.md) §7, §9.
+- For a bf16 plain-Triton small-M GEMM, a 16-row tile carrying one row lost to AKLR's FlyDSL M = 1 dot / vector kernels at both of its shapes in one A/B ([../gemm/small_m_gemm.md](../gemm/small_m_gemm.md) §7); the kernels above differ in operand format, loading and fusion. Small-M GEMM and MoE design: [../gemm.md](../gemm.md) §3, §4, [../moe.md](../moe.md) §7, §9.
 
 ## 9. Epilogues
 

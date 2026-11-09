@@ -1,9 +1,9 @@
 ---
-title: "GatedDeltaNet decode and chunked prefill in Gluon on gfx950 (Qwen3.5, Qwen3-Next)"
+title: "GatedDeltaNet in Gluon on gfx950: one token per sequence step on the VALU, chunks of many tokens on the matrix cores (Qwen3.5, Qwen3-Next)"
 kind: topic
 ops: [gdn]
 dtypes: [bf16, fp8, fp32]
-regimes: [decode, prefill]
+regimes: ["one token per sequence, 1-256 rows", "chunked, 512-16384 tokens in 1-16 sequences", ragged-sequences]
 gens: [gfx950]
 triton: 3.8.0
 ---
@@ -11,26 +11,27 @@ triton: 3.8.0
 # GatedDeltaNet kernels in Gluon on gfx950
 
 At 43e112e AKLR had 44 Gluon kernel files for the GatedDeltaNet (linear attention) layers of Qwen3.5 and Qwen3-Next: 18
-decode files update a 128 × 128 fp32 state per value head on the VALU, 26 chunked-prefill files run the recurrence on
-the matrix cores with sequential recurrence stages. All fuse the gated RMSNorm, all but one decode file the fp8 group
+files that advance each sequence by one token (contracts `*gdn_decode*`, "decode" below) update a 128 × 128 fp32 state
+per value head on the VALU, 26 files that take each sequence in chunks of many tokens (`*gdn_prefill*`, "prefill"
+below) run the recurrence on the matrix cores with sequential recurrence stages. All fuse the gated RMSNorm, all but one decode file the fp8 group
 quant. Dispatch served only the 24 Qwen3.5 files at 43e112e; since d908d01 it also serves 14 Qwen3-Next files. Later, #75
 added a 64-row file to the Qwen3.5 FP8 decode op (9 files) and 11 to its BF16 op (12: rows 1, 2, 4, 8, 16, 32, 64 twice,
 96, 128, 192, 256), #65 five Qwen3-Next decode files (14 over 36 Points); none of them stores a speedup at 0e02a81.
-Since #76 the BF16 op alone serves decode for layers whose projections sglang runs unquantized (`_decode_unquantized` in
+Since #76 the BF16 op alone serves the one-token step of layers whose projections sglang runs unquantized (`_decode_unquantized` in
 `aklr/plugins/sglang/models/qwen3_5/api.py`). File counts and tables below are those of 43e112e.
 
 ## Route here when
 
-- You write or tune a GDN decode or prefill kernel for an AKLR schema, or another recurrence that keeps a matrix state
-  per sequence slot (`run`, scratch and validation: [authoring.md](authoring.md)).
-- You choose, per decode row count, CTAs that split a head's state or own whole heads, and where the second launch goes.
+- You write or tune a GDN kernel for an AKLR schema, one token per sequence step (§2–§6) or chunks of many tokens
+  (§7–§12), or another recurrence that keeps a matrix state per sequence slot (`run`, scratch and validation: [authoring.md](authoring.md)).
+- You choose, per row count (one token per row), CTAs that split a head's state or own whole heads, and where the second launch goes.
 - You fuse an fp8 group quant into a kernel that also makes BF16 or fp32 MFMA results (FP16_OVFL; [numerics.md](numerics.md) §2).
-- You pick a prefill chunk size and schedule for a (tokens, sequences) Point, need an fp32 MFMA accumulator as the next
+- You pick a chunk size and schedule for a (tokens, sequences) Point, need an fp32 MFMA accumulator as the next
   MFMA's operand without a trip through LDS, or must handle ragged sequences without host reads.
 
 ## 1. What the op computes, and the kernels AKLR has
 
-Per decode row (one token with its own state slot; slot −1 is padding: no state change, zero core output) (S1):
+Per row of the one-token contracts (one token with its own state slot; slot −1 is padding: no state change, zero core output) (S1):
 
 1. Causal width-4 convolution of the Q/K/V channels with the slot's 3-token history (plus `conv_bias` where the contract
    has it), SiLU, BF16; the history becomes `[h1, h2, x]` (S1), checked to within its BF16 rounding (S2).
@@ -91,7 +92,7 @@ token's decay to the chunk end, G(last, j), W and U solve the triangular system,
   inside ([authoring.md](authoring.md) §3); the Qwen3.5 prefill files sit in nine scenario directories by
   `max_seq_len`, and `ls aklr/plugins/sglang/models/qwen3_*/impls/triton/*/<digits>*.json` finds one.
 
-## 2. Decode: split each head's state at small row counts, own whole heads above
+## 2. One token per step: split each head's state at small row counts, own whole heads above
 
 With few rows the files cut each head's 128 value rows into tiles, one CTA per tile (`29913388`: 17.7–18.6% less time than
 whole-head tiles at 2 rows, 11.6–11.9% more at 16, 3 runs *(field, E5)*; crossover and cause not measured). Both families
@@ -145,7 +146,7 @@ same run *(field, E4)*. Use the Point files ([kernels/kernel_library.md](kernels
   (S2), so each new pool size compiles again, inside a capture too (four pool sizes, four binaries; with a runtime
   `SLOTS`, one *(field, E16)*): keep it runtime ([authoring.md](authoring.md) §5).
 
-## 3. Decode: put the launch boundary where ownership ends
+## 3. One token per step: put the launch boundary where ownership ends
 
 Two facts place it (S5, S7): the gated RMSNorm and the fp8 group each span one whole value head, so an independent tile CTA cannot finish the epilogue without obtaining whole-head statistics (a same-launch coordination or recomputation variant was not tested); and the conv history may be overwritten only after every
 reader of the old history has read it, while with recomputed inputs (§4) many CTAs read the same channels.
@@ -169,7 +170,7 @@ reader of the old history has read it, while with recomputed inputs (§4) many C
   kernels' 8.25–8.31 µs, 3–4 runs *(field, E10)*;
   the 2-row file's two launches take 8.55–8.87 µs, 3 runs *(field, E5)* ([authoring.md](authoring.md) §7).
 
-## 4. Decode: recompute shared inputs, keep reductions inside a wave
+## 4. One token per step: recompute shared inputs, keep reductions inside a wave
 
 - Recompute instead of staging: split-schedule tile CTAs convolve/normalize their key head's whole Q/K (256 channels); history is read-only, costing reads and saving a launch (S6). In a one-row Triton toy (16 key heads × 4 tile CTAs, 4-tap conv + SiLU + L2 norm, outputs identical) recompute took 0.693–0.775× the staged version's replay time in three runs but 1.014× (9.967 against 9.832 µs) in a fourth, and 0.589–0.610× on AKLR's timer (Kineto, before #33) in all four: the trade depends on the ruler and the run; committed GDN files were not re-run *(field, E24)*.
 - Exchange q and k between the CTA's waves through 1–2 KiB of LDS (q and k, 2 × 128 fp32, at 1 and 2 rows; q, k, v and β
@@ -218,7 +219,7 @@ reader of the old history has read it, while with recomputed inputs (§4) many C
 - Check each variant's VGPR count ([debugging.md](debugging.md)) and A/B it ([tuning.md](tuning.md) §2, §10): at equal
   VGPRs (160) the template's late state load at 32 rows took 1.23× as long *(field, E17)*.
 
-## 5. Decode: the state's loads and stores
+## 5. One token per step: the state's loads and stores
 
 The Qwen3.5 files use five combinations (S5–S10); state stores, and loads up to 32 rows, are 16 bytes per lane:
 
@@ -258,7 +259,7 @@ GPU, one run *(field, E9)*. The instructions are from compiling `_conv_recurrenc
   write a zero core otherwise (S6). The norm and quant still run on that zero core and write the row's outputs, as
   `4f25` does (S7): zero-valued codes, roughly half −0 on the sampled random inputs, and scale float32(1e-10) × float32(1/448) *(field, E17)*.
 
-## 6. Decode: the fused fp8 group quant and the FP16_OVFL mode bit
+## 6. One token per step: the fused fp8 group quant and the FP16_OVFL mode bit
 
 One helper ends every head in all eight Qwen3.5 fp8 decode files (the same function text in each): it rounds the head
 to BF16, takes the amax of its non-NaN values floored at 1e-10, scales by one reciprocal of `amax · (1/448)`, clamps to
@@ -278,7 +279,7 @@ it in the convert's own asm (S24); the template's BF16 results saturate at 16, 6
 Rule: [numerics.md](numerics.md) §2; asm and ordering risk: [gluon/wave_ops.md](gluon/wave_ops.md) §3.2, §7. Keep the
 two choices separate knobs: "collapsing the two into one flag silently changes results" (S25).
 
-## 7. Prefill: the pipeline and its launch boundaries
+## 7. Chunks of many tokens: the pipeline and its launch boundaries
 
 Every prefill file runs, in launch order (`010e`, `70f4`, `11f6` add a conv-history launch, `11f6` a chunk-offset one):
 
@@ -313,7 +314,7 @@ Every prefill file runs, in launch order (`010e`, `70f4`, `11f6` add a conv-hist
   sglang layers *(field, E16)*); a capture in a running server was not tested. Eager launches pay about
   1.0 µs of host time per tensor argument, which the graph bench omits *(field, E10)* ([authoring.md](authoring.md) §7).
 
-## 8. Prefill: chunk size and schedule per Point
+## 8. Chunks of many tokens: chunk size and schedule per Point
 
 Measure candidate designs at the specific (tokens, sequences, `max_seq_len`) Point; the committed boundaries below are not selection rules confirmed by measurement. Labels: D, the ≤ 1024-token source
 (`1fd6`, `61ed`, `1d55`); CKPT, the checkpoint scan (`19b2`, `3828`); SEQ32L, SEQ32G and SEQ16, one program per
@@ -403,7 +404,7 @@ finds a token's sequence in seven unrolled halvings, right for at most 128 seque
 (S35): it fails at 129 sequences, where eight halvings pass *(field, E17)*. `2ece`'s path up to 4096 tokens and CKPT's
 up to 1024 do not run at their Points: no CI run checked or timed them (S30, S33).
 
-## 9. Prefill: the intra-chunk math on the matrix cores
+## 9. Chunks of many tokens: the intra-chunk math on the matrix cores
 
 - Put the Gram products K Kᵀ and Q Kᵀ on the BF16 MFMA (`instr_shape=[16, 16, 32]`, `k_width` 8: eight consecutive K per
   lane, [gluon/mfma.md](gluon/mfma.md) §5): the prefill references round q and k to BF16 (S1), and the product of two finite BF16 values is exact in fp32 when it lies in fp32's normal range: 2^20 random BF16 pairs with exponents within ±63 all matched the fp64 product *(field, E17)*. The fp32 accumulation still rounds.
@@ -428,7 +429,7 @@ up to 1024 do not run at their Points: no CI run checked or timed them (S30, S33
   converts with `assert_trivial=True` (S30), which fails the compile ("layout conversion from … is not trivial",
   printing both linear layouts) when the conversion moves data across lanes or waves (S42).
 
-## 10. Prefill: compensated products, and decay products over intervals
+## 10. Chunks of many tokens: compensated products, and decay products over intervals
 
 **Compensated products.** Where the product of an fp32 operand and a BF16 operand is rounded to BF16 anyway, split the
 fp32 operand into BF16 terms, run the BF16 MFMA once per term, smallest first, and accumulate in fp32. On random finite 16×32 @ 32×16 tiles (4,194,304 outputs), three terms (RTZ, RTZ, RNE) matched the fp64 result rounded to BF16 in 100% of the outputs, two RNE terms in 99.76%, one term in 58.2% *(field, E17)*: sampled agreement, not a proof of correct rounding for every product. Five Qwen3.5
@@ -451,7 +452,7 @@ gfx950; [debugging.md](debugging.md) §4): convert to a blocked layout, scan, co
 tokens get decay 1 and β 0 (S32). One recurrence step with decay 1 and β 0 on a random finite 128 × 128 state changed no bit, but a NaN in v made its rows NaN *(field, E17)*: the update is neutral only with finite intermediates, since β = 0 times a non-finite prediction or residual is NaN. Which
 exponential keeps subnormal decays (`gl.exp`) and which flushes them (`gl.exp2`): [numerics.md](numerics.md).
 
-## 11. Prefill: relabel layouts instead of converting them
+## 11. Chunks of many tokens: relabel layouts instead of converting them
 
 Each chunk step feeds an fp32 MFMA accumulator (the state, or an inverse block) into the next MFMA as the A operand.
 For its `[16, 16, 4]` accumulator as A, `k_width = 1` takes two register↔lane transpositions through LDS (one wave: 4 `ds_write_b32` + 4 `ds_read_b32`, 1 KiB *(field, E17)*); a transposed `[32, 32, 2]` accumulator needs only one and stays in-wave with warps on M (S38). With 4 waves, the `[16, 16, 4]` case took two transpositions and 16 KiB of LDS at 128 × 32, transposed or not; the transposed `[32, 32, 2]` one at 256 × 64 one transposition and no LDS, the untransposed one four and 64 KiB; a sweep of 432 builds stayed in-wave whenever fewer than two transpositions were needed and the warps did not change *(field, E22)*. Ways around it (Triton 3.8.0, gfx950):
@@ -479,7 +480,7 @@ operands through it, the others only B). In a layout-conversion probe, not a GDN
 0.6–1.5 µs per 16 KB tile with all programs running, 3 runs *(field, E5)* ([gluon/layouts.md](gluon/layouts.md) §8; the "D"
 files' hand-written `v_permlane16_swap`: [gluon/wave_ops.md](gluon/wave_ops.md)). Fewer instructions did not mean less time: a 256-step, 4-wave chain on 64 × 16 tiles at 16 programs per CU took 337.2 µs with `k_width = 4` against 256.8 µs with the direct `k_width = 1` conversion, 1.313× (8 balanced repeat clusters, one run) *(field, E23)*; no GDN kernel was timed either way.
 
-## 12. Prefill: LDS staging, conv windows and masks
+## 12. Chunks of many tokens: LDS staging, conv windows and masks
 
 - What the files stage through LDS, in shared layouts they choose (alternatives not timed):
   - V: value-major loads widened to fp32 into `SwizzledSharedLayout(4, 1, 8, [0, 1])`, read in the MFMA layout (S27);
@@ -518,7 +519,7 @@ files' hand-written `v_permlane16_swap`: [gluon/wave_ops.md](gluon/wave_ops.md))
   1.457–1.782; at 256 rows (`c2c3`) both sides stream the state near a read stream's rate (1.30–1.31 there, 2.47–2.48 at
   2 rows, where AKLR's two kernels take 8.55–8.87 µs and the baseline 21.20–21.78 µs; 3 runs *(field, E5)*).
 - At the 2-row decode Point an identical copy's 4-run mean ratio read 0.25–0.27% off the original's (single runs spread
-  1.9–2.0%; two sessions); over 7 Points the largest such offset was 0.4% and 1.3% (fp8 GEMM m = 16) *(field, E9)*: these A/A offsets call for matched controls and uncertainty estimates, not a universal 1–2% detection floor. The same protocol resolved a roughly 1% real change with four alternated runs at a different Point ([tuning.md](tuning.md) §2). Ablations: decode §2–§5, prefill §8, §9, §12. In
+  1.9–2.0%; two sessions); over 7 Points the largest such offset was 0.4% and 1.3% (fp8 GEMM m = 16) *(field, E9)*: these A/A offsets call for matched controls and uncertainty estimates, not a universal 1–2% detection floor. The same protocol resolved a roughly 1% real change with four alternated runs at a different Point ([tuning.md](tuning.md) §2). Ablations: one token per step §2–§5, chunks §8, §9, §12. In
   one run the hand-written Qwen3-Next decode files led the template by 0–8% up to 64 rows *(field, E4)*.
 
 ## Evidence

@@ -2,10 +2,10 @@
 title: "Attention — measuring a change: steady state, rulers, zero points, FLOP accounting, host-bound shapes"
 kind: method
 lever: attn_measurement
-ops: [attention]
+ops: [attention, mla]
 gens: [gfx950]
 dtypes: [bf16, fp8]
-regimes: [prefill, backward, decode, kernel-A/B]
+regimes: [many query rows, dQ dK dV, few query rows, launch-bound, kernel-A/B]
 flydsl: 0.3.2
 ---
 
@@ -13,9 +13,9 @@ flydsl: 0.3.2
 
 > The shared protocol — ruler choice, arm order, warm-up and first-arm bias, noise floors, statistics, closing a
 > series of changes — is in `../gemm/measurement.md`. This card is what attention adds: small
-> workloads, multi-cell scores with guards, workspace-heavy backward cells, FLOP conventions, and launch-bound
-> decode kernels. Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence
-> at the end. Use them for direction and order of magnitude.
+> workloads, multi-cell scores with guards, workspace-heavy dQ/dK/dV cells, FLOP conventions, and launch-bound
+> kernels with few query rows. Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed
+> under Evidence at the end. Use them for direction and order of magnitude.
 
 ## Route here when
 - Setting up a benchmark or scorer for an attention kernel, or reading one you inherited.
@@ -58,10 +58,10 @@ A multi-cell score usually carries guard cells: cells the candidate does not cha
   mode costs the score ~1.5% by itself.
 
 ## 4. Isolation and arm order
-- **One process per backward cell.** Each cell allocates gigabytes of dQ workspace, and allocator fragmentation
-  sets the next cell's time. *(field, E8, E9)* The same cell read 11.23 and 6.64 ms depending on what ran before it, and
-  `empty_cache()` did not help; forking a process per cell cut the cell swing from 69% to 0.29–2.50% and the
-  score floor from 2.6% to 0.18%.
+- **One process per workspace-heavy cell.** Each dQ/dK/dV cell allocates gigabytes of dQ workspace, and allocator
+  fragmentation sets the next cell's time. *(field, E8, E9)* The same cell read 11.23 and 6.64 ms depending on
+  what ran before it, and `empty_cache()` did not help; forking a process per cell cut the cell swing from 69% to
+  0.29–2.50% and the score floor from 2.6% to 0.18%.
 - Arm order and when a palindrome applies: `../gemm/measurement.md` §2 (palindromes only for two
   module instances interleaved in one process; one process per arm runs A B).
 - **Ratio rulers between two arms that share a body do not credit body changes.** For `bf16_ms / fp8_ms` with one
@@ -71,8 +71,8 @@ A multi-cell score usually carries guard cells: cells the candidate does not cha
   against +0.8% on the full bench for one forward change; the in-process ruler omits fixed per-call costs.
 
 ## 5. FLOP and byte accounting
-- **The numerator is the mathematically required work, not what the hardware issues.** Forward:
-  `4·B·Hq·Sq·Skv·D × attended fraction`. Backward: 2.5× the forward (5 GEMMs). For square causal,
+- **The numerator is the mathematically required work, not what the hardware issues.** O (QK and P·V):
+  `4·B·Hq·Sq·Skv·D × attended fraction`. dQ, dK and dV: 2.5× that (5 GEMMs). For square causal,
   `10·B·Hq·S²·D·(1 − (S−1)/(2S))`; for a `(W, 0)` window the attended fraction is about `(W+1)/S`. Rectangular
   and windowed shapes need the real attended fraction, not the square-causal factor.
 - Work an implementation issues beyond the convention is not credited: a deterministic two-kernel backward
@@ -139,11 +139,11 @@ In FlyDSL: `../flydsl/attention.md` § measurement §7.
   extra work.
 - **Kernel-time share is not wall share.** *(field, E26)* A helper was 14.95% of the summed kernel time of a B=4
   backward, while all exposed helper time (that helper, lset and the tail fold) was 1.9% of wall at B=4 and 3.9% at
-  B=1 on the timeline. Rank helper-kernel work by exposed time; fusion pricing is in `backward.md` §7.
+  B=1 on the timeline. Rank helper-kernel work by exposed time; fusion pricing is in `gradients.md` §7.
 
 ## Related
 `../gemm/measurement.md` · `attribution.md` · `correctness.md` ·
-`decode_split_kv.md` §8 · `../flydsl/debug-flydsl-kernel.md`
+`split_kv.md` §8 · `../flydsl/debug-flydsl-kernel.md`
 
 ## Evidence
 

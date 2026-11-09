@@ -3,7 +3,7 @@ title: "fp8 paged MQA logits (DeepSeek-V4 indexer), 64 heads, page 64 — 16 fp8
 kind: case
 ops: [mla, indexer_logits]
 dtypes: [fp8]
-regimes: ["decode batch 1-4", "decode batch 8-32", "decode batch 64-256"]
+regimes: ["one query token per sequence", "paged KV", "batch 1-4", "batch 8-32", "batch 64-256"]
 contract: bounded
 gens: [gfx950]
 flydsl: 0.3.2
@@ -17,7 +17,8 @@ sources:
 # fp8 paged MQA logits: whole pages per wave, no merge
 
 One FlyDSL kernel for `fp8_paged_mqa_logits@1.0`, the DeepSeek-V4 indexer's logits
-`logits[b, t] = Σ_h weights[b, h] · relu(q[b, h] · k_t) · scale_t`, added for DeepSeek-V4-Flash decode (PR #71). The
+`logits[b, t] = Σ_h weights[b, h] · relu(q[b, h] · k_t) · scale_t`, added for DeepSeek-V4-Flash with one query token
+per request, as in decode (PR #71). The
 schema embeds it as `kernel.sources[0].content` (`kernel.py`); the function names below are in that file. "batch"
 is the Point's number of requests.
 
@@ -104,7 +105,7 @@ it multiplies by that token's scale, writes −inf past the context, and the wav
 
 **A split over pages with no merge.** A logit depends on one page, so workgroups split each request's table into
 disjoint page ranges and each wave takes every fourth page of its range; nothing is combined
-(`../attention/decode_split_kv.md` §5: an output that is not a reduction splits with zero merge). The
+(`../attention/split_kv.md` §5: an output that is not a reduction splits with zero merge). The
 host picks one of three bodies from the batch (`_build`):
 
 | Batch | Body | Grid | How a wave gets its next page |
@@ -115,7 +116,8 @@ host picks one of three bodies from the batch (`_build`):
 
 The batch ≤ 4 body keeps two pages in flight through its whole loop at 2 workgroups per CU (512 on 256 CUs);
 `../attention/schedule_sync.md` §10 found depth 2 paying in the prologue at ≤ 2 workgroups per CU and a
-steady-state depth ≥ 2 slower on another decode kernel, so the depth is a per-kernel result. It drops out-of-range
+steady-state depth ≥ 2 slower on a split-KV producer with few query rows per head, so the depth is a
+per-kernel result. It drops out-of-range
 loads through the descriptor bound of `../gemm/datapath.md` §8. The band path puts co-resident
 workgroups on a few bands of the pool and keeps a band on one XCD (`../attention/grid_dispatch.md` §2,
 `../gemm/schedule_and_locality.md` §2). The prepass's LDS atomics fix only the order of entries inside a

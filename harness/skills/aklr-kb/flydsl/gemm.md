@@ -102,7 +102,7 @@ dict is not in the JIT cache key. See § mainloop §4 below and `debug-flydsl-ke
 ## workflow Step 0 — reference kernels as a source of parts
 
 - reference kernel gives structure only for the regime it was built for. FlyDSL's 8-wave and fp8 4-wave GEMMs default
-  to 256×256 tiles (§ mainloop), and its kernels need K a multiple of the K tile; Turbo's target training shapes. For
+  to 256×256 tiles (§ mainloop), and its kernels need K a multiple of the K tile; Turbo's target large M. For
   M ≤ 256 start from `../gemm/small_m.md`. Time a port's first correct build at your Points against the baseline; if
   it is slower, change the structure before tuning (`../SKILL.md` § How to look things up).
 
@@ -110,7 +110,7 @@ dict is not in the JIT cache key. See § mainloop §4 below and `debug-flydsl-ke
   epilogue (`preshuffle_gemm`), bf16/fp16 in NN/NT/TN/TT with async DMA and split-K (`gemm_a16w16_gfx950`), and fp8/MXFP4 NT in 8-wave and 4-wave forms. K must be a multiple of the K tile.
 - **Primus-Turbo's FlyDSL GEMMs**: fp8 NN and TN as well as NT, fp8 at any K ≥ 129 (MXFP4 needs
   K % 64 == 0, MXFP8 needs K % 128 == 0 and K ≥ 256), a whole-loop inline-asm design, a per-shape race
-  between designs, and fused GLU/dGLU + MXFP4-quantization epilogues. They target training shapes; for
+  between designs, and fused GLU/dGLU + MXFP4-quantization epilogues. They target large M; for
   M ≤ 256 use `../gemm/small_m.md`.
 
 Both run on FlyDSL v0.3.2.

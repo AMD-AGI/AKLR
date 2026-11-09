@@ -2,10 +2,10 @@
 title: "GEMM — the main loop: 2-stage ping-pong, 8-wave pipeline, 4-wave designs"
 kind: topic
 lever: gemm_mainloop
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [fp8, int8, mxfp4, mxfp8, bf16, fp16]
-regimes: [prefill, training, large-K, "M 256-4096 (bf16)"]
+regimes: [large-M, large-K, "M 256-4096 (bf16)"]
 flydsl: 0.3.2
 sources:
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/gemm/gemm_fp8_kernel.py
@@ -24,7 +24,7 @@ sources:
 > (`preshuffle_gemm`, explained step by step in `../flydsl/guides.md` § gemm-optimization (FlyDSL's §2 and §4–§6)), the 8-wave
 > pipeline (FlyDSL's `fp8_gemm_8wave.py`; Primus-Turbo's fp8 and MXFP8 GEMMs) and the 4-wave designs (FlyDSL's
 > `fp8_gemm_4wave.py` and `fp4_gemm_4wave.py`; Primus-Turbo's whole-loop inline asm). Primus-Turbo's kernels are
-> built for training shapes (large M; small M is in `small_m.md`). "FP8" below means Turbo's
+> built for large M (small M is in `small_m.md`). "FP8" below means Turbo's
 > `gemm/gemm_fp8_kernel.py`, "FP4" means `gemm/gemm_mxfp4_kernel.py` and "GH" means `utils/gemm_helper.py`, all
 > under `primus_turbo/flydsl/` at main `7615a5a2`. All of them run on FlyDSL v0.3.2. What to know when calling
 > FlyDSL's kernels is in `../flydsl/gemm.md` § mainloop §8.

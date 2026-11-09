@@ -1,11 +1,11 @@
 ---
-title: "Grouped GEMM — inference MoE expert GEMMs: sorted-token mapping, persistence, cache policy, stage 2"
+title: "Grouped GEMM — MoE expert GEMMs over sorted token ids: sorted-token mapping, persistence, cache policy, stage 2"
 kind: topic
-lever: grouped_moe_inference
+lever: grouped_sorted_tokens
 ops: [grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [bf16, fp8, int8, int4, mxfp4]
-regimes: [moe-inference, decode, prefill, skew]
+regimes: [sorted-token-ids, "few tokens per expert", "many tokens per expert", skew]
 flydsl: 0.3.2
 sources:
   - ROCm/FlyDSL@dd8373349:kernels/moe/moe_sorting_kernel.py:3-21
@@ -31,26 +31,31 @@ sources:
   - ROCm/FlyDSL@dd8373349:kernels/moe/moe_2stage_a16wmix/gemm2.py:630-641
 ---
 
-# MoE expert GEMMs for inference
+# MoE expert GEMMs over sorted token ids
 
-> The one card on inference MoE expert GEMMs: tokens are sorted by expert into blocks of tile-M rows, and each
+> The one card on MoE expert GEMMs whose rows are gathered by sorted token ids, at any token count: tokens are
+> sorted by expert into blocks of tile-M rows, and each
 > workgroup runs one (M-block, N-block) of one expert — stage 1 is gate + up with the activation, stage 2 the down
 > projection with the routing weights. FlyDSL facts are for v0.3.2 (`kernels/moe/`); this repository does not
 > contain that tree, and the copies the baseline aiter ships differ in places (`../flydsl/moe.md`
-> § grouped_moe_inference §1). "BM" in FlyDSL's code is tile-M.
+> § grouped_sorted_tokens §1). "BM" in FlyDSL's code is tile-M.
 > Numbers marked `*(field, E<n>)*` are measured values from MoE kernels of this family, except where a sentence
-> names another kernel: a4w4 at decode sizes in the GLM-5.2 runs (E4–E12, E15, E18), 8-bit activations × MXFP4
+> names another kernel: a4w4 at 8–128 tokens in the GLM-5.2 runs (E4–E12, E15, E18), 8-bit activations × MXFP4
 > in the comm-fused stage 2 (E13–E14) and in the Kimi-K3 MoEs at 8–16384 tokens (E19–E41). Their conditions are
 > listed under Evidence at the end. Use them for direction and order of magnitude. aiter's FlyDSL
 > MoE families, their entry points and knobs, and AKLR's own MoE kernels are in
-> `../flydsl/kernels/flydsl_kernel_library.md`; a worked AKLR case is `decode.md`. Training
-> grouped GEMMs (variable-K wgrad, group offsets) are the rest of this package (`INDEX.md`).
+> `../flydsl/kernels/flydsl_kernel_library.md`; a worked AKLR case is `few_tokens.md`. The other grouped-GEMM
+> cards of this package take group offsets over contiguous rows; where they treat the NT layout they apply to these
+> GEMMs as well, and `INDEX.md` § Techniques that apply routes each problem to its section.
 
 ## Route here when
-- You are writing, calling or tuning a MoE stage 1 or stage 2, or the token sort in front of them.
+- You are writing, calling or tuning a MoE stage 1 or stage 2, or the token sort in front of them, at any token
+  count.
 - You are choosing tile-M, tile-N, grid order, the weights' cache policy, atomics or a reduce, or a persistent
   stage 2.
 - A MoE GEMM is fast at one batch size and slow at another.
+- For the same GEMMs' tile and occupancy, XCD placement, low precision, measurement and gates: `INDEX.md`
+  § Techniques that apply.
 
 ## 1. What FlyDSL v0.3.2 ships
 
@@ -63,7 +68,7 @@ non-layout `flydsl_moe2_*` rows run aiter's *mixed builders* (`mixed_moe_gemm_2s
 longer ships), except its bf16-activation rows (`_abf16_wfp4`, `_abf16_wint4`), which run aiter's copy of
 `moe_2stage_a16wmix`. CShuffle is the epilogue that stages C through LDS to reshuffle it into wide, coalesced stores.
 
-In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §1.
+In FlyDSL: `../flydsl/moe.md` § grouped_sorted_tokens §1.
 
 ## 2. How the work is mapped
 
@@ -89,12 +94,13 @@ In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §1.
   One way to sort locally: a global → local table in LDS, −1 dropping a route to another rank's expert; at 8–16 tokens
   it cut 11–16 µs per call *(field, E25)*.
 - **Under expert parallelism, cap that grid.** The bound counts every route and every global expert's padding, so
-  most rows exit. *(field, E37)* On an fp8 × MXFP4 prefill stage 1, 1.25 × the expected local M-blocks + one per local
-  expert, with an 8-row tail launch striding over the rest, cut 4.3–4.9%; the same cap as a stride loop in one
-  kernel (202 → 264 VGPRs) ran 17–20% slower.
+  most rows exit. *(field, E37)* On an fp8 × MXFP4 stage 1 at 9397 and 16384 tokens, 1.25 × the expected local
+  M-blocks + one per local expert, with an 8-row tail launch striding over the rest, cut 4.3–4.9%; the same cap as
+  a stride loop in one kernel (202 → 264 VGPRs) ran 17–20% slower.
 - **Sorted ids staged in LDS, used twice.** `moe_gemm_2stage` loads the block's sorted ids into LDS once and
   reads them for the A gather and again for the output scatter. The gather and scatter layouts read up to
-  `256 / (tile_k / 16)` rows, more than BM at decode, so every readable slot is first seeded with the
+  `256 / (tile_k / 16)` rows, more than BM when BM is small (the tiles used at a few tokens), so every readable
+  slot is first seeded with the
   out-of-range id M — the buffer bound drops those accesses — before the real ids are written; an unseeded slot
   decodes to token 0 and piles garbage onto it (`gemm1.py:412-423`).
 - **Exit on the raw id, then remap.** `mxfp_moe` tests `bx < bound` first; only then does it map `bx` through a
@@ -124,12 +130,13 @@ In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §1.
   lost and its atomics fired on the padding rows (`moe_2stage_a16wmix/gemm2.py:39-41`).
 - Per-expert 64-bit bases: `grouped_group_mapping.md` §7.
 
-In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §2.
+In FlyDSL: `../flydsl/moe.md` § grouped_sorted_tokens §2.
 
-## 3. Grid shape at decode sizes
+## 3. Grid shape when the tokens fill only a few M-blocks
 
-- **At decode M the N blocks are the parallelism.** With tile-M at the sort unit, a decode batch fills only a few
-  M-blocks. *(field, E4)* On an a4w4 atomic stage 2 with tile-M 32, narrowing tile-N from 256 to 128 to 64 helped at
+- **At a few tokens per expert the N blocks are the parallelism.** With tile-M at the sort unit, a batch of a few
+  tokens per expert fills only a few M-blocks. *(field, E4)* On an a4w4 atomic stage 2 with tile-M 32, narrowing
+  tile-N from 256 to 128 to 64 helped at
   each step (64 against 128: +0.84%, +0.88%, +0.96% in three pairs); 32, buildable only with an in-block K
   split, was slower than 64. Race tile-N downward until the per-block fixed cost wins, and count the workgroups
   against the 256-CU dispatch round as you go (`../gemm/small_m.md` §3, §5).
@@ -152,7 +159,7 @@ In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §2.
   sorted row gained: +1.0%, 0.9–1.0 µs at 8 and 12 tokens *(field, E26)*; 58.7 → 57.0 µs at 40 tokens *(field, E31)*.
   A stage 1 that maps padding to token 0 gained nothing: every padding row already hits one cached row.
 
-In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §3.
+In FlyDSL: `../flydsl/moe.md` § grouped_sorted_tokens §3.
 
 ## 4. Cache policy on the weights
 
@@ -164,7 +171,7 @@ In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §3.
   the B policy also coupled with the K tile (`../gemm/small_m.md` §6).
 - **Non-temporal is a property of each load, not of the operand.** *(field, E8)* Choosing per M-block — cached when a
   neighbour in sorted order has the same expert (`sorted_expert_ids[blk ± 1] == expert`), non-temporal otherwise —
-  gained 1.82% over all-non-temporal on an a4w4 decode score. Conditions:
+  gained 1.82% over all-non-temporal on an a4w4 score over 8–128 tokens. Conditions:
   - the reuse exists only if same-expert neighbours share an XCD: with the hardware XCD order (no remap),
     adjacent M-blocks of an N-fastest grid are `grid.x` workgroups apart, so `grid.x` must be a multiple of 8;
     a contiguous XCD remap such as `mxfp_moe` stage 2's keeps them on one XCD except where a slice ends;
@@ -180,12 +187,13 @@ In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §3.
 - **Dead alternatives.** *(field, E12)* One workgroup walking two M-blocks of an expert (turning cross-workgroup reuse
   into same-workgroup reuse) halved the workgroup count and scored 8.5% lower than the all-non-temporal
   baseline; an XCD swizzle that grouped same-expert blocks scored 16.6% lower. Bypassing L1 (`sc0`/GLC) on
-  the cached blocks scored the same as plain cached: the reuse is across CUs. *(field, E38)* On an fp8 × MXFP4 prefill
-  stage 1, a software L2 prefetch of the weights (a one-dword touch load per lane, 2–3 K steps ahead) lost 7.5–9.4%.
+  the cached blocks scored the same as plain cached: the reuse is across CUs. *(field, E38)* On an fp8 × MXFP4
+  stage 1 at 9397 and 16384 tokens, a software L2 prefetch of the weights (a one-dword touch load per lane, 2–3 K
+  steps ahead) lost 7.5–9.4%.
 - **Warming stage 2's weights from an earlier launch.** *(field, E28)* Spare stage-1 workgroups reading w2 slowed stage 1
   more than stage 2 sped up at every share of w2 tried (¼: +7.6 against −2.6 µs at 8 tokens).
 
-In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §4.
+In FlyDSL: `../flydsl/moe.md` § grouped_sorted_tokens §4.
 
 ## 5. Tile-M equals the sort unit
 
@@ -199,8 +207,8 @@ In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §4.
   with non-temporal B. Sweep them as one axis.
 - A tile-M larger than the sort unit is not available when the unit must be a multiple of tile-M; to try one,
   change the sort unit with it.
-- **Skip the padding rows a capped sort leaves.** *(field, E19)* On an fp8 × MXFP4 decode MoE whose sort capped
-  each 32-row block at 16 routes, 16-row stage-2 tiles strided 32 rows cut stage 2 by 0.8–2.4% (unstrided:
+- **Skip the padding rows a capped sort leaves.** *(field, E19)* On an fp8 × MXFP4 MoE at 8–32 tokens whose sort
+  capped each 32-row block at 16 routes, 16-row stage-2 tiles strided 32 rows cut stage 2 by 0.8–2.4% (unstrided:
   +68–73%), and skipping stage 1's MFMAs on the padding rows, occupancy re-raced, gained 1.6%.
 
 ## 6. Stage 2: atomics or split + reduce
@@ -228,10 +236,10 @@ In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §4.
   (`../gemm/correctness.md` §8). AKLR's `fused_moe` contracts are `determinism: bounded`, gated on
   output SQNR ≥ 13 dB with `max_violation_fraction` 1e-3 (`aklr/ops/fused_moe/contract.py`), so atomics are allowed
   there, unlike AKLR's GEMM contracts, all bitwise but `gemm_a8w8_blockwise_scaled`; a port's equivalence is judged
-  by SQNR (`decode.md` §3). Four of AKLR's five MoE kernels still sum the routes in a fixed order
+  by SQNR (`few_tokens.md` §3). Four of AKLR's five MoE kernels still sum the routes in a fixed order
   without atomics (`../flydsl/kernels/flydsl_kernel_library.md` § AKLR's own FlyDSL MoE kernels).
 
-In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §6.
+In FlyDSL: `../flydsl/moe.md` § grouped_sorted_tokens §6.
 
 ## 7. The small kernels around the GEMMs
 
@@ -245,7 +253,7 @@ In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §6.
   *(field, E16, E17)* Under AKLR's timer up to measurement profile 18 a graph node cost ~4 µs (measured on an empty
   kernel and on add + RMSNorm; that timer read Kineto with the bench runner forcing `GPU_FORCE_QUEUE_PROFILING`,
   `AMD-AGI/AKLR@a29581b2d:aklr/core/validation/stages/_bench/_execution/_runner.py:475`), and folding the sort into
-  stage 1 removed one (`decode.md` §1–§2). Profile 19 on current main no longer forces it: recheck the node cost there.
+  stage 1 removed one (`few_tokens.md` §1–§2). Profile 19 on current main no longer forces it: recheck the node cost there.
 - **Or fold the per-token kernels into the sort launch.** *(field, E24)* Token quantization and the sorted-scale scatter
   as extra sort blocks, one per token, removed two nodes: 6.9–8.0 µs per call at 8–32 tokens.
 - **Merging kernels turns an inter-kernel order into an intra-kernel race.** One phase seeded a table with −1
@@ -254,13 +262,15 @@ In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §6.
   Make the two writes disjoint (seed only the entries the scatter never writes). Replacing a kernel boundary with
   a flag needs the polling rules of `../gemm/correctness.md` §4.
 
-## 8. Measuring at decode sizes
+## 8. Measuring at a few tokens per call
 
-- Decode reads cold weights, runs under graph replay and pays a per-node floor: rotate weight copies past the
+- A call of a few tokens (as in decode) reads cold weights, runs under graph replay and pays a per-node floor:
+  rotate weight copies past the
   MALL, time a replayed graph, and price through the deployed entry (`../gemm/small_m.md` §1). AKLR's
   bench already replays a graph with a cache flush per call, and times aiter's MoE through `fused_moe_baseline`
   (`../flydsl/kernels/flydsl_kernel_library.md` § Other FlyDSL families in the baseline aiter).
-- *(field, E18)* A MoE decode scorer's in-batch noise was ~0.2%, but identical code drifted 0.3–0.4% between batches.
+- *(field, E18)* A MoE scorer over 8–128 tokens read ~0.2% in-batch noise, but identical code drifted 0.3–0.4%
+  between batches.
   Decide on interleaved pairs within one batch; use cross-batch values for direction only. *(field, E35)* Unchanged
   code also moved 9% within one session, and a null change was recorded at +6%: even direction needs a fresh pair.
 - Cover several batch sizes, from a few tokens (single M-block per expert, non-temporal B) to above
@@ -277,7 +287,7 @@ In FlyDSL: `../flydsl/moe.md` § grouped_moe_inference §6.
 - [ ] Small kernels were priced by extra launches, and merged kernels write disjoint regions.
 
 ## Related
-`decode.md` · `../flydsl/kernels/flydsl_kernel_library.md` ·
+`few_tokens.md` · `../flydsl/kernels/flydsl_kernel_library.md` ·
 `../gemm/small_m.md` · `../gemm/grid_pricing.md` · `grouped_scheduling.md` ·
 `grouped_measurement.md` · `INDEX.md`
 

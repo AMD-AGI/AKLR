@@ -2,7 +2,7 @@
 title: "GEMM — wave placement, XCD order, scheduling fences and epilogue cost that are easy to get backwards"
 kind: topic
 lever: gemm_schedule_and_locality
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp4]
 regimes: [compute-bound, register-saturated]

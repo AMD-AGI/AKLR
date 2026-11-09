@@ -1,11 +1,11 @@
 ---
-title: "GEMM at small M (decode, skinny) — what sets the time and what to tune"
+title: "GEMM at small M (M ≤ 256, skinny) — what sets the time and what to tune"
 kind: topic
 lever: gemm_small_m
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [bf16]
-regimes: [decode, small-M, skinny, split-k]
+regimes: ["M 1-256", read-once B, small-M, skinny, split-k]
 flydsl: 0.3.2
 sources:
   - aiter/ops/flydsl/kernels/splitk_hgemm.py
@@ -18,9 +18,9 @@ sources:
 
 # GEMM at small M
 
-> Scope: dense GEMM with M ≈ 1–256 (decode steps, speculative-decode verify), mostly bf16. MoE expert GEMMs at
-> decode are in `../moe/grouped_moe_inference.md`. Primus-Turbo's FlyDSL
-> GEMMs (the exemplar elsewhere in this package) are built for training shapes and do not target small M.
+> Scope: dense GEMM with M ≈ 1–256 (as in decode and speculative verify), mostly bf16. MoE expert GEMMs at any
+> token count start at `../moe/INDEX.md` (sorted-token rows: `../moe/grouped_sorted_tokens.md`); §1, §5 and §6
+> apply to them too. Primus-Turbo's FlyDSL GEMMs (the exemplar elsewhere in this package) do not target small M.
 > "The current kernels" are the baseline aiter's bf16 FlyDSL GEMMs behind `flydsl_hgemm`: the generic split-K
 > kernel `aiter/ops/flydsl/kernels/splitk_hgemm.py` and the small-M kernel `kernels/small_m_hgemm.py`, which no
 > shipped tuned row selects. Their arguments are in `../flydsl/kernels/flydsl_knob_space.md`.
@@ -30,16 +30,16 @@ sources:
 > kernels** is a candidate to re-measure in your own.
 
 ## Route here when
-- A decode or speculative-verify step spends visible time in dense GEMMs with M ≤ 256.
+- Dense GEMMs with M ≤ 256 take visible time in a model step (as in decode or speculative verify).
 - You are racing, or reading tuned rows for, aiter's FlyDSL bf16 GEMM at small M.
 - A small-M result looks good in a micro-benchmark and does not show up in the step.
 
 **Somewhere else if:** M is 256–4096 (measured on bf16): the round and split-K at a full round in `grid_pricing.md`
 §1–2, the narrow-N loop in `mainloop.md` §11, the store in `epilogue.md` §5.
 
-## 1. Measure it the way decode runs it
+## 1. Measure it the way the model step runs it
 
-- **B is cold in decode.** A step touches each weight once and streams tens of GB between visits, while a
+- **B is cold in a step that touches each weight once** (as decode does): it streams tens of GB between visits, while a
   benchmark that replays one weight keeps it in the 256 MB MALL/L2. *(field, E1, E2)* The same kernel read 30.7 µs
   replayed and 45.1 µs in the real step, and the ranking of configurations flipped. Configurations chosen on a
   replayed weight were later measured to cost the step 3.3%.
@@ -442,7 +442,7 @@ What it means at small M:
   `AITER_CONFIG_GEMM_BF16` names or, by default, a merged copy under `/tmp/aiter_configs/` built once per
   process (`AITER_CONFIGS.get_config_file`, `aiter/jit/core.py`, also cached), so an edit to a source CSV shows
   only in a new process. Measured, with `AITER_CONFIG_GEMM_BF16` naming the edited file: the edit showed only
-  after both `get_GEMM_A16W16_config_` and `get_GEMM_A16W16_config` were cleared. Graph-captured decode never
+  after both `get_GEMM_A16W16_config_` and `get_GEMM_A16W16_config` were cleared. A captured graph never
   sees it: capture after the table is final.
 
 In FlyDSL: `../flydsl/gemm.md` § small_m §7.

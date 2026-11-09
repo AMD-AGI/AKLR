@@ -4,7 +4,7 @@ kind: pattern
 signals: ["bytes moved / wall time near the stream bandwidth measured on the same box",
   "wall time unchanged when MFMA work is added (compute-additivity probe)",
   "s_waitcnt vmcnt(0) in front of the MFMAs", "VMEM-load stalls (hotspot_analyzer.py)", "MemUnitStalled"]
-ops: [gemm, moe]
+ops: [gemm, moe, fused_moe, grouped_gemm, attention]
 gens: [gfx950]
 flydsl: 0.3.2
 basis: source-semantics
@@ -21,7 +21,7 @@ basis: source-semantics
   per-load rate (S5). A probe that deletes the hot loop's `ds_read`s and MFMAs (wrong output by design) is a
   diagnostic: it moved an M=8 o_proj (K=16384) less than its baseline spread, and short-K kernels at m 64–128 by much
   more; unless it keeps the loads live and the schedule fixed it bounds neither the memory nor the compute share (S6).
-- How near is near: on fp8 × MXFP4 fused-MoE decode, kernels reading the weights of the experts their routes
+- How near is near: on fp8 × MXFP4 fused MoE at 32–112 tokens, kernels reading the weights of the experts their routes
   touch at 6.0–6.45 TB/s, against a 6.5 TB/s read roof measured on MI355X, measured 1.04–1.28× over aiter, and
   6.5 TB/s caps what is left at 5–8% *(field, E1)*.
 
@@ -39,7 +39,7 @@ basis: source-semantics
 
 ## Rule out first
 
-- **A warm ruler.** A replayed weight stays in the MALL/L2 while decode reads it cold (S13): rotate an explicit
+- **A warm ruler.** A replayed weight stays in the MALL/L2, while a step that touches each weight once finds it cold (S13): rotate an explicit
   number of B copies past the MALL (S14). Price headroom against a ceiling measured at the kernel's own byte count,
   not the datasheet (S15).
 - **Bytes from a guess.** For a MoE, count the experts the timed inputs' routes touch, not the uniform estimate
@@ -66,13 +66,13 @@ basis: source-semantics
   work can fill the latency (S24); not when the working set thrashes L2 (S25), nor across a register tier (S26).
 - Cache policy on B and on C — `gemm/small_m.md` §6, `gemm/epilogue.md` §5 — a raced
   per-configuration axis whose sign depends on the shape (S27, S28).
-- Dense decode streaming rows (measured on one o_proj) — `gemm/small_m.md` §2–3 — there split-K and more blocks
+- Dense small-M streaming rows (measured on one o_proj) — `gemm/small_m.md` §2–3 — there split-K and more blocks
   lose (S29).
 - The C store — `gemm/epilogue.md` §2 — run its three ablations before changing it (S12).
 - Other kernel families: attention gathers, unique lines and the index distribution —
-  `attention/decode_split_kv.md` §7; bytes per score and GQA sharer merging —
-  `attention/grid_dispatch.md` §9; cache policy on MoE weights at decode sizes —
-  `moe/grouped_moe_inference.md` §4.
+  `attention/split_kv.md` §7; bytes per score and GQA sharer merging —
+  `attention/grid_dispatch.md` §9; cache policy on MoE weights when few tiles share an expert's weights —
+  `moe/grouped_sorted_tokens.md` §4.
 
 ## Evidence
 
