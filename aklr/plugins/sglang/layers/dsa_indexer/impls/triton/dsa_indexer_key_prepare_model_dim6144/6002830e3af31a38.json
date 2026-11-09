@@ -1,0 +1,193 @@
+{
+  "schema_version": 5,
+  "name": "dsa_indexer_key_prepare_model_dim6144",
+  "contract_id": "dsa_indexer_key_prepare@1.0",
+  "description": "sglang's DSA indexer's key-only path on one rank (Indexer._forward_cuda_k_only on HIP, the Hadamard-rotated index-K format), which stores the tokens' keys and computes no query. Each token's key is LayerNorm(x wk^T) (k_norm_weight, k_norm_bias, k_norm_eps), its first 64 values turned by RoPE in interleaved pairs (2i, 2i + 1) by cos_cache and sin_cache at the token's position, then the Hadamard transform over its 128 values (Sylvester order) times 128^-0.5, each step rounded to bf16 as sglang rounds it; it is stored into index_k_cache at its out_cache_loc slot as fp8 values at a scale of 2^ceil(log2(max(amax, 0.0001) / 448)) of its values, and that scale in fp32.",
+  "op_type": "dsa_indexer",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, padding rows included."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 6144,
+      "description": "The hidden states' width: wk's and weights_proj's input."
+    },
+    "n_positions": {
+      "type": "var",
+      "description": "Rows of the rotary tables."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Pages of the index-K cache."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "x": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's hidden states, the layer's input."
+    },
+    "wk": {
+      "shape": [
+        128,
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 6144
+      },
+      "description": "wk: the key's projection."
+    },
+    "k_norm_weight": {
+      "shape": [128],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "k_norm's (LayerNorm) weight."
+    },
+    "k_norm_bias": {
+      "shape": [128],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "k_norm's bias."
+    },
+    "cos_cache": {
+      "shape": [
+        "n_positions",
+        32
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The rotary cosines, a row per position and a column per RoPE pair."
+    },
+    "sin_cache": {
+      "shape": [
+        "n_positions",
+        32
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The rotary sines, as cos_cache."
+    },
+    "positions": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_positions - 1",
+        "distinct": false
+      },
+      "description": "Each token's position: its row of the rotary tables."
+    },
+    "out_cache_loc": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "64 * n_pages - 1",
+        "distinct": true
+      },
+      "description": "Each token's slot of the index-K cache (page slot // 64, key slot % 64), distinct but for sglang's graph padding rows, which all write slot 0, a slot no sequence reads."
+    },
+    "index_k_cache": {
+      "shape": [
+        "n_pages",
+        64,
+        132
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": 6,
+        "log2_hi": 8
+      },
+      "description": "This layer's index-K cache, as sglang views it: pages of 64 keys, their 128 fp8 values in 16 x 16 tiles (16 keys by 16 values) and then their fp32 scales, each page's bytes compared as fp8 values. The tokens' keys are stored into it."
+    },
+    "k_norm_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "k_norm's epsilon."
+    }
+  },
+  "outputs": {
+    "no_values": {
+      "shape": [0],
+      "dtype": "float32",
+      "description": "No values: the op's one result is index_k_cache, and a contract declares an output."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 4,
+        "n_positions": 131072,
+        "n_pages": 1
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 2.504
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0003,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "_math.py",
+        "content": "# Created by OpenAI\n\"\"\"Integer helpers usable in host code and compile-time expressions.\"\"\"\n\nimport triton\nfrom triton.runtime.jit import ConstexprFunction\n\nnext_power_of_2 = triton.next_power_of_2\nif not isinstance(next_power_of_2, ConstexprFunction):\n    next_power_of_2 = triton.constexpr_function(next_power_of_2)\n"
+      },
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"DSA indexer key-only preparation for GLM-5.2 on gfx950, tuned in its TP4 deployment for 4\ntokens.\n\nProjects each token's key (x wk^T) in Gluon tiles; then its LayerNorm, RoPE on its first 64\nvalues in interleaved pairs and the 128-point Hadamard transform, each rounded to bf16,\nquantized to fp8 at a power-of-two scale and stored with that fp32 scale into its preshuffled\nindex-K page. No query is computed.\n\"\"\"\n\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\nfrom ._math import next_power_of_2 as _ceil_power_of_two\n\n_next_power_of = _ceil_power_of_two\n\n\n@gluon.jit\ndef _projection_tile(\n    X,\n    W,\n    Y,\n    tile,\n    split,\n    M: gl.constexpr,\n    N: gl.constexpr,\n    K: gl.constexpr,\n    SX: gl.constexpr,\n    SW: gl.constexpr,\n    OUTPUT_N: gl.constexpr,\n    OUTPUT_SPLITS: gl.constexpr,\n    OUTPUT_OFFSET: gl.constexpr,\n    BLOCK_K: gl.constexpr,\n    SPLIT_K: gl.constexpr,\n    A_K_LANES: gl.constexpr,\n):\n    a_layout: gl.constexpr = gl.BlockedLayout([1, 8], [64 // A_K_LANES, A_K_LANES], [1, 1], [1, 0])\n    b_layout: gl.constexpr = gl.BlockedLayout([8, 1], [16, 4], [1, 1], [0, 1])\n    mma_layout: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[1, 1]\n    )\n    BLOCK_M: gl.constexpr = _next_power_of(M)\n    ma = gl.arange(0, BLOCK_M, layout=gl.SliceLayout(1, a_layout))\n    ka = gl.arange(0, BLOCK_K, layout=gl.SliceLayout(0, a_layout))\n    kb = gl.arange(0, BLOCK_K, layout=gl.SliceLayout(1, b_layout))\n    nb = tile * 8 + gl.arange(0, 8, layout=gl.SliceLayout(0, b_layout))\n    acc = gl.zeros((BLOCK_M, 8), gl.float32, layout=mma_layout)\n    for step in gl.static_range(gl.cdiv(SPLIT_K, BLOCK_K)):\n        start = split * SPLIT_K + step * BLOCK_K\n        if K % SPLIT_K == 0 and SPLIT_K % BLOCK_K == 0:\n            a = gl.load(X + ma[:, None] * SX + start + ka[None, :], ma[:, None] < M, 0)\n            if N % 8 == 0:\n                b = gl.load(W + nb[None, :] * SW + start + kb[:, None])\n            else:\n                b = gl.load(W + nb[None, :] * SW + start + kb[:, None], nb[None, :] < N, 0)\n        else:\n            a = gl.load(X + ma[:, None] * SX + start + ka[None, :], (ma[:, None] < M) & (start + ka[None, :] < K), 0)\n            b = gl.load(W + nb[None, :] * SW + start + kb[:, None], (nb[None, :] < N) & (start + kb[:, None] < K), 0)\n        a = gl.convert_layout(a, gl.DotOperandLayout(0, mma_layout, 8))\n        b = gl.convert_layout(b, gl.DotOperandLayout(1, mma_layout, 8))\n        acc = gl.amd.cdna4.mfma(a, b, acc)\n    mo = gl.arange(0, BLOCK_M, layout=gl.SliceLayout(1, mma_layout))\n    no = tile * 8 + gl.arange(0, 8, layout=gl.SliceLayout(0, mma_layout))\n    gl.store(\n        Y + mo[:, None] * OUTPUT_SPLITS * OUTPUT_N + split * OUTPUT_N + OUTPUT_OFFSET + no[None, :],\n        acc,\n        (mo[:, None] < M) & (no[None, :] < N),\n    )\n\n\n@gluon.jit\ndef _project(\n    X,\n    QL,\n    WQ,\n    WK,\n    WG,\n    Q,\n    AUX,\n    Cos,\n    Sin,\n    Positions,\n    M: gl.constexpr,\n    HIDDEN: gl.constexpr,\n    LATENT: gl.constexpr,\n    HEADS: gl.constexpr,\n    SX: gl.constexpr,\n    SQL: gl.constexpr,\n    SWQ: gl.constexpr,\n    SWK: gl.constexpr,\n    SWG: gl.constexpr,\n    KEY_ONLY: gl.constexpr,\n    AUX_N: gl.constexpr,\n    SPLITS: gl.constexpr,\n    AUX_K: gl.constexpr,\n    QUERY_K: gl.constexpr,\n    A_K_LANES: gl.constexpr,\n    SC: gl.constexpr,\n):\n    pid = gl.program_id(0)\n    QUERY_TILES: gl.constexpr = 0 if KEY_ONLY else HEADS * 16\n    AUX_TILES: gl.constexpr = AUX_N // 8\n    if not KEY_ONLY and pid < QUERY_TILES:\n        _projection_tile(\n            QL, WQ, Q, pid, 0, M, HEADS * 128, LATENT, SQL, SWQ, HEADS * 128, 1, 0, QUERY_K, LATENT, A_K_LANES\n        )\n    else:\n        aux_pid = pid - QUERY_TILES\n        if not KEY_ONLY and aux_pid < M:\n            r = gl.arange(0, 64, layout=gl.BlockedLayout([1], [64], [1], [0]))\n            pos = gl.load(Positions + aux_pid)\n            rotary = gl.where(\n                r < 32,\n                gl.load(Cos + pos * SC + r % 32, r < 32, 0),\n                gl.load(Sin + pos * SC + r % 32, r >= 32, 0),\n            ).to(gl.float32)\n            gl.store(AUX + M * SPLITS * AUX_N + aux_pid * 64 + r, rotary)\n        split = aux_pid // AUX_TILES\n        tile = aux_pid % AUX_TILES\n        if KEY_ONLY or tile < 16:\n            _projection_tile(\n                X, WK, AUX, tile, split, M, 128, HIDDEN, SX, SWK, AUX_N, SPLITS, 0, AUX_K, AUX_K, A_K_LANES\n            )\n        else:\n            _projection_tile(\n                X, WG, AUX, tile - 16, split, M, HEADS, HIDDEN, SX, SWG, AUX_N, SPLITS, 128, AUX_K, AUX_K, A_K_LANES\n            )\n\n\n@gluon.jit\ndef _rope_partner(x):\n    return gl.inline_asm_elementwise(\n        \"s_nop 1\\n v_mov_b32_dpp $0, $1 quad_perm:[1,0,3,2] row_mask:0xf bank_mask:0xf bound_ctrl:0\\n s_nop 1\",\n        constraints=\"=v,v\",\n        args=[x],\n        dtype=gl.float32,\n        is_pure=True,\n        pack=1,\n    )\n\n\n@gluon.jit\ndef _register_butterfly(x, BIT: gl.constexpr, LAYOUT: gl.constexpr):\n    x = gl.convert_layout(x, LAYOUT)\n    lo, hi = x.reshape((128 >> BIT + 1, 2, 1 << BIT)).permute((0, 2, 1)).split()\n    return gl.join(lo + hi, lo - hi).permute((0, 2, 1)).reshape((128,))\n\n\n@gluon.jit\ndef _transform(x, c, s, d):\n    partner = _rope_partner(x)\n    x = gl.where(d < 64, x * c + gl.where(d % 2 == 0, -partner, partner) * s, x).to(gl.bfloat16).to(gl.float32)\n    x = _register_butterfly(x, 0, gl.DistributedLinearLayout([[1]], [[64], [2], [4], [8], [16], [32]], [], [], [128]))\n    x = _register_butterfly(x, 1, gl.DistributedLinearLayout([[2]], [[64], [1], [4], [8], [16], [32]], [], [], [128]))\n    x = _register_butterfly(x, 2, gl.DistributedLinearLayout([[4]], [[64], [1], [2], [8], [16], [32]], [], [], [128]))\n    x = _register_butterfly(x, 3, gl.DistributedLinearLayout([[8]], [[64], [1], [2], [4], [16], [32]], [], [], [128]))\n    x = _register_butterfly(x, 4, gl.DistributedLinearLayout([[16]], [[64], [1], [2], [4], [8], [32]], [], [], [128]))\n    x = _register_butterfly(x, 5, gl.DistributedLinearLayout([[32]], [[64], [1], [2], [4], [8], [16]], [], [], [128]))\n    x = _register_butterfly(x, 6, gl.DistributedLinearLayout([[64]], [[32], [1], [2], [4], [8], [16]], [], [], [128]))\n    return (x * 0.08838834764831845).to(gl.bfloat16).to(gl.float32)\n\n\n@gluon.jit\ndef _finish(\n    Q,\n    AUX,\n    Gamma,\n    Beta,\n    Cos,\n    Sin,\n    Positions,\n    Slots,\n    Cache,\n    Out,\n    Weights,\n    eps,\n    M: gl.constexpr,\n    HEADS: gl.constexpr,\n    SC: gl.constexpr,\n    PAGE: gl.constexpr,\n    KEY_ONLY: gl.constexpr,\n    AUX_N: gl.constexpr,\n    SPLITS: gl.constexpr,\n):\n    m = gl.program_id(0)\n    role = gl.program_id(1)\n    if M > 1:\n        is_key = role == 0\n    else:\n        is_key = role == HEADS\n    layout: gl.constexpr = gl.BlockedLayout([1], [64], [1], [0])\n    d = gl.arange(0, 128, layout=layout)\n    if KEY_ONLY or is_key:\n        if not KEY_ONLY:\n            gamma = gl.load(Gamma + d).to(gl.float32)\n            beta = gl.load(Beta + d).to(gl.float32)\n            slot = gl.load(Slots + m)\n        if KEY_ONLY:\n            pos = gl.load(Positions + m)\n            c = gl.load(Cos + pos * SC + d // 2, d < 64, 1).to(gl.float32)\n            s = gl.load(Sin + pos * SC + d // 2, d < 64, 0).to(gl.float32)\n        else:\n            c = gl.load(AUX + M * SPLITS * AUX_N + m * 64 + d // 2, d < 64, 1)\n            s = gl.load(AUX + M * SPLITS * AUX_N + m * 64 + 32 + d // 2, d < 64, 0)\n        if KEY_ONLY:\n            gamma = gl.load(Gamma + d).to(gl.float32)\n            beta = gl.load(Beta + d).to(gl.float32)\n            slot = gl.load(Slots + m)\n        partial_layout: gl.constexpr = gl.BlockedLayout([1, 1], [1, 64], [1, 1], [1, 0])\n        sp = gl.arange(0, _next_power_of(SPLITS), layout=gl.SliceLayout(1, partial_layout))\n        dp = gl.arange(0, 128, layout=gl.SliceLayout(0, partial_layout))\n        partial = gl.load(AUX + m * SPLITS * AUX_N + sp[:, None] * AUX_N + dp[None, :], sp[:, None] < SPLITS, 0)\n        x = gl.convert_layout(gl.sum(partial, 0), layout)\n        x = x.to(gl.bfloat16).to(gl.float32)\n        delta = x - gl.sum(x, 0) / 128\n        inv = gl.rsqrt(gl.sum(delta * delta, 0) / 128 + eps)\n        x = (delta * inv * gamma + beta).to(gl.bfloat16).to(gl.float32)\n        x = _transform(x, c, s, d)\n        out_d = gl.arange(0, 128, layout=x.type.layout)\n        exponent = gl.ceil(gl.log2(gl.maximum(gl.max(gl.abs(x), 0), 0.0001) / 448.0))\n        scale = gl.exp2(exponent)\n        quant = (x * gl.exp2(-exponent)).to(gl.float8e4nv)\n        page = slot // PAGE\n        offset = slot % PAGE\n        dst = page * PAGE * 132 + offset // 16 * 2048 + out_d // 16 * 256 + offset % 16 * 16 + out_d % 16\n        gl.store(Cache + dst, quant.to(gl.uint8, bitcast=True), slot >= 0)\n        scale_ptr = gl.cast(Cache, gl.pointer_type(gl.float32)) + page * PAGE * 33 + PAGE * 32 + offset\n        gl.store(scale_ptr, scale, slot >= 0)\n    else:\n        h = role - 1 if M > 1 else role\n        c = gl.load(AUX + M * SPLITS * AUX_N + m * 64 + d // 2, d < 64, 1)\n        s = gl.load(AUX + M * SPLITS * AUX_N + m * 64 + 32 + d // 2, d < 64, 0)\n        gsp = gl.arange(0, _next_power_of(SPLITS), layout=layout)\n        g = (\n            gl.sum(gl.load(AUX + m * SPLITS * AUX_N + gsp * AUX_N + 128 + h, gsp < SPLITS, 0), 0)\n            .to(gl.bfloat16)\n            .to(gl.float32)\n        )\n        gate = (g * HEADS ** (-0.5)).to(gl.bfloat16).to(gl.float32)\n        x = gl.load(Q + (m * HEADS + h) * 128 + d).to(gl.bfloat16).to(gl.float32)\n        x = _transform(x, c, s, d)\n        out_d = gl.arange(0, 128, layout=x.type.layout)\n        exponent = gl.ceil(gl.log2(gl.maximum(gl.max(gl.abs(x), 0), 0.0001) / 448.0))\n        scale = gl.exp2(exponent)\n        gl.store(Out + (m * HEADS + h) * 128 + out_d, (x * gl.exp2(-exponent)).to(gl.float8e4nv))\n        gl.store(Weights + m * HEADS + h, gate * scale * 0.08838834764831845)\n\n\ndef indexer_prepare_key_only(\n    x,\n    q_latent,\n    wq,\n    wk,\n    wgate,\n    k_gamma,\n    k_beta,\n    cos,\n    sin,\n    positions,\n    slots,\n    cache: torch.Tensor,\n    *,\n    key_only: bool = False,\n    eps: float = 1e-06,\n):\n    m, hidden = x.shape\n    heads = wgate.shape[0]\n    aux_k = 512\n    query_k = 1024 if m <= 2 else 512\n    splits = triton.cdiv(hidden, aux_k)\n    aux_n = 128 if key_only else 128 + heads\n    aux = torch.empty((m * splits * aux_n + (0 if key_only else m * 64),), device=x.device, dtype=torch.float32)\n    q = out = weights = None\n    a_k_lanes = 64 if m == 1 else 32 if m == 2 else 16\n    query_tiles = 0 if key_only else heads * 16\n    _project[query_tiles + triton.cdiv(aux_n, 8) * splits,](\n        x,\n        q_latent,\n        wq,\n        wk,\n        wgate,\n        q,\n        aux,\n        cos,\n        sin,\n        positions,\n        m,\n        hidden,\n        q_latent.shape[1],\n        heads,\n        x.stride(0),\n        q_latent.stride(0),\n        wq.stride(0),\n        wk.stride(0),\n        wgate.stride(0),\n        key_only,\n        aux_n,\n        splits,\n        aux_k,\n        query_k,\n        a_k_lanes,\n        cos.stride(0),\n        num_warps=1,\n    )\n    _finish[m, 1 if key_only else heads + 1](\n        q,\n        aux,\n        k_gamma,\n        k_beta,\n        cos,\n        sin,\n        positions,\n        slots,\n        cache,\n        out,\n        weights,\n        eps,\n        m,\n        heads,\n        cos.stride(0),\n        cache.shape[1],\n        key_only,\n        aux_n,\n        splits,\n        num_warps=1,\n        enable_fp_fusion=False,\n    )\n    return (out, weights)\n\n\ndef run(\n    *,\n    x,\n    wk,\n    k_norm_weight,\n    k_norm_bias,\n    cos_cache,\n    sin_cache,\n    positions,\n    out_cache_loc,\n    index_k_cache,\n    k_norm_eps,\n    no_values,\n):\n    \"\"\"Stores the keys: indexer_prepare_key_only on sglang's tensors, key_only, the index-K\n    pages as their bytes. Its key-only path never reads the query side's q_latent, wq and\n    wgate: they are views of x and wk with the shapes and strides GLM-5.2's would have (2048\n    query latents, 32 heads), so that the kernels compile as they were tuned.\"\"\"\n    indexer_prepare_key_only(\n        x,\n        x[:, :2048],\n        wk.view(-1, 2048),\n        wk,\n        wk[:32],\n        k_norm_weight,\n        k_norm_bias,\n        cos_cache,\n        sin_cache,\n        positions,\n        out_cache_loc,\n        index_k_cache.view(torch.uint8),\n        key_only=True,\n        eps=k_norm_eps,\n    )\n"
+      }
+    ]
+  }
+}

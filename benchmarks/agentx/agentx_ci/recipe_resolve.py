@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Resolve InferenceX recipes and optional Pareto selection into serving.json."""
+"""Resolve InferenceX recipes into serving.json."""
 
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ import yaml
 
 from agentx_ci.model_config import ConfigError, model_config
 from agentx_ci.performance_analysis import X, Y, frontier
+from agentx_ci.preflight import pinned_image
 from agentx_ci.utils import (
     DEFAULT_CONFIG,
     REPO_ROOT,
@@ -51,7 +52,6 @@ DEP_PACKAGES = (
     "typing-inspection",
 )
 RUNTIME_SETTINGS = "inferencex-e2e/benchmarks/runtime_settings.sh"
-# Runtime-bound arguments.
 WORKER_OWNED_ARGS = {
     "model-path",
     "served-model-name",
@@ -61,7 +61,6 @@ WORKER_OWNED_ARGS = {
     "port",
     "host",
 }
-# Point-bound client settings.
 BOUND_CLIENT_ENV = {
     "CONC",
     "MODEL",
@@ -84,7 +83,6 @@ POINT_CLIENT_ENV = (
     "KV_OFFLOADING",
     "TOTAL_CPU_DRAM_GB",
 )
-# Single-node AgentX without power telemetry.
 FIXED_CLIENT_ENV = {
     "IS_AGENTIC": "1",
     "IS_MULTINODE": "false",
@@ -135,16 +133,16 @@ def resolve_ref(repo: str, ref: str) -> str:
 
 
 def fetch_inferencex(repo: str, sha: str, dst: Path, retries: tuple[int, ...] = (15, 30, 60)) -> Path:
-    """Check out ``sha`` of ``repo`` into ``dst`` with only the files resolution and the client read."""
+    """Fetch a clean sparse InferenceX checkout at the requested commit."""
     if (dst / ".git").is_dir():
         try:
             if sh(["git", "rev-parse", "HEAD^{commit}"], cwd=dst).strip() == sha:
-                # A matching HEAD alone does not prove the checkout is complete.
-                sh(["git", "diff", "--quiet", "HEAD", "--"], cwd=dst)
+                if sh(["git", "status", "--porcelain", "--untracked-files=all"], cwd=dst).strip():
+                    raise ResolveError("cached InferenceX checkout is dirty")
                 if (dst / "inferencex-e2e/uv.lock").is_file():
                     return dst
         except (ResolveError, subprocess.TimeoutExpired):
-            pass  # Rebuild incomplete checkouts.
+            pass
     error = None
     for delay in (0, *retries):
         time.sleep(delay)
@@ -188,7 +186,6 @@ def locked_versions(uv_lock: str) -> dict[str, str]:
 
 
 def ensure_deps(versions: dict[str, str], cache: Path) -> Path:
-    # Dependency wheels are interpreter-specific.
     abi = f"{sys.implementation.cache_tag}-{sysconfig.get_platform()}"
     target = cache / f"inferencex-deps-{sha256_json([versions, abi])[:16]}"
     if not (target / ".complete").exists():
@@ -211,15 +208,14 @@ def ensure_deps(versions: dict[str, str], cache: Path) -> Path:
 def run_inferencex_points(
     inferencex_e2e: Path, deps: Path, config_file: str, key: str, timeout: int = 120
 ) -> dict:
-    """Run InferenceX's resolution in a child with only its own code and deps on the path."""
+    """Resolve points in an isolated interpreter with pinned dependencies."""
+    inferencex_e2e, deps = inferencex_e2e.resolve(), deps.resolve()
     env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-        "PYTHONNOUSERSITE": "1",
-        "PYTHONDONTWRITEBYTECODE": "1",
         "HOME": "/nonexistent",
         "LANG": "C.UTF-8",
     }
-    # Isolated Python ignores PYTHONPATH; set the dependency path explicitly.
+    # -I ignores PYTHONPATH, so inject the pinned paths.
     script = Path(__file__).with_name("inferencex_points.py")
     path, argv = [str(deps), str(inferencex_e2e)], ["inferencex_points.py", config_file, key]
     boot = (
@@ -241,7 +237,7 @@ def run_inferencex_points(
 
 
 def config_to_cli_args(config: dict) -> list[str]:
-    """srtctl.backends.sglang._config_to_cli_args: sorted keys, ``_`` → ``-``, bare flags for true."""
+    """Match srtctl.backends.sglang._config_to_cli_args."""
     args: list[str] = []
     for key, value in sorted(config.items()):
         flag = key.replace("_", "-")
@@ -257,7 +253,7 @@ def config_to_cli_args(config: dict) -> list[str]:
 
 
 def apply_golden(recipe: dict, overrides: list[str]) -> dict:
-    """Apply ``build_overrides``' ``--set``/``--unset`` pairs (dotted paths, JSON values) as srtctl does."""
+    """Apply srtctl's build_overrides pairs."""
     out = json.loads(json.dumps(recipe))
     for flag, item in zip(overrides[::2], overrides[1::2], strict=True):
         path, _, raw = item.partition("=")
@@ -279,13 +275,13 @@ def canonical(value) -> str:
 
 
 def runtime_settings(text: str) -> dict[str, str]:
-    """The ``AIPERF_*`` defaults InferenceX's workflow exports for every client."""
+    """Read InferenceX's exported AIPERF defaults."""
     pairs = re.findall(r"^export (AIPERF_\w+)='([^']*)'$", text, re.MULTILINE)
     return dict(pairs)
 
 
 def arm_topology(row: dict) -> dict:
-    """Group concurrency points by upstream topology, offloading and decoding strategy."""
+    """Group points by topology, offloading and decoding strategy."""
     return {
         "tp": int(row["tp"]),
         "ep": int(row["ep"]),
@@ -319,7 +315,7 @@ def arm_of(row: dict) -> str:
 
 
 def model_precision(precision: str, model: str) -> str:
-    """Keep the upstream fp4 client contract while checking the explicit weight format."""
+    """Distinguish MXFP4 and NVFP4 within upstream's fp4 label."""
     precision = precision.lower()
     if precision == "fp4":
         for kind in ("mxfp4", "nvfp4"):
@@ -329,7 +325,7 @@ def model_precision(precision: str, model: str) -> str:
 
 
 def time_limit_seconds(value: str) -> int:
-    """Interpret upstream Slurm minutes, minutes:seconds, hours:minutes:seconds or days-hours."""
+    """Parse a Slurm time limit in seconds."""
     days, sep, rest = str(value).partition("-")
     parts = (rest if sep else days).split(":")
     if len(parts) > 3 or not all(part.isdigit() for part in parts) or (sep and not days.isdigit()):
@@ -369,6 +365,8 @@ def runtime_settings_of(point: dict) -> dict:
 
 def resolve_point(point: dict, arm: str, config: dict, client_defaults: dict[str, str]) -> dict:
     row, env = point["row"], point["environment"]
+    if row.get("framework") != "sglang":
+        raise ResolveError("only the SGLang framework is supported")
     recipe = apply_golden(point["bound_recipe"], point["golden_overrides"])
     role = recipe["roles"]["agg"]
     args = dict(role.get("args") or {})
@@ -401,7 +399,6 @@ def resolve_point(point: dict, arm: str, config: dict, client_defaults: dict[str
     command = ["python3", "-m", "sglang.launch_server", *runtime_args, *cli]
     bench_env = (recipe.get("benchmark") or {}).get("env") or {}
     backend = (row.get("kv-offload-backend") or {}).get("name")
-    # Result processing needs the backend metadata.
     backend_metadata = env.get("KV_OFFLOAD_BACKEND_METADATA")
     client_env = {
         **client_defaults,
@@ -443,10 +440,16 @@ def resolve_point(point: dict, arm: str, config: dict, client_defaults: dict[str
 
 
 def check_entry(inferencex_output: dict, expect: dict) -> None:
-    """Raise when the upstream entry stops identifying the model we measure."""
+    """Validate the upstream model and recipe identity."""
     entry, points = inferencex_output["entry"], inferencex_output["points"]
     if not points:
         raise ResolveError("InferenceX generated no points")
+    if entry.get("framework") != "sglang":
+        raise ResolveError("only the SGLang framework is supported")
+    expected_recipe = Path(expect["recipe"]).relative_to("inferencex-e2e").as_posix()
+    for point in points:
+        if point["row"].get("srt-recipe") != expected_recipe:
+            raise ResolveError(f"generated recipe differs from expected {expected_recipe}")
     for key in ("model", "framework", "model-prefix"):
         if str(entry.get(key)) != str(expect[key]):
             raise ResolveError(f"entry {key}={entry.get(key)!r}, expected {expect[key]!r}")
@@ -465,7 +468,7 @@ def build_spec(
     client_defaults: dict[str, str],
     provenance: dict,
 ) -> dict:
-    """Pure: InferenceX's points → serving.json."""
+    """Build serving.json from resolved InferenceX points."""
     source = config["inferencex"]
     check_entry(inferencex_output, source["expect"])
     warnings = []
@@ -497,8 +500,9 @@ def build_spec(
     if inferencex_image != run_image:
         warnings.append(f"run image {run_image} differs from InferenceX's {inferencex_image}")
     return {
-        "schema": 2,
+        "schema": 3,
         "model": config["model"],
+        "target": config["target"],
         "provenance": provenance,
         "image": {
             "run": run_image,
@@ -506,6 +510,7 @@ def build_spec(
             "differs": inferencex_image != run_image,
         },
         "weights": config["weights"],
+        "hardware": config["hardware"],
         "arms": arms,
         "grid_sha256": sha256_json([[q["arm"], q["conc"]] for q in points]),
         "points": points,
@@ -514,13 +519,16 @@ def build_spec(
 
 
 def registry_digest(image: str) -> str | None:
-    """The tag's current manifest digest from the registry, else from the local image store."""
+    """Resolve a registry digest, falling back to the local image."""
     try:
         listing = sh(["docker", "buildx", "imagetools", "inspect", image], timeout=120)
         for line in listing.splitlines():
             key, _, value = line.partition(":")
             if key.strip() == "Digest" and value.strip().startswith("sha256:"):
                 return value.strip()
+    except (ResolveError, OSError, ValueError, subprocess.TimeoutExpired):
+        pass
+    try:
         repo_digests = json.loads(
             sh(["docker", "image", "inspect", "--format", "{{json .RepoDigests}}", image])
         )
@@ -532,17 +540,29 @@ def registry_digest(image: str) -> str | None:
     return None
 
 
-def ci_image(workflow: Path, lookup=registry_digest) -> tuple[str, list[str]]:
-    """AKLR_CI_IMAGE pinned to a digest, and a warning when ci.yaml pins none itself."""
-    image = yaml.safe_load(workflow.read_text())["env"]["AKLR_CI_IMAGE"]
-    if "@sha256:" in image:
-        return image, []
+def pin_image(image: str, lookup=registry_digest) -> str:
+    if pinned_image(image):
+        return image
     digest = lookup(image)
-    if digest is None:
-        return image, [f"AKLR_CI_IMAGE {image} pins no digest and none could be looked up"]
-    return f"{image}@{digest}", [
+    if digest is None or not pinned_image(digest):
+        raise ResolveError(
+            f"cannot pin execution image {image}; supply an immutable digest or restore registry access"
+        )
+    return f"{image}@{digest}"
+
+
+def ci_image(workflow: Path, lookup=registry_digest) -> tuple[str, list[str]]:
+    """Pin AKLR_CI_IMAGE and report mutable tags."""
+    image = yaml.safe_load(workflow.read_text())["env"]["AKLR_CI_IMAGE"]
+    if pinned_image(image):
+        return image, []
+    return pin_image(image, lookup), [
         f"AKLR_CI_IMAGE {image} pins no digest; pinned the tag's digest at resolve time"
     ]
+
+
+def resolve_image(reference: str | None) -> tuple[str, list[str]]:
+    return (pin_image(reference), []) if reference else ci_image(REPO_ROOT / ".github/workflows/ci.yaml")
 
 
 def git_blob(tree: Path, path: str) -> str:
@@ -553,11 +573,12 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python3 -m agentx_bench resolve", description=__doc__)
     parser.add_argument("--config", default=DEFAULT_CONFIG, help="run definition")
     parser.add_argument("--model", help="model id; may be omitted when only one model is enabled")
+    parser.add_argument("--target", help="target id; may be omitted when the model has one enabled target")
     parser.add_argument("--inferencex-ref", help="InferenceX branch, tag or sha (default: the config's ref)")
     parser.add_argument(
         "--inferencex-src", type=Path, help="use this InferenceX checkout instead of fetching"
     )
-    parser.add_argument("--run-image", help="default: AKLR_CI_IMAGE of .github/workflows/ci.yaml")
+    parser.add_argument("--run-image", help="override target.run_image or the default AKLR CI image")
     parser.add_argument("--work", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True, help="serving.json to write")
     args = parser.parse_args(argv)
@@ -567,6 +588,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
     summary = {
+        "model": spec["model"]["id"],
+        "target": spec["target"]["id"],
         "inferencex_sha": spec["provenance"]["inferencex"]["sha"],
         "points": len(spec["points"]),
         "arms": {name: arm["concs"] for name, arm in spec["arms"].items()},
@@ -577,13 +600,15 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def resolve(args: argparse.Namespace) -> dict:
-    config = model_config(load_config(args.config), args.model)
+    args.work = args.work.resolve()
+    config = model_config(load_config(args.config), args.model, args.target)
     source = config["inferencex"]
-    run_image, image_warnings = (
-        (args.run_image, []) if args.run_image else ci_image(REPO_ROOT / ".github/workflows/ci.yaml")
-    )
+    image_reference = args.run_image or config["run_image"]
+    run_image, image_warnings = resolve_image(image_reference)
     if args.inferencex_src:
-        inferencex = args.inferencex_src
+        inferencex = args.inferencex_src.resolve()
+        if sh(["git", "status", "--porcelain", "--untracked-files=all"], cwd=inferencex).strip():
+            raise ResolveError("--inferencex-src must be a clean checkout; commit changes before resolving")
         sha = sh(["git", "rev-parse", "HEAD"], cwd=inferencex).strip()
     else:
         sha = resolve_ref(source["repo"], args.inferencex_ref or source["ref"])
@@ -633,8 +658,50 @@ def resolve(args: argparse.Namespace) -> dict:
         provenance=provenance,
     )
     spec["warnings"] = image_warnings + spec["warnings"]
+    try:
+        pin_traces(e2e, deps, spec["points"])
+    except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
+        raise ResolveError(f"cannot resolve pinned trace datasets: {error}") from error
     write_json(args.out, spec)
     return spec
+
+
+def dataset_revision(repo: str) -> str:
+    request = urllib.request.Request(
+        f"https://huggingface.co/api/datasets/{quote(repo, safe='/')}/revision/main"
+    )
+    if os.environ.get("HF_TOKEN"):
+        request.add_header("Authorization", f"Bearer {os.environ['HF_TOKEN']}")
+    with urllib.request.urlopen(request, timeout=60) as response:
+        revision = json.load(response)["sha"]
+    if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ResolveError(f"invalid trace dataset revision for {repo}")
+    return revision
+
+
+def pin_traces(inferencex_e2e: Path, deps: Path, points: list[dict]) -> None:
+    sources = [
+        [p["client_env"]["MODEL_PREFIX"], p["client_env"].get("WEKA_LOADER_OVERRIDE") or None] for p in points
+    ]
+    paths = [str(deps.resolve()), str(inferencex_e2e.resolve())]
+    script = (
+        f"import sys,json; sys.path[:0]={paths!r}; "
+        "from infx.bench.agentic.traces import resolve; "
+        "json.dump([resolve(*source) for source in json.load(sys.stdin)],sys.stdout)"
+    )
+    done = subprocess.run(
+        [sys.executable, "-I", "-c", script],
+        input=json.dumps(sources),
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    resolved = json.loads(done.stdout)
+    revisions = {repo: dataset_revision(repo) for repo in sorted({repo for _, repo in resolved})}
+    for point, (loader, repo) in zip(points, resolved, strict=True):
+        point["trace"] = {"loader": loader, "repo": repo, "revision": revisions[repo]}
+        point["client_env"]["WEKA_LOADER_OVERRIDE"] = loader
 
 
 POLICY = "inferencex-pareto"

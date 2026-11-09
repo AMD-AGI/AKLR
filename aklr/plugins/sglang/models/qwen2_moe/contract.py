@@ -2,11 +2,13 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
 """sglang's Qwen2MoeSparseMoeBlock with its shared expert fused into the experts (aiter's
-path for Qwen3.5 and Qwen3-Next): the router, the fp8 experts, and both at once.
+path for Qwen3.5 and Qwen3-Next): the router, the fp8 experts, and both at once. With
+MXFP4 experts and the shared expert kept apart in BF16 (sglang's path for Qwen3.5's MXFP4
+checkpoint, which cannot fuse it), the whole block.
 
 A model is a scenario of each contract: Qwen3.5-397B-A17B at TP4 is model_dim 4096,
-n_routed 512, inter_dim 256; Qwen3-Next-80B-A3B at TP4 is model_dim 2048, n_routed 512,
-inter_dim 128."""
+n_routed 512, inter_dim 256 (and shared_inter_dim 256); Qwen3-Next-80B-A3B at TP4 is
+model_dim 2048, n_routed 512, inter_dim 128."""
 
 from __future__ import annotations
 
@@ -14,6 +16,7 @@ from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
     DeterminismLevel,
     DType,
+    E8M0Scales,
     FiniteDistribution,
     IntRangeDistribution,
     LecunNormalDistribution,
@@ -38,6 +41,7 @@ __all__ = [
     "CONTRACTS",
     "QWEN2_MOE_FP8_EXPERTS",
     "QWEN2_MOE_FP8_ROUTER_EXPERTS",
+    "QWEN2_MOE_MXFP4_MOE",
     "QWEN2_MOE_ROUTER",
 ]
 
@@ -258,4 +262,133 @@ QWEN2_MOE_FP8_ROUTER_EXPERTS = OpContract(
     compare=_COMPARE,
 )
 
-CONTRACTS = (QWEN2_MOE_ROUTER, QWEN2_MOE_FP8_EXPERTS, QWEN2_MOE_FP8_ROUTER_EXPERTS)
+_MXFP4 = DTypeSpec(any_of=(DType.FLOAT4_E2M1,))
+_E8M0 = DTypeSpec(any_of=(DType.FLOAT8_E8M0,))
+
+
+def _e8m0_scales(fan_in: str) -> LogUniformDistribution:
+    """MXFP4 block scales log-uniform over 2**-5 to 2**1 times 1 / sqrt(fan_in), as
+    deepseek_v2_mxfp4_moe and minimax_m2_mxfp4_moe draw them."""
+    return LogUniformDistribution(
+        log2_lo=f"-5 - bit_length({fan_in}) // 2", log2_hi=f"1 - bit_length({fan_in}) // 2"
+    )
+
+
+def _mxfp4_facts(shuffled: bool) -> tuple[LayoutFact, ...]:
+    facts = {"w1.is_shuffled": shuffled, "w2.is_shuffled": shuffled, "w1_scale.ndim": 3}
+    return tuple(LayoutFact(location="tensor_attr", name=n, expected_value=v) for n, v in facts.items())
+
+
+# MXFP4 experts as aiter's fused_moe takes them: fp4 values at an e8m0 scale per 32;
+# row-major, or as sglang holds them for aiter: shuffle_weight's 16 x 16 tiles, the scales
+# e8m0-shuffled
+_MXFP4_LAYOUTS = LayoutVariantsSpec(
+    by_name={
+        "row_major": LayoutVariant(layouts={}, detect_facts=_mxfp4_facts(False)),
+        "shuffled_16x16": LayoutVariant(
+            layouts={
+                "w1": Preshuffle(tile=(16, 16)),
+                "w2": Preshuffle(tile=(16, 16)),
+                "w1_scale": E8M0Scales(block_size=32, pad_to=(256, 8), shuffled=True),
+                "w2_scale": E8M0Scales(block_size=32, pad_to=(256, 8), shuffled=True),
+            },
+            detect_facts=_mxfp4_facts(True),
+        ),
+    }
+)
+
+# The routed experts' MXFP4 activations come to 13 to 16 dB on the bench's inputs (sglang's
+# own small-M kernel, which keeps them bf16, to about 48 dB). A reference without the shared
+# expert, with it ungated or with its gate and up rows swapped falls below the bound from 4
+# tokens on (1 to 9 dB), and mostly at 1 and 2.
+_MXFP4_MIN_SQNR_DB = 11.0
+
+QWEN2_MOE_MXFP4_MOE = OpContract(
+    contract_id="qwen2_moe_mxfp4_moe@1.0",
+    description=(
+        "sglang's Qwen2MoeSparseMoeBlock.forward on one rank of its TP group, with MXFP4 "
+        "routed experts and the shared expert apart in BF16 (sglang's path for a checkpoint "
+        f"that keeps its shared expert BF16, which cannot be fused): {_ROUTING}; each routed "
+        "expert down(silu(gate(x)) * up(x)) of its MXFP4 weights (fused_moe's: fp4 values "
+        "at an e8m0 scale per 32), the shared expert down(silu(gate(x)) * up(x)) of its BF16 "
+        "weights, weighed by sigmoid(hidden_states shared_gate_weight^T) and added; out is "
+        "this rank's share of the block's output, which the TP group sums after the call"
+    ),
+    op_type="qwen2_moe",
+    axes={
+        **_TOKENS,
+        "n_routed": _ROUTED,
+        "inter_dim": axis("Routed expert intermediate size on this rank.", 128, 16384, multiple_of=128),
+        "shared_inter_dim": axis(
+            "Shared expert intermediate size on this rank.", 128, 16384, multiple_of=128
+        ),
+        "gate_up_rows": derived_axis("w1 rows: gate and up concatenated.", "2 * inter_dim"),
+        "model_blocks": derived_axis("w1 scale columns.", "model_dim // 32"),
+        "inter_blocks": derived_axis("w2 scale columns.", "inter_dim // 32"),
+        "shared_gate_up_rows": derived_axis(
+            "shared_w1 rows: gate and up concatenated.", "2 * shared_inter_dim"
+        ),
+    },
+    attrs={"topk": attr("Routed experts per token.", 10, param_name="topk")},
+    constraints=(
+        "topk <= n_routed",
+        # makes the scales' padding a no-op
+        "model_dim % 256 == 0 and inter_dim % 256 == 0",
+    ),
+    inputs={
+        "hidden_states": _HIDDEN_STATES,
+        "router_weight": _ROUTER_WEIGHT,
+        "w1": TensorSpec(
+            description="Gate-up projection per routed expert: gate rows, then up rows.",
+            shape=("n_routed", "gate_up_rows", "model_dim"),
+            dtype=_MXFP4,
+            distribution=FiniteDistribution(),
+            lifetime="weight",
+        ),
+        "w1_scale": TensorSpec(
+            description="Per 1 x 32 block of w1.",
+            shape=("n_routed", "gate_up_rows", "model_blocks"),
+            dtype=_E8M0,
+            distribution=_e8m0_scales("model_dim"),
+            lifetime="weight",
+        ),
+        "w2": TensorSpec(
+            description="Down projection per routed expert.",
+            shape=("n_routed", "model_dim", "inter_dim"),
+            dtype=_MXFP4,
+            distribution=FiniteDistribution(),
+            lifetime="weight",
+        ),
+        "w2_scale": TensorSpec(
+            description="Per 1 x 32 block of w2.",
+            shape=("n_routed", "model_dim", "inter_blocks"),
+            dtype=_E8M0,
+            distribution=_e8m0_scales("inter_dim"),
+            lifetime="weight",
+        ),
+        "shared_w1": TensorSpec(
+            description="The shared expert's gate-up projection on this rank: gate rows, then up rows.",
+            shape=("shared_gate_up_rows", "model_dim"),
+            dtype=_BF16,
+            distribution=LecunNormalDistribution(fan_in="model_dim"),
+            lifetime="weight",
+        ),
+        "shared_w2": TensorSpec(
+            description="The shared expert's down projection on this rank.",
+            shape=("model_dim", "shared_inter_dim"),
+            dtype=_BF16,
+            # 8 times a Lecun normal's spread: the shared expert then weighs about as much in
+            # out as the routed experts (their MXFP4 weights are drawn about twice a Lecun
+            # normal's per linear), so that out's bound also fails a kernel that drops the
+            # shared expert or misgates it
+            distribution=LecunNormalDistribution(fan_in="shared_inter_dim // 64"),
+            lifetime="weight",
+        ),
+        "shared_gate_weight": _SHARED_GATE_WEIGHT,
+    },
+    outputs={"out": _moe_output(_MXFP4_MIN_SQNR_DB)},
+    layout_variants=_MXFP4_LAYOUTS,
+    compare=_COMPARE,
+)
+
+CONTRACTS = (QWEN2_MOE_ROUTER, QWEN2_MOE_FP8_EXPERTS, QWEN2_MOE_FP8_ROUTER_EXPERTS, QWEN2_MOE_MXFP4_MOE)

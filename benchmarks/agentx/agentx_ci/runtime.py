@@ -1,9 +1,12 @@
 # SPDX-License-Identifier: MIT
-"""Execute planned points in the container and record validated measurements."""
+"""Run a target's planned points and record measurements."""
 
 from __future__ import annotations
 
 import argparse
+import copy
+import importlib.metadata
+import json
 import math
 import os
 import signal
@@ -15,10 +18,12 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+from agentx_ci.preflight import validate_hardware, verify_image
 from agentx_ci.recipe_resolve import POLICY, ResolveError, SelectionError, fetch_inferencex, selected_points
 from agentx_ci.utils import (
     REPO_ROOT,
     begin_attempt,
+    pending_results,
     read_json,
     sha256_json,
     utc_now,
@@ -28,7 +33,6 @@ from agentx_ci.utils import (
 
 
 def metrics_of(aggregate: dict) -> dict:
-    """The two Pareto axes from an InferenceX AgentX aggregate."""
     request = aggregate["request_metrics"]
     metrics = {
         "tput_per_gpu": request["throughput"]["per_gpu"]["total_tput_tps"],
@@ -40,7 +44,7 @@ def metrics_of(aggregate: dict) -> dict:
     return metrics
 
 
-# Inherit infrastructure only; tunables belong in the hashed plan.
+# Tuning variables must come from the hashed plan.
 INFRA_ENV = (
     "PATH",
     "HOME",
@@ -68,6 +72,7 @@ INFRA_ENV = (
     "PIP_CACHE_DIR",
     "UV_CACHE_DIR",
     "AITER_JIT_DIR",
+    "GPU_ARCHS",
     "FLYDSL_RUNTIME_CACHE_DIR",
     "FLYDSL_AUTOTUNE_CACHE_DIR",
     "TRITON_CACHE_DIR",
@@ -99,7 +104,7 @@ def wait_ready(base_url: str, server: subprocess.Popen, timeout_s: float, interv
 
 
 def stop(server: subprocess.Popen, grace_s: float = 120) -> None:
-    """Stop the whole group created with start_new_session, even after its leader exits."""
+    """Stop the process group even if its leader has exited."""
     deadline = time.monotonic() + grace_s
     try:
         os.killpg(server.pid, signal.SIGTERM)
@@ -114,7 +119,7 @@ def stop(server: subprocess.Popen, grace_s: float = 120) -> None:
 
 
 def run_client(command: list[str], *, timeout: float, **kwargs) -> int:
-    """Own the client's entire process group, including replay/bootstrap descendants."""
+    """Stop the client's process group on exit or timeout."""
     process = subprocess.Popen(command, start_new_session=True, **kwargs)
     try:
         return process.wait(timeout=timeout)
@@ -123,7 +128,6 @@ def run_client(command: list[str], *, timeout: float, **kwargs) -> int:
 
 
 def validate_runtime(points: list[dict]) -> None:
-    """Validate upstream budgets and client topology."""
     for point in points:
         runtime = point.get("runtime", {})
         for field in ("ready_timeout_s", "point_timeout_s", "poll_s"):
@@ -153,7 +157,6 @@ def validate_runtime(points: list[dict]) -> None:
 
 
 def available_port() -> int:
-    """Allocate a port when the recipe leaves it unspecified."""
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         return probe.getsockname()[1]
@@ -164,49 +167,58 @@ def port_free(port: int) -> bool:
         return probe.connect_ex(("127.0.0.1", port)) != 0
 
 
-# Prepare both datasets and hub caches for offline replay.
 PREPARE_TRACES = """
-import os, subprocess, sys
+import json, os, subprocess, sys
 from pathlib import Path
-from infx.bench.agentic import traces
 from infx.bench.agentic.venv import Runtime, bootstrap
-runtime_dir, model_prefix = Path(sys.argv[1]), sys.argv[2]
+runtime_dir, dataset, revision = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 runtime = Runtime(runtime_dir)
 if bootstrap(runtime):
     sys.exit("AgentX runtime bootstrap failed")
-_, dataset = traces.resolve(model_prefix, os.environ.get("WEKA_LOADER_OVERRIDE") or None)
 offline = ("HF_HUB_OFFLINE", "HF_DATASETS_OFFLINE", "TRANSFORMERS_OFFLINE")
 env = {k: v for k, v in os.environ.items() if k not in offline}
-load = "import sys; from datasets import load_dataset; load_dataset(sys.argv[1])"
-subprocess.run([str(runtime.python), "-c", load, dataset], env=env, check=True)
-subprocess.run([str(runtime.hf), "download", "--repo-type", "dataset", dataset], env=env, check=True)
-# Verify the client can resolve traces offline.
+subprocess.run([str(runtime.hf), "download", "--repo-type", "dataset", dataset, "--revision", revision], env=env, check=True)
+ref = Path(env['HF_HUB_CACHE']) / ('datasets--' + dataset.replace('/', '--')) / 'refs' / 'main'
+ref.parent.mkdir(parents=True, exist_ok=True)
+ref.write_text(revision)
+load = '''
+import json, sys
+from datasets import load_dataset
+revision = {"revision": sys.argv[2]} if len(sys.argv) > 2 else {}
+data = load_dataset(sys.argv[1], split="train", streaming=False, trust_remote_code=False, **revision)
+print(json.dumps({"fingerprint": data._fingerprint, "files": data.cache_files, "rows": data.num_rows}))
+'''
+prepared = subprocess.check_output([str(runtime.python), "-c", load, dataset, revision], env=env)
+offline_env = {**env, "HF_HUB_OFFLINE": "1", "HF_DATASETS_OFFLINE": "1"}
 subprocess.run([str(runtime.hf), "download", "--repo-type", "dataset", dataset],
-               env={**env, "HF_HUB_OFFLINE": "1"}, check=True)
+               env=offline_env, check=True)
+replayed = subprocess.check_output([str(runtime.python), "-c", load, dataset], env=offline_env)
+if json.loads(prepared) != json.loads(replayed):
+    sys.exit("offline trace loading differs from the pinned preparation")
 """
 
 
+def trace_datasets_cache(host: dict, dataset: str, revision: str) -> Path:
+    """Isolate datasets' fallback cache by trace revision."""
+    return host["datasets_cache"] / sha256_json([dataset, revision])
+
+
 def prepare_traces(host: dict, points: list[dict], log_path: Path) -> None:
-    """Fill ``host["datasets_cache"]`` with the AgentX traces the points replay."""
-    sources = {
-        (
-            p["client_env"]["MODEL_PREFIX"],
-            p["client_env"].get("WEKA_LOADER_OVERRIDE", "") or "",
-        )
-        for p in points
-    }
+    """Prepare traces and verify offline loading."""
+    sources = {(p["trace"]["repo"], p["trace"]["revision"]) for p in points}
+    if len(sources) != len({repo for repo, _ in sources}):
+        raise RuntimeError("a run cannot use different revisions of the same trace dataset")
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    for prefix, loader in sorted(sources):
+    for dataset, revision in sorted(sources):
         with log_path.open("a") as log:
             code = run_client(
-                [sys.executable, "-c", PREPARE_TRACES, str(host["agentx_runtime_dir"]), prefix],
+                [sys.executable, "-c", PREPARE_TRACES, str(host["agentx_runtime_dir"]), dataset, revision],
                 cwd=host["inferencex_e2e"],
                 env={
                     **execution_env(),
                     "PYTHONPATH": str(host["inferencex_e2e"]),
                     "HF_HUB_CACHE": str(host["trace_hub"]),
-                    "HF_DATASETS_CACHE": str(host["datasets_cache"]),
-                    "WEKA_LOADER_OVERRIDE": loader,
+                    "HF_DATASETS_CACHE": str(trace_datasets_cache(host, dataset, revision)),
                 },
                 stdout=log,
                 stderr=subprocess.STDOUT,
@@ -217,7 +229,6 @@ def prepare_traces(host: dict, points: list[dict], log_path: Path) -> None:
 
 
 def run_live(point: dict, out: Path, host: dict) -> dict:
-    """One point on this host; returns the client's aggregate."""
     runtime = point["runtime"]
     port = runtime["port"] if runtime["port"] is not None else available_port()
     base_url = f"http://127.0.0.1:{port}"
@@ -250,7 +261,9 @@ def run_live(point: dict, out: Path, host: dict) -> dict:
             "TOKENIZER": host["tokenizer"],
             "AIPERF_SERVER_METRICS_URLS": f"{base_url}/metrics",
             "AIPERF_RUNTIME_DIR": str(host["agentx_runtime_dir"]),
-            "HF_DATASETS_CACHE": str(host["datasets_cache"]),
+            "HF_DATASETS_CACHE": str(
+                trace_datasets_cache(host, point["trace"]["repo"], point["trace"]["revision"])
+            ),
             "HF_HUB_CACHE": str(host["trace_hub"]),
             "HF_HUB_OFFLINE": "1",
             "HF_DATASETS_OFFLINE": "1",
@@ -261,7 +274,7 @@ def run_live(point: dict, out: Path, host: dict) -> dict:
         }
         with (out / "client.log").open("w") as log:
             code = run_client(
-                [sys.executable, "-m", "infx.bench", "agentic"],
+                [str(host["agentx_runtime_dir"] / "venv/bin/python"), "-m", "infx.bench", "agentic"],
                 cwd=host["inferencex_e2e"],
                 env=client_env,
                 stdout=log,
@@ -311,7 +324,7 @@ def aklr_sha() -> str:
 
 
 def source_dirty() -> bool:
-    """Unknown source state is not eligible for promotion to a formal baseline."""
+    """Exclude unknown source states from baseline promotion."""
     if "AKLR_SOURCE_DIRTY" in os.environ:
         return os.environ["AKLR_SOURCE_DIRTY"] != "false"
     done = subprocess.run(
@@ -324,6 +337,52 @@ def source_dirty() -> bool:
     return done.returncode != 0 or bool(done.stdout.strip())
 
 
+def observed_hardware() -> dict:
+    import torch
+
+    if not torch.version.hip or not torch.cuda.is_available():
+        raise RuntimeError("ROCm GPUs are required")
+    count = torch.cuda.device_count()
+    return {
+        "devices": [
+            {"name": p.name, "arch": p.gcnArchName.split(":", 1)[0], "total_memory": p.total_memory}
+            for p in (torch.cuda.get_device_properties(i) for i in range(count))
+        ],
+        "peer_access": [
+            [i == j or torch.cuda.can_device_access_peer(i, j) for j in range(count)] for i in range(count)
+        ],
+    }
+
+
+def execution_identity(serving: dict) -> dict:
+    path = os.environ.get("AGENTX_EXECUTION_FILE")
+    if not path:
+        raise RuntimeError("execution image is unverified; start the run with the Docker sweep launcher")
+    return verify_image(serving["image"]["run"], read_json(path))
+
+
+def client_packages(host: dict) -> dict:
+    script = "import json,importlib.metadata as m; print(json.dumps({d.metadata['Name']: d.version for d in m.distributions()}))"
+    return json.loads(
+        subprocess.check_output(
+            [str(host["agentx_runtime_dir"] / "venv/bin/python"), "-c", script],
+            text=True,
+            timeout=60,
+            env=execution_env(),
+        )
+    )
+
+
+def server_packages() -> dict:
+    try:
+        return {
+            name: importlib.metadata.version(name)
+            for name in ("sglang", "torch", "triton", "amd-aiter", "flydsl")
+        }
+    except importlib.metadata.PackageNotFoundError as error:
+        raise RuntimeError(f"serving package identity is unavailable: {error}") from error
+
+
 def host_settings(args: argparse.Namespace, serving: dict) -> dict:
     weights = serving["weights"]
     trace_hub = args.work / "hf-traces-hub"
@@ -333,7 +392,7 @@ def host_settings(args: argparse.Namespace, serving: dict) -> dict:
         hub = Path(os.environ.get("HF_HUB_CACHE", Path.home() / ".cache/huggingface/hub"))
         model_dir = hub / ("models--" + weights["repo"].replace("/", "--"))
         model_path = model_dir / "snapshots" / weights["revision"]
-        # Offline tokenizer lookup uses refs/main, which must match the pinned revision.
+        # Offline tokenizers require refs/main at the pinned revision.
         tokenizer = weights["repo"]
         main = model_dir / "refs" / "main"
         if not main.is_file():
@@ -347,7 +406,7 @@ def host_settings(args: argparse.Namespace, serving: dict) -> dict:
                 f"{main} is {main_revision}, not the pinned {weights['revision']}; "
                 "the AgentX client's tokenizer would come from another revision"
             )
-        # Link pinned weights into the writable trace hub for offline tokenizer lookup.
+        # Reuse pinned weights in the writable trace hub.
         model_link = trace_hub / model_dir.name
         if model_link.is_symlink() and model_link.resolve() != model_dir.resolve():
             model_link.unlink()
@@ -373,7 +432,7 @@ def host_settings(args: argparse.Namespace, serving: dict) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python3 -m agentx_ci.runtime", description=__doc__)
-    parser.add_argument("--serving", type=Path, required=True, help="serving.json from resolve")
+    parser.add_argument("--serving", type=Path, required=True, help="serving.json for one model target")
     parser.add_argument("--out", type=Path, required=True, help="directory for results.json")
     parser.add_argument("--work", type=Path, default=Path("/tmp/agentx-work"))
     parser.add_argument("--arms", help="comma-separated arms, or all; defaults to the plan selection")
@@ -413,83 +472,103 @@ def main(argv: list[str] | None = None) -> int:
         points = selected_points(effective)
     except SelectionError as error:
         parser.error(str(error))
-    records = []
-    results = {
-        "model": serving["model"],
-        "run": {
-            "id": str(args.run_id),
-            "attempt_id": attempt_id,
-            "serving_sha256": sha256_json(serving),
-            "mode": "live",
-            "started_at": utc_now(),
-            "finished_at": utc_now(),
-            "completed": False,
-            "aklr_sha": aklr_sha(),
-            "source_dirty": source_dirty(),
-            "host": socket.gethostname(),
-            "image": serving["image"],
-            "inferencex": serving["provenance"]["inferencex"],
-            "arms_requested": args.arms,
-            "points_requested": args.points,
-            "duration_override_s": args.duration,
-            "weights": serving["weights"],
-            "model_path_override": args.model_path,
-            "points_expected": len(points),
-            "point_policy": policy,
-            **({"selection": selection} if policy == POLICY else {}),
-        },
-        "serving": {
-            "grid_sha256": serving["grid_sha256"],
-            "arms": {
-                arm: dict(spec)
-                for arm, spec in serving["arms"].items()
-                if any(p["arm"] == arm for p in points)
+    try:
+        results = pending_results(
+            serving,
+            points,
+            {
+                "id": str(args.run_id),
+                "attempt_id": attempt_id,
+                "aklr_sha": aklr_sha(),
+                "source_dirty": source_dirty(),
+                "host": socket.gethostname(),
+                "arms_requested": args.arms,
+                "points_requested": args.points,
+                "duration_override_s": args.duration,
+                "model_path_override": args.model_path,
             },
-        },
-        "points": records,
-    }
-    measurements = {
-        p["exp_name"]: {
-            "environment_policy": "planned-tunables-v1",
-            "weights": serving["weights"],
-            "launch": p["launch"],
-            "client_env": {**p["client_env"], **({"DURATION": str(args.duration)} if args.duration else {})},
-            "runtime": p["runtime"],
-            "model_path_override": args.model_path,
-        }
-        for p in points
-    }
-    for arm, spec in results["serving"]["arms"].items():
-        spec["arm_measurement_sha256"] = sha256_json(
-            {p["conc"]: measurements[p["exp_name"]] for p in points if p["arm"] == arm}
         )
+    except (ValueError, KeyError, TypeError) as error:
+        results = read_json(args.out / "results.json")
+        results["run"].update(error=str(error), finished_at=utc_now())
+        write_json(args.out / "results.json", results)
+        print(f"ERROR: {error}", file=sys.stderr)
+        return 1
+    records = results["points"]
     write_json(args.out / "results.json", results)
     if policy == POLICY:
         write_json(args.out / "selection.json", selection)
     try:
         validate_runtime(points)
+        execution = execution_identity(serving)
+        hardware = observed_hardware()
+        validate_hardware(hardware, serving["hardware"])
+        if any(p["gpus"] > len(hardware["devices"]) for p in points):
+            raise ValueError("planned point requires more GPUs than are visible")
+        for target in (results, results["control"]):
+            target["run"].update(execution=execution, hardware=hardware)
         host = host_settings(args, serving)
         print(f"[{utc_now()}] preparing the AgentX traces", flush=True)
         prepare_traces(host, points, args.out / "prepare_traces.log")
-    except (RuntimeError, ResolveError, OSError, ValueError, subprocess.TimeoutExpired) as error:
+        packages = client_packages(host)
+        serving_packages = server_packages()
+        for target in (results, results["control"]):
+            target["run"]["client_packages"] = packages
+            target["run"]["server_packages"] = serving_packages
+    except (
+        RuntimeError,
+        ResolveError,
+        OSError,
+        ValueError,
+        KeyError,
+        TypeError,
+        subprocess.SubprocessError,
+    ) as error:
         results["run"].update(error=str(error), finished_at=utc_now())
         write_json(args.out / "results.json", results)
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
-    for point in points:
-        print(f"[{utc_now()}] {point['arm']} c{point['conc']}: {point['exp_name']}", flush=True)
-        record = run_point(point, args.out / "attempts" / attempt_id / "points" / point["exp_name"], host)
-        record["measurement"] = measurements[point["exp_name"]]
-        record["measurement_sha256"] = sha256_json(record["measurement"])
-        print(f"  -> {record['status']} {record.get('error') or ''}", flush=True)
-        records.append(record)
-        results["run"]["finished_at"] = utc_now()
+    for mode, target in (("disabled", results["control"]), ("enabled", results)):
+        target["run"]["started_at"] = utc_now()
+        measurements = {}
+        for planned in points:
+            point = copy.deepcopy(planned)
+            point["launch"]["env"].update(
+                AKLR_SGLANG_PLUGIN="1" if mode == "enabled" else "0",
+                AKLR_DISABLE="0" if mode == "enabled" else "1",
+            )
+            measurement = {
+                "environment_policy": "paired-aklr-v1",
+                "weights": serving["weights"],
+                "launch": point["launch"],
+                "client_env": {**point["client_env"], **host["client_env_overrides"]},
+                "runtime": point["runtime"],
+                "model_path_override": args.model_path,
+                "trace": point["trace"],
+                "trace_policy": "revision-isolated-v1",
+            }
+            measurements[point["exp_name"]] = measurement
+            print(f"[{utc_now()}] AKLR {mode} · {point['arm']} c{point['conc']}", flush=True)
+            record = run_point(
+                point, args.out / "attempts" / attempt_id / mode / "points" / point["exp_name"], host
+            )
+            record.update(measurement=measurement, measurement_sha256=sha256_json(measurement))
+            print(f"  -> {record['status']} {record.get('error') or ''}", flush=True)
+            target["points"].append(record)
+            target["run"]["finished_at"] = utc_now()
+            write_json(args.out / "results.json", results)
+        for arm, spec in target["serving"]["arms"].items():
+            spec["arm_measurement_sha256"] = sha256_json(
+                {p["conc"]: measurements[p["exp_name"]] for p in points if p["arm"] == arm}
+            )
+        target["run"]["completed"] = True
         write_json(args.out / "results.json", results)
-    results["run"]["completed"] = True
-    write_json(args.out / "results.json", results)
-    failed = sum(r["status"] != "ok" for r in records)
-    print(f"{len(records) - failed}/{len(records)} points ok; wrote {args.out / 'results.json'}")
-    return 1 if failed == len(records) else 0
+    all_records = results["control"]["points"] + records
+    failed = sum(r["status"] != "ok" for r in all_records)
+    print(
+        f"{len(all_records) - failed}/{len(all_records)} paired points ok; wrote {args.out / 'results.json'}"
+    )
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

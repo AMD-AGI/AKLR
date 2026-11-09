@@ -123,21 +123,32 @@ def _gdn_forward(self, hidden_states, forward_batch):
         return FallbackReason.OUT_OF_CONTRACT
     if _layer_falls_back(self):
         return FallbackReason.OUT_OF_CONTRACT
+    if not _takes_fp8_groups(self.out_proj):
+        # BF16 projections (an MXFP4 checkpoint keeps its GDN layers unquantized): decode on the
+        # BF16 op alone, whose output out_proj takes as sglang's own decode hands it
+        if run is _prefill or not _unquantized_projections(self):
+            return FallbackReason.OUT_OF_CONTRACT
+        run = _decode_unquantized
     # AMD's fused AR+norm hands a (bf16, fp8, scale) tuple, whole to sglang's input projections
     hidden = hidden_states[0] if isinstance(hidden_states, tuple) else hidden_states
     return run(self, hidden_states, hidden, forward_batch, get_attn_backend().linear_attn_backend)
 
 
 def _layer_falls_back(layer) -> bool:
-    """Whether the layer computes other than the ops (LoRA, its activations), or its out_proj
-    cannot take the FP8 op's values and row-major per-head scales (_takes_fp8_groups)."""
+    """Whether the layer computes other than the ops: LoRA, or other activations."""
     from sglang.srt.runtime_context import get_lora
 
-    return (
-        get_lora().enable_lora
-        or layer.attn.activation != "silu"
-        or layer.norm.activation != "swish"
-        or not _takes_fp8_groups(layer.out_proj)
+    return get_lora().enable_lora or layer.attn.activation != "silu" or layer.norm.activation != "swish"
+
+
+def _unquantized_projections(layer) -> bool:
+    """Whether sglang runs the layer's input projections and out_proj unquantized: out_proj then
+    takes the BF16 normalized output, as sglang's own decode hands it."""
+    from sglang.srt.layers.quantization.unquant import UnquantizedLinearMethod
+
+    return all(
+        type(linear.quant_method) is UnquantizedLinearMethod
+        for linear in (layer.in_proj_qkvz, layer.in_proj_ba, layer.out_proj)
     )
 
 
@@ -197,9 +208,14 @@ def _prefill(layer, hidden_states, hidden, forward_batch, backend):
     return layer.out_proj((values, scales))[0]
 
 
-def _decode(layer, hidden_states, hidden, forward_batch, backend):
-    """Graph capture too: sglang's projections, the FP8 op or else the BF16 op, then sglang's
-    state tracking and out_proj."""
+def _decode_unquantized(layer, hidden_states, hidden, forward_batch, backend):
+    """_decode on the BF16 op alone, for a layer whose projections sglang runs unquantized."""
+    return _decode(layer, hidden_states, hidden, forward_batch, backend, fp8_groups=False)
+
+
+def _decode(layer, hidden_states, hidden, forward_batch, backend, *, fp8_groups=True):
+    """Graph capture too: sglang's projections, the FP8 op or else the BF16 op (the BF16 op
+    alone without ``fp8_groups``), then sglang's state tracking and out_proj."""
     metadata = backend.forward_metadata
     cache = backend.req_to_token_pool.mamba2_layer_cache(layer.attn.layer_id)
     # ReplaySSM keeps per-slot ring buffers that the ops do not update
@@ -209,13 +225,17 @@ def _decode(layer, hidden_states, hidden, forward_batch, backend):
     # padded graph rows hold sglang's -1 slot, whose state the ops leave alone
     arguments = _layer_inputs(layer, cache) | {"cache_indices": metadata.mamba_cache_indices}
     reasons, projected = [], None
-    for op in (gdn_decode_group_fp8_quant, gdn_decode):
+    for op in (gdn_decode_group_fp8_quant, gdn_decode) if fp8_groups else (gdn_decode,):
         reason = op.fallback_reason(**_projection_stand_ins(arguments, hidden), **arguments)
         if reason is not None:
             reasons.append(reason)
             continue
         if projected is None:
             qkvz, ba = layer._forward_input_proj(hidden_states)
+            if not fp8_groups:
+                # up to 64 rows, sglang runs both BF16 projections as one GEMM and hands on
+                # column slices of its output; the ops read them row-major
+                qkvz, ba = qkvz.contiguous(), ba.contiguous()
             projected = {"projected_qkvz": qkvz, "projected_ba": ba}
         result = op(**projected, **arguments)
         if not isinstance(result, FallbackReason):

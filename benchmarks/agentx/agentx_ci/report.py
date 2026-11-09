@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Render model reports or a planned site with validated results and independent baselines."""
+"""Render target reports and planned sites."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from html import escape
 from pathlib import Path
 
 from agentx_ci.git_history import landed
-from agentx_ci.performance_analysis import X, Y, compare, frontier, frontiers, measured
+from agentx_ci.performance_analysis import X, Y, compare, compare_aklr, frontier, frontiers, measured
 from agentx_ci.utils import (
     DEFAULT_CONFIG,
     REPO_ROOT,
@@ -30,12 +30,14 @@ BASELINE_COLOR = "#9ca3af"
 # Highlight threshold, not a significance test.
 NOTABLE = 0.03
 LANGS = ("en", "zh")
-# Translate known comparison messages; preserve unknown text.
 ZH_MESSAGES = [
     (r"measurement incomplete or points failed", "测量未完成或有失败点，不计算周环比"),
     (r"source is dirty or its state is unknown", "源码包含未提交改动或状态未知，不计算周环比"),
     (r"point selection policy or selected recipes changed", "选点策略或选中的 recipe 已变化"),
     (r"model identity differs or is missing", "模型标识不同或缺失"),
+    (r"target identity differs or is missing", "测试目标标识不同或缺失"),
+    (r"AKLR modes have different or missing model identities\.", "两种 AKLR 模式的模型标识不同或缺失。"),
+    (r"AKLR modes have different or missing target identities\.", "两种 AKLR 模式的测试目标标识不同或缺失。"),
     (
         r"measurement settings changed \(weights, launch, workload or selected points\)",
         "测量设置已变化（权重、启动配置、工作负载或所选数据点）",
@@ -45,8 +47,12 @@ ZH_MESSAGES = [
     (r"no previous run", "没有上次运行"),
     (r"previous run is (\S+), this one is (\S+)", r"上次是 \1 模式，本次是 \2 模式"),
     (r"run image changed", "运行镜像已变化"),
-    (r"InferenceX moved (\S+) → (\S+)", r"InferenceX 从 \1 更新到 \2"),
     (r"concurrency grid changed", "并发网格已变化"),
+    (r"execution identity is missing or unverified", "执行身份缺失或未经验证"),
+    (
+        r"execution image, InferenceX source, dependencies, hardware or traces changed",
+        "执行镜像、InferenceX 源码、依赖、硬件或 traces 已变化",
+    ),
 ]
 
 
@@ -79,7 +85,7 @@ def nice_ticks(high: float, count: int = 5) -> list[float]:
 
 
 def svg_chart(title: str, series: list[dict], lang: str, width: int = 620, height: int = 380) -> str:
-    """Scatter + frontier lines. A series: label, color, points, frontier, dashed, hollow, labels."""
+    """Render scatter points and Pareto frontiers."""
     left, right, bottom = 64, 16, 52
     legend_rows: list[list[tuple[dict, float]]] = [[]]
     row_x = 0.0
@@ -143,7 +149,7 @@ def svg_chart(title: str, series: list[dict], lang: str, width: int = 620, heigh
             off_frontier = pareto_coordinates is not None and (p[X], p[Y]) not in pareto_coordinates
             out.append('<g class="non-pareto-point">' if off_frontier else "<g>")
             fill = "white" if s.get("hollow") else s["color"]
-            tip = f"{s['label']} c{p['conc']}: {p[Y]:.1f} tok/s/GPU, {p[X]:.1f} tok/s/user"
+            tip = f"{s['label']} {p.get('arm', '')} c{p['conc']}: {p[Y]:.1f} tok/s/GPU, {p[X]:.1f} tok/s/user"
             out.append(
                 f'<circle cx="{sx(p[X]):.1f}" cy="{sy(p[Y]):.1f}" r="4.5" fill="{fill}" '
                 f'stroke="{s["color"]}" stroke-width="1.6"><title>{escape(tip)}</title></circle>'
@@ -185,50 +191,143 @@ def short(sha: str) -> str:
 
 
 def charts(results: dict, baseline: dict | None, comparison: dict, lang: str) -> str:
-    current = frontiers(results)
-    pareto_coordinates = {(p[X], p[Y]) for p in current["combined"]}
-    arms = sorted(current["arms"])
-    series = [
-        {
-            "label": tr(lang, f"{arm} (this run)", f"{arm}（本次）"),
-            "color": arm_color(arm, arms),
-            "points": measured(results, arm),
-            "labels": True,
-            "pareto_coordinates": pareto_coordinates,
-        }
-        for arm in arms
-    ]
-    series.append(
-        {
-            "label": tr(lang, "combined frontier", "合并前沿"),
-            "color": COMBINED_COLOR,
-            "points": [],
-            "frontier": current["combined"],
-        }
-    )
-    if comparison["status"] == "ok":
+    control = results.get("control")
+    if control is not None:
+        title = tr(lang, "AKLR enabled vs disabled · Pareto frontiers", "开启与关闭 AKLR · Pareto 前沿")
+        series = []
+        for data, enabled in ((control, False), (results, True)):
+            points = measured(data)
+            line = frontier(points)
+            series.append(
+                {
+                    "label": tr(lang, "AKLR enabled", "开启 AKLR")
+                    if enabled
+                    else tr(lang, "AKLR disabled", "关闭 AKLR"),
+                    "color": "#16a34a" if enabled else "#64748b",
+                    "points": points,
+                    "frontier": line,
+                    "dashed": not enabled,
+                    "hollow": not enabled,
+                    "labels": True,
+                    "pareto_coordinates": {(p[X], p[Y]) for p in line},
+                }
+            )
+    else:
+        title = tr(lang, "All arms · combined Pareto frontier", "全部实验组 · 合并 Pareto 前沿")
+        current = frontiers(results)
+        pareto_coordinates = {(p[X], p[Y]) for p in current["combined"]}
+        arms = sorted(current["arms"])
+        series = [
+            {
+                "label": tr(lang, f"{arm} (this run)", f"{arm}（本次）"),
+                "color": arm_color(arm, arms),
+                "points": measured(results, arm),
+                "labels": True,
+                "pareto_coordinates": pareto_coordinates,
+            }
+            for arm in arms
+        ]
         series.append(
             {
-                "label": tr(lang, "previous run frontier", "上次前沿"),
+                "label": tr(lang, "combined frontier", "合并前沿"),
+                "color": COMBINED_COLOR,
+                "points": [],
+                "frontier": current["combined"],
+            }
+        )
+    if comparison["status"] == "ok" and all(
+        view["status"] == "comparable" for view in comparison["arms"].values()
+    ):
+        series.append(
+            {
+                "label": tr(lang, "AKLR enabled · previous run", "开启 AKLR · 上次运行")
+                if control is not None
+                else tr(lang, "previous run frontier", "上次前沿"),
                 "color": BASELINE_COLOR,
                 "points": [],
                 "frontier": frontier(measured(baseline)),
                 "dashed": True,
             }
         )
-    chart = svg_chart(
-        tr(lang, "All arms · combined Pareto frontier", "全部实验组 · 合并 Pareto 前沿"),
-        series,
-        lang,
-        width=1000,
-        height=380,
-    )
+    chart = svg_chart(title, series, lang, width=1000, height=380)
     toggle = (
         '<label class="chart-toggle"><input type="checkbox" data-show-non-pareto checked> '
         + tr(lang, "Show non-Pareto points", "显示非 Pareto 点")
         + "</label>"
     )
     return f'<div class="card">{toggle}{chart}</div>'
+
+
+def aklr_section(results: dict, lang: str) -> str:
+    control = results.get("control")
+    if control is None:
+        return ""
+    comparison = compare_aklr(results)
+    out = [
+        f"<h2>{tr(lang, 'AKLR performance impact', 'AKLR 性能收益')}</h2>",
+        '<p class="muted">'
+        + tr(
+            lang,
+            "Same run, image, hardware, weights and traces. Disabled mode runs first. Higher and farther right is better. "
+            "Deltas compare identical arm/concurrency pairs, not interpolated points at equal interactivity; no statistical significance is implied.",
+            "同一次运行，使用相同镜像、硬件、权重和 traces，先关闭再开启 AKLR。曲线越靠右上越好。"
+            "增幅按相同实验组和并发点计算，不代表相同交互速度下的插值对比，也不代表统计显著性。",
+        )
+        + "</p>",
+    ]
+    if comparison["status"] != "ok":
+        out.append(
+            '<p class="notes">'
+            + tr(
+                lang,
+                "Paired comparison unavailable: both modes must complete with matching settings. Curves show available measurements only.",
+                "暂不计算成对增幅：两种模式需完整成功且配置匹配。曲线仅展示已获得的测量点。",
+            )
+            + f' <span class="muted">{escape(localize(lang, comparison["reason"]))}</span></p>'
+        )
+        return "\n".join(out)
+    gain = comparison["tput_geomean_ratio"]
+    out.append(
+        '<p class="card">'
+        + tr(lang, "Throughput geomean, enabled / disabled: ", "吞吐几何平均，开启 / 关闭：")
+        + f'<strong class="{delta_class(gain)}" style="font-size:24px">{gain:.3f}× ({pct(gain)})</strong>'
+        + tr(
+            lang,
+            f" · {len(comparison['points'])} matched pairs",
+            f" · {len(comparison['points'])} 对匹配测量点",
+        )
+        + "</p>"
+    )
+    rows = []
+    for row in comparison["points"]:
+        on, off = row["enabled"], row["disabled"]
+        rows.append(
+            f"<tr><td>{escape(row['arm'])}</td><td>{row['conc']}</td>"
+            f"<td>{num(off[Y])}</td><td>{num(on[Y])}</td>"
+            f'<td class="{delta_class(row["tput_ratio"])}">{pct(row["tput_ratio"])}</td>'
+            f"<td>{num(off[X])}</td><td>{num(on[X])}</td>"
+            f'<td class="{delta_class(row["intvty_ratio"])}">{pct(row["intvty_ratio"])}</td></tr>'
+        )
+    out.append(
+        '<div class="card" style="overflow-x:auto"><table><thead><tr>'
+        + "".join(
+            f"<th>{label}</th>"
+            for label in (
+                tr(lang, "Arm", "实验组"),
+                tr(lang, "Concurrency", "并发"),
+                tr(lang, "Off tok/s/GPU", "关闭 tok/s/GPU"),
+                tr(lang, "On tok/s/GPU", "开启 tok/s/GPU"),
+                tr(lang, "Throughput Δ", "吞吐变化"),
+                tr(lang, "Off P90 tok/s/user", "关闭 P90 tok/s/user"),
+                tr(lang, "On P90 tok/s/user", "开启 P90 tok/s/user"),
+                tr(lang, "Interactivity Δ", "交互速度变化"),
+            )
+        )
+        + "</tr></thead><tbody>"
+        + "".join(rows)
+        + "</tbody></table></div>"
+    )
+    return "\n".join(out)
 
 
 def comparison_tables(comparison: dict, lang: str) -> str:
@@ -470,6 +569,8 @@ def render(
         lang: tr(lang, "AgentX weekly", "AgentX 周报")
         + " · "
         + results.get("model", {}).get("display_name", "AgentX")
+        + " · "
+        + results.get("target", {}).get("id", "unknown")
         for lang in LANGS
     }
     pages = "\n".join(
@@ -520,6 +621,20 @@ def page(
     )
     ok = sum(p["status"] == "ok" for p in results["points"])
     total = run["points_expected"]
+    progress = tr(lang, f"{ok}/{total} points ok", f"{ok}/{total} 个点成功")
+    control_table = ""
+    if "control" in results:
+        control = results["control"]
+        off_ok = sum(p["status"] == "ok" for p in control["points"])
+        off_total = control["run"]["points_expected"]
+        progress = tr(
+            lang,
+            f"AKLR on {ok}/{total} · off {off_ok}/{off_total}",
+            f"开启 AKLR {ok}/{total} · 关闭 AKLR {off_ok}/{off_total}",
+        )
+        control_table = f"<h3>{tr(lang, 'AKLR disabled points', '关闭 AKLR 数据点')}</h3>" + points_table(
+            control, lang
+        )
     switch = "".join(
         f'<button type="button" data-set-lang="{code}" aria-pressed="{str(code == lang).lower()}">{label}</button>'
         for code, label in (("en", "EN"), ("zh", "中文"))
@@ -528,20 +643,19 @@ def page(
 <header>
 <div class="top"><h1>{tr(lang, "AgentX weekly", "AgentX 周报")} · {
         escape(results.get("model", {}).get("display_name", "AgentX"))
-    }</h1>
+    } · {escape(results.get("target", {}).get("id", "unknown"))}</h1>
 <div class="lang-switch" role="group" aria-label="Language / 语言">{switch}</div></div>
 <div class="meta">{tr(lang, "run", "运行")} {escape(run["id"])} · {escape(run["finished_at"])} · {
         tr(lang, "host", "主机")
     } {escape(run["host"])} ·
-AKLR {aklr_link} · InferenceX {inferencex_link} · {
-        tr(lang, f"{ok}/{total} points ok", f"{ok}/{total} 个点成功")
-    } · {baseline_line}</div>
+AKLR {aklr_link} · InferenceX {inferencex_link} · {progress} · {baseline_line}</div>
 </header>
 <main>
 {warn}
 {selection_section(results, lang)}
 <h2>{tr(lang, "Pareto frontiers", "Pareto 前沿")}</h2>
 {charts(results, baseline, comparison, lang)}
+{aklr_section(results, lang)}
 <h2>{tr(lang, "Week over week", "周环比")}</h2>
 <p class="muted">{
         tr(
@@ -557,13 +671,23 @@ AKLR {aklr_link} · InferenceX {inferencex_link} · {
 {history_section(history, run["aklr_sha"], repo_url, lang)}
 <h2>{tr(lang, "Points", "数据点")}</h2>
 {points_table(results, lang)}
+{control_table}
 <h2>{tr(lang, "Provenance", "来源信息")}</h2>
 <div class="card"><dl>
 <dt>{tr(lang, "model id", "模型标识")}</dt><dd>{escape(results.get("model", {}).get("id", "unknown"))}</dd>
+<dt>{tr(lang, "target id", "测试目标标识")}</dt><dd>{
+        escape(results.get("target", {}).get("id", "unknown"))
+    }</dd>
 <dt>{tr(lang, "weights", "权重")}</dt><dd>{escape(run.get("weights", {}).get("repo", "unknown"))} @ {
         escape(run.get("weights", {}).get("revision", "unknown"))
     }</dd>
-<dt>{tr(lang, "run image", "运行镜像")}</dt><dd><code>{escape(run["image"]["run"])}</code></dd>
+<dt>{tr(lang, "planned image", "计划镜像")}</dt><dd><code>{escape(run["image"]["run"])}</code></dd>
+<dt>{tr(lang, "verified image ID", "已验证镜像 ID")}</dt><dd><code>{
+        escape(run.get("execution", {}).get("image_id", "unverified"))
+    }</code></dd>
+<dt>{tr(lang, "observed GPUs", "实际 GPU")}</dt><dd>{
+        escape(json.dumps(run.get("hardware", {}), ensure_ascii=False))
+    }</dd>
 <dt>{tr(lang, "InferenceX image", "InferenceX 镜像")}</dt><dd><code>{
         escape(run["image"]["inferencex"])
     }</code></dd>
@@ -674,7 +798,7 @@ def main(argv: list[str] | None = None) -> int:
     except (OSError, ValueError, KeyError) as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 1
-    # CI checks model failures after saving the report.
+    # CI checks target failures separately.
     return 0
 
 
@@ -717,7 +841,15 @@ def write_report(
     write_json(out / "results.json", results)
     write_json(
         out / "report.json",
-        {"frontiers": frontiers(results), "comparison": comparison, "history": history},
+        {
+            "model": results.get("model", {}),
+            "target": results.get("target", {}),
+            "frontiers": frontiers(results),
+            "comparison": comparison,
+            "history": history,
+            "aklr_comparison": compare_aklr(results),
+            "disabled_frontiers": frontiers(results["control"]) if "control" in results else None,
+        },
     )
     print(f"wrote {out / 'index.html'} ({comparison['status']})")
     return comparison

@@ -14,7 +14,7 @@ from aklr.plugins.sglang.layers.dsa_backend.contract import ROPE_DIM
 if TYPE_CHECKING:
     from torch import Tensor
 
-__all__ = ["dsa_sparse_mla_decode_reference"]
+__all__ = ["dsa_sparse_mla_decode_reference", "dsa_topk_transform_reference"]
 
 # tokens a step: a chunk gathers [tokens, topk, kv_dim] rows
 _CHUNK_TOKENS = 16
@@ -48,3 +48,30 @@ def dsa_sparse_mla_decode_reference(
         weights = scores.softmax(-1).nan_to_num(0.0)
         output[chunk] = torch.einsum("thk,tkr->thr", weights, rows[..., :latent])
     return output
+
+
+def dsa_topk_transform_reference(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+    decode: Callable[[Tensor, str], Tensor],
+) -> Tensor:
+    """Each row's top-k positions, or all of them in order for a short row, through its
+    sequence's page table."""
+    import torch
+
+    args = row_major_args
+    scores, topk = args["score"], point.axes["topk"]
+    width = min(topk, scores.shape[-1])
+    lengths = args["lengths"].long().unsqueeze(-1)
+    positions = torch.arange(scores.shape[-1], device=scores.device)
+    # float32 compares exactly: ranking needs no decode.
+    ranked = scores.masked_fill(positions >= lengths, -torch.inf).argsort(
+        dim=-1, descending=True, stable=True
+    )[:, :width]
+    selected = torch.where(lengths <= topk, positions[:width], ranked)
+    is_selected = positions[:width] < lengths
+    rows = torch.arange(scores.shape[0], device=scores.device)
+    sequences = torch.searchsorted(args["cu_seqlens_q"][1:].long(), rows, right=True)
+    table = args["page_table_size_1"]
+    slots = table[sequences[:, None], selected.clamp(max=table.shape[1] - 1)].long()
+    return torch.nn.functional.pad(torch.where(is_selected, slots, -1), (0, topk - width), value=-1).double()
