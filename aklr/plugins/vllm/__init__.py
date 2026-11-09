@@ -68,8 +68,9 @@ def _register() -> None:
 
 @functools.cache
 def _install_once() -> None:
-    # imports the modules that declare the routes: the layers' and the plugin ops' api
+    # imports the modules that declare the routes: the layers', the models' and the plugin ops' api
     importlib.import_module(f"{__name__}.layers")
+    importlib.import_module(f"{__name__}.models")
     for package in op_packages():
         if package.startswith(f"{__name__}."):
             importlib.import_module(f"{package}.api")

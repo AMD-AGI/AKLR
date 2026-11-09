@@ -20,6 +20,7 @@ from aklr.plugins.vllm import hook, warmup
 
 # at collection, as the plugin does in each worker: before any test empties hook._ROUTES
 importlib.import_module("aklr.plugins.vllm.layers")
+importlib.import_module("aklr.plugins.vllm.models")
 DECLARED = list(hook._ROUTES)
 INSTALLED = "0.33.0rc1.dev910"
 
@@ -201,7 +202,16 @@ def test_only_1_turns_the_routes_on(monkeypatch, worker, env, hooked):
     Worker().init_device()
     Worker().init_device()
     Worker().compile_or_warm_up_model()
-    routes = ["aklr.plugins.vllm.layers", "aklr.plugins.vllm.x.y.api", "install"] if hooked else []
+    routes = (
+        [
+            "aklr.plugins.vllm.layers",
+            "aklr.plugins.vllm.models",
+            "aklr.plugins.vllm.x.y.api",
+            "install",
+        ]
+        if hooked
+        else []
+    )
     warmed = ["aklr warms up"] if hooked else []
     assert calls == ["aklr starts", "device bound", *routes, "device bound", "vllm warms up", *warmed]
     assert Worker().execute_model(step="step") == "step"

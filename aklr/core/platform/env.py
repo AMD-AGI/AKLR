@@ -52,7 +52,7 @@ class RuntimeEnv:
         if plugin not in ("0", "1"):
             raise ValueError(f"{ENV_SGLANG_PLUGIN}={plugin!r}: expected '1' or '0'")
         self.is_sglang_plugin_enabled = plugin == "1"
-        # AKLR_VLLM_PLUGIN: "1" sends vLLM's aiter calls to the plugin's routes
+        # AKLR_VLLM_PLUGIN: "1" sends the vLLM calls the plugin routes to AKLR
         plugin = os.environ.get(ENV_VLLM_PLUGIN) or "0"
         if plugin not in ("0", "1"):
             raise ValueError(f"{ENV_VLLM_PLUGIN}={plugin!r}: expected '1' or '0'")

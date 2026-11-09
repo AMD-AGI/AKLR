@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""``@vllm_route``: how a vLLM call into aiter reaches AKLR ops, declared beside them.
+"""``@vllm_route``: how a vLLM call reaches AKLR ops, declared beside them.
 
-vLLM compiles a model's forward with torch.compile, so Python there runs once, while tracing.
-A route therefore replaces no traced function: it replaces the aiter function a vLLM function
-looks up when it runs, inside one of vLLM's opaque custom ops (``vllm::moe_forward``,
-``vllm::rocm_unquantized_gemm``). Their bodies run at
-every eager call and at every CUDA graph capture, where the route's choice is recorded."""
+vLLM compiles most models' forward with torch.compile, so Python there runs once, while
+tracing. A route therefore replaces no traced function: it replaces a function a vLLM function
+looks up when it runs, either an aiter function inside one of vLLM's opaque custom ops
+(``vllm::moe_forward``, ``vllm::rocm_unquantized_gemm``) or a function of a model vLLM runs
+uncompiled (``@ignore_torch_compile``). Those run at every eager call and at every CUDA graph
+capture, where the route's choice is recorded."""
 
 from __future__ import annotations
 
@@ -31,8 +32,8 @@ _ROUTES: list[tuple[str, tuple[str, ...], tuple[str, ...], Callable]] = []
 
 def vllm_route(caller: str, *callees: str, versions: tuple[str, ...]) -> Callable[[Callable], Callable]:
     """Declare that vLLM's ``caller`` reaches AKLR ops through this function where it calls
-    ``callees`` (aiter functions, each as the dotted name ``caller`` looks up at run time), on
-    the vLLM releases ``versions`` it was tested on; on any other, vLLM runs aiter."""
+    ``callees`` (each as the dotted name ``caller`` looks up at run time), on the vLLM releases
+    ``versions`` it was tested on; on any other, vLLM runs its own code."""
 
     def declare(route: Callable) -> Callable:
         _ROUTES.append((caller, callees, versions, route))
@@ -69,7 +70,7 @@ def install() -> None:
             hooked.append(callee)
     # a warning, so that the line shows at any vLLM log level
     _LOGGER.warning(
-        "aklr hooks %d aiter calls of vLLM %s%s",
+        "aklr hooks %d calls of vLLM %s%s",
         len(hooked),
         installed,
         f"; not those of {', '.join(untested)}, untested on it" if untested else "",
