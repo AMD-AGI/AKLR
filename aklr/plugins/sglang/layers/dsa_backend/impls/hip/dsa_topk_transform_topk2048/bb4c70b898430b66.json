@@ -1,0 +1,267 @@
+{
+  "schema_version": 5,
+  "name": "dsa_topk_transform_topk2048",
+  "contract_id": "dsa_topk_transform@1.0",
+  "description": "sglang's DSA indexer top-k on HIP (sgl_kernel.fast_topk_transform_fused): each row selects the topk highest of its first lengths scores and writes their slots in the page_size=1 page table of its sequence, the cu_seqlens_q range holding the row; a row of at most topk scores writes all of its slots in order, then -1.",
+  "op_type": "dsa_backend",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Rows, one per token."
+    },
+    "n_candidates": {
+      "type": "var",
+      "description": "Scores per row."
+    },
+    "n_seqs": {
+      "type": "var",
+      "description": "Sequences."
+    },
+    "n_starts": {
+      "type": "var",
+      "description": "Sequence boundaries: n_seqs + 1."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Page table columns."
+    },
+    "topk": {
+      "type": "const",
+      "value": 2048,
+      "description": "Slots per row, 2048: all sglang's kernel takes."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "score": {
+      "shape": [
+        "n_tokens",
+        "n_candidates"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "permutation"
+      },
+      "description": "Candidate scores per row."
+    },
+    "lengths": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "min(n_candidates, n_slots)",
+        "distinct": false
+      },
+      "description": "Valid candidates per row, a prefix its page table covers."
+    },
+    "page_table_size_1": {
+      "shape": [
+        "n_seqs",
+        "n_slots"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "Each sequence's slot of each candidate position, distinct within a row."
+    },
+    "cu_seqlens_q": {
+      "shape": [
+        "n_starts"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "cu_seqlens",
+        "min_seqlen": 1,
+        "total": "n_tokens"
+      },
+      "description": "Each sequence's first row, then n_tokens."
+    }
+  },
+  "outputs": {
+    "out_page_indices": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "description": "Selected slots; -1 after a short row's entries."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1,
+        "n_candidates": 310080,
+        "n_seqs": 1,
+        "n_starts": 2,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2,
+        "n_candidates": 310080,
+        "n_seqs": 2,
+        "n_starts": 3,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3,
+        "n_candidates": 310080,
+        "n_seqs": 3,
+        "n_starts": 4,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4,
+        "n_candidates": 310080,
+        "n_seqs": 4,
+        "n_starts": 5,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5,
+        "n_candidates": 310080,
+        "n_seqs": 5,
+        "n_starts": 6,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6,
+        "n_candidates": 310080,
+        "n_seqs": 6,
+        "n_starts": 7,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7,
+        "n_candidates": 310080,
+        "n_seqs": 7,
+        "n_starts": 8,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8,
+        "n_candidates": 310080,
+        "n_seqs": 8,
+        "n_starts": 9,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 12,
+        "n_candidates": 310080,
+        "n_seqs": 12,
+        "n_starts": 13,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16,
+        "n_candidates": 310080,
+        "n_seqs": 16,
+        "n_starts": 17,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 18,
+        "n_candidates": 310080,
+        "n_seqs": 18,
+        "n_starts": 19,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 24,
+        "n_candidates": 310080,
+        "n_seqs": 24,
+        "n_starts": 25,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 30,
+        "n_candidates": 310080,
+        "n_seqs": 30,
+        "n_starts": 31,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 36,
+        "n_candidates": 310080,
+        "n_seqs": 36,
+        "n_starts": 37,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 42,
+        "n_candidates": 310080,
+        "n_seqs": 42,
+        "n_starts": 43,
+        "n_slots": 310075
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 48,
+        "n_candidates": 310080,
+        "n_seqs": 48,
+        "n_starts": 49,
+        "n_slots": 310075
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "any_in_full_rows"
+  },
+  "kernel": {
+    "language": "hip",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.hip::run",
+    "sources": []
+  }
+}

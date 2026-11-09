@@ -3,6 +3,7 @@ deepseek_v2_mxfp4_moe_shuffled_16x16_model_dim#_n_routed#_inter_dim#
 dsa_indexer_key_prepare_model_dim#
 dsa_indexer_prepare_model_dim#_q_lora_rank#_n_heads#
 dsa_sparse_mla_decode_n_heads#_kv_dim#_topk#
+dsa_topk_transform_topk#
 gated_attention_decode_group_fp8_quant_qkv_dim#_n_kv_heads#_head_dim#
 gdn_decode_n_v_heads#_key_dim#_value_dim#_conv_dim#
 gdn_decode_group_fp8_quant_n_v_heads#_key_dim#_value_dim#_conv_dim#

@@ -41,6 +41,8 @@ _KV_CACHE_FORMATS = ("dsv4_fp8", "fp8_e4m3", "bf16")
 # Each sparse pool is pages of page_size slots: 576-byte payloads, then 8-byte scale slots.
 _PAGE_SIZE_CONSTRAINT = "{0} == 2 or {0} == 64 or {0} == 128 or {0} == 256"
 _SLOT_LIMIT = 2**31  # slots are int32 indices
+# The DSA models' context, 2^20 tokens, and room for the draft tokens sglang's tables add past it
+_MQA_CONTEXT_LIMIT = 2**20 + 4096
 _MQA_PAGE_SIZES = (
     16,
     32,
@@ -335,13 +337,16 @@ FP8_PAGED_MQA_LOGITS = OpContract(
     axes={
         "batch": axis("Requests, one decode query each.", 1, 65536, is_var=True),
         "n_heads": axis("Indexer heads.", 1, 128),
-        "n_pages": axis("Pages of the key pool.", 1, _SLOT_LIMIT, is_var=True),
-        "max_blocks": axis("Pages per request in the block table.", 1, _SLOT_LIMIT, is_var=True),
+        "n_pages": axis("Pages of the key pool.", 1, _SLOT_LIMIT, is_var=True, any_size=True),
+        "max_blocks": axis(
+            "Pages per request in the block table.", 1, _MQA_CONTEXT_LIMIT, is_var=True, any_size=True
+        ),
         "max_seq_len": axis(
             "Logits per request: every token of its block table row.",
             1,
-            _SLOT_LIMIT - 1,
+            _MQA_CONTEXT_LIMIT,
             is_var=True,
+            any_size=True,
         ),
     },
     attrs={
