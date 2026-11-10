@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from html import escape
 from pathlib import Path
 from unittest import mock
 
@@ -36,6 +37,7 @@ class AgentXReportOutcomeTests(unittest.TestCase):
             "run": {
                 "id": "fixture-run",
                 "mode": "live",
+                "aklr_mode": "enabled",
                 "completed": True,
                 "points_expected": 2,
                 "serving_sha256": "a" * 64,
@@ -49,11 +51,17 @@ class AgentXReportOutcomeTests(unittest.TestCase):
                     "status": "ok",
                     "tput_per_gpu": 100,
                     "p90_full_response_intvty": 20,
+                    "raw_data": {
+                        "request_metrics": {
+                            "latency": {"full_response_itl": {"p90": 0.05}},
+                        }
+                    },
                 }
                 for conc in (1, 2)
             ],
         }
         self.results["control"] = copy.deepcopy(self.results)
+        self.results["control"]["run"]["aklr_mode"] = "disabled"
         utils.write_json(self.results_path, self.results)
         self.plan = {
             "schema": 3,
@@ -130,10 +138,15 @@ class AgentXReportOutcomeTests(unittest.TestCase):
                 self.assertEqual(self.check(site), 0)
 
     def test_resolution_failure_fails_after_saving_the_report(self):
-        self.plan["targets"][0].update(status="resolve-failed", error="upstream duration changed")
+        error = "upstream <duration> changed & no recipe was selected"
+        self.plan["targets"][0].update(status="resolve-failed", error=error)
         site, target = self.render()
         self.assertEqual(target["status"], "resolve-failed")
         self.assertEqual(target["failure_stage"], "plan")
+        self.assertFalse(target["report"])
+        html = (site / "index.html").read_text()
+        self.assertIn(escape(error), html)
+        self.assertNotIn(error, html)
         self.assertEqual(self.check(site, download_outcome="skipped"), 1)
 
     def test_missing_results_fail_after_saving_the_report(self):
@@ -151,6 +164,39 @@ class AgentXReportOutcomeTests(unittest.TestCase):
                 site, target = self.render()
                 self.assertEqual(target["failure_stage"], "report")
                 self.assertEqual(self.check(site), 1)
+
+    def test_missing_or_invalid_modes_fail_the_report_check(self):
+        for invalid in ("missing-control", "empty-control", "enabled-label", "disabled-label", "mode"):
+            with self.subTest(invalid=invalid):
+                current = copy.deepcopy(self.results)
+                if invalid == "missing-control":
+                    current.pop("control")
+                elif invalid == "empty-control":
+                    current["control"] = None
+                elif invalid == "enabled-label":
+                    current["run"]["aklr_mode"] = "disabled"
+                elif invalid == "disabled-label":
+                    current["control"]["run"]["aklr_mode"] = "enabled"
+                else:
+                    current["control"]["run"]["mode"] = "mock"
+                utils.write_json(self.results_path, current)
+                site, target = self.render()
+                self.assertEqual(target["status"], "failed")
+                self.assertEqual(target["failure_stage"], "report")
+                self.assertEqual(self.check(site), 1)
+
+    def test_an_empty_or_partial_mode_keeps_successful_measurements(self):
+        for kept in (0, 1):
+            with self.subTest(control_points=kept):
+                current = copy.deepcopy(self.results)
+                current["control"]["points"] = current["control"]["points"][:kept]
+                current["control"]["run"]["completed"] = False
+                utils.write_json(self.results_path, current)
+                site, target = self.render()
+                self.assertEqual(target["status"], "partial")
+                self.assertEqual((target["points_ok"], target["points_total"]), (2 + kept, 4))
+                self.assertIsNone(target["failure_stage"])
+                self.assertEqual(self.check(site), 0)
 
     def test_unreadable_results_are_saved_as_a_report_failure(self):
         with mock.patch.object(report_all, "read_json", side_effect=PermissionError("cannot read results")):

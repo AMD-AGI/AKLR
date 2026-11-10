@@ -31,7 +31,7 @@ def summarize(out: Path, exit_code: int) -> int:
             total += expected
             rows.append(f"| {mode} | {ok} | {len(points) - ok} | {expected - len(points)} | {expected} |")
         status = "Success" if not exit_code and complete_measurement(results) else "Partial success"
-        if not successful:
+        if exit_code or not successful:
             status, exit_code = "Failed", exit_code or 1
         lines = [
             f"## AgentX sweep: {status}",

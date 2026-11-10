@@ -159,6 +159,27 @@ class AgentXMetricTests(unittest.TestCase):
                 self.assertIn("full-response P90 ITL", migrated["points"][0]["error"])
                 self.assertEqual(analysis.measured(migrated), [])
 
+    def test_cached_interactivity_does_not_replace_raw_itl_evidence(self):
+        source = utils.validated_results(legacy_results())
+        for mode, cached in ((source, 999), (source["control"], 1)):
+            point = mode["points"][0]
+            point.pop("raw_data")
+            point[FULL_RESPONSE] = cached
+        original = copy.deepcopy(source)
+
+        normalized = utils.validated_results(source)
+
+        self.assertEqual(source, original)
+        for mode in (normalized, normalized["control"]):
+            point = mode["points"][0]
+            self.assertEqual(point["status"], "failed")
+            self.assertIn("Missing full-response P90 ITL", point["error"])
+            self.assertNotIn(FULL_RESPONSE, point)
+            self.assertEqual(analysis.measured(mode), [])
+        self.assertEqual(analysis.compare_aklr(normalized)["status"], "unavailable")
+        self.assertFalse(report_all.eligible(normalized))
+        self.assertFalse(report_all.eligible(normalized, historical=True))
+
     def test_pareto_report_axis_and_published_upstream_selection_axis_are_independent(self):
         fast = {FULL_RESPONSE: 300, E2E: 10, "tput_per_gpu": 100}
         slow = {FULL_RESPONSE: 200, E2E: 20, "tput_per_gpu": 90}
@@ -189,8 +210,8 @@ class AgentXReportMetricMigrationTests(unittest.TestCase):
         self.enterContext(mock.patch.object(report, "landed", return_value=None))
         self.enterContext(redirect_stdout(io.StringIO()))
 
-    def build_with_baseline(self, baseline, *, formal=False):
-        current = legacy_results()
+    def build_with_baseline(self, baseline, *, formal=False, current=None, expected_status="ok"):
+        current = copy.deepcopy(current) if current is not None else legacy_results()
         if not formal:
             for result in (current, current["control"]):
                 result["run"]["duration_override_s"] = 600
@@ -221,7 +242,7 @@ class AgentXReportMetricMigrationTests(unittest.TestCase):
         self.assertEqual(baseline_path.read_bytes(), original_bytes)
         self.assertTrue((out / "index.html").is_file())
         self.assertIsNone(manifest["targets"][0]["failure_stage"])
-        self.assertEqual(manifest["targets"][0]["status"], "ok")
+        self.assertEqual(manifest["targets"][0]["status"], expected_status)
         return out, manifest["targets"][0]
 
     def test_report_cli_redraws_old_results_with_new_coordinates_and_labels(self):
@@ -234,8 +255,7 @@ class AgentXReportMetricMigrationTests(unittest.TestCase):
         self.assertEqual(source_path.read_bytes(), original_bytes)
         result = utils.read_json(out / "results.json")
         summary = utils.read_json(out / "report.json")
-        self.assertEqual(result["points"][0][FULL_RESPONSE], 1 / 0.00351)
-        self.assertEqual(result["control"]["points"][0][FULL_RESPONSE], 1 / 0.00359)
+        self.assertEqual(result, source)
         self.assertEqual(summary["axes"], {"x": FULL_RESPONSE, "y": "tput_per_gpu"})
         self.assertEqual(summary["frontiers"]["combined"][0][FULL_RESPONSE], 1 / 0.00351)
         page = (out / "index.html").read_text()
@@ -245,16 +265,14 @@ class AgentXReportMetricMigrationTests(unittest.TestCase):
         self.assertNotIn("P90 E2E interactivity", page)
         self.assertNotIn("Off P90 E2E tok/s/user", page)
 
-    def test_historical_baseline_with_raw_is_migrated_before_eligibility_checks(self):
+    def test_historical_baseline_with_raw_is_normalized_for_comparison_without_rewriting_archive(self):
         baseline = legacy_results("previous-run", itl=0.00702)
         original = copy.deepcopy(baseline)
         out, target = self.build_with_baseline(baseline)
         stored = utils.read_json(out / self.relative / "baseline-live.json")
         summary = utils.read_json(out / self.relative / "report.json")
         self.assertEqual(baseline, original)
-        self.assertEqual(stored["run"]["id"], "previous-run")
-        self.assertEqual(stored["points"][0][FULL_RESPONSE], 1 / 0.00702)
-        self.assertEqual(stored["points"][0]["raw_data"], baseline["points"][0]["raw_data"])
+        self.assertEqual(stored, original)
         self.assertEqual(summary["comparison"]["status"], "ok")
         self.assertAlmostEqual(summary["comparison"]["arms"]["tp1"]["points"][0]["intvty_ratio"], 2)
         self.assertIn("live", target["baselines"])
@@ -281,10 +299,30 @@ class AgentXReportMetricMigrationTests(unittest.TestCase):
         out, target = self.build_with_baseline(baseline, formal=True)
         stored = utils.read_json(out / self.relative / "baseline-live.json")
         self.assertEqual(stored["run"]["id"], "fixture-run")
-        self.assertEqual(stored["points"][0][FULL_RESPONSE], 1 / 0.00351)
-        self.assertEqual(stored["control"]["points"][0][FULL_RESPONSE], 1 / 0.00359)
+        self.assertEqual(stored, legacy_results())
+        summary = utils.read_json(out / self.relative / "report.json")
+        self.assertEqual(summary["frontiers"]["combined"][0][FULL_RESPONSE], 1 / 0.00351)
+        self.assertEqual(summary["disabled_frontiers"]["combined"][0][FULL_RESPONSE], 1 / 0.00359)
         self.assertIn("live", target["baselines"])
         self.assertFalse(target["baseline_unavailable"])
+
+    def test_unverifiable_cached_points_neither_compare_nor_replace_the_baseline(self):
+        current = utils.validated_results(legacy_results())
+        for mode, cached in ((current, 999), (current["control"], 1)):
+            mode["points"][0].pop("raw_data")
+            mode["points"][0][FULL_RESPONSE] = cached
+        baseline = legacy_results("previous-run")
+
+        out, target = self.build_with_baseline(
+            baseline, current=current, formal=True, expected_status="failed"
+        )
+
+        self.assertEqual((target["points_ok"], target["points_total"]), (0, 2))
+        self.assertEqual(utils.read_json(out / self.relative / "baseline-live.json"), baseline)
+        self.assertEqual(utils.read_json(out / self.relative / "results.json"), current)
+        summary = utils.read_json(out / self.relative / "report.json")
+        self.assertEqual(summary["comparison"]["arms"], {})
+        self.assertEqual(summary["aklr_comparison"]["status"], "unavailable")
 
 
 if __name__ == "__main__":

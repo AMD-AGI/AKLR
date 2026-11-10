@@ -38,6 +38,12 @@ class AgentXSweepTests(unittest.TestCase):
                     "status": "ok",
                     "tput_per_gpu": 100,
                     "p90_full_response_intvty": 20,
+                    "raw_data": {
+                        "request_metrics": {
+                            "throughput": {"per_gpu": {"total_tput_tps": 100}},
+                            "latency": {"full_response_itl": {"p90": 0.05}},
+                        }
+                    },
                 }
                 for conc in (1, 2)
             ],
@@ -98,8 +104,21 @@ class AgentXSweepTests(unittest.TestCase):
             with self.subTest(process_code=process_code):
                 code, summary = self.launch(process_code)
                 self.assertEqual(code, process_code)
+                self.assertIn("AgentX sweep: Failed", summary)
+                self.assertNotIn("AgentX sweep: Partial success", summary)
                 self.assertIn("3/4 measurement points successful", summary)
+                self.assertIn("| enabled | 1 | 0 | 1 | 2 |", summary)
+                self.assertIn("| disabled | 2 | 0 | 0 | 2 |", summary)
                 self.assertIn(f"Sweep process exited with status {process_code}", summary)
+
+    def test_process_failure_is_failed_even_when_all_points_succeeded(self):
+        code, summary = self.launch(1)
+        self.assertEqual(code, 1)
+        self.assertIn("AgentX sweep: Failed", summary)
+        self.assertNotIn("AgentX sweep: Partial success", summary)
+        self.assertIn("4/4 measurement points successful", summary)
+        self.assertIn("| enabled | 2 | 0 | 0 | 2 |", summary)
+        self.assertIn("| disabled | 2 | 0 | 0 | 2 |", summary)
 
     def test_missing_results_cannot_turn_a_process_exit_into_success(self):
         code, summary = self.launch(save=False)
@@ -153,7 +172,16 @@ class AgentXDockerOutcomeTests(unittest.TestCase):
                     ]
                 if not completed:
                     current["control"]["points"][0].update(
-                        status="ok", error=None, tput_per_gpu=100, p90_full_response_intvty=20
+                        status="ok",
+                        error=None,
+                        tput_per_gpu=100,
+                        p90_full_response_intvty=20,
+                        raw_data={
+                            "request_metrics": {
+                                "throughput": {"per_gpu": {"total_tput_tps": 100}},
+                                "latency": {"full_response_itl": {"p90": 0.05}},
+                            }
+                        },
                     )
                 (self.args.out / "results.json").write_text(json.dumps(current))
                 return 1, "container log tail"

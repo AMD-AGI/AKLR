@@ -116,20 +116,13 @@ def image_environment(inspection: dict) -> dict[str, str]:
 
 
 def image_environment_evidence(defaults: dict[str, str]) -> dict:
-    """Record image defaults without copying live infrastructure credentials."""
-    protected_name = re.compile(r"token|secret|password|passwd|credential|auth|key|cookie|proxy", re.I)
-    protected_url = re.compile(
-        r"://[^/\s]*@|[?&][^=]*(?:token|secret|password|credential|signature|auth|key)[^=]*=", re.I
-    )
+    """Publish image-default names and their complete digest without exposing values."""
     return {
         "policy": ENVIRONMENT_POLICY,
         "scope": "server",
         "source": "docker-image-inspect.Config.Env",
         "defaults_sha256": sha256_json(defaults),
-        "defaults": {
-            name: "<redacted>" if protected_name.search(name) or protected_url.search(value) else value
-            for name, value in sorted(defaults.items())
-        },
+        "defaults": {name: "<redacted>" for name in sorted(defaults)},
     }
 
 

@@ -154,7 +154,7 @@ def validated_results(results: dict) -> dict:
     points = []
     for original in results["points"]:
         point = dict(original)
-        if point.get("status") == "ok" and ("raw_data" in point or INTERACTIVITY_METRIC not in point):
+        if point.get("status") == "ok":
             try:
                 point[INTERACTIVITY_METRIC] = full_response_interactivity(point.get("raw_data"))
             except ValueError as error:
@@ -184,4 +184,26 @@ def complete_measurement(results: dict, *, axes: tuple[str, str] = METRIC_AXES) 
         and len(identities) == len(set(identities))
         and all(p.get("status") == "ok" and valid_metrics(p, axes=axes) for p in points)
         and ("control" not in results or complete_measurement(results["control"], axes=axes))
+    )
+
+
+def valid_measurement_points(results: dict) -> bool:
+    """Recorded points may be incomplete, but must be unique and fit the declared plan."""
+    points, expected = results["points"], results["run"].get("points_expected")
+    identities = [(point["arm"], point["conc"]) for point in points]
+    return (
+        type(expected) is int
+        and expected > 0
+        and len(points) <= expected
+        and len(identities) == len(set(identities))
+    )
+
+
+def has_successful_measurement(results: dict, *, axes: tuple[str, str] = METRIC_AXES) -> bool:
+    """Accept a valid successful point in either AKLR mode, including a partial run."""
+    modes = [results, *([results["control"]] if "control" in results else [])]
+    return all(valid_measurement_points(mode) for mode in modes) and any(
+        point.get("status") == "ok" and valid_metrics(point, axes=axes)
+        for mode in modes
+        for point in mode["points"]
     )

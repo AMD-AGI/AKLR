@@ -34,16 +34,21 @@ Y_LABEL = "Throughput/Chip (tok/s)"
 NOTABLE = 0.03
 LANGS = ("en", "zh")
 ZH_MESSAGES = [
-    (r"measurement incomplete or points failed", "测量未完成或有失败点，不计算周环比"),
+    (r"no valid successful measurement points to compare", "没有可用于比较的有效成功测量点"),
     (r"source is dirty or its state is unknown", "源码包含未提交改动或状态未知，不计算周环比"),
     (r"point selection policy or selected recipes changed", "选点策略或选中的配置已变化"),
     (r"model identity differs or is missing", "模型标识不同或缺失"),
     (r"target identity differs or is missing", "测试目标标识不同或缺失"),
     (r"AKLR modes have different or missing model identities\.", "两种 AKLR 模式的模型标识不同或缺失。"),
     (r"AKLR modes have different or missing target identities\.", "两种 AKLR 模式的测试目标标识不同或缺失。"),
+    (r"AKLR off/on execution records are required\.", "需要 AKLR 开启和关闭两种模式的执行记录。"),
     (
-        r"Both AKLR modes must finish every selected point successfully\.",
-        "两种 AKLR 模式都需成功完成全部选中数据点。",
+        r"AKLR measurement point records are invalid or duplicated\.",
+        "AKLR 测量点记录无效或存在重复。",
+    ),
+    (
+        r"No successful points with matching settings in both AKLR modes\.",
+        "两种 AKLR 模式之间没有成功完成且配置匹配的测量点对。",
     ),
     (
         r"AKLR modes have different or unverified execution identities\.",
@@ -64,6 +69,8 @@ ZH_MESSAGES = [
         r"measurement settings changed \(weights, launch, workload or selected points\)",
         "测量设置已变化（权重、启动配置、工作负载或所选数据点）",
     ),
+    (r"point measurement settings differ", "该点的测量配置不一致"),
+    (r"point measurement settings are missing or unverified", "该点的测量配置缺失或未经验证"),
     (r"arm absent from the baseline", "上次运行没有这个实验组"),
     (r"serving config changed \(arm (\S+) → (\S+)\)", r"服务配置已变化（实验组 \1 → \2）"),
     (r"no previous run", "没有上次运行"),
@@ -72,8 +79,8 @@ ZH_MESSAGES = [
     (r"concurrency grid changed", "并发网格已变化"),
     (r"execution identity is missing or unverified", "执行身份缺失或未经验证"),
     (
-        r"execution image, InferenceX source, dependencies, hardware or traces changed",
-        "执行镜像、InferenceX 源码、依赖、硬件或请求轨迹已变化",
+        r"execution image, InferenceX source, dependencies or hardware changed",
+        "执行镜像、InferenceX 源码、依赖或硬件已变化",
     ),
 ]
 
@@ -273,17 +280,25 @@ def charts(results: dict, baseline: dict | None, comparison: dict, lang: str) ->
                 "frontier": current["combined"],
             }
         )
-    if comparison["status"] == "ok" and all(
-        view["status"] == "comparable" for view in comparison["arms"].values()
-    ):
+    previous_points = [
+        row["baseline"]
+        for view in comparison["arms"].values()
+        for row in view.get("points", [])
+        if row.get("tput_ratio") is not None
+    ]
+    if baseline is not None and comparison["status"] == "ok" and previous_points:
         series.append(
             {
-                "label": tr(lang, "AKLR enabled · previous run", "开启 AKLR · 上次运行")
+                "label": tr(
+                    lang,
+                    "AKLR enabled · previous run (matched points)",
+                    "开启 AKLR · 上次运行（匹配点）",
+                )
                 if control is not None
-                else tr(lang, "previous run frontier", "上次前沿"),
+                else tr(lang, "previous run frontier (matched points)", "上次前沿（匹配点）"),
                 "color": BASELINE_COLOR,
                 "points": [],
-                "frontier": frontier(measured(baseline)),
+                "frontier": frontier(previous_points),
                 "dashed": True,
             }
         )
@@ -308,10 +323,12 @@ def aklr_section(results: dict, lang: str) -> str:
             lang,
             "Same run, image, hardware, weights and pinned trace dataset. Short runs can sample different requests. "
             "Disabled mode runs first. Higher and farther right is better. "
-            "Deltas compare identical arm/concurrency pairs, not interpolated points at equal interactivity; no statistical significance is implied.",
+            "Deltas use only arm/concurrency pairs that succeeded in both modes with matching settings. "
+            "They are not interpolated comparisons at equal interactivity; no statistical significance is implied.",
             "同一次运行，使用相同镜像、硬件、权重和固定的请求轨迹数据集。短时运行可能覆盖不同请求。"
             "先关闭再开启 AKLR。曲线越靠右上越好。"
-            "增幅按相同实验组和并发点计算，不代表相同交互速度下的插值对比，也不代表统计显著性。",
+            "增幅只对两种模式均成功完成且配置一致的相同实验组和并发点计算，"
+            "不代表相同交互速度下的插值对比，也不代表统计显著性。",
         )
         + "</p>",
     ]
@@ -320,8 +337,8 @@ def aklr_section(results: dict, lang: str) -> str:
             '<p class="notes">'
             + tr(
                 lang,
-                "Paired comparison unavailable: both modes must complete with matching settings. Curves show available measurements only.",
-                "暂不计算成对增幅：两种模式需完整成功且配置匹配。曲线仅展示已获得的测量点。",
+                "Paired comparison unavailable. Curves show available successful measurements.",
+                "暂不计算成对增幅。曲线展示已获得的成功测量点。",
             )
             + f' <span class="muted">{escape(localize(lang, comparison["reason"]))}</span></p>'
         )
@@ -329,7 +346,11 @@ def aklr_section(results: dict, lang: str) -> str:
     gain = comparison["tput_geomean_ratio"]
     out.append(
         '<p class="card">'
-        + tr(lang, "Throughput geomean, enabled / disabled: ", "吞吐几何平均，开启 / 关闭：")
+        + tr(
+            lang,
+            "Throughput geomean over matched pairs, enabled / disabled: ",
+            "匹配点对的吞吐几何平均，开启 / 关闭：",
+        )
         + f'<strong class="{delta_class(gain)}" style="font-size:24px">{gain:.3f}× ({pct(gain)})</strong>'
         + tr(
             lang,
@@ -388,21 +409,21 @@ def comparison_tables(comparison: dict, lang: str) -> str:
         badge = {
             "comparable": (
                 tr(lang, "comparable", "可比"),
-                tr(lang, "same serving config as the previous run", "服务配置与上次相同"),
+                tr(lang, "comparing successful points with matching settings", "比较成功完成且配置匹配的点"),
             ),
             "new-segment": (tr(lang, "new segment", "新分段"), reason),
             "new-arm": (tr(lang, "new arm", "新实验组"), reason),
         }[view["status"]]
         if view["status"] == "comparable" and not any(
-            (row["baseline"] or {}).get("status") == "ok" for row in view["points"]
+            row.get("tput_ratio") is not None for row in view["points"]
         ):
             badge_class = "no-baseline"
             badge = (
-                tr(lang, "no baseline", "无基线"),
+                tr(lang, "no comparable points", "无可比点"),
                 tr(
                     lang,
-                    "same serving config, but the previous run has no successful point to compare",
-                    "服务配置相同，但上次没有成功的数据点可比",
+                    "no points succeeded in both runs with matching settings",
+                    "本次与上次没有均成功完成且配置匹配的点",
                 ),
             )
         head = f'<h3>{escape(arm)} <span class="badge {badge_class}">{badge[0]}</span> <span class="muted">{escape(badge[1])}</span></h3>'
@@ -413,8 +434,8 @@ def comparison_tables(comparison: dict, lang: str) -> str:
                 + '<p class="muted">'
                 + tr(
                     lang,
-                    f"Points whose serving config changed: {changed}. Values are not compared.",
-                    f"服务配置变化的点：{changed}。不做数值比较。",
+                    f"Points whose serving or measurement settings changed: {changed}. Values are not compared.",
+                    f"服务或测量配置变化的点：{changed}。不做数值比较。",
                 )
                 + "</p>"
             )
@@ -427,9 +448,13 @@ def comparison_tables(comparison: dict, lang: str) -> str:
             cur, old = row["current"], row["baseline"] or {}
             t, i = row.get("tput_ratio"), row.get("intvty_ratio")
             status = (
-                status_label(lang, cur["status"])
-                if cur["status"] != "ok"
-                else (tr(lang, "no baseline", "无基线") if not old or old.get("status") != "ok" else "")
+                localize(lang, row["reason"])
+                if row.get("reason")
+                else (
+                    status_label(lang, cur["status"])
+                    if cur["status"] != "ok"
+                    else (tr(lang, "no baseline", "无基线") if not old or old.get("status") != "ok" else "")
+                )
             )
             rows.append(
                 f"<tr><td>c{row['conc']}</td>"
@@ -445,7 +470,11 @@ def comparison_tables(comparison: dict, lang: str) -> str:
             f"<th>{tr(lang, 'P90 tok/s/user', 'P90 tok/s/user')}</th><th>{previous}</th><th>Δ</th><th></th></tr></thead><tbody>"
             + "".join(rows)
             + "</tbody></table><p class='muted'>"
-            + tr(lang, "Throughput geomean vs previous: ", "吞吐几何平均相对上次：")
+            + tr(
+                lang,
+                "Throughput geomean vs previous (matched successful points only): ",
+                "吞吐几何平均相对上次（仅匹配成功点）：",
+            )
             + f"<span class='{delta_class(geo)}'>{pct(geo)}</span></p>"
         )
     return "\n".join(out)
@@ -788,9 +817,10 @@ AKLR {aklr_link} · InferenceX {inferencex_link} · {progress} · {baseline_line
 <p class="muted">{
         tr(
             lang,
-            "An arm is compared only when its serving and effective measurement settings equal the previous run's; "
-            f"otherwise it starts a new segment. Deltas are colored beyond ±{NOTABLE * 100:.0f}% (no noise model yet).",
-            "只有当实验组的服务配置及实际测量设置与上次相同时才做比较，否则开启新分段。"
+            "Comparisons use only points that succeeded in both runs at the same arm and concurrency "
+            "with matching serving and measurement settings. "
+            f"Deltas are colored beyond ±{NOTABLE * 100:.0f}% (no noise model yet).",
+            "周环比仅比较本次与上次均成功、服务与测量配置一致的相同实验组和并发点。"
             f"变化超过 ±{NOTABLE * 100:.0f}% 才着色（暂无噪声模型）。",
         )
     }</p>
@@ -946,6 +976,8 @@ def write_report(
     git_dir: Path,
     notice: str | dict[str, str] | None = None,
 ) -> dict:
+    """Archive the supplied records unchanged; normalize a separate report view."""
+    archive = results
     results = validated_results(results)
     if baseline is not None:
         baseline = validated_results(baseline)
@@ -957,8 +989,9 @@ def write_report(
             messages.append(
                 tr(
                     lang,
-                    "Incomplete measurement or failed points; week-over-week comparison disabled.",
-                    "测量未完成或有失败点；不计算周环比。",
+                    "Incomplete measurement or failed points; week-over-week comparisons use only points "
+                    "that succeeded in both this run and the baseline with matching settings.",
+                    "测量未完成或有失败点；周环比只对本次与基线中均成功完成且配置一致的点计算。",
                 )
             )
         if results["run"].get("source_dirty") is not False:
@@ -985,7 +1018,7 @@ def write_report(
         history = landed(base, head, git_dir, repo_url)
     out.mkdir(parents=True, exist_ok=True)
     (out / "index.html").write_text(render(results, baseline, comparison, history, repo_url, notices))
-    write_json(out / "results.json", results)
+    write_json(out / "results.json", archive)
     write_json(
         out / "report.json",
         {

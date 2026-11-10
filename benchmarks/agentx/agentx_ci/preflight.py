@@ -42,7 +42,7 @@ def validate_hardware(hardware: dict, expected: dict) -> None:
         raise ValueError("invalid GPU peer-access topology")
 
 
-def comparison_identity(results: dict) -> dict | None:
+def comparison_identity(results: dict, *, allow_empty_points: bool = False) -> dict | None:
     """Return an identity only for a verified execution."""
     try:
         model_id = validate_model_id(results["model"]["id"])
@@ -83,7 +83,7 @@ def comparison_identity(results: dict) -> dict | None:
             if key in traces and traces[key] != trace:
                 return None
             traces[key] = trace
-        if not traces:
+        if not traces and not allow_empty_points:
             return None
         return {
             "model_id": model_id,

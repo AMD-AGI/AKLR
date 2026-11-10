@@ -370,6 +370,10 @@ class AgentXEnvironmentTests(unittest.TestCase):
             "HTTPS_PROXY": "https://fixture:image-proxy-password@proxy.invalid",
             "SERVICE_URL": "https://fixture:service-password@service.invalid",
             "DOWNLOAD_URL": "https://service.invalid/file?signature=signed-fixture-secret",
+            "AZURE_STORAGE_CONNECTION_STRING": (
+                "DefaultEndpointsProtocol=https;AccountName=fixture;AccountKey=image-fixture-account-value"
+            ),
+            "APP_CONFIG": "opaque-image-fixture-value",
         }
         self.inspection["Config"]["Env"].extend(f"{key}={value}" for key, value in image_credentials.items())
         self.write_inspection()
@@ -378,11 +382,28 @@ class AgentXEnvironmentTests(unittest.TestCase):
         for key, value in image_credentials.items():
             self.assertEqual(defaults[key], value)
             self.assertEqual(identity["server_environment"]["defaults"][key], "<redacted>")
-        code, results, _ = self.run_main()
+        code, results, calls = self.run_main()
         self.assertEqual(code, 0)
         serialized = json.dumps(results)
         for value in [*image_credentials.values(), self.environ["HF_TOKEN"], self.environ["HTTPS_PROXY"]]:
             self.assertNotIn(value, serialized)
+        for call in calls["run_live"].call_args_list:
+            for name, value in image_credentials.items():
+                self.assertEqual(call.args[2]["server_image_env"][name], value)
+
+    def test_redacted_image_values_still_determine_the_complete_environment_digest(self):
+        defaults = {**self.defaults, "APP_CONFIG": "opaque-image-fixture-value"}
+        original = defaults.copy()
+        evidence = runtime.image_environment_evidence(defaults)
+        self.assertEqual(defaults, original)
+        self.assertEqual(evidence["defaults"], {name: "<redacted>" for name in defaults})
+        self.assertEqual(evidence["defaults_sha256"], runtime.sha256_json(defaults))
+        self.assertEqual(runtime.image_environment_evidence(dict(reversed(list(defaults.items())))), evidence)
+        for name in ("SGLANG_USE_AITER", "APP_CONFIG"):
+            with self.subTest(name=name):
+                changed = runtime.image_environment_evidence({**defaults, name: "changed-fixture-value"})
+                self.assertEqual(changed["defaults"], evidence["defaults"])
+                self.assertNotEqual(changed["defaults_sha256"], evidence["defaults_sha256"])
 
     def test_paired_measurements_share_defaults_and_separate_legacy_environment(self):
         code, results, calls = self.run_main()
