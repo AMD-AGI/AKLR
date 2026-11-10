@@ -62,10 +62,11 @@ jobs:
       actions: read
       pull-requests: read
     env:
+      # Forks too: gpu-node.yaml holds a fork PR, or one whose author or sender lacks write access,
+      # for approval.
       GPU_ENABLED: >-
         ${{ github.event_name != 'pull_request' ||
-            (github.event.pull_request.head.repo.full_name == github.repository &&
-             contains(github.event.pull_request.labels.*.name, 'ci:gpu')) }}
+            contains(github.event.pull_request.labels.*.name, 'ci:gpu') }}
     outputs:
       gpu_enabled: ${{ env.GPU_ENABLED }}
       has_bench_paths: ${{ steps.audit.outputs.has_bench_paths }}
@@ -77,7 +78,7 @@ jobs:
           if [[ $GPU_ENABLED == true ]]; then
             echo '🟢 GPU jobs are eligible; each test stage must pass before the next starts.' | tee -a "$GITHUB_STEP_SUMMARY"
           else
-            echo '⏭️ PR GPU jobs require the ci:gpu label on a same-repository PR; fork PRs never run here.' | tee -a "$GITHUB_STEP_SUMMARY"
+            echo '⏭️ PR GPU jobs require the ci:gpu label.' | tee -a "$GITHUB_STEP_SUMMARY"
           fi
       - name: Checkout source and lint history
         uses: actions/checkout@v4
@@ -448,7 +449,7 @@ jobs:
           AKLR_RESULT: ${{ needs.unittest-aklr.result }}
         run: |
           if [[ "$GPU_ENABLED" != true ]]; then
-            echo '⏭️ GPU tests require a same-repository PR with the ci:gpu label; no coverage data was collected.' | tee -a "$GITHUB_STEP_SUMMARY"
+            echo '⏭️ GPU tests require the ci:gpu label; no coverage data was collected.' | tee -a "$GITHUB_STEP_SUMMARY"
           elif [[ "$AKLR_RESULT" != success ]]; then
             echo "ℹ️ The AKLR tests ended $AKLR_RESULT. Merge the available data; coverage does not imply the tests passed." | tee -a "$GITHUB_STEP_SUMMARY"
           fi

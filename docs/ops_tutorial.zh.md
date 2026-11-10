@@ -109,7 +109,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 ## 4. PR 与 CI
 
 **PR 规则**：
-- 按 `.github/pull_request_template.md` 写正文。kernel 和 code PR 都加 `ci:gpu`，且必须是本仓库分支提的 PR（fork 的 PR 不跑 GPU job）；kernel PR 贴 3. 的结果；
+- 按 `.github/pull_request_template.md` 写正文。kernel 和 code PR 都加 `ci:gpu`（fork 的 PR，或作者没有 write 权限的 PR，GPU job 要等 maintainer 批准后才跑）；kernel PR 贴 3. 的结果；
 - 新算子的代码（`contract.py` 等，属于 code）单独提 PR；kernel-less schema（模板里叫 contract）和带 kernel 的 schema 各按模板对应一节填写。
 - 提交 PR 不写 `accuracy`/`speedup`（手写会报 `perf_edited`）。合入后，main 的 push CI 重新测量，`publish-measurement` 更新 `aklr-perf/main` bot PR；这个 bot PR 以它自己的标题 squash merge 后，workload 才带上 `accuracy`/`speedup`。
 
