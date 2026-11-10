@@ -51,19 +51,6 @@ The `--sparse` paths fetch only the plugin instead of the whole repository. Star
 then run skills as `$aklr:<skill>`. Update with `codex plugin marketplace upgrade aklr`. Codex
 plugins carry no subagents, so `something-important` is available only inside an AKLR checkout.
 
-### Cursor
-
-For one session, load a checkout's copy:
-
-```bash
-agent --plugin-dir <AKLR checkout>/harness
-```
-
-To keep it, copy `harness/` to `~/.cursor/plugins/local/aklr`. A symlink does not work: Cursor
-skips links that point outside that folder. On a Teams or Enterprise plan, an admin can add
-`https://github.com/AMD-AGI/AKLR` as a team marketplace (`agent plugin marketplace add`), and
-members install `aklr` from it under Plugins.
-
 ### Inside this repository
 
 Nothing to install: each agent loads the harness from the checkout, so edits take effect at once.
