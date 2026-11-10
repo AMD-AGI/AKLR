@@ -33,22 +33,22 @@ Install it separately in each agent you use. Inside an AKLR checkout you need no
 
 ```text
 /plugin marketplace add AMD-AGI/AKLR
-/plugin install aklr@aklr
+/plugin install aklr@amd-aklr
 ```
 
 Skills run as `/aklr:<skill>`, for example `/aklr:aklr-kb`, and the subagent is
-`aklr:something-important`. Update with `claude plugin update aklr@aklr`, then `/reload-plugins`.
+`aklr:something-important`. Update with `claude plugin update aklr@amd-aklr`, then `/reload-plugins`.
 On a machine without a GitHub SSH key, set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` first.
 
 ### Codex
 
 ```bash
 codex plugin marketplace add AMD-AGI/AKLR --sparse .claude-plugin --sparse harness
-codex plugin add aklr@aklr
+codex plugin add aklr@amd-aklr
 ```
 
 The `--sparse` paths fetch only the plugin instead of the whole repository. Start a new session,
-then run skills as `$aklr:<skill>`. Update with `codex plugin marketplace upgrade aklr`. Codex
+then run skills as `$aklr:<skill>`. Update with `codex plugin marketplace upgrade amd-aklr`. Codex
 plugins carry no subagents, so `something-important` is available only inside an AKLR checkout.
 
 ### Inside this repository
