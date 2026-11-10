@@ -37,48 +37,59 @@ Install it separately in each agent you use. Inside an AKLR checkout you need no
 ```
 
 Skills run as `/aklr:<skill>`, for example `/aklr:aklr-kb`, and the subagent is
-`aklr:something-important`. Update with `/plugin marketplace update aklr`. On a machine without
-a GitHub SSH key, set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` first.
+`aklr:something-important`. Update with `claude plugin update aklr@aklr`, then `/reload-plugins`.
+On a machine without a GitHub SSH key, set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` first.
 
 ### Codex
 
 ```bash
-codex plugin marketplace add AMD-AGI/AKLR
+codex plugin marketplace add AMD-AGI/AKLR --sparse .claude-plugin --sparse harness
 codex plugin add aklr@aklr
 ```
 
-Start a new session, then run skills as `$aklr:<skill>`. Update with
-`codex plugin marketplace upgrade aklr`. Codex plugins carry no subagents, so
-`something-important` is available only inside an AKLR checkout.
+The `--sparse` paths fetch only the plugin instead of the whole repository. Start a new session,
+then run skills as `$aklr:<skill>`. Update with `codex plugin marketplace upgrade aklr`. Codex
+plugins carry no subagents, so `something-important` is available only inside an AKLR checkout.
 
 ### Cursor
 
+For one session, load a checkout's copy:
+
 ```bash
-agent plugin marketplace add https://github.com/AMD-AGI/AKLR
+agent --plugin-dir <AKLR checkout>/harness
 ```
 
-This adds the marketplace to your Cursor account; install `aklr` from it under Plugins. To try
-it for one session without installing, run `agent --plugin-dir <AKLR checkout>/harness`.
+To keep it, copy `harness/` to `~/.cursor/plugins/local/aklr`. A symlink does not work: Cursor
+skips links that point outside that folder. On a Teams or Enterprise plan, an admin can add
+`https://github.com/AMD-AGI/AKLR` as a team marketplace (`agent plugin marketplace add`), and
+members install `aklr` from it under Plugins.
 
 ### Inside this repository
 
 Nothing to install: each agent loads the harness from the checkout, so edits take effect at once.
 
-- Claude Code loads the plugin from `.claude/skills/aklr`, a symlink to `harness/`, once the
-  repository is trusted (open it interactively once; worktrees share the main checkout's trust).
-  Start Claude Code at the repository root. After editing a skill run `/reload-plugins`.
-- Codex and Cursor read the skills from `.agents/skills`, a symlink to `skills/`, by bare name.
-  Codex reads agents from `.codex/agents`. Cursor gets no subagents here; a skill that names
-  one falls back to giving a general subagent its prompt.
+- Claude Code loads the plugin from `.claude/skills/aklr`, a symlink to `harness/`, as
+  `/aklr:<skill>`, and only once the repository is trusted. `claude -p` and SDK sessions never
+  show the trust dialog, so open the repository interactively once first; worktrees share the
+  main checkout's trust. Start Claude Code at the repository root, since it does not look for
+  plugins in parent directories. After editing a skill run `/reload-plugins`.
+- Codex reads the skills from `.agents/skills`, a symlink to `skills/`, as `$aklr:<skill>`,
+  because the link leads into the plugin. It reads agents from `.codex/agents` once the project
+  is trusted.
+- Cursor reads the skills from `.claude/skills/aklr` by bare name. It gets no subagents here; a
+  skill that names one falls back to giving a general subagent its prompt.
 - If you also installed the plugin:
   - Claude Code loads the installed copy instead of the checkout, since an installed plugin takes
     precedence over a project's `.claude/skills/` plugin of the same name. To use the checkout,
     for example while editing a skill, start with `claude --plugin-dir harness`, which takes
     precedence over both.
-  - Codex turns the installed copy off here (`.codex/config.toml`, read once the project is
-    trusted) and keeps the checkout's skills.
-  - Cursor loads both, so each skill appears twice; uninstall the plugin to work in this
-    repository.
+  - Codex turns the installed copy off here through `.codex/config.toml` and keeps the
+    checkout's skills. In an untrusted project it reads no project config, so each skill appears
+    twice.
+  - Cursor loads both, so each skill appears twice. This includes a plugin installed only in
+    Claude Code, because Cursor imports Claude Code's plugins. Uninstall the plugin, or turn off
+    Cursor's "Include Third-Party Plugins, Skills, and Other Configs" setting for a plugin
+    installed only in Claude Code.
 
 ## Layout
 
