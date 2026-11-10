@@ -64,7 +64,7 @@ basis: source-semantics
 ## Evidence
 
 - S3 gemm/small_m.md:50 one graph node's floor; at small M on a small weight more than half is the node
-- S4 gemm/small_m.md:399 preload removes the s_load → lgkmcnt(0) round trip before the first B load
+- S4 gemm/small_m.md:401 preload removes the s_load → lgkmcnt(0) round trip before the first B load
 - S5 gemm/small_m.md:51 AKLR timer: empty kernel and a second launch each cost; keep the fold in the launch
 - S6 flydsl/gemm.md:469 the jit call re-binds the signature, rebuilds the key, re-checks globals
 - S7 flydsl/gemm.md:476 a dispatch layer calling the @flyc.jit closure pays host cost per call
@@ -83,7 +83,7 @@ basis: source-semantics
 - S20 gemm/attribution.md:145 same FLOPs, different tile counts: swap N and K
 - S21 gemm/grid_pricing.md:301 kernel-argument preload trims F at any M
 - S22 flydsl/gemm.md:385 pass operands as fx.Pointer; a raw torch.Tensor stops the preload
-- S23 gemm/small_m.md:395 the dumped ISA shows .amdhsa_user_sgpr_kernarg_preload_length > 0
+- S23 gemm/small_m.md:397 the dumped ISA shows .amdhsa_user_sgpr_kernarg_preload_length > 0
 - S24 gemm/small_m.md:145 no result may depend on a split that is not running; the last split to arrive folds
 - S26 gemm/small_m.md:134 split-K pays on a single N-block and on latency-bound rows
 - S27 gemm/small_m.md:135 split-K does not pay on streaming rows or short K

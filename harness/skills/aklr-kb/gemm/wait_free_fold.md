@@ -95,7 +95,9 @@ The two layouts:
 - **The tag beside every element** (bf16 GEMM N=128, K=6144, m=64 and 128, split 4). Each thread stores one 16 B
   slot per element, the fp32 partial and a 96-bit tag (the dispatch id's two words and the queue pointer's low word),
   with `sc0 sc1`; waits `vmcnt(0)`; loads that element's slot from every split; and writes C if all the tags match
-  (S9, S10). One store and one load round per element, with no LDS or barrier in the decision.
+  (S9, S10). One store and one load round per element, with no LDS or barrier in the decision. The N=384 file at
+  m=256 packs two fp32 partials and a 64-bit tag, `dispatch.id` · H1 + `queue.ptr` · H2, into each 16 B slot, after
+  its waves have added their partials through LDS (S17).
 - **One tag per (tile, wave) slot** (bf16 GEMM N=2048, K=7168, m 16–128, split 4). Each wave stores its planes with
   `sc0 sc1`, waits `vmcnt(0)`, stores the 64-bit tag `dispatch.id ^ rotl(queue.ptr, 32)` into its own slot, waits
   again, loads the slots of its wave index in every split, makes the result uniform with `readfirstlane`, and folds
@@ -133,6 +135,10 @@ Where one launch with this fold paid, against the same kernel file's path withou
 - *(field, E10)* N=2048, K=7168: m=16 7.80 µs against 8.49–8.64 (driver 8.63 → 7.91); it lost at m=8 (7.71 against
   7.00); at m=1 it read 7.65 against the whole-K kernel's 6.65, but the latter was a driver reading, not the same
   timer.
+- *(field, E17)* N=384, K=7168, m=256 (split 4, 32×64 tiles, each XCD a block of tiles with all their splits):
+  8.48–8.50 µs against 9.44–9.47 for the file's whole-K path. The XCD grouping set the size of the gain: with 1 × 6
+  tiles per XCD the split read 11.17 µs. At m=1 and 8 the per-wave form beat the N=2048 file's whole-K builder,
+  which has 48 workgroups at N=384 (`../cases/k3_bf16_splitk_narrow_n.md` § N 384, its E23).
 - *(field, E15)* At M 512–4096 on narrow N, at a full round of 256 workgroups, where the split bought a wider tile
   (`grid_pricing.md` §2): N=256, K=6144, m=512 (split 2: +4.8% at that m with a compare-and-swap arrival, and
   +5.6% more with the exchange arrival) and m=1024 (split 2, then 4: +2.8% and +2.2% at that m).
@@ -198,10 +204,12 @@ What was checked, and what was not, is under Cost and risk.
   split sees `SPLIT - 1` and the tile is never written.
 - A dispatch-derived tag (the id itself or an odd-multiplier hash) is one to one only within its 62–64-bit domain
   on one queue, so combine it with queue-pointer bits; truncating the queue bits or an XOR does not make it unique
-  across queues. Three bf16 kernels use such a tag in place of zeroing and passed `driver.py --stress`: the
+  across queues. Four bf16 kernels use such a tag in place of zeroing and passed `driver.py --stress`: the
   launch-tagged counter (N = K = 6144, m=64; +0.66% [+0.52, +0.80] over a separate fold launch, m=64 +5.9%
-  *(field, E6)*) and both slot layouts above *(field, E8, E10)*. The queue bits matter: a second stream's dispatch ids
-  started again at 0 *(field, E7)*. Also checked: the dispatch id was the same in every workgroup of a launch and
+  *(field, E6)*), both slot layouts above *(field, E8, E10)*, and the N=384 file, which also passed graph replays
+  with new inputs and concurrent calls on different inputs (`../cases/k3_bf16_splitk_narrow_n.md`, its E24).
+  The queue bits matter: a second stream's dispatch ids started again at 0 *(field, E7)*. Also checked: the
+  dispatch id was the same in every workgroup of a launch and
   different in each launch, eager and in graph replays; a 200-round NaN and determinism check, and up to 1,500 calls
   per case with NaN-prefilled outputs, some on a second stream, plus 200 replays of a 20-call graph, gave no wrong
   output *(field, E8, E10)*. At M 2048–4096 two other tagged builds gave none either: the 56-bit reset-then-add
@@ -232,6 +240,7 @@ What was checked, and what was not, is under Cost and risk.
 - E14 [2026-11, gfx950, FlyDSL 0.3.2, N=1–3, single driver runs (N=64), AKLR `bench_cudagraph` medians over 3 rounds alternated with canonical (N=128), agents' probes on AKLR's graph timer (N=256); arms past the first are timing-only] N=64 m=4096 split 4: partials only 8.051, + `sc0 sc1` stores, `vmcnt(0)`, barrier 8.176, + counter round trip with the folder storing only its own partial 9.383, full fold 10.285 µs; N=128 K=6144 m=2048 split 4: planes stored, no counter 10.555, + store-acknowledge wait and barrier 10.577, + compare-and-swap arrival 12.761, + full fold 15.444, against canonical 13.060–13.071; correct with garbage and with reused scratch, and with inputs changing between graph replays; N=256 K=6144 m=1024 split 4: counter and fold removed 9.47, fixed last arriver without compare-and-swap 11.27, full-fold arms 12.55–12.92 against the unsplit incumbent's 11.55
 - E15 [2026-11, gfx950, FlyDSL 0.3.2, N=3, forge-loop ablation ladders, 3 pairs, driver --bench-mode; the separate-launch arm by driver --bench-mode and Kineto] N=64 K=4096 m=4096: whole fold-introducing round +0.22% [−0.77, +1.21] overall, +1.89% at m=4096, m=256 −0.66%; fold-deletion arm reported as not separable, no cost given; next round against a different parent, counter spacing m=4096 +4.34%, m=256 +2.72%; N=256 K=6144 (whole rounds also changing rotation/PRO, exchange and own-partial retention; not isolated split effects): split m=512 with compare-and-swap arrival +1.59% [+1.31, +1.87] (m=512 +4.75%), exchange and split m=1024 +2.82% [+2.52, +3.12] (m=512 +5.62%, m=1024 +2.81%), per-wave arrival +1.16%, split 4 at m=1024 +0.86% (m=1024 +2.19%); N=64 m=2048 with fp32 partials and a reduce launch: driver 11.416 µs against HEAD 8.689, Kineto GEMM 7.64, `reduce_kernel` 4.32, memset 4.04
 - E16 [2026-11, gfx950, FlyDSL 0.3.2, N=1, single driver run (N=64), agent's probe on AKLR's graph timer (N=256)] LLVM agent fences (release / seq_cst / acquire) around the arrival: N=64 K=4096 m=4096 (64×64, split 4) 26.177 µs (KW 4, 2 stages) against 11.922 for `sc0|sc1` buffer aux (KW 2, 3 stages); partials only, fold skipped, 11.349 (KW 4, 2 stages) and 9.743 (KW 2, 3 stages); N=256 K=6144 m=1024 (split 4, KW 2, BK 128 in both) 24.7 against 14.0 with `sc1` store/load bits
+- E17 [2026-11, gfx950, FlyDSL 0.3.2, N=2–3 readings per arm, each a median of 5 calls of AKLR `bench_cudagraph` with L2 flushed before every call, interleaved with the kept kernel] bf16 GEMM N=384, K=7168, m=256: the kept whole-K path 9.44–9.47 µs; split 4 across workgroups on 32×64 tiles, 2 ring slots, tiles and their splits grouped by XCD (2 M-tiles × 3 N-tiles per XCD): 8.48–8.50; on 3 ring slots, 2 × 3 / 1 × 6 tiles per XCD: 8.55 / 11.17
 - S1 aklr/ops/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:49 `_SC01 = 17`, system-scope access past the non-coherent caches
 - S2 aklr/ops/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:426 `s_waitcnt vmcnt(0)` before the arrival
 - S3 aklr/ops/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:430 the agent-scope `atomicrmw add`
@@ -248,3 +257,4 @@ What was checked, and what was not, is under Cost and risk.
 - S14 aklr/ops/gemm/impls/flydsl/gemm_n64_k4096/3af3d3de3d0f2285.json#kernel.py:304 the tile's counter word and the launch tag (`dispatch.id + queue.ptr · _TAG_MUL`, 56 bits) read before any DMA; the compare-and-swap reset of a stale word (:396-408) and the add whose old value `tag << 8 | S − 1` elects the folder (:410-418)
 - S15 the N=256, K=6144 campaign's final kernel, not committed: two splits: `atomicrmw xchg` of the tag, the one that reads it back is second and swaps the sentinel back; lane 0 of each wave after its `vmcnt(0)`; own partial from registers plus the partner's
 - S16 the N=256, K=6144 campaign's final kernel, not committed: one 128 B counter slot per tile, one 8 B word per wave; the tag is the dispatch id alone
+- S17 aklr/ops/gemm/impls/flydsl/gemm_n384_k7168/d65ffa02dee32841.json#kernel.py:489 `slot_off`: two fp32 sums and the 64-bit tag (`dispatch.id` · H1 + `queue.ptr` · H2, :481) per 16 B slot, stored `sc0 sc1` at :501, `vmcnt(0)` at :502, the other splits' slots loaded at :509

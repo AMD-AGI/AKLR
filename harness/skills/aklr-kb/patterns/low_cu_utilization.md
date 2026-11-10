@@ -90,4 +90,4 @@ basis: source-semantics
 - S30 gemm/small_m.md:99 count workgroups against the 256-CU dispatch round before anything else
 - S31 gemm/small_m.md:134 split-K pays on a single N-block (narrow N) and latency-bound rows
 - S32 gemm/small_m.md:135 split-K does not pay on streaming rows with many N-blocks or short K
-- S33 gemm/small_m.md:377 idle CUs load later K-tiles of B into L2
+- S33 gemm/small_m.md:379 idle CUs load later K-tiles of B into L2
