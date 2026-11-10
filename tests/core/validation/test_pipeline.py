@@ -1252,9 +1252,8 @@ def test_a_tracer_that_cannot_register_is_the_platforms_failure(
     case = OpCase.of("gemm@1.0")
     target = DeviceTarget.from_names(**KERNEL_TARGET)
     monkeypatch.setattr(DeviceTarget, "current", classmethod(lambda cls, d: target))
-    monkeypatch.setitem(
-        sys.modules, "aklr.core.utils.testing", None
-    )  # its import raises, as registration can
+    # its import raises, as a tracer that cannot register does
+    monkeypatch.setitem(sys.modules, "aklr.core.utils.testing", None)
     context = ExecutionContext(device="cpu", log_path=tmp_path / "log")
     request = case.request
     result = run_candidate(
