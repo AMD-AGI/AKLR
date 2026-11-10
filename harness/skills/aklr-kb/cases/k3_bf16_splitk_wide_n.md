@@ -9,11 +9,11 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1
 measured:
-  - {metric: "speedup over aiter, local validate lower bound per Point; no CI measurement on main", value: "0.969–1.441; 15 of 17 Points ≥ 1.03 (not m 9397, 16384); 0 served", gpu: MI355X, workload: "gemm_n6016_k7168, m 8, 12, 16, 24, 32, 40, 48, 56, 60, 64, 80, 96, 112, 893, 2732, 9397, 16384", run_ref: "local:/workspace/code/gpt_oss_docker/work/sikl/k3_forge/final_r2ab6_local/report.md:33", date: "2026-10-26"}
-  - {metric: "speedup over aiter, local validate lower bound per Point; no CI measurement on main", value: "0.952–1.871; 15 of 17 Points ≥ 1.03 (not m 9397, 16384); 0 served", gpu: MI355X, workload: "gemm_n6144_k7168, m 8–16384 (17 Points)", run_ref: "local:/workspace/code/gpt_oss_docker/work/sikl/k3_forge/final_r2ab6_local/report.md:67", date: "2026-10-26"}
-  - {metric: "speedup over aiter, local validate lower bound per Point; no CI measurement on main", value: "1.085–1.552; 13 of 13 Points ≥ 1.03; 0 served", gpu: MI355X, workload: "gemm_n6288_k7168, m 8, 12, 16, 24, 32, 40, 48, 56, 60, 893, 2732, 9397, 16384", run_ref: "local:/workspace/code/gpt_oss_docker/work/sikl/k3_forge/final_r2ab6_local/report.md:97", date: "2026-10-26"}
-  - {metric: "speedup over aiter, local validate lower bound per Point; no CI measurement on main", value: "0.949–2.000 (2.000 is the bound's cap); 15 of 17 Points ≥ 1.03 (not m 2732, 9397); 0 served", gpu: MI355X, workload: "gemm_n8448_k7168, m 8–16384 (17 Points)", run_ref: "local:/workspace/code/gpt_oss_docker/work/sikl/k3_forge/final_r2ab6_local/report.md:127", date: "2026-10-26"}
-  - {metric: "speedup over aiter, local validate lower bound per Point; no CI measurement on main", value: "0.875–1.231; 11 of 15 Points ≥ 1.03 (not m 80, 893, 9397, 16384); 0 served", gpu: MI355X, workload: "gemm_n7168_k35840, m 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 893, 2732, 9397, 16384", run_ref: "local:/workspace/code/gpt_oss_docker/work/sikl/k3_forge/final3_local/validate/report.md:46", date: "2026-10-26"}
+  - {metric: "speedup over aiter, local validate lower bound per Point; no CI measurement on main", value: "0.969–1.441; 15 of 17 Points ≥ 1.03 (not m 9397, 16384); 0 served", gpu: MI355X, workload: "gemm_n6016_k7168, m 8, 12, 16, 24, 32, 40, 48, 56, 60, 64, 80, 96, 112, 893, 2732, 9397, 16384", date: "2026-10-26"}
+  - {metric: "speedup over aiter, local validate lower bound per Point; no CI measurement on main", value: "0.952–1.871; 15 of 17 Points ≥ 1.03 (not m 9397, 16384); 0 served", gpu: MI355X, workload: "gemm_n6144_k7168, m 8–16384 (17 Points)", date: "2026-10-26"}
+  - {metric: "speedup over aiter, local validate lower bound per Point; no CI measurement on main", value: "1.085–1.552; 13 of 13 Points ≥ 1.03; 0 served", gpu: MI355X, workload: "gemm_n6288_k7168, m 8, 12, 16, 24, 32, 40, 48, 56, 60, 893, 2732, 9397, 16384", date: "2026-10-26"}
+  - {metric: "speedup over aiter, local validate lower bound per Point; no CI measurement on main", value: "0.949–2.000 (2.000 is the bound's cap); 15 of 17 Points ≥ 1.03 (not m 2732, 9397); 0 served", gpu: MI355X, workload: "gemm_n8448_k7168, m 8–16384 (17 Points)", date: "2026-10-26"}
+  - {metric: "speedup over aiter, local validate lower bound per Point; no CI measurement on main", value: "0.875–1.231; 11 of 15 Points ≥ 1.03 (not m 80, 893, 9397, 16384); 0 served", gpu: MI355X, workload: "gemm_n7168_k35840, m 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 893, 2732, 9397, 16384", date: "2026-10-26"}
 sources:
   - aklr/ops/gemm/impls/flydsl/gemm_n6016_k7168/fe6fa078b3de6610.json
   - aklr/ops/gemm/impls/flydsl/gemm_n6144_k7168/41ac253b2d1a6704.json
@@ -24,8 +24,8 @@ sources:
 
 # bf16 GEMM at N 6016–8448, K 7168 and at K 35840 (Kimi-K3): a few K splits folded inside the launch
 
-Five FlyDSL kernels for the `gemm@1.0` contract on Kimi-K3 shapes (definitions #69, kernels #115, merge
-a8fe490b1), one schema file per shape, written by forge-loop campaigns and reviewed; n6016, n6144 and n8448 share
+Five FlyDSL kernels for the `gemm@1.0` contract on Kimi-K3 shapes,
+one schema file per shape, written by forge-loop campaigns and reviewed; n6016, n6144 and n8448 share
 the structure of the n2112 kernel in [k3_bf16_splitk_narrow_n.md](../cases/k3_bf16_splitk_narrow_n.md), and the
 large-m paths of the four K 7168 kernels come from one further campaign over the four. Each schema embeds its kernel as `kernel.sources[0].content`
 (`kernel.py`); function names below are in that file. "m" is the Point's M.
@@ -44,7 +44,7 @@ large-m paths of the four K 7168 kernels come from one further campaign over the
 - Each schema name has only this file (no file of another language or an older kernel under the same name on
   main), so at every Point the yardstick is aiter.
 - **No Point of these files is served today.** No CI run has written `speedup` or `accuracy` into their
-  `workloads` (main at 0cef4f2e3); dispatch serves a workload only from `AKLR_MIN_SPEEDUP` 1.03 and falls back with
+  `workloads`; dispatch serves a workload only from `AKLR_MIN_SPEEDUP` 1.03 and falls back with
   `not_measured` (`aklr/ops/README.md` § Environment variables; `aklr/core/contract/spec/_workloads.py:38`).
 
 ## Counter-signals
@@ -135,8 +135,8 @@ their 79 Points. When CI does measure them it runs the FlyDSL of its image (0.3.
 the image of the latest perf runs), not the 0.3.2 of the local numbers below
 (`../pitfalls/measured_a_different_build.md`).
 
-The only per-Point measurements are the campaigns' own `python -m sikl validate` runs on MI355X (the repository
-before its rename to AKLR), FlyDSL 0.3.2: a lower bound of the CUDA-graph time ratio aiter / kernel, one run each,
+The only per-Point measurements are the campaigns' own runs of the predecessor repository's `validate` (before the
+rename to AKLR) on MI355X, FlyDSL 0.3.2: a lower bound of the CUDA-graph time ratio aiter / kernel, one run each,
 capped at 2.000; "≥ 1.03" counts them against the dispatch threshold (that validate itself demoted below 1.02). For the four K 7168 files the run timed the
 large-m campaign's module beside the earlier kernel; the module is what the follow-up commits delivered, and its
 small-m code compiles to the earlier kernel's ISA *(field, E12)*.
@@ -161,7 +161,7 @@ python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n8448_k7168/5beee8319bd5
 python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n7168_k35840/5ac66d6dae624f93.json
 ```
 
-The report goes to `aklr_validation/report.md`; a local run checks the file, the served numbers are CI's
+The report goes to `aklr_validation/report.md`; a run outside CI checks the file, the served numbers are CI's
 (`aklr/ops/README.md` § Workflow). Add `--base origin/main` only on a branch that edits the file: with the base set,
 bench measures only schemas that are not at the base, so on an unchanged checkout it skips the bench
 (`aklr/core/validation/stages/validation_scope.py`, `of_working_tree`). Validate's bitwise check runs on an
@@ -181,20 +181,20 @@ LLVM.
 ## Evidence
 
 `<schema>.json#kernel.py:<line>` is a line of the `kernel.py` a schema embeds in `kernel.sources`; "local validate"
-is `python -m sikl validate` on MI355X in the campaign containers, the ratio lower bound over aiter per Point.
+is the predecessor repository's `validate` (before the rename to AKLR) outside CI on MI355X, the ratio lower bound over aiter per Point.
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] n6016 (the large-m group's module, 9f69f697): m 8 1.134, 12 1.161, 16 1.182, 24 1.176, 32 1.212, 40 1.274, 48 1.340, 56 1.364, 60 1.378, 64 1.371, 80 1.427, 96 1.427, 112 1.441, 893 1.161, 2732 1.096, 9397 1.025, 16384 0.969 (gemm_n6016_k7168; local:/workspace/code/gpt_oss_docker/work/sikl/k3_forge/final_r2ab6_local/report.md:33)
-- E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] n6144 (bb3c3d06): m 8 1.060, 12 1.090, 16 1.104, 24 1.158, 32 1.190, 40 1.851, 48 1.871, 56 1.823, 60 1.804, 64 1.314, 80 1.600, 96 1.506, 112 1.466, 893 1.123, 2732 1.091, 9397 1.021, 16384 0.952 (gemm_n6144_k7168; local:/workspace/code/gpt_oss_docker/work/sikl/k3_forge/final_r2ab6_local/report.md:67)
-- E3 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] n6288 (5cd58204): m 8 1.504, 12 1.282, 16 1.255, 24 1.223, 32 1.278, 40 1.319, 48 1.269, 56 1.552, 60 1.515, 893 1.109, 2732 1.085, 9397 1.102, 16384 1.146 (gemm_n6288_k7168; local:/workspace/code/gpt_oss_docker/work/sikl/k3_forge/final_r2ab6_local/report.md:97)
-- E4 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] n8448 (94dc70c7): m 8 1.165, 12 1.237, 16 1.253, 24 2.000, 32 1.342, 40 1.885, 48 1.881, 56 1.824, 60 1.844, 64 1.398, 80 1.703, 96 1.688, 112 1.700, 893 1.085, 2732 0.985, 9397 0.949, 16384 1.127 (gemm_n8448_k7168; local:/workspace/code/gpt_oss_docker/work/sikl/k3_forge/final_r2ab6_local/report.md:127)
-- E5 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] k35840: m 8 1.069, 16 1.053, 24 1.062, 32 1.073, 40 1.078, 48 1.063, 56 1.036, 64 1.035, 80 1.013, 96 1.078, 112 1.195, 893 0.875, 2732 1.231, 9397 0.989, 16384 0.927 (gemm_n7168_k35840; local:/workspace/code/gpt_oss_docker/work/sikl/k3_forge/final3_local/validate/report.md:46)
-- E6 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n6016: port +18.5–71.4% at m ≤ 112 (recorded); grouped tiles +10.7, 7.7, 8.1, 11.7% at 893–16384 (recorded); split 2 + 224×192 +4.1 / +1.6 / +7.4% at 24 / 32 / 893; one-wave tiles +3.0, 4.1, 5.2% at m 8–16; preload +1.1–1.6% at m ≤ 96; tagged chunks +1.7, 1.9, 2.0, 0.8, 0.9% at m 8–32 (gemm_n6016_k7168; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n6016_k7168/forge_experiments/ablation.json)
-- E7 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n6144: port +20.4–71.5% at m ≤ 112 (recorded); grouped order + 256×256 + last split +15.3, 14.0, 4.3, 13.3% at 893–16384 (recorded); 224×192 split 2 +13.0% at 893; three N-waves +3.1% at 80 (gemm_n6144_k7168; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n6144_k7168/forge_experiments/ablation.json)
-- E8 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n6288: two kernels +12.8–47.0% at m ≤ 60 (recorded); split 2 + early scratch touch +1.0, 2.0, 5.5, 5.3, 4.6% at m 32–60; tagged exchange +2.6, 6.1, 5.0, 7.6, 6.7% at m 32–60; partner first +0.6–1.2% (gemm_n6288_k7168; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n6288_k7168/forge_experiments/ablation.json)
-- E9 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n8448: port +8.6–50.5% at m ≤ 112 (recorded); appended reducers +0.8–5.3%; 24-bit planes + masks +1.1, 0.5, −0.3, 1.8, 1.1, 3.1, 1.8, 0.4, 0.4, −0.0, 1.7, 3.8, 4.6% at m 8–112; deeper A +5.9% at 2732 (gemm_n8448_k7168; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n8448_k7168/forge_experiments/ablation.json)
-- E10 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] k35840: split-K tiled kernel +3.3, 1.1, 2.4, 2.4, 5.2, 2.4, 2.4, 0.4, 9.7, 2.2, 17.2% at m 8–112; in-launch fold + XCD slices +2.8–8.1% at m ≤ 112 and +10.4% at 893 (recorded); 9397 tail +3.6%; 2732 tail +8.3%; all changes off +5.3–24.6% at m ≤ 112, −13.1% at 893, +7.2% at 2732, +6.3% at 9397, −7.9% at 16384 (gemm_n7168_k35840; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n7168_k35840/forge_experiments/ablation.json; local:/workspace/code/gpt_oss_docker/work/sikl/k3_forge/final3_docs/gemm_n7168_k35840/ablation.md)
-- E11 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench, group campaign; remeasured rounds 3 pairs] 4-wave AGPR tile n6016 +7.2 / +7.1%, n6144 +6.0 / +6.7% at m 9397 / 16384 (recorded); n6288 192×320 +1.4 / +2.5%; n8448 `nt` C + regrouping +6.5 / 3.0 / 2.1% at 2732 / 9397 / 16384 (r2_n6k_k7168; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/r2_n6k_k7168/forge_experiments/ablation.json)
-- E12 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] earlier → delivered at m 2732 / 9397 / 16384: n6016 1.099 → 1.096, 0.923 → 1.025, 0.876 → 0.969; n6144 1.092 → 1.091, 0.927 → 1.021, 0.850 → 0.952; n6288 1.079 → 1.085, 1.076 → 1.101, 1.145 → 1.146; n8448 0.914 → 0.985, 0.894 → 0.949, 1.109 → 1.127; outputs bit-identical, same ISA up to m 893 (#115 description draft, local:/workspace/code/gpt_oss_docker/work/sikl/PR_k3_gemm_kernels.md:63)
+- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] n6016 (the large-m group's module): m 8 1.134, 12 1.161, 16 1.182, 24 1.176, 32 1.212, 40 1.274, 48 1.340, 56 1.364, 60 1.378, 64 1.371, 80 1.427, 96 1.427, 112 1.441, 893 1.161, 2732 1.096, 9397 1.025, 16384 0.969 (gemm_n6016_k7168)
+- E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] n6144: m 8 1.060, 12 1.090, 16 1.104, 24 1.158, 32 1.190, 40 1.851, 48 1.871, 56 1.823, 60 1.804, 64 1.314, 80 1.600, 96 1.506, 112 1.466, 893 1.123, 2732 1.091, 9397 1.021, 16384 0.952 (gemm_n6144_k7168)
+- E3 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] n6288: m 8 1.504, 12 1.282, 16 1.255, 24 1.223, 32 1.278, 40 1.319, 48 1.269, 56 1.552, 60 1.515, 893 1.109, 2732 1.085, 9397 1.102, 16384 1.146 (gemm_n6288_k7168)
+- E4 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] n8448: m 8 1.165, 12 1.237, 16 1.253, 24 2.000, 32 1.342, 40 1.885, 48 1.881, 56 1.824, 60 1.844, 64 1.398, 80 1.703, 96 1.688, 112 1.700, 893 1.085, 2732 0.985, 9397 0.949, 16384 1.127 (gemm_n8448_k7168)
+- E5 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] k35840: m 8 1.069, 16 1.053, 24 1.062, 32 1.073, 40 1.078, 48 1.063, 56 1.036, 64 1.035, 80 1.013, 96 1.078, 112 1.195, 893 0.875, 2732 1.231, 9397 0.989, 16384 0.927 (gemm_n7168_k35840)
+- E6 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n6016: port +18.5–71.4% at m ≤ 112 (recorded); grouped tiles +10.7, 7.7, 8.1, 11.7% at 893–16384 (recorded); split 2 + 224×192 +4.1 / +1.6 / +7.4% at 24 / 32 / 893; one-wave tiles +3.0, 4.1, 5.2% at m 8–16; preload +1.1–1.6% at m ≤ 96; tagged chunks +1.7, 1.9, 2.0, 0.8, 0.9% at m 8–32 (gemm_n6016_k7168)
+- E7 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n6144: port +20.4–71.5% at m ≤ 112 (recorded); grouped order + 256×256 + last split +15.3, 14.0, 4.3, 13.3% at 893–16384 (recorded); 224×192 split 2 +13.0% at 893; three N-waves +3.1% at 80 (gemm_n6144_k7168)
+- E8 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n6288: two kernels +12.8–47.0% at m ≤ 60 (recorded); split 2 + early scratch touch +1.0, 2.0, 5.5, 5.3, 4.6% at m 32–60; tagged exchange +2.6, 6.1, 5.0, 7.6, 6.7% at m 32–60; partner first +0.6–1.2% (gemm_n6288_k7168)
+- E9 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n8448: port +8.6–50.5% at m ≤ 112 (recorded); appended reducers +0.8–5.3%; 24-bit planes + masks +1.1, 0.5, −0.3, 1.8, 1.1, 3.1, 1.8, 0.4, 0.4, −0.0, 1.7, 3.8, 4.6% at m 8–112; deeper A +5.9% at 2732 (gemm_n8448_k7168)
+- E10 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] k35840: split-K tiled kernel +3.3, 1.1, 2.4, 2.4, 5.2, 2.4, 2.4, 0.4, 9.7, 2.2, 17.2% at m 8–112; in-launch fold + XCD slices +2.8–8.1% at m ≤ 112 and +10.4% at 893 (recorded); 9397 tail +3.6%; 2732 tail +8.3%; all changes off +5.3–24.6% at m ≤ 112, −13.1% at 893, +7.2% at 2732, +6.3% at 9397, −7.9% at 16384 (gemm_n7168_k35840)
+- E11 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench, group campaign; remeasured rounds 3 pairs] 4-wave AGPR tile n6016 +7.2 / +7.1%, n6144 +6.0 / +6.7% at m 9397 / 16384 (recorded); n6288 192×320 +1.4 / +2.5%; n8448 `nt` C + regrouping +6.5 / 3.0 / 2.1% at 2732 / 9397 / 16384
+- E12 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] earlier → delivered at m 2732 / 9397 / 16384: n6016 1.099 → 1.096, 0.923 → 1.025, 0.876 → 0.969; n6144 1.092 → 1.091, 0.927 → 1.021, 0.850 → 0.952; n6288 1.079 → 1.085, 1.076 → 1.101, 1.145 → 1.146; n8448 0.914 → 0.985, 0.894 → 0.949, 1.109 → 1.127; outputs bit-identical, same ISA up to m 893
 - S1 aklr/ops/gemm/contract.py:95 `_dot_k()` (fp32, `max_split_k` 16) on `GEMM` at :128
 - S2 aklr/ops/gemm/impls/flydsl/gemm_n6016_k7168/fe6fa078b3de6610.json#kernel.py:25 `_CONFIGS`; preload 16 and AGPR form at :121, :124; `_count_ready` "this call's tag" at :139; launch tag at :619, NaN at :678; last-split poll at :732; `_CONFIGS4` at :786
 - S3 aklr/ops/gemm/impls/flydsl/gemm_n6144_k7168/41ac253b2d1a6704.json#kernel.py:26 `_CONFIGS`; `_count_ready` at :127; poll at :427, NaN at :436; `_CONFIGS4` at :505; preload 8 at :822

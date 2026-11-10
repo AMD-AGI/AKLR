@@ -39,7 +39,7 @@ basis: source-semantics
 
 - **A wait count is not a bound.** Co-resident waves can hide `SQ_WAIT_INST_LDS`; decide with a halve-the-reads probe
   and compare `SQ_LDS_IDX_ACTIVE` with `SQ_VALU_MFMA_BUSY_CYCLES` (S5, S16). Zero conflicts is not a speedup (S17).
-- **The floor's lane phases** for `b64` / `b128` are the card's, not the ISA's (S18).
+- **The floor's lane phases** for `b64` / `b128` are `gemm/datapath.md`'s, not the ISA's (S18).
 - **LDS placement.** Reordering `@fx.struct` fields does not move LDS: read `group_segment_fixed_size` first (S19, S33).
 
 ## Candidate techniques
@@ -78,7 +78,7 @@ basis: source-semantics
 - S15 gemm/datapath.md:69 capacity: LDS per workgroup caps occupancy
 - S16 gemm/attribution.md:139 halve-the-reads probe; SQ_LDS_IDX_ACTIVE vs SQ_VALU_MFMA_BUSY_CYCLES
 - S17 gemm/datapath.md:93 zero conflicts is not a speedup; LDS is not the bound until a probe says so
-- S18 hardware/gfx950/memory_and_sync.md:271 the card's per-width lane phases are not from the ISA
+- S18 hardware/gfx950/memory_and_sync.md:271 gemm/datapath.md's per-width lane phases are not from the ISA
 - S19 flydsl/gemm.md:494 reordering @fx.struct fields does not move LDS; each leaf is its own symbol placed by the backend
 - S20 ROCm/FlyDSL@dd8373349:.claude/skills/lds-optimization/SKILL.md:384 Method 3: increase write-read distance
 - S21 gemm/schedule_and_locality.md:225 when VGPR headroom is small, any insertion lengthens a live range

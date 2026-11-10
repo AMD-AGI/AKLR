@@ -79,15 +79,17 @@ Front matter is YAML: quote a value that contains `: `. `flydsl` is the version 
   *(field)* alone, `*field:*` or *(field: …)*). Under `## Evidence` at the end of the page, give one line per mark:
 
   ```
-  - E1 [2026-09, gfx950, FlyDSL ?, N=?, run_perftest cold-L2] 34.1 → 5.0 µs with split-K 12 (1×32×6144; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260904_151953/goal.md:197)
+  - E1 [2026-09, gfx950, FlyDSL ?, N=?, run_perftest cold-L2] 34.1 → 5.0 µs with split-K 12 (1×32×6144)
   - S1 kernels/preshuffle_gemm.py:210 the B tile is loaded once per K step
   ```
 
-  `E` lines are measurements: month, architecture, toolchain, repeat count, ruler, then the claim, the workloads
-  and a reference someone can open. `N=?` says the repeat count is unknown; such a line, like `N=1`, supports no
-  "always" or "never" in the paragraph that cites it. The reference is durable (a commit, `#<PR>`, a CI run or a
-  URL) or `local:<absolute path>` for a file on one machine, which may not outlive it. `S` lines cite source as
-  `file:line`. The text stays readable and every number stays checkable.
+  `E` lines are measurements: month, architecture, toolchain, repeat count, ruler, then the claim and the
+  workloads. `N=?` says the repeat count is unknown; such a line, like `N=1`, supports no "always" or "never" in
+  the paragraph that cites it. A run with a public record cites it (a commit, `#<PR>`, a CI run or a URL); a run
+  without one gives the result alone. A number with no run record says `unverified` in its line. This repository
+  is public: no page names a file of one machine (`local:`
+  references, workspace or shared-disk paths), and the linter rejects them. `S` lines cite public source as
+  `file:line`; source with no public copy is stated without one. The text stays readable.
 - **A number measured on another kind of kernel, or in another language, says so in the sentence** ("on a grouped
   GEMM", "on an attention kernel", "in Triton"), not only in its evidence line: readers do not read the evidence.
   The op packages' numbers were measured on FlyDSL kernels unless a sentence says otherwise, and each package's

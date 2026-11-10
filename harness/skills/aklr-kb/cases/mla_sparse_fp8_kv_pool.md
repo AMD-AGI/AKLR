@@ -9,9 +9,9 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1
 measured:
-  - {metric: "speedup over the contract's baseline (sglang's TileLang dpsk_v4_fp8_attention_fwd), CI, per Point", value: "1.165–2.405; 61 of 61 Points ≥ 1.03", gpu: MI355X, workload: "flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128, batch 1–256 × 4–9 pool sizes", run_ref: "5571f4589 (CI run 40613440602)", date: "2026-10-28"}
-  - {metric: "speedup over the contract's baseline (sglang's TileLang dpsk_v4_fp8_attention_fwd), CI, per Point", value: "2.396–5.845; 61 of 61 Points ≥ 1.03", gpu: MI355X, workload: "flash_mla_with_kvcache_…_extra_page_size2_n_extra_indices8256, batch 1–256 × 4–9 pool sizes", run_ref: "5571f4589 (CI run 40613440602)", date: "2026-10-28"}
-  - {metric: "speedup over the contract's baseline (sglang's TileLang dpsk_v4_fp8_attention_fwd), CI, per Point", value: "2.362–5.078; 61 of 61 Points ≥ 1.03", gpu: MI355X, workload: "flash_mla_with_kvcache_…_extra_page_size64_n_extra_indices512, batch 1–256 × 4–9 pool sizes", run_ref: "5571f4589 (CI run 40613440602)", date: "2026-10-28"}
+  - {metric: "speedup over the contract's baseline (sglang's TileLang dpsk_v4_fp8_attention_fwd), CI, per Point", value: "1.165–2.405; 61 of 61 Points ≥ 1.03", gpu: MI355X, workload: "flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128, batch 1–256 × 4–9 pool sizes", date: "2026-10-28"}
+  - {metric: "speedup over the contract's baseline (sglang's TileLang dpsk_v4_fp8_attention_fwd), CI, per Point", value: "2.396–5.845; 61 of 61 Points ≥ 1.03", gpu: MI355X, workload: "flash_mla_with_kvcache_…_extra_page_size2_n_extra_indices8256, batch 1–256 × 4–9 pool sizes", date: "2026-10-28"}
+  - {metric: "speedup over the contract's baseline (sglang's TileLang dpsk_v4_fp8_attention_fwd), CI, per Point", value: "2.362–5.078; 61 of 61 Points ≥ 1.03", gpu: MI355X, workload: "flash_mla_with_kvcache_…_extra_page_size64_n_extra_indices512, batch 1–256 × 4–9 pool sizes", date: "2026-10-28"}
 sources:
   - aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/97e39bdef97d3e9b.json
   - aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_extra_extra_idx_extra_lens_sinks_kv_cache_float8_e4m3fn_extra_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128_extra_page_size2_n_extra_indices8256/3b21a6af84ad0024.json
@@ -45,10 +45,10 @@ top-2048) is another contract, with its own one-launch kernel:
   does, so that step matches it exactly; the error left to `compare` comes from bf16 P, bf16 partials and the bf16
   output.
 - Yardstick: `flash_mla_with_kvcache_baseline` (`aklr/ops/mla/baseline.py`), which for this cache format calls
-  sglang's TileLang `dpsk_v4_fp8_attention_fwd` (S3), not aiter. Each schema name has one
-  kernel file and no file in another language. The extra-8256 directory also holds `69a38923eb0c686a.json`, a
-  definition (empty `sources`, never served or benched) whose 19 Points (pools of 1501–5229 pages) are not this
-  file's.
+  sglang's TileLang `dpsk_v4_fp8_attention_fwd` (S3), not aiter. No schema name has a file in another language. The
+  no-extra and extra-512 names have one kernel file each; the extra-8256 directory also holds
+  `2d4eafd6ea816a59.json`, a FlyDSL file with three sources (`kernel.py`, `few.py`, `many.py`) whose 19 Points
+  (batch 1–128, pools of 1501–5229 pages) are not this page's.
 
 ## Counter-signals
 
@@ -145,8 +145,8 @@ times, sglang's TileLang `dpsk_v4_fp8_attention_fwd`. `speedup` is a one-sided l
 kernel time over 32 rounds of CUDA-graph replays with a 1 GiB cache flush before each call
 (`aklr/core/validation/stages/_measure.py`); a Point is served from 1.03 (`AKLR_MIN_SPEEDUP`).
 
-CI installs the repository with `--no-deps`, so these runs used the FlyDSL of the CI image, 0.3.4.1, not the
-repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`).
+The predecessor repository's CI installed the code with `--no-deps`, so these runs used the FlyDSL of the CI image,
+0.3.4.1, not the repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`).
 
 Per batch, the range over that batch's pool sizes (9, 9, 7, 6, 8, 8, 6, 4 and 4 Points):
 
@@ -161,7 +161,7 @@ measurement, on the same image, also served all 183 *(field, E4)*.
 
 ## Reproduce
 
-On an MI355X, in a checkout that holds these files with these numbers (main at 0cef4f2e3), one schema at a time:
+On an MI355X, in a checkout that holds these files with these numbers, one schema at a time:
 
 ```
 python -m aklr validate aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/97e39bdef97d3e9b.json
@@ -189,10 +189,10 @@ upgrade, or when the cached workspaces do not fit the server's memory budget.
 `<schema>.json#kernel.py:<line>` is a line of the `kernel.py` the schemas embed (the same text in all three);
 lines are cited in the window-only file.
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over sglang's TileLang dpsk_v4_fp8_attention_fwd 1.165–2.405 per Point, 61 of 61 ≥ 1.03; batch 1 1.901–2.405, 2 2.257–2.399, 4 2.030–2.400, 8 2.244–2.367, 16 2.274–2.394, 32 1.906–2.033, 64 1.582–1.646, 128 1.165–1.188, 256 1.193–1.354 (flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128, 61 Points; 5571f4589, CI run 40613440602)
-- E2 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup 2.396–5.845 per Point, 61 of 61 ≥ 1.03; batch 1 2.809–5.845, 2 4.069–5.486, 4 3.772–5.269, 8 3.342–3.967, 16 2.811–3.162, 32 2.467–2.734, 64 2.396–2.625, 128 2.428–2.553, 256 2.482–2.560 (…_extra_page_size2_n_extra_indices8256, 61 Points; 5571f4589, CI run 40613440602)
-- E3 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup 2.362–5.078 per Point, 61 of 61 ≥ 1.03; batch 1 2.620–3.493, 2 2.674–3.571, 4 3.300–3.585, 8 3.114–3.414, 16 2.688–2.790, 32 2.362–3.614, 64 2.738–3.385, 128 3.429–3.910, 256 4.645–5.078 (…_extra_page_size64_n_extra_indices512, 61 Points; 5571f4589, CI run 40613440602)
-- E4 [2026-10, gfx950, FlyDSL 0.3.4.1, N=2, AKLR CI] the two committed measurements, in commit order: no extra 1.167–2.439 then 1.165–2.405, extra 8256 2.374–5.616 then 2.396–5.845, extra 512 2.363–5.019 then 2.362–5.078, all 183 Points ≥ 1.03 both times; per-Point ratio between the runs 0.924–1.070; extra 8256 at batch 1 by pool size 2.753, 5.616, 5.542, 5.027, 5.246, 5.523, 3.468, 4.491, 2.791 then 2.809, 5.845, 5.595, 5.071, 5.357, 5.526, 3.444, 4.494, 2.861 (the three schemas; 102877ca0, CI run 40154665266; 5571f4589, CI run 40613440602)
+- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over sglang's TileLang dpsk_v4_fp8_attention_fwd 1.165–2.405 per Point, 61 of 61 ≥ 1.03; batch 1 1.901–2.405, 2 2.257–2.399, 4 2.030–2.400, 8 2.244–2.367, 16 2.274–2.394, 32 1.906–2.033, 64 1.582–1.646, 128 1.165–1.188, 256 1.193–1.354 (flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128, 61 Points)
+- E2 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup 2.396–5.845 per Point, 61 of 61 ≥ 1.03; batch 1 2.809–5.845, 2 4.069–5.486, 4 3.772–5.269, 8 3.342–3.967, 16 2.811–3.162, 32 2.467–2.734, 64 2.396–2.625, 128 2.428–2.553, 256 2.482–2.560 (…_extra_page_size2_n_extra_indices8256, 61 Points)
+- E3 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup 2.362–5.078 per Point, 61 of 61 ≥ 1.03; batch 1 2.620–3.493, 2 2.674–3.571, 4 3.300–3.585, 8 3.114–3.414, 16 2.688–2.790, 32 2.362–3.614, 64 2.738–3.385, 128 3.429–3.910, 256 4.645–5.078 (…_extra_page_size64_n_extra_indices512, 61 Points)
+- E4 [2026-10, gfx950, FlyDSL 0.3.4.1, N=2, the predecessor repository's CI] the two committed measurements, in commit order: no extra 1.167–2.439 then 1.165–2.405, extra 8256 2.374–5.616 then 2.396–5.845, extra 512 2.363–5.019 then 2.362–5.078, all 183 Points ≥ 1.03 both times; per-Point ratio between the runs 0.924–1.070; extra 8256 at batch 1 by pool size 2.753, 5.616, 5.542, 5.027, 5.246, 5.523, 3.468, 4.491, 2.791 then 2.809, 5.845, 5.595, 5.071, 5.357, 5.526, 3.444, 4.494, 2.861 (the three schemas)
 - S1 aklr/ops/mla/contract.py:346 compare `BOUNDED`; `output` tolerance at :315, `lse` at :326; `n_pages` declared without `any_size` at :114
 - S2 aklr/ops/mla/reference.py:50 the reference's dequantisation is "the kernel's literal bf16 bit assembly, not fp8 scaling"
 - S3 aklr/ops/mla/baseline.py:35 `flash_mla_with_kvcache_baseline` calls sglang's `dpsk_v4_fp8_attention_fwd` (:40) for the `dsv4_fp8` cache format

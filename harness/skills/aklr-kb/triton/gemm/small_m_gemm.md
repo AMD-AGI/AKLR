@@ -203,7 +203,7 @@ changes neither the MFMA count nor the absence of a K loop in this build *(field
 
 ## Evidence
 
-Measured on one MI355X with Triton 3.8.0 in the `lmsysorg/sglang@sha256:1438dd8b…` image (2026-11): E1–E10 on AKLR
+Measured on one MI355X with Triton 3.8.0 in the `lmsysorg/sglang:v0.5.22-rocm10-mi35x` image (2026-11): E1–E10 on AKLR
 d908d01 with this skill's branch; E11 and E13–E15 are recorded in #89; E12 is a pre-CI record, published in AKLR's initial commit 9a29616.
 AKLR paths and line numbers are on main `0e02a81` unless a line names another commit; the two Triton kernel sources
 are the same at d908d01, 43e112e and 0e02a81.

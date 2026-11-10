@@ -46,12 +46,12 @@ the output row is the sum over the token's k routes of `topk_weights` × that pr
 
 | Regime | What bounds the time | Read |
 |---|---|---|
-| m 1–2 (6–18 routes) | Little work per call, so the launches and the sort weigh (estimated). At m 1 every AKLR kernel runs two launches, no sort and a workgroup set per route, and all four are served, at 1.26–3.36× *(field, E1)*; at m 2 the 33-expert kernel is served with four launches | the two cases |
+| m 1–2 (6–18 routes) | Little work per call, so the launches and the sort weigh (estimated). At m 1 every AKLR kernel runs two launches, no sort and a workgroup set per route, and in the predecessor repository's CI (2026-10) all four were served, at 1.26–3.36× *(field, E1)*; at m 2 the 33-expert kernel is served with four launches | the two cases |
 | m 8–64 with 257 experts | 72–576 routes over 257 experts, so most hit experts are read for one or two routes (estimated); each graph node adds a fixed cost (`few_tokens.md` §1). Folding the sort into stage 1 saved 3.5–6.4 µs of 39–102 µs *(field, E2)* | `few_tokens.md` §1–§2 |
 | m 10–60 with 64 local experts | Expected bandwidth, as in the next row | `grouped_sorted_tokens.md` §3–§5 |
 | Kimi-K3 SiTUv2, fp8 × MXFP4, m 8–112: 896 experts (TP) or 112 of 896 local (EP8), top-16 | Bandwidth: the weights of the experts the routes touch, 2.19 MB each at inter 384 and 17.5 MB at inter 3072 (estimated from the layout); count the touched experts from AKLR's own inputs (`../patterns/memory_bound.md`, Rule out first). From 32–40 tokens up the delivered kernels read them at 6.0–6.45 TB/s against a 6.5 TB/s read roof, aiter at 5.0–5.97, so at most 5–8% is left; at 8–24 tokens the per-launch costs around the GEMMs weigh, and EP8 measured 1.28–1.59 there *(field, E5)* | `../patterns/memory_bound.md`; `grouped_sorted_tokens.md` §2, §7; `few_tokens.md` |
 | Kimi-K3 SiTUv2 at m 893–16384 | Every expert is touched; from ~9k tokens the GEMMs are compute-bound. At 16384 tokens the delivered kernels ran stage 1 at 1970 (TP) and 1889 (EP8) TF/s of useful FLOPs (padding rows not counted) and stage 2 at 1347 and 1764, where aiter ran 1431/1459 and 929/1267 *(field, E6)*. TP's per-route rows and their reduce kernel took 190 of 1533 µs | `grouped_sorted_tokens.md` §2, §6; `../gemm/mainloop.md` §7 |
-| m 64–4096 with 33 local experts | Rows repeat per expert: tile-M 32–128, several row tiles of one expert per weight sweep, activations staged through LDS. Served at 1.030–1.609 over aiter at every m from 64 *(field, E4)* | [fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md) |
+| m 64–4096 with 33 local experts | Rows repeat per expert: tile-M 32–128, several row tiles of one expert per weight sweep, activations staged through LDS. In the predecessor repository's CI (2026-10) it was served at 1.030–1.609 over aiter at every m from 64 *(field, E4)* | [fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md) |
 
 ## Techniques that apply
 
@@ -145,20 +145,20 @@ tokens per call. Reuse the mechanism and re-derive the number.
   table). Workflow and CI: § Workflow. The serving threshold: § Environment variables. Kernel-less files (a
   definition: loaded and audited, not served): § Schema fields.
 - `AKLR_DISABLE=fused_moe@1.0` stops serving every MoE schema.
-- Kernel-less `fused_moe` files on main at 0cef4f2e3, counted from `aklr/ops/fused_moe/impls/flydsl/`: 17 of the 25
-  files, 200 Points, none served (S1). By schema name, after `fused_moe_`:
+- Kernel-less `fused_moe` files in the predecessor repository in 2026-10, counted from `aklr/ops/fused_moe/impls/flydsl/`:
+  17 of the 25 files, 200 Points, none served (S1); the current files differ. By schema name, after `fused_moe_`:
 
-| Name | Points | Added by |
-|---|---|---|
-| `has_expert_mask_shuffled_16x16_model_dim4096_n_experts32_topk2_inter_dim4096_global_experts257` | 53, m 8–65536 | aa5e96bf3 |
-| `shuffled_16x16_model_dim4096_n_experts256_topk1_inter_dim512` | 51, m 8–65536 | aa5e96bf3 |
-| `shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim512` | 13, m 1–4096 | 97d5eb0b3 (#81) |
-| `situv2_act_quant8_gate_up_interleaved_model_dim3584_n_experts896_topk16_inter_dim384` | 17, m 8–16384 | a0e3cbea1 (#69) |
-| `situv2_has_expert_mask_act_quant8_gate_up_interleaved_model_dim3584_n_experts112_topk16_inter_dim3072_global_experts896` | 17, m 8–16384 | a0e3cbea1 (#69) |
-| `interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts384_topk6_inter_dim384` / `…_inter_dim768` | 9 and 6, m 1–256 | 31222a0d9 |
-| `interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts48_…` / `…_n_experts96_…` (inter 3072, 384 global) | 6 and 4, m 1–128 | 31222a0d9 |
-| the four `…_has_num_local_tokens_…` names (hidden 4096 or 7168) | 1 each, m 1024 or 2048 | 39a51ac02 (#71), 31222a0d9 |
-| the kernel-less siblings of the four clamped-SwiGLU kernel files (kernel files for these names also list m 16–256 and are served once CI records ≥ 1.03: [fused_moe_interleave_swiglu.md](../cases/fused_moe_interleave_swiglu.md)) | 5 each, m 16–256 | 39a51ac02 (#71) |
+| Name | Points |
+|---|---|
+| `has_expert_mask_shuffled_16x16_model_dim4096_n_experts32_topk2_inter_dim4096_global_experts257` | 53, m 8–65536 |
+| `shuffled_16x16_model_dim4096_n_experts256_topk1_inter_dim512` | 51, m 8–65536 |
+| `shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim512` | 13, m 1–4096 |
+| `situv2_act_quant8_gate_up_interleaved_model_dim3584_n_experts896_topk16_inter_dim384` | 17, m 8–16384 |
+| `situv2_has_expert_mask_act_quant8_gate_up_interleaved_model_dim3584_n_experts112_topk16_inter_dim3072_global_experts896` | 17, m 8–16384 |
+| `interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts384_topk6_inter_dim384` / `…_inter_dim768` | 9 and 6, m 1–256 |
+| `interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts48_…` / `…_n_experts96_…` (inter 3072, 384 global) | 6 and 4, m 1–128 |
+| the four `…_has_num_local_tokens_…` names (hidden 4096 or 7168) | 1 each, m 1024 or 2048 |
+| the kernel-less siblings of the four clamped-SwiGLU kernel files (kernel files for these names also list m 16–256 and are served once CI records ≥ 1.03: [fused_moe_interleave_swiglu.md](../cases/fused_moe_interleave_swiglu.md)) | 5 each, m 16–256 |
 
 ## Expert GEMM (grouped GEMM)
 
@@ -271,9 +271,9 @@ In FlyDSL: `../flydsl/moe.md` § INDEX Kernel map.
 
 ## Evidence
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter at m 1: 2.472 (257 experts, 1fee59821837c26f), 1.258 (33 experts, ef15e87894a8ae06), 1.353 (65 experts, 1bf41ccba6750300), 3.015–3.359 (clamped SwiGLU, four files; 9dcb4d796b597d0b 3.089, a5a343437ee191a7 3.015 from 102877ca0) (5571f4589, CI run 40613440602)
-- E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, bench_cudagraph: graph replay, 1 GiB flush per call, Kineto kernel time, median; one run per arm] 39.09–102.04 µs per call with a separate sort node, 34.38–95.67 µs with it folded into stage 1, at m 8–64 (257 experts, inter 256; local:/workspace/code/gpt_oss_docker/scratch/glm52_sikl_port/evidence/moe_triage_AB.md:13)
-- E4 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter at m 64–4096: 1.030, 1.147, 1.109, 1.257, 1.609, 1.081, 1.070 (fused_moe_shuffled_16x16_model_dim6144_n_experts33_topk9_inter_dim2048, file ef15e87894a8ae06; 5571f4589, CI run 40613440602)
-- E5 [2026-10, gfx950, FlyDSL ?, N=1, `python -m aklr validate --base origin/main` run locally on one MI355X: graph replay, 1 GiB flush per call, one-sided lower bound against aiter; touched experts counted from the same inputs] speedup over aiter at m 8–112: TP 1.373, 1.287, 1.243, 1.194, 1.168, 1.084, 1.069, 1.061, 1.058, 1.054, 1.043, 1.039, 1.038; EP8 1.592, 1.427, 1.347, 1.281, 1.220, 1.278, 1.282, 1.276, 1.262, 1.253, 1.245, 1.229, 1.240; weight bytes of the touched experts over the median candidate time 6.04–6.20 TB/s (TP, m 40–112) and 6.20–6.45 TB/s (EP8, m 32–112), aiter 5.0–5.97 TB/s; read roof 6.5 TB/s from a read-only kernel (the eight K3 kernel files of branch kyle/k3-moe-kernels; local:/shared_nfs/kyle/moe/k3rebase/val2/report.json; local:/shared_nfs/kyle/moe/kf/scan/touched.json; read roof: local:/workspace/code/gpt_oss_docker/scratch/archive/inference2_cleanup_20261022.tar.gz member tools/_moe_minibench.py:235)
-- E6 [2026-10, gfx950, FlyDSL 0.3.2, N=1, eager calls on the validate inputs, L2 flushed between calls, torch.profiler kernel times; useful FLOPs 2 · routes · N · K per GEMM] at 16384 tokens, the delivered kernels against aiter: TP stage 1 732.4 µs = 1970 TF/s (aiter 1008.2 µs = 1431), stage 2 535.8 µs = 1347 (776.8 µs = 929), other kernels 264.5 µs with the reduce 190.4 (480.3 with 374.8); EP8 stage 1 762.6 µs = 1889 (987.2 µs = 1459), stage 2 408.1 µs = 1764 (568.3 µs = 1267), other 57.5 µs (508.5); at 9397 tokens TP 1701 / 1200, EP8 1660 / 1511 TF/s (local:/shared_nfs/kyle/moe/kf/flops_run/r2/tp8.txt; local:/shared_nfs/kyle/moe/kf/flops_run/r2/ep8.txt; script local:/shared_nfs/kyle/moe/kf/flops_run/prof_flops.py)
+- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI, 2026-10; the files' current values differ] speedup over aiter at m 1: 2.472 (257 experts, 1fee59821837c26f), 1.258 (33 experts, ef15e87894a8ae06), 1.353 (65 experts, 1bf41ccba6750300), 3.015–3.359 (clamped SwiGLU, four files; 9dcb4d796b597d0b 3.089, a5a343437ee191a7 3.015)
+- E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, bench_cudagraph: graph replay, 1 GiB flush per call, Kineto kernel time, median; one run per arm] 39.09–102.04 µs per call with a separate sort node, 34.38–95.67 µs with it folded into stage 1, at m 8–64 (257 experts, inter 256)
+- E4 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI, 2026-10; the file's current values differ] speedup over aiter at m 64–4096: 1.030, 1.147, 1.109, 1.257, 1.609, 1.081, 1.070 (fused_moe_shuffled_16x16_model_dim6144_n_experts33_topk9_inter_dim2048, file ef15e87894a8ae06)
+- E5 [2026-10, gfx950, FlyDSL ?, N=1, `python -m aklr validate --base origin/main`, not CI, on one MI355X: graph replay, 1 GiB flush per call, one-sided lower bound against aiter; touched experts counted from the same inputs] speedup over aiter at m 8–112: TP 1.373, 1.287, 1.243, 1.194, 1.168, 1.084, 1.069, 1.061, 1.058, 1.054, 1.043, 1.039, 1.038; EP8 1.592, 1.427, 1.347, 1.281, 1.220, 1.278, 1.282, 1.276, 1.262, 1.253, 1.245, 1.229, 1.240; weight bytes of the touched experts over the median candidate time 6.04–6.20 TB/s (TP, m 40–112) and 6.20–6.45 TB/s (EP8, m 32–112), aiter 5.0–5.97 TB/s; read roof 6.5 TB/s from a read-only kernel (the eight K3 kernel files)
+- E6 [2026-10, gfx950, FlyDSL 0.3.2, N=1, eager calls on the validate inputs, L2 flushed between calls, torch.profiler kernel times; useful FLOPs 2 · routes · N · K per GEMM] at 16384 tokens, the delivered kernels against aiter: TP stage 1 732.4 µs = 1970 TF/s (aiter 1008.2 µs = 1431), stage 2 535.8 µs = 1347 (776.8 µs = 929), other kernels 264.5 µs with the reduce 190.4 (480.3 with 374.8); EP8 stage 1 762.6 µs = 1889 (987.2 µs = 1459), stage 2 408.1 µs = 1764 (568.3 µs = 1267), other 57.5 µs (508.5); at 9397 tokens TP 1701 / 1200, EP8 1660 / 1511 TF/s
 - S1 aklr/ops/README.md:76 a schema file with empty `sources` is a definition: loaded and audited, not served or benched

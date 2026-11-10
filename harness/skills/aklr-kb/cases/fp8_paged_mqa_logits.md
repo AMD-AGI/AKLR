@@ -9,7 +9,7 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1
 measured:
-  - {metric: "speedup over aiter (deepgemm_fp8_paged_mqa_logits through aklr/ops/mla/baseline.py), CI, per Point", value: "1.041–1.884; 58 of 58 Points ≥ 1.03", gpu: MI355X, workload: "fp8_paged_mqa_logits_page_size64_n_heads64, batch 1–256 × 4–8 pool sizes, max_blocks 4097", run_ref: "5571f4589 (CI run 40613440602)", date: "2026-10-28"}
+  - {metric: "speedup over aiter (deepgemm_fp8_paged_mqa_logits through aklr/ops/mla/baseline.py), CI, per Point", value: "1.041–1.884; 58 of 58 Points ≥ 1.03", gpu: MI355X, workload: "fp8_paged_mqa_logits_page_size64_n_heads64, batch 1–256 × 4–8 pool sizes, max_blocks 4097", date: "2026-10-28"}
 sources:
   - aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a.json
 ---
@@ -18,7 +18,7 @@ sources:
 
 One FlyDSL kernel for `fp8_paged_mqa_logits@1.0`, the DeepSeek-V4 indexer's logits
 `logits[b, t] = Σ_h weights[b, h] · relu(q[b, h] · k_t) · scale_t`, added for DeepSeek-V4-Flash with one query token
-per request, as in decode (PR #71). The
+per request, as in decode. The
 schema embeds it as `kernel.sources[0].content` (`kernel.py`); the function names below are in that file. "batch"
 is the Point's number of requests.
 
@@ -80,7 +80,7 @@ is the Point's number of requests.
 - **Pool size.** Byte offsets are 32-bit (`page id · 8448` in `Int32`) inside one buffer descriptor per pool up to
   2 GiB (254,200 pages); a larger pool gives each page its own descriptor (`_key_pool`, `_issue_page`), which the
   comment there puts at about 4 % at batch 1 (measured outside CI). The 262,144-page Points take that path.
-- **A number from another ruler.** The commit that added the batch ≤ 4 body (39a51ac02) quotes batch 1, 2 and 4 as
+- **A number from another ruler.** The commit that added the batch ≤ 4 body quotes batch 1, 2 and 4 as
   1.7×, 2.1× and 2.2× faster than aiter on AKLR's own clock *(field, E3)*; CI's lower bounds at those Points are
   1.041–1.101, 1.211–1.284 and 1.272–1.372 *(field, E1)*. What makes the gap is not established
   (`../pitfalls/speedup_from_another_ruler.md`).
@@ -135,8 +135,8 @@ The file is the only kernel of its schema name, so the yardstick at every Point 
 CUDA-graph replays with a 1 GiB cache flush before each call (`aklr/core/validation/stages/_measure.py`); a Point is
 served from 1.03 (`AKLR_MIN_SPEEDUP`).
 
-CI installs the repository with `--no-deps`, so these runs used the FlyDSL of the CI image, 0.3.4.1, not the
-repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`).
+The predecessor repository's CI installed the code with `--no-deps`, so these runs used the FlyDSL of the CI image,
+0.3.4.1, not the repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`).
 
 Per batch, the range over that batch's pool sizes:
 
@@ -179,10 +179,10 @@ calls the kernel on two devices or two streams at batch ≥ 64, or a FlyDSL or L
 `<schema>.json#kernel.py:<line>` is a line of the `kernel.py` the schema embeds; `<schema>` is
 aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a.
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter 1.041–1.884 per Point, 58 of 58 ≥ 1.03; batch 1 1.041–1.101, 2 1.211–1.284, 4 1.272–1.372, 8 1.117–1.165, 16 1.212–1.264, 32 1.195–1.269, 64 1.643–1.714, 128 1.700–1.747, 256 1.794–1.884 (fp8_paged_mqa_logits_page_size64_n_heads64, 58 Points; 5571f4589, CI run 40613440602)
-- E2 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] the other committed measurement: 1.024–1.891 per Point, 57 of 58 ≥ 1.03; batch 1 by pool size 105428 1.055, 109404 1.035, 111670 1.024, 111761 1.073, 115603 1.035, 119349 1.030, 120631 1.037, 123163 1.031 (fp8_paged_mqa_logits_page_size64_n_heads64; 102877ca0, CI run 40154665266)
-- E3 [2026-10, gfx950, FlyDSL ?, N=?, AKLR bench_cudagraph, local run] batch 1, 2 and 4 "1.7x, 2.1x and 2.2x faster than aiter" after the depth-2 pipeline (fp8_paged_mqa_logits_page_size64_n_heads64; commit message of 39a51ac02, PR #71)
-- E4 [2026-11, gfx950, FlyDSL 0.3.4.1, N=1, `python -m aklr validate --base origin/main`, local run] speedup over aiter 1.030–1.809 per Point, 61 of 61 passed; batch 1 1.030–1.134, 2 1.244–1.302, 4 1.294–1.341, 8 1.278–1.307, 16 1.217–1.261, 32 1.241–1.271, 64 1.409–1.700, 128 1.570–1.731, 256 1.696–1.809 (fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a, PR #96)
+- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over aiter 1.041–1.884 per Point, 58 of 58 ≥ 1.03; batch 1 1.041–1.101, 2 1.211–1.284, 4 1.272–1.372, 8 1.117–1.165, 16 1.212–1.264, 32 1.195–1.269, 64 1.643–1.714, 128 1.700–1.747, 256 1.794–1.884 (fp8_paged_mqa_logits_page_size64_n_heads64, 58 Points)
+- E2 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] the other committed measurement: 1.024–1.891 per Point, 57 of 58 ≥ 1.03; batch 1 by pool size 105428 1.055, 109404 1.035, 111670 1.024, 111761 1.073, 115603 1.035, 119349 1.030, 120631 1.037, 123163 1.031 (fp8_paged_mqa_logits_page_size64_n_heads64)
+- E3 [2026-10, gfx950, FlyDSL ?, N=?, AKLR bench_cudagraph, not CI] batch 1, 2 and 4 "1.7x, 2.1x and 2.2x faster than aiter" after the depth-2 pipeline (fp8_paged_mqa_logits_page_size64_n_heads64)
+- E4 [2026-11, gfx950, FlyDSL 0.3.4.1, N=1, `python -m aklr validate --base origin/main`, not CI] speedup over aiter 1.030–1.809 per Point, 61 of 61 passed; batch 1 1.030–1.134, 2 1.244–1.302, 4 1.294–1.341, 8 1.278–1.307, 16 1.217–1.261, 32 1.241–1.271, 64 1.409–1.700, 128 1.570–1.731, 256 1.696–1.809 (fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a, PR #96)
 - S1 aklr/ops/mla/contract.py:410 `SqnrBound(min_sqnr_db=30.0)`; compare `BOUNDED` at :414; `context_lens` drawn at `max_seq_len` only at :396; pool bytes below 0x40 at :380
 - S2 aklr/ops/mla/baseline.py:98 the baseline calls aiter with `Preshuffle`, `KVBlockSize` and the logits' width only, leaving `ChunkK`, `WavePerEU` and the scheduling arguments at aiter's defaults
 - S3 aklr/ops/mla/reference.py:133 the reference scales the keys before relu
