@@ -259,6 +259,8 @@ def run(args, runtime_options: list[str]) -> int:
                 "create",
                 "--name",
                 name,
+                "--label",
+                f"agentx.out={out}",
                 "--pull",
                 "never",
                 "--init",

@@ -50,7 +50,9 @@ concurrency:
         format('agentx-pr-{0}', github.event.pull_request.number) ||
         github.event_name == 'pull_request' && format('agentx-ignored-{0}', github.run_id) ||
         'agentx-weekly' }}
-  cancel-in-progress: false
+  # A new commit on a labeled PR supersedes its running AgentX run; ignored PR events have a
+  # group of their own, and scheduled and manual runs still queue.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
   run:
@@ -140,11 +142,21 @@ jobs:
           MODEL_ID: ${{ matrix.model }}
           TARGET_ID: ${{ matrix.target }}
           HF_HUB_DIR: ${{ vars.AGENTX_HF_HUB_DIR }}
+        # exec: a cancelled run's SIGINT must reach the sweep, which then stops its container.
         run: |
-          python3 -m agentx_bench sweep --serving "$RUNNER_TEMP/plan/models/$MODEL_ID/targets/$TARGET_ID/serving.json" \
+          exec python3 -m agentx_bench sweep --serving "$RUNNER_TEMP/plan/models/$MODEL_ID/targets/$TARGET_ID/serving.json" \
             --hub "$HF_HUB_DIR" --run-id "$GITHUB_RUN_ID" --cache "$RUNNER_TEMP/aklr-cache/$MODEL_ID/$TARGET_ID" \
             --work "$RUNNER_TEMP/agentx/$MODEL_ID/$TARGET_ID" \
             --out "$RUNNER_TEMP/results/models/$MODEL_ID/targets/$TARGET_ID"
+      - name: Remove the sweep container left by a cancelled run
+        # The runner kills the sweep 10 s after cancelling, which can be before its own cleanup ends.
+        if: always()
+        env:
+          MODEL_ID: ${{ matrix.model }}
+          TARGET_ID: ${{ matrix.target }}
+        run: |
+          out=$(realpath -m "$RUNNER_TEMP/results/models/$MODEL_ID/targets/$TARGET_ID")
+          docker ps --all --quiet --filter "label=agentx.out=$out" | xargs --no-run-if-empty docker rm --force
       - uses: actions/upload-artifact@v4
         if: always()
         with:
