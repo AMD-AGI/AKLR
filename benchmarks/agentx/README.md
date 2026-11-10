@@ -179,8 +179,6 @@ python3 -m agentx_bench report \
 
 Omit `--baseline-dir` when no baseline exists yet. `plan --models` and `--targets` support the multiple models and targets used by CI; this local example runs one model target. The report's `--results` points to the root containing `models/`, while sweep's `--out` points to the specific target directory. Planning and execution must use the same `--run-id`.
 
-The `plan` command's `--runner-label agentx-mi355x` option further filters the selected models to enabled targets assigned to that runner label. Both PR label and scheduled triggers use this filter. `--require-recipe-duration` verifies inherited durations without overriding them and cannot be combined with `--duration`.
-
 ## 3. Configuration
 
 ### 3.1 agentx.yaml Fields

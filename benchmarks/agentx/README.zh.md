@@ -176,8 +176,6 @@ python3 -m agentx_bench report \
 
 首次没有基线时省略 `--baseline-dir`。`plan` 可通过 `--models` 和 `--targets` 生成 CI 所需的多模型、多 target 计划；本地分阶段示例只运行一个模型和 target。`--results` 指向包含 `models/` 的根目录，sweep 的 `--out` 则指向具体 target 目录。plan 与执行必须使用同一 `--run-id`。
 
-`plan` 专用选项 `--runner-label agentx-mi355x` 可进一步筛选所选模型中绑定该 runner 标签的已启用 target，PR 标签和定时入口均使用此筛选。`--require-recipe-duration` 只校验继承的时长，不作覆盖，不能与 `--duration` 同时使用。
-
 ## 3. 配置介绍
 
 ### 3.1 agentx.yaml 字段说明
