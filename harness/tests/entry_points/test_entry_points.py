@@ -1,5 +1,6 @@
 """Every client reaches every harness skill and agent through the repository's entry points."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -23,10 +24,15 @@ def test_codex_and_cursor_read_the_harness_skills():
     assert (repo / ".agents/skills").resolve() == repo / "harness/skills"
 
 
-@pytest.mark.parametrize("name", harness_agents())
-def test_cursor_reads_each_agent(name):
+def test_cursor_reads_the_harness_agents():
     repo = repo_root()
-    assert (repo / f".cursor/agents/{name}.md").resolve() == repo / f"harness/agents/{name}.md"
+    assert (repo / ".claude/agents").resolve() == repo / "harness/agents"
+
+
+@pytest.mark.parametrize("name", harness_agents())
+def test_claude_code_denies_the_unprefixed_copy_of_each_agent(name):
+    settings = json.loads((repo_root() / ".claude/settings.json").read_text())
+    assert f"Agent({name})" in settings["permissions"]["deny"]
 
 
 @pytest.mark.parametrize("name", harness_agents())

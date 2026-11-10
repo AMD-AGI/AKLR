@@ -1,3 +1,4 @@
 {
-  "enabledPlugins": { "aklr@aklr": false }
+  "enabledPlugins": { "aklr@aklr": false },
+  "permissions": { "deny": ["Agent(something-important)"] }
 }
