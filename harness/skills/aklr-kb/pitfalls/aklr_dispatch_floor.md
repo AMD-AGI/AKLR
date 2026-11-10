@@ -55,7 +55,7 @@ deployment's graph pays per call is the back-to-back time, not AKLR's reading.
 
 ## Evidence
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=3, AKLR graph timer vs back-to-back graph replay with CUDA events] K3 top-k start kernel 4.27 vs 3.44 µs, aiter top-k 12.05 vs 10.54 µs, one-element `zero_` 4.19 vs 1.70 µs, at n_tokens=8 (local:/shared_nfs/kyle/moe/k3six/tasks2/probe_floor2.out)
-- E2 [2026-11, gfx950, FlyDSL 0.3.2, N=3, aklr validate] bmm_n128_k512 m=8: 4.09 vs 4.10 µs with the runner forcing queue profiling; 1.70 vs 2.59 µs, ratio lower bound 1.480, with the runner not forcing it (local:/shared_nfs/kyle/moe/k3six/deliver/fv3.log:41, local:/shared_nfs/kyle/moe/k3six/tasks2/step66.out:9)
-- E3 [2026-11, gfx950, FlyDSL 0.3.2, N=3, aklr validate with back-to-back timing, kernels of the timed graph from Kineto] one `bmm_n128_k512_tiled_0` per call, the readings still 4.1-4.3 µs (local:/shared_nfs/kyle/moe/k3six/tasks2/step65.out:4)
+- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=3, AKLR graph timer vs back-to-back graph replay with CUDA events] K3 top-k start kernel 4.27 vs 3.44 µs, aiter top-k 12.05 vs 10.54 µs, one-element `zero_` 4.19 vs 1.70 µs, at n_tokens=8
+- E2 [2026-11, gfx950, FlyDSL 0.3.2, N=3, aklr validate] bmm_n128_k512 m=8: 4.09 vs 4.10 µs with the runner forcing queue profiling; 1.70 vs 2.59 µs, ratio lower bound 1.480, with the runner not forcing it
+- E3 [2026-11, gfx950, FlyDSL 0.3.2, N=3, aklr validate with back-to-back timing, kernels of the timed graph from Kineto] one `bmm_n128_k512_tiled_0` per call, the readings still 4.1-4.3 µs
 - S1 AMD-AGI/AKLR@a29581b2d:aklr/core/validation/stages/_bench/_execution/_runner.py:475 `GPU_FORCE_QUEUE_PROFILING="1"`

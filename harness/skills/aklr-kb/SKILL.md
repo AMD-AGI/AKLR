@@ -3,11 +3,12 @@ name: aklr-kb
 description: >
   What makes a kernel fast on gfx950 (MI350/MI355X) inside AKLR, and how to write it in FlyDSL, Triton/Gluon or
   HIP (the flydsl/, triton/ and hip/ folders: limits, errors, debugging, each language's own guides). Includes
-  a dense-GEMM package (fp8, MXFP4, MXFP8, bf16/fp16, int8, small-M decode shapes included): dispatch rounds
+  a dense-GEMM package (fp8, MXFP4, MXFP8, bf16/fp16, int8, small-M shapes included): dispatch rounds
   and split-K, main-loop pipelines, LDS/swizzle/DMA data paths, XCD tile order and scheduling hints,
   epilogues, autotuning, attribution, correctness gates and A/B measurement. Also a MoE package (fused MoE at
-  decode sizes, and the expert grouped GEMM: training forward, dgrad and variable-K wgrad in bf16, fp8, MXFP8
-  and MXFP4), an attention package, symptom pages, pitfalls and delivered kernels, trace capture and analysis,
+  any token count, and the expert grouped GEMM: tile-to-group mapping, order under token skew, sorted-token
+  rows, transposed operands and K varying per group, in bf16, fp8, MXFP8 and MXFP4), an attention package,
+  symptom pages, pitfalls and delivered kernels, trace capture and analysis,
   perf-regression bisection, the CDNA4 (gfx950) ISA reference guide with guides to looking things up in it,
   and gfx942 (MI300X) GEMM notes. Use when optimizing a kernel in any of these languages, or finding out why one
   is slow or wrong.
@@ -63,13 +64,13 @@ wins. Check a plan against this table before writing code.
 | Task | Read in this order |
 |---|---|
 | Write or optimize a dense GEMM (fp8 / MXFP4 / MXFP8 / bf16) | `gemm/INDEX.md` → the card it routes to |
-| A GEMM with M ≤ 256 (decode, speculative verify) | `gemm/small_m.md` |
+| A GEMM with M ≤ 256 (as in decode or speculative verify) | `gemm/small_m.md` |
 | A GEMM on gfx942 (MI300X) | `gemm/gfx942.md` |
-| A MoE: fused MoE at decode sizes (MXFP4, routing sort, stage 1 / stage 2), or its expert grouped GEMM (forward, dgrad, variable-K wgrad) | `moe/INDEX.md` → the card it routes to; the expert GEMM is its § Expert GEMM (grouped GEMM), with main loop and datapath in `gemm/` |
-| Write or optimize an attention kernel (prefill, backward, decode with split KV) | `attention/INDEX.md` → the card it routes to |
+| A MoE layer at any token count (MXFP4 experts, routing sort, stage 1 / stage 2), or its expert GEMMs as a grouped GEMM: per-size configuration, tile and occupancy, XCD placement, low precision and scale preshuffle, sorted-token rows, K varying per group, correctness, measurement | `moe/INDEX.md` → the card § it routes the problem to; main loop and data path in `gemm/` |
+| Write or optimize an attention kernel: many query rows per head, the dQ dK dV gradients, or few query rows per head with split KV | `attention/INDEX.md` → the card it routes to |
 | Dump a kernel's IR and final ISA; read registers, LDS, spills, waits and hot-loop counts | `gemm/mainloop.md` §10 (FlyDSL's `FLYDSL_DUMP_IR=1`: `flydsl/gemm.md` § mainloop §10); `analysis/isa_diff.py` compares two dumps |
 | Capture a kernel trace and find the hotspot, or find the commit behind a performance regression | `profile.md` |
-| EP dispatch/combine against TP at decode, or a collective's time in a multi-GPU trace | `communication/INDEX.md` |
+| EP dispatch/combine against TP for a MoE layer at a few tokens per GPU, or a collective's time in a multi-GPU trace | `communication/INDEX.md` |
 | What an instruction, encoding, counter, wait state or hardware limit really is | `hardware/gfx950/INDEX.md` → `hardware/gfx950/lookup.md`, `hardware/gfx950/matrix_core.md`, `hardware/gfx950/memory_and_sync.md`; gfx942 (MI300X): `hardware/gfx942/INDEX.md` |
 | The language: its API, compile errors, debugging, its own guides | the language's folder: `flydsl/SKILL.md`, `triton/SKILL.md`, `hip/SKILL.md` |
 | A Triton or Gluon kernel: authoring, debugging, tuning, numerics, Gluon layouts, memory, MFMA and inline asm, AKLR's 154 Triton kernels by family, its GEMM, MoE, attention and GatedDeltaNet kernels | `triton/SKILL.md` → the page its task table names |

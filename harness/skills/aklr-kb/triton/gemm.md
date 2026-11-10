@@ -1,15 +1,15 @@
 ---
-title: "GEMM in Triton and Gluon on gfx950: AKLR's fp8 block-scaled GEMMs and bf16 decode GEMMs"
+title: "GEMM in Triton and Gluon on gfx950: AKLR's fp8 block-scaled GEMMs (M 1-8193) and bf16 GEMMs at M ≤ 64"
 kind: topic
 ops: [gemm]
 dtypes: [fp8, bf16]
-regimes: [decode, prefill]
+regimes: ["M 1-64", "M 128-8193", tiny-M K-group folding, ragged-M, split-k]
 gens: [gfx950]
 triton: 3.8.0
 ---
 # GEMM in Triton and Gluon (gfx950)
 The Triton side of [`../gemm/`](../gemm/INDEX.md): how AKLR's 24 Gluon fp8 block-scaled (a8w8 blockwise) GEMMs and
-its two plain-Triton bf16 decode GEMMs are cut by M, how their K loops feed the matrix core, and what was measured
+its two plain-Triton bf16 GEMMs for M ≤ 64 are cut by M, how their K loops feed the matrix core, and what was measured
 on them. The `../gemm/` cards cover the related mechanisms. The CI speedups quoted are the values stored at AKLR
 43e112e; later CI runs on main rewrote most of them (n7168 m = 1: 1.664 then, 1.728 since d908d01) *(field, E1)*.
 ## Route here when
@@ -18,7 +18,7 @@ on them. The `../gemm/` cards cover the related mechanisms. The CI speedups quot
 - You need a tile and grid for an M or a new (N, K), tiny-M K-group folding, an async direct-to-LDS K loop, an LDS
   layout for fp8 operands, a tile order, ragged M, the epilogue, or split-K under a `bitwise` contract.
 - You want the knobs a measurement backs (§11).
-Elsewhere: the bf16 decode GEMM, `gemm/decode_gemm.md`; Gluon API facts, `gluon/memory.md`, `gluon/layouts.md`,
+Elsewhere: the bf16 GEMM at M ≤ 64, `gemm/small_m_gemm.md`; Gluon API facts, `gluon/memory.md`, `gluon/layouts.md`,
 `gluon/mfma.md`; A/B method and launch options, `tuning.md`; reading the compiled kernel, `debugging.md` §1–§3;
 rounding, `numerics.md`; files, entry and validation, `authoring.md`; loop designs and throughput arithmetic,
 `../gemm/mainloop.md` §1, §9; MoE expert GEMMs, `moe.md`; every family on main, `kernels/kernel_library.md`.
@@ -53,7 +53,7 @@ rounding, `numerics.md`; files, entry and validation, `authoring.md`; loop desig
   the MoE expert GEMMs, folding the same 1 × 128 / 128 × 128 scales per 128-K group on 16 × 16-preshuffled fp8
   weights in registers: MiniMax-M2 FP8's gate-up at K = 3072 (`mfma_scaled`), Qwen2-MoE FP8's experts at K = 4096
   (fp8 widened to fp16) (S4; `moe.md` §7, also for MXFP4). In FlyDSL: the `b_shuffled` files, N = 4096 at K 256–8192
-  (`../cases/a8w8_n4096_k_sweep.md`), K 7168 at N 768, 1536, 2048, 6144. bf16 long K: `gemm/decode_gemm.md` §5–§6.
+  (`../cases/a8w8_n4096_k_sweep.md`), K 7168 at N 768, 1536, 2048, 6144. bf16 long K: `gemm/small_m_gemm.md` §5–§6.
   `gemm_a8w8@1.0`, `gemm_a4w4_mxfp4@1.0` and `bmm@1.0` have no Triton kernel. Start from §3's last three bullets.
 ## 2. One launch, one output tile per program, one partial per 128-K group
 All 24 a8w8 files launch one kernel per call, one program per output tile, no persistent loop, all of K in each
@@ -163,7 +163,7 @@ result = gl.sum(gl.reshape(acc, (M, PG, BN)), 1)
   the MFMA count is tiny (3 per program at m = 1) and the call streams its weight. n3072 issues every K panel before
   the first wait. In the served n7168 M = 1, 2, 4 paths, 8 of B's 16 K groups are primed; M = 8 instead primes 3
   two-group panels (6 groups). The remaining panels are refilled in the loop (S19).
-- **Measured only on these micro-kernel Points.** The served kernels' 1.307–1.435 (n3072) and 1.664–1.840 (n7168) *(field, E1)* do not separate folding. An M = 2, N = 7168, K = 2048 A-only fold took 0.925–0.934× the one-group time in 3 runs *(field, E8)*. A register-operand sweep over M = 1 / 2 / 4 / 8 × (N, K) = (3072, 1536), (7168, 2048), (7168, 7168), with A-only (FA), A-and-B diagonal (FAB) and one-group (U) arms, was accurate in all 36 (error / max|reference| 1.4e-5–1.8e-5). In one run of 12 balanced cycles per configuration, min(FA, FAB) / U was 0.309–0.512 at M ≤ 4; the M = 8 gains 1.594 / 1.516 / 2.832 were below the M = 1 gains 2.368 / 1.953 / 3.013, and the gain did not fall at every step of M. FA alone at M = 1, N = 7168, K = 2048 took 0.98585× (nominal paired 95 % interval 0.98459–0.98711), not a 3 % gain *(field, E25)*. These do not carry over to other folds or tiny-M operators. `gemm/decode_gemm.md` §7 compares unfolded bf16 16-row tiles with GEMV kernels at M = 1.
+- **Measured only on these micro-kernel Points.** The served kernels' 1.307–1.435 (n3072) and 1.664–1.840 (n7168) *(field, E1)* do not separate folding. An M = 2, N = 7168, K = 2048 A-only fold took 0.925–0.934× the one-group time in 3 runs *(field, E8)*. A register-operand sweep over M = 1 / 2 / 4 / 8 × (N, K) = (3072, 1536), (7168, 2048), (7168, 7168), with A-only (FA), A-and-B diagonal (FAB) and one-group (U) arms, was accurate in all 36 (error / max|reference| 1.4e-5–1.8e-5). In one run of 12 balanced cycles per configuration, min(FA, FAB) / U was 0.309–0.512 at M ≤ 4; the M = 8 gains 1.594 / 1.516 / 2.832 were below the M = 1 gains 2.368 / 1.953 / 3.013, and the gain did not fall at every step of M. FA alone at M = 1, N = 7168, K = 2048 took 0.98585× (nominal paired 95 % interval 0.98459–0.98711), not a 3 % gain *(field, E25)*. These do not carry over to other folds or tiny-M operators. `gemm/small_m_gemm.md` §7 compares unfolded bf16 16-row tiles with GEMV kernels at M = 1.
 ## 5. The K loop: async direct-to-LDS K groups with PREFETCH in flight
 Gluon has no software pipeliner: `gluon_to_ttgir` runs no loop-scheduling or pipelining pass but `add_warp_pipeline`,
 which left loops without `gl.amd.warp_pipeline_stage` blocks unpipelined, and `num_stages` changed only plain Triton's
@@ -377,12 +377,12 @@ dispatched fastest, measured on the same 10 grids *(field, E22)*):
   0.937–0.988) *(field, E23)*. This holds for the measured Point only.
 - **The locality mechanism is unknown.** An eight-reader probe favored congruent ids by 1.76–2.17× (3 runs)
   *(field, E22)*, but real-kernel timing and CPU maps do not isolate L2 as the cause. Prove each launched grid's
-  permutation (`gemm/decode_gemm.md` §3).
-## 9. The bf16 decode GEMMs and split-K under a bitwise contract
+  permutation (`gemm/small_m_gemm.md` §3).
+## 9. The bf16 GEMMs at M ≤ 64 and split-K under a bitwise contract
 The two plain-Triton files, against aiter's tuned `gemm_a16w16` (S1), give a workgroup one N tile across all rows of
 `a` (S20, S22): over all of K at n6144 (192 workgroups) and at n2624 m ≤ 8 (164), over a sixth of K at n2624 m = 64 (41
 tiles × 6 splits = 246, then a reduce launch; counts traced). They read the weight once with `.cg`, remap workgroups
-per XCD and at some Points rotate each one's K start; choices and numbers: `gemm/decode_gemm.md` §1–§8. At 43e112e
+per XCD and at some Points rotate each one's K start; choices and numbers: `gemm/small_m_gemm.md` §1–§8. At 43e112e
 they stored 1.116 / 1.129 / 1.292 (f806, M = 2 / 4 / 8) and 1.048 / 1.070 / 1.062 (b88c) *(field, E1)*; how much of
 the spread over M is the baseline's was not separated. What Triton 3.8.0 adds on gfx950:
 
@@ -392,7 +392,7 @@ the spread over M is the baseline's was not separated. What Triton 3.8.0 adds on
   `warpsPerCTA = [4, 1]`, every wave issuing all 192 MFMAs: extra warps add copy bandwidth, not MFMA parallelism
   (kept, not separated).
 - **`schedule_hint` has no effect in the tested Triton 3.8.0 build.** n6144 passes `schedule_hint="memory-bound-attention"` at m = 32
-  (kept in `gemm/decode_gemm.md`); Triton 3.8.0 reads it nowhere ("right now no effect"), 3.7.0 made it the
+  (kept in `gemm/small_m_gemm.md`); Triton 3.8.0 reads it nowhere ("right now no effect"), 3.7.0 made it the
   `iterative-ilp` scheduler (S22): ask for that with `llvm_fn_attrs=[["amdgpu-sched-strategy", "iterative-ilp"]]`.
 - **One M tile covers all rows.** `offs_m = tl.arange(0, BLOCK_M)` with `BLOCK_M` ≤ 64 is all of M and `run`
   checks no upper bound (S20, S22): at m = 96 and 128 both files ran but left rows above 63 uncomputed. The n6144
@@ -404,7 +404,7 @@ the spread over M is the baseline's was not separated. What Triton 3.8.0 adds on
 - **XCD runs cross split boundaries.** `_xcd_remap` over the 246-tile grid (`pid_k = pid // N_TILES`) hands each XCD
   30–31 consecutive split-major tiles; 41-tile splits do not align, so five XCDs straddle two splits (computed from
   S20). One split per XCD (`../gemm/schedule_and_locality.md` §2) needs runs aligned to the splits.
-- **Price the reduce launch under the ruler that judges it.** AKLR's bench times a call as the sum of its per-kernel device durations, from AKLR's rocprofiler-sdk collector since #33, Kineto before (S23). Under the Kineto timer, before #33, a trivial or empty `zero_()` kernel read about 4.1–4.2 µs, and at n2624 M = 64 the whole call read 4.2 µs more than its split GEMM kernel alone: the timer's cost per kernel, not the reduce kernel's own duration *(field, E19)*. In a bare graph replay an extra chained trivial kernel added about 1.8 µs *(field, E19)* (`authoring.md` §7). The committed source splits K at M = 64 only; split against no split was measured at M = 16 and 64 (`gemm/decode_gemm.md` §6). A one-launch fold, the last split adding all partials in order (`../gemm/wait_free_fold.md`), drops the reduce kernel but, with per-call counters, not the node that zeroes them: without it replays after the first went wrong (MI355X). Forms: `../gemm/grid_pricing.md` §2, `../gemm/small_m.md` §4.
+- **Price the reduce launch under the ruler that judges it.** AKLR's bench times a call as the sum of its per-kernel device durations, from AKLR's rocprofiler-sdk collector since #33, Kineto before (S23). Under the Kineto timer, before #33, a trivial or empty `zero_()` kernel read about 4.1–4.2 µs, and at n2624 M = 64 the whole call read 4.2 µs more than its split GEMM kernel alone: the timer's cost per kernel, not the reduce kernel's own duration *(field, E19)*. In a bare graph replay an extra chained trivial kernel added about 1.8 µs *(field, E19)* (`authoring.md` §7). The committed source splits K at M = 64 only; split against no split was measured at M = 16 and 64 (`gemm/small_m_gemm.md` §6). A one-launch fold, the last split adding all partials in order (`../gemm/wait_free_fold.md`), drops the reduce kernel but, with per-call counters, not the node that zeroes them: without it replays after the first went wrong (MI355X). Forms: `../gemm/grid_pricing.md` §2, `../gemm/small_m.md` §4.
 - **The a8w8 GEMMs do not split K** (12 or 16 groups; `bounded` permits reordering only while each output meets its
   error bound). At M = 32, N = 4096, K = 7168, register-operand micro-kernels, the wave split took 20.8–21.0 µs
   against 22.3–22.6 µs for a split across workgroups plus a reduction (3 runs) *(field, E8)*. A rotating-buffer sweep

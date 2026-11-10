@@ -72,27 +72,27 @@ rules behind several rows are in `../debug-flydsl-kernel.md` §5.
 - S20 ROCm/FlyDSL@dd8373349:python/flydsl/compiler/ast_rewriter.py:1330 `visit_Yield` replaces every `ast.Yield` with a `scf_yield_` call; `visit_FunctionDef` (:423) descends into nested functions
 - S21 ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/__init__.py:17 `from ..._mlir.dialects.rocdl import *` re-exports the generated op builders
 - S22 ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/__init__.py:648 `_to_ir` turns a numeric into an `ir.Value`; `rcp` (:768), `readfirstlane` (:877), `ballot` (:882) and `readlane` (:898) call it; the MFMA wrappers unwrap through `_unwrap_mfma_operand` (:171)
-- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] RuntimeError reproduced from a plain helper (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p20_helper_runtime_if.py)
-- E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] same helper decorated @flyc.jit compiles, scf.if in the IR (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p20b_helper_jit.py)
-- E3 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p21_range_int64.py)
-- E4 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] both variants reproduced (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p22_none_before_for.py, local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p25_none_before_if.py)
-- E5 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p23_carried_dtype_change.py)
-- E6 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] raised at the use after the if (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p24_name_only_in_branch.py)
-- E7 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p43_list_index_runtime_iv.py)
-- E8 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced; using `results` directly compiles (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p67_init_single_result_index.py, local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p66_init_python_int_bounds.py)
-- E9 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p36_and_not_short_circuit.py)
-- E10 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced with a factory-built kernel; a module-level kernel edited after import compiled (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p37_source_edited_after_import.py, local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p37a_module_level_edit.py)
-- E11 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p38_exec_from_string.py)
-- E12 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced on the second call (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p34_global_changed.py)
-- E13 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p26_kernel_outside_jit.py)
-- E14 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p27_two_shared_allocators.py)
-- E15 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p28_known_block_size_mismatch.py)
-- E16 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p29_dynamic_smem_too_small.py)
-- E17 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced with a list (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p30_constexpr_list.py)
-- E18 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced; fx.Constexpr[tuple] with a tuple compiles (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p33_unregistered_arg.py, local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p33b_constexpr_tuple.py)
-- E19 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced with A[:, ::2]; flyc.from_dlpack of the same tensor compiles (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p31_no_unit_stride.py, local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p31b_no_unit_stride_from_dlpack.py)
-- E20 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p32_e8m0_dtype.py)
-- E21 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] printed, exit 0, artifact cached, second run silent (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p35_lds_overflow.py)
-- E22 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced with `thr_copy.partition_S(gB)` inside a runtime `range`; the same kernel with the call before the loop compiles (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p80_method_call_in_runtime_loop.py; local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p80b_method_call_hoisted.py)
-- E23 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced with a generator helper defined inside a runtime `range(..., init=[...])` body and iterated there; the same generator at module level compiles (local:/shared_nfs/kyle/aklr_mla/runs/L3/knowledge_patch_v2/probe/gen_yield.py)
-- E24 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] `rocdl.exp2(T.f32, fx.Float32(1.5))` raised it; the same call with `.ir_value()` compiled (local:/shared_nfs/kyle/aklr_mla/runs/L4/knowledge_patch_v2/probe/p_exp2.py)
+- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] RuntimeError reproduced from a plain helper
+- E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] same helper decorated @flyc.jit compiles, scf.if in the IR
+- E3 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced
+- E4 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] both variants reproduced
+- E5 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced
+- E6 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] raised at the use after the if
+- E7 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced
+- E8 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced; using `results` directly compiles
+- E9 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced
+- E10 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced with a factory-built kernel; a module-level kernel edited after import compiled
+- E11 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced
+- E12 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced on the second call
+- E13 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced
+- E14 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced
+- E15 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced
+- E16 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced
+- E17 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced with a list
+- E18 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced; fx.Constexpr[tuple] with a tuple compiles
+- E19 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced with A[:, ::2]; flyc.from_dlpack of the same tensor compiles
+- E20 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced
+- E21 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] printed, exit 0, artifact cached, second run silent
+- E22 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced with `thr_copy.partition_S(gB)` inside a runtime `range`; the same kernel with the call before the loop compiles
+- E23 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] reproduced with a generator helper defined inside a runtime `range(..., init=[...])` body and iterated there; the same generator at module level compiles
+- E24 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] `rocdl.exp2(T.f32, fx.Float32(1.5))` raised it; the same call with `.ir_value()` compiled

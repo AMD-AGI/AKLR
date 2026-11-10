@@ -9,10 +9,10 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1
 measured:
-  - {metric: "speedup over aiter, CI, per Point", value: "0.418–1.148; 1 of 13 Points ≥ 1.03 and served (m 1); at m 2, 4, 8, 64 a Triton kernel of the same name is served", gpu: MI355X, workload: "gemm_n2624_k6144, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "5571f4589 (CI run 40613440602); file added by 97d5eb0b3 (#81)", date: "2026-10-28"}
-  - {metric: "speedup over aiter, CI, per Point", value: "0.250–1.465; 2 of 13 Points ≥ 1.03 (m 1, 2)", gpu: MI355X, workload: "gemm_n3072_k6144, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "102877ca0 (CI run 40154665266); file added by 97d5eb0b3 (#81)", date: "2026-10-25"}
-  - {metric: "speedup over aiter, CI, per Point", value: "0.355–1.198; 2 of 13 Points ≥ 1.03 (m 1, 2), 1 served (m 1); at m 2–64 a Triton kernel of the same name is served", gpu: MI355X, workload: "gemm_n6144_k2048, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "5571f4589 (CI run 40613440602); file added by 97d5eb0b3 (#81)", date: "2026-10-28"}
-  - {metric: "speedup over aiter, CI, per Point", value: "0.418–1.208; 2 of 13 Points ≥ 1.03 (m 1, 2)", gpu: MI355X, workload: "gemm_n6144_k3072, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "5571f4589 (CI run 40613440602); file added by 97d5eb0b3 (#81)", date: "2026-10-28"}
+  - {metric: "speedup over aiter, CI, per Point", value: "0.418–1.148; 1 of 13 Points ≥ 1.03 and served (m 1); at m 2, 4, 8, 64 a Triton kernel of the same name is served", gpu: MI355X, workload: "gemm_n2624_k6144, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
+  - {metric: "speedup over aiter, CI, per Point", value: "0.250–1.465; 2 of 13 Points ≥ 1.03 (m 1, 2)", gpu: MI355X, workload: "gemm_n3072_k6144, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-25"}
+  - {metric: "speedup over aiter, CI, per Point", value: "0.355–1.198; 2 of 13 Points ≥ 1.03 (m 1, 2), 1 served (m 1); at m 2–64 a Triton kernel of the same name is served", gpu: MI355X, workload: "gemm_n6144_k2048, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
+  - {metric: "speedup over aiter, CI, per Point", value: "0.418–1.208; 2 of 13 Points ≥ 1.03 (m 1, 2)", gpu: MI355X, workload: "gemm_n6144_k3072, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
 sources:
   - aklr/ops/gemm/impls/flydsl/gemm_n2624_k6144/4001df477e6c67f6.json
   - aklr/ops/gemm/impls/flydsl/gemm_n3072_k6144/a85da0998ddc31b1.json
@@ -24,10 +24,10 @@ sources:
 
 # bf16 GEMM at wide N: a wave per output column at M ≤ 2
 
-Four FlyDSL kernels for the `gemm@1.0` contract on GLM-5.2 shapes (PR #43), one schema file per shape. Each schema
+Four FlyDSL kernels for the `gemm@1.0` contract on GLM-5.2 shapes, one schema file per shape. Each schema
 embeds its kernel as `kernel.sources[0].content` (`kernel.py`); the function names below are in that file. Two of
-the shapes also have a Triton kernel under the same name: n2624_k6144 (the QKV projection, PR #93) and n6144_k2048
-(the output projection, PR #95). "m" is the Point's M.
+the shapes also have a Triton kernel under the same name: n2624_k6144 (the QKV projection) and n6144_k2048
+(the output projection). "m" is the Point's M.
 
 ## Applies when
 
@@ -91,8 +91,8 @@ kernel (`aklr/core/validation/stages/_bench/_report.py`). Dispatch serves each P
 `speedup`, from 1.03 (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` § Environment variables). Bold: the file served
 there. Per Point:
 
-CI installs the repository with `--no-deps`, so these runs used the FlyDSL of the CI image, 0.3.4.1, not the
-repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`).
+The predecessor repository's CI installed the code with `--no-deps`, so these runs used the FlyDSL of the CI image,
+0.3.4.1, not the repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`).
 
 | File | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | Served |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -117,7 +117,7 @@ python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n6144_k2048/eb749c07b940
 python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n6144_k3072/d7fed2d1260b5f45.json
 ```
 
-The Triton files validate the same way. The report goes to `aklr_validation/report.md`; a local run checks the file,
+The Triton files validate the same way. The report goes to `aklr_validation/report.md`; a run outside CI checks the file,
 the served numbers are CI's (`aklr/ops/README.md` § Workflow). Add `--base origin/main` only on a branch that edits
 the file: with the base set, bench measures only schemas that are not at the base, so on an unchanged checkout it
 skips the bench (`aklr/core/validation/stages/validation_scope.py`, `of_working_tree`). To read a kernel:
@@ -132,9 +132,9 @@ back for a wrong result CI does not catch, for example after a FlyDSL or LLVM up
 
 ## Evidence
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter per Point 0.418–1.148, 1 of 13 Points ≥ 1.03 (m 1); m ≥ 2 (weight repacked per call) 0.418–0.996 (gemm_n2624_k6144 FlyDSL, m 1–4096; 5571f4589, CI run 40613440602)
-- E2 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter per Point 0.250–1.465, 2 of 13 Points ≥ 1.03 (m 1, 2); m ≥ 4 (repacked) 0.250–0.735 (gemm_n3072_k6144 FlyDSL, m 1–4096; 102877ca0, CI run 40154665266)
-- E3 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter per Point 0.355–1.198, 2 of 13 Points ≥ 1.03 (m 1, 2); m ≥ 4 (repacked) 0.355–0.861 (gemm_n6144_k2048 FlyDSL, m 1–4096; 5571f4589, CI run 40613440602)
-- E4 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter per Point 0.418–1.208, 2 of 13 Points ≥ 1.03 (m 1, 2); m ≥ 4 (repacked) 0.418–0.711 (gemm_n6144_k3072 FlyDSL, m 1–4096; 5571f4589, CI run 40613440602)
-- E5 [2026-10, gfx950, Triton, N=1, AKLR CI] speedup over aiter per Point 1.077–1.195 at m 2, 4, 8, 64, all served (gemm_n2624_k6144 Triton; 5571f4589, CI run 40613440602)
-- E6 [2026-10, gfx950, Triton, N=1, AKLR CI] speedup over aiter per Point 1.078–1.285 at m 2–64, all served (gemm_n6144_k2048 Triton; 5571f4589, CI run 40613440602)
+- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over aiter per Point 0.418–1.148, 1 of 13 Points ≥ 1.03 (m 1); m ≥ 2 (weight repacked per call) 0.418–0.996 (gemm_n2624_k6144 FlyDSL, m 1–4096)
+- E2 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over aiter per Point 0.250–1.465, 2 of 13 Points ≥ 1.03 (m 1, 2); m ≥ 4 (repacked) 0.250–0.735 (gemm_n3072_k6144 FlyDSL, m 1–4096)
+- E3 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over aiter per Point 0.355–1.198, 2 of 13 Points ≥ 1.03 (m 1, 2); m ≥ 4 (repacked) 0.355–0.861 (gemm_n6144_k2048 FlyDSL, m 1–4096)
+- E4 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over aiter per Point 0.418–1.208, 2 of 13 Points ≥ 1.03 (m 1, 2); m ≥ 4 (repacked) 0.418–0.711 (gemm_n6144_k3072 FlyDSL, m 1–4096)
+- E5 [2026-10, gfx950, Triton, N=1, the predecessor repository's CI] speedup over aiter per Point 1.077–1.195 at m 2, 4, 8, 64, all served (gemm_n2624_k6144 Triton)
+- E6 [2026-10, gfx950, Triton, N=1, the predecessor repository's CI] speedup over aiter per Point 1.078–1.285 at m 2–64, all served (gemm_n6144_k2048 Triton)

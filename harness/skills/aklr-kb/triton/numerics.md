@@ -52,7 +52,7 @@ Three places define "correct". The rules are stated in `aklr/ops/README.md` § S
     activations (S4); gated attention 15 dB on `values` and 20 dB on `scales`, by its contract 6-7 dB under aiter's
     fp8-cache decode, kernels wrong on purpose under 9 and 10 dB (16.4 and 16.8 dB on the small test Point) (S3).
   - `output_rounding` (rms_norm, add_rms_norm, the quantization ops' codes and fp32 scales, gemm_a8w8 on int8) allows
-    each element two roundings of the output dtype: compute in fp32, round once. `dot_product` (the 2 bf16 decode GEMMs
+    each element two roundings of the output dtype: compute in fp32, round once. `dot_product` (the 2 bf16 small-M GEMMs
     of `gemm@1.0`) is 2·(6·√K + 2)·u_fp32·M + u_out·|y|, M the reference on |a| and |b|, and covers a split into up to
     `max_split_k` = 16 parts (S1, S5) *(field, E2)*: accumulate in fp32.
   - `dot_product`, `output_rounding` and `baseline_relative` also test the error's bias: |mean|/rms over the n compared
@@ -300,7 +300,7 @@ as without it *(field, E13)*. Redo the split on every call: the weight is an inp
 **Which fp32-accurate path, by token count (MiniMax-M2 routers).** fp32 products and `gl.sum` in all 8 kernels at 1–16
 tokens (S17), the fp32 MFMA in 9 of the 11 at 32–256, the three-term split or the fp32 MFMA from 1024 (`[16, 16, 4]`,
 `[32, 32, 2]`, S36). Three bf16 MFMAs take about 3/16 of the fp32 MFMA's time over the same K (S26; 0.1887–0.1891
-measured, 4 runs *(field, E5)*); which pays at prefill: [moe.md](moe.md) §5.1. On complete router logits at 13 selected branches (VALU, fp32 MFMA and three-term bf16 MFMA), with a seed-0 random and a cancellation input each, the error against an fp64 matmul of the same inputs was no larger than a GPU IEEE fp32 matmul's in L2 on 25 of the 26 inputs (`e6fc`'s cancellation input 1.00009×), in max-abs on 23 and element by element on 3; on two more inputs built with a nonzero weight residual (`62df`, `f839`; 16 flags and 256 residual entries set), the fp64 correction ran, moved those logits from 0 to 2^-23, and both errors were 0 *(field, E19)*. Finite inputs: no guarantee for every input or for the top-8.
+measured, 4 runs *(field, E5)*); which pays from 1024 tokens: [moe.md](moe.md) §5.1. On complete router logits at 13 selected branches (VALU, fp32 MFMA and three-term bf16 MFMA), with a seed-0 random and a cancellation input each, the error against an fp64 matmul of the same inputs was no larger than a GPU IEEE fp32 matmul's in L2 on 25 of the 26 inputs (`e6fc`'s cancellation input 1.00009×), in max-abs on 23 and element by element on 3; on two more inputs built with a nonzero weight residual (`62df`, `f839`; 16 flags and 256 residual entries set), the fp64 correction ran, moved those logits from 0 to 2^-23, and both errors were 0 *(field, E19)*. Finite inputs: no guarantee for every input or for the top-8.
 
 **Round once where the reference rounds once (routers).** The Qwen2-MoE reference computes the router logits exactly in
 float64 and rounds once to bf16 (S8). The routers sum fp32 split partials in a fixed order and round once: "Route from
@@ -406,7 +406,7 @@ The fusion switch can matter for speed: Qwen3-Next prefill `11f6` with fusion on
 
 ## 8. Determinism and atomics
 
-- **Bitwise kernels use no atomics.** At `43e112e` none of the 65 `bitwise` kernels contains a global or LDS atomic; having no atomic does not by itself fix a reduction order, which the code must. The plain-Triton decode GEMM `gemm_n2624_k6144` splits K six ways only for 16 < m ≤ 64 (of its Points, m = 64): each split writes an fp32 partial tile, and "a second kernel adds the six partials in a fixed order before rounding to bf16, so the result is bitwise reproducible" (S58), as it was at all its Points *(field, E9)*; when that split pays: [gemm/decode_gemm.md](gemm/decode_gemm.md) §6.
+- **Bitwise kernels use no atomics.** At `43e112e` none of the 65 `bitwise` kernels contains a global or LDS atomic; having no atomic does not by itself fix a reduction order, which the code must. The plain-Triton bf16 GEMM `gemm_n2624_k6144` splits K six ways only for 16 < m ≤ 64 (of its Points, m = 64): each split writes an fp32 partial tile, and "a second kernel adds the six partials in a fixed order before rounding to bf16, so the result is bitwise reproducible" (S58), as it was at all its Points *(field, E9)*; when that split pays: [gemm/small_m_gemm.md](gemm/small_m_gemm.md) §6.
 - **Bounded kernels use integer atomics, for positions only.** 31 of the 89 `bounded` kernels (DeepSeek-V2 12,
   MiniMax-M2 MXFP4 11, MiniMax-M2 fp8 6, Qwen2-MoE fp8 experts 2) contain an atomic. Their 42 global atomic calls are
   all `sem="relaxed"` integer adds or ors that hand out tickets, job slots, cursors and token masks; three kernels also

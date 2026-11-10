@@ -9,14 +9,14 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1
 measured:
-  - {metric: "speedup over aiter (mhc_fused_post_pre), CI, per Point", value: "1.100–1.510; 13 of 13 Points ≥ 1.03", gpu: MI355X, workload: "mhc_fused_post_pre_has_norm_weight_hidden_size4096, n_tokens 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "5571f4589 (CI run 40613440602)", date: "2026-10-28"}
+  - {metric: "speedup over aiter (mhc_fused_post_pre), CI, per Point", value: "1.100–1.510; 13 of 13 Points ≥ 1.03", gpu: MI355X, workload: "mhc_fused_post_pre_has_norm_weight_hidden_size4096, n_tokens 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
 sources:
   - aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json
 ---
 
 # mHC fused post + pre at hidden 4096: one pass over the residual, a Gram for the norm
 
-One FlyDSL kernel for `mhc_fused_post_pre@1.0` (PR #52). The schema embeds it as `kernel.sources[0].content`
+One FlyDSL kernel for `mhc_fused_post_pre@1.0`. The schema embeds it as `kernel.sources[0].content`
 (`kernel.py`); the function names below are in that file. "T" is the Point's `n_tokens`.
 
 ## Applies when
@@ -123,10 +123,10 @@ The file is the only kernel of its schema name, so the yardstick at every Point 
 1 GiB cache flush before each call (`aklr/core/validation/stages/_measure.py`); a Point is served from 1.03
 (`AKLR_MIN_SPEEDUP`).
 
-CI installs the repository with `--no-deps`, so these runs used the FlyDSL of the CI image, 0.3.4.1, not the
-repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`). CI measured the file under its name before
-#117, `b4b4a7b28dc91a1a.json`, whose `kernel.py` differs from the committed one only in identifiers renamed from
-`sikl` to `aklr`; the rename carried the numbers over.
+The predecessor repository's CI installed the code with `--no-deps`, so these runs used the FlyDSL of the CI image,
+0.3.4.1, not the repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`). That CI measured the file
+under its name before the rename; its `kernel.py` differs from the committed one only in identifiers renamed to
+`aklr`; the rename carried the numbers over.
 
 | T | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | Served |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -136,7 +136,7 @@ repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`). CI measure
 
 ## Reproduce
 
-On an MI355X, in a checkout that holds this file with these numbers (main at 0cef4f2e3):
+On an MI355X, in a checkout that holds this file with these numbers:
 
 ```
 python -m aklr validate aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json
@@ -161,8 +161,8 @@ calls the kernel on two devices or two streams, or a FlyDSL or LLVM upgrade that
 `<schema>.json#kernel.py:<line>` is a line of the `kernel.py` the schema embeds; `<schema>` is
 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter per Point 1.100–1.510, 13 of 13 ≥ 1.03; T 1 1.167, 2 1.185, 4 1.117, 8 1.144, 16 1.125, 32 1.132, 64 1.100, 128 1.225, 256 1.325, 512 1.393, 1024 1.423, 2048 1.397, 4096 1.510 (mhc_fused_post_pre_has_norm_weight_hidden_size4096, T 1–4096; 5571f4589, CI run 40613440602)
-- E2 [2026-10, gfx950, FlyDSL ?, N=5, AKLR CI; FlyDSL of the runs: not recorded, 0.3.1, then 0.3.4.1 three times] per-Point range and served count in commit order: 1.042–1.217, 1.134–1.439, 1.095–1.504, 1.134–1.451, 1.100–1.510, 13 of 13 each time; the kernel text is the same in all five (mhc_fused_post_pre_has_norm_weight_hidden_size4096, b4b4a7b28dc91a1a.json; baa858028, cc6e3b96c with CI run 39908769447, cca5b12df with CI run 40058570127, 102877ca0 with CI run 40154665266, 5571f4589 with CI run 40613440602)
+- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over aiter per Point 1.100–1.510, 13 of 13 ≥ 1.03; T 1 1.167, 2 1.185, 4 1.117, 8 1.144, 16 1.125, 32 1.132, 64 1.100, 128 1.225, 256 1.325, 512 1.393, 1024 1.423, 2048 1.397, 4096 1.510 (mhc_fused_post_pre_has_norm_weight_hidden_size4096, T 1–4096)
+- E2 [2026-10, gfx950, FlyDSL ?, N=5, the predecessor repository's CI; FlyDSL of the runs: not recorded, 0.3.1, then 0.3.4.1 three times] per-Point range and served count in commit order: 1.042–1.217, 1.134–1.439, 1.095–1.504, 1.134–1.451, 1.100–1.510, 13 of 13 each time; the kernel text is the same in all five (mhc_fused_post_pre_has_norm_weight_hidden_size4096, under the file's name before the rename)
 - S1 aklr/ops/mhc/contract.py:227 compare `BOUNDED`; tolerance atol = rtol = 1e-2 at :39, on all four outputs at :151–169
 - S2 aklr/ops/mhc/baseline.py:79 `mhc_fused_post_pre_baseline` calls aiter's `mhc_fused_post_pre`; aiter/ops/mhc.py:560 aiter runs `mhc_post` and `mhc_pre` from 1024 tokens on gfx950
 - S3 aklr/ops/mhc/reference.py:103 the reference rounds `next_residual` to bf16 before the pre step

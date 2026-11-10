@@ -159,28 +159,28 @@
         "n_tokens": 8
       },
       "accuracy": "passed",
-      "speedup": 1.113
+      "speedup": 1.112
     },
     {
       "axes": {
         "n_tokens": 16
       },
       "accuracy": "passed",
-      "speedup": 1.079
+      "speedup": 1.089
     },
     {
       "axes": {
         "n_tokens": 32
       },
       "accuracy": "passed",
-      "speedup": 1.112
+      "speedup": 1.088
     },
     {
       "axes": {
         "n_tokens": 64
       },
       "accuracy": "passed",
-      "speedup": 1.094
+      "speedup": 1.079
     }
   ],
   "layout_variants": {

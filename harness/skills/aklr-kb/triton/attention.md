@@ -1,34 +1,34 @@
 ---
-title: "Decode attention in Gluon on gfx950: DSA sparse MLA and Qwen3.5 gated attention"
+title: "Attention with one query token per sequence in Gluon on gfx950: split-KV, DSA sparse MLA and Qwen3.5 gated attention"
 kind: topic
-ops: [attention]
+ops: [attention, mla]
 dtypes: [bf16, fp8]
-regimes: [decode]
+regimes: ["one query token per sequence", split-kv, sparse, gqa]
 gens: [gfx950]
 triton: 3.8.0
 ---
 
-# Decode attention in Gluon (gfx950)
+# Attention with one query token per sequence in Gluon (gfx950)
 
-This page covers two decode attention ops AKLR serves with Gluon kernels on MI355X, in the 17 files it held at
-43e112e: DSA sparse MLA decode (8 files), where each token attends the 2048 fp8 KV rows its top-k slots name, and Qwen3.5
-gated attention decode (9 files), where 8 query heads share one fp8 KV head and the output gate and fp8 group
-quantization are fused in. All but the 256-token 8-head DSA file split each token's keys over programs, write per-split
-records to scratch and merge them in a later launch. Added since: Qwen3-Next gated attention decode (31 files, #78) and
-DSA files at 16 heads (8) and at 8 heads (9 more, #66); `kernels/kernel_library.md` lists them.
+This page covers two attention ops with one query token per sequence that AKLR serves with Gluon kernels on MI355X,
+in the 17 files it held at 43e112e: DSA sparse MLA (`dsa_sparse_mla_decode@1.0`, 8 files), where each token attends the
+2048 fp8 KV rows its top-k slots name, and Qwen3.5 gated attention (`gated_attention_decode_group_fp8_quant@1.0`, 9
+files), where 8 query heads share one fp8 KV head and the output gate and fp8 group quantization are fused in. All but
+the 256-token 8-head DSA file split each token's keys over programs, write per-split records to scratch and merge them
+in a later launch. Added since: Qwen3-Next gated attention (31 files, #78) and DSA files at 16 heads (8) and at 8 heads (9 more, #66); `kernels/kernel_library.md` lists them.
 
 ## Route here when
 
-- You write or tune a Triton or Gluon decode attention kernel for an AKLR schema: gathered (sparse) MLA, paged GQA
-  decode, or attention with a fused prologue or epilogue.
-- You choose the split count, the head tile, the producer grid or the merge of a split-KV decode; you gather KV rows
+- You write or tune a Triton or Gluon attention kernel with one query token per sequence for an AKLR schema: gathered
+  (sparse) MLA, paged GQA, or attention with a fused prologue or epilogue.
+- You choose the split count, the head tile, the producer grid or the merge of a split-KV attention; you gather KV rows
   by slot and stage them in LDS for the MFMA; you choose the precision of QK, of P·V or of the split partials.
 
-**Not in AKLR's Triton kernels:** softmax attention for prefill or extend, decode with more than one KV head per rank,
-bf16 KV pools; start those from `../attention/INDEX.md` (measured on FlyDSL kernels). Linear attention: `gdn.md`.
+**Not in AKLR's Triton kernels:** softmax attention over many query rows per sequence (as in prefill or extend), one
+query token with more than one KV head per rank, bf16 KV pools; start those from `../attention/INDEX.md` (measured on FlyDSL kernels). Linear attention: `gdn.md`.
 
 **Somewhere else if:** the mechanisms, with numbers measured on FlyDSL kernels → `../attention/INDEX.md`, first
-`../attention/decode_split_kv.md`; a launch's cost under each ruler → `authoring.md` §7; loads, async copies, waits,
+`../attention/split_kv.md`; a launch's cost under each ruler → `authoring.md` §7; loads, async copies, waits,
 barriers → `gluon/memory.md`; layouts → `gluon/layouts.md`; MFMA → `gluon/mfma.md`; inline assembly →
 `gluon/wave_ops.md`; the contracts' numerics → `numerics.md`; the ruler and A/B protocol → `tuning.md`; every AKLR
 Triton kernel → `kernels/kernel_library.md`. Numbers here were measured on AKLR's Gluon kernels unless the sentence
@@ -36,9 +36,9 @@ says otherwise.
 
 ## 1. Decisions at a glance
 
-| You need | What AKLR's decode attention kernels do | § |
+| You need | What AKLR's one-query-token attention kernels do | § |
 |---|---|---|
-| a split-KV decode, bitwise reproducible and safe under graph replay | a producer writes (numerator, max, denominator) per split, an empty split a neutral one; a later launch merges them in a fixed order; no atomics in the 17 files, each byte-identical over 40 runs; replayed graphs on new slots and lengths give the eager result (run on the 24-token DSA and 32-row Qwen3.5 files) | 2 |
+| a split-KV attention, bitwise reproducible and safe under graph replay | a producer writes (numerator, max, denominator) per split, an empty split a neutral one; a later launch merges them in a fixed order; no atomics in the 17 files, each byte-identical over 40 runs; replayed graphs on new slots and lengths give the eager result (run on the 24-token DSA and 32-row Qwen3.5 files) | 2 |
 | a producer loop | the first tile peeled (one `v_exp_f32` fewer in Qwen3.5's 32-row tile, 4 against 5), the length masks only in the partial tile's variant (12 `v_cndmask` in the full one against 60), the running max guarded where tiles can be empty (DSA) | 2, 7 |
 | a producer grid | measure neighbours within each Point: DSA committed 192/256/256 programs beat modified 96/128/512 at 12/16/32 tokens, but splits also change tiles/merge and other knobs; Qwen's 512-program rule and two-tile floor are not universal optima, with faster doubled splits at 4/8/64/128/256 rows; residency causality unmeasured *(field, E18)* | 3, 7 |
 | a head tile when a row serves many heads | choose it with split count: 64 heads were faster at 24 tokens; widening lost at 12/16 tokens (at 16 both arms the 24-token file), and 32 heads were faster at 32 tokens in one session; grid, `pv_mode` and refill confound the comparisons, fewer KV reads are not a measured cause *(field, E5, E18)* | 4 |
@@ -104,7 +104,7 @@ Merged so in float64, the 32-row Qwen3.5 file's records give the softmax over al
 per lane, compiled with Triton 3.8.0 for gfx950 (`numerics.md` §6). The gated-attention files use `gl.exp`; no Point compares the two.
 
 - **Merge in a later launch.** None of the 17 files (8 DSA, 9 Qwen3.5) makes one workgroup wait for another or
-  reduces in the last workgroup to arrive (why: `../attention/decode_split_kv.md` §2, §3). What a separate merge launch
+  reduces in the last workgroup to arrive (why: `../attention/split_kv.md` §2, §3). What a separate merge launch
   costs depends on who times it (`authoring.md` §7): CI sums the per-kernel device durations of the call's kernels, from
   AKLR's rocprofiler-sdk collector since #33 (Kineto before), gaps between graph nodes excluded (S3), and there an added
   launch reads at least AKLR's dispatch floor (`../pitfalls/aklr_dispatch_floor.md`), about 4.05 µs for a trivial
@@ -136,7 +136,7 @@ per lane, compiled with Triton 3.8.0 for gfx950 (`numerics.md` §6). The gated-a
   and a token; they catch both. The 32-row Qwen3.5 file has no guard and stays within the bounds on 1 to 4096 keys
   *(field, E13)*: every row attends at least one slot (S13), and a split runs only tiles that hold a key (S1).
 
-## 3. DSA sparse MLA decode: plugin, Points, grid
+## 3. DSA sparse MLA, one query token over 2048 gathered rows: plugin, Points, grid
 
 The plugin replaces sglang 0.5.22's `DeepseekSparseAttnBackend._forward_triton_decode` with
 `dsa_sparse_mla_decode@1.0`; speculative decoding stays on sglang (S14). The baseline is sglang's split-K Triton
@@ -164,7 +164,7 @@ CI's stored speedups, 64 heads at 43e112e, 8 heads at a29581b *(field, E1)*; sin
 entry (`aklr/ops/README.md` § The kernel section and ABI). The 8-token file and the three 8-head files add a
 `q.to(torch.bfloat16)` launch in `run` (S17, S11, S18, S19).
 
-- **Measured DSA grids, not an isolated CU-residency rule.** At 12/16/32 tokens the accurate committed 64-head files' 192/256/256 eight-wave producers beat modified 96/128/512: modified/committed call times 1.414/1.456/1.098, paired-log 99% CIs 1.402751–1.425598/1.441523–1.470504/1.094254–1.102277 (one session, 6 counterbalanced rounds per arm, 3 forward and 3 reverse) *(field, E18)*. At 24 tokens, in three earlier runs, 384 same-head producers ran 1.08–1.09× slower than 192 *(field, E2)*. Splits change tiles and merge width; the 16-token variant also changes `pv_mode` (`"panels64"`) and the packed statistics, the 32-token variant `pv_mode` (`"serial32"`) and the refill. LDS predicts at most one such workgroup per CU, but residency and its timing contribution were not measured, nor were four-wave or Qwen3.5 residency and untested Points (`../attention/decode_split_kv.md` §4).
+- **Measured DSA grids, not an isolated CU-residency rule.** At 12/16/32 tokens the accurate committed 64-head files' 192/256/256 eight-wave producers beat modified 96/128/512: modified/committed call times 1.414/1.456/1.098, paired-log 99% CIs 1.402751–1.425598/1.441523–1.470504/1.094254–1.102277 (one session, 6 counterbalanced rounds per arm, 3 forward and 3 reverse) *(field, E18)*. At 24 tokens, in three earlier runs, 384 same-head producers ran 1.08–1.09× slower than 192 *(field, E2)*. Splits change tiles and merge width; the 16-token variant also changes `pv_mode` (`"panels64"`) and the packed statistics, the 32-token variant `pv_mode` (`"serial32"`) and the refill. LDS predicts at most one such workgroup per CU, but residency and its timing contribution were not measured, nor were four-wave or Qwen3.5 residency and untested Points (`../attention/split_kv.md` §4).
 - **Do not start a 64-head kernel from the 8-token file.** It differs from the 12–32-token files in many choices:
   16-head groups of 4 warps, rows async-copied into LDS, bf16 hi + lo P, fp32 partials and the extra `q` cast. It
   stores 1.030 *(field, E1)*, at the edge of what dispatch serves (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` §
@@ -244,9 +244,9 @@ entry (`aklr/ops/README.md` § The kernel section and ABI). The 8-token file and
   *(field, E8)*; allocated before the second key reduction, P takes it to 165,888 B with the 2 KiB scratch (compiled).
 - **The bench has no index locality.** Each token's 2048 entries are distinct and uniformly sampled from −1 and the pool's slots (S12),
   so the 8-head files' live-tile skipping does no work on the bench. Test the locality levers of
-  `../attention/decode_split_kv.md` §7 (measured on FlyDSL and Triton kernels) with production-like indices.
+  `../attention/split_kv.md` §7 (measured on FlyDSL and Triton kernels) with production-like indices.
 
-## 6. Qwen3.5 gated attention decode: plugin, Points, launches
+## 6. Qwen3.5 gated attention, one query token, 8 heads per KV head: plugin, Points, launches
 
 The plugin replaces sglang 0.5.22's `Qwen3_5AttentionDecoderLayer.self_attention` on HIP decode with
 `gated_attention_decode_group_fp8_quant@1.0`, between sglang's `qkv_proj` and an `o_proj` that takes the op's fp8
@@ -318,7 +318,7 @@ committed 16 splits with nothing else changed in the sources, in two sessions *(
 Call time is the three kernels' device time per call. The file ties its head tile to the split count (S29), so both
 changed arms also ran an 8-row head tile: the table measures the pair, not the split count alone.
 
-- **At 32 rows half and double splits took 1.58× and 1.06× as long**, losing about 37% and 5% of the speedup, not increasing call time by those percentages *(field, E4)*. Splits also change the head tile, tiles per producer and merge records; CU residency and in-flight-load causality were not measured, and a synthetic stream is not a decode measurement.
+- **At 32 rows half and double splits took 1.58× and 1.06× as long**, losing about 37% and 5% of the speedup, not increasing call time by those percentages *(field, E4)*. Splits also change the head tile, tiles per producer and merge records; CU residency and in-flight-load causality were not measured, and a synthetic stream is not a measurement of this attention kernel.
 - **Measure both neighbours at each Point; neither a 512-program grid nor a two-tile floor is universally optimal.** One session of 6 counterbalanced rounds per arm (3 forward, 3 reverse) *(field, E18)*:
   - Doubling splits at 4/8/64/128/256 rows gave modified/committed call-time ratios 0.7863/0.8142/0.9731/0.7818/0.7052; paired-log 99% CIs 0.782904–0.789708/0.804810–0.823643/0.970714–0.975498/0.780215–0.783308/0.704074–0.706232. Both order strata agree; the 4/8-row doubled arms have one tile per split.
   - At 16 rows half/double = 1.441/1.033; double CI 1.018381–1.046948 supports slower, not a guaranteed ≥2% effect. The committed arm was the fastest tested. At 32 rows see the table above (half/double 1.58/1.06); no 256-row half and no exhaustive search was run.

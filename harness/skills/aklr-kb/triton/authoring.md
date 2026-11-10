@@ -48,8 +48,8 @@ gated attention, more DSA, MoE and GDN files) are in [kernels/kernel_library.md]
 
 | Language | Families at 43e112e (kernel files) |
 |---|---|
-| plain `tl.*` (4) | `gemm@1.0` bf16 decode GEMMs n6144/k2048 and n2624/k6144 (2), RMSNorm and add-RMSNorm at hidden 6144 (2) |
-| Gluon (150) | fp8 block-scaled GEMMs (24); MoE layer plugins: DeepSeek-V2/GLM MXFP4 (19), MiniMax-M2 FP8 (9) and MXFP4 (23), Qwen2-MoE router and experts (14); DSA sparse MLA decode (8); Qwen3.5 gated attention decode (9); GatedDeltaNet decode (18) and chunked prefill (26) |
+| plain `tl.*` (4) | `gemm@1.0` bf16 GEMMs at M ≤ 64, n6144/k2048 and n2624/k6144 (2), RMSNorm and add-RMSNorm at hidden 6144 (2) |
+| Gluon (150) | fp8 block-scaled GEMMs (24); MoE layer plugins: DeepSeek-V2/GLM MXFP4 (19), MiniMax-M2 FP8 (9) and MXFP4 (23), Qwen2-MoE router and experts (14); one-query-token attention: DSA sparse MLA (8), Qwen3.5 gated attention (9); GatedDeltaNet one token per step (18) and chunked (26) |
 
 The two share the launcher and the JIT cache (`@gluon.jit` is a `JITFunction` subclass, S1) and differ in the first
 compiler stage: plain Triton runs `make_ttir` then `make_ttgir`, Gluon replaces both with `gluon_to_ttgir` (S2).
@@ -67,7 +67,7 @@ compiler stage: plain Triton runs `make_ttir` then `make_ttgir`, Gluon replaces 
   a layout with another warp count ("Layout has 4 warps per CTA, but the context requires 8 warps per CTA") or with
   other than 64 lanes (S1). A launch without `num_warps` gets 4 (S4), which hard-coded 4-warp layouts rely on (S5).
 
-The committed plain bf16 GEMMs and norms ([gemm/decode_gemm.md](gemm/decode_gemm.md)) are starting points for plain
+The committed plain bf16 GEMMs and norms ([gemm/small_m_gemm.md](gemm/small_m_gemm.md)) are starting points for plain
 `tl.*`, which leaves layouts and LDS buffers to the compiler ([gemm.md](gemm.md) §9), not a rule for choosing the
 language. Their `num_stages` matters: fewer stages slowed the n6144 GEMM at m = 2, 4, 8, 16 by 1.533–1.625× and RMSNorm
 at 1024, 2048, 4096 tokens by 1.047–1.120×, 1.092–1.095× and 1.051–1.052× (one run, 4 rounds per arm in a fixed order,
@@ -141,7 +141,7 @@ uuid = schema_uuid(schema["name"], OpContract.authored_parts(schema))
 **Core op or plugin op.** A core op's kernel implements its contract (for example GEMM or RMSNorm) against the baseline
 its package defines (aiter and SGLang implementations among them), reached through its `aklr.ops.<op>` api; at 43e112e
 and on main no AKLR plugin route calls those core apis directly. A plugin op replaces a whole SGLang function (an MoE
-layer's forward, a GatedDeltaNet layer, a decode attention step) through an `@sglang_route`, against SGLang's own path,
+layer's forward, a GatedDeltaNet layer, an attention step for one query token per sequence) through an `@sglang_route`, against SGLang's own path,
 and may take framework state as mutable inputs (`aklr/plugins/README.md` § Architecture, § Rules for routes;
 `docs/plugin_tutorial.md`).
 
@@ -256,13 +256,13 @@ What one more launch costs depends on who times it:
 
 | Where | One more launch costs | Ruler |
 |---|---|---|
-| A replayed CUDA graph, as SGLang replays decode | 1.82 µs (1 program) to 1.84 µs (256 programs) of replay time per further chained trivial Gluon kernel (one 64-float load, add and store per program), in a bare CUDA graph, not SGLang's; the replay itself added 3.6–3.8 µs; with 8 launches per graph, 2.27 µs per launch with 1 tensor argument and 2.31 µs with 30 *(field, E13)* | CUDA events around graph replays, least squares over 1–64 kernels |
+| A replayed CUDA graph, as SGLang replays its fixed-shape one-token-per-sequence (decode) steps | 1.82 µs (1 program) to 1.84 µs (256 programs) of replay time per further chained trivial Gluon kernel (one 64-float load, add and store per program), in a bare CUDA graph, not SGLang's; the replay itself added 3.6–3.8 µs; with 8 launches per graph, 2.27 µs per launch with 1 tensor argument and 2.31 µs with 30 *(field, E13)* | CUDA events around graph replays, least squares over 1–64 kernels |
 | AKLR's stored speedup | the sum of the call's per-kernel device durations, flush excluded, from AKLR's rocprofiler-sdk collector since #33 (S46), from Kineto before (S27). Measured before #33: a copy and a sum read 10.84 µs in one call against 6.50 + 4.62 µs apart, a 6.5 µs call stayed 6.5 µs beside a 169.5 µs flush, 8 trivial kernels read 32.4 µs against 8 × 3.88 µs, and no dispatch read below about 4.2 µs *(field, E13)* ([../pitfalls/aklr_dispatch_floor.md](../pitfalls/aklr_dispatch_floor.md)) | AKLR's `bench_cudagraph` |
 | An eager call | 7.30 µs (1 program) to 7.44 µs (256 programs) of host time per `kernel[grid](*args)` of a one-tensor trivial Gluon kernel in Triton 3.8.0's launcher, the wall time within 0.2% of it, the GPU waiting on the host; 6.25 µs + 1.00 µs per tensor + 0.12 µs per int argument by least squares over 7 argument lists (7.32 µs with 1 tensor, 38.45 µs with 32, 17.12 µs with 8 tensors and 24 ints); HIP's Python callback for the `S` key (`get_tensor_specialization`, S20, S21) runs once per tensor per launch and took 0.58 µs per call timed alone, 57% of that slope ([debugging.md](debugging.md) §8); 8 launches of a 15-tensor kernel took 169 µs *(field, E13)* | host clock around 2000 launches |
 
 Host time lengthens the call only while the GPU finishes kernels faster than Python issues them: those 8 launches took
 172 µs with trivial kernels, their host time, and 3166 µs with 396 µs kernels, their sum *(field, E13)*. Only eager calls
-pay it — plugin prefill (the GDN prefill routes refuse capture, the MoE routes decline SGLang's piecewise and breakable
+pay it — uncaptured plugin calls such as many-token (prefill) batches (the GDN prefill routes refuse capture, the MoE routes decline SGLang's piecewise and breakable
 graphs, S28, S29) and direct core-op calls — so there keep tensor arguments few; a 4-key option dict built per call cost
 0.06 µs more per launch than one built once (Qwen3-Next decode builds its at import, S30) *(field, E13)*.
 
@@ -297,7 +297,7 @@ with `q.to(torch.bfloat16)` there add a kernel per call (S31).
 
 ## 8. CUDA-graph capture
 
-SGLang captures decode, and AKLR's decode routes run inside its graphs; the GDN prefill routes return `out_of_contract`
+SGLang captures its one-token-per-sequence (decode) batches, and AKLR's routes for them run inside its graphs; the GDN prefill routes return `out_of_contract`
 while a capture runs, "a capture would replay this call's lengths" (S29). Bench captures every check step — a first
 capture replayed twice with new values copied into the same buffers, fresh captures per input set, a repeat under
 `bitwise`, the post-timing checks (S32) — and fills the outputs with NaN (0xFF bytes for integer and sub-byte dtypes)
@@ -418,7 +418,7 @@ def run(*, a, b, trans_b, bias, out_dtype, out):
     _gemm[(n // cfg.block_n,)](a, b, out, M=m, N=n, K=k, num_warps=cfg.warps, waves_per_eu=2)
 ```
 
-   `version=4` is gfx950's MFMA (S38; [gluon/mfma.md](gluon/mfma.md) §1). The masks keep rows past M out: Triton's buffer descriptor covers 2^31 − 2 bytes from the base, not the tensor (`num_records` `0x7ffffffe` in every buffer op of 27 probe kernels), so an unmasked `buffer_load` past a tensor's end read the memory behind it, while masked lanes read 0 without `other` *(field, E13)* ([gluon/memory.md](gluon/memory.md) §4). The two `convert_layout`s go through 8 KiB of LDS (loading in the operand layout instead: [gluon/layouts.md](gluon/layouts.md) §6, §9). The launch is a start, not a tuned choice: its 96 programs at N 6144 are fewer than the 256 CUs. At m = 2, 4, 8, 16 it took 2.882–3.158× the time of the committed `f806ad2b086d757d`, and prefetching one K step ahead made it 1.695–1.729× faster (one run, 3 rounds per arm in a fixed order; register allocation and scheduling changed too) *(field, E6)*. A Gluon stream of 96 programs × 4 warps rose from 876–886 to 3945–3995 GB/s with eight 16-byte loads per lane in flight instead of one (3 runs) *(field, E2)*, so the skeleton is probably short of bytes in flight: an inference, not a measured cause ([tuning.md](tuning.md) §3, §4). Grid and prefetch: tuning.md §6, §10; `num_warps`: tuning.md §7; `waves_per_eu=2` becomes `"amdgpu-waves-per-eu"="2,2"` and `.amdhsa_next_free_vgpr` 169 for a skeleton using 70 VGPRs; the compiler reports `Occupancy: 2`, a resource limit, not a measured residency (tuning.md §8). Decode GEMM speed: [gemm/decode_gemm.md](gemm/decode_gemm.md).
+   `version=4` is gfx950's MFMA (S38; [gluon/mfma.md](gluon/mfma.md) §1). The masks keep rows past M out: Triton's buffer descriptor covers 2^31 − 2 bytes from the base, not the tensor (`num_records` `0x7ffffffe` in every buffer op of 27 probe kernels), so an unmasked `buffer_load` past a tensor's end read the memory behind it, while masked lanes read 0 without `other` *(field, E13)* ([gluon/memory.md](gluon/memory.md) §4). The two `convert_layout`s go through 8 KiB of LDS (loading in the operand layout instead: [gluon/layouts.md](gluon/layouts.md) §6, §9). The launch is a start, not a tuned choice: its 96 programs at N 6144 are fewer than the 256 CUs. At m = 2, 4, 8, 16 it took 2.882–3.158× the time of the committed `f806ad2b086d757d`, and prefetching one K step ahead made it 1.695–1.729× faster (one run, 3 rounds per arm in a fixed order; register allocation and scheduling changed too) *(field, E6)*. A Gluon stream of 96 programs × 4 warps rose from 876–886 to 3945–3995 GB/s with eight 16-byte loads per lane in flight instead of one (3 runs) *(field, E2)*, so the skeleton is probably short of bytes in flight: an inference, not a measured cause ([tuning.md](tuning.md) §3, §4). Grid and prefetch: tuning.md §6, §10; `num_warps`: tuning.md §7; `waves_per_eu=2` becomes `"amdgpu-waves-per-eu"="2,2"` and `.amdhsa_next_free_vgpr` 169 for a skeleton using 70 VGPRs; the compiler reports `Occupancy: 2`, a resource limit, not a measured residency (tuning.md §8). Small-M GEMM speed: [gemm/small_m_gemm.md](gemm/small_m_gemm.md).
 3. **Compile for gfx950 without a GPU.** `triton.compile` with an `ASTSource` (`GluonASTSource` for Gluon) and `GPUTarget("hip", "gfx950", 64)` builds the launch's instructions, given its constexprs and specialization (`"DS"` for 1 MiB tensors at aligned addresses and `"D"` for n = 1024 matched; a pointer 4 bytes off alignment in a 3 GiB range with n = 1000 gets neither). Signatures name the dtype the launch sees: `*bf16`, `*fp16`, `*fp32`, `*fp8e4nv` (`float8_e4m3fn`), `*fp8e5` (`float8_e5m2`), `*u8` (also the uint8 views of MXFP4 and e8m0), `*i32`, `*i64`; an int is `i32` or `i64` by signed range, or `u64` above the signed-64 range (a constexpr when it is 1); a float is `fp32`, a bool `u1` (S20). It needs Triton and the kernel's imports (torch in 152 of the 154 AKLR files at 43e112e, 278 of 280 on main), not a GPU. A kernel whose `kernel.py` imports a sibling relatively (DSA decode `1148d1c8e30397f7`) fails `from kernel import ...` ("attempted relative import with no known parent package"): write its sources into `kpkg/`, put its parent on `sys.path` and `from kpkg.kernel import ...`, a package as AKLR makes one (S7). Built with the launch's signature, attributes and options, offline compiles gave the launch's amdgcn in 12 of 12 comparisons (one run) *(field, E3)*. This compiles the skeleton with Triton 3.8.0 for gfx950:
 
 ```python

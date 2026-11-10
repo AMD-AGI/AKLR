@@ -1,10 +1,10 @@
 ---
-title: "Small-M launch floor: a decode row bound by launch, reduction and latency, not by reading B"
+title: "Small-M launch floor: an M ≤ 256 row bound by launch, reduction and latency, not by reading B"
 kind: pattern
 signals: ["M ≤ 256 on a row bound by launch, reduction and memory latency", "a large per-tile intercept F in a K-sweep fit",
   "one CUDA-graph node or an empty kernel costs a large share of the measured time",
   "s_load then lgkmcnt(0) in front of the first B load", ".amdhsa_user_sgpr_kernarg_preload_length = 0"]
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe, attention]
 gens: [gfx950]
 flydsl: 0.3.2
 basis: source-semantics
@@ -14,7 +14,7 @@ basis: source-semantics
 
 ## Symptom
 
-- M ≤ 256 (decode, speculative verify) on a row bound by launch, reduction and memory latency rather than by the HBM
+- M ≤ 256 (as in decode or speculative verify) on a row bound by launch, reduction and memory latency rather than by the HBM
   read of B (S10); a K-sweep at fixed M and N fits a large per-tile intercept `F` (S18).
 - One graph node has a floor even for a 1-element op; at the smallest M on a small weight the node can be more than
   half of the measured time (S3).
@@ -56,10 +56,10 @@ basis: source-semantics
 - Launch the `flyc.compile` object, not the `@flyc.jit` function, except under graph capture, where the raw
   `@flyc.jit` closure is the one to launch — `flydsl/gemm.md` § autotune §6 (S28, S29).
 - Fewer launches by fusion — `../flydsl/kernels/flydsl_authoring_method.md` — for latency-bound small shapes (S30).
-- Other kernel families: drop a graph node by folding a small kernel into its consumer — `moe/decode.md`
-  §1–2; a decode attention's combine is a fixed cost, and when merging it into the producer pays —
-  `attention/decode_split_kv.md` §1–2; the small kernels around MoE expert GEMMs —
-  `moe/grouped_moe_inference.md` §7.
+- Other kernel families: drop a graph node by folding a small kernel into its consumer — `moe/few_tokens.md`
+  §1–2; a split-KV attention's combine is a fixed cost, and when merging it into the producer pays —
+  `attention/split_kv.md` §1–2; the small kernels around MoE expert GEMMs —
+  `moe/grouped_sorted_tokens.md` §7.
 
 ## Evidence
 

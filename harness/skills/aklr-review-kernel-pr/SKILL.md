@@ -12,7 +12,8 @@ standalone implementation.
 
 Read the harness [rules](../../rules.md), [gates](../../gates.md), current
 [gate configuration](../../gate-config.md), and
-[references/workflow.md](references/workflow.md).
+[references/workflow.md](references/workflow.md). Check the change against
+[aklr-bad-cases](../aklr-bad-cases/SKILL.md).
 
 ## Responsibilities
 

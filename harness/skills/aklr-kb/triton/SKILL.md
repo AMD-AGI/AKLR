@@ -34,10 +34,10 @@ commit, run or PR; `aklr/…` paths are on main unless pinned.
 |MFMA, scales, small M|[MFMA](gluon/mfma.md) §1–§2, §5, §8|
 |Inline asm, hazards|[wave ops](gluon/wave_ops.md) §2, §6–§9|
 |fp8 GEMM|[GEMM](gemm.md) §3, §5|
-|bf16 decode GEMM, split-K|[decode GEMM](gemm/decode_gemm.md); [GEMM](gemm.md) §9|
+|bf16 M ≤ 64 GEMM, split-K|[small M](gemm/small_m_gemm.md); [GEMM](gemm.md) §9|
 |MoE|[MoE](moe.md) §2, §5–§9|
-|Decode attention|[attention](attention.md) §1–§2, §5, §10|
-|GDN decode, prefill (schedule per Point: §8)|[GDN](gdn.md)|
+|Split-KV attention|[attention](attention.md) §1–§2, §5, §10|
+|GDN, 1 token/step or chunks (schedule per Point: §8)|[GDN](gdn.md)|
 |Ruler|`harness/skills/aklr-read-validation/references/ruler.md`|
 |SA0–SA4, ABI|`aklr/ops/README.md` § The kernel section and ABI|
 |Cross-language|[KB](../SKILL.md)|
@@ -85,7 +85,7 @@ commit, run or PR; `aklr/…` paths are on main unless pinned.
   *(field, E4)*; in another stream (one run) four 8 MiB configurations stayed within 10% of the median, but 3/4/6 MiB
   384×1×8, 256×1×16, 384×1×16 read 0.888×, 0.760×, 0.861× of four-warp peers *(field, E15)*. At equal bytes the
   256-token router's call time read 1.000, 1.033, 1.260 for programs × look-ahead 256×2, 512×1, 128×4 (one run)
-  *(field, E11)*: do not size a decode kernel by bytes alone or pool implementations.
+  *(field, E11)*: do not size a small kernel by bytes alone or pool implementations.
 - Router split 4 → 2 (256 tokens) and gated attention KV splits 16 → 8 (32 rows, head tile changed too) lost: B/A
   0.75, 0.63. Router look-ahead 2 → 1 lost at 256 programs (1.12–1.14× call time); at 512 programs depths 1, 2, 4
   read about 1.03× of 256 × 2. fp8 GEMM m = 16 `PREFETCH` 5 → 3: B/A 0.87–0.91; a gain at 7 is unresolved, not
@@ -107,7 +107,7 @@ commit, run or PR; `aklr/…` paths are on main unless pinned.
   *(field, E6)* ([tuning](tuning.md) §1).
 - A flush preceded each of 85 timed calls; it stores only block sums. Flushed over hot time: 1.19–1.28× at 64–192
   MB, 1.00–1.01× at 512–1024 MB *(field, E12)*. Re-time with AKLR: at n6144 m = 64 the source tier lost hot too,
-  1.08–1.13× the re-tuned time *(field, E13)* ([decode GEMM](gemm/decode_gemm.md) §8).
+  1.08–1.13× the re-tuned time *(field, E13)* ([small M](gemm/small_m_gemm.md) §8).
 - CI requires 3.8.0; matched builds differ from 3.7.0. Check the version and re-time on CI's image
   ([authoring](authoring.md) §11).
 

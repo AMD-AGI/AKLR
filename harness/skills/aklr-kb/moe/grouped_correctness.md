@@ -2,10 +2,10 @@
 title: "Grouped GEMM — correctness gates: skewed and empty groups, large G, proven bodies, runtime splits"
 kind: method
 lever: grouped_correctness
-ops: [grouped_gemm]
+ops: [grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp8, mxfp4]
-regimes: [forward, dgrad, wgrad, variable-k, skew, split-k]
+regimes: ["M split per group", variable-k, skew, split-k]
 flydsl: 0.3.2
 sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_bf16_kernel.py:651-657
@@ -28,6 +28,7 @@ sources:
   runtime split policy in a grouped kernel.
 - A gate passes on balanced inputs and you have not run it on skewed ones, with empty groups, or at large G.
 - You changed a dense kernel or a helper that grouped kernels import.
+- You are building inputs that gate a MoE expert GEMM: skewed routing, experts with no route, many experts.
 
 ## 1. Determinism is not correctness
 
@@ -57,10 +58,10 @@ an fp32 reference built from the dequantized operands, with SNR, on skewed distr
   it into the maximum, the descriptor stops bounding the loads and the kernel faults. *(field, E2)* The fault
   appeared only with empty groups; balanced inputs and other backends ran clean. The fix is one scalar op per
   tile, outside the main loop.
-- **Every path that builds a descriptor needs the clamp.** *(field, E3)* Fixing the shared helper did not fix a kernel
-  that built its descriptor inline. Search for every descriptor construction before declaring the fix done.
+- **Every path that builds a descriptor needs the clamp.** *(field, E3)* A fix in the shared helper does not reach a
+  kernel that builds its descriptor inline, and that kernel was the one that faulted. Search for every descriptor construction before declaring the fix done.
 - **Check the empty group's output block.** Zero for beta=0; unchanged for beta=1 (C += 0). The mechanisms,
-  Turbo's included, are in `grouped_group_mapping.md` §8 and `grouped_wgrad.md` §11.
+  Turbo's included, are in `grouped_group_mapping.md` §8 and `grouped_variable_k.md` §11.
 - **An uninitialized output fakes nondeterminism.** With a `torch.empty` output, empty groups and padding leave
   regions the kernel never writes, and an output fingerprint picks up whatever the allocator left there.
   *(field, E4)* 5–6 of 24 fingerprint cells changed across six runs of one binary with one seed, on different cells
@@ -80,7 +81,7 @@ an fp32 reference built from the dequantized operands, with SNR, on skewed distr
 
 - **Operand layout decides whether the descriptor can clamp an over-run.** With tokens as the inner dimension
   (MX wgrad operands `[OUT, M_total]`) it cannot, and an over-running K step accumulates the next group's real
-  tokens; the guard is a run-time K check (`grouped_wgrad.md` §3). Only an unbalanced gate sees it (§1).
+  tokens; the guard is a run-time K check (`grouped_variable_k.md` §3). Only an unbalanced gate sees it (§1).
 - Values that feed a descriptor, the record count as well as the base, must be wave-uniform
   (`grouped_group_mapping.md` §6, with the base-only case). A per-lane value gives "a non-deterministic
   wrong answer rather than a fault" (Turbo's comment, `grouped_gemm_bf16_kernel.py:651-657`): gate with SNR on
@@ -94,8 +95,8 @@ an fp32 reference built from the dequantized operands, with SNR, on skewed distr
   dequantized reference was 55.38–55.53 dB (55.09–55.53 dB with the wgrad cells of the same gate); *(field, E6)*
   a race that corrupted half of a boundary tile read 36–41 dB, changed every run, and still passed a 10 dB
   minimum.
-- **Pick the reference that can see the error.** *(field, E7)* MXFP4 grouped NT outputs read 14.8–16.0 dB against an
-  fp32 reference of the unquantized operands, all of it quantization; an error smaller than the quantization noise
+- **Pick the reference that can see the error.** Against an fp32 reference of the unquantized operands, an MXFP4
+  grouped NT output reads mostly quantization loss; an error smaller than the quantization noise
   is invisible there. Use the dequantized operands.
 - *(field, E8)* Healthy fp8 grouped GEMMs read about 56 dB with rowwise scales and 40–47 dB with tensorwise scales;
   on a wgrad whose clean reading was ~56 dB, output below 54 dB was corrupted; readings of 15 or 29 dB were wrong
@@ -140,13 +141,13 @@ part of the contraction when the table lacks a split the policy can reach — no
 ## 10. Changes elsewhere break grouped kernels
 
 - **Rerun the grouped gates after changing a dense kernel or a shared helper.** *(field, E14)* A dense kernel stopped
-  importing a module constant that the grouped kernel imported through it, so the grouped module no longer loaded, and
-  a dense-only scorer saw nothing. *(field, E15)* Separately, a test suite reported 2108 passes while a grouped module
+  importing a module constant that the grouped kernel imported through it, so the grouped module no longer loaded.
+  *(field, E15)* Separately, a test suite reported 2108 passes while a grouped module
   failed to import, because its cases ran other backends. Add an import smoke for every grouped module and a build
   smoke for every launch mode.
 - **Probes built from contiguous tensors never reach strided branches.**
   - *(field, E16)* On a dense MXFP4 GEMM, a rule that took one operand's allocated row stride for both operands
-    passed every contiguous probe.
+    ran only on rows padded past K/2 bytes, which no contiguous probe has.
 - **A fallback `except` in a race must record what it swallowed**, so that "never won" and "never built" look
   different in the log (`../gemm/autotune.md` §7, `grouped_host_autotune.md` §8).
 
@@ -161,7 +162,7 @@ part of the contraction when the table lacks a split the policy can reach — no
 
 ## Related
 `../gemm/correctness.md` · `../flydsl/debug-flydsl-kernel.md` · `grouped_group_mapping.md` ·
-`grouped_wgrad.md` · `grouped_lowprec.md` · `grouped_measurement.md`
+`grouped_variable_k.md` · `grouped_lowprec.md` · `grouped_measurement.md`
 
 ## Evidence
 
@@ -169,19 +170,18 @@ A FlyDSL version is given only where the cited run, or another round in the same
 (`flydsl.__version__`, an import path with its version, or a `pip install flydsl==` in the run's own setup); otherwise
 `FlyDSL ?`. `Turbo fork <rev>` names the Primus-Turbo fork commit that ran, where the record gives one.
 
-- E1 [2026-07, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, SNR against a reference, unbalanced and balanced distributions] a wgrad whose tiles over-ran their group read `b_grad_snr` ~6 dB with `balance=False` and passed on balanced groups (grouped MX wgrad; local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/05-mxfp4-mxfp8-deadends.md:276)
-- E2 [2026-07, gfx950, FlyDSL ?, Turbo da4074d8, N=?, fault reproducer] with 13 empty groups of 32 the FlyDSL wgrad hit a GPU memory-access fault; the Triton backend, and a balanced distribution without empty groups, ran clean (fp8 variable-K wgrad, gate_up K=2880, N=5760, G=32; local:/workspace/code/gpt_oss_docker/.claude/memory/project_wgrad_empty_group_fault.md:11)
-- E3 [2026-07, gfx950, FlyDSL ?, Turbo da4074d8, N=?, fault reproducer] of the three wgrad kernels, the two that build descriptors through the shared rebase helper passed; the 4-wave kernel, which built its descriptor inline through the library call, was the one that faulted (fp8 variable-K wgrad; local:/workspace/code/gpt_oss_docker/.claude/memory/project_wgrad_empty_group_fault.md:15)
-- E4 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=6 runs of one binary, `torch.manual_seed(0)`, 24-cell byte fingerprint] 5–6 cells' fingerprints changed, a different set each run, including NT cells without split-K (gpt-oss MXFP4 grouped GEMM; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260817_092541/rounds/round-16/agent.txt:20)
-- E5 [2026-09, gfx950, FlyDSL 0.2.4, Turbo fork rev ?, N=24 gate cells, SNR against fp32 products of the dequantized operands, unequal group lengths] the base read 55.09–55.53 dB: the NT cells (fc2_fwd, fc1_dgrad) 55.38–55.53, the wgrad cells 55.09–55.17; the gate requires SNR > 10 dB (gpt-oss MXFP4 grouped MoE MLP GEMMs, three geometries; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260925_090609/goal.md:65; rounds/round-04/agent.txt:83-84)
-- E6 [2026-09, gfx950, FlyDSL 0.2.4, Turbo fork rev ?, N=? (several scored runs), the same SNR gate] with one fill of the half-N boundary body dropped and its drain unchanged, fc2_fwd read 55.42 → 41.35 / 39.74 dB and fc1_dgrad 55.47 → 37.95 / 35.91 dB, varying from run to run and above the 10 dB gate (gpt-oss MXFP4 grouped NT; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260925_090609/rounds/round-04/agent.txt:66)
-- E7 [2026-07, gfx950, FlyDSL ?, Turbo fork rev ?, N=18 configurations, SNR against an fp32 reference] narrow and wide stores alike read 15.4 dB (eligible configurations) and 14.8 dB (gpt-oss); 8 waves against fp32 read 16.04 dB, all of it quantization loss and equal to 4 waves (MXFP4 grouped NT; local:/workspace/code/gpt_oss_docker/.claude/memory/project_mxfp4_grouped_fp4vs8_occ.md:34)
-- E8 [2026-07, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, ?] healthy FlyDSL fp8 grouped GEMMs read ~56 dB rowwise and ~40–47 dB tensorwise; a wgrad passes at 56 dB and below 54 dB its output is corrupted; collapses such as 15 / 29 / 46 dB were wrong data or races (FlyDSL grouped fp8 production kernels; local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/02-correctness-race-cache.md:60)
-- E9 [2026-09, gfx950, FlyDSL 0.2.4, Turbo fork rev ?, N=? (two cells per distribution), the campaign SNR gate; reverted, 32 repeats bit-exact] poisoning the M body's A-scale granule left balanced cells at 55.42 / 55.47 dB and took skewed cells to 17.90 / 17.07 dB; under skew 19 of 529 M blocks (3.59%) have a ragged remainder, under balanced none (gpt-oss MXFP4 grouped NT, seed 0, 4096 tokens per group; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260925_090609/rounds/round-08/agent.txt:19)
-- E10 [2026-09, gfx950, FlyDSL 0.2.2, Turbo fork rev ?, N=? (both arm orders), same-process element-wise cross-check against the base, inert control arm] deleting the opening rendezvous before c00 raced, before c01 stayed bit-identical but ran 1.1–2.3% slower, before c10 raced; deleting every opening rendezvous raced (gpt-oss tensorwise fp8 grouped NT, distance-2 pipeline, 8 waves, 489 barriers per binary; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260904_151102/memory.md:292)
-- E11 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=10 bit-exact repeats] dropping the b1 half of a boundary tile's fill with the wait unchanged: 0 of 10 repeats identical (gpt-oss-20b dgrad NN, tensorwise fp8 grouped; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260817_065611/memory.md:154)
-- E12 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, SNR against a reference] only the large-M gate `_verify_wg_sa.py` (M≈16384, forcing the high-split branch) caught a reciprocal table that missed a reachable split; the small-M bench gate and the determinism gate passed (tensorwise fp8 grouped wgrad with a runtime split-K; local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/08-splitk-crosslane-lowprec-wgrad.md:192)
-- E13 [2026-09, gfx950, FlyDSL 0.3.2, aiter fork base 5a11152e2, N=?, ?] racy split-K variants reported err 0.00000 on the fully co-resident grids (1,32 / 1,128 / 48,32) (dense bf16 small-M split-K GEMM; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260904_151953/memory.md:229)
-- E14 [2026-09, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, ?] after a dense MXFP4 kernel stopped referencing `_MXFP4_PRESHUF_BLK`, which the grouped MXFP4 kernel imported through it, the grouped module no longer loaded; the dense-only scorer did not see it (fixed in Turbo 13da3f1a; local:/workspace/code/gpt_oss_docker/.claude/memory/reference_dense_kernel_breaks_grouped.md:25)
-- E15 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=1 test-suite run, pytest] `tests/pytorch/ops/test_grouped_gemm_fp4.py` reported 2108 passed while `grouped_gemm_mxfp4_kernel.py` failed to import; its cases ran the CK and Triton backends (mxfp4 PR branch; local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/08-sync-build.md:77)
-- E16 [2026-09, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, ?] a dense MXFP4 kernel's row-stride rule took operand A's allocated stride for both operands; every probe built from contiguous `torch.randn` tensors passed, since A and B then share a stride (fixed in Turbo 2c9e65ee; local:/workspace/code/gpt_oss_docker/.claude/memory/reference_dense_kernel_breaks_grouped.md:64)
+- E1 [2026-07, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, SNR against a reference, unbalanced and balanced distributions] a wgrad whose tiles over-ran their group read `b_grad_snr` ~6 dB with `balance=False` and passed on balanced groups (grouped MX wgrad)
+- E2 [2026-07, gfx950, FlyDSL ?, Turbo da4074d8, N=?, fault reproducer] with 13 empty groups of 32 the FlyDSL wgrad hit a GPU memory-access fault; the Triton backend, and a balanced distribution without empty groups, ran clean (fp8 variable-K wgrad, gate_up K=2880, N=5760, G=32; fixed in Turbo 10dc393c)
+- E3 [2026-07, gfx950, FlyDSL ?, Turbo da4074d8, N=?, fault reproducer] of the three wgrad kernels, the 4-wave kernel, which built its descriptor inline through the library call, was the one that faulted; the masked and persistent kernels build theirs through the shared rebase helper (fp8 variable-K wgrad; Turbo 10dc393c)
+- E4 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=6 runs of one binary, `torch.manual_seed(0)`, 24-cell byte fingerprint] 5–6 cells' fingerprints changed, a different set each run, including NT cells without split-K (gpt-oss MXFP4 grouped GEMM)
+- E5 [2026-09, gfx950, FlyDSL 0.2.4, Turbo fork rev ?, N=24 gate cells, SNR against fp32 products of the dequantized operands, unequal group lengths] the base read 55.09–55.53 dB: the NT cells (fc2_fwd, fc1_dgrad) 55.38–55.53, the wgrad cells 55.09–55.17; the gate requires SNR > 10 dB (gpt-oss MXFP4 grouped MoE MLP GEMMs, three geometries)
+- E6 [2026-09, gfx950, FlyDSL 0.2.4, Turbo fork rev ?, N=? (several scored runs), the same SNR gate] with one fill of the half-N boundary body dropped and its drain unchanged, fc2_fwd read 55.42 → 41.35 / 39.74 dB and fc1_dgrad 55.47 → 37.95 / 35.91 dB, varying from run to run and above the 10 dB gate (gpt-oss MXFP4 grouped NT)
+- E8 [2026-07, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, ?] healthy FlyDSL fp8 grouped GEMMs read ~56 dB rowwise and ~40–47 dB tensorwise; a wgrad passes at 56 dB and below 54 dB its output is corrupted; collapses such as 15 / 29 / 46 dB were wrong data or races (FlyDSL grouped fp8 production kernels)
+- E9 [2026-09, gfx950, FlyDSL 0.2.4, Turbo fork rev ?, N=? (two cells per distribution), the campaign SNR gate; reverted, 32 repeats bit-exact] poisoning the M body's A-scale granule left balanced cells at 55.42 / 55.47 dB and took skewed cells to 17.90 / 17.07 dB; under skew 19 of 529 M blocks (3.59%) have a ragged remainder, under balanced none (gpt-oss MXFP4 grouped NT, seed 0, 4096 tokens per group)
+- E10 [2026-09, gfx950, FlyDSL 0.2.2, Turbo fork rev ?, N=? (both arm orders), same-process element-wise cross-check against the base, inert control arm] deleting the opening rendezvous before c00 raced, before c01 stayed bit-identical but ran 1.1–2.3% slower, before c10 raced; deleting every opening rendezvous raced (gpt-oss tensorwise fp8 grouped NT, distance-2 pipeline, 8 waves, 489 barriers per binary)
+- E11 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=10 bit-exact repeats] dropping the b1 half of a boundary tile's fill with the wait unchanged: 0 of 10 repeats identical (gpt-oss-20b dgrad NN, tensorwise fp8 grouped)
+- E12 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, SNR against a reference] only the large-M gate (M≈16384, forcing the high-split branch) caught a reciprocal table that missed a reachable split; the small-M bench gate and the determinism gate passed (tensorwise fp8 grouped wgrad with a runtime split-K)
+- E13 [2026-09, gfx950, FlyDSL 0.3.2, aiter fork base 5a11152e2, N=?, ?] racy split-K variants reported err 0.00000 on the fully co-resident grids (1,32 / 1,128 / 48,32) (dense bf16 small-M split-K GEMM)
+- E14 [2026-09, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, ?] after a dense MXFP4 kernel stopped referencing `_MXFP4_PRESHUF_BLK`, which the grouped MXFP4 kernel imported through it, the grouped module no longer loaded (dropped in Turbo bafa0326, restored in 13da3f1a)
+- E15 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=1 test-suite run, pytest] `tests/pytorch/ops/test_grouped_gemm_fp4.py` reported 2108 passed while `grouped_gemm_mxfp4_kernel.py` failed to import; its cases ran the CK and Triton backends (mxfp4 PR branch)
+- E16 [2026-09, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, ?] a dense MXFP4 kernel's row-stride rule took operand A's allocated stride for both operands, on a branch taken only when a row is padded past K/2 bytes (`_row_b = None if Kb_a == K // 2`), which contiguous `torch.randn` probes never are (fixed in Turbo 2c9e65ee)

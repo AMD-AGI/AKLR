@@ -32,6 +32,54 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         },
         layout_variant_name="shuffled_16x16",
     ),
+    # DeepSeek-R1-FP8's DeepseekV2MoE shrunk: its 8 expert groups of 4 experts, the shared
+    # expert fused last, the experts fp8 and shuffled as sglang holds them for aiter
+    PointSpec(
+        contract_id="deepseek_v2_fp8_moe@1.0",
+        axes={"n_tokens": 4, "model_dim": 256, "n_routed": 32, "inter_dim": 256},
+        dtypes={
+            "hidden_states": "bfloat16",
+            "router_weight": "bfloat16",
+            "correction_bias": "bfloat16",
+            "w1": "float8_e4m3fn",
+            "w1_scale": "float32",
+            "w2": "float8_e4m3fn",
+            "w2_scale": "float32",
+            "out": "bfloat16",
+        },
+        attrs={
+            "topk": 8,
+            "num_expert_group": 8,
+            "topk_group": 4,
+            "renormalize": True,
+            "scoring_func": "sigmoid",
+        },
+        layout_variant_name="shuffled_16x16",
+    ),
+    # GLM-5.2-FP8's DeepseekV2MoE shrunk: its routed experts in one group, the shared expert
+    # fused last, the experts fp8 and shuffled as sglang holds them for aiter
+    PointSpec(
+        contract_id="deepseek_v2_fp8_moe@1.0",
+        axes={"n_tokens": 4, "model_dim": 256, "n_routed": 32, "inter_dim": 256},
+        dtypes={
+            "hidden_states": "bfloat16",
+            "router_weight": "bfloat16",
+            "correction_bias": "bfloat16",
+            "w1": "float8_e4m3fn",
+            "w1_scale": "float32",
+            "w2": "float8_e4m3fn",
+            "w2_scale": "float32",
+            "out": "bfloat16",
+        },
+        attrs={
+            "topk": 8,
+            "num_expert_group": 1,
+            "topk_group": 1,
+            "renormalize": True,
+            "scoring_func": "sigmoid",
+        },
+        layout_variant_name="shuffled_16x16",
+    ),
     # GLM-5.2's RoPE part; four heads (16 at TP4) and a short top-k
     PointSpec(
         contract_id="dsa_sparse_mla_decode@1.0",
@@ -504,10 +552,41 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"max_context": 8192},
         layout_variant_name="row_major",
     ),
+    # the same heads, the gated output left in BF16; 64 context tokens a row on average,
+    # where a 128**-0.5 scale or another wrong kernel falls under the bound
+    PointSpec(
+        contract_id="gated_attention_decode@1.0",
+        axes={
+            "n_tokens": 4,
+            "qkv_dim": 2560,
+            "n_kv_heads": 1,
+            "head_dim": 256,
+            "n_slots": 320,
+            "n_positions": 64,
+            "n_offsets": 5,
+            "n_kv_tokens": 256,
+        },
+        dtypes={
+            "projected_qkv": "bfloat16",
+            "q_norm_weight": "bfloat16",
+            "k_norm_weight": "bfloat16",
+            "positions": "int64",
+            "cos_sin_cache": "float32",
+            "cache_locations": "int64",
+            "key_cache": "float8_e4m3fn",
+            "value_cache": "float8_e4m3fn",
+            "kv_indptr": "int32",
+            "kv_indices": "int32",
+            "gated": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
     {
+        "deepseek_v2_fp8_moe@1.0",
         "deepseek_v2_mxfp4_moe@1.0",
         "dsa_indexer_key_prepare@1.0",
         "dsa_indexer_prepare@1.0",
@@ -529,5 +608,6 @@ GFX950_CONTRACT_IDS = frozenset(
         "qwen3_next_gdn_decode_group_fp8_quant@1.0",
         "gated_attention_decode_group_fp8_quant@1.0",
         "qwen3_next_gated_attention_decode_group_fp8_quant@1.0",
+        "gated_attention_decode@1.0",
     }
 )

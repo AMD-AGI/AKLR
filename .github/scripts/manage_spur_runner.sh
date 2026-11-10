@@ -27,8 +27,6 @@ set -euo pipefail
 umask 077
 
 readonly COMMAND_TIMEOUT_SECONDS=30
-# gpu-node.yaml's prepare timeout covers both waits plus cancellation.
-readonly QUEUE_TIMEOUT_SECONDS=900
 readonly RUNNER_ONLINE_TIMEOUT_SECONDS=1200
 readonly CANCEL_TIMEOUT_SECONDS=120
 readonly POLL_INTERVAL_SECONDS=2
@@ -320,7 +318,7 @@ release_runner() {
     echo "Released $runner_name; node cleanup is handled by Spur."
 }
 
-# ---- Prepare: bootstrap input, one submission, bounded readiness waits -------
+# ---- Prepare: bootstrap input, one submission, queue and runner waits --------
 
 on_prepare_exit() {
     local exit_status=$?
@@ -346,8 +344,7 @@ write_registration_token() {
 }
 
 submit_allocations() {
-    local queue_deadline=$1
-    local bootstrap_command submit_response account partition remaining_seconds
+    local bootstrap_command submit_response account partition
     local -a submit_args
 
     printf -v bootstrap_command 'exec env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/bash %q %q %q %q %q %q' \
@@ -358,8 +355,6 @@ submit_allocations() {
     # EXIT handler and release resolve them by job name.
     for account in "${spur_accounts[@]}"; do
         for partition in "${spur_partitions[@]}"; do
-            remaining_seconds=$((queue_deadline - SECONDS))
-            ((remaining_seconds > 0)) || break 2
             submit_args=(
                 submit --parsable
                 -A "$account" -p "$partition"
@@ -372,7 +367,7 @@ submit_allocations() {
             [[ -z $exclude_nodes ]] || submit_args+=(--exclude "$exclude_nodes")
 
             submission_started=true
-            if submit_response=$(timeout -k 5s "${remaining_seconds}s" spur "${submit_args[@]}") &&
+            if submit_response=$(run_spur "${submit_args[@]}") &&
                 [[ $submit_response =~ ^[1-9][0-9]*$ ]]; then
                 allocation_ids+=("$submit_response")
                 allocation_logs[$submit_response]="$handoff_dir/allocation-$account-$partition.log"
@@ -394,15 +389,12 @@ publish_workflow_outputs() {
 }
 
 # Keep the first allocation seen RUNNING. Ended ones are dropped from the race.
+# No deadline: a queued allocation waits for as long as Spur keeps it queued.
 wait_for_allocation() {
-    local queue_deadline=$1
     local id allocation_status
     local -a waiting_ids
 
     while :; do
-        if ((SECONDS >= queue_deadline)); then
-            die 'Spur queue deadline exceeded'
-        fi
         waiting_ids=()
         for id in "${allocation_ids[@]}"; do
             allocation_status=$(read_allocation_status "$id")
@@ -454,7 +446,7 @@ wait_for_runner() {
 }
 
 prepare_runner() {
-    local existing_allocations existing_runner queue_deadline
+    local existing_allocations existing_runner
 
     load_prepare_settings
     existing_allocations=$(find_allocation_ids)
@@ -472,10 +464,8 @@ prepare_runner() {
     # Snapshot the trusted script before submitting: another Host checkout must
     # not alter a queued allocation's bootstrap. The Host API token stays local.
     cp -- "$(dirname -- "${BASH_SOURCE[0]}")/run_gpu_runner.sh" "$handoff_dir/run_gpu_runner.sh"
-    # Submission and queueing share one budget; bootstrap gets a separate budget.
-    queue_deadline=$((SECONDS + QUEUE_TIMEOUT_SECONDS))
-    submit_allocations "$queue_deadline"
-    wait_for_allocation "$queue_deadline"
+    submit_allocations
+    wait_for_allocation
     cancel_other_allocations
     write_registration_token
     publish_workflow_outputs

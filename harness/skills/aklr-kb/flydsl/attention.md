@@ -1,9 +1,9 @@
 ---
 title: "Attention in FlyDSL: the FlyDSL side of the attention/ cards"
 kind: topic
-ops: [attention]
+ops: [attention, mla]
 dtypes: [bf16, fp16, fp8]
-regimes: [prefill, decode, training]
+regimes: [many query rows, few query rows, paged KV, dQ dK dV]
 gens: [gfx950]
 flydsl: 0.3.2
 sources:
@@ -70,10 +70,10 @@ Anchors for the API and patterns the cards refer to; read the source for anythin
 | `flash_attn_fp8_gfx950.py` | fp8 flash forward with the same dual-wave structure |
 | `flash_attn_generic.py` | f16/bf16 flash-forward builder keeping Q, P and the O accumulators in 32x32 MFMA registers |
 | `swa_gfx950.py` | GQA sliding-window forward |
-| `mla_fwd_decode.py`, `mla_fwd_decode_m16x8_fp8_fp8.py` | MLA decode launcher and a 128-head fp8-Q/fp8-KV decode kernel |
-| `pa_decode_fp8.py`, `pa_decode_swa.py`, `pa_decode_tile.py`, `pa_common.py`, `pa_metadata*.py` | paged-attention decode: fp8 with persistent scheduling, sliding window, and a readable tile-programming reference |
+| `mla_fwd_decode.py`, `mla_fwd_decode_m16x8_fp8_fp8.py` | MLA with one query row per sequence and head (decode): launcher taking split-KV partial buffers, and a 128-head fp8-Q/fp8-KV kernel |
+| `pa_decode_fp8.py`, `pa_decode_swa.py`, `pa_decode_tile.py`, `pa_common.py`, `pa_metadata*.py` | paged KV pool with `query_length` query rows per sequence (decode): fp8 with persistent scheduling, sliding window, and a readable tile-programming reference |
 
-There is no attention backward kernel in v0.3.2; the backward lessons come from measured FlyDSL backward
+There is no dQ/dK/dV (attention-gradient) kernel in v0.3.2; the gradient lessons come from measured FlyDSL dQ/dK/dV
 kernels written outside the FlyDSL repository.
 
 ## measurement §6 Small shapes, the host and the launcher
@@ -237,4 +237,4 @@ What each lowering costs in ISA: `../attention/softmax.md` §2.
 
 ## Evidence
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=7, 2000 back-to-back calls synchronised at the end, 7 rounds per arm with the arm order rotated; in parentheses the host time with a synchronise before every call] a direct `@flyc.jit` call 31.01 µs [30.70–31.37] (31.84), the object `flyc.compile` returns 2.70 µs [2.60–2.74] (2.38), `torch.add(out=)` 2.34 µs [2.08–2.44] (1.81) (vector-add launcher with 8 arguments including 3 Constexpr and the stream, SIZE 4096, fresh runtime cache directory; probe `p3_flydsl_launch.py`; local:/workspace/code/gpt_oss_docker/scratch/attn_kb/verify/gpu_probes.md:148; local:/workspace/code/gpt_oss_docker/scratch/attn_kb/verify/raw/r_p3_run1.txt:15)
+- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=7, 2000 back-to-back calls synchronised at the end, 7 rounds per arm with the arm order rotated; in parentheses the host time with a synchronise before every call] a direct `@flyc.jit` call 31.01 µs [30.70–31.37] (31.84), the object `flyc.compile` returns 2.70 µs [2.60–2.74] (2.38), `torch.add(out=)` 2.34 µs [2.08–2.44] (1.81) (vector-add launcher with 8 arguments including 3 Constexpr and the stream, SIZE 4096, fresh runtime cache directory)
