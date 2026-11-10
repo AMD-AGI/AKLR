@@ -22,8 +22,10 @@ from pathlib import Path
 from agentx_ci.preflight import validate_hardware, verify_image
 from agentx_ci.recipe_resolve import POLICY, ResolveError, SelectionError, fetch_inferencex, selected_points
 from agentx_ci.utils import (
+    INTERACTIVITY_METRIC,
     REPO_ROOT,
     begin_attempt,
+    full_response_interactivity,
     pending_results,
     read_json,
     sha256_json,
@@ -37,7 +39,7 @@ def metrics_of(aggregate: dict) -> dict:
     request = aggregate["request_metrics"]
     metrics = {
         "tput_per_gpu": request["throughput"]["per_gpu"]["total_tput_tps"],
-        "p90_e2e_norm_intvty": request["latency"]["e2e_norm_intvty"]["p90"],
+        INTERACTIVITY_METRIC: full_response_interactivity(aggregate),
         "num_requests_successful": aggregate.get("num_requests_successful"),
     }
     if not valid_metrics(metrics):

@@ -97,7 +97,7 @@ class AgentXEnvironmentTests(unittest.TestCase):
         self.aggregate = {
             "request_metrics": {
                 "throughput": {"per_gpu": {"total_tput_tps": 100}},
-                "latency": {"e2e_norm_intvty": {"p90": 10}},
+                "latency": {"e2e_norm_intvty": {"p90": 10}, "full_response_itl": {"p90": 0.1}},
             },
             "num_requests_successful": 2,
         }

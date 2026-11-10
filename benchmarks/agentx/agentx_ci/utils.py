@@ -113,27 +113,53 @@ def pending_results(serving: dict, points: list[dict], run_fields: dict) -> dict
     return results
 
 
-METRIC_AXES = ("p90_e2e_norm_intvty", "tput_per_gpu")
+INTERACTIVITY_METRIC = "p90_full_response_intvty"
+METRIC_AXES = (INTERACTIVITY_METRIC, "tput_per_gpu")
+LEGACY_METRIC_AXES = ("p90_e2e_norm_intvty", "tput_per_gpu")
 
 
-def valid_metrics(point: dict) -> bool:
-    for name in METRIC_AXES:
-        value = point.get(name)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return False
-        try:
-            if not math.isfinite(value) or value <= 0:
-                return False
-        except OverflowError:
-            return False
-    return True
+def positive_metric(value) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value) and value > 0
+    except OverflowError:
+        return False
+
+
+def full_response_interactivity(aggregate: dict) -> float:
+    """Match the InferenceX CSV's reciprocal of its saved P90 ITL in seconds."""
+    try:
+        p90_itl = aggregate["request_metrics"]["latency"]["full_response_itl"]["p90"]
+    except (KeyError, TypeError) as error:
+        raise ValueError(
+            "Missing full-response P90 ITL; cannot use E2E interactivity for this axis"
+        ) from error
+    if not positive_metric(p90_itl):
+        raise ValueError("Invalid full-response P90 ITL: expected finite positive seconds")
+    # Use the saved ITL, not full_response_intvty.p90, which was calculated before
+    # upstream rounded the ITL to five decimal places for its CSV export.
+    interactivity = 1 / p90_itl
+    if not positive_metric(interactivity):
+        raise ValueError("Invalid full-response P90 interactivity: reciprocal must be finite")
+    return interactivity
+
+
+def valid_metrics(point: dict, *, axes: tuple[str, str] = METRIC_AXES) -> bool:
+    return all(positive_metric(point.get(name)) for name in axes)
 
 
 def validated_results(results: dict) -> dict:
-    """Mark invalid metrics as failed before rendering."""
+    """Recompute the report axis from raw data, including older E2E-based runs."""
     points = []
     for original in results["points"]:
         point = dict(original)
+        if point.get("status") == "ok" and ("raw_data" in point or INTERACTIVITY_METRIC not in point):
+            try:
+                point[INTERACTIVITY_METRIC] = full_response_interactivity(point.get("raw_data"))
+            except ValueError as error:
+                point.update(status="failed", error=str(error))
+                point.pop(INTERACTIVITY_METRIC, None)
         if not valid_metrics(point):
             if point.get("status") == "ok":
                 point.update(status="failed", error="Invalid metrics: axes must be finite positive numbers")
@@ -147,7 +173,7 @@ def validated_results(results: dict) -> dict:
     }
 
 
-def complete_measurement(results: dict) -> bool:
+def complete_measurement(results: dict, *, axes: tuple[str, str] = METRIC_AXES) -> bool:
     points, run = results["points"], results["run"]
     identities = [(p["arm"], p["conc"]) for p in points]
     return bool(
@@ -156,6 +182,6 @@ def complete_measurement(results: dict) -> bool:
         and type(run.get("points_expected")) is int
         and len(points) == run.get("points_expected")
         and len(identities) == len(set(identities))
-        and all(p.get("status") == "ok" and valid_metrics(p) for p in points)
-        and ("control" not in results or complete_measurement(results["control"]))
+        and all(p.get("status") == "ok" and valid_metrics(p, axes=axes) for p in points)
+        and ("control" not in results or complete_measurement(results["control"], axes=axes))
     )

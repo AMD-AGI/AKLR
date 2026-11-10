@@ -15,6 +15,8 @@ from agentx_ci.recipe_resolve import POLICY, SelectionError, point_id, validate_
 from agentx_ci.report import LANGS, language_switch, render_document, status_label, tr, write_report
 from agentx_ci.utils import (
     DEFAULT_CONFIG,
+    LEGACY_METRIC_AXES,
+    METRIC_AXES,
     REPO_ROOT,
     complete_measurement,
     load_config,
@@ -55,7 +57,9 @@ def baseline_kind(results: dict) -> str:
     return "pareto" if policy == POLICY else "live"
 
 
-def eligible(results: dict | None, *, historical: bool = False) -> bool:
+def eligible(
+    results: dict | None, *, historical: bool = False, metric_axes: tuple[str, str] = METRIC_AXES
+) -> bool:
     """Check whether a formal run can update its baseline."""
     if not results:
         return False
@@ -73,7 +77,11 @@ def eligible(results: dict | None, *, historical: bool = False) -> bool:
         return False
     return bool(
         run.get("mode") == "live"
-        and (complete_measurement(results) if historical else compare_aklr(results)["status"] == "ok")
+        and (
+            complete_measurement(results, axes=metric_axes)
+            if historical
+            else compare_aklr(results)["status"] == "ok"
+        )
         and (run.get("source_dirty") is False or (historical and "source_dirty" not in run))
         and run.get("arms_requested") == "all"
         and not run.get("points_requested")
@@ -124,13 +132,16 @@ def index_page(manifest: dict, lang: str, title: str) -> str:
             label = (
                 f'<a href="{target_path(model_id, target_id).as_posix()}/index.html?lang={lang}">{label}</a>'
             )
-        baselines = (
-            "<br>".join(
-                f"{escape(baseline_labels.get(mode, mode))}: {escape(date)}"
-                for mode, date in item.get("baselines", {}).items()
-            )
-            or "—"
-        )
+        baseline_lines = [
+            f"{escape(baseline_labels.get(mode, mode))}: {escape(date)}"
+            for mode, date in item.get("baselines", {}).items()
+        ]
+        baseline_lines += [
+            f"{escape(baseline_labels.get(mode, mode))}: "
+            + tr(lang, "full-response P90 unavailable", "缺少完整响应 P90，暂不可比")
+            for mode in item.get("baseline_unavailable", {})
+        ]
+        baselines = "<br>".join(baseline_lines) or "—"
         mode = item.get("mode", "—")
         rows.append(
             f"<tr><td>{label}<br><code>{model_id}</code></td><td><code>{target_id}</code></td>"
@@ -204,6 +215,7 @@ def collect(
         item.update(
             report=False,
             baselines={},
+            baseline_unavailable={},
             points_ok=0,
             points_total=0,
             error=None,
@@ -284,18 +296,28 @@ def collect(
         else:
             item["status"] = "not-run"
 
-        baselines = {}
+        baselines, report_baselines = {}, {}
         for kind in ("live", "pareto"):
             candidate = previous.read((relative / f"baseline-{kind}.json").as_posix())
             if candidate is not None:
-                if (
-                    target_key(candidate) != key
-                    or not eligible(candidate, historical=True)
-                    or baseline_kind(candidate) != kind
-                ):
+                if target_key(candidate) != key or baseline_kind(candidate) != kind:
                     raise ValueError(f"invalid {kind} baseline for {model_id}/{target_id}")
-                baselines[kind] = candidate
-        baseline = baselines.get(baseline_kind(current)) if current is not None else baselines.get("live")
+                normalized = validated_results(candidate)
+                if eligible(normalized, historical=True):
+                    baselines[kind] = normalized
+                elif eligible(candidate, historical=True, metric_axes=LEGACY_METRIC_AXES):
+                    # Keep an otherwise valid older baseline intact. Its normalized
+                    # copy has unavailable axes, so comparisons cannot mix metrics.
+                    baselines[kind] = candidate
+                    item["baseline_unavailable"][kind] = "historical baseline lacks full-response P90 ITL"
+                else:
+                    raise ValueError(f"invalid {kind} baseline for {model_id}/{target_id}")
+                report_baselines[kind] = normalized
+        baseline = (
+            report_baselines.get(baseline_kind(current))
+            if current is not None
+            else report_baselines.get("live")
+        )
 
         shown = current
         if shown is None:
@@ -315,6 +337,16 @@ def collect(
                         f"measured at {shown['run']['finished_at']}.",
                         f"历史测量：本轮状态为{status_label(lang, item['status'])}；"
                         f"测量时间 {shown['run']['finished_at']}。",
+                    )
+                    for lang in LANGS
+                }
+            elif baseline_kind(current) in item["baseline_unavailable"]:
+                notice = {
+                    lang: tr(
+                        lang,
+                        "The historical baseline is preserved, but lacks full-response P90 ITL; "
+                        "its E2E interactivity cannot be compared on this axis.",
+                        "历史基线已保留，但缺少完整响应 P90 ITL；不能用其 E2E 交互速度比较当前横轴。",
                     )
                     for lang in LANGS
                 }
@@ -339,9 +371,11 @@ def collect(
             )
         if eligible(current):
             baselines[baseline_kind(current)] = current
+            item["baseline_unavailable"].pop(baseline_kind(current), None)
         for kind, baseline in baselines.items():
             write_json(out / relative / f"baseline-{kind}.json", baseline)
-            item["baselines"][kind] = baseline["run"]["finished_at"]
+            if kind not in item["baseline_unavailable"]:
+                item["baselines"][kind] = baseline["run"]["finished_at"]
         manifest["targets"].append(item)
     write_json(out / "manifest.json", manifest)
     (out / "index.html").write_text(render_index(manifest))

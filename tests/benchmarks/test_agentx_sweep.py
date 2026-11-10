@@ -32,7 +32,13 @@ class AgentXSweepTests(unittest.TestCase):
         target = {
             "run": {"completed": True, "points_expected": 2},
             "points": [
-                {"arm": "tp8", "conc": conc, "status": "ok", "tput_per_gpu": 100, "p90_e2e_norm_intvty": 20}
+                {
+                    "arm": "tp8",
+                    "conc": conc,
+                    "status": "ok",
+                    "tput_per_gpu": 100,
+                    "p90_full_response_intvty": 20,
+                }
                 for conc in (1, 2)
             ],
         }
@@ -147,7 +153,7 @@ class AgentXDockerOutcomeTests(unittest.TestCase):
                     ]
                 if not completed:
                     current["control"]["points"][0].update(
-                        status="ok", error=None, tput_per_gpu=100, p90_e2e_norm_intvty=20
+                        status="ok", error=None, tput_per_gpu=100, p90_full_response_intvty=20
                     )
                 (self.args.out / "results.json").write_text(json.dumps(current))
                 return 1, "container log tail"

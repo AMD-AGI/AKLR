@@ -43,7 +43,13 @@ class AgentXReportOutcomeTests(unittest.TestCase):
                 "finished_at": "2026-01-01T00:00:00Z",
             },
             "points": [
-                {"arm": "tp8", "conc": conc, "status": "ok", "tput_per_gpu": 100, "p90_e2e_norm_intvty": 20}
+                {
+                    "arm": "tp8",
+                    "conc": conc,
+                    "status": "ok",
+                    "tput_per_gpu": 100,
+                    "p90_full_response_intvty": 20,
+                }
                 for conc in (1, 2)
             ],
         }

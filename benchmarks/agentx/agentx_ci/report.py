@@ -27,6 +27,9 @@ from agentx_ci.utils import (
 ARM_COLORS = ("#2563eb", "#ea580c", "#16a34a", "#9333ea", "#0891b2")
 COMBINED_COLOR = "#111827"
 BASELINE_COLOR = "#9ca3af"
+# Keep the published InferenceX CSV labels in both report languages.
+X_LABEL = "P90 Interactivity (tok/s/user)"
+Y_LABEL = "Throughput/Chip (tok/s)"
 # Highlight threshold, not a significance test.
 NOTABLE = 0.03
 LANGS = ("en", "zh")
@@ -158,15 +161,12 @@ def svg_chart(title: str, series: list[dict], lang: str, width: int = 620, heigh
         out.append(f'<line x1="{left}" x2="{left + plot_w}" y1="{sy(t):.1f}" y2="{sy(t):.1f}" class="grid"/>')
         out.append(f'<text x="{left - 8}" y="{sy(t) + 4:.1f}" class="tick" text-anchor="end">{t:g}</text>')
     out.append(
-        f'<text x="{left + plot_w / 2}" y="{height - 12}" class="axis" text-anchor="middle">'
-        + tr(lang, "P90 E2E interactivity", "P90 端到端交互速度")
-        + " (tok/s/user) →</text>"
+        f'<text x="{left + plot_w / 2}" y="{height - 12}" class="axis" text-anchor="middle">{X_LABEL}</text>'
     )
     out.append(
         f'<text transform="translate(16 {top + plot_h / 2}) rotate(-90)" class="axis" '
         'text-anchor="middle">'
-        + tr(lang, "Input + output throughput", "输入+输出吞吐")
-        + " (tok/s/GPU) →</text>"
+        f"{Y_LABEL}</text>"
     )
     for s in series:
         line = s.get("frontier") or []
@@ -189,8 +189,8 @@ def svg_chart(title: str, series: list[dict], lang: str, width: int = 620, heigh
             tip = (
                 f"{tr(lang, 'Configuration', '配置')}: {p.get('arm', s['label'])}\n"
                 f"{label} · c{p['conc']}\n"
-                f"{tr(lang, 'Input + output throughput', '输入+输出吞吐')}: {p[Y]:.1f} tok/s/GPU\n"
-                f"{tr(lang, 'P90 E2E interactivity', 'P90 端到端交互速度')}: {p[X]:.1f} tok/s/user"
+                f"{Y_LABEL}: {p[Y]:.1f}\n"
+                f"{X_LABEL}: {p[X]:.1f}"
             )
             out.append(
                 f'<circle cx="{sx(p[X]):.1f}" cy="{sy(p[Y]):.1f}" r="4.5" fill="{fill}" '
@@ -358,8 +358,8 @@ def aklr_section(results: dict, lang: str) -> str:
                 tr(lang, "Off total tok/s/GPU", "关闭 总 tok/s/GPU"),
                 tr(lang, "On total tok/s/GPU", "开启 总 tok/s/GPU"),
                 tr(lang, "Throughput Δ", "吞吐变化"),
-                tr(lang, "Off P90 E2E tok/s/user", "关闭 P90 端到端 tok/s/user"),
-                tr(lang, "On P90 E2E tok/s/user", "开启 P90 端到端 tok/s/user"),
+                tr(lang, "Off P90 tok/s/user", "关闭 P90 tok/s/user"),
+                tr(lang, "On P90 tok/s/user", "开启 P90 tok/s/user"),
                 tr(lang, "Interactivity Δ", "交互速度变化"),
             )
         )
@@ -442,7 +442,7 @@ def comparison_tables(comparison: dict, lang: str) -> str:
         out.append(
             head + f"<table class='compact'><thead><tr><th>{tr(lang, 'conc', '并发')}</th>"
             f"<th>{tr(lang, 'Total tok/s/GPU', '总 tok/s/GPU')}</th><th>{previous}</th><th>Δ</th>"
-            f"<th>{tr(lang, 'P90 E2E tok/s/user', 'P90 端到端 tok/s/user')}</th><th>{previous}</th><th>Δ</th><th></th></tr></thead><tbody>"
+            f"<th>{tr(lang, 'P90 tok/s/user', 'P90 tok/s/user')}</th><th>{previous}</th><th>Δ</th><th></th></tr></thead><tbody>"
             + "".join(rows)
             + "</tbody></table><p class='muted'>"
             + tr(lang, "Throughput geomean vs previous: ", "吞吐几何平均相对上次：")
@@ -524,7 +524,7 @@ def points_table(results: dict, lang: str) -> str:
         f"<table><thead><tr><th>{tr(lang, 'arm', '实验组')}</th><th>{tr(lang, 'conc', '并发')}</th>"
         f"<th>{tr(lang, 'point', '数据点')}</th><th>{tr(lang, 'status', '状态')}</th>"
         f"<th title='{tr(lang, 'Input + output throughput per GPU', '单 GPU 输入+输出吞吐')}'>{tr(lang, 'Total tok/s/GPU', '总 tok/s/GPU')}</th>"
-        f"<th title='{tr(lang, 'P90 E2E interactivity', 'P90 端到端交互速度')}'>{tr(lang, 'P90 E2E tok/s/user', 'P90 端到端 tok/s/user')}</th>"
+        f"<th title='{tr(lang, 'P90 interactivity (full response)', 'P90 完整响应交互速度')}'>{tr(lang, 'P90 tok/s/user', 'P90 tok/s/user')}</th>"
         f"<th>{tr(lang, 'serve spec', '服务配置')}</th><th></th></tr></thead><tbody>"
         + rows
         + "</tbody></table>"
@@ -774,10 +774,12 @@ AKLR {aklr_link} · InferenceX {inferencex_link} · {progress} · {baseline_line
 <p class="muted">{
         tr(
             lang,
-            "Throughput counts input + output tokens. P90 E2E interactivity = 1 / P90(E2E latency / output tokens), "
-            "including time to first token.",
-            "吞吐统计输入与输出 token 总量。P90 端到端交互速度 = 1 / P90（端到端延迟 / 输出 token 数），"
-            "包含首 token 等待时间。",
+            "Throughput counts input + output tokens. P90 interactivity matches the InferenceX CSV: "
+            "1 / P90(full-response ITL), using the exported ITL in seconds. "
+            "It excludes time to first token and includes the time from the final content chunk to HTTP completion.",
+            "吞吐统计输入与输出 token 总量。P90 交互速度与 InferenceX CSV 口径一致："
+            "1 / P90（完整响应 ITL），使用导出的秒单位 ITL。"
+            "不包含首 token 等待时间，包含最后内容块到 HTTP 响应结束的收尾时间。",
         )
     }</p>
 {charts(results, baseline, comparison, lang)}
@@ -864,17 +866,19 @@ def selection_section(results: dict, lang: str) -> str:
         + "<p>"
         + tr(
             lang,
-            "P90 E2E normalized interactivity × input + output throughput/GPU",
-            "P90 端到端归一化交互速度 × 单 GPU 输入+输出吞吐",
+            "Upstream selection axes: P90 E2E normalized interactivity × input + output throughput/GPU",
+            "上游选点坐标：P90 端到端归一化交互速度 × 单 GPU 输入+输出吞吐",
         )
         + " · "
         f"<code>{escape(selection['selection_sha256'][:12])}</code></p>"
         + "<p>"
         + tr(
             lang,
-            "The upstream frontier selects candidates; the chart below uses only this run's measurements. "
+            "The upstream frontier selects candidates using E2E interactivity; the chart below recomputes "
+            "the frontier using this run's full-response interactivity. "
             "Different hardware or runtime may have a different full frontier.",
-            "上游前沿仅用于选点；下图根据本次实测重新计算。硬件或运行环境不同，完整前沿可能不同。",
+            "上游前沿按端到端交互速度选点；下图按本次实测的完整响应交互速度重新计算前沿。"
+            "硬件或运行环境不同，完整前沿可能不同。",
         )
         + "</p><details><summary>"
         + tr(lang, "Unselected points", "未选中的点")
@@ -987,6 +991,7 @@ def write_report(
         {
             "model": results.get("model", {}),
             "target": results.get("target", {}),
+            "axes": {"x": X, "y": Y},
             "frontiers": frontiers(results),
             "comparison": comparison,
             "history": history,

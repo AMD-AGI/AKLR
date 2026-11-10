@@ -167,7 +167,7 @@ class AgentXPlanTests(unittest.TestCase):
                     "is_multinode": False,
                     "image": IMAGE,
                     "metrics": {
-                        plan.rr.X: interactivity,
+                        "p90_e2e_norm_intvty": interactivity,
                         plan.rr.Y: throughput,
                         "pp": 1,
                         "pcp_size": 1,

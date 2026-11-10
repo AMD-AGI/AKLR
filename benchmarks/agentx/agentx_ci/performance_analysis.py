@@ -7,9 +7,9 @@ import copy
 import math
 
 from agentx_ci.preflight import comparison_identity
-from agentx_ci.utils import complete_measurement, valid_metrics
+from agentx_ci.utils import METRIC_AXES, complete_measurement, valid_metrics
 
-X, Y = "p90_e2e_norm_intvty", "tput_per_gpu"
+X, Y = METRIC_AXES
 
 
 def measured(results: dict, arm: str | None = None) -> list[dict]:
@@ -20,10 +20,10 @@ def measured(results: dict, arm: str | None = None) -> list[dict]:
     ]
 
 
-def frontier(points: list[dict]) -> list[dict]:
+def frontier(points: list[dict], *, x_axis: str = X) -> list[dict]:
     """Return non-dominated points by increasing interactivity."""
     best_y, keep = -math.inf, []
-    for point in sorted(points, key=lambda p: (-p[X], -p[Y])):
+    for point in sorted(points, key=lambda p: (-p[x_axis], -p[Y])):
         if point[Y] > best_y:
             keep.append(point)
             best_y = point[Y]
