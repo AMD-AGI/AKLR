@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What deepseek_v2_mxfp4_moe's contract says, in torch, in fp32: every input decoded to fp32 and nothing
-rounded or quantized in between but what the contract rounds: the router's logits, in the dtype
-sglang's MoEGate returns them in."""
+"""What the contracts say, in torch, in fp32: every input decoded to fp32 and nothing rounded or
+quantized in between but what a contract rounds: the router's logits, in the dtype sglang's
+MoEGate returns them in, and in deepseek_v2_fp8_moe each fp8 linear's input, as the checkpoint's
+FP8 scheme quantizes it (_fp8_linear)."""
 
 from __future__ import annotations
 
@@ -15,10 +16,11 @@ from aklr.core.contract.semantics import rounded_to_bfloat16
 if TYPE_CHECKING:
     from torch import Tensor
 
-__all__ = ["deepseek_v2_mxfp4_moe_reference"]
+__all__ = ["deepseek_v2_fp8_moe_reference", "deepseek_v2_mxfp4_moe_reference"]
 
 
 _MXFP4_BLOCK = 32
+_FP8_BLOCK = 128
 
 
 def _fp32(
@@ -112,5 +114,82 @@ def deepseek_v2_mxfp4_moe_reference(
 
     def mlp(rows: Tensor, e: int) -> Tensor:
         return _mlp(rows, weight("w1", e), weight("w2", e))
+
+    return _experts(x, ids, weights, mlp)
+
+
+def _first_largest(values: Tensor, k: int) -> Tensor:
+    """The indices of each row's k largest values, the lower index first among equals."""
+    import torch
+
+    return torch.sort(values, dim=-1, descending=True, stable=True).indices[..., :k]
+
+
+def _grouped_routed(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+    logits: Tensor,
+    bias: Tensor,
+) -> tuple[Tensor, Tensor]:
+    """Each token's topk experts by sigmoid score plus ``bias`` within its topk_group best
+    groups, a group scored by its two best biased scores summed, and their weights."""
+    import torch
+
+    attrs = point.attrs
+    scores = logits.sigmoid()
+    biased = scores + bias
+    groups = biased.unflatten(-1, (attrs["num_expert_group"], -1))
+    group_scores = groups.topk(2, dim=-1).values.sum(dim=-1)
+    kept = torch.zeros_like(group_scores, dtype=torch.bool)
+    kept.scatter_(-1, _first_largest(group_scores, attrs["topk_group"]), True)
+    allowed = kept.repeat_interleave(groups.shape[-1], dim=-1)
+    ids = _first_largest(biased.masked_fill(~allowed, float("-inf")), attrs["topk"])
+    weights = scores.gather(-1, ids)
+    if attrs["renormalize"]:
+        weights = weights / weights.sum(dim=-1, keepdim=True)
+    return ids, weights * row_major_args["routed_scaling_factor"]
+
+
+def _fp8_linear(x: Tensor, weight: Tensor, scale: Tensor) -> Tensor:
+    """x weight^T of an fp8 weight [n, k] with its scale per 128 x 128 block, x taken as the
+    checkpoint's FP8 scheme quantizes it (sglang's fp8 MoE on aiter, per_128x128): in bf16,
+    then each 1 x 128 group in fp8 at a scale of its amax / 448."""
+    import torch
+
+    n, k = weight.shape
+    block_scale = scale.repeat_interleave(_FP8_BLOCK, 0)[:n]
+    weight = weight * block_scale.repeat_interleave(_FP8_BLOCK, 1)[:, :k]
+    fp8 = torch.float8_e4m3fn
+    groups = x.bfloat16().to(x.dtype).unflatten(-1, (-1, _FP8_BLOCK))
+    group_scale = groups.abs().amax(-1, keepdim=True) / torch.finfo(fp8).max
+    group_scale = group_scale.clamp(min=torch.finfo(torch.float32).tiny)
+    x = ((groups / group_scale).to(fp8).to(x.dtype) * group_scale).flatten(-2)
+    return x @ weight.T
+
+
+def deepseek_v2_fp8_moe_reference(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+    decode: Callable[[Tensor, str], Tensor],
+) -> Tensor:
+    """On hidden_states, each token's routed experts (_grouped_routed) and the shared one (the
+    last slot) at weight 1, both linears of each expert an fp8 one. Rounding points: the
+    router's logits, exact products of hidden_states and router_weight summed in float64,
+    round once to hidden_states' dtype, bf16; each linear's input rounds to bf16, then to fp8
+    per 1 x 128 group (_fp8_linear)."""
+    args, f = row_major_args, _fp32(point, row_major_args, decode)
+    logits = (
+        decode(args["hidden_states"], point.dtypes["hidden_states"]).double()
+        @ decode(args["router_weight"], point.dtypes["router_weight"]).double().T
+    )
+    x = f("hidden_states")
+    ids, weights = _grouped_routed(point, args, rounded_to_bfloat16(logits).float(), f("correction_bias"))
+    ids, weights = _with_shared_slot(point, ids, weights)
+
+    def mlp(rows: Tensor, e: int) -> Tensor:
+        import torch
+
+        gate, up = _fp8_linear(rows, f("w1", e), f("w1_scale", e)).chunk(2, dim=-1)
+        return _fp8_linear(torch.nn.functional.silu(gate) * up, f("w2", e), f("w2_scale", e))
 
     return _experts(x, ids, weights, mlp)
