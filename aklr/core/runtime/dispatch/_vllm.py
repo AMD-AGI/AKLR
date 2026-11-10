@@ -3,8 +3,8 @@
 
 from __future__ import annotations
 
+from aklr.core.runtime import _hook_registry as _hooks
 from aklr.core.runtime.dispatch._registry import DispatcherRegistry
-from aklr.core.runtime.hook_registry import KEEP_RESULT, HookRegistry, HookSpec, HookType
 
 __all__ = ["VLLM_HOOKED_METHOD", "register_vllm_plugin"]
 
@@ -14,7 +14,7 @@ VLLM_HOOKED_METHOD = "vllm.v1.worker.gpu_worker.Worker.init_device"
 
 def _init_runtime(result, *args, **kwargs):
     DispatcherRegistry.default().init_once()
-    return KEEP_RESULT
+    return _hooks.KEEP_RESULT
 
 
 def register_vllm_plugin() -> None:
@@ -31,12 +31,12 @@ def register_vllm_plugin() -> None:
 
 def _register_runtime_hook() -> None:
     """Declare core initialization; the plugin owns the complete bootstrap batch."""
-    HookRegistry.default().register(
-        HookSpec(
+    _hooks.HookRegistry.default().register(
+        _hooks.HookSpec(
             hook_id="vllm.runtime.init",
             target=VLLM_HOOKED_METHOD,
             hook=_init_runtime,
-            hook_type=HookType.AFTER,
+            hook_type=_hooks.HookType.AFTER,
             phase="bootstrap",
             order=0,
             source=__name__,

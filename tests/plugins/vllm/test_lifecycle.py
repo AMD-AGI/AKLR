@@ -10,8 +10,18 @@ from types import ModuleType, SimpleNamespace
 import pytest
 
 import aklr.plugins.vllm as plugin
-from aklr.core.runtime.dispatch import DispatcherRegistry, register_vllm_plugin
-from aklr.core.runtime.hook_registry import HookRegistry, HookSpec
+from aklr.core.runtime._hook_registry import HookRegistry
+from aklr.core.runtime.dispatch import DispatcherRegistry, FallbackReason, register_vllm_plugin
+from aklr.plugins.vllm import hook
+from aklr.plugins.vllm.hook import vllm_route
+
+INSTALLED = "0.33.0rc1.dev910"
+
+
+def compute_caller(value):
+    from vllm.v1.worker.gpu_worker import compute
+
+    return compute(value)
 
 
 @pytest.fixture
@@ -19,6 +29,8 @@ def lifecycle(monkeypatch):
     events = []
     registry = HookRegistry()
     monkeypatch.setattr(HookRegistry, "default", classmethod(lambda cls: registry))
+    monkeypatch.setattr(hook, "_ROUTES", {})
+    monkeypatch.setattr(hook, "_vllm_version", lambda: INSTALLED)
 
     class Worker:
         fail_init = False
@@ -46,6 +58,12 @@ def lifecycle(monkeypatch):
     module.compute = lambda value: value * 2
     monkeypatch.setitem(sys.modules, module.__name__, module)
 
+    @vllm_route(f"{__name__}.compute_caller", f"{module.__name__}.compute", versions=(INSTALLED,))
+    def compute_route(value):
+        if value < 0:
+            return FallbackReason.OUT_OF_CONTRACT
+        return value * 2 + 1
+
     @functools.cache
     def init_once():
         events.append("runtime")
@@ -58,14 +76,7 @@ def lifecycle(monkeypatch):
     def install():
         assert "runtime" in events
         events.append("routes")
-        registry.register(
-            HookSpec(
-                "test.compute",
-                f"{module.__name__}.compute",
-                lambda next_fn, value: next_fn(value) + 1,
-            )
-        )
-        return registry.apply("device_ready")
+        return hook._install()
 
     monkeypatch.setattr(plugin, "_install_once", install)
     from aklr.plugins.vllm import warmup
@@ -103,6 +114,26 @@ def test_bootstrap_and_device_ready_are_ordered_and_idempotent(lifecycle, monkey
     assert events[-2:] == ["native warmup", "aklr warmup"]
     assert worker.execute_model("step") == "step"
     assert events[-2:] == ["roomy", "execute"]
+
+
+@pytest.mark.parametrize("installed, expected", [(INSTALLED, 7), ("0.32.0", 6)])
+def test_declared_route_waits_for_device_and_preserves_native_fallback(
+    lifecycle, monkeypatch, installed, expected
+):
+    Worker, module, _, events = lifecycle
+    monkeypatch.setenv("AKLR_VLLM_PLUGIN", "1")
+    monkeypatch.setattr(hook, "_vllm_version", lambda: installed)
+    native = module.compute
+    assert compute_caller(3) == 6
+
+    plugin.register()
+    assert module.compute is native
+    assert compute_caller(3) == 6
+    assert Worker().init_device() == "bound"
+    assert events == ["device", "runtime", "routes"]
+    assert (module.compute is not native) is (installed == INSTALLED)
+    assert compute_caller(3) == expected
+    assert compute_caller(-3) == -6
 
 
 @pytest.mark.parametrize("first", [register_vllm_plugin, plugin.register])

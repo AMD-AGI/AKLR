@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""``@vllm_route``: how a vLLM call reaches AKLR ops, declared beside them.
+"""``@vllm_route``: the public API for declaring how a vLLM call reaches AKLR ops.
+
+Installation, native-callable lookup and the hook registry are plugin internals.
 
 vLLM compiles most models' forward with torch.compile, so Python there runs once, while
 tracing. A route therefore replaces no traced function: it replaces a function a vLLM function
@@ -23,10 +25,10 @@ from importlib.metadata import version
 import torch
 from packaging.version import Version
 
+from aklr.core.runtime import _hook_registry as _hooks
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.core.runtime.hook_registry import HookRegistry, HookSpec, HookType
 
-__all__ = ["install", "original", "vllm_route", "vllm_version"]
+__all__ = ["vllm_route"]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -66,15 +68,15 @@ def vllm_route(
     return declare
 
 
-def vllm_version() -> str:
+def _vllm_version() -> str:
     """The installed vLLM's release, without a local label (0.33.0rc1.dev910+g4fab5a074 is
     0.33.0rc1.dev910)."""
     return Version(version("vllm")).public
 
 
-def install() -> list[str]:
+def _install() -> list[str]:
     """Validate the selected routes, then install them in one device-ready batch."""
-    installed = vllm_version()
+    installed = _vllm_version()
     blocked_groups = {
         declaration.group
         for targets in _ROUTES.values()
@@ -98,11 +100,11 @@ def install() -> list[str]:
             if f"{attr}(" not in sources[caller]:
                 raise RuntimeError(f"{caller} does not call {callee}")
             specs.append(
-                HookSpec(
+                _hooks.HookSpec(
                     hook_id=_hook_id(route, callee),
                     target=callee,
                     hook=_around(route),
-                    hook_type=HookType.AROUND,
+                    hook_type=_hooks.HookType.AROUND,
                     phase="device_ready",
                     group=declaration.group,
                     source=f"{route.__module__}.{route.__qualname__}",
@@ -111,7 +113,7 @@ def install() -> list[str]:
                 )
             )
             hooked.append(callee)
-    registry = HookRegistry.default()
+    registry = _hooks.HookRegistry.default()
     for spec in specs:
         registry.register(spec)
     registry.apply(phase="device_ready")
@@ -150,7 +152,7 @@ def _signature_validator(route: Callable, callee: str) -> Callable:
     return validate
 
 
-def original(route: Callable, callee: str | None = None) -> Callable:
+def _original(route: Callable, callee: str | None = None) -> Callable:
     """The installed route's saved callable, independent of the current wrapper chain.
 
     Specify ``callee`` for routes with multiple targets. Unlike ``next_fn`` in an
@@ -168,7 +170,7 @@ def original(route: Callable, callee: str | None = None) -> Callable:
         raise ValueError(f"{route.__qualname__}: undeclared callee {callee}")
     # Keep the Registry lookup: restore invalidates handles there, and a later
     # installation may legitimately save a different native implementation.
-    return HookRegistry.default().original(_hook_id(route, callee))
+    return _hooks.HookRegistry.default().original(_hook_id(route, callee))
 
 
 @functools.cache

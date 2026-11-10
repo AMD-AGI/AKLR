@@ -4,7 +4,7 @@ A plugin replaces a function of an inference framework (for example, an MoE laye
 
 To add an optimization, follow the [plugin tutorial](../../docs/plugin_tutorial.md). This page is the reference: the layout, the call flow, the rules for routes, validation, and enabling and upgrading.
 
-The vLLM plugin uses AKLR's [HookRegistry](../core/runtime/hook_registry.py) for staged installation, rollback and saved native callables, while retaining `@vllm_route` for computation and fallback policy. See the [Muse Spark MVP guide (中文)](../../docs/vllm_hook_registry_mvp.zh.md) for its API, tests and limitations.
+The vLLM plugin exposes `@vllm_route` as its only hook declaration API: import it from `aklr.plugins.vllm.hook`, implement the callee's parameters, and return a result or `FallbackReason`. The plugin handles installation and native fallback. Its [private HookRegistry](../core/runtime/_hook_registry.py) and installation helpers are internal implementation details. See the [Muse Spark guide (中文)](../../docs/vllm_hook_registry_mvp.zh.md) for the public API, tests and limitations.
 
 ## Architecture
 
@@ -29,7 +29,7 @@ aklr/plugins/
 │   └── layers/               mirrors SGLang's srt/layers/, with the same layout
 ├── vllm/                     the vLLM plugin (AKLR_VLLM_PLUGIN=1)
 │   ├── __init__.py           entry: hooks the routes in each worker once its device is bound
-│   ├── hook.py               @vllm_route wraps the function a vLLM function looks up at run time
+│   ├── hook.py               public @vllm_route declarations; private installation and fallback helpers
 │   ├── warmup.py             compiles the AKLR kernels vLLM's own warmup does not reach
 │   ├── stack.py              runs each vLLM step from a CPython frame chunk of its own
 │   ├── layers/               routes from vLLM's layers to the ops of aklr/ops (GEMM, MoE)
@@ -48,6 +48,7 @@ In addition, a route is hooked only on the SGLang releases it declares, and insi
 
 ## Rules for routes
 
+- For vLLM, declare routes with `@vllm_route("<caller>", "<callee>", versions=(...))`; `group=...` selects dependent routes together. The decorator records declarations, and the plugin installs them after device initialization. `caller` is an installation check; only the declared callee binding is changed. Route authors do not register with the private Registry or call its installation helpers.
 - Declare a route with `@sglang_route("<target>", versions=(...))` on a function with the target's exact parameters; `versions` lists the SGLang releases it was tested on.
 - A route replaces the whole original function and must return exactly what it returns: steps the op does not cover (such as the projections before and after, or the all-reduce) are done by the route, calling SGLang's existing functions.
 - Shapes, dtypes, token counts and GPU models are the op's to judge; the route does not check them again.

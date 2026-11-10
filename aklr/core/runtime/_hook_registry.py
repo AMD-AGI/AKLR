@@ -1,11 +1,13 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""Startup-only hooks with explicit targets, original callables and reversible writes.
+"""Private startup hook engine with saved callables and reversible attribute writes.
 
 This module has no framework dependencies. Callers own compatibility checks and
 computation/fallback policy; the registry only installs synchronous Python hooks.
 Registration and application must happen before the affected code starts running.
+vLLM extensions declare routes through ``aklr.plugins.vllm.hook.vllm_route``;
+this module is an implementation detail, not a separate registration API.
 """
 
 from __future__ import annotations
@@ -22,7 +24,7 @@ from enum import Enum
 from types import ModuleType
 from typing import Any
 
-__all__ = ["KEEP_RESULT", "HookRegistry", "HookSpec", "HookType"]
+__all__: list[str] = []
 
 _LOGGER = logging.getLogger(__name__)
 KEEP_RESULT = object()

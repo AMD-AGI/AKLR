@@ -11,7 +11,7 @@ from types import ModuleType
 
 import pytest
 
-from aklr.core.runtime.hook_registry import KEEP_RESULT, HookRegistry, HookSpec, HookType
+from aklr.core.runtime._hook_registry import KEEP_RESULT, HookRegistry, HookSpec, HookType
 
 PHASE = "device_ready"
 ERRORS = (ValueError, RuntimeError)

@@ -10,8 +10,8 @@ import importlib
 
 from aklr.core.contract.locate import op_packages
 from aklr.core.platform.env import RuntimeEnv
+from aklr.core.runtime import _hook_registry as _hooks
 from aklr.core.runtime.dispatch._vllm import _register_runtime_hook
-from aklr.core.runtime.hook_registry import KEEP_RESULT, HookRegistry, HookSpec, HookType
 from aklr.plugins.vllm import hook
 from aklr.plugins.vllm.stack import roomy
 
@@ -32,15 +32,15 @@ def _register() -> None:
     env = RuntimeEnv()
     enabled = not env.is_all_disabled and env.is_vllm_plugin_enabled
     _register_runtime_hook()
-    registry = HookRegistry.default()
+    registry = _hooks.HookRegistry.default()
     if enabled:
         for name, method, callback, hook_type, order in (
-            ("routes", "init_device", _install_routes, HookType.AFTER, 10),
-            ("warmup", "compile_or_warm_up_model", _warm_up, HookType.AFTER, 0),
-            ("execute", "execute_model", _execute, HookType.AROUND, 0),
+            ("routes", "init_device", _install_routes, _hooks.HookType.AFTER, 10),
+            ("warmup", "compile_or_warm_up_model", _warm_up, _hooks.HookType.AFTER, 0),
+            ("execute", "execute_model", _execute, _hooks.HookType.AROUND, 0),
         ):
             registry.register(
-                HookSpec(
+                _hooks.HookSpec(
                     hook_id=f"vllm.plugin.{name}",
                     target=f"vllm.v1.worker.gpu_worker.Worker.{method}",
                     hook=callback,
@@ -56,7 +56,7 @@ def _register() -> None:
 def _install_routes(result, *args, **kwargs):
     # The runtime AFTER hook is inside this one, so initialization has completed.
     _install_once()
-    return KEEP_RESULT
+    return _hooks.KEEP_RESULT
 
 
 def _warm_up(result, worker, *args, **kwargs):
@@ -65,7 +65,7 @@ def _warm_up(result, worker, *args, **kwargs):
         from aklr.plugins.vllm.warmup import warm_up
 
         warm_up(worker)
-    return KEEP_RESULT
+    return _hooks.KEEP_RESULT
 
 
 def _execute(next_fn, *args, **kwargs):
@@ -81,4 +81,4 @@ def _install_once() -> list[str]:
     for package in op_packages():
         if package.startswith(f"{__name__}."):
             importlib.import_module(f"{package}.api")
-    return hook.install()
+    return hook._install()

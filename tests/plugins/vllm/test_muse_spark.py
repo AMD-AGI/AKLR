@@ -7,8 +7,8 @@ from types import ModuleType, SimpleNamespace
 import pytest
 import torch
 
+from aklr.core.runtime._hook_registry import HookRegistry
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.core.runtime.hook_registry import HookRegistry
 from aklr.plugins.vllm import hook
 from aklr.plugins.vllm.models.muse_spark import api
 
@@ -62,7 +62,7 @@ def native_muse(monkeypatch):
     registry = HookRegistry()
     monkeypatch.setattr(HookRegistry, "default", staticmethod(lambda: registry))
     monkeypatch.setattr(hook, "_ROUTES", {})
-    monkeypatch.setattr(hook, "vllm_version", lambda: "0.33.0rc1.dev910")
+    monkeypatch.setattr(hook, "_vllm_version", lambda: "0.33.0rc1.dev910")
     for name, value in (("_EXPERTS", {}), ("_SERVES", {}), ("_TOPK_IDS", {}), ("_PENDING", set())):
         monkeypatch.setattr(api, name, value)
     events = []
@@ -159,9 +159,9 @@ def test_muse_fallback_uses_saved_norm_and_experts(native_muse, monkeypatch, rea
 
     miss.fallback_reason = lambda *args, **kwargs: reason
     monkeypatch.setattr(api, "muse_spark_moe", miss)
-    hook.install()
-    assert hook.original(api._defer_norm) is state.norm
-    assert hook.original(api._experts_apply) is state.apply
+    hook._install()
+    assert hook._original(api._defer_norm) is state.norm
+    assert hook._original(api._experts_apply) is state.apply
 
     def trap(*args, **kwargs):
         raise AssertionError("fallback followed a mutable global binding")
@@ -196,7 +196,7 @@ def test_muse_hit_hands_unweighted_routes_to_native_finalize(native_muse, monkey
         return out.fill_(3)
 
     monkeypatch.setattr(api, "muse_spark_moe", hit)
-    hook.install()
+    hook._install()
     pooled = _pool_call(state.x, state.weight, 2)
     assert (
         _expert_call(state.expert, state.output, pooled, state.topk_weights, state.topk_ids, state.expert_map)
@@ -214,7 +214,7 @@ def test_muse_missing_experts_does_not_install_norm_alone(native_muse, monkeypat
     state = native_muse
     monkeypatch.delattr(state.experts_class, "apply")
     with pytest.raises(RuntimeError, match="apply"):
-        hook.install()
+        hook._install()
     assert state.model.fused_rmsnorm_expand is state.norm
     assert state.native.fused_rmsnorm_expand is state.norm
     assert all(row["state"] == "registered" for row in state.registry.report())

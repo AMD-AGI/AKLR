@@ -7,13 +7,13 @@
 | R1：类属性 callable 被额外绑定 `self` | 对原本不绑定实例的 callable 使用 `staticmethod` 包装，保留 builtin、partial、已绑定方法及 callable 对象的调用约定；恢复后还原对象身份与继承查找。 | 直接/继承类属性各四类 callable、类/实例调用、显式模块 alias 均覆盖。 |
 | R2：父子类批量安装依赖路径排序 | 全批解析完成后按继承关系先安装更具体的目标，再安装祖先；每个目标使用本批开始前的原函数，逆序恢复。 | 正常/反向别名、instance/classmethod/staticmethod、多层继承与 singleton；父类赋值已修改再抛异常时仍完整回滚。 |
 | R3：classmethod 的签名检查与调用不一致 | `HookSpec.validate` 使用 Registry 实际保存的 callable 做安装期 ABI 检查。classmethod route 包含 `cls`，singleton 使用已绑定签名。 | 正确 route 的类、子类、实例调用及原生回退/恢复通过；缺少 `cls` 的 route 在写入前整批拒绝。 |
-| R4：公开 core 注册提前冻结 bootstrap | 两个公开入口共享插件的 bootstrap 编排，先收齐 core 和已启用插件声明，再提交。 | 配置保持不变时，两种入口顺序及设备初始化前后的重复调用均保持同一 wrapper；禁用、无效配置、缺失目标和设备失败均覆盖。 |
+| R4：公开 core 注册提前冻结 bootstrap | 两个启动入口共享插件的 bootstrap 编排，先收齐 core 和已启用插件声明，再提交。 | 配置保持不变时，两种入口顺序及设备初始化前后的重复调用均保持同一 wrapper；禁用、无效配置、缺失目标和设备失败均覆盖。 |
 | R5：exclusive route 可被其他 hook 跳过 | 同一目标存在 `exclusive=True` 时拒绝任何其他 hook；`report()` 显示独占标志。 | BEFORE、AFTER、AROUND、REPLACE 在两种排序位置下均在预检失败，不写入目标。 |
 | K1：FP24 partial 压缩引入 Inf/NaN | 大 GEMM producer 和 fold 使用完整 FP32 中间结果与四字节布局，删除 pack/unpack。 | CPU 执行真实内嵌写入与 fold 代码，保留 `+FLT_MAX/-FLT_MAX` 相消为零及相消后一个 FP32 ulp；旧实现会产生 NaN。真实 gfx950 kernel 测试已加入，当前环境跳过。 |
 
 Registry 修复后的独立复核还检查了菱形继承与 singleton，并发现两个相邻的既有绑定边界，已一并处理：`ModuleType` 子类方法按绑定后的 module receiver 调用；只存在于 metaclass 的方法在预检时拒绝，避免安装后改变类及实例两套查找语义。两者均有回归测试。
 
-实现与用法见 [HookRegistry](../aklr/core/runtime/hook_registry.py)、[route facade](../aklr/plugins/vllm/hook.py) 和 [MVP 指南](vllm_hook_registry_mvp.zh.md)。
+实现见 [私有 HookRegistry](../aklr/core/runtime/_hook_registry.py) 与 [route facade](../aklr/plugins/vllm/hook.py)。当前 Hook 声明接口统一为 `vllm_route`，使用方式见 [MVP 指南](vllm_hook_registry_mvp.zh.md)；Registry 字段、安装和恢复协议属于内部实现。
 
 ## 冗余、兼容处理与可观测性
 
@@ -37,7 +37,7 @@ Registry 修复后的独立复核还检查了菱形继承与 singleton，并发�
 
 第三方改写任一绑定时，`restore` 仍会在恢复整个所选批次前失败。这是明确的所有权保护，避免关联 hooks 只恢复一部分。
 
-属性安装与声明集合是不同生命周期：预检或提交失败后，属性未安装或已回滚，声明仍保留；错误声明需在受控启动/测试中重建 Registry。阶段冻结、`KEEP_RESULT` 的 AFTER 语义与严格 ABI 检查均保留，并已写入使用说明。
+属性安装与声明集合是不同生命周期：预检或提交失败后，属性未安装或已回滚，声明仍保留；错误声明需在受控启动/测试中重建 Registry。阶段冻结、`KEEP_RESULT` 的 AFTER 语义与严格 ABI 检查均保留，内部协议见 [设计文档](vllm_plugin_design.zh.md)。
 
 Muse deferred norm、Tensor 属性、业务全局缓存、`roomy` 和既有 warmup 时机属于 MVP 保留的计算协议。本轮修复没有重新设计 module 边界、EP 归约或 graph replay 协议，也没有新增已确认的安全漏洞修复项。
 

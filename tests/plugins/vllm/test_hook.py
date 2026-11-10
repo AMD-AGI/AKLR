@@ -17,8 +17,8 @@ import torch
 
 import aklr.plugins.vllm as plugin
 from aklr.core.platform.env import ENV_DISABLE, ENV_VLLM_PLUGIN
+from aklr.core.runtime._hook_registry import HookRegistry
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.core.runtime.hook_registry import HookRegistry
 from aklr.plugins.vllm import hook, warmup
 
 # at collection, as the plugin does in each worker: before any test empties hook._ROUTES
@@ -54,7 +54,7 @@ def test_no_two_routes_take_one_callee():
 
 def installed_vllm():
     try:
-        return hook.vllm_version()
+        return hook._vllm_version()
     except importlib.metadata.PackageNotFoundError:
         pytest.skip("vllm is not installed")
 
@@ -89,7 +89,7 @@ def test_every_route_takes_its_callees_parameters(callee, route):
 def test_only_a_local_label_is_dropped(monkeypatch, installed, release):
     """A development build is not the release it precedes."""
     monkeypatch.setattr(hook, "version", lambda dist: installed)
-    assert hook.vllm_version() == release
+    assert hook._vllm_version() == release
 
 
 @pytest.fixture
@@ -100,7 +100,7 @@ def fake(monkeypatch):
     module.callee = lambda x: f"aiter({x})"
     monkeypatch.setitem(sys.modules, module.__name__, module)
     monkeypatch.setattr(hook, "_ROUTES", {})
-    monkeypatch.setattr(hook, "vllm_version", lambda: INSTALLED)
+    monkeypatch.setattr(hook, "_vllm_version", lambda: INSTALLED)
     return module
 
 
@@ -119,13 +119,13 @@ def declare(route, versions=(INSTALLED,)):
 
 def test_a_route_serves(fake):
     declare(lambda x: f"aklr({x})")
-    hook.install()
+    hook._install()
     assert caller(1) == "aklr(1)"
 
 
 def test_a_fallback_reason_runs_aiter(fake):
     declare(lambda x: FallbackReason.NOT_MEASURED)
-    hook.install()
+    hook._install()
     assert caller(1) == "aiter(1)"
 
 
@@ -134,22 +134,22 @@ def test_a_raising_route_raises(fake):
         raise RuntimeError("boom")
 
     declare(boom)
-    hook.install()
+    hook._install()
     with pytest.raises(RuntimeError, match="boom"):
         caller(1)
 
 
 def test_installing_twice_wraps_once(fake):
     declare(lambda x: FallbackReason.NOT_MEASURED)
-    hook.install()
-    hook.install()
+    hook._install()
+    hook._install()
     assert fake.callee.__wrapped__(1) == "aiter(1)"
     assert not hasattr(fake.callee.__wrapped__, "aklr_route")
 
 
 def test_a_route_untested_on_the_installed_vllm_is_not_hooked(fake):
     declare(lambda x: f"aklr({x})", versions=("0.32.0",))
-    hook.install()
+    hook._install()
     assert caller(1) == "aiter(1)"
 
 
@@ -158,7 +158,7 @@ def test_a_caller_that_does_not_call_the_callee_raises(fake):
         lambda x: x
     )
     with pytest.raises(RuntimeError, match="does not call"):
-        hook.install()
+        hook._install()
 
 
 def second_caller(x):
@@ -176,7 +176,7 @@ def test_an_incompatible_signature_leaves_the_batch_untouched(fake):
     declare(lambda x: "aklr")
     hook.vllm_route(SECOND_CALLER, "fake_aiter.second", versions=(INSTALLED,))(lambda x: x)
     with pytest.raises(RuntimeError, match="incompatible parameters"):
-        hook.install()
+        hook._install()
     assert fake.callee is before
     assert caller(1) == "aiter(1)"
 
@@ -187,7 +187,7 @@ def test_one_untested_member_skips_the_whole_group(fake, caplog):
     hook.vllm_route(SECOND_CALLER, "fake_aiter.second", versions=("0.32.0",), group="pair")(
         lambda x: "aklr second"
     )
-    assert hook.install() == []
+    assert hook._install() == []
     assert caller(1) == "aiter(1)"
     assert second_caller(1) == "second(1)"
     assert f"untested callers: {SECOND_CALLER}" in caplog.text
@@ -202,7 +202,7 @@ def test_multiple_declarations_keep_each_callees_group(fake):
 
     hook.vllm_route(CALLER, "fake_aiter.callee", versions=(INSTALLED,), group="first")(route)
     hook.vllm_route(SECOND_CALLER, "fake_aiter.second", versions=("0.32.0",), group="second")(route)
-    assert hook.install() == ["fake_aiter.callee"]
+    assert hook._install() == ["fake_aiter.callee"]
     assert caller(1) == "aklr(1)"
     assert second_caller(1) == "second(1)"
 
@@ -213,7 +213,7 @@ def test_conflicting_declaration_does_not_change_an_existing_route(fake):
     declare(route)
     with pytest.raises(ValueError, match="conflicting declaration"):
         declare(route, versions=("0.32.0",))
-    assert hook.install() == ["fake_aiter.callee"]
+    assert hook._install() == ["fake_aiter.callee"]
     assert caller(1) == "aklr(1)"
 
 
@@ -226,10 +226,10 @@ def test_saved_original_and_undeclared_alias_remain_native(fake, monkeypatch):
         return f"aklr({x})"
 
     declare(route)
-    hook.install()
+    hook._install()
     assert caller(1) == "aklr(1)"
     assert alias.callee(1) == "aiter(1)"
-    assert hook.original(route) is alias.callee
+    assert hook._original(route) is alias.callee
 
 
 def test_saved_original_requires_a_declared_installed_target_and_tracks_reinstall(fake, registry):
@@ -241,25 +241,25 @@ def test_saved_original_requires_a_declared_installed_target_and_tracks_reinstal
 
     declare(route)
     with pytest.raises(RuntimeError, match="has not been applied"):
-        hook.original(route)
+        hook._original(route)
     hook.vllm_route(SECOND_CALLER, "fake_aiter.second", versions=(INSTALLED,))(route)
     with pytest.raises(ValueError, match="select one"):
-        hook.original(route)
+        hook._original(route)
     with pytest.raises(ValueError, match="undeclared callee"):
-        hook.original(route, "fake_aiter.unknown")
+        hook._original(route, "fake_aiter.unknown")
     with pytest.raises(ValueError, match="not declared"):
-        hook.original(lambda x: x)
+        hook._original(lambda x: x)
 
-    hook.install()
-    assert hook.original(route, "fake_aiter.callee") is first
-    assert hook.original(route, "fake_aiter.second") is second
+    hook._install()
+    assert hook._original(route, "fake_aiter.callee") is first
+    assert hook._original(route, "fake_aiter.second") is second
     registry.restore("device_ready")
     with pytest.raises(RuntimeError, match="has not been applied"):
-        hook.original(route, "fake_aiter.callee")
+        hook._original(route, "fake_aiter.callee")
 
     fake.callee = replacement = lambda x: f"new native({x})"
-    hook.install()
-    assert hook.original(route, "fake_aiter.callee") is replacement
+    hook._install()
+    assert hook._original(route, "fake_aiter.callee") is replacement
     assert caller(2) == "new native(2)"
     assert second_caller(2) == "second(2)"
 
@@ -289,8 +289,8 @@ def test_classmethod_route_receives_cls_and_preserves_fallback_inheritance_and_r
         return "aklr", cls, x
 
     hook.vllm_route(f"{__name__}.classmethod_caller", "fake_aiter.Owner.callee", versions=(INSTALLED,))(route)
-    hook.install()
-    hook.install()
+    hook._install()
+    hook._install()
     assert classmethod_caller(Owner, 1) == ("aklr", Owner, 1)
     assert classmethod_caller(Owner(), 2) == ("aklr", Owner, 2)
     assert classmethod_caller(Child, 3) == ("aklr", Child, 3)
@@ -298,15 +298,15 @@ def test_classmethod_route_receives_cls_and_preserves_fallback_inheritance_and_r
     assert native_calls == []
     assert classmethod_caller(Child, -1) == ("native", Child, -1)
     assert native_calls == [(Child, -1)]
-    assert hook.original(route) is native.__func__
-    assert hook.original(route)(Owner, 5) == ("native", Owner, 5)
+    assert hook._original(route) is native.__func__
+    assert hook._original(route)(Owner, 5) == ("native", Owner, 5)
 
     registry.restore("device_ready")
     assert inspect.getattr_static(Owner, "callee") is native
     assert "callee" not in vars(Child)
     assert classmethod_caller(Child(), 6) == ("native", Child, 6)
     with pytest.raises(RuntimeError, match="has not been applied"):
-        hook.original(route)
+        hook._original(route)
 
 
 def test_classmethod_route_without_cls_fails_before_any_binding_changes(fake, registry):
@@ -323,7 +323,7 @@ def test_classmethod_route_without_cls_fails_before_any_binding_changes(fake, re
         lambda x: "missing cls"
     )
     with pytest.raises(RuntimeError, match="incompatible parameters"):
-        hook.install()
+        hook._install()
     assert inspect.getattr_static(Owner, "callee") is native
     assert fake.callee is module_native
     assert all(row["state"] == "registered" for row in registry.report())
@@ -356,11 +356,11 @@ def test_tuned_gemm_singleton_route_preserves_bound_original_and_restore(fake, r
 
     hook.vllm_route(f"{__name__}.singleton_gemm_caller", "fake_aiter.tgemm.mm", versions=(INSTALLED,))(route)
     assert "mm" not in vars(fake.tgemm)
-    hook.install()
-    hook.install()
+    hook._install()
+    hook._install()
     assert "mm" in vars(fake.tgemm)
-    assert hook.original(route).__self__ is fake.tgemm
-    assert hook.original(route).__func__ is native_method
+    assert hook._original(route).__self__ is fake.tgemm
+    assert hook._original(route).__func__ is native_method
     assert singleton_gemm_caller(2, 3, bias=4, out="buffer") == ("aklr", 2, 3, 4, "buffer")
     assert not native_calls
     assert singleton_gemm_caller(2, 3, scale_a=5, out="buffer") == ("native", 2, 3, None, "buffer")
@@ -380,7 +380,7 @@ def test_inside_a_compiled_region_the_route_is_not_traced(fake):
     traced = []
     fake.callee = lambda x: x * 2
     declare(lambda x: traced.append(x) or x + 10)
-    hook.install()
+    hook._install()
     torch._dynamo.reset()
     try:
         compiled = torch.compile(lambda x: fake.callee(x), backend="eager")
@@ -420,7 +420,7 @@ def worker(monkeypatch):
     monkeypatch.setattr(plugin, "op_packages", lambda: ("aklr.ops.gemm", "aklr.plugins.vllm.x.y"))
     monkeypatch.setattr(plugin, "importlib", SimpleNamespace(import_module=calls.append))
     hooked = ["aiter.tuned_gemm.tgemm.mm"]
-    monkeypatch.setattr(hook, "install", lambda: calls.append("install") or hooked)
+    monkeypatch.setattr(hook, "_install", lambda: calls.append("install") or hooked)
     plugin._install_once.cache_clear()
     yield Worker, calls, hooked
     plugin._install_once.cache_clear()

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason, api
 from aklr.ops.gemm.api import gemm
-from aklr.plugins.vllm.hook import original, vllm_route
+from aklr.plugins.vllm.hook import _original, vllm_route
 from aklr.plugins.vllm.models.muse_spark.contract import MUSE_SPARK_MOE
 
 __all__ = ["muse_spark_moe"]
@@ -194,8 +194,8 @@ def _experts_apply(
             _SERVES[(layer, hidden_states.shape[0])] = False
         # Saved before the batch was installed: a later wrapper or an imported alias
         # must not redirect fallback back into _defer_norm/_experts_apply.
-        normalized = original(_defer_norm)(hidden_states, weight, eps, gain_center, False, topk_ids.shape[1])
-        return original(_experts_apply)(
+        normalized = _original(_defer_norm)(hidden_states, weight, eps, gain_center, False, topk_ids.shape[1])
+        return _original(_experts_apply)(
             self,
             output,
             normalized,
