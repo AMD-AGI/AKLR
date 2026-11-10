@@ -5,7 +5,8 @@ Sources: `.github/workflows/ci.yaml` (`validation` job),
 
 ## Scope
 
-- GPU jobs run on a same-repository PR labelled `ci:gpu`.
+- GPU jobs run on a PR labelled `ci:gpu`; when its author or sender lacks write access, they wait
+  for a maintainer's approval (`gpu-node.yaml`).
 - `python -m aklr validate --base <base>` with no schema paths, as CI runs it, picks:
   - the changed schemas, when every changed path is a schema file or a document (`docs/`, `*.md`);
   - **every committed schema** otherwise. A PR that also touches an op's Python, tests or any
