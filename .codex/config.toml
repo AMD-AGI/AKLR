@@ -1,0 +1,3 @@
+# Inside AKLR the skills load from .agents/skills; an installed aklr plugin would add a stale cached copy.
+[plugins."aklr@aklr"]
+enabled = false

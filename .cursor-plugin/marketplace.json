@@ -1,0 +1,11 @@
+{
+  "name": "aklr",
+  "owner": { "name": "AMD-AGI" },
+  "plugins": [
+    {
+      "name": "aklr",
+      "source": "harness",
+      "description": "Skills and subagents for writing, reviewing, qualifying and delivering AKLR kernels"
+    }
+  ]
+}
