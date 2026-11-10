@@ -27,7 +27,7 @@ If the launch wrapper is memoized, clear that too:
 compile_my_kernel.cache_clear()      # any @functools.lru_cache on the compile path
 ```
 
-Everything below assumes you have done this. A debugging session that skips it can burn hours
+Everything below assumes you have done this. Debugging that skips it can burn hours
 "fixing" a bug that was already fixed.
 
 ### What the cache key sees

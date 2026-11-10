@@ -105,12 +105,12 @@ The compile options' docstring says `FLYDSL_COMPILE_*`, but `compile_only`, `arc
 - S24 ROCm/FlyDSL@v0.3.1:python/flydsl/compiler/ast_rewriter.py:741 both branches get the same `result_values`
 - S25 ROCm/FlyDSL@dd8373349:python/flydsl/compiler/jit_function.py:1663 `_compile_impl` returns None under compile_only
 - S26 ROCm/FlyDSL@v0.3.0:python/flydsl/compiler/jit_function.py:1671 `jf(*args)` then builds the CompiledFunction, no compile_only check
-- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] env.compile and get_rocm_arch() read under three env sets (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p61_env_names.py)
-- E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] ImportError for `from flydsl.expr import buffer_ops`; no flydsl.expr.buffer_ops / flydsl.expr.vector / kernels package / fx.ArithValue; fx.arith.ArithValue present (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p45_import_buffer_ops.py, local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p65_removed_names.py)
-- E3 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] BufferCopyLDS64b() raises ValueError (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p39_buffercopy_lds64.py)
-- E4 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] bare passthrough absent after stage 10; llvm.passthrough in the LLVM IR attributes (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p10_passthrough_bare.py, local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p10_passthrough_llvm.py)
-- E5 [2026-10, gfx950, FlyDSL 0.2.4, N=1, IR dump] bare passthrough kept, llvm.passthrough left on llvm.func and absent from the LLVM IR (local:/workspace/code/gpt_oss_docker/work/turbo_port/gpu_tests_0341.md:85)
-- E6 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] flyc.compile[{'waves_per_eu': 2}]: "amdgpu-waves-per-eu"="2" in the LLVM IR (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p54_hints.py)
-- E7 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] "128,128" for block=(128,1,1); "1,256" for a runtime Int32 block (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p00_base.py, local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p55_runtime_block.py)
-- E8 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] exp2 fast: rocdl.exp2 after stage 10, 4 v_exp_f32 and no v_cndmask / v_ldexp for 4 lanes (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p63_exp2_fast.py)
-- E9 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] `flyc.compile[...](vector_add, A, B, C)` returned None (local:/workspace/code/gpt_oss_docker/work/sikl/flyprobe_b2/p57b_wide_tile_maxnreg32.py)
+- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] env.compile and get_rocm_arch() read under three env sets
+- E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] ImportError for `from flydsl.expr import buffer_ops`; no flydsl.expr.buffer_ops / flydsl.expr.vector / kernels package / fx.ArithValue; fx.arith.ArithValue present
+- E3 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] BufferCopyLDS64b() raises ValueError
+- E4 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] bare passthrough absent after stage 10; llvm.passthrough in the LLVM IR attributes
+- E5 [2026-10, gfx950, FlyDSL 0.2.4, N=1, IR dump] bare passthrough kept, llvm.passthrough left on llvm.func and absent from the LLVM IR
+- E6 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] flyc.compile[{'waves_per_eu': 2}]: "amdgpu-waves-per-eu"="2" in the LLVM IR
+- E7 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] "128,128" for block=(128,1,1); "1,256" for a runtime Int32 block
+- E8 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] exp2 fast: rocdl.exp2 after stage 10, 4 v_exp_f32 and no v_cndmask / v_ldexp for 4 lanes
+- E9 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] `flyc.compile[...](vector_add, A, B, C)` returned None

@@ -3,7 +3,7 @@ title: "Register pressure: VGPR / AGPR spills, or occupancy below the plan"
 kind: pattern
 signals: ["vgpr_spill_count > 0", "scratch_ loads and stores in the hot loop", "v_accvgpr_read / v_accvgpr_write in the hot loop",
   ".vgpr_count + .agpr_count above a reachable occupancy tier", ".private_segment_fixed_size > 0", "one wave per SIMD"]
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe, attention]
 gens: [gfx950]
 flydsl: 0.3.2
 basis: source-semantics
@@ -59,38 +59,38 @@ basis: source-semantics
 - Not a register cap to make room — `../flydsl/language/limits.md` — in FlyDSL v0.3.2 `maxnreg` does not cap registers, and
   a cap through the `amdgpu-num-vgpr` attribute turns into spills (S29).
 - Other kernel families: attention's occupancy steps, spill scale, code shapes that spill and AGPRs —
-  `attention/registers_occupancy.md` §3, §5–7; grouped GEMM's register wall and waves per SIMD per pass —
+  `attention/registers_occupancy.md` §3, §5–7; grouped GEMM's register wall and waves per SIMD per layout —
   `moe/grouped_tile_pricing.md` §1–2.
 
 ## Evidence
 
 - S1 gemm/schedule_and_locality.md:261 count `v_accvgpr_read/write` and `scratch_` in the hot loop
 - S2 gemm/schedule_and_locality.md:157 the ISA's `vgpr_spill_count`
-- S3 gemm/mainloop.md:325 check .agpr_count, .vgpr_count, .amdhsa_next_free_vgpr, scratch after changes
-- S4 gemm/mainloop.md:287 one 512-entry file per SIMD shared by arch VGPRs and AGPRs, granule 8
-- S5 gemm/mainloop.md:289 arch registers rounded up to 4 before the AGPRs are added
+- S3 gemm/mainloop.md:348 check .agpr_count, .vgpr_count, .amdhsa_next_free_vgpr, scratch after changes
+- S4 gemm/mainloop.md:310 one 512-entry file per SIMD shared by arch VGPRs and AGPRs, granule 8
+- S5 gemm/mainloop.md:312 arch registers rounded up to 4 before the AGPRs are added
 - S6 gemm/correctness.md:109 spill ≠ 0 voids every hand-written partial vmcnt; scratch shares vmcnt
 - S7 gemm/schedule_and_locality.md:257 a wide tile can need more than 256 accumulator dwords per lane
-- S8 gemm/mainloop.md:283 fully unrolling a short K loop pays only with VGPR headroom
+- S8 gemm/mainloop.md:298 fully unrolling a short K loop pays only with VGPR headroom
 - S9 gemm/datapath.md:214 a prefetch that pushes the kernel over a register tier
 - S10 gemm/schedule_and_locality.md:142 the arithmetic must stay pinned; a relaxed fence hoisted VALU
 - S11 gemm/schedule_and_locality.md:187 early fragment reads lost on tiles already at 256 VGPRs (spilled)
 - S12 gemm/attribution.md:174 the register allocator is the constraint on interleaving
-- S13 flydsl/gemm.md:149 a bare "passthrough" key is silently dropped, with no error
+- S13 flydsl/gemm.md:155 a bare "passthrough" key is silently dropped, with no error
 - S14 gemm/attribution.md:192 rocprof VGPR_Count half, Accum_VGPR_Count 0; read registers from the ISA
 - S15 ../flydsl/debug-flydsl-kernel.md:83 identical VGPR_Count / Accum_VGPR_Count across variants: one cached binary
-- S16 gemm/grid_pricing.md:203 the `; Occupancy:` comment does not apply workgroup quantization
-- S17 gemm/grid_pricing.md:199 8-wave workgroup: only 2/4/6/8 waves per SIMD reachable
-- S18 gemm/mainloop.md:227 at unchanged occupancy freed registers buy nothing on their own
+- S16 gemm/grid_pricing.md:255 the `; Occupancy:` comment does not apply workgroup quantization
+- S17 gemm/grid_pricing.md:244 8-wave workgroup: only 2/4/6/8 waves per SIMD reachable
+- S18 gemm/mainloop.md:240 at unchanged occupancy freed registers buy nothing on their own
 - S19 gemm/attribution.md:205 static ISA size nearly free; a spill slot is not; removing code can spill
-- S20 gemm/mainloop.md:220 judge AGPR vs VGPR accumulators by shuttle traffic and wall time
-- S21 flydsl/gemm.md:149 put kernel attributes under "llvm.passthrough"
-- S22 gemm/mainloop.md:275 8-wave candidates race waves_per_eu=2 with different AGPR budgets
-- S23 gemm/grid_pricing.md:200 align a register-reduction target to a reachable tier
+- S20 gemm/mainloop.md:233 judge AGPR vs VGPR accumulators by shuttle traffic and wall time
+- S21 flydsl/gemm.md:155 put kernel attributes under "llvm.passthrough"
+- S22 gemm/mainloop.md:290 8-wave candidates race waves_per_eu=2 with different AGPR budgets
+- S23 gemm/grid_pricing.md:245 align a register-reduction target to a reachable tier
 - S24 gemm/schedule_and_locality.md:160 race LLVM's scheduler per tile (amdgpu-sched-strategy)
 - S25 gemm/schedule_and_locality.md:157 gate any mask change on vgpr_spill_count before benchmarking
 - S26 gemm/schedule_and_locality.md:225 with small VGPR headroom, inserting work lengthens a live range
 - S27 gemm/datapath.md:245 one address VGPR instead of four avoids an address-register spill
 - S28 ROCm/FlyDSL@dd8373349:.claude/skills/gemm-optimization/SKILL.md:623 async copy saves arch_vgpr: A bypasses VGPRs
 - S29 ../flydsl/language/limits.md:82 maxnreg leaves the binary unchanged; the amdgpu-num-vgpr attribute spills
-- S30 gemm/mainloop.md:230 without the attribute an inline-asm AGPR accumulator gets the default allocation, and the result is wrong
+- S30 gemm/mainloop.md:243 without the attribute an inline-asm AGPR accumulator gets the default allocation, and the result is wrong

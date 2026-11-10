@@ -117,7 +117,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.097
     },
     {
       "axes": {
@@ -125,7 +127,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.204
     },
     {
       "axes": {
@@ -133,7 +137,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.231
     },
     {
       "axes": {
@@ -141,7 +147,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.138
     },
     {
       "axes": {
@@ -149,7 +157,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.189
     },
     {
       "axes": {
@@ -157,7 +167,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.231
     },
     {
       "axes": {
@@ -165,7 +177,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.192
     },
     {
       "axes": {
@@ -173,7 +187,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.201
     },
     {
       "axes": {
@@ -181,7 +197,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.233
     },
     {
       "axes": {
@@ -189,7 +207,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.186
     }
   ],
   "layout_variants": {

@@ -40,6 +40,9 @@ DEFAULT_GENS = ("gfx950",)
 # Whole names and family forms (gfx9, gfx95x, gfx94*); the `*` of a bold `**gfx950**` is not a wildcard.
 ARCH_TOKEN_RE = re.compile(r"\bgfx\d{1,4}(?:[a-z]\b|\*(?!\*)|\b)|\bCDNA ?\d\b|\bMI\d{3}X?\b")
 PINNED_FLYDSL = "0.3.2"
+# The Triton that AKLR's CI pins (`.github/workflows/ci.yaml` checks triton==3.8.0); pages under triton/ give it in
+# `triton` where other pages give `flydsl`.
+PINNED_TRITON = "3.8.0"
 SKILL_MD_MAX_LINES = 150  # forge-loop inlines SKILL.md into every round's prompt
 SKILL_MD_MAX_BYTES = 12_000  # of the body it inlines; the front matter is stripped
 CARD_MAX_LINES = 600
@@ -127,7 +130,8 @@ REQUIRED_SECTIONS = {
     "topic": ("Route here when",),
     "method": ("Route here when",),
 }
-MEASURED_KEYS = ("metric", "value", "gpu", "workload", "run_ref", "date")
+# run_ref is optional: a measurement with no public record (commit, PR, CI run, URL) states the result alone.
+MEASURED_KEYS = ("metric", "value", "gpu", "workload", "date")
 
 BASIS_RE = re.compile(r"^(source-semantics|measured N=\d+\b.*|single-observation)$")
 FORBIDDEN_HEADING_RE = re.compile(
@@ -138,12 +142,12 @@ FORBIDDEN_HEADING_RE = re.compile(
 FIELD_ANY_RE = re.compile(r"\*\(field\b[^)]*\)\*|\*field:\*|\(field:[^)]*\)")
 FIELD_CANON_RE = re.compile(r"\*\(field,\s*(E\d+(?:,\s*E\d+)*)\)\*")
 EVIDENCE_E_RE = re.compile(r"^-\s+(E\d+)\s+\[(\d{4}-\d{2}),([^\]]*)\](.*)$")
-EVIDENCE_S_RE = re.compile(r"^-\s+(S\d+)\s+\S+:\d+")
+# an S line cites public source as file:line, or states what source without a public copy does
+EVIDENCE_S_RE = re.compile(r"^-\s+(S\d+)\s+\S")
 N_RE = re.compile(r"\bN=(\d+|\?)")
 TOOLCHAIN_RE = re.compile(r"\bFlyDSL\s+(\d[\w.+-]*|\?)")
-DURABLE_REF_RE = re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b|#\d+|https?://|\bCI run\b")
-LOCAL_REF_RE = re.compile(r"\blocal:/\S+")
-LOCAL_RELATIVE_RE = re.compile(r"\blocal:(?!/)[^\s;)]+")
+# This is a public repository: a page names no file of one machine, wherever it appears.
+LOCAL_TRACE_RE = re.compile(r"\blocal:(?=[/~])|(?<![\w$}/.-])/workspace/code/|/shared_nfs\b")
 ABSOLUTE_RE = re.compile(r"\b(always|never)\b", re.IGNORECASE)
 MD_LINK_RE = re.compile(r"\[[^\]]*\]\(([^)\s#]+)(?:#[^)]*)?\)")
 CODE_PATH_RE = re.compile(r"`([\w./-]+\.md)`")
@@ -352,11 +356,67 @@ def check_links(page: Page, level: str) -> Iterable[Issue]:
                 )
 
 
+# A page says when it applies by mechanism and shape, never by training or inference phase: the same kernels run in
+# both. Titles, file names and `regimes` must not carry a phase word.
+PHASE_WORDS = (
+    "training",
+    "inference",
+    "forward",
+    "backward",
+    "fwd",
+    "bwd",
+    "dgrad",
+    "wgrad",
+    "prefill",
+    "decode",
+)
+PHASE_RE = re.compile(r"(?<![a-z0-9])(" + "|".join(PHASE_WORDS) + r")(?![a-z0-9])", re.IGNORECASE)
+
+
+def check_phase(page: Page) -> Iterable[Issue]:
+    stem = Path(page.rel).stem.replace("_", " ")
+    hit = PHASE_RE.search(stem)
+    if hit:
+        yield Issue(
+            "error", page.rel, 1, f"file name scopes the page by phase (`{hit.group(1)}`); name the mechanism"
+        )
+    front = page.front or {}
+    hit = PHASE_RE.search(str(front.get("title") or ""))
+    if hit:
+        yield Issue(
+            "error",
+            page.rel,
+            1,
+            f"title scopes the page by phase (`{hit.group(1)}`); state the mechanism or shape",
+        )
+    regimes = front.get("regimes") or []
+    for regime in regimes if isinstance(regimes, list) else [regimes]:
+        hit = PHASE_RE.search(str(regime))
+        if hit:
+            yield Issue(
+                "error",
+                page.rel,
+                1,
+                f"`regimes` entry `{regime}` is a phase; give the shape or mechanism it stands for",
+            )
+
+
 def check_front(page: Page) -> Iterable[Issue]:
     kind, front = page.kind, page.front or {}
+    triton_page = page.rel.startswith("triton/")
     for field in REQUIRED_FIELDS[kind]:
+        if triton_page and field == "flydsl":
+            field = "triton"
         if front.get(field) in (None, "", []):
             yield Issue("error", page.rel, 1, f"front matter lacks `{field}` (kind {kind})")
+    triton = str(front.get("triton") or "")
+    if triton and triton != PINNED_TRITON:
+        yield Issue(
+            "warn",
+            page.rel,
+            1,
+            f"pinned to Triton {triton}, AKLR's CI is on {PINNED_TRITON}: re-check",
+        )
     basis = str(front.get("basis") or "")
     if basis and not BASIS_RE.match(basis):
         yield Issue(
@@ -405,37 +465,15 @@ def read_evidence(page: Page) -> tuple[dict[str, Evidence], list[Issue]]:
                     "error",
                     page.rel,
                     line_no,
-                    f"not `- E<n> [YYYY-MM, arch, toolchain, N=k, ruler] …` or `- S<n> file:line …`: {line[:60]}",
+                    f"not `- E<n> [YYYY-MM, arch, toolchain, N=k, ruler] …` or `- S<n> …`: {line[:60]}",
                 )
             )
             continue
-        ident, conditions, rest = (
-            measured.group(1),
-            measured.group(3),
-            measured.group(4),
-        )
+        ident, conditions = measured.group(1), measured.group(3)
         n = N_RE.search(conditions)
         toolchain = TOOLCHAIN_RE.search(conditions)
         if not n:
             issues.append(Issue("error", page.rel, line_no, f"{ident} gives no N=<k> or N=?"))
-        if not (DURABLE_REF_RE.search(rest) or LOCAL_REF_RE.search(rest)):
-            issues.append(
-                Issue(
-                    "error",
-                    page.rel,
-                    line_no,
-                    f"{ident} has no run reference (commit, PR, CI run, URL or local:<absolute path>)",
-                )
-            )
-        for rel in LOCAL_RELATIVE_RE.findall(rest):
-            issues.append(
-                Issue(
-                    "error",
-                    page.rel,
-                    line_no,
-                    f"{ident}: {rel} is not an absolute path",
-                )
-            )
         found[ident] = Evidence(
             ident,
             line_no,
@@ -555,9 +593,23 @@ def duplicate_levers(paths: Iterable[Path]) -> list[Issue]:
     return issues
 
 
+def check_local_traces(page: Page) -> Iterable[Issue]:
+    """Every line, front matter and code included, that names a file of one machine."""
+    for line_no, line in enumerate(page.text.splitlines(), 1):
+        match = LOCAL_TRACE_RE.search(line)
+        if match:
+            yield Issue(
+                "error",
+                page.rel,
+                line_no,
+                f"`{match.group(0)}` names a file of one machine; a public page cites commits, PRs, CI runs, URLs "
+                "and repository files",
+            )
+
+
 def lint_page(page: Page) -> list[Issue]:
     kind = page.kind
-    issues: list[Issue] = list(check_arch(page))
+    issues: list[Issue] = list(check_arch(page)) + list(check_phase(page)) + list(check_local_traces(page))
     if page.front_error:
         level = "error" if kind in NEW_KINDS else "warn"
         issues.append(
@@ -666,8 +718,8 @@ def stale(paths: Iterable[Path], version: str) -> list[str]:
     out = []
     for path in paths:
         page = read_page(path.resolve())
-        if page.kind in ("upstream", "entry", "guide", "index"):
-            continue
+        if page.kind in ("upstream", "entry", "guide", "index") or page.rel.startswith("triton/"):
+            continue  # triton/ pages pin `triton`, not FlyDSL
         pinned = str((page.front or {}).get("flydsl") or "none")
         if pinned != version:
             out.append(f"{page.rel}: flydsl {pinned}")

@@ -14,8 +14,8 @@ VLLM_HOOKED_METHOD = "vllm.v1.worker.gpu_worker.Worker.init_device"
 
 
 def register_vllm_plugin() -> None:
-    """The ``vllm.general_plugins`` entry point (``pyproject.toml``): starts AKLR after
-    ``VLLM_HOOKED_METHOD``."""
+    """What the ``vllm.general_plugins`` entry point (``aklr.plugins.vllm.register``) does
+    first: starts AKLR after ``VLLM_HOOKED_METHOD``."""
     from vllm.v1.worker.gpu_worker import Worker
 
     init_device = Worker.init_device

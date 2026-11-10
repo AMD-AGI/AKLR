@@ -29,5 +29,6 @@ allowed-tools: Read Edit Bash Grep Glob Agent
   and arch only: building a second package under the same `root` finds the first one's marker and
   loads a library that does not exist. Give each package its own `root` when building variants
   yourself; AKLR's builder already does.
-- Below ~4 µs a kernel sits on the graph-node floor of AKLR's measurement: a gain there is a fixed
-  latency difference and may not carry to another node.
+- Up to measurement profile 18 (Kineto, `GPU_FORCE_QUEUE_PROFILING` forced) a kernel below ~4 µs sat on the
+  graph-node floor of AKLR's measurement: a gain there is a fixed latency difference and may not carry to another
+  node. Recheck that floor under profile 19 on current main (`../pitfalls/aklr_dispatch_floor.md`).

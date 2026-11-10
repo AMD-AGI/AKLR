@@ -74,8 +74,7 @@ jobs:
     # Bots, Bot-sent events and PRs by authors without write access wait for maintainer approval
     # before a node is requested for PR code.
     environment: ${{ needs.trust.outputs.environment }}
-    # manage_spur_runner.sh waits at most 15m for the queue and 20m for the runner.
-    timeout-minutes: 50
+    # No timeout-minutes: the Spur queue wait is unbounded, so GitHub's 360-minute default caps it.
     outputs:
       runner_label: ${{ steps.prepare.outputs.runner_label }}
       allocation_id: ${{ steps.prepare.outputs.allocation_id }}

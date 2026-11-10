@@ -70,8 +70,9 @@ def _moe_forward_normal(self, hidden_states, ...):  # exactly the replaced funct
     # an SGLang configuration AKLR does not support
     if _forward_normal_falls_back(self, ...):
         return FallbackReason.OUT_OF_CONTRACT
-    # the module's weights and input as the op's arguments
-    out = deepseek_v2_mxfp4_moe(**_moe_arguments(self, hidden_states))
+    # the op for the experts' format, with the module's weights and input as its arguments
+    op, arguments = _moe_call(self, hidden_states)
+    out = op(**arguments)
     # the op declined, or the original skips the all-reduce here
     if isinstance(out, FallbackReason) or not self.reduce_results:
         return out
@@ -84,7 +85,7 @@ def _moe_forward_normal(self, hidden_states, ...):  # exactly the replaced funct
 It calls two helpers:
 
 - `_forward_normal_falls_back` is true for SGLang configurations the op does not support: some of the call's own arguments (`skip_shared_experts`, `return_moe_output`, ...), graph modes and expert-parallel settings (checks shared by the MoE routes, in `models/moe_blocks.py`), and experts held in another format.
-- `_moe_arguments` takes the op's arguments from the module: `hidden_states`, `mlp.gate.weight` as `router_weight`, the experts' weights and scales, and the routing settings.
+- `_moe_call` picks the op for the experts' format, `deepseek_v2_mxfp4_moe` for Quark's MXFP4 or `deepseek_v2_fp8_moe` for fp8 at a scale per 128 x 128 block, and takes its arguments from the module: `hidden_states`, `mlp.gate.weight` as `router_weight`, the experts' weights and scales, and the routing settings.
 
 Shapes, dtypes, token counts and the GPU are left to the op. All the rules for routes are in [aklr/plugins/README.md](../aklr/plugins/README.md#rules-for-routes).
 

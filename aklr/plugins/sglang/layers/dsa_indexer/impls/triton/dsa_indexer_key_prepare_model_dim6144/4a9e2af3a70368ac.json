@@ -1,0 +1,225 @@
+{
+  "schema_version": 5,
+  "name": "dsa_indexer_key_prepare_model_dim6144",
+  "contract_id": "dsa_indexer_key_prepare@1.0",
+  "description": "sglang's DSA indexer's key-only path on one rank (Indexer._forward_cuda_k_only on HIP, the Hadamard-rotated index-K format), which stores the tokens' keys and computes no query. Each token's key is LayerNorm(x wk^T) (k_norm_weight, k_norm_bias, k_norm_eps), its first 64 values turned by RoPE in interleaved pairs (2i, 2i + 1) by cos_cache and sin_cache at the token's position, then the Hadamard transform over its 128 values (Sylvester order) times 128^-0.5, each step rounded to bf16 as sglang rounds it; it is stored into index_k_cache at its out_cache_loc slot as fp8 values at a scale of 2^ceil(log2(max(amax, 0.0001) / 448)) of its values, and that scale in fp32.",
+  "op_type": "dsa_indexer",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, padding rows included."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 6144,
+      "description": "The hidden states' width: wk's and weights_proj's input."
+    },
+    "n_positions": {
+      "type": "var",
+      "description": "Rows of the rotary tables."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Pages of the index-K cache."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "x": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's hidden states, the layer's input."
+    },
+    "wk": {
+      "shape": [
+        128,
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 6144
+      },
+      "description": "wk: the key's projection."
+    },
+    "k_norm_weight": {
+      "shape": [128],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "k_norm's (LayerNorm) weight."
+    },
+    "k_norm_bias": {
+      "shape": [128],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "k_norm's bias."
+    },
+    "cos_cache": {
+      "shape": [
+        "n_positions",
+        32
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The rotary cosines, a row per position and a column per RoPE pair."
+    },
+    "sin_cache": {
+      "shape": [
+        "n_positions",
+        32
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The rotary sines, as cos_cache."
+    },
+    "positions": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_positions - 1",
+        "distinct": false
+      },
+      "description": "Each token's position: its row of the rotary tables."
+    },
+    "out_cache_loc": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "64 * n_pages - 1",
+        "distinct": true
+      },
+      "description": "Each token's slot of the index-K cache (page slot // 64, key slot % 64), distinct but for sglang's graph padding rows, which all write slot 0, a slot no sequence reads."
+    },
+    "index_k_cache": {
+      "shape": [
+        "n_pages",
+        64,
+        132
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": 6,
+        "log2_hi": 8
+      },
+      "description": "This layer's index-K cache, as sglang views it: pages of 64 keys, their 128 fp8 values in 16 x 16 tiles (16 keys by 16 values) and then their fp32 scales, each page's bytes compared as fp8 values. The tokens' keys are stored into it."
+    },
+    "k_norm_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "k_norm's epsilon."
+    }
+  },
+  "outputs": {
+    "no_values": {
+      "shape": [0],
+      "dtype": "float32",
+      "description": "No values: the op's one result is index_k_cache, and a contract declares an output."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1024,
+        "n_positions": 131072,
+        "n_pages": 16
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 2.702
+    },
+    {
+      "axes": {
+        "n_tokens": 2048,
+        "n_positions": 131072,
+        "n_pages": 32
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 2.198
+    },
+    {
+      "axes": {
+        "n_tokens": 3072,
+        "n_positions": 131072,
+        "n_pages": 48
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 2.14
+    },
+    {
+      "axes": {
+        "n_tokens": 4096,
+        "n_positions": 131072,
+        "n_pages": 64
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.8
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0003,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"DSA indexer key-only preparation for GLM-5.2 on gfx950, tuned in its TP8 deployment for 1024 to 4192 tokens.\n\nProjects each token's key (x wk^T) in Gluon tiles; then its LayerNorm, RoPE on its first 64\nvalues in interleaved pairs and the 128-point Hadamard transform, each rounded to bf16,\nquantized to fp8 at a power-of-two scale and stored with that fp32 scale into its preshuffled\nindex-K page. No query is computed.\n\"\"\"\n\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n\n@gluon.constexpr_function\ndef _padded_copy_layout(shared):\n    bases = shared.offset_bases\n    return gl.DistributedLinearLayout(\n        reg_bases=bases[:3] + bases[11:],\n        lane_bases=bases[3:9],\n        warp_bases=bases[9:11],\n        block_bases=[],\n        shape=shared.shape,\n    )\n\n\n@gluon.jit\ndef _local_butterfly(x, R: gl.constexpr, BIT: gl.constexpr):\n    inner: gl.constexpr = 1 << BIT\n    pairs = gl.reshape(x, (R, 128 // (2 * inner), 2, inner))\n    pairs = gl.permute(pairs, (0, 1, 3, 2))\n    low, high = gl.split(pairs)\n    pairs = gl.join(low + high, low - high)\n    return gl.reshape(gl.permute(pairs, (0, 1, 3, 2)), (R, 128))\n\n\n@gluon.jit\ndef _quad_exchange(x, XOR: gl.constexpr, PACK: gl.constexpr = 2):\n    if PACK == 8:\n        if XOR == 1:\n            return gl.inline_asm_elementwise(\n                \"s_nop 1\\nv_mov_b32 $0, $8 quad_perm:[1,0,3,2]\\nv_mov_b32 $1, $9 quad_perm:[1,0,3,2]\\nv_mov_b32 $2, $10 quad_perm:[1,0,3,2]\\nv_mov_b32 $3, $11 quad_perm:[1,0,3,2]\\nv_mov_b32 $4, $12 quad_perm:[1,0,3,2]\\nv_mov_b32 $5, $13 quad_perm:[1,0,3,2]\\nv_mov_b32 $6, $14 quad_perm:[1,0,3,2]\\nv_mov_b32 $7, $15 quad_perm:[1,0,3,2]\",\n                constraints=\"=&v,=&v,=&v,=&v,=&v,=&v,=&v,=&v,v,v,v,v,v,v,v,v\",\n                args=[x],\n                dtype=gl.float32,\n                is_pure=True,\n                pack=8,\n            )\n        else:\n            return gl.inline_asm_elementwise(\n                \"s_nop 1\\nv_mov_b32 $0, $8 quad_perm:[2,3,0,1]\\nv_mov_b32 $1, $9 quad_perm:[2,3,0,1]\\nv_mov_b32 $2, $10 quad_perm:[2,3,0,1]\\nv_mov_b32 $3, $11 quad_perm:[2,3,0,1]\\nv_mov_b32 $4, $12 quad_perm:[2,3,0,1]\\nv_mov_b32 $5, $13 quad_perm:[2,3,0,1]\\nv_mov_b32 $6, $14 quad_perm:[2,3,0,1]\\nv_mov_b32 $7, $15 quad_perm:[2,3,0,1]\",\n                constraints=\"=&v,=&v,=&v,=&v,=&v,=&v,=&v,=&v,v,v,v,v,v,v,v,v\",\n                args=[x],\n                dtype=gl.float32,\n                is_pure=True,\n                pack=8,\n            )\n    elif XOR == 1:\n        return gl.inline_asm_elementwise(\n            \"s_nop 1\\nv_mov_b32 $0, $2 quad_perm:[1,0,3,2]\\nv_mov_b32 $1, $3 quad_perm:[1,0,3,2]\",\n            constraints=\"=&v,=&v,v,v\",\n            args=[x],\n            dtype=gl.float32,\n            is_pure=True,\n            pack=2,\n        )\n    else:\n        return gl.inline_asm_elementwise(\n            \"s_nop 1\\nv_mov_b32 $0, $2 quad_perm:[2,3,0,1]\\nv_mov_b32 $1, $3 quad_perm:[2,3,0,1]\",\n            constraints=\"=&v,=&v,v,v\",\n            args=[x],\n            dtype=gl.float32,\n            is_pure=True,\n            pack=2,\n        )\n\n\n@gluon.jit\ndef _project_tile(\n    X,\n    W,\n    Y,\n    pm,\n    pn,\n    split,\n    M: gl.constexpr,\n    N: gl.constexpr,\n    K: gl.constexpr,\n    SX: gl.constexpr,\n    SW: gl.constexpr,\n    BM: gl.constexpr,\n    BN: gl.constexpr,\n    BK: gl.constexpr,\n    SPLIT: gl.constexpr,\n    INSTR: gl.constexpr,\n    FULL_M: gl.constexpr,\n):\n    gl.static_assert(N % BN == 0 and K % (BK * SPLIT) == 0)\n    steps: gl.constexpr = K // (BK * SPLIT)\n    first = split * steps * BK\n    nw: gl.constexpr = gl.num_warps()\n    la: gl.constexpr = gl.BlockedLayout([1, 8], [512 // BK, BK // 8], [nw, 1], [1, 0])\n    lb: gl.constexpr = gl.BlockedLayout([8, 1], [BK // 8, 512 // BK], [1, nw], [0, 1])\n    wm: gl.constexpr = min(2, nw, BM // INSTR)\n    lm: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4, instr_shape=[INSTR, INSTR, 512 // INSTR], transposed=True, warps_per_cta=[wm, nw // wm]\n    )\n    ma = pm * BM + gl.arange(0, BM, gl.SliceLayout(1, la))\n    ka = gl.arange(0, BK, gl.SliceLayout(0, la))\n    kb = gl.arange(0, BK, gl.SliceLayout(1, lb))\n    nb = pn * BN + gl.arange(0, BN, gl.SliceLayout(0, lb))\n    acc = gl.zeros((BM, BN), gl.float32, lm)\n    for start in range(steps):\n        a_mask = gl.full((BM, BK), True, gl.int1, la)\n        if not FULL_M:\n            a_mask = a_mask & (ma[:, None] < M)\n        a = gl.load(X + ma[:, None] * SX + first + start * BK + ka[None, :], a_mask, 0)\n        b = gl.load(W + nb[None, :] * SW + first + start * BK + kb[:, None])\n        a = gl.convert_layout(a, gl.DotOperandLayout(0, lm, 8))\n        b = gl.convert_layout(b, gl.DotOperandLayout(1, lm, 8))\n        acc = gl.amd.cdna4.mfma(a, b, acc)\n    cm = pm * BM + gl.arange(0, BM, gl.SliceLayout(1, lm))\n    cn = pn * BN + gl.arange(0, BN, gl.SliceLayout(0, lm))\n    c_mask = gl.full((BM, BN), True, gl.int1, lm)\n    if not FULL_M:\n        c_mask = c_mask & (cm[:, None] < M)\n    gl.store(Y + split * M * N + cm[:, None] * N + cn[None, :], acc, c_mask)\n\n\n@gluon.jit\ndef _project_tail(\n    X,\n    W,\n    Y,\n    pm,\n    pn,\n    split,\n    M: gl.constexpr,\n    N: gl.constexpr,\n    K: gl.constexpr,\n    SX: gl.constexpr,\n    SW: gl.constexpr,\n    BM: gl.constexpr,\n    BN: gl.constexpr,\n    BK: gl.constexpr,\n    SPLIT: gl.constexpr,\n    INSTR: gl.constexpr,\n):\n    if pm < M // BM:\n        _project_tile(X, W, Y, pm, pn, split, M, N, K, SX, SW, BM, BN, BK, SPLIT, INSTR, True)\n    else:\n        _project_tile(X, W, Y, pm, pn, split, M, N, K, SX, SW, BM, BN, BK, SPLIT, INSTR, False)\n\n\n@gluon.jit\ndef _transform(\n    x,\n    Cos,\n    Sin,\n    Positions,\n    rows,\n    valid,\n    SC: gl.constexpr,\n    R: gl.constexpr,\n    DPT: gl.constexpr,\n    SHARED_POS: gl.constexpr,\n    token,\n    FOLD_ROPE: gl.constexpr = False,\n    DPP: gl.constexpr = False,\n):\n    even, odd = gl.split(gl.reshape(x, (R, 64, 2)))\n    pair_layout: gl.constexpr = even.type.layout\n    d = gl.arange(0, 64, gl.SliceLayout(0, pair_layout))\n    if DPT >= 16 or FOLD_ROPE:\n        if SHARED_POS:\n            pos = gl.load(Positions + token)\n            c = gl.load(Cos + pos * SC + d % 32).to(gl.float32)[None, :]\n            s = gl.load(Sin + pos * SC + d % 32).to(gl.float32)[None, :]\n        else:\n            pos = gl.convert_layout(gl.load(Positions + rows, valid, 0), gl.SliceLayout(1, pair_layout))\n            pair_valid = gl.convert_layout(valid, gl.SliceLayout(1, pair_layout))\n            c = gl.load(Cos + pos[:, None] * SC + d[None, :] % 32, pair_valid[:, None], 1).to(gl.float32)\n            s = gl.load(Sin + pos[:, None] * SC + d[None, :] % 32, pair_valid[:, None], 0).to(gl.float32)\n    else:\n        pos = gl.convert_layout(gl.load(Positions + rows, valid, 0), gl.SliceLayout(1, pair_layout))\n        pair_valid = gl.convert_layout(valid, gl.SliceLayout(1, pair_layout))\n        c = gl.load(Cos + pos[:, None] * SC + d[None, :], pair_valid[:, None] & (d[None, :] < 32), 1).to(gl.float32)\n        s = gl.load(Sin + pos[:, None] * SC + d[None, :], pair_valid[:, None] & (d[None, :] < 32), 0).to(\n            gl.float32\n        )\n    real = gl.where(d[None, :] < 32, even * c + -odd * s, even).to(gl.bfloat16).to(gl.float32)\n    imag = gl.where(d[None, :] < 32, odd * c + even * s, odd).to(gl.bfloat16).to(gl.float32)\n    x = gl.reshape(gl.join(real, imag), (R, 128))\n    layout: gl.constexpr = x.type.layout\n    dim = gl.arange(0, 128, gl.SliceLayout(0, layout))\n    for bit in gl.static_range(7):\n        if 1 << bit < DPT:\n            x = _local_butterfly(x, R, bit)\n        elif DPP and 1 << bit < DPT * 4:\n            other = _quad_exchange(x, (1 << bit) // DPT)\n            x = gl.where(dim[None, :] & 1 << bit == 0, x + other, other - x)\n        else:\n            other = gl.gather(x, (dim ^ 1 << bit)[None, :] + gl.zeros((R, 1), gl.int32, layout), 1)\n            x = gl.where(dim[None, :] & 1 << bit == 0, x + other, other - x)\n    return (x * 0.08838834764831845).to(gl.bfloat16).to(gl.float32)\n\n\n@gluon.jit\ndef _finish(\n    Input,\n    Gate,\n    Gamma,\n    Beta,\n    Cos,\n    Sin,\n    Positions,\n    Slots,\n    Cache,\n    Out,\n    Weights,\n    eps,\n    M: gl.constexpr,\n    HEADS: gl.constexpr,\n    SC: gl.constexpr,\n    IS_KEY: gl.constexpr,\n    R: gl.constexpr,\n    SPLIT: gl.constexpr,\n    DPT: gl.constexpr,\n    PID_OFFSET: gl.constexpr = 0,\n    SHARED_POS: gl.constexpr = False,\n    BUFFER_INPUT: gl.constexpr = False,\n    FOLD_ROPE: gl.constexpr = False,\n    KEY_DPP: gl.constexpr = False,\n    ROW_GROUP: gl.constexpr = 0,\n):\n    layout: gl.constexpr = gl.BlockedLayout([1, DPT], [DPT // 2, 128 // DPT], [gl.num_warps(), 1], [1, 0])\n    row = (gl.program_id(0) - PID_OFFSET) * R + gl.arange(0, R, gl.SliceLayout(1, layout))\n    d = gl.arange(0, 128, gl.SliceLayout(0, layout))\n    if IS_KEY:\n        m = row\n    else:\n        m = row // HEADS\n    if IS_KEY and M % R != 0:\n        valid = row < M\n    elif not IS_KEY and M * HEADS % R != 0:\n        valid = row < M * HEADS\n    else:\n        valid = gl.full((R,), True, gl.int1, gl.SliceLayout(1, layout))\n    if ROW_GROUP > 0:\n        input_row = row // ROW_GROUP * SPLIT * ROW_GROUP + row % ROW_GROUP\n        split_stride: gl.constexpr = ROW_GROUP * 128\n    else:\n        input_row = row\n        split_stride: gl.constexpr = M * 128\n    if BUFFER_INPUT:\n        x = gl.amd.cdna4.buffer_load(Input, input_row[:, None] * 128 + d[None, :], valid[:, None], 0).to(gl.float32)\n    else:\n        x = gl.load(Input + input_row[:, None] * 128 + d[None, :], valid[:, None], 0).to(gl.float32)\n    if IS_KEY:\n        for part in gl.static_range(1, SPLIT):\n            if BUFFER_INPUT:\n                x += gl.amd.cdna4.buffer_load(\n                    Input + part * split_stride, input_row[:, None] * 128 + d[None, :], valid[:, None], 0\n                )\n            else:\n                x += gl.load(Input + part * split_stride + input_row[:, None] * 128 + d[None, :], valid[:, None], 0)\n        x = x.to(gl.bfloat16).to(gl.float32)\n        mean = gl.sum(x, 1) / 128\n        delta = x - mean[:, None]\n        inv = gl.rsqrt(gl.sum(delta * delta, 1) / 128 + eps)\n        gamma = gl.load(Gamma + d).to(gl.float32)\n        beta = gl.load(Beta + d).to(gl.float32)\n        x = (delta * inv[:, None] * gamma[None, :] + beta[None, :]).to(gl.bfloat16).to(gl.float32)\n    x = _transform(\n        x,\n        Cos,\n        Sin,\n        Positions,\n        m,\n        valid,\n        SC,\n        R,\n        DPT,\n        SHARED_POS,\n        (gl.program_id(0) - PID_OFFSET) * R // HEADS,\n        FOLD_ROPE,\n        KEY_DPP,\n    )\n    scale = gl.exp2(gl.ceil(gl.log2(gl.maximum(gl.max(gl.abs(x), 1), 0.0001) / 448.0)))\n    inverse_scale = 1.0 / scale\n    quant = (x * inverse_scale[:, None]).to(gl.float8e4nv)\n    if IS_KEY:\n        slot = gl.load(Slots + m, valid, -1)\n        page = slot // 64\n        if BUFFER_INPUT:\n            offset = (slot % 64).to(gl.int32)\n            within_page = offset[:, None] // 16 * 2048 + d[None, :] // 16 * 256\n            within_page += offset[:, None] % 16 * 16 + d[None, :] % 16\n            dst = page[:, None] * 8448 + within_page\n        else:\n            offset = slot % 64\n            dst = page[:, None] * 8448 + offset[:, None] // 16 * 2048\n            dst += d[None, :] // 16 * 256 + offset[:, None] % 16 * 16 + d[None, :] % 16\n        active = valid & (slot >= 0)\n        gl.store(Cache + dst, quant.to(gl.uint8, bitcast=True), active[:, None])\n        scale_ptr = gl.cast(Cache, gl.pointer_type(gl.float32))\n        gl.store(scale_ptr + page * 2112 + 2048 + offset, scale, active)\n    else:\n        gl.store(Out + row[:, None] * 128 + d[None, :], quant, valid[:, None])\n        gate = gl.load(Gate + row, valid, 0).to(gl.float32)\n        for part in gl.static_range(1, SPLIT):\n            gate += gl.load(Gate + part * M * HEADS + row, valid, 0)\n        gate = gate.to(gl.bfloat16).to(gl.float32)\n        gate = (gate * HEADS ** (-0.5)).to(gl.bfloat16).to(gl.float32)\n        gl.store(Weights + row, gate * scale * 0.08838834764831845, valid)\n\n\n@gluon.jit\ndef _project_key96(\n    X,\n    W,\n    Y,\n    M: gl.constexpr,\n    K: gl.constexpr,\n    SX: gl.constexpr,\n    SW: gl.constexpr,\n    SPLIT: gl.constexpr,\n    GROUP: gl.constexpr = 2,\n):\n    gl.static_assert(M % 96 == 0 and K % (64 * SPLIT * 3) == 0)\n    BK: gl.constexpr = 64\n    DEPTH: gl.constexpr = 3\n    steps: gl.constexpr = K // (BK * SPLIT)\n    pid = gl.program_id(0)\n    row = pid // (GROUP * 2 * SPLIT) * GROUP + pid % GROUP\n    part = pid // GROUP % SPLIT\n    column = pid // (GROUP * SPLIT) % 2\n    lm: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 32], transposed=False, warps_per_cta=[2, 2])\n    da: gl.constexpr = gl.DotOperandLayout(0, lm, 8)\n    db: gl.constexpr = gl.DotOperandLayout(1, lm, 8)\n    sa0: gl.constexpr = gl.amd.cdna4.compute_efficient_padded_shared_layout(da, [64, BK], X.dtype.element_ty)\n    sa1: gl.constexpr = gl.amd.cdna4.compute_efficient_padded_shared_layout(da, [32, BK], X.dtype.element_ty)\n    sb: gl.constexpr = gl.amd.cdna4.compute_efficient_padded_shared_layout(db, [BK, 64], W.dtype.element_ty)\n    la0: gl.constexpr = _padded_copy_layout(sa0)\n    la1: gl.constexpr = _padded_copy_layout(sa1)\n    lb: gl.constexpr = _padded_copy_layout(sb)\n    amem0 = gl.allocate_shared_memory(X.dtype.element_ty, [DEPTH, 64, BK], sa0)\n    amem1 = gl.allocate_shared_memory(X.dtype.element_ty, [DEPTH, 32, BK], sa1)\n    bmem = gl.allocate_shared_memory(W.dtype.element_ty, [DEPTH, BK, 64], sb)\n    ao0 = gl.arange(0, 64, gl.SliceLayout(1, la0))[:, None] * SX\n    ao0 += gl.arange(0, BK, gl.SliceLayout(0, la0))[None, :]\n    ao1 = gl.arange(0, 32, gl.SliceLayout(1, la1))[:, None] * SX\n    ao1 += gl.arange(0, BK, gl.SliceLayout(0, la1))[None, :]\n    bo = gl.arange(0, 64, gl.SliceLayout(0, lb))[None, :] * SW\n    bo += gl.arange(0, BK, gl.SliceLayout(1, lb))[:, None]\n    abase0 = X + row * 96 * SX + part * steps * BK\n    abase1 = X + (row * 96 + 64) * SX + part * steps * BK\n    bbase = W + column * 64 * SW + part * steps * BK\n    for stage in gl.static_range(DEPTH):\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(amem0.index(stage), abase0 + stage * BK, ao0)\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(amem1.index(stage), abase1 + stage * BK, ao1)\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(bmem.index(stage), bbase + stage * BK, bo)\n        gl.amd.cdna4.async_copy.commit_group()\n    acc0 = gl.zeros((64, 64), gl.float32, lm)\n    acc1 = gl.zeros((32, 64), gl.float32, lm)\n    for cycle in range(steps // DEPTH - 1):\n        for stage in gl.static_range(DEPTH):\n            gl.amd.cdna4.async_copy.wait_group(DEPTH - 1)\n            gl.barrier()\n            a0 = gl.amd.cdna4.async_copy.load_shared_relaxed(amem0.index(stage), da)\n            a1 = gl.amd.cdna4.async_copy.load_shared_relaxed(amem1.index(stage), da)\n            b = gl.amd.cdna4.async_copy.load_shared_relaxed(bmem.index(stage), db)\n            gl.barrier()\n            kk = ((cycle + 1) * DEPTH + stage) * BK\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(amem0.index(stage), abase0 + kk, ao0)\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(amem1.index(stage), abase1 + kk, ao1)\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(bmem.index(stage), bbase + kk, bo)\n            gl.amd.cdna4.async_copy.commit_group()\n            acc0 = gl.amd.cdna4.mfma(a0, b, acc0)\n            acc1 = gl.amd.cdna4.mfma(a1, b, acc1)\n    for stage in gl.static_range(DEPTH):\n        gl.amd.cdna4.async_copy.wait_group(DEPTH - stage - 1)\n        gl.barrier()\n        a0 = gl.amd.cdna4.async_copy.load_shared_relaxed(amem0.index(stage), da)\n        a1 = gl.amd.cdna4.async_copy.load_shared_relaxed(amem1.index(stage), da)\n        b = gl.amd.cdna4.async_copy.load_shared_relaxed(bmem.index(stage), db)\n        gl.barrier()\n        acc0 = gl.amd.cdna4.mfma(a0, b, acc0)\n        acc1 = gl.amd.cdna4.mfma(a1, b, acc1)\n    r0 = gl.arange(0, 64, gl.SliceLayout(1, lm))\n    r1 = gl.arange(0, 32, gl.SliceLayout(1, lm))\n    c = gl.arange(0, 64, gl.SliceLayout(0, lm))\n    outbase = Y + part * M * 128 + row * 96 * 128 + column * 64\n    gl.amd.cdna4.buffer_store(acc0, outbase, r0[:, None] * 128 + c[None, :])\n    gl.amd.cdna4.buffer_store(acc1, outbase + 64 * 128, r1[:, None] * 128 + c[None, :])\n\n\n@gluon.jit\ndef _project_key_ring(\n    X,\n    W,\n    Y,\n    row,\n    column,\n    split,\n    M: gl.constexpr,\n    K: gl.constexpr,\n    SX: gl.constexpr,\n    SW: gl.constexpr,\n    BM: gl.constexpr,\n    BN: gl.constexpr,\n    BK: gl.constexpr,\n    SPLIT: gl.constexpr,\n    INSTR: gl.constexpr,\n    DEPTH: gl.constexpr,\n    ROW_GROUP: gl.constexpr = 0,\n):\n    steps: gl.constexpr = K // (BK * SPLIT)\n    gl.static_assert(K % (BK * SPLIT) == 0 and steps >= DEPTH)\n    nw: gl.constexpr = gl.num_warps()\n    wm: gl.constexpr = min(2, BM // INSTR)\n    lm: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4, instr_shape=[INSTR, INSTR, 512 // INSTR], transposed=False, warps_per_cta=[wm, nw // wm]\n    )\n    if M == 1024 or M == 2048 or M == 4096 or (M == 3072 and SX == K):\n        sa: gl.constexpr = gl.amd.cdna4.compute_efficient_padded_shared_layout(\n            gl.DotOperandLayout(0, lm, 8), [BM, BK], X.dtype.element_ty\n        )\n        la: gl.constexpr = _padded_copy_layout(sa)\n    else:\n        sa: gl.constexpr = gl.SwizzledSharedLayout(8, 2, 8, [1, 0])\n        la: gl.constexpr = gl.BlockedLayout([1, 8], [512 // BK, BK // 8], [nw, 1], [1, 0])\n    if M == 1024 or M == 2048 or M == 4096:\n        sb: gl.constexpr = gl.amd.cdna4.compute_efficient_padded_shared_layout(\n            gl.DotOperandLayout(1, lm, 8), [BK, BN], W.dtype.element_ty\n        )\n        lb: gl.constexpr = _padded_copy_layout(sb)\n    else:\n        sb: gl.constexpr = gl.SwizzledSharedLayout(8, 2, 8, [0, 1])\n        lb: gl.constexpr = gl.BlockedLayout([8, 1], [BK // 8, 512 // BK], [1, nw], [0, 1])\n    amem = gl.allocate_shared_memory(X.dtype.element_ty, [DEPTH, BM, BK], sa)\n    bmem = gl.allocate_shared_memory(W.dtype.element_ty, [DEPTH, BK, BN], sb)\n    a_offsets = gl.arange(0, BM, gl.SliceLayout(1, la))[:, None] * SX\n    a_offsets = a_offsets + gl.arange(0, BK, gl.SliceLayout(0, la))[None, :]\n    b_offsets = gl.arange(0, BN, gl.SliceLayout(0, lb))[None, :] * SW\n    b_offsets = b_offsets + gl.arange(0, BK, gl.SliceLayout(1, lb))[:, None]\n    a_base = X + row * BM * SX + split * steps * BK\n    b_base = W + column * BN * SW + split * steps * BK\n    if M == 4192 or M == 1024:\n        gl.static_assert(DEPTH >= 2)\n        for stage in gl.static_range(DEPTH - 1):\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(amem.index(stage), a_base + stage * BK, a_offsets)\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(bmem.index(stage), b_base + stage * BK, b_offsets)\n            gl.amd.cdna4.async_copy.commit_group()\n        acc = gl.zeros((BM, BN), gl.float32, lm)\n        for cycle in gl.static_range((steps - DEPTH + 1) // DEPTH):\n            for stage in gl.static_range(DEPTH):\n                gl.amd.cdna4.async_copy.wait_group(DEPTH - 2)\n                gl.barrier()\n                a = gl.amd.cdna4.async_copy.load_shared_relaxed(amem.index(stage), gl.DotOperandLayout(0, lm, 8))\n                b = gl.amd.cdna4.async_copy.load_shared_relaxed(bmem.index(stage), gl.DotOperandLayout(1, lm, 8))\n                free_slot = (stage + DEPTH - 1) % DEPTH\n                next_k = (cycle * DEPTH + stage + DEPTH - 1) * BK\n                gl.amd.cdna4.async_copy.buffer_load_to_shared(amem.index(free_slot), a_base + next_k, a_offsets)\n                gl.amd.cdna4.async_copy.buffer_load_to_shared(bmem.index(free_slot), b_base + next_k, b_offsets)\n                gl.amd.cdna4.async_copy.commit_group()\n                acc = gl.amd.cdna4.mfma(a, b, acc)\n        for stage in gl.static_range((steps - DEPTH + 1) % DEPTH):\n            gl.amd.cdna4.async_copy.wait_group(DEPTH - 2)\n            gl.barrier()\n            a = gl.amd.cdna4.async_copy.load_shared_relaxed(amem.index(stage), gl.DotOperandLayout(0, lm, 8))\n            b = gl.amd.cdna4.async_copy.load_shared_relaxed(bmem.index(stage), gl.DotOperandLayout(1, lm, 8))\n            free_slot = (stage + DEPTH - 1) % DEPTH\n            next_k = ((steps - DEPTH + 1) // DEPTH * DEPTH + stage + DEPTH - 1) * BK\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(amem.index(free_slot), a_base + next_k, a_offsets)\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(bmem.index(free_slot), b_base + next_k, b_offsets)\n            gl.amd.cdna4.async_copy.commit_group()\n            acc = gl.amd.cdna4.mfma(a, b, acc)\n        for stage in gl.static_range(DEPTH - 1):\n            slot = (steps - DEPTH + 1 + stage) % DEPTH\n            gl.amd.cdna4.async_copy.wait_group(DEPTH - 2 - stage)\n            gl.barrier()\n            a = gl.amd.cdna4.async_copy.load_shared_relaxed(amem.index(slot), gl.DotOperandLayout(0, lm, 8))\n            b = gl.amd.cdna4.async_copy.load_shared_relaxed(bmem.index(slot), gl.DotOperandLayout(1, lm, 8))\n            acc = gl.amd.cdna4.mfma(a, b, acc)\n    else:\n        for stage in gl.static_range(DEPTH):\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(amem.index(stage), a_base + stage * BK, a_offsets)\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(bmem.index(stage), b_base + stage * BK, b_offsets)\n            gl.amd.cdna4.async_copy.commit_group()\n        acc = gl.zeros((BM, BN), gl.float32, lm)\n        for cycle in range(steps // DEPTH - 1):\n            for stage in gl.static_range(DEPTH):\n                gl.amd.cdna4.async_copy.wait_group(DEPTH - 1)\n                gl.barrier()\n                a = gl.amd.cdna4.async_copy.load_shared_relaxed(amem.index(stage), gl.DotOperandLayout(0, lm, 8))\n                b = gl.amd.cdna4.async_copy.load_shared_relaxed(bmem.index(stage), gl.DotOperandLayout(1, lm, 8))\n                gl.barrier()\n                next_k = ((cycle + 1) * DEPTH + stage) * BK\n                gl.amd.cdna4.async_copy.buffer_load_to_shared(amem.index(stage), a_base + next_k, a_offsets)\n                gl.amd.cdna4.async_copy.buffer_load_to_shared(bmem.index(stage), b_base + next_k, b_offsets)\n                gl.amd.cdna4.async_copy.commit_group()\n                acc = gl.amd.cdna4.mfma(a, b, acc)\n        for stage in gl.static_range(steps % DEPTH):\n            gl.amd.cdna4.async_copy.wait_group(DEPTH - 1)\n            gl.barrier()\n            a = gl.amd.cdna4.async_copy.load_shared_relaxed(amem.index(stage), gl.DotOperandLayout(0, lm, 8))\n            b = gl.amd.cdna4.async_copy.load_shared_relaxed(bmem.index(stage), gl.DotOperandLayout(1, lm, 8))\n            gl.barrier()\n            next_k = (steps // DEPTH * DEPTH + stage) * BK\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(amem.index(stage), a_base + next_k, a_offsets)\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(bmem.index(stage), b_base + next_k, b_offsets)\n            gl.amd.cdna4.async_copy.commit_group()\n            acc = gl.amd.cdna4.mfma(a, b, acc)\n        for stage in gl.static_range(DEPTH):\n            slot = (stage + steps % DEPTH) % DEPTH\n            gl.amd.cdna4.async_copy.wait_group(DEPTH - stage - 1)\n            gl.barrier()\n            a = gl.amd.cdna4.async_copy.load_shared_relaxed(amem.index(slot), gl.DotOperandLayout(0, lm, 8))\n            b = gl.amd.cdna4.async_copy.load_shared_relaxed(bmem.index(slot), gl.DotOperandLayout(1, lm, 8))\n            gl.barrier()\n            acc = gl.amd.cdna4.mfma(a, b, acc)\n    cm = gl.arange(0, BM, gl.SliceLayout(1, lm))\n    cn = gl.arange(0, BN, gl.SliceLayout(0, lm))\n    if ROW_GROUP > 0:\n        group_start = row * BM // ROW_GROUP\n        local = row * BM % ROW_GROUP + cm\n        base = Y + (group_start * SPLIT + split) * ROW_GROUP * 128 + column * BN\n        offsets = (local // ROW_GROUP * SPLIT * ROW_GROUP + local % ROW_GROUP) * 128\n        gl.amd.cdna4.buffer_store(\n            acc, base, offsets[:, None] + cn[None, :], cache=\".cs\" if M == 1024 or M == 2048 or M == 4192 else \"\"\n        )\n    else:\n        base = Y + split * M * 128 + row * BM * 128 + column * BN\n        gl.amd.cdna4.buffer_store(\n            acc, base, cm[:, None] * 128 + cn[None, :], cache=\".cs\" if M == 1024 or M == 2048 or M == 4192 else \"\"\n        )\n\n\n@gluon.jit\ndef _project_key(\n    X,\n    W,\n    Y,\n    M: gl.constexpr,\n    K: gl.constexpr,\n    SX: gl.constexpr,\n    SW: gl.constexpr,\n    BM: gl.constexpr,\n    BN: gl.constexpr,\n    BK: gl.constexpr,\n    SPLIT: gl.constexpr,\n    INSTR: gl.constexpr,\n    DEPTH: gl.constexpr,\n    ROW_GROUP: gl.constexpr = 0,\n):\n    if M == 2048 or M == 3072 or M == 4096:\n        columns: gl.constexpr = 128 // BN\n        pid = gl.program_id(0)\n        row = pid // (4 * columns * SPLIT) * 4 + pid % 4\n        part = pid // 4 % SPLIT\n        column = pid // (4 * SPLIT) % columns\n    elif M == 4192:\n        columns: gl.constexpr = 128 // BN\n        pid = gl.program_id(0)\n        row = pid // (SPLIT * columns)\n        column = pid // SPLIT % columns\n        part = pid % SPLIT\n    else:\n        row, column, part = (gl.program_id(0), gl.program_id(1), gl.program_id(2))\n    if M % 32 != 0:\n        _project_tail(X, W, Y, row, column, part, M, 128, K, SX, SW, BM, BN, BK, SPLIT, INSTR)\n    elif M % BM == 0:\n        _project_key_ring(X, W, Y, row, column, part, M, K, SX, SW, BM, BN, BK, SPLIT, INSTR, DEPTH, ROW_GROUP)\n    elif row < M // BM:\n        _project_key_ring(X, W, Y, row, column, part, M, K, SX, SW, BM, BN, BK, SPLIT, INSTR, DEPTH, ROW_GROUP)\n    else:\n        tail_row = M // BM * (BM // 32) + row - M // BM\n        _project_key_ring(X, W, Y, tail_row, column, part, M, K, SX, SW, 32, BN, BK, SPLIT, INSTR, DEPTH, ROW_GROUP)\n\n\ndef indexer_prepare_key_only(\n    x,\n    q_latent,\n    wq,\n    wk,\n    wgate,\n    k_gamma,\n    k_beta,\n    cos,\n    sin,\n    positions,\n    slots,\n    cache: torch.Tensor,\n    *,\n    key_only: bool = False,\n    eps: float = 1e-06,\n):\n    m, width = x.shape\n    heads = wgate.shape[0]\n    if m == 1024:\n        bm, bn, key_instr, splits, depth, key_waves = (64, 64, 32, 8, 4, 4)\n    elif m == 2048:\n        bm, bn, key_instr, splits, depth, key_waves = (64, 64, 32, 4, 4, 4)\n    elif m == 3072:\n        bm, bn, key_instr, splits, depth, key_waves = (96, 64, 16, 4, 3, 4)\n    elif m == 4096:\n        bm, bn, key_instr, splits, depth, key_waves = (64, 64, 32, 2, 4, 4)\n    else:\n        bm, bn, key_instr, splits, depth, key_waves = (128, 128, 16, 6, 3 if m == 4192 else 2, 8)\n    bk = 64\n    if m == 1024:\n        row_group = 1\n    elif m == 2048:\n        row_group = 8\n    elif m == 4192:\n        row_group = 16\n    else:\n        row_group = 0\n    key = torch.empty((splits, m, 128), device=x.device, dtype=torch.float32)\n    row_tiles = m // bm + triton.cdiv(m % bm, 32) if m % 32 == 0 else triton.cdiv(m, bm)\n    grid = (row_tiles, triton.cdiv(128, bn), splits)\n    if m in (2048, 3072, 4096, 4192):\n        grid = (grid[0] * grid[1] * grid[2],)\n    if m == 3072:\n        _project_key96[m // 96 * 2 * splits,](x, wk, key, m, width, x.stride(0), wk.stride(0), splits, num_warps=4)\n    else:\n        _project_key[grid](\n            x,\n            wk,\n            key,\n            m,\n            width,\n            x.stride(0),\n            wk.stride(0),\n            bm,\n            bn,\n            bk,\n            splits,\n            key_instr,\n            depth,\n            row_group,\n            num_warps=key_waves,\n        )\n    rows, waves = (2, 1) if m in (1024, 2048) else (4, 2)\n    _finish[triton.cdiv(m, rows),](\n        key,\n        None,\n        k_gamma,\n        k_beta,\n        cos,\n        sin,\n        positions,\n        slots,\n        cache,\n        None,\n        None,\n        eps,\n        m,\n        heads,\n        cos.stride(0),\n        True,\n        rows,\n        splits,\n        4,\n        BUFFER_INPUT=m >= 2048,\n        FOLD_ROPE=True,\n        KEY_DPP=True,\n        ROW_GROUP=row_group,\n        num_warps=waves,\n        enable_fp_fusion=False,\n    )\n    return (None, None)\n\n\ndef run(\n    *,\n    x,\n    wk,\n    k_norm_weight,\n    k_norm_bias,\n    cos_cache,\n    sin_cache,\n    positions,\n    out_cache_loc,\n    index_k_cache,\n    k_norm_eps,\n    no_values,\n):\n    \"\"\"Stores the keys: indexer_prepare_key_only on sglang's tensors, key_only, the index-K\n    pages as their bytes. Its key-only path never reads the query side's q_latent, wq and\n    wgate: they are views of x and wk with the shapes and strides GLM-5.2's would have (2048\n    query latents, 32 heads), so that the kernels compile as they were tuned.\"\"\"\n    indexer_prepare_key_only(\n        x,\n        x[:, :2048],\n        wk.view(-1, 2048),\n        wk,\n        wk[:32],\n        k_norm_weight,\n        k_norm_bias,\n        cos_cache,\n        sin_cache,\n        positions,\n        out_cache_loc,\n        index_k_cache.view(torch.uint8),\n        key_only=True,\n        eps=k_norm_eps,\n    )\n"
+      }
+    ]
+  }
+}

@@ -2,7 +2,7 @@
 title: "GEMM — how to work on one: order of operations, evidence, and the round discipline"
 kind: method
 lever: gemm_workflow
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe]
 gens: [gfx950]
 flydsl: 0.3.2
 sources:
@@ -19,7 +19,7 @@ sources:
 
 ## Route here when
 The question has narrowed to a dense GEMM, and you need to know where to start, what to change first,
-or how to run the next round. For a grouped GEMM start at `../moe/grouped_workflow.md`.
+or how to run the next round. For a grouped GEMM, MoE expert GEMMs at any token count included, start at `../moe/INDEX.md` (working order: `../moe/grouped_workflow.md`).
 
 | The open question | Card |
 |---|---|
@@ -30,7 +30,7 @@ or how to run the next round. For a grouped GEMM start at `../moe/grouped_workfl
 | C store width, cross-lane reorder, cache policy, beta=1, fused epilogues | `epilogue.md` |
 | Per-shape race, cache keys, launch overhead, CUDA graphs | `autotune.md` |
 | Correctness gates, races, silent-wrong traps | `correctness.md` |
-| M ≤ 256: decode-shape rulers, grid, split-K reduction, aiter tuned rows | `small_m.md` |
+| M ≤ 256: rulers with B cold, grid, split-K reduction, aiter tuned rows | `small_m.md` |
 | Rulers, noise floors, A/B design, what to report | `measurement.md` |
 | How a FlyDSL GEMM is put together (FlyDSL's walkthrough on `preshuffle_gemm`) | `../flydsl/guides.md` § gemm-optimization |
 | The kernel is wrong, not slow | `../flydsl/debug-flydsl-kernel.md` |

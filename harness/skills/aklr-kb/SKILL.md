@@ -3,11 +3,12 @@ name: aklr-kb
 description: >
   What makes a kernel fast on gfx950 (MI350/MI355X) inside AKLR, and how to write it in FlyDSL, Triton/Gluon or
   HIP (the flydsl/, triton/ and hip/ folders: limits, errors, debugging, each language's own guides). Includes
-  a dense-GEMM package (fp8, MXFP4, MXFP8, bf16/fp16, int8, small-M decode shapes included): dispatch rounds
+  a dense-GEMM package (fp8, MXFP4, MXFP8, bf16/fp16, int8, small-M shapes included): dispatch rounds
   and split-K, main-loop pipelines, LDS/swizzle/DMA data paths, XCD tile order and scheduling hints,
   epilogues, autotuning, attribution, correctness gates and A/B measurement. Also a MoE package (fused MoE at
-  decode sizes, and the expert grouped GEMM: training forward, dgrad and variable-K wgrad in bf16, fp8, MXFP8
-  and MXFP4), an attention package, symptom pages, pitfalls and delivered kernels, trace capture and analysis,
+  any token count, and the expert grouped GEMM: tile-to-group mapping, order under token skew, sorted-token
+  rows, transposed operands and K varying per group, in bf16, fp8, MXFP8 and MXFP4), an attention package,
+  symptom pages, pitfalls and delivered kernels, trace capture and analysis,
   perf-regression bisection, the CDNA4 (gfx950) ISA reference guide with guides to looking things up in it,
   and gfx942 (MI300X) GEMM notes. Use when optimizing a kernel in any of these languages, or finding out why one
   is slow or wrong.
@@ -42,7 +43,7 @@ wins. Check a plan against this table before writing code.
 | Launch code (`run` and what it calls) does not synchronize, call `.item()` / `.cpu()`, print, read a clock or the environment, or change torch state (SA3) | Timing or racing configurations in `run` |
 | Compilation and the choice of configuration happen in a module-level `@functools.cache` function on a Point's first call; later calls may be inside a CUDA graph capture | The first-call race of `gemm/autotune.md` §1 as written: choose from the shape, with a table raced offline |
 | Inputs other than the mutable ones are read-only (SA2); nothing derived from an argument is kept across calls, and there is no `global` or `nonlocal` (SA1) | Caching a repacked weight: repack on every call, or serve the contract's shuffled layout variant where it has one |
-| Scratch is allocated in the call (`torch.empty`: contents undefined) or once per shape in the compile function and rewritten before it is read; no call depends on what an earlier call left | Counters that live across calls: zero workspaces in each call before any read (`gemm/small_m.md` §4) |
+| Scratch is allocated in the call (`torch.empty`: contents undefined) or once per shape in the compile function and rewritten before it is read; no call depends on what an earlier call left | Counters that live across calls: zero workspaces in each call before any read (`gemm/small_m.md` §4). A slot stamped with this launch's 64-bit tag, queue bits included, needs no zeroing as long as no leftover word equals the tag: such a split-K fold is one launch on a `torch.empty` workspace (`gemm/wait_free_fold.md` § Folding without a counter) |
 | No workgroup waits for another: nothing polls a flag or data that another workgroup of the launch writes, since a launch's workgroups need not all be resident (a stream limited to part of the CUs, another kernel holding CUs) | A split-K fold or split-KV merge whose owner polls its partners: merge in a separate launch, or have each publish and count in on an atomic counter and the last to arrive merge, in a fixed order |
 | `run(*, <kernel_call_keys>)` writes the preallocated outputs and returns nothing; the entry file's docstring describes the kernel, with no history or speedup (SA4) | Allocating outputs; importing sibling files other than relatively (the package name is a hash) |
 
@@ -63,15 +64,16 @@ wins. Check a plan against this table before writing code.
 | Task | Read in this order |
 |---|---|
 | Write or optimize a dense GEMM (fp8 / MXFP4 / MXFP8 / bf16) | `gemm/INDEX.md` → the card it routes to |
-| A GEMM with M ≤ 256 (decode, speculative verify) | `gemm/small_m.md` |
+| A GEMM with M ≤ 256 (as in decode or speculative verify) | `gemm/small_m.md` |
 | A GEMM on gfx942 (MI300X) | `gemm/gfx942.md` |
-| A MoE: fused MoE at decode sizes (MXFP4, routing sort, stage 1 / stage 2), or its expert grouped GEMM (forward, dgrad, variable-K wgrad) | `moe/INDEX.md` → the card it routes to; the expert GEMM is its § Expert GEMM (grouped GEMM), with main loop and datapath in `gemm/` |
-| Write or optimize an attention kernel (prefill, backward, decode with split KV) | `attention/INDEX.md` → the card it routes to |
+| A MoE layer at any token count (MXFP4 experts, routing sort, stage 1 / stage 2), or its expert GEMMs as a grouped GEMM: per-size configuration, tile and occupancy, XCD placement, low precision and scale preshuffle, sorted-token rows, K varying per group, correctness, measurement | `moe/INDEX.md` → the card § it routes the problem to; main loop and data path in `gemm/` |
+| Write or optimize an attention kernel: many query rows per head, the dQ dK dV gradients, or few query rows per head with split KV | `attention/INDEX.md` → the card it routes to |
 | Dump a kernel's IR and final ISA; read registers, LDS, spills, waits and hot-loop counts | `gemm/mainloop.md` §10 (FlyDSL's `FLYDSL_DUMP_IR=1`: `flydsl/gemm.md` § mainloop §10); `analysis/isa_diff.py` compares two dumps |
 | Capture a kernel trace and find the hotspot, or find the commit behind a performance regression | `profile.md` |
-| EP dispatch/combine against TP at decode, or a collective's time in a multi-GPU trace | `communication/INDEX.md` |
+| EP dispatch/combine against TP for a MoE layer at a few tokens per GPU, or a collective's time in a multi-GPU trace | `communication/INDEX.md` |
 | What an instruction, encoding, counter, wait state or hardware limit really is | `hardware/gfx950/INDEX.md` → `hardware/gfx950/lookup.md`, `hardware/gfx950/matrix_core.md`, `hardware/gfx950/memory_and_sync.md`; gfx942 (MI300X): `hardware/gfx942/INDEX.md` |
 | The language: its API, compile errors, debugging, its own guides | the language's folder: `flydsl/SKILL.md`, `triton/SKILL.md`, `hip/SKILL.md` |
+| A Triton or Gluon kernel: authoring, debugging, tuning, numerics, Gluon layouts, memory, MFMA and inline asm, AKLR's 154 Triton kernels by family, its GEMM, MoE, attention and GatedDeltaNet kernels | `triton/SKILL.md` → the page its task table names |
 
 ## By symptom
 
@@ -112,9 +114,11 @@ wins. Check a plan against this table before writing code.
   `python -m aklr export check` and `python -m aklr validate --base origin/main`. The local result does not
   count; CI measures. A `platform_failure` "Kineto recorded no kernels for a single call" is a tracer fault: on a
   busy node, wait a few minutes before you rerun (`pitfalls/profiler_misses_kernels.md`).
-- **AKLR does not time below about 4 µs.** Its bench runner forces `GPU_FORCE_QUEUE_PROFILING`, and a profiled
-  dispatch costs about that however little it does, so a short kernel and its baseline read about the same. A
-  Point whose baseline sits near that floor shows no gain in CI: check `baseline.json` before working on it.
+- **Recheck the short-kernel floor on current main.** Up to measurement profile 18 (Kineto, with
+  `GPU_FORCE_QUEUE_PROFILING` forced) AKLR read about 4 µs per kernel however little it did, so a short kernel and
+  its baseline read about the same. Main now reads kernel times from its own rocprofiler-sdk tracer (profile 19)
+  without forcing queue profiling: time an empty kernel, the baseline and your candidate there before deciding a
+  Point has no headroom (`pitfalls/aklr_dispatch_floor.md`).
 
 ## Folders and adding a page
 
