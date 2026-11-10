@@ -216,3 +216,34 @@ class TestRoundedToBfloat16:
         """A float64 rounds to its nearest bfloat16, not through float32's."""
         x = torch.tensor([value, -value], dtype=torch.float64)
         assert semantics.rounded_to_bfloat16(x).tolist() == [expected, -expected]
+
+
+class TestScaleLayouts:
+    """The byte that the e8m0 scale layouts write into their padding."""
+
+    @staticmethod
+    def _stored_bytes(layout: semantics.Layout, shape: tuple[int, ...], fill: int) -> torch.Tensor:
+        """``layout``'s stored bytes of row-major e8m0 scales that are all ``fill``."""
+        scales = torch.full(shape, fill, dtype=torch.uint8).view(torch.float8_e8m0fnu)
+        return layout.encode(scales).view(torch.uint8)
+
+    @pytest.mark.parametrize(
+        ("layout", "shape", "pad"),
+        [
+            # gemm_a4w4_mxfp4's b_shuffled a_scale at m = 33, k = 2880: rows and groups padded
+            (semantics.E8M0Scales(block_size=32, pad_to=(256, 8), shuffled=True), (33, 90), 0x00),
+            (semantics.E8M0Scales(block_size=32, pad_to=(32, 8), shuffled=True), (2, 40, 12), 0x00),
+            (semantics.E8M0Scales(block_size=32, pad_to=(1, 8)), (3, 12), 0x00),
+            # fused_moe's w1_scale and w2_scale at inter_dim 384, 12 groups padded to 16: 1.0, as
+            # aiter's shuffle_scale(is_guinterleave=True) pads the scales sglang serves
+            (semantics.GateUpInterleavedScales(gate_up=True), (2, 64, 12), 0x7F),
+            (semantics.GateUpInterleavedScales(gate_up=False), (2, 64, 12), 0x7F),
+        ],
+    )
+    def test_padding_value(self, layout: semantics.Layout, shape: tuple[int, ...], pad: int) -> None:
+        """Every byte the layout pads is ``pad``: of the bytes stored from scales all 1 and all
+        2, the ones both share, as many as the stored shape adds."""
+        ones, twos = self._stored_bytes(layout, shape, 1), self._stored_bytes(layout, shape, 2)
+        padding = ones == twos
+        assert padding.sum().item() == math.prod(layout.storage_shape(shape)) - math.prod(shape)
+        assert (ones[padding] == pad).all()
