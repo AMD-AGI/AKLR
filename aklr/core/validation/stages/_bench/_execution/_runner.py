@@ -500,9 +500,6 @@ class DisposableExecutionRunner(ExecutionRunner):
                         TMPDIR=str(directory),
                         OMP_NUM_THREADS=str(max(1, (os.cpu_count() or 1) // max(1, n_resources))),
                     )
-                    # WORKAROUND: clr 1c1ab59 (HIP 7.16); forced queue profiling makes clr time graph
-                    # nodes, whose timestamps race into a double free; remove once the image has HIP >= 7.16
-                    os.environ.pop("GPU_FORCE_QUEUE_PROFILING", None)
                     if is_gpu:
                         # shortcut: an in-tree amdgpu has no version file, the ROCm DKMS one does;
                         # an ioctl probe of KFD's IPC would be exact

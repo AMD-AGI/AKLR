@@ -117,18 +117,3 @@ def _forge_runner_failed(context) -> None:
         RunnerFailed(runner_id=runner["runner_id"], reason="forged", resource_failed=True)
     )
     raise AssertionError("unreachable")
-
-
-def test_the_runner_drops_forced_queue_profiling(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A task never runs with GPU_FORCE_QUEUE_PROFILING inherited: below HIP 7.16 it makes
-    clr time graph nodes, whose timestamps race into a double free (fixed in clr 1c1ab59)."""
-    monkeypatch.setenv("GPU_FORCE_QUEUE_PROFILING", "1")
-    with Executor.for_devices(["cpu"]) as executor:
-        seen = executor.submit(_forced_queue_profiling, timeout_seconds=60).result()
-    assert seen is None
-
-
-def _forced_queue_profiling(context) -> str | None:
-    import os
-
-    return os.environ.get("GPU_FORCE_QUEUE_PROFILING")
