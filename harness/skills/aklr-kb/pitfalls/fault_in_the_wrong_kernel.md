@@ -8,7 +8,6 @@ basis: single-observation
 sources:
   - "ROCm/FlyDSL@dd8373349:kernels/common/buffer_ops.py:338"
   - "ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/universal.py:287"
-  - "local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260912_171610/rounds/round-08/agent.txt"
 ---
 
 # A fault in the wrong kernel
@@ -79,15 +78,15 @@ example as an index, faults, and the fault names that later kernel.
 
 ## Evidence
 
-E2, E4 and the rest of the Symptom are written down only in notes from the debugging session (local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260912_145335/goal.md:36; :101;
-local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/02-correctness-race-cache.md:253; :274); E1, E3 and E5 are
+E2, E4 and the rest of the Symptom are written down only in notes from debugging;
+E1, E3 and E5 are
 in the round's record.
 
-- E1 [2026-09, gfx950, FlyDSL ?, N=?, GLM-5.2 TP4/EP4 server runs with the MoE campaign's kernels] before the fix the server crashed in a window of 90–140 decode batches (GLM-5.2 TP4/EP4 decode; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260912_171610/rounds/round-08/agent.txt:15)
-- E2 [2026-09, gfx950, FlyDSL ?, N=?, isolated MoE runs] eight shapes, 257 and 258 experts, 300 mixed rounds and memory pressure: no fault; 4096-element tail canaries could not catch the far index (KB note; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260912_145335/goal.md:102; :98)
-- E3 [2026-09, gfx950, FlyDSL ?, N=350, canary probe over 350 cases] row-inverse table written 5 int32 past its end at capacity 48 and 84 with repeated expert ids inside the token count; out of bounds on 4 of 4 such cases before the descriptor bound, 350 of 350 clean after (GLM-5.2 MoE sorting, FlyDSL; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260912_171610/rounds/round-08/agent.txt:11; :13; :26)
-- E4 [2026-09, gfx950, FlyDSL ?, N=?, server run with AMD_SERIALIZE_KERNEL=3] the fault came later than without it, and wall time did not grow (KB note; local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/02-correctness-race-cache.md:263; :264)
-- E5 [2026-09, gfx950, FlyDSL ?, N=2, e2e server runs P/B/B/P with the fix] 0 memory access faults over 342 decode batches in each run (GLM-5.2 TP4/EP4 decode; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260912_171610/rounds/round-08/agent.txt:15)
+- E1 [2026-09, gfx950, FlyDSL ?, N=?, GLM-5.2 TP4/EP4 server runs with the MoE campaign's kernels] before the fix the server crashed in a window of 90–140 decode batches (GLM-5.2 TP4/EP4 decode)
+- E2 [2026-09, gfx950, FlyDSL ?, N=?, isolated MoE runs] eight shapes, 257 and 258 experts, 300 mixed rounds and memory pressure: no fault; 4096-element tail canaries could not catch the far index
+- E3 [2026-09, gfx950, FlyDSL ?, N=350, canary probe over 350 cases] row-inverse table written 5 int32 past its end at capacity 48 and 84 with repeated expert ids inside the token count; out of bounds on 4 of 4 such cases before the descriptor bound, 350 of 350 clean after (GLM-5.2 MoE sorting, FlyDSL)
+- E4 [2026-09, gfx950, FlyDSL ?, N=?, server run with AMD_SERIALIZE_KERNEL=3] the fault came later than without it, and wall time did not grow
+- E5 [2026-09, gfx950, FlyDSL ?, N=2, e2e server runs P/B/B/P with the fix] 0 memory access faults over 342 decode batches in each run (GLM-5.2 TP4/EP4 decode)
 - S1 kernels/common/buffer_ops.py:343 at ROCm/FlyDSL dd8373349: with `max_size=False` and no `num_records_bytes`, a memref shape with a dynamic dimension gives `None` (:301) and the descriptor falls back to `0xFFFFFFFF` (:347)
 - S2 python/flydsl/expr/rocdl/universal.py:287 at ROCm/FlyDSL dd8373349: `make_buffer_tensor(max_size=False)` sets `num_records_bytes` from `cosize(layout)` times the element size
 - S3 aiter/ops/flydsl/kernels/buffer_ops.py:373 at ROCm/aiter dbd8bf5: the same fallback to `0xFFFFFFFF` when the static size cannot be read (:376)

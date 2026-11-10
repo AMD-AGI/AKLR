@@ -9,10 +9,10 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1
 measured:
-  - {metric: "speedup over aiter, CI, per Point", value: "1.486–5.571; 13 of 13 Points ≥ 1.03", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n512_k4096, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "5571f4589 (CI run 40613440602)", date: "2026-10-28"}
-  - {metric: "speedup over aiter, CI, per Point", value: "1.375–3.298; 13 of 13 Points ≥ 1.03", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n1024_k4096, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "5571f4589 (CI run 40613440602)", date: "2026-10-28"}
-  - {metric: "speedup over aiter, CI, per Point", value: "1.025–2.611; 12 of 13 Points ≥ 1.03", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k256, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "5571f4589 (CI run 40613440602)", date: "2026-10-28"}
-  - {metric: "speedup over aiter, CI, per Point", value: "0.993–2.266; 12 of 13 Points ≥ 1.03", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k512, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "5571f4589 (CI run 40613440602)", date: "2026-10-28"}
+  - {metric: "speedup over aiter, CI, per Point", value: "1.486–5.571; 13 of 13 Points ≥ 1.03", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n512_k4096, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
+  - {metric: "speedup over aiter, CI, per Point", value: "1.375–3.298; 13 of 13 Points ≥ 1.03", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n1024_k4096, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
+  - {metric: "speedup over aiter, CI, per Point", value: "1.025–2.611; 12 of 13 Points ≥ 1.03", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k256, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
+  - {metric: "speedup over aiter, CI, per Point", value: "0.993–2.266; 12 of 13 Points ≥ 1.03", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k512, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
 sources:
   - aklr/ops/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n512_k4096/e5cda3e1b4f63183.json
   - aklr/ops/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n1024_k4096/7c4c895c7743b287.json
@@ -121,8 +121,8 @@ Each file is the only schema at its Points, so the faster of AKLR's served kerne
 rounds of CUDA-graph replays with L2 flushed before each call (`aklr/core/validation/stages/_measure.py`); here the
 aiter time includes the a_scale copy at m ≥ 2 (Counter-signals). A Point is served from 1.03.
 
-CI installs the repository with `--no-deps`, so these runs used the FlyDSL of the CI image, 0.3.4.1, not the
-repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`).
+The predecessor repository's CI installed the code with `--no-deps`, so these runs used the FlyDSL of the CI image,
+0.3.4.1, not the repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`).
 
 | File | m 1 | m 2–64 | m 128–512 | m 1024–4096 | Served |
 |---|---|---|---|---|---|
@@ -135,7 +135,7 @@ repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`).
 
 ## Reproduce
 
-On an MI355X, in a checkout that holds these files with these numbers (main at 0cef4f2e3), one schema at a time:
+On an MI355X, in a checkout that holds these files with these numbers, one schema at a time:
 
 ```
 python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n512_k4096/e5cda3e1b4f63183.json
@@ -158,12 +158,12 @@ re-measure all four files before trusting their m ≥ 2 margins.
 
 `<schema>.json#kernel.py:<line>` is a line of the `kernel.py` source a schema embeds in `kernel.sources`.
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter 1.486–5.571 per Point, 13 of 13 ≥ 1.03; m 1 4.569, m 2 5.571, m 2–64 4.677–5.571, m 128–512 2.967–4.190, m 1024–4096 1.486–2.532 (gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n512_k4096, m 1–4096; 5571f4589, CI run 40613440602)
-- E2 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter 1.375–3.298 per Point, 13 of 13 ≥ 1.03; m 1 2.285, m 2 3.220, m 2–64 2.747–3.298, m 128–512 1.678–2.560, m 1024–4096 1.375–1.653 (gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n1024_k4096, m 1–4096; 5571f4589, CI run 40613440602)
-- E3 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter 1.025–2.611 per Point, 12 of 13 ≥ 1.03; m 1 1.025, m 2 1.942, m 2–64 1.912–1.969, m 128–512 1.989–2.180, m 1024–4096 1.818–2.611 (gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k256, m 1–4096; 5571f4589, CI run 40613440602)
-- E4 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter 0.993–2.266 per Point, 12 of 13 ≥ 1.03; m 1 0.993, m 2 1.922, m 2–64 1.866–1.924, m 128–512 1.900–2.266, m 1024–4096 1.661–2.125 (gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k512, m 1–4096; 5571f4589, CI run 40613440602)
-- E5 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] column-major variant, m 1 / m 2: n512_k4096 4.638 / 4.504, n1024_k4096 2.383 / 2.400, n4096_k256 1.039 / 1.035, n4096_k512 0.986 / 0.996 (gemm_a8w8_blockwise_scaled_b_shuffled_n512_k4096, _n1024_k4096, _n4096_k256, _n4096_k512; 5571f4589, CI run 40613440602)
-- E6 [2026-10, gfx950, FlyDSL ?, N=5, AKLR CI; FlyDSL of the runs: not recorded, 0.3.1, then 0.3.4.1 three times] m = 1 across the five committed measurements, in commit order: n4096_k256 1.025, 1.006, 1.013, 1.033, 1.025; n4096_k512 1.004, 0.989, 1.009, 0.996, 0.993 (the row-major n4096_k256 and n4096_k512 schemas; baa858028, cc6e3b96c, cca5b12df, 102877ca0, 5571f4589)
+- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over aiter 1.486–5.571 per Point, 13 of 13 ≥ 1.03; m 1 4.569, m 2 5.571, m 2–64 4.677–5.571, m 128–512 2.967–4.190, m 1024–4096 1.486–2.532 (gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n512_k4096, m 1–4096)
+- E2 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over aiter 1.375–3.298 per Point, 13 of 13 ≥ 1.03; m 1 2.285, m 2 3.220, m 2–64 2.747–3.298, m 128–512 1.678–2.560, m 1024–4096 1.375–1.653 (gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n1024_k4096, m 1–4096)
+- E3 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over aiter 1.025–2.611 per Point, 12 of 13 ≥ 1.03; m 1 1.025, m 2 1.942, m 2–64 1.912–1.969, m 128–512 1.989–2.180, m 1024–4096 1.818–2.611 (gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k256, m 1–4096)
+- E4 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over aiter 0.993–2.266 per Point, 12 of 13 ≥ 1.03; m 1 0.993, m 2 1.922, m 2–64 1.866–1.924, m 128–512 1.900–2.266, m 1024–4096 1.661–2.125 (gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n4096_k512, m 1–4096)
+- E5 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] column-major variant, m 1 / m 2: n512_k4096 4.638 / 4.504, n1024_k4096 2.383 / 2.400, n4096_k256 1.039 / 1.035, n4096_k512 0.986 / 0.996 (gemm_a8w8_blockwise_scaled_b_shuffled_n512_k4096, _n1024_k4096, _n4096_k256, _n4096_k512)
+- E6 [2026-10, gfx950, FlyDSL ?, N=5, the predecessor repository's CI; FlyDSL of the runs: not recorded, 0.3.1, then 0.3.4.1 three times] m = 1 across the five committed measurements, in commit order: n4096_k256 1.025, 1.006, 1.013, 1.033, 1.025; n4096_k512 1.004, 0.989, 1.009, 0.996, 0.993 (the row-major n4096_k256 and n4096_k512 schemas)
 - S1 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:369 for `b_shuffled_row_major_a_scale` the timed baseline gets `x_scale.T.contiguous().T` (:379), per the FIXME at :372
 - S2 aklr/ops/gemm/contract.py:298 the `b_shuffled_row_major_a_scale` layout variant; compare `bounded` at :281
 - S3 aklr/ops/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_row_major_a_scale_n512_k4096/e5cda3e1b4f63183.json#kernel.py:344 cross-workgroup fixup: per-thread counter (`raw_ptr_buffer_atomic_fadd`, :376), partials summed in split order (:384), counters zeroed once (:595); split factors in `KS_MAP` at :546

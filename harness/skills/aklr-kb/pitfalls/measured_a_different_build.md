@@ -6,9 +6,8 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: single-observation
 sources:
-  - "local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260910_041317/campaign_remote.py:13"
-  - "AMD-AGI/AKLR@0cef4f2e3:aklr/ops/README.md"
-  - "AMD-AGI/AKLR@0cef4f2e3:aklr/core/runtime/dispatch/_dispatcher.py:50"
+  - "aklr/ops/README.md"
+  - "aklr/core/runtime/dispatch/_dispatcher.py:51"
   - "ROCm/aiter@e7d2453f2:requirements.txt:24"
 ---
 
@@ -89,14 +88,14 @@ Each channel puts a different build under the ruler.
 
 ## Evidence
 
-- S1 local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260910_041317/campaign_remote.py:13 `sync()` rsyncs `REPO_LOCAL` over the remote tree and runs at :20, before every command; the exclude list `/workspace/code/gpt_oss_docker/sync/.rsync-exclude` keeps `*.py`
-- S2 local:/workspace/code/gpt_oss_docker/work/gemm_h2h/code/h2h_adapter_vendor.py:56 `import aiter` imports whatever flydsl is first on `PYTHONPATH`; aiter's FlyDSL a8w8 kernel then failed under 0.2.4 and 0.4.0
-- S3 aklr/core/runtime/dispatch/_dispatcher.py:50 at 0cef4f2e3: `FallbackReason` (`disabled`, `out_of_contract`, `no_workload`, `not_measured`, `inaccurate`, `not_qualified`, `not_warmed`)
-- S4 aklr/core/runtime/dispatch/_recorder.py:58 at 0cef4f2e3: the call record's `fallback_reason`, `None` when served
-- S5 local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260912_152010/goal.md:103 the server imports `sglang` from `/sgl-workspace/sglang_kyle`, not from the tree the campaign rsyncs its edits to (campaign note, 2026-09)
-- S6 .github/workflows/ci.yaml:404 at 0cef4f2e3, in the repository before this one (not in this one's history): `pip install --no-build-isolation --no-deps -e .` inside `AKLR_CI_IMAGE` (:5); `requirements.txt:25` pins `flydsl==0.3.2`
-- S7 ROCm/aiter@e7d2453f2:requirements.txt:24 `flydsl==0.3.4.1`; AKLR's CI image `lmsysorg/sglang:v0.5.22-rocm10-mi35x@sha256:1438dd8b9000` (`.github/workflows/ci.yaml:5`; CI runs of cca5b12df, 102877ca0, 5571f4589) is built with `AITER_COMMIT=e7d2453f2`, and that build step runs `pip install -r requirements.txt` in the aiter checkout (image config, history step 94); no later step installs FlyDSL, and sglang v0.5.22 does not depend on it
-- S8 ROCm/aiter@c16d44b93:requirements.txt:24 `flydsl==0.3.1`; the image of CI run 39908769447 (cc6e3b96c), `lmsysorg/sglang:v0.5.19-rocm724-mi35x@sha256:424411dacf57`, is built with `AITER_COMMIT=c16d44b93`, whose build step installs that file (image config, history step 92)
+- S1 `sync()` rsyncs `REPO_LOCAL` over the remote tree and runs before every command; the exclude list keeps `*.py`
+- S2 `import aiter` imports whatever flydsl is first on `PYTHONPATH`; aiter's FlyDSL a8w8 kernel then failed under 0.2.4 and 0.4.0
+- S3 aklr/core/runtime/dispatch/_dispatcher.py:51: `FallbackReason` (`no_schema`, `disabled`, `out_of_contract`, `no_workload`, `not_measured`, `inaccurate`, `not_qualified`, `not_warmed`)
+- S4 aklr/core/runtime/dispatch/_recorder.py:55: the call record's `fallback_reason`, `None` when served
+- S5 the server imports `sglang` from a separate checkout, not from the tree the campaign rsyncs its edits to (2026-09)
+- S6 .github/workflows/ci.yaml, in the repository before this one (not in this one's history): `pip install --no-build-isolation --no-deps -e .` inside `AKLR_CI_IMAGE`; `requirements.txt` pins `flydsl==0.3.2`
+- S7 ROCm/aiter@e7d2453f2:requirements.txt:24 `flydsl==0.3.4.1`; AKLR's CI image `lmsysorg/sglang:v0.5.22-rocm10-mi35x` (`.github/workflows/ci.yaml:5`) is built with `AITER_COMMIT=e7d2453f2`, and that build step runs `pip install -r requirements.txt` in the aiter checkout (image config, history step 94); no later step installs FlyDSL, and sglang v0.5.22 does not depend on it
+- S8 ROCm/aiter@c16d44b93:requirements.txt:24 `flydsl==0.3.1`; the CI image before it, `lmsysorg/sglang:v0.5.19-rocm724-mi35x`, is built with `AITER_COMMIT=c16d44b93`, whose build step installs that file (image config, history step 92)
 - S9 AMD-AGI/AKLR@f092828ea:.github/workflows/ci.yaml:285 `pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@$AKLR_BASELINE_AITER"`, over the image's aiter (:283); the commit is `AKLR_BASELINE_AITER` at :7
 - S10 ROCm/aiter@dbd8bf5:setup.py:17 `FLYDSL_VERSION = "flydsl==0.3.2"`, in `install_requires` at :478
 - S11 AMD-AGI/AKLR@9a29616:.github/workflows/ci.yaml:334 `pip install -e . -v` ("With its dependencies: aiter's kernels need its pinned FlyDSL, not the image's.", :332); `pyproject.toml:27` pins `flydsl==0.3.2`
