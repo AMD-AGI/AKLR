@@ -62,7 +62,8 @@ jobs:
       actions: read
       pull-requests: read
     env:
-      # Forks too: gpu-node.yaml holds a PR whose author or sender lacks write access for approval.
+      # Forks too: gpu-node.yaml holds a fork PR, or one whose author or sender lacks write access,
+      # for approval.
       GPU_ENABLED: >-
         ${{ github.event_name != 'pull_request' ||
             contains(github.event.pull_request.labels.*.name, 'ci:gpu') }}
