@@ -68,10 +68,8 @@ Nothing to install: each agent loads the harness from the checkout, so edits tak
   repository is trusted (open it interactively once; worktrees share the main checkout's trust).
   Start Claude Code at the repository root. After editing a skill run `/reload-plugins`.
 - Codex and Cursor read the skills from `.agents/skills`, a symlink to `skills/`, by bare name.
-  Codex reads agents from `.codex/agents`, Cursor from `.claude/agents`, a symlink to `agents/`.
-- Claude Code would read `.claude/agents` too, so `.claude/settings.json` denies each agent's
-  unprefixed name (`Agent(<name>)`) and Claude Code keeps only the plugin's `aklr:<name>`; add a
-  deny entry for every new agent.
+  Codex reads agents from `.codex/agents`. Cursor gets no subagents here; a skill that names
+  one falls back to giving a general subagent its prompt.
 - An installed `aklr` plugin is turned off here (`.claude/settings.json`, `.codex/config.toml`),
   so its cached copy never shadows the checkout.
 
