@@ -10,7 +10,6 @@
 // toggling nodes and swallowing every kernel packet of the calibration launches.
 // The Python session adapter consumes these records directly, without Kineto.
 #include <cxxabi.h>
-#include <dlfcn.h>
 #include <hip/hip_runtime_api.h>
 #include <hsa/hsa.h>
 #include <hsa/hsa_ext_amd.h>
@@ -198,55 +197,38 @@ public:
     return &result;
   }
 
-  // loads this library as rocprofiler-sdk's tool, which configures it; the
-  // runtime configured it already if it found the library loaded as it started
+  // registers this tool with the rocprofiler-sdk torch links, as Kineto does.
+  // rocprofiler-sdk 1.3.5 takes it only before the SDK configures, and ROCr
+  // makes interceptable queues only once the SDK is loaded: before the
+  // process's first kernel
   void attach() {
-    if (dispatches_.handle)
-      return;
-    void *reg = dlopen("librocprofiler-register.so.0", RTLD_NOW | RTLD_NOLOAD);
-    auto *attach = reg ? reinterpret_cast<int (*)(const char *, const char *)>(
-                             dlsym(reg, "rocprofiler_register_attach"))
-                       : nullptr;
-    if (!attach)
-      throw std::runtime_error("aklr kernel tracer: the ROCm runtime does not "
-                               "load rocprofiler-register");
-    Dl_info self{};
-    dladdr(reinterpret_cast<void *>(&KernelTracer::tool), &self);
-    // the attach exports these; a child inheriting them loads this tool at
-    // startup
+    // the registration exports these; a child inheriting them configures the
+    // SDK as it starts, before it can register this tool
     std::vector<std::pair<const char *, std::optional<std::string>>> inherited;
     for (const char *name :
-         {"ROCP_TOOL_LIBRARIES", "ROCPROFILER_REGISTER_TOOL_ATTACHED"}) {
+         {"ROCPROFILER_REGISTER_FORCE_LOAD", "ROCPROFILER_REGISTER_LIBRARY"}) {
       const char *value = std::getenv(name);
       inherited.emplace_back(name, value ? std::optional<std::string>(value)
                                          : std::nullopt);
     }
-    const uint32_t no_variables = 0;
-    const int status =
-        attach(reinterpret_cast<const char *>(&no_variables), self.dli_fname);
+    const auto status = rocprofiler_force_configure(&KernelTracer::tool);
     for (const auto &[name, value] : inherited) {
       value ? setenv(name, value->c_str(), 1) : unsetenv(name);
     }
-    if (status == 9) { // ROCP_REG_ATTACHMENT_NOT_AVAILABLE
+    check(status, "register");
+    if (dispatches_.handle == 0) {
       throw std::runtime_error(
-          "aklr kernel tracer: start the process with ROCP_TOOL_ATTACH=1 "
-          "(enter aklr.core.utils.testing.graph_kernel_timing_environment() "
-          "before its first GPU call)");
-    }
-    if (status || dispatches_.handle == 0) {
-      throw std::runtime_error(
-          "aklr kernel tracer: rocprofiler-register attach failed: " +
-          std::to_string(status));
-    }
-    if (!intercept_register_) {
-      throw std::runtime_error("aklr kernel tracer: rocprofiler-sdk gave no "
-                               "HSA table to intercept queues with");
+          "aklr kernel tracer: rocprofiler-sdk did not configure the tool");
     }
   }
 
   // a window records every dispatch and HIP call; between windows the tool
   // sees only code objects load and queues come into use
   void start() {
+    if (!intercept_register_) {
+      throw std::runtime_error("aklr kernel tracer: rocprofiler-sdk gave no "
+                               "HSA table to intercept queues with");
+    }
     {
       std::lock_guard<std::mutex> lock(mutex_);
       window_.clear();
@@ -1320,7 +1302,9 @@ private:
     {
       std::lock_guard<std::mutex> lock(queues_mutex_);
       if (unintercepted_) {
-        plan.unattributable = "queues rocprofiler-sdk does not intercept";
+        plan.unattributable =
+            "queues rocprofiler-sdk does not intercept (import "
+            "aklr.core.utils.testing before the process's first kernel)";
         return;
       }
     }
@@ -1565,22 +1549,13 @@ std::string &next_failure = *new std::string();
 
 } // namespace aklr::kernel_tracer
 
-// found by rocprofiler-sdk in the library rocprofiler-register attaches
-extern "C" ROCPROFILER_PUBLIC_API rocprofiler_tool_configure_result_t *
-rocprofiler_configure(uint32_t version, const char *runtime_version,
-                      uint32_t priority, rocprofiler_client_id_t *id) {
-  return aklr::kernel_tracer::KernelTracer::tool(version, runtime_version,
-                                                 priority, id);
-}
-
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   // SDK 1.4.2 fixes queue interposition deadlocks (ROCM-29087), not node attribution.
 #if ROCPROFILER_SDK_VERSION < 10402
   // below 1.4.2 the default queue interposition deadlocks a HIP graph whose
-  // streams fork and join, and traces no queue made after an attach; set here,
-  // as a library loaded before the ROCm runtime initializes is configured then
+  // streams fork and join; read when the tool registers below
   setenv("ROCPROFILER_QUEUE_INTERPOSITION", "0",
-         1); // the legacy queue intercept does neither
+         1); // the legacy queue intercept does not
 #endif
   m.attr("rocprofiler_sdk_version") = pybind11::make_tuple(
       ROCPROFILER_SDK_VERSION_MAJOR, ROCPROFILER_SDK_VERSION_MINOR,
@@ -1588,10 +1563,9 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   m.attr("hip_version") = pybind11::make_tuple(
       HIP_VERSION_MAJOR, HIP_VERSION_MINOR, HIP_VERSION_PATCH);
   using namespace aklr::kernel_tracer;
+  KernelTracer::instance().attach();
   m.def("start", [] {
-    auto &tracer = KernelTracer::instance();
-    tracer.attach();
-    tracer.start();
+    KernelTracer::instance().start();
   });
   m.def("stop", [] {
     auto &tracer = KernelTracer::instance();
