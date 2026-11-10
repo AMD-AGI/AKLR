@@ -20,11 +20,13 @@ sources:
 
 # Sparse MLA with one query token per sequence on the DeepSeek-V4 fp8 pool: one dequantised tile for all 64 heads
 
-One FlyDSL source serves three schemas of `flash_mla_with_kvcache@1.0` for DeepSeek-V4-Flash with one query token per
-sequence, as in decode (PR #71): the
-three files embed the same `kernel.py` as `kernel.sources[0].content`, and the function names below are in it. They
-are called here by their extra pool: "no extra" (window only), "extra 8256" (extra page size 2, 8256 indices) and
-"extra 512" (extra page size 64, 512 indices). "batch" is the Point's rows, one query token each.
+One FlyDSL source serves three schemas of `flash_mla_with_kvcache@1.0` for DeepSeek-V4-Flash with one query token
+per sequence, as in decode (PR #71): the three files embed the same `kernel.py` as `kernel.sources[0].content`, and
+the function names below are in it. They are called here by their extra pool: "no extra" (window only), "extra 8256"
+(extra page size 2, 8256 indices) and "extra 512" (extra page size 64, 512 indices). "batch" is the Point's rows,
+one query token each. sglang's DSA backend (`dsa_sparse_mla_decode@1.0`: 8 heads, one fp8 pool of 576-byte rows,
+top-2048) is another contract, with its own one-launch kernel:
+[dsa_sparse_mla_8_heads.md](dsa_sparse_mla_8_heads.md).
 
 ## Applies when
 
