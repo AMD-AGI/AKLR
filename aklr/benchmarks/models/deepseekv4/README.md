@@ -11,7 +11,7 @@ Times every operator on its own, sums them as `per-layer cost × layer count`, c
 ```bash
 cd aklr/benchmarks/models/deepseekv4     # required, the scripts do `import model_bench`
 M=/path/to/DeepSeek-V4-Flash             # or DeepSeek-V4-Pro; use local weights to avoid a download
-export AITER_BF16_FP8_MOE_BOUND=16        # activation dispatch threshold; FP4 expert weights stay FP4
+export AITER_BF16_FP8_MOE_BOUND=0         # e4m3 activations at every row count (sglang's DeepSeek-V4 cookbook); FP4 expert weights stay FP4
 ```
 
 ```bash
@@ -119,7 +119,7 @@ See the workflow in `aklr/ops/README.md`. Native SGLang/AITER calls are not reco
 ISL 100000, decode only, for Flash or Pro. Each CONC writes its own report; `[UNSUPPORTED]` marks a CONC not divisible by the DP size, `[BLOCKED_CAPACITY]` one that does not fit.
 
 ```bash
-export AITER_BF16_FP8_MOE_BOUND=16 MORI_SHMEM_MODE=ISOLATION SGLANG_MORI_NUM_MAX_DISPATCH_TOKENS_PER_RANK=256
+export AITER_BF16_FP8_MOE_BOUND=0 MORI_SHMEM_MODE=ISOLATION SGLANG_MORI_NUM_MAX_DISPATCH_TOKENS_PER_RANK=256
 MORI="--moe-a2a-backend mori --moe-dense-tp-size 1 --enable-dp-lm-head --chunked-prefill-size 256"
 for cfg in "--tp-size 8" "--tp-size 8 --enable-dp-attention --dp-size 8" \
            "--tp-size 8 --ep-size 8" "--tp-size 8 --ep-size 8 --enable-dp-attention --dp-size 8 $MORI"; do
