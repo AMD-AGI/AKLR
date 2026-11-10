@@ -3,9 +3,8 @@
 
 from __future__ import annotations
 
-import functools
-
 from aklr.core.runtime.dispatch._registry import DispatcherRegistry
+from aklr.core.runtime.hook_registry import KEEP_RESULT, HookRegistry, HookSpec, HookType
 
 __all__ = ["VLLM_HOOKED_METHOD", "register_vllm_plugin"]
 
@@ -13,17 +12,33 @@ __all__ = ["VLLM_HOOKED_METHOD", "register_vllm_plugin"]
 VLLM_HOOKED_METHOD = "vllm.v1.worker.gpu_worker.Worker.init_device"
 
 
+def _init_runtime(result, *args, **kwargs):
+    DispatcherRegistry.default().init_once()
+    return KEEP_RESULT
+
+
 def register_vllm_plugin() -> None:
-    """What the ``vllm.general_plugins`` entry point (``aklr.plugins.vllm.register``) does
-    first: starts AKLR after ``VLLM_HOOKED_METHOD``."""
-    from vllm.v1.worker.gpu_worker import Worker
+    """Start AKLR after ``VLLM_HOOKED_METHOD``, including enabled vLLM routes.
 
-    init_device = Worker.init_device
+    Both public entry points use the plugin's bootstrap coordinator so the first
+    call collects every enabled hook before freezing the phase. The local import
+    keeps importing the core runtime independent of the optional plugin modules.
+    """
+    from aklr.plugins.vllm import _register
 
-    @functools.wraps(init_device)
-    def wrapper(self, *args, **kwargs):
-        result = init_device(self, *args, **kwargs)
-        DispatcherRegistry.default().init_once()
-        return result
+    _register()
 
-    Worker.init_device = wrapper
+
+def _register_runtime_hook() -> None:
+    """Declare core initialization; the plugin owns the complete bootstrap batch."""
+    HookRegistry.default().register(
+        HookSpec(
+            hook_id="vllm.runtime.init",
+            target=VLLM_HOOKED_METHOD,
+            hook=_init_runtime,
+            hook_type=HookType.AFTER,
+            phase="bootstrap",
+            order=0,
+            source=__name__,
+        )
+    )

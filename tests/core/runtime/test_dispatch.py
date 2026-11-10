@@ -32,6 +32,7 @@ from aklr.core.runtime.dispatch import (
     KernelDispatcher,
     register_vllm_plugin,
 )
+from aklr.core.runtime.hook_registry import HookRegistry
 from tests.op_case import GEMM_KERNEL_SOURCE, KERNEL_TARGET, OpCase
 
 
@@ -359,6 +360,7 @@ class TestDispatcherRegistry:
     @staticmethod
     def _schema_alone(monkeypatch: pytest.MonkeyPatch, schema: OpContract) -> None:
         """``init`` reads ``schema`` alone and serves it on the CPU, as on its target."""
+        monkeypatch.setattr(torch.cuda, "is_current_stream_capturing", lambda: False)
         op_package = ContractRegistry.default().get(schema.contract_id).op_package
         monkeypatch.setattr(
             ContractRegistry,
@@ -458,8 +460,17 @@ class TestVllmPlugin:
 
         module = types.ModuleType("vllm.v1.worker.gpu_worker")
         module.Worker = Worker
+        for name in ("vllm", "vllm.v1", "vllm.v1.worker"):
+            package = types.ModuleType(name)
+            package.__path__ = []
+            monkeypatch.setitem(sys.modules, name, package)
         monkeypatch.setitem(sys.modules, module.__name__, module)
+        registry = HookRegistry()
+        monkeypatch.setattr(HookRegistry, "default", classmethod(lambda cls: registry))
         monkeypatch.setattr(DispatcherRegistry, "init_once", lambda self: events.append("init_once"))
-        register_vllm_plugin()
-        assert Worker().init_device() == "bound"
-        assert events == ["init_device", "init_once"]
+        try:
+            register_vllm_plugin()
+            assert Worker().init_device() == "bound"
+            assert events == ["init_device", "init_once"]
+        finally:
+            registry.restore()

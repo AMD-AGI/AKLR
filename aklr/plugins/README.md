@@ -4,6 +4,8 @@ A plugin replaces a function of an inference framework (for example, an MoE laye
 
 To add an optimization, follow the [plugin tutorial](../../docs/plugin_tutorial.md). This page is the reference: the layout, the call flow, the rules for routes, validation, and enabling and upgrading.
 
+The vLLM plugin uses AKLR's [HookRegistry](../core/runtime/hook_registry.py) for staged installation, rollback and saved native callables, while retaining `@vllm_route` for computation and fallback policy. See the [Muse Spark MVP guide (中文)](../../docs/vllm_hook_registry_mvp.zh.md) for its API, tests and limitations.
+
 ## Architecture
 
 A plugin has three parts:
