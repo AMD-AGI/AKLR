@@ -61,7 +61,7 @@ basis: source-semantics
 - S1 gemm/grid_pricing.md:117 a geometry change that helps one shape moves others the other way
 - S2 gemm/measurement.md:91 report per cell: a gm can sit still while one cell moved
 - S3 gemm/autotune.md:86 race noise above the margin makes the winner flip between runs
-- S4 gemm/small_m.md:433 a row serves every M that pads to it
+- S4 gemm/small_m.md:435 a row serves every M that pads to it
 - S5 gemm/autotune.md:20 loop designs, tiles, L2 bands, store policy, split-K change sign between shapes
 - S6 gemm/small_m.md:87 the lessons flip sign between two regimes
 - S7 gemm/grid_pricing.md:99 narrowing gained only on the shapes whose last round was partial
@@ -69,7 +69,7 @@ basis: source-semantics
 - S9 gemm/grid_pricing.md:311 "divisible ⇒ fast" is not a rule; evaluate the kernel's own gates
 - S10 gemm/grid_pricing.md:326 each extra body variant adds code even when it does not run
 - S11 flydsl/gemm.md:85 constants in both code bases were tuned on specific shapes
-- S12 gemm/small_m.md:421 the lookup tries M as is, then padded at granularity 0 and 1
+- S12 gemm/small_m.md:423 the lookup tries M as is, then padded at granularity 0 and 1
 - S13 flydsl/gemm.md:399 a row whose kernel name the catalog cannot parse falls through
 - S14 flydsl/gemm.md:404 tuner filters can delete the winner silently
 - S15 ../flydsl/kernels/flydsl_knob_space.md:155 a tuned row regressed: CSV raced on another build or machine
@@ -86,7 +86,7 @@ basis: source-semantics
 - S26 gemm/mainloop.md:91 the crossover depends on the shape and on the epilogue
 - S27 gemm/grid_pricing.md:399 the tile/round table for every scored shape exists before the first build
 - S28 gemm/grid_pricing.md:400 judged per shape, with s = 1 / the old tile still in the race
-- S29 gemm/small_m.md:436 validate a row across every M that reaches it; add it only if it beats the pad
+- S29 gemm/small_m.md:438 validate a row across every M that reaches it; add it only if it beats the pad
 - S30 flydsl/gemm.md:402 re-tune instead of copying rows
 - S31 gemm/measurement.md:164 ablate every component on the full table, including an all-off arm
 - S32 gemm/measurement.md:169 keep a change only if it beats BASE-to-BASE drift and its sign agrees

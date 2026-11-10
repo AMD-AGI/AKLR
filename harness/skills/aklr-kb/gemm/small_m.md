@@ -181,7 +181,9 @@ an idle-device tuner (§1).
   tried).** Against the run's kernel with the whole K in each workgroup at that m: *(field, E113)* N=128,
   K=6144, split-K 4: m=64 4.73 against 4.94 µs, m=128 5.30–5.31 against 5.56–5.59, but m=32 4.26–4.29 against 4.24;
   *(field, E114)* N=2048, K=7168, split 4 (one reading per configuration): m=16 7.80 against 8.49/8.64 µs, but m=8
-  7.71 against 7.00 and m=1 7.65 against the driver's 6.65, so m ≤ 8 kept the whole K in one workgroup.
+  7.71 against 7.00 and m=1 7.65 against the driver's 6.65, so m ≤ 8 kept the whole K in one workgroup. At N=384,
+  K=7168 the same split beat that file's whole-K builder at m=1 and 8, where the builder has 48 workgroups
+  (`../cases/k3_bf16_splitk_narrow_n.md` § N 384, its E23): race it at each N.
 - A per-split marginal cost does not show the reduction: price the whole kernel.
 
 **Constraints and correctness**
