@@ -64,28 +64,28 @@
         "m": 2
       },
       "accuracy": "passed",
-      "speedup": 1.022
+      "speedup": 1.03
     },
     {
       "axes": {
         "m": 4
       },
       "accuracy": "passed",
-      "speedup": 1.026
+      "speedup": 1.05
     },
     {
       "axes": {
         "m": 8
       },
       "accuracy": "passed",
-      "speedup": 1.029
+      "speedup": 1.053
     },
     {
       "axes": {
         "m": 64
       },
       "accuracy": "passed",
-      "speedup": 1.169
+      "speedup": 1.151
     }
   ],
   "layout_variants": {
