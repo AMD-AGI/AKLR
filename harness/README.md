@@ -31,6 +31,8 @@ The lifecycle is governed by [rules.md](rules.md), [gates.md](gates.md), and
 - `agents/`: subagent definitions the skills start, `agents/<name>.md`. Codex reads only TOML
   from `.codex/agents`, a symlink to `agents/codex/`; each `<name>.toml` there points back to
   `agents/<name>.md`, so the prompt is written once.
+- `scripts/`: scripts the skills run, such as `forge_task/`.
+- `tests/`: tests of the scripts.
 
 How each agent loads it inside this repository:
 
@@ -40,10 +42,7 @@ How each agent loads it inside this repository:
   `aklr:something-important`; after editing a skill run `/reload-plugins`.
 - Codex and Cursor read the skills natively from `.agents/skills`, a symlink to `skills/`, so
   edits take effect at once. Cursor reads each agent from `.cursor/agents/<name>.md`, a symlink to
-  `agents/<name>.md`; add one for every new agent. Codex installs plugins as cached copies that do not follow edits,
-  and Cursor would load each skill twice, so neither loads the plugin here.
-
-- `scripts/`: scripts the skills run, such as `forge_task/`.
-- `tests/`: tests of the scripts.
+  `agents/<name>.md`; add one for every new agent. Codex installs plugins as cached copies
+  that do not follow edits, and Cursor would load each skill twice, so neither loads the plugin here.
 
 This first version does not add or modify GitHub Actions workflows.
