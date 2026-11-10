@@ -66,7 +66,8 @@ BIASED_GROUPED_TOPK = OpContract(
             description="Router logits per token.",
             shape=("n_tokens", "n_experts"),
             dtype=DTypeSpec(any_of=(DType.BFLOAT16, DType.FLOAT32)),
-            # Ties on the biased score are possible: no tie-free bf16 distribution yet.
+            # Ties on the biased score are possible (no tie-free bf16 distribution yet):
+            # the lower expert ranks first.
             distribution=FiniteDistribution(),
         ),
         "correction_bias": TensorSpec(

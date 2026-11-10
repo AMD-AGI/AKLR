@@ -83,9 +83,15 @@ def gemm_a4w4_mxfp4_baseline(
 
 
 def bmm_baseline(a, b, trans_b=True, bias=None, out_dtype=None, out=None):
-    """aiter's CK 16-bit batched gemm, b as (batch, n, k) only."""
+    """aiter's CK 16-bit batched gemm when b is (batch, n, k); otherwise torch.bmm, which sglang runs for an MLA
+    layer's absorbed w_kc and w_vc products and which aiter has no batched gemm for."""
+    if not trans_b:
+        import torch
+
+        product = torch.bmm(a, b)
+        if bias is not None:
+            product = product + bias[:, None, :]
+        return product.to(out_dtype or a.dtype)
     from aiter.ops.batched_gemm_op_bf16 import batched_gemm_bf16_CK
 
-    if not trans_b:
-        raise NotImplementedError("aiter's batched_gemm_bf16_CK takes b as (batch, n, k) only")
     return batched_gemm_bf16_CK(a, b, bias=bias, dtype=out_dtype)
