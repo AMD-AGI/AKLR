@@ -13,15 +13,13 @@ from pathlib import Path
 import pytest
 import torch
 
-from aklr.core.utils.testing import bench_cudagraph, kernel_tracer
-
 
 def _assert_milliseconds(value):
     assert isinstance(value, float)
     assert math.isfinite(value) and value > 0
 
 
-def _per_stream_state():
+def _per_stream_state(bench_cudagraph):
     initialized = set()
     x = torch.zeros(1 << 20, device="cuda")
 
@@ -37,7 +35,7 @@ def _per_stream_state():
     torch.testing.assert_close(x, torch.full_like(x, 7))
 
 
-def _forked_stream():
+def _forked_stream(bench_cudagraph):
     x = torch.zeros(1 << 20, device="cuda")
     y = torch.zeros_like(x)
     side = torch.cuda.Stream()
@@ -55,7 +53,7 @@ def _forked_stream():
     torch.testing.assert_close(y, torch.full_like(y, 5))
 
 
-def _device_copy():
+def _device_copy(bench_cudagraph):
     x = torch.randn(1 << 22, device="cuda")
     y = torch.empty_like(x)
 
@@ -67,7 +65,7 @@ def _device_copy():
     torch.testing.assert_close(y, x * 2)
 
 
-def _destroy_unused_stream():
+def _destroy_unused_stream(bench_cudagraph):
     x = torch.zeros(1024, device="cuda")
     hip_path = next(
         line.split()[-1]
@@ -86,7 +84,7 @@ def _destroy_unused_stream():
     torch.testing.assert_close(x, torch.full_like(x, 7))
 
 
-def _return_modes_and_quantiles():
+def _return_modes_and_quantiles(bench_cudagraph):
     x = torch.zeros(1024, device="cuda")
 
     def subject():
@@ -108,7 +106,7 @@ def _return_modes_and_quantiles():
         bench_cudagraph(subject, rep=1, quantiles=[1.1])
 
 
-def _capture_exception_and_recovery():
+def _capture_exception_and_recovery(bench_cudagraph):
     x = torch.zeros(1024, device="cuda")
 
     def failing_subject():
@@ -123,8 +121,10 @@ def _capture_exception_and_recovery():
 
 
 def _run_scenario(scenario):
+    from aklr.core.utils.testing import bench_cudagraph
+
     torch.cuda.set_device(0)
-    scenario()
+    scenario(bench_cudagraph)
 
 
 @pytest.mark.gpu
@@ -172,6 +172,8 @@ def _group_rank(rank, rendezvous, fault=False):
     import datetime
 
     import torch.distributed as dist
+
+    from aklr.core.utils.testing import bench_cudagraph, kernel_tracer
 
     torch.cuda.set_device(rank)
     dist.init_process_group(
