@@ -70,8 +70,15 @@ Nothing to install: each agent loads the harness from the checkout, so edits tak
 - Codex and Cursor read the skills from `.agents/skills`, a symlink to `skills/`, by bare name.
   Codex reads agents from `.codex/agents`. Cursor gets no subagents here; a skill that names
   one falls back to giving a general subagent its prompt.
-- An installed `aklr` plugin is turned off here (`.claude/settings.json`, `.codex/config.toml`),
-  so its cached copy never shadows the checkout.
+- If you also installed the plugin:
+  - Claude Code loads the installed copy instead of the checkout, since an installed plugin takes
+    precedence over a project's `.claude/skills/` plugin of the same name. To use the checkout,
+    for example while editing a skill, start with `claude --plugin-dir harness`, which takes
+    precedence over both.
+  - Codex turns the installed copy off here (`.codex/config.toml`, read once the project is
+    trusted) and keeps the checkout's skills.
+  - Cursor loads both, so each skill appears twice; uninstall the plugin to work in this
+    repository.
 
 ## Layout
 
