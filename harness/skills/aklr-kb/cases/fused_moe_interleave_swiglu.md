@@ -46,6 +46,8 @@ is one (token, expert) pair, 6m per call; how many land on one expert depends on
 
 ## Applies when
 
+- The same layout at hidden 7168 (DeepSeek-V4-Pro) has its own kernels:
+  [fused_moe_interleave_swiglu_hidden7168.md](fused_moe_interleave_swiglu_hidden7168.md).
 - Contract `fused_moe@1.0`, layout variant `gate_up_interleaved`: `w1` (experts, 2 × inter, 4096) with gate and up rows
   interleaved in 16-row tiles and fp4 e2m1 in 16 × 64-byte blocks, `w2` (experts, 4096, inter), E8M0 scales per 1×32
   stored 2-D (`aklr/ops/fused_moe/contract.py`, the `gate_up_interleaved` variant). `gate_mode` interleave with
