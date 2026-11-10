@@ -25,7 +25,7 @@ The lifecycle is governed by [rules.md](rules.md), [gates.md](gates.md), and
 ## Installation
 
 `harness/` is the `aklr` plugin: 14 skills and the `something-important` subagent. The
-repository root holds its marketplace, so one repository serves Claude Code, Codex and Cursor.
+repository root holds its marketplace, in Claude Code's format, which Codex and Cursor also read.
 Install it separately in each agent you use. Inside an AKLR checkout you need none of this; see
 [Inside this repository](#inside-this-repository).
 
@@ -75,10 +75,9 @@ Nothing to install: each agent loads the harness from the checkout, so edits tak
 
 ## Layout
 
-`.claude-plugin/plugin.json` is the plugin's manifest for Claude Code (Codex also reads it),
-`.cursor-plugin/plugin.json` its manifest for Cursor. The marketplaces that list it are
-`.claude-plugin/marketplace.json` (Claude Code and Codex) and `.cursor-plugin/marketplace.json`
-(Cursor) at the repository root.
+`.claude-plugin/plugin.json` is the plugin's manifest, and `.claude-plugin/marketplace.json` at the
+repository root its marketplace. Claude Code, Codex and Cursor all read Claude Code's format, so
+there is one of each.
 
 - `skills/`: every AKLR agent skill, `skills/<name>/SKILL.md`, kept only here.
 - `agents/`: subagent definitions the skills start, `agents/<name>.md`. Codex reads only TOML
