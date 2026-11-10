@@ -1,9 +1,9 @@
 ---
-title: "bf16 GEMM, N 144–3584 × K 7168 (Kimi-K3) — K split 4–16 ways across workgroups at m ≤ 112 and folded in a fixed order inside the launch; tiled or lightly split grids at m ≥ 893; N 1024 and 2048 × K 7168 at m 1–128 with the same in-workgroup ring and a fold that does not wait"
+title: "bf16 GEMM, N 144–3584 × K 7168 (Kimi-K3) — K split 4–16 ways across workgroups at m ≤ 112 and folded in a fixed order inside the launch; tiled or lightly split grids at m ≥ 893; N 1024 and 2048 × K 7168 at m 1–128 with the same in-workgroup ring and a fold that does not wait; N 384 × K 7168 (DeepSeek-V4-Pro) at m 7–256 on narrower tiles, with that fold at m 256"
 kind: case
 ops: [gemm]
 dtypes: [bf16]
-regimes: ["M 1-128", "M 893-16384"]
+regimes: ["M 1-256", "M 893-16384"]
 contract: bitwise
 gens: [gfx950]
 flydsl: 0.3.2
@@ -17,6 +17,7 @@ measured:
   - {metric: "speedup over aiter, local validate lower bound per Point", value: "1.229–2.000; 11 of 11 Points ≥ 1.03; CI serves 11 of 11 as of #102", gpu: MI355X, workload: "gemm_n3584_k7168, m 7, 14, 21, 28, 35, 42, 49, 56, 70, 84, 98", date: "2026-10-25"}
   - {metric: "speedup over aiter, AKLR validate profile 19, per Point; no CI measurement yet", value: "1.069–1.466; 8 of 8 Points at or above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n1024_k7168 file 23da2fcbe6d9defd, measured as its predecessor, which differed only in taking the current stream without naming the device, m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
   - {metric: "speedup over aiter, AKLR validate profile 19, per Point; no CI measurement yet", value: "1.114–1.224; 8 of 8 Points at or above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n2048_k7168 file 1f5a93c79dbd12bf, m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point; no CI measurement yet", value: "1.142–1.360; 21 of the 21 Points up to m 256 at or above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n384_k7168 file d65ffa02dee32841, m 7, 14, …, 224 (7 × b) and 256", run_ref: "this file's AKLR validate, local, not CI", date: "2026-11-10"}
 sources:
   - aklr/ops/gemm/impls/flydsl/gemm_n144_k7168/c86923da04869cbc.json
   - aklr/ops/gemm/impls/flydsl/gemm_n768_k7168/28d19101c5b0d2f4.json
@@ -26,11 +27,12 @@ sources:
   - aklr/ops/gemm/impls/flydsl/gemm_n3584_k7168/631331203e1c39ad.json
   - aklr/ops/gemm/impls/flydsl/gemm_n1024_k7168/23da2fcbe6d9defd.json
   - aklr/ops/gemm/impls/flydsl/gemm_n2048_k7168/1f5a93c79dbd12bf.json
+  - aklr/ops/gemm/impls/flydsl/gemm_n384_k7168/d65ffa02dee32841.json
 ---
 
 # bf16 GEMM at N 144–3584, K 7168 (Kimi-K3): split K across workgroups, fold it inside the launch
 
-Six of this page's eight FlyDSL `gemm@1.0` files are the Kimi-K3 set,
+Six of this page's nine FlyDSL `gemm@1.0` files are the Kimi-K3 set,
 one schema file per shape, written by forge-loop campaigns and reviewed. Each schema embeds its
 kernel as `kernel.sources[0].content` (`kernel.py`); function names below are in that file. "m" is the Point's M.
 The same fold forms at N 6016–8448 and at K 35840 are in [k3_bf16_splitk_wide_n.md](../cases/k3_bf16_splitk_wide_n.md).
@@ -203,7 +205,8 @@ fixed order.
 
 Counter-signals:
 - **The slots are read before this call writes them.** `SKILL.md`'s Stop table asks for scratch written in the call
-  before it is read and for counters zeroed in each call. N 2048 × K 7168 at m 16–128 instead reads the slots of an
+  before it is read, and for counters zeroed in each call unless stamped with the launch's 64-bit tag. N 2048 × K 7168
+  at m 16–128 reads the slots of an
   uninitialised `torch.empty` workspace: its output is right only while no leftover word in a slot equals this
   launch's tag, and while the tag differs between launches that can be given the same workspace. Checked, on every
   listed Point of both files: the forge driver's conditions at 20 tries (streams limited to 16 and 64 CUs; a second
@@ -218,6 +221,9 @@ Counter-signals:
   m 8 the first rotation form read 5.86–6.01 against 5.985 without on the ring it was tried on, but the shipped
   unrotated 6-slot ring read 5.793, below the best rotation there, 5.856 *(field, E17)*.
 - **Fallback.** Both `run`s send an m outside their tables to `torch.matmul`; no listed Point reaches it.
+- **At N 384 a split across workgroups was faster at m 8** (§ N 384 × K 7168 below). N 2048's whole-K grid has 256
+  workgroups; at N 384 its whole-K builder has 48. Why the split loses at one N and wins at the other was not
+  measured.
 
 AKLR validate (measurement profile 19) on one MI355X at main 0e02a81, not CI: N 1024 1.069–1.466 over aiter, highest
 at m 1 (the GEMV), lowest at m 32 and 128 (1.071, 1.069) *(field, E13)*; N 2048 × K 7168 1.114–1.224, highest at
@@ -226,6 +232,74 @@ m 128 (split across workgroups) *(field, E14)*. Reproduce with `python -m aklr v
 `aklr/ops/gemm/impls/flydsl/gemm_n2048_k7168/1f5a93c79dbd12bf.json` (§ Reproduce). To roll back, delete the file: its
 Points are then served by no file, and the caller runs its own path. Roll back N 2048 × K 7168 for a wrong or NaN
 output under a CUDA graph that reuses its workspace.
+
+## N 384 × K 7168 at m 7–256 (DeepSeek-V4-Pro's router): N 1024's ring on narrower tiles, a tagged fold at m 256
+
+One file, `gemm_n384_k7168/d65ffa02dee32841.json` (5.25 MiB of weight), serves 21 of the 27 Points of
+`9e1347bc…`, the router GEMM of DeepSeek-V4-Pro at TP8 (hidden 7168, 384 routed experts; #118): m = 7 × b up to
+224, and 256. No other file serves this schema name, so the yardstick is aiter. m 512–16384 are not in the file
+and stay with the caller's path.
+
+A forge-loop campaign tuned N 1024's file at m 1, 2, 4, …, 256, the Points before #118. This file keeps its two
+MFMA paths and takes each new m's row from the campaign's rows, then from a race of a few candidates per m
+(below); no forge-loop round ran at these m. `_SKW_CONFIG` and `_SK_CONFIG` list the rows (S10).
+
+- m 7–154: N 1024's `_build_skw` (four waves of 1792 K, a private ring each, fold in wave order) on tiles narrow
+  enough for 144–240 workgroups in one round: 16×2 at m 7 (B rows past 2 read zero); 8-row M-blocks × 4, 8 or 16
+  columns at m 14–70; 16×16 at m 84–154. At m 42, 84 and 126 the order is XCD-blocked (`XG` 2): XCD `pid % 8` owns
+  a block of half the M-tiles and a quarter of the N-tiles (`../gemm/schedule_and_locality.md` §2).
+- m 168–256: `_build_sk` on m 256's grid: 32×64 tiles, 8 M-tiles whatever m is (rows at or past m read zero and
+  are not stored), K split 4 ways across workgroups (1792 each, 448 per wave, a 2-slot ring), 48 tiles × 4
+  splits. The splits of a tile have ids 8 apart, on one XCD, and each XCD holds a 2 × 3 block of tiles with all
+  their splits (`XG` 4). Each workgroup adds its waves' partials through LDS; then each lane stores, per
+  fragment, two 16 B slots, each two fp32 partial sums beside this launch's 64-bit tag, `dispatch.id` · H1 +
+  `queue.ptr` · H2 with H1, H2 odd (`../gemm/wait_free_fold.md` § How to write it, step 5), with `sc0 sc1`; waits
+  `vmcnt(0)`; loads the same slots of the other three splits; and, where all tags match, writes the split-ordered
+  sum (§ Folding without a counter there). No workgroup waits; two splits that both write store the same bytes. The
+  slots are a `torch.empty` per call.
+
+What each kept round bought in the campaign, at its Points, each round timed beside the one before it
+(forge-loop paired bench, 3–4 pairs) *(field, E20)*:
+- the port with narrowed tiles: 1.49–2.30× per Point over the starting `torch.matmul` (m 256 1.16×);
+- the XCD-blocked order at m 64–256, with 16×2 tiles at m 8: m 256 +17.2%, m 8 +7.6%, m 128 +4.0%, m 64 +2.5%;
+- static-layout tensors, so that the inherited kernarg preload covers every operand pointer of the `_build_skw`
+  launches (`../flydsl/gemm.md` § small_m §6, its E12): +1.3–1.4% at m 16–64, +0.6% at m 128 and 256, +0.3–0.9% at
+  m ≤ 8, against a noise floor of 0.4%.
+  The m 256 launch passes `fx.Pointer`s; the preload length in this file's ISA was not checked;
+- the split across workgroups at m 256 with the 2 × 3 XCD block: 9.44–9.47 → 8.48–8.50 µs, +11.4% at that Point.
+  Without the block the same split read 2.5–4.5% faster than the whole K; on 3 ring slots the split read 8.55 µs with
+  2 × 3 tiles per XCD and 11.17 with 1 × 6 *(field, E21)*.
+
+Rows that filled fewer workgroups lost, at these m: the first derivation ran 120 workgroups at m 35, 70, 140 and
+154 and read 1.07–1.13 over aiter (1.00 at m 154); rows of 216–240 workgroups read 1.23–1.26 there. m 168–224 on
+the whole-K path with 32-row tiles (144–168 workgroups) read 1.08–1.11, and on m 256's split grid 1.19–1.33
+*(field, E25)*. m 42 and 84 stay on 144 workgroups (1.14, 1.15): their tile counts give no one-round grid nearer
+256 on these tiles.
+
+AKLR validate (measurement profile 19) on one MI355X, `--base` at main 49de226, not CI: 1.142–1.360 over aiter
+*(field, E22)*. Checked at every listed Point, each try compared byte for byte with the call alone: the forge driver's `--stress` (streams
+limited to 16 and 64 CUs, a second call on the same inputs), one graph replayed 24 times with three input sets
+rotated into its buffers, and two calls at once on two streams with different inputs, unrestricted and both on the
+same 64 CUs, 20 tries each: none differed *(field, E24)*.
+
+Counter-signals:
+- **The rows of m 7–224 come from the campaign's rows and a race of a few candidates**, not from a
+  forge-loop round at those m (above); the campaign's measurements are at its own Points.
+- **At m 168–224 the split grid computes 256 rows**, so 12–34% of its MFMA work is on rows that read zero; it still
+  beat the whole-K tiles there (E25).
+- **Faster forms the campaign did not keep or did not race.** At m 128 one K split per XCD (split 4, 32×32 tiles)
+  read 6.43 µs against the whole K's 6.92, +7.7% at that Point, below the keep gate, a mean over nine Points
+  *(field, E21)*. A K split 8 ways across workgroups with one wave each (N 2048's `_compile_skw_sk`, 16×16 tiles,
+  192 workgroups), timed separately, read 4.38–4.44 µs at m 1 and 4.56 at m 8 *(field, E23)*; neither this
+  campaign nor the rows of m 7 and 14 raced it. At m 8 a file built on it measured 1.247 over aiter where this
+  file's predecessor measured 1.205, each validated on its own *(field, E22)*; the predecessor's ring at m 8 read 4.68 µs
+  in its campaign's bench *(field, E21)*.
+- **The tags sit in a `torch.empty` workspace**, as N 2048's at m 16–128 (Counter-signals above), and the m 256
+  fold is right only while no leftover word equals this launch's tag. Each 16 B slot carries its own tag, so a
+  slot seen half written (new tag, old sums) would be wrong; no test here forces that.
+
+To reproduce: `python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n384_k7168/d65ffa02dee32841.json --base
+origin/main` on a branch without the file (§ Reproduce). To roll back, delete the file: its Points go back to aiter.
 
 ## Reproduce
 
@@ -289,3 +363,10 @@ is the predecessor repository's `validate` (before the rename to AKLR) outside C
 - E19 [2026-11, gfx950, FlyDSL 0.3.2 (the pin of baseline aiter dbd8bf5, read from the workflow), N=1, AKLR CI perf runs; measurement profile 19 for #102] Points at or above 1.03 as of #102 (6d7cfec, CI run 42549655045): n144 17 of 17, n768 11 of 11, n1536 15 of 17 (not m 9397, 16384), n2112 15 of 17 (not m 9397, 16384), n3584 11 of 11; n1280 14 of 15 (not m 9397) from d908d01 (#71, CI run 42000899019), which #102 left unchanged (each schema's `workloads` at 6d7cfec)
 - S8 aklr/ops/gemm/impls/flydsl/gemm_n1024_k7168/23da2fcbe6d9defd.json#kernel.py:24 `_build_gemv_launcher` (loads issued at :51-56, butterfly at :64-71); `_build_skw` at :102 (`ROT` at :200-202, fold at :271-292); `_SKW_CONFIG` at :304; preload hint and its comment at :313-315; `torch.matmul` fallback at :345
 - S9 aklr/ops/gemm/impls/flydsl/gemm_n2048_k7168/1f5a93c79dbd12bf.json#kernel.py:301 `_compile_skw_sk`: XCD numbering at :346-352, plane store `sc0 sc1` at :394, `vmcnt(0)` at :395, tag at :397-405, slot store at :408, `vmcnt(0)` at :409, slot loads at :410-415, `readfirstlane` at :422, fold in split order at :368-381; `_compile_skw_av` at :229; `_CONFIGS` and `_SK_CONFIGS` at :442 and :450; `torch.empty` per call at :467
+- E20 [2026-11, gfx950, FlyDSL 0.3.2, N=3–4 pairs, forge-loop paired keep gate on AKLR's graph timer, each kept round timed beside the round before it] gemm_n384_k7168, per Point at m 1, 2, 4, 8, 16, 32, 64, 128, 256: the port of N 1024's file with narrowed tiles, over the starting `torch.matmul`: 2.023, 1.973, 1.921, 1.790, 2.301, 2.220, 1.487, 1.535, 1.161; the XCD-blocked order at m 64–256 and 16×2 tiles at m 8: 1.014, 1.011, 1.001, 1.076, 1.000, 1.000, 1.025, 1.040, 1.172; the kernarg preload: 1.004, 1.009, 1.003, 1.003, 1.014, 1.014, 1.013, 1.006, 1.006; the split across workgroups at m 256: 0.981, 0.991, 1.000, 1.001, 1.001, 1.003, 1.001, 1.000, 1.114
+- E21 [2026-11, gfx950, FlyDSL 0.3.2, N=2–3 readings per arm, each a median of 5 calls of AKLR `bench_cudagraph` with L2 flushed before every call, interleaved with the kept kernel] gemm_n384_k7168 m 256: the kept whole-K path (`XG` 2) 9.44–9.47 µs; split 4 across workgroups, 32×64 tiles, 2 ring slots, `XG` 4: 8.48–8.50; with 3 slots, `XG` 4 / 8 (2 × 3 / 1 × 6 tiles per XCD): 8.55 / 11.17; without the XCD block (64×32 tiles, three tries), the split at m 256 paired against the kept kernel: 1.025, 1.045, 1.044, each rejected by the keep gate; m 128: the kept whole-K path 6.92–6.95, split 4 with one K slice per XCD on 32×32 tiles 6.43; m 8: the kept ring 4.684 (driver `--bench-mode`); the keep gate's noise floor 0.0043
+- E22 [2026-11, gfx950, FlyDSL 0.3.2, N=16 rounds, AKLR validate measurement profile 19, one MI355X, aiter 0.1.21.dev66+gdbd8bf5bd, each file validated on its own] d65ffa02dee32841 with `--base` main 49de226 at m 7, 14, 21, 28, 35, 42, 49, 56, 70, 84, 98, 112, 126, 140, 154, 168, 182, 196, 210, 224, 256: 1.297, 1.283, 1.285, 1.303, 1.264, 1.142, 1.227, 1.251, 1.237, 1.154, 1.248, 1.260, 1.322, 1.273, 1.236, 1.184, 1.260, 1.225, 1.258, 1.321, 1.360; its predecessor at the campaign's Points (m 1, 2, 4, …, 256, main d7c0a3e): 1.244, 1.250, 1.251, 1.205, 1.269, 1.316, 1.296, 1.327, 1.359; a file built on N 2048's `_compile_skw_sk` at every m, not delivered: 1.245, 1.238, 1.253, 1.247, 1.280, 1.223, 1.224, 1.318, 1.333; all accuracy passed
+- E23 [2026-11, gfx950, FlyDSL 0.3.2, N=1–2 readings per configuration, the run's own timing (timer not recorded)] gemm_n384_k7168 with N 2048's builders ported: `_compile_skw_av` (whole K, 16×8 tiles, 48 workgroups), best of four rows, m 1 / 8: 5.55 / 6.09 µs; `_compile_skw_sk`, one wave per workgroup, split 8 on 16×16 tiles (192 workgroups), 14 ring slots: m 1 4.38 and 4.44, m 8 4.56; split 7, 16 slots: 4.41 / 4.50
+- S10 aklr/ops/gemm/impls/flydsl/gemm_n384_k7168/d65ffa02dee32841.json#kernel.py:41 `_build_skw`, its XCD-blocked order at :114; `_build_sk` at :308: tile count from the row, `m <= MT * TM`, at :321, XCD block at :363, tag at :481, slot stores `sc0 sc1` at :501, `vmcnt(0)` at :502, the other splits' slots loaded at :509, output store where every tag matched at :545; `_SK_CONFIG` and `_SKW_CONFIG` at :560 and :564; kernarg preload at :585; `torch.empty` per call at :617; `torch.matmul` for any other m at :634
+- E24 [2026-11, gfx950, FlyDSL 0.3.2, N=3–24 (the driver's 3 tries per `--stress` condition, 24 graph replays, 20 tries per concurrent condition); each byte-compared with the call alone on AKLR's input sets] d65ffa02dee32841 at all 21 Points: the forge driver's `--stress` passed; one captured graph replayed 24 times with three input sets (outputs differ between sets) rotated into its buffers, 0 differ; two calls at once on two streams with different inputs, unrestricted and both on the same first 64 CUs, 20 tries each, 0 differ
+- E25 [2026-11, gfx950, FlyDSL 0.3.2, N=16 rounds, AKLR validate measurement profile 19, local, each file validated on its own, no `--base`] rows of the same kernel file at the 21 Points: 120 workgroups at m 35, 70, 140, 154 (8-row × 16, 16×16, 32×16, 32×16 tiles): 1.069, 1.132, 1.067, 1.002 (0.995 with `--base`); 216–240 workgroups (8-row × 8, 8-row × 16, 16×16, 16×16): 1.262, 1.240, 1.255, 1.227; m 168, 182, 196, 210, 224 with 32×16 whole-K tiles (144–168 workgroups): 1.080, 1.106, 1.095, 1.105, 1.077; on m 256's split grid: 1.191, 1.262, 1.227, 1.257, 1.330
