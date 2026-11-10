@@ -15,6 +15,32 @@ from agentx_ci.model_config import ConfigError, model_config, select_runs
 from agentx_ci.recipe_resolve import POLICY, add_arguments, prepare, selected_points, validate_options
 from agentx_ci.utils import DEFAULT_CONFIG, load_config, sha256_json, target_path, utc_now, write_json
 
+MODEL_CATALOG = "https://inferencex.semianalysis.com/api/v1/views/options"
+
+
+def catalog_model(catalog: dict, prefix: str) -> str:
+    models = catalog.get("models") if isinstance(catalog, dict) else None
+    if not isinstance(models, list):
+        raise ConfigError("InferenceX model catalog must contain a models array")
+    matches = []
+    for model in models:
+        if (
+            not isinstance(model, dict)
+            or not isinstance(model.get("name"), str)
+            or not model["name"].strip()
+            or not isinstance(model.get("dbKeys"), list)
+            or not model["dbKeys"]
+            or any(not isinstance(key, str) or not key for key in model["dbKeys"])
+        ):
+            raise ConfigError("Invalid InferenceX model catalog entry")
+        if prefix in model["dbKeys"]:
+            matches.append(model["name"])
+    if len(matches) != 1:
+        raise ConfigError(
+            f"InferenceX model prefix {prefix!r} needs exactly one catalog match; got {matches}"
+        )
+    return matches[0]
+
 
 def cached_resolution(cache: dict, key, resolve, *args):
     if key not in cache:
@@ -30,12 +56,31 @@ def cached_resolution(cache: dict, key, resolve, *args):
 
 def build(args: argparse.Namespace) -> dict:
     validate_options(args)
+    policy = getattr(args, "point_policy", "all")
+    auto_model = policy == POLICY and getattr(args, "inferencex_model", None) == "auto"
+    if auto_model and args.inferencex_run_id:
+        raise ConfigError("--inferencex-model auto cannot be combined with --inferencex-run-id")
+    required_duration = getattr(args, "require_recipe_duration", None)
+    if required_duration is not None:
+        if required_duration <= 0:
+            raise ConfigError("--require-recipe-duration must be positive")
+        if args.duration is not None:
+            raise ConfigError("--require-recipe-duration cannot be combined with --duration")
     config = load_config(args.config)
     selected = select_runs(config, args.models, args.targets)
-    if getattr(args, "point_policy", "all") == POLICY and len(selected) != 1:
-        raise ConfigError("Pareto selection requires exactly one model target per plan/source snapshot")
     definitions = [model_config(config, model_id, target_id) for model_id, target_id in selected]
-    if len(selected) > 1 and (args.arms != "all" or args.points or args.duration is not None):
+    runner_label = getattr(args, "runner_label", None)
+    if runner_label is not None:
+        definitions = [item for item in definitions if item["target"]["runner_label"] == runner_label]
+        if not definitions:
+            raise ConfigError(f"no selected targets use runner label {runner_label!r}")
+    if policy == POLICY and not auto_model and len(definitions) != 1:
+        raise ConfigError("Pareto selection requires exactly one model target unless --inferencex-model auto")
+    if (
+        policy == "all"
+        and len(definitions) > 1
+        and (args.arms != "all" or args.points or args.duration is not None)
+    ):
         raise ConfigError("--arms, --points and --duration smoke filters require exactly one selected target")
     if args.duration is not None and args.duration <= 0:
         raise ConfigError("--duration must be positive")
@@ -61,6 +106,7 @@ def build(args: argparse.Namespace) -> dict:
     write_json(args.out / "manifest.json", manifest)
     refs = {}
     images = {}
+    catalogs = {}
     for item, definition in zip(manifest["targets"], definitions):
         model_id, target_id = item["model"]["id"], item["target"]["id"]
         relative = target_path(model_id, target_id)
@@ -88,16 +134,34 @@ def build(args: argparse.Namespace) -> dict:
             spec["provenance"]["inferencex"]["requested_ref"] = ref
             spec["warnings"] = warnings + spec["warnings"]
             spec["plan_id"] = uuid.uuid4().hex
-            spec["selection"] = prepare(spec, args, dst.parent)
+            target_args = args
+            if auto_model:
+                scope = rr.scope_of(spec, args.inferencex_hardware)
+                catalog, _ = cached_resolution(catalogs, MODEL_CATALOG, rr.fetch_json, MODEL_CATALOG)
+                target_args = argparse.Namespace(**vars(args))
+                target_args.inferencex_model = catalog_model(catalog, scope["model"])
+            spec["selection"] = prepare(spec, target_args, dst.parent)
             if spec["selection"]["policy"] == "all":
                 spec["selection"].update(arms=args.arms, points=args.points, duration=args.duration)
             write_json(dst, spec)
+            points = selected_points(spec)
+            if required_duration is not None:
+                mismatches = [
+                    f"{rr.point_id(point)}={point.get('client_env', {}).get('DURATION')!r}"
+                    for point in points
+                    if str(point.get("client_env", {}).get("DURATION")) != str(required_duration)
+                ]
+                if mismatches:
+                    raise ConfigError(
+                        f"upstream DURATION must be {required_duration} seconds for every selected point: "
+                        + ", ".join(mismatches)
+                    )
             item.update(
                 status="resolved",
-                points=len(selected_points(spec)),
+                points=len(points),
                 point_policy=spec["selection"]["policy"],
                 serving_sha256=sha256_json(spec),
-                point_ids=[rr.point_id(p) for p in selected_points(spec)],
+                point_ids=[rr.point_id(p) for p in points],
             )
             if spec["selection"]["policy"] == POLICY:
                 item["selection_manifest_sha256"] = spec["selection"]["manifest_sha256"]
@@ -109,10 +173,15 @@ def build(args: argparse.Namespace) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m agentx_bench plan", description=__doc__)
+    parser = argparse.ArgumentParser(
+        prog="python -m agentx_bench plan",
+        description=__doc__,
+        epilog="For per-target Pareto sources, plan supports --inferencex-model auto with --inferencex-hardware.",
+    )
     parser.add_argument("--config", default=DEFAULT_CONFIG)
     parser.add_argument("--models", default="all", help="enabled model ids, comma-separated, or all")
     parser.add_argument("--targets", default="all", help="enabled target ids in selected models, or all")
+    parser.add_argument("--runner-label", help="Only resolve selected targets assigned to this runner label")
     parser.add_argument("--inferencex-ref")
     parser.add_argument("--run-image")
     parser.add_argument("--work", type=Path, required=True)
@@ -121,6 +190,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--arms", default="all")
     parser.add_argument("--points")
     parser.add_argument("--duration", type=int)
+    parser.add_argument(
+        "--require-recipe-duration",
+        type=int,
+        help="Require selected points' upstream DURATION without overriding it",
+    )
     add_arguments(parser)
     args = parser.parse_args(argv)
     try:

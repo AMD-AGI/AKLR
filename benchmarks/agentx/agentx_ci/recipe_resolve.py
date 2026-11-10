@@ -23,7 +23,7 @@ from urllib.parse import quote
 import yaml
 
 from agentx_ci.model_config import ConfigError, model_config
-from agentx_ci.performance_analysis import X, Y, frontier
+from agentx_ci.performance_analysis import Y, frontier
 from agentx_ci.preflight import pinned_image
 from agentx_ci.utils import (
     DEFAULT_CONFIG,
@@ -706,6 +706,8 @@ def pin_traces(inferencex_e2e: Path, deps: Path, points: list[dict]) -> None:
 
 POLICY = "inferencex-pareto"
 API = "https://inferencex.semianalysis.com/api/v1/benchmarks"
+# Upstream selection retains its published E2E contract independently of report axes.
+X = "p90_e2e_norm_intvty"
 ALGORITHM = "p90-e2e-normalized-max-throughput-per-gpu-max-v1"
 
 
@@ -909,7 +911,7 @@ def build_selection(spec: dict, snapshot: dict, scope: dict) -> dict:
         )
         if row.get("run_url") != expected_url or workflow.get("status") != "completed":
             raise SelectionError(f"Unfinished or mismatched upstream workflow for point {identity}")
-    coordinates = {(p[X], p[Y]) for p in frontier([row["metrics"] for row in rows])}
+    coordinates = {(p[X], p[Y]) for p in frontier([row["metrics"] for row in rows], x_axis=X)}
     selected_rows = [row for row in rows if (row["metrics"][X], row["metrics"][Y]) in coordinates]
     local = {}
     for point in spec["points"]:
