@@ -39,4 +39,5 @@ def fused_moe(
     gate_mode: str | None = None,
     out_dtype=None,
     num_local_tokens: torch.Tensor | None = None,  # EP: [1] int32 rows received
+    out: torch.Tensor | None = None,  # the caller's output buffer; None: dispatch allocates it
 ): ...
