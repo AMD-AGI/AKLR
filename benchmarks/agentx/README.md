@@ -21,112 +21,38 @@ flowchart TD
 
 Solid arrows show job execution order; dashed arrows show artifact uploads and reads. `agentx-plan` is uploaded once and read by both sweep and report. The report job waits for plan and sweep to finish; it can use the plan to report failures even when sweep fails.
 
-After sweep finishes the selected points, at least one successful measurement lets the job complete successfully. When other points fail, its summary says **Partial success** and lists the successful, failed, and missing measurements across AKLR off/on. All failed measurements make sweep fail; setup, container, and cleanup errors also remain failures. Each point retains its original status and error in the saved results. GitHub Actions has no separate partial-success conclusion, so a partial sweep has a green job status.
-
-If process cleanup fails during a measurement, sweep saves that point and the earlier results, stops before the next point, and returns a failure. After uploading reports, CI separately checks plan resolution, result download, missing results, and result validation errors. Measurement failures alone do not fail the report job. Pages can still publish an uploaded artifact when publishing is enabled.
-
-A model target's baseline is updated only when all points complete a formal measurement successfully and the source tree is clean. Failed, incomplete, dirty, or unknown-source runs do not update the baseline.
-
-The report opens in English. Use the **EN / 中文** buttons at the top right to switch languages on the index and target pages. Hover over a chart point, or focus it with the keyboard, to see its full serving configuration, concurrency, AKLR mode, and metrics. The index shows the target status and counts; point errors remain in the target report and JSON artifacts.
-
-Throughput is **input + output tokens per second per GPU**, including cached input tokens. P90 E2E interactivity is `1 / P90(request latency in seconds / output tokens)` and includes time to first token. It differs from decode-only interactivity, `1 / P90(inter-token latency)`. Short smoke runs can cover different trace segments and input/output lengths at each concurrency or AKLR mode; their aggregate metrics alone do not establish concurrency scaling or an AKLR speedup. Use formal durations and check the recorded request distributions when comparing performance.
+After sweep finishes the selected points, the job completes successfully as long as at least one measurement succeeded. When other points fail, its summary says **Partial success**; sweep fails on point results only when every measurement failed. A target's baseline is updated only when every point of the selected model and target completes a formal measurement successfully and the source tree is clean. Failed, incomplete, dirty, or unknown-source runs do not update the baseline.
 
 ### 1.1 Trigger with a GitHub Runner
 
-Open the [AKLR-agentx-ci workflow](https://github.com/AMD-AGI/AKLR/actions/workflows/agentx-ci.yaml), click **Run workflow**, select an AKLR branch, fill in the parameters below, and click **Run workflow** in the form. Sign in with a GitHub account that can run workflows in this repository; see section 4 for runner setup.
+Open the [AKLR-agentx-ci workflow](https://github.com/AMD-AGI/AKLR/actions/workflows/agentx-ci.yaml), click **Run workflow**, select an AKLR branch, fill in the parameters below, and click **Run workflow** in the form. See section 4 for runner registration and setup.
 
 The form has **7 workflow inputs**, plus GitHub's **Branch / Use workflow from** selector: 8 settings in total. All 7 inputs can be left at their defaults.
 
-| Setting / input | Default | Meaning | CLI equivalent |
-| --- | --- | --- | --- |
-| Branch / Use workflow from | Default branch, usually `main` | Select the **AKLR** workflow, source, and configuration revision | `gh workflow run --ref`; the local CLI uses the current checkout |
-| `models` | `all` | Enabled model IDs, separated by commas, such as `glm52-fp4`; `all` selects every enabled model | `plan --models`; local `pipeline --model` accepts one ID |
-| `targets` | `all` | Enabled target IDs within the selected models, such as `mi355x`; comma-separated targets run serially in plan order | `plan --targets`; local `pipeline --target` accepts one ID |
-| `inferencex_ref` | Empty | Override the **InferenceX** branch, tag, or SHA that supplies the grid, serving configuration, and client; empty uses the configured ref, currently `main` | `--inferencex-ref` |
-| `arms` | `all` | Generated serving scheme IDs, such as `tp8-ep1-none-spec-mtp`, separated by commas; `all` applies no arm filter | `--arms` |
-| `points` | Empty | Exact `ARM:CONC` points, such as `tp8-ep1-none-spec-mtp:1`, separated by commas; empty adds no point filter and still respects `arms` | `--points` |
-| `duration_s` | Empty | Override each point's measurement duration in seconds; a positive integer such as `60`; empty inherits the duration in the upstream generated plan, currently `3600` seconds for AgentX | **`--duration`** |
-| `publish` | `false`, unchecked | Deploy the report to GitHub Pages when checked; generated result and report artifacts are still uploaded when unchecked | Local `pipeline` generates `site/` and has no automatic publishing flag |
-
-Branch selects the AKLR revision; `inferencex_ref` selects the upstream InferenceX revision. The selected target's `runner_label` in `agentx.yaml` determines the execution runner. Set `targets` to a target ID such as `mi355x`. The current `mi355x` target is configured for 8 MI355X GPUs, with the count recorded in `hardware.gpu_count`; the upstream scheme determines how many GPUs each point uses.
-
-When configuring a smoke run:
-
-- If `arms` differs from `all`, `points` is supplied, or `duration_s` is supplied, the final selection must contain **exactly one model / target combination**. Set both `models` and `targets` explicitly.
-- `ARM` and `CONC` come from `points[].arm` and `points[].conc` in the generated `serving.json`. For example, `tp8-ep1-none-spec-mtp:1` selects that scheme at concurrency 1; the concurrency must already exist in the grid.
-- Both `arms` and `points` apply: every requested point must belong to the selected arms. Unknown IDs cause errors. Separate list entries with commas and no spaces.
-- Each point is measured with AKLR off and on. `duration_s=60` applies separately to both measurements; server startup, warmup, and other work add time. For formal measurements, leave `duration_s` empty and omit `--duration` in the local CLI. Any explicit duration override, including `3600`, excludes the run from baseline promotion.
-- For a full-grid run, keep `arms=all` and leave `points` and `duration_s` empty. `publish` controls deployment for manual runs. PR labels and scheduled runs have their own defaults, described below; they do not read the manual form's inputs.
-
-Read `models/<model-id>/targets/<target-id>/serving.json` from an existing run's `agentx-plan` artifact, or generate a plan locally with `plan`. To list valid points, run this from the extracted artifact's root:
-
-```bash
-jq -r '.points[] | "\(.arm):\(.conc)"' \
-  models/glm52-fp4/targets/mi355x/serving.json
-```
-
-Use the same AKLR configuration and InferenceX ref when choosing IDs and triggering the run. The following example assumes that the generated grid includes `tp8-ep1-none-spec-mtp:1`. It runs that point for 60 seconds per measurement without publishing to Pages.
-
-Trigger the same GitHub workflow from a terminal:
-
-```bash
-gh workflow run agentx-ci.yaml --repo AMD-AGI/AKLR \
-  --ref main \
-  -f models=glm52-fp4 \
-  -f targets=mi355x \
-  -f inferencex_ref=main \
-  -f arms=all \
-  -f points=tp8-ep1-none-spec-mtp:1 \
-  -f duration_s=60 \
-  -F publish=false
-```
-
-Replace `--ref main` with the AKLR branch to test. To pin upstream code, replace `main` in `inferencex_ref=main` with the required tag or commit SHA.
-
-For the corresponding local run, use the same AKLR checkout and InferenceX ref on a host with the required GPUs, Docker, and model cache (see section 2 for environment setup):
-
-```bash
-# Start at the repository root; --out must not already exist
-cd benchmarks/agentx
-python3 -m agentx_bench pipeline \
-  --model glm52-fp4 \
-  --target mi355x \
-  --inferencex-ref main \
-  --arms all \
-  --points tp8-ep1-none-spec-mtp:1 \
-  --duration 60 \
-  --hub /data/hf/hub \
-  --out /data/agentx/smoke-001
-```
-
-The GitHub workflow uses a runner with the matching label and reads the model cache path from the `AGENTX_HF_HUB_DIR` repository variable. The local CLI runs on the current host and takes the cache path from `--hub`. The GitHub run page provides `agentx-plan`, generated `agentx-results-*`, and `agentx-site` artifacts. Local results and reports are saved under `--out`, with `site/index.html` as the report entry point. Complete section 4.2 before publishing to Pages.
+| Setting / input | Default | Meaning |
+| --- | --- | --- |
+| Branch / Use workflow from | Default branch, usually `main` | Select the **AKLR** workflow, source, and configuration revision |
+| `models` | `all` | Enabled model IDs, separated by commas, such as `glm52-fp4`; `all` selects every enabled model |
+| `targets` | `all` | Enabled target IDs within the selected models, such as `mi355x`; comma-separated targets run serially in plan order |
+| `inferencex_ref` | Empty | Override the **InferenceX** branch, tag, or SHA that supplies the grid, serving configuration, and client; empty uses the configured ref, currently `main` |
+| `arms` | `all` | Generated serving scheme IDs, such as `tp8-ep1-none-spec-mtp`, separated by commas; `all` applies no arm filter |
+| `points` | Empty | Exact `ARM:CONC` points, such as `tp8-ep1-none-spec-mtp:1`, separated by commas; empty adds no point filter and still respects `arms` |
+| `duration_s` | Empty | Override each point's measurement duration in seconds; a positive integer such as `60`; empty inherits the duration in the upstream generated plan, currently `3600` seconds for AgentX |
+| `publish` | `false`, unchecked | Deploy the report to GitHub Pages when checked; generated result and report artifacts are still uploaded when unchecked |
 
 ### 1.2 Trigger with a PR Label
 
-For a PR from a branch in this repository targeting `main`, add **`ci:agentx-mi355x`** under **Labels** on the PR page to trigger AgentX CI. **Draft PRs are supported.**
+For a PR from a branch in this repository targeting `main`, add **`ci:agentx-mi355x`** under **Labels** on the PR page to trigger AgentX CI.
 
-- Opening a PR, pushing new commits to it, or reopening it triggers a run when it carries this label. A label event starts AgentX tests only when the newly added label is `ci:agentx-mi355x`; adding other labels is skipped.
-- Pushing new commits while keeping the label triggers a new run. AgentX jobs that are already running are not automatically canceled.
-- `ci:agentx-mi355x` is a **PR label**; `agentx-mi355x` is a **GitHub Actions runner label**. PR runs select enabled model targets whose configuration has `runner_label: agentx-mi355x`, currently the `mi355x` target with 8 GPUs.
+| Trigger | Model / target scope | Points | Duration per AKLR off/on measurement | Publish Pages |
+| --- | --- | --- | --- | --- |
+| PR label `ci:agentx-mi355x` | All enabled targets assigned to `agentx-mi355x` | Upstream Pareto frontier | 600 seconds | No |
 
-PR runs test GitHub's default PR merge commit, execute `plan → sweep → report`, and save plan, result, and report artifacts without deploying to GitHub Pages.
+Notes:
 
-The label trigger has no input parameters. It selects all enabled models and targets assigned to `agentx-mi355x`, uses the configured InferenceX ref, and tests **upstream InferenceX Pareto frontier points for 600 seconds each**, separately with AKLR off and on. These duration overrides do not promote a formal baseline.
-
-For each target, planning matches its model prefix to the official InferenceX model catalog, fetches the published measurements, and selects the frontier within the same model, MI355X hardware, framework, precision, and AgentX workload. A single arm can contribute several concurrency points. The selected points must match the resolved recipe fingerprints, concurrency, topology, and upstream image exactly; runtime image overrides are recorded separately in `serving.json`. Missing upstream measurements or mismatches fail that target's plan; the planner does not substitute a full-grid run. Each target saves `upstream-snapshot.json` and `selection.json` alongside `serving.json` in `agentx-plan`.
-
-To inspect the same selection locally, generate a plan without starting a GPU workload:
-
-```bash
-python3 -m agentx_bench plan \
-  --models all --targets all --runner-label agentx-mi355x \
-  --point-policy inferencex-pareto \
-  --inferencex-model auto --inferencex-hardware mi355x \
-  --duration 600 \
-  --work /data/agentx/pr-work --out /data/agentx/pr-plan
-```
-
-Run this from `benchmarks/agentx` and choose a fresh plan output directory. In `plan`, `--inferencex-model auto` looks up each target's model independently and supports multiple targets with a common duration. An explicit model name, result snapshot, or upstream run remains limited to one target. To choose models, exact points, or duration through GitHub's manual form, use **Run workflow** as described in section 1.1 and select the PR branch. The seven-input form uses the full-grid policy with optional smoke filters; it does not expose the Pareto policy.
+- Opening a PR, pushing new commits to it, or reopening it triggers a run when it carries this label. A label event starts AgentX tests only when the newly added label is `ci:agentx-mi355x`.
+- Pushing new commits while keeping the label triggers a new run and automatically cancels that PR's running or queued AgentX run.
+- `ci:agentx-mi355x` is a **PR label**; `agentx-mi355x` is a **GitHub Actions runner label**. PR runs select only the enabled models and targets whose configuration has `runner_label: agentx-mi355x`.
 
 ### 1.3 Scheduled Runs
 
@@ -134,10 +60,7 @@ Set the repository variable `AGENTX_SCHEDULE_ENABLED` to `true` to enable the Fr
 
 | Trigger | Model / target scope | Points | Duration per AKLR off/on measurement | Publish Pages |
 | --- | --- | --- | --- | --- |
-| PR label `ci:agentx-mi355x` | All enabled targets assigned to `agentx-mi355x` | Upstream Pareto frontier | 600 seconds | No |
 | Schedule | All enabled targets assigned to `agentx-mi355x` | Full grid | 3600 seconds | Yes |
-
-The schedule passes `--require-recipe-duration 3600`: planning verifies that every selected point inherits 3600 seconds from InferenceX. A different upstream duration fails that target's plan for review. This check does not apply a smoke duration override, so successful complete runs remain eligible for formal baseline promotion. Pages deployment still requires the setup in section 4.2.
 
 ## 2. CLI Commands
 
@@ -162,7 +85,7 @@ python3 -m agentx_bench pipeline --help
 
 ### 2.2 Run the Pipeline
 
-`pipeline` tests one model target at a time and requires `--model <id>`. You can omit `--target` when the model has exactly one enabled target. The example assumes that pinned model weights are already cached in `/data/hf/hub`; see section 4 for runner setup.
+`pipeline` tests one model target at a time and requires `--model <id>`. You can omit `--target` when the model has exactly one enabled target. The example assumes that pinned model weights are already cached in `/data/hf/hub`; see section 4 for how to prepare them.
 
 ```bash
 python3 -m agentx_bench pipeline \
@@ -327,24 +250,6 @@ advisory_env:
 | `report.repo_url` | Repository URL used for AKLR commit and history links; not the Pages site URL |
 
 The `inferencex.expect.*` fields above belong to each target's `inferencex` mapping. Targets within a model share its `weights`.
-
-The server inherits defaults from the planned image's verified Docker `Config.Env`. The allowed
-infrastructure environment (cache paths, certificates, proxies, and similar settings) overrides those
-defaults, and the point's explicit `launch.env` overrides both. Arbitrary tuning variables in the
-launcher's environment are not inherited. Image metadata is read and validated once before GPU
-inspection; missing or malformed environment metadata fails the run before serving starts.
-
-Results record the image defaults, with credential-like values redacted, under
-`run.execution.server_environment`. Its canonical `defaults_sha256` and the
-`paired-aklr-image-env-v2` policy participate in measurement identity, separating these runs from
-older runs that filtered out image defaults. Both AKLR modes use the same defaults and differ only
-in their explicit AKLR switches. Trace preparation, client package inspection, and the AgentX client
-retain their separate infrastructure allowlist and planned client environment; they do not inherit
-the server's image defaults or `advisory_env`.
-
-The model hub's `refs/main` must contain exactly the pinned revision, without a trailing newline or
-whitespace. Hugging Face uses that content verbatim for the client's offline tokenizer; the runtime
-checks it before preparing traces or starting the server.
 
 ### 3.2 Add a Model
 

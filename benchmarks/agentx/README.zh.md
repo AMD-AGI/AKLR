@@ -19,112 +19,37 @@ flowchart TD
 
 实线表示 job 的执行顺序；虚线表示 artifact 的上传或读取。`agentx-plan` 只上传一次，分别供 sweep 和 report 读取。report 等待 plan 和 sweep 结束后运行；sweep 失败时仍可依据计划生成失败报告。
 
-sweep 遍历完所选数据点后，只要至少一次测量成功，job 就正常结束。有其他点失败时，摘要显示**部分成功**，分别统计 AKLR 开关两种模式的成功、失败和缺失测量。全部测量失败时 sweep 才因测点结果报失败；环境准备、容器和清理等运行错误仍会报失败。结果文件保留各点原有的状态和错误。GitHub Actions 没有独立的“部分成功”结论，因此部分成功的 sweep 显示绿色。
-
-测量过程中若进程清理失败，sweep 会保存该点与此前的结果，停止后续测量并返回失败。报告上传后，CI 单独检查计划解析、结果下载、结果缺失和结果校验错误。普通测量失败不会使 report job 失败；启用发布且 Pages artifact 已上传时，仍可部署报告。
-
-所选模型和 target 的所有点成功完成正式测量且源码为干净状态才会更新该 target 的基线。失败、部分完成、dirty 或源码状态未知的运行不会更新基线。
-
-报告默认显示英文，可通过右上角的 **EN / 中文** 按钮切换首页和详情页的语言。鼠标悬浮到图中数据点，或通过键盘聚焦数据点，可查看完整服务配置、并发数、AKLR 开关状态和指标。首页展示目标状态与统计，各点错误保留在详情页和 JSON 文件中。
-
-吞吐统计的是**每秒每 GPU 的输入加输出 token**，包含命中缓存的输入 token。P90 端到端交互速度采用 `1 / P90(请求总延迟秒数 / 输出 token 数)`，包含首 token 等待，与纯解码交互速度 `1 / P90(逐 token 延迟)` 不同。短时 smoke 在不同并发或 AKLR 模式下可能覆盖不同的请求轨迹和输入输出长度，不能仅凭其汇总指标判断并发扩展性能或 AKLR 加速比。性能比较应使用正式时长，并检查记录中的请求分布。
+sweep 遍历完所选数据点后，只要至少一次测量成功，job 就正常结束。有其他点失败时，摘要显示**部分成功**，全部测量失败时 sweep 才因测点结果报失败。所选模型和 target 的所有点成功完成正式测量且源码为干净状态才会更新该 target 的基线。失败、部分完成、dirty 或源码状态未知的运行不会更新基线。
 
 ### 1.1 使用 Github runner 触发
 
-打开 [AKLR-agentx-ci workflow](https://github.com/AMD-AGI/AKLR/actions/workflows/agentx-ci.yaml)，点击 **Run workflow**，选择 AKLR 分支、填写下面的参数，再点击表单中的 **Run workflow**。需要登录具有运行该仓库 workflow 权限的 GitHub 账号；runner 的注册与准备见第 4 节。
+打开 [AKLR-agentx-ci workflow](https://github.com/AMD-AGI/AKLR/actions/workflows/agentx-ci.yaml)，点击 **Run workflow**，选择 AKLR 分支、填写下面的参数，再点击表单中的 **Run workflow**。runner 的注册与准备见第 4 节。
 
-表单共有 **7 个 workflow 输入项**，另有 GitHub 提供的 **Branch / Use workflow from** 选择器，合计 8 项设置。7 个输入项均可保留默认值。
+表单共有 **7 个 workflow 输入项**，另有 GitHub 提供的 **Branch / Use workflow from** 选择器，合计 8 项设置；7 个输入项均可保留默认值。
 
-| 页面设置 / 输入名 | 默认值 | 含义 | 与 CLI 的对应关系 |
-| --- | --- | --- | --- |
-| Branch / Use workflow from | 默认分支，通常为 `main` | 选择本次使用的 **AKLR** workflow、源码和配置版本 | `gh workflow run --ref`；本地 CLI 使用当前 checkout |
-| `models` | `all` | 选择已启用的模型 ID；多个用英文逗号分隔，例如 `glm52-fp4`；`all` 选择全部已启用模型 | `plan --models`；本地 `pipeline --model` 只接受一个 ID |
-| `targets` | `all` | 在所选模型中选择已启用的 target ID，例如 `mi355x`；多个用英文逗号分隔，按计划顺序串行执行 | `plan --targets`；本地 `pipeline --target` 只接受一个 ID |
-| `inferencex_ref` | 留空 | 覆盖 **InferenceX** 的分支、tag 或 SHA，决定测试网格、serving 配置和客户端；留空使用配置中的 ref，当前为 `main` | `--inferencex-ref` |
-| `arms` | `all` | 选择生成的服务方案 ID，例如 `tp8-ep1-none-spec-mtp`；多个用英文逗号分隔；`all` 不按 arm 过滤 | `--arms` |
-| `points` | 留空 | 精确选择 `ARM:CONC` 测试点，例如 `tp8-ep1-none-spec-mtp:1`；多个用英文逗号分隔；留空不追加点过滤，仍受 `arms` 限制 | `--points` |
-| `duration_s` | 留空 | 覆盖每个点的测量时长，单位秒，必须为正整数，例如 `60`；留空继承上游生成计划中的时长，当前 AgentX 默认 `3600` 秒 | **`--duration`** |
-| `publish` | `false`，不勾选 | 勾选后将报告部署到 GitHub Pages；不勾选仍会上传已生成的结果与报告 artifacts | 本地 `pipeline` 生成 `site/`，没有自动发布的对应开关 |
-
-Branch 选择的是 AKLR 版本，`inferencex_ref` 选择的是上游 InferenceX 版本。执行机器由 `agentx.yaml` 中所选 target 的 `runner_label` 决定；`targets` 填 target ID，例如 `mi355x`。当前 `mi355x` 目标配置为 8 张 MI355X，卡数写在 `hardware.gpu_count` 中；每个测试点的用卡数由上游方案决定。
-
-填写 smoke 参数时需要注意：
-
-- `arms` 不为 `all`、填写 `points` 或填写 `duration_s`，任一条件成立时，最终必须只选中 **一个模型 / target 组合**。建议同时显式填写 `models` 和 `targets`。
-- `ARM` 与 `CONC` 分别来自生成的 `serving.json` 中 `points[].arm` 和 `points[].conc`。例如 `tp8-ep1-none-spec-mtp:1` 表示该方案的并发 1；并发必须是网格中已有的值。
-- `arms` 和 `points` 共同生效；`points` 中的点必须属于所选 `arms`。不存在的 ID 会报错。列表使用英文逗号且不要添加空格。
-- 每个点会分别测量 AKLR off 和 on；`duration_s=60` 对两次测量分别生效，服务启动、预热等还需额外时间。正式测量应将 `duration_s` 留空，本地 CLI 省略 `--duration`；任何显式时长覆盖（包括 `3600`）都不会晋升正式基线。
-- 全量测试保留 `arms=all`，将 `points` 和 `duration_s` 留空。手动运行是否发布由 `publish` 决定。PR 标签和定时运行使用下文所述的独立默认值，不读取手动表单的输入参数。
-
-可以从已有 run 的 `agentx-plan` artifact 读取 `models/<model-id>/targets/<target-id>/serving.json`，也可以先执行本地 `plan` 生成计划。要列出其中可填的点，在解压后的 artifact 根目录执行：
-
-```bash
-jq -r '.points[] | "\(.arm):\(.conc)"' \
-  models/glm52-fp4/targets/mi355x/serving.json
-```
-
-选择 ID 时使用与将要触发的运行相同的 AKLR 配置和 InferenceX ref。以下示例假定生成的网格包含 `tp8-ep1-none-spec-mtp:1`，运行单点、每次测量 60 秒，不发布 Pages。
-
-在命令行触发同一个 GitHub workflow：
-
-```bash
-gh workflow run agentx-ci.yaml --repo AMD-AGI/AKLR \
-  --ref main \
-  -f models=glm52-fp4 \
-  -f targets=mi355x \
-  -f inferencex_ref=main \
-  -f arms=all \
-  -f points=tp8-ep1-none-spec-mtp:1 \
-  -f duration_s=60 \
-  -F publish=false
-```
-
-将 `--ref main` 替换为要测试的 AKLR 分支；需要固定上游版本时，将 `inferencex_ref=main` 中的 `main` 替换为所需 tag 或 commit SHA。
-
-在具备对应 GPU、Docker 和模型缓存的本地主机上，使用相同 AKLR checkout 和 InferenceX ref 执行对应测试（环境准备见第 2 节）：
-
-```bash
-# 从仓库根目录开始；--out 必须为尚不存在的目录
-cd benchmarks/agentx
-python3 -m agentx_bench pipeline \
-  --model glm52-fp4 \
-  --target mi355x \
-  --inferencex-ref main \
-  --arms all \
-  --points tp8-ep1-none-spec-mtp:1 \
-  --duration 60 \
-  --hub /data/hf/hub \
-  --out /data/agentx/smoke-001
-```
-
-GitHub workflow 在匹配标签的 runner 上执行，模型缓存路径来自仓库变量 `AGENTX_HF_HUB_DIR`；本地 CLI 在当前主机执行，由 `--hub` 指定缓存。GitHub run 页面提供 `agentx-plan`、已生成的 `agentx-results-*` 和 `agentx-site` artifacts；本地结果与报告保存在 `--out` 下，报告入口为 `site/index.html`。发布 Pages 前需完成第 4.2 节的设置。
+| 页面设置 / 输入名 | 默认值 | 含义 |
+| --- | --- | --- |
+| Branch / Use workflow from | 默认分支，通常为 `main` | 选择本次使用的 **AKLR** workflow、源码和配置版本 |
+| `models` | `all` | 选择已启用的模型 ID；多个用英文逗号分隔，例如 `glm52-fp4`；`all` 选择全部已启用模型 |
+| `targets` | `all` | 在所选模型中选择已启用的 target ID，例如 `mi355x`；多个用英文逗号分隔，按计划顺序串行执行 |
+| `inferencex_ref` | 留空 | 覆盖 **InferenceX** 的分支、tag 或 SHA，决定测试网格、serving 配置和客户端；留空使用配置中的 ref，当前为 `main` |
+| `arms` | `all` | 选择生成的服务方案 ID，例如 `tp8-ep1-none-spec-mtp`；多个用英文逗号分隔；`all` 不按 arm 过滤 |
+| `points` | 留空 | 精确选择 `ARM:CONC` 测试点，例如 `tp8-ep1-none-spec-mtp:1`；多个用英文逗号分隔；留空不追加点过滤，仍受 `arms` 限制 |
+| `duration_s` | 留空 | 覆盖每个点的测量时长，单位秒，必须为正整数，例如 `60`；留空继承上游生成计划中的时长，当前 AgentX 默认 `3600` 秒 |
+| `publish` | `false`，不勾选 | 勾选后将报告部署到 GitHub Pages；不勾选仍会上传已生成的结果与报告 artifacts |
 
 ### 1.2 通过 PR 标签触发
 
-对于本仓库内分支发起、目标分支为 `main` 的 PR，在 PR 页面的 **Labels** 中添加 **`ci:agentx-mi355x`** 即可触发 AgentX CI，**Draft PR 也支持**。
+对于本仓库内分支发起、目标分支为 `main` 的 PR，在 PR 页面的 **Labels** 中添加 **`ci:agentx-mi355x`** 即可触发 AgentX CI。
 
-- PR 创建、更新提交、重新打开时，如果保留该标签，就会触发运行。添加标签时，只有新增的标签正是 `ci:agentx-mi355x` 才会启动 AgentX 测试；添加其他标签会跳过。
-- 保留标签后推送新提交会触发新的 run，已经运行的 AgentX 任务不会被自动取消。
-- `ci:agentx-mi355x` 是 **PR 标签**；`agentx-mi355x` 是 **GitHub Actions runner 标签**。PR 运行只选择配置中 `runner_label: agentx-mi355x` 的已启用模型和 target，当前为 8 卡的 `mi355x` 目标。
+| 触发方式 | 模型 / target 范围 | 测量点 | AKLR off/on 每次测量时长 | 发布 Pages |
+| --- | --- | --- | --- | --- |
+| PR 标签 `ci:agentx-mi355x` | 全部绑定 `agentx-mi355x` 的已启用 target | 上游 Pareto 前沿 | 600 秒 | 否 |
 
-PR 运行测试 GitHub 默认生成的 PR merge commit，执行 `plan → sweep → report` 并保存计划、结果与报告 artifacts，不发布 GitHub Pages。
-
-标签入口没有输入参数：选择绑定 `agentx-mi355x` 的全部已启用模型和 target，使用配置中的 InferenceX ref，测试 **上游 InferenceX Pareto 曲线选出的点，每点 600 秒**，分别测量 AKLR off 和 on。这类时长覆盖不会晋升正式基线。
-
-plan 会逐 target 将模型前缀对应到 InferenceX 官方模型目录，获取已发布测量，并在相同模型、MI355X 硬件、框架、精度和 AgentX 工作负载内选择 Pareto 前沿。同一 arm 可以保留多个并发点。选中点必须与解析计划中的 recipe 指纹、并发、拓扑和上游镜像精确匹配；运行镜像覆盖由 `serving.json` 单独记录。缺少上游测量或匹配失败时，该 target 解析失败，不会改为全量测量。每个 target 的 `upstream-snapshot.json` 和 `selection.json` 与 `serving.json` 一起保存在 `agentx-plan` 中。
-
-可在本地只生成同样的选点计划，不启动 GPU 工作负载：
-
-```bash
-python3 -m agentx_bench plan \
-  --models all --targets all --runner-label agentx-mi355x \
-  --point-policy inferencex-pareto \
-  --inferencex-model auto --inferencex-hardware mi355x \
-  --duration 600 \
-  --work /data/agentx/pr-work --out /data/agentx/pr-plan
-```
-
-在 `benchmarks/agentx` 下执行，并选择新的计划输出目录。`plan` 的 `--inferencex-model auto` 会独立查找每个 target 的模型，支持多 target 共用一个测量时长；显式模型名称、结果快照或上游 run 仍限于单个 target。需要通过 GitHub 手动表单指定模型、精确测量点或时长时，按第 1.1 节使用 **Run workflow** 选择 PR 分支。七个输入项的表单使用全量策略和可选 smoke 过滤，不提供 Pareto 策略开关。
+注意：
+- PR 创建、更新提交、重新打开时，如果保留该标签，就会触发运行。添加标签时，只有新增的标签正是 `ci:agentx-mi355x` 才会启动 AgentX 测试。
+- 保留标签后推送新提交会触发新的 run，该 PR 正在运行或排队的 AgentX run 会被自动取消。
+- `ci:agentx-mi355x` 是 **PR 标签**；`agentx-mi355x` 是 **GitHub Actions runner 标签**。PR 运行只选择配置中 `runner_label: agentx-mi355x` 的已启用模型和 target。
 
 ### 1.3 定时运行
 
@@ -132,10 +57,7 @@ python3 -m agentx_bench plan \
 
 | 触发方式 | 模型 / target 范围 | 测量点 | AKLR off/on 每次测量时长 | 发布 Pages |
 | --- | --- | --- | --- | --- |
-| PR 标签 `ci:agentx-mi355x` | 全部绑定 `agentx-mi355x` 的已启用 target | 上游 Pareto 前沿 | 600 秒 | 否 |
 | 定时 | 全部绑定 `agentx-mi355x` 的已启用 target | 全量网格 | 3600 秒 | 是 |
-
-定时入口传入 `--require-recipe-duration 3600`，在 plan 阶段核对每个选中点从 InferenceX 继承的时长均为 3600 秒。上游时长改变时，该 target 解析失败，需检查配置。这个检查不覆盖测量时长，因此成功完成的完整运行仍有资格晋升正式基线。发布 Pages 仍需完成第 4.2 节的设置。
 
 ## 2. CLI 命令介绍
 
@@ -326,20 +248,6 @@ advisory_env:
 
 上述 `inferencex.expect.*` 字段均位于 target 的 `inferencex` 中；`weights` 由同一模型的各个 target 共享。
 
-服务器继承计划镜像经 Docker 身份校验后的 `Config.Env` 默认值。允许的基础环境（缓存路径、
-证书、代理等）覆盖镜像默认值，点的显式 `launch.env` 再覆盖两者；启动器环境中的任意调优
-变量不会被继承。镜像元数据只读取并验证一次，先于 GPU 检查；环境元数据缺失或格式错误会
-在启动服务前使运行失败。
-
-结果在 `run.execution.server_environment` 中记录镜像默认值，并对凭据类值脱敏。
-规范化的 `defaults_sha256` 与 `paired-aklr-image-env-v2` 策略进入测量身份，使这些结果与
-过去过滤镜像默认值的运行分段。AKLR 两组使用相同默认值，仅显式 AKLR 开关不同。trace
-准备、客户端包版本检查和 AgentX 客户端继续使用各自的基础环境白名单及计划客户端环境，
-不会继承服务端镜像默认值或 `advisory_env`。
-
-模型 hub 的 `refs/main` 必须恰好包含固定 revision，不能带末尾换行或空白。Hugging Face
-会将该内容原样用于客户端离线 tokenizer；运行时会在准备 trace 和启动服务器前检查它。
-
 ### 3.2 新增模型
 
 先在目标 InferenceX ref 中确认模型的 `config_key`、配置路径、recipe、模型名称、精度和 runner。当前执行器面向单机 SGLang；仅修改 `framework` 不能使其支持其他服务框架。
@@ -384,7 +292,7 @@ advisory_env:
 
 ### 4.1 执行注册脚本
 
-在目标 GitHub 仓库进入 **Settings → Actions → Runners → New self-hosted runner**，获取临时 registration token。它通过 `RUNNER_TOKEN` 环境变量传入
+在目标 GitHub 仓库进入 **Settings → Actions → Runners → New self-hosted runner**，获取临时 registration token。它通过 `RUNNER_TOKEN` 环境变量传入。
 
 ```bash
 # 从仓库根目录执行；交互输入不会显示 token
@@ -425,7 +333,7 @@ unset RUNNER_TOKEN
 
 所选 target 在 `agentx.yaml` 中的 `runner_label` 必须与注册时的 `--label` 一致；本例均为 `agentx-mi355x`。
 
-需要发布报告时，在 **Settings → Pages** 将构建与部署来源设为 **GitHub Actions**，并确认 `github-pages` environment 的部署规则允许目标分支
+需要发布报告时，在 **Settings → Pages** 将构建与部署来源设为 **GitHub Actions**，并确认 `github-pages` environment 的部署规则允许目标分支。
 
 确认 runner 在 GitHub 页面显示 Online / Idle，并在主机检查服务：
 
