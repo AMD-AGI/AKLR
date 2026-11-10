@@ -14,7 +14,7 @@ allowed-tools: Read Edit Bash Grep Glob
 
 **From step 2 until the campaign ends, report to the user every 15 minutes with the `report-progress` skill.**
 Nothing wakes you once your turn ends, so start the timer before the loop goes to the background:
-`/loop 15m /report-progress forge-loop <schema> state=<run dir> reports=<run dir>/progress.md; if the loop
+`/loop 15m /aklr:report-progress forge-loop <schema> state=<run dir> reports=<run dir>/progress.md; if the loop
 crashed, resume it as forge-loop-campaign says`.
 
 If the loop crashed (nobody stopped it and it did not finish), resume it as "Stopping and resuming" says and

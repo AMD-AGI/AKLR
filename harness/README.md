@@ -24,12 +24,24 @@ The lifecycle is governed by [rules.md](rules.md), [gates.md](gates.md), and
 
 ## Layout
 
-- `skills/`: every AKLR agent skill, `skills/<name>/SKILL.md`, kept only here. Agents find them
-  through symlinks: `.claude/skills` for Claude Code, `.agents/skills` for Codex and Cursor.
-- `agents/`: subagent definitions the skills start, `agents/<name>.md`, found through
-  `.claude/agents`, which Claude Code and Cursor read. Codex reads only TOML from
-  `.codex/agents`, a symlink to `agents/codex/`; each `<name>.toml` there points back to
+`harness/` is the `aklr` plugin. `.claude-plugin/plugin.json` is its manifest for Claude Code
+(Codex also reads it), `.cursor-plugin/plugin.json` its manifest for Cursor.
+
+- `skills/`: every AKLR agent skill, `skills/<name>/SKILL.md`, kept only here.
+- `agents/`: subagent definitions the skills start, `agents/<name>.md`. Codex reads only TOML
+  from `.codex/agents`, a symlink to `agents/codex/`; each `<name>.toml` there points back to
   `agents/<name>.md`, so the prompt is written once.
+
+How each agent loads it inside this repository:
+
+- Claude Code loads the plugin from `.claude/skills/aklr`, a symlink to `harness/`, once the
+  repository is trusted (open it interactively once; worktrees share the main checkout's trust).
+  Start Claude Code at the repository root. Skills are `/aklr:<skill>`, the subagent is
+  `aklr:something-important`; after editing a skill run `/reload-plugins`.
+- Codex and Cursor read the skills natively from `.agents/skills`, a symlink to `skills/`, so
+  edits take effect at once. Codex installs plugins as cached copies that do not follow edits,
+  and Cursor would load each skill twice, so neither loads the plugin here.
+
 - `scripts/`: scripts the skills run, such as `forge_task/`.
 - `tests/`: tests of the scripts.
 
