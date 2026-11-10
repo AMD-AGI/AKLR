@@ -83,11 +83,11 @@ basis: source-semantics
 - S23 gemm/grid_pricing.md:123 keep s = 1 in the candidate set
 - S24 gemm/grid_pricing.md:145 if the reduce costs more than the idle time it recovers, no split wins
 - S25 gemm/grid_pricing.md:164 atomic split-K is not bitwise reproducible
-- S26 gemm/correctness.md:209 under AKLR's bitwise contracts, reduce the splits in a fixed order
+- S26 gemm/correctness.md:211 under AKLR's bitwise contracts, reduce the splits in a fixed order
 - S27 gemm/grid_pricing.md:176 tail split: split only the tiles of the ragged last round
 - S28 gemm/grid_pricing.md:178 head and tail launches must each be whole rounds
 - S29 gemm/grid_pricing.md:371 passing the persistent gate is not a win: race it
 - S30 gemm/small_m.md:99 count workgroups against the 256-CU dispatch round before anything else
 - S31 gemm/small_m.md:134 split-K pays on a single N-block (narrow N) and latency-bound rows
 - S32 gemm/small_m.md:135 split-K does not pay on streaming rows with many N-blocks or short K
-- S33 gemm/small_m.md:379 idle CUs load later K-tiles of B into L2
+- S33 gemm/small_m.md:382 idle CUs load later K-tiles of B into L2

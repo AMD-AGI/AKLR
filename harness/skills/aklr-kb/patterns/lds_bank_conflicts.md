@@ -93,4 +93,4 @@ basis: source-semantics
 - S30 gemm/mainloop.md:78 why the 2×2-wave tile wins on long K: fewer LDS reads per MAC
 - S31 gemm/mainloop.md:89 compile both designs and race them; the crossover depends on the shape
 - S32 ../flydsl/language/limits.md:103 a 16-byte LDS load declared 4- or 8-byte aligned becomes `ds_read2_b32` / `ds_read2_b64`; `Vector.load` passes no alignment; declaring 16 cut a MoE epilogue's bank conflicts 4.2–4.9×
-- S33 gemm/correctness.md:147 separate LDS buffers are laid out by the backend; read group_segment_fixed_size first
+- S33 gemm/correctness.md:149 separate LDS buffers are laid out by the backend; read group_segment_fixed_size first
