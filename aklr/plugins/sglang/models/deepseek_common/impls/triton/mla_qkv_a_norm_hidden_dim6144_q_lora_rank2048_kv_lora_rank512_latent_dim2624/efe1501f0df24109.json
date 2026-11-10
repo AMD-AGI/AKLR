@@ -1,0 +1,161 @@
+{
+  "schema_version": 5,
+  "name": "mla_qkv_a_norm_hidden_dim6144_q_lora_rank2048_kv_lora_rank512_latent_dim2624",
+  "contract_id": "mla_qkv_a_norm@1.0",
+  "description": "sglang's qkv_a projection and latent RMSNorms of an MLA attention with a compressed query, on one rank (the qkv latent forward_absorb_rocm_prepare fetches, and its norms): each token's hidden state times w_qkv_a, the qkv latent; its first q_lora_rank columns, q's latent, and its next kv_lora_rank columns, the KV latent, each times rsqrt(mean(x**2) + eps) of its own columns and its norm weight; its last columns, the RoPE key, as projected.",
+  "op_type": "deepseek_common",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call."
+    },
+    "hidden_dim": {
+      "type": "const",
+      "value": 6144,
+      "description": "The hidden size: the projection's reduction."
+    },
+    "q_lora_rank": {
+      "type": "const",
+      "value": 2048,
+      "description": "q's latent: the qkv latent's first part."
+    },
+    "kv_lora_rank": {
+      "type": "const",
+      "value": 512,
+      "description": "The KV latent: the qkv latent's next part."
+    },
+    "latent_dim": {
+      "type": "const",
+      "value": 2624,
+      "description": "A qkv latent row: q's latent, the KV latent, then the RoPE key."
+    },
+    "rope_dim": {
+      "type": "const",
+      "value": 64,
+      "description": "The RoPE key: the qkv latent's last part."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "hidden_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's hidden state, the attention's input."
+    },
+    "w_qkv_a": {
+      "shape": [
+        "latent_dim",
+        "hidden_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "fused_qkv_a_proj_with_mqa's weight: row c gives the qkv latent's column c."
+    },
+    "q_norm_weight": {
+      "shape": [
+        "q_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": "0.58"
+      },
+      "description": "q_a_layernorm's weight, one per column of q's latent."
+    },
+    "kv_norm_weight": {
+      "shape": [
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": "0.58"
+      },
+      "description": "kv_a_layernorm's weight, one per column of the KV latent."
+    },
+    "eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to each mean square: both norms' variance_epsilon."
+    }
+  },
+  "outputs": {
+    "q_latent": {
+      "shape": [
+        "n_tokens",
+        "q_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's q latent, normalized: q_b_proj's and the indexer's input."
+    },
+    "kv_latent": {
+      "shape": [
+        "n_tokens",
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's KV latent, normalized: its KV cache row's latent part."
+    },
+    "k_rope": {
+      "shape": [
+        "n_tokens",
+        "rope_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's RoPE key as projected, before RoPE."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"qkv_a projection and latent RMSNorms for GLM-5.2 decode on gfx950, tuned at TP4 for 16 tokens.\n\nEach token's 6144-wide hidden state times the bf16 fused_qkv_a_proj_with_mqa weight (replicated:\nthe same on every rank, at any TP size) into its 2624-wide qkv latent, split-K into fp32 partials\nsummed in a fixed order and rounded to bf16; its first 2048 columns (q's latent) and next 512 (the\nKV latent) each times rsqrt(mean(x**2) + eps) and their norm weight in fp32, written in bf16; its\nlast 64 (the RoPE key) written as projected.\n\"\"\"\n\nfrom triton.runtime.jit import ConstexprFunction\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n# next_power_of_2 as a constexpr function, for host code and compile-time expressions alike\n_ceil_power_of_two = triton.next_power_of_2\nif not isinstance(_ceil_power_of_two, ConstexprFunction):\n    _ceil_power_of_two = triton.constexpr_function(_ceil_power_of_two)\n\n\n@gluon.jit\ndef _project_wave(\n    X,\n    W,\n    P,\n    M: gl.constexpr,\n    N: gl.constexpr,\n    K: gl.constexpr,\n    SX: gl.constexpr,\n    SW: gl.constexpr,\n    BM: gl.constexpr,\n    BN: gl.constexpr,\n    BK: gl.constexpr,\n    SPLITS: gl.constexpr,\n    GROUP: gl.constexpr,\n    UNROLL: gl.constexpr,\n    CHAINS: gl.constexpr,\n):\n    pid = gl.program_id(0)\n    if M == 16:\n        pid = pid.to(gl.uint32)\n    tile = pid // (GROUP * SPLITS) * GROUP + pid % GROUP\n    split = pid // GROUP % SPLITS\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[1, 1, 1]\n    )\n    al: gl.constexpr = gl.BlockedLayout([1, 1, 8], [1, 4, 16], [1, 1, 1], [2, 1, 0])\n    bl: gl.constexpr = gl.BlockedLayout([1, 8, 1], [1, 16, 4], [1, 1, 1], [1, 2, 0])\n    ap = gl.arange(0, CHAINS, gl.SliceLayout(1, gl.SliceLayout(2, al)))\n    am = gl.arange(0, BM, gl.SliceLayout(0, gl.SliceLayout(2, al)))\n    ak = gl.arange(0, BK, gl.SliceLayout(0, gl.SliceLayout(1, al)))\n    bp = gl.arange(0, CHAINS, gl.SliceLayout(1, gl.SliceLayout(2, bl)))\n    bk = gl.arange(0, BK, gl.SliceLayout(0, gl.SliceLayout(2, bl)))\n    bn = gl.arange(0, BN, gl.SliceLayout(0, gl.SliceLayout(1, bl)))\n    CHUNKS: gl.constexpr = gl.cdiv(K, BK * SPLITS * CHAINS)\n    x_base = X + split * CHAINS * CHUNKS * BK\n    w_base = W + tile * BN * SW + split * CHAINS * CHUNKS * BK\n    acc = gl.zeros((CHAINS, BM, BN), gl.float32, mma)\n    for block in range(gl.cdiv(CHUNKS, UNROLL)):\n        for u in gl.static_range(UNROLL):\n            i = block * UNROLL + u\n            if i < CHUNKS:\n                ka = ap[:, None, None] * CHUNKS * BK + i * BK + ak[None, None, :]\n                kb = bp[:, None, None] * CHUNKS * BK + i * BK + bk[None, :, None]\n                ma = gl.full((CHAINS, BM, BK), True, gl.int1, al)\n                mb = gl.full((CHAINS, BK, BN), True, gl.int1, bl)\n                if BM > M:\n                    ma = ma & (am[None, :, None] < M)\n                if N % (BN * GROUP) != 0:\n                    mb = mb & (tile * BN + bn[None, None, :] < N)\n                if K % (BK * SPLITS * CHAINS) != 0:\n                    ma = ma & (split * CHAINS * CHUNKS * BK + ka < K)\n                    mb = mb & (split * CHAINS * CHUNKS * BK + kb < K)\n                a = gl.amd.cdna4.buffer_load(x_base, am[None, :, None] * SX + ka, ma, 0)\n                b = gl.amd.cdna4.buffer_load(w_base, bn[None, None, :] * SW + kb, mb, 0)\n                a = gl.convert_layout(a, gl.DotOperandLayout(0, mma, 8))\n                b = gl.convert_layout(b, gl.DotOperandLayout(1, mma, 8))\n                acc = gl.amd.cdna4.mfma(a, b, acc)\n    reduced = gl.sum(acc, 0)\n    out: gl.constexpr = gl.SliceLayout(0, mma)\n    om = gl.arange(0, BM, gl.SliceLayout(1, out))\n    on = gl.arange(0, BN, gl.SliceLayout(0, out))\n    gl.amd.cdna4.buffer_store(\n        ptr=P + split * M * N + tile * BN,\n        offsets=om[:, None] * N + on[None, :],\n        stored_value=reduced,\n        mask=(om[:, None] < M) & (tile * BN + on[None, :] < N),\n    )\n\n\n@gluon.jit\ndef _copy_async_panel(AS, BS, X, W, ax, bw, start):\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(AS, X, ax + start)\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(BS, W, bw + start)\n    gl.amd.cdna4.async_copy.commit_group()\n\n\n@gluon.jit\ndef _project_async(\n    X,\n    W,\n    P,\n    M: gl.constexpr,\n    N: gl.constexpr,\n    K: gl.constexpr,\n    SX: gl.constexpr,\n    SW: gl.constexpr,\n    PITCH: gl.constexpr,\n    BK: gl.constexpr,\n    SPLITS: gl.constexpr,\n    STAGES: gl.constexpr,\n    TRANSPOSED: gl.constexpr,\n    STRIPES: gl.constexpr,\n    BN: gl.constexpr,\n    NW: gl.constexpr,\n):\n    pid = gl.program_id(0).to(gl.uint32)\n    total: gl.constexpr = N // BN * SPLITS\n    stripe = pid % STRIPES\n    pid = stripe * (total // STRIPES) + gl.minimum(stripe, total % STRIPES) + pid // STRIPES\n    tile = pid // SPLITS\n    split = pid % SPLITS\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4, instr_shape=[16, 16, 32], transposed=TRANSPOSED, warps_per_cta=[1, NW]\n    )\n    CHUNKS: gl.constexpr = K // (BK * SPLITS)\n    xb = X + split * CHUNKS * BK\n    wb = W + tile * BN * SW + split * CHUNKS * BK\n    asl: gl.constexpr = gl.SwizzledSharedLayout(8, 1, min(16, BK // 8), [1, 0])\n    bsl: gl.constexpr = gl.SwizzledSharedLayout(8, 1, min(16, BK // 8), [0, 1])\n    fl: gl.constexpr = gl.BlockedLayout([8], [64], [NW], [0])\n    af: gl.constexpr = gl.BlockedLayout([2 if M * BK < 512 else 8], [64], [NW], [0])\n    ai = gl.arange(0, M * BK, af)\n    bi = gl.arange(0, BN * BK, fl)\n    ax = ai // BK * SX + (ai % BK ^ ai // BK % min(16, BK // 8) * 8)\n    bw = bi // BK * SW + (bi % BK ^ bi // BK % min(16, BK // 8) * 8)\n    ax = gl.max_contiguous(gl.multiple_of(ax, 8), 8)\n    bw = gl.max_contiguous(gl.multiple_of(bw, 8), 8)\n    flat_shared: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, [0])\n    as0 = gl.allocate_shared_memory(X.dtype.element_ty, [M * BK], flat_shared)\n    bs0 = gl.allocate_shared_memory(W.dtype.element_ty, [BN * BK], flat_shared)\n    as1 = gl.allocate_shared_memory(X.dtype.element_ty, [M * BK], flat_shared)\n    bs1 = gl.allocate_shared_memory(W.dtype.element_ty, [BN * BK], flat_shared)\n    as2 = gl.allocate_shared_memory(X.dtype.element_ty, [M * BK], flat_shared)\n    bs2 = gl.allocate_shared_memory(W.dtype.element_ty, [BN * BK], flat_shared)\n    as3 = gl.allocate_shared_memory(X.dtype.element_ty, [M * BK], flat_shared)\n    bs3 = gl.allocate_shared_memory(W.dtype.element_ty, [BN * BK], flat_shared)\n    a_stages = (as0, as1, as2, as3)\n    b_stages = (bs0, bs1, bs2, bs3)\n    for i in gl.static_range(STAGES):\n        _copy_async_panel(a_stages[i], b_stages[i], xb, wb, ax, bw, i * BK)\n    acc = gl.zeros((M, BN), gl.float32, mma)\n    for i in gl.static_range(CHUNKS):\n        gl.amd.cdna4.async_copy.wait_group(min(STAGES - 1, CHUNKS - i - 1))\n        ac = a_stages[i % STAGES]\n        bc = b_stages[i % STAGES]\n        da = gl.amd.cdna4.async_copy.load_shared_relaxed(\n            ac._reinterpret(shape=[M, BK], layout=asl), gl.DotOperandLayout(0, mma, 8)\n        )\n        db = gl.amd.cdna4.async_copy.load_shared_relaxed(\n            bc._reinterpret(shape=[BK, BN], layout=bsl), gl.DotOperandLayout(1, mma, 8)\n        )\n        if i + STAGES < CHUNKS:\n            gl.barrier()\n            _copy_async_panel(ac, bc, xb, wb, ax, bw, (i + STAGES) * BK)\n        acc = gl.amd.cdna4.mfma(da, db, acc)\n    om = gl.arange(0, M, gl.SliceLayout(1, mma))\n    on = gl.arange(0, BN, gl.SliceLayout(0, mma))\n    gl.amd.cdna4.buffer_store(\n        ptr=P + split * M * PITCH + tile * BN, offsets=om[:, None] * PITCH + on[None, :], stored_value=acc, cache=\".wt\"\n    )\n\n\n@gluon.jit\ndef _project_prefetch(\n    X,\n    W,\n    P,\n    M: gl.constexpr,\n    N: gl.constexpr,\n    K: gl.constexpr,\n    SX: gl.constexpr,\n    SW: gl.constexpr,\n    PITCH: gl.constexpr,\n    BM: gl.constexpr,\n    BN: gl.constexpr,\n    BK: gl.constexpr,\n    SPLITS: gl.constexpr,\n    GROUP: gl.constexpr,\n    NW: gl.constexpr,\n    AK_LANES: gl.constexpr,\n    UNROLL: gl.constexpr,\n    STRIPES: gl.constexpr,\n    B_COLS: gl.constexpr,\n):\n    pid = gl.program_id(0).to(gl.uint32)\n    TILES: gl.constexpr = gl.cdiv(N, BN * GROUP) * GROUP\n    if STRIPES > 1:\n        stripe = pid % STRIPES\n        local = pid // STRIPES\n        STRIPE_SIZE: gl.constexpr = gl.cdiv(TILES * SPLITS, STRIPES)\n        pid = stripe * STRIPE_SIZE + local\n    tile = pid // (GROUP * SPLITS) * GROUP + pid % GROUP\n    split = pid // GROUP % SPLITS\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4, instr_shape=[16, 16, 32], transposed=M != 16, warps_per_cta=[1, NW]\n    )\n    if NW > 1:\n        al: gl.constexpr = gl.BlockedLayout([1, 8], [64 // AK_LANES, AK_LANES], [NW, 1], [1, 0])\n    else:\n        al: gl.constexpr = gl.BlockedLayout([1, 8], [64 // AK_LANES, AK_LANES], [1, NW], [1, 0])\n    if M == 16:\n        bl: gl.constexpr = gl.DistributedLinearLayout(\n            reg_bases=[[1, 0], [2, 0], [4, 0], [0, 4], [0, 8]],\n            lane_bases=[[8, 0], [16, 0], [32, 0], [64, 0], [0, 1], [0, 2]],\n            warp_bases=[[0, 16]],\n            block_bases=[],\n            shape=[128, 32],\n        )\n    else:\n        bl: gl.constexpr = gl.BlockedLayout([8, B_COLS], [16, 4], [1, NW], [0, 1])\n    am = gl.arange(0, BM, gl.SliceLayout(1, al))\n    ak = gl.arange(0, BK, gl.SliceLayout(0, al))\n    bk = gl.arange(0, BK, gl.SliceLayout(1, bl))\n    bn = gl.arange(0, BN, gl.SliceLayout(0, bl))\n    CHUNKS: gl.constexpr = gl.cdiv(K, BK * SPLITS)\n    split_k = split * CHUNKS * BK\n    x_base = X + split_k\n    w_base = W + tile * BN * SW + split_k\n    ax = am[:, None] * SX + ak[None, :]\n    bw = bn[None, :] * SW + bk[:, None]\n    ma = gl.full((BM, BK), True, gl.int1, al)\n    mb = gl.full((BK, BN), True, gl.int1, bl)\n    if BM > M:\n        ma = ma & (am[:, None] < M)\n    if N % (BN * GROUP) != 0:\n        mb = mb & (tile * BN + bn[None, :] < N)\n    if M == 16:\n        a_smem = gl.allocate_shared_memory(\n            X.dtype.element_ty, [BM, BK], gl.SwizzledSharedLayout(8, 1, 16, order=[1, 0])\n        )\n    acc = gl.zeros((BM, BN), gl.float32, mma)\n    a = gl.amd.cdna4.buffer_load(x_base, ax, ma & ((K % (BK * SPLITS) == 0) | (split_k + ak[None, :] < K)), 0)\n    b = gl.amd.cdna4.buffer_load(w_base, bw, mb & ((K % (BK * SPLITS) == 0) | (split_k + bk[:, None] < K)), 0)\n    for block in range(gl.cdiv(CHUNKS, UNROLL)):\n        for u in gl.static_range(UNROLL):\n            i = block * UNROLL + u\n            if i < CHUNKS:\n                next_a = a\n                next_b = b\n                if i + 1 < CHUNKS:\n                    next_a = gl.amd.cdna4.buffer_load(\n                        x_base,\n                        ax + (i + 1) * BK,\n                        ma & ((K % (BK * SPLITS) == 0) | (split_k + (i + 1) * BK + ak[None, :] < K)),\n                        0,\n                    )\n                    next_b = gl.amd.cdna4.buffer_load(\n                        w_base,\n                        bw + (i + 1) * BK,\n                        mb & ((K % (BK * SPLITS) == 0) | (split_k + (i + 1) * BK + bk[:, None] < K)),\n                        0,\n                    )\n                if M == 16:\n                    a_smem.store(a)\n                    da = a_smem.load(gl.DotOperandLayout(0, mma, 8))\n                else:\n                    da = gl.convert_layout(a, gl.DotOperandLayout(0, mma, 8))\n                db = gl.convert_layout(b, gl.DotOperandLayout(1, mma, 8))\n                acc = gl.amd.cdna4.mfma(da, db, acc)\n                if i + 1 < CHUNKS:\n                    a = next_a\n                    b = next_b\n    om = gl.arange(0, BM, gl.SliceLayout(1, mma))\n    on = gl.arange(0, BN, gl.SliceLayout(0, mma))\n    gl.amd.cdna4.buffer_store(\n        ptr=P + split * M * PITCH + tile * BN,\n        offsets=om[:, None] * PITCH + on[None, :],\n        stored_value=acc,\n        mask=(om[:, None] < M) & (tile * BN + on[None, :] < N),\n        cache=\".wt\",\n    )\n\n\n@gluon.jit\ndef _finish_part(\n    P,\n    G,\n    O,\n    eps,\n    row,\n    M: gl.constexpr,\n    PITCH: gl.constexpr,\n    WIDTH: gl.constexpr,\n    OFFSET: gl.constexpr,\n    SPLITS: gl.constexpr,\n    B: gl.constexpr,\n    NORM: gl.constexpr,\n    VEC: gl.constexpr,\n    LOAD_MODE: gl.constexpr,\n):\n    layout: gl.constexpr = gl.BlockedLayout([VEC], [64], [4], [0])\n    d = gl.arange(0, B, layout)\n    base = P + row * PITCH + OFFSET\n    if M == 16:\n        if LOAD_MODE == 2:\n            value = gl.amd.cdna4.buffer_load(P, row * PITCH + OFFSET + d, d < WIDTH, 0)\n        elif LOAD_MODE == 1:\n            value = gl.amd.cdna4.buffer_load(base, d, d < WIDTH, 0)\n        else:\n            value = gl.load(base + d, d < WIDTH, 0)\n    else:\n        value = gl.full((B,), 0, gl.float32, layout)\n    for s in gl.static_range(1 if M == 16 else 0, SPLITS):\n        if LOAD_MODE == 2:\n            value += gl.amd.cdna4.buffer_load(P, row * PITCH + OFFSET + d + s * M * PITCH, d < WIDTH, 0)\n        elif LOAD_MODE == 1:\n            value += gl.amd.cdna4.buffer_load(base + s * M * PITCH, d, d < WIDTH, 0)\n        else:\n            value += gl.load(P + s * M * PITCH + row * PITCH + OFFSET + d, d < WIDTH, 0)\n    if NORM:\n        value = value.to(gl.bfloat16).to(gl.float32)\n        gamma = gl.load(G + d, d < WIDTH, 0).to(gl.float32)\n        inv_rms = gl.rsqrt(gl.sum(value * value, 0) / WIDTH + eps)\n        value = value * inv_rms * gamma\n    gl.store(O + row * WIDTH + d, value, d < WIDTH)\n\n\n@gluon.jit\ndef _finish(\n    P,\n    QG,\n    KG,\n    QO,\n    KO,\n    RO,\n    eps,\n    M: gl.constexpr,\n    PITCH: gl.constexpr,\n    Q: gl.constexpr,\n    KV: gl.constexpr,\n    R: gl.constexpr,\n    SPLITS: gl.constexpr,\n    BQ: gl.constexpr,\n    BKV: gl.constexpr,\n    BR: gl.constexpr,\n    VEC: gl.constexpr,\n    LOAD_MODE: gl.constexpr,\n    REVERSE: gl.constexpr,\n):\n    row = gl.program_id(0)\n    if M == 16:\n        row = row.to(gl.uint32)\n    part = gl.program_id(1)\n    if REVERSE:\n        part = 2 - part\n    if part == 0:\n        _finish_part(P, QG, QO, eps, row, M, PITCH, Q, 0, SPLITS, BQ, True, VEC, LOAD_MODE)\n    elif part == 1:\n        _finish_part(P, KG, KO, eps, row, M, PITCH, KV, Q, SPLITS, BKV, True, VEC, LOAD_MODE)\n    else:\n        _finish_part(P, QG, RO, eps, row, M, PITCH, R, Q + KV, SPLITS, BR, False, VEC, LOAD_MODE)\n\n\ndef qkv_a_norm(\n    hidden: torch.Tensor,\n    weight: torch.Tensor,\n    q_gamma: torch.Tensor,\n    kv_gamma: torch.Tensor,\n    *,\n    rope_dim: int = 64,\n    eps: float = 1e-05,\n    qo: torch.Tensor,\n    ko: torch.Tensor,\n    ro: torch.Tensor,\n):\n    m, k = hidden.shape\n    q, kv = (q_gamma.numel(), kv_gamma.numel())\n    n = q + kv + rope_dim\n    specialized = (\n        k == 6144\n        and q == 2048\n        and (kv == 512)\n        and (rope_dim == 64)\n        and (m in (2, 4, 8, 16) or (m == 1 and hidden.stride(0) % 8 == 0 and (weight.stride(0) % 8 == 0)))\n    )\n    splits = 6 if m <= 16 else 8\n    pitch = n\n    if specialized and m != 1:\n        pitch = 4096 if m <= 4 else 3072 if m == 8 else 2816\n    partial = torch.empty((splits, m, pitch), device=hidden.device, dtype=torch.float32)\n    if specialized:\n        if hidden.stride(0) % 8 == 0 and weight.stride(0) % 8 == 0:\n            bn = 16 if m <= 4 else 64\n            nw = bn // 16\n            _project_async[triton.cdiv(n, bn) * splits,](\n                hidden,\n                weight,\n                partial,\n                m,\n                n,\n                k,\n                hidden.stride(0),\n                weight.stride(0),\n                pitch,\n                128,\n                splits,\n                4 if m == 8 else 3,\n                m != 16,\n                4 if m >= 8 else 8,\n                bn,\n                nw,\n                num_warps=nw,\n            )\n        else:\n            bn, bk, nw, stripes, b_cols = (32, 128, 2, 4, 4) if m == 16 else (16, 256 if m == 2 else 128, 1, 8, 1)\n            _project_prefetch[triton.cdiv(n, bn) * splits,](\n                hidden,\n                weight,\n                partial,\n                m,\n                n,\n                k,\n                hidden.stride(0),\n                weight.stride(0),\n                pitch,\n                m,\n                bn,\n                bk,\n                splits,\n                1,\n                nw,\n                32 if m == 2 else 16,\n                8 if m == 16 else 2,\n                stripes,\n                b_cols,\n                num_warps=nw,\n            )\n    else:\n        bk, chains, unroll, group = (128, 2, 2, 4) if m <= 8 else (256, 1, 4, 1)\n        _project_wave[triton.cdiv(n, 16 * group) * group * splits,](\n            hidden,\n            weight,\n            partial,\n            m,\n            n,\n            k,\n            hidden.stride(0),\n            weight.stride(0),\n            _ceil_power_of_two(m),\n            16,\n            bk,\n            splits,\n            group,\n            unroll,\n            chains,\n            num_warps=1,\n        )\n    vec = 8 if 3 <= m <= 16 else 4\n    m2_finish = specialized and m == 2\n    load_mode = 2 if m2_finish else int(vec == 8)\n    _finish[m, 3](\n        partial,\n        q_gamma,\n        kv_gamma,\n        qo,\n        ko,\n        ro,\n        eps,\n        m,\n        pitch,\n        q,\n        kv,\n        rope_dim,\n        splits,\n        _ceil_power_of_two(q),\n        _ceil_power_of_two(kv),\n        _ceil_power_of_two(rope_dim),\n        vec,\n        load_mode,\n        m2_finish,\n        num_warps=4,\n        enable_fp_fusion=False,\n    )\n    return (qo, ko, ro)\n\n\ndef run(*, hidden_states, w_qkv_a, q_norm_weight, kv_norm_weight, eps, q_latent, kv_latent, k_rope):\n    \"\"\"Writes q_latent, kv_latent and k_rope: qkv_a_norm on sglang's tensors.\"\"\"\n    qkv_a_norm(\n        hidden_states,\n        w_qkv_a,\n        q_norm_weight,\n        kv_norm_weight,\n        rope_dim=k_rope.shape[1],\n        eps=eps,\n        qo=q_latent,\n        ko=kv_latent,\n        ro=k_rope,\n    )\n"
+      }
+    ]
+  }
+}

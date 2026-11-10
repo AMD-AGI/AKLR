@@ -1,0 +1,161 @@
+{
+  "schema_version": 5,
+  "name": "mla_qkv_a_norm_hidden_dim6144_q_lora_rank2048_kv_lora_rank512_latent_dim2624",
+  "contract_id": "mla_qkv_a_norm@1.0",
+  "description": "sglang's qkv_a projection and latent RMSNorms of an MLA attention with a compressed query, on one rank (the qkv latent forward_absorb_rocm_prepare fetches, and its norms): each token's hidden state times w_qkv_a, the qkv latent; its first q_lora_rank columns, q's latent, and its next kv_lora_rank columns, the KV latent, each times rsqrt(mean(x**2) + eps) of its own columns and its norm weight; its last columns, the RoPE key, as projected.",
+  "op_type": "deepseek_common",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call."
+    },
+    "hidden_dim": {
+      "type": "const",
+      "value": 6144,
+      "description": "The hidden size: the projection's reduction."
+    },
+    "q_lora_rank": {
+      "type": "const",
+      "value": 2048,
+      "description": "q's latent: the qkv latent's first part."
+    },
+    "kv_lora_rank": {
+      "type": "const",
+      "value": 512,
+      "description": "The KV latent: the qkv latent's next part."
+    },
+    "latent_dim": {
+      "type": "const",
+      "value": 2624,
+      "description": "A qkv latent row: q's latent, the KV latent, then the RoPE key."
+    },
+    "rope_dim": {
+      "type": "const",
+      "value": 64,
+      "description": "The RoPE key: the qkv latent's last part."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "hidden_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's hidden state, the attention's input."
+    },
+    "w_qkv_a": {
+      "shape": [
+        "latent_dim",
+        "hidden_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "fused_qkv_a_proj_with_mqa's weight: row c gives the qkv latent's column c."
+    },
+    "q_norm_weight": {
+      "shape": [
+        "q_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": "0.58"
+      },
+      "description": "q_a_layernorm's weight, one per column of q's latent."
+    },
+    "kv_norm_weight": {
+      "shape": [
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": "0.58"
+      },
+      "description": "kv_a_layernorm's weight, one per column of the KV latent."
+    },
+    "eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to each mean square: both norms' variance_epsilon."
+    }
+  },
+  "outputs": {
+    "q_latent": {
+      "shape": [
+        "n_tokens",
+        "q_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's q latent, normalized: q_b_proj's and the indexer's input."
+    },
+    "kv_latent": {
+      "shape": [
+        "n_tokens",
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's KV latent, normalized: its KV cache row's latent part."
+    },
+    "k_rope": {
+      "shape": [
+        "n_tokens",
+        "rope_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's RoPE key as projected, before RoPE."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 8
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"qkv_a projection and latent RMSNorms for GLM-5.2 decode on gfx950, tuned at TP8 for 8 tokens.\n\nEach token's 6144-wide hidden state times the bf16 fused_qkv_a_proj_with_mqa weight (replicated:\nthe same on every rank, at any TP size) into its 2624-wide qkv latent, split-K into fp32 partials\nsummed in a fixed order and rounded to bf16; its first 2048 columns (q's latent) and next 512 (the\nKV latent) each times rsqrt(mean(x**2) + eps) and their norm weight in fp32, written in bf16; its\nlast 64 (the RoPE key) written as projected.\n\"\"\"\n\nfrom triton.runtime.jit import ConstexprFunction\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n# next_power_of_2 as a constexpr function, for host code and compile-time expressions alike\n_ceil_power_of_two = triton.next_power_of_2\nif not isinstance(_ceil_power_of_two, ConstexprFunction):\n    _ceil_power_of_two = triton.constexpr_function(_ceil_power_of_two)\n\n_next_power_of = _ceil_power_of_two\n\n\n@gluon.jit\ndef _load_mfma_operands(X, W, ao, bo, am, bm, BUFFER: gl.constexpr, mma: gl.constexpr):\n    if BUFFER:\n        a = gl.amd.cdna4.buffer_load(X, ao, am, 0)\n        b = gl.amd.cdna4.buffer_load(W, bo, bm, 0)\n    else:\n        a = gl.load(X + ao, am, 0)\n        b = gl.load(W + bo, bm, 0)\n    a = gl.convert_layout(a, gl.DotOperandLayout(0, mma, 8))\n    b = gl.convert_layout(b, gl.DotOperandLayout(1, mma, 8))\n    return (a, b)\n\n\n@gluon.jit\ndef _project_grouped(\n    X,\n    W,\n    P,\n    M: gl.constexpr,\n    N: gl.constexpr,\n    K: gl.constexpr,\n    SX: gl.constexpr,\n    SW: gl.constexpr,\n    SPLITS: gl.constexpr,\n    BK: gl.constexpr,\n    BN: gl.constexpr,\n    BUFFER: gl.constexpr,\n    K_LANES: gl.constexpr,\n    A_LANES: gl.constexpr,\n    UNROLL: gl.constexpr,\n    GROUP_N: gl.constexpr,\n    REBASE_EACH_TILE: gl.constexpr,\n    PS: gl.constexpr,\n    PR: gl.constexpr,\n    ROTATE: gl.constexpr,\n    STORE: gl.constexpr = \"\",\n):\n    BM: gl.constexpr = _next_power_of(M)\n    pid = gl.program_id(0).to(gl.uint32)\n    split = pid // GROUP_N % SPLITS\n    pn = pid // (GROUP_N * SPLITS) * GROUP_N + pid % GROUP_N\n    if ROTATE:\n        split = (split + pn * ROTATE) % SPLITS\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[1, 1])\n    la: gl.constexpr = gl.BlockedLayout([1, 8], [64 // A_LANES, A_LANES], [1, 1], [1, 0])\n    lb: gl.constexpr = gl.BlockedLayout([8, 1], [K_LANES, 64 // K_LANES], [1, 1], [0, 1])\n    mi = gl.arange(0, BM, gl.SliceLayout(1, la))\n    ni = gl.arange(0, BN, gl.SliceLayout(0, lb))\n    ka = gl.arange(0, BK, gl.SliceLayout(0, la))\n    kb = gl.arange(0, BK, gl.SliceLayout(1, lb))\n    STEPS: gl.constexpr = gl.cdiv(K, SPLITS * BK)\n    acc0 = gl.zeros((BM, BN), gl.float32, mma)\n    gl.static_assert(UNROLL == 2 or UNROLL == 4)\n    acc1 = gl.zeros((BM, BN), gl.float32, mma)\n    if UNROLL == 4:\n        acc2 = gl.zeros((BM, BN), gl.float32, mma)\n        acc3 = gl.zeros((BM, BN), gl.float32, mma)\n    if not REBASE_EACH_TILE:\n        xb = X + split * STEPS * BK\n        wb = W + pn * BN * SW + split * STEPS * BK\n    else:\n        xb = X\n        wb = W\n    for step_base in range(gl.cdiv(STEPS, UNROLL)):\n        for delta in gl.static_range(UNROLL):\n            step = step_base * UNROLL + delta\n            am = gl.full((BM, BK), True, gl.int1, la)\n            if M != BM:\n                am = am & (mi[:, None] < M)\n            bm = gl.full((BK, BN), True, gl.int1, lb)\n            if N % (BN * GROUP_N) != 0:\n                bm = bm & (pn * BN + ni[None, :] < N)\n            if K % (SPLITS * BK) != 0 or STEPS % UNROLL != 0:\n                am = am & ((split * STEPS + step) * BK + ka[None, :] < K) & (step < STEPS)\n                bm = bm & ((split * STEPS + step) * BK + kb[:, None] < K) & (step < STEPS)\n            if REBASE_EACH_TILE:\n                xb = X + (split * STEPS + step) * BK\n                wb = W + pn * BN * SW + (split * STEPS + step) * BK\n                ao = mi[:, None] * SX + ka[None, :]\n                bo = ni[None, :] * SW + kb[:, None]\n            else:\n                start = step * BK\n                ao = mi[:, None] * SX + start + ka[None, :]\n                bo = ni[None, :] * SW + start + kb[:, None]\n            a, b = _load_mfma_operands(xb, wb, ao, bo, am, bm, BUFFER, mma)\n            if delta == 0:\n                acc0 = gl.amd.cdna4.mfma(a, b, acc0)\n            elif delta == 1:\n                acc1 = gl.amd.cdna4.mfma(a, b, acc1)\n            elif delta == 2:\n                acc2 = gl.amd.cdna4.mfma(a, b, acc2)\n            else:\n                acc3 = gl.amd.cdna4.mfma(a, b, acc3)\n    acc0 = acc0 + acc1\n    if UNROLL == 4:\n        acc0 = acc0 + acc2\n        acc0 = acc0 + acc3\n    mr = gl.arange(0, BM, gl.SliceLayout(1, mma))\n    nr = pn * BN + gl.arange(0, BN, gl.SliceLayout(0, mma))\n    if M == BM and N % (BN * GROUP_N) == 0:\n        gl.store(P + split * PS + mr[:, None] * PR + nr[None, :], acc0, cache_modifier=STORE)\n    else:\n        gl.store(\n            P + split * PS + mr[:, None] * PR + nr[None, :],\n            acc0,\n            (mr[:, None] < M) & (nr[None, :] < N),\n            cache_modifier=STORE,\n        )\n\n\n@gluon.jit\ndef _copy_panel(AS, BS, X, W, ao, bo):\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(AS, X, ao)\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(BS, W, bo)\n    gl.amd.cdna4.async_copy.commit_group()\n\n\n@gluon.jit\ndef _read_panel(AS, BS, mma: gl.constexpr, PENDING: gl.constexpr, REFILL: gl.constexpr = True):\n    gl.amd.cdna4.async_copy.wait_group(PENDING)\n    a = gl.amd.cdna4.async_copy.load_shared_relaxed(AS, gl.DotOperandLayout(0, mma, 8))\n    b = gl.amd.cdna4.async_copy.load_shared_relaxed(BS, gl.DotOperandLayout(1, mma, 8))\n    if REFILL:\n        gl.inline_asm_elementwise(\n            \"s_waitcnt lgkmcnt(0)\\n v_mov_b32 $0, 0\",\n            constraints=\"=v,~{memory}\",\n            args=[],\n            dtype=gl.int32,\n            is_pure=False,\n            pack=1,\n        )\n    return (a, b)\n\n\n@gluon.jit\ndef _project_async_small(\n    X,\n    W,\n    P,\n    M: gl.constexpr,\n    N: gl.constexpr,\n    K: gl.constexpr,\n    SX: gl.constexpr,\n    SW: gl.constexpr,\n    SPLITS: gl.constexpr,\n    PS: gl.constexpr,\n    PR: gl.constexpr,\n    ROTATE: gl.constexpr,\n    STORE: gl.constexpr,\n):\n    gl.static_assert(M == 4 or M == 8)\n    DEPTH: gl.constexpr = 6 if M == 4 else 5\n    gl.static_assert(N % 64 == 0 and K % (SPLITS * 64) == 0)\n    pid = gl.program_id(0).to(gl.uint32)\n    split = pid // 4 % SPLITS\n    pn = pid // (4 * SPLITS) * 4 + pid % 4\n    if ROTATE:\n        split = (split + pn * ROTATE) % SPLITS\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[1, 1])\n    if M == 4:\n        la: gl.constexpr = gl.BlockedLayout([1, 2], [2, 32], [1, 1], [1, 0])\n    else:\n        la: gl.constexpr = gl.BlockedLayout([1, 8], [8, 8], [1, 1], [1, 0])\n    lb: gl.constexpr = gl.BlockedLayout([8, 1], [8, 8], [1, 1], [0, 1])\n    sa: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, [1, 0])\n    sb: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, [0, 1])\n    a_slots = ()\n    b_slots = ()\n    for stage in gl.static_range(DEPTH):\n        a_slots += (gl.allocate_shared_memory(gl.bfloat16, [M, 64], sa),)\n        b_slots += (gl.allocate_shared_memory(gl.bfloat16, [64, 16], sb),)\n    mi = gl.arange(0, M, gl.SliceLayout(1, la))\n    ni = gl.arange(0, 16, gl.SliceLayout(0, lb))\n    ka = gl.arange(0, 64, gl.SliceLayout(0, la))\n    kb = gl.arange(0, 64, gl.SliceLayout(1, lb))\n    ao = mi[:, None] * SX + ka[None, :]\n    bo = ni[None, :] * SW + kb[:, None]\n    STEPS: gl.constexpr = K // (SPLITS * 64)\n    xb = X + split * STEPS * 64\n    wb = W + pn * 16 * SW + split * STEPS * 64\n    for stage in gl.static_range(DEPTH):\n        _copy_panel(a_slots[stage], b_slots[stage], xb, wb, ao + stage * 64, bo + stage * 64)\n    acc = gl.zeros((M, 16), gl.float32, mma)\n    MAIN_STEPS: gl.constexpr = (STEPS - DEPTH) // DEPTH * DEPTH\n    for tile_base in range(0, MAIN_STEPS, DEPTH):\n        for stage in gl.static_range(DEPTH):\n            a, b = _read_panel(a_slots[stage], b_slots[stage], mma, DEPTH - 1)\n            next_k = (tile_base + stage + DEPTH) * 64\n            _copy_panel(a_slots[stage], b_slots[stage], xb, wb, ao + next_k, bo + next_k)\n            acc = gl.amd.cdna4.mfma(a, b, acc)\n    for stage in gl.static_range(STEPS - MAIN_STEPS):\n        a, b = _read_panel(\n            a_slots[stage % DEPTH],\n            b_slots[stage % DEPTH],\n            mma,\n            min(DEPTH - 1, STEPS - MAIN_STEPS - 1 - stage),\n            MAIN_STEPS + stage + DEPTH < STEPS,\n        )\n        if MAIN_STEPS + stage + DEPTH < STEPS:\n            next_k = (MAIN_STEPS + stage + DEPTH) * 64\n            _copy_panel(a_slots[stage % DEPTH], b_slots[stage % DEPTH], xb, wb, ao + next_k, bo + next_k)\n        acc = gl.amd.cdna4.mfma(a, b, acc)\n    mr = gl.arange(0, M, gl.SliceLayout(1, mma))\n    nr = pn * 16 + gl.arange(0, 16, gl.SliceLayout(0, mma))\n    gl.store(P + split * PS + mr[:, None] * PR + nr[None, :], acc, cache_modifier=STORE)\n\n\n@gluon.jit\ndef _merge_projection(\n    P,\n    row,\n    WIDTH: gl.constexpr,\n    OFFSET: gl.constexpr,\n    SPLITS: gl.constexpr,\n    NW: gl.constexpr,\n    VEC: gl.constexpr,\n    PS: gl.constexpr,\n    PR: gl.constexpr,\n    LOAD: gl.constexpr = \"\",\n):\n    layout: gl.constexpr = gl.BlockedLayout([1, VEC], [1, 64], [1, NW], [1, 0])\n    s = gl.arange(0, _next_power_of(SPLITS), gl.SliceLayout(1, layout))\n    d = gl.arange(0, _next_power_of(WIDTH), gl.SliceLayout(0, layout))\n    partial = gl.load(\n        P + s[:, None] * PS + row * PR + OFFSET + d[None, :],\n        (s[:, None] < SPLITS) & (d[None, :] < WIDTH),\n        0,\n        cache_modifier=LOAD,\n    )\n    x = gl.sum(partial, 0).to(gl.bfloat16).to(gl.float32)\n    return (d, x)\n\n\n@gluon.jit\ndef _finish_two(\n    P,\n    QG,\n    KG,\n    QO,\n    KO,\n    RO,\n    eps,\n    Q: gl.constexpr,\n    KV: gl.constexpr,\n    R: gl.constexpr,\n    SPLITS: gl.constexpr,\n    NW: gl.constexpr,\n    VEC: gl.constexpr,\n    PS: gl.constexpr,\n    PR: gl.constexpr,\n    LOAD: gl.constexpr = \"\",\n    INTERLEAVE: gl.constexpr = False,\n):\n    if INTERLEAVE:\n        row = gl.program_id(0) // 2\n        group = gl.program_id(0) % 2\n    else:\n        row = gl.program_id(0)\n        group = gl.program_id(1)\n    if group == 0:\n        qd, qx = _merge_projection(P, row, Q, 0, SPLITS, NW, VEC, PS, PR, LOAD)\n        q_gamma = gl.load(QG + qd, qd < Q, 0).to(gl.float32)\n        qx = qx * gl.rsqrt(gl.sum(qx * qx, 0) / Q + eps) * q_gamma\n        gl.store(QO + row * Q + qd, qx.to(gl.bfloat16), qd < Q)\n    else:\n        d, x = _merge_projection(P, row, KV + R, Q, SPLITS, NW, VEC, PS, PR, LOAD)\n        gamma = gl.load(KG + d, d < KV, 0).to(gl.float32)\n        rms = gl.rsqrt(gl.sum(gl.where(d < KV, x * x, 0), 0) / KV + eps)\n        y = x * rms * gamma\n        gl.store(KO + row * KV + d, y.to(gl.bfloat16), d < KV)\n        gl.store(RO + row * R + d - KV, x.to(gl.bfloat16), (d >= KV) & (d < KV + R))\n\n\ndef qkv_a_norm(\n    hidden: torch.Tensor,\n    weight: torch.Tensor,\n    q_gamma: torch.Tensor,\n    kv_gamma: torch.Tensor,\n    *,\n    rope_dim: int = 64,\n    eps: float = 1e-05,\n    qo: torch.Tensor,\n    ko: torch.Tensor,\n    ro: torch.Tensor,\n):\n    m, k = hidden.shape\n    q, kv = (q_gamma.numel(), kv_gamma.numel())\n    n = q + kv + rope_dim\n    splits = 3 if m <= 2 else 6\n    pitch = _next_power_of(n) if m in (4, 8, 16) else n\n    row_major = m == 2\n    ps, pr = (pitch, splits * pitch) if row_major else (m * pitch, pitch)\n    partials = torch.empty((splits * m * pitch,), device=hidden.device, dtype=torch.float32)\n    if m in (4, 8) and n % 64 == 0 and (k % (splits * 128) == 0) and (k >= splits * 384):\n        _project_async_small[n // 16 * splits,](\n            hidden,\n            weight,\n            partials,\n            m,\n            n,\n            k,\n            hidden.stride(0),\n            weight.stride(0),\n            splits,\n            ps,\n            pr,\n            ROTATE=4 if m == 8 else 0,\n            STORE=\".wt\",\n            num_warps=1,\n        )\n    else:\n        _project_grouped[triton.cdiv(n, 64) * 4 * splits,](\n            hidden,\n            weight,\n            partials,\n            m,\n            n,\n            k,\n            hidden.stride(0),\n            weight.stride(0),\n            splits,\n            BK=256,\n            BN=16,\n            BUFFER=m != 8,\n            K_LANES=16,\n            A_LANES=32 if m == 16 else 16,\n            UNROLL=4 if m == 16 else 2,\n            GROUP_N=4,\n            REBASE_EACH_TILE=m != 16,\n            PS=ps,\n            PR=pr,\n            ROTATE=4 if m == 8 else 1 if m == 16 else 0,\n            STORE=\".wt\" if m in (4, 16) else \"\",\n            num_warps=1,\n        )\n    _finish_two[(m * 2,) if m in (4, 8, 16) else (m, 2)](\n        partials,\n        q_gamma,\n        kv_gamma,\n        qo,\n        ko,\n        ro,\n        eps,\n        q,\n        kv,\n        rope_dim,\n        splits,\n        8,\n        4,\n        ps,\n        pr,\n        LOAD=\".cs\" if m in (4, 8, 16) else \"\",\n        INTERLEAVE=m in (4, 8, 16),\n        num_warps=8,\n        enable_fp_fusion=False,\n    )\n    return (qo, ko, ro)\n\n\ndef run(*, hidden_states, w_qkv_a, q_norm_weight, kv_norm_weight, eps, q_latent, kv_latent, k_rope):\n    \"\"\"Writes q_latent, kv_latent and k_rope: qkv_a_norm on sglang's tensors.\"\"\"\n    qkv_a_norm(\n        hidden_states,\n        w_qkv_a,\n        q_norm_weight,\n        kv_norm_weight,\n        rope_dim=k_rope.shape[1],\n        eps=eps,\n        qo=q_latent,\n        ko=kv_latent,\n        ro=k_rope,\n    )\n"
+      }
+    ]
+  }
+}
