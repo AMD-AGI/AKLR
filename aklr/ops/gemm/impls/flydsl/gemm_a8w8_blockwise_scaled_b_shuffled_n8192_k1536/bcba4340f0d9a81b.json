@@ -1,6 +1,6 @@
 {
   "schema_version": 5,
-  "name": "gemm_a8w8_blockwise_scaled_b_shuffled_n7168_k16384",
+  "name": "gemm_a8w8_blockwise_scaled_b_shuffled_n8192_k1536",
   "contract_id": "gemm_a8w8_blockwise_scaled@1.0",
   "description": "fp8 gemm dequantized per block: a fp32 scale per 128 x 128 of b, per 1 x 128 of a, K-major or MN-major. operand_format is '<a>:<b>'; 'none:preshuffled' is aiter's 16 x 16 shuffle_weight b with a raw column-major a_scale. Set a_scale.is_row_major to pass a row-major a_scale with a shuffled b.",
   "op_type": "gemm",
@@ -11,22 +11,22 @@
     },
     "n": {
       "type": "const",
-      "value": 7168,
+      "value": 8192,
       "description": "Output columns."
     },
     "k": {
       "type": "const",
-      "value": 16384,
+      "value": 1536,
       "description": "Reduction length."
     },
     "scale_rows": {
       "type": "const",
-      "value": 56,
+      "value": 64,
       "description": "Weight-scale rows."
     },
     "scale_columns": {
       "type": "const",
-      "value": 128,
+      "value": 12,
       "description": "Scale columns."
     }
   },
@@ -98,32 +98,122 @@
   "workloads": [
     {
       "axes": {
-        "m": 1
+        "m": 7
       }
     },
     {
       "axes": {
-        "m": 2
+        "m": 14
       }
     },
     {
       "axes": {
-        "m": 4
+        "m": 21
       }
     },
     {
       "axes": {
-        "m": 8
+        "m": 28
       }
     },
     {
       "axes": {
-        "m": 16
+        "m": 35
       }
     },
     {
       "axes": {
-        "m": 32
+        "m": 42
+      }
+    },
+    {
+      "axes": {
+        "m": 49
+      }
+    },
+    {
+      "axes": {
+        "m": 56
+      }
+    },
+    {
+      "axes": {
+        "m": 70
+      }
+    },
+    {
+      "axes": {
+        "m": 84
+      }
+    },
+    {
+      "axes": {
+        "m": 98
+      }
+    },
+    {
+      "axes": {
+        "m": 112
+      }
+    },
+    {
+      "axes": {
+        "m": 126
+      }
+    },
+    {
+      "axes": {
+        "m": 140
+      }
+    },
+    {
+      "axes": {
+        "m": 154
+      }
+    },
+    {
+      "axes": {
+        "m": 168
+      }
+    },
+    {
+      "axes": {
+        "m": 182
+      }
+    },
+    {
+      "axes": {
+        "m": 196
+      }
+    },
+    {
+      "axes": {
+        "m": 210
+      }
+    },
+    {
+      "axes": {
+        "m": 224
+      }
+    },
+    {
+      "axes": {
+        "m": 256
+      }
+    },
+    {
+      "axes": {
+        "m": 512
+      }
+    },
+    {
+      "axes": {
+        "m": 1024
+      }
+    },
+    {
+      "axes": {
+        "m": 2048
       }
     }
   ],
