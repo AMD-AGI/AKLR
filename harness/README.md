@@ -22,10 +22,63 @@ The initial layout is intentionally small: the skills are usable guidance, and
 The lifecycle is governed by [rules.md](rules.md), [gates.md](gates.md), and
 [gate-config.md](gate-config.md).
 
+## Installation
+
+`harness/` is the `aklr` plugin: 14 skills and the `something-important` subagent. The
+repository root holds its marketplace, so one repository serves Claude Code, Codex and Cursor.
+Install it separately in each agent you use. Inside an AKLR checkout you need none of this; see
+[Inside this repository](#inside-this-repository).
+
+### Claude Code
+
+```text
+/plugin marketplace add AMD-AGI/AKLR
+/plugin install aklr@aklr
+```
+
+Skills run as `/aklr:<skill>`, for example `/aklr:aklr-kb`, and the subagent is
+`aklr:something-important`. Update with `/plugin marketplace update aklr`. On a machine without
+a GitHub SSH key, set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` first.
+
+### Codex
+
+```bash
+codex plugin marketplace add AMD-AGI/AKLR
+codex plugin add aklr@aklr
+```
+
+Start a new session, then run skills as `$aklr:<skill>`. Update with
+`codex plugin marketplace upgrade aklr`. Codex plugins carry no subagents, so
+`something-important` is available only inside an AKLR checkout.
+
+### Cursor
+
+```bash
+agent plugin marketplace add https://github.com/AMD-AGI/AKLR
+```
+
+This adds the marketplace to your Cursor account; install `aklr` from it under Plugins. To try
+it for one session without installing, run `agent --plugin-dir <AKLR checkout>/harness`.
+
+### Inside this repository
+
+Nothing to install: each agent loads the harness from the checkout, so edits take effect at once.
+
+- Claude Code loads the plugin from `.claude/skills/aklr`, a symlink to `harness/`, once the
+  repository is trusted (open it interactively once; worktrees share the main checkout's trust).
+  Start Claude Code at the repository root. After editing a skill run `/reload-plugins`.
+- Codex and Cursor read the skills from `.agents/skills`, a symlink to `skills/`, by bare name.
+  Codex reads agents from `.codex/agents`, Cursor from `.cursor/agents/<name>.md`, a symlink to
+  `agents/<name>.md`; add one for every new agent.
+- An installed `aklr` plugin is turned off here (`.claude/settings.json`, `.codex/config.toml`),
+  so its cached copy never shadows the checkout.
+
 ## Layout
 
-`harness/` is the `aklr` plugin. `.claude-plugin/plugin.json` is its manifest for Claude Code
-(Codex also reads it), `.cursor-plugin/plugin.json` its manifest for Cursor.
+`.claude-plugin/plugin.json` is the plugin's manifest for Claude Code (Codex also reads it),
+`.cursor-plugin/plugin.json` its manifest for Cursor. The marketplaces that list it are
+`.claude-plugin/marketplace.json` (Claude Code and Codex) and `.cursor-plugin/marketplace.json`
+(Cursor) at the repository root.
 
 - `skills/`: every AKLR agent skill, `skills/<name>/SKILL.md`, kept only here.
 - `agents/`: subagent definitions the skills start, `agents/<name>.md`. Codex reads only TOML
@@ -33,16 +86,5 @@ The lifecycle is governed by [rules.md](rules.md), [gates.md](gates.md), and
   `agents/<name>.md`, so the prompt is written once.
 - `scripts/`: scripts the skills run, such as `forge_task/`.
 - `tests/`: tests of the scripts.
-
-How each agent loads it inside this repository:
-
-- Claude Code loads the plugin from `.claude/skills/aklr`, a symlink to `harness/`, once the
-  repository is trusted (open it interactively once; worktrees share the main checkout's trust).
-  Start Claude Code at the repository root. Skills are `/aklr:<skill>`, the subagent is
-  `aklr:something-important`; after editing a skill run `/reload-plugins`.
-- Codex and Cursor read the skills natively from `.agents/skills`, a symlink to `skills/`, so
-  edits take effect at once. Cursor reads each agent from `.cursor/agents/<name>.md`, a symlink to
-  `agents/<name>.md`; add one for every new agent. Codex installs plugins as cached copies
-  that do not follow edits, and Cursor would load each skill twice, so neither loads the plugin here.
 
 This first version does not add or modify GitHub Actions workflows.
