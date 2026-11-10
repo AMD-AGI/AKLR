@@ -1,11 +1,11 @@
 ---
-title: "Grouped GEMM — tile, occupancy and boundary bodies per pass, priced before building"
+title: "Grouped GEMM — tile, occupancy and boundary bodies per layout, priced before building"
 kind: topic
 lever: grouped_tile_pricing
-ops: [grouped_gemm]
+ops: [grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp8, mxfp4]
-regimes: [forward, dgrad, wgrad, variable-k, small-m, ragged-tail, register-saturated]
+regimes: ["M split per group", transposed-operand, variable-k, small-m, ragged-tail, register-saturated]
 flydsl: 0.3.2
 sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/grouped_gemm/grouped_gemm_fp8_kernel.py:2487
@@ -20,7 +20,9 @@ sources:
 > Grouped GEMMs on gfx950 reuse the dense 256×256 tile, and where it was measured their main loop ran at dense
 > speed. What the group dimension changes is the price of everything around the loop: more tiles per FLOP,
 > more ragged tiles, a per-tile prologue that looks up the group. This card prices the tile and the waves per
-> SIMD per pass, the small-M dgrad tile, boundary half tiles and tail bodies, and the per-tile fixed cost.
+> SIMD per layout, the tile for few tokens per group, boundary half tiles and tail bodies, and the per-tile fixed
+> cost. MoE expert GEMMs are the NT layout; in a sorted-token kernel tile-M is also the sort unit
+> (`grouped_sorted_tokens.md` §5).
 > Round counting, split-K, the generic fixed-cost fit and the carry cost of a body variant are in
 > `../gemm/grid_pricing.md`; register classes and the K loop are in
 > `../gemm/mainloop.md`. "FP8" and "MX4" are Primus-Turbo's
@@ -30,14 +32,16 @@ sources:
 > them for direction and order of magnitude, not as targets.
 
 ## Route here when
-- You want a bigger tile, more waves per SIMD, or a smaller tile for a short pass.
-- A dgrad with few tokens per group is far from roofline.
+- You want a bigger tile, more waves per SIMD, or a smaller tile for few tokens per group.
+- An M-split grouped GEMM with few tokens per group (measured on dgrad and forward) is far from roofline.
 - Output dimensions are not multiples of 256 and the last tile of a group or of N is mostly padding.
 - A grouped kernel runs its main loop at dense speed and still trails dense by 10% or more.
+- A MoE expert GEMM's tiles run only a few K iterations (a short K, as stage 2 has at a small inter dim): §6.
 
 **Somewhere else if:** the lookup and the dead workgroups that add to the per-tile cost →
 `grouped_group_mapping.md`; tile order and tiles per workgroup → `grouped_scheduling.md`;
-short-contraction wgrad → `grouped_wgrad.md`; MX scale layout → `grouped_lowprec.md`.
+a short per-group contraction (K varying per group) → `grouped_variable_k.md`; MX scale layout →
+`grouped_lowprec.md`.
 
 ## 1. The register wall comes before LDS
 256×256 is the largest tile that fits, for both large-tile loop designs (`../gemm/mainloop.md` §1):
@@ -63,11 +67,11 @@ short-contraction wgrad → `grouped_wgrad.md`; MX scale layout → `grouped_low
   `group_segment_fixed_size`, and the `s_barrier` count. Do not time a candidate that spills
   (`../gemm/mainloop.md` §10; how to dump without running: `../flydsl/gemm.md` § mainloop §10).
 
-## 2. Waves per SIMD: decide per pass
+## 2. Waves per SIMD: decide per layout
 - On fp8 per-tensor, the 4-wave design (1 wave per SIMD) won every variable-K wgrad point against 8 waves (2
-  per SIMD), a minority of the NN dgrad points and almost no forward points (`grouped_wgrad.md` §8). It
-  pays where both operands are transpose-read (`ds_read_b64_tr_b8`; mechanism in `grouped_wgrad.md` §8);
-  the forward pass reads both operands K-contiguous.
+  per SIMD), a minority of the NN dgrad points and almost no forward points (`grouped_variable_k.md` §8). It
+  pays where both operands are transpose-read (`ds_read_b64_tr_b8`; mechanism in `grouped_variable_k.md` §8);
+  the NT layout (a forward pass, every MoE expert GEMM) reads both operands K-contiguous.
 - The fastest grouped kernel measured is that wgrad: 4 waves, 1 wave per SIMD, 256 AGPR accumulators, a full
   160 KB of LDS, 0.13 synchronization instructions per MFMA against 0.93 for an 8-wave MXFP8 NT *(field, E6)*.
 - **1 wave per SIMD with AGPR accumulators is a direction to test, not a rule.**
@@ -92,8 +96,9 @@ short-contraction wgrad → `grouped_wgrad.md`; MX scale layout → `grouped_low
   the rendezvous of the last K steps, which issue no new fill but still make the fills issued two steps earlier
   visible across waves, raced (`grouped_correctness.md` §8).
 
-## 3. Small-M dgrad: when BLOCK_M = 128 pays
-- With few tokens per group a dgrad grid of 256-row tiles leaves CUs idle. Halving BLOCK_M doubles the M tiles,
+## 3. Few tokens per group: when BLOCK_M = 128 pays
+- With few tokens per group an M-split grid of 256-row tiles (measured on dgrad and forward below) leaves CUs
+  idle. Halving BLOCK_M doubles the M tiles,
   and it pays only while the whole 128-row grid still fits in one round:
   `G · ceil(pm / 128) · ceil(N / 256) ≤ N_CU` with `pm = M_total // G` (the host sees no per-group length).
   Turbo's fp8 dgrad takes a fixed BLOCK_M = 128 config inside that gate and races 256-row candidates outside
@@ -148,15 +153,17 @@ quadrants' MFMAs and LDS reads are dead. Pick the variant with a scalar branch o
   of the groups) cost 0.8–1.0 points of band locality. Peeling the boundary strip into a second dispatch was 2.9%
   slower overall and 4.6% on the worst config (MXFP8 NT): the strip loses the A slab it shared in L2. That is about
   edge strips. Running a ragged last dispatch round as a second launch of smaller tiles is a different lever, which
-  won and lost on dense GEMMs (`../gemm/grid_pricing.md` §1–§2); *(field, E31)* under AKLR's timer a second
-  launch after a dense GEMM costs ~4 µs (`../gemm/small_m.md` §1).
+  won and lost on dense GEMMs (`../gemm/grid_pricing.md` §1–§2); *(field, E31)* under AKLR's timer up to
+  measurement profile 18 a second launch after a dense GEMM cost ~4 µs; recheck it under profile 19
+  (`../gemm/small_m.md` §1).
 
 ## 5. Tail bodies: compute the hit rate first
 The carry cost of a body variant (code size paid by every shape in the module) is in
 `../gemm/grid_pricing.md` §8. What the group dimension adds is that the hit rate depends on the
-pass and on the token histogram:
-- A ragged wgrad output (`OUT_M`, `OUT_N`) is a compile-time property: every call hits the tail body.
-- A ragged forward/dgrad M tail exists per group and depends on the group lengths. *(field, E32)* Under the scored
+layout and on the token histogram:
+- A ragged variable-K output (`OUT_M`, `OUT_N`) is a compile-time property: every call hits the tail body.
+- A ragged M tail of an M-split layout (MoE expert GEMMs, forward, dgrad) exists per group and depends on the
+  group lengths. *(field, E32)* Under the scored
   skew 19 of 529 M blocks (3.59%) had a remainder ≤ 128 rows; under balanced tokens, none. With the tail tile
   an estimated ~17% faster the estimated bound was 0.6–0.7 points on each of two cells. Measured, the two skewed cells gained 0.44
   and 0.30 points, the two balanced cells of the same module lost 0.31 and 0.34 to the carry, and the
@@ -184,25 +191,25 @@ writes it `a · n_kblocks + F`; its pitfalls:
 - So the levers are F (lookup, decode, store overlap, boundary bodies, kernel-argument preload:
   `../gemm/small_m.md` §6) or longer tiles per workgroup (`grouped_scheduling.md` §6–§7), not
   the main loop.
-- For wgrad the grid is `G × tiles per group`, so G sets the last-round fill: 144 tiles per group fill 18.0
+- For K varying per group the grid is `G × tiles per group`, so G sets the last-round fill: 144 tiles per group fill 18.0
   rounds of 256 CUs at G = 32 and 13.5 at G = 24. Count rounds for every G you deploy
   (`../gemm/grid_pricing.md` §1).
 
 ## 7. Store-bound short contractions
 A variable-K wgrad writes G full output slices whatever the token split, so groups with few tokens make it
 store-bound. The short-contraction blocking with non-temporal C stores, and its crossover, which scales with
-tiles per group rather than with a token count, are in `grouped_wgrad.md` §6.
+tiles per group rather than with a token count, are in `grouped_variable_k.md` §6.
 
 ## Verify
 - The compile-only dump shows no spill and the expected barrier count before any timing.
-- The waves-per-SIMD choice is per pass, with the 4-wave sync gate passed before a 4-wave result is read.
+- The waves-per-SIMD choice is per layout, with the 4-wave sync gate passed before a 4-wave result is read.
 - A small-M tile is used only inside the one-round gate, and the grid bound follows BLOCK_M.
 - Every boundary variant keeps the race surface (or proves its changed counts at small K and wide N) and the
   spill count, and its hit rate is computed on the scored distribution.
 - A K sweep separates F from P before work on the main loop.
 
 ## Related
-`grouped_group_mapping.md` · `grouped_scheduling.md` · `grouped_wgrad.md` ·
+`grouped_group_mapping.md` · `grouped_scheduling.md` · `grouped_variable_k.md` ·
 `grouped_lowprec.md` · `grouped_correctness.md` · `grouped_measurement.md` ·
 `../gemm/grid_pricing.md` · `../gemm/mainloop.md` · `../gemm/datapath.md` §6 ·
 `../gemm/attribution.md` §7

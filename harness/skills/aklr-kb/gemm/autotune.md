@@ -2,10 +2,10 @@
 title: "GEMM — per-shape autotune that cannot regress, and a launch path that costs nothing"
 kind: method
 lever: gemm_autotune
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [fp8, mxfp4, mxfp8, bf16]
-regimes: [prefill, training, cuda-graph]
+regimes: [large-M, cuda-graph]
 flydsl: 0.3.2
 sources:
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/gemm/gemm_fp8_kernel.py

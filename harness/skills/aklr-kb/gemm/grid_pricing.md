@@ -2,10 +2,10 @@
 title: "GEMM — price the grid, the tile and each structural idea before building it"
 kind: topic
 lever: gemm_grid_pricing
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp4, mxfp6]
-regimes: [small-M, ragged-last-round, large-K, padded-K]
+regimes: [small-M, "M 256-4096 (bf16)", ragged-last-round, large-K, padded-K]
 flydsl: 0.3.2
 sources:
   - ROCm/FlyDSL@dd8373349:kernels/gemm/gemm_a16w16_gfx950.py:71
@@ -65,10 +65,34 @@ How to read it:
 | Reading | What it means | Direction |
 |---|---|---|
 | `tiles < NCU` | every workgroup walks all of K serially; latency is set by K, not M | split K, or shrink the tile |
-| `last_round == slots` (`eff ≈ 1`) | no idle slot to recover; intensity is the limit | **widen** the tile |
+| `last_round == slots` (`eff ≈ 1`) | no idle slot to recover; intensity is the limit | **widen** the tile, to one that still fills whole rounds |
 | `last_round < slots` | CUs idle through the last round | **narrow** the tile (or split) so the last round fills |
 
-Narrowing pays even when it does not remove a round — filling a partial last round is enough.
+These directions were measured on compute- or feed-bound tiles at large M (E1–E3). On the small-M rows measured that
+stream a read-once B from HBM (`small_m.md` §2) every way to a larger grid lost: idle CUs there were not bandwidth to
+recover.
+A full round is what the arithmetic aims at, not a measured optimum: race the grids around it (`small_m.md` §3).
+
+**At M 256–4096 the final campaign kernels for bf16 launched no more workgroups than CUs, one full round wherever
+the tile count allowed it.** *(field, E34)* On eight bf16 GEMMs (N 64–28672, K 512–6144; each campaign started from a
+`torch.matmul` call, and the library kernel it dispatched was not recorded) every final configuration launched 224 or
+256 workgroups (counted from the final kernels' tile tables); only N=7168 at m=4096 (448
+tiles) and N=28672 at m ≥ 1024 walked more tiles than that on a persistent grid of at most 256. Leaving the round
+lost both ways *(field, E35)*: two rounds of narrower tiles (N=2048, m=4096: 37.13 against 30.35 µs; N=3584, m=4096:
+19.60 against 16.32; N=64, m=2048 on 512 workgroups: 9.68 against 8.61), and half a round of wider ones (N=2048,
+m=2048 on 128 workgroups: +7.4 and +7.7 µs, against 19.8 µs for the kernel). At N=7168, m=512 a 128×256 persistent
+build on 112 workgroups read 12.46 against 8.09, but the same build also lost 15–18% at m=1024 on a full round, so
+that loss cannot be put on the half round alone. At narrow N the round fills with tiles smaller than the MFMA:
+*(field, E36)* at N=64, 8×8 and 16×8 output tiles (the MFMA's extra rows and columns alias rows already loaded;
+only the real ones are stored) took m=256 and 512 from 64 and 128 workgroups to 256 (estimated from the tiles) and
+gained 35.4% and 15.4%.
+
+Narrowing to fill a partial last round paid on an MXFP4 training GEMM (E3 below), but on two bf16 GEMMs at M
+256–4096 it lost in all six cases tried: *(field, E37)* at N=7168, K=512, 224-wide tiles that took m=2048 from 224 to
+256 workgroups (8 waves in uneven 4/3 column clusters) read 20.71–21.04 against 17.38 µs, and the same with the C
+store dropped (14.887 both), so the loss was in the store; at m=4096 (448 to 512 tiles) 37.5–38.5 against 31.7; at
+N=28672, 224-wide tiles read 14.99 / 22.22 / 38.22 / 65.67 against 14.71 / 18.55 / 34.22 / 57.89 µs at m=256 / 512 /
+1024 / 2048. Race it.
 Widening full rounds pays even at the cost of a pipeline stage. *(field, E1)* On a feed-bound bf16 GEMM, halving the
 rounds with taller tiles (3 → 2 stages to fit LDS) gained 7–8%: each CU streams fewer A+B bytes.
 *(field, E2, E3)* On related MXFP6/MXFP4 GEMM kernels, widening `tile_n` 256→384 on forward shapes was worth
@@ -86,7 +110,8 @@ while a split-K library kernel ran ~32 µs at M=8. The grid alone explains it �
 from a trace before reading any counter.
 
 The usual rule of thumb, "≥1024 workgroups and a multiple of 8", is not sufficient: 1152 tiles at one
-workgroup per CU is 4.5 rounds with the last round half idle.
+workgroup per CU needs five estimated dispatch rounds, with 128/256 workgroups in the last
+round (4.5 full-round equivalents); this is a grid arithmetic estimate, not measured residency.
 
 A narrower tile also costs reuse: LDS/global reads per tile scale with `tile_m + tile_n`, MFMA work with
 `tile_m · tile_n`. A geometry change that helps one shape moves others the other way, so evaluate it
@@ -98,6 +123,23 @@ across the whole shape set you are scored on.
 `s`, because partial-sum bytes and reduce traffic scale with `s`. Keep `s = 1` in the candidate set and
 choose by measurement with a margin, so a split can never regress a shape. "Few tiles" is only one case
 of this gate — a grid that is full but ragged (1.5 or 3.5 rounds) qualifies too.
+
+The gate prices a split that adds workgroups. **At a full round a split can instead keep the workgroup count and
+widen the tile**. The estimated logical operand loads **per workgroup** are
+(64 + 64) · K/4 against (32 + 32) · K, not loads per output. For a 64×64 final output,
+32×32/split1 and 64×64/split4 both launch four workgroups: operand elements per final
+output per K are 1/16 versus 1/32 (per partial output, 1/16 versus 1/128).
+These counts do not establish HBM traffic or a speedup; `eff` does not see this reuse trade-off, so race it. *(field, E38)* On narrow-N bf16 GEMMs at a full round of 256
+workgroups, each folded in the same launch (`wait_free_fold.md`): at N=64, K=4096, m=4096, 64×64 tiles with split 4
+replaced 32×32 tiles with split 1 — single driver runs read about 10.99 → 10.41 µs. Timed together with the other
+changes made with it, it gained +1.9% at m=4096 and +0.22% [−0.77, +1.21] over five Points, and the fold's own cost
+could not be separated. Spacing the tiles' counters 256 B apart added +4.3% at that m to the kernel it was added to
+(9.99–10.03 µs); at N=256, K=6144, 32×32 tiles with split 2 replaced 16×32 at m=512 (8.77–8.79 → 8.37,
+then 7.95–7.97 µs with exchange arrival and the owner's partial kept in registers) and 64×64 with split 4
+replaced 32×32 at m=1024. Those rounds also changed rotation/PRO; their gains are not split-alone effects. It lost at N=128,
+K=6144, m=2048 (14.37 µs at best against 13.06–13.08), at N=64, m=1024 (6.98 against 5.61) and at N=256, m=256
+(6.46 against 6.29–6.31). At N=64, m=2048 it was within the machine's drift (7.40 against 7.52, then 7.51 against
+7.48): no clear gain.
 
 **Price.** The split recovers at most the idle part of the launch, `t · (1 − eff)`. The reduce costs
 roughly `(s · M · N · partial_bytes + M · N · out_bytes) / BW`. If the reduce costs more than the idle
@@ -143,16 +185,19 @@ Refinements, in the order they usually pay:
   kernel in the same language, not a framework op.
 - **Or reduce in the same launch, without any workgroup waiting for another**: each split publishes its partial and
   counts in on its tile's counter, and the split that arrives last folds every partial in split order, which is
-  bitwise reproducible (`small_m.md` §4). Forms that wait — reducer workgroups polling their tile's
+  bitwise reproducible (`small_m.md` §4). A counter-free form tags each partial with the launch and lets a split
+  that finds every peer's tag fold; it saves the per-call zeroing launch, and holds only while each split reads
+  its peers' tags after its own stores are acknowledged and no leftover scratch word equals this launch's tag
+  (`wait_free_fold.md` § Folding without a counter: launch-tagged slots). Forms that wait — reducer workgroups polling their tile's
   flags, or every split summing a share of the tile once all have arrived — rely on the whole grid being resident
-  and can fail on a stream limited to part of the CUs. The arrival fold runs on one CU, so race it against a separate
-  reduce kernel per shape.
+  and can fail on a stream limited to part of the CUs. The counter's fold runs on one CU, so race it against a
+  separate reduce kernel per shape.
 
 **The reduce kernel itself.** It has many more workgroups than CUs, so occupancy is not its limit; the
 number of waves per workgroup only decides whether the sum crosses waves (barriers and LDS round-trips).
 Try one wave per workgroup first. *(field, E14)* An attention decode's combine kernel, written in Triton, went
 from 4 waves to 1: `s_barrier` 5→0, time −3.7…−6.7%. One wave stops paying where each output merges many
-partials: race wider workgroups there (`../attention/decode_split_kv.md` §1). A changed reduction tree
+partials: race wider workgroups there (`../attention/split_kv.md` §1). A changed reduction tree
 is not bit-identical to the old one — gate it against an independent reference, not old-vs-new max diff.
 
 ## 3. Asymmetric operand widths: the best tile is not square
@@ -200,6 +245,13 @@ With an 8-wave workgroup only 2/4/6/8 waves per SIMD are reachable: cutting from
 (per-SIMD tier 4 → 5) buys nothing. Align a register-reduction target to a reachable tier before chasing
 it.
 
+**At M 256–4096, the two-workgroups-per-CU builds tried on four bf16 GEMMs all lost to the incumbent kernels, but
+only N=28672 timed a one-per-CU control on the same tile, and there two per CU won.** *(field, E39)* At N=7168,
+K=512 18–25% slower (m=2048, 4096; tile not recorded); at N=6144, K=1536 21.45 against 15.10 µs (m=512) and 25.84
+against 21.08 (m=1024) on smaller tiles; at N=28672, K=512 128×128 tiles at two per CU read 14.87–162.57 against
+12.42–110.36 µs for the canonical 256-wide tiles over m 256–4096, and 18.10–234.98 at one per CU; at N=128, K=6144,
+m=2048 15.49–17.92 against 12.96.
+
 The compiler's `; Occupancy:` comment in the ISA does **not** apply this quantization. Example:
 `llc -mcpu=gfx950` reports a kernel using 96 VGPRs with `amdgpu-flat-work-group-size=512,512` as
 occupancy 5; the CU can hold only two such workgroups, i.e. 4 waves per SIMD.
@@ -221,7 +273,12 @@ GEMM, `v_mfma_scale_f32_32x32x64_f8f6f4` occupies the matrix pipe exactly twice 
 `v_mfma_scale_f32_16x16x128_f8f6f4` (`SQ_VALU_MFMA_BUSY_CYCLES / SQ_INSTS_MFMA` = 64 vs 32), so pipe time per
 FLOP is unchanged; it needs 4× the accumulator registers per instruction and leaves fewer independent
 accumulation chains to hide dependencies. Swapping only the main-loop MFMA of that grouped GEMM was 0.8–3.0%
-slower on 12 of 12 shapes. Use the larger shape to fix K granularity, not to go faster.
+slower on 12 of 12 shapes. Use the larger shape to fix K granularity, not to go faster, or to fit a tile in the
+register file: *(field, E45)* on a bf16 GEMM (N=6144, K=1536, m=4096) a 256×384 tile spilled in its K loop with
+16×16×32 MFMAs (256 VGPRs, 54 `scratch_` instructions, in a timing build that stored C directly) and fitted with
+32×32×16 and C staged through LDS in two halves (256 VGPRs, no scratch), at 67.08 µs against the library's 63.9–64.1;
+issuing the copies after the first K slice and a row-pair swizzle brought it to the library's time (63.86–63.90
+against 63.94 µs, 254 VGPRs). 32×32×16 tiles lost at m 512–2048.
 
 Whether an instruction exists on the target is a five-second check:
 `echo '<instruction>' | llvm-mc -arch=amdgcn -mcpu=gfx950 -show-encoding`.
@@ -241,7 +298,12 @@ time at K=2944 (11.5 blocks), 1.7% at K=32768, and the table's TF/s order was es
 share. By the fit, removing one K-block of `F` is worth ~4–5% over that table — a projection, not a measurement,
 but already larger than the 1–2% that swizzle and candidate-table changes returned *(field, E22)*.
 
-Kernel-argument preload (`small_m.md` §6) trims `F` at any M: *(field, E23)* −0.2 to −0.6% at M ≈ 900–16k, not only at decode M.
+Kernel-argument preload (`small_m.md` §6) trims `F` at any M: *(field, E23)* −0.2 to −0.6% at M ≈ 900–16k, not only at small M.
+*(field, E40)* At M 256–4096 the ablation rows that carried it paid +0.7% to +2.8% on each of eight bf16 GEMMs
+(several bundled other changes: an XCD remap at N=256, a constant tile map at N=3584, a new m=2048 tile route at
+N=2048; at N=7168, K=512 +1.0% at m=4096 to +4.8% at m=256), but at N=28672, K=512, m=2048 it
+was slower in every pair (55.90–56.31 against 55.26–55.74 µs) with only the preload block changed in the ISA: time
+it per M bucket.
 
 Two traps when reading such a table:
 - **Compare absolute µs, not TF/s, across padded shapes.** TF/s counts useful FLOPs, so padding waste
@@ -313,8 +375,23 @@ A second tile shape trades arithmetic intensity for CU fill. Price both sides be
   and with no workgroup barrier between tiles (C staged per wave), beat one tile per workgroup by 3–5%.
 - **Race a start delay on half of each XCD's workgroups** (`s_sleep` before the first fill when
   `pid // 8` is odd; a few thousand clocks). *(field, E29, E30)* +1–3% at 6–20 tiles per workgroup, null at ~60.
+  *(field, E41)* At N=28672, K=512 the best delay count moved with M and with other changes: none at m ≤ 512, 1 at
+  m=1024, 5 at m=2048 (58.30–58.41 against 59.85–60.03 for 3) until the XCD order changed and 2 won. At N=7168, m=4096
+  (448 tiles: 64 workgroups walk one tile fewer), delaying only those 64 took 31.39–31.54 to 29.57–29.9 µs (+6.1% at
+  that m in the ablation); the same delay lost at m=2048 and 1024, one tile each.
+- **Cut a partial last round into shorter tail items inside the same persistent launch.** *(field, E42)* At
+  N=28672, K=512, m=2048 (896 tiles of 256×256, 3.5 rounds): 768 head tiles plus 256 items of 128 rows, 61.91 →
+  59.47 µs back to back (+5.3% at that m in an ablation row that also carried a per-m start-delay choice); at
+  m=1024 (1.75 rounds), one head tile and one 192-row tail item per workgroup lost alone (34.09–34.14 against
+  33.87–33.96 µs) and paid +6.5% once the start delay was raced with it.
+- **In a one-round launch, race dropping the next-tile prefetch the persistent body carries.** *(field, E43)* At
+  N=28672, K=512, skipping the last two K-blocks' next-tile DMAs and the last block's wait took m=512 from 20.3 to
+  19.2 µs and left m=256 unchanged (15.40–15.48 against 15.40).
 - **Keeping B resident in LDS does not pay when B already sits in L2.** *(field, E31)* At K=128 with a sub-MB B, a
-  persistent kernel holding each workgroup's B slice gained ~1% at M=16384 and lost 10–22% at M=9397.
+  persistent kernel holding each workgroup's B slice gained ~1% at M=16384 and lost 10–22% at M=9397. *(field, E44)*
+  At K=512 (N=7168, m=512) keeping the B panel in LDS for two 64-row sub-tiles per workgroup lost 12.5–19.3%; with
+  the stores removed it still read 7.37 µs against 6.46 µs for the incumbent with its stores removed, so the loss was
+  not in the stores. Whether B already sat in L2 was not measured.
 
 In FlyDSL: `../flydsl/gemm.md` § grid_pricing §10.
 
@@ -327,7 +404,7 @@ In FlyDSL: `../flydsl/gemm.md` § grid_pricing §10.
 ## Related
 `workflow.md` (order of operations) · `schedule_and_locality.md` (wave
 placement, XCD order, scheduling) · `autotune.md` (racing the candidates) ·
-`small_m.md` (split-K and tiles at decode sizes)
+`small_m.md` (split-K and tiles at M ≤ 256)
 
 ## Evidence
 
@@ -367,3 +444,15 @@ AKLR's bf16 GEMM schema of that N and K.
 - E31 [2026-10, gfx950, FlyDSL 0.3.2, N=2, AKLR graph timer, best of 2 medians of 3, same process] persistent kernel keeping each workgroup's B slice in LDS against the tiled kernel: m=16384 15.02 µs (repeats 15.04, 15.08) against 15.21 (−1.2%); m=9397 11.44–12.70 against 10.44 µs (+9.6% to +21.6%); B is 1536 × 128 bf16 = 384 KB (computed) (gemm_n1536_k128 forge run, iter 2; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n1536_k128/forge_experiments/lessons/iter_002.md:23)
 - E32 [2026-09, gfx950, FlyDSL ?, N=5, the round's probe script: CUDA events around 20 back-to-back calls, best of 5 reps after a warm-up loop, no L2 flush] N=2880, K=32768 fixed, M scanned, unsplit at every M (the kernel's own split-K choice): time per tile × 256 = 266.9 µs at 132 tiles (`eff` 0.52), 240.2 at 156, 217.1 at 192 (`eff` 0.75; M=4096, 162.86 µs), 210.7 at 228, 199.9 at 240 (`eff` 0.94), 197.8 at 252 (`eff` 0.98), 311.5 at 264 (two rounds), 289.0 at 288; 217.1 against 197.8 = +9.8%, 199.9 against 197.8 = +1.1% (Turbo MXFP4 dense GEMM, 256×256 tiles, gpt-oss out_proj wgrad shape at M=4096; campaign 20260925_083359 round 1; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260925_083359/rounds/round-01/deep_raw.jsonl:5906)
 - E33 [2026-10, gfx950, FlyDSL 0.3.2, N=1 per arm, driver on AKLR's graph timer and AKLR's inputs, and an in-process probe on randn inputs with an L2 flush before each call] split-K partials as four 14-bit integers on one shared power-of-two scale (2 dwords per 4 values) against 4 values per 3 dwords, on a fold in which every split summed a share of the tile: driver m=512 92.97 → 91.44 µs, m=256 59.43 → 59.15; probe 99.98 → 98.19 and 65.07 → 63.76; peak error 0.656 → 0.659 (m=512) and 0.646 → 0.679 (m=256) of the contract's bound; on AKLR's inputs the kept kernel read 0.649 / 0.680 against torch's 0.649 / 0.666 (bf16 GEMM n6144 k16384, 256×192 and 256×96 tiles, split 4 and 8; local:/shared_nfs/kyle/moe/k3six/runs/gemm_l/workspace/forge_experiments/lessons/iter_008.md:21; local:/shared_nfs/kyle/moe/k3six/runs/gemm_l/workspace/forge_experiments/lessons/iter_021.md:14)
+- E34 [2026-11, gfx950, FlyDSL 0.3.2, N=1 per run (each campaign's final kernel file), code reading; workgroup counts computed from the tables] final per-m tiles at m 256–4096: N=64 K=4096 8×8 / 16×8 / 16×16 / 32×16, and 64×64 split 4 at m=4096; N=128 K=6144 8×16 / 16×16 / 32×16 / 32×32; N=256 K=6144 16×16, 32×32 split 2, 64×64 split 4 (256 workgroups at every m of these three); N=3584 K=512 64×64 / 64×128 / 128×128 (224) and 128×224 / 256×224 (256); N=2048 K=2048 and N=6144 K=1536 256 at every m they serve (N=6144 m=2048 left on the library); N=7168 K=512 224 tiles at m ≤ 2048 with `GRID = min(_CUS, TILES)`; N=28672 K=512 a persistent grid `G` ≤ 256 (bf16 GEMMs, trans_b, each campaign started from a torch.matmul call whose library kernel was not recorded; local:/shared_nfs/kyle/geak/gemm8big/gn64_k4096/tx/gn64_k4096_kernel_final.py:21-26; local:/shared_nfs/kyle/geak/gemm8big/gn128_k6144/tx/gn128_k6144_kernel_after_refinalize.py:22-27; local:/shared_nfs/kyle/geak/gemm8big/gn256_k6144/tx/gn256_k6144_kernel_final.py:23-27; local:/shared_nfs/kyle/geak/gemm8big/gn3584_k512/tx/gn3584_k512_kernel_after_refinalize.py:34-115; local:/shared_nfs/kyle/geak/gemm8big/gn2048_k2048/tx/gn2048_k2048_kernel_final.py:28-34; local:/shared_nfs/kyle/geak/gemm8big/gn6144_k1536/tx/gn6144_k1536_kernel_final.py:23-46; local:/shared_nfs/kyle/geak/gemm8big/gn7168_k512/tx/gn7168_k512_kernel_final.py:30-38; :473; local:/shared_nfs/kyle/geak/gemm8big/gn28672_k512/tx/gn28672_k512_kernel_after_refinalize.py:167)
+- E35 [2026-11, gfx950, FlyDSL 0.3.2, N=1–5, AKLR graph timer: agents' interleaved in-process probes (5 reps or pairs) except N=64 (one driver --bench-mode run per arm)] N=2048 K=2048: m=4096 on 128×128 tiles (512 workgroups, two rounds) +6.772 µs (37.125 vs 30.353), m=2048 on 256×128 (128 workgroups) +7.707 and +7.364 µs, the kernel's bench reading 19.808 µs at m=2048; N=3584 K=512 m=4096: two-round 128×224 tiles 19.599 vs 16.317 µs; N=64 K=4096 m=2048: 16×16 tiles (512 workgroups) 9.676 vs 8.608 for 16×32 (256); N=7168 K=512 m=512: 128×256 persistent pipe (112 workgroups) 12.46 vs 8.09, the same pipe at m=1024 (224 workgroups) 13.01 / 12.72 vs 11.07 (local:/shared_nfs/kyle/geak/gemm8big/gn2048_k2048/run/workspace/forge_experiments/lessons/iter_017.md:13-18; :5; local:/shared_nfs/kyle/geak/gemm8big/gn3584_k512/run/workspace/forge_experiments/lessons/iter_008.md:7; local:/shared_nfs/kyle/geak/gemm8big/gn64_k4096/run/workspace/forge_experiments/lessons/iter_001.md:11; :13; local:/shared_nfs/kyle/geak/gemm8big/gn7168_k512/run/workspace/forge_experiments/lessons/iter_004.md:19-21)
+- E36 [2026-11, gfx950, FlyDSL 0.3.2, N=3, forge-loop ablation ladder (recorded), 3 pairs, driver --bench-mode] sub-16 output tiles at m=256/512, with A-first loads at larger m in the same round: +10.78% [+10.66, +10.90], m=256 +35.43%, m=512 +15.40%; the MFMA's rows and columns past the tile alias rows already loaded, and a predicated store writes only the valid lanes (bf16 GEMM N=64, K=4096; local:/shared_nfs/kyle/geak/gemm8big/gn64_k4096/run/workspace/forge_experiments/ablation.md:14; local:/shared_nfs/kyle/geak/gemm8big/gn64_k4096/run/workspace/forge_experiments/ablation.json:116; :118; local:/shared_nfs/kyle/geak/gemm8big/gn64_k4096/run/workspace/forge_experiments/lessons/iter_002.md:9)
+- E37 [2026-11, gfx950, FlyDSL 0.3.2, N=1–3, agents' interleaved in-process probes on AKLR's graph timer] N=7168 K=512, 256×224 persistent pipe (4×2 waves, uneven 4 / 3 column clusters, bitwise equal): m=2048 20.71–21.04 vs canonical 17.375, m=4096 37.54–38.53 vs 31.73; with C stores dropped m=2048 14.887 for both tiles, m=4096 27.839 vs 27.345; N=28672 K=512, TN=224: m=256 14.99 vs 14.71, m=512 22.22 vs 18.55, m=1024 38.22 vs 34.22, m=2048 65.67 vs 57.89 (local:/shared_nfs/kyle/geak/gemm8big/gn7168_k512/run/workspace/forge_experiments/lessons/iter_003.md:6-11; local:/shared_nfs/kyle/geak/gemm8big/gn28672_k512/run/workspace/forge_experiments/lessons/iter_005.md:9-16)
+- E38 [2026-11, gfx950, FlyDSL 0.3.2, N=1–10, single driver runs (N=64), agents' interleaved in-process A/B on AKLR's graph timer, medians of 3–10 rounds (N=128, N=256)] N=64 K=4096 m=4096: HEAD (32×32, whole K, 256 workgroups) about 10.99 µs, 64×64 split 4 folded in the launch (grid (m_tiles, 1, S)) 10.409 / 10.411, with 256 B counter spacing 9.986 / 10.025; whole-round ladder rows (3 pairs, driver --bench-mode): fold-introducing round +0.22% [−0.77, +1.21] over five m, m=4096 +1.89%; fold-deletion arm reported as not separable, no cost given; a subsequent counter-spacing round against a different parent m=4096 +4.34%; m=1024 best split 6.975 vs 5.61, m=2048 7.399–7.407 early against HEAD 7.52 at the session's start, later 7.507–7.513 against a HEAD re-time of 7.478 (keep gate failed three times); N=256 K=6144 (whole rounds also changed rotation/PRO and exchange with own-partial retention; not isolated split effects): m=512 incumbent 16×32 tiles 8.773–8.787, split 2 on 32×32 8.371, with an exchange arrival 7.945–7.968 (incumbent 8.363–8.385 in that run); m=1024 64×32 split 2 11.225–11.242 vs 11.536–11.550, then 64×64 split 4; m=256 best split 6.456 vs 6.29–6.31; N=128 K=6144 m=2048 best split 14.370 vs canonical 13.06–13.08 (local:/shared_nfs/kyle/geak/gemm8big/gn64_k4096/run/workspace/forge_experiments/lessons/iter_006.md:3; :12; local:/shared_nfs/kyle/geak/gemm8big/gn64_k4096/run/workspace/forge_experiments/lessons/iter_007.md:34; local:/shared_nfs/kyle/geak/gemm8big/gn64_k4096/tx/gn64_k4096_kernel_final.py:454; local:/shared_nfs/kyle/geak/gemm8big/gn64_k4096/run/workspace/forge_experiments/ablation.md:17-18; local:/shared_nfs/kyle/geak/gemm8big/gn64_k4096/run/workspace/forge_experiments/ablation.json:199; :235; local:/shared_nfs/kyle/geak/gemm8big/gn64_k4096/run/workspace/forge_experiments/lessons/iter_008.md:5; :31; :39-41; :54-59; local:/shared_nfs/kyle/geak/gemm8big/gn256_k6144/run/workspace/forge_experiments/lessons/iter_017.md:59; local:/shared_nfs/kyle/geak/gemm8big/gn256_k6144/run/workspace/forge_experiments/lessons/iter_018.md:51; :65; local:/shared_nfs/kyle/geak/gemm8big/gn256_k6144/run/workspace/forge_experiments/lessons/iter_019.md:7-9; :14; :22; local:/shared_nfs/kyle/geak/gemm8big/gn256_k6144/run/workspace/forge_experiments/lessons/iter_020.md:34-51; local:/shared_nfs/kyle/geak/gemm8big/gn128_k6144/run/workspace/forge_experiments/lessons/iter_019.md:28-37)
+- E39 [2026-11, gfx950, FlyDSL 0.3.2, N=1–5, agents' interleaved probes on AKLR's graph timer (N=7168, N=6144, N=128) and driver --bench-mode (N=28672)] two workgroups per CU: N=7168 K=512 −18.06% (m=2048) and −24.69% (m=4096), −20.05% for a second arm at m=2048; N=6144 K=1536 m=512 21.45 vs 15.10 (64×96 tiles), m=1024 25.84 vs 21.08 (128×96); the N=7168 arms' tile is not recorded and the plan's controls were not run; N=28672 K=512 128×128 tiles 14.87 / 27.07 / 44.40 / 81.89 / 162.57 vs canonical 12.42 / 18.13 / 34.09 / 55.47 / 110.36 at m=256…4096, against 18.10 / 34.14 / 60.23 / 110.91 / 234.98 for the same 128×128 tiles at one workgroup per CU; on 256×128 BK 32 tiles two per CU 16.63 / 23.57 / 43.58 / 72.64 / 140.82 against one per CU 16.63 / 29.03 / 50.05 / 86.06 / 180.27; N=128 K=6144 m=2048 15.489–17.923 vs 12.956 (local:/shared_nfs/kyle/geak/gemm8big/gn7168_k512/run/workspace/forge_experiments/lessons/iter_007.md:12-15; local:/shared_nfs/kyle/geak/gemm8big/gn6144_k1536/run/workspace/forge_experiments/lessons/iter_006.md:8-18; local:/shared_nfs/kyle/geak/gemm8big/gn28672_k512/run/workspace/forge_experiments/lessons/iter_010.md:8-23; local:/shared_nfs/kyle/geak/gemm8big/gn128_k6144/run/workspace/forge_experiments/lessons/iter_016.md:16-20)
+- E40 [2026-11, gfx950, FlyDSL 0.3.2, N=3, forge-loop ablation ladders, 3 pairs, driver --bench-mode; the m=2048 pairs by driver --bench-mode, 3 alternating pairs] kernarg preload rows: N=64 +2.69% [+1.75, +3.63]; N=128 +2.24% (A's pointer only), then +0.67% with all three pointers; N=256 +1.88% (with a shift-and-mask XCD remap); N=3584 +1.27% (with a constant tile map); N=7168 +2.77% [+2.68, +2.86], m=256 +4.79% … m=4096 +1.02%; N=28672 +0.70% (all m but 2048); N=6144 +1.11%; N=2048 +1.80% (with a routing change); N=28672 m=2048 preload 55.90 / 56.04 / 56.31 vs 55.26 / 55.61 / 55.74, ISA differing only by the preload block and its alignment (local:/shared_nfs/kyle/geak/gemm8big/gn64_k4096/run/workspace/forge_experiments/ablation.md:19; local:/shared_nfs/kyle/geak/gemm8big/gn128_k6144/run/workspace/forge_experiments/ablation.md:16; :22; local:/shared_nfs/kyle/geak/gemm8big/gn256_k6144/run/workspace/forge_experiments/ablation.md:17; local:/shared_nfs/kyle/geak/gemm8big/gn3584_k512/run/workspace/forge_experiments/ablation.md:26; local:/shared_nfs/kyle/geak/gemm8big/gn7168_k512/run/workspace/forge_experiments/ablation.md:15; local:/shared_nfs/kyle/geak/gemm8big/gn7168_k512/run/workspace/forge_experiments/ablation.json:128-132; local:/shared_nfs/kyle/geak/gemm8big/gn28672_k512/run/workspace/forge_experiments/ablation.md:20; local:/shared_nfs/kyle/geak/gemm8big/gn6144_k1536/run/workspace/forge_experiments/ablation.md:17; local:/shared_nfs/kyle/geak/gemm8big/gn2048_k2048/run/workspace/forge_experiments/ablation.md:14; local:/shared_nfs/kyle/geak/gemm8big/gn28672_k512/run/workspace/forge_experiments/lessons/iter_011.md:20-22)
+- E41 [2026-11, gfx950, FlyDSL 0.3.2, N=1–5, driver --bench-mode (N=28672) and an interleaved probe on AKLR's graph clock, 5 readings (N=7168); ablation: 3 pairs] N=28672 K=512 odd workgroups of each XCD sleep `_STAGGER[m]` times first: table 0 / 0 / 1 / 2 at m=256 / 512 / 1024 / 2048, 3 above; m=2048 stagger 3 60.03 / 59.85, 4 58.94 / 58.92, 5 58.30–58.41, 6 59.56 / 59.65, 7 63.79, 8 65.39; after the strided XCD map, stagger 2 54.38–54.86 vs 55.38; N=7168 K=512 m=4096: workgroups 192–255 sleep before their first DMA, delay 115 29.57, 127 29.6–29.9 vs 31.39–31.54, ablation m=4096 +6.15%; at m=2048 17.32–21.19 vs 17.13 and at m=1024 11.11–13.28 vs 11.08 (local:/shared_nfs/kyle/geak/gemm8big/gn28672_k512/tx/gn28672_k512_kernel_after_refinalize.py:31-34; local:/shared_nfs/kyle/geak/gemm8big/gn28672_k512/run/workspace/forge_experiments/lessons/iter_003.md:34; local:/shared_nfs/kyle/geak/gemm8big/gn28672_k512/run/workspace/forge_experiments/lessons/iter_013.md:30; local:/shared_nfs/kyle/geak/gemm8big/gn7168_k512/run/workspace/forge_experiments/lessons/iter_004.md:6-8; :11-18; local:/shared_nfs/kyle/geak/gemm8big/gn7168_k512/run/workspace/forge_experiments/ablation.json:161)
+- E42 [2026-11, gfx950, FlyDSL 0.3.2, N=2–3, driver --bench-mode, back-to-back A/B; ablation: 3 pairs] N=28672 K=512 m=2048: plan H=768 head tiles, 256 tail items of 128 rows, 62.08 → 59.99, back to back 59.47 vs 61.91, ablation m=2048 +5.25% (the row also chose the stagger per m); m=1024 fixed plan (one 256-row head, one 192-row tail per workgroup): 34.14 / 34.09 vs 33.96 / 33.87 alone, ablation of the round with its stagger +6.51% at m=1024 (local:/shared_nfs/kyle/geak/gemm8big/gn28672_k512/run/workspace/forge_experiments/lessons/iter_003.md:8-12; local:/shared_nfs/kyle/geak/gemm8big/gn28672_k512/run/workspace/forge_experiments/ablation.json:118; local:/shared_nfs/kyle/geak/gemm8big/gn28672_k512/run/workspace/forge_experiments/lessons/iter_012.md:6-17; local:/shared_nfs/kyle/geak/gemm8big/gn28672_k512/run/workspace/forge_experiments/ablation.json:323)
+- E43 [2026-11, gfx950, FlyDSL 0.3.2, N=3, driver --bench-mode (warmup 3, 20 iterations), ms] N=28672 K=512 m=512: next-tile prefetch skipped when every workgroup runs one item (K-blocks 6 and 7 issue no DMA, K-block 7 drops its mid-block wait and barrier) 0.0203 → 0.01920 ms; m=256 0.01540–0.01548 against 0.01540 for the build before it (local:/shared_nfs/kyle/geak/gemm8big/gn28672_k512/run/workspace/forge_experiments/lessons/iter_002.md:3; :9; :11-13)
+- E44 [2026-11, gfx950, FlyDSL 0.3.2, N=4–5, interleaved in-process probe on AKLR's graph clock, medians of 5 readings] N=7168 K=512 m=512, B panel kept in LDS for two 64-row sub-tiles per workgroup: −12.5% to −19.3% against the incumbent's 7.296–7.299 µs; with its stores removed (timing only) 7.372, −1.0% against the incumbent with its stores and +14% against the incumbent with its stores removed (6.459) (local:/shared_nfs/kyle/geak/gemm8big/gn7168_k512/run/workspace/forge_experiments/lessons/iter_012.md:5-6; :9-22)
+- E45 [2026-11, gfx950, FlyDSL 0.3.2, N=1–3, medians of 4–8 alternating graph readings, ISA dumps] 256×384 tile at m=4096: first BK 64 build with 16×16×32 MFMAs and a direct per-lane C store (a timing proxy) `.vgpr_count` 256, 164 B scratch, 54 `scratch_` instructions with spills inside the K loop; with 32×32×16 and C staged through LDS in two halves `.vgpr_count` 256, 0 AGPRs, 0 `scratch_`, 67.08 against the library's 63.87–64.10; that row with the DMA after the first slice and the row-pair swizzle 63.86–63.90 against the library's 63.94, rebuilt at 254 VGPRs, 0 AGPRs, 0 `scratch_`; 32×32×16 at m=2048 39.07–52.83 against 33.89, m=1024 21.92–22.76 against 21.04, m=512 15.13–16.76 against 14.96 (bf16 GEMM N=6144, K=1536; local:/shared_nfs/kyle/geak/gemm8big/gn6144_k1536/run/workspace/forge_experiments/lessons/iter_013.md:9; :23; local:/shared_nfs/kyle/geak/gemm8big/gn6144_k1536/run/workspace/forge_experiments/lessons/iter_016.md:7; local:/shared_nfs/kyle/geak/gemm8big/gn6144_k1536/run/workspace/forge_experiments/lessons/iter_015.md:5; :15; :19; :53-68; local:/shared_nfs/kyle/geak/gemm8big/gn6144_k1536/run/workspace/forge_experiments/lessons/iter_017.md:18-20)

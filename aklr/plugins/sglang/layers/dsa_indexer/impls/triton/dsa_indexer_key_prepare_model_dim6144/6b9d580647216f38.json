@@ -1,0 +1,189 @@
+{
+  "schema_version": 5,
+  "name": "dsa_indexer_key_prepare_model_dim6144",
+  "contract_id": "dsa_indexer_key_prepare@1.0",
+  "description": "sglang's DSA indexer's key-only path on one rank (Indexer._forward_cuda_k_only on HIP, the Hadamard-rotated index-K format), which stores the tokens' keys and computes no query. Each token's key is LayerNorm(x wk^T) (k_norm_weight, k_norm_bias, k_norm_eps), its first 64 values turned by RoPE in interleaved pairs (2i, 2i + 1) by cos_cache and sin_cache at the token's position, then the Hadamard transform over its 128 values (Sylvester order) times 128^-0.5, each step rounded to bf16 as sglang rounds it; it is stored into index_k_cache at its out_cache_loc slot as fp8 values at a scale of 2^ceil(log2(max(amax, 0.0001) / 448)) of its values, and that scale in fp32.",
+  "op_type": "dsa_indexer",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, padding rows included."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 6144,
+      "description": "The hidden states' width: wk's and weights_proj's input."
+    },
+    "n_positions": {
+      "type": "var",
+      "description": "Rows of the rotary tables."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Pages of the index-K cache."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "x": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's hidden states, the layer's input."
+    },
+    "wk": {
+      "shape": [
+        128,
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 6144
+      },
+      "description": "wk: the key's projection."
+    },
+    "k_norm_weight": {
+      "shape": [128],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "k_norm's (LayerNorm) weight."
+    },
+    "k_norm_bias": {
+      "shape": [128],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "k_norm's bias."
+    },
+    "cos_cache": {
+      "shape": [
+        "n_positions",
+        32
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The rotary cosines, a row per position and a column per RoPE pair."
+    },
+    "sin_cache": {
+      "shape": [
+        "n_positions",
+        32
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The rotary sines, as cos_cache."
+    },
+    "positions": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_positions - 1",
+        "distinct": false
+      },
+      "description": "Each token's position: its row of the rotary tables."
+    },
+    "out_cache_loc": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "64 * n_pages - 1",
+        "distinct": true
+      },
+      "description": "Each token's slot of the index-K cache (page slot // 64, key slot % 64), distinct but for sglang's graph padding rows, which all write slot 0, a slot no sequence reads."
+    },
+    "index_k_cache": {
+      "shape": [
+        "n_pages",
+        64,
+        132
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": 6,
+        "log2_hi": 8
+      },
+      "description": "This layer's index-K cache, as sglang views it: pages of 64 keys, their 128 fp8 values in 16 x 16 tiles (16 keys by 16 values) and then their fp32 scales, each page's bytes compared as fp8 values. The tokens' keys are stored into it."
+    },
+    "k_norm_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "k_norm's epsilon."
+    }
+  },
+  "outputs": {
+    "no_values": {
+      "shape": [0],
+      "dtype": "float32",
+      "description": "No values: the op's one result is index_k_cache, and a contract declares an output."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 256,
+        "n_positions": 131072,
+        "n_pages": 4
+      },
+      "scalars": {
+        "k_norm_eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 2.189
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0003,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"DSA indexer key-only preparation for GLM-5.2 on gfx950, tuned in its TP4 deployment for 256\ntokens.\n\nProjects each token's key (x wk^T) in Gluon tiles; then its LayerNorm, RoPE on its first 64\nvalues in interleaved pairs and the 128-point Hadamard transform, each rounded to bf16,\nquantized to fp8 at a power-of-two scale and stored with that fp32 scale into its preshuffled\nindex-K page. No query is computed.\n\"\"\"\n\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\nimport torch\nimport triton\n\n\n@gluon.jit\ndef _copy_pair(AS, BS, X, W, ao, bo, start):\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(AS, X + start, ao)\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(BS, W + start, bo)\n    gl.amd.cdna4.async_copy.commit_group()\n\n\n@gluon.jit\ndef _read_pair(AS, BS, MMA: gl.constexpr, OUTSTANDING: gl.constexpr, REUSE: gl.constexpr = True):\n    gl.amd.cdna4.async_copy.wait_group(OUTSTANDING)\n    gl.barrier()\n    a = gl.amd.cdna4.async_copy.load_shared_relaxed(AS, gl.DotOperandLayout(0, MMA, 8))\n    b = gl.amd.cdna4.async_copy.load_shared_relaxed(BS, gl.DotOperandLayout(1, MMA, 8))\n    if REUSE:\n        gl.inline_asm_elementwise(\n            \"s_waitcnt lgkmcnt(0)\\n\\tv_mov_b32 $0, 0\",\n            constraints=\"=v,~{memory}\",\n            args=[],\n            dtype=gl.int32,\n            is_pure=False,\n            pack=1,\n        )\n        gl.barrier()\n    return (a, b)\n\n\n@gluon.jit\ndef _async_dot(\n    X,\n    W,\n    M: gl.constexpr,\n    N,\n    K: gl.constexpr,\n    SX: gl.constexpr,\n    SW,\n    mbase,\n    nbase,\n    BM: gl.constexpr,\n    BN: gl.constexpr,\n    BK: gl.constexpr,\n    WM: gl.constexpr,\n    WN: gl.constexpr,\n    STAGES: gl.constexpr = 2,\n):\n    gl.static_assert(STAGES == 2 or STAGES == 3 or STAGES == 4)\n    gl.static_assert(K % (2 * BK) == 0 and K >= 2 * BK)\n    gl.static_assert(K >= STAGES * BK)\n    waves: gl.constexpr = WM * WN\n    copy_k: gl.constexpr = min(BK, 512)\n    copy_a: gl.constexpr = gl.BlockedLayout([1, 8], [512 // copy_k, copy_k // 8], [waves, 1], [1, 0])\n    copy_b: gl.constexpr = gl.BlockedLayout([8, 1], [copy_k // 8, 512 // copy_k], [1, waves], [0, 1])\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[WM, WN]\n    )\n    sa: gl.constexpr = gl.PaddedSharedLayout.with_identity_for([[512, 16]], [BM, BK], [1, 0])\n    sb: gl.constexpr = gl.PaddedSharedLayout.with_identity_for([[512, 16]], [BK, BN], [0, 1])\n    a0 = gl.allocate_shared_memory(X.dtype.element_ty, [BM, BK], sa)\n    a1 = gl.allocate_shared_memory(X.dtype.element_ty, [BM, BK], sa)\n    b0 = gl.allocate_shared_memory(W.dtype.element_ty, [BK, BN], sb)\n    b1 = gl.allocate_shared_memory(W.dtype.element_ty, [BK, BN], sb)\n    a2 = gl.allocate_shared_memory(X.dtype.element_ty, [BM, BK], sa)\n    b2 = gl.allocate_shared_memory(W.dtype.element_ty, [BK, BN], sb)\n    X = X + mbase * SX\n    W = W + nbase * SW\n    mi = gl.arange(0, BM, gl.SliceLayout(1, copy_a))\n    if M % BM != 0:\n        mi = gl.minimum(mi, M - 1 - mbase)\n    ni = gl.arange(0, BN, gl.SliceLayout(0, copy_b))\n    ka = gl.arange(0, BK, gl.SliceLayout(0, copy_a))\n    kb = gl.arange(0, BK, gl.SliceLayout(1, copy_b))\n    ao = mi[:, None] * SX + ka[None, :]\n    bo = ni[None, :] * SW + kb[:, None]\n    acc = gl.zeros((BM, BN), gl.float32, mma)\n    _copy_pair(a0, b0, X, W, ao, bo, 0)\n    _copy_pair(a1, b1, X, W, ao, bo, BK)\n    _copy_pair(a2, b2, X, W, ao, bo, 2 * BK)\n    rounds: gl.constexpr = (K // BK - 3) // 3\n    for start in gl.static_range(rounds):\n        a, b = _read_pair(a0, b0, mma, 2)\n        _copy_pair(a0, b0, X, W, ao, bo, (start * 3 + 3) * BK)\n        acc = gl.amd.cdna4.mfma(a, b, acc)\n        a, b = _read_pair(a1, b1, mma, 2)\n        _copy_pair(a1, b1, X, W, ao, bo, (start * 3 + 4) * BK)\n        acc = gl.amd.cdna4.mfma(a, b, acc)\n        a, b = _read_pair(a2, b2, mma, 2)\n        _copy_pair(a2, b2, X, W, ao, bo, (start * 3 + 5) * BK)\n        acc = gl.amd.cdna4.mfma(a, b, acc)\n    tail: gl.constexpr = K // BK - rounds * 3\n    for i in gl.static_range(tail):\n        if i % 3 == 0:\n            at, bt = (a0, b0)\n        elif i % 3 == 1:\n            at, bt = (a1, b1)\n        else:\n            at, bt = (a2, b2)\n        a, b = _read_pair(at, bt, mma, min(2, tail - i - 1), i + 3 < tail)\n        if i + 3 < tail:\n            _copy_pair(at, bt, X, W, ao, bo, (rounds * 3 + i + 3) * BK)\n        acc = gl.amd.cdna4.mfma(a, b, acc)\n    return acc\n\n\n@gluon.jit\ndef _project_keys(\n    X,\n    WK,\n    Projection,\n    M: gl.constexpr,\n    K: gl.constexpr,\n    SX: gl.constexpr,\n    SW: gl.constexpr,\n    BM: gl.constexpr,\n    BN: gl.constexpr,\n    BK: gl.constexpr,\n    WAVES: gl.constexpr,\n    STAGES: gl.constexpr,\n):\n    mb = gl.program_id(0) * BM\n    nb = gl.program_id(1) * BN\n    acc = _async_dot(X, WK, M, 128, K, SX, SW, mb, nb, BM, BN, BK, 1, WAVES, STAGES=STAGES)\n    mma: gl.constexpr = acc.type.layout\n    m = mb + gl.arange(0, BM, gl.SliceLayout(1, mma))\n    n = nb + gl.arange(0, BN, gl.SliceLayout(0, mma))\n    gl.store(Projection + m[:, None] * 128 + n[None, :], acc, m[:, None] < M)\n\n\n@gluon.jit\ndef _wave_xor(x, bit: gl.constexpr):\n    gl.static_assert(0 <= bit and bit < 4)\n    if bit == 0:\n        return gl.inline_asm_elementwise(\n            \"s_nop 1\\n\\tv_mov_b32_dpp $0, $1 quad_perm:[1,0,3,2] row_mask:0xf bank_mask:0xf bound_ctrl:1\",\n            constraints=\"=v,v\",\n            args=[x],\n            dtype=gl.float32,\n            is_pure=True,\n            pack=1,\n        )\n    elif bit == 1:\n        return gl.inline_asm_elementwise(\n            \"s_nop 1\\n\\tv_mov_b32_dpp $0, $1 quad_perm:[2,3,0,1] row_mask:0xf bank_mask:0xf bound_ctrl:1\",\n            constraints=\"=v,v\",\n            args=[x],\n            dtype=gl.float32,\n            is_pure=True,\n            pack=1,\n        )\n    elif bit == 2:\n        return gl.inline_asm_elementwise(\n            \"s_nop 1\\n\\tv_mov_b32_dpp $0, $1 row_half_mirror row_mask:0xf bank_mask:0xf bound_ctrl:1\\n\\ts_nop 1\\n\\tv_mov_b32_dpp $0, $0 quad_perm:[3,2,1,0] row_mask:0xf bank_mask:0xf bound_ctrl:1\",\n            constraints=\"=v,v\",\n            args=[x],\n            dtype=gl.float32,\n            is_pure=True,\n            pack=1,\n        )\n    else:\n        return gl.inline_asm_elementwise(\n            \"s_nop 1\\n\\tv_mov_b32_dpp $0, $1 row_ror:8 row_mask:0xf bank_mask:0xf bound_ctrl:1\",\n            constraints=\"=v,v\",\n            args=[x],\n            dtype=gl.float32,\n            is_pure=True,\n            pack=1,\n        )\n\n\n@gluon.jit\ndef _register_xor(x, bit: gl.constexpr):\n    rows: gl.constexpr = x.numel // 128\n    shaped = gl.reshape(x, (rows, 128 // (2 << bit), 2, 1 << bit))\n    shaped = gl.permute(shaped, (0, 1, 3, 2))\n    lo, hi = gl.split(shaped)\n    swapped = gl.permute(gl.join(hi, lo), (0, 1, 3, 2))\n    swapped = gl.reshape(swapped, x.type.shape)\n    return gl.convert_layout(swapped, x.type.layout, assert_trivial=True)\n\n\n@gluon.jit\ndef _key_register_stage(x, BIT: gl.constexpr, WAVES: gl.constexpr):\n    rows: gl.constexpr = x.numel // 128\n    warp_bases: gl.constexpr = [] if WAVES == 1 else [[1, 0], [2, 0]]\n    layout: gl.constexpr = gl.DistributedLinearLayout(\n        reg_bases=[[0, 1 << BIT]],\n        lane_bases=[[0, 1], [0, 2], [0, 4], [0, 8], [0, 32 if BIT == 6 else 64], [0, 32 if BIT == 4 else 16]],\n        warp_bases=warp_bases,\n        block_bases=[],\n        shape=[rows, 128],\n    )\n    x = gl.convert_layout(x, layout)\n    d = gl.arange(0, 128, gl.SliceLayout(0, layout))\n    other = _register_xor(x, BIT)\n    return other + gl.where(d[None, :] & 1 << BIT == 0, x, -x)\n\n\n@gluon.jit\ndef _key_register_tail(x, WAVES: gl.constexpr):\n    rows: gl.constexpr = x.numel // 128\n    shape: gl.constexpr = x.type.shape\n    gl.static_assert(rows == WAVES)\n    x = gl.reshape(x, (rows, 128))\n    x = _key_register_stage(x, 4, WAVES)\n    x = _key_register_stage(x, 5, WAVES)\n    x = _key_register_stage(x, 6, WAVES)\n    return gl.reshape(x, shape)\n\n\n@gluon.jit\ndef _rotate_hadamard(x, c, s):\n    d = gl.arange(0, 128, layout=gl.BlockedLayout([1], [64], [1], [0]))\n    partner = _wave_xor(x, 0)\n    x = gl.where(d < 64, x * c + gl.where(d % 2 == 0, -partner, partner) * s, x)\n    x = x.to(gl.bfloat16).to(gl.float32)\n    for bit in gl.static_range(4):\n        other = _wave_xor(x, bit)\n        x = other + gl.where(d & 1 << bit == 0, x, -x)\n    x = _key_register_tail(x, 1)\n    return (x * 0.08838834764831845).to(gl.bfloat16).to(gl.float32)\n\n\n@gluon.jit\ndef _key(K, Gamma, Beta, Cos, Sin, Positions, Slots, Cache, SC: gl.constexpr, EPS, PAGE: gl.constexpr):\n    m = gl.program_id(0)\n    d = gl.arange(0, 128, layout=gl.BlockedLayout([1], [64], [1], [0]))\n    pos = gl.load(Positions + m)\n    slot = gl.load(Slots + m)\n    c = gl.load(Cos + pos * SC + d // 2, d < 64, 1).to(gl.float32)\n    s = gl.load(Sin + pos * SC + d // 2, d < 64, 0).to(gl.float32)\n    gamma = gl.load(Gamma + d).to(gl.float32)\n    beta = gl.load(Beta + d).to(gl.float32)\n    x = gl.load(K + m * 128 + d).to(gl.float32)\n    mean = gl.sum(gl.sum(gl.reshape(x, (2, 64)), 1), 0) / 128\n    delta = x - mean\n    square = gl.reshape(delta * delta, (2, 64))\n    inv = gl.rsqrt(gl.sum(gl.sum(square, 1), 0) / 128 + EPS)\n    x = delta * inv * gamma + beta\n    x = _rotate_hadamard(x.to(gl.bfloat16).to(gl.float32), c, s)\n    d = gl.arange(0, 128, layout=x.type.layout)\n    scale = gl.exp2(gl.ceil(gl.log2(gl.maximum(gl.max(gl.abs(x), 0), 0.0001) / 448.0)))\n    quant = (x / scale).to(gl.float8e4nv)\n    page = slot // PAGE\n    offset = slot % PAGE\n    dst = page * PAGE * 132 + offset // 16 * 2048 + d // 16 * 256 + offset % 16 * 16 + d % 16\n    gl.store(Cache + dst, quant.to(gl.uint8, bitcast=True), slot >= 0)\n    scale_ptr = gl.cast(Cache, gl.pointer_type(gl.float32)) + page * PAGE * 33 + PAGE * 32 + offset\n    gl.store(scale_ptr, scale, slot >= 0)\n\n\ndef indexer_prepare_key_only(\n    x,\n    q_latent,\n    wq,\n    wk,\n    wgate,\n    k_gamma,\n    k_beta,\n    cos,\n    sin,\n    positions,\n    slots,\n    cache: torch.Tensor,\n    *,\n    key_only: bool = False,\n    eps: float = 1e-06,\n):\n    m = x.shape[0]\n    heads = wgate.shape[0]\n    projection = torch.empty((m, 128 if key_only else 128 + heads), device=x.device, dtype=torch.bfloat16)\n    key_rows = 8\n    key_cols = 8 if m <= 128 else 16\n    key_k = 512\n    key_waves = 2\n    key_stages = 3\n    _project_keys[triton.cdiv(m, key_rows), triton.cdiv(128, key_cols)](\n        x,\n        wk,\n        projection,\n        m,\n        x.shape[1],\n        x.stride(0),\n        wk.stride(0),\n        key_rows,\n        key_cols,\n        key_k,\n        key_waves,\n        key_stages,\n        num_warps=key_waves,\n    )\n    _key[m,](\n        projection,\n        k_gamma,\n        k_beta,\n        cos,\n        sin,\n        positions,\n        slots,\n        cache,\n        cos.stride(0),\n        eps,\n        cache.shape[1],\n        num_warps=1,\n        enable_fp_fusion=False,\n    )\n    return (None, None)\n\n\ndef run(\n    *,\n    x,\n    wk,\n    k_norm_weight,\n    k_norm_bias,\n    cos_cache,\n    sin_cache,\n    positions,\n    out_cache_loc,\n    index_k_cache,\n    k_norm_eps,\n    no_values,\n):\n    \"\"\"Stores the keys: indexer_prepare_key_only on sglang's tensors, key_only, the index-K\n    pages as their bytes. Its key-only path never reads the query side's q_latent, wq and\n    wgate: they are views of x and wk with the shapes and strides GLM-5.2's would have (2048\n    query latents, 32 heads), so that the kernels compile as they were tuned.\"\"\"\n    indexer_prepare_key_only(\n        x,\n        x[:, :2048],\n        wk.view(-1, 2048),\n        wk,\n        wk[:32],\n        k_norm_weight,\n        k_norm_bias,\n        cos_cache,\n        sin_cache,\n        positions,\n        out_cache_loc,\n        index_k_cache.view(torch.uint8),\n        key_only=True,\n        eps=k_norm_eps,\n    )\n"
+      }
+    ]
+  }
+}

@@ -40,6 +40,9 @@ DEFAULT_GENS = ("gfx950",)
 # Whole names and family forms (gfx9, gfx95x, gfx94*); the `*` of a bold `**gfx950**` is not a wildcard.
 ARCH_TOKEN_RE = re.compile(r"\bgfx\d{1,4}(?:[a-z]\b|\*(?!\*)|\b)|\bCDNA ?\d\b|\bMI\d{3}X?\b")
 PINNED_FLYDSL = "0.3.2"
+# The Triton that AKLR's CI pins (`.github/workflows/ci.yaml` checks triton==3.8.0); pages under triton/ give it in
+# `triton` where other pages give `flydsl`.
+PINNED_TRITON = "3.8.0"
 SKILL_MD_MAX_LINES = 150  # forge-loop inlines SKILL.md into every round's prompt
 SKILL_MD_MAX_BYTES = 12_000  # of the body it inlines; the front matter is stripped
 CARD_MAX_LINES = 600
@@ -352,11 +355,67 @@ def check_links(page: Page, level: str) -> Iterable[Issue]:
                 )
 
 
+# A page says when it applies by mechanism and shape, never by training or inference phase: the same kernels run in
+# both. Titles, file names and `regimes` must not carry a phase word.
+PHASE_WORDS = (
+    "training",
+    "inference",
+    "forward",
+    "backward",
+    "fwd",
+    "bwd",
+    "dgrad",
+    "wgrad",
+    "prefill",
+    "decode",
+)
+PHASE_RE = re.compile(r"(?<![a-z0-9])(" + "|".join(PHASE_WORDS) + r")(?![a-z0-9])", re.IGNORECASE)
+
+
+def check_phase(page: Page) -> Iterable[Issue]:
+    stem = Path(page.rel).stem.replace("_", " ")
+    hit = PHASE_RE.search(stem)
+    if hit:
+        yield Issue(
+            "error", page.rel, 1, f"file name scopes the page by phase (`{hit.group(1)}`); name the mechanism"
+        )
+    front = page.front or {}
+    hit = PHASE_RE.search(str(front.get("title") or ""))
+    if hit:
+        yield Issue(
+            "error",
+            page.rel,
+            1,
+            f"title scopes the page by phase (`{hit.group(1)}`); state the mechanism or shape",
+        )
+    regimes = front.get("regimes") or []
+    for regime in regimes if isinstance(regimes, list) else [regimes]:
+        hit = PHASE_RE.search(str(regime))
+        if hit:
+            yield Issue(
+                "error",
+                page.rel,
+                1,
+                f"`regimes` entry `{regime}` is a phase; give the shape or mechanism it stands for",
+            )
+
+
 def check_front(page: Page) -> Iterable[Issue]:
     kind, front = page.kind, page.front or {}
+    triton_page = page.rel.startswith("triton/")
     for field in REQUIRED_FIELDS[kind]:
+        if triton_page and field == "flydsl":
+            field = "triton"
         if front.get(field) in (None, "", []):
             yield Issue("error", page.rel, 1, f"front matter lacks `{field}` (kind {kind})")
+    triton = str(front.get("triton") or "")
+    if triton and triton != PINNED_TRITON:
+        yield Issue(
+            "warn",
+            page.rel,
+            1,
+            f"pinned to Triton {triton}, AKLR's CI is on {PINNED_TRITON}: re-check",
+        )
     basis = str(front.get("basis") or "")
     if basis and not BASIS_RE.match(basis):
         yield Issue(
@@ -557,7 +616,7 @@ def duplicate_levers(paths: Iterable[Path]) -> list[Issue]:
 
 def lint_page(page: Page) -> list[Issue]:
     kind = page.kind
-    issues: list[Issue] = list(check_arch(page))
+    issues: list[Issue] = list(check_arch(page)) + list(check_phase(page))
     if page.front_error:
         level = "error" if kind in NEW_KINDS else "warn"
         issues.append(
@@ -666,8 +725,8 @@ def stale(paths: Iterable[Path], version: str) -> list[str]:
     out = []
     for path in paths:
         page = read_page(path.resolve())
-        if page.kind in ("upstream", "entry", "guide", "index"):
-            continue
+        if page.kind in ("upstream", "entry", "guide", "index") or page.rel.startswith("triton/"):
+            continue  # triton/ pages pin `triton`, not FlyDSL
         pinned = str((page.front or {}).get("flydsl") or "none")
         if pinned != version:
             out.append(f"{page.rel}: flydsl {pinned}")

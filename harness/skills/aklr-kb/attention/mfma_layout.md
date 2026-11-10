@@ -2,10 +2,10 @@
 title: "Attention — MFMA timing, atom choice, fragment layouts and fp8 MFMAs on gfx950"
 kind: topic
 lever: attn_mfma_layout
-ops: [attention]
+ops: [attention, mla]
 gens: [gfx950]
 dtypes: [bf16, fp8]
-regimes: [prefill, decode, backward, causal]
+regimes: [many query rows, few query rows, dQ dK dV, causal]
 flydsl: 0.3.2
 sources:
   - ROCm/FlyDSL@dd8373349:kernels/attention/flash_attn_utils.py:3500
@@ -69,7 +69,7 @@ The timings of this section were measured with HIP inline-asm microbenchmarks, n
   the operands of masked-off lanes contributed to it; a `v_mov_b32` in the same region honoured EXEC *(field, E4)*.
 - A lane mask or a divergent `if` neither skips an MFMA nor protects its destination. Skip MFMA work with a
   wave-uniform branch, and mask scores with `-inf` (exp2 then gives exactly 0). Per-wave classification of
-  diagonal blocks: `backward.md` §8.
+  diagonal blocks: `gradients.md` §8.
 
 ## 3. Fragment layouts (bf16, wave64)
 `D[m][n] = Σ_k A[m][k]·B[k][n] + C[m][n]`; s indexes the 8 bf16 values of an operand register group, t and e
@@ -110,11 +110,12 @@ the f32 accumulator elements of a lane.
   16x16x32 fragment's 4 consecutive values go out directly as one 8-byte store.
 
 ## 5. Choosing the atom per GEMM
-- Dump the atom of every GEMM in both passes before reasoning: the forward and the backward of one code base
-  can use different atoms. Changing the atom is a port — fragment layout, transposed-read addressing,
+- Dump the atom of every GEMM in every kernel before reasoning: the O kernel and the dQ/dK/dV kernels of one code
+  base can use different atoms. Changing the atom is a port — fragment layout, transposed-read addressing,
   register footprint and softmax lane map all change. Read the ISA delta (`v_mfma` count, VGPR, spill,
   `ds_read` mix) before timing.
-- **Backward: 16x16x32.** *(field, E7)* Rewriting a dK/dV kernel from 32x32x16 cut its time 1415 → 1168 µs and the whole
+- **Kernels that hold S, dP and dS of a tile (dq, dK/dV): 16x16x32.** *(field, E7)* Rewriting a dK/dV kernel from
+  32x32x16 cut its time 1415 → 1168 µs and the whole
   backward gained 8.7% (`SQ_WAIT_ANY` −47%; a full rewrite, the cause was not isolated); *(field, E8)* a dq body ran 1204 TF/s
   against 1088–1093, and even without exps the correct 32x32x16 version (1198) stayed below 16x16x32 (1220); *(field, E9)* on a D=128
   backward, one GEMM switched back to 32x32x16 alone cost 12%. What does hold either way:
@@ -124,13 +125,15 @@ the f32 accumulator elements of a lane.
   - its 4 consecutive values per lane store without a permlane;
   - the accumulator registers for a given output block are the same for both atoms.
   Independent-chain latency ILP is not a reason (§1).
-- **Forward: 32x32x16.** FlyDSL's gfx950 forward uses `v_mfma_f32_32x32x16_bf16` (`…_f16` for f16 inputs) for QK
+- **The O kernel with many query rows per tile (QK, softmax, P·V): 32x32x16.** FlyDSL's gfx950 forward uses
+  `v_mfma_f32_32x32x16_bf16` (`…_f16` for f16 inputs) for QK
   and P·V (`flash_attn_utils.py:3500`). It leaves 1.5× the VALU shadow per MAC (§1), needs one swap per row
   reduction (§4) and keeps one q row per lane.
   *(field, E11)* A D=64 forward ported to 16x16x32, spill-free and numerically exact, ran 8.4% slower;
   *(field, E12)* a spill-free arm with part of the O accumulator removed read 2.4% slower on the scorer and 1.2%
   faster in a sustained loop, where it clocked higher.
-- **Decode P·V: `16x16x32`, not `16x16x16bf16_1k`** (half the MAC rate, §1). On an MLA decode producer the switch
+- **P·V with few query rows per head (an MLA decode producer): `16x16x32`, not `16x16x16bf16_1k`** (half the MAC
+  rate, §1). There the switch
   alone cut an estimated 8–14% of producer time, with the operand orientation unchanged.
 - The GEMM finding that a smaller atom moves fewer register-file bytes per MAC and can clock higher at the power
   cap (`../gemm/mainloop.md` §5) applies here too: rank atoms on wall time, sclk and power, never on
@@ -193,14 +196,14 @@ In FlyDSL: `../flydsl/attention.md` § mfma_layout §5.
 In FlyDSL: `../flydsl/attention.md` § mfma_layout §8.
 
 ## Verify
-- The atom of every GEMM in both passes is read from the ISA, not assumed.
+- The atom of every GEMM in every kernel is read from the ISA, not assumed.
 - Lane maps and k orders are proven element by element with position-encoded inputs.
 - No MFMA relies on EXEC to be masked or skipped.
 - An atom or rows-per-wave change reports VGPR, spill, occupancy and sclk next to the wall time.
 
 ## Related
 `softmax.md` · `lds.md` · `registers_occupancy.md` ·
-`schedule_sync.md` · `backward.md` · `attribution.md` ·
+`schedule_sync.md` · `gradients.md` · `attribution.md` ·
 `../gemm/mainloop.md` · `../hardware/gfx950/matrix_core.md`
 
 ## Evidence

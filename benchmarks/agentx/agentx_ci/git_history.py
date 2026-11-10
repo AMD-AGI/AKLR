@@ -27,7 +27,7 @@ def has_commit(cwd: Path, sha: str) -> bool:
 
 
 def ensure_history(cwd: Path, shas: tuple[str, ...], remote: str = "origin") -> list[str]:
-    """Fetch missing history, unshallowing first to keep commits connected."""
+    """Unshallow before fetching missing commits to preserve ancestry."""
     done = []
     if git(cwd, "rev-parse", "--is-shallow-repository").stdout.strip() == "true":
         git(cwd, "fetch", "--no-tags", "--quiet", "--unshallow", remote)
@@ -63,7 +63,7 @@ def entry(commit: dict, repo_url: str) -> dict:
 
 
 def landed(base: str, head: str, cwd: Path, repo_url: str) -> dict:
-    """``{"entries": [...], "error": None}`` for (base, head]; a git failure is the error, never raised."""
+    """Return commits in (base, head], recording Git errors in the result."""
     out = {"base": base, "head": head, "entries": [], "error": None, "fetched": []}
     try:
         out["fetched"] = ensure_history(cwd, (base, head))

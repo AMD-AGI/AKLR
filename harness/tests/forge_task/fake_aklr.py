@@ -83,7 +83,7 @@ passing = any({passing!r} in source["content"] for source in candidate["kernel"]
 findings, demotions, records = [], [], []
 for index, workload in enumerate(candidate["workloads"]):
     if aborted:
-        findings.append({{"code": "platform_failure", "axes": workload["axes"], "detail": "timing: Kineto"}})
+        findings.append({{"code": "platform_failure", "axes": workload["axes"], "detail": "timing: rocprofiler-sdk"}})
         records.append({{"axes": workload["axes"], "worst_violation_fraction": None, "timings": []}})
         continue
     if not passing:

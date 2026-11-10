@@ -2,7 +2,7 @@
 title: "GEMM — attribution: price where the time goes before changing anything"
 kind: method
 lever: gemm_attribution
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [fp8, mxfp4, mxfp8, bf16]
 regimes: [compute-bound, feed-bound, power-capped]

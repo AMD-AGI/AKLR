@@ -10,8 +10,9 @@ Decode replays SGLang 0.5.22's ROCm decode kernels between the projections; the
 FP8 decode op adds the AITER quantization its output projection would run.
 
 The gated attention decode replays what Qwen3_5AttentionDecoderLayer.self_attention runs
-between qkv_proj and o_proj on HIP with an FP8 KV cache on the aiter backend, then the
-AITER quantization of the block-FP8 o_proj.
+between qkv_proj and o_proj on HIP with an FP8 KV cache on the aiter backend; the FP8 op
+adds the AITER quantization of the block-FP8 o_proj, the BF16 op ends at o_proj's BF16
+input.
 """
 
 import functools
@@ -275,7 +276,7 @@ def _last_page_lengths(rows, device):
     return torch.ones(rows, dtype=torch.int32, device=device)
 
 
-def gated_attention_decode_group_fp8_quant_baseline(
+def _gated_attention(
     projected_qkv,
     q_norm_weight,
     k_norm_weight,
@@ -286,16 +287,13 @@ def gated_attention_decode_group_fp8_quant_baseline(
     value_cache,
     kv_indptr,
     kv_indices,
-    eps=1e-6,
-    scale=256**-0.5,
-    values=None,
-    scales=None,
+    eps,
+    scale,
 ):
     """forward_prepare_fused_gate's fused Gemma QK norm and gate split, the rotary
     module's Triton mRoPE, the aiter backend's forward_decode (its fused FP8 KV write,
-    then paged_attention_ragged over one-token pages at unit KV scales), fused_sigmoid_mul,
-    then the per-1x128 AITER quantization the block-FP8 o_proj applies to its BF16 input
-    (row-major scales)."""
+    then paged_attention_ragged over one-token pages at unit KV scales) and
+    fused_sigmoid_mul: the BF16 rows sglang hands o_proj."""
     import aiter
     import torch
     from sglang.kernels.ops.attention.rotary_triton import triton_mrope_fused
@@ -363,6 +361,75 @@ def gated_attention_decode_group_fp8_quant_baseline(
         _PARTITION_SIZE,
     )
     fused_sigmoid_mul(attended, gate, inplace=True)
+    return attended
+
+
+def gated_attention_decode_group_fp8_quant_baseline(
+    projected_qkv,
+    q_norm_weight,
+    k_norm_weight,
+    positions,
+    cos_sin_cache,
+    cache_locations,
+    key_cache,
+    value_cache,
+    kv_indptr,
+    kv_indices,
+    eps=1e-6,
+    scale=256**-0.5,
+    values=None,
+    scales=None,
+):
+    """The gated attention above, then the per-1x128 AITER quantization the block-FP8
+    o_proj applies to its BF16 input (row-major scales)."""
+    import aiter
+
+    attended = _gated_attention(
+        projected_qkv,
+        q_norm_weight,
+        k_norm_weight,
+        positions,
+        cos_sin_cache,
+        cache_locations,
+        key_cache,
+        value_cache,
+        kv_indptr,
+        kv_indices,
+        eps,
+        scale,
+    )
     quantize = aiter.get_hip_quant(aiter.QuantType.per_1x128)
     quantized, factors = quantize(attended, quant_dtype=aiter.dtypes.fp8)
-    return quantized.view(rows, heads, head_dim), factors
+    return quantized.view(attended.shape[0], -1, key_cache.shape[-1]), factors
+
+
+def gated_attention_decode_baseline(
+    projected_qkv,
+    q_norm_weight,
+    k_norm_weight,
+    positions,
+    cos_sin_cache,
+    cache_locations,
+    key_cache,
+    value_cache,
+    kv_indptr,
+    kv_indices,
+    eps=1e-6,
+    scale=256**-0.5,
+    gated=None,
+):
+    """The gated attention above: sglang's BF16 input to an o_proj that takes BF16."""
+    return _gated_attention(
+        projected_qkv,
+        q_norm_weight,
+        k_norm_weight,
+        positions,
+        cos_sin_cache,
+        cache_locations,
+        key_cache,
+        value_cache,
+        kv_indptr,
+        kv_indices,
+        eps,
+        scale,
+    )

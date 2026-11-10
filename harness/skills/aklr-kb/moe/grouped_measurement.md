@@ -2,10 +2,10 @@
 title: "Grouped GEMM — measuring: distributions, the deployment's operating point, trace FLOPs, per-cell noise"
 kind: method
 lever: grouped_measurement
-ops: [grouped_gemm]
+ops: [grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [bf16, fp8, mxfp8, mxfp4]
-regimes: [forward, dgrad, wgrad, skew, kernel-A/B]
+regimes: ["M split per group", variable-k, skew, kernel-A/B]
 flydsl: 0.3.2
 sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:benchmark/ops/training/config.py:487-497
@@ -20,21 +20,22 @@ sources:
 > The shared protocol — ruler choice, arm order, warm-up, noise floors, statistics, closing a series of changes —
 > is in `../gemm/measurement.md`; probes and power-cap pricing are in
 > `../gemm/attribution.md`. This card is what the group dimension adds: the token distribution as an
-> axis of the table, the deployment's operating point, FLOP accounting from training traces, and floors that
+> axis of the table, the deployment's operating point, FLOP accounting from a model's trace, and floors that
 > differ per cell. Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence
 > at the end. Use them for direction and order of magnitude.
 
 ## Route here when
 - Building or inheriting a grouped-GEMM benchmark, scorer or autotune race.
-- A kernel-only gain does not show up in the training step, or the bench and a trace disagree.
+- A kernel-only gain does not show up in the model's step, or the bench and a trace disagree.
 - A delta sits near 1% on skewed cells, or two runs of identical code disagree.
 
-## 1. The table: geometries × projections × passes × distributions
+## 1. The table: geometries × projections × layouts × distributions
 
-- **Several model geometries, both projections, all three passes.** Use the gate_up projection
-  (N = 2 · intermediate, K = hidden) and the down projection (N = hidden, K = intermediate) of at least three
-  models, for forward, dgrad and wgrad, at the per-call tokens per group the deployment runs plus one size on each
-  side. Score the geometric mean across geometries: a single-geometry table lets NT changes overfit without any
+- **Several model geometries, both projections, every layout the deployment runs.** Use the gate_up projection
+  (N = 2 · intermediate, K = hidden; MoE stage 1) and the down projection (N = hidden, K = intermediate; stage 2)
+  of at least three models, for each layout the deployment launches (NT alone where no gradient is computed; NT,
+  NN and TN for forward, dgrad and wgrad), at the per-call tokens per group the deployment runs plus one size on
+  each side. Score the geometric mean across geometries: a single-geometry table lets NT changes overfit without any
   warning (`grouped_workflow.md` §8). Take the dimensions from the model configurations; this card fixes
   none.
 - **Every distribution is a column.** Per cell:
@@ -52,7 +53,7 @@ sources:
 
 ## 2. Lock the deployment's operating point
 
-A clean ruler at the wrong operating point optimizes a kernel the training run never launches. Copy these from
+A clean ruler at the wrong operating point optimizes a kernel the deployment never launches. Copy these from
 the deployment, not from a previous bench:
 
 | Condition | What goes wrong when it drifts |
@@ -79,15 +80,15 @@ the deployment, not from a previous bench:
   output axis left a forward on its misaligned slow path). Count useful FLOPs from the unpadded sizes.
 - **Accumulator dtype.** *(field, E4)* A wgrad timed with an fp32 accumulator where the deployment used bf16 took
   8–14% more time on one shape (beta=0 and beta=1). The beta=1 read-back itself is priced in
-  `grouped_wgrad.md` §10.
-- **Graph replay hides host enqueue, not kernel boundaries.** *(field, E5)* On an inference MoE decode path, one extra
-  small kernel on the dependency chain still cost a full launch on every call under graph replay
-  (`grouped_moe_inference.md` §7). Measure launch-count changes on the scoring bench, in the mode the
+  `grouped_variable_k.md` §10.
+- **Graph replay hides host enqueue, not kernel boundaries.** *(field, E5)* On a MoE path at 64 and 128 tokens per
+  call, one extra small kernel on the dependency chain still cost a full launch on every call under graph replay
+  (`grouped_sorted_tokens.md` §7). Measure launch-count changes on the scoring bench, in the mode the
   deployment runs.
 - **Screen with kernel-only, decide in the step.** *(field, E6)* Kernel time saved converted to step time at 81% over
   one series of changes; a probe 0.5% faster on the deployed grid was 0.71% slower in training.
 
-## 3. Reading a training trace: per-call sizes and FLOPs
+## 3. Reading a model's trace: per-call sizes and FLOPs
 
 - **Read sizes, do not reconstruct them.** Pair each GPU kernel with its CPU op through the trace's
   `External id` and read the op's `Input Dims`: `A = [M_total, K]` and `B = [G, N, K]` give G and the mean tokens
@@ -99,8 +100,8 @@ the deployment, not from a previous bench:
 - **One kernel name, several logical GEMMs.** The gate_up and down projections of a pass launch the same kernel,
   so a per-name aggregate merges two GEMMs with different N. Split the calls by per-call duration clusters, compute
   each GEMM's rate, and check that the parts sum back to the aggregate.
-- **Training traces carry contention.** *(field, E7)* The median of one profiled step read 5–9% low from overlap with
-  other work, and *(field, E8)* the long-tail calls were the ones overlapping collectives. Compare with a bench using
+- **A running model's trace carries contention.** *(field, E7)* The median of one profiled training step read
+  5–9% low from overlap with other work, and *(field, E8)* the long-tail calls were the ones overlapping collectives. Compare with a bench using
   the minimum or the calls without overlap.
 - A trace's per-kernel rate must land on the bench at the same operating point. A miss of an order of magnitude
   is FLOP accounting, not the kernel.
@@ -179,8 +180,8 @@ adoption margin (`_NP_RACE_MARGIN`, `:2484`, `:2622`) at the two race points
 remedies are in `grouped_host_autotune.md`.
 
 ## Verify
-- [ ] The table covers ≥3 geometries × both projections × three passes × balanced, heavy-skew, one-hot and
-      empty-group columns.
+- [ ] The table covers ≥3 geometries × both projections × every layout the deployment runs × balanced,
+      heavy-skew, one-hot and empty-group columns.
 - [ ] G, per-call tokens per group, the histogram, padding, beta, accumulator dtype, graph mode and the call
       site's arguments are copied from the deployment, and the launched grids match a trace.
 - [ ] beta=1 timing uses a fresh accumulator per repetition.

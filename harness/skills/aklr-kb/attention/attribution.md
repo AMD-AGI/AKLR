@@ -2,10 +2,10 @@
 title: "Attention — attribution: the true clock, which counter ranks which change, stall pools and probes"
 kind: method
 lever: attn_attribution
-ops: [attention]
+ops: [attention, mla]
 gens: [gfx950]
 dtypes: [bf16]
-regimes: [prefill, backward, decode, occupancy-1, power-capped]
+regimes: [many query rows, dQ dK dV, few query rows, occupancy-1, power-capped]
 flydsl: 0.3.2
 ---
 
@@ -147,8 +147,9 @@ ISA gate (opcode histogram, spill, VGPR) before benchmarking, bracket the arms w
 
 ## 9. Per-kernel additive probes
 Run the compute-additivity probe (`../gemm/attribution.md` §1) on each kernel of an operator, not once for
-the operator. *(field, E27)* Adding MFMA work to a sparse-MLA prefill changed wall time by 0.1% (fully hidden); quadrupling
-the PV MFMAs in its decode producer made it 7% slower (~6 wall cycles per 16-cycle `16x16x32` MFMA, about a third of
+the operator. *(field, E27)* Adding MFMA work to a sparse-MLA kernel with many query rows (a prefill) changed wall
+time by 0.1% (fully hidden); quadrupling the PV MFMAs in the same family's split-KV producer with few query rows (a decode) made it
+7% slower (~6 wall cycles per 16-cycle `16x16x32` MFMA, about a third of
 its pipe time). One kernel of the family is fabric-bound, the other is not.
 
 ## 10. Budget arithmetic for "hide it under the MFMAs"

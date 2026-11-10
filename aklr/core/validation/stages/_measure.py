@@ -59,27 +59,25 @@ GRAPH_BUDGET_MILLISECONDS = 20.0
 
 MEASUREMENT_PROFILE: Mapping[str, Any] = MappingProxyType(
     {
-        "version": 18,
+        "version": 19,
         "timer": "bench_cudagraph",
-        "sample_count_policy": "rep_ms_estimate_capped_by_kernel_record_budget",
+        "sample_count_policy": "rep_ms_estimate",
         "estimation_samples": 5,
         "estimation_timer": "cuda_event_eager_with_cache_flush",
         "capture_warmup_runs": 1,
         "execution_mode": "cuda_graph",
         "metric": "gpu_duration_sum",
-        "profiler": "kineto",
+        "profiler": "aklr_kernel_tracer",
         "calls_per_graph": "adaptive",
         "cache_policy": "flush_before_each_call_in_graph",
         "cache_flush_bytes": 1 << 30,
         "cache_flush_access": "read",
         "cache_flush_kernel": "_flush_l2_cache_kernel",
-        "profiler_warmup_replays": 1,
-        "kineto_warmup": "one_unrecorded_baseline_bench_cudagraph",
+        "profiler_warmup": "one_unrecorded_baseline_bench_cudagraph",
         "tracer_fault_policy": "measure_again_once_in_place_then_rerun_task_once",
         "measurement_replays": 10,
-        "profiler_drain_replays": 1,
-        "sample_aggregation": "mean_within_replay",
-        "replay_aggregation": "median",
+        "sample_aggregation": "mean_over_replays_per_call",
+        "call_aggregation": "median",
         "graph_budget_milliseconds": GRAPH_BUDGET_MILLISECONDS,
         "round_order": "seeded_shuffle_per_round",
         "round_looks": ROUND_LOOKS,
@@ -260,14 +258,11 @@ class Clock(NamedTuple):
     group: Any = None
 
     def graph_reading(self, call: Callable[[], object]) -> float:
-        if self.group is not None:
-            # no rank retries alone, its peers would go on to the next call: a tracer fault
-            # fails the group's task, which the bench reruns whole
-            return self.bench_cudagraph(call, rep=GRAPH_BUDGET_MILLISECONDS, group=self.group)
         try:
-            return self.bench_cudagraph(call, rep=GRAPH_BUDGET_MILLISECONDS)
+            return self.bench_cudagraph(call, rep=GRAPH_BUDGET_MILLISECONDS, group=self.group)
         except Exception as e:
-            if not is_tracer_fault(str(e)):
+            # a rank reading again alone would wait on its peers; the bench reruns the group's task
+            if self.group is not None or not is_tracer_fault(str(e)):
                 raise
         return self.bench_cudagraph(call, rep=GRAPH_BUDGET_MILLISECONDS)
 
@@ -304,30 +299,11 @@ class Clock(NamedTuple):
                             )
                         )
                     if round_index + 1 in ROUND_LOOKS[:-1]:  # the last look ends the rounds anyway
-                        looked = rounds
-                        if self.group is not None:
-                            # every rank decides on the group's rounds, the slowest rank's time of
-                            # each (CandidateResult.of_ranks), so that all stop at the same look
-                            import torch
-
-                            slowest = torch.tensor(
-                                [[r.milliseconds[p] for p in participants] for r in rounds],
-                                dtype=torch.float64,
-                                device=torch.cuda.current_device(),
-                            )
-                            torch.distributed.all_reduce(
-                                slowest, torch.distributed.ReduceOp.MAX, group=self.group
-                            )
-                            looked = [
-                                r.model_copy(
-                                    update={"milliseconds": dict(zip(participants, row, strict=True))}
-                                )
-                                for r, row in zip(rounds, slowest.tolist(), strict=True)
-                            ]
-                        times = [ms for r in looked for ms in r.milliseconds.values()]
+                        # a group's ranks read the same times, so all stop at the same look
+                        times = [ms for r in rounds for ms in r.milliseconds.values()]
                         if not all(math.isfinite(ms) and ms > 0 for ms in times):
                             break  # rounds unusable now stay so: compare_performance reports them
-                        if all(r.is_decided(min_speedup) for r in timing_records(looked, thresholds)):
+                        if all(r.is_decided(min_speedup) for r in timing_records(rounds, thresholds)):
                             break
         finally:
             if is_gc_enabled:
@@ -348,12 +324,13 @@ def bind_clock(group: Any = None) -> Clock:
 
 
 _TRACER_FAULT_MESSAGES = (
-    "Kineto recorded no kernels for a single call",
-    "L2 flushes per replay, got 0",
-    "std::bad_alloc",
-    "std::length_error",
+    "rocprofiler-sdk",
+    "graph replays",
+    "the kernel tracer failed",
+    "calibration could not restore",
 )
 
 
 def is_tracer_fault(text: str) -> bool:
+    """A kernel tracer failure that a retry may not repeat."""
     return any(message in text for message in _TRACER_FAULT_MESSAGES)

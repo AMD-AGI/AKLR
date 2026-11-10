@@ -25,7 +25,10 @@ may have made it stale. `maintenance/kb_lint.py` enforces what can be checked me
   kernels, their knobs and how to write a new one, `<op>.md` (`gemm.md`, `moe.md`, `attention.md`) the FlyDSL side
   of an op package's cards. A card states the mechanism and its numbers; how to write it in FlyDSL goes to that
   page, under a heading named after the card's section (`mainloop §8`), and the card's section ends with a pointer
-  to it
+  to it. In `triton/` (front matter `triton: 3.8.0` in place of `flydsl`): `authoring.md`, `debugging.md`,
+  `tuning.md`, `numerics.md` for any Triton or Gluon kernel, `gluon/` Gluon's layouts, data movement, MFMA and inline
+  assembly, `kernels/kernel_library.md` AKLR's Triton kernels by family, `<op>.md` (`gemm.md` with `gemm/`, `moe.md`,
+  `attention.md`, `gdn.md`) the Triton side of an op
 
 ## Page kinds
 
@@ -64,7 +67,7 @@ because other pages cite them as `<card>.md §<n>`.
 
 Front matter is YAML: quote a value that contains `: `. `flydsl` is the version the page was checked against
 (`0.3.2`), `gens` the architectures (`[gfx950]`; `[gfx942]` on a page about gfx942 only, such as
-`gemm/gfx942.md`), `regimes` the M ranges or regimes it covers.
+`gemm/gfx942.md`), `regimes` the M ranges, shapes or mechanisms it covers, never a phase (see below).
 
 ## Evidence
 
@@ -102,6 +105,12 @@ Front matter is YAML: quote a value that contains `: `. `flydsl` is the version 
   `aklr/ops/README.md` that states them, not restated: a restated rule goes stale when the README changes.
 - **No second page for the same thing.** A technique's `lever` is unique (`maintenance/kb_lint.py` reports a
   duplicate); search the skill for the lever, the op and the symptom before writing, and extend the page you find.
+- **No training-only or inference-only scope.** The same GEMM, attention and MoE kernels run in training and
+  inference, so a page says when it applies by mechanism and shape: the M range, rows per group, whether K varies
+  per group, query rows against KV length, causal or sparse access. Titles, file names and `regimes` carry no phase
+  word (training, inference, forward, backward, fwd, bwd, dgrad, wgrad, prefill, decode; `maintenance/kb_lint.py` reports
+  them), and an index or "Route here when" line routes by the problem, not by the phase. A measurement may still say
+  what it was measured on.
 - **No unchecked claim.** Every statement is checked against source, the ISA or a GPU run before it goes in.
 
 ## How a page gets in

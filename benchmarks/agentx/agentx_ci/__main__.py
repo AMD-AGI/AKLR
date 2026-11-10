@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Dispatch the AgentX benchmark CLI commands."""
+"""Dispatch AgentX CLI commands."""
 
 from __future__ import annotations
 

@@ -1,5 +1,5 @@
 ---
-title: "Communication between GPUs: EP against TP at decode, and reading a collective in a trace"
+title: "Communication between GPUs: EP against TP at a few tokens per GPU, and reading a collective in a trace"
 kind: index
 gens: [gfx950]
 ---
@@ -14,7 +14,7 @@ go here.
 
 | Question | Read |
 |---|---|
-| EP or TP for a MoE at decode; what EP's dispatch pays for, and which changes moved it | `ep_dispatch_combine.md` |
+| EP or TP for a MoE layer at a few tokens per GPU (as in decode); what EP's dispatch pays for, and which changes moved it | `ep_dispatch_combine.md` |
 | A trace gives the allreduce a large share of the step | `../pitfalls/nograph_trace_inflates_collectives.md` |
 | aiter's FlyDSL dispatch/combine and `MegaMoEV2` kernels: files, entry points, tuning tables | `../flydsl/kernels/flydsl_kernel_library.md` |
 | The MoE GEMMs on either side of the dispatch | `../moe/INDEX.md` |

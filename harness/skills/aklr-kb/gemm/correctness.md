@@ -2,7 +2,7 @@
 title: "GEMM — correctness gates that actually exercise the change, races, and silent-wrong traps"
 kind: method
 lever: gemm_correctness
-ops: [gemm]
+ops: [gemm, grouped_gemm, fused_moe]
 gens: [gfx950]
 dtypes: [fp8, bf16, mxfp4, mxfp8]
 regimes: [pipelined, split-k, inline-asm]

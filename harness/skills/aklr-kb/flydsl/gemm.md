@@ -15,6 +15,7 @@ sources:
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/universal.py:266
   - ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/cdna4.py:42
   - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/jit_function.py:1414
+  - ROCm/FlyDSL@dd8373349:python/flydsl/compiler/kernel_function.py:367
   - AMD-AGI/Primus-Turbo@7615a5a2:primus_turbo/flydsl/
   - aiter/ops/flydsl/kernels/splitk_hgemm.py
   - aiter/ops/flydsl/gemm_kernels.py
@@ -98,13 +99,18 @@ silently dropped. `rocdl.s_waitcnt` takes a raw bitfield or the keyword form `s_
 dict is not in the JIT cache key. See § mainloop §4 below and `debug-flydsl-kernel.md`
 § What the cache key sees.
 
-## workflow Step 0 — start from a reference kernel, not from a blank file
+## workflow Step 0 — reference kernels as a source of parts
+
+- reference kernel gives structure only for the regime it was built for. FlyDSL's 8-wave and fp8 4-wave GEMMs default
+  to 256×256 tiles (§ mainloop), and its kernels need K a multiple of the K tile; Turbo's target large M. For
+  M ≤ 256 start from `../gemm/small_m.md`. Time a port's first correct build at your Points against the baseline; if
+  it is slower, change the structure before tuning (`../SKILL.md` § How to look things up).
 
 - **FlyDSL's `kernels/gemm/`**: fp8/int8/fp16/bf16 with a preshuffled B and an optional bias + ReLU/SiLU/GELU
   epilogue (`preshuffle_gemm`), bf16/fp16 in NN/NT/TN/TT with async DMA and split-K (`gemm_a16w16_gfx950`), and fp8/MXFP4 NT in 8-wave and 4-wave forms. K must be a multiple of the K tile.
 - **Primus-Turbo's FlyDSL GEMMs**: fp8 NN and TN as well as NT, fp8 at any K ≥ 129 (MXFP4 needs
   K % 64 == 0, MXFP8 needs K % 128 == 0 and K ≥ 256), a whole-loop inline-asm design, a per-shape race
-  between designs, and fused GLU/dGLU + MXFP4-quantization epilogues. They target training shapes; for
+  between designs, and fused GLU/dGLU + MXFP4-quantization epilogues. They target large M; for
   M ≤ 256 use `../gemm/small_m.md`.
 
 Both run on FlyDSL v0.3.2.
@@ -147,7 +153,10 @@ FlyDSL's `fp4_gemm_4wave.py`, whose comment the card quotes, runs its K loop as 
 
 **Setting `amdgpu-agpr-alloc` and friends.** Turbo passes these through `value_attrs`
 (`make_value_attrs`, GH:1580). Put them under `"llvm.passthrough": [...]`. A bare `"passthrough": [...]`
-key is silently dropped at `convert_gpu_to_rocdl`. A dropped attribute gives no error. Read the counts back from
+key is silently dropped at `convert_gpu_to_rocdl`. Pass them in the kernel call, `my_kernel(…, value_attrs=…)`, which
+attaches them to the `gpu.func` (`python/flydsl/compiler/kernel_function.py:367`), not in `.launch(value_attrs=…)`,
+which attaches them to the launch op (`:445`): *(field, E11)* there an `amdgpu-agpr-alloc` was dropped, and in the
+kernel call it took effect. A dropped attribute gives no error. Read the counts back from
 an ISA dump (`FLYDSL_DUMP_IR=1`, § mainloop §10 below).
 
 ## mainloop §5 MFMA atom choice
@@ -168,6 +177,10 @@ The fp8 4-wave whole loop gets `waves_per_eu=1` and the full register file from
 
 A fully unrolled K loop is a `range_constexpr` loop; a `range()` stays a runtime `scf.for`
 (`debug-flydsl-kernel.md` § The three loop forms).
+
+The opaque copy of the thread id that kept a second loop body's lane values out of the first loop's live range
+(`../gemm/mainloop.md` §7) is an inline-asm move with side effects, made after the first loop:
+`fx.Int32(llvm.InlineAsmOp(T.i32, [fx.Int32(tid).ir_value()], "v_mov_b32 $0, $1", "=v,v", has_side_effects=True).result)`.
 
 ## mainloop §8 FlyDSL's own GEMM kernels (v0.3.2): what to know when calling or tuning them
 
@@ -232,7 +245,13 @@ FlyDSL's `Vector.load` passes no alignment, so the read carries only its element
 
 ## datapath §4 Waits around LDS
 
-- `fx.gpu.barrier()` lowers to `s_barrier`.
+- `fx.gpu.barrier()` is MLIR's `gpu.barrier`, which FlyDSL lowers to a workgroup-scope release fence, `s_barrier`
+  and an acquire fence. In the final ISA of a compile-only probe with no LDS DMA in flight, the release fence was an
+  `s_waitcnt lgkmcnt(0)` before the `s_barrier`, so the wave's `ds_*` operations completed first and a global store
+  still in flight was not waited for *(field, E8)*. LDS fills by DMA are counted by `vmcnt`; read your own loop's
+  ISA for what its barrier waits on. A bare `s_barrier` skips that wait, and then the LDS reads it no longer waits
+  for must stay off the slots refilled after it (one spare ring slot): *(field, E9)* on a bf16 GEMM (N=6144, K=1536,
+  LDS DMA rings) that was 0.7% faster at m=128 and within 0.2% at m = 16, 32 and 64.
 - `cdna4.BufferLoadAsyncLDS*` with `rocdl.asyncmark()` / `wait_asyncmark(n)` is the in-DSL alternative (A16
   uses it).
 
@@ -248,7 +267,9 @@ FlyDSL's `Vector.load` passes no alignment, so the read carries only its element
 **How Turbo issues the DMA** (`G2SLoader`, GH:305-386):
 - One `fx.make_copy_atom(fx.rocdl.BufferCopyLDS128b(), 128)` per 16 B per lane.
 - The per-lane global offsets are Python ints computed at trace time.
-- The wave-uniform K offset rides the SGPR `soffset`: `fx.copy(atom, src, dst, soffset=...)`.
+- The wave-uniform K offset rides the SGPR `soffset`: `fx.copy(atom, src, dst, soffset=...)`. The buffer's range
+  check leaves `soffset` out (`../gemm/datapath.md` §8): an offset that can run past the tensor, such as a pass
+  over padded rows, goes into the slice instead, `fx.slice(src, (None, lane_off + pass_off))`.
 
 ## datapath §7 Prefetch inside the K loop
 
@@ -365,8 +386,13 @@ aiter's tuner `tile_m` filter reaches one M-block only when M ≤ 16 or M is its
   the dumped ISA then shows `.amdhsa_user_sgpr_kernarg_preload_length` > 0.
   - Pass the operands as `fx.Pointer` (`from_c_void_p`): a raw `torch.Tensor` lowers to a pointer plus a layout
     struct, so only the first pointer is preloaded (length 2 at count 16).
+  - Or pass static-layout tensors, `flyc.from_torch_tensor(t, assumed_align=16)`: *(field, E12)* on five bf16 GEMMs
+    the preload length was then 6 (2 with dynamic layouts, in the four runs that record it); where the record says
+    so, the three operands lowered to bare pointers (three runs) and the kernarg segment was 24 B (two runs; 72 B
+    before in one).
   - **Not in aiter's bf16 GEMM kernels**; its FlyDSL MoE helpers set it. Several of AKLR's own bf16 GEMM
-    kernels use it (`grep -l kernarg-preload-count aklr/ops/gemm/impls/flydsl/*/*`).
+    kernels use it; they sit in the schema `.json` files, not in `.py` files
+    (`grep -l kernarg-preload-count aklr/ops/gemm/impls/flydsl/*/*.json`).
 - aiter's generic kernel does not skip A rows past M: it clamps them to row 0 and loads them
   (`splitk_hgemm.py:512-519`).
 
@@ -386,6 +412,29 @@ aiter's tuner `tile_m` filter reaches one M-block only when M ≤ 16 or M is its
 In FlyDSL the wait before a split counts in is `rocdl.s_waitcnt(vmcnt=0)` followed by a barrier, and the arrival is
 `llvm.atomicrmw(add, …, syncscope="agent")`, which returns the old count (lines 426 and 430 of the kernel
 `../gemm/wait_free_fold.md` cites).
+
+A launch tag reads the dispatch id and the queue pointer with `llvm.call_intrinsic` of `flydsl._mlir.dialects.llvm`,
+as the launch-tagged kernels of `../gemm/wait_free_fold.md` do (S6, S9, S12 there; the conditions the protocol rests
+on are under that page's Cost and risk):
+
+```python
+from flydsl._mlir import ir
+from flydsl._mlir.dialects import llvm
+from flydsl.expr.typing import T
+
+did = llvm.call_intrinsic(T.i64, "llvm.amdgcn.dispatch.id", [], [], [])
+qp = llvm.call_intrinsic(ir.Type.parse("!llvm.ptr<4>"), "llvm.amdgcn.queue.ptr", [], [], [])
+qpi = llvm.PtrToIntOp(T.i64, qp).result  # the queue address as i64
+```
+
+*(field, E10)* The id was the same in every workgroup of a launch and grew from launch to launch, eager and in graph
+replays; a second stream started again at 0 with a different queue address, so put queue bits in the tag
+(`../gemm/wait_free_fold.md` § Cost and risk). The launch-tagged counter's swap is `llvm.cmpxchg(ptr, expected,
+new, llvm.AtomicOrdering.monotonic, llvm.AtomicOrdering.monotonic, syncscope="agent", alignment=8)` on an
+`!llvm.ptr<1>`; `llvm.ExtractValueOp(T.i64, res, [0])` is the word it found and `[1]` an `i1`, whether it swapped
+(S7 there). A raw buffer store of a partial with `sc0 sc1` takes `aux=ir.IntegerAttr.get(T.i32, 17)`: FlyDSL wraps
+the load (`rocdl.raw_ptr_buffer_load` turns an int `aux` into the attribute, `expr/rocdl/__init__.py:791`) but not
+the store, whose generated builder raises on a Python int (`language/compile_errors.md`).
 
 ## autotune Per-shape autotune and the launch path
 
@@ -413,6 +462,11 @@ In Turbo's MXFP4 staged search (FP4:3170-3377):
   (`debug-flydsl-kernel.md` § What the cache key sees).
 
 ## autotune §6 The launch path
+
+In AKLR a Point's `speedup` is kernel time in CUDA-graph replays (`aklr/core/validation/stages/_measure.py`), read
+by Kineto up to measurement profile 18 and by AKLR's own rocprofiler-sdk tracer (`aklr_kernel_tracer`) from profile
+19: host launch cost is outside it, so the host-side gaps below buy nothing on AKLR's ruler; they matter to an eager
+caller.
 
 - **Call the `flyc.compile` object, not the `@flyc.jit` function.** The jit call re-binds the signature,
   rebuilds the cache key and re-checks globals on every launch: *(field, E3)* 180 µs against 37 µs for a fused
@@ -501,3 +555,8 @@ A FlyDSL version is given only where the cited run, or another round in the same
 - E3 [2026-08, gfx950, FlyDSL ?, N=?, host time per call; method not stated] calling the `@flyc.jit` launch 180 µs per call against 37 µs through the `flyc.compile` object, for the fp8 combine's ~24-argument launch, called twice per MoE layer in a training step (fused MXFP8 MoE, FC2 + combine; Primus-Turbo 22e544d5 (#456), kept as the docstring of `run_compiled`, Primus-Turbo 7615a5a2:primus_turbo/flydsl/utils/gemm_helper.py:2054)
 - E4 [2026-08, gfx950, FlyDSL ?, N=3, campaign score `_bench_wgrad_vs_fwd.py` (wgrad FLOP rate over the same process's forward, CUDA events around the public call, so host time counts), three reads against one same-day baseline read] the wgrad public entry moved from the `@flyc.jit` closure to the `flyc.compile` object, as the forward entry already was: host 77.9 → 19.1 µs per call (`_resolve_and_make_cache_key` 54% and `_check_globals_drift` 22% of the old time), output byte-identical; gm 0.99043 → 1.05074 / 1.05483 / 1.05459, recorded +6.46%; this followed the runtime split-K policy kept the round before (gpt-oss per-tensor fp8 grouped wgrad, round 4; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260803_111756/memory.md:127; :131; :132; myskill methodology/08-splitk-crosslane-lowprec-wgrad.md:172)
 - E7 [2026-09, gfx950, FlyDSL 0.3.2, N=3, same-process probe] an arm's first read under `FLYDSL_DUMP_IR=1` and `REPS=1`: +15.44%; three normal re-runs ±0.2%; the read had both the IR dump on and a single repetition, so it does not tell which of the two caused the gap (GLM-5.2 sparse-MLA decode attention producer; campaign 20260911_143318 round 10; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260911_143318/rounds/round-10/agent.txt:15)
+- E8 [2026-11, gfx950, FlyDSL 0.3.2, N=1, compile-only probe (`COMPILE_ONLY=1 ARCH=gfx950`, `examples/01-vectorAdd.py` plus an LDS store, `fx.gpu.barrier()` and an LDS read), its IR and ISA dumps; and the ISA of a GEMM build in a forge run] after convert-gpu-to-rocdl: `llvm.fence syncscope("workgroup") release`, `rocdl.s.barrier`, `llvm.fence syncscope("workgroup") acquire`; final ISA: `global_store_dwordx4` (line 89), then `ds_write_b32`, `s_waitcnt lgkmcnt(0)`, `s_barrier` (lines 96-98), with no `vmcnt` wait in between; the forge run: "The ISA showed that `gpu.barrier()` emits waits on outstanding memory ops, including `lgkmcnt(0)`, before each loop `s_barrier`" (bf16 GEMM N=6144, K=1536) (local:/workspace/code/gpt_oss_docker/work/sikl/kb_distill/probes_g1/q3_barrier_isa.py; local:/workspace/code/gpt_oss_docker/work/sikl/kb_distill/probes_g1/q3_barrier_isa.gpu_to_rocdl.mlir:90-92; local:/workspace/code/gpt_oss_docker/work/sikl/kb_distill/probes_g1/q3_barrier_isa.final_isa.s:89; :96-98; local:/shared_nfs/kyle/geak/gemm8/gn6144_k1536/run/workspace/forge_experiments/lessons/iter_009.md:36)
+- E9 [2026-11, gfx950, FlyDSL 0.3.2, N=3, agent's probe on `bench_cudagraph`, the canonical kernel timed alongside in one process in alternating order over 4–6 rounds, medians; then the driver bench twice] loop barrier as a bare `s_barrier` with one spare ring slot per operand (rb1s1) against `gpu.barrier()`: m=128 7.945 / 7.908 / 7.909 against 8.007 / 7.955 / 7.962 µs, driver 7.937 / 7.933 against 8.002 / 7.997; m=64 6.423 / 6.429 against 6.436 / 6.438; m=32 5.389 against 5.384; m=16 5.174 against 5.170; without the spare slot (hazard not covered) m=128 7.935; `lgkmcnt(0)` then a bare `s_barrier` 8.096; ISA of rb1s1 at m=128: at most 3 LDS ops in flight at each loop barrier, all from the most recent tile; not kept (it failed the run's gate) (bf16 GEMM N=6144, K=1536, 16 waves at m=128; local:/shared_nfs/kyle/geak/gemm8/gn6144_k1536/run/workspace/forge_experiments/lessons/iter_009.md:3; :37-41; :47-50; :52; :89-94)
+- E10 [2026-11, gfx950, FlyDSL 0.3.2, N=3, probe kernels storing the intrinsics' results, eager calls and CUDA-graph replays, one probe in each of three forge runs] `llvm.amdgcn.dispatch.id`: the same in every workgroup of a launch; eager 2, 5, 8 and graph replays 53, 66, 79, high word 0, queue pointer low word different on two streams (bf16 GEMM N=128, K=6144); eager 4, 5, a second stream 0 with a different queue address, graph replays 12, 16, 20 (N=K=6144); eager 1, 2, 3, graph replays 7, 11, 15 (N=2048, K=7168) (local:/shared_nfs/kyle/geak/gemm8b/gn128_k6144/run/workspace/forge_experiments/lessons/iter_003.md:6-14; local:/shared_nfs/kyle/geak/gemm8/gn6144_k6144/run/workspace/forge_experiments/lessons/iter_004.md:5-8; local:/shared_nfs/kyle/geak/gemm8b/gn2048_k7168/run/workspace/forge_experiments/lessons/iter_002.md:16)
+- E11 [2026-11, gfx950, FlyDSL 0.3.2, N=1, ISA of the builds] `llvm.passthrough` with `amdgpu-agpr-alloc` in the launch's `value_attrs`: dropped; in the kernel call's `value_attrs`: took effect (the agpr-alloc build: `accum_offset` 64, 296 B scratch, 726 `v_accvgpr`) (bf16 GEMM N=6144, K=1536, m=4096 256×384 tile; local:/shared_nfs/kyle/geak/gemm8big/gn6144_k1536/run/workspace/forge_experiments/lessons/iter_013.md:56; :24)
+- E12 [2026-11, gfx950, FlyDSL 0.3.2, N=1 per run, ISA of the builds] `flyc.from_torch_tensor` static-layout arguments with `amdgpu-kernarg-preload-count` 16 (3 at N=6144 K=1536, whose dynamic-layout arm used 6): preload length 2 → 6 and kernarg size 72 → 24 (N=28672 K=512), 6 (N=7168 K=512), three bare pointers and 6 (N=6144 K=1536; 2 with dynamic layouts), three bare pointers, length 6, size 24, no cold wait before the first DMA at m=256 (N=128 K=6144), 2 → 6 with the first DMA at ISA line about 62 instead of 110 (N=3584 K=512) (local:/shared_nfs/kyle/geak/gemm8big/gn28672_k512/run/workspace/forge_experiments/lessons/iter_011.md:7; :11; local:/shared_nfs/kyle/geak/gemm8big/gn7168_k512/run/workspace/forge_experiments/lessons/iter_003.md:24; local:/shared_nfs/kyle/geak/gemm8big/gn6144_k1536/run/workspace/forge_experiments/lessons/iter_005.md:31-32; :37-38; local:/shared_nfs/kyle/geak/gemm8big/gn6144_k1536/tx/gn6144_k1536_kernel_final.py:529; local:/shared_nfs/kyle/geak/gemm8big/gn128_k6144/run/workspace/forge_experiments/lessons/iter_011.md:35-37; local:/shared_nfs/kyle/geak/gemm8big/gn3584_k512/run/workspace/forge_experiments/lessons/iter_014.md:60)

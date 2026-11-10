@@ -1,0 +1,156 @@
+{
+  "schema_version": 5,
+  "name": "gemm_a8w8_blockwise_scaled_n3072_k1536",
+  "contract_id": "gemm_a8w8_blockwise_scaled@1.0",
+  "description": "fp8 gemm dequantized per block: a fp32 scale per 128 x 128 of b, per 1 x 128 of a, K-major or MN-major. operand_format is '<a>:<b>'; 'none:preshuffled' is aiter's 16 x 16 shuffle_weight b with a raw column-major a_scale. Set a_scale.is_row_major to pass a row-major a_scale with a shuffled b.",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 3072,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 1536,
+      "description": "Reduction length."
+    },
+    "scale_rows": {
+      "type": "const",
+      "value": 24,
+      "description": "Weight-scale rows."
+    },
+    "scale_columns": {
+      "type": "const",
+      "value": 12,
+      "description": "Scale columns."
+    }
+  },
+  "attrs": {
+    "scale_major_mode": "K",
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    },
+    "a_scale": {
+      "shape": [
+        "m",
+        "scale_columns"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "Per 1 x 128 block of a."
+    },
+    "b_scale": {
+      "shape": [
+        "scale_rows",
+        "scale_columns"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "Per 128 x 128 block of b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T, scaled."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 128
+      },
+      "accuracy": "passed",
+      "speedup": 1.492
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "operand_format",
+            "expected_value": "none:none"
+          },
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "author": "openai",
+    "entry_point": "main.py::run",
+    "sources": [
+      {
+        "path": "adapter.py",
+        "content": "\"\"\"Metadata checks shared by the gfx950 N3072/K1536 FP8 candidates.\"\"\"\n\nimport torch\n\n\ndef validate_inputs(a, b, a_scale, b_scale, supported_m):\n    tensors = (a, b, a_scale, b_scale)\n    if not all(isinstance(t, torch.Tensor) and t.ndim == 2 for t in tensors):\n        raise ValueError(\"expected four two-dimensional tensors\")\n    if any(t.layout != torch.strided or not t.is_contiguous() for t in tensors):\n        raise ValueError(\"expected contiguous K-major tensors\")\n    if any(t.is_conj() or t.is_neg() for t in tensors):\n        raise ValueError(\"conjugate and negative views are unsupported\")\n    if any(t.device != a.device for t in tensors):\n        raise ValueError(\"all tensors must be on the same device\")\n    m, k = a.shape\n    if m not in supported_m:\n        raise ValueError(f\"unsupported M={m}; expected one of {supported_m}\")\n    if k != 1536 or b.shape != (3072, 1536):\n        raise ValueError(\"expected N=3072 and K=1536\")\n    if a.dtype != torch.float8_e4m3fn or b.dtype != torch.float8_e4m3fn:\n        raise ValueError(\"expected E4M3FN operands\")\n    if a_scale.dtype != torch.float32 or b_scale.dtype != torch.float32:\n        raise ValueError(\"expected FP32 scales\")\n    if a_scale.shape != (m, 12) or b_scale.shape != (24, 12):\n        raise ValueError(\"expected activation 1x128 and weight 128x128 scales\")\n    if getattr(b, \"is_shuffled\", False):\n        raise ValueError(\"preshuffled weights are unsupported\")\n"
+      },
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\nfrom dataclasses import dataclass\n\nimport torch\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n\n@dataclass(frozen=True)\nclass FP8PrecisionConfig:\n\n    dtype: torch.dtype\n    max_finite: float\n    group_quant_max: float\n\n\nFP8_E4M3_FN = FP8PrecisionConfig(torch.float8_e4m3fn, 448.0, 448.0)\n\n\n@gluon.constexpr_function\ndef _copy_layout(shared_layout):\n\n    bases = shared_layout.offset_bases\n    return gl.DistributedLinearLayout(\n        reg_bases=bases[:4] + bases[12:],\n        lane_bases=bases[4:10],\n        warp_bases=bases[10:12],\n        block_bases=[],\n        shape=shared_layout.shape,\n    )\n\n\n@gluon.constexpr_function\ndef _scale_window_layout(rows):\n\n    if rows == 32:\n        return gl.DistributedLinearLayout(\n            [[0, 1], [0, 2]],\n            [[1, 0], [2, 0], [4, 0], [8, 0], [0, 0], [0, 0]],\n            [[0, 0], [16, 0]],\n            [],\n            [32, 4],\n        )\n    return gl.DistributedLinearLayout(\n        [[0, 1], [0, 2]],\n        [[1, 0], [2, 0], [4, 0], [8, 0], [16, 0], [0, 0]],\n        [[0, 0], [32, 0]],\n        [],\n        [64, 4],\n    )\n\n\n@gluon.jit\ndef _activation_scale_window(\n    XS,\n    SXSM: gl.constexpr,\n    SXSK: gl.constexpr,\n    FIRST_GROUP: gl.constexpr,\n    ROWS: gl.constexpr,\n):\n    layout: gl.constexpr = _scale_window_layout(ROWS)\n    rows = gl.arange(0, ROWS, gl.SliceLayout(1, layout))\n    groups = gl.arange(0, 4, gl.SliceLayout(0, layout))\n    if ROWS == 32:\n        return gl.amd.cdna4.buffer_load(\n            XS,\n            rows[:, None] * SXSM + (groups[None, :] + FIRST_GROUP) * SXSK,\n        )\n    return gl.amd.cdna4.buffer_load(\n        XS + FIRST_GROUP * SXSK,\n        rows[:, None] * SXSM + groups[None, :] * SXSK,\n    )\n\n\n@gluon.jit\ndef _four_scale_column(table, INDEX: gl.constexpr, ROWS: gl.constexpr):\n\n    even, odd = gl.split(table.reshape((ROWS, 2, 2)))\n    if INDEX & 1:\n        pair = odd\n    else:\n        pair = even\n    even, odd = gl.split(pair)\n    if INDEX & 2:\n        return odd\n    return even\n\n\n@gluon.jit\ndef _prefetch_group(\n    destination,\n    base,\n    offsets,\n    GROUP: gl.constexpr,\n    FIXED_BASE: gl.constexpr,\n):\n\n    if FIXED_BASE:\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(\n            destination, base, offsets + GROUP * 128\n        )\n    else:\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(\n            destination, base + GROUP * 128, offsets\n        )\n\n\n@gluon.jit\ndef _decode_kernel(\n    X,\n    XS,\n    W,\n    WS,\n    Y,\n    SXM: gl.constexpr,\n    SXSM: gl.constexpr,\n    SXSK: gl.constexpr,\n    SWN: gl.constexpr,\n    SWSN: gl.constexpr,\n    SWSK: gl.constexpr,\n    BLOCK_M: gl.constexpr,\n):\n\n    pm = gl.program_id(1)\n    pn = gl.program_id(0)\n    if BLOCK_M == 64:\n\n        pn = pn ^ (pm * 2)\n\n    pm = pm.to(gl.uint32)\n    pn = pn.to(gl.uint32)\n    X += pm * BLOCK_M * SXM\n    W += pn * 64 * SWN\n    XS += pm * BLOCK_M * SXSM\n    WS += (pn >> 1) * SWSN\n\n    if BLOCK_M == 32:\n        lc: gl.constexpr = gl.amd.AMDMFMALayout(\n            4, [16, 16, 128], True, [2, 2], tiles_per_warp=[1, 2]\n        )\n    else:\n        lc: gl.constexpr = gl.amd.AMDMFMALayout(4, [32, 32, 64], True, [2, 2])\n    k_width: gl.constexpr = 16 if BLOCK_M == 32 else 32\n    da: gl.constexpr = gl.DotOperandLayout(0, lc, k_width)\n    db: gl.constexpr = gl.DotOperandLayout(1, lc, k_width)\n    if BLOCK_M == 32:\n\n        sa: gl.constexpr = gl.PaddedSharedLayout(\n            [[1024, 32]],\n            [\n                [0, 1],\n                [0, 2],\n                [0, 4],\n                [0, 8],\n                [0, 16],\n                [0, 32],\n                [0, 64],\n                [4, 0],\n                [8, 0],\n                [16, 0],\n                [1, 0],\n                [2, 0],\n            ],\n            [],\n            [32, 128],\n        )\n        sb: gl.constexpr = gl.PaddedSharedLayout(\n            [[1024, 32]],\n            [\n                [1, 0],\n                [2, 0],\n                [4, 0],\n                [8, 0],\n                [16, 0],\n                [32, 0],\n                [64, 0],\n                [0, 4],\n                [0, 8],\n                [0, 16],\n                [0, 1],\n                [0, 2],\n                [0, 32],\n            ],\n            [],\n            [128, 64],\n        )\n    else:\n\n        sa: gl.constexpr = gl.amd.cdna4.compute_efficient_padded_shared_layout(\n            gl.DotOperandLayout(0, lc, 16), [BLOCK_M, 128], gl.float8e4nv\n        )\n        sb: gl.constexpr = gl.amd.cdna4.compute_efficient_padded_shared_layout(\n            gl.DotOperandLayout(1, lc, 16), [128, 64], gl.float8e4nv\n        )\n    la: gl.constexpr = _copy_layout(sa)\n    lb: gl.constexpr = _copy_layout(sb)\n    am = gl.arange(0, BLOCK_M, gl.SliceLayout(1, la))\n    ak = gl.arange(0, 128, gl.SliceLayout(0, la))\n    bk = gl.arange(0, 128, gl.SliceLayout(1, lb))\n    bn = gl.arange(0, 64, gl.SliceLayout(0, lb))\n    ao = am[:, None] * SXM + ak[None, :]\n    bo = bn[None, :] * SWN + bk[:, None]\n\n    A_SLOTS: gl.constexpr = 4 if BLOCK_M == 32 else 3\n    B_SLOTS: gl.constexpr = 4\n    a_slots = ()\n    b_slots = ()\n    for slot in gl.static_range(4):\n        if slot < A_SLOTS:\n            a_slots += (\n                gl.allocate_shared_memory(X.dtype.element_ty, [BLOCK_M, 128], sa),\n            )\n        if slot < B_SLOTS:\n            b_slots += (gl.allocate_shared_memory(W.dtype.element_ty, [128, 64], sb),)\n\n    if BLOCK_M == 32:\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(a_slots[0], X, ao)\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(b_slots[0], W, bo)\n        gl.amd.cdna4.async_copy.commit_group()\n    else:\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(a_slots[0], X, ao)\n        gl.amd.cdna4.async_copy.commit_group()\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(b_slots[0], W, bo)\n        gl.amd.cdna4.async_copy.commit_group()\n\n    x_table = _activation_scale_window(XS, SXSM, SXSK, 0, BLOCK_M)\n    wl: gl.constexpr = gl.BlockedLayout([1], [64], [4], [0])\n    wg = gl.arange(0, 16, wl)\n    w_table = gl.load(WS + wg * SWSK, wg < 12, other=0.0)\n    acc = gl.zeros((BLOCK_M, 64), gl.float32, lc)\n    if BLOCK_M == 32:\n        x_future = gl.zeros((BLOCK_M, 4), gl.float32, _scale_window_layout(BLOCK_M))\n\n        _prefetch_group(a_slots[1], X, ao, 1, True)\n        gl.amd.cdna4.async_copy.commit_group()\n        _prefetch_group(b_slots[1], W, bo, 1, True)\n        gl.amd.cdna4.async_copy.commit_group()\n    else:\n\n        _prefetch_group(b_slots[1], W, bo, 1, False)\n        gl.amd.cdna4.async_copy.commit_group()\n\n    pending_partials = ()\n    pending_scales = ()\n    for stage in gl.static_range(12):\n\n        if BLOCK_M == 32:\n            if stage < 10:\n                _prefetch_group(a_slots[(stage + 2) % A_SLOTS], X, ao, stage + 2, True)\n                gl.amd.cdna4.async_copy.commit_group()\n                _prefetch_group(b_slots[(stage + 2) % B_SLOTS], W, bo, stage + 2, True)\n                gl.amd.cdna4.async_copy.commit_group()\n            gl.amd.cdna4.async_copy.wait_group(\n                4 if stage < 10 else (2 if stage == 10 else 0)\n            )\n        else:\n            if stage < 11:\n                _prefetch_group(a_slots[(stage + 1) % A_SLOTS], X, ao, stage + 1, False)\n                gl.amd.cdna4.async_copy.commit_group()\n            if stage < 10:\n                _prefetch_group(b_slots[(stage + 2) % B_SLOTS], W, bo, stage + 2, False)\n                gl.amd.cdna4.async_copy.commit_group()\n            gl.amd.cdna4.async_copy.wait_group(\n                3 if stage < 10 else (2 if stage == 10 else 0)\n            )\n        gl.barrier()\n\n        a_slot = a_slots[stage % A_SLOTS]\n        b_slot = b_slots[stage % B_SLOTS]\n        a = gl.amd.cdna4.async_copy.load_shared_relaxed(a_slot, da)\n        b = gl.amd.cdna4.async_copy.load_shared_relaxed(b_slot, db)\n        if BLOCK_M == 32:\n            if stage > 0 and stage % 4 == 0:\n                x_table = x_future\n            if stage == 0 or stage == 4:\n\n                x_future = _activation_scale_window(XS, SXSM, SXSK, stage + 4, BLOCK_M)\n        elif stage > 0 and stage % 4 == 0:\n            x_table = _activation_scale_window(XS, SXSM, SXSK, stage, BLOCK_M)\n        xs = _four_scale_column(x_table, stage % 4, BLOCK_M)\n        xs = gl.convert_layout(xs, gl.SliceLayout(1, lc), assert_trivial=True)\n        index = gl.full((1,), stage, gl.int32, wl)\n        ws = gl.gather(w_table, index, axis=0).reshape(())\n\n        if BLOCK_M == 64:\n            scale = xs * ws\n        partial = gl.amd.cdna4.mfma_scaled(\n            a,\n            None,\n            \"e4m3\",\n            b,\n            None,\n            \"e4m3\",\n            gl.zeros((BLOCK_M, 64), gl.float32, lc),\n        )\n\n        if BLOCK_M == 32:\n            acc = gl.fma(partial, xs[:, None] * ws, acc)\n        else:\n\n            if stage >= 2:\n                acc = gl.fma(pending_partials[0], pending_scales[0][:, None], acc)\n                pending_partials = pending_partials[1:]\n                pending_scales = pending_scales[1:]\n            pending_partials += (partial,)\n            pending_scales += (scale,)\n\n    if BLOCK_M == 64:\n        for tail in gl.static_range(2):\n            acc = gl.fma(pending_partials[tail], pending_scales[tail][:, None], acc)\n        output_base = Y + pm * BLOCK_M * 3072 + pn * 64\n\n    out_layout: gl.constexpr = gl.BlockedLayout([1, 8], [8, 8], [4, 1], [1, 0])\n\n    result = acc.to(gl.bfloat16)\n    if BLOCK_M == 32:\n        exchange = gl.allocate_shared_memory(\n            gl.bfloat16,\n            [BLOCK_M, 64],\n            gl.SwizzledSharedLayout(8, 2, 8, [1, 0]),\n        )\n        exchange.store(result)\n        result = exchange.load(out_layout)\n    else:\n\n        exchange_layout: gl.constexpr = gl.SharedLinearLayout(\n            [\n                [0, 1],\n                [0, 2],\n                [0, 4],\n                [0, 8],\n                [0, 16],\n                [0, 32],\n                [1, 8],\n                [2, 16],\n                [4, 32],\n                [8, 0],\n                [16, 0],\n                [32, 8],\n            ],\n            [],\n            16,\n        )\n        exchange = gl.allocate_shared_memory(\n            gl.bfloat16,\n            [BLOCK_M, 64],\n            exchange_layout,\n        )\n        exchange.store(result)\n        result = exchange.load(out_layout)\n    rm = gl.arange(0, BLOCK_M, gl.SliceLayout(1, out_layout))\n    rn = gl.arange(0, 64, gl.SliceLayout(0, out_layout))\n    if BLOCK_M == 32:\n        output_base = Y + pm * BLOCK_M * 3072 + pn * 64\n    gl.amd.cdna4.buffer_store(\n        result,\n        output_base,\n        rm[:, None] * 3072 + rn[None, :],\n        cache=\".wt\",\n    )\n\n    a_slots[11 % A_SLOTS]._keep_alive()\n    b_slots[11 % B_SLOTS]._keep_alive()\n\n\ndef fp8_a8w8_block_scaled_gemm_fn(\n    x: torch.Tensor,\n    x_scales: torch.Tensor,\n    weight: torch.Tensor,\n    weight_scales: torch.Tensor,\n    *,\n    out: torch.Tensor,\n    group_n: int = 128,\n    group_k: int = 128,\n    block_m: int = 32,\n    precision_config: FP8PrecisionConfig = FP8_E4M3_FN,\n) -> None:\n\n    assert x.ndim == weight.ndim == 2\n    assert block_m > 0 and block_m & (block_m - 1) == 0\n    m, k = x.shape\n    n, weight_k = weight.shape\n    assert m in (128, 256) and n == 3072 and k == weight_k == 1536\n    assert group_n == group_k == 128\n    assert x.stride(1) == weight.stride(1) == 1\n    assert precision_config.dtype is torch.float8_e4m3fn\n    assert x.dtype == weight.dtype == torch.float8_e4m3fn\n    assert x_scales.dtype == weight_scales.dtype == torch.float32\n    assert x_scales.shape == (m, 12) and weight_scales.shape == (24, 12)\n    assert x.device == weight.device == x_scales.device == weight_scales.device\n    _decode_kernel[(48, 4)](\n        x,\n        x_scales,\n        weight,\n        weight_scales,\n        out,\n        x.stride(0),\n        *x_scales.stride(),\n        weight.stride(0),\n        *weight_scales.stride(),\n        BLOCK_M=32 if m == 128 else 64,\n        num_warps=4,\n    )\n"
+      },
+      {
+        "path": "main.py",
+        "content": "\"\"\"Canonical argument adapter for the m128 candidate.\"\"\"\n\nfrom .adapter import validate_inputs\n\nSUPPORTED_M = (128,)\n\n\ndef run(\n    *,\n    a,\n    b,\n    a_scale,\n    b_scale,\n    scale_major_mode,\n    trans_b,\n    operand_format,\n    bias,\n    out_dtype,\n    out,\n):\n    validate_inputs(a, b, a_scale, b_scale, SUPPORTED_M)\n    from .kernel import fp8_a8w8_block_scaled_gemm_fn\n\n    # Preserve this implementation's own precision default.\n    # Attrs, bias and out_dtype are fixed by this schema's Point; keep the old behaviour.\n    fp8_a8w8_block_scaled_gemm_fn(a, a_scale, b, b_scale, out=out)\n"
+      }
+    ]
+  }
+}

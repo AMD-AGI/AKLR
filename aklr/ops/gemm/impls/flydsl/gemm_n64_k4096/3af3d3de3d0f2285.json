@@ -1,0 +1,123 @@
+{
+  "schema_version": 5,
+  "name": "gemm_n64_k4096",
+  "contract_id": "gemm@1.0",
+  "description": "16-bit gemm: out = a @ b.T + bias (b is (k, n) unless trans_b).",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 64,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 4096,
+      "description": "Reduction length."
+    }
+  },
+  "attrs": {
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 256
+      }
+    },
+    {
+      "axes": {
+        "m": 512
+      }
+    },
+    {
+      "axes": {
+        "m": 1024
+      }
+    },
+    {
+      "axes": {
+        "m": 2048
+      }
+    },
+    {
+      "axes": {
+        "m": 4096
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"bf16 GEMM ``out = a @ b.T`` in FlyDSL: each wave reduces its own K slice through a private LDS ring\n(`_build_gemm`); past the largest `_CONFIGS` bucket, K is split across workgroups (`_build_fold`).\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import arith as _std_arith\nfrom flydsl._mlir.dialects import llvm as _llvm\nfrom flydsl._mlir.dialects import rocdl as _rocdl_d\nfrom flydsl._mlir.dialects import scf as _scf\nfrom flydsl._mlir.dialects import vector as _vector\nfrom flydsl.expr import arith as _arith\nfrom flydsl.expr.typing import T as _T\nfrom flydsl.expr.typing import as_ir_value as _irv\n\n# M bucket -> (PBM, PBN, BK, KW, STAGES, ROT_Y): a PBM x PBN output tile per workgroup of KW waves, each\n# streaming K / KW through STAGES LDS slots of BK columns from k-tile (bid_x + ROT_Y * bid_y) on.\n_CONFIGS = {\n    256: (8, 8, 128, 8, 3, 5),\n    512: (16, 8, 128, 8, 2, 5),\n    1024: (16, 16, 128, 8, 2, 5),\n    2048: (32, 16, 64, 4, 4, 11),\n}\n_FOLD = (64, 64, 4, 6)  # (BM, BK, S, STAGES) of the split-K fold kernel\n\n_PRELOAD = {\"llvm_options\": {\"amdgpu-kernarg-preload-count\": 16}}\n_WAVE = 64\n_SC01 = (1 << 4) | 1  # sc1 | sc0: system-coherent access past the non-coherent caches\n_TAG_MUL = 0x9E3779B97F4A7C15  # Fibonacci-hash multiplier\n_COUNT_BITS = 8  # low bits of a counter word count arrivals, the rest hold the launch tag\n_TAG_MASK = (1 << (64 - _COUNT_BITS)) - 1\n_CTR_STRIDE = 256  # bytes between two tiles' counters, so their atomics do not share a cache line\n\n\ndef _make_rsrc(ptr):\n    return fx.rocdl.get_buffer_rsrc(fx.rocdl.make_buffer_ptr(ptr))\n\n\ndef _auxattr():\n    i32 = ir.IntegerType.get_signless(32)\n    return ir.IntegerAttr.get(i32, _SC01)\n\n\ndef _i64c(v):\n    i64 = ir.IntegerType.get_signless(64)\n    if v >= (1 << 63):\n        v -= 1 << 64\n    return _std_arith.ConstantOp(i64, ir.IntegerAttr.get(i64, v)).result\n\n\ndef _asm(text, constraints=\"\"):\n    _llvm.InlineAsmOp(None, [], text, constraints, has_side_effects=True)\n\n\ndef _lds_swz(row, chunks_per_row):\n    \"\"\"XOR key for the chunk index of LDS row `row`, shared by the DMA writer and the ds_read reader:\n    the rows that share one bank window get distinct keys.\"\"\"\n    if chunks_per_row == 8:\n        return (row >> 1) & 7\n    if chunks_per_row == 16:\n        return row & 15\n    raise NotImplementedError(chunks_per_row)\n\n\ndef _src_offsets(tid, threads, nloads, row0, cpr, K):\n    \"\"\"Global byte offsets (k excluded) of a thread's 16-byte DMA chunks, pre-swizzled for LDS.\"\"\"\n    offs = []\n    for j in range(nloads):\n        c = tid + j * threads\n        r = c // cpr\n        q = (c % cpr) ^ _lds_swz(r, cpr)\n        offs.append(fx.Int32(r + row0) * (K * 2) + q * 16)\n    return offs\n\n\ndef _dma(rsrc, voff, lds_addr, koff_bytes):\n    lds_p = _llvm.IntToPtrOp(ir.Type.parse(\"!llvm.ptr<3>\"), _irv(lds_addr)).result\n    _llvm.InlineAsmOp(\n        None,\n        [lds_p, _irv(voff), rsrc, _irv(koff_bytes)],\n        \"s_mov_b32 m0, $0\\n\\tbuffer_load_dwordx4 $1, $2, $3 offen lds\",\n        \"s,v,s,s\",\n        has_side_effects=True,\n    )\n\n\ndef _frag_offsets(row, lk, sw, BK):\n    return [fx.Int64(row * BK + ((lk + 4 * kk) ^ sw) * 8) for kk in range(BK // 32)]\n\n\ndef _load_frags(ptr, stage_off, offs, step, kk, count):\n    vec_ty = fx.Vector.make_type(8, fx.BFloat16)\n    return [fx.ptr_load(ptr + (stage_off + offs[kk] + i * step), result_type=vec_ty) for i in range(count)]\n\n\ndef _mfma_stage(a_src, b_src, MR, NR, cs):\n    \"\"\"MFMAs of one LDS stage; a_src and b_src are (LDS pointer, stage offset, lane offsets, fragment step).\"\"\"\n    cs = list(cs)\n    for kk in range(len(a_src[2])):\n        bf = _load_frags(*b_src, kk, NR)\n        af = _load_frags(*a_src, kk, MR)\n        for m in range(MR):\n            for n in range(NR):\n                cs[m * NR + n] = fx.rocdl.mfma_f32_16x16x32_bf16(\n                    _T.vec(4, _T.f32), [af[m], bf[n], cs[m * NR + n], 0, 0, 0]\n                )\n    return cs\n\n\ndef _store_rows(acc, rsrc, base, N):\n    hv = _std_arith.TruncFOp(_T.vec(4, _T.bf16), _irv(acc)).result\n    zero = _irv(fx.Int32(0))\n    for v in range(4):\n        e = _vector.extract(hv, static_position=[v], dynamic_position=[])\n        _rocdl_d.raw_ptr_buffer_store(e, rsrc, _irv(base + v * N * 2), zero)\n\n\ndef _ptr(elem, t):\n    return flyc.from_c_void_p(elem, t.data_ptr(), assumed_align=16)\n\n\ndef _build_gemm(M, N, K, PBM, PBN, BK, KW, STAGES, ROT_Y):\n    \"\"\"KW single-wave K groups per workgroup, each with a private LDS ring and no barrier in its K loop.\n    A tile narrower than the MFMA aliases its loaded rows into the rest of it and stores only its own.\"\"\"\n    MR = max(PBM // 16, 1)\n    NR = max(PBN // 16, 1)\n    NF = MR * NR\n    CPR = BK // 8\n    LA = PBM * CPR // _WAVE\n    LB = PBN * CPR // _WAVE\n    A_STAGE = PBM * BK\n    B_STAGE = PBN * BK\n    k_tiles = K // KW // BK\n    WAIT = LA + LB\n    assert M % PBM == 0 and N % PBN == 0 and LA * _WAVE == PBM * CPR and LB * _WAVE == PBN * CPR\n    assert k_tiles >= STAGES and NF * _WAVE * 8 <= STAGES * A_STAGE\n\n    @fx.struct\n    class _Smem:\n        a_lds: fx.Array[fx.BFloat16, KW * STAGES * A_STAGE, 16]\n        b_lds: fx.Array[fx.BFloat16, KW * STAGES * B_STAGE, 16]\n\n    @flyc.kernel\n    def gemm_kernel(A: fx.Pointer, B: fx.Pointer, C: fx.Pointer):\n        bid_x, bid_y, _ = fx.block_idx\n        rsrc_a = _make_rsrc(A)\n        rsrc_b = _make_rsrc(B)\n        lds = fx.SharedAllocator().allocate(_Smem)\n        a_ptr = lds.a_lds.peek().ptr\n        b_ptr = lds.b_lds.peek().ptr\n        a_i64 = fx.Int64(fx.ptrtoint(a_ptr))\n        b_i64 = fx.Int64(fx.ptrtoint(b_ptr))\n\n        tid_wg = fx.Int32(fx.thread_idx.x)\n        lane = tid_wg % _WAVE\n        kw = tid_wg // _WAVE\n        kw_s = fx.Int32(fx.rocdl.readfirstlane(_T.i32, _irv(kw)))\n        kw_a = fx.Int64(kw_s) * (STAGES * A_STAGE)\n        kw_b = fx.Int64(kw_s) * (STAGES * B_STAGE)\n\n        src_a = _src_offsets(lane, _WAVE, LA, fx.Int32(bid_x) * PBM, CPR, K)\n        src_b = _src_offsets(lane, _WAVE, LB, fx.Int32(bid_y) * PBN, CPR, K)\n\n        def issue_tile(koff_bytes, stage):\n            st = fx.Int64(stage)\n            a_base = a_i64 + (kw_a + st * A_STAGE) * 2\n            b_base = b_i64 + (kw_b + st * B_STAGE) * 2\n            for j in fx.range_constexpr(LB):\n                _dma(rsrc_b, src_b[j], b_base + j * _WAVE * 16, koff_bytes)\n            for j in fx.range_constexpr(LA):\n                _dma(rsrc_a, src_a[j], a_base + j * _WAVE * 16, koff_bytes)\n\n        def wait(vmcnt):\n            _asm(f\"s_waitcnt vmcnt({vmcnt})\\n\\ts_waitcnt lgkmcnt(0)\")\n\n        lr = lane % 16\n        lk = lane // 16\n        sw = _lds_swz(lr, CPR)\n        offA = _frag_offsets(lr % min(PBM, 16), lk, sw, BK)\n        offB = _frag_offsets(lr % min(PBN, 16), lk, sw, BK)\n\n        def compute_tile(stage, cs):\n            st = fx.Int64(stage)\n            a_src = (a_ptr, kw_a + st * A_STAGE, offA, 16 * BK)\n            return _mfma_stage(a_src, (b_ptr, kw_b + st * B_STAGE, offB, 16 * BK), MR, NR, cs)\n\n        # Each workgroup starts at its own k-tile so concurrent loads spread over K.\n        rot = (fx.Int32(bid_x) + fx.Int32(bid_y) * ROT_Y) % k_tiles\n        kb0 = kw_s * ((K // KW) * 2)\n\n        def _koff(t):\n            return kb0 + ((t + rot) % k_tiles) * (BK * 2)\n\n        for s in fx.range_constexpr(STAGES - 1):\n            issue_tile(_koff(s), s)\n        fx.rocdl.sched_barrier(0)\n\n        acc0 = _arith.constant_vector(0.0, _T.vec(4, _T.f32))\n        init_state = [fx.Int32(0), fx.Index(0)] + [acc0] * NF\n        for _t, state in range(0, k_tiles - (STAGES - 1), 1, init=init_state):\n            kb = state[0]\n            cur = fx.Index(state[1])\n            cs = state[2:]\n            nxt = (cur + 1) % STAGES\n            wr = (cur + STAGES - 1) % STAGES\n            wait((STAGES - 2) * WAIT)\n            issue_tile(_koff(kb + (STAGES - 1)), wr)\n            cs_new = compute_tile(cur, cs)\n            results = yield [kb + 1, nxt] + cs_new\n        cur = fx.Index(results[1])\n        cs = results[2:]\n        for s in fx.range_constexpr(STAGES - 1):\n            wait((STAGES - 2 - s) * WAIT)\n            cs = compute_tile(cur, cs)\n            cur = (cur + 1) % STAGES\n\n        # Sum the K groups' partials through the A ring in wave order, so the result is bitwise fixed.\n        v4f32 = _T.vec(4, _T.f32)\n        for i in fx.range_constexpr(NF):\n            fx.ptr_store(cs[i], a_ptr + (kw_a + fx.Int64((i * _WAVE + lane) * 8)))\n        _asm(\"s_waitcnt lgkmcnt(0)\\n\\ts_barrier\")\n        owner = _arith.cmpi(_arith.CmpIPredicate.eq, _irv(kw), _irv(fx.Int32(0)))\n        if fx.const_expr(PBM < 16 or PBN < 16):\n            owner = _arith.andi(owner, _arith.andi(_irv(lr < PBN), _irv(lk < (PBM // 4))))\n        if_owner = _scf.IfOp(_irv(owner), [], has_else=False)\n        with ir.InsertionPoint(if_owner.then_block):\n            red = []\n            for i in fx.range_constexpr(NF):\n                acc = fx.ptr_load(a_ptr + fx.Int64((i * _WAVE + lane) * 8), result_type=v4f32)\n                for q in fx.range_constexpr(1, KW):\n                    acc = _arith.addf(\n                        acc,\n                        fx.ptr_load(\n                            a_ptr + fx.Int64(q * STAGES * A_STAGE + (i * _WAVE + lane) * 8), result_type=v4f32\n                        ),\n                    )\n                red.append(acc)\n            rsrc_c = _make_rsrc(C)\n            for i in fx.range_constexpr(NF):\n                row = fx.Int32(bid_x) * PBM + (i // NR) * 16 + lk * 4\n                col = fx.Int32(bid_y) * PBN + (i % NR) * 16 + lr\n                _store_rows(red[i], rsrc_c, (row * N + col) * 2, N)\n            _scf.YieldOp([])\n\n    @flyc.jit\n    def launch(A: fx.Pointer, B: fx.Pointer, C: fx.Pointer, stream: fx.Stream):\n        gemm_kernel(A, B, C).launch(grid=(M // PBM, N // PBN, 1), block=(_WAVE * KW, 1, 1), stream=stream)\n\n    compiled = flyc.compile[_PRELOAD](launch)\n\n    def run_gemm(a, b, out):\n        compiled(\n            _ptr(fx.BFloat16, a),\n            _ptr(fx.BFloat16, b),\n            _ptr(fx.BFloat16, out),\n            stream=fx.Stream(torch.cuda.current_stream(a.device)),\n        )\n\n    return run_gemm\n\n\ndef _build_fold(M, N, K, BM, BK, S, STAGES):\n    \"\"\"Split-K over S workgroups per BM-row tile: each publishes its fp32 partial and counts in on its tile's\n    counter, whose high bits tag the launch (a stale tag is reset by compare-and-swap). The last one in sums\n    the partials in split order, so no workgroup waits for another.\"\"\"\n    BN = N\n    WM, WN = 2, 2\n    TPW = WM * WN * _WAVE\n    MR = BM // (16 * WM)\n    NR = BN // (16 * WN)\n    NF = MR * NR\n    CPR = BK // 8\n    k_tiles = (K // S) // BK\n    m_tiles = M // BM\n    LA = BM * CPR // TPW\n    LB = BN * CPR // TPW\n    A_STAGE = BM * BK\n    B_STAGE = BN * BK\n    TILE_F = BM * BN\n    PLANE_BYTES = m_tiles * TILE_F * 4\n    CTR_OFF = S * PLANE_BYTES\n    WAIT = LA + LB\n    assert M % BM == 0 and k_tiles >= STAGES and LA * TPW == BM * CPR and LB * TPW == BN * CPR\n\n    @fx.struct\n    class _Smem:\n        a_lds: fx.Array[fx.BFloat16, STAGES * A_STAGE, 16]\n        b_lds: fx.Array[fx.BFloat16, STAGES * B_STAGE, 16]\n\n    @flyc.kernel\n    def fold_kernel(A: fx.Pointer, B: fx.Pointer, W: fx.Pointer, C: fx.Pointer):\n        i64 = ir.IntegerType.get_signless(64)\n        v4f32 = _T.vec(4, _T.f32)\n        bid_x, _, bid_z = fx.block_idx\n        rsrc_a = _make_rsrc(A)\n        rsrc_b = _make_rsrc(B)\n        rsrc_c = _make_rsrc(C)\n        rsrc_w = _make_rsrc(W)\n        zero = _irv(fx.Int32(0))\n\n        # The launch tag and the old counter word are fetched before any DMA.\n        ctr_off = fx.Int32(bid_x) * _CTR_STRIDE + CTR_OFF\n        w0 = _rocdl_d.raw_ptr_buffer_load(i64, rsrc_w, _irv(ctr_off), zero, aux=_auxattr())\n        did = _llvm.call_intrinsic(i64, \"llvm.amdgcn.dispatch.id\", [], [], [])\n        qp = _llvm.call_intrinsic(ir.Type.parse(\"!llvm.ptr<4>\"), \"llvm.amdgcn.queue.ptr\", [], [], [])\n        qpi = _llvm.PtrToIntOp(i64, qp).result\n        tag = _std_arith.AndIOp(\n            _std_arith.AddIOp(did, _std_arith.MulIOp(qpi, _i64c(_TAG_MUL)).result).result, _i64c(_TAG_MASK)\n        ).result\n        tag_word = _std_arith.ShLIOp(tag, _i64c(_COUNT_BITS)).result\n\n        lds = fx.SharedAllocator().allocate(_Smem)\n        a_ptr = lds.a_lds.peek().ptr\n        b_ptr = lds.b_lds.peek().ptr\n        a_i64 = fx.Int64(fx.ptrtoint(a_ptr))\n        b_i64 = fx.Int64(fx.ptrtoint(b_ptr))\n\n        tid_i = fx.Int32(fx.thread_idx.x)\n        wid = tid_i // _WAVE\n        lane = tid_i % _WAVE\n        wave_off = fx.Int64(fx.rocdl.readfirstlane(_T.i64, _irv(fx.Int64(wid) * (_WAVE * 16))))\n\n        src_a = _src_offsets(tid_i, TPW, LA, fx.Int32(bid_x) * BM, CPR, K)\n        src_b = _src_offsets(tid_i, TPW, LB, 0, CPR, K)\n\n        def issue_tile(koff_bytes, stage):\n            st = fx.Int64(stage)\n            a_base = a_i64 + (st * A_STAGE) * 2 + wave_off\n            b_base = b_i64 + (st * B_STAGE) * 2 + wave_off\n            for j in fx.range_constexpr(LA):\n                _dma(rsrc_a, src_a[j], a_base + j * TPW * 16, koff_bytes)\n            for j in fx.range_constexpr(LB):\n                _dma(rsrc_b, src_b[j], b_base + j * TPW * 16, koff_bytes)\n\n        def wait(vmcnt):\n            _asm(f\"s_waitcnt vmcnt({vmcnt})\\n\\ts_barrier\")\n\n        wm = wid % WM\n        wn = wid // WM\n        lr = lane % 16\n        lk = lane // 16\n        sw = _lds_swz(lr, CPR)\n        offA = _frag_offsets(wm * 16 + lr, lk, sw, BK)\n        offB = _frag_offsets(wn * 16 + lr, lk, sw, BK)\n\n        def compute_tile(stage, cs):\n            st = fx.Int64(stage)\n            a_src = (a_ptr, st * A_STAGE, offA, 16 * WM * BK)\n            return _mfma_stage(a_src, (b_ptr, st * B_STAGE, offB, 16 * WN * BK), MR, NR, cs)\n\n        kb0 = fx.Int32(bid_z) * ((K // S) * 2)\n\n        def _koff(t):\n            return kb0 + t * (BK * 2)\n\n        for s in fx.range_constexpr(STAGES - 1):\n            issue_tile(_koff(s), s)\n        fx.rocdl.sched_barrier(0)\n\n        acc0 = _arith.constant_vector(0.0, v4f32)\n        init_state = [fx.Int32(0), fx.Index(0)] + [acc0] * NF\n        for _t, state in range(0, k_tiles - (STAGES - 1), 1, init=init_state):\n            kb = state[0]\n            cur = fx.Index(state[1])\n            cs = state[2:]\n            nxt = (cur + 1) % STAGES\n            wr = (cur + STAGES - 1) % STAGES\n            wait((STAGES - 2) * WAIT)\n            issue_tile(_koff(kb + (STAGES - 1)), wr)\n            cs_new = compute_tile(cur, cs)\n            results = yield [kb + 1, nxt] + cs_new\n        cur = fx.Index(results[1])\n        cs = results[2:]\n        for s in fx.range_constexpr(STAGES - 1):\n            wait((STAGES - 2 - s) * WAIT)\n            cs = compute_tile(cur, cs)\n            cur = (cur + 1) % STAGES\n        cs = [_irv(c) for c in cs]\n\n        tile_base = fx.Int32(bid_x) * (TILE_F * 4)\n        lane_off = (wid * NF * _WAVE + lane) * 16\n        for f in fx.range_constexpr(NF):\n            off = tile_base + fx.Int32(bid_z) * PLANE_BYTES + lane_off + f * _WAVE * 16\n            _rocdl_d.raw_ptr_buffer_store(cs[f], rsrc_w, _irv(off), zero, aux=_auxattr())\n\n        gptr = _llvm.IntToPtrOp(\n            ir.Type.parse(\"!llvm.ptr<1>\"),\n            _std_arith.AddIOp(\n                _llvm.PtrToIntOp(i64, W.llvm_ptr).result, _std_arith.ExtSIOp(i64, _irv(ctr_off)).result\n            ).result,\n        ).result\n        is_t0 = _arith.cmpi(_arith.CmpIPredicate.eq, _irv(tid_i), _irv(fx.Int32(0)))\n        stale = _std_arith.CmpIOp(\n            _std_arith.CmpIPredicate.ne, _std_arith.ShRUIOp(w0, _i64c(_COUNT_BITS)).result, tag\n        ).result\n        if_r = _scf.IfOp(_std_arith.AndIOp(_irv(is_t0), stale).result, [], has_else=False)\n        with ir.InsertionPoint(if_r.then_block):\n            _llvm.AtomicCmpXchgOp(\n                gptr,\n                w0,\n                tag_word,\n                _llvm.AtomicOrdering.monotonic,\n                _llvm.AtomicOrdering.monotonic,\n                syncscope=\"agent\",\n            )\n            _scf.YieldOp([])\n        # Every partial store of this workgroup is acknowledged before it counts in.\n        _asm(\"s_waitcnt vmcnt(0)\\n\\ts_barrier\", \"~{memory}\")\n        if_a = _scf.IfOp(_irv(is_t0), [], has_else=False)\n        with ir.InsertionPoint(if_a.then_block):\n            old = _llvm.atomicrmw(\n                _llvm.AtomicBinOp.add, gptr, _i64c(1), _llvm.AtomicOrdering.monotonic, syncscope=\"agent\"\n            )\n            last = _std_arith.CmpIOp(\n                _std_arith.CmpIPredicate.eq, old, _std_arith.OrIOp(tag_word, _i64c(S - 1)).result\n            )\n            flag = _std_arith.SelectOp(last.result, _irv(fx.Float32(1.0)), _irv(fx.Float32(0.0))).result\n            fx.ptr_store(_vector.broadcast(v4f32, flag), a_ptr + fx.Int64(0))\n            _scf.YieldOp([])\n        _asm(\"s_waitcnt lgkmcnt(0)\\n\\ts_barrier\", \"~{memory}\")\n        fl = fx.ptr_load(a_ptr + fx.Int64(0), result_type=v4f32)\n        fl0 = _vector.extract(_irv(fl), static_position=[0], dynamic_position=[])\n        is_last = _std_arith.CmpFOp(_std_arith.CmpFPredicate.OGT, fl0, _irv(fx.Float32(0.5))).result\n        if_f = _scf.IfOp(is_last, [], has_else=False)\n        with ir.InsertionPoint(if_f.then_block):\n            zi = fx.Int32(bid_z)\n            others = []\n            for i in fx.range_constexpr(S - 1):\n                zj = (zi + (1 + i)) % S\n                row = []\n                for f in fx.range_constexpr(NF):\n                    off = tile_base + zj * PLANE_BYTES + lane_off + f * _WAVE * 16\n                    row.append(_rocdl_d.raw_ptr_buffer_load(v4f32, rsrc_w, _irv(off), zero, aux=_auxattr()))\n                others.append(row)\n            for f in fx.range_constexpr(NF):\n                acc = None\n                for z in fx.range_constexpr(S):\n                    rel = (fx.Int32(z) - zi + (S - 1)) % S\n                    v = others[S - 2][f]\n                    for i in fx.range_constexpr(S - 2):\n                        v = _std_arith.SelectOp(_irv(rel == i), others[i][f], v).result\n                    v = _std_arith.SelectOp(_irv(zi == z), cs[f], v).result\n                    acc = v if acc is None else _arith.addf(acc, v)\n                r0 = fx.Int32(bid_x) * BM + (f // NR) * 16 * WM + wm * 16 + lk * 4\n                c0 = (f % NR) * 16 * WN + wn * 16 + lr\n                _store_rows(acc, rsrc_c, (r0 * N + c0) * 2, N)\n            _scf.YieldOp([])\n\n    @flyc.jit\n    def launch(A: fx.Pointer, B: fx.Pointer, W: fx.Pointer, C: fx.Pointer, stream: fx.Stream):\n        fold_kernel(A, B, W, C).launch(grid=(m_tiles, 1, S), block=(TPW, 1, 1), stream=stream)\n\n    compiled = flyc.compile[_PRELOAD](launch)\n    ws_floats = (CTR_OFF + _CTR_STRIDE * m_tiles) // 4\n\n    def run_fold(a, b, out):\n        # This call's own partials and counters; their contents start undefined.\n        ws = torch.empty((ws_floats,), dtype=torch.float32, device=a.device)\n        compiled(\n            _ptr(fx.BFloat16, a),\n            _ptr(fx.BFloat16, b),\n            _ptr(fx.Float32, ws),\n            _ptr(fx.BFloat16, out),\n            stream=fx.Stream(torch.cuda.current_stream(a.device)),\n        )\n\n    return run_fold\n\n\n@functools.lru_cache(maxsize=None)\ndef _launcher(M, N, K):\n    for bucket in sorted(_CONFIGS):\n        if M <= bucket:\n            return _build_gemm(M, N, K, *_CONFIGS[bucket])\n    return _build_fold(M, N, K, *_FOLD)\n\n\ndef run(*, a, b, trans_b, bias, out_dtype, out):\n    _launcher(a.shape[0], b.shape[0], a.shape[1])(a, b, out)\n"
+      }
+    ]
+  }
+}

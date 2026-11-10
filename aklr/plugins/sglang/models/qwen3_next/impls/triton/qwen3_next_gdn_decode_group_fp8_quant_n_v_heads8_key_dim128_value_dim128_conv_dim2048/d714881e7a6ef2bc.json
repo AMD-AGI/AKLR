@@ -1,0 +1,507 @@
+{
+  "schema_version": 5,
+  "name": "qwen3_next_gdn_decode_group_fp8_quant_n_v_heads8_key_dim128_value_dim128_conv_dim2048",
+  "contract_id": "qwen3_next_gdn_decode_group_fp8_quant@1.0",
+  "description": "Qwen3-Next GDN decode, one token per row, from Q/K/V/Z and B/A projections grouped by key head. A row whose cache index is -1 is padding: it changes no state, and its core output is zero. Every other row uses its distinct slot: the width-four causal convolution of the history and the token's Q/K/V channels adds the bias to the FP32 sum of the four products, oldest tap first, and its SiLU is rounded to BF16. beta, the sigmoid of B, is rounded to BF16, and the decay is exp(-exp(a_log) * softplus(A + dt_bias)). Each value head uses its key head's Q and K, L2-normalized with epsilon 1e-6; the gated delta rule updates the FP32 delta_state in [value,key] order, and the core output, Q times the state times scale, is rounded to BF16. The core is gated RMS-normalized with norm_weight and SiLU of the head's Z, rounded to BF16, and quantized per value head to E4M3FN with scale=max(amax,1e-10)/448. Q and K stay FP32 after their normalization, and the slot's history shifts the row in. Unindexed slots and all other inputs are preserved.",
+  "op_type": "qwen3_next",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Decode rows: one token each, padding rows included."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Allocated state slots."
+    },
+    "n_v_heads": {
+      "type": "const",
+      "value": 8,
+      "description": "Value heads on this rank."
+    },
+    "key_dim": {
+      "type": "const",
+      "value": 128,
+      "description": "Key head width."
+    },
+    "value_dim": {
+      "type": "const",
+      "value": 128,
+      "description": "FP8 group and value-head width."
+    },
+    "conv_dim": {
+      "type": "const",
+      "value": 2048,
+      "description": "Convolution channels: every Q, then every K, then every V."
+    },
+    "value_width": {
+      "type": "const",
+      "value": 1024,
+      "description": "Total value width."
+    },
+    "n_k_heads": {
+      "type": "const",
+      "value": 4,
+      "description": "Key heads on this rank."
+    },
+    "projection_dim": {
+      "type": "const",
+      "value": 3072,
+      "description": "Q/K/V/Z projection width: per key head, 2 * key_dim + 2 * value_dim * n_v_heads // n_k_heads."
+    },
+    "gate_dim": {
+      "type": "const",
+      "value": 16,
+      "description": "B/A projection width."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "projected_qkvz": {
+      "shape": [
+        "n_tokens",
+        "projection_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Q/K/V/Z projections grouped by key head: each key head's Q, its K, then the V and the Z of its value heads."
+    },
+    "projected_ba": {
+      "shape": [
+        "n_tokens",
+        "gate_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "B/A projections grouped by key head: the B, then the A, of its value heads."
+    },
+    "conv_state": {
+      "shape": [
+        "n_slots",
+        "conv_dim",
+        3
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Live three-token convolution histories, channels as conv_dim orders them."
+    },
+    "delta_state": {
+      "shape": [
+        "n_slots",
+        "n_v_heads",
+        "value_dim",
+        "key_dim"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Live recurrent matrices, value dimension first."
+    },
+    "cache_indices": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "Each row's distinct state slot, or -1 for a padding row."
+    },
+    "conv_weight": {
+      "shape": [
+        "conv_dim",
+        4
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Four causal convolution taps, oldest first."
+    },
+    "conv_bias": {
+      "shape": [
+        "conv_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Convolution bias."
+    },
+    "a_log": {
+      "shape": [
+        "n_v_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Log decay magnitude."
+    },
+    "dt_bias": {
+      "shape": [
+        "n_v_heads"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gate bias."
+    },
+    "norm_weight": {
+      "shape": [
+        "value_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gated RMSNorm weights."
+    },
+    "scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Query scale."
+    },
+    "eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Gated RMSNorm epsilon."
+    }
+  },
+  "outputs": {
+    "normalized": {
+      "shape": [
+        "n_tokens",
+        "n_v_heads",
+        "value_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Gated normalized BF16 values."
+    },
+    "values": {
+      "shape": [
+        "n_tokens",
+        "value_width"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "Grouped E4M3FN values."
+    },
+    "scales": {
+      "shape": [
+        "n_tokens",
+        "n_v_heads"
+      ],
+      "dtype": "float32",
+      "description": "One FP32 scale per token and value head."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 72,
+        "n_slots": 73
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.366
+    },
+    {
+      "axes": {
+        "n_tokens": 80,
+        "n_slots": 81
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.427
+    },
+    {
+      "axes": {
+        "n_tokens": 88,
+        "n_slots": 89
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.469
+    },
+    {
+      "axes": {
+        "n_tokens": 96,
+        "n_slots": 97
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.484
+    },
+    {
+      "axes": {
+        "n_tokens": 104,
+        "n_slots": 105
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.469
+    },
+    {
+      "axes": {
+        "n_tokens": 112,
+        "n_slots": 113
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.46
+    },
+    {
+      "axes": {
+        "n_tokens": 120,
+        "n_slots": 121
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.474
+    },
+    {
+      "axes": {
+        "n_tokens": 136,
+        "n_slots": 137
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.233
+    },
+    {
+      "axes": {
+        "n_tokens": 144,
+        "n_slots": 145
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.239
+    },
+    {
+      "axes": {
+        "n_tokens": 152,
+        "n_slots": 153
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.266
+    },
+    {
+      "axes": {
+        "n_tokens": 160,
+        "n_slots": 161
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.268
+    },
+    {
+      "axes": {
+        "n_tokens": 168,
+        "n_slots": 169
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.309
+    },
+    {
+      "axes": {
+        "n_tokens": 176,
+        "n_slots": 177
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.278
+    },
+    {
+      "axes": {
+        "n_tokens": 184,
+        "n_slots": 185
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.288
+    },
+    {
+      "axes": {
+        "n_tokens": 192,
+        "n_slots": 193
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.271
+    },
+    {
+      "axes": {
+        "n_tokens": 200,
+        "n_slots": 201
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.131
+    },
+    {
+      "axes": {
+        "n_tokens": 208,
+        "n_slots": 209
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.16
+    },
+    {
+      "axes": {
+        "n_tokens": 216,
+        "n_slots": 217
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.161
+    },
+    {
+      "axes": {
+        "n_tokens": 224,
+        "n_slots": 225
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.145
+    },
+    {
+      "axes": {
+        "n_tokens": 232,
+        "n_slots": 233
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.164
+    },
+    {
+      "axes": {
+        "n_tokens": 240,
+        "n_slots": 241
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.176
+    },
+    {
+      "axes": {
+        "n_tokens": 248,
+        "n_slots": 249
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      },
+      "accuracy": "passed",
+      "speedup": 1.172
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Qwen3-Next GDN decode with grouped E4M3FN output for MI355X (gfx950), scheduled for 128\nand 256 rows.\n\nSingle-launch Gluon GDN decode. One eight-wave program per row and key head loads the\ngroup's recurrent state first, then convolves the group's Q, K and V channels, each call\nordering every history read before the shift with a workgroup barrier; it updates both\nvalue heads' states and writes the gated RMSNorm and its per-head E4M3FN quantization.\nA row whose cache index is -1 is padding: it reads slot 0, stores no state or history,\nand its core output is zero.\n\"\"\"\n\nimport torch\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n\n@gluon.jit\ndef _convolve_channels(\n    projected, history, weight, bias, source_offsets, channels, slot, live,\n    CHANNELS: gl.constexpr,\n):\n\n    x = gl.load(projected + source_offsets).to(gl.float32)\n    base = (slot * CHANNELS + channels) * 3\n    h0 = gl.load(history + base).to(gl.float32)\n    h1 = gl.load(history + base + 1).to(gl.float32)\n    h2 = gl.load(history + base + 2).to(gl.float32)\n    acc = gl.load(bias + channels).to(gl.float32)\n    w0 = gl.load(weight + channels * 4).to(gl.float32)\n    w1 = gl.load(weight + channels * 4 + 1).to(gl.float32)\n    w2 = gl.load(weight + channels * 4 + 2).to(gl.float32)\n    w3 = gl.load(weight + channels * 4 + 3).to(gl.float32)\n    acc = gl.fma(h0, w0, acc)\n    acc = gl.fma(h1, w1, acc)\n    acc = gl.fma(h2, w2, acc)\n    acc = gl.fma(x, w3, acc)\n\n\n    gl.barrier()\n    if live:\n        gl.store(history + base, h1)\n        gl.store(history + base + 1, h2)\n        gl.store(history + base + 2, x)\n    return (acc / (1.0 + gl.exp(-acc))).to(gl.bfloat16).to(gl.float32)\n\n\n@gluon.jit\ndef _fused_decode(\n    projected, ba, history, state_ptr, indices, conv_weight, conv_bias,\n    a_log, dt_bias, norm_weight, normalized_ptr, quantized_ptr, scales_ptr,\n    scale, eps,\n    KH: gl.constexpr, VH: gl.constexpr, K: gl.constexpr, V: gl.constexpr,\n    FP8_MAX: gl.constexpr,\n):\n    tk = gl.program_id(0)\n    token = tk // KH\n    kh = tk % KH\n    RATIO: gl.constexpr = VH // KH\n    GROUP: gl.constexpr = 2 * K + 2 * RATIO * V\n    CHANNELS: gl.constexpr = 2 * KH * K + VH * V\n    index = gl.load(indices + token)\n    live = index >= 0\n    slot = gl.maximum(index, 0).to(gl.int64)\n\n    L: gl.constexpr = gl.BlockedLayout([1, 4], [4, 16], [8, 1], [1, 0])\n    r = gl.arange(0, RATIO * V, layout=gl.SliceLayout(1, L))\n    c = gl.arange(0, K, layout=gl.SliceLayout(0, L))\n    state_base = state_ptr + (slot * VH + kh * RATIO) * V * K\n    state_offsets = r[:, None] * K + c[None, :]\n    state = gl.amd.cdna4.buffer_load(state_base, state_offsets, cache=\".cg\")\n\n    PREP: gl.constexpr = gl.BlockedLayout([1], [64], [8], [0])\n    columns = gl.arange(0, K, layout=PREP)\n    source = token * KH * GROUP + kh * GROUP\n    q = _convolve_channels(\n        projected, history, conv_weight, conv_bias, source + columns,\n        kh * K + columns, slot, live, CHANNELS,\n    )\n    k = _convolve_channels(\n        projected, history, conv_weight, conv_bias, source + K + columns,\n        KH * K + kh * K + columns, slot, live, CHANNELS,\n    )\n    q = q * (gl.rsqrt(gl.sum(q * q, 0) + 1.0e-6) * scale)\n    k = k * gl.rsqrt(gl.sum(k * k, 0) + 1.0e-6)\n    q = gl.convert_layout(q, gl.SliceLayout(0, L))\n    k = gl.convert_layout(k, gl.SliceLayout(0, L))\n    values = gl.arange(0, RATIO * V, layout=PREP)\n    v = _convolve_channels(\n        projected, history, conv_weight, conv_bias, source + 2 * K + values,\n        2 * KH * K + kh * RATIO * V + values, slot, live, CHANNELS,\n    )\n    v = gl.convert_layout(v, gl.SliceLayout(1, L))\n    vh = kh * RATIO + r // V\n    ba_base = token * 2 * VH + kh * 2 * RATIO + r // V\n    b = gl.load(ba + ba_base).to(gl.float32)\n    a = gl.load(ba + ba_base + RATIO).to(gl.float32)\n    log_a = gl.load(a_log + vh)\n    dt = gl.load(dt_bias + vh).to(gl.float32)\n    sp_arg = a + dt\n    sp = gl.where(sp_arg <= 20.0, gl.log(1.0 + gl.exp(sp_arg)), sp_arg)\n    decay = gl.exp(-gl.exp(log_a) * sp)\n    beta = (1.0 / (1.0 + gl.exp(-b))).to(gl.bfloat16).to(gl.float32)\n    dot_k = gl.sum((state * decay[:, None]) * k[None, :], 1)\n    residual = (v - dot_k) * beta\n    next_state = gl.fma(state, decay[:, None], residual[:, None] * k[None, :])\n    if live:\n        gl.amd.cdna4.buffer_store(next_state, state_base, state_offsets, cache=\".cs\")\n\n    core = gl.where(live, gl.sum(next_state * q[None, :], 1), 0.0).to(gl.bfloat16).to(gl.float32)\n\n    core = gl.convert_layout(core, PREP)\n    gate = gl.load(\n        projected + source + 2 * K + RATIO * V + values,\n    ).to(gl.float32)\n    weight = gl.load(norm_weight + values % V).to(gl.float32)\n    core_heads = gl.reshape(core, (RATIO, V))\n    rrms = gl.rsqrt(gl.sum(core_heads * core_heads, 1) / V + eps)\n    norm_core = gl.reshape(core_heads * rrms[:, None], (RATIO * V,))\n    sigmoid = 1.0 / (1.0 + gl.exp(-gate))\n    output = (norm_core * weight * gate * sigmoid).to(gl.bfloat16)\n    gl.store(normalized_ptr + tk * RATIO * V + values, output)\n\n    quant_values = output.to(gl.float32)\n    groups = gl.reshape(quant_values, (RATIO * V // 128, 128))\n    quant_scale = gl.maximum(gl.max(gl.abs(groups), 1), 1.0e-10) / FP8_MAX\n    quant = gl.clamp(groups / quant_scale[:, None], -FP8_MAX, FP8_MAX)\n    gl.store(\n        quantized_ptr + tk * RATIO * V + values,\n        gl.reshape(quant, (RATIO * V,)),\n    )\n    scale_offsets = gl.arange(\n        0, RATIO * V // 128, layout=gl.SliceLayout(1, groups.type.layout),\n    )\n    gl.store(scales_ptr + tk * (RATIO * V // 128) + scale_offsets, quant_scale)\n\n\ndef gdn_fused_decode_group_fp8_quant(\n    projected_qkvz: torch.Tensor,\n    projected_ba: torch.Tensor,\n    conv_state: torch.Tensor,\n    delta_state: torch.Tensor,\n    cache_indices: torch.Tensor,\n    conv_weight: torch.Tensor,\n    conv_bias: torch.Tensor,\n    a_log: torch.Tensor,\n    dt_bias: torch.Tensor,\n    norm_weight: torch.Tensor,\n    *,\n    scale: float,\n    eps: float,\n    normalized: torch.Tensor,\n    quantized: torch.Tensor,\n    scales: torch.Tensor,\n    precision_config=\"fp8_e4m3fnuz\",\n) -> None:\n    tokens = projected_qkvz.shape[0]\n    _, v_heads, v_dim, k_dim = delta_state.shape\n    k_heads = (conv_state.shape[1] - v_heads * v_dim) // (2 * k_dim)\n    if isinstance(precision_config, str):\n        if precision_config == \"fp8_e4m3fn\":\n            dtype = torch.float8_e4m3fn\n        elif precision_config == \"fp8_e4m3fnuz\":\n            dtype = torch.float8_e4m3fnuz\n        else:\n            raise ValueError(\"Unsupported FP8 format\")\n    else:\n        dtype = precision_config.dtype\n    if dtype == torch.float8_e4m3fn:\n        fp8_max = 448.0\n    elif dtype == torch.float8_e4m3fnuz:\n        fp8_max = 224.0\n    else:\n        raise ValueError(\"Unsupported FP8 format\")\n\n    _fused_decode[(tokens * k_heads,)](\n        projected_qkvz, projected_ba, conv_state, delta_state, cache_indices,\n        conv_weight, conv_bias, a_log, dt_bias, norm_weight,\n        normalized, quantized, scales, scale, eps,\n        KH=k_heads, VH=v_heads, K=k_dim, V=v_dim, FP8_MAX=fp8_max,\n        num_warps=8,\n    )\n\n\ndef run(\n    *,\n    projected_qkvz,\n    projected_ba,\n    conv_state,\n    delta_state,\n    cache_indices,\n    conv_weight,\n    conv_bias,\n    a_log,\n    dt_bias,\n    norm_weight,\n    scale,\n    eps,\n    normalized,\n    values,\n    scales,\n):\n    gdn_fused_decode_group_fp8_quant(\n        projected_qkvz,\n        projected_ba,\n        conv_state,\n        delta_state,\n        cache_indices,\n        conv_weight,\n        conv_bias,\n        a_log,\n        dt_bias,\n        norm_weight,\n        scale=scale,\n        eps=eps,\n        normalized=normalized,\n        quantized=values,\n        scales=scales,\n        precision_config=\"fp8_e4m3fn\",\n    )\n"
+      }
+    ]
+  }
+}

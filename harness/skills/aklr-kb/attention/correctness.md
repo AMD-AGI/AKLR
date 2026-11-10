@@ -5,7 +5,7 @@ lever: attn_correctness
 ops: [attention]
 gens: [gfx950]
 dtypes: [bf16]
-regimes: [prefill, backward, causal, sliding-window, rectangular]
+regimes: [many query rows, dQ dK dV, causal, sliding-window, rectangular]
 flydsl: 0.3.2
 ---
 
@@ -70,7 +70,7 @@ tests pass, full runs fail. Fill workspaces with NaN in the gate. *(field, E10)*
 q-block (W=32 against `BLOCK_Q=64`), a reduction read half-written bands; poisoning reproduced it exactly
 (NaN on rows with `row % 64 ≥ 32`, only at W=32).
 
-## 5. Forward and backward share state
+## 5. The O kernel and the gradient kernels share state
 - **Gate end to end.** The backward consumes the forward's O and LSE, so an edit to the LSE's layout or meaning
   keeps the forward's own SNR perfect and breaks the backward silently. Drive the backward with the optimised
   forward's own outputs, not the reference's:
@@ -138,7 +138,7 @@ that accumulator must already be divided by c, or the scale applies twice.
 
 ## Related
 `../gemm/correctness.md` · `../flydsl/debug-flydsl-kernel.md` · `softmax.md` ·
-`backward.md` · `measurement.md` · `schedule_sync.md`
+`gradients.md` · `measurement.md` · `schedule_sync.md`
 
 ## Evidence
 
