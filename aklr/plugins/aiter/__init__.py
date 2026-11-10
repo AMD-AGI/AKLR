@@ -19,6 +19,7 @@ only turns routing off.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 
 import torch
@@ -57,7 +58,47 @@ def _up() -> bool:
     return _started
 
 
+# Set once: AITER gained the field in ROCm/aiter#7654, and this adapter has to
+# work against the releases on either side of it.
+_REPORTS_LATENCY = "latency_us" in {
+    field.name for field in dataclasses.fields(plugin.KernelCandidate)
+}
+
+
+def _reported_latency_us(contract_id: str) -> float | None:
+    """What AKLR can tell AITER this kernel costs, for the call in hand.
+
+    Nothing, today. That is the honest answer, not a placeholder.
+
+    AITER asks one question: for *this call*, how many microseconds does this
+    kernel take. AKLR's dispatcher cannot answer it -- `lookup()` returns a
+    pair of fast keys and a runnable, and there is no timing anywhere on that
+    path.
+
+    AKLR does hold timings, in `aklr.core.validation`: `TimingRecord` carries
+    `candidate_milliseconds` against a baseline. Reporting those would be
+    worse than reporting nothing. They are measured offline, on the shapes
+    validation picked, as a ratio against a versus kernel -- while AITER labels
+    whatever it records with the conditions of the call in front of it. Handing
+    it a validation number attaches a measurement to a shape it never ran on,
+    which is precisely what the protocol's "omit rather than extrapolate" rule
+    exists to prevent. A number that looks sourced and is not is harder to
+    catch than a missing one.
+
+    To answer properly AKLR needs a read-only accessor on the dispatcher that,
+    given the resolved kernel and the call's shapes, returns the cost it
+    expects from its own tuning table. That does not exist yet. Until it does,
+    omission is correct and costs nothing -- which is why the field is optional
+    on AITER's side.
+    """
+
+    return None
+
+
 def _candidate(contract_id: str, run):
+    extra = {}
+    if _REPORTS_LATENCY:
+        extra["latency_us"] = _reported_latency_us(contract_id)
     return plugin.KernelCandidate(
         provider="aklr",
         # TODO: AKLR's dispatcher knows which kernel file serves a Point -- the
@@ -68,6 +109,7 @@ def _candidate(contract_id: str, run):
         artifact_digest=f"aklr:{contract_id}",
         qualification="https://github.com/AMD-AGI/AKLR",
         run=run,
+        **extra,
     )
 
 
