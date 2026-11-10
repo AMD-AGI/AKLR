@@ -1,0 +1,183 @@
+{
+  "schema_version": 5,
+  "name": "bmm_no_trans_b_n512_k128",
+  "contract_id": "bmm@1.0",
+  "description": "Batched 16-bit gemm: out[i] = a[i] @ b[i].T + bias[i], over all m.",
+  "op_type": "gemm",
+  "axes": {
+    "batch": {
+      "type": "var",
+      "description": "Independent matmuls."
+    },
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 512,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 128,
+      "description": "Reduction length."
+    }
+  },
+  "attrs": {
+    "trans_b": false,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "batch",
+        "m",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "batch",
+        "k",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (batch, n, k) when trans_b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "batch",
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a[i] @ b[i].T + bias[i]."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "batch": 96,
+        "m": 8
+      }
+    },
+    {
+      "axes": {
+        "batch": 96,
+        "m": 12
+      }
+    },
+    {
+      "axes": {
+        "batch": 96,
+        "m": 16
+      }
+    },
+    {
+      "axes": {
+        "batch": 96,
+        "m": 24
+      }
+    },
+    {
+      "axes": {
+        "batch": 96,
+        "m": 32
+      }
+    },
+    {
+      "axes": {
+        "batch": 96,
+        "m": 40
+      }
+    },
+    {
+      "axes": {
+        "batch": 96,
+        "m": 48
+      }
+    },
+    {
+      "axes": {
+        "batch": 96,
+        "m": 56
+      }
+    },
+    {
+      "axes": {
+        "batch": 96,
+        "m": 60
+      }
+    },
+    {
+      "axes": {
+        "batch": 96,
+        "m": 64
+      }
+    },
+    {
+      "axes": {
+        "batch": 96,
+        "m": 80
+      }
+    },
+    {
+      "axes": {
+        "batch": 96,
+        "m": 96
+      }
+    },
+    {
+      "axes": {
+        "batch": 96,
+        "m": 112
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"FlyDSL batched bf16 GEMM out[i] = a[i] @ b[i] with b stored (k, n), for the fixed n = _N and k = _K.\n\nEach (batch, column tile) workgroup DMAs all of K to LDS; C is stored from registers.\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import arith as arith_d\nfrom flydsl._mlir.dialects import llvm\nfrom flydsl._mlir.dialects import rocdl as rocdl_d\nfrom flydsl._mlir.dialects import vector as vector_d\nfrom flydsl.compiler import from_c_void_p\nfrom flydsl.expr import arith, const_expr, range_constexpr, rocdl\nfrom flydsl.expr.typing import T, Vector\n\n_N = 512\n_K = 128\n_TILE_N = 64\n_N_TILES = _N // _TILE_N\n_WARP = 64\n_WARPS = 4\n_THREADS = _WARP * _WARPS\n_DMA = 16\n_B_ROW_BYTES = _TILE_N * 2  # 128\n_A_ROW_BYTES = _K * 2  # 256\n_B_LDS_BYTES = _K * _B_ROW_BYTES  # 16 KiB\n_CUS = 256  # workgroups p, p + _CUS, ... share a CU\n_XCDS = 8  # workgroup p runs on XCD p % _XCDS\n_C_STORE_AUX = 17  # sc0 sc1\n_DMA_BITS = \"sc0\"  # no nt: B stays in L2 across back-to-back calls\n_A_FIRST_M = frozenset({8, 12, 16, 24, 32, 40, 48, 56, 60, 64})  # A DMA issued before B\n_KSPLIT = {8: 4, 12: 4, 16: 4, 24: 2, 32: 2, 40: 2, 48: 2}  # DMA-wait chunks along k\n_MFMA_SKEW_M = frozenset({40, 48})  # MFMAs one chunk behind the DMA wait\n_REMAP_M = frozenset({12, 16, 32, 56, 60, 64, 112})  # a CU takes consecutive tiles\n_ROW4_M = frozenset({112})  # every wave stores whole rows of every fourth row block\n_MIXED_M = frozenset({80, 96})  # whole rows of block w, then halves of the rest\n_MIX4_M = frozenset({60, 64})  # a whole-row and a half-row wave pair\n_ROT_M = frozenset({8, 12, 40})  # the waves' row blocks move with the CU slot\n_SLOT_DELAY_M = frozenset({8, 16, 80})  # later CU slots start their wait late\n_A_TRIM_M = frozenset({40})  # A DMA moves only the m real rows\n\n\ndef _rsrc(ptr, byte_base, nbytes):\n    addr = fx.Int64(fx.ptrtoint(ptr)) + byte_base\n    base = llvm.IntToPtrOp(ir.Type.parse(\"!llvm.ptr\"), fx.arith.unwrap(addr)).result\n    return rocdl.MakeBufferRsrcOp(\n        ir.Type.parse(\"!llvm.ptr<8>\"),\n        base,\n        fx.arith.unwrap(arith.constant(0, type=T.i16)),\n        fx.arith.unwrap(arith.constant(nbytes, type=T.i64)),\n        fx.arith.unwrap(arith.constant((7 << 12) | (4 << 15), type=T.i32)),\n    ).result\n\n\ndef _ptr(tensor):\n    return from_c_void_p(fx.BFloat16, tensor.data_ptr(), assumed_align=16)\n\n\ndef _gep(base_ptr, byte_offset=None, static_byte_offset=0):\n    base_ptr = fx.arith.unwrap(base_ptr)\n    if byte_offset is None:\n        dyn, raw = [], [int(static_byte_offset)]\n    else:\n        dyn, raw = [fx.arith.unwrap(byte_offset)], [-(2**31)]\n    return llvm.GEPOp(base_ptr.type, base_ptr, dyn, raw, T.i8, None).result\n\n\ndef _b_swz(row):\n    # XOR on 16-byte slot bits 1-2 only, so each 32-byte (16-column) block stays whole for the transposed read.\n    return (((row >> 1) & 1) << 1) | (((row >> 3) & 1) << 2)\n\n\n@functools.cache\ndef _launcher(batch, m, device):\n    kernel = _build(batch, m)\n    a_ex = torch.empty((batch, m, _K), device=device, dtype=torch.bfloat16)\n    b_ex = torch.empty((batch, _K, _N), device=device, dtype=torch.bfloat16)\n    c_ex = torch.empty((batch, m, _N), device=device, dtype=torch.bfloat16)\n    # Preload the pointer arguments into SGPRs so the first DMA need not wait on kernarg loads.\n    return flyc.compile[{\"llvm_options\": {\"amdgpu-kernarg-preload-count\": 6}}](\n        kernel,\n        _ptr(c_ex),\n        _ptr(a_ex),\n        _ptr(b_ex),\n        fx.Stream(torch.cuda.current_stream(device)),\n    )\n\n\ndef _build(batch, m):\n    MB = (m + 15) // 16\n    TILE_M = MB * 16\n    A_LDS_OFF = _B_LDS_BYTES\n    LDS_BYTES = _B_LDS_BYTES + TILE_M * _A_ROW_BYTES\n    B_LOADS = _B_LDS_BYTES // (_THREADS * _DMA)  # 4\n    A_DMA_TOTAL = (m if m in _A_TRIM_M else TILE_M) * _A_ROW_BYTES // _DMA  # vectors\n    A_LOADS = (A_DMA_TOTAL + _THREADS - 1) // _THREADS\n    A_PARTIAL = A_DMA_TOTAL % _THREADS != 0\n    LdsArr = fx.Array[fx.BFloat16, LDS_BYTES // 2, 16]\n    GRID = batch * _N_TILES\n    A_FIRST = m in _A_FIRST_M\n    N_RB = (MB + 1) // 2  # row blocks per wave\n    STEPS = _K // 32\n    KSPLIT = _KSPLIT.get(m, 1)\n    REMAP = m in _REMAP_M and GRID % _CUS == 0\n    SKEW = m in _MFMA_SKEW_M and KSPLIT > 1\n    ROW4 = m in _ROW4_M\n    MIXED = m in _MIXED_M\n    MIX4 = m in _MIX4_M\n    assert KSPLIT == 1 or (A_FIRST and not (ROW4 or MIXED or MIX4))\n    assert not ROW4 or (MB > _WARPS and MB % _WARPS != 0)\n    assert not MIXED or _WARPS < MB <= 2 * _WARPS\n    assert not MIX4 or MB == _WARPS\n\n    @flyc.kernel(known_block_size=[_THREADS, 1, 1])\n    def bmm_nn_n512_k128(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer):\n        acc_init = arith.constant_vector(0.0, T.vec(4, T.f32))\n        bf16x8_ty = fx.Vector.make_type(8, fx.BFloat16)\n        v4bf16 = T.vec(4, T.bf16)\n        pid = fx.block_idx.x\n        pid_i = arith.index_cast(T.i32, fx.Index(pid))\n\n        def i32(v):\n            return arith.constant(v, type=T.i32)\n\n        if const_expr(REMAP):\n            # A CU's workgroups take consecutive tiles t of its XCD; bi % _XCDS stays the XCD, so a batch keeps its L2.\n            q = arith_d.remui(pid_i, i32(_CUS))\n            slot = arith_d.divui(pid_i, i32(_CUS))\n            xcd = arith_d.remui(q, i32(_XCDS))\n            cu = arith_d.divui(q, i32(_XCDS))\n            t = arith_d.addi(arith_d.muli(cu, i32(GRID // _CUS)), slot)\n            bi_i = arith_d.addi(xcd, arith_d.andi(t, i32(~(_N_TILES - 1))))\n            nt_i = arith_d.andi(t, i32(_N_TILES - 1))\n            bi = fx.Index(arith.index_cast(T.index, bi_i))\n            nt = fx.Index(arith.index_cast(T.index, nt_i))\n        else:\n            bi = fx.Index(arith.index_cast(T.index, arith_d.remui(pid_i, i32(batch))))\n            nt = fx.Index(arith.index_cast(T.index, arith_d.divui(pid_i, i32(batch))))\n        bi64 = fx.Int64(bi)\n        a_rsrc = _rsrc(A, bi64 * (m * _A_ROW_BYTES), m * _A_ROW_BYTES)\n        b_rsrc = _rsrc(B, bi64 * (_K * _N * 2), _K * _N * 2)\n        c_rsrc = _rsrc(C, bi64 * (m * _N * 2), m * _N * 2)\n\n        lds_base = fx.SharedAllocator().allocate(LdsArr).peek().ptr\n        lds_i64 = fx.Int64(fx.ptrtoint(lds_base))\n        a_lds_ptr = lds_base + A_LDS_OFF // 2\n\n        tid = fx.thread_idx.x\n        wid = tid // _WARP\n        lane = tid % _WARP\n        g = lane // 16\n        L = lane % 16\n\n        warp_offset = rocdl.readfirstlane(\n            T.i64,\n            arith.index_cast(\n                T.i64, fx.Index(wid) * arith.constant(_WARP * _DMA, index=True)\n            ),\n        )\n\n        def dma(rsrc, lds_off, global_offset, bits):\n            llvm.InlineAsmOp(\n                None,\n                [lds_off, global_offset, rsrc],\n                \"s_mov_b32 m0, $0\\n\\tbuffer_load_dwordx4 $1, $2, 0 offen \"\n                + bits\n                + \" lds\",\n                \"s,v,s\",\n                has_side_effects=True,\n            )\n\n        def lds_ptr3(byte_i64):\n            return llvm.IntToPtrOp(\n                ir.Type.parse(\"!llvm.ptr<3>\"), fx.arith.unwrap(byte_i64)\n            ).result\n\n        def issue_b():\n            # B: LDS row r (k) holds the tile's 64 columns; physical 16 B slot p holds logical slot p ^ swz(r).\n            b_lds = _gep(lds_ptr3(lds_i64), warp_offset)\n            nt_bytes = nt * _B_ROW_BYTES\n            for ii in range_constexpr(B_LOADS):\n                gt = _THREADS * ii + tid\n                row = gt // 8\n                slot = (gt % 8) ^ _b_swz(row)\n                goff = row * (_N * 2) + nt_bytes + slot * _DMA\n                if const_expr(ii > 0):\n                    b_lds = _gep(b_lds, static_byte_offset=_THREADS * _DMA)\n                dma(b_rsrc, b_lds, arith.index_cast(T.i32, fx.Index(goff)), _DMA_BITS)\n\n        def issue_a():\n            # A: LDS row i holds 256 B; physical slot p holds logical slot p ^ (i & 15). Rows >= m read zero.\n            a_lds = _gep(lds_ptr3(lds_i64 + fx.Int64(A_LDS_OFF)), warp_offset)\n            for ii in range_constexpr(A_LOADS):\n                gt = _THREADS * ii + tid\n                row = gt // 16\n                slot = (gt % 16) ^ (row % 16)\n                goff = row * _A_ROW_BYTES + slot * _DMA\n                if const_expr(ii > 0):\n                    a_lds = _gep(a_lds, static_byte_offset=_THREADS * _DMA)\n                if const_expr(A_PARTIAL and ii == A_LOADS - 1):\n                    if gt < A_DMA_TOTAL:\n                        dma(\n                            a_rsrc,\n                            a_lds,\n                            arith.index_cast(T.i32, fx.Index(goff)),\n                            _DMA_BITS,\n                        )\n                else:\n                    dma(\n                        a_rsrc,\n                        a_lds,\n                        arith.index_cast(T.i32, fx.Index(goff)),\n                        _DMA_BITS,\n                    )\n\n        if const_expr(A_FIRST):\n            issue_a()\n            issue_b()\n        else:\n            issue_b()\n            issue_a()\n        if const_expr(m in _SLOT_DELAY_M):\n            slot = fx.Index(pid) // _CUS\n            for k in range_constexpr(1, GRID // _CUS):\n                if slot >= k:\n                    llvm.InlineAsmOp(None, [], \"s_sleep 0\", \"\", has_side_effects=True)\n\n        def kwait(c):\n            # With A issued first, each wave's B DMAs are its youngest VMEM ops and B DMA ii holds k-step ii, so\n            # vmcnt(left) retires A and the B chunks up to c; the barrier makes every wave's share visible.\n            left = B_LOADS - (c + 1) * (B_LOADS // KSPLIT)\n            llvm.InlineAsmOp(\n                None,\n                [],\n                f\"s_waitcnt vmcnt({left})\\n\\ts_barrier\",\n                \"\",\n                has_side_effects=True,\n            )\n            if const_expr(KSPLIT > 1):\n                rocdl.sched_barrier(0)\n\n        if const_expr(KSPLIT == 1):\n            kwait(0)\n\n        r_lane = 8 * g + L // 4\n\n        # Raised until the stores, so on every SIMD the waves still computing win issue over those storing.\n        llvm.InlineAsmOp(None, [], \"s_setprio 2\", \"\", has_side_effects=True)\n\n        def b_frag(s, half, b, bcf=False):\n            if const_expr(bcf):\n                slot = (half * 4 + L % 4) ^ _b_swz(r_lane)\n                off = r_lane * _B_ROW_BYTES + slot * 16 + 8 * (b ^ ((L // 2) % 2))\n            else:\n                colb = (half * 32 + (L % 4) * 8 + 4 * b) * 2\n                slot = (colb // 16) ^ _b_swz(r_lane)\n                off = r_lane * _B_ROW_BYTES + slot * 16 + colb % 16\n            rd = _gep(lds_ptr3(lds_i64), fx.Int64(off))\n            lo = rocdl.ds_read_tr16_b64(\n                v4bf16, _gep(rd, static_byte_offset=(32 * s) * _B_ROW_BYTES)\n            ).result\n            hi = rocdl.ds_read_tr16_b64(\n                v4bf16, _gep(rd, static_byte_offset=(32 * s + 4) * _B_ROW_BYTES)\n            ).result\n            lo = fx.Vector(lo, (4,), fx.BFloat16)\n            hi = fx.Vector(hi, (4,), fx.BFloat16)\n            return lo.shuffle(hi, [0, 1, 2, 3, 4, 5, 6, 7])\n\n        def a_frag(row, phys):\n            elem = fx.Int64(row * _K) + fx.Int64(phys * 8)\n            return fx.ptr_load(a_lds_ptr + elem, result_type=bf16x8_ty)\n\n        def a_frag_p(s, blk):\n            phys = (4 * s + g) ^ L\n            return a_frag(blk * 16 + L, phys)\n\n        R = L // 2 + 8 * (L % 2)\n\n        def a_frag_w(s, blk):\n            row = blk * 16 + R\n            return a_frag(row, (4 * s + g) ^ (row % 16))\n\n        def mfma(b, a, acc):\n            return rocdl.mfma_f32_16x16x32_bf16(T.vec(4, T.f32), [b, a, acc, 0, 0, 0])\n\n        def pack(acc0, acc1):\n            c0 = Vector(acc0).to(fx.BFloat16)\n            c1 = Vector(acc1).to(fx.BFloat16)\n            return c0.shuffle(c1, [0, 1, 2, 3, 4, 5, 6, 7])\n\n        def store_c(v, off):\n            rocdl_d.RawPtrBufferStoreOp(\n                v,\n                c_rsrc,\n                fx.arith.unwrap(arith.index_cast(T.i32, fx.Index(off))),\n                fx.arith.constant(0),\n                aux=ir.IntegerAttr.get(T.i32, _C_STORE_AUX),\n            )\n\n        def unswap_bcf(vals):\n            hi32 = fx.arith.unwrap(g >= 2)\n            return [arith_d.select(hi32, vals[d ^ 2], vals[d]) for d in range(4)]\n\n        def store_half(acc, blk, wc, bcf=False):\n            v = pack(acc[0], acc[1])\n            if const_expr(bcf):\n                v = v.bitcast(fx.Int32)\n                v = unswap_bcf([fx.arith.unwrap(v[d]) for d in range(4)])\n                v = vector_d.from_elements(T.vec(4, T.i32), v)\n            else:\n                v = fx.arith.unwrap(v)\n            store_c(v, (blk * 16 + L) * (_N * 2) + (nt * _TILE_N + wc * 32 + g * 8) * 2)\n\n        # Lanes L and L ^ 1 (rows R) swap one piece by DPP, so each of the block's two stores writes whole rows.\n        def store_lines(acc, blk, bcf):\n            h = L % 2\n            odd = fx.arith.unwrap(h == 1)\n            p0 = pack(acc[0], acc[1]).bitcast(fx.Int32)\n            p1 = pack(acc[2], acc[3]).bitcast(fx.Int32)\n            own0 = [fx.arith.unwrap(p0[d]) for d in range(4)]\n            own1 = [fx.arith.unwrap(p1[d]) for d in range(4)]\n            send = [arith_d.select(odd, own0[d], own1[d]) for d in range(4)]\n            recv = [\n                rocdl_d.update_dpp(T.i32, sd, sd, 0xB1, 0xF, 0xF, True) for sd in send\n            ]\n            st0 = [arith_d.select(odd, recv[d], own0[d]) for d in range(4)]\n            st1 = [arith_d.select(odd, own1[d], recv[d]) for d in range(4)]\n            if const_expr(bcf):\n                st0 = unswap_bcf(st0)\n                st1 = unswap_bcf(st1)\n            for half, vals in ((0, st0), (1, st1)):\n                v = vector_d.from_elements(T.vec(4, T.i32), vals)\n                off = (blk * 16 + 8 * half + L // 2) * (_N * 2) + (\n                    nt * _TILE_N + g * 8 + h * 32\n                ) * 2\n                store_c(v, off)\n\n        # Wave (wr, wc) owns column half wc of row blocks wr, wr + 2, ... Fragment reads go ahead of the MFMAs behind\n        # a scheduling barrier (else LLVM waits on a read before nearly every MFMA), per DMA chunk when split.\n        def paired(wr, wc, nrb=N_RB):\n            bfp = []\n            afp = []\n            SPC = STEPS // KSPLIT\n            accp = [[acc_init] * 2 for _ in range(nrb)]\n\n            def mfmas(s0, s1):\n                for s in range_constexpr(s0, s1):\n                    for i in range_constexpr(nrb):\n                        for b in range_constexpr(2):\n                            accp[i][b] = mfma(bfp[s][b], afp[s][i], accp[i][b])\n\n            for c in range_constexpr(KSPLIT):\n                if const_expr(KSPLIT > 1):\n                    kwait(c)\n                if const_expr(KSPLIT == 1):\n                    bfp = [\n                        [b_frag(s, wc, b) for b in range_constexpr(2)]\n                        for s in range_constexpr(STEPS)\n                    ]\n                    afp = [\n                        [a_frag_p(s, 2 * i + wr) for i in range_constexpr(nrb)]\n                        for s in range_constexpr(STEPS)\n                    ]\n                else:\n                    for s in range_constexpr(c * SPC, (c + 1) * SPC):\n                        bfp.append([b_frag(s, wc, b) for b in range_constexpr(2)])\n                        afp.append(\n                            [a_frag_p(s, 2 * i + wr) for i in range_constexpr(nrb)]\n                        )\n                rocdl.sched_barrier(0)\n                if const_expr(SKEW and c > 0):\n                    mfmas((c - 1) * SPC, c * SPC)\n                    rocdl.sched_barrier(0)  # keeps them ahead of the next chunk's wait\n            mfmas((KSPLIT - 1) * SPC if SKEW else 0, STEPS)\n            llvm.InlineAsmOp(None, [], \"s_setprio 0\", \"\", has_side_effects=True)\n            for i in range_constexpr(nrb):\n                store_half(accp[i], 2 * i + wr, wc)\n\n        # Wave w owns whole rows of blocks w, w + _WARPS, ...; each block's stores overlap the next block's MFMAs.\n        def rows4(w, nrb, bcf=False):\n            bfp = []\n            afp = []\n            for s in range_constexpr(STEPS):\n                bfp.append(\n                    [b_frag(s, bb // 2, bb % 2, bcf) for bb in range_constexpr(4)]\n                )\n                afp.append([a_frag_w(s, _WARPS * i + w) for i in range_constexpr(nrb)])\n            rocdl.sched_barrier(0)\n            accp = [[acc_init] * 4 for _ in range(nrb)]\n            for i in range_constexpr(nrb):\n                if const_expr(i > 0):\n                    rocdl.sched_barrier(0)\n                for s in range_constexpr(STEPS):\n                    for b in range_constexpr(4):\n                        accp[i][b] = mfma(bfp[s][b], afp[s][i], accp[i][b])\n                if const_expr(i > 0):\n                    rocdl.sched_barrier(0)\n                store_lines(accp[i], _WARPS * i + w, bcf)\n\n        # Wave w stores block w as rows4 does, then halves of the later blocks as paired does. With bcf, lanes with\n        # L bit 1 read the other half of each B piece (no LDS bank conflicts), swapped back before the stores.\n        def mixed(w):\n            tails = [\n                (_WARPS + j // 2, j % 2) for j in range(w, 2 * (MB - _WARPS), _WARPS)\n            ]\n            bfp = [\n                [b_frag(s, bb // 2, bb % 2, True) for bb in range_constexpr(4)]\n                for s in range_constexpr(STEPS)\n            ]\n            aff = [a_frag_w(s, w) for s in range_constexpr(STEPS)]\n            aft = [\n                [a_frag_p(s, blk) for (blk, _) in tails] for s in range_constexpr(STEPS)\n            ]\n            rocdl.sched_barrier(0)\n            acc = [acc_init] * 4\n            for s in range_constexpr(STEPS):\n                for bb in range_constexpr(4):\n                    acc[bb] = mfma(bfp[s][bb], aff[s], acc[bb])\n            store_lines(acc, w, True)\n            rocdl.sched_barrier(0)\n            acct = [[acc_init] * 2 for _ in tails]\n            for t, (_, wc) in enumerate(tails):\n                for s in range_constexpr(STEPS):\n                    for b in range_constexpr(2):\n                        acct[t][b] = mfma(bfp[s][2 * wc + b], aft[s][t], acct[t][b])\n            rocdl.sched_barrier(0)\n            llvm.InlineAsmOp(None, [], \"s_setprio 0\", \"\", has_side_effects=True)\n            for t, (blk, wc) in enumerate(tails):\n                store_half(acct[t], blk, wc, bcf=True)\n\n        wcr = wid\n        if const_expr(m in _ROT_M):\n            wcr = (wid + _WARPS - fx.Index(pid) // _CUS) % _WARPS\n        if const_expr(MIXED):\n            for w in range_constexpr(_WARPS):\n                if wid == w:\n                    mixed(w)\n        elif const_expr(MIX4):\n            if wid < 2:\n                rows4(wid * 2, 1, bcf=True)\n            else:\n                paired(1, wid - 2)\n        elif const_expr(ROW4):\n            if wid < MB % _WARPS:\n                rows4(wid, MB // _WARPS + 1)\n            else:\n                rows4(wid, MB // _WARPS)\n        elif const_expr(MB == 1):\n            if wcr < 2:\n                paired(0, wcr)\n            elif const_expr(KSPLIT > 1):\n                # Idle waves still take part in every chunk barrier.\n                for c in range_constexpr(KSPLIT):\n                    kwait(c)\n        elif const_expr(MB % 2 == 1):\n            if wcr < 2:\n                paired(0, wcr)\n            else:\n                paired(1, wcr - 2, N_RB - 1)\n        else:\n            paired(wid // 2, wid % 2)\n\n    @flyc.jit\n    def launch(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer, stream: fx.Stream):\n        bmm_nn_n512_k128(C, A, B).launch(\n            grid=(GRID, 1, 1),\n            block=(_THREADS, 1, 1),\n            stream=stream,\n            value_attrs={\"rocdl.flat_work_group_size\": f\"{_THREADS},{_THREADS}\"},\n        )\n\n    return launch\n\n\ndef run(*, a, b, trans_b, bias, out_dtype, out):\n    if trans_b or bias is not None:\n        raise ValueError(\"bmm_no_trans_b_n512_k128 expects trans_b=False and no bias\")\n    launch = _launcher(a.shape[0], a.shape[1], a.device)\n    launch(_ptr(out), _ptr(a), _ptr(b), fx.Stream(torch.cuda.current_stream(a.device)))\n"
+      }
+    ]
+  }
+}
