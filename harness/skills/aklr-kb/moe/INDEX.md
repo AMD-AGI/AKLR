@@ -27,17 +27,20 @@ FlyDSL, aiter or Turbo source they cite, should carry over to Triton or HIP; the
 experts e (`topk_ids`), stage 1 computes act(x · W1_gate,eᵀ, x · W1_up,eᵀ), stage 2 projects that row with W2_e, and
 the output row is the sum over the token's k routes of `topk_weights` × that projection.
 
-- `act` is SiLU(gate) · up (`activation` silu), its clamped form with `swiglu_limit` (`gate_mode` interleave), GELU, or
-  SiTUv2 with `beta` and `linear_beta`. Under expert parallelism (`has_expert_mask`) the ids are global and only the
+- `act` is SiLU(gate) · up (`activation` silu), its clamped form with `swiglu_limit` (`gate_mode` interleave), GELU,
+  SiTUv2 with `beta` and `linear_beta`, or gpt-oss's gate · sigmoid(1.702 · gate) · (up + 1) (`activation` swiglu),
+  which `swiglu_limit` also clamps. Under expert parallelism (`has_expert_mask`) the ids are global and only the
   experts set in `expert_mask` contribute.
 - Weights are fp4 e2m1 with one E8M0 scale per 1 × 32: `w1` (experts, 2 · inter, model_dim), `w2` (experts,
   model_dim, inter). Layout variants: `row_major`, `shuffled_16x16` (aiter's 16×16 preshuffle, shuffled scales) and
   `gate_up_interleaved` (gate and up rows interleaved, 2-D scales). `act_quant` 4 quantizes the activations to MXFP4,
-  8 to fp8 (SiTUv2 only); gate mode interleave keeps bf16 activations.
+  8 to fp8 (SiTUv2 only); gate mode interleave keeps bf16 activations, and so does swiglu below 256 tokens.
 - The var axis is `n_tokens`; model dim, experts, top-k and inter dim are fixed per schema name.
-- Compare: `determinism: bounded`, `max_violation_fraction` 1e-3, one whole-output SQNR ≥ 13 dB bound against the
-  reference (float32 in validation) rounded to the output dtype, with no bias test. Atomic accumulation passes it, and so do fp8
-  partial rows and bf16 truncation ([fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md), Counter-signals).
+- Compare: `determinism: bounded`, `max_violation_fraction` 1e-3, and for every activation but swiglu one whole-output
+  SQNR ≥ 13 dB bound against the reference (float32 in validation) rounded to the output dtype, with no bias test;
+  swiglu is bounded per element relative to aiter's own error (`BaselineRelativeBound`). Atomic accumulation passes
+  the SQNR bound, and so do fp8 partial rows and bf16 truncation
+  ([fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md), Counter-signals).
 - Every AKLR kernel computes it in two GEMM stages. How the routes reach their expert's rows is the main choice at a
   few tokens per call (m 1–64 below): a separate sort kernel, a workgroup set per route with no sort, or a sort
   folded into stage 1.
@@ -46,12 +49,12 @@ the output row is the sum over the token's k routes of `topk_weights` × that pr
 
 | Regime | What bounds the time | Read |
 |---|---|---|
-| m 1–2 (6–18 routes) | Little work per call, so the launches and the sort weigh (estimated). At m 1 every AKLR kernel runs two launches, no sort and a workgroup set per route, and in the predecessor repository's CI (2026-10) all four were served, at 1.26–3.36× *(field, E1)*; at m 2 the 33-expert kernel is served with four launches | the two cases |
+| m 1–2 (6–18 routes) | With 257 experts at inter 256 there is little work per call and the fixed costs weigh: streaming the 23–45 MB of touched weights is 33–46% of the call; with 33 or 65 experts at inter 2048, streaming the 180–321 MB of touched weights is 67–75% of it *(field, E7)*. At m 1 every AKLR kernel runs two launches, no sort and a workgroup set per route, and in the predecessor repository's CI (2026-10) all four were served, at 1.26–3.36× *(field, E1)*; at m 2 the 33-expert kernel is served with four launches | the two cases |
 | m 8–64 with 257 experts | 72–576 routes over 257 experts, so most hit experts are read for one or two routes (estimated); each graph node adds a fixed cost (`few_tokens.md` §1). Folding the sort into stage 1 saved 3.5–6.4 µs of 39–102 µs *(field, E2)* | `few_tokens.md` §1–§2 |
 | m 10–60 with 64 local experts | Expected bandwidth, as in the next row | `grouped_sorted_tokens.md` §3–§5 |
-| Kimi-K3 SiTUv2, fp8 × MXFP4, m 8–112: 896 experts (TP) or 112 of 896 local (EP8), top-16 | Bandwidth: the weights of the experts the routes touch, 2.19 MB each at inter 384 and 17.5 MB at inter 3072 (estimated from the layout); count the touched experts from AKLR's own inputs (`../patterns/memory_bound.md`, Rule out first). From 32–40 tokens up the delivered kernels read them at 6.0–6.45 TB/s against a 6.5 TB/s read roof, aiter at 5.0–5.97, so at most 5–8% is left; at 8–24 tokens the per-launch costs around the GEMMs weigh, and EP8 measured 1.28–1.59 there *(field, E5)* | `../patterns/memory_bound.md`; `grouped_sorted_tokens.md` §2, §7; `few_tokens.md` |
-| Kimi-K3 SiTUv2 at m 893–16384 | Every expert is touched; from ~9k tokens the GEMMs are compute-bound. At 16384 tokens the delivered kernels ran stage 1 at 1970 (TP) and 1889 (EP8) TF/s of useful FLOPs (padding rows not counted) and stage 2 at 1347 and 1764, where aiter ran 1431/1459 and 929/1267 *(field, E6)*. TP's per-route rows and their reduce kernel took 190 of 1533 µs | `grouped_sorted_tokens.md` §2, §6; `../gemm/mainloop.md` §7 |
-| m 64–4096 with 33 local experts | Rows repeat per expert: tile-M 32–128, several row tiles of one expert per weight sweep, activations staged through LDS. In the predecessor repository's CI (2026-10) it was served at 1.030–1.609 over aiter at every m from 64 *(field, E4)* | [fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md) |
+| Kimi-K3 SiTUv2, fp8 × MXFP4, m 8–112: 896 experts (TP) or 112 of 896 local (EP8), top-16 | Bandwidth: the weights of the experts the routes touch, 2.19 MB each at inter 384 and 17.5 MB at inter 3072 (estimated from the layout); count the touched experts from AKLR's own inputs (`../patterns/memory_bound.md`, Rule out first). From 32–40 tokens up the delivered kernels read them at 6.1–6.5 TB/s and aiter at 4.9–5.9, against 6.9 TB/s from a Triton read-only stream at its best configuration (6.5 with uint8 loads), so 6–11% is left *(field, E8)*; at 8–24 tokens the per-launch costs around the GEMMs weigh, and EP8 measured 1.28–1.59 there *(field, E5)* | `../patterns/memory_bound.md`; `grouped_sorted_tokens.md` §2, §7; `few_tokens.md` |
+| Kimi-K3 SiTUv2 at m 893–16384 | Every expert is touched. From ~9k tokens the GEMMs are at neither roof: their least traffic (touched weights, activations read once, output written once) moves at 31–48% of a Triton read-only stream's rate (70–89% at 2732 tokens), and the MFMAs at 32–44% of the 4.9 PF/s a HIP microbenchmark measured for the fp8 × MXFP4 MFMA *(field, E9)*. At 16384 tokens the delivered kernels ran stage 1 at 2100–2170 (TP) and 2140 (EP8) TF/s of useful FLOPs (padding rows not counted) and stage 2 at 1680–1700 and 1830, where aiter ran 1370/1410 and 920/1235; TP's reduce kernel took 100–105 of 1260–1290 µs *(field, E10)* | `grouped_sorted_tokens.md` §2, §6; `../gemm/mainloop.md` §7 |
+| m 64–4096 with 33 local experts | Rows repeat per expert: tile-M 32–128, from m 512 several row tiles of one expert per weight sweep (`GROUP_M` 2–9), activations staged through LDS. In the predecessor repository's CI (2026-10) it was served at 1.030–1.609 over aiter at every m from 64 *(field, E4)* | [fused_moe_shuffled_16x16.md](../cases/fused_moe_shuffled_16x16.md) |
 
 ## Techniques that apply
 
@@ -145,24 +148,21 @@ tokens per call. Reuse the mechanism and re-derive the number.
   table). Workflow and CI: § Workflow. The serving threshold: § Environment variables. Kernel-less files (a
   definition: loaded and audited, not served): § Schema fields.
 - `AKLR_DISABLE=fused_moe@1.0` stops serving every MoE schema.
-- Kernel-less `fused_moe` files in the predecessor repository in 2026-10, counted from `aklr/ops/fused_moe/impls/flydsl/`:
-  17 of the 25 files, 200 Points, none served (S1); the current files differ. By schema name, after `fused_moe_`:
+- Kernel-less `fused_moe` files on main at e525989, counted from `aklr/ops/fused_moe/impls/flydsl/`: 14 of the 46
+  files, 89 Points, none served (S1). By schema name, after `fused_moe_`:
 
 | Name | Points |
 |---|---|
-| `has_expert_mask_shuffled_16x16_model_dim4096_n_experts32_topk2_inter_dim4096_global_experts257` | 53, m 8–65536 |
-| `shuffled_16x16_model_dim4096_n_experts256_topk1_inter_dim512` | 51, m 8–65536 |
 | `shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim512` | 13, m 1–4096 |
-| `situv2_act_quant8_gate_up_interleaved_model_dim3584_n_experts896_topk16_inter_dim384` | 17, m 8–16384 |
-| `situv2_has_expert_mask_act_quant8_gate_up_interleaved_model_dim3584_n_experts112_topk16_inter_dim3072_global_experts896` | 17, m 8–16384 |
 | `interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts384_topk6_inter_dim384` / `…_inter_dim768` | 9 and 6, m 1–256 |
+| `interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts385_topk7_inter_dim384` | 27, m 7–16384 |
 | `interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts48_…` / `…_n_experts96_…` (inter 3072, 384 global) | 6 and 4, m 1–128 |
 | the four `…_has_num_local_tokens_…` names (hidden 4096 or 7168) | 1 each, m 1024 or 2048 |
 | the kernel-less siblings of the four clamped-SwiGLU kernel files (kernel files for these names also list m 16–256 and are served once CI records ≥ 1.03: [fused_moe_interleave_swiglu.md](../cases/fused_moe_interleave_swiglu.md)) | 5 each, m 16–256 |
 
 ## Expert GEMM (grouped GEMM)
 
-The grouped-GEMM package, folded in from its own folder: AKLR has no grouped-GEMM op, and its MoE op runs
+The grouped-GEMM package, folded in from its own folder: AKLR has no grouped-GEMM op, and its MoE ops run
 these GEMMs. Pinned sources: AMD-AGI/Primus-Turbo@ca1fdd67 (primus_turbo/flydsl/{grouped_gemm,utils}); ROCm/FlyDSL@dd8373349 (v0.3.2; kernels/moe).
 
 How to write and optimize a grouped GEMM on gfx950 (MI350/MI355X; the FlyDSL side: `../flydsl/moe.md`): one launch
@@ -208,7 +208,8 @@ In FlyDSL: `../flydsl/moe.md` § INDEX Expert GEMM (grouped GEMM).
 
 ### In AKLR
 
-AKLR has no grouped-GEMM op. Its MoE op is `fused_moe` (the sglang plugin's MoE ops take a whole MoE block): start
+AKLR has no grouped-GEMM op. Its MoE ops are `fused_moe` and `mega_moe` (expert-parallel, the exchange between the
+group's GPUs inside the call), and the sglang plugin's MoE ops take a whole MoE block: start
 at § Techniques that apply above, which routes each problem at any token count to its card section (at a few tokens
 first `few_tokens.md`, then `grouped_sorted_tokens.md`); AKLR's own FlyDSL MoE kernels are listed
 in `../flydsl/kernels/flydsl_kernel_library.md` § AKLR's own FlyDSL MoE kernels. Where a card disagrees with
@@ -271,9 +272,12 @@ In FlyDSL: `../flydsl/moe.md` § INDEX Kernel map.
 
 ## Evidence
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI, 2026-10; the files' current values differ] speedup over aiter at m 1: 2.472 (257 experts, 1fee59821837c26f), 1.258 (33 experts, ef15e87894a8ae06), 1.353 (65 experts, 1bf41ccba6750300), 3.015–3.359 (clamped SwiGLU, four files; 9dcb4d796b597d0b 3.089, a5a343437ee191a7 3.015)
+- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI, 2026-10; the files' current values differ] speedup over aiter at m 1: 2.472 (257 experts, 1fee59821837c26f), 1.258 (33 experts, ef15e87894a8ae06), 1.353 (65 experts, 1bf41ccba6750300), 3.015–3.359 (clamped SwiGLU, four files; 9dcb4d796b597d0b 3.089, a5a343437ee191a7 3.015)
 - E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, bench_cudagraph: graph replay, 1 GiB flush per call, Kineto kernel time, median; one run per arm] 39.09–102.04 µs per call with a separate sort node, 34.38–95.67 µs with it folded into stage 1, at m 8–64 (257 experts, inter 256)
-- E4 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI, 2026-10; the file's current values differ] speedup over aiter at m 64–4096: 1.030, 1.147, 1.109, 1.257, 1.609, 1.081, 1.070 (fused_moe_shuffled_16x16_model_dim6144_n_experts33_topk9_inter_dim2048, file ef15e87894a8ae06)
+- E4 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI, 2026-10; the file's current values differ] speedup over aiter at m 64–4096: 1.030, 1.147, 1.109, 1.257, 1.609, 1.081, 1.070 (fused_moe_shuffled_16x16_model_dim6144_n_experts33_topk9_inter_dim2048, file ef15e87894a8ae06)
 - E5 [2026-10, gfx950, FlyDSL ?, N=1, `python -m aklr validate --base origin/main`, not CI, on one MI355X: graph replay, 1 GiB flush per call, one-sided lower bound against aiter; touched experts counted from the same inputs] speedup over aiter at m 8–112: TP 1.373, 1.287, 1.243, 1.194, 1.168, 1.084, 1.069, 1.061, 1.058, 1.054, 1.043, 1.039, 1.038; EP8 1.592, 1.427, 1.347, 1.281, 1.220, 1.278, 1.282, 1.276, 1.262, 1.253, 1.245, 1.229, 1.240; weight bytes of the touched experts over the median candidate time 6.04–6.20 TB/s (TP, m 40–112) and 6.20–6.45 TB/s (EP8, m 32–112), aiter 5.0–5.97 TB/s; read roof 6.5 TB/s from a read-only kernel (the eight K3 kernel files)
-- E6 [2026-10, gfx950, FlyDSL 0.3.2, N=1, eager calls on the validate inputs, L2 flushed between calls, torch.profiler kernel times; useful FLOPs 2 · routes · N · K per GEMM] at 16384 tokens, the delivered kernels against aiter: TP stage 1 732.4 µs = 1970 TF/s (aiter 1008.2 µs = 1431), stage 2 535.8 µs = 1347 (776.8 µs = 929), other kernels 264.5 µs with the reduce 190.4 (480.3 with 374.8); EP8 stage 1 762.6 µs = 1889 (987.2 µs = 1459), stage 2 408.1 µs = 1764 (568.3 µs = 1267), other 57.5 µs (508.5); at 9397 tokens TP 1701 / 1200, EP8 1660 / 1511 TF/s
-- S1 aklr/ops/README.md:76 a schema file with empty `sources` is a definition: loaded and audited, not served or benched
+- E7 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, Triton 3.8.0, aiter dbd8bf5, N=5, graph wall clock, 1 GiB flush per call, flush-only graph subtracted] share of a call's time that a Triton read-only stream of the touched experts' weight bytes takes, less one 1.52 µs empty launch, at m 1 / 2: 1fee59821837c26f 33.1% / 46.3% (22.6 / 45.1 MB); ef15e87894a8ae06 and 1bf41ccba6750300 66.9–75.1% (180.5–320.9 MB)
+- E8 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, Triton 3.8.0, aiter dbd8bf5, N=5, AKLR bench_cudagraph or graph wall clock, 1 GiB flush per call] touched experts' weight bytes over the call time: delivered kernels 6.09–6.31 TB/s (TP, m 40–112) and 6.22–6.48 (EP8, m 32–112); aiter 4.91–5.89; a 2 GiB Triton read-only stream 6.87 TB/s at its best configuration, 6.53 with uint8 loads; left 8.2–11.3% (TP) and 5.6–9.4% (EP8) (TP e0678268dac4bef6; EP8 b4c655c5220c02de and a22cc342a6677a10)
+- E9 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, Triton 3.8.0, aiter dbd8bf5, N=5, eager, torch.profiler kernel times after a 1 GiB flush] at 9397 and 16384 tokens, stage 1 and stage 2 useful TF/s over 4921 TF/s (a HIP microbenchmark's fp8 × MXFP4 MFMA rate) 0.32–0.44; touched weights, activations read once and output written once over the stage time, against a 6.66 TB/s Triton read-only stream, 0.31–0.48, and 0.70–0.89 at 2732 tokens (TP ae24d42e524edf7d, EP8 84181fb6b00938c6; eea13e61bb2a6241 and 6dba52d6b5e138ae at 2732)
+- E10 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=6 rounds (TP measured twice), eager, torch.profiler kernel times after a 1 GiB flush; useful FLOPs 2 · routes · N · K per GEMM] at 16384 tokens, delivered against aiter: TP stage 1 2168 / 2099 TF/s (aiter 1369), stage 2 1703 / 1679 (922), reduce 105.0 / 99.6 µs of 1260.7 / 1290.0 µs for all kernels; EP8 stage 1 2140 (1409), stage 2 1834 (1235) (TP ae24d42e524edf7d, EP8 84181fb6b00938c6)
+- S1 aklr/ops/README.md:83 a schema file with empty `sources` is a definition: loaded and audited, not served or benched

@@ -13,8 +13,8 @@ measured:
   - {metric: "speedup over aiter, local validate lower bound per Point", value: "1.527–1.628; 11 of 11 Points ≥ 1.03; CI serves 11 of 11 as of #102", gpu: MI355X, workload: "gemm_n163840_k256, m 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14", date: "2026-10-25"}
   - {metric: "speedup over aiter, local validate lower bound per Point", value: "1.087–1.322; 4 of 4 Points ≥ 1.03; CI serves 4 of 4 as of CI run 41976547645 (90b9d50), unchanged by #102", gpu: MI355X, workload: "gemm_n2304_k1536, m 893, 2732, 9397, 16384", date: "2026-10-26"}
   - {metric: "speedup over aiter, local validate lower bound per Point", value: "1.113–1.294; 3 of 3 Points ≥ 1.03; CI serves 3 of 3 as of CI run 42000899019 (d908d01, #71), unchanged by #102", gpu: MI355X, workload: "gemm_n3072_k512, m 35107, 104093, 342073", date: "2026-10-26"}
-  - {metric: "speedup over aiter, AKLR validate profile 19, per Point; no CI measurement yet", value: "1.092–1.353 at m 2–64; m 1 (1.022) and 128 (0.978) not listed", gpu: MI355X, workload: "gemm_n7168_k512 kernel of file d0d6e9e5c93fbd88, measured on a file with the same kernel and m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
-  - {metric: "speedup over aiter, AKLR validate profile 19, per Point; no CI measurement yet", value: "1.181–1.303 at m 32–128; m 1–16 (1.020–1.036) not listed", gpu: MI355X, workload: "gemm_n3584_k512 kernel of file dacbceacd8d1ae5f, measured on a file that imported the same HGEMM from aiter 0.1.21.dev66+gdbd8bf5bd, with m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.092–1.353 at m 2–64; m 1 (1.022) and 128 (0.978) not listed; CI serves 6 of 6 as of #115", gpu: MI355X, workload: "gemm_n7168_k512 kernel of file d0d6e9e5c93fbd88, measured on a file with the same kernel and m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.181–1.303 at m 32–128; m 1–16 (1.020–1.036) not listed; CI serves 3 of 3 as of #115", gpu: MI355X, workload: "gemm_n3584_k512 kernel of file dacbceacd8d1ae5f, measured on a file that imported the same HGEMM from aiter 0.1.21.dev66+gdbd8bf5bd, with m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
 sources:
   - aklr/ops/gemm/impls/flydsl/gemm_n1536_k128/f0579ac60c343047.json
   - aklr/ops/gemm/impls/flydsl/gemm_n163840_k256/1220a995dd7d23c0.json
@@ -75,8 +75,9 @@ Shared by the four kernels:
 
 - **MFMA `mfma_f32_16x16x32_bf16` with B as the first operand**, so a lane holds four consecutive output columns
   of one row (`../gemm/epilogue.md` §3), fp32 accumulators.
-- **Kernel pointer arguments preloaded into SGPRs** (`amdgpu-kernarg-preload-count` 6 or 16;
-  `../gemm/small_m.md` §6).
+- **Kernel pointer arguments preloaded into SGPRs, except in n3072_k512:** all three in n1536_k128 and n163840_k256
+  (`amdgpu-kernarg-preload-count` 6); in n2304_k1536 only the first (2 SGPRs, though its count is 16: each pointer
+  is followed by a 16-byte by-value struct) *(field, E18)* (`../gemm/small_m.md` §6).
 - **A per-m configuration** compiled in a `functools.cache` function on a Point's first call.
 
 Per file:
@@ -142,15 +143,16 @@ strategy goes in through `amdgpu-sched-strategy` (`../gemm/schedule_and_locality
   two-tile walk +0.9% at m 16384. Against the starting kernel: +9.5–23.2% *(field, E9)*.
 - n3072_k512: the 256×256 port with grouped order and `nt` C +6.4–16.7%; the persistent loop with per-wave C
   +5.3–10.0%; tail items +2.3% at m 35107; the start delay +2.9% / +1.1% at m 35107 / 104093; the mid-block barrier
-  +0.6–2.2%. Against the starting kernel: +13.8–31.5% *(field, E10)*.
+  with fragment prefetch and the fill of block kb+2 behind it, one round, +0.6–2.2%. Against the starting kernel:
+  +13.8–31.5% *(field, E10)*.
 
 ## Result
 
 "Served" counts the Points at or above 1.03 in CI as of #102 (6d7cfec, CI run 42549655045, measurement profile 19),
 n2304 as of CI run 41976547645 (90b9d50) and n3072 as of CI run 42000899019 (d908d01, #71), which #102 left unchanged;
-the `speedup` in each schema's `workloads` is the current value *(field, E17)*. CI runs the FlyDSL of its image
-(0.3.4.1 in the image of the latest perf runs), not the 0.3.2 of the local numbers below
-(`../pitfalls/measured_a_different_build.md`).
+the `speedup` in each schema's `workloads` is the current value *(field, E17)*. CI runs FlyDSL 0.3.2, as the local
+numbers below do, not its image's 0.3.4.1: these runs' workflows install the baseline aiter dbd8bf5, which pins
+`flydsl==0.3.2`, over the image (`../pitfalls/measured_a_different_build.md`).
 
 The other columns are the campaigns' own runs of the predecessor repository's `validate` (before the rename to
 AKLR) on MI355X, FlyDSL 0.3.2: a lower bound of the CUDA-graph time ratio aiter / kernel, one run each;
@@ -168,7 +170,7 @@ AKLR) on MI355X, FlyDSL 0.3.2: a lower bound of the CUDA-graph time ratio aiter 
 
 Two later files at small m, one per schema name: `gemm_n7168_k512/d0d6e9e5c93fbd88.json` (m 2–64, 7 MiB of weight)
 and `gemm_n3584_k512/dacbceacd8d1ae5f.json` (m 32–128, 3.5 MiB). No other file serves these Points, so the yardstick
-is aiter; until CI writes their `speedup`, dispatch does not serve them (`qualifies()` in
+is aiter; CI serves all of them as of #115 (`qualifies()` in
 `aklr/core/contract/spec/_workloads.py`; `AKLR_MIN_SPEEDUP`, default 1.03, `aklr/ops/README.md` § Environment
 variables). Like the files above, these two do not split K across workgroups; unlike n163840's, they do not split it
 across waves either: each workgroup reads its rows of A and B over all of K once, and every output is one MFMA chain
@@ -210,10 +212,13 @@ Counter-signals:
   reaches it only through a new copy.
 - **The baseline is aiter's own dispatch.** Its tuned `gemm_a16w16` (`gemm_baseline`) picks its own kernel at these
   shapes; which one it ran was not recorded, so the gain is this tile choice against whatever aiter's dispatch chose.
-- **Near 4.2–4.4 µs the kernel time stops moving with m.** N 7168 read 4.22–4.30 µs per round at every listed m from
-  2 to 64 while aiter went from 4.64 to 5.77, 0.41–0.58 µs above the kernel at m 2–16; N 3584 read 4.16–4.32 at
-  m 1–16 against aiter's 4.32–4.46, about a tenth of a microsecond apart *(field, E14, E15)*. The gain is aiter's time
-  growing with m. Whether profile 19 has a floor near there was not measured (`../pitfalls/aklr_dispatch_floor.md`).
+- **Near 4.2–4.4 µs the profile-19 reading stops moving with m; the N 7168 kernel does not.** N 7168 read
+  4.22–4.30 µs per round at every listed m from 2 to 64 while aiter went from 4.64 to 5.77, 0.41–0.58 µs above the
+  kernel at m 2–16; N 3584 read 4.16–4.32 at m 1–16 against aiter's 4.32–4.46, about a tenth of a microsecond apart
+  *(field, E14, E15)*. Profile 19 flattens short times there: same-grid spin kernels of 1.8–4.4 µs read
+  4.52–4.57 µs. Timed back to back with B cold, the N 7168 kernel goes from 3.63 µs per call at m 2 to 4.34 at m 64,
+  and aiter is 0.81–0.89 µs slower at every m from 2 to 16 *(field, E19)*, so there the gain is not aiter's time
+  growing with m (`../pitfalls/aklr_dispatch_floor.md`).
 - **No K split at K 512.** Splitting K = 512 to fill the grid cost 15–18% on another kernel (`../gemm/small_m.md`
   §4), so at m ≤ 16 N 7168 runs 112 workgroups, under half a round.
 
@@ -265,9 +270,9 @@ is the predecessor repository's `validate` (before the rename to AKLR) outside C
 - E7 [2026-10, gfx950, FlyDSL 0.3.2, N=3, forge-loop paired bench, group campaign] n1536_k128 C from registers with permuted B rows: +5.9% at m 16384, +3.8% at 9397, +1.3% at 2732
 - E8 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n163840_k256: port +18.8–41.3% (recorded); preload +1.6–3.0% (recorded); XCD grouping +0.0–1.6%; two-half workgroup +0.1–2.6% at m 4–14; all changes off +49.7–62.7% (gemm_n163840_k256)
 - E9 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n2304_k1536: grouping + vector C staging + `nt` C +7.9, 8.1, 2.5, 2.6% (recorded); BK 128 +6.2% at 893; unroll +1.2 / +3.2% at 893 / 2732; scheduler strategy +2.3 / +0.7% at 9397 / 16384; persistent +0.9% at 16384; all changes off +23.2, 15.8, 15.6, 9.5% at m 893, 2732, 9397, 16384 (gemm_n2304_k1536)
-- E10 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n3072_k512 at m 35107 / 104093 / 342073: port +9.2 / 16.7 / 6.4% (recorded); persistent loop +10.0 / 7.3 / 5.3% (recorded); tail items +2.3 / 0.1 / 0.0%; start delay +2.9 / 1.1 / 0.0%; mid-block barrier +0.6 / 2.2 / 1.1%; all changes off +28.2 / 31.5 / 13.8% (gemm_n3072_k512)
+- E10 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n3072_k512 at m 35107 / 104093 / 342073: port +9.2 / 16.7 / 6.4% (recorded); persistent loop +10.0 / 7.3 / 5.3% (recorded); tail items +2.3 / 0.1 / 0.0%; start delay +2.9 / 1.1 / 0.0%; mid-block barrier + fragment prefetch + kb+2 fill +0.6 / 2.2 / 1.1%; all changes off +28.2 / 31.5 / 13.8% (gemm_n3072_k512)
 - E11 [2026-10, gfx950, FlyDSL 0.3.2, N=2, local validate, one window per run] n1536_k128 delivered beside the dropped last round: 14 and 16 of 17 Points past the local bar against 14 and 12 (gemm_n1536_k128)
-- S1 aklr/ops/gemm/contract.py:128 `GEMM` with `_UNSHUFFLED_VARIANTS` (:124) and `_dot_k()` (:95); `CompareSpec` defaults bitwise at aklr/core/contract/spec/_args.py:217
+- S1 aklr/ops/gemm/contract.py:118 `GEMM` with `_UNSHUFFLED_VARIANTS` (:116) and `_dot_k()` (:91); `CompareSpec` defaults bitwise at aklr/core/contract/spec/_args.py:202
 - S2 aklr/ops/gemm/impls/flydsl/gemm_n1536_k128/f0579ac60c343047.json#kernel.py:26 `_CONFIGS`; whole-K DMA and one wait at :260; `C_DIRECT` stores at :281; `sc1` stores at :20 and :58
 - S3 aklr/ops/gemm/impls/flydsl/gemm_n163840_k256/1220a995dd7d23c0.json#kernel.py:20 `_CONFIGS`; `_grouped_tile` at :47; B loads first at :134; B-first MFMA at :154; wave-order fold at :182 and :197
 - S4 aklr/ops/gemm/impls/flydsl/gemm_n2304_k1536/0c3c675002f2fa94.json#kernel.py:35 `_CONFIGS`; scheduler strategy at :114; two-tile assertion at :173; second tile in reverse K at :521
@@ -282,3 +287,5 @@ is the predecessor repository's `validate` (before the rename to AKLR) outside C
 - S7 aklr/ops/gemm/impls/flydsl/gemm_n3584_k512/dacbceacd8d1ae5f.json#kernel.py:13 relative imports of `compile_hgemm_kernel` and (:14) `_run_compiled`, `ptr_arg`; `_config` at :17-22; a null pointer in the bias, semaphore and signal slots at :31-33
 - S8 aklr/ops/gemm/impls/flydsl/gemm_n3584_k512/dacbceacd8d1ae5f.json#splitk_hgemm.py:1093 `launch_hgemm_kernel(C, A, B, BIAS, m, semaphore, signal, stream)`; semaphore and signal bound only under `IS_SPLIT_K` at :341, the bias only under `HAS_BIAS` at :262 and :1082; without `B_TO_LDS` only A has LDS storage at :196-208; the copy of ROCm/aiter@dbd8bf5bd:aiter/ops/flydsl/kernels/splitk_hgemm.py (:1094, :342, :263, :1083, :197-209 there) with its aiter import made relative at :15
 - S9 aklr/ops/gemm/impls/flydsl/gemm_n3584_k512/dacbceacd8d1ae5f.json#buffer_ops.py:39 `_get_buffer_flags` with no `FLYDSL_GPU_ARCH` read (:65); its tensor_shim.py:76 default strides without `tolist`; the same lines in aklr/ops/fused_moe/impls/flydsl/fused_moe_situv2_act_quant8_gate_up_interleaved_model_dim3584_n_experts896_topk16_inter_dim384/033eff70aa1f4ee2.json#buffer_ops.py:39 and its tensor_shim.py:175
+- E18 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=1, one compile per file; `.amdhsa_user_sgpr_kernarg_preload_length` read from the final ISA and from the code object's kernel descriptor, which agree] SGPRs preloaded: n1536_k128 6 and n163840_k256 6, all three pointers of a 24-byte kernarg; n2304_k1536 2 of a 72-byte kernarg with `amdgpu-kernarg-preload-count` 16; n3072_k512 0 (no count set)
+- E19 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0, FlyDSL 0.3.2, aiter dbd8bf5, N=8 rounds, medians; AKLR's `bench_cudagraph` (profile 19, L2 flushed per call) and back-to-back calls in one CUDA graph rotating 96 operand copies (704 MB of B)] d0d6e9e5c93fbd88 back to back 3.625 µs at m 2 to 4.341 at m 64, 4.330–4.398 under `bench_cudagraph`; same-grid spin kernels of 1.82–4.40 µs back to back read 4.52–4.57 µs under `bench_cudagraph`; aiter `gemm_a16w16` 0.81–0.89 µs slower than the kernel back to back at m 2–16; every output within tolerance

@@ -31,11 +31,11 @@ sources:
 **Somewhere else if:** the grid, tile size, split-K or a boundary variant is the question →
 `grid_pricing.md`; the general order of operations → `workflow.md`.
 
-## 1. Co-resident waves must not read the same heavy fragment
+## 1. Check which waves share a SIMD before reshaping the wave grid
 
 A workgroup's waves stripe across the CU's 4 SIMDs; with 8 waves, wave `w` and wave `w + 4` share a SIMD.
-If those two read the same LDS fragment of the heavier operand at the same moment, their LDS requests are
-in phase and neither hides the other's latency.
+On one grouped fp8 GEMM, letting that pair read the same LDS fragment of the heavier operand cost ~25% *(field, E1)*;
+on a bf16 LDS→MFMA kernel in HIP with the same 8-of-12 A-read split it cost < 0.1% *(field, E37)*.
 
 *(field, E1)* One 8-wave grouped fp8 GEMM kernel at 2 waves per SIMD with a 2(M)×4(N) wave grid. Writing
 the same `(wave_m, wave_n)` bijection three ways — identical tile split, LDS bytes, instruction counts:
@@ -47,31 +47,34 @@ the same `(wave_m, wave_n)` bijection three ways — identical tile split, LDS b
 | `wave_m` only (same A fragment, 8 of the wave's 12 `ds_read`s) | **~25% slower** |
 
 *(field, E1)* Transposing the wave grid to 4(M)×2(N), the co-resident pair still sharing `wave_n`, cost ~16%
-on its own. Cache, LDS, bank-conflict and MFMA
-counters were bit-identical between arms; only `SQ_WAIT_ANY / SQ_WAVE_CYCLES` moved (31.7% → 50.0%).
+on its own. Between the `wave_m`-sharing arm and the baseline, MFMA counters were identical
+and cache counters within 0.3%; only `SQ_WAIT_ANY / SQ_WAVE_CYCLES` moved (31.7% → 50.0%).
 
 So: any rewrite of the wave grid — new MFMA atom, different `n_tiles` split, changed boundary granularity
 — must state the `wave_id → (wave_m, wave_n)` mapping explicitly and recheck which waves co-reside. It is
-index algebra that can cost a quarter of the kernel, and ordinary counters will not show it.
+index algebra that cost a quarter of one kernel with only its wait counters moving; the cause is not established.
 
 ## 2. Tile order across XCDs
 
 gfx950 has 8 XCDs of 32 CUs each, and L2 is per XCD: an operand that another XCD pulled in is not an L2
-hit. The hardware hands workgroup ids to the XCDs round-robin (`block_id % 8`), so a linear tile order
+hit. The hardware hands workgroup ids to the XCDs round-robin, so ids equal mod 8 share an XCD; `block_id % 8`
+names that group, not the physical XCD, which varies with the stream *(field, E38)*. So a linear tile order
 spreads tiles that share a panel over all 8 L2s; the basic swizzle remaps `block_id → (xcd, local_id)` so a
 contiguous run of tiles lands on one XCD. The GEMM-specific rules:
 
 **Decide by what co-resident workgroups reuse.**
 - Each group of tiles streams **a slab of its own** (shared inside the group, not across the grid) that is larger
   than one XCD's L2: keeping the group's workgroups on the same XCD at the same time (cluster across all 8 XCDs)
-  is K-dependent: *(field, E2)* on a grouped fp8 NN dgrad, 8 XCDs with GROUP_M = 4 against 4 XCDs with
-  GROUP_M = 8 gained 0.79% at K = 2944 and lost 1.91% at K = 5760, both slabs larger than the L2 slice. Key the
-  choice on K too, and sweep.
-- All tiles read a **shared slice**: clustering by XCD only fragments the
-  sharing; the hardware round-robin (`block_id % 8`) with a narrow group-major band wins.
-- **Split-K: give each XCD a contiguous run of one split's tiles**, not all splits of a few tiles: splits of one tile
-  read disjoint K-slices, so an XCD's L2 then holds one K-slice of A and B. *(field, E3, E4)* 46.5 → 37.8 µs on a
-  split-4 grid at M = 893; the tile-major run was 11% slower there and 2% slower at M = 500. *(field, E34)* With the
+  can win or lose by shape: *(field, E2)* on one grouped fp8 NN dgrad, 8 XCDs with GROUP_M = 4 against 4 XCDs with
+  GROUP_M = 8 gained 0.79% at K = 2944 and lost 1.91% at K = 5760, both slabs larger than the L2 slice (K and slab
+  size moved together). Sweep it per K.
+- All tiles read a **shared slice**: the winning order depends on the kernel. *(field, E5)* On a grouped fp8 wgrad
+  (TN), 8-XCD clustering did not beat the hardware round-robin with a narrow group-major band (GROUP_M = 2);
+  *(field, E39)* on a bf16 grouped GEMM in Triton with the same access, clustering was up to 2.4% faster at equal
+  GROUP_M, the best of each order within 1%. Sweep both orders and the band width.
+- **Split-K: race giving each XCD a contiguous run of one split's tiles** against all splits of a few tiles.
+  *(field, E3, E4)* On one kernel it was 46.5 → 37.8 µs on a split-4 grid at M = 893, and the tile-major run was 11%
+  slower there and 2% slower at M = 500. *(field, E34)* With the
   fold removed, XCDs that each ran half of K (two K groups by XCD parity) made the main loop 3.5% faster than all of
   K at M = 256 (A 8 MiB). These orders were all timed with folds in which splits waited for each other, and on
   another such kernel, whose fold exchanged partials inside one XCD's L2 when a tile's splits shared it, one split per
@@ -79,10 +82,10 @@ contiguous run of tiles lands on one XCD. The GEMM-specific rules:
 
 *(field, E5)* On grouped fp8 GEMMs, porting one kernel's winning band/XCD setting to another kernel made it 0.8% to
 2.3% slower (the identity XCD order with GROUP_M = 4, recommended for grouped kernels in general, lost 5.7%). Predict
-the direction from the reuse class, then sweep every group size up to 8 and past it (9 beat every value ≤ 8 that was
-tried — 3, 4, 6, 7 at one shape, 2, 3, 4, 6, 7 at the other — by 1–4% on two shapes, and 4 won at the third
-*(field, E6)*), not 3–5 points, on every shape class you are scored on: *(field, E7)* adjacent `GROUP_M` values
-differed by up to ~14% (9% paired).
+the direction from the reuse class, then sweep every group size up to 8 and past it (on one bf16 dense GEMM, 9 beat
+every value ≤ 8 that was tried — 3, 4, 6, 7 at one shape, 2, 3, 4, 6, 7 at the other — by 1.2–5.8% on two shapes,
+and 4 won at the third, where 9 was not tried *(field, E6)*), not 3–5 points, on every shape class you are scored on:
+*(field, E7)* adjacent `GROUP_M` values differed by up to ~14% (9% paired).
 Re-sweep the group size after every tile change: *(field, E8)* at one shape, groups 4 and 8 lost up to 2.4% at one
 tile; at another, group 4 won 2.3% and group 2 3–4.4%, while groups 6 and 8 won about 0.4%.
 
@@ -92,9 +95,11 @@ tile; at another, group 4 won 2.3% and group 2 3–4.4%, while groups 6 and 8 wo
 - `block_mn` (GH:1967) is a `GROUP_M` (1D) or `group_n` (2D) super-tile decode, also a bijection.
 - `xcd_band_remap_pid` (GH:2694) gives each XCD every `num_xcd`-th run of `band` tiles. That keeps reuse
   inside a run while every XCD samples the whole tile range, which balances tiles of unequal cost.
-- **Gate the band on L2 bytes.** Once one band's operand slice outgrows an XCD's L2 slice (4 MiB on
-  gfx950), clustering buys no reuse and only costs balance. Turbo's dense fp8 table then switches to the
-  plain round-robin (`_NT_BAND_L2_BYTES`, `gemm/gemm_fp8_kernel.py:3186-3192`). The MXFP4 kernel picks
+- **Race the XCD order; the band's L2 footprint alone does not decide it.** Once `GROUP_M · BLOCK_M · K` of the
+  leading config passes one XCD's L2 slice (4 MiB on gfx950, `_NT_BAND_L2_BYTES`), Turbo's dense fp8 NT table adds
+  round-robin candidates (`num_xcd = 1`) to the race beside clustered ones (`gemm/gemm_fp8_kernel.py:3188-3198`).
+  *(field, E40)* Past the slice, clustering was still 3–17% faster than the round-robin on a bf16 8192×8192 GEMM in
+  Triton (256×128 tile, GROUP_M = 4, band slices of 8–64 MiB), while one GROUP_M = 2 cell lost 10%. The MXFP4 kernel picks
   the widest power-of-two N band whose B slice fits one XCD's L2, and no band once a single N tile fills
   it (`_mxfp4_l2_band`, `gemm/gemm_mxfp4_kernel.py:3131-3139`).
 - **Make each XCD's resident set a rectangle.** The dense fp8 TN whole loop sizes `(group_m, group_n)`
@@ -110,10 +115,12 @@ tile; at another, group 4 won 2.3% and group 2 3–4.4%, while groups 6 and 8 wo
 
 **2D bands:** compare `GM · GN` with the per-XCD concurrent window (resident workgroups per XCD: 32 at one
 workgroup per CU). `GM · GN` near the window makes the footprint depend on where the window starts inside
-the band; a 1D band is steadier there. Use 2D only when `GM · GN` is much larger than the window.
+the band, and the time can follow: *(field, E41)* on a bf16 GEMM in Triton, near-window 2D bands spread by up to 4.6%
+over 8 window starts, but 1D bands also by up to 2.7%, and on two shapes the best near-window 2D band beat the best
+1D band by 2–6% at every start. Race 1D against 2D bands, near-window ones included.
 
 **Mechanics:**
-- One locality remap at a time — stacking two usually defeats both.
+- One locality remap at a time — stacking two can defeat both; time a stack against each remap alone.
 - Persistent kernels remap the work id, not `block_idx`.
 - Prove the remap is a bijection over every grid you actually launch (a chunked launch can be narrower
   than the deployment shape). `x*(G//8) + min(x, G%8) + block_id//8` with `x = block_id % 8` is a
@@ -121,8 +128,9 @@ the band; a 1D band is steadier there. Use 2D only when `GM · GN` is much large
 
 **Judge by wall time; explain with stall counters, not L2 hit rate.** *(field, E10)* An XCD order that was 3% faster
 on a grouped fp8 GEMM under balanced routing (2.5% under heavy skew, 0.03% on the canonical distribution) left
-`TCC_HIT`, `TCC_REQ` and `TCP_TCC_READ_REQ` unchanged; the gain showed in `MemUnitStalled` (12.4% → 10.7%), i.e.
-TCP→TCC request queueing. Elsewhere hit rate rose sharply with no wall change. Read `SQ_WAIT_ANY` and `MemUnitStalled`
+`TCC_HIT`, `TCC_REQ` and `TCP_TCC_READ_REQ` unchanged; the gain showed in `MemUnitStalled` (12.4% → 10.7%), which
+counts the TCP stalling its TA data interface (S1). Elsewhere hit rate
+rose sharply with no wall change. Read `SQ_WAIT_ANY` and `MemUnitStalled`
 to explain a result. *(field, E11)* Differences of 1–2% on this axis flipped sign between back-to-back sweeps;
 10%-scale effects (14–16%, and 23–25% the other way) agreed with the shipped heuristic. *(field, E12, E13)* That
 reading was on a grouped NN dgrad; a later band sweep on the same pass improved `MemUnitStalled` in both the winning
@@ -138,8 +146,8 @@ non-memory/non-side-effect (this **includes VALU**), `0x002` VALU, `0x004` SALU,
 `0x020`/`0x040` VMEM read/write, `0x080` all DS, `0x100`/`0x200` DS read/write, `0x400` transcendental, `0x800`
 LDS DMA. A set bit means that class **may cross** the fence; `0` pins everything.
 
-Fences inside a fully unrolled epilogue usually exist to stop the scheduler from hoisting work and
-lengthening live ranges. What must stay pinned is the arithmetic, not only the memory operations:
+Fences inside a fully unrolled epilogue can exist to stop the scheduler from hoisting work and
+lengthening live ranges. In one such epilogue the arithmetic, not only the memory operations, had to stay pinned:
 - *(field, E14)* Relaxing such a fence from `0` to `0x001` in a grouped MXFP4 GEMM's epilogue: VGPR 476 → 512,
   spills 0 → 30 — VALU intermediates hoisted across the fence.
 - *(field, E15, E16, E17)* `0x004 | 0x008 | 0x080` (SALU, MFMA, DS may cross; VALU and VMEM pinned) in the same
@@ -149,13 +157,16 @@ lengthening live ranges. What must stay pinned is the arithmetic, not only the m
   slower. Race the mask on the current code whenever the region changes.
 
 **LLVM also moves work across waits you place by hand; pin it with `sched_barrier(0)`.** Loads issued up
-front for latency sink behind the MFMAs to save VGPRs (a fence after them was +0.6–2.6% on rows with ≥ 12 loads
-*(field, E18)*). MFMAs issued before an inline-asm `s_waitcnt` + `s_barrier` sank past it, 8 of 28 (a fence in
+front for latency sink behind the MFMAs, keeping VGPRs low (a fence after them was +0.6–2.6% on rows with ≥ 12 loads
+*(field, E18)*; *(field, E45)* on other small-M split-K shapes with 12–32 loads it ranged from −1.5% to +12%; race
+it). MFMAs issued before an inline-asm `s_waitcnt` + `s_barrier` sank past it, 8 of 28 (a fence in
 front cut the time 0.8–3.8% at M ≥ 893 and 1.4–1.7% at M = 64–96, and added 1.1–2.4% at M = 56, 60 and 112
 *(field, E19)*; race it).
 
 Gate any mask change on the ISA's `vgpr_spill_count` before benchmarking. Hint counts must come from the
-loop in front of you; constants copied from another kernel are worse than none.
+loop in front of you. A copied table can be worse than none: *(field, E42)* on a FlyDSL fp8 GEMM, tables computed
+for a smaller tile ran up to 19% slower than no hints, tables for a larger tile 9–13% faster than no hints and within
+6% of the tile's own.
 
 **Race LLVM's scheduler per tile:** `amdgpu-sched-strategy=iterative-ilp`
 (or `max-ilp`, `max-memory-clause`, `iterative-minreg`, `iterative-maxocc`); a misspelled name silently compiles the default.
@@ -222,8 +233,8 @@ barrier, leave outstanding only the fills that nothing reads before a later phas
 ## 5. Hiding an LDS write when registers are nearly full
 
 The usual advice is to put independent work (the next global load, address math, an independent MFMA
-group) between a `ds_write` and the `lgkmcnt` wait that guards its read. When VGPR headroom is small, any
-insertion lengthens a live range and loses:
+group) between a `ds_write` and the `lgkmcnt` wait that guards its read. When VGPR headroom is small, an
+insertion lengthens a live range and can lose; on one kernel both insertions tried lost:
 
 *(field, E28)* Occupancy 1, 440/472 VGPR + 256 AGPR, fully unrolled epilogue, same gap three ways:
 
@@ -234,18 +245,20 @@ insertion lengthens a live range and loses:
 | move the `ds_write` into the previous MFMA stream | −2.6% |
 
 Rule of thumb from that kernel: below ~15% VGPR headroom, move the write, do not insert work. A real
-latency fix barely changes the instruction count (5315 → 5307 here *(field, E28)*); a large count change means you
-changed something else.
+latency fix barely changes the instruction count (5315 → 5307 here *(field, E28)*); if the count moves a lot,
+check what else the edit changed before crediting the latency.
 
 ## 6. Epilogue fusion competes with the tile that made the GEMM fast
 
-The tile that wins the GEMM often leaves one wave per SIMD. Then no other wave hides the epilogue's VALU
-work, and every `v_*` instruction the fusion adds shows up in the tile time.
+The tile that wins the GEMM can leave one wave per SIMD. Then no other wave hides the epilogue's VALU work, and in a
+HIP probe every `v_*` the fusion added showed up in the tile time, unless it sat ahead of a wait on an in-flight read,
+where the first 256 per wave filled that wait at 0.16 of their issue time *(field, E43)*.
 
 *(field, E29, E30)* At one wave per SIMD, an exact GELU added to the epilogue cost +70%; rewritten as independent
-vector chains it cost about 1.1× the same math in a separate high-occupancy kernel. The price is set by the
-extra `v_*` instructions per element, the read width of any extra operand, and whether the fusion adds a
-new input stream.
+vector chains it cost about 1.1× the same math in a separate high-occupancy kernel. The price depends on the
+extra `v_*` per element and their kind, the read width of any extra operand, whether the fusion adds a new input
+stream and whether it is prefetched or waited on in the epilogue, and, once the register file is full, the peak
+live registers the new work adds (all of them moved the price in a HIP probe *(field, E44)*).
 
 Before planning an epilogue fusion, read the kernel's occupancy. At one wave per SIMD, write element-wise
 math as independent vector chains, count the added `v_*` per element, and compare against a separate
@@ -255,10 +268,10 @@ as parallel chains, cost 1.87× the GELU's time per added instruction on one sha
 ## 7. Accumulators, descriptors and large operands
 
 - **Accumulators beyond the AGPR file.** A wide tile can need more than 256 accumulator dwords per lane.
-  Place them yourself (part AGPR, part VGPR). *(field, E31)* Leaving a 128×512 tile's accumulators to the
-  compiler produced 613 `v_accvgpr_*` moves and 18 scratch loads in the hot loop;
-  explicit placement of a 256×384 tile ran at 500/512 registers with no spill. Check: count
-  `v_accvgpr_read/write` and `scratch_` in the hot loop.
+  Place them yourself (part AGPR, part VGPR). *(field, E31)* A 256×384 tile (384 dwords per lane: 256 in AGPRs,
+  128 in arch VGPRs by inline asm) ran at 500/512 registers with no spill. A path gate keyed on the tile shape
+  rather than the accumulator footprint can also miss AGPRs: a 128×512 tile (256 dwords) built that way had 613
+  `v_accvgpr_*` and 18 scratch spills. Check: count `v_accvgpr_read/write` and `scratch_` in the hot loop.
 - **Descriptor fields must be wave-uniform, and operands past 4 GiB need an i64 rebase.** See
   `datapath.md` §8. Signature of a non-uniform descriptor: `v_readfirstlane_b32` plus an
   `s_and_saveexec_b64` loop around the hot loop's `buffer_load`s.
@@ -317,3 +330,13 @@ timestamps in each campaign, records of the Kimi-K3 runs (2026-10-24…26).
 - E33 [2026-10, gfx950, FlyDSL ?, N=1, campaign chain bench (GEMM + quantizer), one run per arm, null control −0.92%, quantizer row phase priced by a three-arm subtraction; added instructions counted in the ISA against a same-structure build; outputs byte-identical to the standalone quantizer] FP6 (E2M3) row pack moved into the GEMM epilogue, amax as a depth-5 tree: +5.237 `v_*` per element, `s_waitcnt` +4, vgpr 508, no spill; fc1_double chain 251.9 → 266.4 µs with the quantizer's row phase −32.1 µs, so +46.6 µs in the epilogue (+106.8 µs on fc1_single), against 24.9 µs at the GELU-calibrated price of 4.75 µs per added instruction per element: 1.87× (2.17× on fc1_single) (Turbo A6W4 dense forward GEMM with bias and GELU epilogue)
 - E34 [2026-10, gfx950, FlyDSL 0.3.2, N=8–10 readings per arm, AKLR graph timer, arms interleaved in one process against the canonical kernel, median; outputs bitwise equal] with the fold removed (wrong output on purpose), two K groups (XCD x runs the splits of group x % 2) 50.26 µs against 52.08 for one group at m=256 (256×192 tiles, split 8, A 256 × 16384 bf16 = 8 MiB); with the fold on, every split summing a share of the tile after the others arrived and its flags in the XCD-local L2 only when a tile's splits shared an XCD (device scope otherwise): 8 groups (one split per XCD) 72.18 against 57.64 µs at m=256, 66.64 / 66.71 against 57.60 / 57.72 in the previous iteration (bf16 GEMM n6144 k16384)
 - E36 [2026-10, gfx950, FlyDSL 0.3.2, N=2–4 alternating rounds per arm, each arm in its own process on one GPU, torch.profiler kernel times with a 512 MB flush; the stage-1 strategy runs shared the node with jobs on other GPUs] stage 2 (64×256×128, atomic) default → strategy: `max-memory-clause` 421.6 / 415.6 / 414.8 → 449.7 / 444.9 / 440.1 µs at n_tokens 16384 and 281.3 / 282.5 / 283.9 → 292.4 / 286.5 / 308.6 at 9397; `max-ilp` 429.6 / 420.5 / 426.0 → 433.6 / 429.5 / 424.9 and 281.4 / 274.0 → 286.6 / 276.1 / 279.9 / 281.0; `iterative-minreg` 275.6 / 278.3 / 267.8 → 279.6 / 282.3 / 274.7 at 9397; stage 1 (64×256×256, 108 VGPR + 132 AGPR by default): `max-ilp` 128 + 152 registers, 532–549 / 824 µs, `iterative-ilp` 128 + 152, 535–557 / 831–832, against 464 / 693 for the default in the same rounds (fused MoE SiTUv2, fp8 activations × MXFP4 weights, 112 of 896 experts local, top-16, model dim 3584, inter 3072)
+- E37 [2026-11, gfx950 (MI355X), HIP 7.15, rocprofv3, N=9 rounds, arms rotated in one process, median; A-vs-A ≤ 0.24%] 8 waves in a 2(M)×4(N) grid, waves `w` and `w + 4` on one SIMD, 8 of each wave's 12 `ds_read_b128` of A: the pair sharing `wave_m` against the pair sharing `wave_n` −0.02%, sharing neither −0.06% (a synthetic bf16 LDS→MFMA kernel in HIP)
+- E38 [2026-11, gfx950 (MI355X), Triton 3.8.0, torch 2.11.0+rocm10.0.0, N=49 launches, every workgroup's `XCC_ID` read] `(XCC_ID − workgroup id) mod 8` was one constant within every launch and changed with the stream: the null stream read 0 on the first launch and 5 after three streams were created, those streams 6, 7 and 0 (a Triton probe kernel reading `HW_REG_XCC_ID` on `torch.cuda` streams)
+- E39 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=9 rounds, arms rotated in one process, 512 MiB written before each call; A-vs-A ≤ 0.33%] `C[g] = A[g]ᵀ · B[g]` with A[g] and B[g] token-major, so every tile of a group reads the group's slices; Turbo's `xcd_remap_pid` then `block_mn`, 128×128×64 tile, four group shapes at K = 1024–16384: 8 XCDs against the round-robin at equal GROUP_M −2.42% to +0.49%, best clustered against best round-robin arm −0.78% to +0.20% (bf16 grouped GEMM in Triton)
+- E40 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=9 rounds, arms rotated in one process, 512 MiB written before each call; A-vs-A ≤ 0.87% on the 256×128 tile, ≤ 2.82% overall] M = N = 8192, Turbo's `xcd_remap_pid` then `block_mn` (1D), `num_xcd` 8 against 1; band slice = GROUP_M · BLOCK_M · K · 2 B; 256×128×64 tile, GROUP_M = 4, slices of 8–64 MiB: clustered −3.42% to −17.18%; GROUP_M = 2 at 32 MiB +10.03% (bf16 NT GEMM in Triton)
+- E41 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=8 rounds at 4096×16384×2048 and 16 at 2048×20480×4096, arms shuffled, 512 MiB written before each call; null-arm floor ≤ 1.18%] Turbo's `xcd_remap_pid` on 8 XCDs with the window start moved over 8 phases, then `block_mn`; 256×128×64 tile, window 32: spread over the 8 starts up to 4.60% for 2D 4 × 8 and 2.68% for 1D GROUP_M 4; against the best 1D band, 4 × 6 −4.67 to −6.35% at every start on the first shape, 2 × 16 −2.18 to −3.52% at every start on the second (bf16 NT GEMM in Triton)
+- E42 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=9 rounds, arms rotated in one process, 512 MiB written before each call; A-vs-A ≤ 2.79%, one cell at 6.45% left out] the counts of the gfx950 hot-loop `sched_group_barrier` table computed for another tile, nothing else changed (N = K = 8192, two M, two tiles), against no hints: tables of smaller tiles up to +19.35%, of larger tiles −8.77 to −13.25% (−3.8% to +5.5% against the tile's own); no spills (FlyDSL `kernels/gemm/preshuffle_gemm.py` fp8 at dd8373349)
+- E43 [2026-11, gfx950 (MI355X), HIP 7.15, N=10 rounds, cycles per tile from in-kernel `s_memtime`, one wave per SIMD; A-vs-A 0 cycles] 0–1024 `v_fma_f32` per wave added to the epilogue of a `v_mfma_f32_32x32x16_bf16` tile, as a share of their issue cycles: no read in the epilogue 1.01, an extra read prefetched 1.02; ahead of the wait on a read issued before them 0.16 over the first 256 per wave, 1.00 from 512 to 1024 (synthetic HIP epilogue probe)
+- E44 [2026-11, gfx950 (MI355X), HIP 7.15, N=10 rounds, cycles per tile from in-kernel `s_memtime`, one wave per SIMD; A-vs-A 0 cycles] the probe of E43, U = price of 8 `v_fma_f32` per element = 2396 cycles: 8 `v_exp_f32` per element 1.76 U; an extra bf16 operand read as 64 two-byte against 8 sixteen-byte loads per lane +0.32–0.47 U; the new stream itself +197 cycles prefetched, +1294 waited on; 64 instead of 8 extra live VGPRs +1.95 U on a full register file, where it spilled, no added cost below it (synthetic HIP epilogue probe)
+- E45 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=10 rounds, AKLR `bench_cudagraph` (L2 flushed before each call), arms shuffled per round; outputs bitwise equal] a split-K bf16 partial GEMM (4 waves per workgroup, each loading its own K slice up front, N=256, K=4096), only `rocdl.sched_barrier(0)` after the loads changed: without it 10–11 of the 12–32 loads came before the first MFMA; no-fence / fence time at M=64 and 96 from 0.9850 (24 loads, M=96) to 1.1215 (32 loads)
+- S1 rocm-sdk-core@7.14.0a20260608:_rocm_sdk_core/share/rocprofiler-sdk/config.yaml:1968 `MemUnitStalled` on gfx950 = 100 · `TCP_TCP_TA_DATA_STALL_CYCLES_max` / `GRBM_GUI_ACTIVE` / `SE_NUM` (:1983); `TCP_TCP_TA_DATA_STALL_CYCLES`: "TCP stalls TA data interface" (:9932–9933)

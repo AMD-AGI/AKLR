@@ -61,7 +61,8 @@ balanced and skewed data → `grouped_host_autotune.md`.
 | M split per group (MoE expert GEMMs; forward, dgrad) | tiles per group | none while rounds are full | group-aligned runs (§3) |
 | variable-K wgrad | contraction per tile | longest-first (§5), 1 tile per WG (§6) | round-robin (§2) |
 
-M-split tiles all cost the same except ragged boundary tiles (`grouped_tile_pricing.md` §4); variable-K
+M-split tiles do the same MFMA work and move the same bytes except ragged boundary tiles
+(`grouped_tile_pricing.md` §4); variable-K
 groups all have the same tile count.
 
 - *(field, E1)* Copying the forward settings (GROUP_M = 2, eight contiguous XCD slices) to the variable-K wgrad of
@@ -74,13 +75,13 @@ groups all have the same tile count.
   variable-K path (wgrad).
 
 ## 2. XCD placement: which way the remap should run
-The rule from dense GEMM: a tile stream that reads **a slab of its own** wants its group's workgroups on one
-XCD; streams that read **a shared slice** want the hardware round-robin
-(`../gemm/schedule_and_locality.md` §2). For grouped layouts:
+Dense GEMM sorts tile streams by whether they read **a slab of their own** or **a shared slice**, and in neither
+class did the class alone fix the order: race a group's workgroups clustered on one XCD against the hardware
+round-robin, and sweep the band width (`../gemm/schedule_and_locality.md` §2). For grouped layouts:
 - **M-split tiles (MoE expert GEMMs, forward, dgrad) read a private slab.** Every M tile of group g streams
   `B[g]`. When `B[g]` exceeds an
-  XCD's 4 MB L2, co-resident workgroups that share a B column block should sit on the same XCD: contiguous
-  slices with a narrow band. *(field, E2)* fp8 NN dgrad, 8.7 MB slab: the shared-slice recipe (identity XCD order)
+  XCD's 4 MB L2, race putting co-resident workgroups that share a B column block on the same XCD (contiguous
+  slices with a narrow band) against the identity order. *(field, E2)* fp8 NN dgrad, 8.7 MB slab: the shared-slice recipe (identity XCD order)
   lost 5.7% at GROUP_M = 4; on the NT forward of the same projection it lost 2.3% at GROUP_M = 2 and 5.4% at
   GROUP_M = 1. The slab size alone did not decide the sign: *(field, E3)* on the NN dgrad, 8 contiguous slices
   with GROUP_M = 4 gained 0.79% at K = 2944 and lost 1.91% at K = 5760 (17 MB slab). Treat K as part of the key.
@@ -134,8 +135,10 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
   ~10% slower balanced. Run of 16 (one group): balanced 0–0.8% slower, heavy skew 4.5–6.1% faster. Run of 32:
   heavy skew only 3–4% faster. Net +1.6% geomean, +4.8% on the worst config; the heavy-vs-balanced penalty
   fell from 6.7–7.4% to 0–1.8%, with `SQ_INSTS_MFMA` and the L2 footprint bit-identical.
-- Rule: a run is the M blocks of one group under uniform tokens, with at least 4 runs per XCD. A run that
-  crosses a group boundary pulls two slabs into one XCD. Turbo's MXFP4 NT uses the group-aligned run when it
+- Rule of thumb, from the shape of E12: a run is the M blocks of one group under uniform tokens, with at least 4
+  runs per XCD. A run that crosses a group boundary pulls two slabs into one XCD. It is not universal: the bf16
+  grouped GEMM of E14 was faster at a band of 32 tiles, the workgroups one XCD keeps resident, than at wider bands
+  *(field, E14)*; sweep the run length per kernel. Turbo's MXFP4 NT uses the group-aligned run when it
   divides every group's M-block count and falls back to a narrow band otherwise (MX4:593-629).
 - The band size matters more than the XCD count. *(field, E13)* bf16 wgrad: a band of one N row inside a group
   beat the identity order (worst config +1.05%); a band of a whole group's tiles left the worst config 15%
@@ -154,9 +157,9 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
   identity XCD order took the heavy down config from 0.474 to 1.005 against its reference (+112%), the worst
   config of the table from 0.474 to 0.928, and balanced from 0.955 to 1.001. Group-major is longest-first
   whenever group sizes fall with group index.
-- Never interleave per tile.
-  - *(field, E18)* bf16 wgrad with `group = tile % G`: 1081 → 833 TF/s balanced,
-    1048 → 482 at 8:1 skew. In-group L2 locality outweighs balance.
+- Do not interleave per tile.
+  - *(field, E18)* Turbo bf16 wgrad with `group = tile % G`: 1081 → 833 TF/s balanced,
+    1048 → 482 at 8:1 skew.
 - Turbo keeps interleave only in its masked fallback; its 4-wave wgrad keeps group-major order under the
   hardware XCD split (`num_xcd = 1`, FP8:4654-4656) and, on launches of at least 8 dispatch rounds, leads its
   race with an XCD-affine rectangle inside one group (`_WGRAD_AFF_ROUNDS`, FP8:4657-4663, 4693-4720).
@@ -169,10 +172,12 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
   the worst point. One global GROUP_M = 8 cost 0.21% on the geomean: 1.1% faster on one config and 3.0% slower
   on another K.
 - Key the choice on K: switch to the wider band when `GROUP_M × BLOCK_M × K` crosses 4 MiB, with K in the
-  autotune key (`grouped_host_autotune.md`). Sweep past 8 and again after any tile change: *(field, E20)* on
-  dense GEMMs 9 beat every value ≤ 8 by 1–4% (`../gemm/schedule_and_locality.md` §2).
-- It does not carry across layouts. *(field, E21)* The same K rule on fp8 NN dgrad cost 1.2 points: NN reuses an
-  N stripe of `B[K,N]`, not an A slab.
+  autotune key (`grouped_host_autotune.md`). Sweep GROUP_M past 8 and again after any tile change; the best value
+  moved with the shape. *(field, E20)* On one bf16 dense GEMM, 9 beat the values ≤ 8 that were tried by 1.2–5.8% at
+  two m and 4 won at a third, where 9 was not tried (`../gemm/schedule_and_locality.md` §2); *(field, E45)* a Triton
+  GEMM kept 9 ahead on only one shape and lost to 4 or 8 by 1.3–2.7% on two others.
+- It does not carry across layouts. *(field, E21)* The same K rule on fp8 NN dgrad cost 1.2 points, likely because
+  NN reuses an N stripe of `B[K,N]`, not an A slab.
 - On MXFP4, keeping B resident with a 2D band lost to a 1D band that sweeps all of N for each row pair. Turbo
   records a 6-wide `group_n` band losing on all four NT cells; on wgrad the 1D band was 3.7% faster, with an
   L2 hit rate of 62.7% instead of 57.9% and 2.49 GB of HBM reads instead of 2.86, at identical request and MFMA
@@ -180,7 +185,7 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
 - *(field, E22)* bf16 forward/dgrad: GROUP_M 1/2/4/8 within 1% once the XCD band deal was in.
 
 ## 5. Longest-first inside a wave
-- M-split tiles cost the same: order changes are estimated at exactly 0 where every dispatch round
+- M-split tiles do the same MFMA work, so order changes are estimated at 0 where every dispatch round
   was full. Variable-K wgrad tiles cost what their group's tokens cost, so the dispatch order is a list
   schedule (`../attention/grid_dispatch.md` §4).
 - Three ways to put the deepest group first, all computed on the device from the offsets:
@@ -196,9 +201,12 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
   whose histogram already descended, where group-major was already longest-first.
 
 ## 6. Persistent grid or one tile per workgroup
-- With one workgroup per CU (the usual grouped tile), one tile per workgroup makes the hardware dispatcher
-  the list scheduler: the next tile goes to whichever CU frees first (MX4:1112-1115). A persistent worker
-  fixes the assignment at launch.
+- With one workgroup per CU (the usual grouped tile), one tile per workgroup is only partly dynamic, although Turbo's
+  comment calls the dispatcher the list scheduler (MX4:1112-1115). *(field, E48)* On MI355X a
+  workgroup's XCD and its shader engine inside that XCD follow from its blockIdx; only inside that 8-CU engine does
+  the next tile usually go to the CU that frees first. Random 20–100 µs workgroups ran 1.09× a device-wide list
+  schedule, and 3.0× when the long ones shared blockIdx % 8. A persistent worker fixes the whole assignment at
+  launch.
 - *(field, E24)* fp8 per-tensor wgrad under heavy skew: a grid capped at 2× the CU count left a workgroup that drew
   a hot group's long tile with ~14 more tiles queued behind it. One tile per workgroup was ~26% faster on the
   heaviest config and 8% on the moderate one, unchanged elsewhere, byte-identical. *(field, E25)* On its scored shapes a grid
@@ -225,8 +233,10 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
   (`grouped_tile_pricing.md` §1).
 - Repeating a ping-pong tile body breaks barrier parity. A body in which one wave group issues an extra `s_barrier`
   (`if wave_m == 1`) is consistent only once per workgroup; from the second tile the groups pair with the wrong
-  barrier and the output is noise. Balance the count at the tile boundary; Turbo's bf16 wgrad takes a full barrier
-  there when persistent (BF16:263-268). Another persistent form worth racing: *(field, E36)* a dense persistent grid with
+  barrier and the output is wrong. Balance the count: a matching `s_barrier` for the other group at the tile
+  boundary, or one barrier that every wave takes in place of the conditional one, as Turbo's bf16 wgrad does when
+  persistent (BF16:263-268); an unconditional `s_barrier` added at the boundary does not fix it. Another persistent
+  form worth racing: *(field, E36)* a dense persistent grid with
   no workgroup barrier between tiles (C staged per wave, the next tile's stages filled by the last K-blocks) beat
   one tile per workgroup by 3–5% (`../gemm/grid_pricing.md` §10).
 - A persistent grid capped below the CU count exists to leave CUs to a co-running kernel, not for speed (Turbo:
@@ -252,8 +262,9 @@ Contiguous parks a run of small groups (no B reuse) on one XCD; per-tile scatter
     comment, MX4:1112-1121).
 - *(field, E38, E34)* Plain MXFP4 NT, two tiles per workgroup with one emitted body: 1.1–3.7% slower on all four cells
   (0.9% on one cell in another build, 1.8% there with four tiles); +30 instructions, identical
-  MFMA/load/store counts, VGPRs 480 → 512 (MX4:1086-1099). Static pairing locks in the imbalance of the cheap
-  boundary tiles that the dispatcher would otherwise absorb.
+  MFMA/load/store counts, VGPRs 480 → 512 (MX4:1086-1099). The loss was put down to static pairing locking in
+  the imbalance of the cheap boundary tiles that the dispatcher would otherwise absorb; that was inferred, not
+  measured.
 - Do not pair remainder tiles into "equal-cost" tiles. *(field, E39)* fp8 wgrad, one workgroup running two
   half-height tiles back to back: MFMAs exactly 3.89% fewer, output bit-exact, wall 20% slower, L2 hit rate
   68.0% → 44.5%, DRAM reads +70%. A half-height body is 0.5× the MFMAs and 0.75× the bytes but 1.0× the K walk,
@@ -270,15 +281,15 @@ on single dgrad cells (MX4:102-115). Measure a launch skew against no delay, not
 and nothing at ~60 (`../gemm/grid_pricing.md` §10).
 
 ## 9. Why a grouped GEMM trails one large GEMM
-- In one launch, CUs run different groups at the same time and
-  their weight slabs compete for L2; per-group launches keep one slab hot but pay launch and ramp per group.
+- In one launch, CUs run different groups at the same time and their weight slabs compete for L2 (inferred, not
+  measured with L2 counters); per-group launches keep one slab hot but pay launch and ramp per group.
 - The group-major order with the identity XCD order approximates "one group at a time" inside one launch,
   which is why it is the base the other levers in this card are measured against.
 
 ## Verify
 - The pass is classified (skew in tile count, or in contraction per tile) before any order change.
 - Every remap is a bijection over the live tile count and is scored on balanced and skewed data separately.
-- Run lengths of an XCD band deal are group-aligned with at least 4 runs per XCD.
+- Run lengths of an XCD band deal were swept per kernel, with the one-group run among the candidates.
 - Persistent or multi-tile variants passed a compile-only spill check before timing.
 - Order changes are checked bit-identical: they must not change a single output byte.
 
@@ -309,7 +320,7 @@ score; gpt-oss shapes are G=32 experts, 131072 routed tokens, hidden 2880 (padde
 - E11 [2026-08, gfx950, FlyDSL ?, N=?, ?] super-block span `gp` on the down projection against the automatic 2: gp=4 −0.52%, gp=8 −9.23%, gp=1 −5.8% (gate_up: automatic 1, others −1.03 to −1.81%); the run is not named; one arm of the large-M campaign read gp=1 at −5.68% (Turbo fp8 per-tensor grouped wgrad, 32 experts)
 - E12 [2026-08, gfx950, FlyDSL ?, N=3, palindromic fast probes with the baseline twice, then the campaign score of E1's campaign three times] band-cyclic XCD runs: span 2 +9–11% balanced; span 16 +0.0–0.8% balanced, −1.8–2.7% moderate, −4.5–6.1% heavy; span 32 −3.1–4.4% heavy (fast-probe time changes); bench 1.47328 / 1.47023 / 1.46943 against 1.4495 (+1.48%), min +4.78%; the heavy-against-balanced penalty 6.7–7.4% → 0–1.8%, MFMA and L2 footprint bit-identical (Turbo MXFP4 grouped NT, 16 M blocks per group)
 - E13 [2026-08, gfx950, FlyDSL ?, N=?, the campaign's scoring script on an isolated tree, all three changed files synced] band of one N row (`xcd_band_remap_pid(…, 8, N_BLOCKS_N)`) on wgrad: gm_tf 1161.93 → 1165.93 (+0.34%), worst configuration 1031.2 → 1042.0 (+1.05%); a whole group's tiles as the band: gm 1126.59, worst 880 (Turbo bf16 grouped GEMM, gpt-oss; 2026-08-24)
-- E14 [2026-08, gfx950, FlyDSL ?, N=3, campaign score gm_tf over 24 configurations; the stacked change read three times, each step on the way once] NT band-cyclic XCD remap (8 XCDs, band 32): bench 1110.15 → 1122.92; NN the same: → 1125.74 (+1.4% for the two); wgrad tile decode at GROUP_M 4: → 1139.70; NT GROUP_M 8 → 4: → 1141.61; the stacked change 1138.5 against 1109.3 (+2.63%), reads 1141.5 / 1138.5 / 1138.3, every arm bit-identical (Turbo bf16 grouped GEMM, gpt-oss)
+- E14 [2026-08, gfx950, FlyDSL ?, N=3, campaign score gm_tf over 24 configurations; the stacked change read three times, each step on the way once] NT band-cyclic XCD remap (8 XCDs, band 32): bench 1110.15 → 1122.92; NN the same: → 1125.74 (+1.4% for the two); wgrad tile decode at GROUP_M 4: → 1139.70; NT GROUP_M 8 → 4: → 1141.61; the stacked change 1138.5 against 1109.3 (+2.63%), reads 1141.5 / 1138.5 / 1138.3, every arm bit-identical; a fast probe of the NT forward at GROUP_M 4 (one reading per point, outputs identical) put band 32 0.4–1.6% above bands of 92 and 96 tiles (one GROUP_M super-tile per run) in all four cells (gate_up and down, balanced and skew 8) (Turbo bf16 grouped GEMM, gpt-oss)
 - E15 [2026-06, gfx950, FlyDSL ?, N=?, ?] group-contiguous dispatch of the masked variable-K wgrad under skew: 2:1 −20%, 4:1 −34%, 32:1 −59%; unverified (Turbo FlyDSL fp8 per-tensor grouped wgrad)
 - E16 [2026-07, gfx950, FlyDSL ?, N=?, ?] band-cyclic group interleave: balanced 2143 (−0.9%), 30:1 skew 1162 → 1592 (−46% → −26%); unverified (Turbo FlyDSL fp8 per-tensor grouped wgrad, `num_xcd=1`)
 - E17 [2026-07, gfx950, FlyDSL ?, N=1, campaign score: geomean of t_tw / t_mx over 14 configurations, kernel-only] wgrad group-major with identity XCD order instead of band-cyclic interleave plus 8 XCD slices: gm 0.8062 → 0.9864, min 0.4743 → 0.9277, wgrad down heavy 0.474 → 1.005; the round-3 note gives balanced 0.955 → 1.001 (Turbo MXFP8 grouped wgrad, gpt-oss)
@@ -335,3 +346,5 @@ score; gpt-oss shapes are G=32 experts, 131072 routed tokens, hidden 2880 (padde
 - E38 [2026-09, gfx950, FlyDSL 0.2.4, N=?, four-arm round-robin (wgt1 / wgt2 lgkm fence / wgt2 vmcnt(0) fence / wgt1), same-arm drift 0.22–0.98%] two tiles per workgroup, one emitted body: fc2_fwd@bal +2.04 / +2.70%, fc1_dgrad@bal +2.29 / +1.10%, fc2_fwd@skew +2.65 / +1.71%, fc1_dgrad@skew +3.63 / +3.72% time; instructions 3404 → 3434, `v_mfma` 880, `buffer_load` 202, `buffer_store` 116, `next_free_vgpr` 480 → 512 (Turbo plain MXFP4 grouped NT, gpt-oss)
 - E39 [2026-08, gfx950, FlyDSL ?, N=1, one rocprofv3 pass with 5 counters] one workgroup running two adjacent short-M (`a_halves=1`) tiles: MFMA −3.89%, bit-exact, wall −20%, L2 hit 68.0% → 44.5%, DRAM +70% with requests −1.7%; unverified (Turbo fp8 per-tensor grouped wgrad, gpt-oss with 32 experts at 18 / 34.5 dispatch rounds)
 - E40 [2026-10, gfx950, FlyDSL 0.3.2, N=3, forge-loop ablation ladder (3 pairs) and own CUDA-graph harness] on a dense bf16 GEMM, a start delay on half of each XCD's workgroups: m=35107 +2.92%, m=104093 +1.06%, m=342073 +0.02% (about 6.5 / 19 / 63 tiles per workgroup) (AKLR bf16 dense GEMM N=3072, K=512)
+- E45 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=7 rounds, CUDA graphs without a cache flush, ratio per round against GROUP_M 9; A-vs-A ≤ 0.27% on the cells quoted] bf16 dense NT GEMM, 256 × 256 × 64 tiles, contiguous-slice XCD remap: m = 9397 (N 7168, K 35840) GROUP_M 1–8 0.53–3.83% slower than 9; m = 2732 (same N, K) 4–8 within 0.3% of 9; 8192³ 8 / 4 1.53% / 1.31% faster than 9; 16384 × 7168 × 2048 4 2.66% faster
+- E48 [2026-11, gfx950 (MI355X), HIP 7.15, N=5 launches per pattern, per-wave `s_memrealtime` with the hardware CU and XCC ids, default stream] 2048 workgroups, one per CU, each spinning a set time: XCC = blockIdx % 8 in 25 of 25 launches; inside an XCD the k-th and (k+4)-th workgroups shared a shader engine, and workgroups started in blockIdx order, mostly on the first CU to free inside their shader engine; lengths 20–100 µs at random 620.2–621.4 µs against 571.1 µs for a device-wide list schedule (1.086×); 160 µs on blockIdx % 8 == 0 and 20 µs elsewhere 1282.5 against 422.0 µs (3.04×)

@@ -42,7 +42,9 @@ sources:
   while one wave streams exps no other wave on that SIMD issues VALU. It draws on the same MFMA shadow as every
   other VALU op, twice as fast as a multiply.
 - It is a trans op (CDNA4 ISA Table 12): a non-trans VALU consumer of its result needs one wait state. The
-  compiler pads that for native instructions only (`schedule_sync.md`).
+  compiler pads that for an inline-asm `v_exp_f32` too (AMD clang 23 puts a generic `s_nop 0` between an inline-asm
+  result and its reader), but no more: an MFMA reading an inline-asm result, or inline asm reading an MFMA result, is
+  left short of the wait states it needs (`schedule_sync.md` §7).
 - To place exps between MFMAs, use the transcendental class `0x400` in `sched_group_barrier`; the VALU class
   `0x002` does not match `v_exp_f32` (`schedule_sync.md`).
 - The tile fixes the count: one `v_exp_f32` per 64 scores. Only fewer scores (causal tile skipping, tile
@@ -65,8 +67,10 @@ sources:
   next to bf16 P, so the single instruction is enough. *(field, E5, E7)* Replacing the range-reduced exp with one
   `v_exp_f32` bought +20% and +25% in two backward kernels.
 - `v_exp_f32(-inf) = 0` exactly (ISA): write `-inf` into masked scores and no select is needed after the exp.
-- Do not emit `v_exp_f32` as inline asm: the `llvm.amdgcn.exp2.f32` intrinsic gives the same instruction and stays
-  visible to the scheduler and to the hazard recognizer.
+- Prefer the `llvm.amdgcn.exp2.f32` intrinsic to inline-asm `v_exp_f32`: it gives the same instruction and stays
+  visible to the scheduler and to the hazard recognizer. *(field, E43)* In an hd64 attention backward it took 0.79%
+  off the dq kernel but added 1.06% to dkdv (more `s_nop` around its exps) until the dP MFMAs were issued ahead of
+  the exps, or one q-tile at a time between them: then 0.3–0.5% less than inline asm. Measure it per kernel.
 - **Reference pattern** — FlyDSL's gfx950 forward: Q is multiplied once by `rsqrt(D)·log2e` in f32 and truncated
   back to bf16 (`scale_all`), so scores and the running max are in log2 units; every softmax exp is
   the exp2 intrinsic (the D=128 causal ISA has 197 `v_exp_f32`, no `v_ldexp_f32`, no OCML call); the LSE is converted
@@ -199,10 +203,11 @@ In FlyDSL: `../flydsl/attention.md` § softmax §6.3.
 - Decide before exp2. A test on the row sum is one step late: the sum is built from exp2 outputs, so it sees an
   overflow after it happened, at any check frequency (the failure point did not move whether checked once per
   8 tiles or 4× as often) *(field, E34)*. A clamp under such a test only makes the error silent.
-- A test that cannot miss: `‖q_i‖·max_{j∈tile}‖k_j‖` (q already scaled by `sm_scale·log2e`) bounds every score
-  of row i in the tile (Cauchy–Schwarz). Tiles whose bound stays under the reference skip the max; the rest
-  reduce exactly; the reference still updates online. *(field, E35)* NaN-free to spike 96 and bit-identical to the
-  kernel without the skip.
+- A test that cannot miss: `‖q_i‖·max_j‖k_j‖` (q already scaled by `sm_scale·log2e`) bounds every score
+  of row i (Cauchy–Schwarz). With the key norms from a pass over K, one comparison per row decides whether a rebase
+  is reachable: if not, the max is skipped; if so, every tile's max is reduced exactly; the reference still updates
+  online. *(field, E35)* NaN-free to spike 96 and bit-identical to the kernel without the skip; arming it cost
+  2.0 pp at D=128, so that kernel arms the test at D=64 only.
 
 ### 6.5 fp8 P with a fresh accumulator per tile: fold the rescale into the P·V MFMA
 - If each tile's P·V goes into a fresh accumulator merged as `O·alpha + tile·beta`, exponentiate the tile
@@ -259,7 +264,7 @@ messages carry the numbers.
 - E32 [2026-09, gfx950, FlyDSL ?, N=?, ?] ablation of the rare-rebase residual: detection (a max tree over 32 scores) ≈ 1.7 pp, `scf.if` rebase branch ≈ 2.6 pp (about 1.3 pp per site, two per main-loop iteration), loop-carried reference + QK seed ≈ 1.2 pp (FlyDSL attention online forward)
 - E33 [2026-07, gfx950, FlyDSL ?, N=?, ?] lazy O rescale ported on its own into the sparse-MLA forward: cr4 −31%, the branch conflicting with the pstore pipeline (DeepSeek-V4 sparse-MLA attention forward)
 - E34 [2026-09, gfx950, FlyDSL ?, N=?, non-finite outputs at a row far above the prologue tile] rebase detected from the row sum, one check per 8 tiles (`KV_UNROLL=4`): `KV_UNROLL` 4 → 1 "moved the failure point by zero" (FlyDSL attention forward and backward; Primus-Turbo e3e3008c)
-- E35 [2026-09, gfx950, FlyDSL ?, N=?, NaN gate at spike 1/8/24/36/48/96 × D=128/D=64 on O, LSE, dq, dk, dv; gradient norms against an fp32 reference] Cauchy–Schwarz skip: no non-finite output up to spike 96; outputs bit-identical to the tree without the skip (D=128 dv 0.98890 / 0.97488 / 0.95148 at spike 24 / 48 / 96 on both) (FlyDSL attention forward, online softmax; Primus-Turbo e3e3008c)
+- E35 [2026-09, gfx950, FlyDSL ?, N=?, NaN gate at spike 1/8/24/36/48/96 × D=128/D=64 on O, LSE, dq, dk, dv; gradient norms against an fp32 reference] Cauchy–Schwarz skip, the key norms from a pre-pass over K and one comparison for the whole KV walk: no non-finite output up to spike 96; outputs bit-identical to the tree without the skip (D=128 dv 0.98890 / 0.97488 / 0.95148 at spike 24 / 48 / 96 on both); armed at D=128 as well it cost 2.0 pp of E26's campaign score, so it is armed at D=64 only (FlyDSL attention forward, online softmax; Primus-Turbo e3e3008c)
 - E36 [2026-09, gfx950, FlyDSL 0.3.2, N=2, same-process ABBA, two independent repeats; relL2 over 6 scorer runs] rescale folded into the P·V MFMA's C: 16 `v_pk_mul_f32` + 16 `v_pk_add_f32` fewer per tile and wave (128 of 1284 instructions); producer −1.30 / −1.65% (seq48), −1.22 / −1.33% (seq60), −3.78 / −3.39% (seq84), −1.19 / −1.58% (seq14); relL2 0.026227 → 0.024898 (GLM-5.2 TP4/EP4 sparse-MLA decode producer, fp8 P)
 - E37 [2026-10, gfx950, FlyDSL 0.3.2, N=?, AKLR graph timer, paired timing the round was kept on (one-sided 95% bounds), campaign noise floor 0.09%] wave-uniform lazy rescale (`ballot(m_blk > m_run + 8)`, rescale of the 32 accumulator vectors and the running sum inside the branch) as the only change of its commit: +2.70% kept, +2.71% re-read (+2.67 … +2.75%), faster on 11 of 11 workloads (+0.04% at batch 8 to +4.6% at batch 112); threshold 0 (skip only when no max grows) measured 0.960–1.074× per workload in the round's own probe (dense fp8 MLA decode, 96 heads, query length 1, page size 1, batch 8–112)
 - E38 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-and-run probe, ISA dump] a runtime loop whose `if ballot(alpha != 1) != 0` body multiplies k f32x4 accumulators by alpha: k = 2 / 3 gave 40 / 60 `v_cndmask_b32` beside the `v_pk_mul_f32` with the branch still in `20_llvm_ir.ll`; with `_llvm.inline_asm(None, [], "", "", has_side_effects=True)` first in the body, 0 `v_cndmask` and the branch kept; k = 4, 6, 7, 24 kept the branch either way; outputs equal to torch; on a dense fp8 MLA decode the same pass had turned a per-head rescale branch into 36 `v_pk_mul` and 72 `v_cndmask` per step
@@ -267,3 +272,4 @@ messages carry the numbers.
 - E40 [2026-10, gfx950, FlyDSL 0.3.2, N=1, AKLR graph timer via `driver.py --bench-mode`, warmup 3, 20 iterations, sum over 11 batch sizes, one run per arm] lazy rescale at threshold 8 log2 (`ballot` of `m_tile > m_ref + 8` over the wave, then a 0/1-trip runtime `range` around the O and l multiply) against rescaling every step: 8.542 → 7.846 ms (8.1% less time), the lazy build at 256 VGPRs and 0 spills; no NaN with logits 8× and 30× larger (dense MLA decode over paged fp8 KV, 96 heads, D 576/512, 32-key steps, 6 waves of 16 heads, batch 8–112, cache_seqlens 15–110k)
 - E41 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop ablation ladder: the round against the version before it, the paired AKLR graph-timer timing it was kept on] threshold 8 → 80 log2 with the reference re-based to the new max + 48 on a rescale: gain +4.15% (time without it over time with it; one-sided 95% bounds +3.71…+4.60%), faster on 11 of 11 batch sizes, 2.6–6.2% less time each; max_diff 5.09e-7; inputs had sm_scale 1, logit std 34.6 and max 179 log2 at batch 8, where a simulation put the share of steps that rescale at 0.43 (36-step segments) and 0.085 (420-step) for threshold 8, 0.029 and 0.010 for 64 (same kernel as E40)
 - E42 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local harness (random lengths, n_pages 760149, width 112431), one run per arm, arms not alternated] wave-ballot lazy rescale (rescale and its 64 `v_pk_fma_f32` in an `scf_if_dispatch` branch) against the same kernel without it, b8/b16/b32/b112: 0.2806/0.4640/0.6997/1.9095 ms; threshold 0: 0.2706/0.4372/0.6989/1.7240; threshold 8 (log2): 0.2604/0.4157/0.6345/1.6642 (−7.2/−10.4/−9.3/−12.8%); the kept round (with bare exp and direct fp8→bf16 convert) +16.58% on the campaign's 3-pair ablation, 11/11 cases faster (96-head MLA decode, query length 1, fp8 KV, page size 1, batch 8–112)
+- E43 [2026-07, gfx950, FlyDSL ?, N=2, each arm in its own process, alternated over two rounds, host-timed median of 9 blocks of 40 back-to-back calls] the softmax exp as inline-asm `v_exp_f32` behind the kernel's compiler-visible `v_min` anchors, against the `llvm.amdgcn.exp2.f32` intrinsic with the anchors removed: dq 0.79% less time, dkdv 1.06% more (the dkdv main loop's estimated nop cycles 205 → 439); dkdv all-intrinsic with the dP MFMAs issued before the exps 0.42% and 0.46% less time than the inline-asm base, issued one q-tile at a time between the exps 0.32% less (hd64 deterministic attention backward, B=1, Sq=Skv=16384)

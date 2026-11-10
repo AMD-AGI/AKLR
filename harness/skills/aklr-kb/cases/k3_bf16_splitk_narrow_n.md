@@ -15,8 +15,8 @@ measured:
   - {metric: "speedup over aiter, local validate lower bound per Point", value: "0.956–1.594; 15 of 17 Points ≥ 1.03 (not m 9397, 16384); CI serves 15 of 17 as of #102", gpu: MI355X, workload: "gemm_n1536_k7168, m 8–16384 (17 Points)", date: "2026-10-25"}
   - {metric: "speedup over aiter, local validate lower bound per Point", value: "1.034–1.697; 17 of 17 Points ≥ 1.03; CI serves 15 of 17 as of #102", gpu: MI355X, workload: "gemm_n2112_k7168, m 8–16384 (17 Points)", date: "2026-10-25"}
   - {metric: "speedup over aiter, local validate lower bound per Point", value: "1.229–2.000; 11 of 11 Points ≥ 1.03; CI serves 11 of 11 as of #102", gpu: MI355X, workload: "gemm_n3584_k7168, m 7, 14, 21, 28, 35, 42, 49, 56, 70, 84, 98", date: "2026-10-25"}
-  - {metric: "speedup over aiter, AKLR validate profile 19, per Point; no CI measurement yet", value: "1.069–1.466; 8 of 8 Points at or above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n1024_k7168 file 23da2fcbe6d9defd, measured as its predecessor, which differed only in taking the current stream without naming the device, m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
-  - {metric: "speedup over aiter, AKLR validate profile 19, per Point; no CI measurement yet", value: "1.114–1.224; 8 of 8 Points at or above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n2048_k7168 file 1f5a93c79dbd12bf, m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.069–1.466; 8 of 8 Points at or above AKLR_MIN_SPEEDUP; CI serves 8 of 8 as of #115", gpu: MI355X, workload: "gemm_n1024_k7168 file 23da2fcbe6d9defd, measured as its predecessor, which differed only in taking the current stream without naming the device, m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.114–1.224; 8 of 8 Points at or above AKLR_MIN_SPEEDUP; CI serves 8 of 8 as of #115", gpu: MI355X, workload: "gemm_n2048_k7168 file 1f5a93c79dbd12bf, m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
   - {metric: "speedup over aiter, AKLR validate profile 19, per Point; no CI measurement yet", value: "1.142–1.360; 21 of the 21 Points up to m 256 at or above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n384_k7168 file d65ffa02dee32841, m 7, 14, …, 224 (7 × b) and 256", run_ref: "this file's AKLR validate, local, not CI", date: "2026-11-10"}
 sources:
   - aklr/ops/gemm/impls/flydsl/gemm_n144_k7168/c86923da04869cbc.json
@@ -97,7 +97,8 @@ Shared by the six kernels:
 
 - **MFMA `mfma_f32_16x16x32_bf16` into fp32**, except n768 at m 7 (`mfma_f32_4x4x4bf16_1k`).
 - **At m ≤ 112, K is split S ways across workgroups** (S = 14 or 7 in n144, 16 in n768 and n1280, 8 in n1536,
-  7 in n2112, 4 in n3584), most of them also across the waves of a workgroup; partials go in fp32 (or 24-bit) to a
+  7 in n2112, 4 in n3584), most of them also across the waves of a workgroup; n768 at m 7, n1280 at m 8 and n3584
+  at m 7 and 14 split K only across the waves of one workgroup (table below); partials go in fp32 (or 24-bit) to a
   workspace allocated by `torch.empty` per call, and are folded in the same launch, in split order, then rounded
   once to bf16 (`../gemm/small_m.md` §4, `../gemm/correctness.md` §8). No atomics on data.
 - **Hand-off through scoped stores and loads:** producers store partials with `sc1` or `sc0 sc1`, wait
@@ -120,8 +121,9 @@ Shared by the six kernels:
 | n3584 | m 7, 14: 256 workgroups of 14 columns, K over 4 waves, no cross-workgroup split. m 21–98: 56 tiles of 64 columns × S 4 = 224 workgroups; each wave owns 16 columns, so no in-workgroup fold; split s folds rows s·⌈m/4⌉… of the tile from planes laid out on whole 128-byte lines, its own rows from LDS; m 21–56 poll tags stored inside 24-bit-packed partials, m 70–98 per-reader flags | – | – | – | – |
 
 At m ≥ 893 (n1280, n1536, n2112) A and B go by buffer→LDS DMA into XOR-swizzled multi-stage rings
-(`../gemm/datapath.md` §2, §5), in an XCD-grouped tile order; n1280's 8-wave loop raises `s_setprio`
-around its first MFMA group (`../gemm/mainloop.md` §2).
+(`../gemm/datapath.md` §2, §5). The tile order is XCD-grouped in n2112, in n1280 at m 893 and in n1536 from m 2732.
+n1280's 8-wave loop raises `s_setprio` around the four MFMA groups of each K tile's first K step
+(`../gemm/mainloop.md` §2).
 
 **What each part bought** (campaign ablations; each kept round timed beside the version before it):
 
@@ -133,7 +135,8 @@ around its first MFMA group (`../gemm/mainloop.md` §2).
   record keeps only means *(field, E8)*.
 - n1280: the in-launch flag-gated reducers +5.2–33.0% at m 16–112; one-round re-tiles +10.0% / +23.0% at m 9397 /
   16384; the joint split/tile XCD remap with the 8-wave pipeline +5.1% / +7.1% at m 893 / 2732; the owner + tail
-  split +5.0% at m 2732 (and +18.9% at 16384); load-issue order +2.1–9.4% at m 16–48 *(field, E9)*. The 24-bit
+  split +5.0% at m 2732, the only Point that runs it (switching it off leaves m 16384 unchanged *(field, E26)*);
+  load-issue order +2.1–9.4% at m 16–48 *(field, E9)*. The 24-bit
   planes are not priced in this record (its ablation arm failed).
 - n1536: the single-launch fold with dispatch-tagged partials +33.9–84.9% at m ≤ 112; XCD-grouped order with
   re-raced tiles +3.6–19.2% at m ≥ 893; 256 workgroups with flags above m 48 +4.2–15.6% at m ≤ 112; the 12-wave
@@ -148,8 +151,9 @@ around its first MFMA group (`../gemm/mainloop.md` §2).
 
 "Served" counts the Points at or above 1.03 in CI as of #102 (6d7cfec, CI run 42549655045, measurement profile 19),
 n1280 as of CI run 42000899019 (d908d01, #71), which #102 left unchanged; the `speedup` in each schema's `workloads`
-is the current value *(field, E19)*. CI runs the FlyDSL of its image (0.3.4.1 in the image of the latest perf runs),
-not the 0.3.2 of the local numbers below (`../pitfalls/measured_a_different_build.md`).
+is the current value *(field, E19)*. CI runs FlyDSL 0.3.2, as the local numbers below do,
+not its image's 0.3.4.1: these runs' workflows install the baseline aiter dbd8bf5, which pins `flydsl==0.3.2`, over
+the image (`../pitfalls/measured_a_different_build.md`).
 
 The other columns are the campaigns' own runs of the predecessor repository's `validate` (before the rename to
 AKLR) on MI355X, FlyDSL 0.3.2: a lower bound of the CUDA-graph time ratio aiter / kernel, one run each,
@@ -170,8 +174,8 @@ capped at 2.000; "≥ 1.03" counts them against the dispatch threshold (that val
 
 Two later files, one per schema name: `gemm_n1024_k7168/23da2fcbe6d9defd.json` and
 `gemm_n2048_k7168/1f5a93c79dbd12bf.json` (14 and 28 MiB of weight), each listing m 1, 2, 4, …, 128. The other file
-of each name (`70dd928e…`, `21d17158…`) has no kernel, so the yardstick is aiter; until CI writes their `speedup`,
-dispatch does not serve them (`qualifies()` in `aklr/core/contract/spec/_workloads.py`; `AKLR_MIN_SPEEDUP`, default
+of each name (`3f5baed6…`, `af24c8cf…`) has no kernel, so the yardstick is aiter; CI serves all 8 Points of each as
+of #115 (`qualifies()` in `aklr/core/contract/spec/_workloads.py`; `AKLR_MIN_SPEEDUP`, default
 1.03, `aklr/ops/README.md` § Environment variables). Every Point launches 256 workgroups, and every fold adds in a
 fixed order.
 
@@ -214,8 +218,8 @@ Counter-signals:
   rotated into its buffers, and two calls at once on two streams with different inputs; every try gave the output of
   the call alone *(field, E15)*. Not checked: a full model's decode graph, dispatch-id wraparound, and a garbage word
   equal to the tag.
-- **The K split across workgroups starts at m 16.** At m 8 a 4-way split read 7.71 µs against 7.00 for the whole K in
-  one workgroup *(field, E18)*.
+- **At N 2048 × K 7168 the K split across workgroups starts at m 16.** At m 8 a 4-way split read 7.71 µs against
+  7.00 for the whole K in one workgroup *(field, E18)*.
 - **The GEMV stops at m 2.** It beat the per-wave ring at m 1 and 2 and lost at m 4 *(field, E16)*.
 - **No K-start rotation at m ≤ 8.** At N 1024, m 4, every rotation tried read 5.27–5.34 µs against 5.246 without. At
   m 8 the first rotation form read 5.86–6.01 against 5.985 without on the ring it was tried on, but the shipped
@@ -343,7 +347,7 @@ is the predecessor repository's `validate` (before the rename to AKLR) outside C
 - E6 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] n3584: m 7 1.306, 14 1.229, 21 1.541, 28 1.535, 35 1.627, 42 1.619, 49 1.531, 56 1.763, 70 2.000, 84 1.486, 98 1.685 (gemm_n3584_k7168)
 - E7 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n144: one-kernel fold +62.0, 88.7, 94.0, 77.8, 77.0, 57.4, 60.3, 47.2, 48.1, 49.6, 13.9, 7.3, 5.3% at m 8–112 (recorded); LDS-staged large-m loop +32.4, 48.4, 61.6, 66.2% at m 893–16384 (recorded); XCD remap + hand-off +2.4–25.9% at m ≤ 112, +1.1–11.9% at m ≥ 893 (recorded); spread fold +6.1, 12.3, 17.7, 3.0% at m 893–16384 (recorded); all off +26.2–148.8% (gemm_n144_k7168)
 - E8 [2026-10, gfx950, FlyDSL 0.3.2, N=?, campaign driver bench] n768 per Point, aiter → kernel: m 7 14.48 → 6.41 µs, 14 11.33 → 6.70, 21 10.54 → 6.83, 28 10.94 → 6.96, 35 10.47 → 7.23, 42 10.77 → 7.36, 49 10.41 → 7.71, 56 10.71 → 7.86, 70 10.76 → 8.46, 84 14.84 → 9.16, 98 14.75 → 9.70; the ablation file holds per-round means only (gemm_n768_k7168)
-- E9 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n1280: in-launch reducers +5.2–33.0% at m 16–112 (recorded); re-tiles +10.0 / +23.0% at 9397 / 16384 (recorded); XCD remap + 8-wave pipe +5.1 / +7.1% at 893 / 2732; owner + tail +5.0% at 2732 and +18.9% at 16384; load order +9.4, 2.7, 2.8, 3.1, 2.1% at m 16–48; 24-bit packing arm failed (gemm_n1280_k7168)
+- E9 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n1280: in-launch reducers +5.2–33.0% at m 16–112 (recorded); re-tiles +10.0 / +23.0% at 9397 / 16384 (recorded); XCD remap + 8-wave pipe +5.1 / +7.1% at 893 / 2732; owner + tail +5.0% at 2732; load order +9.4, 2.7, 2.8, 3.1, 2.1% at m 16–48; 24-bit packing arm failed (gemm_n1280_k7168)
 - E10 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n1536: single-launch fold +33.9–84.9% at m ≤ 112 (recorded); XCD-grouped order + tiles +17.6, 19.2, 3.6, 17.3% at m 893–16384 (recorded); 256 flagged workgroups +4.2–15.6% at m ≤ 112 (recorded); 12-wave split tiles +20.7 / +8.2% at 893 / 2732 (gemm_n1536_k7168)
 - E11 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n2112: pipelined kernel + fold +39.1–82.2% at m ≤ 112 (recorded); reducer workgroups +3.9, 3.7, 4.7, 4.7, 5.1, 6.1, 6.9, 9.8% at m 40–112 (recorded); split-major order +22.8% at 893; per-XCD tiles +7.3, 18.1, 4.4% at 2732, 9397, 16384 (recorded); larger tiles +8.3 / +10.5% at 9397 / 16384 (gemm_n2112_k7168)
 - E12 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n3584: K-split kernel +15.1–76.1% (recorded); reduce-scatter +4.6, 1.4, 2.0, 2.7, 1.5, 2.1, 7.8, 11.9, 11.3% at m 21–98; `nt` B + A first +2.9–6.4% (recorded); columns over waves +2.7–4.5% at m 21–98 (recorded); whole-line planes +0.3–1.4%; all off +23.2–125.2% (gemm_n3584_k7168)
@@ -370,3 +374,4 @@ is the predecessor repository's `validate` (before the rename to AKLR) outside C
 - S10 aklr/ops/gemm/impls/flydsl/gemm_n384_k7168/d65ffa02dee32841.json#kernel.py:41 `_build_skw`, its XCD-blocked order at :114; `_build_sk` at :308: tile count from the row, `m <= MT * TM`, at :321, XCD block at :363, tag at :481, slot stores `sc0 sc1` at :501, `vmcnt(0)` at :502, the other splits' slots loaded at :509, output store where every tag matched at :545; `_SK_CONFIG` and `_SKW_CONFIG` at :560 and :564; kernarg preload at :585; `torch.empty` per call at :617; `torch.matmul` for any other m at :634
 - E24 [2026-11, gfx950, FlyDSL 0.3.2, N=3–24 (the driver's 3 tries per `--stress` condition, 24 graph replays, 20 tries per concurrent condition); each byte-compared with the call alone on AKLR's input sets] d65ffa02dee32841 at all 21 Points: the forge driver's `--stress` passed; one captured graph replayed 24 times with three input sets (outputs differ between sets) rotated into its buffers, 0 differ; two calls at once on two streams with different inputs, unrestricted and both on the same first 64 CUs, 20 tries each, 0 differ
 - E25 [2026-11, gfx950, FlyDSL 0.3.2, N=16 rounds, AKLR validate measurement profile 19, local, each file validated on its own, no `--base`] rows of the same kernel file at the 21 Points: 120 workgroups at m 35, 70, 140, 154 (8-row × 16, 16×16, 32×16, 32×16 tiles): 1.069, 1.132, 1.067, 1.002 (0.995 with `--base`); 216–240 workgroups (8-row × 8, 8-row × 16, 16×16, 16×16): 1.262, 1.240, 1.255, 1.227; m 168, 182, 196, 210, 224 with 32×16 whole-K tiles (144–168 workgroups): 1.080, 1.106, 1.095, 1.105, 1.077; on m 256's split grid: 1.191, 1.262, 1.227, 1.257, 1.330
+- E26 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=20, AKLR `bench_cudagraph` with L2 flushed, arms in random order] n1280 with the owner + tail split off (`SK_G` and `SK_A` 0 in the m 2732 row of `_CONFIGS`) against the delivered file: m 16384 time ratio 0.999 (95% interval 0.998–1.000), the same final ISA and bitwise-identical output (gemm_n1280_k7168)

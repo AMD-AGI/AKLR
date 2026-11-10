@@ -15,7 +15,7 @@ measured:
   - {metric: "speedup over aiter, CI, per Point", value: "0.557–1.094; 2 of 13 Points ≥ 1.03 (m 2, 4)", gpu: MI355X, workload: "gemm_n128_k6144, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "6d7cfec (#102, CI run 42549655045, measurement profile 19)", date: "2026-11-09"}
   - {metric: "speedup over aiter, CI, per Point", value: "0.492–1.195; 4 of 13 Points ≥ 1.03 (m 2, 4, 8, 4096)", gpu: MI355X, workload: "gemm_n256_k6144, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "6d7cfec (#102, CI run 42549655045, measurement profile 19)", date: "2026-11-09"}
   - {metric: "speedup over aiter, CI, per Point", value: "0.711–1.907; 4 of 13 Points ≥ 1.03 (m 4, 8, 128, 2048)", gpu: MI355X, workload: "gemm_n32_k6144, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "6d7cfec (#102, CI run 42549655045, measurement profile 19)", date: "2026-11-09"}
-  - {metric: "speedup over aiter, AKLR validate profile 19, per Point; no CI measurement yet", value: "1.046–1.330 at m 4–128; m 1, 2 (1.014, 1.019) not listed", gpu: MI355X, workload: "gemm_n64_k4096 kernel of file 0837d8ad62cf3731, measured on a file with the same kernel, apart from taking the current stream without naming the device, and m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.046–1.330 at m 4–128; m 1, 2 (1.014, 1.019) not listed", gpu: MI355X, workload: "gemm_n64_k4096 kernel of file 0837d8ad62cf3731, measured on a file with the same kernel, apart from taking the current stream without naming the device, and m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
 sources:
   - aklr/ops/gemm/impls/flydsl/gemm_n128_k6144/0bac580d3d76a3df.json
   - aklr/ops/gemm/impls/flydsl/gemm_n256_k6144/0d33213684622a71.json
@@ -56,11 +56,11 @@ the Point's M.
   with 16 K partitions across 128 workgroups reads 0.997 *(field, E3)*.
 - **A reduction in arrival order at n128, m = 16.** 24 K partitions add their fp32 MFMA tiles into an fp64
   workspace with `BufferAtomicAdd(Float64)` (`_epilogue_atomic_sum`); the last producer converts to bf16. Adding
-  fp32 partials in fp64 is exact only while all partials and running sums fit one 53-bit window, which
-  cancellation or a wide magnitude spread breaks (estimated), so the output can depend on arrival order under a
-  bitwise contract (`../gemm/correctness.md` §8). CI's check passed at that Point, which is not
+  fp32 partials in fp64 is exact only while all partials and running sums fit one 53-bit window, which a wide
+  magnitude spread breaks (estimated), so the output can depend on arrival order under a bitwise contract
+  (`../gemm/correctness.md` §8). CI's check passed at that Point, which is not
   served (0.631 *(field, E1)*). Do not copy it.
-- **Counters that live across calls.** n32's split paths (m = 2 and m ≥ 16, the served m = 2048 included) zero
+- **Counters that live across calls.** n32's split paths (m = 2 and m 16–2048, the served m = 2048 included) zero
   their arrival counters once per shape and rely on `atomicrmw uinc_wrap` returning each to 0 at its last
   arrival; n128 at m ≥ 512 advances a counter by one generation per call and never resets it. `SKILL.md`'s Stop
   table asks for scratch rewritten by every call before it is read.
@@ -84,7 +84,7 @@ registers, fp32 accumulation, one launch:
 | Fold | 6-step xor shuffle per wave, then thread 0 sums the 4 waves' partials from LDS in wave order | the same | 6-step xor shuffle; lane 0 stores |
 
 With N this narrow, an MFMA tile covers few columns and the grid is small (`../gemm/grid_pricing.md` §1,
-`../gemm/small_m.md` §3); here every output element gets its own wave or workgroup and the fold never
+`../gemm/small_m.md` §3); here the whole K of each output element stays in one workgroup and the fold never
 leaves it (`../gemm/small_m.md` §5: splitting N across warps needs no LDS reduction, splitting K
 does).
 
@@ -110,8 +110,9 @@ Fold forms: a separate reduce launch against an in-launch last-arriver (`../gemm
 kernel (`aklr/core/validation/stages/_bench/_report.py`). The table is an earlier CI run of the predecessor repository; bold: at or
 above 1.03 (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` § Environment variables) in that run. Per Point:
 
-The predecessor repository's CI installed the code with `--no-deps`, so these runs used the FlyDSL of the CI image,
-0.3.4.1, not the repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`).
+The predecessor repository's CI ran an editable install whose `setup.py` replaced any other FlyDSL with its pin, so
+these runs used FlyDSL 0.3.2, not the CI image's 0.3.4.1 (not checked in the run's log;
+`../pitfalls/measured_a_different_build.md`).
 
 | File | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | ≥ 1.03 |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -127,9 +128,9 @@ schema's `workloads` is the current value.
 
 `gemm_n64_k4096/0837d8ad62cf3731.json` lists m 4, 8, …, 128 (512 KiB of weight) with the design of the m ≤ 8 paths
 above: no MFMA, no LDS ring, `b` in its row-major layout loaded straight into registers, the whole K of an output in
-one workgroup. No other file serves these Points, so the yardstick is aiter; until CI writes its `speedup`, dispatch
-does not serve it (`qualifies()` in `aklr/core/contract/spec/_workloads.py`; `AKLR_MIN_SPEEDUP`, default 1.03,
-`aklr/ops/README.md` § Environment variables). Narrow N at larger m:
+one workgroup. No other file serves these Points, so the yardstick is aiter. As of #125 CI reads 1.020–1.286:
+dispatch serves m 8–128, not m 4 (`qualifies()` in `aklr/core/contract/spec/_workloads.py`; `AKLR_MIN_SPEEDUP`,
+default 1.03, `aklr/ops/README.md` § Environment variables). Narrow N at larger m:
 [bf16_k4096_splitk_hgemm.md](bf16_k4096_splitk_hgemm.md). m 1 and 2 are not listed: within 2% of aiter
 (1.014, 1.019) *(field, E4)*.
 
@@ -182,9 +183,9 @@ m = 2048).
 
 ## Evidence
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over aiter per Point 0.565–1.195, 2 of 13 Points ≥ 1.03 (m 2, 4) (gemm_n128_k6144, m 1–4096)
-- E2 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over aiter per Point 0.490–1.201, 5 of 13 Points ≥ 1.03 (m 2, 4, 8, 2048, 4096) (gemm_n256_k6144, m 1–4096)
-- E3 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over aiter per Point 0.694–1.841, 3 of 13 Points ≥ 1.03 (m 4, 8, 2048) (gemm_n32_k6144, m 1–4096)
+- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup over aiter per Point 0.565–1.195, 2 of 13 Points ≥ 1.03 (m 2, 4) (gemm_n128_k6144, m 1–4096)
+- E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup over aiter per Point 0.490–1.201, 5 of 13 Points ≥ 1.03 (m 2, 4, 8, 2048, 4096) (gemm_n256_k6144, m 1–4096)
+- E3 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup over aiter per Point 0.694–1.841, 3 of 13 Points ≥ 1.03 (m 4, 8, 2048) (gemm_n32_k6144, m 1–4096)
 - E4 [2026-11, gfx950, FlyDSL 0.3.2, N=16, AKLR validate at 0e02a81, measurement profile 19: one-sided lower bound of the aiter / kernel time ratio over 16 rounds of CUDA-graph replays (32 at m 1, 2) with L2 flushed before each call, one MI355X, aiter 0.1.21.dev66+gdbd8bf5bd] an earlier file (the kernel of 0837d8ad62cf3731 except `torch.cuda.current_stream()` without `a.device`, also listing m 1, 2): 1.014, 1.019, 1.046, 1.330, 1.186, 1.207, 1.233, 1.313 at m 1, 2, 4, 8, 16, 32, 64, 128; m 1, 2 demoted `not_faster`; accuracy passed
 - E5 [2026-11, gfx950, FlyDSL 0.3.2, N=16, the run of E4] per-round times, kernel 4.08–4.20 µs at every m (m 1 4.16–4.20, m 128 4.09–4.16); aiter 4.19–4.33 (m 1), 4.35–4.42 (m 4), 5.43–5.95 (m 8), 5.36–5.52 (m 128) (`candidate_milliseconds`, `versus_milliseconds`)
 - E6 [2026-11, gfx950, FlyDSL 0.3.2, N=20, eager and op-level CUDA-graph stress on one MI355X, main 0e02a81 with the schema, each try compared byte for byte with an eager call alone] 0837d8ad62cf3731 as its predecessor, whose one difference was `torch.cuda.current_stream()` without `a.device`, every listed Point: the forge driver's conditions (streams limited to 16 and 64 CUs; a second concurrent call on the same inputs) and one captured graph replayed on the same inputs, 20 tries each; one graph replayed 24 times with three AKLR input sets rotated into its buffers; two calls at once on two streams with different inputs, unrestricted and both on the same 64 CUs, 20 tries each: 0 tries differ

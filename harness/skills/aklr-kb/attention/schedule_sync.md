@@ -37,13 +37,14 @@ sources:
   not; `0x008` matches both 16x16 and 32x32 MFMAs. A `{1 MFMA, 2 VALU} × 4` recipe left every `v_exp`
   after the last MFMA; only `{1 MFMA, 2 TRANS}` placed exps between MFMAs.
 - FlyDSL's gfx950 forward uses `0x008 / 0x002 / 0x400` groups of `{1 MFMA, n VALU}` and
-  `{1 MFMA, 3 EXP}`, halved at D=64, and wraps every rendezvous as
+  `{1 MFMA, 3 EXP}`, halved at D=64, and wraps its main-loop rendezvous as
   `sched_barrier(0); s_barrier; sched_barrier(0)` (`_dualwave_sync_barrier`).
 
 In FlyDSL: `../flydsl/attention.md` § schedule_sync §1.
 
 ## 2. `sched_group_barrier` recipes
-- **Classes not named in a region's groups go to the end of the region.** *(field, E1)* A recipe naming only MFMA
+- **A recipe places only the classes it names; the others land where the scheduler and their dependences put
+  them, possibly behind every group.** *(field, E1)* A recipe naming only MFMA
   and DS-read groups cut its read stalls as intended but pushed the region's unnamed exp chain behind every group:
   −7.7%, VGPR, AGPR and LDS unchanged. Name every class the region contains.
 - **Naming a class pins it.** *(field, E2)* A 1-read-per-MFMA group placed each LDS read beside its consumer:
@@ -51,16 +52,19 @@ In FlyDSL: `../flydsl/attention.md` § schedule_sync §1.
   region's read count.
 - **Count every MFMA in the region, row-sum MFMAs included.** *(field, E3)* A D=64 forward QK region held 8
   `32x32x16` plus 4 `16x16x32` row-sum MFMAs; 8 anchors let the row sums take half and serialized the QK
-  chain after the exps. With 9 registers freed first, 10 anchors gave +1.3% in a same-process lab (+0.8% on the
-  official bench) and let LLVM pack 38 VALU ops into 32 `v_pk_fma_f32`; the same anchors without the freed
-  registers −0.3%; 12 broke the packing. D=128
+  chain after the exps. Freeing 9 registers (`K_HEAD` 3 → 2) and raising the anchors to 10 together gave +1.3% in a
+  same-process lab (+0.8% on the official bench) and let LLVM pack 38 VALU ops into 32 `v_pk_fma_f32`; the freed
+  registers alone +0.7–0.8%, the 10 anchors alone −0.3%; 12 broke the packing. D=128
   sat at 16, ±2 costing 0.5%. Sweep per head_dim, on the current register budget.
-- **A recipe governs only its own region.** `sched_barrier`, `s_setprio` and `s_barrier` cut regions.
+- **A recipe governs only its own region.** `sched_barrier(0)` and `s_setprio` (§5) cut regions; `s_barrier` keeps
+  memory operations on their side, but register-only work crosses it unless a fence stops it *(field, E8, E47)*, and a
+  nonzero `sched_barrier` mask lets the classes it names cross.
   *(field, E4)* A recipe placed after an internal `sched_barrier(0)` steered a region holding 2 MFMAs; moving
-  or deleting it produced byte-identical ISA. After restructuring (e.g. loop unswitching) whole recipe
-  sweeps can go inert.
-- **Hash the opcode stream of the final ISA before benchmarking an arm:**
-  `grep -o "^\s*[a-z_0-9]*" <isa>.s | md5sum`. Equal hashes cost no GPU time.
+  or deleting it left the final opcode sequence unchanged (operands not compared). After restructuring (e.g. loop
+  unswitching) whole recipe sweeps can go inert.
+- **Diff the final ISA before benchmarking an arm** (`analysis/isa_diff.py … --stream`, registers and labels
+  normalised): an opcode-only hash misses arms that differ only in `s_waitcnt` counts, `s_nop` lengths, offsets or
+  cache bits (`attribution.md` §6).
 
 In FlyDSL: `../flydsl/attention.md` § schedule_sync §2.
 
@@ -74,10 +78,13 @@ In FlyDSL: `../flydsl/attention.md` § schedule_sync §2.
   hand groups started 0.9% behind.
 
 ## 4. `sched_barrier` fences: price each site
-- **A fence wrapping a real `s_barrier` is a tax.** With mask 0 nothing crosses, so the matrix pipe idles
-  through the barrier wait. MFMAs touch no LDS: relaxing both fences to `0x008` keeps DS ordering across the
-  rendezvous. *(field, E7)* +0.6–0.84% at D=128, ~0 at D=64. *(field, E8)* On another forward, removing both fences
+- **A fence wrapping a real `s_barrier` can be a tax; price it per site.** With mask 0 nothing crosses, so the matrix
+  pipe can idle through the barrier wait. MFMAs touch no LDS: relaxing both fences to `0x008` keeps DS ordering across
+  the rendezvous, but it also merges the two scheduling regions, and the reschedule can cost more than the crossing
+  saves. *(field, E7)* +0.6–0.84% at D=128, ~0 at D=64. *(field, E8)* On another forward, removing both fences
   +0.61–0.96% (16 exps moved ahead of the barrier); removing either one alone changed nothing or lost.
+  *(field, E47)* In a HIP micro-benchmark `0x008` was slower in five of eight cells (0.6–6.6%), two of them with no
+  MFMA crossing, and faster in one.
   Prove safety by counting `ds_*`/`buffer_load` per barrier-delimited region: equal counts mean no memory
   op crossed.
 - **Cluster-boundary fences do work.** *(field, E9)* Removing the fence at the head of a memory cluster: −1.5%
@@ -90,48 +97,59 @@ In FlyDSL: `../flydsl/attention.md` § schedule_sync §2.
   noise at 3 (D=64); `.vgpr_count` unchanged, spills 24 → 22 at D=64 and 0 → 1 at D=128. Count
   `naked_work` (VALU and TRANS between adjacent MFMAs) in the ISA: when it reaches 0 the lever is spent.
 - An MFMA-only fence makes MFMAs close ranks on both sides, leaving the fenced block with no cover.
-- **A source-level LDS read prefetch needs a fence per MFMA.** LLVM sinks each read beside its MFMA (depth 4 in
-  source, 2 in flight); `sched_barrier(0)` after each MFMA kept 5, same VGPRs. *(field, E44)* +2.6% with
-  `s_setprio(1)` over the run, 1.2–1.8% without (`../gemm/schedule_and_locality.md` §3).
+- **A source-level LDS read prefetch can collapse; count the reads in flight in the ISA.** *(field, E44)* On one MLA
+  decode LLVM sank each read beside its MFMA (depth 4 in source, 2 in flight); `sched_barrier(0)` after each MFMA kept
+  5, same VGPRs: +2.6% with `s_setprio(1)` over the run, 1.2–1.8% without (`../gemm/schedule_and_locality.md` §3).
+  The fence is not a rule: *(field, E48)* in a HIP micro-benchmark it made one of four source forms shallower and
+  none significantly faster (2.1–6.7% slower at 1 wave per SIMD).
 
 ## 5. `s_setprio`
 - Only bits [1:0] count: priorities 0–3. *(field, E13)* 1 vs 2 or 3 is byte-identical apart from the immediate
   and measured flat; all waves running one stream compare only in-region against out-of-region.
-- Raise priority only where this wave has an MFMA run and its co-resident siblings do not, at ≥ 2 waves per
-  SIMD on an MFMA-pipe-serialised body (removing it there −2.8%) *(field, E14)*. In a dual-wave forward protect the
-  VALU-dense window instead (priority on the pure-MFMA QK region −0.45 to −1.9%; releasing the P·V
-  window early −3.5%) *(field, E15)*.
+- Priority alone did not arbitrate against a VALU-only sibling: *(field, E49)* in a HIP micro-benchmark at 2 waves
+  per SIMD, `s_setprio 1` over one wave's MFMA run left both waves' cycle counts unchanged, and raising one of two
+  pure-MFMA waves cost 3.1%. Removing a deployed pair around an MFMA run still cost 2.8% on a backward *(field, E14)*:
+  price a removal together with the reschedule (below). In a dual-wave forward, releasing the deployed P·V window
+  early cost 3.5%, and adding priority on the pure-MFMA QK region (−0.45 to −1.9%) or over the softmax clusters
+  (−0.9%) lost *(field, E15)*.
   - Always drop back to 0.
 - **It is a scheduling anchor.** *(field, E16)* Deleting 4 `s_setprio` at occupancy 1 (inert by hardware
   arbitration): −65 instructions, two regions merged, `lgkmcnt(0)` 44 → 88, −4.7%, and a dS fence race
   (NaN). Price a removal together with the reschedule.
 - Sign depends on regime. *(field, E17)* `s_setprio(1)` around a backward GEMM1 at occupancy 2: −3.3% (it starves
   the co-resident workgroup); a forward sweep with priority off: −0.8% *(field, E18)*.
-- With producer waves feeding MFMA waves, do not raise the MFMA waves. *(field, E45)* On an MLA decode, priority 2 on
-  them (softmax, or QK and P·V) was 3–7% slower on every shape; on the producers, 1% faster to 3% slower.
+- With producer waves feeding MFMA waves, raising the MFMA waves can cost; price it per kernel. *(field, E45)* On an
+  MLA decode, priority 2 on them (softmax, or QK and P·V) was 3–7% slower on every shape; on the producers, 1% faster
+  to 3% slower. *(field, E50)* In a HIP producer/consumer micro-benchmark the same priority on the MFMA waves was flat
+  on three of four shapes and 2.5–3.9% faster on one.
 
 ## 6. LLVM scheduler strategy and options
 - The strategy is the LLVM option `amdgpu-sched-strategy` (values such as `max-ilp`, `max-memory-clause`,
   `iterative-ilp`). Options are LLVM `cl::opt`s; an unknown strategy value (e.g. `max-occupancy`) is accepted and
   silently ignored.
-- Confirm the opcode hash changed (§2), then rerun SNR and determinism.
-- On a body not yet hand-scheduled: *(field, E20)* `max-memory-clause` with post-RA scheduling +0.6–0.7%,
-  `max-ilp` +0.4%; `iterative-ilp` was fastest but reordered hand fences and hazard guards into NaN.
-- On a hand-scheduled body only the downside is left: *(field, E21, E42)* backward −0.35% to −0.85%,
-  *(field, E22)* forward −0.1% to −1.1%.
-- LLVM's SLP vectorizer packs independent scalar f32 FMAs into `v_pk_fma_f32`; the LLVM option
-  `slp-threshold=100000` keeps them scalar. *(field, E46)* With the softmax exponent rewritten as one scalar fma
-  per score, together with the threshold: 0 packed ops on the main path, +6.85% on an fp8 MLA decode (the
-  threshold's own share unpriced).
+- Confirm the final ISA changed (a full diff, §2), then rerun SNR and determinism.
+- On a forward that already carried hand recipes, priority windows and hazard fences: *(field, E20)*
+  `max-memory-clause` with post-RA scheduling +0.6–0.7%, `max-ilp` +0.4%; `iterative-ilp` was fastest but reordered
+  hand fences and hazard guards into NaN.
+- On other hand-scheduled bodies no strategy paid: *(field, E21, E42)* backward −0.13% to −0.85%, *(field, E22)*
+  forward −0.1% to −0.8%. Price strategies per body.
+- LLVM's SLP vectorizer packs independent scalar f32 FMAs and multiplies into `v_pk_fma_f32` and `v_pk_mul_f32`; the
+  LLVM option `slp-threshold=100000` keeps them scalar. That is no general win: on a HIP decode loop of about 100
+  VGPRs without spills the threshold alone was 6–11% slower in three of four cells *(field, E51)*. *(field, E46)* With
+  the softmax exponent rewritten as one scalar fma per score, together with the threshold: 0 packed ops on the main
+  path, +6.85% on an fp8 MLA decode at 256 VGPRs with 29 spills (the threshold's own share unpriced).
 
 In FlyDSL: `../flydsl/attention.md` § schedule_sync §6.
 
 ## 7. Hazards
 - Inline-asm results are invisible to the hazard recognizer (`../gemm/correctness.md` §7).
-- *(field, E23)* MFMAs consuming an inline-asm `v_cvt_pk_bf16_f32` (the f32 → bf16 pack of P) directly got `s_nop 0`
-  instead of the required wait states: non-deterministic, half the q rows (alternate groups of 4) biased, 24.99 dB.
+- *(field, E23)* MFMAs consuming an inline-asm `v_cvt_pk_bf16_f32` (the f32 → bf16 pack of P) directly got only
+  `s_nop 0`, one wait state short of the 2 the ISA requires (Table 38 in
+  `../hardware/gfx950/cdna4/ch07_matrix_arithmetic_instructions.md`); that forward went non-deterministic, half the
+  q rows (alternate groups of 4) biased, 24.99 dB.
   Fix: `sched_barrier(0)` + `s_nop 1` before those MFMAs, or a compiler-emitted `v_cvt_pk_bf16_f32` (an f32 → bf16
-  `fptrunc`).
+  `fptrunc`). An isolated HIP probe read stale P at 0 wait states but not at 1 *(field, E52)*, so that failure also
+  involved the rest of its schedule; still pad to 2.
 - **A clamp can be the hazard carrier.** When an inline-asm instruction reads an MFMA result, a compiler-visible
   VALU op on that value (a `min(s, 0)` that never fires on real data) is what makes LLVM insert the wait states.
   - *(field, E25)* Reducing it from one per element to one per 4-element vector: 1.1% (dK/dV) to 2.4% (dQ) less
@@ -154,9 +172,9 @@ In FlyDSL: `../flydsl/attention.md` § schedule_sync §7.
   fences (`fence syncscope("workgroup") release` before `s_barrier` in the LLVM IR) also gets its own
   `s_waitcnt lgkmcnt(0)` from the backend; a bare `llvm.amdgcn.s.barrier` gets none on gfx950 (LLVM adds a full
   wait before `s_barrier` only on targets without barrier back-off, `SIInsertWaitcnts.cpp`; check the ISA). That
-  drain gives visibility, not write-after-read safety: delete the
-  hand-written one only after checking, per buffer, that the LDS each read targets is overwritten no earlier
-  than two barriers later. *(field, E28)* +0.54%; the same removal in prologue and
+  drain also retires the wave's outstanding LDS reads, so it covers write-after-read too; a bare barrier has none.
+  Before deleting the hand-written one at a bare barrier, check, per buffer, that the LDS each read targets is
+  overwritten no earlier than two barriers later. *(field, E28)* +0.54%; the same removal in prologue and
   epilogues another +0.19–0.32%.
 - **A full drain can sink to the cluster that consumes it** when the buffer it guards is overwritten two
   barriers later. *(field, E29)* +1.4%; without a stagger gate an 8-wave configuration degraded (rel_l2
@@ -164,7 +182,8 @@ In FlyDSL: `../flydsl/attention.md` § schedule_sync §7.
 - **Count depth, not waits.** `lgkmcnt` ≤ 15, `vmcnt` ≤ 63, `expcnt` ≤ 7 on gfx950. *(field, E30)* Moving a
   prefetch ahead of partial stores: `vmcnt(0)` 16 → 1, wait depths (7..0) → (11..4), +3.9%; grouping DMA
   cut `vmcnt` waits 89 → 18 but turned graded waits into full drains: −5.3%.
-- A barrier is also a scheduling boundary and, in a dual-wave body, the phase lock. Price a
+- A barrier is also a scheduling boundary for memory operations (register-only work crosses it unless fenced, §2,
+  §4) and, in a dual-wave body, the phase lock. Price a
   barrier family at N, N/2 and 0 and re-price after nearby edits (`attribution.md` §5); the
   rendezvous pool tracks co-resident workgroups and barrier-domain width
   (`grid_dispatch.md` §9).
@@ -178,8 +197,8 @@ In FlyDSL: `../flydsl/attention.md` § schedule_sync §8.
 - **Dose ≤ the target body's ring depth.** *(field, E32)* Within the depth: 0.96%, then 1.20–1.35% fewer wave
   cycles; one past it 14.4% more, two past 74.3% more. Take the dose from the target body, not the source.
 - **Place the hand-off right after the reads it covers.** *(field, E32)* The same 8 MFMAs after the whole next
-  GEMM bought more cover and cost 23.3% more wave cycles: no other MFMA segment may sit between hand-off and
-  reads.
+  GEMM bought more cover and cost 23.3% more wave cycles: on that body, another MFMA segment between hand-off and
+  reads cost more than the extra cover saved.
 - Ask who covers the wait left behind. *(field, E32)* The same move on a body whose MFMAs were already covering the
   approach to a fence: 1.98% more wave cycles (on another D=64 build the same move read +0.9% wall *(field, E31)*;
   the two readings are unreconciled).
@@ -188,14 +207,16 @@ In FlyDSL: `../flydsl/attention.md` § schedule_sync §8.
 ## 10. Pipelining and DMA
 - **One in-order `vmcnt` for loads and stores:** issue a prefetch before heavy partial stores, never after.
   *(field, E30)* Same prefetch, before the stores +3.4%, a few instructions after them −2.4%.
-- **An LDS DMA in flight forces `vmcnt(0)` before every `ds_read` of the same allocation** (mechanism in
-  `../gemm/datapath.md` §4). *(field, E33)* With a second K/V buffer, drains 16 → 85 and 109. With
+- **An LDS DMA in flight forces `vmcnt(0)` before each `ds_read` the compiler cannot prove disjoint from the DMA's
+  destination** (mechanism in `../gemm/datapath.md` §4). *(field, E33)* With a second Q/dO buffer in a dK/dV kernel,
+  drains 16 → 85 and 109. With
   compiler-visible reads, DMA overlaps only register-resident work; asm reads that carry their own waits avoid the
   drain (`../gemm/datapath.md` §4) at the price of hand-placed `lgkmcnt` (`lds.md` §2).
-- **K/V double buffering usually loses: it hides latency; measured cost was throughput.** *(field, E34)* dq
-  `BLOCK_KV` 96/64/32 double-buffered: −2.9/−3.2/−2.3%; *(field, E33)* a 256-VGPR body duplicated hoisted LDS
-  addresses into 424 B of scratch: −16.5%. The winning form is a single buffer with a hand-off: issue the next DMA
-  where the transposed-read registers die (`SQ_WAIT_ANY` −41% *(field, E35)*). A second slot that removes a
+- **A second LDS buffer hides latency; where it lost, the cost was throughput.** *(field, E34)* dq K/V
+  `BLOCK_KV` 96/64/32 double-buffered: −2.9/−3.2/−2.3%; *(field, E33)* a 256-VGPR dK/dV body with a second Q/dO buffer
+  duplicated hoisted LDS addresses into 424 B of scratch: −16.5%. On that dQ kernel a single buffer with a hand-off
+  won: issue the next DMA where the transposed-read registers die (`SQ_WAIT_ANY` −41%, measured together with an
+  XCD-major grid map *(field, E35)*). A second slot that removes a
   write-after-read barrier can pay (+3.1–3.8% together with a prefetch retune on one sparse-MLA dQ kernel)
   *(field, E36)*, but it is not a rule: *(field, E37)* on a backward at one workgroup per CU it lost 6.0% because
   the second slot moved the next head's `ds_write` burst into a transposed-read burst (`lds.md` §9);
@@ -206,22 +227,27 @@ In FlyDSL: `../flydsl/attention.md` § schedule_sync §8.
   read it a step later.
 - A deeper ring relaxes write-after-read only, never read-after-write.
 - Register prefetch of cold per-head loads (LSE, delta): `grid_dispatch.md` §10.
-- `buffer_load … lds` gets no cross-workgroup vL1D reuse; judge request pressure by `TCP_TCC_READ_REQ`,
-  not by DMA instruction count (`grid_dispatch.md` §2, §9).
-- **Non-temporal hints on attention operand streams were negative.** *(field, E39)* Q `nt` −0.95% (waves of one
+- `buffer_load … lds` hits the vL1D like a load to VGPRs *(field, E53)*: workgroups of one CU re-reading a 4 or
+  16 KiB footprint sent the `TCP_TCC_READ_REQ` of only the first reader, on both paths; when that reuse disappears is
+  in `grid_dispatch.md` §2. Judge request pressure by `TCP_TCC_READ_REQ`, not by DMA instruction count
+  (`grid_dispatch.md` §2, §9).
+- **Non-temporal hints on attention operand streams did not pay.** *(field, E39)* Q `nt` −0.95% (waves of one
   workgroup share Q lines); dkdv Q/dO DMA `nt` −7.6% *(field, E33)* (reused across workgroups); O store `nt` +0.11%
   (noise). Before marking a stream `nt`, ask whether lanes or waves of one workgroup share its lines.
   Workspace partials are in `gradients.md` §5.
-- **Gather prefetch depth in a split-KV producer (few query rows per head):** a prologue depth of 2 pays only at
-  ≤ 2 CTAs per CU. *(field, E40)* It was 1.7–2.7%
-  faster up to 512 CTAs (2 per CU on 256 CUs) and 2.0–2.5% slower from 576 up; *(field, E41)* a steady-state depth
+- **Gather prefetch depth in a split-KV producer (few query rows per head):** whether a prologue depth of 2 pays
+  depends on the kernel and the grid; measure it per grid. *(field, E40)* On one sparse-MLA decode producer the whole
+  call was 1.7–2.7% faster at 384–512 CTAs (1.5–2 per CU on 256 CUs), 1.4% slower at 256 (1 per CU) and 0.6–2.5%
+  slower at 576–768; *(field, E54)* on a minimal HIP gather producer it was 1.0–5.6% slower on every grid from 0.75
+  CTAs per CU up to one full resident round, faster only on some larger grids. *(field, E41)* A steady-state depth
   ≥ 2 was 4.6–6.6% slower. Account the extra prologue tile so the first iteration consumes it, or it becomes the
   steady-state depth (`split_kv.md`).
 
 In FlyDSL: `../flydsl/attention.md` § schedule_sync §10.
 
 ## Verify
-- Every recipe arm has a changed opcode hash, and every region's MFMAs and TRANS ops are named.
+- Every recipe arm's final ISA differs from its base in a full diff (§2), and every region's MFMAs and TRANS ops
+  are named.
 - Fence relaxations keep per-region memory-op counts; hazard edits pass a shape grid with bitwise determinism.
 - Wait changes are judged by `vmcnt(0)` count and depth distribution, then by `SQ_WAVE_CYCLES` /
   `SQ_WAIT_INST_LDS`, then by wall time.
@@ -273,15 +299,23 @@ Wall and throughput percentages are signed
 - E32 [2026-09, gfx950, FlyDSL ?, N=?, rocprofv3 PMC `SQ_WAVE_CYCLES` per arm] `g2_hs` dose on the D=128 body (`g2d=2`): 0/1/2/3/4 tiles → 0 / −0.96% / −1.20 to −1.35% / +14.4% / +74.3% wave cycles; the same 8 MFMAs landed after the whole GEMM3: +23.3% wave cycles though `SQ_WAIT_INST_LDS` was lower; on the D=64 body (`g3_defer=False`): +1.98% wave cycles, LDS wait up 4.0% (llama-8b D=128 a16 paired attention backward, S=4096 and 8192, and the D=64 body of the same file)
 - E33 [2026-07, gfx950, FlyDSL ?, N=1, scored bench, one reading per arm; ISA dump] dK/dV Q/dO DMA marked `nt`: 731.5 against 791.3 TF/s, −7.6%; dK/dV Q/dO LDS double buffer with next-head DMA prefetch: 663.0, −16.5%, from 424 B of scratch for duplicated LDS address sets; with the DMA in flight, `vmcnt(0)` drains 16 → 85, and 16 → 109 with the hand-over moved past the last `ds_read` (hd64 attention backward, Sq=Skv=16384, B=1, Hq=128 Hkv=16)
 - E34 [2026-07, gfx950, FlyDSL ?, N=?, ?] dQ K/V double buffering at BLOCK_KV 96/64/32: −2.9%/−3.2%/−2.3%, SNR 52.29; at BLOCK_KV 32 its LDS was 2/3 of the deployed single buffer and it still lost (hd64 attention backward, dQ kernel, Sq=Skv=16384, B=1; listed among the closed options)
-- E35 [2026-07, gfx950, FlyDSL ?, N=?, PMC counters] register-neutral hand-over, next DMA issued where half the `k_tr` registers die: 793.5 against 787.6 TF/s, kept; `SQ_WAIT_ANY` −41%, coexec +13% (hd64 attention backward, dQ kernel, Sq=Skv=16384, B=1)
+- E35 [2026-07, gfx950, FlyDSL ?, N=2 for the kept tree, scored bench; PMC counters] register-neutral hand-over, next DMA issued where half the `k_tr` registers die, kept together with an XCD-major dQ grid map: 793.5 and 792.7 against 787.6 TF/s, the map alone 789.1; `SQ_WAIT_ANY` −41%, coexec +13% for the two together, not split (hd64 attention backward, dQ kernel, Sq=Skv=16384, B=1)
 - E36 [2026-07, gfx950, FlyDSL ?, N=?, ?] cross-pair LDS double buffer (KVBUF 2 → 4; pair p writes set p%2, so the post-P·V WAR barrier goes, 2 → 1 barrier per pair) together with QK KV-read prefetch depth 4: +3.8% pro cr4, +3.1% flash cr4, det=0, SNR bit-exact; the barrier and the prefetch depth are not priced apart (DeepSeek-V4 sparse-MLA attention backward, dQ kernel `pvk32`; Primus-Turbo 51b4bebf9, its message and `primus_turbo/flydsl/attention/kernels/sparse_mla_v2/dsa_bwd.py`)
 - E37 [2026-08, gfx950, FlyDSL ?, N=?, scored bench] `QDO_PP` (second Q/dO LDS slot, head-step WAR barrier dropped): `s_barrier` 35 → 19, VGPR 455 → 481, 0.8201, −6.0%; the cause was later re-measured on the D=64 body with registers held flat and attributed to the next head's `ds_write` burst landing inside GEMM3's transposed-read burst (gpt-oss D=128 fused attention backward, B=2 Sq=Skv=8192)
 - E38 [2026-08, gfx950, FlyDSL ?, N=?, scored bench per arm; the decomposition from in-process readings] 4-deep K/V ring with one barrier at the iteration boundary: fwd64 0.98704 (−2.2%); the 4-deep ring with both barriers kept 1.9030 against 1.8721 ms (deepening alone −1.65%), so the barrier gave back 1.30%; the build also paid LDS ×2 and spill 4 → 9 (gpt-oss D=64 attention forward, dual-wave, B=4)
 - E39 [2026-08, gfx950, FlyDSL ?, N=?, ruler not stated; `nt` verified in the ISA] Q loaded non-temporal (`BufferCopy128b(2)`): −0.95%; O stored non-temporal: +0.11%; both: −0.9% (gpt-oss D=64 attention forward, dual-wave, B=4)
-- E40 [2026-09, gfx950, FlyDSL 0.3.2, N=?, same-block ABBA] prologue gather prefetch depth 2 (`_XPF_PRIME=2`, steady state 1): producer time −1.68 to −2.70% (faster) at ≤ 2 CTAs per CU, +2.0 to 2.5% (slower) at ≥ 576 CTAs (GLM-5.2 sparse-MLA decode producer `flydsl_sparse_mla_partial`, TP4/EP4 decode shapes; version printed in the same campaign and venv)
+- E40 [2026-09, gfx950, FlyDSL 0.3.2, N=?, same-block ABBA] prologue gather prefetch depth 2 (`_XPF_PRIME=2`, steady state 1), time of the whole call (producer + combine): −1.68 to −2.70% (faster) at 384–512 CTAs (1.5–2 per CU on 256 CUs), −0.05% at 320, +1.37% (slower) at 256 (1 per CU), +2.26/+2.50/+0.62% (slower) at 576/672/768 (GLM-5.2 sparse-MLA decode producer `flydsl_sparse_mla_partial`, TP4/EP4 decode shapes; version printed in the same campaign and venv)
 - E41 [2026-09, gfx950, FlyDSL 0.3.2, N=?, ?] steady-state gather prefetch depth `_XPF_DEPTH` 1 → 2: seq48/60/84 +4.56/+6.01/+6.55% slower, output bit-identical, depth 3 worse (GLM-5.2 sparse-MLA decode producer; version printed in the same campaign and venv)
 - E42 [2026-08, gfx950, FlyDSL ?, N=5 for `max-ilp` (a 5v5 ABBA), ? for `max-memory-clause`, ISA checked per arm] LLVM scheduler strategies re-priced on another hand-scheduled backward body: `max-memory-clause` −0.51%, `max-ilp` +0.15% on 2 points then −0.35% on the 5v5 ABBA; `amdgpu-sched-strategy=max-occupancy` compiled byte-identical to the base: not a strategy name LLVM knows, silently ignored (gpt-oss D=64 attention backward, per-tensor fp8 E4M3, B=4 Hq=64 Hkv=8 S=8192 full causal)
 - E43 [2026-10, gfx950, FlyDSL 0.3.2, N=?, AKLR correctness pass (bounded determinism, max_violation_fraction 0) on every kept build] two bf16 LDS tiles refilled from registers (fp8 gathered, converted, `ds_write`) and read the next step, one `s_barrier` per step: max_diff 0 on all 11 workloads; once the P·V waves ran a step behind the QK waves the kernel needed three rotating tiles, still one barrier per step (dense fp8 MLA decode, 96 heads, query length 1, page size 1, batch 8–112)
 - E44 [2026-10, gfx950, FlyDSL 0.3.2, N=? for the ablation's paired timing on AKLR's graph timer (noise floor 0.12%); N=5–7 paired in-process Kineto rounds of 10 calls for the arms; ISA of both arms compiled and re-read on FlyDSL 0.3.2] `sched_barrier(0)` after each of 18 logits `v_mfma_f32_16x16x32_bf16` with a 4-deep `ds_read_b128` prefetch written in source: waits `lgkmcnt(1)` → `lgkmcnt(4)`, `.vgpr_count` 164 both, no spill; with `s_setprio(1)`/`(0)` around the run +2.56% (bounds +2.48 … +2.64%, 11 of 11 batch sizes); fence alone 0.988 / 0.986 / 0.982 at batch 112 / 32 / 8 against 0.973 / 0.957 / 0.974 with priority; depth 5 fenced 168 VGPRs and slower (one 12-wave workgroup per CU, 3 waves per SIMD; dense MLA decode, 96 heads, fp8 KV; MI355X)
 - E45 [2026-10, gfx950, FlyDSL 0.3.2, N=1, AKLR graph timer via `driver.py --bench-mode`, warmup 3, 20 iterations, one run per arm; the later round's ratios from its own graph-replay probe, control ±0.7% (±2% at b8)] `s_setprio(2)` on the 6 MFMA waves during the softmax: b8 0.1427 / b112 1.5895 ms against 0.1331 / 1.5374 (7.2% / 3.4% slower), during the QK and P·V phases 0.1427 / 1.6061 (7.2% / 4.5% slower), slower on all 11 batch sizes; on the 2 producer waves, priority 2: b8 1.2% faster, b112 0.3% slower, priority 3: 1.1% faster on both; in a later round, time ratios (candidate / base) of priority around the softmax 1.066 / 1.048 / 1.052 (b8 / b48 / b112) and of producer priority 1.014 / 0.989 / 1.027 / 1.017 (b8 / b16 / b48 / b112) (dense MLA decode over paged fp8 KV, one 8-wave workgroup per CU: 2 producer waves gather, convert fp8 → bf16 and store K to LDS for 6 MFMA waves, 256 VGPRs)
 - E46 [2026-10, gfx950, FlyDSL 0.3.2, N=2 for the candidate and 1 for the incumbent on the driver bench (11-case total, cache cleared per run); the gain from the campaign's 3-pair ablation] softmax exponent rewritten as `exp2(fma(s, scale2, -m))` per score plus `slp-threshold=100000`: main-path packed ops 4 `v_pk_fma_f32` (the rewrite under default SLP; 12 packed mul/add before it) → 0, 256 VGPRs and 29 spills unchanged; total 7.768 → 7.288 / 7.300 ms; ablation +6.85% when kept, +6.88% measured by the ablation (one-sided 95% bounds +6.82…+6.94%), 11/11 cases faster; the rewrite under default SLP was not timed, so SLP's own share is unpriced (96-head MLA decode, fp8 KV, batch 8–112)
+- E47 [2026-11, gfx950 (MI355X), hipcc (HIP 7.15; no FlyDSL kernel), N=12 rounds in random arm order, A-vs-A ≤ 0.42%] both `sched_barrier` around an `s_barrier` relaxed from mask 0 to `0x008`, four loop shapes at 1 or 2 waves per SIMD: MFMAs moved ahead of the barrier in two shapes, DS writes and reads stayed on their side in all; 0.58–6.60% slower in five of eight cells (6.60% and 1.61% with no MFMA crossing, the merged regions reordered), 2.36% faster in one (HIP micro-benchmark)
+- E48 [2026-11, gfx950 (MI355X), hipcc (HIP 7.15; no FlyDSL kernel), N=20 rounds in random order, A-vs-A within 0.16%] `sched_barrier(0)` after each MFMA of a loop with a 4-deep LDS-read prefetch written in source, four source forms: mean reads in flight 2.75 → 2.25 where the refill was written after a `32x32x16` MFMA, deeper in the other three; 2.1–6.7% slower at 1 wave per SIMD, none significantly faster at 2 (HIP micro-benchmark)
+- E49 [2026-11, gfx950 (MI355X), hipcc (HIP 7.15; no FlyDSL kernel), N=12 rounds in random arm order, A-vs-A within 0.12%, per-wave loop cycles from `s_memtime`] two waves per SIMD, code identical apart from the `s_setprio` immediates: `s_setprio 1` over an MFMA wave's run beside a VALU-only wave left both waves' loop cycles unchanged; priority 1 on one of two MFMA waves 3.12% slower (HIP micro-benchmark)
+- E50 [2026-11, gfx950 (MI355X), hipcc (HIP 7.15; no FlyDSL kernel), N=30 rounds in random order, A-vs-A within 0.63%, significance bar 1.88%] 2 producer waves gathering fp8 rows into a double-buffered LDS tile for 6 MFMA waves; priority 2 on the MFMA waves (softmax, or QK and P·V): 2.51% and 3.85% faster at 16 heads per MFMA wave and one workgroup per CU, below the bar on the three other shapes (HIP micro-benchmark)
+- E51 [2026-11, gfx950 (MI355X), hipcc (HIP 7.15; no FlyDSL kernel), N=20 rounds in random order, A-vs-A within 0.15%; op micro-benchmark N=10, `s_memtime`] a bf16 MFMA decode loop built with and without `-mllvm -slp-threshold=100000`: 8 `v_pk_fma_f32` + 16 `v_pk_mul_f32` against 0 packed, 98–109 VGPRs, no spill; the threshold 6.30–10.98% slower in three of four cells; independent packed ops 0.55–0.76× the cycles per f32 result of `v_fma_f32` / `v_mul_f32` at 1–2 waves per SIMD (HIP micro-benchmark)
+- E52 [2026-11, gfx950 (MI355X), hipcc (HIP 7.15; no FlyDSL kernel), N=60 launches per arm and context, outputs compared bit for bit] a `16x16x32` bf16 MFMA reading as SrcB the registers an inline-asm `v_cvt_pk_bf16_f32` had just written, XDL idle or busy, 1 or 2 waves per SIMD: stale values in every launch at 0 wait states, none at 1 or 2 (HIP probe)
+- E53 [2026-11, gfx950 (MI355X), hipcc (HIP 7.15; no FlyDSL kernel), rocprofv3 PMC, N=5 dispatches per configuration, readings identical] 8 workgroups per CU each reading F bytes once by `buffer_load_dwordx4 … lds` or into VGPRs: `TCP_TCC_READ_REQ` with a CU's workgroups reading the same bytes 20 µs apart against each its own, 8192 against 65536 at F = 4 KiB, 32768 against 262144 at 16 KiB, equal on both paths (HIP probe)
+- E54 [2026-11, gfx950 (MI355X), hipcc (HIP 7.15; no FlyDSL kernel), N=12 rounds, three arms in all 6 orders, A-vs-A within 0.17%] a split-KV gather producer (per CTA 4 tiles of 64 rows gathered by index), prologue gather depth 2 against 1, steady-state depth 1, residency capped at 2–4 CTAs per CU by static LDS: 1.04–5.56% slower on every grid of at most one resident round (0.75 to 4 CTAs per CU); faster only beyond one round (1.90–3.51% at 4–5 CTAs per CU, 3–4 resident) (HIP micro-benchmark, 256 CUs)

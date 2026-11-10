@@ -33,7 +33,9 @@ the shapes also have a Triton kernel under the same name: n2624_k6144 (the QKV p
 
 - Contract `gemm@1.0`, layout variant `row_major` (`b.is_shuffled` false): `a` (m, k) and `b` (n, k) bf16,
   `trans_b`, no bias, bf16 `out`. `compare` is bitwise (`determinism: bitwise`, `max_violation_fraction` 0.0;
-  `GEMM` in `aklr/ops/gemm/contract.py`). The served paths keep each output's whole K in one wave.
+  `GEMM` in `aklr/ops/gemm/contract.py`). The served FlyDSL paths keep each output's whole K in one wave; the served
+  Triton n2624 kernel at m = 64 splits K six ways across workgroups and a second kernel adds the six fp32 slices in
+  slice order.
 - N × K = 2624 × 6144, 3072 × 6144, 6144 × 2048, 6144 × 3072: a weight of 30.75, 36, 24 and 36 MiB, a streaming
   row bound by the read of `b` (`../gemm/small_m.md` §2).
 - m = 1 and 2 only. FlyDSL is served at n2624 m 1, n3072 m 1, 2, n6144_k2048 m 1, n6144_k3072 m 1, 2. The Triton
@@ -43,14 +45,17 @@ the shapes also have a Triton kernel under the same name: n2624_k6144 (the QKV p
 
 ## Counter-signals
 
-- **Repacking the weight on every call loses at every Point that does it.** Above the m ≤ 2 path each launch
+- **Every Point that repacks the weight on every call loses; the pack is the whole loss at some, not at others.**
+  Above the m ≤ 2 path each launch
   first runs a pack kernel that rewrites the whole `b` into MFMA order, then the MFMA GEMM on the packed copy
   (n2624 `_run_pack`, m ≥ 2; n3072 `_pack`, m ≥ 4; n6144_k2048 `_run_pack`, m ≥ 4; n6144_k3072
   `_run_pack_weights` or `_run_pack_lds_weights`, m ≥ 4). Those Points read n2624 0.418–0.996, n3072 0.250–0.735,
   n6144_k2048 0.355–0.861, n6144_k3072 0.418–0.711 *(field, E1, E2, E3, E4)*.
   - **The cost at these shapes:** the pack reads the weight and writes the packed copy, and the GEMM reads the copy
-    again: about three passes over 24–36 MiB instead of one, plus a second launch per call (estimated). The cost
-    of the pack alone is not measured: no arm runs the same GEMM without it.
+    again: about three passes over 24–36 MiB instead of one, plus a second launch per call (estimated). The pack
+    launch alone takes 13–16 µs, 56–64% of the call at m = 16 and 10% at n6144_k3072 m = 4096; with the pack
+    skipped the same GEMM reads 1.27 at n2624 m = 1024 and about 1.0 at n6144_k3072 m = 16, but still 0.87 and 0.78
+    at n6144_k3072 m = 256 and 4096 *(field, E7)*.
   - The kernel cannot keep the packed copy between calls (`SKILL.md`, Stop table), and `gemm@1.0` has only the
     `row_major` variant, so no pre-shuffled weight can reach it; the host-side preshuffle of
     `../gemm/datapath.md` §10 pays only when done once. At these weight sizes, read `b` in its (n, k)
@@ -68,7 +73,7 @@ the shapes also have a Triton kernel under the same name: n2624_k6144 (the QKV p
 ## Mechanism
 
 At every served FlyDSL Point: **one wave owns one output column and reads that column's weight row, unpacked,
-once.** Each lane issues 16 B buffer loads of the `b` row and of each `a` row straight into registers (no LDS, no
+once.** Each lane issues 16 B loads of the `b` row and of each `a` row straight into registers (no LDS, no
 MFMA), accumulates in a few independent fp32 chains, and the wave reduces them; one launch, no split across waves
 or workgroups, so the order of the sum is fixed. The weight is read once per call at full width, which is what a
 streaming row needs (`../gemm/small_m.md` §2); the grid is N/4 or N/8 workgroups, 656–1536, more
@@ -91,8 +96,9 @@ kernel (`aklr/core/validation/stages/_bench/_report.py`). Dispatch serves each P
 `speedup`, from 1.03 (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` § Environment variables). Bold: the file served
 there. Per Point:
 
-The predecessor repository's CI installed the code with `--no-deps`, so these runs used the FlyDSL of the CI image,
-0.3.4.1, not the repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`).
+The predecessor repository's CI ran an editable install whose `setup.py` replaced any other FlyDSL with its pin, so
+these runs used FlyDSL 0.3.2, not the CI image's 0.3.4.1 (not checked in the runs' logs;
+`../pitfalls/measured_a_different_build.md`).
 
 | File | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | Served |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -132,9 +138,10 @@ back for a wrong result CI does not catch, for example after a FlyDSL or LLVM up
 
 ## Evidence
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over aiter per Point 0.418–1.148, 1 of 13 Points ≥ 1.03 (m 1); m ≥ 2 (weight repacked per call) 0.418–0.996 (gemm_n2624_k6144 FlyDSL, m 1–4096)
-- E2 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over aiter per Point 0.250–1.465, 2 of 13 Points ≥ 1.03 (m 1, 2); m ≥ 4 (repacked) 0.250–0.735 (gemm_n3072_k6144 FlyDSL, m 1–4096)
-- E3 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over aiter per Point 0.355–1.198, 2 of 13 Points ≥ 1.03 (m 1, 2); m ≥ 4 (repacked) 0.355–0.861 (gemm_n6144_k2048 FlyDSL, m 1–4096)
-- E4 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over aiter per Point 0.418–1.208, 2 of 13 Points ≥ 1.03 (m 1, 2); m ≥ 4 (repacked) 0.418–0.711 (gemm_n6144_k3072 FlyDSL, m 1–4096)
+- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup over aiter per Point 0.418–1.148, 1 of 13 Points ≥ 1.03 (m 1); m ≥ 2 (weight repacked per call) 0.418–0.996 (gemm_n2624_k6144 FlyDSL, m 1–4096)
+- E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup over aiter per Point 0.250–1.465, 2 of 13 Points ≥ 1.03 (m 1, 2); m ≥ 4 (repacked) 0.250–0.735 (gemm_n3072_k6144 FlyDSL, m 1–4096)
+- E3 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup over aiter per Point 0.355–1.198, 2 of 13 Points ≥ 1.03 (m 1, 2); m ≥ 4 (repacked) 0.355–0.861 (gemm_n6144_k2048 FlyDSL, m 1–4096)
+- E4 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup over aiter per Point 0.418–1.208, 2 of 13 Points ≥ 1.03 (m 1, 2); m ≥ 4 (repacked) 0.418–0.711 (gemm_n6144_k3072 FlyDSL, m 1–4096)
 - E5 [2026-10, gfx950, Triton, N=1, the predecessor repository's CI] speedup over aiter per Point 1.077–1.195 at m 2, 4, 8, 64, all served (gemm_n2624_k6144 Triton)
 - E6 [2026-10, gfx950, Triton, N=1, the predecessor repository's CI] speedup over aiter per Point 1.078–1.285 at m 2–64, all served (gemm_n6144_k2048 Triton)
+- E7 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=6, AKLR `bench_cudagraph`, median per-call time per arm per round] the delivered call (pack, then GEMM) / the same GEMM on a copy packed beforehand / the pack launch alone / aiter, µs: n6144_k3072 m 16 23.51 / 9.99 / 15.03 / 10.33, m 256 41.74 / 24.92 / 14.64 / 21.68, m 4096 160.79 / 145.90 / 15.51 / 113.87; n2624_k6144 m 1024 59.79 / 46.75 / 13.22 / 59.35, m 16 23.08 / 10.44 / 13.04 / 9.66 (gemm_n6144_k3072 d7fed2d1260b5f45, gemm_n2624_k6144 4001df477e6c67f6)

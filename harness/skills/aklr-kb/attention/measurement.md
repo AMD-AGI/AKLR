@@ -26,8 +26,8 @@ flydsl: 0.3.2
 - **Never sleep between repetitions on a small workload.**
   - *(field, E1)* A B=1 backward kernel read 1024 TF/s cold, 727–969 with `sleep(0.3)` between calls, and a
     different value again under continuous load: a 40% swing that buried a 5–14% gap.
-- Warm with back-to-back calls and no sleep until the clock settles (at least 90 s from an idle card,
-  `../gemm/measurement.md` §3), then take the median of ≥7 back-to-back repetitions.
+- Warm with back-to-back calls and no sleep until the clock settles and a second pass matches the first
+  (`../gemm/measurement.md` §3), then take the median of ≥7 back-to-back repetitions.
 - Decide on a cell large enough to hold the clock steady, and isolate sweeps (§4).
 
 ## 2. The bench mirrors the deployment
@@ -85,7 +85,9 @@ A multi-cell score usually carries guard cells: cells the candidate does not cha
   stream copy; a same-pattern reference that the kernel beats is not a ceiling.
 
 ## 6. Small shapes, the host and the launcher
-- **Every placeholder tensor built in the launcher is a kernel launch.** *(field, E14)* A `torch.zeros(1)` placeholder
+- **Every placeholder the launcher fills (`torch.zeros`/`ones`/`full`, one element or more) is a kernel launch; a
+  `torch.empty` placeholder is not, and `torch.tensor([...])` from a host list is a host-to-device copy.**
+  *(field, E27)* *(field, E14)* A `torch.zeros(1)` placeholder
   that the dense path did not read cost a 4.6–5.6 µs fill kernel per backward call, ~0.4% of a 1.22 ms call.
   Look for `fill_`/`zero_` entries that match no kernel of yours in the profiler table.
 - **For kernels of 20–200 µs, a `synchronize()`-bracketed wall time is not a kernel ruler.** *(field, E15)* ~27 µs
@@ -145,7 +147,8 @@ In FlyDSL: `../flydsl/attention.md` § measurement §7.
 A FlyDSL version is given only where the cited run, or another round in the same container and venv, printed it
 (`flydsl.__version__`, an import path with its version, or a `pip install flydsl==` in the run's own setup); otherwise
 `FlyDSL ?`. The month is the run's where the record dates it; for a number that rests on no run record, the line gives
-the date it was reported. Every workload below is an attention kernel or one of its helper kernels.
+the date it was reported. Every workload below is an attention kernel or one of its helper kernels, except E27,
+placeholder tensors built on their own.
 
 - E1 [2026-07, gfx950, FlyDSL ?, N=?, B=1 bench: cold start, `sleep(0.3)` between calls, continuous load] the same kernel read 1024 TF/s cold, 727–969 half-cold with the sleep, and a value between them under continuous load: a 40% spread that buried a 5–14% gap; repeat count not stated, unverified (hd64 deterministic attention backward at B=1, Hq=128, Hkv=16, D=64, full causal; dated 2026-07-21)
 - E3 [2026-07, gfx950, FlyDSL ?, N=?, campaign score: full-backward conv TF/s] making the scoring bench build dkdv with the deployed `fold_lse` default moved the unchanged kernels from 856.8 to 868.5 TF/s (+1.37%), kept as a ruler correction; the bench-against-deployment gap (dq `block_kv`/`waves_per_eu`, dkdv `fold_lse`) is also reported as 1.4% (hd64 attention backward, Primus-Turbo `flash_attn_bwd.py`, Sq=Skv=16384, B=1, hw-exp path)
@@ -169,3 +172,4 @@ the date it was reported. Every workload below is an attention kernel or one of 
 - E24 [2026-09, gfx950, FlyDSL 0.2.4, N=?, kernel trace of the backward (concurrent) against the fold kernel launched alone] the 4-slot dK/dV fold recorded 670 MB in 317 µs = 2.1 TB/s in the trace; launched alone it ran 5.40–5.55 TB/s (deployed shape) and 6.15–6.16 TB/s (widest tile), against a measured HBM stream floor of 5.95–6.2 TB/s (gpt-oss D=64 attention backward, `_reduce_dkdv_slots`, B=4)
 - E25 [2026-09, gfx950, FlyDSL 0.2.4, N=?, rocprofv3 `--kernel-trace --stats`, per-call min and max] the delta (odo) kernel moved 203 MB in 28.1 µs run serially (7.2 TB/s) at B=1/2, and took 59.8 µs (min) to 1527 µs (max) per call beside the dkdv body at B=4, with the same bytes (gpt-oss D=64 attention backward)
 - E26 [2026-09, gfx950, FlyDSL 0.2.4, N=?, kernel trace: share of the summed kernel time against exposed time on the timeline] the odo kernel was 14.95% of the summed kernel time at B=4; all exposed helper time (odo, lset and the tail fold) was 3.9% of wall at B=1 (1.22 ms) and 1.9% at B=4 (gpt-oss D=64 attention backward)
+- E27 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0, N=50, `torch.profiler` in one process, 50 constructions per form after 5 warm-up] GPU dispatches per construction: `torch.zeros(1)`, `torch.ones(1)` and `torch.full((1,), …)` one fill kernel each; `torch.empty` and `torch.zeros(0)` none; `torch.tensor([0])` no kernel and one host-to-device copy (placeholder constructions on their own)

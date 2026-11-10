@@ -43,9 +43,9 @@ N 28672 × K 512 the `_build` and `_plan` of `gemm_n3072_k512`
   N 6144 × K 1536 (18 MiB). K is left whole: from m 256 the output tiles alone fill a round of the GPU.
 - Points: m 256, 512, 1024, 2048, 4096 in four files; m 256, 512, 1024 at N 6144 × K 1536, whose m 2048 and 4096 are
   not listed (no faster than aiter, § Counter-signals).
-- No other file serves these Points, so the yardstick is aiter. Until CI writes their `speedup`, dispatch does not
-  serve these files (`qualifies()` in `aklr/core/contract/spec/_workloads.py`; `AKLR_MIN_SPEEDUP`, default 1.03,
-  `aklr/ops/README.md` § Environment variables).
+- No other file serves these Points, so the yardstick is aiter. Dispatch serves a Point whose CI `speedup` reaches
+  `AKLR_MIN_SPEEDUP`, default 1.03 (`qualifies()` in `aklr/core/contract/spec/_workloads.py`; `aklr/ops/README.md`
+  § Environment variables); all 23 listed Points of the five files reach it in CI, 1.034–1.798, and are served (#125).
 
 ## Counter-signals
 
@@ -170,8 +170,8 @@ time; every stage barrier also waits `lgkmcnt(0)`:
 
 `speedup` here is AKLR validate's one-sided lower bound of the aiter / kernel time ratio (measurement profile 19,
 `MEASUREMENT_PROFILE` in `aklr/core/validation/stages/_measure.py`; aiter's tuned `gemm_a16w16` through
-`gemm_baseline`), on one MI355X at main 0e02a81 with FlyDSL 0.3.2. CI has not measured these files; dispatch reads
-the `speedup` CI writes (`aklr/ops/README.md` § Workflow).
+`gemm_baseline`), on one MI355X at main 0e02a81 with FlyDSL 0.3.2. Dispatch reads the `speedup` CI writes
+(`aklr/ops/README.md` § Workflow): 1.034–1.798 over the 23 Points (#125), each passing accuracy.
 
 | File | Points | Speedup over aiter | Highest |
 |---|---|---|---|

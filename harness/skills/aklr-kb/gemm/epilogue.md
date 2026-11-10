@@ -46,10 +46,11 @@ sources:
   already covers 64 B, so pairing has no request savings left there. *(field, E4, E5)* It gained +1.3% on a
   grouped fp8 GEMM (a 32×32×64 atom on the transposed 4(M)×2(N) wave grid, the only grid that keeps the
   pairing), against +2.8–5.0% on 16-wide fragments of the same kernel.
-- **At the power cap, store savings show up as clock, not as wall time inside a tile.** *(field, E6)* Deleting a
-  grouped fp8 GEMM's whole epilogue at the power cap moved a same-process wall probe by 0 ± 1 pp, while the
-  benchmark gained. Price store changes with `TCP_TCC_WRITE_REQ` (the mechanism) plus the real benchmark (the
-  size), not with an in-process wall probe.
+- **At the power cap, an in-process wall probe saw a deleted store on one kernel and not on another.** *(field, E6)*
+  Deleting a grouped fp8 GEMM's whole epilogue moved the probe by 0 ± 1 pp; *(field, E49)* on a bf16 Triton GEMM at the
+  same 1400 W cap, deleting the C store read 6.6–22.7% faster with the clock 9% lower at K = 1024, so the saving was
+  wall time, not clock. Price store changes with `TCP_TCC_WRITE_REQ` (the mechanism) plus paired timings and the
+  real benchmark (the size).
 
 ## 2. Decide whether the store matters before changing it
 
@@ -85,7 +86,8 @@ NT GEMM with 5888 B output rows.
 FlyDSL's guide describes the two ends (`../flydsl/guides.md` § gemm-optimization (FlyDSL's §7)): a **direct store** from the MFMA
 layout, and **CShuffle**, which writes the accumulators to LDS row-major, re-reads them as `(MLane=8,
 NLane=32)` after a barrier and stores 4-element vectors, for `tile_n ≥ 128`. Turbo keeps one store class per technique
-between those two ends (GH:778-1525). Prefer the cheapest class that reaches the 64 B floor.
+between those two ends (GH:778-1525). Start from the cheapest class that reaches the 64 B floor, then race it against
+CShuffle (below).
 
 | Class | How a lane gets adjacent columns | Cost | Where |
 |---|---|---|---|
@@ -95,19 +97,20 @@ between those two ends (GH:778-1525). Prefer the cheapest class that reaches the
 | Row merge | one `v_permlane16_swap_b32` per packed fragment pair moves the second fragment into the other 32-lane half, so one store covers a whole 64 B row run | 1 permlane per pair | `StoreCPerTensorRowN`, GH:1004 |
 | Quad/fold | the row permutation folds 4 or 8 columns into one lane: one `dwordx2`/`dwordx4` | offsets only | `StoreCPerTensorQuadN`, GH:1251 |
 | Line via LDS | transpose through LDS with `ds_read_b64_tr_b16` into a whole 128 B line per fragment row; scratch borrowed from an operand buffer | LDS traffic + fence | `StoreCPerTensorLineN`, GH:1180 |
-| CShuffle | LDS staging, then vector stores | LDS + barriers | FlyDSL A16 `write_cshuffle_vec_to_global`, `c_shuffle_epilog`; Turbo `StoreCPerTensorCShuffle`, GH:1335 |
+| CShuffle | LDS staging, then vector stores | LDS + barriers (Turbo: per-wave LDS and `lgkmcnt` waits, no barrier) | FlyDSL A16 `write_cshuffle_vec_to_global` (A16:331); Turbo `StoreCPerTensorCShuffle`, GH:1335 |
 | Transposed accumulator | swap the MFMA operands so the accumulator holds Cᵀ; two `permlane16_swap`s give 8 contiguous columns, one `dwordx4` | 2 permlanes per 8 columns | FP4 `store_tacc_wide`, FP4:513 |
 
 How to choose:
 - **First, see whether the reorder can be an address change.** When the output column is the B operand's
-  slow axis (NT: output column = B row), permute B's rows in the G2S fill using the involution
-  `W·t + m ↔ 2·m + t` within each `2W`-row block. The fill already takes arbitrary per-lane global offsets,
+  slow axis (NT: output column = B row), permute B's rows in the G2S fill: within each `2W`-row block, LDS row
+  `W·t + m` takes global row `2·m + t` (GH:266; a perfect shuffle, not an involution, so the inverse map gives a
+  different layout). The fill already takes arbitrary per-lane global offsets,
   and the LDS swizzle key still follows the LDS row, so the reader does not change. *(field, E10)* This gave
   +2.4–2.8% on a grouped fp8 NT GEMM (three token distributions): `buffer_store_short` 160→32,
   `buffer_store_dword` 0→64, and `v_cvt_pk` 160→96. The MFMA, barrier, VGPR and LDS counts were unchanged.
 - **When the output column is the operand's fast axis (NN/TN), use the row merge.** The transpose read's
-  lane→column map is fixed by hardware, and a 16 B fill chunk holds 16 whole columns, so neither can be
-  permuted. Pack each row pair (`v_cvt_pk_bf16_f32`) first, then swap the packed dwords. *(field, E11)* Swapping
+  addresses move columns only in whole 4-element (`tr_b16`) or 8-byte (`tr_b8`) pieces (`../attention/lds.md` §3),
+  and a 16 B fill chunk holds 16 whole columns, so neither can interleave single columns. Pack each row pair (`v_cvt_pk_bf16_f32`) first, then swap the packed dwords. *(field, E11)* Swapping
   unpacked f32 values on a grouped fp8 GEMM took 64 permlanes and gained +0.13%; swapping packed pairs took 32
   and gained +0.43–0.83% (three token distributions).
   **Price a cross-lane primitive by the output values it moves per instruction.**
@@ -136,16 +139,20 @@ How to choose:
   shape, all 17 faster (the same kept round also gave M=33–60 a single 64×32 row block).
 
 **Instruction-level rules for cross-lane stores**
-- A `permlane16_swap` result consumed only by a `buffer_store` (VMEM) needs no `s_nop`. That hazard covers a
-  following VALU read (FP4:500-502).
-- When a VALU consumes the result, use the `llvm.amdgcn.permlane16.swap` / `permlane32.swap` intrinsics, not inline
-  asm. The hazard recognizer cannot see asm, so asm forces an `s_nop` on both sides. *(field, E17)* Switching to the
+- A `permlane16_swap` / `permlane32_swap` needs its wait states before it, not after. A VALU write to its VDST
+  needs 2 before the swap (CDNA4 ISA Table 11, `../hardware/gfx950/cdna4/ch04_program_flow_control.md`);
+  *(field, E51)* on MI355X a write to its SRC0, which the table does not list, needed a wait too (a quarter of the
+  words wrong without), while a VALU or a store could read the result at once. So FP4:500-502's
+  `v_cvt_pk_bf16_f32` → asm swap → `buffer_store` needs an `s_nop 1` before the swap.
+- Use the `llvm.amdgcn.permlane16.swap` / `permlane32.swap` intrinsics, not inline asm, whatever consumes the
+  result: the hazard recognizer cannot see asm, and *(field, E51)* in compiled HIP put no `s_nop` before asm
+  swaps. *(field, E17)* Switching to the
   intrinsic cut `s_nop` from 412 to 174 in a fused bias + GELU epilogue (683 to 24 with FP6 row quantization fused
   as well).
-- Issue all swaps first, then all stores, so the permlanes and the stores are far apart. *(field, E18)* Only the two
-  changes together, dropping the hard-coded `s_nop` and the two-phase order, took the count from 80 to 0.
+- Issue all swaps first, then all stores. *(field, E18)* Only the two changes together, dropping the hard-coded
+  `s_nop` and the two-phase order, took the count from 80 to 0.
 - **Never store the high half of an f32 accumulator as bf16.** That is truncation, not round-to-nearest-even.
-  - *(field, E19)* It cost 5.8 dB SNR and made the store slower.
+  - *(field, E19)* It cost 5.8 dB SNR.
   - Convert with `v_cvt_pk_bf16_f32`, and store the pair's high half with `buffer_store_short_d16_hi` where the
     toolchain can emit it; otherwise it costs one `v_lshrrev_b32`.
 - On gfx950, a multi-dword MUBUF VGPR tuple must be 64-bit aligned.
@@ -162,8 +169,10 @@ At one wave per SIMD nothing overlaps the epilogue unless you put it inside MFMA
   (`mainloop.md` §3). Issue them row-tile by row-tile and put each row-tile's store after the
   *next* row-tile's MFMAs. *(field, E20)* Distance 1 was best on a grouped GEMM; 2 and 4 were worse.
   - The hazard recognizer cannot see asm MFMAs. Put a `sched_barrier(0)` before each store group and
-    trailing `s_nop`s after the last row-tile. Otherwise a VALU reads a stale accumulator, and only the last
-    row-tile is wrong.
+    trailing `s_nop`s after the last row-tile. Otherwise a VALU can read a stale accumulator: *(field, E57)* on a
+    grouped fp8 weight-gradient kernel only the last-closed row-tiles were wrong. *(field, E53)* A minimal HIP
+    kernel read no stale value with one wait state before such a read, so a passing test does not show the padding
+    can go.
   - The ceiling is one K-block of MFMAs. *(field, E20)* That recovered an estimated 10% of the store cost on a
     grouped weight-gradient GEMM with 32 K-blocks per tile (+0.7–1.1%). *(field, E31)* On a grouped dgrad kernel
     whose last window without G2S held 8 MFMAs, it gained +0.02%, within noise.
@@ -201,7 +210,7 @@ At one wave per SIMD nothing overlaps the epilogue unless you put it inside MFMA
     all 8 M on both inputs, m=64 included; the A/A intervals of those sessions spanned −0.227% to +0.240%.
   - M 1–128, K=512, N=28672: `sc1` lost. *(field, E36)* An earlier campaign build put `sc1` slower than the
     default at 7 of 8 M in single paired readings (+0.3% to +5.5%, four of them above 1%; m=2 −0.4%).
-    *(field, E44)* On a later small-M campaign build (source `827136159797…`), with the C-store aux the only edit
+    *(field, E44)* On a later small-M campaign build, with the C-store aux the only edit
     and the ISA otherwise identical, `sc1` minus default for the two inputs was: m=1 +2.935%/+10.183%;
     m=2 +3.037%/+8.472%; m=4 +3.882%/+12.581%; m=8 +13.363%/+12.190%; m=16 +0.465%/+0.415%;
     m=32 +0.433%/+0.577%; **m=64 −0.992%/+0.615%**; m=128 +2.195%/+1.916%. Every simultaneous 95% interval
@@ -241,8 +250,10 @@ At one wave per SIMD nothing overlaps the epilogue unless you put it inside MFMA
   - Narrow N (64–256, K 4096–6144): *(field, E41)* no policy paid on the output except `sc1` at N=256, m=512 and
     1024 (0.3–0.8% faster before those buckets were split across workgroups, and kept on their split-K output
     store; it lost 1.7% at m=256).
-- **Give `nt` only to stores that write whole 128 B lines.** Sub-line stores (2 bytes per lane) rely on L2 to merge
-  their 32 B pieces into 64 B writes, so `nt` and `sc0` both cost there. *(field, E32)* On a dense MXFP4 NT GEMM, on
+- **Do not give `nt` to sub-line stores of 2 bytes per lane; race it on wider ones.** Their 32 B pieces rely on L2
+  to merge them into 64 B writes; `nt` breaks part of that merge and `sc1` all of it, while `sc0` keeps it.
+  *(field, E54)* `nt` cost 42–187% at 2 B per lane, `sc0` stayed within ±1.4% at every width, and at 4 B per lane
+  `nt` ranged from 38% faster to 30% slower. *(field, E32)* On a dense MXFP4 NT GEMM, on
   the 10 shapes whose A and B fitted the LLC and C did not, the default policy and `sc0` both lost to `nt` on every
   shape, by up to 6.4%. *(field, E34)* On another dense MXFP4 GEMM, whose A and B also fit the LLC and C did not
   (estimated from the shapes), all eight `sc0`/`nt`/`sc1` combinations of its folded C stores read within 0.56% and
@@ -258,8 +269,11 @@ At one wave per SIMD nothing overlaps the epilogue unless you put it inside MFMA
   margin, not pinned (MX8:968-974).
 - **Never mark byte-granular scale stores (E8M0) non-temporal.** They rely on L2 merging the write masks.
   - *(field, E24)* In the MXFP8 cast kernels that cost 15–40%.
-- Keep split-K partials cached only if the same XCD reduces them; reduced on other XCDs, `sc1` stores (aux=16) were
-  *(field, E25)* 2–4% faster. Do not mark partials `nt`: aux 18/19 cost *(field, E26)* 3–6% against aux 17
+- Start split-K partial stores with `sc1` (aux=16) and measure before caching them; which XCD reduces them did not
+  decide it. With the K splits spread across XCDs, `sc1` stores were *(field, E25)* 2–4% faster. *(field, E56)* On a
+  bf16 split-K GEMM, caching won by at most 1.5% whichever XCD ran the reduce kernel, and with the last-arriving
+  workgroup reducing in the same kernel on the writers' XCD `sc1` was 23–28% faster. Do not mark partials `nt`: aux
+  18/19 cost *(field, E26)* 3–6% against aux 17
   (`sc0|sc1`). *(field, E42)* At m=4096 (N=64, K=4096, split 4, the splits presumed on one XCD) aux 16 and 17 tied
   (10.22 µs); after each tile's counter got its own 256 B, aux 18/19 read 10.71–10.72 and the L2-cached aux 0, 1 and 3
   10.79–10.83 against 10.05 with aux 17 (single driver runs): the `sc0|sc1` partials won even with the splits presumed
@@ -271,8 +285,9 @@ In FlyDSL: `../flydsl/gemm.md` § epilogue §5.
 
 - Rebase the C descriptor per row band in i64 and pin base and `num_records` with `readfirstlane`
   (`make_row_band_resource`, GH:2010). A wide store has no per-column mask, so a whole column span is
-  dropped by giving its band 0 records. Store classes that span several fragments require
-  `N % tile_n == 0` (`col_safe`).
+  dropped by giving its band 0 records. The row-merge and whole-line classes, whose runs span two fragments or a
+  whole line, require `N % tile_n == 0` (`col_safe`, GH:1012, GH:1189); the quad/fold and row-permuted pair classes
+  mask each run or pair instead (GH:1312, GH:1086).
 - When a store is bounded by selecting an out-of-range byte offset (one `v_cndmask` per offset), apply that select
   to the part of the offset that does not depend on the sub-tile, then add the sub-tile row delta.
   *(field, E27)* Otherwise `v_cndmask_b32` went from 14 to 64 in a grouped GEMM's fused epilogue.
@@ -334,7 +349,7 @@ does not, the line says which date it is. "Turbo" is Primus-Turbo.
 - E3 [2026-10, gfx950, FlyDSL 0.3.2, N=3, forge-loop ablation ladder, 3 pairs, driver --bench-mode] the kept round that gave each workgroup a line-aligned 64-column block plus a slice of a leftover-column strip, also dropped an epilogue barrier and set the C store's aux per M bucket (0 at m ≤ 64, 17 above; the parent stored with 17 in its 32–96 buckets): +1.31% [+1.18, +1.45] over its parent, −0.42% (m=8) to +3.09% (m=48), 11 of 13 cases up; in the round's own harness the barrier drop alone read 0.9994–1.0029 (gemm_n18432_k1536)
 - E4 [2026-09, gfx950, FlyDSL 0.2.2, N=?, same-process paired readings in both orders, 16 launches per window, with an inert control arm reading ±0.06–0.31%] with a 32×32×64 atom on a transposed 4(M)×2(N) wave grid, the build with pairing read −24.4% against the shipped kernel and the same build without it −25.7%: pairing was worth +1.3% there; that wave grid is the only one on which this atom keeps the paired store (gpt-oss-20b grouped fp8 tensorwise GEMM at B=24, NT forward)
 - E5 [2026-09, gfx950, FlyDSL 0.2.2, N=?, the ruler of E4] switching the 16-wide pairing off (`nt_pairc=False`) on the shipped kernel cost +2.80 / +3.03 / +3.28 / +3.53% on the four NT forward cells; two later readings on the same kernel gave +4.3% (`pairc0`) and +4.98 / +4.49% (both arms with pairing off) (the kernel of E4)
-- E6 [2026-09, gfx950, FlyDSL 0.2.2, N=?, same-process wall probe with drop and alias arms; the board at its 1400 W cap, full-load sclk 1723–1743 MHz] deleting the whole epilogue moved wall by 0% ± 1 pp on four cells (bal/B8 +1.53%, B24 −0.36%, B32 +0.36%); the same round's row-merge store change raised the benchmark's dgrad legs from 0.9739–0.9984 to 0.9985–1.0336 (gpt-oss-20b grouped fp8 tensorwise GEMM, non-persistent)
+- E6 [2026-09, gfx950, FlyDSL 0.2.2, N=?, same-process wall probe with drop and alias arms; benchmark against a same-night baseline; the board at its 1400 W cap, full-load sclk 1723–1743 MHz, the arms' clocks not read] deleting the whole epilogue moved wall by 0% ± 1 pp on four cells (bal/B8 +1.53%, B24 −0.36%, B32 +0.36%); the same round's row-merge store change (`TCP_TCC_WRITE_REQ` 57600 → 29440, −48.89%, on the cells it reached) read +0.7–0.8 pp (gate_up dgrad, balanced) and +0.2–0.3 pp (unbalanced) and about +0.1% on the eight-cell geomean, below the benchmark's 0.35–0.8% resolution (gpt-oss-20b grouped fp8 tensorwise GEMM, non-persistent)
 - E7 [2026-08, gfx950, FlyDSL ?, N=?, per-tile time from a 6-point K-sweep fit t_tile = F + n·P and the probe's TF/s at K=2944, all arms in one run] deleting the C store: F 7.943 → 2.598 µs, 4.87 µs = 20.3% of the tile (probe 3721.7 → 4672.2 TF/s); same bytes and rows with write segments 4 → 1: +0.8%; 254 `v_accvgpr_read` + 254 `cvt_pk` removed with all 256 stores kept: −0.5%; a segment probe that folded four rows into one read −2.58 µs but wrote ~6× fewer bytes; a later round's counter run deleting the whole store read 579.2 → 476.5 µs (−17.7%) (gpt-oss MXFP4 grouped GEMM, NT forward, G=32)
 - E8 [2026-07, gfx950, FlyDSL ?, N=?, time FlyDSL ÷ AITER, lower is faster] at 8192²×4096 the permlane16_swap + dwordx4 store (TACCW) read 0.998 against 1.039 for the default store (Turbo MXFP4 4-wave dense GEMM, 16 KB output rows; unverified, first recorded 2026-07-05)
 - E9 [2026-08, gfx950, FlyDSL ?, N=?, ruler not stated (the campaign scores gm_ratio against the MXFP8 grouped GEMM)] the TACCW wide store was slower by 1.34% (fwd down), 0.70% (fwd gate_up) and 1.07% (dgrad gate_up); in the next campaign on the same kernel the tree's `store_tacc_wide` read +4.1% slower in the NT probe of E7, +3.5% with its software pipeline cut to depth 4 (gpt-oss MXFP4 grouped GEMM, NT, G=32, M=131072, N=2944/5760, 5888 B output rows)
@@ -373,7 +388,13 @@ does not, the line says which date it is. "Turbo" is Primus-Turbo.
 - E42 [2026-11, gfx950, FlyDSL 0.3.2, N=1–2, single driver runs] bf16 GEMM N=64, K=4096, m=4096, split 4 (a tile's splits inferred to share an XCD): plane accesses aux 16 10.218 against aux 17 10.220 µs; with 256 B counter spacing (10.05 µs) aux 0 10.830, aux 1 10.823, aux 3 10.793, aux 18 10.720, aux 19 10.714
 - E43 [2026-11, gfx950 MI355X, FlyDSL 0.3.2, N=24 fresh-input pairs per M, 5 graph-timer readings averaged per arm/pair, cyclic intact/remove/AA order, AKLR cold-cache bench_cudagraph as of 2026-11-06 (rep=20 ms; flush excluded)] terminal global C-store deletion only, data consumed by an empty side-effect sink, existing LDS staging retained; intact finite/reference-allclose (rtol=.02, atol=.002), deletion output all NaN by design, corrupt-output negative control and unchanged-input checks. Saving = mean of per-pair 100*(1-remove/intact), not ratio of means. N=2048 K=2048 m=2048/4096: 6.604%/8.273%; N=3584 K=512 m=1024/2048/4096: 15.751%/9.903%/8.757%; N=6144 K=1536 m=4096: 6.322% (the run's final source, not an intermediate experimental build); N=7168 K=512 m=512/1024: 11.138%/13.941%. Archived pairs recomputed on the CPU: all 16 Bonferroni Student-t (df=23) intervals of the savings positive, all AA intervals inside ±0.3%. ISA summaries: MFMA opcode sequence, LDS opcode histograms and allocation unchanged, global stores positive → zero; full ISA, scheduling and occupancy not compared. Per-reading samples and output tensors not archived.
 - E44 [2026-11, gfx950-targeted compilation, FlyDSL 0.3.2, N=20 timing sessions per seed, small-M campaign build of N=28672 K=512, its decode dispatch at m=1/2/4/8/16/32/64/128, aux0/2/16 C-store-only edits, two fixed seeds 731/1731, 5 readings/arm/session, cyclic order, AKLR cold-cache graph timer as of 2026-11-06, rep=20 ms] primary difference = mean of per-session 100*(mean(aux16)/mean(aux0)-1). Simultaneous 95% Bonferroni Student-t intervals (df=19, family=32: 8 M × 2 seeds × primary+AA), all primary signs resolved and all AA intervals inside ±0.15%; aux2 comparisons exploratory, outside the primary family. Per-seed percentages in §5; m=64 seed731 −0.992476% [−1.033694, −0.951258], seed1731 +0.614804% [+0.560733, +0.668875]. Independently compiled full-ISA hashes matched the archived compile hashes and normalized ISA differed only in C-store flags. Official GEMM reference/DotProductBound, finite-output, aux/default bitwise, alternate-current-stream and corrupt-output rejection checks passed for all eight M × two seeds × three aux, before timing; raw keeps input hashes, PASS markers and timer samples, not output tensors. The two seeds ran in sequential time windows; no GPU idle snapshot or loaded code-object hash recorded.
-- E45 [2026-11, gfx950-targeted compilation, FlyDSL 0.3.2, N=2 fixed inputs per M, 20 timing sessions/input, 5 readings/arm/session; timer not recorded in the verdict] campaign final source SHA256 540ffda92fac89cb364cbab2b52b7f725d275015ad9b7f1924883d657fad13aa (N=6144 K=1536), its m=256/512/1024/4096 dispatch (no m=2048 path), C-store cache-only variants. Effect = mean per-session 100*(time(b)/time(a)-1); a=sc1, b=sc0 at m=256, nt at m=512/1024, default at m=4096. Primary simultaneous 95% Bonferroni Student-t intervals (df=19, family=16, four M × two inputs × primary+AA); every AA interval inside ±0.15%, equivalence = the whole interval inside ±0.3%. m=1024 both inputs nt faster, seed731 beyond ±0.3% and seed1731 within it (effects in §5); m=512 (in the family of 16, marked observation-only): −0.034% [−0.060, −0.007] and −0.078% [−0.119, −0.036]. Reference/allclose, finite sentinel, aux/default bitwise, current-stream and corrupt-output checks passed; source/variant/case hashes matched. Compile summaries only (MFMA counts, LDS allocation, load-cache and store-width histograms); full ISA and output tensors not archived; inputs in sequential windows.
-- E46 [2026-11, gfx950-targeted compilation, FlyDSL 0.3.2, N=2 fixed inputs per M, 20 timing sessions/input, 5 readings/arm/session; timer not recorded in the verdict] campaign final source SHA256 d5171067a306b2f9da3db2cabc811c396956fad77bdb684aaee88d6500b19a3b (N=7168 K=512), its m=256/512/1024/2048/4096 dispatch, C-store cache-only aux0/2/16 variants. Effect = mean per-session 100*(time(b)/time(sc1)-1), b=default or nt; primary simultaneous 95% Bonferroni Student-t intervals (df=19, family=30, five M × two inputs × two primary+AA), every AA interval inside ±0.15%. Both inputs: sc1 over default at all five M and over nt at m=256/512; sc1/nt signs differ between the inputs at m=1024 (both within ±0.3%) and m=2048 (both beyond it), effects in §5; m=4096 sc1/nt (in the family of 30, marked observation-only): +4.672% [+4.491, +4.853] and +4.112% [+4.038, +4.187]. Correctness checks, hash matches and compile summaries as in E45; inputs in sequential windows.
+- E45 [2026-11, gfx950-targeted compilation, FlyDSL 0.3.2, N=2 fixed inputs per M, 20 timing sessions/input, 5 readings/arm/session; timer not recorded in the verdict] campaign final source (N=6144 K=1536), its m=256/512/1024/4096 dispatch (no m=2048 path), C-store cache-only variants. Effect = mean per-session 100*(time(b)/time(a)-1); a=sc1, b=sc0 at m=256, nt at m=512/1024, default at m=4096. Primary simultaneous 95% Bonferroni Student-t intervals (df=19, family=16, four M × two inputs × primary+AA); every AA interval inside ±0.15%, equivalence = the whole interval inside ±0.3%. m=1024 both inputs nt faster, seed731 beyond ±0.3% and seed1731 within it (effects in §5); m=512 (in the family of 16, marked observation-only): −0.034% [−0.060, −0.007] and −0.078% [−0.119, −0.036]. Reference/allclose, finite sentinel, aux/default bitwise, current-stream and corrupt-output checks passed; source/variant/case hashes matched. Compile summaries only (MFMA counts, LDS allocation, load-cache and store-width histograms); full ISA and output tensors not archived; inputs in sequential windows.
+- E46 [2026-11, gfx950-targeted compilation, FlyDSL 0.3.2, N=2 fixed inputs per M, 20 timing sessions/input, 5 readings/arm/session; timer not recorded in the verdict] campaign final source (N=7168 K=512), its m=256/512/1024/2048/4096 dispatch, C-store cache-only aux0/2/16 variants. Effect = mean per-session 100*(time(b)/time(sc1)-1), b=default or nt; primary simultaneous 95% Bonferroni Student-t intervals (df=19, family=30, five M × two inputs × two primary+AA), every AA interval inside ±0.15%. Both inputs: sc1 over default at all five M and over nt at m=256/512; sc1/nt signs differ between the inputs at m=1024 (both within ±0.3%) and m=2048 (both beyond it), effects in §5; m=4096 sc1/nt (in the family of 30, marked observation-only): +4.672% [+4.491, +4.853] and +4.112% [+4.038, +4.187]. Correctness checks, hash matches and compile summaries as in E45; inputs in sequential windows.
 - E47 [2026-11, gfx950, FlyDSL 0.3.2, N=20 sessions per M (inputs drawn anew each session, seed 731 + session, one process), 5 readings per arm per session, arm order rotated; AKLR cold-cache bench_cudagraph (rep=20) as of 2026-11-06; simultaneous 95% Student-t intervals, df=19, Bonferroni families of 8 (N=28672: 4 contrasts + 4 AA) and 10 (N=2048: 6 contrasts + 4 AA); every AA interval inside ±0.15%] effect = mean per-session 100*(time(b)/time(a)-1). N=28672 K=512 campaign build (`_STAGGER[2048]` 3, kernel arguments preloaded at m=2048; the refinalized source has 2 and no preload at m=2048), its own dispatch, head C-store aux 2 or 16 with the tail fixed at aux 2, no default arm: time(nt)/time(sc1)-1 m=512 +0.445% [+0.285, +0.606]; time(sc1)/time(nt)-1 m=1024 −2.961% [−3.164, −2.758], m=2048 −0.307% [−0.510, −0.104], m=4096 −0.847% [−0.927, −0.766]. N=2048 K=2048 campaign final source, C-store aux 0/1/2/16 only: time(nt)/time(default)-1 m=512 −0.496% [−0.561, −0.432], m=1024 −1.342% [−1.428, −1.256], m=2048 +1.256% [+1.118, +1.394]; m=4096 against the default: sc0 −0.027% [−0.050, −0.004], nt +0.688% [+0.362, +1.015], sc1 +2.325% [+2.128, +2.521]. Before timing, every aux output finite, bitwise equal to the baseline arm and within rtol=0.02/atol=0.002 of an fp32 matmul, a corrupted output rejected; the 24 archived ISAs carry the intended store bits, MFMA counts and LDS sizes equal per M.
-- E48 [2026-11, gfx950-targeted compilation, FlyDSL 0.3.2, N=2 fixed inputs per M, 20 timing sessions/input, 5 readings/arm/session; timer not recorded in the verdict; simultaneous 95% Bonferroni Student-t intervals, df=19, family=32] campaign final source SHA256 1aa1cde59b9b7a65aa90f499ce171812407860ccf587b117b8e05c7e2c03a4cc (bf16 GEMM N=7168 K=512, decode m=1–128), C-store aux 0/16 only: mean per-session 100*(time(default)/time(sc1)-1) 2.115–5.470% over 8 M × 2 inputs (m=64 +5.425% [+5.264, +5.586] and +5.470% [+5.341, +5.598]), every interval's lower end at or above +1.956%; AA intervals between −0.227% and +0.240%, outside ±0.15% on at least one input at m=1, 2, 4, 8, 32, 64 and 128.
+- E48 [2026-11, gfx950-targeted compilation, FlyDSL 0.3.2, N=2 fixed inputs per M, 20 timing sessions/input, 5 readings/arm/session; timer not recorded in the verdict; simultaneous 95% Bonferroni Student-t intervals, df=19, family=32] campaign final source (bf16 GEMM N=7168 K=512, decode m=1–128), C-store aux 0/16 only: mean per-session 100*(time(default)/time(sc1)-1) 2.115–5.470% over 8 M × 2 inputs (m=64 +5.425% [+5.264, +5.586] and +5.470% [+5.341, +5.598]), every interval's lower end at or above +1.956%; AA intervals between −0.227% and +0.240%, outside ±0.15% on at least one input at m=1, 2, 4, 8, 32, 64 and 128.
+- E49 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=40 probe rounds per shape plus 6 s sustained segments per arm, in-process event timing, A/A 0.57%, sclk read from sysfs, power cap 1400 W] bf16 GEMM, M=N=8192, 256×128×64 tiles, the C store kept in a branch never taken: deleting it, K=1024 −22.74%, sustained clock 0.909–0.911× the store arm's; K=4096 −6.63%
+- E51 [2026-11, gfx950 (MI355X), HIP 7.15, N=2 launches per arm at 1 and 8 workgroups per CU, every output word checked, wait states from the device ISA] `v_permlane16/32_swap_b32` in inline asm right after a `v_cvt_pk_bf16_f32` wrote its SRC0: about 25% of words wrong (VDST: 25%); 0 with 2 wait states before the swap, and when a `v_mov_b32` or a store read the result with none. Compiled HIP: no `s_nop` before 16 asm swaps, one in each of the 16- and 32-lane kernels right after its VDST write, 6.25% wrong; the intrinsics left at least 4 wait states after the VDST write and 3 after the SRC0 write, 0 wrong
+- E53 [2026-11, gfx950 (MI355X), HIP 7.15, N=20 launches at 1 and 10 at 3–5 workgroups per CU per kernel, every element checked exactly, wait states from the device ISA] 18 kernels whose `v_mfma_f32_32x32x16_bf16` accumulators a VALU add reads: the compiler padded builtin MFMAs' reads to at least 12 wait states, asm MFMAs' to as few as 1; 0 wrong elements in every kernel and launch, the 1-wait-state reads included (HIP microbenchmark)
+- E54 [2026-11, gfx950 (MI355X), HIP 7.15, N=21 rounds × 30 launches per arm, rotated, Bonferroni 95% t, A/A per group; rocprofv3 counters] HIP C-store microbenchmark, one 64×64 bf16 tile per workgroup, C 64 or 512 MiB, with or without operand reads, same bytes at 2–16 B per lane, only the cache bits differing; over the arms whose A/A resolved, `nt` against the default +41.87% to +187.28% at 2 B, −38.22% to +30.01% at 4 B; `sc0` within ±1.4% at every width and size. L2 write requests to memory at 2 B: default 1049937, `sc0` 1048576, `nt` 2453516, `sc1` 2097152 (none of 64 B)
+- E56 [2026-11, gfx950 (MI355X), HIP 7.15, N=21 rounds per condition, paired ratios, A/A 0.2–2.0%, cold and graph-hot, XCD read back with `HW_REG_XCC_ID`] only the partial store's cache bits changed, `sc1` against aux 0: separate reduce kernel on the writers' XCD −4.75 to +1.50%, on another XCD −6.79 to +1.41%; the last-arriving workgroup reducing in the same kernel, writers and reducer on one XCD −23.34 to −28.01% (bf16 split-K GEMM in HIP, N=1024, K=8192, 16 splits, m 64 and 128)
+- E57 [2026-08, gfx950, FlyDSL ?, N=1 run per arm, SNR against an fp32 reference, elements compared with the unpeeled kernel] last K block peeled out of the whole-loop asm, C stores after the asm MFMAs with no `sched_barrier(0)` or `s_nop` pad: 43.05–47.35 dB against 54.24 dB unpeeled, only the last-closed row-tiles wrong; with both, 54.24 dB and bitwise equal at a distance of 16 and 32 MFMAs (gpt-oss-20b grouped fp8 weight gradient, G=4 groups of 4096 tokens)

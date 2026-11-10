@@ -17,8 +17,9 @@ sources:
 
 # Pricing the tile, the occupancy and the boundary bodies of a grouped GEMM
 
-> Grouped GEMMs on gfx950 reuse the dense 256×256 tile, and where it was measured their main loop ran at dense
-> speed. What the group dimension changes is the price of everything around the loop: more tiles per FLOP,
+> Primus-Turbo's grouped GEMMs on gfx950 reuse the dense 256×256 tile, and on MXFP4 NT, the one grouped kernel
+> whose K-loop rate was compared with a dense kernel's, the main loop ran at dense speed (§6). What the group
+> dimension changes is the price of everything around the loop: more tiles per FLOP,
 > more ragged tiles, a per-tile prologue that looks up the group. This card prices the tile and the waves per
 > SIMD per layout, the tile for few tokens per group, boundary half tiles and tail bodies, and the per-tile fixed
 > cost. MoE expert GEMMs are the NT layout; in a sorted-token kernel tile-M is also the sort unit
@@ -48,13 +49,14 @@ a short per-group contraction (K varying per group) → `grouped_variable_k.md`;
 - **8 waves, 2 waves per SIMD** (one 512-thread workgroup per CU, at most 256 registers per wave). *(field, E1)* bf16
   with a 2×4 wave grid: 128 accumulator VGPRs, 228 VGPRs measured; doubling either
   tile side doubles the accumulators to 256 before any operand. *(field, E2)* MXFP8 NT sat at 246–254 of 256 VGPRs depending on the build, with no spill: a 16-wave
-  version of the same tile would need four such waves per SIMD, about 1000 registers against 512.
+  version that computes twice the tile (256×512), each wave's share unchanged, would need four such waves per SIMD,
+  about 1000 registers against 512 (estimated).
 - **4 waves, 1 wave per SIMD** (one 256-thread workgroup per CU). The fp32 accumulators of a tile are
   `BM × BN ≤ 4 waves × 64 lanes × 256 AGPRs = 65536`: 256×256 is exactly the AGPR file. An MXFP4
   BM = 384 would need ~620 registers per lane (estimated) against 512. In the measured MXFP4 grouped kernel BM must also
-  be a multiple of 128 because of its scale-slab layout (`grouped_lowprec.md` §4).
-- **So the operand fill cannot shrink by tiling.** A `buffer_load … lds` costs the 128-byte lines it covers
-  (`../gemm/datapath.md` §6); lines per unit of MFMA work go as `(BM + BN) / (BM · BN)` and do not
+  be a multiple of 256 because of its scale-slab layout (`grouped_lowprec.md` §4).
+- **So the operand fill cannot shrink by tiling.** A `buffer_load … lds` costs the cache lines it covers, not its
+  bytes (`../gemm/datapath.md` §6); for full-line fills, lines per unit of MFMA work go as `(BM + BN) / (BM · BN)` and do not
   depend on BLOCK_K. Only a larger tile lowers them, and the tile is at the wall.
 - **At the wall, anything that lengthens a live range spills.** *(field, E4)* MXFP8 NT at 246/256 arch VGPRs:
   folding the store earlier spilled 18 VGPRs (19% slower), a tile loop 25 (26% slower), holding an A fragment
@@ -70,7 +72,8 @@ a short per-group contraction (K varying per group) → `grouped_variable_k.md`;
   per SIMD), a minority of the NN dgrad points and almost no forward points (`grouped_variable_k.md` §8). It
   pays where both operands are transpose-read (`ds_read_b64_tr_b8`; mechanism in `grouped_variable_k.md` §8);
   the NT layout (a forward pass, every MoE expert GEMM) reads both operands K-contiguous.
-- The fastest grouped kernel measured is that wgrad: 4 waves, 1 wave per SIMD, 256 AGPR accumulators, a full
+- The reference the MXFP8 NT kernel was measured against, the fastest 8-bit grouped kernel in that comparison, is
+  that wgrad: 4 waves, 1 wave per SIMD, 256 AGPR accumulators, a full
   160 KB of LDS, 0.13 synchronization instructions per MFMA against 0.93 for an 8-wave MXFP8 NT *(field, E6)*.
 - **1 wave per SIMD with AGPR accumulators is a direction to test, not a rule.**
   - *(field, E7)* Moving a kernel to 4 waves while keeping the 8-wave phase skeleton (6.4 `s_barrier` per K
@@ -89,7 +92,9 @@ a short per-group contraction (K varying per group) → `grouped_variable_k.md`;
   (worst config 8.7%), merging MFMA phases 1.6%, all with SNR and determinism intact. Before deleting a barrier, ask
   whether it is an ordering constraint (`../gemm/mainloop.md` §2) or a phase-alignment device. Deleting
   the rendezvous of the last K steps, which issue no new fill but still make the fills issued two steps earlier
-  visible across waves, raced (`grouped_correctness.md` §8).
+  visible across waves, raced on the tensorwise fp8 NT (`grouped_correctness.md` §8). *(field, E37)* In a HIP
+  LDS-DMA microbenchmark, a `vmcnt(0)` drain before the second-to-last step's rendezvous let the last one go
+  (exact in 16000 runs).
 
 ## 3. Few tokens per group: when BLOCK_M = 128 pays
 - With few tokens per group an M-split grid of 256-row tiles (measured on dgrad and forward below) leaves CUs
@@ -120,11 +125,16 @@ quadrants' MFMAs and LDS reads are dead. Pick the variant with a scalar branch o
   on 12 of 276 tiles made the whole kernel spill 16 VGPRs and the gate_up wgrad 14.6% slower (−2.8% on the
   geomean over all 14 configs). On MXFP4, deleting
   MFMAs plus one g2s group kept the spill count at 0. Check the spill count after adding any variant.
-- **Deleting the dead half's g2s: lower `vmcnt` by the number deleted, when those loads are the youngest in
-  flight.** The in-flight allowance is "loads issued per iteration minus the earliest group".
-  - *(field, E20, E21)* MXFP4 whole loop: `vmcnt(WLV − n_deleted)`, `WLV` being the full body's allowance, on the half-N body,
-    +3.8% geomean, +4.7% worst config. MXFP8 NT (all pools prefetched two iterations ahead, the deleted pool issued
-    last): drain 6 → 4, the down configs 0.985 → 1.005 against the reference.
+- **Deleting the dead half's g2s: lowering `vmcnt` by the number deleted, when those loads are the youngest in
+  flight, is not safe by itself; prove the count by repetition.** The in-flight allowance is "loads issued per
+  iteration minus the earliest group".
+  - *(field, E20)* MXFP4 whole loop: the whole half-N body (dead MFMAs and B right-half g2s deleted,
+    `vmcnt(WLV − n_deleted)`, `WLV` being the full body's allowance) +3.8% geomean, +4.7% worst config.
+    *(field, E38)* The g2s deletion was about a quarter of such a gain, and `vmcnt(WLV − n_deleted)` raced at all
+    four shapes tried; Turbo's body keeps the g2s and drains to `vmcnt(min(WLV, nsb))`
+    (`primus_turbo/flydsl/gemm/gemm_mxfp4_kernel.py:1382-1386`). *(field, E21)* MXFP8 NT (all pools prefetched two
+    iterations ahead, the deleted pool issued last): drain 6 → 4, the down configs 0.985 → 1.005 against the
+    reference.
   - *(field, E22)* The same surgery on MXFP8 wgrad, where the deleted pool is one iteration ahead and issued first:
     0.09% slower.
   - *(field, E23, E24)* fp8 NN dgrad (8 waves): the reduced counts raced at small K. Keeping the loads and deleting only
@@ -139,8 +149,9 @@ quadrants' MFMAs and LDS reads are dead. Pick the variant with a scalar branch o
   +0.4–3.1% on the deployment-like configs (median +1.7%). Turbo's MXFP4 wgrad serves a block ragged in both
   dimensions with the N re-tile (MX4:1716-1722).
 - *(field, E28)* fp8 per-tensor wgrad, last M block with its upper `a` half all padding, `a_halves = 1`: +4.5–5.8%.
-- **Is the boundary tile on the makespan?** A cheap boundary tile on wgrad finishes early, which is why the
-  barrier trim above did nothing there. The M-side bodies above were measured at 18–35 dispatch rounds, while
+- **Is the boundary tile on the makespan?** A cheap boundary tile that finishes early, off the makespan, saves
+  nothing; that may be why the barrier trim above did nothing on wgrad, but it was not measured. The M-side
+  bodies above were measured at 18–35 dispatch rounds, while
   Turbo's fp8 wgrad keeps its M-side boundary body only below 8 rounds: "a cheap tile frees its CU early and
   desyncs the L2-slab phase cohorts (no resync at occ=1) -- pays off shallow, not deep" (FP8:3921-3925;
   `_WGRAD_AFF_ROUNDS`, FP8:4660). Measure at the deployed depth.
@@ -163,37 +174,40 @@ layout and on the token histogram:
   an estimated ~17% faster the estimated bound was 0.6–0.7 points on each of two cells. Measured, the two skewed cells gained 0.44
   and 0.30 points, the two balanced cells of the same module lost 0.31 and 0.34 to the carry, and the
   geomean moved −0.13%.
-- Two tail bodies with 32 and 64 MFMAs per phase both made their tail tile an estimated ~17% faster: the saving is
-  the tail tile's fixed cost, not its MFMAs.
+- Two M-side tail bodies of an MXFP4 wgrad (32 and 64 MFMAs per phase) were each back-calculated to make their
+  tail tile ~17% faster. *(field, E39)* Measured on N-side bodies with those MFMA counts, the saving was almost all
+  fixed (2.4 and 1.5 µs per tile, under 1% per phase), so it shrinks as K grows; on a 128-column last block the
+  half-N body also saved 2% per phase.
 - *(field, E33)* Disabling the half-N body of an MXFP4 kernel cost 1.79 points of the 8-cell geomean (NT and wgrad
   cells, 7 of 8 in the same direction); re-tiling it to quarter-N gained another 0.67–1.09 points per NT cell.
 
 ## 6. Short tiles: where grouped loses to dense
 Fit `T_tile = F + n · P` from a K sweep, n K iterations at P each (`../gemm/grid_pricing.md` §6, which
 writes it `a · n_kblocks + F`; its pitfalls:
-`../gemm/attribution.md` §7). For grouped kernels the answer has been the same every time:
+`../gemm/attribution.md` §7). For the two grouped kernels priced this way the answer was the same:
 - *(field, E34)* MXFP4 grouped: P = 1.565 µs per K phase against an estimated 1.59 µs derived from the dense MXFP4 kernel's
   5405 TF/s. The steady state ran at dense speed; the whole loss against dense was in F = 7.81 µs per tile.
-- *(field, E35)* MXFP8 NT against the fastest fp8 wgrad: 6192 tiles of 23 K iterations against 1008 of 134; F was
-  15.7% of the wall against ≤3.7%, while MXFP8's P (1.164 µs) beat the reference's (≤1.35). Pushing F's
+- *(field, E35)* MXFP8 NT against the fastest fp8 wgrad, at G = 4: 6192 tiles of 23 K iterations against 1008 of
+  134; F was 15.7% of the wall against ≤3.7%, while MXFP8's P (1.164 µs) beat the reference's (≤1.35). Pushing F's
   share to the reference's level predicts the wall 779 → 673 µs, an estimated ratio of 1.06 — enough on its own. The
   same table carried the control: two of the three cells with 45 K iterations per tile passed, none of the
   nine with 23.
 - *(field, E36)* That F split into launch 1.39, group decode 0.85, C store 2.37 and cold fill 0.80 µs.
 - What the group dimension puts into F: the group lookup (`grouped_group_mapping.md` §5), dead
-  workgroups (§3 there), ragged tiles per group (§4 here), and a cold L2 for each group's slab
-  (`grouped_scheduling.md` §9).
-- So the levers are F (lookup, decode, store overlap, boundary bodies, kernel-argument preload:
-  `../gemm/small_m.md` §6) or longer tiles per workgroup (`grouped_scheduling.md` §6–§7), not
-  the main loop.
+  workgroups (§3 there), ragged tiles per group (§4 here), and, expected but not measured, a cold L2 for each
+  group's slab (`grouped_scheduling.md` §9).
+- So on these two kernels the gap lay in F (lookup, decode, store overlap, boundary bodies, kernel-argument preload:
+  `../gemm/small_m.md` §6) and in tile length (`grouped_scheduling.md` §6–§7), not the main loop's rate.
+  The main loop can still pay (deeper B pools on a per-tensor fp8 wgrad, `grouped_variable_k.md` §8), and on
+  MXFP8 NT more tiles per workgroup spilled at the register wall (§1).
 - For K varying per group the grid is `G × tiles per group`, so G sets the last-round fill: 144 tiles per group fill 18.0
   rounds of 256 CUs at G = 32 and 13.5 at G = 24. Count rounds for every G you deploy
   (`../gemm/grid_pricing.md` §1).
 
 ## 7. Store-bound short contractions
 A variable-K wgrad writes G full output slices whatever the token split, so groups with few tokens make it
-store-bound. The short-contraction blocking with non-temporal C stores, and its crossover, which scales with
-tiles per group rather than with a token count, are in `grouped_variable_k.md` §6.
+store-bound. The short-contraction blocking with non-temporal C stores, and its crossover, which moves with the
+shape, are in `grouped_variable_k.md` §6.
 
 ## Verify
 - The compile-only dump shows no spill and the expected barrier count before any timing.
@@ -215,7 +229,8 @@ A FlyDSL version is given only where the cited run, or another round in the same
 (`flydsl.__version__`, an import path with its version, or a `pip install flydsl==` in the run's own setup); otherwise
 `FlyDSL ?`. The Kimi-K3 forge run of E31 installed `flydsl==0.3.2`. The month is the run's where the record dates it;
 where it does not, the line says which date it is. "Turbo" is Primus-Turbo; "gm" is a campaign's geomean score; gpt-oss
-shapes are G=32 experts, 131072 routed tokens, hidden 2880 (padded to 2944).
+shapes are G=32 experts, 131072 routed tokens, hidden 2880 (padded to 2944), except in E4–E7, E11, E30, E35 and
+E36, which ran G=4 with the same 131072 tokens.
 
 - E1 [2026-08, gfx950, FlyDSL ?, N=?, ISA dump] bf16 256×256 tile on 2×4 waves: accumulators 128 VGPRs, measured vgpr 228; doubling either side puts 256 accumulator VGPRs before any operand (Turbo bf16 grouped GEMM, gpt-oss; record dated 2026-08-24)
 - E2 [2026-07, gfx950, FlyDSL ?, N=?, ISA dump] `kernel_grouped_mxfp8_nt_1`: num_vgpr 254, num_agpr 0, spill 0; a 2026-08 build of the same kernel sat at 246/256 with 10 VGPRs to spare (Turbo MXFP8 grouped NT, gpt-oss)
@@ -233,7 +248,7 @@ shapes are G=32 experts, 131072 routed tokens, hidden 2880 (padded to 2944).
 - E17 [2026-08, gfx950, FlyDSL ?, N=1, one rocprofv3 pass with 5 counters] the down short-N remainder body: MFMA −6.25%, wall +0.6–1.2%, L2 hit −6.4 points, MFMA busy −5.4 points; unverified (Turbo fp8 per-tensor grouped wgrad, 32 experts at 18 / 34.5 dispatch rounds)
 - E18 [2026-08, gfx950, FlyDSL ?, N=1, campaign score (geomean of t_mx / t_tw over 14 configurations)] the dead b1 pool deleted from the (2,1) variant only: `vgpr_spill_count` 0 → 16, gm 0.9847 → 0.9573 (−2.8%), wgrad gate_up −14.6% (dead-pool tiles 12 of 276) (Turbo fp8 per-tensor grouped wgrad, 4-wave whole loop, gpt-oss)
 - E19 [2026-08, gfx950, FlyDSL ?, N=?, ISA dump] MXFP4 half-N body deleting MFMAs and one BR g2s group: vgpr 428 → 432, agpr 256, spill 0 (Turbo MXFP4 grouped GEMM, gpt-oss)
-- E20 [2026-08, gfx950, FlyDSL ?, N=3, campaign score gm_ratio: geomean over 18 configurations of t_MXFP8 / t_MXFP4] the half-N body's deleted g2s group with the partial vmcnt tightened by its count (`_WLV − nsb`): gm +3.8%, min +4.7%, deterministic (Turbo MXFP4 grouped NT)
+- E20 [2026-08, gfx950, FlyDSL ?, N=3, campaign score gm_ratio: geomean over 18 configurations of t_MXFP8 / t_MXFP4] the half-N body (the dead half's MFMAs and its B right-half g2s group deleted, the partial vmcnt tightened by that group's count, `_WLV − nsb`) in both the NT and the wgrad kernel, against no boundary body: gm +3.8%, min +4.7% (medians of three reads), deterministic (Turbo MXFP4 grouped GEMM, gpt-oss)
 - E21 [2026-07, gfx950, FlyDSL ?, N=2, campaign score of E10] half-N body also dropping the B-side g2s with the drain 6 → 4: gm 1.07080 / 1.07084, min 1.00275 / 1.00288; also reported: fwd down balanced 0.985 → 1.005 and dgrad down balanced 0.988 → 1.006 (Turbo MXFP8 grouped NT, gpt-oss)
 - E22 [2026-07, gfx950, FlyDSL ?, N=1, campaign score of E10] the same surgery on wgrad (its A1 pool at distance 1, issued first): 1.06991 (−0.09%), the six wgrad configurations flat to −1.6%
 - E23 [2026-07, gfx950, FlyDSL ?, N=?, determinism probe] the NN dgrad half-N no-load body with derived reduced wait counts under-drained at small K-iteration counts (SNR 75 dB, not deterministic) (Turbo fp8 per-tensor grouped NN dgrad; 2026-07-30; the kernel's comment)
@@ -250,3 +265,6 @@ shapes are G=32 experts, 131072 routed tokens, hidden 2880 (padded to 2944).
 - E34 [2026-08, gfx950, FlyDSL ?, N=?, kernel trace of the main kernel only, six-point K sweep fit] F = 7.81 µs per tile, P = 1.565 µs per phase; the 1.59 µs is computed from the dense MXFP4 kernel's 5405 TF/s (Turbo MXFP4 grouped NT, gpt-oss)
 - E35 [2026-08, gfx950, FlyDSL ?, N=?, one trace, arms interleaved; F from the four-part pricing of E36] forward down balanced: 6192 tiles of 23.0 K iterations against 1008 of 134.3; wall 779.3 against 712.7 µs; P 1.164 against ≤ 1.351 µs; F share 15.7% against ≤ 3.7%; in the 18-cell table the three n=45 cells read 0.984 / 1.032 / 1.013 (two passing) and the nine n=23 cells all ≤ 0.978 (Turbo MXFP8 grouped NT against the fp8 per-tensor 4-wave wgrad, gpt-oss)
 - E36 [2026-08, gfx950, FlyDSL ?, N=?, pricing probes kept out of the tree] F = launch 1.39 + group decode 0.85 + C store 2.37 + cold fill 0.80 µs (5.43 µs, closed to 0.4%) (Turbo MXFP8 grouped NT)
+- E37 [2026-11, gfx950 (MI355X), HIP 7.15 microbenchmark (no FlyDSL kernel), N=2000 runs per arm and configuration, checked against a host reference] 8 waves, LDS filled by `buffer_load_dwordx4 … lds` two K steps ahead and read across waves: a `vmcnt(0)` drain at step K−2 with step K−1's rendezvous deleted 0 of 16000 runs wrong (8 configurations); both tail rendezvous deleted 1917–2000 of 2000 wrong in each of the four configurations without an injected delay
+- E38 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=10 rounds, arms interleaved; A-vs-A 0.28%] Turbo ca1fdd67 MXFP4 grouped NT, half-N boundary body, G=16, N=1152, K=4224: the body with the B right-half g2s deleted +6.56% against no body, deleting the g2s on top of the dead half's `ds_read`s and MFMAs +1.54%; with `vmcnt(WLV − nsb)` repeat calls differed from the first at all four shapes tried
+- E39 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=10 rounds in one process, arms interleaved, per-tile saving fitted over 4–24 K phases; A-vs-A ≤ 0.16%] Turbo ca1fdd67 MXFP4 grouped wgrad, G=32, OUT_M=2048, every tile a boundary tile: OUT_N=64, quarter-N (32 MFMAs per phase) saved 2.36 µs per tile + 0.80% per phase, half-N (64) 1.48 µs + 0.27%; OUT_N=128, half-N 0.49 µs + 2.14% per phase

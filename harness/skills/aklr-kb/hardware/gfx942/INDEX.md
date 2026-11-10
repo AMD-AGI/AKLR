@@ -15,9 +15,11 @@ each split. The guide's Specification Agreement and notices are in `cdna3/00_fro
 
 Use it to settle what an instruction does on gfx942, which encoding and operands it takes, what a counter or wait
 state requires, and what the hardware limits are. There are no guides to looking things up here yet; the chapters
-have the same layout as the CDNA4 guide's, so `../gfx950/lookup.md`, `../gfx950/matrix_core.md` and
-`../gfx950/memory_and_sync.md` show where to look, with gfx942's own chapter in place of CDNA4's. What gfx942
-changes for a GEMM is in `../../gemm/gfx942.md`.
+have the same chapter titles as the CDNA4 guide's, so `../gfx950/lookup.md`, `../gfx950/matrix_core.md` and
+`../gfx950/memory_and_sync.md` show which chapter to open, with gfx942's own chapter in place of CDNA4's. Their § and
+table numbers are CDNA4's and do not all carry over (ch07 has no block-scale section, so its wait-state table is §7.5
+Table 37, not §7.6 Table 38; §11.4 is not the transpose load): find a section here by its title. What gfx942 changes
+for a GEMM is in `../../gemm/gfx942.md`.
 
 ## File map
 

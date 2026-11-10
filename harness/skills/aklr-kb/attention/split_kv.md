@@ -36,15 +36,19 @@ combine → `grid_dispatch.md` §3; GEMM-side split-K → `../gemm/small_m.md` �
 
 ## 1. The combine is a fixed cost
 - *(field, E1)* One graph node (an empty HIP kernel or a 1-element `torch.add`) cost 1.5–1.8 µs. *(field, E2)*
-  Priced by repeated launches, the combine's body was 0.13–0.53 µs, so ~88% of the combine was dispatch. *(field, E3)* It was 13–16% of the attention call at the
+  Priced by repeated launches, the combine cost 1.88–2.19 µs, of which its body was 0.13–0.53 µs: 76–93% of the
+  combine was dispatch, the least at the largest row count. *(field, E3)* It was 13–16% of the attention call at the
   larger row counts and 46% at the smallest, not a rounding error.
 - An empty kernel's duration is not what removing a launch saves: the producer's tail was overlapped by the next
   launch. Price a merge by launching the combine one extra time in the stream and reading the increase of the total
   (`../gemm/attribution.md` §3).
 - Run the combine with one wave per workgroup (`../gemm/grid_pricing.md` §2) and number its
   workgroups like the producer's ownership (`grid_dispatch.md` §3), unless each output merges many
-  partials. *(field, E42)* At 16–32 partials per (row, head), one 64-lane workgroup per (row, head) made the whole call
-  10–32% slower than 512-lane workgroups whose waves split the partials; 1.5% slower at 11, level at 4.
+  partials. *(field, E42)* With a running-max (online) merge at 16–32 partials per (row, head), one 64-lane workgroup
+  per (row, head) made the whole call 10–32% slower than 512-lane workgroups whose waves split the partials; 1.5%
+  slower at 11, level at 4 (one run per arm, one-wave output not validated). *(field, E58)* In a standalone combine
+  reducing the LSE column first (two-pass weights), one wave was level with or faster than 512 lanes doing the same, and at 96 heads and 32 partials took 19% less time than the 512-lane online merge:
+  the cost is the online merge's serial rescale chain, not the workgroup width.
 - Too few combine workgroups: split the value dimension into disjoint column slices (bit-identical).
   *(field, E4)* Gains fell monotonically with the unsliced CTA count (−9.7% at 224, −3.7% at 512, −0.6% at
   1536) and never changed sign. Each slice recomputes the split weights from the LSE column, so more
@@ -62,7 +66,9 @@ rendezvous as existing kernels write it.
 1. Write the partials and LSE as write-through stores that are visible across XCDs (`SC1` = aux value 16,
    device scope, is enough across XCDs; values 16 and 17 were both bitwise clean *(field, E5)*. `0x11` adds `SC0`,
    i.e. system scope. DLC (value 4) and SC0 give no cross-XCD visibility: with value 5 (SC0|DLC) the reader saw
-   the same stale elements as with no bits). The write-through is the release; add no fence.
+   the same stale elements as with no bits). The write-through is the release; add no fence on the writing side,
+   but read the partials and LSE with `SC1` loads too (or after an agent-scope acquire, at §3's price): a plain load
+   of a line the CU had read earlier in the launch returned the previous launch's value *(field, E53)*.
 2. Every wave waits `vmcnt(0)`, then a workgroup barrier (`s_waitcnt` covers only its own wave).
 3. One thread per workgroup arrives on a per-row sense-reversing counter: the master adds
    `SENSE − (n − 1)` with `SENSE = −(1 << 31)`, the others add 1, so each launch adds exactly `SENSE` and
@@ -76,7 +82,8 @@ rendezvous as existing kernels write it.
   polled the same way returned millions of NaN on streams limited to 64 and 128 CUs. A counter cannot record a
   share given up: use Bounded wait's arrival word (below), so that a broken assumption costs time, not a hung
   device or a wrong answer.
-- Column length: `2 ≤ n_groups ≤ 16` on one shared counter. *(field, E6)* 32 workgroups on one counter: +3.25%.
+- Column length: the merged kernel opened for `2 ≤ n_groups ≤ 16` on one shared counter; the cap rests on one
+  shape, its cause not isolated: *(field, E6)* 32 workgroups on one counter: +3.25%.
   *(field, E43)* With one launch-tagged flag per workgroup polled by one
   wave, 32 per row: −3.6% against producer + combine; 16: −2.0%; 21–22: +0.7%. The residency rule is unchanged.
   That kernel's tag, `dispatch.id` xor `queue.ptr`, can repeat; do not copy it (§3 gives one whose kept bits depend
@@ -87,7 +94,8 @@ rendezvous as existing kernels write it.
 The poll: make the polled load atomic or volatile; a plain load in a store-free loop is loop-invariant to LLVM
 and gets hoisted. On E8's kernel keep a nonzero sleep in the loop (*(field, E8)* zero sleep widened the run-to-run
 spread to 10.2%); the bounded waits below poll with an atomic and no sleep, and there `s_sleep(8)` took 1.0–1.6%
-more time and `s_sleep(2)` was within 0.3% (one run each, *(field, E47)*). In the merged epilogue only the number of rounds and the store width per round matter.
+more time and `s_sleep(2)` was within 0.3% (one run each, *(field, E47)*). In the one merged epilogue measured, what
+mattered was the number of rounds and the partial bytes read per round.
 *(field, E9)* Cutting the LSE reads per row by 37.5% changed nothing: they issue beside the longer partial loads.
 
 **Bounded wait.** Each split publishes its partial, waits `vmcnt(0)`, and sets its bit in an arrival word tagged
@@ -112,15 +120,17 @@ each share is merged by exactly one split, in split order, so the output bits do
 
 ## 3. When a "last workgroup reduces" ticket loses
 - **Parallelism collapses.** Only the last arrival knows all splits are in, so the reduce of a row runs in
-  one workgroup. With rows ≪ CUs that drops one to two orders of magnitude of parallelism. Its floor is
-  (reduce work ÷ the largest tile one wave holds) × one memory round trip. *(field, E10)* On a Triton split-K
-  decode: ~1 µs per loop iteration, ~9 µs of tail against the ~3 µs launch it removed, +79% to +510% even with a
-  correct release.
+  one workgroup. With rows ≪ CUs that drops one to two orders of magnitude of parallelism. Its tail then grows
+  with the reduce loop's iterations wherever the compiler does not overlap them. *(field, E10)* On a Triton split-K
+  decode, whose reduce sat in the last arrival's branch and stayed barely pipelined even at 8 stages: ~1 µs (one
+  memory round trip) per loop iteration, ~9 µs of tail against the ~3 µs launch it removed, +79% to +510% even
+  with a correct release.
 - **The producer pays for the reduce.** The reduce's live registers sit on the whole producer, and the
   tail that the next launch used to overlap is now exposed. *(field, E11)* Without a fence: kernel +7% and +144%,
   decode-step benchmark −2.5%.
-- **No agent-scope fence in a kernel that lives on L2 reuse.** A release/acquire fence writes back and
-  invalidates the XCD's L2. *(field, E12)* Decode-step benchmark −62%; *(field, E13)* release 5.1 µs + acquire
+- **No agent-scope fence in the epilogue.** An agent-scope release writes back the XCD's dirty L2 lines and waits
+  for them; the acquire invalidates, in L2, only non-coherently cached lines, so L2 reuse of `hipMalloc` memory
+  survives it. What the fences cost is their own latency, microseconds each *(field, E54)*. *(field, E12)* Decode-step benchmark −62%; *(field, E13)* release 5.1 µs + acquire
   1.3 µs, 3–4× the whole epilogue. Get cross-CU visibility from per-instruction scope bits.
 - Where thousands of output tiles reduce in parallel (the dQ partials of the gradient kernels), the same pattern also
   lost to a separate reduce kernel (`gradients.md` §6).
@@ -163,11 +173,13 @@ each share is merged by exactly one split, in split order, so the output bits do
   rows took 35% off the time of per-row chunk sizes, and the exact split another 3%; *(field, E40)* the exact split
   took 24% off per-row chunks in a second kernel; *(field, E39)* in a third it was 6–9% faster than per-row splits
   dispatched longest row first, and 2 CTAs per CU was slower on every shape.
-- **One workgroup per CU is a cliff.** *(field, E14)* Configurations at ≤ 1.0 CTA/CU won 1–16% (unless tiles
-  per CTA grew to 16); every configuration just above 1.0 (1.09–1.31) lost 2.5–22%: some CU then runs two
-  fat workgroups and that straggler sets the wall. Take the largest `n_groups` with
-  `rows × n_groups ≤ num_cu`; on a tie take fewer groups (less padding). This picked the measured best on
-  all nine sequence lengths tested.
+- **One workgroup per CU is a cliff, unless a second resident workgroup raises the CU's throughput.**
+  *(field, E14)* On the gather-bound decode producer, configurations at ≤ 1.0 CTA/CU won 1–16% (unless tiles per
+  CTA grew to 16); every configuration just above 1.0 (1.09–1.31) lost 2.5–22%: some CU then runs two fat
+  workgroups and that straggler sets the wall. *(field, E55)* With VALU-bound workgroups, two resident per CU,
+  1.09–1.31 CTA/CU was up to 13% faster than the best at ≤ 1.0. Measure both sides of 1.0. Otherwise take the
+  largest `n_groups` with `rows × n_groups ≤ num_cu`; on a tie take fewer groups (less padding). On the decode
+  producer this picked the measured best on all nine sequence lengths tested.
 - Cap tiles per workgroup and fall back to more groups beyond it. *(field, E14)* 16 tiles per CTA lost 2–20%
   where 11 won 8–11%.
 - **The residency limit is a second cliff.** *(field, E15)* Two resident CTAs per CU: 512 → 528 CTAs was +3% work
@@ -191,7 +203,8 @@ each share is merged by exactly one split, in split order, so the output bits do
   a second port *(field, E52)*. 2–8 tokens at 16 splits were not raced against 8.
 - **Tiles per split jump at divisibility boundaries.** `ceil(n / (splits × tile))` steps by a whole round.
   *(field, E22)* On a Triton split-K decode, widening the key set by 5 columns past a boundary cost 12–20%; by 64
-  columns (which divided again) 5–12%.
+  columns 5–12%. Part of the +5 cost is the odd width: *(field, E56)* an odd key count cost 7–9% at an unchanged
+  tile count, because Triton then splits the 16 B loads of the index rows into single dwords.
 - **Pin every other launch parameter when sweeping splits.** *(field, E23)* On a Triton split-K decode, a launcher
   heuristic dropped `num_warps` when the split count rose: +21.8%; with `num_warps` pinned the same split read
   −0.4%.
@@ -205,9 +218,10 @@ each share is merged by exactly one split, in split order, so the output bits do
 ## 6. Price the producer
 - Fit `t ≈ fixed + bytes / bandwidth`. *(field, E25)* `t ≈ (1.7–2.4 µs) + bytes / (6.0–6.2 TB/s)` over five
   shapes; the marginal bandwidth equalled the measured stream floor, so the body had no bandwidth left to buy.
-  The fixed part is the dispatch plus the dependent first hop (index → KV address).
+  The fixed part is per-call latency: the dispatch and the start-up before the gathers stream.
 - Confirm the fit on a clean axis: fix the group count, CTA count and tiles per CTA, and sweep only the
-  number of real tiles. *(field, E26)* Within ±5% of the per-tile fit `2.83 µs + 6.81 ns × tile`.
+  number of real tiles. *(field, E26)* The two sweeps' slopes, 7.15 and 6.46 ns per tile, lay within ±5.1% of the
+  per-tile fit `2.83 µs + 6.81 ns × tile`; single points lay up to 8% off it.
 - A plain gather with the same row width and index pattern shows what the pattern allows (in Triton, random 512 B
   rows ran 33% faster than rows 4.5 lines wide (576 B), and aligning those did not help *(field, E27)*), but it is
   not a ceiling: a tuned FlyDSL decode producer ran 5.9–9.5% faster than the plain Triton gather built to bound it
@@ -222,12 +236,14 @@ each share is merged by exactly one split, in split order, so the output bits do
   lost 4.6–18%: more random 128 B requests in flight only queued.
 
 ## 7. Gathers: unique lines and the index distribution
-- **The currency is unique 128 B lines per row (L2 misses).** *(field, E32)* On a sparse gather prefill under
-  uniform indices: all rows L2-resident −52.9%, all
+- **Under uniform random indices the currency is unique 128 B lines per row (L2 misses).** *(field, E32)* On a
+  sparse gather prefill under uniform indices: all rows L2-resident −52.9%, all
   rows MALL-resident only −10.7%, unique lines per row 5 → 3 −27.3%; cutting TCP requests per row 7 → 5
   with unique lines unchanged: +0.9%.
 - **Make each gather instruction contiguous across lanes** (lane j at byte 16j of the span), not one contiguous chunk per
-  lane: same bytes and lines. *(field, E41)* With two waves issuing every gather: 6–7% less time; with six: flat.
+  lane: same bytes and lines, fewer lines per instruction. It paid only while the gather was latency-bound, with few
+  loads in flight per CU, and was flat at full bandwidth *(field, E57)*. *(field, E41)* With two waves issuing every
+  gather: 6–7% less time; with six: flat.
 - **A row whose width is not a multiple of 128 B touches an extra line**: lines per row =
   ⌈(phase + width) / 128⌉, so a 4.5-line row starting at phase 0 or 64 always touches 5. Only a layout change
   reduces that, and it must be measured.
@@ -258,7 +274,9 @@ gap into 38%. Protocol:
 - No wait on another workgroup is unbounded or merges with partials missing: the merge is a separate combine
   launch, the last workgroup to arrive on an atomic counter (§1, §3), or a bounded wait that hands its share off on
   timeout (§2, Bounded wait); the driver's `--stress` passes at every Point the file lists.
-- The grid has ≤ 1 CTA per CU on every scored shape, and ≥ 2 tiles per split unless measured otherwise (§5).
+- With fat workgroups (§4), the grid has ≤ 1 CTA per CU on every scored shape, and ≥ 2 tiles per split unless
+  measured otherwise (§5); with 1–2 waves per workgroup, sweep the grid instead (a Gluon kernel's curve flattened at
+  about 4 workgroups per CU, §5).
 - The benchmark's indices reproduce production adjacency.
 
 ## Related
@@ -275,7 +293,7 @@ language, or bare graph nodes. "Decode-step score" is that campaign's ruler: the
 `sparse_mla_decode` / `mla_decode_combine` (GLM-5.2 TP4/EP4, H=16, topk 2048, fp8 KV in 576 B rows; MI355X, 256 CUs).
 
 - E1 [2026-09, gfx950, HIP (empty kernels and a 1-element torch.add as graph nodes), N=?, HIP graph replay; the torch.add floor with 20 replays, min of 5] cost of one graph node: empty-node floor 1.746/1.728/1.666 µs (round 14), 1-element torch.add 1.8477 µs (round 12), empty-kernel slope 1.4987–1.5709 µs per node (round 16)
-- E2 [2026-09, gfx950, FlyDSL 0.3.2, N=?, repeated-launch pricing: the combine launched 1, 2 and 3 times in one HIP graph, spread 0.03–0.14%] combine marginal cost 1.88/1.95/2.19 µs at seq 48/60/84, of which the body 0.134/0.218/0.526 µs: 88% dispatch (combine `mla_decode_combine`)
+- E2 [2026-09, gfx950, FlyDSL 0.3.2, N=?, repeated-launch pricing: the combine launched 1, 2 and 3 times in one HIP graph, spread 0.03–0.14%] combine marginal cost 1.88/1.95/2.19 µs at seq 48/60/84, of which the body 0.134/0.218/0.526 µs: 76–93% dispatch, 88% at seq 60 (combine `mla_decode_combine`)
 - E3 [2026-09, gfx950, FlyDSL 0.3.2, N=?, producer and combine captured in separate HIP graphs, ABBA, spread ≤1.7%] producer + combine: seq48 15.043 + 2.776 µs, seq60 16.821 + 2.997, seq84 22.127 + 3.414, seq8 4.484 + 3.802; the combine is 13.4–15.6% of a verify call (seq 48/60/84) and 46% of a draft call (seq8)
 - E4 [2026-09, gfx950, FlyDSL 0.3.2, N=14 at 1344 and 1536 CTAs (two independent 14-rep blocks), not stated for the other seven shapes, same-block ABBA with the combine timed behind the producer] combine Dv slices against unsliced, by the unsliced CTA count: 224 −9.72%, 512 −3.74%, 768 −1.19%, 1344 −0.74%, 1536 −0.58% (nine shapes, all negative); repeats at seq84/96 −0.74/−0.65% and −0.58/−0.39%
 - E5 [2026-09, gfx950, FlyDSL 0.3.2, N=?, `torch.equal` of partial, LSE and output against the two-kernel path] cache-policy value of the cooperative merge's partial/LSE stores: 16 (SC1) and 17 bitwise clean at the same cost; 0 and 5 (SC0|DLC) broke the same 1971 elements (seq60)
@@ -326,3 +344,9 @@ language, or bare graph nodes. "Decode-step score" is that campaign's ruler: the
 - E50 [2026-11, gfx950, FlyDSL 0.3.2, N=16 rounds, AKLR validate measurement profile 19, one MI355X] the 16-head file's first form on sglang's 36 decode sizes: violation fraction 1 (`numeric_mismatch`, `post_timing_mismatch`) at the 12 sizes of 40–128 tokens, its 2-split path, where the waiter's load of the partner's max and sum was issued before the wait; the 24 sizes at 8 or 16 splits and at 1 passed; with that load moved after the wait (and the review's other changes), all 36 passed, 1.291–1.768 over the baseline
 - E51 [2026-11, gfx950, FlyDSL 0.3.2, N=3 pairs, forge-loop paired keep gate, against the kept kernel] the arrival word stored back to zero by the split that completed it, as the only change, in a port of the 8-head kernel to 16 heads: 1 token 1.017–1.021, 32 tokens 1.001–1.004, 256 tokens 1.000; in the delivered file's campaign the same change was kept with ballot validity and precomputed row offsets, and timed alone once by the driver's bench at 1 token: 10.76 / 10.73 / 10.80 → 10.62 / 10.54 / 10.60 µs
 - E52 [2026-11, gfx950, FlyDSL 0.3.2, N=1–2 per arm, the forge driver's bench] the second port, last split merging all columns, 1 token: 16 splits 11.67 / 11.66 µs (16384 / 262144 slots) against 8 splits 10.84 in one run; 16 splits 11.42–11.50 in a later run, whose 8-split kernel read 10.60–10.67 at the session's start
+- E53 [2026-11, gfx950 (MI355X), HIP 7.15, N=8 × 50 launches per arm, every element checked] writer: `sc1` stores, `vmcnt(0)`, barrier, relaxed agent-scope flag, no fence; reader with `sc1` loads, or plain loads after an agent-scope acquire: 0 stale; plain loads of a buffer it had read earlier in the launch: 100% stale (the previous launch's value), writer on the same or another XCD (HIP microbenchmark on `hipMalloc` memory)
+- E54 [2026-11, gfx950 (MI355X), HIP 7.15, N=8, shuffled arms, `s_memrealtime`, A-vs-A 1.37%] 256 workgroups re-read 64 KiB another CU of their XCD had just read into L2: no fence 2.96 µs, after an agent-scope acquire 2.64 µs, after evicting it from L2 5.84 µs; per-wave fence time release 3.72 µs, acquire 3.76 µs (HIP microbenchmark on `hipMalloc` memory, all 1024 waves fencing at once)
+- E55 [2026-11, gfx950 (MI355X), HIP 7.15, N=8, shuffled arms, in-kernel time, A-vs-A 2.62%] VALU-bound workgroups (128 FMAs per gathered word), two resident per CU: 1.09–1.31 CTA/CU −12.7 to +1.6% against the best grid at ≤ 1.0, fastest at 1.5 and 1.72 CTA/CU (HIP microbenchmark, rows of 32 random-gather tiles split over `n_groups`)
+- E56 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=7, CUDA-graph replay, paired ratios, A-vs-A 1.30%] sglang's split-K sparse-MLA decode, `KV_SPLITS` 32 and `BLOCK_K` 64 pinned: 2048 → 2112 keys +8.9%; 2043 / 2047 against 2048 +9.4% / +7.2%; 2049/2053/2111/2113 against 2112 +8.1 to +8.3%; odd widths compile to 56–58 `buffer_load_dword`, multiples of 4 to 8–10 (fp8 KV, batch 1, 8 heads)
+- E57 [2026-11, gfx950 (MI355X), HIP 7.15, N=8, shuffled arms, in-kernel time, paired ratios, A-vs-A 1.46%] random 576 B rows gathered as 3 × 16 B loads by 12 lanes, lane j at byte 192c + 16j against per-lane 48 B chunks: 2 waves per CU, 2 groups of rows in flight 0.968 (about 4.0 TB/s), 4 groups 0.996; 6 waves 0.997 and 1.005 (about 6.0 TB/s) (HIP microbenchmark)
+- E58 [2026-11, gfx950 (MI355X), HIP 7.15, N=9, HIP-graph replay, paired ratios, A-vs-A 0.974–1.002] split-KV combine alone, D 512 bf16, one workgroup per (row, head), one 64-lane wave against 512 lanes: online merge, 96 heads, 32 partials 1.132 (512 lanes 4.396 µs); LSE column reduced first (two-pass), at most 1.006 at 16/96/128 heads and 4–32 partials, one wave 3.564 µs at 96 heads, 32 partials (HIP microbenchmark, outputs checked)

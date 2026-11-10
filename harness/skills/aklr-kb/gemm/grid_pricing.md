@@ -16,9 +16,10 @@ sources:
 
 # Pricing a GEMM's grid and tile
 
-> Most GEMM wins on gfx950 — and most wasted attempts — are decided by arithmetic you can do before
+> Many GEMM wins on gfx950 — and many wasted attempts — can be foreseen with arithmetic you can do before
 > writing code: how many workgroups there are, how full the last dispatch round is, what a split
-> costs, and what a structural change could return at most. Do that arithmetic first.
+> costs, and what a structural change could return at most. Do that arithmetic first; it ranks the
+> builds, and the race decides (§9).
 >
 > Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at the end.
 > Use them for direction and order of magnitude, never as a target for your shape.
@@ -58,6 +59,9 @@ waves_per_simd = min(8, floor(512 / round_up(regs_per_wave, 8)))
 wg_per_cu      = min(floor(4 * waves_per_simd / W), floor(163840 / round_up(lds_bytes_per_wg, 1280)), floor(32 / W))
 ```
 
+*(field, E46)* Measured residency on MI355X matched this at W = 1–4, 8 and 16; at W = 5 and 6 one workgroup fewer
+fit per CU (W = 5 at 136 registers: 1, not 2), as `floor(waves_per_simd / ceil(W / 4))` gives, so use that term there.
+
 A register-heavy GEMM is usually 1, which makes `slots = 256`.
 
 How to read it:
@@ -66,11 +70,12 @@ How to read it:
 |---|---|---|
 | `tiles < NCU` | every workgroup walks all of K serially; latency is set by K, not M | split K, or shrink the tile |
 | `last_round == slots` (`eff ≈ 1`) | no idle slot to recover; intensity is the limit | **widen** the tile, to one that still fills whole rounds |
-| `last_round < slots` | CUs idle through the last round | **narrow** the tile (or split) so the last round fills |
+| `last_round < slots` | CUs idle through the last round | **narrow** the tile (or split) so the last round fills, then race it (below) |
 
-These directions were measured on compute- or feed-bound tiles at large M (E1–E3). On the small-M rows measured that
-stream a read-once B from HBM (`small_m.md` §2) every way to a larger grid lost: idle CUs there were not bandwidth to
-recover.
+These directions were measured on compute- or feed-bound tiles at large M (E1–E3). On small-M rows that stream a
+read-once B from HBM (`small_m.md` §2) a larger grid lost where the base already launched 132–192 workgroups and won
+where an untuned base launched 112: *(field, E48)* on aiter's FlyDSL bf16 HGEMM at M 8–16, split-K 2, split-K 4 and a
+half-width tile were 7–63% slower on four shapes and 8–11% faster on the fifth. Race a larger grid there.
 A full round is what the arithmetic aims at, not a measured optimum: race the grids around it (`small_m.md` §3).
 
 **At M 256–4096 the final campaign kernels for bf16 launched no more workgroups than CUs, one full round wherever
@@ -160,7 +165,9 @@ estimated ~42 µs ⇒ `s=1` is correct; the autotuner that picked it was right.
   `sum(dim=0)` reaches half of it, and the reduce is a sixth of a split launch -- the fold's form decides
   whether a split pays at all" (`_fold_mxfp4_partials`, `gemm_mxfp4_kernel.py:3540-3546`).
 - **A bandwidth reduce beats an atomic-fused one** here, "since same-address HBM atomics serialise"
-  (`gemm_mxfp4_kernel.py:4536-4538`). Atomic split-K is also not bitwise reproducible.
+  (`gemm_mxfp4_kernel.py:4536-4538`). Atomic split-K is also not bitwise reproducible once an output receives three
+  or more partials, or two on a C that is not zeroed first, since partials are added in arrival order *(field, E50)*;
+  bit-identical repeats do not prove that order fixed.
 - **MXFP8 splits only the tail round.** `k_split = NCU / tail` when the tail divides the CU count, with
   at least 16 K iterations per slice; head and tail must both be whole rounds (`_mx_ksplit`,
   `gemm_mxfp8_kernel.py:654-672`). *(field, E8)* A uniform split netted out at zero.
@@ -192,10 +199,11 @@ Refinements, in the order they usually pay:
   and can fail on a stream limited to part of the CUs. The counter's fold runs on one CU, so race it against a
   separate reduce kernel per shape.
 
-**The reduce kernel itself.** It has many more workgroups than CUs, so occupancy is not its limit; the
-number of waves per workgroup only decides whether the sum crosses waves (barriers and LDS round-trips).
-Try one wave per workgroup first. *(field, E14)* An attention decode's combine kernel, written in Triton, went
-from 4 waves to 1: `s_barrier` 5→0, time −3.7…−6.7%. One wave stops paying where each output merges many
+**The reduce kernel itself.** Try one wave per workgroup first, then race 2–8 waves: the wave count decides whether
+the sum crosses waves (barriers and LDS round-trips), and it moved the time even where the sum did not cross waves.
+*(field, E14)* An attention decode's combine kernel, written in Triton, went
+from 4 waves to 1: `s_barrier` 5→0, time −3.7…−6.7%. *(field, E51)* In a Triton split-K reduce, one wave was best or
+within 3% in 31 of 48 cells and 5.6–41% slower in 10, all at 4 or more splits. One wave stops paying where each output merges many
 partials: race wider workgroups there (`../attention/split_kv.md` §1). A changed reduction tree
 is not bit-identical to the old one — gate it against an independent reference, not old-vs-new max diff.
 
@@ -237,7 +245,7 @@ The register tier gives waves per SIMD (`waves_per_simd` in §1). A workgroup's 
 must all be resident on one CU, so the reachable occupancy is quantized by workgroup size:
 
 ```
-waves_per_cu = floor(4 * waves_per_simd / W) * W    # W = waves per workgroup
+waves_per_cu = floor(4 * waves_per_simd / W) * W    # W = waves per workgroup, at most 4 or a multiple of 4 (§1)
 ```
 
 With an 8-wave workgroup only 2/4/6/8 waves per SIMD are reachable: cutting from 128 to 96 registers
@@ -291,13 +299,14 @@ t_tile = a · n_kblocks + F
 ```
 
 `F` — prologue, epilogue, tail peel, address and descriptor setup, drain — is paid once per tile, and its
-share `F / (a · n_kblocks + F)` grows as K shrinks. Across a shape table it usually explains the TF/s
-ranking better than any other variable. *(field, E20, E21)* `F` = 2.21 K-blocks of 256: an estimated 16% of tile
+share `F / (a · n_kblocks + F)` grows as K shrinks. Across a shape table it can explain much of the TF/s
+ranking. *(field, E20, E21)* `F` = 2.21 K-blocks of 256: an estimated 16% of tile
 time at K=2944 (11.5 blocks), 1.7% at K=32768, and the table's TF/s order was essentially the inverse of that
 share. By the fit, removing one K-block of `F` is worth ~4–5% over that table — a projection, not a measurement,
 but already larger than the 1–2% that swizzle and candidate-table changes returned *(field, E22)*.
 
-Kernel-argument preload (`small_m.md` §6) trims `F` at any M: *(field, E23)* −0.2 to −0.6% at M ≈ 900–16k, not only at small M.
+Kernel-argument preload (`small_m.md` §6) can pay past small M, though not at every M: *(field, E23)* −0.2 to −0.6% at
+M ≈ 900–16k.
 *(field, E40)* At M 256–4096 the ablation rows that carried it paid +0.7% to +2.8% on each of eight bf16 GEMMs
 (several bundled other changes: an XCD remap at N=256, a constant tile map at N=3584, a new m=2048 tile route at
 N=2048; at N=7168, K=512 +1.0% at m=4096 to +4.8% at m=256), but at N=28672, K=512, m=2048 it
@@ -308,7 +317,8 @@ Two traps when reading such a table:
 - **Compare absolute µs, not TF/s, across padded shapes.** TF/s counts useful FLOPs, so padding waste
   shows up as "efficiency" instead of as work done.
 - **"Divisible ⇒ fast" is not a rule.** *(field, E24)* K=2816 (11 K-blocks) ran slower than K=2944 padded to 12
-  blocks, because an odd block count fell off an unroll-2 pipeline's store-folding path. Before adding a
+  blocks; at that odd block count the kernel's gate also turns off the unroll-2 pipeline's store folding, which may
+  account for part of it. Before adding a
   shape, evaluate the kernel's own gates (parity of block counts, tail predicates) for it.
 
 ## 7. Bound the gain before building: the illegal arm
@@ -322,16 +332,19 @@ If the ceiling is below what you need, skip the idea.
 
 ## 8. Boundary variants are not free
 
-Each extra body variant (a quarter-N or quarter-M tail, a half-K body) adds code even when it never runs.
-*(field, E26)* On a grouped GEMM, one variant added 739 instructions (+39.5% of the module) and cost 0.32 points
-averaged over the four cells measured, all compiled into that module, with VGPR, SGPR and LDS identical across arms — code size alone.
+Each extra body variant (a quarter-N or quarter-M tail, a half-K body) adds code and a runtime select even when it
+never runs. *(field, E26)* On a grouped GEMM, one variant added 739 instructions (+39.5% of the module) and cost 0.32
+points on average, inside that bench's A-vs-A noise (p95 0.57). *(field, E55)* On a HIP bf16 GEMM, 4.6–18.4 KB of
+never-executed code before, after or inside the K loop cost nothing measurable, while a never-taken branch before the
+loop changed the loop's register assignment and start address and cost 1.2–1.6%: the cost came with the branch, not
+the code size.
 
 ```
 net = hit_rate × gain_per_tile × shapes_that_trigger − carry_cost × shapes_in_module
 ```
 
 Measure the hit rate on the scored input distribution first: a runtime ragged tail can be 0% on balanced
-inputs. When a variant does pay, prefer re-assigning waves over computing less — a ragged tile wastes
+inputs. When a variant does pay, re-assigning waves is an alternative to computing less: a ragged tile wastes
 whole waves pinned to an empty region, and re-tiling the waves (e.g. 2×2 → 4×1) serves the N tail, while
 the same body rotated 90° serves the M tail. Write the gate as geometry (`m_tail <= rows_per_wave`), not
 as shape constants.
@@ -343,17 +356,21 @@ A second tile shape trades arithmetic intensity for CU fill. Price both sides be
   narrower 256×192 tile join the race only when its gain in resident workgroups exceeds its loss in
   intensity: `coverage(rect) / coverage(square) > intensity(rect) / intensity(square)` (`_nt4_geoms`,
   `gemm_fp8_kernel.py:2102-2119`).
-- **A narrow tile wins only where its extra tiles still fit in the same number of dispatch rounds**, so
+- **A narrow tile usually pays only where its extra tiles still fit in the same number of dispatch rounds**, so
   each round is shorter. Turbo's MXFP4 picks BLOCK_N=192 over 256 only when the 192 grid needs no more
   rounds and its priced time is lower: a k-block at the pessimistic feed ratio `(BM + BN) / (2·BM)`, plus
   the C store the narrow tile can no longer fold (`_mxfp4_pick_block_n`, `gemm_mxfp4_kernel.py:3426-3445`).
-  The store penalty was solved from one measured shape; re-derive it for your kernel.
+  The store penalty was solved from one measured shape; re-derive it for your kernel. *(field, E54)* At K=8192,
+  narrowing that added a round lost 10 of 14 pairs, yet 256×128 in three rounds beat 256×256 in two whose last round
+  held 8 tiles (347.3 against 365.0 µs); with no added round it lost on two bf16 GEMMs (E37, §1): race it either way.
 - **Dead quadrants still issue their MFMAs.** The descriptor bound drops only their loads and stores. An
   exact tile (e.g. 192 rows when M divides by 192) therefore shortens every workgroup's own path. Turbo
   adds exact tiles only when they fit in one CU pass and cut the per-workgroup MFMAs per K block
   (`gemm_fp8_kernel.py:2066-2070, 2134-2144`).
-- **Work freed on only some workgroups returns less than it looks.** On a power-capped part, idle CUs
-  come back as clock for the others, not as wall time (`_nt4_wg_path` docstring, `gemm_fp8_kernel.py:2134`).
+- **Work freed on only some workgroups returns less than it looks.** The wall follows the path every workgroup
+  walks; on a power-capped part Turbo counts idle CUs as coming back only as clock for the others (`_nt4_wg_path`
+  docstring, `gemm_fp8_kernel.py:2134`). Whether they do depends on the run's clock state: read each arm's clock
+  (`measurement.md` §3).
 - **The race decides, not the plan.** An analytic ranking only orders the builds.
 
 ## 10. Persistent tiles per workgroup
@@ -386,11 +403,14 @@ A second tile shape trades arithmetic intensity for CU fill. Price both sides be
 - **In a one-round launch, race dropping the next-tile prefetch the persistent body carries.** *(field, E43)* At
   N=28672, K=512, skipping the last two K-blocks' next-tile DMAs and the last block's wait took m=512 from 20.3 to
   19.2 µs and left m=256 unchanged (15.40–15.48 against 15.40).
-- **Keeping B resident in LDS does not pay when B already sits in L2.** *(field, E31)* At K=128 with a sub-MB B, a
+- **Keeping B resident in LDS gained ~1% or lost in the two FlyDSL kernels tried; B sitting in L2 does not by itself
+  rule it out.** *(field, E31)* At K=128 with a sub-MB B, a
   persistent kernel holding each workgroup's B slice gained ~1% at M=16384 and lost 10–22% at M=9397. *(field, E44)*
   At K=512 (N=7168, m=512) keeping the B panel in LDS for two 64-row sub-tiles per workgroup lost 12.5–19.3%; with
   the stores removed it still read 7.37 µs against 6.46 µs for the incumbent with its stores removed, so the loss was
-  not in the stores. Whether B already sat in L2 was not measured.
+  not in the stores. Whether B already sat in L2 was not measured. *(field, E53)* In a HIP GEMM without software
+  pipelining (64×64 bf16 tiles, K=128 and 256), re-reading B every tile hit L2 on 95–100% of the extra requests and
+  still took 1.03–1.21× the time of keeping B resident.
 
 In FlyDSL: `../flydsl/gemm.md` § grid_pricing §10.
 
@@ -434,7 +454,7 @@ AKLR's bf16 GEMM schema of that N and K.
 - E23 [2026-10, gfx950, FlyDSL 0.3.2, N=3, bench_cudagraph in the same process as the incumbent, median of 3] kernel-argument preload count 16: m=893 74.21 → 73.92, m=2732 184.03 → 183.64, m=9397 625.45 → 621.71, m=16384 1056.47 → 1053.95 µs (−0.2% to −0.6%) (gemm_n6016_k7168 forge run)
 - E24 [2026-09, gfx950, FlyDSL ?, N=?, timer not stated] K scan at M=32768, N=4096: K=2816 (11 K-blocks of 256) 190.9 µs, K=2944 (11.5 blocks, padded to 12) 178.2 µs, K=3072 185.4 µs; by the kernel's gate `(ki >= 4) and (ki % 2 == 0 or half_k)` the folded C store is off at ki = 11 (Turbo MXFP4 dense GEMM, 256×256×256 tiles)
 - E25 [2026-09, gfx950, FlyDSL 0.2.4, N=1, the round's probe script, one run per arm, per-arm JIT cache directories, absum to prove the arm is live] no wait on the k=0 prefill (wrong output, absum 8.67e35 against 1.06e8): 214.00 → 212.47 µs (−0.72%) (Llama out_proj_dgrad shape; Turbo MXFP4 dense GEMM)
-- E26 [2026-09, gfx950, FlyDSL 0.2.4, N=5, campaign score: frozen-denominator geomean over 8 cells, each cell drift-corrected against 4 inert wgrad cells] a runtime M-tail body compiled into the NT module: module 1870 → 2609 instructions (+739, +39.5%), VGPR 480 / SGPR 96 / LDS 163840 identical across arms; −0.31 and −0.34 points on the two cells where it does not fire (B−A), −0.32 mean over 4 NT cells with the body compiled but its predicate false (C−A); gm −0.134 ± 0.045 (gpt-oss plain MXFP4 grouped MoE GEMMs fc2_fwd and fc1_dgrad)
+- E26 [2026-09, gfx950, FlyDSL 0.2.4, N=5, campaign score: frozen-denominator geomean over 8 cells, each cell drift-corrected against 4 inert wgrad cells] a runtime M-tail body compiled into the NT module: module 1870 → 2609 instructions (+739, +39.5%), VGPR 480 / SGPR 96 / LDS 163840 identical across arms; −0.31 and −0.34 points on the two cells where it does not fire (B−A), −0.32 mean over 4 NT cells with the body compiled but its predicate false (C−A, N=2: −0.06 / −0.43 / −0.55 / −0.22); that bench's A-vs-A over 96 cell runs: mean |0.22|, p95 |0.57|, max |0.71| points; gm −0.134 ± 0.045 (gpt-oss plain MXFP4 grouped MoE GEMMs fc2_fwd and fc1_dgrad)
 - E27 [2026-10, gfx950, FlyDSL 0.3.2, N=4–6, AKLR graph timer, arms interleaved in one process, 4–6 reps each, medians] persistent 2-tile grid (1280 workgroups) by store placement tail / eager / after_issue: m=14 16.69 / 17.50 / 16.46 µs and m=12 16.42 / 16.54 / 15.73 µs against 15.56 and 14.91 µs with one tile per workgroup (+5.5% to +12.5%); a two-tile walk of the skinny kernel (2560 workgroups): m=8 14.97–15.16 against 14.44 µs, m=12 15.10–15.19 against 14.91, m=14 15.71–15.78 against 15.57 (+0.9% to +5.0%) (gemm_n163840_k256 forge run)
 - E28 [2026-10, gfx950, FlyDSL 0.3.2, N=1, own CUDA-graph harness, all arms in one process, 10 launches per graph, median of 10 replays] the same 256×256 body as a persistent 256-workgroup grid against one tile per workgroup: m=35107 0.1143 against 0.1200, m=104093 0.3019 against 0.3183, m=342073 0.9738 against 1.0022 ms (−2.8% to −5.2%); 1656 / 4884 / 16044 tiles, about 6.5 / 19 / 63 per workgroup (computed) (gemm_n3072_k512 forge run)
 - E29 [2026-10, gfx950, FlyDSL 0.3.2, N=3, forge-loop ablation ladder, 3 pairs, driver --bench-mode] the start-delay round (the delay is applied at m ≤ 200k only) against its parent: m=35107 +2.92%, m=104093 +1.06%, m=342073 +0.02%; +1.33% [+1.17, +1.49] over the three (gemm_n3072_k512 forge run)
@@ -454,3 +474,10 @@ AKLR's bf16 GEMM schema of that N and K.
 - E43 [2026-11, gfx950, FlyDSL 0.3.2, N=3, driver --bench-mode (warmup 3, 20 iterations), ms] N=28672 K=512 m=512: next-tile prefetch skipped when every workgroup runs one item (K-blocks 6 and 7 issue no DMA, K-block 7 drops its mid-block wait and barrier) 0.0203 → 0.01920 ms; m=256 0.01540–0.01548 against 0.01540 for the build before it
 - E44 [2026-11, gfx950, FlyDSL 0.3.2, N=4–5, interleaved in-process probe on AKLR's graph clock, medians of 5 readings] N=7168 K=512 m=512, B panel kept in LDS for two 64-row sub-tiles per workgroup: −12.5% to −19.3% against the incumbent's 7.296–7.299 µs; with its stores removed (timing only) 7.372, −1.0% against the incumbent with its stores and +14% against the incumbent with its stores removed (6.459)
 - E45 [2026-11, gfx950, FlyDSL 0.3.2, N=1–3, medians of 4–8 alternating graph readings, ISA dumps] 256×384 tile at m=4096: first BK 64 build with 16×16×32 MFMAs and a direct per-lane C store (a timing proxy) `.vgpr_count` 256, 164 B scratch, 54 `scratch_` instructions with spills inside the K loop; with 32×32×16 and C staged through LDS in two halves `.vgpr_count` 256, 0 AGPRs, 0 `scratch_`, 67.08 against the library's 63.87–64.10; that row with the DMA after the first slice and the row-pair swizzle 63.86–63.90 against the library's 63.94, rebuilt at 254 VGPRs, 0 AGPRs, 0 `scratch_`; 32×32×16 at m=2048 39.07–52.83 against 33.89, m=1024 21.92–22.76 against 21.04, m=512 15.13–16.76 against 14.96 (bf16 GEMM N=6144, K=1536)
+- E46 [2026-11, gfx950 (MI355X), HIP 7.15, N=3 repeats, peak resident workgroups per CU counted from `HW_ID` and `XCC_ID` on all 256 CUs] equal to the formula on every CU for 23 configurations at W = 1–4, 8 and 16, chosen to separate each term; one fewer at W = 5 (136 registers: 1 against 2) and W = 6 (80 VGPRs: 3 against 4), both equal to `floor(waves_per_simd / ceil(W / 4))` (occupancy probe kernels)
+- E48 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=7 rounds, arms rotated in one process, torch profiler kernel time, B read cold] aiter's FlyDSL bf16 HGEMM (`flydsl_hgemm`) at M 8–16, split-K 2, split-K 4 and a half-width tile against the base: +7.2% to +63.5% on the four shapes whose base launched 132–192 workgroups, −7.8% to −10.8% on 8×7168×16384, whose untuned base launched 112 (aiter dbd8bf5 `aiter/ops/flydsl/kernels/splitk_hgemm.py`)
+- E50 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=120 runs per arm (back to back, after a 512 MiB write, beside a copy on another stream), each compared bit for bit with the arm's first run] FlyDSL's `gemm_a16w16` atomic split-K (split 0 zeroes C, each split adds its partial): bf16 C 119 of 120 runs differed at M=1280, N=64, K=4096, split 8 and at M=512, N=2560, K=6144, split 3 (fp32 C 115 and 44 of 120); M=N=K=2048, split 4 0 of 120 (ROCm/FlyDSL@dd8373349:kernels/gemm/gemm_a16w16_gfx950.py)
+- E51 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=7 rounds of graph replays, arm order rotated per round; tied = within 3% of the best arm, lost = more than 5% behind it in at least 6 of 7 rounds] only `num_warps` 1 / 2 / 4 / 8 changed: one wave best or tied in 31 of 48 cells, lost in 10 by 5.6% to 41.3%, all at S ≥ 4; an element-wise form with no `s_barrier` or LDS access at any wave count moved more than 5% across wave counts in 22 of its 24 cells (Triton kernels reducing fp32 split-K partials into bf16, M 256 / 1024 / 4096, N=4096, S 2 / 4 / 8 / 16)
+- E53 [2026-11, gfx950 (MI355X), HIP 7.15, rocprofv3, N=7 rounds, 1 GiB read before each call, kernel-trace time, median of per-round ratios; PMC `TCC_REQ_sum` and `TCC_HIT_sum`] a persistent bf16 GEMM without software pipelining (64×64 tiles, whole K in LDS, K=128 and 256) keeping each workgroup's B block in LDS against re-reading it every tile: resident / re-read time 0.824–0.976 on six shapes (B 384 KB–16 MB), with 0.953–1.000 of the extra B requests hitting L2 (HIP GEMM, M 8192–32768, N 1536–65536)
+- E54 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=9 rounds of back-to-back calls, arm order rotated, torch profiler kernel time, median of per-round narrow / wide ratios] K=8192, one workgroup per CU, 192×256 or 256×128 against 256×256 tiles on FlyDSL's `gemm_a16w16` and aiter's MXFP4 assembly GEMM: narrow faster in 3 of 3 pairs at the same round count, slower in 10 of 14 that added a round; FlyDSL 256×128 at M×N 8448×2048 (528 tiles in three rounds against 264 in two, 8 in the last) 347.3 against 365.0 µs (ROCm/FlyDSL@dd8373349:kernels/gemm/gemm_a16w16_gfx950.py)
+- E55 [2026-11, gfx950 (MI355X), HIP 7.15, N=31 rounds, each workgroup's `s_memtime` cycles to its C store, median of per-round ratios; A/A within 0.051%] a bf16 GEMM (256×192 tiles, one workgroup per CU, K 1024 and 4096, warm and cold) with a block of inline assembly behind a branch on an always-0 argument: 4624 B or 18448 B before, after or inside the K loop within ±0.04% of a 16 B block; the 16 B block and its branch against no block (MFMA accumulators renumbered, loop start 1332 against 1296) +1.23% to +1.65% (dead-code placement probe kernels)

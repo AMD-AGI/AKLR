@@ -9,8 +9,8 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1, AKLR validate measurement profile 19
 measured:
-  - {metric: "speedup over aiter, AKLR validate profile 19, per Point; no CI measurement yet", value: "1.130–1.290; 8 of 8 Points at or above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n6144_k4096 file 3e2804d64ce6b4c7, m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
-  - {metric: "speedup over aiter, AKLR validate profile 19, per Point; no CI measurement yet", value: "1.085–1.309; 7 of 7 Points at or above AKLR_MIN_SPEEDUP; m 64 not yet measured with its fold launch", gpu: MI355X, workload: "gemm_n6144_k6144 file f73a587b360cf0f3, measured as its predecessor, whose code differs only at m 64, m 1, 2, 4, 8, 16, 32, 128", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.130–1.290; 8 of 8 Points at or above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n6144_k4096 file 3e2804d64ce6b4c7, m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.085–1.309; 7 of 7 Points at or above AKLR_MIN_SPEEDUP; m 64 left out, where the predecessor runs a one-launch fold", gpu: MI355X, workload: "gemm_n6144_k6144 file f73a587b360cf0f3, measured as its predecessor, whose code differs only at m 64, m 1, 2, 4, 8, 16, 32, 128", date: "2026-11-09"}
 sources:
   - aklr/ops/gemm/impls/flydsl/gemm_n6144_k4096/3e2804d64ce6b4c7.json
   - aklr/ops/gemm/impls/flydsl/gemm_n6144_k6144/f73a587b360cf0f3.json
@@ -20,7 +20,7 @@ sources:
 
 Two FlyDSL kernels for the `gemm@1.0` contract on 48 and 72 MiB weights, one file per schema name, each listing
 m 1, 2, 4, …, 128. Each file embeds its kernel as `kernel.sources[0].content` (`kernel.py`); the function names below
-are in that file. "m" is the Point's M. N 6144 × K 4096 reuses the `_build_skinny` strip builder of
+are in that file. "m" is the Point's M. N 6144 × K 4096 runs an extended version of the `_build_skinny` strip builder of
 `gemm_n6144_k16384`; N 6144 × K 6144 has a strip kernel of its own (`_build_strip`) and, at m 64 and 128, a split-K
 kernel (`_build_splitk`). The band kernels of the same decode sizes, which split M × N × K differently, are in
 [k3_bf16_band_stream.md](k3_bf16_band_stream.md); the split-K folds of the Kimi-K3 K 7168 kernels in
@@ -33,18 +33,19 @@ kernel (`_build_splitk`). The band kernels of the same decode sizes, which split
   Every reduction these kernels run at a listed Point adds in a fixed order, with no atomics on data.
 - N = 6144 with K = 4096 or 6144: 48 or 72 MiB of `b`, against at most 1.5 MiB of `a` at these m (estimated from the
   shapes), so each kernel gives every CU its own strip of `b`.
-- No other file serves these Points, so the yardstick is aiter. Until CI writes their `speedup`, dispatch does not
-  serve these files (`qualifies()` in `aklr/core/contract/spec/_workloads.py`; `AKLR_MIN_SPEEDUP`, default 1.03,
-  `aklr/ops/README.md` § Environment variables).
+- No other file serves these Points, so the yardstick is aiter. Dispatch serves a Point whose CI `speedup` reaches
+  `AKLR_MIN_SPEEDUP`, default 1.03 (`qualifies()` in `aklr/core/contract/spec/_workloads.py`; `aklr/ops/README.md`
+  § Environment variables); every listed Point of both files reaches it in CI, 1.081–1.316, so all 16 are served (#125).
 
 ## Counter-signals
 
 - **m 64 and 128 at K 6144 take two launches.** On this kernel a one-launch fold, in which the last of the four
   splits to count in on a launch-tagged counter adds the planes, read 18.30 µs against 19.38 for the fold launch at
-  m 64, and 24.05 against 23.82 at m 128 *(field, E4)*. Its counter word came from a `torch.empty` workspace the call
-  had not written, which `SKILL.md`'s Stop table rules out, so both Points take the second launch. At m 64 the
-  one-launch fold measured 1.272 over aiter *(field, E2)*; m 64 has not been measured with the fold launch, an
-  estimated 6% slower there from E4's times.
+  m 64, and 24.05 against 23.82 at m 128 *(field, E4)*. AKLR's per-kernel timer gives the same order at m 64 but reads
+  the fold launch's short second kernel at its floor; on the wall time of back-to-back calls the one-launch fold was
+  the slower at both m, 19.29 against 18.50 µs at m 64 *(field, E5)*. Its counter word came from a `torch.empty`
+  workspace the call had not written, which `SKILL.md`'s Stop table rules out, so both Points take the second
+  launch. At m 64 the one-launch fold measured 1.272 over aiter *(field, E2)*.
 - **The thinnest margins** are K 6144 at m 32 (1.085) and K 4096 at m 128 (1.130) *(field, E1, E2)*.
 - **Fallback.** N 6144 × K 4096 sends m > 128 to `torch.matmul`, N 6144 × K 6144 any m outside its tables; no listed
   Point reaches either.
@@ -96,13 +97,15 @@ Shared by both strip kernels (all of N 6144 × K 4096; N 6144 × K 6144 at m ≤
 
 `speedup` here is AKLR validate's one-sided lower bound of the aiter / kernel time ratio (measurement profile 19,
 `MEASUREMENT_PROFILE` in `aklr/core/validation/stages/_measure.py`; aiter's tuned `gemm_a16w16` through
-`gemm_baseline`), on one MI355X at main 0e02a81 with FlyDSL 0.3.2; CI has not measured these files. N 6144 × K
-6144 was measured as its predecessor, whose code differs only at m 64 (§ Counter-signals).
+`gemm_baseline`), on one MI355X at main 0e02a81 with FlyDSL 0.3.2. N 6144 × K
+6144 was measured as its predecessor, whose code differs only at m 64 (§ Counter-signals). Dispatch reads the
+`speedup` CI writes: 1.204–1.316 at K 4096 and 1.081–1.300 at K 6144 (m 64, the fold launch, 1.117), all 16 Points
+served (#125).
 
 | File | Points | Speedup over aiter | Highest |
 |---|---|---|---|
 | N 6144 × K 4096 `3e2804d6…` *(field, E1)* | m 1–128 | 1.130–1.290 | 1.290 at m 4 |
-| N 6144 × K 6144 `f73a587b…` *(field, E2)* | m 1–32, 128 | 1.085–1.309 | 1.309 at m 128 (split-K, two launches); m 64 not yet measured with the fold launch |
+| N 6144 × K 6144 `f73a587b…` *(field, E2)* | m 1–32, 128 | 1.085–1.309 | 1.309 at m 128 (split-K, two launches) |
 
 Every Point passed accuracy. Kernel times at K 6144 ran from 12.91 µs (m 1) to 24.23 µs (m 128) *(field, E2)*.
 Under stress every listed Point gave the output of the call alone, K 6144 as its predecessor *(field, E3)*.
@@ -134,6 +137,7 @@ GEMM schema included. A Point CI measures below the threshold stops being served
 - E2 [2026-11, gfx950, FlyDSL 0.3.2, N=16, the ruler of E1; times are the median of a Point's per-round times] the predecessor of f73a587b360cf0f3, the same code but for a one-launch fold on a launch-tagged counter at m 64: 1.166, 1.106, 1.109, 1.114, 1.194, 1.085, 1.272, 1.309 at m 1, 2, 4, 8, 16, 32, 64, 128; kernel 12.91 µs at m 1, 24.23 at m 128; accuracy passed (gemm_n6144_k6144)
 - E3 [2026-11, gfx950, FlyDSL 0.3.2, N=20, eager and op-level CUDA-graph stress on one MI355X, main 0e02a81 with each schema, each try compared byte for byte with an eager call alone] 3e2804d64ce6b4c7 and the predecessor of f73a587b360cf0f3 (E2), every listed Point: the forge driver's conditions (streams limited to 16 and 64 CUs; a second concurrent call on the same inputs) and one captured graph replayed on the same inputs, 20 tries each; one graph replayed 24 times with three AKLR input sets rotated into its buffers; two calls at once on two streams with different inputs, unrestricted and both on the same 64 CUs, 20 tries each: 0 tries differ; a full model's decode graph was not run
 - E4 [2026-11, gfx950, FlyDSL 0.3.2, N=?, the campaign's interleaved A/B, timer not stated in the record] N 6144 × K 6144: the one-launch tagged fold with batched loads and its own quarter from registers 18.30 µs against 19.38 for the fold launch at m 64, 24.05 against 23.82 at m 128
+- E5 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=10 rounds in one process, AKLR's `bench_cudagraph` (per-kernel times summed per call) and the wall time per call of one CUDA graph of 525 back-to-back calls] the predecessor of f73a587b360cf0f3 (E2) at K 6144, its one-launch tagged fold against the fold launch, outputs bitwise equal: per-kernel 18.34 against 19.46 µs at m 64, the fold launch's second kernel 4.43 µs against 4.39 for a one-element `zero_()`; wall time 19.29 against 18.50 µs at m 64, 26.42 against 25.07 at m 128
 - S1 harness/scripts/forge_task/assets/aklr_forge_driver.py:437 `_stress_conditions`; `beside_another` at :456 gives the second call the same inputs (`twin = {**call, …}`, :457)
 - S2 aklr/ops/gemm/impls/flydsl/gemm_n6144_k4096/3e2804d64ce6b4c7.json#kernel.py:26 `_SKINNY` per m; `B_LIVE` at :116; rows past the strip sent past the descriptor at :180; XCD-major index kid at :154, strip and row half at :155-160; first K tile at :187; fold at :274-312; preload at :325
 - S3 aklr/ops/gemm/impls/flydsl/gemm_n6144_k6144/f73a587b360cf0f3.json#kernel.py:21 `_STRIP` and `_SPLITK` (:30); strip number at :183; 24-row B stages and the comment on reading the next stage at :140 and :156-157; last DMAs from the first waves only at :219-228; K start at :205; K slice per XCD pair at :385-389; partial stores at the default policy (`aux` 0) at :495-504, every row of the plane over `OUT_PASSES`; fold kernel in split order at :506-527, launched after the split-K kernel at :529-535; `torch.empty` workspace of the four planes per call at :552-553

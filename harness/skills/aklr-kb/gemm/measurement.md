@@ -39,8 +39,10 @@ flydsl: 0.3.2
 ## 2. Arm order
 
 - **One process per arm (whole-score or kernel A/B): `A B`, or `A B A B` for more confidence. No
-  palindromes** (`A B B A`): each arm already carries its own warmup and median, so a palindrome only
-  doubles machine time.
+  palindromes** (`A B B A`): with the same four runs, `A B A B` read as two brackets, each middle run against the
+  mean of its neighbours (`A B A`, `B A B`), cancels a steady drift between processes as well, and each arm's own
+  warmup and median do not absorb that drift (§1). The mean of the A runs against the mean of the B runs leaves B
+  one slot of it.
 - **One process, two module instances interleaved per rep (§1): `A B B A` within each rep.** The
   palindrome cancels a linear drift inside the rep; take the median of the per-rep ratios
   (`autotune.md` §2).
@@ -58,26 +60,31 @@ flydsl: 0.3.2
 
 ## 3. Warmup, clocks and load
 
-- **An idle card needs a minute or two of sustained real-shape load to reach its working clock** (warm for
-  at least 90 s). *(field, E9)* The same config climbed from 3984 to 4910 TF/s while each reading looked
-  stable (0.26% spread). Short warmups make every absolute number ~20% low.
+- **Warm up with real-shape load and check that a second pass matches the first.** *(field, E9)* In one FlyDSL
+  MXFP4 run the same config climbed from 3984 to 4910 TF/s while each reading looked stable (0.26% spread); the
+  cause was not isolated. A minute-long warm-up is not a general requirement: after 5 minutes idle, with the process
+  holding its context, hipBLASLt MXFP4 and FP8 GEMMs ran within 1.6% of their steady rate from the first batch
+  *(field, E42)*. Only the first ~20 ms of load after a pause read low (up to 10%; 15% at process start): discard
+  those reads.
 - **On a power-capped kernel the first arm of a batch runs slow** while the clock policy settles
   (on an attention kernel 0.9–1.7% slower at 3–4% lower sclk *(field, E10)*). Burn a throwaway arm first, or
   use the end-of-batch baseline.
-- **Record sclk per arm**, derived as `GRBM_GUI_ACTIVE / 8 XCDs / duration` rather than sampled with
-  `rocm-smi` between batches (which catches idle windows). Two arms at different clocks are two
-  machines, not two kernels.
+- **Record sclk per arm, derived from long dispatches only.** `GRBM_GUI_ACTIVE / 8 XCDs / duration` read 4–7% above
+  the in-kernel clock on dispatches of 0.17–20 ms but 1.6× it at 15 µs, and a profiled run clocked up to 9% higher
+  than an unprofiled one; `rocm-smi` between batches reads the DPM clock of that moment, 5–35% above the in-kernel
+  clock 0.1 s after a batch *(field, E34)*. Two arms at different clocks are two machines, not two kernels.
 - **Check for another tenant before timing** (`rocm-smi --showuse`, `--showpids`). *(field, E11)* With the GPU
   90–96% busy from another process, readings were up to 4× slow (223 against ~56 µs) and scattered up to 9×
   within one cell (7.72–68.83 µs): discard them, do not average them.
 - **Measure CU-fill levers under the real load mix.** *(field, E12)* An isolated loop let the under-filled
   arm boost to 1699 MHz and made a tail split look negative; under the real mix both arms ran at
   ~1605 MHz and the split won by 21.5% on the scored table.
-- **Cache, residency, swizzle and placement levers do not transfer from isolated back-to-back loops.**
+- **Cache, residency, swizzle and placement levers can fail to transfer from isolated back-to-back loops.**
   *(field, E13, E14)* On quantization (cast) kernels, a write-placement change read +0.4…6.5% isolated on 10
   of 11 casts (no gain on the eleventh) and −0.45% on the scored bench; an `nt` hint read −2.1% isolated and
-  was worth +2.4% inside the step. Levers that delete bytes or requests do transfer (the isolated reading is
-  then a lower bound).
+  was worth +2.4% inside the step. Levers that delete bytes or requests can keep their sign and still shrink (a
+  second global read per row deleted from a HIP fp8 cast kernel saved 4.5 µs isolated, 3.1 µs inside a four-kernel
+  sequence *(field, E35)*): the isolated reading need not be a lower bound; re-measure them in the step.
 
 ## 4. Noise floors and null controls
 
@@ -112,24 +119,33 @@ flydsl: 0.3.2
   +0.39%: a different file size meant a different idle time before the run, so a different
   temperature. Equalize the gap (sleep ~20 s after each swap) or let a compile separate the arms.
 - **Operands made outside the real path change GEMM time.** *(field, E20)* All-zero operands ran 155 µs
-  against 205 µs on real data, same build and shape. The values cannot account for that gap: data entropy alone is
-  put at about 10%. The likelier cause is allocation history and page placement. Time on tensors from the real path;
-  SNR-gate every probe.
-- **Output-buffer placement moves the same binary 10–15%** on a quantization kernel *(field, E21)*. Share
+  against 205 µs on real data, same build and shape. Values alone can make a gap that size on a power-capped card:
+  on hipBLASLt 4096×4096×32768 GEMMs, zeros or a constant in place of randn cut time 28% in fp8 and 14% in bf16 as
+  board power fell below the cap and sclk rose, while five allocation histories moved the bf16 GEMM by at most
+  0.5% *(field, E37)*. Time on tensors from the real path; SNR-gate every probe.
+- **Output-buffer placement alone can move the same binary by up to 10–15%** on a quantization kernel
+  *(field, E21)*; how much depends on kernel and shape (a Triton MXFP8 quantizer up to 10% across separately
+  allocated outputs, within 0.51% with one shared output; PyTorch's bf16→fp8 cast within 1.3% *(field, E43)*). Share
   buffers across arms and pre-warm all of them; per-arm allocation in a tuning sweep biases the winner.
 - **Input placement moves a GEMM too.** *(field, E33)* Where B was allocated alone moved one bf16 GEMM binary from 91
-  to 102 µs and reversed a K-chunk ranking. Rank address-sensitive settings on the mean over several allocation
-  offsets (`small_m.md` §1).
+  to 102 µs and reversed a K-chunk ranking whose two settings were within 2% of each other. With byte-identical
+  copies of B at different offsets, Triton bf16 GEMMs moved by up to 8% and hipBLASLt by under 2%, while Triton
+  configurations 6% or more apart kept their order *(field, E38)*. Rank address-sensitive settings on the mean
+  over several allocation offsets (`small_m.md` §1).
 - **Do not trust an arm's first read at a single repetition.** On an attention kernel such a read was +15% on a ±0.2%
   ruler *(field, E22)*; that run also dumped its IR, so the two causes are not separated.
 - **Keep the host out of the GPU window.** Time R consecutive calls inside one event pair; a
   `synchronize` per call puts Python into the measurement (on a grouped GEMM, 650 TF/s read for ~1150 real
-  *(field, E23)*). If time is flat across sizes, you are measuring the host.
-- **One call per CUDA/HIP graph measures the launch floor**, and `torch.cuda.current_stream()` must be
-  read inside the captured closure.
+  *(field, E23)*). If time is flat across sizes, you are measuring the host or a launch floor
+  (`../pitfalls/aklr_dispatch_floor.md`).
+- **One call per CUDA/HIP graph reads the launch floor for a kernel shorter than it** (5.4 µs for spin kernels of
+  up to 2 µs; from 4 µs up it added 1.1–1.4 µs *(field, E39)*). Read `torch.cuda.current_stream()` inside the
+  captured closure, or pass it as `torch.cuda.graph(g, stream=...)`: kernels launched on a stream read before
+  capture run during capture and the graph replays nothing (0.22 µs per call, only an empty-graph warning)
+  *(field, E40)*.
 - Give every arm an identity fingerprint — config, grid, kernel name, error signature, opcode counts —
   plus one arm that must lose (e.g. an injected `s_sleep`). Arms silently collapsing into one binary
-  is the most common way a probe lies.
+  is a recurring way a probe lies.
 
 In FlyDSL: `../flydsl/gemm.md` § measurement §6.
 
@@ -180,7 +196,8 @@ A FlyDSL version is given only where the cited run, or another round in the same
 (`flydsl.__version__`, an import path with its version, or a `pip install flydsl==` in the run's own setup); otherwise
 `FlyDSL ?`. Kernels are the FlyDSL GEMM, grouped GEMM, quantization and attention kernels of the campaigns named on each
 line; "grouped GEMM", "quantization kernel" and "attention kernel"
-in a sentence mark the numbers this page states for another kind of kernel.
+in a sentence mark the numbers this page states for another kind of kernel. E34–E43 were measured on the non-FlyDSL
+kernels each line names (hand-written HIP kernels, hipBLASLt, Triton and a PyTorch cast).
 
 - E1 [2026-09, gfx950, FlyDSL ?, N=?, paired in-process ruler (one process, the frozen base and the candidate loaded as two module instances)] A-vs-A (the same code in both arms) read −0.009% on the geomean with the machine idle; with neighbours on the machine −0.098% (MXFP4 dense GEMM, 12 Llama training shapes; unverified)
 - E2 [2026-09, gfx950, FlyDSL ?, N=5, one process per arm, scored bench (12-row geomean against frozen reference values)] five reads of the same code spread 0.61% (MXFP4 dense GEMM, 12 Llama training shapes)
@@ -200,7 +217,7 @@ in a sentence mark the numbers this page states for another kind of kernel.
 - E17 [2026-09, gfx950, FlyDSL 0.2.4, N=3, scored bench against frozen denominators, four changed and four inert cells per run] raw gm read 101.25 / 101.24 / 100.99 against 100.81 for the reference; changed-cell mean minus inert-cell mean read +0.46 / +0.50 / +0.67 against −0.05, which the round turns into +0.59 on four cells, about +0.29 gm (gpt-oss MXFP4 grouped MoE MLP GEMMs, wgrad cells)
 - E18 [2026-09, gfx950, FlyDSL 0.2.4, N=2, 18-cell scored bench, the same code twice (one comment apart), a neighbour on another GPU] the total read 1.0109 / 1.0107 (0.02 pp); per-cell differences had a median of 0.38% and a maximum of 3.36% (gptoss_QKV_wgrad) (MXFP4 dense GEMM, 6 gpt-oss and 12 Llama shapes; unverified)
 - E19 [2026-10, gfx950, FlyDSL ?, N=4, arms swapped by `cp` between benches, ABBA, four reads per arm] with the swapped file never imported, B read 4823.45 against 4804.64 TF/s (+0.391%, t 2.35, permutation p 0.043); with the file live +0.331% (MXFP4 dense GEMM linear2_dgrad 16384×15360×3072; unverified)
-- E20 [2026-09, gfx950, FlyDSL ?, N=?, probes on one build and shape] all-zero operands (`torch.zeros`) read 155 µs, real-data operands 205 µs, 32%; data entropy alone put at 10%, the rest on allocation history and page placement (MXFP4 dense GEMM, Llama-2 70B training shapes; the probe runs are not recorded)
+- E20 [2026-09, gfx950, FlyDSL ?, N=?, probes on one build and shape] all-zero operands (`torch.zeros`) read 155 µs, real-data operands 205 µs, 32%; the record put data entropy at 10% and the rest on allocation history and page placement, without a controlled test (MXFP4 dense GEMM, Llama-2 70B training shapes; the probe runs are not recorded)
 - E21 [2026-09, gfx950, FlyDSL ?, N=?, one compiled binary, fixed inputs and build knobs, only the output planes' byte offsets moved] 16384×21504 read 262.8–301.2 µs (14.6%), 16384×15360 191.6–220.6 µs (15.1%), three other shapes 10–11% (MXFP8 dual-cast quantization kernel)
 - E22 [2026-09, gfx950, FlyDSL 0.3.2, N=3, same-process probe] an arm's first read under `FLYDSL_DUMP_IR=1` and `REPS=1`: +15.44%; three normal re-runs ±0.2%; the read had both the IR dump on and a single repetition, so it does not tell which of the two caused the gap (GLM-5.2 sparse-MLA decode attention producer)
 - E23 [2026-08, gfx950, FlyDSL ?, N=?, one CUDA event pair and a `synchronize` per call] a wrapper that rebuilt its launch on every call (2.52 ms of host time per call) made the forward read 650 TF/s, ~1150 once fixed (gpt-oss-20b MoE grouped bf16 GEMM forward, G=32)
@@ -212,3 +229,11 @@ in a sentence mark the numbers this page states for another kind of kernel.
 - E30 [2026-08, gfx950, FlyDSL ?, N=3, one process, the two arms interleaved, paired win count over 9, 11 or 15 trials per session, three independent sessions] two candidates that won 8/9 (+0.49%) and 7/9 (+0.31%) in one session read 6/11 and 3/15, and 2/11 and 5/15, in the next two (both judged noise); a +0.53% change kept its sign at 8/9, 7/9 (+0.23%) and 11/15; a −2.8% change read 9/9, and another −2.9% / −2.8% at 11/11 in each of two sessions; the rule written from these: |Δ| > 2% one 9-trial session, 0.5–2% at least 11 trials, < 0.5% at least 11 trials in each of two sessions with the same sign (fused FlyDSL flash-attention backward, dQ folded into the dK/dV kernel, D=64, scored at B=3 S=8192 Hq64 Hkv8 causal)
 - E32 [2026-10, gfx950, FlyDSL 0.3.2, N=3 sessions, per-kernel time inside CUDA graphs with the L2 flushed per call] stage 1 about 226 or 268 µs, fixed for each captured graph; about 224 or 267 in a second session; 224.8 and 271.2 µs in two identical captures in a third. Not removed by one scratch arena, shared outputs or 1–8 dummy workgroups launched first; XCC ids read round-robin in fast and slow graphs alike (fused_moe situv2 fp8 × MXFP4, 896 experts, top-16, n_tokens 2732, stage 1 t64x128x256)
 - E33 [2026-10, gfx950, FlyDSL 0.3.2, N=1 per arm, AKLR graph timer through the driver, and an in-process probe on copies of the inputs at chosen offsets] bf16 GEMM, N 6144, K 16384, m=512, split-K 4: partway through a session the unchanged kernel moved from about 93.0 to 102.41 µs; swapping tensors one at a time, the K-chunk-16 build read 101.85 µs with the driver's B and its own A, 91.17 with its own B and the driver's A; in that state chunk 8 92.67 against chunk 16 101.88, over 9 copied offsets 90.24–90.85 against 90.74–91.22; a later sweep with 0 / 37 / 211 MB allocated before the inputs: chunk 32 91.44 / 91.50 / 89.96 against chunk 16 90.06 / 90.05 / 90.12 (bf16 GEMM n6144 k16384)
+- E34 [2026-11, gfx950 (MI355X), rocprofv3 of torch 2.11.0+rocm10.0.0, N=5 rounds, against the in-kernel `s_memtime` clock] `GRBM_GUI_ACTIVE / 8 / duration` read 1.037–1.073× the kernel clock at 0.17–20 ms, 1.58× at 15.4 µs, 4.61× at 1.92 µs; profiled up to 2270 against 2082 MHz unprofiled; `pp_dpm_sclk` 156 MHz idle; `rocm-smi` 0.1 s after a batch 1.048–1.345× (full-card HIP VALU kernel)
+- E35 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0 graphs, N=7 rounds, one process, arms shuffled; A-vs-A 0.06 µs isolated, 1.26 µs in the sequence] deleting each row's second global read saved a median 4.54 µs per call isolated and 3.11 µs (0.69 of the isolated saving) inside producer → cast → 4096³ bf16 GEMM → consumer (hand-written HIP fp8 e4m3 row cast, 8192×8192 bf16)
+- E37 [2026-11, gfx950 (MI355X, 1400 W cap), torch 2.11.0+rocm10.0.0, N=6 rounds, one process, arms shuffled, sysfs power and sclk] zeros instead of randn: bf16 0.863× the time, fp8 0.715×, power 1400 → 1053 / 1072 W, sclk 1606 / 1694 → 2390 MHz; a constant read as zeros; five allocation histories 0.9952–1.0031 on bf16 (hipBLASLt bf16 `torch.mm`, fp8 `torch._scaled_mm`, 4096×4096×32768)
+- E38 [2026-11, gfx950 (MI355X), Triton 3.8.0, torch 2.11.0+rocm10.0.0, N=7 rounds, L2-flushed graphs, only B's address moved; A-vs-A ≤ 0.52%] bf16 M 1024, N 8192, K 8192 over 11 placements of B: Triton 128×128 tiles up to +8.10%, hipBLASLt `torch.mm` within 1.53% (1.66% at M 512, N 6144, K 16384); Triton `BLOCK_K` 32 / 64 / 128, ≥ 6.3% apart, kept their order
+- E39 [2026-11, gfx950 (MI355X), HIP with torch 2.11.0+rocm10.0.0, N=6 rounds, one process; a one-call graph replayed 100 times in one event pair against a 100-call graph replayed once, per call] a kernel spinning d µs: one call per graph 5.43–5.45 µs against 1.63–3.05 in the 100-call graph at d = 0–2, and 6.20 / 10.21 / 34.54 / 66.54 against 5.05 / 9.05 / 33.12 / 65.12 at d = 4 / 8 / 32 / 64 (one-wave HIP kernel spinning on `s_memrealtime`)
+- E40 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0, N=7 replays, twenty 20 µs HIP spin kernels by `hipModuleLaunchKernel` inside `torch.cuda.graph(g)`] stream read inside the closure, or passed as `stream=`: 20 kernels per replay; default or side stream read before capture: all 20 ran during capture, none per replay, 0.22 µs per call, only torch's empty-graph warning
+- E42 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0, one process holding its context, one read = one event pair over ~5 ms; N=189 reads per workload, 6–8 short trials] hipBLASLt MXFP4 and FP8 `torch._scaled_mm`: the first batch after 300 s idle 0.9995 / 1.0159 of steady; trials after 3 s idle, following the 300 s idle or the load: 20 warm-up calls (7–9 ms), then reads 1 / 2 / 3+ at 0.902–0.931 / 0.955–0.979 / 0.987–1.016; a process-start calibration of 3 warm-up and 10 timed calls 0.854 / 0.915
+- E43 [2026-11, gfx950 (MI355X), Triton 3.8.0, torch 2.11.0+rocm10.0.0, N=11 rounds, graphs, arms shuffled; A/A 0.03–0.13%; only output pointers moved] 16384×7168, 8192×4096, 16384×14336: a Triton MXFP8 quantizer moved up to 4.36% at offsets inside one allocation, up to 10.0% with per-arm outputs, 0.04–0.51% with one shared output; PyTorch's bf16 → fp8 `copy_` at most 1.3%
