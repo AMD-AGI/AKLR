@@ -3,6 +3,7 @@
 gated attention decode."""
 
 from aklr.plugins.sglang.models.qwen3_5.api import (
+    gated_attention_decode,
     gated_attention_decode_group_fp8_quant,
     gdn_decode,
     gdn_decode_group_fp8_quant,
@@ -10,6 +11,7 @@ from aklr.plugins.sglang.models.qwen3_5.api import (
 )
 
 __all__ = [
+    "gated_attention_decode",
     "gated_attention_decode_group_fp8_quant",
     "gdn_decode",
     "gdn_decode_group_fp8_quant",
