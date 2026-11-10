@@ -20,8 +20,9 @@ sources:
   batch sizes, for instance).
 - An EP MoE layer is slower than its GEMMs explain.
 - Writing or changing a dispatch between GPUs. `MegaMoEV2`'s stage 1 runs producers and consumers in one launch
-  (workgroups wait on flags that other workgroups of the launch write), which an AKLR kernel may not do
-  (`../SKILL.md` § Stop: no workgroup waits for another). In an AKLR kernel those waits become separate launches;
+  (workgroups wait on flags that other workgroups of the launch write; whether those waits are bounded was not
+  checked), which an AKLR kernel may do only as a bounded wait with hand-off (`../SKILL.md` § Stop). In an AKLR
+  kernel those waits become separate launches;
   what carries over from §2 is the layout (fixed regions, parity halves) and where the acquire goes.
 
 The kernels themselves (files, entry points, tuning tables) are in `../flydsl/kernels/flydsl_kernel_library.md`;

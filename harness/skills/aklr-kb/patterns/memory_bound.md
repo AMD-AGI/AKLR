@@ -82,7 +82,7 @@ basis: source-semantics
 - S3 gemm/attribution.md:33 compute additivity: wall time does not move, compute is fully hidden
 - S4 gemm/workflow.md:76 `vmcnt(0)` in front of the MFMAs: exposed global latency or a conservative drain
 - S5 ROCm/FlyDSL@dd8373349:.claude/skills/kernel-trace-analysis/SKILL.md:336 hotspots dominated by VMEM-load at a high stall rate: memory-bound
-- S6 gemm/small_m.md:296 compute-deletion probes are diagnostics, not an upper bound on compute's share
+- S6 gemm/small_m.md:299 compute-deletion probes are diagnostics, not an upper bound on compute's share
 - S7 gemm/grid_pricing.md:205 bytes a workgroup moves per K element against the MACs it produces
 - S8 gemm/grid_pricing.md:68 last round full: no idle slot, intensity is the limit, widen
 - S9 gemm/datapath.md:166 the cost unit is unique 128-byte lines touched per instruction
@@ -103,6 +103,6 @@ basis: source-semantics
 - S24 gemm/datapath.md:200 prefetch pays only when independent work can fill the latency
 - S25 gemm/datapath.md:203 prefetch hides latency, not capacity; L2 thrash
 - S26 gemm/datapath.md:214 a prefetch over a register tier costs more than it hides
-- S27 gemm/small_m.md:306 B's cache policy is a raced, per-configuration axis
+- S27 gemm/small_m.md:309 B's cache policy is a raced, per-configuration axis
 - S28 gemm/epilogue.md:256 the store cache-policy sign is shape-dependent, race it
 - S29 gemm/small_m.md:94 streaming rows: split-K and more blocks lose

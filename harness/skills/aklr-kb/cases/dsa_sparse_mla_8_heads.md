@@ -35,8 +35,8 @@ written one that qualifies (`aklr/ops/README.md` § Environment variables). It e
   524288), each with `sm_scale` 0.0625. Dispatch matches `n_tokens` exactly. `n_slots` is `any_size`, so once a
   Point is served, its token count is served at every pool size (`aklr/ops/README.md` § Inputs and workloads);
   bench times only pools of tokens × 2048 rows (36, 144 and 288 MiB).
-- Not covered: the other 33 decode sizes sglang pads TP8 batches to and the 16-head schema name (other files,
-  #66); another top-k or head count; draft steps of speculative decoding and a q that is not one contiguous
+- Not covered: the other 33 decode sizes sglang pads TP8 batches to and the 16-head schema name (#66's files, and
+  [dsa_sparse_mla_16_heads.md](dsa_sparse_mla_16_heads.md)); another top-k or head count; draft steps of speculative decoding and a q that is not one contiguous
   (tokens, heads, 576) view, which the api sends back to sglang (S11).
 - Yardstick at each Point: the faster of the baseline, `dsa_sparse_mla_decode_baseline` (sglang 0.5.22's
   `triton_sparse_mla_decode_splitk`, S10), and the file main serves there (S12). All are Gluon files (schema
@@ -91,7 +91,10 @@ written one that qualifies (`aklr/ops/README.md` § Environment variables). It e
   (`../attention/grid_dispatch.md` §2); at 128 tokens the two splits of token t are workgroups t and t + 128, on
   one XCD.
 - **Workspace reuse is tested for the op alone, not in a model's graph.** Arrival words are not cleared between
-  calls, so whether a word belongs to this launch rests on its tag alone (§ Mechanism). One captured graph per
+  calls, so whether a word belongs to this launch rests on its tag alone (§ Mechanism). That also sends every split
+  of the next launch down the compare-swap path: the 16-head file stores zero once a word is complete, which, alone
+  in a 16-head port, was 1.7–2.1% faster at 1 token and level at 32 and 256 ([dsa_sparse_mla_16_heads.md](dsa_sparse_mla_16_heads.md);
+  `../attention/split_kv.md` §3, its E51); this file was not timed with it. One captured graph per
   Point, replayed 24 times with three different input sets copied into its buffers in turn, so every replay meets
   the words its predecessor left, matched an eager call on the same inputs at every replay *(field, E3)*. Inside
   a model's decode graph the call's workspace comes from the graph's memory pool, which other kernels may write

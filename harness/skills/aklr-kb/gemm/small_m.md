@@ -145,10 +145,13 @@ an idle-device tuner (§1).
 - **No result may depend on a split that is not running.** A split that polls a flag, a counter or a tagged
   partial until another split has written assumes that split is already running. On a stream limited to part of the
   CUs, or beside another process, it may not be, and a capped poll then has no correct value to write when it gives
-  up. *(field, E106)* A split-K bf16 GEMM whose splits polled up to a cap and then wrote NaN returned NaN at m=256
-  and 512 on streams limited to part of the CUs (2.3–4.3 M NaN in the test on 64 and 128 CUs, up to 4.7 M in the
+  up, unless it hands its share to the split that arrives last, which has all the data
+  (`../attention/split_kv.md` §2, Bounded wait). *(field, E106)* A split-K bf16 GEMM whose splits polled up to a cap
+  and then wrote NaN returned NaN at m=256 and 512 on streams limited to part of the CUs (2.3–4.3 M NaN in the
+  test on 64 and 128 CUs, up to 4.7 M in the
   run's summary) and took up to 140 ms per call on 16 CUs; its wait-free rewrite passed the same test. A designated
-  last split, reducer workgroups appended after the producers, and every split summing a share of the tile all wait.
+  last split, reducer workgroups appended after the producers, and every split summing a share of the tile all wait;
+  each is correct without residency only with that hand-off, which has not been measured on a GEMM fold.
 - **Fold by arrival instead.** Each split stores its partial at agent scope or wider (`sc1` or `sc0 sc1`, scope
   below), waits `s_waitcnt vmcnt(0)`, then adds one to its tile's counter with a device-scope atomic that returns the
   old value. The split that sees `s − 1` earlier arrivals reads every partial, its own through the same packing, and

@@ -52,11 +52,13 @@ combine → `grid_dispatch.md` §3; GEMM-side split-K → `../gemm/small_m.md` �
 
 ## 2. Merging producer and combine: a persistent, cooperative rendezvous
 The merged form that paid has every producer workgroup of a row wait at a rendezvous and then share the
-reduce. A workgroup that waits for another is right only while every workgroup it waits for is resident (Opening
-window below), which a kernel cannot promise: a deployment may run it on a stream limited to part of the CUs or
-beside another kernel. In a kernel for AKLR no workgroup waits on another: keep the separate combine (§1), or let
-the last workgroup to arrive on an atomic counter do the merge (§3 prices that here). The steps below describe
-the rendezvous as existing kernels write it.
+reduce. A wait with no way out is right only while every workgroup it waits for is resident (Opening window
+below), which a kernel cannot promise: a deployment may run it on a stream limited to part of the CUs or beside
+another kernel. So in a kernel for AKLR every wait on another workgroup is bounded, and a workgroup that times out
+hands its share to the last workgroup to arrive (Bounded wait, below); one that gives up and writes anyway returns
+wrong results (a split-K GEMM fold returned NaN, *(field, E45)*). Two forms need no wait at all: the separate combine (§1), and the last
+workgroup to arrive on an atomic counter doing the merge (§3 prices that here). The steps below describe the
+rendezvous as existing kernels write it.
 1. Write the partials and LSE as write-through stores that are visible across XCDs (`SC1` = aux value 16,
    device scope, is enough across XCDs; values 16 and 17 were both bitwise clean *(field, E5)*. `0x11` adds `SC0`,
    i.e. system scope. DLC (value 4) and SC0 give no cross-XCD visibility: with value 5 (SC0|DLC) the reader saw
@@ -71,8 +73,9 @@ the rendezvous as existing kernels write it.
 - Residency: `rows × n_groups ≤ num_cu`. The rendezvous ends only if all splits of a row are resident
   at once; at most one workgroup per CU guarantees it only while the kernel has every CU to itself. A stream
   limited to part of the CUs, or another kernel holding CUs, breaks it: *(field, E45)* a split-K GEMM fold that
-  polled the same way returned millions of NaN on streams limited to 64 and 128 CUs. Bound the poll loop, so that a
-  broken assumption produces a wrong answer instead of a hung device.
+  polled the same way returned millions of NaN on streams limited to 64 and 128 CUs. A counter cannot record a
+  share given up: use Bounded wait's arrival word (below), so that a broken assumption costs time, not a hung
+  device or a wrong answer.
 - Column length: `2 ≤ n_groups ≤ 16` on one shared counter. *(field, E6)* 32 workgroups on one counter: +3.25%.
   *(field, E43)* With one launch-tagged flag per workgroup polled by one
   wave, 32 per row: −3.6% against producer + combine; 16: −2.0%; 21–22: +0.7%. The residency rule is unchanged.
@@ -81,12 +84,33 @@ the rendezvous as existing kernels write it.
 
 *(field, E7)* Bit-identical outputs; −1.0% to −7.6% against two kernels; +2.47% on the decode-step benchmark.
 
-The poll: keep a nonzero sleep in the loop (*(field, E8)* zero sleep widened the run-to-run spread to 10.2%),
-and make the polled load atomic or volatile; a plain load in a store-free loop is loop-invariant to LLVM
-and gets hoisted. In the merged epilogue only the number of rounds and the store width per round matter.
+The poll: make the polled load atomic or volatile; a plain load in a store-free loop is loop-invariant to LLVM
+and gets hoisted. On E8's kernel keep a nonzero sleep in the loop (*(field, E8)* zero sleep widened the run-to-run
+spread to 10.2%); the bounded waits below poll with an atomic and no sleep, and there `s_sleep(8)` took 1.0–1.6%
+more time and `s_sleep(2)` was within 0.3% (one run each, *(field, E47)*). In the merged epilogue only the number of rounds and the store width per round matter.
 *(field, E9)* Cutting the LSE reads per row by 37.5% changed nothing: they issue beside the longer partial loads.
 
-## 3. Why a "last workgroup reduces" ticket fails here
+**Bounded wait.** Each split publishes its partial, waits `vmcnt(0)`, and sets its bit in an arrival word tagged
+with the launch (§3's word and tag). The split whose bit completes the mask merges its own share of the output;
+every other split waits by wall clock (`s_memrealtime`, 100 MHz) until the mask is complete or its own bit is gone,
+which means the completing split has already stored zero (§3), then merges its own share. A split whose wait runs
+out sets an abandon bit with a compare-swap, unless the word changed meanwhile, and leaves; the split that completes
+the mask also merges every abandoned share. A waiter that took a zero word for an empty mask would wait out its
+bound and abandon a share nobody merges. No split depends on one that is not running, and
+each share is merged by exactly one split, in split order, so the output bits do not depend on who merged.
+- *(field, E46)* 16-head DSA decode, each split merging a 1/S slice of the 512 output columns with a 2000-tick
+  bound, against the last split to arrive merging all of them: speedup 1.081–1.089 at 1 and 32 tokens (8 splits),
+  level at 256 (1 split); the driver's `--stress` passed. On top of it, 16 splits at 1 token: 1.098–1.110
+  *(field, E48)*. The
+  delivered file is [dsa_sparse_mla_16_heads.md](../cases/dsa_sparse_mla_16_heads.md).
+- *(field, E49)* 64-head DSA decode at 8, 32 and 128 tokens, wave 0 polling per-split flags by ballot with the same
+  bound: 11.64 / 22.91 / 46.48 µs against 13.94 / 23.89 / 46.94 for the two-launch kernel it replaced, bit-identical,
+  `--stress` passed. Its tag is weaker than §3's (E49).
+- **A waiter reads its partners' maxima and sums after its wait, never before.** A load issued ahead of the wait
+  returns the partner's stale words; in the 16-head file's first form only the 2-split path hoisted that load, and
+  every one of its 12 Points failed the bound while the 8- and 16-split paths passed *(field, E50)*.
+
+## 3. When a "last workgroup reduces" ticket loses
 - **Parallelism collapses.** Only the last arrival knows all splits are in, so the reduce of a row runs in
   one workgroup. With rows ≪ CUs that drops one to two orders of magnitude of parallelism. Its floor is
   (reduce work ÷ the largest tile one wave holds) × one memory round trip. *(field, E10)* On a Triton split-K
@@ -106,13 +130,18 @@ and gets hoisted. In the merged epilogue only the number of rounds and the store
   the last split to arrive with every load of the merge in one batch and no fence; as a whole it was faster than
   the two-launch kernels timed beside it, though its merge was not measured apart
   (`../cases/dsa_sparse_mla_8_heads.md`).
-- **Arrival words, so nothing is zeroed per call.** One 64-bit word per (row, wave) on its own 128 B line, never
-  cleared: a low-bit mask of the splits that published, a launch tag above it. A split reads the word before its
+- **Arrival words, so the host zeroes nothing.** One 64-bit word per (row, wave) on its own 128 B line: a
+  low-bit mask of the splits that published, a launch tag above it. A split reads the word before its
   partial stores; if it carries this launch's tag and every other bit, the split merges without publishing.
   Otherwise it waits `vmcnt(0)` and ORs (tag | its bit) with an atomic that returns the old word, and the OR that
   completes the mask merges. A word with another launch's tag is claimed by a compare-swap from the value read; if
   the swap fails, a partner claimed it first and the split ORs as above (with 2 splits it merges at once when the
-  returned word already holds the partner's bit).
+  returned word already holds the partner's bit). A word left with the previous launch's full mask sends every
+  split down the compare-swap path, one more round trip each time: the split that completes the mask should store
+  zero once it has merged, so that the next launch ORs into a zero word, and a waiter must then take its own bit's
+  absence as completion (§2, Bounded wait). *(field, E51)* Alone, on a port of the 8-head kernel to 16 heads: speedup
+  1.017–1.021 at 1 token, level at 32 and 256 tokens; timed on the op alone, where nothing else writes the word
+  between calls. Inside a model's graph another kernel may, and the compare-swap path returns.
 - **The tag: the low bits of `dispatch.id` · H1 + queue address · H2, with H1 and H2 odd.** A change in the kept
   low bits of either input alone changes it, one queue repeats a tag only after 2^(tag bits) dispatches, and queues
   at addresses a and b collide only when their dispatch ids differ by (b − a) · H2 · H1⁻¹: one pseudo-random
@@ -156,7 +185,10 @@ and gets hoisted. In the merged epilogue only the number of rounds and the store
 ## 5. Split rules
 - **At least two tiles per split**, or the pipeline has nothing to overlap. *(field, E21)* On a Triton split-K
   decode, halving the tile and doubling the splits at 2 tiles per split: −11%; the same CTA count with 1 tile per
-  split: +1.8%.
+  split: +1.8%. One exception was measured: the 16-head DSA decode at 1 token (16 workgroups on 256 CUs), 16 splits
+  of one 32-key chunk per wave with each split merging its own slice (§2, Bounded wait), speedup 1.098–1.110 over 8
+  splits *(field, E48)*; the same split count with the last split merging every column read slower, in two runs of
+  a second port *(field, E52)*. 2–8 tokens at 16 splits were not raced against 8.
 - **Tiles per split jump at divisibility boundaries.** `ceil(n / (splits × tile))` steps by a whole round.
   *(field, E22)* On a Triton split-K decode, widening the key set by 5 columns past a boundary cost 12–20%; by 64
   columns (which divided again) 5–12%.
@@ -223,9 +255,10 @@ gap into 38%. Protocol:
 ## Verify
 - Combine numbering matches producer ownership; the combine has one wave per workgroup unless each output merges
   many partials (§1).
-- No workgroup waits on another (no rendezvous, no polled flags): the merge is a separate combine launch or the
-  last workgroup to arrive on an atomic counter (§1, §3).
-- The grid has ≤ 1 CTA per CU and ≥ 2 tiles per split on every scored shape.
+- No wait on another workgroup is unbounded or merges with partials missing: the merge is a separate combine
+  launch, the last workgroup to arrive on an atomic counter (§1, §3), or a bounded wait that hands its share off on
+  timeout (§2, Bounded wait); the driver's `--stress` passes at every Point the file lists.
+- The grid has ≤ 1 CTA per CU on every scored shape, and ≥ 2 tiles per split unless measured otherwise (§5).
 - The benchmark's indices reproduce production adjacency.
 
 ## Related
@@ -286,3 +319,10 @@ language, or bare graph nodes. "Decode-step score" is that campaign's ruler: the
 - E43 [2026-10, gfx950, FlyDSL 0.3.2, N=3 pairs, forge ablation on AKLR's graph timer, noise floor 0.06%] producer with the merge fused (sc1 partial stores, one flag per workgroup holding `dispatch.id` xor `queue.ptr`, one wave polling the row's flags by ballot with `s_sleep`, an unbounded loop, no fences; one CTA per CU over 256 CUs) against producer + combine: +1.49% (time without over time with; one-sided 95% bounds +1.46…+1.53%), 8 of 9 cases faster; b8 (32 per row) +3.70%, b16 (16) +2.03%, b12 (21–22) −0.67% (same kernel family as E42)
 - E44 [2026-10, gfx950, FlyDSL 0.3.2, N=1 for the skip (driver bench, warmup 3, 20 iterations), 3 pairs for the staging (forge ablation on AKLR's graph timer, noise floor 0.06%)] partial stores skipped (outputs wrong): 1.2841 against 1.3442 ms summed over 9 batches; bf16 partials staged in LDS (16 B chunks XOR-swizzled by head) and copied out 16 B per lane contiguous across lanes, in place of 8 B per lane into head rows 1 KB apart: +1.84% (+1.78…+1.91%), per case +0.80% (b60) to +3.54% (b8), 9 of 9 faster (same kernel family as E42)
 - E45 [2026-11, gfx950, FlyDSL 0.3.2, N=1 per setting, eager calls on streams created with a CU mask, output against the same call alone] a one-launch split-K bf16 GEMM whose owner split polls its partners' flags and writes NaN once a bounded poll gives up: m=256 3,151,872 NaN on 64 CUs and 2,340,864 on 128 CUs (35.5 and 12.4 ms per call), m=512 4,276,224 and 3,158,016 NaN; on 16 and 64 CUs the stress check failed at m=256 (gemm_n6144_k16384)
+- E46 [2026-11, gfx950, FlyDSL 0.3.2, N=3 pairs, forge-loop paired keep gate on AKLR's graph timer, against the kept kernel] dsa_sparse_mla_decode n_heads16, 9 cases (1, 32, 256 tokens × 16384, 65536, 262144 slots): each of 8 splits merging its 64-column slice after a 2000-tick `s_memrealtime` wait, abandon bit by compare-swap, against the last split merging all columns: 1 token 1.086–1.089, 32 tokens 1.081–1.085, 256 tokens 0.999–1.000; driver bench at 65536 slots, 1 / 32 tokens: 10.39 → 9.55, 13.62 → 12.80 µs; outputs bit-identical with scratch filled with random bytes, zeros or −1 and with the bound forced to 0 and 30 ticks; `--stress` passed
+- E47 [2026-11, gfx950, FlyDSL 0.3.2, N=1 per arm, the forge driver's bench] the same kernel at 1 token / 65536, 32 / 65536, 32 / 262144: atomic poll without sleep 9.552 / 12.797 / 13.324 µs; `s_sleep(2)` 9.582 / 12.820 / 13.361; `s_sleep(8)` 9.704 / 12.959 / 13.465
+- E48 [2026-11, gfx950, FlyDSL 0.3.2, N=3 pairs, forge-loop paired keep gate, against the kept kernel] the same kernel with 16 splits of one 32-key chunk per wave at 1 token, against 8 splits: 1.098–1.110 at the three pool sizes; 32 and 256 tokens unchanged (1.000–1.001)
+- E49 [2026-11, gfx950, FlyDSL 0.3.2, N=3 driver runs of the submitted kernel, forge driver bench; the driver's `--stress` on streams limited to 16 and 64 CUs] a 64-head sparse MLA decode (fp8 KV rows, top-2048) at 8, 32 and 128 tokens with each split's share merged in the producer launch: per-split flags tagged with the launch (the low 32 bits of `dispatch.id` and an 8-bit hash of `queue.ptr`), wave 0 polling them by ballot with a 2000-tick `s_memrealtime` bound, a compare-swap claim by the workgroup whose first look finds every flag raised and a compare-swap abandon on timeout: 11.64 / 22.91 / 46.48 µs, then 11.63 / 22.90 / 46.45 and 11.65 / 22.96 / 46.45, against 13.94 / 23.89 / 46.94 for the two-launch kernel it replaced; outputs bit-identical to it; `--stress` passed
+- E50 [2026-11, gfx950, FlyDSL 0.3.2, N=16 rounds, AKLR validate measurement profile 19, one MI355X] the 16-head file's first form on sglang's 36 decode sizes: violation fraction 1 (`numeric_mismatch`, `post_timing_mismatch`) at the 12 sizes of 40–128 tokens, its 2-split path, where the waiter's load of the partner's max and sum was issued before the wait; the 24 sizes at 8 or 16 splits and at 1 passed; with that load moved after the wait (and the review's other changes), all 36 passed, 1.291–1.768 over the baseline
+- E51 [2026-11, gfx950, FlyDSL 0.3.2, N=3 pairs, forge-loop paired keep gate, against the kept kernel] the arrival word stored back to zero by the split that completed it, as the only change, in a port of the 8-head kernel to 16 heads: 1 token 1.017–1.021, 32 tokens 1.001–1.004, 256 tokens 1.000; in the delivered file's campaign the same change was kept with ballot validity and precomputed row offsets, and timed alone once by the driver's bench at 1 token: 10.76 / 10.73 / 10.80 → 10.62 / 10.54 / 10.60 µs
+- E52 [2026-11, gfx950, FlyDSL 0.3.2, N=1–2 per arm, the forge driver's bench] the second port, last split merging all columns, 1 token: 16 splits 11.67 / 11.66 µs (16384 / 262144 slots) against 8 splits 10.84 in one run; 16 splits 11.42–11.50 in a later run, whose 8-split kernel read 10.60–10.67 at the session's start
