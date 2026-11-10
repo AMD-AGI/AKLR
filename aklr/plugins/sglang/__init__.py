@@ -29,7 +29,8 @@ def _register() -> None:
     env = RuntimeEnv()
     if env.is_all_disabled or not env.is_sglang_plugin_enabled:
         return
-    # imports this package's api modules, which declare its routes
+    # imports the modules that declare the routes: the layers' and the plugin ops' api
+    importlib.import_module(f"{__name__}.layers")
     for package in op_packages():
         if package.startswith(f"{__name__}."):
             importlib.import_module(f"{package}.api")

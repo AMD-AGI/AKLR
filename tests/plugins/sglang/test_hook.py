@@ -20,16 +20,23 @@ from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.sglang import hook
 
 # at collection, as the plugin does at start-up: before any test empties hook._ROUTES
+importlib.import_module("aklr.plugins.sglang.layers")
 for package in op_packages():
     if package.startswith("aklr.plugins.sglang."):
         importlib.import_module(f"{package}.api")
 DECLARED = list(hook._ROUTES)
+DECLARED_CALLS = list(hook._CALL_ROUTES)
 INSTALLED = "0.5.22"
 
 
 def test_no_two_routes_take_one_target():
     targets = [target for target, _, _ in DECLARED]
     assert targets and len(set(targets)) == len(targets)
+
+
+def test_no_two_call_routes_take_one_callee():
+    callees = [callee for _, callees, _, _ in DECLARED_CALLS for callee in callees]
+    assert callees and len(set(callees)) == len(callees)
 
 
 def installed_sglang():
@@ -43,6 +50,7 @@ def test_every_route_was_tested_on_the_installed_sglang():
     """A new sglang image needs the routes adapted."""
     installed = installed_sglang()
     assert [target for target, versions, _ in DECLARED if installed not in versions] == []
+    assert [caller for caller, _, versions, _ in DECLARED_CALLS if installed not in versions] == []
 
 
 def parameters(fn):
@@ -55,6 +63,25 @@ def parameters(fn):
 def test_every_route_takes_its_targets_parameters(target, route):
     installed_sglang()
     assert parameters(route) == parameters(pkgutil.resolve_name(target))
+
+
+def names_and_kinds(fn):
+    # aiter's defaults are aiter's enums, which api modules cannot import
+    return [(p.name, p.kind) for p in inspect.signature(fn).parameters.values()]
+
+
+@pytest.mark.parametrize(
+    ("callee", "route"),
+    [(c, r) for _, callees, _, r in DECLARED_CALLS for c in callees],
+    ids=[c for _, callees, _, _ in DECLARED_CALLS for c in callees],
+)
+def test_every_call_route_takes_its_callees_parameters(callee, route):
+    """The installed callee's parameters first, in its order; then any that later releases add
+    (sglang images carry different aiter releases, and pass the newer ones' parameters)."""
+    installed_sglang()
+    pytest.importorskip(callee.split(".")[0])
+    taken = names_and_kinds(pkgutil.resolve_name(callee))
+    assert names_and_kinds(route)[: len(taken)] == taken
 
 
 @pytest.mark.parametrize(
@@ -76,13 +103,15 @@ TARGET = f"{__name__}.original"
 
 @pytest.fixture
 def hooks(monkeypatch):
-    """No route declared; what install() hooks, as sglang's HookRegistry records it."""
+    """No route of either kind declared; what install() hooks, as sglang's HookRegistry
+    records it."""
     registered = []
     registry = ModuleType("sglang.srt.plugins.hook_registry")
     registry.HookType = SimpleNamespace(AROUND="around")
     registry.HookRegistry = SimpleNamespace(register=lambda *args: registered.append(args))
     monkeypatch.setitem(sys.modules, registry.__name__, registry)
     monkeypatch.setattr(hook, "_ROUTES", [])
+    monkeypatch.setattr(hook, "_CALL_ROUTES", [])
     monkeypatch.setattr(hook, "sglang_version", lambda: INSTALLED)
     return registered
 
@@ -174,7 +203,7 @@ def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, hooked):
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     plugin.register()
-    routes = ["aklr.plugins.sglang.x.y.api", "install"] if hooked else []
+    routes = ["aklr.plugins.sglang.layers", "aklr.plugins.sglang.x.y.api", "install"] if hooked else []
     assert register_calls == ["aklr starts", *routes]
 
 
@@ -194,3 +223,84 @@ def test_a_plugin_that_cannot_start_ends_the_process(monkeypatch, register_calls
     monkeypatch.setattr(hook, "install", install)
     with pytest.raises(SystemExit, match="broken declaration"):
         plugin.register()
+
+
+@pytest.fixture
+def fake(monkeypatch, hooks):
+    """No route declared; a module ``fake_aiter`` with ``callee``, and ``caller`` that looks
+    it up when it runs."""
+    module = ModuleType("fake_aiter")
+    module.callee = lambda x: f"aiter({x})"
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    monkeypatch.setattr(hook, "_CALL_ROUTES", [])
+    return module
+
+
+def caller(x):
+    from fake_aiter import callee
+
+    return callee(x)
+
+
+CALLER = f"{__name__}.caller"
+
+
+def declare_call(route, versions=(INSTALLED,)):
+    hook.sglang_call_route(CALLER, "fake_aiter.callee", versions=versions)(route)
+
+
+def test_a_call_route_serves(fake):
+    declare_call(lambda x: f"aklr({x})")
+    hook.install()
+    assert caller(1) == "aklr(1)"
+
+
+def test_a_call_routes_fallback_reason_runs_the_callee(fake):
+    declare_call(lambda x: FallbackReason.NOT_MEASURED)
+    hook.install()
+    assert caller(1) == "aiter(1)"
+
+
+def test_a_raising_call_route_raises(fake):
+    def boom(x):
+        raise RuntimeError("boom")
+
+    declare_call(boom)
+    hook.install()
+    with pytest.raises(RuntimeError, match="boom"):
+        caller(1)
+
+
+def test_installing_a_call_route_twice_wraps_once(fake):
+    declare_call(lambda x: FallbackReason.NOT_MEASURED)
+    hook.install()
+    hook.install()
+    assert fake.callee.__wrapped__(1) == "aiter(1)"
+    assert not hasattr(fake.callee.__wrapped__, "aklr_route")
+
+
+def test_a_call_route_untested_on_the_installed_sglang_is_not_hooked(fake):
+    declare_call(lambda x: f"aklr({x})", versions=("0.5.21",))
+    hook.install()
+    assert caller(1) == "aiter(1)"
+
+
+def test_a_caller_that_does_not_call_the_callee_raises(fake):
+    hook.sglang_call_route(f"{__name__}.original", "fake_aiter.callee", versions=(INSTALLED,))(lambda x: x)
+    with pytest.raises(RuntimeError, match="does not call"):
+        hook.install()
+
+
+def test_inside_a_compiled_region_the_call_route_is_not_traced(fake):
+    traced = []
+    fake.callee = lambda x: x * 2
+    declare_call(lambda x: traced.append(x) or x + 10)
+    hook.install()
+    torch._dynamo.reset()
+    try:
+        compiled = torch.compile(lambda x: fake.callee(x), backend="eager")
+        assert torch.equal(compiled(torch.ones(2)), torch.full((2,), 2.0))
+    finally:
+        torch._dynamo.reset()
+    assert traced == []
+    assert torch.equal(fake.callee(torch.ones(2)), torch.full((2,), 11.0))
