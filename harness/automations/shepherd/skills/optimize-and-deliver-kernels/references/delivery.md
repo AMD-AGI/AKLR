@@ -5,9 +5,9 @@ Requires `allow_draft_pr`, current evidence, a frozen commit and confirmed clean
 Re-fetch main. If freshness from the validation base is stale (see [validation](validation.md)), or the
 head does not merge cleanly into main (in a scratch worktree of main, `git merge --no-commit --no-ff
 <head>` exits non-zero; remove the worktree after), mark evidence stale and hand the candidate to the
-owner. Otherwise follow `harness/skills/aklr-open-pr/SKILL.md` with `branch_prefix` and `--draft`. The PR
+owner. Otherwise follow `harness/skills/open-pr/SKILL.md` with `branch_prefix` and `--draft`. The PR
 head is the validated commit, never rebased; its evidence comes from that commit merged into the
-validation base, which aklr-open-pr allows, and the body says so, with the
+validation base, which open-pr allows, and the body says so, with the
 validation base and the main the last freshness check passed on. For a regime candidate the body states
 the crossover and the workloads on each side.
 
