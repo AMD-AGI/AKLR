@@ -13,6 +13,7 @@ __all__ = [
     "ENV_DISABLE",
     "ENV_EXPORT",
     "ENV_EXPORT_DIR",
+    "ENV_FLYDSL_FASTCALL",
     "ENV_KERNEL_CACHE_DIR",
     "ENV_MEASURED_DIR",
     "ENV_MIN_SPEEDUP",
@@ -30,6 +31,7 @@ ENV_KERNEL_CACHE_DIR = "AKLR_KERNEL_CACHE_DIR"
 ENV_EXPORT = "AKLR_EXPORT"
 ENV_EXPORT_DIR = "AKLR_EXPORT_DIR"
 ENV_MEASURED_DIR = "AKLR_MEASURED_DIR"
+ENV_FLYDSL_FASTCALL = "AKLR_FLYDSL_FASTCALL"
 ENV_SGLANG_PLUGIN = "AKLR_SGLANG_PLUGIN"
 ENV_VLLM_PLUGIN = "AKLR_VLLM_PLUGIN"
 ENV_TRACE = "AKLR_TRACE"
@@ -74,6 +76,12 @@ class RuntimeEnv:
             raise ValueError(f"{ENV_VLLM_PLUGIN}={plugin!r}: expected '1' or '0'")
         self.is_vllm_plugin_enabled = plugin == "1"
         self.trace_mode = trace_mode()
+        # AKLR_FLYDSL_FASTCALL: "1" or unset launches FlyDSL kernels through a compiled function
+        # per argument signature, "0" through FlyDSL's per-call checks
+        fastcall = os.environ.get(ENV_FLYDSL_FASTCALL) or "1"
+        if fastcall not in ("0", "1"):
+            raise ValueError(f"{ENV_FLYDSL_FASTCALL}={fastcall!r}: expected '1' or '0'")
+        self.is_flydsl_fastcall_enabled = fastcall == "1"
         self.export_dir = Path(os.environ.get(ENV_EXPORT_DIR) or DEFAULT_EXPORT_DIR).absolute()
         # AKLR_MIN_SPEEDUP: least speedup over aiter to serve; <= 0 also serves unmeasured
         speedup = os.environ.get(ENV_MIN_SPEEDUP) or str(DEFAULT_MIN_SPEEDUP)

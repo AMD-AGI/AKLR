@@ -219,6 +219,15 @@ class FlyDSLBuilder(PythonBuilder):
             return False
         return True
 
+    def build(self, schema: OpContract) -> Runnable:
+        """``PythonBuilder.build``, with the host fast path for the kernels' launchers installed
+        unless ``AKLR_FLYDSL_FASTCALL=0``."""
+        if RuntimeEnv().is_flydsl_fastcall_enabled:
+            from aklr.core.runtime.builder._flydsl_fastcall import install
+
+            install(KERNEL_PACKAGE_PREFIX)
+        return super().build(schema)
+
 
 class HipBuilder(Builder):
     """Builds the sources into a torch extension for this GPU's arch
