@@ -182,9 +182,13 @@ regular file (`find <pulled> ! -type f ! -type d` prints nothing), and run no co
 **Pools.** A pool is one node of `execution.cluster`, requested with `--cluster <execution.cluster> alloc
 --no-wait -N 1 -t <execution.pool_hours>` and `--idle` above the longest gap between rounds (180 minutes,
 since a ledger `wake_at` delays a round by at most two hours), so the node is not released while its
-campaigns wait. A full cluster leaves the request queued, keeping its place: save its handle as `pending`
-and in later rounds observe it with `remote-gpu ready -j <handle> --wait 60` (exit 205: still pending, keep
-waiting; never cancel and resubmit it); its OK line starts the pool, and its end is the scheduler start
+campaigns wait. `--no-wait` turns off alloc's race over the cluster's accounts, so queue one request per
+`ACCOUNT:QOS` pair of the cluster's manifest (`ACCOUNTS` in `~/.remote-gpu/clusters/<cluster>/cluster.env`),
+each with `-A <account> -q <qos>`, all saved under the one pool before submitting. A full cluster leaves
+them queued, keeping their places: save each handle as `pending` and in later rounds observe each with
+`remote-gpu ready -j <handle> --wait 60` (exit 205: still pending, keep waiting; never cancel and resubmit
+one). The first to print OK starts the pool; release the pool's other requests at once, confirmed gone by
+`ls`, and settle each from its own start if it ever started. Its OK line starts the pool, and its end is the scheduler start
 plus the time limit. Its bounds are its node hours (nodes times the time limit). Admit a campaign only onto
 a started pool with a free GPU whose end is after the campaign's deadline, so a deadline never waits on
 the queue; request a new pool only when no started or pending one can take the next candidate. Never put two campaigns on one GPU.
