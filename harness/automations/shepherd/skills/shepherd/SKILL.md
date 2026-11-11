@@ -53,10 +53,20 @@ configuration and the ledger, never from this conversation, Memories or shell va
 
 ## 1. Load
 
-The scheduler starts this round through the [state helper](references/state.md)'s `round` wrapper, which
-already owns the ledger and sets `AKLR_ROUND_ID`. If that variable is missing, stop: this agent was not
-started by the wrapper. Read the ledger with `show`. Missing or corrupt state blocks writes; only setup
-initializes.
+A round runs inside the [state helper](references/state.md)'s `round` wrapper, which owns the ledger and
+sets `AKLR_ROUND_ID`. If that variable is missing, this agent was started directly (a scheduler that can
+only send a prompt, or a person pasting it). Do not run the round yourself:
+- If `.shepherd/configuration.yaml`, `execution.round_agent` or the state directory (`show` fails) is
+  missing, report that setup is incomplete, name what is missing and point to
+  `harness/automations/shepherd/FOR_AGENTS.md`, then stop. Never set up or initialize from a round.
+- Otherwise start the round in the foreground and wait for it to exit:
+  `python -I harness/automations/shepherd/skills/shepherd/scripts/state.py --root <execution.state_dir> round --config .shepherd/configuration.yaml -- <execution.round_agent...> "<templates/automation-prompt.md without its comment line>"`.
+  Relay its JSON result (`busy`, `waiting_until` or the round's exit code) and the report it appended to
+  `reports.md`, then stop. Start it once; never retry in the same turn. Wait through your tool's own completion signal, never a timer or wakeup.
+
+Inside the wrapper, read the ledger with `show`. Missing or corrupt state blocks writes; only setup
+initializes. If the ledger lacks `repository`, `budget_authorization` or the cumulative caps, copy them
+from the configuration in this round's first save.
 
 If `AKLR_RECOVERED_FROM` is set, the previous round died. Every operation it saved with an intent and no
 result is `unknown`: reconcile those through their recorded names before any other action.

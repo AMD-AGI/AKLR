@@ -101,6 +101,12 @@ def test_root_expands_environment_variables(tmp_path, monkeypatch):
     assert (tmp_path / "state" / "state.json").is_file()
 
 
+def test_init_creates_missing_private_parents(tmp_path):
+    success(tmp_path / "user" / "shepherd" / "state", "init")
+    assert (tmp_path / "user" / "shepherd" / "state" / "state.json").is_file()
+    assert (tmp_path / "user" / "shepherd").stat().st_mode & 0o777 == 0o700
+
+
 def test_root_under_a_shared_directory_is_refused(tmp_path):
     shared = tmp_path / "shared"
     shared.mkdir()

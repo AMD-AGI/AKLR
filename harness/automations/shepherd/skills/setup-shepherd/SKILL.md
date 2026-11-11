@@ -34,18 +34,27 @@ Ask for or confirm:
 
 - Repository and base branch (infer from the checkout).
 - Mode: `run`, `observe` or `drain`.
-- State directory, cluster, image digest and runtime revision.
+- State directory, cluster, image digest and runtime revision. Offer found values for confirmation: the
+  image from AKLR CI (`AKLR_CI_IMAGE` in `.github/workflows/ci.yaml`) resolved to its registry digest; the
+  runtime as the Hyperloom `AKLR` branch commit (KernelForge) plus the flydsl version
+  `harness/scripts/forge_task/README.md` pins.
+- `execution.round_agent`: the non-interactive agent command (CLI, outer model, reasoning effort,
+  permission mode) the wrapper runs.
 - Strategies (`manual` paths, `kernel-less`), `batch_size`, `allowed_ops`, backend, `max_open_prs`,
   `cooldown_hours`.
 - Campaign model and reasoning effort, loop hours, node hours, model USD, `max_auto_resumes`.
-- Cumulative budget, its recorded authorization and the provider's hard limit.
+- Cumulative budget, its recorded authorization and the provider's hard limit: the spend cap on the API
+  key or gateway the campaign's model calls use (`claude auth status`, `ANTHROPIC_BASE_URL`). If none
+  exists, say the owner must set one; it cannot be inferred from here.
 - Publication: draft PRs, PR comments, `ci:gpu` label, branch prefix.
 
 Resolve the model to an identifier KernelForge's provider supports and verify the reasoning effort; do
 not guess a model, invent a flag or drop the effort. Node hours cover setup, finalize, stress and
 validation as well as the loop. The model budget covers every inner agent call; outer automation and
 GPU CI need their own authorization. Never estimate hard caps from logs. Do not guess any paid-run
-choice: a missing one blocks the actions that need it, not read-only inspection.
+choice: a missing one blocks the actions that need it, not read-only inspection. Ask every item above in
+the same pass; with `mode: run`, end setup by listing each one still `null` as `prepared (blocked: ...)`,
+never as ready. Verify the effort against the pinned KernelForge source (`--agent-reasoning-effort`).
 
 ## 4. Check the execution environment
 
@@ -74,7 +83,9 @@ check has not run, leave paid mode off.
 
 ## 5. Initialize state
 
-Read [state.md](../shepherd/references/state.md). Initialize a new state directory once with the helper.
+Read [state.md](../shepherd/references/state.md). Initialize a new state directory once with the helper;
+it creates missing private parents. Setup cannot `save` (only a running round can): the first round copies
+`repository`, `budget_authorization` and the caps from the configuration into the ledger.
 An existing directory, or one missing after use, needs investigation, not a new `init`.
 
 ## 6. Prepare the scheduled task
@@ -84,7 +95,9 @@ Ask whether this is a first-time creation or an existing task.
 **First time.** Use the owner's chosen scheduler, for example GitHub Actions on a self-hosted runner or
 host cron. It runs the state helper's `round` wrapper with the agent CLI after `--` (see
 [state.md](../shepherd/references/state.md)), never the agent directly, and sends SIGTERM to the wrapper on
-timeout. Give the agent `templates/automation-prompt.md` as the prompt; keep workflow rules in the round
+timeout. A scheduler that can only send a prompt to an agent (for example a chat app's scheduled task)
+may send `templates/automation-prompt.md` directly: the round skill then starts the wrapper with
+`execution.round_agent` itself. Give the agent `templates/automation-prompt.md` as the prompt; keep workflow rules in the round
 skill, not in the prompt. Bind the task to the checkout and environment checked in
 step 4, set the interval (15 minutes by default), and record the task identity, the outer model and its
 reasoning effort. Repository events may trigger the same task; polling stays the fallback. Do not rely
@@ -98,9 +111,10 @@ results and remaining settings, and say the task is not saved.
 
 ## 7. Verify before paid operation
 
-1. Run one `observe` round: it reads GitHub and existing runs, lists candidates, writes a report and
-   changes nothing.
-2. Run the CPU tests (`python -m pytest harness/tests/shepherd`). On the configured host, through the
+1. Run one `observe` round through the wrapper (`round --now -- <round_agent> <prompt>`): it reads GitHub
+   and existing runs, lists candidates, writes a report and changes nothing.
+2. Run the CPU tests (`python -m pytest harness/tests/shepherd`) with `TMPDIR` on a directory only you
+   and root own, such as `/tmp`: the helper rightly refuses a temp root under another user's directory. On the configured host, through the
    scheduler's own command, show that two concurrent triggers start one agent, a second fresh round reads
    what the first saved, and after `kill -9` of a running agent the next trigger takes over with
    `AKLR_RECOVERED_FROM` set.

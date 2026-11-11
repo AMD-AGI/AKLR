@@ -7,8 +7,9 @@ base_branch: main
 execution:
   state_dir: /var/tmp/$USER/shepherd/state  # Local disk that survives reboots (not NFS or /tmp), owned by you; env vars, never a literal username.
   cluster: null  # remote-gpu cluster name.
-  image: null  # Verified ROCm image pinned by digest.
-  runtime_revision: null  # Toolchain revision covered by the readiness checks.
+  image: null  # ROCm image pinned by digest, e.g. AKLR CI's tag (.github/workflows/ci.yaml) resolved to it.
+  runtime_revision: null  # KernelForge (Hyperloom AKLR branch) commit and flydsl version the readiness checks ran.
+  round_agent: null  # Non-interactive agent argv the wrapper runs before the prompt, e.g. [claude, -p, --model, <id>, --effort, <level>, <owner-chosen permission flags>]; a permission bypass is the owner's explicit choice.
 policy:
   strategies:  # Applied in order.
     - type: manual
@@ -30,7 +31,7 @@ budget:  # Cumulative over all campaigns in state_dir. On probation: one campaig
   authorization: null  # Recorded spending authorization, not a credential.
   total_model_usd: null
   total_node_hours: null  # Whole-node hours, even when using one GPU.
-  model_hard_limit_ref: null  # Name of the provider-side hard spending limit, not a path.
+  model_hard_limit_ref: null  # Name of the provider-side hard spending limit (API key or gateway cap), not a path. None: no admission.
 publication:
   allow_draft_pr: false
   allow_pr_comments: false

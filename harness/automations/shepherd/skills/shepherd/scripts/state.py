@@ -185,6 +185,8 @@ def execute(args):
     check_private_path(root)
     if args.command == "init":
         # Exclusive directory creation also rejects a lost ledger in an existing directory.
+        # A fresh host has no `/var/tmp/$USER/shepherd` yet; the checked parents are made private.
+        root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         try:
             root.mkdir(mode=0o700, parents=False)
         except FileExistsError as exc:

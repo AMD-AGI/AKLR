@@ -33,8 +33,8 @@ revision; use the returned revision for the next save. A stale revision is rejec
 
 ## Ledger contents
 
-`init` creates `campaigns: []` and `last_main_sha: null`. Setup adds `repository`, `budget_authorization`
-and the cumulative caps. The committed budget is not stored: it is the sum over campaigns of their settled
+`init` creates `campaigns: []` and `last_main_sha: null`, and any missing parent directories (mode 700).
+The first round adds `repository`, `budget_authorization` and the cumulative caps from the configuration. The committed budget is not stored: it is the sum over campaigns of their settled
 use, or their admitted bounds until settled. Changing the authorization erases no commitment. Each round may set the top-level `wake_at` its wrapper reads.
 
 Each campaign records:
