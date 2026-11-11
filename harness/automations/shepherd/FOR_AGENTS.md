@@ -9,13 +9,14 @@ One scheduled automation that keeps optimizing AKLR kernels unattended.
 - Requests: an issue titled `shepherd:` from a member of the configured team asks for schemas in a YAML
   block; one progress comment tracks it, closing the issue stops its campaigns, its PRs say `Refs #N`.
 - Behavior: each round observes GitHub and the remote GPU jobs, then advances existing work as far as
-  confirmed results allow (stop, clean, validate, deliver), or admits one new kernel-less schema. Triggers
+  confirmed results allow (stop, clean, validate, deliver), and admits new kernel-less schemas into free
+  GPUs. Triggers
   before the ledger's next wake time end without starting an agent, unless the last round failed.
-- Campaign: optimizes the kernel on one GPU node, then finalizes, stress-tests and validates it in a
-  trusted checkout.
+- Campaign: optimizes the kernel on one GPU of a shared pool node, then finalizes, stress-tests and
+  validates it in a trusted checkout.
 - Outcome: a draft PR with head-bound evidence, followed until a maintainer merges or closes it, and a
   short report after every round.
-- Boundary: one GPU campaign at a time, within the recorded budget. Draft PRs only; no merge, no edits
+- Boundary: at most `max_parallel_campaigns` campaigns, one per GPU, within the recorded budget. Draft PRs only; no merge, no edits
   to existing PRs.
 
 ## Shared rules
@@ -34,7 +35,7 @@ One scheduled automation that keeps optimizing AKLR kernels unattended.
 - Repository and base branch: `<repo>`, `<branch>`
 - Mode: `<run | observe | drain>`
 - State directory, cluster, image, runtime revision: `<...>`
-- Candidate strategies, ops and backend: `<...>`
+- Candidate strategies, ops, backends and parallelism: `<...>`
 - Campaign model, reasoning effort and per-campaign limits: `<...>`
 - Cumulative budget and its authorization: `<...>`
 - Publication permissions and branch prefix: `<...>`

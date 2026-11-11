@@ -276,28 +276,29 @@ def execute(args):
         state = read_json(Path(args.input))
         if not isinstance(state, dict):
             raise StateError("--input must contain a state object, not a list or scalar")
-        # The committed budget is derived from the campaigns, so a save may never drop one or
-        # change the bounds it was admitted with.
-        campaigns = {}
-        for campaign in state.get("campaigns", []):
-            if (
-                not isinstance(campaign, dict)
-                or not isinstance(campaign.get("id"), str)
-                or campaign["id"] in campaigns
-            ):
-                raise StateError("every campaign needs a unique string id")
-            campaigns[campaign["id"]] = campaign
+        # The committed budget is derived from the campaigns (model spend) and the pools (shared node
+        # allocations, node hours), so a save may never drop one or change the bounds it was admitted with.
+        for kind in ("campaigns", "pools"):
+            entries = {}
+            for entry in state.get(kind, []):
+                if (
+                    not isinstance(entry, dict)
+                    or not isinstance(entry.get("id"), str)
+                    or entry["id"] in entries
+                ):
+                    raise StateError(f"every entry of {kind} needs a unique string id")
+                entries[entry["id"]] = entry
+            for kept in value["state"].get(kind, []):
+                if kept["id"] not in entries:
+                    raise StateError(f"{kind} entry {kept['id']} is missing; entries are never removed")
+                if "bounds" in kept and entries[kept["id"]].get("bounds") != kept["bounds"]:
+                    raise StateError(f"{kind} entry {kept['id']} changes its admitted bounds")
         issues = [request.get("issue") if isinstance(request, dict) else None for request in state.get("requests", [])]
         if not all(type(issue) is int for issue in issues) or len(set(issues)) != len(issues):
             raise StateError("every request needs a unique integer issue")
         for kept in value["state"].get("requests", []):
             if kept["issue"] not in issues:
                 raise StateError(f"request {kept['issue']} is missing; requests are never removed")
-        for kept in value["state"].get("campaigns", []):
-            if kept["id"] not in campaigns:
-                raise StateError(f"campaign {kept['id']} is missing; campaigns are never removed")
-            if "bounds" in kept and campaigns[kept["id"]].get("bounds") != kept["bounds"]:
-                raise StateError(f"campaign {kept['id']} changes its admitted bounds")
         value = {"revision": value["revision"] + 1, "state": state}
         atomic_json(root / "state.json", value)
         return value

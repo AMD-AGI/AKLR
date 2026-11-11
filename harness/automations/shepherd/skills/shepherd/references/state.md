@@ -38,18 +38,19 @@ committed budget is derived from them. So is a state that drops a request or giv
 ## Ledger contents
 
 `init` creates `campaigns: []`, `requests: []` and `last_main_sha: null`, and any missing parent directories (mode 700).
-The caps and the authorization stay in the configuration. The committed budget is not stored: it is the
-sum over campaigns of their settled use, or their admitted bounds until settled. Changing the
+The caps and the authorization stay in the configuration. The committed budget is not stored: model USD
+is the sum over campaigns, node hours the sum over `pools`, each its settled use, or its admitted bounds
+until settled. Changing the
 authorization or a cap erases no commitment. Each round may set the top-level `wake_at` its wrapper reads.
 
 Each campaign records:
 
 - Identity: `id` (unique, required), repository, schema path, SHA-256 of the input, regime (M range and workloads, or none),
   base SHA, config snapshot, creation time.
-- Bounds: `bounds`, fixed at admission (model, admitted model USD and node hours, absolute deadline); the
-  automatic resume count; and once cleanup is confirmed the settled model USD and node hours with the
-  observations they came from, outside `bounds`.
-- Work: phase, local/remote run and checkout paths, exact allocation handle, task handles.
+- Bounds: `bounds`, fixed at admission (model, admitted model USD, absolute deadline); the automatic resume
+  count; and once cleanup is confirmed the settled model USD with the observations it came from, outside
+  `bounds`.
+- Work: phase, pool id and GPU index, local/remote run and checkout paths, task handles.
 - Operations: ID, kind, intent time, unique external name, deadline, result or `unknown`, last observation.
 - Evidence: candidate digest, intended head, validation base, validator/environment versions, report paths,
   per-Point verdicts, and the last freshness check (main SHA, relevant paths).
@@ -59,6 +60,11 @@ Each campaign records:
 - Next action, failure or blocked reason, delivered input identity, cooldown-until time.
 - Request: `request` (issue number), `request_version`, `schema`, `pr`, for a campaign admitted from an
   issue request. The `requests` entries themselves are described in the round skill's Requests section.
+
+Each pool (`pools`, created on first use) records its `id` (unique), `bounds` fixed before allocating
+(node hours as nodes times the time limit, and its end), the allocation intent and exact handle(s),
+`CANCEL_FAILED` handles, scheduler start, the GPU each campaign holds, the release observations, and once
+released the settled node hours. `save` rejects dropping a pool or changing its `bounds`, as for campaigns.
 
 A starting-kernel failure also records the blocked op contract with the tree hashes (the op directory
 without `impls/`, and `harness/scripts/forge_task`) and the runtime revision that lift it.
