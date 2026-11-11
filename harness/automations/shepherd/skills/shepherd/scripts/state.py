@@ -1,17 +1,23 @@
-"""Local, durable round ownership and atomic snapshots for cooperating skill runs.
+"""Shepherd's round ledger: one live round on this host at a time, and atomic snapshots of its state.
 
 This is a storage helper, not a budget gate, a workflow engine, or a security boundary.
 """
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import secrets
+import signal
 import stat
+import subprocess
 import sys
 import tempfile
-from contextlib import contextmanager
+import time
+from contextlib import contextmanager, suppress
+from dataclasses import asdict, dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -71,10 +77,86 @@ def snapshot(root):
     return value
 
 
-def check_owner(root, token):
-    value = read_json(root / "owner.json")
-    if not isinstance(value, dict) or not secrets.compare_digest(str(value.get("token", "")), token):
-        raise StateError("round token does not match the current owner")
+@dataclass(frozen=True)
+class Round:
+    """One run of the round wrapper, identified on this host by its process, boot and PID namespace.
+
+    The wrapper's agent and every process it starts inherit `AKLR_ROUND_ID`, which is how a later
+    wrapper finds them even when they run in their own sessions.
+    """
+
+    id: str
+    pid: int
+    start: str
+    boot_id: str
+    pid_namespace: str
+    config_sha256: str
+
+    @staticmethod
+    def process_start(pid):
+        # Field 22 of /proc/<pid>/stat; the command name before it may contain spaces.
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19]
+
+    @classmethod
+    def begin(cls, config_path):
+        return cls(
+            id=secrets.token_hex(12),
+            pid=os.getpid(),
+            start=cls.process_start("self"),
+            boot_id=Path("/proc/sys/kernel/random/boot_id").read_text().strip(),
+            pid_namespace=os.readlink("/proc/self/ns/pid"),
+            config_sha256=hashlib.sha256(Path(config_path).read_bytes()).hexdigest(),
+        )
+
+    @classmethod
+    def recorded(cls, path):
+        if not path.exists():
+            return None
+        value = read_json(path)
+        try:
+            return cls(**value)
+        except TypeError as exc:
+            raise StateError(f"invalid round record {path}; investigate, do not delete it") from exc
+
+    def processes(self):
+        """PIDs this user can see whose initial environment carries this round's id."""
+        marker = f"AKLR_ROUND_ID={self.id}".encode()
+        found = []
+        for environ in Path("/proc").glob("[0-9]*/environ"):
+            with suppress(OSError):
+                if marker in environ.read_bytes().split(b"\0"):
+                    found.append(int(environ.parent.name))
+        return found
+
+    def is_alive(self, here):
+        """False only when none of this round's processes can still run; undecidable counts as alive."""
+        if self.boot_id != here.boot_id:
+            return False
+        if self.pid_namespace != here.pid_namespace:
+            return True
+        with suppress(OSError):
+            if Round.process_start(self.pid) == self.start:
+                return True
+        return bool(self.processes())
+
+    def run(self, root, agent, recovered_from):
+        env = {**os.environ, "AKLR_ROUND_ID": self.id, "AKLR_STATE_DIR": str(root)}
+        if recovered_from:
+            env["AKLR_RECOVERED_FROM"] = recovered_from
+        child = subprocess.Popen(agent, env=env)
+        for signum in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(signum, lambda *_: child.terminate())
+        code = child.wait()
+        # Tool commands run in their own sessions, so only the round id finds what the agent left behind.
+        while leftovers := self.processes():
+            for pid in leftovers:
+                with suppress(ProcessLookupError):
+                    os.kill(pid, signal.SIGKILL)
+            time.sleep(0.1)
+        with guarded(root):
+            os.replace(root / "owner.json", root / "last_round.json")
+            sync_directory(root)
+        return code
 
 
 def check_private_path(root):
@@ -111,7 +193,6 @@ def execute(args):
             "revision": 0,
             "state": {
                 "campaigns": [],
-                "committed": {"model_usd": 0, "node_hours": 0},
                 "last_main_sha": None,
             },
         }
@@ -119,24 +200,49 @@ def execute(args):
         sync_directory(root.parent)
         return value
 
+    owner_path = root / "owner.json"
+    if args.command == "round":
+        if not args.agent:
+            raise StateError("round needs the agent command after --")
+        here = Round.begin(args.config)
+        now = datetime.now(timezone.utc)
+        with guarded(root):
+            value = snapshot(root)
+            previous = Round.recorded(owner_path)
+            if previous and previous.is_alive(here):
+                with (root / "reports.md").open("a") as reports:
+                    reports.write(
+                        f"\n{now.isoformat()}: round {previous.id} is still running; trigger skipped.\n"
+                    )
+                return {"busy": previous.id}
+            # A dead owner is taken over at once: its saved intents need reconciling, whatever wake_at says.
+            if previous is None and not args.now:
+                last = Round.recorded(root / "last_round.json")
+                wake_at = value["state"].get("wake_at")
+                try:
+                    wake = datetime.fromisoformat(wake_at) if isinstance(wake_at, str) else None
+                except ValueError:
+                    wake = None
+                if (
+                    last is not None
+                    and last.config_sha256 == here.config_sha256
+                    and wake is not None
+                    and wake.tzinfo is not None
+                    # A wrong wake_at can delay a round by at most two hours.
+                    and now < wake <= now + timedelta(hours=2)
+                ):
+                    return {"waiting_until": wake_at}
+            atomic_json(owner_path, asdict(here))
+        code = here.run(root, args.agent, previous.id if previous else None)
+        return {"round": here.id, "recovered_from": previous.id if previous else None, "exit_code": code}
+
     with guarded(root):
         value = snapshot(root)
-        owner_path = root / "owner.json"
+        owner = Round.recorded(owner_path)
         if args.command == "show":
-            # Owner identity is observable, but don't print its token to every reader.
-            owner = read_json(owner_path) if owner_path.exists() else None
-            return {**value, "owner": owner.get("owner") if isinstance(owner, dict) else None}
-        if args.command == "acquire":
-            if owner_path.exists():
-                raise StateError("busy: a round owns this ledger; no automatic takeover")
-            token = secrets.token_hex(24)
-            atomic_json(owner_path, {"token": token, "owner": args.owner})
-            return {"token": token, **value}
-        check_owner(root, args.token)
-        if args.command == "release":
-            owner_path.unlink()
-            sync_directory(root)
-            return {"released": True}
+            return {**value, "owner": asdict(owner) if owner else None}
+        if owner is None or owner.id != os.environ.get("AKLR_ROUND_ID"):
+            raise StateError("only the running round may save: AKLR_ROUND_ID does not match owner.json")
         if args.revision != value["revision"]:
             raise StateError(f"stale revision: expected {value['revision']}")
         state = read_json(Path(args.input))
@@ -153,22 +259,23 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("init")
     sub.add_parser("show")
-    acquire = sub.add_parser("acquire")
-    acquire.add_argument("--owner", required=True)
+    round_ = sub.add_parser("round", help="run the agent command after -- as the ledger's one round")
+    round_.add_argument("--config", required=True)
+    round_.add_argument("--now", action="store_true", help="run even if the ledger's wake_at is ahead")
+    round_.add_argument("agent", nargs=argparse.REMAINDER)
     save = sub.add_parser("save")
-    save.add_argument("--token", required=True)
     save.add_argument("--revision", required=True, type=int)
     save.add_argument("--input", required=True)
-    release = sub.add_parser("release")
-    release.add_argument("--token", required=True)
     args = parser.parse_args()
+    if args.command == "round" and args.agent[:1] == ["--"]:
+        args.agent = args.agent[1:]
     try:
         result = execute(args)
     except (StateError, OSError, ValueError) as exc:
         print(json.dumps({"error": str(exc)}), file=sys.stderr)
         return 1
     print(json.dumps(result, allow_nan=False))
-    return 0
+    return result.get("exit_code", 0)
 
 
 if __name__ == "__main__":

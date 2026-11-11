@@ -1,4 +1,4 @@
-<!-- Use this prompt in the configured scheduler. -->
+<!-- The agent's prompt; the scheduler starts the agent through the state helper's `round` wrapper. -->
 
 Run one shepherd round in this repository: read and follow `harness/automations/shepherd/skills/shepherd/SKILL.md`
 with `.shepherd/configuration.yaml`. This is not setup: do not manage schedules or reinitialize state.

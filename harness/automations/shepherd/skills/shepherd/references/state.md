@@ -1,52 +1,75 @@
 # Persistent round state
 
 Run the helper on the same host with the same `--root` every time. It expands `$VAR` and `~`, needs only
-Python 3.10+ on Linux, and refuses a root that another user owns or could swap. Set `AKLR_STATE_DIR` from
-`execution.state_dir` and `AKLR_ROUND_ID` to this invocation's unique identity.
+Python 3.10+ on Linux, and refuses a root that another user owns or could swap.
 
 ```bash
-STATE="python harness/automations/shepherd/skills/shepherd/scripts/state.py --root ${AKLR_STATE_DIR:?Set from execution.state_dir}"
-$STATE init     # setup only
-$STATE acquire --owner "${AKLR_ROUND_ID:?Set the unique round identity}"
+STATE="python -I harness/automations/shepherd/skills/shepherd/scripts/state.py --root <execution.state_dir>"
+$STATE init                                                   # setup only
+$STATE round --config .shepherd/configuration.yaml -- <agent CLI> <prompt>   # the scheduler's command
 $STATE show
-$STATE save --token "$AKLR_ROUND_TOKEN" --revision "$AKLR_REVISION" --input "$AKLR_NEXT_STATE"
-$STATE release --token "$AKLR_ROUND_TOKEN"
+$STATE save --revision "$REVISION" --input "$NEXT_STATE"     # inside a round only
 ```
 
-`acquire` returns a token and `{revision, state}`. To save, write the complete next **state object** (not
-the envelope) to a temporary file and pass it with the current revision; use the returned revision for
-the next save. A stale revision or wrong token is rejected. Never edit `state.json` or `owner.json` by
-hand, and keep tokens out of shared logs.
+`round` owns the ledger for one agent run:
+
+1. If `owner.json` names a round that may still be running, it prints `{"busy": <id>}`, appends a line to
+   `reports.md` and exits 0 without starting the agent. A round counts as running while its wrapper
+   process (pid and start time) exists, or any process this user can see carries its `AKLR_ROUND_ID`.
+   Another PID namespace on the same boot is undecidable and also counts as running. Age never counts.
+2. Otherwise, if no round died and `--now` is not given, it skips the trigger with `{"waiting_until": ...}`
+   while the ledger's `wake_at` is ahead, at most two hours ahead, and the configuration file is unchanged
+   since the last round.
+3. It records itself in `owner.json` and starts the agent with `AKLR_ROUND_ID` and `AKLR_STATE_DIR`, plus
+   `AKLR_RECOVERED_FROM=<id>` when it took over from a dead round. SIGTERM or SIGINT to the wrapper
+   terminates the agent.
+4. When the agent exits, it kills every remaining process carrying its round id, renames `owner.json` to
+   `last_round.json`, and exits with the agent's code.
+
+`save` accepts a write only from the round named in `owner.json`, read from `AKLR_ROUND_ID`. Write the
+complete next **state object** (not the envelope) to a temporary file and pass it with the current
+revision; use the returned revision for the next save. A stale revision is rejected. Never edit
+`state.json`, `owner.json` or `last_round.json` by hand.
 
 ## Ledger contents
 
-`init` creates `campaigns: []`, `committed: {model_usd: 0, node_hours: 0}` and `last_main_sha: null`.
-Setup adds `repository`, `budget_authorization` and the cumulative caps. Changing the authorization
-erases no commitment.
+`init` creates `campaigns: []` and `last_main_sha: null`. Setup adds `repository`, `budget_authorization`
+and the cumulative caps. The committed budget is not stored: it is the sum over campaigns of their settled
+use, or their admitted bounds until settled. Changing the authorization erases no commitment. Each round may set the top-level `wake_at` its wrapper reads.
 
 Each campaign records:
 
-- Identity: ID, repository, schema path, SHA-256 of the input, base SHA, config snapshot, creation time.
-- Bounds: model, admitted model/node bounds, absolute deadline, automatic resume count.
+- Identity: ID, repository, schema path, SHA-256 of the input, regime (M range and workloads, or none),
+  base SHA, config snapshot, creation time.
+- Bounds: model, admitted model/node bounds, absolute deadline, automatic resume count, and once cleanup is
+  confirmed the settled model USD and node hours with the observations they came from.
 - Work: phase, local/remote run and checkout paths, exact allocation handle, task handles.
 - Operations: ID, kind, intent time, unique external name, deadline, result or `unknown`, last observation.
-- Evidence: candidate digest, intended head, validator/environment versions, report paths, per-Point verdicts.
-- Cleanup: stop intent, process/container/allocation observations, confirmed completion time.
+- Evidence: candidate digest, intended head, validation base, validator/environment versions, report paths,
+  per-Point verdicts, and the last freshness check (main SHA, relevant paths).
+- Cleanup: stop intent, the `release` output, each node's `cleaned.<node>` marker, the `ls` observation,
+  and whether it is confirmed or unconfirmed-but-bounded, with the time.
 - Delivery: branch, campaign marker, PR number/URL, head/base, CI/review state, merge commit, comment hashes.
 - Next action, failure or blocked reason, delivered input identity, cooldown-until time.
+
+A starting-kernel failure also records the blocked op contract with the tree hashes and runtime revision
+that lift it.
 
 Store each campaign's snapshots and reports under `runs/<campaign_id>/`. The helper checks none of this;
 the entry skill and the owner keep it correct.
 
 ## Crash and recovery
 
-The round lock has no expiry. If a round crashes, pause the scheduled task. An operator on that host
-confirms the owner invocation has stopped, reconciles its saved intents against the external resources,
-saves that evidence, and only then runs `release` with the token from `owner.json`. Never release on age
-or add a force-unlock.
+A crashed round needs no operator: the next trigger takes over once none of its processes remain on this
+host, and that round reconciles the saved intents first. A wrapper killed while its agent lives stays busy
+until the agent exits.
+
+A round that hangs while alive stays busy. To end it, an operator on that host finds its processes by id
+(`grep -l "AKLR_ROUND_ID=<id>" /proc/[0-9]*/environ`) and kills them; the next trigger takes over. Never
+release on age, delete `owner.json`, or add a force-unlock.
 
 An empty, missing or corrupt directory does not mean nothing is running. Restore a consistent backup
 while paused and reconcile resources created since it; never initialize over a lost ledger.
 
-Back up `state.json`, `owner.json` and the evidence while paused, to another machine as well. Recovery
+Back up `state.json`, `owner.json`, `last_round.json` and the evidence while paused, to another machine as well. Recovery
 covers one host, not multi-host availability.

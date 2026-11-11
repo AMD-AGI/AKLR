@@ -1,8 +1,9 @@
 # shepherd
 
 shepherd is a scheduled automation that optimizes AKLR kernels unattended. Each round it observes GitHub and
-the GPU jobs, then advances one KernelForge campaign or admits a new kernel-less schema, validates the
-kernel, opens a draft PR and follows it until a maintainer merges or closes it.
+the GPU jobs, then advances one KernelForge campaign as far as confirmed results allow or admits a new
+kernel-less schema, validates the kernel, opens a draft PR and follows it until a maintainer merges or
+closes it.
 
 The files here are read by repository path; they do not appear as slash skills. The round reuses the
 optimization, GPU, validation, PR and reporting skills in `harness/skills/`.
@@ -15,8 +16,8 @@ optimization, GPU, validation, PR and reporting skills in `harness/skills/`.
    `.shepherd/configuration.yaml` at the repository root (ignored by Git) and fill it in.
 3. Pass the environment checks, initialize the state directory once, and run one `observe` round.
 4. Ask setup to create or update one scheduled task with
-   [`automation-prompt.md`](./templates/automation-prompt.md), then enable `run` within your budget
-   authorization.
+   [`automation-prompt.md`](./templates/automation-prompt.md), then enable `run` on probation (one
+   campaign's budget, one PR) until a real campaign reaches a draft PR, and raise the budget after.
 
 ## Files
 
@@ -31,11 +32,19 @@ shepherd/
     └── shepherd/
         ├── SKILL.md               one round
         ├── references/state.md    ledger, helper CLI, crash recovery
-        └── scripts/state.py       round lock and atomic snapshots
+        └── scripts/
+            ├── state.py           round wrapper, takeover and atomic snapshots
+            └── freshness.py       which main changes make evidence stale
 ```
 
 ## Limits
 
 One Linux host with a persistent state directory, GitHub access and the GPU cluster. One GPU campaign
-at a time. Budget enforcement and validation isolation rely on the execution environment; a trusted
-tool service is planned.
+at a time. The ledger's budget is bookkeeping, not a hard limit: the provider's hard limit and Slurm time
+limits are.
+
+Isolation is a mount boundary under one identity. Workers run only on allocated nodes, in containers that
+mount their own directory (and read-only model credentials for model-calling steps), never the validator,
+earlier evidence, the cluster `$HOME` or GitHub and state credentials. This stops a worker from editing
+what judges it; it does not stop a deliberate container escape, since containers run as root. Independent
+review is the PR's GPU CI (`ci:gpu`).

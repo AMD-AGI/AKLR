@@ -26,7 +26,7 @@ campaign:  # Per campaign.
   total_node_hours: null  # Includes setup, finalize, stress and validation.
   max_model_usd: null  # Includes finalize and distill.
   max_auto_resumes: 1
-budget:  # Cumulative over all campaigns in state_dir.
+budget:  # Cumulative over all campaigns in state_dir. On probation: one campaign's bounds, max_open_prs 1.
   authorization: null  # Recorded spending authorization, not a credential.
   total_model_usd: null
   total_node_hours: null  # Whole-node hours, even when using one GPU.

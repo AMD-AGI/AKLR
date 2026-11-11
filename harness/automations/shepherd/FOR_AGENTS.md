@@ -5,8 +5,9 @@
 One scheduled automation that keeps optimizing AKLR kernels unattended.
 
 - Trigger: a schedule, every 15 minutes by default. Repository events may also start a round.
-- Behavior: each round observes GitHub and the remote GPU jobs, then does one bounded thing: advance,
-  stop or clean an existing campaign, deliver it, or admit one new kernel-less schema.
+- Behavior: each round observes GitHub and the remote GPU jobs, then advances existing work as far as
+  confirmed results allow (stop, clean, validate, deliver), or admits one new kernel-less schema. Triggers
+  before the ledger's next wake time end without starting an agent.
 - Campaign: optimizes the kernel on one GPU node, then finalizes, stress-tests and validates it in a
   trusted checkout.
 - Outcome: a draft PR with head-bound evidence, followed until a maintainer merges or closes it, and a
