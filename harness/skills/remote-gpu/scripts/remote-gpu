@@ -101,6 +101,12 @@ need_running() {
   ((left >= 0 && left < 900)) && warn "job=$C:$1 timeleft=${left}s hint=\"$LATE_HINT\""
   return 0
 }
+# cancel_job JOB [pending]: a failed cancel leaves a job that is still the user's and still billed.
+cancel_job() {
+  scheduler_cancel "$@" >/dev/null 2>&1 && return 0
+  warn "CANCEL_FAILED job=$C:$1 hint=\"it may still be queued or running under your account: remote-gpu release -j $C:$1\""
+  return 1
+}
 # Cancel only while pending; a job that starts during withdrawal is kept.
 withdraw() {
   local attempt
@@ -108,7 +114,7 @@ withdraw() {
     scheduler_cancel "$1" pending >/dev/null 2>&1; sleep 1; read_job "$1"
     case $JOB_STATE in RUNNING | CONFIGURING) return 0 ;; PENDING | '') ;; *) return 1 ;; esac
   done
-  scheduler_cancel "$1" >/dev/null 2>&1; return 1
+  cancel_job "$1"; return 1
 }
 # Node execution has the same transport contract for exec, health checks and bg confirmation.
 on_node() { local job=$1 node=$2; shift 2; scheduler_run "$job" "$node" batch "$@"; }
@@ -133,7 +139,7 @@ exec >>"$B/logs/$J.$H.log" 2>&1
 # Stop task process groups and containers together, allow ~20s for checkpoints, then mark
 # this node clean. Release waits for all holders before cancelling the scheduler allocation.
 cleanup() {
-  local reason=$1 containers task_file node pid process_groups=() attempt active docker_stop_pid=''
+  local reason=$1 containers task_file node pid process_groups=() attempt active docker_stop_pid='' survivors=() listed container
   [[ -e $D/cleaned.$H ]] && return
   for task_file in "$D"/tasks/*.pid; do
     [[ ! -e $task_file || -e ${task_file%.pid}.rc ]] && continue
@@ -149,9 +155,20 @@ cleanup() {
     sleep 1
   done
   for pid in "${process_groups[@]}"; do kill -KILL -- "-$pid" 2>/dev/null; done
+  wait "${process_groups[@]}" 2>/dev/null
   [[ -n $docker_stop_pid ]] && wait "$docker_stop_pid"
   [[ -n $containers ]] && docker rm -f $containers >/dev/null 2>&1
   echo "$(date +%T) $H cleanup ($reason): containers=[$(echo $containers)] tasks=${#process_groups[@]}"
+  # The marker tells release (and its callers' ledgers) that nothing of this job is left here.
+  for pid in "${process_groups[@]}"; do kill -0 -- "-$pid" 2>/dev/null && survivors+=("task=$pid"); done
+  if command -v docker >/dev/null; then
+    if listed=$(docker ps -aq --filter "label=$C.job=$J"); then
+      for container in $listed; do survivors+=("container=$container"); done
+    else
+      survivors+=("containers=unknown")
+    fi
+  fi
+  if ((${#survivors[@]})); then echo "$(date +%T) $H cleanup incomplete: ${survivors[*]}"; return 1; fi
   touch "$D/cleaned.$H"
 }
 # A reused pid only delays reaping; it never removes a live container.
@@ -361,7 +378,7 @@ await_job() {
       PENDING)
         reason=$JOB_REASON start=$JOB_START
         if [[ $reason =~ $UNSCHEDULABLE ]]; then
-          scheduler_cancel "$job" >/dev/null 2>&1
+          cancel_job "$job"
           err UNSCHEDULABLE "job=$C:$job(cancelled) reason=\"$(q "$reason")\" hint=\"fix the request and alloc again\""
         fi
         if ((SECONDS >= deadline)); then
@@ -379,7 +396,7 @@ await_job() {
     esac
     if ((SECONDS >= deadline + 120)); then
       if [[ $on_timeout == keep ]]; then echo "PENDING job=$C:$job state=${JOB_STATE:-unknown}"; exit 205; fi
-      scheduler_cancel "$job" >/dev/null 2>&1
+      cancel_job "$job"
       err PENDING_TIMEOUT "job=$C:$job(cancelled) state=${JOB_STATE:-unknown}"
     fi
     sleep 5
@@ -411,7 +428,7 @@ check_nodes() {
     if ((${gpus:-0} < GPUS_PER_NODE || ${seen:-0} == 0)); then
       rm -rf "$tmp"
       [[ $(job_value "$J" STATE) == RUNNING ]] || err JOB_GONE "job=$C:$J state=$(job_value "$J" STATE) msg=\"ended during the health check\""
-      scheduler_cancel "$J" >/dev/null 2>&1
+      cancel_job "$J"
       err BAD_NODE "job=$C:$J(cancelled) node=$n gpus=${gpus:-0}/$GPUS_PER_NODE sees_workdir=${seen:-0} hint=\"retry: remote-gpu --cluster $C alloc ... -x $n\""
     fi
     ((${foreign:-0} > 0)) && warn "node=$n has $foreign pre-existing docker containers (not ours; GPUs may be busy)"
@@ -442,7 +459,7 @@ alloc_cleanup() {
   local job
   if [[ -n ${WD:-} ]]; then kill "$WD" 2>/dev/null; fi
   for job in "${submitted_jobs[@]}"; do
-    if [[ -n $job && $job != "$kept_job" ]]; then scheduler_cancel "$job" >/dev/null 2>&1; fi
+    if [[ -n $job && $job != "$kept_job" ]]; then cancel_job "$job"; fi
   done
 }
 trap alloc_cleanup EXIT
@@ -492,8 +509,7 @@ else
         break
       fi
       if [[ $JOB_STATE == PENDING && $JOB_REASON =~ $UNSCHEDULABLE ]]; then
-        scheduler_cancel "$job" >/dev/null 2>&1
-        submitted_jobs[index]=''
+        cancel_job "$job" && submitted_jobs[index]=''
       elif ! terminal_state "$JOB_STATE"; then
         live=$((live + 1))
       fi
@@ -513,8 +529,7 @@ else
   cancelled=()
   for candidate in "${submitted_jobs[@]}"; do
     if [[ -n $candidate && $candidate != "$job" ]]; then
-      scheduler_cancel "$candidate" >/dev/null 2>&1
-      cancelled+=("$candidate")
+      cancel_job "$candidate" && cancelled+=("$candidate")
     fi
   done
   echo "RACE kept=$C:$job (${candidates[winner]}) cancelled=\"${cancelled[*]}\"" >&2
@@ -614,7 +629,11 @@ build_node_command() { # build_node_command RANK KIND CMD... -> CMD array to exe
          --device /dev/kfd --device /dev/dri --group-add video --cap-add SYS_PTRACE --security-opt seccomp=unconfined)
     if ((${#MOUNTS[@]})); then
       # --mount replaces the default work root and $HOME mounts; HOME is the first mount.
-      local m path home=''
+      local m path home='' flag
+      for flag in $DOCKER_FLAGS; do
+        [[ $flag =~ ^(-v|--volume|--mount)(=|$|/) ]] &&
+          err USAGE "msg=\"--mount runs with only the given directories, but the manifest's DOCKER_FLAGS adds $flag\" hint=\"drop mounts from DOCKER_FLAGS\""
+      done
       CMD+=($DOCKER_FLAGS)
       for m in "${MOUNTS[@]}"; do
         path=${m%:ro}; [[ $path == /* ]] || path=$REL/$path

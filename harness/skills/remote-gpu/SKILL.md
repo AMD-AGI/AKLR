@@ -56,7 +56,8 @@ $RG release -j mycluster:202642      # ALWAYS, as soon as you are done
   nodes (`RACE kept=...`), releasing the rest. Pass `--cluster NAME` when the user names one, when
   only some clusters have the needed `GPU_ARCH`, or when the code is on a path that cluster mounts.
 - **Account race.** On clusters with `ALLOC_AGGRESSIVE=1`, `alloc` submits one job per `ACCOUNTS`
-  pair and keeps the first to start. `-A`, `-q` or `--no-wait` use one account instead.
+  pair and keeps the first to start. `-A`, `-q` or `--no-wait` use one account instead. Any job it
+  could not cancel is printed as `CANCEL_FAILED job=...` (it is still yours): release it.
 - **Preemptible** (`--preemptible`): only when the user asks for it or for a temporary or
   short-lived machine; never for a run that must not stop, such as a campaign. It adds the
   cluster's `BURST_QOS` to the race (team jobs still win). If the OK line's `qos=` is the burst
@@ -107,7 +108,8 @@ redirection use `bash -lc '...'`, which runs on the node, so `$VAR` expands ther
 - **Docker.** `--image IMG` runs CMD in `docker run --rm` as root, with the GPUs, host network and
   IPC, the work root and `$HOME` mounted, plus the manifest's `DOCKER_FLAGS`. `release` removes it.
   `--mount DIR[:ro]` (repeatable, relative = under the work root) mounts only those directories instead
-  and sets `HOME` to the first: use it when the command must not see or write anything else.
+  and sets `HOME` to the first: use it when the command must not see or write anything else. It fails
+  when the manifest's `DOCKER_FLAGS` adds mounts of its own.
 - **Multi-node.** `-N 2`+ with `exec --all` or `bg --all` runs one copy per node, each with
   `REMOTE_GPU_NODE_RANK`, `REMOTE_GPU_NNODES`, `REMOTE_GPU_NODES`, `MASTER_ADDR` and `MASTER_PORT`,
   e.g. `bash -lc 'torchrun --nnodes $REMOTE_GPU_NNODES --node-rank $REMOTE_GPU_NODE_RANK --master-addr $MASTER_ADDR ...'`.

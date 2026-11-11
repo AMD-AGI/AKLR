@@ -70,6 +70,7 @@ scheduler_jobs() {
   done
 }
 scheduler_cancel() {
+  if [[ -n ${FAKE_CANCEL_FAILS:-} ]]; then return 1; fi
   mkdir -p "$HOME/scheduler/$C"
   echo "$C:$1 ${2:-all}" >>"$HOME/cancelled"
   touch "$HOME/scheduler/$C/$1.cancelled"
@@ -768,3 +769,45 @@ def test_mount_replaces_the_default_mounts(env):
     assert mounts == [f"{home}/work/run/worker:{home}/work/run/worker", "/keys:/keys:ro"]
     assert f"HOME={home}/work/run/worker" in call
     assert rg(env, "exec", "-j", "fake:1", "--mount", "x", "--", "true").returncode != 0
+
+
+def test_mount_refuses_extra_mounts_from_the_manifest(env):
+    directory = configure(env)
+    env_file = directory / "cluster.env"
+    env_file.write_text(
+        env_file.read_text().replace("DOCKER_FLAGS=''", "DOCKER_FLAGS='--privileged -v /validate:/validate'")
+    )
+    result = rg(
+        env, "exec", "-j", "fake:1", "--image", "img", "--mount", "run/worker", "--", "true", timeout=15
+    )
+    assert result.returncode != 0
+    assert "DOCKER_FLAGS" in result.stderr
+    assert not (Path(env["HOME"]) / "docker_calls").exists()
+
+
+def test_account_race_reports_a_loser_it_could_not_cancel(env):
+    configure(env, aggressive=True)
+    env["FAKE_CANCEL_FAILS"] = "1"
+    result = rg(env, "alloc", timeout=30)
+    assert 'cancelled=""' in result.stderr
+    assert re.search(r"CANCEL_FAILED job=fake:2\b", result.stderr), result.stderr
+
+
+def test_holder_leaves_no_clean_marker_while_a_container_survives(env):
+    home = Path(env["HOME"])
+    bindir = Path(env["PATH"].split(":")[0])
+    # Removal fails, so the job's container stays listed.
+    (bindir / "docker").write_text(
+        '#!/bin/bash\nprintf "%s\\n" "$*" >>"$HOME/docker_calls"\n'
+        'case $1 in ps) [[ $* == *"label=fake.job=1"* ]] && echo c1 ;; stop | rm) exit 1 ;; esac\nexit 0\n'
+    )
+    directory = home / "work/fake/jobs/1"
+    directory.mkdir(parents=True)
+    (directory / "release").touch()
+    holder = start_holder(env)
+    try:
+        holder.wait(timeout=60)
+        assert not (directory / "cleaned.n0").exists()
+        assert "cleanup incomplete" in (home / "work/fake/logs/1.n0.log").read_text()
+    finally:
+        stop_holder(holder)
