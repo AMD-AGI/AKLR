@@ -22,6 +22,12 @@ if mode == "detach":
     subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"], start_new_session=True)
 if mode.startswith("sleep"):
     time.sleep(float(mode[5:]))
+if mode == "fail":
+    sys.exit(3)
+if mode == "stubborn":
+    import signal
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+    time.sleep(600)
 if mode == "save":
     sys.exit(subprocess.run(sys.argv[3:]).returncode)
 """
@@ -113,7 +119,7 @@ def test_root_under_a_shared_directory_is_refused(tmp_path):
     shared.chmod(0o777)
     result = call(shared / "state", "init")
     assert result.returncode != 0
-    assert "world-writable" in result.stderr
+    assert "writable by other users" in result.stderr
     assert not (shared / "state").exists()
 
 
@@ -275,3 +281,113 @@ def test_missing_or_corrupt_state_never_becomes_an_empty_ledger(root, config, tm
     assert call(root, "init").returncode != 0
     assert not (root / "owner.json").exists()
     assert not (tmp_path / "out").exists()
+
+
+def save_as_owner(root, tmp_path, revision, state):
+    write_owner(root, id="live", **host())
+    source = tmp_path / f"next{revision}.json"
+    source.write_text(json.dumps(state))
+    return call(
+        root,
+        "save",
+        "--revision",
+        str(revision),
+        "--input",
+        str(source),
+        env={**os.environ, "AKLR_ROUND_ID": "live"},
+    )
+
+
+def test_save_never_drops_a_campaign_or_changes_its_bounds(root, tmp_path):
+    admitted = {"id": "c1", "phase": "admitted", "bounds": {"model_usd": 400, "node_hours": 20}}
+    assert save_as_owner(root, tmp_path, 0, {"campaigns": [admitted]}).returncode == 0
+    assert (
+        save_as_owner(root, tmp_path, 1, {"campaigns": [{**admitted, "phase": "preparing"}]}).returncode == 0
+    )
+    for bad in (
+        {"campaigns": []},
+        {"campaigns": [{**admitted, "bounds": {"model_usd": 1, "node_hours": 20}}]},
+        {"campaigns": [{"phase": "admitted"}]},
+        {"campaigns": [admitted, admitted]},
+    ):
+        result = save_as_owner(root, tmp_path, 2, bad)
+        assert result.returncode != 0, bad
+    assert success(root, "show")["state"]["campaigns"][0]["phase"] == "preparing"
+
+
+@pytest.mark.parametrize("ending", ["fail", "missing-agent", "terminated"])
+def test_a_round_that_did_not_end_cleanly_is_recovered(root, config, tmp_path, ending):
+    out = tmp_path / "out"
+    subprocess.run(round_command(root, config, out, "fast"), check=True)
+    if ending == "missing-agent":
+        command = [
+            sys.executable,
+            "-I",
+            str(SCRIPT),
+            "--root",
+            str(root),
+            "round",
+            "--config",
+            str(config),
+            "--",
+            str(tmp_path / "no-such-agent"),
+        ]
+        assert subprocess.run(command, capture_output=True, check=False).returncode != 0
+        dead_id = json.loads((root / "last_round.json").read_text())["id"]
+    else:
+        wrapper = subprocess.Popen(
+            round_command(root, config, out, "sleep30" if ending == "terminated" else "fail")
+        )
+        while len(agent_runs(out)) < 2:
+            time.sleep(0.05)
+        if ending == "terminated":
+            wrapper.send_signal(signal.SIGTERM)
+        assert wrapper.wait(timeout=30) != 0
+        dead_id = agent_runs(out)[1]["AKLR_ROUND_ID"]
+    assert not (root / "owner.json").exists()
+    # A dead round is recovered at once, whatever wake_at says.
+    wake(root, timedelta(minutes=30))
+    taken = subprocess.run(
+        round_command(root, config, out, "fast"), capture_output=True, text=True, check=True
+    )
+    assert json.loads(taken.stdout)["recovered_from"] == dead_id
+    assert agent_runs(out)[-1]["AKLR_RECOVERED_FROM"] == dead_id
+    # That recovery ended cleanly, so the next trigger waits again.
+    assert "waiting_until" in json.loads(
+        subprocess.run(
+            round_command(root, config, out, "fast"), capture_output=True, text=True, check=True
+        ).stdout
+    )
+
+
+def test_terminated_round_is_killed_when_its_agent_ignores_sigterm(root, config, tmp_path):
+    out = tmp_path / "out"
+    wrapper = subprocess.Popen(round_command(root, config, out, "stubborn"))
+    while not agent_runs(out):
+        time.sleep(0.05)
+    time.sleep(0.5)
+    wrapper.send_signal(signal.SIGTERM)
+    assert wrapper.wait(timeout=30) != 0
+    assert not (root / "owner.json").exists()
+
+
+def test_group_writable_parent_is_refused(tmp_path):
+    shared = tmp_path / "group"
+    shared.mkdir()
+    shared.chmod(0o770)
+    result = call(shared / "state", "init")
+    assert result.returncode != 0
+    assert "writable" in result.stderr
+
+
+def test_init_makes_every_new_parent_private_whatever_the_umask(tmp_path):
+    root = tmp_path / "a" / "b" / "state"
+    result = subprocess.run(
+        ["bash", "-c", f'umask 000; exec "{sys.executable}" -I "{SCRIPT}" --root "{root}" init'],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    for path in (tmp_path / "a", tmp_path / "a" / "b", root):
+        assert path.stat().st_mode & 0o777 == 0o700, path
+    assert success(root, "show")["revision"] == 0

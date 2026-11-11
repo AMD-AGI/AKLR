@@ -16,7 +16,7 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager, suppress
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -91,6 +91,8 @@ class Round:
     boot_id: str
     pid_namespace: str
     config_sha256: str
+    # The agent's exit code once the round ended; None while it runs, or when it never started or was killed.
+    exit_code: int | None = None
 
     @staticmethod
     def process_start(pid):
@@ -143,19 +145,31 @@ class Round:
         env = {**os.environ, "AKLR_ROUND_ID": self.id, "AKLR_STATE_DIR": str(root)}
         if recovered_from:
             env["AKLR_RECOVERED_FROM"] = recovered_from
-        child = subprocess.Popen(agent, env=env)
-        for signum in (signal.SIGTERM, signal.SIGINT):
-            signal.signal(signum, lambda *_: child.terminate())
-        code = child.wait()
-        # Tool commands run in their own sessions, so only the round id finds what the agent left behind.
-        while leftovers := self.processes():
-            for pid in leftovers:
-                with suppress(ProcessLookupError):
-                    os.kill(pid, signal.SIGKILL)
-            time.sleep(0.1)
-        with guarded(root):
-            os.replace(root / "owner.json", root / "last_round.json")
-            sync_directory(root)
+        code = None
+        try:
+            child = subprocess.Popen(agent, env=env)
+            stopping = []
+            for signum in (signal.SIGTERM, signal.SIGINT):
+                signal.signal(signum, lambda *_: stopping.append(time.monotonic()) or child.terminate())
+            while code is None:
+                try:
+                    code = child.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    # A scheduler's timeout must end the round even when the agent ignores SIGTERM.
+                    if stopping and time.monotonic() > stopping[0] + 10:
+                        child.kill()
+        finally:
+            # Tool commands run in their own sessions, so only the round id finds what the agent left behind.
+            while leftovers := self.processes():
+                for pid in leftovers:
+                    with suppress(ProcessLookupError):
+                        os.kill(pid, signal.SIGKILL)
+                time.sleep(0.1)
+            # The exit code tells the next round whether this one's intents need reconciling.
+            with guarded(root):
+                atomic_json(root / "last_round.json", asdict(replace(self, exit_code=code)))
+                (root / "owner.json").unlink()
+                sync_directory(root)
         return code
 
 
@@ -173,8 +187,8 @@ def check_private_path(root):
             # A sticky directory such as /var/tmp keeps others from replacing what we own inside it.
             if info.st_mode & stat.S_ISVTX:
                 break
-            if info.st_mode & stat.S_IWOTH:
-                raise StateError(f"{path} is world-writable")
+            if info.st_mode & (stat.S_IWOTH | stat.S_IWGRP):
+                raise StateError(f"{path} is writable by other users")
 
 
 def execute(args):
@@ -184,13 +198,14 @@ def execute(args):
         raise StateError("--root must be an absolute persistent directory")
     check_private_path(root)
     if args.command == "init":
-        # Exclusive directory creation also rejects a lost ledger in an existing directory.
-        # A fresh host has no `/var/tmp/$USER/shepherd` yet; the checked parents are made private.
-        root.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        try:
-            root.mkdir(mode=0o700, parents=False)
-        except FileExistsError as exc:
-            raise StateError("directory already exists; never initialize over existing state") from exc
+        # A fresh host has no `/var/tmp/$USER/shepherd` yet. Every directory made here is private,
+        # whatever the umask; exclusive creation of the root also rejects a lost ledger.
+        for directory in [*reversed([p for p in root.parents if not p.exists()]), root]:
+            try:
+                directory.mkdir(mode=0o700)
+            except FileExistsError as exc:
+                raise StateError("directory already exists; never initialize over existing state") from exc
+            directory.chmod(0o700)
         value = {
             "revision": 0,
             "state": {
@@ -217,9 +232,12 @@ def execute(args):
                         f"\n{now.isoformat()}: round {previous.id} is still running; trigger skipped.\n"
                     )
                 return {"busy": previous.id}
-            # A dead owner is taken over at once: its saved intents need reconciling, whatever wake_at says.
+            # A round that died or failed is recovered at once: its saved intents need reconciling,
+            # whatever wake_at says.
+            last = Round.recorded(root / "last_round.json")
+            if previous is None and last is not None and last.exit_code != 0:
+                previous = last
             if previous is None and not args.now:
-                last = Round.recorded(root / "last_round.json")
                 wake_at = value["state"].get("wake_at")
                 try:
                     wake = datetime.fromisoformat(wake_at) if isinstance(wake_at, str) else None
@@ -250,6 +268,22 @@ def execute(args):
         state = read_json(Path(args.input))
         if not isinstance(state, dict):
             raise StateError("--input must contain a state object, not a list or scalar")
+        # The committed budget is derived from the campaigns, so a save may never drop one or
+        # change the bounds it was admitted with.
+        campaigns = {}
+        for campaign in state.get("campaigns", []):
+            if (
+                not isinstance(campaign, dict)
+                or not isinstance(campaign.get("id"), str)
+                or campaign["id"] in campaigns
+            ):
+                raise StateError("every campaign needs a unique string id")
+            campaigns[campaign["id"]] = campaign
+        for kept in value["state"].get("campaigns", []):
+            if kept["id"] not in campaigns:
+                raise StateError(f"campaign {kept['id']} is missing; campaigns are never removed")
+            if "bounds" in kept and campaigns[kept["id"]].get("bounds") != kept["bounds"]:
+                raise StateError(f"campaign {kept['id']} changes its admitted bounds")
         value = {"revision": value["revision"] + 1, "state": state}
         atomic_json(root / "state.json", value)
         return value
