@@ -743,3 +743,28 @@ def test_git_seed_rejects_a_non_sha_without_invoking_git(env):
     )
     assert result.returncode == 1
     assert not (Path(env["HOME"]) / "clone_calls").exists()
+
+
+def test_mount_replaces_the_default_mounts(env):
+    home = env["HOME"]
+    result = rg(
+        env,
+        "exec",
+        "-j",
+        "fake:1",
+        "--image",
+        "img",
+        "--mount",
+        "run/worker",
+        "--mount",
+        "/keys:ro",
+        "--",
+        "true",
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    call = (Path(home) / "docker_calls").read_text().split()
+    mounts = [call[i + 1] for i, arg in enumerate(call) if arg == "-v"]
+    assert mounts == [f"{home}/work/run/worker:{home}/work/run/worker", "/keys:/keys:ro"]
+    assert f"HOME={home}/work/run/worker" in call
+    assert rg(env, "exec", "-j", "fake:1", "--mount", "x", "--", "true").returncode != 0

@@ -560,15 +560,16 @@ read_job "$1"
 echo "OK job=$C:$1 timelimit=$JOB_TIME_LIMIT timeleft=$JOB_TIME_LEFT"' "$JOB" "$time_limit"
 }
 
-# Common option parser for exec/bg: fills JOB RUN_NODES DIR IMG TNAME UENV, leaves the command in CMD.
+# Common option parser for exec/bg: fills JOB RUN_NODES DIR IMG TNAME UENV MOUNTS, leaves the command in CMD.
 parse_run_opts() {
-  RUN_NODES='' DIR='' IMG='' TNAME='' UENV=() CMD=()
+  RUN_NODES='' DIR='' IMG='' TNAME='' UENV=() MOUNTS=() CMD=()
   while (($#)); do case $1 in
     -j | --job) need2 "$@"; JOB=$2; shift 2 ;;
     -w | --node) need2 "$@"; RUN_NODES=$2; shift 2 ;;
     --all) RUN_NODES=ALL; shift ;;
     -C | --dir) need2 "$@"; DIR=$2; shift 2 ;;
     --image) need2 "$@"; IMG=$2; shift 2 ;;
+    --mount) need2 "$@"; MOUNTS+=("$2"); shift 2 ;;
     --name) need2 "$@"; TNAME=$2; shift 2 ;;
     -e | --env) need2 "$@"; [[ $2 == *=* ]] || die "--env expects KEY=VAL"; UENV+=("$2"); shift 2 ;;
     --) shift; CMD=("$@"); break ;;
@@ -576,14 +577,17 @@ parse_run_opts() {
   esac; done
   need_job
   ((${#CMD[@]})) || die "missing command after --"
+  ((${#MOUNTS[@]} == 0)) || [[ -n $IMG ]] || die "--mount needs --image"
   [[ -z $RUN_NODES || $RUN_NODES == ALL || $RUN_NODES =~ ^[a-z0-9,-]+$ ]] || die "bad -w node list"
   return 0
 }
 
 # exec/bg remote prelude. Its envelope (sent only by run_remote): JOB NODE_SELECTION DIR IMAGE TAG
-# ENV_COUNT, that many environment entries, then command argv; no shell reparses these values.
+# ENV_COUNT, that many environment entries, MOUNT_COUNT, that many mounts, then command argv; no shell
+# reparses these values.
 read -r -d '' R_RUNPRE <<'EOF'
 J=$1 RUN_NODES=$2 DIR=$3 IMG=$4 TAG=$5 NE=$6; shift 6; UENV=("${@:1:NE}"); shift "$NE"
+NM=$1; shift; MOUNTS=("${@:1:NM}"); shift "$NM"
 need_running "$J"
 IFS=, read -ra NL <<<"$JOB_NODES"; N0=${NL[0]:-}; CSV=$JOB_NODES
 [[ -n $N0 ]] || err NODES_UNKNOWN "job=$C:$J msg=\"cannot resolve the job's nodes (controller busy?)\" hint=\"retry the same command\""
@@ -607,8 +611,19 @@ build_node_command() { # build_node_command RANK KIND CMD... -> CMD array to exe
     CMD=(bash -c 'exec docker run --label "$0.pid=$$" "$@"' "$C"
          --rm --init --name "$C-$J-$TAG-$i" --label "$C.job=$J" --label "$C.user=$USER" --label "$C.kind=$kind"
          --network host --ipc host
-         --device /dev/kfd --device /dev/dri --group-add video --cap-add SYS_PTRACE --security-opt seccomp=unconfined
-         "${DOCKER_X[@]}")
+         --device /dev/kfd --device /dev/dri --group-add video --cap-add SYS_PTRACE --security-opt seccomp=unconfined)
+    if ((${#MOUNTS[@]})); then
+      # --mount replaces the default work root and $HOME mounts; HOME is the first mount.
+      local m path home=''
+      CMD+=($DOCKER_FLAGS)
+      for m in "${MOUNTS[@]}"; do
+        path=${m%:ro}; [[ $path == /* ]] || path=$REL/$path
+        CMD+=(-v "$path:$path${m#"${m%:ro}"}"); home=${home:-$path}
+      done
+      CMD+=(-e "HOME=$home")
+    else
+      CMD+=("${DOCKER_X[@]}")
+    fi
     local e; for e in "${E[@]}"; do CMD+=(-e "$e"); done
     CMD+=(-w "$DIR" "$IMG" "$@")
   else
@@ -644,7 +659,7 @@ EOF
 # All exec/bg remote arguments are constructed here, beside their receiver above.
 run_remote() {
   local body=$1 tag=$2
-  remote "$body" "$JOB" "$RUN_NODES" "$DIR" "$IMG" "$tag" "${#UENV[@]}" "${UENV[@]}" "${CMD[@]}"
+  remote "$body" "$JOB" "$RUN_NODES" "$DIR" "$IMG" "$tag" "${#UENV[@]}" "${UENV[@]}" "${#MOUNTS[@]}" "${MOUNTS[@]}" "${CMD[@]}"
 }
 cmd_exec() {
   parse_run_opts "$@"
@@ -1065,12 +1080,14 @@ remote-gpu — whole GPU nodes on the clusters under ~/.remote-gpu/clusters/, on
         Prints: OK cluster=... job=CLUSTER:ID nodes=... account=... qos=... workdir=...
   ready -j JOB [--wait 420]          wait for a queued job to start, health-check it, print the
                                      OK line (exit 205 = still pending, job kept)
-  exec -j JOB [-w node|--all] [-C dir] [--image IMG] [-e K=V]... -- CMD ARGS...
+  exec -j JOB [-w node|--all] [-C dir] [--image IMG [--mount DIR[:ro]]...] [-e K=V]... -- CMD ARGS...
         Run and wait; returns CMD's exit code. Default node = rank 0, dir = workdir (a relative
         -C is under the cluster's work root, see `push`). --all runs on every node
         in parallel with [node]-prefixed output. Env: REMOTE_GPU_NODE_RANK, REMOTE_GPU_NNODES,
         REMOTE_GPU_NODES, REMOTE_GPU_JOB, MASTER_ADDR, MASTER_PORT. --image runs CMD in
-        `docker run --rm` with GPUs, host net/ipc, the work root's filesystem and $HOME mounted.
+        `docker run --rm` with GPUs, host net/ipc, the work root's filesystem and $HOME mounted;
+        --mount mounts only the given directories instead (relative = under the work root) and sets
+        HOME to the first.
         If remote-gpu is killed (e.g. tool timeout), the remote command is killed too.
   bg   -j JOB [same options as exec] [--name TASK] -- CMD...   start a detached task
   wait -j JOB TASK [--timeout 540]   block until done; exit = task rc (205 = still running)

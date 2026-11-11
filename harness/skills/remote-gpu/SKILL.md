@@ -79,7 +79,7 @@ $RG release -j mycluster:202642      # ALWAYS, as soon as you are done
 |---|---|
 | `alloc [-N n] [-t H:MM:SS] [-J label] [--idle MIN] [--wait SEC] [--no-wait] [-x node] [--aggressive] [--preemptible]` | Whole nodes with all their GPUs, health-checked. `--aggressive` races accounts where it is not the default. `-p/-A/-q/-w/-x` need `--cluster`. |
 | `ready -j JOB [--wait 420]` | Waits for a queued job, health-checks it, prints the OK line. In the background, pass `--wait 6900`. |
-| `exec -j JOB [-w node \| --all] [-C dir] [--image IMG] [-e K=V] -- CMD ARGS...` | Runs and waits; exits with CMD's code. `-e` values are visible on the node: no secrets. |
+| `exec -j JOB [-w node \| --all] [-C dir] [--image IMG [--mount DIR[:ro]]...] [-e K=V] -- CMD ARGS...` | Runs and waits; exits with CMD's code. `-e` values are visible on the node: no secrets. |
 | `bg -j JOB [exec options] [--name TASK] -- CMD...` | Starts a detached task; each name once per job. |
 | `wait -j JOB TASK [--timeout 540]` | Waits for the task, prints log tails, exits with its rc (205 = still running). In the background, pass `--timeout 6900`. |
 | `logs -j JOB [TASK] [-n 50]` | Lists tasks, or tails one's log. |
@@ -106,6 +106,8 @@ redirection use `bash -lc '...'`, which runs on the node, so `$VAR` expands ther
   doesn't exist exits 126.
 - **Docker.** `--image IMG` runs CMD in `docker run --rm` as root, with the GPUs, host network and
   IPC, the work root and `$HOME` mounted, plus the manifest's `DOCKER_FLAGS`. `release` removes it.
+  `--mount DIR[:ro]` (repeatable, relative = under the work root) mounts only those directories instead
+  and sets `HOME` to the first: use it when the command must not see or write anything else.
 - **Multi-node.** `-N 2`+ with `exec --all` or `bg --all` runs one copy per node, each with
   `REMOTE_GPU_NODE_RANK`, `REMOTE_GPU_NNODES`, `REMOTE_GPU_NODES`, `MASTER_ADDR` and `MASTER_PORT`,
   e.g. `bash -lc 'torchrun --nnodes $REMOTE_GPU_NNODES --node-rank $REMOTE_GPU_NODE_RANK --master-addr $MASTER_ADDR ...'`.
