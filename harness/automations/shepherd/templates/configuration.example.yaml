@@ -26,6 +26,7 @@ campaign:  # Per campaign.
   loop_hours: null
   total_node_hours: null  # Includes setup, finalize, stress and validation.
   max_model_usd: null  # Includes finalize and distill.
+  model_usd_per_hour: null  # Highest hourly model spend of a KernelForge step; its timeouts keep max_model_usd.
   max_auto_resumes: 1
 budget:  # Cumulative over all campaigns in state_dir. On probation: one campaign's bounds, max_open_prs 1.
   authorization: null  # Recorded spending authorization, not a credential.

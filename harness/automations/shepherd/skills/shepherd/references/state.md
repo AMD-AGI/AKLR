@@ -17,32 +17,36 @@ $STATE save --revision "$REVISION" --input "$NEXT_STATE"     # inside a round on
    `reports.md` and exits 0 without starting the agent. A round counts as running while its wrapper
    process (pid and start time) exists, or any process this user can see carries its `AKLR_ROUND_ID`.
    Another PID namespace on the same boot is undecidable and also counts as running. Age never counts.
-2. Otherwise, if no round died and `--now` is not given, it skips the trigger with `{"waiting_until": ...}`
+2. Otherwise, if the last round ended cleanly (its agent exited 0) and `--now` is not given, it skips the trigger with `{"waiting_until": ...}`
    while the ledger's `wake_at` is ahead, at most two hours ahead, and the configuration file is unchanged
    since the last round.
 3. It records itself in `owner.json` and starts the agent with `AKLR_ROUND_ID` and `AKLR_STATE_DIR`, plus
-   `AKLR_RECOVERED_FROM=<id>` when it took over from a dead round. SIGTERM or SIGINT to the wrapper
-   terminates the agent.
-4. When the agent exits, it kills every remaining process carrying its round id, renames `owner.json` to
-   `last_round.json`, and exits with the agent's code.
+   `AKLR_RECOVERED_FROM=<id>` when the previous round died (its `owner.json` was left behind) or ended
+   without exit code 0 (failed, killed by a signal, or its agent never started). SIGTERM or SIGINT to the
+   wrapper terminates the agent, and kills it 10 seconds later if it is still running.
+4. When the agent exits, it kills every remaining process carrying its round id, writes `last_round.json`
+   with the agent's exit code, removes `owner.json`, and exits with the agent's code.
 
 `save` accepts a write only from the round named in `owner.json`, read from `AKLR_ROUND_ID`. Write the
 complete next **state object** (not the envelope) to a temporary file and pass it with the current
-revision; use the returned revision for the next save. A stale revision is rejected. Never edit
-`state.json`, `owner.json` or `last_round.json` by hand.
+revision; use the returned revision for the next save. A stale revision is rejected, and so is a state
+that drops a campaign, gives two the same `id`, or changes a campaign's `bounds` once saved: the
+committed budget is derived from them. Never edit `state.json`, `owner.json` or `last_round.json` by hand.
 
 ## Ledger contents
 
 `init` creates `campaigns: []` and `last_main_sha: null`, and any missing parent directories (mode 700).
-The first round adds `repository`, `budget_authorization` and the cumulative caps from the configuration. The committed budget is not stored: it is the sum over campaigns of their settled
-use, or their admitted bounds until settled. Changing the authorization erases no commitment. Each round may set the top-level `wake_at` its wrapper reads.
+The caps and the authorization stay in the configuration. The committed budget is not stored: it is the
+sum over campaigns of their settled use, or their admitted bounds until settled. Changing the
+authorization or a cap erases no commitment. Each round may set the top-level `wake_at` its wrapper reads.
 
 Each campaign records:
 
-- Identity: ID, repository, schema path, SHA-256 of the input, regime (M range and workloads, or none),
+- Identity: `id` (unique, required), repository, schema path, SHA-256 of the input, regime (M range and workloads, or none),
   base SHA, config snapshot, creation time.
-- Bounds: model, admitted model/node bounds, absolute deadline, automatic resume count, and once cleanup is
-  confirmed the settled model USD and node hours with the observations they came from.
+- Bounds: `bounds`, fixed at admission (model, admitted model USD and node hours, absolute deadline); the
+  automatic resume count; and once cleanup is confirmed the settled model USD and node hours with the
+  observations they came from, outside `bounds`.
 - Work: phase, local/remote run and checkout paths, exact allocation handle, task handles.
 - Operations: ID, kind, intent time, unique external name, deadline, result or `unknown`, last observation.
 - Evidence: candidate digest, intended head, validation base, validator/environment versions, report paths,

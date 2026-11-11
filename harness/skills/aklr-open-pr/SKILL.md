@@ -1,6 +1,6 @@
 ---
 name: aklr-open-pr
-description: Open a AKLR pull request whose body carries the evidence each kind of change needs (contracts, kernels, code, withdrawn kernels, documents), following .github/pull_request_template.md and the review-tier check. Use when committing a AKLR change and opening or updating its PR.
+description: Open a AKLR pull request whose body carries the evidence each kind of change needs (contracts, kernels, code, withdrawn kernels, documents), following .github/pull_request_template.md. Use when committing a AKLR change and opening or updating its PR.
 ---
 
 # Open a AKLR Pull Request
@@ -11,13 +11,12 @@ reviewer has when GPU CI did not run. Write it from runs on the PR's head, never
 ## Required Context
 
 Read [.github/pull_request_template.md](../../../.github/pull_request_template.md) (sections and
-what each kind needs), [.github/scripts/review_tier/policy.py](../../../.github/scripts/review_tier/policy.py)
-(what the `review-tier` status asks of each kind) and [aklr-bad-cases](../aklr-bad-cases/SKILL.md);
-check the change against it before opening the pull request.
+what each kind needs) and [aklr-bad-cases](../aklr-bad-cases/SKILL.md); check the change against
+them before opening the pull request.
 
 ## Procedure
 
-1. **Find the kinds** in `git diff --name-status origin/main...HEAD`, as `review_tier/change.py` does:
+1. **Find the kinds** in `git diff --name-status origin/main...HEAD`:
    - `aklr/ops/<op>/impls/<language>/<name>/<16 hex>.json`: deleted is a **withdrawn kernel**;
      empty `kernel.sources` is a **contract**; otherwise a **kernel**.
    - `docs/`, `harness/`, `.claude/` or `*.md`: a **document** (docs and agent skills).
@@ -48,8 +47,7 @@ check the change against it before opening the pull request.
 5. **Title**: Conventional Commits, `type(scope): subject`, e.g. `feat(flydsl): ...`.
 6. **Open or update** with `gh pr create --base main --body-file <file>` or `gh pr edit`. Add
    `ci:gpu` for kernels and code.
-7. **Check** `gh pr checks <number>` for the `review-tier` status and the kinds it found. When
-   its kinds differ from the body's, the body is wrong: fix it.
+7. **Check** `gh pr checks <number>`: report each check's real state, pending included.
 
 ## Boundary
 
@@ -58,4 +56,4 @@ passed that is pending or did not run; pending is not success.
 
 ## Completion
 
-Report the PR URL, the kinds found, the `review-tier` state, and what did not run.
+Report the PR URL, the kinds found, the checks' states, and what did not run.

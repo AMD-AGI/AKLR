@@ -14,7 +14,7 @@ optimization, GPU, validation, PR and reporting skills in `harness/skills/`.
    [`setup-shepherd`](./skills/setup-shepherd/SKILL.md).
 2. Copy [`configuration.example.yaml`](./templates/configuration.example.yaml) to
    `.shepherd/configuration.yaml` at the repository root (ignored by Git) and fill it in.
-3. Pass the environment checks, initialize the state directory once, and run one `observe` round.
+3. Initialize the state directory once, pass the environment checks, and run one `observe` round.
 4. Ask setup to create or update one scheduled task with
    [`automation-prompt.md`](./templates/automation-prompt.md), then enable `run` on probation (one
    campaign's budget, one PR) until a real campaign reaches a draft PR, and raise the budget after.

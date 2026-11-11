@@ -42,7 +42,9 @@ Ask for or confirm:
   permission mode) the wrapper runs.
 - Strategies (`manual` paths, `kernel-less`), `batch_size`, `allowed_ops`, backend, `max_open_prs`,
   `cooldown_hours`.
-- Campaign model and reasoning effort, loop hours, node hours, model USD, `max_auto_resumes`.
+- Campaign model and reasoning effort, loop hours, node hours, model USD, `model_usd_per_hour` (the
+  highest hourly spend of the model with KernelForge, from the provider's billing, not a guess),
+  `max_auto_resumes`.
 - Cumulative budget, its recorded authorization and the provider's hard limit: the spend cap on the API
   key or gateway the campaign's model calls use (`claude auth status`, `ANTHROPIC_BASE_URL`). If none
   exists, say the owner must set one; it cannot be inferred from here.
@@ -56,7 +58,14 @@ choice: a missing one blocks the actions that need it, not read-only inspection.
 the same pass; with `mode: run`, end setup by listing each one still `null` as `prepared (blocked: ...)`,
 never as ready. Verify the effort against the pinned KernelForge source (`--agent-reasoning-effort`).
 
-## 4. Check the execution environment
+## 4. Initialize state
+
+Read [state.md](../shepherd/references/state.md). Initialize a new state directory once with the helper;
+it creates missing private parents. Setup cannot `save` (only a running round can); the configuration keeps
+the repository, authorization and caps. An existing directory, or one missing after use, needs
+investigation, not a new `init`.
+
+## 5. Check the execution environment
 
 Run these checks where every scheduled round will run, not only in this session:
 
@@ -81,13 +90,6 @@ Run these checks where every scheduled round will run, not only in this session:
 Record the passing checks and the budget authorization in `readiness.md` in the state directory. If a
 check has not run, leave paid mode off.
 
-## 5. Initialize state
-
-Read [state.md](../shepherd/references/state.md). Initialize a new state directory once with the helper;
-it creates missing private parents. Setup cannot `save` (only a running round can): the first round copies
-`repository`, `budget_authorization` and the caps from the configuration into the ledger.
-An existing directory, or one missing after use, needs investigation, not a new `init`.
-
 ## 6. Prepare the scheduled task
 
 Ask whether this is a first-time creation or an existing task.
@@ -99,7 +101,7 @@ timeout. A scheduler that can only send a prompt to an agent (for example a chat
 may send `templates/automation-prompt.md` directly: the round skill then starts the wrapper with
 `execution.round_agent` itself. Give the agent `templates/automation-prompt.md` as the prompt; keep workflow rules in the round
 skill, not in the prompt. Bind the task to the checkout and environment checked in
-step 4, set the interval (15 minutes by default), and record the task identity, the outer model and its
+step 5, set the interval (15 minutes by default), and record the task identity, the outer model and its
 reasoning effort. Repository events may trigger the same task; polling stays the fallback. Do not rely
 on bot comments as triggers or invent a scheduler API.
 
