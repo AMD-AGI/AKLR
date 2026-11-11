@@ -100,7 +100,7 @@ Save confirmed facts with source and time, keeping each fact's last successful o
 - mark merged inputs delivered, with the merge commit;
 - give failed, no-gain or closed tasks the configured cooldown; a campaign that fails before optimizing
   because the starting kernel does not build or match the reference blocks every candidate of the same
-  op contract instead, until the op's code or `harness/scripts/forge_task` changes (their tree hashes,
+  op contract instead, until the op's code on main or this checkout's `harness/scripts/forge_task` changes (their tree hashes,
   the op directory's taken without `impls/`, whose measurement updates are expected) or the runtime
   revision changes; time alone never lifts it;
 - never infer cancellation or cleanup from a closed PR or a terminal phase.
@@ -167,7 +167,10 @@ mounting `<campaign>`). The worker gets the model only through `<campaign>/secre
 on the node from the cluster user's Claude settings holding only their `ANTHROPIC_*` variables, which each
 model-calling step sources; the image has no `claude`, so copy the cluster user's `claude` binary to
 `<campaign>/worker/bin/` and put it on `PATH`. In the worker, clone AKLR at the recorded main and
-Hyperloom at `execution.runtime_revision` from their public URLs, and install as forge_task's README says
+Hyperloom at `execution.runtime_revision` from their public URLs, replace the clone's
+`harness/scripts/forge_task` with this checkout's (pushed read-only beside the campaign, never fetched
+from main: the pack runs with the forge_task it was tested with; the validator clone does the same, and the
+ledger records its tree hash), and install as forge_task's README says
 into a venv in the worker whose `image.pth` holds `import site; site.addsitedir("<the image python's
 site-packages>")` (that python is itself a venv, so `--system-site-packages` would hide torch, and a plain
 path line would skip the image's editable installs such as sglang), with the baseline AITER from AKLR CI's
