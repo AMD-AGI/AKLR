@@ -31,15 +31,20 @@ jobs:
          (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude'))))
     runs-on: aklr-claude  # self-hosted, hosts the model gateway
     timeout-minutes: 30
+    # The job token only checks out and reads CI; the App token writes.
     permissions:
       contents: read
-      issues: write
-      pull-requests: write
       actions: read
     env:
       # Gateway on the runner itself; the key is useless elsewhere.
       ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
     steps:
+      # Comments and reviews post as aklr-claude[bot].
+      - id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.AKLR_CLAUDE_APP_ID }}
+          private-key: ${{ secrets.AKLR_CLAUDE_APP_PRIVATE_KEY }}
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -48,8 +53,7 @@ jobs:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # The classifier would call api.anthropic.com, bypassing the gateway.
           classify_inline_comments: 'false'
-          # Job token instead of the Claude App, limited by the permissions above.
-          github_token: ${{ github.token }}
+          github_token: ${{ steps.app.outputs.token }}
           # Skills come from main, so a PR cannot change what reviews it.
           plugin_marketplaces: https://github.com/AMD-AGI/AKLR.git
           plugins: aklr@amd-aklr
