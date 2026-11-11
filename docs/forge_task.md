@@ -85,7 +85,7 @@ python -m kernelforge.cli forge-say --workspace $RUN/workspace "focus on m<=64"
 ```bash
 A=$(pwd) W=$RUN/workspace
 python -m kernelforge.cli forge-ablate --workspace $W --gpus 0      # what each kept round is worth
-mkdir -p $RUN/review_guide && cp $A/harness/skills/aklr-kb/flydsl/guides.md $RUN/review_guide/   # the review's guides,
+mkdir -p $RUN/review_guide && cp $A/harness/skills/kb/flydsl/guides.md $RUN/review_guide/   # the review's guides,
 curl -sSfL https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/kernel-code-cleanup/SKILL.md \
   -o $RUN/review_guide/flydsl_code_cleanup.md   # in a folder of their own: the review may edit it
 python -m kernelforge.cli forge-finalize --workspace $W --gpu 0 --model claude-opus-5-5 \
@@ -96,9 +96,9 @@ python -m kernelforge.cli forge-finalize --workspace $W --gpu 0 --model claude-o
   --review-guide $RUN/review_guide/guides.md   # review, squash into one commit
 HIP_VISIBLE_DEVICES=0 python $W/driver.py --stress                 # must end with "stress: PASS"
 python -m kernelforge.cli forge-distill --workspace $W --model claude-opus-5-5 \
-  --skill-dir $A/harness/skills/aklr-kb --out $RUN/knowledge_patch \
+  --skill-dir $A/harness/skills/kb --out $RUN/knowledge_patch \
   --reference $A --guide CONTRIBUTING.md \
-  --lint "python maintenance/kb_lint.py --errors-only --repo-root {repo}"   # what aklr-kb should learn
+  --lint "python maintenance/kb_lint.py --errors-only --repo-root {repo}"   # what kb should learn
 ```
 
 `--stress` runs every workload on streams limited to a few CUs and beside a second call of its own. AKLR's validate
@@ -115,7 +115,7 @@ python -m aklr export check && python -m aklr validate --base origin/main <the p
 
 Commit the published file as `aklr/ops/README.md` describes and open a pull request. What the run taught the skill
 goes into the same pull request: apply `$RUN/knowledge_patch/knowledge_patch.diff` and review it item by item, as
-`harness/skills/aklr-kb/CONTRIBUTING.md` says.
+`harness/skills/kb/CONTRIBUTING.md` says.
 
 ## What you get
 
