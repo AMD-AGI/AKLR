@@ -1,11 +1,6 @@
 name: Claude
 
-# @claude in an issue, in a PR's Conversation tab, or in a new issue's title or body gets one
-# answer comment. Read-only: the job token cannot push, approve, merge or start workflows, and
-# Claude has no shell and no edit tools; it reads diffs through the GitHub API (the github MCP
-# server, in docker). Inline review comments and review bodies trigger it too, on same-repo PRs
-# only: a fork PR's run would get no secrets and would bring its own copy of this file. A
-# maintainer's @claude on a fork PR's conversation checks the fork's files out, only to be read.
+# Answers @claude mentions with one comment; read-only, no shell, no edits.
 on:
   issue_comment:
     types: [created]
@@ -18,15 +13,14 @@ on:
 
 permissions: {}
 
-# One run per issue or PR; a newer mention queues behind it (GitHub keeps one queued run per group).
+# One run per issue or PR; later mentions queue.
 concurrency:
   group: claude-${{ github.event.issue.number || github.event.pull_request.number }}
   cancel-in-progress: false
 
 jobs:
   claude:
-    # The action re-checks the phrase and the sender's write access through the API
-    # (author_association reports a private org member as a non-member).
+    # Fork PRs' review events are skipped: they would run the fork's copy of this file.
     if: >-
       github.event.sender.type != 'Bot' && (
         (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) ||
@@ -35,7 +29,7 @@ jobs:
           (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')))) ||
         (github.event_name == 'issues' &&
          (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude'))))
-    runs-on: aklr-claude  # self-hosted, no GPU, runs the gateway
+    runs-on: aklr-claude  # self-hosted, hosts the model gateway
     timeout-minutes: 30
     permissions:
       contents: read
@@ -43,9 +37,9 @@ jobs:
       pull-requests: write
       actions: read
     env:
-      # The runner's own gateway (magpie on 127.0.0.1); the key works only from that host.
+      # Gateway on the runner itself; the key is useless elsewhere.
       ANTHROPIC_BASE_URL: ${{ vars.ANTHROPIC_BASE_URL }}
-      # Subprocesses such as plugin hooks lose the Anthropic key.
+      # Keep the key out of subprocesses.
       CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1'
     steps:
       - uses: actions/checkout@v4
@@ -54,16 +48,16 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Its classifier calls api.anthropic.com directly, bypassing the runner's gateway.
+          # The classifier would call api.anthropic.com, bypassing the gateway.
           classify_inline_comments: 'false'
-          # The job token, not the Claude GitHub App: nothing to install, scoped by the permissions above.
+          # Job token instead of the Claude App, limited by the permissions above.
           github_token: ${{ github.token }}
-          # main's aklr plugin; it shadows the .claude/skills/aklr copy of a PR head.
+          # Skills come from main, so a PR cannot change what reviews it.
           plugin_marketplaces: https://github.com/AMD-AGI/AKLR.git
           plugins: aklr@amd-aklr
           include_fix_links: 'false'
           settings: >-
-            {"attribution": false,
+            {"attribution": false, "disableAllHooks": true, "enableAllProjectMcpServers": false,
             "permissions": {"blockReadsOutsideWorkingDirectories": true},
             "pluginConfigs": {"cc-plugin-agents-md@builtin": {"options": {"instructionFiles": "claude-md"}}},
             "claudeMdExcludes": ["${{ github.workspace }}/*/**/CLAUDE*.md"]}
