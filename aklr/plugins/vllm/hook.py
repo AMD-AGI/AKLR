@@ -12,16 +12,13 @@ capture, where the route's choice is recorded."""
 
 from __future__ import annotations
 
-import inspect
 import logging
-import pkgutil
 from collections.abc import Callable
 from importlib.metadata import version
 
-import torch
 from packaging.version import Version
 
-from aklr.core.runtime.dispatch import FallbackReason
+from aklr.plugins._calls import wrap_calls
 
 __all__ = ["install", "vllm_route", "vllm_version"]
 
@@ -56,18 +53,7 @@ def install() -> list[str]:
         if installed not in versions:
             untested.append(caller)
             continue
-        source = inspect.getsource(pkgutil.resolve_name(caller))
-        for callee in callees:
-            owner_name, attr = callee.rsplit(".", 1)
-            if f"{attr}(" not in source:
-                raise RuntimeError(f"{caller} does not call {callee}")
-            pkgutil.resolve_name(owner_name)
-            # aiter's backward-compatible module paths change sys.modules on their first import
-            owner = pkgutil.resolve_name(owner_name)
-            orig = getattr(owner, attr)
-            if getattr(orig, "aklr_route", None) is not route:
-                setattr(owner, attr, _around(route, orig))
-            hooked.append(callee)
+        hooked += wrap_calls(caller, callees, route)
     # a warning, so that the line shows at any vLLM log level
     _LOGGER.warning(
         "aklr hooks %d calls of vLLM %s%s",
@@ -76,17 +62,3 @@ def install() -> list[str]:
         f"; not those of {', '.join(untested)}, untested on it" if untested else "",
     )
     return hooked
-
-
-def _around(route: Callable, orig: Callable) -> Callable:
-    def around(*args, **kwargs):
-        # Dynamo would trace AKLR's table lookup and recompile for every new shape
-        if not torch.compiler.is_compiling():
-            result = route(*args, **kwargs)
-            if not isinstance(result, FallbackReason):
-                return result
-        return orig(*args, **kwargs)
-
-    around.__wrapped__ = orig
-    around.aklr_route = route
-    return around

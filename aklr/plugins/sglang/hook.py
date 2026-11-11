@@ -5,11 +5,10 @@
 
 ``@sglang_call_route``: how a call sglang makes reaches AKLR ops, where the callee is not
 sglang's (aiter's ``fused_moe``, which sglang's caller looks up when it runs): the callee is
-wrapped in its own module, as ``@vllm_route`` does."""
+wrapped in its own module (``aklr.plugins._calls``), as ``@vllm_route`` does."""
 
 from __future__ import annotations
 
-import inspect
 import logging
 import pkgutil
 from collections.abc import Callable
@@ -19,6 +18,7 @@ import torch
 from packaging.version import Version
 
 from aklr.core.runtime.dispatch import FallbackReason
+from aklr.plugins._calls import wrap_calls
 
 __all__ = ["install", "sglang_call_route", "sglang_route", "sglang_version"]
 
@@ -63,35 +63,24 @@ def install() -> None:
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
     installed = sglang_version()
-    untested = []
+    functions, calls, untested = 0, [], []
     for target, versions, route in _ROUTES:
         if installed in versions:
             # sglang only logs a target it cannot resolve
             pkgutil.resolve_name(target)
             HookRegistry.register(target, _around(route), HookType.AROUND)
+            functions += 1
         else:
             untested.append(target)
-    calls = []
     for caller, callees, versions, route in _CALL_ROUTES:
         if installed not in versions:
             untested.append(caller)
             continue
-        source = inspect.getsource(pkgutil.resolve_name(caller))
-        for callee in callees:
-            owner_name, attr = callee.rsplit(".", 1)
-            if f"{attr}(" not in source:
-                raise RuntimeError(f"{caller} does not call {callee}")
-            pkgutil.resolve_name(owner_name)
-            # aiter's backward-compatible module paths change sys.modules on their first import
-            owner = pkgutil.resolve_name(owner_name)
-            orig = getattr(owner, attr)
-            if getattr(orig, "aklr_route", None) is not route:
-                setattr(owner, attr, _around_call(route, orig))
-            calls.append(callee)
+        calls += wrap_calls(caller, callees, route)
     # a warning, so that the line shows at any sglang log level
     _LOGGER.warning(
         "aklr hooks %d sglang functions and %d calls on sglang %s%s",
-        len(_ROUTES) - sum(t in untested for t, _, _ in _ROUTES),
+        functions,
         len(calls),
         installed,
         f"; not {', '.join(untested)}, untested on it" if untested else "",
@@ -107,19 +96,4 @@ def _around(route: Callable) -> Callable:
                 return result
         return orig(*args, **kwargs)
 
-    return around
-
-
-def _around_call(route: Callable, orig: Callable) -> Callable:
-    """``orig``, reaching ``route`` first: as ``_around``, for a callee wrapped in place."""
-
-    def around(*args, **kwargs):
-        if not torch.compiler.is_compiling():
-            result = route(*args, **kwargs)
-            if not isinstance(result, FallbackReason):
-                return result
-        return orig(*args, **kwargs)
-
-    around.__wrapped__ = orig
-    around.aklr_route = route
     return around
