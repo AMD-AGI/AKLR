@@ -34,6 +34,9 @@ jobs:
         with:
           app-id: ${{ secrets.AKLR_CLAUDE_APP_ID }}
           private-key: ${{ secrets.AKLR_CLAUDE_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-pull-requests: write
       # The base commit, so the PR's own instruction files and settings never load.
       - uses: actions/checkout@v4
         with:
@@ -50,7 +53,7 @@ jobs:
           plugins: aklr@amd-aklr
           settings: >-
             {"attribution": false, "disableAllHooks": true, "enableAllProjectMcpServers": false,
-            "permissions": {"blockReadsOutsideWorkingDirectories": true}}
+            "permissions": {"blockReadsOutsideWorkingDirectories": true, "deny": ["Read(./.git/**)"]}}
           prompt: |
             /aklr:aklr-review-kernel-pr Review pull request #${{ github.event.pull_request.number }} of ${{ github.repository }}.
 
