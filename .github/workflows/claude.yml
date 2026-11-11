@@ -45,6 +45,10 @@ jobs:
         with:
           app-id: ${{ secrets.AKLR_CLAUDE_APP_ID }}
           private-key: ${{ secrets.AKLR_CLAUDE_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
@@ -60,7 +64,7 @@ jobs:
           include_fix_links: 'false'
           settings: >-
             {"attribution": false, "disableAllHooks": true, "enableAllProjectMcpServers": false,
-            "permissions": {"blockReadsOutsideWorkingDirectories": true},
+            "permissions": {"blockReadsOutsideWorkingDirectories": true, "deny": ["Read(./.git/**)"]},
             "pluginConfigs": {"cc-plugin-agents-md@builtin": {"options": {"instructionFiles": "claude-md"}}},
             "claudeMdExcludes": ["${{ github.workspace }}/*/**/CLAUDE*.md"]}
           claude_args: |
