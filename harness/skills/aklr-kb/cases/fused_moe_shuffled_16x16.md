@@ -34,7 +34,7 @@ sources:
 
 Nine FlyDSL kernel files for `fused_moe@1.0` under four schema names: 257 experts with inter dim 256 (`1fee5982…`,
 `4fbd9d02…`, `2ff61774…`) and with inter dim 512 (`4ea93103…`, `71df350d…`), 65 experts (`1bf41ccb…`,
-`4535d4f7…`, `78f98e0b…`) and 33 experts (`ef15e878…`) with inter dim 2048. Four are on main (`1fee5982…`,
+`4535d4f7…`, `78f98e0b…`) and 33 experts (`ef15e878…`) with inter dim 2048. Four carry CI measurements (`1fee5982…`,
 `4fbd9d02…`, `ef15e878…`, `1bf41ccb…`); the other five are new and carry no CI measurement yet. Each schema embeds
 its kernel in `kernel.sources`: `1fee5982…`, `ef15e878…`, `1bf41ccb…` and `78f98e0b…` as one `kernel.py`,
 `4fbd9d02…` as eight files, and `4ea93103…`, `4535d4f7…`, `2ff61774…` and `71df350d…` as their `kernel.py` beside
@@ -73,7 +73,7 @@ below are of the earlier versions, but for E18 on `71df350d…`.
   | Name | Served on main | Not served on main |
   |---|---|---|
   | 257 experts, inter 256 | m 1, 2 `1fee5982…`; m 8–64 `4fbd9d02…` | m 4, 128–4096 |
-  | 257 experts, inter 512 | none (only the kernel-less definition `c97f6644…`) | all 13 Points |
+  | 257 experts, inter 512 | none (the kernel-less definition `c97f6644…` and the new files, which CI has not measured) | all 13 Points |
   | 65 experts, inter 2048 | m 1, 2, 4, 1024 `1bf41ccb…` | m 8–512, 2048, 4096 |
   | 33 experts, inter 2048 | m 1, 2, 4, 64–4096 `ef15e878…` | m 8, 16, 32 |
 
@@ -86,12 +86,11 @@ below are of the earlier versions, but for E18 on `71df350d…`.
   | 257 experts, inter 512 | m 32 `4ea93103…`; m 512–4096 `71df350d…` |
   | 65 experts, inter 2048 | m 4–128 `4535d4f7…`; m 256, 2048, 4096 `78f98e0b…` |
 
-  At every listed Point but one the name has no kernel file on main, or its main file reads below 1.03
+  At every listed Point but one the name has no other file with a CI `speedup` there, or that file reads below 1.03
   *(field, E1)*, so the yardstick there is aiter. The exception is m 4 of the 65 experts, which `4535d4f7…` lists
-  and main's `1bf41ccb…` serves at 1.031: of the qualifying files of a name, dispatch serves the one whose workload
-  ranks highest, by `speedup` and then by kernel content hash (S6). Until CI writes a `speedup` for `4535d4f7…`,
-  `1bf41ccb…` keeps m 4; after that, the file with the higher CI speedup serves it if that speedup reaches 1.03, and
-  `1bf41ccb…`, not aiter, is the yardstick there while it qualifies.
+  and where main's `1bf41ccb…` read 1.031 as of #102: of the qualifying files of a name, dispatch serves the one whose
+  workload ranks highest, by `speedup` and then by kernel content hash (S6), so in a CI run where `1bf41ccb…` reaches
+  1.03 at m 4, the file with the higher CI speedup serves it, and `1bf41ccb…`, not aiter, is the yardstick there.
 
 ## Counter-signals
 
@@ -108,8 +107,11 @@ below are of the earlier versions, but for E18 on `71df350d…`.
   it is not served, stores int8 rows with one fp32 scale per 32 values. `2ff61774…` (every Point), `71df350d…` (m
   1024–4096) and `78f98e0b…` (every Point) store each route's stage-2 row as MXFP4, e2m1 with an E8M0 scale per 32,
   before the route sum. The contract notes that the 33- and 65-expert kernels keep partials far off aiter's error
-  (`contract.py`, the FIXME at `out`'s `error_bounds`). The runs record `accuracy: passed`, not the SQNR; the error
-  itself is not measured here. Under a tighter bound these Points need wider partials and rounding (code read).
+  (`contract.py`, the FIXME at `out`'s `error_bounds`). The runs record `accuracy: passed`, not the SQNR. Against
+  aiter's error (the contract's `BaselineRelativeBound`), `ef15e878…`'s fp8 rows fail at 31.4–31.5 dB against aiter's
+  46.9–47.3 dB, and its fp32 or bf16 rows pass; `1bf41ccb…` fails at 26.5–30.3 dB, and rounding to nearest even
+  instead of truncating moves it by under 0.1 dB, so rounding is not what limits it *(field, E19)*. The MXFP4 route
+  rows are not measured against such a bound.
 - **Not the compile-function form in three files.** `1fee5982…`, `ef15e878…` and `1bf41ccb…` keep built launches in
   a module-level dict `_RUN_CACHE` filled from `run`, not in a `functools.cache` compile function, allocate their
   per-shape scratch on device `"cuda"` rather than an argument's device, and `1fee5982…` hashes its own source file
@@ -174,7 +176,7 @@ below are of the earlier versions, but for E18 on `71df350d…`.
 
 - **257 experts, inter 256, at m 4 and 128: served by no file.** `4fbd9d02…` has no Point there and `1fee5982…`
   reads 0.137 and 0.314 *(field, E1)*. At m 4, 16, 128, 512 and 1024 `1fee5982…` repacks `w1`, `w2` and their scales
-  into a K-major record layout on every call (`pack_weights`, two extra `pack_weight_scales` launches): about 0.64 GB
+  into a record layout on every call (`pack_weights`, two extra `pack_weight_scales` launches): about 0.64 GB
   read and as much written per call (estimated from the tensor sizes). Those five Points read 0.137–0.431, its other
   Points below 1.03 0.741–0.925 *(field, E1)*. A kernel may not keep a repacked weight between calls (`../SKILL.md`,
   Stop table), and the `shuffled_16x16` layout is the one its stages read without repacking.
@@ -206,10 +208,10 @@ below are of the earlier versions, but for E18 on `71df350d…`.
 
 - **257 experts, inter 256, at m 256: listed by no file.** `2ff61774…` starts at 512 and `1fee5982…` reads 0.855
   *(field, E1)*.
-- **65 experts at m 512: listed by no new file and below 1.03 on main.** `1bf41ccb…` reads 1.020 as of #102
-  *(field, E1)*, 1.007 in the CI run before *(field, E17)* and 1.012–1.147 across the five earlier runs
-  *(field, E2)*; neither `4535d4f7…` nor `78f98e0b…` lists the Point. At the other Points those two list it reads
-  0.811–1.012, and 1.031 at m 4 *(field, E1)*.
+- **65 experts at m 512: listed by no new file, and main's file crosses the threshold between runs.** `1bf41ccb…`
+  reads 1.020 as of #102 *(field, E1)*, 1.007 in the CI run before *(field, E17)* and 1.012–1.147 across the five
+  earlier runs *(field, E2)*; neither `4535d4f7…` nor `78f98e0b…` lists the Point. At the other Points those two list
+  it reads 0.811–1.012, and 1.031 at m 4 *(field, E1)*.
 - **`78f98e0b…` reuses constants from another load point at 256 and 2048 tokens.** It is `ef15e878…`'s pipeline
   with branches written for 65 experts (`CACHE1` at 256 tokens, `GROUP_M1`/`GROUP_M2`, `PIPE1`, `PIPE2`,
   `GATHER_FUSED`, `DERIVE_TILES`, `TAILS`, `W2NT`: S11), and `_OWNED` applies the constants of the 33-expert layer's
@@ -226,8 +228,8 @@ What the nine kernels share:
   loads (`../gemm/datapath.md` §10, §11).
 - **Activations quantized twice on the GPU:** the input rows to MXFP4 (amax of each 32-value group across lanes, an
   E8M0 exponent from it, `cvt_scalef32_pk_fp4_*`), and the SiLU(gate)·up intermediate again before stage 2: in stage
-  1's epilogue, or, in `1fee5982…` at m 1 and 2, at the start of stage 2. The reference rounds both to MXFP4 too
-  (`aklr/ops/fused_moe/reference.py`, its docstring).
+  1's epilogue, or, in `1fee5982…`, at the start of stage 2 at m 1 and 2 and in a separate `activate_quant` launch at
+  m 4–32. The reference rounds both to MXFP4 too (`aklr/ops/fused_moe/reference.py`, its docstring).
 - **Configuration per m** from constants in the source, compiled on a Point's first call. In `2ff61774…` they
   include the block sizes and stage-1 kernels its earlier version took from aiter's tuned table, in `71df350d…` the
   stage wrappers and stage-1 output format its earlier version took from aiter's configuration.
@@ -423,13 +425,14 @@ local result does not count; CI's measurement is the one dispatch reads (`aklr/o
 Delete a schema file (in a PR): its Points fall back to another file of the same name where that one reaches 1.03,
 else go unserved: the call returns to the caller's own path, and AKLR runs no baseline in its place. Deleting
 `4fbd9d02…` leaves m 8–64 of the 257-expert inter-256 name unserved, since `1fee5982…` is below 1.03 there. At every
-Point a new file lists but m 4 of the 65 experts, its name has no kernel file on main or the main file is below 1.03
-*(field, E1)*, so deleting a new file leaves those Points unserved; m 4 goes back to `1bf41ccb…` while it reads 1.03
-or more. `AKLR_DISABLE=fused_moe@1.0` stops serving the whole contract, every other MoE kernel included. Points CI
+Point a new file lists but m 4 of the 65 experts, its name has no other file with a CI `speedup` there or that file
+is below 1.03 *(field, E1)*, so deleting a new file leaves those Points unserved; m 4 goes back to `1bf41ccb…` while
+it reads 1.03 or more.
+`AKLR_DISABLE=fused_moe@1.0` stops serving the whole contract, every other MoE kernel included. Points CI
 measures below 1.03 are not served without any rollback. If the contract becomes bitwise, remove `4fbd9d02…`,
 `4ea93103…`, `4535d4f7…` and `71df350d…`'s m 512 workload; if the error bound tightens, remove the files and Points
-that keep fp8 or MXFP4 route rows or truncate (`ef15e878…`, `1bf41ccb…`, `2ff61774…`, `71df350d…` at 1024–4096,
-`78f98e0b…`).
+that keep fp8 or MXFP4 route rows (`ef15e878…` at its fp8-row Points, `2ff61774…`, `71df350d…` at 1024–4096,
+`78f98e0b…`) and `1bf41ccb…` (Counter-signals, precision).
 
 ## Evidence
 
@@ -440,7 +443,7 @@ are sources of `4fbd9d02b4c053c7.json`. E4–E15 measured the earlier versions o
 head launch's sorted-id bound (S9) and its scale path at m 1024 (E18).
 
 - E1 [2026-11, gfx950, FlyDSL ?, N=1, AKLR CI, measurement profile 19; 4fbd9d02b4c053c7: profile 18] speedup over aiter in the committed files at main 6d7cfec (#102), per Point m 1–4096: 1fee59821837c26f 2.489, 2.016, 0.137, 0.925, 0.180, 0.820, 0.813, 0.314, 0.855, 0.372, 0.431, 0.793, 0.741; ef15e87894a8ae06 1.272, 1.109, 1.052, 1.021, 0.973, 1.022, 1.053, 1.186, 1.237, 1.285, 1.670, 1.090, 1.072; 1bf41ccba6750300 1.316, 1.085, 1.031, 0.984, 0.965, 0.998, 1.012, 0.898, 0.958, 1.020, 1.238, 0.868, 0.811 (6d7cfec, CI run 42549655045); 4fbd9d02b4c053c7 at m 8, 16, 32, 64: 1.113, 1.079, 1.112, 1.094, not re-measured by #102 (90b9d50, CI run 41976547645)
-- E2 [2026-10, gfx950, FlyDSL ?, N=5, CI of the repository's predecessor, before these kernels moved to AKLR; FlyDSL of the runs: not recorded, 0.3.1, then 0.3.4.1 three times] the five committed measurements of an unchanged kernel, in commit order: 33 experts m 1 0.921, 1.279, 1.261, 1.278, 1.258; m 2 1.011, 1.039, 1.033, 1.046, 1.049; m 8 0.994, 1.031, 1.009, 1.012, 1.019; m 16 0.983, 1.045, 1.036, 1.043, 1.039; m 32 0.974, 1.024, 1.003, 1.002, 0.991; m 64 1.008, 1.033, 1.025, 1.022, 1.030; 65 experts m 2 0.794, 1.049, 0.989, 1.014, 1.024; m 256 1.034, 0.968, 0.917, 1.026, 1.023; m 512 1.147, 1.092, 1.012, 1.107, 1.113 (files ef15e87894a8ae06 and 1bf41ccba6750300)
+- E2 [2026-10, gfx950, FlyDSL 0.3.2 (the pin the predecessor's editable install enforces, not read from the runs' logs; `../pitfalls/measured_a_different_build.md`), N=5, CI of the repository's predecessor, before these kernels moved to AKLR] the five committed measurements of an unchanged kernel, in commit order: 33 experts m 1 0.921, 1.279, 1.261, 1.278, 1.258; m 2 1.011, 1.039, 1.033, 1.046, 1.049; m 8 0.994, 1.031, 1.009, 1.012, 1.019; m 16 0.983, 1.045, 1.036, 1.043, 1.039; m 32 0.974, 1.024, 1.003, 1.002, 0.991; m 64 1.008, 1.033, 1.025, 1.022, 1.030; 65 experts m 2 0.794, 1.049, 0.989, 1.014, 1.024; m 256 1.034, 0.968, 0.917, 1.026, 1.023; m 512 1.147, 1.092, 1.012, 1.107, 1.113 (files ef15e87894a8ae06 and 1bf41ccba6750300)
 - E3 [2026-10, gfx950, FlyDSL 0.3.2, N=3, three of the bench's input sets per token count, SQNR of the bf16 output between two runs] 48.35–51.87 dB at m 8, 16, 32, 64 (the 4fbd9d02b4c053c7 sources, byte-identical)
 - E4 [2026-11, gfx950, FlyDSL 0.3.2, N=2, two AKLR validate runs of 16 timing rounds each, measurement profile 19] speedup over aiter 1.246, 1.505, 1.587, 1.800 at m 512, 1024, 2048, 4096; median kernel 120.85, 134.01, 179.83, 247.16 µs, aiter 150.82, 201.94, 285.59, 445.12 µs; accuracy passed, worst violation fraction 0 (…_n_experts257_topk9_inter_dim256, the earlier version of file 2ff617744254b896, base 0e02a81); a second profile-19 run of the same file read 1.248, 1.473, 1.592, 1.812
 - E5 [2026-11, gfx950, FlyDSL 0.3.2, N=2 at m 32, two AKLR validate runs of 16 timing rounds each; N=1 at m 64, 32 timing rounds; measurement profile 19] speedup over aiter 1.049 at m 32, 1.025 at m 64; median kernel 132.86 and 181.68 µs, aiter 139.94 and 186.19 µs; accuracy passed, worst violation fraction 0 (…_n_experts257_topk9_inter_dim512, the kernel of the earlier version of file 4ea93103a078dc17, measured as a file that also held m 64; base 0e02a81); a second profile-19 run of that earlier version read 1.040 at m 32
@@ -457,6 +460,7 @@ head launch's sorted-id bound (S9) and its scale path at m 1024 (E18).
 - E16 [2026-11, gfx950, FlyDSL 0.3.2, N=20 tries per condition and Point, check (c) of E15 on main's unmodified files] wrong output, tries out of 20 on unrestricted streams / on the shared 64 CUs: ef15e87894a8ae06 m 1 16/20, m 2 19/20, m 4 18/20, m 8 19/20, m 16 19/20, m 32–4096 20/20; 1bf41ccba6750300 m 1 0/20, m 2 18/20, m 4–32 19/20, m 64–4096 20/20; 1fee59821837c26f m 1 0/0, m 2 0/3, m 4 20/20, m 8 0/20, m 16 20/20, m 32 19/20, m 64–128 20/20, m 256 19/20, m 512–2048 20/20, m 4096 20 of 20 unrestricted, then a GPU memory access fault in `grouped_gemm_3`; 4fbd9d02b4c053c7 0 at every Point
 - E17 [2026-11, gfx950, FlyDSL ?, N=1, AKLR CI, measurement profile 18] speedup over aiter in the committed files before #102 (at 0e02a81), per Point m 1–4096: 1fee59821837c26f 2.460, 2.024, 0.136, 0.909, 0.178, 0.827, 0.828, 0.311, 0.861, 0.372, 0.426, 0.808, 0.758; ef15e87894a8ae06 1.217, 1.090, 1.031, 1.024, 0.967, 1.018, 1.031, 1.192, 1.170, 1.263, 1.720, 1.073, 1.077; 1bf41ccba6750300 1.282, 1.050, 0.979, 0.960, 0.941, 0.967, 0.969, 0.863, 0.954, 1.007, 1.221, 0.867, 0.803 (d908d01, CI run 42000899019)
 - E18 [2026-11, gfx950, FlyDSL 0.3.2, N=500 tries per run (two streams, different inputs, AKLR timing inputs), each output compared with the call alone, bitwise at m 1024, rows off by more than 4 at m 512] the earlier revision at m 1024: 8, 6 and 8 wrong outputs of 2000 in three runs, one route row wrong per affected token, up to 45.75 off; stage 2 rerun alone on the captured stage-1 output reproduced them; the same without the split stage 1 at 1024: 2 of 1000; 71df350d424c8b92 0 of 1000, and AKLR validate (measurement profile 19, 16 rounds) 1.061, 1.161, 1.425, 1.649 at m 512, 1024, 2048, 4096, accuracy passed; 71df350d424c8b92 at m 512: 0 of 1200 outputs with a row off by more than 4, worst 3.0, alone repeats up to 2.5
+- E19 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=3 input sets per Point; SQNR of the bf16 output against the reference rounded to bf16, and the contract's `BaselineRelativeBound` with aiter's `fused_moe` as the baseline] ef15e87894a8ae06 with its fp8 stage-2 rows: 31.44–31.52 dB at m 16, 64, 512, 4096, the bound violated; with fp32 or bf16 rows instead, within the bound; aiter 46.93–47.34 dB. 1bf41ccba6750300: 26.46–30.33 dB at m 1, 16, 512, violated; its truncations rounded to nearest even change SQNR by −0.053 to +0.078 dB and still fail. Every reading passes the schema's `SqnrBound` 13 dB
 - S1 aklr/ops/fused_moe/contract.py:271 `SqnrBound(min_sqnr_db=13.0)` under the FIXME at :269–270 (e33/e65 kernels keep fp8/MXFP4 partials); compare at :299; the `shuffled_16x16` variant at :278–286
 - S2 fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/1fee59821837c26f.json#kernel.py:655 `pack_weights` at m 4, 16, 128, 512, 1024, launched at :763–785 (`pack_weight_scales`, :138); stage 1 at :245, stage-2 gather by `ds_bpermute` at :374–381, route sum in route order at :394–400; `_RUN_CACHE` at :801, `read_bytes()` at :653, device `"cuda"` at :708; counters zeroed per call at :234–236
 - S3 fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/4fbd9d02b4c053c7.json#kernel.py:58 `_plan` (functools.cache) builds the fold for m in {8, 16, 32, 64}, XCD grouping at m 32 (:37); workspace per call at :144; g1_fold.py:518 non-temporal weights, :1143 `s_setprio(1)`; g2_port.py:328 kernarg preload 16, :899–915 bf16x2 `atomicrmw fadd`

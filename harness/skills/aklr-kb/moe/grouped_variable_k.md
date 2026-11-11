@@ -88,9 +88,12 @@ In FlyDSL: `../flydsl/moe.md` § grouped_variable_k §2.
   accumulators are held, which alone gained nothing; the prefetch gave about all of it (`_wgrad_ssa_chunk`, MX8:166).
 - Scale loads must be few and wide. *(field, E5)* A whole-loop MXFP8 wgrad that fetched scales with 16 `buffer_load_ubyte`
   per phase into 16 scattered VGPRs ran 811 µs against 479 µs for the chunked kernel. From an 807 µs reading,
-  removing those loads alone gave 448 µs; cutting the scale registers from 16 to 2 gave 506 µs. Byte loads are
-  issue-bound and prefetching does not hide them. Pack four E8M0 per dword, per group: `grouped_lowprec.md` §3.
-- The scaled MFMA instruction itself is free (`grouped_lowprec.md` §4).
+  removing those loads alone gave 448 µs; cutting the scale registers from 16 to 2 gave 506 µs. Pack four E8M0 per
+  dword, per group: `grouped_lowprec.md` §3.
+- The scaled MFMA instruction itself issues at the unscaled rate on fp8 operands with independent accumulators
+  (`grouped_lowprec.md` §4). It is not free everywhere *(field, E35)*: a scaled MFMA on the previous one's
+  accumulator took about 3 cycles more (not with an fp8 operand at 32x32x64), 16x16x128 on fp4 or fp6 took 18.5
+  cycles against 17.0, and a chip-wide fp8 MFMA-only loop ran 3–5% longer at a lower clock.
 
 In FlyDSL: `../flydsl/moe.md` § grouped_variable_k §4.
 
@@ -121,11 +124,12 @@ every group has the same tiles and skew changes what each costs. The mechanics o
 - Switch blocking for short contractions and store C non-temporally (`_GMXFP4_WGRAD_CFG_SHORT`, MX4:1124).
   *(field, E8)* gate_up at 159:1 skew 916 → 3969 TF/s, at 36:1 1288 → 4002, at 10:1 2133 → 3971; the reference cell
   rose too.
-- **The crossover scales with tiles per group.** *(field, E9)* Sweeping 2048–32768 tokens per group at G=32, the
-  short/regular crossover was 24576–32768 for a 276-tile-per-group shape and 12288–16384 for a 144-tile one: about
-  85–120 tokens per output tile in both (one reading per point; the sweep brackets the crossover). Gate on
-  `M_total / G > c · tiles_per_group`, not on a token count (MX4 uses a fitted `_GMXFP4_WGRAD_SHORT_MG = 8192`,
-  MX4:1152, selector MX4:2083-2091).
+- **The crossover moves with the shape, not in proportion to tiles per group.** *(field, E9)* Sweeping 2048–32768
+  tokens per group at G=32, the short/regular crossover was 24576–32768 for a 276-tile-per-group shape and
+  12288–16384 for a 144-tile one: about 85–120 tokens per output tile in both (one reading per point; the sweep
+  brackets the crossover). *(field, E33)* At 64 tiles per group the short blocking still won at 80–112 tokens per
+  tile and did not lose up to 640; at 448 it lost 1.3–3.9% from 27 on. Measure the crossover on each deployed shape
+  (MX4 uses a fitted `_GMXFP4_WGRAD_SHORT_MG = 8192`, MX4:1152, selector MX4:2083-2091).
 - **The skew tax that remains.** With split-K active, one expert holding nearly all the tokens can still cost the
   main kernel more than a balanced load: 31 near-empty groups each compute a full output, and eight pieces cannot
   spread the deep group over 256 CUs.
@@ -165,11 +169,15 @@ the in-launch split-K reduce of `../gemm/grid_pricing.md` §2 and of
   against CUs; `_wgrad_split_geom`, FP8:3688-3704) and cuts a group only if its own contraction clears a bar
   (`_wgrad_is_cut`, FP8:3747). A variant chose one window and its slice count S at run time. *(field, E18)* That
   variant gained 7.57% on a six-cell score (two projections × balanced, moderate and heavy skew) of a tensorwise
-  wgrad; the dispatch layer it added had to win its host cost back (`grouped_host_autotune.md` §2).
+  wgrad; a dispatch layer like the one it added costs host time, so re-measure the host path
+  (`grouped_host_autotune.md` §2).
 - **Layout.** The piece that starts at K=0 writes C; every later piece writes a scratch band at C's pitch, so the
   store only swaps the descriptor base (FP8:3425-3433). Swapping only the base keeps C's cache bits on the band;
-  give the band its own: *(field, E19, E20)* on a dense split-K, `nt` partials cost 3–6% and `sc1` paid when another XCD
-  reduced them (`../gemm/epilogue.md` §5). A reduce kernel launched by the same host launcher, on
+  whether the band should get its own was not measured on a grouped wgrad. *(field, E19, E20)* On a dense split-K,
+  `nt` partials cost 3–6% and `sc1` partials were 2.0–3.6% faster with the K splits spread across XCDs
+  (`../gemm/epilogue.md` §5); *(field, E34)* with a second kernel folding the bands, as here, a HIP microbenchmark had
+  `nt` band stores about 3% slower and `sc1` 1.2–1.3% slower on 224 MiB of bands but 2.8% faster on 56 MiB. A
+  reduce kernel launched by the same host launcher, on
   the same stream, folds the bands into C in ascending chunk order, in fp32, with no atomics: bit-reproducible
   (`kernel_grouped_tn_wgrad_reduce`, FP8:4450; launch FP8:4617). Its grid is the compile-time tile space, and a
   launch that cut nothing exits at once.
@@ -279,3 +287,6 @@ only reference is a note gives the month of that note ("recorded by"); such note
 - E28 [2026-08, gfx950, FlyDSL ?, N=4, relative error against the reference; determinism over 4 runs] tight-C wgrad with the split-K `band_row` still at `OUT_M`: rel 1.42, det 0/4 (gpt-oss-20b down projection, tensorwise fp8 grouped wgrad)
 - E29 [2026-08, gfx950, FlyDSL ?, N=?, campaign score (wgrad / forward ratio, gm)] the bench pads the wgrad's 1-byte operand free dim 2880 → 2944, as the quantizer would, and slices the output back: +3% gm (baseline gm 0.892–0.896 unpadded, 0.922–0.923 padded) (gpt-oss tensorwise fp8 grouped wgrad, 4 local experts; built into the campaign's baseline)
 - E31 [2026-08, gfx950, FlyDSL ?, Turbo 1d66cc27 (frozen ruler), N=1, one bench run of the arm against the kept arm's mean of 4 runs; in-process interleaved TF ratio against the frozen kernel, gm over random in-sample token distributions × {gate_up, down}, JIT cache cleared] folding `_WGRAD_RED_WPT` 8 → 4 on top of the kept boundary-body change: gm 1.0227 against 1.0234 (flat, reverted) (gpt-oss-20b tensorwise fp8 grouped wgrad, G=32, 131072 tokens)
+- E33 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=12 paired rounds per point; a point goes to one blocking when ≥ 10 of 12 ratios agree and the median is ≥ 0.5% from 1] Turbo ca1fdd67 MXFP4 grouped wgrad, G=32, equal groups, short-span over regular blocking: 2048×2048 (64 tiles per group) 0.961–0.981 at 5120–7168 tokens per group, the regular one ahead at no point up to 40960 (a tie there); 4096×7168 (448 tiles) 0.989 at 8192, then 1.013–1.039 from 12288 to 98304, ties at 32768 and 61440
+- E34 [2026-11, gfx950 (MI355X), HIP 7.15 microbenchmark (no GEMM), N=11 rounds, L2 and MALL flushed before every run, event time of writer plus reducer; A-vs-A within ±1%] a writer stores each tile's C and 7 bands on one XCD, a second kernel on the same stream folds the bands on the writer's XCD or the next one: 224 MiB of bands, `nt` band stores +2.97% / +2.85% (same / next XCD), `sc1` +1.24% / +1.30%; 56 MiB, `sc1` −2.75% / −2.84%
+- E35 [2026-11, gfx950 (MI355X), HIP 7.15 microbenchmark (no FlyDSL kernel), N=7 rounds, per-wave `s_memtime` cycles per MFMA and chip-wide launch time at 2 waves per SIMD (A-vs-A 1.005)] `v_mfma_scale_f32_16x16x128_f8f6f4` and `_32x32x64_f8f6f4` against the unscaled encoding on the same operands: independent accumulators unchanged except 16x16x128 fp4 / fp6 17.03 → 18.53 cycles; one dependent chain about 3 cycles more per MFMA, except 32x32x64 with an fp8 operand; chip-wide on fp8, per-wave cycles unchanged, launch time +3.1–4.6% at a lower clock

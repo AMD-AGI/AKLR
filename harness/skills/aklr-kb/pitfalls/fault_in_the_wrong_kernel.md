@@ -34,9 +34,10 @@ example as an index, faults, and the fault names that later kernel.
 - FlyDSL's `make_buffer_tensor` bounds nothing by default (`num_records = 0xFFFFFFFF`,
   `../flydsl/language/limits.md` § By design; `../flydsl/gemm.md` § correctness §6).
 - The raw helper `create_buffer_resource(t, max_size=False)` falls back to the same 4 GiB bound, without a
-  warning, when the memref's shape is dynamic. It is not in the wheel: FlyDSL's repository and the baseline
-  aiter each carry a copy, and both do this (S1, S3). The wheel's `make_buffer_tensor(t, max_size=False)` derives
-  the bound from the layout at run time instead (S2).
+  warning, whatever the memref's shape, static or dynamic: its size probe casts the `!fly.memref` to a builtin
+  `MemRefType`, the cast fails, and the helper takes the fallback *(field, E6)*. It is not in the wheel: FlyDSL's
+  repository and the baseline aiter each carry a copy, and both do this (S1, S3). The wheel's
+  `make_buffer_tensor(t, max_size=False)` derives the bound from the layout at run time instead (S2).
 - In the recorded case a FlyDSL MoE sorting kernel wrote its row-inverse table 5 int32 past its end at capacities
   48 and 84 when rows inside the token count carried repeated expert ids, which is what padding a batch to the
   captured graph size leaves behind *(field, E3)*.
@@ -63,7 +64,7 @@ example as an index, faults, and the fault names that later kernel.
 - Bound every access whose index comes from data with the buffer's real size in the descriptor
   (`num_records_bytes=`, which may be a runtime value), as `../gemm/correctness.md` §6 describes; derive it from
   traced arguments (`../flydsl/gemm.md` § correctness §6).
-  With the helper of S1 and a dynamic shape, `max_size=False` is not enough.
+  With the helper of S1 or S3, `max_size=False` is not enough, whatever the shape (E6).
 - Prove the bound works before trusting it: feed an input known to go out of bounds and see the write land before
   the change and get dropped after it. A bound you have not seen stop a write looks the same as no bound. In the
   recorded case the canary probe went from out of bounds on every repeated-id case to clean on 350 of 350, and two
@@ -87,6 +88,7 @@ in the round's record.
 - E3 [2026-09, gfx950, FlyDSL ?, N=350, canary probe over 350 cases] row-inverse table written 5 int32 past its end at capacity 48 and 84 with repeated expert ids inside the token count; out of bounds on 4 of 4 such cases before the descriptor bound, 350 of 350 clean after (GLM-5.2 MoE sorting, FlyDSL)
 - E4 [2026-09, gfx950, FlyDSL ?, N=?, server run with AMD_SERIALIZE_KERNEL=3] the fault came later than without it, and wall time did not grow
 - E5 [2026-09, gfx950, FlyDSL ?, N=2, e2e server runs P/B/B/P with the fix] 0 memory access faults over 342 decode batches in each run (GLM-5.2 TP4/EP4 decode)
-- S1 kernels/common/buffer_ops.py:343 at ROCm/FlyDSL dd8373349: with `max_size=False` and no `num_records_bytes`, a memref shape with a dynamic dimension gives `None` (:301) and the descriptor falls back to `0xFFFFFFFF` (:347)
+- E6 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=6 calls per arm and memref, int32 stores past the buffer end, `num_records` from the IR dump] `create_buffer_resource(max_size=False)` of S1 and S3: `num_records` 4294967295 on static and dynamic, 1-D and 2-D memrefs, no warning, every out-of-bounds store landed; `ir.MemRefType` on the `!fly.memref` raised "Cannot cast type to MemRefType"; with `num_records_bytes` every one was dropped
+- S1 kernels/common/buffer_ops.py:343 at ROCm/FlyDSL dd8373349: with `max_size=False` and no `num_records_bytes`, the size probe returns `None` when the value's type does not cast to `ir.MemRefType` (:299, :315) or a dimension is dynamic (:301), and the descriptor falls back to `0xFFFFFFFF` (:347); the pointer extraction before it (:287) takes only a `!fly.memref` (include/flydsl/Dialect/Fly/IR/FlyOps.td:521)
 - S2 python/flydsl/expr/rocdl/universal.py:287 at ROCm/FlyDSL dd8373349: `make_buffer_tensor(max_size=False)` sets `num_records_bytes` from `cosize(layout)` times the element size
 - S3 aiter/ops/flydsl/kernels/buffer_ops.py:373 at ROCm/aiter dbd8bf5: the same fallback to `0xFFFFFFFF` when the static size cannot be read (:376)

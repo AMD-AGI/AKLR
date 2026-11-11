@@ -11,7 +11,7 @@ flydsl: 0.3.2
 
 # Correctness for an attention kernel
 
-> Most cases marked `*(field, E<n>)*` below passed a gate that reported clean. Use them to design the gate before
+> Several cases marked `*(field, E<n>)*` below passed a gate that reported clean. Use them to design the gate before
 > trusting it. Numbers marked `*(field, E<n>)*` are measured values; their conditions are listed under Evidence at
 > the end. Use them for direction and order of magnitude.
 > The general GEMM rules — gates that reach the changed path, calling twice, races found by bitwise repetition,
@@ -26,19 +26,23 @@ flydsl: 0.3.2
 
 ## 1. What a gate measures
 For each output — O, LSE, dQ, dK, dV — against an fp32 reference:
-- **SNR**, to catch structural errors. *(field, E11)* Correct bf16 kernels read ~49–52 dB on O and the
-  gradients.
+- **SNR**, to catch structural errors. *(field, E19)* With independent Gaussian inputs correct bf16 kernels
+  read ~50–54 dB on O and the gradients (48.8–49.3 dB end to end *(field, E11)*), but a correct dQ read 42–46 dB
+  with the spiked keys of §2: take the threshold from a known-correct kernel on the same inputs, not a fixed 50 dB.
+  A mask missing one edge key reads ~15 dB at W=32 but ~41 dB at W=2048.
 - **Norm ratio `|got| / |ref|`**, to catch "finite but biased", which SNR and finiteness checks miss. *(field, E3)* dV
   fell to 0.94 at D=64 (0.95 at D=128) at spike 96 with no non-finite value anywhere.
 - **Non-finite count** on every output, LSE included.
-- **Bitwise determinism**: two runs, `torch.equal`. In synchronisation changes it usually fails before SNR does.
+- **Bitwise determinism**: two runs, `torch.equal`. When a synchronisation change breaks a kernel outright, SNR and
+  determinism fail together *(field, E8, E20)*; the bitwise check earns its place on rare races that leave SNR
+  clean (`../gemm/correctness.md` §3).
 - Score accuracy by the **worst** cell, not the mean: an average lets one row that is 5% off hide behind twenty
   correct rows.
 - Check dQ, dK and dV separately; a change to a dQ scaling constant is invisible in dV.
 
 ## 2. Inputs that reach the numerics
-- **Independent Gaussian inputs cannot exercise the softmax range.** The row maximum then grows slowly with the
-  logit scale and stays near the first tile; trained attention is concentrated, and the maximum is often far
+- **Independent Gaussian inputs barely exercise the softmax range.** The row maximum then grows slowly with the
+  logit scale and stays near the first tile; concentrated attention can put the maximum far
   from it. Build spike inputs: a few keys with large logits, placed away from the first KV tile, at several
   spike levels.
 - **Push the spike to failure, not to "enough".** *(field, E4)* A gate that stopped at spike 24 reported clean; the
@@ -116,7 +120,8 @@ that accumulator must already be divided by c, or the scale applies twice.
   −6%; a dQ loss stayed hidden under a positive P bias until that bias was fixed.
   Confirm against an independent reference, or switch each known error source off and see whether the metric moves.
 - **A "no-op" whose removal changes the result is doing something.** A clamp that shifts the result by 13% when
-  removed is firing often; one that never fires on real data but drops SNR when removed is carrying a hazard.
+  removed is firing on values that carry the result, possibly only a few large ones; one that never fires on real
+  data but drops SNR when removed is carrying a hazard.
 
 ## 9. Mask conventions
 - **`window_size = (W, 0)` keeps W+1 keys**, `kv ∈ [q + off − W, q + off]`, diagonal included. A reference or a
@@ -124,8 +129,10 @@ that accumulator must already be divided by c, or the scale applies twice.
   kernel.
 - **SDPA's `is_causal` is top-left aligned.** It equals the kernel's bottom-right causal mask only when Sq == Skv
   and cannot express a left window. Give rectangular and windowed references an explicit bottom-right mask.
-- A masked SDPA reference falls back to the math backend, materialises `[B, H, Sq, Skv]` and keeps it for its own
-  backward: put the reference forward and backward inside the same out-of-memory guard.
+- In PyTorch 2.11 on ROCm, a masked SDPA reference with grouped KV heads (`enable_gqa=True`) falls back to the math
+  backend, materialises an fp32 `[B, Hq, Sq, Skv]` and keeps it for its own backward: put the reference forward and
+  backward inside the same out-of-memory guard. *(field, E21)* At Hq=64, S=4096 the backward peaked at 17.4 GB;
+  with equal head counts the same mask ran on the efficient backend.
 
 ## Related
 `../gemm/correctness.md` · `../flydsl/debug-flydsl-kernel.md` · `softmax.md` ·
@@ -147,4 +154,7 @@ A FlyDSL version is given only where the cited run, or another round in the same
 - E13 [2026-09, gfx950, FlyDSL ?, N=?, gradient norm ratios against an fp32 autograd reference at key spikes 1/24/96/192] the backward mirroring the forward's Q pre-scaling: dV 1.000 at every spike at D=128 and D=64; the commit adds that scaling the fp32 accumulator exactly instead "still leaves D=64 4% off" (FlyDSL attention backward; Primus-Turbo 86be8d0a)
 - E14 [2026-09, gfx950, FlyDSL ?, N=?, gradient norm ratios against an fp32 autograd reference at key spikes 1/8/32/96, D=64 and D=128] with the softmax scale on the score accumulator and the rebase branch's seed not pre-divided: dq 0.03612 at D=64 spike 96, normal at D=128 and at low spikes; after the fix all within 7e-4 of 1.0 (FlyDSL attention forward and backward; Primus-Turbo 438692bc)
 - E15 [2026-09, gfx950, FlyDSL ?, N=?, ?] with the reference pre-divided by c, a fully-masked prologue tile under a left window reached the −3.0e38 floor through the division, overflowed fp32 and left the LSE non-finite (FlyDSL attention forward, at Primus-Turbo 438692bc; Primus-Turbo 0a8e4d17)
+- E19 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0, aiter dbd8bf5, FlyDSL 0.3.2, N=2 seeds per cell, SNR against an fp32 reference] correct bf16 kernels, independent Gaussian inputs: O, dQ, dK, dV 50.5–54.0 dB; 64 keys scaled by 8 or 24: dQ 42.5–46.0 dB; one missing edge key (W keys against the W+1-key reference): W=32 14.5–15.0, W=2048 40.9–42.0 dB (SDPA, aiter fmha, FlyDSL forward; D=64 and 128, S=1024 and 4096)
+- E20 [2026-11, gfx950 (MI355X), HIP 7.15, N=100 runs per cell as 50 pairs, SNR fails below 45 dB] an LDS-tiled bf16 MFMA GEMM with LDS barriers replaced by a scheduling barrier, six variants on three shapes: 15 of 18 cells broke the result, each failing determinism and SNR together, none determinism alone
+- E21 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0 with AOTriton, N=1 per configuration, backend from the profiler's aten ops] SDPA with an explicit bool mask, Hq=64, Hkv=8, `enable_gqa=True`: math backend, an fp32 [1, 64, Sq, Skv] saved for the backward, at Sq=Skv=4096 4.50 GB retained after the forward and a 17.4 GB backward peak; Hq=Hkv=8: efficient backend (B=1, D=64)
 - S1 Primus-Turbo@8eaab045:primus_turbo/flydsl/attention/flash_attn_bwd.py:930 the backward keeps `kv >= q+off-W` (W+1 keys), matching the forward; the commit moved four backward mask sites from W to W+1 keys

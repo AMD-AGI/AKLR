@@ -9,11 +9,11 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1
 measured:
-  - {metric: "speedup over aiter, local validate lower bound per Point; no CI measurement on main", value: "0.969–1.441; 15 of 17 Points ≥ 1.03 (not m 9397, 16384); 0 served", gpu: MI355X, workload: "gemm_n6016_k7168, m 8, 12, 16, 24, 32, 40, 48, 56, 60, 64, 80, 96, 112, 893, 2732, 9397, 16384", date: "2026-10-26"}
-  - {metric: "speedup over aiter, local validate lower bound per Point; no CI measurement on main", value: "0.952–1.871; 15 of 17 Points ≥ 1.03 (not m 9397, 16384); 0 served", gpu: MI355X, workload: "gemm_n6144_k7168, m 8–16384 (17 Points)", date: "2026-10-26"}
-  - {metric: "speedup over aiter, local validate lower bound per Point; no CI measurement on main", value: "1.085–1.552; 13 of 13 Points ≥ 1.03; 0 served", gpu: MI355X, workload: "gemm_n6288_k7168, m 8, 12, 16, 24, 32, 40, 48, 56, 60, 893, 2732, 9397, 16384", date: "2026-10-26"}
-  - {metric: "speedup over aiter, local validate lower bound per Point; no CI measurement on main", value: "0.949–2.000 (2.000 is the bound's cap); 15 of 17 Points ≥ 1.03 (not m 2732, 9397); 0 served", gpu: MI355X, workload: "gemm_n8448_k7168, m 8–16384 (17 Points)", date: "2026-10-26"}
-  - {metric: "speedup over aiter, local validate lower bound per Point; no CI measurement on main", value: "0.875–1.231; 11 of 15 Points ≥ 1.03 (not m 80, 893, 9397, 16384); 0 served", gpu: MI355X, workload: "gemm_n7168_k35840, m 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 893, 2732, 9397, 16384", date: "2026-10-26"}
+  - {metric: "speedup over aiter, local validate lower bound per Point", value: "0.969–1.441; 15 of 17 Points ≥ 1.03 (not m 9397, 16384); CI serves 15 of 17 as of #125", gpu: MI355X, workload: "gemm_n6016_k7168, m 8, 12, 16, 24, 32, 40, 48, 56, 60, 64, 80, 96, 112, 893, 2732, 9397, 16384", date: "2026-10-26"}
+  - {metric: "speedup over aiter, local validate lower bound per Point", value: "0.952–1.871; 15 of 17 Points ≥ 1.03 (not m 9397, 16384); CI serves 15 of 17 as of #125", gpu: MI355X, workload: "gemm_n6144_k7168, m 8–16384 (17 Points)", date: "2026-10-26"}
+  - {metric: "speedup over aiter, local validate lower bound per Point", value: "1.085–1.552; 13 of 13 Points ≥ 1.03; CI serves 10 of 13 as of #125", gpu: MI355X, workload: "gemm_n6288_k7168, m 8, 12, 16, 24, 32, 40, 48, 56, 60, 893, 2732, 9397, 16384", date: "2026-10-26"}
+  - {metric: "speedup over aiter, local validate lower bound per Point", value: "0.949–2.000 (2.000 is the bound's cap); 15 of 17 Points ≥ 1.03 (not m 2732, 9397); CI serves 13 of 17 as of #125", gpu: MI355X, workload: "gemm_n8448_k7168, m 8–16384 (17 Points)", date: "2026-10-26"}
+  - {metric: "speedup over aiter, local validate lower bound per Point", value: "0.875–1.231; 11 of 15 Points ≥ 1.03 (not m 80, 893, 9397, 16384); CI serves 9 of 15 as of #125", gpu: MI355X, workload: "gemm_n7168_k35840, m 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 893, 2732, 9397, 16384", date: "2026-10-26"}
 sources:
   - aklr/ops/gemm/impls/flydsl/gemm_n6016_k7168/fe6fa078b3de6610.json
   - aklr/ops/gemm/impls/flydsl/gemm_n6144_k7168/41ac253b2d1a6704.json
@@ -43,9 +43,10 @@ large-m paths of the four K 7168 kernels come from one further campaign over the
 - Points: m 8–16384 (17) for n6016, n6144, n8448; m 8–60 and 893–16384 (13) for n6288; 15 for k35840.
 - Each schema name has only this file (no file of another language or an older kernel under the same name on
   main), so at every Point the yardstick is aiter.
-- **No Point of these files is served today.** No CI run has written `speedup` or `accuracy` into their
-  `workloads`; dispatch serves a workload only from `AKLR_MIN_SPEEDUP` 1.03 and falls back with
-  `not_measured` (`aklr/ops/README.md` § Environment variables; `aklr/core/contract/spec/_workloads.py:38`).
+- **CI serves 62 of their 79 Points** as of #125; the count per file is in § Result, and the current value of each
+  Point is the `speedup` in its schema's `workloads`. Dispatch serves a workload only from
+  `AKLR_MIN_SPEEDUP` 1.03 and not one whose accuracy is `failed` (`aklr/ops/README.md` § Environment variables;
+  `aklr/core/contract/spec/_workloads.py:38`).
 
 ## Counter-signals
 
@@ -64,8 +65,10 @@ large-m paths of the four K 7168 kernels come from one further campaign over the
   | n6288 | the two K halves of a column strip swap halves of the output (m 32–60) | this launch's tag, inside each 8-byte (value, tag) pair | 2²², `s_sleep 0` | adds whatever the slot holds and stores it | each strip's two halves (256 workgroups in all) |
   | k35840 | every split waits for all, each fragment's owner folds (S 8 at m ≤ 112 and the 9397 tail, 4 in the 2732 tail, 2 at 893) | this launch's tag | 2²², `s_sleep 0` | sums whatever the planes hold | yes, 224–256 |
 
-  A grid that is not resident at once (another kernel holding CUs, or fewer CUs) turns the last two into silently
-  wrong sums. Both kernels call the bound a guard against a hang; n6288's comment says a split that gives up writes
+  A grid that is not resident at once can turn the last two into silently wrong sums: n6288 on a stream limited to
+  64 or 16 CUs or while another kernel held half of every XCD, k35840 while another kernel held one whole XCD past
+  the poll bound; a ~8 ms matmul chain on another stream left both bit-exact *(field, E15)*. Both kernels call the
+  bound a guard against a hang; n6288's comment says a split that gives up writes
   "an unfolded value", but the code adds the stale slot to its own term. A fully resident grid, as on an idle GPU,
   hides a broken hand-off (`../gemm/small_m.md` §4).
 - **Flags read before this call writes them.** Where the tag is the same every call (n6016 above m 32, n6144,
@@ -94,8 +97,10 @@ Shared by the five kernels:
 - **XCD-aware orders:** grouped tile runs per XCD at large m (3–9 block rows, or 5–6 column blocks, per group);
   n8448's producers in split-major runs; n6288's two K halves of a strip on one XCD; k35840's K slices one per XCD
   at split 8 (four XCDs per slice at split 2) (`../gemm/schedule_and_locality.md` §2).
-- **Kernel pointer arguments preloaded into SGPRs** in n6016, n6144 and n8448 (8–16 dwords) and in n6288's
-  large-m kernel (`../gemm/small_m.md` §6); k35840 does not.
+- **Kernel pointer arguments preloaded into SGPRs** in n6144 and n8448 (`fx.Pointer` arguments): all four, 8 dwords.
+  n6016 (count 16) and n6288's large-m kernel (12) take `fx.Tensor` arguments, with which preloading stops after the
+  first pointer (2 SGPRs in n2304_k1536, [k3_bf16_short_k_large_m.md](k3_bf16_short_k_large_m.md) § Mechanism); their
+  own ISA was not read (`../gemm/small_m.md` §6). k35840 sets no count.
 
 | | m ≤ 112 | m 893 | m 2732 | m 9397 | m 16384 |
 |---|---|---|---|---|---|
@@ -113,7 +118,8 @@ registers. Its 8-wave tiles use the pipeline of `../gemm/mainloop.md` §2.
 rounds come from a second campaign over the four K 7168 kernels):
 
 - n6016: the n2112 port with N-tail tiles +18.5–71.4% at m ≤ 112 over the campaign's starting kernel; grouped
-  large-m tiles +7.7–11.7% at m ≥ 893; split 2 at m 24–32 and 224×192 at 893 +1.6–7.4%; one-wave 16×48 tiles at
+  large-m tiles, in the round that also widened the m 9397 and 16384 tiles to 256, +7.7–11.7% at m ≥ 893; split 2
+  at m 24–32 and 224×192 at 893 +1.6–7.4%; one-wave 16×48 tiles at
   m ≤ 16 +3.0–5.2%; preload +1.1–1.6% at m ≤ 96; the tagged chunks at m ≤ 32 +0.8–2.0% *(field, E6)*; the 4-wave
   AGPR tile +7.2% / +7.1% at m 9397 / 16384 *(field, E11)*.
 - n6144: the port +20.4–71.5% at m ≤ 112; grouped order with 256×256 tiles and last-split folds at mid m
@@ -126,28 +132,28 @@ rounds come from a second campaign over the four K 7168 kernels):
   padding masks −0.3% to +4.6% by Point (+3.8–4.6% at m 96, 112); a deeper A pipeline +5.9% at m 2732 *(field, E9)*;
   `nt` C with regrouping +6.5% / +3.0% / +2.1% at m 2732 / 9397 / 16384 *(field, E11)*.
 - k35840: the split-K tiled kernel +0.4–17.2% at m ≤ 112; the fold inside one launch with one K slice per XCD
-  +2.8–8.1% at m ≤ 112 and +10.4% at 893; the split tails +3.6% (9397) and +8.3% (2732) *(field, E10)*.
+  +2.8–8.1% at m ≤ 112 and +10.4% at 893; retuned large-m grouping with the m 9397 tail run as split-K +3.6% at
+  m 2732 and 9397 and +2.3% at 16384; the m 2732 tail +8.3% *(field, E10)*.
 
 ## Result
 
-`speedup` is absent from every workload of these files: CI has not measured them, so dispatch serves none of
-their 79 Points. When CI does measure them it runs the FlyDSL of its image (0.3.4.1 in
-the image of the latest perf runs), not the 0.3.2 of the local numbers below
+"Served" counts the Points at or above 1.03 in the `speedup` CI wrote into each schema's `workloads`, as of #125.
+CI runs FlyDSL 0.3.2, the version of the local numbers below, not the 0.3.4.1 of its image
 (`../pitfalls/measured_a_different_build.md`).
 
-The only per-Point measurements are the campaigns' own runs of the predecessor repository's `validate` (before the
-rename to AKLR) on MI355X, FlyDSL 0.3.2: a lower bound of the CUDA-graph time ratio aiter / kernel, one run each,
+The other columns are the campaigns' own runs of the predecessor repository's `validate` (before the rename to
+AKLR) on MI355X, FlyDSL 0.3.2: a lower bound of the CUDA-graph time ratio aiter / kernel, one run each,
 capped at 2.000; "≥ 1.03" counts them against the dispatch threshold (that validate itself demoted below 1.02). For the four K 7168 files the run timed the
 large-m campaign's module beside the earlier kernel; the module is what the follow-up commits delivered, and its
 small-m code compiles to the earlier kernel's ISA *(field, E12)*.
 
 | File | m ≤ 112 | m 893 | m 2732 | m 9397 | m 16384 | ≥ 1.03 locally | Served |
 |---|---|---|---|---|---|---|---|
-| n6016 *(field, E1)* | 1.134–1.441 | 1.161 | 1.096 | 1.025 | 0.969 | 15 of 17 | 0 |
-| n6144 *(field, E2)* | 1.060–1.871 | 1.123 | 1.091 | 1.021 | 0.952 | 15 of 17 | 0 |
-| n6288 *(field, E3)* | 1.223–1.552 (m ≤ 60) | 1.109 | 1.085 | 1.102 | 1.146 | 13 of 13 | 0 |
-| n8448 *(field, E4)* | 1.165–2.000 | 1.085 | 0.985 | 0.949 | 1.127 | 15 of 17 | 0 |
-| k35840 *(field, E5)* | 1.013–1.195 | 0.875 | 1.231 | 0.989 | 0.927 | 11 of 15 | 0 |
+| n6016 *(field, E1)* | 1.134–1.441 | 1.161 | 1.096 | 1.025 | 0.969 | 15 of 17 | 15 of 17 |
+| n6144 *(field, E2)* | 1.060–1.871 | 1.123 | 1.091 | 1.021 | 0.952 | 15 of 17 | 15 of 17 |
+| n6288 *(field, E3)* | 1.223–1.552 (m ≤ 60) | 1.109 | 1.085 | 1.102 | 1.146 | 13 of 13 | 10 of 13 |
+| n8448 *(field, E4)* | 1.165–2.000 | 1.085 | 0.985 | 0.949 | 1.127 | 15 of 17 | 13 of 17 |
+| k35840 *(field, E5)* | 1.013–1.195 | 0.875 | 1.231 | 0.989 | 0.927 | 11 of 15 | 9 of 15 |
 
 ## Reproduce
 
@@ -172,9 +178,8 @@ kernel:
 ## Rollback
 
 Delete the schema file: its Points go unserved, since no other file serves them. `AKLR_DISABLE=gemm@1.0`
-stops serving the whole contract, every other bf16 GEMM schema included. Until CI writes `speedup`, nothing is
-served and nothing needs rolling back; afterwards a Point measured below 1.03 is not served, and a `failed`
-accuracy never is. Roll back for a wrong result CI does not catch: a silently wrong sum from n6288 or k35840 when
+stops serving the whole contract, every other bf16 GEMM schema included. A Point CI measures below 1.03 is not
+served, and a `failed` accuracy never is. Roll back for a wrong result CI does not catch: a silently wrong sum from n6288 or k35840 when
 their splits are not resident, NaN or a stale fold after a timed-out launch of the others, or a change of FlyDSL or
 LLVM.
 
@@ -188,16 +193,17 @@ is the predecessor repository's `validate` (before the rename to AKLR) outside C
 - E3 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] n6288: m 8 1.504, 12 1.282, 16 1.255, 24 1.223, 32 1.278, 40 1.319, 48 1.269, 56 1.552, 60 1.515, 893 1.109, 2732 1.085, 9397 1.102, 16384 1.146 (gemm_n6288_k7168)
 - E4 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] n8448: m 8 1.165, 12 1.237, 16 1.253, 24 2.000, 32 1.342, 40 1.885, 48 1.881, 56 1.824, 60 1.844, 64 1.398, 80 1.703, 96 1.688, 112 1.700, 893 1.085, 2732 0.985, 9397 0.949, 16384 1.127 (gemm_n8448_k7168)
 - E5 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] k35840: m 8 1.069, 16 1.053, 24 1.062, 32 1.073, 40 1.078, 48 1.063, 56 1.036, 64 1.035, 80 1.013, 96 1.078, 112 1.195, 893 0.875, 2732 1.231, 9397 0.989, 16384 0.927 (gemm_n7168_k35840)
-- E6 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n6016: port +18.5–71.4% at m ≤ 112 (recorded); grouped tiles +10.7, 7.7, 8.1, 11.7% at 893–16384 (recorded); split 2 + 224×192 +4.1 / +1.6 / +7.4% at 24 / 32 / 893; one-wave tiles +3.0, 4.1, 5.2% at m 8–16; preload +1.1–1.6% at m ≤ 96; tagged chunks +1.7, 1.9, 2.0, 0.8, 0.9% at m 8–32 (gemm_n6016_k7168)
+- E6 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n6016: port +18.5–71.4% at m ≤ 112 (recorded); grouped tiles + 256-wide tiles at 9397 / 16384 +10.7, 7.7, 8.1, 11.7% at 893–16384 (recorded); split 2 + 224×192 +4.1 / +1.6 / +7.4% at 24 / 32 / 893; one-wave tiles +3.0, 4.1, 5.2% at m 8–16; preload +1.1–1.6% at m ≤ 96; tagged chunks +1.7, 1.9, 2.0, 0.8, 0.9% at m 8–32 (gemm_n6016_k7168)
 - E7 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n6144: port +20.4–71.5% at m ≤ 112 (recorded); grouped order + 256×256 + last split +15.3, 14.0, 4.3, 13.3% at 893–16384 (recorded); 224×192 split 2 +13.0% at 893; three N-waves +3.1% at 80 (gemm_n6144_k7168)
 - E8 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n6288: two kernels +12.8–47.0% at m ≤ 60 (recorded); split 2 + early scratch touch +1.0, 2.0, 5.5, 5.3, 4.6% at m 32–60; tagged exchange +2.6, 6.1, 5.0, 7.6, 6.7% at m 32–60; partner first +0.6–1.2% (gemm_n6288_k7168)
 - E9 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] n8448: port +8.6–50.5% at m ≤ 112 (recorded); appended reducers +0.8–5.3%; 24-bit planes + masks +1.1, 0.5, −0.3, 1.8, 1.1, 3.1, 1.8, 0.4, 0.4, −0.0, 1.7, 3.8, 4.6% at m 8–112; deeper A +5.9% at 2732 (gemm_n8448_k7168)
-- E10 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] k35840: split-K tiled kernel +3.3, 1.1, 2.4, 2.4, 5.2, 2.4, 2.4, 0.4, 9.7, 2.2, 17.2% at m 8–112; in-launch fold + XCD slices +2.8–8.1% at m ≤ 112 and +10.4% at 893 (recorded); 9397 tail +3.6%; 2732 tail +8.3%; all changes off +5.3–24.6% at m ≤ 112, −13.1% at 893, +7.2% at 2732, +6.3% at 9397, −7.9% at 16384 (gemm_n7168_k35840)
+- E10 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench; remeasured rounds 3 pairs] k35840: split-K tiled kernel +3.3, 1.1, 2.4, 2.4, 5.2, 2.4, 2.4, 0.4, 9.7, 2.2, 17.2% at m 8–112; in-launch fold + XCD slices +2.8–8.1% at m ≤ 112 and +10.4% at 893 (recorded); regrouping + 9397 tail +3.6, 3.6, 2.3% at 2732, 9397, 16384; 2732 tail +8.3%; all changes off +5.3–24.6% at m ≤ 112, −13.1% at 893, +7.2% at 2732, +6.3% at 9397, −7.9% at 16384 (gemm_n7168_k35840)
 - E11 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench, group campaign; remeasured rounds 3 pairs] 4-wave AGPR tile n6016 +7.2 / +7.1%, n6144 +6.0 / +6.7% at m 9397 / 16384 (recorded); n6288 192×320 +1.4 / +2.5%; n8448 `nt` C + regrouping +6.5 / 3.0 / 2.1% at 2732 / 9397 / 16384
 - E12 [2026-10, gfx950, FlyDSL 0.3.2, N=1, local validate] earlier → delivered at m 2732 / 9397 / 16384: n6016 1.099 → 1.096, 0.923 → 1.025, 0.876 → 0.969; n6144 1.092 → 1.091, 0.927 → 1.021, 0.850 → 0.952; n6288 1.079 → 1.085, 1.076 → 1.101, 1.145 → 1.146; n8448 0.914 → 0.985, 0.894 → 0.949, 1.109 → 1.127; outputs bit-identical, same ISA up to m 893
 - S1 aklr/ops/gemm/contract.py:95 `_dot_k()` (fp32, `max_split_k` 16) on `GEMM` at :128
-- S2 aklr/ops/gemm/impls/flydsl/gemm_n6016_k7168/fe6fa078b3de6610.json#kernel.py:25 `_CONFIGS`; preload 16 and AGPR form at :121, :124; `_count_ready` "this call's tag" at :139; launch tag at :619, NaN at :678; last-split poll at :732; `_CONFIGS4` at :786
-- S3 aklr/ops/gemm/impls/flydsl/gemm_n6144_k7168/41ac253b2d1a6704.json#kernel.py:26 `_CONFIGS`; `_count_ready` at :127; poll at :427, NaN at :436; `_CONFIGS4` at :505; preload 8 at :822
-- S4 aklr/ops/gemm/impls/flydsl/gemm_n8448_k7168/5beee8319bd5c527.json#kernel.py:1 docstring "sum … in fixed order and round once"; `_RED_FLAGS` at :41; `_pack24` (+0x80, keep the top 24 bits) at :109; `_count_ready` at :199; reducer poll at :619; `_CONFIGS4` at :710
-- S5 aklr/ops/gemm/impls/flydsl/gemm_n6288_k7168/18df46ab10cda50d.json#kernel.py:22 `_SKINNY`; `_SPIN_LIMIT` "writes an unfolded value" at :33; launch tag at :354; partner's pairs first at :380; poll at :424; own + partner sum at :441; `_CONFIG4` at :727; `run` allocating `out` at :986
+- S2 aklr/ops/gemm/impls/flydsl/gemm_n6016_k7168/fe6fa078b3de6610.json#kernel.py:25 `_CONFIGS`; preload 16 and AGPR form at :121, :124; `fx.Tensor` arguments at :232; `_count_ready` "this call's tag" at :139; launch tag at :619, NaN at :678; last-split poll at :732; `_CONFIGS4` at :786
+- S3 aklr/ops/gemm/impls/flydsl/gemm_n6144_k7168/41ac253b2d1a6704.json#kernel.py:26 `_CONFIGS`; `_count_ready` at :127; poll at :427, NaN at :436; `_CONFIGS4` at :505; `fx.Pointer` arguments at :197; preload 8 at :822
+- S4 aklr/ops/gemm/impls/flydsl/gemm_n8448_k7168/5beee8319bd5c527.json#kernel.py:1 docstring "sum … in fixed order and round once"; `_RED_FLAGS` at :41; `_pack24` (+0x80, keep the top 24 bits) at :109; preload 8 at :172, `fx.Pointer` arguments at :294; `_count_ready` at :199; reducer poll at :619; `_CONFIGS4` at :710
+- S5 aklr/ops/gemm/impls/flydsl/gemm_n6288_k7168/18df46ab10cda50d.json#kernel.py:22 `_SKINNY`; `_SPIN_LIMIT` "writes an unfolded value" at :33; launch tag at :354; partner's pairs first at :380; poll at :424; own + partner sum at :441; `_CONFIG4` at :727; preload 12 at :738, `fx.Tensor` arguments of the large-m kernel at :786; `run` allocating `out` at :986
 - S6 aklr/ops/gemm/impls/flydsl/gemm_n7168_k35840/5ac66d6dae624f93.json#kernel.py:27 `_CONFIGS`; `_TAIL_SPLITS` at :80; `_SPIN_LIMIT` at :90; one K slice per XCD at :283; fold at :538; dispatch tag at :661
+- E15 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=1–10 tries per condition, eager calls compared byte for byte with a call on the idle GPU] wrong output, every value finite, no hang: n6288 at m 32 and 60 in every try on a stream limited to 64 or 16 CUs and while another kernel held half the CUs of every XCD for 3 s; k35840 at m 8, 112 and 893 in 4 of 6 tries while another kernel held all of one XCD for 3 s; both 0 of 10 per Point beside a ~8 ms matmul chain on another stream (gemm_n6288_k7168, gemm_n7168_k35840)

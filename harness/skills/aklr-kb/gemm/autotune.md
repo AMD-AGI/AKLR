@@ -66,8 +66,10 @@ time.
   the race's own noise. Turbo's margins:
   - whole-loop depth: 2% (`_WL_MARGIN = 1.02`, FP4:3274);
   - speculative swizzles: 0.5% (`_SWZ_MARGIN = 1.005`, FP4:3278). *(field, E15)* With the race's fixed
-    candidate order and minimum over 8 reps (FP4:3261-3273), a replay on one MXFP4 shape gave the
-    first-listed candidate a 2.3–2.4% discount, so there this margin acted as an estimated ~2.9%;
+    candidate order and minimum over 8 reps (FP4:3261-3273), one replay on one MXFP4 shape gave the
+    first-listed candidate a 2.3–2.4% discount; an A-vs-A replay of the same timing on hipBLASLt bf16 and fp8
+    GEMMs found at most 0.4%, with single races from −2.4% to +2.1% *(field, E17)*, so measure your own race's
+    head-slot bias and noise before trusting a margin;
   - split-K arms: 1% (`_race_mxfp4_ksplit(margin=0.99)`, FP4:3557);
   - MXFP8 C-store policy and split: 1% (MX8:973-976).
   These are the constants Turbo ships; its source records no measurement behind them. Derive your own
@@ -78,15 +80,19 @@ time.
   list. *(field, E2)* One candidate added without a margin cost 0.19% of a 12-shape score in one read, and
   one shape (FC2_wgrad) fell from 1.005 to 0.993 of the reference's throughput.
 - **The first list entry is a decision.** With a margin, a challenger that wins by less never lands.
-  - *(field, E3)* On a grouped fp8 dgrad, where no `num_xcd` was best everywhere, starting the list at one end of the
-    axis let the margin chain step along it. Starting in the middle stranded it, because neither neighbour could clear
-    the margin. Start at the end on the side of the measured optimum; one arm that moved the dgrad and the forward
+  - *(field, E3)* On a grouped fp8 dgrad, where no `num_xcd` was best everywhere, starting the list at one end of
+    the axis instead of the middle (one candidate also swapped) read 0.08–0.35% better; the round's explanation, a
+    margin chain that steps along the axis from an end but strands in the middle, was not observed. Start at the
+    end on the side of the measured optimum; one arm that moved the dgrad and the forward
     starting points one step further together read lower, and it moved both lists, so it does not tell which move
     cost.
 - **Race noise above the margin makes the winner flip between runs.** *(field, E4)* On a grouped MXFP8 GEMM, one
   shape alternated between two configurations that tied at the race's synthetic balanced point and were about
   3% apart on the skewed distribution the bench scored. Clearing the cache and re-running the same shape
-  showed a 2:1 split. The cause was the measurement order, not thermal noise.
+  showed a 2:1 split, which the round put on the measurement order: base timed first in its own window on a clock
+  still ramping up. That bias is systematic: in an A-vs-A race of one bf16 GEMM timed that way after idle, the
+  candidate cleared a 1.5% margin in 5 of 12 races; a palindrome in one window, or 6 s of load right before the
+  race, removed it *(field, E18)*.
   - Time base and candidate in one process, inside one window, as a palindrome `(base, cand, cand, base)` per
     rep, and take the median of `(c1+c2)/(b1+b2)` (`_robust_ab_ratio`, GH:2091). The DVFS ramp is odd in the
     slot index, so it cancels within a rep. This is the two-arm in-process case of
@@ -129,8 +135,10 @@ In FlyDSL: `../flydsl/gemm.md` § autotune §3.
   clock (Turbo's grouped fp8 race, `_autotune_np_dispatch`, `grouped_gemm/grouped_gemm_fp8_kernel.py:2558`), so
   race on the caller's operands, as Turbo's dense race does (`_bench_dense_args`, FP8:3008-3013). Zero operands
   are a false ruler. *(field, E8)* On an MXFP4 GEMM they read 155 µs against 205 µs for the same build and
-  shape, while operand entropy accounts for only about 10%; the rest of the gap is put,
-  untested, on allocation history. Time on tensors the deployment path produced.
+  shape. On a Triton MXFP4 GEMM of the same shape the whole gap was the operand values, not allocation history:
+  zeroing only the values in the same buffers read 0.76× the real-data time, while two other allocation histories
+  moved it under 0.5%; with zeros the card stayed under its 1400 W cap and clocked about 2390 MHz against 1840 MHz
+  *(field, E19)*. Time on tensors the deployment path produced.
 - **Choose the beta the race ranks at.** Turbo's dense races time the beta=0 build on a scratch output and rebuild the
   winner with the accumulate epilogue (`epilogue.md` §7), so beta=0 and beta=1 callers of a shape share
   one configuration. *(field, E9)* Ranking at the caller's beta costs one more build per surviving candidate. On a
@@ -210,10 +218,13 @@ kernel.
 - E5 [2026-09, gfx950, FlyDSL 0.2.2, N=6, cleared-cache re-runs of the race per cell] race paired against the incumbent as `(base, cand, cand, base)` per rep (`_robust_ab_ratio`), every canonical M below 0.985: B=24 eight cells × 6 = 48/48 stable, B=8/32 four cells × 4 = 32/32, each pick the arm measured fastest; with the unpaired race the same tree had picked (4,8)/(8,4)/(8,4) on Down fwd N=2944, where (8,4) is 2.2% faster at the deployment point; one stability probe read 4/4 at the start of the round and 2:1 two hours later (gpt-oss-20b grouped per-tensor fp8 GEMM `grouped_gemm_fp8_tensorwise_flydsl_kernel`, forward and dgrad)
 - E6 [2026-08, gfx950, FlyDSL ?, N=4, isolated probe, palindrome, median of 4 probe rounds at M = 1024/2048/8192 and of 5 at the deployed M, bitwise-identical arms] `(num_xcd, group_m)` = (8, 4) against the race's pick (4, 8): at the deployed 4096 tokens per expert +2.48% and +2.95% (two balanced sweeps), heavy skew +2.49%; at the race's two canonical M points 1024 −0.94% and 8192 +0.54%, geomean about +0.2%, under the 1.5% adoption margin; M = 2048 +0.32% (gpt-oss-20b down-projection padN dgrad NN, grouped tensorwise fp8, G=32)
 - E7 [2026-08, gfx950, FlyDSL ?, N=2, race disabled and each config timed twice (repeatability under 0.15%); campaign score `gm_ratio` (geomean over 18 configs of the MXFP8 time over ours), one read per arm] the NT race scored candidates on synthetic balanced group offsets and did not pick `(2,8,0)`, which was in its list; timed per config, `(2,8,0)` was 7.0% and 7.8% faster on the two configs holding `min_ratio`; a hard-coded NT constant, the race code deleted with it: gm 1.3529 → 1.37619, min 1.1843 → 1.22707; the same constant on the wgrad path, which shared the default, collapsed wgrad to 0.38–0.55× (gpt-oss MXFP4 grouped GEMM)
-- E8 [2026-09, gfx950, FlyDSL ?, N=?, probes on one build and shape] `torch.zeros` operands 155 µs against real-data operands 205 µs, 32%; data entropy alone put at 10%; the note puts the rest on allocation history and page placement, untested (Turbo MXFP4 dense GEMM, Llama-2 70B training shapes; the campaign's ruler note, the probe runs are not recorded)
+- E8 [2026-09, gfx950, FlyDSL ?, N=?, probes on one build and shape] `torch.zeros` operands 155 µs against real-data operands 205 µs, 32%; data entropy alone put at 10%; the note puts the rest on allocation history and page placement, untested (Turbo MXFP4 dense GEMM, out_proj_wgrad 4096×4096×32768; the campaign's ruler note, the probe runs are not recorded)
 - E9 [2026-09, gfx950, FlyDSL ?, N=?, each candidate pinned and timed at both betas on balanced draws; the race's choice observed over 6 scored runs] winners at beta=0 and beta=1: down G=24 (1,4) 2623.1 and (4,2) 2215.9 TF/s, gate_up G=24 (1,4) 2677.3 and (1,3) 2272.6, the same rectangle at G=32; beta=1 16% slower outright; ranked at beta=0 the race reached the beta=1 best on down in 2 of 6 runs, ranked at the caller's beta in 6 of 6; each surviving candidate is compiled twice, about doubling a cold autotune (gpt-oss-20b grouped per-tensor fp8 wgrad, variable K, down and gate_up at G=24 and G=32)
 - E12 [2026-08, gfx950, FlyDSL ?, N=?, campaign bench that scored NN and TN only] `NameError: gn` in the NT candidate loop, swallowed by `except Exception: continue`; the whole NT forward path was broken while ten rounds of bench stayed green (Turbo dense fp8 GEMM, NT path, found after the NN dgrad campaign; unverified)
 - E13 [2026-09, gfx950, FlyDSL 0.2.4, N=1, code reading, then one scored read per arm] the TACCW/COOP epilogue-twin stage looks its base up in `_MXFP4_AT_CACHE` under a 13-field key while entries are stored under 15 fields; the `KeyError` goes to `except Exception: pass`, so the twin axis had not run in the whole campaign; with the key fixed in a later campaign, all 18 cells of that campaign's table still picked `(taccw, coop) = (False, False)` (Turbo MXFP4 dense GEMM for gpt-oss, `_autotune_mxfp4_config`)
 - E14 [2026-09, gfx950, FlyDSL 0.2.4, N=?, code reading and a probe of the race] the four kernel calls in `launch_mxfp4_tail` lacked the `ACT`/`PROBS` arguments, so launch modes 2 and 3 (tail split) raised `TypeError: missing a required argument: 'ACT'` and `except Exception: continue` dropped them: the tail-split leg had not been raced; mode 2/3 is also reported as unbuilt through the whole preceding 16-round campaign; the two arguments came with `9f05cd85` (2026-09-17) (Turbo MXFP4 dense GEMM, a GEMM campaign over 18 cells)
 - E15 [2026-09, gfx950, FlyDSL 0.2.4, N=1, campaign score `gptoss_q` (six gpt-oss training-step cells: dual quantization of A and B, scale handoff and the packed GEMM), one read against the same day's 1.2301] race timing fixed as the KB prescribed (0.30 s wall-clock warm-up, candidate order reversed each rep): 1.2217 (−0.68%) on a clean run (`pass_drift` 0.0102); per cell QKV_wgrad +2.0%, QKV_fwd −3.2%; replaying the old timing (fixed order, min over 8 reps) on the compiled candidates gave the first-listed candidate a 2.3–2.4% discount on QKV_dgrad 32768×2880×5120, which the round reads as an effective `_SWZ_MARGIN` of about 2.9%; on the GEMM-only `gemm18` score a later change to the race's timing estimator (min over 8 reps → median of per-rep ratios) read flat, 1.0087 / 1.0123 against 1.0103 (Turbo MXFP4 dense GEMM for gpt-oss, `_autotune_mxfp4_config`)
 - E16 [2026-07, gfx950, FlyDSL ?, N=?, ruler not stated; adoption margin >4% for a 4-wave candidate over the real 8-wave dispatch best] a 4-wave persistent NT candidate came out only ~3% over the real 8-wave dispatch best, under the 4% margin, and lost to the 4-wave non-persistent kernel at short K, where persistence was to pay; adopted on no shape, withdrawn, net change zero (Turbo grouped per-tensor fp8 GEMM, tensorwise branch, NT; unverified)
+- E17 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0, N=8 races per cell, A-vs-A (every candidate the same compiled GEMM), Turbo's MXFP4 race timing replayed (FP4:3256-3273), race started after idle or after load] the first-listed candidate's discount on bf16 8192×4096×4096 and fp8 32768×2880×5120: at most +0.41%; single races −2.4% to +2.1% (hipBLASLt bf16 and fp8 GEMMs)
+- E18 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0, N=12 races per arm in one process, 6 s idle before each, A-vs-A of one compiled GEMM] base and candidate in separate windows, base first: bias −1.22%, adopted at a 1.5% margin in 5 of 12 races; palindrome `(base, cand, cand, base)` in one window −0.02%, 0 of 12; separate windows after 6 s of full load +0.04%, 0 of 12 (`torch.mm` bf16 4096×4096×4096 on hipBLASLt)
+- E19 [2026-11, gfx950 (MI355X), Triton 3.8.0, torch 2.11.0+rocm10.0.0, N=6 rounds after 60 s of full load, arms shuffled, ratio of round medians to the real-data arm; sysfs power and sclk] A, B and scales zeroed in the same buffers 0.761; the real data in buffers with two other allocation histories 1.0041 and 1.0016; real data 1392 W at 1843 MHz, zeros 1087 W at 2393 MHz, cap 1400 W (Triton's gfx950 MXFP4 GEMM tutorial kernel, 4096×4096×32768)

@@ -30,5 +30,6 @@ allowed-tools: Read Edit Bash Grep Glob Agent
   loads a library that does not exist. Give each package its own `root` when building variants
   yourself; AKLR's builder already does.
 - Up to measurement profile 18 (Kineto, `GPU_FORCE_QUEUE_PROFILING` forced) a kernel below ~4 µs sat on the
-  graph-node floor of AKLR's measurement: a gain there is a fixed latency difference and may not carry to another
-  node. Recheck that floor under profile 19 on current main (`../pitfalls/aklr_dispatch_floor.md`).
+  graph-node floor of AKLR's measurement: two kernels that both run under it read about the same whatever their
+  real gap, and a gain read where only the faster one is under it is smaller than the real gain. Profile 19 on
+  current main still has that floor (`../pitfalls/aklr_dispatch_floor.md`).

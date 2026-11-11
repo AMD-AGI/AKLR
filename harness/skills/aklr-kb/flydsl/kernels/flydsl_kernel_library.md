@@ -35,7 +35,7 @@ sources:
 **This is about reading or copying aiter's kernels, not writing your own.** The kernels below are in
 `aiter/ops/flydsl/` of the baseline aiter (`../../SKILL.md` § Also in AKLR): host wrappers there, kernel bodies under
 `kernels/`. A path given in full is from aiter's root; after that a file is named without its directory, and
-`kernels/…` is `aiter/ops/flydsl/kernels/…`. AKLR kernels do not import aiter: read these kernels to know what you
+`kernels/…` is `aiter/ops/flydsl/kernels/…`. No committed AKLR kernel imports these kernels: read them to know what you
 are racing, and copy code out of them if you reuse it. The dense GEMMs come first; the other FlyDSL families in
 that directory (MoE, linear attention, MLA reduce, EP dispatch/combine and smaller fused ops) are mapped in
 § Other FlyDSL families below.
@@ -83,21 +83,23 @@ enumerated M ≤ 16.
 
 | Family | Reduction | Run to run |
 |---|---|---|
-| HGEMM | split 0 writes zero (or the bias) into C with `sc0 sc1` stores and raises a per-tile signal; the other splits spin on it; every split rounds its partial to the output dtype and adds it into C with a bf16x2/f16x2 `atomicrmw fadd` at agent scope; the last arrival resets the tile's counter and signal (`splitk_hgemm.py:401-504, 1015, 1059-1066`). No workspace. | **not bitwise reproducible** at split-K ≥ 3, or at split-K 2 with a bias. Measured: 400 of 400 repeats differed from the first at split-K 2 with a bias and at 3, 4 and 8; none at split-K 1, or 2 without a bias. |
-| small-M HGEMM | the first split to arrive at a tile zeroes C and publishes it; partials are added with the same atomic (`small_m_hgemm.py:674-730, 1010-1017`). | the same, measured the same way. |
+| HGEMM | split 0 writes zero (or the bias) into C with `sc0 sc1` stores and raises a per-tile signal; the other splits spin on it; every split rounds its partial to the output dtype and adds it into C with a bf16x2/f16x2 `atomicrmw fadd` at agent scope; the last arrival resets the tile's counter and signal (`splitk_hgemm.py:401-504, 1015, 1059-1066`). No workspace. | **not bitwise reproducible** at split-K ≥ 3, or at split-K 2 with a bias. Measured at M × N × K = 16 × 2048 × 6144: 400 of 400 repeats differed from the first at split-K 2 with a bias and at 3, 4 and 8; none at split-K 1, or 2 without a bias *(field, E1)*. At other shapes such cells differed in 323–400 of 400 and one in none, so a clean run proves nothing. |
+| small-M HGEMM | the first split to arrive at a tile zeroes C and publishes it; partials are added with the same atomic (`small_m_hgemm.py:674-730, 1010-1017`). | the same, measured the same way *(field, E1)*. |
 | fp8 8-wave | no split-K: its kernel names carry only the tile, `waves_per_eu` and `xcd_swizzle` (`gemm_a8w8_bpreshuffle_8wave.py:247-262`). | — |
 | fp8/int8 preshuffle | each split writes its own fp32 plane; the last split to arrive at a tile sums the planes in a fixed pairwise order and resets the tile's counter (`splitk_epilogue.py:29-161`). Workspace and counters are a persistent per-stream buffer (`gemm_kernels.py:989-1003`). | bitwise reproducible. Measured: no difference in 400 repeats at split-K 2, 4, 8 and 16. |
 
 ## Before you reuse one
 - **It is dispatched only through a tuned row.** A shape without one never runs FlyDSL (step 4 above).
 - **Copy, do not import.** A AKLR kernel carries its code: copy what you reuse into its sources and import it
-  relatively. The audit does not check imports (`aklr/ops/README.md`), and no committed AKLR kernel imports aiter.
+  relatively. The audit does not check imports (`aklr/ops/README.md`). No committed AKLR kernel imports an aiter
+  FlyDSL kernel (four import other aiter code).
 - **Persistent buffers are an aiter choice.** Both split-K schemes keep their counters (and the preshuffle
   family its workspace) alive across calls in an `lru_cache`. A AKLR kernel allocates scratch per call, or once
   per shape in its compile function and rewritten whole before it is read, so its counters must be
-  zeroed on every call.
-- **Re-measure on your hardware and your shapes.** A tuned row was chosen on one machine's timing; the row, not
-  the kernel, is what changes between deployments.
+  zeroed on every call, or compared against a value only that call writes, such as the per-dispatch tag of
+  `gemm_n1536_k7168` below.
+- **Re-measure on your hardware and your shapes.** A tuned row was chosen on one machine's timing, and its lookup
+  key (step 2 above) holds nothing of the build (`tuned_gemm.py:147-159`).
 
 ## AKLR's own bf16 GEMM kernels
 
@@ -117,7 +119,7 @@ are deterministic (no atomics) and pass AKLR's audit: the nearest working code f
 | `gemm_n7168_k1792` | kernel arguments preloaded into SGPRs (`amdgpu-kernarg-preload-count`) on a multi-stage LDS DMA ring |
 | `gemm_n1536_k128` | K = 128 in one tile: aiter's async-LDS HGEMM at split-K 1 with per-m tiles and `sc1` C stores |
 | `gemm_n6016_k7168` | split-K 2 folded through dispatch-tagged chunks, no flags, at m ≤ 32; N-tail tiles |
-| `gemm_n6144_k7168` | the last split to arrive reduces mid-m tiles; three N-waves; 48-column split-2 tiles at small m |
+| `gemm_n6144_k7168` | the last split by index (`SPLIT - 1`), not by arrival, waits on the other splits' flags and reduces mid-m tiles; three N-waves; 48-column split-2 tiles at small m |
 | `gemm_n6288_k7168` | two workgroups per column strip, each half of K, polling each other's launch-tagged partials |
 | `gemm_n7168_k3584` | the `gemm_n7168_k1792` streaming design at K = 3584, plus a tiled path for m ≥ 893 |
 | `gemm_n8448_k7168` | appended reducer workgroups with 24-bit packed partials switched per row; 320×256 tiles at m = 16384 |
@@ -159,7 +161,8 @@ serve; which run where: `../../moe/INDEX.md` § Kernels to start from.
 Same layout as the GEMMs: host wrapper in `aiter/ops/flydsl/`, body under `kernels/`, and nothing runs unless
 `is_flydsl_available()` (`aiter/ops/flydsl/utils.py:72`). `aiter.fused_moe.fused_moe` (`aiter/fused_moe.py:470`) is
 the call `fused_moe_baseline` makes (`aklr/ops/fused_moe/baseline.py`), in sglang's environment: price aiter's MoE
-through it. Everything here runs on gfx950 unless § Not for gfx950 lists it.
+through it. Only what § Not for gfx950 lists is kept off gfx950 by its source; the families were not each run on
+gfx950.
 
 ### MoE (grouped GEMM)
 
@@ -207,7 +210,7 @@ default `1`, admits activations other than SwiGLU/SiTUv2), and for int4 weights 
 | GDN prefill, hidden state ("K5") | the chunked gated-delta hidden-state recurrence: per-chunk `h` snapshots, `v_new`, final state | `chunk_gated_delta_rule_fwd_h_flydsl_opt` (`aiter/ops/flydsl/linear_attention_prefill_kernels.py:952`) → `compile_chunk_gated_delta_h_opt` (`kernels/chunk_gated_delta_h_opt.py:76`) | `chunk_gated_delta_rule_opt_vk(..., use_chunk_flydsl=True)` (`aiter/ops/triton/gated_delta_net/gated_delta_rule.py:446`; default `False`) → `aiter/ops/triton/_triton_kernels/gated_delta_rule/prefill/chunk.py:425-427`; bf16 with K = V = 128 |
 | GDN prefill, prepare | the fused prepare stage (`w`, `u`, cumulative `g`) | `gdn_prepare_fwd_flydsl` (`linear_attention_prefill_kernels.py:1455`) → `compile_gdn_prepare` (`kernels/gdn_prepare.py:215`) | the same op with `use_prepare_flydsl=True`, when `gdn_prepare_flydsl_supported` (`:1434`) holds |
 | causal conv1d, split q/k/v | the GDN/Mamba prefill depthwise causal conv, split into q, k and v | `causal_conv1d_split_qkv_flydsl_fn` (`aiter/ops/flydsl/causal_conv1d_flydsl.py:470`) → `build_causal_conv1d_flydsl_module` (same file, :31) | no aiter op; the framework picks the backend (`aiter/ops/triton/gated_delta_net/causal_conv1d_prefill.py:6-17`) |
-| MLA decode reduce | combines the split-KV partial outputs and LSEs of MLA decode | `flydsl_mla_reduce_v1` (`aiter/ops/flydsl/mla_reduce_kernels.py:272`) → `compile_mla_reduce` / `compile_mla_reduce_splitk` (`kernels/mla_reduce.py:239, 1025`) | `aiter.mla.mla_decode_fwd` (`aiter/mla.py:537`) with `AITER_MLA_REDUCE_FLYDSL=1` (default off, `mla.py:93-116`), only for H 16, Dv 512, one query token, fp32 partials, bf16/fp16 output, gfx950 (`mla.py:19-21, 35-90`) |
+| MLA decode reduce | combines the split-KV partial outputs and LSEs of MLA decode | `flydsl_mla_reduce_v1` (`aiter/ops/flydsl/mla_reduce_kernels.py:272`) → `compile_mla_reduce` / `compile_mla_reduce_splitk` (`kernels/mla_reduce.py:239, 1025`) | `aiter.mla.mla_decode_fwd` (`aiter/mla.py:537`) with `AITER_MLA_REDUCE_FLYDSL=1` (default off, `mla.py:93-116`), only for H 16, Dv 512, one query token, fp32 partials, bf16/fp16 output, on the two architectures `mla.py:19` lists, gfx950 one of them (`mla.py:19-21, 35-90`); `mla_reduce_kernels.py:240` calls gfx950 "permitted but unvalidated" |
 | QK RMSNorm + RoPE + FP8 quant | per-token RMSNorm and GPT-J RoPE on Q and KV, optional FP8 group quant and SWA KV scatter, in one launch | `flydsl_qk_norm_rope_quant` (`kernels/qk_norm_rope_quant.py:1403`) | exported from `aiter.ops.flydsl`; no aiter op calls it |
 | FP8 MQA logits | DeepSeek indexer logits, `Σ_h ReLU(⟨Q[m,h], K[n]⟩ · kv_scale[n]) · w[m,h]` | `flydsl_fp8_mqa_logits` (`kernels/mqa_logits/fp8_mqa_logits.py:451`) | exported; a drop-in for the Triton `fp8_mqa_logits`; no aiter op calls it |
 | FP4 paged MQA logits | the same logits from an FP4 paged cache, decode and prefill/varlen | `flydsl_pa_mqa_logits_fp4` (`kernels/mqa_logits/pa_mqa_logits_fp4.py:638`); `flydsl_pa_mqa_logits_fp4_prefill` / `_varqlen` (`kernels/mqa_logits/pa_mqa_logits_fp4_prefill.py:651, 810`) | exported; no aiter op calls them |
@@ -233,3 +236,7 @@ Ahead-of-time compilation for the GEMM, MoE, mxmoe, FHMoE and GDN prefill kernel
 `../../gemm/small_m.md` (small-M use of the HGEMM kernels and the tuned table) ·
 `../../moe/grouped_sorted_tokens.md` (MoE expert GEMMs: mapping, cache policy, stage 2) ·
 `../moe.md` (the FlyDSL side of the MoE cards)
+
+## Evidence
+
+- E1 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=400 repeats per cell, eager, each output compared bitwise with the first call's] aiter's `flydsl_hgemm` (HGEMM and small-M), bf16, K=6144: split-K 1, and 2 without a bias, 0 of 400 differed at every shape; split-K 2 with a bias and 3, 4 and 8, 400 of 400 at 16×2048, and 323–400 of 400 at 1×2048, 16×512 and 16×16384 except the HGEMM at 16×16384, split-K 3 without a bias, 0 of 400

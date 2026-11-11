@@ -21,9 +21,11 @@ sources:
 - An EP MoE layer is slower than its GEMMs explain.
 - Writing or changing a dispatch between GPUs. `MegaMoEV2`'s stage 1 runs producers and consumers in one launch
   (workgroups wait on flags that other workgroups of the launch write; whether those waits are bounded was not
-  checked), which an AKLR kernel may do only as a bounded wait with hand-off (`../SKILL.md` § Stop). In an AKLR
-  kernel those waits become separate launches;
-  what carries over from §2 is the layout (fixed regions, parity halves) and where the acquire goes.
+  checked), and the `mega_moe` op's FlyDSL kernels in AKLR, taken from `MegaMoEV2`, still wait that way inside
+  one launch (S18). Such a wait hangs or reads garbage when the launch's workgroups are not all resident
+  (`../gemm/correctness.md` §4), so a new AKLR kernel bounds it with hand-off (`../SKILL.md` § Stop) or uses a
+  separate launch or a last-arriver count on an atomic counter; either way what carries over from §2 is the layout
+  (fixed regions, parity halves) and where the acquire goes.
 
 The kernels themselves (files, entry points, tuning tables) are in `../flydsl/kernels/flydsl_kernel_library.md`;
 the MoE GEMMs in `../moe/INDEX.md`.
@@ -191,3 +193,4 @@ the fork's `MegaMoEV2.set_weights`, which the baseline lacks.
 - S15 xiaobochen-amd/sglang@b96766116:python/sglang/srt/models/deepseek_v2.py:737-757 under the megamoe all-to-all backend the shared expert is built with `tp_size=1`
 - S16 xiaobochen-amd/aiter@70f50bb10:aiter/ops/flydsl/kernels/mega_moe/mega_moe_config.py:90-100 `nearest_token_bucket` picks the nearer configuration bucket
 - S17 xiaobochen-amd/aiter@a40fd4980:aiter/ops/flydsl/kernels/mega_moe/mega_moe_config.py:31 `FIXED_SLOT_MAX_RESERVED_BYTES = 512 << 20`, used by `use_fixed_slot_dispatch()` (:110-124)
+- S18 aklr/ops/mega_moe/impls/flydsl/mega_moe_ep_size8_gate_up_interleaved_model_dim7168_n_experts48_topk6_inter_dim3072/1f7d5b1b02359d25.json#mega_moe_large_m.py:344 the owner workgroup waits for `group_done` to reach the producer count (raised at :572), the rest wait at its gate (:1511), all in the one launch of :1901; `86ac3e8237e1bc1f.json` and `eafbde5d34ed4034.json` the same at `mega_moe_small_m.py`:1041, one launch (:1367)

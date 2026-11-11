@@ -35,8 +35,9 @@ sources:
   (steps: `../gemm/grid_pricing.md` §4). In these cards *occupancy N* means N co-resident
   workgroups per CU, which is what decides whether sibling waves can cover each other. A wave
   addresses at most 256 arch VGPRs; AGPRs come out of the same pool.
-- Read `.vgpr_count`, `.agpr_count`, `.vgpr_spill_count` and `.private_segment_fixed_size` from the kernel's
-  ISA metadata. rocprof's register columns are wrong (`../gemm/attribution.md` §9).
+- Read `.vgpr_count` (arch VGPRs and AGPRs together), `.agpr_count`, `.vgpr_spill_count` and
+  `.private_segment_fixed_size` from the kernel's ISA metadata. rocprof's register columns are wrong above 128 arch
+  VGPRs (`../gemm/attribution.md` §9).
   *(field, E1)* A sparse-MLA backward dQ kernel reported as 172 VGPR was 256 + 81 = 337: one wave per SIMD.
 - For an 8-wave workgroup only 2/4/6/8 waves per SIMD are reachable. *(field, E2)* An 8-wave forward at 4
   waves/SIMD had to stay at ≤ 128 registers; at 3 waves/SIMD the second workgroup does not fit, so the
@@ -84,8 +85,9 @@ In FlyDSL: `../flydsl/attention.md` § registers_occupancy §1.
   118; replacing half with VALU: 93; *(field, E14)* moving 2 of them: spill 4 → 8.
 
 ## 5. Spill scale
-- *(field, E16)* At 128 VGPRs, 4 waves/SIMD: 5 spills −0.3%, 10 spills −0.2%, 35 spills −19%. Single-digit
-  spills cost 0.2–0.4%; 30+ is a cliff.
+- *(field, E16)* In one forward at 128 VGPRs, 4 waves/SIMD: 5 spills −0.3%, 10 spills −0.2%, 35 spills −19% (that
+  arm also unrolled 2× with a four-deep K/V ring, §6). Where the spills sit, not their count alone, sets the cost:
+  *(field, E38)* 8 dwords reloaded in the hot loop cost 8.5%, 36 parked across the prologue and epilogue 2.0%.
 - Spill 0 is not a goal. *(field, E14)* Reaching 0 by dropping a K prefetch that covered the first QK MFMAs:
   −1.1%. Re-sweep "keep a little more resident" knobs at the current spill level.
 - Gate every arm on the ISA spill count before timing; a dump takes seconds, a bench round does not.
@@ -141,13 +143,15 @@ interleave of the pack/dS VALU 0.00%; *(field, E29)* counted `sched_group_barrie
 +0.04%, +0.05%, all inside noise. Only removing instructions moves wall there (`../gemm/attribution.md`
 §8).
 
-**One workgroup per CU is the only regime where in-workgroup dual-wave scheduling can pay.** FlyDSL v0.3.2's
+**At two workgroups per CU every in-workgroup dual-wave form measured lost; at one workgroup per CU it can pay, though
+not in every kernel.** FlyDSL v0.3.2's
 gfx950 forward is the reference: 8 waves, split into two groups by `wave_id // 4`; group B issues one extra
 `s_barrier` at entry and group A one at exit, so the groups run one cluster apart, one loading while the other
 computes. Each loop iteration is 8 clusters separated by `sched_barrier(0); s_barrier; sched_barrier(0)`, alternating
-memory and compute, with compute clusters wrapped in `s_setprio(1)`/`s_setprio(0)`. It is one answer, not the only
-one: *(field, E31)* on an 8-wave forward running two workgroups per CU (4 waves/SIMD), turning the stagger on was
-6.3% slower; price it on your own kernel at one workgroup per CU. *(field, E37)* A 12-wave MLA decode
+memory and compute, with the P·V compute clusters (not the QK ones) wrapped in `s_setprio(1)`/`s_setprio(0)`.
+*(field, E40)* At D = 64, causal, in its default build (one workgroup per CU, no spills), turning the stagger on cut
+the time 10–11%. It is one answer, not the only one: *(field, E31)* on an 8-wave forward running two workgroups per
+CU (4 waves/SIMD), turning the stagger on was 6.3% slower; price it on your own kernel at one workgroup per CU. *(field, E37)* A 12-wave MLA decode
 alone on its CU (3 waves per SIMD) lost 2.5–15% in all nine spill-free forms of two halves run half a step apart.
 
 **At one workgroup per CU a role split can beat the stagger.** *(field, E35)* On a dense fp8 MLA decode, two
@@ -222,3 +226,5 @@ A FlyDSL version is given only where the cited run, or another round in the same
 - E35 [2026-10, gfx950, FlyDSL 0.3.2, N=1 per build, CUDA-graph probe on random inputs, ratio to the kept kernel, outputs bit-identical] six-wave kernel split into two phase-staggered groups of three waves, three LDS tiles, two barriers per step: five timed builds (two groupings, tile-offset arithmetic, read look-ahead 2 and 3) at 0.700–0.989× on batch 8 / 32 / 112, worst 0.700× at batch 112, best 0.961 / 0.989 / 0.968× (dense fp8 MLA decode, 96 heads, query length 1, page size 1, one workgroup per CU)
 - E36 [2026-10, gfx950, FlyDSL 0.3.2, N=?, AKLR graph timer, paired timing the round was kept on (one-sided 95% bounds); the conversion move also by CUDA-graph probe] 8-wave role split (3 QK + softmax waves of two head tiles each sharing every K read, 5 P·V waves a step behind, 227 VGPRs, 0 spills) against the 6-wave kernel: +9.05% kept, +8.99% re-read (+8.96 … +9.03%), 11 of 11 workloads faster; fp8 conversion and gather moved from the QK waves to the P·V waves: probe 1.043 / 1.065 / 1.054× at batch 8 / 40 / 112, kept together with softmax VALU trims at +13.2% (same decode)
 - E37 [2026-10, gfx950, FlyDSL 0.3.2, N=? (CUDA-event, then CUDA-graph replay of 20 calls per round, median of interleaved per-round ratios; a self-against-self null read 1.000 / 0.994 / 1.003), outputs bitwise identical] two 6-wave halves of a 12-wave workgroup half a step apart on a double- or triple-buffered KV tile, against the single-phase kernel: five forms in one round 1.032–1.147 (b8 / b112: 1.073 / 1.114, 1.092 / 1.086, without `s_setprio` 1.086 / 1.084, halves interleaved per SIMD 1.147 / 1.130, triple buffer 1.032 / 1.051), four in a later round 1.025–1.070 (with and without `s_setprio`, with a carried gather); a spilling first form 3.2–3.7×; an `s_getreg HW_ID` probe placed the 12 waves 3 per SIMD (dense MLA decode, 96 heads, one query, fp8 KV, one workgroup per CU, 256 CTAs; MI355X)
+- E38 [2026-11, gfx950 (MI355X), HIP 7.15 (no FlyDSL kernel), N=11 rounds, median ratio to the spill-free control; A/A −0.11%] spills simulated with `scratch_store_dword`/`scratch_load_dword` around a pure `v_mfma_f32_16x16x32_bf16` loop at ≤ 128 VGPRs and 4 waves/SIMD: 8 dwords reloaded in the hot loop +8.5%; 36 dwords across prologue and epilogue +2.0% (microbenchmark)
+- E40 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=9 rounds, A/A within 0.08%] FlyDSL v0.3.2's gfx950 dual-wave forward in its default build (168 VGPRs, no spills, one workgroup per CU), stagger on over off, time 0.900 at B=4, S=4096, 0.890 at B=1, S=16384, 9 of 9 rounds below 1 (bf16 attention forward, D=64, Hq=64, Hkv=8, causal)

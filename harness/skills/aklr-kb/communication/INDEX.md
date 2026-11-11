@@ -7,9 +7,11 @@ gens: [gfx950]
 # Communication
 
 The collectives of a multi-GPU step: the allreduce that joins TP's partial results, and the all-to-all dispatch
-and combine that move tokens to their experts and back under EP. AKLR has no communication op yet; the kernels are
-aiter's (custom allreduce, the FlyDSL EP dispatch/combine, `MegaMoEV2`) and RCCL's. These pages are for choosing a
-parallel layout and for reading a collective's time in a trace. When AKLR gets a communication op, its design pages
+and combine that move tokens to their experts and back under EP. AKLR's one op that moves data between GPUs is
+`mega_moe` (`aklr/ops/mega_moe/`): its FlyDSL kernels, taken from aiter's `MegaMoEV2`, dispatch, run both GEMMs
+and combine in one launch per rank. The allreduce and standalone dispatch/combine kernels are aiter's (custom
+allreduce, the FlyDSL EP dispatch/combine) and RCCL's. These pages are for choosing a parallel layout and for
+reading a collective's time in a trace. Design pages for AKLR's own communication kernels, `mega_moe`'s included,
 go here.
 
 | Question | Read |

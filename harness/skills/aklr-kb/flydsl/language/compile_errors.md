@@ -18,7 +18,7 @@ sources:
 # FlyDSL v0.3.2 compile errors
 
 Look up the last line of the traceback. Every row was reproduced with a compile-only probe (`COMPILE_ONLY=1
-ARCH=gfx950`, CPU tensors, one change to `examples/01-vectorAdd.py`); names such as `vector_add_kernel_0`, `y`
+ARCH=gfx950`), most as one change to `examples/01-vectorAdd.py` on CPU tensors; names such as `vector_add_kernel_0`, `y`
 or `GRID_PAD` come from the probe. Long messages are cut at `…` after their distinctive part. The loop and branch
 rules behind several rows are in `../debug-flydsl-kernel.md` §5.
 
@@ -30,7 +30,7 @@ rules behind several rows are in `../debug-flydsl-kernel.md` §5.
 | `TypeError: for-body: carried variable 'acc' does not match the region entry: expected dtype [IntegerType(i32)], produced [F32Type(f32)]` | a carried name changes type: `acc = 0` is promoted to `Int32`, the body makes it `Float32` (S5) *(field, E5)* | initialise with the loop's type: `acc = fx.Float32(0.0)` |
 | `TypeError: ThrCopy.__init__() missing 1 required positional argument: 'thr_idx'` | a method called on a local inside a runtime loop or branch (`thr_copy.partition_S(…)`) makes that local a carried value, and a `ThrCopy` slice cannot be rebuilt from IR values (S19) *(field, E22)* | call it before the loop or branch and use the result inside |
 | `NameError: name 'y' is not defined` | a name first bound inside a runtime `if` is used after it; only names bound before the region are carried out (S6) *(field, E6)* | bind a typed value before the `if` |
-| `ValueError: Operand 0 of operation "rocdl.exp2" must be a Value (is not a Value)` | an `fx.Float32` (or another FlyDSL numeric) passed to a `rocdl.*` op that FlyDSL does not wrap: most `rocdl` names are the generated MLIR builders (S21); only some (the MFMAs, `readfirstlane`, `ballot`, `readlane`, `rcp`) convert their operands (S22) *(field, E24)* | pass `x.ir_value()` and rewrap the result: `fx.Float32(rocdl.exp2(T.f32, x.ir_value()))` |
+| `ValueError: Operand 0 of operation "rocdl.exp2" must be a Value (is not a Value)` | an `fx.Float32` (or another FlyDSL numeric) passed to a `rocdl.*` op that FlyDSL does not wrap: most `rocdl` names are the generated MLIR builders (S21); only some (among them the MFMAs, `readfirstlane`, `ballot`, `readlane`, `rcp`) convert their operands (S22) *(field, E24)* | pass `x.ir_value()` and rewrap the result: `fx.Float32(rocdl.exp2(T.f32, x.ir_value()))` |
 | `TypeError: list indices must be integers or slices, not ArithValue` | a Python list indexed by the induction variable of a runtime `range()`, which is an SSA value (S7) *(field, E7)* | `range_constexpr(n)` for loops that index Python containers |
 | `TypeError: 'ArithValue' object is not subscriptable` | `results[0]` after `results = yield [x]` in a one-slot `range(..., init=[x])` loop: one carried value comes back bare, two or more as a list (S8) *(field, E8)* | use `results` itself when one value is carried |
 | `IndexError: Cannot insert operation at the end of a block that already has a terminator. Did you mean to use 'InsertionPoint.at_block_terminator(block)' …` | a Python generator defined inside the kernel body: the rewriter turns every `yield` in the decorated function, nested `def`s included, into `scf.yield` (S20) *(field, E23)* | define the generator at module level, outside the decorated function |
