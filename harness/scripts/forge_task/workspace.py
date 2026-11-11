@@ -116,13 +116,9 @@ def read_starting_kernel(path: Path) -> dict[str, str]:
 
 
 def builtin_starting_kernel(schema: Schema, aklr_root: Path) -> dict[str, str]:
-    """A gemm-contract schema's starting kernel, one file writing into the preallocated output: torch's product for
-    a plain gemm, and for a scaled or quantized one, which torch cannot compute, its contract's AKLR baseline."""
-    if schema.op_type != "gemm":
-        raise StartingKernelError(
-            f"no built-in starting kernel for op {schema.op_type!r}; pass --starting-kernel"
-        )
-    # The keyword arguments AKLR calls the entry with, and the contract's baseline as [module, name] or null.
+    """A schema's starting kernel, one file writing into the preallocated outputs: torch's product for a plain
+    gemm, and for any other contract, which torch cannot compute, its AKLR baseline."""
+    # The keyword arguments AKLR calls the entry with, its outputs, and the contract's baseline as [module, name].
     completed = subprocess.run(
         [sys.executable, str(ASSETS / "aklr_api_params.py"), str(aklr_root), str(schema.path)],
         capture_output=True,
@@ -134,7 +130,7 @@ def builtin_starting_kernel(schema: Schema, aklr_root: Path) -> dict[str, str]:
     entry = json.loads(completed.stdout)
     params = entry["params"]
     signature = f"def run(*, {', '.join(params)}):\n"
-    if set(params) <= {"a", "b", "trans_b", "bias", "out_dtype", "out"}:
+    if schema.op_type == "gemm" and set(params) <= {"a", "b", "trans_b", "bias", "out_dtype", "out"}:
         rank = len(schema.inputs["a"]["shape"])
         return {
             "kernel.py": (
@@ -144,18 +140,26 @@ def builtin_starting_kernel(schema: Schema, aklr_root: Path) -> dict[str, str]:
         }
     if entry["baseline"] is None:
         raise StartingKernelError(
-            f"{schema.name}: torch cannot compute its contract and AKLR has no baseline for it; pass --starting-kernel"
+            f"{schema.name}: no built-in starting kernel, as {schema.op_type!r}'s contract has no AKLR baseline; "
+            "pass --starting-kernel"
+        )
+    outputs = entry["outputs"]
+    if not outputs or not set(outputs) <= set(params):
+        raise StartingKernelError(
+            f"{schema.name}: the entry does not take every output {outputs} preallocated; pass --starting-kernel"
         )
     module, name = entry["baseline"]
     call = ", ".join(f"{param}={param}" for param in params)
     return {
         "kernel.py": (
-            f'"""Starting point for {schema.name}: AKLR\'s baseline for its contract, its result in the preallocated '
-            'output."""\n\n'
+            f'"""Starting point for {schema.name}: AKLR\'s baseline for its contract, its results in the preallocated '
+            'outputs."""\n\n'
             f"from {module} import {name}\n\n\n{signature}"
             f"    result = {name}({call})\n"
-            "    if result is not out:\n"
-            "        out.copy_(result)\n"
+            "    results = result if isinstance(result, (tuple, list)) else (result,)\n"
+            f"    for target, value in zip(({', '.join(outputs)},), results, strict=True):\n"
+            "        if value is not target:\n"
+            "            target.copy_(value)\n"
         )
     }
 
