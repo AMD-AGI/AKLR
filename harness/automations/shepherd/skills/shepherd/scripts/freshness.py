@@ -34,14 +34,17 @@ class Candidate:
         # Validation reads no Markdown.
         if path.suffix == ".md":
             return False
-        # Only the `aklr` package is installed; root files such as pyproject.toml set its build and dependencies.
+        # Only the `aklr` package is installed; root files such as pyproject.toml set its build and
+        # dependencies, and the CI workflow pins the image and the baseline every Point is measured against.
         if path.parts[0] != "aklr":
-            return len(path.parts) == 1 and not path.name.startswith(".")
+            return (len(path.parts) == 1 and not path.name.startswith(".")) or path == PurePosixPath(
+                ".github/workflows/ci.yaml"
+            )
         if path.parts[1] not in ("ops", "plugins"):
             return True
         if not path.is_relative_to(self.op_dir):
-            # Another op can only fail loudly at import; the packages enclosing this op still load it.
-            return path.parent in self.op_dir.parents
+            # Another op's code may be imported by this op's reference or baseline; its kernels are not.
+            return "impls" not in path.parts
         # Bench reads only the incumbents that share the candidate's name; perf-bot updates land elsewhere.
         rest = path.relative_to(self.op_dir).parts
         return not (len(rest) > 3 and rest[0] == "impls" and rest[2] != self.name)
@@ -57,7 +60,7 @@ class Candidate:
         return sorted(
             path
             for meta, path in zip(fields[::2], fields[1::2])
-            if self.is_relevant(path, "160000" in meta.split()[:2])
+            if self.is_relevant(path, "160000" in meta.lstrip(":").split()[:2])
         )
 
 
