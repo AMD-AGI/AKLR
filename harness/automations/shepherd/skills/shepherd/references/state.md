@@ -52,8 +52,8 @@ Each campaign records:
 - Delivery: branch, campaign marker, PR number/URL, head/base, CI/review state, merge commit, comment hashes.
 - Next action, failure or blocked reason, delivered input identity, cooldown-until time.
 
-A starting-kernel failure also records the blocked op contract with the tree hashes and runtime revision
-that lift it.
+A starting-kernel failure also records the blocked op contract with the tree hashes (the op directory
+without `impls/`, and `harness/scripts/forge_task`) and the runtime revision that lift it.
 
 Store each campaign's snapshots and reports under `runs/<campaign_id>/`. The helper checks none of this;
 the entry skill and the owner keep it correct.

@@ -1,6 +1,6 @@
 ---
 name: shepherd
-description: Run one shepherd round (observe, choose one action, execute it, record state). Use only from the configured shepherd scheduled task or a manual round.
+description: Run one shepherd round (observe, chain actions until one must wait, record state). Use only from the configured shepherd scheduled task or a manual round.
 disable-model-invocation: true
 ---
 
@@ -77,8 +77,9 @@ Save confirmed facts with source and time, keeping each fact's last successful o
 - mark merged inputs delivered, with the merge commit;
 - give failed, no-gain or closed tasks the configured cooldown; a campaign that fails before optimizing
   because the starting kernel does not build or match the reference blocks every candidate of the same
-  op contract instead, until the op directory's or `harness/scripts/forge_task`'s tree hash or the
-  runtime revision changes; time alone never lifts it;
+  op contract instead, until the op's code or `harness/scripts/forge_task` changes (their tree hashes,
+  the op directory's taken without `impls/`, whose measurement updates are expected) or the runtime
+  revision changes; time alone never lifts it;
 - never infer cancellation or cleanup from a closed PR or a terminal phase.
 
 ## 3. Plan the next action
