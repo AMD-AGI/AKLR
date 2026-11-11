@@ -21,6 +21,8 @@ from aklr.core.platform.env import (
     ENV_EXPORT,
     ENV_EXPORT_DIR,
     ENV_MIN_SPEEDUP,
+    ENV_TRACE,
+    RuntimeEnv,
 )
 from aklr.core.runtime import LoadError
 from aklr.core.runtime._vllm_hook_registry import HookRegistry
@@ -251,6 +253,50 @@ class TestKernelDispatcher:
             dispatcher.dispatch(case.call(case.inputs()))
         assert f"the kernel serving {schema.name} at m=" in caplog.text
         assert f"{ENV_DISABLE}={case.contract_id} turns this op off" in caplog.text
+
+    @pytest.mark.parametrize(
+        ("mode", "is_traced"), [("0", False), ("plugin", False), ("op", True), ("all", True)]
+    )
+    def test_trace_names_the_kernel_or_the_fallback_reason_once(
+        self,
+        builder_registry: BuilderRegistry,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+        mode: str,
+        is_traced: bool,
+    ) -> None:
+        """``AKLR_TRACE`` op or all: one ``[aklr op]`` line per distinct call, naming its
+        Point and kernel when served, its reason when not."""
+        monkeypatch.setenv(ENV_TRACE, mode)
+        case = OpCase.of("gemm@1.0")
+        schema = case.schema(GEMM_KERNEL_SOURCE)
+        dispatcher = self._dispatcher(builder_registry, (schema,))
+        closed = KernelDispatcher(case.contract)
+        for _ in range(2):
+            dispatcher.dispatch(case.call(case.inputs()))
+            assert closed.dispatch(case.call(case.inputs())) is FallbackReason.NO_SCHEMA
+            assert closed.fallback_reason(case.call(case.inputs())) is FallbackReason.NO_SCHEMA
+        lines = [r.message for r in caplog.records if r.name == "aklr.trace.op"]
+        if not is_traced:
+            assert lines == []
+            return
+        served, fallen = lines
+        assert (
+            served.startswith("[aklr op] pid=")
+            and f" contract=gemm@1.0 scenario={schema.name} point=m=" in served
+        )
+        meta = dispatcher.table.runnables[next(iter(dispatcher.table.runnables))].metadata
+        assert served.endswith(
+            f" result=served kernel=flydsl:{meta.schema_name}:{meta.content_hash[:12]} reason=-"
+        )
+        assert fallen.endswith(
+            " contract=gemm@1.0 scenario=- point=- result=fallback kernel=- reason=no_schema"
+        )
+
+    def test_a_bad_trace_value_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv(ENV_TRACE, "1")
+        with pytest.raises(ValueError, match=ENV_TRACE):
+            RuntimeEnv()
 
     def test_best_ranked_kernel_serves(self, builder_registry: BuilderRegistry) -> None:
         case = OpCase.of("gemm@1.0")

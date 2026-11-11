@@ -17,6 +17,7 @@ from aklr.core.runtime.builder import (
     TritonBuilder,
 )
 from aklr.core.runtime.dispatch import DispatcherRegistry, FallbackReason
+from aklr.core.runtime.dispatch._trace import trace
 from tests.op_case import OpCase
 
 
@@ -43,6 +44,7 @@ def aklr_env(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathF
     for name in [n for n in os.environ if n.startswith("AKLR_")]:
         monkeypatch.delenv(name)
     monkeypatch.setenv(ENV_KERNEL_CACHE_DIR, str(tmp_path_factory.mktemp("kernel_cache")))
+    trace.cache_clear()
 
 
 @pytest.fixture(params=OpCase.all(), ids=lambda case: case.contract_id)

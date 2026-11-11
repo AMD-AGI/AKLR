@@ -27,6 +27,7 @@ from packaging.version import Version
 
 from aklr.core.runtime import _vllm_hook_registry as _hooks
 from aklr.core.runtime.dispatch import FallbackReason
+from aklr.core.runtime.dispatch._trace import trace
 
 __all__ = ["vllm_route"]
 
@@ -175,11 +176,17 @@ def _original(route: Callable, callee: str | None = None) -> Callable:
 
 @functools.cache
 def _around(route: Callable) -> Callable:
+    # one hook per route: aliased callees of one native must share it
+    route_name = f"{route.__module__}.{route.__qualname__}"
+
     def around(orig, *args, **kwargs):
         # Dynamo would trace AKLR's table lookup and recompile for every new shape
         if not torch.compiler.is_compiling():
             result = route(*args, **kwargs)
-            if not isinstance(result, FallbackReason):
+            fallback = result if isinstance(result, FallbackReason) else None
+            if (tracer := trace()) is not None and tracer.is_plugin:
+                tracer.plugin("vllm", ",".join(_ROUTES.get(route, ())), route_name, fallback)
+            if fallback is None:
                 return result
         return orig(*args, **kwargs)
 

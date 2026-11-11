@@ -15,7 +15,7 @@ import torch
 
 import aklr.plugins.sglang as plugin
 from aklr.core.contract.locate import op_packages
-from aklr.core.platform.env import ENV_DISABLE, ENV_SGLANG_PLUGIN
+from aklr.core.platform.env import ENV_DISABLE, ENV_SGLANG_PLUGIN, ENV_TRACE
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.sglang import hook
 
@@ -106,6 +106,28 @@ def test_a_fallback_reason_runs_sglang(hooks):
     declare(lambda x: FallbackReason.NOT_MEASURED)
     hook.install()
     assert wrapper(hooks)(original, 1) == "sglang(1)"
+
+
+@pytest.mark.parametrize(
+    ("mode", "is_traced"), [("0", False), ("op", False), ("plugin", True), ("all", True)]
+)
+def test_trace_names_the_route_and_its_result_once(hooks, monkeypatch, caplog, mode, is_traced):
+    monkeypatch.setenv(ENV_TRACE, mode)
+    route = lambda x: f"aklr({x})" if x else FallbackReason.NOT_MEASURED
+    declare(route)
+    hook.install()
+    around = wrapper(hooks)
+    assert [around(original, x) for x in (1, 1, 0, 0)] == ["aklr(1)", "aklr(1)", "sglang(0)", "sglang(0)"]
+    lines = [r.message for r in caplog.records if r.name == "aklr.trace.plugin"]
+    if not is_traced:
+        assert lines == []
+        return
+    prefix = f"framework=sglang target={TARGET} route={route.__module__}.{route.__qualname__}"
+    assert [line.split(" ", 3)[3] for line in lines] == [
+        f"{prefix} result=served reason=-",
+        f"{prefix} result=fallback reason=not_measured",
+    ]
+    assert all(line.startswith("[aklr plugin] pid=") for line in lines)
 
 
 def test_a_raising_route_raises(hooks):

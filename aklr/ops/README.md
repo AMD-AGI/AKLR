@@ -342,3 +342,4 @@ Read only by `RuntimeEnv()` in `aklr/core/platform/env.py`.
 | `AKLR_EXPORT_DIR` | a path | the export directory, default `./aklr_export`; setting it alone records nothing |
 | `AKLR_MEASURED_DIR` | a path | a directory laid out like the checkout whose schemas replace the committed ones they name |
 | `AKLR_SGLANG_PLUGIN` | `1`, `0`, unset | `1`: the sglang plugin hooks sglang's layers to its ops (`aklr/plugins/README.md`); any other value is an error |
+| `AKLR_TRACE` | `plugin`, `op`, `all`, `0`, unset | log, as warnings, each distinct hooked call once per process: `plugin` the vLLM and sglang routes (`[aklr plugin]` lines, logger `aklr.trace.plugin`), `op` every op api dispatch, including the ones aiter makes (`[aklr op]` lines, logger `aklr.trace.op`: the Point, and the kernel serving it or the fallback reason), `all` both; CUDA graph replays run no Python and log nothing; any other value is an error |
