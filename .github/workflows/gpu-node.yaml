@@ -2,9 +2,9 @@ name: AKLR-GPU-node
 
 # One Spur GPU node for a CI run attempt: prepare allocates it and registers a runner on it,
 # labelled with its own name; release ends the allocation and deletes the runner.
-# The only code that runs on the aklr-spur-host runner, which holds the Spur account and a
-# runner-admin token. A PR edits its own ci.yaml, so ci.yaml calls this file at main, and the
-# host's runner group admits only this file at refs/heads/main.
+# The only code that runs on the aklr-spur-host and aklr-spur-release runners, which hold the Spur
+# account and a runner-admin token. A PR edits its own ci.yaml, so ci.yaml calls this file at main,
+# and the host's runner group admits only this file at refs/heads/main.
 
 on:
   workflow_call:
@@ -75,7 +75,7 @@ jobs:
 
   prepare:
     needs: trust
-    runs-on: &spur_host aklr-spur-host
+    runs-on: aklr-spur-host
     # Bots, Bot-sent events, fork PRs and PRs by authors without write access wait for maintainer
     # approval before a node is requested for PR code.
     environment: ${{ needs.trust.outputs.environment }}
@@ -124,7 +124,9 @@ jobs:
   release:
     # always(): the caller releases after failed or cancelled jobs too.
     if: always() && inputs.operation == 'release'
-    runs-on: *spur_host
+    # Its own runner: a prepare holds an aklr-spur-host runner while it waits on the Spur queue,
+    # and the nodes it waits for are freed only by releases.
+    runs-on: aklr-spur-release
     timeout-minutes: 15
     env: *spur_env
     steps:
