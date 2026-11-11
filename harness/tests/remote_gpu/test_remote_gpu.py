@@ -421,6 +421,17 @@ def test_no_wait_picks_capacity_and_its_pair_once(env, preemptible):
     assert not submitted(env, "roomier" if preemptible else "fake")
 
 
+@pytest.mark.parametrize(("state", "idle"), [("PENDING", "-"), ("RUNNING", "2m")])
+def test_ls_reports_idle_only_for_a_running_job(env, state, idle):
+    (Path(env["HOME"]) / "jobstate").write_text(state)
+    assert rg(env, "alloc", "--no-wait").returncode == 0
+    submit_time = time.time() - 150
+    os.utime(Path(env["HOME"]) / "work/fake/jobs/1/heartbeat", (submit_time, submit_time))
+    result = rg(env, "ls")
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines()[-1].split()[-1] == idle
+
+
 def test_no_free_nodes_submits_nothing(env):
     result = subprocess.run(
         [str(RG), "alloc", "--no-wait", "-N", "9"],

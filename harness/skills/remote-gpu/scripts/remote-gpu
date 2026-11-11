@@ -766,7 +766,8 @@ rows=$(scheduler_jobs) || err PROBE_FAILED 'msg="cannot list jobs"'
     [[ -n $id ]] || continue
     decode_job "$record"
     heartbeat=$B/jobs/$id/heartbeat; idle=-
-    if [[ -e $heartbeat ]]; then idle=$((($(date +%s) - $(stat -c %Y "$heartbeat")) / 60))m; fi
+    # A pending --no-wait job's heartbeat only dates its submit; the holder resets it at start.
+    if [[ $JOB_STATE == RUNNING && -e $heartbeat ]]; then idle=$((($(date +%s) - $(stat -c %Y "$heartbeat")) / 60))m; fi
     echo "$C:$id|${JOB_NAME// /_}|$JOB_STATE|$JOB_NODES|$JOB_ELAPSED|$JOB_TIME_LEFT|$JOB_PARTITION|$JOB_ACCOUNT|$JOB_QOS|$JOB_NODE_COUNT|${JOB_REASON// /_}|$JOB_START|$idle"
   done <<<"$rows"
 } | column -t -s '|'
