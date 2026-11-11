@@ -82,7 +82,7 @@ def _quantile(a, q):
     def get_quantile(q):
         if not (0 <= q <= 1):
             raise ValueError("Quantiles must be in the range [0, 1]")
-        point = q * (n - 1)
+        point = q * n
         lower = math.floor(point)
         upper = math.ceil(point)
         t = point - lower
