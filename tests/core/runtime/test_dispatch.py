@@ -23,7 +23,7 @@ from aklr.core.platform.env import (
     ENV_MIN_SPEEDUP,
 )
 from aklr.core.runtime import LoadError
-from aklr.core.runtime._hook_registry import HookRegistry
+from aklr.core.runtime._vllm_hook_registry import HookRegistry
 from aklr.core.runtime.builder import BuilderRegistry
 from aklr.core.runtime.dispatch import (
     CallRecorder,

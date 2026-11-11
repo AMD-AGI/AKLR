@@ -17,7 +17,7 @@ import torch
 
 import aklr.plugins.vllm as plugin
 from aklr.core.platform.env import ENV_DISABLE, ENV_VLLM_PLUGIN
-from aklr.core.runtime._hook_registry import HookRegistry
+from aklr.core.runtime._vllm_hook_registry import HookRegistry
 from aklr.core.runtime.dispatch import DispatcherRegistry, FallbackReason
 from aklr.plugins.vllm import hook, warmup
 

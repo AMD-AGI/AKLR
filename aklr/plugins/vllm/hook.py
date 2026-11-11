@@ -25,7 +25,7 @@ from importlib.metadata import version
 import torch
 from packaging.version import Version
 
-from aklr.core.runtime import _hook_registry as _hooks
+from aklr.core.runtime import _vllm_hook_registry as _hooks
 from aklr.core.runtime.dispatch import FallbackReason
 
 __all__ = ["vllm_route"]

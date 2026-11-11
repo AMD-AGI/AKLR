@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""Private startup hook engine with saved callables and reversible attribute writes.
+"""Private vLLM startup hook engine with saved callables and reversible attribute writes.
 
 This module has no framework dependencies. Callers own compatibility checks and
 computation/fallback policy; the registry only installs synchronous Python hooks.

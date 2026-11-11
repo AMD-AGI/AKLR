@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from aklr.core.runtime import _hook_registry as _hooks
+from aklr.core.runtime import _vllm_hook_registry as _hooks
 from aklr.core.runtime.dispatch._registry import DispatcherRegistry
 
 __all__ = ["VLLM_HOOKED_METHOD", "register_vllm_plugin"]

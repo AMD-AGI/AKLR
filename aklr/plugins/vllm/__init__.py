@@ -9,7 +9,7 @@ import importlib
 
 from aklr.core.contract.locate import op_packages
 from aklr.core.platform.env import RuntimeEnv
-from aklr.core.runtime import _hook_registry as _hooks
+from aklr.core.runtime import _vllm_hook_registry as _hooks
 from aklr.core.runtime.dispatch._vllm import _register_runtime_hook
 from aklr.plugins.vllm import hook
 from aklr.plugins.vllm.stack import roomy
