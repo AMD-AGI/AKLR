@@ -748,6 +748,9 @@ def test_git_seed_rejects_a_non_sha_without_invoking_git(env):
 
 def test_mount_replaces_the_default_mounts(env):
     home = env["HOME"]
+    keys = Path(home) / "keys"
+    (Path(home) / "work/run/worker").mkdir(parents=True)
+    keys.mkdir()
     result = rg(
         env,
         "exec",
@@ -758,7 +761,7 @@ def test_mount_replaces_the_default_mounts(env):
         "--mount",
         "run/worker",
         "--mount",
-        "/keys:ro",
+        f"{keys}:ro",
         "--",
         "true",
         timeout=15,
@@ -766,12 +769,26 @@ def test_mount_replaces_the_default_mounts(env):
     assert result.returncode == 0, result.stderr
     call = (Path(home) / "docker_calls").read_text().split()
     mounts = [call[i + 1] for i, arg in enumerate(call) if arg == "-v"]
-    assert mounts == [f"{home}/work/run/worker:{home}/work/run/worker", "/keys:/keys:ro"]
+    assert mounts == [f"{home}/work/run/worker:{home}/work/run/worker", f"{keys}:{keys}:ro"]
     assert f"HOME={home}/work/run/worker" in call
     assert rg(env, "exec", "-j", "fake:1", "--mount", "x", "--", "true").returncode != 0
 
 
+def test_mount_refuses_a_directory_that_does_not_exist(env):
+    # docker -v would create it owned by root, and the user could no longer write it.
+    result = rg(
+        env, "exec", "-j", "fake:1", "--image", "img", "--mount", "run/missing", "--", "true", timeout=15
+    )
+    assert result.returncode != 0
+    assert "run/missing" in result.stderr
+    assert not (Path(env["HOME"]) / "docker_calls").exists()
+    result = rg(env, "exec", "-j", "fake:1", "--image", "img", "-C", "run/missing", "--", "true", timeout=15)
+    assert result.returncode != 0
+    assert not (Path(env["HOME"]) / "docker_calls").exists()
+
+
 def test_mount_refuses_extra_mounts_from_the_manifest(env):
+    (Path(env["HOME"]) / "work/run/worker").mkdir(parents=True)
     directory = configure(env)
     env_file = directory / "cluster.env"
     env_file.write_text(

@@ -637,6 +637,8 @@ build_node_command() { # build_node_command RANK KIND CMD... -> CMD array to exe
       CMD+=($DOCKER_FLAGS)
       for m in "${MOUNTS[@]}"; do
         path=${m%:ro}; [[ $path == /* ]] || path=$REL/$path
+        # docker -v would create a missing directory owned by root, which the user cannot write.
+        [[ -d $path ]] || err USAGE "msg=\"--mount $m: $path is not a directory\" hint=\"create it first (remote-gpu exec -- mkdir -p $path)\""
         CMD+=(-v "$path:$path${m#"${m%:ro}"}"); home=${home:-$path}
       done
       CMD+=(-e "HOME=$home")
@@ -644,6 +646,7 @@ build_node_command() { # build_node_command RANK KIND CMD... -> CMD array to exe
       CMD+=("${DOCKER_X[@]}")
     fi
     local e; for e in "${E[@]}"; do CMD+=(-e "$e"); done
+    [[ -d $DIR ]] || err USAGE "msg=\"-C $DIR is not a directory\" hint=\"create it first; docker would create it owned by root\""
     CMD+=(-w "$DIR" "$IMG" "$@")
   else
     CMD=(env "${NODE_ENV[@]}" "${E[@]}"
