@@ -30,8 +30,9 @@ aklr/plugins/
 │   ├── hook.py               @vllm_route wraps the function a vLLM function looks up at run time
 │   ├── warmup.py             compiles the AKLR kernels vLLM's own warmup does not reach
 │   ├── stack.py              runs each vLLM step from a CPython frame chunk of its own
-│   ├── layers/               routes from vLLM's layers to the ops of aklr/ops (GEMM, MoE)
+│   ├── layers/               routes from vLLM's layers to the ops of aklr/ops, mirrors vLLM's model_executor/layers/
 │   └── models/               routes from the model files vLLM runs uncompiled, mirrors vLLM's models/
+│       └── muse_spark/       Muse Spark on ROCm (vLLM's models/muse_spark/amd)
 └── aiter/                    planned
 ```
 

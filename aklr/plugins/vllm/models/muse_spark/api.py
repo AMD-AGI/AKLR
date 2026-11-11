@@ -5,12 +5,13 @@ from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason, api
 from aklr.ops.gemm.api import gemm
-from aklr.plugins.vllm.hook import vllm_route
+from aklr.plugins.vllm.hook import _original, vllm_route
 from aklr.plugins.vllm.models.muse_spark.contract import MUSE_SPARK_MOE
 
 __all__ = ["muse_spark_moe"]
 
 _VERSIONS = ("0.33.0rc1.dev910",)
+_NORM_EXPERTS_GROUP = "muse_spark.norm_experts"
 # set on the pooled rows whose pre-expert norm the experts apply: (weight, eps, gain_center)
 _DEFERRED_NORM = "_aklr_muse_deferred_norm"
 # _defer_norm defers only where the op serves: materializing the norm in _experts_apply when
@@ -58,6 +59,7 @@ def _torch_linear(self, layer, x, bias=None):
     "vllm.models.muse_spark.amd.model.MuseSpark1xMoE._pool",
     "vllm.models.muse_spark.amd.model.fused_rmsnorm_expand",
     versions=_VERSIONS,
+    group=_NORM_EXPERTS_GROUP,
 )
 def _defer_norm(x, weight, eps, gain_center, input_scale, repeats):
     """The pooled rows as they are, for the experts (_experts_apply) to normalize as they
@@ -113,6 +115,7 @@ def _would_serve(x, weight, eps, gain_center, layer) -> bool | None:
     "vllm.model_executor.layers.fused_moe.modular_kernel.FusedMoEKernelModularImpl._fused_experts",
     "vllm.models.muse_spark.amd.muse_moe_runner.MuseSparkAiterExperts.apply",
     versions=_VERSIONS,
+    group=_NORM_EXPERTS_GROUP,
 )
 def _experts_apply(
     self,
@@ -189,11 +192,10 @@ def _experts_apply(
     if isinstance(route_output, FallbackReason):
         if route_output is not FallbackReason.NOT_WARMED:
             _SERVES[(layer, hidden_states.shape[0])] = False
-        from vllm.models.muse_spark.amd.muse_moe_runner import MuseSparkAiterExperts
-        from vllm.models.muse_spark.amd.ops.fused_norm_expand import fused_rmsnorm_expand
-
-        normalized = fused_rmsnorm_expand(hidden_states, weight, eps, gain_center, False, topk_ids.shape[1])
-        return MuseSparkAiterExperts.apply.__wrapped__(
+        # Saved before the batch was installed: a later wrapper or an imported alias
+        # must not redirect fallback back into _defer_norm/_experts_apply.
+        normalized = _original(_defer_norm)(hidden_states, weight, eps, gain_center, False, topk_ids.shape[1])
+        return _original(_experts_apply)(
             self,
             output,
             normalized,

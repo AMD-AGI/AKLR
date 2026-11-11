@@ -23,6 +23,7 @@ from aklr.core.platform.env import (
     ENV_MIN_SPEEDUP,
 )
 from aklr.core.runtime import LoadError
+from aklr.core.runtime._hook_registry import HookRegistry
 from aklr.core.runtime.builder import BuilderRegistry
 from aklr.core.runtime.dispatch import (
     CallRecorder,
@@ -456,10 +457,23 @@ class TestVllmPlugin:
                 events.append("init_device")
                 return "bound"
 
-        module = types.ModuleType("vllm.v1.worker.gpu_worker")
+        for name in ("vllm", "vllm.v1", "vllm.v1.worker", "vllm.v1.worker.gpu_worker"):
+            module = types.ModuleType(name)
+            module.__path__ = []
+            monkeypatch.setitem(sys.modules, name, module)
+            parent, _, child = name.rpartition(".")
+            if parent:
+                monkeypatch.setattr(sys.modules[parent], child, module, raising=False)
         module.Worker = Worker
-        monkeypatch.setitem(sys.modules, module.__name__, module)
         monkeypatch.setattr(DispatcherRegistry, "init_once", lambda self: events.append("init_once"))
-        register_vllm_plugin()
-        assert Worker().init_device() == "bound"
-        assert events == ["init_device", "init_once"]
+        registry = HookRegistry()
+        monkeypatch.setattr(HookRegistry, "default", classmethod(lambda cls: registry))
+        try:
+            register_vllm_plugin()
+            wrapped = Worker.init_device
+            register_vllm_plugin()
+            assert Worker.init_device is wrapped
+            assert Worker().init_device() == "bound"
+            assert events == ["init_device", "init_once"]
+        finally:
+            registry.restore()

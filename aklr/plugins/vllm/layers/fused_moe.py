@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
+# TODO(ruibzhan): remove this file once aiter supports plugins.
+
 """vLLM's MoE layers on ROCm, where ``vllm::rocm_aiter_fused_moe`` reaches aiter's fused MoE."""
 
 from __future__ import annotations
