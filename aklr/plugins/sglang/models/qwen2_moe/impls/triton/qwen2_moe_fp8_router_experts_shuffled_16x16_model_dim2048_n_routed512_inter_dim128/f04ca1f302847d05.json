@@ -160,49 +160,49 @@
         "n_tokens": 1024
       },
       "accuracy": "passed",
-      "speedup": 1.089
+      "speedup": 1.085
     },
     {
       "axes": {
         "n_tokens": 2048
       },
       "accuracy": "passed",
-      "speedup": 1.18
+      "speedup": 1.193
     },
     {
       "axes": {
         "n_tokens": 4096
       },
       "accuracy": "passed",
-      "speedup": 1.248
+      "speedup": 1.247
     },
     {
       "axes": {
         "n_tokens": 5120
       },
       "accuracy": "passed",
-      "speedup": 1.345
+      "speedup": 1.349
     },
     {
       "axes": {
         "n_tokens": 8192
       },
       "accuracy": "passed",
-      "speedup": 1.386
+      "speedup": 1.38
     },
     {
       "axes": {
         "n_tokens": 10240
       },
       "accuracy": "passed",
-      "speedup": 1.355
+      "speedup": 1.351
     },
     {
       "axes": {
         "n_tokens": 16384
       },
       "accuracy": "passed",
-      "speedup": 1.495
+      "speedup": 1.53
     }
   ],
   "layout_variants": {
