@@ -179,11 +179,15 @@ credentials. Nothing the worker wrote is trusted on this host or by the validato
 files delivery needs (never the worker directory, whose `.git` would run here), refuse any that is not a
 regular file (`find <pulled> ! -type f ! -type d` prints nothing), and run no code from it.
 
-**Pools.** A pool is one node of `execution.cluster`, allocated with `-N 1 -t <execution.pool_hours>` and
-`--idle` above the longest gap between rounds (180 minutes, since a ledger `wake_at` delays a round by at
-most two hours), so the node is not released while its campaigns wait. Its bounds are its node hours
-(nodes times the time limit) and its end. Place a new campaign on a pool with a free GPU whose end is after
-the campaign's deadline; allocate a new pool only when none has one. Never put two campaigns on one GPU.
+**Pools.** A pool is one node of `execution.cluster`, requested with `--cluster <execution.cluster> alloc
+--no-wait -N 1 -t <execution.pool_hours>` and `--idle` above the longest gap between rounds (180 minutes,
+since a ledger `wake_at` delays a round by at most two hours), so the node is not released while its
+campaigns wait. A full cluster leaves the request queued, keeping its place: save its handle as `pending`
+and in later rounds observe it with `remote-gpu ready -j <handle> --wait 60` (exit 205: still pending, keep
+waiting; never cancel and resubmit it); its OK line starts the pool, and its end is the scheduler start
+plus the time limit. Its bounds are its node hours (nodes times the time limit). Admit a campaign only onto
+a started pool with a free GPU whose end is after the campaign's deadline, so a deadline never waits on
+the queue; request a new pool only when no started or pending one can take the next candidate. Never put two campaigns on one GPU.
 `alloc` may print `CANCEL_FAILED job=<handle>` for a request it could not withdraw: that job is the pool's
 too; record it and release it like the kept one before settling. Release a pool once no campaign holds
 one of its GPUs and none will be placed on it this round.
