@@ -248,9 +248,19 @@
       "scalars": {
         "scale": 0.0883883461356163,
         "eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2048,
+        "n_sequences": 2,
+        "n_slots": 4,
+        "n_starts": 3
       },
-      "accuracy": "passed",
-      "speedup": 2.383
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      }
     }
   ],
   "layout_variants": {

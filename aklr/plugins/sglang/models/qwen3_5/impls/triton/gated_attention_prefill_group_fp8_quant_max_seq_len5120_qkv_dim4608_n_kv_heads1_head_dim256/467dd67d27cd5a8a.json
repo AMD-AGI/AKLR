@@ -1,0 +1,244 @@
+{
+  "schema_version": 5,
+  "name": "gated_attention_prefill_group_fp8_quant_max_seq_len5120_qkv_dim4608_n_kv_heads1_head_dim256",
+  "contract_id": "gated_attention_prefill_group_fp8_quant@1.0",
+  "description": "Qwen3.5 full-attention prefill of fresh sequences on one rank, between qkv_proj and o_proj. projected_qkv holds each query head's query then its output gate, then the KV heads' keys, then their values. Q and K are RMS-normalized per head with weight 1 + norm weight and rounded to BF16; each head's first 64 channels take NeoX RoPE, rounded to BF16, whose frequency f in [0, 32) reads positions[1] when f % 3 == 1 and f < 33, positions[2] when f % 3 == 2 and f < 30, else positions[0], in cos_sin_cache's row of 32 cosines then 32 sines. Each row writes its K and V, cast to E4M3FN, at its distinct cache_locations slot of key_cache and value_cache. cu_seqlens partitions the rows into sequences with actual maximum max_seq_len and no cached prefix: query head h of a row attends, through KV head h // (n_heads // n_kv_heads), the written slots of its sequence's rows up to itself with scores q . k * scale; the softmax-weighted sum of their values is rounded to BF16, multiplied by sigmoid of the gate and rounded to BF16, then quantized in groups of 128 channels to E4M3FN with scale=max(amax,1e-10)/448. Unwritten slots and all other inputs are preserved.",
+  "op_type": "qwen3_5",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Prefill rows."
+    },
+    "qkv_dim": {
+      "type": "const",
+      "value": 4608,
+      "description": "qkv_proj's output width on this rank."
+    },
+    "n_kv_heads": {
+      "type": "const",
+      "value": 1,
+      "description": "KV heads on this rank."
+    },
+    "head_dim": {
+      "type": "const",
+      "value": 256,
+      "description": "Query, key and value head width."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Rows of the KV pools."
+    },
+    "n_positions": {
+      "type": "var",
+      "description": "Rows of the cos/sin table."
+    },
+    "n_starts": {
+      "type": "var",
+      "description": "Sequence boundaries: sequences + 1."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 8,
+      "description": "Query heads on this rank."
+    },
+    "n_groups": {
+      "type": "const",
+      "value": 16,
+      "description": "FP8 groups of 128 channels in a row."
+    }
+  },
+  "attrs": {
+    "max_seq_len": 5120
+  },
+  "inputs": {
+    "projected_qkv": {
+      "shape": [
+        "n_tokens",
+        "qkv_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "qkv_proj's output: each query head's query then gate, then keys, then values."
+    },
+    "q_norm_weight": {
+      "shape": [
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Query RMSNorm weight, applied as 1 + weight."
+    },
+    "k_norm_weight": {
+      "shape": [
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Key RMSNorm weight, applied as 1 + weight."
+    },
+    "positions": {
+      "shape": [
+        3,
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_positions - 1",
+        "distinct": false
+      },
+      "description": "Each row's temporal, height and width positions."
+    },
+    "cos_sin_cache": {
+      "shape": [
+        "n_positions",
+        64
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Per position, the 32 rotary cosines then the 32 sines."
+    },
+    "cache_locations": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int64",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "Each row's KV pool slot."
+    },
+    "key_cache": {
+      "shape": [
+        "n_slots",
+        "n_kv_heads",
+        "head_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "This layer's key pool."
+    },
+    "value_cache": {
+      "shape": [
+        "n_slots",
+        "n_kv_heads",
+        "head_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "This layer's value pool."
+    },
+    "cu_seqlens": {
+      "shape": [
+        "n_starts"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "bounded_cu_seqlens",
+        "total": "n_tokens",
+        "max_seqlen": 5120
+      },
+      "description": "Cumulative sequence boundaries."
+    },
+    "eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Q and K RMSNorm epsilon."
+    },
+    "scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every score."
+    }
+  },
+  "outputs": {
+    "values": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "head_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "Each query head's gated attention, grouped E4M3FN values."
+    },
+    "scales": {
+      "shape": [
+        "n_tokens",
+        "n_groups"
+      ],
+      "dtype": "float32",
+      "description": "One FP32 scale per row and group of 128 channels."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 5120,
+        "n_slots": 5184,
+        "n_positions": 262144,
+        "n_starts": 2
+      },
+      "scalars": {
+        "eps": 9.999999974752427e-07,
+        "scale": 0.0625
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "attention.py",
+        "content": "# Created by OpenAI\n\"\"\"MI355 causal MQA with live native-layout KV packing and exact FP8 output.\n\nSixteen-row gather blocks keep the packing grid occupied for both profiles.\nFP8 cache reads use 128-bit vectors and buffer addressing where offsets fit;\nthe 64-bit fallback supports larger cache allocations. The one-wave long\nprofile uses a narrower Q LDS swizzle. The four-wave short profile uses\nstreaming stores for its three outputs to limit cache interference. Attention arithmetic and all BF16,\nsigmoid, scale-reduction, and round-to-nearest division boundaries are intact.\n\"\"\"\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n_MEM = gl.constexpr(gl.BlockedLayout([1, 16], [4, 16], [4, 1], [1, 0]))\n\n\n@gluon.jit\ndef _gather(K, V, DK, DV, IDX, KV_PTR, BLOCK: gl.constexpr, I: gl.constexpr, BUFFER: gl.constexpr,\n            DENSE: gl.constexpr):\n    seq = gl.program_id(0)\n    start = gl.load(KV_PTR + seq)\n    length = gl.load(KV_PTR + seq + 1) - start\n    block = gl.program_id(1) * BLOCK\n    if block < gl.cdiv(length, 64) * 64:\n        row = block + gl.arange(0, BLOCK, gl.SliceLayout(1, _MEM))\n        dim = gl.arange(0, 256, gl.SliceLayout(0, _MEM))\n        if DENSE:\n            # Fresh sequences: their own rows' BF16 keys and values, rounded to E4M3FN as the\n            # prologue writes them to the pool.\n            src = (start + row)[:, None] * 256 + dim[None, :]\n            key = gl.amd.cdna4.buffer_load(K, src, row[:, None] < length, other=0.0)\n            key = key.to(gl.float8e4nv).to(gl.bfloat16)\n            value = gl.amd.cdna4.buffer_load(V, src, row[:, None] < length, other=0.0)\n            value = value.to(gl.float8e4nv).to(gl.float16)\n        elif BUFFER:\n            slot = gl.load(IDX + start + row, row < length, other=0)\n            src = slot[:, None] * 256 + dim[None, :]\n            key = gl.amd.cdna4.buffer_load(K, src, row[:, None] < length, other=0.0).to(gl.bfloat16)\n            value = gl.amd.cdna4.buffer_load(V, src, row[:, None] < length, other=0.0).to(gl.float16)\n        else:\n            slot = gl.load(IDX + start + row, row < length, other=0)\n            src = slot[:, None].to(gl.int64) * 256 + dim[None, :]\n            key = gl.load(K + src, row[:, None] < length, other=0.0).to(gl.bfloat16)\n            value = gl.load(V + src, row[:, None] < length, other=0.0).to(gl.float16)\n        base = (start // 64 + seq) * 64 * 256\n        IK: gl.constexpr = 512 // I\n        kl: gl.constexpr = gl.BlockedLayout([1, 8], [I, 64 // I], [1, 4], [1, 0])\n        kr = block + gl.arange(0, BLOCK, gl.SliceLayout(1, kl))\n        kd = gl.arange(0, 256, gl.SliceLayout(0, kl))\n        ko = (base + kr[:, None] // I * (I * 256) + kd[None, :] // IK * 512\n              + kd[None, :] % IK // 8 * (I * 8) + kr[:, None] % I * 8 + kd[None, :] % 8)\n        gl.store(DK + ko, gl.convert_layout(key, kl))\n        vl: gl.constexpr = gl.BlockedLayout([8, 1], [64 // I, I], [1, 4], [0, 1])\n        vr = block + gl.arange(0, BLOCK, gl.SliceLayout(1, vl))\n        vd = gl.arange(0, 256, gl.SliceLayout(0, vl))\n        vo = (base + vr[:, None] // IK * (IK * 256) + vd[None, :] // I * 512\n              + vr[:, None] % IK // 8 * (I * 8) + vd[None, :] % I * 8 + vr[:, None] % 8)\n        gl.store(DV + vo, gl.convert_layout(value, vl))\n\n\n@gluon.jit\ndef _store_gate_quant(attention, G, O, F, S, q0, qlen, tile,\n                      BM: gl.constexpr, NW: gl.constexpr):\n    # Reshaping this layout exposes two independently reduced groups per head.\n    full_mem: gl.constexpr = gl.BlockedLayout([1, 16], [16 // 4, 256 // 16], [NW, 1], [1, 0])\n    mem: gl.constexpr = gl.BlockedLayout([1, 16], [16 // 2, 128 // 16], [NW, 1], [1, 0])\n    attention = gl.convert_layout(attention, full_mem)\n    attention = gl.reshape(attention, (BM * 2, 128))\n    attention = gl.convert_layout(attention, mem).to(gl.float32)\n    group = tile * BM * 2 + gl.arange(0, BM * 2, gl.SliceLayout(1, mem))\n    dim = gl.arange(0, 128, gl.SliceLayout(0, mem))\n    offsets = (q0 * 16 + group[:, None]) * 128 + dim[None, :]\n    valid = group[:, None] < qlen * 16\n    gate = gl.amd.cdna4.buffer_load(G, offsets, valid, other=0.0).to(gl.float32)\n    gated = (attention * (1.0 / (1.0 + gl.exp2((-gate) * 1.4426950408889634)))).to(gl.bfloat16)\n    gl.amd.cdna4.buffer_store(ptr=O, offsets=offsets, stored_value=gated, mask=valid,\n                               cache=\".cs\" if NW == 4 else None)\n    values = gated.to(gl.float32)\n    scale = gl.maximum(gl.max(gl.abs(values), 1), 1.0e-10) * (1.0 / 448.0)\n    quantized = gl.clamp(gl.div_rn(values, scale[:, None]), -448.0, 448.0)\n    gl.amd.cdna4.buffer_store(ptr=F, offsets=offsets, stored_value=quantized.to(F.dtype.element_ty), mask=valid,\n                               cache=\".cs\" if NW == 4 else None)\n    gl.amd.cdna4.buffer_store(ptr=S, offsets=q0 * 16 + group, stored_value=scale, mask=group < qlen * 16,\n                               cache=\".cs\" if NW == 4 else None)\n\n\n@gluon.jit\ndef _attention(Q, K, V, G, O, F, S, KV_PTR, Q_PTR, KS, VS,\n               SM_SCALE: gl.constexpr, BM: gl.constexpr, BN: gl.constexpr,\n               I: gl.constexpr, WM: gl.constexpr, WN: gl.constexpr, PTR_MODE: gl.constexpr):\n    mem: gl.constexpr = gl.BlockedLayout([1, 8], [4, 16], [WM * WN, 1], [1, 0])\n    seq = gl.program_id(0)\n    tile = gl.num_programs(1) - 1 - gl.program_id(1)\n    q0 = gl.load(Q_PTR + seq)\n    qlen = gl.load(Q_PTR + seq + 1) - q0\n    k0 = gl.load(KV_PTR + seq)\n    klen = gl.load(KV_PTR + seq + 1) - k0\n    prefix = klen - qlen\n    if (tile >= 0) & (tile * BM < qlen * 8):\n        IK: gl.constexpr = 512 // I\n        mma: gl.constexpr = gl.amd.AMDMFMALayout(\n            version=4, instr_shape=[I, I, IK], transposed=True, warps_per_cta=[WM, WN])\n        dot_a: gl.constexpr = gl.DotOperandLayout(0, mma, 8)\n        dot_b: gl.constexpr = gl.DotOperandLayout(1, mma, 8)\n        row = tile * BM + gl.arange(0, BM, gl.SliceLayout(1, mem))\n        dim = gl.arange(0, 256, gl.SliceLayout(0, mem))\n        offsets = (q0 * 8 + row[:, None]) * 256 + dim[None, :]\n        q_initial = gl.amd.cdna4.buffer_load(Q, offsets, row[:, None] < qlen * 8, other=0.0)\n        # The one-wave 16x16 profile benefits from a different Q bank mapping.\n        q_shared = gl.allocate_shared_memory(\n            gl.bfloat16, (BM, 256),\n            gl.SwizzledSharedLayout(\n                4 if WM * WN == 1 else 8, 1 if WM * WN == 1 else 2, 8, [1, 0]),\n            q_initial)\n        kl: gl.constexpr = gl.DistributedLinearLayout(\n            [[1, 0], [2, 0], [4, 0]] + ([[16, 0]] if I == 32 else []) + [[32, 0], [64, 0], [128, 0]]\n            + ([[0, I * WN]] if BN > I * WN else []) + ([[0, I * WN * 2]] if BN > I * WN * 2 else [])\n            + ([[0, I * WN * 4]] if BN > I * WN * 4 else []),\n            [[0, 1], [0, 2], [0, 4], [0, 8]] + ([[0, 16], [8, 0]] if I == 32 else [[8, 0], [16, 0]]),\n            ([[0, I]] if WN == 2 else [[0, I], [0, I * 2]] if WN == 4 else [])\n            + ([[0, 0], [0, 0]] if WM == 4 else [[0, 0]] if WM == 2 else []), [], [256, BN])\n        vl: gl.constexpr = gl.DistributedLinearLayout(\n            [[1, 0], [2, 0], [4, 0]] + ([[16, 0]] if I == 32 else [])\n            + ([[32, 0]] if BN >= 64 else []) + ([[64, 0]] if BN >= 128 else []) + ([[128, 0]] if BN >= 256 else [])\n            + ([[0, I * WN]] if 256 > I * WN else []) + ([[0, I * WN * 2]] if 256 > I * WN * 2 else [])\n            + ([[0, I * WN * 4]] if 256 > I * WN * 4 else []) + ([[0, I * WN * 8]] if 256 > I * WN * 8 else []),\n            [[0, 1], [0, 2], [0, 4], [0, 8]] + ([[0, 16], [8, 0]] if I == 32 else [[8, 0], [16, 0]]),\n            ([[0, I]] if WN == 2 else [[0, I], [0, I * 2]] if WN == 4 else [])\n            + ([[0, 0], [0, 0]] if WM == 4 else [[0, 0]] if WM == 2 else []), [], [BN, 256])\n        kr = gl.arange(0, BN, gl.SliceLayout(0, kl))\n        kd = gl.arange(0, 256, gl.SliceLayout(1, kl))\n        vr = gl.arange(0, BN, gl.SliceLayout(1, vl))\n        vd = gl.arange(0, 256, gl.SliceLayout(0, vl))\n        base = (k0 // 64 + seq) * 64 * 256\n        ko = (kr[None, :] // I * (I * 256) + kd[:, None] // IK * 512\n              + kd[:, None] % IK // 8 * (I * 8) + kr[None, :] % I * 8 + kd[:, None] % 8)\n        vo = (vr[:, None] // IK * (IK * 256) + vd[None, :] // I * 512\n              + vr[:, None] % IK // 8 * (I * 8) + vd[None, :] % I * 8 + vr[:, None] % 8)\n        qr = tile * BM + gl.arange(0, BM, gl.SliceLayout(1, mma))\n        kc = gl.arange(0, BN, gl.SliceLayout(0, mma))\n        maximum = gl.full((BM,), -float('inf'), gl.float32, gl.SliceLayout(1, mma))\n        denominator = gl.full((BM,), 0.0, gl.float32, gl.SliceLayout(1, mma))\n        acc = gl.full((BM, 256), 0.0, gl.float32, mma)\n        key_scale = gl.load(KS)\n        value_scale = gl.load(VS)\n        end = gl.minimum(klen, prefix + gl.cdiv((tile + 1) * BM, 8))\n        full_end = gl.minimum(klen, prefix + tile * BM // 8 + 1) // BN * BN\n        for phase in gl.static_range(2):\n            lo = 0 if phase == 0 else full_end\n            hi = full_end if phase == 0 else end\n            for start in range(lo, hi, BN):\n                if PTR_MODE == 2:\n                    key = gl.amd.cdna4.buffer_load(K + base + start * 256,\n                        gl.max_contiguous(gl.multiple_of(ko, (8, 1)), (8, 1)))\n                elif PTR_MODE == 1:\n                    key = gl.amd.cdna4.buffer_load(K + base,\n                        gl.max_contiguous(gl.multiple_of(start * 256 + ko, (8, 1)), (8, 1)))\n                else:\n                    key = gl.amd.cdna4.buffer_load(K, gl.max_contiguous(\n                        gl.multiple_of(base + start * 256 + ko, (8, 1)), (8, 1)))\n                key = gl.convert_layout(key, dot_b, assert_trivial=True)\n                q_frag = q_shared.load(dot_a)\n                score = gl.amd.cdna4.mfma(q_frag, key, gl.full((BM, BN), 0.0, gl.float32, mma))\n                score = score * (SM_SCALE * key_scale)\n                valid = (start + kc[None, :] < klen) & (start + kc[None, :] <= prefix + qr[:, None] // 8)\n                if phase != 0:\n                    score = gl.where(valid, score, -float('inf'))\n                next_maximum = gl.maximum(maximum, gl.max(score, 1))\n                rescale = gl.exp2((maximum - next_maximum) * 1.4426950408889634)\n                if phase == 0:\n                    probability = gl.exp2((score - next_maximum[:, None]) * 1.4426950408889634)\n                else:\n                    probability = gl.where(valid, gl.exp2(\n                        (score - next_maximum[:, None]) * 1.4426950408889634), 0.0)\n                denominator = denominator * rescale + gl.sum(probability, 1)\n                acc = acc * rescale[:, None]\n                if PTR_MODE == 2:\n                    value = gl.amd.cdna4.buffer_load(V + base + start * 256,\n                        gl.max_contiguous(gl.multiple_of(vo, (8, 1)), (8, 1)))\n                elif PTR_MODE == 1:\n                    value = gl.amd.cdna4.buffer_load(V + base,\n                        gl.max_contiguous(gl.multiple_of(start * 256 + vo, (8, 1)), (8, 1)))\n                else:\n                    value = gl.amd.cdna4.buffer_load(V, gl.max_contiguous(\n                        gl.multiple_of(base + start * 256 + vo, (8, 1)), (8, 1)))\n                value = gl.convert_layout(value, dot_b, assert_trivial=True)\n                probability_half = gl.convert_layout(probability.to(gl.float16), dot_a)\n                acc = gl.amd.cdna4.mfma(probability_half, value, acc)\n                maximum = next_maximum\n        attention = (acc * (value_scale / denominator[:, None])).to(gl.bfloat16)\n        _store_gate_quant(attention, G, O, F, S, q0, qlen, tile, BM, WM * WN)\n\n\ndef paged_attention_prefill_output_gate_group_fp8_quant(\n    query: torch.Tensor, key_cache: torch.Tensor, value_cache: torch.Tensor,\n    kv_indptr: torch.Tensor, kv_indices: torch.Tensor, qo_indptr: torch.Tensor,\n    k_scale: torch.Tensor, v_scale: torch.Tensor, gate: torch.Tensor, *,\n    softmax_scale: float, max_query_length: int,\n    gated: torch.Tensor, quantized: torch.Tensor, scales: torch.Tensor,\n    key: torch.Tensor | None = None, value: torch.Tensor | None = None,\n) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:\n    \"\"\"With key and value (the rows' contiguous BF16 keys and values), fresh sequences: read\n    them instead of gathering the pool through kv_indices.\"\"\"\n    rows = query.shape[0]\n    sequences = qo_indptr.numel() - 1\n    capacity = kv_indices.numel()\n    dense = key is not None\n    if dense:\n        key_cache, value_cache = key, value\n    dense_k = torch.empty((triton.cdiv(capacity, 64) * 64 + sequences * 64, 256),\n                          device=query.device, dtype=torch.bfloat16)\n    dense_v = torch.empty((triton.cdiv(capacity, 64) * 64 + sequences * 64, 256),\n                          device=query.device, dtype=torch.float16)\n    if max_query_length <= 1024:\n        _gather[(sequences, triton.cdiv(max_query_length + capacity - rows, 64) * 4)](\n            key_cache, value_cache, dense_k, dense_v, kv_indices, kv_indptr,\n            BLOCK=16, I=32, BUFFER=key_cache.numel() < 2**31, DENSE=dense, num_warps=4)\n        _attention[(sequences, triton.cdiv(max_query_length * 8, 64))](\n            query, dense_k, dense_v, gate, gated, quantized, scales, kv_indptr, qo_indptr,\n            k_scale, v_scale, SM_SCALE=softmax_scale, BM=64, BN=64, I=32,\n            WM=2, WN=2, PTR_MODE=0, num_warps=4, num_stages=1, waves_per_eu=2,\n            llvm_fn_attrs=[['amdgpu-sched-strategy', 'iterative-ilp']])\n    else:\n        _gather[(sequences, triton.cdiv(max_query_length + capacity - rows, 64) * 4)](\n            key_cache, value_cache, dense_k, dense_v, kv_indices, kv_indptr,\n            BLOCK=16, I=16, BUFFER=key_cache.numel() < 2**31, DENSE=dense, num_warps=4)\n        _attention[(sequences, triton.cdiv(max_query_length * 8, 32))](\n            query, dense_k, dense_v, gate, gated, quantized, scales, kv_indptr, qo_indptr,\n            k_scale, v_scale, SM_SCALE=softmax_scale, BM=32, BN=64, I=16,\n            WM=1, WN=1, PTR_MODE=1, num_warps=1, num_stages=1, waves_per_eu=0,\n            llvm_fn_attrs=[])\n    return gated, quantized, scales\n"
+      },
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Qwen3.5 gated attention prefill of fresh sequences with grouped E4M3FN output for MI355X\n(gfx950).\n\nprologue.py RMS-normalizes Q and K, applies the interleaved mRoPE and writes each row's FP8\nkey and value slots; attention.py packs each sequence's own keys and values (with no prefix,\nwhat it has just written), rounded to E4M3FN as the pool holds them, attends causally and\napplies the output gate and the group-128 E4M3FN quantization.\n\"\"\"\n\nimport functools\n\nimport torch\n\nfrom .attention import paged_attention_prefill_output_gate_group_fp8_quant\nfrom .prologue import fused_attention_qk_norm_rope_kv_cache\n\n\n@functools.cache\ndef _unit_scale(device):\n    \"\"\"The FP32 KV scale the kernels read: the pools hold unscaled values.\"\"\"\n    return torch.ones(1, dtype=torch.float32, device=device)\n\n\ndef run(\n    *,\n    projected_qkv,\n    q_norm_weight,\n    k_norm_weight,\n    positions,\n    cos_sin_cache,\n    cache_locations,\n    key_cache,\n    value_cache,\n    cu_seqlens,\n    eps,\n    scale,\n    max_seq_len,\n    values,\n    scales,\n):\n    unit = _unit_scale(projected_qkv.device)\n    query, gate, key, value, _, _ = fused_attention_qk_norm_rope_kv_cache(\n        projected_qkv,\n        q_norm_weight,\n        k_norm_weight,\n        positions,\n        cos_sin_cache,\n        cache_locations,\n        key_cache,\n        value_cache,\n        eps=eps,\n        rotary_dim=64,\n        k_scale=unit,\n        v_scale=unit,\n        mrope_section=(11, 11, 10),\n    )\n    gated = torch.empty((query.shape[0], query.shape[1] * query.shape[2]), dtype=torch.bfloat16, device=query.device)\n    paged_attention_prefill_output_gate_group_fp8_quant(\n        query,\n        key_cache,\n        value_cache,\n        cu_seqlens,\n        cache_locations.to(torch.int32),\n        cu_seqlens,\n        unit,\n        unit,\n        gate,\n        softmax_scale=scale,\n        max_query_length=max_seq_len,\n        gated=gated,\n        quantized=values.view(values.shape[0], -1),\n        scales=scales,\n        key=key,\n        value=value,\n    )\n"
+      },
+      {
+        "path": "prologue.py",
+        "content": "# Created by OpenAI\n\"\"\"One-wave Q/K normalization, partial RoPE, and partitioned KV-cache writes.\"\"\"\n\nimport torch\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n\n@gluon.jit\ndef _load_trig(Positions, CosSin, token, columns,\n               POSITION_STRIDE: gl.constexpr, MROPE: gl.constexpr,\n               HEIGHT_MASK: gl.constexpr, WIDTH_MASK: gl.constexpr):\n    frequency = (columns % 32).to(gl.uint32)\n    if MROPE:\n        height = ((HEIGHT_MASK >> frequency) & 1) != 0\n        width = ((WIDTH_MASK >> frequency) & 1) != 0\n        axis = gl.where(height, 1, gl.where(width, 2, 0))\n        position = gl.load(Positions + axis * POSITION_STRIDE + token).to(gl.int64)\n    else:\n        position = gl.load(Positions + token).to(gl.int64)\n\n    # The two wave halves fetch cosine and sine together, then exchange them.\n    table = gl.load(CosSin + position * 64 + columns % 64).to(gl.float32)\n    other_half = gl.gather(table, columns ^ 32, axis=0)\n    cosine = gl.where(columns % 64 < 32, table, other_half)\n    sine = gl.where(columns % 64 < 32, other_half, table)\n    return cosine, sine\n\n\n@gluon.jit\ndef _apply_rope(normalized, cosine, sine, columns):\n    x = normalized.to(gl.float32)\n    partner = gl.gather(x, columns ^ 32, axis=0)\n    rotated = gl.where(columns < 32,\n                       x * cosine - partner * sine,\n                       x * cosine + partner * sine)\n    return gl.where(columns < 64, rotated, x).to(gl.bfloat16)\n\n\n@gluon.jit\ndef _head(Packed, Weight, Positions, CosSin, Locations, KeyCache, ValueCache,\n          Output, CompanionOutput, KScale, VScale, eps, token, head, part,\n          HEADS: gl.constexpr, IS_KEY: gl.constexpr,\n          USE_SCALE: gl.constexpr, BF16_SCALE: gl.constexpr,\n          POSITION_STRIDE: gl.constexpr, MROPE: gl.constexpr,\n          HEIGHT_MASK: gl.constexpr, WIDTH_MASK: gl.constexpr):\n    layout: gl.constexpr = gl.BlockedLayout([1], [64], [1], [0])\n    all_columns = gl.arange(0, 256, layout=layout)\n    BLOCK: gl.constexpr = 64 if IS_KEY else 256\n    local_columns = gl.arange(0, BLOCK, layout=layout)\n    if IS_KEY:\n        columns = part * 64 + local_columns\n        packed_base = token * (HEADS * 512 + 512) + HEADS * 512\n        output_base = token * 256\n        slot = gl.load(Locations + token).to(gl.int64)\n        if USE_SCALE:\n            key_scale = gl.load(KScale).to(gl.float32)\n            value_scale = gl.load(VScale).to(gl.float32)\n    else:\n        columns = local_columns\n        packed_base = token * (HEADS * 512 + 512) + head * 512\n        output_base = (token * HEADS + head) * 256\n\n    cosine, sine = _load_trig(Positions, CosSin, token, local_columns,\n                             POSITION_STRIDE, MROPE, HEIGHT_MASK, WIDTH_MASK)\n    source = gl.load(Packed + packed_base + all_columns).to(gl.float32)\n    companion = gl.load(Packed + packed_base + 256 + columns)\n    weight = gl.load(Weight + columns).to(gl.float32)\n    # Each KV quarter repeats this small reduction, but owns disjoint writes.\n    variance = gl.sum(source * source, axis=0) / 256.0\n    if IS_KEY:\n        source = gl.gather(source, columns, axis=0)\n    normalized = (source * gl.rsqrt(variance + eps) * (1.0 + weight)).to(gl.bfloat16)\n    rotated = _apply_rope(normalized, cosine, sine, local_columns)\n    if IS_KEY:\n        result = gl.where(part == 0, rotated, normalized)\n    else:\n        result = rotated\n\n    gl.store(Output + output_base + columns, result)\n    gl.store(CompanionOutput + output_base + columns, companion)\n    if IS_KEY:\n        if USE_SCALE:\n            if BF16_SCALE:\n                # OCP FP8 requires correctly rounded division and BF16 rounding.\n                scaled_key = gl.div_rn(result.to(gl.float32), key_scale).to(gl.bfloat16)\n                scaled_value = gl.div_rn(companion.to(gl.float32), value_scale).to(gl.bfloat16)\n            else:\n                scaled_key = result.to(gl.float32) / key_scale\n                scaled_value = companion.to(gl.float32) / value_scale\n        else:\n            scaled_key = result\n            scaled_value = companion\n        gl.store(KeyCache + slot * 256 + columns, scaled_key)\n        gl.store(ValueCache + slot * 256 + columns, scaled_value)\n\n\n@gluon.jit\ndef _fused(Packed, QWeight, KWeight, Positions, CosSin, Locations,\n           KeyCache, ValueCache, Query, Gate, Key, Value, KScale, VScale, eps,\n           HEADS: gl.constexpr, USE_SCALE: gl.constexpr,\n           BF16_SCALE: gl.constexpr, POSITION_STRIDE: gl.constexpr,\n           MROPE: gl.constexpr, HEIGHT_MASK: gl.constexpr, WIDTH_MASK: gl.constexpr):\n    token = gl.program_id(0)\n    task = gl.program_id(1)\n    # Schedule the longer KV-cache work before the query-only programs.\n    if task < 4:\n        _head(Packed, KWeight, Positions, CosSin, Locations, KeyCache, ValueCache,\n              Key, Value, KScale, VScale, eps, token, 0, task, HEADS, True,\n              USE_SCALE, BF16_SCALE, POSITION_STRIDE, MROPE, HEIGHT_MASK, WIDTH_MASK)\n    else:\n        _head(Packed, QWeight, Positions, CosSin, Locations, KeyCache, ValueCache,\n              Query, Gate, KScale, VScale, eps, token, task - 4, 0,\n              HEADS, False, USE_SCALE, BF16_SCALE, POSITION_STRIDE,\n              MROPE, HEIGHT_MASK, WIDTH_MASK)\n\n\ndef fused_attention_qk_norm_rope_kv_cache(\n    projected_qkv_gate: torch.Tensor,\n    q_norm_weight: torch.Tensor,\n    k_norm_weight: torch.Tensor,\n    positions: torch.Tensor,\n    cos_sin_cache: torch.Tensor,\n    cache_locations: torch.Tensor,\n    key_cache: torch.Tensor,\n    value_cache: torch.Tensor,\n    *,\n    eps: float = 1.0e-6,\n    rotary_dim: int = 64,\n    k_scale: torch.Tensor | None = None,\n    v_scale: torch.Tensor | None = None,\n    mrope_section: tuple[int, int, int] | None = None,\n) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:\n    \"\"\"Return contiguous Q/gate/K/V tensors and update the supplied KV caches.\"\"\"\n    assert projected_qkv_gate.ndim == 2 and projected_qkv_gate.shape[1] in (2560, 4608)\n    rows = projected_qkv_gate.shape[0]\n    heads = (projected_qkv_gate.shape[1] - 512) // 512\n    assert rows > 0 and q_norm_weight.shape == k_norm_weight.shape == (256,)\n    assert cache_locations.shape == (rows,)\n    if mrope_section is None:\n        assert positions.shape == (rows,)\n    else:\n        assert positions.shape == (3, rows) and positions.stride(1) == 1\n        assert len(mrope_section) == 3 and sum(mrope_section) == rotary_dim // 2\n    assert positions.dtype is torch.int64 and cache_locations.dtype in (torch.int32, torch.int64)\n    assert cos_sin_cache.ndim == 2 and cos_sin_cache.shape[1] == rotary_dim == 64\n    assert key_cache.shape == value_cache.shape and key_cache.shape[1:] == (1, 256)\n    assert key_cache.dtype is value_cache.dtype\n    assert key_cache.dtype in (torch.bfloat16, torch.float8_e4m3fnuz, torch.float8_e4m3fn)\n    assert (k_scale is None) == (v_scale is None)\n    if k_scale is not None:\n        assert k_scale.dtype is torch.float32 and k_scale.numel() == 1\n        assert v_scale is not None and v_scale.dtype is torch.float32 and v_scale.numel() == 1\n    tensors = (projected_qkv_gate, q_norm_weight, k_norm_weight)\n    assert all(t.dtype is torch.bfloat16 and t.is_contiguous() for t in tensors)\n    # sglang 0.5.22 keeps the cos/sin cache in FP32 on HIP; the kernels read it as FP32\n    assert cos_sin_cache.dtype in (torch.bfloat16, torch.float32) and cos_sin_cache.is_contiguous()\n    assert key_cache.is_contiguous() and value_cache.is_contiguous()\n\n    query = torch.empty((rows, heads, 256), dtype=torch.bfloat16, device=projected_qkv_gate.device)\n    gate = torch.empty((rows, heads * 256), dtype=torch.bfloat16, device=projected_qkv_gate.device)\n    key = torch.empty((rows, 1, 256), dtype=torch.bfloat16, device=projected_qkv_gate.device)\n    value = torch.empty_like(key)\n    height_mask = 0\n    width_mask = 0\n    if mrope_section is not None:\n        height_mask = sum(1 << i for i in range(32) if i % 3 == 1 and i < 3 * mrope_section[1])\n        width_mask = sum(1 << i for i in range(32) if i % 3 == 2 and i < 3 * mrope_section[2])\n    _fused[(rows, heads + 4)](\n        projected_qkv_gate, q_norm_weight, k_norm_weight, positions, cos_sin_cache,\n        cache_locations, key_cache, value_cache, query, gate, key, value,\n        projected_qkv_gate if k_scale is None else k_scale,\n        projected_qkv_gate if v_scale is None else v_scale, eps,\n        HEADS=heads, USE_SCALE=k_scale is not None,\n        BF16_SCALE=key_cache.dtype is torch.float8_e4m3fn,\n        POSITION_STRIDE=positions.stride(0) if positions.ndim == 2 else 0,\n        MROPE=mrope_section is not None, HEIGHT_MASK=height_mask, WIDTH_MASK=width_mask,\n        num_warps=1,\n    )\n    return query, gate, key, value, key_cache, value_cache\n"
+      }
+    ]
+  }
+}

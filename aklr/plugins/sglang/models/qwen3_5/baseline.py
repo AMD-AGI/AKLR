@@ -1,7 +1,8 @@
 # Created by OpenAI
 """SGLang 0.5.22 Triton prefill and native block-128 FP8 activation quantization.
 
-Projection GEMMs and the output projection are outside this op on both paths.
+Projection GEMMs and the output projection are outside this op on both paths; the BF16
+prefill op ends at the unquantized output projection's BF16 input.
 Fresh recurrent slots are initialized here to implement the contract independently
 of SGLang's allocator. The host maximum gives the convolution its native launch
 geometry without a timed device-to-host read.
@@ -26,7 +27,7 @@ _SERVED_CONTEXT = 131072
 _PARTITION_SIZE = 256  # sglang's _AITER_PARTITION_SIZE_ROCM
 
 
-def gdn_prefill_group_fp8_quant_baseline(
+def _prefill_normalized(
     projected_qkvz,
     projected_ba,
     conv_state,
@@ -39,13 +40,11 @@ def gdn_prefill_group_fp8_quant_baseline(
     a_log,
     dt_bias,
     norm_weight,
-    max_seq_len=2048,
-    scale=128**-0.5,
-    eps=1e-6,
-    normalized=None,
-    values=None,
-    scales=None,
+    max_seq_len,
+    scale,
+    eps,
 ):
+    """SGLang 0.5.22's Triton prefill up to the BF16 input of its output projection."""
     import torch
     from sglang.kernels.ops.attention.fla.chunk import chunk_gated_delta_rule
     from sglang.kernels.ops.attention.fla.fused_gdn_gating import fused_gdn_gating
@@ -55,7 +54,6 @@ def gdn_prefill_group_fp8_quant_baseline(
         fused_qkvzba_split_reshape_cat_contiguous,
     )
     from sglang.kernels.ops.mamba.causal_conv1d_triton import causal_conv1d_fn
-    from sglang.kernels.ops.quantization.fp8_kernel import per_token_group_quant_fp8
 
     _slots, heads, value_dim, key_dim = delta_state.shape
     key_heads = (conv_state.shape[1] - heads * value_dim) // (2 * key_dim)
@@ -120,9 +118,89 @@ def gdn_prefill_group_fp8_quant_baseline(
         is_rms_norm=True,
         activation="swish",
     )
-    normed = normed.reshape(rows, heads, value_dim)
+    return normed.reshape(rows, heads, value_dim)
+
+
+def gdn_prefill_group_fp8_quant_baseline(
+    projected_qkvz,
+    projected_ba,
+    conv_state,
+    delta_state,
+    cache_indices,
+    cu_seqlens,
+    has_initial_state,
+    conv_weight,
+    conv_bias,
+    a_log,
+    dt_bias,
+    norm_weight,
+    max_seq_len=2048,
+    scale=128**-0.5,
+    eps=1e-6,
+    normalized=None,
+    values=None,
+    scales=None,
+):
+    from sglang.kernels.ops.quantization.fp8_kernel import per_token_group_quant_fp8
+
+    normed = _prefill_normalized(
+        projected_qkvz,
+        projected_ba,
+        conv_state,
+        delta_state,
+        cache_indices,
+        cu_seqlens,
+        has_initial_state,
+        conv_weight,
+        conv_bias,
+        a_log,
+        dt_bias,
+        norm_weight,
+        max_seq_len,
+        scale,
+        eps,
+    )
+    rows, _, value_dim = normed.shape
     quantized, factors = per_token_group_quant_fp8(normed.reshape(rows, -1), value_dim)
     return normed, quantized, factors
+
+
+def gdn_prefill_baseline(
+    projected_qkvz,
+    projected_ba,
+    conv_state,
+    delta_state,
+    cache_indices,
+    cu_seqlens,
+    has_initial_state,
+    conv_weight,
+    conv_bias,
+    a_log,
+    dt_bias,
+    norm_weight,
+    max_seq_len=2048,
+    scale=128**-0.5,
+    eps=1e-6,
+    normalized=None,
+):
+    """The prefill above, ending at the BF16 input of an unquantized out_proj."""
+    return _prefill_normalized(
+        projected_qkvz,
+        projected_ba,
+        conv_state,
+        delta_state,
+        cache_indices,
+        cu_seqlens,
+        has_initial_state,
+        conv_weight,
+        conv_bias,
+        a_log,
+        dt_bias,
+        norm_weight,
+        max_seq_len,
+        scale,
+        eps,
+    )
 
 
 def _decode_normalized(
@@ -276,7 +354,7 @@ def _last_page_lengths(rows, device):
     return torch.ones(rows, dtype=torch.int32, device=device)
 
 
-def _gated_attention(
+def _prepare(
     projected_qkv,
     q_norm_weight,
     k_norm_weight,
@@ -285,19 +363,12 @@ def _gated_attention(
     cache_locations,
     key_cache,
     value_cache,
-    kv_indptr,
-    kv_indices,
     eps,
-    scale,
 ):
-    """forward_prepare_fused_gate's fused Gemma QK norm and gate split, the rotary
-    module's Triton mRoPE, the aiter backend's forward_decode (its fused FP8 KV write,
-    then paged_attention_ragged over one-token pages at unit KV scales) and
-    fused_sigmoid_mul: the BF16 rows sglang hands o_proj."""
-    import aiter
-    import torch
+    """forward_prepare_fused_gate's fused Gemma QK norm and gate split, the rotary module's
+    Triton mRoPE, and the aiter backend's fused FP8 KV write at unit KV scales: the query,
+    key, value and gate rows the attention reads."""
     from sglang.kernels.ops.attention.rotary_triton import triton_mrope_fused
-    from sglang.kernels.ops.elementwise.elementwise import fused_sigmoid_mul
     from sglang.kernels.ops.kvcache.cache_ops import launch_reshape_and_cache_flash
     from sglang.srt.models.utils import fused_qk_gemma_rmsnorm_with_gate
 
@@ -335,6 +406,47 @@ def _gated_attention(
         k_scale=unit,
         v_scale=unit,
     )
+    return query, key, value, gate
+
+
+def _gated_attention(
+    projected_qkv,
+    q_norm_weight,
+    k_norm_weight,
+    positions,
+    cos_sin_cache,
+    cache_locations,
+    key_cache,
+    value_cache,
+    kv_indptr,
+    kv_indices,
+    eps,
+    scale,
+):
+    """_prepare, the aiter backend's forward_decode (paged_attention_ragged over one-token
+    pages at unit KV scales) and fused_sigmoid_mul: the BF16 rows sglang hands o_proj."""
+    import aiter
+    import torch
+    from sglang.kernels.ops.elementwise.elementwise import fused_sigmoid_mul
+
+    query, _, _, gate = _prepare(
+        projected_qkv,
+        q_norm_weight,
+        k_norm_weight,
+        positions,
+        cos_sin_cache,
+        cache_locations,
+        key_cache,
+        value_cache,
+        eps,
+    )
+    rows, device = projected_qkv.shape[0], projected_qkv.device
+    _, kv_heads, head_dim = key_cache.shape
+    heads = query.shape[1] // head_dim
+    width = heads * head_dim
+    key_pages = key_cache.view(-1, 1, kv_heads, head_dim)
+    value_pages = value_cache.view(-1, 1, kv_heads, head_dim)
+    unit = _unit_scale(device)
     partitions = -(-_SERVED_CONTEXT // _PARTITION_SIZE)
     # the backend's float32 workspace: partial outputs, then exp sums and max logits
     workspace = torch.empty(rows * heads * partitions * (head_dim + 2) * 4, dtype=torch.uint8, device=device)
@@ -432,4 +544,130 @@ def gated_attention_decode_baseline(
         kv_indices,
         eps,
         scale,
+    )
+
+
+def _gated_attention_prefill(
+    projected_qkv,
+    q_norm_weight,
+    k_norm_weight,
+    positions,
+    cos_sin_cache,
+    cache_locations,
+    key_cache,
+    value_cache,
+    cu_seqlens,
+    eps,
+    scale,
+    max_seq_len,
+):
+    """_prepare, the aiter backend's forward_extend without a prefix (gfx950, head width 256,
+    FP8 pool: flash_attn_varlen_fp8_pertensor_func on Q, K and V cast to E4M3FN at unit
+    scales) and fused_sigmoid_mul: the BF16 rows sglang hands o_proj."""
+    import torch
+    from aiter import flash_attn_varlen_fp8_pertensor_func
+    from sglang.kernels.ops.elementwise.elementwise import fused_sigmoid_mul
+
+    query, key, value, gate = _prepare(
+        projected_qkv,
+        q_norm_weight,
+        k_norm_weight,
+        positions,
+        cos_sin_cache,
+        cache_locations,
+        key_cache,
+        value_cache,
+        eps,
+    )
+    rows, device = projected_qkv.shape[0], projected_qkv.device
+    _, kv_heads, head_dim = key_cache.shape
+    unit = _unit_scale(device)
+    fp8 = torch.float8_e4m3fn
+    attended = flash_attn_varlen_fp8_pertensor_func(
+        query.contiguous().view(rows, -1, head_dim).to(fp8),
+        key.contiguous().view(rows, kv_heads, head_dim).to(fp8),
+        value.contiguous().view(rows, kv_heads, head_dim).to(fp8),
+        unit,
+        unit,
+        unit,
+        cu_seqlens,
+        cu_seqlens,
+        max_seq_len,
+        max_seq_len,
+        softmax_scale=scale,
+        causal=True,
+    )
+    attended = attended.to(torch.bfloat16).view(rows, -1)
+    fused_sigmoid_mul(attended, gate, inplace=True)
+    return attended
+
+
+def gated_attention_prefill_group_fp8_quant_baseline(
+    projected_qkv,
+    q_norm_weight,
+    k_norm_weight,
+    positions,
+    cos_sin_cache,
+    cache_locations,
+    key_cache,
+    value_cache,
+    cu_seqlens,
+    eps=1e-6,
+    scale=256**-0.5,
+    max_seq_len=1024,
+    values=None,
+    scales=None,
+):
+    """The gated prefill above, then the per-1x128 AITER quantization of the block-FP8
+    o_proj (row-major scales)."""
+    import aiter
+
+    attended = _gated_attention_prefill(
+        projected_qkv,
+        q_norm_weight,
+        k_norm_weight,
+        positions,
+        cos_sin_cache,
+        cache_locations,
+        key_cache,
+        value_cache,
+        cu_seqlens,
+        eps,
+        scale,
+        max_seq_len,
+    )
+    quantize = aiter.get_hip_quant(aiter.QuantType.per_1x128)
+    quantized, factors = quantize(attended, quant_dtype=aiter.dtypes.fp8)
+    return quantized.view(attended.shape[0], -1, key_cache.shape[-1]), factors
+
+
+def gated_attention_prefill_baseline(
+    projected_qkv,
+    q_norm_weight,
+    k_norm_weight,
+    positions,
+    cos_sin_cache,
+    cache_locations,
+    key_cache,
+    value_cache,
+    cu_seqlens,
+    eps=1e-6,
+    scale=256**-0.5,
+    max_seq_len=1024,
+    gated=None,
+):
+    """The gated prefill above: sglang's BF16 input to an o_proj that takes BF16."""
+    return _gated_attention_prefill(
+        projected_qkv,
+        q_norm_weight,
+        k_norm_weight,
+        positions,
+        cos_sin_cache,
+        cache_locations,
+        key_cache,
+        value_cache,
+        cu_seqlens,
+        eps,
+        scale,
+        max_seq_len,
     )
