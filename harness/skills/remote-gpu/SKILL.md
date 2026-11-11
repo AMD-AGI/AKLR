@@ -23,8 +23,8 @@ Where `${CLAUDE_SKILL_DIR}` is not expanded, it is `harness/skills/remote-gpu` f
 `$ARGUMENTS`:
 
 - Empty or plain language ("2 nodes on mycluster for bench.py"): follow the workflow below.
-- A command or `--cluster ...`: run `$RG $ARGUMENTS` once, exactly as given, with a Bash `timeout`
-  of 600000, and report the `OK`/`ERR` lines and the job handle.
+- A command or `--cluster ...`: run `$RG $ARGUMENTS` once, exactly as given, in the background
+  (see **Timeouts**), and once it exits report the `OK`/`ERR` lines and the job handle.
 
 ## Clusters
 
@@ -66,9 +66,10 @@ $RG release -j mycluster:202642      # ALWAYS, as soon as you are done
   `ready -j JOB` then waits up to 420 s (rc 205 = still pending). After the first 205, tell the
   user `reason=` and `start_estimate=` and ask whether to keep polling, leave it queued, or
   release. A reason starting `QOSMax` or `AssocMax` is the user's own limit: show `ls`.
-- **Timeouts.** Run `alloc`, `ready`, `exec` and `wait` with a Bash `timeout` of 600000. For
-  `-N` ≥ 2 on a busy cluster use `--no-wait` + `ready`. If `alloc` was killed anyway, its stderr
-  has `SUBMITTED job=...`; check `ls` before allocating again.
+- **Timeouts.** Run `alloc`, `ready`, `exec` and `wait` in the background (Bash
+  `run_in_background`, `timeout` 7200000); you are woken when they finish. Without a background
+  mode, use a `timeout` of 600000. For `-N` ≥ 2 on a busy cluster use `--no-wait` + `ready`. If
+  `alloc` was killed anyway, its stderr has `SUBMITTED job=...`; check `ls` before allocating again.
 - **Release** when done; clusters are shared. A job also releases itself after `--idle` minutes
   (default 60) with no running `exec` or task, and at its time limit (`-t`, default 4h, max `MAX_TIME`).
 
@@ -77,10 +78,10 @@ $RG release -j mycluster:202642      # ALWAYS, as soon as you are done
 | command | what it does |
 |---|---|
 | `alloc [-N n] [-t H:MM:SS] [-J label] [--idle MIN] [--wait SEC] [--no-wait] [-x node] [--aggressive] [--preemptible]` | Whole nodes with all their GPUs, health-checked. `--aggressive` races accounts where it is not the default. `-p/-A/-q/-w/-x` need `--cluster`. |
-| `ready -j JOB [--wait 420]` | Waits for a queued job, health-checks it, prints the OK line. |
+| `ready -j JOB [--wait 420]` | Waits for a queued job, health-checks it, prints the OK line. In the background, pass `--wait 6900`. |
 | `exec -j JOB [-w node \| --all] [-C dir] [--image IMG] [-e K=V] -- CMD ARGS...` | Runs and waits; exits with CMD's code. `-e` values are visible on the node: no secrets. |
 | `bg -j JOB [exec options] [--name TASK] -- CMD...` | Starts a detached task; each name once per job. |
-| `wait -j JOB TASK [--timeout 540]` | Waits for the task, prints log tails, exits with its rc (205 = still running). |
+| `wait -j JOB TASK [--timeout 540]` | Waits for the task, prints log tails, exits with its rc (205 = still running). In the background, pass `--timeout 6900`. |
 | `logs -j JOB [TASK] [-n 50]` | Lists tasks, or tails one's log. |
 | `release -j JOB` | Stops the job's tasks and containers, gives the nodes back. |
 | `extend -j JOB -t NEW_TOTAL` | New total time limit, where `EXTEND=1`. |
@@ -93,12 +94,12 @@ redirection use `bash -lc '...'`, which runs on the node, so `$VAR` expands ther
 
 ## Running work
 
-- **Under ~8 min**: `exec`. An `exec` that outlives the Bash tool's 10 minutes is killed with its
+- **Under ~8 min**: `exec`. An `exec` that outlives the Bash tool's timeout is killed with its
   remote command, and the output is lost.
 - **Longer** (big builds, benchmarks, training, large image pulls): `bg` + `wait`:
   ```bash
   $RG bg -j mycluster:202642 --name bench -C mycluster/src/myrepo -- python bench.py --iters 1000
-  $RG wait -j mycluster:202642 bench    # repeat while it exits 205
+  $RG wait -j mycluster:202642 bench --timeout 6900   # in the background; repeat while it exits 205
   ```
 - **Paths.** `workdir=` is the job's state dir and the default `-C`. A relative `-C`, `push` or
   `pull` path is under the cluster's work root; `push` prints where it put the code. A `-C` that

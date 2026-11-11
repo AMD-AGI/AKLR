@@ -76,6 +76,8 @@ there is one of each.
   from `.codex/agents`, a symlink to `agents/codex/`; each `<name>.toml` there points back to
   `agents/<name>.md`, so the prompt is written once.
 - `scripts/`: scripts the skills run, such as `forge_task/`.
+- `hooks/`: a Claude Code mod, `register.tsx`: while you hold a `remote-gpu` job, a band above the
+  prompt shows your jobs, free nodes per cluster and the tasks Claude started there.
 - `tests/`: tests of the scripts.
 
 This first version does not add or modify GitHub Actions workflows.
