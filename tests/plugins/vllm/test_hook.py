@@ -17,7 +17,7 @@ import torch
 
 import aklr.plugins.vllm as plugin
 from aklr.core.platform.env import ENV_DISABLE, ENV_VLLM_PLUGIN
-from aklr.core.runtime._vllm_hook_registry import HookRegistry
+from aklr.core.runtime._vllm_hook_registry import HookRegistry, HookSpec, HookType
 from aklr.core.runtime.dispatch import DispatcherRegistry, FallbackReason
 from aklr.plugins.vllm import hook, warmup
 
@@ -148,6 +148,137 @@ def test_installing_twice_wraps_once(fake):
     assert fake.callee is wrapped
     assert wrapped.__wrapped__ is native
     assert caller(1) == "aiter(1)"
+
+
+@pytest.mark.parametrize("shared_owner", [True, False], ids=["module_alias", "separate_bindings"])
+@pytest.mark.parametrize("phase", [None, "device_ready"], ids=["all", "routes_only"])
+def test_module_alias_routes_install_once_and_capture_replaced_natives(
+    monkeypatch, worker, fake, hook_registry, shared_owner, phase
+):
+    """Compatibility module names may share a binding or just the native callable."""
+    alias = fake if shared_owner else ModuleType("fake_aiter_compat")
+    monkeypatch.setitem(sys.modules, "fake_aiter_compat", alias)
+    monkeypatch.setenv(ENV_VLLM_PLUGIN, "1")
+    Worker, _ = worker
+    calls = []
+    callees = ("fake_aiter.callee", "fake_aiter_compat.callee")
+
+    def route(x):
+        calls.append(("route", x))
+        return "aklr(0)" if x == 0 else FallbackReason.NOT_MEASURED
+
+    def make_native(label):
+        def native(x):
+            calls.append((label, x))
+            return f"{label}({x})"
+
+        return native
+
+    hook.vllm_route(CALLER, *callees, versions=(INSTALLED,))(route)
+    for label in ("aiter", "replacement"):
+        native = make_native(label)
+        fake.callee = alias.callee = native
+        plugin.register()
+        assert Worker().init_device() == "bound"
+        wrappers = [pkgutil.resolve_name(callee) for callee in callees]
+        for callee, wrapped in zip(callees, wrappers):
+            assert hook._original(route, callee) is native
+            assert wrapped.__wrapped__ is native
+            calls.clear()
+            assert wrapped(0) == "aklr(0)"
+            assert calls == [("route", 0)]
+            calls.clear()
+            assert wrapped(1) == f"{label}(1)"
+            assert calls == [("route", 1), (label, 1)]
+
+        plugin.register()
+        Worker().init_device()
+        assert all(pkgutil.resolve_name(callee) is wrapped for callee, wrapped in zip(callees, wrappers))
+        hook_registry.restore(phase)
+        assert fake.callee is alias.callee is native
+        for callee in callees:
+            with pytest.raises(RuntimeError, match="has not been applied"):
+                hook._original(route, callee)
+
+
+def test_different_routes_on_aliased_modules_conflict_before_writing(monkeypatch, fake):
+    monkeypatch.setitem(sys.modules, "fake_aiter_compat", fake)
+    native = fake.callee
+    fake.other = lambda x: f"other({x})"
+    other_native = fake.other
+    declare(lambda x: f"first({x})")
+    hook.vllm_route(CALLER, "fake_aiter_compat.callee", versions=(INSTALLED,))(lambda x: f"second({x})")
+    hook.vllm_route(f"{__name__}.other_caller", "fake_aiter.other", versions=(INSTALLED,))(
+        lambda x: f"aklr_other({x})"
+    )
+    with pytest.raises(RuntimeError, match="conflicts with"):
+        hook._install()
+    assert fake.callee is native
+    assert fake.other is other_native
+
+
+def test_aliased_module_cannot_overwrite_another_phase(monkeypatch, fake, hook_registry):
+    monkeypatch.setitem(sys.modules, "fake_aiter_compat", fake)
+    native = fake.callee
+
+    def before(x):
+        return None
+
+    for phase, target in (("bootstrap", "fake_aiter.callee"), ("device_ready", "fake_aiter_compat.callee")):
+        hook_registry.register(HookSpec(phase, target, before, HookType.BEFORE, phase=phase))
+    hook_registry.apply("bootstrap")
+    wrapped = fake.callee
+    with pytest.raises(RuntimeError, match="cross-phase write"):
+        hook_registry.apply("device_ready")
+    assert fake.callee is wrapped
+    assert caller(1) == "aiter(1)"
+    hook_registry.restore()
+    assert fake.callee is native
+
+
+def test_collapsed_targets_run_every_validator(monkeypatch, fake, hook_registry):
+    monkeypatch.setitem(sys.modules, "fake_aiter_compat", fake)
+    native = fake.callee
+
+    def before(x):
+        return None
+
+    def reject(original):
+        assert original is native
+        raise ValueError("incompatible alias")
+
+    hook_registry.register(HookSpec("first", "fake_aiter.callee", before, HookType.BEFORE))
+    hook_registry.register(
+        HookSpec("alias", "fake_aiter_compat.callee", before, HookType.BEFORE, validate=reject)
+    )
+    with pytest.raises(RuntimeError, match="incompatible alias"):
+        hook_registry.apply("device_ready")
+    assert fake.callee is native
+
+
+def test_explicit_aliases_share_one_binding_and_preserve_repeated_hooks(monkeypatch, fake, hook_registry):
+    monkeypatch.setitem(sys.modules, "fake_aiter_compat", fake)
+    native = fake.callee
+    calls = []
+
+    def before(x):
+        calls.append(x)
+
+    for hook_id in ("first", "second"):
+        hook_registry.register(
+            HookSpec(
+                hook_id,
+                "fake_aiter.callee",
+                before,
+                HookType.BEFORE,
+                aliases=("fake_aiter.callee", "fake_aiter_compat.callee"),
+            )
+        )
+    hook_registry.apply("device_ready")
+    assert caller(1) == "aiter(1)"
+    assert calls == [1, 1]
+    hook_registry.restore()
+    assert fake.callee is native
 
 
 def test_a_route_untested_on_the_installed_vllm_is_not_hooked(fake):

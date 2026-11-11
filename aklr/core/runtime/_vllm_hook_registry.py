@@ -170,6 +170,7 @@ class HookRegistry:
     by (order, hook_id), from inner to outer, with a sole REPLACE at the center.
     An exclusive hook permits no other hook on its target. Each target wraps the
     callable resolved before this batch, including inherited class/instance targets.
+    Equivalent hook stacks on paths resolving to the same attribute install once.
     ``restore`` is for startup failure/test cleanup, never live graph hot-swapping.
     """
 
@@ -209,6 +210,11 @@ class HookRegistry:
             if spec.phase == phase:
                 targets[spec.target].append(spec)
 
+        resolved_targets = {target: _resolve(target) for target in sorted(targets)}
+        shared_targets: dict[tuple[int, str], list[str]] = defaultdict(list)
+        for target, (owner, attr, _) in resolved_targets.items():
+            shared_targets[id(owner), attr].append(target)
+
         occupied = {
             binding.key: binding.path
             for installations in self._applied.values()
@@ -216,17 +222,35 @@ class HookRegistry:
             for binding in installation.bindings
         }
         plan = []
-        for target, specs in sorted(targets.items()):
-            if sum(s.hook_type is HookType.REPLACE for s in specs) > 1:
-                raise ValueError(f"Multiple REPLACE hooks for {target}")
-            if sum(s.exclusive for s in specs) > 1:
-                raise ValueError(f"Multiple exclusive hooks for {target}")
-            if len(specs) > 1 and any(s.exclusive for s in specs):
-                raise ValueError(f"Exclusive hook cannot be combined with other hooks for {target}")
-            ordered = tuple(
-                sorted(specs, key=lambda s: (s.hook_type is not HookType.REPLACE, s.order, s.hook_id))
-            )
-            owner, attr, raw = _resolve(target)
+        for paths in shared_targets.values():
+            stacks = []
+            for path in paths:
+                specs = targets[path]
+                if sum(s.hook_type is HookType.REPLACE for s in specs) > 1:
+                    raise ValueError(f"Multiple REPLACE hooks for {path}")
+                if sum(s.exclusive for s in specs) > 1:
+                    raise ValueError(f"Multiple exclusive hooks for {path}")
+                if len(specs) > 1 and any(s.exclusive for s in specs):
+                    raise ValueError(f"Exclusive hook cannot be combined with other hooks for {path}")
+                stacks.append(
+                    tuple(
+                        sorted(specs, key=lambda s: (s.hook_type is not HookType.REPLACE, s.order, s.hook_id))
+                    )
+                )
+            # AITER compatibility module names can resolve to one owner/attribute.
+            # Collapse equivalent stacks, retaining path-specific IDs and validators.
+            # Different hooks must still conflict, and repeated hooks at one literal
+            # target must retain their order and multiplicity.
+            stack_keys = [
+                tuple((id(s.hook), s.hook_type, s.group, s.order, s.exclusive) for s in stack)
+                for stack in stacks
+            ]
+            target, ordered = paths[0], stacks[0]
+            for path, stack_key in zip(paths[1:], stack_keys[1:]):
+                if stack_key != stack_keys[0]:
+                    raise ValueError(f"Binding {path} conflicts with {target} (different hook stacks)")
+            specs = tuple(spec for stack in stacks for spec in stack)
+            owner, attr, raw = resolved_targets[target]
             original, descriptor = _callable(raw, target)
             if not isinstance(owner, type):
                 # AITER's tgemm is a singleton instance. Its route receives no self:
@@ -238,7 +262,7 @@ class HookRegistry:
                     raise TypeError(f"Hook target does not resolve to a callable: {target}")
                 original, _ = _callable(resolved, target)
                 descriptor = None
-            for spec in ordered:
+            for spec in specs:
                 if spec.validate is not None:
                     spec.validate(original)
             wrapped = original
@@ -249,7 +273,8 @@ class HookRegistry:
                 # Builtins, partials, bound methods and callable objects stored on
                 # a class do not bind its instances. A plain function wrapper would.
                 replacement = staticmethod(wrapped)
-            bindings = [_Binding(owner, attr, raw, attr in vars(owner), replacement, target)]
+            binding = _Binding(owner, attr, raw, attr in vars(owner), replacement, target)
+            bindings = {binding.key: binding}
             aliases = sorted({alias for spec in specs for alias in spec.aliases})
             if descriptor and aliases:
                 raise ValueError(f"Descriptor aliases are not supported: {target}")
@@ -257,15 +282,16 @@ class HookRegistry:
                 alias_owner, alias_attr, alias_raw = _resolve(alias)
                 if not isinstance(alias_owner, ModuleType) or alias_raw is not original:
                     raise ValueError(f"Alias {alias} must be a module binding to the original {target}")
-                bindings.append(_Binding(alias_owner, alias_attr, alias_raw, True, wrapped, alias))
-            for binding in bindings:
+                binding = _Binding(alias_owner, alias_attr, alias_raw, True, wrapped, alias)
+                bindings.setdefault(binding.key, binding)
+            for binding in bindings.values():
                 if binding.key in occupied:
                     raise ValueError(
                         f"Binding {binding.path} conflicts with {occupied[binding.key]} "
                         "(duplicate target/alias or cross-phase write)"
                     )
                 occupied[binding.key] = binding.path
-            plan.append(_Installation(target, ordered, original, tuple(bindings)))
+            plan.append(_Installation(target, specs, original, tuple(bindings.values())))
         return tuple(sorted(plan, key=lambda item: -_lookup_depth(item.bindings[0].owner)))
 
     @staticmethod

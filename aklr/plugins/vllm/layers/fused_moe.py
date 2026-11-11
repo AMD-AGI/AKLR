@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-# TODO(ruibzhan): remove this file once aiter supports plugins.
+# TODO(ruibzhan): remove this file once AITER's plugin works inside vLLM custom ops
+# under torch.compile and CUDA graphs and preserves measured speedups for all
+# workloads served by this route.
 
 """vLLM's MoE layers on ROCm, where ``vllm::rocm_aiter_fused_moe`` reaches aiter's fused MoE."""
 
