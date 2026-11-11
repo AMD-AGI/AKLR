@@ -68,7 +68,7 @@ def _prepare(args: argparse.Namespace) -> int:
         starting_kernel = (
             workspace.read_starting_kernel(args.starting_kernel)
             if args.starting_kernel
-            else workspace.torch_starting_kernel(schema, aklr_root)
+            else workspace.builtin_starting_kernel(schema, aklr_root)
         )
         stamp = time.strftime("%Y%m%d_%H%M%S")
         run = workspace.materialize(

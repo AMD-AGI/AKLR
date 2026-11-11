@@ -46,7 +46,8 @@ HIP_VISIBLE_DEVICES=0 python harness/scripts/forge_task prepare --schema bmm_n12
 ```
 
 It checks the starting kernel with AKLR, records AKLR's baseline times and writes the task into `$RUN`. A GEMM
-schema starts from torch; any other needs `--starting-kernel <kernel.py>`, or `--starting-kernel <dir>` for a kernel
+schema starts from torch, or from its contract's AKLR baseline when torch cannot compute it (a scaled or quantized
+GEMM); any other needs `--starting-kernel <kernel.py>`, or `--starting-kernel <dir>` for a kernel
 of several files: every `*.py` in the directory, `kernel.py` among them.
 
 **2. Optimize.** Hours, and the agents cost money from here: in the Kimi-K3 runs, about $10 an hour on a GEMM

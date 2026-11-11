@@ -85,7 +85,7 @@ def real_run(tmp_path: Path, monkeypatch):
         tmp_path / "run",
         aklr_root=root,
         language="flydsl",
-        starting_kernel=workspace.torch_starting_kernel(schema, root),
+        starting_kernel=workspace.builtin_starting_kernel(schema, root),
         anchor="baseline",
     )
     return run, schema

@@ -1,0 +1,38 @@
+# Copy to .shepherd/configuration.yaml (ignored by Git) and fill in the nulls.
+# Never write host names, usernames or personal absolute paths, even locally; credentials stay in the secret store.
+
+mode: run  # run: observe, optimize and open draft PRs; observe: inspect only; drain: finish existing work
+repository: AMD-AGI/AKLR
+base_branch: main
+execution:
+  state_dir: /var/tmp/$USER/shepherd/state  # Local disk that survives reboots (not NFS or /tmp), owned by you; env vars, never a literal username.
+  cluster: null  # remote-gpu cluster name.
+  image: null  # Verified ROCm image pinned by digest.
+  runtime_revision: null  # Toolchain revision covered by the readiness checks.
+policy:
+  strategies:  # Applied in order.
+    - type: manual
+      schemas: []  # Repository-relative paths to schema JSON files.
+    - type: kernel-less
+  batch_size: 10
+  allowed_ops: [gemm]
+  backend: flydsl  # One tested backend for the first version.
+  max_open_prs: 8
+  cooldown_hours: 72
+campaign:  # Per campaign.
+  model: null  # Model KernelForge runs with.
+  reasoning_effort: null
+  loop_hours: null
+  total_node_hours: null  # Includes setup, finalize, stress and validation.
+  max_model_usd: null  # Includes finalize and distill.
+  max_auto_resumes: 1
+budget:  # Cumulative over all campaigns in state_dir.
+  authorization: null  # Recorded spending authorization, not a credential.
+  total_model_usd: null
+  total_node_hours: null  # Whole-node hours, even when using one GPU.
+  model_hard_limit_ref: null  # Name of the provider-side hard spending limit, not a path.
+publication:
+  allow_draft_pr: false
+  allow_pr_comments: false
+  allow_ci_gpu_label: false  # GPU CI spending needs separate authorization.
+  branch_prefix: shepherd/

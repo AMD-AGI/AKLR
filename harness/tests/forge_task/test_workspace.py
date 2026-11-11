@@ -104,7 +104,7 @@ def test_the_start_anchor_is_said_in_the_brief(aklr_root: Path, tmp_path: Path):
 def test_a_gemm_schema_starts_from_torch_with_its_contracts_call_keys(tmp_path: Path, rank, statement):
     root = install_aklr(tmp_path / "aklr")
     schema = load(write_schema(root, schema_payload(rank=rank)))
-    (kernel,) = workspace.torch_starting_kernel(schema, root).values()
+    (kernel,) = workspace.builtin_starting_kernel(schema, root).values()
     assert "def run(*, a, b, trans_b, bias, out_dtype, out):" in kernel
     assert statement in kernel
     compile(kernel, "kernel.py", "exec")
@@ -114,7 +114,21 @@ def test_another_op_has_no_built_in_starting_kernel(tmp_path: Path):
     root = install_aklr(tmp_path / "aklr")
     schema = load(write_schema(root, schema_payload("mla_demo", op_type="mla")))
     with pytest.raises(workspace.StartingKernelError, match="--starting-kernel"):
-        workspace.torch_starting_kernel(schema, root)
+        workspace.builtin_starting_kernel(schema, root)
+
+
+def test_a_scaled_gemm_schema_starts_from_its_contracts_baseline_into_the_output(tmp_path: Path):
+    root = install_aklr(tmp_path / "aklr")
+    payload = schema_payload()
+    payload["inputs"]["a_scale"] = {"shape": ["m", 1], "dtype": "float32"}
+    payload["inputs"]["b_scale"] = {"shape": [1, 1], "dtype": "float32"}
+    schema = load(write_schema(root, payload))
+    (kernel,) = workspace.builtin_starting_kernel(schema, root).values()
+    assert "torch" not in kernel
+    assert "from aklr.core.contract.registry import gemm_scaled_baseline" in kernel
+    assert "def run(*, a, b, a_scale, b_scale, trans_b, bias, out_dtype, out):" in kernel
+    assert "out.copy_(result)" in kernel
+    compile(kernel, "kernel.py", "exec")
 
 
 def test_a_starting_kernel_aklr_passes_is_kept(aklr_root: Path, tmp_path: Path):
