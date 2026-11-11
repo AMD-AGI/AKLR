@@ -24,7 +24,7 @@ The lifecycle is governed by [rules.md](rules.md), [gates.md](gates.md), and
 
 ## Installation
 
-`harness/` is the `aklr` plugin: 14 skills and the `something-important` subagent. The
+`harness/` is the `aklr` plugin, holding the AKLR skills and subagents. The
 repository root holds its marketplace, in Claude Code's format, which Codex and Cursor also read.
 Install it separately in each agent you use. Inside an AKLR checkout you need none of this; see
 [Inside this repository](#inside-this-repository).
@@ -36,8 +36,8 @@ Install it separately in each agent you use. Inside an AKLR checkout you need no
 /plugin install aklr@amd-aklr
 ```
 
-Skills run as `/aklr:<skill>`, for example `/aklr:aklr-kb`, and the subagent is
-`aklr:something-important`. Update with `claude plugin update aklr@amd-aklr`, then `/reload-plugins`.
+Skills run as `/aklr:<skill>`, for example `/aklr:aklr-kb`, and subagents
+as `aklr:<name>`. Update with `claude plugin update aklr@amd-aklr`, then `/reload-plugins`.
 On a machine without a GitHub SSH key, set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` first.
 
 ### Codex
@@ -49,34 +49,21 @@ codex plugin add aklr@amd-aklr
 
 The `--sparse` paths fetch only the plugin instead of the whole repository. Start a new session,
 then run skills as `$aklr:<skill>`. Update with `codex plugin marketplace upgrade amd-aklr`. Codex
-plugins carry no subagents, so `something-important` is available only inside an AKLR checkout.
+plugins carry no subagents, so subagents are available only inside an AKLR checkout.
 
 ### Inside this repository
 
-Nothing to install: each agent loads the harness from the checkout, so edits take effect at once.
+Nothing to install. Claude Code, Codex and Cursor load the harness straight from the checkout, so
+skill edits take effect right away.
 
-- Claude Code loads the plugin from `.claude/skills/aklr`, a symlink to `harness/`, as
-  `/aklr:<skill>`, and only once the repository is trusted. `claude -p` and SDK sessions never
-  show the trust dialog, so open the repository interactively once first; worktrees share the
-  main checkout's trust. Start Claude Code at the repository root, since it does not look for
-  plugins in parent directories. After editing a skill run `/reload-plugins`.
-- Codex reads the skills from `.agents/skills`, a symlink to `skills/`, as `$aklr:<skill>`,
-  because the link leads into the plugin. It reads agents from `.codex/agents` once the project
-  is trusted.
-- Cursor reads the skills from `.claude/skills/aklr` by bare name. It gets no subagents here; a
-  skill that names one falls back to giving a general subagent its prompt.
-- If you also installed the plugin:
-  - Claude Code loads the installed copy instead of the checkout, since an installed plugin takes
-    precedence over a project's `.claude/skills/` plugin of the same name. To use the checkout,
-    for example while editing a skill, start with `claude --plugin-dir harness`, which takes
-    precedence over both.
-  - Codex turns the installed copy off here through `.codex/config.toml` and keeps the
-    checkout's skills. In an untrusted project it reads no project config, so each skill appears
-    twice.
-  - Cursor loads both, so each skill appears twice. This includes a plugin installed only in
-    Claude Code, because Cursor imports Claude Code's plugins. Uninstall the plugin, or turn off
-    Cursor's "Include Third-Party Plugins, Skills, and Other Configs" setting for a plugin
-    installed only in Claude Code.
+- Claude Code: trust the repository once in an interactive session and start at its root. Skills
+  are `/aklr:<skill>`; run `/reload-plugins` after editing one.
+- Codex: skills are `$aklr:<skill>`; subagents need the project to be trusted.
+- Cursor: skills keep their bare names; there are no subagents.
+
+If you also installed the plugin, Claude Code uses the installed copy (start with
+`claude --plugin-dir harness` to use the checkout instead), Codex uses the checkout, and Cursor
+shows each skill twice.
 
 ## Layout
 
