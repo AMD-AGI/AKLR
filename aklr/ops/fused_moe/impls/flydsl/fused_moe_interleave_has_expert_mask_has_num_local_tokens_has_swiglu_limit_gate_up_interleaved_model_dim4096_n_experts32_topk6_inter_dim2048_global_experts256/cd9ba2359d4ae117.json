@@ -1,0 +1,262 @@
+{
+  "schema_version": 5,
+  "name": "fused_moe_interleave_has_expert_mask_has_num_local_tokens_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts32_topk6_inter_dim2048_global_experts256",
+  "contract_id": "fused_moe@1.0",
+  "description": "Route each token to its top-k experts, run both projections, combine.",
+  "op_type": "fused_moe",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens routed in this call."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 4096,
+      "description": "Hidden size."
+    },
+    "n_experts": {
+      "type": "const",
+      "value": 32,
+      "description": "Local experts on this rank."
+    },
+    "topk": {
+      "type": "const",
+      "value": 6,
+      "description": "Experts per token."
+    },
+    "inter_dim": {
+      "type": "const",
+      "value": 2048,
+      "description": "Expert intermediate size."
+    },
+    "global_experts": {
+      "type": "const",
+      "value": 256,
+      "description": "Experts of the whole expert-parallel group."
+    },
+    "gate_up_rows": {
+      "type": "const",
+      "value": 4096,
+      "description": "w1 rows: gate and up concatenated."
+    },
+    "model_blocks": {
+      "type": "const",
+      "value": 128,
+      "description": "w1 scale columns."
+    },
+    "inter_blocks": {
+      "type": "const",
+      "value": 64,
+      "description": "w2 scale columns."
+    }
+  },
+  "attrs": {
+    "activation": "silu",
+    "quant_type": "per_1x32",
+    "doweight_stage1": false,
+    "gate_mode": "interleave",
+    "has_expert_mask": true,
+    "has_num_local_tokens": true,
+    "has_swiglu_limit": true,
+    "act_quant": 4
+  },
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Token activations."
+    },
+    "w1": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gate-up projection per expert: gate rows, then up rows."
+    },
+    "w2": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Down projection per expert."
+    },
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Routing weight of each chosen expert."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": 255,
+        "distinct": true
+      },
+      "description": "Chosen experts per token, distinct within a row; global ids under expert parallelism."
+    },
+    "w1_scale": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -11,
+        "log2_hi": -5
+      },
+      "description": "Per 1 x 32 block of w1."
+    },
+    "w2_scale": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -11,
+        "log2_hi": -5
+      },
+      "description": "Per 1 x 32 block of w2."
+    },
+    "expert_mask": {
+      "shape": [
+        "global_experts"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "expert_mask",
+        "local_experts": 32
+      },
+      "description": "1 for the experts this rank holds, in the order w1 holds them."
+    },
+    "num_local_tokens": {
+      "shape": [1],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": "n_tokens",
+        "hi": "n_tokens",
+        "distinct": false
+      },
+      "description": "Rows this rank received; later rows are unused."
+    },
+    "swiglu_limit": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Clamped SwiGLU bound: gate at most this, up within +/- this."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Routing-weighted sum of the chosen experts' outputs; under expert parallelism, this rank's share."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 2048
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "gate_up_interleaved": {
+        "layouts": {
+          "w1": {
+            "kind": "gate_up_interleaved_weight",
+            "gate_up": true
+          },
+          "w2": {
+            "kind": "gate_up_interleaved_weight",
+            "gate_up": false
+          },
+          "w1_scale": {
+            "kind": "gate_up_interleaved_scales",
+            "gate_up": true
+          },
+          "w2_scale": {
+            "kind": "gate_up_interleaved_scales",
+            "gate_up": false
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "w1.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w2.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w1_scale.ndim",
+            "expected_value": 2
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.001,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Expert-parallel MXFP4 fused MoE (a8w4, gate/up interleaved, clamped SwiGLU) for gfx950: one FlyDSL prelude\n(routing sort, ``out`` zeroing, MXFP8 quant) then aiter's FlyDSL GEMMs, each workgroup's K loop started at a\nrotated k-tile so the workgroups streaming weights at once spread over the memory channels.\"\"\"\n\nimport functools\nimport inspect\nimport re\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom aiter import ActivationType, QuantType, dtypes\nfrom aiter.fused_moe import (\n    GateMode,\n    get_2stage_cfgs,\n    get_padded_M,\n)\nfrom aiter.ops.flydsl.kernels import buffer_ops\nfrom aiter.ops.flydsl.kernels import mixed_moe_gemm_2stage_common as _gemm_common\nfrom aiter.ops.flydsl.kernels.quant_utils import emit_mx_e8m0_scale\nfrom aiter.ops.flydsl.kernels.tensor_shim import _run_compiled, ptr_arg, ptr_buf_tensor\nfrom aiter.ops.flydsl.moe_kernels import (\n    _flydsl_moe_stage1_impl,\n    _flydsl_moe_stage2_impl,\n    get_flydsl_kernel_params,\n)\nfrom aiter.utility.mx_types import MX_DEFAULT_ROUND_MODE, MxDtypeInt\nfrom flydsl._mlir.dialects import llvm\nfrom flydsl.expr import const_expr, gpu, range_constexpr\nfrom flydsl.expr.typing import T\n\n_P_THREADS = 1024  # prelude workgroup width\n_P_TPW = 8  # tokens per prelude workgroup; their routes fit one wave\n_WAVE = 64\n_E_SLOTS = 64  # LDS slots per expert table, so at most this many local experts\n_HIST_LEN = 2 * _E_SLOTS + _WAVE\n_LOC_LEN = _E_SLOTS + _WAVE\n\n\n@fx.struct\nclass _PreludeStorage:\n    # hist: routes per expert of earlier workgroups, then of the rest, then per-lane dummies for dropped routes.\n    hist: fx.Array[fx.Int32, _HIST_LEN, 16]\n    loc: fx.Array[fx.Int32, _LOC_LEN, 16]  # rank of each own route in its expert, then per-lane dummies\n    start: fx.Array[fx.Int32, _E_SLOTS, 16]\n    padded: fx.Array[fx.Int32, _E_SLOTS, 16]\n    pos: fx.Array[fx.Int32, _WAVE, 16]  # sorted row of each own route, negative if dropped\n\n\ndef _build_prelude(M, topk, global_E, E, block_m, cols, n_pad):\n    \"\"\"Each workgroup histograms every local route redundantly, so all agree on the padded expert offsets without\n    waiting on each other; it then places its own tokens' routes, zeroes their ``out`` rows and quantizes them,\n    writing each e8m0 scale to every sorted row of the token. Workgroup e < E also writes expert e's padding.\"\"\"\n    assert global_E == 4 * _WAVE and E <= _E_SLOTS\n    row_thr = cols // 8  # threads per hidden_states row, one dwordx4 load each\n    row_log2 = row_thr.bit_length() - 1\n    assert 2 * row_thr == _P_THREADS and (1 << row_log2) == row_thr\n    rpw = _P_TPW * topk\n    assert rpw <= _WAVE\n    n_routes = M * topk\n    n_it = (n_routes + _P_THREADS - 1) // _P_THREADS\n    n_wg = max((M + _P_TPW - 1) // _P_TPW, E)\n    sentinel = (topk << 24) | M\n    bm_log2 = block_m.bit_length() - 1\n    assert (1 << bm_log2) == block_m\n    n_groups = cols // 32\n    n32 = (n_groups + 7) // 8 * 8 * 32\n    row_v4 = cols * 2 // 16\n    n_zero_it = _P_TPW * row_v4 // _P_THREADS\n    assert n_zero_it * _P_THREADS == _P_TPW * row_v4\n    n_pass = _P_TPW * row_thr // _P_THREADS\n    pad_thr = 16  # threads per padding row, each zeroing n_groups / pad_thr scales\n    assert n_groups % pad_thr == 0\n\n    def scale_off(row, grp):\n        # Byte of (sorted row, MX column group) in the preshuffled e8m0 layout the GEMMs read.\n        return (\n            (row >> 5) * n32\n            + (grp >> 3) * 256\n            + (grp & 3) * 64\n            + (row & 15) * 4\n            + ((grp >> 2) & 1) * 2\n            + ((row >> 4) & 1)\n        )\n\n    @flyc.kernel(known_block_size=[_P_THREADS, 1, 1])\n    def prelude_kernel(\n        x: fx.Pointer,\n        topk_ids: fx.Pointer,\n        topk_w: fx.Pointer,\n        expert_mask: fx.Pointer,\n        n_local: fx.Pointer,\n        sorted_ids: fx.Pointer,\n        sorted_w: fx.Pointer,\n        sorted_e: fx.Pointer,\n        num_valid: fx.Pointer,\n        a1: fx.Pointer,\n        a1_scale: fx.Pointer,\n        out: fx.Pointer,\n    ):\n        g = fx.block_idx.x\n        tid = fx.thread_idx.x\n        lane = tid & (_WAVE - 1)\n        lds = fx.SharedAllocator().allocate(_PreludeStorage).peek()\n        hist = lds.hist.ptr\n        loc = lds.loc.ptr\n        st = lds.start.ptr\n        pd = lds.padded.ptr\n        posb = lds.pos.ptr\n        ids_p = ptr_buf_tensor(topk_ids)\n        w_p = ptr_buf_tensor(topk_w, elem=fx.Float32)\n        mask_p = ptr_buf_tensor(expert_mask)\n        nlt_p = ptr_buf_tensor(n_local)\n        sid_p = ptr_buf_tensor(sorted_ids, num_records_bytes=fx.Int32(n_pad * 4))\n        sw_p = ptr_buf_tensor(sorted_w, elem=fx.Float32, num_records_bytes=fx.Int32(n_pad * 4))\n        se_p = ptr_buf_tensor(sorted_e)\n        nv_p = ptr_buf_tensor(num_valid)\n        scale_i8_ptr = fx.inttoptr(\n            fx.PointerType.get(T.i8, address_space=fx.AddressSpace.Global, alignment=1),\n            fx.Int64(fx.ptrtoint(a1_scale)),\n        )\n        x_rsrc = buffer_ops.create_buffer_resource_from_addr(\n            fx.Int64(fx.ptrtoint(x)), num_records_bytes=fx.Int64(M * cols * 2)\n        )\n        a1_rsrc = buffer_ops.create_buffer_resource_from_addr(\n            fx.Int64(fx.ptrtoint(a1)), num_records_bytes=fx.Int64(M * cols)\n        )\n        out_rsrc = buffer_ops.create_buffer_resource_from_addr(\n            fx.Int64(fx.ptrtoint(out)), num_records_bytes=fx.Int64(M * cols * 2)\n        )\n\n        # Issue every hidden_states load first; a token's liveness is read from its sorted rows later.\n        col_t = tid & (row_thr - 1)\n        xs = []\n        for p in range_constexpr(n_pass):\n            tok = g * _P_TPW + p * 2 + (tid >> row_log2)\n            xs.append(buffer_ops.buffer_load(x_rsrc, tok * (cols // 2) + col_t * 4, vec_width=4, dtype=T.i32))\n\n        eids = []\n        for it in range_constexpr(n_it):\n            r = tid + it * _P_THREADS\n            if const_expr((it + 1) * _P_THREADS > n_routes):\n                r = (r < n_routes).select(r, fx.Int32(0))\n            eids.append(ids_p[r])\n        r_loc = g * rpw + (tid < rpw).select(tid, fx.Int32(0))\n        r_loc = (r_loc < n_routes).select(r_loc, fx.Int32(0))\n        eid_loc = ids_p[r_loc]\n        w_loc = w_p[r_loc]\n        nlt = nlt_p[fx.Int32(0)]\n        # Ballot the expert mask so every wave holds all of it in SGPRs.\n        bw = []\n        for k in range_constexpr(global_E // _WAVE):\n            mk = mask_p[lane + _WAVE * k]\n            bw.append(fx.Int64(fx.rocdl.ballot(T.i64, mk != 0)))\n        pc1 = fx.Int32(fx.math.ctpop(bw[0]))\n        pc2 = pc1 + fx.Int32(fx.math.ctpop(bw[1]))\n        pc3 = pc2 + fx.Int32(fx.math.ctpop(bw[2]))\n\n        def lid_of(e):\n            w = e >> 6\n            bit = fx.Int64(e & 63)\n            b = (w == 0).select(bw[0], (w == 1).select(bw[1], (w == 2).select(bw[2], bw[3])))\n            base = (w == 0).select(fx.Int32(0), (w == 1).select(pc1, (w == 2).select(pc2, pc3)))\n            below = fx.Int32(fx.math.ctpop(b & ((fx.Int64(1) << bit) - fx.Int64(1))))\n            isset = ((b >> bit) & fx.Int64(1)) != fx.Int64(0)\n            return isset.select(base + below, fx.Int32(-1))\n\n        zero_v4 = fx.Vector.filled(4, 0, fx.Int32)\n        for z in range_constexpr(n_zero_it):\n            idx = g * (_P_TPW * row_v4) + z * _P_THREADS + tid\n            buffer_ops.buffer_store(zero_v4, out_rsrc, idx * 4)\n\n        if tid < _HIST_LEN:\n            hist[tid] = fx.Int32(0)\n        if tid < _LOC_LEN:\n            loc[tid] = fx.Int32(0)\n        gpu.barrier()\n\n        def _atomic_inc(base_ptr, slot):\n            return llvm.AtomicRMWOp(\n                llvm.AtomicBinOp.add,\n                (base_ptr + slot).llvm_ptr,\n                fx.Int32(1).ir_value(),\n                llvm.AtomicOrdering.monotonic,\n                syncscope=\"workgroup\",\n                alignment=4,\n            ).result\n\n        dummy = fx.Int32(E) + lane\n        first = g * rpw\n        for it in range_constexpr(n_it):\n            r = tid + it * _P_THREADS\n            tok = r // topk\n            lid = lid_of(eids[it])\n            keep = (lid >= 0) & (tok < nlt)\n            if const_expr((it + 1) * _P_THREADS > n_routes):\n                keep = keep & (r < n_routes)\n            slot = (r < first).select(lid, lid + _E_SLOTS)\n            _atomic_inc(hist, keep.select(slot, lane + 2 * _E_SLOTS))\n        lid_l = lid_of(eid_loc)\n        r_l = g * rpw + tid\n        keep_l = (lid_l >= 0) & ((r_l // topk) < nlt) & (tid < rpw) & (r_l < n_routes)\n        old_l = fx.Int32(_atomic_inc(loc, keep_l.select(lid_l, dummy)))\n        gpu.barrier()\n\n        if tid < E:\n            start = fx.Int32(0)\n            total = fx.Int32(0)\n            for e_ in range_constexpr(E):\n                c_e = hist[fx.Int32(e_)] + hist[fx.Int32(e_ + _E_SLOTS)]\n                p_e = ((c_e + (block_m - 1)) >> bm_log2) << bm_log2\n                start = start + (tid > e_).select(p_e, fx.Int32(0))\n                total = total + p_e\n            c = hist[tid] + hist[tid + _E_SLOTS]\n            st[tid] = start\n            pd[tid] = ((c + (block_m - 1)) >> bm_log2) << bm_log2\n            if g == 0:\n                if tid == 0:\n                    nv_p[fx.Int32(0)] = total\n                    nv_p[fx.Int32(1)] = nlt\n        gpu.barrier()\n\n        # This workgroup's routes.\n        lsafe = keep_l.select(lid_l, fx.Int32(0))\n        pos = st[lsafe] + hist[lsafe] + old_l\n        pos = keep_l.select(pos, fx.Int32(n_pad))\n        tok_l = r_l // topk\n        sid_p[pos] = ((r_l - tok_l * topk) << 24) | tok_l\n        sw_p[pos] = w_loc\n        if tid < rpw:\n            posb[tid] = keep_l.select(pos, fx.Int32(-1))\n\n        # Expert g: block ids, padding rows and their zero scales.\n        if g < E:\n            st_e = st[g]\n            pd_e = pd[g]\n            c_e = hist[g] + hist[g + _E_SLOTS]\n            b0 = st_e >> bm_log2\n            nb = pd_e >> bm_log2\n            for j in range(tid, nb, _P_THREADS):\n                se_p[b0 + j] = g\n            j = tid // pad_thr\n            row = st_e + c_e + j\n            if j < pd_e - c_e:\n                if tid % pad_thr == 0:\n                    sid_p[row] = fx.Int32(sentinel)\n                    sw_p[row] = fx.Float32(0.0)\n                for q in range_constexpr(n_groups // pad_thr):\n                    scale_i8_ptr[fx.Int32(scale_off(row, tid % pad_thr + pad_thr * q))] = fx.Int8(0)\n        gpu.barrier()\n\n        # Quantize this workgroup's live tokens.\n        c0_f32 = fx.Float32(0.0)\n        for p in range_constexpr(n_pass):\n            tl = p * 2 + (tid >> row_log2)\n            tok = g * _P_TPW + tl\n            any_l = fx.Int32(-1)\n            for s_ in range_constexpr(topk):\n                any_l = any_l & posb[fx.Int32(tl * topk + s_)]\n            live = any_l >= 0\n            v = fx.Vector(xs[p]).bitcast(fx.BFloat16).extf(T.vec(8, T.f32))\n            local_max = c0_f32\n            for vi in range_constexpr(8):\n                local_max = local_max.maximumf(fx.math.absf(v[vi]))\n            for sh in [1, 2]:\n                local_max = local_max.maximumf(local_max.shuffle_xor(fx.Int32(sh), fx.Int32(_WAVE)))\n            e8m0 = fx.Int32(\n                emit_mx_e8m0_scale(\n                    local_max.ir_value(), mode=MX_DEFAULT_ROUND_MODE, dtype=MxDtypeInt.FP8_E4M3\n                )\n            )\n            qs = ((fx.Int32(254) - e8m0) << fx.Int32(23)).bitcast(fx.Float32)\n            halves = []\n            for h in range_constexpr(4):\n                pk = fx.rocdl.cvt_pk_fp8_f32(\n                    T.i32,\n                    (v[2 * h] * qs).ir_value(),\n                    (v[2 * h + 1] * qs).ir_value(),\n                    fx.Int32(0).ir_value(),\n                    0,\n                )\n                halves.append(fx.Int32(pk).to(fx.Int16))\n            packed = fx.Vector.from_elements(halves, dtype=fx.Int16).bitcast(fx.Int32)\n            tok_c = (tok < M).select(tok, fx.Int32(0))\n            buffer_ops.buffer_store(packed, a1_rsrc, tok_c * (cols // 4) + col_t * 2, mask=live)\n            if live & ((tid & 3) == 0):\n                for s in range_constexpr(topk):\n                    prow = posb[fx.Int32(tl * topk + s)]\n                    if prow >= 0:\n                        scale_i8_ptr[fx.Int32(scale_off(prow, col_t >> 2))] = e8m0.to(fx.Int8)\n\n    @flyc.jit\n    def launch(\n        x: fx.Pointer,\n        topk_ids: fx.Pointer,\n        topk_w: fx.Pointer,\n        expert_mask: fx.Pointer,\n        n_local: fx.Pointer,\n        sorted_ids: fx.Pointer,\n        sorted_w: fx.Pointer,\n        sorted_e: fx.Pointer,\n        num_valid: fx.Pointer,\n        a1: fx.Pointer,\n        a1_scale: fx.Pointer,\n        out: fx.Pointer,\n        stream: fx.Stream,\n    ):\n        prelude_kernel(\n            x,\n            topk_ids,\n            topk_w,\n            expert_mask,\n            n_local,\n            sorted_ids,\n            sorted_w,\n            sorted_e,\n            num_valid,\n            a1,\n            a1_scale,\n            out,\n        ).launch(grid=(n_wg, 1, 1), block=(_P_THREADS, 1, 1), stream=stream)\n\n    return launch\n\n\n# aiter's heuristic stage-1 kernel without `_bnt0`: non-temporal w1 loads beat it, other wave counts, tile_n and\n# XCD swizzles did not.\n_STAGE1_KERNEL = \"flydsl_moe1_afp8_wfp4_bf16_t64x128x256_w3_gui_fp8\"\n\n# K-loop start step per (m-block, N-tile); stage 2 gains from an odd N step on top of the m step, stage 1 does not.\n_S1_ROT = (3, 0)\n_S2_ROT = (1, 1)\n\n_WRAP_K2 = \" % arith.constant(int(inter_dim), index=True)\"\n\n_S2_ROT_EDITS = (\n    (\n        \"return k_py // scale_pack_k // 128\",\n        \"return ((kf_start + arith.constant(k_py, index=True))\" + _WRAP_K2 + \")\"\n        \" // arith.constant(scale_pack_k * 128, index=True)\",\n    ),\n    (\n        \"k0 = arith.index(0)\\n\",\n        \"kf_start = ((bx * arith.constant(_ROT_M, index=True) + by * arith.constant(_ROT_N, index=True))\"\n        \" % arith.constant(int(inter_dim) // tile_k, index=True)) * arith.constant(tile_k, index=True)\\n\"\n        \"{ind}k0 = kf_start\\n\",\n    ),\n    (\"k0_bk = k0\\n\", \"k0_bk = k0 // b_byte_div\\n\"),\n    (\"next_k1 = k_iv + tile_k\\n\", \"next_k1 = (kf_start + k_iv + tile_k)\" + _WRAP_K2 + \"\\n\"),\n    (\"next_k2 = k_iv + c2_tile_k\\n\", \"next_k2 = (kf_start + k_iv + c2_tile_k)\" + _WRAP_K2 + \"\\n\"),\n    (\n        \"k_tail1 = (k_in + tile_k - 1) // tile_k * tile_k - tile_k\\n\",\n        \"k_tail1 = (kf_start + (k_in + tile_k - 1) // tile_k * tile_k - tile_k)\" + _WRAP_K2 + \"\\n\",\n    ),\n    ('f\"{cumul_tag}{xcd_tag}{acc_tag}\"', 'f\"{cumul_tag}{xcd_tag}{acc_tag}_krot{_ROT_M}x{_ROT_N}\"'),\n)\n\n_WRAP_K1 = \" % arith.constant(k_dim, index=True)\\n\"\n_S1_ROT_EDITS = (\n    (\n        \"body_k_base_idx = k_base_idx\\n\",\n        \"body_k_base_idx = ((expert_idx * arith.constant(_ROT_M, index=True) + by * arith.constant(_ROT_N, index=True))\"\n        \" % arith.constant(k_dim // tile_k, index=True)) * arith.constant(tile_k, index=True)\\n\",\n    ),\n    (\n        \"abs_k = body_k_base_idx + arith.constant(next_k_load, index=True)\\n\",\n        \"abs_k = (body_k_base_idx + arith.constant(next_k_load, index=True))\" + _WRAP_K1,\n    ),\n    (\n        \"if const_expr(use_async_copy and next_k_dma_py < int(k_dim)):\\n\",\n        \"abs_k_dma = abs_k_dma\"\n        + _WRAP_K1\n        + \"{ind}if const_expr(use_async_copy and next_k_dma_py < int(k_dim)):\\n\",\n    ),\n    (\n        \"k1 = body_k_base_idx + arith.constant(tile_k, index=True)\\n\",\n        \"k1 = (body_k_base_idx + arith.constant(tile_k, index=True))\" + _WRAP_K1,\n    ),\n    (\"k_tail1 = body_k_base_idx + k_tail_rel\\n\", \"k_tail1 = (body_k_base_idx + k_tail_rel)\" + _WRAP_K1),\n    (\n        '{heterogeneous_tag}_v{kernel_version}\"',\n        '{heterogeneous_tag}_v{kernel_version}_krot{_ROT_M}x{_ROT_N}\"',\n    ),\n)\n\n\n@functools.cache\ndef _builder_rot(stage, rot):\n    \"\"\"aiter's stage-``stage`` builder with each m-block's K loop started at k-tile ``(m*rot[0] + n*rot[1]) % nK``\n    and wrapped, so the workgroups streaming weights at once do not all hit the same address bits; the per-tile\n    sum order stays fixed.\"\"\"\n    name = f\"compile_mixed_moe_gemm{stage}_common\"\n    src = inspect.getsource(getattr(_gemm_common, name))\n    for old, new in _S1_ROT_EDITS if stage == 1 else _S2_ROT_EDITS:\n        assert src.count(old) == 1, old\n        if \"{ind}\" in new:\n            ind = re.search(r\"\\n([ \\t]*)\" + re.escape(old), src).group(1)\n            new = new.replace(\"{ind}\", ind)\n        src = src.replace(old, new)\n    ns = dict(_gemm_common.__dict__)\n    ns[\"_ROT_M\"], ns[\"_ROT_N\"] = rot\n    exec(compile(src, _gemm_common.__file__, \"exec\"), ns)\n    return ns[name]\n\n\n@functools.cache\ndef _s2_compile_rot(rot, b_dtype, **kw):\n    assert b_dtype in (\"fp4\", \"fp8\")\n    return _builder_rot(2, rot)(b_dtype=b_dtype, **kw)\n\n\n@functools.cache\ndef _s1_compile_rot(rot, b_dtype, gate_mode, k_batch, **kw):\n    assert b_dtype in (\"fp4\", \"fp8\") and k_batch == 1\n    return _builder_rot(1, rot)(b_dtype=b_dtype, gate_mode=GateMode(gate_mode), k_batch=k_batch, **kw)\n\n\n@functools.cache\ndef _plan(M, topk, E, global_E, model_dim, inter_dim, device_index):\n    meta = get_2stage_cfgs(\n        get_padded_M(M),\n        model_dim,\n        inter_dim,\n        E,\n        topk,\n        dtypes.bf16,\n        dtypes.fp8,\n        dtypes.fp4x2,\n        QuantType.per_1x32,\n        True,\n        ActivationType.Silu,\n        False,\n        0,\n        0,\n        True,\n        GateMode.INTERLEAVE,\n        is_ep=True,\n        has_stage2_bias=False,\n        opus_weights_shuffled=True,\n        config_file=None,\n    )\n    stage1 = meta.stage1\n    kw = dict(stage1.keywords)\n    kw[\"kernelName\"] = _STAGE1_KERNEL\n    # Stage 1 goes through aiter's impl directly (as its wrapper would) so the compiler can be the K-rotated one.\n    p = get_flydsl_kernel_params(kw[\"kernelName\"])\n    stage1 = functools.partial(\n        _flydsl_moe_stage1_impl,\n        tile_m=p[\"tile_m\"],\n        tile_n=p[\"tile_n\"],\n        tile_k=p[\"tile_k\"],\n        a_dtype=p[\"a_dtype\"],\n        b_dtype=p[\"b_dtype\"],\n        out_dtype=p[\"out_dtype\"],\n        act=\"silu\",\n        persist_m=0,\n        use_async_copy=True,\n        k_batch=p.get(\"k_batch\", 1),\n        waves_per_eu=p.get(\"waves_per_eu\", 3),\n        b_nt=p.get(\"b_nt\", 2),\n        gate_mode=p.get(\"gate_mode\", \"separated\"),\n        a_scale_one=p.get(\"a_scale_one\", False),\n        xcd_swizzle=p.get(\"xcd_swizzle\", 0),\n        k_wave=p.get(\"k_wave\", 1),\n        _compile_kernel=functools.partial(_s1_compile_rot, _S1_ROT),\n    )\n    stage2 = functools.partial(\n        _flydsl_moe_stage2_impl,\n        tile_m=64,\n        tile_n=128,\n        tile_k=256,\n        a_dtype=\"fp8\",\n        b_dtype=\"fp4\",\n        out_dtype=\"bf16\",\n        mode=\"atomic\",\n        persist=None,\n        _compile_kernel=functools.partial(_s2_compile_rot, _S2_ROT),\n    )\n    block_m = int(meta.block_m)\n    assert block_m == 64, block_m\n    max_num_tokens_padded = int(M * topk + global_E * block_m - topk)\n    max_num_m_blocks = (max_num_tokens_padded + block_m - 1) // block_m\n    # Upper bound on live sort blocks for ANY routing: at most M*topk local routes, plus < block_m padding\n    # rows for each of the E local experts. Both GEMM grids are sized from the length of sorted_expert_ids, so\n    # handing them only this prefix drops the workgroups that could never find a valid block.\n    n_blk_live = min((M * topk + E * block_m + block_m - 1) // block_m, max_num_m_blocks)\n    prelude = _build_prelude(M, topk, global_E, E, block_m, model_dim, max_num_tokens_padded)\n    return stage1, stage2, block_m, max_num_tokens_padded, max_num_m_blocks, n_blk_live, prelude\n\n\ndef run(\n    *,\n    hidden_states,\n    w1,\n    w2,\n    topk_weights,\n    topk_ids,\n    w1_scale,\n    w2_scale,\n    activation,\n    quant_type,\n    doweight_stage1,\n    gate_mode,\n    act_quant,\n    expert_mask,\n    num_local_tokens,\n    beta,\n    linear_beta,\n    swiglu_limit,\n    out_dtype,\n    out,\n):\n    M, topk = topk_ids.shape\n    E = w1.shape[0]\n    model_dim = w2.shape[1]\n    inter_dim = w2.shape[2] * 2\n    global_E = expert_mask.numel()\n    device = topk_ids.device\n    stage1, stage2, block_m, n_pad, n_blocks, n_blk_live, prelude = _plan(\n        M, topk, E, global_E, model_dim, inter_dim, device.index\n    )\n\n    sorted_ids = torch.empty(n_pad, dtype=torch.int32, device=device)\n    sorted_weights = torch.empty(n_pad, dtype=torch.float32, device=device)\n    sorted_expert_ids = torch.empty(n_blocks, dtype=torch.int32, device=device)\n    num_valid_ids = torch.empty(2, dtype=torch.int32, device=device)\n    if num_local_tokens is None:\n        num_local_tokens = torch.full((1,), M, dtype=torch.int32, device=device)\n    a1 = torch.empty((M, model_dim), dtype=dtypes.fp8, device=device)\n    a1_scale = torch.empty(\n        ((n_pad + 31) // 32 * 32, (model_dim // 32 + 7) // 8 * 8), dtype=dtypes.fp8_e8m0, device=device\n    )\n    _run_compiled(\n        prelude,\n        ptr_arg(hidden_states),\n        ptr_arg(topk_ids),\n        ptr_arg(topk_weights),\n        ptr_arg(expert_mask),\n        ptr_arg(num_local_tokens),\n        ptr_arg(sorted_ids),\n        ptr_arg(sorted_weights),\n        ptr_arg(sorted_expert_ids),\n        ptr_arg(num_valid_ids),\n        ptr_arg(a1),\n        ptr_arg(a1_scale),\n        ptr_arg(out),\n        torch.cuda.current_stream(),\n    )\n\n    live_expert_ids = sorted_expert_ids[:n_blk_live]\n    limit = None if swiglu_limit is None else float(swiglu_limit)\n    a2, a2_scale = stage1(\n        a=a1,\n        w1=w1,\n        sorted_token_ids=sorted_ids,\n        sorted_expert_ids=live_expert_ids,\n        num_valid_ids=num_valid_ids,\n        out=None,\n        topk=topk,\n        a1_scale=a1_scale,\n        w1_scale=w1_scale.view(dtypes.fp8_e8m0),\n        sorted_weights=None,\n        swiglu_limit=limit,\n        situ_beta=1.0,\n        situ_linear_beta=1.0,\n    )\n    a2 = a2.view(M, topk, -1)\n    stage2(\n        a2,\n        w2,\n        sorted_ids,\n        live_expert_ids,\n        num_valid_ids,\n        out,\n        topk,\n        w2_scale=w2_scale.view(dtypes.fp8_e8m0),\n        a2_scale=a2_scale,\n        sorted_weights=sorted_weights,\n        sort_block_m=block_m,\n    )\n"
+      }
+    ]
+  }
+}
