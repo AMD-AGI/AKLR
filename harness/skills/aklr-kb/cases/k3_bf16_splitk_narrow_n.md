@@ -52,7 +52,7 @@ The same fold forms at N 6016–8448 and at K 35840 are in [k3_bf16_splitk_wide_
 - **CI serves 83 of their 88 Points** as of #102 (6d7cfec, CI run 42549655045, measurement profile 19), n1280's as
   of CI run 42000899019 (d908d01, #71), which #102 left unchanged; the count per file is in § Result, and the
   current value of each Point is the `speedup` in its schema's `workloads`. Dispatch serves a workload only from
-  `AKLR_MIN_SPEEDUP` 1.03 (`aklr/ops/README.md` § Environment variables; `aklr/core/contract/spec/_workloads.py:38`).
+  `AKLR_MIN_SPEEDUP` 1.05 (`aklr/ops/README.md` § Environment variables; `aklr/core/contract/spec/_workloads.py:38`).
 
 ## Counter-signals
 
@@ -329,7 +329,7 @@ an otherwise idle GPU, where every split is resident; test the folds also with a
 ## Rollback
 
 Delete the schema file: its Points go unserved, since no other file serves them. `AKLR_DISABLE=gemm@1.0` stops serving
-the whole contract, every other bf16 GEMM schema included. A Point CI measures below 1.03 is not served, and a
+the whole contract, every other bf16 GEMM schema included. A Point CI measures below 1.05 is not served, and a
 `failed` accuracy never is. Roll back for a wrong result CI does not catch: NaN or a stale fold after a timed-out or
 aborted launch, a silently wrong sum from n1536 when its splits are not resident, a hang of n144, or a change of
 FlyDSL or LLVM.

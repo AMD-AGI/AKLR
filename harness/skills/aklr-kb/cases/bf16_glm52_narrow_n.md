@@ -108,7 +108,7 @@ Fold forms: a separate reduce launch against an in-launch last-arriver (`../gemm
 
 `speedup` as CI writes it into each schema's `workloads`: a lower bound of the CUDA-graph time ratio aiter /
 kernel (`aklr/core/validation/stages/_bench/_report.py`). The table is an earlier CI run of the predecessor repository; bold: at or
-above 1.03 (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` § Environment variables) in that run. Per Point:
+above 1.03 (`AKLR_MIN_SPEEDUP`'s default then, `aklr/ops/README.md` § Environment variables) in that run. Per Point:
 
 The predecessor repository's CI ran an editable install whose `setup.py` replaced any other FlyDSL with its pin, so
 these runs used FlyDSL 0.3.2, not the CI image's 0.3.4.1 (not checked in the run's log;
@@ -130,7 +130,7 @@ schema's `workloads` is the current value.
 above: no MFMA, no LDS ring, `b` in its row-major layout loaded straight into registers, the whole K of an output in
 one workgroup. No other file serves these Points, so the yardstick is aiter. As of #125 CI reads 1.020–1.286:
 dispatch serves m 8–128, not m 4 (`qualifies()` in `aklr/core/contract/spec/_workloads.py`; `AKLR_MIN_SPEEDUP`,
-default 1.03, `aklr/ops/README.md` § Environment variables). Narrow N at larger m:
+default 1.05, `aklr/ops/README.md` § Environment variables). Narrow N at larger m:
 [bf16_k4096_splitk_hgemm.md](bf16_k4096_splitk_hgemm.md). m 1 and 2 are not listed: within 2% of aiter
 (1.014, 1.019) *(field, E4)*.
 
@@ -176,7 +176,7 @@ bench measures only schemas that are not at the base, so on an unchanged checkou
 ## Rollback
 
 Delete the schema file: dispatch stops serving that file's Points. `AKLR_DISABLE=gemm@1.0` stops serving the
-whole contract, every other bf16 GEMM schema included. A re-measured Point below 1.03 stops being served
+whole contract, every other bf16 GEMM schema included. A re-measured Point below 1.05 stops being served
 without a rollback, and a `failed` accuracy is never served. Roll back for a wrong result CI does not catch, for
 example after a FlyDSL or LLVM upgrade, or a counter left off its expected value by an aborted launch (n32 at
 m = 2048).

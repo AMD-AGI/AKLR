@@ -466,7 +466,7 @@ python -m aklr validate --base origin/main --stages audit,bench --devices 0 <sch
 alone needs no GPU. Without `--base` the committed `f3970dec` was timed against the baseline alone, at the retain
 threshold; a copy with `--base origin/main` against the baseline at the entry threshold and the serving file
 (`incumbent`) at the retain one. A Point that stores less than `AKLR_MIN_SPEEDUP` is not served (`not_qualified`): the
-committed RMSNorm `cf637bff0784c454` stored 1.023–1.029 at its 7 Points of 3–18 tokens at d908d01, none served at the default 1.03,
+committed RMSNorm `cf637bff0784c454` stored 1.023–1.029 at its 7 Points of 3–18 tokens at d908d01, none served at the default then, 1.03,
 and 1.04 or more at the others, all served *(field, E17)*. Tune past the dispatch threshold (`aklr/ops/README.md` §
 Environment variables; `harness/skills/aklr-read-validation/references/ruler.md` § Judging; reading a report: its
 `SKILL.md`).

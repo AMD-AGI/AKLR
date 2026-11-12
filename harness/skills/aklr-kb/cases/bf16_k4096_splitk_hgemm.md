@@ -121,7 +121,7 @@ XCD order: `../gemm/schedule_and_locality.md` §2, `../gemm/small_m.md` §6.
 
 `speedup` as CI writes it into each schema's `workloads`: a lower bound of the CUDA-graph time ratio aiter /
 kernel (`aklr/core/validation/stages/_bench/_report.py`). The table is one CI run of the predecessor repository; bold: at or
-above 1.03 (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` § Environment variables) in that run. Per Point:
+above 1.03 (`AKLR_MIN_SPEEDUP`'s default then, `aklr/ops/README.md` § Environment variables) in that run. Per Point:
 
 The predecessor repository's CI installed the code with `--no-deps`, but the editable install ran that repository's
 `setup.py`, which at that commit replaced any other FlyDSL with its pin, so these runs used FlyDSL 0.3.2, the
@@ -145,7 +145,7 @@ to narrower N at m 256–4096, one new file each: `gemm_n64_k4096/3af3d3de3d0f22
 weight), `gemm_n128_k6144/0ebeb298609e55ab.json` (m 256–2048, 1.5 MiB) and `gemm_n256_k6144/d47047da480ab92f.json`
 (m 256–1024, 3 MiB). No other file serves these Points (the older K 6144 files read below aiter at these m in CI,
 #102), so the yardstick is aiter; narrow N at small m is on [bf16_glm52_narrow_n.md](bf16_glm52_narrow_n.md). CI
-reads 1.211–1.624 at all 12 Points (#125), at or above `AKLR_MIN_SPEEDUP` (default 1.03, `aklr/ops/README.md` §
+reads 1.211–1.624 at all 12 Points (#125), at or above `AKLR_MIN_SPEEDUP` (default 1.05, `aklr/ops/README.md` §
 Environment variables; `qualifies()` in `aklr/core/contract/spec/_workloads.py`), so dispatch serves the new files.
 N 2048 × K 2048 at m 256–4096 starts from n512's `_build_gemm` too:
 [bf16_large_m_whole_k_tiles.md](bf16_large_m_whole_k_tiles.md).
@@ -237,7 +237,7 @@ bench measures only schemas that are not at the base, so on an unchanged checkou
 ## Rollback
 
 Delete the schema file: dispatch stops serving that file's Points. `AKLR_DISABLE=gemm@1.0` stops serving the
-whole contract, every other bf16 GEMM schema included. A re-measured Point below 1.03 stops being served
+whole contract, every other bf16 GEMM schema included. A re-measured Point below 1.05 stops being served
 without a rollback, and a `failed` accuracy is never served. Roll back for a wrong result CI does not catch, for
 example after a FlyDSL or LLVM upgrade, or a split-K counter left non-zero by an aborted launch.
 

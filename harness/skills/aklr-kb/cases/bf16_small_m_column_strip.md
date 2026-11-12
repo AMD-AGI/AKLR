@@ -34,7 +34,7 @@ kernel (`_build_splitk`). The band kernels of the same decode sizes, which split
 - N = 6144 with K = 4096 or 6144: 48 or 72 MiB of `b`, against at most 1.5 MiB of `a` at these m (estimated from the
   shapes), so each kernel gives every CU its own strip of `b`.
 - No other file serves these Points, so the yardstick is aiter. Dispatch serves a Point whose CI `speedup` reaches
-  `AKLR_MIN_SPEEDUP`, default 1.03 (`qualifies()` in `aklr/core/contract/spec/_workloads.py`; `aklr/ops/README.md`
+  `AKLR_MIN_SPEEDUP`, default 1.05 (`qualifies()` in `aklr/core/contract/spec/_workloads.py`; `aklr/ops/README.md`
   § Environment variables); every listed Point of both files reaches it in CI, 1.081–1.316, so all 16 are served (#125).
 
 ## Counter-signals

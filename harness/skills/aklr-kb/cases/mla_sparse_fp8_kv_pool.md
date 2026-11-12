@@ -148,7 +148,7 @@ No other kernel has these files' Points (the extra-8256 name's other file holds 
 the yardstick at every Point is the defined baseline that bench
 times, sglang's TileLang `dpsk_v4_fp8_attention_fwd`. `speedup` is a one-sided lower bound (α = 0.05) of baseline /
 kernel time over 32 rounds of CUDA-graph replays with a 1 GiB cache flush before each call
-(`aklr/core/validation/stages/_measure.py`); a Point is served from 1.03 (`AKLR_MIN_SPEEDUP`).
+(`aklr/core/validation/stages/_measure.py`); a Point is served from 1.05 (`AKLR_MIN_SPEEDUP`).
 
 The predecessor repository's CI measured these numbers on FlyDSL 0.3.2, the repository's pin, not the CI image's
 0.3.4.1 (`../pitfalls/measured_a_different_build.md`).
@@ -187,7 +187,7 @@ measurement is the one dispatch reads. To read the kernel:
 Delete a schema file (in a PR): its Points fall back to the caller's own kernel, sglang's TileLang attention, since
 no other file serves them. `AKLR_DISABLE=flash_mla_with_kvcache@1.0` drops all three and the contract's six other
 kernels: two dense fp8 ones at 96 heads, two at 128 heads, and the 64-head extra-1024 and small-pool extra-8256 ones
-(S10). A Point CI measures below 1.03 stops being served without a rollback. Roll
+(S10). A Point CI measures below 1.05 stops being served without a rollback. Roll
 back for a wrong result CI does not catch, such as a pool view at a non-zero storage offset or a FlyDSL or LLVM
 upgrade, or when the cached workspaces do not fit the server's memory budget.
 

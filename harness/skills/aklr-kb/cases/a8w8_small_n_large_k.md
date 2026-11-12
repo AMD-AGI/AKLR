@@ -130,7 +130,7 @@ Per file (functions are in the `kernel.py` each schema embeds):
 Each file is the only schema at its Points (no other file under `aklr/ops/gemm/impls/` carries these names), so the
 faster of AKLR's served kernel and aiter is aiter, and the `speedup` CI wrote is the yardstick. Each value is a
 one-sided lower bound (α = 0.05) of the aiter / kernel time ratio over 32 rounds of CUDA-graph replays with L2
-flushed before each call (`aklr/core/validation/stages/_measure.py`); a Point is served from 1.03.
+flushed before each call (`aklr/core/validation/stages/_measure.py`); a Point is served from 1.05.
 
 The predecessor repository's CI ran an editable install whose `setup.py` replaced any other FlyDSL with its pin, so
 these runs used FlyDSL 0.3.2, not the CI image's 0.3.4.1 (not checked in the runs' logs;
@@ -164,7 +164,7 @@ measurement is the one dispatch reads.
 
 Delete the schema file (in a PR): its Points go unserved, since no other file serves them. `AKLR_DISABLE`
 takes a whole contract id and would also drop every other `gemm_a8w8_blockwise_scaled@1.0` kernel. A Point that CI
-measures below 1.03 stops being served without a rollback (as n1024_k4096 m = 4096 is now); delete the file for a
+measures below 1.05 stops being served without a rollback (as n1024_k4096 m = 4096 is now); delete the file for a
 wrong result, a crash, or a regression above the threshold that CI has not yet measured.
 
 ## Evidence
