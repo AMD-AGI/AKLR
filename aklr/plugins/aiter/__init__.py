@@ -10,5 +10,7 @@ plugin declares its route on the releases it was tested on, with the parameters 
 release's image, and passes every argument by name."""
 
 from aklr.plugins.aiter.fused_moe import fused_moe
+from aklr.plugins.aiter.triton_gemm import gemm_a16w16
+from aklr.plugins.aiter.tuned_gemm import mm
 
-__all__ = ["fused_moe"]
+__all__ = ["fused_moe", "gemm_a16w16", "mm"]
