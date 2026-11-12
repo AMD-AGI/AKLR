@@ -107,7 +107,7 @@ FLASH_MLA_WITH_KVCACHE = OpContract(
         ),
         "query_length": axis("Queries per row.", 1, 65536),
         "n_heads": axis("Query heads.", 1, 128),
-        "n_pages": axis("Pages of the KV pool.", 1, _SLOT_LIMIT, is_var=True),
+        "n_pages": axis("Pages of the KV pool.", 1, _SLOT_LIMIT, is_var=True, any_size=True),
         "page_size": axis("Slots per page of the KV pool.", 1, 256),
         "n_indices": axis("Sparse indices per token.", 64, 65536, multiple_of=64),
         "n_extra_pages": axis("Pages of the extra KV pool.", 1, _SLOT_LIMIT, is_var=True),
@@ -118,6 +118,7 @@ FLASH_MLA_WITH_KVCACHE = OpContract(
             1,
             _SLOT_LIMIT - 1,  # cu_seqlens_k holds it as an int32 offset
             is_var=True,
+            any_size=True,
         ),
         "n_offsets": axis("Offsets in cu_seqlens_k: batch + 1.", 2, 65537, is_var=True),
     },

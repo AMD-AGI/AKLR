@@ -23,6 +23,7 @@ from aklr.plugins.sglang import hook
 for package in op_packages():
     if package.startswith("aklr.plugins.sglang."):
         importlib.import_module(f"{package}.api")
+importlib.import_module("aklr.plugins.sglang.layers.aiter_backend_mla_verify")
 DECLARED = list(hook._ROUTES)
 INSTALLED = "0.5.22"
 
@@ -196,7 +197,15 @@ def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, hooked):
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     plugin.register()
-    routes = ["aklr.plugins.sglang.x.y.api", "install"] if hooked else []
+    routes = (
+        [
+            "aklr.plugins.sglang.x.y.api",
+            "aklr.plugins.sglang.layers.aiter_backend_mla_verify",
+            "install",
+        ]
+        if hooked
+        else []
+    )
     assert register_calls == ["aklr starts", *routes]
 
 
