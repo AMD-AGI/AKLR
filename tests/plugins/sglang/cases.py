@@ -170,6 +170,68 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # Kimi-K3's latent MoE shrunk: 32 routed experts of latent size 256 in their
+    # gate-up-interleaved layout, as sglang holds them for aiter's a8w4 path
+    PointSpec(
+        contract_id="kimi_k3_latent_moe@1.0",
+        axes={
+            "n_tokens": 4,
+            "model_dim": 256,
+            "latent_dim": 256,
+            "n_routed": 32,
+            "inter_dim": 128,
+            "shared_inter_dim": 128,
+        },
+        dtypes={
+            "hidden_states": "bfloat16",
+            "front_weight": "bfloat16",
+            "correction_bias": "float32",
+            "w1": "float4_e2m1",
+            "w1_scale": "float8_e8m0",
+            "w2": "float4_e2m1",
+            "w2_scale": "float8_e8m0",
+            "shared_w2": "bfloat16",
+            "latent": "bfloat16",
+            "shared": "bfloat16",
+        },
+        attrs={"topk": 16},
+        layout_variant_name="gate_up_interleaved",
+    ),
+    # Kimi-K3's MLA decode: two heads over a small latent cache
+    PointSpec(
+        contract_id="kimi_k3_mla_decode@1.0",
+        axes={"n_seqs": 4, "n_heads": 2, "n_slots": 64, "n_offsets": 5, "n_kv_tokens": 40},
+        dtypes={
+            "q": "bfloat16",
+            "kv_cache": "float8_e4m3fn",
+            "kv_indptr": "int32",
+            "kv_indices": "int64",
+            "output": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
+        contract_id="kimi_k3_mla_vc_output_gate@1.0",
+        axes={"n_tokens": 4, "n_heads": 2, "v_head_dim": 32},
+        dtypes={"latent": "bfloat16", "vc_weight": "bfloat16", "gate": "bfloat16", "output": "bfloat16"},
+        attrs={},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
+        contract_id="kimi_k3_mla_prefill_gate@1.0",
+        axes={"n_tokens": 1536, "n_offsets": 3, "n_heads": 2},
+        dtypes={
+            "q": "bfloat16",
+            "k": "bfloat16",
+            "v": "bfloat16",
+            "gate": "bfloat16",
+            "qo_indptr": "int32",
+            "output": "bfloat16",
+        },
+        attrs={"max_seq_len": 1024},
+        layout_variant_name="row_major",
+    ),
     # MiniMax-M2's MoE shrunk: every routed expert on the rank, then half of them (expert
     # parallelism); the experts as sglang holds them for aiter
     *(
