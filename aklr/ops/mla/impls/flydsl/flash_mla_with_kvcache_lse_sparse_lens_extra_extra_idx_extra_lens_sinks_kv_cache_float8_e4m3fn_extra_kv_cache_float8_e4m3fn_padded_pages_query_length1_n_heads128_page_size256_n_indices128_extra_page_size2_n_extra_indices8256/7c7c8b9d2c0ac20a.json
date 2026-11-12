@@ -212,7 +212,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 2.889
+      "speedup": 2.94
     },
     {
       "axes": {
@@ -225,7 +225,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 5.652
+      "speedup": 5.663
     },
     {
       "axes": {
@@ -238,7 +238,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 4.602
+      "speedup": 4.657
     },
     {
       "axes": {
@@ -251,7 +251,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 3.268
+      "speedup": 3.307
     },
     {
       "axes": {
@@ -264,7 +264,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 9.146
+      "speedup": 9.122
     },
     {
       "axes": {
@@ -277,7 +277,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 9.771
+      "speedup": 9.784
     },
     {
       "axes": {
@@ -290,7 +290,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 6.615
+      "speedup": 6.628
     },
     {
       "axes": {
@@ -303,7 +303,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 8.293
+      "speedup": 8.287
     },
     {
       "axes": {
@@ -316,7 +316,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 8.586
+      "speedup": 8.524
     },
     {
       "axes": {
@@ -329,7 +329,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 8.061
+      "speedup": 8.08
     },
     {
       "axes": {
@@ -342,39 +342,13 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 9.14
+      "speedup": 8.943
     },
     {
       "axes": {
         "batch": 8,
         "n_pages": 663,
         "n_extra_pages": 6621
-      },
-      "scalars": {
-        "sm_scale": 0.04419417306780815,
-        "kv_scale": 1.0
-      },
-      "accuracy": "passed",
-      "speedup": 7.631
-    },
-    {
-      "axes": {
-        "batch": 8,
-        "n_pages": 1283,
-        "n_extra_pages": 12825
-      },
-      "scalars": {
-        "sm_scale": 0.04419417306780815,
-        "kv_scale": 1.0
-      },
-      "accuracy": "passed",
-      "speedup": 7.374
-    },
-    {
-      "axes": {
-        "batch": 8,
-        "n_pages": 3919,
-        "n_extra_pages": 39182
       },
       "scalars": {
         "sm_scale": 0.04419417306780815,
@@ -386,6 +360,32 @@
     {
       "axes": {
         "batch": 8,
+        "n_pages": 1283,
+        "n_extra_pages": 12825
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815,
+        "kv_scale": 1.0
+      },
+      "accuracy": "passed",
+      "speedup": 7.415
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 3919,
+        "n_extra_pages": 39182
+      },
+      "scalars": {
+        "sm_scale": 0.04419417306780815,
+        "kv_scale": 1.0
+      },
+      "accuracy": "passed",
+      "speedup": 7.661
+    },
+    {
+      "axes": {
+        "batch": 8,
         "n_pages": 4567,
         "n_extra_pages": 45663
       },
@@ -394,7 +394,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 6.985
+      "speedup": 7.014
     },
     {
       "axes": {
@@ -407,7 +407,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 8.801
+      "speedup": 8.906
     },
     {
       "axes": {
@@ -420,7 +420,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 8.905
+      "speedup": 8.965
     },
     {
       "axes": {
@@ -433,7 +433,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 9.603
+      "speedup": 9.666
     },
     {
       "axes": {
@@ -446,7 +446,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 8.668
+      "speedup": 8.711
     },
     {
       "axes": {
@@ -459,7 +459,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 10.307
+      "speedup": 10.412
     },
     {
       "axes": {
@@ -472,7 +472,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 10.186
+      "speedup": 10.178
     },
     {
       "axes": {
@@ -485,7 +485,7 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 10.786
+      "speedup": 10.79
     }
   ],
   "layout_variants": {

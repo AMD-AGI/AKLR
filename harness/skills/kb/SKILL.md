@@ -39,7 +39,7 @@ wins. Check a plan against this table before writing code.
 | Rule | What it rules out here |
 |---|---|
 | Outputs pass the definition's `compare` block; under `determinism: bitwise`, the default, two runs are byte-identical (`runs_agree`, `aklr/core/contract/semantics/_compare.py`) | Reducing in arrival order (atomic split-K, stream-K fix-ups): reduce in a fixed order (`gemm/correctness.md` §8, `gemm/grid_pricing.md` §2) |
-| A Point is served by the file with the best measured `speedup` over the baseline, and only from `AKLR_MIN_SPEEDUP` (1.03) | Judging on a mean: compare each Point with the faster of the kernel AKLR serves there and the baseline |
+| A Point is served by the file with the best measured `speedup` over the baseline, and only from `AKLR_MIN_SPEEDUP` (1.05) | Judging on a mean: compare each Point with the faster of the kernel AKLR serves there and the baseline |
 | Launch code (`run` and what it calls) does not synchronize, call `.item()` / `.cpu()`, print, read a clock or the environment, or change torch state (SA3) | Timing or racing configurations in `run` |
 | Compilation and the choice of configuration happen in a module-level `@functools.cache` function on a Point's first call; later calls may be inside a CUDA graph capture | The first-call race of `gemm/autotune.md` §1 as written: choose from the shape, with a table raced offline |
 | Inputs other than the mutable ones are read-only (SA2); nothing derived from an argument is kept across calls, and there is no `global` or `nonlocal` (SA1) | Caching a repacked weight: repack on every call, or serve the contract's shuffled layout variant where it has one |

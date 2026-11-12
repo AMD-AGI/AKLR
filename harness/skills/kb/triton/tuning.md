@@ -66,7 +66,7 @@ How far the number moves with no change to the kernel:
   (bf16 GEMM, RMSNorm), lowest Point *(field, E5)*. With identical baseline times the baseline cancels algebraically; in the measured interleaved A/Bs, B/A of the ratios matched A/B
   of the call times within 0.2% over 8 pairs *(field, E3)*.
 - **The yardstick.** Among files whose workloads qualify (including accuracy), dispatch serves at a fixed-size Point the file with the highest stored speedup that reaches
-  `AKLR_MIN_SPEEDUP` (default 1.03; a 1.02 file alone was `not_qualified`), so a kernel counts per Point against the
+  `AKLR_MIN_SPEEDUP` (default 1.05, 1.03 before; a 1.02 file alone was `not_qualified`), so a kernel counts per Point against the
   faster of the kernel main serves there and the baseline (`aklr/ops/README.md`: files sharing a name, § Environment
   variables; `../CONTRIBUTING.md` § Evidence); §2 step 3 times both in the same rounds.
 - **A benchmark of your own is not a substitute for `validate`.** In one comparison of 7 A/B pairs (router split-K, fp8 GEMM prefetch / tile order, MoE `.cg`), hot eager, flushed eager and graph replay without the flush missed its recorded B/A by >1% on 6, 4 and 5 pairs. AKLR's `bench_cudagraph` came within 0.9% on 6, but read 0.930 versus `validate`'s 0.871–0.905 for m = 16 `PREFETCH` 5 → 3: A read 4.49 µs versus 4.23–4.33 *(field, E47)* ([debugging.md](debugging.md) §11).

@@ -104,7 +104,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
   - 正确性：对每个 workload 用分布采样的输入，参考实现进行比较；
   - 性能：在 CUDA graph 下与基线多轮对比。
 
-**门槛**：新 kernel 的每个 Point 相对基线（`aklr/ops/<op>/baseline.py` 的 `<contract>_baseline`）要 ≥ **1.02**，相对已服务的 kernel 要 ≥ **0.99**，运行时服务要求 ≥ `AKLR_MIN_SPEEDUP`（默认 **1.03**）。不达标的 Point 只记进 report 的 demoted 列表，不会让 validate 失败；demoted 里既有性能不达标的，也有正确性不过的（如 `numeric_mismatch`、`build_failed`、`candidate_crash`，CI 会写成 `accuracy: failed`），两类都要处理。只有一个 workload 都不达标时，schema 才报 `no_qualifying_workload`。
+**门槛**：新 kernel 的每个 Point 相对基线（`aklr/ops/<op>/baseline.py` 的 `<contract>_baseline`）要 ≥ **1.05**，相对已服务的 kernel 要 ≥ **0.99**，运行时服务要求 ≥ `AKLR_MIN_SPEEDUP`（默认 **1.05**）。不达标的 Point 只记进 report 的 demoted 列表，不会让 validate 失败；demoted 里既有性能不达标的，也有正确性不过的（如 `numeric_mismatch`、`build_failed`、`candidate_crash`，CI 会写成 `accuracy: failed`），两类都要处理。只有一个 workload 都不达标时，schema 才报 `no_qualifying_workload`。
 
 ## 4. PR 与 CI
 
@@ -119,7 +119,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 
 ## 5. 运行时分发
 
-调用 api 时，如果这次调用的 Point 在某个已加载 schema（`targets`/`requires` 与本机匹配）的 workloads 里，且该 workload 的 `accuracy` 不是 `failed`、`speedup ≥ AKLR_MIN_SPEEDUP`（默认 1.03），就运行该 kernel。
+调用 api 时，如果这次调用的 Point 在某个已加载 schema（`targets`/`requires` 与本机匹配）的 workloads 里，且该 workload 的 `accuracy` 不是 `failed`、`speedup ≥ AKLR_MIN_SPEEDUP`（默认 1.05），就运行该 kernel。
 
 其余情况不走 kernel：api 返回 `FallbackReason`，由调用方运行自己的实现。
 
@@ -131,7 +131,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 | `no_workload` | 这次调用的 Point 不在任何已加载 schema 的 workloads 里（如 `<var 轴>` 的取值不在列表里） |
 | `not_measured` | 还没测量 |
 | `inaccurate` | 测量结果为 `failed` |
-| `not_qualified` | 已测且 passed，但 speedup < `AKLR_MIN_SPEEDUP`（默认 1.03） |
+| `not_qualified` | 已测且 passed，但 speedup < `AKLR_MIN_SPEEDUP`（默认 1.05） |
 | `not_warmed` | 在 graph capture 中，而该 Point 从未在 graph 外跑过 |
 
 ## 示例：添加一个 fused MoE schema

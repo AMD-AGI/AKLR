@@ -1,0 +1,261 @@
+{
+  "schema_version": 5,
+  "name": "qwen2_moe_mxfp4_moe_shuffled_16x16_model_dim4096_n_routed512_inter_dim256_shared_inter_dim256",
+  "contract_id": "qwen2_moe_mxfp4_moe@1.0",
+  "description": "sglang's Qwen2MoeSparseMoeBlock.forward on one rank of its TP group, with MXFP4 routed experts and the shared expert apart in BF16 (sglang's path for a checkpoint that keeps its shared expert BF16, which cannot be fused): the logits hidden_states router_weight^T, rounded to bf16, pick each token's topk experts by descending logit, a tie going to the lower expert id, weighed by the softmax of their logits (the softmax over every expert, renormalized over the chosen ones); each routed expert down(silu(gate(x)) * up(x)) of its MXFP4 weights (fused_moe's: fp4 values at an e8m0 scale per 32), the shared expert down(silu(gate(x)) * up(x)) of its BF16 weights, weighed by sigmoid(hidden_states shared_gate_weight^T) and added; out is this rank's share of the block's output, which the TP group sums after the call",
+  "op_type": "qwen2_moe",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 4096,
+      "description": "Hidden size."
+    },
+    "n_routed": {
+      "type": "const",
+      "value": 512,
+      "description": "Routed experts: the router's rows."
+    },
+    "inter_dim": {
+      "type": "const",
+      "value": 256,
+      "description": "Routed expert intermediate size on this rank."
+    },
+    "shared_inter_dim": {
+      "type": "const",
+      "value": 256,
+      "description": "Shared expert intermediate size on this rank."
+    },
+    "gate_up_rows": {
+      "type": "const",
+      "value": 512,
+      "description": "w1 rows: gate and up concatenated."
+    },
+    "model_blocks": {
+      "type": "const",
+      "value": 128,
+      "description": "w1 scale columns."
+    },
+    "inter_blocks": {
+      "type": "const",
+      "value": 8,
+      "description": "w2 scale columns."
+    },
+    "shared_gate_up_rows": {
+      "type": "const",
+      "value": 512,
+      "description": "shared_w1 rows: gate and up concatenated."
+    }
+  },
+  "attrs": {
+    "topk": 10
+  },
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The tokens' hidden states, the MoE block's input."
+    },
+    "router_weight": {
+      "shape": [
+        "n_routed",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 4096
+      },
+      "description": "The router (the block's gate) projection."
+    },
+    "w1": {
+      "shape": [
+        "n_routed",
+        "gate_up_rows",
+        "model_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gate-up projection per routed expert: gate rows, then up rows."
+    },
+    "w1_scale": {
+      "shape": [
+        "n_routed",
+        "gate_up_rows",
+        "model_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -11,
+        "log2_hi": -5
+      },
+      "description": "Per 1 x 32 block of w1."
+    },
+    "w2": {
+      "shape": [
+        "n_routed",
+        "model_dim",
+        "inter_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Down projection per routed expert."
+    },
+    "w2_scale": {
+      "shape": [
+        "n_routed",
+        "model_dim",
+        "inter_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -9,
+        "log2_hi": -3
+      },
+      "description": "Per 1 x 32 block of w2."
+    },
+    "shared_w1": {
+      "shape": [
+        "shared_gate_up_rows",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 4096
+      },
+      "description": "The shared expert's gate-up projection on this rank: gate rows, then up rows."
+    },
+    "shared_w2": {
+      "shape": [
+        "model_dim",
+        "shared_inter_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 4
+      },
+      "description": "The shared expert's down projection on this rank."
+    },
+    "shared_gate_weight": {
+      "shape": [
+        1,
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 4096
+      },
+      "description": "shared_expert_gate's weight: the shared expert weighs sigmoid(hidden_states shared_gate_weight^T)."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "This rank's share of the MoE block's output."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 56
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 128
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "shuffled_16x16": {
+        "layouts": {
+          "w1": {
+            "kind": "preshuffle",
+            "tile": [16, 16]
+          },
+          "w2": {
+            "kind": "preshuffle",
+            "tile": [16, 16]
+          },
+          "w1_scale": {
+            "kind": "e8m0_scales",
+            "block_size": 32,
+            "pad_to": [256, 8],
+            "shuffled": true
+          },
+          "w2_scale": {
+            "kind": "e8m0_scales",
+            "block_size": 32,
+            "pad_to": [256, 8],
+            "shuffled": true
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "w1.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w2.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w1_scale.ndim",
+            "expected_value": 3
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Qwen3.5 MXFP4 MoE block, TP4, for 128 tokens.\n\nqwen2_moe_mxfp4_moe for Qwen3.5-397B-A17B-MXFP4 at TP4 on gfx950: hidden size 4096, 512\nrouted experts of intermediate size 256 on this rank, top-10, and the BF16 shared expert of\nintermediate size 256 apart from them. The router's logits rounded to bf16 pick each token's\n10 experts by descending logit (a tie to the lower id), weighed by their renormalized softmax;\neach routed expert's gate-up and down projections take their inputs quantized to MXFP4 per 32\nvalues, on sglang's 16 x 16 shuffled fp4 weights and e8m0-shuffled scales, silu(gate) * up\nbetween them, the routes' contributions rounded to bf16 and summed in slot order; the\nshared expert's BF16 projections, weighed by the sigmoid of hidden_states shared_gate_weight^T\nin fp32, are added, and out is this rank's share of the block's output.\n\nFive launches: the router and shared gate-up projections beside the input's MXFP4\nquantization and the shared gate; the top-10 selection into per-expert jobs with the shared\nactivation; the routed gate-up per job, its activation quantized to MXFP4, beside the shared\ndown projection; the routed down projection into per-route bf16 contributions; their ordered\nten-slot merge with the gated shared output into out.\n\"\"\"\n\nfrom typing import NamedTuple\n\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n\nclass _ExpertTile(NamedTuple):\n    n: int\n    k: int\n    warps: int\n    adaptive: bool\n    weight_buffer: bool = False\n    scale_buffer: bool = False\n    weight_cache: str = \"\"\n    scale_cache: str = \"\"\n\n\nclass _DenseTile(NamedTuple):\n    m: int\n    n: int\n    k: int\n\n\nclass _Policy(NamedTuple):\n    queue_m: int\n    router_splits: int\n    shared_splits: int\n    projection_m: int\n    projection_k: int\n    select_unroll: int\n    up: _ExpertTile\n    down: _ExpertTile\n    finish_m: int\n    finish_n: int\n    shared: _DenseTile\n    contribution_block: int\n    up_large_scale_cache: str | None = None\n    large_queue: int = 416\n    up_group: int = 0\n\n\ndef _policy(m, h):\n    small = m <= 128\n    return _Policy(\n        queue_m=32, router_splits=8, shared_splits=8,\n        projection_m=64, projection_k=128, select_unroll=5,\n        up=_ExpertTile(n=64, k=2048, warps=4, adaptive=True,\n                       scale_buffer=True, weight_cache=\".cg\"),\n        down=_ExpertTile(n=64 if small else 256, k=256,\n                         warps=4 if small else 8, adaptive=True,\n                         weight_buffer=not small, scale_buffer=not small,\n                         scale_cache=\"\" if small else \".cg\"),\n        finish_m=1 if small else 4, finish_n=1024 if small else 256,\n        shared=_DenseTile(64, 128, 64),\n        contribution_block=h if small else 256,\n        up_group=120,\n        up_large_scale_cache=None if small else \".cg\",\n    )\n\n\ndef _job_capacity(m, topk, queue_m):\n    routes = m * topk\n    active = min(512, routes)\n    return active + (routes - active) // queue_m\n\n\n@gluon.jit\ndef _round_router(x):\n    # Correct FP64 -> FP32 -> BF16 double rounding at BF16 midpoints.\n    approx = x.to(gl.float32)\n    bits = approx.to(gl.int32, bitcast=True)\n    midpoint = (bits & 65535) == 32768\n    inexact = x != approx.to(gl.float64)\n    positive = x > approx.to(gl.float64)\n    step = gl.where(positive == (approx > 0), 1, -1)\n    corrected = (bits + step).to(gl.float32, bitcast=True)\n    return gl.where(midpoint & inexact, corrected, approx).to(gl.bfloat16)\n\n\n@gluon.jit\ndef _bf16_tile(X, W, split, M: gl.constexpr, K: gl.constexpr,\n               BM: gl.constexpr, BN: gl.constexpr, SPLIT: gl.constexpr,\n               INDEPENDENT: gl.constexpr, STAGE_K: gl.constexpr, row_tile, col_tile,\n               WM: gl.constexpr = 1, INSTR_M: gl.constexpr = 16):\n    gl.static_assert(STAGE_K >= 64 and STAGE_K % 64 == 0)\n    gl.static_assert(K % (STAGE_K * SPLIT) == 0)\n    ll: gl.constexpr = gl.BlockedLayout([1, 8], [16, 4], [4, 1], [1, 0])\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[INSTR_M, INSTR_M, 512 // INSTR_M],\n                                           transposed=True, warps_per_cta=[WM, 4 // WM])\n    ad: gl.constexpr = gl.DotOperandLayout(0, mma, 8)\n    bd: gl.constexpr = gl.DotOperandLayout(1, mma, 8)\n    r = row_tile * BM + gl.arange(0, BM, gl.SliceLayout(1, ll))\n    n = col_tile * BN + gl.arange(0, BN, gl.SliceLayout(1, ll))\n    k = gl.arange(0, STAGE_K, gl.SliceLayout(0, ll))\n    acc = gl.zeros((BM, BN), gl.float32, mma)\n    if STAGE_K > 64:\n        shared_a: gl.constexpr = gl.amd.cdna4.compute_efficient_padded_shared_layout(ad, [BM, STAGE_K], gl.bfloat16)\n        shared_b: gl.constexpr = gl.amd.cdna4.compute_efficient_padded_shared_layout(bd, [STAGE_K, BN], gl.bfloat16)\n        at = gl.allocate_shared_memory(gl.bfloat16, [BM, STAGE_K], shared_a)\n        bt = gl.allocate_shared_memory(gl.bfloat16, [STAGE_K, BN], shared_b)\n    for chunk in range(K // (STAGE_K * SPLIT)):\n        kk = split * (K // SPLIT) + chunk * STAGE_K + k\n        a = gl.load(X + r[:, None] * K + kk[None, :], (r < M)[:, None], 0)\n        b = gl.load(W + n[:, None] * K + kk[None, :])\n        if STAGE_K > 64:\n            at.store(a)\n            bt.store(b.T)\n        for inner in gl.static_range(STAGE_K // 64):\n            if STAGE_K > 64:\n                av = at.slice(inner * 64, 64, 1).load(ad)\n                bv = bt.slice(inner * 64, 64, 0).load(bd)\n            else:\n                av = gl.convert_layout(a, ad)\n                bv = gl.convert_layout(b.T, bd)\n            if INDEPENDENT:\n                partial = gl.amd.cdna4.mfma(av, bv, gl.zeros((BM, BN), gl.float32, mma))\n                acc += partial\n            else:\n                acc = gl.amd.cdna4.mfma(av, bv, acc)\n    return acc\n\n\n@gluon.jit\ndef _project_split(X, W, P, split, M: gl.constexpr, K: gl.constexpr,\n                   SPLIT: gl.constexpr, INDEPENDENT: gl.constexpr,\n                   PM: gl.constexpr, STAGE_K: gl.constexpr):\n    acc = _bf16_tile(X, W, split, M, K, PM, 64, SPLIT, INDEPENDENT, STAGE_K,\n                     gl.program_id(0), gl.program_id(1), WM=2,\n                     INSTR_M=32 if M <= 128 else 16)\n    ol: gl.constexpr = gl.BlockedLayout([1, 4], [4, 16], [4, 1], [1, 0])\n    rr = gl.program_id(0) * PM + gl.arange(0, PM, gl.SliceLayout(1, ol))\n    nn = gl.program_id(1) * 64 + gl.arange(0, 64, gl.SliceLayout(0, ol))\n    ptr = split * M * 512 + rr[:, None] * 512 + nn[None, :]\n    gl.store(P + ptr, gl.convert_layout(acc, ol), (rr < M)[:, None])\n\n\n@gluon.jit\ndef _select_logits(logits, TOPK: gl.constexpr, NW: gl.constexpr, UNROLL: gl.constexpr):\n    gl.static_assert(TOPK % UNROLL == 0)\n    src: gl.constexpr = gl.BlockedLayout([1], [64], [NW], [0])\n    layout: gl.constexpr = gl.BlockedLayout([8], [64], [NW], [0])\n    logits = gl.convert_layout(logits, layout)\n    e = gl.arange(0, 512, layout)\n    # Retire both value and ID: even an all-negative-infinity row must select\n    # distinct experts in stable ID order. The max needs no availability mask.\n    ids = e\n    slots = gl.arange(0, 16, src)\n    selected = gl.full((16,), -float('inf'), gl.float32, src)\n    chosen = gl.full((16,), 0, gl.int32, src)\n    for base in range(TOPK // UNROLL):\n        for step in gl.static_range(UNROLL):\n            slot = base * UNROLL + step\n            value = gl.max(logits, 0)\n            expert = gl.min(gl.where(logits == value, ids, 0x7fffffff), 0)\n            chosen = gl.where(slots == slot, expert, chosen)\n            selected = gl.where(slots == slot, value, selected)\n            logits = gl.where(e == expert, -float('inf'), logits)\n            ids = gl.where(e == expert, 0x7fffffff, ids)\n    return gl.convert_layout(ids != 0x7fffffff, src), selected, chosen\n\n\n@gluon.jit\ndef _router_intervals(P, Norms, row, M: gl.constexpr, H: gl.constexpr,\n                      SPLIT: gl.constexpr, NW: gl.constexpr):\n    layout: gl.constexpr = gl.BlockedLayout([1], [64], [NW], [0])\n    e = gl.arange(0, 512, layout)\n    total = gl.full((512,), 0, gl.float64, layout)\n    for split in gl.static_range(SPLIT):\n        total += gl.load(P + split * M * 512 + row * 512 + e).to(gl.float64)\n    row_norm = gl.load(Norms + row)\n    # Cauchy-Schwarz bounds FP32 projection error using replay-local FP64 norms.\n    norm_product = row_norm * gl.load(Norms + M + e)\n    eps: gl.constexpr = (64 + H // (64 * SPLIT)) * 2.0 ** -24\n    norm_eps: gl.constexpr = 4 * H * 2.0 ** -52\n    error = norm_product * ((eps / (1.0 - eps) + norm_eps) / (1.0 - norm_eps)) + 1.0e-30\n    lower = _round_router(total - error).to(gl.float32)\n    upper = _round_router(total + error).to(gl.float32)\n    valid = gl.abs(total) < float('inf')\n    lower = gl.where(valid & (lower == lower), lower, -float('inf'))\n    upper = gl.where(valid & (upper == upper), upper, float('inf'))\n    logits = _round_router(total).to(gl.float32)\n    logits = gl.where(logits == logits, logits, -float('inf'))\n    return logits, lower, upper, row_norm\n\n\n@gluon.jit\ndef _certified_topk(P, Norms, X, W, row,\n                    M: gl.constexpr, H: gl.constexpr, SPLIT: gl.constexpr,\n                    TOPK: gl.constexpr, NW: gl.constexpr, UNROLL: gl.constexpr):\n    layout: gl.constexpr = gl.BlockedLayout([1], [64], [NW], [0])\n    e = gl.arange(0, 512, layout)\n    logits, lower, upper, row_norm = _router_intervals(P, Norms, row, M, H, SPLIT, NW)\n    available, selected, chosen = _select_logits(logits, TOPK, NW, UNROLL)\n    threshold = gl.min(gl.where(~available, lower, float('inf')), 0)\n    original = logits\n    uncertain = (lower != upper) & (upper >= threshold)\n    # M128 benefits from contiguous eight-BF16 correction loads; retain the\n    # striped correction layout at M256. Both accumulate products in FP64.\n    k = gl.arange(0, H, gl.BlockedLayout([8 if M <= 128 else 1], [64], [NW], [0]))\n    # Preserve exact signed-zero behavior, including arithmetic instrumentation.\n    uncertain |= row_norm == 0\n    expert = gl.min(gl.where(uncertain, e, 512), 0)\n    if expert < 512:\n        if M <= 128:\n            x = gl.load(X + row * H + k).to(gl.float64)\n        while expert < 512:\n            if M > 128:\n                x = gl.load(X + row * H + k).to(gl.float64)\n            w = gl.load(W + expert * H + k).to(gl.float64)\n            exact = _round_router(gl.sum(x * w, 0)).to(gl.float32)\n            exact = gl.where(exact == exact, exact, -float('inf'))\n            logits = gl.where(e == expert, exact, logits)\n            uncertain &= e != expert\n            expert = gl.min(gl.where(uncertain, e, 512), 0)\n    changed = logits.to(gl.int32, bitcast=True) != original.to(gl.int32, bitcast=True)\n    if gl.sum(changed.to(gl.int32), 0) > 0:\n        available, selected, chosen = _select_logits(logits, TOPK, NW, UNROLL)\n    return selected, chosen\n\n\n@gluon.jit\ndef _topk_shared(RP, Norms, X, W, SP, Y, ExpertRoutes, Counts, Weights, Jobs,\n                 M: gl.constexpr, H: gl.constexpr, ROUTER_SPLIT: gl.constexpr,\n                 SHARED_SPLIT: gl.constexpr, TOPK: gl.constexpr,\n                 QUEUE_M: gl.constexpr, UNROLL: gl.constexpr, NW: gl.constexpr):\n    row = gl.program_id(0)\n    selected, chosen = _certified_topk(RP, Norms, X, W, row,\n                                      M, H, ROUTER_SPLIT, TOPK, NW, UNROLL)\n    layout: gl.constexpr = gl.BlockedLayout([1], [64], [NW], [0])\n    slots = gl.arange(0, 16, layout)\n    prob = gl.exp(selected - gl.max(selected, 0))\n    prob /= gl.sum(prob, 0)\n    gl.store(Weights + row * TOPK + slots, prob, slots < TOPK)\n    slots = gl.arange(0, NW * 64, layout)\n    owners = gl.gather(chosen, slots % 16, 0)\n    ticket = gl.atomic_add(Counts + owners, 1, sem='relaxed', mask=slots < TOPK)\n    # Independent shared work hides route-ticket and job-counter latency.\n    shared_gate, shared_up = _load_shared_projection(SP, row, M, SHARED_SPLIT, NW)\n    gl.store(ExpertRoutes + owners * M + ticket, row * TOPK + slots, slots < TOPK)\n    opens_tile = (slots < TOPK) & (ticket % QUEUE_M == 0)\n    job = gl.atomic_add(Counts + 512 + slots * 0, 1, sem='relaxed', mask=opens_tile)\n    _store_shared_activation(shared_gate, shared_up, Y, row, NW)\n    descriptor = owners * gl.cdiv(M, QUEUE_M) + ticket // QUEUE_M\n    gl.store(Jobs + job, descriptor, opens_tile)\n\n\n@gluon.jit\ndef _encode_mxfp4(values):\n    # E8M0 ceil scales, native E2M1 round-to-nearest-even magnitude packing.\n    gl.static_assert(values.shape[1] == 32)\n    maximum = gl.maximum(gl.max(gl.abs(values), 1), 1.0e-10)\n    scaled = maximum * (1.0 / 6.0)\n    bits = scaled.to(gl.int32, bitcast=True)\n    scale = (bits >> 23) + ((bits & 0x7FFFFF) != 0).to(gl.int32)\n    reciprocal = ((254 - scale) << 23).to(gl.float32, bitcast=True)\n    mag = gl.abs(values * reciprocal[:, None])\n    mag = gl.where(mag > 0.0, mag, 0.0)\n    lo, hi = gl.split(mag.reshape((values.shape[0], 16, 2)))\n    packed = gl.inline_asm_elementwise(\n        \"v_cvt_scalef32_pk_fp4_f32 $0, $1, $2, $3 op_sel:[0,0,0,0]\",\n        constraints=\"=v,v,v,v\", args=[lo, hi, 1.0], dtype=gl.uint32,\n        is_pure=True, pack=1)\n    sign = (values.to(gl.int32, bitcast=True) >> 28) & 8\n    sl, sh = gl.split(sign.reshape((values.shape[0], 16, 2)))\n    return (packed | sl | (sh << 4)).to(gl.uint8), scale.to(gl.uint8)\n\n\n@gluon.jit\ndef _norm_zero_combine(a, bits_a, b, bits_b):\n    return a + b, bits_a | bits_b\n\n\n@gluon.jit\ndef _quantize_and_gate(X, Gate, A, S, G, Norms, row, H: gl.constexpr):\n    layout: gl.constexpr = gl.BlockedLayout([1, 2], [4, 16], [4, 1], [1, 0])\n    groups = gl.arange(0, H // 32, gl.SliceLayout(1, layout))\n    k = gl.arange(0, 32, gl.SliceLayout(0, layout))\n    x_raw = gl.load(X + row * H + groups[:, None] * 32 + k[None, :])\n    xd = x_raw.to(gl.float64)\n    magnitude_bits = x_raw.to(gl.uint16, bitcast=True).to(gl.int32) & 0x7fff\n    sums, masks = gl.reduce((xd * xd, magnitude_bits), 1, _norm_zero_combine)\n    norm2, mask = gl.reduce((sums, masks), 0, _norm_zero_combine)\n    norm = gl.sqrt(norm2)\n    gl.store(Norms + row, gl.where(mask == 0, 0.0, norm))\n    x = x_raw.to(gl.float32)\n    gw = gl.load(Gate + groups[:, None] * 32 + k[None, :]).to(gl.float32)\n    gate = gl.sum(gl.sum(x * gw, 1), 0)\n    gl.store(G + row, 1.0 / (1.0 + gl.exp(-gate)))\n    packed, scale = _encode_mxfp4(x)\n    pl: gl.constexpr = packed.type.layout\n    pg = gl.arange(0, H // 32, gl.SliceLayout(1, pl))\n    pk = gl.arange(0, 16, gl.SliceLayout(0, pl))\n    gl.store(A + row * (H // 2) + pg[:, None] * 16 + pk[None, :], packed)\n    gl.store(S + row * (H // 32) + groups, scale)\n\n\n@gluon.jit\ndef _weight_load(P, offset, CACHE: gl.constexpr, BUFFER: gl.constexpr):\n    if BUFFER:\n        value = gl.amd.cdna4.buffer_load(P, offset, cache=CACHE)\n    else:\n        value = gl.load(P + offset, cache_modifier=CACHE)\n    return value\n\n\n@gluon.jit\ndef _load_packed_weight(W, expert, n0, k0, N: gl.constexpr, K: gl.constexpr,\n                        BN: gl.constexpr, BK: gl.constexpr, PAIRED: gl.constexpr,\n                        CACHE: gl.constexpr, BUFFER: gl.constexpr, NW: gl.constexpr):\n    gl.static_assert(BN % 32 == 0 and BK % 256 == 0)\n    wl: gl.constexpr = gl.BlockedLayout([1, 16], [1, 64], [NW, 1], [1, 0])\n    nb = gl.arange(0, BN // 16, gl.SliceLayout(1, wl)) * 16\n    raw = gl.arange(0, 16 * BK // 2, gl.SliceLayout(0, wl))\n    if PAIRED:\n        nb = nb % (BN // 2) + nb // (BN // 2) * (N // 2)\n    weight_offset = expert * (N * K // 2) + (n0 + nb[:, None]) * (K // 2)\n    weight_offset += k0 * 8 + raw[None, :]\n    weight = _weight_load(W, weight_offset, CACHE, BUFFER)\n    weight = weight.reshape((BN // 16, BK // 64, 2, 16, 16))\n    return weight.permute((1, 2, 4, 0, 3)).reshape((BK // 2, BN))\n\n\n@gluon.jit\ndef _load_weight_scales(S, expert, n0, k0, N: gl.constexpr, K: gl.constexpr,\n                        BN: gl.constexpr, BK: gl.constexpr, PAIRED: gl.constexpr,\n                        CACHE: gl.constexpr, BUFFER: gl.constexpr, NW: gl.constexpr):\n    gl.static_assert(BN % 32 == 0 and BK % 256 == 0)\n    raw = gl.arange(0, BN * BK // 32, gl.BlockedLayout([4], [64], [NW], [0]))\n    nb = raw // (32 * BK // 32) * 32\n    if PAIRED:\n        nb = nb % (BN // 2) + nb // (BN // 2) * (N // 2)\n    scale_offset = expert * (N * K // 32) + (n0 + nb) * (K // 32)\n    scale_offset += k0 + raw % (32 * BK // 32)\n    scale = _weight_load(S, scale_offset, CACHE, BUFFER)\n    scale = scale.reshape((BN // 32, BK // 256, 4, 16, 2, 2))\n    return scale.permute((0, 5, 3, 1, 4, 2)).reshape((BN, BK // 32))\n\n\n@gluon.jit\ndef _live_rows(remaining, BM: gl.constexpr, layout: gl.constexpr):\n    return gl.arange(0, BM, layout) < remaining\n\n\n@gluon.jit\ndef _routed_tile(A, AS, W, WS, ExpertRoutes, Weights, Y, YS,\n                 expert, first, remaining, n_tile, M: gl.constexpr, N: gl.constexpr,\n                 K: gl.constexpr, TOPK: gl.constexpr,\n                 BM: gl.constexpr, TILE: gl.constexpr,\n                 UP: gl.constexpr, BLOCK: gl.constexpr, SCALE_CACHE: gl.constexpr):\n    BN: gl.constexpr = TILE.n\n    BK: gl.constexpr = TILE.k\n    NW: gl.constexpr = TILE.warps\n    gl.static_assert(K % BK == 0 and N % BN == 0)\n    gl.static_assert(not UP or BN % 64 == 0)\n    al: gl.constexpr = gl.BlockedLayout([1, 16], [4, 16], [NW, 1], [1, 0])\n    sl: gl.constexpr = gl.BlockedLayout([1, 4], [16, 4], [1, NW], [1, 0])\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 128],\n                                           transposed=True, warps_per_cta=[1, NW])\n    ad: gl.constexpr = gl.DotOperandLayout(0, mma, 16)\n    bd: gl.constexpr = gl.DotOperandLayout(1, mma, 16)\n    asl: gl.constexpr = gl.amd.cdna4.get_mfma_scale_layout(ad, [BM, BK // 32])\n    bsl: gl.constexpr = gl.amd.cdna4.get_mfma_scale_layout(bd, [BN, BK // 32])\n    r = first + gl.arange(0, BM, gl.SliceLayout(1, al))\n    live = _live_rows(remaining, BM, gl.SliceLayout(1, al))\n    route = gl.load(ExpertRoutes + expert * M + r, live, 0)\n    source = route // TOPK if UP else route\n    kp = gl.arange(0, BK // 2, gl.SliceLayout(0, al))\n    scale_live = _live_rows(remaining, BM, gl.SliceLayout(1, sl))\n    st = gl.convert_layout(source, gl.SliceLayout(1, sl))\n    g = gl.arange(0, BK // 32, gl.SliceLayout(0, sl))\n    acc = gl.zeros((BM, BN), gl.float32, mma)\n    n0 = n_tile * (BN // 2 if UP else BN)\n    if UP:\n        shared_layout: gl.constexpr = gl.amd.cdna4.compute_efficient_padded_shared_layout(ad, [BM, BK // 2], gl.uint8)\n        activation_tile = gl.allocate_shared_memory(gl.uint8, [BM, BK // 2], shared_layout)\n    for start in range(K // BK):\n        a = gl.load(A + source[:, None] * (K // 2) + start * (BK // 2) + kp[None, :], live[:, None], 0)\n        if not UP:\n            sa = gl.amd.cdna4.buffer_load(AS, st[:, None] * (K // 32) + start * (BK // 32) + g[None, :], scale_live[:, None], 0)\n        else:\n            sa = gl.load(AS + st[:, None] * (K // 32) + start * (BK // 32) + g[None, :], scale_live[:, None], 0)\n        w = _load_packed_weight(W, expert, n0, start * BK, N, K, BN, BK, UP, TILE.weight_cache, TILE.weight_buffer, NW)\n        sw = _load_weight_scales(WS, expert, n0, start * BK, N, K, BN, BK, UP, SCALE_CACHE, TILE.scale_buffer, NW)\n        if UP:\n            activation_tile.store(a)\n            av = activation_tile.load(ad)\n        else:\n            av = gl.convert_layout(a, ad)\n        acc = gl.amd.cdna4.mfma_scaled(av, gl.convert_layout(sa, asl), 'e2m1',\n                                      gl.convert_layout(w, bd), gl.convert_layout(sw, bsl), 'e2m1', acc)\n    if UP:\n        _store_routed_activation(acc, route, remaining, Y, YS, n0, N, BM, BN, NW)\n    else:\n        _store_routed_contribution(acc, route, remaining, Weights, Y, n0, M, N, TOPK, BM, BN, NW, BLOCK)\n\n\n@gluon.jit\ndef _store_routed_activation(acc, route, remaining, Y, YS, n0, N: gl.constexpr,\n                             BM: gl.constexpr, BN: gl.constexpr, NW: gl.constexpr):\n    ol: gl.constexpr = gl.BlockedLayout([1, 2], [4, 16], [NW, 1], [1, 0])\n    out = gl.convert_layout(acc, ol)\n    pair = out.reshape((BM, 2, BN // 2)).permute((0, 2, 1))\n    gate, up = gl.split(pair)\n    val = (gate / (1.0 + gl.exp(-gate))) * up\n    val = val.to(gl.bfloat16).to(gl.float32)\n    val = gl.convert_layout(val, ol)\n    packed, scale = _encode_mxfp4(val.reshape((BM * (BN // 64), 32)))\n    packed = packed.reshape((BM, BN // 4))\n    pl: gl.constexpr = packed.type.layout\n    valid = _live_rows(remaining, BM, gl.SliceLayout(1, pl))\n    dest = gl.convert_layout(route, gl.SliceLayout(1, pl))\n    kk = gl.arange(0, BN // 4, gl.SliceLayout(0, pl))\n    gl.store(Y + dest[:, None] * (N // 4) + n0 // 2 + kk[None, :], packed, valid[:, None])\n    scale = scale.reshape((BM, BN // 64))\n    spl: gl.constexpr = scale.type.layout\n    dests = gl.convert_layout(route, gl.SliceLayout(1, spl))\n    valid = _live_rows(remaining, BM, gl.SliceLayout(1, spl))\n    sg = gl.arange(0, BN // 64, gl.SliceLayout(0, spl))\n    gl.store(YS + dests[:, None] * (N // 64) + n0 // 32 + sg[None, :], scale, valid[:, None])\n\n\n@gluon.jit\ndef _contribution_offset(route, col, M: gl.constexpr, H: gl.constexpr,\n                          TOPK: gl.constexpr, BLOCK: gl.constexpr):\n    # [channel slab, token, slot, channel-in-slab]; BLOCK=H is row-major.\n    gl.static_assert(H % BLOCK == 0)\n    if BLOCK == H:\n        return route * H + col\n    return (col // BLOCK * (M * TOPK) + route) * BLOCK + col % BLOCK\n\n\n@gluon.jit\ndef _store_routed_contribution(acc, route, remaining, Weights, Y, n0,\n                               M: gl.constexpr, N: gl.constexpr, TOPK: gl.constexpr,\n                               BM: gl.constexpr, BN: gl.constexpr, NW: gl.constexpr, BLOCK: gl.constexpr):\n    ol: gl.constexpr = gl.BlockedLayout([1, 4], [4, 16], [NW, 1], [1, 0])\n    out = gl.convert_layout(acc, ol)\n    dest = gl.convert_layout(route, gl.SliceLayout(1, ol))\n    valid = _live_rows(remaining, BM, gl.SliceLayout(1, ol))\n    col = n0 + gl.arange(0, BN, gl.SliceLayout(0, ol))\n    weight = gl.load(Weights + dest, valid, 0)\n    out = (out * weight[:, None]).to(gl.bfloat16)\n    if BLOCK < N and BN <= BLOCK:\n        gl.static_assert(BLOCK % BN == 0)\n        slab = Y + (n0 // BLOCK) * (M * TOPK * BLOCK)\n        local_col = n0 % BLOCK + gl.arange(0, BN, gl.SliceLayout(0, ol))\n        offset = dest[:, None] * BLOCK + local_col[None, :]\n        offset = gl.max_contiguous(gl.multiple_of(offset, [1, 4]), [1, 4])\n        gl.store(slab + offset, out, valid[:, None])\n    else:\n        offset = _contribution_offset(dest[:, None], col[None, :], M, N, TOPK, BLOCK)\n        gl.store(Y + offset, out, valid[:, None])\n\n\n@gluon.jit\ndef _routed_job(A, AS, W, WS, ExpertRoutes, Weights, Y, YS,\n                expert, first, remaining, n_tile, M: gl.constexpr, N: gl.constexpr,\n                K: gl.constexpr, TOPK: gl.constexpr, P: gl.constexpr,\n                TILE: gl.constexpr, UP: gl.constexpr, SCALE_CACHE: gl.constexpr):\n    # Queue descriptors span queue_m tickets; only the arithmetic tail shrinks.\n    if TILE.adaptive and remaining <= 16:\n        _routed_tile(A, AS, W, WS, ExpertRoutes, Weights, Y, YS, expert, first, remaining, n_tile,\n                     M, N, K, TOPK, 16, TILE, UP, P.contribution_block, SCALE_CACHE)\n    else:\n        _routed_tile(A, AS, W, WS, ExpertRoutes, Weights, Y, YS, expert, first, remaining, n_tile,\n                     M, N, K, TOPK, P.queue_m, TILE, UP, P.contribution_block, SCALE_CACHE)\n\n\n@gluon.jit\ndef _projection_job(live_jobs, COLUMNS: gl.constexpr, CAPACITY: gl.constexpr,\n                    GROUP: gl.constexpr, EXTRA: gl.constexpr):\n    # The final group uses its live width, without padded holes.\n    if GROUP:\n        pid = gl.program_id(0)\n        suffix = live_jobs * COLUMNS\n        work_valid = pid < suffix\n        job = 0\n        column = 0\n        if work_valid:\n            group = pid // (GROUP * COLUMNS)\n            within = pid % (GROUP * COLUMNS)\n            complete = live_jobs // GROUP\n            if group < complete:\n                job = group * GROUP + within % GROUP\n                column = within // GROUP\n            else:\n                width = gl.maximum(live_jobs % GROUP, 1)\n                job = group * GROUP + within % width\n                column = within // width\n        shared_valid = (pid >= suffix) & (pid < suffix + EXTRA * COLUMNS)\n        aux = pid - suffix\n    else:\n        job, column = gl.program_id(0), gl.program_id(1)\n        work_valid = job < live_jobs\n        shared_valid = (job >= live_jobs) & (job < live_jobs + EXTRA)\n        aux = job - live_jobs + column * EXTRA\n    return job, column, work_valid, shared_valid, aux\n\n\n@gluon.jit\ndef _shared_down(X, W, Out, tile, M: gl.constexpr, H: gl.constexpr, TILE: gl.constexpr):\n    rm, cn = tile // (H // TILE.n), tile % (H // TILE.n)\n    if rm * TILE.m < M:\n        acc = _bf16_tile(X, W, 0, M, 256, TILE.m, TILE.n, 1, False, TILE.k, rm, cn)\n        ol: gl.constexpr = gl.BlockedLayout([1, 4], [4, 16], [4, 1], [1, 0])\n        rr = rm * TILE.m + gl.arange(0, TILE.m, gl.SliceLayout(1, ol))\n        nn = cn * TILE.n + gl.arange(0, TILE.n, gl.SliceLayout(0, ol))\n        gl.store(Out + rr[:, None] * H + nn[None, :], gl.convert_layout(acc.to(gl.bfloat16), ol), (rr < M)[:, None])\n\n\n@gluon.jit\ndef _routed_projection(A, AS, W, WS, ExpertRoutes, Counts, Jobs, Weights, Y, YS,\n                       SharedX, SharedW, Out, M: gl.constexpr, N: gl.constexpr,\n                       K: gl.constexpr, TOPK: gl.constexpr, P: gl.constexpr,\n                       UP: gl.constexpr, CAPACITY: gl.constexpr, EXTRA: gl.constexpr = 0):\n    TILE: gl.constexpr = P.up if UP else P.down\n    GROUP: gl.constexpr = P.up_group if UP else 0\n    live_jobs = gl.load(Counts + 512)\n    job, n_tile, work_valid, shared_valid, aux = _projection_job(live_jobs, N // TILE.n, CAPACITY, GROUP, EXTRA)\n    if work_valid:\n        descriptor = gl.load(Jobs + job)\n        expert = descriptor // gl.cdiv(M, P.queue_m)\n        first = (descriptor % gl.cdiv(M, P.queue_m)) * P.queue_m\n        remaining = gl.load(Counts + expert) - first\n        # Keep the uniform scale-cache branch outside the K loop.\n        if UP and P.up_large_scale_cache is not None:\n            if live_jobs > P.large_queue:\n                _routed_job(A, AS, W, WS, ExpertRoutes, Weights, Y, YS, expert, first, remaining, n_tile,\n                            M, N, K, TOPK, P, TILE, UP, P.up_large_scale_cache)\n            else:\n                _routed_job(A, AS, W, WS, ExpertRoutes, Weights, Y, YS, expert, first, remaining, n_tile,\n                            M, N, K, TOPK, P, TILE, UP, TILE.scale_cache)\n        else:\n            _routed_job(A, AS, W, WS, ExpertRoutes, Weights, Y, YS, expert, first, remaining, n_tile,\n                        M, N, K, TOPK, P, TILE, UP, TILE.scale_cache)\n    elif UP and EXTRA:\n        if shared_valid:\n            _shared_down(SharedX, SharedW, Out, aux, M, K, P.shared)\n\n\n@gluon.jit\ndef _load_shared_projection(P, row, M: gl.constexpr, SPLIT: gl.constexpr, NW: gl.constexpr):\n    layout: gl.constexpr = gl.BlockedLayout([1], [64], [NW], [0])\n    k = gl.arange(0, 256, layout)\n    gate = gl.full((256,), 0, gl.float32, layout)\n    up = gl.full((256,), 0, gl.float32, layout)\n    for s in gl.static_range(SPLIT):\n        gate += gl.load(P + s * M * 512 + row * 512 + k)\n        up += gl.load(P + s * M * 512 + row * 512 + 256 + k)\n    return gate, up\n\n\n@gluon.jit\ndef _store_shared_activation(gate, up, Y, row, NW: gl.constexpr):\n    layout: gl.constexpr = gl.BlockedLayout([1], [64], [NW], [0])\n    k = gl.arange(0, 256, layout)\n    # Shared SiLU rounds before multiplication by up.\n    gate = gate.to(gl.bfloat16).to(gl.float32)\n    up = up.to(gl.bfloat16).to(gl.float32)\n    act = (gate * (1.0 / (1.0 + gl.exp(-gate)))).to(gl.bfloat16).to(gl.float32)\n    gl.store(Y + row * 256 + k, act * up)\n\n\n@gluon.jit\ndef _projections_prepare(X, RW, SW, Gate, RP, Norms, SP, A, S, G, Counts,\n                         M: gl.constexpr, H: gl.constexpr,\n                         ROUTER_SPLIT: gl.constexpr, SHARED_SPLIT: gl.constexpr,\n                         PM: gl.constexpr, STAGE_K: gl.constexpr):\n    role = gl.program_id(2)\n    if role < ROUTER_SPLIT:\n        _project_split(X, RW, RP, role, M, H, ROUTER_SPLIT, True, PM, STAGE_K)\n        if (role == 0) & (gl.program_id(0) == 0):\n            e = gl.program_id(1) * 64 + gl.arange(0, 64, gl.BlockedLayout([1], [64], [4], [0]))\n            gl.store(Counts + e, 0)\n            if gl.program_id(1) == 0:\n                gl.store(Counts + 512, 0)\n    elif role < ROUTER_SPLIT + SHARED_SPLIT:\n        _project_split(X, SW, SP, role - ROUTER_SPLIT, M, H, SHARED_SPLIT, False, PM, STAGE_K)\n    else:\n        row = gl.program_id(0) + gl.num_programs(0) * (gl.program_id(1) + 8 * (role - ROUTER_SPLIT - SHARED_SPLIT))\n        if row < M:\n            _quantize_and_gate(X, Gate, A, S, G, Norms, row, H)\n        elif row < M + 512:\n            k = gl.arange(0, H, gl.BlockedLayout([8], [64], [4], [0]))\n            w = gl.load(RW + (row - M) * H + k).to(gl.float64)\n            gl.store(Norms + row, gl.sqrt(gl.sum(w * w, 0)))\n\n\n@gluon.jit\ndef _finish(Routes, Gate, Out, M: gl.constexpr, H: gl.constexpr, TOPK: gl.constexpr, P: gl.constexpr):\n    BM: gl.constexpr = P.finish_m\n    BN: gl.constexpr = P.finish_n\n    if BM == 1:\n        layout: gl.constexpr = gl.BlockedLayout([4], [64], [4], [0])\n        i = gl.arange(0, BM * BN, layout)\n        rr = gl.program_id(0) * BM + i // BN\n        nn = gl.program_id(1) * BN + i % BN\n        shared = gl.load(Out + rr * H + nn, rr < M, 0).to(gl.float32)\n        total = gl.full((BM * BN,), 0.0, gl.float32, layout)\n        for slot in gl.static_range(TOPK):\n            offset = _contribution_offset(rr * TOPK + slot, nn, M, H, TOPK, P.contribution_block)\n            total += gl.load(Routes + offset, rr < M, 0).to(gl.float32)\n        total = total.to(gl.bfloat16).to(gl.float32)\n        gate = gl.load(Gate + rr, rr < M, 0)\n        gl.store(Out + rr * H + nn, total + gate * shared, rr < M)\n    else:\n        # Four token rows per CTA; each wave reads a full contribution slab.\n        ol: gl.constexpr = gl.BlockedLayout([1, 4], [1, 64], [4, 1], [1, 0])\n        rr = gl.program_id(0) * BM + gl.arange(0, BM, gl.SliceLayout(1, ol))\n        nn = gl.program_id(1) * BN + gl.arange(0, BN, gl.SliceLayout(0, ol))\n        shared = gl.load(Out + rr[:, None] * H + nn[None, :], (rr < M)[:, None], 0).to(gl.float32)\n        total = gl.zeros((BM, BN), gl.float32, ol)\n        # Each output tile lies inside one slab, with aligned vector BF16 reads.\n        BLOCK: gl.constexpr = P.contribution_block\n        gl.static_assert(BLOCK % BN == 0)\n        n0 = gl.program_id(1) * BN\n        slab = Routes + (n0 // BLOCK) * (M * TOPK * BLOCK)\n        local_col = n0 % BLOCK + gl.arange(0, BN, gl.SliceLayout(0, ol))\n        base = rr[:, None] * (TOPK * BLOCK) + local_col[None, :]\n        base = gl.max_contiguous(gl.multiple_of(base, [1, 4]), [1, 4])\n        for slot in gl.static_range(TOPK):\n            total += gl.load(slab + base + slot * BLOCK, (rr < M)[:, None], 0).to(gl.float32)\n        total = total.to(gl.bfloat16).to(gl.float32)\n        gate = gl.load(Gate + rr, rr < M, 0)\n        gl.store(Out + rr[:, None] * H + nn[None, :], total + gate[:, None] * shared, (rr < M)[:, None])\n\n\ndef mxfp4_router_complete_moe(\n    hidden_states, router_weight, routed_w13, routed_w2, routed_w13_scales,\n    routed_w2_scales, shared_w13, shared_w2, shared_gate_weight,\n    *, topk=10, routed_path='block64_ordered', out\n):\n    m, h = hidden_states.shape\n    device = hidden_states.device\n    assert h == 4096 and topk == 10 and m > 16\n    assert routed_path == ('block32_bf16_atomic' if m <= 1024 else 'block64_ordered')\n    p = _policy(m, h)\n    projection_rows = triton.cdiv(m, p.projection_m)\n    preparation_roles = triton.cdiv(m + 512, projection_rows * 8)\n    capacity = _job_capacity(m, topk, p.queue_m)\n    router_partials = torch.empty((p.router_splits, m, 512), device=device, dtype=torch.float32)\n    router_norms = torch.empty((m + 512,), device=device, dtype=torch.float64)\n    route_weights = torch.empty((m, topk), device=device, dtype=torch.float32)\n    packed_input = torch.empty((m, h // 2), device=device, dtype=torch.uint8)\n    input_scales = torch.empty((m, h // 32), device=device, dtype=torch.uint8)\n    gate = torch.empty((m,), device=device, dtype=torch.float32)\n    expert_routes = torch.empty((512, m), device=device, dtype=torch.int32)\n    counts = torch.empty((513,), device=device, dtype=torch.int32)\n    jobs = torch.empty((capacity,), device=device, dtype=torch.int32)\n    packed_activation = torch.empty((m * topk, 128), device=device, dtype=torch.uint8)\n    activation_scales = torch.empty((m * topk, 8), device=device, dtype=torch.uint8)\n    contributions = torch.empty((m * topk, h), device=device, dtype=torch.bfloat16)\n    shared_partials = torch.empty((p.shared_splits, m, 512), device=device, dtype=torch.float32)\n    shared_activation = torch.empty((m, 256), device=device, dtype=torch.bfloat16)\n    # Each launch publishes all its writes to the next; no cross-CTA waiting.\n    _projections_prepare[(projection_rows, 8, p.router_splits + p.shared_splits + preparation_roles)](\n        hidden_states, router_weight, shared_w13, shared_gate_weight,\n        router_partials, router_norms, shared_partials, packed_input, input_scales, gate, counts,\n        m, h, p.router_splits, p.shared_splits, p.projection_m, p.projection_k, num_warps=4)\n    _topk_shared[(m,)](\n        router_partials, router_norms, hidden_states, router_weight, shared_partials, shared_activation,\n        expert_routes, counts, route_weights, jobs,\n        m, h, p.router_splits, p.shared_splits, topk, p.queue_m,\n        UNROLL=p.select_unroll, NW=4, num_warps=4)\n    up_columns = 512 // p.up.n\n    extra = triton.cdiv(triton.cdiv(m, p.shared.m) * (h // p.shared.n), up_columns)\n    if p.up_group:\n        up_grid = ((capacity + extra) * up_columns,)\n    else:\n        up_grid = (capacity + extra, up_columns)\n    _routed_projection[up_grid](\n        packed_input, input_scales, routed_w13, routed_w13_scales, expert_routes, counts,\n        jobs, None, packed_activation, activation_scales, shared_activation, shared_w2, out,\n        m, 512, h, topk, p, UP=True, CAPACITY=capacity, EXTRA=extra, num_warps=p.up.warps)\n    _routed_projection[(capacity, h // p.down.n)](\n        packed_activation, activation_scales, routed_w2, routed_w2_scales, expert_routes, counts,\n        jobs, route_weights, contributions, None, None, None, None,\n        m, h, 256, topk, p, UP=False, CAPACITY=capacity, num_warps=p.down.warps)\n    _finish[(triton.cdiv(m, p.finish_m), h // p.finish_n)](contributions, gate, out, m, h, topk, p, num_warps=4)\n    return out\n\n\ndef run(\n    *,\n    hidden_states,\n    router_weight,\n    w1,\n    w1_scale,\n    w2,\n    w2_scale,\n    shared_w1,\n    shared_w2,\n    shared_gate_weight,\n    topk,\n    out_dtype,\n    out,\n):\n    # The Point fixes the shapes, topk (10) and out's dtype (bf16, hidden_states'); the MXFP4\n    # weights and their e8m0 scales are read as bytes.\n    mxfp4_router_complete_moe(\n        hidden_states,\n        router_weight,\n        w1.view(torch.uint8),\n        w2.view(torch.uint8),\n        w1_scale.view(torch.uint8),\n        w2_scale.view(torch.uint8),\n        shared_w1,\n        shared_w2,\n        shared_gate_weight,\n        topk=topk,\n        routed_path=\"block32_bf16_atomic\",\n        out=out,\n    )\n"
+      }
+    ]
+  }
+}

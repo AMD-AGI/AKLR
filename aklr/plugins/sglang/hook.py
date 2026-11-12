@@ -14,6 +14,7 @@ import torch
 from packaging.version import Version
 
 from aklr.core.runtime.dispatch import FallbackReason
+from aklr.core.runtime.dispatch._trace import trace
 
 __all__ = ["install", "sglang_route", "sglang_version"]
 
@@ -48,7 +49,7 @@ def install() -> None:
         if installed in versions:
             # sglang only logs a target it cannot resolve
             pkgutil.resolve_name(target)
-            HookRegistry.register(target, _around(route), HookType.AROUND)
+            HookRegistry.register(target, _around(route, target), HookType.AROUND)
         else:
             untested.append(target)
     # a warning, so that the line shows at any sglang log level
@@ -60,12 +61,17 @@ def install() -> None:
     )
 
 
-def _around(route: Callable) -> Callable:
+def _around(route: Callable, target: str) -> Callable:
+    route_name = f"{route.__module__}.{route.__qualname__}"
+
     def around(orig, *args, **kwargs):
         # Dynamo would trace AKLR's table lookup and recompile for every new shape
         if not torch.compiler.is_compiling():
             result = route(*args, **kwargs)
-            if not isinstance(result, FallbackReason):
+            fallback = result if isinstance(result, FallbackReason) else None
+            if (tracer := trace()) is not None and tracer.is_plugin:
+                tracer.plugin("sglang", target, route_name, fallback)
+            if fallback is None:
                 return result
         return orig(*args, **kwargs)
 

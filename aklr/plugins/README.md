@@ -30,8 +30,9 @@ aklr/plugins/
 │   ├── hook.py               @vllm_route wraps the function a vLLM function looks up at run time
 │   ├── warmup.py             compiles the AKLR kernels vLLM's own warmup does not reach
 │   ├── stack.py              runs each vLLM step from a CPython frame chunk of its own
-│   ├── layers/               routes from vLLM's layers to the ops of aklr/ops (GEMM, MoE)
+│   ├── layers/               routes from vLLM's layers to the ops of aklr/ops, mirrors vLLM's model_executor/layers/
 │   └── models/               routes from the model files vLLM runs uncompiled, mirrors vLLM's models/
+│       └── muse_spark/       Muse Spark on ROCm (vLLM's models/muse_spark/amd)
 └── aiter/                    planned
 ```
 
@@ -71,6 +72,20 @@ Unit tests:
 ## Enabling the plugin and upgrading SGLang
 
 With AKLR installed, SGLang loads the plugin at start-up; routes are hooked only when `AKLR_SGLANG_PLUGIN=1`. `AKLR_DISABLE=<contract id,...>` disables the listed ops; `AKLR_DISABLE=1` disables AKLR entirely.
+
+To see which routes and ops a run actually reaches, set `AKLR_TRACE=plugin` (the vLLM and sglang routes), `AKLR_TRACE=op` (every op dispatch, including the ops aiter calls) or `AKLR_TRACE=all` (both). Each process logs each distinct call once, served or fallen back:
+
+```
+[aklr plugin] pid=<pid> framework=<vllm|sglang> target=<hooked function> route=<route function> result=<served|fallback> reason=<FallbackReason|->
+[aklr op] pid=<pid> contract=<contract id> scenario=<schema name|-> point=<axes|-> result=<served|fallback> kernel=<language:schema name:hash|-> reason=<FallbackReason|->
+```
+
+A vLLM route declared for several names of one function (aiter's compatibility module paths) shares one hook, so its `target` lists them all, comma-separated.
+
+- The ops AKLR actually ran: `grep '\[aklr op\].*result=served'`.
+- The calls AKLR did not serve, and why: `grep 'result=fallback'`, then read `reason`.
+
+A CUDA graph replay runs no Python and logs nothing: the graph replays the kernels its capture logged.
 
 Only official SGLang releases are supported. To upgrade:
 

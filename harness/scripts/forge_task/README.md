@@ -62,7 +62,7 @@ KernelForge's shared knowledge stores (the three `--no-` options). A round takes
 early once the directions it knows are mined out.
 
 **3. Watch and steer.** `$RUN/workspace/forge_experiments/dashboard.html` shows the score, every round, and each
-workload against AKLR's serving bar (1.03× the baseline). To leave the agents a message, which they read from
+workload against AKLR's serving bar (1.05× the baseline). To leave the agents a message, which they read from
 the next round on:
 
 ```bash

@@ -13,6 +13,7 @@ from typing import Any, Literal, NamedTuple, get_args
 
 from aklr.core.contract.semantics import derive_seed
 from aklr.core.contract.spec import FrozenModel
+from aklr.core.platform.env import DEFAULT_MIN_SPEEDUP
 from aklr.core.validation.stages._report._finding import Finding, FindingCode
 
 __all__ = [
@@ -21,7 +22,6 @@ __all__ = [
     "MAX_ABS_LOG_RATIO",
     "MAX_REGRESS_FRACTION",
     "MEASUREMENT_PROFILE",
-    "MIN_GAIN_FRACTION",
     "LOOK_ALPHA",
     "N_WARMUP_ROUNDS",
     "ROUND_LOOKS",
@@ -41,10 +41,10 @@ __all__ = [
     "timing_records",
 ]
 
-MIN_GAIN_FRACTION = 0.02
 MAX_REGRESS_FRACTION = 0.01
+# entry is dispatch's default threshold: a kernel validation admits is one dispatch serves
 THRESHOLD_RATIOS: Mapping[Threshold, float] = MappingProxyType(
-    {"entry": 1 + MIN_GAIN_FRACTION, "retain": 1 - MAX_REGRESS_FRACTION}
+    {"entry": DEFAULT_MIN_SPEEDUP, "retain": 1 - MAX_REGRESS_FRACTION}
 )
 ALPHA = 0.05
 MAX_ABS_LOG_RATIO = math.log(2)
@@ -125,12 +125,15 @@ class TimingRecord(FrozenModel):
 
     def is_decided(self, min_speedup: float) -> bool:
         """Whether the bounds settle every verdict the record feeds, each threshold under the
-        lower bound or over the upper: the gate, and against the baseline whether the workload
-        qualifies (``entry``) and whether dispatch serves its published speedup (``min_speedup``)."""
+        lower bound or over the upper: the gate, and against the baseline whether its published
+        speedup qualifies the workload (``entry``) and whether dispatch serves it (``min_speedup``)."""
         bounds = (self.ratio_lower_bound, self.ratio_upper_bound)
         settled = {(*bounds, THRESHOLD_RATIOS[self.threshold])}
         if self.versus == "baseline":
-            settled |= {(*bounds, THRESHOLD_RATIOS["entry"]), (*self.speedup_bounds, min_speedup)}
+            settled |= {
+                (*self.speedup_bounds, THRESHOLD_RATIOS["entry"]),
+                (*self.speedup_bounds, min_speedup),
+            }
         return all(lower >= t or upper < t for lower, upper, t in settled)
 
 
