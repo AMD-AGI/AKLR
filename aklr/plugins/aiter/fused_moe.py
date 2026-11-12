@@ -11,6 +11,7 @@ import inspect
 from aklr.core.contract.spec import attr_value
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.ops.fused_moe.api import fused_moe as aklr_fused_moe
+from aklr.plugins.aiter.situv2_a4w4_moe.api import situv2_a4w4_moe
 
 __all__ = ["fused_moe"]
 
@@ -73,7 +74,8 @@ def fused_moe(
         return FallbackReason.OUT_OF_CONTRACT
     act_quant = 4
     # aiter picks SiTUv2's activation dtype at each call (AITER_SITUV2_A8W4, AITER_SITUV2_A4W4): fp8 is
-    # fused_moe's, on sglang's gate-up interleaved weights; any other goes back to aiter
+    # fused_moe's, on sglang's gate-up interleaved weights; fp4 is vLLM's, whose a16w4 shuffle keeps gate and up
+    # apart and is marked so on the weight by aiter from 0.1.28 on
     if attr_value(activation) == "situv2":
         from aiter import dtypes
 
@@ -82,6 +84,27 @@ def fused_moe(
         )
         if q_dtype == dtypes.fp8:
             act_quant = 8
+        elif (
+            q_dtype == dtypes.fp4x2
+            and getattr(w1, "gate_up_interleave", None) is False
+            and attr_value(gate_mode) == "separated"
+            and expert_mask is None
+            and num_local_tokens is None
+            and not doweight_stage1
+        ):
+            return situv2_a4w4_moe(
+                hidden_states,
+                w1,
+                w2,
+                topk_weight,
+                topk_ids,
+                w1_scale,
+                w2_scale,
+                beta,
+                linear_beta,
+                out_dtype=dtype,
+                out=output,
+            )
         else:
             return FallbackReason.OUT_OF_CONTRACT
     return aklr_fused_moe(

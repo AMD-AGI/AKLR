@@ -38,6 +38,9 @@ def op_calls(monkeypatch):
         return "aklr"
 
     monkeypatch.setattr(moe_module, "aklr_fused_moe", op)
+    monkeypatch.setattr(
+        moe_module, "situv2_a4w4_moe", lambda *args, **kwargs: calls.append({"a4w4": kwargs}) or "a4w4"
+    )
     monkeypatch.setattr(gemm_module, "gemm", op)
     monkeypatch.setattr(triton_gemm_module, "gemm", op)
     return calls
@@ -162,6 +165,18 @@ def test_situv2_goes_back_to_aiter_on_other_activations(op_calls, aiter_picks, d
     aiter_picks.dtype = dtype
     assert moe_call(ActivationType.Situv2) is FallbackReason.OUT_OF_CONTRACT
     assert op_calls == []
+
+
+def test_situv2_with_fp4_activations_on_separated_weights_reaches_the_a4w4_op(op_calls, aiter_picks):
+    aiter_picks.dtype = FP4
+    out = torch.empty(5, 8)
+    assert (
+        moe_call(ActivationType.Situv2, gate_up_interleave=False, output=out, dtype=torch.bfloat16) == "a4w4"
+    )
+    ((key, call),) = (next(iter(c.items())) for c in op_calls)
+    assert key == "a4w4"
+    assert call["out"] is out
+    assert call["out_dtype"] is torch.bfloat16
 
 
 @pytest.mark.parametrize(

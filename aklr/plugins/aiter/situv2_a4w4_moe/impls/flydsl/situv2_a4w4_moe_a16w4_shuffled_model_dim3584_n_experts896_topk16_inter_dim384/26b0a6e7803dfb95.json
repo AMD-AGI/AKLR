@@ -1,0 +1,305 @@
+{
+  "schema_version": 5,
+  "name": "situv2_a4w4_moe_a16w4_shuffled_model_dim3584_n_experts896_topk16_inter_dim384",
+  "contract_id": "situv2_a4w4_moe@1.0",
+  "description": "aiter's fused MoE as vLLM calls it for SiTUv2 experts with MXFP4 weights and MXFP4 activations (VLLM_ROCM_USE_AITER_MOE_SITUV2 a4w4, AITER_SITUV2_A4W4): each token through its top-k experts, down(situ(gate(x)) * linear(up(x))) of fp4 weights at an e8m0 scale per 32, each stage's activations rounded to MXFP4, weighted by its routing weight, summed. w1 keeps the gate rows before the up rows; aiter's a16w4 shuffle, gate and up not interleaved, holds both weights and both scales.",
+  "op_type": "situv2_a4w4_moe",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens routed in this call."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 3584,
+      "description": "Hidden size."
+    },
+    "n_experts": {
+      "type": "const",
+      "value": 896,
+      "description": "Experts."
+    },
+    "topk": {
+      "type": "const",
+      "value": 16,
+      "description": "Experts per token."
+    },
+    "inter_dim": {
+      "type": "const",
+      "value": 384,
+      "description": "Expert intermediate size."
+    },
+    "gate_up_rows": {
+      "type": "const",
+      "value": 768,
+      "description": "w1 rows: gate and up concatenated."
+    },
+    "model_blocks": {
+      "type": "const",
+      "value": 112,
+      "description": "w1 scale columns."
+    },
+    "inter_blocks": {
+      "type": "const",
+      "value": 12,
+      "description": "w2 scale columns."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Token activations."
+    },
+    "w1": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gate-up projection per expert: gate rows, then up rows."
+    },
+    "w2": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Down projection per expert."
+    },
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Routing weight of each chosen expert."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": 895,
+        "distinct": true
+      },
+      "description": "Chosen experts per token, distinct within a row."
+    },
+    "w1_scale": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -11,
+        "log2_hi": -5
+      },
+      "description": "Per 1 x 32 block of w1."
+    },
+    "w2_scale": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -9,
+        "log2_hi": -3
+      },
+      "description": "Per 1 x 32 block of w2."
+    },
+    "beta": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "SiTUv2 gate saturation."
+    },
+    "linear_beta": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "SiTUv2 up saturation."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Routing-weighted sum of the chosen experts' outputs."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 160
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 200
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 240
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 280
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 320
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 400
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 480
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 520
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 600
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "a16w4_shuffled": {
+        "layouts": {
+          "w1": {
+            "kind": "gate_up_interleaved_weight",
+            "gate_up": false
+          },
+          "w2": {
+            "kind": "gate_up_interleaved_weight",
+            "gate_up": false
+          },
+          "w1_scale": {
+            "kind": "gate_up_interleaved_scales",
+            "gate_up": false
+          },
+          "w2_scale": {
+            "kind": "gate_up_interleaved_scales",
+            "gate_up": false
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "w1.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w2.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w1_scale.ndim",
+            "expected_value": 2
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.001,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "author": "kyle-256",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"SiTUv2 a4w4 MoE: a FlyDSL prelude (routing sort, MXFP4 activation quant, zeroing of the accumulation\ntarget), aiter's FlyDSL stage 1 reading token-major A scales through sorted_ids, and aiter's FlyDSL stage 2\nadding into ``out``, or at large token counts into a call-local buffer then copied into ``out``.\"\"\"\n\nimport functools\nimport os\n\nimport torch\n\n_SCRATCH_ACC_MIN_TOKENS = 448\n_ENV = {\"AITER_SITUV2_A4W4\": \"1\", \"AITER_SITUV2_A8W4\": \"0\", \"AITER_FLYDSL_STAGE2_FP8\": \"1\"}\n\n\n# Edits to aiter's stage-1 builder so it gathers the prelude's token-major A scales through sorted_ids,\n# with no sorted-scale scatter launch. The \"_tmsc\" tag keeps the symbol from aliasing aiter's build in\n# FlyDSL's cache.\n_STAGE1_EDITS = (\n    (\n        '{heterogeneous_tag}_v{kernel_version}\"',\n        '{heterogeneous_tag}_tmsc_v{kernel_version}\"',\n    ),\n    (\n        \"\"\"                sx_nbytes_idx = scale_rows * kblk\n\"\"\",\n        \"\"\"                # token-major (tokens, model_dim/32) e8m0 scales, gathered via sorted_ids\n                sx_nbytes_idx = tokens_in * kblk\n\"\"\",\n    ),\n    (\n        \"\"\"                    a_scale_bases = []\n                    for mi in range_constexpr(m_repeat_packed):\n                        a_mni = mi + bx_m // scale_mn_pack // 16\n                        a_scale_bases.append(\n                            a_mni * layout_a_scale.stride_n0 + scale_lane_elem\n                        )\n\"\"\",\n        \"\"\"                    # Token-major A scales: each lane owns sorted rows r and r+16 of this\n                    # 32-row block and MX groups (k1*8 + kl) and (k1*8 + kl + 4), kl = lane/16.\n                    a_scale_bases = []\n                    _tm_tokens_i32 = arith.index_cast(T.i32, tokens_in)\n                    _tm_words = arith.constant(model_dim // 128, index=True)\n                    _tm_shift = arith.index_cast(\n                        T.i32, lane_div_16 * arith.constant(8, index=True)\n                    )\n                    for mi in range_constexpr(m_repeat_packed):\n                        _tm_pair = []\n                        for _h in range_constexpr(2):\n                            _row = (\n                                bx_m\n                                + arith.constant(mi * 32 + _h * 16, index=True)\n                                + lane_mod_16\n                            )\n                            _fid = buffer_ops.buffer_load(\n                                sorted_rsrc, _row, vec_width=1, dtype=T.i32\n                            )\n                            _t = arith.andi(_fid, arith.constant(0xFFFFFF))\n                            _s = arith.shrui(_fid, arith.constant(24))\n                            _ok = arith.andi(\n                                arith.cmpi(CmpIPredicate.ult, _t, _tm_tokens_i32),\n                                arith.cmpi(\n                                    CmpIPredicate.ult, _s, arith.constant(topk)\n                                ),\n                            )\n                            # padding rows point past the buffer: their scale loads read 0\n                            _t = arith.select(_ok, _t, _tm_tokens_i32)\n                            _tm_pair.append(\n                                arith.index_cast(ir.IndexType.get(), _t) * _tm_words\n                            )\n                        a_scale_bases.append(_tm_pair)\n\n                def _tm_load_a_scale(bases, off):\n                    _k2 = (off // arith.constant(64, index=True)) * arith.constant(\n                        2, index=True\n                    )\n                    _ff = arith.constant(0xFF, type=T.i32)\n                    _bytes = []\n                    for _h in range_constexpr(2):\n                        _v = buffer_ops.buffer_load(\n                            sx_rsrc,\n                            bases[_h] + _k2,\n                            vec_width=2,\n                            dtype=T.i32,\n                            cache_modifier=0,\n                        )\n                        _lo = vector.extract(_v, static_position=[0], dynamic_position=[])\n                        _hi = vector.extract(_v, static_position=[1], dynamic_position=[])\n                        _bytes.append(arith.andi(arith.shrui(_lo, _tm_shift), _ff))\n                        _bytes.append(arith.andi(arith.shrui(_hi, _tm_shift), _ff))\n                    # byte order in the MFMA scale word: [r k0, r+16 k0, r k1, r+16 k1]\n                    _r = arith.ori(\n                        _bytes[0], arith.shli(_bytes[2], arith.constant(8, type=T.i32))\n                    )\n                    _r = arith.ori(\n                        _r, arith.shli(_bytes[1], arith.constant(16, type=T.i32))\n                    )\n                    return arith.ori(\n                        _r, arith.shli(_bytes[3], arith.constant(24, type=T.i32))\n                    )\n\"\"\",\n    ),\n    (\n        \"\"\"                                s = buffer_ops.buffer_load(\n                                    sx_rsrc,\n                                    a_scale_bases[mi] + k_off,\n                                    vec_width=1,\n                                    dtype=T.i32,\n                                    cache_modifier=0,\n                                )\n\"\"\",\n        \"\"\"                                s = _tm_load_a_scale(a_scale_bases[mi], k_off)\n\"\"\",\n    ),\n    (\n        \"\"\"                                        raw_as = buffer_ops.buffer_load(\n                                            sx_rsrc,\n                                            a_scale_bases[mi_p] + ku_off,\n                                            vec_width=1,\n                                            dtype=T.i32,\n                                            cache_modifier=0,\n                                        )\n\"\"\",\n        \"\"\"                                        raw_as = _tm_load_a_scale(\n                                            a_scale_bases[mi_p], ku_off\n                                        )\n\"\"\",\n    ),\n)\n\n\n_PRE_NT = 1024  # threads per prelude workgroup\n_PRE_VEC = 8  # bf16 per quant thread: one vector load in, one packed MXFP4 dword out\n_PRE_SORT_GROUPS = 28  # sort workgroups at least, so each pads few enough experts for one pass\n_PRE_QPASS = 2  # quant passes per workgroup\n_PRE_ZITERS = 16  # zeroed dwords per thread\n\n\n@functools.cache\ndef _build_prelude(experts, topk, unit, tokens, cols, zero_dwords, sort_groups, quant_passes, zero_iters):\n    \"\"\"One launch of independent sort, quant and zero workgroups. Each sort workgroup builds the routing table\n    as an LDS bit mesh and places its chunk of routes after each expert's earlier tokens, keeping token order;\n    quant workgroups write packed MXFP4 rows with round-up e8m0 scales; zero workgroups clear the target.\"\"\"\n    import flydsl.compiler as flyc\n    import flydsl.expr as fx\n    from aiter.ops.flydsl.kernels import buffer_ops\n    from aiter.ops.flydsl.kernels.moe_sorting_kernel import _allwave_inclusive_prefix_sum\n    from aiter.ops.flydsl.kernels.quant_utils import emit_f32_to_e2m1, emit_mx_e8m0_scale\n    from aiter.utility.mx_types import MxDtypeInt, MxScaleRoundModeInt\n    from flydsl._mlir import ir\n    from flydsl._mlir.dialects import llvm\n    from flydsl.compiler.kernel_function import CompilationContext\n    from flydsl.expr import const_expr, range_constexpr\n    from flydsl.expr.typing import T\n\n    NT, VEC = _PRE_NT, _PRE_VEC\n    E = experts\n    assert E <= NT and NT % topk == 0 and (topk & (topk - 1)) == 0\n    n_routes = tokens * topk\n    C = -(-n_routes // NT)  # route chunks, one per scattering sort workgroup\n    G = max(C, sort_groups)\n    W = -(-tokens // 32)  # mesh dwords per expert\n    assert (NT // topk) % 32 == 0\n    WPC = NT // topk // 32  # mesh dwords per route chunk\n    TPT = cols // VEC  # quant threads per token\n    assert cols % 32 == 0 and TPT % 4 == 0 and TPT <= NT\n    QT = NT // TPT\n    QB = -(-tokens // (QT * quant_passes))\n    ZB = -(-zero_dwords // (NT * zero_iters))\n    scale_cols = cols // 32\n    mesh_words = E * W\n    NW = NT // 64\n    log2_topk = topk.bit_length() - 1\n    tail_experts = -(-E // G)\n    tail_per_pass = NT // unit\n    tail_passes = -(-tail_experts // tail_per_pass)\n    blk_passes = -(-tokens // (unit * unit))\n    route_passes = -(-n_routes // NT)\n    assert NT % unit == 0\n\n    def _p(p, dtype):\n        return fx.recast_iter(dtype, p)\n\n    def _bytes(p):\n        return fx.inttoptr(\n            fx.PointerType.get(T.i8, address_space=fx.AddressSpace.Global, alignment=1),\n            fx.Int64(fx.ptrtoint(p)),\n        )\n\n    def _vec4(p, offset):\n        view = fx.make_view(_p(p, fx.Int32), fx.make_layout((4, 268435456), (1, 4)))\n        buf = fx.rocdl.make_buffer_tensor(view)\n        reg = fx.make_rmem_tensor(fx.make_layout(4, 1), fx.Int32)\n        atom = fx.make_copy_atom(fx.rocdl.BufferCopy128b(0), fx.Int32)\n        fx.copy_atom_call(atom, fx.slice(buf, (None, offset >> 2)), reg)\n        return fx.Vector(reg.load())\n\n    def _lds(ptr, idx):\n        return fx.ptr_load(ptr + fx.Int64(idx))\n\n    def _lds_st(ptr, val, idx):\n        fx.ptr_store(val, ptr + fx.Int64(idx))\n\n    # mesh[w * E + e] bit (t & 31) is set when token t = 32 w + (t & 31) routes to expert e\n    @fx.struct\n    class SortShared:\n        mesh: fx.Array[fx.Int32, mesh_words, 16]\n        seg_start: fx.Array[fx.Int32, E, 16]\n        seg_count: fx.Array[fx.Int32, E, 16]\n        before: fx.Array[fx.Int32, E, 16]\n        scratch: fx.Array[fx.Int32, NW, 16]\n\n    @flyc.kernel(known_block_size=[NT, 1, 1])\n    def prelude_kernel(\n        topk_ids: fx.Pointer,\n        topk_weights: fx.Pointer,\n        x: fx.Pointer,\n        out_q: fx.Pointer,\n        token_scale: fx.Pointer,\n        zero_buf: fx.Pointer,\n        sorted_ids: fx.Pointer,\n        sorted_w: fx.Pointer,\n        sorted_e: fx.Pointer,\n        num_valid_ids: fx.Pointer,\n    ):\n        bid = fx.Int32(fx.gpu.block_idx.x)\n        tid = fx.Int32(fx.gpu.thread_idx.x)\n        lds = fx.SharedAllocator().allocate(SortShared).peek()\n        if bid < G:\n            lane = tid % 64\n            wave = tid // 64\n            mesh = lds.mesh.ptr\n            mesh_base = fx.Int64(fx.ptrtoint(mesh))\n            ids = _p(topk_ids, fx.Int32)\n            # Issue every global load first, so their latency overlaps the mesh clear.\n            route_e = []\n            for i in range_constexpr(route_passes):\n                f = tid + i * NT\n                route_e.append(ids[(f < n_routes).select(f, fx.Int32(0))])\n            flat = bid * NT + tid\n            valid = (bid < C) & (flat < n_routes)\n            safe_flat = valid.select(flat, fx.Int32(0))\n            wt = _p(topk_weights, fx.Int32)[safe_flat]\n            for i in range_constexpr(-(-mesh_words // NT)):\n                w = tid + i * NT\n                if w < mesh_words:\n                    _lds_st(mesh, fx.Int32(0), w)\n            fx.gpu.barrier()\n            e_r = route_e[0]\n            for i in range_constexpr(route_passes):\n                f = tid + i * NT\n                if const_expr(i > 0):\n                    e_r = (bid == i).select(route_e[i], e_r)\n                if f < n_routes:\n                    e = route_e[i]\n                    tt = f >> log2_topk\n                    ptr = buffer_ops.create_llvm_ptr(\n                        mesh_base + fx.Int64(((tt >> 5) * E + e) * 4), address_space=3\n                    )\n                    ptr = ptr._value if hasattr(ptr, \"_value\") else ptr\n                    llvm.AtomicRMWOp(\n                        llvm.AtomicBinOp._or,\n                        ptr,\n                        (fx.Int32(1) << (tt & 31)).ir_value(),\n                        llvm.AtomicOrdering.monotonic,\n                        syncscope=\"workgroup\",\n                        alignment=4,\n                    )\n            fx.gpu.barrier()\n            e_ok = tid < E\n            safe_e = e_ok.select(tid, fx.Int32(0))\n            tot = fx.Int32(0)\n            before = fx.Int32(0)  # this expert's routes from tokens before this workgroup's chunk\n            chunk_w = bid * WPC\n            for wi in range_constexpr(W):\n                pc = fx.Int32(fx.math.ctpop(_lds(mesh, safe_e + wi * E).ir_value()))\n                tot = tot + pc\n                before = before + (fx.Int32(wi) < chunk_w).select(pc, fx.Int32(0))\n            tot = e_ok.select(tot, fx.Int32(0))\n            pad = (tot + (unit - 1)) // unit * unit\n            _, incl = _allwave_inclusive_prefix_sum(pad, lane, wave, lds.scratch.ptr, NW, 64)\n            start = incl - pad\n            if e_ok:\n                _lds_st(lds.seg_start.ptr, start, tid)\n                _lds_st(lds.seg_count.ptr, tot, tid)\n                _lds_st(lds.before.ptr, before, tid)\n            fx.gpu.barrier()\n            if bid < C:\n                t = safe_flat >> log2_topk\n                q = (t >> 5) - chunk_w\n                low = (fx.Int32(1) << (t & 31)) - 1\n                rank = _lds(lds.before.ptr, e_r)\n                for wi in range_constexpr(WPC):\n                    word = _lds(mesh, e_r + (chunk_w + wi) * E)\n                    m = (fx.Int32(wi) < q).select(fx.Int32(-1), (fx.Int32(wi) == q).select(low, fx.Int32(0)))\n                    rank = rank + fx.Int32(fx.math.ctpop((word & m).ir_value()))\n                if valid:\n                    pos = _lds(lds.seg_start.ptr, e_r) + rank\n                    _p(sorted_ids, fx.Int32)[pos] = ((flat & (topk - 1)) << 24) | t\n                    _p(sorted_w, fx.Int32)[pos] = wt\n            slot = tid % unit\n            for tp in range_constexpr(tail_passes):\n                te = bid + (tid // unit + tp * tail_per_pass) * G\n                if te < E:\n                    seg = _lds(lds.seg_start.ptr, te)\n                    cnt = _lds(lds.seg_count.ptr, te)\n                    padded_cnt = (cnt + (unit - 1)) // unit * unit\n                    if slot < padded_cnt - cnt:\n                        _p(sorted_ids, fx.Int32)[seg + cnt + slot] = fx.Int32((topk << 24) | tokens)\n                        _p(sorted_w, fx.Int32)[seg + cnt + slot] = fx.Int32(0)\n                    for bp in range_constexpr(blk_passes):\n                        blk = slot + bp * unit\n                        if blk < padded_cnt // unit:\n                            _p(sorted_e, fx.Int32)[seg // unit + blk] = te\n            if (bid == 0) & (tid == 0):\n                total_padded = fx.Int32(0)\n                for w in range_constexpr(NW):\n                    total_padded = total_padded + _lds(lds.scratch.ptr, fx.Int32(w))\n                _p(num_valid_ids, fx.Int32)[0] = total_padded\n                _p(num_valid_ids, fx.Int32)[1] = fx.Int32(tokens)\n        if (bid >= G) & (bid < G + QB):\n            for qp in range_constexpr(quant_passes):\n                sub = tid // TPT\n                token = ((bid - G) * quant_passes + qp) * QT + sub\n                col0 = (tid - sub * TPT) * VEC\n                ok = (token < tokens) & (sub < QT)\n                safe_token = ok.select(token, fx.Int32(0))\n                words = _vec4(x, safe_token * (cols // 2) + ok.select(col0, fx.Int32(0)) // 2)\n                v = words.bitcast(fx.BFloat16).extf(T.vec(VEC, T.f32))\n                vals = [fx.Float32(v[i]) for i in range_constexpr(VEC)]\n                amax = fx.Float32(0.0)\n                for i in range_constexpr(VEC):\n                    amax = amax.maximumf(fx.math.absf(vals[i]))\n                for dist in (1, 2):\n                    amax = amax.maximumf(amax.shuffle_xor(fx.Int32(dist), fx.Int32(64)))\n                e8m0 = fx.Int32(\n                    emit_mx_e8m0_scale(\n                        amax.ir_value(), mode=MxScaleRoundModeInt.RoundUp, dtype=MxDtypeInt.FP4_E2M1\n                    )\n                )\n                inv_scale = ((fx.Int32(254) - e8m0) << fx.Int32(23)).bitcast(fx.Float32)\n                packed = fx.Int32(0)\n                for i in range_constexpr(VEC):\n                    nib = fx.Int32(emit_f32_to_e2m1((vals[i] * inv_scale).ir_value()))\n                    packed = packed | (nib << fx.Int32(4 * i))\n                if ok:\n                    _p(out_q, fx.Int32)[token * (cols // 8) + col0 // 8] = packed\n                if ok & ((col0 & 31) == 0):\n                    _bytes(token_scale)[token * scale_cols + (col0 >> 5)] = e8m0.to(fx.Int8)\n        if bid >= G + QB:\n            zbase = (bid - G - QB) * (NT * zero_iters) + tid\n            for it in range_constexpr(zero_iters):\n                zi = zbase + it * NT\n                if zi < zero_dwords:\n                    _p(zero_buf, fx.Int32)[zi] = fx.Int32(0)\n\n    @flyc.jit\n    def launch_prelude(\n        topk_ids: fx.Pointer,\n        topk_weights: fx.Pointer,\n        x: fx.Pointer,\n        out_q: fx.Pointer,\n        token_scale: fx.Pointer,\n        zero_buf: fx.Pointer,\n        sorted_ids: fx.Pointer,\n        sorted_w: fx.Pointer,\n        sorted_e: fx.Pointer,\n        num_valid_ids: fx.Pointer,\n        stream: fx.Stream,\n    ):\n        ctx = CompilationContext.get_current()\n        with ir.InsertionPoint(ctx.gpu_module_body):\n            pass\n        prelude_kernel(\n            topk_ids,\n            topk_weights,\n            x,\n            out_q,\n            token_scale,\n            zero_buf,\n            sorted_ids,\n            sorted_w,\n            sorted_e,\n            num_valid_ids,\n        ).launch(grid=(G + QB + ZB, 1, 1), block=(NT, 1, 1), stream=stream)\n\n    return launch_prelude\n\n\ndef _ptr(t):\n    import flydsl.compiler as flyc\n    import flydsl.expr as fx\n\n    # torch allocations are 16-byte aligned; typed loads in the kernel need that stated\n    return flyc.from_c_void_p(fx.Uint8, t.data_ptr(), assumed_align=16)\n\n\n@functools.cache\ndef _tokscale_builder():\n    \"\"\"Load aiter's mixed_moe_gemm_2stage_common with _STAGE1_EDITS applied, as a sibling module.\"\"\"\n    import importlib.util\n    import linecache\n    import types\n\n    base = \"aiter.ops.flydsl.kernels.mixed_moe_gemm_2stage_common\"\n    spec = importlib.util.find_spec(base)\n    src = spec.loader.get_source(base)\n    for old, new in _STAGE1_EDITS:\n        assert src.count(old) >= 1, old\n        src = src.replace(old, new, 1)\n    name = base + \"_tmsc\"\n    filename = spec.origin[: -len(\".py\")] + \"_tmsc.py\"\n    # FlyDSL reads kernel source through inspect/linecache; register the edited text under its own name.\n    linecache.cache[filename] = (len(src), None, src.splitlines(True), filename)\n    module = types.ModuleType(name)\n    module.__file__ = filename\n    module.__package__ = base.rpartition(\".\")[0]\n    exec(compile(src, filename, \"exec\"), module.__dict__)\n    return module\n\n\n@functools.cache\ndef _compile_stage1(\n    model_dim,\n    inter_dim,\n    experts,\n    topk,\n    tile_m,\n    tile_n,\n    tile_k,\n    doweight_stage1,\n    a_dtype,\n    b_dtype,\n    out_dtype,\n    act=\"silu\",\n    persist_m=1,\n    use_async_copy=False,\n    k_batch=1,\n    waves_per_eu=3,\n    b_nt=2,\n    gate_mode=\"separated\",\n    model_dim_pad=0,\n    inter_dim_pad=0,\n    enable_bias=False,\n    a_scale_one=False,\n    xcd_swizzle=0,\n    k_wave=1,\n    v2_output_layout=False,\n):\n    \"\"\"aiter's a4w4 stage-1 kernel, built to gather its A scales token-major through sorted_ids.\"\"\"\n    from aiter.ops.flydsl.moe_common import GateMode\n\n    return _tokscale_builder().compile_mixed_moe_gemm1_common(\n        model_dim=model_dim,\n        inter_dim=inter_dim,\n        experts=experts,\n        topk=topk,\n        tile_m=tile_m,\n        tile_n=tile_n,\n        tile_k=tile_k,\n        doweight_stage1=doweight_stage1,\n        a_dtype=a_dtype,\n        b_dtype=b_dtype,\n        out_dtype=out_dtype,\n        act=act,\n        use_cshuffle_epilog=None,\n        enable_bias=enable_bias,\n        model_dim_pad=model_dim_pad,\n        inter_dim_pad=inter_dim_pad,\n        persist_m=persist_m,\n        use_async_copy=use_async_copy,\n        waves_per_eu=waves_per_eu,\n        k_batch=k_batch,\n        b_nt=b_nt,\n        gate_mode=GateMode(gate_mode),\n        a_scale_one=a_scale_one,\n        xcd_swizzle=xcd_swizzle,\n        k_wave=k_wave,\n        v2_output_layout=v2_output_layout,\n    )\n\n\n@functools.cache\ndef _plan(n_tokens, model_dim, inter_dim, n_experts, topk, out_dtype, weights_shuffled, device):\n    \"\"\"Resolve aiter's tuned two-stage config for this shape, with the a4w4 flags set only while resolving.\"\"\"\n    from aiter import ActivationType, QuantType, dtypes\n    from aiter import fused_moe as fm\n\n    saved = {var: os.environ.get(var) for var in _ENV}\n    os.environ.update(_ENV)\n    try:\n        metadata = fm.get_2stage_cfgs(\n            fm.get_padded_M(n_tokens),\n            model_dim,\n            inter_dim,\n            n_experts,\n            topk,\n            out_dtype,\n            dtypes.fp4x2,\n            dtypes.fp4x2,\n            QuantType.per_1x32,\n            True,\n            ActivationType.Situv2,\n            False,\n            0,\n            0,\n            weights_shuffled,\n            \"separated\",\n            is_ep=False,\n            has_stage2_bias=False,\n            opus_weights_shuffled=weights_shuffled,\n            config_file=None,\n        )\n    finally:\n        for var, value in saved.items():\n            if value is None:\n                os.environ.pop(var, None)\n            else:\n                os.environ[var] = value\n    assert not metadata.run_1stage and not metadata.output_aux and metadata.prequant\n    assert metadata.skip_inter_quant and metadata.fuse_quant == \"fp4\"\n    # One stage-1 tile config for every token count: none of aiter's tuned rows streams w1 faster.\n    from aiter.ops.flydsl.moe_kernels import _flydsl_moe_stage1_impl, get_flydsl_kernel_params\n\n    p = get_flydsl_kernel_params(\"flydsl_moe1_afp4_wfp4_bf16_t32x64x256_w3_kw2_fp4\")\n    block_m = int(metadata.block_m)\n    assert p[\"tile_m\"] == block_m and p.get(\"k_batch\", 1) == 1\n    # The launcher aiter's stage-1 wrapper calls, with the builder swapped for the token-major-scale one.\n    stage1 = functools.partial(\n        _flydsl_moe_stage1_impl,\n        tile_m=p[\"tile_m\"],\n        tile_n=p[\"tile_n\"],\n        tile_k=p[\"tile_k\"],\n        a_dtype=p[\"a_dtype\"],\n        b_dtype=p[\"b_dtype\"],\n        out_dtype=\"fp4\",\n        act=\"situv2\",\n        use_async_copy=True,\n        k_batch=1,\n        waves_per_eu=p.get(\"waves_per_eu\", 3),\n        b_nt=p.get(\"b_nt\", 2),\n        gate_mode=p.get(\"gate_mode\", \"separated\"),\n        inter_dim_pad=0,\n        model_dim_pad=0,\n        bias=None,\n        a_scale_one=False,\n        xcd_swizzle=p.get(\"xcd_swizzle\", 0),\n        swiglu_limit=None,\n        k_wave=p.get(\"k_wave\", 1),\n        v2_output_layout=True,\n        _compile_kernel=_compile_stage1,\n    )\n    max_padded = int(n_tokens * topk + n_experts * block_m - topk)\n    max_blocks = (max_padded + block_m - 1) // block_m\n    scratch_acc = n_tokens >= _SCRATCH_ACC_MIN_TOKENS\n    prelude = _build_prelude(\n        n_experts,\n        topk,\n        block_m,\n        n_tokens,\n        model_dim,\n        n_tokens * model_dim * torch.finfo(out_dtype).bits // 32,\n        _PRE_SORT_GROUPS,\n        _PRE_QPASS,\n        _PRE_ZITERS,\n    )\n    return metadata, stage1, block_m, max_padded, max_blocks, scratch_acc, prelude\n\n\ndef run(\n    *, hidden_states, w1, w2, topk_weights, topk_ids, w1_scale, w2_scale, beta, linear_beta, out_dtype, out\n):\n    from aiter import dtypes\n    from aiter.ops.flydsl.moe_kernels import _run_compiled\n\n    n_tokens, topk = topk_ids.shape\n    n_experts = w1.shape[0]\n    model_dim = w2.shape[1]\n    inter_dim = w2.shape[2] * 2\n    shuffled = bool(getattr(w1, \"is_shuffled\", False) and getattr(w2, \"is_shuffled\", False))\n    metadata, stage1, block_m, max_padded, max_blocks, scratch_acc, prelude = _plan(\n        n_tokens, model_dim, inter_dim, n_experts, topk, out.dtype, shuffled, out.device\n    )\n    device = out.device\n\n    sorted_ids = torch.empty(max_padded, dtype=torch.int32, device=device)\n    sorted_weights = torch.empty(max_padded, dtype=torch.float32, device=device)\n    sorted_expert_ids = torch.empty(max_blocks, dtype=torch.int32, device=device)\n    num_valid_ids = torch.empty(2, dtype=torch.int32, device=device)\n    # Stage 2's atomics run faster on a fresh buffer than on the caller's `out`; from _SCRATCH_ACC_MIN_TOKENS\n    # that saves more than the final copy costs.\n    acc = torch.empty_like(out) if scratch_acc else out\n    # Token-major MXFP4 activations; stage 1 gathers both the rows and their scales via sorted_ids.\n    a1 = torch.empty(n_tokens, model_dim // 2, dtype=torch.uint8, device=device)\n    a1_scale = torch.empty(n_tokens, model_dim // 32, dtype=torch.uint8, device=device)\n    _run_compiled(\n        prelude,\n        (\n            _ptr(topk_ids),\n            _ptr(topk_weights),\n            _ptr(hidden_states),\n            _ptr(a1),\n            _ptr(a1_scale),\n            _ptr(acc),\n            _ptr(sorted_ids),\n            _ptr(sorted_weights),\n            _ptr(sorted_expert_ids),\n            _ptr(num_valid_ids),\n            torch.cuda.current_stream(),\n        ),\n    )\n    a1 = a1.view(dtypes.fp4x2)\n    a1_scale = a1_scale.view(dtypes.fp8_e8m0)\n\n    a2, a2_scale = stage1(\n        a=a1,\n        w1=w1,\n        sorted_token_ids=sorted_ids,\n        sorted_expert_ids=sorted_expert_ids,\n        num_valid_ids=num_valid_ids,\n        out=None,\n        topk=topk,\n        w1_scale=w1_scale.view(dtypes.fp8_e8m0),\n        a1_scale=a1_scale,\n        sorted_weights=None,\n        topk_ids=topk_ids,\n        situ_beta=1.0 if beta is None else float(beta),\n        situ_linear_beta=1.0 if linear_beta is None else float(linear_beta),\n    )\n\n    metadata.stage2(\n        a2,\n        w1,\n        w2,\n        sorted_ids,\n        sorted_expert_ids,\n        num_valid_ids,\n        acc,\n        topk,\n        w2_scale=w2_scale.view(dtypes.fp8_e8m0),\n        a2_scale=a2_scale,\n        block_m=block_m,\n        sorted_weights=sorted_weights,\n        bias2=None,\n    )\n    if acc is not out:\n        out.copy_(acc)\n"
+      }
+    ]
+  }
+}

@@ -1,0 +1,305 @@
+{
+  "schema_version": 5,
+  "name": "situv2_a4w4_moe_a16w4_shuffled_model_dim3584_n_experts896_topk16_inter_dim384",
+  "contract_id": "situv2_a4w4_moe@1.0",
+  "description": "aiter's fused MoE as vLLM calls it for SiTUv2 experts with MXFP4 weights and MXFP4 activations (VLLM_ROCM_USE_AITER_MOE_SITUV2 a4w4, AITER_SITUV2_A4W4): each token through its top-k experts, down(situ(gate(x)) * linear(up(x))) of fp4 weights at an e8m0 scale per 32, each stage's activations rounded to MXFP4, weighted by its routing weight, summed. w1 keeps the gate rows before the up rows; aiter's a16w4 shuffle, gate and up not interleaved, holds both weights and both scales.",
+  "op_type": "situv2_a4w4_moe",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens routed in this call."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 3584,
+      "description": "Hidden size."
+    },
+    "n_experts": {
+      "type": "const",
+      "value": 896,
+      "description": "Experts."
+    },
+    "topk": {
+      "type": "const",
+      "value": 16,
+      "description": "Experts per token."
+    },
+    "inter_dim": {
+      "type": "const",
+      "value": 384,
+      "description": "Expert intermediate size."
+    },
+    "gate_up_rows": {
+      "type": "const",
+      "value": 768,
+      "description": "w1 rows: gate and up concatenated."
+    },
+    "model_blocks": {
+      "type": "const",
+      "value": 112,
+      "description": "w1 scale columns."
+    },
+    "inter_blocks": {
+      "type": "const",
+      "value": 12,
+      "description": "w2 scale columns."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Token activations."
+    },
+    "w1": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gate-up projection per expert: gate rows, then up rows."
+    },
+    "w2": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Down projection per expert."
+    },
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Routing weight of each chosen expert."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": 895,
+        "distinct": true
+      },
+      "description": "Chosen experts per token, distinct within a row."
+    },
+    "w1_scale": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -11,
+        "log2_hi": -5
+      },
+      "description": "Per 1 x 32 block of w1."
+    },
+    "w2_scale": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -9,
+        "log2_hi": -3
+      },
+      "description": "Per 1 x 32 block of w2."
+    },
+    "beta": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "SiTUv2 gate saturation."
+    },
+    "linear_beta": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "SiTUv2 up saturation."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Routing-weighted sum of the chosen experts' outputs."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 40
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 48
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 56
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 72
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 80
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 96
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 112
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 120
+      },
+      "scalars": {
+        "beta": 4.0,
+        "linear_beta": 25.0
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "a16w4_shuffled": {
+        "layouts": {
+          "w1": {
+            "kind": "gate_up_interleaved_weight",
+            "gate_up": false
+          },
+          "w2": {
+            "kind": "gate_up_interleaved_weight",
+            "gate_up": false
+          },
+          "w1_scale": {
+            "kind": "gate_up_interleaved_scales",
+            "gate_up": false
+          },
+          "w2_scale": {
+            "kind": "gate_up_interleaved_scales",
+            "gate_up": false
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "w1.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w2.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w1_scale.ndim",
+            "expected_value": 2
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.001,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "author": "kyle-256",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"SiTUv2 a4w4 fused MoE (MXFP4 weights and activations) for gfx950 on aiter's FlyDSL two-stage path.\n\nOne prelude launch sorts routes, zeroes ``out`` and quantizes activations; stage 2 adds into ``out``.\"\"\"\n\nimport functools\nimport os\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom aiter.ops.flydsl.kernels import buffer_ops, vector\nfrom aiter.ops.flydsl.kernels.quant_utils import emit_mx_e8m0_scale\nfrom aiter.utility.mx_types import MX_DEFAULT_ROUND_MODE as _ROUND_MODE\nfrom aiter.utility.mx_types import MxDtypeInt as _MxDtype\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import llvm\nfrom flydsl.compiler.kernel_function import CompilationContext\nfrom flydsl.expr import arith, gpu, range_constexpr, rocdl\nfrom flydsl.expr.arith import ArithValue\nfrom flydsl.expr.typing import T\n\n_STAGE1_KERNEL = \"flydsl_moe1_afp4_wfp4_bf16_t32x64x256_w4_kw2_fp4\"\n_ENV = {\"AITER_SITUV2_A4W4\": \"1\", \"AITER_SITUV2_A8W4\": \"0\", \"AITER_FLYDSL_STAGE2_FP8\": \"1\"}\n\n# Quantization reads 8 bf16 per lane, so LANES_PER_BLOCK lanes cover one MX block. Sorted rows and scales\n# match aiter's moe sort and MX quant + scale shuffle on every routed row; scale bytes of padding rows stay\n# unwritten, as aiter's fused quant-sort leaves them.\nBLOCK_THREADS = 256\nWAVE = 64\nWAVES = BLOCK_THREADS // WAVE\nTILE_ROWS = 32\nLANES_PER_BLOCK = 4\n\n\ndef _raw(value):\n    return value.ir_value() if hasattr(value, \"ir_value\") else value\n\n\ndef _dpp_wave_inclusive_sum(val, lane):\n    \"\"\"Inclusive prefix sum of one i32 per lane across a wave: DPP row shifts, then two ds_bpermute steps.\"\"\"\n    for shift in (1, 2, 4, 8):\n        remote = rocdl.update_dpp(T.i32, _raw(fx.Int32(0)), _raw(val), 0x110 + shift, 0xF, 0xF, True)\n        val = (lane >= fx.Int32(shift)).select(val + fx.Int32(remote), val)\n    remote16 = rocdl.ds_bpermute(\n        T.i32, _raw(((lane & fx.Int32(0x30)) - fx.Int32(1)) * fx.Int32(4)), _raw(val)\n    )\n    val = (lane >= fx.Int32(16)).select(val + fx.Int32(remote16), val)\n    remote32 = rocdl.ds_bpermute(\n        T.i32, _raw(((lane & fx.Int32(0x30)) - fx.Int32(17)) * fx.Int32(4)), _raw(val)\n    )\n    val = (lane >= fx.Int32(32)).select(val + fx.Int32(remote32), val)\n    return val\n\n\ndef _lds_atomic_add(base_i64, idx):\n    ptr = buffer_ops.create_llvm_ptr(base_i64 + fx.Int64(idx) * 4, address_space=3)\n    ptr = ptr._value if hasattr(ptr, \"_value\") else ptr\n    llvm.AtomicRMWOp(\n        llvm.AtomicBinOp.add,\n        ptr,\n        arith.constant(1, type=T.i32),\n        llvm.AtomicOrdering.monotonic,\n        syncscope=\"workgroup\",\n        alignment=4,\n    )\n\n\n@functools.cache\ndef _build_prelude(M: int, topk: int, E: int, model_dim: int, block_m: int, n_pad: int, n_blocks: int):\n    \"\"\"One launch, one workgroup per token: the routing sort (rebuilt in LDS by every workgroup), zeroing\n    out[t], MXFP4 quantization of hidden[t] and the scatter of its e8m0 scales into stage 1's row layout.\"\"\"\n    assert block_m == TILE_ROWS and topk == 16 and E <= 1024 and model_dim % 32 == 0\n    n_mx = model_dim // 32\n    assert n_mx % 8 == 0\n    n_items = M * topk\n    n_quads = n_items // 4\n    item_rounds = (n_quads + BLOCK_THREADS - 1) // BLOCK_THREADS\n    feat_bytes = model_dim * 2\n    payload_bytes = model_dim // 2\n    blocks_per_pass = BLOCK_THREADS // LANES_PER_BLOCK\n    q_passes = (n_mx + blocks_per_pass - 1) // blocks_per_pass\n    zero_vecs = feat_bytes // 16\n    zero_rounds = (zero_vecs + BLOCK_THREADS - 1) // BLOCK_THREADS\n    e_per_wg = (E + M - 1) // M\n    assert e_per_wg <= BLOCK_THREADS\n    pad_rounds = (e_per_wg * TILE_ROWS + BLOCK_THREADS - 1) // BLOCK_THREADS\n    sentinel = (topk << 24) | M\n    sc_items = topk * n_mx\n    sc_rounds = (sc_items + BLOCK_THREADS - 1) // BLOCK_THREADS\n    scale_bytes = (n_pad + TILE_ROWS - 1) // TILE_ROWS * TILE_ROWS * n_mx\n\n    @fx.struct\n    class SharedStorage:\n        hist: fx.Array[fx.Int32, 1024, 16]\n        pre: fx.Array[fx.Int32, 1024, 16]\n        boff: fx.Array[fx.Int32, 1024, 16]\n        wsum: fx.Array[fx.Int32, 16, 16]\n        ids: fx.Array[fx.Int32, 16, 16]\n        pos: fx.Array[fx.Int32, 16, 16]\n        sc: fx.Array[fx.Int32, n_mx, 16]\n\n    @flyc.kernel(name=f\"situv2_mxfp4_sort_quant_m{M}_md{model_dim}\", known_block_size=[BLOCK_THREADS, 1, 1])\n    def prelude_kernel(\n        topk_ids: fx.Pointer,\n        topk_weights: fx.Pointer,\n        hidden: fx.Pointer,\n        out: fx.Pointer,\n        sorted_ids: fx.Pointer,\n        sorted_weights: fx.Pointer,\n        sorted_expert_ids: fx.Pointer,\n        num_valid_ids: fx.Pointer,\n        a1: fx.Pointer,\n        scale: fx.Pointer,\n    ):\n        i32 = T.i32\n        f32 = T.f32\n        c0_f32 = arith.constant(0.0, type=f32)\n        c23 = arith.constant(23, type=i32)\n        tid = fx.Int32(fx.thread_idx.x)\n        t = fx.Int32(fx.block_idx.x)\n        wave = tid >> fx.Int32(6)\n        lane = tid & fx.Int32(63)\n        blk_in = tid >> fx.Int32(2)\n        lib = tid & fx.Int32(3)\n\n        def rsrc(ptr, nbytes, off_bytes=None):\n            base = fx.Int64(fx.ptrtoint(ptr))\n            if off_bytes is not None:\n                base = base + off_bytes\n            return buffer_ops.create_buffer_resource_from_addr(base, num_records_bytes=nbytes)\n\n        # 1. Issue the global loads first: hidden[t], every route's expert id, token t's own routes.\n        hid_rsrc = rsrc(hidden, feat_bytes, fx.Int64(t) * feat_bytes)\n        raws = []\n        for p in range_constexpr(q_passes):\n            mx_block = blk_in + fx.Int32(p * blocks_per_pass)\n            raws.append(\n                buffer_ops.buffer_load(\n                    hid_rsrc, mx_block * fx.Int32(16) + lib * fx.Int32(4), vec_width=4, dtype=i32\n                )\n            )\n        ids_rsrc = rsrc(topk_ids, n_items * 4)\n        items = []\n        for r in range_constexpr(item_rounds):\n            i4 = tid + fx.Int32(r * BLOCK_THREADS)\n            items.append((r, i4, buffer_ops.buffer_load(ids_rsrc, i4 * fx.Int32(4), vec_width=4, dtype=i32)))\n        k_own = tid & fx.Int32(15)\n        own_e = fx.Int32(buffer_ops.buffer_load(ids_rsrc, t * fx.Int32(topk) + k_own, vec_width=1, dtype=i32))\n        w_rsrc = rsrc(topk_weights, n_items * 4)\n        own_w = buffer_ops.buffer_load(w_rsrc, t * fx.Int32(topk) + k_own, vec_width=1, dtype=f32)\n\n        lds = fx.SharedAllocator().allocate(SharedStorage).peek()\n        lds_hist = lds.hist.ptr\n        lds_pre = lds.pre.ptr\n        lds_boff = lds.boff.ptr\n        lds_wsum = lds.wsum.ptr\n        lds_ids = lds.ids.ptr\n        lds_pos = lds.pos.ptr\n        lds_sc = lds.sc.ptr\n        c_zero = fx.Int32(0)\n        for j in range_constexpr(4):\n            fx.ptr_store(c_zero, lds_hist + fx.Int64(tid * fx.Int32(4) + fx.Int32(j)))\n            fx.ptr_store(c_zero, lds_pre + fx.Int64(tid * fx.Int32(4) + fx.Int32(j)))\n        if tid < fx.Int32(16):\n            fx.ptr_store(own_e, lds_ids + fx.Int64(tid))\n\n        # 2. Zero out[t] for stage 2's atomic accumulation.\n        out_rsrc = rsrc(out, feat_bytes, fx.Int64(t) * feat_bytes)\n        zvec = vector.from_elements(T.vec(4, i32), [_raw(c_zero)] * 4)\n        for z in range_constexpr(zero_rounds):\n            zi = tid + fx.Int32(z * BLOCK_THREADS)\n            if (z + 1) * BLOCK_THREADS <= zero_vecs:\n                buffer_ops.buffer_store(zvec, out_rsrc, zi * fx.Int32(16), offset_is_bytes=True)\n            else:\n                buffer_ops.buffer_store(\n                    zvec,\n                    out_rsrc,\n                    zi * fx.Int32(16),\n                    mask=_raw(zi < fx.Int32(zero_vecs)),\n                    offset_is_bytes=True,\n                )\n        gpu.barrier()\n\n        # 3. Per-expert route counts, and the counts from tokens before t (its rank inside each expert).\n        hist_base = fx.Int64(fx.ptrtoint(lds_hist))\n        pre_base = fx.Int64(fx.ptrtoint(lds_pre))\n        for r, i4, e4 in items:\n            before = (i4 >> fx.Int32(2)) < t\n            in_range = i4 < fx.Int32(n_quads)\n            for q in range_constexpr(4):\n                e = fx.Int32(vector.extract(e4, static_position=[q], dynamic_position=[]))\n                if (r + 1) * BLOCK_THREADS <= n_quads:\n                    _lds_atomic_add(hist_base, e)\n                    if before:\n                        _lds_atomic_add(pre_base, e)\n                else:\n                    if in_range:\n                        _lds_atomic_add(hist_base, e)\n                        if before:\n                            _lds_atomic_add(pre_base, e)\n        gpu.barrier()\n\n        # 4. Exclusive scan of the per-expert block counts (4 experts per thread).\n        nbs = []\n        for j in range_constexpr(4):\n            h = fx.Int32(fx.ptr_load(lds_hist + fx.Int64(tid * fx.Int32(4) + fx.Int32(j))))\n            nbs.append((h + fx.Int32(TILE_ROWS - 1)) >> fx.Int32(5))\n        s = nbs[0] + nbs[1] + nbs[2] + nbs[3]\n        incl = _dpp_wave_inclusive_sum(s, lane)\n        if lane == fx.Int32(63):\n            fx.ptr_store(incl, lds_wsum + fx.Int64(wave))\n        gpu.barrier()\n        cross = c_zero\n        total_blocks = c_zero\n        for w in range_constexpr(WAVES):\n            wt = fx.Int32(fx.ptr_load(lds_wsum + fx.Int64(fx.Int32(w))))\n            cross = (wave > fx.Int32(w)).select(cross + wt, cross)\n            total_blocks = total_blocks + wt\n        run_off = incl + cross - s\n        for j in range_constexpr(4):\n            fx.ptr_store(run_off, lds_boff + fx.Int64(tid * fx.Int32(4) + fx.Int32(j)))\n            run_off = run_off + nbs[j]\n        gpu.barrier()\n\n        # 5. Token t's own routes: sorted position = expert block offset * TILE_ROWS + rank in the expert.\n        sid_rsrc = rsrc(sorted_ids, n_pad * 4)\n        sw_rsrc = rsrc(sorted_weights, n_pad * 4)\n        if tid < fx.Int32(16):\n            dup = c_zero\n            for kk in range_constexpr(16):\n                ek = fx.Int32(fx.ptr_load(lds_ids + fx.Int64(fx.Int32(kk))))\n                dup = ((ek == own_e) & (fx.Int32(kk) < tid)).select(dup + fx.Int32(1), dup)\n            bo = fx.Int32(fx.ptr_load(lds_boff + fx.Int64(own_e)))\n            pr = fx.Int32(fx.ptr_load(lds_pre + fx.Int64(own_e)))\n            pos = bo * fx.Int32(TILE_ROWS) + pr + dup\n            fx.ptr_store(pos, lds_pos + fx.Int64(tid))\n            buffer_ops.buffer_store((tid << fx.Int32(24)) | t, sid_rsrc, pos)\n            buffer_ops.buffer_store(own_w, sw_rsrc, pos)\n\n        # 6. Experts e == t (mod M): their block ids, and the sentinel / zero weight on their padding rows.\n        # One (expert slot, row) pair per thread: padding rows lie only in an expert's last block.\n        seid_rsrc = rsrc(sorted_expert_ids, n_blocks * 4)\n        for j in range_constexpr(pad_rounds):\n            idx = tid + fx.Int32(j * BLOCK_THREADS)\n            slot = idx >> fx.Int32(5)\n            rw = idx & fx.Int32(TILE_ROWS - 1)\n            e = t + slot * fx.Int32(M)\n            live = (slot < fx.Int32(e_per_wg)) & (e < fx.Int32(E))\n            e_safe = live.select(e, c_zero)\n            h = fx.Int32(fx.ptr_load(lds_hist + fx.Int64(e_safe)))\n            bo = fx.Int32(fx.ptr_load(lds_boff + fx.Int64(e_safe)))\n            live = live & (h > c_zero)\n            nb = (h + fx.Int32(TILE_ROWS - 1)) >> fx.Int32(5)\n            last_fill = h - (nb - fx.Int32(1)) * fx.Int32(TILE_ROWS)\n            pad_row = (bo + nb - fx.Int32(1)) * fx.Int32(TILE_ROWS) + rw\n            ok_pad = _raw(live & (rw >= last_fill))\n            buffer_ops.buffer_store(fx.Int32(sentinel), sid_rsrc, pad_row, mask=ok_pad)\n            buffer_ops.buffer_store(c_zero, sw_rsrc, pad_row, mask=ok_pad)\n            buffer_ops.buffer_store(e, seid_rsrc, bo + rw, mask=_raw(live & (rw < nb)))\n        if (t == c_zero) & (tid == c_zero):\n            nv_rsrc = rsrc(num_valid_ids, 8)\n            buffer_ops.buffer_store(total_blocks * fx.Int32(TILE_ROWS), nv_rsrc, c_zero)\n            buffer_ops.buffer_store(fx.Int32(M), nv_rsrc, fx.Int32(1))\n\n        # 7. Quantize hidden[t] once: fp4 payload to a1[t], e8m0 scales staged in LDS.\n        a1_rsrc = rsrc(a1, payload_bytes, fx.Int64(t) * payload_bytes)\n        for p in range_constexpr(q_passes):\n            raw4 = raws[p]\n            mx_block = blk_in + fx.Int32(p * blocks_per_pass)\n            xs8 = []\n            for j in range_constexpr(4):\n                rj = vector.extract(raw4, static_position=[j], dynamic_position=[])\n                lo = arith.trunci(T.i16, rj)\n                hi = arith.trunci(T.i16, ArithValue(rj) >> arith.constant(16, type=i32))\n                xs8.append(arith.extf(f32, arith.bitcast(T.bf16, lo)))\n                xs8.append(arith.extf(f32, arith.bitcast(T.bf16, hi)))\n            amax = c0_f32\n            for xv in xs8:\n                amax = arith.maximumf(amax, llvm.call_intrinsic(f32, \"llvm.fabs.f32\", [xv], [], []))\n            for dist in (2, 1):\n                peer = amax.shuffle_xor(arith.constant(dist, type=i32), arith.constant(WAVE, type=i32))\n                amax = arith.maximumf(amax, peer)\n            e8m0 = emit_mx_e8m0_scale(amax, mode=_ROUND_MODE, dtype=_MxDtype.FP4_E2M1)\n            sc = (ArithValue(e8m0) << c23).bitcast(f32)\n            packed = arith.constant(0, type=i32)\n            for j in range_constexpr(4):\n                packed = rocdl.cvt_scalef32_pk_fp4_f32(\n                    i32, _raw(packed), _raw(xs8[2 * j]), _raw(xs8[2 * j + 1]), _raw(sc), j\n                )\n            in_row = mx_block < fx.Int32(n_mx)\n            buffer_ops.buffer_store(\n                packed,\n                a1_rsrc,\n                mx_block * fx.Int32(16) + lib * fx.Int32(4),\n                mask=_raw(in_row),\n                offset_is_bytes=True,\n            )\n            if (lib == c_zero) & in_row:\n                fx.ptr_store(fx.Int32(e8m0), lds_sc + fx.Int64(mx_block))\n        gpu.barrier()\n\n        # 8. Scatter the scales: one byte per (route, MX column) in aiter's mx_scale_shuffle_idx layout.\n        sc_rsrc = rsrc(scale, scale_bytes)\n        for j in range_constexpr(sc_rounds):\n            idx = tid + fx.Int32(j * BLOCK_THREADS)\n            k = idx // fx.Int32(n_mx)\n            c = idx - k * fx.Int32(n_mx)\n            ok = idx < fx.Int32(sc_items)\n            k = ok.select(k, c_zero)\n            c = ok.select(c, c_zero)\n            R = fx.Int32(fx.ptr_load(lds_pos + fx.Int64(k)))\n            off = (\n                (R >> fx.Int32(5)) * fx.Int32(TILE_ROWS * n_mx)\n                + (\n                    (\n                        (c >> fx.Int32(3)) * fx.Int32(64)\n                        + (c & fx.Int32(3)) * fx.Int32(16)\n                        + (R & fx.Int32(15))\n                    )\n                    << fx.Int32(2)\n                )\n                + ((R >> fx.Int32(4)) & fx.Int32(1))\n                + (((c >> fx.Int32(2)) & fx.Int32(1)) << fx.Int32(1))\n            )\n            v = fx.Int32(fx.ptr_load(lds_sc + fx.Int64(c)))\n            byte = arith.trunci(T.i8, _raw(v))\n            if (j + 1) * BLOCK_THREADS <= sc_items:\n                buffer_ops.buffer_store(byte, sc_rsrc, off, offset_is_bytes=True)\n            else:\n                buffer_ops.buffer_store(byte, sc_rsrc, off, mask=_raw(ok), offset_is_bytes=True)\n\n    @flyc.jit\n    def launch(\n        topk_ids: fx.Pointer,\n        topk_weights: fx.Pointer,\n        hidden: fx.Pointer,\n        out: fx.Pointer,\n        sorted_ids: fx.Pointer,\n        sorted_weights: fx.Pointer,\n        sorted_expert_ids: fx.Pointer,\n        num_valid_ids: fx.Pointer,\n        a1: fx.Pointer,\n        scale: fx.Pointer,\n        stream: fx.Stream = fx.Stream(None),  # noqa: B008\n    ):\n        ctx = CompilationContext.get_current()\n        with ir.InsertionPoint(ctx.gpu_module_body):\n            pass\n        prelude_kernel(\n            topk_ids,\n            topk_weights,\n            hidden,\n            out,\n            sorted_ids,\n            sorted_weights,\n            sorted_expert_ids,\n            num_valid_ids,\n            a1,\n            scale,\n        ).launch(grid=(M, 1, 1), block=(BLOCK_THREADS, 1, 1), stream=stream)\n\n    return launch\n\n\n@functools.cache\ndef _config(M, topk, E, model_dim, inter_dim, dtype):\n    \"\"\"Sort block size, buffer sizes, the stage callables and the quant+scatter launcher for this shape.\"\"\"\n    import aiter.fused_moe as fm\n    from aiter import ActivationType, QuantType, dtypes\n\n    metadata = fm.get_2stage_cfgs(\n        fm.get_padded_M(M),\n        model_dim,\n        inter_dim,\n        E,\n        topk,\n        dtype,\n        dtypes.fp4x2,\n        dtypes.fp4x2,\n        QuantType.per_1x32,\n        True,\n        ActivationType.Situv2,\n        False,\n        0,\n        0,\n        True,\n        fm.GateMode(\"separated\"),\n        is_ep=False,\n        has_stage2_bias=False,\n        opus_weights_shuffled=True,\n    )\n    assert not metadata.run_1stage and not metadata.output_aux and not metadata.flat\n    assert not fm.stage2_uses_route_reduce(metadata.stage2)\n    assert metadata.stage1.func is fm._flydsl_stage1_wrapper and metadata.skip_inter_quant\n    assert metadata.fuse_quant == \"fp4\"\n    block_m = int(metadata.block_m)\n    max_num_tokens_padded = int(M * topk + E * block_m - topk)\n    max_num_m_blocks = (max_num_tokens_padded + block_m - 1) // block_m\n    # Stage 1 always runs the wider tile named by _STAGE1_KERNEL: the tuned table's narrower pick for small M\n    # streams the same expert weights with half the N per workgroup.\n    assert (\n        metadata.stage1.keywords[\"kernelName\"].endswith(\"_fp4\")\n        and metadata.stage1.keywords[\"out_dtype\"] == \"fp4\"\n    )\n    stage1 = functools.partial(\n        metadata.stage1.func,\n        *metadata.stage1.args,\n        **{**metadata.stage1.keywords, \"kernelName\": _STAGE1_KERNEL},\n    )\n    scale_rows = (max_num_tokens_padded + 31) // 32 * 32\n    launch = _build_prelude(M, topk, E, model_dim, block_m, max_num_tokens_padded, max_num_m_blocks)\n    return block_m, max_num_tokens_padded, max_num_m_blocks, scale_rows, stage1, metadata.stage2, launch\n\n\ndef run(\n    *, hidden_states, w1, w2, topk_weights, topk_ids, w1_scale, w2_scale, beta, linear_beta, out_dtype, out\n):\n    from aiter import dtypes\n    from aiter.ops.flydsl.kernels.tensor_shim import ptr_arg\n\n    M, topk = topk_ids.shape\n    E, gate_up_rows, model_dim = w1.shape[0], w1.shape[1], w2.shape[1]\n    inter_dim = gate_up_rows // 2\n    block_m, n_pad, n_blocks, scale_rows, stage1, stage2, launch = _config(\n        M, topk, E, model_dim, inter_dim, out_dtype\n    )\n    device = topk_ids.device\n\n    sorted_ids = torch.empty(n_pad, dtype=dtypes.i32, device=device)\n    sorted_weights = torch.empty(n_pad, dtype=dtypes.fp32, device=device)\n    sorted_expert_ids = torch.empty(n_blocks, dtype=dtypes.i32, device=device)\n    num_valid_ids = torch.empty(2, dtype=dtypes.i32, device=device)\n    a1 = torch.empty(M, model_dim // 2, dtype=dtypes.fp4x2, device=device)\n    a1_scale = torch.empty(scale_rows, model_dim // 32, dtype=dtypes.fp8_e8m0, device=device)\n    # One launch: routing sort, zeroing `out` for stage 2's atomic adds, MXFP4 activations and their scales.\n    launch(\n        ptr_arg(topk_ids),\n        ptr_arg(topk_weights),\n        ptr_arg(hidden_states),\n        ptr_arg(out),\n        ptr_arg(sorted_ids),\n        ptr_arg(sorted_weights),\n        ptr_arg(sorted_expert_ids),\n        ptr_arg(num_valid_ids),\n        ptr_arg(a1),\n        ptr_arg(a1_scale),\n        stream=torch.cuda.current_stream(),\n    )\n\n    saved = {var: os.environ.get(var) for var in _ENV}\n    os.environ.update(_ENV)\n    try:\n        a2, a2_scale = stage1(\n            a1,\n            w1,\n            w2,\n            sorted_ids,\n            sorted_expert_ids,\n            num_valid_ids,\n            None,\n            topk,\n            block_m=block_m,\n            a1_scale=a1_scale,\n            w1_scale=w1_scale.view(dtypes.fp8_e8m0),\n            sorted_weights=None,\n            bias1=None,\n            topk_ids=topk_ids,\n            swiglu_limit=None,\n            v2_output_layout=True,\n            situ_beta=1.0 if beta is None else float(beta),\n            situ_linear_beta=1.0 if linear_beta is None else float(linear_beta),\n        )\n        stage2(\n            a2,\n            w1,\n            w2,\n            sorted_ids,\n            sorted_expert_ids,\n            num_valid_ids,\n            out,\n            topk,\n            w2_scale=w2_scale.view(dtypes.fp8_e8m0),\n            a2_scale=a2_scale,\n            block_m=block_m,\n            sorted_weights=sorted_weights,\n            bias2=None,\n            topk_weights=topk_weights.to(torch.float32).contiguous(),\n        )\n    finally:\n        for var, value in saved.items():\n            if value is None:\n                os.environ.pop(var, None)\n            else:\n                os.environ[var] = value\n"
+      }
+    ]
+  }
+}

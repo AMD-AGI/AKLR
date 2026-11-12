@@ -1,0 +1,2 @@
+situv2_a4w4_moe_model_dim#_n_experts#_topk#_inter_dim#
+situv2_a4w4_moe_a16w4_shuffled_model_dim#_n_experts#_topk#_inter_dim#
