@@ -29,8 +29,9 @@ def _register() -> None:
     env = RuntimeEnv()
     if env.is_all_disabled or not env.is_sglang_plugin_enabled:
         return
-    # imports this package's api modules, which declare its routes
+    # imports this package's api modules, which declare its routes, and its other routes
     for package in op_packages():
         if package.startswith(f"{__name__}."):
             importlib.import_module(f"{package}.api")
+    importlib.import_module(f"{__name__}.models.forward_mla_rocm_bmm")
     hook.install()
