@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason, api
+from aklr.ops.mla import flash_mla_with_kvcache
 from aklr.plugins.sglang.hook import sglang_route
 from aklr.plugins.sglang.models import moe_blocks
 from aklr.plugins.sglang.models.kimi_k3.contract import (
@@ -355,3 +356,63 @@ def _prefill_falls_back(attn, forward_batch) -> bool:
         or attn._gate_hidden_states is None
         or attn.o_proj.weight.dtype != torch.bfloat16
     )
+
+
+@sglang_route(
+    "sglang.srt.layers.attention.aiter_backend.AiterAttnBackend._forward_verify_dcp", versions=("0.5.22",)
+)
+def _forward_verify_dcp(self, q, k_window, layer, k_descale):
+    """DCP target verify on aiter's cp schedule as one op call: each query row reads this rank's shard
+    of its request, prefix and window, up to its own global position, which is the causal mask.
+    Returns the partial and its natural-log lse for sglang's cross-rank merge."""
+    import torch
+
+    metadata = self.forward_metadata
+    if not metadata.use_asm_cprr_verify or layer.logit_cap or self.page_size != 1:
+        return FallbackReason.OUT_OF_CONTRACT
+    q_len, heads = metadata.max_q_len, layer.tp_q_head_num
+    table, local_lens = metadata.verify_token_table, metadata.local_kv_lens
+    rows = local_lens.shape[0]
+    kv_cache = self.token_to_kv_pool.get_key_buffer(layer.layer_id)
+    if kv_cache.dtype == torch.uint8:
+        kv_cache = kv_cache.view(self.kv_cache_dtype)
+    arguments = {
+        "q": q.view(rows, 1, heads, layer.qk_head_dim),
+        "kv_cache": kv_cache.view(-1, 1, 1, layer.qk_head_dim),
+        "block_table": table,
+        "head_dim_v": layer.v_head_dim,
+        "sm_scale": layer.scaling,
+        "kv_cache_format": "fp8_e4m3",
+        "kv_scale": self._resolve_fp8_kv_scale_float(layer, k_descale),
+        "return_lse": True,
+    }
+    stand_in = local_lens.new_empty(local_lens.shape)
+    reason = flash_mla_with_kvcache.fallback_reason(cache_seqlens=stand_in, **arguments)
+    if reason is not None:
+        return reason
+    output, lse = flash_mla_with_kvcache(cache_seqlens=_causal_shard_lens(self, metadata, q_len), **arguments)
+    return output.view(rows, heads, -1), lse.view(rows, heads)
+
+
+def _causal_shard_lens(backend, metadata, q_len):
+    """Per query row, this rank's tokens at or before the row's global position: with global position p
+    on rank p % size, row i of a request of global length L (window included) reads its first
+    ceil((L - q_len + i + 1 - rank) / size) entries of the shard. Computed once per forward, every
+    layer reads the same; a cuda graph capture recomputes them, since sglang warms up on the
+    capture's metadata first."""
+    import torch
+    from sglang.srt.runtime_context import get_parallel
+
+    capturing = torch.cuda.is_current_stream_capturing()
+    cached = getattr(metadata, "_aklr_causal_shard_lens", None)
+    if cached is not None and cached[0] == capturing:
+        return cached[1]
+
+    size, rank = backend.dcp_world_size, get_parallel().attn_dcp_rank
+    indptr = metadata.global_kv_indptr
+    bs = indptr.shape[0] - 1
+    visible = (indptr[1:] - indptr[:-1] - q_len + 1 - rank + size - 1).unsqueeze(1)
+    visible = visible + torch.arange(q_len, dtype=indptr.dtype, device=indptr.device)
+    lens = (visible.clamp_min(0) // size).view(bs * q_len).to(torch.int32)
+    metadata._aklr_causal_shard_lens = (capturing, lens)
+    return lens
