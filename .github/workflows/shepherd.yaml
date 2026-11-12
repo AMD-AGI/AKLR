@@ -10,12 +10,14 @@ permissions: {}
 
 jobs:
   forward:
-    # Only events that can matter to a request; anyone can open an issue, so the round re-checks everything.
+    # Each event starts a paid round, so only issues a repository member or collaborator opened, or a shepherd
+    # label change (which needs triage access), are forwarded. The round still checks the requesters team.
     if: >-
       github.event_name == 'workflow_dispatch'
       || github.event.label.name == 'shepherd'
-      || startsWith(github.event.issue.title, 'shepherd:')
-      || contains(github.event.issue.labels.*.name, 'shepherd')
+      || (contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association)
+          && (startsWith(github.event.issue.title, 'shepherd:')
+              || contains(github.event.issue.labels.*.name, 'shepherd')))
     runs-on: aklr-claude
     timeout-minutes: 2
     steps:

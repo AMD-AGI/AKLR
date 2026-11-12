@@ -94,8 +94,8 @@ class RequestBoard:
             repository=config["repository"],
             label=requests.get("label") or "shepherd",
             team=requests["team"],
-            # GraphQL names an App without the `[bot]` suffix REST adds.
-            bot=(requests.get("bot") or "").removesuffix("[bot]") or None,
+            # REST names the App `<slug>[bot]`, a login no person can hold.
+            bot=requests.get("bot") or None,
             allowed_ops=tuple(config["policy"]["allowed_ops"]),
         )
 
@@ -121,7 +121,7 @@ class RequestBoard:
         """Label open issues titled `<label>:` that a team member opened, as Sweep does on `issues opened`."""
         found = self.graphql(
             """query($q: String!) { search(query: $q, type: ISSUE, first: 100) { nodes { ... on Issue {
-                number title author { login } labels(first: 100) { nodes { name } } } } } }""",
+                number title author { login } editor { login } labels(first: 100) { nodes { name } } } } } }""",
             q=f"repo:{self.repository} is:issue is:open in:title {self.label}",
         )
         labeled = []
@@ -131,6 +131,8 @@ class RequestBoard:
                 issue.get("title", "").lower().startswith(f"{self.label}:")
                 and self.label not in {label["name"] for label in issue["labels"]["nodes"]}
                 and (issue.get("author") or {}).get("login") in self.members
+                # The App's label approves the author's text only; an outsider's edit waits for a member's label.
+                and (issue.get("editor") or issue.get("author") or {}).get("login") in self.members
             ):
                 self.gh("api", "-X", "POST", f"repos/{self.repository}/issues/{issue['number']}/labels",
                         "-f", f"labels[]={self.label}")
@@ -153,7 +155,7 @@ class RequestBoard:
                     issue(number: $number) { state body lastEditedAt author { login } editor { login }
                     labels(first: 100) { nodes { name } }
                     timelineItems(last: 100, itemTypes: [LABELED_EVENT]) { nodes { ... on LabeledEvent {
-                        createdAt actor { login } label { name } } } } } } }""",
+                        createdAt actor { __typename login } label { name } } } } } } }""",
                 number=number,
             )["repository"]["issue"]
             if issue["state"] == "CLOSED":
@@ -162,18 +164,19 @@ class RequestBoard:
                 request = Request(number, "unlabeled")
             else:
                 events = [e for e in issue["timelineItems"]["nodes"] if e["label"]["name"] == self.label]
-                labeler = ((events[-1].get("actor") if events else None) or {}).get("login")
+                actor = (events[-1].get("actor") if events else None) or {}
+                # GraphQL drops the `[bot]` suffix, so only the actor type tells the App from a person of that name.
+                by_bot = actor.get("__typename") == "Bot" and f"{actor.get('login')}[bot]" == self.bot
+                by_member = actor.get("__typename") == "User" and actor.get("login") in self.members
                 author = (issue.get("author") or {}).get("login")
                 editor = (issue.get("editor") or {}).get("login")
-                if labeler is None or not (
-                    labeler in self.members or (labeler == self.bot and author in self.members)
-                ):
+                if not (by_member or (by_bot and author in self.members)):
                     request = Request(number, "unapproved", "labeler_not_in_team")
                 elif (
                     editor is not None
                     and editor not in self.members
-                    # A team member labeling after the edit approves it.
-                    and events[-1]["createdAt"] <= (issue["lastEditedAt"] or "")
+                    # Only a team member's label after the edit approves it; the App's label never does.
+                    and not (by_member and events[-1]["createdAt"] > (issue["lastEditedAt"] or ""))
                 ):
                     request = Request(number, "paused", "editor_not_in_team")
                 else:
@@ -217,10 +220,12 @@ class RequestBoard:
             json.loads(line)
             for line in self.gh(
                 "api", "--paginate", f"repos/{self.repository}/issues/{request.issue}/comments",
-                "--jq", ".[] | {id, body, login: .user.login}",
+                "--jq", ".[] | {id, body, login: .user.login, type: .user.type}",
             ).splitlines()
         ]
-        mine = [c for c in comments if c["login"].removesuffix("[bot]") == self.bot and c["body"].startswith(marker)]
+        mine = [
+            c for c in comments if c["type"] == "Bot" and c["login"] == self.bot and c["body"].startswith(marker)
+        ]
         if mine and mine[0]["body"] == body:
             return "unchanged"
         if mine:

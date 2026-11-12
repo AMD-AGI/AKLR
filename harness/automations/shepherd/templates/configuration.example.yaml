@@ -37,7 +37,7 @@ budget:  # Cumulative over all campaigns in state_dir. On probation: one campaig
 requests:  # Issue requests; without a team nobody can request.
   label: shepherd  # Issues titled `shepherd:` get it; adding it starts a request.
   team: null  # Slug of the repository owner's team whose members may request, label and edit requests.
-  bot: null  # Login of the shepherd GitHub App that labels issues and writes progress comments, e.g. <app>[bot].
+  bot: null  # Full login of the shepherd GitHub App that labels issues and writes progress comments: <app-slug>[bot].
 publication:
   allow_draft_pr: false
   allow_pr_comments: false

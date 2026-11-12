@@ -216,8 +216,9 @@ it. Use `RB="python -I harness/automations/shepherd/skills/shepherd/scripts/requ
 - **Observe.** In `run` and `drain`, `$RB label` first. In every mode, `$RB observe --root <state_dir>`
   lists each open labeled issue and each request in the ledger with its GitHub-side status: `active`,
   `paused` (with a reason), `unapproved` (only for ones already in the ledger), `unlabeled` or `closed`.
-  The script checks that the last labeler is in the team (the App's label counts as the issue author's)
-  and that a body edit by someone outside the team came before that label. A non-zero exit is `unknown`:
+  The script checks that the last labeler is in the team (the App's label counts as the issue author's,
+  for the author's own text only) and that a body edit by someone outside the team came before a team
+  member's label. A non-zero exit is `unknown`:
   admit nothing for requests this round and stop nothing because of them.
 - **Ledger.** `requests` holds one entry per issue, never removed: `issue`, `status`, `reason`,
   `version`, `body_sha256`, `schemas`, `max_prs`, `max_campaigns`, `prompt`, and the times it was

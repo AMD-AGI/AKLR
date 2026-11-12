@@ -46,7 +46,13 @@ def issue(body, labeler="owner", author="owner", editor=None, edited=None, state
         "editor": {"login": editor} if editor else None,
         "labels": {"nodes": [{"name": "shepherd"}] if labeled else []},
         "timelineItems": {
-            "nodes": [{"createdAt": "2026-11-12T01:00:00Z", "actor": {"login": labeler}, "label": {"name": "shepherd"}}]
+            "nodes": [
+                {
+                    "createdAt": "2026-11-12T01:00:00Z",
+                    "actor": {"__typename": "Bot" if labeler == "aklr-shepherd" else "User", "login": labeler},
+                    "label": {"name": "shepherd"},
+                }
+            ]
         },
     }
 
@@ -99,6 +105,8 @@ def test_title_prefix_from_a_team_member_adds_the_label(github):
             {"number": 2, "title": "Shepherd: from outside", "author": {"login": "stranger"}, "labels": {"nodes": []}},
             {"number": 3, "title": "shepherd: done", "author": {"login": "owner"}, "labels": {"nodes": [{"name": "shepherd"}]}},
             {"number": 4, "title": "about shepherd: a question", "author": {"login": "owner"}, "labels": {"nodes": []}},
+            {"number": 5, "title": "shepherd: edited", "author": {"login": "owner"}, "editor": {"login": "stranger"},
+             "labels": {"nodes": []}},
         ],
     )
     assert result.returncode == 0, result.stderr
@@ -123,6 +131,10 @@ def test_observe_approves_only_team_labels_and_edits(github):
             "7": issue(good, state="CLOSED"),
             "8": issue(good, labeled=False),
             "9": issue(good, labeler="aklr-shepherd", author="stranger"),
+            "10": issue(good, labeler="aklr-shepherd", editor="stranger", edited="2026-11-12T00:00:00Z"),
+            "11": {**issue(good), "timelineItems": {"nodes": [
+                {"createdAt": "2026-11-12T01:00:00Z", "actor": {"__typename": "User", "login": "aklr-shepherd"},
+                 "label": {"name": "shepherd"}}]}},
         },
     )
     assert result.returncode == 0, result.stderr
@@ -135,6 +147,7 @@ def test_observe_approves_only_team_labels_and_edits(github):
         6: ("paused", "schema_not_allowed:aklr/ops/fused_moe/impls/triton/x/1.json"),
         7: ("closed", None),
         8: ("unlabeled", None),
+        10: ("paused", "editor_not_in_team"),
     }
     assert found[1]["schemas"] == [SCHEMA] and found[1]["max_prs"] == 1 and found[1]["max_campaigns"] == 1
     assert found[1]["prompt"] == "### Request\n\n\n\n### Notes\n\nTry split-K below M=64."
@@ -165,12 +178,12 @@ def test_progress_comment_is_written_once_and_edited_in_place(github):
         "requests": [entry],
         "campaigns": [{"id": "c1", "request": 1, "schema": SCHEMA, "phase": "pr_open", "pr": 321}, {"id": "c2"}],
     }
-    spoof = {"id": 5, "body": "<!-- shepherd-progress -->\nfake", "login": "stranger"}
+    spoof = {"id": 5, "body": "<!-- shepherd-progress -->\nfake", "login": "aklr-shepherd[bot]", "type": "User"}
     result, calls = github("progress", "--issue", "1", state=state, comments=[spoof])
     assert json.loads(result.stdout) == {"comment": "created"}
     body = next(c for c in calls if "POST" in c)[-1].removeprefix("body=")
     assert "| `" + SCHEMA + "` | c1 | pr_open | #321 |" in body and "PRs 1 of 1, campaigns 1 of 1." in body
-    mine = {"id": 9, "body": body, "login": "aklr-shepherd[bot]"}
+    mine = {"id": 9, "body": body, "login": "aklr-shepherd[bot]", "type": "Bot"}
     result, calls = github("progress", "--issue", "1", state=state, comments=[spoof, mine])
     assert json.loads(result.stdout) == {"comment": "unchanged"}
     assert not [c for c in calls if "-X" in c]
