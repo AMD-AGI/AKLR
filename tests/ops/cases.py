@@ -100,6 +100,36 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"trans_b": True, "has_bias": False},
         layout_variant_name="row_major",
     ),
+    # Kimi-K3's MLA prefill after kv_b, two sequences: 12 heads, which aiter's fp8 path tiles to 16
+    PointSpec(
+        contract_id="mla_prefill_varlen@1.0",
+        axes={"n_q": 300, "n_kv": 300, "n_offsets": 3, "n_heads": 12, "qk_head_dim": 192, "v_head_dim": 128},
+        dtypes={
+            "q": "bfloat16",
+            "k": "bfloat16",
+            "v": "bfloat16",
+            "cu_seqlens_q": "int32",
+            "cu_seqlens_k": None,
+            "output": "bfloat16",
+        },
+        attrs={"has_prefix": False, "qkv_fp8": True},
+        layout_variant_name="row_major",
+    ),
+    # the same with a cached prefix: each sequence's keys hold all 300 queries' worth at least
+    PointSpec(
+        contract_id="mla_prefill_varlen@1.0",
+        axes={"n_q": 300, "n_kv": 1000, "n_offsets": 3, "n_heads": 12, "qk_head_dim": 192, "v_head_dim": 128},
+        dtypes={
+            "q": "bfloat16",
+            "k": "bfloat16",
+            "v": "bfloat16",
+            "cu_seqlens_q": "int32",
+            "cu_seqlens_k": "int32",
+            "output": "bfloat16",
+        },
+        attrs={"has_prefix": True, "qkv_fp8": True},
+        layout_variant_name="row_major",
+    ),
     # sglang's pool: 64 * 584-byte pages start every 37440 bytes
     PointSpec(
         contract_id="flash_mla_with_kvcache@1.0",
@@ -659,6 +689,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "gemm_a4w4_mxfp4@1.0",
         "mega_moe@1.0",
         "flash_mla_with_kvcache@1.0",
+        "mla_prefill_varlen@1.0",
         "fp8_paged_mqa_logits@1.0",  # gfx942 reads its fp8 bytes as e4m3fnuz
         "per_group_quant_fp8@1.0",
         "per_group_quant_mxfp8@1.0",
