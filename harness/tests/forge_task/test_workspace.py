@@ -42,6 +42,14 @@ def _tracked(run: workspace.Run) -> list[str]:
     )
 
 
+def test_legacy_skill_directory_resolves_for_saved_forge_loop_scripts():
+    repo = Path(__file__).resolve().parents[3]
+    legacy = repo / "harness" / "skills" / "aklr-kb"
+    current = repo / "harness" / "skills" / "kb"
+    assert legacy.is_dir()
+    assert legacy.resolve() == current.resolve()
+
+
 def test_what_the_driver_writes_lives_outside_the_workspace(aklr_root: Path, tmp_path: Path):
     """The driver writes AKLR's reports on every measurement; inside the workspace KernelForge's guard reads
     that as tampering."""

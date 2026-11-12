@@ -1,0 +1,4 @@
+interface:
+  display_name: "Qualify Downstream"
+  short_description: "Qualify AKLR with vLLM, SGLang, and ATOM"
+  default_prompt: "Use $qualify-downstream to qualify AKLR with downstream engines."

@@ -37,7 +37,7 @@ flowchart TD
 
 ### 1. A contract does not exist: create the contract
 
-Following `harness/skills/aklr-port-generated-kernels/references/new-op.md` in the repository, implement these files in order:
+Following `harness/skills/port-generated-kernels/references/new-op.md` in the repository, implement these files in order:
 
 1. `contract.py`: defines `OpContract` and `CONTRACTS` (the registry discovers them automatically); `op_type` is the directory name `<op>`; name things by their mathematical meaning; with several outputs, none may be called `out`; give every output `error_bounds`, and give the contract a `determinism`.
 2. `reference.py`: a float64 `<contract>_reference(point, row_major_args, to_float64)`.

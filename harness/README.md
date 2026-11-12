@@ -9,15 +9,15 @@ The initial layout is intentionally small: the skills are usable guidance, and
 
 ## Lifecycle
 
-1. `aklr-monitor-upstreams` identifies a candidate.
-2. `aklr-port-generated-kernels` integrates it.
-3. `aklr-review-kernel-pr` validates the pull request.
-4. `aklr-build-runtime-image` creates a reproducible runtime.
-5. `aklr-qualify-downstream` checks SGLang, vLLM, and ATOM compatibility.
+1. `monitor-upstreams` identifies a candidate.
+2. `port-generated-kernels` integrates it.
+3. `review-kernel-pr` validates the pull request.
+4. `build-runtime-image` creates a reproducible runtime.
+5. `qualify-downstream` checks SGLang, vLLM, and ATOM compatibility.
 
-`aklr-open-pr` opens the pull request of any step, with the evidence its kinds need.
-`aklr-read-validation` reads a validation result, local or from CI, per Point.
-`aklr-bad-cases` lists mistakes agents have made in AKLR, checked when reviewing a change or opening a pull request.
+`open-pr` opens the pull request of any step, with the evidence its kinds need.
+`read-validation` reads a validation result, local or from CI, per Point.
+`bad-cases` lists mistakes agents have made in AKLR, checked when reviewing a change or opening a pull request.
 
 The lifecycle is governed by [rules.md](rules.md), [gates.md](gates.md), and
 [gate-config.md](gate-config.md).
@@ -36,7 +36,7 @@ Install it separately in each agent you use. Inside an AKLR checkout you need no
 /plugin install aklr@amd-aklr
 ```
 
-Skills run as `/aklr:<skill>`, for example `/aklr:aklr-kb`, and subagents
+Skills run as `/aklr:<skill>`, for example `/aklr:kb`, and subagents
 as `aklr:<name>`. Update with `claude plugin update aklr@amd-aklr`, then `/reload-plugins`.
 On a machine without a GitHub SSH key, set `CLAUDE_CODE_PLUGIN_PREFER_HTTPS=1` first.
 

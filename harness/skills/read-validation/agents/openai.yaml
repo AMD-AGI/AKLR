@@ -1,0 +1,4 @@
+interface:
+  display_name: "Read AKLR Validation"
+  short_description: "Read a AKLR validation result and decide per Point"
+  default_prompt: "Use $read-validation to explain this AKLR validation result."

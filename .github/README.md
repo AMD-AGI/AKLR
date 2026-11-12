@@ -34,7 +34,7 @@ An engine calls an AKLR operator. AKLR checks the inputs and picks a kernel that
 
 ## The Kernel Rosetta Stone
 
-The **Kernel Rosetta Stone** is a guide for agents writing AMD kernels. It brings together tips from handwritten kernels, AMD architecture and CDNA3/CDNA4 ISA documents, and real examples. Start at [`SKILL.md`](../harness/skills/aklr-kb/SKILL.md).
+The **Kernel Rosetta Stone** is a guide for agents writing AMD kernels. It brings together tips from handwritten kernels, AMD architecture and CDNA3/CDNA4 ISA documents, and real examples. Start at [`SKILL.md`](../harness/skills/kb/SKILL.md).
 
 It aims to help agents reach the same speed sooner, use fewer tokens, and find faster kernels. Below is our first measurement on one GEMM ([details](../docs/kernel_rosetta_stone.md)):
 

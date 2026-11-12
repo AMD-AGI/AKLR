@@ -74,21 +74,21 @@ echo $! > $RUN/forge_loop.pid
   validate gives a kernel the GPU alone, so it passes one that is right only while every workgroup of a launch is
   resident: a split-K fold that polls for its partners and gives up with NaN. On a stream limited to part of the CUs
   such a kernel returns NaN. Do not deliver it; tell the user, and have its fold made wait-free first.
-- `python harness/skills/aklr-kb/maintenance/kb_gaps.py $RUN/workspace` lists the skill pages the
+- `python harness/skills/kb/maintenance/kb_gaps.py $RUN/workspace` lists the skill pages the
   rounds opened and the questions they found no page for.
 - Report: AKLR's verdict per workload from `aklr validate`, the delivered commit, what forge-ablate said each kept
   round is worth, and the skill's gaps.
 
 ## Step 7: put what the campaign taught into the skill
 
-forge-distill's patch (`$RUN/knowledge_patch/`, for aklr-kb and its language folders) is a proposal. Review every item before it goes in, as
-`aklr-kb/CONTRIBUTING.md` says:
+forge-distill's patch (`$RUN/knowledge_patch/`, for kb and its language folders) is a proposal. Review every item before it goes in, as
+`kb/CONTRIBUTING.md` says:
 
 - Check each claim against the run's files (`$W/forge_experiments/`: `lessons/`, `analysis/`, `ablation.md`),
   FlyDSL's source or the ISA. A number carries the ruler it was taken with; a gain inside the noise, or measured by
   another ruler than AKLR's, is not a gain.
 - Search the skill for a page that already says it, and extend that page rather than write a second one.
-- An edit to an existing page goes in place; a new page goes to its folder, as `aklr-kb/CONTRIBUTING.md` § Page kinds says,
+- An edit to an existing page goes in place; a new page goes to its folder, as `kb/CONTRIBUTING.md` § Page kinds says,
   and is reviewed in the kernel's pull request.
 - `python maintenance/kb_lint.py --errors-only` and `python maintenance/kb_index.py --check` pass, and `maintenance/kb_numbers_guard.py`
   accounts for every number an edited page gains or loses.
@@ -104,4 +104,4 @@ ruler -- goes into a pull request of its own that changes the method.
 - Clear FlyDSL's compile cache only at `FLYDSL_RUNTIME_CACHE_DIR` (default `~/.flydsl/cache`). A glob such as
   `/tmp/flydsl*` also deletes source trees.
 - "Kineto recorded no kernels for a single call" on a busy machine is the profiler's, not the kernel's: see
-  `aklr-kb/pitfalls/profiler_misses_kernels.md`.
+  `kb/pitfalls/profiler_misses_kernels.md`.

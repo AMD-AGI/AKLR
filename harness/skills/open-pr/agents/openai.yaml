@@ -1,0 +1,4 @@
+interface:
+  display_name: "Open AKLR PR"
+  short_description: "Open a AKLR pull request with the evidence its kinds need"
+  default_prompt: "Use $open-pr to open a pull request for this change."

@@ -1,4 +1,0 @@
-interface:
-  display_name: "Review Kernel PR"
-  short_description: "Review AKLR kernel correctness and performance"
-  default_prompt: "Use $aklr-review-kernel-pr to review this AKLR kernel pull request."

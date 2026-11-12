@@ -24,8 +24,8 @@ ASSETS = Path(__file__).resolve().parent / "assets"
 # count as a change to the workspace.
 GITIGNORE = "__pycache__/\n*.pyc\n*.log\nbuild/\nforge_experiments/\n.stop\n"
 
-# What the agents read, per kernel language: aklr-kb, and its folder for the language (each has a SKILL.md).
-WIKI = Path("harness/skills/aklr-kb")
+# What the agents read, per kernel language: kb, and its folder for the language (each has a SKILL.md).
+WIKI = Path("harness/skills/kb")
 SKILLS = {
     "flydsl": (WIKI, WIKI / "flydsl"),
     "triton": (WIKI, WIKI / "triton"),
@@ -288,7 +288,7 @@ def forge_loop_commands(
 ) -> tuple[list[str], list[str]]:
     """KernelForge's own commands for this task: the one that starts the loop and the one that resumes it. Each
     candidate is timed beside the kernel kept so far, the loop stops once its known directions are mined out, and
-    the agents read aklr-kb and its folder for the language. A resume keeps the kernel, driver, brief, backend
+    the agents read kb and its folder for the language. A resume keeps the kernel, driver, brief, backend
     and branch the loop started with and refuses the first three again; every other option holds only when given
     again.
     """
