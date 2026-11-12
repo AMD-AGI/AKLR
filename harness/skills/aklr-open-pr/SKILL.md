@@ -30,7 +30,7 @@ check the change against it before opening the pull request.
      `python -m aklr export check`.
    - Kernels: `python -m aklr validate --base origin/main --stages audit,bench <schemas>` on the target GPU (a
      remote node if none is local). Without `--base` a new kernel is held to the retention
-     threshold (0.99) instead of the entry one (1.02) and is not timed against a served kernel,
+     threshold (0.99) instead of the entry one (1.05) and is not timed against a served kernel,
      so a local pass can still fail CI. One table row per contract: measured / all workloads,
      accuracy n/n and its bound, lowest – highest speedup. Note every `AKLR_*` or `AITER_*`
      variable set that loosens a check.

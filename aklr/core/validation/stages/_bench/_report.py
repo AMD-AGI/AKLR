@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import html
-import math
 import statistics
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -71,15 +70,13 @@ class WorkloadRecord(FrozenModel):
 
     @property
     def beats_baseline(self) -> bool:
+        """Whether the published speedup reaches the entry ratio, as dispatch compares it."""
         if self.batch_stopped:
             return False
         if not self.is_timed:
             return True  # no baseline to beat
-        baselines = [t for t in self.timings if t.versus == "baseline"]
-        return {t.mode for t in baselines} == {"graph"} and all(
-            math.isfinite(t.ratio_lower_bound) and t.ratio_lower_bound > THRESHOLD_RATIOS["entry"]
-            for t in baselines
-        )
+        speedup = self.speedup
+        return speedup is not None and speedup >= THRESHOLD_RATIOS["entry"]
 
     @property
     def speedup(self) -> float | None:
@@ -144,7 +141,7 @@ class BenchReport(StageReport):
                     schema_path=path,
                     axes=None,
                     detail="no workload both passes correctness and has a graph/"
-                    f"baseline ratio lower bound > {THRESHOLD_RATIOS['entry']:g}"
+                    f"baseline speedup >= {THRESHOLD_RATIOS['entry']:g}"
                     " (correctness alone when no baseline exists)",
                 )
             )

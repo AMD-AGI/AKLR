@@ -69,7 +69,7 @@ SGLang loads AKLR at startup and, with `AKLR_SGLANG_PLUGIN=1`, runs AKLR's kerne
 | `AKLR_DISABLE=1` | Turn AKLR off |
 | `AKLR_DISABLE=<contract id>,...` | Turn off the listed ops, e.g. `gemm@1.0` |
 | `AKLR_SGLANG_PLUGIN=1` | Hook SGLang's functions to the plugin's ops ([aklr/plugins/README.md](../aklr/plugins/README.md)) |
-| `AKLR_MIN_SPEEDUP=<x>` | Serve only kernels with a measured speedup of at least x (default 1.03) |
+| `AKLR_MIN_SPEEDUP=<x>` | Serve only kernels with a measured speedup of at least x (default 1.05, the same bar validation uses) |
 
 ## Development
 

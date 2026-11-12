@@ -336,7 +336,7 @@ Read only by `RuntimeEnv()` in `aklr/core/platform/env.py`.
 | Variable | Values | Effect |
 |---|---|---|
 | `AKLR_DISABLE` | `1`, `0`, unset, `<contract_id>,...` | emergency stop: every contract, or the listed ones, falls back |
-| `AKLR_MIN_SPEEDUP` | a finite number | the least measured `speedup` over the baseline that a workload needs to be served, default `1.03`; `0` or less also serves unmeasured workloads, never a `failed` one |
+| `AKLR_MIN_SPEEDUP` | a finite number | the least measured `speedup` over the baseline that a workload needs to be served, default `1.05` (`DEFAULT_MIN_SPEEDUP`; validation admits a kernel only when one of its workloads reaches it); `0` or less also serves unmeasured workloads, never a `failed` one |
 | `AKLR_KERNEL_CACHE_DIR` | a path | where kernels are materialized; default `${XDG_CACHE_HOME:-$HOME/.cache}/aklr/kernels` |
 | `AKLR_EXPORT` | `1`, `0`, unset | record calls; any other value is an error |
 | `AKLR_EXPORT_DIR` | a path | the export directory, default `./aklr_export`; setting it alone records nothing |

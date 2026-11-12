@@ -36,8 +36,8 @@ Read [references/ruler.md](references/ruler.md) (how a Point is timed and judged
      difference that does not carry across nodes (ruler.md).
    - **Real**: the medians are close or inverted.
 5. **Decide per Point** (thresholds in ruler.md). Keep a Point whose lower bound is at least the
-   dispatch threshold, 1.03, with margin; one between 1.02 and 1.03 merges but is never served. Remove
-   only Points the report shows failing or under 1.03, never others on a guess. Rerun a spike failure
+   dispatch threshold, 1.05, with margin; one under 1.05 can merge when another Point of the file
+   qualifies, but is never served. Remove only Points the report shows failing or under 1.05, never others on a guess. Rerun a spike failure
    before removing a Point its medians support.
 6. **Change and rerun on the new head.** Removing a workload renames the schema (its uuid hashes the
    workloads); the kernel's sources and content hash stay.

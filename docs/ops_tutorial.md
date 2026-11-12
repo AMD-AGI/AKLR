@@ -104,7 +104,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
   - Correctness: for each workload, compares against the reference implementation on inputs sampled from the declared distributions;
   - Performance: compares against the baseline over multiple rounds under CUDA graph.
 
-**Thresholds**: every Point of a new kernel must reach ≥ **1.02** over the baseline (`<contract>_baseline` in `aklr/ops/<op>/baseline.py`) and ≥ **0.99** against the kernel already serving it, and runtime serving requires ≥ `AKLR_MIN_SPEEDUP` (default **1.03**). A Point that misses the bar is only recorded in the report's demoted list and does not fail validate. The demoted list holds both performance misses and correctness failures (such as `numeric_mismatch`, `build_failed`, `candidate_crash`, which CI writes as `accuracy: failed`); both kinds need handling. Only when not a single workload qualifies does the schema report `no_qualifying_workload`.
+**Thresholds**: every Point of a new kernel must reach ≥ **1.05** over the baseline (`<contract>_baseline` in `aklr/ops/<op>/baseline.py`) and ≥ **0.99** against the kernel already serving it, and runtime serving requires ≥ `AKLR_MIN_SPEEDUP` (default **1.05**, the same bar). A Point that misses the bar is only recorded in the report's demoted list and does not fail validate. The demoted list holds both performance misses and correctness failures (such as `numeric_mismatch`, `build_failed`, `candidate_crash`, which CI writes as `accuracy: failed`); both kinds need handling. Only when not a single workload qualifies does the schema report `no_qualifying_workload`.
 
 ## 4. PR and CI
 
@@ -119,7 +119,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 
 ## 5. Runtime dispatch
 
-When the api is called, if the call's Point is in the workloads of a loaded schema (one whose `targets`/`requires` match this machine), and that workload's `accuracy` is not `failed` and its `speedup ≥ AKLR_MIN_SPEEDUP` (default 1.03), that kernel runs.
+When the api is called, if the call's Point is in the workloads of a loaded schema (one whose `targets`/`requires` match this machine), and that workload's `accuracy` is not `failed` and its `speedup ≥ AKLR_MIN_SPEEDUP` (default 1.05), that kernel runs.
 
 In every other case no kernel runs: the api returns a `FallbackReason`, and the caller runs its own implementation.
 
@@ -131,7 +131,7 @@ In every other case no kernel runs: the api returns a `FallbackReason`, and the 
 | `no_workload` | The call's Point is not in the workloads of any loaded schema (e.g. the value of `<var axis>` is not in the list) |
 | `not_measured` | Not measured yet |
 | `inaccurate` | The measurement is `failed` |
-| `not_qualified` | Measured and passed, but speedup < `AKLR_MIN_SPEEDUP` (default 1.03) |
+| `not_qualified` | Measured and passed, but speedup < `AKLR_MIN_SPEEDUP` (default 1.05) |
 | `not_warmed` | Inside graph capture, and the Point has never run outside a graph |
 
 ## Example: adding a fused MoE schema
