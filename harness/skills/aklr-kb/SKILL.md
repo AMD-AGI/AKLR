@@ -44,7 +44,7 @@ wins. Check a plan against this table before writing code.
 | Compilation and the choice of configuration happen in a module-level `@functools.cache` function on a Point's first call; later calls may be inside a CUDA graph capture | The first-call race of `gemm/autotune.md` §1 as written: choose from the shape, with a table raced offline |
 | Inputs other than the mutable ones are read-only (SA2); nothing derived from an argument is kept across calls, and there is no `global` or `nonlocal` (SA1) | Caching a repacked weight: repack on every call, or serve the contract's shuffled layout variant where it has one |
 | Scratch is allocated in the call (`torch.empty`: contents undefined) or once per shape in the compile function and rewritten before it is read; no call depends on what an earlier call left | Counters that live across calls: zero workspaces in each call before any read (`gemm/small_m.md` §4). A slot stamped with this launch's 64-bit tag, queue bits included, needs no zeroing as long as no leftover word equals the tag: such a split-K fold is one launch on a `torch.empty` workspace (`gemm/wait_free_fold.md` § Folding without a counter) |
-| No workgroup waits for another without a way out: a launch's workgroups need not all be resident (a stream limited to part of the CUs, another kernel holding CUs), so a wait on a flag another workgroup writes is bounded, and on timeout hands its share to the last to arrive (`attention/split_kv.md` §2 Bounded wait); the driver's `--stress` passes at every Point the file lists | A split-K fold or split-KV merge whose owner polls its partners with no bound, or gives up and writes: merge in a separate launch, have each publish and count in on an atomic counter and the last to arrive merge, or wait bounded with hand-off, in a fixed order |
+| Not in the README or its audit, but keep to it: no workgroup waits for another without a way out: a launch's workgroups need not all be resident (a stream limited to part of the CUs, another kernel holding CUs), so a wait on a flag another workgroup writes is bounded, and on timeout hands its share to the last to arrive (`attention/split_kv.md` §2 Bounded wait); the driver's `--stress` passes at every Point the file lists | A split-K fold or split-KV merge whose owner polls its partners with no bound, or gives up and writes: merge in a separate launch, have each publish and count in on an atomic counter and the last to arrive merge, or wait bounded with hand-off, in a fixed order |
 | `run(*, <kernel_call_keys>)` writes the preallocated outputs and returns nothing; the entry file's docstring describes the kernel, with no history or speedup (SA4) | Allocating outputs; importing sibling files other than relatively (the package name is a hash) |
 
 ## How to look things up
@@ -73,7 +73,7 @@ wins. Check a plan against this table before writing code.
 | EP dispatch/combine against TP for a MoE layer at a few tokens per GPU, or a collective's time in a multi-GPU trace | `communication/INDEX.md` |
 | What an instruction, encoding, counter, wait state or hardware limit really is | `hardware/gfx950/INDEX.md` → `hardware/gfx950/lookup.md`, `hardware/gfx950/matrix_core.md`, `hardware/gfx950/memory_and_sync.md`; gfx942 (MI300X): `hardware/gfx942/INDEX.md` |
 | The language: its API, compile errors, debugging, its own guides | the language's folder: `flydsl/SKILL.md`, `triton/SKILL.md`, `hip/SKILL.md` |
-| A Triton or Gluon kernel: authoring, debugging, tuning, numerics, Gluon layouts, memory, MFMA and inline asm, AKLR's 154 Triton kernels by family, its GEMM, MoE, attention and GatedDeltaNet kernels | `triton/SKILL.md` → the page its task table names |
+| A Triton or Gluon kernel: authoring, debugging, tuning, numerics, Gluon layouts, memory, MFMA and inline asm, AKLR's Triton kernels by family, its GEMM, MoE, attention and GatedDeltaNet kernels | `triton/SKILL.md` → the page its task table names |
 
 ## By symptom
 
@@ -96,7 +96,7 @@ wins. Check a plan against this table before writing code.
 
 ## Rules that hold everywhere
 
-- **Structure before parameters.** Fusion, pipelining and layout changes beat knob tuning; tune last.
+- **Structure before parameters.** Try fusion, pipelining and layout changes before knob tuning; tune last.
 - **Reuse the mechanism, re-derive the number.** Constants in the cited kernels (tile and preload tables,
   wait counts, adoption margins, cache thresholds) were tuned on specific shapes.
 - Numbers marked *(field)* are measured values: use them for direction and order of magnitude, not as
@@ -108,17 +108,20 @@ wins. Check a plan against this table before writing code.
   (`.github/workflows/ci.yaml`): AKLR does not ship, patch or fall back to it, so its `aiter/` paths are that
   revision's, read as reference code. Price aiter through the op's `<contract>_baseline`
   (`aklr/ops/<op>/baseline.py`), the call bench times. At a Point no kernel serves, the api returns a
-  `FallbackReason` and its caller runs its own path. AKLR's plugins route a model to plugin ops only
-  (`aklr/plugins/README.md`), so an `aklr/ops` kernel runs in a model only where the engine calls its api.
+  `FallbackReason` and its caller runs its own path. AKLR's plugins route a model to plugin ops and to some
+  `aklr/ops` ops (vLLM's GEMM and MoE layers, sglang's DSA paged MQA logits; `aklr/plugins/README.md`), so an
+  `aklr/ops` kernel runs in a model only where such a route or the engine calls its api.
 - **Workflow** (`aklr/ops/README.md` § Workflow): export the Points, fill `kernel.sources`, then
   `python -m aklr export check` and `python -m aklr validate --base origin/main`. The local result does not
-  count; CI measures. A `platform_failure` "Kineto recorded no kernels for a single call" is a tracer fault: on a
-  busy node, wait a few minutes before you rerun (`pitfalls/profiler_misses_kernels.md`).
-- **Recheck the short-kernel floor on current main.** Up to measurement profile 18 (Kineto, with
+  count; CI measures. A `platform_failure` whose message names rocprofiler-sdk or the graph replays, or says "the
+  kernel tracer failed" or "calibration could not restore", is a tracer fault, already measured again in fresh
+  processes: rerun (`aklr/core/validation/stages/_measure.py`, `pitfalls/profiler_misses_kernels.md`).
+- **A short kernel sits on AKLR's timing floor.** Up to measurement profile 18 (Kineto, with
   `GPU_FORCE_QUEUE_PROFILING` forced) AKLR read about 4 µs per kernel however little it did, so a short kernel and
-  its baseline read about the same. Main now reads kernel times from its own rocprofiler-sdk tracer (profile 19)
-  without forcing queue profiling: time an empty kernel, the baseline and your candidate there before deciding a
-  Point has no headroom (`pitfalls/aklr_dispatch_floor.md`).
+  its baseline read about the same. Main's profile 19 (its own rocprofiler-sdk tracer, queue profiling not forced)
+  still has that floor, about 4.4 µs: a bmm candidate 1.50× faster back to back read 1.13× on it. Time an empty
+  kernel, the baseline and your candidate on current main before deciding a Point has no headroom
+  (`pitfalls/aklr_dispatch_floor.md` § Root cause).
 
 ## Folders and adding a page
 

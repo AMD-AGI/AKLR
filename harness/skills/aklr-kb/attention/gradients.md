@@ -36,16 +36,16 @@ occupancy and spills → `registers_occupancy.md`; gates → `correctness.md`.
 
 ## 2. The D/A law: workspace bytes are set by the register file
 Let `A` be the accumulator floats one workgroup holds.
-- KV-outer (workgroup holds dK/dV, dQ leaves as partials): `A = BLOCK_KV · D · 2`; partial bytes
-  `(Skv / BLOCK_KV) · |dQ| / 2 = B·Sq·Skv·Hq·D² / A`.
+- KV-outer (workgroup holds dK/dV, dQ leaves as partials): `A = BLOCK_KV · D · 2`; partial elements
+  `(Skv / BLOCK_KV) · |dQ| / 2 = B·Sq·Skv·Hq·D² / A` (causal, |dQ| in elements; bf16 partials take 2 bytes each).
 - Q-outer (workgroup holds dQ, dK/dV leave as partials): `A = BLOCK_M · G · D` (G = GQA sharers covered);
-  partial bytes are the same `B·Sq·Skv·Hq·D² / A`, and dK/dV partials usually need fp32, so ×2.
+  partial elements are the same `B·Sq·Skv·Hq·D² / A`, and dK/dV partials usually need fp32, so ×2 the bytes.
 - So partial bytes per FLOP are `D / A`: no loop order removes them, KV-outer is the cheaper side, and at a
   fixed register file they grow linearly with head dim.
 - Only three moves change `A`: a larger accumulator (the 512-register pool is the hardware limit), another
   storage level (LDS is usually already spent: at D128 and `BLOCK_KV = 256` dV alone is 128 KB), or recomputation
-  (*(field, E1)* splitting dV across sibling workgroups made each recompute S/dP: +20% MFMA; it read 0.97 ms slower,
-  a gross cost near 1.6 ms against a byte saving near 0.6 ms).
+  (*(field, E1)* moving dV to a sibling workgroup made both compute S (GEMM1), estimated at +20% FLOPs; it read
+  0.97 ms slower, an estimated gross cost near 1.6 ms against a byte saving near 0.6 ms).
 - *(field, E2)* Measured on a fused body: the D128 compute phase took no more than 2× the D64 one (4.18 ms
   against 2 × 2.12 ms); the D128 excess over 2× D64 sat in the dQ workspace path: partial store 1.82 vs 1.11 ms, reduce
   0.63 vs 0.47 ms, 0.88 ms of a 0.96 ms gap.
@@ -66,12 +66,17 @@ Let `A` be the accumulator floats one workgroup holds.
     requests). *(field, E5)* Issued with the store's address layout, one instruction spread over 16 such 64 B
     segments, and its atomics cost about 10× as much (10.5 ms against ~1.0–1.1 ms with coalesced addresses; whole
     backward 13.3 ms).
-  - Issue it with the default cache policy. *(field, E6)* With SC0 set it lost three of four updates.
+  - Issue it with the default cache policy (aux 0). *(field, E6)* With SC0 set it lost three of four updates:
+    *(field, E46)* with its result unused, the atomic compiled to the no-return form with sc0 set, so the returned
+    pre-op value overwrote the data VGPR (S2, S3) that the lane's next atomics reused. A returning atomic whose
+    result is consumed was exact with SC0.
   - Price the exposed fold first. *(field, E7, E8)* D128: fold 0.414 ms = 12.9%, atomics together with the 256-row
     band they made affordable +2.11%, and they made a
     later +12.29% change possible; *(field, E9)* on another kernel the atomic path took D64 962.9 → 1023.8 and D128
-    863.5 → 1008.8 TF/s and cut the dQ workspace from 4.8 to 0.8 GiB. Where the fold is already hidden
-    (an idempotent store overlapped with the body), atomics are a pure loss.
+    863.5 → 1008.8 TF/s and cut the dQ workspace from 4.8 to 0.8 GiB. The atomics alone did not pay at
+    `BLOCK_KV = 128`: +0.79 ms against the exposed fold's 0.41 ms *(field, E8)*. Against a fold that is already
+    hidden (an idempotent store overlapped with the body), the atomics must beat the store they replace on their
+    own: measure both arms.
 - **dK/dV atomic epilogue loses.** The MFMA C layout spreads a wave's lanes over many lines, so each atomic
   degrades to per-line read-modify-write. *(field, E10)* D128 0.419 → 0.554 ms (32% slower), D64 12% slower, in the same
   kernel where coalesced dQ atomics won. Gate an atomic on "does one wave's address set coalesce", not on
@@ -89,7 +94,7 @@ Let `A` be the accumulator floats one workgroup holds.
 - **Each q-split carries a fixed cost.** *(field, E14)* Fixing three chunks, a 1/8 tail and a 1/4 tail both cost
   8%: the tail was ≤ 0.1%, the rest was doubled dK/dV slots and per-band K/V staging.
 - **A workspace capacity cap is not free.** *(field, E15)* Capping at 3 GiB instead of 16 gave 876 against 990 TF/s
-  (D64) and cost D128 22%: grouping bands to fit the cap trades throughput 1:1 for capacity. Check that a
+  (D64) and cost D128 22%: grouping bands to fit the cap trades throughput for capacity. Check that a
   tighter cap does not switch off pair folding (§5).
 
 ## 5. Workspace layout and residency
@@ -102,17 +107,20 @@ Let `A` be the accumulator floats one workgroup holds.
   line (two 64 B stores merge in L2). Judge by DRAM transactions (UMC counters), not by rate. *(field, E18)*
   NT writes added ~1.3 GB of DRAM traffic and were 0.45% slower; cached reads cost 0.1 J per pass with DRAM
   traffic unchanged.
-- **MALL residency is a step.** *(field, E19)* Clamping the fold's read footprint: 268 MB 7.66 J, 1.07 GB 8.10 J,
-  4.29 GB 8.13 J. Above ~1 GB everything prices as a full miss; only a footprint within the 256 MB MALL
-  drops. A slightly smaller working set buys nothing.
+- **MALL residency fades past 256 MiB; it is not a step.** *(field, E19)* Clamping the fold's read footprint:
+  268 MB 7.66 J, 1.07 GB 8.10 J, 4.29 GB 8.13 J. *(field, E47)* On a streaming-read kernel, footprints up to
+  256 MiB caused no DRAM traffic; past that the DRAM traffic per byte read rose smoothly, to half the full-miss
+  level at 512 MiB and 87% at 1 GiB, so a working set cut toward 512 MiB still saves DRAM traffic.
 - **Size every buffer slice under 4 GiB.** `num_records` is 32-bit; a larger slice silently drops the
   out-of-range writes. *(field, E20)* An interleave sweep at ILV = 64 built an 8.6 GB slice and read a fake +18%.
   See `../gemm/datapath.md` §8.
 - **Causal pair folding.** Under causal, band group `g` never writes the first `g/ng` of its slab, and group
   `ng − g` needs exactly that many rows, so the two share one slab: `ng → ng/2 + 1` slabs, no extra bytes,
   the minimum for this layout (`Sq · (ng + 1) / 2`). Remove the unpaired branch at compile time.
-- **Window: size the workspace as a ring** of `ceil(W / BLOCK_KV) + 1` bands. It is a capacity lever, not
-  a speed one. *(field, E21)* 16 → 1.25 GiB, and the two kernels read 1.4% faster.
+- **Window: size the workspace as a ring** of `floor((BLOCK_KV + W + BLOCK_Q − 2) / BLOCK_KV) + 1` bands (band
+  interleave 1; S1), so that no two bands that write the same q block share a slot; `ceil(W / BLOCK_KV) + 1` is
+  enough only when BLOCK_KV and Skv − Sq are multiples of BLOCK_Q. It is a capacity lever, not a speed one.
+  *(field, E21)* 16 → 1.25 GiB, and the two kernels read 1.4% faster.
 
 ## 6. Reducing in the producer: the last-arriving workgroup
 - Folding the partials in the last dK/dV workgroup to finish a q tile, instead of in a trailing reduce kernel,
@@ -141,23 +149,24 @@ Let `A` be the accumulator floats one workgroup holds.
   - A KV-outer single pass computes S, dP and the softmax once: 5 GEMM-equivalents instead of 7. It needs a
     wide KV band per workgroup, because `A` sets the dQ partial bytes (§2): the working form used
     `BLOCK_KV = 256` at D64 and 128 at D128, where the dK/dV accumulators cap it.
-    *(field, E26)* At `BLOCK_KV = 64` the same fusion was 1.95–2.55× slower (small-tile overhead plus ~2 GB of
-    dQ workspace outweighed the 5-instead-of-7 GEMM saving). *(field, E27)* The wide form started below the split
+    *(field, E26)* At `BLOCK_KV = 64` the same fusion was 1.95–2.55× slower. *(field, E27)* The wide form started below the split
     pair (690–785 vs 840 TF/s) and passed it only after workspace and scheduling work (879, later ~964).
   - The crossover is real: *(field, E28)* at 64k context, D128, fused 226.9–228.2 ms against 192.6–193.2 ms
     split.
   - Before calling a fused path slow, A/B its host heuristics (pipeline gate, band width, q-split).
     *(field, E29)* A reported 3.7× loss (Hq=8) came back to parity, and, on sub-1024 D128 shapes, 1.31× and 1.30× to 1.05× and 0.98×, after fixing
     two host constants.
-- **Splitting a kernel usually loses.** *(field, E30)* dK/dV split into dV-only and dK-only kernels to reach
-  occupancy 3: −36% (Q/dO read twice). *(field, E31)* Overlapping the reduce with the next band group's body: both
+- **Splitting a kernel lost where measured.** *(field, E30)* dK/dV split into dV-only and dK-only kernels to reach
+  occupancy 3: −36%. *(field, E31)* Overlapping the reduce with the next band group's body: both
   fought for DRAM, wall 226.7 → 237.4 ms.
 - **Price an auxiliary kernel by the main kernel's disturbed time.** An occupancy-1 body that fills the
-  machine has no idle slots, so a "hidden" kernel only renames CU time.
+  machine has no idle slots, so a "hidden" kernel is paid for in the body's time; it wins only the exposed time
+  it removes beyond that tax.
   - *(field, E32)* A delta kernel's per-call time beside the body spread over 25× (`measurement.md` §9); not
     chunking it at all tied (+0.03%).
   - *(field, E33)* Aligning chunks to whole fills still left the D128 body 18% slower and the co-resident reduce
-    3× slower: the binding term was the body's register headroom (498/512 → 18% tax; 449/512 → 3.6%).
+    3× slower: the binding term was the body's register headroom (498/512 → 18% tax; 449/512 → 3.6%). At the
+    3.6% tax the pipelined reduce still won: wall 85 µs shorter than with the reduce run after the body.
   - Split a knob's effect into body and eviction by running it with and without the co-resident kernel.
     *(field, E34)* A "ring depth regression" of 0.6 ms was 0.15 ms body and 0.46 ms evicted reduce.
   - The co-residency tax scales with fold bytes divided by the body work beside them. *(field, E35)* Spreading the
@@ -176,7 +185,7 @@ Let `A` be the accumulator floats one workgroup holds.
     blocks with `nt > mt`; above publishes zeros. Waves wait for each other at the barrier, so the block
     costs the slowest wave. *(field, E38)* Diagonal MFMAs 128 → 88, critical path 675 → 560, 0.59% faster,
     bit-identical; *(field, E39)* the dq version 0.34% faster.
-  - Skip with a wave-uniform branch. An MFMA ignores EXEC, so lane masks skip nothing.
+  - Skip with a wave-uniform branch. A bf16 MFMA ignores EXEC (`mfma_layout.md` §2), so lane masks skip nothing.
   - Write the arms as sequential wave-uniform branches, not nested ones (`registers_occupancy.md` §6).
   - Count the values a branch must carry. *(field, E39)* In a fully unrolled dK/dV head loop the branch carried
     40 values: spill 0 → 5, 0.17% slower. Check spill before counting saved work.
@@ -251,7 +260,7 @@ the numbers.
 - E30 [2026-07, gfx950, FlyDSL ?, N=?, campaign score: mean conv TF/s over four Sq] dK/dV split into dV-only and dK-only kernels, reaching occupancy 3: −36% (Meta hd64 varlen backward)
 - E31 [2026-08, gfx950, FlyDSL ?, N=?, the round's own probe, wall ms] band groups double-buffered so the reduce overlaps the next group's body: 237.4 against 226.7 ms, reverted; the round reads the 64k cell as already memory-saturated, the overlap adding only contention (gpt-oss D128 backward, 64k context, cell `full_d128_64k`)
 - E32 [2026-09, gfx950, FlyDSL 0.2.4, N=2, rocprofv3 `--kernel-trace --stats`; the campaign's same-process paired ABBA cell ruler, two reads against the session's zero point] the same odo kernel running beside the dK/dV body at b4: per call 59.8 → 1527 µs (25×), bytes identical; b4 not chunked (`_A16_MIN_BAT` 4 → 8): 0.9992 / 1.0068, mean 1.0030 against a zero point of 1.0027 (+0.03%) (gpt-oss D64 backward, Hq64/Hkv8 S=8192, B=4)
-- E33 [2026-08, gfx950, FlyDSL ?, N=?, per-kernel times from the campaign's probes] D128 dQ pipeline cut into whole fills (512 workgroups = 2 fills): wall 3.0837 → 3.0521 ms (−1.0%), body 2.2022 → 2.5281 (+18%), reduce 0.6569 → 1.9798 (3.0×); the round puts the binding term on the body's 498/512 registers. On a D64 cell whose body holds 449: body 2.027 against 1.956 ms with the reduce co-resident, a 71 µs tax (3.6%) (gpt-oss sliding-window and rectangular backward cells)
+- E33 [2026-08, gfx950, FlyDSL ?, N=?, per-kernel times from the campaign's probes] D128 dQ pipeline cut into whole fills (512 workgroups = 2 fills): wall 3.0837 → 3.0521 ms (−1.0%), body 2.2022 → 2.5281 (+18%), reduce 0.6569 → 1.9798 (3.0×); the round puts the binding term on the body's 498/512 registers. On a D64 cell whose body holds 449: body 2.027 against 1.956 ms with the reduce co-resident, a 71 µs tax (3.6%); on that cell, with the reduce pipelined beside the body against run after it (A-B-B-A), wall 2.379 against 2.464 ms (85 µs shorter) and the reduce 0.638 against 0.301 ms (gpt-oss sliding-window and rectangular backward cells)
 - E34 [2026-08, gfx950, FlyDSL ?, N=?, full minus `nored`, each candidate run with and without the co-resident reduce] `g2d=1` read as a 0.6 ms scheduling regression and was 0.15 ms body plus 0.46 ms evicted reduce (gpt-oss D128 fused backward, B=2 Hq64/Hkv8 S=8192)
 - E35 [2026-08, gfx950, FlyDSL ?, N=6–17, each arm in its own process, min of 40 per read, palindromic order] the hidden fold delivered as 8 slices (batch × q): mean 5.8513 ms (n=10) against 5.9315 (n=17), −1.35%; 4–16 slices a plateau, 32 and more worse; chunk plan `[1,2,1]` against equal width: 5.7563 against 5.8608 ms (6 reads per arm), which the round reads as −1.8% at D64 and +1.9% at D128. The next round's granularity re-sweep found the deployed 8 slices about as costly as a true single-shot fold, and a later campaign read 8 slices +0.9% against its default (gpt-oss D64 fused backward, B=4 Hq64/Hkv8 S=8192)
 - E36 [2026-08, gfx950, FlyDSL ?, N=?, campaign probes; the record writes "3/11"] the diagonal q-block is 6.06% of q-block visits in a causal KV-outer body; skipping it in every wave (wrong results, diagnostic): +0.37% (gpt-oss D64 fused backward, B=3 Hq64/Hkv8 S=8192 causal)
@@ -262,4 +271,9 @@ the numbers.
 - E41 [2026-08, gfx950, FlyDSL ?, N=?, fused/split through the deployment entry with the fused window path switched on] under a window, the change that took the band one step narrower than full causal's (D64 256 → 128, D128 128 → 64) changed only the band and gives B3 8192² D64 W128 1.24, W2048 1.04, B4 4096² D128 W2047 1.41, B4 1024×16384 D128 W2047 1.26, against 6.6 to 9.0 at the old band (gpt-oss sliding-window backward, D64 and D128; Primus-Turbo 17f683584)
 - E42 [2026-08, gfx950, FlyDSL ?, N=3, campaign score `sp_over_fu` (split time / fused time), three reads] the band taken from the window, `min(cap, pow2_floor(W))` floored at 32 with the cap set by the K/V LDS staging (D128 128, D64 256), flat_wg doubled to 256 for bands of 128 and more so the per-thread dK/dV accumulators stay unchanged, and windowed reduce-pipeline gates: +17.79%; flat_wg alone 0.8451, the cap used unconditionally 0.9555 (the W=128 cell 0.691 → 0.803 ms); on cells with W ≫ BLOCK_KV the rule widened the band against the narrower window choice and halved the dQ partial bands; Q/dO sharing between interleaved waves (FQ_PAIR, D64 narrow band) followed as a separate change (round 3) (gpt-oss sliding-window backward cells, D64 and D128)
 - E43 [2026-08, gfx950, FlyDSL ?, N=6, six palindromic pairs] `dkdv_g2d=2` (GEMM2's dt prefetch ring one group deeper) at D64: 26 fewer `s_waitcnt` in the unmasked loop, wall +1.9% (6 of 6, single pairs +1.2% to +2.7%); depth 2 is the deployed D128 value (gpt-oss D64 fused backward, B=4 S=8192)
-- E44 [2026-08, gfx950, FlyDSL ?, N=9, cross-process interleaved 9 v 9 (3 reads per process, 3 processes per arm), body and wall time] dead kv bands of a rectangular bottom-right windowed backward kept in the grid with a zero-`num_records` K/V read: body 0.8445 → 0.8122 (−3.8%, distributions not overlapping), wall 1.2732 → 1.2549 (−1.44%); the band axis rotated so live bands dispatch first: body 0.808 → 0.938 (+16%), at Skv=4096 0.755 → 0.902 (+19%) (gpt-oss D64 windowed fused backward, Sq=1024)
+- E44 [2026-08, gfx950, FlyDSL ?, N=9, cross-process interleaved 9 v 9 (3 reads per process, 3 processes per arm), body and wall time] dead kv bands of a rectangular bottom-right windowed backward kept in the grid with a zero-`num_records` K/V read: body 0.8445 → 0.8122 (−3.8%, distributions not overlapping), wall 1.2732 → 1.2549 (−1.44%); the band axis rotated so live bands dispatch first: body 0.808 → 0.938 (+16%), at Skv=4096 0.755 → 0.902 (+19%) (gpt-oss D128 windowed fused backward, B=4 Hq64 Sq=1024 Skv=16384 W=2047)
+- E46 [2026-11, gfx950 (MI355X), HIP 7.15, N=5 repeats of 12 cells per kernel; exact = every touched dword equals the expected sum] `buffer_atomic_pk_add_bf16` with aux 1 or 17 and its result unused compiled to the no-return form with sc0 set, a lane's K atomics sharing one data VGPR; with an `s_waitcnt vmcnt(0)` between them, K=4 and K=8 inexact in every cell (one address per atomic: a zeroed buffer received 1/4 and 1/8 of the sum); aux 0, and returning atomics whose result was consumed, exact in every cell (a HIP kernel)
+- E47 [2026-11, gfx950 (MI355X), HIP 7.15, N=7 rounds, one 2.5 s window of back-to-back reads per footprint; UMC activity (amdsmi `mem_activity_acc`) per GiB read] 0 at footprints up to 256 MiB in all 7 rounds, then rising smoothly; relative to 2048 MiB: 28% at 384 MiB, 50% at 512, 87% at 1024, 97% at 1536; round-to-round spread ≤ 2.1% per footprint (a HIP streaming-read kernel, reads only)
+- S1 AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/attention/flash_attn_bwd.py:123 `_wsq_ring_for`: `dmax = (block_kv + window_left + block_q - 2) // block_kv`, then `(dmax + ilv - 1) // ilv + 1` band groups; its docstring (:117) says a band takes the whole block_q run its kv rows plus the window reach into
+- S2 ../hardware/gfx950/cdna4/ch09_vector_memory_operations.md:433 for atomics, SC0 selects whether the pre-op memory value is returned
+- S3 ../hardware/gfx950/cdna4/ch09_vector_memory_operations.md:112 an atomic that returns a value writes it to the same VGPRs starting at VDATA, from which it read its data

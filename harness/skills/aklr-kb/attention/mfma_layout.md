@@ -63,11 +63,12 @@ The timings of this section were measured with HIP inline-asm microbenchmarks, n
   (`attribution.md` §8), and use the shadow table only to prefilter
   (`registers_occupancy.md` §8).
 
-## 2. An MFMA ignores EXEC
-- On gfx950 an MFMA computes and writes all 64 lanes whatever EXEC holds. In a HIP inline-asm microbenchmark, with
-  EXEC = 0, one lane or half the lanes, `v_mfma_f32_16x16x32_bf16` still wrote its full result to every lane, and
+## 2. A bf16, int8 or fp8 MFMA ignores EXEC
+- On gfx950 `v_mfma_f32_16x16x32_bf16` computes and writes all 64 lanes whatever EXEC holds. In a HIP inline-asm
+  microbenchmark, with EXEC = 0, one lane or half the lanes, it still wrote its full result to every lane, and
   the operands of masked-off lanes contributed to it; a `v_mov_b32` in the same region honoured EXEC *(field, E4)*.
-- A lane mask or a divergent `if` neither skips an MFMA nor protects its destination. Skip MFMA work with a
+  The other bf16, int8 and fp8 forms tested did the same; the F32-input MFMAs did not (`../gemm/correctness.md` §6).
+- A lane mask or a divergent `if` neither skips such an MFMA nor protects its destination. Skip MFMA work with a
   wave-uniform branch, and mask scores with `-inf` (exp2 then gives exactly 0). Per-wave classification of
   diagonal blocks: `gradients.md` §8.
 
@@ -129,10 +130,11 @@ the f32 accumulator elements of a lane.
   faster in a sustained loop, where it clocked higher.
 - **P·V with few query rows per head (an MLA decode producer): `16x16x32`, not `16x16x16bf16_1k`** (half the MAC
   rate, §1). There the switch
-  alone cut an estimated 8–14% of producer time, with the operand orientation unchanged.
-- The GEMM finding that a smaller atom moves fewer register-file bytes per MAC and can clock higher at the power
-  cap (`../gemm/mainloop.md` §5) applies here too: rank atoms on wall time, sclk and power, never on
-  MFMA utilization.
+  alone, with the operand orientation unchanged, cut 5.7–7.4% of producer time in one producer and 13–26% in
+  another whose P·V runs on dedicated value waves *(field, E22)*.
+- As in GEMM (`../gemm/mainloop.md` §5), the smaller atom can clock higher at the power cap (fewer accumulator
+  register-file bytes per MAC is the proposed reason, not a measured one): rank atoms on wall time, sclk and power,
+  never on MFMA utilization.
 
 In FlyDSL: `../flydsl/attention.md` § mfma_layout §5.
 
@@ -172,8 +174,9 @@ In FlyDSL: `../flydsl/attention.md` § mfma_layout §5.
   `llvm.amdgcn.mfma.scale.f32.32x32x64.f8f6f4` (`IntrinsicsAMDGPU.td:3732-3733`); when both scale operands are the
   constant 0, the backend selects the unscaled `v_mfma_f32_16x16x128_f8f6f4` / `…_32x32x64_…` encoding
   (`UnscaledMFMAOptimizationPat`, `SIInstrInfo.td:316-327`; LLVM `e2a39f50`, the one FlyDSL v0.3.2 pins).
-- A GEMM qualifies only with a contraction ≥ 128. At D = 64, QK and dP (contraction D) and dV and dK
-  (contraction BLOCK_Q = 64) do not; dQ (contraction BLOCK_KV) can. *(field, E18)* Storing only the dQ partials in
+- A GEMM qualifies when its contraction fills the wide form's K: 64 for 32x32x64, 128 for 16x16x128. At D = 64,
+  QK and dP (contraction D) and dV and dK (contraction BLOCK_Q = 64) can use only 32x32x64, which puts S and dP in
+  the 32x32 C layout (§5); dQ (contraction BLOCK_KV) can use either once BLOCK_KV ≥ 128. *(field, E18)* Storing only the dQ partials in
   fp8 saved bytes, not MFMA time: +3.5–4.1% with dq SNR 47.9 → 31.3 dB.
 - A scale must be constant along the contraction axis to leave the MFMA. A tensor contracted along different
   axes in two GEMMs — dO along d in dP = dO·Vᵀ and along q in dV = Pᵀ·dO; dS along q and along kv — needs a
@@ -222,3 +225,4 @@ run's, or, where the number is unverified, of the date it was reported.
 - E18 [2026-08, gfx950, FlyDSL ?, N=3, campaign bench, three reads of the score cell; the round's gate read two (+3.51% against the previous best 978.30)] dQ split-K partials stored as E4M3: 1015.7 / 1015.4 / 1015.2 TF/s against a ~975 clean-tree median (+4.1%); dq SNR 31.32–31.39 dB at D64 against 47.9 dB in bf16, dk/dv unchanged; the campaign's total over its four kept changes 970.5 → 1012.65 (+4.34%) (gpt-oss D=64 attention backward, B=4 Hq=64 Hkv=8 S=8192 full causal)
 - E20 [2026-07, gfx950, torch (no FlyDSL kernel), N=1, PyTorch SNR model of fp8 P, kernel unchanged] bf16 P 57.47 dB, e4m3 with per-row and with per-tile scale 33.41 dB, e5m2 with per-row scale 27.40 dB (6.0 dB below e4m3); scaled to the kernel's measured 51.61 dB, e4m3 P ≈ 27.6 dB, which the round sets against a 48 dB gate (same hd64 forward)
 - E21 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-and-run probe, ISA dump, output compared bitwise with torch's e4m3 → bf16] 16 fp8 bytes per lane: `cvt_pk_f32_fp8` (lo, hi) then `.to(BFloat16)` emit 8 `v_cvt_pk_f32_fp8` + 8 `v_cvt_pk_bf16_f32`; `cvt_scalef32_pk_bf16_fp8` with scale 1.0 emits 8 `v_cvt_scalef32_pk_bf16_fp8`; both bit-equal to torch on all 254 non-NaN e4m3 codes (±0 included); instruction semantics in `../hardware/gfx950/cdna4/ch12_11_vop3a_vop3b_instructions.md` § V_CVT_SCALEF32_PK_BF16_FP8
+- E22 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=9 rounds, producer kernel timed alone, eager calls with a cache flush between] only the P·V MFMA changed, one `v_mfma_f32_16x16x32_bf16` in place of two `v_mfma_f32_16x16x16bf16_1k`, same LDS reads and operand orientation, no spills: 5.7–7.4% off a producer whose waves run QK and P·V, 13.1–26.0% off one whose P·V runs on five dedicated value waves, over four shapes (dense fp8 MLA decode, 96 heads, query length 1, batch 4–64, 4096 to 112431 tokens)

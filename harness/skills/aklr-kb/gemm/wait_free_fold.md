@@ -36,8 +36,9 @@ In the kernel above (line numbers of `kernel.py`):
 2. `s_waitcnt vmcnt(0)` and a barrier: the stores are acknowledged before the split counts in (line 426, S2).
 3. Thread 0 adds 1 to the tile's counter with an agent-scope atomic add that returns the old count, and passes the
    old count to its workgroup through LDS (line 430, S3).
-4. The split that read `SPLIT - 1` folds: it loads every plane, its own included, with `sc0 sc1` and adds them in
-   split order (line 440, S4). Its own partial goes through the same packing as the published ones, so the sum is
+4. The split that read `SPLIT - 1` folds: it loads every other split's plane with `sc0 sc1`, its own load pointed
+   out of bounds and dropped, and adds the partials in split order (line 440, S4; lines 454–463). Its own partial
+   comes from its registers after the same packing as the published ones, so the sum is
    bitwise the same whichever split folds.
 5. Make the counters valid for this call, in one of four ways (the last three tag the counter word with the launch):
    - Zero them in the call with `torch.zeros` before launching the GEMM. The split that folds also resets its tile's
@@ -121,9 +122,12 @@ What it costs:
   the counter round trip 9.38, with the fold 10.29. At N=128, K=6144, m=2048 (split 4, compare-and-swap arrival):
   10.58 → 12.76 with the arrival → 15.44 with the fold, against 13.06–13.08 unsplit. At N=256, K=6144, m=1024 a
   fixed folder with no arrival read 11.27 against 12.55–12.92 for the full fold.
-- **Spread tiles' counters apart; one tile's per-wave words may share a line.** *(field, E13)* At N=64, m=4096,
+- **Spacing tiles' counters apart helped one kernel's reset-then-add counter, not a plain add; one tile's
+  per-wave words may share a line.** *(field, E13)* At N=64, m=4096,
   tiles' counters 8 B apart read 10.42 µs, and 64, 128 and 256 B apart 10.08, 10.10 and 10.05 (single runs; +4.3% at
-  that m in the ablation of the 256 B round), so two counters in one 128 B line did as well as a line each; at N=256
+  that m in the ablation of the 256 B round), so two counters in one 128 B line did as well as a line each;
+  *(field, E20)* in a minimal HIP fold whose splits each add 1 to a 64-bit counter, counters 8 B apart were within 1%
+  of 256 B apart. At N=256
   per-wave words 8 B apart in one 128 B slot per tile read 7.94 / 10.89 µs (m=512 / 1024) against 8.00 / 10.93 with
   a line per wave.
 
@@ -170,7 +174,10 @@ What was checked, and what was not, is under Cost and risk.
 
 - A fold that waits is faster where its work spreads over all splits: the owner-per-slice spin fold beat this one
   by 15.6% at m=128 (8 splits, one workgroup now reads 7 planes) and by 22% at m=256 on a larger tile
-  *(field, E1)*. That speed is not available safely; take it from fewer splits or a cheaper partial format instead.
+  *(field, E1)*. That speed is not available safely; fewer splits win back part of it, a cheaper partial format less.
+  *(field, E18)* At m=128, split 4 on 128×96 tiles (still 256 workgroups) read 43.3 µs against 47.6 for the shipped
+  split 8, but 24–45% slower on 64×192 tiles or half the workgroups; fp16 partials (only while the sums fit fp16)
+  read 2.7% less, and bf16-rounded ones broke the contract's error bound.
 - A pairwise tree in fixed order does not help: each level waits for its own stores to be acknowledged, and the
   splits of a tile finish close together, so the last split pays every level. It was no faster than the flat
   fold at m=128 and 1.7-2.9% slower at m=32, 64, 256 and 512 *(field, E2)*.
@@ -199,9 +206,13 @@ What was checked, and what was not, is under Cost and risk.
   AKLR's former kernel state (no longer offered): *(field, E4)* 4.2 µs at m=32, 4.2 at m=64, 4.7 at m=128, 3.1 at
   m=256 and 4.1 at m=512.
 - **A launch tag can replace the zeroing; a 32-bit tag is known to be unsafe, and a wider one is only as safe as no
-  leftover word equalling this launch's tag** (next bullets). `dispatch.id` XOR `queue.ptr` is 32 bits and repeats
-  (dispatch ids 1 and 2^32 + 1 on one queue), and a stale word that reads as this launch's, already complete, means no
-  split sees `SPLIT - 1` and the tile is never written.
+  leftover word equalling this launch's tag** (next bullets). `dispatch.id` XOR `queue.ptr` is 64 bits; cut to 32 bits
+  (as in half of a 64-bit counter word) it repeats (dispatch ids 1 and 2^32 + 1 on one queue). A stale word carrying
+  this launch's tag harms each counter differently *(field, E19)*: where the count only adds (the reset-then-add
+  counter, S14), a word at `SPLIT` or more means no split sees `SPLIT - 1` and the tile is never written; where it
+  wraps modulo `SPLIT` (the compare-and-swap counter, S7), a completed word reads as no arrivals and the tile stays
+  right; on both, a word left part-way can let a split fold before its partners have published, and the tile is
+  written wrong.
 - A dispatch-derived tag (the id itself or an odd-multiplier hash) is one to one only within its 62–64-bit domain
   on one queue, so combine it with queue-pointer bits; truncating the queue bits or an XOR does not make it unique
   across queues. Four bf16 kernels use such a tag in place of zeroing and passed `driver.py --stress`: the
@@ -241,6 +252,9 @@ What was checked, and what was not, is under Cost and risk.
 - E15 [2026-11, gfx950, FlyDSL 0.3.2, N=3, forge-loop ablation ladders, 3 pairs, driver --bench-mode; the separate-launch arm by driver --bench-mode and Kineto] N=64 K=4096 m=4096: whole fold-introducing round +0.22% [−0.77, +1.21] overall, +1.89% at m=4096, m=256 −0.66%; fold-deletion arm reported as not separable, no cost given; next round against a different parent, counter spacing m=4096 +4.34%, m=256 +2.72%; N=256 K=6144 (whole rounds also changing rotation/PRO, exchange and own-partial retention; not isolated split effects): split m=512 with compare-and-swap arrival +1.59% [+1.31, +1.87] (m=512 +4.75%), exchange and split m=1024 +2.82% [+2.52, +3.12] (m=512 +5.62%, m=1024 +2.81%), per-wave arrival +1.16%, split 4 at m=1024 +0.86% (m=1024 +2.19%); N=64 m=2048 with fp32 partials and a reduce launch: driver 11.416 µs against HEAD 8.689, Kineto GEMM 7.64, `reduce_kernel` 4.32, memset 4.04
 - E16 [2026-11, gfx950, FlyDSL 0.3.2, N=1, single driver run (N=64), agent's probe on AKLR's graph timer (N=256)] LLVM agent fences (release / seq_cst / acquire) around the arrival: N=64 K=4096 m=4096 (64×64, split 4) 26.177 µs (KW 4, 2 stages) against 11.922 for `sc0|sc1` buffer aux (KW 2, 3 stages); partials only, fold skipped, 11.349 (KW 4, 2 stages) and 9.743 (KW 2, 3 stages); N=256 K=6144 m=1024 (split 4, KW 2, BK 128 in both) 24.7 against 14.0 with `sc1` store/load bits
 - E17 [2026-11, gfx950, FlyDSL 0.3.2, N=2–3 readings per arm, each a median of 5 calls of AKLR `bench_cudagraph` with L2 flushed before every call, interleaved with the kept kernel] bf16 GEMM N=384, K=7168, m=256: the kept whole-K path 9.44–9.47 µs; split 4 across workgroups on 32×64 tiles, 2 ring slots, tiles and their splits grouped by XCD (2 M-tiles × 3 N-tiles per XCD): 8.48–8.50; on 3 ring slots, 2 × 3 / 1 × 6 tiles per XCD: 8.55 / 11.17
+- E18 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=6 rounds, AKLR bench_cudagraph, arms rotated] m=128 on the shipped gemm_n6144_k16384 kernel (bf16, K=16384), only the split, tile or partial format changed: shipped split 8 (128×192) 47.47–47.61 µs; split 4, 128×96, 256 workgroups 43.20–43.32; split 4 on 64×192 1.450×, on 128 workgroups 1.242×; unscaled fp16 partials 0.973×; bf16-rounded partials 9 elements past the contract's error bound
+- E19 [2026-11, gfx950 (MI355X), HIP 7.15, N=10 trials × 64 tiles per cell, one split held back 300 µs or none] HIP replicas of the S7 and S14 counters, split 4, the counter word preset under this launch's tag: S7 completed word 640/640 tiles right; S14 word at or past `SPLIT` 640/640 tiles unwritten; a word left part-way on either 640/640 wrong with a split held back, 0–64 of 640 without; other tags, zero or random words 640/640 right
+- E20 [2026-11, gfx950 (MI355X), HIP 7.15 (no FlyDSL kernel), N=21 rounds, graphs of 20 calls, arms rotated, median of per-round ratios] minimal split-K fold, 4 splits per tile each adding 1 to a 64-bit counter with `global_atomic_add_x2`, 256 and 1024 workgroups: counters 8 B against 256 B apart 0.9935 and 0.9982; a tile's per-wave words in one 128 B slot against a line per wave 0.9906 and 0.9919 (probe kernel)
 - S1 aklr/ops/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:49 `_SC01 = 17`, system-scope access past the non-coherent caches
 - S2 aklr/ops/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:426 `s_waitcnt vmcnt(0)` before the arrival
 - S3 aklr/ops/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json#kernel.py:430 the agent-scope `atomicrmw add`

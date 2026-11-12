@@ -31,17 +31,21 @@ ambiguous: probes that remove or repeat a part and read the time.
 example, run the MFMA loop twice over the same operands (the result is wrong; this probe is for timing
 only). Check in the ISA that the instructions really were added and not removed as dead code.
 - Wall time does not move → compute is fully hidden. Drop every "fewer instructions / less VALU / fewer
-  LDS issues / different occupancy" candidate at once. *(field, E1)* On an attention kernel, +76% MFMAs cost
-  +0.1%.
+  LDS issues" candidate at once. *(field, E1)* On an attention kernel, +76% MFMAs cost +0.1%. The probe says
+  nothing about occupancy: in a memory-latency-bound microbenchmark where twice the MFMAs cost +0.1%, 1, 4 and
+  8 waves per SIMD instead of 2 took 1.86×, 0.57× and 0.39× the time *(field, E42)*. Time occupancy candidates
+  separately.
 - Wall time grows in proportion → compute is on the critical path, and removing instructions is a real
   lever.
 - Do it per kernel; two kernels of one operator can sit in different regimes.
 - The same idea for synchronization: add two `gpu.barrier()` per tile. If that is free, barrier count is
-  not the problem; look at what the barrier protects.
+  probably not the problem (untested; an added copy does not price a removal, §3); look at what the barrier
+  protects.
 
 **Apparent byte rate.** Divide the kernel's bytes by its wall time and compare with the stream bandwidth
-you measured on the same box. *(field, E2)* torch's `copy_` 4.98 TB/s, `add(out=)` 6.25 TB/s, `sum` 3.74,
-`amax` 2.01 (a reduction is not a bandwidth ruler). A rate above stream bandwidth means caches are serving
+you measured on the same box with the kernel's own read/write ratio and, below about 1 GiB, its byte count
+(`../patterns/memory_bound.md` § Symptom, § Rule out first). *(field, E2)* torch's `copy_` 4.98 TB/s, `add(out=)` 6.25 TB/s, `sum` 3.74,
+`amax` 2.01 (a reduction is not a bandwidth ruler). A rate above that stream bandwidth means caches are serving
 part of the traffic; the kernel is not at the HBM limit.
 
 ## 2. Subtractive probes: remove a part, read the time
@@ -66,7 +70,7 @@ that changes). Keep probe switches out of the delivered code.
   DMA, triple buffering or query blocking, because the removed part was doing other work (cross-wave sharing,
   latency hiding). Other changes beat their bound because they also removed a serial dependency or a spill.
   Decide only on the real implementation.
-- **Instruction counts predict exactly; time does not.** *(field, E5, E6)* On a grouped GEMM, a paper count of
+- **MFMA counts predict exactly; time does not.** *(field, E5, E6)* On a grouped GEMM, a paper count of
   1.043478× MFMAs matched `SQ_INSTS_MFMA` to five digits, while the time saved was 50–60% of the proportional
   estimate.
 - **An isolated micro-benchmark can flip the sign.** *(field, E7)* In an attention backward pass, a reduce
@@ -83,7 +87,7 @@ When a part cannot be removed safely, run it one extra time and fold the result 
 - Make the probe a compile-time parameter that appears in the kernel name, and time it against the base
   in the same process. *(field, E8, E9)* On an attention kernel, cross-process spread reached 12.9%, which
   hides a 1–4% margin.
-- **The margin is an upper bound on the saving only when the kernel has no idle issue slots.**
+- **The margin prices a second copy, not the saving from removing the first.**
   *(field, E9, E10)* On an attention kernel, a rendezvous that cost +1–4% as an extra copy was *slower* to
   remove (+1.2–5.9%), because its reads were covering another read's latency.
 - The same trick prices a whole launch. *(field, E11)* `rocprofv3 --kernel-trace` start→end overstated a small
@@ -94,14 +98,14 @@ When a part cannot be removed safely, run it one extra time and fold the result 
 A dense GEMM at the power cap trades cycles for clock. Two changes with the same cycle saving can be
 worth very different wall time.
 - **Build an all-removed arm and sample the clock under sustained load.** *(field, E12)* With every load, LDS
-  read, barrier and scale operand removed, wall time fell 25.7%, but cycles fell only 12.6%: the clock rose
+  read, barrier and scale operand removed, wall time fell 25.7%, but cycles fell only 11.2%: the clock rose
   from 1702 to 2034 MHz. The kernel was energy-bound, not issue-bound.
-- **In an energy-bound kernel, the savings of separate instruction groups add up.** *(field, E13)* Removing the A
-  DMA, the B loads and the A LDS reads separately saved 8.09 + 5.50 + 6.16 = 19.75%; together, 20.98%. In an
-  issue-bound kernel the savings would overlap.
+- **In an energy-bound kernel, the savings of separate instruction groups can add up.** *(field, E13)* Removing the A
+  DMA, the B loads and the A LDS reads separately saved 8.09 + 5.50 + 6.16 = 19.75%; together, 20.98%.
 - **Rank candidates by what an instruction moves, not by how many you delete.** *(field, E14, E15)* Deleting
-  7.4% of the hot loop's instructions, all SALU and `s_nop`, gained 0%; cutting global bytes per MAC by 20%
-  gained 5.4%.
+  7.4% of the hot loop's instructions, all SALU and `s_nop`, gained 0%. A (256,384) tile that cut global bytes
+  per MAC by 20% raised a six-shape score 5.4%, but it also cut LDS reads per MFMA and, on one shape, dispatch
+  rounds; on two tile_m=128 shapes, whose bytes per MAC it also cut, it ran 9.6% and 14.7% slower.
 - **Cycles convert to wall at a shape-dependent rate.** *(field, E16, E17)* On a grouped GEMM, 5.3% fewer cycles
   gave 2.2% wall on one shape (42%), and 7.1% fewer gave 1.4% on another (20%). Discount cycle-only gains
   accordingly.
@@ -119,11 +123,12 @@ worth very different wall time.
 `SQ_ACTIVE_INST_ANY + SQ_WAIT_INST_ANY + SQ_WAIT_ANY = SQ_WAVE_CYCLES` (all in quad-cycles): issuing,
 wanting to issue but blocked by a busy pipe, and waiting on `s_waitcnt` or `s_barrier`.
 - In an MFMA-bound loop a high `SQ_WAIT_INST_ANY` is healthy. Idle time is `SQ_WAIT_ANY`; read it next to
-  MFMA busy. If `SQ_WAIT_ANY` rises while MFMA busy is unchanged, the change is slower. *(field, E18)* On a
-  grouped GEMM, 31.7% → 50.0% came with −26%. The sign is reliable; the slope is not.
-- **This budget is the only locator for changes that keep bytes and instructions identical**, such as a
-  different wave → tile assignment. *(field, E18)* A wave-grid change on a grouped GEMM lost 26% with every
-  memory, LDS and MFMA counter bit-identical.
+  MFMA busy. If `SQ_WAIT_ANY` rises while MFMA busy is unchanged, at the same waves per SIMD, expect the change
+  to be slower. *(field, E18)* On a grouped GEMM, 31.7% → 50.0% came with −26%. That is one reading: take the
+  direction as a hint, and the slope not at all.
+- **This budget locates changes that keep bytes and instructions identical**, such as a
+  different wave → tile assignment, where the memory, LDS and MFMA counters cannot. *(field, E18)* A wave-grid
+  change on a grouped GEMM lost 26% with every memory, LDS and MFMA counter bit-identical.
 - **`SQ_ACTIVE_INST_ANY / SQ_WAVE_CYCLES` gates "remove instructions" candidates, per kernel.**
   *(field, E19, E20, E21)* 19% on a two-waves-per-SIMD grouped GEMM left 5× headroom, so removing instructions
   was worth nothing there; 57–60% on one occupancy-1 kernel made it the top lever; another occupancy-1 kernel,
@@ -137,8 +142,9 @@ wanting to issue but blocked by a busy pipe, and waiting on `s_waitcnt` or `s_ba
 `SQ_WAIT_INST_LDS` counts dependent waits. Co-resident waves can hide them, so a high value is not proof that
 LDS bounds the kernel. *(field, E22)* An attention kernel with 81% of its cycle budget in LDS waits gained 0.0%
 in each of three probes that cut one LDS read stream by 17–33%. Decide with a halve-the-reads probe and ISA
-counts. Compare `SQ_LDS_IDX_ACTIVE` with `SQ_VALU_MFMA_BUSY_CYCLES` to see whether the LDS port is anywhere
-near busy.
+counts. `SQ_LDS_IDX_ACTIVE` over `SQ_VALU_MFMA_BUSY_CYCLES` follows the LDS-to-MFMA instruction mix and reads
+the same for a saturated port and an idle one. Divided by CU-cycles instead (`GRBM_GUI_ACTIVE` × CUs, as
+rocprof's `LdsUtil`), `SQ_LDS_IDX_ACTIVE` tracked the port load in a microbenchmark *(field, E43)*.
 
 ## 7. Per-tile fixed cost
 
@@ -189,18 +195,20 @@ near busy.
 
 ## 9. Readings you cannot trust
 
-- rocprof's `VGPR_Count` reports half the true value, and `Accum_VGPR_Count` reports 0 *(field, E33)*. Read
-  registers from the ISA (`mainloop.md` §10).
-- `MfmaUtil` (`SQ_VALU_MFMA_BUSY_CYCLES` over `GRBM_GUI_ACTIVE`·SIMDs) is not reliably comparable across wave
-  counts. On grouped GEMMs, a 1-wave-per-SIMD kernel read 32.2% against 63.8% for a 2-wave-per-SIMD kernel with
-  the same MFMA count and wall time 4% apart *(field, E34)*. Before comparing
-  kernels with different waves per SIMD, check busy cycles against `SQ_INSTS_MFMA`, or compare time per K
-  iteration.
-- `SQ_LEVEL_WAVES` and `SQ_ACCUM_PREV_HIRES` read 0 in rocprofv3 on gfx950 (`SQ_ACCUM_PREV_HIRES` on an
-  attention kernel) *(field, E35, E36)*. Wait counters cannot separate `vmcnt` waits from barrier waits there;
-  use probes.
-- In an ATT trace, an MFMA waiting for its operand is charged to the MFMA, not to an `s_waitcnt`. *(field, E37)*
-  1.8% VMEM wait next to 89.5% MFMA stall was hidden memory latency.
+- rocprof's `VGPR_Count` is wrong above 128 architectural VGPRs: on rocprofv3 1.3.5 it read 72 for 200 and 128
+  for 256, with the rest in `Accum_VGPR_Count` *(field, E44)*; an earlier rocprofv3 read 128 for a 256-VGPR GEMM
+  and `Accum_VGPR_Count` 0 *(field, E33)*. Read registers from the ISA (`mainloop.md` §10).
+- `MfmaUtil` (`SQ_VALU_MFMA_BUSY_CYCLES` over `GRBM_GUI_ACTIVE`·SIMDs) can mislead across kernels: on grouped GEMMs,
+  a 1-wave-per-SIMD kernel read 32.2% against 63.8% for a 2-wave-per-SIMD kernel with the same MFMA count and wall
+  time 4% apart *(field, E34)*. Wave count alone does not do that: at 1, 2 and 4 waves per SIMD a bf16
+  microbenchmark kept busy cycles per MFMA fixed *(field, E46)*. Before
+  comparing kernels, check busy cycles against `SQ_INSTS_MFMA`, or compare time per K iteration.
+- `SQ_LEVEL_WAVES` and `SQ_ACCUM_PREV_HIRES` read 0 when requested directly in rocprofv3 on gfx950
+  *(field, E35, E36, E47)*; rocprofv3 1.3.5's derived `MeanOccupancyPerCU`, `VmemLatency` and `LdsLatency` read
+  plausible values *(field, E47)*. Wait counters cannot separate `vmcnt` waits from barrier waits there; use probes.
+- In an ATT trace (rocprofv3 1.3.5), a wave waiting for a load is charged to the `s_waitcnt` that guards the
+  load, not to the MFMA that consumes the data *(field, E45)*. So 1.8% VMEM wait next to 89.5% MFMA stall
+  *(field, E37)* points to a busy matrix pipe, not to hidden memory latency.
 - **Static ISA size is nearly free; a spill slot is not.** *(field, E38)* On a grouped GEMM, halving a whole-loop
   kernel's static instructions gained 0.2%, and the kernel that gained one spill slot lost 0.30–0.41% instead of
   gaining (about 0.45% per slot, estimated). Removing code can also create a spill, because the allocator's
@@ -232,10 +240,10 @@ A FlyDSL version is given only where the cited run, or another round in the same
 - E9 [2026-09, gfx950, FlyDSL 0.3.2, N=?, same-process ABBA, probe as a compile-time parameter in the kernel name] one extra cross-wave rsum rendezvous per tile: seq48 +0.207 µs (+1.37%), seq60 +0.169 µs (+1.01%), seq84 +0.887 µs (+4.00%) (GLM-5.2 TP4/EP4 sparse-MLA decode producer)
 - E10 [2026-09, gfx950, FlyDSL ?, N=?, ?] deferring the rsum fold, which drops the four `ds_read_b32` after the barrier, was 1.2% slower at seq 48, 2.0% at seq 60 and 5.9% at seq 84 (same decode producer; source comment, aiter fork commit 4e80e6619, aiter/ops/flydsl/kernels/sparse_mla_decode.py:433)
 - E11 [2026-09, gfx950, FlyDSL 0.2.4, N=9, same-process additive probe (0/1/2/4 extra launches, 9 alternations, median slope) against rocprofv3 --kernel-trace Start→End] an early-returning output-tail kernel: 1.579 / 2.006 µs in the stream against 5.10 / 5.08 µs Start→End (3.2×); the scale-preshuffle kernel `kern_0`: ≈10.2 µs against 20.32 µs (≈2×) (gpt-oss MXFP4 grouped MoE MLP, fc2_fwd and fc1_dgrad)
-- E12 [2026-10, gfx950, FlyDSL ?, N=?, clock sampled after 75 s of back-to-back launches] shipped 580.3 µs at 1702 MHz / 1400 W; with every load, LDS read, barrier and scale operand removed 431.1 µs at 2034 MHz / 1380 W: wall −25.7%, cycles 987.7k → 876.9k (−12.6%) (A6W4 forward GEMM, linear1 training shape)
+- E12 [2026-10, gfx950, FlyDSL ?, N=?, clock sampled after 75 s of back-to-back launches] shipped 580.3 µs at 1702 MHz / 1400 W; with every load, LDS read, barrier and scale operand removed 431.1 µs at 2034 MHz / 1380 W: wall −25.7%, cycles 987.7k → 876.9k (−11.2%) (A6W4 forward GEMM, linear1 training shape)
 - E13 [2026-10, gfx950, FlyDSL ?, N=15, same-process palindrome pairs, A/A floor ±0.03%] removing the A DMA −8.09%, the B loads −5.50%, the A LDS reads −6.16% (sum 19.75%); the three together 20.98% (A6W4 forward GEMM, linear1)
 - E14 [2026-10, gfx950, FlyDSL ?, N=3, campaign score (training-time-weighted TF/s over six shapes), three reads per arm] soffset/imm_offset addressing: hot loop 949 → 879 instructions (SALU 98 → 52, `s_nop` 42 → 18; ds_read, vmem and s_waitcnt unchanged); score 3964.08 / 3954.31 / 3951.09 against 3950.12 / 3952.65 / 3956.84, 0% (A6W4 forward GEMM, six training shapes)
-- E15 [2026-10, gfx950, FlyDSL ?, N=?, campaign score] tile (256,384) on four shapes: global bytes per MAC 0.625 → 0.500 (−20%), score 4167.19 (+5.43%) (same A6W4 forward GEMM)
+- E15 [2026-10, gfx950, FlyDSL ?, N=?, campaign score] tile (256,384) on four shapes: global bytes per MAC 0.625 → 0.500 (−20%), score 4167.19 (+5.43%); the same change cut `ds_read` per MFMA 0.518 → 0.345 and qkv's dispatch from 4.5 to 3 waves on 256 CUs; on fc2 and out_proj (tile_m=128, 0.875 → 0.75 bytes per MAC) it ran 9.6% and 14.7% slower and was not kept (same A6W4 forward GEMM)
 - E16 [2026-07, gfx950, FlyDSL ?, N=2, power and clock probe, palindrome mx/tw/tw/mx, 14 s sustained drive] cycle ratio tw/mx 1.0315 → 1.0858 (+5.3%) against wall 1.0172 → 1.0392 (+2.2%), ~1397 W (gpt-oss MXFP8 grouped GEMM, fwd down balanced)
 - E17 [2026-07, gfx950, FlyDSL ?, N=?, same probe] mx 2905 against tw 3110 cycles (7.1%), wall 1.6014 against 1.6241 (1.42%), sclk 1814 against 1915 MHz, both at 1400 W (same grouped GEMM, dgrad gate_up heavy)
 - E18 [2026-09, gfx950, FlyDSL 0.2.2, N=?, rocprofv3 PMC and wall] a `wave_id → (wave_m, wave_n)` remap: wall −25.9% (−26.5% on the shipped 16-wide kernel); `SQ_WAIT_ANY/SQ_WAVE_CYCLES` 31.7% → 50.0%; TCP/TCC request, hit, miss and DRAM counters, `SQ_INSTS_MFMA` and MFMA busy bit-identical (≤0.3%), and reportedly the LDS counters too (gpt-oss-20b grouped per-tensor FP8 GEMM, B=24, 2 waves/SIMD)
@@ -261,3 +269,9 @@ A FlyDSL version is given only where the cited run, or another round in the same
 - E38 [2026-09, gfx950, FlyDSL 0.2.2, N=7, palindrome, two arms] removing the duplicate tile bodies that never run (ISA −49%): gate_up +0.23% / +0.15% (7/7 draws), down −0.41% / −0.30% (0/7) with `vgpr_spill_count` 0 → 1; the round derives "+0.2% per halving, ≈ −0.45% per spill slot" (gpt-oss fp8 per-tensor grouped wgrad, occupancy 1, 4 waves)
 - E39 [2026-09, gfx950, FlyDSL 0.3.2, N=3, same-process probe] an arm's first read under `FLYDSL_DUMP_IR=1` and `REPS=1`: +15.44%; three normal re-runs ±0.2%; the read had both the IR dump on and a single repetition, so it does not tell which of the two caused the gap (sparse-MLA decode producer)
 - E40 [2026-10, gfx950, hipcc inline asm (no FlyDSL kernel), N=7, s_memtime slope method, median of 7 launches] `v_mfma_f32_16x16x32_bf16` 16.000 and `v_mfma_f32_32x32x16_bf16` 32.000 cycles per instruction, dependent through srcC or independent; `v_mfma_f32_16x16x16_bf16` 16.0 at half the FLOP rate of 16x16x32; with k VALU after each MFMA, cycles = max(pipe, X + 8·k_exp + 4·k_mul), X = 8 for 16x16x32 and 32x32x16 and 4 for 16x16x16, so the shadow is 8 cycles (one exp or two mul), 24 and 12 (microbenchmark)
+- E42 [2026-11, gfx950 (MI355X), hipcc (no FlyDSL kernel), N=9 rounds per arm, arm order rotated, ratio of round medians to the 2-waves-per-SIMD arm] a dependent pointer chase over a 1 GiB table with independent MFMAs between each load and its wait: 16 MFMAs per step against 8 read 1.0011; 1, 4 and 8 waves per SIMD instead of 2 read 1.863, 0.568 and 0.393 (microbenchmark)
+- E43 [2026-11, gfx950 (MI355X), hipcc inline asm (no FlyDSL kernel), rocprofv3 1.3.5, N=3 profiled dispatches per variant; port load from `s_memtime` spans against a pure-read loop] `SQ_LDS_IDX_ACTIVE` 4 per `ds_read_b128`, MFMA busy 16 per `v_mfma_f32_16x16x32_bf16`; 8 reads and 2 MFMAs per loop read a ratio of 1.00 at port load 0.99 and, with an `s_sleep 32` added, at 0.12; over 16 loops rank correlation with the port load 0.44 for the ratio, 1.00 for `SQ_LDS_IDX_ACTIVE` per CU-cycle (0.985 over `GRBM_GUI_ACTIVE` / 8 × 256 CUs) (microbenchmark, no bank conflicts)
+- E44 [2026-11, gfx950 (MI355X), rocprofv3 1.3.5, hipcc, N=1 launch per kernel, kernel-trace CSV against the assembler's register counts] `VGPR_Count` / `Accum_VGPR_Count` without AGPRs: correct at 32–128 architectural VGPRs, 72/128 at 200, 128/128 at 256; 256 + 256 AGPRs read 128/384; the two summed to the allocated total in all 10 kernels (test kernels)
+- E45 [2026-11, gfx950 (MI355X), rocprofv3 1.3.5 ATT, hipcc (no FlyDSL kernel), N=1 traced dispatch per variant, stall cycles summed per instruction over 8 waves] an MFMA fed by a load issued just before it: global load, `s_waitcnt vmcnt(0)` 96.4% of the loop's stall and the MFMA 0.0%; `ds_read_b128`, `s_waitcnt lgkmcnt(0)` 89.6% and the MFMA 0.4%; independent MFMAs and no memory reads, 100% on the MFMAs (microbenchmark)
+- E46 [2026-11, gfx950 (MI355X), hipcc (no FlyDSL kernel), rocprofv3 1.3.5, N=5 profiled dispatches per arm, waves per SIMD checked from `HW_ID`] bf16 MFMA loops, same MFMA count at 1, 2 and 4 waves per SIMD: `SQ_VALU_MFMA_BUSY_CYCLES / SQ_INSTS_MFMA` 16.0 (16x16x32) and 32.0 (32x32x16) at every wave count; MfmaUtil 84.4–90.8% and 91.7–92.7%, its ratio to 1 wave per SIMD within 2% of the `GRBM_GUI_ACTIVE` ratio in all six comparisons (microbenchmark)
+- E47 [2026-11, gfx950 (MI355X), rocprofv3 1.3.5, hipcc (no FlyDSL kernel), N=5 profiled dispatches per kernel and counter set] `SQ_LEVEL_WAVES` alone, `SQ_ACCUM_PREV_HIRES` alone and both in one pass read 0 in every dispatch of five kernels while `SQ_WAVES` matched the launch; derived `MeanOccupancyPerCU` within 2.2% of `OccupancyPercent`, `VmemLatency` 2828 cycles on a streaming read, `LdsLatency` 42.9 cycles on an LDS loop (microbenchmarks)

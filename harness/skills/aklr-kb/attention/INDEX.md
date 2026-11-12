@@ -26,8 +26,10 @@ section it serves.
   counter, bytes, registers, an error norm) is the change of that quantity.
 - *Occupancy N* means N co-resident workgroups per CU; waves per SIMD are stated as such. An 8-wave workgroup
   alone on a CU is occupancy 1 at 2 waves per SIMD.
-- Most attention bodies are latency- and rendezvous-bound, not throughput-bound. Several lessons below
-  exist because a throughput explanation looked right and was wrong.
+- Some of the attention bodies measured for these cards were latency- or rendezvous-bound rather than
+  throughput-bound; others ran at the power cap, where energy sets wall time (`attribution.md` §8). Pin the bound
+  of your own body first (`workflow.md`). Several lessons below exist because a throughput explanation looked
+  right and was wrong.
 
 ## Route by shape
 

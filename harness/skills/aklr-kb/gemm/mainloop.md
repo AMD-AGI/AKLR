@@ -110,14 +110,19 @@ In FlyDSL: `../flydsl/gemm.md` § mainloop §1.
   swap cur/next names in Python
   ```
 - **Every barrier is load-bearing.** The kernel docstring says "each guards a compiler-reorder race".
-  *(field, E4)* On Turbo's MXFP4 4-wave whole loop, every attempt to drop a barrier produced an operand race; the cross-wave cause is a missing
-  LDS rendezvous, not out-of-order `vmcnt`.
+  *(field, E4)* On Turbo's MXFP4 4-wave whole loop, the one barrier cut checked for correctness raced, even with the `vmcnt` drain fully emptied; with a barrier in every phase it did not: the cross-wave cause is a missing
+  LDS rendezvous, not out-of-order `vmcnt`. One barrier per phase can be enough if every refill still comes after all waves' reads of its slot and every read after all waves' DMAs into it *(field, E39)*.
 - **The end-of-iteration drain is a correctness knob, not a tuning knob.** `nt_vmcnt=3` is documented
   at FP8:92: N=3 gave bitwise-repeatable output at ≤1.1% cost, N≥4 raced, N<3 was slower *(field, E5)*.
+  Only part of this held on other tiles of the same kernel *(field, E48)*: a drain at or above the loop's own
+  `wait_barrier` count is a no-op, the race was rare and tile-dependent (3 in 8000 repeats at BLOCK_M=128, none at
+  BLOCK_M=256 even with no drain), and only N=0–1 cost measurable time.
   - If you build this pipeline, sweep the drain with a bitwise repetition gate (`correctness.md` §3),
     never with SNR alone.
-- **`s_setprio(1)` … `s_setprio(0)` around each MFMA cluster.** At two waves per SIMD this lets the wave
-  that reached its MFMAs keep the matrix pipe. Always drop priority afterwards. The whole-loop kernels at
+- **`s_setprio(1)` … `s_setprio(0)` around each MFMA cluster.** At two waves per SIMD, with both waves' clusters
+  wrapped as Turbo wraps them, the raise does not let the wave that reached its MFMAs first keep the matrix pipe: the
+  two are at equal priority and the older wave takes it, as without the raise *(field, E40)*; what it changes in a
+  loop with LDS and VMEM traffic was not isolated. Always drop priority afterwards. The whole-loop kernels at
   one wave per SIMD use none.
   - *(field, E6, E7, E8, E9)* Added alone to three other loops at two waves per SIMD it did not pay:
     ~4% slower on an 8-wave DMA loop without per-cluster barriers, neutral to ~4% slower on compiler- or
@@ -210,7 +215,7 @@ In FlyDSL: `../flydsl/gemm.md` § mainloop §3.
 Any beyond that go to a pinned arch-VGPR window. Operand fragments sit in a pinned VGPR window starting
 at `v8` (FP8:1122). The loop counter and the per-pool soffsets are early-clobber SGPR outputs.
 
-**Constraint rules.** Each of these has produced silently wrong output:
+**Constraint rules.** Breaking rule 2, 5 or 6 has produced silently wrong output and breaking rule 4 a memory fault, none with a compile error; rules 1 and 3 rest on Turbo's source comments:
 1. **A zero accumulator is a literal `src2=0`, never a VALU-zeroed register tied in.** The hazard
    recognizer cannot see an MFMA inside inline asm, so it cannot pad the two wait states a VALU write
    needs before an MFMA reads it. Turbo's `asm_mma_do` checks for a zero-fill vector and emits `0`
@@ -218,15 +223,17 @@ at `v8` (FP8:1122). The loop counter and the per-pool soffsets are early-clobber
 2. **An output that lives in arch VGPRs must be early-clobber (`=&v` / `=&{v[a:b]}`).** Without `&` the
    allocator may place an input (a `ds_read` base, a voffset) inside the output range. The asm then
    overwrites it mid-loop. *(field, E15)* Moving accumulators from AGPR to VGPR without `&` passed 3 of 10
-   shapes and collapsed the other 7 to 0–2 dB, depending on tile count, not on K. Every ISA check stayed
-   green. Adding `&` fixed all of them and changed no ISA byte. `&` and a tied operand (`"0"`) are
-   mutually exclusive: a tied output shares its input's register by definition.
+   shapes and collapsed the other 7 to 0–2 dB; a failing and a passing shape had the same K. The ISA check, run on a
+   passing shape, stayed green. Adding `&` made all 12 shapes then tested bitwise equal to the base build. `&` and a
+   tied operand (`"0"`) can be combined (Turbo's `asm_mma_do` uses `"=&v,v,v,0"`, GH:1627) *(field, E41)*: the tied
+   output shares its input's register, and `&` keeps every other input, even one holding the same value, out of it
+   (`correctness.md` §7).
 3. **An unwritten `=&s` output is a register-allocation hazard** (FP8:1430). Write every declared output.
 4. **A loop inside the asm needs `~{scc}` in the clobbers.** Without it LLVM can keep an outer loop's
    exit condition in SCC across the blob. *(field, E16)* The back edge became a bare `s_cbranch_scc1` with no
    `s_cmp`, giving a wrong trip count and a memory fault. Fully unrolled callers looked fine, so the bug
    stayed latent until a loop was rolled.
-5. **Waits that order an intrinsic DMA need `~{memory}`**, and asm `ds_read`s must drain their own
+5. **Waits that order an intrinsic DMA must be side-effecting asm (`has_side_effects=True`, as Turbo's `wait_barrier`, GH:484-491) or carry `~{memory}`** *(field, E42)*: a wait with neither was scheduled after the LDS read it guarded. Asm `ds_read`s must drain their own
    `lgkmcnt` before their consumer (`datapath.md` §4).
 6. **An untied "pin" (`"=a,v"`) deletes the operand.** See `correctness.md` §7.
 
@@ -237,11 +244,11 @@ hot loop) and by wall time, not by `accum_offset` or register totals.
   C store packs straight out of arch VGPRs with no shuttle (`_MXFP4_ARCH_ACC`, FP4:578-582).
 - The same trade on the fp8 NT whole loop "measured a wash" (FP8:2045-2047): an MFMA writing an arch
   VGPR that a VALU then reads needs wait states that the single wave per SIMD has nothing to fill.
-- *(field, E17)* At unchanged occupancy, freed registers buy nothing on their own. In one attention kernel, releasing 72
-  VGPRs and 72 AGPRs cost −2.05%. Name the specific gain the headroom is for before building it.
+- *(field, E17)* At unchanged occupancy, freed registers are not a gain by themselves. In one attention kernel, a change that freed 72
+  VGPRs and 72 AGPRs by re-reading an operand from LDS (256 more reads, still one wave per SIMD) cost −2.05%. Name the specific gain the headroom is for before building it.
 
-**Setting `amdgpu-agpr-alloc` and friends.** Without the attribute, an inline-asm AGPR
-accumulator gets the default allocation, and the result is wrong. After setting any kernel attribute,
+**Setting `amdgpu-agpr-alloc` and friends.** Without the attribute the compiler may give an inline-asm AGPR
+accumulator fewer AGPRs than it holds *(field, E43)*: in a HIP kernel at `waves_per_eu=2` a 128-AGPR accumulator got 4 and ~99% of outputs were wrong; at `waves_per_eu=1` a 64-AGPR one got its 64. Set it to the accumulator's AGPR count, and declare every AGPR the asm string names: the attribute does not cover undeclared ones *(field, E46)*. After setting any kernel attribute,
 read `.agpr_count`, `.vgpr_count` and the waves-per-eu fields from the ISA (§10).
 
 In FlyDSL: `../flydsl/gemm.md` § mainloop §4.
@@ -289,14 +296,14 @@ In FlyDSL: `../flydsl/gemm.md` § mainloop §6.
 
 - 8-wave candidates race `waves_per_eu=2` with different AGPR budgets: Turbo's NT table lists
   32, 48 and 64 (`_NT_CANDIDATES`, FP8:3193).
-- **Reach a register tier by shortening A's live range, not by a hint.** When A's registers set the occupancy tier,
+- **Reach a register tier by shortening A's live range, not by a hint; race the extra wave, it can cost more than it gives.** When A's registers set the occupancy tier,
   read A from LDS in 16-row groups one to three ahead of their MFMAs instead of a whole K tile ahead. On fused-MoE
   fp8 × MXFP4 expert GEMMs: 202 → 168 VGPRs (2 → 3 waves per SIMD) and 7.6–7.9% off the call, where
   `waves_per_eu=3` on the old loop spilled 210 VGPRs and ran 2.4× slower *(field, E23)*; 202 → 148 VGPRs and
-  −6.1/−6.8% MoE time *(field, E22)*; 146 → 122 VGPRs, after which `waves_per_eu` 4 built at 128 VGPRs with no spill
-  where it had spilled 19–43 *(field, E21)*.
-- **Fully unrolling a short K loop pays only with VGPR headroom.** *(field, E19)* At 12–24 K steps:
-  ~1–5% faster on ~100-VGPR tiles, ~40% slower on one 256-VGPR tile (spills 9 → 59) and about 1% slower on another (its ISA was not read).
+  −6.1/−6.8% MoE time *(field, E22)*; 146 → 122 VGPRs, after which, with the change extended to the last K tile, `waves_per_eu` 4 built at 128 VGPRs with no spill
+  where it had spilled 19–43 *(field, E21)*. In a HIP bf16 GEMM the same change reached 3 waves per SIMD with no spill yet ran 16–17% slower than at 2 *(field, E44)*.
+- **Fully unrolling a short K loop needs VGPR headroom; headroom alone does not make it pay.** *(field, E19)* At 12–24 K steps:
+  ~1–5% faster on ~100-VGPR tiles, ~40% slower on one 256-VGPR tile (spills 9 → 59) and about 1% slower on another (its ISA was not read). In a HIP bf16 GEMM without LDS, unrolling into spills ran 1.67–1.95× slower, without spills it gained 0.1–0.8% *(field, E45)*.
   *(field, E34)* At m 256–4096 on bf16: at N=128, K=6144 unrolling together with a new K-start rotation took m=1024
   from 10.21 to 10.01 µs, and unrolling alone tied at m=512 and lost 0.7% at m=2048 (13.95 against 13.85); at
   N=3584, K=512, m=4096 a 244-VGPR tile without spills gained only with the next fragments prefetched (16.70 against
@@ -304,7 +311,7 @@ In FlyDSL: `../flydsl/gemm.md` § mainloop §6.
 - **Two loop bodies in one launch can spill at the seam.** *(field, E35)* In a persistent bf16 kernel (N=28672,
   K=512, m=2048) the lane values a tail body derived from the thread id were computed before the head loop and kept
   live across it: 256 VGPRs, 13 spilled. Building the tail body after the head loop, from an opaque copy of the
-  thread id, gave 238 VGPRs, no spill, and 5.7% at that m.
+  thread id, gave 238 VGPRs, no spill, and 5.7% at that m. The copy is what counts *(field, E47)*: built after the head loop without it, the tail body still compiled to 256 VGPRs and 13 spills; with the copy, before or after the head loop, 238 and none.
 - The 4-wave whole loop runs at `waves_per_eu=1` and uses the full register file (FP8:1992). FP4 also sets
   `amdgpu-agpr-alloc=256` (FP4:3095).
 - Arch VGPRs and AGPRs share one 512-entry file per SIMD. Allocation is in granules of 8, and the
@@ -428,7 +435,7 @@ does not, the line says which date it is. "Turbo" is Primus-Turbo.
 - E14 [2026-10, gfx950, FlyDSL 0.3.2, N=?, per-arm timer not stated (the run's baseline is the driver bench, warmup 3, 20 iterations)] G2S fills spread into the MFMA stream: m=16384 spread 1/2/4 1.0563/1.0631/1.0953 ms against 1.0529 unspread (+0.3% to +4.0%); spread 1 at m=893 0.08205 against 0.08207, m=2732 0.18101 against 0.17989, m=9397 0.62490 against 0.61983 (gemm_n6144_k7168 forge run; 2×4 waves)
 - E15 [2026-09, gfx950, FlyDSL ?, N=1, the round's correctness gate: bitwise equality with the base build plus SNR, 10 shapes] traded accumulators in arch VGPRs with `"={v[b:b+3]}"`: 7 of 10 shapes neither bitwise equal nor above 1.77 dB (0.03–1.77 dB); `out_proj_fwd` 32768×4096×4096 passed while `KI16_wide` 1024×2048×4096, same K and K iterations, failed; with `=&` 12 of 12 shapes bitwise equal and the ISA byte-identical (Turbo MXFP4 dense GEMM on the Llama training shapes)
 - E16 [2026-09, gfx950, FlyDSL ?, N=1, one run and its ISA dump] a scf.for-rolled persistent tile loop around the whole-loop asm, without `~{scc}`: GPU memory fault on the first run, back edge a bare `s_cbranch_scc1` with no `s_cmp`; with the clobber the shipped, unrolled path stayed byte-identical (4696 instructions, 496 VGPRs) (Flux MXFP4 dense GEMM, `call_mxfp4_wholeloop`)
-- E17 [2026-09, gfx950, FlyDSL 0.2.4, N=1, campaign score: geomean of reference/current time over three batch sizes times a guard term, one scored run] on an attention kernel, `g3_kreg=False` freed 72 VGPRs and 72 AGPRs (479 → 407, 223 → 151, spill 0, still one wave per SIMD) and scored 0.9795 (−2.05%) (gpt-oss D=64 attention backward)
+- E17 [2026-09, gfx950, FlyDSL 0.2.4, N=1, campaign score: geomean of reference/current time over three batch sizes times a guard term, one scored run] on an attention kernel, `g3_kreg=False` (256 more LDS reads) freed 72 VGPRs and 72 AGPRs (479 → 407, 223 → 151, spill 0, still one wave per SIMD) and scored 0.9795 (−2.05%) (gpt-oss D=64 attention backward)
 - E18 [2026-08, gfx950, FlyDSL ?, N=1, rocprofv3 PMC run of 10 dispatches against a recorded baseline; the campaign score for the whole round, 3 reads] Mfma32x32x16 → Mfma16x16x32 in the 8-wave 256×256 forward NT tile: the Down projection's dispatch 1803 → 1608.9 µs (−10.8%), sclk 1.40 → 1.667 GHz at a pinned 1400 W (the same record also gives the baseline as 1.37 and as 1.37–1.40 GHz), cycles per dispatch up ~8%, MFMA utilization 84% → 77%, SQ_VALU_MFMA_BUSY_CYCLES 2.12337e9 on both; campaign score +9.17% (1283.9 → 1401.7 TF/s geomean over 8 configurations) (bf16 grouped GEMM forward, gpt-oss-20b MoE: 32 experts, M=131072, K=2880, N=5760 and 2880; Primus-Turbo ed8d7af4 (#486))
 - E19 [2026-10, gfx950, FlyDSL 0.3.2, N=2, temporary CUDA-graph bench, median of 10 replays of 50 calls, two readings per arm against canonical; VGPR and spill counts from the distill probe's ISA dumps] fully unrolled K loop: m=893 (12 K steps, 102 VGPRs) 10.30 and 10.29 µs against 10.94 and 10.90; m=2732 (24 K steps, 104 VGPRs) 22.97 and 22.68 against 23.48 and 23.69; m=9397 (24 K steps, 256 VGPRs, spills 9 → 59) 79.65 and 79.32 against 56.16 and 56.23 (+41%); m=16384 (256 VGPRs, ISA of the unrolled build not read) 93.10 and 94.59 against 92.81 and 93.50; the run's ablation of the kept rows (m=893, m=2732) +1.09%, one-sided 95% bounds +1.03% … +1.14% (gemm_n2304_k1536 forge run)
 - E20 [2026-10, gfx950, FlyDSL ?, N=3, campaign score: training-time-weighted harmonic mean TF/s of six shapes, three reads per arm] A's K-tile offset moved into `soffset` and A's LDS laid out wave-major: hot loop 949 → 879 instructions (SALU 98 → 52, `s_nop` 42 → 18), ds_read, VMEM-load and s_waitcnt counts unchanged; score 3964.08 / 3954.31 / 3951.09 against 3950.12 / 3952.65 / 3956.84, 0% (Turbo A6W4 dense forward GEMM, six training shapes)
@@ -450,3 +457,13 @@ does not, the line says which date it is. "Turbo" is Primus-Turbo.
 - E36 [2026-11, gfx950 MI355X, FlyDSL 0.3.2, N=24 sequential sessions × 3 cyclic readings; cold-L2 official `bench_cudagraph`, rep=20, 90 s GPU ramp; session-mean latency ratios, t(23) Bonferroni 95% familywise CI over candidate + AA] N=7168 K=512 M=2048, original canonical vs candidate sources/configurations recompiled: A2/B3 + A-first + vmcnt(4) + out-of-K B-load zeroing + C-in-A-stage-0 bundle −0.970% latency [−1.015, −0.925]; AA −0.012% [−0.033, +0.009], inside the ±0.15% gate. GPU ISA: both 163840 B LDS, 204 VGPRs, no spills/scratch; bundle vmcnt(4) is present. Three input seeds pass the official float64-reference DotProductBound comparison and are cross-arm bitwise equal. The bundle as a whole, at this M only; B's third stage not timed alone. The interval treats the sequential sessions as independent; one process, no restarts.
 - E37 [2026-11, gfx950 MI355X, FlyDSL 0.3.2, N=24 sequential sessions × 3 cyclic readings; E36's cold-L2 ruler and session analysis, Bonferroni family candidate contrasts + AA, practical equivalence margin ±0.3%] N=128 K=6144 M=256, original campaign builder, no new SCHED/UROT/PRO options and original unconditional scheduling: recorded S3+UNROLL vs S2 +4.025% latency [+3.980, +4.070]; diagnostic S2+UNROLL vs S2 −0.011% [−0.049, +0.027], equivalent, not a standalone UNROLL regression. GPU ISA: S2/S3+UNROLL/S2+UNROLL LDS 98304/147456/98304 B, VGPRs 44/42/42, no spills/scratch; three seeds pass official float64 comparison and cross-arm bitwise equality. Configurations rebuilt on the original builder; the campaign's discarded build was not available, and its absolute 6.000/5.999 vs 5.734 µs were not re-timed. This M only.
 - E38 [2026-11, gfx950 MI355X, FlyDSL 0.3.2, N=24 sequential sessions × 3 cyclic readings; E36's cold-L2 ruler and session analysis, Bonferroni family candidate contrasts + AA] N=64 K=4096 M=4096, original campaign builder `_build_gemm_impl`, private-wave, no rotation, A-first, only STAGES changed: S3 vs S4 +0.994% latency [+0.949, +1.039], S5 vs S4 +0.835% [+0.787, +0.884]. GPU ISA: S3/S4/S5 LDS 98304/131072/163840 B, VGPRs 72/90/110, no spills/scratch; three seeds pass official float64 comparison and cross-arm bitwise equality. Configurations rebuilt on the original builder; the campaign's discarded build was not available, and its absolute 11.732/11.736 vs 11.650 µs were not re-timed; the fold path the m=4096 row later took was not in the comparison. This M only.
+- E39 [2026-11, gfx950 (MI355X), HIP 7.15, N=100 launches per arm, per-thread checksum compared bitwise with a global-memory reference, `s_sleep` skew] 4 waves, a two-slot LDS ring filled by buffer-load-to-LDS, each wave reading another's share: one barrier per phase, after the DMA wait (refilling the slot read a phase earlier) or before the in-place refill (each DMA drained a phase ahead, one more barrier before the loop), 0 of 100 wrong; the latter barrier removed, 100 of 100 (HIP microbenchmark)
+- E40 [2026-11, gfx950 (MI355X), HIP 7.15, N=100 launches × 8 rounds per configuration, cluster time from `s_memtime`] two waves on one SIMD, each cluster 256 independent `v_mfma_f32_16x16x32_bf16` wrapped in `s_setprio 1` / `s_setprio 0` on both waves, the other wave starting about 800 ticks in: the older wave ran its cluster uninterrupted either way, a younger one that started first took 8208 ticks against 4152–4160 alone (1.97×); every reading the same within 4 ticks without the raise (HIP microbenchmark)
+- E41 [2026-11, gfx950 (MI355X), HIP 7.15, N=50 runs per arm, every output compared exactly with a host reference; registers read from the ISA] `"=&v,v,v,0"` around one `v_mfma_f32_16x16x32_bf16` and `"=&v,v,v,v,v,0"` around two compiled, 0 wrong in 50 of 50 runs, every MFMA with src2 = dst and none with dst on srcA or srcB; an untied output without `&` put dst on an input in 3 of 8 MFMAs, every run wrong (HIP microbenchmark, K=2048)
+- E42 [2026-11, gfx950 (MI355X), HIP 7.15 (only the wait's two asm flags edited in the LLVM IR), N=200 launches per arm and code shape, per-thread checksum compared bitwise with a global-memory reference; wait placement from the ISA] buffer-load-to-LDS DMA, asm `s_waitcnt vmcnt(0)` + `s_barrier`, then a compiler-visible LDS read of another wave's share: the wait side-effecting (Turbo's `wait_barrier`), with `~{memory}`, or both: every read after it, 0 of 200 wrong; neither: the wait scheduled after the reads, 200 of 200 wrong (HIP microbenchmark, 4 waves, 2048 workgroups)
+- E43 [2026-11, gfx950 (MI355X), HIP 7.15, N=10 repetitions per process, outputs compared exactly with a CPU reference; registers and wait states from the ISA] inline-asm `v_mfma_f32_16x16x32_bf16` with `"=a"` accumulators tied in, no `amdgpu-agpr-alloc` given: the compiler inferred `"4"`; `waves_per_eu=1`, 16 accumulators: 64 AGPRs, 0 wrong; `waves_per_eu=2`, 32 accumulators (128 AGPRs): 4 AGPRs, copies through arch VGPRs around the asm MFMAs with as few as 1 wait state, 1038455–1041250 of 1048576 outputs wrong; the attribute at 128: 0 wrong (HIP microbenchmark)
+- E44 [2026-11, gfx950 (MI355X), HIP 7.15, N=9 rounds, hipEvent, median of 30 calls per arm per round, arms interleaved; registers from the ISA] bf16 GEMM with A through LDS in K tiles of 128, M=512, N=98304, K=1024, outputs bitwise equal: A read one to three 16-row groups ahead instead of a whole K tile, 182 → 142–150 VGPRs (2 → 3 waves per SIMD), no scratch, 0.2699 → 0.3144–0.3153 ms, 1.159–1.172× in every round (HIP microbenchmark, 256 threads, 64 × 64 per wave)
+- E45 [2026-11, gfx950 (MI355X), HIP 7.15, N=12 paired rounds, hipEvent, median of 7 batches of 20 launches per arm per round; spills from the ISA] bf16 GEMM, 4096 × 4096 output, operands from global memory into registers (no LDS), fully unrolled against rolled loops of 12 or 24 K steps, outputs identical: without spills unrolling gained 0.12–0.78%, every 95% CI above 0; unrolled into spills 1.67–1.95× slower (HIP microbenchmark)
+- E46 [2026-11, gfx950 (MI355X), HIP 7.15 (only `amdgpu-agpr-alloc` edited in the LLVM IR), N=10 runs per build, outputs compared exactly with an integer reference; registers from the ISA] one `v_mfma_f32_16x16x32_bf16` accumulator per wave plus extra live values, the attribute inferred, removed or set to `"4,4"`: AGPRs declared as `"+a"`, tied `"=a"` or clobbers, 84 of 84 builds exact; `a[0:3]` named in the asm string but undeclared, 17 of 28 exact, 4 wrong and 7 memory faults, among them one wrong and two faulting with the attribute set (HIP microbenchmark, K=4096)
+- E47 [2026-11, gfx950, FlyDSL 0.3.2, N=1, compile only, `.vgpr_count` and `.vgpr_spill_count` of the final ISA, variants differing in one statement] E35's kernel at m=2048: tail body built before the head loop 256 VGPRs, 13 spilled; built after it without copying `tid`, the same; with the inline-asm `v_mov_b32` copy, before or after the head loop, 238 and none (AKLR persistent bf16 GEMM N=28672, K=512)
+- E48 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=2000 repeats per arm, 8 back-to-back outputs compared bitwise with the arm's first; timing: median of per-round ratios over 7 rounds of 50 event-timed calls, threshold twice a repeat timing's drift] only `nt_vmcnt` changed (none, 0–6), each drain right after the loop's `wait_barrier` `vmcnt(6)` with no LDS DMA between (`vmcnt(4)` at BLOCK_M=128, by the source); repeats differing from the first: every arm 0 of 2000 at BLOCK_M=256, at BLOCK_M=128 N=5 2 and N=6 1, the rest 0; slower than N=3 beyond the threshold only N=0 (1.020 at 8192×3072×1536, threshold 1.54%; 1.120 at BLOCK_M=128, 8.04%) and N=1 (1.081 at BLOCK_M=128) (Primus-Turbo 7615a5a2 FP8 dense NT 8-wave kernel at 4096×4096×2048 and 8192×3072×1536 with BLOCK_M=256, 4096×4096×2048 with BLOCK_M=128)

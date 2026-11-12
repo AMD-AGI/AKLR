@@ -16,7 +16,7 @@ sources:
 # Grid and dispatch for an attention kernel
 
 > Which workgroup gets which `(batch, head, tile)`, in what order, and where the padding falls is index
-> arithmetic outside the kernel body. On attention it often pays more than the body: *(field, E1, E2)* three
+> arithmetic outside the kernel body. On one attention backward it paid more than the body: *(field, E1, E2)* three
 > index-only, bit-identical changes (XCD-major decode, LPT order, padding origin), kept together with an LDS
 > hand-over and an LSE fold, gave +7% on a set of dQ/dK/dV kernels whose body tuning had returned ~1%.
 >
@@ -44,7 +44,9 @@ Judge changes at this layer by wall time, `SQ_WAIT_ANY` and `SQ_VALU_MFMA_COEXEC
 rate can rise sharply and buy nothing.
 
 ## 2. XCD-major mapping
-- Workgroup `i` runs on XCD `i % 8`, and each XCD has its own 4 MB L2 (`../gemm/schedule_and_locality.md` §2).
+- Workgroups whose ids are equal mod 8 run on the same XCD, and each XCD has its own 4 MB L2
+  (`../gemm/schedule_and_locality.md` §2); which physical XCD gets id 0 changes with the stream, so key work to
+  `i % 8` as a group, not to an absolute XCD number.
   FlyDSL's launcher states the same mapping for its forward grid (`flash_attn_interface.py:1075`).
 - **Give each XCD a whole `(batch, kv-head)` block**, so the GQA workgroups that read the same K/V share one
   L2. *(field, E3, E4)* dq: L2 hit 86.5% → 94.8%, misses −62%, wall within noise (+0.54% kept together with an
@@ -65,15 +67,19 @@ rate can rise sharply and buy nothing.
   read −0.19% with memory counters bit-identical. FlyDSL's forward applies its head-slow remap to
   non-causal grids only (`flash_attn_utils.py:1000-1013`).
 - **The same arithmetic sets the work per XCD; rows that share nothing want balance, not locality.** A row-fastest
-  `(rows, splits)` grid with `rows % 8 == 0` runs every split of row r on XCD `r % 8`; rows of unequal length then
+  `(rows, splits)` grid with `rows % 8 == 0` runs every split of row r on block r's XCD; rows of unequal length then
   load the XCDs unequally. Rotate the row by the split index (`row = (x + y) % rows`): *(field, E33, E34)* without
-  it two split-KV decodes were 24% slower, on all 11 batch sizes.
+  it two split-KV decodes were 24% slower, on all 11 batch sizes. *(field, E36)* In a synthetic split-KV grid it
+  paid reliably only past one resident wave of workgroups (median 1.17× ALU-bound, 1.05× memory-bound); with the
+  whole grid resident it went either way (0.88–1.37×): measure it.
 - **A co-resident stream reverses the sign.** *(field, E8)* A contiguous per-XCD slice for a reduce launched
   alone cut its time 5.4% (a 1.8% on a second shape did not reproduce). The same slice for the same reduce
   running beside the body made it 12% slower, because it pinned
-  the reduce's reads onto the L2 sets the body was writing through. Beside a co-resident body, offset the
-  phase inside a slice instead of giving the stream a slice of its own.
-- vL1D is not a reuse level for sharers. *(field, E9)* Placing the 8 GQA sharers of a forward tile on one CU
+  the reduce's reads onto the L2 sets the body was writing through. Beside a co-resident body, do not give the
+  stream a slice of its own.
+- **vL1D is a reuse level for sharers only while their working set fits.** *(field, E37)* On a read probe, 8
+  sharers on one CU cut `TCP_TCC_READ_REQ` to 1/8 at up to 16 KiB per sharer, even read 3 µs apart; read apart,
+  32 KiB kept about half of that saving and 64 KiB almost none. *(field, E9)* Placing the 8 GQA sharers of a forward tile on one CU
   cost 0.57%, with `TCP_TCC_READ_REQ` and `TCC_HIT` unchanged: one workgroup's own 32 KB K/V double buffer
   fills the vL1D.
 
@@ -90,17 +96,18 @@ with it. The grid-size cliff of a split-KV grid is in `split_kv.md` §4.
 - The dispatcher issues workgroups in block-id order, so the grid order is the schedule. Under a causal
   mask the work of a q-tile grows as `(q_tile + 1) * BLOCK_M / BLOCK_KV`: dispatch in descending q-tile
   order (longest processing time first). *(field, E11, E12)* dq +2.5% together with an LSE fold that gained
-  nothing on its own (the reorder alone +1.1%, one read); forward +2.34%, but only with VGPR held below the
-  occupancy step (a loop-carry split, or forcing waves_per_eu=3, +2.4%), because the plain reorder raised VGPR
-  162 → 170 across it.
+  nothing on its own (the reorder alone +1.1%, one read); forward +2.34% with VGPR held below the occupancy step
+  (a loop-carry split, or forcing waves_per_eu=3, +2.4%); the plain reorder raised VGPR 162 → 170 across that step
+  and was not timed.
 - FlyDSL's fp8 forward does this by reversing the q-block index under causal (`init_causal_lpt_order`,
   `flash_attn_utils.py:4418-4429`).
 - **Do not assume in-order is already right.** *(field, E13)* In one code base the dK/dV kernel's in-order grid
   happened to be LPT and the dq kernel's was reversed. Read the decode of every kernel separately.
 - **Choose the order from the profile shape.** Monotone → descending. Unimodal → start in the middle and
   walk out (`i → mid ± i/2`, O(1) index math, bit-identical). *(field, E14)* Rectangular causal plus a finite
-  window gave a tent of trip counts (2 at the ends, 16 in the middle); ascending and descending were
-  equally bad, middle-out cut body time 4.3% and wall 2.7%. Constant → nothing to win.
+  window gave a tent of trip counts (2 at the ends, 16 in the middle); ascending and descending both start on a
+  narrow 2-trip band (descending was not timed); middle-out cut body time 4.3% and wall 2.7% against ascending.
+  Constant → nothing to win.
 - **Do not make q-blocks the fastest axis under causal**; it clusters unequal work (FlyDSL records 7% for
   this, `flash_attn_utils.py:1005-1006`).
 - **Trust a greedy "N slots per XCD" simulator for the first-order profile only.** *(field, E13, E12, E15)* It
@@ -129,7 +136,8 @@ time (15.03 against 12.49 ms) at Sq = 2048, Skv = 16384.
 Square shapes never expose this; put rectangular shapes in the acceptance set.
 
 ## 7. The first-order term is live `(batch, kv-head)` slices per XCD
-At occupancy 1, more ready work per CU is not a gain. What matters is how many operand sets each XCD's L2
+On an occupancy-1 dK/dV body launched at 4 workgroups per CU, deepening to 8 bought no wall time (−1.2%) and cutting
+to 2 lost about 7% *(field, E19)*: past that depth, what matters is how many operand sets each XCD's L2
 must hold at once. *(field, E19)* Running two batch-disjoint chunks concurrently, with bytes, slots and
 workgroup count identical, made the dK/dV body 13–32% slower (min and average kernel time) and the B=4 wall
 2.0% slower: a resident window of 256 consecutive block ids
@@ -160,16 +168,19 @@ Read a pool from two or more points of a curve, never from an end point.
   *(field, E23)* Forward at the power cap: 2.04% faster, `TCP_TCC_READ_REQ` −49.5%, clock +8.7% at unchanged
   power, cycles +6.6%. The whole gain came through the clock.
 - **Precondition: the merge must leave more than one workgroup per CU** (`../gemm/grid_pricing.md` §4).
-  *(field, E24, E25)* In a VGPR-locked occupancy-2 backward, the same merge left one workgroup per CU with nothing
-  to cover barriers and drains: dq −2.7% (the dq kernel itself an estimated −6.5%), an 8-wave dK/dV −4.3%, outputs
-  bit-identical.
-- **A 16-wave workgroup loses through barrier-domain width.** *(field, E26, E27)* A 16-wave workgroup with
-  registers, waves per SIMD, bytes and instruction counts all identical was −3.1% (another reading of the same
-  change −4.3%): 16 waves now wait for each other. Where the merge also lowered waves per SIMD (3 → 2) it lost 2.0%.
+  *(field, E24, E25)* In a VGPR-locked occupancy-2 backward, the same merge on dq left one workgroup per CU with
+  nothing to cover barriers and drains: dq −2.7% (the dq kernel itself an estimated −6.5%), outputs bit-identical.
+  Widening dK/dV to an 8-wave, BLOCK_KV = 256 workgroup (no sharer merge) also left one workgroup per CU: −4.3%.
+- **A 16-wave workgroup can lose two ways: a wider barrier domain, and one workgroup per CU.** *(field, E26, E27)*
+  With registers, waves per SIMD, bytes and instruction counts all identical it was −3.1% (another reading −4.3%);
+  where the merge also lowered waves per SIMD (3 → 2) it lost 2.0%. *(field, E28)* On another forward body it lost
+  2.1% at S = 8192 and deleting every barrier gained 0%: the loss was the uncovered prologue and epilogue of one
+  workgroup per CU. *(field, E38)* On a toy MFMA/LDS loop, deleting every barrier removed 30–80% of the 16-wave
+  loss. Before cutting barriers to rescue a 16-wave layout, delete them all once and see how much of the loss goes.
   *(field, E32)* Four sharers in an 8-wave workgroup (registers and waves per SIMD unchanged, 4 → 2 workgroups
   per CU) won 4.0%; eight sharers in a 16-wave workgroup were 1.1% slower than that.
-- **20-second gate:** read `TCP_TCC_READ_REQ` on your kernel and on the reference. A ratio under 1.1 means
-  the request path is already level and a merge has nothing to save.
+- **20-second gate:** read `TCP_TCC_READ_REQ` on your kernel and on the reference. A ratio near 1 means
+  the request path is already level and a merge has little to save.
 - Changing waves per workgroup changes the rendezvous pool. *(field, E28)* Removing every barrier (diagnostic,
   wrong results) gained 0% with three 4-wave workgroups per CU, +2.4% (+1.25% on another build) with two 8-wave
   ones, and 0% with one
@@ -180,7 +191,8 @@ Read a pool from two or more points of a curve, never from an end point.
 A body that loops over the q-heads sharing one kv-head (measured on dK/dV bodies) has a second loop axis to
 pipeline.
 - Issue head `h+1`'s exp2/pack work inside head `h`'s GEMM2 MFMA run. *(field, E29)* +1.4% along the head
-  axis; the same pipelining along the d-tile axis was negative.
+  axis; the same pipelining along the d-tile axis was negative. It keeps two P tiles live at once: check the spill
+  count before timing it.
 - Issue the next head's LSE/delta loads at the last d-tile of the current head's GEMM2. *(field, E30)* +1.81%,
   register-neutral and bit-identical. On an occupancy-1 fused backward, carrying it across the q-block
   boundary (the last head prefetches the next q-block's head 0 through the loop's iter_args) added +0.29% /
@@ -224,7 +236,7 @@ bench; "best of 3" is its rule of keeping the best of three reads.
 - E16 [2026-07, gfx950, FlyDSL ?, N=3, campaign score as E1; the dq kernel alone, interleaved, n=3] causal-aligned q-tile origin: score 844.6 against 836.6 (+0.96%); kv-block visits 7481 → 7396 per head; dq kernel 5.2686 → 5.2150 ms (−1.02%); the interleaved full bench read −0.1% at Sq=16384 and +0.75% at 8192, below its resolution (as E1)
 - E17 [2026-08, gfx950, FlyDSL ?, N=?, ?] launching only the non-empty q segments of a block-diagonal varlen backward: 64 segments with one non-empty 0.740 → 0.153 ms; the host path is gated on `n_ne * 8 <= n_seg` (Primus-Turbo FlyDSL attention varlen backward, context-parallel block-diagonal pattern; Primus-Turbo a25b5e0d, its message and the gate in `primus_turbo/pytorch/kernels/attention/attention_flydsl_impl.py`)
 - E18 [2026-07, gfx950, FlyDSL ?, N=?, ?] the dK/dV tile chosen from Sq on a rectangular shape: 15.03 ms, against 12.49 ms with the tile chosen from Skv (recorded as −19%); square shapes unchanged (Meta hd64 attention backward, KV-outer dK/dV, B=4, Sq=2048, Skv=16384, full causal; Primus-Turbo 85b28c41, its message; the full-causal column of the Meta table in `benchmark/ops/training/bench_flydsl_flash_attn_bwd.py` at c5fd3e7c)
-- E19 [2026-09, gfx950, FlyDSL 0.2.4, N=1, one rocprofv3 kernel-trace run per arm (`R3_B=4 R3_N=9`), avg and min dispatch time; cell score from the campaign's same-process ABBA bench, two reads per arm] the two batch-disjoint chunks of the B=4 plan on two streams, bytes, slots and workgroup count unchanged: dK/dV body avg 2793 → 3697 µs (+32%), min 2463 → 2790 µs (+13%); B=4 cell 0.9853 / 0.9884 against 1.0100 / 1.0044 (−2.0%); a later round of the same campaign treats the kernel-trace average as polluted by concurrency (gpt-oss D=64 attention backward, B=4, Hq=64, Hkv=8, S=8192, causal; version printed in the same campaign)
+- E19 [2026-09, gfx950, FlyDSL 0.2.4, N=1, one rocprofv3 kernel-trace run per arm (`R3_B=4 R3_N=9`), avg and min dispatch time; cell score from the campaign's same-process ABBA bench, two reads per arm] the two batch-disjoint chunks of the B=4 plan on two streams, bytes, slots and workgroup count unchanged: dK/dV body avg 2793 → 3697 µs (+32%), min 2463 → 2790 µs (+13%); B=4 cell 0.9853 / 0.9884 against 1.0100 / 1.0044 (−2.0%); a later round of the same campaign treats the kernel-trace average as polluted by concurrency; the same round's depth arms against the same base: `q_split` 2 → 4 (8 workgroups per CU) 0.9954 / 0.9945 (−1.2%), `q_split` 2 → 1 (2 per CU) 0.9263 / 0.9353 (recorded as −7.3%) (gpt-oss D=64 attention backward, B=4, Hq=64, Hkv=8, S=8192, causal; version printed in the same campaign)
 - E20 [2026-08, gfx950, FlyDSL ?, N=1, one run per point, warms=5 reps=40] batch scan at fixed per-workgroup work: B=1, 2, 3, 4, 5, 6, 8, 16 → 1146.7, 1176.8, 1184.1, 1193.6, 1193.3, 1194.1, 1194.1, 1195.7 TF/s (B=12 1177.8, set aside as shared-node noise); S scan at B=4: S=8192 → 16384 1190.3 → 1198.6 TF/s (+0.7%) (gpt-oss D=64 attention forward, Hq=64, Hkv=8, S=8192, causal)
 - E21 [2026-08, gfx950, FlyDSL ?, N=10, the campaign's screening ruler, n=10, and its scorer] `Q_HEADS_PER_WG` 2 → 4 with `block_m` 128 → 64: ISA bit-identical to the deployed build; screening 1.84095 against 1.84605 ms (+0.28%), scored 1.01954 against 1.020395 (−0.08%) (gpt-oss D=64 attention forward as E20, B=4)
 - E22 [2026-08, gfx950, FlyDSL ?, N=3, the campaign's bench, three reads per arm; a rocprofv3 PMC pair of 14 dispatches each] a second K/V DMA per tile (buffer_load 4 → 8, the ISA otherwise identical): 1.9030 against 1.8353 ms (−3.69%), sclk 1620 against 1625 MHz at 1399–1401 W; SQ_VALU_MFMA_BUSY_CYCLES 2.45485e9 on both, SQ_WAVE_CYCLES +4.04%, SQ_WAIT_ANY +6.54% (gpt-oss D=64 attention forward as E21)
@@ -233,10 +245,13 @@ bench; "best of 3" is its rule of keeping the best of three reads.
 - E25 [2026-07, gfx950, FlyDSL ?, N=?, the campaign's full-backward score] dK/dV with BLOCK_KV=256 and an 8-wave workgroup (32 kv rows per wave, VGPR-neutral by construction): 795.5 against 829.5 (−4.3%), one workgroup per CU (as E24)
 - E26 [2026-08, gfx950, FlyDSL ?, N=2, the campaign's bench, two reads per arm] a 16-wave workgroup (`Q_HEADS_PER_WG=4`, each K/V line filled twice) with an ISA identical to the 8-wave build (VGPR 128, spill 4, LDS 34048, 240 instructions, 4 waves per SIMD): 1.9011 / 1.9113 against 1.8479 / 1.8491 ms (−3.1%); the same 16-wave arm, built earlier in the campaign, 1.9207 against 1.8414 ms (−4.3%) (gpt-oss D=64 attention forward as E21)
 - E27 [2026-09, gfx950, FlyDSL ?, N=2, palindromic B A A B in one session; the D=128 cell, unchanged by construction, as the same-binary control] GQA merge from 2 to 4 q-heads per workgroup at D=64: VGPR 168 → 190 (3 → 2 waves per SIMD), spill 22 → 0, VMEM loads 8 → 4 per trip, output bit-identical; D=64 A/B +2.03% slower against a −0.94% position bias on the control, a 2–3% loss; a same-node re-check of the D=64 cell −2.8% (gpt-oss D=64 attention forward, B=4, Hq=64, Hkv=8, S=8192, causal)
-- E28 [2026-07, gfx950, FlyDSL 0.2.2, N=?, the campaign's bench; diagnostic arms with wrong results] deleting every barrier: 0% with 4-wave workgroups, +2.4% (1229.9 TF/s) with the merged 8-wave workgroup (+1.25% when re-measured on a later build), 0% with 16-wave workgroups (1202.1 against 1205.5); the record gives 2 and 1 workgroups per CU for the 8- and 16-wave builds, and 3 is also reported for the 4-wave one (Primus-Turbo hd64 attention forward as E7)
+- E28 [2026-07, gfx950, FlyDSL 0.2.2, N=?, the campaign's bench; diagnostic arms with wrong results] deleting every barrier: 0% with 4-wave workgroups, +2.4% (1229.9 TF/s) with the merged 8-wave workgroup (+1.25% when re-measured on a later build), 0% with 16-wave workgroups (1202.1 against 1205.5); the record gives 2 and 1 workgroups per CU for the 8- and 16-wave builds, and 3 is also reported for the 4-wave one; the 16-wave build itself (correct output) 1198.2–1205.5 against 1212.0–1217.2 for the 8-wave build in the same session, and 1159 against 1184 at S=8192 (−2.1%) (Primus-Turbo hd64 attention forward as E7)
 - E29 [2026-07, gfx950, FlyDSL ?, N=?, ?] issuing head h+1's exp2 inside head h's GEMM2 MFMA run is recorded at +1.4%, and the same along the d-tile axis as negative; unverified, and on 2026-07-16 the change was absent from the kernel a campaign was working on (Meta hd64 attention backward)
 - E30 [2026-07, gfx950, FlyDSL ?, N=3, campaign score: hardware-exp conv TF/s, three reads] the next head's LSE/delta loads issued at the last d-tile of the current head's GEMM2: 1134.4 against 1114.2 (+1.81%), spill 8 unchanged, MFMA count unchanged, SNR 52.6 dB, deterministic; issued before GEMM2 instead −0.6% (spill 8 → 13) (Meta hd64 attention backward, dK/dV kernel, B=4, Hq=128, Hkv=16, D=64, Skv=16384, bottom-right causal, hardware exp)
 - E31 [2026-08, gfx950, FlyDSL ?, N=2, same-process interleaved A/B, two sessions] carrying that prefetch across the q-block boundary through the loop's iter_args: +0.29% and +0.55% in two sessions; together with GEMM1 ks-outer issue 15/15 +0.57% (gpt-oss fused attention backward, dQ folded into the KV-outer dK/dV kernel, B=3, S=8192, Hq=64, Hkv=8, D=64, full causal)
 - E32 [2026-09, gfx950, FlyDSL ?, N=3, campaign score: geometric mean of main_ms / candidate_ms over the d128 and d64 cells, three runs; a same-session null of the untouched tree read 1.006168] four GQA sharers per 8-wave workgroup at the harness's `block_m` 64 (VGPR 128, spill 2, scratch 12 B, LDS 34048 all unchanged; 4 → 2 workgroups per CU, total waves unchanged; K/V L2 → LDS traffic 16.9 → 8.5 GB): d64 cand_ms 1.84051 → 1.76759 (−4.0%), re-reads 1.76710 and 1.78059; eight sharers in a 16-wave workgroup 1.78758 ms, 1.1% slower than four (FlyDSL dualwave_swp attention forward, d64 B4 Hq64 Hkv8 S8192 D64 causal)
 - E33 [2026-10, gfx950, FlyDSL 0.3.2, N=?, the campaign's ablation: paired timing on AKLR's graph timer, noise floor 0.12%] row rotated by split index against the unrotated `(rows, splits)` grid: +24.07% (one-sided 95% bounds +24.04 … +24.10%), 11 of 11 batch sizes faster (8–112, all multiples of 8); driver bench per case 2.3% (batch 8) to 30.7% (batch 96) less time (dense MLA decode, 96 heads, one query, fp8 KV, page size 1, `cache_seqlens` uniform in [1, 112431]; MI355X)
 - E34 [2026-10, gfx950, FlyDSL 0.3.2, N=1 per arm for the per-batch times (driver --bench-mode, warmup 3, iters 20, cache cleared); the gain from the campaign's 3-pair ablation; probe: partial-kernel µs, N=?] split-KV decode producer with grid `(rows, ns)`, row index fastest, rows 8–112 (all multiples of 8), per-row lengths uniform in [1, 112431]: `row = (bx + by) % rows` against `row = bx`: b8 0.4526 → 0.4407 ms, b16 0.7380 → 0.5590, b96 4.6846 → 3.2450, b112 4.5350 → 3.7692; ablation +23.65% when kept, +23.88% measured by the ablation (one-sided 95% bounds +23.73…+24.04%), 11/11 cases faster. An input-only probe on the unrotated kernel, rows permuted so every XCD gets equal keys: b8 −1.7%, b56 −6.9%, b96 −30.9%, b112 −21.1% partial-kernel time (96-head MLA decode, fp8 KV, page size 1)
+- E36 [2026-11, gfx950 (MI355X), HIP 7.15, N=7 rounds, ratio of per-round medians, a same-kernel A/A arm in every round] `row = (bx + by) % rows` against `row = bx` on a row-fastest `(rows, splits)` grid, 8 workgroups per CU, rows 8–112 of lengths uniform in [1, 112431]: above 2048 workgroups (more than one resident wave) median 1.174× ALU-bound (14 of 14 ≥ 1.02×), 1.047× memory-bound (11 of 14); 2048 or fewer 0.881–1.368× (synthetic split-KV kernel in HIP)
+- E37 [2026-11, gfx950 (MI355X), HIP 7.15, N=3 dispatches per arm, rocprofv3 `TCP_TCC_READ_REQ` net of a no-read arm] 8 one-wave workgroups reading the same block, all on one CU against on 8 CUs of one XCD: requests 0.125 at 4 and 16 KiB per sharer, read together or with reader k starting k × 3 µs late; staggered 0.554 at 32 KiB and 0.922 at 64 KiB (0.125 together) (read-only probe kernel in HIP)
+- E38 [2026-11, gfx950 (MI355X), HIP 7.15, N=15 rounds of 20 launches per arm, same-round ratio; A/A −0.18%] one 16-wave workgroup per CU against two 8-wave ones, the same code object, 16 waves per CU either way, equal total work: the 16-wave arm slower by 18.6–26.1% with barriers and by 3.8–17.8% with every `s_barrier` replaced by `s_nop 0`; the barrier's share of the loss 30–32% at 4 iterations per unit, 64–80% at 64 (toy MFMA/LDS kernel in HIP)

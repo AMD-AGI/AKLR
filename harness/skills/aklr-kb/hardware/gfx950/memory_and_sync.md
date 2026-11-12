@@ -10,7 +10,8 @@ flydsl: 0.3.2
 
 # Memory instructions and synchronization in the CDNA4 ISA
 
-> Everything here comes from the ISA chapters in `cdna4/`. `chNN` / `ch12_NN` stand for `cdna4/chNN_*.md`, `p.N` for
+> Everything here comes from the ISA chapters in `cdna4/`, except the gfx950 measurements, which have `E` lines
+> under Evidence. `chNN` / `ch12_NN` stand for `cdna4/chNN_*.md`, `p.N` for
 > the `<!-- page N -->` marker. Quoted strings are exact. "Not in the ISA" means the chapters were searched and say
 > nothing about it. Reading caveat: the page markers of tables that cross pages are not reliable and some tables
 > are misaligned (`lookup.md` §6); check signs that matter, and the tables flagged below, against the PDF page.
@@ -90,10 +91,11 @@ ignored when resource bit ADD_TID_ENABLE == 0". Figure 4 in §9.1.5 has the same
 | Structured | `AddTID==0 && Stride!=0 && IdxEn==1` | `Index(vgpr) >= NumRecords` |
 | Private (scratch) | `AddTID==1 && IdxEn==0` | "no range checking" |
 
-- The base and `soffset` take no part in the raw range check: an address raised only by `soffset` is never judged
-  out of range.
+- The formula leaves the base and `soffset` out, but on gfx950 `soffset` counts: with a raw descriptor, an address
+  raised past `num_records` only by `soffset` was out of range (loads returned 0, stores were dropped) *(field, E1)*.
 - "Load/store-format-* instruction and atomics are range-checked "all or nothing""; "Load/store-Dword-x{2,3,4}
-  and range-check per component", so a `dwordx4` that straddles the end keeps its in-range dwords.
+  and range-check per component", so a `dwordx4` that straddles the end keeps its in-range dwords; on gfx950 a dword
+  was in range only when all four of its bytes lay below `num_records` *(field, E5)*.
 - Check p.86: Table 45 says num_records is "In units of: (inst_idxen == 1) ? Bytes : Stride", the reverse of the
   sentence before it ("Bytes for raw buffers, units of Stride for structured buffers") and of the checks above.
 
@@ -112,7 +114,9 @@ ignored when resource bit ADD_TID_ENABLE == 0". Figure 4 in §9.1.5 has the same
 gfx950 is. Loads: "if TG_SPLIT mode is active, SC1==0, SC0==1, NT==0 case becomes: Miss LRU, Hit LRU, Hit LRU."
 - Atomics: "SC0 indicates whether or not to return the "pre-op" memory value"; "SC1 : 0 = device scope
   atomic, 1 = system scope atomic"; "NT : 0 = last level cache "allocate" policy; 1 = "no Allocate" policy".
-  FLAT/global float atomics "must set SC[0]=0 (no return value)" (ch10 §10.3.1).
+  ch10 §10.3.1 says FLAT/global float atomics "must set SC[0]=0 (no return value)", but the §12.15 entries return
+  the pre-op value "iff the SC0 bit is set", and on gfx950 the returning forms (global and flat `add_f32`, `add_f64`,
+  `pk_add_f16`, `pk_add_bf16`; global `min_f64`, `max_f64`) returned the pre-op values with exact results *(field, E2)*.
 - BUFFER_WBL2 (opcode 40, Table 51): `SC1=0` NOP; `SC1=1` writes back dirty L2 data (with `SC0=0`, only with more
   than one L2). BUFFER_INV (41, Table 52): `SC1=1` invalidates the CU cache, and the L2's "non-coherently cached
   lines" when `SC0=1` or with more than one L2; `SC1=0`, `SC0=1` invalidates the CU cache in TG Split mode and is
@@ -177,7 +181,9 @@ gfx950 is. Loads: "if TG_SPLIT mode is active, SC1==0, SC0==1, NT==0 case become
   address."; "All LDS operations require that M0 be initialized prior to use. … If no clamping is wanted, set M0
   to 0xFFFFFFFF." (§11.3.1; Table 57's rows are column-shifted in the text, check p.105). Out of range is
   "addr < 0 or >= (MIN(lds_size, m0))": writes are discarded, reads return zero (ch03 §3.6.1). `M0[16:0]` cannot
-  express 160 kB, and M0 is also the DMA offset (§3); the ISA reconciles neither.
+  express 160 kB, and M0 is also the DMA offset (§3); the ISA reconciles neither. On gfx950 M0 does not clamp plain
+  DS reads, writes or `ds_add`; reads past the allocation returned 0 and writes there were dropped, and
+  `ds_read/write_addtid_b32` take M0 as a base, not a limit *(field, E3)*.
 
 ### 4.2 Banks and conflicts
 "Dwords are placed in the banks serially, but all banks can execute a store or load simultaneously." "Reads
@@ -185,6 +191,11 @@ across wavefront are dispatched over four cycles in waterfall." "it is possible 
 write or read instructions, each nominally 32-bits; extended instructions, read2/write2, can be 64-bits each."
 Conflicting "indexed and atomic operations" become "serial accesses" (§11.1) and take from "two cycles" to "64
 cycles" (§11.3.1). **Not in the ISA:** which lanes are serviced together for `b64`, `b128` or transpose reads.
+
+**Measured on gfx950:** `ds_read_b32` and `ds_write_b32` conflict as 32 banks, bank = dword address mod 32, with
+lanes 0–31 and 32–63 in separate passes, so a lane stride of 32 dwords costs as much as one of 64; derive b32
+swizzles from 32 banks, not 64. `ds_read_b64` matched 64 banks × 4 B with 32 lanes per pass, `ds_write_b64` 32
+banks with 16 lanes per pass *(field, E4)*.
 
 ### 4.3 Reads and writes (§11.3.1 Table 58, ch12_12)
 
@@ -220,7 +231,9 @@ major matrix A or row major matrix B data load".
 - "LDS atomics are performed in the LDS hardware" (§11.2), which "contains 32 integer atomic units" (ch02
   §2.2.1). RTN variants "return the value that was in memory before the operation was performed" (ch12_12).
   Float: DS_ADD_F32, DS_PK_ADD_F16/BF16, DS_ADD_F64, MIN/MAX/CMPST F32/F64; "round to nearest even"; denormals per
-  MODE except DS_ADD_F64, which does not flush them (ch09 §9.2 Table 53). Data sources "can only be VGPRs or constant values, not SGPRs".
+  MODE except DS_ADD_F64, which does not flush them (ch09 §9.2 Table 53). Data sources "can only be VGPRs or constant values, not SGPRs"
+  (§11.3.1), but the DS encoding has only VGPR data fields (DATA0, DATA1: "First data VGPR", "Second data VGPR",
+  ch13 Table 95), so a constant has to be put in a VGPR first.
 - LDS ops count 1 each in LGKM_CNT and retire in issue order among themselves (§1). For a barrier to protect
   LDS writes, the ISA asks for the matching `s_waitcnt` before the S_BARRIER (ch12_05; §5 below).
 
@@ -268,12 +281,19 @@ independent instructions." (ch04 §4.5 Table 11, PDF pp.28–29). The rows that 
 
 | Card | What the ISA adds |
 |---|---|
-| `../../gemm/datapath.md` §2–§4 (swizzle, banks, LDS waits) | §4.2: 64 banks × 4 B, serial dword placement; the card's per-width lane phases are not from the ISA. §1: LDS ops in order by type; FLAT needs both counters at zero; SMEM out of order. |
+| `../../gemm/datapath.md` §2–§4 (swizzle, banks, LDS waits) | §4.2: the ISA's 64 banks × 4 B, serial dword placement; measured b32 conflicts follow 32 banks (§4.2); the card's per-width lane phases are not from the ISA. §1: LDS ops in order by type; FLAT needs both counters at zero; SMEM out of order. |
 | `../../gemm/datapath.md` §5–§6 (DMA, M0, offsets) | §3: byte/short/dword/x3/x4 only, no x2; the immediate moves both addresses; the M0 width statements disagree; §6 M0 row. §4.3 DS offset windows. Request sizes and per-line cost are not in the ISA. |
-| `../../gemm/datapath.md` §8–§9 (descriptors, transpose) | §2.1–§2.3: `soffset` is outside the raw range check; x2/x3/x4 are checked per dword; §6: 5 wait states after `readfirstlane`. §4.4 transpose rules. |
+| `../../gemm/datapath.md` §8–§9 (descriptors, transpose) | §2.1–§2.3: the ISA's raw range check leaves `soffset` out, but on gfx950 it counts (§2.3); x2/x3/x4 are checked per dword; §6: 5 wait states after `readfirstlane`. §4.4 transpose rules. |
 | `../../gemm/schedule_and_locality.md` §2–§4 (XCD order, hints, waits) | §5: `sched_*` are compiler directives. §1: one VM_CNT for loads and stores. XCD count and L2 size are not in the ISA. |
 | `../../gemm/epilogue.md` §3–§5 (stores, permlanes, cache policy) | §6: 1–2 wait states before overwriting x3/x4 store data, and the permlane rows. §1: stores share VM_CNT. §2.4: scope tables; `aux` integers are the compiler's encoding, not ISA fields. |
 
 ## Related
 `lookup.md` (encodings, operands, limits) · `matrix_core.md` (MFMA and its hazards) · `cdna4/ch04_program_flow_control.md` ·
 `cdna4/ch09_vector_memory_operations.md` · `cdna4/ch10_flat_memory_instructions.md` · `cdna4/ch11_data_share_operations.md`
+
+## Evidence
+- E1 [2026-11, gfx950 (MI355X), HIP 7.15, N=5 launches per arm; raw descriptor, `offen`, twin arms with `num_records` 65536] `num_records` N (256 B or 1 KiB), `voffset` + immediate below N, `soffset` = 2N: `buffer_load_dword`/`dwordx4` returned 0 (the `lds` forms wrote 0) and `buffer_store_dword` changed no word; the twins read and wrote at 2N (inline-asm test kernel)
+- E2 [2026-11, gfx950 (MI355X), HIP 7.15 (hipcc, AMD clang 23), N=5 launches per cell; `hipMalloc` memory, device scope; results against a host reference] global and flat `atomic_{add_f32, add_f64, pk_add_f16, pk_add_bf16}` and global `atomic_{min_f64, max_f64}` with `sc0`, one wave on one address, four work-groups on one address and distinct addresses: 26 of 26 cells returned the pre-op values and left exact final values (inline-asm test kernel)
+- E3 [2026-11, gfx950 (MI355X), HIP 7.15, N=3 launches per configuration; one wave, 4096 B dynamic LDS, M0 set in the access's asm block] 12 plain DS read, write and `ds_add` forms with M0 = 0, 0x400 or 0x800 behaved as with M0 = 0xFFFFFFFF: every access past M0 read the stored value or landed; add-TID forms used M0 as their base; past the allocation reads returned 0 and writes were dropped (test kernel)
+- E4 [2026-11, gfx950 (MI355X), HIP 7.15, N=1 rocprofv3 `SQ_LDS_BANK_CONFLICT` pass per configuration, one wave] conflict cycles per instruction, lane l at dword `l` / `2l` / `32l` / `64l` / `32l + (l>>1)` / `32l + (l & 31)`: `ds_read_b32` and `ds_write_b32` 0 / 2 / 62 / 62 / 2 / 0 (of the models tried only 32 banks with 32 contiguous lanes per pass fits); `ds_read_b64` at `2l` / `4l` / `32l` / `64l` 0 / 2 / 30 / 62, `ds_write_b64` 0 / 4 / 60 / 60
+- E5 [2026-11, gfx950 (MI355X), HIP 7.15, N=3 launches per cell; one wave across the end of a raw descriptor, `offen`] `buffer_load_dword` to `_x4`, the matching stores and `buffer_load_dwordx4 … lds` at `num_records` 1000 and 1002: a dword was in range only when all four of its bytes were below `num_records` (at 1002 the dword at byte 1000 read 0 and was not written) (inline-asm test kernel)

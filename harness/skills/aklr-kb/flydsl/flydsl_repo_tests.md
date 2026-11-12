@@ -170,7 +170,7 @@ matters. `.mlir` files carry no markers.
 
 - Place it by what it depends on: a pass → a `.mlir` file under `tests/mlir/`; language semantics →
   `tests/language/`; compiler or runtime pieces → `tests/unit/`; a kernel → `tests/kernels/`. Name it
-  `test_*.py`, or pytest never collects it.
+  `test_*.py`, or a directory run does not collect it.
 - Mark the tier at module level, as the in-tree kernel tests do:
   ```python
   pytestmark = [pytest.mark.l2_device, pytest.mark.rocm_lower]
@@ -240,9 +240,11 @@ iters=50, flush_l2=True, prep_fn=None)`: per-call events after zeroing a buffer 
 - `bash scripts/run_benchmark.sh` runs every op; `… gemm moe`, `--only softmax,layernorm`, `--list`,
   `--output_csv <path>` select or export. Ops: `softmax softmax_bwd layernorm rmsnorm flash_attn mla gemm moe`.
   `gemm` covers preshuffle (sync and async-copy lists), A16W16, 8-wave fp8 row-scale and 4-wave fp4; GEMM and
-  MoE rows run only on CDNA, and gfx950-only rows print `skip` elsewhere.
-- Each shape runs a test file as a script, not under pytest, logging to `$BENCH_LOG_DIR/<op>_<shape>.log`. GEMM
-  runs pass `--num_warmup 10 --num_iters 100`, so the numbers are `run_perftest`'s.
+  MoE rows run only on CDNA. On other CDNA GPUs the gfx950-only fp8 row-scale, fp4 and MoE fp4/a8w4 rows print
+  `skip`, and A16W16 prints no row (its shape list is set only on gfx950).
+- Each shape runs a test file as a script, not under pytest (the rmsnorm mixed-weight rows run their `benchmark`
+  tests under pytest), logging to `$BENCH_LOG_DIR/<op>_<shape>.log`. GEMM runs pass 10 warmup and 100 timed
+  iterations, except A16W16 (`--num_warmup 3 --num_iters 50`); all time with `run_perftest`.
 - The table (`op shape dtype TB/s TFLOPS`) is parsed from the logs: GEMM rows take the **last**
   `Throughput: … TFLOPS, BW: … TB/s` line, softmax and norm rows the **first** `Bandwidth: … GB/s` line. A log
   containing `Skipped:` counts as skipped; any failure makes the exit code 1.

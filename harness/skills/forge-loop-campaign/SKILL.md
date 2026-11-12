@@ -2,8 +2,7 @@
 name: forge-loop-campaign
 description: >
   Run an autonomous optimization campaign on a kernel-less AKLR schema with KernelForge on an MI355X
-  (gfx950) machine, allocating a cluster node with the remote-gpu skill when this machine has no free one,
-  and deliver the kernel: prepare the task, run forge-loop, watch and steer it, stop or resume it, review
+  (gfx950) machine and deliver the kernel: prepare the task, run forge-loop, watch and steer it, stop or resume it, review
   and squash the kept rounds, publish the kernel into AKLR, and hand over the skill patch. Use when asked
   to optimize an AKLR op or schema with KernelForge or forge-loop, or to check on, resume, finish or
   deliver such a run.
@@ -12,25 +11,12 @@ allowed-tools: Read Edit Bash Grep Glob
 
 # Forge-loop campaign on an AKLR schema
 
-**From step 2 until the campaign ends, report to the user every 15 minutes with the `report-progress` skill.**
-Nothing wakes you once your turn ends, so start the timer before the loop goes to the background:
-`/loop 15m /report-progress forge-loop <schema> state=<run dir> reports=<run dir>/progress.md; if the loop
-crashed, resume it as forge-loop-campaign says`.
-
-If the loop crashed (nobody stopped it and it did not finish), resume it as "Stopping and resuming" says and
-mention it in the report. If it crashed again before finishing a round since the last resume, leave it stopped and ask the user.
+From step 2 until the campaign ends, **report progress** to me every 15m; the timer's prompt also says to resume
+the loop if it crashed, and to ask me if it crashes again before finishing a round.
 
 `harness/scripts/forge_task/README.md` § Run a campaign has the six steps and their commands: read it first and
 follow it. This skill adds what you decide, and what you must not forget, when you run the campaign yourself
 rather than a person at a terminal.
-
-## The machine
-
-The campaign needs one gfx950 card that nobody else uses, for hours. First look at this machine
-(`rocm-smi --showpids`, `rocm-smi --showmeminfo vram`): if it has such a card, run the campaign here and skip
-everything about cluster nodes below. Only if it has none, get a node with the `remote-gpu` skill and run the
-campaign there, allocated for `--max-hours` plus the steps after the loop (`$RG` below is its script,
-`harness/skills/remote-gpu/scripts/remote-gpu` from the clone's root).
 
 ## Before step 1
 
@@ -67,18 +53,6 @@ nohup $RUN/forge_loop.sh --max-hours 12 --model claude-opus-5-5 --gpu 0 \
 echo $! > $RUN/forge_loop.pid
 ```
 
-On a cluster node, start it as a bg task of the job instead; a task named `forge` runs as the container
-`NAME-ID-forge-0`:
-
-```bash
-$RG bg -j NAME:ID --name forge --image <image> -C <clone> -e RUN=$RUN -- bash -lc \
-  '. $RUN/venv/bin/activate && $RUN/forge_loop.sh --max-hours 12 --model claude-opus-5-5 --gpu 0 \
-   --lanes 1 --no-experience-kb --no-kb-warmstart --no-pr-kb > $RUN/forge_loop.log 2>&1'
-```
-
-Read the run's files with `$RG exec -j NAME:ID -- tail ...` or `$RG pull`, and add the job handle to the
-report-progress timer line.
-
 - When someone else may take the card, add `--gpu-pool N,M,…`: before a round the run moves to a free card of
   the pool, and waits while all are taken.
 - Look in every few minutes, no more: `tail $RUN/forge_loop.log`, the dashboard, and each round's own account in
@@ -89,12 +63,8 @@ report-progress timer line.
 - After the current round: `touch $RUN/workspace/.stop`. At once: `kill -- -$(cat $RUN/forge_loop.pid)`, which
   stops forge-loop and the agents it started; killing forge-loop alone leaves them running, and spending.
 - Afterwards `pgrep -fa claude` must list no agent of this run.
-- On a cluster node, `$RG exec -j NAME:ID -- touch $RUN/workspace/.stop` stops after the round, and
-  `$RG exec -j NAME:ID -- docker stop -t 30 NAME-ID-<task>-0` at once, the agents with it. `$RG release` also
-  stops it, and gives the node back.
 - Resume as the README's step 4 says, launched as above with `forge_loop_resume.sh` in place of
-  `forge_loop.sh`. A job keeps every task name it has used, so each resume on the same job takes a new
-  `--name` (`forge-r1`, `forge-r2`, ...).
+  `forge_loop.sh`.
 
 ## Steps 5 and 6
 

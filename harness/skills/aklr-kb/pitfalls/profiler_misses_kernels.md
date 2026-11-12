@@ -1,7 +1,7 @@
 ---
-title: "Kineto can drop the kernels a HIP graph launches; AKLR reports the all-dropped case as a platform failure"
+title: "Kineto can drop the kernels a HIP graph launches; AKLR's timer up to measurement profile 18 reported the all-dropped case as a platform failure"
 kind: pitfall
-scope: [torch profiler (Kineto) traces of HIP-graph replays, AKLR's bench_cudagraph timer and harnesses that call it, sglang /start_profile with CUDA graphs on]
+scope: [torch profiler (Kineto) traces of HIP-graph replays, AKLR's bench_cudagraph timer up to measurement profile 18 and harnesses that call it, sglang /start_profile with CUDA graphs on]
 gens: [gfx950]
 flydsl: 0.3.2
 basis: single-observation
@@ -15,9 +15,9 @@ sources:
 
 Two forms, both silent about which kernels went missing.
 
-- **In AKLR's timer: no records at all.** `RuntimeError: Kineto recorded no kernels for a single call`, raised
-  while sizing a measurement (S1). Through `python -m aklr validate` it ends as a `platform_failure` finding only
-  after AKLR's own retries (below). A harness that calls `bench_cudagraph` directly loses the arm's measurement:
+- **In AKLR's timer up to measurement profile 18: no records at all.** `RuntimeError: Kineto recorded no kernels
+  for a single call`, raised while sizing a measurement (S1). Through `python -m aklr validate` it ended as a
+  `platform_failure` finding only after AKLR's own retries (below). A harness that calls `bench_cudagraph` directly loses the arm's measurement:
   in one optimization run on a bf16 GEMM, 3 of 14 measured rounds lost their paired timing this way, two on the
   candidate arm and one on the unchanged incumbent, and all three were recorded as performance reverts
   *(field, E1)*. In another, a change was reverted after two correctness invocations aborted with it on all three
@@ -37,42 +37,45 @@ Two forms, both silent about which kernels went missing.
   timing in parallel it hit about 0.5% of processes *(field, E4)*; on a node where other campaigns were profiling
   and benchmarking at the same time it hit a plain `torch.mul` on every try for 10 minutes *(field, E8)*. Upstream
   Kineto has since replaced that backend with rocprofiler-sdk, whose flush is synchronous.
-- The window AKLR checks holds one L2-flush kernel and one call, captured in a graph and replayed once and then
-  six times (S1). The flush kernel is in the graph, so zero records means the tracer recorded nothing, not that
-  your kernel launched nothing.
+- Up to profile 18, the window AKLR checked held one L2-flush kernel and one call, captured in a graph and
+  replayed once and then six times (S1). The flush kernel was in the graph, so zero records meant the tracer
+  recorded nothing, not that your kernel launched nothing. Since #33 (profile 19), AKLR reads kernel times from
+  its own rocprofiler-sdk tracer, `aklr_kernel_tracer`, not from Kineto, and raises when records of the replayed
+  kernel dispatches are dropped or missing (S7).
 - The partial serving trace is not explained by the record: whether that torch 2.9.1 build uses the roctracer
   backend was not checked.
 
 ## How to detect
 
-The timer this page describes (S1–S6) is the predecessor repository's Kineto timer of 2026-10. AKLR's timer now
-traces kernels with rocprofiler-sdk, and its tracer-fault list (`aklr/core/validation/stages/_measure.py:326`)
-holds other messages: "rocprofiler-sdk", "graph replays", "the kernel tracer failed" and "calibration could not
-restore".
+The timer of S1–S6 is the predecessor repository's Kineto timer of 2026-10, which AKLR used up to measurement
+profile 18. AKLR's timer now traces kernels with rocprofiler-sdk (S7), and its tracer-fault list
+(`aklr/core/validation/stages/_measure.py:326`) holds other messages: "rocprofiler-sdk", "graph replays", "the
+kernel tracer failed" and "calibration could not restore".
 
-- **In AKLR, read the message, not the stage.** Four messages count as tracer faults: "Kineto recorded no kernels
-  for a single call", "L2 flushes per replay, got 0", `std::bad_alloc` and `std::length_error` (S2). AKLR measures
-  again once in place (S3), then reruns the whole task once in a fresh process (S4), and reports
-  `platform_failure` only when both fail. The other trace checks of the timer ("did not record every graph
+- **In AKLR, read the message, not the stage.** Up to profile 18, four messages counted as tracer faults: "Kineto
+  recorded no kernels for a single call", "L2 flushes per replay, got 0", `std::bad_alloc` and `std::length_error`
+  (S2). AKLR measures again once in place (S3), then reruns the whole task once in a fresh process (S4), and reports
+  `platform_failure` only when both fail. The other trace checks of that timer ("did not record every graph
   launch", "expected N L2 flushes per replay, got M" with M above 0, "no target kernels", "incomplete or
-  inconsistent kernels", S5) are not on that list: they fail the task as a candidate crash (S6), although a
-  partly late window can produce them as well: one harness run crashed on "expected 56 L2 flushes per replay, got
-  54" *(field, E6)*.
+  inconsistent kernels", S5) were not on that list: they failed the task as a candidate crash (S6), although a
+  partly late window could produce them as well: one harness run crashed on "expected 56 L2 flushes per replay,
+  got 54" *(field, E6)*.
 - **In a profile you read for kernel shares**, check that the trace is complete before reading it: kernel time
   per step against the step's wall period, the count of a kernel you know runs once per graph replay, and the
-  names of the kernels you expect. AKLR's timer does this with its flush kernel: exactly one per call in every
-  replay, and the same kernel counts in every replay (S5).
+  names of the kernels you expect. Up to profile 18, AKLR's timer did this with its flush kernel: exactly one per
+  call in every replay, and the same kernel counts in every replay (S5).
 
 ## Fix or workaround
 
-- `platform_failure` with one of the four messages in `aklr validate`: rerun (`../SKILL.md` § Also in AKLR).
+- `platform_failure` with a tracer-fault message (above) in `aklr validate`: rerun (`../SKILL.md` § Also in AKLR).
 - A harness that calls `bench_cudagraph` directly: catch the tracer-fault messages, measure again once, then
   again in a fresh process, as AKLR does (S3, S4), and do not turn a tracer fault into a revert or a keep.
   Whether a kernel can make the fault more likely is not established: it recurred on one change twice running
   (E2), and a script that called `bench_cudagraph` 473 times in nine fresh processes on another kernel saw no
   fault *(field, E5)*.
-- **On a node where several processes profile at once, retry after a wait, not at once.** The tracer can then lose
-  every call for minutes, and retries back to back all fail: a paired timing that tried 3 fresh processes in a row
+- **With Kineto (AKLR's timer up to profile 18), on a node where several processes profile at once, retry after a
+  wait, not at once.** The tracer can then lose every call for minutes, and retries back to back all fail: a
+  paired timing that tried 3 fresh processes in a row
   failed in all three, in three runs; with `_records_per_call` retried after waits of 15, 30, 60 and 120 s, both
   reruns completed *(field, E7)*. AKLR's own retries (S3, S4) do not wait.
 - **Before blaming the kernel, check a plain op.** `_records_per_call` on a plain `torch.mul` faulted about as often
@@ -106,3 +109,4 @@ restore".
 - S4 the predecessor repository's bench stage (2026-10): a tracer fault on the first attempt reruns the task in a fresh process
 - S5 the predecessor repository's timer (2026-10): the per-replay checks on graph launches, flush counts and kernel counts
 - S6 the predecessor repository's bench stage (2026-10): a task error is `platform_failure` only when it is a tracer fault, else `candidate_crash`
+- S7 aklr/core/utils/_kernel_tracer.cpp:330 at 6b6b34e: `await_dispatches` raises when rocprofiler-sdk dropped records (:335) or, after 10,000 waits of 1 ms, recorded fewer kernel dispatches than the graph replays enqueued (:345); `bench_cudagraph` loads the tracer at aklr/core/utils/testing.py:169, measurement profile 19 at aklr/core/validation/stages/_measure.py:62

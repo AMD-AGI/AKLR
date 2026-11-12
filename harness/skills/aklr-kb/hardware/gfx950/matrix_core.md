@@ -11,7 +11,8 @@ flydsl: 0.3.2
 # Matrix cores (MFMA) in the CDNA4 ISA
 
 > What AMD's CDNA4 ISA guide says about MFMA, for someone writing or tuning a gfx950 GEMM main loop. Every
-> statement cites the guide. Values marked *(derived)* are arithmetic on cited numbers, not text from the guide.
+> statement cites the guide, except the gfx950 measurements in §2, which have `E` lines under Evidence. Values
+> marked *(derived)* are arithmetic on cited numbers, not text from the guide.
 > Short names: **ch07** = `cdna4/ch07_matrix_arithmetic_instructions.md`, **vop3p** =
 > `cdna4/ch12_10_vop3p_instructions.md`, **ch13** = `cdna4/ch13_microcode_formats.md`, **ch03** =
 > `cdna4/ch03_kernel_state.md`. General instruction lookup is in `lookup.md`; memory instructions, `s_waitcnt`,
@@ -76,7 +77,9 @@ SRC0 [40:32], SRC1 [49:41], SRC2 [58:50], ACC [60:59], BLGP [63:61].
   VGPR/ACC_VGPR/Constant". A zero accumulator can therefore be the inline constant 0.
 - **Alignment.** ch07 §7.1: the registers "must be contiguous, and … the first register must be aligned to the
   number of registers required" (A in four registers: v4–v7 legal, v5–v8 not). The §7.1.2 and §7.1.5 rules
-  tables only say "need to be even aligned". Meeting the first rule meets both.
+  tables only say "need to be even aligned". Meeting the first rule meets both for operands of two or more
+  registers; a one-register A or B (the F32-input MFMAs and the I8 `_4b`/`_2b`/`_16b` forms) meets the first rule
+  in any VGPR but the even rule only in an even one.
 - **Capacity.** ch03 §3.1 Table 2: V0–V255 and AV0–AV255. ch03 §3.6.4: "A wave may have up to 512 total VGPRs,
   256 of each type"; below 512 the split "is flexible"; "VGPRs are allocated in groups of eight Dwords".
 - **Moves.** `V_ACCVGPR_READ` (vop3p, opcode 88), `V_ACCVGPR_WRITE` (89), `V_ACCVGPR_MOV_B32`
@@ -86,7 +89,11 @@ SRC0 [40:32], SRC1 [49:41], SRC2 [58:50], ACC [60:59], BLGP [63:61].
 - **EXEC, rounding, denormals.** "ignores exec mask from MODE and forces it to 1 for all threads"; "forces it to
   RNE"; input and output denormals are kept (ch07 §7.1.2 and §7.1.5 rules). §7.4 agrees for inputs narrower
   than 32 bits but says the F32-input MFMAs "honor the denormal-handling flags in MODE", which the §7.1.2 rules
-  table contradicts (§6 below). Correct FP8/BF8 results need
+  table contradicts (§6 below). On gfx950 the F32-input `v_mfma_f32_16x16x4_f32` and `v_mfma_f32_32x32x2_f32`
+  followed MODE's f32 denorm field (for A, B, C and the result) and did not ignore EXEC, while
+  `v_mfma_f32_16x16x32_bf16` kept denormals and wrote D in all 64 lanes; all three rounded to nearest even under every
+  MODE round mode, and the launch MODE of a hipcc kernel (0x3F0) flushed nothing *(field, E1)*. Correct FP8/BF8
+  results need
   "SH_MEM_CONFIG, bit[8] … set to 1" (ch07 §7.3).
 - **Negate.** The vop3p notes of 45, 46 and 53–56 say "NEG[1:0] and ABS[1:0] must be zero. NEG[2] and ABS[2]
   may be used to control matrix C". Table 89 has no NEG or ABS field. Only the F64 MFMAs reuse BLGP as negate
@@ -161,7 +168,7 @@ them is a reading, not text.
 **Reading caveat.** Table 38 prints four values in each multi-value row, with no labels. The order 2, 4, 8, 16
 passes of the first (writing) MFMA is inferred: the SGEMM block names its four rows `V_MFMA_F32_4X4X4F16`,
 `…16X16X16F16`, `…32X32X8F16` and `…32X32X4F16`, which Table 28 gives 8, 16, 32 and 64 cycles. The table runs over
-PDF pages 75–77; the Markdown places all of it under the page-74 marker.
+PDF pages 74–77; the Markdown places all of it under the page-74 marker.
 
 **XDL or V_SMFMA\* writes a VGPR, then** (Table 38; the pass-count column labels are inferred):
 
@@ -234,7 +241,7 @@ MACs per cycle *(derived: M·N·K·B ÷ Table 28 cycles)*:
 | mainloop §4 Register plan and inline-asm constraints | §2 register files and sources; §3 "VALU writes → MFMA reads: 2" (its constraint rule 1) |
 | mainloop §2 8-wave pipeline, §3 4-wave whole loop | §3: K chains need no padding; the peeled first phase's `src2=0` is the inline constant; an epilogue scheduled between the closing MFMAs must still cover 8 / 12 / 20 |
 | mainloop §7 Occupancy and allocation knobs | ch03 §3.6.4: granule 8, 256 + 256 per wave. The card's occupancy tiers and round-to-4 rule are not in the guide |
-| `../../gemm/correctness.md` §6 Bounds (MFMA ignores EXEC) | §2 "forces it to 1 for all threads" |
+| `../../gemm/correctness.md` §6 Bounds (MFMA ignores EXEC) | §2 "forces it to 1 for all threads"; on gfx950 the two F32-input MFMAs tested in §2 (`16x16x4`, `32x32x2`) do not ignore it |
 | correctness §7 Register classes and inline asm | §3: the card's 8 / 8 / 12 / 20 match the VALU row at 4 / 4 / 8 / 16 passes |
 
 ## 6. Gaps and inconsistencies in the chapter text
@@ -253,3 +260,6 @@ MACs per cycle *(derived: M·N·K·B ÷ Table 28 cycles)*:
 ## Related
 `INDEX.md` · `lookup.md` · `memory_and_sync.md` · `../../gemm/mainloop.md` ·
 `../../gemm/correctness.md` · `../../gemm/schedule_and_locality.md`
+
+## Evidence
+- E1 [2026-11, gfx950 (MI355X), HIP 7.15, N=3 launches per arm, bitwise identical; one wave, MODE's f32 round or denorm field (`s_setreg_imm32_b32`) or EXEC changed right before the MFMA] `v_mfma_f32_16x16x4_f32` and `_32x32x2_f32` followed the f32 denorm field for a denormal in A, the product or C (mode 0 zeroed all three, mode 3, the launch MODE 0x3F0, kept all), and with EXEC = 0xFFFF 16x16x4 wrote D in all 64 lanes as if A and B of lanes 16–63 were 0 and 32x32x2 left D of lanes 16–31 and 48–63 unwritten; `v_mfma_f32_16x16x32_bf16` exact under every setting and wrote D in all 64 lanes; all three round-to-nearest-even under every round mode (inline-asm test kernel)

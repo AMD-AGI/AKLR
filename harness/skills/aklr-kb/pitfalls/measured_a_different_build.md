@@ -41,10 +41,12 @@ Each channel puts a different build under the ruler.
    the workflow, not checked in a run's log), not necessarily the `flydsl>=0.3.2` of `pyproject.toml`. From this
    repository's first commit (2026-10-31) to 2026-11-03 it installed the checkout with its dependencies, whose
    `pyproject.toml` pinned `flydsl==0.3.2` (S11). The repository the first schemas were measured in, whose history
-   this one does not include, installed the checkout without its dependencies and ran the FlyDSL of its image (S6):
-   0.3.4.1 in the image of the runs from 2026-10-24 on, 0.3.1 in the one before, each the pin of the aiter commit
-   the image was built from (S7, S8). The `speedup` CI writes into a schema was measured on the FlyDSL of its run,
-   and the run's commit message names the image, not the version.
+   this one does not include, installed the checkout without its dependencies (S6), but that editable install ran
+   the checkout's `setup.py`, which replaced any other FlyDSL with its pin 0.3.2 (S12): its runs used 0.3.2, not
+   the FlyDSL of their image, 0.3.4.1 from 2026-10-24 on and 0.3.1 before, each the pin of the aiter commit the
+   image was built from (S7, S8; read from the workflow and `setup.py`, not checked in a run's log). `--no-deps`
+   does not stop a `setup.py` that installs a package itself. The `speedup` CI writes into a schema was measured
+   on the FlyDSL of its run, and the run's commit message names the image, not the version.
 5. **AKLR runs the schema, not your file.** Validation and dispatch run the `content` strings of the schema's
    `kernel.sources`, imported as a package `_aklr_<hash16>` (`aklr/ops/README.md` § Workflow and § The kernel
    section and ABI). A model reaches an `aklr/ops` kernel only where the engine calls the op's api: AKLR's plugins
@@ -62,8 +64,8 @@ Each channel puts a different build under the ruler.
   that defines your kernel.
 - **On a remote machine, hash the source there right after the run** and compare it with the file you meant to
   time.
-- **Read back the binary.** Take the kernel names from a kernel trace of the timed run (register counts there are
-  half the true value, `../gemm/attribution.md` §9) and compare them with an ISA dump of the source you meant (`FLYDSL_DUMP_IR=1`, which skips the disk cache,
+- **Read back the binary.** Take the kernel names from a kernel trace of the timed run (its register counts are
+  wrong above 128 architectural VGPRs, `../gemm/attribution.md` §9) and compare them with an ISA dump of the source you meant (`FLYDSL_DUMP_IR=1`, which skips the disk cache,
   `../flydsl/gemm.md` § mainloop §10) made in a separate run: do not time with the dump on
   (`../flydsl/gemm.md` § measurement §6). A compile-time switch that shows in the kernel name makes the arms
   tell apart in a trace (`../gemm/attribution.md` §3). Break the kernel on purpose once
@@ -99,3 +101,4 @@ Each channel puts a different build under the ruler.
 - S9 AMD-AGI/AKLR@f092828ea:.github/workflows/ci.yaml:285 `pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@$AKLR_BASELINE_AITER"`, over the image's aiter (:283); the commit is `AKLR_BASELINE_AITER` at :7
 - S10 ROCm/aiter@dbd8bf5:setup.py:17 `FLYDSL_VERSION = "flydsl==0.3.2"`, in `install_requires` at :478
 - S11 AMD-AGI/AKLR@9a29616:.github/workflows/ci.yaml:334 `pip install -e . -v` ("With its dependencies: aiter's kernels need its pinned FlyDSL, not the image's.", :332); `pyproject.toml:27` pins `flydsl==0.3.2`
+- S12 setup.py, in the repository before this one (not in this one's history): an editable install (`is_develop_mode`) without `AITER_TRITON_ONLY` runs `pip install flydsl==0.3.2` (`FLYDSL_VERSION`) whenever another FlyDSL version is installed; the CI install of S6 is editable and sets no `AITER_TRITON_ONLY`; the parents of all seven CI measurement runs there (2026-10-16 to 2026-10-28) carry the same block and pin

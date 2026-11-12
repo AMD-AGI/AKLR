@@ -21,7 +21,7 @@ sources:
 # Sparse MLA with one query token per sequence on the DeepSeek-V4 fp8 pool: one dequantised tile for all 64 heads
 
 One FlyDSL source serves three schemas of `flash_mla_with_kvcache@1.0` for DeepSeek-V4-Flash with one query token
-per sequence, as in decode (PR #71): the three files embed the same `kernel.py` as `kernel.sources[0].content`, and
+per sequence, as in decode: the three files embed the same `kernel.py` as `kernel.sources[0].content`, and
 the function names below are in it. They are called here by their extra pool: "no extra" (window only), "extra 8256"
 (extra page size 2, 8256 indices) and "extra 512" (extra page size 64, 512 indices). "batch" is the Point's rows,
 one query token each. sglang's DSA backend (`dsa_sparse_mla_decode@1.0`: 8 heads, one fp8 pool of 576-byte rows,
@@ -77,15 +77,19 @@ top-2048) is another contract, with its own one-launch kernel:
   of the storage, not `data_ptr()`, and the layout's storage test checks strides only
   (`aklr/core/contract/semantics/_layouts.py`). A pool view that starts inside a larger allocation would be read
   from the wrong base. The bench's pools start at offset 0; sglang's were not checked for this page.
-- **Not the shape the split-KV and grid-pricing cards recommend**, and nothing here prices the differences: the
-  combine is a second launch with 4 waves and an LDS merge (`../attention/split_kv.md` §1 and
-  `../gemm/grid_pricing.md` §2 found one wave per combine workgroup faster); a producer workgroup owns
+- **The combine's shape suits the extra-pool schemas, not the window-only one.** The combine runs 4 waves per
+  workgroup with an LDS merge. `../attention/split_kv.md` §1 and `../gemm/grid_pricing.md` §2 keep one
+  wave per combine workgroup unless each output merges many partials: up to 20 per (row, head) for extra 512 and
+  133 for extra 8256, against 4 for the window-only schema. A one-wave combine gave the whole call 1.33× the time at
+  133 partials and 8% more at 20 (batch 8), and 7% less at 4 partials and batch 64 *(field, E5)*.
+  Nothing here prices the producer's departures from the split-KV card: a producer workgroup owns
   one 32-key tile, two above 1024 live keys, where §5 of the split-KV card asks for at least two per split; partials
   are bf16, which §5 says adds merge error.
 - **Each call goes through the `@flyc.jit` launcher** `launch_all`, which re-binds its arguments on every call
   (`../flydsl/attention.md` § measurement §6, on FlyDSL 0.3.2). CI's ratio is GPU time in graph replays, so that
   host cost is outside it; an eager caller pays it.
-- **64 heads are a constant** (`NHEAD`): the 128-head DeepSeek-V4-Pro definitions of this contract have no kernel.
+- **64 heads are a constant** (`NHEAD`): the contract's 128-head DeepSeek-V4-Pro schemas have their own FlyDSL
+  kernels (S10).
 
 ## Mechanism
 
@@ -140,13 +144,14 @@ passes the window's tensors as the second segment with width 0, which compiles t
 
 ## Result
 
-Each file is the only kernel of its schema name, so the yardstick at every Point is the defined baseline that bench
+No other kernel has these files' Points (the extra-8256 name's other file holds pools of 1501–5229 pages, S10), so
+the yardstick at every Point is the defined baseline that bench
 times, sglang's TileLang `dpsk_v4_fp8_attention_fwd`. `speedup` is a one-sided lower bound (α = 0.05) of baseline /
 kernel time over 32 rounds of CUDA-graph replays with a 1 GiB cache flush before each call
 (`aklr/core/validation/stages/_measure.py`); a Point is served from 1.03 (`AKLR_MIN_SPEEDUP`).
 
-The predecessor repository's CI installed the code with `--no-deps`, so these runs used the FlyDSL of the CI image,
-0.3.4.1, not the repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`).
+The predecessor repository's CI measured these numbers on FlyDSL 0.3.2, the repository's pin, not the CI image's
+0.3.4.1 (`../pitfalls/measured_a_different_build.md`).
 
 Per batch, the range over that batch's pool sizes (9, 9, 7, 6, 8, 8, 6, 4 and 4 Points):
 
@@ -161,7 +166,8 @@ measurement, on the same image, also served all 183 *(field, E4)*.
 
 ## Reproduce
 
-On an MI355X, in a checkout that holds these files with these numbers, one schema at a time:
+On an MI355X, in a checkout that holds these files (on AKLR main their workloads hold CI's later measurements, not
+the table's numbers), one schema at a time:
 
 ```
 python -m aklr validate aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/97e39bdef97d3e9b.json
@@ -179,8 +185,9 @@ measurement is the one dispatch reads. To read the kernel:
 ## Rollback
 
 Delete a schema file (in a PR): its Points fall back to the caller's own kernel, sglang's TileLang attention, since
-no other file serves them. `AKLR_DISABLE=flash_mla_with_kvcache@1.0` drops all three, and nothing else: the
-contract's other files are definitions. A Point CI measures below 1.03 stops being served without a rollback. Roll
+no other file serves them. `AKLR_DISABLE=flash_mla_with_kvcache@1.0` drops all three and the contract's six other
+kernels: two dense fp8 ones at 96 heads, two at 128 heads, and the 64-head extra-1024 and small-pool extra-8256 ones
+(S10). A Point CI measures below 1.03 stops being served without a rollback. Roll
 back for a wrong result CI does not catch, such as a pool view at a non-zero storage offset or a FlyDSL or LLVM
 upgrade, or when the cached workspaces do not fit the server's memory budget.
 
@@ -189,10 +196,11 @@ upgrade, or when the cached workspaces do not fit the server's memory budget.
 `<schema>.json#kernel.py:<line>` is a line of the `kernel.py` the schemas embed (the same text in all three);
 lines are cited in the window-only file.
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup over sglang's TileLang dpsk_v4_fp8_attention_fwd 1.165–2.405 per Point, 61 of 61 ≥ 1.03; batch 1 1.901–2.405, 2 2.257–2.399, 4 2.030–2.400, 8 2.244–2.367, 16 2.274–2.394, 32 1.906–2.033, 64 1.582–1.646, 128 1.165–1.188, 256 1.193–1.354 (flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128, 61 Points)
-- E2 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup 2.396–5.845 per Point, 61 of 61 ≥ 1.03; batch 1 2.809–5.845, 2 4.069–5.486, 4 3.772–5.269, 8 3.342–3.967, 16 2.811–3.162, 32 2.467–2.734, 64 2.396–2.625, 128 2.428–2.553, 256 2.482–2.560 (…_extra_page_size2_n_extra_indices8256, 61 Points)
-- E3 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, the predecessor repository's CI] speedup 2.362–5.078 per Point, 61 of 61 ≥ 1.03; batch 1 2.620–3.493, 2 2.674–3.571, 4 3.300–3.585, 8 3.114–3.414, 16 2.688–2.790, 32 2.362–3.614, 64 2.738–3.385, 128 3.429–3.910, 256 4.645–5.078 (…_extra_page_size64_n_extra_indices512, 61 Points)
-- E4 [2026-10, gfx950, FlyDSL 0.3.4.1, N=2, the predecessor repository's CI] the two committed measurements, in commit order: no extra 1.167–2.439 then 1.165–2.405, extra 8256 2.374–5.616 then 2.396–5.845, extra 512 2.363–5.019 then 2.362–5.078, all 183 Points ≥ 1.03 both times; per-Point ratio between the runs 0.924–1.070; extra 8256 at batch 1 by pool size 2.753, 5.616, 5.542, 5.027, 5.246, 5.523, 3.468, 4.491, 2.791 then 2.809, 5.845, 5.595, 5.071, 5.357, 5.526, 3.444, 4.494, 2.861 (the three schemas)
+- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup over sglang's TileLang dpsk_v4_fp8_attention_fwd 1.165–2.405 per Point, 61 of 61 ≥ 1.03; batch 1 1.901–2.405, 2 2.257–2.399, 4 2.030–2.400, 8 2.244–2.367, 16 2.274–2.394, 32 1.906–2.033, 64 1.582–1.646, 128 1.165–1.188, 256 1.193–1.354 (flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128, 61 Points)
+- E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup 2.396–5.845 per Point, 61 of 61 ≥ 1.03; batch 1 2.809–5.845, 2 4.069–5.486, 4 3.772–5.269, 8 3.342–3.967, 16 2.811–3.162, 32 2.467–2.734, 64 2.396–2.625, 128 2.428–2.553, 256 2.482–2.560 (…_extra_page_size2_n_extra_indices8256, 61 Points)
+- E3 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup 2.362–5.078 per Point, 61 of 61 ≥ 1.03; batch 1 2.620–3.493, 2 2.674–3.571, 4 3.300–3.585, 8 3.114–3.414, 16 2.688–2.790, 32 2.362–3.614, 64 2.738–3.385, 128 3.429–3.910, 256 4.645–5.078 (…_extra_page_size64_n_extra_indices512, 61 Points)
+- E4 [2026-10, gfx950, FlyDSL 0.3.2, N=2, the predecessor repository's CI] the two committed measurements, in commit order: no extra 1.167–2.439 then 1.165–2.405, extra 8256 2.374–5.616 then 2.396–5.845, extra 512 2.363–5.019 then 2.362–5.078, all 183 Points ≥ 1.03 both times; per-Point ratio between the runs 0.924–1.070; extra 8256 at batch 1 by pool size 2.753, 5.616, 5.542, 5.027, 5.246, 5.523, 3.468, 4.491, 2.791 then 2.809, 5.845, 5.595, 5.071, 5.357, 5.526, 3.444, 4.494, 2.861 (the three schemas)
+- E5 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=7 rounds, CUDA-graph replay with a 1 GiB flush per call, arms interleaved] whole-call time, one-wave over four-wave combine, 64 heads, every slot live: 133 partials 1.331 and 20 partials 1.080 at batch 8; 4 partials 0.934 at batch 64; every arm within the contract's tolerances (the window-only file's kernel.py with only the combine's waves and LDS struct changed)
 - S1 aklr/ops/mla/contract.py:346 compare `BOUNDED`; `output` tolerance at :315, `lse` at :326; `n_pages` declared without `any_size` at :114
 - S2 aklr/ops/mla/reference.py:50 the reference's dequantisation is "the kernel's literal bf16 bit assembly, not fp8 scaling"
 - S3 aklr/ops/mla/baseline.py:35 `flash_mla_with_kvcache_baseline` calls sglang's `dpsk_v4_fp8_attention_fwd` (:40) for the `dsv4_fp8` cache format
@@ -202,3 +210,4 @@ lines are cited in the window-only file.
 - S7 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/97e39bdef97d3e9b.json#kernel.py:274 logits MFMA; max and sum shuffles at :285; alpha through LDS at :300; transposed reads at :319 and P·V MFMA at :330
 - S8 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/97e39bdef97d3e9b.json#kernel.py:374 `comb_kernel`: wave slices at :411, wave-order merge at :441, sink factor at :459
 - S9 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/97e39bdef97d3e9b.json#kernel.py:523 `_words` views the storage from offset 0 (:527); aklr/core/contract/semantics/_layouts.py:216 `Deepseekv4KvPages.storage_test` checks strides only
+- S10 the contract's other FlyDSL kernels under aklr/ops/mla/impls/flydsl/, each `contract_id` `flash_mla_with_kvcache@1.0` at :4: 64-head extra-8256 2d4eafd6ea816a59.json (pools of 1501–5229 pages), 128-head extra-8256 7c7c8b9d2c0ac20a.json and extra-1024 43b2d2975d491dd7.json, 64-head extra-1024 0e41dac662b070e5.json, 96-head fp8 f7b2bc6f70f00674.json and 854d38b4a14e3719.json; aklr/core/platform/env.py:40 `AKLR_DISABLE` lists contract ids

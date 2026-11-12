@@ -53,8 +53,10 @@ The README's rule that nothing derived from an argument is kept across calls is 
 ## How to detect
 
 - **Time on inputs that change.** Write new values into the input buffers between timed calls (in place, as a
-  weight reload does) and, separately, pass fresh buffers. A kernel without kept state reads the same within the
-  ruler's noise floor (`../gemm/measurement.md` §4).
+  weight reload does) and, separately, pass fresh buffers. On a ruler that flushes the caches before each call,
+  as AKLR's graph timer does, a kernel without kept state read within 1% with fresh buffers; without
+  the flush, fresh buffers read cold (a memory-bound GEMM 20% slower) and an in-place write cost about as much
+  with the old values as with new ones *(field, E4)*: compare against the same protocol fed the old values.
 - **Compare each shape's throughput with the ceiling** (`../gemm/measurement.md` §7). A reading above
   the peak means the work was not done.
 - **Read the source; timing is not enough.** In one loop, timing missed three kernels whose machinery a dispatch
@@ -62,8 +64,9 @@ The README's rule that nothing derived from an argument is kept across calls is 
   and device code for `_version`, `data_ptr`, `id(`, `weakref`, `is` comparisons on an argument, `nonlocal`,
   `global`, a module-level container filled from an argument, a saved copy of an input in per-shape scratch,
   and a flag that guards the MFMAs or the whole body.
-- **A passing correctness check says nothing here**: both forms compute the right answer on any input that
-  changed.
+- **A passing correctness check says nothing about form 1**: it computes the right answer on any input that
+  changed. Form 2 does too on a new tensor or after a `_version` bump; it fails a check that rewrites a reused
+  input unseen by the cache: through `.data.copy_`, as AKLR's does, or before a graph replay.
 
 ## Fix or workaround
 
@@ -90,5 +93,6 @@ unverified.
 - E1 [2026-09, gfx950, FlyDSL ?, N=?, KernelForge task timing: one CUDA graph captured over one set of input buffers and replayed] later iterations of gemm_n6144_k6144 peaked at 7.93 PFLOP/s on one shape; five of the seven kernels rolled back reported per-shape throughput above what the hardware can reach (bf16 GEMM, KernelForge FlyDSL campaigns)
 - E2 [2026-09, gfx950, FlyDSL ?, N=?, the same protocol, then the activations moved between calls] the worst of the seven reported 5.448× and recomputed 14× slower than aiter once its activations moved; which kernel it was, and whether the numbers are per case or a mean over cases, is not known (bf16 GEMM or MXFP4 fused MoE, KernelForge FlyDSL campaigns)
 - E3 [2026-10, gfx950, FlyDSL ?, N=?, ruler not recorded; a bench check rewrote weights in place through `.data.copy_`] the 20 schemas whose kernels cached a weight keyed on the object and its `_version` returned the old weights' result after an update; their recorded speedups predated the bench's rotating input sets and measured only cache hits (FlyDSL bf16 GEMMs and MXFP4 fused MoE)
+- E4 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0, N=7 rounds, floor = largest gap between two identical arms; AKLR `bench_cudagraph` (1 GiB flush per call), and eager Kineto kernel time without a flush] `torch.mm` bf16 at 4096×4096×4096, 16×8192×8192 and 16×2048×2048: with the flush, fresh buffers +0.10% to +0.87%; without it, at 16×8192×8192, fresh buffers +20.2%, an in-place write +1.1% with new values and +0.9% with the old ones (floor 0.93%) (hipBLASLt bf16 GEMMs)
 - S1 `if b is not cached_weight or version is None or version != cached_version:` repacks, else reuses `packed_b`; a later commit removed the check from all 20, and no kernel committed later reads `._version`
 - S2 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:406: one `call` built from one input set, timed for every participant

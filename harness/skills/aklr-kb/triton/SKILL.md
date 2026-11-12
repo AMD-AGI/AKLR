@@ -60,8 +60,8 @@ commit, run or PR; `aklr/…` paths are on main unless pinned.
   1.16× the replay time of a 1–2-token count scan (one run) *(field, E9)* ([authoring](authoring.md) §7).
 - Under `bitwise`, no float atomics: reduce in a fixed order ([numerics](numerics.md) §8).
 - Skipping a reference rounding: in the router (256 tokens) and GDN decode (128 rows) it lowered the error yet failed
-  validate twice; in DeepSeek-V2 (8 tokens) and gated attention (32 rows) it passed twice, gated attention's scale
-  error rising. A pass is not non-inferiority *(field, E14)*. Compute in fp32: bf16 × a Python float stays bf16
+  validate twice; in DeepSeek-V2 (8 tokens) and gated attention (32 rows) it passed twice.
+  A pass is not non-inferiority *(field, E14)*. Compute in fp32: bf16 × a Python float stays bf16
   ([numerics](numerics.md) §1).
 - Every tested layout mismatch in an elementwise op, store or load mask (Blocked, Slice, MFMA, DotOperand, Linear)
   failed to compile. Give `arange`, `zeros` and `full` a layout; a Blocked layout's warps multiply to `num_warps`
@@ -83,7 +83,7 @@ commit, run or PR; `aklr/…` paths are on main unless pinned.
 - Equal bytes in flight do not give equal rate (programs × warps × 16 B loads per lane): on a 1 GiB stream
   equal-byte groups spread up to 10.4%, and at 3 MB 96×4×8 and 192×1×16 read 0.80× and 0.50× of 384×4×2 (3 runs)
   *(field, E4)*; in another stream (one run) four 8 MiB configurations stayed within 10% of the median, but 3/4/6 MiB
-  384×1×8, 256×1×16, 384×1×16 read 0.888×, 0.760×, 0.861× of four-warp peers *(field, E15)*. At equal bytes the
+  384×1×8, 256×1×16, 384×1×16 read 0.868×, 0.744×, 0.854× of four-warp peers *(field, E15)*. At equal bytes the
   256-token router's call time read 1.000, 1.033, 1.260 for programs × look-ahead 256×2, 512×1, 128×4 (one run)
   *(field, E11)*: do not size a small kernel by bytes alone or pool implementations.
 - Router split 4 → 2 (256 tokens) and gated attention KV splits 16 → 8 (32 rows, head tile changed too) lost: B/A
@@ -123,7 +123,7 @@ commit, run or PR; `aklr/…` paths are on main unless pinned.
 - E8 [2026-11, CPU only, Triton 3.8.0, N=1, source scan and a CPU test] 154 of 154 `run`s; 7 cached elements stale (AKLR@43e112e)
 - E9 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, Gluon probes, graph replay] 0 wrong in 1000 calls per Point with the counter zeroed per call (1999 of 1999 wrong without); two launches no slower than the fold at 9 sizes, 1.16× the count scan at 1–2 tokens, 0.89× at 16; the oversubscribed spin (4096 programs) timed out 3448–3454 of 4095 times in 2 runs, 0 in two launches (#89)
 - E10 [2026-11, CPU only, Triton 3.8.0, N=2, compile-only for gfx950] 63 mismatch/control pairs, 24 warp builds per run (#89)
-- E11 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, `aklr validate` (Kineto), 4 rounds per arm] router `c3889614985b700a` 1.000/1.033/1.260; DeepSeek-V2 `d3bbbce5c0bbc61e` split 4 → 2 1.004×, unresolved (AKLR@43e112e)
+- E11 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1–3, `aklr validate` (Kineto), 4 rounds per arm] router `c3889614985b700a` 1.000/1.033/1.260; DeepSeek-V2 `d3bbbce5c0bbc61e` split 4 → 2 1.004× (unresolved), 1.011× and 1.017× (resolved) (AKLR@43e112e)
 - E12 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=2, `bench_cudagraph` (Kineto)] 85 of 85 calls flushed; 1 GiB over a 4 GiB flush 0.992–1.000; flushed/hot 1.19–1.28× (64–192 MB), 1.00–1.01× (512–1024 MB); Gluon eager probe (4 runs) 1.10–1.22×, 0.99–1.01×; HBM reads not measured (AKLR@43e112e)
 - E13 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=4, in-process timing] BLOCK_K 128, 8 warps, KROT 0 over 256, 4, 1, hot: 1.08–1.13× (`f806ad2b086d757d`; AKLR@43e112e)
 - E14 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, `aklr validate` twice per variant, one input set] router `c3889614985b700a`, GDN decode `fc261961f0ad572d`: 2 of 2 failed; gated attention scale relative L2 0.003233 → 0.003269 (AKLR@43e112e)

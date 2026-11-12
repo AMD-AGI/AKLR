@@ -48,8 +48,7 @@ sources:
 - **The extreme cells are real.** *(field, E1)* A one-hot bench cell reproduced the slowest wgrad call of a training
   trace within 1%.
 - Report each pass's skew-to-balanced ratio and every cell, not only the geometric mean
-  (`../gemm/measurement.md` §4). The heavy-skew cells are usually the minimum, and they are where a
-  skew lever is accepted or rejected.
+  (`../gemm/measurement.md` §4). The heavy-skew cells are where a skew lever is accepted or rejected.
 
 ## 2. Lock the deployment's operating point
 
@@ -102,8 +101,8 @@ the deployment, not from a previous bench:
 - **A running model's trace carries contention.** *(field, E7)* The median of one profiled training step read
   4–8% low from overlap with other work, and *(field, E8)* the long-tail calls were the ones overlapping collectives. Compare with a bench using
   the minimum or the calls without overlap.
-- A trace's per-kernel rate must land on the bench at the same operating point. A miss of an order of magnitude
-  is FLOP accounting, not the kernel.
+- Compare a trace's per-kernel rate with the bench at the same operating point. When the two differ by an order
+  of magnitude, check the FLOP accounting (layer count, top-k, padded sizes) before suspecting the kernel.
 
 ## 4. Timing hygiene
 
@@ -130,10 +129,10 @@ In FlyDSL: `../flydsl/moe.md` § grouped_measurement §4.
 
 ## 5. Noise per cell and arm order
 
-- **The floor belongs to the cell.** *(field, E12)* In one run of one binary, the A-vs-A reading was −0.02% on a
-  balanced cell and +1.39% on a skewed cell, whose histogram was redrawn every run so its tile counts and
-  imbalance changed. Set acceptance thresholds per cell; to resolve under ~1.5% on a skewed cell, add samples or
-  detrend, and keep the draw identical across arms when ranking a kernel change.
+- **The floor belongs to the cell.** *(field, E12)* In one run, a code-identical control arm read −0.02% on a
+  balanced cell and +1.39% on a skewed cell; the record does not isolate why. Set acceptance thresholds per cell; to resolve under ~1.5% on a skewed cell, add
+  samples or detrend, and keep the draw and the autotuned configuration identical across arms when ranking a
+  kernel change.
 - **Single cells swing more than aggregates.** *(field, E13)* One wgrad cell moved ±2.5% run to run on identical code.
   Decide on paired differences, not on one cell's reading.
 - **Detrend with an in-run control arm.** *(field, E14)* A control arm drifted 1.8% over six back-to-back runs; an
@@ -149,8 +148,10 @@ In FlyDSL: `../flydsl/moe.md` § grouped_measurement §4.
 - **Price small kernels additively** — group-offset kernels, scale preshuffle, tail kernels, the split-K reduce —
   by launching them 0, 1, 2 and 4 extra times in one process, alternating arm order, and fitting the slope
   (`../gemm/attribution.md` §3). *(field, E16)* `rocprofv3` start→end gave an idle tail kernel 5.10 µs
-  against a marginal 1.58 µs, and a working preshuffle 20.3 µs against ~10.2; a candidate priced at +0.374% from
-  the trace was worth an estimated +0.121% (+0.107% measured).
+  against a marginal 1.58 µs, and a working preshuffle 20.3 µs against ~10.2 (from one duplicated launch with L2
+  warm, not a fitted slope); a candidate priced at +0.374% from the trace was worth an estimated +0.121% (+0.107%
+  measured). The inflation is not a fixed factor *(field, E23)*: an empty kernel traced at 3.96 µs against a 1.6 µs
+  marginal, and a ~9 µs kernel at its marginal.
 - **Split ISA dumps per kernel.** A module's ISA dump holds all of its kernels back to back. *(field, E17)* Four
   stores read as "the GEMM's prologue draining" belonged to the preshuffle kernel in front of it. Cut at the
   `.amdhsa_kernel` and label lines first.
@@ -163,8 +164,9 @@ In FlyDSL: `../flydsl/moe.md` § grouped_measurement §4.
 
 - **Read power per pass before ranking cycle-saving levers.** At ≥99% of board power, part of a cycle saving is lost
   to a lower clock (`../gemm/attribution.md` §4, whose 20% conversion case was the skewed worst cell of a
-  grouped MXFP8 NT kernel *(field, E19)*). *(field, E20)* A variable-K wgrad ran at its maximum clock (2400 MHz, about
-  266 W), far below the cap, so cycle savings there are not handed back as clock. Prefer levers that remove bytes
+  grouped MXFP8 NT kernel *(field, E19)*). *(field, E22)* Variable-K wgrad is no exception: a tensorwise-fp8
+  variable-K wgrad at gpt-oss shapes (Triton and `torch._scaled_grouped_mm`, 1.4–1.7 PF/s) sat at the 1400 W cap
+  with sclk at 1.89–2.0 GHz, so cycle savings there are partly handed back as clock. Prefer levers that remove bytes
   or requests on capped passes and skewed cells.
 - **Compare precisions on equal terms** (`grouped_lowprec.md` §8; quantization inside the timed region:
   `../attention/measurement.md` §5).
@@ -211,9 +213,10 @@ A FlyDSL version is given only where the cited run, or another round in the same
 - E13 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=5 bench runs, identical code] wgrad down balanced read 1.563 / 1.606 / 1.644 / 1.650 / 1.657 (±2.5%), the NT cells ±0.4% (gpt-oss MXFP4 grouped GEMM, campaign bench)
 - E14 [2026-09, gfx950, FlyDSL 0.2.4, Turbo fork rev ?, N=6 back-to-back runs, code-identical control arm] the control arm drifted from 1.2731 to 1.2505 (−1.8%) (gpt-oss fused GLU/dGLU grouped GEMMs)
 - E15 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=5 base→candidate and 3 candidate→base pairs] gate_up wgrad canon +1.70 pp in one order and +2.34 pp in the other; the forward cell the wgrad-only knob cannot touch read ~0.5 pp low in whichever arm ran first (gpt-oss MXFP4 grouped GEMM)
-- E16 [2026-09, gfx950, FlyDSL 0.2.4, Turbo fork rev ?, N=4–5 samples per arm (ABBA) for the measured difference; additive probe of 0/1/2/4 extra launches in one process] an idle tail kernel read 5.10 µs from rocprofv3 Start→End against a marginal 1.579 µs; the preshuffle kernel 20.32 against ≈10.2 µs; a candidate priced at gm +0.374% from rocprof was worth +0.121% at the probe's price and +0.107% in the measured difference (gpt-oss MXFP4 grouped MoE MLP GEMMs, fc2_fwd)
+- E16 [2026-09, gfx950, FlyDSL 0.2.4, Turbo fork rev ?, N=4–5 samples per arm (ABBA) for the measured difference; additive probe of 0/1/2/4 extra launches in one process] an idle tail kernel read 5.10 µs from rocprofv3 Start→End against a marginal 1.579 µs; the preshuffle kernel 20.32 against ≈10.2 µs, the latter from one duplicated launch with L2 warm (a lower bound); a candidate priced at gm +0.374% from rocprof was worth +0.121% at the probe's price and +0.107% in the measured difference (gpt-oss MXFP4 grouped MoE MLP GEMMs, fc2_fwd)
 - E17 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, stage ISA dump `21_final_isa.s`] four stores counted as the GEMM's prologue draining belonged to the preshuffle kernel placed before it in the dump (MXFP4 grouped GEMM)
 - E18 [2026-07, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, static ISA histograms] whole main-loop region: wgrad 7581 instructions / 1152 MFMA = 6.6 per MFMA, NT 4546 / 1104 = 4.1; steady-state window `mfma[8..40]`: wgrad 106 / 33 = 3.2, NT 111 / 33 = 3.4 (MXFP8 grouped wgrad with four boundary variants, NT with two)
 - E19 [2026-07, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, interleaved mx/tw probe with sclk and power sampled, both arms at the 1400 W cap] dgrad gate_up heavy: 2905 against 3110 cycles (7.1% fewer) but 1.6014 against 1.6241 ms of wall (1.42%), sclk 1814 against 1915 MHz: 20% of the cycle saving reached the wall (gpt-oss MXFP8 grouped NT against tensorwise fp8)
-- E20 [2026-07, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, ?] the grouped wgrad ran at the full 2400 MHz at about 266 W, far below the power cap (fp8 grouped variable-K wgrad)
 - E21 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=5 palindrome rounds, isolated kernel] the `(num_xcd, group_m) = (8, 4)` arm read +2.5–2.9% at the deployed 4096 tokens per expert and −0.94% / +0.54% at the race's 1024 and 8192 tokens (geomean ≈ +0.2%) (gpt-oss-20b down-projection padN dgrad NN, tensorwise fp8)
+- E22 [2026-11, gfx950 (MI355X), Triton 3.8.0, torch 2.11.0+rocm10.0.0, N=1–2 passes per arm of 30–60 s load, sysfs power and sclk, steady-state medians; 1400 W cap] tensorwise-fp8 variable-K wgrad, gpt-oss-20b shapes (G = 32, 4096 tokens per group): Triton gate_up and down 1621.6–1697.7 TF/s at 1400 W, 1889–1921 MHz; `torch._scaled_grouped_mm` gate_up 1411.1 TF/s, 1392 W, 1999 MHz
+- E23 [2026-11, gfx950 (MI355X), HIP 7.15, rocprofv3 1.3.5, N=10 rounds of the additive slope (0/1/2/4 extra launches, one stream) and 3 under `--kernel-trace`] marginal against traced Start→End median, µs: an empty kernel 1.551 / 3.96, a 256-workgroup kernel that returns at once 1.504 / 3.96, a 16 MiB copy 4.216 / 5.36, a dependent-FMA kernel 9.050 / 9.0

@@ -22,7 +22,7 @@ You do not wake on your own, so before handing work to the background start a
 timer (interval from the user or caller, else 15m):
 
 ```
-/loop 15m /report-progress <task> state=<run state path> reports=<reports file>
+/loop 15m /aklr:report-progress <task> state=<run state path> reports=<reports file>
 ```
 
 Each firing receives only that line, so put every path the report needs in it.
@@ -31,7 +31,7 @@ longer work before then. If `/loop` is unavailable, say no timer is running.
 
 ## Gather with a subagent
 
-Before each report, run the `something-important` agent and wait for it. Give it the
+Before each report, run the `something-important` agent (`aklr:something-important` in Claude Code) and wait for it. Give it the
 goal, the artifact paths and the reports file. If that agent is not available, give
 a subagent [its prompt](../../agents/something-important.md) instead.
 

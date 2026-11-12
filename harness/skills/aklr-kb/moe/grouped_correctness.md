@@ -36,7 +36,8 @@ A run-to-run check passes an output that is wrong the same way every time. Every
 an fp32 reference built from the dequantized operands, with SNR, on skewed distributions as well as balanced.
 - *(field, E1)* A wgrad whose tiles over-ran their group read about 6 dB on an unbalanced distribution and passed on
   a balanced one.
-  - Balanced groups end on tile boundaries, so an over-running tile never reaches the next group.
+  - Balanced groups end on tile boundaries only when each group's length is a multiple of the tile's size along
+    the tokens; only then does an over-running tile stay out of the next group.
 - Keep the dense gate's mechanics: at least two calls, NaN-filled outputs between calls, bitwise repetition at
   the shapes you time (`../gemm/correctness.md` §1–§3).
 
@@ -83,9 +84,9 @@ an fp32 reference built from the dequantized operands, with SNR, on skewed distr
   (MX wgrad operands `[OUT, M_total]`) it cannot, and an over-running K step accumulates the next group's real
   tokens; the guard is a run-time K check (`grouped_variable_k.md` §3). Only an unbalanced gate sees it (§1).
 - Values that feed a descriptor, the record count as well as the base, must be wave-uniform
-  (`grouped_group_mapping.md` §6, with the base-only case). A per-lane value gives "a non-deterministic
-  wrong answer rather than a fault" (Turbo's comment, `grouped_gemm_bf16_kernel.py:651-657`): gate with SNR on
-  repeated runs, not with a fault check.
+  (`grouped_group_mapping.md` §6, with the base-only case). In Turbo's FlyDSL bf16 kernel an unpinned value gave
+  "a non-deterministic wrong answer rather than a fault" (Turbo's comment, `grouped_gemm_bf16_kernel.py:651-657`):
+  gate with SNR on repeated runs, not with a fault check.
 
 ## 6. Health lines per dtype and reference
 
@@ -98,9 +99,10 @@ an fp32 reference built from the dequantized operands, with SNR, on skewed distr
 - **Pick the reference that can see the error.** Against an fp32 reference of the unquantized operands, an MXFP4
   grouped NT output reads mostly quantization loss; an error smaller than the quantization noise
   is invisible there. Use the dequantized operands.
-- *(field, E8)* Healthy fp8 grouped GEMMs read about 56 dB with rowwise scales and 40–47 dB with tensorwise scales;
-  on a wgrad whose clean reading was ~56 dB, output below 54 dB was corrupted; readings of 15 or 29 dB were wrong
-  data or races. Judge each kernel against its own band (first bullet).
+- *(field, E8)* Healthy FlyDSL fp8 grouped GEMMs read about 56 dB with rowwise scales and 40–47 dB with tensorwise
+  scales; on a wgrad whose clean reading was ~56 dB, output below 54 dB was treated as corrupted; readings of 15 or
+  29 dB were wrong data or races. Judge each kernel against its own band (first bullet), not against one line for
+  all fp8 kernels.
 - **Kernel or upstream?** Run the same inputs through a second backend. Identical SNR to many digits means the
   difference comes from quantization or the reference path, not from the kernel.
 

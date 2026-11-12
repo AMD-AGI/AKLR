@@ -91,6 +91,9 @@ In FlyDSL: `../flydsl/moe.md` § grouped_sorted_tokens §1.
   `:221`; grid `aiter/ops/flydsl/moe_kernels.py:1625`). With 112 of 896 experts local, 9% of 45,696 stage-1
   workgroups had work at 112 tokens, and a local sort cut the sort 24.5 → 9.5 µs and stage 1 174.4 → 160.6 µs
   *(field, E30)*; at 893 / 2732 tokens local sizing cut a call 2.0–3.7% and a local-only sort 3.0–3.4% more *(field, E33)*.
+  The saving depends on the sort kernel *(field, E43)*: on aiter dbd8bf5 at 112 tokens local sizing took the FlyDSL
+  sort 22.3 → 8.8 µs but aiter's default Opus sort only 10.6 → 8.9 µs, and at 40 tokens aiter switched to a slower
+  one-kernel sort (10.5 → 12.3 µs).
   One way to sort locally: a global → local table in LDS, −1 dropping a route to another rank's expert; at 8–16 tokens
   it cut 11–16 µs per call *(field, E25)*.
 - **Under expert parallelism, cap that grid.** The bound counts every route and every global expert's padding, so
@@ -144,8 +147,11 @@ In FlyDSL: `../flydsl/moe.md` § grouped_sorted_tokens §2.
   the blocks and waves, less barrier and LDS-sync overhead) but caps it at 128 so tile-N 256 stays two blocks per
   row, because one 256-channel block made a 256-wide intermediate ~40% slower (grid too small, register pressure)
   (`moe_gemm_2stage/gemm1.py:62-72`).
-- **Split K inside a block only when K is long.** *(field, E5)* Splitting K across the waves of a stage-2 block,
-  where K is the intermediate size, was neutral to negative: the split landed on launch and epilogue fixed costs.
+- **An in-block K split did not pay, at stage-2 K or at long K.** *(field, E5)* Splitting K across the waves of a
+  stage-2 block, where K is the intermediate size (2048), was neutral to negative at tile_k 256; at tile_k 128 a
+  2-way split gained 1.1% but stayed below tile_k 256 unsplit. *(field, E44)* On a bf16 weight-streaming kernel
+  with a full grid, a 2-way split was 8.6% slower at K = 2048 and 2.0% at K = 32768; a grid too small to fill the
+  CUs was not measured.
 - **Keep the grid N-fastest.** *(field, E6)* Swapping to M-fastest cost 2.4% on stage 1 and 1.5% on stage 2 (whose
   relative L2 error also rose from 0.0003 to 0.0017). N-fastest keeps the N-blocks that share one A tile running
   together, so the A tile stays in L2 and MALL (the last-level Infinity Cache). Both FlyDSL grids are N-fastest
@@ -178,11 +184,13 @@ In FlyDSL: `../flydsl/moe.md` § grouped_sorted_tokens §3.
   - one neighbour on each side is enough: in a run of two or more same-expert blocks, every block has one;
   - compile the branch only when the host knows a repeat is possible (tokens > block M): the if/else duplicates
     the GEMM body, and *(field, E9)* small batches that could not repeat a block paid up to 2.1% for it.
-- **A skip-the-block bound underestimates reuse.** *(field, E10)* A probe that skipped the repeated blocks bounded the
-  gain at 2.11% of the score and 1.0 µs at one batch size; at that batch size the cached version saved 1.82 µs,
-  beyond the bound, because it also relieved L2 contention with the other streams.
-- **Keep scale loads cached.** *(field, E11)* Marking the B-scale loads non-temporal on single-read blocks lost 1.7%:
-  4-byte loads gain nothing from streaming and lose line merging. A and its scales stay cached as well — all the
+- **A skip-the-block bound can underestimate reuse.** *(field, E10)* A probe that skipped the repeated blocks bounded
+  the gain at 1.0 µs at 64 tokens and 9.9 µs at 128; the cached version saved 1.82 µs at 64 tokens, beyond the
+  bound, but 6.66 µs at 128, under it.
+- **Keep scale loads cached when several waves read parts of one 128 B line.** *(field, E11)* Marking the
+  B-scale loads non-temporal on single-read blocks lost 1.7%. *(field, E45)* In a microbenchmark, 4-byte `nt` loads
+  whose lines were split across 4 waves sent 1.5–2.1× the TCP→TCC requests and ran 3–27% slower; read as whole
+  lines by one load they gained up to 10%: the load width does not decide it. A and its scales stay cached as well — all the
   N-blocks of a row share the A tile.
 - **Dead alternatives.** *(field, E12)* One workgroup walking two M-blocks of an expert (turning cross-workgroup reuse
   into same-workgroup reuse) halved the workgroup count and scored 8.5% lower than the all-non-temporal
@@ -303,7 +311,7 @@ records do not give. The Kimi-K3 forge runs installed FlyDSL 0.3.2.
 - E2 [2026-10, gfx950, FlyDSL 0.3.2, N=4–6, AKLR graph timer, arms interleaved in one process] runs of 8 tiles per XCD against plain order at m=5–10: 14.55 against 14.92 µs at m=5 … 14.51 against 14.94 at m=10 (1.4–2.9%) (dense bf16 GEMM n=163840, k=256, Kimi-K3 forge run)
 - E3 [2026-10, gfx950, FlyDSL 0.3.2, N=1, own CUDA-graph harness, all arms in one process, 10 launches per graph, median of 10 replays] the same 256×256 body as a persistent 256-workgroup grid against one tile per workgroup: 0.1143 against 0.1200, 0.3019 against 0.3183, 0.9738 against 1.0022 ms at m = 35107 / 104093 / 342073 (−2.8% to −5.2%) (dense bf16 GEMM n=3072, k=512, Kimi-K3 forge run)
 - E4 [2026-09, gfx950, FlyDSL ?, aiter fork rev ?, N=3 pairs, same-batch interleaved A/B, MoE decode score over 8 / 16 / 64 / 128 tokens under graph replay] stage-2 tile-N 64 against 128: 1.09594 / 1.09836 / 1.09857 against 1.08680 / 1.08881 / 1.08810, +0.84 / +0.88 / +0.96% per pair; tile-N 256 → 128 → 64 read 1.05688 → 1.0915 → 1.1020; tile-N 32 with a two-way in-block K split 1.0883 against 1.0997 at 64 (GLM-5.2 TP4/EP4 a4w4 MoE decode)
-- E5 [2026-09, gfx950, FlyDSL ?, aiter fork rev ?, N=?, one batch, MoE decode score] splitting K across the waves of a stage-2 block (`k_wave` 2 / 4): 1.0992 / 1.0790 against 1.0997 unsplit at tile-N 64, 1.0890 against 1.0925 at tile-N 128; stage 2's K (inter_dim) is 2048 (GLM-5.2 TP4/EP4 a4w4 MoE decode)
+- E5 [2026-09, gfx950, FlyDSL ?, aiter fork rev ?, N=?, one batch, MoE decode score] splitting K across the waves of a stage-2 block (`k_wave` 2 / 4) at tile_k 256: 1.0992 / 1.0790 against 1.0997 unsplit at tile-N 64, 1.0890 against 1.0925 at tile-N 128; at tile_k 128, `k_wave` 2 1.09446 against 1.08286 unsplit (+1.1%), still below tile_k 256 unsplit; stage 2's K (inter_dim) is 2048 (GLM-5.2 TP4/EP4 a4w4 MoE decode)
 - E6 [2026-09, gfx950, FlyDSL ?, aiter fork rev ?, N=?, same-batch interleaved A/B, MoE decode score] the grid swapped to M-fastest: −2.4% on stage 1, −1.5% on stage 2, whose rel_l2 rose from 0.0003 to 0.0017 (GLM-5.2 TP4/EP4 a4w4 MoE decode)
 - E7 [2026-09, gfx950, FlyDSL ?, aiter fork rev ?, N=1 pair per tile-N, same batch, MoE decode score] stage 2's fp4 A tile packed at its real width (16 → 8 KB of LDS per workgroup): 1.10187 against 1.10077 at tile-N 64, 1.09246 against 1.09149 at tile-N 128 (GLM-5.2 TP4/EP4 a4w4 MoE decode)
 - E8 [2026-09, gfx950, FlyDSL ?, aiter fork rev ?, N=3 pairs, same-batch interleaved A/B, MoE decode score] B cached on M-blocks with a same-expert neighbour and non-temporal elsewhere, against all non-temporal: 1.11075 → 1.13092 (+1.82%), every pair positive (A 1.11089 / 1.10991 / 1.11146, B 1.12989 / 1.13224 / 1.13064) (GLM-5.2 TP4/EP4 a4w4 MoE decode, stage 1 and stage 2)
@@ -344,3 +352,6 @@ tokens; the ruler is AKLR's graph timer (bench_cudagraph, L2 flushed per replay)
 - E40 [2026-10, gfx950, FlyDSL 0.3.2, N=1 per arm, torch.profiler kernel times (fold, 9397 tokens only) and per-call sums (streams)] fold: incumbent stage 2 300–309 µs plus a 61.5 µs reduce; stage 2 with a per-(token, N-tile) agent-scope atomic counter whose last arriver sums the 16 fp4 rows in slot order 526–547 µs, counters and sc1 stores without the sum 364, counters alone 345; two streams (stage 2 and the reduce, overlap seen in the trace): 818.0 → 833.1 µs at 9397 and 1267.5 → 1275.1–1278.4 µs at 16384, stage 2 about 508 µs during the overlap against 425 alone (same MoE as E39)
 - E41 [2026-10, gfx950, FlyDSL 0.3.2, N=6 pairs per arm, AKLR graph timer, arms interleaved in one process, ratio base / candidate; the two A/Bs ran at the same time on one GPU] W1 buffer loads non-temporal (cache modifier 2) in stage 1: 0.791 / 0.795; W2 non-temporal in stage 2 (`use_nt=True`): 0.942 / 0.914; W1 with modifier 1: 0.9984 / 0.9978; at n_tokens 9397 / 16384, 3 / 5 64-row blocks per expert for 110 / 109 of the 112 local experts (fused MoE SiTUv2, fp8 × MXFP4, 112 of 896 experts local, top-16, model dim 3584, inter 3072, stage 1 64×256×256, stage 2 64×256×128)
 - E42 [2026-08, gfx950 (the source does not name the GPU; its `NUM_CU = 256` is commented as gfx950's), FlyDSL ?, N=?, ruler not stated] FlyDSL's own source comment: without `@flyc.jit` on the atomic bf16 epilogue helper, its `token_id < M` guard runs at trace time and is dropped, so the atomic scatter fires on padded and out-of-range rows: stage 2 ~13× slower, 39 → ~490 µs at 896 experts (FlyDSL `moe_2stage_a16wmix` stage 2, shape not stated; ROCm/FlyDSL #948, commit 47ed57a6, read at dd8373349:kernels/moe/moe_2stage_a16wmix/gemm2.py:39-41)
+- E43 [2026-11, gfx950 (MI355X), aiter dbd8bf5, FlyDSL 0.3.2, N=8 rounds at 112 tokens and 6 at 40, Kineto kernel time, arms back to back, order swapped each round] sort buffers sized for the 896 global experts against topk_ids remapped to the 112 local experts plus one discard slot: at 112 tokens the FlyDSL sort 22.32 → 8.85 µs, aiter's default Opus sort 10.57 → 8.93 µs; at 40 tokens the Opus sort 10.54 → 12.34 µs (at 113 experts aiter ran its one-kernel sort) (fused MoE SiTUv2, fp8 activations × MXFP4 weights, 112 of 896 experts local, top-16, model dim 3584, inter 3072)
+- E44 [2026-11, gfx950 (MI355X), HIP 7.15, N=21 rounds, hipEvent time per launch, arms alternated; A-vs-A within 0.11%] a 2-way K split across the waves of a block (partials summed through LDS) against 4 N-waves over the whole K, the same LDS, K step and prefetch depth: 1.086× at K = 2048, 1.020× at K = 32768 (bf16 weight-streaming kernel: 16 experts × 32 rows × N = 7168, 1792 blocks, 768 resident)
+- E45 [2026-11, gfx950 (MI355X), HIP 7.15, rocprofv3, N=11 rounds, ratio `nt` / default per round; A-vs-A within 0.49%] 4-byte words streamed once per launch, `nt` the only ISA difference: each 128 B line read whole by one load 0.901 alone and 0.987 beside a 512 MiB `nt` weight stream (16-byte loads 0.905 alone); split across 4 waves 1.272 and 1.030, with `TCP_TCC_READ_REQ` 1.491× and 2.135× (`buffer_load_dword` microbenchmark)

@@ -48,7 +48,7 @@ sources:
   15.9–16.1 µs at every explicit count from 8 to 128.
 - **Time a replayed CUDA graph, and know the floor.** *(field, E4, E5, E6)* An eager aiter call cost 16.7 µs of host time
   against kernels of 4.6–8 µs. One graph node cost 1.75–1.95 µs even for a 1-element op, so at
-  M ≤ 16 on a small weight more than half the measured time is the node. *(field, E7, E8, E9)* Under AKLR's timer of
+  M ≤ 16 on a small weight the node is about a third to a half of the time per call, more on a GEMM tuned to ~3 µs: 33–52% for the fastest stock GEMM on 2–16 MiB bf16 weights *(field, E140)*, 59% for one at 2.983 µs (1×2048×2048). *(field, E7, E8, E9)* Under AKLR's timer of
   measurement profile 18 and earlier (Kineto, `GPU_FORCE_QUEUE_PROFILING` forced, L2 flushed before each call) an
   empty kernel read ~4 µs and a second launch added ~4 µs (a separate split-K fold took M=8 from ~8 to ~11 µs): keep
   the fold in the GEMM launch, and price a per-call counter zeroing, one more kernel (`wait_free_fold.md` E4),
@@ -59,9 +59,9 @@ sources:
   `GPU_FORCE_QUEUE_PROFILING`. *(field, E111, E112)* Two bf16 GEMMs read below an empty FlyDSL kernel timed the same
   way: 4.235–4.254 µs at m=1 against 4.32–4.36 (N=7168, K=512), and 4.07–4.26 µs at m 1–4 against 4.32–4.34 (N=512,
   K=4096). Current main times with its own rocprofiler-sdk tracer (`aklr_kernel_tracer`, profile 19) and no longer
-  forces queue profiling, so recheck the floor there: time an empty kernel, the baseline and your candidate in pairs
-  on current main before deciding a Point near 4 µs has no headroom (`../SKILL.md` § Also in AKLR;
-  `../pitfalls/aklr_dispatch_floor.md`).
+  forces queue profiling, and the floor holds there too: spin kernels of 1.8–3.5 µs back to back read 4.40–4.56 µs
+  (`../pitfalls/aklr_dispatch_floor.md` E4). Time an empty kernel, the baseline and your candidate in pairs on main
+  and back to back outside AKLR before deciding a Point at 4–5 µs has no headroom (`../SKILL.md` § Also in AKLR).
 - **Price aiter's rows through the deployed entry** (`aiter.tuned_gemm.gemm_a16w16`, the call `gemm_baseline`
   makes), not a direct kernel call; time your own kernel through its `run` entry, as
   the benchmark calls it.
@@ -70,7 +70,7 @@ sources:
 - **A cold micro-benchmark shortlists; the step decides.** *(field, E11, E12, E13)* Kernel time converted to step time about
   1:1 (ratio 1.04), but 1.2% of the step score landed in other kernels, and a +10% uniformly-weighted gain was
   −1% when weighted by call counts.
-- **A single-shape tuner on an idle GPU overvalues split-K.** *(field, E14)* Fifty tuned rows whose split-K only
+- **A single-shape tuner on an idle GPU overvalues split-K when the step's concurrent work holds the CUs it borrows** (`../patterns/low_cu_utilization.md` § Rule out first). *(field, E14)* Fifty tuned rows whose split-K only
   paid on an idle device made the step 18% slower (5742 vs 4853 µs). Deeper split-K buys parallelism from CUs
   that are idle only in the micro-benchmark.
 - **Allocate fresh tensors for each repetition.** *(field, E15)* Eight allocations of one shape and configuration
@@ -91,7 +91,7 @@ The lessons below flip sign between two regimes. Decide which one a call site is
 |---|---|---|
 | Example | o_proj / q_b / qkv projections, B tens of MB, ~100+ N-blocks | a narrow-N projection, B ≈ 1.5–3 MB |
 | Bound by | HBM read of B | launch, reduction and memory latency |
-| Split-K, more blocks | lose: +17–19% on an o_proj row already at an estimated ~7.7 TB/s with 192 blocks *(field, E21)* | win: −40% and −16% on two such rows, with a 4× larger grid and split-K 8 on one and split-K 16 on the other, B read cached instead of `nt` on both *(field, E22)* |
+| Split-K, more blocks | lose: +17–19% on an o_proj row already at an estimated ~7.7 TB/s with 192 blocks *(field, E21)*; a row that read B well below that won (`../patterns/low_cu_utilization.md`) | win: −40% and −16% on two such rows, with a 4× larger grid and split-K 8 on one and split-K 16 on the other, B read cached instead of `nt` on both *(field, E22)* |
 | `nt` on B | won on some long read-once streams, lost on another (§6) | loses: L2 is reducing latency, not only reusing |
 
 ## 3. Grid size at small M
@@ -103,7 +103,7 @@ The lessons below flip sign between two regimes. Decide which one a call site is
   around a full round on the binary you serve (`../pitfalls/measured_a_different_build.md`). `grid_pricing.md` §1
   has the arithmetic.
 - **"Fewer tiles than CUs" is necessary for starvation, not sufficient.** A cold, read-once B stream can be
-  HBM-bound with ~200 blocks; then every way to more blocks loses (table above).
+  HBM-bound with ~200 blocks; then more blocks do not pay (table above; `grid_pricing.md` §1).
 - **On a wide N, up to ~64 rows, cover M with one M-block: `tile_m = align_up(M, 16)`** (measured at M ≤ 84 on
   N = 38720). Each M-block re-streams all of B; above ~64 rows race two XCD-paired M-blocks (the short-K bullet
   below, measured at N=7168, K=768). *(field, E25, E26)* At M=24
@@ -133,10 +133,10 @@ In FlyDSL: `../flydsl/gemm.md` § small_m §3.
 
 **When it pays:** a single N-block (narrow N), where split-K is the only parallelism (34.1 → 5.0 µs at
 1×32×6144 with split-K 12 *(field, E31)*), and latency-bound rows (§2). **When it does not:** streaming rows that already have
-~100+ N-blocks, short K (splitting K=512 to fill a 0.44-wave grid cost 15–18% *(field, E32)*), and anything chosen on
+~100+ N-blocks, short K (splitting K=512 to fill a 0.44-wave grid cost 15–18% *(field, E32)*; race it with the zeroing or reduce launch counted, `../patterns/low_cu_utilization.md`), and anything chosen on
 an idle-device tuner (§1).
 
-**The reduction is a fixed cost that dominates at M=1.**
+**The reduction is a fixed cost: about a third to a half of an M=1 call on one kernel** *(field, E33)*.
 - In the generic kernel, split 0 writes zero (or the bias) into C and raises a per-tile signal, the other splits
   spin until it is visible, and every split adds its bf16-rounded partial into C with an `atomicrmw fadd`
   (`splitk_hgemm.py:401-504, 1015, 1059-1066`). The small-M kernel lets the first split to arrive zero the tile
@@ -159,21 +159,18 @@ an idle-device tuner (§1).
   planes, a last-arriving block summing them in f32 and one counter per 128 B line took a 2048×2048, M=1, split-K 8
   kernel from 4.66 to 3.85 µs (replayed, warm weight: the cost is latency and coherence, not bandwidth).
   **Not in the current kernels.** How to write it, step by step: `wait_free_fold.md`.
-- **Spread the tiles' counters apart, and race the spacing.** *(field, E34)* Packing the per-tile counters as
-  adjacent dwords put a whole launch on two cache lines and cost 1.1–2.5 µs. In a counter-stride sweep two tiles'
-  counters in one 128 B line did as well as a line each, and one tile's per-wave words may share its line
-  (`wait_free_fold.md` E13).
+- **Race the spacing of the tiles' counters.** *(field, E34)* Adjacent-dword counters put a whole launch on two cache
+  lines and cost 1.1–2.5 µs. At 8 B against 64–256 B apart a reset-then-add counter read slower and a plain add did
+  not; two tiles' counters, or one tile's per-wave words, may share a 128 B line (`wait_free_fold.md` E13, E20).
 - **Zero counters in per-call scratch before launching the GEMM.** AKLR kernels receive only their contract
   call keys and keep no state between calls. Allocate counters with `torch.zeros` on the input device on every
   call; the partial planes may use `torch.empty` because each is written before it is read. The zeroing adds
   one kernel to each split-K call. A launch tag in the counter word, or beside each partial, replaces the zeroing
   (`wait_free_fold.md` § How to write it, § Folding without a counter: launch-tagged slots); several bf16 kernels
-  do so and pass `driver.py --stress`. Make the tag wide: `llvm.amdgcn.dispatch.id` xor `llvm.amdgcn.queue.ptr` is
-  32 bits and repeats (dispatch ids 1 and 2^32 + 1 on one queue give the same tag), and a stale word that reads as
-  this launch's, already complete, leaves its tile unwritten. A wider dispatch-derived tag is one to one only within
-  its 62–64-bit domain on one queue; add queue-pointer bits, and note that truncated queue bits or an XOR do not make
-  it unique across queues. The case no test covers is a leftover scratch word equal to this launch's tag
-  (`wait_free_fold.md` § Cost and risk).
+  do so and pass `driver.py --stress`. Make the tag wide: `llvm.amdgcn.dispatch.id` xor `llvm.amdgcn.queue.ptr` cut to 32 bits
+  repeats (dispatch ids 1 and 2^32 + 1 on one queue), and on an add-only counter a stale word that reads as this
+  launch's, already complete, leaves its tile unwritten. A dispatch-derived tag is unique only on one queue; add the
+  queue-pointer bits whole, not truncated or XORed in. No test covers a leftover scratch word equal to this launch's tag (`wait_free_fold.md` § Cost and risk).
 - **Price split-K with this fold.** The last split to arrive reads every partial through one CU, and arrival skew
   leaves most tiles' fold to one split. *(field, E107)* Against folds that waited and spread the sum over all
   splits, it was 16% slower at M=128 and within 2% at M ≤ 64 on one GEMM, 24% and 8% slower at M 256 and 512 on
@@ -191,14 +188,16 @@ an idle-device tuner (§1).
 
 **Constraints and correctness**
 - **The current split-K is not bitwise reproducible** at split-K ≥ 3, or at split-K 2 with a bias: partials
-  are added into C in arrival order. Where
-  runs must match bitwise, use split-K 1 or 2 without a bias, or a fixed-order reduction
+  are added into C in arrival order. Split-K 2 without a bias is not safe on every kernel: aiter's small-M kernel
+  with B loaded straight to VGPRs (m=8, N=2560, K=1536) sometimes lost a whole partial at every split-K ≥ 2, a
+  wrong output, not only a reordered one *(field, E145)*. Where
+  runs must match bitwise, use split-K 1 or a fixed-order reduction
   (`../flydsl/kernels/flydsl_kernel_library.md` § Split-K).
 - *(field, E50)* bf16 partials exceeded a 0.02 relative-error gate at split-K ≈ 12 (0.0241); f32 partials read 0.
   Gate every deep split-K row on accuracy, not only the first one tuned.
 - **Race fp32 partials rounded to their top 24 bits, four packed in three dwords** (25% fewer plane bytes, error
   ≤ 2⁻¹⁶ of each partial). *(field, E51)* 4.5–4.9% at M ≈ 112, nothing at M ≤ 16; within 1 bf16 ulp unless the sum cancels.
-- Coherence scope of the partials on gfx950: `sc0 sc1` is system scope (past the MALL). *(field, E52)* On three
+- Coherence scope of the partials on gfx950: `sc0 sc1` is system scope, but it does not bypass the MALL: the ISA lists the last-level cache as Hit LRU for system and device scope alike (`../hardware/gfx950/cdna4/ch09_vector_memory_operations.md` Table 49). *(field, E52)* On three
   split-K rows of one campaign, `sc0 sc1` on every partial read 4.7–8.8% slower than agent scope (`sc1`); the same
   round put the spread between readings of one arm at 7–10%. On two
   other kernels it was not slower: *(field, E53)* agent scope (`sc1`) timed the same as `sc0 sc1`; *(field, E115)* on a
@@ -260,17 +259,13 @@ In FlyDSL: `../flydsl/gemm.md` § small_m §4.
   1 wave lost (3.83 at m=32); at N=2048, K=7168 (split-K 4, one reading per configuration) the best 1- and 2-wave
   configurations beat every 4-wave one at m=16 (7.80 and 7.98 against 8.07 or more; 1 wave with a 4-slot ring read
   8.46) and m=32 (8.55 and 8.66 against 9.20 or more).
-- **For a row-major (N, K) B, `block_k` is the DRAM burst length of each row segment.** *(field, E62, E63, E64)* 256 was best
-  by 9–40% cold on long-K rows and 512 was worse; at K=2048, 128 won because 8 iterations of 256 made the
-  pipeline fill too large a share. *(field, E65)* At K=7168 with LDS capping stages, 256 × 3 stages lost 1.6% to
-  128 × 5 at one paired point; race `block_k` together with the stage count it leaves room for.
-- **Stages of a ring the waves share: deeper prefetch pays until LDS per workgroup crosses an occupancy step**
+- **For a row-major (N, K) B, `block_k` is the DRAM burst length of each row segment.** *(field, E142)* At M=8 with 2 stages and B cold, the better of 64 and 128 took 17–46% longer than 256 at K 7168–16384; 512 was 2–7% faster still where its grid fit at one workgroup per CU and 19–34% slower where it did not; with stages raced, 128 × 4 tied or beat 256 on 2 of 4 shapes.
+  *(field, E62, E63, E64)* On the campaign's decode rows, 256 rows that also changed `tile_n` and the warp layout took 4–40% off the cold time, 512 was worse on one, and at K=2048 128 × 6 stages beat 256 × 4. *(field, E65)* At K=7168 with LDS capping stages, 256 × 3 stages lost 1.6% to 128 × 5 at one paired point; race `block_k` together with the stage count it leaves room for.
+- **Stages of a ring the waves share: a third stage usually paid, further ones rarely; time jumps where LDS per workgroup leaves the grid no longer co-resident**
   (private rings per wave held at 2–3 stages at M 256–4096, `mainloop.md` §11; the final small-m campaign kernels with
   private rings at N 1024–2048 keep 6–10 slots per wave at m ≤ 32 and 2–6 at m 64–128: race the depth per m).
-  *(field, E66, E67)* With 2 stages
-  the loop barrier drained `vmcnt(0)` every iteration; 2 → 4 stages was 1.43× at the winning tile. At a fixed
-  tile, time jumped where LDS per workgroup crossed 81920 B (2 → 1 workgroup per CU). Sweep stages together
-  with the tile; judging a tile at fixed 2 stages misranks it.
+  *(field, E66, E67)* With 2 stages the loop barrier drained `vmcnt(0)` every iteration; 2 → 4 stages was 1.43× at the winning tile. At a fixed tile,
+  time jumped where LDS per workgroup crossed 81920 B (2 → 1 workgroup per CU). *(field, E142)* Over 8 tiles at M=8, 2 → 3 stages paid 4–25% on 5 and lost on 2; later stages moved the time by under 1.3% until a step left fewer workgroups resident than the grid, which added 3–25%. Sweep stages together with the tile; judging a tile at fixed 2 stages misranks it.
 - **For a B in its (N, K) layout, race the LDS path against loading straight to VGPRs.** At m ≤ 128 every bypass
   tried lost at N 2048–6144 with K ≥ 1536. Register paths won only in narrower cases: a GEMV at N=1024, K=7168 at
   m ≤ 2 (it lost from m=4), and B in VGPRs at N=28672, K=512, m=32 (at m=64 B through LDS with A in VGPRs won); the
@@ -305,7 +300,7 @@ In FlyDSL: `../flydsl/gemm.md` § small_m §4.
 
 ## 6. Memory-side knobs
 
-- **B's cache policy must be a raced, per-configuration axis.**
+- **B's cache policy must be raced per configuration, timed with B as cold or as reused as in deployment.** *(field, E146)* On two LDS-DMA skinny kernels (B 2–128 MiB), `nt` was within 0.2% of the best policy at every point with B read cold each call, and cost up to 23% with the same B re-read back to back.
   - `nt` on B was −4.4 to −9.5% on long read-once streams *(field, E71)*.
   - On the streamed B of six small-m kernels, `nt` helped at K 4096–6144 (N=6144), was neutral at K 1536–2048
     (N 4096–6144) and hurt at K=512 (N 7168–28672); K, N and the kernel design changed together. *(field, E133)*
@@ -323,10 +318,10 @@ In FlyDSL: `../flydsl/gemm.md` § small_m §4.
     (N=512, K=4096) *(field, E136)*. At N=64 (A is larger than B only at m=128), `nt` on A alone read 4.19 against
     4.26 µs at m=128 and 0.4% faster on the mean over all m (a separately compiled copy of the same kernel read 0.16%
     apart in an earlier run); it was not kept *(field, E137)*.
-  - So does C: `nt` on the C store cost up to ~2% at M 16–112 (tie at M=8), while the same GEMM's M≈900 tile gained ~2% *(field, E78)*.
+  - For C it depends on whether C stays in cache: on two skinny kernels (N=7168), `nt` on the C store cost 0.5–4.3% at M 32–98 when every call rewrote the same C, saved 3.5–4.5% at M 96–112 with a fresh C each call, and tied at M 8–16 *(field, E78, E143)*; the same GEMM's M≈900 tile gained ~2% *(field, E78)*.
 
   **Not in the current kernels.**
-- **Race issuing each stage's A DMA before its B DMA.** *(field, E79)* 0.2–3.5% at M 21–98 on cold B, most at the largest M.
+- **Race issuing each stage's A DMA before its B DMA.** *(field, E79)* On one `nt`-B kernel (N=3584, K=7168, L2 flushed per call) it gained up to 3.4% at M=98 and lost about 0.1% at M 7 and 14; *(field, E143)* that kernel's shipped version moved by under 0.5% either way, and at N=2048, K=7168 B first was 0.4–0.5% faster at M 70 and 98.
   On a second kernel it was within 0.1%; on a third, with L2 flushed per call, neutral to 1% slower at M 12–96
   (1.5–2.5% faster in a warm replay loop) and ~1% faster only on split-K tiles of ≥ 128 rows *(field, E80, E81)*.
 - **Race three K-start forms: none, per block, and grouped.** With all blocks starting at k-tile 0, concurrent reads
@@ -379,7 +374,7 @@ In FlyDSL: `../flydsl/gemm.md` § small_m §4.
   - It interacts with the XCD band below; re-sweep both after any tile change.
   - **Not in the current kernels.**
 - **When the grid leaves CUs idle, give them workgroups that load later K-tiles of B into L2** (cached, not `nt`).
-  *(field, E89, E90)* Dropping them read ~6% slower at M ≈ 56–98 in single driver runs, within noise in the run's own ablation; they lost at M ≤ 21; race the first prefetched tile per M.
+  *(field, E89, E90, E143)* On one kernel (N=7168, K=1792) with B cold, dropping them cost 8–13% at M 56–98, and at M 7–14 every start tried (50–93% through K) lost; with B resident in cache, starts 50–71% through K won 8–16% at M 7 and 21. Race the first prefetched tile per M.
   *(field, E91, E92, E93)* On one kernel (N=7168, K=4224, 33 K-tiles) the best start sat ~60–80% through K at M 24–112,
   a mid-K start was ~30% slower than none at M=64, and on a split-K grid no start paid reliably (the best read 1.1%
   faster at M=112 in one run). *(field, E139)* On another (N=6144, K=1536, 12 K-tiles) the best start moved earlier as
@@ -387,7 +382,7 @@ In FlyDSL: `../flydsl/gemm.md` § small_m §4.
   stagger that alone cost ~1% there *(field, E131)*), 50% at m=32, 42% at m=64 and 33% at m=128; there a start at
   58% beat none at m=64 (7.07 against 7.57 µs).
 - **XCD placement at small grids.**
-  - The hardware deals workgroup i to XCD `i % 8`, so with plain N-fastest order each XCD gets N-tiles 8 apart.
+  - Workgroups whose indices differ by a multiple of 8 run on the same XCD, so with plain N-fastest order each XCD gets N-tiles 8 apart; which XCD gets workgroup 0 depends on the hardware queue the launch lands on (`schedule_and_locality.md` §2): never key work to an absolute XCD number.
   - A band-cyclic remap (runs of adjacent N-tiles per XCD) removed the bimodal timings in §1 and was −2 to −3% on
     some rows *(field, E94, E95, E96)*, neutral or harmful on others; race it.
   - *(field, E97, E98, E99)* On a read-once B with no reuse between tiles (N=163840, K=256), runs of 8 adjacent tiles
@@ -413,10 +408,8 @@ In FlyDSL: `../flydsl/gemm.md` § small_m §4.
     final small-M kernel does not preload; at N=3584, K=512 the sign flipped between two runs (m=1 4.23 → 4.12, then
     4.22 → 4.34).
   - **Not in aiter's bf16 GEMM kernels.**
-- **Fetch only the real A rows when M < 16**, but only where A is a large share of the bytes. *(field, E103)* −1.5% on
-  one row, +11% on another where it made the A load wave-predicated and shortened the pipeline. Never predicate
-  an LDS DMA per lane: a DMA under a partial exec mask does not land where the reader expects. **Not in the
-  generic kernel.**
+- **Fetch only the real A rows when M < 16**, and race it. *(field, E103)* −1.5% on one row, +11% on another where it made the A load wave-predicated and shortened the pipeline. *(field, E144)* A per-lane exec mask on a buffer or global LDS DMA is safe: active lanes land at the M0 base plus their lane offset and inactive slots keep their contents.
+  Keep M0 wave-uniform (a per-lane M0 read with `readfirstlane` shifts the whole wave's data), and keep a skipped slot's old contents out of every kept output. **Not in the generic kernel.**
 
 In FlyDSL: `../flydsl/gemm.md` § small_m §6.
 
@@ -520,7 +513,7 @@ setup); otherwise `FlyDSL ?`.
 - E59 [2026-10, gfx950, FlyDSL 0.3.2, N=?, driver graph-timer medians; the run's own CUDA-graph replay timer for the separate-fold-kernel arm] cross-block split-K 8 on 32×256×64 tiles against the narrow-tile kernel: m=24 81.7 vs 88.7 µs, m=8 80.6 vs 82.9 µs (m=16 not compared), its fold in the launch: each split publishes a launch tag and polls flags, and the split that owns each fragment sums it; in an earlier candidate, with a separate fixed-order fp32 fold kernel, split 8 at m=24 90.4 µs against 87.8 for the narrow-tile kernel with a stagger of 1 tile per band (gemm_n7168_k35840 forge run)
 - E60 [2026-09, gfx950, FlyDSL 0.3.2, N=3, graph, cold (B rotated over >= 512 MB), ABAB×3 against late bases] warps split along N instead of K (w1x2x1): 11.257/11.320/11.449 vs 11.385/11.387 µs = −1.0%, SNR 50.8 → 94.8 dB (q_b (8,16384,2048))
 - E61 [2026-10, gfx950, FlyDSL 0.3.2, N=?, isolated times, warmup 3, 20 iterations, timer not stated] 3 against 2 N-waves over 96-wide tiles: m=80 19.73 vs 20.68, m=96 21.13 vs 22.66, m=112 22.62 vs 24.65 µs; 6 waves against 4 at m=112 22.27 vs 22.79 µs (different stage counts) (gemm_n6144_k7168 forge run)
-- E62 [2026-08, gfx950, FlyDSL ?, aiter fork rev ?, N=?, graph, cold] raising TILE_K to 256 was worth 9% to 40% cold on the four decode shapes (GLM-5.2 decode GEMMs (8,6144,16384), (8,16384,2048), (8,2624,6144), (8,4096,2048))
+- E62 [2026-08, gfx950, FlyDSL ?, aiter fork rev ?, N=?, graph, cold] TILE_K 256 rows against the rows served, with tile_n and the warp layout changed too: (8,6144,16384) 40.3–42.7 → 38.82 µs, (8,16384,2048) 25.12 → 15.14 µs; (8,2624,6144) and (8,4096,2048) were already served at TILE_K 256 (GLM-5.2 decode GEMMs (8,6144,16384), (8,16384,2048), (8,2624,6144), (8,4096,2048))
 - E63 [2026-08, gfx950, FlyDSL ?, aiter fork rev ?, N=?, graph, cold] TILE_K 512: t16x32x512 split-K 4 44.74 µs against t16x32x256 38.79 µs ((8,6144,16384))
 - E64 [2026-08, gfx950, FlyDSL 0.3.2, N=?, graph, cold (B rotated over >= 512 MB)] STAGES 6 with BLOCK_K 128 beat STAGES 4 with BLOCK_K 256 (q_b (8,16384,2048))
 - E65 [2026-10, gfx950, FlyDSL 0.3.2, N=1, single-case driver bench, warmup 3, 20 iterations] block_k 256 × 3 stages against 128 × 5: m=16 44.3 → 45.0 µs (+1.6%, the one paired point); m=8 44.9 µs against an unpaired 43.4–44.9; m=32 did not fit LDS (gemm_n20480_k7168 forge run)
@@ -537,7 +530,7 @@ setup); otherwise `FlyDSL ?`.
 - E76 [2026-09, gfx950, FlyDSL 0.3.2, aiter fork base 5a11152e2, N=?, aiter tuner run_perftest, rotated (cold)] b_cpol=1 alone took 24,38720 at tile_k 64 from 98.04 to 158.68 µs and 10,38720 at tile_k 128 from 152.76 to 83.45 µs (24,38720; 10,38720)
 - E77 [2026-08, gfx950, FlyDSL 0.3.2, N=2, graph, cold (B rotated over >= 512 MB), ABAB] nt on A: 34.874/34.644 vs 33.289 µs = +4.5% (o_proj (8,6144,16384))
 - E78 [2026-10, gfx950, FlyDSL 0.3.2, N=3, driver --bench-case, warmup 3, 20 iterations, 2–3 pairs per case] nt (aux=2) on the C store against aux=0: m=8 9.704 vs 9.703 (tie), m=32 11.075 vs 10.954, m=96 15.33 vs 15.12 µs; m=893 49.53–49.57 vs 50.48–50.52 µs (gemm_n7168_k3584 forge run)
-- E79 [2026-10, gfx950, FlyDSL 0.3.2, N=3–4, AKLR bench_cudagraph (1 GiB read flush before each call), 8 input sets, median of 3–4 repeats] A DMA issued before B on top of the nt-B kernel: m=98 17.595 → 16.992 µs (−3.4%), m=21 −0.9%, m=56 −0.4%; at other m −0.038 to −0.173 µs (gemm_n3584_k7168 forge run)
+- E79 [2026-10, gfx950, FlyDSL 0.3.2, N=3–4, AKLR bench_cudagraph (1 GiB read flush before each call), 8 input sets, median of 3–4 repeats] A DMA issued before B on top of the nt-B kernel: m=98 17.595 → 16.992 µs (−3.4%), m=21 −0.9%, m=56 −0.4%, m=7 9.943 → 9.957 (+0.14%); at other m −0.038 to −0.173 µs, except m=14 +0.010 (gemm_n3584_k7168 forge run)
 - E80 [2026-10, gfx950, FlyDSL 0.3.2, N=1, driver single-case --bench-mode, 3 warmup, 20 iterations] A's DMA before B's: within 0.1% of canonical at m=16, 64 and 112 (gemm_n8448_k7168 forge run)
 - E81 [2026-10, gfx950, FlyDSL 0.3.2, N=3–7, AKLR bench_cudagraph (L2 flushed per call); warm = own graph replayed back to back] A before B on split rows: 1.5–2.5% faster warm; flushed, within ±0.3% at m=12–96 except m=80 20.10 vs 19.87 µs; m=893 72.58/72.75 vs 73.45/73.52, m=112 22.93/22.92 vs 23.09/23.06 µs (gemm_n6016_k7168 forge run)
 - E82 [2026-08, gfx950, FlyDSL 0.3.2, N=2, graph, cold (B rotated over >= 512 MB), ABAB] K-start stagger: −8.6 / −2.9 / −3.2 / −5.5% per shape (the four GLM-5.2 decode shapes)
@@ -556,8 +549,8 @@ setup); otherwise `FlyDSL ?`.
 - E95 [2026-08, gfx950, FlyDSL 0.3.2, N=2, graph, cold (B rotated over >= 512 MB)] every banded configuration below both base reads, ~−2.6% ((8,2624,6144))
 - E96 [2026-09, gfx950, FlyDSL ?, aiter fork 2c71811b3, N=?, run_perftest rotate_args, palindromic order, same-binary control] xcd_band 2 worth −2.83% against a 0.13% noise floor (o_proj 6144x16384, M=1; commit 2c71811b3)
 - E97 [2026-10, gfx950, FlyDSL 0.3.2, N=4–6, AKLR graph timer, arms interleaved in one process] runs of 8 tiles per XCD (g8) against plain order (g1) at m=5–10: 14.55 vs 14.92 µs at m=5 … 14.51 vs 14.94 at m=10 (1.4–2.9%) (gemm_n163840_k256 forge run)
-- E98 [2026-10, gfx950, FlyDSL 0.3.2, N=3–4, AKLR graph timer, arms interleaved in one process] one contiguous slice per XCD: 16.45 vs 16.06 µs at m=14 and 16.92 vs 15.40 µs at m=12 (gemm_n163840_k256 forge run)
-- E99 [2026-10, gfx950, FlyDSL 0.3.2, N=?, AKLR graph timer; the g8 base is taken from another line of the same record] runs of 80 and 640 tiles: g=80 14.46/15.04/14.50/14.63 and g=640 15.27/16.30/15.24/15.41 µs against g8 14.45/14.64/14.23/14.39 (gemm_n163840_k256 forge run)
+- E98 [2026-10, gfx950, FlyDSL 0.3.2, N=3–4, AKLR graph timer, arms interleaved in one process] one contiguous slice per XCD: 16.45 vs 16.06 µs at m=14 and 16.92 vs 15.40 µs at m=12; runs of 8 tiles per XCD against plain order at m=1–4 on a shared output 14.18/14.26/14.33/14.75 vs 14.32/14.34/14.43/15.13 µs, at m=4 on fresh outputs 14.43 vs 15.13 (gemm_n163840_k256 forge run)
+- E99 [2026-10, gfx950, FlyDSL 0.3.2, N=?, AKLR graph timer; the g8 base is taken from other lines of the same record] runs of 80 and 640 tiles at m=1/5/7/8: g=80 14.46/15.04/14.50/14.63 and g=640 15.27/16.30/15.24/15.41 µs against g8 13.88 (the run's HEAD at m=1)/14.45/14.23/14.39, g=80 +1.7 to +4.2%, g=640 +7.1 to +12.8% (gemm_n163840_k256 forge run)
 - E100 [2026-09, gfx950, FlyDSL 0.3.2, N=3, graph, cold (B rotated over >= 512 MB), ABAB×3] kernarg preload: (8,6144,16384) 29.640/29.429/29.464 vs 29.970/29.655/29.587 µs (−0.5%); (8,16384,2048) −1.0%, (8,2624,6144) −0.6%, (8,4096,2048) −0.7% (the four GLM-5.2 decode shapes)
 - E101 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop ablation ladder row marked recorded (the campaign's paired KEEP timing), driver --bench-mode] kernarg preload: +3.41% mean (lower bound +2.89%), +2.0% at m=98 to +4.3% at m=7 and 35, all 11 cases positive; kernel 5.9–10.8 µs (gemm_n7168_k1792)
 - E102 [2026-09, gfx950, FlyDSL 0.3.2, N=3, decode step, min of 4 runs, three scored runs] with preload the step scored 47.0522 / 47.0345 / 47.0057 against 46.8209, about +0.45% (GLM-5.2 decode step)
@@ -597,3 +590,9 @@ setup); otherwise `FlyDSL ?`.
 - E137 [2026-11, gfx950, FlyDSL 0.3.2, N=6 rounds, AKLR bench_cudagraph, rounds shuffled in one process] nt on A only / B only / both, means over 8 m: 4.2117 / 4.2494 / 4.2589 against 4.2271; in an earlier run of the same iteration a separately compiled copy of c0 4.2277 against 4.2208; m=128 A only 4.189 against 4.258 µs; the round was rejected at the keep gate (bf16 GEMM n64 k4096, forge run)
 - E138 [2026-11, gfx950, FlyDSL 0.3.2, N=1 ablation (n1024); in-process A/B on bench_cudagraph, 4–6 rounds (n2048, n7168, n3584)] n1024 k7168: +2.68% [+2.46, +2.89], 7 up / 1 down, kernarg_preload_length 2 (A's pointer only); n2048 k2048 no preload → preload: m=64 5.443 → 5.176, m=128 6.508 → 6.255, m=16 4.367 → 4.395; skw8 at m ≤ 8 driver 4.45–4.47 against 4.29, in-process 4.226 against 4.246; n7168 k512 pointer arguments, preload 0 → 6: m=16 4.206 → 4.242, m=32 4.189 → 4.248, m=128 4.872 → 4.660; n3584 k512 m=1 4.228 → 4.123 in run 1, 4.216 → 4.337 in run 2 (n7168 k512 final kernel, no `amdgpu-kernarg-preload-count`)
 - E139 [2026-11, gfx950, FlyDSL 0.3.2, N=7 readings per configuration, bench_cudagraph via the run's config probe, interleaved; 12 K-tiles of 128] first prefetched tile: m=64 (stagger 5) pf 6 / 5 / 4 / 3 / 8: 6.72 / 6.49 / 6.67 / 6.98 / 7.00; pf 7 (stagger 0) 7.07 against off 7.57; m=128 (stagger 11) pf 6 / 5 / 4 / 3 / 2: 8.81 / 8.62 / 8.37 / 8.47 / 8.67; m=32 (stagger 7) pf 10 / 8 / 7 / 6 / 5 / 4: 5.77 / 5.69 / 5.56 / 5.50 / 5.61 / 5.82; m=16: pf 9 row 5.08, pf 6 / 5 / 4 (stagger 7) 5.12 / 5.47 / 5.95; final kernel: off at m ≤ 8, pf 9 / 6 / 5 / 4 at m 9–16 / 17–32 / 33–95 / ≥ 96 (the pf 9 row is the m=32 row timed at m=16) (bf16 GEMM n6144 k1536, forge run)
+- E140 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, torch 2.11.0+rocm10.0.0, N=9 rounds of 5 graph replays; graphs of 40 calls on one weight] the fastest correct GEMM per point 3.613–5.672 µs per call against 1.879–1.888 µs per 1-element `add_` node timed beside it: node share 0.333–0.521 (bf16 GEMM, M 1, 4, 8, 16, five (N, K) from (1024, 1024) to (2048, 4096), 2–16 MiB; `torch` linear, aiter `gemm_a16w16` and aiter FlyDSL split-K HGEMM)
+- E142 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=9 rounds of 7 graph replays; B cold (≥ 640 MiB of copies rotated)] aiter's split-K HGEMM at M=8, B row-major (N, K) through LDS, one knob per series, t16x64 and t16x32 tiles on four (N, K) with K 7168–16384. TILE_K at 2 stages: the better of 64 and 128 took 1.17–1.46× the time of 256; 512 against 256 1.9–7.5% faster on grids of 128–256 workgroups (one per CU), 18.6–34.1% slower on 384–768; best of 2–4 stages (t16x64), 128 × 4 16.64 and 14.88 µs against 256 × 3 16.75 and 15.40 at (N, K) (2048, 16384) and (4096, 7168). STAGES, 8 tiles: 2 → 3 −3.6% to −25.4% on 5, −1.2% on one, +2.9% and +10.1% on two; a later step that left fewer workgroups resident than the grid +3.0% to +24.8%, every other within ±1.3% (aiter split-K HGEMM, bf16)
+- E143 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=10–11 paired rounds; CUDA graphs rotating copies of B (cold) or on one B (hot)] AKLR's shipped bf16 kernels, one knob changed, outputs bitwise equal. `nt` on the C store, N=7168, K 3584 and 1792: a fresh C each call −3.50% to −4.45% at m 96–112, within 0.3% at m 8–16; the same C every call +0.52% to +4.28% at m 32–98. Prefetch workgroups, N=7168, K=1792: off, cold, +8.4% to +12.7% at m 56–98; first prefetched tile 7, 10 or 13 of 14 against none, cold, +1.2% to +76.1% at m 7 and 14; hot, tile 7 or 10 −8.3% to −15.7% at m 7 and 21. B's DMA first against A's first (AKLR bench_cudagraph, 1 GiB read before each call): shipped gemm_n3584_k7168 at m 21–98 −0.17% to +0.43%; at (N, K) (2048, 7168) −0.42% and −0.47% at m 70 and 98
+- E144 [2026-11, gfx950 (MI355X), HIP 7.15, N=2048 wave instances per path, size and mask, LDS compared word by word] one LDS DMA per wave under a partial exec mask, wave-uniform M0: `buffer_load_dword`, `_dwordx3` and `_dwordx4` with `lds` and `global_load_lds_dword`, `_dwordx3` and `_dwordx4` put every active lane's data at the M0 base + its lane offset and left inactive lanes' slots unchanged; with M0 = `readfirstlane` of a per-lane LDS address, every mask without lane 0 shifted the whole wave's data (probe kernel)
+- E145 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=400 repeats per cell, each compared bitwise with the first; back to back, beside a 4096³ bf16 matmul on another stream, and after writing 1 GiB] aiter's `flydsl_hgemm` (bf16) at split-K 1, 2, 3, 4 and 8, with and without a bias: split-K 1 0 of 400 in all cells; with B through LDS (HGEMM m=32, N=1024, K=3072 and m=96, N=3072, K=1536; small-M m=1, N=1024, K=3072), split-K 2 without a bias 0 of 400, split-K 2 with a bias and 3, 4 and 8 398–400 of 400, at most 3 apart except the m=96 HGEMM with a bias, 8.25–23.25 apart in 31–61 of the 133 repeats beside the matmul; small-M m=8, N=2560, K=1536 with B straight to VGPRs, split-K 2 without a bias 285 of 400 off by 49–123 (outputs up to 154), split-K 3, 4 and 8 400 of 400, 175–263 of them by 30–121, with a bias split-K 2 and 3 already wrong on the first call
+- E146 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=10 rounds, median of per-round ratios, A/A threshold ≥ 0.3%; cold: AKLR `bench_cudagraph` with 1 GiB read before each call; reused: a graph of 20 calls on the same B] two AKLR LDS-DMA skinny kernels at main 3b315a7, only the cache bits of B's DMA changed (six policies, outputs bitwise equal), 8 points with B 2–128 MiB: cold, `nt` within 0.18% of the best policy at all 8; reused, `nt` faster than none at no point, 23.38 → 28.68 µs at 128 MiB, m=56 (`gemm_n3584_k7168`'s kernel at three N × K, `gemm_n6144_k1536`)

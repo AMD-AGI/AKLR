@@ -16,8 +16,8 @@ measured:
   - {metric: "speedup over aiter, AKLR CI measurement profile 19 per Point", value: "0.876–3.429; 14 of 17 Points ≥ 1.03 and served as of #102 (not m 2732, 9397, 16384)", gpu: MI355X, workload: "gemm_n7168_k4224, m 8–16384 (17 Points)", run_ref: "6d7cfec (#102, CI run 42549655045)", date: "2026-11-09"}
   - {metric: "speedup over aiter, local validate lower bound per Point", value: "1.284–2.000 (2.000 is the bound's cap); 13 of 13 Points ≥ 1.03; CI serves 13 of 13 as of CI run 41197527705 (a29581b), unchanged by #102", gpu: MI355X, workload: "gemm_n18432_k1536, m 8, 12, 16, 24, 32, 40, 48, 56, 60, 64, 80, 96, 112", date: "2026-10-25"}
   - {metric: "speedup over aiter, local validate lower bound per Point", value: "1.071–1.417; 23 of 23 Points ≥ 1.03; CI serves 23 of 23 as of #102", gpu: MI355X, workload: "gemm_n20480_k7168, m 7–112 (23 Points)", date: "2026-10-26"}
-  - {metric: "speedup over aiter, AKLR validate profile 19, per Point; no CI measurement yet", value: "1.118–1.449; 8 of 8 Points at or above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n4096_k2048 file 37c909c4b629ad59, m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
-  - {metric: "speedup over aiter, AKLR validate profile 19, per Point; no CI measurement yet", value: "1.427–1.592; 8 of 8 Points at or above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n6144_k1536 file 1d3a1fcaf77631e1, m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.118–1.449; 8 of 8 Points at or above AKLR_MIN_SPEEDUP; CI serves 8 of 8 as of #115", gpu: MI355X, workload: "gemm_n4096_k2048 file 37c909c4b629ad59, m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.427–1.592; 8 of 8 Points at or above AKLR_MIN_SPEEDUP; CI serves 8 of 8 as of #115", gpu: MI355X, workload: "gemm_n6144_k1536 file 1d3a1fcaf77631e1, m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
 sources:
   - aklr/ops/gemm/impls/flydsl/gemm_n7168_k768/0567a6d854ac7a39.json
   - aklr/ops/gemm/impls/flydsl/gemm_n7168_k1536/c9ad7a129bb4cfe6.json
@@ -147,8 +147,9 @@ under Counter-signals (`../gemm/grid_pricing.md` §2).
 **What each part bought** (campaign ablations; each kept round timed beside the version before it):
 
 - k1792: the single-pass ring with a fixed-order K-wave fold +3.5% (m 98) to +50.6% (m 35) over the campaign's
-  starting kernel; the K-start stagger +0.2–8.4% at m ≥ 35; the row split at m 84, 98 +6.4–6.6%; per-m wave layouts
-  +12.9% at m 98; kernel-argument preload +2.0–4.3% at every Point; `nt` on B +0.6–3.4% up to m 84. The L2-prefetch
+  starting kernel; the K-start stagger +0.2–8.4% at m ≥ 35; the row split at m 84, 98, in one round with L2 prefetch
+  and a leaner epilogue, +6.4–6.6% for the round; per-m wave layouts +12.9% at m 98; kernel-argument preload
+  +2.0–4.3% at every Point; `nt` on B +0.6–3.4% up to m 84. The L2-prefetch
   workgroups measured −3.3% to +2.6% by Point *(field, E9)*.
 - k3584: the skinny/tiled pair +17.2–45.7% at m ≤ 112 *(field, E10)*; the persistent grid +1.5% (m 9397) and
   +0.9% (16384) *(field, E14)*.
@@ -161,16 +162,18 @@ under Counter-signals (`../gemm/grid_pricing.md` §2).
 - k1536: aiter's async-LDS HGEMM with a per-m table +17.0–42.9% at m ≤ 112 over the starting kernel; the 3-stage
   160×256 8-wave tile +25.2% at m 2732; the head + tail split at m 9397 +4.4% *(field, E13)*; `nt` C stores
   +1.0–2.4% at m ≥ 2732 and the persistent grid +3.5% (9397) and +3.6% (16384) *(field, E14)*.
-- n18432: the one-workgroup-per-CU port +7.5–113.4%; 72-column blocks on all 256 CUs with A issued first +17.2% at
-  m 112; the line-aligned block plus strip −0.4% to +3.1% *(field, E15)*. n20480 is that kernel at K 7168, kept in
-  one round *(field, E16)*.
+- n18432: the one-workgroup-per-CU port +7.5–113.4%; 72-column blocks on all 256 CUs with A issued first, in one
+  round that also retiled m 112, +17.2% at m 112 for the round; the line-aligned block plus strip, in one round that
+  also dropped an epilogue barrier, −0.4% to +3.1% *(field, E15)*. n20480 is that kernel at K 7168, kept in one round
+  *(field, E16)*.
 
 ## Result
 
 "Served" counts the Points at or above 1.03 in CI as of #102 (6d7cfec, CI run 42549655045, measurement profile 19),
 n18432 as of CI run 41197527705 (a29581b), which #102 left unchanged; the `speedup` in each schema's `workloads` is
-the current value *(field, E23)*. CI runs the FlyDSL of its image (0.3.4.1 in the image of the latest perf runs), not
-the 0.3.2 of the local numbers below (`../pitfalls/measured_a_different_build.md`).
+the current value *(field, E23)*. CI runs FlyDSL 0.3.2, the version of the local numbers below, not the 0.3.4.1 of
+its image: its workflow installs a `flydsl==0.3.2` pin over the image (read from the workflow, not from a run's log;
+`../pitfalls/measured_a_different_build.md`).
 
 The other columns are the campaigns' own runs of the predecessor repository's `validate` (before the rename to
 AKLR) on MI355X, FlyDSL 0.3.2: a lower bound of the CUDA-graph time ratio aiter / kernel, one run each,
@@ -192,10 +195,10 @@ are from the run on the delivered version *(field, E5, E6)*.
 
 ## N 4096 × K 2048 and N 6144 × K 1536 at m 1–128: the k1792 band kernel
 
-Two later files, one per schema name, run k1792's `_config` / `_kernels` builder (the first column of the m ≤ 112
-table under § Mechanism) with tables of their own: `gemm_n4096_k2048/37c909c4b629ad59.json` (16 MiB of weight) and
-`gemm_n6144_k1536/1d3a1fcaf77631e1.json` (18 MiB), each listing m 1, 2, 4, …, 128. No other file serves these
-Points, so the yardstick is aiter; until CI writes their `speedup`, dispatch does not serve them (`qualifies()` in
+Two later files, one per schema name, run edited copies of k1792's `_config` / `_kernels` builder (the first column
+of the m ≤ 112 table under § Mechanism) with tables of their own: `gemm_n4096_k2048/37c909c4b629ad59.json` (16 MiB of
+weight) and `gemm_n6144_k1536/1d3a1fcaf77631e1.json` (18 MiB), each listing m 1, 2, 4, …, 128. No other file serves
+these Points, so the yardstick is aiter; CI serves all 8 Points of each as of #115 (`qualifies()` in
 `aklr/core/contract/spec/_workloads.py`; `AKLR_MIN_SPEEDUP`, default 1.03, `aklr/ops/README.md` § Environment
 variables). As in k1792, each compute workgroup streams one column band of B (`nt`) and A (cached)
 by buffer→LDS DMA through an A ring and a B ring of their own depths, B is the MFMA's first operand and C leaves in
@@ -292,7 +295,7 @@ is the predecessor repository's `validate` (before the rename to AKLR) outside C
 - E16 [2026-10, gfx950, FlyDSL 0.3.2, N=?, forge-loop paired bench, recorded round] n20480: the one kept round, the n18432 design at N 20480, +7.9–42.9% over the starting kernel (gemm_n20480_k7168)
 - E17 [2026-10, gfx950, FlyDSL 0.3.2, N=?, same-process paired bench] k4224 persistent grid against the version before: outputs bitwise equal, +1.4% at m 9397, +2.6% at m 16384 (gemm_n7168_k4224)
 - E18 [2026-10, gfx950, FlyDSL 0.3.2, N=?, campaign driver bench] k1792: split-K 2 in one launch with a flag hand-off 9.89 µs at m 7 to 15.76 µs at m 98 against 6.13–11.55 µs for the single-pass kernel (gemm_n7168_k1792)
-- S1 aklr/ops/gemm/contract.py:128 `GEMM` with `_UNSHUFFLED_VARIANTS` (:124) and `_dot_k()` (:95, fp32, `max_split_k` 16); `CompareSpec` defaults bitwise at aklr/core/contract/spec/_args.py:217
+- S1 aklr/ops/gemm/contract.py:118 `GEMM` with `_UNSHUFFLED_VARIANTS` (:116) and `_dot_k()` (:91, fp32, `max_split_k` 16); `CompareSpec` defaults bitwise at aklr/core/contract/spec/_args.py:202
 - S2 aklr/ops/gemm/impls/flydsl/gemm_n7168_k1792/f0a48d1c7cdce51f.json#kernel.py:50 `_config`; L2-prefetch workgroups at :86 and :276; B `nt` at :221; B-first MFMA at :271; owner-wave fold in wave order at :357; kernel pointers preloaded at :396
 - S3 aklr/ops/gemm/impls/flydsl/gemm_n7168_k3584/251a5ceb2d416e55.json#kernel.py:26 `_SKINNY`; tiled `_CONFIGS` at :419; tail launch `_TAIL_SPLITS` at :471 and `_launcher` at :475; persistent walk at :1041
 - S4 aklr/ops/gemm/impls/flydsl/gemm_n7168_k4224/2d72ae169867a6d1.json#kernel.py:1102 `_SK_CONFIGS`; `_sk_count_ready` static tag at :1155; poll at :1409, NaN at :1428, flag clear at :1432, producer tag at :1443

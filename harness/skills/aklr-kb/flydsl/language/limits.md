@@ -24,7 +24,8 @@ sources:
 
 What FlyDSL v0.3.2 cannot do, or does in a way a kernel author would not guess. Each bullet: the limit, what it
 does to the kernel, the workaround, the source. Probe results are compile-only (`COMPILE_ONLY=1 ARCH=gfx950`, CPU
-tensors, no GPU): IR, ISA and code-object metadata, no timings. Error texts are in `compile_errors.md`.
+tensors, no GPU: IR, ISA and code-object metadata, no timings) unless their evidence line records a GPU run. Error
+texts are in `compile_errors.md`.
 
 ## Open limits
 
@@ -33,7 +34,9 @@ tensors, no GPU): IR, ISA and code-object metadata, no timings. Error texts are 
   `.mark_shape_dynamic(dims, divisibility=16)` / `.mark_stride_dynamic(...)` (S2).
 - **Two converts are inline asm.** `fx.rocdl.cvt_pk_bf16_f32` (gfx950: f32 pair to packed bf16) and
   `fx.rocdl.cvt_off_f32_i4` emit `llvm.inline_asm` until MLIR grows ROCDL ops for them (TODO, S3); LLVM cannot
-  fold or combine an inline-asm string with its neighbours. For f32 → bf16, `Vector.to(fx.BFloat16)` let LLVM
+  constant-fold the asm or merge it with neighbouring instructions, but the wrappers are pure
+  (`has_side_effects=False`, S36), so an identical second call was still merged and an unused one deleted
+  *(field, E22)*. For f32 → bf16, `Vector.to(fx.BFloat16)` let LLVM
   select `v_cvt_pk_bf16_f32` itself *(field, E13)*.
 - **Block reduce is a first version.** `fx.coop` block reduce `WARP_REDUCTIONS` folds the per-warp totals
   linearly, every thread walking all `num_warps` slots (TODO: 15 combines at a 1024-thread block); `RAKING` walks
@@ -59,15 +62,20 @@ tensors, no GPU): IR, ISA and code-object metadata, no timings. Error texts are 
   `max_size=False` (size from the layout) or `num_records_bytes=` when the descriptor is the mask.
 - **Static block dims, or the kernel is compiled for at most 256 lanes.** Static `block=` dims at launch become
   `known_block_size` (S9). The probe kernel got `"amdgpu-flat-work-group-size"="128,128"`; launched with a
-  runtime `fx.Int32` block it got `"1,256"` and no `rocdl.reqd_work_group_size` *(field, E4)*, and nothing checks
-  a runtime block above 256. Workaround: static block dims, or `@flyc.kernel(known_block_size=[x, y, z])` (S9).
+  runtime `fx.Int32` block it got `"1,256"` and no `rocdl.reqd_work_group_size` *(field, E4)*. FlyDSL does not check
+  a runtime block above 256 lanes (32 × 16 included); HIP rejects the launch, FlyDSL only prints a
+  `hipModuleLaunchKernel(…) failed` line on stderr and returns, and the next torch call raises `unspecified launch
+  failure` *(field, E23, E26)*. Under CUDA-graph capture the launch is left out of the graph and nothing raises
+  *(field, E26)*. Workaround: static block dims, or `@flyc.kernel(known_block_size=[x, y, z])` (S9).
 - **One `SharedAllocator` per kernel; one LDS symbol per struct leaf.** A second allocator raises (S9). In
   `static=True` mode fields do not overlap; a `@fx.union` is one allocation sized to its widest variant (S10).
   LDS reused across phases (A/B stages, then a C-shuffle buffer) adds up unless declared as a union.
-- **`waves_per_eu` alone splits the register file between arch VGPRs and AGPRs.** At `rocdl.waves_per_eu` 4 a lane
+- **`waves_per_eu` can split the register file between arch VGPRs and AGPRs.** At `rocdl.waves_per_eu` 4 a lane
   gets 512 / 4 = 128 registers; with no AGPR budget the allocator gave a kernel that needed 128 arch VGPRs 64 arch and
   64 AGPRs and spilled 96 VGPRs (164 B of scratch). With `"llvm.passthrough": [["amdgpu-agpr-alloc", "0"]]` beside it
-  the same kernel compiled to 128 arch VGPRs and no spill *(field, E15)*.
+  the same kernel compiled to 128 arch VGPRs and no spill *(field, E15)*. The split needs something that stops LLVM
+  inferring no AGPR use: MFMA alone did not, an empty `rocdl.asyncmark` / `wait_asyncmark` pair (as in the gfx950
+  async-LDS GEMMs) did, and a VALU-only kernel so split ran 1.46× as long as with `amdgpu-agpr-alloc` 0 *(field, E24)*.
 - **Compile hints stick to the jit object.** `flyc.compile[hints](f, ...)` merges `hints` into
   `f.compile_hints` (S11); a later plain `f(...)` that recompiled still carried `"amdgpu-waves-per-eu"="2"`
   *(field, E5)*. Give each hint set its own `@flyc.jit` object when comparing hints.
@@ -109,7 +117,9 @@ tensors, no GPU): IR, ISA and code-object metadata, no timings. Error texts are 
 - **LDS overflow does not fail the compile.** `SharedAllocator` has no capacity check (S16; the legacy
   `SmemAllocator` has one, S17). 192 KiB on gfx950 printed `error: <unknown>:0:0: local memory (196608) exceeds
   limit (163840) …`, returned normally, cached a code object with `group_segment_fixed_size` 196608, and the next
-  run hit that cache without a message *(field, E10)*. Check `.group_segment_fixed_size` in the ISA dump.
+  compile-only run hit that cache without a message *(field, E10)*. On the GPU every launch of such a code object,
+  fresh or cached, only prints a `hipModuleLaunchKernel(…) failed` line, raises nothing and leaves the output
+  unwritten *(field, E25)*. Check `.group_segment_fixed_size` in the ISA dump.
 - **Arch-dispatched helpers read the host, not `ARCH`.** The compile target takes `ARCH` first (S13), but
   `fx.rocdl.s_waitcnt`, `fx.rocdl.WMMA` and the buffer-descriptor flags call `get_rocm_arch()`:
   `FLYDSL_GPU_ARCH`, `HSA_OVERRIDE_GFX_VERSION`, `rocm_agent_enumerator`, else a built-in default that is not
@@ -131,8 +141,8 @@ tensors, no GPU): IR, ISA and code-object metadata, no timings. Error texts are 
   arm with `barrier; barrier` and the other with `barrier; ds_write; barrier` compiled to 4 `s_barrier` instead of
   5, and the first arm's wave read stale LDS *(field, E18)*. Put an empty side-effecting `llvm.inline_asm` between
   the two, and count `s_barrier` per arm in the ISA.
-- **Signed `%` truncates while `//` floors** (S6): for a negative dividend `(a // b) * b + a % b != a`. Keep
-  index math non-negative, or use unsigned types.
+- **Signed `%` truncates while `//` floors** (S6): when `a` and `b` differ in sign and `b` does not divide `a`,
+  `(a // b) * b + a % b != a`. Keep index math non-negative, or use unsigned types.
 - **Autotune's online cache ignores the kernel source.** `~/.flydsl/autotune/<function name>.json` is keyed on
   key-argument shapes, dtypes, strides, env, toolchain, device and hints (S22), not on the kernel's source or its
   `Config` list. Delete the file or set `FLYDSL_AUTOTUNE_CACHE_DIR` after editing either.
@@ -173,6 +183,7 @@ tensors, no GPU): IR, ISA and code-object metadata, no timings. Error texts are 
 - S33 ROCm/FlyDSL@dd8373349:python/flydsl/expr/gpu.py:73 `barrier()` returns `gpu.barrier(...)`
 - S34 ROCm/FlyDSL@dd8373349:python/flydsl/compiler/backends/rocm.py:83 `canonicalize` in the pre-binary pipeline, right after `fly-int-swizzle-simplify`
 - S35 ROCm/FlyDSL@dd8373349:python/flydsl/expr/typing.py:2002 `Vector.load` builds `vector.LoadOp(result_type, memref, indices)` with no alignment; `Vector.store(..., alignment=None)` at :2016 passes one
+- S36 ROCm/FlyDSL@dd8373349:python/flydsl/expr/rocdl/inline_asm.py:65 `cvt_pk_bf16_f32` emits `llvm.inline_asm` with `has_side_effects=False` (:70); so does `cvt_off_f32_i4` (:44, :51)
 - E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] f32x4 a*b+c: 2 v_pk_mul_f32 + 2 v_pk_add_f32 by default, 2 v_pk_fma_f32 under fastmath("contract")
 - E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] 4 lanes: exp2 default 4 v_exp_f32 + 8 v_cndmask + 4 v_ldexp; exp2 fast 4 v_exp_f32 only; exp fast 4 v_exp_f32 + 8 v_cndmask
 - E3 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only] 00_origin.mlir argument type (?,?):(?{i64},1) for a raw tensor, (100,1000):(1000,1) via from_dlpack
@@ -193,3 +204,8 @@ tensors, no GPU): IR, ISA and code-object metadata, no timings. Error texts are 
 - E19 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile-only, `FLYDSL_DUMP_IR=1`] `vector<8xf16>` loaded with `vector.LoadOp` from an LDS memref at the runtime element index `8·(tid + shift)`: `alignment` 4 / 8 / 16 gave two `ds_read2_b32` / one `ds_read2_b64` / one `ds_read_b128`; without `alignment` (the f16 element's 2), one `ds_read_b128`
 - E20 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile and run, final ISA read, outputs equal] one `fx.ptr_load` of `vector<4xi32>` through `fx.PointerType.get(T.i32, fx.AddressSpace.Shared, align)` at a base plus a kernel-argument offset: align 4 two `ds_read2_b32`, 8 one `ds_read2_b64`, 16 one `ds_read_b128`; with no runtime offset, align 4 and 16 both one `ds_read_b128`
 - E21 [2026-10, gfx950, FlyDSL 0.3.2, N=1 per arm, rocprofv3 PMC on one stage-1 call at n_tokens 9397] `alignment=16` on the C-shuffle epilogue's `vector.LoadOp` of staged C: `ds_read2_b32` → `ds_read_b128`, `SQ_LDS_BANK_CONFLICT` 15.38M → 3.64M (EP8, 112 of 896 experts local, inter 3072) and 1.47e7 → 2.98e6 (TP, 896 experts, inter 384), outputs unchanged (fused MoE SiTUv2, fp8 activations × MXFP4 weights, top-16, model dim 3584, 8-wave stage-1 tiles of two 64-row groups)
+- E22 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=1 per variant, ISA and MLIR dumps, outputs bitwise equal] `fx.rocdl.cvt_pk_bf16_f32` against `.to(fx.BFloat16)`: constant operands, 2 `v_mov_b32` + 1 convert against 1 `v_mov_b32`; two half-used converts packed into a word, 2 converts + `v_and_b32` + `v_lshl_or_b32` against 1; a duplicated asm call and an unused one each left one `llvm.inline_asm` after FlyDSL's MLIR passes
+- E23 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, torch 2.11.0+rocm10.0.0, N=2 per runtime block size, outputs prefilled] runtime `fx.Int32` block, `.max_flat_workgroup_size` 256: 320, 512 and 1024 lanes wrote nothing and raised nothing, even at `torch.cuda.synchronize()`, besides one FlyDSL `'hipModuleLaunchKernel(…)' failed` line on stderr; the next torch op raised `unspecified launch failure`; 256 lanes, a static 512 block and `known_block_size=[512, 1, 1]` wrote every slot
+- E24 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=9 rounds, median of 5 batches of 10 launches] at `rocdl.waves_per_eu` 4 an MFMA and a VALU-only kernel got no AGPRs (same ISA as `amdgpu-agpr-alloc` 0); an empty `rocdl.asyncmark()` + `wait_asyncmark(0)` at entry gave 64 arch VGPRs plus 36 and 54 AGPRs, and the VALU-only kernel took 551.4 µs against 377.8 with `amdgpu-agpr-alloc` 0 (1.46×)
+- E25 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=1 per step, one process per step, disk cache on, output prefilled] static `SharedAllocator` LDS of 180224 and 196608 B: every GPU run, fresh or cached, printed `'hipModuleLaunchKernel(…)' failed with 'hipErrorIllegalState'`, raised nothing and wrote 0 of 256 outputs; 163840 B wrote 256 of 256
+- E26 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, torch 2.11.0+rocm10.0.0, N=1 per arm, outputs prefilled] the same kind of kernel: 257 and 32 × 16 lanes eager and 512 through the `flyc.compile` object failed as in E23; under `torch.cuda.graph` 512 and 32 × 16 lanes gave 0 graph nodes (1 at 256), capture, instantiate and replay returned `hipSuccess`, nothing was written and no later torch op raised
