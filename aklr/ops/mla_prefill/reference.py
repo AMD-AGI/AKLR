@@ -74,3 +74,31 @@ def mla_prefill_varlen_reference(point, row_major_args, decode):
             logits = logits.masked_fill(torch.arange(n_k, device=q.device)[None] > last, -torch.inf)
             output[q0 + r0 : q0 + r1] = torch.einsum("hqk,khd->qhd", logits.softmax(dim=-1), values)
     return output
+
+
+def mla_prefill_varlen_lse_reference(point, row_major_args, decode):
+    """Each head's attention per sequence, causal (queries aligned at the end of its keys) or over every key of the
+    sequence, in float32: the output and the natural log-sum-exp of the logits read, [query row, head]."""
+    import torch
+
+    args, dtypes = row_major_args, point.dtypes
+    causal = point.attrs["causal"]
+    q, k, v = (decode(args[name], dtypes[name]).float() for name in ("q", "k", "v"))
+    starts_q = args["cu_seqlens_q"].tolist()
+    cu_k = args.get("cu_seqlens_k")
+    starts_k = starts_q if cu_k is None else cu_k.tolist()
+    output = q.new_zeros(q.shape[0], q.shape[1], v.shape[-1])
+    lse = q.new_zeros(q.shape[0], q.shape[1])
+    for s in range(len(starts_q) - 1):
+        q0, q1, k0, k1 = starts_q[s], starts_q[s + 1], starts_k[s], starts_k[s + 1]
+        n_q, n_k = q1 - q0, k1 - k0
+        keys, values = k[k0:k1], v[k0:k1]
+        for r0 in range(0, n_q, _QUERY_ROWS):
+            r1 = min(r0 + _QUERY_ROWS, n_q)
+            logits = torch.einsum("qhd,khd->hqk", q[q0 + r0 : q0 + r1], keys) * args["sm_scale"]
+            if causal:
+                last = torch.arange(r0, r1, device=q.device)[:, None] + (n_k - n_q)
+                logits = logits.masked_fill(torch.arange(n_k, device=q.device)[None] > last, -torch.inf)
+            output[q0 + r0 : q0 + r1] = torch.einsum("hqk,khd->qhd", logits.softmax(dim=-1), values)
+            lse[q0 + r0 : q0 + r1] = logits.logsumexp(dim=-1).transpose(0, 1)
+    return output, lse

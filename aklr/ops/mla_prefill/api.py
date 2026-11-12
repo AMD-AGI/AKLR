@@ -3,7 +3,7 @@
 
 from aklr.core.runtime.dispatch import api
 
-from .contract import MLA_PREFILL_VARLEN, SPARSE_PREFILL_MXFP8
+from .contract import MLA_PREFILL_VARLEN, MLA_PREFILL_VARLEN_LSE, SPARSE_PREFILL_MXFP8
 
 
 @api(SPARSE_PREFILL_MXFP8)
@@ -34,4 +34,19 @@ def mla_prefill_varlen(
     cu_seqlens_k=None,
     sm_scale=None,
     output=None,
+): ...
+
+
+@api(MLA_PREFILL_VARLEN_LSE)
+def mla_prefill_varlen_lse(
+    q,
+    k,
+    v,
+    cu_seqlens_q,
+    qkv_fp8=True,
+    causal=True,
+    cu_seqlens_k=None,
+    sm_scale=None,
+    output=None,
+    lse=None,
 ): ...
