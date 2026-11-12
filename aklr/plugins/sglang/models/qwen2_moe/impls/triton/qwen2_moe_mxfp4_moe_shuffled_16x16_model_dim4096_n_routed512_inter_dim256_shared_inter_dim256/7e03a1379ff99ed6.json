@@ -180,7 +180,9 @@
     {
       "axes": {
         "n_tokens": 5120
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.375
     }
   ],
   "layout_variants": {
