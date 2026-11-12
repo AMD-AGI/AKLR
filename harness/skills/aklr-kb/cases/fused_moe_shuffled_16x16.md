@@ -77,7 +77,7 @@ below are of the earlier versions, but for E18 on `71df350d…`.
   | 65 experts, inter 2048 | m 1, 2, 4, 1024 `1bf41ccb…` | m 8–512, 2048, 4096 |
   | 33 experts, inter 2048 | m 1, 2, 4, 64–4096 `ef15e878…` | m 8, 16, 32 |
 
-  The new files list these Points, served once CI records a `speedup` of 1.03 or more for them (this page's runs of
+  The new files list these Points, served once CI records a `speedup` of 1.05 or more for them (this page's runs of
   their earlier versions *(field, E4, E5, E6, E7, E8)*); they raise on any other token count:
 
   | Name | Listed by the new files |
@@ -429,7 +429,7 @@ Point a new file lists but m 4 of the 65 experts, its name has no other file wit
 is below 1.03 *(field, E1)*, so deleting a new file leaves those Points unserved; m 4 goes back to `1bf41ccb…` while
 it reads 1.03 or more.
 `AKLR_DISABLE=fused_moe@1.0` stops serving the whole contract, every other MoE kernel included. Points CI
-measures below 1.03 are not served without any rollback. If the contract becomes bitwise, remove `4fbd9d02…`,
+measures below 1.05 are not served without any rollback. If the contract becomes bitwise, remove `4fbd9d02…`,
 `4ea93103…`, `4535d4f7…` and `71df350d…`'s m 512 workload; if the error bound tightens, remove the files and Points
 that keep fp8 or MXFP4 route rows (`ef15e878…` at its fp8-row Points, `2ff61774…`, `71df350d…` at 1024–4096,
 `78f98e0b…`) and `1bf41ccb…` (Counter-signals, precision).

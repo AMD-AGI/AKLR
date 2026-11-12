@@ -93,7 +93,7 @@ on the LDS path for MFMA tiles; at m ≤ 2 these kernels issue no MFMA.
 
 `speedup` as CI writes it into each schema's `workloads`: a lower bound of the CUDA-graph time ratio aiter /
 kernel (`aklr/core/validation/stages/_bench/_report.py`). Dispatch serves each Point with the file of the highest
-`speedup`, from 1.03 (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` § Environment variables). Bold: the file served
+`speedup`, from 1.05 (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` § Environment variables). Bold: the file served
 there. Per Point:
 
 The predecessor repository's CI ran an editable install whose `setup.py` replaced any other FlyDSL with its pin, so
@@ -133,7 +133,7 @@ skips the bench (`aklr/core/validation/stages/validation_scope.py`, `of_working_
 
 Delete the FlyDSL schema file: its m 1 (and m 2) Points go unserved, while the Triton files keep the Points
 they serve. `AKLR_DISABLE=gemm@1.0` stops serving the whole contract, every other bf16 GEMM schema included. A
-re-measured Point below 1.03 stops being served without a rollback, and a `failed` accuracy is never served. Roll
+re-measured Point below 1.05 stops being served without a rollback, and a `failed` accuracy is never served. Roll
 back for a wrong result CI does not catch, for example after a FlyDSL or LLVM upgrade.
 
 ## Evidence

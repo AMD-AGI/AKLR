@@ -146,6 +146,8 @@ SGLANG_USE_AITER=1 AKLR_SGLANG_PLUGIN=1 python -m sglang.launch_server \
 
 The log reports the hooked functions (`aklr hooks N sglang functions on sglang 0.5.22`), and the model's replies must stay correct.
 
+A new route also reports its end-to-end gain: benchmark the same server with the op off (`AKLR_DISABLE=deepseek_v2_mxfp4_moe@1.0`) and on, and put the result in the PR's `End to end` section. The criterion is 2% on a stated workload ([acceptance criteria](acceptance_criteria.md)).
+
 ## Next
 
 - The plugin's layout, rules for routes, and upgrading SGLang: [aklr/plugins/README.md](../aklr/plugins/README.md).

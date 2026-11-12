@@ -109,7 +109,7 @@ def install_aklr(
     passing: str = "torch.matmul",
     platform_failures: int = 0,
     timed_baseline: bool = True,
-    min_speedup: float = 1.03,
+    min_speedup: float = 1.05,
 ) -> Path:
     """Plant the AKLR stand-in at ``root``, a checkout `--aklr-root` can name."""
     contract = root / "aklr" / "core" / "contract"

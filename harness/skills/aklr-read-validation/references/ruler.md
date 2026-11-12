@@ -9,8 +9,9 @@ Sources: `aklr/core/validation/stages/_measure.py`, `stages/_bench/_stage.py`,
   weights and activations come from HBM on every call.
 - One warm-up round, then rounds until a look decides (`ROUND_LOOKS`: after 16 and 32 rounds,
   timing stops once every threshold a verdict reads is under the lower bound or over the upper one:
-  the gate's, and against the baseline also 1.02, which a workload clears to qualify, and the
-  dispatch minimum against the speedup bounds to 3 decimals, as stored). Each
+  the gate's, and against the baseline also the entry ratio 1.05, which a workload's speedup
+  reaches to qualify, and the dispatch minimum, both against the speedup bounds to 3 decimals, as
+  stored). Each
   round times the candidate and the versus side (the baseline, or a served kernel); its log ratio
   is `log(t_versus / t_candidate)`. `n_rounds` in a report says where it stopped.
 
@@ -25,15 +26,17 @@ Sources: `aklr/core/validation/stages/_measure.py`, `stages/_bench/_stage.py`,
 
   | | ratio | applies to |
   |---|---|---|
-  | entry | 1.02 | a new or changed kernel, vs the baseline |
+  | entry | 1.05 (`DEFAULT_MIN_SPEEDUP`) | a new or changed kernel, vs the baseline; a schema needs one Point whose stored `speedup` reaches it |
   | retain | 0.99 | a kept kernel vs the baseline, and any kernel vs a served one |
-  | dispatch | 1.03 (default) | the stored `speedup` a Point needs to be served |
+  | dispatch | 1.05 (default) | the stored `speedup` a Point needs to be served |
 
 - The stored `speedup` (written back by CI) is the graph lower bound vs the baseline computed from
-  the **unclamped** rounds, to 3 decimals. A Point whose bound is in [1.02, 1.03) passes entry and is
-  never served.
-- Without `--base`, a named kernel counts as kept: it is held to 0.99, not 1.02, and is not timed
-  against a served kernel. Validate with `--base origin/main` before trusting a pass.
+  the **unclamped** rounds, to 3 decimals. A schema qualifies on that same number, so with the
+  default `AKLR_MIN_SPEEDUP` a schema that passes is served at its qualifying Points; its other
+  Points are measured and never served.
+- Without `--base`, a named kernel counts as kept: its Points are gated at 0.99, not 1.05, and it is
+  not timed against a served kernel; it still needs one Point at 1.05 to qualify. Validate with
+  `--base origin/main` before trusting a pass.
 
 ## What moves a result
 

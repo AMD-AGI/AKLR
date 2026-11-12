@@ -45,7 +45,7 @@ large-m paths of the four K 7168 kernels come from one further campaign over the
   main), so at every Point the yardstick is aiter.
 - **CI serves 62 of their 79 Points** as of #125; the count per file is in § Result, and the current value of each
   Point is the `speedup` in its schema's `workloads`. Dispatch serves a workload only from
-  `AKLR_MIN_SPEEDUP` 1.03 and not one whose accuracy is `failed` (`aklr/ops/README.md` § Environment variables;
+  `AKLR_MIN_SPEEDUP` 1.05 and not one whose accuracy is `failed` (`aklr/ops/README.md` § Environment variables;
   `aklr/core/contract/spec/_workloads.py:38`).
 
 ## Counter-signals
@@ -178,7 +178,7 @@ kernel:
 ## Rollback
 
 Delete the schema file: its Points go unserved, since no other file serves them. `AKLR_DISABLE=gemm@1.0`
-stops serving the whole contract, every other bf16 GEMM schema included. A Point CI measures below 1.03 is not
+stops serving the whole contract, every other bf16 GEMM schema included. A Point CI measures below 1.05 is not
 served, and a `failed` accuracy never is. Roll back for a wrong result CI does not catch: a silently wrong sum from n6288 or k35840 when
 their splits are not resident, NaN or a stale fold after a timed-out launch of the others, or a change of FlyDSL or
 LLVM.

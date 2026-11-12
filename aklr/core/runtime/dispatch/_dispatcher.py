@@ -32,6 +32,7 @@ from aklr.core.contract.spec import WorkloadSpec, axes_text
 from aklr.core.platform.env import ENV_DISABLE
 from aklr.core.platform.toolchain import toolchain_version
 from aklr.core.runtime.builder import Runnable
+from aklr.core.runtime.dispatch._trace import trace
 
 if TYPE_CHECKING:
     from aklr.core.runtime.dispatch._recorder import CallRecorder
@@ -196,6 +197,8 @@ class KernelDispatcher:
         """
         table = self.table
         if table is None:
+            if (tracer := trace()) is not None and tracer.is_op:
+                tracer.op(self.contract, None, self.closed_reason)
             return self.closed_reason
         key, match, runnable = table.lookup(call)
         if isinstance(runnable, FallbackReason):
@@ -224,6 +227,8 @@ class KernelDispatcher:
                 )
                 raise
             table.warmed_keys.add(match)
+        if (tracer := trace()) is not None and tracer.is_op:
+            tracer.op(self.contract, key, runnable)
         if self.recorder is not None:
             self.recorder.count(
                 self.contract,
@@ -238,10 +243,14 @@ class KernelDispatcher:
         ``dispatch`` counts it; nothing runs."""
         table = self.table
         if table is None:
+            if (tracer := trace()) is not None and tracer.is_op:
+                tracer.op(self.contract, None, self.closed_reason)
             return self.closed_reason
         key, _, runnable = table.lookup(call)
         if not isinstance(runnable, FallbackReason):
             return None
+        if (tracer := trace()) is not None and tracer.is_op:
+            tracer.op(self.contract, key, runnable)
         if self.recorder is not None:
             self.recorder.count(self.contract, key, call, runnable)
         return runnable

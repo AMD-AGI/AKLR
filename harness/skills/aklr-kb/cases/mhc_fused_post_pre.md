@@ -120,7 +120,7 @@ hidden elements; at T 512 two waves share the Sinkhorn reduction through LDS bes
 
 The file is the only kernel of its schema name, so the yardstick at every Point is aiter's `mhc_fused_post_pre`.
 `speedup` is a one-sided lower bound (α = 0.05) of aiter / kernel time over 32 rounds of CUDA-graph replays with a
-1 GiB cache flush before each call (`aklr/core/validation/stages/_measure.py`); a Point is served from 1.03
+1 GiB cache flush before each call (`aklr/core/validation/stages/_measure.py`); a Point is served from 1.05
 (`AKLR_MIN_SPEEDUP`).
 
 The predecessor repository's CI measured these numbers on FlyDSL 0.3.2, the repository's pin, not the CI image's
@@ -153,7 +153,7 @@ measurement is the one dispatch reads.
 Delete the schema file (in a PR): its Points go unserved, since no other file serves them.
 `AKLR_DISABLE=mhc_fused_post_pre@1.0` drops this kernel and the hidden-7168 schema's HIP kernel, which serves the
 same contract (S9). A
-Point CI measures below 1.03 stops being served without a rollback. Roll back for a wrong result CI does not catch,
+Point CI measures below 1.05 stops being served without a rollback. Roll back for a wrong result CI does not catch,
 such as a model whose scalars differ from the captured ones and are first seen inside a graph capture, a process that
 calls the kernel on two devices or two streams, or a FlyDSL or LLVM upgrade that changes LDS residency.
 

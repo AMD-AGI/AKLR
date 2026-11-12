@@ -48,7 +48,7 @@ None of the four splits K across workgroups. n2304's `_build` and n3072's `_buil
 - **CI serves 25 of their 35 Points** as of #102 (6d7cfec, CI run 42549655045, measurement profile 19), n2304's as
   of CI run 41976547645 (90b9d50) and n3072's as of CI run 42000899019 (d908d01, #71), which #102 left unchanged;
   the count per file is in § Result, and the current value of each Point is the `speedup` in its schema's
-  `workloads`. Dispatch serves a workload only from `AKLR_MIN_SPEEDUP` 1.03 (`aklr/ops/README.md` § Environment
+  `workloads`. Dispatch serves a workload only from `AKLR_MIN_SPEEDUP` 1.05 (`aklr/ops/README.md` § Environment
   variables; `aklr/core/contract/spec/_workloads.py:38`).
 
 ## Counter-signals
@@ -171,7 +171,7 @@ AKLR) on MI355X, FlyDSL 0.3.2: a lower bound of the CUDA-graph time ratio aiter 
 Two later files at small m, one per schema name: `gemm_n7168_k512/d0d6e9e5c93fbd88.json` (m 2–64, 7 MiB of weight)
 and `gemm_n3584_k512/dacbceacd8d1ae5f.json` (m 32–128, 3.5 MiB). No other file serves these Points, so the yardstick
 is aiter; CI serves all of them as of #115 (`qualifies()` in
-`aklr/core/contract/spec/_workloads.py`; `AKLR_MIN_SPEEDUP`, default 1.03, `aklr/ops/README.md` § Environment
+`aklr/core/contract/spec/_workloads.py`; `AKLR_MIN_SPEEDUP`, default 1.05, `aklr/ops/README.md` § Environment
 variables). Like the files above, these two do not split K across workgroups; unlike n163840's, they do not split it
 across waves either: each workgroup reads its rows of A and B over all of K once, and every output is one MFMA chain
 in K order. N 7168 at m 1 (1.022) and m 128 (0.978) and N 3584 at
@@ -252,7 +252,7 @@ To read a kernel:
 ## Rollback
 
 Delete the schema file: its Points go unserved, since no other file serves them. `AKLR_DISABLE=gemm@1.0` stops serving
-the whole contract, every other bf16 GEMM schema included. A Point CI measures below 1.03 is not served, and a
+the whole contract, every other bf16 GEMM schema included. A Point CI measures below 1.05 is not served, and a
 `failed` accuracy never is. Roll back for a wrong result CI does not catch, for example after a FlyDSL or LLVM
 upgrade.
 

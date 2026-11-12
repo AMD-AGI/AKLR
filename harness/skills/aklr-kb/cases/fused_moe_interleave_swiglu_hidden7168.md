@@ -53,7 +53,7 @@ names and kernels.
   quantize them to MX-fp8 (Counter-signals).
 - Points listed, one kernel file per name: m 1, 2, 4, 8, 16, 32, 64 (inter 384, `e18b982b…`); m 1, 2, 4, 16, 32,
   64 (inter 768, `93aeaecb…`); m 1, 2, 16, 32 (96 local, `7856e34c…`). They are served once CI records a speedup
-  ≥ 1.03 for them (Result): the files carry no `speedup` yet, so dispatch serves none of them before that. Each
+  ≥ 1.05 for them (Result): the files carry no `speedup` yet, so dispatch serves none of them before that. Each
   name's other file (`5587cccd…`, `3cd667a8…`, `1a61a10a…`) has empty `sources`, a definition that is not served
   (`aklr/ops/README.md` § Schema fields), so the yardstick is aiter; it defines the same Points, and `5587cccd…`
   also m 128 and 256. Not covered: m 128 and 256 at inter 384 (Counter-signals), the expert-parallel name with 48
@@ -193,7 +193,7 @@ is `gpu_duration_sum`: the summed durations of the GPU kernels it launches, not 
 0.1.21.dev66+gdbd8bf5bd, torch 2.11.0+rocm10.0.0; audit and bench passed with no finding. The shipped files are not
 measured yet: `e18b982b…` and `93aeaecb…` differ from these predecessors only in host code, and `7856e34c…` keeps
 its predecessor's GPU code at m 16 and 32 but not at m 1 and 2. CI writes `speedup` into the shipped files once they
-merge; dispatch serves a Point from 1.03 of that number (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` § Environment
+merge; dispatch serves a Point from 1.05 of that number (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` § Environment
 variables).
 
 | Predecessor (of the shipped file) | 1 | 2 | 4 | 8 | 16 | 32 | 64 |

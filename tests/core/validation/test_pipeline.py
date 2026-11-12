@@ -360,10 +360,10 @@ class TestPipeline:
     @pytest.mark.parametrize(
         ("case", "expected"),
         [
-            # _measure: gate against entry (1.02) and retain (0.99), the t lower bound
-            pytest.param(lambda _: _gate(1.05), None, id="gate-faster"),
+            # _measure: gate against entry (1.05) and retain (0.99), the t lower bound
+            pytest.param(lambda _: _gate(1.1), None, id="gate-faster"),
             pytest.param(lambda _: _gate(1.0), FindingCode.NOT_FASTER, id="gate-equal"),
-            pytest.param(lambda _: _gate(1.05, 0.98), FindingCode.REGRESSED, id="gate-regressed"),
+            pytest.param(lambda _: _gate(1.1, 0.98), FindingCode.REGRESSED, id="gate-regressed"),
             pytest.param(lambda _: _gate(0.5, 0.5), FindingCode.REGRESSED, id="gate-both-below"),
             pytest.param(lambda _: ratio_lower_bound([0.1]), ValueError, id="bound-one-round"),
             pytest.param(
@@ -554,11 +554,11 @@ class TestTimeRounds:
     @pytest.mark.parametrize(
         ("baseline_ms", "threshold", "min_speedup", "n_rounds"),
         [
-            (2.0, "entry", 1.03, 16),
-            (1.02, "entry", 0, 32),
-            (1.02, "retain", 0, 32),
-            (1.045, "entry", 0, 16),
-            (1.045, "entry", 1.03, 32),
+            (2.0, "entry", 1.05, 16),
+            (1.05, "entry", 0, 32),
+            (1.05, "retain", 0, 32),
+            (1.075, "entry", 0, 16),
+            (1.075, "entry", 1.06, 32),
         ],
         ids=[
             "clear-win-stops-at-16",
@@ -627,20 +627,20 @@ class TestSpeedupMeasures:
         assert finding is not None and finding.code is FindingCode.CANDIDATE_CRASH
 
     def test_min_speedup_is_decided_on_the_published_speedup(self) -> None:
-        """Raw bounds about 1.0292 and 1.0298 both under 1.03 publish as 1.029 and 1.030:
-        whether dispatch serves the workload at 1.03 is still open."""
+        """Raw bounds about 1.0492 and 1.0498 both under 1.05 publish as 1.049 and 1.050:
+        whether the workload qualifies and dispatch serves it at 1.05 is still open."""
         rounds = [
             RoundTimes(
                 mode="graph",
                 round_index=i,
                 order=("baseline", "candidate"),
-                milliseconds={"baseline": 1.029 if i % 2 else 1.030, "candidate": 1.0},
+                milliseconds={"baseline": 1.049 if i % 2 else 1.050, "candidate": 1.0},
             )
             for i in range(16)
         ]
         record = timing_records(rounds, {"baseline": "entry"})[0]
-        assert record.speedup_bounds == (1.029, 1.030)
-        assert not record.is_decided(1.03)
+        assert record.speedup_bounds == (1.049, 1.050)
+        assert not record.is_decided(1.05)
 
     def test_speedup_is_the_graph_bound(self) -> None:
         """Graph 1.5 vs the baseline: 1.5."""
@@ -659,7 +659,7 @@ class TestSpeedupMeasures:
 
     @pytest.mark.parametrize(
         ("ratio", "expected"),
-        [(0.99, False), (1.0, False), (1.02, False), (1.0200001, True)],
+        [(0.99, False), (1.0, False), (1.049, False), (1.05, True)],
     )
     def test_same_workload_must_be_correct_and_fast(self, ratio: float, expected: bool) -> None:
         report = TestPipeline._bench(
@@ -693,7 +693,7 @@ class TestSpeedupMeasures:
         failed_axes = schema.workloads[0].axes
         records = tuple(_workload(w.axes, qualifying_ratio, 0.0) for w in schema.workloads)
         report = TestPipeline._bench([(FindingCode.POST_TIMING_MISMATCH, failed_axes, "")], *records)
-        assert report.is_passed is (qualifying_ratio > 1.02)
+        assert report.is_passed is (qualifying_ratio >= 1.05)
         measured = report.measurements(_SCHEMA, schema)
         assert measured is not None
         failed = measured[axes_text(failed_axes)]

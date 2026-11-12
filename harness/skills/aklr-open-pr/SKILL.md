@@ -30,12 +30,16 @@ check the change against it before opening the pull request.
      `python -m aklr export check`.
    - Kernels: `python -m aklr validate --base origin/main --stages audit,bench <schemas>` on the target GPU (a
      remote node if none is local). Without `--base` a new kernel is held to the retention
-     threshold (0.99) instead of the entry one (1.02) and is not timed against a served kernel,
+     threshold (0.99) instead of the entry one (1.05) and is not timed against a served kernel,
      so a local pass can still fail CI. One table row per contract: measured / all workloads,
      accuracy n/n and its bound, lowest – highest speedup. Note every `AKLR_*` or `AITER_*`
      variable set that loosens a check.
    - Code: the tests run and their result. CI validation of every schema is required: add the
      `ci:gpu` label so CI runs it, and link the run once its `validation` job passes.
+   - A new plugin route, or one that now handles more cases: the end-to-end run
+     [docs/acceptance_criteria.md](../../../docs/acceptance_criteria.md) asks for, this PR's ops
+     off and on, in the template's `End to end`. Kernels for an existing op
+     or route need only the kernel table.
      A PR that changes CI (`.github/workflows/`, `scripts/`, `actions/`) runs its own CI, so that
      run is not evidence:
      code owners decide; keep such changes in a PR of their own.
