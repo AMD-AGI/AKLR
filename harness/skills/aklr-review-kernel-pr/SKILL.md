@@ -11,7 +11,8 @@ standalone implementation.
 ## Required Context
 
 Read the harness [rules](../../rules.md), [gates](../../gates.md), current
-[gate configuration](../../gate-config.md), and
+[gate configuration](../../gate-config.md), the
+[acceptance criteria](../../../docs/acceptance_criteria.md), and
 [references/workflow.md](references/workflow.md). Check the change against
 [aklr-bad-cases](../aklr-bad-cases/SKILL.md).
 
@@ -24,6 +25,10 @@ Read the harness [rules](../../rules.md), [gates](../../gates.md), current
 - Run or verify unit, reference-correctness, edge-case, sanitizer, and relevant
   end-to-end tests.
 - Compare performance with the actual AKLR incumbent in the same environment.
+- Check the acceptance criteria: each kernel file has a workload at 1.05 or more over the
+  baseline. A new plugin route, or one that now handles more cases, reports an end-to-end gain
+  of 2% or more on a stated, representative workload, with its ops off and on, and commands to
+  reproduce. Missing end-to-end evidence for such a route is `CHANGES REQUIRED`.
 - Audit warm-up, synchronization, input selection, timeouts, cache state,
   fallback paths, failures, and aggregation for unfair benchmarking.
 - Look for reward hacking, including benchmark-only reachability, shape

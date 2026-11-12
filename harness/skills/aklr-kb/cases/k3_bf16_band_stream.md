@@ -53,7 +53,7 @@ at m 256–4096: [bf16_large_m_whole_k_tiles.md](bf16_large_m_whole_k_tiles.md).
 - **CI serves 94 of their 115 Points** as of #102 (6d7cfec, CI run 42549655045, measurement profile 19), n18432's
   as of CI run 41197527705 (a29581b), which #102 left unchanged; the count per file is in § Result, and the current
   value of each Point is the `speedup` in its schema's `workloads`. Dispatch serves a workload only from
-  `AKLR_MIN_SPEEDUP` 1.03 (`aklr/ops/README.md` § Environment variables; `aklr/core/contract/spec/_workloads.py:38`).
+  `AKLR_MIN_SPEEDUP` 1.05 (`aklr/ops/README.md` § Environment variables; `aklr/core/contract/spec/_workloads.py:38`).
 
 ## Counter-signals
 
@@ -199,7 +199,7 @@ Two later files, one per schema name, run edited copies of k1792's `_config` / `
 of the m ≤ 112 table under § Mechanism) with tables of their own: `gemm_n4096_k2048/37c909c4b629ad59.json` (16 MiB of
 weight) and `gemm_n6144_k1536/1d3a1fcaf77631e1.json` (18 MiB), each listing m 1, 2, 4, …, 128. No other file serves
 these Points, so the yardstick is aiter; CI serves all 8 Points of each as of #115 (`qualifies()` in
-`aklr/core/contract/spec/_workloads.py`; `AKLR_MIN_SPEEDUP`, default 1.03, `aklr/ops/README.md` § Environment
+`aklr/core/contract/spec/_workloads.py`; `AKLR_MIN_SPEEDUP`, default 1.05, `aklr/ops/README.md` § Environment
 variables). As in k1792, each compute workgroup streams one column band of B (`nt`) and A (cached)
 by buffer→LDS DMA through an A ring and a B ring of their own depths, B is the MFMA's first operand and C leaves in
 8 B stores. Where the waves split K (wk > 1), the partials sit in LDS clear of the ring slots the last tile reads, and
@@ -268,7 +268,7 @@ bench measures only schemas that are not at the base, so on an unchanged checkou
 ## Rollback
 
 Delete the schema file: its Points go unserved, since no other file serves them. `AKLR_DISABLE=gemm@1.0` stops serving
-the whole contract, every other bf16 GEMM schema included. A Point CI measures below 1.03 is not served, and a
+the whole contract, every other bf16 GEMM schema included. A Point CI measures below 1.05 is not served, and a
 `failed` accuracy never is. Roll back for a wrong result CI does not catch: a NaN or stale fold from k4224's flags at
 m 56–112 after an aborted or timed-out launch, or a change of FlyDSL or LLVM.
 

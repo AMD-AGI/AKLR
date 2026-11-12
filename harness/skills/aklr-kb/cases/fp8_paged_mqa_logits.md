@@ -136,7 +136,7 @@ calls the compiled object with raw addresses, the form that section recommends f
 The file is the only kernel of its schema name, so the yardstick at every Point is aiter's kernel as
 `baseline.py` calls it. `speedup` is a one-sided lower bound of aiter / kernel time over CUDA-graph replays with a
 1 GiB cache flush before each call, read at 16 rounds and, where a threshold is still undecided, again at 32, each
-look at α = 0.025 (`aklr/core/validation/stages/_measure.py`, measurement profile 19); a Point is served from 1.03
+look at α = 0.025 (`aklr/core/validation/stages/_measure.py`, measurement profile 19); a Point is served from 1.05
 (`AKLR_MIN_SPEEDUP`).
 
 This file's CI runs and the predecessor repository's runs of E1 and E2 used FlyDSL 0.3.2, not the FlyDSL of their
@@ -175,7 +175,7 @@ measurement is the one dispatch reads.
 
 Delete the schema file (in a PR): its Points go unserved, since no other file serves them.
 `AKLR_DISABLE=fp8_paged_mqa_logits@1.0` drops this kernel and also the 32-head HIP one GLM-5.x's indexer takes
-(`aklr/ops/mla/impls/hip/fp8_paged_mqa_logits_page_size64_n_heads32/`). A Point CI measures below 1.03 stops being served without a rollback, as the batch-1 Points can. Roll
+(`aklr/ops/mla/impls/hip/fp8_paged_mqa_logits_page_size64_n_heads32/`). A Point CI measures below 1.05 stops being served without a rollback, as the batch-1 Points can. Roll
 back for a wrong result CI does not catch: a consumer that reads logits past a request's last page, a process that
 calls the kernel on two devices or two streams at batch ≥ 64, or a FlyDSL or LLVM upgrade.
 

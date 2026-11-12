@@ -272,7 +272,7 @@ Each file is the only kernel at its Points, so the faster of AKLR's served kerne
 is a one-sided lower bound of the aiter / kernel time ratio over CUDA-graph replays with L2 flushed before each call,
 read at 16 rounds and, where a threshold is still undecided, again at 32, each look at α = 0.025
 (`aklr/core/validation/stages/_measure.py:49`; `alpha_per_look` in a report). Dispatch compares CI's value with
-`AKLR_MIN_SPEEDUP`, 1.03 by default (`aklr/ops/README.md` § Environment variables).
+`AKLR_MIN_SPEEDUP`, 1.05 by default (`aklr/ops/README.md` § Environment variables).
 
 The eight N 4096 and K 1024 rows are main's CI measurements as of #102 (6d7cfec): n4096_k256, n4096_k1024,
 n4096_k4096, n8192_k1024 and n32768_k1024 from run 42549655045 (#102, measurement profile 19); n4096_k512,
@@ -324,7 +324,7 @@ with an aiter other than dbd8bf5, compare the kernel times above before comparin
 
 Delete the schema file (in a PR): its Points go unserved, since no other file serves them. `AKLR_DISABLE`
 takes a whole contract id and would also drop every other `gemm_a8w8_blockwise_scaled@1.0` kernel. Points CI
-measures below 1.03 are not served without any rollback (8 Points of n4096_k256, 8 of n4096_k512, 11 of n4096_k1024
+measures below 1.05 are not served without any rollback (below 1.03, the default then: 8 Points of n4096_k256, 8 of n4096_k512, 11 of n4096_k1024
 on main as of #102). The three newer files are served since CI measured them in #115 (Result); a listed
 Point CI later measures below 1.03 drops out the same way. The scenario Points they do not list (n65536 m = 32, n7168
 m = 1–32 and 256) run aiter. Delete n4096_k8192's file, or give its m 64 and 128 Points a fixed-order reduction, if

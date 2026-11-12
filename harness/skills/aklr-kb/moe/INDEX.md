@@ -158,7 +158,7 @@ tokens per call. Reuse the mechanism and re-derive the number.
 | `interleave_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts385_topk7_inter_dim384` | 27, m 7–16384 |
 | `interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts48_…` / `…_n_experts96_…` (inter 3072, 384 global) | 6 and 4, m 1–128 |
 | the four `…_has_num_local_tokens_…` names (hidden 4096 or 7168) | 1 each, m 1024 or 2048 |
-| the kernel-less siblings of the four clamped-SwiGLU kernel files (kernel files for these names also list m 16–256 and are served once CI records ≥ 1.03: [fused_moe_interleave_swiglu.md](../cases/fused_moe_interleave_swiglu.md)) | 5 each, m 16–256 |
+| the kernel-less siblings of the four clamped-SwiGLU kernel files (kernel files for these names also list m 16–256 and are served once CI records ≥ 1.05: [fused_moe_interleave_swiglu.md](../cases/fused_moe_interleave_swiglu.md)) | 5 each, m 16–256 |
 
 ## Expert GEMM (grouped GEMM)
 

@@ -22,7 +22,7 @@
 5. **Verify per Point.** Run `python -m aklr export check`, then
    `python -m aklr validate --base origin/main --stages audit,bench <new schema>` on
    the target GPU, naming only the new file. Keep a Point when its lower bound is
-   at least 1.03 against the baseline and 1.0 against a served kernel; read
+   at least 1.05 against the baseline and 1.0 against a served kernel; read
    failures with `aklr-read-validation`. Confirm that the ported fast path, not a
    fallback, produced the result.
 6. **Prepare the handoff.** Summarize provenance, the schema and its Points,

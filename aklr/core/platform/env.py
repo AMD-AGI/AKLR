@@ -9,6 +9,7 @@ from pathlib import Path
 
 __all__ = [
     "DEFAULT_EXPORT_DIR",
+    "DEFAULT_MIN_SPEEDUP",
     "ENV_DISABLE",
     "ENV_EXPORT",
     "ENV_EXPORT_DIR",
@@ -30,6 +31,9 @@ ENV_MEASURED_DIR = "AKLR_MEASURED_DIR"
 ENV_SGLANG_PLUGIN = "AKLR_SGLANG_PLUGIN"
 ENV_VLLM_PLUGIN = "AKLR_VLLM_PLUGIN"
 DEFAULT_EXPORT_DIR = "aklr_export"
+# the least published speedup over the baseline that validation admits a kernel at and
+# dispatch serves a workload at
+DEFAULT_MIN_SPEEDUP = 1.05
 
 
 class RuntimeEnv:
@@ -59,7 +63,7 @@ class RuntimeEnv:
         self.is_vllm_plugin_enabled = plugin == "1"
         self.export_dir = Path(os.environ.get(ENV_EXPORT_DIR) or DEFAULT_EXPORT_DIR).absolute()
         # AKLR_MIN_SPEEDUP: least speedup over aiter to serve; <= 0 also serves unmeasured
-        speedup = os.environ.get(ENV_MIN_SPEEDUP) or "1.03"
+        speedup = os.environ.get(ENV_MIN_SPEEDUP) or str(DEFAULT_MIN_SPEEDUP)
         try:
             self.min_speedup = float(speedup)
         except ValueError as e:

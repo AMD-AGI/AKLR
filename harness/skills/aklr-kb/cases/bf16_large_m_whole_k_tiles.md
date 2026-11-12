@@ -44,7 +44,7 @@ N 28672 × K 512 the `_build` and `_plan` of `gemm_n3072_k512`
 - Points: m 256, 512, 1024, 2048, 4096 in four files; m 256, 512, 1024 at N 6144 × K 1536, whose m 2048 and 4096 are
   not listed (no faster than aiter, § Counter-signals).
 - No other file serves these Points, so the yardstick is aiter. Dispatch serves a Point whose CI `speedup` reaches
-  `AKLR_MIN_SPEEDUP`, default 1.03 (`qualifies()` in `aklr/core/contract/spec/_workloads.py`; `aklr/ops/README.md`
+  `AKLR_MIN_SPEEDUP`, default 1.05 (`qualifies()` in `aklr/core/contract/spec/_workloads.py`; `aklr/ops/README.md`
   § Environment variables); all 23 listed Points of the five files reach it in CI, 1.034–1.798, and are served (#125).
 
 ## Counter-signals
