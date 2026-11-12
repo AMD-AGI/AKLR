@@ -141,7 +141,7 @@ GEMM_A8W8 = OpContract(
     op_type="gemm",
     axes={"m": _M, "n": _N, "k": _K},
     attrs={"trans_b": _TRANS_B, "has_bias": _HAS_BIAS},
-    constraints=("b.dtype == a.dtype",),
+    constraints=("b.dtype == a.dtype", "layout_variant != 'b_shuffled' or trans_b"),
     inputs={
         "a": TensorSpec(
             description="Activations.",
@@ -174,7 +174,17 @@ GEMM_A8W8 = OpContract(
         default=DType.BFLOAT16,
         error_bounds=(("a.dtype == 'int8'", OutputRoundingBound()), (None, _dot_k())),
     ),
-    layout_variants=_UNSHUFFLED_VARIANTS,
+    # vLLM's per-token fp8 linears for aiter's gemm_a8w8_bpreshuffle hold b as (n, k) in shuffle_weight's 16 x 16
+    # tiles
+    layout_variants=LayoutVariantsSpec(
+        by_name={
+            "row_major": LayoutVariant(detect_facts=(_B_UNSHUFFLED,)),
+            "b_shuffled": LayoutVariant(
+                layouts={"b": Preshuffle(tile=(16, 16))},
+                detect_facts=(LayoutFact(location="tensor_attr", name="b.is_shuffled", expected_value=True),),
+            ),
+        }
+    ),
 )
 
 

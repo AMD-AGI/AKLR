@@ -22,11 +22,13 @@ def gemm_baseline(a, b, trans_b=True, bias=None, out_dtype=None, out=None):
 
 
 def gemm_a8w8_baseline(a, b, a_scale, b_scale, trans_b=True, bias=None, out_dtype=None, out=None):
-    """aiter's CK 8-bit gemm, b as (n, k) only."""
-    from aiter.ops.gemm_op_a8w8 import gemm_a8w8
+    """aiter's CK 8-bit gemm, b as (n, k) only; on a shuffled b, its preshuffled gemm, as vLLM calls it."""
+    from aiter.ops.gemm_op_a8w8 import gemm_a8w8, gemm_a8w8_bpreshuffle
 
     if not trans_b:
         raise NotImplementedError("aiter's gemm_a8w8 takes b as (n, k) only")
+    if getattr(b, "is_shuffled", False):
+        return gemm_a8w8_bpreshuffle(a, b, a_scale, b_scale, bias=bias, dtype=out_dtype)
     return gemm_a8w8(a, b, a_scale, b_scale, bias=bias, dtype=out_dtype)
 
 

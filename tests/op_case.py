@@ -109,7 +109,14 @@ class OpCase:
     @property
     def needs_gfx950(self) -> bool:
         """Whether the backend runs the Point only on gfx950."""
-        return self.contract_id in _GFX950_CONTRACT_IDS
+        return (
+            self.contract_id in _GFX950_CONTRACT_IDS
+            or (
+                self.contract_id,
+                self.point.layout_variant_name,
+            )
+            in ops_cases.GFX950_LAYOUT_VARIANTS
+        )
 
     def schema(
         self,

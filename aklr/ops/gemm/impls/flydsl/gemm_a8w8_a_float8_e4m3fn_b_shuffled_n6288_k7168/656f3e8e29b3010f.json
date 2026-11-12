@@ -1,0 +1,205 @@
+{
+  "schema_version": 5,
+  "name": "gemm_a8w8_a_float8_e4m3fn_b_shuffled_n6288_k7168",
+  "contract_id": "gemm_a8w8@1.0",
+  "description": "Per-token 8-bit gemm: out = (a * a_scale) @ (b * b_scale).T + bias.",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 6288,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 7168,
+      "description": "Reduction length."
+    }
+  },
+  "attrs": {
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    },
+    "a_scale": {
+      "shape": [
+        "m",
+        1
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": 1
+      },
+      "description": "Per row of a."
+    },
+    "b_scale": {
+      "shape": [
+        "n",
+        1
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": 1
+      },
+      "description": "Per output column."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T, scaled."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 8
+      }
+    },
+    {
+      "axes": {
+        "m": 16
+      }
+    },
+    {
+      "axes": {
+        "m": 24
+      }
+    },
+    {
+      "axes": {
+        "m": 32
+      }
+    },
+    {
+      "axes": {
+        "m": 40
+      }
+    },
+    {
+      "axes": {
+        "m": 48
+      }
+    },
+    {
+      "axes": {
+        "m": 56
+      }
+    },
+    {
+      "axes": {
+        "m": 64
+      }
+    },
+    {
+      "axes": {
+        "m": 80
+      }
+    },
+    {
+      "axes": {
+        "m": 96
+      }
+    },
+    {
+      "axes": {
+        "m": 112
+      }
+    },
+    {
+      "axes": {
+        "m": 120
+      }
+    },
+    {
+      "axes": {
+        "m": 160
+      }
+    },
+    {
+      "axes": {
+        "m": 200
+      }
+    },
+    {
+      "axes": {
+        "m": 240
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "b_shuffled": {
+        "layouts": {
+          "b": {
+            "kind": "preshuffle",
+            "tile": [16, 16]
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": true
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "author": "kyle-256",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Per-token fp8 GEMM with a preshuffled B (N=6288, K=7168): out = (a * a_scale) @ (b * b_scale).T in bf16.\n\nOne launch per call, writing into ``out``. Each workgroup computes one tile_m x tile_n output tile with its waves\nalong N (four, or two for a 32-column tile). B goes from the preshuffled layout straight to VGPRs; A comes by LDS DMA\ninto a ring of ``lds_stage`` slots, so the loads of tile t + lds_stage - 1 are in flight while tile t computes. The\nMFMAs take B as their first operand, so each lane accumulates four adjacent columns of one row and stores them with\none 8-byte store. With ``kfold = 2`` two workgroups split K for each output tile: each lane publishes its raw fp32\npartial into a per-call workspace, then atomically swaps a launch-unique tag into its own word; the lane that gets the\ntag back arrived second, sums the two partials and stores. No workgroup waits on another, and either split folding\ngives the same bits. The configuration is chosen from M in a module-level cached plan, which compiles the kernel once\nper shape.\n\nThe GEMM is derived from aiter's FlyDSL preshuffle GEMM (Copyright (C) 2024-2026, Advanced Micro Devices, Inc., MIT).\n\"\"\"\n\nimport functools\n\nimport torch\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nfrom flydsl.compiler.kernel_function import CompilationContext\nfrom flydsl.expr import const_expr, gpu, range_constexpr, rocdl\nfrom flydsl.expr.typing import BFloat16, Float8E4M3FN, Float32, Int8, Int32\nfrom flydsl.expr.typing import Vector as Vec\nfrom flydsl.runtime.device import get_rocm_arch\n\nfrom aiter.ops.flydsl.kernels.kernels_common import set_slp_vectorize_once_used\nfrom aiter.ops.flydsl.kernels.mfma_preshuffle_pipeline import xcd_remap_bx_by\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import arith as std_arith\nfrom flydsl._mlir.dialects import llvm, scf\nfrom flydsl._mlir.dialects import rocdl as rocdl_d\nfrom flydsl._mlir.dialects import vector as _vector\nfrom flydsl.expr.typing import T, as_ir_value\n\n# ── Raw buffer helpers for the wait-free split-K fold ──────────────────\nRSRC_FLAGS = (7 << 12) | (4 << 15)  # buffer descriptor word 3: raw 32-bit data format\n# SC0 | SC1, system coherent: bypasses the per-XCD L2 so the folding lane sees the other split's partial.\nCPOL_SYS = 1 | 16\n\n\ndef _i32c(value):\n    return std_arith.ConstantOp(T.i32, ir.IntegerAttr.get(T.i32, value)).result\n\n\ndef _i64c(value):\n    return std_arith.ConstantOp(T.i64, ir.IntegerAttr.get(T.i64, value)).result\n\n\ndef _to_i32(value):\n    value = as_ir_value(value)\n    return value if value.type == T.i32 else std_arith.IndexCastOp(T.i32, value).result\n\n\ndef _v_extract(vec, idx):\n    return _vector.ExtractOp(as_ir_value(vec), static_position=[idx], dynamic_position=[]).result\n\n\ndef _make_rsrc(ptr_i64):\n    base = llvm.IntToPtrOp(ir.Type.parse(\"!llvm.ptr<0>\"), as_ir_value(ptr_i64)).result\n    stride = std_arith.ConstantOp(T.i16, ir.IntegerAttr.get(T.i16, 0)).result\n    return rocdl_d.MakeBufferRsrcOp(\n        ir.Type.parse(\"!llvm.ptr<8>\"), base, stride, _i64c(0xFFFFFFFF), _i32c(RSRC_FLAGS)\n    ).result\n\n\ndef _aux(cpol):\n    return ir.IntegerAttr.get(ir.IntegerType.get_signless(32), cpol) if cpol else None\n\n\ndef _buffer_load(rsrc, offset, vec_width, dtype, cpol=0):\n    # offset is in elements of dtype.\n    offset = std_arith.MulIOp(_to_i32(offset), _i32c(dtype.width // 8)).result\n    result_type = ir.VectorType.get([vec_width], dtype)\n    return rocdl_d.RawPtrBufferLoadOp(result_type, rsrc, offset, _i32c(0), aux=_aux(cpol)).result\n\n\ndef _buffer_store(data, rsrc, offset, cpol=0):\n    data = as_ir_value(data)\n    offset = std_arith.MulIOp(_to_i32(offset), _i32c(data.type.element_type.width // 8)).result\n    rocdl_d.RawPtrBufferStoreOp(data, rsrc, offset, _i32c(0), aux=_aux(cpol))\n\n\ndef _guarded(cond, fn):\n    if_ = scf.IfOp(cond, results_=[], has_else=False)\n    with ir.InsertionPoint(if_.then_block):\n        fn()\n        scf.YieldOp([])\n\n\n# Row bound of the A and C layout views.\nPRESHUFFLE_M_MAX = 65536\n\n\n@functools.lru_cache(maxsize=1024)\ndef compile_preshuffle_gemm(\n    *,\n    N: int,\n    K: int,\n    tile_m: int,\n    tile_n: int,\n    tile_k: int,\n    xcd_swizzle: int = 0,\n    lds_stage: int = 3,\n    preload: tuple = (0, 0),\n    kfold: int = 1,\n    b_cpol: int = 0,\n    a_rows: int = 0,\n):\n    \"\"\"Compile the fp8 GEMM. Signature: fn(C, out, semaphore, A, B, scale_a, scale_b, M, N, stream).\n\n    lds_stage 2 is aiter's two-slot ping-pong with its scheduler hints (``preload`` is their (ds_read, VMEM)\n    preload); 3 or 4 is the DMA ring. With kfold 2, C is the fp32 partial workspace and semaphore the swap words.\n    \"\"\"\n    if not str(get_rocm_arch()).startswith(\"gfx950\"):\n        raise ValueError(\"needs gfx950: fp8 e4m3fn and the 16x16x128 MFMA\")\n    if kfold not in (1, 2):\n        raise ValueError(f\"kfold must be 1 or 2, got {kfold}\")\n    split_k_extent = K // kfold\n    if tile_k % 128 != 0 or split_k_extent % tile_k != 0:\n        raise ValueError(f\"tile_k must be a multiple of 128 dividing K/kfold; got tile_k={tile_k}, K={K}\")\n    if lds_stage < 2 or lds_stage > 4:\n        raise ValueError(f\"lds_stage must be 2-4, got {lds_stage}\")\n    if N % 16 != 0:\n        raise ValueError(f\"N must be a multiple of 16 for preshuffled B, got N={N}\")\n    if tile_n != 32 and tile_n % 64 != 0:\n        raise ValueError(f\"tile_n must be 32 or a multiple of 64, got tile_n={tile_n}\")\n    n_padded = ((N + tile_n - 1) // tile_n) * tile_n\n    is_two_wave = tile_n == 32\n    n_tiles_n = n_padded // tile_n\n\n    layout_elem = Float8E4M3FN\n    out_elem_cls = BFloat16\n\n    # Tile geometry: one 16x16x128 MFMA per (16-row block, 16-column block, 128 of K).\n    k_iters = tile_k // 128\n    num_tiles = split_k_extent // tile_k\n    m_repeat = tile_m // 16\n    # Four waves along N; a 32-column tile has two, so each wave still owns one full 16-column MFMA atom.\n    num_waves = 2 if is_two_wave else 4\n    n_per_wave = tile_n // num_waves\n    num_acc_n = n_per_wave // 16\n    acc_size = m_repeat * num_acc_n * 4\n    # The epilogue operands are loaded before the last tile's MFMAs and kept live over them.\n    if acc_size > 64:\n        raise ValueError(f\"accumulator of {acc_size} values per lane is too large to overlap the epilogue loads\")\n\n    total_threads = num_waves * 64\n    a_load_bytes = 16\n    # Each A DMA moves 16 bytes per thread: the tile must be a whole number of them, or rows are silently dropped.\n    if (tile_m * tile_k) % (total_threads * a_load_bytes) != 0:\n        raise ValueError(f\"tile_m * tile_k must be a multiple of {total_threads * a_load_bytes}\")\n    num_a_loads = tile_m * tile_k // total_threads // a_load_bytes\n    num_b_loads = tile_n * tile_k // total_threads // 16\n    num_ds_load = tile_m * tile_k // 64 // 16  # A LDS reads per wave\n    num_gmem_loads = num_a_loads + num_b_loads\n    dsrd_preload, dvmem_preload = preload\n\n    a_lds_elems = tile_m * tile_k\n\n    @fx.struct\n    class SharedStorage:\n        a0: fx.Array[layout_elem, a_lds_elems, 16]\n        a1: fx.Array[layout_elem, a_lds_elems, 16]\n        if lds_stage >= 3:\n            a2: fx.Array[layout_elem, a_lds_elems, 16]\n        if lds_stage >= 4:\n            a3: fx.Array[layout_elem, a_lds_elems, 16]\n\n    # ── Kernel ────────────────────────────────────────────────────────\n    @flyc.kernel\n    def kernel_gemm(\n        arg_c: fx.Tensor,\n        arg_out: fx.Tensor,\n        arg_semaphore: fx.Tensor,\n        arg_a: fx.Tensor,\n        arg_b: fx.Tensor,\n        arg_scale_a: fx.Tensor,\n        arg_scale_b: fx.Tensor,\n        i32_m: fx.Int32,\n        i32_n: fx.Int32,\n    ):\n        tid = fx.thread_idx.x\n        bid_x, bid_y, bid_z = fx.block_idx\n        k_off = fx.Int32(bid_z) * num_tiles\n\n        if const_expr(xcd_swizzle > 0):\n            _bx, _by = xcd_remap_bx_by(\n                gpu.block_id(\"x\"),\n                gpu.block_id(\"y\"),\n                fx.Index(i32_m),\n                tile_m=tile_m,\n                tile_n=tile_n,\n                N=N,\n                xcd_swizzle=xcd_swizzle,\n            )\n            bid_x, bid_y = Int32(_bx), Int32(_by)\n\n        _scale_atom = fx.make_mma_atom(fx.rocdl.cdna4.MFMA_Scale(16, 16, 128, layout_elem))\n        if const_expr(is_two_wave):\n            wave_layout = fx.make_layout((1, 2, 1), (0, 1, 0))\n        else:\n            wave_layout = fx.make_layout((1, 4, 1), (0, 1, 0))\n        tiled_mma = fx.make_tiled_mma(\n            _scale_atom,\n            wave_layout,\n            fx.make_tile(None, None, fx.make_layout((32, 4), (1, 32))),\n        )\n\n        # B is bounded to its real N rows so the padded tail of the last column tile reads 0.\n        gB = fx.rocdl.make_buffer_tensor(\n            arg_b,\n            max_size=False,\n            num_records_bytes=fx.Int64(N) * fx.Int64(K),\n        )\n        gC = fx.rocdl.make_buffer_tensor(\n            arg_c,\n            max_size=False,\n            num_records_bytes=fx.Int64(i32_m) * fx.Int64(N) * fx.Int64(2),\n        )\n\n        tB = fx.flat_divide(gB, fx.make_tile(tile_n, tile_k))[None, None, bid_y, None]\n        tC = fx.flat_divide(gC, fx.make_tile(tile_m, tile_n))[None, None, bid_x, bid_y]\n\n        buf_copy = fx.make_copy_atom(fx.rocdl.BufferCopy128b(), layout_elem)\n        # B is read once per M block: its cache policy is a per-configuration choice.\n        buf_copy_b = fx.make_copy_atom(fx.rocdl.BufferCopy128b(b_cpol), layout_elem)\n        uni_copy = fx.make_copy_atom(fx.UniversalCopy128b(), layout_elem)\n\n        # Per-thread slices\n        thr_mma = tiled_mma.thr_slice(tid)\n        thr_s2r = fx.make_tiled_copy_A(buf_copy, tiled_mma).get_slice(tid)\n        thr_g2r_B = fx.make_tiled_copy_B(buf_copy, tiled_mma).get_slice(tid)\n\n        lds = fx.SharedAllocator().allocate(SharedStorage).peek()\n        k_blocks16 = tile_k // 16\n        if k_blocks16 & (k_blocks16 - 1) != 0:\n            raise ValueError(f\"the LDS swizzle needs tile_k / 16 to be a power of two, got tile_k={tile_k}\")\n        swz_bits = k_blocks16.bit_length() - 1  # log2\n        swz = fx.SwizzleType.get(swz_bits, 4, swz_bits)\n\n        def _make_sA(arr):\n            return fx.make_view(\n                arr.ptr,\n                fx.make_composed_layout(\n                    fx.static(swz),\n                    fx.make_ordered_layout((tile_m, tile_k), (1, 0)),\n                ),\n            )\n\n        sA_stages = [_make_sA(getattr(lds, f\"a{i}\")) for i in range(lds_stage)]\n\n        # Partitions\n        pA_s2r_stages = [thr_s2r.partition_S(s) for s in sA_stages]\n        pB_g = thr_g2r_B.partition_S(tB)\n\n        # Fragments: one B fragment per stage (its own VGPRs), so B loads run ahead like the A DMAs.\n        frag_A = thr_mma.make_fragment_A(sA_stages[0])\n        frag_B_single_layout = thr_mma.partition_B(tB).layout(None, None, None, 0)\n        frag_B_stages = [\n            fx.make_fragment_like(frag_B_single_layout, layout_elem.ir_type)\n            for _ in range(lds_stage)\n        ]\n        frag_C = thr_mma.make_fragment_C(tC)\n        frag_A_retile = thr_s2r.retile(frag_A)\n        frag_B_retile_stages = [thr_g2r_B.retile(b) for b in frag_B_stages]\n        frag_C_out = fx.make_fragment_like(frag_C, out_elem_cls.ir_type)\n\n        # ── Async gmem->LDS DMA (buffer_load_lds) for the A tile ──\n        dma_atom = fx.make_copy_atom(fx.rocdl.BufferCopyLDS128b(), 128)\n        # Bound to the real M extent so the DMAs of rows past M read 0 instead of faulting past the allocation.\n        gA_flat = fx.rocdl.make_buffer_tensor(\n            fx.Tensor(\n                fx.make_view(\n                    fx.get_iter(arg_a), fx.make_layout(PRESHUFFLE_M_MAX * K, 1)\n                )\n            ),\n            max_size=False,\n            num_records_bytes=fx.Int64(i32_m) * fx.Int64(K),\n        )\n        gA_div = fx.logical_divide(gA_flat, fx.make_layout(1, 1))\n        sA_i8_ptr = [fx.recast_iter(Int8, getattr(lds, f\"a{i}\").ptr) for i in range(lds_stage)]\n        dma_bx_m = bid_x * tile_m\n        dma_wave_id = tid // 64\n        step_bytes = total_threads * a_load_bytes\n        wave_stride_bytes = 64 * a_load_bytes\n        k_blocks16_dma = tile_k // 16\n\n        # DMA i covers rows [i, i + 1) * (total_threads * a_load_bytes / tile_k); with a_rows set only the DMAs\n        # holding such rows run (the LDS rows past them keep stale bytes that only feed unstored rows).\n        dma_rows = max(1, total_threads * a_load_bytes // tile_k)\n        n_a_dmas = num_a_loads if a_rows <= 0 else min(num_a_loads, -(-a_rows // dma_rows))\n\n        def dma_a_to_lds(k_tile_val, stage):\n            wave_off = rocdl.readfirstlane(\n                fx.Int32.ir_type, dma_wave_id * wave_stride_bytes\n            )\n            lds_ptr = fx.add_offset(sA_i8_ptr[stage], wave_off)\n            base_k = (k_off + k_tile_val) * tile_k\n            for i in range_constexpr(n_a_dmas):\n                if const_expr(i > 0):\n                    lds_ptr = fx.add_offset(lds_ptr, step_bytes)\n                pos_bytes = i * total_threads * a_load_bytes + tid * a_load_bytes\n                m = pos_bytes // tile_k\n                k = pos_bytes % tile_k\n                # The LDS tile is XOR-swizzled in 16-byte blocks by row; the DMA writes LDS linearly, so it\n                # reads the swizzled global address instead.\n                k_swz = k ^ ((m % k_blocks16_dma) * 16)\n                gmem_byte = (dma_bx_m + m) * K + base_k + k_swz\n                dst = fx.make_view(lds_ptr, fx.make_layout(1, 1))\n                src = fx.slice(gA_div, (None, fx.Int32(gmem_byte)))\n                fx.copy(dma_atom, src, dst)\n\n        # ── aiter's scheduling hints for the two-slot ping-pong ───────────\n        def build_scheduler(numer: int, denom: int):\n            if const_expr(denom <= 0):\n                return []\n            if const_expr(numer <= 0):\n                return [0] * denom\n            out = []\n            prev = 0\n            for i in range_constexpr(denom):\n                cur = ((i + 1) * numer + (denom - 1)) // denom\n                out.append(cur - prev)\n                prev = cur\n            return out\n\n        def hot_loop_scheduler():\n            mfma_total = k_iters * m_repeat * num_acc_n\n            dsrd_preload_eff = min(int(dsrd_preload), num_ds_load)\n            dvmem_preload_eff = min(int(dvmem_preload), num_gmem_loads)\n            vmem_remaining = num_gmem_loads - dvmem_preload_eff\n            dsrd_remaining = num_ds_load - dsrd_preload_eff\n            if const_expr(vmem_remaining > 0 and vmem_remaining < mfma_total):\n                vmem_schedule = build_scheduler(vmem_remaining, vmem_remaining) + [\n                    0\n                ] * (mfma_total - vmem_remaining)\n            else:\n                vmem_schedule = build_scheduler(vmem_remaining, mfma_total)\n            dsrd_schedule = build_scheduler(dsrd_remaining, mfma_total)\n            idx_ds_read = dsrd_preload_eff\n            idx_gmem_load = dvmem_preload_eff\n            if const_expr(dvmem_preload_eff):\n                rocdl.sched_vmem(dvmem_preload_eff)\n            if const_expr(dsrd_preload_eff):\n                rocdl.sched_dsrd(dsrd_preload_eff)\n            for mfma_idx in range_constexpr(mfma_total):\n                rocdl.sched_mfma(1)\n                n_dsrd = dsrd_schedule[mfma_idx]\n                if const_expr(n_dsrd and (idx_ds_read < num_ds_load)):\n                    if const_expr(idx_ds_read + n_dsrd > num_ds_load):\n                        n_dsrd = num_ds_load - idx_ds_read\n                    if const_expr(n_dsrd):\n                        rocdl.sched_dsrd(n_dsrd)\n                        idx_ds_read += n_dsrd\n                n_vmem = vmem_schedule[mfma_idx]\n                if const_expr(n_vmem and (idx_gmem_load < num_gmem_loads)):\n                    if const_expr(idx_gmem_load + n_vmem > num_gmem_loads):\n                        n_vmem = num_gmem_loads - idx_gmem_load\n                    if const_expr(n_vmem):\n                        rocdl.sched_vmem(n_vmem)\n                        idx_gmem_load += n_vmem\n            rocdl.sched_barrier(0)\n\n        # ── MFMAs of one tile ─────────────────────────────────────────\n        def mma_kloop(a_stage, cur_frag_B):\n            for ki in range_constexpr(k_iters):\n                fx.copy(\n                    uni_copy,\n                    pA_s2r_stages[a_stage][None, None, ki],\n                    frag_A_retile[None, None, ki],\n                )\n                # B as the MFMA's first operand: the accumulator holds C transposed, so a lane ends with four\n                # adjacent columns of one row (one 8-byte store) instead of four rows of one column.\n                for mi in range_constexpr(m_repeat):\n                    a_op = Vec(frag_A[None, mi, ki].load()).bitcast(fx.Int32)\n                    for ni in range_constexpr(num_acc_n):\n                        b_op = Vec(cur_frag_B[None, ni, ki].load()).bitcast(fx.Int32)\n                        acc = rocdl.mfma_scale_f32_16x16x128_f8f6f4(\n                            T.vec(4, T.f32), [b_op, a_op, frag_C[None, mi, ni].load(), 0, 0, 0, 0, 0, 0]\n                        )\n                        frag_C[None, mi, ni].store(Vec(acc))\n\n        def pipeline_2stage(read_stage, next_k_val=None, read_next=True):\n            write_stage = read_stage ^ 1\n            do_next = read_next and next_k_val is not None\n            if const_expr(do_next):\n                dma_a_to_lds(next_k_val, write_stage)\n                fx.copy(\n                    buf_copy_b,\n                    pB_g[None, None, None, k_off + next_k_val],\n                    frag_B_retile_stages[write_stage],\n                )\n            mma_kloop(read_stage, frag_B_stages[read_stage])\n            hot_loop_scheduler()\n            if const_expr(do_next):\n                rocdl.s_waitcnt(num_b_loads)\n            gpu.barrier()\n\n        # ── D-slot ring (lds_stage >= 3): tile t+D-1 is issued while tile t computes ──\n        ring = lds_stage >= 3\n        loads_per_tile = n_a_dmas + num_b_loads\n\n        def ring_issue(t):\n            dma_a_to_lds(fx.Int32(t), t % lds_stage)\n            # Keep the A DMA ahead of B in issue order: the explicit vmcnt below counts on it.\n            rocdl.sched_barrier(0)\n            fx.copy(\n                buf_copy_b,\n                pB_g[None, None, None, k_off + t],\n                frag_B_retile_stages[t % lds_stage],\n            )\n            rocdl.sched_barrier(0)\n\n        def ring_wait(t):\n            # Wait for tile t's A DMA only (tile t's B and the loads of later tiles stay in flight), then a raw\n            # s_barrier so every wave sees the slot and is done with the one the next issue overwrites. gpu.barrier's\n            # release fence would also wait for every LDS DMA in flight and drain the ring at each tile.\n            later = min(num_tiles - 1, t + lds_stage - 2) - t\n            rocdl.s_waitcnt(vmcnt=min(63, num_b_loads + later * loads_per_tile), lgkmcnt=0)\n            rocdl_d.s_barrier()\n\n        # ── Prologue ──────────────────────────────────────────────\n        acc_zero = fx.full(acc_size, 0.0, Float32)\n        if const_expr(ring):\n            for t in range_constexpr(min(lds_stage - 1, num_tiles)):\n                ring_issue(t)\n            frag_C.store(acc_zero)\n        else:\n            dma_a_to_lds(fx.Int32(0), 0)\n            fx.copy(buf_copy_b, pB_g[None, None, None, k_off], frag_B_retile_stages[0])\n            frag_C.store(acc_zero)\n            rocdl.s_waitcnt(num_b_loads)\n            gpu.barrier()\n        rocdl.sched_barrier(0)\n\n        # ── Main tile loop ────────────────────────────────────────────\n        if const_expr(ring):\n            for t in range_constexpr(num_tiles - 1):\n                ring_wait(t)\n                if const_expr(t + lds_stage - 1 < num_tiles):\n                    ring_issue(t + lds_stage - 1)\n                mma_kloop(t % lds_stage, frag_B_stages[t % lds_stage])\n        else:\n            # Ping-pong, two tiles per step; the last tile is peeled below.\n            tail = 1 if num_tiles % 2 == 1 else 2\n            loop_end = (num_tiles - tail) // 2\n            for iv in range_constexpr(loop_end):\n                pipeline_2stage(read_stage=0, next_k_val=fx.Int32(iv * 2) + fx.Int32(1))\n                pipeline_2stage(read_stage=1, next_k_val=fx.Int32(iv * 2) + fx.Int32(2))\n            k_tail0 = num_tiles - tail\n            for j in range_constexpr(tail - 1):\n                pipeline_2stage(\n                    read_stage=(k_tail0 + j) % 2, next_k_val=fx.Int32(k_tail0 + j + 1)\n                )\n\n        # ── Epilogue operands (scale_a, scale_b) ─────────────────────────\n        bx_m = bid_x * tile_m\n        by_n = bid_y * tile_n\n        wave_id = gpu.thread_id(\"x\") // 64\n        lane_id = gpu.thread_id(\"x\") % 64\n        lane_div_16 = lane_id // 16\n        lane_mod_16 = lane_id % 16\n\n        def _epi_tiles(arg, tile_elems, *, max_size=True, num_records_bytes=None):\n            # buffer-resource view of a 1D epilogue operand, split into `tile_elems`\n            # tiles so the tile index == element_offset // tile_elems (BufferCopy\n            # soffset is an element count). OOB-clamped by the descriptor.\n            view = fx.rocdl.make_buffer_tensor(\n                arg, max_size=max_size, num_records_bytes=num_records_bytes\n            )\n            return fx.logical_divide(view, fx.make_layout(tile_elems, 1))\n\n        def _epi_read1(tiles, idx, elem_ty, atom):\n            r = fx.make_rmem_tensor(fx.make_layout(1, 1), elem_ty)\n            fx.copy(atom, fx.slice(tiles, (None, fx.Int32(idx))), r)\n            return fx.memref_load_vec(r)[0]\n\n        def load_epi_operands():\n            # One scale_a per lane row of each 16-row block, a dwordx4 of scale_b per lane's four columns of each\n            # 16-column block; both bounded to the real M and N, so the padded rows and columns read 0.\n            sa_tiles = _epi_tiles(arg_scale_a, 1, max_size=False, num_records_bytes=fx.Int64(i32_m) * 4)\n            sa_atom = fx.make_copy_atom(fx.rocdl.BufferCopy32b(0), fx.Float32)\n            s_a = [\n                _epi_read1(sa_tiles, bx_m + mi * 16 + lane_mod_16, fx.Float32, sa_atom)\n                for mi in range_constexpr(m_repeat)\n            ]\n            sb_tiles = _epi_tiles(arg_scale_b, 4, max_size=False, num_records_bytes=N * 4)\n            sb_atom = fx.make_copy_atom(fx.rocdl.BufferCopy128b(0), fx.Float32)\n            s_b = []\n            for ni in range_constexpr(num_acc_n):\n                r = fx.make_rmem_tensor(fx.make_layout(4, 1), fx.Float32)\n                idx = fx.Int32(by_n + (ni * num_waves + wave_id) * 16 + lane_div_16 * 4) // 4\n                fx.copy(sb_atom, fx.slice(sb_tiles, (None, idx)), r)\n                s_b.append(fx.memref_load_vec(r).bitcast(fx.Float32))\n            return s_a, s_b\n\n        # The last tile's MFMAs overlap the epilogue-operand loads, issued after the last explicit wait so they\n        # stay out of its count.\n        if const_expr(ring):\n            ring_wait(num_tiles - 1)\n            s_a_vals, s_b_vals = load_epi_operands()\n            last = (num_tiles - 1) % lds_stage\n            mma_kloop(last, frag_B_stages[last])\n        else:\n            s_a_vals, s_b_vals = load_epi_operands()\n            pipeline_2stage(read_stage=(num_tiles - 1) % 2, read_next=False)\n\n        def epilogue_store(s_a_vals, s_b_vals):\n            acc_vec = Vec(frag_C.load())\n            out_elems = []\n            for p in range_constexpr(acc_size):\n                ni = p // (m_repeat * 4)\n                mi = (p // 4) % m_repeat\n                ii = p % 4\n                val_s = (acc_vec[p] * s_a_vals[mi]) * s_b_vals[ni][ii]\n                out_elems.append(val_s.to(out_elem_cls))\n            frag_C_out.store(fx.Vector.from_elements(out_elems, out_elem_cls))\n\n            # Four adjacent columns of one row per (block, lane): one 8-byte store. N is a multiple of 4, so a\n            # group is wholly inside or outside it; groups outside go to the one-past-end element.\n            out_4 = _epi_tiles(\n                arg_out, 4, max_size=False, num_records_bytes=fx.Int64(i32_m) * fx.Int64(i32_n) * 2\n            )\n            four = fx.make_rmem_tensor(fx.make_layout(4, 1), out_elem_cls)\n            st8 = fx.make_copy_atom(fx.rocdl.BufferCopy64b(0), out_elem_cls)\n            final_values = Vec(frag_C_out.load())\n            oob4 = (i32_m * i32_n) // 4\n            for ni in range_constexpr(num_acc_n):\n                for mi in range_constexpr(m_repeat):\n                    p0 = (ni * m_repeat + mi) * 4\n                    fx.memref_store_vec(\n                        fx.Vector.from_elements([final_values[p0 + ii] for ii in range(4)], out_elem_cls), four\n                    )\n                    row = bx_m + mi * 16 + lane_mod_16\n                    col = by_n + (ni * num_waves + wave_id) * 16 + lane_div_16 * 4\n                    ok = (row < i32_m) & (col < i32_n)\n                    fx.copy(st8, four, fx.slice(out_4, (None, ok.select(fx.Int32(row * i32_n + col) // 4, oob4))))\n\n        # ── Epilogue ─────────────────────────────────────────────\n        if const_expr(kfold == 2):\n            # Each lane publishes its raw fp32 partial into plane (tile, split), then atomically swaps this launch's\n            # tag into its (tile, wave, lane) word; the lane that gets the tag back arrived second and writes the sum\n            # with the other plane (a + b is commutative, so either split folding gives the same bits). No lane waits.\n            ws_rsrc = _make_rsrc(fx.Int64(fx.ptrtoint(fx.get_iter(arg_c))))\n            tile_id = fx.Int32(bid_x) * n_tiles_n + fx.Int32(bid_y)\n            s_idx = fx.Int32(bid_z)\n            wave_f = fx.Int32(rocdl.readfirstlane(fx.Int32.ir_type, fx.Int32(wave_id)))\n            lane_f = fx.Int32(lane_id)\n            n_vec4 = acc_size // 4\n\n            def plane_off(sp, j):\n                return ((tile_id * 2 + sp) * num_waves + wave_f) * (64 * acc_size) + j * 256 + lane_f * 4\n\n            acc_raw = as_ir_value(frag_C.load())\n            own = []\n            for j in range_constexpr(n_vec4):\n                v = _vector.FromElementsOp(\n                    T.vec(4, T.f32), [_v_extract(acc_raw, 4 * j + e) for e in range(4)]\n                ).result\n                own.append(v)\n                _buffer_store(v, ws_rsrc, plane_off(s_idx, j), cpol=CPOL_SYS)\n            # The partial must be visible before the swap announces it.\n            rocdl.s_waitcnt(0)\n\n            # The tag is unique per launch (dispatch id, queue address), so no word left by an earlier\n            # launch matches it and the workspace needs no zeroing.\n            did = llvm.call_intrinsic(T.i64, \"llvm.amdgcn.dispatch.id\", [], [], [])\n            qp = llvm.call_intrinsic(ir.Type.parse(\"!llvm.ptr<4>\"), \"llvm.amdgcn.queue.ptr\", [], [], [])\n            qpi = llvm.PtrToIntOp(T.i64, qp).result\n            qrot = std_arith.OrIOp(\n                std_arith.ShLIOp(qpi, _i64c(32)).result, std_arith.ShRUIOp(qpi, _i64c(32)).result\n            ).result\n            tag = std_arith.XOrIOp(did, qrot).result\n            slot_word = (tile_id * num_waves + wave_f) * 64 + lane_f\n            slot_addr = fx.Int64(fx.ptrtoint(fx.get_iter(arg_semaphore))) + fx.Int64(slot_word) * 8\n            slot_ptr = llvm.IntToPtrOp(ir.Type.parse(\"!llvm.ptr<1>\"), as_ir_value(slot_addr)).result\n            prev = llvm.atomicrmw(\n                llvm.AtomicBinOp.xchg,\n                slot_ptr,\n                tag,\n                llvm.AtomicOrdering.monotonic,\n                syncscope=\"agent\",\n                alignment=8,\n            )\n            second = std_arith.CmpIOp(std_arith.CmpIPredicate.eq, prev, tag).result\n\n            def fold2():\n                peer = fx.Int32(1) - s_idx\n                parts = [\n                    _buffer_load(ws_rsrc, plane_off(peer, j), 4, T.f32, cpol=CPOL_SYS)\n                    for j in range_constexpr(n_vec4)\n                ]\n                elems = []\n                for j in range_constexpr(n_vec4):\n                    sm = std_arith.AddFOp(own[j], parts[j]).result\n                    for e in range_constexpr(4):\n                        elems.append(fx.Float32(_v_extract(sm, e)))\n                frag_C.store(fx.Vector.from_elements(elems, Float32))\n                epilogue_store(s_a_vals, s_b_vals)\n\n            _guarded(second, fold2)\n        else:\n            epilogue_store(s_a_vals, s_b_vals)\n\n    # ── Host launcher ─────────────────────────────────────────────\n    @flyc.jit\n    def launch_gemm(\n        arg_c: fx.Tensor,\n        arg_out: fx.Tensor,\n        arg_semaphore: fx.Tensor,\n        arg_a: fx.Tensor,\n        arg_b: fx.Tensor,\n        arg_scale_a: fx.Tensor,\n        arg_scale_b: fx.Tensor,\n        i32_m: fx.Int32,\n        i32_n: fx.Int32,\n        stream: fx.Stream,\n    ):\n        CompilationContext.get_current()\n\n        # Preshuffled B (aiter shuffle_weight 16x16): per 16-row block, 16-byte K packs of 16 lanes, 4 packs\n        # per 64 bytes of K.\n        kp_elems = 16\n        n0 = n_padded // 16\n        k0 = K // 64\n        s_nlane = kp_elems\n        s_klane = 16 * s_nlane\n        s_k0 = 4 * s_klane\n        s_n0 = k0 * s_k0\n        preshuffle_B = fx.Tensor(\n            fx.make_view(\n                fx.get_iter(arg_b),\n                fx.make_layout(\n                    ((16, n0), (kp_elems, 4, k0)), ((s_nlane, s_n0), (1, s_klane, s_k0))\n                ),\n            )\n        )\n\n        # Reshape A and C to 2D\n        M_max = PRESHUFFLE_M_MAX\n        arg_a_2d = fx.Tensor(\n            fx.make_view(fx.get_iter(arg_a), fx.make_layout((M_max, K), (K, 1)))\n        )\n        arg_c_2d = fx.Tensor(\n            fx.make_view(\n                fx.get_iter(arg_c),\n                fx.make_layout((M_max, n_padded), (n_padded, 1)),\n            )\n        )\n\n        gx = (i32_m + (tile_m - 1)) // tile_m\n        gy = (i32_n + (tile_n - 1)) // tile_n\n\n        kernel_gemm(\n            arg_c_2d,\n            arg_out,\n            arg_semaphore,\n            arg_a_2d,\n            preshuffle_B,\n            arg_scale_a,\n            arg_scale_b,\n            i32_m,\n            i32_n,\n        ).launch(\n            grid=(gx, gy, kfold),\n            block=(total_threads, 1, 1),\n            stream=stream,\n        )\n\n    set_slp_vectorize_once_used(launch_gemm, False)\n    return launch_gemm\n\n\n# ── Dispatch ──────────────────────────────────────────────────────────\n_N = 6288\n_K = 7168\n\n# (max m, (tile_m, tile_n, tile_k, xcd_swizzle, lds_stage, kfold, b_cpol, a_rows)): lds_stage 3-4 is the DMA ring, 2\n# aiter's ping-pong (better on the 112/128 x 128 tiles); kfold 2 splits K over two workgroups; b_cpol 2 (nt) where one\n# M block reads B once, 0 where two share it through L2; a_rows > 0 issues only the A DMAs holding that many rows.\n_TABLE = (\n    (8, (16, 32, 512, 0, 4, 1, 2, 8)),\n    (16, (16, 32, 512, 0, 3, 1, 2, 0)),\n    (24, (32, 32, 512, 0, 3, 1, 2, 24)),\n    (32, (32, 64, 512, 4, 3, 2, 2, 0)),\n    (48, (48, 64, 256, 4, 3, 2, 2, 0)),\n    (56, (64, 64, 256, 0, 3, 2, 2, 0)),\n    (64, (64, 64, 256, 0, 3, 2, 2, 0)),\n    (80, (80, 64, 256, 4, 3, 2, 2, 0)),\n    (96, (96, 64, 256, 4, 3, 2, 2, 0)),\n    (112, (112, 64, 256, 4, 3, 2, 2, 0)),\n    (128, (128, 64, 256, 0, 3, 2, 2, 0)),\n    (160, (80, 128, 256, 8, 3, 2, 0, 0)),\n    (224, (112, 128, 256, 8, 2, 2, 0, 0)),\n    (256, (128, 128, 256, 1, 2, 2, 0, 0)),\n)\n# aiter's tuned scheduler preload (ds_read, VMEM) for the ping-pong's 112x128x256 and 128x128x256 tiles.\n_PINGPONG_PRELOAD = (4, 4)\n\n\ndef _config(m):\n    for bound, cfg in _TABLE:\n        if m <= bound:\n            return cfg\n    return _TABLE[-1][1]\n\n\ndef _build(cfg, m, device):\n    tm, tn, tk, xcd, lds, kfold, b_cpol, a_rows = cfg\n    exe = compile_preshuffle_gemm(\n        N=_N,\n        K=_K,\n        tile_m=tm,\n        tile_n=tn,\n        tile_k=tk,\n        xcd_swizzle=xcd,\n        lds_stage=lds,\n        preload=_PINGPONG_PRELOAD if lds == 2 else (0, 0),\n        kfold=kfold,\n        b_cpol=b_cpol,\n        a_rows=a_rows,\n    )\n    if kfold > 1:\n        tiles = ((m + tm - 1) // tm) * ((_N + tn - 1) // tn)\n        waves = 2 if tn == 32 else 4\n        acc_size = (tm // 16) * (tn // waves // 16) * 4\n        plane_bytes = tiles * kfold * waves * 64 * acc_size * 4\n        slot_bytes = tiles * waves * 64 * 8  # one 8-byte swap word per (tile, wave, lane)\n        return exe, None, (plane_bytes, slot_bytes)\n    sem = torch.empty(0, dtype=torch.int32, device=device)\n    return exe, sem, None\n\n\n@functools.cache\ndef _plan(m, device):\n    return _build(_config(m), m, device)\n\n\ndef _launch(plan, a, b, a_scale, b_scale, out, m):\n    import flydsl.expr as fx\n    from aiter.ops.flydsl.kernels.tensor_shim import _run_compiled\n\n    exe, sem, ws_bytes = plan\n    flat_out = out.view(-1)\n    if ws_bytes is None:\n        c = flat_out\n    else:\n        # Per-call workspace: fp32 partial planes, then the swap words. Contents are never trusted: a word\n        # only counts when it holds this launch's tag.\n        plane_bytes, slot_bytes = ws_bytes\n        ws = torch.empty(plane_bytes + slot_bytes, dtype=torch.uint8, device=out.device)\n        c = ws[:plane_bytes].view(torch.float32)\n        sem = ws[plane_bytes:].view(torch.int32)\n    _run_compiled(\n        exe,\n        c,\n        flat_out,\n        sem,\n        a.view(torch.int8).view(-1),\n        b.view(torch.int8).view(-1),\n        a_scale.view(-1),\n        b_scale.view(-1),\n        m,\n        _N,\n        fx.Stream(torch.cuda.current_stream()),\n    )\n\n\ndef run(*, a, b, a_scale, b_scale, trans_b, bias, out_dtype, out):\n    m = a.shape[0]\n    _launch(_plan(m, out.device), a, b, a_scale, b_scale, out, m)\n"
+      }
+    ]
+  }
+}
