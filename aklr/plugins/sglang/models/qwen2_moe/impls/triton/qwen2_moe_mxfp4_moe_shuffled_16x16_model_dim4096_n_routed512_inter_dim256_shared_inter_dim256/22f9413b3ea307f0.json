@@ -179,10 +179,28 @@
   "workloads": [
     {
       "axes": {
+        "n_tokens": 72
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 120
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 136
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 144
+      }
+    },
+    {
+      "axes": {
         "n_tokens": 192
-      },
-      "accuracy": "passed",
-      "speedup": 1.288
+      }
     }
   ],
   "layout_variants": {
