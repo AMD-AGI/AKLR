@@ -1240,6 +1240,29 @@ def test_platform_the_kernel_does_not_state_aborts(
     assert code.is_platform_fault
 
 
+def test_a_tracer_that_cannot_register_is_the_platforms_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The kernel tracer registers as the candidate imports the timing module: its failure
+    is the platform's, not the candidate's crash."""
+    from aklr.core.platform.device import DeviceTarget
+    from aklr.core.validation.stages._bench._evaluation import run_candidate
+    from tests.op_case import KERNEL_TARGET, OpCase
+
+    case = OpCase.of("gemm@1.0")
+    target = DeviceTarget.from_names(**KERNEL_TARGET)
+    monkeypatch.setattr(DeviceTarget, "current", classmethod(lambda cls, d: target))
+    # its import raises, as a tracer that cannot register does
+    monkeypatch.setitem(sys.modules, "aklr.core.utils.testing", None)
+    context = ExecutionContext(device="cpu", log_path=tmp_path / "log")
+    request = case.request
+    result = run_candidate(
+        context, requests=[request], outputs={request.axes_text: request.empty_outputs("cpu")}
+    )
+    findings = CandidateResult.model_validate(result).findings
+    assert [f.code for f in findings] == [FindingCode.PLATFORM_FAILURE]
+
+
 def test_importing_validation_loads_no_torch() -> None:
     """Audit-only runs stay light: torch loads only once a bench runs."""
     import subprocess
