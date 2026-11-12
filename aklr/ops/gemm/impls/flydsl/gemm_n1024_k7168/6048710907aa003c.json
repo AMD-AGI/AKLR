@@ -1,0 +1,118 @@
+{
+  "schema_version": 5,
+  "name": "gemm_n1024_k7168",
+  "contract_id": "gemm@1.0",
+  "description": "16-bit gemm: out = a @ b.T + bias (b is (k, n) unless trans_b).",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 1024,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 7168,
+      "description": "Reduction length."
+    }
+  },
+  "attrs": {
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 256
+      }
+    },
+    {
+      "axes": {
+        "m": 512
+      }
+    },
+    {
+      "axes": {
+        "m": 1024
+      }
+    },
+    {
+      "axes": {
+        "m": 2048
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Split-K BF16 GEMM A @ B.T for the tuned shapes: the waves of a workgroup share one DMA-filled LDS ring, and K\nsplits publish launch-tagged partials that the last split to arrive folds in split order. Other shapes run\ntorch.matmul.\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import arith as std_arith\nfrom flydsl._mlir.dialects import llvm, vector\nfrom flydsl._mlir.dialects import rocdl as rocdl_d\nfrom flydsl.expr import arith, const_expr, range_constexpr, rocdl\nfrom flydsl.expr.typing import T, as_ir_value\n\nWARP = 64\nNUM_XCD = 8\nLDS_BYTES = 160 * 1024\nVMCNT_MAX = 63\nBF16_BYTES = 2\nLINE_K = 64\nLINE_BYTES = LINE_K * BF16_BYTES\nDMA_BYTES = WARP * 16\nTAG_ELEMS_PER_UNIT = LINE_BYTES // 4\n# SC0 | SC1, system coherent: the folding wave sees every split's partials.\nCPOL_SYS = 1 | 16\n# Element offset past every buffer here, small enough that its byte offset fits in 32 bits.\nOOB_ELEM = 0x10000000\n# Odd multipliers of the launch tag (signed i64).\nTAG_H1 = 0x9E3779B97F4A7C15 - (1 << 64)\nTAG_H2 = 0x632BE59BD9B4E019\n\n\ndef _gep(base_ptr, byte_offset):\n    base_ptr = as_ir_value(base_ptr)\n    if isinstance(byte_offset, int):\n        dyn, const = [], [byte_offset]\n    else:\n        dyn, const = [as_ir_value(byte_offset)], [-(2**31)]  # GEP's marker for a dynamic index\n    return llvm.GEPOp(base_ptr.type, base_ptr, dyn, const, T.i8, None).result\n\n\ndef _i32c(value):\n    return std_arith.ConstantOp(T.i32, ir.IntegerAttr.get(T.i32, value)).result\n\n\ndef _i64c(value):\n    return std_arith.ConstantOp(T.i64, ir.IntegerAttr.get(T.i64, value)).result\n\n\ndef _to_i32(value):\n    value = as_ir_value(value)\n    return value if value.type == T.i32 else std_arith.IndexCastOp(T.i32, value).result\n\n\ndef _make_rsrc(ptr, num_records):\n    return fx.rocdl.get_buffer_rsrc(fx.rocdl.make_buffer_ptr(ptr, num_records_bytes=num_records))\n\n\ndef _bload(rsrc, offset, vec_width, dtype):\n    offset = std_arith.MulIOp(_to_i32(offset), _i32c(dtype.width // 8)).result\n    return rocdl.raw_ptr_buffer_load(\n        ir.VectorType.get([vec_width], dtype), rsrc, offset, _i32c(0), aux=CPOL_SYS\n    )\n\n\ndef _bstore(data, rsrc, offset, cpol=0):\n    data = as_ir_value(data)\n    offset = std_arith.MulIOp(_to_i32(offset), _i32c(data.type.element_type.width // 8)).result\n    aux = ir.IntegerAttr.get(T.i32, cpol) if cpol else None\n    rocdl_d.RawPtrBufferStoreOp(data, rsrc, offset, _i32c(0), aux=aux)\n\n\ndef _build_sr(m, n, k, TM, TN, S, R, WM, WN, BM, PK, CF):\n    \"\"\"WM x WN waves split a TM x TN tile and fill an R-line LDS ring; K splits S ways across workgroups, boxed\n    BM tiles tall per XCD. PK publishes rounded, packed partials; a wave that sees every partner's tag CF\n    lines before the end of its K loop is the only folder and skips publishing.\"\"\"\n    W = WM * WN\n    THREADS = WARP * W\n    SM, SN = TM // WM, TN // WN\n    FR, NF = SM // 16, SN // 16\n    NFRAG = FR * NF\n    assert SM % 16 == 0 and SN % 16 == 0 and m % TM == 0 and n % TN == 0\n    MT, NB = m // TM, n // TN\n    NT = MT * NB\n    KS = k // S\n    assert S > 1 and KS % LINE_K == 0\n    J = KS // LINE_K\n    DA, DB = TM // 8, TN // 8\n    DL = DA + DB\n    assert DA % W == 0 and DL % W == 0\n    DLW = DL // W\n    LB = (TM + TN) * LINE_BYTES\n    B_OFF = TM * LINE_BYTES\n    assert R * LB <= LDS_BYTES and DLW * R <= VMCNT_MAX and 2 <= R <= J\n    GRID = NT * S\n    assert NT % NUM_XCD == 0\n    TPG = NT // NUM_XCD\n    assert TPG % BM == 0 and MT % BM == 0 and NB % (TPG // BM) == 0\n    # Tag loads are issued after line X0's wait, once the last line's DMAs are in flight.\n    X0 = J - CF\n    assert 1 <= CF <= R and X0 >= 1\n    # PK: sign, exponent and 15 mantissa bits, 4 values per 3 dwords.\n    PW = 3 if PK else 4\n    PLANE_ELEMS = NT * S * W * NFRAG * WARP * PW  # i32 elements\n    TAG_ELEMS = NT * S * W * TAG_ELEMS_PER_UNIT\n    WS_BYTES = (PLANE_ELEMS + TAG_ELEMS) * 4\n\n    @fx.struct\n    class SrStorage:\n        ops: fx.Array[fx.BFloat16, R * LB // BF16_BYTES, 16]\n\n    @flyc.kernel(known_block_size=[THREADS, 1, 1])\n    def sr_kernel(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer, WS: fx.Pointer):\n        a_rsrc = _make_rsrc(A, m * k * BF16_BYTES)\n        b_rsrc = _make_rsrc(B, n * k * BF16_BYTES)\n        c_rsrc = _make_rsrc(C, m * n * BF16_BYTES)\n        ws_rsrc = _make_rsrc(WS, WS_BYTES)\n\n        lds = fx.SharedAllocator().allocate(SrStorage)\n        lds_base = fx.to_llvm_ptr(lds.ops.peek().ptr)\n\n        tid = fx.thread_idx.x\n        wid = tid // WARP\n        lane = tid % WARP\n        pid = fx.block_idx.x\n        xcd = pid % NUM_XCD\n        grp = pid // NUM_XCD\n        s_idx = grp % S\n        tile = xcd * TPG + grp // S\n        bx = tile // TPG\n        lt = tile % TPG\n        m_tile = (bx % (MT // BM)) * BM + lt % BM\n        n_tile = (bx // (MT // BM)) * (TPG // BM) + lt // BM\n        n0 = n_tile * TN\n        m0 = m_tile * TM\n        wm = wid % WM\n        wn = wid // WM\n\n        drow = lane // 8\n        dchunk = (lane % 8) ^ drow\n        k_lane = fx.Index(s_idx * KS + dchunk * 8)\n        d_of = [fx.Index(wid) + W * t for t in range_constexpr(DLW)]\n        goffs = []\n        for t in range_constexpr(DLW):\n            d = d_of[t]\n            if const_expr(t * W < DA):\n                row = fx.Index(m0) + d * 8 + drow\n            else:\n                row = fx.Index(n0) + (d - DA) * 8 + drow\n            goffs.append(fx.Int32((row * k + k_lane) * BF16_BYTES))\n        # A groups at d KiB, B groups after B_OFF (= DA KiB): both are d KiB into the line.\n        lds_doff = [\n            rocdl.readfirstlane(T.i64, arith.index_cast(T.i64, d_of[t] * DMA_BYTES))\n            for t in range_constexpr(DLW)\n        ]\n        dma_ptr0 = [_gep(lds_base, lds_doff[t]) for t in range_constexpr(DLW)]\n\n        def dma(rsrc, lds_ptr, goff, soff):\n            llvm.InlineAsmOp(\n                None,\n                [lds_ptr, as_ir_value(goff), as_ir_value(rsrc), as_ir_value(soff)],\n                \"s_mov_b32 m0, $0\\n\\tbuffer_load_dwordx4 $1, $2, $3 offen offset:0 sc0 lds\",\n                \"s,v,s,s\",\n                has_side_effects=True,\n            )\n\n        def issue_line(jj):\n            soff = fx.Int32(jj * LINE_BYTES)\n            for t in range_constexpr(DLW):\n                rs = a_rsrc if t * W < DA else b_rsrc\n                dma(rs, _gep(dma_ptr0[t], (jj % R) * LB), goffs[t], soff)\n\n        for jj in range_constexpr(R):\n            issue_line(jj)\n\n        lr = lane % 16\n        g = lane // 16\n        rr = lr % 8\n        sw = [(rr * 8 + ((g + 4 * h) ^ rr)) * 16 for h in range(2)]\n        FRAG_B = 16 * LINE_BYTES\n        a_ptr = [\n            _gep(\n                lds_base,\n                arith.index_cast(T.i64, fx.Index(wm * (FR * FRAG_B) + (lr // 8) * DMA_BYTES + sw[h])),\n            )\n            for h in range_constexpr(2)\n        ]\n        b_ptr = [\n            _gep(\n                lds_base,\n                arith.index_cast(T.i64, fx.Index(wn * (NF * FRAG_B) + (lr // 8) * DMA_BYTES + sw[h] + B_OFF)),\n            )\n            for h in range_constexpr(2)\n        ]\n        frag_t = T.vec(8, T.bf16)\n        acc = [arith.constant_vector(0.0, T.vec(4, T.f32)) for _ in range_constexpr(NFRAG)]\n\n        def read_frags(jj):\n            sl_off = (jj % R) * LB\n            bfs = []\n            afs = []\n            for h in range_constexpr(2):\n                bfs.append(\n                    [\n                        llvm.LoadOp(frag_t, _gep(b_ptr[h], sl_off + nf * FRAG_B), alignment=16).result\n                        for nf in range_constexpr(NF)\n                    ]\n                )\n                afs.append(\n                    [\n                        llvm.LoadOp(frag_t, _gep(a_ptr[h], sl_off + fr * FRAG_B), alignment=16).result\n                        for fr in range_constexpr(FR)\n                    ]\n                )\n            return bfs, afs\n\n        def sync_line(jj):\n            # Wait until line jj landed for every wave; line jj > 0 waits before line jj + R - 1 is issued.\n            pend = R - 1 if jj == 0 else min(J - 1, jj + R - 2) - jj\n            extra = S if jj > X0 else 0\n            llvm.InlineAsmOp(\n                None,\n                [],\n                f\"s_waitcnt vmcnt({DLW * pend + extra}) lgkmcnt(0)\\n\\ts_barrier\",\n                \"\",\n                has_side_effects=True,\n            )\n            rocdl.sched_barrier(0)\n\n        did = llvm.call_intrinsic(T.i64, \"llvm.amdgcn.dispatch.id\", [], [], [])\n        qp = llvm.call_intrinsic(ir.Type.parse(\"!llvm.ptr<4>\"), \"llvm.amdgcn.queue.ptr\", [], [], [])\n        qpi = llvm.PtrToIntOp(T.i64, qp).result\n        tag = std_arith.AddIOp(\n            std_arith.MulIOp(did, _i64c(TAG_H1)).result, std_arith.MulIOp(qpi, _i64c(TAG_H2)).result\n        ).result\n        tag_lo = std_arith.TruncIOp(T.i32, tag).result\n        tag_hi = std_arith.TruncIOp(T.i32, std_arith.ShRUIOp(tag, _i64c(32)).result).result\n        oob = fx.Index(OOB_ELEM)\n\n        def unit(sp):\n            return (fx.Index(tile * S) + sp) * W + fx.Index(wid)\n\n        def tag_off(sp):\n            return PLANE_ELEMS + unit(sp) * TAG_ELEMS_PER_UNIT\n\n        mine = [fx.Index(s_idx) == sp for sp in range(S)]\n\n        def ext(v, e):\n            return vector.extract(as_ir_value(v), static_position=[e], dynamic_position=[])\n\n        def tag_loads(skip=None):\n            offs = []\n            for sp in range_constexpr(S):\n                o = mine[sp].select(oob, tag_off(sp))\n                if skip is not None:\n                    o = std_arith.SelectOp(skip, as_ir_value(oob), as_ir_value(o)).result\n                offs.append(o)\n            return [_bload(ws_rsrc, offs[sp], 2, T.i32) for sp in range_constexpr(S)]\n\n        def tags_ok(tls):\n            ok = None\n            for sp in range_constexpr(S):\n                lo = rocdl.readfirstlane(T.i32, ext(tls[sp], 0))\n                hi = rocdl.readfirstlane(T.i32, ext(tls[sp], 1))\n                e = std_arith.AndIOp(\n                    std_arith.CmpIOp(std_arith.CmpIPredicate.eq, as_ir_value(lo), tag_lo).result,\n                    std_arith.CmpIOp(std_arith.CmpIPredicate.eq, as_ir_value(hi), tag_hi).result,\n                ).result\n                e = std_arith.OrIOp(as_ir_value(mine[sp]), e).result\n                ok = e if ok is None else std_arith.AndIOp(ok, e).result\n            return ok\n\n        sync_line(0)\n        cur = read_frags(0)\n        for jj in range_constexpr(J):\n            if const_expr(jj + 1 < J):\n                sync_line(jj + 1)\n                if const_expr(jj + R < J):\n                    issue_line(jj + R)\n                if const_expr(jj + 1 == X0):\n                    pre_tl = tag_loads()\n                nxt = read_frags(jj + 1)\n            bfs, afs = cur\n            for h in range_constexpr(2):\n                for fr in range_constexpr(FR):\n                    for nf in range_constexpr(NF):\n                        acc[fr * NF + nf] = rocdl.mfma_f32_16x16x32_bf16(\n                            T.vec(4, T.f32), [bfs[h][nf], afs[h][fr], as_ir_value(acc[fr * NF + nf]), 0, 0, 0]\n                        )\n            if const_expr(jj + 1 < J):\n                cur = nxt\n\n        def c_off(f):\n            a_row = fx.Index(m0 + wm * SM) + (f // NF) * 16 + fx.Index(lr)\n            col = fx.Index(n0 + wn * SN) + (f % NF) * 16 + fx.Index(g) * 4\n            return a_row * n + col\n\n        def plane_off(sp, f):\n            return (unit(sp) * NFRAG + f) * (WARP * PW) + fx.Index(lane) * PW\n\n        def shl(x, b):\n            return std_arith.ShLIOp(x, _i32c(b)).result\n\n        def shr(x, b):\n            return std_arith.ShRUIOp(x, _i32c(b)).result\n\n        def bor(x, y):\n            return std_arith.OrIOp(x, y).result\n\n        def pack(v):\n            r = []\n            for e in range_constexpr(4):\n                x = vector.extract(\n                    vector.bitcast(T.vec(4, T.i32), as_ir_value(v)), static_position=[e], dynamic_position=[]\n                )\n                odd = std_arith.AndIOp(shr(x, 8), _i32c(1)).result\n                x = std_arith.AddIOp(std_arith.AddIOp(x, _i32c(0x7F)).result, odd).result\n                r.append(shr(x, 8))\n            d0 = bor(r[0], shl(r[1], 24))\n            d1 = bor(shr(r[1], 8), shl(r[2], 16))\n            d2 = bor(shr(r[2], 16), shl(r[3], 8))\n            return vector.FromElementsOp(T.vec(3, T.i32), [d0, d1, d2]).result\n\n        def unpack(d):\n            d0, d1, d2 = [\n                vector.extract(as_ir_value(d), static_position=[e], dynamic_position=[]) for e in range(3)\n            ]\n            f0 = shl(d0, 8)\n            f1 = bor(shl(shr(d0, 24), 8), shl(d1, 16))\n            f2 = bor(shl(shr(d1, 16), 8), shl(d2, 24))\n            f3 = std_arith.AndIOp(d2, _i32c(-256)).result\n            return vector.bitcast(\n                T.vec(4, T.f32), vector.FromElementsOp(T.vec(4, T.i32), [f0, f1, f2, f3]).result\n            )\n\n        packed = [pack(acc[f]) for f in range_constexpr(NFRAG)] if PK else None\n\n        # Every partner published before this wave looked, so none saw this wave's tag: it is the only folder.\n        pre = tags_ok(pre_tl)\n\n        def skip_off(o):\n            return std_arith.SelectOp(pre, as_ir_value(oob), as_ir_value(o)).result\n\n        for f in range_constexpr(NFRAG):\n            pub = packed[f] if PK else vector.bitcast(T.vec(4, T.i32), as_ir_value(acc[f]))\n            _bstore(pub, ws_rsrc, skip_off(plane_off(s_idx, f)), cpol=CPOL_SYS)\n        fx.rocdl.s_waitcnt(vmcnt=0)\n        tv = vector.FromElementsOp(T.vec(2, T.i32), [tag_lo, tag_hi]).result\n        _bstore(tv, ws_rsrc, skip_off((fx.Index(lane) == 0).select(tag_off(s_idx), oob)), cpol=CPOL_SYS)\n        fx.rocdl.s_waitcnt(vmcnt=0)\n\n        ok = std_arith.OrIOp(pre, tags_ok(tag_loads(pre))).result\n        sums = [None] * NFRAG\n        own = [unpack(packed[f]) for f in range_constexpr(NFRAG)] if PK else acc\n        for sp in range_constexpr(S):\n            use = std_arith.AndIOp(\n                ok, std_arith.XOrIOp(as_ir_value(mine[sp]), as_ir_value(arith.constant(True))).result\n            ).result\n            for f in range_constexpr(NFRAG):\n                off = std_arith.SelectOp(use, as_ir_value(plane_off(sp, f)), as_ir_value(oob)).result\n                if const_expr(PK):\n                    pv = unpack(_bload(ws_rsrc, off, 3, T.i32))\n                else:\n                    pv = vector.bitcast(T.vec(4, T.f32), _bload(ws_rsrc, off, 4, T.i32))\n                pf = std_arith.SelectOp(as_ir_value(mine[sp]), as_ir_value(own[f]), pv).result\n                sums[f] = pf if sums[f] is None else std_arith.AddFOp(sums[f], pf).result\n        for f in range_constexpr(NFRAG):\n            outv = std_arith.TruncFOp(T.vec(4, T.bf16), as_ir_value(sums[f])).result\n            coff = std_arith.SelectOp(ok, as_ir_value(c_off(f)), as_ir_value(oob)).result\n            _bstore(outv, c_rsrc, coff)\n\n    @flyc.jit\n    def launch(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer, WS: fx.Pointer, stream: fx.Stream):\n        sr_kernel(C, A, B, WS).launch(grid=(GRID, 1, 1), block=(THREADS, 1, 1), stream=stream)\n\n    return launch, WS_BYTES\n\n\n# Preload kernel arguments into user SGPRs; the launch passes bare pointers, so all of them are preloaded.\n_COMPILE_HINTS = {\"llvm_options\": {\"amdgpu-kernarg-preload-count\": 16}}\n\n# (TM, TN, S, R, WM, WN, BM, PK, CF) per M at the (N, K) the shared-ring kernel is tuned for.\n_SR_NK = (1024, 7168)\n_SR_CONFIG = {\n    256: (64, 64, 4, 6, 2, 4, 2, 0, 4),\n    512: (128, 64, 4, 4, 2, 2, 2, 0, 2),\n    1024: (128, 128, 4, 4, 2, 4, 2, 1, 2),\n}\n\n\n@functools.cache\ndef _sr_launcher(m, n, k):\n    launch, ws_bytes = _build_sr(m, n, k, *_SR_CONFIG[m])\n    return flyc.compile[_COMPILE_HINTS](launch), ws_bytes\n\n\ndef _ptr_arg(t):\n    return flyc.from_c_void_p(fx.Uint8, t.data_ptr())\n\n\ndef run(*, a, b, trans_b, bias, out_dtype, out):\n    m, k = a.shape\n    n = b.shape[0]\n    if (\n        trans_b\n        and bias is None\n        and m in _SR_CONFIG\n        and (n, k) == _SR_NK\n        and a.dtype == torch.bfloat16\n        and b.dtype == torch.bfloat16\n        and out.dtype == torch.bfloat16\n        and a.is_contiguous()\n        and b.is_contiguous()\n        and out.is_contiguous()\n    ):\n        launch, ws_bytes = _sr_launcher(m, n, k)\n        ws = torch.empty(ws_bytes, dtype=torch.uint8, device=a.device)\n        launch(\n            _ptr_arg(out),\n            _ptr_arg(a),\n            _ptr_arg(b),\n            _ptr_arg(ws),\n            fx.Stream(torch.cuda.current_stream(a.device)),\n        )\n        return\n    torch.matmul(a, b.t() if trans_b else b, out=out)\n"
+      }
+    ]
+  }
+}
