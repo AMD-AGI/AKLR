@@ -1,6 +1,8 @@
 name: shepherd
 
-# Forward issue events to the shepherd host's event queue; the host's shepherd-round service runs the round.
+# Turn issue events into shepherd work on the shepherd host, whose shepherd-round service runs the paid round.
+# Opening an issue only labels it (no model); only events a requesters-team member or the shepherd App
+# caused are queued for a round. Anything else waits for the scheduled round, which re-checks everything.
 on:
   issues:
     types: [opened, edited, labeled, unlabeled, closed, reopened]
@@ -10,22 +12,58 @@ permissions: {}
 
 jobs:
   forward:
-    # Each event starts a paid round, so only issues a repository member or collaborator opened, or a shepherd
-    # label change (which needs triage access), are forwarded. The round still checks the requesters team.
     if: >-
       github.event_name == 'workflow_dispatch'
       || github.event.label.name == 'shepherd'
-      || (contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association)
-          && (startsWith(github.event.issue.title, 'shepherd:')
-              || contains(github.event.issue.labels.*.name, 'shepherd')))
+      || startsWith(github.event.issue.title, 'shepherd:')
+      || contains(github.event.issue.labels.*.name, 'shepherd')
     runs-on: aklr-claude
-    timeout-minutes: 2
+    timeout-minutes: 3
+    env:
+      BOARD: python3 -I harness/automations/shepherd/skills/shepherd/scripts/request_board.py --config .shepherd/configuration.yaml
+    defaults:
+      run:
+        # The host's shepherd checkout: its configuration names the team and the App.
+        working-directory: ${{ vars.SHEPHERD_CHECKOUT }}
     steps:
-      - name: Queue the event
+      - name: Get the shepherd App's token
+        id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.SHEPHERD_APP_ID }}
+          private-key: ${{ secrets.SHEPHERD_APP_PRIVATE_KEY }}
+
+      # The App's label is itself an event, which queues the round below in its own run.
+      - name: Label a new request from a team member
+        if: >-
+          contains(fromJSON('["opened", "reopened", "edited"]'), github.event.action)
+          && startsWith(github.event.issue.title, 'shepherd:')
+          && !contains(github.event.issue.labels.*.name, 'shepherd')
         env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          ISSUE: ${{ github.event.issue.number }}
+        run: $BOARD label --issue "$ISSUE"
+
+      - name: Queue a round for a trusted sender
+        if: >-
+          github.event_name == 'workflow_dispatch'
+          || github.event.label.name == 'shepherd'
+          || contains(github.event.issue.labels.*.name, 'shepherd')
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          SENDER: ${{ github.event.sender.login }}
           EVENTS: ${{ vars.SHEPHERD_EVENTS_DIR }}
           ISSUE: ${{ github.event.issue.number || 0 }}
           ACTION: ${{ github.event.action || 'dispatch' }}
         run: |
+          set +e
+          $BOARD trusts --login "$SENDER"
+          code=$?
+          set -e
+          case $code in
+            0) ;;
+            3) echo "$SENDER is not a requester; the next scheduled round reads this change"; exit 0 ;;
+            *) exit 1 ;;
+          esac
           test -d "$EVENTS" || { echo "SHEPHERD_EVENTS_DIR is not a directory on this runner" >&2; exit 1; }
           printf '%s %s\n' "$ISSUE" "$ACTION" > "$EVENTS/$(date +%s%N)-$GITHUB_RUN_ID"

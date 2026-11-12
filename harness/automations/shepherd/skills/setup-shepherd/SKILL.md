@@ -114,8 +114,10 @@ disable the old trigger before enabling the new one. Keep the state directory an
 **Issue requests (systemd and the runner).** The owner's choice for request-driven rounds is the three
 `systemd --user` units in `templates/`, on the host that holds the state directory, which is also where
 the `aklr-claude` runner runs as the same user:
-1. Create `<state_dir>/events` (mode 700) and set the repository variable `SHEPHERD_EVENTS_DIR` to its
-   absolute path; `.github/workflows/shepherd.yaml` writes one file per issue event there.
+1. Create `<state_dir>/events` (mode 700). Set the repository variables `SHEPHERD_EVENTS_DIR` (its
+   absolute path) and `SHEPHERD_CHECKOUT` (this checkout), and the secrets `SHEPHERD_APP_ID` and
+   `SHEPHERD_APP_PRIVATE_KEY`. `.github/workflows/shepherd.yaml` labels new requests with the App's token
+   and writes one file per issue event there, only when a team member or the App caused it.
 2. Copy `shepherd-round.service`, `.path` and `.timer` to `~/.config/systemd/user/` and replace
    `@CHECKOUT@` (this checkout), `@STATE_DIR@` (the expanded state directory), `@ROUND_AGENT@`
    (`execution.round_agent`, space separated) and `@PROMPT@` (`templates/automation-prompt.md` without
@@ -124,7 +126,8 @@ the `aklr-claude` runner runs as the same user:
    `shepherd-round.timer` only when the user asks. The timer replaces any other scheduled task.
 4. The shepherd App needs the organization's Members read permission (team membership) and the
    repository's Issues write permission (label, progress comments); the round's `gh` must act as it.
-   Record in `readiness.md` that a non-member's label gets no reply.
+   Record in `readiness.md` that a non-member's issue gets no label, and a non-member's label or edit
+   starts no round.
 
 If the scheduler cannot be configured from here, hand over the prompt, configuration path, readiness
 results and remaining settings, and say the task is not saved.

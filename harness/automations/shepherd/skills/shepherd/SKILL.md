@@ -213,12 +213,13 @@ Issue requests follow Sweep's issue flow. An issue titled `shepherd:` that a mem
 opens gets the `requests.label`; the label starts a request, and one progress comment on the issue shows
 it. Use `RB="python -I harness/automations/shepherd/skills/shepherd/scripts/request_board.py --config .shepherd/configuration.yaml"`.
 
-- **Observe.** In `run` and `drain`, `$RB label` first. In every mode, `$RB observe --root <state_dir>`
+- **Observe.** The runner's workflow labels new requests as they open; in `run` and `drain`, `$RB label`
+  first catches any it missed. In every mode, `$RB observe --root <state_dir>`
   lists each open labeled issue and each request in the ledger with its GitHub-side status: `active`,
   `paused` (with a reason), `unapproved` (only for ones already in the ledger), `unlabeled` or `closed`.
   The script checks that the last labeler is in the team (the App's label counts as the issue author's,
-  for the author's own text only) and that a body edit by someone outside the team came before a team
-  member's label. A non-zero exit is `unknown`:
+  for the author's own text only) and that every body edit by someone outside the team (in the issue's
+  edit history, not just the last editor) came before a team member's label. A non-zero exit is `unknown`:
   admit nothing for requests this round and stop nothing because of them.
 - **Ledger.** `requests` holds one entry per issue, never removed: `issue`, `status`, `reason`,
   `version`, `body_sha256`, `schemas`, `max_prs`, `max_campaigns`, `prompt`, and the times it was

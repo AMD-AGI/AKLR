@@ -27,7 +27,9 @@ Sweep 的做法依据它固定版本的源码：[sweepai/api.py@a8b8b67](https:/
 同意做成一直在线的服务，它和本分支已有的设计（`state.py round` + 账本 + 每轮新起的 agent）不冲突：服务只决定什么时候跑一轮，每一轮怎么跑完全不变。
 
 - **事件入口是 `aklr-claude` runner**：runner 主动连 GitHub 拉任务，主机不用开任何入站端口。这点很重要，因为这台主机在 AMD 内网，GitHub 的 webhook 打不进来。
-- **workflow 只转发事件**：`shepherd.yaml` 的 job 只把 issue 号和事件类型写进主机上的事件队列目录，几秒钟就结束，不在 job 里跑 round。
+- **workflow 只转发事件**：`shepherd.yaml` 的 job 几秒钟就结束，不在 job 里跑 round：
+  - 开 issue 时只用 App token 给 team 成员的 `shepherd:` issue 加 label，不调模型；
+  - 只有 team 成员或 App 本身引起的事件，才把 issue 号和事件类型写进主机上的事件队列目录。其他人（包括 41 个 write 用户里不在 team 的）的操作不触发付费 round，留给下一次定时 round 处理。
 - **主机上的服务跑 round**：
   - 收到新事件就跑一轮；
   - 没有事件时按账本的 `wake_at` 定时跑；
@@ -56,7 +58,7 @@ Sweep 的做法依据它固定版本的源码：[sweepai/api.py@a8b8b67](https:/
 | — | 下一轮 round：解析 YAML 块并把这一版冻结进账本，按顺序准入 | 进度评论：已受理，列出 schema 和上限 |
 | — | campaign 跑完，通过检查后开 draft PR，正文写 `Refs #N` | 进度评论更新；PR 自动出现在 issue 时间线上 |
 | 你改了正文 | 以后的准入按新版本，在跑的不动 | 进度评论注明当前是第几版 |
-| 不在 team 里的人改了正文 | 暂停准入，等 team 里的人重新加 label | 进度评论：已暂停及原因 |
+| 不在 team 里的人改了正文 | 暂停准入，等 team 里的人重新加 label。GitHub 无法禁止 write 用户改正文，所以按完整编辑历史检测：只要有 team 外的人改过，就要 team 成员在那之后亲手重加 label，App 的 label 不算 | 进度评论：已暂停及原因 |
 | 去掉 label | 不再准入，在跑的做完 | 进度评论：收尾中 |
 | 关闭 issue | 在跑的 campaign 停止、清理、结算 | 进度评论改成最终汇总 |
 | PR 数或 campaign 数用完，或者没有可做的了 | 等 campaign 都不再占节点后，请求结束 | 最终汇总，请你关掉 issue |

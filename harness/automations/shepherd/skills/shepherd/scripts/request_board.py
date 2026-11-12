@@ -117,27 +117,56 @@ class RequestBoard:
         org = self.repository.split("/")[0]
         return set(self.gh("api", "--paginate", f"orgs/{org}/teams/{self.team}/members", "--jq", ".[].login").split())
 
-    def label_new(self):
-        """Label open issues titled `<label>:` that a team member opened, as Sweep does on `issues opened`."""
-        found = self.graphql(
-            """query($q: String!) { search(query: $q, type: ISSUE, first: 100) { nodes { ... on Issue {
-                number title author { login } editor { login } labels(first: 100) { nodes { name } } } } } }""",
-            q=f"repo:{self.repository} is:issue is:open in:title {self.label}",
+    def last_outsider_edit(self, issue):
+        """When someone outside the team (or a deleted account) last edited the body, or None."""
+        # shortcut: the last 100 edits only, enough unless a body is edited more often than that.
+        return max(
+            (edit["editedAt"] for edit in issue["userContentEdits"]["nodes"]
+             if (edit.get("editor") or {}).get("login") not in self.members),
+            default=None,
         )
+
+    def label_new(self, numbers=()):
+        """Label open issues titled `<label>:` that a team member opened, as Sweep does on `issues opened`.
+
+        With issue numbers, only those (the runner passes the event's issue: search lags new issues); without, a search.
+        """
+        fields = "number state title author { login } labels(first: 100) { nodes { name } } " \
+                 "userContentEdits(last: 100) { nodes { editedAt editor { login } } }"
+        if numbers:
+            issues = [
+                self.graphql(
+                    f"""query($owner: String!, $name: String!, $number: Int!) {{
+                        repository(owner: $owner, name: $name) {{ issue(number: $number) {{ {fields} }} }} }}""",
+                    number=number,
+                )["repository"]["issue"]
+                for number in numbers
+            ]
+        else:
+            # shortcut: first 100 search hits only, page when requests outgrow that.
+            issues = self.graphql(
+                f"""query($q: String!) {{ search(query: $q, type: ISSUE, first: 100) {{
+                    nodes {{ ... on Issue {{ {fields} }} }} }} }}""",
+                q=f"repo:{self.repository} is:issue is:open in:title {self.label}",
+            )["search"]["nodes"]
         labeled = []
-        # shortcut: first 100 search hits only, page when requests outgrow that.
-        for issue in found["search"]["nodes"]:
+        for issue in issues:
             if (
-                issue.get("title", "").lower().startswith(f"{self.label}:")
+                issue["state"] == "OPEN"
+                and issue["title"].lower().startswith(f"{self.label}:")
                 and self.label not in {label["name"] for label in issue["labels"]["nodes"]}
                 and (issue.get("author") or {}).get("login") in self.members
                 # The App's label approves the author's text only; an outsider's edit waits for a member's label.
-                and (issue.get("editor") or issue.get("author") or {}).get("login") in self.members
+                and self.last_outsider_edit(issue) is None
             ):
                 self.gh("api", "-X", "POST", f"repos/{self.repository}/issues/{issue['number']}/labels",
                         "-f", f"labels[]={self.label}")
                 labeled.append(issue["number"])
         return labeled
+
+    def trusts(self, login):
+        """Whether an event's sender (a REST login) may start a paid round: a team member or the App itself."""
+        return login == self.bot or login in self.members
 
     def requests(self, tracked):
         """Every open labeled issue and every tracked one, as Requests; untracked issues nobody approved are left out."""
@@ -152,7 +181,8 @@ class RequestBoard:
         for number in numbers:
             issue = self.graphql(
                 """query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) {
-                    issue(number: $number) { state body lastEditedAt author { login } editor { login }
+                    issue(number: $number) { state body author { login }
+                    userContentEdits(last: 100) { nodes { editedAt editor { login } } }
                     labels(first: 100) { nodes { name } }
                     timelineItems(last: 100, itemTypes: [LABELED_EVENT]) { nodes { ... on LabeledEvent {
                         createdAt actor { __typename login } label { name } } } } } } }""",
@@ -169,14 +199,12 @@ class RequestBoard:
                 by_bot = actor.get("__typename") == "Bot" and f"{actor.get('login')}[bot]" == self.bot
                 by_member = actor.get("__typename") == "User" and actor.get("login") in self.members
                 author = (issue.get("author") or {}).get("login")
-                editor = (issue.get("editor") or {}).get("login")
+                outsider_edit = self.last_outsider_edit(issue)
                 if not (by_member or (by_bot and author in self.members)):
                     request = Request(number, "unapproved", "labeler_not_in_team")
-                elif (
-                    editor is not None
-                    and editor not in self.members
-                    # Only a team member's label after the edit approves it; the App's label never does.
-                    and not (by_member and events[-1]["createdAt"] > (issue["lastEditedAt"] or ""))
+                elif outsider_edit is not None and not (
+                    # Only a team member's label after every outsider edit approves the text; the App's label never does.
+                    by_member and events[-1]["createdAt"] > outsider_edit
                 ):
                     request = Request(number, "paused", "editor_not_in_team")
                 else:
@@ -239,7 +267,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("label", help="label open issues titled `<label>:` that a team member opened")
+    label = sub.add_parser("label", help="label open issues titled `<label>:` that a team member opened")
+    label.add_argument("--issue", type=int, action="append", default=[], help="only this issue (repeatable)")
+    trusts = sub.add_parser("trusts", help="exit 0 if the login may start a paid round, 3 if not")
+    trusts.add_argument("--login", required=True)
     observe = sub.add_parser("observe", help="print every request with its GitHub-side status")
     observe.add_argument("--root", required=True, help="state directory, read for tracked issues")
     progress = sub.add_parser("progress", help="write the issue's progress comment from the ledger")
@@ -249,7 +280,11 @@ def main():
     try:
         board = RequestBoard.from_config(args.config)
         if args.command == "label":
-            result = {"labeled": board.label_new()}
+            result = {"labeled": board.label_new(args.issue)}
+        elif args.command == "trusts":
+            trusted = board.trusts(args.login)
+            print(json.dumps({"trusted": trusted}))
+            return 0 if trusted else 3
         else:
             state = json.loads((Path(args.root) / "state.json").read_text())["state"]
             entries = {entry["issue"]: entry for entry in state.get("requests", [])}

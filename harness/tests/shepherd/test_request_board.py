@@ -28,7 +28,8 @@ elif "issues(labels" in query:
                and "shepherd" in [l["name"] for l in i["labels"]["nodes"]]]
     print(json.dumps({"data": {"repository": {"issues": {"nodes": numbers}}}}))
 elif "issue(number" in query:
-    print(json.dumps({"data": {"repository": {"issue": github["issues"][fields["number"]]}}}))
+    found = {"number": int(fields["number"]), **github["issues"][fields["number"]]}
+    print(json.dumps({"data": {"repository": {"issue": found}}}))
 elif args[-3:-1] == ["--jq", ".[].login"] or args[-1] == ".[].login":
     print("\\n".join(github["members"]))
 elif "comments" in args[-3] and "-X" not in args:
@@ -37,13 +38,17 @@ elif "comments" in args[-3] and "-X" not in args:
 """
 
 
-def issue(body, labeler="owner", author="owner", editor=None, edited=None, state="OPEN", labeled=True):
+def edits(*pairs):
+    return {"nodes": [{"editor": {"login": who} if who else None, "editedAt": when} for who, when in pairs]}
+
+
+def issue(body, labeler="owner", author="owner", edited=(), state="OPEN", labeled=True, title="shepherd: x"):
     return {
         "state": state,
+        "title": title,
         "body": body,
-        "lastEditedAt": edited,
         "author": {"login": author},
-        "editor": {"login": editor} if editor else None,
+        "userContentEdits": edits(*edited),
         "labels": {"nodes": [{"name": "shepherd"}] if labeled else []},
         "timelineItems": {
             "nodes": [
@@ -85,7 +90,7 @@ def github(tmp_path, monkeypatch):
         (bin_dir / "calls.jsonl").unlink(missing_ok=True)
         result = subprocess.run(
             [sys.executable, "-I", str(SCRIPT), "--config", str(config), *args]
-            + ([] if args[0] == "label" else ["--root", str(root)]),
+            + ([] if args[0] in ("label", "trusts") else ["--root", str(root)]),
             capture_output=True,
             text=True,
             check=False,
@@ -98,22 +103,31 @@ def github(tmp_path, monkeypatch):
 
 
 def test_title_prefix_from_a_team_member_adds_the_label(github):
-    result, calls = github(
-        "label",
-        search=[
-            {"number": 1, "title": "shepherd: speed up gemm", "author": {"login": "owner"}, "labels": {"nodes": []}},
-            {"number": 2, "title": "Shepherd: from outside", "author": {"login": "stranger"}, "labels": {"nodes": []}},
-            {"number": 3, "title": "shepherd: done", "author": {"login": "owner"}, "labels": {"nodes": [{"name": "shepherd"}]}},
-            {"number": 4, "title": "about shepherd: a question", "author": {"login": "owner"}, "labels": {"nodes": []}},
-            {"number": 5, "title": "shepherd: edited", "author": {"login": "owner"}, "editor": {"login": "stranger"},
-             "labels": {"nodes": []}},
-        ],
-    )
+    candidates = {
+        "1": issue("", title="shepherd: speed up gemm", labeled=False),
+        "2": issue("", title="Shepherd: from outside", author="stranger", labeled=False),
+        "3": issue("", title="shepherd: done"),
+        "4": issue("", title="about shepherd: a question", labeled=False),
+        "5": issue("", labeled=False, edited=[("owner", "t1"), ("stranger", "t2"), ("peer", "t3")]),
+        "6": issue("", labeled=False, edited=[(None, "t1")]),
+        "7": issue("", labeled=False, state="CLOSED"),
+    }
+    result, calls = github("label", search=[{"number": int(n), **i} for n, i in candidates.items()])
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == {"labeled": [1]}
     assert [c for c in calls if "POST" in c] == [
         ["api", "-X", "POST", "repos/AMD-AGI/AKLR/issues/1/labels", "-f", "labels[]=shepherd"]
     ]
+    result, calls = github("label", "--issue", "1", "--issue", "2", search=[], issues=candidates)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {"labeled": [1]}
+    assert not [c for c in calls if any("search(" in a for a in c)]
+
+
+@pytest.mark.parametrize("login,code", [("owner", 0), ("aklr-shepherd[bot]", 0), ("aklr-shepherd", 3), ("stranger", 3)])
+def test_only_members_and_the_app_start_paid_rounds(github, login, code):
+    result, _ = github("trusts", "--login", login)
+    assert result.returncode == code, result.stderr
 
 
 def test_observe_approves_only_team_labels_and_edits(github):
@@ -125,13 +139,15 @@ def test_observe_approves_only_team_labels_and_edits(github):
             "1": issue(good),
             "2": issue(good, labeler="aklr-shepherd", author="peer"),
             "3": issue(good, labeler="stranger"),
-            "4": issue(good, editor="stranger", edited="2026-11-12T02:00:00Z"),
-            "5": issue(good, editor="stranger", edited="2026-11-12T00:00:00Z"),
+            "4": issue(good, edited=[("stranger", "2026-11-12T02:00:00Z")]),
+            "5": issue(good, edited=[("stranger", "2026-11-12T00:00:00Z")]),
             "6": issue(request_body("schemas: [aklr/ops/fused_moe/impls/triton/x/1.json]")),
             "7": issue(good, state="CLOSED"),
             "8": issue(good, labeled=False),
             "9": issue(good, labeler="aklr-shepherd", author="stranger"),
-            "10": issue(good, labeler="aklr-shepherd", editor="stranger", edited="2026-11-12T00:00:00Z"),
+            "10": issue(good, labeler="aklr-shepherd", edited=[("stranger", "2026-11-12T00:00:00Z")]),
+            "12": issue(good, edited=[("stranger", "2026-11-12T02:00:00Z"), ("owner", "2026-11-12T03:00:00Z")]),
+            "13": issue(good, edited=[(None, "2026-11-12T02:00:00Z")]),
             "11": {**issue(good), "timelineItems": {"nodes": [
                 {"createdAt": "2026-11-12T01:00:00Z", "actor": {"__typename": "User", "login": "aklr-shepherd"},
                  "label": {"name": "shepherd"}}]}},
@@ -148,6 +164,8 @@ def test_observe_approves_only_team_labels_and_edits(github):
         7: ("closed", None),
         8: ("unlabeled", None),
         10: ("paused", "editor_not_in_team"),
+        12: ("paused", "editor_not_in_team"),
+        13: ("paused", "editor_not_in_team"),
     }
     assert found[1]["schemas"] == [SCHEMA] and found[1]["max_prs"] == 1 and found[1]["max_campaigns"] == 1
     assert found[1]["prompt"] == "### Request\n\n\n\n### Notes\n\nTry split-K below M=64."
