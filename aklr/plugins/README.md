@@ -73,6 +73,20 @@ Unit tests:
 
 With AKLR installed, SGLang loads the plugin at start-up; routes are hooked only when `AKLR_SGLANG_PLUGIN=1`. `AKLR_DISABLE=<contract id,...>` disables the listed ops; `AKLR_DISABLE=1` disables AKLR entirely.
 
+To see which routes and ops a run actually reaches, set `AKLR_TRACE=plugin` (the vLLM and sglang routes), `AKLR_TRACE=op` (every op dispatch, including the ops aiter calls) or `AKLR_TRACE=all` (both). Each process logs each distinct call once, served or fallen back:
+
+```
+[aklr plugin] pid=<pid> framework=<vllm|sglang> target=<hooked function> route=<route function> result=<served|fallback> reason=<FallbackReason|->
+[aklr op] pid=<pid> contract=<contract id> scenario=<schema name|-> point=<axes|-> result=<served|fallback> kernel=<language:schema name:hash|-> reason=<FallbackReason|->
+```
+
+A vLLM route declared for several names of one function (aiter's compatibility module paths) shares one hook, so its `target` lists them all, comma-separated.
+
+- The ops AKLR actually ran: `grep '\[aklr op\].*result=served'`.
+- The calls AKLR did not serve, and why: `grep 'result=fallback'`, then read `reason`.
+
+A CUDA graph replay runs no Python and logs nothing: the graph replays the kernels its capture logged.
+
 Only official SGLang releases are supported. To upgrade:
 
 1. Install the new release and run `test_hook.py`. It lists the routes whose parameters changed or that do not declare the new release yet.

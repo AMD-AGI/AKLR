@@ -16,7 +16,7 @@ import pytest
 import torch
 
 import aklr.plugins.vllm as plugin
-from aklr.core.platform.env import ENV_DISABLE, ENV_VLLM_PLUGIN
+from aklr.core.platform.env import ENV_DISABLE, ENV_TRACE, ENV_VLLM_PLUGIN
 from aklr.core.runtime._vllm_hook_registry import HookRegistry, HookSpec, HookType
 from aklr.core.runtime.dispatch import DispatcherRegistry, FallbackReason
 from aklr.plugins.vllm import hook, warmup
@@ -127,6 +127,27 @@ def test_a_fallback_reason_runs_aiter(fake):
     declare(lambda x: FallbackReason.NOT_MEASURED)
     hook._install()
     assert caller(1) == "aiter(1)"
+
+
+@pytest.mark.parametrize(
+    ("mode", "is_traced"), [("0", False), ("op", False), ("plugin", True), ("all", True)]
+)
+def test_trace_names_the_route_and_its_result_once(fake, monkeypatch, caplog, mode, is_traced):
+    monkeypatch.setenv(ENV_TRACE, mode)
+    route = lambda x: f"aklr({x})" if x else FallbackReason.NOT_MEASURED
+    declare(route)
+    hook._install()
+    assert [caller(x) for x in (1, 1, 0, 0)] == ["aklr(1)", "aklr(1)", "aiter(0)", "aiter(0)"]
+    lines = [r.message for r in caplog.records if r.name == "aklr.trace.plugin"]
+    if not is_traced:
+        assert lines == []
+        return
+    prefix = f"framework=vllm target=fake_aiter.callee route={route.__module__}.{route.__qualname__}"
+    assert [line.split(" ", 3)[3] for line in lines] == [
+        f"{prefix} result=served reason=-",
+        f"{prefix} result=fallback reason=not_measured",
+    ]
+    assert all(line.startswith("[aklr plugin] pid=") for line in lines)
 
 
 def test_a_raising_route_raises(fake):
