@@ -92,3 +92,4 @@ python -m aklr validate --stages audit,bench --devices 0-7  # full validation
 
 - Commit hooks and the baseline: [CONTRIBUTING.md](../CONTRIBUTING.md)
 - PR descriptions: follow the [template](pull_request_template.md)
+- What a kernel or a plugin PR must show: the [acceptance criteria](../docs/acceptance_criteria.md) ([中文](../docs/acceptance_criteria.zh.md))

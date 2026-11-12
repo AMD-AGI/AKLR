@@ -36,6 +36,10 @@ check the change against it before opening the pull request.
      variable set that loosens a check.
    - Code: the tests run and their result. CI validation of every schema is required: add the
      `ci:gpu` label so CI runs it, and link the run once its `validation` job passes.
+   - A new plugin route, or one that now handles more cases: the end-to-end run
+     [docs/acceptance_criteria.md](../../../docs/acceptance_criteria.md) asks for, this PR's ops
+     off and on, in the template's `End to end`. Kernels for an existing op
+     or route need only the kernel table.
      A PR that changes CI (`.github/workflows/`, `scripts/`, `actions/`) runs its own CI, so that
      run is not evidence:
      code owners decide; keep such changes in a PR of their own.

@@ -146,6 +146,8 @@ SGLANG_USE_AITER=1 AKLR_SGLANG_PLUGIN=1 python -m sglang.launch_server \
 
 日志会报告挂载了哪些函数（`aklr hooks N sglang functions on sglang 0.5.22`），模型的回答必须保持正确。
 
+新的 route 还要报告端到端提升：同一个 server 配置，分别在关闭这个算子（`AKLR_DISABLE=deepseek_v2_mxfp4_moe@1.0`）和打开时跑 benchmark，结果写进 PR 的 `End to end` 小节。标准是在说明的 workload 下提升 2%（[合入标准](acceptance_criteria.zh.md)）。
+
 ## 下一步
 
 - 插件的结构、route 规范、升级 SGLang：[aklr/plugins/README.md](../aklr/plugins/README.md)。
