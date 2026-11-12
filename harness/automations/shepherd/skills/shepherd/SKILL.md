@@ -197,8 +197,10 @@ too; record it and release it like the kept one before settling. Release a pool 
 one of its GPUs and none will be placed on it this round.
 
 **Campaign.** Follow `harness/skills/forge-loop-campaign/SKILL.md` for every command, except its timers
-and its stress gate (run in the validator, below). Prepare with `--kernel-backend <the candidate's language>`; run every
-GPU step on `--gpu 0` (its one visible GPU); for a Triton or Gluon kernel, finalize without `--review-guide`
+and its stress gate (run in the validator, below). Prepare with `--kernel-backend <the candidate's language>`; give
+KernelForge no `--gpu`, `--gpus` or `--gpu-pool`, whatever that skill shows: they set `HIP_VISIBLE_DEVICES` for every
+process it starts, replacing the container's mask, so `--gpu 0` puts every campaign of the node on its first card.
+Without them each step inherits the campaign's GPU. For a Triton or Gluon kernel, finalize without `--review-guide`
 and skip distill. Move through
 `admitted → preparing → optimizing → finalizing → validating → cleaning → ready_to_deliver → pr_open`
 only on a confirmed result, never on a log line alone. Start long steps as remote background tasks and return their handle. The
