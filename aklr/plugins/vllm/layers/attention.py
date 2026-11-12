@@ -1,6 +1,10 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
+# TODO(ruibzhan): remove this file once AITER's plugin works inside vLLM custom ops
+# under torch.compile and CUDA graphs and preserves measured speedups for all
+# workloads served by this route.
+
 """vLLM's ROCM_AITER_FA attention backend, where it reaches aiter's triton unified attention."""
 
 from __future__ import annotations
@@ -12,7 +16,7 @@ from aklr.plugins.vllm.hook import vllm_route
 __all__: list[str] = []
 
 
-# vLLM imports aiter's backward-compatible path, which aiter executes as a module of its own
+# vLLM imports aiter's backward-compatible path, which may alias the current module.
 @vllm_route(
     "vllm.v1.attention.backends.rocm_aiter_fa.AiterFlashAttentionImpl.forward",
     "aiter.ops.triton.unified_attention.unified_attention",
