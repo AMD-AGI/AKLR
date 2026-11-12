@@ -9,7 +9,8 @@ result, or the :class:`~aklr.core.runtime.dispatch.FallbackReason` that sends th
 aiter. Each framework's plugin declares its route on the releases it was tested on, with the
 parameters of the aiter in that release's image, and passes every argument by name."""
 
+from aklr.plugins.aiter.fused_moe import fused_moe
 from aklr.plugins.aiter.triton_gemm import gemm_a16w16
 from aklr.plugins.aiter.tuned_gemm import mm
 
-__all__ = ["gemm_a16w16", "mm"]
+__all__ = ["fused_moe", "gemm_a16w16", "mm"]
