@@ -258,7 +258,8 @@
     "language": "flydsl",
     "targets": [
       {
-        "arch": "gfx950"
+        "arch": "gfx950",
+        "hardware": "MI355X"
       }
     ],
     "entry_point": "kernel.py::run",
