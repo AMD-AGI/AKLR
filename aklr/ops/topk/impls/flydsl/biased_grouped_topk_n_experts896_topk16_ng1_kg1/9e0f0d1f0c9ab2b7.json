@@ -1,0 +1,207 @@
+{
+  "name": "biased_grouped_topk_n_experts896_topk16_ng1_kg1",
+  "op_type": "biased_grouped_topk",
+  "axes": {
+    "n_tokens": {
+      "description": "Tokens routed in this call.",
+      "type": "var"
+    },
+    "n_experts": {
+      "description": "Experts scored per token.",
+      "value": 896,
+      "type": "const"
+    },
+    "topk": {
+      "description": "Experts chosen per token.",
+      "value": 16,
+      "type": "const"
+    },
+    "num_expert_group": {
+      "description": "Expert groups.",
+      "value": 1,
+      "type": "const"
+    },
+    "topk_group": {
+      "description": "Groups kept per token.",
+      "value": 1,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 12
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 24
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 32
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 40
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 48
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 56
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 60
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 80
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 96
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 112
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 893
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2732
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 9397
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 16384
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "router_logits": {
+      "shape": [
+        "n_tokens",
+        "n_experts"
+      ],
+      "dtype": "bfloat16",
+      "description": "Router logits per token."
+    },
+    "correction_bias": {
+      "shape": [
+        "n_experts"
+      ],
+      "dtype": "bfloat16",
+      "description": "Per-expert bias added to the scores for selection only."
+    },
+    "topk": {
+      "dtype": "int32",
+      "description": "Experts chosen per token.",
+      "shape": null
+    },
+    "num_expert_group": {
+      "dtype": "int32",
+      "description": "Expert groups.",
+      "shape": null
+    },
+    "topk_group": {
+      "dtype": "int32",
+      "description": "Groups kept per token.",
+      "shape": null
+    },
+    "renormalize": {
+      "dtype": "bool",
+      "description": "Whether the weights are divided by their sum.",
+      "shape": null
+    },
+    "routed_scaling_factor": {
+      "dtype": "float32",
+      "description": "Multiplies every weight.",
+      "shape": null
+    }
+  },
+  "outputs": {
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "float32",
+      "description": "Unbiased sigmoid scores of the chosen experts, renormalized and scaled."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "description": "Chosen experts, by descending biased score."
+    }
+  },
+  "tags": [
+    "kimi-k3/tp8+dcp8",
+    "kimi-k3/tp8+dcp8+ep8"
+  ],
+  "description": "Pick topk experts per token by sigmoid(router_logits) + correction_bias, among the topk_group of num_expert_group equal groups whose two best biased scores sum highest; weigh them with the unbiased sigmoid scores, divided by their sum when renormalize, times routed_scaling_factor.",
+  "constraints": [
+    "n_experts % num_expert_group == 0",
+    "topk_group <= num_expert_group",
+    "topk <= topk_group * (n_experts // num_expert_group)",
+    "router_logits.dtype in ('bfloat16', 'float32')",
+    "correction_bias.dtype == router_logits.dtype"
+  ],
+  "kernel": null
+}

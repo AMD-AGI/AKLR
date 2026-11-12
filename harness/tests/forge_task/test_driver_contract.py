@@ -97,8 +97,6 @@ def test_the_driver_builds_validates_calls_with_this_checkouts_aklr(real_run):
     """
     run, schema = real_run
     driver = _import_driver(run)
-    budget, bind_clock, is_tracer_fault = driver._aklr_timer()
-    assert budget > 0 and callable(bind_clock) and callable(is_tracer_fault)
     calls = driver._calls("cpu")
     assert set(calls) == {workload.case_id for workload in schema.workloads}
     registry, *_ = driver._aklr()
@@ -111,37 +109,36 @@ def test_the_driver_builds_validates_calls_with_this_checkouts_aklr(real_run):
 
 def test_the_driver_reads_aklrs_own_report_of_a_wrong_workload(real_run):
     """The report a stand-in writes can drift from AKLR's: this one is written by this checkout's own models, where
-    a workload computed wrong is demoted with the fraction it compared, and the schema's others still pass.
+    a workload computed wrong is demoted, and the schema's others still pass.
     """
     run, schema = real_run
     driver = _import_driver(run)
     driver._aklr()
-    from aklr.core.validation.stages._bench._report import BenchReport, WorkloadRecord
-    from aklr.core.validation.stages._report._finding import Finding, FindingCode
+    from aklr.core.validation import BenchReport, Finding, FindingCode, Versus, WorkloadRecord
+    from aklr.core.validation.stages.workload_key import WorkloadKey
 
     wrong = schema.workloads[0]
     records = tuple(
         WorkloadRecord(
             schema_path="candidate.json",
-            axes=workload.axes,
-            kernel_content_hash="",
-            baseline=None,
-            is_timed=False,
-            worst_violation_fraction=0.5 if workload is wrong else 0.0,
-            timings=(),
-            batch_stopped=False,
+            workload=WorkloadKey(workload.axes),
+            verdict="outputs_mismatch" if workload is wrong else "passed",
+            is_demoted=workload is wrong,
+            versus=Versus.NOTHING,
+            comparison=None,
+            kernel_hash="",
         )
         for workload in schema.workloads
     )
     mismatch = Finding(
-        code=FindingCode.NUMERIC_MISMATCH,
+        code=FindingCode.OUTPUTS_MISMATCH,
         schema_path="candidate.json",
-        axes=wrong.axes,
-        detail="numeric/0: out",
+        workload=WorkloadKey(wrong.axes),
+        detail="trial 0: the outputs fail the schema's check",
     )
-    bench = BenchReport.from_findings([mismatch], workload_records=records)
+    bench = BenchReport(stage_name="bench", status="passed", records=records, demotions=(mismatch,))
     outcomes = driver._outcomes({"stages": [bench.model_dump(mode="json")]})
-    assert outcomes[wrong.case_id]["incorrect"] == ["numeric_mismatch"]
+    assert outcomes[wrong.case_id]["incorrect"] == ["outputs_mismatch"]
     assert all(not outcomes[w.case_id]["incorrect"] for w in schema.workloads[1:])
 
 
@@ -177,7 +174,7 @@ def test_a_workload_aklr_finds_wrong_fails_the_candidate(run):
     run.kernel.write_text(FAILING_KERNEL, encoding="utf-8")
     stdout = _run_driver(run)
     for case_id in CASES:
-        assert f"aklr_findings: {case_id} numeric_mismatch" in stdout
+        assert f"aklr_findings: {case_id} outputs_mismatch" in stdout
     assert "allclose: False" in stdout
 
 
@@ -254,18 +251,19 @@ def test_finding_kinds_split_into_wrong_and_slow(run):
                 "stage_name": "bench",
                 "findings": [],
                 "demotions": [
-                    {"code": "not_faster", "axes": {"m": 8}},
-                    {"code": "nondeterministic", "axes": {"m": 16}},
+                    {"code": "not_faster", "workload": {"axes": {"m": 8}}},
+                    {"code": "candidate_raised", "workload": {"axes": {"m": 16}}},
                 ],
-                "workload_records": [
-                    {"axes": {"m": m}, "worst_violation_fraction": 0.0, "timings": []} for m in (8, 16)
+                "records": [
+                    {"workload": {"axes": {"m": 8}}, "verdict": "not_faster", "comparison": None},
+                    {"workload": {"axes": {"m": 16}}, "verdict": "candidate_raised", "comparison": None},
                 ],
             },
         ]
     }
     outcomes = driver._outcomes(report)
     assert outcomes[fast]["incorrect"] == []
-    assert outcomes[slow]["incorrect"] == ["nondeterministic"]
+    assert outcomes[slow]["incorrect"] == ["candidate_raised"]
 
 
 def test_a_workload_aklr_did_not_compare_is_not_correct(run):
@@ -276,9 +274,10 @@ def test_a_workload_aklr_did_not_compare_is_not_correct(run):
             {"stage_name": "audit", "findings": []},
             {
                 "stage_name": "bench",
-                "findings": [{"code": "platform_failure", "axes": {"m": m}} for m in (8, 16)],
-                "workload_records": [
-                    {"axes": {"m": m}, "worst_violation_fraction": None, "timings": []} for m in (8, 16)
+                "findings": [{"code": "platform_fault", "workload": {"axes": {"m": m}}} for m in (8, 16)],
+                "records": [
+                    {"workload": {"axes": {"m": m}}, "verdict": "platform_fault", "comparison": None}
+                    for m in (8, 16)
                 ],
             },
         ]
@@ -309,7 +308,7 @@ def test_an_audit_finding_rejects_every_workload(run):
         "stages": [
             {
                 "stage_name": "audit",
-                "findings": [{"code": "source_rejected", "axes": None}],
+                "findings": [{"code": "source_rejected", "workload": None}],
             }
         ]
     }
@@ -343,36 +342,6 @@ def test_an_edit_to_any_of_the_kernels_files_is_validated_anew(aklr_root: Path, 
 def test_driver_is_importable_without_a_gpu(run):
     """KernelForge hashes the driver before it ever runs; importing must not need ROCm or AKLR."""
     assert _import_driver(run).SCHEMA_JSON == run.schema_json
-
-
-def test_a_reading_the_profiler_dropped_is_taken_again_once(run):
-    """A trace that lost replays says nothing about the kernel; a second loss, or any other error, still fails."""
-    driver = _import_driver(run)
-    dropped = RuntimeError("rocprofiler-sdk recorded 9 of 10 graph replays")
-
-    def bench_failing(*failures):
-        queue = list(failures)
-
-        def bench(call, rep):
-            if queue:
-                raise queue.pop(0)
-            return 0.01
-
-        return bench
-
-    def is_fault(text):
-        return "graph replays" in text
-
-    assert driver.graph_reading(bench_failing(dropped), None, 20.0, is_fault) == 0.01
-    with pytest.raises(RuntimeError, match="9 of 10"):
-        driver.graph_reading(bench_failing(dropped, dropped), None, 20.0, is_fault)
-    with pytest.raises(RuntimeError, match="HIP error"):
-        driver.graph_reading(
-            bench_failing(RuntimeError("HIP error: illegal address")),
-            None,
-            20.0,
-            is_fault,
-        )
 
 
 def test_stress_passes_one_answer_and_names_the_workload_that_differs(real_run, monkeypatch, capsys):

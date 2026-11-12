@@ -1,9 +1,12 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
+#
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
-from aklr.core.runtime.dispatch._registry import DispatcherRegistry
+from aklr.core.runtime.dispatch._dispatcher import KernelDispatcher
 
 __all__ = ["SGLANG_HOOKED_METHOD", "register_sglang_plugin"]
 
@@ -11,11 +14,11 @@ SGLANG_HOOKED_METHOD = "sglang.srt.model_executor.model_runner.ModelRunner.init_
 
 
 def register_sglang_plugin() -> None:
-    """Start AKLR after ``SGLANG_HOOKED_METHOD``; the sglang plugin's entry point calls it."""
+    """The ``sglang.srt.plugins`` entry point: starts the dispatcher after ``SGLANG_HOOKED_METHOD``."""
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
     HookRegistry.register(
         SGLANG_HOOKED_METHOD,
-        lambda result, *args, **kwargs: DispatcherRegistry.default().init_once(),
+        lambda result, *args, **kwargs: KernelDispatcher.get_instance(),
         HookType.AFTER,
     )

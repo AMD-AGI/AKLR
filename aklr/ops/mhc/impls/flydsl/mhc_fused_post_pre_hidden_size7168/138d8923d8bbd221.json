@@ -1,0 +1,230 @@
+{
+  "name": "mhc_fused_post_pre_hidden_size7168",
+  "op_type": "mhc_fused_post_pre",
+  "axes": {
+    "n_tokens": {
+      "description": "Tokens.",
+      "type": "var"
+    },
+    "hidden_size": {
+      "description": "Hidden size of one stream.",
+      "value": 7168,
+      "type": "const"
+    },
+    "n_streams": {
+      "description": "Residual streams.",
+      "value": 4,
+      "type": "const"
+    },
+    "n_mix_logits": {
+      "description": "Mix logits: 4 pre, 4 post, 16 combination.",
+      "value": 24,
+      "type": "const"
+    },
+    "n_mix_scales": {
+      "description": "Pre, post and combination.",
+      "value": 3,
+      "type": "const"
+    },
+    "one": {
+      "description": "A post mix per stream.",
+      "value": 1,
+      "type": "const"
+    },
+    "projection_size": {
+      "description": "Projection input: n_streams * hidden_size.",
+      "value": 28672,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 32
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 128
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "x": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The layer's output."
+    },
+    "residual": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "Four residual streams."
+    },
+    "post_mix": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "one"
+      ],
+      "dtype": "float32",
+      "description": "Weight of x in each new stream."
+    },
+    "comb_mix": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "n_streams"
+      ],
+      "dtype": "float32",
+      "description": "Weight of old stream i in new stream j, at [i, j]."
+    },
+    "proj_weight": {
+      "shape": [
+        "n_mix_logits",
+        "projection_size"
+      ],
+      "dtype": "float32",
+      "description": "Projects the flattened streams to the mix logits."
+    },
+    "mix_scale": {
+      "shape": [
+        "n_mix_scales"
+      ],
+      "dtype": "float32",
+      "description": "Scale of the pre, post and combination logits."
+    },
+    "mix_bias": {
+      "shape": [
+        "n_mix_logits"
+      ],
+      "dtype": "float32",
+      "description": "Bias of the mix logits."
+    },
+    "rms_eps": {
+      "dtype": "float32",
+      "description": "Added to the mean square of the streams.",
+      "shape": null
+    },
+    "pre_eps": {
+      "dtype": "float32",
+      "description": "Added to each pre mix after its sigmoid.",
+      "shape": null
+    },
+    "sinkhorn_eps": {
+      "dtype": "float32",
+      "description": "Added in each Sinkhorn normalization.",
+      "shape": null
+    },
+    "post_multiplier": {
+      "dtype": "float32",
+      "description": "Multiplies each post mix after its sigmoid.",
+      "shape": null
+    },
+    "sinkhorn_iters": {
+      "dtype": "int32",
+      "description": "Sinkhorn normalizations of the combination mix.",
+      "shape": null
+    },
+    "norm_weight": {
+      "shape": [
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "Weight of the rms norm of layer_input."
+    },
+    "norm_eps": {
+      "dtype": "float32",
+      "description": "Added to the mean square of layer_input.",
+      "shape": null
+    }
+  },
+  "outputs": {
+    "next_post_mix": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "one"
+      ],
+      "dtype": "float32",
+      "description": "Post mix of the next mHC post."
+    },
+    "next_comb_mix": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "n_streams"
+      ],
+      "dtype": "float32",
+      "description": "Combination mix of the next mHC post."
+    },
+    "layer_input": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The streams summed under the pre mix."
+    },
+    "next_residual": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The new streams."
+    }
+  },
+  "tags": [],
+  "description": "mHC post, then the next mHC pre on the new streams rounded to residual's dtype; aiter's return order (next_post_mix, next_comb_mix, layer_input, next_residual), not sglang's residual-first order.",
+  "constraints": [
+    "projection_size == n_streams * hidden_size",
+    "sinkhorn_iters >= 1"
+  ],
+  "kernel": null
+}

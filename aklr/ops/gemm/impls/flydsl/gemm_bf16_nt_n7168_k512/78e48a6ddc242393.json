@@ -1,0 +1,124 @@
+{
+  "name": "gemm_bf16_nt_n7168_k512",
+  "op_type": "gemm_bf16_nt",
+  "axes": {
+    "M": {
+      "description": "Tokens.",
+      "type": "var"
+    },
+    "N": {
+      "description": "Output columns.",
+      "value": 7168,
+      "type": "const"
+    },
+    "K": {
+      "description": "Reduction length.",
+      "value": 512,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "M": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 16
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 32
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 64
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "a": {
+      "shape": [
+        "M",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "N",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Weights."
+    },
+    "bias": {
+      "shape": [
+        "N"
+      ],
+      "dtype": null,
+      "description": "Added to every output row."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "M",
+        "N"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "tags": [
+    "glm-5.2/tp4",
+    "kimi-k3/tp8+dcp8"
+  ],
+  "description": "bf16 gemm: out = a @ b.T + bias, b stored (N, K).",
+  "constraints": [
+    "not use_shuffled_weight",
+    "bias is None or bias.dtype in ('bfloat16', 'float16', 'float32')",
+    "out.dtype in ('bfloat16', 'float16', 'float32')"
+  ],
+  "kernel": {
+    "name": "gemm_bf16_nt_n7168_k512_flydsl_d0d6e9e5c93fbd88",
+    "author": "unknown",
+    "build": {
+      "language": "flydsl",
+      "target_hardware": [
+        "gfx950/MI355X"
+      ],
+      "entry_point": "kernel.py::run",
+      "dependencies": [],
+      "destination_passing_style": true,
+      "binding": null
+    },
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"FlyDSL bf16 GEMM out = a @ b^T, one deterministic launch per call: each workgroup DMAs the whole of K\nfor its tile into XOR-swizzled LDS up front, then its waves run MFMAs chunk by chunk as each chunk lands.\"\"\"\n\nimport functools\nimport types\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import llvm\nfrom flydsl._mlir.dialects import rocdl as rocdl_d\nfrom flydsl.expr import const_expr, range_constexpr, rocdl\nfrom flydsl.expr.typing import T, Vector\n\n_N = 7168\n_K = 512\n_TILE_K = 64  # K per LDS chunk: one async DMA group and one wait each\n_LDS_BYTES = 163840\n_VMCNT_MAX = 63\n\n# m upper bound -> (TILE_M, TILE_N, waves along M, waves along N, paired 16 B C stores)\n_CONFIGS = types.MappingProxyType(\n    {\n        16: (16, 64, 1, 2, True),\n        32: (32, 32, 2, 2, False),\n        64: (32, 64, 1, 2, True),\n        128: (64, 64, 4, 2, True),\n    }\n)\n_C_AUX = 16  # sc1 (gfx950 CPol bit 4) on C stores shortens the store tail at the end of the kernel\n\n\ndef _bstore(data, rsrc, elem_off):\n    data = fx.arith.unwrap(data)\n    off = fx.arith.unwrap(elem_off * (data.type.element_type.width // 8))\n    rocdl_d.RawPtrBufferStoreOp(data, rsrc, off, fx.arith.constant(0), aux=ir.IntegerAttr.get(T.i32, _C_AUX))\n\n\ndef _gep(base_ptr, byte_offset):\n    if isinstance(byte_offset, int):\n        return llvm.GEPOp(base_ptr.type, base_ptr, [], [byte_offset], T.i8, None).result\n    off = fx.arith.unwrap(byte_offset)\n    return llvm.GEPOp(base_ptr.type, base_ptr, [off], [-(2**31)], T.i8, None).result\n\n\ndef _ptr_rsrc_t(tensor, num_records_bytes):\n    buf = rocdl.make_buffer_tensor(tensor, max_size=False, num_records_bytes=num_records_bytes)\n    return fx.arith.unwrap(rocdl.get_buffer_rsrc(fx.get_iter(buf)))\n\n\ndef _swz(row):\n    \"\"\"XOR key of a tile row's 16 B slots: row pairs share a key, so one ds_read_b128 pass spans all banks.\"\"\"\n    return (row // 2) % 8\n\n\n@functools.cache\ndef _launcher(m):\n    cfg = _CONFIGS[min(bound for bound in _CONFIGS if m <= bound)]\n    return _build_whole(m, *cfg)\n\n\ndef _build_whole(m, TILE_M, TILE_N, WAVES_M, WAVES_N, PAIR):\n    n, k = _N, _K\n    BK = _TILE_K\n    CHUNKS = k // BK\n    THREADS = WAVES_M * WAVES_N * 64\n    WARP_M = TILE_M // WAVES_M\n    WARP_N = TILE_N // WAVES_N\n    M_STEPS = WARP_M // 16\n    N_STEPS = WARP_N // 16\n    assert M_STEPS >= 1 and N_STEPS >= 1 and n % TILE_N == 0\n    assert not PAIR or (N_STEPS == 2 and TILE_N % 32 == 0)\n    N_BLOCKS = n // TILE_N\n    M_BLOCKS = (m + TILE_M - 1) // TILE_M\n    ROW_BYTES = BK * 2\n    A_BYTES = TILE_M * ROW_BYTES\n    B_BYTES = TILE_N * ROW_BYTES\n    CHUNK_BYTES = A_BYTES + B_BYTES\n    LDS_TOTAL = CHUNKS * CHUNK_BYTES\n    assert LDS_TOTAL <= _LDS_BYTES\n    DMA_PER_WAVE = 64 * 16\n    DMA_PER_PASS = WAVES_M * WAVES_N * DMA_PER_WAVE\n    A_DMAS = A_BYTES // DMA_PER_PASS\n    B_DMAS = B_BYTES // DMA_PER_PASS\n    assert A_DMAS * DMA_PER_PASS == A_BYTES and B_DMAS * DMA_PER_PASS == B_BYTES\n    PER_CHUNK = A_DMAS + B_DMAS\n    assert (CHUNKS - 1) * PER_CHUNK <= _VMCNT_MAX\n    Lds = fx.Array[fx.Float32, LDS_TOTAL // 4, 16]\n    ROWS_PER_PASS = THREADS // 8\n\n    @flyc.kernel(known_block_size=[THREADS, 1, 1])\n    def gemm_n7168_k512_whole(A: fx.Tensor, B: fx.Tensor, C: fx.Tensor):\n        tid = fx.thread_idx.x\n        lane = tid % 64\n        wid = tid // 64\n        pid = fx.block_idx.x\n        if const_expr(M_BLOCKS == 1):\n            bm = 0\n            bn = pid\n        else:\n            bm = pid // N_BLOCKS\n            bn = pid % N_BLOCKS\n        a_rsrc = _ptr_rsrc_t(A, m * k * 2)\n        b_rsrc = _ptr_rsrc_t(B, n * k * 2)\n        c_rsrc = _ptr_rsrc_t(C, m * n * 2)\n\n        lds = fx.SharedAllocator().allocate(Lds).peek().ptr\n        lds_base = fx.to_llvm_ptr(lds)\n        wave_base = _gep(lds_base, rocdl.readfirstlane(T.i64, fx.Int64(wid * DMA_PER_WAVE)))\n        asm = \"s_mov_b32 m0, $0\\n\\tbuffer_load_dwordx4 $1, $2, 0 offen sc0 lds\"\n\n        # DMA pass p: thread t fills row p*ROWS_PER_PASS + t//8, physical slot t%8 = logical ^ _swz(row).\n        drow = tid // 8\n        dslot = tid % 8\n        a_goff = []\n        for p in range_constexpr(A_DMAS):\n            lrow = p * ROWS_PER_PASS + drow\n            row = bm * TILE_M + lrow\n            if const_expr(M_BLOCKS * TILE_M > m):\n                row = (row < fx.Int32(m)).select(row, fx.Int32(0))\n            a_goff.append((row * k + (dslot ^ _swz(lrow)) * 8) * 2)\n        b_goff = []\n        for p in range_constexpr(B_DMAS):\n            lrow = p * ROWS_PER_PASS + drow\n            if const_expr(PAIR):\n                # Within each 32-row block, LDS row 16j+4q+v holds column 8q+4j+v, so a lane's two\n                # N fragments hold 8 adjacent C columns.\n                x = lrow % 32\n                tcol = (lrow - x) + ((x // 4) % 4) * 8 + (x // 16) * 4 + x % 4\n            else:\n                tcol = lrow\n            b_goff.append(((bn * TILE_N + tcol) * k + (dslot ^ _swz(lrow)) * 8) * 2)\n\n        def issue(rsrc, sb, goff):\n            args = [_gep(wave_base, sb), fx.arith.unwrap(goff), rsrc]\n            llvm.InlineAsmOp(None, args, asm, \"s,v,s\", has_side_effects=True)\n\n        for c in range_constexpr(CHUNKS):\n            base = c * CHUNK_BYTES\n            for p in range_constexpr(A_DMAS):\n                issue(a_rsrc, base + p * DMA_PER_PASS, a_goff[p] + c * ROW_BYTES)\n            for p in range_constexpr(B_DMAS):\n                issue(b_rsrc, base + A_BYTES + p * DMA_PER_PASS, b_goff[p] + c * ROW_BYTES)\n\n        r = lane % 16\n        kq = lane // 16\n        wm = wid // WAVES_N * WARP_M\n        wn = wid % WAVES_N * WARP_N\n        a_fo = []\n        b_fo = []\n        for h in range_constexpr(2):\n            a_fo.append(\n                [\n                    fx.Int64((wm + i * 16 + r) * ROW_BYTES + ((h * 4 + kq) ^ _swz(wm + i * 16 + r)) * 16)\n                    for i in range(M_STEPS)\n                ]\n            )\n            b_fo.append(\n                [\n                    fx.Int64(\n                        A_BYTES + (wn + j * 16 + r) * ROW_BYTES + ((h * 4 + kq) ^ _swz(wn + j * 16 + r)) * 16\n                    )\n                    for j in range(N_STEPS)\n                ]\n            )\n\n        def frag(off, c):\n            p = _gep(lds_base, off + c * CHUNK_BYTES)\n            return llvm.LoadOp(T.bf16x8, p, alignment=16).result\n\n        def wait_barrier(cnt):\n            llvm.InlineAsmOp(\n                None, [], f\"s_waitcnt vmcnt({cnt})\\n\\ts_barrier\", \"~{memory}\", has_side_effects=True\n            )\n\n        blgp = ir.Attribute.parse(\"#rocdl<mfma_perm_b none>\")\n        acc = [fx.arith.unwrap(fx.constant_vector(0.0, T.f32x4)) for _ in range(M_STEPS * N_STEPS)]\n        for c in range_constexpr(CHUNKS):\n            rocdl.sched_barrier(0)\n            wait_barrier((CHUNKS - 1 - c) * PER_CHUNK)\n            rocdl.sched_barrier(0)\n            fr = [\n                ([frag(b_fo[h][j], c) for j in range(N_STEPS)], [frag(a_fo[h][i], c) for i in range(M_STEPS)])\n                for h in range(2)\n            ]\n            for h in range_constexpr(2):\n                bf, af = fr[h]\n                for i in range_constexpr(M_STEPS):\n                    for j in range_constexpr(N_STEPS):\n                        acc[i * N_STEPS + j] = rocdl_d.mfma_f32_16x16x32_bf16(\n                            T.f32x4, bf[j], af[i], acc[i * N_STEPS + j], 0, 0, blgp\n                        ).res\n\n        # Rows >= m fall past the C descriptor's num_records, so the store drops them.\n        if const_expr(PAIR):\n            for i in range_constexpr(M_STEPS):\n                lo = Vector(acc[i * 2 + 0]).to(fx.BFloat16)\n                v8 = lo.shuffle(Vector(acc[i * 2 + 1]).to(fx.BFloat16), list(range(8)))\n                row = bm * TILE_M + wm + i * 16 + r\n                col = bn * TILE_N + wn + kq * 8\n                _bstore(v8, c_rsrc, row * n + col)\n        else:\n            for i in range_constexpr(M_STEPS):\n                for j in range_constexpr(N_STEPS):\n                    cast = Vector(acc[i * N_STEPS + j]).to(fx.BFloat16)\n                    row = bm * TILE_M + wm + i * 16 + r\n                    col = bn * TILE_N + wn + j * 16 + kq * 4\n                    _bstore(cast, c_rsrc, row * n + col)\n\n    @flyc.jit\n    def launch(A: fx.Tensor, B: fx.Tensor, C: fx.Tensor, stream: fx.Stream):\n        gemm_n7168_k512_whole(A, B, C).launch(\n            grid=(M_BLOCKS * N_BLOCKS, 1, 1),\n            block=(THREADS, 1, 1),\n            stream=stream,\n            value_attrs={\"rocdl.flat_work_group_size\": f\"{THREADS},{THREADS}\"},\n        )\n\n    return launch\n\n\ndef run(a, b, bias, out):\n    trans_b = True\n    if not trans_b or bias is not None:\n        raise ValueError(\"gemm_n7168_k512 expects trans_b=True and no bias\")\n    launch = _launcher(a.shape[0])\n    launch(a, b, out, stream=fx.Stream(torch.cuda.current_stream(a.device)))\n"
+      }
+    ],
+    "description": null
+  }
+}

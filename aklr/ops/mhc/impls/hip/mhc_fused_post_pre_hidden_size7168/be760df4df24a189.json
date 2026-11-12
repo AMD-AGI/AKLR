@@ -1,0 +1,238 @@
+{
+  "name": "mhc_fused_post_pre_hidden_size7168",
+  "op_type": "mhc_fused_post_pre",
+  "axes": {
+    "n_tokens": {
+      "description": "Tokens.",
+      "type": "var"
+    },
+    "hidden_size": {
+      "description": "Hidden size of one stream.",
+      "value": 7168,
+      "type": "const"
+    },
+    "n_streams": {
+      "description": "Residual streams.",
+      "value": 4,
+      "type": "const"
+    },
+    "n_mix_logits": {
+      "description": "Mix logits: 4 pre, 4 post, 16 combination.",
+      "value": 24,
+      "type": "const"
+    },
+    "n_mix_scales": {
+      "description": "Pre, post and combination.",
+      "value": 3,
+      "type": "const"
+    },
+    "one": {
+      "description": "A post mix per stream.",
+      "value": 1,
+      "type": "const"
+    },
+    "projection_size": {
+      "description": "Projection input: n_streams * hidden_size.",
+      "value": 28672,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 7
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "x": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The layer's output."
+    },
+    "residual": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "Four residual streams."
+    },
+    "post_mix": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "one"
+      ],
+      "dtype": "float32",
+      "description": "Weight of x in each new stream."
+    },
+    "comb_mix": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "n_streams"
+      ],
+      "dtype": "float32",
+      "description": "Weight of old stream i in new stream j, at [i, j]."
+    },
+    "proj_weight": {
+      "shape": [
+        "n_mix_logits",
+        "projection_size"
+      ],
+      "dtype": "float32",
+      "description": "Projects the flattened streams to the mix logits."
+    },
+    "mix_scale": {
+      "shape": [
+        "n_mix_scales"
+      ],
+      "dtype": "float32",
+      "description": "Scale of the pre, post and combination logits."
+    },
+    "mix_bias": {
+      "shape": [
+        "n_mix_logits"
+      ],
+      "dtype": "float32",
+      "description": "Bias of the mix logits."
+    },
+    "rms_eps": {
+      "dtype": "float32",
+      "description": "Added to the mean square of the streams.",
+      "shape": null
+    },
+    "pre_eps": {
+      "dtype": "float32",
+      "description": "Added to each pre mix after its sigmoid.",
+      "shape": null
+    },
+    "sinkhorn_eps": {
+      "dtype": "float32",
+      "description": "Added in each Sinkhorn normalization.",
+      "shape": null
+    },
+    "post_multiplier": {
+      "dtype": "float32",
+      "description": "Multiplies each post mix after its sigmoid.",
+      "shape": null
+    },
+    "sinkhorn_iters": {
+      "dtype": "int32",
+      "description": "Sinkhorn normalizations of the combination mix.",
+      "shape": null
+    },
+    "norm_weight": {
+      "shape": [
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "Weight of the rms norm of layer_input."
+    },
+    "norm_eps": {
+      "dtype": "float32",
+      "description": "Added to the mean square of layer_input.",
+      "shape": null
+    }
+  },
+  "outputs": {
+    "next_post_mix": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "one"
+      ],
+      "dtype": "float32",
+      "description": "Post mix of the next mHC post."
+    },
+    "next_comb_mix": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "n_streams"
+      ],
+      "dtype": "float32",
+      "description": "Combination mix of the next mHC post."
+    },
+    "layer_input": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The streams summed under the pre mix."
+    },
+    "next_residual": {
+      "shape": [
+        "n_tokens",
+        "n_streams",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The new streams."
+    }
+  },
+  "tags": [],
+  "description": "mHC post, then the next mHC pre on the new streams rounded to residual's dtype; aiter's return order (next_post_mix, next_comb_mix, layer_input, next_residual), not sglang's residual-first order.",
+  "constraints": [
+    "projection_size == n_streams * hidden_size",
+    "sinkhorn_iters >= 1"
+  ],
+  "kernel": {
+    "name": "mhc_fused_post_pre_hidden_size7168_hip_be760df4df24a189",
+    "author": "GEAK; AKLR port by Codex",
+    "build": {
+      "language": "hip",
+      "target_hardware": [
+        "gfx950/MI355X"
+      ],
+      "entry_point": "kernel.hip::run",
+      "dependencies": [],
+      "destination_passing_style": true,
+      "binding": null
+    },
+    "sources": [
+      {
+        "path": "kernel.hip",
+        "content": "// Fused mHC post/pre decode with split-N projection and per-row Gram reduction.\n// SPDX-License-Identifier: MIT\n// Copyright (C) 2024-2026, Advanced Micro Devices, Inc. All rights reserved.\n#include <ATen/hip/HIPContext.h>\n#include <ATen/ops/empty.h>\n#include <hip/hip_runtime.h>\n#include <torch/library.h>\n#include <cstdint>\n#include <optional>\n#include <type_traits>\n\n// The reached OPUS types are native clang vectors; the reached scalar BF16\n// conversion is a round-to-nearest cast on ROCm clang >= 20.\nnamespace opus {\nusing bf16_t = __bf16;\ntemplate<typename T, int N> using vector_t = T __attribute__((ext_vector_type(N)));\ntemplate<typename T, typename U>\n__device__ __forceinline__ T cast(U value) { return static_cast<T>(value); }\n}\nnamespace {\ntemplate <int ctrl>\n    __device__ __forceinline__ float mhc_dpp_f(float v)\n    {\n        return __builtin_bit_cast(float, __builtin_amdgcn_update_dpp(\n            0, __builtin_bit_cast(int, v), ctrl, 0xf, 0xf, true));\n    }\n\n    __device__ __forceinline__ float mhc_wave_sum_all(float v)\n    {\n        v += mhc_dpp_f<0xb1>(v);\n        v += mhc_dpp_f<0x4e>(v);\n        v += mhc_dpp_f<0x141>(v);\n        v += mhc_dpp_f<0x140>(v);\n        v += __builtin_bit_cast(float, __builtin_amdgcn_update_dpp(\n            0, __builtin_bit_cast(int, v), 0x142, 0xa, 0xf, false));\n        v += __builtin_bit_cast(float, __builtin_amdgcn_update_dpp(\n            0, __builtin_bit_cast(int, v), 0x143, 0xc, 0xf, false));\n        return __builtin_bit_cast(float, __builtin_amdgcn_readlane(__builtin_bit_cast(int, v), 63));\n    }\n\n    template <int N>\n    __device__ __forceinline__ void mhc_wave_sum_all_n(float (&v)[N])\n    {\n        #pragma unroll\n        for (int j = 0; j < N; j++) v[j] += mhc_dpp_f<0xb1>(v[j]);\n        #pragma unroll\n        for (int j = 0; j < N; j++) v[j] += mhc_dpp_f<0x4e>(v[j]);\n        #pragma unroll\n        for (int j = 0; j < N; j++) v[j] += mhc_dpp_f<0x141>(v[j]);\n        #pragma unroll\n        for (int j = 0; j < N; j++) v[j] += mhc_dpp_f<0x140>(v[j]);\n        #pragma unroll\n        for (int j = 0; j < N; j++)\n            v[j] += __builtin_bit_cast(float, __builtin_amdgcn_update_dpp(\n                0, __builtin_bit_cast(int, v[j]), 0x142, 0xa, 0xf, false));\n        #pragma unroll\n        for (int j = 0; j < N; j++)\n            v[j] += __builtin_bit_cast(float, __builtin_amdgcn_update_dpp(\n                0, __builtin_bit_cast(int, v[j]), 0x143, 0xc, 0xf, false));\n        #pragma unroll\n        for (int j = 0; j < N; j++)\n            v[j] = __builtin_bit_cast(float, __builtin_amdgcn_readlane(__builtin_bit_cast(int, v[j]), 63));\n    }\n\n    __device__ __forceinline__ float mhc_gram_pack2(float a, float b, float inv)\n    {\n        const int qa = (int)rintf(fminf(fmaxf(a * inv, -32767.0f), 32767.0f));\n        const int qb = (int)rintf(fminf(fmaxf(b * inv, -32767.0f), 32767.0f));\n        const unsigned u = ((unsigned)qa & 0xffffu) | ((unsigned)qb << 16);\n        return __builtin_bit_cast(float, u);\n    }\n    __device__ __forceinline__ void mhc_gram_unpack2(float f, float sc, float& a, float& b)\n    {\n        const int u = __builtin_bit_cast(int, f);\n        a = (float)((u << 16) >> 16) * sc;\n        b = (float)(u >> 16) * sc;\n    }\n\n    template <typename DTYPE_I, int NC, int NS>\n    __global__ __launch_bounds__(64, 1)\n    void mhc_pre_big_fuse_rmsnorm_decode2_kernel(\n\n        const float* gemm_out_mul,\n        const float* gemm_out_sqrsum,\n        const DTYPE_I* residual,\n        const DTYPE_I* norm_weight,\n        const float* hc_scale,\n        const float* hc_base,\n        int m,\n        int n_splits_arg,\n        float* post_mix,\n        float* comb_mix,\n        DTYPE_I* out,\n        float rms_eps,\n        float hc_pre_eps,\n        float hc_sinkhorn_eps,\n        float norm_eps,\n        float hc_post_mult_value,\n        int sinkhorn_repeat)\n    {\n        const int n_splits = NS > 0 ? NS : n_splits_arg;\n        static constexpr int hidden_size = 7168;\n        static constexpr int hc_mult = 4;\n        static constexpr int hc_mult2 = 16;\n        static constexpr int warp_size = 64;\n        static constexpr int CHUNK = hidden_size / NC;\n        static constexpr int VEC = CHUNK / warp_size;\n        static constexpr int gemm_out_mul_stride = 32;\n        static constexpr int residual_stride = hc_mult * hidden_size;\n        static_assert(hidden_size % NC == 0 && CHUNK % warp_size == 0, \"bad chunk\");\n        static_assert(VEC == 16 || VEC == 8 || VEC == 4 || VEC == 2, \"bad VEC\");\n        using vec_t = opus::vector_t<DTYPE_I, VEC>;\n        using fp32x4_t = opus::vector_t<float, 4>;\n        typedef float f2_t __attribute__((ext_vector_type(2)));\n\n        const int bid = blockIdx.x;\n\n        const int chunk = bid < 2 * m ? NC + (bid >= m) : (bid - 2 * m) % NC;\n        const int row = bid < 2 * m ? (bid < m ? bid : bid - m) : (bid - 2 * m) / NC;\n        const int lane = threadIdx.x;\n        auto sigmoid = [](float x) { return __builtin_amdgcn_rcpf(1.0f + __expf(-x)); };\n        const float* g_row = gemm_out_mul + (int64_t)row * gemm_out_mul_stride;\n        const int sstride = m * gemm_out_mul_stride;\n\n        if (chunk < NC) {\n\n            const int col0 = chunk * CHUNK + lane * VEC;\n            const int head_stride = residual_stride / hc_mult;\n            const DTYPE_I* r_ptr = residual + (int64_t)row * residual_stride + col0;\n            vec_t v_r[hc_mult];\n            #pragma unroll\n            for (int h = 0; h < hc_mult; h++) {\n                v_r[h] = *reinterpret_cast<const vec_t*>(r_ptr + h * head_stride);\n            }\n            const vec_t v_w = *reinterpret_cast<const vec_t*>(norm_weight + col0);\n            const float hc_scale0 = hc_scale[0];\n            const float hb0 = hc_base[0], hb1 = hc_base[1], hb2 = hc_base[2], hb3 = hc_base[3];\n\n            float acc[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};\n            float gacc[10];\n            #pragma unroll\n            for (int j = 0; j < 10; j++) gacc[j] = 0.0f;\n\n            bool gram_ok = true;\n            auto add_split = [&](fp32x4_t a, fp32x4_t gd, fp32x4_t go, float q, bool valid) {\n                gram_ok &= !valid || __builtin_bit_cast(unsigned, q)\n                    == __builtin_bit_cast(unsigned, (gd[0] + gd[1]) + (gd[2] + gd[3]));\n                const float sc = go[3] * (1.0f / 32767.0f);\n                float o[6];\n                mhc_gram_unpack2(go[0], sc, o[0], o[1]);\n                mhc_gram_unpack2(go[1], sc, o[2], o[3]);\n                mhc_gram_unpack2(go[2], sc, o[4], o[5]);\n                #pragma unroll\n                for (int j = 0; j < 4; j++) acc[j] += valid ? a[j] : 0.0f;\n                acc[4] += valid ? q : 0.0f;\n                #pragma unroll\n                for (int j = 0; j < 4; j++) gacc[j] += valid ? gd[j] : 0.0f;\n                #pragma unroll\n                for (int j = 0; j < 6; j++) gacc[4 + j] += valid ? o[j] : 0.0f;\n            };\n            {\n                const int s0 = min(lane, n_splits - 1);\n                const int s1 = min(lane + warp_size, n_splits - 1);\n                const float* p0 = g_row + s0 * sstride;\n                const float* p1 = g_row + s1 * sstride;\n                const fp32x4_t a0 = *reinterpret_cast<const fp32x4_t*>(p0);\n                const fp32x4_t a1 = *reinterpret_cast<const fp32x4_t*>(p1);\n                const fp32x4_t gd0 = *reinterpret_cast<const fp32x4_t*>(p0 + 24);\n                const fp32x4_t gd1 = *reinterpret_cast<const fp32x4_t*>(p1 + 24);\n                const fp32x4_t go0 = *reinterpret_cast<const fp32x4_t*>(p0 + 28);\n                const fp32x4_t go1 = *reinterpret_cast<const fp32x4_t*>(p1 + 28);\n                const float q0 = gemm_out_sqrsum[s0 * m + row];\n                const float q1 = gemm_out_sqrsum[s1 * m + row];\n                add_split(a0, gd0, go0, q0, lane < n_splits);\n                add_split(a1, gd1, go1, q1, lane + warp_size < n_splits);\n            }\n            for (int s = lane + 2 * warp_size; s < n_splits; s += warp_size) {\n                const float* p = g_row + s * sstride;\n                add_split(*reinterpret_cast<const fp32x4_t*>(p),\n                          *reinterpret_cast<const fp32x4_t*>(p + 24),\n                          *reinterpret_cast<const fp32x4_t*>(p + 28),\n                          gemm_out_sqrsum[s * m + row], true);\n            }\n\n            gram_ok = __builtin_amdgcn_ballot_w64(!gram_ok) == 0;\n            mhc_wave_sum_all_n<5>(acc);\n            const float rms = rsqrtf(acc[4] * (1.0f / (hidden_size * hc_mult)) + rms_eps);\n            const float p0 = sigmoid(acc[0] * rms * hc_scale0 + hb0) + hc_pre_eps;\n            const float p1 = sigmoid(acc[1] * rms * hc_scale0 + hb1) + hc_pre_eps;\n            const float p2 = sigmoid(acc[2] * rms * hc_scale0 + hb2) + hc_pre_eps;\n            const float p3 = sigmoid(acc[3] * rms * hc_scale0 + hb3) + hc_pre_eps;\n\n            float s_l = p0 * p0 * gacc[0] + p1 * p1 * gacc[1] + p2 * p2 * gacc[2] + p3 * p3 * gacc[3];\n            float s_o = p0 * p1 * gacc[4] + p0 * p2 * gacc[5] + p0 * p3 * gacc[6]\n                      + p1 * p2 * gacc[7] + p1 * p3 * gacc[8] + p2 * p3 * gacc[9];\n            float ysq = mhc_wave_sum_all(s_l + 2.0f * s_o);\n            if (!gram_ok) {\n\n                using v8_t = opus::vector_t<DTYPE_I, 8>;\n                const DTYPE_I* rr = residual + (int64_t)row * residual_stride;\n                float sq = 0.0f;\n                for (int c = lane * 8; c < hidden_size; c += warp_size * 8) {\n                    v8_t t[hc_mult];\n                    #pragma unroll\n                    for (int h = 0; h < hc_mult; h++)\n                        t[h] = *reinterpret_cast<const v8_t*>(rr + h * head_stride + c);\n                    #pragma unroll\n                    for (int k = 0; k < 8; k++) {\n                        const float yv = (static_cast<float>(t[0][k]) * p0 + static_cast<float>(t[1][k]) * p1)\n                                       + (static_cast<float>(t[2][k]) * p2 + static_cast<float>(t[3][k]) * p3);\n                        sq += yv * yv;\n                    }\n                }\n                ysq = mhc_wave_sum_all(sq);\n            }\n            const float rn = rsqrtf(fmaxf(ysq, 0.0f) * (1.0f / hidden_size) + norm_eps);\n\n            const f2_t pp0 = {p0, p0}, pp1 = {p1, p1}, pp2 = {p2, p2}, pp3 = {p3, p3};\n            const f2_t rn2 = {rn, rn};\n            vec_t v_o;\n            #pragma unroll\n            for (int k = 0; k < VEC / 2; k++) {\n                f2_t r0 = {static_cast<float>(v_r[0][2 * k]), static_cast<float>(v_r[0][2 * k + 1])};\n                f2_t r1 = {static_cast<float>(v_r[1][2 * k]), static_cast<float>(v_r[1][2 * k + 1])};\n                f2_t r2 = {static_cast<float>(v_r[2][2 * k]), static_cast<float>(v_r[2][2 * k + 1])};\n                f2_t r3 = {static_cast<float>(v_r[3][2 * k]), static_cast<float>(v_r[3][2 * k + 1])};\n                f2_t a = r0 * pp0 + r1 * pp1;\n                f2_t b = r2 * pp2 + r3 * pp3;\n                f2_t yv = a + b;\n                f2_t y2 = f2_t{static_cast<float>(opus::cast<DTYPE_I>(yv[0])),\n                               static_cast<float>(opus::cast<DTYPE_I>(yv[1]))};\n                f2_t w2 = {static_cast<float>(v_w[2 * k]), static_cast<float>(v_w[2 * k + 1])};\n                f2_t o = y2 * w2 * rn2;\n                v_o[2 * k] = opus::cast<DTYPE_I>(o[0]);\n                v_o[2 * k + 1] = opus::cast<DTYPE_I>(o[1]);\n            }\n            *reinterpret_cast<vec_t*>(out + (int64_t)row * hidden_size + col0) = v_o;\n\n            asm volatile(\"\" :: \"s\"(post_mix), \"s\"(comb_mix), \"s\"(hc_sinkhorn_eps),\n                         \"s\"(hc_post_mult_value), \"s\"(sinkhorn_repeat));\n        } else if (chunk == NC + 1) {\n\n            const float hc_scale1 = hc_scale[1];\n            const float hb_post = hc_base[hc_mult + (lane & 3)];\n            const float* g_post = g_row + hc_mult;\n            fp32x4_t acc = {0.0f, 0.0f, 0.0f, 0.0f};\n            float accq = 0.0f;\n            for (int s0 = 0; s0 < n_splits; s0 += 128) {\n                fp32x4_t g[2];\n                float q[2];\n                #pragma unroll\n                for (int k = 0; k < 2; k++) {\n                    const int s = min(s0 + lane + 64 * k, n_splits - 1);\n                    g[k] = *reinterpret_cast<const fp32x4_t*>(g_post + s * sstride);\n                    q[k] = gemm_out_sqrsum[s * m + row];\n                }\n                #pragma unroll\n                for (int k = 0; k < 2; k++) {\n                    const bool ok = s0 + lane + 64 * k < n_splits;\n                    acc += ok ? g[k] : fp32x4_t{0.0f, 0.0f, 0.0f, 0.0f};\n                    accq += ok ? q[k] : 0.0f;\n                }\n            }\n            float rv[5] = {acc[0], acc[1], acc[2], acc[3], accq};\n            mhc_wave_sum_all_n<5>(rv);\n            const float rms = rsqrtf(rv[4] * (1.0f / (hidden_size * hc_mult)) + rms_eps);\n            const int jj = lane & 3;\n            const float val = (jj & 2) ? ((jj & 1) ? rv[3] : rv[2]) : ((jj & 1) ? rv[1] : rv[0]);\n            if (lane < hc_mult)\n                post_mix[row * hc_mult + jj] = sigmoid(val * rms * hc_scale1 + hb_post) * hc_post_mult_value;\n        } else {\n\n            const float hc_scale2 = hc_scale[2];\n            const float hb_mix = hc_base[2 * hc_mult + (lane & 15)];\n            const int gi = lane >> 4;\n            const int sg = lane & 15;\n            static constexpr int UNR = 7;\n            fp32x4_t acc = {0.0f, 0.0f, 0.0f, 0.0f};\n            float accq = 0.0f;\n            const float* g_lane = g_row + 2 * hc_mult + gi * 4;\n            auto load_pass = [&](int s0, auto check_t) {\n                constexpr bool CHECK = decltype(check_t)::value;\n                fp32x4_t g[UNR];\n                if constexpr (CHECK) {\n                    #pragma unroll\n                    for (int u = 0; u < UNR; u++) {\n                        const int s = min(s0 + sg + u * 16, n_splits - 1);\n                        g[u] = *reinterpret_cast<const fp32x4_t*>(g_lane + s * sstride);\n                    }\n                } else {\n                    const float* p = g_lane + (uint32_t)((s0 + sg) * sstride);\n                    const uint32_t step = 16u * (uint32_t)sstride;\n                    #pragma unroll\n                    for (int u = 0; u < UNR; u++)\n                        g[u] = *reinterpret_cast<const fp32x4_t*>(p + (size_t)(u * step));\n                }\n                float q[2];\n                #pragma unroll\n                for (int k = 0; k < 2; k++) {\n                    const int s = min(s0 + lane + 64 * k, n_splits - 1);\n                    q[k] = gemm_out_sqrsum[s * m + row];\n                }\n                __builtin_amdgcn_sched_barrier(0);\n                #pragma unroll\n                for (int u = 0; u < UNR; u++) {\n                    if (CHECK && s0 + sg + u * 16 >= n_splits) g[u] = fp32x4_t{0.0f, 0.0f, 0.0f, 0.0f};\n                }\n                #pragma unroll\n                for (int w = 1; w < UNR; w *= 2) {\n                    #pragma unroll\n                    for (int u = 0; u + w < UNR; u += 2 * w) g[u] += g[u + w];\n                }\n                acc += g[0];\n                #pragma unroll\n                for (int k = 0; k < 2; k++) {\n\n                    const int s = s0 + lane + 64 * k;\n                    accq += (lane + 64 * k < 16 * UNR && s < n_splits) ? q[k] : 0.0f;\n                }\n            };\n            for (int s0 = 0; s0 < n_splits; s0 += 16 * UNR) {\n                if (s0 + 16 * UNR <= n_splits) load_pass(s0, std::false_type{});\n                else                           load_pass(s0, std::true_type{});\n            }\n\n            float rv[5] = {acc[0], acc[1], acc[2], acc[3], accq};\n            #pragma unroll\n            for (int j = 0; j < 5; j++) rv[j] += mhc_dpp_f<0xb1>(rv[j]);\n            #pragma unroll\n            for (int j = 0; j < 5; j++) rv[j] += mhc_dpp_f<0x4e>(rv[j]);\n            #pragma unroll\n            for (int j = 0; j < 5; j++) rv[j] += mhc_dpp_f<0x141>(rv[j]);\n            #pragma unroll\n            for (int j = 0; j < 5; j++) rv[j] += mhc_dpp_f<0x140>(rv[j]);\n            float qv = rv[4];\n            qv += __builtin_bit_cast(float, __builtin_amdgcn_update_dpp(\n                0, __builtin_bit_cast(int, qv), 0x142, 0xa, 0xf, false));\n            qv += __builtin_bit_cast(float, __builtin_amdgcn_update_dpp(\n                0, __builtin_bit_cast(int, qv), 0x143, 0xc, 0xf, false));\n            const float sqrsum = __builtin_bit_cast(float, __builtin_amdgcn_readlane(__builtin_bit_cast(int, qv), 63));\n\n            const float lo = (lane & 1) ? rv[1] : rv[0];\n            const float hi = (lane & 1) ? rv[3] : rv[2];\n            const float mine = (lane & 2) ? hi : lo;\n            const int src = (lane & 12) * 4 + (lane & 3);\n            const float val = __builtin_bit_cast(float,\n                __builtin_amdgcn_ds_bpermute(src << 2, __builtin_bit_cast(int, mine)));\n            const float rms = rsqrtf(sqrsum * (1.0f / (hidden_size * hc_mult)) + rms_eps);\n            float c = val * rms * hc_scale2 + hb_mix;\n            float row_max = fmaxf(c, mhc_dpp_f<0xb1>(c));\n            row_max = fmaxf(row_max, mhc_dpp_f<0x4e>(row_max));\n            c = __expf(c - row_max);\n            float rsum = c + mhc_dpp_f<0xb1>(c);\n            rsum += mhc_dpp_f<0x4e>(rsum);\n            c = c * __builtin_amdgcn_rcpf(rsum) + hc_sinkhorn_eps;\n            float csum = c + mhc_dpp_f<0x124>(c);\n            csum += mhc_dpp_f<0x128>(csum);\n            c = c * __builtin_amdgcn_rcpf(csum + hc_sinkhorn_eps);\n\n            const float e4 = 0.25f * hc_sinkhorn_eps;\n\n            const f2_t e4z = {e4, 0.0f};\n            float ce = c + e4;\n            auto sk_iter = [&]() {\n                float rs = ce + mhc_dpp_f<0xb1>(ce);\n                rs += mhc_dpp_f<0x4e>(rs);\n                const float r1 = __builtin_amdgcn_rcpf(rs);\n                f2_t t = f2_t{c, c} * f2_t{r1, r1} + e4z;\n                ce = t[0]; c = t[1];\n                float cs = ce + mhc_dpp_f<0x124>(ce);\n                cs += mhc_dpp_f<0x128>(cs);\n                const float r2 = __builtin_amdgcn_rcpf(cs);\n                t = f2_t{c, c} * f2_t{r2, r2} + e4z;\n                ce = t[0]; c = t[1];\n            };\n            if (sinkhorn_repeat == 20) {\n                #pragma unroll\n                for (int i = 0; i < 19; i++) sk_iter();\n            } else {\n                for (int i = 0; i < sinkhorn_repeat - 1; i++) sk_iter();\n            }\n            if (lane < hc_mult2) comb_mix[row * hc_mult2 + lane] = c;\n        }\n    }\n\n__device__ __forceinline__ float mhc_sum_xor16_32(float v)\n    {\n#if defined(__gfx950__)\n        auto a = __builtin_amdgcn_permlane16_swap(__builtin_bit_cast(int, v), __builtin_bit_cast(int, v), false, false);\n        v = __builtin_bit_cast(float, (int)a[0]) + __builtin_bit_cast(float, (int)a[1]);\n        auto b = __builtin_amdgcn_permlane32_swap(__builtin_bit_cast(int, v), __builtin_bit_cast(int, v), false, false);\n        v = __builtin_bit_cast(float, (int)b[0]) + __builtin_bit_cast(float, (int)b[1]);\n        return v;\n#else\n        v += __shfl_xor(v, 16, 64);\n        v += __shfl_xor(v, 32, 64);\n        return v;\n#endif\n    }\n\n    template <typename DTYPE_I, int KPL>\n    __global__ __launch_bounds__(256, 1)\n    void mhc_fused_post_pre_small_kernel(\n\n        const DTYPE_I* x,\n        const DTYPE_I* residual,\n        const float* fn,\n        const float* post_layer_mix,\n        const float* comb_res_mix,\n        int m,\n        int hidden_size,\n        int x_stride,\n        int out_stride,\n        float* out,\n        float* sqrsum,\n        DTYPE_I* next_residual)\n    {\n        static constexpr int hc_mult = 4;\n        static constexpr int hc_mult3 = 24;\n        static constexpr int ks = 16 * KPL;\n        using act_t = opus::vector_t<DTYPE_I, KPL>;\n        using fv_t = opus::vector_t<float, KPL>;\n        using fp32x4_t = opus::vector_t<float, 4>;\n\n        const int nb = blockIdx.y;\n        const int s = blockIdx.z;\n        const int warp = __builtin_amdgcn_readfirstlane(threadIdx.x / 64);\n        const int lane = threadIdx.x % 64;\n        const int r16 = lane % 16;\n        const int g = lane / 16;\n        const int row = blockIdx.x * 16 + r16;\n        const bool row_ok = row < m;\n        const int rowc = row_ok ? row : m - 1;\n        const int hc_hidden = hc_mult * hidden_size;\n        const int k0 = s * ks + warp * (4 * KPL) + g * KPL;\n\n        const fp32x4_t v_post = *reinterpret_cast<const fp32x4_t*>(post_layer_mix + rowc * hc_mult);\n        fp32x4_t v_comb[hc_mult];\n        #pragma unroll\n        for (int h = 0; h < hc_mult; h++)\n            v_comb[h] = *reinterpret_cast<const fp32x4_t*>(comb_res_mix + rowc * 16 + h * hc_mult);\n        const act_t v_x = *reinterpret_cast<const act_t*>(x + (int64_t)rowc * x_stride + k0);\n        const DTYPE_I* r_ptr = residual + (int64_t)rowc * hc_hidden + k0;\n        act_t v_r[hc_mult];\n        #pragma unroll\n        for (int h = 0; h < hc_mult; h++) v_r[h] = *reinterpret_cast<const act_t*>(r_ptr + h * hidden_size);\n        const int n = nb * 16 + r16;\n        const int nc = n < hc_mult3 ? n : hc_mult3 - 1;\n        const float* f_ptr = fn + (int64_t)nc * hc_hidden + k0;\n        fv_t v_f[hc_mult];\n        #pragma unroll\n        for (int h = 0; h < hc_mult; h++) v_f[h] = *reinterpret_cast<const fv_t*>(f_ptr + h * hidden_size);\n\n        __builtin_amdgcn_sched_barrier(0);\n\n        float res[hc_mult][KPL];\n        #pragma unroll\n        for (int w = 0; w < hc_mult; w++) {\n            #pragma unroll\n            for (int k = 0; k < KPL; k++) {\n                float v = static_cast<float>(v_x[k]) * v_post[w];\n                #pragma unroll\n                for (int h = 0; h < hc_mult; h++) v += static_cast<float>(v_r[h][k]) * v_comb[h][w];\n                res[w][k] = v;\n            }\n        }\n\n        auto store_nres = [&]() {\n            if (nb == 0 && row_ok) {\n                #pragma unroll\n                for (int w = 0; w < hc_mult; w++) {\n                    act_t o;\n                    #pragma unroll\n                    for (int k = 0; k < KPL; k++) o[k] = opus::cast<DTYPE_I>(res[w][k]);\n                    *reinterpret_cast<act_t*>(next_residual + (int64_t)row * hc_hidden + w * hidden_size + k0) = o;\n                }\n            }\n        };\n\n        fp32x4_t acc[hc_mult];\n        auto gemm = [&]() {\n            #pragma unroll\n            for (int w = 0; w < hc_mult; w++) {\n                acc[w] = fp32x4_t{0.0f, 0.0f, 0.0f, 0.0f};\n                #pragma unroll\n                for (int k = 0; k < KPL; k++)\n                    acc[w] = __builtin_amdgcn_mfma_f32_16x16x4f32(v_f[w][k], res[w][k], acc[w], 0, 0, 0);\n            }\n        };\n        store_nres();\n        __builtin_amdgcn_sched_barrier(0);\n        gemm();\n\n        __shared__ float s_acc[3][64][4];\n        __shared__ float s_aux[4][16][8];\n        float aux[6];\n        if (nb == 0) {\n            #pragma unroll\n            for (int w = 0; w < hc_mult; w++) {\n                float d = 0.0f;\n                #pragma unroll\n                for (int k = 0; k < KPL; k++) d += res[w][k] * res[w][k];\n                aux[w] = d;\n            }\n            #pragma unroll\n            for (int j = 0; j < 4; j++) aux[j] = mhc_sum_xor16_32(aux[j]);\n        } else {\n            #pragma unroll\n            for (int j = 0; j < 6; j++) aux[j] = 0.0f;\n            #pragma unroll\n            for (int k = 0; k < KPL; k++) {\n                aux[0] += res[0][k] * res[1][k]; aux[1] += res[0][k] * res[2][k];\n                aux[2] += res[0][k] * res[3][k]; aux[3] += res[1][k] * res[2][k];\n                aux[4] += res[1][k] * res[3][k]; aux[5] += res[2][k] * res[3][k];\n            }\n            #pragma unroll\n            for (int j = 0; j < 6; j++) aux[j] = mhc_sum_xor16_32(aux[j]);\n        }\n        fp32x4_t c = (acc[0] + acc[1]) + (acc[2] + acc[3]);\n        if (warp != 0) *reinterpret_cast<fp32x4_t*>(&s_acc[warp - 1][lane][0]) = c;\n        if (g == 0) {\n            if (nb == 0) {\n                *reinterpret_cast<fp32x4_t*>(&s_aux[warp][r16][0]) = fp32x4_t{aux[0], aux[1], aux[2], aux[3]};\n            } else {\n                *reinterpret_cast<fp32x4_t*>(&s_aux[warp][r16][0]) = fp32x4_t{aux[0], aux[1], aux[2], aux[3]};\n                s_aux[warp][r16][4] = aux[4];\n                s_aux[warp][r16][5] = aux[5];\n            }\n        }\n        __syncthreads();\n        if (warp == 0) {\n            #pragma unroll\n            for (int w = 0; w < 3; w++) c += *reinterpret_cast<const fp32x4_t*>(&s_acc[w][lane][0]);\n            float* o_ptr = out + ((int64_t)s * m + row) * out_stride + nb * 16 + g * 4;\n            if (nb == 0) {\n                if (row_ok) {\n                    *reinterpret_cast<fp32x4_t*>(o_ptr) = c;\n                    if (g == 0) {\n                        fp32x4_t d = *reinterpret_cast<const fp32x4_t*>(&s_aux[0][r16][0]);\n                        #pragma unroll\n                        for (int w = 1; w < 4; w++) d += *reinterpret_cast<const fp32x4_t*>(&s_aux[w][r16][0]);\n                        *reinterpret_cast<fp32x4_t*>(o_ptr + 24) = d;\n                        sqrsum[s * m + row] = (d[0] + d[1]) + (d[2] + d[3]);\n                    }\n                }\n            } else if (row_ok) {\n                if (g < 2) {\n                    *reinterpret_cast<fp32x4_t*>(o_ptr) = c;\n                } else if (g == 3) {\n                    float G[6];\n                    #pragma unroll\n                    for (int j = 0; j < 6; j++)\n                        G[j] = (s_aux[0][r16][j] + s_aux[1][r16][j]) + (s_aux[2][r16][j] + s_aux[3][r16][j]);\n                    float M = 0.0f;\n                    #pragma unroll\n                    for (int j = 0; j < 6; j++) M = fmaxf(M, fabsf(G[j]));\n                    const float inv = M > 0.0f ? 32767.0f / M : 0.0f;\n                    *reinterpret_cast<fp32x4_t*>(o_ptr) = fp32x4_t{\n                        mhc_gram_pack2(G[0], G[1], inv), mhc_gram_pack2(G[2], G[3], inv),\n                        mhc_gram_pack2(G[4], G[5], inv), M};\n                }\n            }\n        }\n    }\n\nvoid run(const at::Tensor& x, const at::Tensor& residual,\n         const at::Tensor& post_mix, const at::Tensor& comb_mix,\n         const at::Tensor& proj_weight, const at::Tensor& mix_scale,\n         const at::Tensor& mix_bias, double rms_eps, double pre_eps,\n         double sinkhorn_eps, double post_multiplier, int64_t sinkhorn_iters,\n         const std::optional<at::Tensor>& norm_weight, double norm_eps,\n         at::Tensor& next_post_mix, at::Tensor& next_comb_mix,\n         at::Tensor& layer_input, at::Tensor& next_residual) {\n    constexpr int splits = 112, hidden = 7168;\n    const int rows = x.size(0);\n    auto partials = at::empty({splits, rows, 32}, x.options().dtype(at::kFloat));\n    auto squares = at::empty({splits, rows}, x.options().dtype(at::kFloat));\n    const auto stream = at::hip::getCurrentHIPStream();\n    mhc_fused_post_pre_small_kernel<opus::bf16_t, 4>\n        <<<dim3((rows + 15) / 16, 2, splits), 256, 0, stream>>>(\n            static_cast<const opus::bf16_t*>(x.data_ptr()),\n            static_cast<const opus::bf16_t*>(residual.data_ptr()),\n            static_cast<const float*>(proj_weight.data_ptr()),\n            static_cast<const float*>(post_mix.data_ptr()),\n            static_cast<const float*>(comb_mix.data_ptr()), rows, hidden, hidden, 32,\n            static_cast<float*>(partials.data_ptr()), static_cast<float*>(squares.data_ptr()),\n            static_cast<opus::bf16_t*>(next_residual.data_ptr()));\n    mhc_pre_big_fuse_rmsnorm_decode2_kernel<opus::bf16_t, 14, splits>\n        <<<16 * rows, 64, 0, stream>>>(\n            static_cast<const float*>(partials.data_ptr()),\n            static_cast<const float*>(squares.data_ptr()),\n            static_cast<const opus::bf16_t*>(next_residual.data_ptr()),\n            static_cast<const opus::bf16_t*>(norm_weight->data_ptr()),\n            static_cast<const float*>(mix_scale.data_ptr()),\n            static_cast<const float*>(mix_bias.data_ptr()), rows, splits,\n            static_cast<float*>(next_post_mix.data_ptr()),\n            static_cast<float*>(next_comb_mix.data_ptr()),\n            static_cast<opus::bf16_t*>(layer_input.data_ptr()),\n            rms_eps, pre_eps, sinkhorn_eps, norm_eps, post_multiplier, sinkhorn_iters);\n}\n} // namespace\n\n#define TORCH_LIBRARY_EXPAND(ns, m) TORCH_LIBRARY(ns, m)\nTORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {\n    m.def(\"run(Tensor x, Tensor residual, Tensor post_mix, Tensor comb_mix, \"\n          \"Tensor proj_weight, Tensor mix_scale, Tensor mix_bias, float rms_eps, \"\n          \"float pre_eps, float sinkhorn_eps, float post_multiplier, int sinkhorn_iters, \"\n          \"Tensor? norm_weight, float norm_eps, Tensor(a!) next_post_mix, \"\n          \"Tensor(b!) next_comb_mix, Tensor(c!) layer_input, Tensor(d!) next_residual) -> ()\", &run);\n}\n"
+      }
+    ],
+    "description": null
+  }
+}

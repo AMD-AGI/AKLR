@@ -1,0 +1,634 @@
+{
+  "name": "paged_attention_decode_kv_split_pages_n_heads16_n_kv_heads2_head_dim64_block_size16",
+  "op_type": "paged_attention_decode",
+  "axes": {
+    "batch": {
+      "description": "Requests, one query token each.",
+      "type": "var"
+    },
+    "n_heads": {
+      "description": "Query heads.",
+      "value": 16,
+      "type": "const"
+    },
+    "n_kv_heads": {
+      "description": "KV heads.",
+      "value": 2,
+      "type": "const"
+    },
+    "head_dim": {
+      "description": "Values per head.",
+      "value": 64,
+      "type": "const"
+    },
+    "n_blocks": {
+      "description": "Blocks of the KV cache.",
+      "type": "var"
+    },
+    "block_size": {
+      "description": "Tokens per block.",
+      "value": 16,
+      "type": "const"
+    },
+    "max_blocks": {
+      "description": "Blocks per request in the block table.",
+      "type": "var"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "batch": 1,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 3,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 5,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 6,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 7,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 9,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 10,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 11,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 12,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 13,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 14,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 15,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 17,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 18,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 19,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 20,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 21,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 22,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 23,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 24,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 25,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 26,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 27,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 28,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 29,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 30,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 31,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 33,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 34,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 35,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 36,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 37,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 38,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 39,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 40,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 41,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 42,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 43,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 44,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 45,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 46,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 47,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 48,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 49,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 50,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 51,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 52,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 53,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 54,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 55,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 56,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 57,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 58,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 59,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 60,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 61,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 62,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 63,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 64,
+        "n_blocks": 65536,
+        "max_blocks": 2048
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "query": {
+      "shape": [
+        "batch",
+        "n_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "The query of each request."
+    },
+    "key_cache": {
+      "shape": [
+        "n_blocks",
+        "block_size",
+        "n_kv_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "The keys of every cached token, block by block."
+    },
+    "value_cache": {
+      "shape": [
+        "n_blocks",
+        "block_size",
+        "n_kv_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "The values of every cached token, block by block."
+    },
+    "block_tables": {
+      "shape": [
+        "batch",
+        "max_blocks"
+      ],
+      "dtype": "int32",
+      "description": "The blocks of each request, in context order."
+    },
+    "context_lens": {
+      "shape": [
+        "batch"
+      ],
+      "dtype": "int32",
+      "description": "Cached tokens of each request, the query's own included."
+    },
+    "scale": {
+      "dtype": "float32",
+      "description": "Multiplies every logit.",
+      "shape": null
+    },
+    "sliding_window": {
+      "dtype": "int32",
+      "description": "Trailing tokens each query reads; 0 reads the whole context.",
+      "shape": null
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "batch",
+        "n_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Softmax-weighted sum of the read values."
+    }
+  },
+  "tags": [],
+  "description": "Decode attention over a paged KV cache: query head h of each request attends to KV head h // (n_heads / n_kv_heads) of the first context_lens tokens its block_tables row names, block_size tokens a block; with sliding_window > 0 only to the last sliding_window of them. Logits are q . k * scale. vLLM's storage: the key and the value caches are the two halves of each row of one (blocks, heads, tokens, 2 * head_dim) buffer, the query rows of a wider buffer.",
+  "constraints": [
+    "n_heads % n_kv_heads == 0",
+    "n_heads // n_kv_heads <= 16",
+    "head_dim in (64, 128, 256)",
+    "block_size in (16, 32)",
+    "n_blocks * block_size <= 2147483648",
+    "query.dtype in ('bfloat16', 'float16')",
+    "key_cache.dtype == value_cache.dtype == query.dtype",
+    "kv_cache_storage == 'kv_split_pages'",
+    "kv_cache_dtype == 'auto' and kv_cache_layout == 'NHD'",
+    "alibi_slopes is None and logits_soft_cap == 0"
+  ],
+  "kernel": null
+}

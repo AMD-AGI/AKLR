@@ -1,0 +1,158 @@
+{
+  "name": "bmm_bf16_nt_n128_k512",
+  "op_type": "bmm_bf16_nt",
+  "axes": {
+    "batch_size": {
+      "description": "Independent matmuls.",
+      "type": "var"
+    },
+    "M": {
+      "description": "Tokens.",
+      "type": "var"
+    },
+    "N": {
+      "description": "Output columns.",
+      "value": 128,
+      "type": "const"
+    },
+    "K": {
+      "description": "Reduction length.",
+      "value": 512,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "batch_size": 12,
+        "M": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch_size": 12,
+        "M": 12
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch_size": 12,
+        "M": 16
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch_size": 12,
+        "M": 24
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch_size": 12,
+        "M": 32
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch_size": 12,
+        "M": 40
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch_size": 12,
+        "M": 48
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch_size": 12,
+        "M": 56
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch_size": 12,
+        "M": 60
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch_size": 12,
+        "M": 64
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch_size": 12,
+        "M": 80
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch_size": 12,
+        "M": 96
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch_size": 12,
+        "M": 112
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "A": {
+      "shape": [
+        "batch_size",
+        "M",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Activations."
+    },
+    "B": {
+      "shape": [
+        "batch_size",
+        "N",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Weights."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "batch_size",
+        "M",
+        "N"
+      ],
+      "dtype": "bfloat16",
+      "description": "A[i] @ B[i] in the stored orientation."
+    }
+  },
+  "tags": [
+    "kimi-k3/tp8+dcp8",
+    "kimi-k3/tp8+dcp8+ep8"
+  ],
+  "description": "Batched bf16 gemm: out[i] = A[i] @ B[i].T, B stored (batch_size, N, K).",
+  "constraints": [
+    "not use_shuffled_weight",
+    "out.dtype in ('bfloat16', 'float16', 'float32')"
+  ],
+  "kernel": null
+}

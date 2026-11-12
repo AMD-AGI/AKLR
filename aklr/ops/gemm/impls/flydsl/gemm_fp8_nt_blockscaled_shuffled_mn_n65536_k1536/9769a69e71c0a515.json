@@ -1,0 +1,125 @@
+{
+  "name": "gemm_fp8_nt_blockscaled_shuffled_mn_n65536_k1536",
+  "op_type": "gemm_fp8_nt_blockscaled",
+  "axes": {
+    "M": {
+      "description": "Tokens.",
+      "type": "var"
+    },
+    "N": {
+      "description": "Output columns.",
+      "value": 65536,
+      "type": "const"
+    },
+    "K": {
+      "description": "Reduction length.",
+      "value": 1536,
+      "type": "const"
+    },
+    "N_div_block": {
+      "description": "Weight-scale rows: ceil_div(N, 128).",
+      "value": 512,
+      "type": "const"
+    },
+    "K_div_block": {
+      "description": "Scale columns: ceil_div(K, 128).",
+      "value": 12,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "M": 1
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 16
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 32
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "a": {
+      "shape": [
+        "M",
+        "K"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "N",
+        "K"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "Weights."
+    },
+    "a_scale": {
+      "shape": [
+        "K_div_block",
+        "M"
+      ],
+      "dtype": "float32",
+      "description": "Per 1 x 128 block of a."
+    },
+    "b_scale": {
+      "shape": [
+        "N_div_block",
+        "K_div_block"
+      ],
+      "dtype": "float32",
+      "description": "Per 128 x 128 block of b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "M",
+        "N"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T, scaled."
+    }
+  },
+  "tags": [],
+  "description": "fp8 gemm dequantized per block: a fp32 scale per 128 x 128 of b, per 1 x 128 of a. A shuffled b is aiter's 16 x 16 shuffle_weight. scale_major_mode 'K' stores a_scale as (M, K_div_block), 'MN' as (K_div_block, M); b_scale is (N_div_block, K_div_block) in both.",
+  "constraints": [
+    "use_shuffled_weight",
+    "scale_major_mode == 'MN'",
+    "N_div_block == ceil_div(N, 128)",
+    "K_div_block == ceil_div(K, 128)",
+    "a.dtype in ('float8_e4m3fn', 'float8_e5m2')",
+    "b.dtype == a.dtype",
+    "out.dtype in ('bfloat16', 'float16')",
+    "a.dtype == 'float8_e4m3fn'"
+  ],
+  "kernel": null
+}

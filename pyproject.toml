@@ -24,17 +24,16 @@ dependencies = [
 ]
 
 [project.entry-points."sglang.srt.plugins"]
-aklr = "aklr.plugins.sglang:register"
+aklr = "aklr.core.runtime.dispatch:register_sglang_plugin"
 
 [project.entry-points."vllm.general_plugins"]
-aklr = "aklr.plugins.vllm:register"
+aklr = "aklr.core.runtime.dispatch:register_vllm_plugin"
 
 [tool.setuptools.packages.find]
 include = ["aklr", "aklr.*"]
 
 [tool.setuptools.package-data]
 "aklr.ops" = ["*/impls/*/*/*.json"]
-"aklr.plugins" = ["*/*/*/impls/*/*/*.json"]
 
 # The version is AKLR's commit: 0.1.devN+g<sha> before the first tag.
 [tool.setuptools_scm]

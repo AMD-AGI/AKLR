@@ -1,0 +1,153 @@
+{
+  "name": "gemm_bf16_nt_n163840_k256",
+  "op_type": "gemm_bf16_nt",
+  "axes": {
+    "M": {
+      "description": "Tokens.",
+      "type": "var"
+    },
+    "N": {
+      "description": "Output columns.",
+      "value": 163840,
+      "type": "const"
+    },
+    "K": {
+      "description": "Reduction length.",
+      "value": 256,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "M": 1
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 3
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 5
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 6
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 7
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 10
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 12
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 14
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "a": {
+      "shape": [
+        "M",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "N",
+        "K"
+      ],
+      "dtype": "bfloat16",
+      "description": "Weights."
+    },
+    "bias": {
+      "shape": [
+        "N"
+      ],
+      "dtype": null,
+      "description": "Added to every output row."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "M",
+        "N"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "tags": [
+    "kimi-k3/tp8+dcp8"
+  ],
+  "description": "bf16 gemm: out = a @ b.T + bias, b stored (N, K).",
+  "constraints": [
+    "not use_shuffled_weight",
+    "bias is None or bias.dtype in ('bfloat16', 'float16', 'float32')",
+    "out.dtype in ('bfloat16', 'float16', 'float32')"
+  ],
+  "kernel": {
+    "name": "gemm_bf16_nt_n163840_k256_flydsl_1220a995dd7d23c0",
+    "author": "KernelForge",
+    "build": {
+      "language": "flydsl",
+      "target_hardware": [
+        "gfx950/MI355X"
+      ],
+      "entry_point": "kernel.py::run",
+      "dependencies": [],
+      "destination_passing_style": true,
+      "binding": null
+    },
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"FlyDSL bf16 GEMM out = a @ b^T, one launch per call: each workgroup splits K over its\nwaves and sums their partials in LDS in a fixed order, so results are reproducible.\"\"\"\n\nimport functools\nimport types\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl.compiler import from_c_void_p\nfrom flydsl.expr import const_expr, range_constexpr, rocdl\nfrom flydsl.expr.typing import T\n\n_N = 163840\n_K = 256\n_ELEM_BYTES = 2  # bf16\n_XCDS = 8\n_GROUP = 8  # adjacent column tiles per XCD: neighbouring tiles finish C rows in one L2\n_PRELOAD_DWORDS = 3 * 2  # C, A, B pointers in SGPRs skip the kernarg load\n_CONFIGS = types.MappingProxyType(  # largest m -> _build_skinny(waves, ns, halves, ...)\n    {\n        1: (4, 1, 1, True, False),\n        3: (8, 2, 1, True, True),\n        16: (4, 1, 2, False, True),\n    }\n)\n\n\ndef _rsrc(ptr, nbytes):\n    \"\"\"Buffer resource whose accesses past nbytes read 0 and drop stores.\"\"\"\n    return rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(ptr, nbytes))\n\n\ndef _bload(rsrc, elem_off):\n    return rocdl.raw_ptr_buffer_load(T.bf16x8, rsrc, elem_off * _ELEM_BYTES, 0)\n\n\ndef _bstore(data, rsrc, elem_off):\n    rocdl.raw_ptr_buffer_store(\n        fx.arith.unwrap(data),\n        rsrc,\n        (elem_off * _ELEM_BYTES).ir_value(),\n        fx.Int32(0).ir_value(),\n    )\n\n\ndef _grouped_tile(n_tiles):\n    \"\"\"Column tile of this workgroup: blocks are dealt to the XCDs round robin.\"\"\"\n    span = _XCDS * _GROUP\n    assert n_tiles % span == 0\n    bid = fx.block_idx.x\n    return (bid // span) * span + (bid % _XCDS) * _GROUP + (bid // _XCDS) % _GROUP\n\n\ndef _ptr(tensor):\n    return from_c_void_p(fx.BFloat16, tensor.data_ptr(), assumed_align=16)\n\n\n@functools.cache\ndef _launcher(m, device):\n    launch = _build_skinny(m, *_CONFIGS[min(bound for bound in _CONFIGS if m <= bound)])\n    c_ex = torch.empty((m, _N), device=device, dtype=torch.bfloat16)\n    a_ex = torch.empty((m, _K), device=device, dtype=torch.bfloat16)\n    b_ex = torch.empty((_N, _K), device=device, dtype=torch.bfloat16)\n    compiled = flyc.compile[\n        {\"llvm_options\": {\"amdgpu-kernarg-preload-count\": _PRELOAD_DWORDS}}\n    ](\n        launch,\n        _ptr(c_ex),\n        _ptr(a_ex),\n        _ptr(b_ex),\n        fx.Stream(torch.cuda.current_stream(device)),\n    )\n\n    def call(a, b, out):\n        compiled(\n            _ptr(out), _ptr(a), _ptr(b), fx.Stream(torch.cuda.current_stream(a.device))\n        )\n\n    return call\n\n\ndef _build_skinny(m, waves, ns, halves, a_direct, packed):\n    \"\"\"One MFMA row block by ns*halves column groups per workgroup; wave w owns K slice\n    w % waves of column half w // waves, with A in LDS or (a_direct) in VGPRs. MFMA runs\n    as C^T = B A^T so a lane's four results are consecutive columns of one row.\"\"\"\n    assert m <= 16\n    n, k = _N, _K\n    bn = 16 * ns * halves\n    n_tiles = n // bn\n    kslice = k // waves\n    steps = kslice // 32\n    assert steps * 32 * waves == k\n    threads = waves * halves * 64\n    A_STRIDE = k + 8  # bf16 elements per staged A row: the pad spreads rows over banks\n    a_vecs = 16 * (k // 8)\n    slot = 64 * 4  # floats of one 16-column group's partials\n    wave_part = ns * slot\n    part_floats = waves * halves * wave_part\n    if not a_direct:\n        assert a_vecs % threads == 0\n        part_floats = max(part_floats, 16 * A_STRIDE // 2)\n    Partials = fx.Array[fx.Float32, part_floats, 16]\n    assert packed or halves == 1\n\n    @flyc.kernel(known_block_size=[threads, 1, 1])\n    def gemm_n163840_k256_skinny(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer):\n        tid = fx.thread_idx.x\n        lane = tid % 64\n        wave = tid // 64\n        r = lane % 16\n        kq = lane // 16\n        a_rsrc = _rsrc(A, m * k * _ELEM_BYTES)\n        b_rsrc = _rsrc(B, n * k * _ELEM_BYTES)\n        c_rsrc = _rsrc(C, m * n * _ELEM_BYTES)\n        if const_expr(halves == 1):\n            s_idx = wave\n            h_idx = 0\n        else:\n            s_idx = wave % waves\n            h_idx = wave // waves\n        kbase = s_idx * kslice + kq * 8\n        if const_expr(a_direct):  # rows >= m read 0 through A's num_records\n            av = [_bload(a_rsrc, r * k + kbase + t * 32) for t in range(steps)]\n        n_tile = _grouped_tile(n_tiles)\n        b_off = [\n            (n_tile * bn + h_idx * (16 * ns) + j * 16 + r) * k + kbase\n            for j in range(ns)\n        ]\n        part = fx.SharedAllocator().allocate(Partials).peek().ptr\n        a_lds = fx.recast_iter(fx.BFloat16, part)\n\n        acc = [fx.arith.unwrap(fx.constant_vector(0.0, T.f32x4)) for _ in range(ns)]\n        bv = [  # B loads go out first so their latency overlaps the A staging\n            [_bload(b_rsrc, b_off[j] + t * 32) for j in range(ns)] for t in range(steps)\n        ]\n        if const_expr(not a_direct):\n            items = []\n            for it in range_constexpr(a_vecs // threads):\n                v = tid + it * threads\n                items.append((v // (k // 8), v % (k // 8)))\n            vals = [_bload(a_rsrc, arow * k + ac8 * 8) for arow, ac8 in items]\n            for (arow, ac8), val in zip(items, vals):\n                fx.ptr_store(val, a_lds + arow * A_STRIDE + ac8 * 8)\n            fx.gpu.barrier()\n        for t in range_constexpr(steps):\n            if const_expr(a_direct):\n                a_t = av[t]\n            else:\n                a_t = fx.ptr_load(\n                    a_lds + r * A_STRIDE + kbase + t * 32, result_type=T.bf16x8\n                )\n            for j in range_constexpr(ns):\n                acc[j] = rocdl.mfma_f32_16x16x32_bf16(T.f32x4, [bv[t][j], a_t, acc[j]])\n\n        vec4f = fx.Vector.make_type(4, fx.Float32)\n        if const_expr(not a_direct):\n            fx.gpu.barrier()  # the partials overwrite the staged A\n        for j in range_constexpr(ns):\n            fx.ptr_store(fx.Vector(acc[j]), part + (wave * ns + j) * slot + lane * 4)\n        fx.gpu.barrier()\n        if const_expr(packed):  # whole-vector stores: each row leaves as one request\n            row_chunks = bn // 8\n            hc = row_chunks // halves\n            ptasks = m * row_chunks\n            for it in range_constexpr((ptasks + threads - 1) // threads):\n                task = tid + it * threads\n                if task < fx.Int32(ptasks):\n                    row = task // row_chunks\n                    ch = task % row_chunks\n                    if const_expr(halves == 1):\n                        hb = 0\n                        c = ch\n                    else:\n                        hb = (ch // hc) * (waves * wave_part)\n                        c = ch % hc\n                    lo_off = hb + (c // 2) * slot + ((c % 2) * 32 + row) * 4\n                    hi_off = lo_off + 64\n                    lo = fx.ptr_load(part + lo_off, result_type=vec4f)\n                    hi = fx.ptr_load(part + hi_off, result_type=vec4f)\n                    for w in range_constexpr(1, waves):\n                        lo = lo + fx.ptr_load(\n                            part + w * wave_part + lo_off, result_type=vec4f\n                        )\n                        hi = hi + fx.ptr_load(\n                            part + w * wave_part + hi_off, result_type=vec4f\n                        )\n                    v8 = lo.to(fx.BFloat16).shuffle(hi.to(fx.BFloat16), list(range(8)))\n                    _bstore(v8, c_rsrc, row * n + n_tile * bn + ch * 8)\n        else:\n            tasks = ns * 64\n            for it in range_constexpr((tasks + threads - 1) // threads):\n                task = tid + it * threads\n                if task < fx.Int32(tasks):\n                    total = fx.ptr_load(part + task * 4, result_type=vec4f)\n                    for w in range_constexpr(1, waves):\n                        total = total + fx.ptr_load(\n                            part + w * wave_part + task * 4, result_type=vec4f\n                        )\n                    tl = task % 64\n                    col = n_tile * bn + (task // 64) * 16 + (tl // 16) * 4\n                    _bstore(total.to(fx.BFloat16), c_rsrc, (tl % 16) * n + col)\n\n    @flyc.jit\n    def launch(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer, stream: fx.Stream):\n        gemm_n163840_k256_skinny(C, A, B).launch(\n            grid=(n_tiles, 1, 1), block=(threads, 1, 1), stream=stream\n        )\n\n    return launch\n\n\ndef run(a, b, bias, out):\n    out_dtype = out.dtype\n    trans_b = True\n    if not trans_b or bias is not None:\n        raise ValueError(\"gemm_n163840_k256 expects trans_b=True and no bias\")\n    _launcher(a.shape[0], a.device)(a, b, out)\n"
+      }
+    ],
+    "description": null
+  }
+}

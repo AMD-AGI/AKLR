@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""A two-workload AKLR schema, and a AKLR stand-in with the contract calls, the serving bar and the
-`validate` report the driver reads."""
+"""A two-workload AKLR schema, and a AKLR stand-in with the contract calls, the workload key, the serving bar and
+the `validate` report the driver reads."""
 
 from __future__ import annotations
 
@@ -65,13 +65,22 @@ def schema_uuid(name, parts):
     return hashlib.sha256(json.dumps([name, parts], sort_keys=True).encode()).hexdigest()[:16]
 """
 
+# The stages' workload key, named as AKLR names a workload.
+FAKE_WORKLOAD_KEY = """class WorkloadKey:
+    def __init__(self, axes):
+        self.axes = axes
+
+    def __str__(self):
+        return ",".join(f"{a}={v}" for a, v in self.axes.items())
+"""
+
 # `python -m aklr validate`: passes a kernel whose source contains {passing!r} on every
-# workload, finds a numeric mismatch on every workload otherwise, and counts its calls. As
-# AKLR does, a workload's mismatch is filed under the bench stage's demotions with the
-# fraction it compared, and a schema with no workload left fails on a finding of its own.
-# Its first {platform_failures} calls abort the way a tracer fault does: a platform failure
-# on every workload, none of them compared. With {timed_baseline} false it compares outputs
-# but times no baseline, as for a contract that defines none.
+# workload, finds its outputs wrong on every workload otherwise, and counts its calls. As
+# AKLR does, a wrong workload is filed under the bench stage's demotions and recorded with
+# its verdict, and a schema with no workload left fails on a finding of its own. Its first
+# {platform_failures} calls abort the way a tracer fault does: a platform fault on every
+# workload. With {timed_baseline} false it checks outputs but times no baseline, as for
+# an op that has none.
 FAKE_VALIDATE = """import json, pathlib, sys
 argv = sys.argv[1:]
 out = pathlib.Path(argv[argv.index("--out") + 1])
@@ -82,23 +91,26 @@ aborted = int(calls.read_text()) <= {platform_failures}
 passing = any({passing!r} in source["content"] for source in candidate["kernel"]["sources"])
 findings, demotions, records = [], [], []
 for index, workload in enumerate(candidate["workloads"]):
+    key = {{"axes": workload["axes"]}}
     if aborted:
-        findings.append({{"code": "platform_failure", "axes": workload["axes"], "detail": "timing: rocprofiler-sdk"}})
-        records.append({{"axes": workload["axes"], "worst_violation_fraction": None, "timings": []}})
+        findings.append({{"code": "platform_fault", "workload": key, "detail": "timing: tracer"}})
+        records.append({{"workload": key, "verdict": "platform_fault", "comparison": None}})
         continue
+    comparison = None
     if not passing:
-        demotions.append({{"code": "numeric_mismatch", "axes": workload["axes"], "detail": "off"}})
-    timing = {{"mode": "graph", "versus": "baseline", "ratio_lower_bound": 0.9,
-               "candidate_milliseconds": [0.01 * (index + 1)] * 3, "versus_milliseconds": [0.009 * (index + 1)] * 3}}
-    timings = [timing] if {timed_baseline} else []
-    violation = 0.0 if passing else 0.5
-    records.append({{"axes": workload["axes"], "worst_violation_fraction": violation, "timings": timings}})
+        demotions.append({{"code": "outputs_mismatch", "workload": key, "detail": "off"}})
+    elif {timed_baseline}:
+        comparison = {{"versus": "baseline", "versus_name": "aiter", "ratio": 0.9, "speedup": 0.9,
+                       "candidate_ms": [0.01 * (index + 1)] * 3,
+                       "opponent_ms": [0.009 * (index + 1)] * 3}}
+    verdict = "passed" if passing else "outputs_mismatch"
+    records.append({{"workload": key, "verdict": verdict, "comparison": comparison}})
 if demotions and not aborted:
-    findings.append({{"code": "no_qualifying_workload", "axes": None, "detail": "no workload passes"}})
+    findings.append({{"code": "no_admitted_workload", "workload": None, "detail": "no workload passes"}})
 out.mkdir(parents=True, exist_ok=True)
 report = {{"stages": [{{"stage_name": "audit", "findings": []}},
                       {{"stage_name": "bench", "findings": findings, "demotions": demotions,
-                        "workload_records": records}}]}}
+                        "records": records}}]}}
 (out / "report.json").write_text(json.dumps(report))
 """
 
@@ -114,9 +126,11 @@ def install_aklr(
     """Plant the AKLR stand-in at ``root``, a checkout `--aklr-root` can name."""
     contract = root / "aklr" / "core" / "contract"
     platform = root / "aklr" / "core" / "platform"
-    for package in (root / "aklr", root / "aklr" / "core", contract, platform):
+    stages = root / "aklr" / "core" / "validation" / "stages"
+    for package in (root / "aklr", root / "aklr" / "core", contract, platform, stages.parent, stages):
         package.mkdir(parents=True, exist_ok=True)
         (package / "__init__.py").write_text("", encoding="utf-8")
+    (stages / "workload_key.py").write_text(FAKE_WORKLOAD_KEY, encoding="utf-8")
     for module in ("registry", "op", "locate"):
         (contract / f"{module}.py").write_text(FAKE_CONTRACT, encoding="utf-8")
     (platform / "env.py").write_text(

@@ -1,0 +1,139 @@
+{
+  "name": "gemm_fp8_nt_blockscaled_shuffled_mn_n65536_k1536",
+  "op_type": "gemm_fp8_nt_blockscaled",
+  "axes": {
+    "M": {
+      "description": "Tokens.",
+      "type": "var"
+    },
+    "N": {
+      "description": "Output columns.",
+      "value": 65536,
+      "type": "const"
+    },
+    "K": {
+      "description": "Reduction length.",
+      "value": 1536,
+      "type": "const"
+    },
+    "N_div_block": {
+      "description": "Weight-scale rows: ceil_div(N, 128).",
+      "value": 512,
+      "type": "const"
+    },
+    "K_div_block": {
+      "description": "Scale columns: ceil_div(K, 128).",
+      "value": 12,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "M": 1
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "M": 16
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "a": {
+      "shape": [
+        "M",
+        "K"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "N",
+        "K"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "Weights."
+    },
+    "a_scale": {
+      "shape": [
+        "K_div_block",
+        "M"
+      ],
+      "dtype": "float32",
+      "description": "Per 1 x 128 block of a."
+    },
+    "b_scale": {
+      "shape": [
+        "N_div_block",
+        "K_div_block"
+      ],
+      "dtype": "float32",
+      "description": "Per 128 x 128 block of b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "M",
+        "N"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T, scaled."
+    }
+  },
+  "tags": [],
+  "description": "fp8 gemm dequantized per block: a fp32 scale per 128 x 128 of b, per 1 x 128 of a. A shuffled b is aiter's 16 x 16 shuffle_weight. scale_major_mode 'K' stores a_scale as (M, K_div_block), 'MN' as (K_div_block, M); b_scale is (N_div_block, K_div_block) in both.",
+  "constraints": [
+    "use_shuffled_weight",
+    "scale_major_mode == 'MN'",
+    "N_div_block == ceil_div(N, 128)",
+    "K_div_block == ceil_div(K, 128)",
+    "a.dtype in ('float8_e4m3fn', 'float8_e5m2')",
+    "b.dtype == a.dtype",
+    "out.dtype in ('bfloat16', 'float16')",
+    "a.dtype == 'float8_e4m3fn'"
+  ],
+  "kernel": {
+    "name": "gemm_fp8_nt_blockscaled_shuffled_mn_n65536_k1536_flydsl_133d48070dcb6c3d",
+    "author": "unknown",
+    "build": {
+      "language": "flydsl",
+      "target_hardware": [
+        "gfx950/MI355X"
+      ],
+      "entry_point": "kernel.py::run",
+      "dependencies": [],
+      "destination_passing_style": true,
+      "binding": null
+    },
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Block-scaled FP8 GEMM: N=65536, K=1536, M=1..32; BF16 output.\nA is row-major; B uses AITER shuffle_weight((16, 16)); scales use 128-wide blocks.\nA scales are raw column-major (kb * M + m); B scales are row-major (n // 128, kb).\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir.dialects import llvm as _llvm\nfrom flydsl._mlir.dialects import math as _math\nfrom flydsl._mlir.dialects.fly_rocdl import TargetAddressSpace\nfrom flydsl.expr import const_expr, gpu, range_constexpr, rocdl\nfrom flydsl.expr.typing import Vector as Vec\n\n_N = 65536\n_K = 1536\n_SCALE_BLK = 128\n\n\ndef ceildiv(numer, denom):\n    return (numer + denom - 1) // denom\n\n\ndef make_fp8_buffer_tensor(arg_i8, fp8_ir_t):\n    t_i8 = fx.rocdl.make_buffer_tensor(arg_i8, max_size=False)\n    iter_i8 = fx.get_iter(t_i8)\n    f8_buf_ptr_ty = fx.PointerType.get(\n        elem_ty=fp8_ir_t,\n        address_space=TargetAddressSpace.BufferDesc,\n        alignment=fx.PointerType(iter_i8.type).alignment,\n    )\n    iter_f8 = fx.recast_iter(f8_buf_ptr_ty, iter_i8)\n    return fx.Tensor(fx.make_view(iter_f8, fx.get_layout(t_i8)))\n\n\ndef pack_i32x4_i32x8(lo, hi):\n    return lo.shuffle(hi, list(range(8)))\n\n\ndef opaque_i32(v):\n    \"\"\"Pass an i32 through a v_mov so LLVM folds per-use constants into the\n    ds_read/ds_write immediate offset off this single VGPR.\"\"\"\n    res = _llvm.inline_asm(\n        res=fx.Int32.ir_type,\n        operands_=[fx.Int32(v).ir_value()],\n        asm_string=\"v_mov_b32 $0, $1\",\n        constraints=\"=v,v\",\n        has_side_effects=False,\n    )\n    return fx.Int32(res)\n\n\nclass Mfma16x16x128:\n    def __init__(self, n_tiles_a, n_tiles_b):\n        self.atom = fx.make_mma_atom(fx.rocdl.cdna4.MFMA_Scale(16, 16, 128, fx.Float8E4M3FN))\n        self.zero_value = Vec.filled(4, 0.0, fx.Float32)\n        self.n_tiles_a = n_tiles_a\n        self.n_tiles_b = n_tiles_b\n\n    def _make_operand_frag(self, value):\n        frag = fx.make_rmem_tensor(8, fx.Int32)\n        frag.store(Vec(value))\n        return frag\n\n    def _make_accum_frag(self, value):\n        frag = fx.make_rmem_tensor(4, fx.Float32)\n        frag.store(Vec(value))\n        return frag\n\n    def call_partial(self, a, b):\n        \"\"\"Fresh (zero-initialized) partial products for one K step.\"\"\"\n        a_frags = [self._make_operand_frag(a[i]) for i in range_constexpr(self.n_tiles_a)]\n        b_frags = [self._make_operand_frag(b[j]) for j in range_constexpr(self.n_tiles_b)]\n        c_frags = [\n            self._make_accum_frag(self.zero_value) for _ in range_constexpr(self.n_tiles_a * self.n_tiles_b)\n        ]\n        for i in range_constexpr(self.n_tiles_a):\n            for j in range_constexpr(self.n_tiles_b):\n                cf = c_frags[i * self.n_tiles_b + j]\n                fx.gemm(self.atom, cf, a_frags[i], b_frags[j], cf)\n        return [c_frags[i].load().ir_value() for i in range_constexpr(self.n_tiles_a * self.n_tiles_b)]\n\n\ndef compile_skinny_gemm(*, K, BM, BN=64, W_INFLIGHT=4, waves_per_eu=2, BCPOL=0):\n    BLOCK_K = 128\n    KSTEPS = K // BLOCK_K\n    SK = K // _SCALE_BLK\n    NW = BN // 16\n    NTHREADS = NW * 64\n    MT = BM // 16\n    assert BM % 16 == 0 and BN % 16 == 0 and BN <= 128\n    RS = K + 16  # padded LDS row stride (bytes): conflict-free ds_read_b128\n    LDS_BYTES = BM * RS\n    CH_PER_ROW = K // 16\n    assert (BM * CH_PER_ROW) % NTHREADS == 0\n    PASSES = (BM * CH_PER_ROW) // NTHREADS\n    W = min(W_INFLIGHT, KSTEPS)\n\n    _kname = f\"flydsl_bscale_skinny_m{BM}_n{BN}_w{W}_{waves_per_eu}_c{BCPOL}_k{K}_n{_N}\"\n\n    @fx.struct\n    class SkinnyStorage:\n        A_slab: fx.Array[fx.Float8E4M3FN, LDS_BYTES, 16]\n\n    @flyc.kernel(name=_kname, known_block_size=[NTHREADS, 1, 1])\n    def kernel_skinny(\n        A: fx.Tensor,\n        B_T: fx.Tensor,\n        C: fx.Tensor,\n        A_scale: fx.Tensor,\n        B_scale: fx.Tensor,\n        c_m: fx.Int32,\n        c_n: fx.Int32,\n    ):\n        F8_IR_t = fx.Float8E4M3FN.ir_type\n        lds = fx.SharedAllocator().allocate(SkinnyStorage).peek()\n        slab = lds.A_slab\n\n        tid = fx.thread_idx.x\n        lane = tid % 64\n        l16 = lane % 16\n        lq = lane // 16\n        wave_id = fx.Int32(rocdl.readfirstlane(fx.Int32.ir_type, fx.Int32(tid // 64).ir_value()))\n        blk = fx.block_idx.x\n        n0 = blk * BN + wave_id * 16\n        nb = (blk * BN) // _SCALE_BLK\n\n        # ---- scales ----\n        sa_nbytes = c_m * (SK * 4)\n        sb_nbytes = (_N // _SCALE_BLK) * SK * 4\n        gSA = fx.rocdl.make_buffer_tensor(A_scale, max_size=False, num_records_bytes=sa_nbytes)\n        gSB = fx.rocdl.make_buffer_tensor(B_scale, max_size=False, num_records_bytes=sb_nbytes)\n        sa_div = fx.logical_divide(gSA, fx.make_layout(1, 1))\n        sb_div = fx.logical_divide(gSB, fx.make_layout(1, 1))\n        atom_f32x1 = fx.make_copy_atom(fx.rocdl.BufferCopy32b(), fx.Float32)\n        atom_f32x4 = fx.make_copy_atom(fx.rocdl.BufferCopy128b(), fx.Float32)\n\n        sb_regs = []\n        for h in range_constexpr(SK // 4):\n            r = fx.make_rmem_tensor(fx.make_layout(4, 1), fx.Float32)\n            fx.copy(atom_f32x4, fx.slice(sb_div, (None, fx.Int32(nb * SK + h * 4))), r)\n            sb_regs.append(r)\n        sa_regs = []\n        for mt in range_constexpr(MT):\n            row = []\n            for kb in range_constexpr(SK):\n                r = fx.make_rmem_tensor(fx.make_layout(1, 1), fx.Float32)\n                fx.copy(atom_f32x1, fx.slice(sa_div, (None, fx.Int32(kb * c_m + mt * 16 + l16))), r)\n                row.append(r)\n            sa_regs.append(row)\n\n        # ---- activation slab: global -> VGPR ----\n        gAct = make_fp8_buffer_tensor(A, F8_IR_t)\n        gW = make_fp8_buffer_tensor(B_T, F8_IR_t)\n        act_div = fx.logical_divide(gAct, fx.make_layout(1, 1))\n        w_div = fx.logical_divide(gW, fx.make_layout(1, 1))\n        atom_16b = fx.make_copy_atom(fx.rocdl.BufferCopy128b(), fx.Float8E4M3FN)\n        atom_w16b = fx.make_copy_atom(fx.rocdl.BufferCopy128b(BCPOL), fx.Float8E4M3FN)\n\n        tid16 = fx.Int32(tid * 16)\n        slab_regs = []\n        for p in range_constexpr(PASSES):\n            r = fx.make_rmem_tensor(fx.make_layout(16, 1), fx.Float8E4M3FN)\n            fx.copy(atom_16b, fx.slice(act_div, (None, tid16 + p * NTHREADS * 16)), r)\n            slab_regs.append(r)\n\n        rocdl.sched_barrier(0)\n\n        # ---- weights: global -> VGPR (lane*16 + wave-uniform soffset) ----\n        lane16 = fx.Int32(lane * 16)\n        w_base = n0 * K\n\n        def issue_w(k):\n            regs = []\n            for h in range_constexpr(2):\n                r = fx.make_rmem_tensor(fx.make_layout(16, 1), fx.Float8E4M3FN)\n                fx.copy(\n                    atom_w16b,\n                    fx.slice(w_div, (None, lane16)),\n                    r,\n                    soffset=fx.Int32(w_base + (k * 2048 + h * 1024)),\n                )\n                regs.append(r)\n            return regs\n\n        w_regs = [None] * KSTEPS\n        for k in range_constexpr(W):\n            w_regs[k] = issue_w(k)\n\n        rocdl.sched_barrier(0)\n\n        # ---- sab = sa * sb ----\n        sb_v = [Vec(fx.memref_load_vec(sb_regs[h])) for h in range_constexpr(SK // 4)]\n        sb_s = []\n        for kb in range_constexpr(SK):\n            v = sb_v[kb // 4][kb % 4]\n            sb_s.append(fx.Float32(rocdl.readfirstlane(fx.Float32.ir_type, fx.Float32(v).ir_value())))\n        sab = []\n        for mt in range_constexpr(MT):\n            row = []\n            for kb in range_constexpr(SK):\n                sa_v = Vec(fx.memref_load_vec(sa_regs[mt][kb]))[0]\n                row.append(sa_v * sb_s[kb])\n            sab.append(row)\n\n        # ---- slab: VGPR -> LDS (chunk id = p*NTHREADS + tid -> row id//CH, col id%CH) ----\n        for p in range_constexpr(PASSES):\n            cid = tid + p * NTHREADS\n            st_off = (cid // CH_PER_ROW) * RS + (cid % CH_PER_ROW) * 16\n            v = Vec(fx.memref_load_vec(slab_regs[p])).bitcast(fx.Uint8)\n            ptr = fx.add_offset(slab.ptr, fx.make_int_tuple(fx.Int32(st_off)))\n            u8_iter = fx.recast_iter(fx.Uint8, ptr)\n            fx.make_view(u8_iter, fx.make_layout(16, 1)).store(v)\n\n        gpu.barrier()\n\n        rd_base = opaque_i32(l16 * RS + lq * 16)\n\n        def read_a(mt, k):\n            halves = []\n            for h in range_constexpr(2):\n                ptr = fx.add_offset(slab.ptr, fx.make_int_tuple(rd_base + (mt * 16 * RS + k * 128 + h * 64)))\n                i8_iter = fx.recast_iter(fx.Uint8, ptr)\n                v = fx.make_view(i8_iter, fx.make_layout(16, 1)).load()\n                halves.append(v.bitcast(fx.Int32))\n            return pack_i32x4_i32x8(halves[0], halves[1])\n\n        mfma = Mfma16x16x128(1, MT)\n        acc = [mfma.zero_value] * MT\n        for k in range_constexpr(KSTEPS):\n            wl = Vec(fx.memref_load_vec(w_regs[k][0])).bitcast(fx.Int32)\n            wh = Vec(fx.memref_load_vec(w_regs[k][1])).bitcast(fx.Int32)\n            w_frag = pack_i32x4_i32x8(wl, wh)\n            if const_expr(k + W < KSTEPS):\n                w_regs[k + W] = issue_w(k + W)\n            a_frags = [read_a(mt, k) for mt in range_constexpr(MT)]\n            part = mfma.call_partial([w_frag], a_frags)\n            for mt in range_constexpr(MT):\n                s = Vec.filled(4, sab[mt][k], fx.Float32).ir_value()\n                acc[mt] = _math.fma(part[mt], s, Vec(acc[mt]).ir_value())\n\n        # ---- epilogue: lane holds n = n0+lq*4+i, m = mt*16+l16 ----\n        c_nbytes = c_m * c_n * 2\n        gC = fx.rocdl.make_buffer_tensor(C, max_size=False, num_records_bytes=c_nbytes)\n        c_div = fx.logical_divide(gC, fx.make_layout(1, 1))\n        out_atom = fx.make_copy_atom(fx.rocdl.BufferCopy64b(), fx.BFloat16)\n        reg_bf16 = fx.make_rmem_tensor(fx.make_layout(4, 1), fx.BFloat16)\n        for mt in range_constexpr(MT):\n            fx.memref_store_vec(Vec(acc[mt]).to(fx.BFloat16), reg_bf16)\n            fx.copy(\n                out_atom, reg_bf16, fx.slice(c_div, (None, fx.Int32((mt * 16 + l16) * c_n + n0 + lq * 4)))\n            )\n\n    @flyc.jit\n    def launch_skinny(\n        A: fx.Tensor,\n        B_T: fx.Tensor,\n        C: fx.Tensor,\n        A_scale: fx.Tensor,\n        B_scale: fx.Tensor,\n        c_m: fx.Int32,\n        c_n: fx.Int32,\n        stream: fx.Stream,\n    ):\n        grid_x = ceildiv(c_n, BN)\n        kernel_skinny(\n            A,\n            B_T,\n            C,\n            A_scale,\n            B_scale,\n            c_m,\n            c_n,\n            value_attrs={\n                \"rocdl.waves_per_eu\": waves_per_eu,\n                \"rocdl.flat_work_group_size\": f\"{NTHREADS},{NTHREADS}\",\n            },\n        ).launch(grid=(grid_x, 1, 1), block=(NTHREADS, 1, 1), stream=stream)\n\n    return launch_skinny\n\n\ndef _skinny_cfg(m):\n    # (BM, BN, W_INFLIGHT, waves_per_eu); one M-block covers all rows.\n    if m <= 16:\n        return 16, 64, 8, 4\n    return 32, 128, 4, 4\n\n\n# Non-temporal weight loads for the read-once B stream.\nB_CPOL = 2\n\n\n@functools.cache\ndef _launch_for(m):\n    bm, bn, w, wpe = _skinny_cfg(m)\n    exe = compile_skinny_gemm(K=_K, BM=bm, BN=bn, W_INFLIGHT=w, waves_per_eu=wpe, BCPOL=B_CPOL)\n    state = {\"cf\": None}\n\n    def launch(*args):\n        cf = state[\"cf\"]\n        if cf is None:\n            cf = flyc.compile(exe, *args)\n            state[\"cf\"] = cf\n        cf(*args)\n\n    return launch\n\n\ndef run(a, b, a_scale, b_scale, out):\n    \"\"\"Write dequant(a) @ dequant(b).T into BF16 ``out``.\n    Dispatch fixes the unused attrs, ``bias`` and ``out_dtype``.\"\"\"\n    m = int(a.shape[0])\n    launch = _launch_for(m)\n    launch(\n        a.view(torch.int8).view(-1),\n        b.view(torch.int8).view(-1),\n        out.view(-1),\n        a_scale.view(-1),\n        b_scale.view(-1),\n        m,\n        _N,\n        fx.Stream(torch.cuda.current_stream(device=a.device)),\n    )\n"
+      }
+    ],
+    "description": null
+  }
+}

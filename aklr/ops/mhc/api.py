@@ -1,15 +1,18 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
+#
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
-from aklr.core.runtime.dispatch import api
-from aklr.ops.mhc.contract import MHC_FUSED_POST_PRE, MHC_POST, MHC_PRE
+from aklr.core.runtime.dispatch import aklr_api
+from aklr.ops.mhc.schema import MHC_FUSED_POST_PRE, MHC_POST, MHC_PRE
 
 __all__ = ["mhc_fused_post_pre", "mhc_post", "mhc_pre"]
 
 
-@api(MHC_PRE)
+@aklr_api(MHC_PRE)
 def mhc_pre(
     residual,
     proj_weight,
@@ -26,11 +29,11 @@ def mhc_pre(
 ): ...
 
 
-@api(MHC_POST)
+@aklr_api(MHC_POST)
 def mhc_post(x, residual, post_mix, comb_mix, *, out=None): ...
 
 
-@api(MHC_FUSED_POST_PRE)
+@aklr_api(MHC_FUSED_POST_PRE)
 def mhc_fused_post_pre(
     x,
     residual,

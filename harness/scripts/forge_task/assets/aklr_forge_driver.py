@@ -34,23 +34,21 @@ KERNEL = WORKSPACE / "kernel.py"
 # The package the candidate's sources are imported into, as AKLR imports a kernel's: a package made in memory.
 CANDIDATE_PACKAGE = "forge_candidate"
 
-# Findings that mean a workload's output cannot be trusted; NOT_FASTER and REGRESSED only grade speed.
+# Findings that mean a workload's output cannot be trusted; not_faster and regressed only grade speed.
 INCORRECT_CODES = frozenset(
     {
         "schema_invalid",
-        "kernel_missing",
         "source_rejected",
         "build_failed",
-        "candidate_crash",
-        "candidate_timeout",
-        "capture_unsafe",
-        "input_mutation",
-        "numeric_mismatch",
-        "output_caching",
-        "nondeterministic",
-        "post_timing_mismatch",
+        "task_crashed",
+        "task_timeout",
+        "candidate_raised",
+        "wrong_outputs",
+        "outputs_mismatch",
     }
 )
+# A workload's verdicts that mean AKLR checked nothing on it.
+UNCHECKED_CODES = frozenset({"platform_fault", "baseline_unbound"})
 
 
 def _aklr():
@@ -120,9 +118,7 @@ def _publish() -> Path:
 
 
 def _platform_failed(report: dict) -> bool:
-    return any(
-        f["code"] == "platform_failure" for stage in report["stages"] for f in stage.get("findings", [])
-    )
+    return any(f["code"] == "platform_fault" for stage in report["stages"] for f in stage.get("findings", []))
 
 
 def _report() -> dict:
@@ -176,14 +172,13 @@ def _stage(report: dict, name: str) -> dict:
     return next((stage for stage in report["stages"] if stage["stage_name"] == name), {})
 
 
-def _case_id(axes: dict) -> str:
-    return ",".join(f"{name}={value}" for name, value in axes.items())
-
-
 def _outcomes(report: dict) -> dict[str, dict]:
-    """Per workload: whether AKLR found its output wrong, and the baseline's graph time."""
+    """Per workload, by its key's text: whether AKLR found its output wrong, and the baseline's graph time."""
+    _aklr()
+    from aklr.core.validation.stages.workload_key import WorkloadKey
+
     workloads = json.loads(SCHEMA_JSON.read_text(encoding="utf-8"))["workloads"]
-    outcomes = {_case_id(w["axes"]): {"incorrect": [], "baseline_ms": None} for w in workloads}
+    outcomes = {str(WorkloadKey(w["axes"])): {"incorrect": [], "baseline_ms": None} for w in workloads}
     for stage in ("audit", "bench"):
         # A workload's own finding is filed under the stage's demotions: AKLR serves the schema's other workloads.
         found = _stage(report, stage)
@@ -191,18 +186,18 @@ def _outcomes(report: dict) -> dict[str, dict]:
             if finding["code"] not in INCORRECT_CODES:
                 continue
             # An audit finding names no workload: it rejects the kernel everywhere.
-            cases = [_case_id(finding["axes"])] if finding.get("axes") else list(outcomes)
+            cases = [str(WorkloadKey(**finding["workload"]))] if finding.get("workload") else list(outcomes)
             for case_id in cases:
                 outcomes[case_id]["incorrect"].append(finding["code"])
-    for record in _stage(report, "bench").get("workload_records", []):
-        outcome = outcomes[_case_id(record["axes"])]
-        outcome["violation"] = record.get("worst_violation_fraction")
-        for timing in record["timings"]:
-            if timing["mode"] == "graph" and timing["versus"] == "baseline":
-                outcome["baseline_ms"] = statistics.median(timing["versus_milliseconds"])
+    for record in _stage(report, "bench").get("records", []):
+        outcome = outcomes[str(WorkloadKey(**record["workload"]))]
+        outcome["checked"] = record["verdict"] not in UNCHECKED_CODES
+        comparison = record.get("comparison")
+        if comparison and comparison["versus"] == "baseline":
+            outcome["baseline_ms"] = statistics.median(comparison["opponent_ms"])
     for outcome in outcomes.values():
         # An aborted run compares nothing; a workload AKLR did not compare is not shown correct.
-        if outcome.get("violation") is None and not outcome["incorrect"]:
+        if not outcome.get("checked") and not outcome["incorrect"]:
             outcome["incorrect"].append("not_compared")
     return outcomes
 
@@ -249,39 +244,20 @@ def _write_baseline(path: Path) -> int:
     return 0
 
 
-def graph_reading(bench, call, budget: float, is_fault) -> float:
-    """One reading of AKLR's graph timer, measured again once in place when the profiler, not the kernel, failed it
-    (validate's tracer fault policy)."""
-    try:
-        return bench(call, rep=budget)
-    except RuntimeError as error:
-        if not is_fault(str(error)):
-            raise
-    return bench(call, rep=budget)
-
-
-def _aklr_timer():
-    """AKLR's graph timer as validate's bench reads it: the budget of one reading, the clock, and whether an error
-    is the profiler's rather than the kernel's."""
-    _aklr()
-    from aklr.core.validation.stages._measure import (
-        GRAPH_BUDGET_MILLISECONDS,
-        bind_clock,
-        is_tracer_fault,
-    )
-
-    return GRAPH_BUDGET_MILLISECONDS, bind_clock, is_tracer_fault
-
-
 def _measure_candidate(warmup: int, rounds: int) -> dict[str, float]:
-    """Per workload, the candidate's median time over ``rounds`` readings of AKLR's graph timer on the call
-    validate's bench times."""
-    budget, bind_clock, is_tracer_fault = _aklr_timer()
-    clock = bind_clock()  # imports the timer's module before the candidate's first GPU call
+    """Per workload, the candidate's median time over ``rounds`` readings of AKLR's graph timer, as validate's
+    bench reads it (a profiler fault read again once), on the inputs validate's bench times."""
+    _aklr()
+    import torch
+
+    # the kernel tracer registers as torch initializes the GPU: before the process's first kernel
+    import aklr.core.utils.testing  # noqa: F401
+    from aklr.core.validation import MeasurementProfile
+
+    profile = MeasurementProfile()
     candidate = _load_candidate()
     times = {}
-    profiler_warm = False
-    for case_id, call in _calls("cuda").items():
+    for index, (case_id, call) in enumerate(_calls("cuda").items()):
 
         def call_once(call=call) -> None:
             candidate.run(**call)
@@ -289,14 +265,10 @@ def _measure_candidate(warmup: int, rounds: int) -> dict[str, float]:
         # At least once, as a model's warm-up does: a per-tensor cache fills here, not in a timed graph.
         for _ in range(max(1, warmup)):
             call_once()
-        clock.synchronize()
-        if not profiler_warm:
-            # Validate's profiler warm-up: one unrecorded profile before the first recorded one in the process.
-            graph_reading(clock.bench_cudagraph, call_once, budget, is_tracer_fault)
-            profiler_warm = True
-        readings = [
-            graph_reading(clock.bench_cudagraph, call_once, budget, is_tracer_fault) for _ in range(rounds)
-        ]
+        torch.cuda.synchronize()
+        if index == 0:
+            profile.reading("candidate", call_once)  # validate's unrecorded warm-up reading
+        readings = [profile.reading("candidate", call_once) for _ in range(rounds)]
         times[case_id] = statistics.median(readings)
     return times
 
@@ -312,40 +284,30 @@ def _run_bench(warmup: int, iterations: int) -> int:
 
 
 def _calls(device: str) -> dict[str, dict]:
-    """Per workload, the call validate's bench times, on AKLR's timing inputs, built by AKLR's own trial code:
-    inputs from another draw describe a call nobody scores. The call holds the schema's call keys only, as AKLR's
-    builder hands the kernel: a trial call also carries API parameters an attr hides from the kernel. The outputs
-    dispatch would allocate are allocated here, since the candidate is called directly.
+    """Per workload, by its key's text, the inputs validate's bench times (its first accuracy trial's), by the
+    schema's names, with the outputs dispatch would allocate: the candidate is called directly.
     """
     import torch
+    from pydantic import TypeAdapter
 
-    registry, *_ = _aklr()
-    from aklr.core.contract import semantics
-    from aklr.core.validation.stages._bench._evaluation._request import TrialRequest
+    _aklr()
+    from aklr.core.runtime.dispatch._adapt import ordered_input_values
+    from aklr.core.schema import Schema, Tensor
+    from aklr.core.utils import dtype_str_to_torch_dtype
+    from aklr.core.validation.stages.bench import InputSampler
+    from aklr.core.validation.stages.workload_key import WorkloadKey
 
-    text, _ = _candidate_text()
-    schema = registry.parse_schema(text.encode(), str(SCHEMA_JSON))
-    contract = registry.get(schema.contract_id)
+    schema = TypeAdapter(Schema).validate_json(SCHEMA_JSON.read_text(encoding="utf-8"))
     calls = {}
     for workload in schema.workloads:
-        request = TrialRequest.of_workload(
-            str(SCHEMA_JSON),
-            schema,
-            contract,
-            workload,
-            thresholds={},
-            incumbent=None,
-            baseline=None,
-        )
-        assembled = request.assemble_call(request.compose_inputs(None, device), device)
-        call = {key: assembled[key] for key in schema.kernel_call_keys if key in assembled}
-        for name in contract.allocated_outputs:
-            call[name] = torch.empty(
-                contract.storage_shape_of(name, request.point),
-                dtype=semantics.torch_dtypes(request.point.dtypes[name])[0],
-                device=device,
-            )
-        calls[_case_id(workload.axes)] = call
+        key = WorkloadKey.from_workload(workload)
+        drawn = InputSampler.for_workload(schema, key).draw(0, 0, device)
+        axes = {**schema.const_axes, **key.axes}
+        call = dict(zip(schema.inputs, ordered_input_values(schema, drawn), strict=True))
+        for (name, spec), shape in zip(schema.outputs.items(), schema.get_output_shapes(axes), strict=True):
+            if isinstance(spec, Tensor) and shape is not None:
+                call[name] = torch.empty(shape, dtype=dtype_str_to_torch_dtype(spec.dtype), device=device)
+        calls[str(key)] = call
     return calls
 
 

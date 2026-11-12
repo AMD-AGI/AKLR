@@ -1,0 +1,163 @@
+{
+  "name": "topk_transform_paged_k512_ps64",
+  "op_type": "topk_transform_paged",
+  "axes": {
+    "n_tokens": {
+      "description": "Rows, one per token.",
+      "type": "var"
+    },
+    "n_candidates": {
+      "description": "Candidate scores per row.",
+      "type": "var"
+    },
+    "k": {
+      "description": "Candidates selected per row.",
+      "value": 512,
+      "type": "const"
+    },
+    "n_pages": {
+      "description": "Page table columns.",
+      "type": "var"
+    },
+    "page_size": {
+      "description": "Slots per page.",
+      "value": 64,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 4,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 8,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 16,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 32,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 64,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 128,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 256,
+        "n_candidates": 262208,
+        "n_pages": 4097
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "scores": {
+      "shape": [
+        "n_tokens",
+        "n_candidates"
+      ],
+      "dtype": "float32",
+      "description": "Candidate scores per row."
+    },
+    "seq_lens": {
+      "shape": [
+        "n_tokens"
+      ],
+      "dtype": "int32",
+      "description": "Valid candidates per row, a prefix the page table covers."
+    },
+    "page_tables": {
+      "shape": [
+        "n_tokens",
+        "n_pages"
+      ],
+      "dtype": "int32",
+      "description": "Page of each page_size candidates, distinct within a row."
+    },
+    "k": {
+      "dtype": "int32",
+      "description": "Candidates selected per row.",
+      "shape": null
+    },
+    "page_size": {
+      "dtype": "int32",
+      "description": "Slots per page.",
+      "shape": null
+    }
+  },
+  "outputs": {
+    "out_page_indices": {
+      "shape": [
+        "n_tokens",
+        "k"
+      ],
+      "dtype": "int32",
+      "description": "Selected positions, or page_tables slots when passed; -1 after a short row's entries."
+    }
+  },
+  "tags": [
+    "deepseek-v4-flash/tp4",
+    "deepseek-v4-flash/tp4+dp4",
+    "deepseek-v4-flash/tp4+dp4+ep4",
+    "deepseek-v4-flash/tp4+ep4",
+    "deepseek-v4-flash/tp8",
+    "deepseek-v4-flash/tp8+dp8",
+    "deepseek-v4-flash/tp8+dp8+ep8",
+    "deepseek-v4-flash/tp8+ep8"
+  ],
+  "description": "Select each row's k highest scores among its first seq_lens candidates; write their positions, or their page slots, padded with -1.",
+  "constraints": [
+    "page_size >= 1",
+    "page_tables is None or n_pages * page_size <= 2147483648"
+  ],
+  "kernel": null
+}

@@ -1,0 +1,459 @@
+{
+  "name": "fused_moe_swiglu_shuffled_16x16_model_dim6144_n_experts128_topk4_inter_dim768",
+  "op_type": "fused_moe",
+  "axes": {
+    "n_tokens": {
+      "description": "Tokens routed in this call.",
+      "type": "var"
+    },
+    "model_dim": {
+      "description": "Hidden size.",
+      "value": 6144,
+      "type": "const"
+    },
+    "n_experts": {
+      "description": "Local experts on this rank.",
+      "value": 128,
+      "type": "const"
+    },
+    "topk": {
+      "description": "Experts per token.",
+      "value": 4,
+      "type": "const"
+    },
+    "inter_dim": {
+      "description": "Expert intermediate size.",
+      "value": 768,
+      "type": "const"
+    },
+    "global_experts": {
+      "description": "Experts of the whole expert-parallel group.",
+      "value": null,
+      "type": "const"
+    },
+    "gate_up_rows": {
+      "description": "w1 rows: 2 * inter_dim.",
+      "value": 1536,
+      "type": "const"
+    },
+    "packed_model_dim": {
+      "description": "Bytes per w1 row: model_dim // 2.",
+      "value": 3072,
+      "type": "const"
+    },
+    "packed_inter_dim": {
+      "description": "Bytes per w2 row: inter_dim // 2.",
+      "value": 384,
+      "type": "const"
+    },
+    "model_blocks": {
+      "description": "w1 scale columns: model_dim // 32.",
+      "value": 192,
+      "type": "const"
+    },
+    "inter_blocks": {
+      "description": "w2 scale columns: inter_dim // 32.",
+      "value": 24,
+      "type": "const"
+    },
+    "one": {
+      "description": "A single count.",
+      "value": 1,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 5
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 9
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 24
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 32
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 40
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 48
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 56
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 72
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 80
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 88
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 96
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 104
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 112
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 120
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 128
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 136
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 144
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 152
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 160
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 168
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 176
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 184
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 192
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 200
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 213
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 214
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 216
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 220
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 224
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 232
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 240
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "n_tokens": 248
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Token activations."
+    },
+    "w1": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "packed_model_dim"
+      ],
+      "dtype": "float4_e2m1fn_x2",
+      "description": "Gate-up projection per expert, two values a byte."
+    },
+    "w2": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "packed_inter_dim"
+      ],
+      "dtype": "float4_e2m1fn_x2",
+      "description": "Down projection per expert, two values a byte."
+    },
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "float32",
+      "description": "Routing weight of each chosen expert."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "description": "Chosen experts per token, distinct within a row; global ids under expert parallelism."
+    },
+    "expert_mask": {
+      "shape": [
+        "global_experts"
+      ],
+      "dtype": "int32",
+      "description": "1 for the experts this rank holds, in the order w1 holds them."
+    },
+    "activation": {
+      "dtype": "string",
+      "description": "Gate activation.",
+      "shape": null
+    },
+    "act_quant": {
+      "dtype": "string",
+      "description": "Quantization of each expert gemm's activations, per 1 x 32 with e8m0 scales: 'mxfp4', 'mxfp8' (e4m3), or None for none.",
+      "shape": null
+    },
+    "w1_scale": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_blocks"
+      ],
+      "dtype": "float8_e8m0fnu",
+      "description": "Per 1 x 32 block of w1."
+    },
+    "w2_scale": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_blocks"
+      ],
+      "dtype": "float8_e8m0fnu",
+      "description": "Per 1 x 32 block of w2."
+    },
+    "swiglu_limit": {
+      "dtype": "float32",
+      "description": "Clamped SwiGLU bound: gate at most this, up within +/- this.",
+      "shape": null
+    },
+    "beta": {
+      "dtype": "float32",
+      "description": "SiTUv2 gate saturation.",
+      "shape": null
+    },
+    "linear_beta": {
+      "dtype": "float32",
+      "description": "SiTUv2 up saturation.",
+      "shape": null
+    },
+    "num_local_tokens": {
+      "shape": [
+        "one"
+      ],
+      "dtype": "int32",
+      "description": "Rows this rank received; later rows are unused."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Routing-weighted sum of the chosen experts' outputs; under expert parallelism, this rank's share."
+    }
+  },
+  "tags": [],
+  "description": "out = sum over the top-k experts e of topk_weights[e] * (act(gate) * up) @ w2[e].T, [gate | up] = hidden_states @ w1[e].T; mxfp4 weights with e8m0 scales per 1 x 32. gpt-oss's swiglu: act(gate) * up is gate * sigmoid(1.702 * gate) * (up + 1), gate and up clamped first. Weights in aiter's shuffle_weight 16 x 16 tiles, scales in its shuffle_scale order.",
+  "constraints": [
+    "gate_up_rows == 2 * inter_dim",
+    "packed_model_dim == model_dim // 2",
+    "packed_inter_dim == inter_dim // 2",
+    "model_blocks == model_dim // 32",
+    "inter_blocks == inter_dim // 32",
+    "expert_mask is not None or topk <= n_experts",
+    "expert_mask is None or topk <= global_experts",
+    "expert_mask is None or n_experts <= global_experts",
+    "model_dim % 128 == 0 and inter_dim % 128 == 0",
+    "hidden_states.dtype in ('bfloat16', 'float16')",
+    "topk_weights.dtype in ('float32', 'bfloat16', 'float16')",
+    "topk_ids.dtype in ('int32', 'int64')",
+    "num_local_tokens is None or expert_mask is not None",
+    "activation == 'swiglu'",
+    "(activation == 'situv2') == (beta is not None)",
+    "(beta is None) == (linear_beta is None)",
+    "act_quant is None or act_quant in ('mxfp4', 'mxfp8')",
+    "use_shuffled_weight",
+    "gate_mode == 'separated'",
+    "swiglu_limit is not None",
+    "model_dim % 512 == 0",
+    "model_dim % 256 == 0 and inter_dim % 256 == 0"
+  ],
+  "kernel": {
+    "name": "fused_moe_swiglu_shuffled_16x16_model_dim6144_n_experts128_topk4_inter_dim768_flydsl_b8696e8215eb64cd",
+    "author": "unknown",
+    "build": {
+      "language": "flydsl",
+      "target_hardware": [
+        "gfx950/MI355X"
+      ],
+      "entry_point": "kernel.py::run",
+      "dependencies": [],
+      "destination_passing_style": true,
+      "binding": null
+    },
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"FlyDSL MXFP4 fused MoE with gpt-oss clamped SwiGLU; fp4 weights are dequantized in registers for bf16 MFMAs.\n\nFew routes run per route, then per token; more run in per-expert tiles; below 256 tokens only.\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import llvm\nfrom flydsl.expr import const_expr, range_constexpr, rocdl\nfrom flydsl.expr.typing import T\n\n\ndef _raw(x):\n    return x.ir_value() if hasattr(x, \"ir_value\") else x\n\n\ndef _p(p, dtype):\n    return fx.recast_iter(dtype, p)\n\n\ndef _vec4(p, offset, cache=0):\n    # 16-byte load at dword ``offset`` (a multiple of 4); cache 2 is non-temporal.\n    view = fx.make_view(_p(p, fx.Int32), fx.make_layout((4, 268435456), (1, 4)))\n    buf = fx.rocdl.make_buffer_tensor(view)\n    reg = fx.make_rmem_tensor(fx.make_layout(4, 1), fx.Int32)\n    atom = fx.make_copy_atom(fx.rocdl.BufferCopy128b(cache), fx.Int32)\n    fx.copy_atom_call(atom, fx.slice(buf, (None, offset >> 2)), reg)\n    return fx.Vector(reg.load())\n\n\ndef _uniform(x):\n    return fx.Int32(rocdl.readfirstlane(T.i32, _raw(x)))\n\n\ndef _e8m0(byte):\n    return (fx.Int32(byte) << 23).bitcast(fx.Float32)\n\n\ndef _fp4x8(word, scale):\n    # Eight fp4 (byte b: elements 2b low nibble, 2b + 1 high) times scale, as v8bf16.\n    v2bf16 = ir.Type.parse(\"vector<2xbf16>\")\n    words = []\n    for sel in range_constexpr(4):\n        pair = rocdl.cvt_scalef32_pk_bf16_fp4(v2bf16, _raw(word), _raw(scale), sel)\n        words.append(fx.Vector(pair).bitcast(fx.Int32)[0])\n    return fx.Vector.from_elements(words, fx.Int32).bitcast(fx.BFloat16)\n\n\ndef _mfma(a, b, acc):\n    return fx.Vector(rocdl.mfma_f32_16x16x32_bf16(T.f32x4, [a, b, acc, 0, 0, 0]))\n\n\ndef _lds_x(xs, base, step):\n    return [\n        fx.Vector.from_elements([xs[base + s * step + q] for q in range(4)], fx.Int32).bitcast(fx.BFloat16)\n        for s in range(4)\n    ]\n\n\ndef _scales(wsrc, sc, j):\n    # Dwords sbg + 64 j and sbu + 64 j hold the gate and up scale bytes of chunks 2 j and 2 j + 1.\n    _, WS1, _, _, sbg, sbu, _ = wsrc\n    if j not in sc:\n        sc[j] = (_p(WS1, fx.Int32)[sbg + j * 64], _p(WS1, fx.Int32)[sbu + j * 64])\n\n\ndef _weights(wsrc, sc, i):\n    W1, _, wbg, wbu, _, _, NT = wsrc\n    _scales(wsrc, sc, i // 2)\n    return _vec4(W1, wbg + i * 256, NT), _vec4(W1, wbu + i * 256, NT)\n\n\ndef _gate_up(b, s, i, par, a, accs):\n    bg, bu = b\n    wg, wu = s\n    sh = par + (i % 2) * 16\n    sg = _e8m0((wg >> sh) & 255)\n    su = _e8m0((wu >> sh) & 255)\n    gf = [_fp4x8(bg[k], sg) for k in range(4)]\n    uf = [_fp4x8(bu[k], su) for k in range(4)]\n    ag, au = accs\n    for k in range(4):\n        ag = _mfma(a[k], gf[k], ag)\n        au = _mfma(a[k], uf[k], au)\n    return [ag, au]\n\n\ndef _k_walk_lds(wsrc, sc, X, xbase, xs, wave, lane, n, PF, W, accs, par):\n    # The four waves share the tile's activation rows through a two-window LDS ring; chunk c's window is\n    # issued just ahead of chunk c's weights, so it lands with them.\n    woff = (4 * (lane // 16) + wave) * 64 + (lane % 16) * 4\n    roff = (lane // 16) * 256 + (lane % 16) * 4\n    w = {}\n    xr = {}\n\n    def issue(c):\n        if c % W == 0:\n            xr[c // W] = [_vec4(X, xbase + (c + q) * 64) for q in range(W)]\n        w[c] = _weights(wsrc, sc, c)\n\n    for c in range(min(PF, n)):\n        issue(c)\n    rocdl.sched_barrier(0)\n    for i in range(n):\n        j = i // W\n        if i % W == 0:\n            st = (j % 2) * W * 1024\n            vs = xr.pop(j)\n            for c in range(W):\n                for q in range(4):\n                    xs[st + c * 1024 + woff + q] = vs[c][q]\n            fx.gpu.barrier()\n        if i + PF < n:\n            issue(i + PF)\n        a = _lds_x(xs, (j % 2) * W * 1024 + (i % W) * 1024 + roff, 64)\n        accs = _gate_up(w.pop(i), sc[i // 2], i, par, a, accs)\n    return accs\n\n\n@flyc.kernel\ndef _route(\n    IDS: fx.Pointer,\n    C: fx.Pointer,\n    ROUTES: fx.Pointer,\n    MAP: fx.Pointer,\n    R: fx.Constexpr[int],\n    E: fx.Constexpr[int],\n    BM: fx.Constexpr[int],\n):\n    # One CTA bins every route with LDS atomics, then scans the per-expert tile counts so tiles come in expert\n    # order. C holds the E expert counts and the tile count.\n    r = fx.Int32(fx.gpu.thread_idx.x)\n    lds = fx.SharedAllocator()\n    cst = lds.allocate(fx.Array[fx.Int32, E])\n    cnt = cst.peek()\n    tb = lds.allocate(fx.Array[fx.Int32, E]).peek()\n    if r < E:\n        cnt[r] = fx.Int32(0)\n    fx.gpu.barrier()\n    act = r < R\n    e = _p(IDS, fx.Int32)[act.select(r, fx.Int32(0))]\n    slot = fx.Int32(\n        llvm.AtomicRMWOp(\n            llvm.AtomicBinOp.add,\n            (_p(cst._ptr, fx.Int32) + e).llvm_ptr,\n            _raw(act.select(fx.Int32(1), fx.Int32(0))),\n            llvm.AtomicOrdering.monotonic,\n            syncscope=\"workgroup\",\n        ).res\n    )\n    if act:\n        _p(ROUTES, fx.Int32)[e * R + slot] = r\n    fx.gpu.barrier()\n    if r < E:\n        base = fx.Int32(0)\n        for q in range_constexpr(E):\n            base = base + (fx.Int32(q) < r).select((cnt[q] + (BM - 1)) // BM, fx.Int32(0))\n        own = cnt[r]\n        tb[r] = base\n        _p(C, fx.Int32)[r] = own\n        if r == E - 1:\n            _p(C, fx.Int32)[E] = base + (own + (BM - 1)) // BM\n    fx.gpu.barrier()\n    if act:\n        if slot % BM == 0:\n            tile = tb[e] + slot // BM\n            _p(MAP, fx.Int32)[tile * 2] = e\n            _p(MAP, fx.Int32)[tile * 2 + 1] = slot\n\n\ndef _reduce_waves(red, accs, wave, lane, nw, NWN, KW):\n    # Sum the K-slice partials of the waves sharing this wave's N tile, in wave order.\n    n = len(accs)\n    for i in range_constexpr(n):\n        for j in range_constexpr(4):\n            red[((wave * n + i) * 4 + j) * 64 + lane] = accs[i][j]\n    fx.gpu.barrier()\n    out = []\n    for i in range_constexpr(n):\n        vals = []\n        for j in range_constexpr(4):\n            v = fx.Float32(0.0)\n            for q in range_constexpr(KW):\n                v = v + red[(((q * NWN + nw) * n + i) * 4 + j) * 64 + lane]\n            vals.append(v)\n        out.append(vals)\n    return out\n\n\n@flyc.kernel\ndef _stage1(\n    X: fx.Pointer,\n    W1: fx.Pointer,\n    WS1: fx.Pointer,\n    C: fx.Pointer,\n    MAP: fx.Pointer,\n    ROUTES: fx.Pointer,\n    Y: fx.Pointer,\n    LIM: fx.Float32,\n    IDS: fx.Pointer,\n    D: fx.Constexpr[int],\n    I: fx.Constexpr[int],\n    E: fx.Constexpr[int],\n    R: fx.Constexpr[int],\n    TOP: fx.Constexpr[int],\n    KW: fx.Constexpr[int],\n    DIRECT: fx.Constexpr[bool],\n    PF: fx.Constexpr[int],\n    NT: fx.Constexpr[int],\n    XW: fx.Constexpr[int],\n):\n    tid = fx.Int32(fx.gpu.thread_idx.x)\n    lane = tid % 64\n    wave = _uniform(tid // 64)\n    NWN = 4 // KW\n    CK = D // 128\n    nw = wave % NWN\n    kw = wave // NWN\n    t16 = fx.Int32(fx.gpu.block_idx.x) * NWN + nw\n    tile = fx.Int32(fx.gpu.block_idx.y)\n    lds = fx.SharedAllocator()\n    if const_expr(DIRECT):\n        red = lds.allocate(fx.Array[fx.Float32, 4 * 2 * 4 * 64]).peek()\n    xs = lds.allocate(fx.Array[fx.Int32, D // 2 if DIRECT else 2 * XW * 1024]).peek()\n    if const_expr(DIRECT):\n        live = tile < R\n    else:\n        live = tile < _p(C, fx.Int32)[E]\n    if live:\n        if const_expr(DIRECT):\n            e = _uniform(_p(IDS, fx.Int32)[tile])\n        else:\n            e = _uniform(_p(MAP, fx.Int32)[tile * 2])\n            row0 = _uniform(_p(MAP, fx.Int32)[tile * 2 + 1])\n            count = _uniform(_p(C, fx.Int32)[e])\n            sr = row0 + lane % 16\n            sr = (sr < count).select(sr, row0)\n            route = _p(ROUTES, fx.Int32)[e * R + sr]\n            xrow = fx.Int32(fx.Uint32(route) // fx.Uint32(TOP)) * D + (lane // 16) * 32\n        # Block (n16, c) of 16 rows x one K chunk: lane = 16 * (k / 32 % 4) + row. Gate is n16 = t16,\n        # up is n16 = I / 16 + t16.\n        wbg = e * (I * D // 4) + t16 * (CK * 256) + lane * 4\n        wbu = wbg + (I // 16) * (CK * 256)\n        sbg = e * (2 * I * (D // 32)) + (t16 // 2) * (D // 256 * 256) + (lane // 16) * 64 + (lane % 16) * 4\n        sbu = sbg + (I // 32) * (D // 256 * 256)\n        par = (t16 % 2) * 8\n        accs = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range_constexpr(2)]\n        n = CK // KW\n        c0 = kw * n\n        if const_expr(DIRECT):\n            XQ = D // 512\n            xt = fx.Int32(fx.Uint32(tile) // fx.Uint32(TOP)) * (D // 2) + tid * XQ\n            xv = [_vec4(X, xt + 4 * j) for j in range_constexpr(XQ // 4)]\n        wsrc = (W1, WS1, wbg + c0 * 256, wbu + c0 * 256, (sbg >> 2) + c0 * 32, (sbu >> 2) + c0 * 32, NT)\n        rocdl.sched_barrier(0)\n        sc = {}\n        if const_expr(DIRECT):\n            for j in range_constexpr(n // 2):\n                _scales(wsrc, sc, j)\n            rocdl.sched_barrier(0)\n            w = {i: _weights(wsrc, sc, i) for i in range_constexpr(n)}\n            rocdl.sched_barrier(0)\n            # Each wave reads back only the token-row dwords it wrote itself, so no barrier is needed.\n            for j in range_constexpr(XQ // 4):\n                for q in range_constexpr(4):\n                    xs[tid * XQ + 4 * j + q] = xv[j][q]\n            xbase = c0 * 64 + (lane // 16) * 16\n            for i in range_constexpr(n):\n                accs = _gate_up(w.pop(i), sc[i // 2], i, par, _lds_x(xs, xbase + i * 64, 4), accs)\n            sums = _reduce_waves(red, accs, wave, lane, nw, NWN, KW)\n        else:\n            accs = _k_walk_lds(wsrc, sc, X, (xrow >> 1) + wave * 4, xs, wave, lane, n, PF, XW, accs, par)\n            sums = [[accs[i][j] for j in range_constexpr(4)] for i in range_constexpr(2)]\n        if kw == 0:\n            neg = fx.Float32(0.0) - LIM\n            for j in range_constexpr(1 if DIRECT else 4):\n                g = (sums[0][j] > LIM).select(LIM, sums[0][j])\n                u = sums[1][j]\n                u = (u > LIM).select(LIM, u)\n                u = (u < neg).select(neg, u)\n                ep = fx.Float32(rocdl.exp2(T.f32, _raw(g * fx.Float32(-1.702 * 1.4426950408889634))))\n                sig = fx.Float32(1.0) / (fx.Float32(1.0) + ep)\n                y = fx.BFloat16(g * sig * (u + fx.Float32(1.0)))\n                if const_expr(DIRECT):\n                    if lane < 16:\n                        _p(Y, fx.BFloat16)[tile * I + t16 * 16 + lane] = y\n                else:\n                    sq = row0 + (lane // 16) * 4 + j\n                    if sq < count:\n                        rq = _p(ROUTES, fx.Int32)[e * R + sq]\n                        _p(Y, fx.BFloat16)[rq * I + t16 * 16 + lane % 16] = y\n\n\ndef _w2_offsets(e, lane, nbase, tiles, CK, I, D):\n    wb = []\n    s4 = []\n    shl = []\n    for b in range_constexpr(tiles):\n        n16 = nbase + b\n        wb.append(e * (D * I // 8) + n16 * (CK * 256) + lane * 4)\n        s4.append(\n            (e * (D * (I // 32)) + (n16 // 2) * (I // 256 * 256) + (lane // 16) * 64 + (lane % 16) * 4) >> 2\n        )\n        shl.append((n16 % 2) * 8)\n    return wb, s4, shl\n\n\ndef _w2_walk(Y, W2, WS2, ybase, xs, woff, roff, e, lane, nbase, CK, I, D, tiles, NT):\n    # K chunks in blocks of 4, a block's weight and scale loads all ahead of its first MFMA. The CTA's\n    # cooperative Y loads issue first, the first block's weights next, then Y goes to LDS behind one barrier.\n    accs = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range_constexpr(tiles)]\n    wb, s4, shl = _w2_offsets(e, lane, nbase, tiles, CK, I, D)\n    yv = [_vec4(Y, ybase + c * 64) for c in range_constexpr(CK)]\n    for blk in range_constexpr(0, CK, 4):\n        loaded = []\n        sdw = {}\n        for c in range(blk, min(blk + 4, CK)):\n            bws = []\n            sws = []\n            for b in range_constexpr(tiles):\n                bws.append(_vec4(W2, wb[b] + c * 256, NT))\n                if (b, c // 2) not in sdw:\n                    sdw[(b, c // 2)] = _p(WS2, fx.Int32)[s4[b] + (c // 2) * 64]\n                sws.append(sdw[(b, c // 2)])\n            loaded.append((c, bws, sws))\n        if blk == 0:\n            for c in range_constexpr(CK):\n                for q in range_constexpr(4):\n                    xs[c * 1024 + woff + q] = yv[c][q]\n            fx.gpu.barrier()\n        for c, bws, sws in loaded:\n            af = _lds_x(xs, c * 1024 + roff, 64)\n            for b in range_constexpr(tiles):\n                sw = _e8m0((sws[b] >> (shl[b] + (c % 2) * 16)) & 255)\n                acc = accs[b]\n                for s in range_constexpr(4):\n                    acc = _mfma(af[s], _fp4x8(bws[b][s], sw), acc)\n                accs[b] = acc\n    return accs\n\n\n# One CTA, BN columns of one token, one wave per route; weights and route sum in fp32.\n@flyc.kernel\ndef _stage2_tok(\n    Y: fx.Pointer,\n    W2: fx.Pointer,\n    WS2: fx.Pointer,\n    IDS: fx.Pointer,\n    RW: fx.Pointer,\n    OUT: fx.Pointer,\n    D: fx.Constexpr[int],\n    I: fx.Constexpr[int],\n    TOP: fx.Constexpr[int],\n    BN: fx.Constexpr[int],\n):\n    tid = fx.Int32(fx.gpu.thread_idx.x)\n    lane = tid % 64\n    wave = _uniform(tid // 64)\n    token = fx.Int32(fx.gpu.block_idx.y)\n    nbase = fx.Int32(fx.gpu.block_idx.x) * (BN // 16)\n    tiles = BN // 16\n    CK = I // 128\n    YD = I // 2\n    YF = YD // 256\n    YR = (YD % 256) // 4\n    lds = fx.SharedAllocator()\n    partials = lds.allocate(fx.Array[fx.Float32, TOP * BN]).peek()\n    ys = lds.allocate(fx.Array[fx.Int32, TOP * YD]).peek()\n    route = token * TOP + wave\n    # Loads independent of the expert issue first, then the expert id, then all of this wave's W2 loads.\n    yb = route * YD\n    yv = [_vec4(Y, yb + f * 256 + lane * 4) for f in range_constexpr(YF)]\n    if const_expr(YR > 0):\n        yv.append(_vec4(Y, yb + YF * 256 + (lane % YR) * 4))\n    w = _p(RW, fx.Float32)[route]\n    e = _uniform(_p(IDS, fx.Int32)[route])\n    rocdl.sched_barrier(0)\n    wb, s4, shl = _w2_offsets(e, lane, nbase, tiles, CK, I, D)\n    bws = [[_vec4(W2, wb[b] + c * 256) for b in range_constexpr(tiles)] for c in range_constexpr(CK)]\n    sdw = {}\n    for c in range_constexpr(CK):\n        for b in range_constexpr(tiles):\n            key = (b // 2 if tiles % 2 == 0 else b, c // 2)\n            if key not in sdw:\n                sdw[key] = _p(WS2, fx.Int32)[s4[b] + (c // 2) * 64]\n    rocdl.sched_barrier(0)\n    # Stage the Y row in this wave's own LDS slice; every lane of a 16-lane group then reads the same 16 bytes.\n    yw = wave * YD\n    for f in range_constexpr(YF):\n        for q in range_constexpr(4):\n            ys[yw + f * 256 + lane * 4 + q] = yv[f][q]\n    if const_expr(YR > 0):\n        if lane < YR:\n            for q in range_constexpr(4):\n                ys[yw + YF * 256 + lane * 4 + q] = yv[YF][q]\n    fx.gpu.barrier()\n    accs = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range_constexpr(tiles)]\n    yr = yw + (lane // 16) * 16\n    for c in range_constexpr(CK):\n        af = _lds_x(ys, yr + c * 64, 4)\n        for b in range_constexpr(tiles):\n            sws = sdw[(b // 2 if tiles % 2 == 0 else b, c // 2)]\n            sw = _e8m0((sws >> (shl[b] + (c % 2) * 16)) & 255)\n            acc = accs[b]\n            for s in range_constexpr(4):\n                acc = _mfma(af[s], _fp4x8(bws[c][b][s], sw), acc)\n            accs[b] = acc\n    if lane < 16:\n        for b in range_constexpr(tiles):\n            partials[wave * BN + b * 16 + lane] = accs[b][0] * w\n    fx.gpu.barrier()\n    if tid < BN:\n        total = partials[tid]\n        for j in range_constexpr(1, TOP):\n            total = total + partials[j * BN + tid]\n        col0 = fx.Int32(fx.gpu.block_idx.x) * BN\n        _p(OUT, fx.BFloat16)[token * D + col0 + tid] = fx.BFloat16(total)\n\n\n# One CTA per (16-route expert tile, 4 * 16 * TB columns); stores routing-weighted fp32 rows.\n@flyc.kernel\ndef _stage2_grp(\n    Y: fx.Pointer,\n    W2: fx.Pointer,\n    WS2: fx.Pointer,\n    C: fx.Pointer,\n    MAP: fx.Pointer,\n    ROUTES: fx.Pointer,\n    RW: fx.Pointer,\n    Z: fx.Pointer,\n    D: fx.Constexpr[int],\n    I: fx.Constexpr[int],\n    E: fx.Constexpr[int],\n    R: fx.Constexpr[int],\n    TB: fx.Constexpr[int],\n    NT: fx.Constexpr[int],\n):\n    tid = fx.Int32(fx.gpu.thread_idx.x)\n    lane = tid % 64\n    wave = _uniform(tid // 64)\n    tile = fx.Int32(fx.gpu.block_idx.y)\n    CK = I // 128\n    xs = fx.SharedAllocator().allocate(fx.Array[fx.Int32, CK * 1024]).peek()\n    # The tile count and the tile's map entry load together (an entry past the count is in bounds, unused).\n    ntiles = _p(C, fx.Int32)[E]\n    e = _uniform(_p(MAP, fx.Int32)[tile * 2])\n    row0 = _uniform(_p(MAP, fx.Int32)[tile * 2 + 1])\n    if tile < ntiles:\n        # Slots load before the expert count is known (clamped into the expert's R slots); a slot past the\n        # count takes the leader's route afterwards, so its loaded value is never used.\n        count = _uniform(_p(C, fx.Int32)[e])\n        lead = _p(ROUTES, fx.Int32)[e * R + row0]\n        sr = row0 + lane % 16\n        route = _p(ROUTES, fx.Int32)[e * R + (sr < R).select(sr, row0)]\n        sjs = []\n        rraw = []\n        for j in range_constexpr(4):\n            sj = row0 + (lane // 16) * 4 + j\n            sjs.append(sj)\n            rraw.append(_p(ROUTES, fx.Int32)[e * R + (sj < R).select(sj, row0)])\n        route = (sr < count).select(route, lead)\n        ybase = route * I + (lane // 16) * 32\n        nbase = (fx.Int32(fx.gpu.block_idx.x) * 4 + wave) * TB\n        rjs = []\n        wjs = []\n        for j in range_constexpr(4):\n            rj = (sjs[j] < count).select(rraw[j], lead)\n            rjs.append(rj)\n            wjs.append(_p(RW, fx.Float32)[rj])\n        woff = (4 * (lane // 16) + wave) * 64 + (lane % 16) * 4\n        roff = (lane // 16) * 256 + (lane % 16) * 4\n        accs = _w2_walk(Y, W2, WS2, (ybase >> 1) + wave * 4, xs, woff, roff, e, lane, nbase, CK, I, D, TB, NT)\n        for j in range_constexpr(4):\n            if sjs[j] < count:\n                rj = rjs[j]\n                wj = wjs[j]\n                for b in range_constexpr(TB):\n                    _p(Z, fx.Float32)[rj * D + (nbase + b) * 16 + lane % 16] = accs[b][j] * wj\n\n\n@flyc.kernel\ndef _combine(Z: fx.Pointer, OUT: fx.Pointer, D: fx.Constexpr[int], TOP: fx.Constexpr[int]):\n    # out[t, c] = sum over k in order of Z[TOP t + k, c]; 4 columns per thread.\n    i = fx.Int32(fx.gpu.block_idx.x) * 256 + fx.Int32(fx.gpu.thread_idx.x)\n    t = i // (D // 4)\n    c4 = i % (D // 4)\n    base = t * (TOP * D) + c4 * 4\n    acc = _vec4(Z, base).bitcast(fx.Float32)\n    for k in range_constexpr(1, TOP):\n        v = _vec4(Z, base + k * D).bitcast(fx.Float32)\n        acc = fx.Vector.from_elements([acc[q] + v[q] for q in range_constexpr(4)], fx.Float32)\n    for q in range_constexpr(4):\n        _p(OUT, fx.BFloat16)[t * D + c4 * 4 + q] = fx.BFloat16(acc[q])\n\n\ndef _ptr(t):\n    return flyc.from_c_void_p(fx.Uint8, t.data_ptr(), assumed_align=16)\n\n\n@functools.cache\ndef _build(M, D, E, I, TOP, device):\n    R = M * TOP\n    BM = 16\n    DIRECT = R <= 64\n    KW1 = 4 if DIRECT else 1\n    PF1 = 4\n    # Per-route stage 1 reads its weights cached at five tokens, non-temporally elsewhere (raced per M).\n    NT1 = 0 if DIRECT and M == 5 else 2\n    XW1 = 2\n    max_tiles = (R + (BM - 1) * min(R, E) + BM - 1) // BM\n    BN = 16\n    TB = 4\n    NT2 = 2\n    sizes = (\n        (E + 1, torch.int32),\n        (E * R, torch.int32),\n        (max_tiles * 2, torch.int32),\n        (R * I, torch.bfloat16),\n        (1 if DIRECT else R * D, torch.float32),\n    )\n\n    @flyc.jit\n    def dispatch(\n        X: fx.Pointer,\n        W1: fx.Pointer,\n        W2: fx.Pointer,\n        RW: fx.Pointer,\n        IDS: fx.Pointer,\n        WS1: fx.Pointer,\n        WS2: fx.Pointer,\n        C: fx.Pointer,\n        ROUTES: fx.Pointer,\n        MAP: fx.Pointer,\n        Y: fx.Pointer,\n        Z: fx.Pointer,\n        OUT: fx.Pointer,\n        LIM: fx.Float32,\n        execute: fx.Int32,\n        stream: fx.Stream,\n    ):\n        if execute != 0:\n            if const_expr(DIRECT):\n                _stage1(\n                    X, W1, WS1, C, MAP, ROUTES, Y, LIM, IDS, D, I, E, R, TOP, KW1, DIRECT, PF1, NT1, XW1\n                ).launch(grid=(I // 16 // (4 // KW1), R), block=(256,), stream=stream)\n                _stage2_tok(Y, W2, WS2, IDS, RW, OUT, D, I, TOP, BN).launch(\n                    grid=(D // BN, M), block=(TOP * 64,), stream=stream\n                )\n            else:\n                _route(IDS, C, ROUTES, MAP, R, E, BM).launch(\n                    grid=(1,), block=(max(256, (R + 63) // 64 * 64),), stream=stream\n                )\n                _stage1(\n                    X, W1, WS1, C, MAP, ROUTES, Y, LIM, IDS, D, I, E, R, TOP, KW1, DIRECT, PF1, NT1, XW1\n                ).launch(grid=(I // 16 // (4 // KW1), max_tiles), block=(256,), stream=stream)\n                _stage2_grp(Y, W2, WS2, C, MAP, ROUTES, RW, Z, D, I, E, R, TB, NT2).launch(\n                    grid=(D // (64 * TB), max_tiles), block=(256,), stream=stream\n                )\n                _combine(Z, OUT, D, TOP).launch(grid=(M * D // 1024,), block=(256,), stream=stream)\n\n    null = flyc.from_c_void_p(fx.Uint8, 0, assumed_align=16)\n    compiled = flyc.compile(dispatch, *([null] * 13), 10.0, 0, fx.Stream(None))\n\n    def launch(hidden_states, w1, w2, topk_weights, topk_ids, w1_scale, w2_scale, swiglu_limit, out):\n        inputs = (hidden_states, w1, w2, topk_weights, topk_ids, w1_scale, w2_scale)\n        # Scratch per call: two streams calling one Point at once must not share the route counters.\n        ws = tuple(torch.empty((n,), dtype=dtype, device=hidden_states.device) for n, dtype in sizes)\n        compiled(\n            *(_ptr(t) for t in inputs),\n            *(_ptr(t) for t in ws),\n            _ptr(out),\n            swiglu_limit,\n            1,\n            fx.Stream(torch.cuda.current_stream()),\n        )\n\n    return launch\n\n\ndef run(\n    hidden_states,\n    w1,\n    w2,\n    topk_weights,\n    topk_ids,\n    expert_mask,\n    activation,\n    act_quant,\n    w1_scale,\n    w2_scale,\n    swiglu_limit,\n    beta,\n    linear_beta,\n    num_local_tokens,\n    out,\n):\n    \"\"\"Fused MoE into ``out``: MXFP4 experts, gpt-oss clamped SwiGLU, routing weights applied in stage 2.\"\"\"\n    quant_type = 'per_1x32'\n    doweight_stage1 = False\n    gate_mode = 'separated'\n    out_dtype = out.dtype\n    M, D = hidden_states.shape\n    if M >= 256:\n        raise ValueError(f\"n_tokens {M}: this kernel serves fewer than 256 tokens\")\n    launch = _build(M, D, w1.shape[0], w1.shape[1] // 2, topk_ids.shape[1], hidden_states.device)\n    launch(hidden_states, w1, w2, topk_weights, topk_ids, w1_scale, w2_scale, swiglu_limit, out)\n"
+      }
+    ],
+    "description": null
+  }
+}

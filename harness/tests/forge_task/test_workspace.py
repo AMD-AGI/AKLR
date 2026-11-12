@@ -127,7 +127,7 @@ def test_a_starting_kernel_aklr_fails_stops_with_its_findings(aklr_root: Path, t
         tmp_path,
         kernel='"""Wrong."""\n\n\ndef run(*, a, b, trans_b, bias, out_dtype, out):\n    pass\n',
     )
-    with pytest.raises(workspace.StartingKernelError, match="numeric_mismatch"):
+    with pytest.raises(workspace.StartingKernelError, match="outputs_mismatch"):
         workspace.check_starting_kernel(run)
 
 

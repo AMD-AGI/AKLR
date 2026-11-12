@@ -1,130 +1,166 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-import sys
-from types import SimpleNamespace
-
 import pytest
 import torch
 
-from aklr.core.runtime.builder import (
-    KERNEL_PACKAGE_PREFIX,
-    BuilderRegistry,
-    BuildError,
-    Runnable,
-)
-from aklr.core.runtime.builder.builder import _taking_call_keys
-from tests.op_case import GEMM_KERNEL_SOURCE, HIP_GEMM_KERNEL_SOURCE, OpCase
+from aklr.core.runtime.builder import BuilderRegistry, BuildError
+from aklr.core.schema import Build, Kernel, Schema, SourceFile, Tensor, Var
+from tests.op_case import OpCase
 
-_IMPORT_ERROR_KERNEL_SOURCE = "raise ImportError('no kernel')\n"
-_UNBOUND = r"kernel\.py::run does not take the call keys"
+_GEMM = "def run(a, b, bias, out):\n    out.copy_(a @ b.mT)\n"
+_GEMM_RETURNING = "def run(a, b, bias):\n    return a @ b.mT\n"
+_GEMM_EITHER = "def run(a, b, bias, out=None):\n    return a @ b.mT if out is None else out.copy_(a @ b.mT)\n"
+_HIP_GEMM = """\
+#include <ATen/hip/HIPContext.h>
+#include <hip/hip_bf16.h>
+#include <optional>
+#include <torch/library.h>
+
+namespace {
+
+__global__ void gemm(const __hip_bfloat16 *a, const __hip_bfloat16 *b, __hip_bfloat16 *out,
+                     int k) {
+    float acc = 0.0f;
+    for (int i = 0; i < k; ++i) {
+        acc += __bfloat162float(a[blockIdx.x * k + i]) * __bfloat162float(b[threadIdx.x * k + i]);
+    }
+    out[blockIdx.x * blockDim.x + threadIdx.x] = __float2bfloat16(acc);
+}
+
+void run(const at::Tensor &a, const at::Tensor &b, const std::optional<at::Tensor> &bias,
+         at::Tensor &out) {
+    gemm<<<a.size(0), b.size(0), 0, at::hip::getCurrentHIPStream()>>>(
+        static_cast<const __hip_bfloat16 *>(a.data_ptr()),
+        static_cast<const __hip_bfloat16 *>(b.data_ptr()),
+        static_cast<__hip_bfloat16 *>(out.data_ptr()), static_cast<int>(a.size(1)));
+}
+
+} // namespace
+
+#define TORCH_LIBRARY_EXPAND(ns, m) TORCH_LIBRARY(ns, m)
+TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {
+    m.def("run(Tensor a, Tensor b, Tensor? bias, Tensor(a!) out) -> ()", &run);
+}
+"""
+_HIP_SUM_AND_DIFFERENCE = """\
+#include <ATen/ATen.h>
+#include <torch/library.h>
+#include <tuple>
+
+namespace {
+
+std::tuple<at::Tensor, at::Tensor> run(const at::Tensor &a, const at::Tensor &b) {
+    return {a + b, a - b};
+}
+
+} // namespace
+
+#define TORCH_LIBRARY_EXPAND(ns, m) TORCH_LIBRARY(ns, m)
+TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {
+    m.def("run(Tensor a, Tensor b) -> (Tensor, Tensor)", &run);
+}
+"""
+
+
+def _kernel(source: str, *, language: str = "triton", dps: bool = True) -> Kernel:
+    entry = "kernel.hip" if language == "hip" else "kernel.py"
+    return Kernel(
+        name=f"{language}_{'dps' if dps else 'returning'}",
+        author="tests",
+        build=Build(
+            language=language,
+            target_hardware=["gfx950"],
+            entry_point=f"{entry}::run",
+            destination_passing_style=dps,
+        ),
+        sources=[SourceFile(path=entry, content=source)],
+    )
+
+
+def _sum_and_difference(dps: bool) -> Schema:
+    return Schema(
+        op_type="sum_and_difference",
+        axes={"m": Var()},
+        inputs={
+            "a": Tensor(["m"], dtype="float32"),
+            "b": Tensor(["m"], dtype="float32"),
+        },
+        outputs={
+            "x": Tensor(["m"], dtype="float32"),
+            "y": Tensor(["m"], dtype="float32"),
+        },
+        kernel=_kernel(_HIP_SUM_AND_DIFFERENCE, language="hip", dps=dps),
+    )
 
 
 class TestBuilderRegistry:
-    """``build`` imports a schema's kernel as a ``Runnable``, once per content hash."""
+    def test_runs_a_destination_passing_kernel(self, builder_registry: BuilderRegistry) -> None:
+        case = OpCase.from_id("gemm_bf16_nt")
+        call = case.call()
+        out = torch.empty(4, 32, dtype=torch.bfloat16)
+        builder_registry.build(case.schema(_kernel(_GEMM)))(call["a"], call["b"], None, out)
+        assert torch.equal(out, call["a"] @ call["b"].mT)
 
-    def test_imports_entry_point(self, builder_registry: BuilderRegistry) -> None:
-        """The gemm case's schema builds to a ``Runnable`` writing ``a @ b.T`` into ``out``."""
-        case = OpCase.of("gemm@1.0")
-        runnable = builder_registry.build(case.schema(GEMM_KERNEL_SOURCE))
-        assert isinstance(runnable, Runnable)
-        call = case.call(case.inputs())
-        call["out"] = torch.empty(case.contract.storage_shape_of("out", case.point), dtype=call["out_dtype"])
-        runnable(**call)
-        torch.testing.assert_close(call["out"], call["a"] @ call["b"].mT, rtol=0, atol=0)
-        package = runnable.metadata.misc["module_name"].partition(".")[0]
-        assert package in sys.modules
-        builder_registry.cleanup()
-        assert package not in sys.modules
+    def test_runs_a_value_returning_kernel(self, builder_registry: BuilderRegistry) -> None:
+        case = OpCase.from_id("gemm_bf16_nt")
+        call = case.call()
+        runnable = builder_registry.build(case.schema(_kernel(_GEMM_RETURNING, dps=False)))
+        assert torch.equal(runnable(call["a"], call["b"], None), call["a"] @ call["b"].mT)
+
+    def test_keeps_the_calling_convention_of_each_kernel(self, builder_registry: BuilderRegistry) -> None:
+        case = OpCase.from_id("gemm_bf16_nt")
+        built = {
+            dps: builder_registry.build(case.schema(_kernel(_GEMM_EITHER, dps=dps))) for dps in (True, False)
+        }
+        assert {dps: runnable.metadata.destination_passing_style for dps, runnable in built.items()} == {
+            True: True,
+            False: False,
+        }
 
     @pytest.mark.parametrize(
         ("source", "match"),
         [
-            (_IMPORT_ERROR_KERNEL_SOURCE, r"cannot import kernel\.py::run"),
-            ("def run(a, b):\n    return a @ b.mT\n", _UNBOUND),
-            ("def run(*, a, b, out, scale, **_): ...\n", _UNBOUND),
+            pytest.param("raise ImportError('no kernel')\n", "kernel", id="import"),
+            pytest.param("def run(a, b):\n    pass\n", "positional", id="arity"),
         ],
-        ids=["import_error", "without_out", "unknown_required"],
     )
-    def test_build_error_leaves_no_module(
-        self, builder_registry: BuilderRegistry, source: str, match: str
-    ) -> None:
-        """A kernel that cannot be imported or bound gives a ``BuildError`` naming its entry point, and leaves no package behind."""
-        schema = OpCase.of("gemm@1.0").schema(source)
+    def test_build_error(self, builder_registry: BuilderRegistry, source: str, match: str) -> None:
         with pytest.raises(BuildError, match=match):
-            builder_registry.build(schema)
-        package = f"{KERNEL_PACKAGE_PREFIX}flydsl_{schema.kernel.content_hash[:16]}"
-        assert not [m for m in sys.modules if f"{m}.".startswith(f"{package}.")]
+            builder_registry.build(OpCase.from_id("gemm_bf16_nt").schema(_kernel(source)))
 
-    def test_caches_by_content_hash(self, builder_registry: BuilderRegistry) -> None:
-        """Two schemas with the same kernel build one ``Runnable``."""
-        gemm_schema = OpCase.of("gemm@1.0").schema()
-        bmm_schema = OpCase.of("bmm@1.0").schema()
-        assert gemm_schema.name != bmm_schema.name
-        assert builder_registry.build(gemm_schema) is builder_registry.build(bmm_schema)
-
-
-def test_an_optional_attr_at_its_default_hides_its_param_from_the_kernel() -> None:
-    """Dispatch passes every api param; a kernel built before an optional attr was added takes
-    only the call keys."""
-    schema = SimpleNamespace(
-        kernel_call_keys=("a", "out"),
-        api_params=tuple(SimpleNamespace(name=n) for n in ("a", "has_b", "b", "out")),
-    )
-    assert _taking_call_keys(lambda **call: call, schema)(a=1, has_b=False, b=None, out=2) == {
-        "a": 1,
-        "out": 2,
-    }
-    every = SimpleNamespace(kernel_call_keys=("a",), api_params=(SimpleNamespace(name="a"),))
-    fn = lambda **call: call
-    assert _taking_call_keys(fn, every) is fn
+    def test_bad_aklr_value_is_not_a_build_error(
+        self, builder_registry: BuilderRegistry, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("AKLR_MIN_SPEEDUP", "abc")
+        with pytest.raises(ValueError, match="AKLR_MIN_SPEEDUP"):
+            builder_registry.build(OpCase.from_id("gemm_bf16_nt").schema(_kernel(_GEMM)))
 
 
 @pytest.mark.gpu
-class TestHipBuilder:
-    """``build`` of a hip schema loads its library and returns its entry op."""
-
-    def test_builds_entry_op(self, builder_registry: BuilderRegistry) -> None:
-        """The hip gemm writes ``a @ b.T`` into ``out``."""
-        case = OpCase.of("gemm@1.0")
-        runnable = builder_registry.build(case.schema(HIP_GEMM_KERNEL_SOURCE, language="hip"))
-        assert runnable.metadata.build_type == "hip"
-        call = case.call(case.inputs(), device="cuda")
-        call["out"] = torch.empty(
-            case.contract.storage_shape_of("out", case.point),
-            dtype=call["out_dtype"],
-            device="cuda",
+class TestTorchBuilder:
+    def test_runs_the_entry_op(self, builder_registry: BuilderRegistry) -> None:
+        case = OpCase.from_id("gemm_bf16_nt")
+        call = case.call(device="cuda")
+        out = torch.empty(4, 32, dtype=torch.bfloat16, device="cuda")
+        builder_registry.build(case.schema(_kernel(_HIP_GEMM, language="hip")))(
+            call["a"], call["b"], None, out
         )
-        runnable(**call)
         torch.testing.assert_close(
-            call["out"].float(),
-            call["a"].float() @ call["b"].float().mT,
-            rtol=1e-2,
-            atol=1e-2,
+            out.float(), call["a"].float() @ call["b"].float().mT, rtol=1e-2, atol=1e-2
         )
 
-    @pytest.mark.parametrize(
-        ("old", "new", "match"),
-        [
-            ("float acc = 0.0f;", "float acc = ;", "Error building extension"),
-            ('m.def("run(', 'm.def("other(', "registers no op run"),
-            ("Tensor(a!) out)", "Tensor(a!) output)", "not the call keys"),
-            ("Tensor(a!) out)", "Tensor out)", r"must write exactly \['out'\]"),
-        ],
-        ids=["compile_error", "no_op", "other_names", "output_not_written"],
-    )
-    def test_build_error(self, builder_registry: BuilderRegistry, old: str, new: str, match: str) -> None:
-        """A kernel that does not compile, or whose entry op is not the call's, gives a ``BuildError``."""
-        source = HIP_GEMM_KERNEL_SOURCE.replace(old, new)
-        assert source != HIP_GEMM_KERNEL_SOURCE
-        with pytest.raises(BuildError, match=match):
-            builder_registry.build(OpCase.of("gemm@1.0").schema(source, language="hip"))
+    def test_runs_a_value_returning_op_of_two_outputs(self, builder_registry: BuilderRegistry) -> None:
+        a, b = torch.arange(4.0, device="cuda"), torch.ones(4, device="cuda")
+        x, y = builder_registry.build(_sum_and_difference(dps=False))(a, b)
+        assert x.tolist() == [1.0, 2.0, 3.0, 4.0]
+        assert y.tolist() == [-1.0, 0.0, 1.0, 2.0]
 
-    def test_library_that_does_not_load_is_the_kernels_fault(self, builder_registry: BuilderRegistry) -> None:
-        """An undefined symbol links but fails the load: a ``BuildError`` not caused by an ``OSError``, so bench does not blame the platform."""
-        source = HIP_GEMM_KERNEL_SOURCE.replace(
-            "namespace {\n", "void aklr_undefined();\n\nnamespace {\n", 1
-        ).replace("    gemm<<<", "    aklr_undefined();\n    gemm<<<")
-        with pytest.raises(BuildError, match="undefined symbol") as error:
-            builder_registry.build(OpCase.of("gemm@1.0").schema(source, language="hip"))
-        assert not isinstance(error.value.__cause__, OSError)
+    def test_op_not_taking_the_outputs_is_a_build_error(self, builder_registry: BuilderRegistry) -> None:
+        with pytest.raises(BuildError, match="positional"):
+            builder_registry.build(_sum_and_difference(dps=True))
+
+    def test_kernel_that_does_not_compile_is_a_build_error(self, builder_registry: BuilderRegistry) -> None:
+        source = _HIP_GEMM.replace("float acc = 0.0f;", "float acc = ;")
+        with pytest.raises(BuildError, match="build"):
+            builder_registry.build(OpCase.from_id("gemm_bf16_nt").schema(_kernel(source, language="hip")))

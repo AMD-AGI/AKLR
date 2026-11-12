@@ -13,15 +13,15 @@ aklr/ops/
     reference.py               one <contract>_reference per contract
     api.py                     one @api function per contract
     baseline.py                one <contract>_baseline per contract that has a baseline
-    group.py                   one <contract>_group_init per ranks contract that needs a set-up
     impls/<language>/<name>/<uuid>.json        one kernel and the workloads it serves
 ```
 
-- A contract with `ranks` (the attr holding the group size, e.g. `ep_size`) is called by every rank of its group
-  at once. The bench runs a process a rank, one device each, in one `torch.distributed` group; each rank draws its
-  own inputs. Its reference is `<contract>_reference(point, group_args, rank, decode)`, `group_args` every
-  rank's inputs in rank order, each on its rank's device (`cuda:<rank>`), and `group.py`'s `<contract>_group_init()`, if any, sets up on each rank what the
-  calls take for granted (as an engine does before the first, e.g. mori shmem).
+- A group op (e.g. mega_moe, its group size the Const axis `ep_size`) is called by every rank of its group at
+  once. The bench runs a process a rank, one device each, in one `torch.distributed` group; each rank draws its own
+  inputs, and its Reference reads every rank's through `group_calls`. How many ranks, whether in fresh processes,
+  and what each rank sets up first (e.g. mori shmem) is not in the op package: it is the op's
+  `ExecutionPolicy`, a subclass in `aklr/core/validation/stages/bench/_execution_policy/<op_type>.py` (see
+  `docs/ops_tutorial.md`).
 
 - `<language>` equals the schema's `kernel.language` (`flydsl`, `hip` or `triton`, `Language` in
   `aklr/core/contract/spec/_kernel.py`). `impls/` is not a Python package: it holds language directories, they hold
@@ -219,7 +219,7 @@ def run(*, <every name of OpContract.kernel_call_keys>) -> None: ...
   globals and fails to compile a plain `BLOCK = 64` or an annotated `BLOCK: tl.constexpr = 64` read inside the
   kernel. Pass such a value as a `tl.constexpr` parameter (`_k[grid](..., BLOCK=BLOCK)`) or write it inside the
   device function.
-- The authority is `aklr/core/validation/stages/_audit/_rules.py`, whose rules SA0–SA4 every source must pass
+- The authority is `aklr/core/validation/stages/audit/_rules.py`, whose rules SA0–SA4 every source must pass
   before it reaches a GPU; a source too deeply nested to audit (a few thousand chained operators) is rejected
   (SA0).
 
@@ -243,7 +243,7 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {
   `Tensor(a!)`, and it returns `()`: aklr calls it as `run(**call)`, and the rules of `run` hold (it writes the
   preallocated outputs and the mutable inputs, reads its other inputs only and keeps nothing across calls).
 - Launch on `at::hip::getCurrentHIPStream()`; allocate scratch with `at::empty` on an argument's device.
-- Audit applies SH0–SH5 (`aklr/core/validation/stages/_audit/_hip.py`) instead of SA0–SA4, on the text with
+- Audit applies SH0–SH5 (`aklr/core/validation/stages/audit/_hip.py`) instead of SA0–SA4, on the text with
   comments and literals blanked: no unterminated comment or literal (SH0); the one registration above, in the entry
   file, and no other library macro (SH1: a second library of one namespace aborts the process that loads it);
   includes are sources, `hip/`, `ATen/`, `c10/`, `torch/library.h` or a listed standard header (SH2); no

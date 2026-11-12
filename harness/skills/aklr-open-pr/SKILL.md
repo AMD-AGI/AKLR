@@ -1,6 +1,6 @@
 ---
 name: aklr-open-pr
-description: Open a AKLR pull request whose body carries the evidence each kind of change needs (contracts, kernels, code, withdrawn kernels, documents), following .github/pull_request_template.md and the review-tier check. Use when committing a AKLR change and opening or updating its PR.
+description: Open a AKLR pull request whose body carries the evidence each kind of change needs (schemas, kernels, code, withdrawn kernels, documents), following .github/pull_request_template.md and the review-tier check. Use when committing a AKLR change and opening or updating its PR.
 ---
 
 # Open a AKLR Pull Request
@@ -19,22 +19,23 @@ check the change against it before opening the pull request.
 
 1. **Find the kinds** in `git diff --name-status origin/main...HEAD`, as `review_tier/change.py` does:
    - `aklr/ops/<op>/impls/<language>/<name>/<16 hex>.json`: deleted is a **withdrawn kernel**;
-     empty `kernel.sources` is a **contract**; otherwise a **kernel**.
+     empty `kernel.sources` is a **schema**; otherwise a **kernel**.
    - `docs/`, `harness/`, `.claude/` or `*.md`: a **document** (docs and agent skills).
      Anything else: **code**.
-2. **Split** when kernels or contracts are mixed with code: a PR of their own merges on its
+2. **Split** when kernels or schemas are mixed with code: a PR of their own merges on its
    evidence alone; mixed with code it waits for CI validation of every schema. Ask the user
    before splitting their branch.
 3. **Gather evidence on the head commit**; rerun when the head moves.
-   - Contracts: the model, serving config and `AKLR_EXPORT` run the workloads came from;
+   - Schemas: the model, serving config and `AKLR_EXPORT` run the workloads came from;
      `python -m aklr export check`.
    - Kernels: `python -m aklr validate --base origin/main --stages audit,bench <schemas>` on the target GPU (a
      remote node if none is local). Without `--base` a new kernel is held to the retention
      threshold (0.99) instead of the entry one (1.05) and is not timed against a served kernel,
-     so a local pass can still fail CI. One table row per contract: measured / all workloads,
+     so a local pass can still fail CI. One table row per op schema: measured / all workloads,
      accuracy n/n and its bound, lowest – highest speedup. Note every `AKLR_*` or `AITER_*`
      variable set that loosens a check.
-   - Code: the tests run and their result. CI validation of every schema is required: add the
+   - Code: the tests run and their result; a bug fix also pastes its new test failing on the
+     code before the fix. CI validation of every schema is required: add the
      `ci:gpu` label so CI runs it, and link the run once its `validation` job passes.
    - A new plugin route, or one that now handles more cases: the end-to-end run
      [docs/acceptance_criteria.md](../../../docs/acceptance_criteria.md) asks for, this PR's ops

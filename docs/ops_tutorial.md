@@ -42,7 +42,7 @@ Following `harness/skills/aklr-port-generated-kernels/references/new-op.md` in t
 1. `contract.py`: defines `OpContract` and `CONTRACTS` (the registry discovers them automatically); `op_type` is the directory name `<op>`; name things by their mathematical meaning; with several outputs, none may be called `out`; give every output `error_bounds`, and give the contract a `determinism`.
 2. `reference.py`: a float64 `<contract>_reference(point, row_major_args, to_float64)`.
 3. `api.py`: an `@api(<CONTRACT>)` stub (the body may only be `...`).
-4. `baseline.py`: one `<contract>_baseline` per contract that has a baseline. It takes the api's arguments (passed as the call's keyword arguments), imports AITER or SGLang inside the function, and returns the outputs the same way the api does; for an unsupported call it raises `NotImplementedError` (bench reports `baseline_failed`). Without this function the op is its own baseline, and the kernel has nothing to beat.
+4. `baseline.py`: one `<backend function>_baseline` per schema template that has a baseline, set as `baseline=` of the template's `standard=Standard(...)` in `schema.py` (beside its `init`, `reference` and `check`). It takes the schema's inputs and outputs as keyword arguments, imports AITER or SGLang inside the function, does any set-up, and returns a no-argument call of the backend for the bench to time; for an unsupported call it returns `None` (bench reports `baseline_unbound`). Without a baseline the kernel is judged on accuracy alone, against nothing.
 5. `__init__.py`: exports the api.
 6. Add each contract's base small Point to `SMALL_POINTS` in `tests/ops/cases.py`, in contract order, then run `AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py` to regenerate `tests/ops/names.txt` and commit it with the rest.
 
@@ -104,7 +104,30 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
   - Correctness: for each workload, compares against the reference implementation on inputs sampled from the declared distributions;
   - Performance: compares against the baseline over multiple rounds under CUDA graph.
 
-**Thresholds**: every Point of a new kernel must reach ≥ **1.05** over the baseline (`<contract>_baseline` in `aklr/ops/<op>/baseline.py`) and ≥ **0.99** against the kernel already serving it, and runtime serving requires ≥ `AKLR_MIN_SPEEDUP` (default **1.05**). A Point that misses the bar is only recorded in the report's demoted list and does not fail validate. The demoted list holds both performance misses and correctness failures (such as `numeric_mismatch`, `build_failed`, `candidate_crash`, which CI writes as `accuracy: failed`); both kinds need handling. Only when not a single workload qualifies does the schema report `no_qualifying_workload`.
+**Thresholds**: a kernel the base does not serve is timed against what serves today: the kernel already serving a Point (≥ **1.05**, Entry), else the baseline (the backend function the op's seam adapter wraps; ≥ **1.05**, or ≥ **0.99**, Retain, on a first release); a kernel the base already serves keeps its Points at ≥ **0.99** over the baseline. Runtime serving requires a stored speedup ≥ `AKLR_MIN_SPEEDUP` (default **1.05**). A Point that misses its bar, or computes wrong (`outputs_mismatch`, `wrong_outputs`, `candidate_raised`, `build_failed`, `task_crashed`, `task_timeout`, written as `accuracy: failed`), is only recorded in the report's demotions and does not fail validate; both kinds need handling. Only when no workload is correct with a published speedup ≥ 1.05 does the schema report `no_admitted_workload`.
+
+### Ops that need the bench customized
+
+By default the bench runs an op's task on one rank, in a reused process, with nothing set up first. An op that
+needs otherwise (a group op on several ranks, a library that must be set up in each process, one that pollutes
+its process) adds a file named after its op type to `aklr/core/validation/stages/bench/_execution_policy/` and registers an
+`ExecutionPolicy` subclass there, overriding only what differs:
+
+```python
+class MegaMoeExecutionPolicy(ExecutionPolicy, name="mega_moe"):
+    @property
+    def ranks_per_task(self) -> int:  # default 1
+        return self.schema.const_axes["ep_size"]
+
+    def setup(self) -> None:  # default: nothing; on every rank, before the build
+        ...  # mori's symmetric heap over the task's process group, torch.distributed.group.WORLD
+```
+
+- `isolate` (default `ranks_per_task > 1`) runs each task in fresh processes, as `--isolate <op_type>` does.
+  With `isolate` False, `setup` runs once per task in a reused process, so it must be idempotent.
+- The policy decides only where and in what processes the task runs. Inputs, Reference, check, seeds and timing
+  stay in the schema and the bench; `setup` must not change global numeric settings (TF32 and the like).
+- Import heavy libraries inside `setup`, never at the module's top: the bench imports every module of `_execution_policy/` not starting with `_`.
 
 ## 4. PR and CI
 

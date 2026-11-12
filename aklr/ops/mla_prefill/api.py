@@ -1,12 +1,15 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026, Advanced Micro Devices, Inc. All rights reserved.
 
-from aklr.core.runtime.dispatch import api
+from __future__ import annotations
 
-from .contract import SPARSE_PREFILL_MXFP8
+from aklr.core.runtime.dispatch import aklr_api
+from aklr.ops.mla_prefill.schema import SPARSE_PREFILL_MXFP8
+
+__all__ = ["sparse_prefill_mxfp8"]
 
 
-@api(SPARSE_PREFILL_MXFP8)
+@aklr_api(SPARSE_PREFILL_MXFP8)
 def sparse_prefill_mxfp8(
     q_nope,
     q_rope,
@@ -19,6 +22,6 @@ def sparse_prefill_mxfp8(
     extend_indices,
     extend_indptr,
     sinks,
-    *,
     softmax_scale=512**-0.5,
+    output=None,
 ): ...

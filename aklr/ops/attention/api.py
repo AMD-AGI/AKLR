@@ -1,15 +1,18 @@
+###############################################################################
 # SPDX-License-Identifier: MIT
+#
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 from __future__ import annotations
 
-from aklr.core.runtime.dispatch import api
-from aklr.ops.attention.contract import PAGED_ATTENTION_DECODE, UNIFIED_ATTENTION
+from aklr.core.runtime.dispatch import aklr_api
+from aklr.ops.attention.schema import paged_attention_decode_op_schema, unified_attention_op_schema
 
 __all__ = ["paged_attention_decode", "unified_attention"]
 
 
-@api(PAGED_ATTENTION_DECODE)
+@aklr_api(paged_attention_decode_op_schema)
 def paged_attention_decode(
     query,
     key_cache,
@@ -24,12 +27,11 @@ def paged_attention_decode(
     alibi_slopes=None,
     sliding_window=0,
     logits_soft_cap=0.0,
-    out_dtype=None,
     out=None,
 ): ...
 
 
-@api(UNIFIED_ATTENTION)
+@aklr_api(unified_attention_op_schema)
 def unified_attention(
     q,
     k,
@@ -47,6 +49,5 @@ def unified_attention(
     q_descale=None,
     k_descale=None,
     v_descale=None,
-    out_dtype=None,
     out=None,
 ): ...

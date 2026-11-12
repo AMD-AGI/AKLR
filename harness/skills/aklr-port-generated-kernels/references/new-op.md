@@ -17,10 +17,10 @@ each file are in `aklr/ops/README.md`; this is the order and the traps.
    SGLang inside the function and returns the outputs as the api does; a call it does not serve
    raises `NotImplementedError` (bench: `baseline_failed`). Example: `aklr/ops/gemm/baseline.py`.
    Without one the op is its own baseline: a kernel has nothing to beat.
-   An op every rank of a group calls together (expert parallelism, collectives) sets the contract's
-   `ranks` to the attr holding the group size; its reference takes `(point, group_args, rank,
-   decode)`, and `group.py`'s `<contract>_group_init()` sets up what an engine would before the
-   first call. See `aklr/ops/README.md`.
+   An op every rank of a group calls together (expert parallelism, collectives) keeps its group size
+   in a Const axis, its Reference reads every rank's call through `group_calls`, and an
+   `ExecutionPolicy` in `stages/bench/_execution_policy/<op_type>.py` gives its ranks and per-process
+   set-up. See `aklr/ops/README.md`.
 5. **`__init__.py`**: export the api functions.
 6. **Tests**: add the contract's base Point, small, to `_SMALL_POINTS` in `tests/op_case.py` (contract
    order), so the contract and reference suites cover it, and regenerate the variant names with

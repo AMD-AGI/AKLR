@@ -1,10 +1,8 @@
 ###############################################################################
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 ###############################################################################
-
-"""Shared bench plumbing: sglang forward setup, batch prep, graph/eager timing, MoE layouts, versions and tables."""
 
 import contextlib
 import inspect
@@ -16,7 +14,7 @@ from typing import NamedTuple
 
 import torch
 
-# Repeating an op inside one graph amortises the ~10us host launch that would otherwise inflate small kernels.
+# Repeating an op inside one graph amortises the ~10us host launch that would inflate small kernels.
 GRAPH_REPS = 20
 
 # Cap on tokens one graph pushes through; each repeat allocates its own activations in the graph pool.
@@ -41,7 +39,6 @@ def require_aiter() -> None:
 
 
 def load_tag(server_args) -> str:
-    """`dummy` for a synthetic-weight run, empty for a real one."""
     return "dummy" if server_args.load_format == "dummy" else ""
 
 
@@ -63,7 +60,6 @@ def parallel_state(model_runner):
 
 
 def publish_once(server_args, gpu_id: int, tp_rank: int) -> None:
-    """Publish the config bags if nothing has yet."""
     from sglang.srt.runtime_context import get_context, publish
 
     if not get_context().is_config_namespace_published("model"):
@@ -102,7 +98,6 @@ class A2aImpl(NamedTuple):
 
 
 def assert_lockstep(saved: dict) -> None:
-    """Raise if the ranks recorded different op lists."""
     from sglang.srt.distributed import get_world_group
 
     names = list(saved)
@@ -145,7 +140,6 @@ def forward_ctx(model_runner):
 
 
 def local_conc(args, model_runner) -> int:
-    """How many requests this rank runs."""
     return args.CONC // parallel_state(model_runner).attn_dp_size
 
 
@@ -169,7 +163,6 @@ def prefill_conc(args) -> int:
 
 
 def prepare_decode(batch, model_runner) -> None:
-    """Advance the batch to its next decode step, on random tokens."""
     from sglang.benchmark.one_batch import _maybe_prepare_mlp_sync_batch
 
     vocab = model_runner.model_config.vocab_size
@@ -179,7 +172,6 @@ def prepare_decode(batch, model_runner) -> None:
 
 
 def graph_reps_for(extend_tokens: int) -> int:
-    """How many times one op repeats inside a captured graph, by chunk size."""
     return max(1, min(GRAPH_REPS, GRAPH_TOKEN_BUDGET // max(extend_tokens, 1)))
 
 
@@ -228,7 +220,6 @@ def bench_eager(fn: Callable, reps: int, rounds: int = 1) -> float:
 
 
 def _capture(fn: Callable) -> torch.cuda.CUDAGraph:
-    """Record fn into a CUDA graph."""
     from sglang.srt.distributed.parallel_state import graph_capture
 
     for _ in range(3):
@@ -282,10 +273,9 @@ def _partitions(times: dict, kind: str, name: str) -> bool:
 
 
 def _git_rev(path: str) -> str:
-    """`abc1234` for the checkout owning `path`, `+dirty` when it has edits."""
     import subprocess
 
-    # Set safe.directory on the command: a bind-mounted repo owned by the host user is otherwise unreadable.
+    # Set safe.directory per command: git otherwise rejects a bind-mounted repo owned by the host user.
     def git(*cmd) -> str:
         try:
             done = subprocess.run(
@@ -304,7 +294,6 @@ def _git_rev(path: str) -> str:
 
 
 def versions() -> list[tuple]:
-    """Every version that can move a number in the report."""
     import importlib
 
     def one(name: str) -> str:
@@ -346,7 +335,6 @@ def table(rows: list[tuple], headers: tuple, fmt: str = ".3f") -> str:
 
 
 def merged_skips(results) -> dict:
-    """Every op any chunk could not replay, labelled with where it first fell."""
     out = {}
     for i, r in enumerate(results):
         for name, err in r.skipped.items():

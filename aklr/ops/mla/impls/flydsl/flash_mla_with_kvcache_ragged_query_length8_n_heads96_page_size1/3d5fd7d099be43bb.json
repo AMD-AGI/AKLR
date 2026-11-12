@@ -1,0 +1,332 @@
+{
+  "name": "flash_mla_with_kvcache_ragged_query_length8_n_heads96_page_size1",
+  "op_type": "flash_mla_with_kvcache",
+  "axes": {
+    "batch": {
+      "description": "Rows: one token each (sparse) or one request each (dense).",
+      "type": "var"
+    },
+    "query_length": {
+      "description": "Queries per row.",
+      "value": 8,
+      "type": "const"
+    },
+    "n_heads": {
+      "description": "Query heads.",
+      "value": 96,
+      "type": "const"
+    },
+    "n_pages": {
+      "description": "Pages of the KV pool.",
+      "type": "var"
+    },
+    "page_size": {
+      "description": "Slots per page of the KV pool.",
+      "value": 1,
+      "type": "const"
+    },
+    "n_indices": {
+      "description": "Sparse indices per token.",
+      "value": null,
+      "type": "const"
+    },
+    "n_extra_pages": {
+      "description": "Pages of the extra KV pool.",
+      "type": "var"
+    },
+    "extra_page_size": {
+      "description": "Slots per page of the extra KV pool.",
+      "value": null,
+      "type": "const"
+    },
+    "n_extra_indices": {
+      "description": "Extra sparse indices per token.",
+      "value": null,
+      "type": "const"
+    },
+    "table_width": {
+      "description": "Columns of the 2-D block_table, or length of the flat one.",
+      "type": "var"
+    },
+    "n_offsets": {
+      "description": "Offsets in cu_seqlens_k: batch + 1.",
+      "type": "var"
+    },
+    "head_dim": {
+      "description": "Query values per head.",
+      "value": 576,
+      "type": "const"
+    },
+    "kv_dim": {
+      "description": "Bytes (sparse) or values (dense) per pool slot.",
+      "value": 576,
+      "type": "const"
+    },
+    "v_dim": {
+      "description": "Output values per head.",
+      "value": 512,
+      "type": "const"
+    },
+    "one": {
+      "description": "A single KV head.",
+      "value": 1,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 8,
+        "table_width": 8,
+        "n_offsets": 2
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 16,
+        "table_width": 16,
+        "n_offsets": 3
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 3,
+        "n_pages": 24,
+        "table_width": 24,
+        "n_offsets": 4
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 32,
+        "table_width": 32,
+        "n_offsets": 5
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 5,
+        "n_pages": 40,
+        "table_width": 40,
+        "n_offsets": 6
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 6,
+        "n_pages": 48,
+        "table_width": 48,
+        "n_offsets": 7
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 7,
+        "n_pages": 56,
+        "table_width": 56,
+        "n_offsets": 8
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 64,
+        "table_width": 64,
+        "n_offsets": 9
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 10,
+        "n_pages": 80,
+        "table_width": 80,
+        "n_offsets": 11
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 12,
+        "n_pages": 96,
+        "table_width": 96,
+        "n_offsets": 13
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 14,
+        "n_pages": 112,
+        "table_width": 112,
+        "n_offsets": 15
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "q": {
+      "shape": [
+        "batch",
+        "query_length",
+        "n_heads",
+        "head_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "The queries of each row; dense: the rope part last."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_pages",
+        "page_size",
+        "one",
+        "kv_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "The KV pool: one 576-value row a page."
+    },
+    "sparse_indices": {
+      "shape": [
+        "batch",
+        "one",
+        "n_indices"
+      ],
+      "dtype": "int32",
+      "description": "Slots of the KV pool each token reads; negative: skipped."
+    },
+    "sparse_lens": {
+      "shape": [
+        "batch"
+      ],
+      "dtype": "int32",
+      "description": "Leading sparse_indices each token reads; all when absent."
+    },
+    "extra_kv_cache": {
+      "shape": [
+        "n_extra_pages",
+        "extra_page_size",
+        "one",
+        "kv_dim"
+      ],
+      "dtype": null,
+      "description": "The extra KV pool, packed dsv4 slots in pages padded as kv_cache's."
+    },
+    "extra_sparse_indices": {
+      "shape": [
+        "batch",
+        "one",
+        "n_extra_indices"
+      ],
+      "dtype": "int32",
+      "description": "Slots of the extra KV pool each token reads; negative: skipped."
+    },
+    "extra_sparse_lens": {
+      "shape": [
+        "batch"
+      ],
+      "dtype": "int32",
+      "description": "Leading extra_sparse_indices each token reads; all when absent."
+    },
+    "block_table": {
+      "shape": [
+        "table_width"
+      ],
+      "dtype": "int32",
+      "description": "Pool rows of each request: a (batch, width) table read up to cache_seqlens, or every request's rows back to back."
+    },
+    "cache_seqlens": {
+      "shape": [
+        "batch"
+      ],
+      "dtype": "int32",
+      "description": "Leading block_table entries each request reads, at least one."
+    },
+    "cu_seqlens_k": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "description": "Where each request's rows start in block_table, then its length."
+    },
+    "causal": {
+      "dtype": "bool",
+      "description": "Whether query i of a request of length L reads only its first L - query_length + i + 1 rows.",
+      "shape": null
+    },
+    "sm_scale": {
+      "dtype": "float32",
+      "description": "Multiplies every logit; q.shape[-1] ** -0.5 when absent.",
+      "shape": null
+    },
+    "sinks": {
+      "shape": [
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "description": "Per-head logit added to the normalisation only, not to lse."
+    },
+    "kv_cache_format": {
+      "dtype": "string",
+      "description": "The pool rows: DeepSeek-V4's packed fp8 slots (sparse), or 576 fp8 or bf16 values (dense).",
+      "shape": null
+    },
+    "kv_scale": {
+      "dtype": "float32",
+      "description": "Multiplies every KV value, in the logits and the values.",
+      "shape": null
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "batch",
+        "query_length",
+        "n_heads",
+        "v_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Softmax-weighted sum of the read values; 0 for no row read."
+    },
+    "lse": {
+      "shape": [
+        "batch",
+        "query_length",
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "description": "Log-sum-exp of the scaled logits, sinks excluded; for no row read +inf (sparse) or -inf (dense)."
+    }
+  },
+  "tags": [
+    "kimi-k3/tp8+dcp8"
+  ],
+  "description": "MLA attention over a paged KV pool, FlashMLA's API. Sparse: each token attends to the slots its indices name, in the pool and the optional extra one; sinks join the normalisation only. Dense: each request attends to its context rows; q's rope part is last, scores are q . row * sm_scale * kv_scale and values row[:head_dim_v] * kv_scale. With causal, query i of a request of length L reads its first L - query_length + i + 1 rows.",
+  "constraints": [
+    "sparse_indices is None",
+    "sparse_lens is None",
+    "extra_kv_cache is None",
+    "extra_sparse_indices is None",
+    "extra_sparse_lens is None",
+    "sinks is None",
+    "cache_seqlens is None",
+    "n_pages * page_size <= 2147483648",
+    "kv_cache_format in ('fp8_e4m3', 'bf16')",
+    "(kv_cache.dtype == 'bfloat16') == (kv_cache_format == 'bf16')",
+    "kv_cache_format != 'fp8_e4m3' or kv_cache.dtype == 'float8_e4m3fn'",
+    "head_dim_v == 512",
+    "page_size == 1",
+    "n_offsets == batch + 1",
+    "table_width >= batch * query_length"
+  ],
+  "kernel": null
+}

@@ -1,81 +1,49 @@
 ###############################################################################
 # SPDX-License-Identifier: Apache-2.0
 #
-# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
-# Copyright (c) 2025 FlashInfer-Bench Contributors
+# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+# Copyright (c) 2025 by FlashInfer-Bench Contributors
 #
 # Adapted from FlashInfer-Bench (https://github.com/flashinfer-ai/flashinfer-bench)
-# Source: flashinfer_bench/compile/{builder,utils}.py and
-#         flashinfer_bench/compile/builders/{python_builder,triton_builder}.py
-# Modified by Advanced Micro Devices, Inc. for the AKLR project.
-# Modified for aklr/core/runtime/builder
+# Modified by the AKLR team.
 #
 # This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
 # not the MIT license that covers the rest of AKLR (see LICENSE).
 ###############################################################################
 
-
 from __future__ import annotations
 
+import importlib
 import inspect
+import shutil
 import sys
-import types
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Final
+from typing import TYPE_CHECKING, Any, ClassVar, List
 
-import torch
-
-from aklr.core.contract.locate import import_entry
-from aklr.core.contract.spec import write_sources
-from aklr.core.jit import hip_extension
 from aklr.core.platform.device import DeviceTarget
-from aklr.core.platform.env import (
-    ENV_DISABLE,
-    ENV_KERNEL_CACHE_DIR,
-    RuntimeEnv,
-)
+from aklr.core.platform.env import RuntimeEnv
 from aklr.core.runtime import LoadError
 from aklr.core.runtime.builder.runnable import Runnable, RunnableMetadata
-
-if TYPE_CHECKING:
-    from collections.abc import Collection
-
-    from aklr.core.contract.op import OpContract
-    from aklr.core.contract.spec import SourceFile
+from aklr.core.utils import create_package_name, write_sources_to_path
 
 __all__ = [
-    "KERNEL_PACKAGE_PREFIX",
     "BuildError",
     "Builder",
     "FlyDSLBuilder",
-    "HipBuilder",
     "PythonBuilder",
+    "TorchBuilder",
     "TritonBuilder",
-    "get_build_cache_path",
 ]
 
-# every kernel package starts with it: bench detects a stray kernel import by it
-KERNEL_PACKAGE_PREFIX: Final = "_aklr_"
-_CACHE_HINT: Final = (
-    f"set {ENV_KERNEL_CACHE_DIR} to a writable directory, or {ENV_DISABLE}=1 to start without AKLR"
-)
+if TYPE_CHECKING:
+    from aklr.core.schema import Schema
+    from aklr.core.schema._kernel import Kernel
 
 
 class BuildError(LoadError):
-    """A schema's kernel could not be made callable; ``__cause__`` an ``OSError``: the platform's fault."""
-
-
-def get_build_cache_path() -> Path:
-    """``RuntimeEnv().build_cache_path``, the kernel cache's root."""
-    try:
-        root = RuntimeEnv().build_cache_path
-    except ValueError as e:
-        raise BuildError(str(e)) from None
-    if root is None:
-        raise BuildError(f"no kernel cache: HOME is not set; {_CACHE_HINT}")
-    return root
+    """A schema's kernel could not be made callable; an ``OSError`` cause marks the platform's fault."""
 
 
 class Builder(ABC):
@@ -91,113 +59,171 @@ class Builder(ABC):
     @staticmethod
     @abstractmethod
     def is_available() -> bool:
-        """Whether this builder's toolchain is installed here."""
+        pass
 
     @abstractmethod
-    def can_build(self, schema: OpContract) -> bool:
-        """Whether this builder claims ``schema.kernel.language``."""
+    def can_build(self, schema: Schema) -> bool:
+        pass
 
     @abstractmethod
-    def build(self, schema: OpContract) -> Runnable:
-        """Import ``schema``'s kernel, running none of it; raises :class:`BuildError`."""
+    def build(self, schema: Schema) -> Runnable:
+        """Make ``schema``'s kernel callable without calling it; failures raise :class:`BuildError`."""
 
-    def _get_package_name_and_build_path(self, schema: OpContract) -> tuple[str, Path]:
-        assert schema.kernel is not None
-        package = f"{self._package_prefix}{schema.kernel.content_hash[:16]}"
-        root = get_build_cache_path()
-        return package, root / self._build_dir_name / package
+    def _get_package_name_and_build_path(self, kernel: Kernel) -> tuple[str, Path]:
+        package_name = create_package_name(kernel, self._package_prefix)
+        build_path = RuntimeEnv().build_cache_path / self._build_dir_name / package_name
+        return package_name, build_path
 
-    def _update_sources(self, sources: Sequence[SourceFile], build_path: Path) -> None:
+    def _signature(self, callable: Callable) -> inspect.Signature:
+        return inspect.signature(callable)
+
+    def _try_validate_signature(self, callable: Callable, schema: Schema) -> None:
+
         try:
-            changed = [
-                source
-                for source in sources
-                if not (build_path / source.path).is_file()
-                or (build_path / source.path).read_bytes() != source.content.encode()
-            ]
-            if changed:
-                write_sources(changed, build_path)
-        except OSError as e:
-            raise BuildError(f"cannot write {build_path}: {e}; {_CACHE_HINT}") from e
+            signature = self._signature(callable)
+        except (ValueError, TypeError):
+            return
+        assert schema.kernel is not None
+        dps = schema.kernel.build.destination_passing_style
+        expected_nparam = len(schema.inputs) + len(schema.outputs) if dps else len(schema.inputs)
+
+        # the runtime passes exactly these args positionally: extra params need defaults
+        sample_args = [object() for _ in range(expected_nparam)]
+        try:
+            signature.bind(*sample_args)
+        except TypeError as e:
+            style = "Destination-passing" if dps else "Value-returning"
+            raise BuildError(
+                f"{style} style callable: expected {expected_nparam} positional parameters, "
+                f"but signature '{signature}' is incompatible: {e}"
+            ) from e
+
+        if not dps:
+            num_outputs = len(schema.outputs)
+            ret_ann = signature.return_annotation
+            if ret_ann is not inspect.Signature.empty:
+                origin = getattr(ret_ann, "__origin__", None)
+                if origin is tuple:
+                    args = getattr(ret_ann, "__args__", None)
+                    if args is not None and len(args) != num_outputs:
+                        raise BuildError(
+                            f"Value-returning style callable with {num_outputs} outputs must "
+                            f"return a {num_outputs}-element tuple, got {ret_ann}"
+                        )
+                elif ret_ann is None:
+                    if num_outputs != 0:
+                        raise BuildError(
+                            f"Value-returning style callable with {num_outputs} outputs must not return None"
+                        )
+                elif num_outputs != 1:
+                    raise BuildError(
+                        f"Value-returning style callable returning non-tuple must "
+                        f"only have one output, got {num_outputs}"
+                    )
 
 
 class PythonBuilder(Builder):
-    """Writes the sources into the kernel cache and imports the entry point as a package made in memory."""
+    """Imports the entry point from the sources written to the build cache, as a per-kernel package."""
 
     _LANGUAGE: ClassVar[str] = "python"
 
     def __init__(self) -> None:
-        super().__init__(f"{KERNEL_PACKAGE_PREFIX}{self._LANGUAGE}_", self._LANGUAGE)
+        super().__init__(f"{self._LANGUAGE}_", self._LANGUAGE)
 
     @staticmethod
     def is_available() -> bool:
-        """Python builds always work."""
         return True
 
-    def can_build(self, schema: OpContract) -> bool:
-        """Whether ``schema``'s kernel is in this builder's language."""
-        return schema.kernel is not None and schema.kernel.language == self._LANGUAGE
+    def can_build(self, schema: Schema) -> bool:
+        return schema.kernel is not None and schema.kernel.build.language == self._LANGUAGE
 
-    def build(self, schema: OpContract) -> Runnable:
-        """``_update_sources``, then import ``entry_point`` from an empty package made in memory."""
+    def _get_cleaner(self, package: str, build_path: Path) -> Callable[[], None]:
+        def cleaner() -> None:
+            try:
+                to_delete = [m for m in sys.modules if m == package or m.startswith(package + ".")]
+                for m in to_delete:
+                    sys.modules.pop(m, None)
+            except Exception:
+                pass
+
+            try:
+                build_path_str = str(build_path)
+                if build_path_str in sys.path:
+                    sys.path.remove(build_path_str)
+            finally:
+                shutil.rmtree(build_path, ignore_errors=True)
+
+        return cleaner
+
+    def build(self, schema: Schema) -> Runnable:
         kernel = schema.kernel
         assert kernel is not None
-        entry_file = kernel.entry_file
-        package, build_path = self._get_package_name_and_build_path(schema)
-        # the registry builds a content hash once: another hash with these 16 digits
-        if package in sys.modules:
-            raise BuildError(f"{package} is already imported")
-        # before the package exists: nothing to clean up, and not an import failure
-        self._update_sources(kernel.sources, build_path)
 
-        def clean_up_build() -> None:
-            for name in [name for name in sys.modules if f"{name}.".startswith(f"{package}.")]:
-                sys.modules.pop(name, None)
+        entry_file = kernel.get_entry_path()
+        entry_symbol = kernel.get_entry_symbol()
 
-        module_name = f"{package}.{entry_file.removesuffix('.py')}"
+        if entry_file.suffix != ".py":
+            raise BuildError(f"Entry file '{entry_file}' is not a Python file")
+
+        package_name, build_path = self._get_package_name_and_build_path(kernel)
+        module_name = package_name + "." + ".".join(Path(entry_file).with_suffix("").parts)
+
+        package_path = build_path / package_name
+        write_sources_to_path(package_path, kernel.sources)
+
+        cleaner = self._get_cleaner(package_name, build_path)
+
+        sys.path.insert(0, str(build_path))
+
         try:
-            module = types.ModuleType(package)
-            module.__path__ = [str(build_path)]
-            sys.modules[package] = module
-            entry = import_entry(f"{module_name}.{kernel.entry_symbol}")
-            if not callable(entry):
-                raise TypeError(f"{type(entry).__name__} is not callable")
-            call_keys = schema.kernel_call_keys
-            try:
-                signature = inspect.signature(entry)
-            except (ValueError, TypeError):  # uninspectable entry: bind nothing
-                signature = None
-            if signature is not None:
-                try:
-                    signature.bind(**dict.fromkeys(call_keys))
-                except TypeError as e:
-                    raise BuildError(
-                        f"{kernel.entry_point} does not take the call keys {list(call_keys)}: {e}"
-                    ) from e
-            entry = _taking_call_keys(entry, schema)
-        except BaseException as e:  # KeyboardInterrupt too: leave no package behind
-            clean_up_build()
-            if isinstance(e, BuildError) or not isinstance(e, Exception):
-                raise
-            raise BuildError(f"cannot import {kernel.entry_point}: {type(e).__name__}: {e}") from e
+            mod = importlib.import_module(module_name)
+        except Exception as e:
+            cleaner()
+            raise BuildError(f"Failed importing module '{module_name}' from sources: {e}") from e
+
+        try:
+            fn: Any = getattr(mod, entry_symbol)
+        except AttributeError as e:
+            cleaner()
+            raise BuildError(f"Entry symbol '{entry_symbol}' not found in module '{module_name}'") from e
+
+        if not callable(fn):
+            cleaner()
+            raise BuildError(f"Entry symbol '{entry_symbol}' is not callable")
+
         metadata = RunnableMetadata(
             build_type=self._LANGUAGE,
-            contract_id=schema.contract_id,
+            op_type=schema.op_type,
             schema_name=schema.name,
-            content_hash=kernel.content_hash,
-            misc={"module_name": module_name, "entry_symbol": kernel.entry_symbol},
+            kernel_name=kernel.name,
+            destination_passing_style=kernel.build.destination_passing_style,
+            schema=schema,
+            misc={"module_name": module_name, "entry_symbol": entry_symbol},
         )
-        return Runnable(entry, metadata, cleaner=clean_up_build)
+
+        self._try_validate_signature(fn, schema)
+        return Runnable(callable=fn, metadata=metadata, cleaner=cleaner)
+
+    def check_call_keys(self, schema: Schema, entry: Callable[..., Any]) -> None:
+        call_keys = schema.kernel_call_keys
+        try:
+            signature = inspect.signature(entry)
+        except (ValueError, TypeError):
+            return
+        try:
+            signature.bind(**dict.fromkeys(call_keys))
+        except TypeError as e:
+            assert schema.kernel is not None
+            raise BuildError(
+                f"{schema.kernel.build.entry_point} does not take the call keys {list(call_keys)}: {e}"
+            ) from e
 
 
 class TritonBuilder(PythonBuilder):
-    """Triton is python: only the language differs."""
-
     _LANGUAGE: ClassVar[str] = "triton"
 
     @staticmethod
     def is_available() -> bool:
-        """Whether triton is importable here."""
         try:
             import triton  # noqa: F401
         except ImportError:
@@ -206,13 +232,12 @@ class TritonBuilder(PythonBuilder):
 
 
 class FlyDSLBuilder(PythonBuilder):
-    """FlyDSL is python too: it JIT-compiles from inside the imported module."""
+    """FlyDSL is python too: its kernels JIT-compile themselves inside the imported module."""
 
     _LANGUAGE: ClassVar[str] = "flydsl"
 
     @staticmethod
     def is_available() -> bool:
-        """Whether flydsl is importable here."""
         try:
             import flydsl  # noqa: F401
         except ImportError:
@@ -220,86 +245,125 @@ class FlyDSLBuilder(PythonBuilder):
         return True
 
 
-class HipBuilder(Builder):
-    """Builds the sources into a torch extension for this GPU's arch
-    (``aklr.core.jit.hip_extension``); the kernel is its op
-    ``torch.ops.<package>.<entry symbol>``."""
+class TorchBuilder(Builder):
+    """Builds hip sources for this GPU's arch into the TORCH_LIBRARY op ``torch.ops.<package>.<symbol>``."""
 
-    _LANGUAGE: ClassVar[str] = "hip"
+    _LANGUAGE: ClassVar[str] = "torch"
+
+    _CPP_HIP_CUDA_EXTENSIONS: ClassVar[List[str]] = [".hip", ".cu", ".cpp", ".cc", ".cxx", ".c"]
 
     def __init__(self) -> None:
-        # the package names the op namespace too, which TORCH_LIBRARY pastes after an
-        # underscore: a leading one would make a reserved C++ identifier
-        super().__init__("aklr_hip_", self._LANGUAGE)
+        # the package is TORCH_LIBRARY's namespace, pasted after "_": a leading "_" would make a reserved "__"
+        super().__init__(f"aklr_{self._LANGUAGE}_", self._LANGUAGE)
 
     @staticmethod
     def is_available() -> bool:
-        """Whether torch is a ROCm build and hipcc and ninja are here."""
-        return hip_extension.is_available()
+        try:
+            import torch
+        except ImportError:
+            return False
+        return torch.cuda.is_available()
 
-    def can_build(self, schema: OpContract) -> bool:
-        """Whether ``schema``'s kernel is in this builder's language."""
-        return schema.kernel is not None and schema.kernel.language == self._LANGUAGE
+    def can_build(self, schema: Schema) -> bool:
+        return schema.kernel is not None and schema.kernel.build.language in ("hip", "cuda", "cpp")
 
-    def build(self, schema: OpContract) -> Runnable:
-        """The library's entry op, the library built first on a new toolchain; raises :class:`BuildError` unless the op takes exactly the call keys and writes exactly the outputs and the mutable inputs."""
+    def _filter_sources(self, source_paths: List[Path]) -> List[str]:
+        return [str(path) for path in source_paths if path.suffix in self._CPP_HIP_CUDA_EXTENSIONS]
+
+    def _get_cleaner(self, build_dir: Path) -> Callable[[], None]:
+        def cleaner() -> None:
+            shutil.rmtree(build_dir, ignore_errors=True)
+
+        return cleaner
+
+    def _signature(self, callable: Callable) -> inspect.Signature:
+        """The op's signature from its schema: ``inspect.signature`` sees only ``(*args, **kwargs)``."""
+        import torch
+
+        op_schema = callable._schema
+        return inspect.Signature(
+            [
+                inspect.Parameter(
+                    argument.name,
+                    (
+                        inspect.Parameter.KEYWORD_ONLY
+                        if argument.kwarg_only
+                        else inspect.Parameter.POSITIONAL_OR_KEYWORD
+                    ),
+                    default=(
+                        argument.default_value if argument.has_default_value() else inspect.Parameter.empty
+                    ),
+                )
+                for argument in op_schema.arguments
+            ],
+            return_annotation=(
+                inspect.Signature.empty  # a list return has no fixed length to check
+                if any(isinstance(r.type, torch.ListType) for r in op_schema.returns)
+                else tuple[(Any,) * len(op_schema.returns)]
+            ),
+        )
+
+    def build(self, schema: Schema) -> Runnable:
+        import torch
+        from torch.utils.cpp_extension import load
+
+        assert schema.kernel is not None
         kernel = schema.kernel
-        assert kernel is not None
-        package, build_path = self._get_package_name_and_build_path(schema)
+
+        entry_file_extension = kernel.get_entry_path().suffix
+        if entry_file_extension not in self._CPP_HIP_CUDA_EXTENSIONS:
+            raise BuildError(
+                f"Entry file type not recognized. Must be one of {self._CPP_HIP_CUDA_EXTENSIONS}, "
+                f"got {entry_file_extension}."
+            )
+
+        symbol = kernel.get_entry_symbol()
+        package_name, build_dir = self._get_package_name_and_build_path(kernel)
+        source_paths = write_sources_to_path(build_dir, kernel.sources)
+
+        cpp_cuda_paths = self._filter_sources(source_paths)
+
+        extra_include_paths = [str(build_dir)]
+        with_cuda = kernel.build.language in ("cuda", "hip")
+
+        # a killed build leaves torch's lock and load() would wait forever; BuilderRegistry serializes builds
+        (build_dir / "lock").unlink(missing_ok=True)
         arch = DeviceTarget.current().arch
         if arch is None:
-            raise BuildError(f"{kernel.entry_point}: no GPU arch to build for")
-        sources = {source.path: source.content for source in kernel.sources}
+            raise BuildError(f"{kernel.name}: no GPU arch to build for")
         try:
-            library = hip_extension.load_library(package, sources, build_path, arch)
-        except OSError as e:
-            raise BuildError(f"cannot build in {build_path}: {e}; {_CACHE_HINT}") from e
-        except RuntimeError as e:
-            raise BuildError(f"{kernel.entry_point}: {e}") from e
+            # torch adds its archs (PYTORCH_ROCM_ARCH) unless extra_cflags, not extra_cuda_cflags, name one
+            load(
+                name=package_name,
+                sources=cpp_cuda_paths,
+                extra_include_paths=extra_include_paths,
+                extra_cflags=[f"--offload-arch={arch}"],  # host c++ also gets it and fails: no .cpp sources
+                extra_cuda_cflags=["-O3"],
+                with_cuda=with_cuda,
+                build_directory=build_dir,
+                is_python_module=False,
+                verbose=True,
+            )
+        except Exception as e:
+            raise BuildError(f"Torch build failed for kernel '{kernel.name}': {e}") from e
+
         try:
-            op = getattr(getattr(torch.ops, package), kernel.entry_symbol).default
-        except (AttributeError, RuntimeError):
-            raise BuildError(
-                f"{kernel.entry_point}: the library registers no op {kernel.entry_symbol}"
-                " in TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m)"
-            ) from None
-        _check_op_schema(
-            kernel.entry_point,
-            op._schema,
-            schema.kernel_call_keys,
-            schema.mutable_tensors,
-        )
+            callable = getattr(getattr(torch.ops, package_name), symbol).default
+        except AttributeError as e:
+            raise BuildError(f"torch.ops.{package_name}.{symbol} is not registered") from e
+
         metadata = RunnableMetadata(
             build_type=self._LANGUAGE,
-            contract_id=schema.contract_id,
+            op_type=schema.op_type,
             schema_name=schema.name,
-            content_hash=kernel.content_hash,
-            misc={"library": str(library), "op": f"{package}::{kernel.entry_symbol}"},
+            kernel_name=kernel.name,
+            destination_passing_style=kernel.build.destination_passing_style,
+            schema=schema,
+            misc={"entry_symbol": symbol},
         )
-        # a loaded library stays: no cleaner
-        return Runnable(_taking_call_keys(op, schema), metadata)
 
+        cleaner = self._get_cleaner(build_dir)
 
-def _taking_call_keys(fn: Callable[..., Any], schema: OpContract) -> Callable[..., Any]:
-    """``fn``, given only ``schema.kernel_call_keys`` of the api params dispatch passes."""
-    call_keys = schema.kernel_call_keys
-    if len(call_keys) == len(schema.api_params):
-        return fn
-    return lambda **call: fn(**{k: call[k] for k in call_keys})
+        self._try_validate_signature(callable, schema)
 
-
-def _check_op_schema(
-    entry_point: str,
-    op_schema: torch._C.FunctionSchema,
-    call_keys: Collection[str],
-    mutable_tensors: Collection[str],
-) -> None:
-    names = [a.name for a in op_schema.arguments]
-    if sorted(names) != sorted(call_keys):
-        raise BuildError(f"{entry_point} takes {names}, not the call keys {list(call_keys)}")
-    writes = {a.name for a in op_schema.arguments if a.alias_info is not None and a.alias_info.is_write}
-    if writes != set(mutable_tensors) or op_schema.returns:
-        raise BuildError(
-            f"{entry_point}: {op_schema} must write exactly"
-            f" {sorted(mutable_tensors)}, each a Tensor(a!), and return ()"
-        )
+        return Runnable(callable=callable, metadata=metadata, cleaner=cleaner)

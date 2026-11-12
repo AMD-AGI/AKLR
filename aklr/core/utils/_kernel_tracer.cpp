@@ -1,7 +1,7 @@
 /***************************************************************************************************
  * SPDX-License-Identifier: MIT
  *
- * Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+ * Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
  **************************************************************************************************/
 
 // Kernel dispatch timestamps from rocprofiler-sdk, with replayed graph dispatches
@@ -39,6 +39,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <shared_mutex>
 #include <stdexcept>
 #include <string>
@@ -223,12 +224,16 @@ public:
   }
 
   // a window records every dispatch and HIP call; between windows the tool
-  // sees only code objects load and queues come into use
+  // sees only code objects load and queues come into use. Sessions share the
+  // window: the first opens it, the last closes it
   void start() {
     if (!intercept_register_) {
       throw std::runtime_error("aklr kernel tracer: rocprofiler-sdk gave no "
                                "HSA table to intercept queues with");
     }
+    std::lock_guard<std::mutex> sessions(sessions_mutex_);
+    if (sessions_++ > 0)
+      return;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       window_.clear();
@@ -271,28 +276,39 @@ public:
           "pop a scope");
   }
 
-  void stop() {
-    check(rocprofiler_stop_context(dispatches_), "stop");
-    check(rocprofiler_stop_context(hip_), "stop");
-  }
-
-  // The completed window, after stop().
-  Profile profile() {
-    await_dispatches();
-    std::lock_guard<std::mutex> lock(mutex_);
-    Profile profile;
-    profile.attribution = attribute();
-    for (const auto &dispatch : window_) {
-      auto name = names_.find(dispatch.kernel_id);
-      profile.kernels.push_back(name == names_.end() ? "<unknown kernel>"
-                                                     : demangle(name->second));
+  // Ends one session: the dispatches of the window its scopes own. Alone in
+  // the window it waits for every dispatch and takes every one, as a window of
+  // its own; beside other sessions it waits for and takes the replays of the
+  // plans its scopes captured, and the calls made in its scopes
+  Profile finish(const std::unordered_set<uint64_t> &scopes) {
+    std::lock_guard<std::mutex> sessions(sessions_mutex_);
+    const bool alone = sessions_ == 1;
+    AtExit close{[&] {
+      if (--sessions_ == 0) {
+        (void)rocprofiler_stop_context(dispatches_);
+        (void)rocprofiler_stop_context(hip_);
+      }
+    }};
+    std::set<uint64_t> serials; // the plans its scopes captured
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      for (const auto &[serial, plan] : planned_) {
+        for (const auto &node : plan->info) {
+          if (scopes.count(node.scope)) {
+            serials.insert(serial);
+            break;
+          }
+        }
+      }
     }
-    profile.dispatches.swap(window_);
-    return profile;
+    await_dispatches(alone ? nullptr : &serials);
+    std::lock_guard<std::mutex> lock(mutex_);
+    return take(scopes, serials, alone);
   }
 
 private:
   KernelTracer() = default;
+
 
   static void check(rocprofiler_status_t status, const char *what) {
     if (status != ROCPROFILER_STATUS_SUCCESS) {
@@ -308,8 +324,8 @@ private:
   }
 
   // a dispatch's record arrives after the GPU ran it, from rocprofiler-sdk's
-  // own thread
-  void await_dispatches() {
+  // own thread: every kernel dispatch of the window, or the replays of serials
+  void await_dispatches(const std::set<uint64_t> *serials) {
     for (int wait = 0;; ++wait) {
       check(rocprofiler_flush_buffer(buffer_), "flush");
       std::lock_guard<std::mutex> lock(mutex_);
@@ -317,28 +333,112 @@ private:
         throw std::runtime_error("rocprofiler-sdk dropped " +
                                  std::to_string(dropped_) + " records");
       }
-      const auto recorded = static_cast<uint64_t>(
-          std::count_if(window_.begin(), window_.end(), [](const Dispatch &d) {
-            return d.copy == ROCPROFILER_MEMORY_COPY_NONE;
-          }));
-      if (recorded == enqueued_)
+      uint64_t recorded = 0;
+      uint64_t expected = enqueued_;
+      if (serials) {
+        expected = 0;
+        for (uint64_t serial : *serials) {
+          auto found = launched_.find(serial);
+          expected += found == launched_.end() ? 0 : found->second;
+        }
+      }
+      for (const auto &d : window_) {
+        if (d.copy == ROCPROFILER_MEMORY_COPY_NONE &&
+            (!serials || (d.tag && serials->count(d.tag >> kNodeBits))))
+          ++recorded;
+      }
+      if (recorded >= expected)
         return;
       if (wait == 10000) {
         throw std::runtime_error("rocprofiler-sdk recorded " +
                                  std::to_string(recorded) + " of " +
-                                 std::to_string(enqueued_.load()) +
+                                 std::to_string(expected) +
                                  " kernel dispatches of the graph replays");
       }
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
   }
 
-  // each window dispatch's plan, node and capturing call, every replayed
-  // dispatch of a planned exec bound; the caller holds mutex_
-  std::vector<Attribution> attribute() const {
-    if (!unattributable_.empty()) {
+  // the session's dispatches, each with its plan, node and capturing call,
+  // every replay of its plans bound, taken out of the window; alone, every
+  // dispatch of the window. The caller holds mutex_
+  Profile take(const std::unordered_set<uint64_t> &scopes,
+               const std::set<uint64_t> &serials, bool alone) {
+    const auto thread = std::this_thread::get_id();
+    std::string unattributable;
+    if (auto found = unattributable_.find(thread);
+        found != unattributable_.end()) {
+      unattributable = std::move(found->second);
+      unattributable_.erase(found);
+    }
+    Profile profile;
+    std::vector<Dispatch> kept; // other sessions'
+    std::map<uint64_t, uint64_t> bound; // plan -> its window dispatches
+    bool unmatched = false, uncaptured = false;
+    for (auto &dispatch : window_) {
+      Attribution attribution;
+      const uint64_t tag = dispatch.tag;
+      if (tag) {
+        const uint64_t serial = tag >> kNodeBits, node = tag & kNodeMask;
+        if (!alone && !serials.count(serial)) {
+          kept.push_back(dispatch);
+          continue;
+        }
+        auto plan = planned_.find(serial);
+        if (plan == planned_.end() || node >= plan->second->info.size()) {
+          unmatched = true;
+        } else {
+          const auto &info = plan->second->info[node];
+          uncaptured = uncaptured || !info.call;
+          attribution = {static_cast<int64_t>(serial),
+                         static_cast<int64_t>(node), info.call, info.scope};
+          ++bound[serial];
+        }
+      } else {
+        auto scope = call_scopes_.find(dispatch.correlation);
+        if (scope != call_scopes_.end())
+          attribution.scope = scope->second;
+        // a call in no session's scope is no session's: dropped
+        if (!alone && !scopes.count(attribution.scope)) {
+          if (attribution.scope)
+            kept.push_back(dispatch);
+          continue;
+        }
+      }
+      auto name = names_.find(dispatch.kernel_id);
+      profile.kernels.push_back(name == names_.end() ? "<unknown kernel>"
+                                                     : demangle(name->second));
+      profile.attribution.push_back(attribution);
+      profile.dispatches.push_back(dispatch);
+    }
+    // the window's count of kernel dispatches stays the count of those still in it
+    const auto kernels = [](const std::vector<Dispatch> &dispatches) {
+      return static_cast<uint64_t>(std::count_if(
+          dispatches.begin(), dispatches.end(), [](const Dispatch &d) {
+            return d.copy == ROCPROFILER_MEMORY_COPY_NONE;
+          }));
+    };
+    enqueued_ -= kernels(window_) - kernels(kept);
+    window_.swap(kept);
+    std::map<uint64_t, uint64_t> expected;
+    for (auto launched = launched_.begin(); launched != launched_.end();) {
+      if (alone || serials.count(launched->first)) {
+        expected.insert(*launched);
+        planned_.erase(launched->first);
+        launched = launched_.erase(launched);
+      } else {
+        ++launched;
+      }
+    }
+    for (auto call = call_scopes_.begin(); call != call_scopes_.end();) {
+      call = alone || scopes.count(call->second) ? call_scopes_.erase(call)
+                                                 : std::next(call);
+    }
+    if (alone && !unattributable_.empty())
+      unattributable = unattributable_.begin()->second;
+    if (!unattributable.empty()) {
       throw std::runtime_error("cannot attribute the replays of a graph with " +
-                               unattributable_);
+                               unattributable);
     }
     {
       std::lock_guard<std::mutex> lock(fault_mutex_);
@@ -353,40 +453,23 @@ private:
       throw std::runtime_error("rocprofiler-sdk took the kernel packets of the "
                                "graph replays out of order");
     }
-    std::vector<Attribution> attribution(window_.size());
-    std::map<uint64_t, uint64_t> bound; // plan -> its window dispatches
-    for (size_t i = 0; i < window_.size(); ++i) {
-      const uint64_t tag = window_[i].tag;
-      if (!tag) {
-        auto scope = call_scopes_.find(window_[i].correlation);
-        if (scope != call_scopes_.end())
-          attribution[i].scope = scope->second;
-        continue;
-      }
-      const uint64_t serial = tag >> kNodeBits, node = tag & kNodeMask;
-      auto plan = planned_.find(serial);
-      if (plan == planned_.end() || node >= plan->second->info.size()) {
-        throw std::runtime_error(
-            "a dispatch of the graph replays matched no graph node");
-      }
-      const auto &info = plan->second->info[node];
-      if (!info.call) {
-        throw std::runtime_error("a dispatch of the graph replays matched a "
-                                 "node no traced HIP call captured");
-      }
-      attribution[i] = {static_cast<int64_t>(serial),
-                        static_cast<int64_t>(node), info.call, info.scope};
-      ++bound[serial];
+    if (unmatched) {
+      throw std::runtime_error(
+          "a dispatch of the graph replays matched no graph node");
     }
-    for (const auto &[serial, expected] : launched_) {
-      if (bound[serial] != expected) {
+    if (uncaptured) {
+      throw std::runtime_error("a dispatch of the graph replays matched a "
+                               "node no traced HIP call captured");
+    }
+    for (const auto &[serial, owed] : expected) {
+      if (bound[serial] != owed) {
         throw std::runtime_error(std::to_string(bound[serial]) + " of " +
-                                 std::to_string(expected) +
+                                 std::to_string(owed) +
                                  " dispatches of the graph replays bound to "
                                  "their graph nodes");
       }
     }
-    return attribution;
+    return profile;
   }
 
   static std::string demangle(const std::string &name) {
@@ -989,13 +1072,15 @@ private:
   void launch(hipGraphExec_t exec) {
     std::lock_guard<std::mutex> lock(mutex_);
     auto found = plans_.find(exec);
+    const auto thread = std::this_thread::get_id();
     if (found == plans_.end()) {
-      unattributable_ = "an exec instantiated outside the profiling window";
+      unattributable_.emplace(thread,
+                              "an exec instantiated outside the profiling window");
       return;
     }
     const Plan &plan = *found->second;
     if (!plan.unattributable.empty()) {
-      unattributable_ = plan.unattributable;
+      unattributable_.emplace(thread, plan.unattributable);
       return;
     }
     uint64_t expected = 0;
@@ -1514,7 +1599,8 @@ private:
       planned_; // the window's plans, by serial
   std::map<uint64_t, uint64_t>
       launched_;               // plan -> the dispatches its replays owe
-  std::string unattributable_; // why a replayed exec cannot be bound
+  // why a replayed exec cannot be bound, by the thread that launched it
+  std::unordered_map<std::thread::id, std::string> unattributable_;
   std::unordered_map<int, hipStream_t> streams_;
   std::vector<Dispatch> window_;
   std::unordered_map<uint64_t, uint64_t> call_scopes_;
@@ -1522,6 +1608,8 @@ private:
   uint64_t next_plan_ = 1;
   std::atomic<uint64_t> enqueued_{0}; // the window's kernel dispatches
   std::atomic<uint16_t> window_serial_{0};
+  std::mutex sessions_mutex_;
+  int sessions_ = 0; // the sessions sharing the window
   std::atomic<bool> misaligned_{false};
   std::atomic<bool> unrestored_{false}; // sticky: the program's graph changed
   mutable std::mutex fault_mutex_;
@@ -1565,12 +1653,17 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
   using namespace aklr::kernel_tracer;
   KernelTracer::instance().attach();
   m.def("start", [] {
+    pybind11::gil_scoped_release released; // another session may be finishing
     KernelTracer::instance().start();
   });
-  m.def("stop", [] {
+  m.def("stop", [](const std::vector<uint64_t> &scopes) {
     auto &tracer = KernelTracer::instance();
-    tracer.stop();
-    auto profile = tracer.profile();
+    Profile profile;
+    {
+      // waits for the replays: other threads' sessions go on meanwhile
+      pybind11::gil_scoped_release released;
+      profile = tracer.finish({scopes.begin(), scopes.end()});
+    }
     if (!next_failure.empty())
       throw std::runtime_error(std::exchange(next_failure, {}));
     pybind11::list records;

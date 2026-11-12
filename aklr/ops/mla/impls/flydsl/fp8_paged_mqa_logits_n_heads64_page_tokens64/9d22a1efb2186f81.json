@@ -1,0 +1,504 @@
+{
+  "name": "fp8_paged_mqa_logits_n_heads64_page_tokens64",
+  "op_type": "fp8_paged_mqa_logits",
+  "axes": {
+    "batch": {
+      "description": "Requests, one decode query each.",
+      "type": "var"
+    },
+    "n_heads": {
+      "description": "Indexer heads.",
+      "value": 64,
+      "type": "const"
+    },
+    "n_pages": {
+      "description": "Pages of the key pool.",
+      "type": "var"
+    },
+    "page_tokens": {
+      "description": "Tokens per page of the key pool: page_size.",
+      "value": 64,
+      "type": "const"
+    },
+    "max_blocks": {
+      "description": "Pages per request in the block table.",
+      "type": "var"
+    },
+    "max_seq_len": {
+      "description": "Logits per request: one per slot of its block table row.",
+      "type": "var"
+    },
+    "one": {
+      "description": "A single decode query, a single key head.",
+      "value": 1,
+      "type": "const"
+    },
+    "index_dim": {
+      "description": "Values per query head.",
+      "value": 128,
+      "type": "const"
+    },
+    "token_bytes": {
+      "description": "Bytes per token of a page: 128 fp8 keys, then an fp32 scale.",
+      "value": 132,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 6621,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 15005,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 15005,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 6621,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 15005,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 6621,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 6621,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 15005,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 15005,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 64,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 64,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 128,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    },
+    {
+      "axes": {
+        "batch": 128,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "q": {
+      "shape": [
+        "batch",
+        "one",
+        "n_heads",
+        "index_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "The decode query of each request."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_pages",
+        "page_tokens",
+        "one",
+        "token_bytes"
+      ],
+      "dtype": "uint8",
+      "description": "The key pool, a page a row: page_size x 128 fp8 keys in aiter's preshuffled 16 x 16 tiles, then page_size fp32 scales."
+    },
+    "weights": {
+      "shape": [
+        "batch",
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "description": "Per-head weight of each request."
+    },
+    "context_lens": {
+      "shape": [
+        "batch"
+      ],
+      "dtype": "int32",
+      "description": "Cached tokens of each request."
+    },
+    "block_tables": {
+      "shape": [
+        "batch",
+        "max_blocks"
+      ],
+      "dtype": "int32",
+      "description": "The pages of each request, in context order."
+    },
+    "page_size": {
+      "dtype": "int32",
+      "description": "Tokens per page.",
+      "shape": null
+    }
+  },
+  "outputs": {
+    "logits": {
+      "shape": [
+        "batch",
+        "max_seq_len"
+      ],
+      "dtype": "float32",
+      "description": "The logits of each request's cached tokens."
+    }
+  },
+  "tags": [
+    "deepseek-v4-flash/tp4",
+    "deepseek-v4-flash/tp4+dp4",
+    "deepseek-v4-flash/tp4+dp4+ep4",
+    "deepseek-v4-flash/tp4+ep4",
+    "deepseek-v4-flash/tp8",
+    "deepseek-v4-flash/tp8+dp8",
+    "deepseek-v4-flash/tp8+dp8+ep8",
+    "deepseek-v4-flash/tp8+ep8",
+    "deepseek-v4-pro/tp4",
+    "deepseek-v4-pro/tp4+dp4",
+    "deepseek-v4-pro/tp4+dp4+ep4",
+    "deepseek-v4-pro/tp4+ep4",
+    "deepseek-v4-pro/tp8",
+    "deepseek-v4-pro/tp8+dp8",
+    "deepseek-v4-pro/tp8+dp8+ep8",
+    "deepseek-v4-pro/tp8+ep8"
+  ],
+  "description": "DeepSeek-V4 indexer logits: for each request and each cached token t, sum over heads h of weights[h] * relu(q[h] . k_t) * scale_t, over a paged pool of fp8 keys with an fp32 scale per token.",
+  "constraints": [
+    "page_tokens == page_size",
+    "preshuffled",
+    "page_size % 16 == 0",
+    "max_seq_len == max_blocks * page_size"
+  ],
+  "kernel": null
+}

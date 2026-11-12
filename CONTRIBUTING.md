@@ -38,6 +38,11 @@ for kernel lifecycle changes.
 [AITER](https://github.com/ROCm/aiter) is the baseline AKLR's kernels are timed against in
 performance tests, at the commit `AKLR_BASELINE_AITER` in
 `.github/workflows/ci.yaml`, which CI installs over the image's AITER (with the FlyDSL it pins).
-To time an op against an AITER function, call it from the op's `<contract>_baseline` in its
-`baseline.py`. To move the baseline, change that commit: the next validation re-measures every
-kernel against it.
+
+AKLR does not edit AITER. The dispatcher, which the SGLang and vLLM plugins start,
+replaces each AITER entry point an `@adapter` in `aklr/seam/aiter.py` names with its
+stand-in, under every name a loaded module binds it to. What the op is timed against is the
+`baseline` of its schema's `Standard`, in `aklr/ops/<op>/baseline.py`: it calls the AITER function the
+adapter wraps. To route a new AITER function, declare its `@adapter`, and give the schema's standard a
+baseline that calls it. To move the baseline, change that commit and update the adapters and the baselines
+to its signatures together: the next validation re-measures every kernel against it.

@@ -1,0 +1,230 @@
+{
+  "name": "fused_moe_gate_up_interleaved_model_dim7168_n_experts96_topk6_inter_dim3072_global_experts384",
+  "op_type": "fused_moe",
+  "axes": {
+    "n_tokens": {
+      "description": "Tokens routed in this call.",
+      "type": "var"
+    },
+    "model_dim": {
+      "description": "Hidden size.",
+      "value": 7168,
+      "type": "const"
+    },
+    "n_experts": {
+      "description": "Local experts on this rank.",
+      "value": 96,
+      "type": "const"
+    },
+    "topk": {
+      "description": "Experts per token.",
+      "value": 6,
+      "type": "const"
+    },
+    "inter_dim": {
+      "description": "Expert intermediate size.",
+      "value": 3072,
+      "type": "const"
+    },
+    "global_experts": {
+      "description": "Experts of the whole expert-parallel group.",
+      "value": 384,
+      "type": "const"
+    },
+    "gate_up_rows": {
+      "description": "w1 rows: 2 * inter_dim.",
+      "value": 6144,
+      "type": "const"
+    },
+    "packed_model_dim": {
+      "description": "Bytes per w1 row: model_dim // 2.",
+      "value": 3584,
+      "type": "const"
+    },
+    "packed_inter_dim": {
+      "description": "Bytes per w2 row: inter_dim // 2.",
+      "value": 1536,
+      "type": "const"
+    },
+    "model_blocks": {
+      "description": "w1 scale columns: model_dim // 32.",
+      "value": 224,
+      "type": "const"
+    },
+    "inter_blocks": {
+      "description": "w2 scale columns: inter_dim // 32.",
+      "value": 96,
+      "type": "const"
+    },
+    "one": {
+      "description": "A single count.",
+      "value": 1,
+      "type": "const"
+    },
+    "w1_scale_rows": {
+      "description": "w1 scale rows, every expert's: n_experts * gate_up_rows.",
+      "value": 589824,
+      "type": "const"
+    },
+    "w1_scale_columns": {
+      "description": "w1 scale columns, padded: ceil_div(model_blocks, 8) * 8.",
+      "value": 224,
+      "type": "const"
+    },
+    "w2_scale_rows": {
+      "description": "w2 scale rows, every expert's: n_experts * model_dim.",
+      "value": 688128,
+      "type": "const"
+    },
+    "w2_scale_columns": {
+      "description": "w2 scale columns, padded: ceil_div(inter_blocks, 8) * 8.",
+      "value": 96,
+      "type": "const"
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1024
+      },
+      "evaluations": []
+    }
+  ],
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Token activations."
+    },
+    "w1": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "packed_model_dim"
+      ],
+      "dtype": "float4_e2m1fn_x2",
+      "description": "Gate-up projection per expert, two values a byte."
+    },
+    "w2": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "packed_inter_dim"
+      ],
+      "dtype": "float4_e2m1fn_x2",
+      "description": "Down projection per expert, two values a byte."
+    },
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "float32",
+      "description": "Routing weight of each chosen expert."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "description": "Chosen experts per token, distinct within a row; global ids under expert parallelism."
+    },
+    "expert_mask": {
+      "shape": [
+        "global_experts"
+      ],
+      "dtype": "int32",
+      "description": "1 for the experts this rank holds, in the order w1 holds them."
+    },
+    "activation": {
+      "dtype": "string",
+      "description": "Gate activation.",
+      "shape": null
+    },
+    "act_quant": {
+      "dtype": "string",
+      "description": "Quantization of each expert gemm's activations, per 1 x 32 with e8m0 scales: 'mxfp4', 'mxfp8' (e4m3), or None for none.",
+      "shape": null
+    },
+    "w1_scale": {
+      "shape": [
+        "w1_scale_rows",
+        "w1_scale_columns"
+      ],
+      "dtype": "float8_e8m0fnu",
+      "description": "Per 1 x 32 block of w1."
+    },
+    "w2_scale": {
+      "shape": [
+        "w2_scale_rows",
+        "w2_scale_columns"
+      ],
+      "dtype": "float8_e8m0fnu",
+      "description": "Per 1 x 32 block of w2."
+    },
+    "swiglu_limit": {
+      "dtype": "float32",
+      "description": "Clamped SwiGLU bound: gate at most this, up within +/- this.",
+      "shape": null
+    },
+    "beta": {
+      "dtype": "float32",
+      "description": "SiTUv2 gate saturation.",
+      "shape": null
+    },
+    "linear_beta": {
+      "dtype": "float32",
+      "description": "SiTUv2 up saturation.",
+      "shape": null
+    },
+    "num_local_tokens": {
+      "shape": [
+        "one"
+      ],
+      "dtype": "int32",
+      "description": "Rows this rank received; later rows are unused."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Routing-weighted sum of the chosen experts' outputs; under expert parallelism, this rank's share."
+    }
+  },
+  "tags": [],
+  "description": "out = sum over the top-k experts e of topk_weights[e] * (act(gate) * up) @ w2[e].T, [gate | up] = hidden_states @ w1[e].T; mxfp4 weights with e8m0 scales per 1 x 32. Gate and up tiles interleaved in w1, the scales 2-D with columns padded to 8 and shuffled.",
+  "constraints": [
+    "gate_up_rows == 2 * inter_dim",
+    "packed_model_dim == model_dim // 2",
+    "packed_inter_dim == inter_dim // 2",
+    "model_blocks == model_dim // 32",
+    "inter_blocks == inter_dim // 32",
+    "expert_mask is not None or topk <= n_experts",
+    "expert_mask is None or topk <= global_experts",
+    "expert_mask is None or n_experts <= global_experts",
+    "model_dim % 128 == 0 and inter_dim % 128 == 0",
+    "hidden_states.dtype in ('bfloat16', 'float16')",
+    "topk_weights.dtype in ('float32', 'bfloat16', 'float16')",
+    "topk_ids.dtype in ('int32', 'int64')",
+    "num_local_tokens is None or expert_mask is not None",
+    "activation in ('silu', 'gelu', 'situv2')",
+    "(activation == 'situv2') == (beta is not None)",
+    "(beta is None) == (linear_beta is None)",
+    "act_quant is None or act_quant in ('mxfp4', 'mxfp8')",
+    "use_shuffled_weight",
+    "gate_mode == 'interleave'",
+    "w1_scale_rows == n_experts * gate_up_rows",
+    "w1_scale_columns == ceil_div(model_blocks, 8) * 8",
+    "w2_scale_rows == n_experts * model_dim",
+    "w2_scale_columns == ceil_div(inter_blocks, 8) * 8"
+  ],
+  "kernel": null
+}

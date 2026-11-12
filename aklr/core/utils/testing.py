@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0 AND MIT
-# Copyright (c) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 # Copyright 2018-2020 Philippe Tillet
 # Copyright 2020-2022 OpenAI
 
@@ -115,7 +115,8 @@ def cuda_graph_without_gc(*args, **kwargs):
     if gc_was_enabled:
         gc.disable()
     try:
-        with torch.cuda.graph(*args, **kwargs) as graph:
+        # thread_local: another thread's GPU calls, on its own device, do not invalidate this capture
+        with torch.cuda.graph(*args, capture_error_mode="thread_local", **kwargs) as graph:
             yield graph
     finally:
         if gc_was_enabled:
