@@ -1,0 +1,253 @@
+{
+  "schema_version": 5,
+  "name": "mla_prefill_varlen_prefix_n_heads12_qk_head_dim192_v_head_dim128",
+  "contract_id": "mla_prefill_varlen@1.0",
+  "description": "MLA's prefill attention once kv_b has expanded the latent keys, every head on its own: sequence s's queries are q's rows cu_seqlens_q[s]:cu_seqlens_q[s + 1], its keys and values the rows cu_seqlens_k[s]:cu_seqlens_k[s + 1] of k and v (with no prefix, the queries' own rows). Causal, aligned at the end: query i of a sequence of Lq queries over Lk keys reads keys 0 .. Lk - Lq + i. Logits q . k * sm_scale over qk_head_dim; output the softmax-weighted sum of v. With qkv_fp8 a kernel may round q, k and v to float8_e4m3fn first, as aiter's fp8 prefill does.",
+  "op_type": "mla_prefill",
+  "axes": {
+    "n_q": {
+      "type": "var",
+      "description": "Query rows, every sequence's back to back."
+    },
+    "n_kv": {
+      "type": "var",
+      "description": "Key and value rows, every sequence's back to back."
+    },
+    "n_offsets": {
+      "type": "var",
+      "description": "Sequence offsets: sequences + 1."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 12,
+      "description": "Heads on this rank; k and v carry q's."
+    },
+    "qk_head_dim": {
+      "type": "const",
+      "value": 192,
+      "description": "Values per q and k head: the no-rope and rope parts."
+    },
+    "v_head_dim": {
+      "type": "const",
+      "value": 128,
+      "description": "Values per v and output head."
+    }
+  },
+  "attrs": {
+    "has_prefix": true,
+    "qkv_fp8": true
+  },
+  "inputs": {
+    "q": {
+      "shape": [
+        "n_q",
+        "n_heads",
+        "qk_head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Queries."
+    },
+    "k": {
+      "shape": [
+        "n_kv",
+        "n_heads",
+        "qk_head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Keys."
+    },
+    "v": {
+      "shape": [
+        "n_kv",
+        "n_heads",
+        "v_head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Values."
+    },
+    "cu_seqlens_q": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "cu_seqlens",
+        "min_seqlen": 1,
+        "total": "n_q"
+      },
+      "description": "Where each sequence's queries start in q, then where the last ends."
+    },
+    "cu_seqlens_k": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "cu_seqlens",
+        "min_seqlen": "n_q",
+        "total": "n_kv"
+      },
+      "description": "Where each sequence's keys start in k and v, then where the last ends."
+    },
+    "sm_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every logit."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "n_q",
+        "n_heads",
+        "v_head_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "The softmax-weighted sum of the values each query reads."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_q": 257,
+        "n_kv": 33025,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      }
+    },
+    {
+      "axes": {
+        "n_q": 893,
+        "n_kv": 35107,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      }
+    },
+    {
+      "axes": {
+        "n_q": 1696,
+        "n_kv": 34464,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      }
+    },
+    {
+      "axes": {
+        "n_q": 2732,
+        "n_kv": 35107,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      }
+    },
+    {
+      "axes": {
+        "n_q": 2732,
+        "n_kv": 104093,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      }
+    },
+    {
+      "axes": {
+        "n_q": 3392,
+        "n_kv": 36160,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      }
+    },
+    {
+      "axes": {
+        "n_q": 8480,
+        "n_kv": 57344,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      }
+    },
+    {
+      "axes": {
+        "n_q": 9397,
+        "n_kv": 104093,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      }
+    },
+    {
+      "axes": {
+        "n_q": 16384,
+        "n_kv": 65536,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      }
+    },
+    {
+      "axes": {
+        "n_q": 16384,
+        "n_kv": 131072,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.2"
+    },
+    "author": "kyle-256",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"MLA prefill over a cached prefix, causal and end-aligned, in fp8: one FlyDSL launch casts q, k and v,\naiter's persistent ASM prefill runs on a causal work plan built once per shape, and a FlyDSL kernel merges\nsplit query tiles' partials by log-sum-exp in a fixed order. Several sequences take one bf16 varlen call.\"\"\"\n\nimport functools\nimport math\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl.expr.typing import T\n\nN_HEADS = 12\nQK_DIM = 192\nV_DIM = 128\nTILE_Q = 256  # the plan's query tile\n\n# --- FlyDSL map reduce. Each split tile s has a descriptor row [out_base, n_rows, n_splits, p_0 .. p_{MS-1}] with\n# out_base = q_start * H, n_rows = (q_end - q_start) * H and p_j = partial row j * H (padded with p_0). Row x of the\n# tile (x = local_q * H + h) merges partial rows p_j + x by their natural-log lse, in j order, into out_base + x.\n_LOG2E = math.log2(math.e)\nVEC = 4  # fp32 values per lane: one 16-byte load\nLANES_PER_ROW = V_DIM // VEC\nNUM_THREADS = 256\nROWS_PER_BLOCK = NUM_THREADS // LANES_PER_ROW\nDESC_HEAD = 3\n\n\ndef _view(ptr, dtype, shape, stride):\n    return fx.rocdl.make_buffer_tensor(\n        fx.make_view(fx.recast_iter(dtype, ptr), fx.make_layout(shape, stride))\n    )\n\n\n@functools.cache\ndef compile_reduce(max_splits: int):\n    MS = max_splits\n    STRIDE = DESC_HEAD + MS\n\n    @flyc.kernel(known_block_size=[NUM_THREADS, 1, 1])\n    def reduce_kernel(\n        part: fx.Pointer,  # f32 [P, V_DIM] (P = partial rows * H)\n        lse: fx.Pointer,  # f32 [P]\n        desc: fx.Pointer,  # i32 [n_tiles, STRIDE]\n        out: fx.Pointer,  # bf16 [R, V_DIM]\n        n_part: fx.Int32,\n        n_out: fx.Int32,\n        n_tiles: fx.Int32,\n    ):\n        tid = fx.thread_idx.x\n        bx = fx.block_idx.x\n        by = fx.block_idx.y\n        c_lanes = fx.Int32(LANES_PER_ROW)\n        x = bx * fx.Int32(ROWS_PER_BLOCK) + tid // c_lanes\n        lane = tid % c_lanes\n\n        g_desc = _view(desc, fx.Int32, (n_tiles * fx.Int32(STRIDE),), (1,))\n        g_part = _view(part, fx.Float32, (n_part, V_DIM), (V_DIM, 1))\n        g_lse = _view(lse, fx.Float32, (n_part,), (1,))\n        g_out = _view(out, fx.BFloat16, (n_out, V_DIM), (V_DIM, 1))\n\n        base = by * fx.Int32(STRIDE)\n        out_base = g_desc[base]\n        n_rows = g_desc[base + fx.Int32(1)]\n        n_splits = g_desc[base + fx.Int32(2)]\n        last = n_rows - fx.Int32(1)\n        x = (x > last).select(last, x)\n\n        reg_layout = fx.make_layout(VEC, 1)\n        atom = fx.make_copy_atom(fx.rocdl.BufferCopy128b(), fx.Float32)\n        neg_inf = fx.Float32(float(\"-inf\"))\n\n        lses = []\n        parts = []\n        for j in fx.range_constexpr(MS):\n            prow = g_desc[base + fx.Int32(DESC_HEAD + j)] + x\n            l = g_lse[prow]\n            if j >= 2:\n                l = (fx.Int32(j) < n_splits).select(l, neg_inf)\n            lses.append(l)\n            tiled = fx.logical_divide(fx.slice(g_part, (prow, None)), reg_layout)\n            frag = fx.make_rmem_tensor(reg_layout, fx.Float32)\n            fx.copy_atom_call(atom, fx.slice(tiled, (None, lane)), frag)\n            parts.append(frag.load())\n\n        m = lses[0]\n        for j in fx.range_constexpr(1, MS):\n            m = m.maximumf(lses[j])\n        zero = fx.Float32(0.0)\n        finite = m > neg_inf\n        m = finite.select(m, zero)\n\n        acc = [zero for _ in fx.range_constexpr(VEC)]\n        den = zero\n        for j in fx.range_constexpr(MS):\n            w = fx.Float32(fx.rocdl.exp2(T.f32, ((lses[j] - m) * _LOG2E).ir_value()))\n            den = den + w\n            v = parts[j]\n            acc = [acc[i] + w * v[i] for i in fx.range_constexpr(VEC)]\n        inv = fx.Float32((den > zero).select(fx.rocdl.rcp(T.f32, den.ir_value()), zero))\n\n        res = fx.make_rmem_tensor(reg_layout, fx.BFloat16)\n        res.store(\n            fx.Vector.from_elements(\n                [(acc[i] * inv).to(fx.BFloat16) for i in fx.range_constexpr(VEC)], dtype=fx.BFloat16\n            )\n        )\n        out_atom = fx.make_copy_atom(fx.rocdl.BufferCopy64b(), fx.BFloat16)\n        out_tiled = fx.logical_divide(fx.slice(g_out, (out_base + x, None)), reg_layout)\n        fx.copy_atom_call(out_atom, res, fx.slice(out_tiled, (None, lane)))\n\n    @flyc.jit\n    def launch(\n        part: fx.Pointer,\n        lse: fx.Pointer,\n        desc: fx.Pointer,\n        out: fx.Pointer,\n        n_part: fx.Int32,\n        n_out: fx.Int32,\n        n_tiles: fx.Int32,\n        n_blocks: fx.Int32,\n        stream: fx.Stream = fx.Stream(None),  # noqa: B008\n    ):\n        reduce_kernel(part, lse, desc, out, n_part, n_out, n_tiles).launch(\n            grid=(n_blocks, n_tiles, 1), block=(NUM_THREADS, 1, 1), stream=stream\n        )\n\n    return launch\n\n\n# --- FlyDSL fused bf16 -> fp8 e4m3fn cast of q, k and v in one launch. Each tensor is a flat run of CAST_VEC-wide\n# rows; block b owns unroll x CAST_THREADS consecutive rows of one tensor (q's blocks first, then k's, then v's), each\n# lane one bf16 row load and one fp8 row store per step. The buffers' sizes bound the tails.\nCAST_THREADS = 256\nCAST_VEC = 8\nCAST_UNROLL = 2  # rows per lane\n# The bf16 inputs are read once, so they load nontemporal and leave the caches to the fp8 outputs the ASM reads\n# next; nontemporal stores would speed the cast but slow the ASM by more, so the stores keep the default policy.\nCAST_LOAD_POLICY = 2  # slc: nontemporal\n\n\ndef _flat_view(ptr, dtype, n_rows, width):\n    t = fx.make_view(fx.recast_iter(dtype, ptr), fx.make_layout((n_rows, width), (width, 1)))\n    return fx.rocdl.make_buffer_tensor(t, max_size=False)\n\n\n@functools.cache\ndef compile_cast(unroll: int):\n    rows_per_block = CAST_THREADS * unroll\n\n    @flyc.kernel(known_block_size=[CAST_THREADS, 1, 1])\n    def cast_kernel(\n        q: fx.Pointer, k: fx.Pointer, v: fx.Pointer,  # bf16\n        qo: fx.Pointer, ko: fx.Pointer, vo: fx.Pointer,  # fp8 bytes, as i32 pairs\n        nq: fx.Int32, nk: fx.Int32, nv: fx.Int32,  # 8-element rows\n        bq: fx.Int32, bk: fx.Int32,  # blocks of q, of q and k\n    ):  # fmt: skip\n        tid = fx.thread_idx.x\n        bx = fx.block_idx.x\n        reg_in = fx.make_layout(CAST_VEC, 1)\n        reg_out = fx.make_layout(2, 1)\n        atom_in = fx.make_copy_atom(fx.rocdl.BufferCopy128b(CAST_LOAD_POLICY), fx.BFloat16)\n        atom_out = fx.make_copy_atom(fx.rocdl.BufferCopy64b(), fx.Int32)\n\n        def body(src, dst, n, b):\n            g_in = _flat_view(src, fx.BFloat16, n, CAST_VEC)\n            g_out = _flat_view(dst, fx.Int32, n, 2)\n            row0 = b * fx.Int32(rows_per_block) + tid\n            vals = []\n            for u in fx.range_constexpr(unroll):\n                row = row0 + fx.Int32(u * CAST_THREADS)\n                frag = fx.make_rmem_tensor(reg_in, fx.BFloat16)\n                fx.copy_atom_call(atom_in, fx.slice(g_in, (row, None)), frag)\n                vals.append(frag.load())\n            for u in fx.range_constexpr(unroll):\n                row = row0 + fx.Int32(u * CAST_THREADS)\n                x = vals[u]\n                f = [x[i].to(fx.Float32) for i in fx.range_constexpr(CAST_VEC)]\n                words = []\n                for w in fx.range_constexpr(2):\n                    lo = fx.rocdl.cvt_pk_fp8_f32(\n                        T.i32, f[4 * w].ir_value(), f[4 * w + 1].ir_value(), fx.Int32(0).ir_value(), False\n                    )\n                    hi = fx.rocdl.cvt_pk_fp8_f32(\n                        T.i32, f[4 * w + 2].ir_value(), f[4 * w + 3].ir_value(), lo, True\n                    )\n                    words.append(fx.Int32(hi))\n                res = fx.make_rmem_tensor(reg_out, fx.Int32)\n                res.store(fx.Vector.from_elements(words, dtype=fx.Int32))\n                fx.copy_atom_call(atom_out, res, fx.slice(g_out, (row, None)))\n\n        if bx < bq:\n            body(q, qo, nq, bx)\n        elif bx < bk:\n            body(k, ko, nk, bx - bq)\n        else:\n            body(v, vo, nv, bx - bk)\n\n    @flyc.jit\n    def launch(\n        q: fx.Pointer, k: fx.Pointer, v: fx.Pointer,\n        qo: fx.Pointer, ko: fx.Pointer, vo: fx.Pointer,\n        nq: fx.Int32, nk: fx.Int32, nv: fx.Int32,\n        bq: fx.Int32, bk: fx.Int32, n_blocks: fx.Int32,\n        stream: fx.Stream = fx.Stream(None),  # noqa: B008\n    ):  # fmt: skip\n        assert unroll >= 1  # the unroll is a closure int the launcher reads, so it is part of the cache key\n        cast_kernel(q, k, v, qo, ko, vo, nq, nk, nv, bq, bk).launch(\n            grid=(n_blocks, 1, 1), block=(CAST_THREADS, 1, 1), stream=stream\n        )\n\n    return launch\n\n\ndef cast_fp8(q, k, v, qf, kf, vf, unroll: int):\n    \"\"\"q, k, v (contiguous bf16) -> qf, kf, vf (contiguous fp8 e4m3fn) in one launch.\"\"\"\n    nq, nk, nv = q.numel() // CAST_VEC, k.numel() // CAST_VEC, v.numel() // CAST_VEC\n    rows = CAST_THREADS * unroll\n    cb = lambda n: (n + rows - 1) // rows  # noqa: E731\n    bq, bk, bv = cb(nq), cb(nk), cb(nv)\n    compile_cast(unroll)(\n        flyc.from_c_void_p(fx.BFloat16, q.data_ptr()),\n        flyc.from_c_void_p(fx.BFloat16, k.data_ptr()),\n        flyc.from_c_void_p(fx.BFloat16, v.data_ptr()),\n        flyc.from_c_void_p(fx.Int32, qf.data_ptr()),\n        flyc.from_c_void_p(fx.Int32, kf.data_ptr()),\n        flyc.from_c_void_p(fx.Int32, vf.data_ptr()),\n        nq, nk, nv, bq, bq + bk, bq + bk + bv,\n        fx.Stream(torch.cuda.current_stream(q.device)),\n    )  # fmt: skip\n\n\nN_CU = 256\nKV_BLOCK = 128\n\n\ndef _own_items(n_q: int, n_kv: int, chunks: int, c_item: int):\n    \"\"\"One head per CU list: each head's KV_BLOCK-key blocks, tile after tile, cut into `chunks` pieces at the same\n    blocks for every head, balancing blocks + c_item per item. Returns per chunk a list of\n    (tile, q_start, q_end, kv_start, kv_end, diag).\"\"\"\n    prefix = n_kv - n_q\n    n_tiles = (n_q + TILE_Q - 1) // TILE_Q\n    tiles = []\n    for t in range(n_tiles):\n        qs, qe = t * TILE_Q, min(n_q, (t + 1) * TILE_Q)\n        kv_end = min((prefix + qe + KV_BLOCK - 1) // KV_BLOCK * KV_BLOCK, n_kv)\n        nb = (kv_end + KV_BLOCK - 1) // KV_BLOCK\n        cut_max = (prefix + qs + 1) // KV_BLOCK  # every row sees all keys before a cut at block <= cut_max\n        tiles.append((qs, qe, kv_end, nb, cut_max))\n\n    def pack(m):\n        out, cur, cost = [], [], 0\n        t, b = 0, 0  # next block b of tile t\n        while t < n_tiles:\n            qs, qe, kv_end, nb, cut_max = tiles[t]\n            room = m - cost - c_item\n            rest = nb - b\n            if rest <= room:\n                cur.append((t, b, nb))\n                cost += c_item + rest\n                t, b = t + 1, 0\n                continue\n            e = min(b + max(room, 0), cut_max)\n            if e > b:\n                cur.append((t, b, e))\n                b = e\n            if not cur:\n                return None\n            out.append(cur)\n            cur, cost = [], 0\n        if cur:\n            out.append(cur)\n        return out\n\n    lo, hi = 1, sum(tl[3] for tl in tiles) + c_item * (n_tiles + 1)\n    while lo < hi:\n        mid = (lo + hi) // 2\n        r = pack(mid)\n        if r is not None and len(r) <= chunks:\n            hi = mid\n        else:\n            lo = mid + 1\n    res = pack(lo)\n    items = []\n    for ch in res:\n        its = []\n        for t, b, e in ch:\n            qs, qe, kv_end, nb, _ = tiles[t]\n            ks = b * KV_BLOCK\n            diag = e == nb\n            ke = kv_end if diag else e * KV_BLOCK\n            its.append((t, qs, qe, ks, ke, diag))\n        items.append(its)\n    return items\n\n\ndef _aligned_items(n_q: int, n_kv: int, chunks: int, c_item: int, spare: bool = False):\n    \"\"\"Like _own_items, but every tile is cut at the same R ranges of X blocks, list r * n_tiles + t holding range r of\n    tile t so one range's lists read the same keys together; the diagonal remainders fill the other lists (with `spare`\n    also one walking its cluster's heads, cost counted per head). Returns (max cost, items, heads per list) or None.\"\"\"\n    prefix = n_kv - n_q\n    n_tiles = (n_q + TILE_Q - 1) // TILE_Q\n    tiles = []\n    for t in range(n_tiles):\n        qs, qe = t * TILE_Q, min(n_q, (t + 1) * TILE_Q)\n        kv_end = min((prefix + qe + KV_BLOCK - 1) // KV_BLOCK * KV_BLOCK, n_kv)\n        nb = (kv_end + KV_BLOCK - 1) // KV_BLOCK\n        cut_max = (prefix + qs + 1) // KV_BLOCK\n        tiles.append((qs, qe, kv_end, nb, cut_max))\n    cm = min(tl[4] for tl in tiles)\n\n    def fill(R, X, m):\n        \"\"\"Tail lists under cost m: the L shortest tails whole, one per list (when there are more tails than lists),\n        the others cut into the room left, every cut but the diagonal's at most cut_max.\"\"\"\n        L = chunks - R * n_tiles\n        order = sorted(range(n_tiles), key=lambda t: tiles[t][3])\n        whole, rest = order[:L], order[L:]\n        lists = [[tiles[t][3] - R * X + c_item, [(t, R * X, tiles[t][3])], 1] for t in whole]\n        if spare:\n            lists.append([0, [], 3])\n        if any(c > m for c, _, _ in lists):\n            return None\n        for t in reversed(rest):\n            b, nb, cut = R * X, tiles[t][3], tiles[t][4]\n            for ls in sorted(lists, key=lambda ls: ls[0] - m // ls[2]):\n                room = m // ls[2] - ls[0] - c_item\n                if room <= 0:\n                    continue\n                if nb - b <= room:\n                    ls[1].append((t, b, nb))\n                    ls[0] += nb - b + c_item\n                    b = nb\n                    break\n                e = min(b + room, cut)\n                if e > b:\n                    ls[1].append((t, b, e))\n                    ls[0] += e - b + c_item\n                    b = e\n            if b < nb:\n                return None\n        return lists\n\n    best = None\n    for R in range(1, (chunks - 1) // n_tiles + 1):\n        L = chunks - R * n_tiles\n        if L < 1:\n            break\n        for X in range(1, cm // R + 1):\n            tails = sorted(((tiles[t][3] - R * X, t) for t in range(n_tiles)), reverse=True)\n            if n_tiles <= L:\n                bins = [[0, []] for _ in range(L)]\n                for nbk, t in tails:  # longest tail first into the lightest list\n                    b = min(bins, key=lambda bn: bn[0])\n                    b[0] += nbk + c_item\n                    b[1].append((t, R * X, tiles[t][3]))\n                bins = [[bn[0], sorted(bn[1]), 1] for bn in bins if bn[1]]\n            else:\n                # the tails' total over the L lists bounds the cost from below; a cost above the best so far loses\n                tot = sum(nbk + c_item for nbk, _ in tails)\n                m = max(X + c_item, (3 * tot + 3 * L) // (3 * L + 1) if spare else (tot + L - 1) // L)\n                cap = 4 * (X + c_item) + sum(tl[3] for tl in tiles)\n                if best is not None:\n                    cap = min(cap, best[0][0] + 1)\n                while (bins := fill(R, X, m)) is None and m < cap:\n                    m += 1\n                if bins is None:\n                    continue\n                bins = [bn for bn in bins if bn[1]]\n            cost = max(X + c_item, max(bn[0] * bn[2] for bn in bins))\n            splits = max(R + sum(1 for bn in bins for it in bn[1] if it[0] == t) for t in range(n_tiles))\n            key = (cost, splits, -R * X)\n            if best is None or key < best[0]:\n                best = (key, R, X, [bn[1] for bn in bins], [bn[2] for bn in bins])\n    if best is None:\n        return None\n    (cost, _, _), R, X, tail_lists, tail_hpl = best\n    items = []\n    for r in range(R):\n        for t in range(n_tiles):\n            qs, qe, kv_end, nb, cut_max = tiles[t]\n            assert (r + 1) * X <= cut_max\n            items.append([(t, qs, qe, r * X * KV_BLOCK, (r + 1) * X * KV_BLOCK, False)])\n    for its in tail_lists:\n        lst = []\n        for t, b, e in its:\n            qs, qe, kv_end, nb, cut_max = tiles[t]\n            diag = e == nb\n            assert diag or e <= cut_max\n            lst.append((t, qs, qe, b * KV_BLOCK, kv_end if diag else e * KV_BLOCK, diag))\n        items.append(lst)\n    hpl = [1] * (R * n_tiles) + tail_hpl\n    assert len(items) - (3 in hpl) <= chunks and hpl.count(3) <= 1\n    for t in range(n_tiles):  # every block of every tile exactly once, one diagonal piece per tile\n        cov = sorted((ks, ke) for its in items for (tt, _, _, ks, ke, _) in its if tt == t)\n        assert cov[0][0] == 0 and cov[-1][1] == tiles[t][2]\n        assert all(a[1] == b[0] for a, b in zip(cov, cov[1:]))\n        assert sum(1 for its in items for it in its if it[0] == t and it[5]) == 1\n    return cost, items, hpl\n\n\ndef _items_cost(items, c_item):\n    return max(\n        sum((ke - ks + KV_BLOCK - 1) // KV_BLOCK + c_item for (_, _, _, ks, ke, _) in its) for its in items\n    )\n\n\ndef _place(n_q: int, n_kv: int, items, hpl, device):\n    \"\"\"work_indptr / work_info and the reduce's descriptors. Chunk k (its pieces items[k]) runs on 3 CU lists of each\n    cluster, one per head, when hpl[k] == 1, or on one list walking the cluster's 3 heads per piece when hpl[k] == 3.\n    Cluster c's lists take the workgroups w with w % 8 in {2c, 2c + 1}: one XCD pair on any stream.\"\"\"\n    # which chunks cover each tile, in line order\n    per_tile = {}\n    for k, its in enumerate(items):\n        for it in its:\n            per_tile.setdefault(it[0], []).append(k)\n    slot_of = {}\n    n_slots = 0\n    desc_tiles = []\n    for t in sorted(per_tile):\n        ks = per_tile[t]\n        if len(ks) > 1:\n            for j, k in enumerate(ks):\n                slot_of[(t, k)] = n_slots\n                n_slots += 1\n            desc_tiles.append((t, [slot_of[(t, k)] for k in ks]))\n    lists = [[] for _ in range(N_CU)]\n    n_clusters = N_HEADS // 3\n    xcd_per_cluster = 8 // n_clusters\n    for cl in range(n_clusters):\n        wgs = [\n            x + 8 * i\n            for x in range(cl * xcd_per_cluster, (cl + 1) * xcd_per_cluster)\n            for i in range(N_CU // 8)\n        ]\n        pos = 0\n        for k, its in enumerate(items):\n            groups = (\n                [[h] for h in range(3 * cl, 3 * cl + 3)] if hpl[k] == 1 else [list(range(3 * cl, 3 * cl + 3))]\n            )\n            for hs in groups:\n                w = wgs[pos]\n                pos += 1\n                for h, (t, qs, qe, ks, ke, diag) in [(h, it) for it in its for h in hs]:\n                    ploc = slot_of[(t, k)] * TILE_Q if (t, k) in slot_of else -1\n                    koff = 0 if diag else n_kv - ke\n                    lists[w].append([0, ploc, qs, qe, ks, ke, koff, ((h + 1) << 16) | h])\n    indptr = [0]\n    info = []\n    for lst in lists:\n        info += lst\n        indptr.append(len(info))\n    max_splits = max((len(s) for _, s in desc_tiles), default=0)\n    desc = []\n    for t, slots in desc_tiles:\n        qs, qe = t * TILE_Q, min(n_q, (t + 1) * TILE_Q)\n        ps = [s * TILE_Q * N_HEADS for s in slots]\n        ps += [ps[0]] * (max_splits - len(ps))\n        desc += [qs * N_HEADS, (qe - qs) * N_HEADS, len(slots)] + ps\n    work_indptr = torch.tensor(indptr, dtype=torch.int32, device=device)\n    work_info = torch.tensor(info, dtype=torch.int32, device=device).view(-1)\n    desc_t = torch.tensor(desc or [0], dtype=torch.int32, device=device)\n    indices = torch.arange(n_kv, dtype=torch.int32, device=device)\n    one = torch.ones((), dtype=torch.float32, device=device)\n    n_partial = max(n_slots, 1) * TILE_Q\n    launch = compile_reduce(max_splits) if desc_tiles else None\n    return work_indptr, work_info, indices, one, n_partial, desc_t, len(desc_tiles), launch\n\n\ndef _d1a(work_indptr, work_info):\n    \"\"\"Permute aiter's whole CU lists so each 3-head cluster sits on two XCDs (WGs equal mod 8 share an XCD).\"\"\"\n    wi = work_indptr.cpu().tolist()\n    info = work_info.cpu().view(-1, 8).tolist()\n    n = len(wi) - 1\n    clusters = {}\n    for l in range(n):\n        cs = {(info[w][7] & 0xFFFF) // 3 for w in range(wi[l], wi[l + 1])}\n        if len(cs) != 1:\n            return work_indptr, work_info\n        clusters.setdefault(cs.pop(), []).append(l)\n    if n != N_CU or len(clusters) != 4 or any(len(v) != 64 for v in clusters.values()):\n        return work_indptr, work_info\n    new = [None] * n\n    for c, ls in clusters.items():\n        for i, l in enumerate(ls):\n            new[(i // 2) * 8 + 2 * c + (i % 2)] = info[wi[l] : wi[l + 1]]\n    indptr, flat = [0], []\n    for lst in new:\n        for it in lst:\n            flat += it\n        indptr.append(indptr[-1] + len(lst))\n    rest = work_info.cpu().view(-1)[len(flat) :].tolist()\n    dev = work_info.device\n    return (\n        torch.tensor(indptr, dtype=torch.int32, device=dev),\n        torch.tensor(flat + rest, dtype=torch.int32, device=dev).view(work_info.shape),\n    )\n\n\n@functools.cache\ndef _fp8_plan(n_q: int, n_kv: int, device, permute: bool = True):\n    \"\"\"aiter's causal persistent plan for one sequence of n_q queries over n_kv keys, and the reduce's descriptors.\n\n    The planner writes its buffers with a synchronous hipMemcpy on the null stream, which does not order with the\n    current stream: into device memory just freed it races with writes still queued there. So it plans on the host\n    and the CU lists go to the device with .to(), in stream order.\"\"\"\n    from aiter import get_ps_metadata_info_v1, get_ps_metadata_v1\n\n    qo_cpu = torch.tensor([0, n_q], dtype=torch.int32)\n    kv_cpu = torch.tensor([0, n_kv], dtype=torch.int32)\n    sizes = get_ps_metadata_info_v1(batch_size=1, num_head_k=N_HEADS, max_qlen=n_q, qlen_granularity=TILE_Q)\n    buffers = [torch.zeros(size, dtype=dtype) for size, dtype in sizes]\n    work_metadata, work_indptr, work_info, reduce_indptr, reduce_final_map, reduce_partial_map = buffers\n    get_ps_metadata_v1(\n        qo_cpu, kv_cpu, kv_cpu.diff(), 1, N_HEADS,\n        work_metadata, work_indptr, work_info, reduce_indptr, reduce_final_map, reduce_partial_map,\n        qhead_granularity=1, qlen_granularity=TILE_Q, kvlen_granularity=128, block_size=1, is_causal=True,\n    )  # fmt: skip\n    if permute:\n        work_indptr, work_info = _d1a(work_indptr, work_info)\n    work_indptr, work_info = work_indptr.to(device), work_info.to(device)\n    indptr = reduce_indptr.cpu().tolist()\n    final = reduce_final_map.cpu().view(-1, 2).tolist()\n    partial = reduce_partial_map.cpu().tolist()\n    tiles = [(t, indptr[t], indptr[t + 1]) for t in range(len(indptr) - 1) if indptr[t + 1] - indptr[t] > 1]\n    max_splits = max((b - a for _, a, b in tiles), default=0)\n    rows = [partial[j] for _, a, b in tiles for j in range(a, b)]\n    n_partial = (max(rows) + TILE_Q) if rows else TILE_Q\n    desc = []\n    for t, a, b in tiles:\n        q_start, q_end = final[t]\n        ps = [partial[j] * N_HEADS for j in range(a, b)]\n        ps += [ps[0]] * (max_splits - len(ps))\n        desc += [q_start * N_HEADS, (q_end - q_start) * N_HEADS, b - a] + ps\n    desc_t = torch.tensor(desc or [0], dtype=torch.int32, device=device)\n    indices = torch.arange(n_kv, dtype=torch.int32, device=device)\n    one = torch.ones((), dtype=torch.float32, device=device)\n    launch = compile_reduce(max_splits) if tiles else None\n    return work_indptr, work_info, indices, one, n_partial, desc_t, len(tiles), launch\n\n\nOWN_PLAN_CHUNKS = 21  # one list per head and chunk nearly fills the CUs, each cluster's lists on one XCD pair\n# Sequences of fewer query tiles than OWN_PLAN_CHUNKS take the one-head key-aligned plan, with its spare 3-head list,\n# when its longest list is no longer than the unaligned one-head plan's; ALIGNED1_C_ITEM is the per-item cost of both.\nALIGNED1_C_ITEM = 6\n# The others of fewer query tiles than a cluster has CU lists take a key-aligned plan whose every list walks its\n# cluster's 3 heads (one-head lists lose clock there), when its longest list is within ALIGNED3_SLACK blocks of\n# aiter's; ALIGNED3_C_ITEM is the per-item cost its lists are balanced on.\nALIGNED3_MAX_TILES = 64\nALIGNED3_C_ITEM = 6\nALIGNED3_SLACK = 6\n\n\n@functools.cache\ndef _plan(n_q: int, n_kv: int, device):\n    n_tiles = (n_q + TILE_Q - 1) // TILE_Q\n    if n_tiles <= OWN_PLAN_CHUNKS - 1:\n        al = _aligned_items(n_q, n_kv, OWN_PLAN_CHUNKS, ALIGNED1_C_ITEM, spare=True)\n        own = _own_items(n_q, n_kv, OWN_PLAN_CHUNKS, ALIGNED1_C_ITEM)\n        if al is not None and al[0] <= _items_cost(own, ALIGNED1_C_ITEM):\n            return _place(n_q, n_kv, al[1], al[2], device)\n    if n_tiles < ALIGNED3_MAX_TILES:\n        al = _aligned_items(n_q, n_kv, N_CU // 4, ALIGNED3_C_ITEM)\n        if al is not None:\n            wi, info = _fp8_plan(n_q, n_kv, device)[:2]\n            wi, info = wi.cpu().tolist(), info.cpu().view(-1, 8).tolist()\n            aiter_cost = (\n                max(\n                    sum((it[5] - it[4] + KV_BLOCK - 1) // KV_BLOCK for it in info[wi[l] : wi[l + 1]])\n                    for l in range(len(wi) - 1)\n                )\n                // 3\n            )\n            if _items_cost(al[1], 0) <= aiter_cost + ALIGNED3_SLACK:\n                return _place(n_q, n_kv, al[1], [3] * len(al[1]), device)\n    return _fp8_plan(n_q, n_kv, device)\n\n\ndef run(*, q, k, v, cu_seqlens_q, qkv_fp8, cu_seqlens_k, sm_scale, output):\n    offsets_k = cu_seqlens_q if cu_seqlens_k is None else cu_seqlens_k\n    n_q, n_kv = q.shape[0], k.shape[0]\n    if cu_seqlens_q.shape[0] != 2:\n        from aiter import flash_attn_varlen_func\n\n        # the row counts bound the longest sequence's without reading the offsets\n        flash_attn_varlen_func(\n            q, k, v, cu_seqlens_q, offsets_k, n_q, n_kv, softmax_scale=sm_scale, causal=True, out=output\n        )\n        return\n\n    from aiter import mla_prefill_ps_asm_fwd\n\n    work_indptr, work_info, indices, one, n_partial, desc, n_tiles, launch = _plan(n_q, n_kv, q.device)\n    fp8 = torch.float8_e4m3fn\n    if q.is_contiguous() and k.is_contiguous() and v.is_contiguous():\n        nq, nk = q.numel(), k.numel()\n        buf = torch.empty(nq + nk + v.numel(), dtype=fp8, device=q.device)\n        qf, kf, vf = buf[:nq].view(q.shape), buf[nq : nq + nk].view(k.shape), buf[nq + nk :].view(v.shape)\n        cast_fp8(q, k, v, qf, kf, vf, CAST_UNROLL)\n    else:\n        qf, kf, vf = q.to(fp8), k.to(fp8), v.to(fp8)\n    logits = torch.empty((n_partial, N_HEADS, V_DIM), dtype=torch.float32, device=q.device)\n    lse = torch.empty((n_partial, N_HEADS), dtype=torch.float32, device=q.device)\n    mla_prefill_ps_asm_fwd(\n        qf, kf, vf, cu_seqlens_q, offsets_k, indices, work_indptr, work_info, n_q, sm_scale, True,\n        logits, lse, output, one, one, one,\n    )  # fmt: skip\n    if n_tiles:\n        n_rows = n_partial * N_HEADS\n        launch(\n            flyc.from_c_void_p(fx.Float32, logits.data_ptr()),\n            flyc.from_c_void_p(fx.Float32, lse.data_ptr()),\n            flyc.from_c_void_p(fx.Int32, desc.data_ptr()),\n            flyc.from_c_void_p(fx.BFloat16, output.data_ptr()),\n            n_rows,\n            n_q * N_HEADS,\n            n_tiles,\n            (TILE_Q * N_HEADS) // ROWS_PER_BLOCK,\n            fx.Stream(torch.cuda.current_stream(output.device)),\n        )\n"
+      }
+    ]
+  }
+}

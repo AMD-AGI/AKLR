@@ -5,14 +5,26 @@
 
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
+    DTYPE_TRAITS,
     CuSeqlensDistribution,
+    DeterminismLevel,
     DType,
     FiniteDistribution,
     IntRangeDistribution,
     Mxfp8NopeRowsDistribution,
+    SqnrBound,
     ToleranceBound,
 )
-from aklr.core.contract.spec import DTypeSpec, LayoutVariant, LayoutVariantsSpec, ScalarSpec, TensorSpec, axis
+from aklr.core.contract.spec import (
+    CompareSpec,
+    DTypeSpec,
+    LayoutVariant,
+    LayoutVariantsSpec,
+    ScalarSpec,
+    TensorSpec,
+    attr,
+    axis,
+)
 
 
 def _tensor(description, shape, dtype, distribution, *, lifetime="per_call"):
@@ -107,4 +119,231 @@ SPARSE_PREFILL_MXFP8 = OpContract(
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
 )
 
-CONTRACTS = (SPARSE_PREFILL_MXFP8,)
+_ROWS_LIMIT = 2**20  # one prefill's rows: sglang attends at most 131072 keys at once
+_BF16_OR_SAME = DTypeSpec(same_as_tensor="q")
+
+MLA_PREFILL_VARLEN = OpContract(
+    contract_id="mla_prefill_varlen@1.0",
+    description=(
+        "MLA's prefill attention once kv_b has expanded the latent keys, every head on its own: sequence s's "
+        "queries are q's rows cu_seqlens_q[s]:cu_seqlens_q[s + 1], its keys and values the rows "
+        "cu_seqlens_k[s]:cu_seqlens_k[s + 1] of k and v (with no prefix, the queries' own rows). Causal, aligned "
+        "at the end: query i of a sequence of Lq queries over Lk keys reads keys 0 .. Lk - Lq + i. Logits "
+        "q . k * sm_scale over qk_head_dim; output the softmax-weighted sum of v. With qkv_fp8 a kernel may "
+        "round q, k and v to float8_e4m3fn first, as aiter's fp8 prefill does."
+    ),
+    op_type="mla_prefill",
+    axes={
+        "n_q": axis("Query rows, every sequence's back to back.", 1, _ROWS_LIMIT, is_var=True, any_size=True),
+        "n_kv": axis(
+            "Key and value rows, every sequence's back to back.", 1, _ROWS_LIMIT, is_var=True, any_size=True
+        ),
+        "n_offsets": axis("Sequence offsets: sequences + 1.", 2, 4097, is_var=True, any_size=True),
+        "n_heads": axis("Heads on this rank; k and v carry q's.", 1, 128),
+        "qk_head_dim": axis("Values per q and k head: the no-rope and rope parts.", 64, 256, multiple_of=64),
+        "v_head_dim": axis("Values per v and output head.", 64, 256, multiple_of=64),
+    },
+    attrs={
+        "has_prefix": attr(
+            "Whether cu_seqlens_k is passed: the sequences' keys start with a cached prefix.",
+            False,
+            True,
+            default=False,
+            abbrev="prefix",
+        ),
+        "qkv_fp8": attr(
+            "Whether a kernel may round q, k and v to float8_e4m3fn, scale 1, before it attends.",
+            True,
+            False,
+            default=True,
+            param_name="qkv_fp8",
+            abbrev="fp8",
+        ),
+    },
+    constraints=(
+        "n_offsets - 1 <= n_q",
+        "has_prefix or n_kv == n_q",
+        # each sequence's keys are at least all the queries: none of its queries reads no key
+        "(not has_prefix) or n_kv >= (n_offsets - 1) * n_q",
+    ),
+    inputs={
+        "q": TensorSpec(
+            description="Queries.",
+            shape=("n_q", "n_heads", "qk_head_dim"),
+            dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
+            distribution=FiniteDistribution(),
+        ),
+        "k": TensorSpec(
+            description="Keys.",
+            shape=("n_kv", "n_heads", "qk_head_dim"),
+            dtype=_BF16_OR_SAME,
+            distribution=FiniteDistribution(),
+        ),
+        "v": TensorSpec(
+            description="Values.",
+            shape=("n_kv", "n_heads", "v_head_dim"),
+            dtype=_BF16_OR_SAME,
+            distribution=FiniteDistribution(),
+        ),
+        "cu_seqlens_q": TensorSpec(
+            description="Where each sequence's queries start in q, then where the last ends.",
+            shape=("n_offsets",),
+            dtype=DTypeSpec(any_of=(DType.INT32,)),
+            distribution=CuSeqlensDistribution(min_seqlen=1, total="n_q"),
+        ),
+        "cu_seqlens_k": TensorSpec(
+            description="Where each sequence's keys start in k and v, then where the last ends.",
+            shape=("n_offsets",),
+            dtype=DTypeSpec(any_of=(DType.INT32,)),
+            present_when="has_prefix",
+            distribution=CuSeqlensDistribution(min_seqlen="n_q", total="n_kv"),
+        ),
+        # always passed: present_when gives the api default None, which declines
+        "sm_scale": ScalarSpec(
+            description="Multiplies every logit.",
+            dtype=DType.FLOAT32,
+            interval=(2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value),
+            # MLA's, 1/sqrt(128 + 64): at 1, N(0, 1) logits over 192 values reach +-60, past aiter's fp8 prefill
+            default=192**-0.5,
+            present_when="True",
+        ),
+    },
+    outputs={
+        "output": TensorSpec(
+            description="The softmax-weighted sum of the values each query reads.",
+            shape=("n_q", "n_heads", "v_head_dim"),
+            dtype=_BF16_OR_SAME,
+            # rounding q, k and v to fp8 leaves sglang's own path about 26 dB from the exact result
+            error_bounds=(
+                ("qkv_fp8", SqnrBound(min_sqnr_db=20.0)),
+                (None, ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2)),
+            ),
+        ),
+    },
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+)
+
+MLA_PREFILL_VARLEN_LSE = OpContract(
+    contract_id="mla_prefill_varlen_lse@1.0",
+    description=(
+        "mla_prefill_varlen that also returns each query's log-sum-exp, the passes of a chunked prefix that "
+        "sglang merges: sequence s's queries are q's rows cu_seqlens_q[s]:cu_seqlens_q[s + 1], its keys and "
+        "values the rows cu_seqlens_k[s]:cu_seqlens_k[s + 1] of k and v (with no prefix, the queries' own rows). "
+        "With causal, aligned at the end: query i of a sequence of Lq queries over Lk keys reads keys "
+        "0 .. Lk - Lq + i; without, every key of its sequence (a prefix chunk, each of whose keys precedes every "
+        "query). Logits q . k * sm_scale over "
+        "qk_head_dim; output the softmax-weighted sum of v, lse the natural log of the sum of exp(logit) over the "
+        "keys read, per query row and head. With qkv_fp8 a kernel may round q, k and v to float8_e4m3fn first, "
+        "as aiter's fp8 prefill does."
+    ),
+    op_type="mla_prefill",
+    axes={
+        "n_q": axis("Query rows, every sequence's back to back.", 1, _ROWS_LIMIT, is_var=True, any_size=True),
+        "n_kv": axis(
+            "Key and value rows, every sequence's back to back.", 1, _ROWS_LIMIT, is_var=True, any_size=True
+        ),
+        "n_offsets": axis("Sequence offsets: sequences + 1.", 2, 4097, is_var=True, any_size=True),
+        "n_heads": axis("Heads on this rank; k and v carry q's.", 1, 128),
+        "qk_head_dim": axis("Values per q and k head: the no-rope and rope parts.", 64, 256, multiple_of=64),
+        "v_head_dim": axis("Values per v and output head.", 64, 256, multiple_of=64),
+    },
+    attrs={
+        "has_prefix": attr(
+            "Whether cu_seqlens_k is passed: the sequences' keys are not the queries' rows (a cached prefix and, "
+            "with causal, the queries' own keys after it).",
+            False,
+            True,
+            default=False,
+            abbrev="prefix",
+        ),
+        "qkv_fp8": attr(
+            "Whether a kernel may round q, k and v to float8_e4m3fn, scale 1, before it attends.",
+            True,
+            False,
+            default=True,
+            param_name="qkv_fp8",
+            abbrev="fp8",
+        ),
+        "causal": attr(
+            "Whether the queries attend causally, aligned at the end of their keys, else to every key.",
+            True,
+            False,
+            default=True,
+            param_name="causal",
+        ),
+    },
+    constraints=(
+        "n_offsets - 1 <= n_q",
+        "has_prefix or n_kv == n_q",
+        # causal: each sequence's keys are at least all the queries, so none of its queries reads no key
+        "(not has_prefix) or (not causal) or n_kv >= (n_offsets - 1) * n_q",
+        "(not has_prefix) or n_kv >= n_offsets - 1",
+    ),
+    inputs={
+        "q": TensorSpec(
+            description="Queries.",
+            shape=("n_q", "n_heads", "qk_head_dim"),
+            dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
+            distribution=FiniteDistribution(),
+        ),
+        "k": TensorSpec(
+            description="Keys.",
+            shape=("n_kv", "n_heads", "qk_head_dim"),
+            dtype=_BF16_OR_SAME,
+            distribution=FiniteDistribution(),
+        ),
+        "v": TensorSpec(
+            description="Values.",
+            shape=("n_kv", "n_heads", "v_head_dim"),
+            dtype=_BF16_OR_SAME,
+            distribution=FiniteDistribution(),
+        ),
+        "cu_seqlens_q": TensorSpec(
+            description="Where each sequence's queries start in q, then where the last ends.",
+            shape=("n_offsets",),
+            dtype=DTypeSpec(any_of=(DType.INT32,)),
+            distribution=CuSeqlensDistribution(min_seqlen=1, total="n_q"),
+        ),
+        "cu_seqlens_k": TensorSpec(
+            description="Where each sequence's keys start in k and v, then where the last ends.",
+            shape=("n_offsets",),
+            dtype=DTypeSpec(any_of=(DType.INT32,)),
+            present_when="has_prefix",
+            distribution=CuSeqlensDistribution(min_seqlen=1, total="n_kv"),
+        ),
+        "sm_scale": ScalarSpec(
+            description="Multiplies every logit.",
+            dtype=DType.FLOAT32,
+            interval=(2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value),
+            default=192**-0.5,
+            present_when="True",
+        ),
+    },
+    outputs={
+        "output": TensorSpec(
+            description="The softmax-weighted sum of the values each query reads.",
+            shape=("n_q", "n_heads", "v_head_dim"),
+            dtype=_BF16_OR_SAME,
+            error_bounds=(
+                ("qkv_fp8", SqnrBound(min_sqnr_db=20.0)),
+                (None, ToleranceBound(absolute_tolerance=1e-2, relative_tolerance=1e-2)),
+            ),
+        ),
+        "lse": TensorSpec(
+            description="Natural log-sum-exp of the scaled logits each query reads, [query row, head].",
+            shape=("n_q", "n_heads"),
+            dtype=DTypeSpec(any_of=(DType.FLOAT32,)),
+            # q . k on fp8-rounded operands moves an N(0, 1) logit by up to ~0.1, and a row reading few keys
+            # carries that into its lse (aiter's fp8 prefill: up to 0.08 on 16384 causal rows)
+            error_bounds=(
+                ("qkv_fp8", ToleranceBound(absolute_tolerance=0.25, relative_tolerance=1e-3)),
+                (None, ToleranceBound(absolute_tolerance=1e-3, relative_tolerance=1e-3)),
+            ),
+        ),
+    },
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+)
+
+CONTRACTS = (MLA_PREFILL_VARLEN, MLA_PREFILL_VARLEN_LSE, SPARSE_PREFILL_MXFP8)

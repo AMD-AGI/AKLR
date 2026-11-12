@@ -29,7 +29,7 @@ def _register() -> None:
     env = RuntimeEnv()
     if env.is_all_disabled or not env.is_sglang_plugin_enabled:
         return
-    # imports this package's api modules, which declare its routes, and the routes on aiter's calls
+    # imports this package's api modules, which declare its routes, the routes on aiter's calls and its other routes
     for package in op_packages():
         if package.startswith(f"{__name__}."):
             importlib.import_module(f"{package}.api")
@@ -37,4 +37,5 @@ def _register() -> None:
     importlib.import_module(f"{__name__}.models.kimi_k3_torch_gemm")
     importlib.import_module(f"{__name__}.models.dspark_torch_gemm")
     importlib.import_module(f"{__name__}.layers.logits_processor_torch_gemm")
+    importlib.import_module(f"{__name__}.layers.aiter_backend_mla_prefill")
     hook.install()
