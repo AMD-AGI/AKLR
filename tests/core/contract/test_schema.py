@@ -45,7 +45,7 @@ class TestSchemaFile:
         registry = ContractRegistry.default()
         impls = Path("aklr/ops/fused_moe/impls/flydsl")
         separated = impls / (
-            "fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/1fee59821837c26f.json"
+            "fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/f13fecf15dbe0a9d.json"
         )
         text = separated.read_bytes()
         assert b"has_num_local_tokens" not in text

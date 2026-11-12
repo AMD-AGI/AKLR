@@ -1,0 +1,436 @@
+{
+  "schema_version": 5,
+  "name": "gemm_n200064_k256",
+  "contract_id": "gemm@1.0",
+  "description": "16-bit gemm: out = a @ b.T + bias (b is (k, n) unless trans_b).",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 200064,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 256,
+      "description": "Reduction length."
+    }
+  },
+  "attrs": {
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 1
+      }
+    },
+    {
+      "axes": {
+        "m": 2
+      }
+    },
+    {
+      "axes": {
+        "m": 3
+      }
+    },
+    {
+      "axes": {
+        "m": 4
+      }
+    },
+    {
+      "axes": {
+        "m": 5
+      }
+    },
+    {
+      "axes": {
+        "m": 6
+      }
+    },
+    {
+      "axes": {
+        "m": 7
+      }
+    },
+    {
+      "axes": {
+        "m": 8
+      }
+    },
+    {
+      "axes": {
+        "m": 10
+      }
+    },
+    {
+      "axes": {
+        "m": 11
+      }
+    },
+    {
+      "axes": {
+        "m": 12
+      }
+    },
+    {
+      "axes": {
+        "m": 13
+      }
+    },
+    {
+      "axes": {
+        "m": 14
+      }
+    },
+    {
+      "axes": {
+        "m": 15
+      }
+    },
+    {
+      "axes": {
+        "m": 16
+      }
+    },
+    {
+      "axes": {
+        "m": 18
+      }
+    },
+    {
+      "axes": {
+        "m": 19
+      }
+    },
+    {
+      "axes": {
+        "m": 20
+      }
+    },
+    {
+      "axes": {
+        "m": 21
+      }
+    },
+    {
+      "axes": {
+        "m": 22
+      }
+    },
+    {
+      "axes": {
+        "m": 23
+      }
+    },
+    {
+      "axes": {
+        "m": 24
+      }
+    },
+    {
+      "axes": {
+        "m": 26
+      }
+    },
+    {
+      "axes": {
+        "m": 27
+      }
+    },
+    {
+      "axes": {
+        "m": 28
+      }
+    },
+    {
+      "axes": {
+        "m": 29
+      }
+    },
+    {
+      "axes": {
+        "m": 30
+      }
+    },
+    {
+      "axes": {
+        "m": 31
+      }
+    },
+    {
+      "axes": {
+        "m": 32
+      }
+    },
+    {
+      "axes": {
+        "m": 34
+      }
+    },
+    {
+      "axes": {
+        "m": 35
+      }
+    },
+    {
+      "axes": {
+        "m": 36
+      }
+    },
+    {
+      "axes": {
+        "m": 37
+      }
+    },
+    {
+      "axes": {
+        "m": 38
+      }
+    },
+    {
+      "axes": {
+        "m": 39
+      }
+    },
+    {
+      "axes": {
+        "m": 40
+      }
+    },
+    {
+      "axes": {
+        "m": 42
+      }
+    },
+    {
+      "axes": {
+        "m": 43
+      }
+    },
+    {
+      "axes": {
+        "m": 44
+      }
+    },
+    {
+      "axes": {
+        "m": 46
+      }
+    },
+    {
+      "axes": {
+        "m": 48
+      }
+    },
+    {
+      "axes": {
+        "m": 51
+      }
+    },
+    {
+      "axes": {
+        "m": 53
+      }
+    },
+    {
+      "axes": {
+        "m": 54
+      }
+    },
+    {
+      "axes": {
+        "m": 55
+      }
+    },
+    {
+      "axes": {
+        "m": 56
+      }
+    },
+    {
+      "axes": {
+        "m": 58
+      }
+    },
+    {
+      "axes": {
+        "m": 59
+      }
+    },
+    {
+      "axes": {
+        "m": 60
+      }
+    },
+    {
+      "axes": {
+        "m": 62
+      }
+    },
+    {
+      "axes": {
+        "m": 64
+      }
+    },
+    {
+      "axes": {
+        "m": 67
+      }
+    },
+    {
+      "axes": {
+        "m": 70
+      }
+    },
+    {
+      "axes": {
+        "m": 72
+      }
+    },
+    {
+      "axes": {
+        "m": 75
+      }
+    },
+    {
+      "axes": {
+        "m": 78
+      }
+    },
+    {
+      "axes": {
+        "m": 80
+      }
+    },
+    {
+      "axes": {
+        "m": 83
+      }
+    },
+    {
+      "axes": {
+        "m": 86
+      }
+    },
+    {
+      "axes": {
+        "m": 91
+      }
+    },
+    {
+      "axes": {
+        "m": 96
+      }
+    },
+    {
+      "axes": {
+        "m": 102
+      }
+    },
+    {
+      "axes": {
+        "m": 107
+      }
+    },
+    {
+      "axes": {
+        "m": 112
+      }
+    },
+    {
+      "axes": {
+        "m": 118
+      }
+    },
+    {
+      "axes": {
+        "m": 123
+      }
+    },
+    {
+      "axes": {
+        "m": 128
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.2"
+    },
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"FlyDSL bf16 GEMM out = a @ b^T: whole-K B strips stream into VGPRs against A staged once in LDS.\"\"\"\n\nimport functools\nimport types\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl.compiler import from_c_void_p\nfrom flydsl.expr import const_expr, range_constexpr, rocdl\nfrom flydsl.expr.typing import T\n\n_N = 200064\n_K = 256\n_ELEM_BYTES = 2  # bf16\n_PRELOAD_DWORDS = 3 * 2  # C, A, B pointers in SGPRs skip the kernarg load\n# largest m -> (waves per workgroup, 16-column groups per wave, N tiles walked per workgroup)\n_CONFIGS = types.MappingProxyType({13: (1, 2, 1), 96: (2, 2, 13), 128: (2, 2, 7)})\n_TORCH_M = range(14, 17)  # torch's kernel ties this one here\n\n\ndef _rsrc(ptr, nbytes):\n    return rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(ptr, nbytes))\n\n\ndef _bload(rsrc, elem_off):\n    return rocdl.raw_ptr_buffer_load(T.bf16x8, rsrc, elem_off * _ELEM_BYTES, 0)\n\n\ndef _bstore(data, rsrc, elem_off):\n    rocdl.raw_ptr_buffer_store(\n        data.ir_value(),\n        rsrc,\n        (elem_off * _ELEM_BYTES).ir_value(),\n        fx.Int32(0).ir_value(),\n    )\n\n\ndef _ptr(tensor):\n    return from_c_void_p(fx.BFloat16, tensor.data_ptr(), assumed_align=16)\n\n\n@functools.cache\ndef _launcher(m, device):\n    waves, ns, walk = _CONFIGS[min(bound for bound in _CONFIGS if m <= bound)]\n    c_ex = torch.empty((m, _N), device=device, dtype=torch.bfloat16)\n    a_ex = torch.empty((m, _K), device=device, dtype=torch.bfloat16)\n    b_ex = torch.empty((_N, _K), device=device, dtype=torch.bfloat16)\n    compiled = flyc.compile[{\"llvm_options\": {\"amdgpu-kernarg-preload-count\": _PRELOAD_DWORDS}}](\n        _build(m, waves, ns, walk),\n        _ptr(c_ex),\n        _ptr(a_ex),\n        _ptr(b_ex),\n        fx.Stream(torch.cuda.current_stream(device)),\n    )\n\n    def call(a, b, out):\n        compiled(_ptr(out), _ptr(a), _ptr(b), fx.Stream(torch.cuda.current_stream(a.device)))\n\n    return call\n\n\ndef _brow(j, r):\n    \"\"\"B row fed to MFMA row r of fragment j: fragments 2p, 2p+1 give a lane 8 adjacent columns.\"\"\"\n    return 32 * (j // 2) + 8 * (r // 4) + 4 * (j % 2) + (r % 4)\n\n\ndef _build(m, waves, ns, walk):\n    \"\"\"Wave w owns columns [tile*bn + w*16*ns, +16*ns) of all rows; workgroup g walks tiles g + i*grid.\n    MFMA runs as C^T = B A^T, so a lane's results are consecutive columns of one row.\"\"\"\n    n, k = _N, _K\n    mb = (m + 15) // 16\n    tm = mb * 16\n    bn = 16 * ns * waves\n    assert n % bn == 0 and ns % 2 == 0\n    n_tiles = n // bn\n    grid = (n_tiles + walk - 1) // walk\n    steps = k // 32\n    threads = waves * 64\n    A_STRIDE = k + 8  # bf16 elements per staged A row: the pad spreads rows over banks\n    a_vecs = tm * (k // 8)\n    a_iters = (a_vecs + threads - 1) // threads\n    ALds = fx.Array[fx.BFloat16, tm * A_STRIDE, 16]\n\n    @flyc.kernel(known_block_size=[threads, 1, 1])\n    def gemm_n200064_k256(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer):\n        tid = fx.thread_idx.x\n        lane = tid % 64\n        wave = tid // 64\n        r = lane % 16\n        kq = lane // 16\n        a_rsrc = _rsrc(A, m * k * _ELEM_BYTES)\n        b_rsrc = _rsrc(B, n * k * _ELEM_BYTES)\n        c_rsrc = _rsrc(C, m * n * _ELEM_BYTES)\n        wg = fx.block_idx.x\n        kbase = kq * 8\n        a_lds = fx.SharedAllocator().allocate(ALds).peek().ptr\n\n        def load_b(i):\n            col0 = (wg + i * grid) * bn + wave * (16 * ns)\n            return [\n                [_bload(b_rsrc, (col0 + _brow(j, r)) * k + kbase + t * 32) for j in range(ns)]\n                for t in range(steps)\n            ]\n\n        items = []\n        for it in range_constexpr(a_iters):\n            v = tid + it * threads\n            items.append((v // (k // 8), v % (k // 8)))\n        avals = [_bload(a_rsrc, arow * k + ac8 * 8) for arow, ac8 in items]\n        bufs = [load_b(0)]  # after A: loads retire in order, so A's wait leaves B in flight\n        for it in range_constexpr(a_iters):\n            arow, ac8 = items[it]\n            if const_expr(a_vecs % threads != 0):\n                if arow < fx.Int32(tm):\n                    fx.ptr_store(avals[it], a_lds + arow * A_STRIDE + ac8 * 8)\n            else:\n                fx.ptr_store(avals[it], a_lds + arow * A_STRIDE + ac8 * 8)\n        fx.gpu.barrier()\n\n        vec_zero = fx.constant_vector(0.0, T.f32x4).ir_value()\n        for ti in range_constexpr(walk):\n            if const_expr(ti + 1 < walk):\n                bufs.append(load_b(ti + 1))\n            bv = bufs[ti]\n            tile = wg + ti * grid\n            col0 = tile * bn + wave * (16 * ns)\n            # a tile past the end stores past the end of C, which the buffer resource drops\n            c_skip = 0\n            if const_expr(grid * walk != n_tiles):\n                c_skip = (tile // n_tiles) * (m * n)\n            acc = [[vec_zero for _ in range(ns)] for _ in range(mb)]\n            for t in range_constexpr(steps):\n                for i in range_constexpr(mb):\n                    a_t = fx.ptr_load(\n                        a_lds + (i * 16 + r) * A_STRIDE + kbase + t * 32,\n                        result_type=T.bf16x8,\n                    )\n                    for j in range_constexpr(ns):\n                        acc[i][j] = rocdl.mfma_f32_16x16x32_bf16(T.f32x4, [bv[t][j], a_t, acc[i][j]])\n            for i in range_constexpr(mb):\n                row = i * 16 + r\n                for jp in range_constexpr(ns // 2):\n                    pair = fx.Vector(acc[i][2 * jp]).shuffle(fx.Vector(acc[i][2 * jp + 1]), list(range(8)))\n                    col = col0 + jp * 32 + kq * 8\n                    _bstore(pair.to(fx.BFloat16), c_rsrc, row * n + col + c_skip)\n\n    @flyc.jit\n    def launch(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer, stream: fx.Stream):\n        gemm_n200064_k256(C, A, B).launch(grid=(grid, 1, 1), block=(threads, 1, 1), stream=stream)\n\n    return launch\n\n\ndef run(*, a, b, trans_b, bias, out_dtype, out):\n    m = a.shape[0]\n    if not trans_b or bias is not None or m in _TORCH_M:\n        torch.matmul(a, b.t() if trans_b else b, out=out)\n        return\n    _launcher(m, a.device)(a, b, out)\n"
+      }
+    ]
+  }
+}
