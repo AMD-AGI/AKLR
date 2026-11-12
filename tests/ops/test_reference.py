@@ -80,7 +80,7 @@ def test_mqa_logits_reference_is_the_same_in_chunks(
 
 def test_biased_grouped_topk_ranks_scores_float32_would_tie() -> None:
     """Two logits a float32 sigmoid maps to one score: the ids still follow the larger."""
-    from aklr.ops.biased_grouped_topk.reference import biased_grouped_topk_reference
+    from aklr.ops.topk.reference import biased_grouped_topk_reference
 
     point = SimpleNamespace(
         dtypes={"router_logits": "float32", "correction_bias": "float32"},
@@ -98,7 +98,7 @@ def test_biased_grouped_topk_ranks_scores_float32_would_tie() -> None:
 
 def test_biased_grouped_topk_ranks_tied_experts_lower_first() -> None:
     """Equal biased scores: the lower expert ranks first, whatever torch.topk's algorithm does."""
-    from aklr.ops.biased_grouped_topk.reference import biased_grouped_topk_reference
+    from aklr.ops.topk.reference import biased_grouped_topk_reference
 
     point = SimpleNamespace(
         dtypes={"router_logits": "float32", "correction_bias": "float32"},

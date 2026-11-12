@@ -7,7 +7,7 @@ in the file it names; when the two disagree, the named file wins.
 aklr/ops/
   __init__.py                  re-exports op apis
   README.md                    this file
-  <op>/                        attention, biased_grouped_topk, gemm, fused_moe, mhc, mla, rms_norm, topk
+  <op>/                        attention, gemm, fused_moe, mhc, mla, rms_norm, topk
     __init__.py                re-exports api.py's apis
     contract.py                OpContract constants, CONTRACTS
     reference.py               one <contract>_reference per contract

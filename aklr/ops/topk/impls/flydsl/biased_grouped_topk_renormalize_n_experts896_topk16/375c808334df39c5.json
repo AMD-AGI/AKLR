@@ -3,7 +3,7 @@
   "name": "biased_grouped_topk_renormalize_n_experts896_topk16",
   "contract_id": "biased_grouped_topk@1.0",
   "description": "Pick topk experts per token by sigmoid(router_logits) + correction_bias; weigh them with the unbiased sigmoid scores, divided by their sum when renormalize, times routed_scaling_factor. Expert groups are all kept (topk_group == num_expert_group), so grouping selects nothing.",
-  "op_type": "biased_grouped_topk",
+  "op_type": "topk",
   "axes": {
     "n_tokens": {
       "type": "var",
@@ -78,9 +78,7 @@
       },
       "scalars": {
         "routed_scaling_factor": 1.0
-      },
-      "accuracy": "passed",
-      "speedup": 2.984
+      }
     },
     {
       "axes": {
@@ -88,9 +86,7 @@
       },
       "scalars": {
         "routed_scaling_factor": 1.0
-      },
-      "accuracy": "passed",
-      "speedup": 3.69
+      }
     },
     {
       "axes": {
@@ -98,9 +94,7 @@
       },
       "scalars": {
         "routed_scaling_factor": 1.0
-      },
-      "accuracy": "passed",
-      "speedup": 6.745
+      }
     },
     {
       "axes": {
@@ -108,9 +102,7 @@
       },
       "scalars": {
         "routed_scaling_factor": 1.0
-      },
-      "accuracy": "passed",
-      "speedup": 8.522
+      }
     }
   ],
   "layout_variants": {
