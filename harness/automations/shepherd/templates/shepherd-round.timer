@@ -1,0 +1,11 @@
+# Starts a round 15 minutes after the last one ended; the wrapper skips it while the ledger's wake_at is ahead.
+[Unit]
+Description=shepherd round schedule
+
+[Timer]
+OnBootSec=5min
+OnUnitInactiveSec=15min
+Unit=shepherd-round.service
+
+[Install]
+WantedBy=timers.target

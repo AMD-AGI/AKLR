@@ -1,0 +1,13 @@
+# systemd --user unit; setup copies it to ~/.config/systemd/user/ and replaces each @...@.
+[Unit]
+Description=shepherd round
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=@CHECKOUT@
+# Pending files in the event directory make the round run now; otherwise the ledger's wake_at applies.
+ExecStart=/usr/bin/python3 -I harness/automations/shepherd/skills/shepherd/scripts/state.py --root @STATE_DIR@ round --config .shepherd/configuration.yaml --events @STATE_DIR@/events -- @ROUND_AGENT@ "@PROMPT@"
+# The wrapper turns SIGTERM into ending the agent and its leftovers.
+KillMode=mixed
+TimeoutStartSec=3h

@@ -210,6 +210,7 @@ def execute(args):
             "revision": 0,
             "state": {
                 "campaigns": [],
+                "requests": [],
                 "last_main_sha": None,
             },
         }
@@ -225,6 +226,13 @@ def execute(args):
         now = datetime.now(timezone.utc)
         with guarded(root):
             value = snapshot(root)
+            # Issue events the runner forwarded: any pending file means run now. They are consumed even when
+            # busy, so a path unit watching the directory does not retrigger; every round reads all issues anyway.
+            events = Path(os.path.expandvars(args.events)).expanduser() if args.events else None
+            triggered = events is not None and events.is_dir() and any(events.iterdir())
+            if triggered:
+                for event in events.iterdir():
+                    event.unlink()
             previous = Round.recorded(owner_path)
             if previous and previous.is_alive(here):
                 with (root / "reports.md").open("a") as reports:
@@ -237,7 +245,7 @@ def execute(args):
             last = Round.recorded(root / "last_round.json")
             if previous is None and last is not None and last.exit_code != 0:
                 previous = last
-            if previous is None and not args.now:
+            if previous is None and not args.now and not triggered:
                 wake_at = value["state"].get("wake_at")
                 try:
                     wake = datetime.fromisoformat(wake_at) if isinstance(wake_at, str) else None
@@ -279,6 +287,12 @@ def execute(args):
             ):
                 raise StateError("every campaign needs a unique string id")
             campaigns[campaign["id"]] = campaign
+        issues = [request.get("issue") if isinstance(request, dict) else None for request in state.get("requests", [])]
+        if not all(type(issue) is int for issue in issues) or len(set(issues)) != len(issues):
+            raise StateError("every request needs a unique integer issue")
+        for kept in value["state"].get("requests", []):
+            if kept["issue"] not in issues:
+                raise StateError(f"request {kept['issue']} is missing; requests are never removed")
         for kept in value["state"].get("campaigns", []):
             if kept["id"] not in campaigns:
                 raise StateError(f"campaign {kept['id']} is missing; campaigns are never removed")
@@ -298,6 +312,7 @@ def main():
     round_ = sub.add_parser("round", help="run the agent command after -- as the ledger's one round")
     round_.add_argument("--config", required=True)
     round_.add_argument("--now", action="store_true", help="run even if the ledger's wake_at is ahead")
+    round_.add_argument("--events", help="directory of forwarded issue events; any file in it acts as --now and is removed")
     round_.add_argument("agent", nargs=argparse.REMAINDER)
     save = sub.add_parser("save")
     save.add_argument("--revision", required=True, type=int)

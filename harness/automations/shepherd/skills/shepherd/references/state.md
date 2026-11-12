@@ -6,7 +6,7 @@ Python 3.10+ on Linux, and refuses a root that another user owns or could swap.
 ```bash
 STATE="python -I harness/automations/shepherd/skills/shepherd/scripts/state.py --root <execution.state_dir>"
 $STATE init                                                   # setup only
-$STATE round --config .shepherd/configuration.yaml -- <agent CLI> <prompt>   # the scheduler's command
+$STATE round --config .shepherd/configuration.yaml [--events <state_dir>/events] -- <agent CLI> <prompt>   # the scheduler's command
 $STATE show
 $STATE save --revision "$REVISION" --input "$NEXT_STATE"     # inside a round only
 ```
@@ -17,6 +17,8 @@ $STATE save --revision "$REVISION" --input "$NEXT_STATE"     # inside a round on
    `reports.md` and exits 0 without starting the agent. A round counts as running while its wrapper
    process (pid and start time) exists, or any process this user can see carries its `AKLR_ROUND_ID`.
    Another PID namespace on the same boot is undecidable and also counts as running. Age never counts.
+   Before that check, with `--events`, it deletes every file in that directory (forwarded issue events);
+   if there was any, the trigger counts as `--now`.
 2. Otherwise, if the last round ended cleanly (its agent exited 0) and `--now` is not given, it skips the trigger with `{"waiting_until": ...}`
    while the ledger's `wake_at` is ahead, at most two hours ahead, and the configuration file is unchanged
    since the last round.
@@ -31,11 +33,11 @@ $STATE save --revision "$REVISION" --input "$NEXT_STATE"     # inside a round on
 complete next **state object** (not the envelope) to a temporary file and pass it with the current
 revision; use the returned revision for the next save. A stale revision is rejected, and so is a state
 that drops a campaign, gives two the same `id`, or changes a campaign's `bounds` once saved: the
-committed budget is derived from them. Never edit `state.json`, `owner.json` or `last_round.json` by hand.
+committed budget is derived from them. So is a state that drops a request or gives two the same `issue`. Never edit `state.json`, `owner.json` or `last_round.json` by hand.
 
 ## Ledger contents
 
-`init` creates `campaigns: []` and `last_main_sha: null`, and any missing parent directories (mode 700).
+`init` creates `campaigns: []`, `requests: []` and `last_main_sha: null`, and any missing parent directories (mode 700).
 The caps and the authorization stay in the configuration. The committed budget is not stored: it is the
 sum over campaigns of their settled use, or their admitted bounds until settled. Changing the
 authorization or a cap erases no commitment. Each round may set the top-level `wake_at` its wrapper reads.
@@ -55,6 +57,8 @@ Each campaign records:
   and whether it is confirmed or unconfirmed-but-bounded, with the time.
 - Delivery: branch, campaign marker, PR number/URL, head/base, CI/review state, merge commit, comment hashes.
 - Next action, failure or blocked reason, delivered input identity, cooldown-until time.
+- Request: `request` (issue number), `request_version`, `schema`, `pr`, for a campaign admitted from an
+  issue request. The `requests` entries themselves are described in the round skill's Requests section.
 
 A starting-kernel failure also records the blocked op contract with the tree hashes (the op directory
 without `impls/`, and `harness/scripts/forge_task`) and the runtime revision that lift it.

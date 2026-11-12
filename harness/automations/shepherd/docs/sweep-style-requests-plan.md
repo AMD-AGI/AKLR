@@ -12,7 +12,7 @@ Sweep 的做法依据它固定版本的源码：[sweepai/api.py@a8b8b67](https:/
 |---|---|---|
 | 标题以 `sweep` 开头或含 `sweep:` 时自动加 label；`issues/labeled` 才开工 | **照抄**：标题以 `shepherd:` 开头的 issue 自动加 `shepherd` label，`labeled` 事件开工 | 用法和你的想法一致 |
 | 谁都能触发 | **改**：只认一个 GitHub team 的成员（主机配置里写 team 名）。先建一个只有你的 team，跑通后再加可信的人 | 仓库公开、41 个 write 用户，Triage 权限就能加 label，GitHub 做不到只给 admin 用；用 team 管名单，加人不用改主机配置 |
-| 标题和正文原样交给 agent，当作任务 | **改为两层**：正文开头的 YAML 块（`schemas`、`max_prs`、`max_campaigns`）由脚本解析，决定做什么；其余自由文本当作提示，只交给节点容器里的 KernelForge worker，不交给 round agent | round agent 跳过权限确认，手里有 App 写 token、集群访问和预算；worker 在容器里碰不到 GitHub 和账本，产出还要过可信验证 |
+| 标题和正文原样交给 agent，当作任务 | **改为两层**：正文里的 YAML 块（`schemas`、`max_prs`、`max_campaigns`）由脚本解析，决定做什么；其余自由文本冻结进账本，交给 round agent，只约束本请求的 campaign | 只有 team 成员批准的版本才会进账本；自由文本不能改预算、权限和规则 |
 | 预算由服务端控制 | **照抄**：钱、模型、并发、发布权限只在主机配置里，issue 只能缩小范围 | 和 Sweep 一样，issue 定“做什么”，不定“花多少” |
 | 以 `repo-issue号` 为键，一个 issue 一个任务 | **照抄键，改载体**：账本里的 `requests` 条目以 issue 号为键；一个请求可以对应多个 campaign | shepherd 本来就以账本为准，能断点续跑；进程里的线程表重启就丢 |
 | 改正文就杀掉旧任务再重跑 | **改**：改正文只影响以后的准入；在跑的 campaign 不受影响，不杀也不重跑 | 一个 campaign 要几小时 GPU，重跑等于把钱扔掉；Sweep 往线程里注入异常来杀任务，本身也不可靠 |
@@ -51,7 +51,7 @@ Sweep 的做法依据它固定版本的源码：[sweepai/api.py@a8b8b67](https:/
 
 | 你做什么 | shepherd 做什么 | issue 上出现什么 |
 |---|---|---|
-| 开 issue，标题写 `shepherd: <描述>`，正文开头写 YAML 块 | 开 issue 的人在 team 里，shepherd App 就自动加 `shepherd` label；这个 label 算作开 issue 的人批准的 | — |
+| 开 issue，标题写 `shepherd: <描述>`，正文里写 YAML 块（用表单即可） | 开 issue 的人在 team 里，shepherd App 就自动加 `shepherd` label；这个 label 算作开 issue 的人批准的 | — |
 | （或者）手动加 `shepherd` label | 检查最近一次加 label 的人在 team 里，正文最后编辑人也在 team 里 | — |
 | — | 下一轮 round：解析 YAML 块并把这一版冻结进账本，按顺序准入 | 进度评论：已受理，列出 schema 和上限 |
 | — | campaign 跑完，通过检查后开 draft PR，正文写 `Refs #N` | 进度评论更新；PR 自动出现在 issue 时间线上 |
@@ -79,7 +79,7 @@ Sweep 的做法依据它固定版本的源码：[sweepai/api.py@a8b8b67](https:/
 - **issue 层（GitHub）**：表单、label、`Refs #N`、进度评论。
 - **事件层（runner + 主机上的 systemd 服务）**：runner 把事件转发进队列，服务据此或按定时器跑 round。
 - **受理层（主机上的 `request_board.py`）**：读时间线核对 team 成员，解析 YAML 并冻结版本，改写进度评论。
-- **执行层（round agent + 节点上的 worker）**：round 只看账本里的请求，看不到 issue 文字；提示文本随 campaign 交给节点上的 worker。
+- **执行层（round agent + 节点上的 worker）**：round 只看账本里冻结的请求版本（含批准过的提示文本），不直接读 issue；需要时由 round 把提示写进 worker 的 `program.md`。
 
 ## 5. 分阶段
 
@@ -104,7 +104,10 @@ Sweep 的做法依据它固定版本的源码：[sweepai/api.py@a8b8b67](https:/
 3. 进度评论用 shepherd App 发。
 4. 做成一直在线的服务：要；先用 systemd 单元实现（见第 2 节）。
 
+5. 自由文本提示交给 round agent（2026-11-12 改定，不再只给 worker）：它只约束本请求的 campaign，由 round agent 决定是否写进 worker 的 `program.md`，不能越过 skill 规则、配置和预算。
+6. 代码照抄 Sweep 的行为，不复制 Sweep 的源码：Sweep 各版本的许可证（CC BY-NC-SA、Elastic 2.0、AGPLv3、Sweep EE）都不允许并入 MIT/Apache 的 AKLR。
+
 ## 7. 还需要你决定
 
-1. 自由文本提示交给节点上的 worker，可以吗？还是先不用自由文本，只用 YAML 块？
-2. 给 shepherd App 加组织的 Members 读权限需要 org owner 批准，谁来批？
+1. 给 shepherd App 加组织的 Members 读权限需要 org owner 批准，谁来批？
+2. requesters team 的 slug（配置里先留空）。

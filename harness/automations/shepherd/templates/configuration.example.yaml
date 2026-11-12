@@ -12,6 +12,7 @@ execution:
   round_agent: null  # Non-interactive agent argv the wrapper runs before the prompt, e.g. [claude, -p, --model, <id>, --effort, <level>, <owner-chosen permission flags>]; a permission bypass is the owner's explicit choice.
 policy:
   strategies:  # Applied in order.
+    - type: requests  # Schemas of active issue requests (see `requests` below), oldest issue first.
     - type: manual
       schemas: []  # Repository-relative paths to schema JSON files.
     - type: kernel-less
@@ -33,6 +34,10 @@ budget:  # Cumulative over all campaigns in state_dir. On probation: one campaig
   total_model_usd: null
   total_node_hours: null  # Whole-node hours, even when using one GPU.
   model_hard_limit_ref: null  # Name of the provider-side hard spending limit (API key or gateway cap), not a path. None: no admission.
+requests:  # Issue requests; without a team nobody can request.
+  label: shepherd  # Issues titled `shepherd:` get it; adding it starts a request.
+  team: null  # Slug of the repository owner's team whose members may request, label and edit requests.
+  bot: null  # Login of the shepherd GitHub App that labels issues and writes progress comments, e.g. <app>[bot].
 publication:
   allow_draft_pr: false
   allow_pr_comments: false

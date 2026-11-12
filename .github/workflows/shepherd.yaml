@@ -1,0 +1,29 @@
+name: shepherd
+
+# Forward issue events to the shepherd host's event queue; the host's shepherd-round service runs the round.
+on:
+  issues:
+    types: [opened, edited, labeled, unlabeled, closed, reopened]
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  forward:
+    # Only events that can matter to a request; anyone can open an issue, so the round re-checks everything.
+    if: >-
+      github.event_name == 'workflow_dispatch'
+      || github.event.label.name == 'shepherd'
+      || startsWith(github.event.issue.title, 'shepherd:')
+      || contains(github.event.issue.labels.*.name, 'shepherd')
+    runs-on: aklr-claude
+    timeout-minutes: 2
+    steps:
+      - name: Queue the event
+        env:
+          EVENTS: ${{ vars.SHEPHERD_EVENTS_DIR }}
+          ISSUE: ${{ github.event.issue.number || 0 }}
+          ACTION: ${{ github.event.action || 'dispatch' }}
+        run: |
+          test -d "$EVENTS" || { echo "SHEPHERD_EVENTS_DIR is not a directory on this runner" >&2; exit 1; }
+          printf '%s %s\n' "$ISSUE" "$ACTION" > "$EVENTS/$(date +%s%N)-$GITHUB_RUN_ID"
