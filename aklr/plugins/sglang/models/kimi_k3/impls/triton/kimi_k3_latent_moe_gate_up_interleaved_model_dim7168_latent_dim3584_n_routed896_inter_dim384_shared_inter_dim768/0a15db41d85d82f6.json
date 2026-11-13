@@ -187,42 +187,42 @@
         "n_tokens": 1
       },
       "accuracy": "passed",
-      "speedup": 2.077
+      "speedup": 2.112
     },
     {
       "axes": {
         "n_tokens": 2
       },
       "accuracy": "passed",
-      "speedup": 2.186
+      "speedup": 2.185
     },
     {
       "axes": {
         "n_tokens": 4
       },
       "accuracy": "passed",
-      "speedup": 1.975
+      "speedup": 1.968
     },
     {
       "axes": {
         "n_tokens": 8
       },
       "accuracy": "passed",
-      "speedup": 1.669
+      "speedup": 1.719
     },
     {
       "axes": {
         "n_tokens": 12
       },
       "accuracy": "passed",
-      "speedup": 1.342
+      "speedup": 1.353
     },
     {
       "axes": {
         "n_tokens": 16
       },
       "accuracy": "passed",
-      "speedup": 1.225
+      "speedup": 1.241
     }
   ],
   "layout_variants": {
