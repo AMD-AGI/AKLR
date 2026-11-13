@@ -4,17 +4,18 @@
 
 One scheduled automation that keeps optimizing AKLR kernels unattended.
 
-- Trigger: a schedule, every 15 minutes by default. Repository events may also start a round.
+- Trigger: a schedule, every 15 minutes by default. Repository events may also start a round. A trigger
+  starts no agent while a round is still running, or while the ledger's next wake time is ahead and the
+  last round succeeded.
 - Behavior: each round observes GitHub and the remote GPU jobs, then advances existing work as far as
   confirmed results allow (stop, clean, validate, deliver), and admits new kernel-less schemas into free
-  GPUs. Triggers
-  before the ledger's next wake time end without starting an agent, unless the last round failed.
+  GPUs.
 - Campaign: optimizes the kernel on one GPU of a shared pool node, then finalizes, stress-tests and
   validates it in a trusted checkout.
 - Outcome: a draft PR with head-bound evidence, followed until a maintainer merges or closes it, and a
   short report after every round.
-- Boundary: at most `max_parallel_campaigns` campaigns, one per GPU, within the recorded budget. Draft PRs only; no merge, no edits
-  to existing PRs.
+- Boundary: at most `max_parallel_campaigns` campaigns, one per GPU, within the recorded budget. Draft
+  PRs only; no merge, no edits to existing PRs.
 
 ## Shared rules
 
@@ -40,9 +41,12 @@ Start from [`configuration.example.yaml`](./templates/configuration.example.yaml
 
 ## For the agent
 
+The human enters setup or a round by pointing the agent at this file. Both skills below set
+`disable-model-invocation: true` and sit outside every skill root, so nothing invokes them as slash
+skills: do not look for one. Read each file by its path from the repository root.
+
 - Setup or a configuration change: read and follow
-  [`skills/setup-shepherd/SKILL.md`](./skills/setup-shepherd/SKILL.md). Do not create or update the
-  scheduled task until the user explicitly asks.
-- A scheduled or manual round: read and follow [`skills/shepherd/SKILL.md`](./skills/shepherd/SKILL.md).
+  `harness/automations/shepherd/skills/setup-shepherd/SKILL.md`. Do not create or update the scheduled
+  task until the user explicitly asks.
+- A scheduled or manual round: read and follow `harness/automations/shepherd/skills/shepherd/SKILL.md`.
   Do not repeat setup.
-- Read these files by repository path; they are not slash skills.
