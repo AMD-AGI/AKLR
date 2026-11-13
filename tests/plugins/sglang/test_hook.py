@@ -23,6 +23,7 @@ from aklr.plugins.sglang import hook
 for package in op_packages():
     if package.startswith("aklr.plugins.sglang."):
         importlib.import_module(f"{package}.api")
+importlib.import_module("aklr.plugins.sglang.aiter_calls")
 DECLARED = list(hook._ROUTES)
 INSTALLED = "0.5.22"
 
@@ -45,8 +46,11 @@ def test_every_route_was_tested_on_the_installed_sglang():
     assert [target for target, versions, _ in DECLARED if installed not in versions] == []
 
 
-def parameters(fn):
-    return [(p.name, p.kind, p.default) for p in inspect.signature(fn).parameters.values()]
+def parameters(fn, *, defaults=True):
+    return [
+        (p.name, p.kind, *((p.default,) if defaults else ()))
+        for p in inspect.signature(fn).parameters.values()
+    ]
 
 
 @pytest.mark.parametrize(
@@ -54,7 +58,9 @@ def parameters(fn):
 )
 def test_every_route_takes_its_targets_parameters(target, route):
     installed_sglang()
-    assert parameters(route) == parameters(pkgutil.resolve_name(target))
+    # aiter's defaults are aiter's enums, which route modules cannot import
+    defaults = not target.startswith("aiter.")
+    assert parameters(route, defaults=defaults) == parameters(pkgutil.resolve_name(target), defaults=defaults)
 
 
 @pytest.mark.parametrize(
@@ -196,7 +202,15 @@ def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, hooked):
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     plugin.register()
-    routes = ["aklr.plugins.sglang.x.y.api", "install"] if hooked else []
+    routes = (
+        [
+            "aklr.plugins.sglang.x.y.api",
+            "aklr.plugins.sglang.aiter_calls",
+            "install",
+        ]
+        if hooked
+        else []
+    )
     assert register_calls == ["aklr starts", *routes]
 
 
