@@ -34,4 +34,7 @@ def _register() -> None:
         if package.startswith(f"{__name__}."):
             importlib.import_module(f"{package}.api")
     importlib.import_module(f"{__name__}.aiter_calls")
+    importlib.import_module(f"{__name__}.models.kimi_k3_torch_gemm")
+    importlib.import_module(f"{__name__}.models.dspark_torch_gemm")
+    importlib.import_module(f"{__name__}.layers.logits_processor_torch_gemm")
     hook.install()

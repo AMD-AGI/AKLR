@@ -295,6 +295,37 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"max_seq_len": 2},
         layout_variant_name="row_major",
     ),
+    # the BF16 prefill of an unquantized out_proj: the FP8 op's Point without its FP8 outputs
+    PointSpec(
+        contract_id="gdn_prefill@1.0",
+        axes={
+            "n_tokens": 4,
+            "n_sequences": 2,
+            "n_slots": 4,
+            "n_v_heads": 4,
+            "key_dim": 16,
+            "value_dim": 128,
+            "conv_dim": 544,
+            "n_starts": 3,
+        },
+        dtypes={
+            "projected_qkvz": "bfloat16",
+            "projected_ba": "bfloat16",
+            "conv_state": "bfloat16",
+            "delta_state": "float32",
+            "cache_indices": "int32",
+            "cu_seqlens": "int32",
+            "has_initial_state": "bool",
+            "conv_weight": "bfloat16",
+            "conv_bias": "bfloat16",
+            "a_log": "float32",
+            "dt_bias": "bfloat16",
+            "norm_weight": "bfloat16",
+            "normalized": "bfloat16",
+        },
+        attrs={"max_seq_len": 2},
+        layout_variant_name="row_major",
+    ),
     # Qwen3.5's MoE block shrunk: 16 routed experts of hidden and intermediate size 256,
     # the shared one fused in last, the experts fp8 and shuffled as sglang holds them
     PointSpec(
@@ -582,6 +613,39 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # the decode Points' heads prefilling two fresh sequences of up to 32 rows
+    *(
+        PointSpec(
+            contract_id=contract_id,
+            axes={
+                "n_tokens": 48,
+                "qkv_dim": 2560,
+                "n_kv_heads": 1,
+                "head_dim": 256,
+                "n_slots": 320,
+                "n_positions": 64,
+                "n_starts": 3,
+            },
+            dtypes={
+                "projected_qkv": "bfloat16",
+                "q_norm_weight": "bfloat16",
+                "k_norm_weight": "bfloat16",
+                "positions": "int64",
+                "cos_sin_cache": "float32",
+                "cache_locations": "int64",
+                "key_cache": "float8_e4m3fn",
+                "value_cache": "float8_e4m3fn",
+                "cu_seqlens": "int32",
+                **outputs,
+            },
+            attrs={"max_seq_len": 32},
+            layout_variant_name="row_major",
+        )
+        for contract_id, outputs in (
+            ("gated_attention_prefill_group_fp8_quant@1.0", {"values": "float8_e4m3fn", "scales": "float32"}),
+            ("gated_attention_prefill@1.0", {"gated": "bfloat16"}),
+        )
+    ),
     # Kimi-K3's attention-residual aggregation shrunk: a bank of 4 rows, 3 written; the
     # layer that also stores its prefix as the next bank row
     PointSpec(
@@ -690,6 +754,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "dsa_sparse_mla_decode@1.0",
         "dsa_topk_transform@1.0",
         "gdn_prefill_group_fp8_quant@1.0",
+        "gdn_prefill@1.0",
         "kimi_k3_latent_moe@1.0",
         "kimi_k3_mla_decode@1.0",
         "kimi_k3_mla_prefill_gate@1.0",
@@ -706,6 +771,8 @@ GFX950_CONTRACT_IDS = frozenset(
         "gated_attention_decode_group_fp8_quant@1.0",
         "qwen3_next_gated_attention_decode_group_fp8_quant@1.0",
         "gated_attention_decode@1.0",
+        "gated_attention_prefill_group_fp8_quant@1.0",
+        "gated_attention_prefill@1.0",
         "mla_kc_rope_cache@1.0",
         "mla_qkv_a_norm@1.0",
         "mla_vc@1.0",

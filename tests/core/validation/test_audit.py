@@ -7,9 +7,10 @@ import pytest
 
 from aklr.core.validation import AuditStage, ValidationScope
 from aklr.core.validation.stages._audit._hip import check_hip_kernel
+from aklr.core.validation.stages._audit._hsaco import check_hsaco_kernel
 from aklr.core.validation.stages._audit._stage import check_kernel
 from aklr.core.validation.stages._report._finding import Finding
-from tests.op_case import HIP_GEMM_KERNEL_SOURCE, OpCase
+from tests.op_case import HIP_GEMM_KERNEL_SOURCE, HSACO_GEMM_KERNEL_SOURCE, OpCase
 
 _SIGNATURE = "def run(*, a, b, trans_b, bias, out_dtype, out):"  # gemm@1.0's call keys
 _PLAIN_SOURCE = '"""K."""\n' + _SIGNATURE + "\n    out.copy_(a @ b.mT)\n"
@@ -316,6 +317,73 @@ class TestCheckHipKernel:
         assert {f.detail.split()[0] for f in findings} == {rule}
 
 
+_CODE_OBJECTS = {"codeobjects.py": '"""The gemm."""\n\nGEMM = b""\n'}
+
+
+def _hsaco_findings(source: str) -> tuple[Finding, ...]:
+    """``check_kernel`` and ``check_hsaco_kernel`` on a gemm@1.0 hsaco schema."""
+    case = OpCase.of("gemm@1.0")
+    schema, contract = case.schema(source, language="hsaco", other_sources=_CODE_OBJECTS), case.contract
+    schema_path = str(schema.relative_path())
+    return check_kernel(
+        schema_path,
+        schema.kernel,
+        call_keys=schema.kernel_call_keys,
+        tensor_names=tuple(contract.tensors()),
+        mutable_names=tuple(contract.mutable_tensors),
+    ) + check_hsaco_kernel(schema_path, schema.kernel)
+
+
+_HSACO_LAUNCH = "    kernarg = "
+
+
+class TestCheckHsacoKernel:
+    def test_plain_kernel_passes(self) -> None:
+        """The hsaco gemm has no finding."""
+        assert _hsaco_findings(HSACO_GEMM_KERNEL_SOURCE) == ()
+
+    @pytest.mark.parametrize(
+        ("old", "new", "rule"),
+        [
+            ("import struct\n", "import ctypes\nimport struct\n", "SC1"),
+            ("import struct\n", "import os.path\nimport struct\n", "SC1"),
+            ("import hsaco\n", "import hip_extension as hsaco\n", "SC1"),
+            ("import struct\n", "import struct\nfrom torch.utils import cpp_extension\n", "SC1"),
+            (_HSACO_LAUNCH, '    __import__("ctypes")\n' + _HSACO_LAUNCH, "SC2"),
+            (_HSACO_LAUNCH, '    eval("a")\n' + _HSACO_LAUNCH, "SC2"),
+            (
+                "import struct\n",
+                'import struct\n\nimport torch\n\ntorch.ops.load_library("gemm.so")\n',
+                "SC2",
+            ),
+            ("import struct\n", "import struct\n\nimport torch as t\n\nt._C._cuda_init()\n", "SC2"),
+            ("import struct\n", "import struct\n\nfrom torch import cuda\n\ncuda.cudart()\n", "SC2"),
+            ("import struct\n", "import struct\n\nimport torch\n", None),
+            (_HSACO_LAUNCH, "    torch.cuda.synchronize()\n" + _HSACO_LAUNCH, "SA3"),
+        ],
+        ids=[
+            "ctypes",
+            "os",
+            "another_aklr_module",
+            "torch_cpp_extension",
+            "dunder_import",
+            "eval",
+            "torch_load_library",
+            "torch_c_aliased",
+            "torch_cudart_from_import",
+            "torch_passes",
+            "the_sa_rules_too",
+        ],
+    )
+    def test_rejects_rule_violation(self, old: str, new: str, rule: str | None) -> None:
+        """Every finding names ``kernel.py``, and their rules are exactly ``{rule}`` (none for None)."""
+        source = HSACO_GEMM_KERNEL_SOURCE.replace(old, new, 1)
+        assert source != HSACO_GEMM_KERNEL_SOURCE
+        findings = _hsaco_findings(source)
+        assert all(" kernel.py:" in f.detail for f in findings)
+        assert {f.detail.split()[0] for f in findings} == ({rule} if rule else set())
+
+
 _BAD_SOURCE = '"""K."""\n' + _SIGNATURE + "\n    a.zero_()\n"
 _OLD_FORMAT_PATH = "aklr/ops/gemm/kernels/gemm.py"  # a base that predates the format
 # origin/main's solution file layout: under impls/, but its stem is not a schema uuid
@@ -425,3 +493,18 @@ class TestAuditStage:
         (finding,) = AuditStage().run(scope, None).findings
         assert finding.code.value == "source_rejected"
         assert finding.detail.startswith("SH3 kernel.hip:")
+
+    def test_hsaco_kernel_takes_the_sa_and_sc_rules(self, tmp_path: Path) -> None:
+        """An hsaco schema's kernel is audited by SA0-SA4, then SC1-SC2."""
+        case = OpCase.of("gemm@1.0")
+        source = HSACO_GEMM_KERNEL_SOURCE.replace(
+            "import struct\n", "import ctypes\nimport struct\n"
+        ).replace(_HSACO_LAUNCH, "    a.zero_()\n" + _HSACO_LAUNCH)
+        schema = case.schema(source, language="hsaco", other_sources=_CODE_OBJECTS)
+        path = tmp_path / "aklr/ops" / case.contract.op_type / schema.relative_path()
+        path.parent.mkdir(parents=True)
+        path.write_text(schema.schema_text(), encoding="utf-8")
+        scope = ValidationScope(tmp_path, "", None, (path.resolve(),), ())
+        findings = AuditStage().run(scope, None).findings
+        assert {f.code.value for f in findings} == {"source_rejected"}
+        assert sorted(f.detail.split(" kernel.py:")[0] for f in findings) == ["SA2", "SC1"]

@@ -20,6 +20,7 @@ from aklr.core.runtime.builder.builder import (
     BuildError,
     FlyDSLBuilder,
     HipBuilder,
+    HsacoBuilder,
     PythonBuilder,
     TritonBuilder,
 )
@@ -33,6 +34,7 @@ __all__ = [
     "BuilderRegistry",
     "FlyDSLBuilder",
     "HipBuilder",
+    "HsacoBuilder",
     "PythonBuilder",
     "Runnable",
     "RunnableMetadata",

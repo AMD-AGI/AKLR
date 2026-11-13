@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from aklr.core.contract import op
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.validation.stages._audit._hip import check_hip_kernel
+from aklr.core.validation.stages._audit._hsaco import check_hsaco_kernel
 from aklr.core.validation.stages._audit._report import AuditReport
 from aklr.core.validation.stages._audit._rules import SOURCE_RULES
 from aklr.core.validation.stages._report._finding import Finding, FindingCode
@@ -77,7 +78,7 @@ class AuditStage(PipelineStage[AuditReport]):
             return []
         if schema.kernel.language == "hip":
             return list(check_hip_kernel(schema_path, schema.kernel))
-        return list(
+        findings = list(
             check_kernel(
                 schema_path,
                 schema.kernel,
@@ -86,6 +87,9 @@ class AuditStage(PipelineStage[AuditReport]):
                 mutable_names=tuple(contract.mutable_tensors),
             )
         )
+        if schema.kernel.language == "hsaco":
+            findings += check_hsaco_kernel(schema_path, schema.kernel)
+        return findings
 
     def _change_findings(self, scope: ValidationScope) -> list[Finding]:
         base_parts = functools.cache(lambda p: _schema_parts_of(scope.text_at_base(p)))
