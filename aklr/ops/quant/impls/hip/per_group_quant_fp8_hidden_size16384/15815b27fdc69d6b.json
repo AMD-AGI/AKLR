@@ -4,6 +4,9 @@
   "contract_id": "per_group_quant_fp8@1.0",
   "description": "Quantize each group of 128 BF16 values to E4M3FN using its absolute maximum, floored at 1e-10. Scales are float32 dequantization scales stored group-major.",
   "op_type": "quant",
+  "models": [
+    "deepseek-v4-pro"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

@@ -198,6 +198,7 @@ class OpCase:
                 "entry_point": f"{entry_file}::run",
                 "sources": [{"path": p, "content": c} for p, c in sorted(sources.items())],
             },
+            models=["test-model"],
         )
 
     @cached_property

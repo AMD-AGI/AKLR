@@ -4,6 +4,10 @@
   "contract_id": "gemm_a8w8_blockwise_scaled@1.0",
   "description": "fp8 gemm dequantized per block: a fp32 scale per 128 x 128 of b, per 1 x 128 of a, K-major or MN-major. operand_format is '<a>:<b>'; 'none:preshuffled' is aiter's 16 x 16 shuffle_weight b with a raw column-major a_scale. Set a_scale.is_row_major to pass a row-major a_scale with a shuffled b.",
   "op_type": "gemm",
+  "models": [
+    "deepseek-r1",
+    "deepseek-v3"
+  ],
   "axes": {
     "m": {
       "type": "var",

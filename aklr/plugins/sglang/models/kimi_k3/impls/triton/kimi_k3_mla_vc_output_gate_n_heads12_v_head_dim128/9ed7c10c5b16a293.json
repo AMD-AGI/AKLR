@@ -4,6 +4,9 @@
   "contract_id": "kimi_k3_mla_vc_output_gate@1.0",
   "description": "Kimi-K3's MLA absorbed attention output to o_proj's input, as sglang's rocm_absorb_v_bmm and its output gate do it: per head, latent vc_weight^T rounded to bf16, times sigmoid(gate) rounded to bf16, the product rounded to bf16, the heads flattened",
   "op_type": "kimi_k3",
+  "models": [
+    "kimi-k3"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

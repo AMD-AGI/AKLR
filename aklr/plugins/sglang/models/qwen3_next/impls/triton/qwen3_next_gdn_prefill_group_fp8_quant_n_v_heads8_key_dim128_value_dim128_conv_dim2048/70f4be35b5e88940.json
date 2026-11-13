@@ -4,6 +4,9 @@
   "contract_id": "qwen3_next_gdn_prefill_group_fp8_quant@1.0",
   "description": "Qwen3-Next GDN prefill from Q/K/V/Z and B/A projections grouped by key head. cu_seqlens partitions the tokens into positive sequences with actual maximum max_seq_len; each sequence uses its distinct cache_indices slot, and a fresh one (has_initial_state false) starts from zero history and state, ignoring the slot's old values. For each token, the width-four causal convolution of the history and the token's Q/K/V channels adds the bias to the FP32 sum of the four products, oldest tap first, and its SiLU is rounded to BF16. beta, the sigmoid of B, is rounded to BF16, and the decay is exp(-exp(a_log) * softplus(A + dt_bias)). Each value head uses its key head's Q and K, L2-normalized with epsilon 1e-6; the gated delta rule updates the FP32 delta_state in [value,key] order, and the core output, Q times the state times scale, is rounded to BF16. The core is gated RMS-normalized with norm_weight and SiLU of the head's Z, rounded to BF16, and quantized per value head to E4M3FN with scale=max(amax,1e-10)/448; Q and K are rounded to BF16 after their normalization. Each sequence's slot keeps its last three tokens and its final state; unindexed slots and all other inputs are preserved.",
   "op_type": "qwen3_next",
+  "models": [
+    "qwen3-next"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

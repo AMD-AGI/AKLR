@@ -4,6 +4,9 @@
   "contract_id": "deepseek_v2_mxfp4_moe@1.0",
   "description": "sglang's DeepseekV2MoE on one rank, with MXFP4 experts and the shared expert in their last slot: on hidden_states, each token's topk experts by sigmoid score plus correction_bias, the scores those of the router's logits in hidden_states' dtype (as sglang's MoEGate returns them on ROCm), weighed by the renormalized unbiased scores times routed_scaling_factor, and the shared expert at weight 1, each expert down(silu(gate(x)) * up(x)) of its MXFP4 weights (fused_moe's: fp4 values at an e8m0 scale per 32); out is their output on this rank, which sglang sums over the ranks.",
   "op_type": "deepseek_v2",
+  "models": [
+    "glm-5.2"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

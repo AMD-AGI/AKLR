@@ -4,6 +4,10 @@
   "contract_id": "flash_mla_with_kvcache@1.0",
   "description": "MLA attention over a paged KV pool, FlashMLA's API. Sparse: each token attends to the slots its indices name, in the pool and the optional extra one; sinks join the normalisation only. Dense: each request attends to its context rows; q's rope part is last, scores are q . row * sm_scale * kv_scale and values row[:head_dim_v] * kv_scale. With causal, query i of a request of length L reads its first L - query_length + i + 1 rows.",
   "op_type": "mla",
+  "models": [
+    "deepseek-v4-flash",
+    "deepseek-v4-pro"
+  ],
   "axes": {
     "batch": {
       "type": "var",

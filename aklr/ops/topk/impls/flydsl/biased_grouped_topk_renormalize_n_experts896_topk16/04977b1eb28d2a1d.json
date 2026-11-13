@@ -4,6 +4,9 @@
   "contract_id": "biased_grouped_topk@1.0",
   "description": "Pick topk experts per token by sigmoid(router_logits) + correction_bias; weigh them with the unbiased sigmoid scores, divided by their sum when renormalize, times routed_scaling_factor. Expert groups are all kept (topk_group == num_expert_group), so grouping selects nothing.",
   "op_type": "topk",
+  "models": [
+    "kimi-k3"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

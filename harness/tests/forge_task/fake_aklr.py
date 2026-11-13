@@ -38,8 +38,8 @@ class _Contract:
     def point_from_json(self, raw, axes):
         return axes
 
-    def narrow(self, point, *, workloads, kernel):
-        return _Narrowed(dict(self.raw, workloads=workloads, kernel=kernel))
+    def narrow(self, point, *, workloads, kernel, models):
+        return _Narrowed(dict(self.raw, models=models, workloads=workloads, kernel=kernel))
 
 
 class ContractRegistry:
@@ -152,6 +152,7 @@ def schema_payload(
         "contract_id": f"{op_type}@1.0",
         "description": "16-bit gemm.",
         "op_type": op_type,
+        "models": ["test-model"],
         "axes": {
             "m": {"type": "var", "description": "Tokens."},
             "n": {"type": "const", "value": 32},

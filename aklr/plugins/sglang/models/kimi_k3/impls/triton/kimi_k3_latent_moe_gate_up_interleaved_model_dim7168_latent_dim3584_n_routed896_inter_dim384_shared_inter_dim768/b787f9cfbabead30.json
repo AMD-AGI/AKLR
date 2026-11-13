@@ -4,6 +4,9 @@
   "contract_id": "kimi_k3_latent_moe@1.0",
   "description": "sglang's KimiK3MoE._forward_fused on one rank of its TP group, up to its all-reduce: front = hidden_states front_weight^T rounded to bf16, split into the shared experts' gate and up rows, the router's logits and the latent input; each token's topk experts by sigmoid(logit) + correction_bias, weighed by their sigmoid scores renormalized; each routed expert down(situ(gate(z), up(z))) of its MXFP4 weights on the latent input z, its two linears taking their inputs in MXFP8 (aiter's a8w4), situ(g, u) = 4 tanh(g / 4) sigmoid(g) * 25 tanh(u / 25); latent is the routed experts' weighed sum and shared the shared experts' down projection of situ(gate, up), both this rank's share, which the TP group sums after the call",
   "op_type": "kimi_k3",
+  "models": [
+    "kimi-k3"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

@@ -68,14 +68,16 @@ _DISTINCT_PRIME_DIMS = (10007, 10009, 10037, 10039, 10061, 10067, 10069, 10079)
 
 
 class OpContract(FrozenModel):
-    """A registered contract (``name`` is ``None``) or a schema (``name``, ``workloads``
-    and ``kernel`` filled); a schema's file is ``schema_text``."""
+    """A registered contract (``name`` is ``None``) or a schema (``name``, ``models``,
+    ``workloads`` and ``kernel`` filled); a schema's file is ``schema_text``."""
 
     # a schema's name, a path segment: impls/<language>/<name>/
     name: Annotated[str, Field(min_length=1)] | None = None
     contract_id: ContractId
     description: str
     op_type: str  # the op family: "gemm" for aklr/ops/gemm/
+    # the models whose serving makes a schema's calls, sorted: "kimi-k3", "glm-5.2"
+    models: tuple[Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9.-]*$")], ...] = ()
     workloads: tuple[WorkloadSpec, ...] = ()
     axes: dict[str, AxisSpec]
     attrs: dict[str, AttrSpec] = {}  # noqa: RUF012 -- pydantic copies defaults
@@ -91,13 +93,17 @@ class OpContract(FrozenModel):
     @model_validator(mode="after")
     def _check_kind(self) -> OpContract:
         if self.name is None:
-            if self.workloads or self.kernel is not None:
-                raise ValueError("a registered contract has no workloads or kernel")
+            if self.workloads or self.kernel is not None or self.models:
+                raise ValueError("a registered contract has no workloads, kernel or models")
             if self.layout_variants.names()[0] != "row_major":
                 raise ValueError('the first layout variant of a registered contract is "row_major"')
             return self
         if not self.workloads or self.kernel is None:
             raise ValueError("a schema has non-empty workloads and a kernel")
+        if not self.models or list(self.models) != sorted(set(self.models)):
+            raise ValueError(
+                f"models {list(self.models)}: a schema names the models it serves, sorted, once each"
+            )
         tensors = self.tensors()
         for name in self.mutable_tensors:
             spec = tensors[name]
@@ -639,10 +645,11 @@ class OpContract(FrozenModel):
         *,
         workloads: Sequence[WorkloadSpec | Mapping[str, Any]],
         kernel: KernelSpec | Mapping[str, Any],
+        models: Sequence[str],
     ) -> OpContract:
         """The schema serving ``point`` (its var axes not read): every other axis, attr,
         dtype and layout variant pinned to ``point``'s, with ``workloads`` (stored
-        sorted by axes) and ``kernel``."""
+        sorted by axes), ``kernel`` and ``models``."""
         if not self.domain.contains(point):
             raise ValueError(f"{point.key()} is outside the domain of {self.contract_id}")
         symbols = self.domain.symbols(point)
@@ -677,6 +684,7 @@ class OpContract(FrozenModel):
             {
                 **fields,
                 "name": self.name_at(point),
+                "models": models,
                 "workloads": workloads,
                 "axes": axes,
                 "attrs": attrs,
@@ -842,6 +850,7 @@ class OpContract(FrozenModel):
                 "contract_id": self.contract_id,
                 "description": self.description,
                 "op_type": self.op_type,
+                "models": list(self.models),
                 "axes": {
                     name: ({"type": "var"} if a.is_var else {"type": "const", "value": symbols[name]})
                     | {"description": a.description}

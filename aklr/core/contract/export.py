@@ -112,11 +112,14 @@ class SchemaCalls(NamedTuple):
     calls: tuple[tuple[str, int], ...]
     # served: call targets kernel.targets does not match, sorted; added: ()
     mismatched_targets: tuple[DeviceTarget, ...]
+    # served: the export's models the file does not list; added: ()
+    missing_models: tuple[str, ...]
 
 
 class _ServingSchema(NamedTuple):
     relative_path: PurePosixPath  # <op>/impls/<language>/<schema_name>/<uuid>.json
     targets: tuple[DeviceTarget, ...]  # its kernel.targets
+    models: tuple[str, ...]  # its models
 
 
 class _ServedCalls(NamedTuple):
@@ -146,10 +149,11 @@ def export_schemas(
     export_dir: Path,
     *,
     language: Language,
+    models: Sequence[str],
 ) -> list[SchemaCalls]:
-    """Write into ``export_dir`` a ``language`` schema for each schema name whose called
-    Points no committed schema serves; every schema file the calls reach, sorted by
-    path."""
+    """Write into ``export_dir`` a ``language`` schema of ``models`` (whose serving made
+    the calls) for each schema name whose called Points no committed schema serves; every
+    schema file the calls reach, sorted by path."""
     if export_dir.resolve().is_relative_to(_AKLR_DIR):
         raise ValueError(f"{export_dir}: inside the aklr source tree; export never writes the repository")
     errors: list[str] = []
@@ -169,11 +173,12 @@ def export_schemas(
             serving_schema = _ServingSchema(
                 PurePosixPath(path.relative_to(op_dir.parent)),
                 s.kernel.targets,
+                s.models,
             )
             for w in s.workloads:
                 serving.setdefault((pkg, s.name, frozenset(w.axes.items())), serving_schema)
     pending: dict[tuple[str, str], _PendingSchema] = {}
-    served: dict[PurePosixPath, _ServedCalls] = {}
+    served: dict[_ServingSchema, _ServedCalls] = {}
     for record in records:
         if (point := record.point) is None:
             continue
@@ -194,7 +199,7 @@ def export_schemas(
         pkg, name = contract.op_package, contract.name_at(point)
         serving_schema = serving.get((pkg, name, frozenset(workload.axes.items())))
         if serving_schema is not None:
-            calls = served.setdefault(serving_schema.relative_path, _ServedCalls(Counter(), set()))
+            calls = served.setdefault(serving_schema, _ServedCalls(Counter(), set()))
             calls.n_calls_by_axes[axes_text(workload.axes)] += record.n_calls
             if not DeviceTarget.matches_target(record.target, serving_schema.targets):
                 calls.mismatched_targets.add(record.target)
@@ -221,7 +226,7 @@ def export_schemas(
             entry_point=f"kernel{spec.SOURCE_SUFFIXES[language][0]}::run",
             sources=(),
         )
-        narrowed = p.contract.narrow(p.point, workloads=workloads, kernel=kernel)
+        narrowed = p.contract.narrow(p.point, workloads=workloads, kernel=kernel, models=models)
         relative_path = locate.op_dir(pkg).name / narrowed.relative_path()
         path = export_dir / relative_path
         errors += p.contract.schema_errors(path, narrowed)
@@ -229,12 +234,17 @@ def export_schemas(
         n_calls_by_axes: Counter[str] = Counter()
         for key, w in p.workloads.items():
             n_calls_by_axes[axes_text(w.axes)] += p.n_calls_by_workload[key]
-        results.append(SchemaCalls(relative_path, True, _sorted_calls(n_calls_by_axes), ()))
-    for relative_path, calls in served.items():
+        results.append(SchemaCalls(relative_path, True, _sorted_calls(n_calls_by_axes), (), ()))
+    for serving_schema, calls in served.items():
         mismatched = (
             DeviceTarget.normalize_targets(list(calls.mismatched_targets)) if calls.mismatched_targets else ()
         )
-        results.append(SchemaCalls(relative_path, False, _sorted_calls(calls.n_calls_by_axes), mismatched))
+        missing = tuple(m for m in models if m not in serving_schema.models)
+        results.append(
+            SchemaCalls(
+                serving_schema.relative_path, False, _sorted_calls(calls.n_calls_by_axes), mismatched, missing
+            )
+        )
     if errors:  # without repeats: each call of an unknown contract_id reports it
         raise ValueError("\n".join(dict.fromkeys(errors)))
     # replace the earlier export's files that are still empty: filled ones hold a kernel's sources
@@ -279,23 +289,26 @@ def repository_errors() -> list[str]:
 
 
 def main(argv: Sequence[str], *, export_dir: Path | None) -> int:
-    """``python -m aklr export [check] [--from D] [--to D] [--language L]``;
+    """``python -m aklr export [check] [--from D] [--to D] [--language L] [--model M]``;
     ``export_dir`` defaults both directories and is ``None`` only for check."""
     parser = argparse.ArgumentParser(prog="python -m aklr export")
     parser.add_argument("command", nargs="?", choices=["check"])
     parser.add_argument("--from", dest="calls_dir", type=Path, metavar="DIR")
     parser.add_argument("--to", dest="export_dir", type=Path, metavar="DIR")
     parser.add_argument("--language", choices=spec.LANGUAGES, help="of the new schema files")
+    parser.add_argument("--model", help="the model whose serving made the calls, such as kimi-k3")
     args = parser.parse_args(argv)
     if args.command == "check":
-        if args.calls_dir or args.export_dir or args.language:
-            parser.error("export check takes no --from, --to or --language")
+        if args.calls_dir or args.export_dir or args.language or args.model:
+            parser.error("export check takes no --from, --to, --language or --model")
         errors = repository_errors()
         for line in errors:
             print(line, file=sys.stderr)
         return int(bool(errors))
     if args.language is None and len(spec.LANGUAGES) > 1:
         parser.error(f"--language is required: one of {list(spec.LANGUAGES)}")
+    if args.model is None:
+        parser.error("--model is required: the model whose serving made the calls, such as kimi-k3")
     language = args.language or spec.LANGUAGES[0]
     assert export_dir is not None
     calls_dir, export_dir = args.calls_dir or export_dir, args.export_dir or export_dir
@@ -304,12 +317,12 @@ def main(argv: Sequence[str], *, export_dir: Path | None) -> int:
         if not records:
             print(f"no calls.*.jsonl in {calls_dir}", file=sys.stderr)
             return 1
-        results = export_schemas(calls_dir, records, export_dir, language=language)
+        results = export_schemas(calls_dir, records, export_dir, language=language, models=(args.model,))
     except (OSError, ValueError) as e:
         print(e, file=sys.stderr)
         return 1
     for schema_calls in results:
-        relative_path, is_added, calls, mismatched_targets = schema_calls
+        relative_path, is_added, calls, mismatched_targets, missing_models = schema_calls
         status = "added" if is_added else "served"
         line = f"{status:<8} {relative_path}   {len(calls)} workloads  "
         line += " ".join(f"{axes}:{n_calls}" for axes, n_calls in calls)
@@ -318,6 +331,8 @@ def main(argv: Sequence[str], *, export_dir: Path | None) -> int:
         elif mismatched_targets:
             targets = ", ".join(str(t) for t in mismatched_targets)
             line += f"   (target mismatch: called on {targets}, which falls back)"
+        if missing_models:
+            line += f"   (models lack {', '.join(missing_models)}: add it to the file)"
         print(line)
     if n_calls := sum(r.n_calls for r in records if r.point is None):
         print(f"{n_calls} calls had no point (fallback only)")

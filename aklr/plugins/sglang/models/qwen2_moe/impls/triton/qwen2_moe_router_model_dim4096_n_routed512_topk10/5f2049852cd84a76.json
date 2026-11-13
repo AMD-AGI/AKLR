@@ -4,6 +4,9 @@
   "contract_id": "qwen2_moe_router@1.0",
   "description": "sglang's Qwen2MoeSparseMoeBlock router, its gate and TopK with renormalize: the logits hidden_states router_weight^T, rounded to bf16, pick each token's topk experts by descending logit, a tie going to the lower expert id, weighed by the softmax of their logits (the softmax over every expert, renormalized over the chosen ones).",
   "op_type": "qwen2_moe",
+  "models": [
+    "qwen3.5"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",
