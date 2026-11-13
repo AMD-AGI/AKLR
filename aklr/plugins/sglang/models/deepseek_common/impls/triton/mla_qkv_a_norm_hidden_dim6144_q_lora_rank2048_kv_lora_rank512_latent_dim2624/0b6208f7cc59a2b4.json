@@ -1,0 +1,161 @@
+{
+  "schema_version": 5,
+  "name": "mla_qkv_a_norm_hidden_dim6144_q_lora_rank2048_kv_lora_rank512_latent_dim2624",
+  "contract_id": "mla_qkv_a_norm@1.0",
+  "description": "sglang's qkv_a projection and latent RMSNorms of an MLA attention with a compressed query, on one rank (the qkv latent forward_absorb_rocm_prepare fetches, and its norms): each token's hidden state times w_qkv_a, the qkv latent; its first q_lora_rank columns, q's latent, and its next kv_lora_rank columns, the KV latent, each times rsqrt(mean(x**2) + eps) of its own columns and its norm weight; its last columns, the RoPE key, as projected.",
+  "op_type": "deepseek_common",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call."
+    },
+    "hidden_dim": {
+      "type": "const",
+      "value": 6144,
+      "description": "The hidden size: the projection's reduction."
+    },
+    "q_lora_rank": {
+      "type": "const",
+      "value": 2048,
+      "description": "q's latent: the qkv latent's first part."
+    },
+    "kv_lora_rank": {
+      "type": "const",
+      "value": 512,
+      "description": "The KV latent: the qkv latent's next part."
+    },
+    "latent_dim": {
+      "type": "const",
+      "value": 2624,
+      "description": "A qkv latent row: q's latent, the KV latent, then the RoPE key."
+    },
+    "rope_dim": {
+      "type": "const",
+      "value": 64,
+      "description": "The RoPE key: the qkv latent's last part."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "hidden_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's hidden state, the attention's input."
+    },
+    "w_qkv_a": {
+      "shape": [
+        "latent_dim",
+        "hidden_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "fused_qkv_a_proj_with_mqa's weight: row c gives the qkv latent's column c."
+    },
+    "q_norm_weight": {
+      "shape": [
+        "q_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": "0.58"
+      },
+      "description": "q_a_layernorm's weight, one per column of q's latent."
+    },
+    "kv_norm_weight": {
+      "shape": [
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": "0.58"
+      },
+      "description": "kv_a_layernorm's weight, one per column of the KV latent."
+    },
+    "eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to each mean square: both norms' variance_epsilon."
+    }
+  },
+  "outputs": {
+    "q_latent": {
+      "shape": [
+        "n_tokens",
+        "q_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's q latent, normalized: q_b_proj's and the indexer's input."
+    },
+    "kv_latent": {
+      "shape": [
+        "n_tokens",
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's KV latent, normalized: its KV cache row's latent part."
+    },
+    "k_rope": {
+      "shape": [
+        "n_tokens",
+        "rope_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's RoPE key as projected, before RoPE."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"qkv_a projection and latent RMSNorms for GLM-5.2 decode on gfx950, tuned at TP8 for 16 tokens.\n\nEach token's 6144-wide hidden state times the bf16 fused_qkv_a_proj_with_mqa weight (replicated:\nthe same on every rank, at any TP size) into its 2624-wide qkv latent, split-K into fp32 partials\nsummed in a fixed order and rounded to bf16; its first 2048 columns (q's latent) and next 512 (the\nKV latent) each times rsqrt(mean(x**2) + eps) and their norm weight in fp32, written in bf16; its\nlast 64 (the RoPE key) written as projected.\n\"\"\"\n\nimport torch\nimport triton\nfrom triton.runtime.jit import ConstexprFunction\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n# next_power_of_2 as a constexpr function, for host code and compile-time expressions alike\n_ceil_power_of_two = triton.next_power_of_2\nif not isinstance(_ceil_power_of_two, ConstexprFunction):\n    _ceil_power_of_two = triton.constexpr_function(_ceil_power_of_two)\n\n_next_power_of = _ceil_power_of_two\n\n\n@gluon.jit\ndef _project_async(\n    X,\n    W,\n    P,\n    M: gl.constexpr,\n    N: gl.constexpr,\n    K: gl.constexpr,\n    SX: gl.constexpr,\n    SW: gl.constexpr,\n    SPLITS: gl.constexpr,\n    PITCH: gl.constexpr,\n):\n    STAGES: gl.constexpr = 5 if M == 8 else 4\n    ROTATE: gl.constexpr = 4 if M == 8 else 1\n    SLAB: gl.constexpr = 1024\n    pid = gl.program_id(0).to(gl.uint32)\n    pn = pid // (SPLITS * 4) * 4 + pid % 4\n    split = (pid // 4 % SPLITS + ROTATE * pn) % SPLITS\n    BM: gl.constexpr = _next_power_of(M)\n    STEPS: gl.constexpr = K // (SPLITS * 64)\n    gl.static_assert(K % (SPLITS * 64) == 0)\n    gl.static_assert(N % 64 == 0)\n    gl.static_assert(M == 8 or M == 16)\n    gl.static_assert(STEPS >= STAGES)\n    la: gl.constexpr = gl.BlockedLayout([1, 8], [8, 8], [1, 1], [1, 0])\n    lb: gl.constexpr = gl.BlockedLayout([8, 1], [8, 8], [1, 1], [0, 1])\n    sa: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, [1, 0])\n    sb: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, [0, 1])\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[16, 16, 32], transposed=True, warps_per_cta=[1, 1])\n    da: gl.constexpr = gl.DotOperandLayout(0, mma, 8)\n    db: gl.constexpr = gl.DotOperandLayout(1, mma, 8)\n    a0 = gl.allocate_shared_memory(gl.bfloat16, [BM, 64], sa)\n    a1 = gl.allocate_shared_memory(gl.bfloat16, [BM, 64], sa)\n    a2 = gl.allocate_shared_memory(gl.bfloat16, [BM, 64], sa)\n    a3 = gl.allocate_shared_memory(gl.bfloat16, [BM, 64], sa)\n    b0 = gl.allocate_shared_memory(gl.bfloat16, [64, 16], sb)\n    b1 = gl.allocate_shared_memory(gl.bfloat16, [64, 16], sb)\n    b2 = gl.allocate_shared_memory(gl.bfloat16, [64, 16], sb)\n    b3 = gl.allocate_shared_memory(gl.bfloat16, [64, 16], sb)\n    aa = (a0, a1, a2, a3)\n    bb = (b0, b1, b2, b3)\n    if M == 8:\n        a4 = gl.allocate_shared_memory(gl.bfloat16, [BM, 64], sa)\n        b4 = gl.allocate_shared_memory(gl.bfloat16, [64, 16], sb)\n        aa = aa + (a4,)\n        bb = bb + (b4,)\n    mi = gl.arange(0, BM, gl.SliceLayout(1, la))\n    ka = gl.arange(0, 64, gl.SliceLayout(0, la))\n    kb = gl.arange(0, 64, gl.SliceLayout(1, lb))\n    ni = gl.arange(0, 16, gl.SliceLayout(0, lb))\n    ao = mi[:, None] * SX + ka[None, :]\n    bo = kb[:, None] + ni[None, :] * SW\n    xp = X + split * STEPS * 64\n    wp = W + pn * 16 * SW + split * STEPS * 64\n    for stage in gl.static_range(STAGES):\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(aa[stage], xp, ao + stage * 64)\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(bb[stage], wp, bo + stage * 64)\n        gl.amd.cdna4.async_copy.commit_group()\n    acc = gl.zeros((BM, 16), gl.float32, mma)\n    for step in gl.static_range(STEPS):\n        gl.amd.cdna4.async_copy.wait_group(min(STAGES - 1, STEPS - 1 - step))\n        a = gl.amd.cdna4.async_copy.load_shared_relaxed(aa[step % STAGES], da)\n        b = gl.amd.cdna4.async_copy.load_shared_relaxed(bb[step % STAGES], db)\n        if M == 16:\n            acc = gl.amd.cdna4.mfma(a, b, acc)\n        if step + STAGES < STEPS:\n            gl.inline_asm_elementwise(\n                \"s_waitcnt lgkmcnt(0)\\n v_mov_b32 $0, 0\",\n                constraints=\"=v,~{memory}\",\n                args=[],\n                dtype=gl.int32,\n                is_pure=False,\n                pack=1,\n            )\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(aa[step % STAGES], xp, ao + (step + STAGES) * 64)\n            gl.amd.cdna4.async_copy.buffer_load_to_shared(bb[step % STAGES], wp, bo + (step + STAGES) * 64)\n            gl.amd.cdna4.async_copy.commit_group()\n        if M == 8:\n            acc = gl.amd.cdna4.mfma(a, b, acc)\n    mr = gl.arange(0, BM, gl.SliceLayout(1, mma))\n    nr = pn * 16 + gl.arange(0, 16, gl.SliceLayout(0, mma))\n    if M == 16:\n        offset = ((split * (PITCH // SLAB) + nr[None, :] // SLAB) * M + mr[:, None]) * SLAB + nr[None, :] % SLAB\n    else:\n        offset = (split * M + mr[:, None]) * PITCH + nr[None, :]\n    gl.store(P + offset, acc, cache_modifier=\".wt\")\n\n\n@gluon.jit\ndef _finish_q(\n    P,\n    G,\n    Y,\n    row,\n    eps,\n    M: gl.constexpr,\n    WIDTH: gl.constexpr,\n    OFFSET: gl.constexpr,\n    SPLITS: gl.constexpr,\n    B: gl.constexpr,\n    NW: gl.constexpr,\n    VEC: gl.constexpr,\n    PITCH: gl.constexpr,\n    ROW_MAJOR: gl.constexpr,\n    SLAB: gl.constexpr,\n):\n    layout: gl.constexpr = gl.BlockedLayout([1, VEC], [1, 64], [1, NW], [1, 0])\n    s = gl.arange(0, _next_power_of(SPLITS), gl.SliceLayout(1, layout))\n    d = gl.arange(0, B, gl.SliceLayout(0, layout))\n    if M == 16:\n        col = OFFSET + d[None, :]\n        offset = ((s[:, None] * (PITCH // SLAB) + col // SLAB) * M + row) * SLAB + col % SLAB\n    elif ROW_MAJOR:\n        offset = (row * SPLITS + s[:, None]) * PITCH + OFFSET + d[None, :]\n    else:\n        offset = (s[:, None] * M + row) * PITCH + OFFSET + d[None, :]\n    cache: gl.constexpr = \".cs\" if M == 8 or M == 16 else \"\"\n    partial = gl.load(P + offset, (s[:, None] < SPLITS) & (d[None, :] < WIDTH), 0, cache_modifier=cache)\n    x = gl.sum(partial, 0).to(gl.bfloat16).to(gl.float32)\n    gamma = gl.load(G + d, d < WIDTH, 0).to(gl.float32)\n    x = x * gl.rsqrt(gl.sum(x * x, 0) / WIDTH + eps) * gamma\n    gl.store(Y + row * WIDTH + d, x.to(gl.bfloat16), d < WIDTH)\n\n\n@gluon.jit\ndef _finish(\n    P,\n    QG,\n    KG,\n    QO,\n    KO,\n    RO,\n    eps,\n    M: gl.constexpr,\n    Q: gl.constexpr,\n    KV: gl.constexpr,\n    R: gl.constexpr,\n    SPLITS: gl.constexpr,\n    NW: gl.constexpr,\n    VEC: gl.constexpr,\n    PITCH: gl.constexpr,\n    ROW_MAJOR: gl.constexpr,\n    SLAB: gl.constexpr,\n    INTERLEAVE: gl.constexpr = False,\n):\n    if INTERLEAVE:\n        row = gl.program_id(0) // 2\n        group = gl.program_id(0) % 2\n    else:\n        row = gl.program_id(0)\n        group = gl.program_id(1)\n    if group == 0:\n        _finish_q(P, QG, QO, row, eps, M, Q, 0, SPLITS, _next_power_of(Q), NW, VEC, PITCH, ROW_MAJOR, SLAB)\n    else:\n        layout: gl.constexpr = gl.BlockedLayout([1, VEC], [1, 64], [1, NW], [1, 0])\n        s = gl.arange(0, _next_power_of(SPLITS), gl.SliceLayout(1, layout))\n        d = gl.arange(0, _next_power_of(KV + R), gl.SliceLayout(0, layout))\n        if M == 16:\n            col = Q + d[None, :]\n            offset = ((s[:, None] * (PITCH // SLAB) + col // SLAB) * M + row) * SLAB + col % SLAB\n        elif ROW_MAJOR:\n            offset = (row * SPLITS + s[:, None]) * PITCH + Q + d[None, :]\n        else:\n            offset = (s[:, None] * M + row) * PITCH + Q + d[None, :]\n        cache: gl.constexpr = \".cs\" if M == 8 or M == 16 else \"\"\n        part = gl.load(P + offset, (s[:, None] < SPLITS) & (d[None, :] < KV + R), 0, cache_modifier=cache)\n        x = gl.sum(part, 0).to(gl.bfloat16).to(gl.float32)\n        xv = gl.where(d < KV, x, 0.0)\n        gamma = gl.load(KG + d, d < KV, 0).to(gl.float32)\n        y = xv * gl.rsqrt(gl.sum(xv * xv, 0) / KV + eps) * gamma\n        gl.store(KO + row * KV + d, y.to(gl.bfloat16), d < KV)\n        gl.store(RO + row * R + d - KV, x.to(gl.bfloat16), (d >= KV) & (d < KV + R))\n\n\ndef qkv_a_norm(\n    hidden: torch.Tensor,\n    weight: torch.Tensor,\n    q_gamma: torch.Tensor,\n    kv_gamma: torch.Tensor,\n    *,\n    rope_dim: int = 64,\n    eps: float = 1e-05,\n    qo: torch.Tensor,\n    ko: torch.Tensor,\n    ro: torch.Tensor,\n):\n    m, k = hidden.shape\n    q, kv = (q_gamma.numel(), kv_gamma.numel())\n    n = q + kv + rope_dim\n    splits = 3 if m <= 2 else 6\n    use_async = m in (8, 16)\n    slab = 1024 if use_async and m == 16 else 512\n    pitch = triton.cdiv(n, slab) * slab if m in (8, 16) else 4096 if m == 4 else n\n    row_major = m < 16 and m != 8\n    partials = torch.empty((m * splits * pitch,), device=hidden.device, dtype=torch.float32)\n    _project_async[splits * triton.cdiv(n, 16),](\n        hidden, weight, partials, m, n, k, hidden.stride(0), weight.stride(0), splits, PITCH=pitch, num_warps=1\n    )\n    _finish[(m * 2,) if use_async else (m, 2)](\n        partials,\n        q_gamma,\n        kv_gamma,\n        qo,\n        ko,\n        ro,\n        eps,\n        m,\n        q,\n        kv,\n        rope_dim,\n        splits,\n        8,\n        4,\n        pitch,\n        row_major,\n        SLAB=slab,\n        INTERLEAVE=use_async,\n        num_warps=8,\n        enable_fp_fusion=False,\n    )\n    return (qo, ko, ro)\n\n\ndef run(*, hidden_states, w_qkv_a, q_norm_weight, kv_norm_weight, eps, q_latent, kv_latent, k_rope):\n    \"\"\"Writes q_latent, kv_latent and k_rope: qkv_a_norm on sglang's tensors.\"\"\"\n    qkv_a_norm(\n        hidden_states,\n        w_qkv_a,\n        q_norm_weight,\n        kv_norm_weight,\n        rope_dim=k_rope.shape[1],\n        eps=eps,\n        qo=q_latent,\n        ko=kv_latent,\n        ro=k_rope,\n    )\n"
+      }
+    ]
+  }
+}
