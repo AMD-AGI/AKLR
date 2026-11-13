@@ -16,6 +16,8 @@ from aklr.plugins import aiter as aklr_aiter
 
 # the package's names are the functions; the modules hold what the tests replace
 moe_module = importlib.import_module("aklr.plugins.aiter.fused_moe")
+gemm_module = importlib.import_module("aklr.plugins.aiter.tuned_gemm")
+triton_gemm_module = importlib.import_module("aklr.plugins.aiter.triton_gemm")
 
 
 class ActivationType(enum.Enum):
@@ -36,6 +38,8 @@ def op_calls(monkeypatch):
         return "aklr"
 
     monkeypatch.setattr(moe_module, "aklr_fused_moe", op)
+    monkeypatch.setattr(gemm_module, "gemm", op)
+    monkeypatch.setattr(triton_gemm_module, "gemm", op)
     return calls
 
 
@@ -186,3 +190,49 @@ def test_the_callers_buffer_and_dtype_reach_the_op(op_calls):
     assert call["out_dtype"] is torch.bfloat16
     # vLLM's 0.0 is no limit
     assert call["swiglu_limit"] is None
+
+
+def mm_call(**changed):
+    call = {"bias": None, "otype": None, "scale_a": None, "scale_b": None, "scale_c": None} | changed
+    return aklr_aiter.mm(torch.zeros(4, 8), torch.zeros(6, 8), **call)
+
+
+@pytest.mark.parametrize("scale", ["scale_a", "scale_b", "scale_c"])
+def test_a_scaled_gemm_goes_back_to_aiter(op_calls, scale):
+    assert mm_call(**{scale: torch.ones(1)}) is FallbackReason.OUT_OF_CONTRACT
+    assert op_calls == []
+
+
+def test_a_gemm_reaches_the_op_with_the_callers_buffer(op_calls):
+    out = torch.empty(4, 6)
+    assert mm_call(otype=torch.bfloat16, out=out) == "aklr"
+    (call,) = op_calls
+    assert call["out"] is out
+    assert call["out_dtype"] is torch.bfloat16
+
+
+def triton_call(**changed):
+    call = {
+        "bias": None,
+        "dtype": torch.bfloat16,
+        "y": None,
+        "activation": None,
+        "skip_reduce": False,
+    } | changed
+    return aklr_aiter.gemm_a16w16(torch.zeros(4, 8), torch.zeros(6, 8), **call)
+
+
+@pytest.mark.parametrize(
+    "changed", [{"activation": "gelu"}, {"skip_reduce": True}], ids=lambda c: next(iter(c))
+)
+def test_a_triton_gemm_with_more_than_the_product_goes_back_to_aiter(op_calls, changed):
+    assert triton_call(**changed) is FallbackReason.OUT_OF_CONTRACT
+    assert op_calls == []
+
+
+def test_a_triton_gemm_reaches_the_op_with_the_callers_buffer(op_calls):
+    y = torch.empty(4, 6)
+    assert triton_call(y=y, dtype=torch.float16) == "aklr"
+    (call,) = op_calls
+    assert call["out"] is y
+    assert call["out_dtype"] is torch.float16
