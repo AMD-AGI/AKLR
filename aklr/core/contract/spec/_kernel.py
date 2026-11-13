@@ -44,7 +44,8 @@ class KernelSpec(FrozenModel):
         Field(min_length=1),
         AfterValidator(DeviceTarget.normalize_targets),
     ]
-    # the toolchain versions the kernel needs, by language: {"triton": ">=3.8"}; {}: any
+    # the toolchain versions the kernel needs, by language: {"triton": ">=3.8"}; a kernel
+    # names at least its own language (requires_error)
     requires: dict[Language, str] = {}  # noqa: RUF012
     # who wrote the kernel: a person, team or agent; "": not recorded
     author: str = ""
@@ -114,6 +115,14 @@ class KernelSpec(FrozenModel):
         if not self.author:
             data.pop("author", None)
         return data
+
+    @property
+    def requires_error(self) -> str | None:
+        """Why ``requires`` names no version of the kernel's own language; None when it
+        does or there are no sources (a definition)."""
+        if not self.sources or self.language in self.requires:
+            return None
+        return f'kernel.requires names no {self.language} version, such as {{"{self.language}": ">=<developed on>"}}'
 
     @property
     def entry_file(self) -> str:

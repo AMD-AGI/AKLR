@@ -24,7 +24,8 @@ aklr/plugins/
 │   │       ├── reference.py  reference implementation written from the math, used to verify kernel correctness
 │   │       ├── baseline.py   SGLang's original implementation, the baseline for kernel performance
 │   │       └── impls/        kernel implementations, one JSON file per kernel
-│   └── layers/               mirrors SGLang's srt/layers/, with the same layout
+│   ├── layers/               mirrors SGLang's srt/layers/, with the same layout
+│   └── aiter_calls.py        routes on the aiter functions SGLang calls, for every model
 ├── vllm/                     the vLLM plugin (AKLR_VLLM_PLUGIN=1)
 │   ├── __init__.py           entry: hooks the routes in each worker once its device is bound
 │   ├── hook.py               @vllm_route wraps the function a vLLM function looks up at run time
@@ -33,7 +34,7 @@ aklr/plugins/
 │   ├── layers/               routes from vLLM's layers to the ops of aklr/ops, mirrors vLLM's model_executor/layers/
 │   └── models/               routes from the model files vLLM runs uncompiled, mirrors vLLM's models/
 │       └── muse_spark/       Muse Spark on ROCm (vLLM's models/muse_spark/amd)
-└── aiter/                    planned
+└── aiter/                    aiter's arguments to an AKLR op call, shared by the routes both plugins put on aiter's functions
 ```
 
 ## Call flow

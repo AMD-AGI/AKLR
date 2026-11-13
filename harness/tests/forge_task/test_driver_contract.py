@@ -238,8 +238,10 @@ def test_publish_keeps_the_kernel_in_the_checkout_to_commit(run, aklr_root: Path
     assert cli.main(["publish", str(run.root)]) == 0
     out = capsys.readouterr().out
     published = aklr_root / out.split("published: ")[1].splitlines()[0]
-    sources = json.loads(published.read_text())["kernel"]["sources"]
-    assert sources == [{"path": "kernel.py", "content": CANDIDATE_KERNEL}]
+    kernel = json.loads(published.read_text())["kernel"]
+    assert kernel["sources"] == [{"path": "kernel.py", "content": CANDIDATE_KERNEL}]
+    # export check rejects a kernel that names no version of its own language: the installed one is its floor
+    assert kernel["requires"] == {"flydsl": ">=0.3.4.1"}
     assert "python -m aklr export check" in out
 
 

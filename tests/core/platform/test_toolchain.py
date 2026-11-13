@@ -26,3 +26,21 @@ def test_unmet_requirement(monkeypatch: pytest.MonkeyPatch, installed: str | Non
 
 def test_toolchain_version_of_no_module_is_none() -> None:
     assert toolchain.toolchain_version("no_such_toolchain") is None
+
+
+@pytest.mark.parametrize(
+    ("torch_hip", "version"),
+    [("7.15.26333", "7.15.26333"), ("7.15.26333-dd7f95766", "7.15.26333"), (None, None)],
+    ids=["release", "build_suffix", "not_rocm"],
+)
+def test_hip_is_the_hip_torch_was_built_with(
+    monkeypatch: pytest.MonkeyPatch, torch_hip: str | None, version: str | None
+) -> None:
+    """No ``hip`` module exists: the hip toolchain is ``torch.version.hip``, which a
+    specifier reads once its build suffix is dropped."""
+    import torch
+
+    monkeypatch.setattr(torch.version, "hip", torch_hip)
+    assert toolchain.toolchain_version("hip") == version
+    expected = None if version else "hip is not installed, >=7.15 is required"
+    assert toolchain.unmet_requirement({"hip": ">=7.15"}) == expected
