@@ -16,7 +16,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "kimi_k3_latent_moe_reference",
-    "kimi_k3_mla_decode_reference",
     "kimi_k3_mla_prefill_gate_reference",
     "kimi_k3_mla_vc_output_gate_reference",
 ]
@@ -83,27 +82,6 @@ def kimi_k3_latent_moe_reference(
         h = rounded_to_bfloat16(_situ(g, u))
         latent.index_add_(0, tokens, weights[tokens, slots, None] * (_mxfp8(h) @ weight("w2", e).T))
     return latent, shared
-
-
-def kimi_k3_mla_decode_reference(
-    point: Any,
-    row_major_args: Mapping[str, Any],
-    decode: Callable[[Tensor, str], Tensor],
-) -> Tensor:
-    """Each row's softmax over its slots of q . row * sm_scale, applied to the rows' first 512
-    values; no rounding point."""
-    import torch
-
-    args = row_major_args
-    q = decode(args["q"], point.dtypes["q"]).float()
-    cache = decode(args["kv_cache"], point.dtypes["kv_cache"]).float()[:, 0]
-    indptr, indices = args["kv_indptr"].long().tolist(), args["kv_indices"].long()
-    output = q.new_zeros((q.shape[0], q.shape[1], 512))
-    for r in range(q.shape[0]):
-        rows = cache[indices[indptr[r] : indptr[r + 1]]]
-        scores = (q[r] @ rows.T) * float(args["sm_scale"])
-        output[r] = torch.softmax(scores, dim=-1) @ rows[:, :512]
-    return output
 
 
 def kimi_k3_mla_vc_output_gate_reference(
