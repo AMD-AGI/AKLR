@@ -10,7 +10,7 @@ Configuration source. The file is ignored by Git and exists only on the host tha
 .shepherd/configuration.yaml
 ```
 
-Trigger: a schedule, every 15 minutes by default, or a repository event. Polling stays the fallback; never treat a bot comment as a trigger.
+Trigger: one schedule, every 15 minutes by default (cron `*/15 * * * *`). No repository-event triggers: each round reads GitHub itself, and the wrapper skips triggers before the ledger's `wake_at`. The run uses no trigger data.
 
 The creation intent should describe this as one scheduled round on the self-hosted worker that holds the state directory. It should include the configured repository, base branch, GitHub pull request, CI and review access, and draft pull request capability.
 

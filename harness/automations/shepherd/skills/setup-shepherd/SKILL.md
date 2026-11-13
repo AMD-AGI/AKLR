@@ -98,7 +98,7 @@ Ask for or confirm:
   key or gateway the campaign's model calls use (`claude auth status`, `ANTHROPIC_BASE_URL`). If none
   exists, say the owner must set one; it cannot be inferred from here.
 - Publication: draft PRs, PR comments, `ci:gpu` label, branch prefix.
-- Model slug and schedule of the Cursor automation (15 minutes by default, plus any repository events).
+- Model slug and schedule interval of the Cursor automation (15 minutes by default).
 
 Use only model slugs shown as available in the user's Cursor model picker or supported model list. Do not guess a slug and do not carry over a private default.
 
@@ -117,7 +117,10 @@ Run these checks where every scheduled round will run, not only in this session.
 The automation needs:
 
 - A self-hosted Cursor worker on the host below, not a Cursor cloud agent: a cloud agent has no
-  persistent state directory, no `/proc` of earlier rounds and no cluster access.
+  persistent state directory, no `/proc` of earlier rounds and no cluster access. Use a My Machines or
+  repo-backed pool worker in the checkout that holds `.shepherd/configuration.yaml`, on the base branch:
+  these use the checkout they have, while an any-repo pool worker started with `--clone-git-repos` clones
+  a fresh one without the Git-ignored configuration.
 - Read access to this pack and `.shepherd/configuration.yaml` by repository path.
 - Read access to main, PRs, CI and reviews of the repository; with publication on, branch push and a
   draft pull request action. The `ci:gpu` label is a separate authority.

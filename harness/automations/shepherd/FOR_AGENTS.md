@@ -6,7 +6,7 @@ one automation that keeps optimizing aklr kernels unattended.
 
 ### automation: run shepherd rounds
 
-- trigger: a schedule, every 15 minutes by default. repository events may also start it. a trigger starts no round while one is still running, or while the ledger's next wake time is ahead and the last round succeeded.
+- trigger: a schedule, every 15 minutes by default, and no repository events: each round reads github itself. a trigger starts no round while one is still running, or while the ledger's next wake time is ahead and the last round succeeded.
 - behavior: each round observes github and the remote gpu jobs, advances existing work as far as confirmed results allow (stop, clean, validate, deliver), and admits new kernel-less schemas into free gpus.
 - campaign: each campaign optimizes one kernel with kernelforge on one gpu of a shared pool node, then finalizes, stress-tests and validates it in a trusted checkout.
 - tools: repository and history access, github pull request, ci and review access, draft pull request creation, the configured `remote-gpu` cluster, and the aklr harness skills the round uses.
@@ -35,7 +35,7 @@ one automation that keeps optimizing aklr kernels unattended.
 - campaign model, reasoning effort and per-campaign limits: `<...>`
 - cumulative budget and its authorization: `<...>`
 - publication permissions and branch prefix: `<...>`
-- automation model and schedule: `<model, interval, repository events>`
+- automation model and schedule: `<model, interval>`
 
 start from [`configuration.example.yaml`](./templates/configuration.example.yaml). copy and fill it outside this pack, at `.shepherd/configuration.yaml`. keep secret values in a secret manager or environment.
 
