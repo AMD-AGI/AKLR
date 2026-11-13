@@ -117,7 +117,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.091
     },
     {
       "axes": {
@@ -125,7 +127,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.237
     },
     {
       "axes": {
@@ -133,7 +137,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.21
     },
     {
       "axes": {
@@ -141,7 +147,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.142
     },
     {
       "axes": {
@@ -149,7 +157,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.201
     },
     {
       "axes": {
@@ -157,7 +167,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.225
     },
     {
       "axes": {
@@ -165,7 +177,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.219
     },
     {
       "axes": {
@@ -173,7 +187,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.187
     },
     {
       "axes": {
@@ -181,7 +197,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.229
     },
     {
       "axes": {
@@ -189,7 +207,9 @@
         "n_pages": 50264,
         "max_blocks": 4845,
         "max_seq_len": 310080
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.165
     }
   ],
   "layout_variants": {
