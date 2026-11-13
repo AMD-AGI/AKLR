@@ -1,0 +1,120 @@
+{
+  "schema_version": 5,
+  "name": "mla_vc_n_heads16_kv_lora_rank512_v_head_dim256",
+  "contract_id": "mla_vc@1.0",
+  "description": "sglang's absorbed MLA value projection on one rank, kv_b_proj in fp8 at one scale per tensor, for a bf16 o_proj (rocm_absorb_v_bmm): each head's attention output, quantized per 128-wide group to fp8 at max(amax, 1e-10) / 448, times w_vc and w_scale; the heads side by side, o_proj's input.",
+  "op_type": "deepseek_common",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, padding rows included."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 16,
+      "description": "Query heads on this rank."
+    },
+    "kv_lora_rank": {
+      "type": "const",
+      "value": 512,
+      "description": "The latent: the attention output's width per head."
+    },
+    "v_head_dim": {
+      "type": "const",
+      "value": 256,
+      "description": "A head's value channels."
+    },
+    "out_dim": {
+      "type": "const",
+      "value": 4096,
+      "description": "The heads' value channels side by side."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "attn_output": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each head's attention output, in the latent's basis."
+    },
+    "w_vc": {
+      "shape": [
+        "n_heads",
+        "v_head_dim",
+        "kv_lora_rank"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "kv_b_proj's value part per head, absorbed (sglang's w_vc, transposed): row v maps the latent to value channel v."
+    },
+    "w_scale": {
+      "shape": [1],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -6,
+        "log2_hi": 0
+      },
+      "description": "kv_b_proj's per-tensor scale, one element: sglang's 0-d w_scale, viewed."
+    }
+  },
+  "outputs": {
+    "attn_bmm_output": {
+      "shape": [
+        "n_tokens",
+        "out_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's value channels, head by head."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 8
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Absorbed MLA value projection for GLM-5.2 on gfx950: TP4, 16 heads per rank, scheduled for 8 tokens.\n\nEach head's 512-wide attention output is quantized per 128-wide group to fp8 at\nmax(amax, 1e-10) / 448 and multiplied by the fp8 w_vc and its per-tensor scale into the\nhead's 256 value channels, written in bf16 with the heads side by side.\n\"\"\"\n\nfrom triton.runtime.jit import ConstexprFunction\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\nfrom triton.language import core\n\n# next_power_of_2 as a constexpr function, for host code and compile-time expressions alike\n_ceil_power_of_two = triton.next_power_of_2\nif not isinstance(_ceil_power_of_two, ConstexprFunction):\n    _ceil_power_of_two = triton.constexpr_function(_ceil_power_of_two)\n\n\n@gluon.jit\ndef _finite_max(a, b):\n    return gl.maximum(a, b, propagate_nan=core.PropagateNan.ALL)\n\n\n@gluon.jit\ndef _reconstruct_grouped(\n    latent,\n    weight,\n    weight_scale,\n    output,\n    M: gl.constexpr,\n    H: gl.constexpr,\n    K: gl.constexpr,\n    N: gl.constexpr,\n    XM: gl.constexpr,\n    XH: gl.constexpr,\n    XK: gl.constexpr,\n    WH: gl.constexpr,\n    WN: gl.constexpr,\n    WK: gl.constexpr,\n    BM: gl.constexpr,\n):\n    gl.static_assert(K == 512 and N == 256)\n    BN: gl.constexpr = 16\n    AV: gl.constexpr = 4 if BM == 2 else 16 if BM == 16 else 8\n    AT: gl.constexpr = max(2, BM)\n    KW: gl.constexpr = 32 if BM == 8 else 16\n    PANEL: gl.constexpr = 16 if BM <= 2 else 8\n    EXCHANGE: gl.constexpr = (8, 2, 4) if BM == 16 else (4, 2, 4)\n    pid = gl.program_id(0).to(gl.uint32)\n    head = pid // PANEL % H\n    tile = pid // (PANEL * H) * PANEL + pid % PANEL\n    if BM <= 2:\n        tile = tile * 3 % 16\n    elif BM == 8:\n        tile = tile & 10 | (tile & 1) << 2 | (tile & 4) >> 2\n    if M <= BM:\n        row_tile = 0\n    else:\n        row_tile = gl.program_id(2)\n    if M <= 16:\n        final_scale = gl.load(weight_scale)\n    shared_result = gl.allocate_shared_memory(\n        gl.float32,\n        (4, BM, BN),\n        gl.SwizzledSharedLayout(*EXCHANGE, [2, 1, 0]) if BM >= 4 else gl.SwizzledSharedLayout(1, 1, 1, [0, 2, 1]),\n    )\n    al: gl.constexpr = gl.BlockedLayout([1, 1, AV], [1, AT, 64 // AT], [4, 1, 1], [2, 1, 0])\n    bl: gl.constexpr = gl.BlockedLayout([1, KW, 1], [1, 4, 16], [4, 1, 1], [2, 1, 0])\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(\n        version=4, instr_shape=[16, 16, 32], transposed=BM > 2, warps_per_cta=[4, 1, 1]\n    )\n    ag = gl.arange(0, 4, gl.SliceLayout(1, gl.SliceLayout(2, al)))\n    am = row_tile * BM + gl.arange(0, BM, gl.SliceLayout(0, gl.SliceLayout(2, al)))\n    ak = gl.arange(0, 128, gl.SliceLayout(0, gl.SliceLayout(1, al)))\n    bg = gl.arange(0, 4, gl.SliceLayout(1, gl.SliceLayout(2, bl)))\n    bk = gl.arange(0, 128, gl.SliceLayout(0, gl.SliceLayout(2, bl)))\n    bn = tile * BN + gl.arange(0, BN, gl.SliceLayout(0, gl.SliceLayout(1, bl)))\n    total = gl.full((4, BM, BN), 0, gl.float32, mma)\n    akk = ag[:, None, None] * 128 + ak[None, None, :]\n    bkk = bg[:, None, None] * 128 + bk[None, :, None]\n    a_mask = (M % BM == 0) | (am[None, :, None] < M)\n    if BM == 2:\n        x_offsets = (head * XH + am[None, :, None] * XM + akk * XK).to(gl.int64)\n        values = gl.load(latent + x_offsets, a_mask, other=0.0).to(gl.float32)\n    else:\n        x_offsets = (head * XH + am[None, :, None] * XM + akk * XK).to(gl.uint32)\n        values = gl.load(latent + x_offsets, a_mask, other=0.0).to(gl.float32)\n    if BM == 4:\n        w = gl.amd.cdna4.buffer_load(\n            weight + head * WH + tile * BN * WN, (bn[None, None, :] - tile * BN) * WN + bkk * WK\n        )\n    else:\n        w = gl.amd.cdna4.buffer_load(weight + head * WH, bn[None, None, :] * WN + bkk * WK)\n    if BM == 8:\n        blocks = gl.reshape(gl.abs(values), (4, BM, 16, 8))\n        absmax = gl.reduce(gl.reduce(blocks, 3, _finite_max), 2, _finite_max)\n        absmax = gl.convert_layout(absmax, gl.SliceLayout(2, al))\n    elif BM == 16:\n        absmax = gl.reduce(gl.abs(values), 2, _finite_max)\n    else:\n        absmax = gl.max(gl.abs(values), 2)\n    scales = gl.maximum(absmax, 1e-10) * (1.0 / 448.0)\n    quantized = gl.clamp(values * (1.0 / scales[:, :, None]), -448.0, 448.0).to(gl.float8e4nv)\n    a = gl.convert_layout(quantized, gl.DotOperandLayout(0, mma, KW))\n    b = gl.convert_layout(w, gl.DotOperandLayout(1, mma, KW))\n    partial = gl.amd.cdna4.mfma(a, b, gl.full((4, BM, BN), 0, gl.float32, mma))\n    scales = gl.convert_layout(scales, gl.SliceLayout(2, mma))\n    if M >= 2 and M <= 4:\n        total = partial * scales[:, :, None]\n    else:\n        total += partial * scales[:, :, None]\n    fold_layout: gl.constexpr = gl.BlockedLayout([4, 1, 1], [1, 4, 16], [1, 4, 1], [2, 1, 0])\n    shared_result.store(total)\n    total = shared_result.load(fold_layout)\n    if M > 16:\n        final_scale = gl.load(weight_scale)\n    if BM >= 4:\n        groups = gl.reshape(gl.permute(total, (1, 2, 0)), (BM, BN, 2, 2))\n        even, odd = gl.split(groups)\n        g0, g2 = gl.split(even)\n        g1, g3 = gl.split(odd)\n        if BM == 16:\n            folded = g0 + g1 + (g2 + g3)\n        else:\n            folded = g0 + g2 + (g1 + g3)\n        folded = gl.convert_layout(folded, gl.SliceLayout(0, fold_layout))\n    else:\n        folded = gl.sum(total, 0)\n    result = (folded * final_scale).to(gl.bfloat16)\n    om = row_tile * BM + gl.arange(0, BM, gl.SliceLayout(1, result.type.layout))\n    on = tile * BN + gl.arange(0, BN, gl.SliceLayout(0, result.type.layout))\n    if BM == 4:\n        gl.amd.cdna4.buffer_store(\n            result,\n            output + head * N + tile * BN,\n            om[:, None] * H * N + (on[None, :] - tile * BN),\n            (M % BM == 0) | (om[:, None] < M),\n            cache=\".wt\",\n        )\n    elif BM >= 8:\n        offsets = ((om[:, None] * H + head) * N + on[None, :]).to(gl.uint32)\n        if BM == 16:\n            gl.amd.cdna4.buffer_store(result, output, offsets, (M % BM == 0) | (om[:, None] < M), cache=\".wt\")\n        else:\n            gl.store(output + offsets, result, (M % BM == 0) | (om[:, None] < M), cache_modifier=\".wt\")\n    else:\n        gl.store(\n            output + (om[:, None].to(gl.int64) * H + head) * N + on[None, :],\n            result,\n            (M % BM == 0) | (om[:, None] < M),\n            cache_modifier=\".wt\",\n        )\n\n\ndef vc_reconstruct(\n    latent: torch.Tensor, weight: torch.Tensor, weight_scale: torch.Tensor, output: torch.Tensor\n) -> torch.Tensor:\n    m, h, k = latent.shape\n    n = weight.shape[1]\n    bm = min(16, _ceil_power_of_two(m))\n    x_strides, w_strides = (latent.stride(), weight.stride())\n    grid = (h * triton.cdiv(n, 16), 1, triton.cdiv(m, bm))\n    _reconstruct_grouped[grid](\n        latent,\n        weight,\n        weight_scale,\n        output,\n        m,\n        h,\n        k,\n        n,\n        *x_strides,\n        *w_strides,\n        bm,\n        num_warps=4,\n        llvm_fn_attrs=[[\"amdgpu-sched-strategy\", \"max-ilp\"]] if bm >= 2 else [],\n    )\n    return output\n\n\ndef run(*, attn_output, w_vc, w_scale, attn_bmm_output):\n    \"\"\"Writes attn_bmm_output: vc_reconstruct on sglang's tensors, w_scale's one element\n    viewed as the 0-d scale it takes.\"\"\"\n    vc_reconstruct(attn_output, w_vc, w_scale.view(()), attn_bmm_output)\n"
+      }
+    ]
+  }
+}
