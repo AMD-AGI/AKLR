@@ -1,0 +1,326 @@
+{
+  "schema_version": 5,
+  "name": "flash_mla_with_kvcache_causal_bf16_lse_has_block_table_has_cu_seqlens_k_kv_cache_bfloat16_query_length8_n_heads96_page_size1",
+  "contract_id": "flash_mla_with_kvcache@1.0",
+  "description": "MLA attention over a paged KV pool, FlashMLA's API. Sparse: each token attends to the slots its indices name, in the pool and the optional extra one; sinks join the normalisation only. Dense: each request attends to its context rows; q's rope part is last, scores are q . row * sm_scale * kv_scale and values row[:head_dim_v] * kv_scale. With causal, query i of a request of length L reads its first L - query_length + i + 1 rows.",
+  "op_type": "mla",
+  "axes": {
+    "batch": {
+      "type": "var",
+      "description": "Rows: one token each (sparse) or one request each (dense)."
+    },
+    "query_length": {
+      "type": "const",
+      "value": 8,
+      "description": "Queries per row."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 96,
+      "description": "Query heads."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Pages of the KV pool."
+    },
+    "page_size": {
+      "type": "const",
+      "value": 1,
+      "description": "Slots per page of the KV pool."
+    },
+    "table_width": {
+      "type": "var",
+      "description": "Columns of the 2-D block_table, or length of the flat one."
+    },
+    "n_offsets": {
+      "type": "var",
+      "description": "Offsets in cu_seqlens_k: batch + 1."
+    }
+  },
+  "attrs": {
+    "causal": true,
+    "kv_cache_format": "bf16",
+    "return_lse": true,
+    "has_sparse_indices": false,
+    "has_sparse_lens": false,
+    "has_extra_kv_cache": false,
+    "has_extra_sparse_indices": false,
+    "has_extra_sparse_lens": false,
+    "has_block_table": true,
+    "has_cache_seqlens": false,
+    "has_cu_seqlens_k": true,
+    "has_sinks": false
+  },
+  "inputs": {
+    "q": {
+      "shape": [
+        "batch",
+        "query_length",
+        "n_heads",
+        576
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The queries of each row; dense: the rope part last."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_pages",
+        "page_size",
+        1,
+        576
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The KV pool: packed dsv4 slots, or one 576-value row a page."
+    },
+    "block_table": {
+      "shape": [
+        "table_width"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_pages * page_size - 1",
+        "distinct": false
+      },
+      "description": "Pool rows of each request: a (batch, width) table read up to cache_seqlens, or every request's rows back to back."
+    },
+    "cu_seqlens_k": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "cu_seqlens",
+        "min_seqlen": 8,
+        "total": "table_width"
+      },
+      "description": "Where each request's rows start in block_table, then its length."
+    },
+    "head_dim_v": {
+      "shape": null,
+      "dtype": "int32",
+      "description": "Values per output head: 512 dense, None sparse."
+    },
+    "sm_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every logit."
+    },
+    "kv_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every KV value, in the logits and the values."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "batch",
+        "query_length",
+        "n_heads",
+        512
+      ],
+      "dtype": "bfloat16",
+      "description": "Softmax-weighted sum of the read values; 0 for no row read."
+    },
+    "lse": {
+      "shape": [
+        "batch",
+        "query_length",
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "description": "Log-sum-exp of the scaled logits, sinks excluded; for no row read +inf (sparse) or -inf (dense)."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 8,
+        "table_width": 8,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 16,
+        "table_width": 16,
+        "n_offsets": 3
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 3,
+        "n_pages": 24,
+        "table_width": 24,
+        "n_offsets": 4
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 32,
+        "table_width": 32,
+        "n_offsets": 5
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 5,
+        "n_pages": 40,
+        "table_width": 40,
+        "n_offsets": 6
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 6,
+        "n_pages": 48,
+        "table_width": 48,
+        "n_offsets": 7
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 7,
+        "n_pages": 56,
+        "table_width": 56,
+        "n_offsets": 8
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 64,
+        "table_width": 64,
+        "n_offsets": 9
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 10,
+        "n_pages": 80,
+        "table_width": 80,
+        "n_offsets": 11
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 12,
+        "n_pages": 96,
+        "table_width": 96,
+        "n_offsets": 13
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 14,
+        "n_pages": 112,
+        "table_width": 112,
+        "n_offsets": 15
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "kv_cache_layout",
+            "expected_value": "row_major"
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.2"
+    },
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"FlyDSL causal dense MLA over a paged bf16 KV pool (query_length 8, 96 heads, page size 1) in one launch,\none wave per (request, query position, 16 heads). Each wave first assumes its request holds exactly CH rows at\nCH b and stores that; a request that does not fit is recomputed in CH-row chunks with an online softmax.\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir.dialects import llvm as _llvm\nfrom flydsl.expr import math as fmath\nfrom flydsl.expr import range_constexpr, rocdl\nfrom flydsl.expr.typing import BFloat16, Float32, Int16, Int32, T\nfrom flydsl.expr.typing import Vector as Vec\n\nNHEAD = 96\nQLEN = 8\nDQK = 576\nDV = 512\nQBLK = DQK // 32  # k-steps of the logit MFMA\nNPV = DV // 32  # pairs of 16-dim value tiles\nCH = 8  # KV rows a chunk\nROWE = DV + 8  # LDS row stride in bf16 elements (1040 B: rows land 16 B apart in the banks)\nNHT = NHEAD // 16\nLOG2E = 1.4426950408889634\nLN2 = 0.6931471805599453\nNEGBIG = -1.0e30\n\n\n@functools.cache\ndef _build(sm_scale, kv_scale, batch, width, npool):\n    \"\"\"Compile the kernel for one batch and table width (scales folded in as constants).\"\"\"\n    scale2 = float(sm_scale) * float(kv_scale) * LOG2E\n    vscale = float(kv_scale)\n\n    @fx.struct\n    class Shared:\n        \"\"\"LDS: the chunk's CH value rows (the MFMA's rows 8..15 read rows 0..7 again, against zero P).\"\"\"\n\n        vt: fx.Array[BFloat16, CH * ROWE, 16]\n\n    def _swap(x, wide):\n        \"\"\"(x, x of lane ^ 16) (wide: ^ 32) in some order, by one permlane swap.\"\"\"\n        xi = fx.Float32(x).bitcast(Int32).ir_value()\n        op = rocdl.permlane32_swap if wide else rocdl.permlane16_swap\n        st = op(_llvm.StructType.get_literal([T.i32, T.i32]), xi, xi, False, False)\n        return [fx.Int32(_llvm.extractvalue(T.i32, st, [k])).bitcast(Float32) for k in range(2)]\n\n    def _hi(x):\n        \"\"\"x of lane + 32 (for lanes below 32): the second result of permlane32_swap.\"\"\"\n        return _swap(x, True)[1]\n\n    def _allmax(x):\n        o = _swap(x, False)\n        x = o[0].maximumf(o[1])\n        o = _swap(x, True)\n        return o[0].maximumf(o[1])\n\n    def _allsum(x):\n        o = _swap(x, False)\n        x = o[0] + o[1]\n        o = _swap(x, True)\n        return o[0] + o[1]\n\n    def _tidx(i):\n        \"\"\"A block_table index, clamped into the table only when the speculative read can run past it.\"\"\"\n        if width >= batch * CH:\n            return i\n        return (i < fx.Int32(width)).select(i, fx.Int32(width - 1))\n\n    @flyc.kernel\n    def mla_kernel(q_t, kv_t, bt_t, cu_t, out_t, lse_t):\n        t = fx.Int32(fx.block_idx.x)\n        lane = fx.thread_idx.x\n        lr = lane % 16\n        lg = lane // 16\n        b = t // (QLEN * NHT)\n        rem = t - b * (QLEN * NHT)\n        qpos = rem // NHT\n        h0 = (rem - qpos * NHT) * 16\n\n        lds = fx.SharedAllocator().allocate(Shared).peek()\n        vp = lds.vt.ptr\n\n        qp = fx.get_iter(q_t)\n        kvp = fx.get_iter(kv_t)\n        btp = fx.get_iter(bt_t)\n        cup = fx.get_iter(cu_t)\n\n        key = lr % CH\n        # Speculative table entries CH b .. CH b + CH - 1 as wave-uniform loads; each lane picks its row's.\n        tb = []\n        for k in range_constexpr(CH):\n            tv = fx.Int32(fx.ptr_load(fx.add_offset(btp, _tidx(b * CH + k))))\n            # readfirstlane keeps the loads scalar (LLVM would fold the selects into one vector load).\n            tb.append(fx.Int32(rocdl.readfirstlane(T.i32, tv.ir_value())))\n        slot_s = tb[0]\n        for k in range_constexpr(1, CH):\n            slot_s = (key == fx.Int32(k)).select(tb[k], slot_s)\n        # Clamp the pool row: the speculative chunk runs unconditionally, also when the guess is wrong.\n        slot_s = (slot_s < fx.Int32(0)).select(fx.Int32(0), slot_s)\n        slot_s = (slot_s > fx.Int32(npool - 1)).select(fx.Int32(npool - 1), slot_s)\n        rt = fx.Int32(fx.ptr_load(fx.add_offset(cup, b)))\n        re = fx.Int32(fx.ptr_load(fx.add_offset(cup, b + fx.Int32(1))))\n        # Q as the logit MFMA's B operand: lane holds head h0 + lr, dims 32 ks + 8 lg .. + 7.\n        qbase = ((b * QLEN + qpos) * NHEAD + h0 + lr) * DQK + 8 * lg\n        qv = [fx.ptr_load(fx.add_offset(qp, qbase + 32 * ks), T.bf16x8) for ks in range(QBLK)]\n\n        ln = re - rt\n        ln = (ln < fx.Int32(0)).select(fx.Int32(0), ln)\n        nvalid = ln - fx.Int32(QLEN - 1) + qpos  # causal: the first ln - QLEN + qpos + 1 rows\n        nvalid = (nvalid < fx.Int32(0)).select(fx.Int32(0), nvalid)\n        nch = (nvalid + fx.Int32(CH - 1)) // CH\n        slow = (rt != b * CH) | (ln != fx.Int32(CH))\n\n        tr_atom = fx.make_copy_atom(rocdl.cdna4.LDSReadTrans16_64b(), BFloat16)\n        tr_layout = fx.make_layout(4, 1)\n        # Transposed value read: lane (lg, lr) gives row 4 lg + lr // 4, dims 8 (lr % 4) + 4 u + 32 p .. + 3;\n        # the MFMA's row 4 lg + i then holds dim 32 p + 8 lg + 4 u + i.\n        rbase = ((lg % 2) * 4 + lr // 4) * ROWE + (lr % 4) * 8\n        half = lr // CH\n        wbase = key * ROWE + 32 * half + 8 * lg\n\n        def pv_read(off):\n            src = fx.make_view(fx.add_offset(vp, rbase + off), tr_layout)\n            dst = fx.make_rmem_tensor(tr_layout, BFloat16)\n            fx.copy(tr_atom, src, dst)\n            return Vec(dst.load())\n\n        def chunk(c, slot, st, nv):\n            \"\"\"Fold chunk c (rows CH c .. of the query's live rows; slot is this lane's pool row) into st.\"\"\"\n            # Lane (lg, lr) loads a distinct 16 B of row lr % CH; as the A operand, MFMA rows 8..15 carry\n            # the odd k-steps of rows 0..7: sa[0] keeps rows 0..7 of even steps, sa[1] rows 8..15 of odd ones.\n            kb = slot * DQK + 32 * half + 8 * lg\n            kv = [fx.ptr_load(fx.add_offset(kvp, kb + 64 * j), T.bf16x8) for j in range(QBLK // 2)]\n            sa = [Vec.filled(4, 0.0, Float32), Vec.filled(4, 0.0, Float32)]\n            for ks in range_constexpr(QBLK):\n                sa[ks % 2] = Vec(rocdl.mfma_f32_16x16x32_bf16(T.f32x4, [kv[ks // 2], qv[ks], sa[ks % 2]]))\n            fx.barrier()  # the previous chunk's value reads are done\n            for j in range_constexpr(NPV // 2):\n                fx.ptr_store(Vec(kv[j]), fx.add_offset(vp, wbase + 64 * j))\n            fx.barrier()\n            mprev = fx.Float32(st[0])\n            sprev = fx.Float32(st[1])\n            acc = [Vec(st[2 + n]) for n in range(2 * NPV)]\n            r0 = fx.Int32(c * CH) + 4 * lg  # lane holds logits of rows r0 + i (lg < 2) of head h0 + lr\n            sv = []\n            for i in range_constexpr(4):\n                s = fx.Float32(sa[0][i]) + _hi(fx.Float32(sa[1][i]))\n                ok = (lg < fx.Int32(2)) & (r0 + fx.Int32(i) < nv)\n                sv.append(ok.select(s * scale2, fx.Float32(NEGBIG)))\n            ml = sv[0].maximumf(sv[1]).maximumf(sv[2].maximumf(sv[3]))\n            mnew = _allmax(ml).maximumf(mprev)\n            alpha = fmath.exp2(mprev - mnew, fastmath=\"afn\")\n            pv = [\n                (sv[i] > fx.Float32(NEGBIG)).select(fmath.exp2(sv[i] - mnew, fastmath=\"afn\"), fx.Float32(0.0))\n                for i in range(4)\n            ]\n            psum = _allsum((pv[0] + pv[1]) + (pv[2] + pv[3]))\n            snew = sprev * alpha + psum\n            pb = Vec.from_elements(pv, Float32).to(BFloat16).bitcast(Int16)\n            a4 = Vec.from_elements([alpha] * 4, Float32)\n            out = []\n            for n in range_constexpr(2 * NPV):\n                p, u = n // 2, n % 2\n                va = pv_read(32 * p + 4 * u).bitcast(Int16)\n                out.append(Vec(rocdl.mfma_f32_16x16x16bf16_1k(T.f32x4, [va, pb, Vec(acc[n] * a4)])))\n            return [mnew, snew] + out\n\n        def finish(res):\n            \"\"\"Normalize and store the lane's head's lse and its 16 output dims of each value-tile pair.\"\"\"\n            mrun = fx.Float32(res[0])\n            srun = fx.Float32(res[1])\n            live = srun > fx.Float32(0.0)\n            inv = live.select(fx.Float32(vscale) / srun, fx.Float32(0.0))\n            lsev = live.select((mrun + fmath.log2(srun)) * LN2, fx.Float32(float(\"-inf\")))\n            row = (b * QLEN + qpos) * NHEAD + h0 + lr\n            if lane < fx.Int32(16):\n                fx.ptr_store(Vec.from_elements([lsev], Float32), fx.add_offset(fx.get_iter(lse_t), row))\n            ofp = fx.get_iter(out_t)\n            i8 = Vec.from_elements([inv] * 8, Float32)\n            for p in range_constexpr(NPV):\n                a0 = Vec(res[2 + 2 * p])\n                a1 = Vec(res[3 + 2 * p])\n                o8 = a0.shuffle(a1, [0, 1, 2, 3, 4, 5, 6, 7])\n                fx.ptr_store(Vec(o8 * i8).to(BFloat16), fx.add_offset(ofp, row * DV + 32 * p + 8 * lg))\n\n        init = [fx.Float32(NEGBIG), fx.Float32(0.0)] + [Vec.filled(4, 0.0, Float32) for _ in range(2 * NPV)]\n        finish(chunk(0, slot_s, init, qpos + fx.Int32(1)))\n        if slow:\n            for ci, st in range(fx.Int32(0), nch, fx.Int32(1), init=init):\n                c = fx.Int32(ci)\n                cidx = c * CH + key\n                cidx = (cidx < nvalid).select(cidx, fx.Int32(0))\n                slot = fx.Int32(fx.ptr_load(fx.add_offset(btp, rt + cidx)))\n                nst = chunk(c, slot, st, nvalid)\n                res = yield nst\n            finish(res)\n\n    @flyc.jit\n    def launch_all(q_t, kv_t, bt_t, cu_t, out_t, lse_t, stream: fx.Stream):\n        mla_kernel(q_t, kv_t, bt_t, cu_t, out_t, lse_t).launch(\n            grid=(batch * QLEN * NHT, 1, 1), block=(64, 1, 1), stream=stream\n        )\n\n    def launch(q, kv_cache, block_table, cu_seqlens_k, output, lse):\n        launch_all(\n            q.view(-1),\n            kv_cache.view(-1),\n            block_table.view(-1),\n            cu_seqlens_k.view(-1),\n            output.view(-1),\n            lse.view(-1),\n            fx.Stream(torch.cuda.current_stream()),\n        )\n\n    return launch\n\n\ndef run(\n    *,\n    q,\n    kv_cache,\n    causal,\n    kv_cache_format,\n    return_lse,\n    kv_cache_layout,\n    sparse_indices,\n    sparse_lens,\n    extra_kv_cache,\n    extra_sparse_indices,\n    extra_sparse_lens,\n    block_table,\n    cache_seqlens,\n    cu_seqlens_k,\n    head_dim_v,\n    sm_scale,\n    sinks,\n    kv_scale,\n    output,\n    lse,\n):\n    \"\"\"Write the causal dense MLA of this request batch into output and lse.\"\"\"\n    fn = _build(\n        float(sm_scale),\n        float(kv_scale),\n        q.shape[0],\n        block_table.numel(),\n        kv_cache.shape[0] * kv_cache.shape[1],\n    )\n    fn(q, kv_cache, block_table, cu_seqlens_k, output, lse)\n"
+      }
+    ]
+  }
+}
