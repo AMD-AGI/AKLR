@@ -103,7 +103,7 @@ jobs:
           head=$(git rev-parse HEAD)
           # The validation base: incumbents and the change set start here; empty validates everything.
           validation_base=
-          # Whether the bot wrote the change's measured fields (speedup, accuracy).
+          # Whether the bot wrote the change's measured fields (speedup, accuracy, microseconds).
           measured_by_bot=false
           if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
             # Checkout tests the PR merge commit; its first parent is the
@@ -600,10 +600,10 @@ jobs:
             exit 0
           fi
           schema_path='^aklr/(ops|plugins(/[^/]+)+)/[^/]+/impls/[^/]+/[^/]+/[0-9a-f]{16}\.json$'
-          authored='del(.workloads[] | .speedup, .accuracy)'
-          # Every workload measured; speedup absent only on a failed one.
+          authored='del(.workloads[] | .speedup, .accuracy, .microseconds)'
+          # Every workload measured; speedup absent only on a failed one, microseconds wherever no baseline was timed.
           shape='(.workloads | length > 0) and all(.workloads[];
-            (.speedup == null or (.speedup | type == "number" and . > 0)) and
+            all(.speedup, .microseconds; . == null or (type == "number" and . > 0)) and
             (.accuracy == "passed" and .speedup != null or .accuracy == "failed"))'
           manifest=$RUNNER_TEMP/manifest
           # accept <file> <path> <sha>: copy over main's file iff only measured fields change.
