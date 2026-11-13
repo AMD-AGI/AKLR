@@ -240,20 +240,6 @@
   "workloads": [
     {
       "axes": {
-        "n_tokens": 8193,
-        "n_sequences": 5,
-        "n_slots": 7,
-        "n_starts": 6
-      },
-      "scalars": {
-        "scale": 0.0883883461356163,
-        "eps": 9.999999974752427e-07
-      },
-      "accuracy": "passed",
-      "speedup": 0.997
-    },
-    {
-      "axes": {
         "n_tokens": 15360,
         "n_sequences": 8,
         "n_slots": 10,
@@ -262,9 +248,7 @@
       "scalars": {
         "scale": 0.0883883461356163,
         "eps": 9.999999974752427e-07
-      },
-      "accuracy": "passed",
-      "speedup": 1.473
+      }
     }
   ],
   "layout_variants": {

@@ -1,6 +1,6 @@
 {
   "schema_version": 5,
-  "name": "gdn_prefill_group_fp8_quant_n_v_heads16_key_dim128_value_dim128_conv_dim3072",
+  "name": "gdn_prefill_group_fp8_quant_max_seq_len5120_n_v_heads16_key_dim128_value_dim128_conv_dim3072",
   "contract_id": "gdn_prefill_group_fp8_quant@1.0",
   "description": "Qwen3.5 GDN prefill from contiguous Q/K/V/Z and B/A projections. Each sequence uses its distinct cache_indices slot; fresh sequences ignore the slot's old values. Causal width-four SiLU convolution updates conv_state, Q and K are L2-normalized and rounded to BF16, and the gated delta recurrence updates FP32 delta_state in [value,key] order. BF16 attention output is gated RMS-normalized, rounded to BF16 and quantized per value head to E4M3FN, with scale=max(amax,1e-10)/448. Only the indexed state slots change. cu_seqlens partitions all tokens into positive sequences with actual maximum max_seq_len. Unindexed state slots and all other inputs are preserved.",
   "op_type": "qwen3_5",
@@ -63,7 +63,7 @@
     }
   },
   "attrs": {
-    "max_seq_len": 2048
+    "max_seq_len": 5120
   },
   "inputs": {
     "projected_qkvz": {
@@ -134,7 +134,7 @@
       "distribution": {
         "kind": "bounded_cu_seqlens",
         "total": "n_tokens",
-        "max_seqlen": 2048
+        "max_seqlen": 5120
       },
       "description": "Cumulative sequence boundaries."
     },
@@ -240,7 +240,7 @@
   "workloads": [
     {
       "axes": {
-        "n_tokens": 2048,
+        "n_tokens": 5120,
         "n_sequences": 1,
         "n_slots": 3,
         "n_starts": 2
@@ -248,9 +248,43 @@
       "scalars": {
         "scale": 0.0883883461356163,
         "eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 10240,
+        "n_sequences": 2,
+        "n_slots": 4,
+        "n_starts": 3
       },
-      "accuracy": "passed",
-      "speedup": 2.092
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 11264,
+        "n_sequences": 3,
+        "n_slots": 5,
+        "n_starts": 4
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 15360,
+        "n_sequences": 3,
+        "n_slots": 5,
+        "n_starts": 4
+      },
+      "scalars": {
+        "scale": 0.0883883461356163,
+        "eps": 9.999999974752427e-07
+      }
     }
   ],
   "layout_variants": {
