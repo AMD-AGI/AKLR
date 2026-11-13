@@ -16,7 +16,7 @@ The pack lives at `harness/automations/shepherd/` in the AKLR checkout the task 
 checkout contains `FOR_AGENTS.md`, this file, `skills/shepherd/` (skill, `references/state.md`,
 `scripts/state.py`, `scripts/request_board.py`) and the templates. Confirm the shared skills the round uses exist under
 `harness/skills/`: forge-loop-campaign, remote-gpu, aklr-read-validation, aklr-open-pr, report-progress,
-aklr-kb and the configured backend's knowledge.
+aklr-kb and the configured backends' knowledge.
 
 A scheduler that checks out afresh needs all of these committed on its revision. One that uses an
 existing checkout needs its revision and local edits recorded. Do not commit unless the user asks.
@@ -40,14 +40,15 @@ Ask for or confirm:
   `harness/scripts/forge_task/README.md` pins.
 - `execution.round_agent`: the non-interactive agent command (CLI, outer model, reasoning effort,
   permission mode) the wrapper runs.
-- Strategies (`manual` paths, `kernel-less`), `batch_size`, `allowed_ops`, backend, `max_open_prs`,
+- Strategies (`manual` paths, `kernel-less`), `batch_size`, `allowed_ops`, `backends`,
+  `max_parallel_campaigns`, `max_open_prs`, `execution.pool_hours`,
   `cooldown_hours`.
 - Campaign model and reasoning effort, loop hours, node hours, model USD, `model_usd_per_hour` (the
   highest hourly spend of the model with KernelForge, from the provider's billing, not a guess),
   `max_auto_resumes`.
 - Cumulative budget, its recorded authorization and the provider's hard limit: the spend cap on the API
   key or gateway the campaign's model calls use (`claude auth status`, `ANTHROPIC_BASE_URL`). If none
-  exists, say the owner must set one; it cannot be inferred from here.
+  exists, the owner sets one or records `unlimited`; it cannot be inferred from here.
 - Publication: draft PRs, PR comments, `ci:gpu` label, branch prefix.
 - Issue requests: `requests.team` (a team of the repository's organization; start with the owner alone)
   and `requests.bot` (the shepherd App's login). Keep `requests.label` at `shepherd`, which
@@ -141,12 +142,6 @@ results and remaining settings, and say the task is not saved.
    scheduler's own command, show that two concurrent triggers start one agent, a second fresh round reads
    what the first saved, and after `kill -9` of a running agent the next trigger takes over with
    `AKLR_RECOVERED_FROM` set.
-3. Enable `run` on probation, within the owner's authorization: `budget.total_*` set to one campaign's
-   bounds (twice that if the owner allows a retry), `max_open_prs: 1`, `allow_draft_pr: true`. Reports
-   say `enabled (probation)`.
-4. Accept it after one real campaign reaches confirmed cleanup and a draft PR, and a later
-   scheduler-started round observes that PR. CPU tests or a prompt preview do not count. If the probation
-   budget runs out first, report `blocked`, not accepted. After acceptance the owner records a new
-   authorization and raises the budget.
+3. Enable `run` within the owner's authorization.
 
 Report each state separately: prepared, saved, enabled, runtime-verified.

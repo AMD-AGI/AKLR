@@ -319,21 +319,23 @@ def save_as_owner(root, tmp_path, revision, state):
     )
 
 
-def test_save_never_drops_a_campaign_or_changes_its_bounds(root, tmp_path):
+@pytest.mark.parametrize("kind", ["campaigns", "pools"])
+def test_save_never_drops_a_budgeted_entry_or_changes_its_bounds(root, tmp_path, kind):
+    # Campaigns bound model spend and pools (shared node allocations) node hours: the committed budget is derived
+    # from both.
     admitted = {"id": "c1", "phase": "admitted", "bounds": {"model_usd": 400, "node_hours": 20}}
-    assert save_as_owner(root, tmp_path, 0, {"campaigns": [admitted]}).returncode == 0
-    assert (
-        save_as_owner(root, tmp_path, 1, {"campaigns": [{**admitted, "phase": "preparing"}]}).returncode == 0
-    )
+    assert save_as_owner(root, tmp_path, 0, {kind: [admitted]}).returncode == 0
+    assert save_as_owner(root, tmp_path, 1, {kind: [{**admitted, "phase": "preparing"}]}).returncode == 0
     for bad in (
-        {"campaigns": []},
-        {"campaigns": [{**admitted, "bounds": {"model_usd": 1, "node_hours": 20}}]},
-        {"campaigns": [{"phase": "admitted"}]},
-        {"campaigns": [admitted, admitted]},
+        {kind: []},
+        {},
+        {kind: [{**admitted, "bounds": {"model_usd": 1, "node_hours": 20}}]},
+        {kind: [admitted, {"phase": "admitted"}]},
+        {kind: [admitted, admitted]},
     ):
         result = save_as_owner(root, tmp_path, 2, bad)
         assert result.returncode != 0, bad
-    assert success(root, "show")["state"]["campaigns"][0]["phase"] == "preparing"
+    assert success(root, "show")["state"][kind][0]["phase"] == "preparing"
 
 
 def test_save_never_drops_a_request(root, tmp_path):

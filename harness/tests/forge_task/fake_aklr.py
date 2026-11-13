@@ -39,9 +39,11 @@ class _Contract:
         self.raw = raw
         inputs = [name for name in raw["inputs"] if name not in ("a", "b")]
         self.api_params = [_Param(name) for name in ("a", "b", *inputs, "trans_b", "bias", "out_dtype", "out")]
+        self.outputs = {"out": None}
 
     def baseline(self):
-        return gemm_scaled_baseline if "a_scale" in self.raw["inputs"] else None
+        has_baseline = "a_scale" in self.raw["inputs"] or self.raw["op_type"] == "mla"
+        return gemm_scaled_baseline if has_baseline else None
 
     def point_from_json(self, raw, axes):
         return axes

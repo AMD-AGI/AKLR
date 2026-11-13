@@ -1,8 +1,8 @@
 # shepherd
 
 shepherd is a scheduled automation that optimizes AKLR kernels unattended. Each round it observes GitHub and
-the GPU jobs, then advances one KernelForge campaign as far as confirmed results allow or admits a new
-kernel-less schema, validates the kernel, opens a draft PR and follows it until a maintainer merges or
+the GPU jobs, then advances each KernelForge campaign as far as confirmed results allow and admits new
+kernel-less schemas into free GPUs, validates the kernel, opens a draft PR and follows it until a maintainer merges or
 closes it.
 
 The files here are read by repository path; they do not appear as slash skills. The round reuses the
@@ -16,8 +16,7 @@ optimization, GPU, validation, PR and reporting skills in `harness/skills/`.
    `.shepherd/configuration.yaml` at the repository root (ignored by Git) and fill it in.
 3. Initialize the state directory once, pass the environment checks, and run one `observe` round.
 4. Ask setup to create or update one scheduled task with
-   [`automation-prompt.md`](./templates/automation-prompt.md), then enable `run` on probation (one
-   campaign's budget, one PR) until a real campaign reaches a draft PR, and raise the budget after.
+   [`automation-prompt.md`](./templates/automation-prompt.md), then enable `run`.
 
 ## Files
 
@@ -41,9 +40,11 @@ shepherd/
 
 ## Limits
 
-One Linux host with a persistent state directory, GitHub access and the GPU cluster. One GPU campaign
-at a time. The ledger's budget is bookkeeping, not a hard limit: the provider's hard limit and Slurm time
-limits are.
+One Linux host with a persistent state directory, GitHub access and the GPU cluster. Up to
+`max_parallel_campaigns` campaigns at once, one per GPU of shared pool nodes (a node's GPUs are not
+isolated from each other's containers, so a campaign's timings share the node with its neighbours; the PR's
+GPU CI measures alone). The ledger's budget is bookkeeping, not a hard limit: the provider's hard limit (unless `unlimited`)
+and Slurm time limits are.
 
 Isolation is a mount boundary under one identity. Workers run only on allocated nodes, in containers that
 mount their own directory (and read-only model credentials for model-calling steps), never the validator,

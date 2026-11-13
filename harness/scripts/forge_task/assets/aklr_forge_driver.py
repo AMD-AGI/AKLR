@@ -188,12 +188,16 @@ def _outcomes(report: dict) -> dict[str, dict]:
         # A workload's own finding is filed under the stage's demotions: AKLR serves the schema's other workloads.
         found = _stage(report, stage)
         for finding in (*found.get("findings", []), *found.get("demotions", [])):
-            if finding["code"] not in INCORRECT_CODES:
-                continue
             # An audit finding names no workload: it rejects the kernel everywhere.
             cases = [_case_id(finding["axes"])] if finding.get("axes") else list(outcomes)
             for case_id in cases:
-                outcomes[case_id]["incorrect"].append(finding["code"])
+                if finding["code"] in INCORRECT_CODES:
+                    outcomes[case_id]["incorrect"].append(finding["code"])
+                else:
+                    # Why a workload went uncompared (a platform failure), so the caller sees its cause. One short
+                    # line: the detail may quote the candidate's own output, which must not forge a verdict line.
+                    detail = " ".join(str(finding.get("detail", "")).split())[:300]
+                    outcomes[case_id].setdefault("other", []).append(f"{finding['code']}: {detail}")
     for record in _stage(report, "bench").get("workload_records", []):
         outcome = outcomes[_case_id(record["axes"])]
         outcome["violation"] = record.get("worst_violation_fraction")
@@ -214,7 +218,10 @@ def _run_correctness() -> int:
     outcomes = _outcomes(_report())
     for case_id, outcome in outcomes.items():
         if outcome["incorrect"]:
-            print(f"aklr_findings: {case_id} {' '.join(sorted(set(outcome['incorrect'])))}")
+            line = f"aklr_findings: {case_id} {' '.join(sorted(set(outcome['incorrect'])))}"
+            if "not_compared" in outcome["incorrect"] and outcome.get("other"):
+                line += f" ({'; '.join(sorted(set(outcome['other'])))})"
+            print(line)
     passed = [not outcome["incorrect"] for outcome in outcomes.values()]
     print(f"allclose: {bool(passed) and all(passed)}")
     return 0

@@ -8,6 +8,7 @@ execution:
   state_dir: /var/tmp/$USER/shepherd/state  # Local disk that survives reboots (not NFS or /tmp), owned by you; env vars, never a literal username.
   cluster: null  # remote-gpu cluster name.
   image: null  # ROCm image pinned by digest, e.g. AKLR CI's tag (.github/workflows/ci.yaml) resolved to it.
+  pool_hours: 24  # Time limit of each pool node allocation (<= the cluster's MAX_TIME); its node-hour bound.
   runtime_revision: null  # KernelForge (Hyperloom AKLR branch) commit and flydsl version the readiness checks ran.
   round_agent: null  # Non-interactive agent argv the wrapper runs before the prompt, e.g. [claude, -p, --model, <id>, --effort, <level>, <owner-chosen permission flags>]; a permission bypass is the owner's explicit choice.
 policy:
@@ -17,23 +18,24 @@ policy:
       schemas: []  # Repository-relative paths to schema JSON files.
     - type: kernel-less
   batch_size: 10
-  allowed_ops: [gemm]
-  backend: flydsl  # One tested backend for the first version.
+  allowed_ops: [all]  # Op names, or all.
+  backends: [all]  # Schema languages (flydsl, triton, gluon), or all: every one forge_task can drive.
+  max_parallel_campaigns: 8  # Campaigns at once, one per GPU of a pool node.
   max_open_prs: 8
   cooldown_hours: 72
 campaign:  # Per campaign.
   model: null  # Model KernelForge runs with.
   reasoning_effort: null
   loop_hours: null
-  total_node_hours: null  # Includes setup, finalize, stress and validation.
+  total_node_hours: null  # Wall hours from admission to its deadline: setup, loop, finalize, stress, validation.
   max_model_usd: null  # Includes finalize and distill.
   model_usd_per_hour: null  # Highest hourly model spend of a KernelForge step; its timeouts keep max_model_usd.
   max_auto_resumes: 1
-budget:  # Cumulative over all campaigns in state_dir. On probation: one campaign's bounds, max_open_prs 1.
-  authorization: null  # Recorded spending authorization, not a credential.
-  total_model_usd: null
-  total_node_hours: null  # Whole-node hours, even when using one GPU.
-  model_hard_limit_ref: null  # Name of the provider-side hard spending limit (API key or gateway cap), not a path. None: no admission.
+budget:  # Cumulative: model USD over all campaigns, node hours over all pools.
+  authorization: unlimited  # Recorded spending authorization, not a credential.
+  total_model_usd: unlimited  # unlimited: no cumulative cap.
+  total_node_hours: unlimited  # Whole-node hours, even when using one GPU; unlimited: no cumulative cap.
+  model_hard_limit_ref: unlimited  # Name of the provider-side hard spending limit (API key or gateway cap), not a path, or unlimited. None: no admission.
 requests:  # Issue requests; without a team nobody can request.
   label: shepherd  # Issues titled `shepherd:` get it; adding it starts a request.
   team: null  # Slug of the repository owner's team whose members may request, label and edit requests.

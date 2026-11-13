@@ -110,11 +110,21 @@ def test_a_gemm_schema_starts_from_torch_with_its_contracts_call_keys(tmp_path: 
     compile(kernel, "kernel.py", "exec")
 
 
-def test_another_op_has_no_built_in_starting_kernel(tmp_path: Path):
+def test_an_op_whose_contract_has_no_baseline_needs_a_starting_kernel(tmp_path: Path):
     root = install_aklr(tmp_path / "aklr")
-    schema = load(write_schema(root, schema_payload("mla_demo", op_type="mla")))
+    schema = load(write_schema(root, schema_payload("topk_demo", op_type="topk")))
     with pytest.raises(workspace.StartingKernelError, match="--starting-kernel"):
         workspace.builtin_starting_kernel(schema, root)
+
+
+def test_any_op_with_a_baseline_starts_from_it_into_every_output(tmp_path: Path):
+    root = install_aklr(tmp_path / "aklr")
+    schema = load(write_schema(root, schema_payload("mla_demo", op_type="mla")))
+    (kernel,) = workspace.builtin_starting_kernel(schema, root).values()
+    assert "torch" not in kernel
+    assert "from aklr.core.contract.registry import gemm_scaled_baseline" in kernel
+    assert "zip((out,), results, strict=True)" in kernel
+    compile(kernel, "kernel.py", "exec")
 
 
 def test_a_scaled_gemm_schema_starts_from_its_contracts_baseline_into_the_output(tmp_path: Path):
@@ -127,7 +137,7 @@ def test_a_scaled_gemm_schema_starts_from_its_contracts_baseline_into_the_output
     assert "torch" not in kernel
     assert "from aklr.core.contract.registry import gemm_scaled_baseline" in kernel
     assert "def run(*, a, b, a_scale, b_scale, trans_b, bias, out_dtype, out):" in kernel
-    assert "out.copy_(result)" in kernel
+    assert "target.copy_(value)" in kernel
     compile(kernel, "kernel.py", "exec")
 
 
