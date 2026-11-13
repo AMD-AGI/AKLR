@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Final, Literal, NamedTuple
@@ -158,12 +157,8 @@ class TrialRequest:
 
     @property
     def output_bytes(self) -> int:
-        dtypes = self.point.dtypes
         return len(self.steps) * sum(
-            math.prod(self.contract.storage_shape_of(o, self.point))
-            * max(semantics.DTYPE_TRAITS[dtypes[o]].bits, 8)
-            // 8
-            for o in self.contract.mutable_tensors
+            self.contract.storage_bytes_of(o, self.point) for o in self.contract.mutable_tensors
         )
 
     def empty_outputs(self, device: str | torch.device) -> dict[str, torch.Tensor]:
@@ -188,13 +183,7 @@ class TrialRequest:
     @property
     def input_bytes(self) -> int:
         """One input set's bytes: every present tensor input at the Point."""
-        dtypes = self.point.dtypes
-        return sum(
-            math.prod(self.contract.storage_shape_of(name, self.point))
-            * max(semantics.DTYPE_TRAITS[dtypes[name]].bits, 8)
-            // 8
-            for name in self.distributions
-        )
+        return sum(self.contract.storage_bytes_of(name, self.point) for name in self.distributions)
 
     def has_error_bound(self, kind: str) -> bool:
         return any(

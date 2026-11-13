@@ -577,8 +577,8 @@ class OpContract(FrozenModel):
         cost = self._optional_function("cost", f"{contract_name(self.contract_id)}_cost")
         if cost is None:
             return None
-        tensor_bytes = {  # a 4-bit dtype stores two values per byte
-            name: math.prod(self.storage_shape_of(name, point)) * max(DTYPE_TRAITS[dtype].bits, 8) // 8
+        tensor_bytes = {
+            name: self.storage_bytes_of(name, point)
             for name, dtype in point.dtypes.items()
             if dtype is not None
         }
@@ -624,6 +624,12 @@ class OpContract(FrozenModel):
         """``dtype_storage_shape_of`` in ``tensor``'s layout at ``point``."""
         layout = self.layout_variants.by_name[point.layout_variant_name].layout_of(tensor)
         return layout.storage_shape(self.dtype_storage_shape_of(tensor, point))
+
+    def storage_bytes_of(self, tensor: str, point: PointSpec) -> int:
+        """The bytes of ``tensor``'s ``storage_shape_of``, whose last dim a 4-bit dtype
+        already packs two values a byte."""
+        bits = DTYPE_TRAITS[point.dtypes[tensor]].bits
+        return math.prod(self.storage_shape_of(tensor, point)) * max(bits, 8) // 8
 
     def name_at(self, point: PointSpec) -> str:
         """The schema name for ``point``: the contract name, each attr's part, root
