@@ -10,7 +10,7 @@ execution:
   image: null  # ROCm image pinned by digest, e.g. AKLR CI's tag (.github/workflows/ci.yaml) resolved to it.
   pool_hours: 24  # Time limit of each pool node allocation (<= the cluster's MAX_TIME); its node-hour bound.
   runtime_revision: null  # KernelForge (Hyperloom AKLR branch) commit and flydsl version the readiness checks ran.
-  round_agent: null  # Non-interactive agent argv the wrapper runs before the prompt, e.g. [claude, -p, --model, <id>, --effort, <level>, <owner-chosen permission flags>]; a permission bypass is the owner's explicit choice.
+  round_agent: null  # Non-interactive agent argv the wrapper runs before the prompt, e.g. [claude, -p, --plugin-dir, harness, --model, <id>, --effort, <level>, <owner-chosen permission flags>]; it must load the shared skills from this checkout; a permission bypass is the owner's explicit choice.
 policy:
   strategies:  # Applied in order.
     - type: manual

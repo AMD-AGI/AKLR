@@ -10,25 +10,16 @@ The round reuses the optimization, GPU, validation, PR and reporting skills in `
 
 ## Set it up
 
-1. Point the agent at [`FOR_AGENTS.md`](./FOR_AGENTS.md) and name the target repository, an AKLR checkout.
-2. Let setup merge this whole directory into the target at `harness/automations/shepherd/`. It must preserve
-   destination-only files and review conflicts instead of overwriting local edits.
-3. Let setup enable amd-aklr in the target repository's `.cursor/settings.json` for shared dependencies:
-
-```json
-{
-	"plugins": {
-		"amd-aklr": { "enabled": true }
-	}
-}
-```
-
-4. Keep user-owned configuration outside the copied pack, in `.shepherd/configuration.yaml` (ignored by
+1. Point the agent at [`FOR_AGENTS.md`](./FOR_AGENTS.md) and name the AKLR checkout, on the base branch,
+   that will run rounds. It already holds this pack; nothing is copied.
+2. Let setup choose a round agent that loads the shared skills from that checkout (Claude CLI:
+   `--plugin-dir harness`), not from an installed plugin whose cached revision can lag.
+3. Keep user-owned configuration outside the pack, in `.shepherd/configuration.yaml` (ignored by
    Git). Adapt [`configuration.example.yaml`](./templates/configuration.example.yaml).
-5. Commit `.cursor/settings.json` and `harness/automations/shepherd/` before enabling the automation.
-6. Review the new automation draft or update the existing automation in its editor. Then run one `observe`
-   round and enable `run` on probation (one campaign's budget, `max_parallel_campaigns: 1`, one PR) until a
-   real campaign reaches a draft PR, and raise the budget and parallelism after.
+4. Review the new automation draft or update the existing automation in its editor. Enable it with
+   `mode: observe`, run the setup tests, then switch to `run` on probation (one campaign's budget,
+   `max_parallel_campaigns: 1`, one PR) until a real campaign reaches a draft PR, and raise the budget
+   and parallelism after.
 
 ## Limits
 
