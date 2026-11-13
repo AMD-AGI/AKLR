@@ -523,3 +523,9 @@ class TestVllmPlugin:
             assert events == ["init_device", "init_once"]
         finally:
             registry.restore()
+
+
+def test_a_failing_hsaco_kernels_hint_names_the_hip_that_loads_it() -> None:
+    from aklr.core.runtime.dispatch._dispatcher import kernel_failure_hint
+
+    assert kernel_failure_hint("gemm@1.0", "hsaco").startswith("hip ")

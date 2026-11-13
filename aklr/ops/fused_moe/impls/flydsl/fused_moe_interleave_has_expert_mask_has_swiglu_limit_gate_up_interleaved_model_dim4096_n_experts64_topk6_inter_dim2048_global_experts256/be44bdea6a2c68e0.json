@@ -182,7 +182,9 @@
       },
       "scalars": {
         "swiglu_limit": 10.0
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 2.638
     },
     {
       "axes": {
@@ -190,7 +192,9 @@
       },
       "scalars": {
         "swiglu_limit": 10.0
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 3.521
     }
   ],
   "layout_variants": {
