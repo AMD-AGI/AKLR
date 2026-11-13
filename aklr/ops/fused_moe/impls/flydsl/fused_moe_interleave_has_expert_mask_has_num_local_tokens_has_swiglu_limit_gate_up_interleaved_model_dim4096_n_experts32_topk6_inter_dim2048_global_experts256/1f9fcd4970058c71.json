@@ -251,6 +251,9 @@
         "hardware": "MI355X"
       }
     ],
+    "requires": {
+      "flydsl": ">=0.3.2"
+    },
     "entry_point": "kernel.py::run",
     "sources": [
       {
