@@ -84,7 +84,7 @@ implementations, not of the languages, and not of preshuffled MXFP4.
   the variants that differ from their first declared value and the const axes (`aklr/ops/README.md` § Names).
 - **uuid.** The first 16 hex digits of the sha256 of `[name, authored parts]` as sorted-key JSON: the whole `kernel`
   section and each Point's axes and scalars, sorted (S6). Editing a source, `requires`, `author` or the Points renames
-  the file; `speedup`, `accuracy` and the workload order do not. A file elsewhere fails audit with
+  the file; `speedup`, `accuracy`, `microseconds` and the workload order do not. A file elsewhere fails audit with
   `<path>: not at <ops>/<op_type>/impls/triton/<name>/<uuid>.json`, which names the right uuid (S6); after every edit,
   `python -m aklr export check` names that path: exit 0 and no output on a clean repository, exit 1 and one `not at`
   line per misnamed file (`aklr/ops/README.md` § Workflow, steps 4–5).
@@ -131,6 +131,7 @@ schema = json.loads(old.read_text())
 for w in schema["workloads"]:                      # only CI writes these
     w.pop("speedup", None)
     w.pop("accuracy", None)
+    w.pop("microseconds", None)
 schema["kernel"] = {"language": "triton", "targets": schema["kernel"]["targets"],
                     "requires": {"triton": ">=3.8"}, "author": "my-agent", "entry_point": "kernel.py::run",
                     "sources": [{"path": "kernel.py", "content": Path("/path/to/kernel.py").read_text()}]}
@@ -487,7 +488,7 @@ What bites:
 - **A git checkout**, with the file at its canonical path in the exact schema text (§3, S6, S9): validate asks git for
   the repository root (`git rev-parse --show-toplevel`) and takes only paths inside it (S39); a copy without `.git`
   and a file outside the repository each exit 2 before any check.
-- **Measurements.** Delete `speedup` and `accuracy` from every workload of a new or edited file: with `--base`, measured
+- **Measurements.** Delete `speedup`, `accuracy` and `microseconds` from every workload of a new or edited file: with `--base`, measured
   fields that differ from the base are `perf_edited` (S13), and a file measured on some workloads only is invalid.
 - **The image.** CI runs `lmsysorg/sglang:v0.5.22-rocm10-mi35x` with the baseline aiter (`AKLR_BASELINE_AITER`) installed over it, and refuses any Triton but 3.8.0 (S40). Validate in that image after installing the same aiter as `.github/README.md` § Install writes it, with `AITER_USE_SYSTEM_TRITON=1` to keep an installed Triton: otherwise aiter's setup.py runs its Triton installer unless torch is below 2.9.1, and may skip an installer failure (S40). A baseline that reaches aiter can move with the aiter build: the n6144 bf16 GEMM's baseline read 7.02 µs on the image's aiter and 7.95 µs on the pinned one at m = 8, 4.5% apart the other way at m = 16, the candidate within 1.2% at both *(field, E1)* ([tuning.md](tuning.md) §1). A local container may hold another Triton (3.7.0 has been seen): check `triton.__version__`. On 3.7.0 the launch's keyword check rejects `llvm_fn_attrs` (`KeyError`), and `schedule_hint="memory-bound-attention"` (AKLR's n6144 GEMM passes it) adds `"amdgpu-sched-strategy"="iterative-ilp"`, which 3.8.0 ignores (S8, S2). Built offline for gfx950 with the same options (a bf16 `tl.dot` loop, 64 × 64 × 64 tile, 4 warps, 2 stages, that hint), one probe had 274 static instructions and 16384 B of LDS on 3.7.0 against 405 and 33968 B on 3.8.0 *(field, E18)*.
 

@@ -13,7 +13,7 @@ from aklr.core.contract import expr, locate, semantics
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.semantics import sorted_key_json
-from aklr.core.contract.spec import TOOLCHAINS, attr
+from aklr.core.contract.spec import TOOLCHAINS, WorkloadSpec, attr
 from tests.op_case import HIP_GEMM_KERNEL_SOURCE, OpCase
 
 
@@ -79,6 +79,15 @@ class TestSchemaFile:
         lines = str(error.value).splitlines()
         for field in ("language", "entry_point"):
             assert any(line.startswith(f"bad.json: kernel.{field}: ") for line in lines)
+
+    def test_microseconds_is_measured(self) -> None:
+        """``microseconds`` comes with an ``accuracy``, as ``speedup`` does, and is left
+        out of the file when unmeasured."""
+        with pytest.raises(ValueError, match="microseconds 4.17 has no accuracy"):
+            WorkloadSpec(axes={"m": 1}, microseconds=4.17)
+        measured = WorkloadSpec(axes={"m": 1}, accuracy="passed", speedup=1.2, microseconds=4.17)
+        assert measured.model_dump()["microseconds"] == 4.17
+        assert "microseconds" not in WorkloadSpec(axes={"m": 1}).model_dump()
 
     def test_kernel_requires(self) -> None:
         """``kernel.requires`` follows ``targets`` and is absent when empty; a key is a

@@ -899,10 +899,10 @@ class OpContract(FrozenModel):
 
     @staticmethod
     def measured_parts(schema: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
-        """Each workload's written ``speedup`` and ``accuracy`` by ``axes_text``, from a
-        schema's raw json. ``ValueError`` as ``authored_parts``."""
+        """Each workload's written ``speedup``, ``accuracy`` and ``microseconds`` by
+        ``axes_text``, from a schema's raw json. ``ValueError`` as ``authored_parts``."""
         return {
-            axes_text(w["axes"]): {k: w[k] for k in ("speedup", "accuracy") if k in w}
+            axes_text(w["axes"]): {k: w[k] for k in ("speedup", "accuracy", "microseconds") if k in w}
             for w in OpContract._raw_workloads(schema)
         }
 
@@ -922,8 +922,8 @@ class OpContract(FrozenModel):
         return raw_workloads
 
     def with_measurements(self, measurements: Mapping[str, WorkloadSpec]) -> OpContract:
-        """A copy with each workload's ``speedup`` and ``accuracy`` from
-        ``measurements`` by ``axes_text``; ``ValueError`` on a key mismatch or an
+        """A copy with each workload's ``speedup``, ``accuracy`` and ``microseconds``
+        from ``measurements`` by ``axes_text``; ``ValueError`` on a key mismatch or an
         invalid measurement."""
         keys = [axes_text(w.axes) for w in self.workloads]
         if set(keys) != set(measurements):
@@ -936,7 +936,12 @@ class OpContract(FrozenModel):
             try:
                 workloads.append(
                     WorkloadSpec.model_validate(
-                        {**w.model_dump(), "speedup": m.speedup, "accuracy": m.accuracy}
+                        {
+                            **w.model_dump(),
+                            "speedup": m.speedup,
+                            "accuracy": m.accuracy,
+                            "microseconds": m.microseconds,
+                        }
                     )
                 )
             except ValidationError as e:
