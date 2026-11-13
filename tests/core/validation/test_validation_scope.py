@@ -1,7 +1,11 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""Which changed paths are schema data, and which re-bench every schema."""
+"""Which changed paths are schema data, which re-bench every schema, and which schemas
+lie under a directory."""
+
+from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -28,3 +32,11 @@ _UUID = "0123456789abcdef"
 )
 def test_path_kind(path: str, kind: str) -> None:
     assert ValidationScope.path_kind(path) == kind
+
+
+def test_under_keeps_the_schemas_under_a_directory(tmp_path: Path) -> None:
+    ops, plugin = tmp_path / "aklr/ops/a.json", tmp_path / "aklr/plugins/b.json"
+    scope = ValidationScope(tmp_path, "", None, (ops, plugin), (plugin,))
+    assert scope.under("aklr/ops") == replace(scope, schema_paths=(ops,), bench_paths=())
+    assert scope.under("aklr/plugins/").bench_paths == (plugin,)
+    assert scope.under("aklr/op").schema_paths == ()

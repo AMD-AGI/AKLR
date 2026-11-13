@@ -141,7 +141,7 @@ language's toolchain (`TOOLCHAINS`): `flydsl`, `triton`, or `hip` for hip and hs
 version torch was built with (`torch.version.hip`), not the ROCm release (ROCm 10.0 ships HIP 7.15), and every
 library it imports beyond torch, such as `{"mori": ">=1.2.4"}` (`Library` in `aklr/core/contract/spec/_kernel.py`);
 `export check` rejects one that misses either (`KernelSpec.requires_error`). It is omitted only in a definition. Where the installed toolchain misses it, the runtime skips the schema, logging why at INFO, and validation
-reports `no_matching_toolchain`. Give the version the kernel was developed on as the lower bound, and an upper bound
+skips it too, listing it in the report. Give the version the kernel was developed on as the lower bound, and an upper bound
 only once a release breaks it. A kernel that fails where `requires` holds raises: nothing falls back on an error.
 
 `author` names who wrote the kernel: a person, a team or an agent, such as `"GEAK"`. It is one line without
@@ -368,7 +368,7 @@ A schema file carries no semantics stamp. After a change to the schema format, r
 |---|---|---|
 | `python -m aklr export [--from DIR] [--to DIR] [--language L]` | export (`--from` and `--to` default to `AKLR_EXPORT_DIR`, else `./aklr_export`; `--language` required); fails with `no calls.*.jsonl in DIR` when there are no calls | 0 done, 1 error, 2 usage |
 | `python -m aklr export check` | checks every committed schema and `impls/`; no GPU, no environment | 0 clean, 1 problems on stderr, 2 usage |
-| `python -m aklr validate [PATH ...] [--base REV] [--stages audit,bench] ...` | audit and bench stages (default: both); writes `aklr_validation/report.json` and `report.md` | 0 passed, 1 failed, 2 usage, 3 aborted |
+| `python -m aklr validate [PATH ...] [--base REV] [--stages audit,bench] [--under DIR] [--no-timing] ...` | audit and bench stages (default: both); writes `aklr_validation/report.json` and `report.md`. `--under` keeps the schemas under DIR; `--no-timing` builds and checks the kernels only, timing and writing back nothing. A schema whose `kernel.requires` the environment misses is skipped, as dispatch skips it | 0 passed, 1 failed, 2 usage, 3 aborted |
 
 Options and stages of `validate`: `python -m aklr validate --help`.
 

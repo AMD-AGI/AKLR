@@ -7,7 +7,7 @@ flydsl: 0.3.2
 basis: single-observation
 sources:
   - "aklr/ops/README.md"
-  - "aklr/core/validation/stages/_bench/_evaluation/_candidate.py:406"
+  - "aklr/core/validation/stages/_bench/_evaluation/_candidate.py:402"
 ---
 
 # State kept between calls
@@ -95,4 +95,4 @@ unverified.
 - E3 [2026-10, gfx950, FlyDSL ?, N=?, ruler not recorded; a bench check rewrote weights in place through `.data.copy_`] the 20 schemas whose kernels cached a weight keyed on the object and its `_version` returned the old weights' result after an update; their recorded speedups predated the bench's rotating input sets and measured only cache hits (FlyDSL bf16 GEMMs and MXFP4 fused MoE)
 - E4 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0, N=7 rounds, floor = largest gap between two identical arms; AKLR `bench_cudagraph` (1 GiB flush per call), and eager Kineto kernel time without a flush] `torch.mm` bf16 at 4096×4096×4096, 16×8192×8192 and 16×2048×2048: with the flush, fresh buffers +0.10% to +0.87%; without it, at 16×8192×8192, fresh buffers +20.2%, an in-place write +1.1% with new values and +0.9% with the old ones (floor 0.93%) (hipBLASLt bf16 GEMMs)
 - S1 `if b is not cached_weight or version is None or version != cached_version:` repacks, else reuses `packed_b`; a later commit removed the check from all 20, and no kernel committed later reads `._version`
-- S2 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:406: one `call` built from one input set, timed for every participant
+- S2 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:402: one `call` built from one input set, timed for every participant

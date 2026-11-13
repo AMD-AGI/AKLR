@@ -70,6 +70,13 @@ class ValidationScope:
     def relative_path(self, path: Path) -> str:
         return Path(path).resolve().relative_to(self.root.resolve()).as_posix()
 
+    def under(self, directory: str) -> ValidationScope:
+        """This scope's schemas under ``directory``, a path relative to the root."""
+        prefix = directory.rstrip("/") + "/"
+        inside = tuple(p for p in self.schema_paths if self.relative_path(p).startswith(prefix))
+        bench = tuple(p for p in self.bench_paths if p in inside)
+        return replace(self, schema_paths=inside, bench_paths=bench)
+
     def changed_paths(self) -> tuple[str, ...]:
         """The sorted change set: what differs from ``base_sha`` in the working tree."""
         if self.base_sha is None:

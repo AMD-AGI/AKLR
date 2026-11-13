@@ -1222,22 +1222,41 @@ def test_long_schema_spreads_over_batches(monkeypatch: pytest.MonkeyPatch) -> No
     assert [r.axes_text for b in batches for r in b] == [axes_text(w.axes) for w in schema.workloads]
 
 
-@pytest.mark.parametrize(
-    ("kernel", "code"),
-    [
-        ({"targets": [{"arch": "gfx942"}]}, FindingCode.NO_MATCHING_DEVICE),
-        ({"requires": {"flydsl": ">=999"}}, FindingCode.NO_MATCHING_TOOLCHAIN),
-    ],
-    ids=["targets", "requires"],
-)
-def test_platform_the_kernel_does_not_state_aborts(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-    kernel: dict[str, Any],
-    code: FindingCode,
-) -> None:
-    """A device or toolchain the kernel does not state is the platform's fault: the
-    candidate stops before its kernel is built."""
+def test_a_kernel_whose_requires_the_environment_misses_is_skipped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """As dispatch skips it: no batch and no finding; the report names it and why."""
+    from aklr.core.validation.stages._bench import _stage
+
+    monkeypatch.setattr(_stage, "unmet_requirement", lambda requires: "flydsl 0.3.4.1 is not <0.3.4")
+    scope = ValidationScope(Path.cwd(), "", None, (Path(_SCHEMA),), (Path(_SCHEMA),))
+    report = BenchStage(["cpu"]).run(scope, None)
+    assert (report.status, report.findings, report.workload_records) == ("passed", (), ())
+    assert report.skipped_schemas == {_SCHEMA: "flydsl 0.3.4.1 is not <0.3.4"}
+
+
+def test_an_untimed_bench_compares_with_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``validate --no-timing``: no threshold, so no workload is timed, and no incumbent is read."""
+    monkeypatch.setattr(ValidationScope, "paths_at_base", lambda self, directory: ())
+    monkeypatch.setattr(BenchStage, "_incumbents", lambda *args: pytest.fail("read an incumbent"))
+    scope = ValidationScope(Path.cwd(), "", "base", (), ())
+    stage = BenchStage(["cpu"], timed=False)
+    batches = stage._workloads_to_run(scope, Path(_SCHEMA), ContractRegistry.default())
+    assert batches
+    assert all(r.thresholds == {} and r.incumbent is None for batch in batches for r in batch)
+
+
+def test_an_untimed_bench_never_runs_the_baseline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An engine image's AITER may not even build the baseline an untimed bench never times."""
+    from aklr.core.validation.stages._bench._evaluation._candidate import CandidateRun
+    from tests.op_case import OpCase
+
+    request = replace(OpCase.of("gemm@1.0").request, thresholds={})
+    monkeypatch.setattr(OpContract, "baseline", lambda self: lambda **call: pytest.fail("ran the baseline"))
+    CandidateRun("cpu", None, None).run_baseline(request)
+
+
+def test_a_device_the_kernel_does_not_state_aborts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A device the kernel does not state is the platform's fault: the candidate stops
+    before its kernel is built."""
     from aklr.core.contract.spec import KernelSpec
     from aklr.core.platform.device import DeviceTarget
     from aklr.core.validation.stages._bench._evaluation import run_candidate
@@ -1245,7 +1264,7 @@ def test_platform_the_kernel_does_not_state_aborts(
 
     case = OpCase.of("gemm@1.0")
     schema = case.schema()
-    kernel_spec = KernelSpec.model_validate(schema.kernel.model_dump() | kernel)
+    kernel_spec = KernelSpec.model_validate(schema.kernel.model_dump() | {"targets": [{"arch": "gfx942"}]})
     schema = schema.model_copy(update={"kernel": kernel_spec})
     target = DeviceTarget.from_names(**KERNEL_TARGET)
     monkeypatch.setattr(DeviceTarget, "current", classmethod(lambda cls, d: target))
@@ -1255,8 +1274,8 @@ def test_platform_the_kernel_does_not_state_aborts(
         context, requests=[request], outputs={request.axes_text: request.empty_outputs("cpu")}
     )
     findings = CandidateResult.model_validate(result).findings
-    assert [f.code for f in findings] == [code]
-    assert code.is_platform_fault
+    assert [f.code for f in findings] == [FindingCode.NO_MATCHING_DEVICE]
+    assert FindingCode.NO_MATCHING_DEVICE.is_platform_fault
 
 
 def test_a_tracer_that_cannot_register_is_the_platforms_failure(

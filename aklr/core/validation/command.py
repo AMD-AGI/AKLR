@@ -37,6 +37,12 @@ def main(argv: Sequence[str]) -> int:
         help=f"a part of {','.join(STAGE_ORDER)} that starts with audit",
     )
     parser.add_argument("--devices", help="0-7 or 0,2,5")
+    parser.add_argument("--under", metavar="DIR", help="only the schemas under DIR, such as aklr/ops")
+    parser.add_argument(
+        "--no-timing",
+        action="store_true",
+        help="build and check the kernels only: nothing is timed or written back",
+    )
     parser.add_argument("--out", type=Path, default=DEFAULT_REPORT_DIR)
     parser.add_argument(
         "--allow-measured-edits",
@@ -52,6 +58,8 @@ def main(argv: Sequence[str]) -> int:
     Progress().write("collecting schemas and platform")
     try:
         scope = ValidationScope.of_working_tree(args.base, args.paths or None)
+        if args.under is not None:
+            scope = scope.under(args.under)
         stages: list[PipelineStage] = [AuditStage(allow_measured_edits=args.allow_measured_edits)]
         if "bench" in names:
             if args.devices is None:
@@ -65,13 +73,14 @@ def main(argv: Sequence[str]) -> int:
                 ]
             if not indices:
                 raise ValueError("no visible device and no --devices")
-            stages.append(BenchStage([f"cuda:{i}" for i in indices]))
+            stages.append(BenchStage([f"cuda:{i}" for i in indices], timed=not args.no_timing))
         pipeline = Pipeline(stages)
     except ValueError as error:
         parser.error(str(error))
     report = pipeline.run(scope)
     report.write(args.out)
-    report.write_schemas(scope.root, args.out / "schemas")
-    report.write_baselines(scope, args.out / "baseline")
+    if not args.no_timing:  # untimed: no measurement to write back, no baseline compared with
+        report.write_schemas(scope.root, args.out / "schemas")
+        report.write_baselines(scope, args.out / "baseline")
     print(f"validation {report.conclusion}: {args.out / 'report.md'}")
     return report.exit_code

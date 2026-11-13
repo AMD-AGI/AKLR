@@ -110,6 +110,8 @@ class BenchReport(StageReport):
     stage_name: Literal["bench"] = "bench"
     workload_records: tuple[WorkloadRecord, ...] = ()
     demotions: tuple[Finding, ...] = ()
+    # schema path -> the kernel.requires this environment misses: not benched, as dispatch skips it
+    skipped_schemas: dict[str, str] = {}  # noqa: RUF012
 
     @classmethod
     def from_findings(cls, findings: Sequence[Finding], **records: Any) -> Self:
@@ -172,7 +174,8 @@ class BenchReport(StageReport):
         return str(finding.code)
 
     def speedups(self) -> list[float]:
-        return sorted(s for r in self.workload_records if (s := r.speedup) is not None)
+        """The timed workloads' speedups: an untimed one's 1.0 measures nothing."""
+        return sorted(s for r in self.workload_records if r.is_timed and (s := r.speedup) is not None)
 
     def accuracy(self) -> tuple[int, int]:
         """(failed, ok) workload counts; the rest are not measured."""
@@ -206,8 +209,10 @@ class BenchReport(StageReport):
 
     def outcome_lines(self) -> list[str]:
         """The end-of-stage roll-up of workloads by verdict, speedup and accuracy."""
+        n_skipped = len(self.skipped_schemas)
+        skipped = [f"{n_skipped} schemas skipped: kernel.requires"] if n_skipped else []
         if not self.workload_records:
-            return []
+            return skipped
         n = len(self.workload_records)
         s = self.speedups()
         failed, ok = self.accuracy()
@@ -226,6 +231,7 @@ class BenchReport(StageReport):
             ),
             f"  accuracy FAIL {failed}, ok {ok}, not measured {n - failed - ok}",
             "  per-schema table: report.md",
+            *skipped,
         ]
 
     def console_lines(self) -> list[str]:
@@ -238,6 +244,11 @@ class BenchReport(StageReport):
             blocks += [
                 Paragraph("demoted:"),
                 BulletList(tuple(f.markdown_item() for f in self.demotions)),
+            ]
+        if self.skipped_schemas:
+            blocks += [
+                Paragraph("skipped (kernel.requires):"),
+                BulletList(tuple(f"`{path}`: {why}" for path, why in self.skipped_schemas.items())),
             ]
         return blocks
 
