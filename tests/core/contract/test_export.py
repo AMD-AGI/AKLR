@@ -75,6 +75,12 @@ class TestExport:
         text = committed_path.read_bytes()
         assert registry.parse_schema(text, "copy").schema_text().encode() == text
 
+    def test_model_must_be_a_schema_model_name(self, tmp_path: Path) -> None:
+        """A ``--model`` no schema could name is a usage error before any call is read."""
+        with pytest.raises(SystemExit) as exited:
+            export.main(["--language", "flydsl", "--model", "Kimi-K3"], export_dir=tmp_path)
+        assert exited.value.code == 2
+
     def test_a_point_outside_the_domain_is_skipped(self, tmp_path: Path) -> None:
         """An idle rank's call of no rows: no kernel can serve it, so it adds no schema."""
         case = OpCase.of("gemm@1.0")

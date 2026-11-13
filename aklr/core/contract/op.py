@@ -58,6 +58,7 @@ __all__ = [
     "CONTRACT_VERSION",
     "ApiParam",
     "Domain",
+    "ModelName",
     "OpContract",
     "api_name",
 ]
@@ -65,6 +66,10 @@ __all__ = [
 CONTRACT_VERSION: Final = 5  # the json format of a schema file (its "schema_version")
 _RESERVED_NAMES = frozenset({"out_dtype", "layout_variant"})
 _DISTINCT_PRIME_DIMS = (10007, 10009, 10037, 10039, 10061, 10067, 10069, 10079)
+
+
+# a model as schemas name it: "kimi-k3", "glm-5.2"
+ModelName = Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9.-]*$")]
 
 
 class OpContract(FrozenModel):
@@ -77,7 +82,7 @@ class OpContract(FrozenModel):
     description: str
     op_type: str  # the op family: "gemm" for aklr/ops/gemm/
     # the models whose serving makes a schema's calls, sorted: "glm-5.2", "kimi-k3"
-    models: tuple[Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9.-]*$")], ...] = ()
+    models: tuple[ModelName, ...] = ()
     workloads: tuple[WorkloadSpec, ...] = ()
     axes: dict[str, AxisSpec]
     attrs: dict[str, AttrSpec] = {}  # noqa: RUF012 -- pydantic copies defaults

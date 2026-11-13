@@ -13,7 +13,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path, PurePosixPath
 from typing import Final, NamedTuple
 
-from pydantic import PositiveInt, ValidationError, field_validator, model_validator
+from pydantic import PositiveInt, TypeAdapter, ValidationError, field_validator, model_validator
 
 from aklr.core.contract import locate, op, semantics, spec
 from aklr.core.contract.registry import ContractRegistry, UnknownContractError
@@ -313,6 +313,10 @@ def main(argv: Sequence[str], *, export_dir: Path | None) -> int:
         parser.error(f"--language is required: one of {list(spec.LANGUAGES)}")
     if args.model is None:
         parser.error("--model is required: the model whose serving made the calls, such as kimi-k3")
+    try:
+        TypeAdapter(op.ModelName).validate_python(args.model)
+    except ValidationError:
+        parser.error(f"--model {args.model!r}: lower-case letters, digits, '.' and '-', such as kimi-k3")
     language = args.language or spec.LANGUAGES[0]
     assert export_dir is not None
     calls_dir, export_dir = args.calls_dir or export_dir, args.export_dir or export_dir
