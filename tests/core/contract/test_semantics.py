@@ -54,6 +54,14 @@ class TestPoolDistributions:
         assert pool.dtype == torch.uint8
         assert torch.equal(pool.unique(), torch.arange(64, dtype=torch.uint8))
 
+    def test_distinct_ties_rank_by_index(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Distinct int_range values from equal draws come lowest index first, so every
+        task drawing the inputs gets the same page tables."""
+        monkeypatch.setattr(torch, "randn", lambda shape, generator: torch.zeros(shape))
+        distribution = semantics.IntRangeDistribution(lo=3, hi=12, distinct=True)
+        values = distribution.sample((2, 10), "int32", torch.Generator())
+        assert torch.equal(values, torch.arange(3, 13, dtype=torch.int32).expand(2, 10))
+
 
 class TestCompareOutputs:
     """``compare_outputs`` fails an output off its reference."""
