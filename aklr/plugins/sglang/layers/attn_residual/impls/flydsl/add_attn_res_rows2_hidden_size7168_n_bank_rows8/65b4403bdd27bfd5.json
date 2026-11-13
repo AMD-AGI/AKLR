@@ -1,0 +1,207 @@
+{
+  "schema_version": 5,
+  "name": "add_attn_res_rows2_hidden_size7168_n_bank_rows8",
+  "contract_id": "add_attn_res@1.0",
+  "description": "p = prefix + addend, rounded to their dtype before it is scored; prefix_out = p; rows = bank[:, :n_valid_rows] and the prefix p; each row r scores (r . score_weight) * rsqrt(mean(r**2) + score_eps); the softmax of the scores weights the rows into mix; normalized = mix * rsqrt(mean(mix**2) + norm_eps) * norm_weight, the means over the hidden axis. With write_bank, bank[:, n_valid_rows] = p. Bank rows from n_valid_rows on are unwritten memory in sglang: a kernel reads none of them.",
+  "op_type": "attn_residual",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "hidden_size": {
+      "type": "const",
+      "value": 7168,
+      "description": "Width of the residual stream."
+    },
+    "n_bank_rows": {
+      "type": "const",
+      "value": 8,
+      "description": "Rows the bank holds per token."
+    }
+  },
+  "attrs": {
+    "n_valid_rows": 2,
+    "write_bank": false
+  },
+  "inputs": {
+    "prefix": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The running prefix before the pending layer output."
+    },
+    "addend": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The pending layer output."
+    },
+    "bank": {
+      "shape": [
+        "n_tokens",
+        "n_bank_rows",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's bank: the embedding, then the sum of each block of layers' outputs."
+    },
+    "score_weight": {
+      "shape": [
+        "hidden_size"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 7168
+      },
+      "description": "The score projection's weight times its RMSNorm's weight."
+    },
+    "norm_weight": {
+      "shape": [
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": "0.58"
+      },
+      "description": "The layer norm's weight, scaling each normalized column."
+    },
+    "score_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to the mean square of each scored row."
+    },
+    "norm_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to the mean square of the mix."
+    }
+  },
+  "outputs": {
+    "normalized": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The normalized mix, scaled by norm_weight."
+    },
+    "prefix_out": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "prefix + addend, which the next layer adds on to."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 8
+      },
+      "scalars": {
+        "score_eps": 9.999999747378752e-06,
+        "norm_eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "scalars": {
+        "score_eps": 9.999999747378752e-06,
+        "norm_eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 24
+      },
+      "scalars": {
+        "score_eps": 9.999999747378752e-06,
+        "norm_eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 32
+      },
+      "scalars": {
+        "score_eps": 9.999999747378752e-06,
+        "norm_eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 48
+      },
+      "scalars": {
+        "score_eps": 9.999999747378752e-06,
+        "norm_eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "scalars": {
+        "score_eps": 9.999999747378752e-06,
+        "norm_eps": 9.999999747378752e-06
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.2"
+    },
+    "author": "kyle-256",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "aggregate.py",
+        "content": "\"\"\"Kimi-K3's attention-residual aggregation for hidden size 7168 and any 1 to 8 scored bank rows, in FlyDSL for gfx950.\n\nOne workgroup per token, 896 threads (14 waves), each thread owning 8 contiguous hidden columns, handled as four column\npairs in packed fp32. The buffers arrive as preloaded pointers. p is the prefix, or bf16(prefix + addend) stored as\nprefix_out; with write_bank p also goes to bank row n_valid_rows. The rows scored are the n_valid_rows bank rows, then\np. Each row's two per-thread partials (dot with the score weight, sum of squares) are reduce-scattered inside each\nwave (permlane swaps, then DPP), exchanged through LDS and summed over the waves in a fixed order by every wave alike.\nLanes below the row count hold one row's score each; the softmax runs across those lanes and its unnormalised weights\ngo to scalar registers for the mix, their sum Z in a fixed order. The mix's mean square (second LDS exchange) absorbs\nZ. Every reduction runs in a fixed order, so the output is bitwise deterministic.\n\nUp to 128 tokens each token's workgroup has a helper workgroup on the same XCD (8 workgroup ids later) that only loads\nthe token's bank rows, so that the token's own requests for them, issued ~0.3 us after its first loads, hit the shared\nL2. The helper waits for nobody and nobody waits for it. Past 128 tokens every CU has tokens of its own and there is\nno helper. The token count is a kernel argument: one build serves every count with its grid.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport functools\n\nimport torch\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nfrom flydsl._mlir import ir as _ir\nfrom flydsl._mlir.dialects import arith as _arith\nfrom flydsl._mlir.dialects import llvm as _llvm\nfrom flydsl._mlir.dialects import math as _math\nfrom flydsl._mlir.dialects import memref as _memref\nfrom flydsl._mlir.dialects import rocdl as _rocdl\nfrom flydsl._mlir.dialects import scf as _scf\nfrom flydsl._mlir.dialects import vector as _vector\nfrom flydsl.compiler.kernel_function import CompilationContext\nfrom flydsl.expr.gpu import lds_space as _lds_space\nfrom flydsl.utils.smem_allocator import SmemAllocator\n\nD = 7168\nWAVE = 64\nVEC = 8           # hidden columns per thread\nNTHR = D // VEC   # 896\nNW = NTHR // WAVE  # 14\nWPAD = 16         # waves per LDS slot row (14 used)\nLDS1 = 32 * WPAD  # slot s (dot of row s, or sum of squares of row s - 2 * h2), wave w at s * WPAD + w\nLDS2 = WPAD       # the sums of squares of the second exchange, one per wave\nXCDS = 8          # workgroups b and b + 8 run on the same XCD\nHELP = 128        # up to here each token's workgroup has a helper; past it LLVM's max-ilp scheduler is used\nGROUP = 2 * XCDS  # 8 tokens' workgroups, then their 8 helpers\nHELP_SLEEP = 12   # s_sleep units (64 cycles) the token's workgroup waits before its bank-row loads\n_LOG2E = 1.4426950408889634\n_INV_D = 1.0 / D\n\n_DPP_XOR1 = 0xB1      # quad_perm [1,0,3,2]\n_DPP_XOR2 = 0x4E      # quad_perm [2,3,0,1]\n_DPP_HMIRROR = 0x141  # row_half_mirror (xor 4 once quads are uniform)\n_DPP_ROR8 = 0x128     # row_ror:8 (xor 8 inside a 16-lane row)\n_DPP_ALL = (_DPP_XOR1, _DPP_XOR2, _DPP_HMIRROR, _DPP_ROR8)\n\n\ndef _f32(v):\n    return fx.Float32(v)\n\n\ndef _rsq(x):\n    return fx.Float32(fx.rocdl.rsq(_ir.F32Type.get(), fx.as_ir_value(x)))\n\n\ndef _exp2(x):\n    return fx.Float32(fx.rocdl.exp2(_ir.F32Type.get(), fx.as_ir_value(x)))\n\n\ndef _dpp(v, ctrl):\n    return fx.Float32(fx.rocdl.update_dpp(\n        _ir.F32Type.get(), fx.as_ir_value(v), fx.as_ir_value(v), ctrl, 0xF, 0xF, True))\n\n\ndef _permute_pair(a, b, bit):\n    \"\"\"(a_low | b_low, a_high | b_high) across the 32-lane (bit 5) or 16-lane (bit 4) split.\"\"\"\n    i32 = _ir.IntegerType.get_signless(32)\n    ai = _arith.BitcastOp(i32, fx.as_ir_value(a)).result\n    bi = _arith.BitcastOp(i32, fx.as_ir_value(b)).result\n    op = _rocdl.permlane16_swap if bit == 4 else _rocdl.permlane32_swap\n    pair = op(_ir.Type.parse(\"!llvm.struct<(i32, i32)>\"), ai, bi, False, True)\n    vals = [_llvm.ExtractValueOp(i32, pair, [i]).result for i in range(2)]\n    return [fx.Float32(_arith.BitcastOp(_ir.F32Type.get(), v).result) for v in vals]\n\n\ndef _scatter(vals, bit):\n    \"\"\"Reduce-scatter step: lanes with ``bit`` clear end with the low half summed, lanes with it set the high half.\"\"\"\n    h = (len(vals) + 1) // 2\n    lo = vals[:h]\n    hi = vals[h:] + [None] * (2 * h - len(vals))\n    out = []\n    for k in range(h):\n        hk = _f32(0.0) if hi[k] is None else hi[k]\n        a, b = _permute_pair(lo[k], hk, bit)\n        out.append(a + b)\n    return out\n\n\ndef _wave_allsum(v):\n    for ctrl in _DPP_ALL:\n        v = v + _dpp(v, ctrl)\n    for bit in (4, 5):\n        a, b = _permute_pair(v, v, bit)\n        v = a + b\n    return v\n\n\ndef _readlane(v, j):\n    i32 = _ir.IntegerType.get_signless(32)\n    bits = _arith.BitcastOp(i32, fx.as_ir_value(v)).result\n    r = fx.rocdl.readlane(i32, bits, j)\n    return fx.Float32(_arith.BitcastOp(_ir.F32Type.get(), fx.as_ir_value(r)).result)\n\n\ndef _as_index(v):\n    v = fx.as_ir_value(v)\n    if isinstance(v.type, _ir.IntegerType):\n        v = _arith.IndexCastOp(_ir.IndexType.get(), v).result\n    return v\n\n\ndef _scf_if(cond, then_fn):\n    \"\"\"scf.if without results on a condition: ``then_fn`` emits the guarded ops.\"\"\"\n    op = _scf.IfOp(fx.as_ir_value(cond), [], has_else=False)\n    with _ir.InsertionPoint(op.regions[0].blocks[0]):\n        then_fn()\n        _scf.YieldOp([])\n\n\ndef _lds_st(lds, v, idx):\n    _memref.store(fx.as_ir_value(v), lds, [_as_index(idx)])\n\n\ndef _lds_ld(lds, idx):\n    return fx.Float32(_memref.load(lds, [_as_index(idx)]))\n\n\ndef _lds_ld4(lds, idx):\n    \"\"\"Four consecutive LDS floats from a 16 B aligned index.\"\"\"\n    return _vector.load(_vt(4, _ir.F32Type.get()), lds, [_as_index(idx)])\n\n\ndef _vt(n, elem):\n    return _ir.VectorType.get([n], elem)\n\n\ndef _bf_pair(vec, k):\n    \"\"\"Columns 2k, 2k+1 of an 8 x bf16 vector, as a 2 x bf16 vector.\"\"\"\n    return _vector.extract_strided_slice(_vt(2, _ir.BF16Type.get()), fx.as_ir_value(vec), [2 * k], [2], [1])\n\n\ndef _f_pair(bf2):\n    return _arith.ExtFOp(_vt(2, _ir.F32Type.get()), bf2).result\n\n\ndef _to_bf_pair(f2):\n    return _arith.TruncFOp(_vt(2, _ir.BF16Type.get()), f2).result\n\n\ndef _pk_add(a, b):\n    return _arith.AddFOp(a, b).result\n\n\ndef _pk_mul(a, b):\n    return _arith.MulFOp(a, b).result\n\n\ndef _pk_fma(a, b, c):\n    return _math.fma(a, b, c)\n\n\ndef _hsum(v2):\n    return _f32(_vector.extract(v2, [], [0])) + _f32(_vector.extract(v2, [], [1]))\n\n\ndef _splat2(x):\n    return _vector.broadcast(_vt(2, _ir.F32Type.get()), fx.as_ir_value(x))\n\n\ndef _sum_sq(x):\n    \"\"\"A row's sum of squares over the thread's 8 columns (v_pk_fma_f32 on the widened pairs).\"\"\"\n    s2 = _pk_mul(x[0], x[0])\n    for k in range(1, 4):\n        s2 = _pk_fma(x[k], x[k], s2)\n    return _hsum(s2)\n\n\ndef _concat8(pairs):\n    \"\"\"Four 2-element vectors into one 8-element vector.\"\"\"\n    a = _vector.shuffle(pairs[0], pairs[1], [0, 1, 2, 3])\n    b = _vector.shuffle(pairs[2], pairs[3], [0, 1, 2, 3])\n    return _vector.shuffle(a, b, list(range(8)))\n\n\ndef _opaque(v, bits, side_effects=False):\n    \"\"\"v unchanged through an empty asm tied to its input (no instruction): LLVM cannot fold across it, and with\n    side_effects it stays before the next barrier.\"\"\"\n    ity = _ir.IntegerType.get_signless(bits)\n    x = _llvm.BitcastOp(ity, v).result\n    y = _llvm.InlineAsmOp(ity, [x], \"\", \"=v,0\", has_side_effects=side_effects).result\n    return _llvm.BitcastOp(v.type, y).result\n\n\ndef _rsrc(ptr):\n    return fx.rocdl.get_buffer_rsrc(fx.rocdl.make_buffer_ptr(ptr))\n\n\ndef _i32(v):\n    return fx.as_ir_value(fx.Int32(v))\n\n\ndef _load16(rsrc, voff, soff, elem, n, aux=0):\n    \"\"\"16 bytes at voff + soff (bytes) as an n x elem vector.\"\"\"\n    raw = fx.rocdl.raw_ptr_buffer_load(_vt(4, _ir.IntegerType.get_signless(32)), rsrc, _i32(voff), _i32(soff), aux=aux)\n    return fx.Vector(_vector.bitcast(_vt(n, elem), raw), (n,), fx.BFloat16 if n == 8 else fx.Float32)\n\n\ndef _store16(rsrc, voff, soff, value):\n    raw = _vector.bitcast(_vt(4, _ir.IntegerType.get_signless(32)), fx.as_ir_value(value))\n    _rocdl.raw_ptr_buffer_store(raw, rsrc, _i32(voff), _i32(soff),\n                                aux=_ir.IntegerAttr.get(_ir.IntegerType.get_signless(32), 2))\n\n\ndef _block_sum(lds, v, lane, wave):\n    \"\"\"v summed over the workgroup's 14 waves in a fixed order, in every lane (the second LDS exchange).\"\"\"\n    s = _wave_allsum(v)\n    _scf_if(lane == 0, lambda: _lds_st(lds, s, LDS1 + wave))\n    fx.gpu.barrier()\n    # Lane j of each 16-lane row reads wave j's sum (0 past the 14 waves); the row's DPP sum is the total.\n    j = lane & 15\n    tot = (j < NW).select(_lds_ld(lds, LDS1 + j), _f32(0.0))\n    for ctrl in _DPP_ALL:\n        tot = tot + _dpp(tot, ctrl)\n    return tot\n\n\ndef _f4_pair(vec4, k):\n    \"\"\"Elements 2k, 2k+1 of a 4 x f32 vector.\"\"\"\n    return _vector.extract_strided_slice(_vt(2, _ir.F32Type.get()), fx.as_ir_value(vec4), [2 * k], [2], [1])\n\n\ndef _token(cfg, t, lds, prefix, addend, bank, score_weight, prefix_out, norm_weight, normalized, score_eps,\n           norm_eps):\n    \"\"\"One token's workgroup: the whole computation for token ``t``.\"\"\"\n    nbank, nb, write, add, helped = cfg\n    nr = nb + 1\n    h2 = (nr + 1) // 2\n    r_prefix = _rsrc(prefix)\n    r_bank = _rsrc(bank)\n    r_cw = _rsrc(score_weight)\n\n    tid = fx.thread_idx.x\n    lane = tid % WAVE\n    wave = tid // WAVE\n    hb = tid * (VEC * 2)       # this thread's byte offset in a bf16 row\n    tb = t * (D * 2)           # the token's row, bytes (wave-uniform)\n    bf16, f32 = _ir.BF16Type.get(), _ir.F32Type.get()\n\n    # The token's first loads: the prefix, the addend and the score weight; with a helper, the bank rows go out\n    # after the helper's requests for them, else the score weight first of all.\n    if not helped:\n        cw0 = _load16(r_cw, tid * 32, 0, f32, 4)\n        cw1 = _load16(r_cw, tid * 32 + 16, 0, f32, 4)\n        fx.rocdl.sched_barrier(0)\n    xa = _load16(r_prefix, hb, tb, bf16, 8, 2)\n    xb = _load16(_rsrc(addend), hb, tb, bf16, 8, 2) if add else None\n    if helped:\n        cw0 = _load16(r_cw, tid * 32, 0, f32, 4)\n        cw1 = _load16(r_cw, tid * 32 + 16, 0, f32, 4)\n        _llvm.InlineAsmOp(None, [], f\"s_sleep {HELP_SLEEP}\", \"~{memory}\", has_side_effects=True)\n        fx.rocdl.sched_barrier(0)\n    braw = [_load16(r_bank, hb, (t * nbank + r) * (D * 2), bf16, 8, 2) for r in range(nb)]\n    nwr = _load16(_rsrc(norm_weight), hb, 0, bf16, 8)\n    # The output pointer and the two scalars do not fit the 14 preloaded SGPRs (the token count and six pointers do);\n    # using the scalars here makes their s_load wait while the data loads are in flight, instead of after the first\n    # barrier where LLVM would sink it.\n    _llvm.InlineAsmOp(None, [fx.as_ir_value(score_eps), fx.as_ir_value(norm_eps)], \"; $0 $1\", \"s,s\",\n                      has_side_effects=True)\n\n    # p as four bf16 pairs: prefix + addend rounded to bf16 (through an empty asm, or LLVM folds widen(round(x))\n    # into a per-element round and shift instead of reusing the pair), stored as prefix_out; or the prefix.\n    if add:\n        pb2 = [_opaque(_to_bf_pair(_pk_add(_f_pair(_bf_pair(xa, k)), _f_pair(_bf_pair(xb, k)))), 32)\n               for k in range(4)]\n        pv = _concat8(pb2)\n        _store16(_rsrc(prefix_out), hb, tb, pv)\n    else:\n        pb2 = [_bf_pair(xa, k) for k in range(4)]\n        pv = xa\n    if write:\n        _store16(r_bank, hb, (t * nbank + nb) * (D * 2), pv)\n\n    cwp = [_f4_pair(cw0, 0), _f4_pair(cw0, 1), _f4_pair(cw1, 0), _f4_pair(cw1, 1)]\n    rows = [[_f_pair(_bf_pair(braw[r], k)) for k in range(4)] for r in range(nb)] + [[_f_pair(b) for b in pb2]]\n\n    dots = []\n    sss = []\n    for r in range(nr):\n        x = rows[r]\n        d = _pk_mul(x[0], cwp[0])\n        for k in range(1, 4):\n            d = _pk_fma(x[k], cwp[k], d)\n        dots.append(_hsum(d))\n        sss.append(_sum_sq(x))\n\n    # Wave reduce-scatter: bit 5 splits dots / sums of squares, bit 4 splits each into h2 + (nr - h2) (+ pad).\n    vals = _scatter(dots + sss, 5)\n    vals = _scatter(vals, 4)\n    for ctrl in _DPP_ALL:\n        vals = [v + _dpp(v, ctrl) for v in vals]\n    nwf = [_f_pair(_bf_pair(nwr, k)) for k in range(4)]\n    q = lane >> 4\n\n    def _partials_to_lds():\n        for k in range(h2):\n            _lds_st(lds, vals[k], (q * h2 + k) * WPAD + wave)\n\n    _scf_if((lane & 15) == 0, _partials_to_lds)\n    fx.gpu.barrier()\n\n    # Every wave sums the 14 waves' partials in the same fixed order: lane (j, q) adds waves 4q..4q+3 of row j,\n    # then the four lane groups are summed across lane bits 4 and 5. Lanes j < nr hold row j's totals.\n    j = lane & 15\n    last = q == 3  # its waves 14 and 15 do not exist\n\n    def _four_waves(slot):\n        v = _lds_ld4(lds, slot * WPAD + q * 4)\n        e = [_f32(_vector.extract(v, [], [i])) for i in range(4)]\n        e[2] = last.select(_f32(0.0), e[2])\n        e[3] = last.select(_f32(0.0), e[3])\n        return (e[0] + e[1]) + (e[2] + e[3])\n\n    # Swap-add across bit 4 reduce-scatters (dots to lanes with bit 4 clear, sums of squares to the others), a\n    # swap-add across bit 5 completes both, and a last swap hands every lane its row's pair.\n    a, b = _permute_pair(_four_waves(j), _four_waves(j + 2 * h2), 4)\n    tot = a + b\n    a, b = _permute_pair(tot, tot, 5)\n    tot = a + b\n    dsum, ssum = _permute_pair(tot, tot, 4)\n    valid = lane < nr\n    score = dsum * _rsq(fx.math.fma(ssum, _f32(_INV_D), score_eps))\n    sc = valid.select(score, _f32(-3.0e38))\n    mx = sc\n    for ctrl in _DPP_ALL:\n        mx = fx.Float32(_arith.MaximumFOp(fx.as_ir_value(mx), fx.as_ir_value(_dpp(mx, ctrl))).result)\n    ex = valid.select(_exp2((sc - mx) * _f32(_LOG2E)), _f32(0.0))\n    # The mix uses the unnormalised exponentials e_r; their sum Z, taken in row order, is folded into the norm:\n    # rsqrt(sum (mix / Z)^2 / D + eps) / Z = rsqrt(sum mix^2 / D + eps Z^2).\n    wts = [_readlane(ex, r) for r in range(nr)]\n    z = wts[0]\n    for w in wts[1:]:\n        z = z + w\n\n    wv = [_splat2(w) for w in wts]\n    mix = []\n    for k in range(4):\n        m = _pk_mul(rows[0][k], wv[0])\n        for r in range(1, nr):\n            m = _pk_fma(rows[r][k], wv[r], m)\n        mix.append(m)\n    tsq = _block_sum(lds, _sum_sq(mix), lane, wave)\n    scale = _splat2(_rsq(fx.math.fma(tsq, _f32(_INV_D), norm_eps * (z * z))))\n    outs = [_to_bf_pair(_pk_mul(_pk_mul(mix[k], scale), nwf[k])) for k in range(4)]\n    _store16(_rsrc(normalized), hb, tb, _concat8(outs))\n\n\ndef _prefetch(cfg, t, bank):\n    \"\"\"A helper workgroup on the token's XCD: load its bank rows, as the token's workgroup will, so that the\n    workgroup's later requests hit the shared L2 instead of memory. The loads allocate in L2 (default policy, not\n    nt); an empty asm consumes them.\"\"\"\n    nbank, nb = cfg[0], cfg[1]\n    r_bank = _rsrc(bank)\n    hb = fx.thread_idx.x * (VEC * 2)\n    bf16 = _ir.BF16Type.get()\n    rows = [_load16(r_bank, hb, (t * nbank + r) * (D * 2), bf16, 8) for r in range(nb)]\n    acc = _f_pair(_bf_pair(rows[0], 0))\n    for v in rows[1:]:\n        acc = _pk_add(acc, _f_pair(_bf_pair(v, 0)))\n    _llvm.InlineAsmOp(None, [fx.as_ir_value(_hsum(acc))], \"; $0\", \"v\", has_side_effects=True)\n\n\ndef _make(cfg, grid):\n    helped = cfg[4]\n    alloc = SmemAllocator(None, arch=\"gfx950\", global_sym_name=\"attn_res_rows_lds\")\n    alloc.ptr = (LDS1 + LDS2) * 4\n\n    @flyc.kernel\n    def k_attn_res_rows(\n        n_tokens: fx.Int32,\n        prefix: fx.Pointer,\n        addend: fx.Pointer,\n        bank: fx.Pointer,\n        score_weight: fx.Pointer,\n        prefix_out: fx.Pointer,\n        norm_weight: fx.Pointer,\n        normalized: fx.Pointer,\n        score_eps: fx.Float32,\n        norm_eps: fx.Float32,\n    ):\n        lds_ty = _ir.MemRefType.get([LDS1 + LDS2], _ir.F32Type.get(), memory_space=_lds_space())\n        lds = _memref.view(lds_ty, alloc.get_base(),\n                           _arith.ConstantOp(_ir.IndexType.get(), 0).result, sizes=[])\n        args = (lds, prefix, addend, bank, score_weight, prefix_out, norm_weight, normalized, score_eps, norm_eps)\n        b = fx.Int32(fx.block_idx.x)\n        if fx.const_expr(helped):\n            # groups of 16 workgroups: 8 tokens, then their 8 helpers; past n_tokens both idle\n            t = (b // GROUP) * XCDS + b % XCDS\n            helper = (b // XCDS) % 2 == 1\n            live = t < n_tokens\n            _scf_if(live & ~helper, lambda: _token(cfg, t, *args))\n            _scf_if(live & helper, lambda: _prefetch(cfg, t, bank))\n        else:\n            _token(cfg, b, *args)\n\n    @flyc.jit\n    def launch(\n        n_tokens: fx.Int32,\n        prefix: fx.Pointer,\n        addend: fx.Pointer,\n        bank: fx.Pointer,\n        score_weight: fx.Pointer,\n        prefix_out: fx.Pointer,\n        norm_weight: fx.Pointer,\n        normalized: fx.Pointer,\n        score_eps: fx.Float32,\n        norm_eps: fx.Float32,\n        stream: fx.Stream = fx.Stream(None),\n    ):\n        alloc.finalized = False\n        ctx = CompilationContext.get_current()\n        with _ir.InsertionPoint(ctx.gpu_module_body):\n            alloc.finalize()\n        k_attn_res_rows(n_tokens, prefix, addend, bank, score_weight, prefix_out, norm_weight, normalized,\n                        score_eps, norm_eps).launch(grid=(grid, 1, 1), block=(NTHR, 1, 1), stream=stream)\n\n    # The token count and six pointers arrive preloaded in SGPRs: the first loads need no s_load round trip.\n    opts = {\"amdgpu-kernarg-preload-count\": 8, \"vectorize-slp\": False}\n    if not helped:\n        opts[\"amdgpu-sched-strategy\"] = \"max-ilp\"\n    return flyc.compile[{\"llvm_options\": opts}](launch)\n\n\n@functools.cache\ndef _launch_for(n_bank_rows, n_valid_rows, write_bank, has_addend, n_tokens):\n    helped = n_tokens <= HELP\n    grid = GROUP * -(-n_tokens // XCDS) if helped else n_tokens\n    return _make((n_bank_rows, n_valid_rows, write_bank, has_addend, helped), grid)\n\n\ndef aggregate(prefix, addend, bank, score_weight, norm_weight, score_eps, norm_eps, n_valid_rows, write_bank,\n              normalized, prefix_out):\n    \"\"\"normalized, and prefix_out with an addend and bank row n_valid_rows with write_bank, written in place.\"\"\"\n    n_tokens, hidden_size = prefix.shape\n    n_bank_rows = bank.shape[1]\n    assert hidden_size == D and 1 <= n_valid_rows <= n_bank_rows and n_tokens * n_bank_rows * D * 2 < 2**31\n    fn = _launch_for(n_bank_rows, n_valid_rows, write_bank, addend is not None, n_tokens)\n    tensors = (prefix, prefix if addend is None else addend, bank, score_weight,\n               prefix if prefix_out is None else prefix_out, norm_weight, normalized)\n    ptrs = [flyc.from_c_void_p(fx.Int32, x.data_ptr()) for x in tensors]\n    fn(n_tokens, *ptrs, score_eps, norm_eps, fx.Stream(torch._C._cuda_getCurrentRawStream(prefix.device.index)))\n"
+      },
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"add_attn_res for hidden_size 7168 and 8 bank rows, 1 to 7 of them scored, in FlyDSL: the aggregation of\n``aggregate`` with the pending addend folded into the prefix.\"\"\"\n\nfrom .aggregate import aggregate\n\n\ndef run(*, prefix, addend, bank, score_weight, norm_weight, n_valid_rows, write_bank, score_eps, norm_eps, normalized,\n        prefix_out):\n    \"\"\"normalized and prefix_out of the attention-residual aggregation, written in place.\"\"\"\n    aggregate(prefix, addend, bank, score_weight, norm_weight, score_eps, norm_eps, n_valid_rows, write_bank,\n              normalized, prefix_out)\n"
+      }
+    ]
+  }
+}
