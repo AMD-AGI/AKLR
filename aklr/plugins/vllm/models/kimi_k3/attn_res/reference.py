@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 __all__ = ["kimi_k3_attn_res_reference"]
 
 _CHUNK_TOKENS = 2048  # float64 rows of 9 x 8192 per token: about 1.2 GB a chunk
+# The bank stays as decode gives it (float32 holds every bf16 exactly): in float64 the largest bank, 65536 x 16 x 8192,
+# would take 64 GiB; each chunk's scored rows are widened alone.
 
 
 def kimi_k3_attn_res_reference(
@@ -30,7 +32,7 @@ def kimi_k3_attn_res_reference(
     if attrs["has_addend"]:
         total = prefix + decode(args["addend"], dtypes["addend"]).double()
         prefix = total.to(args["prefix"].dtype).double()
-    bank = decode(args["bank"], dtypes["bank"]).double()
+    bank = decode(args["bank"], dtypes["bank"])
     score_weight = (
         decode(args["score_norm_weight"], dtypes["score_norm_weight"]).double()
         * decode(args["score_proj_weight"], dtypes["score_proj_weight"]).double()
@@ -39,12 +41,16 @@ def kimi_k3_attn_res_reference(
     out = torch.empty_like(prefix)
     for start in range(0, prefix.shape[0], _CHUNK_TOKENS):
         tokens = slice(start, start + _CHUNK_TOKENS)
-        rows = torch.cat((bank[tokens, :valid], prefix[tokens, None]), dim=1)
-        scores = (rows @ score_weight) * (rows.square().mean(dim=-1) + args["score_eps"]).rsqrt()
-        mix = (torch.softmax(scores, dim=-1)[..., None] * rows).sum(dim=1)
+        if valid == 0:
+            # one source, whose softmax weight is 1 whatever its score (an infinite p scores NaN)
+            mix = prefix[tokens]
+        else:
+            rows = torch.cat((bank[tokens, :valid].double(), prefix[tokens, None]), dim=1)
+            scores = (rows @ score_weight) * (rows.square().mean(dim=-1) + args["score_eps"]).rsqrt()
+            mix = (torch.softmax(scores, dim=-1)[..., None] * rows).sum(dim=1)
         if norm_weight is not None:
             mix = mix * (mix.square().mean(dim=-1, keepdim=True) + args["norm_eps"]).rsqrt() * norm_weight
         out[tokens] = mix
     if attrs["write_bank"]:
-        bank[:, valid] = prefix
+        bank[:, valid] = prefix.to(bank.dtype)
     return out, prefix, bank

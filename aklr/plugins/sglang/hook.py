@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import pkgutil
 from collections.abc import Callable
@@ -52,20 +53,30 @@ def install() -> None:
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
     installed = sglang_version()
-    untested = []
+    untested, absent = [], []
     for target, versions, route in _ROUTES:
-        if installed in versions:
+        if installed not in versions:
+            untested.append(target)
+            continue
+        try:
             # sglang only logs a target it cannot resolve
             pkgutil.resolve_name(target)
-            HookRegistry.register(target, _around(route, target), HookType.AROUND)
-        else:
-            untested.append(target)
+        except ModuleNotFoundError as e:
+            # a target that needs a package this environment does not have (aiter off ROCm) is never called;
+            # one missing from a package it has is a renamed target, which ends the start
+            package = (e.name or "").partition(".")[0]
+            if not package or importlib.util.find_spec(package) is not None:
+                raise
+            absent.append(f"{target} ({package} is not installed)")
+            continue
+        HookRegistry.register(target, _around(route, target), HookType.AROUND)
     # a warning, so that the line shows at any sglang log level
     _LOGGER.warning(
-        "aklr hooks %d sglang functions on sglang %s%s",
-        len(_ROUTES) - len(untested),
+        "aklr hooks %d sglang functions on sglang %s%s%s",
+        len(_ROUTES) - len(untested) - len(absent),
         installed,
         f"; not {', '.join(untested)}, untested on it" if untested else "",
+        f"; not {', '.join(absent)}" if absent else "",
     )
 
 

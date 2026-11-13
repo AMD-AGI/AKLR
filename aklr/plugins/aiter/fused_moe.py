@@ -11,6 +11,7 @@ import inspect
 from aklr.core.contract.spec import attr_value
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.ops.fused_moe.api import fused_moe as aklr_fused_moe
+from aklr.ops.fused_moe.reference import _SWIGLU_BF16_ROWS
 
 __all__ = ["fused_moe"]
 
@@ -72,9 +73,10 @@ def fused_moe(
     ):
         return FallbackReason.OUT_OF_CONTRACT
     act_quant = 4
+    name = attr_value(activation)
     # aiter picks SiTUv2's activation dtype at each call (AITER_SITUV2_A8W4, AITER_SITUV2_A4W4): fp8 is
     # fused_moe's, on sglang's gate-up interleaved weights; any other goes back to aiter
-    if attr_value(activation) == "situv2":
+    if name == "situv2":
         from aiter import dtypes
 
         q_dtype = _activation_dtype(
@@ -83,6 +85,12 @@ def fused_moe(
         if q_dtype == dtypes.fp8:
             act_quant = 8
         else:
+            return FallbackReason.OUT_OF_CONTRACT
+    # fused_moe rounds SwiGLU's activations to fp4 from _SWIGLU_BF16_ROWS rows on, aiter from its
+    # GPTOSS_SWIGLU_MXFP4_BF16_BOUND: a call they would round differently goes back to aiter
+    elif name == "swiglu" and attr_value(gate_mode) == "separated":
+        rounds = _aiter_rounds_swiglu(hidden_states, w1, activation=activation, quant_type=quant_type)
+        if rounds != (hidden_states.shape[0] >= _SWIGLU_BF16_ROWS):
             return FallbackReason.OUT_OF_CONTRACT
     return aklr_fused_moe(
         hidden_states,
@@ -106,6 +114,22 @@ def fused_moe(
         act_quant=act_quant,
         out=output,
     )
+
+
+def _aiter_rounds_swiglu(hidden_states, w1, *, activation, quant_type) -> bool:
+    """Whether aiter's fused MoE rounds this SwiGLU call's activations (gate and up separated) to fp4."""
+    import importlib
+
+    from aiter import dtypes
+
+    aiter_moe = importlib.import_module("aiter.fused_moe")
+    if hasattr(aiter_moe, "resolve_activation_dtype"):
+        q_dtype = _activation_dtype(
+            hidden_states, w1, activation=activation, quant_type=quant_type, gate_mode="separated"
+        )
+        return q_dtype == dtypes.fp4x2
+    # an aiter without the resolver (CI's) picks it inline, by the same bound
+    return hidden_states.shape[0] >= aiter_moe._SWIGLU_MXFP4_BF16_BOUND
 
 
 def _activation_dtype(hidden_states, w1, *, activation, quant_type, gate_mode):

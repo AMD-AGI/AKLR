@@ -18,7 +18,6 @@ from aklr.core.contract.semantics import (
     DType,
     FiniteDistribution,
     LecunNormalDistribution,
-    LogUniformDistribution,
     ToleranceBound,
 )
 from aklr.core.contract.spec import (
@@ -38,8 +37,8 @@ _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
 _SAME_AS_PREFIX = DTypeSpec(same_as_tensor="prefix")
 _ROWS = ("n_tokens", "hidden_size")
 _EXACT = ToleranceBound(absolute_tolerance=0, relative_tolerance=0)
-# about [0.5, 1.5]
-_NORM_WEIGHT_DISTRIBUTION = LogUniformDistribution(log2_lo="-1", log2_hi="0.58")
+# any finite RMS weight vLLM computes with, zero and negative ones too
+_NORM_WEIGHT_DISTRIBUTION = FiniteDistribution()
 
 KIMI_K3_ATTN_RES = OpContract(
     contract_id="kimi_k3_attn_res@1.0",

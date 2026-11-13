@@ -23,5 +23,5 @@ def _project_through_lm_head(hidden, lm_head):
 
     if should_apply_lm_head_quant_method(lm_head, lm_head.quant_method):
         return FallbackReason.OUT_OF_CONTRACT
-    weight = lm_head.weight
-    return gemm(hidden.to(weight.dtype), weight)
+    # hidden states of another dtype than the head's go back to sglang, which converts them: none is copied first
+    return gemm(hidden, lm_head.weight)
