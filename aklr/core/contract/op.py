@@ -17,6 +17,7 @@ from typing import Annotated, Any, Final
 from pydantic import Field, ValidationError, model_validator
 
 from aklr.core.contract import expr, semantics
+from aklr.core.contract.cost import Cost
 from aklr.core.contract.locate import (
     OP_PACKAGE_PATTERN,
     op_module,
@@ -568,6 +569,20 @@ class OpContract(FrozenModel):
         api's params and returns the outputs, as the api does, and raises
         ``NotImplementedError`` for a call it does not serve."""
         return self._optional_function("baseline", self.baseline_name)
+
+    def cost_at(self, point: PointSpec) -> Cost | None:
+        """One call's work at ``point``: the op's ``cost.py`` function ``<contract>_cost``
+        of the Point's symbols (``Domain.symbols``) and each present tensor's bytes in
+        storage; None when the op has none."""
+        cost = self._optional_function("cost", f"{contract_name(self.contract_id)}_cost")
+        if cost is None:
+            return None
+        tensor_bytes = {  # a 4-bit dtype stores two values per byte
+            name: math.prod(self.storage_shape_of(name, point)) * max(DTYPE_TRAITS[dtype].bits, 8) // 8
+            for name, dtype in point.dtypes.items()
+            if dtype is not None
+        }
+        return cost(self.domain.symbols(point), tensor_bytes)
 
     def _optional_function(self, submodule: str, name: str) -> Callable | None:
         try:

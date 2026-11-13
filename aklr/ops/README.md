@@ -14,8 +14,14 @@ aklr/ops/
     api.py                     one @api function per contract
     baseline.py                one <contract>_baseline per contract that has a baseline
     group.py                   one <contract>_group_init per ranks contract that needs a set-up
+    cost.py                    one <contract>_cost per contract a roofline can rank (see below)
     impls/<language>/<name>/<uuid>.json        one kernel and the workloads it serves
 ```
+
+- `cost.py`'s `<contract>_cost(symbols, tensor_bytes)` returns one call's `Cost` (`aklr/core/contract/cost.py`): the
+  matrix-core operations, the dtype whose rate bounds them, and the least bytes moved, from the Point's symbols
+  (`Domain.symbols`) and each present tensor's bytes in storage. `OpContract.cost_at(point)` calls it; an op without
+  one has no cost, and nothing guesses it.
 
 - A contract with `ranks` (the attr holding the group size, e.g. `ep_size`) is called by every rank of its group
   at once. The bench runs a process a rank, one device each, in one `torch.distributed` group; each rank draws its
