@@ -18,7 +18,7 @@ AGENT = """
 import json, os, subprocess, sys, time
 out, mode = sys.argv[1], sys.argv[2]
 with open(out, "a") as stream:
-    stream.write(json.dumps({k: v for k, v in os.environ.items() if k.startswith("AKLR_")}) + "\\n")
+    stream.write(json.dumps({k: v for k, v in os.environ.items() if k.startswith("SHEPHERD_")}) + "\\n")
 if mode == "detach":
     subprocess.Popen([sys.executable, "-c", "import time; time.sleep(600)"], start_new_session=True)
 if mode.startswith("sleep"):
@@ -148,7 +148,7 @@ def test_concurrent_rounds_run_one_agent(root, config, tmp_path):
     assert sum("busy" in result for result in results) == 3
     assert len(agent_runs(out)) == 1
     assert not (root / "owner.json").exists()
-    assert json.loads((root / "last_round.json").read_text())["id"] == agent_runs(out)[0]["AKLR_ROUND_ID"]
+    assert json.loads((root / "last_round.json").read_text())["id"] == agent_runs(out)[0]["SHEPHERD_ROUND_ID"]
 
 
 def test_agent_exit_code_is_returned(root, config, tmp_path):
@@ -178,14 +178,14 @@ def test_only_the_running_round_saves(root, config, tmp_path):
     subprocess.run(round_command(root, config, out, "save", *save), check=True)
     assert success(root, "show")["state"] == state
     # The round is over and its id is no longer the owner's.
-    stale = {**os.environ, "AKLR_ROUND_ID": agent_runs(out)[0]["AKLR_ROUND_ID"]}
+    stale = {**os.environ, "SHEPHERD_ROUND_ID": agent_runs(out)[0]["SHEPHERD_ROUND_ID"]}
     assert call(root, "save", "--revision", "1", "--input", str(source), env=stale).returncode != 0
     assert call(root, "save", "--revision", "1", "--input", str(source)).returncode != 0
 
 
 def test_save_rejects_stale_revisions_and_survives_restart(root, tmp_path):
     write_owner(root, id="live", **host())
-    env = {**os.environ, "AKLR_ROUND_ID": "live"}
+    env = {**os.environ, "SHEPHERD_ROUND_ID": "live"}
     source = tmp_path / "next.json"
     source.write_text(json.dumps({"campaigns": []}))
     assert success(root, "save", "--revision", "0", "--input", str(source), env=env)["revision"] == 1
@@ -199,7 +199,7 @@ def test_invalid_save_preserves_snapshot(root, tmp_path, content):
     before = (root / "state.json").read_bytes()
     source = tmp_path / "invalid.json"
     source.write_text(content)
-    env = {**os.environ, "AKLR_ROUND_ID": "live"}
+    env = {**os.environ, "SHEPHERD_ROUND_ID": "live"}
     assert call(root, "save", "--revision", "0", "--input", str(source), env=env).returncode != 0
     assert (root / "state.json").read_bytes() == before
 
@@ -211,14 +211,14 @@ def test_killed_wrapper_stays_busy_until_its_agent_exits(root, config, tmp_path)
         time.sleep(0.05)
     wrapper.send_signal(signal.SIGKILL)
     wrapper.wait()
-    dead_id = agent_runs(out)[0]["AKLR_ROUND_ID"]
+    dead_id = agent_runs(out)[0]["SHEPHERD_ROUND_ID"]
     busy = subprocess.run(
         round_command(root, config, out, "fast"), capture_output=True, text=True, check=True
     )
     assert json.loads(busy.stdout) == {"busy": dead_id}
     assert "still running" in (root / "reports.md").read_text()
     while Path(f"/proc/{wrapper.pid}").exists() or any(
-        f"AKLR_ROUND_ID={dead_id}".encode() in environ.read_bytes()
+        f"SHEPHERD_ROUND_ID={dead_id}".encode() in environ.read_bytes()
         for environ in Path("/proc").glob("[0-9]*/environ")
         if os.access(environ, os.R_OK)
     ):
@@ -227,13 +227,13 @@ def test_killed_wrapper_stays_busy_until_its_agent_exits(root, config, tmp_path)
         round_command(root, config, out, "fast"), capture_output=True, text=True, check=True
     )
     assert json.loads(taken.stdout)["recovered_from"] == dead_id
-    assert agent_runs(out)[-1]["AKLR_RECOVERED_FROM"] == dead_id
+    assert agent_runs(out)[-1]["SHEPHERD_RECOVERED_FROM"] == dead_id
 
 
 def test_detached_leftovers_are_killed(root, config, tmp_path):
     out = tmp_path / "out"
     subprocess.run(round_command(root, config, out, "detach"), check=True)
-    marker = f"AKLR_ROUND_ID={agent_runs(out)[0]['AKLR_ROUND_ID']}".encode()
+    marker = f"SHEPHERD_ROUND_ID={agent_runs(out)[0]['SHEPHERD_ROUND_ID']}".encode()
     survivors = []
     for environ in Path("/proc").glob("[0-9]*/environ"):
         try:
@@ -309,7 +309,7 @@ def save_as_owner(root, tmp_path, revision, state):
         str(revision),
         "--input",
         str(source),
-        env={**os.environ, "AKLR_ROUND_ID": "live"},
+        env={**os.environ, "SHEPHERD_ROUND_ID": "live"},
     )
 
 
@@ -360,7 +360,7 @@ def test_a_round_that_did_not_end_cleanly_is_recovered(root, config, tmp_path, e
         if ending == "terminated":
             wrapper.send_signal(signal.SIGTERM)
         assert wrapper.wait(timeout=30) != 0
-        dead_id = agent_runs(out)[1]["AKLR_ROUND_ID"]
+        dead_id = agent_runs(out)[1]["SHEPHERD_ROUND_ID"]
     assert not (root / "owner.json").exists()
     # A dead round is recovered at once, whatever wake_at says.
     wake(root, timedelta(minutes=30))
@@ -368,7 +368,7 @@ def test_a_round_that_did_not_end_cleanly_is_recovered(root, config, tmp_path, e
         round_command(root, config, out, "fast"), capture_output=True, text=True, check=True
     )
     assert json.loads(taken.stdout)["recovered_from"] == dead_id
-    assert agent_runs(out)[-1]["AKLR_RECOVERED_FROM"] == dead_id
+    assert agent_runs(out)[-1]["SHEPHERD_RECOVERED_FROM"] == dead_id
     # That recovery ended cleanly, so the next trigger waits again.
     assert "waiting_until" in json.loads(
         subprocess.run(

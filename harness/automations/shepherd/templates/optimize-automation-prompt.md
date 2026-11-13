@@ -1,4 +1,4 @@
-# Round automation prompt
+# Optimize automation prompt
 
 > Source material for the setup workflow. Paraphrase this intent into a built-in `automate` draft after `automate` confirms that the pack is committed in the repository where the automation will run.
 
@@ -14,7 +14,7 @@ Trigger: one schedule, every 15 minutes by default (cron `*/15 * * * *`). No rep
 
 The creation intent should describe this as one scheduled round on the self-hosted worker that holds the state directory. It should include the configured repository and base branch, and no GitHub or other integration: the round agent uses the host's own credentials.
 
-The round skill starts the state helper's `round` wrapper, which runs `execution.round_agent` with the round prompt below. Relay the wrapper's result and report, then end. The schedule supplies the next round.
+`optimize-and-deliver-kernels` starts the state helper's `round` wrapper, which runs `execution.round_agent` with the round prompt below. Relay the wrapper's result and report, then end. The schedule supplies the next round.
 
 Round prompt, passed to `execution.round_agent`:
 

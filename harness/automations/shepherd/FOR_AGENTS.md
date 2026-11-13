@@ -4,7 +4,7 @@
 
 one cursor automation keeps optimizing aklr kernels unattended.
 
-### automation: run shepherd rounds
+### automation: optimize and deliver kernels
 
 - trigger: a schedule, every 15 minutes by default. no repository events: each round reads github itself.
 - skip: a trigger starts no round while one is still running, or while the ledger's next wake time is ahead and the last round succeeded.
@@ -41,7 +41,7 @@ start from [`configuration.example.yaml`](./templates/configuration.example.yaml
 
 ## for the agent
 
-the human enters setup by pointing cursor at this file. do not look for or invoke a discovered shepherd slash skill.
+the human enters setup by pointing cursor at this file. do not look for or invoke a discovered slash skill.
 
 1. ask which aklr checkout, on which host, will run rounds. it must be on the base branch.
 2. check that it holds `harness/automations/shepherd/` at a revision no older than this file's. if it is older, stop and ask the user to update it. never copy pack files into it.

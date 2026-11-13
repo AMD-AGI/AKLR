@@ -15,19 +15,19 @@ $STATE save --revision "$REVISION" --input "$NEXT_STATE"     # inside a round on
 
 1. If `owner.json` names a round that may still be running, it prints `{"busy": <id>}`, appends a line to
    `reports.md` and exits 0 without starting the agent. A round counts as running while its wrapper
-   process (pid and start time) exists, or any process this user can see carries its `AKLR_ROUND_ID`.
+   process (pid and start time) exists, or any process this user can see carries its `SHEPHERD_ROUND_ID`.
    Another PID namespace on the same boot is undecidable and also counts as running. Age never counts.
 2. Otherwise, if the last round ended cleanly (its agent exited 0) and `--now` is not given, it skips the trigger with `{"waiting_until": ...}`
    while the ledger's `wake_at` is ahead, at most two hours ahead, and the configuration file is unchanged
    since the last round.
-3. It records itself in `owner.json` and starts the agent with `AKLR_ROUND_ID` and `AKLR_STATE_DIR`, plus
-   `AKLR_RECOVERED_FROM=<id>` when the previous round died (its `owner.json` was left behind) or ended
+3. It records itself in `owner.json` and starts the agent with `SHEPHERD_ROUND_ID` and `SHEPHERD_STATE_DIR`, plus
+   `SHEPHERD_RECOVERED_FROM=<id>` when the previous round died (its `owner.json` was left behind) or ended
    without exit code 0 (failed, killed by a signal, or its agent never started). SIGTERM or SIGINT to the
    wrapper terminates the agent, and kills it 10 seconds later if it is still running.
 4. When the agent exits, it kills every remaining process carrying its round id, writes `last_round.json`
    with the agent's exit code, removes `owner.json`, and exits with the agent's code.
 
-`save` accepts a write only from the round named in `owner.json`, read from `AKLR_ROUND_ID`. Write the
+`save` accepts a write only from the round named in `owner.json`, read from `SHEPHERD_ROUND_ID`. Write the
 complete next **state object** (not the envelope) to a temporary file and pass it with the current
 revision; use the returned revision for the next save. A stale revision is rejected, and so is a state
 that drops a campaign, gives two the same `id`, or changes a campaign's `bounds` once saved: the
@@ -66,7 +66,7 @@ A starting-kernel failure also records the blocked op contract with the tree has
 without `impls/`, and `harness/scripts/forge_task`) and the runtime revision that lift it.
 
 Store each campaign's snapshots and reports under `runs/<campaign_id>/`. The helper checks none of this;
-the entry skill and the owner keep it correct.
+`optimize-and-deliver-kernels` and the owner keep it correct.
 
 ## Crash and recovery
 
@@ -75,7 +75,7 @@ host, and that round reconciles the saved intents first. A wrapper killed while 
 until the agent exits.
 
 A round that hangs while alive stays busy. To end it, an operator on that host finds its processes by id
-(`grep -l "AKLR_ROUND_ID=<id>" /proc/[0-9]*/environ`) and kills them; the next trigger takes over. Never
+(`grep -l "SHEPHERD_ROUND_ID=<id>" /proc/[0-9]*/environ`) and kills them; the next trigger takes over. Never
 release on age, delete `owner.json`, or add a force-unlock.
 
 An empty, missing or corrupt directory does not mean nothing is running. Restore a consistent backup

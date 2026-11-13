@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 # Set up shepherd
 
-shepherd is a dormant automation pack in the AKLR repository. This file and the round skill are not slash skills.
+shepherd is a dormant automation pack in the AKLR repository. This file and `optimize-and-deliver-kernels` are not slash skills.
 
 The human enters setup by pointing Cursor at `FOR_AGENTS.md`, which sends you here in the checkout that will run rounds.
 
@@ -20,7 +20,7 @@ Do this before asking for configuration and before invoking `/automate`.
 
 The round checkout is the AKLR checkout on the round host, on the base branch. It already holds this pack. Never copy pack files into it.
 
-Verify that it contains `FOR_AGENTS.md`, this file, the round skill with its `references/` and `scripts/`, and the templates. If the copy that sent you here is newer (`git log -1 -- harness/automations/shepherd`), stop and ask the user to update the checkout.
+Verify that it contains `FOR_AGENTS.md`, this file, `optimize-and-deliver-kernels` with its `references/` and `scripts/`, and the templates. If the copy that sent you here is newer (`git log -1 -- harness/automations/shepherd`), stop and ask the user to update the checkout.
 
 The automation needs no plugin; it only starts the wrapper. Do not edit `.cursor/settings.json`.
 
@@ -111,9 +111,9 @@ Read `../../FOR_AGENTS.md` as the primary intent source for either path.
 
 ### First-time creation
 
-1. Read `../../templates/automation-prompt.md` as secondary source material.
+1. Read `../../templates/optimize-automation-prompt.md` as secondary source material.
 2. Turn `FOR_AGENTS.md`, the finished configuration and the template into a complete natural-language request.
-3. Point the live prompt at the committed round skill by its repository-relative path. Do not copy its contents or use a plugin cache path.
+3. Point the live prompt at the committed `optimize-and-deliver-kernels` skill by its repository-relative path. Do not copy its contents or use a plugin cache path.
 4. Read and follow the built-in `automate` skill.
 5. Let `automate` discover the repository and confirm that the pack is committed there.
 6. Tell `automate` that `.shepherd/configuration.yaml` is uncommitted on purpose: the self-hosted worker uses the checkout that holds it.
@@ -156,13 +156,13 @@ Enable the automation only with `mode: observe`. Keep it there until step 7 pass
 
 ## 7. Test before paid operation
 
-Confirm that the pack is committed on the automation's branch and that the live prompt points at the committed round skill. If not, stop and tell the user the automation cannot be enabled yet.
+Confirm that the pack is committed on the automation's branch and that the live prompt points at the committed `optimize-and-deliver-kernels` skill. If not, stop and tell the user the automation cannot be enabled yet.
 
 Verify with `mode: observe`:
 
 1. One round through the wrapper (`round --now -- <round_agent> <prompt>`) reads GitHub and existing runs, lists candidates, writes a report and changes nothing.
 2. `python -m pytest harness/tests/shepherd` passes with `TMPDIR` on a directory only you and root own, such as `/tmp`. The helper refuses a temp root under another user's directory.
-3. Through the automation's own trigger: two concurrent triggers start one round; a second round reads what the first saved; after `kill -9` of a running agent, the next trigger takes over with `AKLR_RECOVERED_FROM` set.
+3. Through the automation's own trigger: two concurrent triggers start one round; a second round reads what the first saved; after `kill -9` of a running agent, the next trigger takes over with `SHEPHERD_RECOVERED_FROM` set.
 
 Then switch to `mode: run` on probation, within the owner's authorization:
 

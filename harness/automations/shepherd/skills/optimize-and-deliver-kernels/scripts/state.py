@@ -82,7 +82,7 @@ def snapshot(root):
 class Round:
     """One run of the round wrapper, identified on this host by its process, boot and PID namespace.
 
-    The wrapper's agent and every process it starts inherit `AKLR_ROUND_ID`, which is how a later
+    The wrapper's agent and every process it starts inherit `SHEPHERD_ROUND_ID`, which is how a later
     wrapper finds them even when they run in their own sessions.
     """
 
@@ -123,7 +123,7 @@ class Round:
 
     def processes(self):
         """PIDs this user can see whose initial environment carries this round's id."""
-        marker = f"AKLR_ROUND_ID={self.id}".encode()
+        marker = f"SHEPHERD_ROUND_ID={self.id}".encode()
         found = []
         for environ in Path("/proc").glob("[0-9]*/environ"):
             with suppress(OSError):
@@ -143,9 +143,9 @@ class Round:
         return bool(self.processes())
 
     def run(self, root, agent, recovered_from):
-        env = {**os.environ, "AKLR_ROUND_ID": self.id, "AKLR_STATE_DIR": str(root)}
+        env = {**os.environ, "SHEPHERD_ROUND_ID": self.id, "SHEPHERD_STATE_DIR": str(root)}
         if recovered_from:
-            env["AKLR_RECOVERED_FROM"] = recovered_from
+            env["SHEPHERD_RECOVERED_FROM"] = recovered_from
         code = None
         try:
             child = subprocess.Popen(agent, env=env)
@@ -266,8 +266,8 @@ def execute(args):
         owner = Round.recorded(owner_path)
         if args.command == "show":
             return {**value, "owner": asdict(owner) if owner else None}
-        if owner is None or owner.id != os.environ.get("AKLR_ROUND_ID"):
-            raise StateError("only the running round may save: AKLR_ROUND_ID does not match owner.json")
+        if owner is None or owner.id != os.environ.get("SHEPHERD_ROUND_ID"):
+            raise StateError("only the running round may save: SHEPHERD_ROUND_ID does not match owner.json")
         if args.revision != value["revision"]:
             raise StateError(f"stale revision: expected {value['revision']}")
         state = read_json(Path(args.input))

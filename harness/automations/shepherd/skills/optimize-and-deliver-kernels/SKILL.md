@@ -1,10 +1,10 @@
 ---
 name: optimize-and-deliver-kernels
-description: Run one shepherd round (observe, chain actions until one must wait, record state). Use only from the configured shepherd scheduled task or a manual round.
+description: Optimize kernel-less AKLR schemas with KernelForge and deliver them as draft PRs, one round per run (observe, chain actions until one must wait, record state). Use only from the configured shepherd automation or a manual round.
 disable-model-invocation: true
 ---
 
-# shepherd round
+# Optimize and deliver kernels
 
 Each invocation runs one round against the Git-ignored `.shepherd/configuration.yaml`. For installation or
 configuration changes, follow [setup-shepherd](../setup-shepherd/SKILL.md) instead. Take task facts from the
@@ -60,14 +60,14 @@ configuration and the ledger, never from this conversation, Memories or shell va
 ## 1. Load
 
 A round runs inside the [state helper](references/state.md)'s `round` wrapper, which owns the ledger and
-sets `AKLR_ROUND_ID`. If that variable is missing, this agent was started directly (a scheduler that can
+sets `SHEPHERD_ROUND_ID`. If that variable is missing, this agent was started directly (a scheduler that can
 only send a prompt, or a person pasting it). Do not run the round yourself:
 - If `.shepherd/configuration.yaml`, `execution.round_agent` or the state directory (`show` fails) is
   missing, report that setup is incomplete, name what is missing and point to
   `harness/automations/shepherd/FOR_AGENTS.md`, then stop. Never set up or initialize from a round.
 - Otherwise start the round as a background command of your tool, so a foreground time limit cannot
   kill it, and wait for its completion notice:
-  `timeout -s TERM 2h python3 -I harness/automations/shepherd/skills/optimize-and-deliver-kernels/scripts/state.py --root '<execution.state_dir>' round --config .shepherd/configuration.yaml -- <execution.round_agent...> "<the fenced round prompt in ../../templates/automation-prompt.md>"`.
+  `timeout -s TERM 2h python3 -I harness/automations/shepherd/skills/optimize-and-deliver-kernels/scripts/state.py --root '<execution.state_dir>' round --config .shepherd/configuration.yaml -- <execution.round_agent...> "<the fenced round prompt in ../../templates/optimize-automation-prompt.md>"`.
   Keep the root in single quotes: the helper expands `$USER` itself, even when your shell has no `USER`.
   Relay its JSON result (`busy`, `waiting_until` or the round's exit code) and the report it appended to
   `reports.md`, then stop. Start it once; never retry in the same turn. Wait through your tool's own completion signal, never a timer or wakeup.
@@ -76,7 +76,7 @@ Inside the wrapper, read the ledger with `show`. Missing or corrupt state blocks
 initializes. The repository, budget authorization and cumulative caps are read from the configuration
 every round; the ledger keeps only what campaigns did, so raising a cap is a configuration change.
 
-If `AKLR_RECOVERED_FROM` is set, the previous round died, failed or never started its agent. Every
+If `SHEPHERD_RECOVERED_FROM` is set, the previous round died, failed or never started its agent. Every
 operation it saved with an intent and no result is `unknown`: reconcile those through their recorded names
 before any other action.
 
