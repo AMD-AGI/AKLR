@@ -522,10 +522,7 @@ class DisposableExecutionRunner(ExecutionRunner):
                         )
                         import torch
 
-                        from aklr.core.utils.testing import graph_kernel_timing_environment
-
-                        with graph_kernel_timing_environment():
-                            torch.cuda.set_device(0)
+                        torch.cuda.init()  # a device that cannot start fails the runner, not a task
                     endpoint.send(RunnerStarted(runner_id=runner_id))
 
                     command = endpoint.receive()

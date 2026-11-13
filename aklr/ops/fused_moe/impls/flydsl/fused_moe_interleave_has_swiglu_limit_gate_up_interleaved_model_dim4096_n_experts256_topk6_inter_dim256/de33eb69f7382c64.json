@@ -1,0 +1,269 @@
+{
+  "schema_version": 5,
+  "name": "fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim256",
+  "contract_id": "fused_moe@1.0",
+  "description": "Route each token to its top-k experts, run both projections, combine.",
+  "op_type": "fused_moe",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens routed in this call."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 4096,
+      "description": "Hidden size."
+    },
+    "n_experts": {
+      "type": "const",
+      "value": 256,
+      "description": "Local experts on this rank."
+    },
+    "topk": {
+      "type": "const",
+      "value": 6,
+      "description": "Experts per token."
+    },
+    "inter_dim": {
+      "type": "const",
+      "value": 256,
+      "description": "Expert intermediate size."
+    },
+    "gate_up_rows": {
+      "type": "const",
+      "value": 512,
+      "description": "w1 rows: gate and up concatenated."
+    },
+    "model_blocks": {
+      "type": "const",
+      "value": 128,
+      "description": "w1 scale columns."
+    },
+    "inter_blocks": {
+      "type": "const",
+      "value": 8,
+      "description": "w2 scale columns."
+    }
+  },
+  "attrs": {
+    "activation": "silu",
+    "quant_type": "per_1x32",
+    "doweight_stage1": false,
+    "gate_mode": "interleave",
+    "has_expert_mask": false,
+    "has_swiglu_limit": true,
+    "act_quant": 4
+  },
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Token activations."
+    },
+    "w1": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gate-up projection per expert: gate rows, then up rows."
+    },
+    "w2": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Down projection per expert."
+    },
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Routing weight of each chosen expert."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": 255,
+        "distinct": true
+      },
+      "description": "Chosen experts per token, distinct within a row; global ids under expert parallelism."
+    },
+    "w1_scale": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -11,
+        "log2_hi": -5
+      },
+      "description": "Per 1 x 32 block of w1."
+    },
+    "w2_scale": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -9,
+        "log2_hi": -3
+      },
+      "description": "Per 1 x 32 block of w2."
+    },
+    "swiglu_limit": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Clamped SwiGLU bound: gate at most this, up within +/- this."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Routing-weighted sum of the chosen experts' outputs; under expert parallelism, this rank's share."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 32
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 128
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 256
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "gate_up_interleaved": {
+        "layouts": {
+          "w1": {
+            "kind": "gate_up_interleaved_weight",
+            "gate_up": true
+          },
+          "w2": {
+            "kind": "gate_up_interleaved_weight",
+            "gate_up": false
+          },
+          "w1_scale": {
+            "kind": "gate_up_interleaved_scales",
+            "gate_up": true
+          },
+          "w2_scale": {
+            "kind": "gate_up_interleaved_scales",
+            "gate_up": false
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "w1.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w2.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w1_scale.ndim",
+            "expected_value": 2
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.001,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.2"
+    },
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"FlyDSL fused MoE: bf16 tokens x MXFP4 experts (interleaved gate/up), clamped SwiGLU, fp8 x fp4 MFMAs.\nFew routes run stage 1 per route; more run it per expert, publishing route lists for an expert-major stage 2\nthat adds into ``out`` with packed-bf16 atomics.\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import arith as marith\nfrom flydsl._mlir.dialects import llvm\nfrom flydsl.expr import const_expr, range_constexpr, rocdl\nfrom flydsl.expr.typing import T\n\nDIRECT_MAX_ROUTES = 96\n# The per-expert kernels hold a route list in LDS, so the FlyDSL path stops here.\nFLY_MAX_ROUTES = 1536\nEXPERT_STAGE2_MIN_ROUTES = 384\n# From here every expert is almost surely live, so pass 0's weights issue before its route count is known.\nSPEC_MIN_ROUTES = 1536\nNARROW_STAGE2_MAX_ROUTES = 192\nNONTEMPORAL = 2\nVIEW_ELEMS = 1 << 30\nLOG2E = 1.4426950408889634\n\n\ndef _raw(x):\n    return x.ir_value() if hasattr(x, \"ir_value\") else x\n\n\ndef _p(p, dtype):\n    return fx.recast_iter(dtype, p)\n\n\ndef _buf(p, dtype, vec):\n    layout = fx.make_layout((vec, VIEW_ELEMS // vec), (1, vec))\n    return fx.rocdl.make_buffer_tensor(fx.make_view(_p(p, dtype), layout))\n\n\ndef _vec4(p, offset, cache=0):\n    buf = _buf(p, fx.Int32, 4)\n    reg = fx.make_rmem_tensor(fx.make_layout(4, 1), fx.Int32)\n    atom = fx.make_copy_atom(fx.rocdl.BufferCopy128b(cache), fx.Int32)\n    fx.copy(atom, fx.slice(buf, (None, offset >> 2)), reg)\n    return fx.Vector(reg.load())\n\n\ndef _vec2(p, offset):\n    buf = _buf(p, fx.Int32, 2)\n    reg = fx.make_rmem_tensor(fx.make_layout(2, 1), fx.Int32)\n    atom = fx.make_copy_atom(fx.rocdl.BufferCopy64b(0), fx.Int32)\n    fx.copy(atom, fx.slice(buf, (None, offset >> 1)), reg)\n    return fx.Vector(reg.load())\n\n\ndef _ld1(p, offset):\n    buf = _buf(p, fx.Int32, 1)\n    reg = fx.make_rmem_tensor(fx.make_layout(1, 1), fx.Int32)\n    atom = fx.make_copy_atom(fx.rocdl.BufferCopy32b(0), fx.Int32)\n    fx.copy(atom, fx.slice(buf, (None, offset)), reg)\n    return fx.Vector(reg.load())[0]\n\n\ndef _st2(p, offset, vals):\n    buf = _buf(p, fx.Int32, 2)\n    reg = fx.make_rmem_tensor(fx.make_layout(2, 1), fx.Int32)\n    bf = [fx.BFloat16(v) for v in vals]\n    reg.store(fx.Vector.from_elements(bf, fx.BFloat16).bitcast(fx.Int32))\n    atom = fx.make_copy_atom(fx.rocdl.BufferCopy64b(0), fx.Int32)\n    fx.copy(atom, reg, fx.slice(buf, (None, offset >> 1)))\n\n\ndef _atom_pk(p, dword, v0, v1):\n    buf = _buf(p, fx.BFloat16, 2)\n    reg = fx.make_rmem_tensor(fx.make_layout(2, 1), fx.BFloat16)\n    reg.store(fx.Vector.from_elements([fx.BFloat16(v0), fx.BFloat16(v1)], fx.BFloat16))\n    atom = fx.make_copy_atom(fx.rocdl.BufferAtomicPkAdd(fx.BFloat16), fx.BFloat16)\n    fx.copy(atom, reg, fx.slice(buf, (None, dword)))\n\n\ndef _uniform(x):\n    return fx.Int32(rocdl.readfirstlane(T.i32, _raw(x)))\n\n\ndef _eid(IDS, r, E, IDS64):\n    gid = _p(IDS, fx.Int32)[r * (2 if IDS64 else 1)]\n    return ((gid >= 0) & (gid < E)).select(gid, fx.Int32(-1))\n\n\ndef _swiglu(g, u, lim):\n    neg = fx.Float32(0.0) - lim\n    g = (g > lim).select(lim, g)\n    u = (u > lim).select(lim, u)\n    u = (u < neg).select(neg, u)\n    ep = fx.Float32(rocdl.exp2(T.f32, _raw(g * fx.Float32(-LOG2E))))\n    sig = fx.Float32(rocdl.rcp(T.f32, _raw(fx.Float32(1.0) + ep)))\n    return fx.BFloat16(g * sig * u)\n\n\ndef _scales(wsrc, sc, j):\n    # The dword at sb + 64 j holds the gate, up scale bytes of chunks 2 j and 2 j + 1.\n    _, WS1, _, sb, _, _, BUF = wsrc\n    if j not in sc:\n        sc[j] = _ld1(WS1, sb + j * 64) if BUF else _p(WS1, fx.Int32)[sb + j * 64]\n\n\ndef _weights(wsrc, sc, i):\n    W1, _, wb, _, CK, NT, _ = wsrc\n    _scales(wsrc, sc, i // 2)\n    return _vec4(W1, wb + i * 256, NT), _vec4(W1, wb + (CK + i) * 256, NT)\n\n\ndef _acts(p, base, i):\n    # fp8 A slice of K chunk i: lane group g holds K 16 g .. 16 g + 15 and the same block of the upper half.\n    return [_vec4(p, base + i * 64 + s) for s in (0, 4, 32, 36)]\n\n\ndef _k_walk_s(wsrc, sc, w, x8, xsc, c0, lane, n, PF, accs):\n    g = lane // 16\n    for i in range(n):\n        rocdl.sched_barrier(0)\n        if i + PF < n:\n            w[i + PF] = _weights(wsrc, sc, i + PF)\n        rocdl.sched_barrier(0)\n        c = c0 + i\n        base = c * 32 + g * 4\n        a8 = fx.Vector.from_elements(\n            [x8[base + q] for q in range(4)] + [x8[base + 16 + q] for q in range(4)], fx.Int32\n        )\n        ea = xsc[c * 4 + g]\n        bg, bu = w.pop(i)\n        word = sc[i // 2]\n        accs = [\n            _mfma_s(a8, ea, bg, word, (i % 2) * 2, accs[0]),\n            _mfma_s(a8, ea, bu, word, (i % 2) * 2 + 1, accs[1]),\n        ]\n    return accs\n\n\ndef _reduce_waves(red, accs, wave, lane):\n    n = len(accs)\n    for i in range_constexpr(n):\n        for j in range_constexpr(4):\n            red[((wave * n + i) * 4 + j) * 64 + lane] = accs[i][j]\n    fx.gpu.barrier()\n    out = []\n    for i in range_constexpr(n):\n        vals = []\n        for j in range_constexpr(4):\n            v = fx.Float32(0.0)\n            for q in range_constexpr(4):\n                v = v + red[((q * n + i) * 4 + j) * 64 + lane]\n            vals.append(v)\n        out.append(vals)\n    return out\n\n\n@flyc.kernel\ndef _stage1(\n    IDS: fx.Pointer,\n    X: fx.Pointer,\n    W1: fx.Pointer,\n    WS1: fx.Pointer,\n    Y: fx.Pointer,\n    LIM: fx.Float32,\n    D: fx.Constexpr[int],\n    I: fx.Constexpr[int],\n    E: fx.Constexpr[int],\n    R: fx.Constexpr[int],\n    TOP: fx.Constexpr[int],\n    IDS64: fx.Constexpr[bool],\n    PF: fx.Constexpr[int],\n):\n    # Block L (on XCD L % 8) runs one 16-column tile of route L / 8 % R, so the routes sharing an\n    # expert read its w1 lines together from one L2. The 4 waves split K.\n    tid = fx.Int32(fx.gpu.thread_idx.x)\n    lane = tid % 64\n    wave = _uniform(tid // 64)\n    CK = D // 128\n    L = fx.Int32(fx.gpu.block_idx.x)\n    q = L // 8\n    tile = q % R\n    t16 = (q // R) * 8 + L % 8\n    lds = fx.SharedAllocator()\n    red = lds.allocate(fx.Array[fx.Float32, 4 * 2 * 4 * 64]).peek()\n    x8 = lds.allocate(fx.Array[fx.Int32, D // 4]).peek()\n    xsc = lds.allocate(fx.Array[fx.Int32, D // 32]).peek()\n    e = _uniform(_eid(IDS, tile, E, IDS64))\n    if e >= 0:\n        wbase = e * (I * D // 4) + t16 * (2 * CK * 256) + lane * 4\n        sbase = e * (2 * I * (D // 32)) + t16 * (D // 256 * 256) + (lane // 16) * 64 + (lane % 16) * 4\n        accs = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range_constexpr(2)]\n        n = CK // 4\n        c0 = wave * n\n        xt = (\n            fx.Int32(fx.Uint32(tile) // fx.Uint32(TOP)) * (D // 2)\n            + wave * (D // 8)\n            + (lane % 32) * 16\n            + (lane // 32) * 8\n        )\n        xv = [_vec4(X, xt + 4 * j) for j in range_constexpr(2)]\n        wsrc = (W1, WS1, wbase + c0 * 256, (sbase >> 2) + c0 * 32, CK, 0, False)\n        # vmcnt retires in issue order (token row, scales, weights), so chunk 0 waits only on its own\n        # loads; the barriers stop the scheduler regrouping them.\n        rocdl.sched_barrier(0)\n        sc = {}\n        w = {i: _weights(wsrc, sc, i) for i in range_constexpr(PF)}\n        rocdl.sched_barrier(0)\n        d = [xv[j][q] for j in range_constexpr(2) for q in range_constexpr(4)]\n        e8 = _e8_of(_amax(d, (rocdl.permlane32_swap,)))\n        q8, _ = _cvt_fp8(d, e8)\n        xo = wave * (D // 16) + (lane % 32) * 8 + (lane // 32) * 4\n        for q in range_constexpr(4):\n            x8[xo + q] = q8[q]\n        if lane < 32:\n            xsc[wave * (D // 128) + lane] = e8\n        accs = _k_walk_s(wsrc, sc, w, x8, xsc, c0, lane, n, PF, accs)\n        sums = _reduce_waves(red, accs, wave, lane)\n        if wave == 0:\n            y = _swiglu(sums[0][0], sums[1][0], LIM)\n            if lane < 16:\n                _p(Y, fx.BFloat16)[tile * I + t16 * 16 + lane] = y\n\n\ndef _pkmax(a, b):\n    v2 = T.vec(2, T.i16)\n    va = llvm.BitcastOp(v2, _raw(a)).result\n    vb = llvm.BitcastOp(v2, _raw(b)).result\n    return fx.Int32(llvm.BitcastOp(T.i32, marith.MaxUIOp(va, vb).result).result)\n\n\ndef _amax(d, swaps):\n    m = [v & 0x7FFF7FFF for v in d]\n    while len(m) > 1:\n        m = [_pkmax(m[2 * i], m[2 * i + 1]) for i in range(len(m) // 2)]\n    m = m[0]\n    st_t = ir.Type.parse(\"!llvm.struct<(i32, i32)>\")\n    for fn in swaps:\n        st = fn(st_t, _raw(m), _raw(m), False, False)\n        m = _pkmax(fx.Int32(llvm.extractvalue(T.i32, st, [0])), fx.Int32(llvm.extractvalue(T.i32, st, [1])))\n    return m\n\n\ndef _quant_fp8(d):\n    return _cvt_fp8(d, _e8_of(_amax(d, (rocdl.permlane16_swap, rocdl.permlane32_swap))))\n\n\ndef _e8_of(m):\n    # e8m0 scale of a packed |bf16| max, rounded up so that amax / scale stays within e4m3's range.\n    lo = m & 0xFFFF\n    hi = (m >> 16) & 0xFFFF\n    am = (lo > hi).select(lo, hi)\n    e8 = (am >> 7) - 8 + ((am & 0x7F) > 0x60).select(fx.Int32(1), fx.Int32(0))\n    return (e8 < 1).select(fx.Int32(1), e8)\n\n\ndef _cvt_fp8(d, e8):\n    sc = _raw((e8 << 23).bitcast(fx.Float32))\n    v2i16 = T.vec(2, T.i16)\n    out = []\n    for w in range(len(d) // 2):\n        acc = _raw(fx.Vector.from_elements([fx.Int32(0)], fx.Int32).bitcast(fx.Int16))\n        for h in range(2):\n            src = _raw(fx.Vector.from_elements([d[2 * w + h]], fx.Int32).bitcast(fx.BFloat16))\n            acc = rocdl.cvt_scalef32_pk_fp8_bf16(v2i16, acc, src, sc, h == 1)\n        out.append(fx.Vector(acc).bitcast(fx.Int32)[0])\n    return fx.Vector.from_elements(out, fx.Int32), e8\n\n\ndef _mfma_s(a8, ea, b4, sb, opb, acc):\n    return fx.Vector(\n        rocdl.mfma_scale_f32_16x16x128_f8f6f4(\n            T.f32x4, [_raw(a8), _raw(b4), _raw(acc), 0, 4, 0, _raw(ea), opb, _raw(sb)]\n        )\n    )\n\n\ndef _k_walk_m(wsrcs, scs, ws, X, xb, n, PF, PX, accs, x):\n    # Each X slice is quantized once and serves every N tile; it issues before the next weights, so\n    # waiting on it never waits on newer weights.\n    for i in range(n):\n        rocdl.sched_barrier(0)\n        if i + PX < n:\n            x[i + PX] = _acts(X, xb, i + PX)\n        if i + PF < n:\n            for t in range(len(wsrcs)):\n                ws[t][i + PF] = _weights(wsrcs[t], scs[t], i + PF)\n        rocdl.sched_barrier(0)\n        a = x.pop(i)\n        a8, ea = _quant_fp8([a[s // 4][s % 4] for s in range(16)])\n        new = []\n        for t in range(len(wsrcs)):\n            bg, bu = ws[t].pop(i)\n            word = scs[t][i // 2]\n            new.append(_mfma_s(a8, ea, bg, word, (i % 2) * 2, accs[2 * t]))\n            new.append(_mfma_s(a8, ea, bu, word, (i % 2) * 2 + 1, accs[2 * t + 1]))\n        accs = new\n    return accs\n\n\ndef _s1_issue(wsrcs, n, PF):\n    scs = []\n    for t in range(len(wsrcs)):\n        sc = {}\n        for j in range(n // 2):\n            _scales(wsrcs[t], sc, j)\n        scs.append(sc)\n    rocdl.sched_barrier(0)\n    ws = [{} for _ in range(len(wsrcs))]\n    for i in range(min(PF, n)):\n        for t in range(len(wsrcs)):\n            ws[t][i] = _weights(wsrcs[t], scs[t], i)\n    rocdl.sched_barrier(0)\n    return scs, ws\n\n\ndef _s1_pass(X, lst, red, wsrcs, p16, count, lane, wave, c0, n, D, TOP, PF, PX, LIM, pre=None):\n    # One pass over 16 routes of lst; wave w keeps tile w % NT and returns its values and their routes.\n    NT = len(wsrcs)\n    srow = p16 + lane % 16\n    srow = (srow < count).select(srow, p16)\n    xroute = lst[srow]\n    xrow = fx.Int32(fx.Uint32(xroute) // fx.Uint32(TOP)) * D + (lane // 16) * 16\n    xb = (xrow >> 1) + c0 * 64\n    rocdl.sched_barrier(0)\n    xa = {i: _acts(X, xb, i) for i in range(min(PX, n))}\n    rocdl.sched_barrier(0)\n    scs, ws = _s1_issue(wsrcs, n, PF) if pre is None else pre\n    acc0 = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range(2 * NT)]\n    acc1 = _k_walk_m(wsrcs, scs, ws, X, xb, n, PF, PX, acc0, xa)\n    NA = 2 * NT\n    for i in range(NA):\n        for j in range(4):\n            red[((wave * NA + i) * 4 + j) * 64 + lane] = acc1[i][j]\n    fx.gpu.barrier()\n    tl = wave % NT\n    ys = []\n    ors = []\n    for j in range(4):\n        g = fx.Float32(0.0)\n        u = fx.Float32(0.0)\n        for q in range(4):\n            g = g + red[((q * NA + 2 * tl) * 4 + j) * 64 + lane]\n            u = u + red[((q * NA + 2 * tl + 1) * 4 + j) * 64 + lane]\n        ys.append(_swiglu(g, u, LIM))\n        orow = p16 + (lane // 16) * 4 + j\n        ors.append(lst[(orow < count).select(orow, p16)])\n    return ys, ors\n\n\n@flyc.kernel\ndef _stage1_ex(\n    X: fx.Pointer,\n    W1: fx.Pointer,\n    WS1: fx.Pointer,\n    Y: fx.Pointer,\n    LIM: fx.Float32,\n    IDS: fx.Pointer,\n    D: fx.Constexpr[int],\n    I: fx.Constexpr[int],\n    E: fx.Constexpr[int],\n    R: fx.Constexpr[int],\n    TOP: fx.Constexpr[int],\n    IDS64: fx.Constexpr[bool],\n    PF: fx.Constexpr[int],\n    PX: fx.Constexpr[int],\n    NT: fx.Constexpr[int],\n    LG: fx.Pointer,\n    CNT: fx.Pointer,\n    OUT: fx.Pointer,\n    ZN: fx.Constexpr[int],\n    SPEC: fx.Constexpr[bool],\n):\n    # Block (b, e) finds expert e's routes itself (ballots, in route order) and runs them over NT\n    # 16-column tiles; 4 waves split K. Block 0 of each expert publishes the list for stage 2.\n    tid = fx.Int32(fx.gpu.thread_idx.x)\n    lane = tid % 64\n    wave = _uniform(tid // 64)\n    CK = D // 128\n    bx = fx.Int32(fx.gpu.block_idx.x)\n    e = fx.Int32(fx.gpu.block_idx.y)\n    lds = fx.SharedAllocator()\n    red = lds.allocate(fx.Array[fx.Float32, 4 * 2 * NT * 4 * 64]).peek()\n    lst = lds.allocate(fx.Array[fx.Int32, R + 1]).peek()\n    n = CK // 4\n    c0 = wave * n\n    wsrcs = []\n    for t in range_constexpr(NT):\n        t16 = bx * NT + t\n        wbase = e * (I * D // 4) + t16 * (2 * CK * 256) + lane * 4\n        sbase = e * (2 * I * (D // 32)) + t16 * (D // 256 * 256) + (lane // 16) * 64 + (lane % 16) * 4\n        wsrcs.append((W1, WS1, wbase + c0 * 256, (sbase >> 2) + c0 * 32, CK, NONTEMPORAL, True))\n\n    def zero():\n        # _stage2_ex adds into ``out`` after this launch; ZN counts 8-byte units.\n        GX = I // 16 // NT\n        for k in range_constexpr((ZN + GX * E * 256 - 1) // (GX * E * 256)):\n            zi = ((e * GX + bx) * 256 + tid) + k * (GX * E * 256)\n            if zi < ZN:\n                _st2(OUT, zi * 2, [fx.Float32(0.0) for _ in range_constexpr(4)])\n\n    pre = None\n    if const_expr(SPEC):\n        gids = _route_ids(IDS, lane, R, IDS64)\n        rocdl.sched_barrier(0)\n        pre = _s1_issue(wsrcs, n, PF)\n        if const_expr(ZN > 0):\n            zero()\n            rocdl.sched_barrier(0)\n        count = _route_list(IDS, lst, e, lane, wave, R, IDS64, gids)\n    else:\n        count = _route_list(IDS, lst, e, lane, wave, R, IDS64)\n    ytile = (bx * NT + wave % NT) * 16 + lane % 16\n    npass = (count + 15) >> 4\n    if count > 0:\n        if const_expr(SPEC):\n            issued = pre\n        else:\n            issued = _s1_issue(wsrcs, n, PF)\n            if const_expr(ZN > 0):\n                zero()\n                rocdl.sched_barrier(0)\n        fx.gpu.barrier()\n        if bx == 0:\n            if tid == 0:\n                _p(CNT, fx.Int32)[e] = count\n            for k in range_constexpr((R + 255) // 256):\n                if tid + k * 256 < count:\n                    _p(LG, fx.Int32)[e * R + tid + k * 256] = lst[tid + k * 256]\n        ys2, ors2 = _s1_pass(\n            X, lst, red, wsrcs, fx.Int32(0), count, lane, wave, c0, n, D, TOP, PF, PX, LIM, issued\n        )\n        for j in range_constexpr(4):\n            if (wave < NT) & ((lane // 16) * 4 + j < count):\n                _p(Y, fx.BFloat16)[ors2[j] * I + ytile] = ys2[j]\n        fx.gpu.barrier()\n        # Later passes run one N tile at a time, so their register peak stays below pass 0's.\n        for p in range(1, npass):\n            p16 = fx.Int32(p) * 16\n            for t in range_constexpr(NT):\n                ys2, ors2 = _s1_pass(\n                    X, lst, red, [wsrcs[t]], p16, count, lane, wave, c0, n, D, TOP, PF, PX, LIM\n                )\n                for j in range_constexpr(4):\n                    if (wave == 0) & (p16 + (lane // 16) * 4 + j < count):\n                        _p(Y, fx.BFloat16)[ors2[j] * I + (bx * NT + t) * 16 + lane % 16] = ys2[j]\n                fx.gpu.barrier()\n    else:\n        if const_expr(ZN > 0 and not SPEC):\n            zero()\n        if (bx == 0) & (tid == 0):\n            _p(CNT, fx.Int32)[e] = fx.Int32(0)\n\n\ndef _route_ids(IDS, lane, R, IDS64):\n    NB = (R + 63) // 64\n    gids = []\n    for k in range_constexpr(NB):\n        rr = lane + k * 64\n        if R % 64 != 0 and k == NB - 1:\n            rr = (rr < R).select(rr, fx.Int32(0))\n        gids.append(_p(IDS, fx.Int32)[rr * (2 if IDS64 else 1)])\n    return gids\n\n\ndef _route_list(IDS, lst, e, lane, wave, R, IDS64, gids=None):\n    # Expert e's routes in route order into lst (other lanes write dead slot R); barrier before reading.\n    NB = (R + 63) // 64\n    if gids is None:\n        gids = _route_ids(IDS, lane, R, IDS64)\n    below = (fx.Int64(1) << fx.Int64(lane)) - fx.Int64(1)\n    count = fx.Int32(0)\n    for k in range_constexpr(NB):\n        hit = gids[k] == e\n        if R % 64 != 0 and k == NB - 1:\n            hit = hit & (lane + k * 64 < R)\n        bits = fx.Int64(rocdl.ballot(T.i64, _raw(hit)))\n        pos = count + fx.Int32(fx.ctpop(bits & below))\n        slot = (hit & (wave == 0)).select(pos, fx.Int32(R))\n        lst[slot] = lane + k * 64\n        count = count + fx.Int32(fx.ctpop(bits))\n    return _uniform(count)\n\n\ndef _s2_lg(LG, e, p16, lane, R):\n    # Pass p16's list entries as scalar loads at count-independent addresses; garbage past the count.\n    base = e * R + p16\n    sl = [_p(LG, fx.Int32)[base + j] for j in range_constexpr(16)]\n    r16 = lane % 16\n    q = lane // 16\n    lr = sl[0]\n    for j in range_constexpr(1, 16):\n        lr = (r16 == j).select(sl[j], lr)\n    ors = []\n    for j in range_constexpr(4):\n        v = sl[j]\n        for k in range_constexpr(1, 4):\n            v = (q == k).select(sl[4 * k + j], v)\n        ors.append(v)\n    return lr, sl[0], ors, sl\n\n\ndef _s2_addr(e, lane, nbase, CK, I, D, tiles):\n    wb = []\n    s4 = []\n    for b in range_constexpr(tiles):\n        n16 = nbase + b\n        wb.append(e * (D * I // 8) + n16 * (CK * 256) + lane * 4)\n        s4.append(\n            (e * (D * (I // 32)) + (n16 // 2) * (I // 256 * 256) + (lane // 16) * 64 + (lane % 16) * 4) >> 2\n        )\n    return wb, s4\n\n\ndef _s2_wload(W2, WS2, wb, s4, CK, tiles):\n    bws = [\n        [_vec4(W2, wb[b] + c * 256, NONTEMPORAL) for b in range_constexpr(tiles)] for c in range_constexpr(CK)\n    ]\n    sdw = {}\n    for c in range_constexpr(CK):\n        for b in range_constexpr(0, tiles, 2):\n            if (b // 2, c // 2) not in sdw:\n                sdw[(b // 2, c // 2)] = _p(WS2, fx.Int32)[s4[b] + (c // 2) * 64]\n    return bws, sdw\n\n\ndef _s2_pass(Y, W2, WS2, RW, lg, e, p16, count, lane, nbase, CK, I, D, tiles, pre=None):\n    # pre holds w2 and scales already issued; all loads precede the MFMAs, in the order they are consumed.\n    lr, l0, ors0, _ = lg\n    xr = (p16 + lane % 16 < count).select(lr, l0)\n    ors = [(p16 + (lane // 16) * 4 + j < count).select(ors0[j], l0) for j in range_constexpr(4)]\n    ydw = (xr * I + (lane // 16) * 16) >> 1\n    if pre is None:\n        wb, s4 = _s2_addr(e, lane, nbase, CK, I, D, tiles)\n        rocdl.sched_barrier(0)\n        sdw = {}\n        for b in range_constexpr(0, tiles, 2):\n            for c in range_constexpr(0, CK, 2):\n                sdw[(b // 2, c // 2)] = _p(WS2, fx.Int32)[s4[b] + (c // 2) * 64]\n        af = []\n        bws = []\n        for c in range_constexpr(CK):\n            rocdl.sched_barrier(0)\n            af.append(_acts(Y, ydw, c))\n            bws.append([_vec4(W2, wb[b] + c * 256, NONTEMPORAL) for b in range_constexpr(tiles)])\n        rocdl.sched_barrier(0)\n    else:\n        _, bws, sdw = pre\n        rocdl.sched_barrier(0)\n        af = [_acts(Y, ydw, c) for c in range_constexpr(CK)]\n    ows = [_p(RW, fx.Float32)[ors[j]] for j in range_constexpr(4)]\n    rocdl.sched_barrier(0)\n    accs = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range_constexpr(tiles)]\n    for c in range_constexpr(CK):\n        a8, ea = _quant_fp8([af[c][s // 4][s % 4] for s in range(16)])\n        for b in range_constexpr(tiles):\n            accs[b] = _mfma_s(a8, ea, bws[c][b], sdw[(b // 2, c // 2)], b % 2 + (c % 2) * 2, accs[b])\n    return accs, ows\n\n\ndef _s2_atom_rows(xl, accs, ows, p16, count, lane, wave, nbase, tiles, D, TOP, sl):\n    # Weighted tiles go through LDS and return as column pairs, so each atomic covers contiguous row segments.\n    BNW = tiles * 16\n    base = wave * 16 * BNW\n    for b in range_constexpr(tiles):\n        for j in range_constexpr(4):\n            xl[base + ((lane // 16) * 4 + j) * BNW + b * 16 + lane % 16] = accs[b][j] * ows[j]\n    fx.gpu.barrier()\n    HW = BNW // 2\n    RPI = 64 // HW\n    res = []\n    for i in range_constexpr(16 // RPI):\n        row = i * RPI + lane // HW\n        cp = (lane % HW) * 2\n        valid = p16 + row < count\n        rsel = sl[i * RPI]\n        for k in range_constexpr(1, RPI):\n            rsel = (lane // HW == k).select(sl[i * RPI + k], rsel)\n        route = valid.select(rsel, sl[0])\n        token = fx.Int32(fx.Uint32(route) // fx.Uint32(TOP))\n        v0 = xl[base + row * BNW + cp]\n        v1 = xl[base + row * BNW + cp + 1]\n        res.append((valid, (token * D + nbase * 16 + cp) >> 1, v0, v1))\n    return res\n\n\n@flyc.kernel\ndef _stage2_ex(\n    Y: fx.Pointer,\n    W2: fx.Pointer,\n    WS2: fx.Pointer,\n    LG: fx.Pointer,\n    CNT: fx.Pointer,\n    RW: fx.Pointer,\n    D: fx.Constexpr[int],\n    I: fx.Constexpr[int],\n    R: fx.Constexpr[int],\n    BN: fx.Constexpr[int],\n    SPEC: fx.Constexpr[bool],\n    OUT: fx.Pointer,\n    TOP: fx.Constexpr[int],\n):\n    # Block (n, e) runs expert e's published routes over BN columns, adding each weighted row into ``out``.\n    tid = fx.Int32(fx.gpu.thread_idx.x)\n    lane = tid % 64\n    wave = _uniform(tid // 64)\n    e = fx.Int32(fx.gpu.block_idx.y)\n    tiles = BN // 64\n    CK = I // 128\n    nbase = fx.Int32(fx.gpu.block_idx.x) * (BN // 16) + wave * tiles\n    xl = fx.SharedAllocator().allocate(fx.Array[fx.Float32, BN * 16]).peek()\n    cnt = _p(CNT, fx.Int32)[e]\n    lg0 = _s2_lg(LG, e, fx.Int32(0), lane, R)\n    pre = None\n    if const_expr(SPEC):\n        rocdl.sched_barrier(0)\n        addr = _s2_addr(e, lane, nbase, CK, I, D, tiles)\n        pre = (addr, *_s2_wload(W2, WS2, addr[0], addr[1], CK, tiles))\n        rocdl.sched_barrier(0)\n    count = _uniform(cnt)\n    # The second term is true whenever count > 0 (entry 0 is a route); folding in all 16 entries keeps\n    # their loads ahead of the branch, inside the count's round trip.\n    mix = lg0[3][1]\n    for j in range_constexpr(2, 16):\n        mix = mix ^ lg0[3][j]\n    if (count > 0) & ((lg0[1] >= 0) | (mix == 0x7FFFFFFF)):\n        accs, ows = _s2_pass(Y, W2, WS2, RW, lg0, e, fx.Int32(0), count, lane, nbase, CK, I, D, tiles, pre)\n        for valid, dw, v0, v1 in _s2_atom_rows(\n            xl, accs, ows, fx.Int32(0), count, lane, wave, nbase, tiles, D, TOP, lg0[3]\n        ):\n            if valid:\n                _atom_pk(OUT, dw, v0, v1)\n        npass = (count + 15) >> 4\n        for p in range(1, npass):\n            p16 = fx.Int32(p) * 16\n            lgp = _s2_lg(LG, e, p16, lane, R)\n            accs, ows = _s2_pass(Y, W2, WS2, RW, lgp, e, p16, count, lane, nbase, CK, I, D, tiles)\n            for valid, dw, v0, v1 in _s2_atom_rows(\n                xl, accs, ows, p16, count, lane, wave, nbase, tiles, D, TOP, lgp[3]\n            ):\n                if valid:\n                    _atom_pk(OUT, dw, v0, v1)\n\n\ndef _dpp_pkmax8(m):\n    # _pkmax over each aligned group of 8 lanes (DPP xor 1, xor 2, then the half-row mirror).\n    for ctrl in (0xB1, 0x4E, 0x141):\n        moved = fx.Int32(rocdl.update_dpp(T.i32, _raw(m), _raw(m), ctrl, 0xF, 0xF, False))\n        m = _pkmax(m, moved)\n    return m\n\n\ndef _w2_walk_l(Y, W2, WS2, yl, ysc, route, e, lane, wave, nbase, CK, I, D, tiles, WC):\n    # The Y row goes through this wave's own LDS slot as fp8 (no barrier); every load precedes the first MFMA.\n    accs = [fx.Vector.filled(4, 0.0, fx.Float32) for _ in range_constexpr(tiles)]\n    wb, s4 = _s2_addr(e, lane, nbase, CK, I, D, tiles)\n    rocdl.sched_barrier(0)\n    y = _vec2(Y, route * (I // 2) + lane * 2)\n    sdw = {}\n    for c in range_constexpr(CK):\n        for b in range_constexpr(0, tiles, 2):\n            if (b, c // 2) not in sdw:\n                sdw[(b, c // 2)] = _ld1(WS2, s4[b] + (c // 2) * 64)\n                sdw[(b + 1, c // 2)] = sdw[(b, c // 2)]\n    bws = []\n    for c in range_constexpr(CK):\n        rocdl.sched_barrier(0)\n        bws.append([_vec4(W2, wb[b] + c * 256, WC) for b in range_constexpr(tiles)])\n    rocdl.sched_barrier(0)\n    d = [y[0], y[1]]\n    e8 = _e8_of(_dpp_pkmax8(_amax(d, ())))\n    q8, _ = _cvt_fp8(d, e8)\n    yl[wave * (I // 4) + lane] = q8[0]\n    ysc[wave * (I // 32) + lane // 8] = e8\n    g = lane // 16\n    for c in range_constexpr(CK):\n        base = wave * (I // 4) + c * 32 + g * 4\n        a8 = fx.Vector.from_elements(\n            [yl[base + q] for q in range(4)] + [yl[base + 16 + q] for q in range(4)], fx.Int32\n        )\n        ea = ysc[wave * (I // 32) + c * 4 + g]\n        for b in range_constexpr(tiles):\n            accs[b] = _mfma_s(a8, ea, bws[c][b], sdw[(b, c // 2)], b % 2 + (c % 2) * 2, accs[b])\n    return accs\n\n\n@flyc.kernel\ndef _stage2_tp(\n    Y: fx.Pointer,\n    W2: fx.Pointer,\n    WS2: fx.Pointer,\n    RW: fx.Pointer,\n    OUT: fx.Pointer,\n    D: fx.Constexpr[int],\n    I: fx.Constexpr[int],\n    TOP: fx.Constexpr[int],\n    BN: fx.Constexpr[int],\n    IDS: fx.Pointer,\n    E: fx.Constexpr[int],\n    IDS64: fx.Constexpr[bool],\n    M: fx.Constexpr[int],\n    WC: fx.Constexpr[int],\n):\n    # One wave per route of a token over BN columns. Block L (on XCD L % 8) takes token L / 8 % M,\n    # so every token of a column block runs on one XCD and shares its experts' w2 lines in L2.\n    tid = fx.Int32(fx.gpu.thread_idx.x)\n    lane = tid % 64\n    wave = _uniform(tid // 64)\n    L = fx.Int32(fx.gpu.block_idx.x)\n    q = L // 8\n    token = q % M\n    bxx = (q // M) * 8 + L % 8\n    nbase = bxx * (BN // 16)\n    tiles = BN // 16\n    CK = I // 128\n    lds = fx.SharedAllocator()\n    partials = lds.allocate(fx.Array[fx.Float32, TOP * BN]).peek()\n    yl = lds.allocate(fx.Array[fx.Int32, TOP * I // 4]).peek()\n    ysc = lds.allocate(fx.Array[fx.Int32, TOP * I // 32]).peek()\n    route = token * TOP + wave\n    e = _uniform(_eid(IDS, route, E, IDS64))\n    rw = _p(RW, fx.Float32)[route]\n    # A value assigned inside the branch does not escape it, so a masked route keeps this zero.\n    if lane < 16:\n        for b in range_constexpr(tiles):\n            partials[wave * BN + b * 16 + lane] = fx.Float32(0.0)\n    if e >= 0:\n        accs = _w2_walk_l(Y, W2, WS2, yl, ysc, route, e, lane, wave, nbase, CK, I, D, tiles, WC)\n        if lane < 16:\n            for b in range_constexpr(tiles):\n                partials[wave * BN + b * 16 + lane] = accs[b][0] * rw\n    fx.gpu.barrier()\n    if tid < BN:\n        total = fx.Float32(0.0)\n        col0 = bxx * BN\n        for j in range_constexpr(TOP):\n            total = total + partials[j * BN + tid]\n        _p(OUT, fx.BFloat16)[token * D + col0 + tid] = fx.BFloat16(total)\n\n\ndef _ptr(t):\n    return flyc.from_c_void_p(fx.Uint8, t.data_ptr(), assumed_align=16)\n\n\n@functools.cache\ndef _build(x_shape, ids_shape, w1_shape, ids_dtype, rw_dtype, device):\n    M, D = x_shape\n    TOP = ids_shape[1]\n    E = w1_shape[0]\n    I = w1_shape[1] // 2\n    R = M * TOP\n    assert rw_dtype == torch.float32, \"topk_weights must be float32\"\n    assert ids_dtype in (torch.int32, torch.int64)\n    assert D == 4096 and I == 256, \"the kernels are specialized to model_dim 4096, inter_dim 256\"\n    IDS64 = ids_dtype == torch.int64\n    DIRECT = R <= DIRECT_MAX_ROUTES\n    PF1 = 2\n    NT1E = 2\n    PF_EX = 1\n    PX_EX = 1\n    S2EX = R >= EXPERT_STAGE2_MIN_ROUTES\n    SPEC = R >= SPEC_MIN_ROUTES\n    # Wider blocks need the 3-wave cap to fit their registers; they pay off only at the largest batch.\n    BN2 = 512 if SPEC else 256\n    WPE2 = 3 if SPEC else 4\n    ZN = M * D // 4 if S2EX else 0\n    NARROW = R <= NARROW_STAGE2_MAX_ROUTES\n    W2C = NONTEMPORAL if NARROW else 0\n    BN = 32 if NARROW else 64\n    # scratch, allocated by each call so that calls on two streams never share it\n    sizes = ((R * I, torch.bfloat16), (E * R, torch.int32), (E, torch.int32))\n\n    @flyc.jit\n    def dispatch(\n        X: fx.Pointer,\n        W1: fx.Pointer,\n        W2: fx.Pointer,\n        RW: fx.Pointer,\n        IDS: fx.Pointer,\n        WS1: fx.Pointer,\n        WS2: fx.Pointer,\n        Y: fx.Pointer,\n        LG: fx.Pointer,\n        CNT: fx.Pointer,\n        OUT: fx.Pointer,\n        LIM: fx.Float32,\n        execute: fx.Int32,\n        stream: fx.Stream,\n    ):\n        if execute != 0:\n            if const_expr(DIRECT):\n                _stage1(IDS, X, W1, WS1, Y, LIM, D, I, E, R, TOP, IDS64, PF1).launch(\n                    grid=(I // 16 * R,), block=(256,), stream=stream\n                )\n            else:\n                _stage1_ex(\n                    X,\n                    W1,\n                    WS1,\n                    Y,\n                    LIM,\n                    IDS,\n                    D,\n                    I,\n                    E,\n                    R,\n                    TOP,\n                    IDS64,\n                    PF_EX,\n                    PX_EX,\n                    NT1E,\n                    LG,\n                    CNT,\n                    OUT,\n                    ZN,\n                    SPEC,\n                    value_attrs={\"rocdl.waves_per_eu\": 3},\n                ).launch(grid=(I // 16 // NT1E, E), block=(256,), stream=stream)\n            if const_expr(S2EX):\n                _stage2_ex(\n                    Y,\n                    W2,\n                    WS2,\n                    LG,\n                    CNT,\n                    RW,\n                    D,\n                    I,\n                    R,\n                    BN2,\n                    SPEC,\n                    OUT,\n                    TOP,\n                    value_attrs={\"rocdl.waves_per_eu\": WPE2},\n                ).launch(grid=(D // BN2, E), block=(256,), stream=stream)\n            else:\n                _stage2_tp(\n                    Y,\n                    W2,\n                    WS2,\n                    RW,\n                    OUT,\n                    D,\n                    I,\n                    TOP,\n                    BN,\n                    IDS,\n                    E,\n                    IDS64,\n                    M,\n                    W2C,\n                    value_attrs={\"rocdl.waves_per_eu\": 6},\n                ).launch(grid=(D // BN * M,), block=(TOP * 64,), stream=stream)\n\n    null = flyc.from_c_void_p(fx.Uint8, 0, assumed_align=16)\n    # Kernel arguments preloaded into SGPRs skip the kernarg round trip; FlyDSL takes LLVM options only here.\n    compiled = flyc.compile[{\"llvm_options\": {\"amdgpu-kernarg-preload-count\": 16}}](\n        dispatch, *([null] * 11), 10.0, 0, fx.Stream(None)\n    )\n\n    def launch(hidden_states, w1, w2, topk_weights, topk_ids, w1_scale, w2_scale, swiglu_limit, out):\n        ws = tuple(torch.empty((n,), dtype=dtype, device=hidden_states.device) for n, dtype in sizes)\n        inputs = (hidden_states, w1, w2, topk_weights, topk_ids, w1_scale, w2_scale, *ws, out)\n        limit = 3.0e38 if swiglu_limit is None else swiglu_limit\n        compiled(\n            *(_ptr(t) for t in inputs), limit, 1, fx.Stream(torch.cuda.current_stream(hidden_states.device))\n        )\n\n    return launch\n\n\ndef run(\n    *,\n    hidden_states,\n    w1,\n    w2,\n    topk_weights,\n    topk_ids,\n    w1_scale,\n    w2_scale,\n    activation,\n    quant_type,\n    doweight_stage1,\n    gate_mode,\n    act_quant,\n    expert_mask,\n    beta,\n    linear_beta,\n    swiglu_limit,\n    out_dtype,\n    out,\n):\n    \"\"\"Fused MoE into ``out``; serves silu, interleaved gate/up, stage-2 routing weights.\"\"\"\n    assert topk_ids.numel() <= FLY_MAX_ROUTES and expert_mask is None\n    launch = _build(\n        hidden_states.shape,\n        topk_ids.shape,\n        w1.shape,\n        topk_ids.dtype,\n        topk_weights.dtype,\n        hidden_states.device,\n    )\n    launch(hidden_states, w1, w2, topk_weights, topk_ids, w1_scale, w2_scale, swiglu_limit, out)\n"
+      }
+    ]
+  }
+}

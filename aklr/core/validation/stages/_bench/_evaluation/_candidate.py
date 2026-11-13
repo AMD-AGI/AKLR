@@ -145,7 +145,6 @@ def run_candidate(
 
     from aklr.core.platform.device import DeviceTarget
     from aklr.core.platform.toolchain import unmet_requirement
-    from aklr.core.utils.testing import flush_l2_cache
 
     schema = requests[0].schema
     batch_findings: tuple[Finding, ...] = ()
@@ -161,6 +160,8 @@ def run_candidate(
         torch.cuda.set_device(device)
     target = DeviceTarget.current(device)
     try:
+        with StepFailed.failing_as(FindingCode.PLATFORM_FAILURE, "kernel tracer: "):
+            from aklr.core.utils.testing import flush_l2_cache
         if not target.is_complete:
             detail = f"{device}: unknown arch or hardware ({target})"
             raise StepFailed(FindingCode.PLATFORM_FAILURE, detail)

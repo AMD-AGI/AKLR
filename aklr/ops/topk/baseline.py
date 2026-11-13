@@ -3,7 +3,33 @@
 
 from __future__ import annotations
 
-__all__ = ["topk_transform_paged_baseline"]
+__all__ = ["biased_grouped_topk_baseline", "topk_transform_paged_baseline"]
+
+
+def biased_grouped_topk_baseline(
+    router_logits,
+    correction_bias,
+    topk_weights,
+    topk_ids,
+    num_expert_group,
+    topk_group,
+    renormalize,
+    routed_scaling_factor=1.0,
+):
+    """aiter's biased grouped top-k, into the caller's outputs."""
+    from aiter.ops.topk import biased_grouped_topk
+
+    biased_grouped_topk(
+        router_logits,
+        correction_bias,
+        topk_weights,
+        topk_ids,
+        num_expert_group,
+        topk_group,
+        renormalize,
+        routed_scaling_factor,
+    )
+    return topk_weights, topk_ids
 
 
 def topk_transform_paged_baseline(scores, seq_lens, page_tables, out_page_indices, page_size, metadata):

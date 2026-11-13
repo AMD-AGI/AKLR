@@ -58,8 +58,8 @@ from aklr.core.validation.stages._report._markdown import one_line
 from aklr.core.validation.stages.stage import StageStatus
 
 # a committed gfx950/MI355X schema, rewritten under tmp_path with a stored speedup
-_SCHEMA = "aklr/ops/gemm/impls/flydsl/gemm_n512_k4096/09c4acd65577d824.json"
-_TRITON_SCHEMA = "aklr/ops/gemm/impls/triton/gemm_a8w8_blockwise_scaled_n3072_k1536/d4457ae42fce5327.json"
+_SCHEMA = "aklr/ops/gemm/impls/flydsl/gemm_n512_k4096/b88f9602c806937b.json"
+_TRITON_SCHEMA = "aklr/ops/gemm/impls/triton/gemm_a8w8_blockwise_scaled_n3072_k1536/4a159c69e56742a3.json"
 _PLATFORM = dict.fromkeys(PlatformRecord.model_fields, "unknown") | {
     "arch": "gfx950",
     "hardware": "MI355X",
@@ -1238,6 +1238,29 @@ def test_platform_the_kernel_does_not_state_aborts(
     findings = CandidateResult.model_validate(result).findings
     assert [f.code for f in findings] == [code]
     assert code.is_platform_fault
+
+
+def test_a_tracer_that_cannot_register_is_the_platforms_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The kernel tracer registers as the candidate imports the timing module: its failure
+    is the platform's, not the candidate's crash."""
+    from aklr.core.platform.device import DeviceTarget
+    from aklr.core.validation.stages._bench._evaluation import run_candidate
+    from tests.op_case import KERNEL_TARGET, OpCase
+
+    case = OpCase.of("gemm@1.0")
+    target = DeviceTarget.from_names(**KERNEL_TARGET)
+    monkeypatch.setattr(DeviceTarget, "current", classmethod(lambda cls, d: target))
+    # its import raises, as a tracer that cannot register does
+    monkeypatch.setitem(sys.modules, "aklr.core.utils.testing", None)
+    context = ExecutionContext(device="cpu", log_path=tmp_path / "log")
+    request = case.request
+    result = run_candidate(
+        context, requests=[request], outputs={request.axes_text: request.empty_outputs("cpu")}
+    )
+    findings = CandidateResult.model_validate(result).findings
+    assert [f.code for f in findings] == [FindingCode.PLATFORM_FAILURE]
 
 
 def test_importing_validation_loads_no_torch() -> None:
