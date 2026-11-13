@@ -126,7 +126,7 @@ read through the op's `contract.py`); a schema file's `inputs` and `outputs` ite
 ## The kernel section and ABI
 
 `kernel` (model `KernelSpec`): `language`, `targets` (a list of `{arch, hardware}`; a missing field leaves that
-dimension unrestricted (`DeviceTarget.matches_target`); only a load gate), `requires` (optional, see below), `author`
+dimension unrestricted (`DeviceTarget.matches_target`); only a load gate), `requires` (required with sources, see below), `author`
 (optional, see below), `entry_point` (`"<path>::<symbol>"`), and `sources`, a list of `{path, content}`, `content`
 being the file's whole text (utf-8 without a byte order mark or a non-utf-8 encoding declaration, no control
 character but `\n`, one final newline and no blank line before it); a path is one `<identifier>.py` segment other
@@ -135,10 +135,12 @@ file describes the kernel; its prose carries no history, commit or speedup, and 
 (such as `legacy_solution:`, `keep_commit:`, `device_edits:`) are allowed; audit rejects an empty docstring (SA4).
 
 `requires` maps a language to a PEP 440 specifier of the toolchain versions the kernel needs, such as
-`{"triton": ">=3.8"}`; it is omitted when empty, and a dev or rc build counts as its release. Where the installed
-toolchain misses it, the runtime skips the schema, logging why at INFO, and validation reports
-`no_matching_toolchain`. Give a lower bound when the kernel uses a newer toolchain's feature, an upper bound only once
-a release breaks it. A kernel that fails where `requires` holds raises: nothing falls back on an error.
+`{"triton": ">=3.8"}`; a dev or rc build counts as its release. A kernel with sources names at least its own
+language: `flydsl`, `triton`, or `hip`, which is the HIP version torch was built with (`torch.version.hip`), not the
+ROCm release (ROCm 10.0 ships HIP 7.15);
+`export check` rejects one that does not (`KernelSpec.requires_error`). It is omitted only in a definition. Where the installed toolchain misses it, the runtime skips the schema, logging why at INFO, and validation
+reports `no_matching_toolchain`. Give the version the kernel was developed on as the lower bound, and an upper bound
+only once a release breaks it. A kernel that fails where `requires` holds raises: nothing falls back on an error.
 
 `author` names who wrote the kernel: a person, a team or an agent, such as `"GEAK"`. It is one line without
 surrounding spaces, omitted when empty, and only recorded: dispatch and the build ignore it, and validation
