@@ -49,7 +49,7 @@ def success(root, *args, env=None):
     return json.loads(result.stdout)
 
 
-def round_command(root, config, out, mode, *extra, now=False, events=None):
+def round_command(root, config, out, mode, *extra, now=False):
     return [
         sys.executable,
         "-I",
@@ -60,7 +60,6 @@ def round_command(root, config, out, mode, *extra, now=False, events=None):
         "--config",
         str(config),
         *(["--now"] if now else []),
-        *(["--events", str(events)] if events else []),
         "--",
         sys.executable,
         "-I",
@@ -270,26 +269,6 @@ def test_round_waits_for_wake_at_unless_something_changed(root, config, tmp_path
     assert len(agent_runs(out)) == 5
 
 
-def test_forwarded_events_run_now_and_are_consumed(root, config, tmp_path):
-    out, events = tmp_path / "out", root / "events"
-    events.mkdir()
-    subprocess.run(round_command(root, config, out, "fast", events=events), check=True)
-    wake(root, timedelta(minutes=30))
-    subprocess.run(round_command(root, config, out, "fast", events=events), check=True)
-    assert len(agent_runs(out)) == 1
-    (events / "1-42-labeled").write_text("42 labeled\n")
-    subprocess.run(round_command(root, config, out, "fast", events=events), check=True)
-    assert len(agent_runs(out)) == 2
-    assert not any(events.iterdir())
-    write_owner(root, id="elsewhere", boot_id=host()["boot_id"], pid_namespace="pid:[1]")
-    (events / "2-42-closed").write_text("42 closed\n")
-    busy = subprocess.run(
-        round_command(root, config, out, "fast", events=events), capture_output=True, text=True, check=True
-    )
-    assert json.loads(busy.stdout) == {"busy": "elsewhere"}
-    assert not any(events.iterdir())
-
-
 def test_missing_or_corrupt_state_never_becomes_an_empty_ledger(root, config, tmp_path):
     missing = tmp_path / "missing"
     assert (
@@ -336,18 +315,6 @@ def test_save_never_drops_a_budgeted_entry_or_changes_its_bounds(root, tmp_path,
         result = save_as_owner(root, tmp_path, 2, bad)
         assert result.returncode != 0, bad
     assert success(root, "show")["state"][kind][0]["phase"] == "preparing"
-
-
-def test_save_never_drops_a_request(root, tmp_path):
-    request = {"issue": 42, "status": "active", "version": 1}
-    assert save_as_owner(root, tmp_path, 0, {"campaigns": [], "requests": [request]}).returncode == 0
-    for bad in (
-        {"campaigns": [], "requests": []},
-        {"campaigns": [], "requests": [request, request]},
-        {"campaigns": [], "requests": [{**request, "issue": "42"}]},
-    ):
-        assert save_as_owner(root, tmp_path, 1, bad).returncode != 0, bad
-    assert success(root, "show")["state"]["requests"] == [request]
 
 
 @pytest.mark.parametrize("ending", ["fail", "missing-agent", "terminated"])

@@ -14,7 +14,7 @@ campaign, and creates or updates no scheduled task until the user explicitly ask
 
 The pack lives at `harness/automations/shepherd/` in the AKLR checkout the task will run in. Confirm that
 checkout contains `FOR_AGENTS.md`, this file, `skills/shepherd/` (skill, `references/state.md`,
-`scripts/state.py`, `scripts/request_board.py`) and the templates. Confirm the shared skills the round uses exist under
+`scripts/state.py`) and the templates. Confirm the shared skills the round uses exist under
 `harness/skills/`: forge-loop-campaign, remote-gpu, aklr-read-validation, aklr-open-pr, report-progress,
 aklr-kb and the configured backends' knowledge.
 
@@ -50,9 +50,6 @@ Ask for or confirm:
   key or gateway the campaign's model calls use (`claude auth status`, `ANTHROPIC_BASE_URL`). If none
   exists, say the owner must set one; it cannot be inferred from here.
 - Publication: draft PRs, PR comments, `ci:gpu` label, branch prefix.
-- Issue requests: `requests.team` (a team of the repository's organization; start with the owner alone)
-  and `requests.bot` (the shepherd App's login). Keep `requests.label` at `shepherd`, which
-  `.github/workflows/shepherd.yaml` also names. Leave the `requests` strategy out until both are set.
 
 Resolve the model to an identifier KernelForge's provider supports and verify the reasoning effort; do
 not guess a model, invent a flag or drop the effort. Node hours cover setup, finalize, stress and
@@ -111,24 +108,6 @@ on bot comments as triggers or invent a scheduler API.
 
 **Existing task.** Update it in place; never create a second one. When moving to another scheduler,
 disable the old trigger before enabling the new one. Keep the state directory and budgets.
-
-**Issue requests (systemd and the runner).** The owner's choice for request-driven rounds is the three
-`systemd --user` units in `templates/`, on the host that holds the state directory, which is also where
-the `aklr-claude` runner runs as the same user:
-1. Create `<state_dir>/events` (mode 700). Set the repository variables `SHEPHERD_EVENTS_DIR` (its
-   absolute path) and `SHEPHERD_CHECKOUT` (this checkout), and the secrets `SHEPHERD_APP_ID` and
-   `SHEPHERD_APP_PRIVATE_KEY`. `.github/workflows/shepherd.yaml` labels new requests with the App's token
-   and writes one file per issue event there, only when a team member or the App caused it.
-2. Copy `shepherd-round.service`, `.path` and `.timer` to `~/.config/systemd/user/` and replace
-   `@CHECKOUT@` (this checkout), `@STATE_DIR@` (the expanded state directory), `@ROUND_AGENT@`
-   (`execution.round_agent`, space separated) and `@PROMPT@` (`templates/automation-prompt.md` without
-   its comment line, on one line). Changing `round_agent` or the prompt means repeating this.
-3. `systemctl --user daemon-reload`, then enable and start `shepherd-round.path` and
-   `shepherd-round.timer` only when the user asks. The timer replaces any other scheduled task.
-4. The shepherd App needs the organization's Members read permission (team membership) and the
-   repository's Issues write permission (label, progress comments); the round's `gh` must act as it.
-   Record in `readiness.md` that a non-member's issue gets no label, and a non-member's label or edit
-   starts no round.
 
 If the scheduler cannot be configured from here, hand over the prompt, configuration path, readiness
 results and remaining settings, and say the task is not saved.

@@ -27,8 +27,7 @@ shepherd/
 ├── FOR_AGENTS.md                  intent and routing
 ├── templates/
 │   ├── automation-prompt.md       scheduler prompt
-│   ├── configuration.example.yaml
-│   └── shepherd-round.{service,path,timer}  systemd units: round on issue events or schedule
+│   └── configuration.example.yaml
 └── skills/
     ├── setup-shepherd/SKILL.md       setup and configuration changes
     └── shepherd/
@@ -36,7 +35,6 @@ shepherd/
         ├── references/state.md    ledger, helper CLI, crash recovery
         └── scripts/
             ├── state.py           round wrapper, takeover and atomic snapshots
-            ├── request_board.py   issue requests: approval, parsing, progress comment
             └── freshness.py       which main changes make evidence stale
 ```
 
