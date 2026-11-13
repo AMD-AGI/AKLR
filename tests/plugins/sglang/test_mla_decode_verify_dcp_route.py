@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""The Kimi-K3 DCP target-verify route on stand-ins of sglang 0.5.22's aiter backend: on aiter's
-cp schedule, one op call whose per-row lengths make each query row read its rank's shard up to
-its own global position; on the gluon schedule, sglang's own path."""
+"""The DCP target-verify route on stand-ins of sglang 0.5.22's aiter backend: in place of aiter's
+cp round-robin kernel, one op call whose per-row lengths make each query row read its rank's shard
+up to its own global position."""
 
 import sys
 from types import ModuleType, SimpleNamespace
@@ -12,7 +12,7 @@ import pytest
 import torch
 
 from aklr.core.runtime.dispatch import FallbackReason
-from aklr.plugins.sglang.models.kimi_k3 import api
+from aklr.plugins.sglang.layers.mla_decode import api
 
 SIZE, HEADS, Q_LEN = 8, 96, 5
 # global lengths, window included: 3 shorter than the ranks, one a rank's shard ends inside the window
@@ -35,14 +35,12 @@ class Op:
         return torch.zeros(rows, 1, HEADS, 512), torch.zeros(rows, 1, HEADS)
 
 
-def backend(cprr=True, logit_cap=0.0):
+def backend(logit_cap=0.0, table_fill=0):
     rows = len(LENGTHS) * Q_LEN
     indptr = torch.tensor((0, *LENGTHS), dtype=torch.int32).cumsum(0, dtype=torch.int32)
     metadata = SimpleNamespace(
-        use_asm_cprr_verify=cprr,
         max_q_len=Q_LEN,
-        verify_token_table=torch.zeros(rows, 640, dtype=torch.int32),
-        local_kv_lens=torch.zeros(rows, dtype=torch.int32),
+        verify_token_table=torch.full((rows, 640), table_fill, dtype=torch.int32),
         global_kv_indptr=indptr,
     )
     pool = torch.zeros(4097, 1, 576, dtype=torch.uint8)
@@ -89,7 +87,7 @@ def test_each_row_reads_its_shard_up_to_its_global_position(rank, op, dcp_rank):
     0 .. L - Q_LEN + i on rank p % SIZE, counted here one by one."""
     rank.attn_dcp_rank = dcp_rank
     attn, layer, q = backend()
-    out, lse = api._forward_verify_dcp(attn, q, None, layer, None)
+    out, lse = api._forward_verify_asm_cprr(attn, q, layer, None, q.shape[0])
     assert out.shape == (q.shape[0], HEADS, 512) and lse.shape == (q.shape[0], HEADS)
     (call,) = op.calls
     expected = [
@@ -107,8 +105,8 @@ def test_each_row_reads_its_shard_up_to_its_global_position(rank, op, dcp_rank):
 def test_the_lengths_are_computed_once_a_forward(rank, op):
     """Every layer of a forward reads one tensor of lengths."""
     attn, layer, q = backend()
-    api._forward_verify_dcp(attn, q, None, layer, None)
-    api._forward_verify_dcp(attn, q, None, layer, None)
+    api._forward_verify_asm_cprr(attn, q, layer, None, q.shape[0])
+    api._forward_verify_asm_cprr(attn, q, layer, None, q.shape[0])
     first, second = op.calls
     assert first["cache_seqlens"] is second["cache_seqlens"]
 
@@ -117,18 +115,17 @@ def test_a_graph_capture_recomputes_the_warm_up_lengths(rank, op, monkeypatch):
     """sglang warms up on the capture's metadata: the capture must record its own lengths, not
     read the warm-up's tensor, which no replay would update."""
     attn, layer, q = backend()
-    api._forward_verify_dcp(attn, q, None, layer, None)
+    api._forward_verify_asm_cprr(attn, q, layer, None, q.shape[0])
     monkeypatch.setattr(torch.cuda, "is_current_stream_capturing", lambda: True)
-    api._forward_verify_dcp(attn, q, None, layer, None)
-    api._forward_verify_dcp(attn, q, None, layer, None)
+    api._forward_verify_asm_cprr(attn, q, layer, None, q.shape[0])
+    api._forward_verify_asm_cprr(attn, q, layer, None, q.shape[0])
     warm_up, captured, next_layer = (call["cache_seqlens"] for call in op.calls)
     assert captured is not warm_up and next_layer is captured
 
 
-@pytest.mark.parametrize("case", [{"cprr": False}, {"logit_cap": 30.0}], ids=["gluon_schedule", "logit_cap"])
-def test_other_schedules_stay_on_sglang(rank, op, case):
-    attn, layer, q = backend(**case)
-    assert api._forward_verify_dcp(attn, q, None, layer, None) is FallbackReason.OUT_OF_CONTRACT
+def test_a_logit_cap_stays_on_sglang(rank, op):
+    attn, layer, q = backend(logit_cap=30.0)
+    assert api._forward_verify_asm_cprr(attn, q, layer, None, q.shape[0]) is FallbackReason.OUT_OF_CONTRACT
     assert op.asked == 0 and not op.calls
 
 
@@ -136,6 +133,25 @@ def test_an_unserved_point_stays_on_sglang(rank, op):
     """A point the op would not serve: sglang's own path, before any length is computed."""
     op.ask = FallbackReason.NO_WORKLOAD
     attn, layer, q = backend()
-    assert api._forward_verify_dcp(attn, q, None, layer, None) is FallbackReason.NO_WORKLOAD
+    assert api._forward_verify_asm_cprr(attn, q, layer, None, q.shape[0]) is FallbackReason.NO_WORKLOAD
     assert op.asked == 1 and not op.calls
     assert not hasattr(attn.forward_metadata, "_aklr_causal_shard_lens")
+
+
+def test_rows_that_see_no_token_of_the_rank(rank, op):
+    """A row that sees none of this rank's tokens: the lse sglang gives an empty shard, and its first table
+    entry, which the kernel reads even at length 0 and sglang leaves unwritten for an empty shard, points
+    at the pool's padding slot."""
+    rank.attn_dcp_rank = SIZE - 1
+    garbage = 2**31 - 1
+    attn, layer, q = backend(table_fill=garbage)
+    _, lse = api._forward_verify_asm_cprr(attn, q, layer, None, q.shape[0])
+    (call,) = op.calls
+    empty = call["cache_seqlens"] == 0
+    # the shortest request: rows 0 .. 3 see positions 3 .. 6, none on the last rank; row 4 sees position 7
+    assert empty.tolist()[:Q_LEN] == [True] * (Q_LEN - 1) + [False]
+    assert not empty[Q_LEN:].any()
+    table = attn.forward_metadata.verify_token_table
+    assert (table[empty, 0] == 0).all() and (table[~empty, 0] == garbage).all()
+    assert (table[:, 1:] == garbage).all()
+    assert (lse[empty] == -1e30).all() and (lse[~empty] == 0).all()

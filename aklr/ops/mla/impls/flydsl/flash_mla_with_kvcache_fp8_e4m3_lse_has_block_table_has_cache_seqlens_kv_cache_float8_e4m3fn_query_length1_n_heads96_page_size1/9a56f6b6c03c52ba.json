@@ -551,6 +551,9 @@
         "hardware": "MI355X"
       }
     ],
+    "requires": {
+      "flydsl": ">=0.3.2"
+    },
     "author": "kyle-256",
     "entry_point": "kernel.py::run",
     "sources": [
