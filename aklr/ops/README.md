@@ -306,7 +306,9 @@ values are only the sizes bench runs. `scalars` holds every present scalar input
 captured or authored value inside its declared range; it is omitted when the schema has none. `speedup` (over `<contract>_baseline`) and
 `accuracy` are written by CI on every workload or none (a `failed` one may lack `speedup`; it is never dispatched),
 with one complete `kernel.targets` item; so is `microseconds`, the kernel's median time per call in the rounds against
-the baseline (graph timer, 3 significant digits), absent where no baseline was timed.
+the baseline (graph timer, 3 significant digits), absent where no baseline was timed. CI rewrites a file
+only when a workload's accuracy changes, a speedup or time comes or goes, or a speedup moves by more than 2%, so
+`microseconds` can trail a re-bench that slows or speeds the kernel and the baseline alike.
 
 No workload carries a uuid. A workload is located by its file and its `axes` (`m=1` in reports). Every tensor is
 seeded from `workload_hash(name, workload)` (its axes and scalars), 16 hex digits of a sha256: the same Point with
