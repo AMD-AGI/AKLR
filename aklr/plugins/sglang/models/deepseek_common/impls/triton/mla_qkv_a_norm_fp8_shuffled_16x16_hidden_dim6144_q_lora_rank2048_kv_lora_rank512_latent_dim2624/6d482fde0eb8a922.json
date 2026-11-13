@@ -1,0 +1,481 @@
+{
+  "schema_version": 5,
+  "name": "mla_qkv_a_norm_fp8_shuffled_16x16_hidden_dim6144_q_lora_rank2048_kv_lora_rank512_latent_dim2624",
+  "contract_id": "mla_qkv_a_norm_fp8@1.0",
+  "description": "sglang's qkv_a projection and latent RMSNorms of an MLA attention with a compressed query and a block-fp8 checkpoint, on one rank, and q_b_proj's input quantization: each token's hidden state, quantized per 128-wide group to fp8 at max(amax, 1e-10) / 448, times w_qkv_a at its scale per 128 x 128 block, the qkv latent; its first q_lora_rank columns, q's latent, and its next kv_lora_rank columns, the KV latent, each times rsqrt(mean(x**2) + eps) of its own columns and its norm weight; its last columns, the RoPE key, as projected. q's normalized latent, rounded to bf16, also quantized per 128-wide group to fp8 at max(amax, 1e-10) / 448, its scales group by group.",
+  "op_type": "deepseek_common",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call."
+    },
+    "hidden_dim": {
+      "type": "const",
+      "value": 6144,
+      "description": "The hidden size: the projection's reduction."
+    },
+    "q_lora_rank": {
+      "type": "const",
+      "value": 2048,
+      "description": "q's latent: the qkv latent's first part."
+    },
+    "kv_lora_rank": {
+      "type": "const",
+      "value": 512,
+      "description": "The KV latent: the qkv latent's next part."
+    },
+    "latent_dim": {
+      "type": "const",
+      "value": 2624,
+      "description": "A qkv latent row: q's latent, the KV latent, then the RoPE key."
+    },
+    "rope_dim": {
+      "type": "const",
+      "value": 64,
+      "description": "The RoPE key: the qkv latent's last part."
+    },
+    "hidden_groups": {
+      "type": "const",
+      "value": 48,
+      "description": "128-wide groups of the hidden size."
+    },
+    "latent_blocks": {
+      "type": "const",
+      "value": 21,
+      "description": "128-row blocks of w_qkv_a."
+    },
+    "q_groups": {
+      "type": "const",
+      "value": 16,
+      "description": "128-wide groups of q's latent."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "hidden_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's hidden state, the attention's input."
+    },
+    "w_qkv_a": {
+      "shape": [
+        "latent_dim",
+        "hidden_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 6144
+      },
+      "description": "fused_qkv_a_proj_with_mqa's weight: row c gives the qkv latent's column c."
+    },
+    "w_qkv_a_scale": {
+      "shape": [
+        "latent_blocks",
+        "hidden_groups"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "w_qkv_a's dequant scale per 128 x 128 block (its weight_scale_inv)."
+    },
+    "q_norm_weight": {
+      "shape": [
+        "q_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": "0.58"
+      },
+      "description": "q_a_layernorm's weight, one per column of q's latent."
+    },
+    "kv_norm_weight": {
+      "shape": [
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": "0.58"
+      },
+      "description": "kv_a_layernorm's weight, one per column of the KV latent."
+    },
+    "eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to each mean square: both norms' variance_epsilon."
+    }
+  },
+  "outputs": {
+    "q_latent": {
+      "shape": [
+        "n_tokens",
+        "q_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's q latent, normalized: the indexer's input."
+    },
+    "q_fp8": {
+      "shape": [
+        "n_tokens",
+        "q_lora_rank"
+      ],
+      "dtype": "float8_e4m3fn",
+      "description": "q_latent's fp8 codes, per 128-wide group: q_b_proj's input."
+    },
+    "q_scale": {
+      "shape": [
+        "q_groups",
+        "n_tokens"
+      ],
+      "dtype": "float32",
+      "description": "q_fp8's scale per group, group-major (row g holds group g of every token): transposed, the column-major scale aiter's preshuffled GEMM reads."
+    },
+    "kv_latent": {
+      "shape": [
+        "n_tokens",
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's KV latent, normalized: its KV cache row's latent part."
+    },
+    "k_rope": {
+      "shape": [
+        "n_tokens",
+        "rope_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each token's RoPE key as projected, before RoPE."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 3
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 5
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 6
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 7
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 9
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 10
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 11
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 12
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 13
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 14
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 15
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 20
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 24
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 28
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 32
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 36
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 40
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 44
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 48
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 52
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 56
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 60
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 68
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 72
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 76
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 80
+      },
+      "scalars": {
+        "eps": 9.999999747378752e-06
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "shuffled_16x16": {
+        "layouts": {
+          "w_qkv_a": {
+            "kind": "preshuffle",
+            "tile": [16, 16]
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "w_qkv_a.is_shuffled",
+            "expected_value": true
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "_decode.py",
+        "content": "# Created by OpenAI\n\"\"\"Shared pieces of the decode projections: fp8 quantization of a 128-wide group, the\npreshuffled weight's offsets, partial stores, and the 4- and 8/16-row split-K producers.\"\"\"\n\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n@gluon.jit\ndef _axes3(D0: gl.constexpr, D1: gl.constexpr, D2: gl.constexpr, LAYOUT: gl.constexpr):\n    d0 = gl.arange(0, D0, gl.SliceLayout(1, gl.SliceLayout(2, LAYOUT)))\n    d1 = gl.arange(0, D1, gl.SliceLayout(0, gl.SliceLayout(2, LAYOUT)))\n    d2 = gl.arange(0, D2, gl.SliceLayout(0, gl.SliceLayout(1, LAYOUT)))\n    return (d0, d1, d2)\n\n\n@gluon.jit\ndef _quantize_block(x, DTYPE: gl.constexpr):\n    axis: gl.constexpr = len(x.type.shape) - 1\n    scale = gl.maximum(gl.max(gl.abs(x), axis), 1e-10) * (1.0 / 448.0)\n    return ((x * gl.expand_dims(gl.div_rn(1.0, scale), axis)).to(DTYPE), scale)\n\n\n@gluon.jit\ndef _packed_offset(k, n, K: gl.constexpr, group=0):\n    return n // 16 * K * 16 + group * 2048 + k // 16 * 256 + n % 16 * 16 + k % 16\n\n\n@gluon.jit\ndef _store_partial(value, P, tile, split, M: gl.constexpr, PITCH: gl.constexpr, BN: gl.constexpr, BUFFER: gl.constexpr=True, CACHE: gl.constexpr=None):\n    layout: gl.constexpr = value.type.layout\n    row = gl.arange(0, M, gl.SliceLayout(1, layout))\n    col = gl.arange(0, BN, gl.SliceLayout(0, layout))\n    if BUFFER:\n        gl.amd.cdna4.buffer_store(value.to(P.dtype.element_ty), P + split * M * PITCH + tile * BN, row[:, None] * PITCH + col[None, :], cache=CACHE)\n    else:\n        gl.store(P + split * M * PITCH + row[:, None] * PITCH + tile * BN + col[None, :], value, cache_modifier=CACHE)\n\n\n@gluon.jit\ndef _diagonal_two(dot, M: gl.constexpr, BN: gl.constexpr, WAVES: gl.constexpr):\n    blocks = dot.reshape((WAVES, 2, M, 2, BN)).permute((0, 1, 2, 4, 3))\n    a, b = gl.split(blocks.reshape((WAVES, 2, M, BN, 2)))\n    group = gl.arange(0, 2, gl.SliceLayout(0, gl.SliceLayout(2, gl.SliceLayout(3, a.type.layout))))\n    return gl.where(group[None, :, None, None] == 0, a, b)\n\n\n@gluon.jit\ndef _project_two(X, W, WS, P, M: gl.constexpr, PITCH: gl.constexpr, K: gl.constexpr, SX: gl.constexpr, BN: gl.constexpr, PACK: gl.constexpr, WAVES: gl.constexpr, AV: gl.constexpr, FN: gl.constexpr, LIVE_M=0, MASKED: gl.constexpr=False):\n    gl.static_assert(M == 4 and PACK == 2 and (WAVES == 8) and (BN == 32) and (FN == 16))\n    BM: gl.constexpr = M * PACK\n    al: gl.constexpr = gl.BlockedLayout([1, 1, AV], [1, BM, 64 // BM], [WAVES, 1, 1], [2, 1, 0])\n    ml: gl.constexpr = gl.amd.AMDMFMALayout(4, [16, 16, 32], True, [WAVES, 1, 1])\n    bl: gl.constexpr = gl.BlockedLayout([1, 16, 1], [1, 4, 16], [WAVES, 1, 1], [2, 1, 0])\n    rl: gl.constexpr = gl.BlockedLayout([1, 1, 1], [1, 2, 32], [1, WAVES // 2, 2], [2, 1, 0])\n    ga, ra, ka = _axes3(WAVES, BM, 128, al)\n    gb, kb, nb = _axes3(WAVES, 128, PACK * FN, bl)\n    gc = gl.arange(0, WAVES, gl.SliceLayout(1, gl.SliceLayout(2, ml)))\n    rc = gl.arange(0, BM, gl.SliceLayout(0, gl.SliceLayout(2, ml)))\n    tile, split = (gl.program_id(0).to(gl.uint32), gl.program_id(1).to(gl.uint32))\n    first = split * WAVES * PACK\n    ag = ga[:, None, None] * PACK + ra[None, :, None] // M\n    xo = ra[None, :, None] % M * SX + ag * 128 + ka[None, None, :]\n    if MASKED:\n        x = gl.amd.cdna4.buffer_load(X + first * 128, xo, (ra[None, :, None] % M < LIVE_M) & (xo >= 0), 0.0).to(gl.float32)\n    else:\n        x = gl.amd.cdna4.buffer_load(X + first * 128, xo).to(gl.float32)\n    a, sa = _quantize_block(x, W.dtype.element_ty)\n    a = gl.convert_layout(a, gl.DotOperandLayout(0, ml, 16))\n    sa = gl.convert_layout(sa, gl.SliceLayout(2, ml))\n    sw = gl.amd.cdna4.buffer_load(WS + tile * BN // 128 * (K // 128) + first, gc[:, None] * PACK + rc[None, :] // M)\n    factor = sa * sw\n    shared = gl.allocate_shared_memory(gl.float32, (WAVES, M, BN), gl.SwizzledSharedLayout(4, 2, 4, [2, 1, 0]))\n    for frag in gl.static_range(BN // FN):\n        bk = (gb[:, None, None] * PACK + nb[None, None, :] // FN) * 128 + kb[None, :, None]\n        wo = _packed_offset(bk, nb[None, None, :] % FN, K)\n        b = gl.convert_layout(gl.amd.cdna4.buffer_load(W + (tile * BN + frag * FN) * K + first * 2048, wo), gl.DotOperandLayout(1, ml, 16))\n        dot = gl.amd.cdna4.mfma(a, b, gl.full((WAVES, BM, PACK * FN), 0, gl.float32, ml))\n        dot = _diagonal_two(dot, M, FN, WAVES).reshape((WAVES, BM, FN))\n        factors = gl.convert_layout(factor, gl.SliceLayout(2, dot.type.layout))\n        value = gl.sum((dot * factors[:, :, None]).reshape((WAVES, PACK, M, FN)), 1)\n        shared.slice(frag * FN, FN, 2).store(value)\n    value = gl.sum(shared.load(rl), 0)\n    _store_partial(value, P, tile, split, M, PITCH, BN, CACHE='.wt')\n\n\n@gluon.jit\ndef _project_stream_exchange(X, W, WS, P, M: gl.constexpr, PITCH: gl.constexpr, K: gl.constexpr, SX: gl.constexpr, BN: gl.constexpr, PACK: gl.constexpr, WAVES: gl.constexpr, AV: gl.constexpr, FN: gl.constexpr, BF16_EXCHANGE: gl.constexpr=False, LIVE_M=0, MASKED: gl.constexpr=False):\n    gl.static_assert(PACK == 1 and (M == 8 or M == 16))\n    gl.static_assert(FN % 16 == 0 and BN % FN == 0 and (BN <= 128))\n    al: gl.constexpr = gl.BlockedLayout([1, 1, AV], [1, M, 64 // M], [WAVES, 1, 1], [2, 1, 0])\n    ml: gl.constexpr = gl.amd.AMDMFMALayout(4, [16, 16, 32], True, [WAVES, 1, 1])\n    if M == 8:\n        bl: gl.constexpr = gl.DotOperandLayout(1, ml, 16)\n        rl: gl.constexpr = gl.BlockedLayout([1, 1, 1], [1, 2, 32], [1, WAVES // 2, 2], [2, 1, 0])\n    else:\n        bl: gl.constexpr = gl.BlockedLayout([1, 16, 1], [1, 4, 16], [WAVES, 1, 1], [2, 1, 0])\n        rl: gl.constexpr = gl.BlockedLayout([1, 1, 2], [1, 4, 16], [1, WAVES // 2, 2], [2, 1, 0])\n    ga, ra, ka = _axes3(WAVES, M, 128, al)\n    gb, kb, nb = _axes3(WAVES, 128, FN, bl)\n    gc = gl.arange(0, WAVES, gl.SliceLayout(1, gl.SliceLayout(2, ml)))\n    tile, split = (gl.program_id(0), gl.program_id(1))\n    if M == 16:\n        tile, split = (tile.to(gl.uint32), split.to(gl.uint32))\n    first = split * WAVES\n    sw = gl.amd.cdna4.buffer_load(WS + tile * BN // 128 * (K // 128) + first, gc)[:, None]\n    if M == 16:\n        xo = ra[None, :, None] * SX + ga[:, None, None] * 128 + ka[None, None, :]\n        if MASKED:\n            x = gl.amd.cdna4.buffer_load(X + first * 128, xo, (ra[None, :, None] < LIVE_M) & (xo >= 0), 0.0).to(gl.float32)\n        else:\n            x = gl.amd.cdna4.buffer_load(X + first * 128, xo).to(gl.float32)\n    else:\n        xo = ra[None, :, None] * SX + (first + ga[:, None, None]) * 128 + ka[None, None, :]\n        if MASKED:\n            x = gl.amd.cdna4.buffer_load(X, xo, (ra[None, :, None] < LIVE_M) & (xo >= 0), 0.0).to(gl.float32)\n        else:\n            x = gl.amd.cdna4.buffer_load(X, xo).to(gl.float32)\n    a, sa = _quantize_block(x, W.dtype.element_ty)\n    a = gl.convert_layout(a, gl.DotOperandLayout(0, ml, 16))\n    sa = gl.convert_layout(sa, gl.SliceLayout(2, ml))\n    factor = sa * sw\n    exchange_dtype: gl.constexpr = gl.bfloat16 if BF16_EXCHANGE else gl.float32\n    shared = gl.allocate_shared_memory(exchange_dtype, (WAVES, M, BN), gl.SwizzledSharedLayout(8 if BF16_EXCHANGE else 4, 1, 8, [2, 1, 0]))\n    for frag in gl.static_range(BN // FN):\n        if M == 16:\n            bk = gb[:, None, None] * 128 + kb[None, :, None]\n            bn = nb[None, None, :]\n            wo = bn // 16 * K * 16 + bk // 32 * 512 + bk // 16 % 2 * 256 + bn % 16 * 16 + bk % 16\n        else:\n            wo = _packed_offset(kb[None, :, None], nb[None, None, :], K, gb[:, None, None])\n        b = gl.convert_layout(gl.amd.cdna4.buffer_load(W + (tile * BN + frag * FN) * K + first * 2048, wo), gl.DotOperandLayout(1, ml, 16))\n        dot = gl.amd.cdna4.mfma(a, b, gl.full((WAVES, M, FN), 0, gl.float32, ml))\n        shared.slice(frag * FN, FN, 2).store((dot * factor[:, :, None]).to(exchange_dtype))\n    value = gl.sum(shared.load(rl).to(gl.float32), 0)\n    _store_partial(value, P, tile, split, M, PITCH, BN, BUFFER=M != 8, CACHE='.wt')\n"
+      },
+      {
+        "path": "_m32.py",
+        "content": "# Created by OpenAI\n\"\"\"The 32- and 64-row split-K producer: partials [rows, splits, n].\"\"\"\n\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\nN_TILE, SPLITS = (64, 6)\nTUNING = {32: dict(CHAINS=4, PREFETCH=False, CYCLIC=False, BUFFER_SCALES=True, ROTATE=True, FOLD_VEC=4, FOLD_ROW_LANES=4, FOLD_ORDER=(2, 0, 1), INDEX_2D=True, waves_per_eu=2), 64: dict(CHAINS=2, PREFETCH=True, CYCLIC=True, BUFFER_SCALES=False, ROTATE=False, FOLD_VEC=8, FOLD_ROW_LANES=8, FOLD_ORDER=(0, 2, 1), INDEX_2D=False, waves_per_eu=4)}\n\n\n@gluon.jit\ndef _indices(g: gl.constexpr, rows: gl.constexpr, cols: gl.constexpr, layout: gl.constexpr):\n    gi = gl.arange(0, g, gl.SliceLayout(1, gl.SliceLayout(2, layout)))\n    ri = gl.arange(0, rows, gl.SliceLayout(0, gl.SliceLayout(2, layout)))\n    ci = gl.arange(0, cols, gl.SliceLayout(0, gl.SliceLayout(1, layout)))\n    return (gi[:, None, None], ri[None, :, None], ci[None, None, :])\n\n\n@gluon.jit\ndef _load_record(X, W, WS, offsets, start, BUFFER_SCALES: gl.constexpr, PREFETCH: gl.constexpr, MASKED: gl.constexpr=False):\n    ao, wo, gs, live = offsets\n    if MASKED:\n        x = gl.amd.cdna4.buffer_load(X + start * 128, ao, live, 0.0)\n    else:\n        x = gl.amd.cdna4.buffer_load(X + start * 128, ao)\n    w = gl.amd.cdna4.buffer_load(W + start * 2048, wo)\n    sw = gl.amd.cdna4.buffer_load(WS + start, gs) if BUFFER_SCALES else gl.load(WS + start + gs)\n    return (x if PREFETCH else x.to(gl.float32), w, sw)\n\n\n@gluon.jit\ndef _apply_record(record, zeros):\n    x, w, sw = record\n    ml: gl.constexpr = zeros.type.layout\n    ad: gl.constexpr = gl.DotOperandLayout(0, ml, 16)\n    x = x.to(gl.float32)\n    scale = gl.maximum(gl.max(gl.abs(x), 2), 1e-10) * (1.0 / 448.0)\n    a = gl.convert_layout((x * gl.div_rn(1.0, scale)[:, :, None]).to(w.dtype), ad)\n    sa = gl.convert_layout(scale, gl.SliceLayout(2, ml))\n    return gl.amd.cdna4.mfma(a, w, zeros) * (sa * sw[:, None])[:, :, None]\n\n\n@gluon.jit\ndef _project(X, W, WS, P, M: gl.constexpr, N: gl.constexpr, K: gl.constexpr, SX: gl.constexpr, BN: gl.constexpr, SPLIT: gl.constexpr, CHAINS: gl.constexpr, PREFETCH: gl.constexpr, CYCLIC: gl.constexpr, BUFFER_SCALES: gl.constexpr, FOLD_VEC: gl.constexpr, FOLD_ROW_LANES: gl.constexpr, FOLD_ORDER: gl.constexpr, INDEX_2D: gl.constexpr, ROTATE: gl.constexpr, LIVE_M=0, MASKED: gl.constexpr=False):\n    gl.static_assert(M == 32 or M == 64)\n    gl.static_assert(BN == 64 and N % BN == 0)\n    gl.static_assert(K % (128 * CHAINS * SPLIT) == 0)\n    if INDEX_2D:\n        si, ni = (gl.program_id(0).to(gl.uint32), gl.program_id(1).to(gl.uint32))\n        gl.assume(si < SPLIT)\n        gl.assume(ni < N // BN)\n    else:\n        linear = gl.program_id(0)\n        si, ni = (linear % SPLIT, linear // SPLIT)\n        if M == 32:\n            ni %= N // BN\n    if ROTATE:\n        si = (si + ni) % SPLIT\n    row_waves: gl.constexpr = gl.num_warps() // CHAINS\n    ml: gl.constexpr = gl.amd.AMDMFMALayout(4, [16, 16, 32], True, [CHAINS, row_waves, 1])\n    bd: gl.constexpr = gl.DotOperandLayout(1, ml, 16)\n    al: gl.constexpr = gl.BlockedLayout([1, 1, 16], [1, 16, 4], [CHAINS, row_waves, 1], [2, 1, 0])\n    ga, ra, ka = _indices(CHAINS, M, 128, al)\n    gb, kb, nb = _indices(CHAINS, 128, BN, bd)\n    gs = gl.arange(0, CHAINS, gl.SliceLayout(1, gl.SliceLayout(2, ml)))\n    ao = ra * SX + ka + ga * 128\n    wo = nb // 16 * K * 16 + kb // 32 * 512\n    wo += kb // 16 % 2 * 256 + nb % 16 * 16 + kb % 16 + gb * 2048\n    W += ni * BN * K\n    WS += ni * BN // 128 * (K // 128)\n    offsets = (ao, wo, gs, (ra + 0 * ka + 0 * ga) < LIVE_M)\n    ITERS: gl.constexpr = K // (128 * CHAINS * SPLIT)\n    first = si * CHAINS if CYCLIC else si * CHAINS * ITERS\n    step: gl.constexpr = CHAINS * SPLIT if CYCLIC else CHAINS\n    zeros = gl.zeros((CHAINS, M, BN), gl.float32, ml)\n    acc = zeros\n    if PREFETCH:\n        record = _load_record(X, W, WS, offsets, first, BUFFER_SCALES, PREFETCH, MASKED)\n    for it in gl.static_range(ITERS):\n        if it + PREFETCH < ITERS:\n            upcoming = _load_record(X, W, WS, offsets, first + (it + PREFETCH) * step, BUFFER_SCALES, PREFETCH, MASKED)\n        if not PREFETCH:\n            record = upcoming\n        acc += _apply_record(record, zeros)\n        if PREFETCH and it + 1 < ITERS:\n            record = upcoming\n    fold: gl.constexpr = gl.BlockedLayout([CHAINS, 1, FOLD_VEC], [1, FOLD_ROW_LANES, 64 // FOLD_ROW_LANES], [1, gl.num_warps(), 1], FOLD_ORDER)\n    merged = gl.sum(gl.convert_layout(acc, fold), 0)\n    cl: gl.constexpr = merged.type.layout\n    row = gl.arange(0, M, gl.SliceLayout(1, cl))\n    col = ni * BN + gl.arange(0, BN, gl.SliceLayout(0, cl))\n    gl.amd.cdna4.buffer_store(merged.to(P.dtype.element_ty), P + si * N, row[:, None] * (SPLIT * N) + col[None, :], cache='.wt')\n"
+      },
+      {
+        "path": "_small.py",
+        "content": "# Created by OpenAI\n\"\"\"The 1- and 2-row split-K producer (one scaled MFMA over eight 128-wide groups).\"\"\"\n\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\nfrom ._decode import _packed_offset, _quantize_block, _store_partial\n\n\n@gluon.jit\ndef _diagonal_eight(dot, M: gl.constexpr, BN: gl.constexpr):\n    blocks = dot.reshape((8, M, 8, BN)).permute((0, 1, 3, 2))\n    even, odd = gl.split(blocks.reshape((8, M, BN, 4, 2)))\n    ae, cg = gl.split(even.reshape((8, M, BN, 2, 2)))\n    bf, dh = gl.split(odd.reshape((8, M, BN, 2, 2)))\n    a, e = gl.split(ae)\n    c, g = gl.split(cg)\n    b, f = gl.split(bf)\n    d, h = gl.split(dh)\n    layout: gl.constexpr = a.type.layout\n    group = gl.arange(0, 8, gl.SliceLayout(1, gl.SliceLayout(2, layout)))[:, None, None]\n    if M == 2:\n        bit0, bit1, bit2 = (group & 1 != 0, group & 2 != 0, group & 4 != 0)\n        low = gl.where(bit1, gl.where(bit0, d, c), gl.where(bit0, b, a))\n        high = gl.where(bit1, gl.where(bit0, h, g), gl.where(bit0, f, e))\n        selected = gl.where(bit2, high, low)\n    else:\n        choices = (a, b, c, d, e, f, g)\n        selected = h\n        for index in gl.static_range(6, -1, -1):\n            selected = gl.where(group == index, choices[index], selected)\n    return selected\n\n\n@gluon.jit\ndef _project_native(X, W, WS, P, M: gl.constexpr, PITCH: gl.constexpr, K: gl.constexpr, SX: gl.constexpr, BN: gl.constexpr, PACK: gl.constexpr, WAVES: gl.constexpr, AV: gl.constexpr):\n    gl.static_assert(WAVES == 1 and PACK == 8 and (M <= 2))\n    BM: gl.constexpr = M * PACK\n    al: gl.constexpr = gl.BlockedLayout([1, AV], [BM, 64 // BM], [1, 1], [1, 0])\n    bl: gl.constexpr = gl.BlockedLayout([32, 1], [4, 16], [1, 1], [1, 0])\n    ml: gl.constexpr = gl.amd.AMDMFMALayout(4, [16, 16, 128], False, [1, 1])\n    ra = gl.arange(0, BM, gl.SliceLayout(1, al))\n    ka = gl.arange(0, 128, gl.SliceLayout(0, al))\n    kb = gl.arange(0, 128, gl.SliceLayout(1, bl))\n    nb = gl.arange(0, PACK * BN, gl.SliceLayout(0, bl))\n    rc = gl.arange(0, BM, gl.SliceLayout(1, ml))\n    tile, split = (gl.program_id(0), gl.program_id(1))\n    first = split * PACK\n    xo = ra[:, None] % M * SX + ra[:, None] // M * 128 + ka[None, :]\n    wo = _packed_offset(nb[None, :] // BN * 128 + kb[:, None], nb[None, :] % BN, K)\n    x = gl.amd.cdna4.buffer_load(X + first * 128, xo).to(gl.float32)\n    a, sa = _quantize_block(x, W.dtype.element_ty)\n    b = gl.amd.cdna4.buffer_load(W + tile * BN * K + first * 2048, wo)\n    if M == 1:\n        sw = gl.amd.cdna4.buffer_load(WS + tile * BN // 128 * (K // 128) + first, rc // M)\n    else:\n        sw = gl.load(WS + tile * BN // 128 * (K // 128) + first + rc // M)\n    dot = gl.amd.cdna4.mfma_scaled(gl.convert_layout(a, gl.DotOperandLayout(0, ml, 32)).to(gl.uint8, bitcast=True), None, 'e4m3', gl.convert_layout(b, gl.DotOperandLayout(1, ml, 32)).to(gl.uint8, bitcast=True), None, 'e4m3', gl.full((BM, PACK * BN), 0, gl.float32, ml))\n    dot = _diagonal_eight(dot, M, BN)\n    dl: gl.constexpr = dot.type.layout\n    sa = gl.convert_layout(sa.reshape((PACK, M)), gl.SliceLayout(2, dl))\n    sw = gl.convert_layout(sw.reshape((PACK, M)), gl.SliceLayout(2, dl))\n    value = gl.sum(dot * sa[:, :, None] * sw[:, :, None], 0)\n    _store_partial(value, P, tile, split, M, PITCH, BN, CACHE='.wt' if M == 2 else None)\n"
+      },
+      {
+        "path": "_wide.py",
+        "content": "# Created by OpenAI\n\"\"\"Any row count: the rows quantized once into a packed fp8 panel, then an LDS-pipelined\nsplit-K projection over 64-row tiles.\"\"\"\n\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n@gluon.jit\ndef _tile_ids(M: gl.constexpr, N: gl.constexpr, BM: gl.constexpr, SPLITS: gl.constexpr, STRIPES: gl.constexpr):\n    total: gl.constexpr = M // BM * (N // 64) * SPLITS\n    pid = gl.program_id(0).to(gl.uint32)\n    pid = pid % STRIPES * (total // STRIPES) + gl.minimum(pid % STRIPES, total % STRIPES) + pid // STRIPES\n    return (pid // (N // 64) % (M // BM), pid % (N // 64), pid // (M // BM * (N // 64)))\n\n\n@gluon.jit\ndef _enqueue(amem, bmem, abase, wbase, ao, bo, GROUP: gl.constexpr, STAGES: gl.constexpr, PANEL: gl.constexpr):\n    slot: gl.constexpr = GROUP % STAGES\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(amem.index(slot), abase + GROUP * (16 * PANEL), ao)\n    gl.amd.cdna4.async_copy.buffer_load_to_shared(bmem.index(slot), wbase + GROUP * (16 * PANEL), bo)\n    gl.amd.cdna4.async_copy.commit_group()\n\n\n@gluon.jit\ndef _read_panel(amem, bmem, abase, wbase, ao, bo, INDEX: gl.constexpr, PANELS: gl.constexpr, STAGES: gl.constexpr, MMA: gl.constexpr, PANEL: gl.constexpr):\n    gl.amd.cdna4.async_copy.wait_group(min(STAGES - 1, PANELS - INDEX - 1))\n    a = gl.amd.cdna4.async_copy.load_shared_relaxed(amem.index(INDEX % STAGES), gl.DotOperandLayout(0, MMA, 16))\n    b = gl.amd.cdna4.async_copy.load_shared_relaxed(bmem.index(INDEX % STAGES).permute((1, 0)), gl.DotOperandLayout(1, MMA, 16))\n    gl.barrier()\n    if INDEX + STAGES < PANELS:\n        _enqueue(amem, bmem, abase, wbase, ao, bo, INDEX + STAGES, STAGES, PANEL)\n    return (a, b)\n\n\n@gluon.jit\ndef _store_split(acc, P, pm, pn, part, M: gl.constexpr, N: gl.constexpr, BM: gl.constexpr, VEC: gl.constexpr):\n    layout: gl.constexpr = gl.BlockedLayout([1, VEC], [VEC, 64 // VEC], [4, 1], [1, 0])\n    value = gl.convert_layout(acc.to(P.dtype.element_ty), layout)\n    r = pm * BM + gl.arange(0, BM, gl.SliceLayout(1, layout))\n    c = pn * 64 + gl.arange(0, 64, gl.SliceLayout(0, layout))\n    gl.amd.cdna4.buffer_store(value, P + part * M * N, r[:, None] * N + c[None, :], cache='.wt')\n\n\n@triton.constexpr_function\ndef _packed_shared(outer, panel):\n    return gl.SharedLinearLayout([[0, bit] for bit in (1, 2, 4, 8)] + [[1 << bit, 0] for bit in range(outer.bit_length() - 1)] + [[0, 1 << bit] for bit in range(4, panel.bit_length() - 1)])\n\n\n@gluon.jit\ndef _panel_offset(row, k, K: gl.constexpr):\n    return row // 16 * K * 16 + k // 16 * 256 + row % 16 * 16 + k % 16\n\n\n@gluon.jit\ndef _packed_tile(OUTER: gl.constexpr, K: gl.constexpr, PANEL: gl.constexpr):\n    layout: gl.constexpr = gl.BlockedLayout([1, 16], [64, 1], [1, 4], [1, 0])\n    row = gl.arange(0, OUTER, gl.SliceLayout(1, layout))\n    k = gl.arange(0, PANEL, gl.SliceLayout(0, layout))\n    return _panel_offset(row[:, None], k[None, :], K)\n\n\n@gluon.jit\ndef _quantize_wide(X, A, S, M: gl.constexpr, K: gl.constexpr, SX: gl.constexpr, LIVE_M: gl.constexpr):\n    layout: gl.constexpr = gl.BlockedLayout([1, 16], [4, 16], [1, 1], [1, 0])\n    pid = gl.program_id(0).to(gl.uint32)\n    tile, group = (pid % (M // 4), pid // (M // 4))\n    rows = tile * 4 + gl.arange(0, 4, gl.SliceLayout(1, layout))\n    k = group * 256 + gl.arange(0, 256, gl.SliceLayout(0, layout))\n    x = gl.amd.cdna4.buffer_load(X, rows[:, None] * SX + k[None, :], rows[:, None] < LIVE_M, 0.0).to(gl.float32)\n    x = gl.reshape(x, (4, 2, 128))\n    scale = gl.maximum(gl.max(gl.abs(x), 2), 1e-10) * (1.0 / 448.0)\n    value = (x * gl.div_rn(1.0, scale)[:, :, None]).to(A.dtype.element_ty)\n    value = gl.reshape(value, (4, 256))\n    gl.amd.cdna4.buffer_store(value, A, _panel_offset(rows[:, None], k[None, :], K), cache='.wt')\n    sr = gl.convert_layout(rows, gl.SliceLayout(1, scale.type.layout))\n    sg = group * 2 + gl.arange(0, 2, gl.SliceLayout(0, scale.type.layout))\n    gl.amd.cdna4.buffer_store(scale, S, sg[None, :] * M + sr[:, None], cache='.wt')\n\n\n@gluon.jit\ndef _project_lds(A, AS, W, WS, P, M: gl.constexpr, N: gl.constexpr, K: gl.constexpr, BM: gl.constexpr, SPLITS: gl.constexpr, STAGES: gl.constexpr=2, STRIPES: gl.constexpr=8, WM: gl.constexpr=2):\n    gl.static_assert(K % (128 * SPLITS) == 0 and M % BM == 0 and (N % 64 == 0))\n    gl.static_assert(BM % 16 == 0)\n    GROUPS: gl.constexpr = K // 128 // SPLITS\n    gl.static_assert((STAGES >= 1) & (STAGES <= GROUPS))\n    pm, pn, part = _tile_ids(M, N, BM, SPLITS, STRIPES)\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(version=4, instr_shape=[32, 32, 64], transposed=True, warps_per_cta=[WM, 4 // WM])\n    rows = pm * BM + gl.arange(0, BM, gl.SliceLayout(1, mma))\n    start = part * GROUPS\n    abase, wbase = (A + pm * BM * K + start * 2048, W + pn * 64 * K + start * 2048)\n    sa, sw = ((), ())\n    for i in gl.static_range(GROUPS):\n        sa += (gl.amd.cdna4.buffer_load(AS, (start + i) * M + rows),)\n        sw += (gl.load(WS + pn // 2 * (K // 128) + start + i),)\n    ao, bo = (_packed_tile(BM, K, 128), _packed_tile(64, K, 128))\n    amem = gl.allocate_shared_memory(A.dtype.element_ty, (STAGES, BM, 128), _packed_shared(BM, 128))\n    bmem = gl.allocate_shared_memory(W.dtype.element_ty, (STAGES, 64, 128), _packed_shared(64, 128))\n    for i in gl.static_range(STAGES):\n        _enqueue(amem, bmem, abase, wbase, ao, bo, i, STAGES, 128)\n    zero = gl.zeros((BM, 64), gl.float32, mma)\n    acc = zero\n    for i in gl.static_range(GROUPS):\n        a, b = _read_panel(amem, bmem, abase, wbase, ao, bo, i, GROUPS, STAGES, mma, 128)\n        dot = gl.amd.cdna4.mfma_scaled(a, None, 'e4m3', b, None, 'e4m3', zero)\n        acc = gl.fma(dot, (sa[i] * sw[i])[:, None], acc)\n        acc = gl.inline_asm_elementwise('', '=v,0,~{memory}', [acc], dtype=gl.float32, is_pure=False, pack=1)\n    _store_split(acc, P, pm, pn, part, M, N, BM, 8)\n"
+      },
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"qkv_a projection, latent RMSNorms and q_b_proj's input quantization for a block-fp8 MLA\n(GLM-5.3 FP8) in decode, verify and draft on gfx950, any TP size (the projection is replicated).\n\nEach token's 6144-wide hidden state is quantized per 128-wide group to fp8 inside the producer\nand multiplied with the preshuffled fp8 fused_qkv_a_proj_with_mqa weight at its 128 x 128 block\nscales, split-K into partials. The finish kernel sums the partials in a fixed order, rounds the\n2624-wide qkv latent to bf16, normalizes q's 2048 columns and the KV latent's 512 by their own\nrms and norm weight (fp32, written in bf16), writes the RoPE key as projected, and quantizes the\nbf16 q latent per 128-wide group to fp8 with its scales group-major, the layout aiter's\npreshuffled q_b_proj GEMM reads.\n\nProducers by row count: 1-2 rows one scaled MFMA over eight groups; 3-4, 5-8 and 9-16 rows the\n4-, 8- and 16-row producers, 17-32 and 33-64 the 32- and 64-row one, the missing rows read as 0;\nmore rows a quantized fp8 panel and an LDS-pipelined projection.\n\"\"\"\n\nimport torch\nimport triton\nimport triton.language as tl\n\nfrom ._decode import _project_stream_exchange, _project_two\nfrom ._m32 import N_TILE, SPLITS, TUNING\nfrom ._m32 import _project as _project_32\nfrom ._small import _project_native\nfrom ._wide import _project_lds, _quantize_wide\n\n_Q, _KV, _ROPE, _HIDDEN = 2048, 512, 64, 6144\n\n\n@triton.jit\ndef _finish_q(base, part_stride, QG, QO, QF, QS, row, n_tokens, eps, Q: tl.constexpr, PARTS: tl.constexpr):\n    GROUPS: tl.constexpr = Q // 128\n    group = tl.arange(0, GROUPS)\n    offsets = group[:, None] * 128 + tl.arange(0, 128)[None, :]\n    acc = tl.zeros((GROUPS, 128), tl.float32)\n    for part in tl.static_range(PARTS):\n        acc += tl.load(base + part * part_stride + offsets).to(tl.float32)\n    x = acc.to(tl.bfloat16).to(tl.float32)\n    inv = tl.rsqrt(tl.sum(tl.sum(x * x, 1), 0) / Q + eps)\n    gamma = tl.load(QG + offsets).to(tl.float32)\n    y = (x * inv * gamma).to(tl.bfloat16)\n    tl.store(QO + row * Q + offsets, y)\n    y = y.to(tl.float32)\n    scale = tl.maximum(tl.max(tl.abs(y), 1), 1e-10) * (1.0 / 448.0)\n    codes = y * tl.math.div_rn(tl.full((GROUPS,), 1.0, tl.float32), scale)[:, None]\n    tl.store(QF + row * Q + offsets, codes.to(QF.dtype.element_ty))\n    tl.store(QS + group * n_tokens + row, scale)\n\n\n@triton.jit\ndef _finish_kv(base, part_stride, KG, KO, RO, row, eps, Q: tl.constexpr, KV: tl.constexpr, R: tl.constexpr, PARTS: tl.constexpr):\n    d = tl.arange(0, KV)\n    acc = tl.zeros((KV,), tl.float32)\n    for part in tl.static_range(PARTS):\n        acc += tl.load(base + part * part_stride + Q + d).to(tl.float32)\n    x = acc.to(tl.bfloat16).to(tl.float32)\n    inv = tl.rsqrt(tl.sum(x * x, 0) / KV + eps)\n    gamma = tl.load(KG + d).to(tl.float32)\n    tl.store(KO + row * KV + d, (x * inv * gamma).to(tl.bfloat16))\n    r = tl.arange(0, R)\n    rope = tl.zeros((R,), tl.float32)\n    for part in tl.static_range(PARTS):\n        rope += tl.load(base + part * part_stride + Q + KV + r).to(tl.float32)\n    tl.store(RO + row * R + r, rope.to(tl.bfloat16))\n\n\n@triton.jit\ndef _finish(\n    P,\n    row_stride,\n    part_stride,\n    QG,\n    KG,\n    QO,\n    QF,\n    QS,\n    KO,\n    RO,\n    n_tokens,\n    eps,\n    Q: tl.constexpr,\n    KV: tl.constexpr,\n    R: tl.constexpr,\n    PARTS: tl.constexpr,\n):\n    \"\"\"One row's q role (program_id(1) == 0) or KV and RoPE role: the partials summed in a\n    fixed order, rounded to bf16, then normalized (and q quantized).\"\"\"\n    row = tl.program_id(0)\n    base = P + row.to(tl.int64) * row_stride\n    if tl.program_id(1) == 0:\n        _finish_q(base, part_stride, QG, QO, QF, QS, row, n_tokens, eps, Q, PARTS)\n    else:\n        _finish_kv(base, part_stride, KG, KO, RO, row, eps, Q, KV, R, PARTS)\n\n\ndef _split_k(hidden, n, k, rows, pack, waves, scratch):\n    \"\"\"(fp32 partials [parts, rows, pitch], row stride, part stride, parts) for a split-K\n    producer whose `waves` waves take `pack` 128-wide groups each.\"\"\"\n    parts = k // (128 * pack * waves)\n    pitch = triton.cdiv(n, scratch) * scratch\n    partial = torch.empty((parts, rows, pitch), device=hidden.device, dtype=torch.float32)\n    return partial, pitch, rows * pitch, parts\n\n\ndef _project(hidden, weight, scales):\n    \"\"\"Launch the producer for this row count; returns the partials and how to read them.\"\"\"\n    m, k = hidden.shape\n    n = weight.shape[0]\n    sx = hidden.stride(0)\n    if m <= 2:\n        vec, scratch, wpe = (4, 16384, 5) if m == 1 else (32, 2048, 4)\n        partial, pitch, plane, parts = _split_k(hidden, n, k, m, 8, 1, scratch)\n        _project_native[n // 16, parts](\n            hidden, weight, scales, partial, m, pitch, k, sx, 16, 8, 1, vec,\n            num_warps=1, enable_fp_fusion=False, waves_per_eu=wpe,\n        )\n        return partial, pitch, plane, parts\n    if m <= 4:\n        partial, pitch, plane, parts = _split_k(hidden, n, k, 4, 2, 8, 4096)\n        _project_two[n // 32, parts](\n            hidden, weight, scales, partial, 4, pitch, k, sx, 32, 2, 8, 8,\n            FN=16, LIVE_M=m, MASKED=m < 4, num_warps=8, enable_fp_fusion=True, waves_per_eu=3,\n        )\n        return partial, pitch, plane, parts\n    if m <= 16:\n        rows, vec, scratch, wpe, fn = (8, 8, 16384, 8, 32) if m <= 8 else (16, 16, 2048, 4, 16)\n        partial, pitch, plane, parts = _split_k(hidden, n, k, rows, 1, 8, scratch)\n        _project_stream_exchange[n // 64, parts](\n            hidden, weight, scales, partial, rows, pitch, k, sx, 64, 1, 8, vec, fn,\n            BF16_EXCHANGE=False, LIVE_M=m, MASKED=m < rows, num_warps=8, enable_fp_fusion=True,\n            waves_per_eu=wpe,\n        )\n        return partial, pitch, plane, parts\n    if m <= 64:\n        rows = 32 if m <= 32 else 64\n        tuning = TUNING[rows]\n        partial = torch.empty((rows, SPLITS, n), device=hidden.device, dtype=torch.float32)\n        grid = (SPLITS, n // N_TILE) if tuning[\"INDEX_2D\"] else (n // N_TILE * SPLITS,)\n        _project_32[grid](\n            hidden, weight, scales, partial, rows, n, k, sx, N_TILE, SPLITS, **tuning,\n            LIVE_M=m, MASKED=m < rows, num_warps=8, enable_fp_fusion=True,\n        )\n        return partial, SPLITS * n, n, SPLITS\n    bm, splits = 64, 6\n    rows = triton.cdiv(m, bm) * bm\n    panel = torch.empty((rows, k), device=hidden.device, dtype=weight.dtype)\n    panel_scales = torch.empty((k // 128, rows), device=hidden.device, dtype=torch.float32)\n    partial = torch.empty((splits, rows, n), device=hidden.device, dtype=torch.float32)\n    _quantize_wide[rows // 4 * (k // 256),](hidden, panel, panel_scales, rows, k, sx, m, num_warps=1)\n    _project_lds[rows // bm * (n // 64) * splits,](\n        panel, panel_scales, weight, scales, partial, rows, n, k, bm, splits, num_warps=4, waves_per_eu=0\n    )\n    return partial, n, rows * n, splits\n\n\ndef run(\n    *,\n    hidden_states,\n    w_qkv_a,\n    w_qkv_a_scale,\n    q_norm_weight,\n    kv_norm_weight,\n    eps,\n    q_latent,\n    q_fp8,\n    q_scale,\n    kv_latent,\n    k_rope,\n):\n    \"\"\"Writes q_latent, q_fp8, q_scale, kv_latent and k_rope from sglang's tensors.\"\"\"\n    m, k = hidden_states.shape\n    q, kv, rope = q_latent.shape[1], kv_latent.shape[1], k_rope.shape[1]\n    assert (k, q, kv, rope) == (_HIDDEN, _Q, _KV, _ROPE) and w_qkv_a.shape == (q + kv + rope, k)\n    assert hidden_states.stride(1) == 1 and w_qkv_a_scale.is_contiguous()\n    partial, row_stride, part_stride, parts = _project(hidden_states, w_qkv_a, w_qkv_a_scale)\n    _finish[m, 2](\n        partial,\n        row_stride,\n        part_stride,\n        q_norm_weight,\n        kv_norm_weight,\n        q_latent,\n        q_fp8,\n        q_scale,\n        kv_latent,\n        k_rope,\n        m,\n        eps,\n        q,\n        kv,\n        rope,\n        parts,\n        num_warps=4,\n        enable_fp_fusion=False,\n    )\n"
+      }
+    ]
+  }
+}
