@@ -28,7 +28,7 @@ from aklr.core.contract.fastkey import (
     FastKeyFnGenerator,
 )
 from aklr.core.contract.op import OpContract
-from aklr.core.contract.spec import WorkloadSpec, axes_text
+from aklr.core.contract.spec import TOOLCHAINS, WorkloadSpec, axes_text
 from aklr.core.platform.env import ENV_DISABLE
 from aklr.core.platform.toolchain import toolchain_version
 from aklr.core.runtime.builder import Runnable
@@ -45,8 +45,9 @@ _LOGGER = logging.getLogger(__name__)
 def kernel_failure_hint(contract_id: str, language: str) -> str:
     """What a failing kernel's message adds: its toolchain here, and the switch that
     turns its op off."""
-    version = toolchain_version(language) or "not installed"
-    return f"{language} {version} here; {ENV_DISABLE}={contract_id} turns this op off"
+    toolchain = TOOLCHAINS[language]
+    version = toolchain_version(toolchain) or "not installed"
+    return f"{toolchain} {version} here; {ENV_DISABLE}={contract_id} turns this op off"
 
 
 class FallbackReason(str, Enum):

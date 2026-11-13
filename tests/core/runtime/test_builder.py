@@ -14,7 +14,13 @@ from aklr.core.runtime.builder import (
     Runnable,
 )
 from aklr.core.runtime.builder.builder import _taking_call_keys
-from tests.op_case import GEMM_KERNEL_SOURCE, HIP_GEMM_KERNEL_SOURCE, OpCase
+from tests.op_case import (
+    GEMM_KERNEL_SOURCE,
+    HIP_GEMM_KERNEL_SOURCE,
+    HSACO_GEMM_KERNEL_SOURCE,
+    OpCase,
+    hsaco_gemm_sources,
+)
 
 _IMPORT_ERROR_KERNEL_SOURCE = "raise ImportError('no kernel')\n"
 _UNBOUND = r"kernel\.py::run does not take the call keys"
@@ -128,3 +134,28 @@ class TestHipBuilder:
         with pytest.raises(BuildError, match="undefined symbol") as error:
             builder_registry.build(OpCase.of("gemm@1.0").schema(source, language="hip"))
         assert not isinstance(error.value.__cause__, OSError)
+
+
+@pytest.mark.gpu
+class TestHsacoBuilder:
+    """``build`` of an hsaco schema imports its entry, which launches its code object."""
+
+    def test_launches_the_code_object(self, builder_registry: BuilderRegistry) -> None:
+        """The hsaco gemm writes ``a @ b.T`` into ``out``."""
+        case = OpCase.of("gemm@1.0")
+        schema = case.schema(HSACO_GEMM_KERNEL_SOURCE, language="hsaco", other_sources=hsaco_gemm_sources())
+        runnable = builder_registry.build(schema)
+        assert runnable.metadata.build_type == "hsaco"
+        call = case.call(case.inputs(), device="cuda")
+        call["out"] = torch.empty(
+            case.contract.storage_shape_of("out", case.point),
+            dtype=call["out_dtype"],
+            device="cuda",
+        )
+        runnable(**call)
+        torch.testing.assert_close(
+            call["out"].float(),
+            call["a"].float() @ call["b"].float().mT,
+            rtol=1e-2,
+            atol=1e-2,
+        )
