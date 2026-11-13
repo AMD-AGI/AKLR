@@ -8,6 +8,7 @@ import fcntl
 import hashlib
 import json
 import os
+import pwd
 import secrets
 import signal
 import stat
@@ -193,6 +194,10 @@ def check_private_path(root):
 
 def execute(args):
     # Config keeps `$USER`-style values so it never records a username or home path.
+    # Schedulers such as cron or a Cursor automation may start without USER, and with a system PATH that
+    # misses ~/.local/bin, where the agent CLIs install; the round agent inherits both.
+    os.environ.setdefault("USER", pwd.getpwuid(os.getuid()).pw_name)
+    os.environ["PATH"] = os.pathsep.join([os.environ.get("PATH", os.defpath), str(Path.home() / ".local/bin")])
     root = Path(os.path.expandvars(args.root)).expanduser()
     if not root.is_absolute():
         raise StateError("--root must be an absolute persistent directory")

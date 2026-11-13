@@ -2,6 +2,7 @@
 
 import json
 import os
+import pwd
 import signal
 import subprocess
 import sys
@@ -105,6 +106,20 @@ def test_root_expands_environment_variables(tmp_path, monkeypatch):
     monkeypatch.setenv("SHEPHERD_TEST_DIR", str(tmp_path))
     success("$SHEPHERD_TEST_DIR/state", "init")
     assert (tmp_path / "state" / "state.json").is_file()
+
+
+def test_round_runs_under_a_scheduler_without_user_or_local_path(tmp_path, config):
+    home = tmp_path / "home"
+    (home / ".local/bin").mkdir(parents=True)
+    agent = home / ".local/bin/agent-cli"
+    agent.write_text(f'#!/bin/sh\necho "$USER" > {tmp_path}/user\n')
+    agent.chmod(0o755)
+    env = {"HOME": str(home), "PATH": "/usr/bin:/bin"}
+    success(f"{tmp_path}/$USER/state", "init", env=env)
+    name = pwd.getpwuid(os.getuid()).pw_name
+    assert (tmp_path / name / "state" / "state.json").is_file()
+    success(f"{tmp_path}/$USER/state", "round", "--config", str(config), "--", "agent-cli", env=env)
+    assert (tmp_path / "user").read_text().strip() == name
 
 
 def test_init_creates_missing_private_parents(tmp_path):

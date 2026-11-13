@@ -4,7 +4,7 @@ Run the helper on the same host with the same `--root` every time. It expands `$
 Python 3.10+ on Linux, and refuses a root that another user owns or could swap.
 
 ```bash
-STATE="python -I harness/automations/shepherd/skills/shepherd/scripts/state.py --root <execution.state_dir>"
+STATE="python3 -I harness/automations/shepherd/skills/shepherd/scripts/state.py --root <execution.state_dir>"
 $STATE init                                                   # setup only
 $STATE round --config .shepherd/configuration.yaml -- <agent CLI> <prompt>   # the scheduler's command
 $STATE show
