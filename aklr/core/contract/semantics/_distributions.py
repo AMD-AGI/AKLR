@@ -343,7 +343,8 @@ class PermutationDistribution(Distribution):
 
         n = shape[-1]
         draws = torch.rand((math.prod(shape[:-1]), n), generator=generator)
-        permutations = draws.argsort(dim=-1).reshape(shape)
+        # float32 draws tie; an unstable sort may order ties differently in another task
+        permutations = draws.argsort(dim=-1, stable=True).reshape(shape)
         return (permutations.double() / n).to(torch_dtypes(dtype)[0])
 
     # every decoded value is finite; rows need not be permutations
