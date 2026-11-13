@@ -4,8 +4,9 @@
 """Routes on the aiter functions sglang calls, for every model that reaches them.
 
 sglang looks ``fused_moe`` up in aiter at each call, so hooking aiter's name reaches every call. The
-parameters are those of the aiter in the sglang release's image; the arguments go by name to
-:mod:`aklr.plugins.aiter`."""
+route takes the parameters of CI's aiter, followed by the ones the aiter in sglang's release image
+adds: sglang passes ``output`` when that aiter has it, for MoRI EP's combine buffer. The arguments
+go by name to :mod:`aklr.plugins.aiter`."""
 
 from __future__ import annotations
 
@@ -49,6 +50,10 @@ def _fused_moe(
     shared_w2_scale=None,
     shared_expert_id=-1,
     stage2_scatter=None,
+    output=None,
+    quant_type_a=None,
+    quant_dtype_a=None,
+    quant_dtype_a2=None,
 ):
     return aklr_aiter.fused_moe(
         hidden_states,
@@ -79,9 +84,8 @@ def _fused_moe(
         shared_w2=shared_w2,
         shared_expert_id=shared_expert_id,
         stage2_scatter=stage2_scatter,
-        # the parameters sglang 0.5.22's aiter has: no caller's buffer, no activation quant types
-        output=None,
-        quant_type_a=None,
-        quant_dtype_a=None,
-        quant_dtype_a2=None,
+        output=output,
+        quant_type_a=quant_type_a,
+        quant_dtype_a=quant_dtype_a,
+        quant_dtype_a2=quant_dtype_a2,
     )
