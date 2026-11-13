@@ -1,0 +1,475 @@
+{
+  "schema_version": 5,
+  "name": "fp8_paged_mqa_logits_page_size64_n_heads64",
+  "contract_id": "fp8_paged_mqa_logits@1.0",
+  "description": "DeepSeek-V4 indexer logits: for each request and each cached token t, sum over heads h of weights[h] * relu(q[h] . k_t) * scale_t, over a paged pool of fp8 keys with an fp32 scale per token.",
+  "op_type": "mla",
+  "axes": {
+    "batch": {
+      "type": "var",
+      "description": "Requests, one decode query each."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 64,
+      "description": "Indexer heads."
+    },
+    "n_pages": {
+      "type": "var",
+      "description": "Pages of the key pool."
+    },
+    "max_blocks": {
+      "type": "var",
+      "description": "Pages per request in the block table."
+    },
+    "max_seq_len": {
+      "type": "var",
+      "description": "Logits per request: every token of its block table row."
+    }
+  },
+  "attrs": {
+    "page_size": 64,
+    "preshuffled": true
+  },
+  "inputs": {
+    "q": {
+      "shape": [
+        "batch",
+        1,
+        "n_heads",
+        128
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The decode query of each request."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_pages",
+        64,
+        1,
+        132
+      ],
+      "dtype": "uint8",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": 63,
+        "distinct": false
+      },
+      "description": "The key pool, a page a row: page_size x 128 fp8 keys in 16 x 16 tiles, then page_size fp32 scales."
+    },
+    "weights": {
+      "shape": [
+        "batch",
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Per-head weight of each request."
+    },
+    "context_lens": {
+      "shape": [
+        "batch"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": "max_seq_len",
+        "hi": "max_seq_len",
+        "distinct": false
+      },
+      "description": "Cached tokens of each request."
+    },
+    "block_tables": {
+      "shape": [
+        "batch",
+        "max_blocks"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_pages - 1",
+        "distinct": false
+      },
+      "description": "The pages of each request, in context order."
+    }
+  },
+  "outputs": {
+    "logits": {
+      "shape": [
+        "batch",
+        "max_seq_len"
+      ],
+      "dtype": "float32",
+      "description": "The logits of each request's cached tokens."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 6621,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 15005,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 1,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 15005,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 2,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 6621,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 15005,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 4,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 6621,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 8,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 6621,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 15005,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 16,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 12825,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 15005,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 39182,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 45663,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 64,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 64,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 128,
+        "n_pages": 51442,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    },
+    {
+      "axes": {
+        "batch": 128,
+        "n_pages": 52289,
+        "max_blocks": 4097,
+        "max_seq_len": 262208
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.2"
+    },
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"FlyDSL fp8 paged MQA logits: logits[b, t] = sum_h weights[b, h] * relu(q[b, h] . k_t) * scale_t.\n\nKeys come in aiter's preshuffled pages, so one lane's two buffer loads are one token's MFMA fp8 operand.\n\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import llvm as _llvm\nfrom flydsl._mlir.dialects import rocdl as _rocdl\nfrom flydsl.compiler import from_c_void_p\nfrom flydsl.expr import range_constexpr, rocdl\nfrom flydsl.expr.typing import T\n\n_PAGE = 64\n_HEADS = 64\n_DIM = 128\n_WAVE = 64\n_WAVES = 4\n_THREADS = _WAVES * _WAVE\n_TILE = 16\n_KEY_BYTES = _PAGE * _DIM\n_PAGE_BYTES = _KEY_BYTES + _PAGE * 4\n_TILE_BYTES = _TILE * _DIM\n_BLOCK_BYTES = _TILE * _TILE\n_LANE_DIMS = _DIM * _TILE // _WAVE\n_E8M0_ONE = 127\n_XCDS = 8\n_TARGET_CHUNK = 32\n_SPLIT_CAP = 512\n_FILL = 2048\n_SPLITS = {1: 512, 2: 256, 4: 128, 16: 256, 32: 128, 64: 128, 128: 128, 256: 256}\n_BAND_BATCHES = (64, 128, 256)\n_BANDS = 128\n_BAND_MIN_BLOCKS = 1024\n# Buffer-op cache policy bit `nt`: streams read or written once go no-allocate.\n_CPOL_NT = 2\n\n\ndef _swap_halves(value, bit):\n    \"\"\"gfx950 permlane swap of an f32's 16- or 32-lane halves; returns both halves of the pair.\"\"\"\n    i32 = ir.IntegerType.get_signless(32)\n    op = _rocdl.permlane16_swap if bit == 4 else _rocdl.permlane32_swap\n    bits = value.bitcast(fx.Int32).ir_value()\n    pair = op(ir.Type.parse(\"!llvm.struct<(i32, i32)>\"), bits, bits, False, True)\n    return [fx.Int32(_llvm.ExtractValueOp(i32, pair, [i]).result).bitcast(fx.Float32) for i in range(2)]\n\n\ndef _uniform(value):\n    \"\"\"Wave-uniform value moved to an SGPR, so descriptors built from it need no waterfall loop.\"\"\"\n    return fx.Int32(rocdl.readfirstlane(T.i32, value))\n\n\ndef _rsrc(ptr, offset, nbytes):\n    \"\"\"Buffer descriptor from a 64-bit byte offset, so 32-bit offsets reach any row of a large tensor.\"\"\"\n    return rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(ptr + offset, num_records_bytes=nbytes))\n\n\ndef _lane_group_sum(value):\n    \"\"\"Sum a value over the four 16-lane groups of a wave.\"\"\"\n    total = value\n    for bit in (4, 5):\n        lo, hi = _swap_halves(total, bit)\n        total = lo + hi\n    return total\n\n\ndef _lds_atomic_add(array, index, value):\n    \"\"\"``atomicAdd`` on one LDS word; returns the value it held before.\"\"\"\n    return fx.Int32(\n        _llvm.AtomicRMWOp(\n            _llvm.AtomicBinOp.add,\n            fx.as_ir_value((array.ptr + index).llvm_ptr),\n            fx.as_ir_value(value),\n            _llvm.AtomicOrdering.monotonic,\n        ).result\n    )\n\n\ndef _cut(sp, n, split):\n    \"\"\"Start of slice ``sp`` of ``split`` over ``n``, in 64 bits as the product passes int32.\"\"\"\n    return fx.Int32(fx.Int64(sp) * fx.Int64(n) // split)\n\n\ndef _key_pool(kv, kv_bytes):\n    \"\"\"One descriptor over the pool while 32-bit offsets reach it, else per-page descriptors.\"\"\"\n    if kv_bytes < 1 << 31:\n        return kv_bytes, rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(kv, num_records_bytes=kv_bytes))\n    return None, kv\n\n\ndef _query_frags(q_rs, w_rs, b, r, g, zero_i32):\n    \"\"\"Load the request's query MFMA operands and head weights, one per 16-head group.\"\"\"\n    qfrag = []\n    wfrag = []\n    for hg in range_constexpr(_HEADS // _TILE):\n        base = (b * _HEADS + hg * _TILE + r) * _DIM + g * _LANE_DIMS\n        lo = fx.Vector(rocdl.raw_ptr_buffer_load(T.i32x4, q_rs, fx.Int32(base), zero_i32))\n        hi = fx.Vector(rocdl.raw_ptr_buffer_load(T.i32x4, q_rs, fx.Int32(base + _LANE_DIMS // 2), zero_i32))\n        qfrag.append(lo.shuffle(hi, [0, 1, 2, 3, 4, 5, 6, 7]))\n        woff = (b * _HEADS + hg * _TILE + g * 4) * 4\n        wfrag.append(fx.Vector(rocdl.raw_ptr_buffer_load(T.f32x4, w_rs, fx.Int32(woff), zero_i32)))\n    return qfrag, wfrag\n\n\ndef _issue_page(ctx, pid, live=None, cpol=None):\n    \"\"\"Issue one page's scale load and key burst; ``live`` false aims all of them out of bounds.\"\"\"\n    (kv_bytes, kv), lane, r, g, zero_i32 = ctx[0], ctx[4], ctx[5], ctx[6], ctx[10]\n    if kv_bytes is None:\n        nbytes = _PAGE_BYTES\n        if live is not None:\n            nbytes = _uniform(live.select(fx.Int32(_PAGE_BYTES), zero_i32))\n        kv_rs, pbase = _rsrc(kv, fx.Int64(_uniform(pid)) * _PAGE_BYTES, nbytes), 0\n    else:\n        kv_rs, pbase = kv, pid * _PAGE_BYTES\n        if live is not None:\n            pbase = live.select(pbase, fx.Int32(kv_bytes))\n    # Scales are non-negative, so they factor out of relu and both sums: one multiply after the reduction.\n    page_scale = fx.Float32(\n        rocdl.raw_ptr_buffer_load(T.f32, kv_rs, pbase + (_KEY_BYTES + lane * 4), zero_i32, aux=cpol)\n    )\n    kfrags = []\n    for j in range_constexpr(_PAGE // _TILE):\n        koff = pbase + (j * _TILE_BYTES + g * (_LANE_DIMS * _TILE) + r * _TILE)\n        klo = fx.Vector(rocdl.raw_ptr_buffer_load(T.i32x4, kv_rs, koff, zero_i32, aux=cpol))\n        khi = fx.Vector(rocdl.raw_ptr_buffer_load(T.i32x4, kv_rs, koff + _BLOCK_BYTES, zero_i32, aux=cpol))\n        kfrags.append(klo.shuffle(khi, [0, 1, 2, 3, 4, 5, 6, 7]))\n    return kfrags, page_scale\n\n\ndef _page_compute(ctx, kfrags, page_scale, pos):\n    \"\"\"Consume one page's loaded fragments: MFMAs, head and lane reductions, store.\"\"\"\n    (\n        _, out, qfrag, wfrag, lane, _, g, context,\n        max_seq, b, zero_i32, unity, zero4,\n    ) = ctx  # fmt: skip\n    tiles = []\n    for j in range_constexpr(_PAGE // _TILE):\n        # A barrier per tile caps the live MFMA results at one tile's, keeping eight waves per SIMD.\n        rocdl.sched_barrier(0)\n        total = None\n        for hg in range_constexpr(_HEADS // _TILE):\n            acc = fx.Vector(\n                rocdl.mfma_scale_f32_16x16x128_f8f6f4(\n                    T.f32x4,\n                    [qfrag[hg], kfrags[j], zero4, 0, 0, 0, unity, 0, unity],\n                )\n            )\n            relu = fx.Vector(acc.maximumf(zero4))\n            total = relu * wfrag[hg] if total is None else fx.fma(relu, wfrag[hg], total)\n        tiles.append(_lane_group_sum(total.reduce(\"add\")))\n    value = tiles[0]\n    for j in range_constexpr(1, _PAGE // _TILE):\n        value = (g == j).select(tiles[j], value)\n    value = value * page_scale\n    token = pos * _PAGE + lane\n    value = (token < context).select(value, fx.Float32(float(\"-inf\")))\n    out_rs = _rsrc(out, (fx.Int64(b) * max_seq + fx.Int64(_uniform(pos)) * _PAGE) * 4, _PAGE * 4)\n    rocdl.raw_ptr_buffer_store(\n        fx.as_ir_value(value),\n        out_rs,\n        fx.as_ir_value(lane * 4),\n        fx.as_ir_value(zero_i32),\n        aux=ir.IntegerAttr.get(ir.IntegerType.get_signless(32), _CPOL_NT),\n    )\n\n\ndef _page_body(ctx, pid, pos):\n    \"\"\"Emit one page's work: scales, key burst, MFMAs, reduction, store.\"\"\"\n    kfrags, page_scale = _issue_page(ctx, pid)\n    _page_compute(ctx, kfrags, page_scale, pos)\n\n\n@functools.cache\ndef _build(batch, max_blocks, max_seq, n_pages, page_size, preshuffled):\n    \"\"\"Compile the kernel for one set of axes; cached by them.\"\"\"\n    if int(page_size) != _PAGE or not preshuffled:\n        raise ValueError(\"kernel needs page_size 64 and preshuffled keys\")\n    batch = int(batch)\n    max_blocks = int(max_blocks)\n    max_seq = int(max_seq)\n    n_pages = int(n_pages)\n    # Band mode: workgroup `sp` owns the positions whose page id falls in band `sp` of the pool, so co-resident\n    # workgroups share a key window the cache can hold. A packed `pid | pos << pid_bits` word must fit in an i32.\n    pid_bits = max(1, (n_pages - 1).bit_length())\n    band = (\n        batch in _BAND_BATCHES\n        and max_blocks >= _BAND_MIN_BLOCKS\n        and pid_bits + max(1, (max_blocks - 1).bit_length()) <= 31\n        and n_pages * _BANDS < (1 << 31)\n    )\n    if band:\n        split = _BANDS\n    else:\n        split = _SPLITS.get(\n            batch,\n            min(max(-(-max_blocks // _TARGET_CHUNK), -(-_FILL // batch)), max(1, _FILL // batch), _SPLIT_CAP),\n        )\n        split = max(1, min(split, -(-max_blocks // _WAVES)))\n    # Batches up to 4 hold a workgroup's whole page-id list in one register, so a slice must fit in a wave.\n    small = (not band) and batch <= 4\n    if small:\n        split = max(split, -(-max_blocks // _WAVE))\n    hist_pad = max(_THREADS, -(-split // _THREADS) * _THREADS)\n    hist_chunks = hist_pad // _THREADS\n    row_bytes = max_blocks * 4\n    ord_bytes = batch * row_bytes\n    off_bytes = batch * (split + 1) * 4\n    kv_bytes = n_pages * _PAGE_BYTES\n    q_bytes = batch * _HEADS * _DIM\n    w_bytes = batch * _HEADS * 4\n    bt_bytes = batch * row_bytes\n    cl_bytes = batch * 4\n\n    @flyc.kernel(known_block_size=[_THREADS, 1, 1])\n    def logits_kernel(\n        Q: fx.Pointer,\n        KV: fx.Pointer,\n        WT: fx.Pointer,\n        CL: fx.Pointer,\n        BT: fx.Pointer,\n        OUT: fx.Pointer,\n    ):\n        tid = fx.thread_idx.x\n        lane = tid % _WAVE\n        wave = _uniform(tid // _WAVE)\n        r = lane % _TILE\n        g = lane // _TILE\n        b = fx.block_idx.y\n        sp = fx.block_idx.x\n\n        q_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(Q, num_records_bytes=q_bytes))\n        keys = _key_pool(KV, kv_bytes)\n        w_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(WT, num_records_bytes=w_bytes))\n        cl_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(CL, num_records_bytes=cl_bytes))\n        bt_rs = _rsrc(BT, fx.Int64(b) * row_bytes, row_bytes)\n\n        zero_i32 = fx.Int32(0)\n        unity = fx.Int32(_E8M0_ONE)\n        zero4 = fx.Vector.filled(4, 0.0, fx.Float32)\n\n        context = _uniform(rocdl.raw_ptr_buffer_load(T.i32, cl_rs, fx.Int32(b * 4), zero_i32))\n        npages = (context + (_PAGE - 1)) // _PAGE\n        start = _cut(sp, npages, split) + wave\n        stop = _cut(sp + 1, npages, split)\n        # The first page id goes ahead of the query loads; an over-read past the row loads 0 and is never used.\n        pid0 = fx.Int32(rocdl.raw_ptr_buffer_load(T.i32, bt_rs, start * 4, zero_i32))\n\n        qfrag, wfrag = _query_frags(q_rs, w_rs, b, r, g, zero_i32)\n        ctx = (\n            keys, OUT, qfrag, wfrag, lane, r, g, context,\n            max_seq, b, zero_i32, unity, zero4,\n        )  # fmt: skip\n\n        for page, state in range(start, stop, _WAVES, init=[pid0]):\n            pos = fx.Int32(page)\n            pid = fx.Int32(state[0])\n            nxt = fx.Int32(rocdl.raw_ptr_buffer_load(T.i32, bt_rs, (pos + _WAVES) * 4, zero_i32))\n            # Pin the next page id's load first, so its wait covers a page of work rather than `vmcnt(0)`.\n            rocdl.sched_barrier(0)\n            _page_body(ctx, pid, pos)\n            yield [nxt]\n\n    @flyc.kernel(known_block_size=[_THREADS, 1, 1])\n    def small_kernel(\n        Q: fx.Pointer,\n        KV: fx.Pointer,\n        WT: fx.Pointer,\n        CL: fx.Pointer,\n        BT: fx.Pointer,\n        OUT: fx.Pointer,\n    ):\n        \"\"\"Latency-oriented body: one block-table read per workgroup, next page's loads issued a page ahead.\"\"\"\n        tid = fx.thread_idx.x\n        lane = tid % _WAVE\n        wave = _uniform(tid // _WAVE)\n        r = lane % _TILE\n        g = lane // _TILE\n        b = fx.block_idx.y\n        sp = fx.block_idx.x\n\n        q_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(Q, num_records_bytes=q_bytes))\n        keys = _key_pool(KV, kv_bytes)\n        w_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(WT, num_records_bytes=w_bytes))\n        cl_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(CL, num_records_bytes=cl_bytes))\n        bt_rs = _rsrc(BT, fx.Int64(b) * row_bytes, row_bytes)\n\n        zero_i32 = fx.Int32(0)\n        unity = fx.Int32(_E8M0_ONE)\n        zero4 = fx.Vector.filled(4, 0.0, fx.Float32)\n\n        # Slices over the compile-time table width, clamped to the context, so the page ids load in parallel.\n        wg_base = _cut(sp, max_blocks, split)\n        pids = fx.Int32(rocdl.raw_ptr_buffer_load(T.i32, bt_rs, (wg_base + lane) * 4, zero_i32))\n        context = _uniform(rocdl.raw_ptr_buffer_load(T.i32, cl_rs, fx.Int32(b * 4), zero_i32))\n        npages = (context + (_PAGE - 1)) // _PAGE\n        hi = _cut(sp + 1, max_blocks, split)\n        stop = (hi < npages).select(hi, npages)\n\n        qfrag, wfrag = _query_frags(q_rs, w_rs, b, r, g, zero_i32)\n        ctx = (\n            keys, OUT, qfrag, wfrag, lane, r, g, context,\n            max_seq, b, zero_i32, unity, zero4,\n        )  # fmt: skip\n\n        pos0 = wg_base + wave\n        kf0, ps0 = _issue_page(ctx, fx.Int32(rocdl.readlane(T.i32, pids, wave)), pos0 < stop, _CPOL_NT)\n\n        for page, state in range(wg_base + wave, stop, _WAVES, init=list(kf0) + [ps0]):\n            pos = fx.Int32(page)\n            cur = [fx.Vector(fx.as_ir_value(state[j])) for j in range(4)]\n            cur_scale = fx.Float32(fx.as_ir_value(state[4]))\n            ahead = pos + _WAVES\n            nkf, nps = _issue_page(\n                ctx, fx.Int32(rocdl.readlane(T.i32, pids, ahead - wg_base)), ahead < stop, _CPOL_NT\n            )\n            # Keep the look-ahead burst above this page's compute, or the pipeline falls back to one page.\n            rocdl.sched_barrier(0)\n            _page_compute(ctx, cur, cur_scale, pos)\n            yield list(nkf) + [nps]\n\n    @flyc.kernel(known_block_size=[_THREADS, 1, 1])\n    def band_kernel(\n        Q: fx.Pointer,\n        KV: fx.Pointer,\n        WT: fx.Pointer,\n        CL: fx.Pointer,\n        BT: fx.Pointer,\n        OUT: fx.Pointer,\n        ORD: fx.Pointer,\n        OFF: fx.Pointer,\n    ):\n        tid = fx.thread_idx.x\n        lane = tid % _WAVE\n        wave = _uniform(tid // _WAVE)\n        r = lane % _TILE\n        g = lane // _TILE\n        # The block id's low bits pick the XCD: moved onto the band axis, each XCD's L2 holds fewer bands.\n        b = (fx.block_idx.x // _XCDS) * _XCDS + fx.block_idx.y % _XCDS\n        sp = (fx.block_idx.y // _XCDS) * _XCDS + fx.block_idx.x % _XCDS\n\n        q_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(Q, num_records_bytes=q_bytes))\n        keys = _key_pool(KV, kv_bytes)\n        w_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(WT, num_records_bytes=w_bytes))\n        cl_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(CL, num_records_bytes=cl_bytes))\n        ord_rs = _rsrc(ORD, fx.Int64(b) * row_bytes, row_bytes)\n        off_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(OFF, num_records_bytes=off_bytes))\n\n        zero_i32 = fx.Int32(0)\n        unity = fx.Int32(_E8M0_ONE)\n        zero4 = fx.Vector.filled(4, 0.0, fx.Float32)\n\n        context = _uniform(rocdl.raw_ptr_buffer_load(T.i32, cl_rs, fx.Int32(b * 4), zero_i32))\n        qfrag, wfrag = _query_frags(q_rs, w_rs, b, r, g, zero_i32)\n        ctx = (\n            keys, OUT, qfrag, wfrag, lane, r, g, context,\n            max_seq, b, zero_i32, unity, zero4,\n        )  # fmt: skip\n\n        obase = fx.Int32(b * (split + 1)) + sp\n        lo = _uniform(rocdl.raw_ptr_buffer_load(T.i32, off_rs, obase * 4, zero_i32))\n        hi = _uniform(rocdl.raw_ptr_buffer_load(T.i32, off_rs, (obase + 1) * 4, zero_i32))\n        begin = lo + wave\n        w0 = fx.Int32(rocdl.raw_ptr_buffer_load(T.i32, ord_rs, begin * 4, zero_i32))\n        for j, jstate in range(begin, hi, _WAVES, init=[w0]):\n            word = _uniform(jstate[0])\n            nxt = fx.Int32(rocdl.raw_ptr_buffer_load(T.i32, ord_rs, (fx.Int32(j) + _WAVES) * 4, zero_i32))\n            rocdl.sched_barrier(0)\n            _page_body(ctx, word & ((1 << pid_bits) - 1), word >> pid_bits)\n            yield [nxt]\n\n    @flyc.kernel(known_block_size=[_THREADS, 1, 1])\n    def sort_kernel(\n        CL: fx.Pointer,\n        BT: fx.Pointer,\n        ORD: fx.Pointer,\n        OFF: fx.Pointer,\n    ):\n        \"\"\"Bucket-sort one request's block table by band into packed (page id, position) words.\"\"\"\n        tid = fx.thread_idx.x\n        b = fx.block_idx.x\n        cl_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(CL, num_records_bytes=cl_bytes))\n        bt_rs = _rsrc(BT, fx.Int64(b) * row_bytes, row_bytes)\n        ord_rs = _rsrc(ORD, fx.Int64(b) * row_bytes, row_bytes)\n        off_rs = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(OFF, num_records_bytes=off_bytes))\n        zero_i32 = fx.Int32(0)\n        one_i32 = fx.Int32(1)\n\n        context = fx.Int32(rocdl.raw_ptr_buffer_load(T.i32, cl_rs, fx.Int32(b * 4), zero_i32))\n        npages = (context + (_PAGE - 1)) // _PAGE\n        hist = (\n            fx.SharedAllocator()\n            .allocate(\n                fx.Struct[\n                    \"h\" : fx.Array[fx.Int32, hist_pad],\n                    \"c\" : fx.Array[fx.Int32, hist_pad],\n                ]\n            )\n            .peek()\n        )\n        for ch in range_constexpr(hist_chunks):\n            hist.h[tid + ch * _THREADS] = zero_i32\n        fx.barrier()\n\n        for i in range(tid, npages, _THREADS):\n            pid = fx.Int32(rocdl.raw_ptr_buffer_load(T.i32, bt_rs, fx.Int32(i) * 4, zero_i32))\n            _lds_atomic_add(hist.h, (pid * split) // n_pages, one_i32)\n        fx.barrier()\n\n        for ch in range_constexpr(hist_chunks):\n            hist.c[tid + ch * _THREADS] = hist.h[tid + ch * _THREADS]\n        fx.barrier()\n        # Hillis-Steele inclusive scan; the zero padding to whole passes needs no tail guard.\n        for d in range_constexpr((hist_pad - 1).bit_length()):\n            step = 1 << d\n            vals = []\n            for ch in range_constexpr(hist_chunks):\n                i = tid + ch * _THREADS\n                back = i - step\n                prev = (back >= 0).select(hist.h[(back >= 0).select(back, zero_i32)], zero_i32)\n                vals.append(hist.h[i] + prev)\n            fx.barrier()\n            for ch in range_constexpr(hist_chunks):\n                hist.h[tid + ch * _THREADS] = vals[ch]\n            fx.barrier()\n\n        obase = fx.Int32(b * (split + 1))\n        rocdl.raw_ptr_buffer_store(\n            fx.as_ir_value(zero_i32),\n            off_rs,\n            fx.as_ir_value(obase * 4),\n            fx.as_ir_value(zero_i32),\n        )\n        for ch in range_constexpr(hist_chunks):\n            i = tid + ch * _THREADS\n            inc = hist.h[i]\n            # Padding lanes store past `num_records`, where the hardware drops it.\n            dst = (i < split).select(obase + 1 + i, fx.Int32(batch * (split + 1)))\n            rocdl.raw_ptr_buffer_store(\n                fx.as_ir_value(inc),\n                off_rs,\n                fx.as_ir_value(dst * 4),\n                fx.as_ir_value(zero_i32),\n            )\n            hist.h[i] = inc - hist.c[i]\n        fx.barrier()\n\n        for i in range(tid, npages, _THREADS):\n            ii = fx.Int32(i)\n            pid = fx.Int32(rocdl.raw_ptr_buffer_load(T.i32, bt_rs, ii * 4, zero_i32))\n            slot = _lds_atomic_add(hist.h, (pid * split) // n_pages, one_i32)\n            rocdl.raw_ptr_buffer_store(\n                fx.as_ir_value(pid + (ii << pid_bits)),\n                ord_rs,\n                fx.as_ir_value(slot * 4),\n                fx.as_ir_value(zero_i32),\n            )\n\n    if band:\n        grid = (batch, split, 1)\n        # `run` passes fresh scratch per call; these only back the compile-time warm-up launch.\n        order = torch.empty(ord_bytes, dtype=torch.uint8, device=\"cuda\")\n        offsets = torch.empty(off_bytes, dtype=torch.uint8, device=\"cuda\")\n\n        @flyc.jit\n        def launch(\n            Q: fx.Pointer,\n            KV: fx.Pointer,\n            WT: fx.Pointer,\n            CL: fx.Pointer,\n            BT: fx.Pointer,\n            OUT: fx.Pointer,\n            ORD: fx.Pointer,\n            OFF: fx.Pointer,\n            stream: fx.Stream,\n        ):\n            sort_kernel(CL, BT, ORD, OFF).launch(grid=(batch, 1, 1), block=(_THREADS, 1, 1), stream=stream)\n            band_kernel(Q, KV, WT, CL, BT, OUT, ORD, OFF).launch(\n                grid=grid, block=(_THREADS, 1, 1), stream=stream\n            )\n\n    else:\n        grid = (split, batch, 1)\n        order = None\n        offsets = None\n        body = small_kernel if small else logits_kernel\n\n        @flyc.jit\n        def launch(\n            Q: fx.Pointer,\n            KV: fx.Pointer,\n            WT: fx.Pointer,\n            CL: fx.Pointer,\n            BT: fx.Pointer,\n            OUT: fx.Pointer,\n            stream: fx.Stream,\n        ):\n            body(Q, KV, WT, CL, BT, OUT).launch(grid=grid, block=(_THREADS, 1, 1), stream=stream)\n\n    # Warm-up launch: zero contexts walk no page, but the block table may be read before that exit.\n    scratch = torch.zeros(max(q_bytes, w_bytes, cl_bytes, bt_bytes), dtype=torch.uint8, device=\"cuda\")\n    warm = from_c_void_p(fx.Int8, scratch.data_ptr(), assumed_align=16)\n    null = from_c_void_p(fx.Int8, 0, assumed_align=16)\n    args = [warm, null, warm, warm, warm, null]\n    sizes = ()\n    if band:\n        args += [\n            from_c_void_p(fx.Int8, order.data_ptr(), assumed_align=16),\n            from_c_void_p(fx.Int8, offsets.data_ptr(), assumed_align=16),\n        ]\n        sizes = (ord_bytes, off_bytes)\n    compiled = flyc.compile(launch, *args, fx.Stream(torch.cuda.current_stream()))\n    return compiled, sizes, (order, offsets, scratch)\n\n\ndef run(\n    *,\n    q,\n    kv_cache,\n    weights,\n    context_lens,\n    block_tables,\n    logits,\n    page_size,\n    preshuffled,\n):\n    \"\"\"Write each request's weighted relu logits over its paged fp8 keys.\"\"\"\n    launch, sizes, _keep = _build(\n        q.shape[0],\n        block_tables.shape[1],\n        logits.shape[1],\n        kv_cache.shape[0],\n        page_size,\n        preshuffled,\n    )\n    # Per-call scratch, so concurrent calls on different streams never share it.\n    scratch = [torch.empty(n, dtype=torch.uint8, device=q.device) for n in sizes]\n    launch(\n        q.data_ptr(),\n        kv_cache.data_ptr(),\n        weights.data_ptr(),\n        context_lens.data_ptr(),\n        block_tables.data_ptr(),\n        logits.data_ptr(),\n        *(t.data_ptr() for t in scratch),\n        torch.cuda.current_stream(q.get_device()).cuda_stream,\n    )\n\n\ndef build_fp8_paged_mqa_logits_module():\n    \"\"\"Return this schema's entry point.\"\"\"\n    return run\n"
+      }
+    ]
+  }
+}
