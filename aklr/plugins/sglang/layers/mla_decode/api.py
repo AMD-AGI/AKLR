@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from aklr.core.runtime.dispatch import FallbackReason, api
 from aklr.plugins.sglang.hook import sglang_route
-from aklr.plugins.sglang.layers.triton_backend.contract import KIMI_K3_MLA_DECODE
+from aklr.plugins.sglang.layers.mla_decode.contract import KIMI_K3_MLA_DECODE
 
 __all__ = ["kimi_k3_mla_decode"]
 

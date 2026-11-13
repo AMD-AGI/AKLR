@@ -39,7 +39,7 @@ KIMI_K3_MLA_DECODE = OpContract(
         "scores q . row * sm_scale over all 576 values, and output is the softmax-weighted sum "
         "of the rows' first 512 values"
     ),
-    op_type="triton_backend",
+    op_type="mla_decode",
     axes={
         "n_seqs": axis("Decode rows: one query each, padding rows included.", 1, 2048, is_var=True),
         "n_heads": axis("Query heads on this rank.", 1, 128),
