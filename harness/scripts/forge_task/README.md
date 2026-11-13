@@ -62,7 +62,7 @@ KernelForge's shared knowledge stores (the three `--no-` options). A round takes
 early once the directions it knows are mined out.
 
 **3. Watch and steer.** `$RUN/workspace/forge_experiments/dashboard.html` shows the score, every round, and each
-workload against AKLR's serving bar (1.03× the baseline). To leave the agents a message, which they read from
+workload against AKLR's serving bar (1.05× the baseline). To leave the agents a message, which they read from
 the next round on:
 
 ```bash
@@ -110,7 +110,9 @@ python harness/scripts/forge_task publish $RUN
 python -m aklr export check && python -m aklr validate --base origin/main <the path publish printed>
 ```
 
-`publish` writes the reviewed kernel into `aklr/ops/` as the schema's kernel. Give validate that path: with none, it
+`publish` writes the reviewed kernel into `aklr/ops/` as the schema's kernel, with `kernel.requires` pinning the
+installed toolchain of its language as the lower bound unless the schema already pins one; lower it if the kernel
+runs on an older release. Give validate that path: with none, it
 checks only the schema files a change touches, and only when it touches nothing else; on a branch that also changes
 code, it checks every schema in AKLR, which takes hours. Commit the kernel as `aklr/ops/README.md` describes and
 open a pull request. What the run taught goes into the same pull request: apply

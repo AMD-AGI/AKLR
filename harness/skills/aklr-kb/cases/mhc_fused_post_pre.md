@@ -9,14 +9,14 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1
 measured:
-  - {metric: "speedup over aiter (mhc_fused_post_pre), CI, per Point", value: "1.100–1.510; 13 of 13 Points ≥ 1.03", gpu: MI355X, workload: "mhc_fused_post_pre_has_norm_weight_hidden_size4096, n_tokens 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "5571f4589 (CI run 40613440602)", date: "2026-10-28"}
+  - {metric: "speedup over aiter (mhc_fused_post_pre), CI, per Point", value: "1.100–1.510; 13 of 13 Points ≥ 1.03", gpu: MI355X, workload: "mhc_fused_post_pre_has_norm_weight_hidden_size4096, n_tokens 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
 sources:
   - aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json
 ---
 
 # mHC fused post + pre at hidden 4096: one pass over the residual, a Gram for the norm
 
-One FlyDSL kernel for `mhc_fused_post_pre@1.0` (PR #52). The schema embeds it as `kernel.sources[0].content`
+One FlyDSL kernel for `mhc_fused_post_pre@1.0`. The schema embeds it as `kernel.sources[0].content`
 (`kernel.py`); the function names below are in that file. "T" is the Point's `n_tokens`.
 
 ## Applies when
@@ -33,13 +33,13 @@ One FlyDSL kernel for `mhc_fused_post_pre@1.0` (PR #52). The schema embeds it as
 - Yardstick: `mhc_fused_post_pre_baseline` (`aklr/ops/mhc/baseline.py`), aiter's
   `mhc_fused_post_pre` (`aiter/ops/mhc.py`): on gfx950 its fused HIP kernel below 1024 tokens, `mhc_post` then
   `mhc_pre` from 1024 on (read from the source). This file is the only one of its schema name, in any language; the
-  hidden-7168 schema of the same contract is a definition with no kernel.
+  hidden-7168 schema of the same contract has a HIP kernel for T 1–16 beside a FlyDSL definition with no kernel (S9).
 
 ## Counter-signals
 
 - **The margin is smallest at T ≤ 64**: 1.100–1.185 there, 1.225 at 128 and 1.325–1.510 from 256 *(field, E1)*.
-  All 13 Points were served in each of the five committed measurements, the lowest reading 1.042 (T = 2048, a run
-  whose FlyDSL is not recorded); in the three runs on FlyDSL 0.3.4.1 the lowest was 1.095 *(field, E2)*.
+  All 13 Points were served in each of the five committed measurements, the lowest reading 1.042 (T = 2048, the
+  first run); in the last three runs the lowest was 1.095 *(field, E2)*.
 - **Compilation inside launch code.** The builder (`_aklr_launch`, a module-level `lru_cache`) returns a `launch`
   closure that compiles a kernel pair (`_make_jit`) for every new tuple of the six scalars and keeps it in a dict.
   The scalars are compile-time constants, and the Sinkhorn loop is unrolled `sinkhorn_iters` times at trace time. A
@@ -120,13 +120,12 @@ hidden elements; at T 512 two waves share the Sinkhorn reduction through LDS bes
 
 The file is the only kernel of its schema name, so the yardstick at every Point is aiter's `mhc_fused_post_pre`.
 `speedup` is a one-sided lower bound (α = 0.05) of aiter / kernel time over 32 rounds of CUDA-graph replays with a
-1 GiB cache flush before each call (`aklr/core/validation/stages/_measure.py`); a Point is served from 1.03
+1 GiB cache flush before each call (`aklr/core/validation/stages/_measure.py`); a Point is served from 1.05
 (`AKLR_MIN_SPEEDUP`).
 
-CI installs the repository with `--no-deps`, so these runs used the FlyDSL of the CI image, 0.3.4.1, not the
-repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`). CI measured the file under its name before
-#117, `b4b4a7b28dc91a1a.json`, whose `kernel.py` differs from the committed one only in identifiers renamed from
-`sikl` to `aklr`; the rename carried the numbers over.
+The predecessor repository's CI measured these numbers on FlyDSL 0.3.2, the repository's pin, not the CI image's
+0.3.4.1 (`../pitfalls/measured_a_different_build.md`). That CI measured the file under its name before the rename; its
+`kernel.py` differs from the committed one only in identifiers renamed to `aklr`; the rename carried the numbers over.
 
 | T | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 | 512 | 1024 | 2048 | 4096 | Served |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
@@ -136,7 +135,8 @@ repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`). CI measure
 
 ## Reproduce
 
-On an MI355X, in a checkout that holds this file with these numbers (main at 0cef4f2e3):
+On an MI355X, in a checkout that holds this file (on AKLR main its workloads hold CI's later measurements, not the
+table's numbers):
 
 ```
 python -m aklr validate aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json
@@ -151,8 +151,9 @@ measurement is the one dispatch reads.
 ## Rollback
 
 Delete the schema file (in a PR): its Points go unserved, since no other file serves them.
-`AKLR_DISABLE=mhc_fused_post_pre@1.0` drops this kernel and nothing else (the hidden-7168 file is a definition). A
-Point CI measures below 1.03 stops being served without a rollback. Roll back for a wrong result CI does not catch,
+`AKLR_DISABLE=mhc_fused_post_pre@1.0` drops this kernel and the hidden-7168 schema's HIP kernel, which serves the
+same contract (S9). A
+Point CI measures below 1.05 stops being served without a rollback. Roll back for a wrong result CI does not catch,
 such as a model whose scalars differ from the captured ones and are first seen inside a graph capture, a process that
 calls the kernel on two devices or two streams, or a FlyDSL or LLVM upgrade that changes LDS residency.
 
@@ -161,8 +162,8 @@ calls the kernel on two devices or two streams, or a FlyDSL or LLVM upgrade that
 `<schema>.json#kernel.py:<line>` is a line of the `kernel.py` the schema embeds; `<schema>` is
 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter per Point 1.100–1.510, 13 of 13 ≥ 1.03; T 1 1.167, 2 1.185, 4 1.117, 8 1.144, 16 1.125, 32 1.132, 64 1.100, 128 1.225, 256 1.325, 512 1.393, 1024 1.423, 2048 1.397, 4096 1.510 (mhc_fused_post_pre_has_norm_weight_hidden_size4096, T 1–4096; 5571f4589, CI run 40613440602)
-- E2 [2026-10, gfx950, FlyDSL ?, N=5, AKLR CI; FlyDSL of the runs: not recorded, 0.3.1, then 0.3.4.1 three times] per-Point range and served count in commit order: 1.042–1.217, 1.134–1.439, 1.095–1.504, 1.134–1.451, 1.100–1.510, 13 of 13 each time; the kernel text is the same in all five (mhc_fused_post_pre_has_norm_weight_hidden_size4096, b4b4a7b28dc91a1a.json; baa858028, cc6e3b96c with CI run 39908769447, cca5b12df with CI run 40058570127, 102877ca0 with CI run 40154665266, 5571f4589 with CI run 40613440602)
+- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup over aiter per Point 1.100–1.510, 13 of 13 ≥ 1.03; T 1 1.167, 2 1.185, 4 1.117, 8 1.144, 16 1.125, 32 1.132, 64 1.100, 128 1.225, 256 1.325, 512 1.393, 1024 1.423, 2048 1.397, 4096 1.510 (mhc_fused_post_pre_has_norm_weight_hidden_size4096, T 1–4096)
+- E2 [2026-10, gfx950, FlyDSL 0.3.2, N=5, the predecessor repository's CI] per-Point range and served count in commit order: 1.042–1.217, 1.134–1.439, 1.095–1.504, 1.134–1.451, 1.100–1.510, 13 of 13 each time; the kernel text is the same in all five (mhc_fused_post_pre_has_norm_weight_hidden_size4096, under the file's name before the rename)
 - S1 aklr/ops/mhc/contract.py:227 compare `BOUNDED`; tolerance atol = rtol = 1e-2 at :39, on all four outputs at :151–169
 - S2 aklr/ops/mhc/baseline.py:79 `mhc_fused_post_pre_baseline` calls aiter's `mhc_fused_post_pre`; aiter/ops/mhc.py:560 aiter runs `mhc_post` and `mhc_pre` from 1024 tokens on gfx950
 - S3 aklr/ops/mhc/reference.py:103 the reference rounds `next_residual` to bf16 before the pre step
@@ -171,3 +172,4 @@ aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af
 - S6 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json#kernel.py:788 `_kfin_epilogue`: sum of squares from the Gram at :796–803; rms from the Gram diagonal at :637
 - S7 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json#kernel.py:589 `_sinkhorn_el` with DPP row and column sums; fixed reduction tree in `_reduce_all` at :173
 - S8 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json#kernel.py:832 `ROLE`, `WSPLIT` at :835, `R32` at :836, `SKW` at :848, generic `k_fin` body from :1123; `_KFIN_W4_KW = 1` at :377
+- S9 aklr/ops/mhc/impls/hip/mhc_fused_post_pre_has_norm_weight_hidden_size7168/be760df4df24a189.json:4 `contract_id` `mhc_fused_post_pre@1.0`, a HIP kernel at :293, Points n_tokens 1, 2, 4, 7, 8, 16; aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size7168/138d8923d8bbd221.json:315 empty `sources`; aklr/core/platform/env.py:40 `AKLR_DISABLE` lists contract ids

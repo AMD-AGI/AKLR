@@ -6,13 +6,12 @@
 import ctypes
 import math
 import multiprocessing
-import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 import torch
-
-from aklr.core.utils.testing import bench_cudagraph, graph_kernel_timing_environment, kernel_tracer
 
 
 def _assert_milliseconds(value):
@@ -20,7 +19,7 @@ def _assert_milliseconds(value):
     assert math.isfinite(value) and value > 0
 
 
-def _per_stream_state():
+def _per_stream_state(bench_cudagraph):
     initialized = set()
     x = torch.zeros(1 << 20, device="cuda")
 
@@ -36,7 +35,7 @@ def _per_stream_state():
     torch.testing.assert_close(x, torch.full_like(x, 7))
 
 
-def _forked_stream():
+def _forked_stream(bench_cudagraph):
     x = torch.zeros(1 << 20, device="cuda")
     y = torch.zeros_like(x)
     side = torch.cuda.Stream()
@@ -54,7 +53,7 @@ def _forked_stream():
     torch.testing.assert_close(y, torch.full_like(y, 5))
 
 
-def _device_copy():
+def _device_copy(bench_cudagraph):
     x = torch.randn(1 << 22, device="cuda")
     y = torch.empty_like(x)
 
@@ -66,7 +65,7 @@ def _device_copy():
     torch.testing.assert_close(y, x * 2)
 
 
-def _destroy_unused_stream():
+def _destroy_unused_stream(bench_cudagraph):
     x = torch.zeros(1024, device="cuda")
     hip_path = next(
         line.split()[-1]
@@ -85,7 +84,7 @@ def _destroy_unused_stream():
     torch.testing.assert_close(x, torch.full_like(x, 7))
 
 
-def _return_modes_and_quantiles():
+def _return_modes_and_quantiles(bench_cudagraph):
     x = torch.zeros(1024, device="cuda")
 
     def subject():
@@ -107,7 +106,7 @@ def _return_modes_and_quantiles():
         bench_cudagraph(subject, rep=1, quantiles=[1.1])
 
 
-def _capture_exception_and_recovery():
+def _capture_exception_and_recovery(bench_cudagraph):
     x = torch.zeros(1024, device="cuda")
 
     def failing_subject():
@@ -122,12 +121,10 @@ def _capture_exception_and_recovery():
 
 
 def _run_scenario(scenario):
-    os.environ.update(ROCP_TOOL_ATTACH="0", GPU_FORCE_QUEUE_PROFILING="1")
-    with graph_kernel_timing_environment():
-        torch.cuda.set_device(0)
-    scenario()
-    assert os.environ["ROCP_TOOL_ATTACH"] == "0"
-    assert os.environ["GPU_FORCE_QUEUE_PROFILING"] == "1"
+    from aklr.core.utils.testing import bench_cudagraph
+
+    torch.cuda.set_device(0)
+    scenario(bench_cudagraph)
 
 
 @pytest.mark.gpu
@@ -156,13 +153,29 @@ def test_bench_cudagraph(scenario):
         pool.apply_async(_run_scenario, (scenario,)).get(timeout=300)
 
 
+@pytest.mark.gpu
+@pytest.mark.skipif(torch.version.hip is None, reason="requires ROCm PyTorch")
+def test_bench_cudagraph_refuses_a_late_tracer():
+    """Queues made before the tracer registers cannot be intercepted, so attribution refuses them."""
+    late = (
+        "import torch\n"
+        "x = torch.zeros(1024, device='cuda')\n"
+        "from aklr.core.utils.testing import bench_cudagraph\n"
+        "bench_cudagraph(lambda: x.fill_(7), rep=1)\n"
+    )
+    result = subprocess.run([sys.executable, "-c", late], capture_output=True, text=True, timeout=300)
+    assert result.returncode != 0
+    assert "before the process's first kernel" in result.stderr
+
+
 def _group_rank(rank, rendezvous, fault=False):
     import datetime
 
     import torch.distributed as dist
 
-    with graph_kernel_timing_environment():
-        torch.cuda.set_device(rank)
+    from aklr.core.utils.testing import bench_cudagraph, kernel_tracer
+
+    torch.cuda.set_device(rank)
     dist.init_process_group(
         "nccl", init_method=rendezvous, rank=rank, world_size=2, timeout=datetime.timedelta(seconds=120)
     )
@@ -215,40 +228,3 @@ def test_bench_cudagraph_group_fails_together(tmp_path):
         rank0, rank1 = (job.get(timeout=200) for job in jobs)
     assert rank0 == "rocprofiler-sdk dropped 1 records"
     assert rank1 == "rank 0: rocprofiler-sdk dropped 1 records"
-
-
-@pytest.mark.parametrize("original", [None, "0", "1"])
-@pytest.mark.parametrize("fail", [False, True], ids=["normal_exit", "exception"])
-def test_timing_environment_restores_settings(monkeypatch, original, fail):
-    names = ("ROCP_TOOL_ATTACH", "GPU_FORCE_QUEUE_PROFILING")
-    for name in names:
-        if original is None:
-            monkeypatch.delenv(name, raising=False)
-        else:
-            monkeypatch.setenv(name, original)
-
-    def use_environment():
-        with graph_kernel_timing_environment():
-            assert os.environ["ROCP_TOOL_ATTACH"] == "1"
-            assert "GPU_FORCE_QUEUE_PROFILING" not in os.environ
-            with graph_kernel_timing_environment():
-                pass
-            assert os.environ["ROCP_TOOL_ATTACH"] == "1"
-            assert "GPU_FORCE_QUEUE_PROFILING" not in os.environ
-            if fail:
-                raise ValueError("subject failed")
-
-    if fail:
-        with pytest.raises(ValueError, match="subject failed"):
-            use_environment()
-    else:
-        use_environment()
-    assert {name: os.environ.get(name) for name in names} == dict.fromkeys(names, original)
-
-
-def test_bench_rejects_invalid_return_mode_before_calling_subject():
-    def subject():
-        pytest.fail("the subject must not run with an invalid return mode")
-
-    with pytest.raises(AssertionError):
-        bench_cudagraph(subject, return_mode="invalid")

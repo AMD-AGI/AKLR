@@ -42,10 +42,12 @@ sources:
   2083-2091), and FP8 adds a coarse M-derived regime to its key (`_np_regime`, FP8:2487; §3).
 - **Decisions that need the distribution are made in the kernel.** Reading `group_offs` on the device to choose a
   walk direction or a split (`grouped_variable_k.md` §5, §9) keeps the host path sync-free and graph-safe.
-- **Derived offsets are one device kernel, not a chain of torch ops.** *(field, E1)* Computing an MX quantizer's padded
-  group lengths and offsets with ~7 small torch kernels cost ~31 µs per call (each ~4.4 µs, launch-bound); a
-  single-thread device kernel that derives them from the tight int64 offsets (the HIP reference's form) takes
-  ~9 µs. Launch it from the quantizer's host launcher. Moving a quantizer's group search to host-side torch ops costs
+- **Derived offsets are one device kernel, not a chain of torch ops, while G is small.** *(field, E1)* Computing an MX
+  quantizer's padded group lengths and offsets with ~7 small torch kernels cost ~31 µs per call (each ~4.4 µs,
+  launch-bound); a single-thread device kernel that derives them from the tight int64 offsets (the HIP reference's
+  form) takes ~9 µs. That thread walks the groups serially, about 0.2 µs per group, so *(field, E10)* it was
+  3.2–6.5× cheaper than a six-op torch chain at G = 8–32 but 2.6× dearer at G = 384 (76 against 29 µs per call).
+  Launch it from the quantizer's host launcher. Moving a quantizer's group search to host-side torch ops costs
   the same way (`grouped_lowprec.md` §5).
 
 ## 2. Two launch modes: eager and CUDA-graph capture
@@ -53,15 +55,18 @@ sources:
   must return a static configuration and not cache it, so a later eager call still races (MX8:1722-1723).
 - **Launch helpers from the GEMM's host launcher.** Scale repack then GEMM (MX8:1101-1120), GEMM then split-K reduce
   (FP8:4617): one launcher call, stream order for free.
-- **A run-time dispatch layer costs host time**, as a device-side split policy for a wgrad did; re-measure the
+- **A run-time dispatch layer costs host time**; re-measure the
   host path after adding any dispatch logic (`../gemm/autotune.md` §6).
 
 In FlyDSL: `../flydsl/moe.md` § grouped_host_autotune §2.
 
 ## 3. Cache compiled objects and launch closures, keyed on static shape
-- **Never key on tensor identity** (`../gemm/autotune.md` §5). Every grouped call brings new activations and
-  `group_offs` (and gradients, where it computes one), so an identity-keyed cache of quantized activations or
-  derived offsets hits ~0 and returns stale data when an id is reused. A weight-side cache keyed on
+- **Never key on tensor identity alone** (`../gemm/autotune.md` §5). Every grouped call brings new activations, and
+  `group_offs` (and gradients, where it computes one) are new at least every step, so an identity-keyed cache of
+  quantized activations or derived offsets misses across steps and returns stale data when an id is reused. Calls
+  within a step can share one `group_offs` object; Turbo reuses a table derived from it only if the object (by weak
+  reference), its `data_ptr` and its `_version` all match (`_prov_key` and `check_prebuilt`, in its bf16 grouped
+  kernel for another architecture). A weight-side cache keyed on
   `(id(weight), weight._version)` holds until the weight is updated. Where an optimizer step updates it every step, the forward fills it,
   the backward reuses it and the optimizer bumps the version; its gain there is capped at quantization time over
   step time.
@@ -84,12 +89,12 @@ In FlyDSL: `../flydsl/moe.md` § grouped_host_autotune §2.
   Bound it like a compile cache, or keep `M_total` out of its key.
 
 ## 4. Never re-pad weights per call
-- *(field, E3)* An MXFP4 entry that padded the weight `[G, N, K/2]` (~65 MB) on every call for a non-256 N took
-  0.142 ms instead of 0.090 ms (1867 against 2957 TF/s).
+- *(field, E3)* An MXFP4 entry that padded the weight `[G, N, K/2]` on every call for a non-256 N copied the whole
+  weight each call, the bottleneck of its wide-N forward.
 - Handle ragged dims in the kernel instead: a column mask on the store for a free N (out-of-range columns go to an
-  index the descriptor drops), descriptor row bounds for a free M, zero scales past K for an MX contraction tail
+  index the descriptor drops), descriptor row bounds for a free M, zero scales past K for an MXFP4 contraction tail
   (`k_real`, MX4:364-373). *(field, E4)* Replacing the per-call N pad with a masked store took one wide-N MXFP4 forward
-  from 1127 to 3079 TF/s.
+  from 0.72–0.89× to 1.46–1.49× the speed of the MXFP8 grouped kernel.
 - Produce the layout the kernel reads in the quantizer. *(field, E5)* An MXFP4 wgrad that re-packed column-wise operands
   to per-group 512 alignment with gather ops on every call lost its largest per-call backward overhead once the
   quantizer emitted that layout directly.
@@ -144,11 +149,13 @@ In FlyDSL: `../flydsl/moe.md` § grouped_host_autotune §6.
 ## 7. Price helper kernels by launching them once more
 A grouped call carries helper kernels: scale repack, quantizer, padded offsets, split-K reduce, output tail. Price
 each by adding 0/1/2/4 extra launches in one process and fitting the slope (`../gemm/attribution.md`
-§3), not by its trace duration, which overstated such kernels 2–3× (`grouped_measurement.md` §6).
+§3), not by its trace duration, which overstated near-idle helpers 2–3× (`grouped_measurement.md` §6).
 - *(field, E7)* On an MXFP4 grouped kernel the kernel trace put the scale repack at 2.1–2.6% and an output-tail kernel
-  at 0.5–0.9% of each call, an overstatement of about 2× (repack) and 3× (tail); even so they outweigh the
-  whole family of steady-state SALU trims (~0.15%).
-- Removing a whole helper launch pays. Shrinking the work inside a launch-bound helper does not
+  at 0.5–0.9% of each call, an overstatement of about 2× (repack, against a lower bound) and 3× (tail); even so they
+  outweigh the whole family of steady-state SALU trims (~0.15%).
+- Removing a whole helper launch pays unless the work it moves costs more where it lands: folding the MoE sort into a
+  wide stage 1, where every workgroup repeats it, lost (`few_tokens.md` § Counter-signals).
+  Shrinking the work inside a launch-bound helper does not pay
   (`grouped_sorted_tokens.md` §7); a helper bound by its own work, like a VALU-bound scale repack, does
   pay (`grouped_lowprec.md` §2).
 
@@ -181,14 +188,13 @@ In FlyDSL: `../flydsl/moe.md` § grouped_host_autotune Verify.
 
 A FlyDSL version is given only where the cited run, or another round in the same container and venv, printed it
 (`flydsl.__version__`, an import path with its version, or a `pip install flydsl==` in the run's own setup); otherwise
-`FlyDSL ?`. "Turbo" is Primus-Turbo. A line whose only reference is a myskill or memory note gives the month of that
-note ("recorded by"); such notes rarely state N. Secondary references in a line sit in the directory of its first
-`local:` path unless they carry their own.
+`FlyDSL ?`. "Turbo" is Primus-Turbo. A line whose only reference is a note gives the month of that note ("recorded by"); such notes rarely state N.
 
-- E1 [2026-07, gfx950, FlyDSL ?, N=?, rocprof kernel trace and wrapper time] grouped MXFP8 quantizer: the padded lengths and offsets computed by ~7 small torch kernels (`ceil` ×2, 2 × `cumsum`, `fill`, `copy`, ~4.4 µs each, launch-bound) ≈31 µs per call; the HIP reference's single-thread `compute_padded_layout_gpu <<<1,1>>>` ~9 µs (Turbo MXFP8 grouped quantization path; recorded by 2026-07-05, myskill 99db6ee; local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/02-measurement-noise.md:431-432)
-- E3 [2026-07, gfx950, FlyDSL ?, N=?, direct scan with the pad outside the timed region vs the entry] fat-N MXFP4 grouped forward, M=8192: the entry's per-call `F.pad` of the weight `[G,N,K/2]` (~65 MB) for a non-256 N took 0.090 → 0.142 ms (2957 → 1867 TF/s) (gpt-oss MoE shape N5760/K2816; local:/workspace/code/gpt_oss_docker/.claude/memory/project_mxfp4_grouped_gemm.md:59)
-- E4 [2026-07, gfx950, FlyDSL ?, N=?, median; fp4/fp8 forward ratio against the MXFP8 grouped kernel] masked store for a free non-256 N instead of the per-call pad: fat-N N5760/K2816 forward 1127 → 3079 TF/s (fp4/fp8 0.72–0.89× → 1.46–1.49×), SNR ~15 dB on non-256 N (Turbo MXFP4 grouped GEMM; commit:/workspace/code/gpt_oss_docker/sync/tensorwise/Primus-Turbo@5f0d7fdc, 2026-07-14; local:/workspace/code/gpt_oss_docker/.claude/memory/project_mxfp4_grouped_gemm.md:61)
-- E5 [2026-07, gfx950, FlyDSL ?, N=?, full forward+backward vs Triton, median] the quantizer emitting the per-group 512-aligned column-wise layout removed the per-call searchsorted + gather + index_select repack, which the commit names the dominant per-call backward cost; forward+backward vs Triton gate_up 0.79–1.06× → 1.43–1.74×, down 0.64–0.94× → 1.13–1.63× (Turbo MXFP4 grouped wgrad, MoE shapes; commit:/workspace/code/gpt_oss_docker/sync/tensorwise/Primus-Turbo@6dc9bac9, 2026-07-14; local:/workspace/code/gpt_oss_docker/.claude/memory/project_mxfp4_grouped_gemm.md:66-67)
-- E6 [2026-08, gfx950, FlyDSL ?, N=4, `PROBE_ROUNDS=4`, median per arm, balanced routing, all arms bitwise identical] static wgrad lead `(group_m=2, num_xcd=1)` against the race's own pick: +1.47 / +0.27 / +0.78–0.98 / +0.95% at 1024 / 2048 / 4096 / 8192 tokens per expert; the NN dgrad lead (x8g4) −0.94% at 1024 (gpt-oss-20b down projection, tensorwise fp8 grouped GEMM, padded operands; campaign 20260817_065611 rounds 6–7; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260817_065611/remote_data.md:180-191; :28)
-- E7 [2026-09, gfx950, FlyDSL 0.2.4, N=?, rocprofv3 `--kernel-trace` per cell; in-process additive probe (0/1/2/4 extra launches, slope)] MXFP4 grouped call: the preshuffle `kern_0` 2.08–2.60% of each op and `_grouped_gemm_output_tail_kernel` 0.5–0.9% by the trace, against ~0.15% for the whole steady-state SALU family; additive probe: `kern_0` 20.32 µs traced vs ≈10.2 µs in stream (≈2×), the idle tail kernel 5.10 µs traced vs 1.579 µs (3.2×) (gpt-oss-20b plain MXFP4 grouped MoE GEMMs; campaign 20260925_090609 rounds 2 and 10, `kyle_mxfp4_204` `/opt/venv-syncv4`; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260925_090609/rounds/round-02/agent.txt:37; goal.md:254; rounds/round-10/agent.txt:18)
-- E8 [2026-07, gfx950, FlyDSL ?, N=?, full end-to-end autograd sweep over B × M shapes; host RSS probe] the grouped MXFP4 dual-quant compile cache (`_GQ_MXFP4_CACHE`), keyed on total_M and unbounded, accumulated compiled kernels until the container hit its host-RAM cgroup limit (OOM 137, seen as a segfault mid MLIR build); with the cache bounded, a 132-distinct-shape probe held RSS flat and the sweep passed 1148 / 32 skipped (Turbo MXFP4 grouped GEMM; commit:/workspace/code/gpt_oss_docker/sync/tensorwise/Primus-Turbo@8d6f3854, 2026-07-15; local:/workspace/code/gpt_oss_docker/.claude/memory/project_mxfp4_grouped_gemm.md:69)
+- E1 [2026-07, gfx950, FlyDSL ?, N=?, rocprof kernel trace and wrapper time] grouped MXFP8 quantizer: the padded lengths and offsets computed by ~7 small torch kernels (`ceil` ×2, 2 × `cumsum`, `fill`, `copy`, ~4.4 µs each, launch-bound) ≈31 µs per call; the HIP reference's single-thread `compute_padded_layout_gpu <<<1,1>>>` ~9 µs (Turbo MXFP8 grouped quantization path; recorded by 2026-07-05)
+- E3 [2026-07, gfx950, FlyDSL ?, N=?, fp4/fp8 forward ratio against the MXFP8 grouped kernel (E4)] fat-N MXFP4 grouped forward: the entry's per-call `F.pad` of the weight `[G,N,K/2]` for a non-256 N copied the whole weight every call, which the commit names the fat-N bottleneck (gpt-oss MoE shape N5760/K2816; commit:Primus-Turbo@5f0d7fdc, 2026-07-14)
+- E4 [2026-07, gfx950, FlyDSL ?, N=?, median; fp4/fp8 forward ratio against the MXFP8 grouped kernel] masked store for a free non-256 N instead of the per-call pad: fat-N N5760/K2816 forward fp4/fp8 0.72–0.89× → 1.46–1.49×, SNR ~15 dB on non-256 N (Turbo MXFP4 grouped GEMM; commit:Primus-Turbo@5f0d7fdc, 2026-07-14)
+- E5 [2026-07, gfx950, FlyDSL ?, N=?, full forward+backward vs Triton, median] the quantizer emitting the per-group 512-aligned column-wise layout removed the per-call searchsorted + gather + index_select repack, which the commit names the dominant per-call backward cost; forward+backward vs Triton gate_up 0.79–1.06× → 1.43–1.74×, down 0.64–0.94× → 1.13–1.63× (Turbo MXFP4 grouped wgrad, MoE shapes; commit:Primus-Turbo@6dc9bac9, 2026-07-14)
+- E6 [2026-08, gfx950, FlyDSL ?, N=4, `PROBE_ROUNDS=4`, median per arm, balanced routing, all arms bitwise identical] static wgrad lead `(group_m=2, num_xcd=1)` against the race's own pick: +1.47 / +0.27 / +0.78–0.98 / +0.95% at 1024 / 2048 / 4096 / 8192 tokens per expert; the NN dgrad lead (x8g4) −0.94% at 1024 (gpt-oss-20b down projection, tensorwise fp8 grouped GEMM, padded operands)
+- E7 [2026-09, gfx950, FlyDSL 0.2.4, N=?, rocprofv3 `--kernel-trace` per cell; in-process additive probe (0/1/2/4 extra launches, slope)] MXFP4 grouped call: the preshuffle `kern_0` 2.08–2.60% of each op and `_grouped_gemm_output_tail_kernel` 0.5–0.9% by the trace, against ~0.15% for the whole steady-state SALU family; additive probe: `kern_0` 20.32 µs traced vs ≈10.2 µs in stream (≈2×; from one duplicated launch with L2 warm, a lower bound), the idle tail kernel 5.10 µs traced vs 1.579 µs (3.2×) (gpt-oss-20b plain MXFP4 grouped MoE GEMMs)
+- E8 [2026-07, gfx950, FlyDSL ?, N=?, full end-to-end autograd sweep over B × M shapes; host RSS probe] the grouped MXFP4 dual-quant compile cache (`_GQ_MXFP4_CACHE`), keyed on total_M and unbounded, accumulated compiled kernels until the container hit its host-RAM cgroup limit (OOM 137, seen as a segfault mid MLIR build); a 132-distinct-shape probe held RSS flat once the GEMM caches were bounded, so it was not a FlyDSL JIT leak; with the quantizer cache bounded too, the sweep passed 1148 / 32 skipped (Turbo MXFP4 grouped GEMM; commit:Primus-Turbo@8d6f3854, 2026-07-15)
+- E10 [2026-11, gfx950 (MI355X), HIP 7.15, torch 2.11.0+rocm10.0.0, N=9 rounds of 50 back-to-back eager calls per arm (median per round), arms in one process and stream] padded group lengths and offsets for two alignments from int64 group lengths, a six-op torch chain against one single-thread HIP kernel, µs per call: G = 8 24.39 / 3.75, G = 32 24.59 / 7.60, G = 384 28.93 / 76.42; every output equal to the reference

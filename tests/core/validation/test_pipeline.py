@@ -58,8 +58,8 @@ from aklr.core.validation.stages._report._markdown import one_line
 from aklr.core.validation.stages.stage import StageStatus
 
 # a committed gfx950/MI355X schema, rewritten under tmp_path with a stored speedup
-_SCHEMA = "aklr/ops/gemm/impls/flydsl/gemm_n512_k4096/09c4acd65577d824.json"
-_TRITON_SCHEMA = "aklr/ops/gemm/impls/triton/gemm_a8w8_blockwise_scaled_n3072_k1536/d4457ae42fce5327.json"
+_SCHEMA = "aklr/ops/gemm/impls/flydsl/gemm_n512_k4096/b88f9602c806937b.json"
+_TRITON_SCHEMA = "aklr/ops/gemm/impls/triton/gemm_a8w8_blockwise_scaled_n3072_k1536/4a159c69e56742a3.json"
 _PLATFORM = dict.fromkeys(PlatformRecord.model_fields, "unknown") | {
     "arch": "gfx950",
     "hardware": "MI355X",
@@ -360,10 +360,10 @@ class TestPipeline:
     @pytest.mark.parametrize(
         ("case", "expected"),
         [
-            # _measure: gate against entry (1.02) and retain (0.99), the t lower bound
-            pytest.param(lambda _: _gate(1.05), None, id="gate-faster"),
+            # _measure: gate against entry (1.05) and retain (0.99), the t lower bound
+            pytest.param(lambda _: _gate(1.1), None, id="gate-faster"),
             pytest.param(lambda _: _gate(1.0), FindingCode.NOT_FASTER, id="gate-equal"),
-            pytest.param(lambda _: _gate(1.05, 0.98), FindingCode.REGRESSED, id="gate-regressed"),
+            pytest.param(lambda _: _gate(1.1, 0.98), FindingCode.REGRESSED, id="gate-regressed"),
             pytest.param(lambda _: _gate(0.5, 0.5), FindingCode.REGRESSED, id="gate-both-below"),
             pytest.param(lambda _: ratio_lower_bound([0.1]), ValueError, id="bound-one-round"),
             pytest.param(
@@ -554,11 +554,11 @@ class TestTimeRounds:
     @pytest.mark.parametrize(
         ("baseline_ms", "threshold", "min_speedup", "n_rounds"),
         [
-            (2.0, "entry", 1.03, 16),
-            (1.02, "entry", 0, 32),
-            (1.02, "retain", 0, 32),
-            (1.045, "entry", 0, 16),
-            (1.045, "entry", 1.03, 32),
+            (2.0, "entry", 1.05, 16),
+            (1.05, "entry", 0, 32),
+            (1.05, "retain", 0, 32),
+            (1.075, "entry", 0, 16),
+            (1.075, "entry", 1.06, 32),
         ],
         ids=[
             "clear-win-stops-at-16",
@@ -627,20 +627,20 @@ class TestSpeedupMeasures:
         assert finding is not None and finding.code is FindingCode.CANDIDATE_CRASH
 
     def test_min_speedup_is_decided_on_the_published_speedup(self) -> None:
-        """Raw bounds about 1.0292 and 1.0298 both under 1.03 publish as 1.029 and 1.030:
-        whether dispatch serves the workload at 1.03 is still open."""
+        """Raw bounds about 1.0492 and 1.0498 both under 1.05 publish as 1.049 and 1.050:
+        whether the workload qualifies and dispatch serves it at 1.05 is still open."""
         rounds = [
             RoundTimes(
                 mode="graph",
                 round_index=i,
                 order=("baseline", "candidate"),
-                milliseconds={"baseline": 1.029 if i % 2 else 1.030, "candidate": 1.0},
+                milliseconds={"baseline": 1.049 if i % 2 else 1.050, "candidate": 1.0},
             )
             for i in range(16)
         ]
         record = timing_records(rounds, {"baseline": "entry"})[0]
-        assert record.speedup_bounds == (1.029, 1.030)
-        assert not record.is_decided(1.03)
+        assert record.speedup_bounds == (1.049, 1.050)
+        assert not record.is_decided(1.05)
 
     def test_speedup_is_the_graph_bound(self) -> None:
         """Graph 1.5 vs the baseline: 1.5."""
@@ -659,7 +659,7 @@ class TestSpeedupMeasures:
 
     @pytest.mark.parametrize(
         ("ratio", "expected"),
-        [(0.99, False), (1.0, False), (1.02, False), (1.0200001, True)],
+        [(0.99, False), (1.0, False), (1.049, False), (1.05, True)],
     )
     def test_same_workload_must_be_correct_and_fast(self, ratio: float, expected: bool) -> None:
         report = TestPipeline._bench(
@@ -693,7 +693,7 @@ class TestSpeedupMeasures:
         failed_axes = schema.workloads[0].axes
         records = tuple(_workload(w.axes, qualifying_ratio, 0.0) for w in schema.workloads)
         report = TestPipeline._bench([(FindingCode.POST_TIMING_MISMATCH, failed_axes, "")], *records)
-        assert report.is_passed is (qualifying_ratio > 1.02)
+        assert report.is_passed is (qualifying_ratio >= 1.05)
         measured = report.measurements(_SCHEMA, schema)
         assert measured is not None
         failed = measured[axes_text(failed_axes)]
@@ -1238,6 +1238,29 @@ def test_platform_the_kernel_does_not_state_aborts(
     findings = CandidateResult.model_validate(result).findings
     assert [f.code for f in findings] == [code]
     assert code.is_platform_fault
+
+
+def test_a_tracer_that_cannot_register_is_the_platforms_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The kernel tracer registers as the candidate imports the timing module: its failure
+    is the platform's, not the candidate's crash."""
+    from aklr.core.platform.device import DeviceTarget
+    from aklr.core.validation.stages._bench._evaluation import run_candidate
+    from tests.op_case import KERNEL_TARGET, OpCase
+
+    case = OpCase.of("gemm@1.0")
+    target = DeviceTarget.from_names(**KERNEL_TARGET)
+    monkeypatch.setattr(DeviceTarget, "current", classmethod(lambda cls, d: target))
+    # its import raises, as a tracer that cannot register does
+    monkeypatch.setitem(sys.modules, "aklr.core.utils.testing", None)
+    context = ExecutionContext(device="cpu", log_path=tmp_path / "log")
+    request = case.request
+    result = run_candidate(
+        context, requests=[request], outputs={request.axes_text: request.empty_outputs("cpu")}
+    )
+    findings = CandidateResult.model_validate(result).findings
+    assert [f.code for f in findings] == [FindingCode.PLATFORM_FAILURE]
 
 
 def test_importing_validation_loads_no_torch() -> None:

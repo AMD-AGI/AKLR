@@ -29,7 +29,7 @@ flowchart TD
 |---|---|---|
 | 1. A contract 不存在 | 新建 `contract.py`/`reference.py`/`api.py`/`baseline.py`/`__init__.py`、测试小 Point、更新 `names.txt`，再按 1. B 收窄 | 新算子包 + kernel-less schema |
 | 1. B contract 已存在 | `get` → `PointSpec` → `workload_for` → `narrow(sources=[])` → `schema_text()` | kernel-less schema（uuid 临时） |
-| 2. 开发 kernel | 填 `kernel.sources`（可选 `requires`、`author`），再重新执行 1. B 脚本 | 带 kernel 的 schema（新 uuid） |
+| 2. 开发 kernel | 填 `kernel.sources` 和 `requires`（可选 `author`），再重新执行 1. B 脚本 | 带 kernel 的 schema（新 uuid） |
 | 3. 本地验证 | `python -m aklr validate --base origin/main --stages audit,bench <schema>`；看 demoted 列表，删掉不达标的 workload | `aklr_validation/report.md`、`report.json` |
 | 4. PR/CI/写回 | PR 加 `ci:gpu`；合入后由 bot PR 写回测量值 | kernel 合入 main 分支 |
 
@@ -86,7 +86,7 @@ path.write_text(s.schema_text(), encoding="utf-8")
 - `sources`：flydsl/triton，入口是 `kernel.py::run`，其他文件只能相对导入；hip 用 `.hip`/`.h`，入口是 `kernel.hip::run`。入口文件开头必须有描述 kernel 的 docstring（hip 为开头注释）。推荐用 `narrow(..., kernel=...)` + `schema_text()` 写出。path 规则：
   - flydsl/triton：Python kernel 是一个扁平包，path 里不能有 `/`，也不能有 `__init__.py`；
   - hip：可以用多级目录，如 `include/utils.h`；
-- `requires`：工具链版本约束，如 `{"triton": ">=3.8"}`。
+- `requires`：工具链版本约束，必填。至少写上 kernel 自己的语言，以开发时用的版本作下限：`{"flydsl": ">=0.3.2"}`、`{"triton": ">=3.8"}` 或 `{"hip": ">=7.15"}`（torch 报告的 HIP 版本，不是 ROCm 版本：ROCm 10.0 里的 HIP 是 7.15）。没写的 kernel，`python -m aklr export check` 会报错；运行时，环境里的版本不满足 `requires` 的 kernel 会被跳过。
 - `author`：作者署名。
 
 source 字段全部填写完毕后，重新执行 1.B 脚本（把 `"sources": []` 换成 `[SourceFile(path=..., content=...), ...]`，`SourceFile` 从 `aklr.core.contract.spec` 导入，写法见示例第 1 步脚本），生成新 uuid 的 schema 文件。
@@ -104,12 +104,12 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
   - 正确性：对每个 workload 用分布采样的输入，参考实现进行比较；
   - 性能：在 CUDA graph 下与基线多轮对比。
 
-**门槛**：新 kernel 的每个 Point 相对基线（`aklr/ops/<op>/baseline.py` 的 `<contract>_baseline`）要 ≥ **1.02**，相对已服务的 kernel 要 ≥ **0.99**，运行时服务要求 ≥ `AKLR_MIN_SPEEDUP`（默认 **1.03**）。不达标的 Point 只记进 report 的 demoted 列表，不会让 validate 失败；demoted 里既有性能不达标的，也有正确性不过的（如 `numeric_mismatch`、`build_failed`、`candidate_crash`，CI 会写成 `accuracy: failed`），两类都要处理。只有一个 workload 都不达标时，schema 才报 `no_qualifying_workload`。
+**门槛**：新 kernel 的每个 Point 相对基线（`aklr/ops/<op>/baseline.py` 的 `<contract>_baseline`）要 ≥ **1.05**，相对已服务的 kernel 要 ≥ **0.99**，运行时服务要求 ≥ `AKLR_MIN_SPEEDUP`（默认 **1.05**）。不达标的 Point 只记进 report 的 demoted 列表，不会让 validate 失败；demoted 里既有性能不达标的，也有正确性不过的（如 `numeric_mismatch`、`build_failed`、`candidate_crash`，CI 会写成 `accuracy: failed`），两类都要处理。只有一个 workload 都不达标时，schema 才报 `no_qualifying_workload`。
 
 ## 4. PR 与 CI
 
 **PR 规则**：
-- 按 `.github/pull_request_template.md` 写正文。kernel 和 code PR 都加 `ci:gpu`，且必须是本仓库分支提的 PR（fork 的 PR 不跑 GPU job）；kernel PR 贴 3. 的结果；
+- 按 `.github/pull_request_template.md` 写正文。kernel 和 code PR 都加 `ci:gpu`（fork 的 PR，或作者没有 write 权限的 PR，GPU job 要等 maintainer 批准后才跑）；kernel PR 贴 3. 的结果；
 - 新算子的代码（`contract.py` 等，属于 code）单独提 PR；kernel-less schema（模板里叫 contract）和带 kernel 的 schema 各按模板对应一节填写。
 - 提交 PR 不写 `accuracy`/`speedup`（手写会报 `perf_edited`）。合入后，main 的 push CI 重新测量，`publish-measurement` 更新 `aklr-perf/main` bot PR；这个 bot PR 以它自己的标题 squash merge 后，workload 才带上 `accuracy`/`speedup`。
 
@@ -119,7 +119,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 
 ## 5. 运行时分发
 
-调用 api 时，如果这次调用的 Point 在某个已加载 schema（`targets`/`requires` 与本机匹配）的 workloads 里，且该 workload 的 `accuracy` 不是 `failed`、`speedup ≥ AKLR_MIN_SPEEDUP`（默认 1.03），就运行该 kernel。
+调用 api 时，如果这次调用的 Point 在某个已加载 schema（`targets`/`requires` 与本机匹配）的 workloads 里，且该 workload 的 `accuracy` 不是 `failed`、`speedup ≥ AKLR_MIN_SPEEDUP`（默认 1.05），就运行该 kernel。
 
 其余情况不走 kernel：api 返回 `FallbackReason`，由调用方运行自己的实现。
 
@@ -131,7 +131,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 | `no_workload` | 这次调用的 Point 不在任何已加载 schema 的 workloads 里（如 `<var 轴>` 的取值不在列表里） |
 | `not_measured` | 还没测量 |
 | `inaccurate` | 测量结果为 `failed` |
-| `not_qualified` | 已测且 passed，但 speedup < `AKLR_MIN_SPEEDUP`（默认 1.03） |
+| `not_qualified` | 已测且 passed，但 speedup < `AKLR_MIN_SPEEDUP`（默认 1.05） |
 | `not_warmed` | 在 graph capture 中，而该 Point 从未在 graph 外跑过 |
 
 ## 示例：添加一个 fused MoE schema

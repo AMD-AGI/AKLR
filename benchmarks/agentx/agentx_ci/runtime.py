@@ -9,6 +9,7 @@ import importlib.metadata
 import json
 import math
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -21,8 +22,10 @@ from pathlib import Path
 from agentx_ci.preflight import validate_hardware, verify_image
 from agentx_ci.recipe_resolve import POLICY, ResolveError, SelectionError, fetch_inferencex, selected_points
 from agentx_ci.utils import (
+    INTERACTIVITY_METRIC,
     REPO_ROOT,
     begin_attempt,
+    full_response_interactivity,
     pending_results,
     read_json,
     sha256_json,
@@ -36,7 +39,7 @@ def metrics_of(aggregate: dict) -> dict:
     request = aggregate["request_metrics"]
     metrics = {
         "tput_per_gpu": request["throughput"]["per_gpu"]["total_tput_tps"],
-        "p90_e2e_norm_intvty": request["latency"]["e2e_norm_intvty"]["p90"],
+        INTERACTIVITY_METRIC: full_response_interactivity(aggregate),
         "num_requests_successful": aggregate.get("num_requests_successful"),
     }
     if not valid_metrics(metrics):
@@ -44,7 +47,8 @@ def metrics_of(aggregate: dict) -> dict:
     return metrics
 
 
-# Tuning variables must come from the hashed plan.
+# Tuning variables come from the hashed plan or the verified image defaults.
+ENVIRONMENT_POLICY = "paired-aklr-image-env-v2"
 INFRA_ENV = (
     "PATH",
     "HOME",
@@ -80,8 +84,46 @@ INFRA_ENV = (
 )
 
 
-def execution_env() -> dict[str, str]:
-    return {name: os.environ[name] for name in INFRA_ENV if name in os.environ}
+def execution_env(image_defaults: dict[str, str] | None = None) -> dict[str, str]:
+    """Use verified image defaults only when explicitly requested by the server."""
+    return {
+        **(image_defaults or {}),
+        **{name: os.environ[name] for name in INFRA_ENV if name in os.environ},
+    }
+
+
+def image_environment(inspection: dict) -> dict[str, str]:
+    """Parse Config.Env after the inspection has passed image identity verification."""
+    config = inspection.get("Config")
+    if not isinstance(config, dict) or "Env" not in config:
+        raise ValueError("Docker image inspection has no Config.Env")
+    entries = config["Env"]
+    if entries is None:
+        return {}
+    if not isinstance(entries, list):
+        raise ValueError("Docker image Config.Env must be a list or null")
+    defaults = {}
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, str) or "=" not in entry:
+            raise ValueError(f"Docker image Config.Env entry {index} must be NAME=VALUE")
+        name, value = entry.split("=", 1)
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) or "\0" in value:
+            raise ValueError(f"Docker image Config.Env entry {index} has an invalid name or value")
+        if name in defaults:
+            raise ValueError(f"Docker image Config.Env entry {index} repeats a variable name")
+        defaults[name] = value
+    return defaults
+
+
+def image_environment_evidence(defaults: dict[str, str]) -> dict:
+    """Publish image-default names and their complete digest without exposing values."""
+    return {
+        "policy": ENVIRONMENT_POLICY,
+        "scope": "server",
+        "source": "docker-image-inspect.Config.Env",
+        "defaults_sha256": sha256_json(defaults),
+        "defaults": {name: "<redacted>" for name in sorted(defaults)},
+    }
 
 
 def http_ok(url: str) -> bool:
@@ -103,19 +145,28 @@ def wait_ready(base_url: str, server: subprocess.Popen, timeout_s: float, interv
     raise RuntimeError(f"server not ready after {timeout_s:.0f} s")
 
 
+class CleanupError(RuntimeError):
+    """A child process could not be stopped safely; the sweep must abort."""
+
+
 def stop(server: subprocess.Popen, grace_s: float = 120) -> None:
     """Stop the process group even if its leader has exited."""
     deadline = time.monotonic() + grace_s
     try:
-        os.killpg(server.pid, signal.SIGTERM)
-        while time.monotonic() < deadline:
-            server.poll()
-            os.killpg(server.pid, 0)
-            time.sleep(min(0.1, max(0, deadline - time.monotonic())))
-        os.killpg(server.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    server.wait()
+        try:
+            os.killpg(server.pid, signal.SIGTERM)
+            while time.monotonic() < deadline:
+                server.poll()
+                os.killpg(server.pid, 0)
+                time.sleep(min(0.1, max(0, deadline - time.monotonic())))
+            os.killpg(server.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        server.wait()
+    except (OSError, RuntimeError, subprocess.SubprocessError) as error:
+        raise CleanupError(
+            f"Could not stop process group {server.pid}: {type(error).__name__}: {error}"
+        ) from error
 
 
 def run_client(command: list[str], *, timeout: float, **kwargs) -> int:
@@ -244,7 +295,7 @@ def run_live(point: dict, out: Path, host: dict) -> dict:
     with (out / "server.log").open("w") as log:
         server = subprocess.Popen(
             command,
-            env={**execution_env(), **point["launch"]["env"]},
+            env={**execution_env(host["server_image_env"]), **point["launch"]["env"]},
             stdout=log,
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -306,6 +357,8 @@ def run_point(point: dict, out: Path, host: dict) -> dict:
         record["raw_data"] = aggregate
     except (RuntimeError, OSError, KeyError, ValueError, TypeError, subprocess.TimeoutExpired) as error:
         record.update(status="failed", error=f"{type(error).__name__}: {error}"[:500])
+        if isinstance(error, CleanupError):
+            record["cleanup_failed"] = True
     record["elapsed_s"] = round(time.monotonic() - began, 1)
     return record
 
@@ -354,11 +407,18 @@ def observed_hardware() -> dict:
     }
 
 
-def execution_identity(serving: dict) -> dict:
+def execution_identity(serving: dict) -> tuple[dict, dict[str, str]]:
+    """Return public identity and server defaults from one verified inspection."""
     path = os.environ.get("AGENTX_EXECUTION_FILE")
     if not path:
         raise RuntimeError("execution image is unverified; start the run with the Docker sweep launcher")
-    return verify_image(serving["image"]["run"], read_json(path))
+    inspection = read_json(path)
+    if not isinstance(inspection, dict):
+        raise ValueError("Docker image inspection must be an object")
+    identity = verify_image(serving["image"]["run"], inspection)
+    defaults = image_environment(inspection)
+    identity["server_environment"] = image_environment_evidence(defaults)
+    return identity, defaults
 
 
 def client_packages(host: dict) -> dict:
@@ -400,11 +460,12 @@ def host_settings(args: argparse.Namespace, serving: dict) -> dict:
                 f"{main} is missing; prepare refs/main at the pinned {weights['revision']} "
                 "for the AgentX client's offline tokenizer"
             )
-        main_revision = main.read_text().strip()
+        main_revision = main.read_text()
         if main_revision != weights["revision"]:
             raise RuntimeError(
-                f"{main} is {main_revision}, not the pinned {weights['revision']}; "
-                "the AgentX client's tokenizer would come from another revision"
+                f"{main} must contain exactly the pinned revision {weights['revision']}, "
+                "with no trailing newline or whitespace; the AgentX client's offline tokenizer "
+                "uses the ref contents verbatim"
             )
         # Reuse pinned weights in the writable trace hub.
         model_link = trace_hub / model_dir.name
@@ -500,7 +561,7 @@ def main(argv: list[str] | None = None) -> int:
         write_json(args.out / "selection.json", selection)
     try:
         validate_runtime(points)
-        execution = execution_identity(serving)
+        execution, image_defaults = execution_identity(serving)
         hardware = observed_hardware()
         validate_hardware(hardware, serving["hardware"])
         if any(p["gpus"] > len(hardware["devices"]) for p in points):
@@ -508,6 +569,7 @@ def main(argv: list[str] | None = None) -> int:
         for target in (results, results["control"]):
             target["run"].update(execution=execution, hardware=hardware)
         host = host_settings(args, serving)
+        host["server_image_env"] = image_defaults
         print(f"[{utc_now()}] preparing the AgentX traces", flush=True)
         prepare_traces(host, points, args.out / "prepare_traces.log")
         packages = client_packages(host)
@@ -538,7 +600,8 @@ def main(argv: list[str] | None = None) -> int:
                 AKLR_DISABLE="0" if mode == "enabled" else "1",
             )
             measurement = {
-                "environment_policy": "paired-aklr-v1",
+                "environment_policy": ENVIRONMENT_POLICY,
+                "server_image_env_sha256": execution["server_environment"]["defaults_sha256"],
                 "weights": serving["weights"],
                 "launch": point["launch"],
                 "client_env": {**point["client_env"], **host["client_env_overrides"]},
@@ -556,6 +619,15 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  -> {record['status']} {record.get('error') or ''}", flush=True)
             target["points"].append(record)
             target["run"]["finished_at"] = utc_now()
+            if record.get("cleanup_failed"):
+                error = f"AKLR {mode} {point['arm']} c{point['conc']}: {record['error']}"
+                for interrupted in (target, results):
+                    interrupted["run"].update(
+                        completed=False, cleanup_failed=True, error=error, finished_at=utc_now()
+                    )
+                write_json(args.out / "results.json", results)
+                print(f"ERROR: {error}", file=sys.stderr)
+                return 1
             write_json(args.out / "results.json", results)
         for arm, spec in target["serving"]["arms"].items():
             spec["arm_measurement_sha256"] = sha256_json(
@@ -564,11 +636,14 @@ def main(argv: list[str] | None = None) -> int:
         target["run"]["completed"] = True
         write_json(args.out / "results.json", results)
     all_records = results["control"]["points"] + records
-    failed = sum(r["status"] != "ok" for r in all_records)
+    successful = sum(r["status"] == "ok" and valid_metrics(r) for r in all_records)
+    failed = len(all_records) - successful
+    status = "Failed" if not successful else "Partial success" if failed else "Success"
     print(
-        f"{len(all_records) - failed}/{len(all_records)} paired points ok; wrote {args.out / 'results.json'}"
+        f"{status}: {successful}/{len(all_records)} measurement points successful; "
+        f"{failed} failed; wrote {args.out / 'results.json'}"
     )
-    return 1 if failed else 0
+    return 0 if successful else 1
 
 
 if __name__ == "__main__":

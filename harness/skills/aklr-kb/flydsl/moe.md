@@ -153,8 +153,11 @@ epilogue (`_SUPPORTED` in both host files).
 
 ## grouped_sorted_tokens §3 Grid shape when the tokens fill only a few M-blocks
 
-- **aiter's v2 stage 2: stage C in fp32.** With `g2_kstatic` the bf16 default leaves 2 A slots and a barrier per K tile
-  (`mxmoe_dispatcher.py:187–201`, `mxmoe_gemm_v2.py:734`); *(field, E1)* `g2_bf16_lds=False` won every pair, +0.37%.
+- **aiter's v2 stage 2: stage C in fp32.** With `g2_kstatic` the bf16 C default leaves 2 A slots and an extra
+  barrier on each of the first KT − 2 K tiles only where `3 × KH_TILE_A > 2 × BN` (`KH_TILE_A` = BK for fp8 A,
+  BK / 2 for fp4 A), e.g. fp8 A at BK 256, BN 128 or 256; `mxfp4_moe_gemm2`'s default (fp4 A, BN 256, BK 256) keeps
+  3 slots (`mxmoe_dispatcher.py:187–204`, `mxmoe_gemm_v2.py:733–735`); *(field, E1)* in the a8w4 2-slot tiles
+  `g2_bf16_lds=False` won every pair, +0.37%.
 
 ## grouped_sorted_tokens §4 Cache policy on the weights
 
@@ -194,7 +197,10 @@ epilogue (`_SUPPORTED` in both host files).
 - In an in-process A/B (`../moe/grouped_measurement.md` §4), load each version as its own module. FlyDSL's cache key
   hashes the launcher's source, the kernels it reaches and plain helpers from its own directory, not plain helpers
   read as globals from another directory or non-scalar closure values (`debug-flydsl-kernel.md` § What the cache
-  key sees): two versions that differ only there get one key, and one binary then serves both arms.
+  key sees), but it records the module names of the globals the launcher reads (`jit_function.py:200-291`,
+  `:1326-1351`): two versions that differ only in such a helper share one key and one binary when both load under
+  the same module names, as on a reload or with two processes or worktrees sharing a cache directory *(field, E4)*.
+  Versions that differ only in a non-scalar closure value also get one key.
 
 ## grouped_measurement Verify
 
@@ -207,11 +213,13 @@ epilogue (`_SUPPORTED` in both host files).
   `jit_function.py:1358-1400`). The object returned by `flyc.compile` goes straight to the call state
   (`CompiledFunction.__call__`, `jit_function.py:1613-1635`). Measured gaps: `gemm.md` § autotune §6,
   `attention.md` § measurement §6.
-- **Mode split.** Eager calls the compiled object; under capture the raw `@flyc.jit` closure is launched, because
-  in Turbo's measurement the compiled object "regresses under capture" (FP8:2743-2754, 5060-5074;
-  `run_eager_or_capture`, MX8:79-86). FlyDSL v0.3.2 has no capture-specific path in `jit_function.py`; treat this
-  as a measured property of that stack and re-measure on yours. *(field, E2)* On a small shape the split took the
-  eager call from 18.4 to 17.2 µs.
+- **Mode split.** Eager calls the compiled object; under capture the raw `@flyc.jit` closure is launched. Turbo
+  gives the reason only in a code comment, that the compiled object "regresses under capture" (FP8:2743-2754,
+  5060-5074; `run_eager_or_capture`, MX8:79-86). FlyDSL v0.3.2 has no capture-specific path in `jit_function.py`;
+  on a bf16 dense GEMM a compiled object built before the capture replayed as fast as the raw closure, but one built
+  inside it also recorded its scratch fill and compile-time launch (next bullet): 90.2 against 46.1 µs per one-call
+  graph *(field, E6)*. Build the compiled object eagerly, or launch the
+  raw closure under capture. *(field, E2)* On a small shape the split took the eager call from 18.4 to 17.2 µs.
 - **Compiling runs the kernel once** (`_compile_impl`, `jit_function.py:1662`): build a beta=1 launch against a
   scratch output (`compile_with_scratch_out`, GH:86-95; `../gemm/epilogue.md` §7,
   `gemm.md` § epilogue §7).
@@ -225,13 +233,14 @@ epilogue (`_SUPPORTED` in both host files).
 
 ## grouped_host_autotune §8 Do not let a race swallow build errors
 
-- In FlyDSL a configuration over the LDS limit raises nothing: the launch fails on stderr only and the output is
-  never written (`gemm.md` § autotune §7).
+- In FlyDSL a configuration over the LDS limit raises nothing at the call or at `torch.cuda.synchronize()`: the launch
+  fails on stderr only, the output is not written, and the next PyTorch kernel launch raises the pending HIP error as
+  `torch.AcceleratorError` *(field, E5)* (`gemm.md` § autotune §7).
 
 ## grouped_host_autotune Verify
 
-- Under capture the raw `@flyc.jit` closure is launched, not the `flyc.compile` object (§ grouped_host_autotune §2
-  above).
+- Under capture either the raw `@flyc.jit` closure or a `flyc.compile` object built before the capture is launched;
+  nothing is compiled inside the capture (§ grouped_host_autotune §2 above).
 
 ## grouped_group_mapping §5 Tile → group lookup: four forms and their price
 
@@ -300,6 +309,9 @@ list/tuple/dict/SimpleNamespace of them (`compiler/protocol.py:97-108`); a helpe
 
 ## Evidence
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=? pairs, AKLR graph timer, the kept version beside the one before it, remeasured; a8w4 SiTUv2 fused MoE, 112 of 896 experts local, top-16, model dim 3584, inter 3072, at 8 / 12 / 16 / 24 / 32 tokens; AKLR's graph timer, L2 flushed per replay, median] `g2_bf16_lds=False` at BM 32, BK 256, BN 128/256: +0.37% [+0.31, +0.44], 5 of 5 cases up; faster by 0.15–0.8 µs in every interleaved pair (local:/shared_nfs/kyle/moe/kf/runs/ep8_bw_s/workspace/forge_experiments/ablation.md:17; lessons/iter_005.md:44–46)
-- E2 [2026-06, gfx950, FlyDSL ?, N=?, eager per-call time] mode split (compiled object in eager, raw `@flyc.jit` under capture): a small shape's eager call 18.4 → 17.2 µs (~7%) (kernel and shape not named; the note sits in the fp8 GEMM tuning skill's autotune design, beside the grouped `_balanced_group_offs` construction; recorded by 2026-06-17, myskill 2563ed1 `flydsl-fp8-gemm-tuning/06-autotune-design.md:85`; local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/13-autotune-fleet.md:42)
-- E3 [2026-07, gfx950, FlyDSL ?, N=?, ?] MXFP8 variable-K wgrad with chunk-local SSA accumulators and per-step scale prefetch: 930/1047/530/307 → 851/936/478/274 µs (~9%); SSA accumulators alone 0, scale prefetch alone ≈ all of it (Turbo MXFP8 grouped wgrad, four shapes not named; recorded by 2026-07-05, myskill 99db6ee; local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/12-mxfp8-grouped.md:15-16)
+- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=? pairs, AKLR graph timer, the kept version beside the one before it, remeasured; a8w4 SiTUv2 fused MoE, 112 of 896 experts local, top-16, model dim 3584, inter 3072, at 8 / 12 / 16 / 24 / 32 tokens; AKLR's graph timer, L2 flushed per replay, median] `g2_bf16_lds=False` at BM 32, BK 256, BN 128/256: +0.37% [+0.31, +0.44], 5 of 5 cases up; faster by 0.15–0.8 µs in every interleaved pair
+- E2 [2026-06, gfx950, FlyDSL ?, N=?, eager per-call time] mode split (compiled object in eager, raw `@flyc.jit` under capture): a small shape's eager call 18.4 → 17.2 µs (~7%) (kernel and shape not named; recorded by 2026-06-17)
+- E3 [2026-07, gfx950, FlyDSL ?, N=?, ?] MXFP8 variable-K wgrad with chunk-local SSA accumulators and per-step scale prefetch: 930/1047/530/307 → 851/936/478/274 µs (~9%); SSA accumulators alone 0, scale prefetch alone ≈ all of it (Turbo MXFP8 grouped wgrad, four shapes not named; recorded by 2026-07-05)
+- E4 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=1 per loading form, disk cache on] two versions of a plain helper read as a global from another directory, kernel and launcher source byte-identical: under the same kernel and helper module names (two processes sharing a cache directory, or a reload in one process) one key and one cached binary, the second version returning the first's result on 2048 of 2048 elements; under a distinct kernel or helper module name the second compiled its own binary (int32 element-wise `@flyc.jit` kernel)
+- E5 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, torch 2.11.0+rocm10.0.0, N=1 per configuration, stderr and an output sentinel] static LDS of 167936–262144 B or `SharedAllocator(static=False)` of 196608 B (limit 163840), through the `@flyc.jit` launcher and the `flyc.compile` object: no Python exception at the call or at `torch.cuda.synchronize()`, a HIP error on stderr only, 0 of 16384 outputs written; the next PyTorch kernel raised `torch.AcceleratorError` in 8 of 8 over-limit runs
+- E6 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, torch 2.11.0+rocm10.0.0, N=8 rounds, median of 20 replays per graph] FlyDSL preshuffle GEMM, bf16, N = K = 4096, captured at M 32 and 128: a `flyc.compile` object built before the capture recorded the same kernel node as the raw `@flyc.jit` closure and replayed at 40.40–40.49 against 40.42–40.46 µs per call; built inside the capture, one call recorded 3 kernel nodes (scratch fill and two GEMM launches) and its graph replayed in 90.21 against 46.05 µs

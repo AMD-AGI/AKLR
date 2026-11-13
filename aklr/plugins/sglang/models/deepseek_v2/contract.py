@@ -251,6 +251,8 @@ DEEPSEEK_V2_FP8_MOE = OpContract(
             shape=("n_routed",),
             # bf16, as sglang's aiter top-k reads it for fp8 checkpoints: DeepSeek-R1 holds it in
             # bf16, GLM-5.2 in fp32, which top-k reads through a bf16 copy (the route passes that)
+            # TODO: fp32 for an fp32 bias (GLM-5.x) once the sglang AKLR targets has sglang PR
+            # #44797, whose aiter top-k reads an fp32 bias as it is; 0.5.22 and 0.5.23 do not
             dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
             # centred on 0 and narrow beside the scores' spread: it moves most tokens' picks,
             # yet keeps the routes spread over the experts, as a balanced model's are

@@ -7,7 +7,7 @@ in the file it names; when the two disagree, the named file wins.
 aklr/ops/
   __init__.py                  re-exports op apis
   README.md                    this file
-  <op>/                        biased_grouped_topk, gemm, fused_moe, mhc, mla, rms_norm, topk
+  <op>/                        attention, gemm, fused_moe, mhc, mla, rms_norm, topk
     __init__.py                re-exports api.py's apis
     contract.py                OpContract constants, CONTRACTS
     reference.py               one <contract>_reference per contract
@@ -126,7 +126,7 @@ read through the op's `contract.py`); a schema file's `inputs` and `outputs` ite
 ## The kernel section and ABI
 
 `kernel` (model `KernelSpec`): `language`, `targets` (a list of `{arch, hardware}`; a missing field leaves that
-dimension unrestricted (`DeviceTarget.matches_target`); only a load gate), `requires` (optional, see below), `author`
+dimension unrestricted (`DeviceTarget.matches_target`); only a load gate), `requires` (required with sources, see below), `author`
 (optional, see below), `entry_point` (`"<path>::<symbol>"`), and `sources`, a list of `{path, content}`, `content`
 being the file's whole text (utf-8 without a byte order mark or a non-utf-8 encoding declaration, no control
 character but `\n`, one final newline and no blank line before it); a path is one `<identifier>.py` segment other
@@ -135,10 +135,12 @@ file describes the kernel; its prose carries no history, commit or speedup, and 
 (such as `legacy_solution:`, `keep_commit:`, `device_edits:`) are allowed; audit rejects an empty docstring (SA4).
 
 `requires` maps a language to a PEP 440 specifier of the toolchain versions the kernel needs, such as
-`{"triton": ">=3.8"}`; it is omitted when empty, and a dev or rc build counts as its release. Where the installed
-toolchain misses it, the runtime skips the schema, logging why at INFO, and validation reports
-`no_matching_toolchain`. Give a lower bound when the kernel uses a newer toolchain's feature, an upper bound only once
-a release breaks it. A kernel that fails where `requires` holds raises: nothing falls back on an error.
+`{"triton": ">=3.8"}`; a dev or rc build counts as its release. A kernel with sources names at least its own
+language: `flydsl`, `triton`, or `hip`, which is the HIP version torch was built with (`torch.version.hip`), not the
+ROCm release (ROCm 10.0 ships HIP 7.15);
+`export check` rejects one that does not (`KernelSpec.requires_error`). It is omitted only in a definition. Where the installed toolchain misses it, the runtime skips the schema, logging why at INFO, and validation
+reports `no_matching_toolchain`. Give the version the kernel was developed on as the lower bound, and an upper bound
+only once a release breaks it. A kernel that fails where `requires` holds raises: nothing falls back on an error.
 
 `author` names who wrote the kernel: a person, a team or an agent, such as `"GEAK"`. It is one line without
 surrounding spaces, omitted when empty, and only recorded: dispatch and the build ignore it, and validation
@@ -287,6 +289,7 @@ A name is unique per variant, across every contract (`tests/ops/test_contracts.p
 |---|---|---|
 | bool attr | `values[0]` | `<label>` when true, `no_<label>` when false |
 | int attr | `values[0]` | `<label><value>` |
+| int tuple attr (an entry point's int-pair argument, such as a window) | `values[0]` | `<label><v0>_<v1>...` |
 | str attr | `values[0]` | the value, lowercased |
 | dtype of a tensor holding its own (not another tensor's via `same_as_tensor` alone) | `any_of[0]`, or the `same_as_tensor` dtype when both are set | `<tensor>_<dtype>`; none when absent |
 | layout variant | the first (`row_major`) | its name |
@@ -335,9 +338,10 @@ Read only by `RuntimeEnv()` in `aklr/core/platform/env.py`.
 | Variable | Values | Effect |
 |---|---|---|
 | `AKLR_DISABLE` | `1`, `0`, unset, `<contract_id>,...` | emergency stop: every contract, or the listed ones, falls back |
-| `AKLR_MIN_SPEEDUP` | a finite number | the least measured `speedup` over the baseline that a workload needs to be served, default `1.03`; `0` or less also serves unmeasured workloads, never a `failed` one |
+| `AKLR_MIN_SPEEDUP` | a finite number | the least measured `speedup` over the baseline that a workload needs to be served, default `1.05`; `0` or less also serves unmeasured workloads, never a `failed` one |
 | `AKLR_KERNEL_CACHE_DIR` | a path | where kernels are materialized; default `${XDG_CACHE_HOME:-$HOME/.cache}/aklr/kernels` |
 | `AKLR_EXPORT` | `1`, `0`, unset | record calls; any other value is an error |
 | `AKLR_EXPORT_DIR` | a path | the export directory, default `./aklr_export`; setting it alone records nothing |
 | `AKLR_MEASURED_DIR` | a path | a directory laid out like the checkout whose schemas replace the committed ones they name |
 | `AKLR_SGLANG_PLUGIN` | `1`, `0`, unset | `1`: the sglang plugin hooks sglang's layers to its ops (`aklr/plugins/README.md`); any other value is an error |
+| `AKLR_TRACE` | `plugin`, `op`, `all`, `0`, unset | log, as warnings, each distinct hooked call once per process: `plugin` the vLLM and sglang routes (`[aklr plugin]` lines, logger `aklr.trace.plugin`), `op` every op api dispatch, including the ones aiter makes (`[aklr op]` lines, logger `aklr.trace.op`: the Point, and the kernel serving it or the fallback reason), `all` both; CUDA graph replays run no Python and log nothing; any other value is an error |

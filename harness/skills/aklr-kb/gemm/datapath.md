@@ -34,7 +34,7 @@ async DMA, B preshuffled straight to VGPRs, the XOR swizzle and its write/read p
 (`../flydsl/guides.md` § gemm-optimization (FlyDSL's §3, §4, §11, §12)). The general LDS and prefetch skills
 (`../flydsl/guides.md` § lds-optimization, `../flydsl/guides.md` § prefetch-data-load) cover diagnosis from a trace,
 swizzle vs padding, write-to-read distance and the prologue/loop/epilogue prefetch transformation, for any
-kernel. gfx950 has 160 KiB of LDS per CU in 64 banks of 4 bytes.
+kernel. gfx950 has 160 KiB of LDS per CU in 64 banks of 4 bytes, though a `ds_read_b32` conflicts as on 32 (§3).
 
 ## 1. Allocating LDS
 
@@ -70,21 +70,23 @@ In FlyDSL: `../flydsl/gemm.md` § datapath §2.
 | Layout | bank conflicts from the stride or the access pattern | swizzle or padding |
 | Timing | a `ds_write` too close to the `ds_read` that depends on it | more write-to-read distance (`../flydsl/guides.md` § lds-optimization) |
 
-Treating every LDS symptom as a swizzle problem wastes the most time: check the write-to-read distance before
-the layout.
+Not every LDS stall is a layout problem, but a wait spike after a `ds_write` does not prove exposed write-to-read
+latency: a bank conflict also inflates that `lgkmcnt` wait, so check the `ds_*` rows and `SQ_LDS_BANK_CONFLICT` before changing the distance or the layout (`../flydsl/kernels/flydsl_authoring_method.md` § Diagnose LDS from the trace, not from intuition).
 
-gfx950 LDS has 64 banks of 4 bytes; bank = `(byte_addr / 4) mod 64`. A read is served in phases and
-conflicts count within a phase: `ds_read_b32` is one phase of all 64 lanes, `b64` two phases of 32
+gfx950 LDS has 64 banks of 4 bytes; wide reads see bank = `(byte_addr / 4) mod 64`. A read is served in phases and
+conflicts count within a phase: `b64` two phases of 32
 consecutive lanes, `b128` four phases of 16 lanes in a non-consecutive pattern ({T0–3, T12–15, T20–23, T24–27},
-{T32–35, T44–47, T52–55, T56–59}, {T4–7, T8–11, T16–19, T28–31}, {T36–39, T40–43, T48–51, T60–63}). For a `ds_read_b32` whose lane stride is `s` dwords, the 64 lanes
-touch `64 / gcd(s, 64)` distinct banks: a 128-byte row stride (`s = 32`) lands every lane on two banks, a
-32-way conflict. For `b64`/`b128`, count the stride in 8- or 16-byte units: with one row per lane, an odd
+{T32–35, T44–47, T52–55, T56–59}, {T4–7, T8–11, T16–19, T28–31}, {T36–39, T40–43, T48–51, T60–63}). A `ds_read_b32` conflicts as two 32-lane passes over 32 banks
+*(field, E31)*: a lane stride of `s` dwords is a `gcd(s, 32)`-way conflict, so a 128-byte row stride (`s = 32`) and every
+multiple of it (`s` = 64, 96, 128) cost the same 32-way conflict (124 cycles per read against 60 conflict-free, one wave). For `b64`/`b128`, count the stride in 8- or 16-byte units: with one row per lane, an odd
 stride keeps every phase on distinct banks.
 
 - **Swizzle or pad.** XOR swizzle when the access pattern is regular and LDS headroom is tight; padding when
   a small stride bump removes the conflict and the swizzle arithmetic would clutter the address code.
-  gfx950's 160 KiB LDS often leaves room for padding. Derive any swizzle or padding from the 64-bank rule
-  above; a layout you did not derive that way is unverified.
+  gfx950's 160 KiB LDS often leaves room for padding. Derive any swizzle or padding from the bank rule
+  above for each access (32 banks for `ds_read_b32` and `ds_write_b32`/`b64`/`b128`, 64 for `b64`/`b128` reads;
+  `../hardware/gfx950/memory_and_sync.md` §4.2, for `b128` the trace section cited above); a layout you did not
+  derive that way is unverified.
 - Padding must keep the 8- or 16-byte alignment a `ds_read_b64/b128` needs. `+1 element` on fp16 breaks
   it; pad by whole 16-byte slots, or swizzle.
 - **Declare 16-byte alignment on a 16-byte LDS read** where LLVM cannot prove it; otherwise the read splits into
@@ -119,8 +121,9 @@ In FlyDSL: `../flydsl/gemm.md` § datapath §3.
 - **After an intrinsic LDS DMA, the compiler drains everything before your `ds_read`.** It cannot prove
   which reads alias the DMA's destination, so it inserts `s_waitcnt vmcnt(0)`. Turbo issues those
   `ds_read`s in inline asm and supplies the wait itself (`vmcnt_hint`, `_packed_ds_read_tr_offsets`,
-  GH:1783). *(field, E5)* At long K this drain removal gave +6.8% (2580 → 2768 TF/s on a dense fp8 TN GEMM,
-  8192×8192×28672); `vmcnt(3)` was the deepest setting that stayed bitwise repeatable. An asm `ds_read`
+  GH:1783). *(field, E36)* In Turbo's 8-wave fp8 TN kernel, moving only A's reads from the intrinsic into asm
+  with `vmcnt(3)` gave +15.6% at 8192×8192×28672 and +7.4% at K = 4096. `vmcnt(3)` was the deepest setting that
+  stayed bitwise repeatable *(field, E5)*. An asm `ds_read`
   must also drain its own `lgkmcnt` before the consumer, because the compiler does not track it.
   Or issue the untracked async LDS DMA and wait by group count (`asyncmark` / `wait.asyncmark`): the backend
   inserts no wait for it. Or keep the compiler-issued DMA (the one it inserts waits for) and emit the read as an
@@ -151,8 +154,9 @@ In FlyDSL: `../flydsl/gemm.md` § datapath §4.
 
 **How Turbo issues the DMA** (`G2SLoader`, GH:305-386):
 - One 16 B DMA per lane: each wave writes 1 KiB per step.
-- The per-lane global offsets are compile-time constants, so the hot loop has no address
-  VALU. The wave-uniform K offset rides the SGPR `soffset`, which the range check leaves out (§8).
+- The per-lane global offsets are computed once, before the loop, from the lane and wave ids
+  (`compute_global_swizzle`, GH:234-253) and reused in every K iteration, so the hot loop has no address
+  VALU. The wave-uniform K offset rides the SGPR `soffset`, which gfx950's range check also counts (§8).
 - **M0.** In the whole-loop asm each fill is `s_add_u32 m0, <pool base>, <step·nwaves·1024>` followed by
   `buffer_load_dwordx4 … offen lds`. The MXFP4 kernel uses a **wave-major** layout instead: each wave's
   chunks are contiguous, so consecutive steps are 1 KiB apart and ride the 12-bit immediate. One M0 write
@@ -163,16 +167,22 @@ In FlyDSL: `../flydsl/gemm.md` § datapath §5.
 
 ## 6. What a global access costs
 
-- **The cost unit is unique 128-byte lines touched per instruction, not bytes or requests.**
+- **For data in L2, an instruction costs by the 128 B lines it touches, or by 64-byte chunks where adjacent
+  instructions read the rest of each line; fewer bytes do not make it cheaper.** *(field, E32, E35)* 1 KiB per
+  instruction over 32 and 64 lines cost 1.7–1.9× and 3.3–3.9× 8 full lines (loads, LDS DMA and stores alike) where
+  adjacent instructions read the rest of each line, and 16 half lines whose rest no instruction read cost 1.89×; a quarter
+  of the bytes from the same lines saved nothing.
+  From HBM, loads and LDS DMA paid only for total traffic in whole lines; stores still paid 1.6–1.8× at 32 and 64 lines.
   *(field, E10, E11)* On a grouped GEMM, narrowing a `buffer_load … lds` to a quarter of its width with the
   same lines touched bought 0.14%; cutting the lines one instruction touches from 8 to 1 at the same
   instruction count bought 20.2% in a timing-only probe whose output was wrong. Storing an fp6 A operand
   densely (96-byte rows) saved 25% of the bytes but scattered each wave's DMA over 64 lines and lost 26.6%;
-  re-tiling it so a wave's 64 lanes read 1 KiB contiguously turned the same byte saving into +2.0%. Merging
-  requests pays only when it also cuts unique lines.
-- **Keep `tile_k` at a whole 128 B line per row; do not halve it to buy stages.** bf16 `tile_k` 32 fills 64 B,
-  half a line. *(field, E12, E13, E14)* On three kernels, `tile_k` 64 → 32 with 3–6 stages lost 4–17% at
-  M ≈ 900–16k and 31–43% at M = 80–112.
+  re-tiling it so a wave's 64 lanes read 1 KiB contiguously turned the same byte saving into +2.0%. On these
+  LDS DMA reads, merging requests paid only where it also cut the lines touched.
+- **Whether halving `tile_k` to buy stages pays depends on the kernel.** bf16 `tile_k` 32 fills 64 B, half a line.
+  *(field, E12, E13, E14)* On three Kimi-K3 bf16 GEMMs at K = 7168, `tile_k` 64 → 32 with 3–6 stages lost 4–17% at
+  M ≈ 900–16k and 31–43% at M = 80–112; in a Triton bf16 GEMM at K = 4096 the same trade at equal LDS ranged from
+  5% slower (M = 4096) to 8% faster (M = 128) *(field, E33)*. Measure it on your kernel.
 - **A contraction stride ≡ 64 mod 128 bytes straddles lines.** Padding K so the row pitch is a
   multiple of 128 B removes the straddle.
 - **Stores go out in 64-byte requests on gfx950.** Pairing two columns per lane halves the request
@@ -188,8 +198,9 @@ In FlyDSL: `../flydsl/gemm.md` § datapath §5.
   cannot split the two. After a tile change silently turned coalescing off, restoring it with `nt`
   unchanged saved 2.2%. Both are per-shape, per-tile choices. Choose `nt` per load by reuse class (scale
   streams that are re-read stay cached).
-- **LDS immediates have windows.** A base at or above `0x10000` cannot use the 16-bit DS offset
-  (`ds_read_b128 … offset:65536` does not assemble), and `ds_read2st64`'s 8-bit offset (256-byte units)
+- **LDS immediates have windows.** The DS offset is a 16-bit immediate, so a constant LDS base at or above
+  `0x10000` has to go into the address VGPR (`ds_read_b128 … offset:65536` does not assemble; the limit is on the
+  immediate, not on the address), and `ds_read2st64`'s 8-bit offset (256-byte units)
   breaks when tiles widen. *(field, E20)* On a cast kernel, doubling the row stride from 512 to 1024 B
   pushed offsets out of that window and the paired reads split: +38% `ds_read` instructions per unit of
   work (84 → 232 for twice the work).
@@ -207,12 +218,13 @@ In FlyDSL: `../flydsl/gemm.md` § datapath §5.
   direct-to-VGPR reached 77.8% of the throughput of B through LDS; A direct-to-VGPR ran 2.5× slower on a
   long K. B can go straight to VGPRs when it is preshuffled and each wave owns its own N slice, as in the
   2-stage baseline of `mainloop.md`.
-  Private rows do not rescue a row-major A: it must then be loaded in the MFMA lane layout, which touches more lines
-  per instruction (§6), or permuted in registers. *(field, E30)* With 8×1 waves, each owning its A rows, both lost
-  8–32% to A through LDS on a bf16 GEMM, while contiguous loads of the same rows (wrong output by design) were as
+  Private rows did not rescue a row-major A on a bf16 GEMM with a cold L2: it must then be loaded in the MFMA lane
+  layout or permuted in registers. *(field, E30)* At m = 512 with 8×1 waves, each owning its A rows, both lost
+  8–32% to A through LDS, while contiguous loads of the same rows (wrong output by design) were as
   fast as it or up to 3% faster.
-- A prefetch that pushes the kernel over a register tier costs more than it hides; re-read
-  `.vgpr_count` after adding one.
+- A prefetch that pushes the kernel over a register tier lowers occupancy, which may or may not cost more than it
+  hides: re-read `.vgpr_count` and the spill count after adding one, and time both
+  (`../flydsl/guides.md` § prefetch-data-load).
 - **Gate a prefetched load exactly as its consumer is gated**, in the prologue and in the loop body. A
   load behind a mode flag (e.g. a scale load that only one quantization mode needs) that is gated
   differently in the two places feeds the consumer a value from the other branch.
@@ -225,11 +237,10 @@ The buffer descriptor's `num_records` and the per-lane `voffset` are 32-bit, so 
 at most 4 GiB.
 - **Fold each tile's large base into the descriptor's 64-bit base** and keep only the in-tile offset in
   `voffset`/`soffset` (`make_fp8_buffer_tensor_rebased`, GH:118-147). Bound `num_records` to the rest of the
-  tensor from that base: out-of-range M/N/K reads then return zero for free, as long as the offset that runs
-  past the end is in `voffset` or the instruction offset. A raw buffer access is out of range when those two
-  reach `num_records`; `soffset` is added to the address but not to that test
-  (`../hardware/gfx950/memory_and_sync.md` §2), so a padded row reached through `soffset` reads whatever lies
-  past the tensor.
+  tensor from that base: out-of-range M/N/K reads then return zero for free. The ISA's raw range check counts
+  only `voffset` and the instruction offset, but on gfx950 an address pushed past `num_records` by `soffset`
+  alone is out of range too, so a padded row reached through `soffset` also reads zeros
+  (`../hardware/gfx950/memory_and_sync.md` §2.3).
 - **Pin base and `num_records` with `readfirstlane`.** A value the divergence analysis cannot prove
   uniform lands in VGPRs, and a descriptor built from VGPRs puts every buffer access behind a
   readfirstlane waterfall (`_readfirstlane_i32`, PR:338-344). *(field, E24)* On a grouped GEMM, leaving
@@ -237,7 +248,8 @@ at most 4 GiB.
 - When one operand's strided traversal spans 2³² bytes or more, rebase the descriptor per load (the
   `rebase` mode of `G2SLoader`). Clamp the shifted `num_records` at 0 for tiles past the end.
 - Check SNR on both sides of any 2³¹-element limit the toolchain has, such as an int32 shape pack. Equal SNR
-  means there is no overflow break.
+  does not prove there is no overflow break: one that corrupts only a few elements may barely move SNR, so also
+  compare the elements past the limit with a reference.
 
 In FlyDSL: `../flydsl/gemm.md` § datapath §8.
 
@@ -246,10 +258,13 @@ In FlyDSL: `../flydsl/gemm.md` § datapath §8.
 - `ds_read_b64_tr_b8` (fp8) and `ds_read_b64_tr_b16` (bf16) read a K-row tile (stored `[K, ·]`) from LDS directly into MFMA
   operand order (gfx950 only). Turbo runs NN and TN natively with them, with no transposed copy of either
   operand (`S2RLoaderTr`, GH:1831-1963).
-- Pack the four reads of one fragment onto one base VGPR with immediate offsets. One address VGPR
-  instead of four avoids an address-register spill (`_packed_ds_read_tr_offsets`, GH:1783-1805).
-- The lane→column map of a transpose read is fixed by the hardware. Only which 16-column chunk a 16-lane
-  group reads can be chosen through the address.
+- Pack a fragment's reads onto shared base VGPRs with immediate offsets to avoid an address-register spill
+  (`_packed_ds_read_tr_offsets`, GH:1783-1805). Turbo's four reads of one fragment use two bases, as the first two
+  differ by a runtime XOR no immediate can express (GH:1903-1907).
+- The lane→element map of a transpose read is fixed by the hardware and stays inside each 16-lane group, but each
+  lane's own 8-byte-aligned address picks the row (8 fp8 or 4 bf16 elements) the group transposes, so rows may sit
+  anywhere in LDS (`ds_read_b64_tr_b8`: lane l, byte b comes from byte l mod 8 of the row read by group lane
+  2b + ⌊(l mod 16)/8⌋) *(field, E34)*.
 - *(field, E25)* Do not "halve the instruction count" by replacing four `ds_read_b64_tr_b8` with two
   `ds_read_b128` at the same addresses. On a grouped GEMM the probe took the wgrad speed score (higher is
   faster) from 0.971 to 0.566: transpose-read base addresses are laid out per transpose unit, and `b128` at
@@ -268,8 +283,10 @@ There are two ways to get an operand into MFMA order without a runtime shuffle:
   The cost is a host-side pass, paid once for weights that do not change between calls.
 - **Permute rows in the fill.** Changing only which global row each G2S load fetches reorders a lane's
   n-fragments with no runtime cost, and the LDS image, swizzle and reads stay the same
-  (`compute_global_swizzle_pair`, GH:256-267; epilogue use in `epilogue.md` §3). Turbo's dense
-  paths use this and need no offline step, which matters where weights change between calls.
+  (`compute_global_swizzle_pair`, GH:256-267; epilogue use in `epilogue.md` §3). Turbo's fp8 grouped
+  GEMM and, for B when its gate allows, its MXFP8 dense GEMM use this and need no offline step, which matters where weights change
+  between calls (`grouped_gemm/grouped_gemm_fp8_kernel.py:1240`, `gemm/gemm_mxfp8_kernel.py:97-111, 359, 719`); its fp8
+  tensorwise dense GEMM pairs columns through a DPP neighbour exchange in the epilogue instead (GH:1113-1115).
 
 - **Keep every operand row on a 128 B line.** Take the row stride from the tensor, not from K, so a
   caller can pad rows (`row_bytes`, FP4). For MXFP4, `K % 256 == 0` is what puts the row stride `K/2` on
@@ -293,7 +310,7 @@ In FlyDSL: `../flydsl/gemm.md` § datapath §10.
   must offset its K position by that lag.
 - **Do the scale preshuffle in the same host call.** One host call launches the preshuffle kernel and then the
   GEMM, so the repack runs in stream order with no extra host dispatch. A caller that reuses weights can instead
-  preshuffle their scales once.
+  preshuffle their scales once; an AKLR kernel cannot keep them across calls (`workflow.md` § The round discipline).
 - Never store E8M0 scales with a non-temporal hint (`epilogue.md` §5).
 
 In FlyDSL: `../flydsl/gemm.md` § datapath §11.
@@ -310,30 +327,36 @@ A FlyDSL version is given only where the cited run, or another round in the same
 earliest record that has the number.
 
 - E1 [2026-08, gfx950 (the source does not name the GPU), FlyDSL ?, N=?, ruler not stated] FlyDSL's own source comment: on the bf16 sync path at `tile_k=256`, 1011 TF/s with the fixed `Swizzle<3,3,3>` against 417 TF/s with the swizzle derived from `tile_k` (FlyDSL `preshuffle_gemm`, shape not stated; ROCm/FlyDSL #1008, commit 3a02102e, read at dd8373349:kernels/gemm/preshuffle_gemm.py:284-288)
-- E2 [2026-07, gfx950, FlyDSL ?, N=?, rocprofv3 LDSBankConflict] XOR-ing `W << 1` into the chunk index on the G2S write and on the transpose read took LDSBankConflict from 14% to 0.00% at a 1024 B chunk stride (grouped fp8 TN wgrad, 4 waves, two LDS pools, MoE expert shapes at m=2048 and 4096; commit message of Primus-Turbo bd4bd3a8 in local:/workspace/code/gpt_oss_docker/sync/tensorwise/Primus-Turbo)
-- E3 [2026-08, gfx950, FlyDSL ?, N=7, same-process interleaved A/B, ISA counts checked] `SQ_WAIT_INST_LDS` came to ~81% of the CU-cycle budget; halving each of three LDS read classes in turn (`ds_read_b128` 384 → 320 and 384 → 256, `ds_read_b64_tr_b16` 1536 → 1280) read −0.25%, −0.09% and −0.09%, all noise (base won 3/7, 3/7, 2/7), recorded as 0.0% (gpt-oss fused attention backward, B=3 S=8192 Hq64 Hkv8 D64; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260804_003925/goal.md:37, :130-135)
-- E4 [2026-10, gfx950, FlyDSL 0.3.2 with AMD LLVM 22.0.0git, N=40, s_memtime ticks, median per variant] one wave, 4 B per lane, an inline-asm load from global memory, then a wait: `flat_load_dword` + `lgkmcnt(0)` 96 ticks, `global_load_dword` + `lgkmcnt(0)` 56; `vmcnt(0)` 244 (flat) and 242 (global) on a line read before, 1032 and 984 on first touch (probe p8_flat_lgkm.py; local:/workspace/code/gpt_oss_docker/work/turbo_port/fe032/raw/out_p8_fd0.3.2.txt:115-119)
-- E5 [2026-05, gfx950, FlyDSL ?, N=? for timing and 1000 runs for determinism, TF/s through the public entry] issuing both operands' `ds_read_b64_tr_b8` in inline asm, which removes the compiler's `vmcnt(0)` drain: 2580 → 2768 TF/s (+6.8%); `vmcnt_hint=3` stayed deterministic over 1000 runs, `vmcnt_hint` ≥ 4 raced (dense fp8 tensorwise TN, 8192×8192×28672; Primus-Turbo commit ba6d40f8)
-- E7 [2026-08, gfx950, hand-written HIP probe, N=?, LDS placement check, then the campaign bench] `buffer_load_dwordx4 … lds offset:N` adds N to the LDS address (M0 + N + TID·16) and to the memory address (the data landed at LDS dwords 256/512 while lane 0 still read element 0); a wave-major fill sharing one M0 write then read −0.23% and −0.46% in two samples against a 0.55% noise band and was priced at 0 (MXFP8 grouped GEMM, gpt-oss, six balanced cells; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260813_160237/memory.md:197)
-- E8 [2026-09, gfx950, FlyDSL 0.2.4, N=1 per arm, gemm18 scorer: geomean over 18 dense MXFP4 cells (6 gpt-oss, 12 Llama)] turning the LDS-DMA immediate off on all 18 cells read 0.9980 against a 1.0057 baseline (−0.77%); 16 of the 18 cells use it, recorded as −0.87% per affected cell; the hot loop grew from 381 to 404 instructions, all `s_add_u32 m0` (Primus-Turbo MXFP4 dense GEMM; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260925_144843/memory.md:134)
-- E9 [2026-10, gfx950, FlyDSL ?, N=3, six-shape A6W4 forward scorer] a wave-major A fill with the K-tile offset in `soffset` and each step in the 12-bit immediate cut the hot loop from 949 to 879 instructions; the scorer read 3964.08/3954.31/3951.09 against 3950.12/3952.65/3956.84, recorded as 0% (A6W4 forward GEMM, six training shapes; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20261010_100503/memory.md:178)
-- E10 [2026-08, gfx950, FlyDSL ?, N=1 per probe, gm_tf of `_bench_campaign_mxfp4.py` in the same session as baseline reads 4076.3/4065.3] `buffer_load_dword` in place of `dwordx4`, same lines touched: 4082.0 (+0.14%); every lane on one address, so one instruction touches 1 line instead of 8 (timing only, wrong output): 4901.6 (+20.2%) (gpt-oss MXFP4 grouped GEMM; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260804_140240/memory.md:396)
-- E11 [2026-10, gfx950, FlyDSL ?, N=1 (dense rows) and N=5 (re-tiled) against 3 baseline reads, six-shape A6W4 forward scorer] fp6 A stored at 96 B per row: 2847.61 (−26.6%); stored densely with a 64-row preshuffle: 3959.89/3960.54/3953.53/3950.35/3960.10 against 3901.73/3881.19/3878.16, median +2.03% (A6W4 forward GEMM, six training shapes; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20261010_100503/memory.md:164)
-- E12 [2026-10, gfx950, FlyDSL 0.3.2, N=50 graph replays (median), scratch CUDA-graph timer] `tile_k` 32 with 4 stages against the current `tile_k` 64 rows: m=2732 220.40 against 190.35 µs, m=16384 1364.94 against 1204.59 µs (Kimi-K3 bf16 GEMM N=6144 K=7168, forge iteration 3; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n6144_k7168/forge_experiments/lessons/iter_003.md:28-30)
-- E13 [2026-10, gfx950, FlyDSL 0.3.2, N=? (iteration 2: driver --bench-mode, 3 warm-up and 10 timed calls; iteration 6: timer not stated for the item)] `tile_k` 32: m=2732 with 4 stages 220.6 µs against 198.4 for 2 stages of `tile_k` 64; m=16384, 256×256 with 4 or 3 stages, 1.258 / 1.286 ms against 1.110; m=893 with 5 or 6 stages 84.42 / 85.22 µs against 72.74 (Kimi-K3 bf16 GEMM N=6016 K=7168, forge iterations 2 and 6; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n6016_k7168/forge_experiments/lessons/iter_002.md:15-28; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n6016_k7168/forge_experiments/lessons/iter_006.md:29)
-- E14 [2026-10, gfx950, FlyDSL 0.3.2, N=? (m=80/112: own script without L2 flush; m=2732: driver single-case bench; m=9397/16384: CUDA-graph script with a 512 MB flush, median of 4 interleaved repeats)] `tile_k` 32: m=112 / 80 with 5 stages 44.69 / 44.06 µs against 34.02 / 30.78; m=2732 with 4 / 3 stages 0.306 / 0.318 ms against 0.294; with 4 stages m=9397 903 → 1010 µs and m=16384 1615 → 1792 µs (Kimi-K3 bf16 GEMM N=8448 K=7168, forge iterations 2, 6 and 8; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n8448_k7168/forge_experiments/lessons/iter_002.md:36-37; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n8448_k7168/forge_experiments/lessons/iter_006.md:22-27; local:/workspace/code/gpt_oss_docker/work/sikl/dashboards_k3/gemm_n8448_k7168/forge_experiments/lessons/iter_008.md:7-9)
-- E16 [2026-08, gfx950, FlyDSL ?, N=?, rocprofv3 TCP_TCC_WRITE_REQ] pairing two output columns per lane so that one store covers 64 B: `TCP_TCC_WRITE_REQ` 2.359e7 → 1.206e7 (−48.9%), `TCP_TCC_READ_REQ` unchanged; widening further to `dwordx2` left it at 1.206e7 (gpt-oss-20b down projection, grouped tensorwise fp8 forward, G=32, M=131072, N=K=2880; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260817_065611/goal.md:29; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260817_065611/memory.md:220)
-- E17 [2026-09, gfx950, FlyDSL ?, N=1 per arm, baseline read at both ends of a palindromic order (1559.27 / 1569.43 µs), 90 s warm-up] removing only the 64 `buffer_store_dwordx2`: 1471.60 µs (+6.30%); only the 128 `v_cvt_pk_bf16_f32`: +0.43%; only the `v_accvgpr_read_b32` layer: +0.52%, both within noise; all three: +7.75% (Primus-Turbo MXFP4 dense GEMM, Llama FC1_fwd row, K=4096; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260910_041317/memory.md:414-419)
-- E18 [2026-10, gfx950, FlyDSL ?, N=61 paired rounds, in-process paired probe] on linear1 at a 256×256 tile, removing `nt` from the C store cost +10.4% with half-row stores (store_mode 0) and +10.8% with whole-row stores (store_mode 1), 0 of 61 rounds faster; on linear2, whole-row against half-row stores, both cached, read +0.07% (A6W4 forward GEMM; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20261010_100503/rounds/round-03/agent.txt:17)
-- E19 [2026-10, gfx950, FlyDSL ?, N=1 per scorer read, linear1 drifting 522.4–525.5 µs in the session] a later round credited that 10.4% to whole-row coalescing by subtracting linear2's +0.07% arm; after a 256×384 tile had switched coalescing off, restoring it with `nt` unchanged took linear1 from 533.9 to 522.4 µs (−2.2%, spread 0.43%) (A6W4 forward GEMM; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20261010_100503/memory.md:209-210, :220, :225)
-- E20 [2026-09, gfx950, FlyDSL 0.2.4, N=1, static ISA count (FLYDSL_DUMP_IR)] widening the tile from 128×256 to 128×512 (LDS row stride 512 → 1024 B) took `ds_read` from 84 to 232 for twice the work (×2.76, +38% per unit of work) as `ds_read2st64_b32` pairs stopped fusing (gpt-oss MXFP4 fused dual-cast kernel; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260923_085930/rounds/round-15/agent.txt:56)
-- E21 [2026-07, gfx950, FlyDSL ?, N=?, ruler not stated] a 3-stage B ring with a longer prefetch distance measured +0.05% (neutral) where eight experts' weights thrashed the 4 MB per-XCD L2 (grouped GEMM forward, shapes not stated; recorded by 2026-07-05, myskill 6afa91f; local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/03-lds-l2-datapath.md:28)
-- E22 [2026-07, gfx950, FlyDSL ?, N=?, TF/s] B loaded straight to VGPRs, bit-exact, reached 77.8% of the throughput of B through LDS, recorded as ~22% slower (MXFP4 8-wave GEMM, 4096×4096×8192; note, no run record on this machine, first recorded in myskill 9d3f961, 2026-07-05; local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/03-lds-l2-datapath.md:13)
-- E23 [2026-07, gfx950, FlyDSL ?, N=?, TF/s] A loaded straight to VGPRs: 1990 TF/s against 5033 with A through LDS, 2.5× slower (MXFP4 8-wave GEMM, 8192×8192×28672; note, no run record on this machine, first recorded in myskill 6afa91f, 2026-07-05; local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/03-lds-l2-datapath.md:9)
-- E24 [2026-06, gfx950, FlyDSL ?, N=?, ruler not stated] with the rebased descriptor's base and num_records left in VGPRs, every K-loop `buffer_load` went through a readfirstlane waterfall: gate_up −16%, down −13% (grouped fp8 GEMM, MoE gate_up and down, shapes not stated; recorded 2026-06-17, myskill 2563ed1:flydsl-fp8-gemm-tuning/05-int64-addressing.md:30; local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/07-epilogue-addressing-transpose.md:217)
-- E25 [2026-07, gfx950, FlyDSL ?, N=?, wgrad geomean of `_bench_tw_vs_mx.py`] the A pools read with plain `ds_read_b128` (half the DS instructions, same bytes) instead of `ds_read_b64_tr_b8`: wgrad score 0.971 → 0.566, recorded as −80%; probe invalid (gpt-oss tensorwise fp8 grouped wgrad, whole-loop; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260731_073404/memory.md:194)
+- E2 [2026-07, gfx950, FlyDSL ?, N=?, rocprofv3 LDSBankConflict] XOR-ing `W << 1` into the chunk index on the G2S write and on the transpose read took LDSBankConflict from 14% to 0.00% at a 1024 B chunk stride (grouped fp8 TN wgrad, 4 waves, two LDS pools, MoE expert shapes at m=2048 and 4096)
+- E3 [2026-08, gfx950, FlyDSL ?, N=7, same-process interleaved A/B, ISA counts checked] `SQ_WAIT_INST_LDS` came to ~81% of the CU-cycle budget; halving each of three LDS read classes in turn (`ds_read_b128` 384 → 320 and 384 → 256, `ds_read_b64_tr_b16` 1536 → 1280) read −0.25%, −0.09% and −0.09%, all noise (base won 3/7, 3/7, 2/7), recorded as 0.0% (gpt-oss fused attention backward, B=3 S=8192 Hq64 Hkv8 D64)
+- E4 [2026-10, gfx950, FlyDSL 0.3.2 with AMD LLVM 22.0.0git, N=40, s_memtime ticks, median per variant] one wave, 4 B per lane, an inline-asm load from global memory, then a wait: `flat_load_dword` + `lgkmcnt(0)` 96 ticks, `global_load_dword` + `lgkmcnt(0)` 56; `vmcnt(0)` 244 (flat) and 242 (global) on a line read before, 1032 and 984 on first touch
+- E5 [2026-05, gfx950, FlyDSL ?, N=? for timing and 1000 runs for determinism, TF/s through the public entry] issuing A's `ds_read_b64_tr_b8` in inline asm as well as B's, which removes the compiler's `vmcnt(0)` drain before A, with `GROUP_M=1` (+2.5% against `GROUP_M=2`), `vmcnt_hint=3` (+1% against 2), `agpr_alloc=0` and an inline-asm MFMA (`asm_mma=2`): 2580 → 2768 TF/s (+6.8%) against the candidates with compiler-issued A reads; `vmcnt_hint=3` stayed deterministic over 1000 runs, `vmcnt_hint` ≥ 4 raced (dense fp8 tensorwise TN, 8192×8192×28672; Primus-Turbo commit ba6d40f8)
+- E7 [2026-08, gfx950, hand-written HIP probe, N=?, LDS placement check, then the campaign bench] `buffer_load_dwordx4 … lds offset:N` adds N to the LDS address (M0 + N + TID·16) and to the memory address (the data landed at LDS dwords 256/512 while lane 0 still read element 0); a wave-major fill sharing one M0 write then read −0.23% and −0.46% in two samples against a 0.55% noise band and was priced at 0 (MXFP8 grouped GEMM, gpt-oss, six balanced cells)
+- E8 [2026-09, gfx950, FlyDSL 0.2.4, N=1 per arm, a GEMM campaign's scorer: geomean over 18 dense MXFP4 cells (6 gpt-oss, 12 Llama)] turning the LDS-DMA immediate off on all 18 cells read 0.9980 against a 1.0057 baseline (−0.77%); 16 of the 18 cells use it, recorded as −0.87% per affected cell; the hot loop grew from 381 to 404 instructions, all `s_add_u32 m0` (Primus-Turbo MXFP4 dense GEMM)
+- E9 [2026-10, gfx950, FlyDSL ?, N=3, six-shape A6W4 forward scorer] a wave-major A fill with the K-tile offset in `soffset` and each step in the 12-bit immediate cut the hot loop from 949 to 879 instructions; the scorer read 3964.08/3954.31/3951.09 against 3950.12/3952.65/3956.84, recorded as 0% (A6W4 forward GEMM, six training shapes)
+- E10 [2026-08, gfx950, FlyDSL ?, N=1 per probe, gm_tf in the same session as baseline reads 4076.3/4065.3] `buffer_load_dword` in place of `dwordx4`, same lines touched: 4082.0 (+0.14%); every lane on one address, so one instruction touches 1 line instead of 8 (timing only, wrong output): 4901.6 (+20.2%) (gpt-oss MXFP4 grouped GEMM)
+- E11 [2026-10, gfx950, FlyDSL ?, N=1 (dense rows) and N=5 (re-tiled) against 3 baseline reads, six-shape A6W4 forward scorer] fp6 A stored at 96 B per row: 2847.61 (−26.6%); stored densely with a 64-row preshuffle: 3959.89/3960.54/3953.53/3950.35/3960.10 against 3901.73/3881.19/3878.16, median +2.03% (A6W4 forward GEMM, six training shapes)
+- E12 [2026-10, gfx950, FlyDSL 0.3.2, N=50 graph replays (median), scratch CUDA-graph timer] `tile_k` 32 with 4 stages against the current `tile_k` 64 rows: m=2732 220.40 against 190.35 µs, m=16384 1364.94 against 1204.59 µs (Kimi-K3 bf16 GEMM N=6144 K=7168)
+- E13 [2026-10, gfx950, FlyDSL 0.3.2, N=? (m=2732 and m=16384: driver --bench-mode, 3 warm-up and 10 timed calls; m=893, read on a later candidate: timer not stated for the item)] `tile_k` 32: m=2732 with 4 stages 220.6 µs against 198.4 for 2 stages of `tile_k` 64; m=16384, 256×256 with 4 or 3 stages, 1.258 / 1.286 ms against 1.110; m=893 with 5 or 6 stages 84.42 / 85.22 µs against 72.74 (Kimi-K3 bf16 GEMM N=6016 K=7168)
+- E14 [2026-10, gfx950, FlyDSL 0.3.2, N=? (m=80/112: own script without L2 flush; m=2732: driver single-case bench; m=9397/16384: CUDA-graph script with a 512 MB flush, median of 4 interleaved repeats)] `tile_k` 32: m=112 / 80 with 5 stages 44.69 / 44.06 µs against 34.02 / 30.78; m=2732 with 4 / 3 stages 0.306 / 0.318 ms against 0.294; with 4 stages m=9397 903 → 1010 µs and m=16384 1615 → 1792 µs (Kimi-K3 bf16 GEMM N=8448 K=7168)
+- E16 [2026-08, gfx950, FlyDSL ?, N=?, rocprofv3 TCP_TCC_WRITE_REQ] pairing two output columns per lane so that one store covers 64 B: `TCP_TCC_WRITE_REQ` 2.359e7 → 1.206e7 (−48.9%), `TCP_TCC_READ_REQ` unchanged; widening further to `dwordx2` left it at 1.206e7 (gpt-oss-20b down projection, grouped tensorwise fp8 forward, G=32, M=131072, N=K=2880)
+- E17 [2026-09, gfx950, FlyDSL ?, N=1 per arm, baseline read at both ends of a palindromic order (1559.27 / 1569.43 µs), 90 s warm-up] removing only the 64 `buffer_store_dwordx2`: 1471.60 µs (+6.30%); only the 128 `v_cvt_pk_bf16_f32`: +0.43%; only the `v_accvgpr_read_b32` layer: +0.52%, both within noise; all three: +7.75% (Primus-Turbo MXFP4 dense GEMM, Llama FC1_fwd row, K=4096)
+- E18 [2026-10, gfx950, FlyDSL ?, N=61 paired rounds, in-process paired probe] on linear1 at a 256×256 tile, removing `nt` from the C store cost +10.4% with half-row stores (store_mode 0) and +10.8% with whole-row stores (store_mode 1), 0 of 61 rounds faster; on linear2, whole-row against half-row stores, both cached, read +0.07% (A6W4 forward GEMM)
+- E19 [2026-10, gfx950, FlyDSL ?, N=1 per scorer read, linear1 drifting 522.4–525.5 µs in the session] a later round credited that 10.4% to whole-row coalescing by subtracting linear2's +0.07% arm; after a 256×384 tile had switched coalescing off, restoring it with `nt` unchanged took linear1 from 533.9 to 522.4 µs (−2.2%, spread 0.43%) (A6W4 forward GEMM)
+- E20 [2026-09, gfx950, FlyDSL 0.2.4, N=1, static ISA count (FLYDSL_DUMP_IR)] widening the tile from 128×256 to 128×512 (LDS row stride 512 → 1024 B) took `ds_read` from 84 to 232 for twice the work (×2.76, +38% per unit of work) as `ds_read2st64_b32` pairs stopped fusing (gpt-oss MXFP4 fused dual-cast kernel)
+- E21 [2026-07, gfx950, FlyDSL ?, N=?, ruler not stated] a 3-stage B ring with a longer prefetch distance measured +0.05% (neutral) where eight experts' weights thrashed the 4 MB per-XCD L2 (grouped GEMM forward, shapes not stated; recorded by 2026-07-05)
+- E22 [2026-07, gfx950, FlyDSL ?, N=?, TF/s] B loaded straight to VGPRs, bit-exact, reached 77.8% of the throughput of B through LDS, recorded as ~22% slower (MXFP4 8-wave GEMM, 4096×4096×8192; unverified, first recorded 2026-07-05)
+- E23 [2026-07, gfx950, FlyDSL ?, N=?, TF/s] A loaded straight to VGPRs: 1990 TF/s against 5033 with A through LDS, 2.5× slower (MXFP4 8-wave GEMM, 8192×8192×28672; unverified, first recorded 2026-07-05)
+- E24 [2026-06, gfx950, FlyDSL ?, N=?, ruler not stated] with the rebased descriptor's base and num_records left in VGPRs, every K-loop `buffer_load` went through a readfirstlane waterfall: gate_up −16%, down −13% (grouped fp8 GEMM, MoE gate_up and down, shapes not stated; recorded 2026-06-17)
+- E25 [2026-07, gfx950, FlyDSL ?, N=?, wgrad geomean] the A pools read with plain `ds_read_b128` (half the DS instructions, same bytes) instead of `ds_read_b64_tr_b8`: wgrad score 0.971 → 0.566, recorded as −80%; probe invalid (gpt-oss tensorwise fp8 grouped wgrad, whole-loop)
 - E26 [2026-08, gfx950, FlyDSL ?, N=? (interleaved A/B), ms] 12 K blocks held fixed, fp4 row stride phase 0 / 64 / 32 / 96 B: 0.2753 / 0.2985 (+8.4%) / 0.3072 (+11.6%) / 0.3082 ms (+12.0%) (Primus-Turbo MXFP4 dense GEMM, M=32768, N=5120, K=3072/2944/2880/3008; Primus-Turbo #487, commit f6d5ab685, first committed as a5606e87)
-- E27 [2026-07, gfx950, FlyDSL ?, N=?, geomean of tw/mx over 14 cells (`_bench_campaign_mxfp8.py`) and per-workgroup PMC] wgrad with four E8M0 scales per dword: `SQ_INSTS_VMEM` per workgroup 3947 → 3387 (−14.2%), MFMA and VALU unchanged, six configurations +5.4–8.2% (gpt-oss MXFP8 grouped GEMM, variable-K wgrad; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260729_093030/memory.md:109)
-- E28 [2026-07, gfx950, FlyDSL ?, N=?, ruler not stated] in an MXFP8 dense per-K loop that already prefetched its scales one step ahead, a probe that loaded only the k=0 scales and reused them put the scale tax at ≈0% (all 4 shapes ≤ 1%, some slower) (MXFP8 dense GEMM, 4 shapes not named; recorded by 2026-07-05, myskill 9d3f961; local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/05-mxfp4-mxfp8-deadends.md:205, :365)
-- E29 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile and run, final ISA read] two `BufferCopyLDS128b` DMAs, an inline-asm `s_waitcnt vmcnt(1)` + `s_barrier`, then one `ds_read_b128`: the plain `llvm.load` got `s_waitcnt vmcnt(0)` before it, the same load with an `alias_scopes` attribute none; output correct in both (probe kernel; local:/shared_nfs/kyle/moe/kf/runs/ep8_cmp/knowledge_patch_v2/probe_alias/probe.py, ISA in dump0/ and dump1/probe_kernel_0/21_final_isa.s). On a fused-MoE stage 2 the same change removed the `vmcnt(4..12)` the compiler put before its A reads (local:/shared_nfs/kyle/moe/kf/runs/ep8_cmp/workspace/forge_experiments/lessons/iter_011.md:24; :27)
-- E30 [2026-10, gfx950, FlyDSL 0.3.2, N=1 per arm, in-process probe, L2 flushed before each call, randn inputs, every arm against a same-process control; arms equal to the A-through-LDS build except the diagnostics] bf16, m=512, 256×192 tile, 8×1 waves (32 A rows per wave): A through LDS 96.6–97.8 µs; A in the MFMA lane layout 113–118 (2 A stages), 106.0 (3 stages); quad-contiguous loads + `ds_bpermute` 107.7–110.0; permlane/DPP register transpose 124.8 (7 spills) and 127.5 (248 VGPRs, none); contiguous-load diagnostics, wrong output, 92.7–96.1 against controls of 95.3–96.7 (bf16 GEMM n6144 k16384; local:/shared_nfs/kyle/moe/k3six/runs/gemm_l/workspace/forge_experiments/lessons/iter_012.md:3; :7)
+- E27 [2026-07, gfx950, FlyDSL ?, N=?, geomean of tw/mx over 14 cells and per-workgroup PMC] wgrad with four E8M0 scales per dword: `SQ_INSTS_VMEM` per workgroup 3947 → 3387 (−14.2%), MFMA and VALU unchanged, six configurations +5.4–8.2% (gpt-oss MXFP8 grouped GEMM, variable-K wgrad)
+- E28 [2026-07, gfx950, FlyDSL ?, N=?, ruler not stated] in an MXFP8 dense per-K loop that already prefetched its scales one step ahead, a probe that loaded only the k=0 scales and reused them put the scale tax at ≈0% (all 4 shapes ≤ 1%, some slower) (MXFP8 dense GEMM, 4 shapes not named; recorded by 2026-07-05)
+- E29 [2026-10, gfx950, FlyDSL 0.3.2, N=1, compile and run, final ISA read] two `BufferCopyLDS128b` DMAs, an inline-asm `s_waitcnt vmcnt(1)` + `s_barrier`, then one `ds_read_b128`: the plain `llvm.load` got `s_waitcnt vmcnt(0)` before it, the same load with an `alias_scopes` attribute none; output correct in both (probe kernel). On a fused-MoE stage 2 the same change removed the `vmcnt(4..12)` the compiler put before its A reads
+- E30 [2026-10, gfx950, FlyDSL 0.3.2, N=1 per arm, in-process probe, L2 flushed before each call, randn inputs, every arm against a same-process control; arms equal to the A-through-LDS build except the diagnostics] bf16, m=512, 256×192 tile, 8×1 waves (32 A rows per wave): A through LDS 96.6–97.8 µs; A in the MFMA lane layout 113–118 (2 A stages), 106.0 (3 stages); quad-contiguous loads + `ds_bpermute` 107.7–110.0; permlane/DPP register transpose 124.8 (7 spills) and 127.5 (248 VGPRs, none); contiguous-load diagnostics, wrong output, 92.7–96.1 against controls of 95.3–96.7 (bf16 GEMM n6144 k16384)
+- E31 [2026-11, gfx950 (MI355X), hipcc, rocprofv3, N=7, `s_memtime` cycles per dependent `ds_read_b32`, median; `SQ_LDS_BANK_CONFLICT` per read] lane l at dword l·s, one wave: s = 1 and odd s 60.05 cycles, s = 32, 64, 96 and 128 all 124.02; conflict cycles per read 2·(gcd(s, 32) − 1) (HIP microbenchmark)
+- E32 [2026-11, gfx950 (MI355X), hipcc, N=7 rounds, hipEvent per launch, ratios paired by round; A-vs-A ≤ 1.8% in L2, ≤ 3.6% from HBM] 1 KiB per instruction per wave, 16, 32 and 64 lines each filled over consecutive instructions, against 8 full lines (load, LDS DMA, store): in L2 0.96–1.00×, 1.67–1.94× and 3.29–3.94×; from HBM, load and LDS DMA 0.95–1.01×, store 1.57 / 1.84× at 32 / 64 lines; 4 B instead of 16 B per lane on the same 8 lines: L2 load 1.70×, LDS DMA 1.75×, store 1.00× (`buffer_load_dwordx4`, `buffer_load … lds` and `buffer_store` microbenchmark)
+- E33 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=7, kernel time from torch.profiler, L2 and MALL flushed before each call, arms rotated, ratios paired by round; A-vs-A ≤ 1.5%] bf16, K = 4096, `BLOCK_K` 32 with 4 stages against 64 with 2 at the same LDS: 8192×8192 −1.7%, 4096×4096 +5.4% (slower in 7 of 7 rounds), 2048×6144 +2.6%, 256×8192 +0.4%, 128×16384 −8.0% (faster in 7 of 7) (Triton tutorial-style tiled matmul)
+- E34 [2026-11, gfx950 (MI355X), hipcc, N=1 run of 64 address sets, LDS filled with each byte's own address] one wave, every lane reading at its own 8-byte-aligned address: for `ds_read_b64_tr_b8` and `ds_read_b64_tr_b16` a per-lane-address model matched all 32768 bytes, a group-base model 0 of 61 distinguishing sets; no byte crossed a 16-lane group; `tr_b8`: lane l, byte b from byte l mod 8 of the row read by group lane 2b + ⌊(l mod 16)/8⌋ (HIP microbenchmark)
+- E35 [2026-11, gfx950 (MI355X), hipcc, N=11 rounds, hipEvent per launch, ratios paired by round; A-vs-A within 3.5% in L2, 2.3% from HBM] `global_load_dwordx4`, 1 KiB per instruction per wave, the rest of each line never read: in L2, 16 / 32 / 64 lines against 8 full lines 1.89 / 3.60 / 7.28×, the same lines over interleaved instead of adjacent lanes 1.78–3.34×; from HBM, each line read by ½, ¼ or ⅛: 1.89 / 3.73 / 7.29× for the same useful bytes (HIP microbenchmark)
+- E36 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, Primus-Turbo 7615a5a2, N=9 rounds, profiler kernel time, A-vs-A within 0.55%; outputs bitwise equal across arms] Turbo's 8-wave dense fp8 TN kernel with only A's `ds_read_b64_tr_b8` changed: the intrinsic (compiler drain before it) against inline asm with `vmcnt(3)`, 1618.3 against 1398.8 µs (+15.6%) at 8192×8192×28672, +7.4% at 8192×8192×4096 (dense fp8 tensorwise TN GEMM)

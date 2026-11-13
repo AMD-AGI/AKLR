@@ -113,7 +113,7 @@ atom = fx.make_copy_atom(rocdl.cdna4.LDSReadTrans16_64b(), bf16)   # copy atom
 
 ## lds §8 Addresses
 
-- An offset is a compile-time constant only when every term of it is a Python int while the kernel is traced;
+- An offset is a runtime value as soon as one of its terms is a runtime value while the kernel is traced;
   `fx.block_idx` is always a runtime value. In the card's case (E18 there) the d-tile index had been taken from
   `block_idx.z`; the fix computes it in a helper that returns a Python int on the path where it is static
   (`if const_expr(<no D split>)`), so only the variant that needs the runtime index pays for runtime offsets.
@@ -165,7 +165,7 @@ atom = fx.make_copy_atom(rocdl.cdna4.LDSReadTrans16_64b(), bf16)   # copy atom
 
 ## schedule_sync §2 `sched_group_barrier` recipes
 
-- The final ISA to hash is the `NN_final_isa.s` that `FLYDSL_DUMP_IR=1` writes under `$FLYDSL_DUMP_DIR/<kernel>/`
+- The final ISA to diff is the `NN_final_isa.s` that `FLYDSL_DUMP_IR=1` writes under `$FLYDSL_DUMP_DIR/<kernel>/`
   (`debug-flydsl-kernel.md` § What the cache key sees).
 
 ## schedule_sync §6 LLVM scheduler strategy and options
@@ -189,16 +189,20 @@ jitfn.compile_hints["llvm_options"] = {"amdgpu-sched-strategy": "max-ilp"}   # c
 ## schedule_sync §8 Waits and barriers
 
 - `gpu.barrier()` lowers (MLIR `convert-gpu-to-rocdl`) to `fence syncscope("workgroup") release`, `s_barrier`,
-  `fence syncscope("workgroup") acquire`; on gfx950 that is `s_waitcnt lgkmcnt(0)` then `s_barrier`, with no
-  `vmcnt` wait for a global load still in flight. `rocdl.s_barrier()` is the bare instruction with no wait;
-  FlyDSL's gfx950 forward uses it (`_s_barrier`, `_dualwave_sync_barrier`, `flash_attn_utils.py:66-76`).
+  `fence syncscope("workgroup") acquire`. On gfx950 that is `s_waitcnt lgkmcnt(0)` then `s_barrier`, with no
+  `vmcnt` wait for ordinary global loads in flight; with an LDS DMA in flight (`buffer_load_* … lds`, from
+  `rocdl.raw_ptr_buffer_load_lds` or `BufferCopyLDS128b`) it also waits `vmcnt(0)` before the `s_barrier`.
+  `rocdl.s_barrier()` is the bare instruction with no wait; FlyDSL's gfx950 forward uses it (`_s_barrier`,
+  `_dualwave_sync_barrier`, `flash_attn_utils.py:66-76`). *(field, E2)* After an LDS DMA, `s_waitcnt lgkmcnt(0)` +
+  `rocdl.s_barrier()` let other waves read the LDS before the DMA landed, in every launch: wait `vmcnt` first.
 
 ## schedule_sync §10 Pipelining and DMA
 
 - **Cache bits:** the LDS-DMA atoms (`BufferCopyLDS*`, `cdna4.BufferLoadAsyncLDS*`, `GlobalLoadAsyncLDS*`)
   always emit `aux = 0`. For `nt`/`sc` bits call
-  `rocdl.raw_ptr_buffer_load_lds(rsrc, lds_ptr, size, voffset, soffset, offset, aux=<python int>)`; any other
-  type is silently dropped (`gemm.md` § INDEX FlyDSL version).
+  `rocdl.raw_ptr_buffer_load_lds(rsrc, lds_ptr, size, voffset, soffset, offset, aux=<python int>)`; an MLIR
+  attribute (`ir.IntegerAttr.get(T.i32, <bits>)`) is passed through as is, and any other type, such as `fx.Int32`,
+  is silently dropped (`expr/rocdl/__init__.py:815-819`; `gemm.md` § epilogue §5).
 
 ## softmax §2 exp2: one `v_exp_f32` is enough
 
@@ -237,4 +241,5 @@ What each lowering costs in ISA: `../attention/softmax.md` §2.
 
 ## Evidence
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=7, 2000 back-to-back calls synchronised at the end, 7 rounds per arm with the arm order rotated; in parentheses the host time with a synchronise before every call] a direct `@flyc.jit` call 31.01 µs [30.70–31.37] (31.84), the object `flyc.compile` returns 2.70 µs [2.60–2.74] (2.38), `torch.add(out=)` 2.34 µs [2.08–2.44] (1.81) (vector-add launcher with 8 arguments including 3 Constexpr and the stream, SIZE 4096, fresh runtime cache directory; probe `p3_flydsl_launch.py`; local:/workspace/code/gpt_oss_docker/scratch/attn_kb/verify/gpu_probes.md:148; local:/workspace/code/gpt_oss_docker/scratch/attn_kb/verify/raw/r_p3_run1.txt:15)
+- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=7, 2000 back-to-back calls synchronised at the end, 7 rounds per arm with the arm order rotated; in parentheses the host time with a synchronise before every call] a direct `@flyc.jit` call 31.01 µs [30.70–31.37] (31.84), the object `flyc.compile` returns 2.70 µs [2.60–2.74] (2.38), `torch.add(out=)` 2.34 µs [2.08–2.44] (1.81) (vector-add launcher with 8 arguments including 3 Constexpr and the stream, SIZE 4096, fresh runtime cache directory)
+- E2 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=20 launches per arm and grid, every output word checked; ISA from the run's own dump] after a 16 B-per-lane LDS DMA (`rocdl.raw_ptr_buffer_load_lds`), waves reading LDS that another wave's DMA fills behind `rocdl.s_waitcnt(lgkmcnt=0)` + `rocdl.s_barrier()` read pre-DMA contents in 20 of 20 launches per arm and grid; behind `gpu.barrier()` (compiled to `s_waitcnt vmcnt(0)` then `s_barrier`) or `rocdl.s_waitcnt(vmcnt=0, lgkmcnt=0)` + `rocdl.s_barrier()`: 0 wrong words in 80 launches each; with an ordinary `buffer_load_dwordx4` into VGPRs in flight, `gpu.barrier()` compiled to `s_waitcnt lgkmcnt(0)` then `s_barrier` (test kernel, 4 waves, 256 and 4096 blocks)

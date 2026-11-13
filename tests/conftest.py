@@ -2,6 +2,7 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
 import os
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -17,6 +18,7 @@ from aklr.core.runtime.builder import (
     TritonBuilder,
 )
 from aklr.core.runtime.dispatch import DispatcherRegistry, FallbackReason
+from aklr.core.runtime.dispatch._trace import trace
 from tests.op_case import OpCase
 
 
@@ -28,6 +30,11 @@ def pytest_configure(config: pytest.Config) -> None:
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Skip every ``gpu`` test unless ``torch.cuda.is_available()``."""
+    # the probe below initializes the GPU: a kernel tracer imported with a test module would
+    # register in pytest's own process, and a failure there would read as "no GPU"
+    assert "aklr.core.utils.testing" not in sys.modules, (
+        "a test module imports aklr.core.utils.testing at collection; import it in the process that times"
+    )
     has_gpu = torch.cuda.is_available()
     has_gfx950 = has_gpu and DeviceTarget.current().arch == "gfx950"
     for item in items:
@@ -43,6 +50,7 @@ def aklr_env(monkeypatch: pytest.MonkeyPatch, tmp_path_factory: pytest.TempPathF
     for name in [n for n in os.environ if n.startswith("AKLR_")]:
         monkeypatch.delenv(name)
     monkeypatch.setenv(ENV_KERNEL_CACHE_DIR, str(tmp_path_factory.mktemp("kernel_cache")))
+    trace.cache_clear()
 
 
 @pytest.fixture(params=OpCase.all(), ids=lambda case: case.contract_id)

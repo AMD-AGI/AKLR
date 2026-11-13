@@ -12,6 +12,7 @@ import os
 import statistics
 import tempfile
 import uuid
+import warnings
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -19,23 +20,6 @@ import torch
 import torch.distributed as dist
 import triton
 import triton.language as tl
-
-
-@contextmanager
-def graph_kernel_timing_environment():
-    """Enable tracer attachment without forced queue timing before the process's first GPU call."""
-    previous = {name: os.environ.get(name) for name in ("ROCP_TOOL_ATTACH", "GPU_FORCE_QUEUE_PROFILING")}
-    try:
-        os.environ["ROCP_TOOL_ATTACH"] = "1"
-        # Forced queue timing adds overhead and corrupts graph replay's heap below HIP 7.16.
-        os.environ.pop("GPU_FORCE_QUEUE_PROFILING", None)
-        yield
-    finally:
-        for name, value in previous.items():
-            if value is None:
-                os.environ.pop(name, None)
-            else:
-                os.environ[name] = value
 
 
 @functools.cache
@@ -54,10 +38,25 @@ def kernel_tracer():
         sources=[str(Path(__file__).with_name("_kernel_tracer.cpp"))],
         extra_cflags=["-D__HIP_PLATFORM_AMD__"],
         extra_include_paths=[f"{ROCM_HOME}/include"],
-        extra_ldflags=[f"-L{ROCM_HOME}/lib", "-lrocprofiler-sdk", "-lamdhip64", "-ldl"],
+        extra_ldflags=[f"-L{ROCM_HOME}/lib", "-lrocprofiler-sdk", "-lamdhip64"],
         build_directory=None if build is None else str(build),
     )
+    # SDK 1.4.0 takes a tool at any time and 1.4.2 fixes queue interposition, which torch 2.12 loads at import
+    sdk = tracer.rocprofiler_sdk_version
+    deprecated = [f"torch {torch.__version__}"] if torch.__version__ < "2.12" else []
+    deprecated += [f"rocprofiler-sdk {'.'.join(map(str, sdk))}"] if sdk < (1, 4, 2) else []
+    if deprecated:
+        warnings.warn(
+            f"aklr kernel tracer: {' and '.join(deprecated)} support is deprecated; "
+            "it will require torch >= 2.12 with rocprofiler-sdk >= 1.4.2",
+            FutureWarning,
+        )
     return tracer
+
+
+if torch.version.hip is not None:
+    # registers as torch initializes the GPU, or now if it has: rocprofiler-sdk intercepts only queues made after
+    torch.cuda._lazy_call(kernel_tracer)
 
 
 @triton.jit
@@ -160,7 +159,6 @@ def _collect_scope_times(database, prefix):
     return [time for _, time in sorted(scope_times)]
 
 
-@graph_kernel_timing_environment()
 def bench_cudagraph(fn, rep=20, grad_to_none=None, quantiles=None, return_mode="median", *, group=None):
     """fn's kernel ms per call in a CUDA graph, minus cache flushes; with group, the slowest rank's."""
     assert return_mode in ["min", "max", "mean", "median", "all"]

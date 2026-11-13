@@ -18,6 +18,9 @@ review contract, not an automated CI implementation.
 - The review checks for reward hacking, hidden fallbacks, selective inputs, and
   misleading benchmark methodology.
 - Regressions and unsupported cases are explicitly reported.
+- The [acceptance criteria](../docs/acceptance_criteria.md) are met: each kernel file has a
+  workload 5% faster than the baseline, and a new plugin route, or one that now handles more
+  cases, reports a 2% end-to-end gain.
 
 ## Gate 3: Release Qualification
 

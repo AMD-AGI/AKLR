@@ -80,7 +80,7 @@ def test_mqa_logits_reference_is_the_same_in_chunks(
 
 def test_biased_grouped_topk_ranks_scores_float32_would_tie() -> None:
     """Two logits a float32 sigmoid maps to one score: the ids still follow the larger."""
-    from aklr.ops.biased_grouped_topk.reference import biased_grouped_topk_reference
+    from aklr.ops.topk.reference import biased_grouped_topk_reference
 
     point = SimpleNamespace(
         dtypes={"router_logits": "float32", "correction_bias": "float32"},
@@ -94,6 +94,26 @@ def test_biased_grouped_topk_ranks_scores_float32_would_tie() -> None:
     }
     _, ids = biased_grouped_topk_reference(point, args, semantics.to_float32)
     assert ids.tolist() == [[1.0]]
+
+
+def test_biased_grouped_topk_ranks_tied_experts_lower_first() -> None:
+    """Equal biased scores: the lower expert ranks first, whatever torch.topk's algorithm does."""
+    from aklr.ops.topk.reference import biased_grouped_topk_reference
+
+    point = SimpleNamespace(
+        dtypes={"router_logits": "float32", "correction_bias": "float32"},
+        axes={"topk": 3},
+        attrs={"renormalize": False},
+    )
+    logits = torch.zeros(1, 1024)
+    logits[0, [583, 571, 368, 31]] = 1.0
+    args = {
+        "router_logits": logits,
+        "correction_bias": torch.zeros(1024),
+        "routed_scaling_factor": 1.0,
+    }
+    _, ids = biased_grouped_topk_reference(point, args, semantics.to_float32)
+    assert ids.tolist() == [[31.0, 368.0, 571.0]]
 
 
 def test_rms_norm_reference_holds_large_finite_inputs() -> None:

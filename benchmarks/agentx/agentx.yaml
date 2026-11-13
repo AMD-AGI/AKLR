@@ -10,7 +10,7 @@ models:
       repo: amd/GLM-5.2-MXFP4
       revision: 386bd0e4ec821f7b07975701cec3c3b953a5576a
     targets:
-      mi355x-8:
+      mi355x:
         hardware:
           gpu_name_pattern: '\bMI355X\b'
           gpu_arch: gfx950

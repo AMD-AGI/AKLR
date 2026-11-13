@@ -5,7 +5,8 @@ Sources: `.github/workflows/ci.yaml` (`validation` job),
 
 ## Scope
 
-- GPU jobs run on a same-repository PR labelled `ci:gpu`.
+- GPU jobs run on a PR labelled `ci:gpu`; on a fork PR, or when its author or sender lacks write
+  access, they wait for a maintainer's approval (`gpu-node.yaml`).
 - `python -m aklr validate --base <base>` with no schema paths, as CI runs it, picks:
   - the changed schemas, when every changed path is a schema file or a document (`docs/`, `*.md`);
   - **every committed schema** otherwise. A PR that also touches an op's Python, tests or any
@@ -16,7 +17,7 @@ Sources: `.github/workflows/ci.yaml` (`validation` job),
 ## Where the result is
 
 - The `validation` job's `Validate (<stages>)` step: the progress per schema, the outcome counts,
-  and the findings, e.g. `not_faster <schema>: graph vs baseline ratio_lower_bound 0.9950 < 1.02`.
+  and the findings, e.g. `not_faster <schema>: graph vs baseline ratio_lower_bound 0.9950 < 1.05`.
   It names the schema, not the Point. `regressed (demoted)` there counts demotions, not findings.
 - The run's artifact `validation-report-<attempt>`: `report.md` (one row per Point: verdict,
   `graph/baseline`, `graph/incumbent`, then the findings), `report.json`, `schemas/` (the schemas

@@ -13,7 +13,7 @@ triton: 3.8.0
 How AKLR's two plain-Triton `gemm@1.0` kernels (`trans_b`, no bias: n = 6144, k = 2048, a 25 MB weight, `f806`; n = 2624,
 k = 6144, 32 MB, `b88c`; S13) read their weight once per call, and what was measured to move them, on MI355X with Triton
 3.8.0. Times from AKLR's validate and `bench_cudagraph` were taken with its Kineto timer, before #33 replaced it with
-AKLR's rocprofiler-sdk collector; both sum a call's per-kernel device durations. Each Evidence line names its timer.
+AKLR's rocprofiler-sdk collector, unless a sentence names that collector; both sum a call's per-kernel device durations. Each Evidence line names its timer.
 CI's stored speedups against aiter, validate lower bounds, are in [../gemm.md](../gemm.md) §1 and §9.
 
 The configurations were tuned before AKLR's CI (Triton version not recorded), where the source campaign recorded lower
@@ -54,20 +54,25 @@ Reading B once is the source construction, not a measured HBM-traffic count:
 
 For a row-major (N, K) weight (`trans_b`), build the `[BLOCK_K, BLOCK_N]` tile directly:
 `b_offs = offs_k[:, None] + offs_n[None, :] * K`, then `tl.dot(a, b)` with no `tl.trans` (S2, S4). In `b88c`, loading
-`[BLOCK_N, BLOCK_K]` and calling `tl.trans` instead added `ds_bpermute_b32` shuffles (509 against 350 instructions for
-the 16 × 16 × 512 tile, 331 against 261 for the 64 × 64 × 128 tile) and took 1.12 – 1.17× the time at M = 2, 4, 8
-and 1.01× at M = 64, in one run *(field, E3)*. Both kernels load B with `cache_modifier=".cg"` (S2, S4; kept, not separated: its
-effect on them is untested; what the hint compiles to and bought elsewhere: [../gluon/memory.md](../gluon/memory.md)
-§6).
+`[BLOCK_N, BLOCK_K]` and calling `tl.trans` instead added `ds_bpermute_b32` shuffles (12 and 16 against 0 in the
+M = 2, 4, 8 and M = 64 tiles), kept at M = 2, 4, 8 the K loop the direct tile fully unrolls (48 against 192 MFMAs)
+*(field, E16)*, and took 1.09 – 1.17× the time at M = 2, 4, 8 and 1.01× at M = 64 in two runs, one on AKLR's
+rocprofiler-sdk timer *(field, E3, E16)*.
+Both kernels load B with `cache_modifier=".cg"` (S2, S4). Without it both took 1.1 – 3.4 % more time with the caches flushed
+before each call (no stable difference at `f806` M = 32) but 0.58 – 0.95× the time when the next calls re-read the
+same weight, 1 run *(field, E17)*; what the hint compiles to and bought elsewhere: [../gluon/memory.md](../gluon/memory.md) §6.
 
 ## 3. Order the tiles per XCD
 
 On the tested grids, launched on the default stream, workgroup `i` ran on XCD `i % 8` *(field, E4)*; on a new stream
 the absolute XCD index rotates by a constant and workgroups congruent mod 8 still share an XCD
 ([../gluon/memory.md](../gluon/memory.md) §14). The placements below assume that grouping. Both kernels remap the
-program id so each XCD gets N tiles in contiguous runs: one run per XCD in `b88c`, runs of 8 or 24
-tiles in `f806` (S1, S4, S9; kept, not separated: the remap's effect on their time is untested; what XCD order
-measured on other kernels: [../tuning.md](../tuning.md) §12). A remap must be a permutation of the grid for every grid
+program id so each XCD gets N tiles in contiguous runs: one run per XCD in `b88c` at M ≤ 16 (at M = 64 a run of
+split-major tile numbers, which crosses a K split on five XCDs), runs of 8 or 24 tiles in `f806` (S1, S4, S9).
+In program order (`pid = raw`) they took up to 1.8 % more time with the caches flushed before each call, but
+5 – 16 % less at `f806` M ≤ 16 when the next calls re-read the same weight (warm cache or back-to-back graph
+calls), 1 run *(field, E18)*; what XCD order measured on other kernels:
+[../tuning.md](../tuning.md) §12. A remap must be a permutation of the grid for every grid
 size launched, including one not divisible by 8 (164 tiles = 8 × 20 + 4). `b88c`'s gives `per` tiles to the first
 `tall` XCDs and `per - 1` to the rest, one contiguous run per XCD, and is a permutation for every grid of 1 – 4096
 tiles (S1):
@@ -101,12 +106,13 @@ Without a K phase every workgroup walks K in the same order. The kernels rotate 
 `kphase = ((pid_raw // NXCD) * KROT) % n_kb`, then `kb = ((i + kphase) % n_kb) * BLOCK_K` (S2; `f806` writes
 `& (n_kb - 1)`, the same for its power-of-two `n_kb`, S4). At `f806`'s M = 64 launch (n = 6144, k = 2048; 64 × 32
 tiles, `BLOCK_K = 256`, 192 workgroups, 4 warps), `KROT = 0` took 9.14 – 9.18 µs against 8.56 – 8.61 µs with
-`KROT = 1`, 6.5 – 7.2 % longer in each of 4 runs *(field, E6)*; no other Point was measured. A K-phase timing benefit was also observed
+`KROT = 1`, 6.5 – 7.2 % longer in each of 4 runs *(field, E6)*. A K-phase timing benefit was also observed
 in a separate private-A construction (no two workgroups read the same A line): `KROT = 0`
 cost 11.6 – 11.8 % (15.05 – 15.08 against 13.47 – 13.50 µs, 4 runs) *(field, E6)*. The committed configurations use
 `KROT = 1` for k = 2048 at M = 32 and 64 and for k = 6144 at M ≤ 16, and `KROT = 0` for k = 6144 at M = 64 (S3, S4).
-Only k = 2048 at M = 64 was timed, and without checking the output *(field, E6)*; whether the other three choices
-are best is untested.
+Flipped one at a time with the output checked, on AKLR's rocprofiler-sdk timer, `KROT = 0` took 11.6 % more time at
+k = 2048, M = 64, 1.1 % more at M = 32 and 1.6 – 2.4 % more at k = 6144, M = 2, 4, 8, while `KROT = 1` at k = 6144,
+M = 64 took 0.4 % more, inside that Point's A/A threshold, 1 run *(field, E19)*; M = 1 and 16 were not timed.
 
 ## 5. Long K, small M: fewer, longer workgroups
 
@@ -151,9 +157,10 @@ fp32 references on 3 input seeds and gave byte-identical output over 100 repeats
 A 16-pair pilot picked one `BLOCK_N` per split (32 for splits 1, 2, 3; 64 for 4, 6, 8, 12); each comparison then
 took 32 balanced, randomized AB/BA pairs with A/A pairs interleaved, on one input seed. Split 6 / `BLOCK_N` 64 beat
 splits 1 / 2 / 3 / 8 / 12 (their time over split 6's: 1.744 / 1.242 / 1.085 / 1.215 / 1.178). Against split 4 /
-`BLOCK_N` 64 the ratio was 1.095 (family-corrected 99 % interval 1.068–1.123), but that did not clear the A/A noise
-floor plus the AB/BA order gap, so split 4 against 6 is unresolved, and split 6 is not shown best even within this
-sweep *(field, E11)*. Other N, K and tile choices were not searched.
+`BLOCK_N` 64 the ratio was 1.095 (family-corrected 99 % interval 1.068–1.123), which did not clear that run's A/A
+noise floor plus the AB/BA order gap *(field, E11)*. Re-measured on two other input seeds, split 4 took 1.11× split 6's
+time on a device-graph event timer and 1.15× on AKLR's rocprofiler-sdk timer, slower in every round *(field, E21)*,
+so split 6 / `BLOCK_N` 64 was the fastest of the seven splits in this sweep. Other N, K and tile choices were not searched.
 
 The timer measured one preallocated device-graph call, with a 1 GiB flush outside each event window: whole = GEMM +
 fixed-order reduce, partial = GEMM only. Split 6's whole / partial means were 16.140 / 14.273 µs; the paired
@@ -163,8 +170,10 @@ times with the validate times above, which use another timer.
 
 ## 7. M = 1: a 16-row MFMA tile carrying one row
 
-At M = 1 both source paths select a 16-row tile: with M as a runtime i32 and `matrix_instr_nonkdim=16`, both compile
-to `v_mfma_f32_16x16x32_bf16` (64 in `f806`, 48 in `b88c`) and no `v_dot2` *(field, E15)*. AKLR's FlyDSL kernels at
+At M = 1 both source paths select a 16-row tile and compile to `v_mfma_f32_16x16x32_bf16`, no `v_dot2`. Called at M = 1,
+Triton 3.8.0 turns M into the constant 1 (S15): `f806` has 64 MFMAs and `b88c` 192, its K loop fully unrolled
+*(field, E20)*; with M kept a runtime i32 `b88c` has 48 in a loop *(field, E15)* and took 1.08× the time on AKLR's
+rocprofiler-sdk timer *(field, E20)*. AKLR's FlyDSL kernels at
 these two shapes take a dot / vector path at M = 1, with `fdot2` and no MFMA (S11). Neither Triton file lists an
 M = 1 Point (S8). In one validate A/B (4 alternated rounds) of Triton copies given an M = 1 Point against those
 FlyDSL kernels, FlyDSL took 0.975× the Triton time at `f806`'s shape (5.86 against 6.01 µs) and 0.933× at `b88c`'s
@@ -178,7 +187,7 @@ GEMV (`tl.sum` over K, no `tl.dot`, six tile sizes) beat the 16-row tile on 1 of
 A configuration taken from elsewhere did not carry. At k = 2048, M = 64 the `BLOCK_M = 64` tier taken from the source
 kernel (`BLOCK_K = 128`, 8 warps, no K phase) took 1.05 – 1.08× the time of the re-tuned one (`BLOCK_K = 256`,
 4 warps, `KROT = 1`; the three changed together): about 9.0 – 9.3 µs against 8.53 – 8.78 µs under AKLR's flushed graph
-timer, 4 runs *(field, E7)*. The tier's speedup against aiter was not measured. A hot cache does not explain the gap:
+timer, 4 runs *(field, E7)*. A hot cache does not explain the gap:
 timed with the weight hot (one flush, then replays of a 50-call graph, where the re-tuned kernel took 6.99 – 7.05 µs
 against 8.53 – 8.78 µs flushed), the source tier took 1.08 – 1.13× the re-tuned one's time, against 1.05 – 1.08×
 flushed; the hot ratio was 0.02 – 0.05 higher in each of 4 runs *(field, E7)*. Only M = 64 was timed. How to A/B such
@@ -203,14 +212,15 @@ changes neither the MFMA count nor the absence of a K loop in this build *(field
 
 ## Evidence
 
-Measured on one MI355X with Triton 3.8.0 in the `lmsysorg/sglang@sha256:1438dd8b…` image (2026-11): E1–E10 on AKLR
+Measured on one MI355X with Triton 3.8.0 in the `lmsysorg/sglang:v0.5.22-rocm10-mi35x` image (2026-11): E1–E10 on AKLR
 d908d01 with this skill's branch; E11 and E13–E15 are recorded in #89; E12 is a pre-CI record, published in AKLR's initial commit 9a29616.
+E16–E21 name their own torch build in their lines.
 AKLR paths and line numbers are on main `0e02a81` unless a line names another commit; the two Triton kernel sources
 are the same at d908d01, 43e112e and 0e02a81.
 
 - E1 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=4, AKLR validate (graph replay, 1 GiB flush per call, Kineto timer, before #33) for the GEMMs; a Gluon read-and-sum of the same bytes under AKLR's `bench_cudagraph` for the plain read] over 4 runs: `f806` (25.17 MB weight) at m = 2–16 5.94–6.38 µs (3.95–4.23 TB/s), m = 32 7.16–7.22, m = 64 8.53–8.56 µs, plain read 5.53–5.61 µs (4.48–4.55 TB/s); `b88c` (32.24 MB) at m = 2–8 7.98–8.40 µs, m = 64 12.49–12.65 µs, plain read 6.90–7.02 µs; m = 64 over the same run's read 1.52–1.54 (`f806`) and 1.78–1.83 (`b88c`). Two of the runs per m: `f806` m = 2, 4, 8, 16, 32, 64 5.95 / 5.98, 5.98 / 5.98, 6.05 / 6.07, 6.36 / 6.34, 7.21 / 7.19, 8.56 / 8.54 µs, read 5.61 / 5.59; `b88c` m = 2, 4, 8, 64 8.03 / 8.01, 8.12 / 8.09, 8.39 / 8.35, 12.49 / 12.62 µs, read 7.02 / 6.97 (f806ad2b086d757d, b88c8d5f28d86777; AKLR@d908d01)
 - E2 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=4, AKLR `bench_cudagraph` (Kineto timer, before #33), median of 5 alternated rounds] a plain-Triton bf16 test GEMM, N 6144, K 2048, `BLOCK_N` 32, `BLOCK_K` 256, 4 warps: one M tile against two that each re-read B, m = 32: 7.30–7.35 against 10.43–10.48 µs (1.426–1.428×), m = 64: 9.03–9.15 against 12.43–12.50 µs (1.358–1.379×), round ranges disjoint in each run, max relative error 0.25–0.26 % (test kernel; AKLR@d908d01)
-- E3 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, AKLR validate A/B (Kineto timer, before #33), 4 alternated rounds; ISA of the two tiers] `b88c` with B loaded as `[BLOCK_N, BLOCK_K]` and `tl.trans` against the committed direct tile: time ratio 1.172, 1.163, 1.121, 1.009 at m = 2, 4, 8, 64; 16 × 16 × 512 tile, 2 warps: 509 against 350 instructions (16 against 0 `ds_bpermute_b32`); 64 × 64 × 128 tile, 8 warps: 331 against 261 (6 against 0) (b88c8d5f28d86777; AKLR@d908d01)
+- E3 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, AKLR validate A/B (Kineto timer, before #33), 4 alternated rounds; ISA of a stand-alone `tl.dot` test kernel with the two tiers' tile sizes, not of `b88c`] `b88c` with B loaded as `[BLOCK_N, BLOCK_K]` and `tl.trans` against the committed direct tile: time ratio 1.172, 1.163, 1.121, 1.009 at m = 2, 4, 8, 64; the test kernel with B loaded the same two ways, 16 × 16 × 512 tile, 2 warps: 509 against 350 instructions (16 against 0 `ds_bpermute_b32`); 64 × 64 × 128 tile, 8 warps: 331 against 261 (6 against 0) (b88c8d5f28d86777; AKLR@d908d01)
 - E4 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=3, XCC and CU ids read from the hardware in each workgroup, launched on the default stream] XCD = workgroup id % 8 with no mismatch on 1-D grids of 8, 100, 2048 and 4096 workgroups and on 6 multi-axis grids (3 launches each), and with offset 0 in 5 further launches of 4096, in each of 3 runs; 256 CUs (`multi_processor_count`, and 32 distinct CU ids on each of 8 XCCs) in each run; `b88c`'s m ≤ 16 grid read from its source: 164 (b88c8d5f28d86777; AKLR@d908d01)
 - E5 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=2, CUDA events over 20 back-to-back calls (no flush), median of 9, 5 alternated rounds] `b88c` at m = 8 with the remap `xcd * (GRID // 8) + local` on 164 tiles: columns 2560 – 2623 NaN in all 8 rows, bitwise equal elsewhere; broken / committed 11.93 / 11.94 µs (0.999×; round ranges 11.90 – 12.05 and 11.88 – 12.53), the other run 12.59 / 12.69 µs (0.993×; 12.53 – 12.73 and 12.55 – 12.72) (b88c8d5f28d86777; AKLR@d908d01)
 - E6 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=4, AKLR `bench_cudagraph` (graph replay, flush per call, Kineto timer, before #33), median of 5 alternated rounds] `f806`'s m = 64 kernel launched directly with the committed options (64 × 32 tiles, `BLOCK_K` 256, 192 workgroups, 4 warps), `KROT` 1 against 0: A shared by all workgroups 8.562 – 8.609 against 9.136 – 9.181 µs, `KROT` 0 / 1 = 1.065 – 1.072 (per run 8.581 / 9.136, 8.609 / 9.166, 8.562 / 9.181, 8.562 / 9.155 µs); A private to each workgroup (A of 192 × 64 rows, each workgroup offset to its own 64 rows by its remapped tile index) 13.47 – 13.50 against 15.05 – 15.08 µs, 1.116 – 1.118 (per run 13.47 / 15.07, 13.50 / 15.07, 13.48 / 15.05, 13.49 / 15.08 µs); output not checked (f806ad2b086d757d; AKLR@d908d01)
@@ -222,8 +232,14 @@ are the same at d908d01, 43e112e and 0e02a81.
 - E12 [2026-10, gfx950 (MI355X), Triton version not recorded, N=?, AKLR validate lower bound of 32 rounds, 8 rotated input sets, graph replay, 1 GiB flush per call] lower bounds against aiter's `gemm_a16w16`: `f806` at m = 2–64 1.09–1.31; `b88c` at m = 2, 4, 8 1.085–1.106, at m = 64 1.236; published as ranges only, raw reports not kept (first in AKLR@9a29616, 2026-10-31; AKLR@a12866b:harness/skills/aklr-kb/triton/gemm/decode_gemm.md §1, §5, §6)
 - E13 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, balanced AB/BA pairs: device-graph calls timed by events (1 GiB flush per call at K = 12288); AKLR `bench_cudagraph` (Kineto timer, before #33, 1 GiB flush per call) at M = 16] (64, 2624, 12288): no split, `BLOCK_N` 32, 82 workgroups 48.27 µs against split 6, `BLOCK_N` 64 22.70 µs, split / no split 0.4701 (99 % interval 0.464–0.476), 24 pairs; M = 16, N = 2624, K = 6144: `b88c`'s m ≤ 16 launch (`BLOCK_K` 512, no split) 9.74 and 9.67 µs against split 6 12.09 and 12.04 µs, split / no split 1.240 (1.234–1.247) and 1.244 (1.242–1.247) for two seeds, 16 pairs each; the same launch against split 6 (`BLOCK_N` 64, `BLOCK_K` 128) at N = 2624, K = 6144 in device-graph event timing, 48 pairs per seed, two seeds, 99.875 % intervals, accurate before and after timing: split / no split at M = 16 0.9831 (0.9607–1.0059) and 0.9799 (0.9556–1.0048), 16.18 and 16.23 µs no split; M = 2 1.0949 (1.0768–1.1132) and 1.0867 (1.0702–1.1035); M = 4 1.0371 (0.9849–1.0920) and 1.0638 (1.0398–1.0883); M = 8 1.0371 (1.0089–1.0661) and 1.1042 (0.8659–1.4081) (plain-Triton copies of b88c8d5f28d86777; #89)
 - E14 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=1, AKLR validate (Kineto timer, before #33), 4 alternated rounds per arm; GEMV against MFMA under AKLR's `bench_cudagraph`, 5 alternated rounds] Triton copies of `f806` and `b88c` given m = 1 and 2 Points against AKLR's FlyDSL `gemm_n6144_k2048` and `gemm_n2624_k6144` cut to m = 1, 2: FlyDSL / Triton time at m = 1 0.9754 (5.86 against 6.01 µs; pairs 0.973–0.979) and 0.9332 (7.27 against 7.79 µs; pairs 0.926–0.944), FlyDSL lower in every round; at m = 2 Triton / FlyDSL 0.9167 at `f806`'s shape (5.97 against 6.51 µs) and 0.40 at `b88c`'s (8.03–8.05 against 19.98–20.09 µs per round); a plain-Triton GEMV (fp32 `tl.sum` over all K, `.cg` on B, six (BN, BK) tiles) against the 16-row MFMA tile at m = 1 on five shapes: best GEMV / best MFMA 0.972 at N 6144, K 2048, 1.174 at (2624, 6144), 1.049 at (4096, 2048), 1.090 at (2048, 7168), 1.019 at (6144, 4096), max error 3.5e-03 (f806ad2b086d757d, b88c8d5f28d86777, FlyDSL eb749c07b94008ab and 4001df477e6c67f6; #89)
-- E15 [2026-11, gfx950 (offline), Triton 3.8.0 and 3.7.0, N=4, offline compiles of the committed launches] the m = 1 tiles (`BLOCK_M` 16, M a runtime i32, `matrix_instr_nonkdim` 16 on both): 64 (`f806`) and 48 (`b88c`) `v_mfma_f32_16x16x32_bf16`, 0 `v_dot2`, in each of 4 runs; `f806`'s m = 32 kernel on 3.8.0 with and without `schedule_hint="memory-bound-attention"`: byte-identical AMDGCN; on 3.7.0 (3.7.0+gitb4e20bbe.rocm7.14.0a20260608) the hinted LLIR differs only in `"amdgpu-sched-strategy"="iterative-ilp"`, the TTGIR is identical and the AMDGCN differs; `llvm_fn_attrs=[["amdgpu-sched-strategy", "iterative-ilp"]]` gives that attribute on 3.8.0 and none on 3.7.0 (f806ad2b086d757d, b88c8d5f28d86777; #89)
-- S1 aklr/ops/gemm/impls/triton/gemm_n2624_k6144/b88c8d5f28d86777.json#kernel.py:26 `_xcd_remap`: `per` tiles to the first `tall` XCDs, `per - 1` to the rest (to :35); a permutation with one run per XCD for every grid of 1 – 4096 (164: `per` 21, `tall` 4; 246: `per` 31, `tall` 6), enumerated from the formula
+- E15 [2026-11, gfx950 (offline), Triton 3.8.0 and 3.7.0, N=4, offline compiles of the committed kernels] the m = 1 tiles (`BLOCK_M` 16) compiled with M a runtime i32 and `matrix_instr_nonkdim` 16 on both, not as the committed launches call them at m = 1 (E20): 64 (`f806`) and 48 (`b88c`) `v_mfma_f32_16x16x32_bf16`, 0 `v_dot2`, in each of 4 runs; `f806`'s m = 32 kernel on 3.8.0 with and without `schedule_hint="memory-bound-attention"`: byte-identical AMDGCN; on 3.7.0 (3.7.0+gitb4e20bbe.rocm7.14.0a20260608) the hinted LLIR differs only in `"amdgpu-sched-strategy"="iterative-ilp"`, the TTGIR is identical and the AMDGCN differs; `llvm_fn_attrs=[["amdgpu-sched-strategy", "iterative-ilp"]]` gives that attribute on 3.8.0 and none on 3.7.0 (f806ad2b086d757d, b88c8d5f28d86777; #89)
+- E16 [2026-11, gfx950 (MI355X), Triton 3.8.0, torch 2.11.0+rocm10.0.0, N=1, AKLR `bench_cudagraph` (rocprofiler-sdk), 30 random-order rounds; ISA of the kernels `b88c` launches] `b88c` with B loaded as `[BLOCK_N, BLOCK_K]` and `tl.trans` against the committed direct tile: time ratio 1.155, 1.148, 1.087, 1.009 at m = 2, 4, 8, 64; `ds_bpermute_b32` 12 (m = 2, 4, 8 tile) and 16 (m = 64 tile) against 0; at m = 2, 4, 8, 48 against 192 `v_mfma_f32_16x16x32_bf16` and one loop back-branch against none (b88c8d5f28d86777; AKLR@3b315a7)
+- E17 [2026-11, gfx950 (MI355X), Triton 3.8.0, torch 2.11.0+rocm10.0.0, N=1, CUDA events, median of 40 calls × 15 rounds; cold: a 1 GiB flush before each call; warm: one call after the flush, then a spin kernel before each call; graph: 20 back-to-back calls] the committed kernels without `cache_modifier=".cg"` on the B load, time over committed, `f806` m = 2–64 and `b88c` m = 2, 4, 8, 64: cold 1.011–1.034 (`f806` m = 32 1.000, not stable), warm 0.728–0.947, graph 0.585–0.875 (f806ad2b086d757d, b88c8d5f28d86777; AKLR@3b315a7)
+- E18 [2026-11, gfx950 (MI355X), Triton 3.8.0, torch 2.11.0+rocm10.0.0, N=1, the three rulers of E17] the committed kernels with program order (`pid = raw`) in place of the XCD remap, time over committed: cold at most 1.018 (`f806` m = 2–64, `b88c` m = 2, 4, 8, 64); `f806` m = 2, 4, 8, 16 warm 0.913–0.949, graph 0.838–0.910 (f806ad2b086d757d, b88c8d5f28d86777; AKLR@3b315a7)
+- E19 [2026-11, gfx950 (MI355X), Triton 3.8.0, torch 2.11.0+rocm10.0.0, N=1, AKLR `bench_cudagraph` (rocprofiler-sdk), 30 random-order rounds] each committed `KROT` flipped, outputs within the accuracy bound, flipped over committed time: `f806` k = 2048, 1 → 0: 1.116 at m = 64, 1.011 at m = 32; `b88c` k = 6144, 1 → 0: 1.016, 1.024, 1.019 at m = 2, 4, 8; m = 64, 0 → 1: 1.004, under that Point's A/A threshold of 1.7 % (f806ad2b086d757d, b88c8d5f28d86777; AKLR@3b315a7)
+- E20 [2026-11, gfx950 (MI355X), Triton 3.8.0, torch 2.11.0+rocm10.0.0, N=2, the `.amdgcn` of the JIT entry each call compiled; AKLR `bench_cudagraph` (rocprofiler-sdk), 30 random-order rounds] the committed launches at m = 1 compile M as the constant 1: `b88c` 192 `v_mfma_f32_16x16x32_bf16` with no loop back-branch, `f806` 64, 0 `v_dot2` in both; `b88c` with `do_not_specialize=['M']`: 48 with one back-branch, outputs bitwise equal, 1.077× the specialized time (b88c8d5f28d86777, f806ad2b086d757d; AKLR@3b315a7)
+- E21 [2026-11, gfx950 (MI355X), Triton 3.8.0, torch 2.11.0+rocm10.0.0, N=1, two timers: E11's device-graph event timer with a 1 GiB flush (800 rounds) and AKLR `bench_cudagraph` (rocprofiler-sdk, 236 rounds); input seeds 3301 and 7717] (M, N, K) = (64, 2624, 6144) at E11's configuration, `BLOCK_N` 64, split 4 over split 6 time: 1.1081 on the event timer and 1.1505 on AKLR's timer, above 1 in every round (b88c8d5f28d86777's `_gemm_kernel` and `_reduce_kernel`)
+- S1 aklr/ops/gemm/impls/triton/gemm_n2624_k6144/b88c8d5f28d86777.json#kernel.py:26 `_xcd_remap`: `per` tiles to the first `tall` XCDs, `per - 1` to the rest (to :35); a permutation with one run per XCD for every grid of 1 – 4096 (164: `per` 21, `tall` 4; 246: `per` 31, `tall` 6), enumerated from the formula; at 246 (m = 64) the run is of split-major tile numbers (`pid_n = pid % N_TILES`, `pid_k = pid // N_TILES`, :58-59), and on XCDs 1, 2, 3, 5 and 6 it crosses a split boundary
 - S2 aklr/ops/gemm/impls/triton/gemm_n2624_k6144/b88c8d5f28d86777.json#kernel.py:62 `kphase = ((raw // NXCD) * KROT) % n_kb`; `b_offs` as `[BLOCK_K, BLOCK_N]` (:68); `kb = ((i + kphase) % n_kb) * BLOCK_K` (:71); B loaded with `.cg` and `tl.dot(a, b, acc=acc)` (:76-77)
 - S3 aklr/ops/gemm/impls/triton/gemm_n2624_k6144/b88c8d5f28d86777.json#kernel.py:100 m ≤ 16: `n // 16` tiles (:101), `BLOCK_M=16`, `BLOCK_N=16`, `BLOCK_K=512`, `SPLIT_K=1` (:113-116), `KROT=1` (:120); m = 64: 64 × 64 tiles, `BLOCK_K=128`, split 6, `KROT=0`, 8 warps (:128-149), then the reduce (:154)
 - S4 aklr/ops/gemm/impls/triton/gemm_n6144_k2048/f806ad2b086d757d.json#kernel.py:145 m ≤ 32: `BLOCK_M=32`, `BLOCK_K=64`, `UNROLL=4`, `KROT=1`, 4 warps, `schedule_hint="memory-bound-attention"` (:156-168); m = 64: `BLOCK_M=64`, `BLOCK_K=256`, `KROT=1`, 4 warps (:182-190); m ≤ 16: `BLOCK_M=16` (:133), no `matrix_instr_nonkdim` (:139-141), remap `(pid % NXCD) * (N_TILES // NXCD) + (pid // NXCD)` (:45); `kphase = ((pid // NXCD) * KROT) & (n_kb - 1)` (:90), the `CHUNK` remap (:93); `b_offs` (:99), `kb = ((i + kphase) & (n_kb - 1)) * BLOCK_K` (:102), `.cg` and `tl.dot` (:107-108)
@@ -237,3 +253,4 @@ are the same at d908d01, 43e112e and 0e02a81.
 - S12 aklr/ops/gemm/impls/triton/gemm_n2624_k6144/b88c8d5f28d86777.json#kernel.py:121 `num_stages=3`, `waves_per_eu=2`, `matrix_instr_nonkdim=16` on the m ≤ 16 launch (:121-124) and the m = 64 launch (:149-152); gemm_n6144_k2048/f806ad2b086d757d.json#kernel.py:139 the m ≤ 16 launch with `num_stages=3`, `waves_per_eu=2` and no `matrix_instr_nonkdim` (:139-141), the m ≤ 32 (:164-168) and m = 64 (:190-193) launches with it
 - S13 aklr/ops/gemm/impls/triton/gemm_n2624_k6144/b88c8d5f28d86777.json:4 `gemm@1.0`, `trans_b` true and no bias (:24-25), bf16 operands (:33, :44), `"determinism": "bitwise"` (:107); gemm_n6144_k2048/f806ad2b086d757d.json:121 the same determinism; these two are the only Triton `gemm@1.0` schemas at 43e112e and on main; weights 2624 × 6144 and 6144 × 2048 bf16, 32,243,712 and 25,165,824 bytes (computed); validate's bitwise rule, every run's output byte-identical to the first's: aklr/core/contract/semantics/_compare.py:142
 - S14 triton-lang/triton@c01b677:third_party/amd/backend/compiler.py:110 `llvm_fn_attrs`, set on the kernel function at :479-481
+- S15 triton-lang/triton@c01b677:python/src/specialize.cc:274 an integer argument equal to 1 is passed as a constexpr when its parameter is specialized; `do_not_specialize` turns that off (python/triton/runtime/jit.py:412)

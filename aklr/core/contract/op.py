@@ -51,7 +51,7 @@ from aklr.core.contract.spec import (
     contract_name,
     evaluated_json,
 )
-from aklr.core.contract.spec._points import attr_membership_key, case_key
+from aklr.core.contract.spec._points import AttrValue, attr_membership_key, case_key
 from aklr.core.contract.spec._sources import source_error_parts
 
 __all__ = [
@@ -1055,7 +1055,7 @@ class Domain(FrozenModel):
     axes: dict[str, AxisSpec]  # int axes
     derived_axis_exprs: dict[str, str] = {}  # noqa: RUF012 -- pydantic copies defaults
     # attr names, "<t>.dtype", "layout_variant"
-    allowed_values: dict[str, frozenset[str | int | bool | None]]
+    allowed_values: dict[str, frozenset[AttrValue | None]]
     relations: tuple[str, ...] = ()
 
     def contains(self, point: PointSpec) -> bool:

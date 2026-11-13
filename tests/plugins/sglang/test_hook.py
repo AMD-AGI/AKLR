@@ -15,7 +15,7 @@ import torch
 
 import aklr.plugins.sglang as plugin
 from aklr.core.contract.locate import op_packages
-from aklr.core.platform.env import ENV_DISABLE, ENV_SGLANG_PLUGIN
+from aklr.core.platform.env import ENV_DISABLE, ENV_SGLANG_PLUGIN, ENV_TRACE
 from aklr.core.runtime.dispatch import FallbackReason
 from aklr.plugins.sglang import hook
 
@@ -23,6 +23,7 @@ from aklr.plugins.sglang import hook
 for package in op_packages():
     if package.startswith("aklr.plugins.sglang."):
         importlib.import_module(f"{package}.api")
+importlib.import_module("aklr.plugins.sglang.aiter_calls")
 DECLARED = list(hook._ROUTES)
 INSTALLED = "0.5.22"
 
@@ -45,8 +46,11 @@ def test_every_route_was_tested_on_the_installed_sglang():
     assert [target for target, versions, _ in DECLARED if installed not in versions] == []
 
 
-def parameters(fn):
-    return [(p.name, p.kind, p.default) for p in inspect.signature(fn).parameters.values()]
+def parameters(fn, *, defaults=True):
+    return [
+        (p.name, p.kind, *((p.default,) if defaults else ()))
+        for p in inspect.signature(fn).parameters.values()
+    ]
 
 
 @pytest.mark.parametrize(
@@ -54,7 +58,25 @@ def parameters(fn):
 )
 def test_every_route_takes_its_targets_parameters(target, route):
     installed_sglang()
-    assert parameters(route) == parameters(pkgutil.resolve_name(target))
+    if not target.startswith("aiter."):
+        assert parameters(route) == parameters(pkgutil.resolve_name(target))
+        return
+    # aiter's defaults are aiter's enums, which route modules cannot import. A newer aiter than the
+    # installed one adds parameters at the end, which the route takes too.
+    taken = parameters(pkgutil.resolve_name(target), defaults=False)
+    assert parameters(route, defaults=False)[: len(taken)] == taken
+
+
+def test_the_fused_moe_route_passes_sglangs_output_to_the_op(monkeypatch):
+    """CI's aiter lacks ``output``, so the parameter test cannot see it: the route must take
+    sglang's ``output`` (MoRI EP's combine buffer) and pass it on."""
+    from aklr.plugins.sglang import aiter_calls
+
+    passed = {}
+    monkeypatch.setattr(aiter_calls.aklr_aiter, "fused_moe", lambda *args, **kwargs: passed.update(kwargs))
+    out = torch.empty(0)
+    aiter_calls._fused_moe(*[None] * 5, output=out)
+    assert passed["output"] is out
 
 
 @pytest.mark.parametrize(
@@ -106,6 +128,28 @@ def test_a_fallback_reason_runs_sglang(hooks):
     declare(lambda x: FallbackReason.NOT_MEASURED)
     hook.install()
     assert wrapper(hooks)(original, 1) == "sglang(1)"
+
+
+@pytest.mark.parametrize(
+    ("mode", "is_traced"), [("0", False), ("op", False), ("plugin", True), ("all", True)]
+)
+def test_trace_names_the_route_and_its_result_once(hooks, monkeypatch, caplog, mode, is_traced):
+    monkeypatch.setenv(ENV_TRACE, mode)
+    route = lambda x: f"aklr({x})" if x else FallbackReason.NOT_MEASURED
+    declare(route)
+    hook.install()
+    around = wrapper(hooks)
+    assert [around(original, x) for x in (1, 1, 0, 0)] == ["aklr(1)", "aklr(1)", "sglang(0)", "sglang(0)"]
+    lines = [r.message for r in caplog.records if r.name == "aklr.trace.plugin"]
+    if not is_traced:
+        assert lines == []
+        return
+    prefix = f"framework=sglang target={TARGET} route={route.__module__}.{route.__qualname__}"
+    assert [line.split(" ", 3)[3] for line in lines] == [
+        f"{prefix} result=served reason=-",
+        f"{prefix} result=fallback reason=not_measured",
+    ]
+    assert all(line.startswith("[aklr plugin] pid=") for line in lines)
 
 
 def test_a_raising_route_raises(hooks):
@@ -174,7 +218,15 @@ def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, hooked):
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     plugin.register()
-    routes = ["aklr.plugins.sglang.x.y.api", "install"] if hooked else []
+    routes = (
+        [
+            "aklr.plugins.sglang.x.y.api",
+            "aklr.plugins.sglang.aiter_calls",
+            "install",
+        ]
+        if hooked
+        else []
+    )
     assert register_calls == ["aklr starts", *routes]
 
 

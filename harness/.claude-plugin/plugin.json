@@ -1,0 +1,8 @@
+{
+  "name": "aklr",
+  "description": "AKLR agent harness: skills and subagents for writing, reviewing, qualifying and delivering AKLR kernels",
+  "author": {
+    "name": "AKLR maintainers"
+  },
+  "types": "./types/index.d.ts"
+}

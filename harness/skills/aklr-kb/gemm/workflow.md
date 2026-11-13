@@ -9,6 +9,8 @@ sources:
   - ROCm/FlyDSL@dd8373349:.claude/skills/gemm-optimization/SKILL.md
   - AMD-AGI/Primus-Turbo@7615a5a2:agent/skills/kernel-optimize/SKILL.md
   - AMD-AGI/Primus-Turbo@7615a5a2:agent/rules/iteration_rules.mdc
+  - AMD-AGI/Primus-Turbo@7615a5a2:agent/skills/kernel-optimize/workflow/optimize-loop.md
+  - AMD-AGI/Primus-Turbo@7615a5a2:agent/skills/kernel-optimize/knowledge/ops/gemm/overview.md
 ---
 
 # Working on a GEMM
@@ -63,7 +65,7 @@ Read both the device kernel and the host launcher, and answer:
 - Which data is re-read often enough that staging it through LDS pays for itself?
 - Does the epilogue store straight out, reorder first, or fuse other work?
 
-A kernel with incidental MFMA is not a GEMM, and GEMM advice will not help it.
+A kernel with incidental MFMA is not a GEMM.
 
 ## Step 2 — let the evidence pick the problem
 
@@ -97,13 +99,15 @@ instruction-count method for the hot loop (§9); `../profile.md` § kernel-trace
 4. Epilogue and store
 5. Per-shape configuration (the race)
 
-Each level changes the pressure the next one works under. Constants tuned against a bad tile have to be
-re-tuned after the tile is fixed. Do not touch step 5 while steps 1–4 still have known problems.
+Each level changes the pressure the next one works under; Primus-Turbo's GEMM notes
+(`agent/skills/kernel-optimize/knowledge/ops/gemm/overview.md`) also work top-down, tile shape and MFMA atom first
+and the epilogue late. Constants tuned against a bad tile may need re-tuning once the tile is fixed, so a per-shape
+race run while steps 1–4 still have known problems may have to be repeated.
 
 ## The round discipline
 
-These rules come from Primus-Turbo's optimization loop (`agent/skills/kernel-optimize/SKILL.md`,
-`agent/rules/iteration_rules.mdc`). Each exists because breaking it cost rounds.
+These rules come from Primus-Turbo's optimization loop (`agent/skills/kernel-optimize/SKILL.md` and its
+`workflow/optimize-loop.md`, `agent/rules/iteration_rules.mdc`).
 
 - **One change per measured round.** Sweeping one configuration axis with the kernel code unchanged
   counts as one change. A new MFMA atom plus a new LDS stage is two, and their effects cannot be
@@ -133,7 +137,9 @@ These rules come from Primus-Turbo's optimization loop (`agent/skills/kernel-opt
 - **No benchmark-only gains.**
   - A cache keyed on an input tensor's identity works only because the benchmark reuses tensor objects.
   - A shortcut that assumes uniform shapes or distributions will not survive real inputs.
-  - Preprocess static weights once, outside the timed region.
+  - A packed or reshuffled copy of a weight kept across calls, which AKLR does not allow
+    (`aklr/ops/README.md` § The kernel section and ABI, `../pitfalls/state_kept_across_calls.md`): repack on every
+    call, or serve the contract's shuffled layout variant where it has one.
   - If a gain is larger than the change could structurally produce, look for one of these before
     accepting it.
 
@@ -151,8 +157,9 @@ These rules come from Primus-Turbo's optimization loop (`agent/skills/kernel-opt
 1. Correctness first, with a gate that exercises the changed path (`correctness.md` §1).
 2. Re-measure the same shapes as the baseline, in the same session, each arm at its own best
    configuration.
-3. If you had trace or ISA evidence, confirm that the specific stall moved. A wall-time drop for some
-   other reason teaches nothing, and the next change will be a guess.
+3. If you had trace or ISA evidence, confirm that the specific stall moved. If wall time dropped and that
+   stall did not, the hypothesis is not confirmed: find what did move, the clock for one (`attribution.md` §4),
+   before basing the next change on it.
 4. Check that no neighbouring shape regressed.
 
 ## Related

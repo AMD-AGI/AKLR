@@ -15,8 +15,9 @@ sources:
 ## Symptom
 
 A per-kernel table from a multi-GPU trace puts a large share of the step on the allreduce
-(`cross_device_reduce_1stage`, `allreduce_fusion_kernel_1stage` and the like). Expect the kernel's per-call times to
-have a long tail: most calls near what the kernel takes on its own, a few far longer. Concluding from the summed
+(`cross_device_reduce_1stage`, `allreduce_fusion_kernel_1stage` and the like). The wait below can give the
+kernel's per-call times a long tail, most calls near what the kernel takes on its own and a few far longer
+(inferred from the source, not measured). Concluding from the summed
 time that communication dominates, or that the allreduce kernel is slow, is not supported by the sum alone.
 
 A compute kernel's long tail in the same trace is a different case: contention with a collective that overlaps it

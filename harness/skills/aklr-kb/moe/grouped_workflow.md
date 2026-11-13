@@ -46,8 +46,11 @@ have not audited yet.
 
 - **The M-split grid is an upper bound.** M is cut at group offsets that exist only on the device.
   Cutting at group boundaries costs at most one short tile per group, so `(ceil(M_total / BM) + G) · n_blocks`
-  workgroups cover any distribution; the surplus exits on the device (Turbo: `grouped_gemm_bf16_kernel.py:507-510`,
-  `grouped_gemm_fp8_kernel.py:386-396`, `:906-911`). A variable-K wgrad's plain grid is exact
+  workgroups cover any distribution (Turbo: `grouped_gemm_bf16_kernel.py:507-510`,
+  `grouped_gemm_fp8_kernel.py:906-911`). The fp8 grid exits the surplus on the device
+  (`grouped_gemm_fp8_kernel.py:386-396`); the bf16 grouped NT runs it as zero-row tiles through the whole K loop
+  (`grouped_group_mapping.md` §3), each about half a live tile's time *(field, E9)*. A
+  variable-K wgrad's plain grid is exact
   (`G × tiles_per_group`) and the offsets set each tile's trip count; a deterministic split-K adds a fixed head
   of split ids that the offsets enable or retire (`grouped_gemm_fp8_kernel.py:3959-3965`,
   `grouped_variable_k.md` §9). No host read of the offsets is needed (`grouped_group_mapping.md` §2–§3).
@@ -88,13 +91,17 @@ In FlyDSL: `../flydsl/moe.md` § grouped_workflow §2.
 
 ## 3. Step 1 — name the layout and where its skew lives
 
-1. **Is the skew in the tile count or in the cost per tile?** In the tile count (NT/NN), a group-aware XCD order
-   absorbs it: a group-aligned band deal removed most of an MXFP4 NT kernel's heavy-skew penalty
-   (`grouped_scheduling.md` §3). In the cost per tile (variable-K wgrad), any XCD partition coarser than
+1. **Is the skew in the tile count or in the cost per tile?** In the tile count (NT/NN), the penalty measured came
+   from contiguous XCD slices, which stack the small groups' tiles on one XCD: a group-aligned band deal removed most
+   of an MXFP4 NT kernel's heavy-skew penalty (`grouped_scheduling.md` §3), and on a Triton bf16 NT kernel the
+   hardware round-robin and short bands kept it under 1% as well *(field, E10)*. In the cost per tile (variable-K
+   wgrad), any XCD partition coarser than
    one tile adds imbalance in proportion to the skew: a wgrad given its NT sibling's XCD setting, and an XCD
    remap that won on balanced inputs, both collapsed under skew (`grouped_scheduling.md` §1–§2).
-2. **Are the tiles equal in cost?** Equal (NT/NN): once every dispatch round is full, dispatch order does not
-   matter. Unequal (variable-K wgrad): longest-first is a live lever, but choose its direction on the device
+2. **Are the tiles equal in cost?** Equal (NT/NN): once every dispatch round is full, the order of the groups does
+   not change the time, so longest-first has nothing to balance; the tile order inside a group still does, through
+   L2 reuse (`grouped_scheduling.md` §4). Unequal (variable-K wgrad): longest-first is a live lever, but choose its
+   direction on the device
    from the group table; reversing unconditionally loses wherever the table already descends
    (`grouped_scheduling.md` §5).
 3. **Which distributions decide?** Balanced, moderate and heavy skew, a near one-hot case and empty groups
@@ -108,7 +115,9 @@ Ask, in order:
 1. **What does a tile pay to find its group?** Count the prologue instructions; a per-tile O(G) search is the
    usual culprit, and a lane-resident prefix table with a ballot count replaces it
    (`grouped_group_mapping.md` §5). **When MFMA counts match the reference's and the kernel is still
-   slower, suspect index and decode overhead first.**
+   slower, check index and decode overhead next to the clock and the tile length:** a lower clock at the power cap
+   can make up the gap (`grouped_measurement.md` §7), and in the measured MXFP8 NT case the gap was mostly tile
+   length (`grouped_tile_pricing.md` §6).
 2. **On an over-launched grid, does the exit test the raw workgroup id before any XCD remap?** With the remap
    first, the dead ids all land on one XCD (`grouped_group_mapping.md` §4).
 3. **Does the XCD partition match where the skew lives** (Step 1)? On a variable-K wgrad, group-major order with
@@ -125,7 +134,8 @@ counters across distributions with `GRBM_GUI_ACTIVE` apart: idle CUs, not memory
 
 Fit `t_tile = F + n_kblocks · P` over a K sweep (`../gemm/grid_pricing.md` §6; its systematic errors
 are in `../gemm/attribution.md` §7). Then compare `P` with the dense kernel of the same dtype.
-- In the measured grouped kernels `P` matched the dense rate and the loss sat in `F`; a kernel with the faster
+- In the two grouped kernels priced this way `P` matched the dense rate (MXFP4) or beat the reference's (MXFP8
+  NT) and the loss sat in `F`; a kernel with the faster
   steady state still lost to a reference whose tiles ran several times as many K iterations
   (`grouped_tile_pricing.md` §6).
 - **State whether an MFMA utilization is wall or steady state.** *(field, E3)* One MXFP8 grouped NT kernel read 60%
@@ -154,9 +164,11 @@ Where `F` comes from and what removes it: `grouped_tile_pricing.md`.
 ## 7. Usually dead
 
 Each entry held where it was measured. Reopen one only with a probe that shows its precondition changed.
-- **One launch per group instead of one grouped launch.** Per-group launches were slower than one grouped
-  launch; the gap to dense came from groups competing for L2 while they run concurrently, which group-major
-  order addresses inside one launch (`grouped_scheduling.md` §9).
+- **One launch per group instead of one grouped launch.** With the same kernel, per-group launches were not faster
+  *(field, E12)*: about even when each group filled whole dispatch rounds, 42% slower with skewed groups. Per-group
+  calls of a faster dense library kernel can still beat a slower grouped kernel, a gain from the kernel, not the
+  launch split. The grouped launch's gap to dense was put down to L2 contention between concurrent groups
+  (`grouped_scheduling.md` §9), which group-major order addresses inside one launch.
 - **A persistent wgrad that walks one tile position across all groups.** With unequal tiles and a grid divided
   by G it lost far more than it saved (`grouped_scheduling.md` §6).
 - **Pairing remainder tiles into equal-cost work.** Equalize workgroup lifetime, not MFMA count
@@ -187,14 +199,14 @@ Each entry held where it was measured. Reopen one only with a probe that shows i
 
 ## 8. Rules that save rounds
 
-- **A one-geometry benchmark overfits NT changes.** *(field, E7)* One change measured on three model geometries: its
-  wgrad part gained 0.7–10.9% in all six cells; its NT part gained 3.8–4.3% in three of four cells of the
-  geometry it was tuned on and between −1.3% and +1.2% on the other two geometries, because its gate was an
-  absolute tile count. Score across several geometries (`grouped_measurement.md` §1) and write gates as
-  ratios.
-- **A gain larger than the structure allows** usually means the benchmark took a uniform-distribution shortcut
-  or reused tensor identities (`../gemm/workflow.md` § The round discipline). A gain that vanishes
-  under skew is benchmark overfit; revert it.
+- **A one-geometry benchmark overfits NT changes.** *(field, E7)* A campaign tuned on one geometry, its start and
+  end trees measured on three model geometries: its wgrad cells gained 0.7–10.9% in all six; its NT cells gained
+  3.8–4.3% in three of four cells of the geometry it was tuned on and between −1.3% and +1.2% on the other two
+  geometries, because the NT gain hung on a gate that was an absolute tile count. Score across several
+  geometries (`grouped_measurement.md` §1) and write gates as ratios.
+- **A gain larger than the structure allows** can mean the benchmark took a uniform-distribution shortcut or
+  reused tensor identities; check both before accepting it (`../gemm/workflow.md` § The round discipline). A
+  gain that vanishes under skew is benchmark overfit; revert it.
 - **When the goal is to beat a specific kernel, dump its ISA and dispatch metadata first.** Compare waves per
   SIMD, accumulator class, K iterations per tile and synchronization instructions per MFMA (waits, barriers,
   priority changes, `s_nop`) rather than MFMA utilization. *(field, E8)* In the measured case the candidate's
@@ -222,11 +234,14 @@ A FlyDSL version is given only where the cited run, or another round in the same
 (`flydsl.__version__`, an import path with its version, or a `pip install flydsl==` in the run's own setup); otherwise
 `FlyDSL ?`. `Turbo fork <rev>` names the Primus-Turbo fork commit that ran, where the record gives one.
 
-- E1 [2026-08, gfx950, FlyDSL ?, Turbo fork 527e62c7 and a081d201, N=?, direct calls of the entry, ratio = skewed / balanced throughput] forward and dgrad (byte-identical in both trees) held 0.92–0.99 of their balanced throughput under skew; the base wgrad fell to 0.656 (gate_up) and 0.336 (down) on a one-hot distribution (gpt-oss-20b tensorwise fp8, G=32, 131072 tokens; local:/workspace/code/gpt_oss_docker/.claude/memory/project_gptoss_wgrad_skew_campaign.md:84)
-- E2 [2026-08, gfx950, FlyDSL ?, Turbo fork 527e62c7, N=? (one rank-0 trace, steps 30–32), training trace, kernels paired with ops by External id] in every layout the long-tail calls (duration above 1.3× the median) overlapped NCCL kernels 192–200%, the other calls 0–3% (gpt-oss-20b training trace, forward / dgrad / wgrad; local:/workspace/code/gpt_oss_docker/.claude/memory/project_gptoss_wgrad_skew_campaign.md:82)
-- E3 [2026-07, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, rocprofv3 PMC averaged over the wall] the MXFP8 grouped NT kernel read MfmaUtil 60.2% (`kernel_grouped_mxfp8_nt`, M=2048, 4096×7168; local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/12-mxfp8-grouped.md:76)
-- E4 [2026-07, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, caches cleared] with scales the whole-loop wgrad ran 811–813 µs against the production chunked body's 479 µs; without scales 445 µs (grouped MXFP8 variable-K wgrad, B=8, M=4096, N×K=4096×4096; local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/12-mxfp8-grouped.md:30)
-- E5 [2026-07, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, ?] without scales the whole loop was 5–7% faster on three shapes (K 4096 and 2048) and 51–59% slower at K=7168 and 2880×2880; on 4096×7168, a 16×28 tile grid, MfmaUtil was 29.9 against 54.8 with no workgroup imbalance (grouped MXFP8 variable-K wgrad, a build deleted unmerged; local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/05-mxfp4-mxfp8-deadends.md:253)
-- E6 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=24, palindrome-order A/B] the LLVM scheduling hints read +0.06%; the two binaries' opcode histograms differed by 1 instruction of 4975 (s_waitcnt +2, s_mov_b32 −1) (MXFP8 grouped NT, the campaign's gpt-oss bench; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260805_150542/memory.md:112)
-- E7 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, the campaign's start and end trees on three geometries, G=32, 131072 tokens, the same canonical skew] wgrad +7.6/+10.9% (gpt-oss), +5.8/+3.1% (DeepSeek-V3), +6.0/+0.7% (Qwen3-235B); forward/dgrad +3.8/+4.0/−0.6/+4.3% on gpt-oss and −1.3% to +1.2% on the other two (MXFP4 grouped GEMM, gate_up and down; local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/14-benchmark-shapes.md:50)
-- E8 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, one trace, arms interleaved; per-K-iteration times derived from the tile time and a priced fixed cost, the reference's an upper bound] the MXFP8 NT candidate's steady state was 11–14% faster per K-iteration than the reference (1.164 against 1.31–1.35 µs), and its tiles ran 23 K-iterations against the reference's 134 (gpt-oss forward down balanced, 2.272 TFLOP; reference `kernel_grouped_tn_wgrad_4wave_0`; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260805_150542/goal.md:124)
+- E1 [2026-08, gfx950, FlyDSL ?, Turbo fork 527e62c7, N=3 baseline reads, the campaign's in-process bench, ratio = skewed / balanced throughput] forward and dgrad held 0.91–1.01 of their balanced throughput under skew; the base wgrad fell to 0.654–0.670 (gate_up) and 0.327–0.330 (down) on a one-hot distribution (gpt-oss-20b tensorwise fp8, G=32, 131072 tokens)
+- E2 [2026-08, gfx950, FlyDSL ?, Turbo fork 527e62c7, N=? (one rank-0 trace, steps 30–32), training trace, kernels paired with ops by External id] in every layout the long-tail calls (duration above 1.3× the median) overlapped NCCL kernels for 96–100% of their duration on average, the other calls 0–7% (gpt-oss-20b training trace, forward / dgrad / wgrad; Primus-Turbo@c932b278)
+- E3 [2026-07, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, rocprofv3 PMC averaged over the wall] the MXFP8 grouped NT kernel read MfmaUtil 60.2% (`kernel_grouped_mxfp8_nt`, M=2048, 4096×7168)
+- E4 [2026-07, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, caches cleared] with scales the whole-loop wgrad ran 811–813 µs against the production chunked body's 479 µs; without scales 445 µs (grouped MXFP8 variable-K wgrad, B=8, M=4096, N×K=4096×4096)
+- E5 [2026-07, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, ?] without scales the whole loop was 5–7% faster on three shapes (K 4096 and 2048) and 51–59% slower at K=7168 and 2880×2880; on 4096×7168, a 16×28 tile grid, MfmaUtil was 29.9 against 54.8 with no workgroup imbalance (grouped MXFP8 variable-K wgrad, a build deleted unmerged)
+- E6 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=24, palindrome-order A/B] the LLVM scheduling hints read +0.06%; the two binaries' opcode histograms differed by 1 instruction of 4975 (s_waitcnt +2, s_mov_b32 −1) (MXFP8 grouped NT, the campaign's gpt-oss bench)
+- E7 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, the campaign's start and end trees on three geometries, G=32, 131072 tokens, the same canonical skew] wgrad +7.6/+10.9% (gpt-oss), +5.8/+3.1% (DeepSeek-V3), +6.0/+0.7% (Qwen3-235B); forward/dgrad +3.8/+4.0/−0.6/+4.3% on gpt-oss and −1.3% to +1.2% on the other two (MXFP4 grouped GEMM, gate_up and down)
+- E8 [2026-08, gfx950, FlyDSL ?, Turbo fork rev ?, N=?, one trace, arms interleaved; per-K-iteration times derived from the tile time and a priced fixed cost, the reference's an upper bound] the MXFP8 NT candidate's steady state was 11–14% faster per K-iteration than the reference (1.164 against 1.31–1.35 µs), and its tiles ran 23 K-iterations against the reference's 134 (gpt-oss forward down balanced, 2.272 TFLOP; reference `kernel_grouped_tn_wgrad_4wave_0`)
+- E9 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=9 rounds in one process, arms rotated, median of 20 calls each; ISA of the same binary] Turbo ca1fdd67 bf16 grouped NT (`kernel_grouped_nt`), 32 groups of 256 rows, N=4096, K=2048: the upper-bound grid (512 of 1024 workgroups zero-row) +52% against a grid of the 512 live tiles, about 0.149 µs per zero-row workgroup against 0.285 µs per live one; no branch around any MFMA, one `s_endpgm` at the end
+- E10 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=10 rounds, CUDA graphs, arms rotated in one process; penalty = paired skewed / balanced ratio; A-vs-A within 0.42%] bf16 M-split grouped NT, G=32, M=131072, N=3072, K=4096, Turbo's `xcd_band_remap_pid`, 32:1 skew: a contiguous eighth per XCD +1.7% / +2.6%; the group-aligned band, the hardware round-robin and 2- or 32-tile bands −1.4% to +0.9%
+- E12 [2026-11, gfx950 (MI355X), Triton 3.8.0, N=10 rounds, graph replays or eager batches, arms rotated in one process; cells whose A-vs-A failed dropped] bf16 M-split grouped NT, N=4096, K=7168, one binary: G launches against one grouped launch −0.1% to +1.2% at 4096–8192 rows per group, +42% with 8 skewed groups (51 down to 2 blocks of 256 rows); per-group `torch.mm` (hipBLASLt) −14% to −19% against the grouped launch; one `torch.mm` −14% to −22% against the same Triton kernel as one dense GEMM

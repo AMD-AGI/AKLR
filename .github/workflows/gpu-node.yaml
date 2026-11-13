@@ -2,9 +2,9 @@ name: AKLR-GPU-node
 
 # One Spur GPU node for a CI run attempt: prepare allocates it and registers a runner on it,
 # labelled with its own name; release ends the allocation and deletes the runner.
-# The only code that runs on the aklr-spur-host runner, which holds the Spur account and a
-# runner-admin token. A PR edits its own ci.yaml, so ci.yaml calls this file at main, and the
-# host's runner group admits only this file at refs/heads/main.
+# The only code that runs on the aklr-spur-host and aklr-spur-release runners, which hold the Spur
+# account and a runner-admin token. A PR edits its own ci.yaml, so ci.yaml calls this file at main,
+# and the host's runner group admits only this file at refs/heads/main.
 
 on:
   workflow_call:
@@ -50,16 +50,21 @@ jobs:
       - name: Decide whether the run waits for approval
         id: trust
         env:
-          NOT_BOT: ${{ github.event.sender.type != 'Bot' && github.event.pull_request.user.type != 'Bot' }}
+          # A fork's head can hold commits by someone without write access here.
+          NOT_BOT_NOR_FORK: >-
+            ${{ github.event.sender.type != 'Bot' && github.event.pull_request.user.type != 'Bot' &&
+                (!github.event.pull_request ||
+                 github.event.pull_request.head.repo.full_name == github.repository) }}
           SENDER: ${{ github.event.sender.login }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           GH_TOKEN: ${{ github.token }}
-        # Trusted only when the sender and the PR author, if any, have write access, whatever the
-        # event: a PR's own workflow may call this one from any event. By permission, not
-        # author_association: that reports a private org member as a non-member.
+        # Trusted only when the code is this repository's and the sender and the PR author, if any,
+        # have write access, whatever the event: a PR's own workflow may call this one from any
+        # event. By permission, not author_association: that reports a private org member as a
+        # non-member.
         # "Re-run failed jobs" keeps this decision, "Re-run all jobs" reads it again.
         run: |
-          trusted=$NOT_BOT
+          trusted=$NOT_BOT_NOR_FORK
           for user in "$SENDER" ${PR_AUTHOR:+"$PR_AUTHOR"}; do
             # .permission folds maintain into write; a failed lookup is untrusted.
             permission=$(gh api "repos/$GITHUB_REPOSITORY/collaborators/$user/permission" --jq .permission) ||
@@ -70,12 +75,11 @@ jobs:
 
   prepare:
     needs: trust
-    runs-on: &spur_host aklr-spur-host
-    # Bots, Bot-sent events and PRs by authors without write access wait for maintainer approval
-    # before a node is requested for PR code.
+    runs-on: aklr-spur-host
+    # Bots, Bot-sent events, fork PRs and PRs by authors without write access wait for maintainer
+    # approval before a node is requested for PR code.
     environment: ${{ needs.trust.outputs.environment }}
-    # manage_spur_runner.sh waits at most 15m for the queue and 20m for the runner.
-    timeout-minutes: 50
+    # No timeout-minutes: the Spur queue wait is unbounded, so GitHub's 360-minute default caps it.
     outputs:
       runner_label: ${{ steps.prepare.outputs.runner_label }}
       allocation_id: ${{ steps.prepare.outputs.allocation_id }}
@@ -120,7 +124,9 @@ jobs:
   release:
     # always(): the caller releases after failed or cancelled jobs too.
     if: always() && inputs.operation == 'release'
-    runs-on: *spur_host
+    # Its own runner: a prepare holds an aklr-spur-host runner while it waits on the Spur queue,
+    # and the nodes it waits for are freed only by releases.
+    runs-on: aklr-spur-release
     timeout-minutes: 15
     env: *spur_env
     steps:

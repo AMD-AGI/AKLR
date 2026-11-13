@@ -9,6 +9,7 @@ from pathlib import Path
 
 __all__ = [
     "DEFAULT_EXPORT_DIR",
+    "DEFAULT_MIN_SPEEDUP",
     "ENV_DISABLE",
     "ENV_EXPORT",
     "ENV_EXPORT_DIR",
@@ -16,8 +17,10 @@ __all__ = [
     "ENV_MEASURED_DIR",
     "ENV_MIN_SPEEDUP",
     "ENV_SGLANG_PLUGIN",
+    "ENV_TRACE",
     "ENV_VLLM_PLUGIN",
     "RuntimeEnv",
+    "trace_mode",
 ]
 
 # RuntimeEnv() reads them
@@ -29,7 +32,20 @@ ENV_EXPORT_DIR = "AKLR_EXPORT_DIR"
 ENV_MEASURED_DIR = "AKLR_MEASURED_DIR"
 ENV_SGLANG_PLUGIN = "AKLR_SGLANG_PLUGIN"
 ENV_VLLM_PLUGIN = "AKLR_VLLM_PLUGIN"
+ENV_TRACE = "AKLR_TRACE"
 DEFAULT_EXPORT_DIR = "aklr_export"
+# the least published speedup over the baseline that validation admits a kernel at and
+# dispatch serves a workload at
+DEFAULT_MIN_SPEEDUP = 1.05
+
+
+def trace_mode() -> str:
+    """AKLR_TRACE: "0" or unset traces nothing, "plugin" the plugins' routes, "op" the op
+    dispatches, "all" both."""
+    mode = os.environ.get(ENV_TRACE) or "0"
+    if mode not in ("0", "plugin", "op", "all"):
+        raise ValueError(f"{ENV_TRACE}={mode!r}: expected '0', 'plugin', 'op' or 'all'")
+    return mode
 
 
 class RuntimeEnv:
@@ -57,9 +73,10 @@ class RuntimeEnv:
         if plugin not in ("0", "1"):
             raise ValueError(f"{ENV_VLLM_PLUGIN}={plugin!r}: expected '1' or '0'")
         self.is_vllm_plugin_enabled = plugin == "1"
+        self.trace_mode = trace_mode()
         self.export_dir = Path(os.environ.get(ENV_EXPORT_DIR) or DEFAULT_EXPORT_DIR).absolute()
         # AKLR_MIN_SPEEDUP: least speedup over aiter to serve; <= 0 also serves unmeasured
-        speedup = os.environ.get(ENV_MIN_SPEEDUP) or "1.03"
+        speedup = os.environ.get(ENV_MIN_SPEEDUP) or str(DEFAULT_MIN_SPEEDUP)
         try:
             self.min_speedup = float(speedup)
         except ValueError as e:

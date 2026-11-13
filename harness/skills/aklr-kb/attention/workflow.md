@@ -62,10 +62,10 @@ layer you have not audited.
 
 | What the evidence shows | What it usually means | Next |
 |---|---|---|
-| MFMA duty well under 80% at the true clock, large share where neither pipe is busy | latency, rendezvous, serial exp/pack chains | price the stall pool (Step 4) |
+| MFMA duty far from saturated at the true clock, large share where neither pipe is busy | latency, rendezvous, serial exp/pack chains | price the stall pool (Step 4) |
 | MFMA busy + VALU busy near the timeline, low co-execution, occupancy 1 | the two pipes run nearly serially | overlap inside the workgroup (`schedule_sync.md`) |
 | One pipe saturated in a per-class census (exp at 8 cycles, `softmax.md` §1) | throughput on that pipe | delete its work; reordering pays nothing |
-| `SQ_VALU_MFMA_BUSY_CYCLES` under ~4× `SQ_LDS_IDX_ACTIVE` | LDS read bound (in fwd, usually the PV transposed reads) | `lds.md` |
+| `SQ_VALU_MFMA_BUSY_CYCLES` under ~4× `SQ_LDS_IDX_ACTIVE`, with `SQ_LDS_IDX_ACTIVE` a large share of the CU's cycles | LDS read bound (in fwd, usually the PV transposed reads). The ratio alone reads the same for a saturated port and an idle one; transposed reads next to 16×16×32 MFMAs saturated the port only at a ratio ≤ 2 *(field, E28)* | `lds.md` |
 | sclk far under peak with power at the cap | energy-bound | price in wall and clock (`attribution.md` §8) |
 
 ## Step 2 — audit the grid and dispatch mapping before the kernel body
@@ -95,7 +95,8 @@ redundancy          = issued / causal-exact − 1
 ```
 - A causally trimmed D=64 backward issued only 3.1% more than causal-exact, the half-triangles of the
   diagonal band at tile granularity. That caps every "fewer MFMA" idea on that body at 3.1%.
-- Above ~15%, this is the first lever; under ~5%, go to Step 4.
+- Where the redundancy is a large share of the issued FLOPs, this is the first lever; at a few percent, as on that
+  body, go to Step 4.
 - With redundancy to remove, audit droppable GEMMs and global correction terms first: dropping one GEMM from a
   dq kernel gained 9.8% *(field, E9)*. Fusion and drop rules are in `gradients.md` §7.
 - Redundancy that buys a constraint is not free. A deterministic two-kernel backward recomputes S and dP in
@@ -103,13 +104,15 @@ redundancy          = issued / causal-exact − 1
   it needs float atomics or a per-trip dQ partial store (`gradients.md` §1–§4).
 
 ## Step 4 — price the stall pool, then hide latency
-- Every route to a speed-up goes through the stall pool; only some routes also need more co-execution. Price
-  the pool by source (barrier, wait counters, LDS return, prologue/epilogue) before touching the schedule
-  (`attribution.md` §3 and §6). Eight rounds of scheduling work on one body returned 0.4–4.0% in
+- Price the stall pool by source (barrier, wait counters, LDS return, prologue/epilogue) before touching the
+  schedule (`attribution.md` §3 and §6). Eight rounds of scheduling work on one body returned 0.4–4.0% in
   total while its stall pool had not been priced *(field, E10)*.
-- **When co-resident waves already fill the MFMA shadow** (no bare VALU between MFMAs in the ISA, high coexec / MFMA
-  busy), reordering inside one wave is worth about zero; only deleting instructions pays (forced exp
-  interleave in a backward with two co-resident workgroups per CU: 0.00%) *(field, E11)*. Where bare VALU remains between MFMAs,
+- **When co-resident waves already fill the MFMA shadow** (no bare VALU between MFMAs in the ISA, MFMA busy near
+  100% of SIMD cycles), reordering inside one wave is worth about zero (two co-resident workgroups per CU on a
+  backward: forced pack/dS VALU interleave 0.00% *(field, E11)*, exp placed by MFMA:TRANS counts noise-level
+  *(field, E16)*). Two workgroups per CU do not fill it by themselves: in a microbenchmark at two waves per SIMD,
+  interleaving exps still gained 7–12% where the clustered order left the MFMA pipe 62–92% busy *(field, E29)*.
+  Where bare VALU remains between MFMAs,
   fence relaxation still paid at 2 waves/SIMD and was noise at 3 (`schedule_sync.md` §4): count
   `naked_work` first. With one workgroup per CU,
   interleaving inside the workgroup is the only cover.
@@ -128,7 +131,8 @@ every "relax determinism to drop MFMAs" option; decide it before Step 3, not aft
 Each entry held on the bodies where it was measured; re-open one only with a probe that shows its precondition
 changed.
 - **LDS swizzle, padding or bank-conflict work** when MFMA busy cycles are ≥4× `SQ_LDS_IDX_ACTIVE`
-  (4× on a dq body, 8× on a dkdv body *(field, E12)*): the port is not the limit (`lds.md` §5).
+  (4× on a dq body, 8× on a dkdv body *(field, E12)*) and `SQ_LDS_IDX_ACTIVE` is a small share of the CU's cycles:
+  the port is not the limit (`lds.md` §5); the ratio alone does not show it *(field, E28)*.
 - **Raising occupancy by force** (`waves_per_eu`, AGPR allocation) when the code does not already nearly fit: the
   compiler spills (`registers_occupancy.md` §2). *(field, E13)* One more wave
   per SIMD made a backward 32% slower and two more 5× slower; *(field, E14)* forcing AGPR splits took a forward's
@@ -137,19 +141,20 @@ changed.
   (measured on dK/dV bodies). Those
   co-resident workgroups already overlap with no barrier; the rebuilt version adds a barrier tax. Its best stagger,
   which raced (NaN, not deterministic), reached 1029 TF/s against a 1116 TF/s baseline *(field, E15)*.
-- **Pushing exp into MFMA shadows with two co-resident workgroups per CU**: 0.00% and noise-level results; raising
-  MFMA priority to force it, −3.3% *(field, E11, E16)*.
-- **Pure reordering on a power-capped kernel whose shadow is already full**: identical instructions in a new order pay
-  0 ± 2% (co-execution 44% of SIMD cycles, 52% of MFMA busy) *(field, E17)*; at low co-execution reorders still gain
-  (`attribution.md` §8).
+- **Pushing exp into MFMA shadows with two co-resident workgroups per CU** (measured on a dK/dV body): noise-level
+  results, and raising MFMA priority to force it −3.3% *(field, E16)*. Where the clustered order leaves the MFMA pipe
+  short of full, the interleave can still pay (Step 4).
+- **Pure reordering on a power-capped kernel at high co-execution**: on one forward at 44% of SIMD cycles, 52% of
+  MFMA busy, five reorders of identical instructions read slower than the deployed order *(field, E17)*; at low
+  co-execution a reorder can gain or lose (`attribution.md` §8).
 - **K/V LDS double buffering to hide DMA with two co-resident workgroups per CU**: the occupancy already hides most
   DMA latency and the prefetch's LDS writes compete with the compute reads; *(field, E18)* a deletion probe showed 8.7%
   headroom and the built prefetch lost 4.3–4.7% (`attribution.md` §5). At one workgroup per CU a second
   slot that removes a write-after-read barrier can pay, but not as a rule (`schedule_sync.md` §10).
 - **A fixed reference max for the softmax shift** as a general lever: exact only inside a data-dependent window,
   silently wrong outside it (`softmax.md`).
-- **Lazy (threshold) O-rescale ported into a P-store pipeline**: the branch broke its overlap; −31% on one path,
-  neutral on another *(field, E19)*; on dense decodes with no such pipeline it paid (`softmax.md`
+- **Lazy (threshold) O-rescale ported into a P-store pipeline**: the branch broke its overlap; −31% on one path
+  *(field, E19)*; on dense decodes with no such pipeline it paid (`softmax.md`
   §6.3).
 - **Q-outer fused dq+dkdv**: reducing dK/dV over q takes float atomics (not deterministic) or a dK/dV partial
   workspace that saves no bytes (`gradients.md` §2). A KV-outer fusion with a narrow KV band
@@ -164,11 +169,11 @@ changed.
 ## Rules that save rounds
 - **Before declaring a lever dead in one regime, align the other levers.** A regime that still runs a different
   softmax, mask or tile path than the one where the lever was measured can flip its sign.
-- **A gate condition whose reason nobody can state is usually scope residue.** A `window_left < 0` gate kept
+- **A gate condition whose reason nobody can state can be scope residue.** A `window_left < 0` gate kept
   sliding windows on a path nobody had tuned for them; window-gated configuration (compile-time guarded:
   q_split, tile sizes, register prefetch, dead-tile skip) took one window shape from 216 to 298 effective TF/s
   *(field, E24)*.
-- **"The levers are exhausted" usually means one layer is.** List the layers (grid and dispatch, body, waits and
+- **"The levers are exhausted" can mean only one layer is** (Step 2). List the layers (grid and dispatch, body, waits and
   barriers, helper kernels, host path) and name the last probe that priced each.
 - **Re-derive per head_dim.** Anchor counts, tile sizes and which pipe binds change with D; D=64 and D=128
   sharing one file does not share gains (`measurement.md` §8).
@@ -184,33 +189,35 @@ changed.
 
 Every workload below is an attention kernel. A FlyDSL version is given only where the cited run, or another round in the
 same container and venv, printed it (`flydsl.__version__`, an import path with its version, or a `pip install flydsl==`
-in the run's own setup); otherwise `FlyDSL ?`. Months are those of the round timestamps (`run.jsonl`), or of the dated
-entry where only myskill or memory records the number. A sign on a wall-time change is the record's own.
+in the run's own setup); otherwise `FlyDSL ?`. Months are those of the round timestamps, or, where
+the number is unverified, of the date it was reported. A sign on a wall-time change is the record's own.
 
-- E1 [2026-08, gfx950, FlyDSL ?, N=?, issued MFMA FLOPs ÷ wall over the clock band measured under load (2078–2377 MHz), checked against PMC] issued MFMA 5.669e12 / 5.2924 ms = 1071 TF/s ⇒ MFMA-pipe busy ≈ 44–49%, against the PMC's 44.0% (gpt-oss D=64 attention backward, b4; campaign 20260829_150647, round-14 replan; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260829_150647/goal.md:339)
-- E2 [2026-09, gfx950, FlyDSL 0.2.4, N=?, rocprofv3 PMC, clock from `GRBM_GUI_ACTIVE` (~1823 MHz under profiling)] `MFMA_BUSY` per trip 20,626 cycles of a ≈36,350-cycle trip ⇒ duty ≈52–57% at that clock; the same campaign's replan, at the sustained unprofiled 2070 MHz, put the duty at ≈50% (b4 1073–1086 / b2 1095 / b1 1102–1110 TF against a 2171 TF on-clock peak) and called 52–57% slightly high (local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260911_114527/goal.md:168) (gpt-oss D=64 attention backward, b4; campaign 20260911_114527 round 7; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260911_114527/memory.md:364)
-- E3 [2026-09, gfx950, FlyDSL ?, N=2, official bench, two runs] three `sched_barrier(0)` fences relaxed to 0x008: speedup 0.946331 / 0.945965 (+3.1%), the D=128 cell 0.930 → 0.9855 (2 waves/SIMD), while the D=64 cell (3 waves/SIMD) moved only inside the noise (0.9099 → 0.9061) (FlyDSL dualwave attention forward, D=128 and D=64 cells; campaign 20260924_001030 round 3; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260924_001030/memory.md:150; local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/15-attention-optimize.md:143)
-- E4 [2026-07, gfx950, FlyDSL ?, N=?, PMC instruction count] an issue budget of "285×4 = 1140 slots against 1152 MFMA cycles = 99% issue-bound" (81% in the plan) compared per-SIMD issue slots with per-wave pipe cycles; with 4 waves sharing one pipe the issue occupancy is 960 / 4608 = 20.8%; no run record was found; month of the myskill commit (hd64 attention forward; local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/13-meta-hd64-flash-bwd.md:1246)
-- E5 [2026-07, gfx950, FlyDSL ?, N=3, campaign bench, three reads per round] four kept rounds outside the kernel body: dq XCD-major decode, kept together with a register-neutral LDS hand-over, +0.54%; dkdv XCD-major decode +2.81%; descending-q_tile dispatch, kept together with a dq LSE fold into the MFMA C-init that changed dQ's bits (SNR 52.16 → 50.26 dB), +2.50%; padding moved to the cheapest tile +0.96% (compounded ≈ +7%, computed from the four) (Meta hd64 attention backward, Sq=Skv=16384, B=1, hw-exp path; campaign 20260726_152547 rounds 6, 7, 10, 11; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260726_152547/memory.md:174, :186, :210, :222, :169, :205, :207)
-- E6 [2026-07, gfx950, FlyDSL ?, N=?, ?] weeks of tile size, double buffering and traversal changes inside the kernel had been worth about 1%; a summary in myskill, no run record, dated 2026-07-27 there (Meta hd64 attention backward; local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/15-attention-optimize.md:41)
-- E7 [2026-07, gfx950, FlyDSL ?, N=3, campaign bench, three reads] dq XCD-major decode: L2 hit 86.53 → 94.84%, misses −62%, wall within noise in the first build; kept at +0.54% (same campaign, round 6; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260726_152547/memory.md:169)
-- E8 [2026-08, gfx950, FlyDSL ?, N=3, palindromic arms, one process per arm] stall census: grid and tail ≤0.2% (gpt-oss D=64 attention forward; campaign 20260831_084030 round 13; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260831_084030/memory.md:281)
-- E9 [2026-07, gfx950, FlyDSL ?, N=3, campaign bench, three reads] dropping the dq kernel's B-GEMM and its rho/R correction: 703.9 → 773.0 (+9.81%) (Meta hd64 deterministic attention backward, dq kernel; campaign 20260715_142909 round 7; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260715_142909/memory.md:84)
-- E10 [2026-08, gfx950, FlyDSL ?, N=?, campaign ruler] eight rounds of scheduling, iglp, sched_group, region-mutation and chain-splitting arms measured +0.4% to +4.0%, while the stall pool had never been priced (gpt-oss D=64 attention backward; campaign 20260829_150647, round-14 replan; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260829_150647/goal.md:366)
-- E11 [2026-07, gfx950, FlyDSL ?, N=?, campaign bench, ISA-verified interleave] exp interleave forced with `sched_barrier(0)` (MVVVV…, 56 runs of exactly 4): wall moved 0.00% (gpt-oss hd64 attention backward, dkdv, Hq=64, Hkv=8, Sq=Skv=8192, B=2, SBHD, two workgroups per CU; campaign 20260728_123346 round 7; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260728_123346/memory.md:137)
-- E12 [2026-07, gfx950, FlyDSL ?, N=?, rocprofv3 PMC] LDS / MFMA busy ratio dq 0.25, dkdv 0.125: 4× and 8× LDS-port headroom (Meta hd64 deterministic attention backward; campaign 20260715_142909 round 11; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260715_142909/memory.md:127)
-- E13 [2026-07, gfx950, FlyDSL ?, N=?, ?] forcing `waves_per_eu` 3 cost 32% (VGPR squeezed to 84 + 180 B scratch), 4 cost 5× (368 B scratch); no run record was found; month of the myskill commit (Meta hd64 attention backward, dq kernel; local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/13-meta-hd64-flash-bwd.md:44)
-- E14 [2026-09, gfx950, FlyDSL ?, N=?, ISA dump (spill counts)] `amdgpu-agpr-alloc` forced to 32,32 / 64,64: spill 31 → 52 / 77 (FlyDSL dualwave attention forward, D=64 cell; campaign 20260924_001030 round 13; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260924_001030/memory.md:365)
-- E15 [2026-07, gfx950, FlyDSL ?, N=?, campaign bench] 8-wave NT=2 994.8; with the stagger 1029.8, but NaN / not deterministic (a WAR race on the shared Q/dO tile); baseline ~1104–1116 TF in the campaign goal, 1116.7 TF read at the start of that session (local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260720_143502/memory.md:104) (Meta hd64 attention backward, dkdv, hw-exp; campaign 20260720_143502 round 6; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260720_143502/memory.md:105)
-- E16 [2026-07, gfx950, FlyDSL ?, N=?, campaign bench, ISA-verified] `sched_group_barrier` MFMA:TRANS at 1:2 / 2:4 / 4:8 (applied, `nop_cyc` 222 → 85): +0.26 / −0.04 / −0.07%; dkdv GEMM1 `s_setprio(1)`: 799.7, −3.3% (same campaign as E11, round 8; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260728_123346/rounds/round-08/agent.txt:13)
-- E17 [2026-09, gfx950, FlyDSL ?, N=3, instruction-identical pair, three batches reproduced to 0.01%] pure reorders paid 0 ± 2% on a forward whose coexec covered 43.64% of SIMD cycles (52% of MFMA busy, computed from the two counters) (gpt-oss D=64 attention forward; campaign 20260901_123110 round 2; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260901_123110/rounds/round-02/agent.txt:24; table in local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/03-profiling-utilization.md:768)
-- E18 [2026-07, gfx950, FlyDSL ?, N=?, ?] skipping the per-tile K/V DMA +8.7%; the built double-buffered prefetch −4.3~4.7%; no run record was found; the entry is dated 2026-07-21 (Meta hd64 attention backward, dq kernel, fast-exp path; local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/13-meta-hd64-flash-bwd.md:158)
-- E19 [2026-07, gfx950, FlyDSL ?, N=?, ?] lazy O-rescale ported on its own: flash cr4 654 → ~450 TF (−31%), pro cr4 neutral; recorded in a memory note dated 2026-07-12 (DeepSeek-V4 sparse-MLA attention forward, K32 path; local:/workspace/code/gpt_oss_docker/.claude/memory/project_dsv4_fwd_lazy_rescale.md:13)
-- E20 [2026-07, gfx950, FlyDSL ?, N=?, campaign bench] fused dq+dkdv with a transient dQ: 1.95–2.55× slower; myskill records it as the KV-outer fusion at BLOCK_KV=64 (local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/13-meta-hd64-flash-bwd.md:139) (Meta hd64 deterministic attention backward; campaign 20260715_142909, measured earlier in the session and listed in round 11; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260715_142909/memory.md:130)
-- E21 [2026-08, gfx950, FlyDSL 0.2.4, N=?, campaign bench] the real fp32-atomic dQ (512 `buffer_atomic_add_f32`, 486 VGPR, 0 scratch): 105.5 ms against 6.34 ms, versus 1.229 ms for the whole dQ split-K round trip (D=128 attention backward, cell d128_70b_b2 (B=2); campaign 20260822_152617 round 4; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260822_152617/rounds/round-04/agent.txt:5)
-- E22 [2026-07, gfx950, FlyDSL ?, N=?, campaign bench] dkdv BLOCK_Q=128 → 254 (−67%, register-walled) (same campaign as E12, round 11; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260715_142909/memory.md:127)
-- E23 [2026-09, gfx950, FlyDSL ?, N=?, illegal subtractive probes] removing the hand-written vmcnt drain +0.3%, all `s_waitcnt` +0.4%, the barrier family +3.2% (FlyDSL dualwave attention forward; campaign 20260923_144851 round 3; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260923_144851/memory.md:136)
-- E24 [2026-08, gfx950, FlyDSL ?, N=3, campaign bench, three reads] SWA(128) effective TF 216.5 → 294.6 (round 3) → 298.1 (round 4); round 1 found the window trim already present on the split path SWA takes, and the gains came from window-gated configuration (q_split, BLOCK_M, BLOCK_KV, register prefetch, dead-tile skip, prologue batching) (gpt-oss attention backward, SWA(128), B=3, S=8192, Hq64/Hkv8, D64; campaign 20260808_153438; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260808_153438/memory.md:59)
-- E25 [2026-08, gfx950, FlyDSL ?, N=?, campaign bench, single-variable arms] −351 instructions / −234 shuttle / −8 dwords / spill 1→0 = 0.0% (d64 attention backward with fp8 operands, dkdv; campaign 20260828_090905 round 9; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260828_090905/rounds/round-09/agent.txt:12)
-- E26 [2026-08, gfx950, FlyDSL ?, N=?, campaign bench] `iglp_opt` id 3, never tried before, is worth +0.85% (same kernel; campaign 20260828_090905 round 13; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260828_090905/memory.md:310)
-- E27 [2026-09, gfx950, FlyDSL ?, N=?, official bench] `V_HEAD` 1→2 on the D=128 cell: LDS read cover distance 17.8 → 23.4 (+31%), instructions −4, `s_waitcnt` −3, VGPR and spill unchanged; the D=128 cell 0.985395 → 0.97886 (−0.65%) (FlyDSL dualwave attention forward; campaign 20260924_001030 round 4; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260924_001030/rounds/round-04/agent.txt:38)
+- E1 [2026-08, gfx950, FlyDSL ?, N=?, issued MFMA FLOPs ÷ wall over the clock band measured under load (2078–2377 MHz), checked against PMC] issued MFMA 5.669e12 / 5.2924 ms = 1071 TF/s ⇒ MFMA-pipe busy ≈ 44–49%, against the PMC's 44.0% (gpt-oss D=64 attention backward, b4)
+- E2 [2026-09, gfx950, FlyDSL 0.2.4, N=?, rocprofv3 PMC, clock from `GRBM_GUI_ACTIVE` (~1823 MHz under profiling)] `MFMA_BUSY` per trip 20,626 cycles of a ≈36,350-cycle trip ⇒ duty ≈52–57% at that clock; the same campaign's replan, at the sustained unprofiled 2070 MHz, put the duty at ≈50% (b4 1073–1086 / b2 1095 / b1 1102–1110 TF against a 2171 TF on-clock peak) and called 52–57% slightly high (gpt-oss D=64 attention backward, b4)
+- E3 [2026-09, gfx950, FlyDSL ?, N=2, official bench, two runs] three `sched_barrier(0)` fences relaxed to 0x008: speedup 0.946331 / 0.945965 (+3.1%), the D=128 cell 0.930 → 0.9855 (2 waves/SIMD), while the D=64 cell (3 waves/SIMD) moved only inside the noise (0.9099 → 0.9061) (FlyDSL dualwave attention forward, D=128 and D=64 cells)
+- E4 [2026-09, gfx950, FlyDSL ?, N=?, PMC instruction count] an issue budget of "285×4 = 1140 slots against 1152 MFMA cycles = 99% issue-bound" (81% in the plan) compared per-SIMD issue slots with per-wave pipe cycles; with 4 waves sharing one pipe the issue occupancy is 960 / 4608 = 20.8%; unverified (hd64 attention forward)
+- E5 [2026-07, gfx950, FlyDSL ?, N=3, campaign bench, three reads per round] four kept rounds outside the kernel body: dq XCD-major decode, kept together with a register-neutral LDS hand-over, +0.54%; dkdv XCD-major decode +2.81%; descending-q_tile dispatch, kept together with a dq LSE fold into the MFMA C-init that changed dQ's bits (SNR 52.16 → 50.26 dB), +2.50%; padding moved to the cheapest tile +0.96% (compounded ≈ +7%, computed from the four) (Meta hd64 attention backward, Sq=Skv=16384, B=1, hw-exp path)
+- E6 [2026-07, gfx950, FlyDSL ?, N=?, ?] weeks of tile size, double buffering and traversal changes inside the kernel had been worth about 1%; a summary, unverified, dated 2026-07-27 (Meta hd64 attention backward)
+- E7 [2026-07, gfx950, FlyDSL ?, N=3, campaign bench, three reads] dq XCD-major decode: L2 hit 86.53 → 94.84%, misses −62%, wall within noise in the first build; kept at +0.54% (same campaign as E5)
+- E8 [2026-08, gfx950, FlyDSL ?, N=3, palindromic arms, one process per arm] stall census: grid and tail ≤0.2% (gpt-oss D=64 attention forward)
+- E9 [2026-07, gfx950, FlyDSL ?, N=3, campaign bench, three reads] dropping the dq kernel's B-GEMM and its rho/R correction: 703.9 → 773.0 (+9.81%) (Meta hd64 deterministic attention backward, dq kernel)
+- E10 [2026-08, gfx950, FlyDSL ?, N=?, campaign ruler] eight rounds of scheduling, iglp, sched_group, region-mutation and chain-splitting arms measured +0.4% to +4.0%, while the stall pool had never been priced (gpt-oss D=64 attention backward)
+- E11 [2026-07, gfx950, FlyDSL ?, N=?, campaign bench, ISA-verified interleave] the full-rate pack/dS VALU emitted inside the next q-half's GEMM1a MFMAs, forced with `sched_barrier(0)` (MVVVV…, 56 runs of exactly 4): wall moved 0.00%; the exp (TRANS) group was not forced this way in that round (gpt-oss hd64 attention backward, dkdv, Hq=64, Hkv=8, Sq=Skv=8192, B=2, SBHD, two workgroups per CU)
+- E12 [2026-07, gfx950, FlyDSL ?, N=?, rocprofv3 PMC] LDS / MFMA busy ratio dq 0.25, dkdv 0.125: 4× and 8× LDS-port headroom (Meta hd64 deterministic attention backward)
+- E13 [2026-07, gfx950, FlyDSL ?, N=?, ?] forcing `waves_per_eu` 3 cost 32% (VGPR squeezed to 84 + 180 B scratch), 4 cost 5× (368 B scratch); unverified (Meta hd64 attention backward, dq kernel)
+- E14 [2026-09, gfx950, FlyDSL ?, N=?, ISA dump (spill counts)] `amdgpu-agpr-alloc` forced to 32,32 / 64,64: spill 31 → 52 / 77 (FlyDSL dualwave attention forward, D=64 cell)
+- E15 [2026-07, gfx950, FlyDSL ?, N=?, campaign bench] 8-wave NT=2 994.8; with the stagger 1029.8, but NaN / not deterministic (a WAR race on the shared Q/dO tile); baseline ~1104–1116 TF, 1116.7 TF read at the start of that session (Meta hd64 attention backward, dkdv, hw-exp)
+- E16 [2026-07, gfx950, FlyDSL ?, N=?, campaign bench, ISA-verified] `sched_group_barrier` MFMA:TRANS at 1:2 / 2:4 / 4:8 (applied, `nop_cyc` 222 → 85): +0.26 / −0.04 / −0.07%; dkdv GEMM1 `s_setprio(1)`: 799.7, −3.3% (same campaign as E11)
+- E17 [2026-09, gfx950, FlyDSL ?, N=3, instruction-identical pair, three batches reproduced to 0.01%] five pure reorders all read slower than the deployed order, by 1.46–3.39%, on a forward whose coexec covered 43.64% of SIMD cycles (52% of MFMA busy, computed from the two counters) (gpt-oss D=64 attention forward)
+- E18 [2026-07, gfx950, FlyDSL ?, N=?, ?] skipping the per-tile K/V DMA +8.7%; the built double-buffered prefetch −4.3~4.7%; unverified, dated 2026-07-21 (Meta hd64 attention backward, dq kernel, fast-exp path)
+- E19 [2026-07, gfx950, FlyDSL ?, N=?, ?] lazy O-rescale ported on its own: cr4 −31%, the branch conflicting with the P-store pipeline; unverified (DeepSeek-V4 sparse-MLA attention forward)
+- E20 [2026-07, gfx950, FlyDSL ?, N=?, campaign bench] fused dq+dkdv with a transient dQ: 1.95–2.55× slower; also reported as the KV-outer fusion at BLOCK_KV=64 (Meta hd64 deterministic attention backward)
+- E21 [2026-08, gfx950, FlyDSL 0.2.4, N=?, campaign bench] the real fp32-atomic dQ (512 `buffer_atomic_add_f32`, 486 VGPR, 0 scratch): 105.5 ms against 6.34 ms, versus 1.229 ms for the whole dQ split-K round trip (D=128 attention backward, cell d128_70b_b2 (B=2))
+- E22 [2026-07, gfx950, FlyDSL ?, N=?, campaign bench] dkdv BLOCK_Q=128 → 254 (−67%, register-walled) (same campaign as E12)
+- E23 [2026-09, gfx950, FlyDSL ?, N=?, illegal subtractive probes] removing the hand-written vmcnt drain +0.3%, all `s_waitcnt` +0.4%, the barrier family +3.2% (FlyDSL dualwave attention forward)
+- E24 [2026-08, gfx950, FlyDSL ?, N=3, campaign bench, three reads] SWA(128) effective TF 216.5 → 294.6 (round 3) → 298.1 (round 4); the window trim was already present on the split path SWA takes, and the gains came from window-gated configuration (q_split, BLOCK_M, BLOCK_KV, register prefetch, dead-tile skip, prologue batching) (gpt-oss attention backward, SWA(128), B=3, S=8192, Hq64/Hkv8, D64)
+- E25 [2026-08, gfx950, FlyDSL ?, N=?, campaign bench, single-variable arms] −351 instructions / −234 shuttle / −8 dwords / spill 1→0 = 0.0% (d64 attention backward with fp8 operands, dkdv)
+- E26 [2026-08, gfx950, FlyDSL ?, N=?, campaign bench] `iglp_opt` id 3, never tried before, is worth +0.85% (same kernel)
+- E27 [2026-09, gfx950, FlyDSL ?, N=?, official bench] `V_HEAD` 1→2 on the D=128 cell: LDS read cover distance 17.8 → 23.4 (+31%), instructions −4, `s_waitcnt` −3, VGPR and spill unchanged; the D=128 cell 0.985395 → 0.97886 (−0.65%) (FlyDSL dualwave attention forward)
+- E28 [2026-11, gfx950 (MI355X), hipcc inline asm (HIP 7.15; no FlyDSL kernel), N=7 rounds of 5 launches per variant, rocprofv3 PMC against LDS bytes per CU-cycle from `s_memtime`, as a fraction of pure-read peak] both counters add a fixed count per instruction, so their ratio is the instruction mix: a loop with and without an `s_sleep` read the same two counters bit for bit while its port ran at 0.895 and 0.064 of peak; at two workgroups per CU, conflict-free transposed reads next to 16×16×32 MFMAs ran the port at 0.89–0.95 of peak at ratio 1–2 and 0.23–0.68 at ratio 3–16; `SQ_LDS_IDX_ACTIVE` per CU-cycle read 0.70–0.99 where the port ran at ≥ 0.82 of peak and ≤ 0.50 where it ran at ≤ 0.53 (microbenchmark, reads and MFMAs with no data dependence)
+- E29 [2026-11, gfx950 (MI355X), hipcc inline asm (HIP 7.15; no FlyDSL kernel), N=8 rounds of 5 launches per arm, per-SIMD iterations per `s_memtime` cycle, A-vs-A floor ≤ 0.04%] a loop of 8 bf16 MFMAs and 4, 8 or 16 independent `v_exp_f32`, the exps spread over the gaps after each MFMA against all after the 8th; two workgroups per CU, two waves per SIMD: interleaving gained 6.85–11.54% where the clustered order kept the MFMA pipe 62–92% busy, +0.05% at ~100% (microbenchmark, no data dependence between MFMA and exp)

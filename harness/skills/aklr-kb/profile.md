@@ -26,7 +26,8 @@ capture an ATT trace with rocprofv3 (kernel discovery, `input.yaml`, debug info 
 run, PMC cache and HBM counters. What this repository adds:
 
 - **§Error Handling** (added row): `Option 'spirv-expand-step' registered more than once!`, then `caught signal 6`
-  and a hang. `import torch` alone triggered it, seen once (torch 2.11.0+rocm10.0.0, venv and `/opt/rocm` rocprofv3 alike): wrap
+  and a hang that outlived SIGTERM. `import torch` alone triggered it in every run (torch 2.11.0+rocm10.0.0, rocprofv3
+  1.3.5, the venv's and `/opt/rocm`'s rocprofv3 alike, with `--kernel-trace` and with `--pmc`) *(field, E1)*: wrap
   the run in `timeout -s KILL` and time kernels with `torch.profiler`.
 
 ## kernel-trace-analysis
@@ -37,11 +38,12 @@ PMC L2 / HBM decision tree, and the MFMA latency and dependency tables. Run its 
 below). Where it differs on gfx950 with FlyDSL v0.3.2, and what this repository adds:
 
 - **§Register pressure check, reading the real counts**: `out_kernel_trace.csv` is not authoritative for registers
-  either: rocprofv3's `VGPR_Count` has read half the true value and `Accum_VGPR_Count` 0
-  (`gemm/attribution.md` §9). Read `.vgpr_count` and `.agpr_count` from the kernel's dumped ISA
-  (`FLYDSL_DUMP_IR=1`, `NN_final_isa.s`). The analyzer's register counts are then a floor, so treat its
-  register-based occupancy as an upper bound. The §Error Handling row "PMC `accum_vgpr=0` but kernel uses MFMA"
-  has the same fix: the CSV reads `Accum_VGPR_Count` as 0, so read the two counts from the ISA rather than adding
+  either: rocprofv3's `VGPR_Count` is wrong above 128 architectural VGPRs, and `Accum_VGPR_Count` read 0 on an
+  earlier version and the rest of the allocation on 1.3.5 (`gemm/attribution.md` §9). Read `.vgpr_count` and
+  `.agpr_count` from the kernel's dumped ISA (`FLYDSL_DUMP_IR=1`, `NN_final_isa.s`). The analyzer guards the CSV's
+  counts only with the highest register its trace touches (`analysis/hotspot_analyzer.py:343-354`), so its
+  register-based occupancy can be off either way; recompute it from the ISA's counts. The §Error Handling row "PMC
+  `accum_vgpr=0` but kernel uses MFMA" has the same fix: read the two counts from the ISA rather than adding
   `VGPR_Count + Accum_VGPR_Count`.
 - **§Register pressure check, the warning**: in FlyDSL v0.3.2 `maxnreg` does not cap registers, and a cap set
   through the `amdgpu-num-vgpr` attribute turns into spills (`flydsl/language/limits.md`).
@@ -94,3 +96,7 @@ https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/kernel-trace
 every trace gfx950 and sizes LDS at 160 KB. FlyDSL's takes a trace with none of `v_mfma_scale_f32_*`,
 `v_mfma_f32_16x16x128_*` and `v_mfma_f32_32x32x64_*` as CDNA3, reports it as `gfx942 (CDNA3)` and uses
 `lds_total = 65536` (64 KB) in its LDS limiter (`scripts/hotspot_analyzer.py:355-356`, `:422` at v0.3.2).
+
+## Evidence
+
+- E1 [2026-11, gfx950 (MI355X), rocprofv3 1.3.5 (ROCm 10.0.0), torch 2.11.0+rocm10.0.0, N=3 per rocprofv3 and mode] `python -c "import torch"` under the venv's and `/opt/rocm`'s rocprofv3, with `--kernel-trace` and with `--pmc SQ_WAVES`: `Option 'spirv-expand-step' registered more than once!`, `caught signal 6`, then a hang still alive 4 s after SIGTERM, 3 of 3 each

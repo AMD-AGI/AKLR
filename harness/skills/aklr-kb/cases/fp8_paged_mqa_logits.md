@@ -9,7 +9,7 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1
 measured:
-  - {metric: "speedup over aiter (deepgemm_fp8_paged_mqa_logits through aklr/ops/mla/baseline.py), CI, per Point", value: "1.041–1.884; 58 of 58 Points ≥ 1.03", gpu: MI355X, workload: "fp8_paged_mqa_logits_page_size64_n_heads64, batch 1–256 × 4–8 pool sizes, max_blocks 4097", run_ref: "5571f4589 (CI run 40613440602)", date: "2026-10-28"}
+  - {metric: "speedup over aiter (deepgemm_fp8_paged_mqa_logits through aklr/ops/mla/baseline.py), CI, measurement profile 19, per Point", value: "1.046–1.837; 61 of 61 Points ≥ 1.03", gpu: MI355X, workload: "fp8_paged_mqa_logits_page_size64_n_heads64 file 2c17b79278febb6a, batch 1–256 × 4–9 pool sizes, max_blocks 4097", run_ref: "227aa66 (#115, CI run 42599763780)", date: "2026-11-09"}
 sources:
   - aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a.json
 ---
@@ -18,7 +18,7 @@ sources:
 
 One FlyDSL kernel for `fp8_paged_mqa_logits@1.0`, the DeepSeek-V4 indexer's logits
 `logits[b, t] = Σ_h weights[b, h] · relu(q[b, h] · k_t) · scale_t`, added for DeepSeek-V4-Flash with one query token
-per request, as in decode (PR #71). The
+per request, as in decode. The
 schema embeds it as `kernel.sources[0].content` (`kernel.py`); the function names below are in that file. "batch"
 is the Point's number of requests.
 
@@ -32,8 +32,8 @@ is the Point's number of requests.
   1, 16 and 64 with a 262,144-page pool (2.2 GB, one Point per body), every one with 4097-page tables (262,208
   logits per request): 61 Points. `n_pages`, `max_blocks` and `max_seq_len` are `any_size`: a batch's Points,
   if each of them qualifies, serve every pool size and table width within the contract's bounds.
-- Compare: `determinism: bounded`, `max_violation_fraction` 0.0, logits within an SQNR of 30 dB of the float64
-  reference (`SqnrBound`, `aklr/ops/mla/contract.py`).
+- Compare: `determinism: bounded`, `max_violation_fraction` 0.0, logits within an SQNR of 30 dB of the reference
+  (`SqnrBound`, `aklr/ops/mla/contract.py`).
 - Yardstick: `fp8_paged_mqa_logits_baseline` (`aklr/ops/mla/baseline.py`), aiter's
   `deepgemm_fp8_paged_mqa_logits` (`aiter/ops/triton/attention/pa_mqa_logits.py`) with `Preshuffle`, `KVBlockSize`
   64 and the logits' width as `max_model_len`; `ChunkK`, `WavePerEU` and the scheduling arguments stay at aiter's
@@ -45,15 +45,18 @@ is the Point's number of requests.
 
 ## Counter-signals
 
-- **Batch 1 sits just above the threshold**: 1.041–1.101 over its eight pool sizes *(field, E1)*. In the other
-  committed run, on the same image, the same Points read 1.024–1.073, and the one at 111670 pages (1.024) was not
+- **Batch 1 sits just above the threshold**: 1.046–1.110 over its nine pool sizes in one CI run of this file
+  *(field, E5)*. In a CI run of the file this one replaced, the Point at 111670 pages read 1.024 and was not
   served *(field, E2)*. Which batch-1 Points dispatch serves depends on the run that wrote the file.
-- **The bench's workload is not serving's.** Every Point draws full contexts (`context_lens` = `max_seq_len`, the
+- **The bench's workload may not be serving's.** Every Point draws full contexts (`context_lens` = `max_seq_len`, the
   contract's stated shortcut) and block tables uniform over the whole pool, so requests share pages: at batch 256
   the tables name 8.5–9.4 entries per pool page (estimated: 256 · 4097 over 123,163 to 111,670 pages). The band
-  path exists to catch those cross-request re-reads in cache (its comment in `_build` says so). In serving a request
-  owns its pages and most contexts are shorter than 262,208 tokens; the gain of the band path and of the per-batch
-  slice counts there is not measured.
+  path exists to catch those cross-request re-reads in cache (its comment in `_build` says so). Whether serving's
+  block tables look like the bench's is not established. With each request owning its pages (contexts of
+  8,192–49,152 tokens, batch 64–256), the band path ran at 0.88–0.94 of the slice path's speed with the pages
+  scattered over the pool, and at 0.19–0.51 (0.27–0.47 of aiter's) with each request's pages one contiguous run
+  *(field, E7)*: such a run lies in one or two of the 128 bands, so one or two workgroups walk the whole request. The
+  gain of the per-batch slice counts there is not measured.
 - **Logits past a request's last page are not written.** Pages at or past ⌈context / 64⌉ are not visited; −inf is
   written only to the tokens past the context inside the last page. The reference fills −inf up to `max_seq_len`;
   the bench's full contexts do not reach the difference, and the contract's comment says aiter leaves those logits
@@ -80,10 +83,10 @@ is the Point's number of requests.
 - **Pool size.** Byte offsets are 32-bit (`page id · 8448` in `Int32`) inside one buffer descriptor per pool up to
   2 GiB (254,200 pages); a larger pool gives each page its own descriptor (`_key_pool`, `_issue_page`), which the
   comment there puts at about 4 % at batch 1 (measured outside CI). The 262,144-page Points take that path.
-- **A number from another ruler.** The commit that added the batch ≤ 4 body (39a51ac02) quotes batch 1, 2 and 4 as
-  1.7×, 2.1× and 2.2× faster than aiter on AKLR's own clock *(field, E3)*; CI's lower bounds at those Points are
-  1.041–1.101, 1.211–1.284 and 1.272–1.372 *(field, E1)*. What makes the gap is not established
-  (`../pitfalls/speedup_from_another_ruler.md`).
+- **A number from another ruler.** The commit that added the batch ≤ 4 body quotes batch 1, 2 and 4 as
+  1.7×, 2.1× and 2.2× faster than aiter on AKLR's own clock *(field, E3)*; CI's lower bounds for that commit's file,
+  `a989fd4b…`, at those Points were 1.041–1.101, 1.211–1.284 and 1.272–1.372 *(field, E1)*. What makes the gap is
+  not established (`../pitfalls/speedup_from_another_ruler.md`).
 
 ## Mechanism
 
@@ -115,8 +118,8 @@ host picks one of three bodies from the batch (`_build`):
 | 64, 128, 256 | `sort_kernel`, then `band_kernel` (tables of 1024 pages or more) | batch prepass workgroups, then 128 × batch | The prepass buckets the request's table by band = page id · 128 // n_pages (LDS histogram with LDS atomics, Hillis–Steele scan, scatter of packed (page id, position) words into `ORD`, band bounds into `OFF`); workgroup (request, band) walks its bucket, request index fastest, and its block index is relabelled so XCD c takes the bands ≡ c mod 8 |
 
 The batch ≤ 4 body keeps two pages in flight through its whole loop at 2 workgroups per CU (512 on 256 CUs);
-`../attention/schedule_sync.md` §10 found depth 2 paying in the prologue at ≤ 2 workgroups per CU and a
-steady-state depth ≥ 2 slower on a split-KV producer with few query rows per head, so the depth is a
+`../attention/schedule_sync.md` §10 found a prologue depth of 2 paying on some grids and losing on others, and a
+steady-state depth ≥ 2 slower, on split-KV producers with few query rows per head, so the depth is a
 per-kernel result. It drops out-of-range
 loads through the descriptor bound of `../gemm/datapath.md` §8. The band path puts co-resident
 workgroups on a few bands of the pool and keeps a band on one XCD (`../attention/grid_dispatch.md` §2,
@@ -131,24 +134,26 @@ calls the compiled object with raw addresses, the form that section recommends f
 ## Result
 
 The file is the only kernel of its schema name, so the yardstick at every Point is aiter's kernel as
-`baseline.py` calls it. `speedup` is a one-sided lower bound (α = 0.05) of aiter / kernel time over 32 rounds of
-CUDA-graph replays with a 1 GiB cache flush before each call (`aklr/core/validation/stages/_measure.py`); a Point is
-served from 1.03 (`AKLR_MIN_SPEEDUP`).
+`baseline.py` calls it. `speedup` is a one-sided lower bound of aiter / kernel time over CUDA-graph replays with a
+1 GiB cache flush before each call, read at 16 rounds and, where a threshold is still undecided, again at 32, each
+look at α = 0.025 (`aklr/core/validation/stages/_measure.py`, measurement profile 19); a Point is served from 1.05
+(`AKLR_MIN_SPEEDUP`).
 
-CI installs the repository with `--no-deps`, so these runs used the FlyDSL of the CI image, 0.3.4.1, not the
-repository's pin 0.3.2 (`../pitfalls/measured_a_different_build.md`).
+This file's CI runs and the predecessor repository's runs of E1 and E2 used FlyDSL 0.3.2, not the FlyDSL of their
+CI image (`../pitfalls/measured_a_different_build.md`).
 
-Per batch, the range over that batch's pool sizes:
+Per batch, the range over that batch's pool sizes, in one CI run of this file:
 
 | Batch | 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 256 |
 |---|---|---|---|---|---|---|---|---|---|
 | Body | small | small | small | slices | slices | slices | band | band | band |
-| Points | 8 | 8 | 6 | 6 | 8 | 8 | 6 | 4 | 4 |
-| Speedup *(field, E1)* | 1.041–1.101 | 1.211–1.284 | 1.272–1.372 | 1.117–1.165 | 1.212–1.264 | 1.195–1.269 | 1.643–1.714 | 1.700–1.747 | 1.794–1.884 |
+| Points | 9 | 8 | 6 | 6 | 9 | 8 | 7 | 4 | 4 |
+| Speedup *(field, E5)* | 1.046–1.110 | 1.206–1.301 | 1.327–1.390 | 1.296–1.311 | 1.203–1.257 | 1.241–1.269 | 1.434–1.674 | 1.572–1.727 | 1.796–1.837 |
 
-58 of the 58 Points are served, and all pass accuracy (`accuracy: passed` in each workload). These are
-`a989fd4b5f22b3d2.json`'s, the file this one replaced: the same bodies, before the per-page descriptors, the untuned
-split and batch 32's `split_table` entry. This file's validation against main, outside CI, reads 1.030–1.809 over
+61 of the 61 Points are served, and all pass accuracy (`accuracy: passed` in each workload).
+`a989fd4b5f22b3d2.json`, the file this one replaced, whose kernel differs from this one in more than the per-page
+descriptors, read 1.041–1.884 over its 58 Points in CI *(field, E1)*. This file's validation against main, outside
+CI, reads 1.030–1.809 over
 its 61 Points, batch 1 at 1.030–1.134, the 262,144-page Points at 1.030 (batch 1), 1.240 (16) and 1.409 (64)
 *(field, E4)*.
 
@@ -170,7 +175,7 @@ measurement is the one dispatch reads.
 
 Delete the schema file (in a PR): its Points go unserved, since no other file serves them.
 `AKLR_DISABLE=fp8_paged_mqa_logits@1.0` drops this kernel and also the 32-head HIP one GLM-5.x's indexer takes
-(`aklr/ops/mla/impls/hip/fp8_paged_mqa_logits_page_size64_n_heads32/`). A Point CI measures below 1.03 stops being served without a rollback, as the batch-1 Points can. Roll
+(`aklr/ops/mla/impls/hip/fp8_paged_mqa_logits_page_size64_n_heads32/`). A Point CI measures below 1.05 stops being served without a rollback, as the batch-1 Points can. Roll
 back for a wrong result CI does not catch: a consumer that reads logits past a request's last page, a process that
 calls the kernel on two devices or two streams at batch ≥ 64, or a FlyDSL or LLVM upgrade.
 
@@ -179,10 +184,12 @@ calls the kernel on two devices or two streams at batch ≥ 64, or a FlyDSL or L
 `<schema>.json#kernel.py:<line>` is a line of the `kernel.py` the schema embeds; `<schema>` is
 aklr/ops/mla/impls/flydsl/fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a.
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] speedup over aiter 1.041–1.884 per Point, 58 of 58 ≥ 1.03; batch 1 1.041–1.101, 2 1.211–1.284, 4 1.272–1.372, 8 1.117–1.165, 16 1.212–1.264, 32 1.195–1.269, 64 1.643–1.714, 128 1.700–1.747, 256 1.794–1.884 (fp8_paged_mqa_logits_page_size64_n_heads64, 58 Points; 5571f4589, CI run 40613440602)
-- E2 [2026-10, gfx950, FlyDSL 0.3.4.1, N=1, AKLR CI] the other committed measurement: 1.024–1.891 per Point, 57 of 58 ≥ 1.03; batch 1 by pool size 105428 1.055, 109404 1.035, 111670 1.024, 111761 1.073, 115603 1.035, 119349 1.030, 120631 1.037, 123163 1.031 (fp8_paged_mqa_logits_page_size64_n_heads64; 102877ca0, CI run 40154665266)
-- E3 [2026-10, gfx950, FlyDSL ?, N=?, AKLR bench_cudagraph, local run] batch 1, 2 and 4 "1.7x, 2.1x and 2.2x faster than aiter" after the depth-2 pipeline (fp8_paged_mqa_logits_page_size64_n_heads64; commit message of 39a51ac02, PR #71)
-- E4 [2026-11, gfx950, FlyDSL 0.3.4.1, N=1, `python -m aklr validate --base origin/main`, local run] speedup over aiter 1.030–1.809 per Point, 61 of 61 passed; batch 1 1.030–1.134, 2 1.244–1.302, 4 1.294–1.341, 8 1.278–1.307, 16 1.217–1.261, 32 1.241–1.271, 64 1.409–1.700, 128 1.570–1.731, 256 1.696–1.809 (fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a, PR #96)
+- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup over aiter 1.041–1.884 per Point, 58 of 58 ≥ 1.03; batch 1 1.041–1.101, 2 1.211–1.284, 4 1.272–1.372, 8 1.117–1.165, 16 1.212–1.264, 32 1.195–1.269, 64 1.643–1.714, 128 1.700–1.747, 256 1.794–1.884 (fp8_paged_mqa_logits_page_size64_n_heads64, 58 Points)
+- E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] the other committed measurement: 1.024–1.891 per Point, 57 of 58 ≥ 1.03; batch 1 by pool size 105428 1.055, 109404 1.035, 111670 1.024, 111761 1.073, 115603 1.035, 119349 1.030, 120631 1.037, 123163 1.031 (fp8_paged_mqa_logits_page_size64_n_heads64)
+- E3 [2026-10, gfx950, FlyDSL ?, N=?, AKLR bench_cudagraph, not CI] batch 1, 2 and 4 "1.7x, 2.1x and 2.2x faster than aiter" after the depth-2 pipeline (fp8_paged_mqa_logits_page_size64_n_heads64)
+- E4 [2026-11, gfx950, FlyDSL 0.3.4.1, N=1, `python -m aklr validate --base origin/main`, not CI] speedup over aiter 1.030–1.809 per Point, 61 of 61 passed; batch 1 1.030–1.134, 2 1.244–1.302, 4 1.294–1.341, 8 1.278–1.307, 16 1.217–1.261, 32 1.241–1.271, 64 1.409–1.700, 128 1.570–1.731, 256 1.696–1.809 (fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a, PR #96)
+- E5 [2026-11, gfx950, FlyDSL 0.3.2 (aiter dbd8bf5's pin), N=1, AKLR CI, measurement profile 19] speedup over aiter 1.046–1.837 per Point, 61 of 61 ≥ 1.03, accuracy passed at every Point; batch 1 1.046–1.110, 2 1.206–1.301, 4 1.327–1.390, 8 1.296–1.311, 16 1.203–1.257, 32 1.241–1.269, 64 1.434–1.674, 128 1.572–1.727, 256 1.796–1.837 (fp8_paged_mqa_logits_page_size64_n_heads64/2c17b79278febb6a; 227aa66, #115, CI run 42599763780)
+- E7 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=8 rounds in one process, AKLR's `bench_cudagraph` with a 1 GiB flush per call] 2c17b79278febb6a's kernel.py (band path) against a copy forced to the slice path and against aiter, batch 64, 128, 256, each request owning its pages, contexts uniform in 8,192–49,152 tokens: band / slice speed 0.882–0.937 with the pages scattered over the pool, 0.194–0.514 with one contiguous run per request, there band at 0.266–0.471 of aiter's speed; band and slice outputs bitwise equal inside the context
 - S1 aklr/ops/mla/contract.py:410 `SqnrBound(min_sqnr_db=30.0)`; compare `BOUNDED` at :414; `context_lens` drawn at `max_seq_len` only at :396; pool bytes below 0x40 at :380
 - S2 aklr/ops/mla/baseline.py:98 the baseline calls aiter with `Preshuffle`, `KVBlockSize` and the logits' width only, leaving `ChunkK`, `WavePerEU` and the scheduling arguments at aiter's defaults
 - S3 aklr/ops/mla/reference.py:133 the reference scales the keys before relu

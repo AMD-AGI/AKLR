@@ -116,14 +116,15 @@ The order is `if bid >= live: exit`, then `pid = remap(bid, live)`. FlyDSL's MXF
 bound from `cumsum[0]`, tests the raw `bx`, then, when `xcd_swizzle > 0`, applies its XCD remap over that bound
 (MOE1:748-774). Turbo exits on the raw id and then remaps over the live tile count
 (`xcd_remap_pid_u(t, total_tiles, ...)`, FP8:386-412; `xcd_band_remap_pid`, MX4:614-629).
-- **Remap over the grid bound and exit on the remapped id, and the dead ids all land on one XCD.** A
-  contiguous remap gives each XCD a slice of `[0, grid)`; the dead range is the top of the last slice, and the
-  hardware's static `bid % 8` split cannot rebalance it. *(field, E1)* 32 dead M blocks of 544 with 12 N blocks:
+- **Remap over the grid bound and exit on the remapped id, and the dead ids all land on the last XCD, or on the
+  last few once more than grid/8 ids are dead.** A contiguous remap gives each XCD a slice of `[0, grid)`; the dead
+  range is the top of `[0, grid)`, so it fills the last slice first, and the hardware's static `bid % 8` split
+  cannot rebalance it. *(field, E1)* 32 dead M blocks of 544 with 12 N blocks:
   XCDs 0–6 each ran 816 tiles and XCD 7 ran 432, a makespan 816/768 = 6.25% over ideal. Fixing the order on
-  MXFP4 grouped NT raised the score from 1.4292 to 1.4486 (+1.4%), with the tile order inside each XCD
-  unchanged.
-- **Remap over `live` but exit on the remapped id, and ids at or above `live` map into the live range**: one
-  tile is computed twice, another never.
+  MXFP4 grouped NT raised the score from 1.4292 to 1.4486 (+1.4%).
+- **Remap over `live` but exit on the remapped id, and ids at or above `live` map into the live range**: the
+  ids below `live` already cover every tile once, so some tiles are computed twice and none is skipped
+  *(field, E15)*. A plain store hides it; a beta = 1 or atomic epilogue can add those tiles twice.
 - Signature of a static XCD imbalance, without reading code *(field, E2)*: `SQ_INSTS_MFMA` identical and L2
   requests within 0.007% (hit rate within 0.7 points) across token distributions, `GRBM_GUI_ACTIVE` 13% apart,
   `SQ_BUSY_CU_CYCLES` only 0.7% apart.
@@ -161,7 +162,8 @@ that; the lane table takes `ceil((G+1)/64)` VGPRs.
   G = 32. *(field, E5)* MXFP4 NT: +5.4% on an 18-config geomean whose 6 wgrad configs do not run this
   prologue (+7.2% on the worst config); prologue 2153 → 761 instructions, SGPRs 97 → 58, per-tile fixed cost
   12.46 → 10.47 µs and steady-state cost per K phase unchanged in a K-sweep fit of the whole op (scale
-  preshuffle included). *(field, E7)* fp8 per-tensor NN dgrad: about 5% faster on all four configs.
+  preshuffle included). Turbo's fp8 per-tensor NT/NN tile decode uses the same lane-resident lookup past G = 8
+  and keeps the whole table in SGPRs at or below it (`_SGPR_GO_MAX_G`, FP8:96-100).
 
 **SGPR table.** Loads go through the scalar cache and a consumer waits on `lgkmcnt` (`_sload_i32`, PR:434-445).
 The cost is the budget of at most 102 SGPRs per wave (CDNA4 ISA): *(field, E8)* two `[G+1]` tables at G = 32
@@ -169,20 +171,23 @@ The cost is the budget of at most 102 SGPRs per wave (CDNA4 ISA): *(field, E8)* 
 
 **Per-tile O(G) scan.** *(field, E9, E10)* On MXFP8 NT at G = 32, replacing an O(G) scan at entry and another per tile
 with O(1) lookups halved the VALU instructions (225M → 110M), cut `v_cmp` + `v_cndmask` per tile from 299 to
-74 and removed a 16-byte spill; the production version was 1.3–5.4% faster on 8 configs. The signature: the
+74 and removed a 16-byte spill. A version with one O(G) scan and an SGPR prefix compare (a log-G tree reduce) was
+1.3–5.4% faster on the 8 forward/dgrad configs; moving its two prefix tables into LDS, the production version,
+raised the geomean about 1% more. The signature: the
 same `SQ_INSTS_MFMA` as a reference, more VALU and VMEM per tile, a larger per-tile fixed cost in a K sweep
 (`grouped_tile_pricing.md` §6) with the per-phase cost unchanged, and the worst result on the
-narrowest-N shape, which has the fewest N blocks to share the prologue.
+narrowest-N shape.
 
-**Do not copy the whole table into every lane.** *(field, E11)* A persistent fp8 kernel that held all `[G+1]`
-entries in each thread's VGPRs across its tile loop was 1.8% slower at G = 32 and about 4.5× slower at
-G = 256: that form costs G+1 VGPRs per lane, against `ceil((G+1)/64)` for the lane-resident table.
+**Do not copy the whole table into every lane.** Holding all `[G+1]` entries in each thread's VGPRs across a
+tile loop costs G+1 VGPRs per lane, against `ceil((G+1)/64)` for the lane-resident table.
 
 **Monotone group carry (persistent loops).** A workgroup that walks tiles in increasing order only moves
 forward through the groups: carry the group index and its bounds, and read the table only when a tile crosses
-into the next group. *(field, E12)* fp8 per-tensor NT persistent kernel: +7.7–9.6% on one shape, +2.0–2.8% on
-another; the gain grew with the number of experts per unit of K, from about 0 with 8 experts to about 2× at
-the highest ratio measured.
+into the next group. It saves against a per-tile O(G) scan, but *(field, E17)* in a synthetic persistent kernel it
+was within 2% of the lane-resident ballot lookup above at G = 8–256. *(field, E12)* On fp8 per-tensor NT, a commit
+adding the carry with once-computed tile prefixes and a persistent path read +7.7–9.6% on one
+shape and +2.0–2.8% on one that stays non-persistent (not from the carry); its gain grew with experts per unit
+of K, from about 0 with 8 experts to about 2× at the highest ratio measured.
 
 **Variable-K wgrad needs no search.** The tile count per group is a compile-time constant, so
 `group = tile // TILES_PER_GROUP`, or a rank permutation of it (`grouped_scheduling.md` §5); the tile
@@ -196,9 +201,9 @@ In FlyDSL: `../flydsl/moe.md` § grouped_group_mapping §5.
   `total_tiles` (FP8:388-389), the row count its bf16 descriptors are sized by (BF16:654-657), and
   every rebased descriptor base and record count (GH:124-128).
 - Unpinned, a descriptor lands in VGPRs and every buffer access goes behind a waterfall loop
-  (`../gemm/datapath.md` §8). Turbo's bf16 kernel records the other failure: a per-lane row count
-  in a descriptor gave a non-deterministic wrong answer rather than a fault (BF16:654-656). Pin the record count
-  as well as the base: *(field, E13)* pinning only the base gave different wrong rows on each run of one shape.
+  (`../gemm/datapath.md` §8). Turbo's bf16 kernel records a worse outcome on its own FlyDSL code path: an unpinned
+  row count in a descriptor gave a non-deterministic wrong answer rather than a fault (BF16:654-656). Pin the record
+  count as well as the base: *(field, E13)* pinning only the base gave different wrong rows on each run of one shape.
 - Choose a boundary-body variant with a scalar branch on `readfirstlane(block == last)`, so the whole wave
   takes one body (`grouped_tile_pricing.md` §4).
 
@@ -213,7 +218,9 @@ The mechanism (fold the base into the descriptor's 64-bit base, bound `num_recor
     (FP8:427-428; `_wgrad_rebase`, FP8:2072-2085).
 - Clamp a record count at zero whenever a tile offset is subtracted from it (a signed max, FP8:3442-3451).
   For an empty group, `M_g × stride − tile_offset` is negative; the descriptor builder reads it as unsigned,
-  saturates at `0xFFFFFFFF`, and the loads are no longer bounded: a memory fault.
+  saturates at `0xFFFFFFFF`, and the loads are no longer bounded. *(field, E18)* They silently return whatever is
+  mapped past the group (another group's rows, or the next tensor in the same allocation) and fault only where
+  the address is unmapped.
 - FlyDSL's bf16-weight MoE kernel folds the per-expert weight base the same way, because the whole `[E, N, K]`
   tensor overflows the 32-bit record count at large expert counts; its MXFP4 and int4 weights keep a
   whole-tensor descriptor (`kernels/moe/moe_2stage_a16wmix/gemm1.py:217-223`).
@@ -250,16 +257,17 @@ A FlyDSL version is given only where the cited run, or another round in the same
 `FlyDSL ?`. The month is the run's where the record dates it; where it does not, the line says which date it is. "Turbo"
 is Primus-Turbo; "gm" is a campaign's geomean score.
 
-- E1 [2026-08, gfx950, FlyDSL ?, N=3, campaign score gm_ratio: geomean over 18 configurations of t_MXFP8 / t_MXFP4, drift-immune interleaved A/B, per-call CUDA-event median] exit on the raw block id and remap over the live tile count: three bench runs 1.44669 / 1.45059 / 1.45115 against 1.42992 / 1.42841 (+1.42%; the goal file gives the first two, 1.4292 → 1.4467 / 1.4506); before the change XCDs 0–6 ran 816 tiles each and XCD 7 ran 432 (32 dead M blocks of 544, counted from the grid; 816/768 = +6.25%); SNR 55.58–55.60 dB, deterministic (Turbo MXFP4 grouped NT, forward and dgrad, gpt-oss G=32, M=131072, N 5760 / 2944, K 2944; campaign 20260803_155024 round 4; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260803_155024/rounds/round-04/agent.txt:3)
-- E2 [2026-08, gfx950, FlyDSL ?, N=?, rocprofv3 PMC, mean of the main kernel's last 8 dispatches] forward down, balanced against heavy tokens: SQ_INSTS_MFMA 36,175,872 on both, TCC_REQ +0.007%, L2 hit rate 79.49% against 78.78% (−0.7 points), HBM read latency +1.9%, SQ_BUSY_CU_CYCLES +0.67%, GRBM_GUI_ACTIVE +13.1% (kernel and campaign of E1, after its round-4 change; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260803_155024/goal.md:74)
-- E3 [2026-07, gfx950, FlyDSL ?, N=2, campaign score: geomean of t_tw / t_mx over 14 configurations, kernel-only (scale preshuffle excluded)] lane-resident DPP wave-scan group lookup in the MXFP8 NT kernel: gm 1.08715 → 1.10632, 1.10531 on a rerun; min 1.01324 → 1.04390 / 1.04090; the 8 forward/dgrad configurations +2.8–5.0% each, the 6 wgrad configurations unchanged (Turbo MXFP8 grouped GEMM against the per-tensor fp8 one, gpt-oss G=32, M=131072; campaign 20260729_093030 round 11; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260729_093030/memory.md:212)
-- E4 [2026-07, gfx950, FlyDSL ?, N=?, ?] myskill records that the chain the lane-resident scan replaced (serial carry, two [G+1] tables in LDS, a publish barrier, a G-wide compare tree) was worth 5.3% of the cycles at G=32; the measurement behind it is not named, and the month is the one its section heading gives (MXFP8 grouped NT; local:/workspace/code/gpt_oss_docker/myskill/optimizer/methodology/12-mxfp8-grouped.md:98)
-- E5 [2026-08, gfx950, FlyDSL ?, N=?, the campaign score of E1 (18 configurations: forward, dgrad and wgrad × 3 token distributions × 2 projections) and the ISA dump; F and P from a six-point K sweep of the whole op] the lane-resident scan ported into the MXFP4 NT prologue (the wgrad prologue was already O(1)): prologue 2153 → 761 instructions, SGPRs 97 → 58, per-tile fixed cost F 12.46 → 10.47 µs with P 1.6126 → 1.6153 µs, gm 1.2868 → 1.3568 (+5.4%), min 1.0976 → 1.1771 (+7.2%); the next round found that the sweep timed the whole op, scale preshuffle included, and refit the GEMM kernel alone at F = 7.81 µs; the +9.40% the records also give for this change is round 3's candidate (1.42866) against the round-0 baseline (1.30593), on a tree that carried this scan, the split NT swizzle constants of round 2 and the half-N boundary body of round 3 together (Turbo MXFP4 grouped NT; campaign 20260803_155024 round 1; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260803_155024/memory.md:126)
-- E7 [2026-07, gfx950, FlyDSL ?, N=?, `_bench_tw_vs_mx.py` (t_mx / t_tw, drift-immune interleaved)] lane-DPP O(1) group lookup moved into the per-tensor fp8 NN dgrad kernel: dgrad from about −12% to about −7% against MXFP8 on all four dgrad configurations, gm 0.888 → 0.9025, SNR 54.7 dB, byte-deterministic (Turbo fp8 per-tensor grouped NN dgrad `kernel_grouped_nn_persistent`, gpt-oss; a hands-on session recorded 2026-07-29 to 07-31; local:/workspace/code/gpt_oss_docker/.claude/memory/project_tw_nn_beats_mxfp8_campaign.md:19)
-- E8 [2026-07, gfx950, FlyDSL ?, N=?, ISA dump] two [G+1] prefix tables held as SGPRs at G=32 (66 live scalars) overflowed the ~102-SGPR budget and were moved to LDS (MXFP8 grouped NT; campaign 20260729_093030 round 3; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260729_093030/memory.md:122; myskill pitfalls/05:360)
-- E9 [2026-07, gfx950, FlyDSL ?, N=?, rocprofv3 PMC and ISA dump of an O(1) probe against the O(G) kernel] SQ_INSTS_VALU 225.3M → 109.8M, buffer_load per tile 307 → 213, v_cmp + v_cndmask per tile 299 → 74, private segment 16 B → 0 (MXFP8 grouped NT, G=32; campaign 20260729_093030 round 2; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260729_093030/memory.md:109; myskill pitfalls/05:333-338)
-- E10 [2026-07, gfx950, FlyDSL ?, N=2, campaign score of E3] the production version (one O(G) scan, SGPR prefix compare with a log-G tree reduce, two prefix tables in LDS): the 8 forward/dgrad configurations +1.3–5.4% (campaign 20260729_093030 round 3; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260729_093030/memory.md:118)
-- E11 [2026-07, gfx950, FlyDSL ?, N=?, drift-immune separate-process A/B, outputs byte-identical across arms] the whole [G+1] offset and tile-cumsum table kept in each thread's registers across the persistent tile loop (`hoist_lookup`): G=32 −1.8%, G=64 −4.2%, G=128 −47.8%, G=256 −77.7% (Turbo FlyDSL fp8 per-tensor grouped forward `compile_fp8_grouped_gemm`, K=2880; record dated 2026-07-29; local:/workspace/code/gpt_oss_docker/.claude/memory/project_triton_gg_fp8_tile_cumsum.md:27)
-- E12 [2026-07, gfx950, FlyDSL ?, N=?, drift-immune same-process position-balanced interleave of the commit against its parent, outputs byte-identical] monotone group carry in the persistent NT path: Shape A (gate_up forward / down dgrad, K=2880, N=5760) +9.22% balanced, +9.62% skewed, +7.72% with empty groups; Shape B (K=5760, N=2880) +2.80 / +2.04 / +2.65%; across models myskill records Kimi-K2 down +107.84% and Mixtral (8 experts) about 0% (Turbo fp8 per-tensor grouped NT; 4e15c6ce; local:/workspace/code/gpt_oss_docker/.claude/memory/project_gptoss_nt_fwd_dgrad_opt.md:22)
-- E13 [2026-09, gfx950, FlyDSL ?, N=3, repeated runs of one shape] a descriptor whose base was pinned with readfirstlane but whose extent was a per-lane value: the same shape gave 512, 160 and 320 bad rows across runs; the month is that of the commit (Turbo bf16 grouped GEMM; ed8d7af4 (#486))
-- E14 [2026-06, gfx950, FlyDSL ?, N=?, ?] persistent wgrad with `m_start × OUT_M` in int32: at G=256, M_g=1536, OUT_M=8192, `m_total × OUT_M` = 3.2e9 > 2^31 and the last groups' gradients were silently wrong; no run record is kept, and the month is that of the myskill commit that first recorded it, 2563ed1 (Turbo FlyDSL fp8 per-tensor grouped wgrad; local:/workspace/code/gpt_oss_docker/myskill/optimizer/pitfalls/04-race-vmcnt-correctness.md:125)
+- E1 [2026-08, gfx950, FlyDSL ?, N=3, campaign score gm_ratio: geomean over 18 configurations of t_MXFP8 / t_MXFP4, drift-immune interleaved A/B, per-call CUDA-event median] exit on the raw block id and remap over the live tile count: three bench runs 1.44669 / 1.45059 / 1.45115 against 1.42992 / 1.42841 (+1.42%; the first two also reported as 1.4292 → 1.4467 / 1.4506); before the change XCDs 0–6 ran 816 tiles each and XCD 7 ran 432 (32 dead M blocks of 544, counted from the grid; 816/768 = +6.25%); SNR 55.58–55.60 dB, deterministic (Turbo MXFP4 grouped NT, forward and dgrad, gpt-oss G=32, M=131072, N 5760 / 2944, K 2944)
+- E2 [2026-08, gfx950, FlyDSL ?, N=?, rocprofv3 PMC, mean of the main kernel's last 8 dispatches] forward down, balanced against heavy tokens: SQ_INSTS_MFMA 36,175,872 on both, TCC_REQ +0.007%, L2 hit rate 79.49% against 78.78% (−0.7 points), HBM read latency +1.9%, SQ_BUSY_CU_CYCLES +0.67%, GRBM_GUI_ACTIVE +13.1% (kernel and campaign of E1, after its change)
+- E3 [2026-07, gfx950, FlyDSL ?, N=2, campaign score: geomean of t_tw / t_mx over 14 configurations, kernel-only (scale preshuffle excluded)] lane-resident DPP wave-scan group lookup in the MXFP8 NT kernel: gm 1.08715 → 1.10632, 1.10531 on a rerun; min 1.01324 → 1.04390 / 1.04090; the 8 forward/dgrad configurations +2.8–5.0% each, the 6 wgrad configurations unchanged (Turbo MXFP8 grouped GEMM against the per-tensor fp8 one, gpt-oss G=32, M=131072)
+- E4 [2026-07, gfx950, FlyDSL ?, N=?, ?] the chain the lane-resident scan replaced (serial carry, two [G+1] tables in LDS, a publish barrier, a G-wide compare tree) was worth 5.3% of the cycles at G=32; the measurement behind it is not named, and the month is the one its section heading gives (MXFP8 grouped NT)
+- E5 [2026-08, gfx950, FlyDSL ?, N=?, the campaign score of E1 (18 configurations: forward, dgrad and wgrad × 3 token distributions × 2 projections) and the ISA dump; F and P from a six-point K sweep of the whole op] the lane-resident scan ported into the MXFP4 NT prologue (the wgrad prologue was already O(1)): prologue 2153 → 761 instructions, SGPRs 97 → 58, per-tile fixed cost F 12.46 → 10.47 µs with P 1.6126 → 1.6153 µs, gm 1.2868 → 1.3568 (+5.4%), min 1.0976 → 1.1771 (+7.2%); the next round found that the sweep timed the whole op, scale preshuffle included, and refit the GEMM kernel alone at F = 7.81 µs; the +9.40% the records also give for this change is round 3's candidate (1.42866) against the round-0 baseline (1.30593), on a tree that carried this scan, the split NT swizzle constants of round 2 and the half-N boundary body of round 3 together (Turbo MXFP4 grouped NT)
+- E8 [2026-07, gfx950, FlyDSL ?, N=?, ISA dump] two [G+1] prefix tables held as SGPRs at G=32 (66 live scalars) overflowed the ~102-SGPR budget and were moved to LDS (MXFP8 grouped NT)
+- E9 [2026-07, gfx950, FlyDSL ?, N=?, rocprofv3 PMC and ISA dump of an O(1) probe against the O(G) kernel] SQ_INSTS_VALU 225.3M → 109.8M, buffer_load per tile 307 → 213, v_cmp + v_cndmask per tile 299 → 74, private segment 16 B → 0 (MXFP8 grouped NT, G=32)
+- E10 [2026-07, gfx950, FlyDSL ?, N=1 for the SGPR version and 2 for the LDS version, campaign score of E3] one O(G) scan with an SGPR prefix compare and a log-G tree reduce, both prefix tables still in SGPRs: gm 1.00802, the 8 forward/dgrad configurations +1.3–5.4%; the production version, both prefix tables moved to LDS and read with one `ds_read` each: gm 1.01767, 1.01824 on a rerun
+- E12 [2026-07, gfx950, FlyDSL ?, N=?, drift-immune same-process position-balanced interleave of the commit against its parent, outputs byte-identical] one commit: tile prefixes computed once per workgroup, plus a persistent NT path with monotone group carry that the autotuner may pick: Shape A (gate_up forward / down dgrad, K=2880, N=5760, persistent) +7.7–9.6% over balanced, skewed and empty-group loads; Shape B (K=5760, N=2880), which stays on the non-persistent path, +2.0–2.8%; across models Kimi-K2 down +107.84% and Mixtral (8 experts) about 0% (Turbo fp8 per-tensor grouped NT)
+- E13 [2026-09, gfx950, FlyDSL ?, N=3, repeated runs of one shape] a descriptor whose base was pinned with readfirstlane but whose extent was a per-lane value: the same shape gave 512, 160 and 320 bad rows across runs; the month is that of the commit (Turbo bf16 grouped GEMM; Primus-Turbo ed8d7af4 (Primus-Turbo#486))
+- E14 [2026-06, gfx950, FlyDSL ?, N=?, ?] persistent wgrad with `m_start × OUT_M` in int32: at G=256, M_g=1536, OUT_M=8192, `m_total × OUT_M` = 3.2e9 > 2^31 and the last groups' gradients were silently wrong; unverified (Turbo FlyDSL fp8 per-tensor grouped wgrad)
+- E15 [2026-11, gfx950 (MI355X), HIP 7.15, N=1 launch per configuration (540 launches), per-tile execution counts from GPU atomics] remap over `live` then exit on the remapped id: some tiles ran twice in every configuration with Turbo's `xcd_remap_pid` (30 of 30) and FlyDSL MOE1's XCD swizzle (60 of 60), none more than twice, none skipped; none repeated with `xcd_band_remap_pid` or the identity
+- E17 [2026-11, gfx950 (MI355X), HIP 7.15, N=7 rounds per cell, median of 20 calls, three arms rotated in one process, paired by round] only the tile → group lookup differing, G = 8–256: monotone carry against a per-tile O(G) reload of the offsets +2.4–16.2% at G = 8, +93–535% at G = 256; against the lane-resident table with a ballot within 2% in all 16 cells (synthetic persistent kernel, 256 workgroups, balanced and skewed loads)
+- E18 [2026-11, gfx950 (MI355X), HIP 7.15, N=2 runs per placement and distance] one wave loading through Turbo's empty-group descriptor (record count read back as 4294967295), 256 B to 1 GiB past the group's end: inside a 64 MiB allocation the loads silently returned the next group's rows or the data after the tensor (8 of 8); past a 4 MiB allocation or into an unmapped range they faulted (14 of 14); with the count clamped at 0 every load returned 0

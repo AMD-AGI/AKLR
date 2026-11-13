@@ -68,7 +68,7 @@ and split-K reductions are in `kernels/flydsl_kernel_library.md`, their argument
 
 | File | dtype / layout | Loop design | Entry point |
 |---|---|---|---|
-| `gemm/gemm_fp8_kernel.py` | fp8 E4M3/E5M2, per-tensor scale; NT, NN, TN; bf16/fp16 out; any K | 8-wave pipeline raced against the 4-wave whole loop per shape | `gemm_fp8_tensorwise_flydsl_kernel` (:3448) |
+| `gemm/gemm_fp8_kernel.py` | fp8 E4M3/E5M2, per-tensor scale; NT, NN, TN; bf16/fp16 out; K ≥ 129 | 8-wave pipeline; NT and NN race it against the 4-wave whole loop once ⌈K/128⌉ ≥ 16 (NN: K % 128 = 0), TN takes that loop where supported (FP8:3134, 3218, 3502) | `gemm_fp8_tensorwise_flydsl_kernel` (:3448) |
 | `gemm/gemm_mxfp4_kernel.py` | MXFP4 (E8M0 per 32) NT; fused GLU/dGLU + MXFP4 quant variants | 4-wave whole loop, VGPR-direct scales, folded C store | `gemm_mxfp4_flydsl_kernel` (:4351); `preshuffle_mxfp4_scales` (:4877) |
 | `gemm/gemm_mxfp8_kernel.py` | MXFP8 NT | 8-wave pipeline, packed scales, tail-round split-K | `gemm_mxfp8_flydsl_kernel` (:985) |
 | `gemm/gemm_bf16_kernel.py` | bf16/fp16 NT/NN/TN tile bodies (no dense bf16 entry point; these tiles serve other Turbo kernels) | 8-wave, 16x16x32 MFMA, transpose reads | `gemm_bf16_tile` (:721) |
@@ -87,15 +87,18 @@ were tuned on specific shapes. Reuse the mechanism and re-derive the number.
 
 ## INDEX FlyDSL version
 
-All API statements in the gemm package and on this page are for FlyDSL v0.3.2. Turbo main `7615a5a2` runs
-unmodified on it. The raw buffer helpers (`create_buffer_resource`, …) are not in the wheel: they live in
+All API statements in the gemm package and on this page are for FlyDSL v0.3.2. Turbo main `7615a5a2` pins
+`flydsl==0.3.4.1`, but its dense GEMM entries (fp8 NT/NN/TN, MXFP8 NT, MXFP4 NT) run unmodified on v0.3.2
+*(field, E13, E14)*; its other kernels were not run on it. The raw buffer helpers (`create_buffer_resource`, …)
+are not in the wheel: they live in
 `kernels/common/buffer_ops.py` in the FlyDSL repo, and Turbo vendors its own copy in `utils/buffer_ops.py`. In the wheel,
 `rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(ptr, num_records_bytes))` turns an `fx.Pointer` into the raw
 resource the `rocdl.raw_ptr_buffer_*` wrappers take. Kernel attributes passed through
 `value_attrs`, such as `amdgpu-agpr-alloc`, must go under `"llvm.passthrough"`; a bare `"passthrough"` key is
 silently dropped. `rocdl.s_waitcnt` takes a raw bitfield or the keyword form `s_waitcnt(vmcnt=…, lgkmcnt=…)`.
-`rocdl.asyncmark()` and `wait_asyncmark(n)` exist and pair with `cdna4.BufferLoadAsyncLDS*`. A non-`int` `aux`
-(cache policy) on the `rocdl.raw_ptr_buffer_*` wrappers is silently replaced by `None`. A closure-captured Python
+`rocdl.asyncmark()` and `wait_asyncmark(n)` exist and pair with `cdna4.BufferLoadAsyncLDS*`. An `aux` (cache
+policy) that is neither an `int` nor an MLIR attribute, such as `fx.Int32`, is silently replaced by `None` on the
+`rocdl.raw_ptr_buffer_*` wrappers (§ epilogue §5 below). A closure-captured Python
 dict is not in the JIT cache key. See § mainloop §4 below and `debug-flydsl-kernel.md`
 § What the cache key sees.
 
@@ -113,7 +116,7 @@ dict is not in the JIT cache key. See § mainloop §4 below and `debug-flydsl-ke
   between designs, and fused GLU/dGLU + MXFP4-quantization epilogues. They target large M; for
   M ≤ 256 use `../gemm/small_m.md`.
 
-Both run on FlyDSL v0.3.2.
+Both run on FlyDSL v0.3.2 (for Turbo, its dense GEMM entries: § INDEX FlyDSL version above).
 
 ## grid_pricing §10 Persistent tiles per workgroup
 
@@ -266,10 +269,12 @@ FlyDSL's `Vector.load` passes no alignment, so the read carries only its element
 
 **How Turbo issues the DMA** (`G2SLoader`, GH:305-386):
 - One `fx.make_copy_atom(fx.rocdl.BufferCopyLDS128b(), 128)` per 16 B per lane.
-- The per-lane global offsets are Python ints computed at trace time.
-- The wave-uniform K offset rides the SGPR `soffset`: `fx.copy(atom, src, dst, soffset=...)`. The buffer's range
-  check leaves `soffset` out (`../gemm/datapath.md` §8): an offset that can run past the tensor, such as a pass
-  over padded rows, goes into the slice instead, `fx.slice(src, (None, lane_off + pass_off))`.
+- The per-lane global offsets are a trace-time Python list, one entry per load step, each a traced value computed
+  from the lane and wave ids (`compute_global_swizzle`, GH:234-253), not a Python int.
+- The wave-uniform K offset rides the SGPR `soffset`: `fx.copy(atom, src, dst, soffset=...)`. The ISA's raw range
+  check leaves `soffset` out (gfx950 counts it, `../hardware/gfx950/memory_and_sync.md` §2.3): an offset that can
+  run past the tensor, such as a pass over padded rows, goes into the slice, which the documented check covers,
+  `fx.slice(src, (None, lane_off + pass_off))`.
 
 ## datapath §7 Prefetch inside the K loop
 
@@ -317,8 +322,9 @@ FlyDSL's helpers are thin wrappers over `sched_group_barrier`:
 The fence is `rocdl.sched_barrier(mask)`, which takes the int mask (`expr/rocdl/__init__.py:142`).
 
 **FlyDSL's `hot_loop_scheduler` is the reference use.** `preshuffle_gemm` builds one hint table per tile.
-On gfx950 it spreads the LDS reads and VMEM loads evenly over all MFMAs,
-for both sync and async copy (`guides.md` § gemm-optimization (FlyDSL's §5.5));
+On gfx950 it spreads the LDS reads evenly over all MFMAs; the VMEM loads left after the preload are spread evenly
+only when there are at least as many as MFMAs, and otherwise go one after each of the first MFMAs (PS:454-460).
+Both hold for sync and async copy (`guides.md` § gemm-optimization (FlyDSL's §5.5));
 the sync path also places its LDS writes at the tail.
 `preload=(dsrd, dvmem)` sets how many go ahead of the first MFMA
 (PS:439-494).
@@ -473,8 +479,10 @@ caller.
   MoE combine kernel's ~24-argument launch (`run_compiled`, GH:2049-2069). Compile once per key with
   `_static_layout` (`flyc.from_torch_tensor` per tensor, FP8:2973) so the object does not re-read shapes and
   strides.
-- **Under CUDA-graph capture: no timing, and call the raw closure.** Launch the raw `@flyc.jit` closure, because "a
-  flyc.compile'd object regresses under CUDA-graph capture" (`_run_dense`, FP8:3081-3091).
+- **Under CUDA-graph capture: no timing; launch the raw closure or a `flyc.compile` object built before the capture.**
+  Turbo launches the raw `@flyc.jit` closure because "a flyc.compile'd object regresses under CUDA-graph capture"
+  (`_run_dense`, FP8:3081-3091); on FlyDSL v0.3.2 that held only for an object first built inside the capture
+  (`moe.md` § grouped_host_autotune §2).
 - **A dispatch layer that calls the `@flyc.jit` closure pays its host cost on every call.** *(field, E4)* On a grouped fp8 wgrad whose public entry
   called the `@flyc.jit` closure behind a runtime split-K policy, host time was 77.9 µs per call (cache-key
   build 54%, the globals-drift check 22%); moving the entry to the compiled object cut it to 19.1 µs and
@@ -482,8 +490,11 @@ caller.
 
 ## autotune §7 Failures the race must not hide
 
-**A configuration over the LDS limit raises nothing in FlyDSL.** LLVM prints `local memory (N) exceeds limit`, the
-launch fails with `hipErrorIllegalState` on stderr only, and the output is never written.
+**A configuration over the LDS limit raises nothing in FlyDSL.** LLVM prints `local memory (N) exceeds limit` and
+the compile returns; each launch then fails with `hipErrorIllegalState` (`hipErrorInvalidValue` for dynamic LDS) on
+stderr only, and the output is not written *(field, E17)*. The error stays pending until the next torch kernel
+raises it as `AcceleratorError`. A race that checks outputs with a torch op (Turbo's `_dense_race`, FP8:3040-3058)
+drops the configuration; one that only times it does not notice.
 
 ## correctness §4 Waits, barriers and the scheduler
 
@@ -493,8 +504,10 @@ The monotonic, agent-scope atomic load that keeps a poll loop is
 
 ## correctness §5 LDS placement and DMA
 
-- **Reordering `@fx.struct` fields does not move LDS.** With `SharedAllocator(static=True)` every leaf
-  is its own symbol placed by the backend (`expr/gpu.py:157`).
+- **Reordering `@fx.struct` fields moves only fields of equal size.** With `SharedAllocator(static=True)` every
+  leaf is its own `@__shared_alloc_<n>` symbol, numbered in declaration order and placed by the backend
+  (`expr/gpu.py:157`): equal-size fields (A/B tiles, ping/pong slots) swap offsets when their declarations are
+  swapped *(field, E18)*.
 - **Buffers that must be contiguous go in one field, or use `static=False`.** The default static
   allocator places fields by size, largest first, and equal sizes by symbol name (declared
   `a4k, b16k, c8k, d256, e1k` land as `b16k, c8k, a4k, e1k, d256`). `SharedAllocator(static=False)` keeps
@@ -548,15 +561,19 @@ at `gemm1.py:282-291`.
 
 A FlyDSL version is given only where the cited run, or another round in the same container and venv, printed it
 (`flydsl.__version__`, an import path with its version, or a `pip install flydsl==` in the run's own setup); otherwise
-`FlyDSL ?`. The month is the run's where the record dates it; E3's is the date of the commit that recorded the number.
+`FlyDSL ?`. The month is the run's where the record dates it; E3's is the date of Primus-Turbo 22e544d5.
 "Turbo" is Primus-Turbo.
 
-- E2 [2026-09, gfx950, FlyDSL 0.2.4, N=1, code reading, then one scored read per arm] the TACCW/COOP epilogue-twin stage looks its base up in `_MXFP4_AT_CACHE` under a 13-field key while entries are stored under 15 fields; the `KeyError` goes to `except Exception: pass`, so the twin axis had not run in the whole campaign; with the key fixed in a later campaign, all 18 cells of the `gemm18` table still picked `(taccw, coop) = (False, False)` (Turbo MXFP4 dense GEMM for gpt-oss, `_autotune_mxfp4_config`, round 16; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260923_085930/rounds/round-16/agent.txt:8; myskill pitfalls/06-autotune-dispatch.md:827; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260925_144843/memory.md:199)
+- E2 [2026-09, gfx950, FlyDSL 0.2.4, N=1, code reading, then one scored read per arm] the TACCW/COOP epilogue-twin stage looks its base up in `_MXFP4_AT_CACHE` under a 13-field key while entries are stored under 15 fields; the `KeyError` goes to `except Exception: pass`, so the twin axis had not run in the whole campaign; with the key fixed in a later campaign, all 18 cells of the `gemm18` table still picked `(taccw, coop) = (False, False)` (Turbo MXFP4 dense GEMM for gpt-oss, `_autotune_mxfp4_config`)
 - E3 [2026-08, gfx950, FlyDSL ?, N=?, host time per call; method not stated] calling the `@flyc.jit` launch 180 µs per call against 37 µs through the `flyc.compile` object, for the fp8 combine's ~24-argument launch, called twice per MoE layer in a training step (fused MXFP8 MoE, FC2 + combine; Primus-Turbo 22e544d5 (#456), kept as the docstring of `run_compiled`, Primus-Turbo 7615a5a2:primus_turbo/flydsl/utils/gemm_helper.py:2054)
-- E4 [2026-08, gfx950, FlyDSL ?, N=3, campaign score `_bench_wgrad_vs_fwd.py` (wgrad FLOP rate over the same process's forward, CUDA events around the public call, so host time counts), three reads against one same-day baseline read] the wgrad public entry moved from the `@flyc.jit` closure to the `flyc.compile` object, as the forward entry already was: host 77.9 → 19.1 µs per call (`_resolve_and_make_cache_key` 54% and `_check_globals_drift` 22% of the old time), output byte-identical; gm 0.99043 → 1.05074 / 1.05483 / 1.05459, recorded +6.46%; this followed the runtime split-K policy kept the round before (gpt-oss per-tensor fp8 grouped wgrad, round 4; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260803_111756/memory.md:127; :131; :132; myskill methodology/08-splitk-crosslane-lowprec-wgrad.md:172)
-- E7 [2026-09, gfx950, FlyDSL 0.3.2, N=3, same-process probe] an arm's first read under `FLYDSL_DUMP_IR=1` and `REPS=1`: +15.44%; three normal re-runs ±0.2%; the read had both the IR dump on and a single repetition, so it does not tell which of the two caused the gap (GLM-5.2 sparse-MLA decode attention producer; campaign 20260911_143318 round 10; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260911_143318/rounds/round-10/agent.txt:15)
-- E8 [2026-11, gfx950, FlyDSL 0.3.2, N=1, compile-only probe (`COMPILE_ONLY=1 ARCH=gfx950`, `examples/01-vectorAdd.py` plus an LDS store, `fx.gpu.barrier()` and an LDS read), its IR and ISA dumps; and the ISA of a GEMM build in a forge run] after convert-gpu-to-rocdl: `llvm.fence syncscope("workgroup") release`, `rocdl.s.barrier`, `llvm.fence syncscope("workgroup") acquire`; final ISA: `global_store_dwordx4` (line 89), then `ds_write_b32`, `s_waitcnt lgkmcnt(0)`, `s_barrier` (lines 96-98), with no `vmcnt` wait in between; the forge run: "The ISA showed that `gpu.barrier()` emits waits on outstanding memory ops, including `lgkmcnt(0)`, before each loop `s_barrier`" (bf16 GEMM N=6144, K=1536) (local:/workspace/code/gpt_oss_docker/work/sikl/kb_distill/probes_g1/q3_barrier_isa.py; local:/workspace/code/gpt_oss_docker/work/sikl/kb_distill/probes_g1/q3_barrier_isa.gpu_to_rocdl.mlir:90-92; local:/workspace/code/gpt_oss_docker/work/sikl/kb_distill/probes_g1/q3_barrier_isa.final_isa.s:89; :96-98; local:/shared_nfs/kyle/geak/gemm8/gn6144_k1536/run/workspace/forge_experiments/lessons/iter_009.md:36)
-- E9 [2026-11, gfx950, FlyDSL 0.3.2, N=3, agent's probe on `bench_cudagraph`, the canonical kernel timed alongside in one process in alternating order over 4–6 rounds, medians; then the driver bench twice] loop barrier as a bare `s_barrier` with one spare ring slot per operand (rb1s1) against `gpu.barrier()`: m=128 7.945 / 7.908 / 7.909 against 8.007 / 7.955 / 7.962 µs, driver 7.937 / 7.933 against 8.002 / 7.997; m=64 6.423 / 6.429 against 6.436 / 6.438; m=32 5.389 against 5.384; m=16 5.174 against 5.170; without the spare slot (hazard not covered) m=128 7.935; `lgkmcnt(0)` then a bare `s_barrier` 8.096; ISA of rb1s1 at m=128: at most 3 LDS ops in flight at each loop barrier, all from the most recent tile; not kept (it failed the run's gate) (bf16 GEMM N=6144, K=1536, 16 waves at m=128; local:/shared_nfs/kyle/geak/gemm8/gn6144_k1536/run/workspace/forge_experiments/lessons/iter_009.md:3; :37-41; :47-50; :52; :89-94)
-- E10 [2026-11, gfx950, FlyDSL 0.3.2, N=3, probe kernels storing the intrinsics' results, eager calls and CUDA-graph replays, one probe in each of three forge runs] `llvm.amdgcn.dispatch.id`: the same in every workgroup of a launch; eager 2, 5, 8 and graph replays 53, 66, 79, high word 0, queue pointer low word different on two streams (bf16 GEMM N=128, K=6144); eager 4, 5, a second stream 0 with a different queue address, graph replays 12, 16, 20 (N=K=6144); eager 1, 2, 3, graph replays 7, 11, 15 (N=2048, K=7168) (local:/shared_nfs/kyle/geak/gemm8b/gn128_k6144/run/workspace/forge_experiments/lessons/iter_003.md:6-14; local:/shared_nfs/kyle/geak/gemm8/gn6144_k6144/run/workspace/forge_experiments/lessons/iter_004.md:5-8; local:/shared_nfs/kyle/geak/gemm8b/gn2048_k7168/run/workspace/forge_experiments/lessons/iter_002.md:16)
-- E11 [2026-11, gfx950, FlyDSL 0.3.2, N=1, ISA of the builds] `llvm.passthrough` with `amdgpu-agpr-alloc` in the launch's `value_attrs`: dropped; in the kernel call's `value_attrs`: took effect (the agpr-alloc build: `accum_offset` 64, 296 B scratch, 726 `v_accvgpr`) (bf16 GEMM N=6144, K=1536, m=4096 256×384 tile; local:/shared_nfs/kyle/geak/gemm8big/gn6144_k1536/run/workspace/forge_experiments/lessons/iter_013.md:56; :24)
-- E12 [2026-11, gfx950, FlyDSL 0.3.2, N=1 per run, ISA of the builds] `flyc.from_torch_tensor` static-layout arguments with `amdgpu-kernarg-preload-count` 16 (3 at N=6144 K=1536, whose dynamic-layout arm used 6): preload length 2 → 6 and kernarg size 72 → 24 (N=28672 K=512), 6 (N=7168 K=512), three bare pointers and 6 (N=6144 K=1536; 2 with dynamic layouts), three bare pointers, length 6, size 24, no cold wait before the first DMA at m=256 (N=128 K=6144), 2 → 6 with the first DMA at ISA line about 62 instead of 110 (N=3584 K=512) (local:/shared_nfs/kyle/geak/gemm8big/gn28672_k512/run/workspace/forge_experiments/lessons/iter_011.md:7; :11; local:/shared_nfs/kyle/geak/gemm8big/gn7168_k512/run/workspace/forge_experiments/lessons/iter_003.md:24; local:/shared_nfs/kyle/geak/gemm8big/gn6144_k1536/run/workspace/forge_experiments/lessons/iter_005.md:31-32; :37-38; local:/shared_nfs/kyle/geak/gemm8big/gn6144_k1536/tx/gn6144_k1536_kernel_final.py:529; local:/shared_nfs/kyle/geak/gemm8big/gn128_k6144/run/workspace/forge_experiments/lessons/iter_011.md:35-37; local:/shared_nfs/kyle/geak/gemm8big/gn3584_k512/run/workspace/forge_experiments/lessons/iter_014.md:60)
+- E4 [2026-08, gfx950, FlyDSL ?, N=3, campaign score (wgrad FLOP rate over the same process's forward, CUDA events around the public call, so host time counts), three reads against one same-day baseline read] the wgrad public entry moved from the `@flyc.jit` closure to the `flyc.compile` object, as the forward entry already was: host 77.9 → 19.1 µs per call (`_resolve_and_make_cache_key` 54% and `_check_globals_drift` 22% of the old time), output byte-identical; gm 0.99043 → 1.05074 / 1.05483 / 1.05459, recorded +6.46%; this followed the runtime split-K policy kept the round before (gpt-oss per-tensor fp8 grouped wgrad)
+- E7 [2026-09, gfx950, FlyDSL 0.3.2, N=3, same-process probe] an arm's first read under `FLYDSL_DUMP_IR=1` and `REPS=1`: +15.44%; three normal re-runs ±0.2%; the read had both the IR dump on and a single repetition, so it does not tell which of the two caused the gap (GLM-5.2 sparse-MLA decode attention producer)
+- E8 [2026-11, gfx950, FlyDSL 0.3.2, N=1, compile-only probe (`COMPILE_ONLY=1 ARCH=gfx950`, `examples/01-vectorAdd.py` plus an LDS store, `fx.gpu.barrier()` and an LDS read), its IR and ISA dumps; and the ISA of a GEMM build in a forge run] after convert-gpu-to-rocdl: `llvm.fence syncscope("workgroup") release`, `rocdl.s.barrier`, `llvm.fence syncscope("workgroup") acquire`; final ISA: `global_store_dwordx4` (line 89), then `ds_write_b32`, `s_waitcnt lgkmcnt(0)`, `s_barrier` (lines 96-98), with no `vmcnt` wait in between; the forge run: "The ISA showed that `gpu.barrier()` emits waits on outstanding memory ops, including `lgkmcnt(0)`, before each loop `s_barrier`" (bf16 GEMM N=6144, K=1536)
+- E9 [2026-11, gfx950, FlyDSL 0.3.2, N=3, agent's probe on `bench_cudagraph`, the canonical kernel timed alongside in one process in alternating order over 4–6 rounds, medians; then the driver bench twice] loop barrier as a bare `s_barrier` with one spare ring slot per operand (rb1s1) against `gpu.barrier()`: m=128 7.945 / 7.908 / 7.909 against 8.007 / 7.955 / 7.962 µs, driver 7.937 / 7.933 against 8.002 / 7.997; m=64 6.423 / 6.429 against 6.436 / 6.438; m=32 5.389 against 5.384; m=16 5.174 against 5.170; without the spare slot (hazard not covered) m=128 7.935; `lgkmcnt(0)` then a bare `s_barrier` 8.096; ISA of rb1s1 at m=128: at most 3 LDS ops in flight at each loop barrier, all from the most recent tile; not kept (it failed the run's gate) (bf16 GEMM N=6144, K=1536, 16 waves at m=128)
+- E10 [2026-11, gfx950, FlyDSL 0.3.2, N=3, probe kernels storing the intrinsics' results, eager calls and CUDA-graph replays, one probe in each of three forge runs] `llvm.amdgcn.dispatch.id`: the same in every workgroup of a launch; eager 2, 5, 8 and graph replays 53, 66, 79, high word 0, queue pointer low word different on two streams (bf16 GEMM N=128, K=6144); eager 4, 5, a second stream 0 with a different queue address, graph replays 12, 16, 20 (N=K=6144); eager 1, 2, 3, graph replays 7, 11, 15 (N=2048, K=7168)
+- E11 [2026-11, gfx950, FlyDSL 0.3.2, N=1, ISA of the builds] `llvm.passthrough` with `amdgpu-agpr-alloc` in the launch's `value_attrs`: dropped; in the kernel call's `value_attrs`: took effect (the agpr-alloc build: `accum_offset` 64, 296 B scratch, 726 `v_accvgpr`) (bf16 GEMM N=6144, K=1536, m=4096 256×384 tile)
+- E12 [2026-11, gfx950, FlyDSL 0.3.2, N=1 per run, ISA of the builds] `flyc.from_torch_tensor` static-layout arguments with `amdgpu-kernarg-preload-count` 16 (3 at N=6144 K=1536, whose dynamic-layout arm used 6): preload length 2 → 6 and kernarg size 72 → 24 (N=28672 K=512), 6 (N=7168 K=512), three bare pointers and 6 (N=6144 K=1536; 2 with dynamic layouts), three bare pointers, length 6, size 24, no cold wait before the first DMA at m=256 (N=128 K=6144), 2 → 6 with the first DMA at ISA line about 62 instead of 110 (N=3584 K=512)
+- E13 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, torch 2.11.0+rocm10.0.0, N=2, two calls per entry in one process, each output against a reference computed from the same quantized inputs] Turbo `7615a5a2` unmodified on the 0.3.2 wheel: fp8 NT, NN and TN, MXFP8 NT and MXFP4 NT at M=256, N=512, K=512: 0 mismatches, no NaN or Inf (Turbo dense GEMM entries)
+- E14 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, torch 2.11.0+rocm10.0.0, N=2, two calls per entry in one process, each output against a float64 reference from the same quantized inputs] at M=N=2048 the fp8 NT, NN and TN races ran whole-loop candidates; fp8 at K=200, MXFP8 at K=384 and MXFP4 at K=320 also passed: 0 mismatches, no NaN or Inf (Turbo dense GEMM entries)
+- E17 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, torch 2.11.0+rocm10.0.0, N=2, one process per arm, disk cache off] 196608 B of LDS against the 163840 B limit: static allocation printed `local memory (196608) exceeds limit (163840)`, both calls returned, stderr had `hipErrorIllegalState`, 0 of 256 outputs written, the error stayed pending until the next torch kernel raised `AcceleratorError`; dynamic allocation: `hipErrorInvalidValue`; a timing-only race timed it like the valid candidate (18.6 against 18.3 µs) (256-thread probe kernel)
+- E18 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, torch 2.11.0+rocm10.0.0, N=1, LDS offset of each field read back on the GPU] two 4096 B fields declared x, y: x at 0, y at 4096; declared y, x: y at 0, x at 4096; fields of 4, 16 and 8 KiB in either declaration order: the 16 KiB field at 0, 8 KiB at 16384, 4 KiB at 24576 (`SharedAllocator(static=True)` probe kernel)

@@ -1140,7 +1140,7 @@ on_all() {
 }
 
 # session_job ARGS...: with no -j before `--`, use the one job whose name holds $REMOTE_GPU_SESSION
-# (set by the gpu-cluster hook to the Claude session that runs this call).
+# (set by the aklr plugin's hook to the Claude session that runs this call).
 session_job() {
   local a mine
   [[ -n ${REMOTE_GPU_SESSION:-} && -z $JOB ]] || return 0

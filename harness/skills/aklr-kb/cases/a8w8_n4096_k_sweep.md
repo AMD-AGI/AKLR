@@ -1,5 +1,5 @@
 ---
-title: "fp8 block-scaled GEMM, shuffled B: N 4096 × K 256–8192, N 8192 / 32768 × K 1024, N 16384 / 65536 × K 1536, N 7168 × K 384 (m 64 and 128 only) — one structure per shape; skinny paths at large N and small m; at N 4096 with K 256, 512 and 1024, 8–11 of 13 Points per file are not served"
+title: "fp8 block-scaled GEMM, shuffled B: N 4096 × K 256–8192, N 8192 / 32768 × K 1024, N 16384 / 65536 × K 1536, N 7168 × K 384 (m 64 and 128 only) — one structure per shape; skinny paths at large N and small m; at N 4096 with K 256, 512 and 1024, most of the 13 Points per file are not served"
 kind: case
 ops: [gemm]
 dtypes: [fp8]
@@ -17,9 +17,9 @@ measured:
   - {metric: "speedup over aiter, CI, per Point", value: "1.092–2.590; 13 of 13 Points ≥ 1.03", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k8192, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "d908d01 (#71, CI run 42000899019, measurement profile 18)", date: "2026-11-05"}
   - {metric: "speedup over aiter, CI, per Point", value: "1.401–1.847; 13 of 13 Points ≥ 1.03", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_n8192_k1024, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "6d7cfec (#102, CI run 42549655045, measurement profile 19)", date: "2026-11-09"}
   - {metric: "speedup over aiter, CI, per Point", value: "1.061–2.152; 13 of 13 Points ≥ 1.03", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_n32768_k1024, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", run_ref: "6d7cfec (#102, CI run 42549655045, measurement profile 19)", date: "2026-11-09"}
-  - {metric: "speedup over aiter, local validate lower bound (measurement profile 19) per Point; no CI measurement on main", value: "1.328–1.945; 5 of 5 Points ≥ 1.03; 0 served", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_n16384_k1536, m 1, 2, 4, 16, 32", run_ref: "local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/fp8/fp8_ef050f07296547ba/report.json", date: "2026-11-09"}
-  - {metric: "speedup over aiter, local validate lower bound (measurement profile 19) per Point; no CI measurement on main", value: "1.026–1.092; 5 of 6 measured Points ≥ 1.03 (the file lists those 5); 0 served", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_n65536_k1536, m 1, 2, 4, 8, 16, 32, measured on the kernel.py of 133d48070dcb6c3d's predecessor (E11)", run_ref: "local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/fp8/fp8_e5f9fd89c5a994fa/report.json", date: "2026-11-09"}
-  - {metric: "speedup over aiter, local validate lower bound (measurement profile 19) per Point; no CI measurement on main", value: "1.020–1.155; 2 of 8 measured Points ≥ 1.03 (the file lists those 2); 0 served", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_n7168_k384, m 1, 2, 4, 8, 16, 32, 64, 128", run_ref: "local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/fp8/fp8_2c481a926208c5cd/report.json", date: "2026-11-09"}
+  - {metric: "speedup over aiter, local validate lower bound (measurement profile 19) per Point", value: "1.328–1.945; 5 of 5 Points ≥ 1.03", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_n16384_k1536, m 1, 2, 4, 16, 32", date: "2026-11-09"}
+  - {metric: "speedup over aiter, local validate lower bound (measurement profile 19) per Point", value: "1.026–1.092; 5 of 6 measured Points ≥ 1.03 (the file lists those 5)", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_n65536_k1536, m 1, 2, 4, 8, 16, 32, measured on the kernel.py of 133d48070dcb6c3d's predecessor (E11)", date: "2026-11-09"}
+  - {metric: "speedup over aiter, local validate lower bound (measurement profile 19) per Point", value: "1.020–1.155; 2 of 8 measured Points ≥ 1.03 (the file lists those 2)", gpu: MI355X, workload: "gemm_a8w8_blockwise_scaled_b_shuffled_n7168_k384, m 1, 2, 4, 8, 16, 32, 64, 128", date: "2026-11-09"}
 sources:
   - aklr/ops/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k256/5fcd9f0ebdced65c.json
   - aklr/ops/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k512/9a8319559bcb2f29.json
@@ -49,8 +49,8 @@ sources:
   scenarios' other Points, n65536 m = 32 and n7168 m = 1–32 and 256, have no kernel and run aiter.
 - Dispatch serves a listed Point only once CI has written a `speedup` that reaches `AKLR_MIN_SPEEDUP` into it
   (`aklr/core/contract/spec/_workloads.py:38`; `aklr/ops/README.md` § Environment variables): 77 of the 104 Points
-  of the eight CI-measured files on main as of #102, and none of the three newer files' Points until CI measures them
-  (Result).
+  of the eight CI-measured files on main as of #102, and all 12 of the three newer files' Points since CI measured
+  them in #115 (Result).
 - Compare: each schema's `compare` block is `determinism: bounded`, `max_violation_fraction: 0.0`, against the
   contract's tolerance (atol = rtol = 1e-2 for bf16 out; `aklr/ops/gemm/contract.py`). One file's split-K
   depends on it (Counter-signals).
@@ -60,11 +60,14 @@ sources:
 
 ## Counter-signals
 
-- **N 4096 with K 256, 512 or 1024 at small m is at or below aiter.** n4096_k256 reads 1.010–1.026 at m ≤ 64 and
+- **N 4096 with K 256, 512 or 1024 at small m is at or near aiter.** n4096_k256 reads 1.010–1.026 at m ≤ 64 and
   1.022 at m = 128 *(field, E1)*. n4096_k512 reads 0.986–1.000 at m ≤ 128 *(field, E2)*; it splits K nowhere, and
-  at m ≤ 64 one 16×64 tile holds all of K (64 workgroups at m ≤ 16). n4096_k1024 clears 1.03 only at m = 2048, 4096
-  (1.105, 1.110); its unsplit four-wave body reads 0.809–1.005 at m = 1, 2 and 32–1024, and its eight-wave
-  in-workgroup K split at m = 4, 8, 16 reads 0.998–1.000 in #102 after 1.073–1.080 in #71 *(field, E3, E9)*.
+  at m ≤ 64 one 16×64 tile holds all of K (64 workgroups at m ≤ 16). n4096_k1024 clears 1.03 in #102 only at
+  m = 2048, 4096 (1.105, 1.110); its unsplit four-wave body reads 0.809–1.005 at m = 1, 2 and 32–1024, and its
+  eight-wave in-workgroup K split at m = 4, 8, 16 reads 0.998–1.000 in #102 after 1.073–1.080 in #71 *(field, E3, E9)*
+  and 1.04–1.05 in a paired run where profiles 18 and 19 agreed within 0.5% *(field, E15)*. There the kernel takes
+  4.35–4.37 µs, about an empty kernel's 4.34 µs under the same timer, so the ratio only measures how far aiter sits
+  above that floor.
 - **N 7168 with K 384 at m ≤ 32 reads 1.020–1.028** *(field, E12)*. The kernel's time is flat in m, 4.23–4.31 µs
   from m = 1 to 128, and so is aiter's up to m = 32, 4.38–4.41 µs; the margin opens only where aiter's time grows,
   4.47 µs at m = 64 and 4.90 µs at m = 128 *(field, E12)*. At m ≤ 16 the kernel runs a 16×16 one-wave tile (448
@@ -75,20 +78,23 @@ sources:
   n4096_k1024 m = 4, 8, 16 0.998–1.085, below 1.03 in four of ten runs, #102 among them, and m = 32 1.004–1.032;
   n4096_k2048 m = 2048 1.023–1.073; n4096_k8192 m = 4096 1.005–1.100; n32768_k1024 m = 64 1.016–1.026 in five runs, then
   1.061 in #102 *(field, E9)*. Which of these dispatch serves depends on the run that wrote the file. Between the two
-  local runs of the three newer kernels the ruler changed: measurement profile 18 at a12866b, timed through Kineto, then
+  non-CI runs of the three newer kernels the ruler changed: measurement profile 18 at a12866b, timed through Kineto, then
   profile 19 at 0e02a81, timed through AKLR's rocprofiler-sdk kernel tracer (#33). Every kernel and aiter time read
   0.2–3.2% higher in the second run, the ratios moved by −1.2% to +1.0%, and n7168_k384 m = 8 (1.031 → 1.028) and
   n65536_k1536 m = 32 (1.035 → 1.026) crossed 1.03 *(field, E13, E11, E12)*.
-- **The skinny path's margin shrinks at the m where it widens to 128 columns per workgroup.** n32768_k1024 at m = 64
-  (64-row slab, 8 waves, 256 workgroups) reads 1.061 in #102, against 1.319–1.500 at m ≤ 32 with 16- or 32-row slabs and
-  64 columns (512 workgroups), and 1.016–1.026 in the five runs before *(field, E8, E9)*. n65536_k1536 at m = 32 (32-row
-  slab, 8 waves, 512 workgroups, 4 K blocks of weights in flight instead of 8) reads 1.026 against 1.047–1.092 at m ≤
-  16; its time rises from 16.66 µs at m = 16 to 18.60 µs, aiter's from 18.22 to 19.09 µs *(field, E11)*.
+- **The skinny path's margin shrinks at the m where it widens to 128 columns per workgroup, but the width is not the
+  main cause.** n32768_k1024 at m = 64 (64-row slab, 8 waves, 256 workgroups) reads 1.061 in #102, against
+  1.319–1.500 at m ≤ 32 with 16- or 32-row slabs and 64 columns (512 workgroups), and 1.016–1.026 in the five runs
+  before *(field, E8, E9)*; compiled with 64 columns at m = 64 it is about 1% slower *(field, E16)*. n65536_k1536 at
+  m = 32 (32-row slab, 8 waves, 512 workgroups, 4 K blocks of weights in flight instead of 8) reads 1.026 against
+  1.047–1.092 at m ≤ 16; its time rises from 16.66 µs at m = 16 to 18.60 µs, aiter's from 18.22 to 19.09 µs
+  *(field, E11)*; with 64 columns there it is about 2% faster, a third of that drop *(field, E16)*.
 - **At N 65536 the margin is 5–9%, under a read-roof cap.** At m ≤ 16 the kernel reads its 100.7 MB of weights in
-  16.50–16.66 µs, an estimated 6.0–6.1 TB/s, about 93% of the 6.5 TB/s read roof a read-only kernel measured on
-  MI355X (`../patterns/memory_bound.md`); aiter, at 17.34–18.22 µs, reaches an estimated 5.5–5.8 TB/s
-  *(field, E11)*. That roof caps any kernel at an estimated 1.12–1.18 over aiter at these Points;
-  n16384_k1536's margins do not carry over.
+  16.50–16.66 µs, an estimated 6.0–6.1 TB/s; aiter, at 17.34–18.22 µs, reaches an estimated 5.5–5.8 TB/s
+  *(field, E11)*. Under the same timer the fastest of 17 read-only kernels over the same 100.7 MB reached 6.1 TB/s
+  (6.8 TB/s only over ten times the bytes), so the kernel is within about 2% of a pure read at this size, and a kernel
+  at that speed would be an estimated 1.06–1.11 over aiter at these Points *(field, E17)*. n16384_k1536's margins do
+  not carry over.
 - **n16384_k1536's margin follows aiter's time, not the kernel's.** The kernel takes 5.17–5.61 µs at all five
   Points; aiter takes 9.70–10.73 µs at m = 1, 4, 16 (1.868–1.945) but 6.91–7.92 µs at m = 2, 32 (1.328–1.408)
   *(field, E10)*. For this shape aiter 0.1.21.dev66+gdbd8bf5bd's tuned table names its Triton kernel at m = 1, 4, 16
@@ -241,7 +247,7 @@ listed m.
 - Weights as the MFMA A operand, two 16-byte loads per lane per K block, 8 of the 12 K blocks in flight, every load
   `nt` (aux 2), which the source gives for a read-once weight stream.
 - The slab goes from global to registers in six 16-byte loads per thread, each pass's offset in the lane's
-  `voffset` so the buffer's range check returns zeros for slab rows past m (`../gemm/datapath.md` §8), then to
+  `voffset`; the buffer's range check returns zeros for slab rows past m (`../gemm/datapath.md` §8), then to
   LDS at a 1552-byte row stride, behind one barrier; the LDS read base passes through a `v_mov` so the per-read
   constants fold into the `ds_read` offsets.
 - Scales: the workgroup's 12 b-scales in three 16-byte loads moved to SGPRs with `readfirstlane`, a lane's a-scales
@@ -266,7 +272,7 @@ Each file is the only kernel at its Points, so the faster of AKLR's served kerne
 is a one-sided lower bound of the aiter / kernel time ratio over CUDA-graph replays with L2 flushed before each call,
 read at 16 rounds and, where a threshold is still undecided, again at 32, each look at α = 0.025
 (`aklr/core/validation/stages/_measure.py:49`; `alpha_per_look` in a report). Dispatch compares CI's value with
-`AKLR_MIN_SPEEDUP`, 1.03 by default (`aklr/ops/README.md` § Environment variables).
+`AKLR_MIN_SPEEDUP`, 1.05 by default (`aklr/ops/README.md` § Environment variables).
 
 The eight N 4096 and K 1024 rows are main's CI measurements as of #102 (6d7cfec): n4096_k256, n4096_k1024,
 n4096_k4096, n8192_k1024 and n32768_k1024 from run 42549655045 (#102, measurement profile 19); n4096_k512,
@@ -276,7 +282,8 @@ CI installs the baseline aiter, ROCm/aiter@dbd8bf5, and the FlyDSL that aiter pi
 workflow; `../pitfalls/measured_a_different_build.md`). The n16384_k1536, n65536_k1536 and n7168_k384 rows come from
 `aklr validate` on one MI355X at main 0e02a81 with measurement profile 19, FlyDSL 0.3.2 and aiter
 0.1.21.dev66+gdbd8bf5bd, after 16 rounds (32 at n7168_k384 m = 8); the n65536_k1536 row is of the kernel.py of
-`133d48070dcb6c3d`'s predecessor (E11). No CI run has measured them, so none of their Points is served yet.
+`133d48070dcb6c3d`'s predecessor (E11). Dispatch reads only CI's values: CI first measured these three files in
+#115, at 1.03 or more at every Point they list, so all of those Points are served.
 
 | File | m 1–64 | m 128–512 | m 1024–4096 | ≥ 1.03 | Served |
 |---|---|---|---|---|---|
@@ -288,9 +295,9 @@ workflow; `../pitfalls/measured_a_different_build.md`). The n16384_k1536, n65536
 | n4096_k8192 | 1.624–2.590 *(field, E6)* | 1.395–1.468 *(field, E6)* | 1.092–1.266 *(field, E6)* | 13 of 13 | 13 |
 | n8192_k1024 | 1.416–1.626 *(field, E7)* | 1.401–1.486 *(field, E7)* | 1.785–1.847 *(field, E7)* | 13 of 13 | 13 |
 | n32768_k1024 | 1.319–1.500 (1–32), 1.061 (64) *(field, E8)* | 1.520–1.876 *(field, E8)* | 1.814–2.152 *(field, E8)* | 13 of 13 | 13 |
-| n16384_k1536 (local) | 1.328–1.945 (1, 2, 4, 16, 32) *(field, E10)* | — | — | 5 of 5 | 0 |
-| n65536_k1536 (local) | 1.047–1.092 (1–16), 1.026 (32) *(field, E11)* | — | — | 5 of 6 | 0 |
-| n7168_k384 (local) | 1.020–1.028 (1–32), 1.055 (64) *(field, E12)* | 1.155 (128) *(field, E12)* | — | 2 of 8 | 0 |
+| n16384_k1536 (local) | 1.328–1.945 (1, 2, 4, 16, 32) *(field, E10)* | — | — | 5 of 5 | 5 |
+| n65536_k1536 (local) | 1.047–1.092 (1–16), 1.026 (32) *(field, E11)* | — | — | 5 of 6 | 5 |
+| n7168_k384 (local) | 1.020–1.028 (1–32), 1.055 (64) *(field, E12)* | 1.155 (128) *(field, E12)* | — | 2 of 8 | 2 |
 
 All 104 CI Points pass accuracy (`accuracy: passed` in each workload), and so do the 19 local ones (worst violation
 fraction 0). The kernels of the local rows take 5.17–5.61 µs (n16384_k1536), 16.50–16.66 µs at m ≤ 16
@@ -317,9 +324,9 @@ with an aiter other than dbd8bf5, compare the kernel times above before comparin
 
 Delete the schema file (in a PR): its Points go unserved, since no other file serves them. `AKLR_DISABLE`
 takes a whole contract id and would also drop every other `gemm_a8w8_blockwise_scaled@1.0` kernel. Points CI
-measures below 1.03 are not served without any rollback (8 Points of n4096_k256, 8 of n4096_k512, 11 of n4096_k1024
-on main as of #102). The three newer files serve nothing until CI writes their `speedup`; after that a listed
-Point CI measures below 1.03 drops out the same way. The scenario Points they do not list (n65536 m = 32, n7168
+measures below 1.05 are not served without any rollback (below 1.03, the default then: 8 Points of n4096_k256, 8 of n4096_k512, 11 of n4096_k1024
+on main as of #102). The three newer files are served since CI measured them in #115 (Result); a listed
+Point CI later measures below 1.03 drops out the same way. The scenario Points they do not list (n65536 m = 32, n7168
 m = 1–32 and 256) run aiter. Delete n4096_k8192's file, or give its m 64 and 128 Points a fixed-order reduction, if
 the contract's `compare` becomes `bitwise`.
 
@@ -344,12 +351,15 @@ the contract's `compare` becomes `bitwise`.
 - S6 aklr/ops/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k256/5fcd9f0ebdced65c.json#kernel.py:101 `tile_k = K`
 - S7 aklr/ops/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k4096/8c907984278eefc4.json#kernel.py:304 owner-wave reduction; half exchange through the B ring at :1092
 - S8 aklr/ops/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n32768_k1024/42ffbb4ee1697e03.json#kernel.py:1139 skinny kernel; path choice in `_Runner` at :1415
-- E10 [2026-11, gfx950, FlyDSL 0.3.2, N=1, AKLR validate, measurement profile 19, 16 rounds per Point] speedup over aiter m 1 1.871, 2 1.328, 4 1.868, 16 1.945, 32 1.408; median kernel / aiter time 5.17 / 9.70, 5.20 / 6.91, 5.23 / 9.78, 5.52 / 10.73, 5.61 / 7.92 µs; worst violation fraction 0 (gemm_a8w8_blockwise_scaled_b_shuffled_n16384_k1536 ef050f07296547ba, m 1, 2, 4, 16, 32; main 0e02a81, aiter 0.1.21.dev66+gdbd8bf5bd; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/fp8/fp8_ef050f07296547ba/report.json)
-- E11 [2026-11, gfx950, FlyDSL 0.3.2, N=1, AKLR validate, measurement profile 19, 16 rounds per Point] speedup over aiter m 1 1.047, 2 1.056, 4 1.061, 8 1.065, 16 1.092, 32 1.026; median kernel / aiter time 16.52 / 17.34, 16.50 / 17.46, 16.52 / 17.54, 16.57 / 17.65, 16.66 / 18.22, 18.60 / 19.09 µs; worst violation fraction 0; measured as e5f9fd89c5a994fa, at AMD-AGI/AKLR@3877820 (branch kyle/fp8-blockscale-campaigns), which also lists m 32 and embeds the same kernel.py as 63974391515c66e5, the predecessor of 133d48070dcb6c3d; 133d48070dcb6c3d moves each slab pass's offset from `soffset` into the lane's offset, the same 295 instructions in a compile-only ISA dump at m 16 (local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/fp8_soffset_isa/before_63974391515c66e5_m16.s:82-89 against after_133d48070dcb6c3d_m16.s:82-89; README.txt in that folder), and calls the compiled launcher directly (gemm_a8w8_blockwise_scaled_b_shuffled_n65536_k1536, m 1–32; main 0e02a81, aiter 0.1.21.dev66+gdbd8bf5bd; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/fp8/fp8_e5f9fd89c5a994fa/report.json)
-- E12 [2026-11, gfx950, FlyDSL 0.3.2, N=1, AKLR validate, measurement profile 19, 16 rounds per Point, 32 at m 8] speedup over aiter m 1 1.021, 2 1.020, 4 1.021, 8 1.028, 16 1.025, 32 1.027, 64 1.055, 128 1.155; median kernel time 4.31, 4.29, 4.29, 4.28, 4.27, 4.29, 4.23, 4.23 µs, aiter 4.40, 4.39, 4.38, 4.40, 4.38, 4.41, 4.47, 4.90 µs; worst violation fraction 0; measured as 2c481a926208c5cd, at AMD-AGI/AKLR@3877820 (branch kyle/fp8-blockscale-campaigns), which also lists m 1–32 and embeds the same kernel.py as 7944f0214f92cf4d (gemm_a8w8_blockwise_scaled_b_shuffled_n7168_k384, m 1–128; main 0e02a81, aiter 0.1.21.dev66+gdbd8bf5bd; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/fp8/fp8_2c481a926208c5cd/report.json)
-- E13 [2026-11, gfx950, FlyDSL 0.3.2, N=1, AKLR validate, measurement profile 18 (Kineto), 16 rounds per Point, 32 at n7168_k384 m 1, 8, 16] the same three kernel.py files at a12866b: n65536_k1536 m 1–16 1.045–1.094, m 32 1.035; n7168_k384 m 1–32 1.020–1.031 (m 8 1.031), m 64 1.055, m 128 1.154; n16384_k1536 m 1, 2, 4, 16, 32 1.894, 1.333, 1.888, 1.966, 1.395; profile 19 (E10–E12) read every median kernel and aiter time 0.2–3.2% higher (local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/fp8/profile18/fn65536_k1536.json; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/fp8/profile18/fn7168_k384.json; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/fp8/profile18/fn16384_k1536.json)
+- E10 [2026-11, gfx950, FlyDSL 0.3.2, N=1, AKLR validate, measurement profile 19, 16 rounds per Point] speedup over aiter m 1 1.871, 2 1.328, 4 1.868, 16 1.945, 32 1.408; median kernel / aiter time 5.17 / 9.70, 5.20 / 6.91, 5.23 / 9.78, 5.52 / 10.73, 5.61 / 7.92 µs; worst violation fraction 0 (gemm_a8w8_blockwise_scaled_b_shuffled_n16384_k1536 ef050f07296547ba, m 1, 2, 4, 16, 32; main 0e02a81, aiter 0.1.21.dev66+gdbd8bf5bd)
+- E11 [2026-11, gfx950, FlyDSL 0.3.2, N=1, AKLR validate, measurement profile 19, 16 rounds per Point] speedup over aiter m 1 1.047, 2 1.056, 4 1.061, 8 1.065, 16 1.092, 32 1.026; median kernel / aiter time 16.52 / 17.34, 16.50 / 17.46, 16.52 / 17.54, 16.57 / 17.65, 16.66 / 18.22, 18.60 / 19.09 µs; worst violation fraction 0; measured as e5f9fd89c5a994fa.json at AMD-AGI/AKLR@3877820, which also lists m 32 and embeds the same kernel.py as the predecessor of 133d48070dcb6c3d; 133d48070dcb6c3d moves each slab pass's offset from `soffset` into the lane's offset, the same 295 instructions in a compile-only ISA dump at m 16, and calls the compiled launcher directly (gemm_a8w8_blockwise_scaled_b_shuffled_n65536_k1536, m 1–32; main 0e02a81, aiter 0.1.21.dev66+gdbd8bf5bd)
+- E12 [2026-11, gfx950, FlyDSL 0.3.2, N=1, AKLR validate, measurement profile 19, 16 rounds per Point, 32 at m 8] speedup over aiter m 1 1.021, 2 1.020, 4 1.021, 8 1.028, 16 1.025, 32 1.027, 64 1.055, 128 1.155; median kernel time 4.31, 4.29, 4.29, 4.28, 4.27, 4.29, 4.23, 4.23 µs, aiter 4.40, 4.39, 4.38, 4.40, 4.38, 4.41, 4.47, 4.90 µs; worst violation fraction 0; measured as 2c481a926208c5cd.json at AMD-AGI/AKLR@3877820, which also lists m 1–32 and embeds the same kernel.py as 7944f0214f92cf4d (gemm_a8w8_blockwise_scaled_b_shuffled_n7168_k384, m 1–128; main 0e02a81, aiter 0.1.21.dev66+gdbd8bf5bd)
+- E13 [2026-11, gfx950, FlyDSL 0.3.2, N=1, AKLR validate, measurement profile 18 (Kineto), 16 rounds per Point, 32 at n7168_k384 m 1, 8, 16] the same three kernel.py files at a12866b: n65536_k1536 m 1–16 1.045–1.094, m 32 1.035; n7168_k384 m 1–32 1.020–1.031 (m 8 1.031), m 64 1.055, m 128 1.154; n16384_k1536 m 1, 2, 4, 16, 32 1.894, 1.333, 1.888, 1.966, 1.395; profile 19 (E10–E12) read every median kernel and aiter time 0.2–3.2% higher
 - S9 aklr/ops/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n16384_k1536/ef050f07296547ba.json#kernel.py:343 `_skinny_cfg`; slab loads trimmed to m rows at :107; slab slices and weights issued in K order at :216, each slice stored before its K blocks at :274; kernarg preload requested at :385
 - S10 aklr/ops/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n65536_k1536/133d48070dcb6c3d.json#kernel.py:284 `_skinny_cfg`; `B_CPOL = 2` on the weight loads at :292; padded slab row stride at :93; slab loads with the pass offset in the slice at :165; one barrier at :216; `_launch_for` compiling at the first call at :296–308
 - S11 aklr/ops/gemm/impls/flydsl/gemm_a8w8_blockwise_scaled_b_shuffled_n7168_k384/7944f0214f92cf4d.json#kernel.py:389 `_pick_config`; whole K per tile at :80; K-block partials scaled after the last MFMA at :272; direct stores at :282
 - S12 ROCm/aiter@dbd8bf5:aiter/configs/model_configs/dsv4_a8w8_blockscale_bpreshuffle_tuned_gemm.csv:671 N 16384 × K 1536 on 256 CUs: `triton` at m 1, 4, 8, 16 (:671, :673–675), CK kernel 7 at m 2, 32 (:672, :676); no other bpreshuffle table of that commit lists this (N, K)
 - S13 ROCm/aiter@dbd8bf5:aiter/ops/gemm_op_a8w8.py:453 `get_CKGEMM_config` looks up (gfx, cu_num, M, N, K) with M as given, then `get_padded_m` at granularity 0 and 1 (:480); `gemm_a8w8_blockscale_bpreshuffle` (:913) uses it
+- E15 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=8, AKLR `bench_cudagraph` of measurement profile 19, kernel and aiter paired in each round in one process (profile 18 at 43e112e in a second process, N=6)] the eight-wave split against aiter at m 4, 8, 16: 1.051, 1.053, 1.041; kernel 4.349–4.370 µs, an empty Triton kernel 4.337 µs; profile 18 read 0.30–0.48% higher (gemm_a8w8_blockwise_scaled_b_shuffled_n4096_k1024 e5d65066d6572075)
+- E16 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=8, AKLR `bench_cudagraph` of measurement profile 19, all arms in each round in one process] the skinny path as shipped (128 columns per workgroup) against the same kernel compiled with 64: n32768_k1024 m 64 9.794 against 9.899 µs; n65536_k1536 (133d48070dcb6c3d) m 32 18.413 against 17.972 µs, aiter 18.915 µs, m 16 16.628 µs against aiter 18.166 µs
+- E17 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=6, AKLR `bench_cudagraph` of measurement profile 19, all arms in each round in one process] n65536_k1536 (133d48070dcb6c3d) m 1–16 16.544–16.791 µs, 6.08–5.99 TB/s on 100.66 MB of weights, aiter 17.348–18.298 µs; the fastest of 17 Triton and HIP read-only kernels over the same 100.66 MB 16.434 µs, 6.125 TB/s, over 1.007 GB 6.84 TB/s; checksums and GEMM outputs correct

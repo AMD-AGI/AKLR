@@ -94,11 +94,25 @@ def kernel_sources() -> dict[str, str]:
     return dict(sorted(sources.items()))
 
 
+def _requires(kernel: dict) -> dict[str, str]:
+    """``kernel.requires`` with the installed toolchain of the kernel's language as its lower bound when the schema
+    pins none: ``export check`` rejects a kernel that names no version of its own language."""
+    from packaging.version import Version
+
+    from aklr.core.platform.toolchain import toolchain_version
+
+    requires = dict(kernel.get("requires", {}))
+    if LANGUAGE not in requires and (version := toolchain_version(LANGUAGE)) is not None:
+        requires[LANGUAGE] = f">={Version(version).base_version}"
+    return requires
+
+
 def _candidate_text() -> tuple[str, str]:
     """The schema text AKLR expects for this kernel, and the file name AKLR derives from it."""
     registry, op_contract, _, schema_uuid = _aklr()
     raw = json.loads(SCHEMA_JSON.read_text(encoding="utf-8"))
     raw["kernel"]["language"] = LANGUAGE
+    raw["kernel"]["requires"] = _requires(raw["kernel"])
     raw["kernel"]["sources"] = [
         {"path": name, "content": content} for name, content in kernel_sources().items()
     ]

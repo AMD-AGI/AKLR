@@ -27,37 +27,77 @@ from agentx_ci.utils import (
 ARM_COLORS = ("#2563eb", "#ea580c", "#16a34a", "#9333ea", "#0891b2")
 COMBINED_COLOR = "#111827"
 BASELINE_COLOR = "#9ca3af"
+# Keep the published InferenceX CSV labels in both report languages.
+X_LABEL = "P90 Interactivity (tok/s/user)"
+Y_LABEL = "Throughput/Chip (tok/s)"
 # Highlight threshold, not a significance test.
 NOTABLE = 0.03
 LANGS = ("en", "zh")
 ZH_MESSAGES = [
-    (r"measurement incomplete or points failed", "测量未完成或有失败点，不计算周环比"),
+    (r"no valid successful measurement points to compare", "没有可用于比较的有效成功测量点"),
     (r"source is dirty or its state is unknown", "源码包含未提交改动或状态未知，不计算周环比"),
-    (r"point selection policy or selected recipes changed", "选点策略或选中的 recipe 已变化"),
+    (r"point selection policy or selected recipes changed", "选点策略或选中的配置已变化"),
     (r"model identity differs or is missing", "模型标识不同或缺失"),
     (r"target identity differs or is missing", "测试目标标识不同或缺失"),
     (r"AKLR modes have different or missing model identities\.", "两种 AKLR 模式的模型标识不同或缺失。"),
     (r"AKLR modes have different or missing target identities\.", "两种 AKLR 模式的测试目标标识不同或缺失。"),
+    (r"AKLR off/on execution records are required\.", "需要 AKLR 开启和关闭两种模式的执行记录。"),
+    (
+        r"AKLR measurement point records are invalid or duplicated\.",
+        "AKLR 测量点记录无效或存在重复。",
+    ),
+    (
+        r"No successful points with matching settings in both AKLR modes\.",
+        "两种 AKLR 模式之间没有成功完成且配置匹配的测量点对。",
+    ),
+    (
+        r"AKLR modes have different or unverified execution identities\.",
+        "两种 AKLR 模式的执行身份不同或未经验证。",
+    ),
+    (
+        r"AKLR modes do not belong to the same source and execution attempt\.",
+        "两种 AKLR 模式并非来自相同源码和同一次执行。",
+    ),
+    (r"AKLR mode labels are missing or invalid\.", "AKLR 模式标签缺失或无效。"),
+    (r"AKLR modes selected different points\.", "两种 AKLR 模式选择的数据点不同。"),
+    (r"AKLR mode switches do not match their labels\.", "AKLR 模式开关与标签不符。"),
+    (
+        r"Settings other than the AKLR switches differ between modes\.",
+        "两种模式除 AKLR 开关外还有其他配置差异。",
+    ),
     (
         r"measurement settings changed \(weights, launch, workload or selected points\)",
         "测量设置已变化（权重、启动配置、工作负载或所选数据点）",
     ),
+    (r"point measurement settings differ", "该点的测量配置不一致"),
+    (r"point measurement settings are missing or unverified", "该点的测量配置缺失或未经验证"),
     (r"arm absent from the baseline", "上次运行没有这个实验组"),
-    (r"serving config changed \(arm (\S+) → (\S+)\)", r"serving 配置已变化（arm \1 → \2）"),
+    (r"serving config changed \(arm (\S+) → (\S+)\)", r"服务配置已变化（实验组 \1 → \2）"),
     (r"no previous run", "没有上次运行"),
     (r"previous run is (\S+), this one is (\S+)", r"上次是 \1 模式，本次是 \2 模式"),
     (r"run image changed", "运行镜像已变化"),
     (r"concurrency grid changed", "并发网格已变化"),
     (r"execution identity is missing or unverified", "执行身份缺失或未经验证"),
     (
-        r"execution image, InferenceX source, dependencies, hardware or traces changed",
-        "执行镜像、InferenceX 源码、依赖、硬件或 traces 已变化",
+        r"execution image, InferenceX source, dependencies or hardware changed",
+        "执行镜像、InferenceX 源码、依赖或硬件已变化",
     ),
 ]
 
 
 def tr(lang: str, en: str, zh: str) -> str:
     return zh if lang == "zh" else en
+
+
+def status_label(lang: str, status: str) -> str:
+    labels = {
+        "ok": ("OK", "成功"),
+        "partial": ("Partial success", "部分成功"),
+        "failed": ("Failed", "失败"),
+        "resolve-failed": ("Resolve failed", "解析失败"),
+        "not-run": ("Not selected", "本轮未选择"),
+    }
+    return tr(lang, *labels[status]) if status in labels else status
 
 
 def localize(lang: str, message: str) -> str:
@@ -128,13 +168,12 @@ def svg_chart(title: str, series: list[dict], lang: str, width: int = 620, heigh
         out.append(f'<line x1="{left}" x2="{left + plot_w}" y1="{sy(t):.1f}" y2="{sy(t):.1f}" class="grid"/>')
         out.append(f'<text x="{left - 8}" y="{sy(t) + 4:.1f}" class="tick" text-anchor="end">{t:g}</text>')
     out.append(
-        f'<text x="{left + plot_w / 2}" y="{height - 12}" class="axis" text-anchor="middle">'
-        + tr(lang, "P90 E2E interactivity", "P90 端到端交互速度")
-        + " (tok/s/user) →</text>"
+        f'<text x="{left + plot_w / 2}" y="{height - 12}" class="axis" text-anchor="middle">{X_LABEL}</text>'
     )
     out.append(
         f'<text transform="translate(16 {top + plot_h / 2}) rotate(-90)" class="axis" '
-        'text-anchor="middle">' + tr(lang, "throughput per GPU", "单 GPU 吞吐") + " (tok/s/GPU) →</text>"
+        'text-anchor="middle">'
+        f"{Y_LABEL}</text>"
     )
     for s in series:
         line = s.get("frontier") or []
@@ -149,15 +188,22 @@ def svg_chart(title: str, series: list[dict], lang: str, width: int = 620, heigh
             off_frontier = pareto_coordinates is not None and (p[X], p[Y]) not in pareto_coordinates
             out.append('<g class="non-pareto-point">' if off_frontier else "<g>")
             fill = "white" if s.get("hollow") else s["color"]
-            tip = f"{s['label']} {p.get('arm', '')} c{p['conc']}: {p[Y]:.1f} tok/s/GPU, {p[X]:.1f} tok/s/user"
+            mode = {
+                "enabled": tr(lang, "AKLR enabled", "开启 AKLR"),
+                "disabled": tr(lang, "AKLR disabled", "关闭 AKLR"),
+            }.get(s.get("aklr_mode"))
+            label = f"{s['label']} · {mode}" if mode else s["label"]
+            tip = (
+                f"{tr(lang, 'Configuration', '配置')}: {p.get('arm', s['label'])}\n"
+                f"{label} · c{p['conc']}\n"
+                f"{Y_LABEL}: {p[Y]:.1f}\n"
+                f"{X_LABEL}: {p[X]:.1f}"
+            )
             out.append(
                 f'<circle cx="{sx(p[X]):.1f}" cy="{sy(p[Y]):.1f}" r="4.5" fill="{fill}" '
-                f'stroke="{s["color"]}" stroke-width="1.6"><title>{escape(tip)}</title></circle>'
+                f'stroke="{s["color"]}" stroke-width="1.6" tabindex="0" role="img" '
+                f'aria-label="{escape(tip)}" aria-describedby="point-tooltip" data-point-tooltip="{escape(tip)}"/>'
             )
-            if s.get("labels"):
-                out.append(
-                    f'<text x="{sx(p[X]) + 7:.1f}" y="{sy(p[Y]) - 6:.1f}" class="point-label">c{p["conc"]}</text>'
-                )
             out.append("</g>")
     for i, row in enumerate(legend_rows):
         y = 44 + i * 18
@@ -208,7 +254,6 @@ def charts(results: dict, baseline: dict | None, comparison: dict, lang: str) ->
                     "frontier": line,
                     "dashed": not enabled,
                     "hollow": not enabled,
-                    "labels": True,
                     "pareto_coordinates": {(p[X], p[Y]) for p in line},
                 }
             )
@@ -221,8 +266,8 @@ def charts(results: dict, baseline: dict | None, comparison: dict, lang: str) ->
             {
                 "label": tr(lang, f"{arm} (this run)", f"{arm}（本次）"),
                 "color": arm_color(arm, arms),
+                "aklr_mode": results["run"].get("aklr_mode"),
                 "points": measured(results, arm),
-                "labels": True,
                 "pareto_coordinates": pareto_coordinates,
             }
             for arm in arms
@@ -235,17 +280,25 @@ def charts(results: dict, baseline: dict | None, comparison: dict, lang: str) ->
                 "frontier": current["combined"],
             }
         )
-    if comparison["status"] == "ok" and all(
-        view["status"] == "comparable" for view in comparison["arms"].values()
-    ):
+    previous_points = [
+        row["baseline"]
+        for view in comparison["arms"].values()
+        for row in view.get("points", [])
+        if row.get("tput_ratio") is not None
+    ]
+    if baseline is not None and comparison["status"] == "ok" and previous_points:
         series.append(
             {
-                "label": tr(lang, "AKLR enabled · previous run", "开启 AKLR · 上次运行")
+                "label": tr(
+                    lang,
+                    "AKLR enabled · previous run (matched points)",
+                    "开启 AKLR · 上次运行（匹配点）",
+                )
                 if control is not None
-                else tr(lang, "previous run frontier", "上次前沿"),
+                else tr(lang, "previous run frontier (matched points)", "上次前沿（匹配点）"),
                 "color": BASELINE_COLOR,
                 "points": [],
-                "frontier": frontier(measured(baseline)),
+                "frontier": frontier(previous_points),
                 "dashed": True,
             }
         )
@@ -268,10 +321,14 @@ def aklr_section(results: dict, lang: str) -> str:
         '<p class="muted">'
         + tr(
             lang,
-            "Same run, image, hardware, weights and traces. Disabled mode runs first. Higher and farther right is better. "
-            "Deltas compare identical arm/concurrency pairs, not interpolated points at equal interactivity; no statistical significance is implied.",
-            "同一次运行，使用相同镜像、硬件、权重和 traces，先关闭再开启 AKLR。曲线越靠右上越好。"
-            "增幅按相同实验组和并发点计算，不代表相同交互速度下的插值对比，也不代表统计显著性。",
+            "Same run, image, hardware, weights and pinned trace dataset. Short runs can sample different requests. "
+            "Disabled mode runs first. Higher and farther right is better. "
+            "Deltas use only arm/concurrency pairs that succeeded in both modes with matching settings. "
+            "They are not interpolated comparisons at equal interactivity; no statistical significance is implied.",
+            "同一次运行，使用相同镜像、硬件、权重和固定的请求轨迹数据集。短时运行可能覆盖不同请求。"
+            "先关闭再开启 AKLR。曲线越靠右上越好。"
+            "增幅只对两种模式均成功完成且配置一致的相同实验组和并发点计算，"
+            "不代表相同交互速度下的插值对比，也不代表统计显著性。",
         )
         + "</p>",
     ]
@@ -280,8 +337,8 @@ def aklr_section(results: dict, lang: str) -> str:
             '<p class="notes">'
             + tr(
                 lang,
-                "Paired comparison unavailable: both modes must complete with matching settings. Curves show available measurements only.",
-                "暂不计算成对增幅：两种模式需完整成功且配置匹配。曲线仅展示已获得的测量点。",
+                "Paired comparison unavailable. Curves show available successful measurements.",
+                "暂不计算成对增幅。曲线展示已获得的成功测量点。",
             )
             + f' <span class="muted">{escape(localize(lang, comparison["reason"]))}</span></p>'
         )
@@ -289,7 +346,11 @@ def aklr_section(results: dict, lang: str) -> str:
     gain = comparison["tput_geomean_ratio"]
     out.append(
         '<p class="card">'
-        + tr(lang, "Throughput geomean, enabled / disabled: ", "吞吐几何平均，开启 / 关闭：")
+        + tr(
+            lang,
+            "Throughput geomean over matched pairs, enabled / disabled: ",
+            "匹配点对的吞吐几何平均，开启 / 关闭：",
+        )
         + f'<strong class="{delta_class(gain)}" style="font-size:24px">{gain:.3f}× ({pct(gain)})</strong>'
         + tr(
             lang,
@@ -315,8 +376,8 @@ def aklr_section(results: dict, lang: str) -> str:
             for label in (
                 tr(lang, "Arm", "实验组"),
                 tr(lang, "Concurrency", "并发"),
-                tr(lang, "Off tok/s/GPU", "关闭 tok/s/GPU"),
-                tr(lang, "On tok/s/GPU", "开启 tok/s/GPU"),
+                tr(lang, "Off total tok/s/GPU", "关闭 总 tok/s/GPU"),
+                tr(lang, "On total tok/s/GPU", "开启 总 tok/s/GPU"),
                 tr(lang, "Throughput Δ", "吞吐变化"),
                 tr(lang, "Off P90 tok/s/user", "关闭 P90 tok/s/user"),
                 tr(lang, "On P90 tok/s/user", "开启 P90 tok/s/user"),
@@ -348,21 +409,21 @@ def comparison_tables(comparison: dict, lang: str) -> str:
         badge = {
             "comparable": (
                 tr(lang, "comparable", "可比"),
-                tr(lang, "same serving config as the previous run", "serving 配置与上次相同"),
+                tr(lang, "comparing successful points with matching settings", "比较成功完成且配置匹配的点"),
             ),
             "new-segment": (tr(lang, "new segment", "新分段"), reason),
             "new-arm": (tr(lang, "new arm", "新实验组"), reason),
         }[view["status"]]
         if view["status"] == "comparable" and not any(
-            (row["baseline"] or {}).get("status") == "ok" for row in view["points"]
+            row.get("tput_ratio") is not None for row in view["points"]
         ):
             badge_class = "no-baseline"
             badge = (
-                tr(lang, "no baseline", "无基线"),
+                tr(lang, "no comparable points", "无可比点"),
                 tr(
                     lang,
-                    "same serving config, but the previous run has no successful point to compare",
-                    "serving 配置相同，但上次没有成功的数据点可比",
+                    "no points succeeded in both runs with matching settings",
+                    "本次与上次没有均成功完成且配置匹配的点",
                 ),
             )
         head = f'<h3>{escape(arm)} <span class="badge {badge_class}">{badge[0]}</span> <span class="muted">{escape(badge[1])}</span></h3>'
@@ -373,8 +434,8 @@ def comparison_tables(comparison: dict, lang: str) -> str:
                 + '<p class="muted">'
                 + tr(
                     lang,
-                    f"Points whose serving config changed: {changed}. Values are not compared.",
-                    f"serving 配置变化的点：{changed}。不做数值比较。",
+                    f"Points whose serving or measurement settings changed: {changed}. Values are not compared.",
+                    f"服务或测量配置变化的点：{changed}。不做数值比较。",
                 )
                 + "</p>"
             )
@@ -387,9 +448,13 @@ def comparison_tables(comparison: dict, lang: str) -> str:
             cur, old = row["current"], row["baseline"] or {}
             t, i = row.get("tput_ratio"), row.get("intvty_ratio")
             status = (
-                cur["status"]
-                if cur["status"] != "ok"
-                else (tr(lang, "no baseline", "无基线") if not old or old.get("status") != "ok" else "")
+                localize(lang, row["reason"])
+                if row.get("reason")
+                else (
+                    status_label(lang, cur["status"])
+                    if cur["status"] != "ok"
+                    else (tr(lang, "no baseline", "无基线") if not old or old.get("status") != "ok" else "")
+                )
             )
             rows.append(
                 f"<tr><td>c{row['conc']}</td>"
@@ -401,11 +466,15 @@ def comparison_tables(comparison: dict, lang: str) -> str:
         previous = tr(lang, "previous", "上次")
         out.append(
             head + f"<table class='compact'><thead><tr><th>{tr(lang, 'conc', '并发')}</th>"
-            f"<th>tok/s/GPU</th><th>{previous}</th><th>Δ</th>"
-            f"<th>P90 tok/s/user</th><th>{previous}</th><th>Δ</th><th></th></tr></thead><tbody>"
+            f"<th>{tr(lang, 'Total tok/s/GPU', '总 tok/s/GPU')}</th><th>{previous}</th><th>Δ</th>"
+            f"<th>{tr(lang, 'P90 tok/s/user', 'P90 tok/s/user')}</th><th>{previous}</th><th>Δ</th><th></th></tr></thead><tbody>"
             + "".join(rows)
             + "</tbody></table><p class='muted'>"
-            + tr(lang, "Throughput geomean vs previous: ", "吞吐几何平均 vs 上次：")
+            + tr(
+                lang,
+                "Throughput geomean vs previous (matched successful points only): ",
+                "吞吐几何平均相对上次（仅匹配成功点）：",
+            )
             + f"<span class='{delta_class(geo)}'>{pct(geo)}</span></p>"
         )
     return "\n".join(out)
@@ -474,7 +543,7 @@ def history_section(history: dict | None, this: str, repo_url: str, lang: str) -
 def points_table(results: dict, lang: str) -> str:
     rows = "".join(
         f"<tr><td>{escape(p['arm'])}</td><td>c{p['conc']}</td><td><code>{escape(p['exp_name'])}</code></td>"
-        f"<td class='{'' if p['status'] == 'ok' else 'bad'}'>{escape(p['status'])}</td>"
+        f"<td class='{'' if p['status'] == 'ok' else 'bad'}'>{escape(status_label(lang, p['status']))}</td>"
         f"<td>{num(p.get(Y))}</td><td>{num(p.get(X))}</td>"
         f"<td><code>{p['serve_spec_sha256'][:12]}</code></td>"
         f"<td class='muted'>{escape(p.get('error') or '')}</td></tr>"
@@ -482,8 +551,12 @@ def points_table(results: dict, lang: str) -> str:
     )
     return (
         f"<table><thead><tr><th>{tr(lang, 'arm', '实验组')}</th><th>{tr(lang, 'conc', '并发')}</th>"
-        f"<th>{tr(lang, 'point', '数据点')}</th><th>{tr(lang, 'status', '状态')}</th><th>tok/s/GPU</th>"
-        "<th>P90 tok/s/user</th><th>serve spec</th><th></th></tr></thead><tbody>" + rows + "</tbody></table>"
+        f"<th>{tr(lang, 'point', '数据点')}</th><th>{tr(lang, 'status', '状态')}</th>"
+        f"<th title='{tr(lang, 'Input + output throughput per GPU', '单 GPU 输入+输出吞吐')}'>{tr(lang, 'Total tok/s/GPU', '总 tok/s/GPU')}</th>"
+        f"<th title='{tr(lang, 'P90 interactivity (full response)', 'P90 完整响应交互速度')}'>{tr(lang, 'P90 tok/s/user', 'P90 tok/s/user')}</th>"
+        f"<th>{tr(lang, 'serve spec', '服务配置')}</th><th></th></tr></thead><tbody>"
+        + rows
+        + "</tbody></table>"
     )
 
 
@@ -511,7 +584,9 @@ html[data-show-non-pareto="false"] .non-pareto-point { display:none; }
 .chart-title { font-size:14px; font-weight:600; fill:var(--fg); }
 .grid { stroke:#eef0f3; } .tick { font-size:11px; fill:var(--muted); }
 .axis { font-size:12px; fill:#374151; } .legend { font-size:12px; fill:#374151; }
-.point-label { font-size:11px; fill:#374151; }
+.chart [data-point-tooltip] { cursor:help; }
+.chart [data-point-tooltip]:focus { outline:2px solid #2563eb; outline-offset:3px; }
+.point-tooltip { position:fixed; z-index:10; max-width:min(420px,calc(100vw - 24px)); padding:10px 12px; border-radius:6px; background:#0f172a; color:#f8fafc; box-shadow:0 4px 14px #0003; font-size:12px; white-space:pre-line; overflow-wrap:anywhere; pointer-events:none; }
 table { border-collapse:collapse; width:100%; background:white; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
 table.compact { width:auto; min-width:640px; } table.compact th, table.compact td { padding:6px 16px; }
 th, td { padding:6px 10px; border-bottom:1px solid var(--line); text-align:left; font-variant-numeric:tabular-nums; }
@@ -531,21 +606,80 @@ dt { color:var(--muted); overflow-wrap:anywhere; } dd { margin:0; min-width:0; o
 SCRIPT = """
 (function () {
   var root = document.documentElement, titles = %s;
+  function syncButtons() {
+    document.querySelectorAll("[data-set-lang]").forEach(function (button) {
+      button.setAttribute("aria-pressed", String(button.dataset.setLang === root.dataset.lang));
+    });
+  }
   function set(lang, save) {
+    hidePoint();
     root.dataset.lang = lang;
     root.lang = lang === "zh" ? "zh-CN" : "en";
     document.title = titles[lang];
-    if (save) { try { localStorage.setItem("agentx-lang", lang); } catch (e) {} }
+    syncButtons();
+    if (save) {
+      try { localStorage.setItem("agentx-lang", lang); } catch (e) {}
+      try {
+        var url = new URL(location.href);
+        url.searchParams.set("lang", lang);
+        history.replaceState(null, "", url);
+      } catch (e) {}
+    }
   }
   var asked = new URLSearchParams(location.search).get("lang"), saved = null;
   try { saved = localStorage.getItem("agentx-lang"); } catch (e) {}
-  set(titles[asked] ? asked : titles[saved] ? saved : "en", false);
+  function valid(lang) { return lang === "en" || lang === "zh"; }
+  set(valid(asked) ? asked : valid(saved) ? saved : "en", false);
+  document.addEventListener("DOMContentLoaded", syncButtons);
   document.addEventListener("click", function (event) {
     var button = event.target.closest("[data-set-lang]");
-    if (button) { set(button.dataset.setLang, true); }
+    if (button && valid(button.dataset.setLang)) { set(button.dataset.setLang, true); }
   });
+  var activePoint = null;
+  function hidePoint() {
+    var tooltip = document.getElementById("point-tooltip");
+    if (tooltip) { tooltip.hidden = true; }
+    activePoint = null;
+  }
+  function showPoint(point, x, y) {
+    var tooltip = document.getElementById("point-tooltip");
+    activePoint = point;
+    tooltip.textContent = point.dataset.pointTooltip;
+    tooltip.hidden = false;
+    var box = tooltip.getBoundingClientRect();
+    tooltip.style.left = Math.max(12, Math.min(x + 14, innerWidth - box.width - 12)) + "px";
+    tooltip.style.top = Math.max(12, y + box.height + 26 > innerHeight ? y - box.height - 14 : y + 14) + "px";
+  }
+  document.addEventListener("pointerover", function (event) {
+    var point = event.target.closest("[data-point-tooltip]");
+    if (point) { showPoint(point, event.clientX, event.clientY); }
+  });
+  document.addEventListener("pointermove", function (event) {
+    if (activePoint && event.target === activePoint) {
+      showPoint(activePoint, event.clientX, event.clientY);
+    }
+  });
+  document.addEventListener("pointerout", function (event) {
+    if (event.target === activePoint) { hidePoint(); }
+  });
+  document.addEventListener("focusin", function (event) {
+    var point = event.target.closest("[data-point-tooltip]");
+    if (point) {
+      var box = point.getBoundingClientRect();
+      showPoint(point, box.right, box.bottom);
+    }
+  });
+  document.addEventListener("focusout", function (event) {
+    if (event.target === activePoint) { hidePoint(); }
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") { hidePoint(); }
+  });
+  window.addEventListener("scroll", hidePoint, true);
+  window.addEventListener("resize", hidePoint);
   document.addEventListener("change", function (event) {
     if (!event.target.matches("[data-show-non-pareto]")) { return; }
+    hidePoint();
     var show = event.target.checked;
     root.dataset.showNonPareto = String(show);
     document.querySelectorAll("[data-show-non-pareto]").forEach(function (input) {
@@ -556,13 +690,36 @@ SCRIPT = """
 """
 
 
+def language_switch(lang: str) -> str:
+    buttons = "".join(
+        f'<button type="button" data-set-lang="{code}" aria-pressed="{str(code == lang).lower()}">{label}</button>'
+        for code, label in (("en", "EN"), ("zh", "中文"))
+    )
+    return (
+        f'<div class="lang-switch" role="group" aria-label="{tr(lang, "Language", "语言")}">{buttons}</div>'
+    )
+
+
+def render_document(titles: dict[str, str], pages: str) -> str:
+    titles_json = json.dumps(titles, ensure_ascii=False).replace("<", r"\u003c")
+    return f"""<!doctype html>
+<html lang="en" data-lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{escape(titles["en"])}</title><style>{STYLE}</style>
+<script>{SCRIPT % titles_json}</script></head>
+<body>
+{pages}
+<div id="point-tooltip" class="point-tooltip" role="tooltip" hidden></div>
+</body></html>
+"""
+
+
 def render(
     results: dict,
     baseline: dict | None,
     comparison: dict,
     history: dict | None,
     repo_url: str,
-    notice: str | None = None,
+    notice: str | dict[str, str] | None = None,
 ) -> str:
     generated = utc_now()
     titles = {
@@ -576,15 +733,7 @@ def render(
     pages = "\n".join(
         page(results, baseline, comparison, history, repo_url, lang, generated, notice) for lang in LANGS
     )
-    titles_json = json.dumps(titles, ensure_ascii=False).replace("<", r"\u003c")
-    return f"""<!doctype html>
-<html lang="en" data-lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{escape(titles["en"])}</title><style>{STYLE}</style>
-<script>{SCRIPT % titles_json}</script></head>
-<body>
-{pages}
-</body></html>
-"""
+    return render_document(titles, pages)
 
 
 def page(
@@ -595,12 +744,13 @@ def page(
     repo_url: str,
     lang: str,
     generated: str,
-    notice: str | None = None,
+    notice: str | dict[str, str] | None = None,
 ) -> str:
     run, inferencex = results["run"], results["run"]["inferencex"]
     aklr_link = f'<a href="{repo_url}/commit/{run["aklr_sha"]}">{short(run["aklr_sha"])}</a>'
     inferencex_link = f'<a href="https://github.com/{inferencex["repo"]}/commit/{inferencex["sha"]}">{short(inferencex["sha"])}</a>'
-    warn = f'<div class="warn">{escape(notice)}</div>' if notice else ""
+    message = notice.get(lang) if isinstance(notice, dict) else notice
+    warn = f'<div class="warn">{escape(message)}</div>' if message else ""
     arms = "".join(
         f"<dt>{escape(name)}</dt><dd>c{', c'.join(map(str, arm['concs']))} · "
         f"<code>{arm['arm_serve_sha256'][:16]}</code></dd>"
@@ -635,16 +785,12 @@ def page(
         control_table = f"<h3>{tr(lang, 'AKLR disabled points', '关闭 AKLR 数据点')}</h3>" + points_table(
             control, lang
         )
-    switch = "".join(
-        f'<button type="button" data-set-lang="{code}" aria-pressed="{str(code == lang).lower()}">{label}</button>'
-        for code, label in (("en", "EN"), ("zh", "中文"))
-    )
     return f"""<div class="page" data-page="{lang}" lang="{tr(lang, "en", "zh-CN")}">
 <header>
 <div class="top"><h1>{tr(lang, "AgentX weekly", "AgentX 周报")} · {
         escape(results.get("model", {}).get("display_name", "AgentX"))
     } · {escape(results.get("target", {}).get("id", "unknown"))}</h1>
-<div class="lang-switch" role="group" aria-label="Language / 语言">{switch}</div></div>
+{language_switch(lang)}</div>
 <div class="meta">{tr(lang, "run", "运行")} {escape(run["id"])} · {escape(run["finished_at"])} · {
         tr(lang, "host", "主机")
     } {escape(run["host"])} ·
@@ -654,15 +800,27 @@ AKLR {aklr_link} · InferenceX {inferencex_link} · {progress} · {baseline_line
 {warn}
 {selection_section(results, lang)}
 <h2>{tr(lang, "Pareto frontiers", "Pareto 前沿")}</h2>
+<p class="muted">{
+        tr(
+            lang,
+            "Throughput counts input + output tokens. P90 interactivity matches the InferenceX CSV: "
+            "1 / P90(full-response ITL), using the exported ITL in seconds. "
+            "It excludes time to first token and includes the time from the final content chunk to HTTP completion.",
+            "吞吐统计输入与输出 token 总量。P90 交互速度与 InferenceX CSV 口径一致："
+            "1 / P90（完整响应 ITL），使用导出的秒单位 ITL。"
+            "不包含首 token 等待时间，包含最后内容块到 HTTP 响应结束的收尾时间。",
+        )
+    }</p>
 {charts(results, baseline, comparison, lang)}
 {aklr_section(results, lang)}
 <h2>{tr(lang, "Week over week", "周环比")}</h2>
 <p class="muted">{
         tr(
             lang,
-            "An arm is compared only when its serving and effective measurement settings equal the previous run's; "
-            f"otherwise it starts a new segment. Deltas are colored beyond ±{NOTABLE * 100:.0f}% (no noise model yet).",
-            "只有当实验组的 serving 配置及实际测量设置与上次相同时才做比较，否则开启新分段。"
+            "Comparisons use only points that succeeded in both runs at the same arm and concurrency "
+            "with matching serving and measurement settings. "
+            f"Deltas are colored beyond ±{NOTABLE * 100:.0f}% (no noise model yet).",
+            "周环比仅比较本次与上次均成功、服务与测量配置一致的相同实验组和并发点。"
             f"变化超过 ±{NOTABLE * 100:.0f}% 才着色（暂无噪声模型）。",
         )
     }</p>
@@ -683,7 +841,7 @@ AKLR {aklr_link} · InferenceX {inferencex_link} · {progress} · {baseline_line
     }</dd>
 <dt>{tr(lang, "planned image", "计划镜像")}</dt><dd><code>{escape(run["image"]["run"])}</code></dd>
 <dt>{tr(lang, "verified image ID", "已验证镜像 ID")}</dt><dd><code>{
-        escape(run.get("execution", {}).get("image_id", "unverified"))
+        escape(run.get("execution", {}).get("image_id", tr(lang, "unverified", "未经验证")))
     }</code></dd>
 <dt>{tr(lang, "observed GPUs", "实际 GPU")}</dt><dd>{
         escape(json.dumps(run.get("hardware", {}), ensure_ascii=False))
@@ -721,7 +879,7 @@ def selection_section(results: dict, lang: str) -> str:
         tr(lang, "Upstream curve", "上游曲线")
         + ": "
         + " / ".join(str(scope[key]) for key in ("model", "hardware", "framework", "precision"))
-        + f" · {selection['curve_date']} · run {selection['curve_workflow_run_id']}"
+        + f" · {selection['curve_date']} · {tr(lang, 'run', '运行')} {selection['curve_workflow_run_id']}"
     )
     reasons = {
         "off-upstream-frontier": tr(lang, "Off upstream frontier", "未进入上游前沿"),
@@ -735,14 +893,22 @@ def selection_section(results: dict, lang: str) -> str:
     )
     return (
         f'<div class="card"><p>{escape(text)}</p><p>{escape(source)}</p>'
-        "<p>P90 E2E normalized interactivity × throughput/GPU · "
+        + "<p>"
+        + tr(
+            lang,
+            "Upstream selection axes: P90 E2E normalized interactivity × input + output throughput/GPU",
+            "上游选点坐标：P90 端到端归一化交互速度 × 单 GPU 输入+输出吞吐",
+        )
+        + " · "
         f"<code>{escape(selection['selection_sha256'][:12])}</code></p>"
         + "<p>"
         + tr(
             lang,
-            "The upstream frontier selects candidates; the chart below uses only this run's measurements. "
+            "The upstream frontier selects candidates using E2E interactivity; the chart below recomputes "
+            "the frontier using this run's full-response interactivity. "
             "Different hardware or runtime may have a different full frontier.",
-            "上游前沿仅用于选点；下图根据本次实测重新计算。硬件或运行环境不同，完整前沿可能不同。",
+            "上游前沿按端到端交互速度选点；下图按本次实测的完整响应交互速度重新计算前沿。"
+            "硬件或运行环境不同，完整前沿可能不同。",
         )
         + "</p><details><summary>"
         + tr(lang, "Unselected points", "未选中的点")
@@ -808,21 +974,35 @@ def write_report(
     out: Path,
     repo_url: str,
     git_dir: Path,
-    notice: str | None = None,
+    notice: str | dict[str, str] | None = None,
 ) -> dict:
+    """Archive the supplied records unchanged; normalize a separate report view."""
+    archive = results
     results = validated_results(results)
     if baseline is not None:
         baseline = validated_results(baseline)
-    notices = [notice] if notice else []
-    if not complete_measurement(results):
-        notices.append(
-            "测量未完成或有失败点；不计算周环比。 / Incomplete measurement or failed points; week-over-week comparison disabled."
-        )
-    if results["run"].get("source_dirty") is not False:
-        notices.append(
-            "源码包含未提交改动或状态未知；不更新基线。 / Source dirty or unknown; baseline promotion disabled."
-        )
-    notice = " ".join(notices) or None
+    notices = {}
+    for lang in LANGS:
+        message = notice.get(lang) if isinstance(notice, dict) else notice
+        messages = [message] if message else []
+        if not complete_measurement(results):
+            messages.append(
+                tr(
+                    lang,
+                    "Incomplete measurement or failed points; week-over-week comparisons use only points "
+                    "that succeeded in both this run and the baseline with matching settings.",
+                    "测量未完成或有失败点；周环比只对本次与基线中均成功完成且配置一致的点计算。",
+                )
+            )
+        if results["run"].get("source_dirty") is not False:
+            messages.append(
+                tr(
+                    lang,
+                    "Source dirty or unknown; baseline promotion disabled.",
+                    "源码包含未提交改动或状态未知；不更新基线。",
+                )
+            )
+        notices[lang] = " ".join(messages)
     results = {
         **results,
         "serving": {key: value for key, value in results["serving"].items() if key != "warnings"},
@@ -837,13 +1017,14 @@ def write_report(
         base, head = baseline["run"]["aklr_sha"], results["run"]["aklr_sha"]
         history = landed(base, head, git_dir, repo_url)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "index.html").write_text(render(results, baseline, comparison, history, repo_url, notice))
-    write_json(out / "results.json", results)
+    (out / "index.html").write_text(render(results, baseline, comparison, history, repo_url, notices))
+    write_json(out / "results.json", archive)
     write_json(
         out / "report.json",
         {
             "model": results.get("model", {}),
             "target": results.get("target", {}),
+            "axes": {"x": X, "y": Y},
             "frontiers": frontiers(results),
             "comparison": comparison,
             "history": history,

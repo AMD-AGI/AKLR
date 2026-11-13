@@ -189,7 +189,7 @@ def test_the_baseline_is_what_kernelforge_reads_as_its_anchor(run, tmp_path: Pat
     assert payload["wall_ms"] == pytest.approx(sum(payload["case_times"].values()))
     loop = pytest.importorskip("kernelforge.cli.forge_loop_command")
     assert loop._load_external_baseline(str(path))[1] == payload["case_times"]
-    assert loop._load_anchor_presentation(str(path)) == ("AKLR baseline", 1.03)
+    assert loop._load_anchor_presentation(str(path)) == ("AKLR baseline", 1.05)
 
 
 def test_without_a_serving_bar_the_anchor_marks_none(tmp_path: Path):
@@ -238,8 +238,10 @@ def test_publish_keeps_the_kernel_in_the_checkout_to_commit(run, aklr_root: Path
     assert cli.main(["publish", str(run.root)]) == 0
     out = capsys.readouterr().out
     published = aklr_root / out.split("published: ")[1].splitlines()[0]
-    sources = json.loads(published.read_text())["kernel"]["sources"]
-    assert sources == [{"path": "kernel.py", "content": CANDIDATE_KERNEL}]
+    kernel = json.loads(published.read_text())["kernel"]
+    assert kernel["sources"] == [{"path": "kernel.py", "content": CANDIDATE_KERNEL}]
+    # export check rejects a kernel that names no version of its own language: the installed one is its floor
+    assert kernel["requires"] == {"flydsl": ">=0.3.4.1"}
     assert "python -m aklr export check" in out
 
 

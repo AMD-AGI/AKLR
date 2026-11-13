@@ -4,7 +4,57 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
+
+from agentx_ci.utils import complete_measurement, read_json, validated_results
+
+
+def summarize(out: Path, exit_code: int) -> int:
+    """Expose partial measurements without hiding launcher or cancellation failures."""
+    try:
+        results = validated_results(read_json(out / "results.json"))
+        rows, successful, total = [], 0, 0
+        for mode, target in (("disabled", results["control"]), ("enabled", results)):
+            expected = target["run"]["points_expected"]
+            points = target["points"]
+            identities = [(point["arm"], point["conc"]) for point in points]
+            if (
+                type(expected) is not int
+                or expected <= 0
+                or len(points) > expected
+                or len(identities) != len(set(identities))
+            ):
+                raise ValueError("invalid measurement point counts")
+            ok = sum(point.get("status") == "ok" for point in points)
+            successful += ok
+            total += expected
+            rows.append(f"| {mode} | {ok} | {len(points) - ok} | {expected - len(points)} | {expected} |")
+        status = "Success" if not exit_code and complete_measurement(results) else "Partial success"
+        if exit_code or not successful:
+            status, exit_code = "Failed", exit_code or 1
+        lines = [
+            f"## AgentX sweep: {status}",
+            "",
+            f"**{successful}/{total} measurement points successful.**",
+            "",
+            "| AKLR | Successful | Failed | Not completed | Planned |",
+            "| --- | ---: | ---: | ---: | ---: |",
+            *rows,
+            "",
+            "Point failures and their logs remain in the result artifact and report.",
+        ]
+    except (OSError, ValueError, KeyError, TypeError):
+        exit_code = exit_code or 1
+        lines = ["## AgentX sweep: Failed", "", "No usable measurement results were saved."]
+    if exit_code:
+        lines.extend(["", f"Sweep process exited with status {exit_code}; see the sweep and launcher logs."])
+    summary = "\n".join(lines) + "\n"
+    print(summary)
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as output:
+            output.write(summary)
+    return exit_code
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -54,4 +104,4 @@ def main(argv: list[str] | None = None) -> int:
         return runtime.main(command)
     from agentx_ci import docker_launch
 
-    return docker_launch.run(args, command)
+    return summarize(args.out, docker_launch.run(args, command))

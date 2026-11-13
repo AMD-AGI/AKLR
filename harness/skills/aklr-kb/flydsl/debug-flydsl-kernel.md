@@ -14,8 +14,8 @@ allowed-tools: Read Edit Bash Grep Glob Agent
 # Debugging a FlyDSL kernel
 
 ## Before anything else: clear the cache
-FlyDSL caches compiled kernels aggressively, and a stale cache is the single most common reason a
-correct fix appears not to work. **Do this before you believe any result**, including a failing one:
+FlyDSL caches compiled kernels aggressively, and a stale cache makes a correct fix appear not to work.
+**Do this before you believe any result**, including a failing one:
 
 ```bash
 rm -rf "${FLYDSL_RUNTIME_CACHE_DIR:-$HOME/.flydsl/cache}"
@@ -27,7 +27,7 @@ If the launch wrapper is memoized, clear that too:
 compile_my_kernel.cache_clear()      # any @functools.lru_cache on the compile path
 ```
 
-Everything below assumes you have done this. A debugging session that skips it can burn hours
+Everything below assumes you have done this. Debugging that skips it can burn hours
 "fixing" a bug that was already fixed.
 
 ### What the cache key sees
@@ -57,8 +57,10 @@ calling into `kernels/common/` is one), functions reached through a module attri
 environment variables your own code reads. A kernel that stores `cfg["v"]` from a closure `dict` keeps the
 value it was first compiled with, even in a second process sharing the cache directory, while the same
 kernel reading a closure `float` recompiles; a raw-tensor kernel launched at different row counts reuses one
-cache entry. Edits there need `FLYDSL_EXTRA_SOURCE_DIRS` pointing at the helper directory,
-`FLYDSL_RUNTIME_ENABLE_CACHE=0` (disables the disk cache; the in-memory cache stays), or a clean cache.
+cache entry. Edits there need a new process with `FLYDSL_RUNTIME_ENABLE_CACHE=0` (disables the disk cache;
+the in-memory cache stays) or with a clean cache. `FLYDSL_EXTRA_SOURCE_DIRS` pointing at the helper directory
+covers only edits to the `.py` files in that directory, not an environment variable your code reads
+*(field, E1)*.
 
 A captured `dict` is never in the key: not in one process, not through a second call of the factory, not
 across processes sharing the cache directory. A captured scalar enters the key on the jit object's first call
@@ -79,27 +81,28 @@ Three checks that settle "did my change run?":
 - **Break it on purpose.** Make the kernel compute something wrong (scale by 2) without clearing the
   cache. If the old correct result comes back, every earlier measurement of that edit was stale.
 - **Identical numbers are a signal.** Variants that should differ but report byte-identical timings, or
-  identical `VGPR_Count` / `Accum_VGPR_Count` / `SGPR_Count` in a rocprofv3 kernel trace, are almost
-  always one cached binary.
+  identical `VGPR_Count` / `Accum_VGPR_Count` / `SGPR_Count` in a rocprofv3 kernel trace, may be one
+  cached binary; two real variants can also share register counts, so confirm with the next check.
 - **Read what was compiled.** In a fresh process, `FLYDSL_DUMP_IR=1` skips the disk cache and writes every
   pass and `NN_final_isa.s` under `$FLYDSL_DUMP_DIR/<kernel>/` (default `~/.flydsl/debug`;
   `python/flydsl/utils/env.py:249-251`, `python/flydsl/compiler/jit_function.py:1414`). How to read the dump:
   `../gemm/mainloop.md` §10.
 
 ## Start from the symptom
-| What you observe | Most likely cause | Section |
+| What you observe | Causes to check | Section |
 |---|---|---|
 | Output is all NaN | `-inf` minus `-inf` in softmax, or divide by zero | [§1](#1-all-nan) |
 | Output is all zeros | wrong output address, or an unwritten intermediate | [§2](#2-all-zeros) |
-| More than half the elements are wrong | missing partitions, or a layout/addressing mismatch | [§3](#3-mostly-wrong) |
+| Errors far larger than the data path's precision | missing partitions, or a layout/addressing mismatch | [§3](#3-mostly-wrong) |
 | Some shapes partly unwritten, depending on the order shapes ran | a bound baked from a host integer | [§3](#a-bound-or-address-baked-from-a-host-integer) |
-| 1–5% of elements are slightly off | FP8 quantization, or a scale applied twice | [§4](#4-slightly-off) |
+| Errors about the size of the data path's precision | FP8 quantization, or a scale near 1 applied twice | [§4](#4-slightly-off) |
 | Won't compile, or crashes at trace time | `range` vs `range_constexpr`, loop-state typing, scalar/vector mismatch | [§5](#5-wont-compile) |
-| GPU hangs | loop bounds, or a divergent barrier | [§6](#6-hang) |
+| GPU hangs | loop bounds (`step == 0`); on gfx950 a divergent barrier can give stale LDS but does not hang *(field, E2)* | [§6](#6-hang) |
 
 The distinction that matters most is **§3 versus §4**. A large mismatch is structural — you have the
-wrong data. A small mismatch is numeric — you have the right data at the wrong precision. They have
-disjoint cause sets, so classify before you dig.
+wrong data. A small mismatch is numeric — you have the right data at the wrong precision. Classify before
+you dig, but the two cause sets overlap: a scale far from 1 applied twice puts every element far off, and an
+addressing bug confined to a tail tile leaves only a few elements wrong.
 
 ---
 
@@ -143,19 +146,21 @@ not.
 
 ## 2. All zeros
 
-Zeros almost always mean *the write went somewhere else*, not *the compute produced zero*.
+Zeros can mean *the write went somewhere else*, not *the compute produced zero*: rule that out before you
+debug the compute.
 
 ### Wrong stride
-A wrong `stride_out_seq` or `stride_out_part` sends every store to the wrong address:
+A wrong output stride (such as `stride_out_seq`) sends every store with a non-zero index along that axis to the
+wrong address, while index 0 lands right:
 
 ```python
 print(f"out strides: {output.stride()}, temp strides: {temporary_output.stride()}")
 ```
 
 ### Partition slot versus partition index
-For multi-partition kernels, output must be written to the **`part_z` slot** (`0 .. grid_z-1`), not the
-absolute partition index. The reduce kernel reads slots. Writing by absolute index scatters results
-outside the range the reducer looks at.
+If the reduce kernel reads partial results from slots `0 .. grid_z-1` (**`part_z`**), each partition's
+output must be written to its slot, not to the absolute partition index: writing by absolute index scatters
+results outside the range the reducer looks at. Check which index your reduce kernel reads.
 
 ### The intermediate was never written
 If the main kernel never writes `exp_sums` / `max_logits`, the reduce kernel faithfully reduces
@@ -175,8 +180,8 @@ This distinguishes "wrote zeros" from "wrote nothing", which look identical othe
 ## 3. Mostly wrong
 
 ### Missing partitions
-If `grid_z < total_partitions` and the kernel handles exactly one partition per CTA with no loop, most
-of the context is silently skipped:
+If `grid_z < total_partitions` and the kernel handles exactly one partition per CTA with no loop, the last
+`total_partitions − grid_z` partitions of the context are silently skipped:
 
 ```python
 total_parts = math.ceil(context_len / KV_COMPUTE_BLOCK)
@@ -208,14 +213,18 @@ cache key does not see (a `dict` in a closure, a helper object's attribute; see
 [What the cache key sees](#what-the-cache-key-sees)), every later shape with the same dtype reuses the
 first shape's value.
 
-Signature: part of the output is never written — rows of zeros past a fixed byte count, or a gap spread
-evenly across one dimension — and only for some shapes. It hides when shapes run largest first, so a
-single-shape test passes. **The decisive experiment is to run the same shapes in reverse order:**
-failures that follow the shape are shape-specific; failures that follow the position are a stale bound.
+Signature: part of the output is wrong, only for shapes run after the first one compiled. A byte bound
+baked from the first shape leaves everything past that byte count unwritten, and only in larger shapes, so
+it hides when shapes run largest first and a single-shape test passes. A baked stride sends rows to the
+wrong offsets — some left unwritten, others holding wrong values — in every order *(field, E3)*. **The
+decisive experiment is to run the same shapes in reverse order:** failures that follow the shape are
+shape-specific; failures that follow the position are a stale bound or stride.
 
 Fix: derive every quantity that varies with the shape from the kernel's traced arguments
 (`fx.Int32` sizes, the tensor's layout). Keep host constants for what genuinely changes the code —
-branch choice, unroll count, vector width — which changes the IR anyway.
+branch choice, unroll count, vector width — but pass them as `fx.Constexpr` arguments or closure scalars:
+the cache key hashes source and those values, not the IR (`jit_function.py:563-593, 1301-1302`), so a vector
+width read from a closure `dict` reuses the first compiled binary *(field, E4)*.
 
 ### Differential against another backend
 ```python
@@ -232,13 +241,13 @@ Before treating a small mismatch as a bug, check whether it is the expected erro
 
 | Source | Expected magnitude | Verdict |
 |---|---|---|
-| FP8 PV MFMA vs a bf16 reference | ~0.03 max error, `atol=5e-3` | **not a bug** — inherent to the FP8 data path |
-| Reference uses per-row Q quant, kernel uses per-tensor | ~1–3% | quantization mode mismatch, fix the kernel or the reference |
+| FP8 data path (Q and P in FP8 for the MFMAs) vs a bf16 reference | max abs error ~1e-3–6e-3 with U(−1,1) inputs, up to ~0.06 with a sharp softmax, where `atol=rtol=5e-3` fails *(field, E5)* | **not a bug** if the kernel matches an emulation of the same FP8 path; the large errors come mostly from quantizing Q |
+| Reference uses per-row Q quant, kernel uses per-tensor | relative L2 ~0.7–2% for U(−1,1) or N(0,1) Q, 6–7% for N(0,4²) Q *(field, E6)* | quantization mode mismatch, fix the kernel or the reference |
 | `_scale` composition | arbitrary | verify `_scale = softmax_scale * q_scale * k_scale` |
 
-The recurring real bug in this class is **applying `v_scale` twice** — once while scaling the
-probabilities and again after the PV product. It produces a small, plausible, uniformly-scaled error
-that is easy to mistake for quantization noise.
+A real bug in this class is **applying `v_scale` twice** — once while scaling the
+probabilities and again after the PV product. It scales every output by `v_scale` once more: when `v_scale`
+is near 1 the error is small and uniform, and easy to mistake for quantization noise.
 
 ---
 
@@ -339,9 +348,11 @@ converts them with `as_ir_value` itself. Unwrap to a raw `ir.Value` only where a
 demands one. Every slot keeps one MLIR type across `init`, the per-iteration `state`, `yield` and the
 post-loop results.
 
-A slot is not limited to `f32`, `i32`, `i64`, `index` or a vector: any value of one MLIR type can be
-carried, a raw `ir.Value` such as an `ArithValue` included. The inferred forms (a plain `range` loop, a
-runtime `if`, `while`) also carry a name bound to a `list`, `tuple`, `dict` or `SimpleNamespace` of such
+Through `init=` a slot can carry any value of one MLIR type, a raw `ir.Value` included. The inferred forms (a
+plain `range` loop, a runtime `if`, `while`) carry only `fx` numerics, `Vector` and raw scalar or `index` values
+such as an `ArithValue`; any other raw `ir.Value`, such as a buffer resource or a raw vector, raises
+`TypeError: as_dsl_value cannot wrap ir.Value …` at trace time, so carry it through `init=` *(field, E7)*.
+The inferred forms also carry a name bound to a `list`, `tuple`, `dict` or `SimpleNamespace` of such
 values, nested, as one `iter_arg` per leaf, and rebuild it after the region; a bare Python initial value is
 promoted (`0` to `fx.Int32`, `0.0` to `fx.Float32`). A body that changes a leaf's type (an `acc = 0`
 reassigned to an `f32`), a sequence's length or a dict's keys raises `TypeError: … does not match the
@@ -357,8 +368,9 @@ k_addr_bytes = ...   # for FP8, elements == bytes
 k_4xi32 = buffer_ops.buffer_load(k_rsrc, k_addr_bytes // 4, vec_width=4, dtype=T.i32)
 ```
 
-Getting this wrong reads from a 4×-off address — which usually lands *inside* the buffer, so it fails
-as garbage rather than as a fault.
+Getting this wrong reads from a 4×-off address. Only offsets below a quarter of the buffer stay inside it;
+the rest run past its end, where a descriptor given `num_records_bytes` returns 0 and the default
+`max_size=True` reads whatever is mapped there or raises a GPU memory access fault *(field, E8)*.
 
 ### Vector stores need vector values
 ```python
@@ -371,7 +383,8 @@ Vec.from_elements([scalar_i32], fx.Int32).store(lds_ptr, [idx])   # CORRECT
 ## 6. Hang
 
 ### Loop bounds
-`stop < start` under unsigned comparison, or `step == 0`, hangs the GPU. Print the bounds on the host
+`step == 0` (with `start < stop`) never terminates and hangs the GPU. `stop <= start` does not: both `range`
+forms compare signed, so the loop runs zero times *(field, E9)*. Print the bounds on the host
 before launching — it costs nothing:
 
 ```python
@@ -380,8 +393,10 @@ print(f"loop: start={part_start}, stop={part_end}, step={cpb}")
 
 ### Divergent barrier
 `gpu.barrier()` requires **every** thread in the workgroup to reach it. If a runtime `if` sends some
-threads down another path, the barrier deadlocks. FlyDSL does not support divergent barriers — hoist
-the barrier out of the conditional, do not try to make the condition uniform.
+threads down another path, gfx950 does not deadlock — `s_barrier` is counted per wave, a wave executes it
+when any of its lanes does, and waves that have ended are not waited for — but when whole waves skip a
+barrier or run an extra one, the waves pair up the wrong barriers and can read stale LDS *(field, E2)*. Hoist
+the barrier out of the conditional, or keep it in wave-uniform arms as below.
 
 Branches that every lane of a wave takes the same way (wave roles) may hold barriers only if each wave
 executes the same number of `s_barrier`; a mismatch can give stale LDS instead of a hang. Count them per arm
@@ -390,7 +405,7 @@ in the ISA: two adjacent barriers in one arm compile to one (`language/limits.md
 ### Recovery
 ```bash
 rocm-smi                # 100% busy with no progress confirms the hang
-sudo amdgpu-reset       # or reboot
+sudo amd-smi reset -G -g <gpu_index>   # or reboot; without -g it resets every GPU
 ```
 
 ---
@@ -416,9 +431,20 @@ sudo amdgpu-reset       # or reboot
 - [ ] `buffer_load` offset units match `dtype` (bytes ÷ 4 for `i32`)
 - [ ] Vector stores pass `Vector` values, not scalars
 - [ ] Loop-carried state uses FlyDSL types, unwrapped only at hard boundaries
-- [ ] Output written to the `part_z` slot, not the absolute partition index
+- [ ] Partial outputs written to the index the reduce kernel reads (`part_z` slot or absolute partition index)
 - [ ] `exp_sums` / `max_logits` strides match the real tensor layout
 - [ ] Softmax guards `-inf - (-inf)`
 - [ ] Division guarded with `select(sum > 0, sum, 1.0)`
 - [ ] K/V addressing matches the tensor rank (4-D vs 5-D `trans_v`)
 - [ ] MFMA operand order verified — all-1s will not catch this one
+
+## Evidence
+- E1 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=1 per step, processes sharing a cache directory] a helper in the `FLYDSL_EXTRA_SOURCE_DIRS` directory returning an environment variable changed 1 → 2: a new process still read 1, with `FLYDSL_RUNTIME_ENABLE_CACHE=0` or a cleared cache 2, the same jit object in one process with `FLYDSL_RUNTIME_ENABLE_CACHE=0` still 1; an edit of the helper's source recompiled with the directory set, not without (probe kernel storing the helper's value)
+- E2 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, HIP 7.15, N=100 launches per arm, 10 s timeout, LDS read back] a barrier skipped or added under a runtime `if`, 6 arms: 600 of 600 launches completed; half the lanes of each wave diverging: 0 stale reads; a whole wave running an extra barrier, or whole waves skipping the only one: stale LDS on every launch; wave-uniform arms with one barrier each: 0 wrong (1024 workgroups × 256 threads)
+- E3 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=1 per order, output prefilled with -1] four shapes (64 KiB–4 MiB of output) in one process, value baked from a closure `dict`: `num_records_bytes` largest first all correct, smallest first each later shape unwritten from byte 65536 on with no wrong value; a stride, in each of three orders: every later shape unwritten and wrong in places; each shape alone correct (2-D store kernel)
+- E4 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, torch 2.11.0+rocm10.0.0, N=1 per step, probe output read back and final ISA counted] vector width 4 and 8 compile to 2 and 4 `buffer_load_dwordx4`; width from a closure `dict` compiled at 4, then 8 requested in a new process sharing the cache directory or through a second factory call in one process: the width-4 binary ran; width from a closure `int`: recompiled (element-wise add kernel)
+- E5 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, torch 2.11.0+rocm10.0.0, N=2 seeds × 29 configs, against a bf16 reference and an FP8-path emulation] max abs error 0.0009–0.0057 with U(−1,1) inputs, 0.034–0.0625 with Q×8 (sharp softmax), where `atol=rtol=5e-3` failed on 27–54% of the elements; kernel against the emulation ≤ 0.0039; with Q×8, quantizing Q alone 0.036–0.0625, P alone 0.0044–0.0234 (FP8-KV paged-attention decode, head dim 128)
+- E6 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0, N=5 seeds (medians), attention in float64 with Q quantized to FP8 per row and per tensor] relative L2 between the two modes 0.74–0.77% with U(−1,1) Q, 2.12–2.19% with N(0,1), 6.38–7.39% with N(0,4²); elements failing `atol=rtol=5e-3`: 0, except 27–57% with N(0,4²); each mode against unquantized Q 0.35–5.4% (batch 4, 8 query heads per KV head, head dim 128, context 256–4096, FP8 e4m3)
+- E7 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=1 per form and value, outputs read back] a raw `vector<4xf32>` and an `!llvm.ptr<8>` buffer resource: carried correctly through `init=`, `TypeError: as_dsl_value cannot wrap ir.Value …` at trace time in a plain `range`, a runtime `if` and `while`; a raw `ArithValue` (i32, f32): correct in all four forms (single-workgroup probe kernels)
+- E8 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=2 per size and descriptor, exit status and read-back] byte offsets passed to `buffer_load(..., vec_width=4, dtype=T.i32)` over FP8 buffers of 64 KiB–256 MiB: only the first quarter of the threads read inside the buffer; `max_size=True`: memory access fault at 64 and 256 MiB, garbage at 64 KiB and 4 MiB; `num_records_bytes`: reads past the end returned 0
+- E9 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, torch 2.11.0+rocm10.0.0, N=5 launches per bounds and form, iteration count read back] `range(10, 2, 1)` and `range(4, -4, 1)` ran 0 iterations, `range(-4, 4, 1)` ran 8, with a plain `range` (`icmp slt i32`) and with `init=` (`icmp slt i64`); `step == 0` not run (runtime `fx.Int32` bounds, one thread)

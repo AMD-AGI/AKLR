@@ -14,7 +14,7 @@ from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.semantics import sorted_key_json
 from aklr.core.contract.spec import attr
-from tests.op_case import OpCase
+from tests.op_case import HIP_GEMM_KERNEL_SOURCE, OpCase
 
 
 class TestSchemaFile:
@@ -45,7 +45,7 @@ class TestSchemaFile:
         registry = ContractRegistry.default()
         impls = Path("aklr/ops/fused_moe/impls/flydsl")
         separated = impls / (
-            "fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/1fee59821837c26f.json"
+            "fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/f13fecf15dbe0a9d.json"
         )
         text = separated.read_bytes()
         assert b"has_num_local_tokens" not in text
@@ -103,6 +103,34 @@ class TestSchemaFile:
         for bad in ({"flydsl": ""}, {"flydsl": "0.3.2"}, {"cuda": ">=12"}):
             with pytest.raises(ValueError, match=r"^a\.json: kernel\.requires"):
                 parse(with_requires(bad), "a.json")
+
+    @pytest.mark.parametrize(
+        ("language", "requires", "pinned"),
+        [
+            ("flydsl", {"flydsl": ">=0.3.2"}, True),
+            ("triton", {"triton": ">=3.8", "flydsl": ">=0.3.2"}, True),
+            ("hip", {"hip": ">=7.15"}, True),
+            ("flydsl", {}, False),
+            ("flydsl", {"triton": ">=3.8"}, False),
+            ("hip", {}, False),
+        ],
+        ids=["flydsl", "triton_and_more", "hip", "flydsl_empty", "flydsl_other_language", "hip_empty"],
+    )
+    def test_kernel_requires_error(self, language: str, requires: dict[str, str], pinned: bool) -> None:
+        """A kernel names its own language in ``requires``; a definition (no sources)
+        needs nothing. ``export check`` reports the error."""
+        case = OpCase.of("gemm@1.0")
+        schema = (
+            case.schema(HIP_GEMM_KERNEL_SOURCE, language="hip")
+            if language == "hip"
+            else case.schema(language=language)
+        )
+        kernel = schema.kernel.model_copy(update={"requires": requires})
+        error = kernel.requires_error
+        assert (error is None) is pinned
+        if not pinned:
+            assert f"names no {language} version" in error
+        assert kernel.model_copy(update={"sources": ()}).requires_error is None
 
     def test_kernel_author(self) -> None:
         """``kernel.author`` follows ``targets``, is absent when empty and is one line

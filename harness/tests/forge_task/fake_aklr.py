@@ -11,6 +11,8 @@ from pathlib import Path
 
 SCHEMA_NAME = "gemm_n32_k64"
 CASES = ("m=8", "m=16")
+# the installed toolchains the stand-in's aklr.core.platform.toolchain reports
+FAKE_TOOLCHAINS = {"flydsl": "0.3.4.1"}
 
 # The contract surface the driver and the api-params probe call, with the schema text as plain JSON.
 FAKE_CONTRACT = """import hashlib, json
@@ -109,7 +111,7 @@ def install_aklr(
     passing: str = "torch.matmul",
     platform_failures: int = 0,
     timed_baseline: bool = True,
-    min_speedup: float = 1.03,
+    min_speedup: float = 1.05,
 ) -> Path:
     """Plant the AKLR stand-in at ``root``, a checkout `--aklr-root` can name."""
     contract = root / "aklr" / "core" / "contract"
@@ -121,6 +123,9 @@ def install_aklr(
         (contract / f"{module}.py").write_text(FAKE_CONTRACT, encoding="utf-8")
     (platform / "env.py").write_text(
         f"class RuntimeEnv:\n    min_speedup = {min_speedup!r}\n", encoding="utf-8"
+    )
+    (platform / "toolchain.py").write_text(
+        f"def toolchain_version(name):\n    return {FAKE_TOOLCHAINS!r}.get(name)\n", encoding="utf-8"
     )
     (root / "aklr" / "__main__.py").write_text(
         FAKE_VALIDATE.format(

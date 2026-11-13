@@ -13,10 +13,10 @@ measured:
   - {metric: "speedup over aiter, AKLR CI measurement profile 18, per Point", value: "2.878–4.094; 2 of 2 Points ≥ 1.03 (m 1, 2)", gpu: MI355X, workload: "fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts64_topk6_inter_dim2048_global_experts256 file 5db89e7db4f729ff, m 1, 2", run_ref: "d908d01 (CI run 42000899019)", date: "2026-11-05"}
   - {metric: "speedup over aiter, AKLR CI measurement profile 18, per Point", value: "2.006–2.920; 4 of 4 Points ≥ 1.03 (m 1, 2, 4, 8)", gpu: MI355X, workload: "fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim256 file a5a343437ee191a7, m 1, 2, 4, 8", run_ref: "d908d01 (CI run 42000899019)", date: "2026-11-05"}
   - {metric: "speedup over aiter, AKLR CI measurement profile 18, per Point", value: "1.503–2.894; 4 of 4 Points ≥ 1.03 (m 1, 2, 4, 8)", gpu: MI355X, workload: "fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim512 file 9dcb4d796b597d0b, m 1, 2, 4, 8", run_ref: "d908d01 (CI run 42000899019)", date: "2026-11-05"}
-  - {metric: "speedup over aiter, AKLR validate measurement profile 19, per Point", value: "1.339–1.622; 5 of 5 listed Points ≥ 1.03 (m 16, 32, 64, 128, 256)", gpu: MI355X, workload: "fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts32_topk6_inter_dim2048_global_experts256 file d8335ff9da7e16df (its GPU code now in 640d56e2cf48884d), m 16, 32, 64, 128, 256", run_ref: "local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/flash/flash_d8335ff9da7e16df/report.json (base 0e02a81)", date: "2026-11-09"}
-  - {metric: "speedup over aiter, AKLR validate measurement profile 19, per Point", value: "1.241–1.406; 5 of 5 listed Points ≥ 1.03 (m 16, 32, 64, 128, 256)", gpu: MI355X, workload: "fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts64_topk6_inter_dim2048_global_experts256 file 69c33e38a0f91a72 (its GPU code now in 3279ada84a65bbd9), m 16, 32, 64, 128, 256", run_ref: "local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/flash/flash_69c33e38a0f91a72/report.json (base 0e02a81)", date: "2026-11-09"}
-  - {metric: "speedup over aiter, AKLR validate measurement profile 19, per Point", value: "1.358–1.962; 5 of 5 listed Points ≥ 1.03 (m 16, 32, 64, 128, 256)", gpu: MI355X, workload: "fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim256 file 9506ba35c7cf8ec1 (its GPU code now in b9ae6161bd156dc2), m 16, 32, 64, 128, 256", run_ref: "local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/scratch_per_call/results/g2/validate_flash_9506ba35c7cf8ec1/validation/report.json (base 0e02a81)", date: "2026-11-09"}
-  - {metric: "speedup over aiter, AKLR validate measurement profile 19, per Point", value: "1.250–1.662; 5 of 5 listed Points ≥ 1.03 (m 16, 32, 64, 128, 256)", gpu: MI355X, workload: "fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim512 file 9e158753082c37e4 (its GPU code now in eb8af99c7e8ad333), m 16, 32, 64, 128, 256", run_ref: "local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/flash/flash_9e158753082c37e4/report.json (base 0e02a81)", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate measurement profile 19, per Point", value: "1.339–1.622; 5 of 5 listed Points ≥ 1.03 (m 16, 32, 64, 128, 256)", gpu: MI355X, workload: "fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts32_topk6_inter_dim2048_global_experts256 file 640d56e2cf48884d, measured as its earlier version with the same GPU code, m 16, 32, 64, 128, 256", run_ref: "base 0e02a81", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate measurement profile 19, per Point", value: "1.241–1.406; 5 of 5 listed Points ≥ 1.03 (m 16, 32, 64, 128, 256)", gpu: MI355X, workload: "fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts64_topk6_inter_dim2048_global_experts256 file 3279ada84a65bbd9, measured as its earlier version with the same GPU code, m 16, 32, 64, 128, 256", run_ref: "base 0e02a81", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate measurement profile 19, per Point", value: "1.358–1.962; 5 of 5 listed Points ≥ 1.03 (m 16, 32, 64, 128, 256)", gpu: MI355X, workload: "fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim256 file b9ae6161bd156dc2, measured as its earlier version with the same GPU code, m 16, 32, 64, 128, 256", run_ref: "base 0e02a81", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate measurement profile 19, per Point", value: "1.250–1.662; 5 of 5 listed Points ≥ 1.03 (m 16, 32, 64, 128, 256)", gpu: MI355X, workload: "fused_moe_interleave_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts256_topk6_inter_dim512 file eb8af99c7e8ad333, measured as its earlier version with the same GPU code, m 16, 32, 64, 128, 256", run_ref: "base 0e02a81", date: "2026-11-09"}
 sources:
   - aklr/ops/fused_moe/impls/flydsl/fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts32_topk6_inter_dim2048_global_experts256/df5c661e4ce848dc.json
   - aklr/ops/fused_moe/impls/flydsl/fused_moe_interleave_has_expert_mask_has_swiglu_limit_gate_up_interleaved_model_dim4096_n_experts64_topk6_inter_dim2048_global_experts256/5db89e7db4f729ff.json
@@ -37,7 +37,7 @@ by token count:
 
 - **1–8 tokens**, on main: `df5c661e…`, `5db89e7d…`, `a5a34343…` and `9dcb4d79…`, which embed the same `kernel.py`
   (identical `kernel` sections). `kernel.py:<line>` and bare function names in the 1–8-token parts below are in it.
-- **16–256 tokens**, new and not yet measured by CI: `640d56e2…` (32 local), `3279ada8…` (64 local), `b9ae6161…`
+- **16–256 tokens**, measured by CI as of #125: `640d56e2…` (32 local), `3279ada8…` (64 local), `b9ae6161…`
   (inter 256) and `eb8af99c…` (inter 512), one kernel each. The three built on aiter's FlyDSL code carry copies of
   the aiter modules they use and import no aiter at run time.
 
@@ -46,6 +46,8 @@ is one (token, expert) pair, 6m per call; how many land on one expert depends on
 
 ## Applies when
 
+- The same layout at hidden 7168 (DeepSeek-V4-Pro) has its own kernels:
+  [fused_moe_interleave_swiglu_hidden7168.md](fused_moe_interleave_swiglu_hidden7168.md).
 - Contract `fused_moe@1.0`, layout variant `gate_up_interleaved`: `w1` (experts, 2 × inter, 4096) with gate and up rows
   interleaved in 16-row tiles and fp4 e2m1 in 16 × 64-byte blocks, `w2` (experts, 4096, inter), E8M0 scales per 1×32
   stored 2-D (`aklr/ops/fused_moe/contract.py`, the `gate_up_interleaved` variant). `gate_mode` interleave with
@@ -65,12 +67,12 @@ is one (token, expert) pair, 6m per call; how many land on one expert depends on
 - Compare: `determinism: bounded`, `max_violation_fraction` 1e-3, whole-output SQNR ≥ 13 dB (`SqnrBound`). The
   1–8-token kernel reduces in a fixed order with no atomics; the 16–256-token kernels add into `out` with atomics,
   except `b9ae6161…` at 16 and 32 tokens.
-- Points. Served on main today: m 1, 2 (expert parallel) and m 1, 2, 4, 8 (all local), by the 1–8-token files
-  *(field, E1)*. The 16–256-token files list m 16, 32, 64, 128 and 256 of every name; dispatch serves them once CI
-  records a `speedup` of 1.03 or more, since a workload without one does not qualify (`AKLR_MIN_SPEEDUP`,
-  `aklr/ops/README.md` § Environment variables; S13). Each name also has a kernel-less file (`550200e0…`,
-  `58ad3640…`, `af9db8f6…`, `ff293e2a…`) defining m 16–256, which is not served (`aklr/ops/README.md` § Schema
-  fields); no other Point of these names has a kernel.
+- Points. Served on main: m 1, 2 (expert parallel) and m 1, 2, 4, 8 (all local), by the 1–8-token files
+  *(field, E1, E17)*, and, as of #125, m 16, 32, 64, 128 and 256 of every name, by the 16–256-token files, whose CI
+  `speedup` is 1.235 or more; a workload without a `speedup` of 1.05 or more is not served
+  (`AKLR_MIN_SPEEDUP`, `aklr/ops/README.md` § Environment variables; S13). Each name also has a kernel-less file
+  (`550200e0…`, `58ad3640…`, `af9db8f6…`, `ff293e2a…`) defining m 16–256, which is not served (`aklr/ops/README.md`
+  § Schema fields); no other Point of these names has a kernel.
 - The baseline is aiter's `fused_moe` with `AITER_BF16_FP8_MOE_BOUND=16`, sglang's DeepSeek-V4 setting
   (`aklr/ops/fused_moe/baseline.py`): below 16 rows aiter keeps bf16 activations, from 16 it runs fp8. One kernel
   file measures each Point, so the yardstick is aiter.
@@ -144,7 +146,9 @@ is one (token, expert) pair, 6m per call; how many land on one expert depends on
   graph replay), one CUDA graph replayed with three input sets, and two calls at once with different inputs as above
   *(field, E12)*. The same GPU code as `b9ae6161…` with its scratch allocated once per shape in `_build` passed the
   first two and gave wrong output under the third in 20 of 20 tries at 32–256 tokens, and at 16 tokens on the shared
-  CUs *(field, E13)*: the same-input conditions cannot show scratch that concurrent calls share.
+  CUs *(field, E13)*: the same-input conditions cannot show scratch that only receives plain stores of
+  input-determined values, as this kernel's does; scratch that each call zeroes and then accumulates into with
+  atomics can show under them, but enqueued back to back only in 1–2 of 200 tries on a toy HIP op *(field, E15)*.
 - **Code no Point reaches.** `b9ae6161…` asserts at most 1536 routes and no expert mask, which every listed Point
   meets (S11). `eb8af99c…`'s unfolded path below 256 tokens (`_pf_depth` 2, `_early_tail`, the K-stagger off) and its
   copy of aiter's v2 stage 2 above 256 tokens, `3279ada8…`'s default configuration for token counts outside `_CFG`,
@@ -166,8 +170,11 @@ routes: 768, 1536).
   MFMA, in the order row, scales, weights, pinned with `sched_barrier` so `vmcnt` retires them in that order.
 - Weights: one 16-byte load per lane per chunk for the gate tile and one for the up tile of the interleaved pair; each
   dword of 8 fp4 values becomes 8 bf16 with the block scale applied by `cvt_scalef32_pk_bf16_fp4`; one scale dword
-  holds the gate and up bytes of two chunks. Non-temporal loads under expert parallelism, cached otherwise (routes that
-  share an expert then reuse it from L2, per the code's note) (`../moe/grouped_sorted_tokens.md` §4).
+  holds the gate and up bytes of two chunks. Non-temporal loads under expert parallelism, cached otherwise
+  (`../moe/grouped_sorted_tokens.md` §4). The code's note says routes that share an expert then reuse it from L2; at
+  8 tokens with L2 flushed, non-temporal loads were 9.5–13% slower in five of six cases where 6 or 8 experts took all
+  48 routes and within 2.4% under random routing, with a HIP copy's L2 hit rates at 7–26% either way
+  *(field, E19, E20)*, so little of that reuse is in L2.
 - `mfma_f32_16x16x32_bf16`, 4 per chunk for gate and 4 for up, into fp32 (`../gemm/mainloop.md` §5).
 - `_reduce_waves`: the 4 waves' partials through LDS, summed in wave order (`../gemm/small_m.md` §4).
   Wave 0 clamps, applies SiLU with `exp2` and `rcp`, rounds to bf16 and stores the route's 16 values to `Y`.
@@ -193,9 +200,12 @@ matters at these sizes.
   workgroup waits on another and no routing launch runs; the sorted ids and routing weights of each block are
   published for stage 2, and the grid zeroes `out` in stripes for stage 2's adds (`../moe/few_tokens.md` §2). Under expert
   parallelism the local slot comes from the mask by ballot, and routes to other ranks join no block. At 256 tokens
-  `640d56e2…`, `3279ada8…` and `eb8af99c…` run one launch before stage 1 that sorts, quantizes and zeroes `out`;
-  `640d56e2…`'s launch adds 256 workgroups that request the first k-tile of each local expert's W1 from the XCD that
-  stage 1 runs it on, so stage 1's first loads hit cache. `b9ae6161…` has no sort: at 16 tokens (96 routes) stage 1
+  `640d56e2…`, `3279ada8…` and `eb8af99c…` run one launch before stage 1 that sorts and quantizes, and in `3279ada8…`
+  and `eb8af99c…` also zeroes `out` (`640d56e2…` zeroes it inside stage 1, `_make_zero`);
+  `640d56e2…`'s launch adds 256 workgroups that request the first half of the start k-tile of each local expert's W1
+  from the XCD that stage 1 runs it on. That made stage 1 about 2% faster at m 256, but not through L2 hits: a probe
+  with the same requests and placement saw none in the next launch *(field, E21)*. `b9ae6161…` has no sort: at 16
+  tokens (96 routes) stage 1
   runs one workgroup per (route, 16 columns) as the 1–8-token kernel does; from 32 tokens one workgroup per (expert,
   32 columns) collects its expert's routes by ballots in route order and runs them 16 per pass, and its column block 0
   publishes the list for stage 2. One FlyDSL launch for sort, quantization and zeroing in place of aiter's, paired
@@ -220,8 +230,10 @@ matters at these sizes.
   expert ids are distinct). Padding rows read past the end of the activations, which returns zeros without a memory
   request (`640d56e2…`; `3279ada8…` at 16, 64 and 128 tokens).
 - **Weights streamed once, K starts staggered.** Weight loads are non-temporal in most stages
-  (`../moe/grouped_sorted_tokens.md` §4); `b9ae6161…`'s per-route stage 1 at 16 tokens reads w1 cached, so the routes
-  of one expert share it in L2 (placement below). Workgroups start their K loop at different K tiles and wrap:
+  (`../moe/grouped_sorted_tokens.md` §4); `b9ae6161…`'s per-route stage 1 at 16 tokens reads w1 cached. The routes of
+  one expert read each 16-column w1 tile from one L2 (placement below) whether the read is cached or non-temporal
+  (equal L2 hits on a HIP copy of its load pattern), and with L2 flushed the cached read was 2–4% faster only when
+  many routes shared an expert *(field, E19, E20)*. Workgroups start their K loop at different K tiles and wrap:
   `640d56e2…` by expert block in both GEMMs, `3279ada8…` per stage-2 workgroup, `eb8af99c…` per stage-1 column tile and
   block. Experts streamed at once then do not hit the same address bits together (`640d56e2…`'s comment at
   `_TIERS`); each block's accumulation order stays fixed (`../gemm/small_m.md` §6 on racing a K-start stagger). The
@@ -234,8 +246,9 @@ matters at these sizes.
   at m 32–256; atomics in place of a combine kernel: +4.0% to +5.6% at m 64–256 *(field, E11)*.
 - **Launch arguments, occupancy and placement.** `b9ae6161…` and `eb8af99c…` preload 16 kernel arguments into SGPRs
   (`../gemm/small_m.md` §6); `3279ada8…` pads stage 1's LDS so that at most 7 (16 tokens), 10 (32 tokens) or 8
-  workgroups share a CU; `b9ae6161…` places the per-route stage-1 workgroups so that block L runs on XCD L mod 8 and
-  the routes of one expert read its w1 lines from one L2 (`../gemm/schedule_and_locality.md` §2).
+  workgroups share a CU; `b9ae6161…` places the per-route stage-1 workgroups so that blocks whose index agrees mod 8
+  share an XCD (which XCD is rotated on some launches) and the routes of one expert read each 16-column w1 tile from
+  one L2 *(field, E16)* (`../gemm/schedule_and_locality.md` §2).
 
 Per Point:
 
@@ -250,41 +263,42 @@ Per Point:
 
 Both sets of numbers use the ruler of `MEASUREMENT_PROFILE` in `aklr/core/validation/stages/_measure.py`, a one-sided
 Student-t lower bound of aiter's time over the kernel's after 16 or 32 rounds of CUDA-graph replays with L2 flushed
-before each call; main's files were measured under its version 18, which collected kernel times through Kineto, the
-new files under version 19, which collects them with AKLR's own rocprofiler-sdk tracer (#33).
+before each call; the readings in the tables below are of its version 19, which collects kernel times with AKLR's own
+rocprofiler-sdk tracer (#33).
 
-**1–8 tokens, on main** (CI run 42000899019), the speedups dispatch reads *(field, E1)*. Bold: 1.03 or above.
+**1–8 tokens, in CI** (CI run 42740594241, #125, for `df5c661e…`, 42549655045 for `5db89e7d…` and `9dcb4d79…`,
+42599763780 for `a5a34343…`), the speedups dispatch reads as of #125 *(field, E1, E17)*. Bold: 1.03 or above.
 
 | File | 1 | 2 | 4 | 8 |
 |---|---|---|---|---|
-| 32 local of 256, inter 2048 `df5c661e…` | **3.251** | **3.448** | – | – |
-| 64 local of 256, inter 2048 `5db89e7d…` | **2.878** | **4.094** | – | – |
-| 256 local, inter 256 `a5a34343…` | **2.920** | **2.702** | **2.366** | **2.006** |
-| 256 local, inter 512 `9dcb4d79…` | **2.894** | **2.502** | **1.853** | **1.503** |
+| 32 local of 256, inter 2048 `df5c661e…` | **3.297** | **3.343** | – | – |
+| 64 local of 256, inter 2048 `5db89e7d…` | **2.805** | **4.053** | – | – |
+| 256 local, inter 256 `a5a34343…` | **2.941** | **2.697** | **2.440** | **2.021** |
+| 256 local, inter 512 `9dcb4d79…` | **2.991** | **2.535** | **1.853** | **1.479** |
 
 "–": no workload in that file. Every workload reads `accuracy: passed`. Across the profile-18 CI runs that rewrote
 each file, a Point moved by up to 0.19 (`df5c661e…` m 2: 3.255–3.448; `5db89e7d…` m 2: 3.929–4.120), and none came
 near 1.03 *(field, E2)*.
 
-**16–256 tokens, the new files**, measured as their earlier versions `d8335ff9…`, `69c33e38…`, `9506ba35…` and
-`9e158753…` (`python -m aklr validate` at main 0e02a81 on an MI355X, FlyDSL 0.3.2, aiter 0.1.21.dev66+gdbd8bf5bd,
+**16–256 tokens, the new files**, measured as their earlier versions
+(`python -m aklr validate` at main 0e02a81 on an MI355X, FlyDSL 0.3.2, aiter 0.1.21.dev66+gdbd8bf5bd,
 torch 2.11.0+rocm10.0.0). Those imported aiter at run time; the current files run the same GPU code from their own
-copies of aiter's modules (S14) and are not yet re-measured. CI writes `speedup` into these files after they merge;
-until then dispatch serves none of their Points. Bold: 1.03 or above.
+copies of aiter's modules (S14). CI measured the current files at 1.235–1.959, every Point served and passing
+accuracy (#125). Bold: 1.03 or above.
 
 | File | 16 | 32 | 64 | 128 | 256 |
 |---|---|---|---|---|---|
-| 32 local of 256, inter 2048 `640d56e2…` (as `d8335ff9…`) *(field, E3)* | **1.622** | **1.485** | **1.432** | **1.339** | **1.350** |
-| 64 local of 256, inter 2048 `3279ada8…` (as `69c33e38…`) *(field, E4)* | **1.406** | **1.363** | **1.285** | **1.243** | **1.241** |
-| 256 local, inter 256 `b9ae6161…` (as `9506ba35…`) *(field, E5)* | **1.962** | **1.692** | **1.414** | **1.358** | **1.362** |
-| 256 local, inter 512 `eb8af99c…` (as `9e158753…`) *(field, E6)* | **1.662** | **1.432** | **1.318** | **1.263** | **1.250** |
+| 32 local of 256, inter 2048 `640d56e2…` *(field, E3)* | **1.622** | **1.485** | **1.432** | **1.339** | **1.350** |
+| 64 local of 256, inter 2048 `3279ada8…` *(field, E4)* | **1.406** | **1.363** | **1.285** | **1.243** | **1.241** |
+| 256 local, inter 256 `b9ae6161…` *(field, E5)* | **1.962** | **1.692** | **1.414** | **1.358** | **1.362** |
+| 256 local, inter 512 `eb8af99c…` *(field, E6)* | **1.662** | **1.432** | **1.318** | **1.263** | **1.250** |
 
-All 20 Points passed accuracy with a worst violation fraction of 0. A second run of `d8335ff9…`, `69c33e38…` and
-`9e158753…` read 1.330–1.646, 1.242–1.407 and 1.256–1.660 *(field, E7)*; `9506ba35…`'s GPU code read 1.333–1.948 and
+All 20 Points passed accuracy with a worst violation fraction of 0. A second run for `640d56e2…`, `3279ada8…` and
+`eb8af99c…` read 1.330–1.646, 1.242–1.407 and 1.256–1.660 *(field, E7)*; `b9ae6161…`'s GPU code read 1.333–1.948 and
 1.342–1.970 in two runs with its scratch allocated once per shape *(field, E5)*. Median call times at 16 and 256
-tokens: 25.9 and 78.3 µs against aiter's 42.0 and 105.9 (`d8335ff9…`); 58.2 and 140.3 against 81.8 and 174.4
-(`69c33e38…`); 25.4 and 76.5 against 50.0 and 104.3 (`9506ba35…`); 45.7 and 140.5 against 76.0 and 176.0
-(`9e158753…`) *(field, E3, E4, E5, E6)*.
+tokens: 25.9 and 78.3 µs against aiter's 42.0 and 105.9 (`640d56e2…`); 58.2 and 140.3 against 81.8 and 174.4
+(`3279ada8…`); 25.4 and 76.5 against 50.0 and 104.3 (`b9ae6161…`); 45.7 and 140.5 against 76.0 and 176.0
+(`eb8af99c…`) *(field, E3, E4, E5, E6)*.
 
 ## Reproduce
 
@@ -314,20 +328,26 @@ contract becomes bitwise (atomic stage 2) or its error bound no longer admits fp
 `kernel.py:<line>` is a line of the `kernel.py` the four 1–8-token files embed (byte-identical `kernel` sections);
 `<uuid>.json#<file>:<line>` is a line of that source of the 16–256-token file (its path is under `sources`).
 
-- E1 [2026-11, gfx950, FlyDSL ?, N=1, AKLR CI, measurement profile 18] speedup over aiter in the committed files at main 0e02a81: df5c661e4ce848dc 3.251, 3.448 at m 1, 2; 5db89e7db4f729ff 2.878, 4.094; a5a343437ee191a7 2.920, 2.702, 2.366, 2.006 at m 1, 2, 4, 8; 9dcb4d796b597d0b 2.894, 2.502, 1.853, 1.503 (d908d01, CI run 42000899019)
+- E1 [2026-11, gfx950, FlyDSL 0.3.2 (the pin of baseline aiter dbd8bf5, read from the workflow), N=1, AKLR CI, measurement profile 19] speedup over aiter in the committed file as of #125: df5c661e4ce848dc 3.297, 3.343 at m 1, 2 (3.251, 3.448 in #71 under profile 18, E2); accuracy passed at both Points (da38d32, #125, CI run 42740594241, measured at d7c0a3e)
 - E2 [2026-11, gfx950, FlyDSL ?, N=6, AKLR CI, measurement profile 18; N=3 for a5a343437ee191a7] range over the profile-18 CI runs that rewrote each file: df5c661e4ce848dc m 1 3.190–3.364, m 2 3.255–3.448; 5db89e7db4f729ff m 1 2.756–2.886, m 2 3.929–4.120; a5a343437ee191a7 m 1 2.894–2.957, m 2 2.702–2.723, m 4 2.366–2.429, m 8 1.984–2.015; 9dcb4d796b597d0b m 1 2.894–3.051, m 2 2.467–2.592, m 4 1.831–1.880, m 8 1.496–1.512 (3fb9033, CI run 41812750710; 5f63e8a, CI run 41956295934; 93eba6d, CI run 41964469977; 90b9d50, CI run 41976547645; 43e112e, CI run 41991630592; d908d01, CI run 42000899019)
-- E3 [2026-11, gfx950, FlyDSL 0.3.2, N=16 rounds, AKLR validate, measurement profile 19] speedup over aiter 1.622, 1.485, 1.432, 1.339, 1.350 at m 16, 32, 64, 128, 256; median kernel 25.87, 41.57, 55.63, 74.18, 78.33 µs, aiter 41.99, 61.91, 79.69, 99.51, 105.93 µs; accuracy passed, worst violation fraction 0 (…_n_experts32_topk6_inter_dim2048_global_experts256, file d8335ff9da7e16df, base 0e02a81; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/flash/flash_d8335ff9da7e16df/report.json)
-- E4 [2026-11, gfx950, FlyDSL 0.3.2, N=16 rounds, AKLR validate, measurement profile 19] speedup over aiter 1.406, 1.363, 1.285, 1.243, 1.241 at m 16, 32, 64, 128, 256; median kernel 58.16, 78.43, 110.41, 133.22, 140.32 µs, aiter 81.81, 106.91, 141.91, 166.05, 174.35 µs; accuracy passed, worst violation fraction 0 (…_n_experts64_topk6_inter_dim2048_global_experts256, file 69c33e38a0f91a72, base 0e02a81; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/flash/flash_69c33e38a0f91a72/report.json)
-- E5 [2026-11, gfx950, FlyDSL 0.3.2, N=16 rounds, AKLR validate, measurement profile 19] speedup over aiter 1.962, 1.692, 1.414, 1.358, 1.362 at m 16, 32, 64, 128, 256; median kernel 25.42, 39.65, 57.21, 68.24, 76.50 µs, aiter 49.95, 67.09, 81.28, 92.76, 104.30 µs; accuracy passed, worst violation fraction 0 (…_n_experts256_topk6_inter_dim256, file 9506ba35c7cf8ec1, base 0e02a81; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/scratch_per_call/results/g2/validate_flash_9506ba35c7cf8ec1/validation/report.json); the same GPU code with its scratch allocated once per shape (file d637cbb8575c3d72) read 1.948, 1.669, 1.420, 1.333, 1.356 (local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/flash/flash_d637cbb8575c3d72/report.json) and 1.970, 1.687, 1.422, 1.352, 1.342 (local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/results/g6/flash_d637cbb8575c3d72/validation/report.json)
-- E6 [2026-11, gfx950, FlyDSL 0.3.2, N=16 rounds, AKLR validate, measurement profile 19] speedup over aiter 1.662, 1.432, 1.318, 1.263, 1.250 at m 16, 32, 64, 128, 256; median kernel 45.67, 73.46, 108.29, 128.16, 140.47 µs, aiter 75.98, 105.59, 142.96, 163.51, 176.03 µs; accuracy passed, worst violation fraction 0 (…_n_experts256_topk6_inter_dim512, file 9e158753082c37e4, base 0e02a81; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_revalidation/flash/flash_9e158753082c37e4/report.json)
-- E7 [2026-11, gfx950, FlyDSL 0.3.2, N=16 rounds, AKLR validate, measurement profile 19, a second run of the same files] speedup over aiter at m 16, 32, 64, 128, 256: d8335ff9da7e16df 1.646, 1.503, 1.436, 1.330, 1.352; 69c33e38a0f91a72 1.407, 1.371, 1.269, 1.242, 1.255; 9e158753082c37e4 1.660, 1.425, 1.318, 1.275, 1.256; accuracy passed, worst violation fraction 0 (base 0e02a81; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/results/g2/flash_d8335ff9da7e16df/validation/report.json, local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/results/g3/flash_69c33e38a0f91a72/validation/report.json, local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/results/g2/flash_9e158753082c37e4/validation/report.json)
-- E8 [2026-11, gfx950, FlyDSL ?, N=?, campaign paired timing: the version before the change over the version with it, minus one; a step may bundle more than the change named] one FlyDSL launch for sort, activation quantization and zeroing of `out` in place of aiter's: 69c33e38a0f91a72's campaign +12.7, +7.6, +5.5, +5.2, +4.9% at m 16, 32, 64, 128, 256 (round 9fd72bac, local:/workspace/code/gpt_oss_docker/work/sikl/kb_distill/ma8/flash_ep64/run/workspace/forge_experiments/ablation.json); 9e158753082c37e4's +14.2, +9.4, +7.4, +6.5, +6.3% (round 6bb1c48e, local:/workspace/code/gpt_oss_docker/work/sikl/kb_distill/ma8/flash_tp512/run/workspace/forge_experiments/ablation.json)
-- E9 [2026-11, gfx950, FlyDSL ?, N=?, campaign paired timing: the version before the change over the version with it, minus one; a step may bundle more than the change named] that launch folded into stage 1: 9e158753082c37e4 up to 64 tokens +5.2, +1.4, +0.8% at m 16, 32, 64 (round 1e4eb2c2, local:/workspace/code/gpt_oss_docker/work/sikl/kb_distill/ma8/flash_tp512/run/workspace/forge_experiments/ablation.json); d8335ff9da7e16df at 16 tokens +2.8% at m 16 (round 15f3fba6), then up to 32 tokens with a one-wave routing head and the quantization before the W1 request +3.8, +3.3% at m 16, 32 (round 3edd5a3c) (local:/workspace/code/gpt_oss_docker/work/sikl/kb_distill/ma8/flash_ep32/run/workspace/forge_experiments/ablation.json); 69c33e38a0f91a72 at 16 and 64 tokens, dropping its prologue launch, +0.8, +1.3% at m 16, 64 (round a488991c, local:/workspace/code/gpt_oss_docker/work/sikl/kb_distill/ma8/flash_ep64/run/workspace/forge_experiments/ablation.json)
-- E10 [2026-11, gfx950, FlyDSL ?, N=?, campaign paired timing: the version before the change over the version with it, minus one; a step may bundle more than the change named] d8335ff9da7e16df's campaign, each block's K loop started at a rotated k-tile in both GEMMs: +2.8, +5.8, +7.7, +4.2, +4.4% at m 16, 32, 64, 128, 256 (round 47a6afdd, local:/workspace/code/gpt_oss_docker/work/sikl/kb_distill/ma8/flash_ep32/run/workspace/forge_experiments/ablation.json)
-- E11 [2026-11, gfx950, FlyDSL ?, N=?, campaign paired timing: the version before the change over the version with it, minus one; a step may bundle more than the change named] the campaign that produced 9506ba35c7cf8ec1's GPU code (as file d637cbb8575c3d72): per-expert stage 1 with in-kernel routing and an expert-major stage 2 +10.4, +21.5, +14.1, +14.6% at m 32, 64, 128, 256 (round 9e252edc); bf16 atomics into `out` in place of the combine kernel +4.0, +4.8, +5.6% at m 64, 128, 256 (round 7e5bbc26) (local:/workspace/code/gpt_oss_docker/work/sikl/kb_distill/ma8/flash_tp256/run/workspace/forge_experiments/ablation.json)
-- E12 [2026-11, gfx950, FlyDSL 0.3.2, N=20 tries per condition and Point (24 graph replays), stress checks on MI355X at main 0e02a81] 0 differing tries for d8335ff9da7e16df, 69c33e38a0f91a72, 9e158753082c37e4 and 9506ba35c7cf8ec1 at every Point under (a) the forge driver's conditions: a stream limited to 16 CUs, one limited to 64 CUs, a second call with the same inputs on another stream, replays of one captured graph; (b) one CUDA graph replayed 24 times with three input sets copied into its buffers, each replay compared with an eager call on the same inputs; (c) two calls at once on two streams, each with its own input set and outputs, on unrestricted streams and on two streams limited to the same first 64 CUs, each compared with an eager call alone (local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/stress/README.txt; per file under local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/stress/results/, local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/stress/graph/results/ and local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/stress/concurrent/results/; 9506ba35c7cf8ec1 under local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/scratch_per_call/results/g7/stress_flash_9506ba35c7cf8ec1/, local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/scratch_per_call/results/g3/graph_flash_9506ba35c7cf8ec1/ and local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/scratch_per_call/results/g5/conc_flash_9506ba35c7cf8ec1/)
-- E13 [2026-11, gfx950, FlyDSL 0.3.2, N=20 tries per condition and Point, the checks of E12] d637cbb8575c3d72, 9506ba35c7cf8ec1's GPU code with its scratch allocated once per shape in `_build`: under (c) wrong output at m 16 in 0 of 20 tries on unrestricted streams and 20 of 20 on the shared 64 CUs, at m 32, 64, 128 and 256 in 20 of 20 under both; under (a) and (b) 0 differing tries (local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/stress/concurrent/results/g0/flash_d637cbb8575c3d72/concurrent.log, local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/stress/results/g0/flash_d637cbb8575c3d72/stress.log, local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/stress/graph/results/g0/flash_d637cbb8575c3d72/graph.log)
-- E14 [2026-11, gfx950, FlyDSL 0.3.2, N=20 tries per condition and Point, check (c) of E12 on main's unmodified files] wrong output, tries out of 20 on unrestricted streams / on the shared 64 CUs: df5c661e4ce848dc m 1 0/2, m 2 0/20; a5a343437ee191a7 m 1 0/0, m 2 0/1, m 4 0/3, m 8 0/20; 9dcb4d796b597d0b m 1 0/0, m 2 0/16, m 4 0/15, m 8 15/20; 5db89e7db4f729ff 0 at every Point (local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/main_control/README.txt; local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/main_control/results/g3/conc_main_df5c661e4ce848dc/run.log, local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/main_control/results/g3/conc_main_a5a343437ee191a7/run.log, local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/main_control/results/g5/conc_main_9dcb4d796b597d0b/run.log, local:/workspace/code/gpt_oss_docker/work/kb_evidence/v19_final_schemas/main_control/results/g5/conc_main_5db89e7db4f729ff/run.log)
+- E3 [2026-11, gfx950, FlyDSL 0.3.2, N=16 rounds, AKLR validate, measurement profile 19] speedup over aiter 1.622, 1.485, 1.432, 1.339, 1.350 at m 16, 32, 64, 128, 256; median kernel 25.87, 41.57, 55.63, 74.18, 78.33 µs, aiter 41.99, 61.91, 79.69, 99.51, 105.93 µs; accuracy passed, worst violation fraction 0 (…_n_experts32_topk6_inter_dim2048_global_experts256, an earlier version of file 640d56e2cf48884d, base 0e02a81)
+- E4 [2026-11, gfx950, FlyDSL 0.3.2, N=16 rounds, AKLR validate, measurement profile 19] speedup over aiter 1.406, 1.363, 1.285, 1.243, 1.241 at m 16, 32, 64, 128, 256; median kernel 58.16, 78.43, 110.41, 133.22, 140.32 µs, aiter 81.81, 106.91, 141.91, 166.05, 174.35 µs; accuracy passed, worst violation fraction 0 (…_n_experts64_topk6_inter_dim2048_global_experts256, an earlier version of file 3279ada84a65bbd9, base 0e02a81)
+- E5 [2026-11, gfx950, FlyDSL 0.3.2, N=16 rounds, AKLR validate, measurement profile 19] speedup over aiter 1.962, 1.692, 1.414, 1.358, 1.362 at m 16, 32, 64, 128, 256; median kernel 25.42, 39.65, 57.21, 68.24, 76.50 µs, aiter 49.95, 67.09, 81.28, 92.76, 104.30 µs; accuracy passed, worst violation fraction 0 (…_n_experts256_topk6_inter_dim256, an earlier version of file b9ae6161bd156dc2, base 0e02a81); the same GPU code with its scratch allocated once per shape read 1.948, 1.669, 1.420, 1.333, 1.356 and 1.970, 1.687, 1.422, 1.352, 1.342
+- E6 [2026-11, gfx950, FlyDSL 0.3.2, N=16 rounds, AKLR validate, measurement profile 19] speedup over aiter 1.662, 1.432, 1.318, 1.263, 1.250 at m 16, 32, 64, 128, 256; median kernel 45.67, 73.46, 108.29, 128.16, 140.47 µs, aiter 75.98, 105.59, 142.96, 163.51, 176.03 µs; accuracy passed, worst violation fraction 0 (…_n_experts256_topk6_inter_dim512, an earlier version of file eb8af99c7e8ad333, base 0e02a81)
+- E7 [2026-11, gfx950, FlyDSL 0.3.2, N=16 rounds, AKLR validate, measurement profile 19, a second run of the same files] speedup over aiter at m 16, 32, 64, 128, 256, earlier versions of: 640d56e2cf48884d 1.646, 1.503, 1.436, 1.330, 1.352; 3279ada84a65bbd9 1.407, 1.371, 1.269, 1.242, 1.255; eb8af99c7e8ad333 1.660, 1.425, 1.318, 1.275, 1.256; accuracy passed, worst violation fraction 0 (base 0e02a81)
+- E8 [2026-11, gfx950, FlyDSL ?, N=?, campaign paired timing: the version before the change over the version with it, minus one; a step may bundle more than the change named] one FlyDSL launch for sort, activation quantization and zeroing of `out` in place of aiter's: 3279ada84a65bbd9's campaign +12.7, +7.6, +5.5, +5.2, +4.9% at m 16, 32, 64, 128, 256; eb8af99c7e8ad333's +14.2, +9.4, +7.4, +6.5, +6.3%
+- E9 [2026-11, gfx950, FlyDSL ?, N=?, campaign paired timing: the version before the change over the version with it, minus one; a step may bundle more than the change named] that launch folded into stage 1: eb8af99c7e8ad333 up to 64 tokens +5.2, +1.4, +0.8% at m 16, 32, 64; 640d56e2cf48884d at 16 tokens +2.8% at m 16, then up to 32 tokens with a one-wave routing head and the quantization before the W1 request +3.8, +3.3% at m 16, 32; 3279ada84a65bbd9 at 16 and 64 tokens, dropping its prologue launch, +0.8, +1.3% at m 16, 64
+- E10 [2026-11, gfx950, FlyDSL ?, N=?, campaign paired timing: the version before the change over the version with it, minus one; a step may bundle more than the change named] 640d56e2cf48884d's campaign, each block's K loop started at a rotated k-tile in both GEMMs: +2.8, +5.8, +7.7, +4.2, +4.4% at m 16, 32, 64, 128, 256
+- E11 [2026-11, gfx950, FlyDSL ?, N=?, campaign paired timing: the version before the change over the version with it, minus one; a step may bundle more than the change named] the campaign that produced b9ae6161bd156dc2's GPU code (as a version with its scratch allocated once per shape): per-expert stage 1 with in-kernel routing and an expert-major stage 2 +10.4, +21.5, +14.1, +14.6% at m 32, 64, 128, 256; bf16 atomics into `out` in place of the combine kernel +4.0, +4.8, +5.6% at m 64, 128, 256
+- E12 [2026-11, gfx950, FlyDSL 0.3.2, N=20 tries per condition and Point (24 graph replays), stress checks on MI355X at main 0e02a81] 0 differing tries for the earlier versions of 640d56e2cf48884d, 3279ada84a65bbd9, eb8af99c7e8ad333 and b9ae6161bd156dc2 at every Point under (a) the forge driver's conditions: a stream limited to 16 CUs, one limited to 64 CUs, a second call with the same inputs on another stream, replays of one captured graph; (b) one CUDA graph replayed 24 times with three input sets copied into its buffers, each replay compared with an eager call on the same inputs; (c) two calls at once on two streams, each with its own input set and outputs, on unrestricted streams and on two streams limited to the same first 64 CUs, each compared with an eager call alone
+- E13 [2026-11, gfx950, FlyDSL 0.3.2, N=20 tries per condition and Point, the checks of E12] b9ae6161bd156dc2's GPU code with its scratch allocated once per shape in `_build`: under (c) wrong output at m 16 in 0 of 20 tries on unrestricted streams and 20 of 20 on the shared 64 CUs, at m 32, 64, 128 and 256 in 20 of 20 under both; under (a) and (b) 0 differing tries
+- E14 [2026-11, gfx950, FlyDSL 0.3.2, N=20 tries per condition and Point, check (c) of E12 on main's unmodified files] wrong output, tries out of 20 on unrestricted streams / on the shared 64 CUs: df5c661e4ce848dc m 1 0/2, m 2 0/20; a5a343437ee191a7 m 1 0/0, m 2 0/1, m 4 0/3, m 8 0/20; 9dcb4d796b597d0b m 1 0/0, m 2 0/16, m 4 0/15, m 8 15/20; 5db89e7db4f729ff 0 at every Point
+- E15 [2026-11, gfx950 (MI355X), HIP 7.15, N=200 tries per condition, two calls on two streams sharing scratch, same inputs, exact compare] scratch given plain stores of input-determined values: 0 of 200 wrong; scratch zeroed then added into with atomics: 1–2 of 200 enqueued back to back, 200 of 200 with both calls behind one event (a toy HIP routed op, not an AKLR kernel)
+- E16 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=224 launches, `HW_REG_XCC_ID` recorded per block] block L of a launch on XCD (L + c) mod 8, one c per launch: c = 0 in 104 of 224 launches, 5–7 in the rest; blocks of one (expert, 16-column w1 tile) on more than one XCD in 0 of 32,256 groups (b9ae6161bd156dc2's per-route `_stage1`, m 16, 8 and 13)
+- E17 [2026-11, gfx950, FlyDSL 0.3.2, N=1, AKLR CI, measurement profile 19] speedup over aiter in the files on main: 5db89e7db4f729ff 2.805, 4.053 at m 1, 2 and 9dcb4d796b597d0b 2.991, 2.535, 1.853, 1.479 at m 1, 2, 4, 8 (6d7cfec, #102, CI run 42549655045 at 0e02a81); a5a343437ee191a7 2.941, 2.697, 2.440, 2.021 at m 1, 2, 4, 8 (227aa66, #115, CI run 42599763780); accuracy passed at every Point
+- E19 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=15 rounds, CUDA events, a 1 GiB read before each call, median non-temporal / cached time] stage 1 with only its w1 loads' cache bit changed: df5c661e4ce848dc's at m 8 (48 routes) 1.095–1.132 in 5 of 6 cases with 6 or 8 experts (0.966 with the same 6 at 256 local, inter 2048), 0.988–1.024 random; b9ae6161bd156dc2's per-route one at m 16 and 8 1.021–1.039 with 6 or 8 experts, 0.993–1.001 random
+- E20 [2026-11, gfx950 (MI355X), HIP 7.15, N=5 dispatches per arm, rocprofv3 TCC hits and misses, cache flushed before each] L2 hit rate cached / non-temporal: b9ae6161bd156dc2's pattern at m 16 0.889 / 0.889 (6 experts) and 0.871 / 0.871 (8); df5c661e4ce848dc's at m 8, 6 or 8 experts, 0.070–0.258 / 0.202–0.264 (a HIP kernel with only stage 1's w1 loads, not an AKLR kernel)
+- E21 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=8 rounds, CUDA graph, AKLR's tracer, a 1 GiB read before each call; probe HIP 7.15, N=9 rounds] 640d56e2cf48884d at m 256: stage 1 1.021× as fast with its routing launch's W1 requests (8 of 8 rounds); a HIP probe with the same requests and XCD placement: the next launch's L2 misses 133,296 with and without them
 - S1 kernel.py:532 `DIRECT = R <= 64`; launches at :560–574: `_prep` and `_route` only when not `DIRECT`
 - S2 kernel.py:55 `_local_expert`: `ballot` at :70, `ctpop` at :71 and :74; `LOC` written by column block 0 at :255–256
 - S3 kernel.py:251 `XL` (the token row staged in LDS by each wave's own lanes, :282–302); loads issued row, scales, weights between `sched_barrier`s at :287–297; `PF1` = all of a wave's chunks at :535
@@ -340,5 +360,5 @@ contract becomes bitwise (atomic stage 2) or its error bound no longer admits fp
 - S10 3279ada84a65bbd9.json#kernel.py:51 `_CFG` (16-row blocks, fused at m ≤ 128, comments at :42–50); `_prologue` at :95, its MX-fp8 scaling by hand and `cvt_pk_fp8_f32` at :198–221; the fused stage 1's `CvtScaleF32PkFp8Bf16Op` at :2246–2247; `_fused_route_head` at :287; stage-2 builder copy at :471, `raw_ptr_buffer_atomic_fadd` at :1370; LDS padded to cap workgroups per CU at :1610; `_plan` asserting hidden = 16 × global experts and ≤ 64 local at :3184; buffers per call at :3309
 - S11 b9ae6161bd156dc2.json#kernel.py:16 route thresholds (`DIRECT_MAX_ROUTES` 96, `FLY_MAX_ROUTES` 1536, expert-major stage 2 from 384, `SPEC` from 1536); `_stage1` per route with the XCD placement at :175–176 and w1 read cached (cache policy 0) at :203; `_cvt_fp8` with `cvt_scalef32_pk_fp8_bf16` at :266 and `mfma_scale_f32_16x16x128_f8f6f4` at :273; `_stage1_ex` with `_route_list` ballots at :478 and the zeroing of `out` at :395; `_atom_pk` (`BufferAtomicPkAdd`) at :78, used at :633 and :643; `_stage2_tp` route-order sum at :738; `_build` with fp32 `topk_weights` asserted at :753, scratch sizes at :772 and the scratch allocated in each call in `launch` at :863; kernarg preload at :858; `run` asserting at most `FLY_MAX_ROUTES` routes and no expert mask at :895
 - S12 eb8af99c7e8ad333.json#kernel.py:53 `_E`, `_TOPK`, `_D`, `_INTER` fixed; `_kn1` (aiter kernel names) at :72; `_k_stagger` at :85 and `_fold_k_stagger` at :92; `_kernarg_preload` at :107; `_fp8_pack` with `cvt_pk_fp8_f32` at :237 and :246, used by the prep kernel at :386; `_fp8_pack_bf16` with `cvt_scalef32_pk_fp8_bf16` at :302, used by the folded stage 1 at :2429; `_rows16` at :3824; own stage 2 over the routed rows at :3831; the copy of aiter's v2 stage 2 past `_rows16` at :4350 (eb8af99c7e8ad333.json#fused_moe_v2_stage2.py:25); `_fold` (m ≤ 128) at :4388 and `_setup_fold` (8-route blocks) at :4394; buffers per call at :4445
-- S13 aklr/core/contract/spec/_workloads.py:38 `qualifies`: a workload without `speedup` does not reach `AKLR_MIN_SPEEDUP` (:41); aklr/ops/README.md:338 `AKLR_MIN_SPEEDUP`, default 1.03
+- S13 aklr/core/contract/spec/_workloads.py:38 `qualifies`: a workload without `speedup` does not reach `AKLR_MIN_SPEEDUP` (:41); aklr/ops/README.md:338 `AKLR_MIN_SPEEDUP`, default 1.05
 - S14 640d56e2cf48884d.json#aiter_stubs.py:1 stand-ins for aiter's `dtypes`, `fp8_e8m0`, `logger`, `ActivationType` and `get_cu_num`, the same file in 3279ada84a65bbd9 and eb8af99c7e8ad333; in the copies, a nested import of a module the file does not carry raising at 640d56e2cf48884d.json#moe_kernels.py:643, environment defaults at 640d56e2cf48884d.json#tensor_shim.py:24 and :27 and moe_kernels.py:2062, the argument-keyed pad cache turned off at moe_kernels.py:1177 and :1182 (its `global` is rejected by SA1), `.tolist()` replaced at tensor_shim.py:175 (SA3), and the launch-argument builders a listed Point reaches take the stream of their input's device (`dev`) at moe_kernels.py:838 and :930 (eb8af99c7e8ad333.json#moe_kernels.py:838, at 256 tokens); the copies' other `torch.cuda.current_stream()` calls, 18 in 640d56e2cf48884d and 20 in eb8af99c7e8ad333, are reached at no listed Point, and 3279ada84a65bbd9's copies launch nothing; 3279ada84a65bbd9.json#mx_types.py:1 keeps aiter's int enums only; eb8af99c7e8ad333.json#fused_moe_v2_stage2.py:1 the three functions copied from aiter's `fused_moe.py`

@@ -169,6 +169,32 @@ def save_failure(out, pending, error, cleanup_failed):
     write_json(out / "results.json", current)
 
 
+def all_measurements_failed(out: Path, pending: dict) -> bool:
+    """Recognize a completed all-failed sweep instead of reporting a container crash."""
+    try:
+        current = read_json(out / "results.json")
+        if any(current[key] != pending[key] for key in ("model", "target")) or any(
+            current["run"].get(key) != pending["run"].get(key) for key in ("id", "serving_sha256")
+        ):
+            return False
+        for target in (current, current["control"]):
+            run, points = target["run"], target["points"]
+            identities = [(point["arm"], point["conc"]) for point in points]
+            if (
+                run.get("completed") is not True
+                or run.get("error")
+                or type(run.get("points_expected")) is not int
+                or not points
+                or len(points) != run["points_expected"]
+                or len(identities) != len(set(identities))
+                or any(point.get("status") != "failed" for point in points)
+            ):
+                return False
+        return True
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def run(args, runtime_options: list[str]) -> int:
     repo, out = REPO_ROOT.resolve(), args.out.resolve()
     cache, work = (args.cache or out / "cache").resolve(), (args.work or out / "work").resolve()
@@ -233,6 +259,8 @@ def run(args, runtime_options: list[str]) -> int:
                 "create",
                 "--name",
                 name,
+                "--label",
+                f"agentx.out={out}",
                 "--pull",
                 "never",
                 "--init",
@@ -279,7 +307,9 @@ def run(args, runtime_options: list[str]) -> int:
             code, text = launcher.command(
                 ["docker", "start", "--attach", name], stream=True, timeout=None, check=False
             )
-            if code:
+            if code == 1 and all_measurements_failed(out, pending):
+                launcher.note("All measurement points failed; see results.json for point errors.")
+            elif code:
                 error = f"Container exited with status {code}: {text.strip()}"
         except (Cancelled, OSError, RuntimeError, ValueError, KeyError, TypeError) as failure:
             error = str(failure)
