@@ -135,11 +135,12 @@ than `__init__.py`, sorted and unique (a hip kernel's: [hip kernels](#hip-kernel
 file describes the kernel; its prose carries no history, commit or speedup, and trailing `key: value` metadata lines
 (such as `legacy_solution:`, `keep_commit:`, `device_edits:`) are allowed; audit rejects an empty docstring (SA4).
 
-`requires` maps a toolchain to a PEP 440 specifier of the versions the kernel needs, such as
+`requires` maps a toolchain or library to a PEP 440 specifier of the versions the kernel needs, such as
 `{"triton": ">=3.8"}`; a dev or rc build counts as its release. A kernel with sources names at least its
 language's toolchain (`TOOLCHAINS`): `flydsl`, `triton`, or `hip` for hip and hsaco kernels, which is the HIP
-version torch was built with (`torch.version.hip`), not the ROCm release (ROCm 10.0 ships HIP 7.15);
-`export check` rejects one that does not (`KernelSpec.requires_error`). It is omitted only in a definition. Where the installed toolchain misses it, the runtime skips the schema, logging why at INFO, and validation
+version torch was built with (`torch.version.hip`), not the ROCm release (ROCm 10.0 ships HIP 7.15), and every
+library it imports beyond torch, such as `{"mori": ">=1.2.4"}` (`Library` in `aklr/core/contract/spec/_kernel.py`);
+`export check` rejects one that misses either (`KernelSpec.requires_error`). It is omitted only in a definition. Where the installed toolchain misses it, the runtime skips the schema, logging why at INFO, and validation
 reports `no_matching_toolchain`. Give the version the kernel was developed on as the lower bound, and an upper bound
 only once a release breaks it. A kernel that fails where `requires` holds raises: nothing falls back on an error.
 

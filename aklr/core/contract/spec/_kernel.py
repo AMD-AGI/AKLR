@@ -7,6 +7,7 @@ import contextlib
 import dataclasses
 import hashlib
 import keyword
+import re
 from functools import cached_property
 from typing import Annotated, Any, Final, Literal, get_args
 
@@ -29,6 +30,12 @@ from aklr.core.platform.device import DeviceTarget
 # kernel.language and impls/<language>/: a new language is a code PR first, then a schema PR.
 Language = Literal["flydsl", "hip", "hsaco", "triton"]
 LANGUAGES: Final = get_args(Language)
+# a library a kernel imports beyond torch, named in kernel.requires: a new one is a code PR first,
+# with its distribution in aklr/core/platform/toolchain.py
+Library = Literal["mori"]
+LIBRARIES: Final = get_args(Library)
+# the top-level module of each import statement in a Python source
+_IMPORTED = re.compile(r"^\s*(?:import|from)\s+(\w+)", re.MULTILINE)
 # each language's source suffixes, the entry file's first
 SOURCE_SUFFIXES: Final = {"flydsl": (".py",), "hip": (".hip", ".h"), "hsaco": (".py",), "triton": (".py",)}
 # the toolchain each language's kernels need, which kernel.requires names: the language's own, but an
@@ -47,9 +54,9 @@ class KernelSpec(FrozenModel):
         Field(min_length=1),
         AfterValidator(DeviceTarget.normalize_targets),
     ]
-    # the toolchain versions the kernel needs: {"triton": ">=3.8"}; a kernel names at least
-    # its language's toolchain (TOOLCHAINS, requires_error)
-    requires: dict[Language, str] = {}  # noqa: RUF012
+    # the versions the kernel needs, by toolchain or library: {"triton": ">=3.8"}; a kernel names
+    # its language's toolchain (TOOLCHAINS) and every library its sources import (requires_error)
+    requires: dict[Language | Library, str] = {}  # noqa: RUF012
     # who wrote the kernel: a person, team or agent; "": not recorded
     author: str = ""
     # "<path>::<symbol>"
@@ -121,12 +128,16 @@ class KernelSpec(FrozenModel):
 
     @property
     def requires_error(self) -> str | None:
-        """Why ``requires`` names no version of the toolchain the kernel's language needs;
-        None when it does or there are no sources (a definition)."""
-        toolchain = TOOLCHAINS[self.language]
-        if not self.sources or toolchain in self.requires:
+        """Why ``requires`` misses the toolchain the kernel's language needs or a library its
+        sources import; None when it names both or there are no sources (a definition)."""
+        if not self.sources:
             return None
-        return f'kernel.requires names no {toolchain} version, such as {{"{toolchain}": ">=<developed on>"}}'
+        python = (s.content for s in self.sources if s.path.endswith(".py"))
+        imported = {name for content in python for name in _IMPORTED.findall(content)}
+        for name in (TOOLCHAINS[self.language], *sorted(imported.intersection(LIBRARIES))):
+            if name not in self.requires:
+                return f'kernel.requires names no {name} version, such as {{"{name}": ">=<developed on>"}}'
+        return None
 
     @property
     def entry_file(self) -> str:

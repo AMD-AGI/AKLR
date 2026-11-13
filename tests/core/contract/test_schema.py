@@ -91,7 +91,7 @@ class TestSchemaFile:
 
     def test_kernel_requires(self) -> None:
         """``kernel.requires`` follows ``targets`` and is absent when empty; a key is a
-        language, a value a version specifier. The uuid hashes it."""
+        language or a known library, a value a version specifier. The uuid hashes it."""
         schema = OpCase.of("gemm@1.0").schema()
         data = json.loads(schema.schema_text())
         kernel = data["kernel"]
@@ -109,6 +109,8 @@ class TestSchemaFile:
         parsed = parse(with_requires({"flydsl": ">=0.3.2"}), "a.json")
         assert parsed.kernel.requires == {"flydsl": ">=0.3.2"}
         assert parsed.relative_path() != schema.relative_path()
+        with_library = {"flydsl": ">=0.3.2", "mori": ">=1.2.4"}
+        assert parse(with_requires(with_library), "a.json").kernel.requires == with_library
         for bad in ({"flydsl": ""}, {"flydsl": "0.3.2"}, {"cuda": ">=12"}):
             with pytest.raises(ValueError, match=r"^a\.json: kernel\.requires"):
                 parse(with_requires(bad), "a.json")
@@ -146,6 +148,15 @@ class TestSchemaFile:
         if not pinned:
             assert f"names no {TOOLCHAINS[language]} version" in error
         assert kernel.model_copy(update={"sources": ()}).requires_error is None
+
+    def test_kernel_requires_the_libraries_its_sources_import(self) -> None:
+        kernel = OpCase.of("gemm@1.0").schema(language="flydsl").kernel
+        entry, *rest = kernel.sources
+        sources = (entry.model_copy(update={"content": entry.content + "\nimport mori.shmem as ms\n"}), *rest)
+        importing = kernel.model_copy(update={"requires": {"flydsl": ">=0.3.2"}, "sources": sources})
+        assert "names no mori version" in importing.requires_error
+        pinned = importing.model_copy(update={"requires": {"flydsl": ">=0.3.2", "mori": ">=1.2.4"}})
+        assert pinned.requires_error is None
 
     def test_kernel_author(self) -> None:
         """``kernel.author`` follows ``targets``, is absent when empty and is one line

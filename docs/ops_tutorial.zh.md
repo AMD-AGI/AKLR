@@ -86,7 +86,7 @@ path.write_text(s.schema_text(), encoding="utf-8")
 - `sources`：flydsl/triton，入口是 `kernel.py::run`，其他文件只能相对导入；hip 用 `.hip`/`.h`，入口是 `kernel.hip::run`。入口文件开头必须有描述 kernel 的 docstring（hip 为开头注释）。推荐用 `narrow(..., kernel=...)` + `schema_text()` 写出。path 规则：
   - flydsl/triton：Python kernel 是一个扁平包，path 里不能有 `/`，也不能有 `__init__.py`；
   - hip：可以用多级目录，如 `include/utils.h`；
-- `requires`：工具链版本约束，必填。至少写上 kernel 自己的语言，以开发时用的版本作下限：`{"flydsl": ">=0.3.2"}`、`{"triton": ">=3.8"}` 或 `{"hip": ">=7.15"}`（torch 报告的 HIP 版本，不是 ROCm 版本：ROCm 10.0 里的 HIP 是 7.15）。没写的 kernel，`python -m aklr export check` 会报错；运行时，环境里的版本不满足 `requires` 的 kernel 会被跳过。
+- `requires`：工具链版本约束，必填。至少写上 kernel 自己的语言，以开发时用的版本作下限：`{"flydsl": ">=0.3.2"}`、`{"triton": ">=3.8"}` 或 `{"hip": ">=7.15"}`（torch 报告的 HIP 版本，不是 ROCm 版本：ROCm 10.0 里的 HIP 是 7.15）。没写的 kernel，`python -m aklr export check` 会报错；运行时，环境里的版本不满足 `requires` 的 kernel 会被跳过。kernel import 了 torch 以外的库，也要写上，比如 `{"mori": ">=1.2.4"}`；import 了却没写，`export check` 会报错。
 - `author`：作者署名。
 
 source 字段全部填写完毕后，重新执行 1.B 脚本（把 `"sources": []` 换成 `[SourceFile(path=..., content=...), ...]`，`SourceFile` 从 `aklr.core.contract.spec` 导入，写法见示例第 1 步脚本），生成新 uuid 的 schema 文件。

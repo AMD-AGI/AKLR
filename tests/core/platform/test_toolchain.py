@@ -29,6 +29,26 @@ def test_toolchain_version_of_no_module_is_none() -> None:
 
 
 @pytest.mark.parametrize(
+    ("installed", "version"), [(True, "1.2.4"), (False, None)], ids=["installed", "missing"]
+)
+def test_mori_is_its_distribution_not_imported(
+    monkeypatch: pytest.MonkeyPatch, installed: bool, version: str | None
+) -> None:
+    """mori's version comes from amd_mori's metadata: importing mori would size its heap."""
+    import importlib.metadata
+
+    def metadata_version(distribution: str) -> str:
+        assert distribution == "amd_mori"
+        if not installed:
+            raise importlib.metadata.PackageNotFoundError(distribution)
+        return "1.2.4"
+
+    monkeypatch.setattr(importlib.metadata, "version", metadata_version)
+    monkeypatch.setattr(toolchain.importlib, "import_module", lambda name: pytest.fail(f"imported {name}"))
+    assert toolchain.toolchain_version("mori") == version
+
+
+@pytest.mark.parametrize(
     ("torch_hip", "version"),
     [("7.15.26333", "7.15.26333"), ("7.15.26333-dd7f95766", "7.15.26333"), (None, None)],
     ids=["release", "build_suffix", "not_rocm"],

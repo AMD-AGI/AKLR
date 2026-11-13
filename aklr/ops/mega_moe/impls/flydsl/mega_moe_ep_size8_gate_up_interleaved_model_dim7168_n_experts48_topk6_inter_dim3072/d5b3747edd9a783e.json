@@ -250,7 +250,8 @@
       }
     ],
     "requires": {
-      "flydsl": ">=0.3.2"
+      "flydsl": ">=0.3.2",
+      "mori": ">=1.2.4"
     },
     "author": "zhengyao",
     "entry_point": "kernel.py::run",

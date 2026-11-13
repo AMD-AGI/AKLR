@@ -535,7 +535,7 @@ main, except in paths pinned to an earlier commit.
 - S6 triton-lang/triton@c01b677:python/src/specialize.cc:274-283 a runtime int is keyed by its width (i32 or i64), the value 1 (a constexpr) and divisibility by 16 (`D`)
 - S7 aklr/ops/gemm/baseline.py:15-21 the gemm baseline is aiter's tuned gemm_a16w16
 - S8 aklr/plugins/sglang/models/qwen2_moe/baseline.py:63-78 a plugin baseline reaches aiter through SGLang's path (tgemm.mm or aiter's Triton GEMM)
-- S9 stack.json:4 `aiter`, installed over the image's aiter (.github/workflows/ci.yaml:303)
+- S9 stack.json:4 `aiter`, installed over the image's aiter (.github/workflows/ci.yaml:296)
 - S10 aklr/ops/README.md:31-33 the uuid hashes the authored parts; export check names the expected path
 - S11 aklr/plugins/sglang/models/qwen2_moe/impls/triton/qwen2_moe_router_model_dim4096_n_routed512_topk10/c3889614985b700a.json#kernel.py:27-34 split, tile and look-ahead per row count; :19-24 the `_ShapeConfig` fields; :113-129 the ring: AHEAD stages issued ahead, one refilled per step, DEPTH = AHEAD + 2 slots, a barrier after each wait
 - S12 aklr/plugins/sglang/models/qwen2_moe/impls/triton/qwen2_moe_router_model_dim4096_n_routed512_topk10/c3889614985b700a.json#kernel.py:294 grid rows / 32 × 512 / expert_tile × split, four warps

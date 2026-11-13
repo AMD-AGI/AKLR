@@ -4,19 +4,30 @@
 from __future__ import annotations
 
 import importlib
+import importlib.metadata
 from collections.abc import Mapping
+from typing import Final
 
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
 
 __all__ = ["toolchain_version", "unmet_requirement"]
 
+# libraries read from their installed distribution, not imported: importing mori sizes its heap
+_DISTRIBUTIONS: Final = {"mori": "amd_mori"}
+
 
 def toolchain_version(name: str) -> str | None:
-    """The ``__version__`` of the toolchain module ``name`` (a kernel language), None
-    when it does not import; ``hip`` is the HIP that torch was built with."""
+    """``name``'s installed version, None when it is missing: a language's module
+    ``__version__``, for ``hip`` the HIP torch was built with, for a library its
+    distribution's version."""
     if name == "hip":
         return _hip_version()
+    if name in _DISTRIBUTIONS:
+        try:
+            return importlib.metadata.version(_DISTRIBUTIONS[name])
+        except importlib.metadata.PackageNotFoundError:
+            return None
     try:
         return importlib.import_module(name).__version__
     except ImportError:
