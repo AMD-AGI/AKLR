@@ -96,17 +96,20 @@ def _forward_verify_asm_cprr(self, q, layer, k_descale, n_rows):
     if reason is not None:
         return reason
     lens, empty = _causal_shard_lens(self, metadata, n_rows)
-    output, lse = flash_mla_with_kvcache(cache_seqlens=lens, **arguments)
-    return output.view(n_rows, heads, -1), lse.view(n_rows, heads).masked_fill_(empty[:, None], _EMPTY_LSE)
+    result = flash_mla_with_kvcache(cache_seqlens=lens, **arguments)
+    if isinstance(result, FallbackReason):
+        raise RuntimeError(f"flash_mla_with_kvcache declined after its dispatch check: {result}")
+    output, lse = result
+    # sglang masks only requests whose whole shard is empty, not rows empty under the causal limit
+    output = output.view(n_rows, heads, -1).masked_fill_(empty[:, None, None], 0)
+    return output, lse.view(n_rows, heads).masked_fill_(empty[:, None], _EMPTY_LSE)
 
 
 def _causal_shard_lens(backend, metadata, n_rows):
-    """Per query row, this rank's tokens at or before the row's global position: with global position p
-    on rank p % size, row i of a request of global length L (window included) reads its first
-    ceil((L - q_len + i + 1 - rank) / size) entries of the shard. The kernel reads a row's first table
-    entry even at length 0, which sglang leaves unwritten for a request with an empty shard, so those
-    rows point it at the pool's padding slot 0. Computed once per forward, every layer reads the same;
-    a cuda graph capture recomputes them, since sglang warms up on the capture's metadata first."""
+    """Per query row, this rank's tokens at or before the row's global position: row i of a request of
+    global length L (window included) reads the first ceil((L - q_len + i + 1 - rank) / size) entries
+    of the shard. Rows of length 0 get their first table entry, which the kernel reads anyway, set to
+    the padding slot 0. Once a forward; a cuda graph capture recomputes (its warm-up shares the metadata)."""
     import torch
     from sglang.srt.runtime_context import get_parallel
 

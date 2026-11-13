@@ -32,7 +32,7 @@ class Op:
     def __call__(self, **kwargs):
         self.calls.append(kwargs)
         rows = kwargs["q"].shape[0]
-        return torch.zeros(rows, 1, HEADS, 512), torch.zeros(rows, 1, HEADS)
+        return torch.ones(rows, 1, HEADS, 512), torch.zeros(rows, 1, HEADS)
 
 
 def backend(logit_cap=0.0, table_fill=0):
@@ -139,13 +139,13 @@ def test_an_unserved_point_stays_on_sglang(rank, op):
 
 
 def test_rows_that_see_no_token_of_the_rank(rank, op):
-    """A row that sees none of this rank's tokens: the lse sglang gives an empty shard, and its first table
-    entry, which the kernel reads even at length 0 and sglang leaves unwritten for an empty shard, points
+    """A row that sees none of this rank's tokens: output 0 and the lse sglang gives an empty shard; its first
+    table entry, which the kernel reads even at length 0 and sglang leaves unwritten for an empty shard, points
     at the pool's padding slot."""
     rank.attn_dcp_rank = SIZE - 1
     garbage = 2**31 - 1
     attn, layer, q = backend(table_fill=garbage)
-    _, lse = api._forward_verify_asm_cprr(attn, q, layer, None, q.shape[0])
+    out, lse = api._forward_verify_asm_cprr(attn, q, layer, None, q.shape[0])
     (call,) = op.calls
     empty = call["cache_seqlens"] == 0
     # the shortest request: rows 0 .. 3 see positions 3 .. 6, none on the last rank; row 4 sees position 7
@@ -155,3 +155,4 @@ def test_rows_that_see_no_token_of_the_rank(rank, op):
     assert (table[empty, 0] == 0).all() and (table[~empty, 0] == garbage).all()
     assert (table[:, 1:] == garbage).all()
     assert (lse[empty] == -1e30).all() and (lse[~empty] == 0).all()
+    assert (out[empty] == 0).all() and (out[~empty] == 1).all()
