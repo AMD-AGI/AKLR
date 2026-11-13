@@ -61,6 +61,7 @@ from ._layouts import (
 from ._workloads import (
     default_scalar,
     derive_seed,
+    inputs_digest,
     magnified_inputs,
     row_major_inputs,
     sorted_key_json,
@@ -109,6 +110,7 @@ __all__ = [
     "derive_seed",
     "dtype_storage_shape",
     "from_float64",
+    "inputs_digest",
     "magnified_inputs",
     "mutable_tensor_declarations",
     "row_major_inputs",

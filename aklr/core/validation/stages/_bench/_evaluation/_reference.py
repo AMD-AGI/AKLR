@@ -37,6 +37,7 @@ class WorkloadEvaluation:
     request: TrialRequest
     outputs: Sequence[Mapping[str, torch.Tensor]]
     output_keys: Sequence[Sequence[str]]
+    input_digests: Sequence[Mapping[str, str]]
     devices: Sequence[str]
     _failures: list[tuple[int, str | int, Finding]]
 
@@ -45,13 +46,16 @@ class WorkloadEvaluation:
         request: TrialRequest,
         outputs: Sequence[Mapping[str, torch.Tensor]],
         output_keys: Sequence[Sequence[str]],
+        input_digests: Sequence[Mapping[str, str]],
         devices: Sequence[str],
     ) -> None:
         """By rank: ``outputs``, ``request.empty_outputs`` on ``devices``, of which the
-        candidate filled ``output_keys``."""
+        candidate filled ``output_keys`` from the input sets whose digests are
+        ``input_digests``."""
         self.request = request
         self.outputs = outputs
         self.output_keys = output_keys
+        self.input_digests = input_digests
         self.devices = devices
         self._failures = []
 
@@ -112,6 +116,11 @@ class WorkloadEvaluation:
                     for args in group_args
                 ]
             for rank in ranks:
+                # the candidate's task drew the set on its own: other values make every compare moot
+                if semantics.inputs_digest(group_args[rank]) != self.input_digests[rank].get(first.input_set):
+                    detail = f"internal: {rank_at[rank]}the candidate's task drew other values of {first.input_set}"
+                    self._fail(first, FindingCode.PLATFORM_FAILURE, detail)
+                    continue
                 for decode in (semantics.to_float32, semantics.to_float64):
                     compare_kwargs = {
                         "reference_outputs": contract.reference_outputs(point, group_args, rank, decode)

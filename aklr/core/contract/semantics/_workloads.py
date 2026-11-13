@@ -40,6 +40,29 @@ def workload_hash(name: str, workload: Mapping[str, Any]) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
+def inputs_digest(row_major_args: Mapping[str, Any]) -> str:
+    """sha256 of every input by name: a tensor by its shape, dtype and the sum of its words,
+    each times an odd weight of its position, mod 2**64, reduced on its device. Tasks that
+    draw an input set each on their own compare it to know they drew the same values."""
+    import torch
+
+    digest = hashlib.sha256()
+    for name, value in row_major_args.items():
+        if torch.is_tensor(value):
+            words = value.detach().contiguous().reshape(-1).view(torch.uint8)
+            if words.numel() % 4 == 0:
+                words = words.view(torch.int32)
+            total = torch.zeros((), dtype=torch.int64, device=words.device)
+            # chunked: an int64 copy of a multi-GB pool would not fit beside it
+            for start in range(0, words.numel(), 1 << 24):
+                chunk = words[start : start + (1 << 24)].long()
+                weights = torch.arange(start, start + chunk.numel(), device=words.device).mul_(2).add_(1)
+                total += chunk.mul_(weights).sum()  # int64 wraps: the sum is exact mod 2**64
+            value = (tuple(value.shape), str(value.dtype), int(total) % 2**64)
+        digest.update(repr((name, value)).encode())
+    return digest.hexdigest()
+
+
 def default_scalar(scalar_declaration: Mapping[str, Any]) -> bool | int | float:
     """A ``ScalarSpec`` dump's default: ``default``, else ``values[0]``, else 1.0
     clipped into ``interval``."""

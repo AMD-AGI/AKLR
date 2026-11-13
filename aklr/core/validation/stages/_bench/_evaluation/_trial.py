@@ -164,6 +164,7 @@ def run_trial(
                 request,
                 [o[request.axes_text] for o in outputs],
                 [w[request.axes_text].output_keys for w in by_axes],
+                [w[request.axes_text].input_digests for w in by_axes],
                 devices,
             ).evaluate()
             for request in requests
