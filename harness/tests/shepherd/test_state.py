@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "automations/shepherd/skills/shepherd/scripts/state.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "automations/shepherd/skills/optimize-and-deliver-kernels/scripts/state.py"
 # The agent records its round environment, then optionally sleeps, saves, or leaves a detached child behind.
 AGENT = """
 import json, os, subprocess, sys, time

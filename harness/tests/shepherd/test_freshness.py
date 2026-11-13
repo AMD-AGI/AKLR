@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "automations/shepherd/skills/shepherd/scripts/freshness.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "automations/shepherd/skills/optimize-and-deliver-kernels/scripts/freshness.py"
 SCHEMA = "aklr/ops/gemm/impls/flydsl/gemm_a8w8_n512/0123abcd.json"
 
 
