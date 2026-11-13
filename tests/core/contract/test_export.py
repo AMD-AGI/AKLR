@@ -61,11 +61,11 @@ class TestExport:
         seeded = export_dir / gemm_dir.name / "impls" / "flydsl" / "old" / "old.json"
         seeded.parent.mkdir(parents=True)
         seeded.write_text(json.dumps({"kernel": {"sources": sources}}))
-        results = export.export_schemas(None, records, export_dir, language="flydsl", models=["test-model"])
+        results = export.export_schemas(None, records, export_dir, language="flydsl", model="test-model")
         assert sorted(r.is_added for r in results) == [False, True]
         served, added = sorted(results, key=lambda r: r.is_added)
         assert served.relative_path == PurePosixPath(committed_path.relative_to(gemm_dir.parent))
-        assert (served.missing_models, added.missing_models) == (("test-model",), ())
+        assert (served.lacks_model, added.lacks_model) == (True, False)
         path = export_dir / added.relative_path
         assert sorted(export_dir.rglob("*.json")) == sorted([path] + ([seeded] if kept else []))
         schema = registry.parse_schema(path.read_bytes(), str(path))
@@ -89,9 +89,7 @@ class TestExport:
             n_calls=3,
         )
         assert (
-            export.export_schemas(
-                None, [record], tmp_path / "export", language="flydsl", models=["test-model"]
-            )
+            export.export_schemas(None, [record], tmp_path / "export", language="flydsl", model="test-model")
             == []
         )
 
@@ -108,9 +106,7 @@ class TestExport:
             n_calls=1,
         )
         with pytest.raises(ValueError, match="axes"):
-            export.export_schemas(
-                None, [record], tmp_path / "export", language="flydsl", models=["test-model"]
-            )
+            export.export_schemas(None, [record], tmp_path / "export", language="flydsl", model="test-model")
 
     @pytest.mark.parametrize(
         ("language", "entry_point"),
@@ -128,7 +124,7 @@ class TestExport:
             target=KERNEL_TARGET,
             n_calls=1,
         )
-        (added,) = export.export_schemas(None, [record], tmp_path, language=language, models=["test-model"])
+        (added,) = export.export_schemas(None, [record], tmp_path, language=language, model="test-model")
         path = tmp_path / added.relative_path
         kernel = ContractRegistry.default().parse_schema(path.read_bytes(), str(path)).kernel
         assert (kernel.language, kernel.entry_point) == (language, entry_point)

@@ -112,14 +112,14 @@ class SchemaCalls(NamedTuple):
     calls: tuple[tuple[str, int], ...]
     # served: call targets kernel.targets does not match, sorted; added: ()
     mismatched_targets: tuple[DeviceTarget, ...]
-    # served: the export's models the file does not list; added: ()
-    missing_models: tuple[str, ...]
+    # served: the file's models do not list the export's model; added: False
+    lacks_model: bool
 
 
 class _ServingSchema(NamedTuple):
     relative_path: PurePosixPath  # <op>/impls/<language>/<schema_name>/<uuid>.json
     targets: tuple[DeviceTarget, ...]  # its kernel.targets
-    models: tuple[str, ...]  # its models
+    models: tuple[str, ...]
 
 
 class _ServedCalls(NamedTuple):
@@ -149,11 +149,11 @@ def export_schemas(
     export_dir: Path,
     *,
     language: Language,
-    models: Sequence[str],
+    model: str,
 ) -> list[SchemaCalls]:
-    """Write into ``export_dir`` a ``language`` schema of ``models`` (whose serving made
-    the calls) for each schema name whose called Points no committed schema serves; every
-    schema file the calls reach, sorted by path."""
+    """Write into ``export_dir`` a ``language`` schema listing ``model`` (whose serving
+    made the calls) for each schema name whose called Points no committed schema serves;
+    every schema file the calls reach, sorted by path."""
     if export_dir.resolve().is_relative_to(_AKLR_DIR):
         raise ValueError(f"{export_dir}: inside the aklr source tree; export never writes the repository")
     errors: list[str] = []
@@ -226,7 +226,7 @@ def export_schemas(
             entry_point=f"kernel{spec.SOURCE_SUFFIXES[language][0]}::run",
             sources=(),
         )
-        narrowed = p.contract.narrow(p.point, workloads=workloads, kernel=kernel, models=models)
+        narrowed = p.contract.narrow(p.point, workloads=workloads, kernel=kernel, models=(model,))
         relative_path = locate.op_dir(pkg).name / narrowed.relative_path()
         path = export_dir / relative_path
         errors += p.contract.schema_errors(path, narrowed)
@@ -234,15 +234,19 @@ def export_schemas(
         n_calls_by_axes: Counter[str] = Counter()
         for key, w in p.workloads.items():
             n_calls_by_axes[axes_text(w.axes)] += p.n_calls_by_workload[key]
-        results.append(SchemaCalls(relative_path, True, _sorted_calls(n_calls_by_axes), (), ()))
+        results.append(SchemaCalls(relative_path, True, _sorted_calls(n_calls_by_axes), (), False))
     for serving_schema, calls in served.items():
         mismatched = (
             DeviceTarget.normalize_targets(list(calls.mismatched_targets)) if calls.mismatched_targets else ()
         )
-        missing = tuple(m for m in models if m not in serving_schema.models)
+        lacks_model = model not in serving_schema.models
         results.append(
             SchemaCalls(
-                serving_schema.relative_path, False, _sorted_calls(calls.n_calls_by_axes), mismatched, missing
+                serving_schema.relative_path,
+                False,
+                _sorted_calls(calls.n_calls_by_axes),
+                mismatched,
+                lacks_model,
             )
         )
     if errors:  # without repeats: each call of an unknown contract_id reports it
@@ -317,12 +321,12 @@ def main(argv: Sequence[str], *, export_dir: Path | None) -> int:
         if not records:
             print(f"no calls.*.jsonl in {calls_dir}", file=sys.stderr)
             return 1
-        results = export_schemas(calls_dir, records, export_dir, language=language, models=(args.model,))
+        results = export_schemas(calls_dir, records, export_dir, language=language, model=args.model)
     except (OSError, ValueError) as e:
         print(e, file=sys.stderr)
         return 1
     for schema_calls in results:
-        relative_path, is_added, calls, mismatched_targets, missing_models = schema_calls
+        relative_path, is_added, calls, mismatched_targets, lacks_model = schema_calls
         status = "added" if is_added else "served"
         line = f"{status:<8} {relative_path}   {len(calls)} workloads  "
         line += " ".join(f"{axes}:{n_calls}" for axes, n_calls in calls)
@@ -331,8 +335,8 @@ def main(argv: Sequence[str], *, export_dir: Path | None) -> int:
         elif mismatched_targets:
             targets = ", ".join(str(t) for t in mismatched_targets)
             line += f"   (target mismatch: called on {targets}, which falls back)"
-        if missing_models:
-            line += f"   (models lack {', '.join(missing_models)}: add it to the file)"
+        if lacks_model:
+            line += f"   (models lack {args.model}: add it to the file)"
         print(line)
     if n_calls := sum(r.n_calls for r in records if r.point is None):
         print(f"{n_calls} calls had no point (fallback only)")

@@ -76,7 +76,7 @@ class OpContract(FrozenModel):
     contract_id: ContractId
     description: str
     op_type: str  # the op family: "gemm" for aklr/ops/gemm/
-    # the models whose serving makes a schema's calls, sorted: "kimi-k3", "glm-5.2"
+    # the models whose serving makes a schema's calls, sorted: "glm-5.2", "kimi-k3"
     models: tuple[Annotated[str, Field(pattern=r"^[a-z0-9][a-z0-9.-]*$")], ...] = ()
     workloads: tuple[WorkloadSpec, ...] = ()
     axes: dict[str, AxisSpec]
@@ -850,7 +850,7 @@ class OpContract(FrozenModel):
                 "contract_id": self.contract_id,
                 "description": self.description,
                 "op_type": self.op_type,
-                "models": list(self.models),
+                "models": self.models,
                 "axes": {
                     name: ({"type": "var"} if a.is_var else {"type": "const", "value": symbols[name]})
                     | {"description": a.description}
