@@ -58,9 +58,25 @@ def parameters(fn, *, defaults=True):
 )
 def test_every_route_takes_its_targets_parameters(target, route):
     installed_sglang()
-    # aiter's defaults are aiter's enums, which route modules cannot import
-    defaults = not target.startswith("aiter.")
-    assert parameters(route, defaults=defaults) == parameters(pkgutil.resolve_name(target), defaults=defaults)
+    if not target.startswith("aiter."):
+        assert parameters(route) == parameters(pkgutil.resolve_name(target))
+        return
+    # aiter's defaults are aiter's enums, which route modules cannot import. A newer aiter than the
+    # installed one adds parameters at the end, which the route takes too.
+    taken = parameters(pkgutil.resolve_name(target), defaults=False)
+    assert parameters(route, defaults=False)[: len(taken)] == taken
+
+
+def test_the_fused_moe_route_passes_sglangs_output_to_the_op(monkeypatch):
+    """CI's aiter lacks ``output``, so the parameter test cannot see it: the route must take
+    sglang's ``output`` (MoRI EP's combine buffer) and pass it on."""
+    from aklr.plugins.sglang import aiter_calls
+
+    passed = {}
+    monkeypatch.setattr(aiter_calls.aklr_aiter, "fused_moe", lambda *args, **kwargs: passed.update(kwargs))
+    out = torch.empty(0)
+    aiter_calls._fused_moe(*[None] * 5, output=out)
+    assert passed["output"] is out
 
 
 @pytest.mark.parametrize(
