@@ -12,7 +12,12 @@ from types import SimpleNamespace
 
 from aklr.plugins.sglang.models.deepseek_common.contract import FP8_GROUP
 
-__all__ = ["mla_kc_rope_cache_baseline", "mla_qkv_a_norm_baseline", "mla_vc_baseline"]
+__all__ = [
+    "mla_kc_rope_cache_baseline",
+    "mla_qkv_a_norm_baseline",
+    "mla_qkv_a_norm_fp8_baseline",
+    "mla_vc_baseline",
+]
 
 
 def _forward_mla_rocm():
@@ -49,6 +54,43 @@ def mla_qkv_a_norm_baseline(
         q, q_norm_weight, eps, latent_cache[..., :kv_rank], kv_norm_weight, eps
     )
     return q, kv, latent_cache[..., kv_rank:]
+
+
+def mla_qkv_a_norm_fp8_baseline(
+    hidden_states,
+    w_qkv_a,
+    w_qkv_a_scale,
+    q_norm_weight,
+    kv_norm_weight,
+    eps=1e-5,
+    q_latent=None,
+    q_fp8=None,
+    q_scale=None,
+    kv_latent=None,
+    k_rope=None,
+):
+    """The qkv latent prepare fetches and its norms for a block-fp8 checkpoint whose scales
+    sglang keeps as weight_scale_inv (GLM-5.3's): fused_qkv_a_proj_with_mqa through
+    aiter_w8a8_block_fp8_linear (aiter's per-1x128 quantization, then its preshuffled CK GEMM),
+    split as prepare splits it, the fused q and KV RMSNorm it binds (fused_qk_rmsnorm_bf16),
+    then the per-1x128 quantization q_b_proj's own aiter_w8a8_block_fp8_linear applies to the
+    q latent, its scale in the layout that GEMM reads."""
+    from sglang.srt.layers.quantization import fp8_utils
+
+    rocm = _forward_mla_rocm()
+    q_rank, kv_rank = q_norm_weight.shape[0], kv_norm_weight.shape[0]
+    latent = fp8_utils.aiter_w8a8_block_fp8_linear(hidden_states, w_qkv_a, [128, 128], w_qkv_a_scale)
+    q, latent_cache = latent.split([q_rank, latent.shape[-1] - q_rank], dim=-1)
+    q, kv = rocm.fused_qk_rmsnorm_bf16(
+        q, q_norm_weight, eps, latent_cache[..., :kv_rank], kv_norm_weight, eps
+    )
+    transposed = q.shape[0] >= 2
+    codes, scales = fp8_utils.aiter_per1x128_quant(
+        q, quant_dtype=fp8_utils.aiter.dtypes.fp8, transpose_scale=transposed
+    )
+    if transposed:
+        scales = fp8_utils.view_aiter_fused_rms_transposed_fp8_scale(scales)
+    return q, codes, scales.T, kv, latent_cache[..., kv_rank:]
 
 
 def mla_kc_rope_cache_baseline(
