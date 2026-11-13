@@ -188,7 +188,9 @@
       "scalars": {
         "eps": 9.999999974752427e-07,
         "scale": 0.0625
-      }
+      },
+      "accuracy": "failed",
+      "speedup": 1.234
     },
     {
       "axes": {
@@ -200,7 +202,9 @@
       "scalars": {
         "eps": 9.999999974752427e-07,
         "scale": 0.0625
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.345
     }
   ],
   "layout_variants": {

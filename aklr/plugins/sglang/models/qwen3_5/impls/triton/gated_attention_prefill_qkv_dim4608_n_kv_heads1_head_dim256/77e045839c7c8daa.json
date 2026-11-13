@@ -188,7 +188,9 @@
       "scalars": {
         "eps": 9.999999974752427e-07,
         "scale": 0.0625
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.528
     },
     {
       "axes": {
@@ -200,7 +202,9 @@
       "scalars": {
         "eps": 9.999999974752427e-07,
         "scale": 0.0625
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.5
     },
     {
       "axes": {
@@ -212,7 +216,9 @@
       "scalars": {
         "eps": 9.999999974752427e-07,
         "scale": 0.0625
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.491
     },
     {
       "axes": {
@@ -224,7 +230,9 @@
       "scalars": {
         "eps": 9.999999974752427e-07,
         "scale": 0.0625
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.546
     }
   ],
   "layout_variants": {
