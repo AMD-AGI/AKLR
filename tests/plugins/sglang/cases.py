@@ -582,10 +582,42 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    # Kimi-K3's attention-residual aggregation shrunk: a bank of 4 rows, 3 written; the
+    # layer that also stores its prefix as the next bank row
+    PointSpec(
+        contract_id="attn_res@1.0",
+        axes={"n_tokens": 4, "hidden_size": 256, "n_bank_rows": 4},
+        dtypes={
+            "prefix": "bfloat16",
+            "bank": "bfloat16",
+            "score_weight": "float32",
+            "norm_weight": "bfloat16",
+            "normalized": "bfloat16",
+        },
+        attrs={"n_valid_rows": 3, "write_bank": True},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
+        contract_id="add_attn_res@1.0",
+        axes={"n_tokens": 4, "hidden_size": 256, "n_bank_rows": 4},
+        dtypes={
+            "prefix": "bfloat16",
+            "addend": "bfloat16",
+            "bank": "bfloat16",
+            "score_weight": "float32",
+            "norm_weight": "bfloat16",
+            "normalized": "bfloat16",
+            "prefix_out": "bfloat16",
+        },
+        attrs={"n_valid_rows": 2, "write_bank": False},
+        layout_variant_name="row_major",
+    ),
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
     {
+        "add_attn_res@1.0",
+        "attn_res@1.0",
         "deepseek_v2_fp8_moe@1.0",
         "deepseek_v2_mxfp4_moe@1.0",
         "dsa_indexer_key_prepare@1.0",
