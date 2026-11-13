@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from torch import Tensor
 
-__all__ = ["flash_mla_with_kvcache_reference", "fp8_paged_mqa_logits_reference"]
+__all__ = ["flash_mla_with_kvcache_reference", "fp8_paged_mqa_logits_reference", "mla_decode_fwd_reference"]
 
 # Gathered KV values per chunk of rows: 256 MiB of float32.
 _CHUNK_ELEMENTS = 2**26
@@ -144,3 +144,41 @@ def fp8_paged_mqa_logits_reference(
     context = row_major_args["context_lens"].long()
     positions = torch.arange(out.shape[1], device=out.device)
     return out.masked_fill(positions >= context[:, None], -torch.inf)
+
+
+def mla_decode_fwd_reference(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+    decode: Callable[[Tensor, str], Tensor],
+) -> tuple[Tensor, Tensor]:
+    """Each head of a request's query attends over the pool rows its kv_indices name."""
+    import torch
+
+    args, dtypes = row_major_args, point.dtypes
+    q = decode(args["q"], dtypes["q"]).float() * decode(args["q_scale"], dtypes["q_scale"]).reshape(())
+    kv_scale = decode(args["kv_scale"], dtypes["kv_scale"]).reshape(())
+    pool = args["kv_buffer"].flatten(0, 2)
+    offsets = args["kv_indptr"].long()
+    lengths = offsets.diff()
+    positions = torch.arange(max(1, int(lengths.max())), device=q.device)
+    visible = positions < lengths[:, None]
+    # entries past a request's length read entry 0, hidden by ``visible``
+    rows = args["kv_indices"].long()[
+        (offsets[:-1, None] + positions).clamp(max=args["kv_indices"].numel() - 1)
+    ]
+    rows = rows.where(visible, 0)
+    o = q.new_zeros(*q.shape[:-1], 512)
+    lse = q.new_full(q.shape[:-1], -torch.inf)
+    n_requests = max(1, _CHUNK_ELEMENTS // (positions.numel() * q.shape[-1]))
+    for start in range(0, q.shape[0], n_requests):
+        requests = slice(start, start + n_requests)
+        keys = decode(pool[rows[requests]], dtypes["kv_buffer"]).float() * kv_scale
+        seen = visible[requests][:, None]
+        logits = torch.einsum("rhd,rkd->rhk", q[requests], keys) * args["sm_scale"]
+        logits = logits.masked_fill(~seen, -torch.inf)
+        empty = ~seen.any(dim=-1)
+        # normalized directly: subtracting lse would carry its rounding at large logits
+        weights = logits.softmax(dim=-1).masked_fill(empty[..., None], 0)
+        o[requests] = weights @ keys[..., :512]
+        lse[requests] = logits.logsumexp(dim=-1).masked_fill(empty, -torch.inf)
+    return o, lse
