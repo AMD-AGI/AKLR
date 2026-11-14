@@ -142,6 +142,18 @@
     {
       "axes": {
         "batch": 5,
+        "n_pages": 1048006,
+        "table_width": 131073
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 5,
         "n_pages": 1048747,
         "table_width": 131073
       },
@@ -166,6 +178,18 @@
     {
       "axes": {
         "batch": 6,
+        "n_pages": 1048006,
+        "table_width": 131073
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 6,
         "n_pages": 1048747,
         "table_width": 131073
       },
@@ -190,6 +214,18 @@
     {
       "axes": {
         "batch": 8,
+        "n_pages": 1048006,
+        "table_width": 131073
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 8,
         "n_pages": 1048747,
         "table_width": 131073
       },
@@ -214,6 +250,18 @@
     {
       "axes": {
         "batch": 10,
+        "n_pages": 1048006,
+        "table_width": 131073
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 10,
         "n_pages": 1048747,
         "table_width": 131073
       },
@@ -238,6 +286,18 @@
     {
       "axes": {
         "batch": 12,
+        "n_pages": 1048006,
+        "table_width": 131073
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 12,
         "n_pages": 1048747,
         "table_width": 131073
       },
@@ -262,6 +322,18 @@
     {
       "axes": {
         "batch": 15,
+        "n_pages": 1048006,
+        "table_width": 131073
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 15,
         "n_pages": 1048747,
         "table_width": 131073
       },
@@ -286,6 +358,18 @@
     {
       "axes": {
         "batch": 16,
+        "n_pages": 1048006,
+        "table_width": 131073
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 16,
         "n_pages": 1048747,
         "table_width": 131073
       },
@@ -310,6 +394,18 @@
     {
       "axes": {
         "batch": 18,
+        "n_pages": 1048006,
+        "table_width": 131073
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 18,
         "n_pages": 1048747,
         "table_width": 131073
       },
@@ -334,6 +430,18 @@
     {
       "axes": {
         "batch": 20,
+        "n_pages": 1048006,
+        "table_width": 131073
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 20,
         "n_pages": 1048747,
         "table_width": 131073
       },
@@ -358,6 +466,18 @@
     {
       "axes": {
         "batch": 24,
+        "n_pages": 1048006,
+        "table_width": 131073
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 24,
         "n_pages": 1048747,
         "table_width": 131073
       },
@@ -382,6 +502,18 @@
     {
       "axes": {
         "batch": 25,
+        "n_pages": 1048006,
+        "table_width": 131073
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 25,
         "n_pages": 1048747,
         "table_width": 131073
       },
@@ -406,6 +538,18 @@
     {
       "axes": {
         "batch": 30,
+        "n_pages": 1048006,
+        "table_width": 131073
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 30,
         "n_pages": 1048747,
         "table_width": 131073
       },
@@ -430,6 +574,18 @@
     {
       "axes": {
         "batch": 32,
+        "n_pages": 1048006,
+        "table_width": 131073
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 32,
         "n_pages": 1048747,
         "table_width": 131073
       },
@@ -454,6 +610,18 @@
     {
       "axes": {
         "batch": 35,
+        "n_pages": 1048006,
+        "table_width": 131073
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 35,
         "n_pages": 1048747,
         "table_width": 131073
       },
@@ -478,6 +646,18 @@
     {
       "axes": {
         "batch": 36,
+        "n_pages": 1048006,
+        "table_width": 131073
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 36,
         "n_pages": 1048747,
         "table_width": 131073
       },
@@ -491,6 +671,18 @@
       "axes": {
         "batch": 36,
         "n_pages": 1049488,
+        "table_width": 131073
+      },
+      "scalars": {
+        "head_dim_v": 512,
+        "sm_scale": 0.07216878235340118,
+        "kv_scale": 1.0
+      }
+    },
+    {
+      "axes": {
+        "batch": 40,
+        "n_pages": 1048006,
         "table_width": 131073
       },
       "scalars": {
