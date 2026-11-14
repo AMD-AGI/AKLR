@@ -345,7 +345,7 @@ class CandidateRun:
         # the keys come from the candidate's schema: same-named files share them
         schema, contract = requests[0].schema, requests[0].contract
         runnable = BuilderRegistry.get_instance().build(kernel_schema)
-        unmeasured = {"speedup": None, "accuracy": None}
+        unmeasured = {"speedup": None, "accuracy": None, "microseconds": None}
         workloads = [r.workload.model_copy(update=unmeasured) for r in requests]
         dispatcher = KernelDispatcher(contract)
         dispatcher.set_table(

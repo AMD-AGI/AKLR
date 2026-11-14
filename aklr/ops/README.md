@@ -29,7 +29,7 @@ aklr/ops/
 - Several files may share a `<name>` and its Points; dispatch serves each Point with the best measured one
   (`AKLR_MIN_SPEEDUP`).
 - `<uuid>` is 16 hex digits of `sha256(sorted_key_json([name, authored_parts]))` (`OpContract.authored_parts`): it
-  changes with the kernel, its targets, requires or author, the scalars or the Points, never with `speedup`, `accuracy` or workload order.
+  changes with the kernel, its targets, requires or author, the scalars or the Points, never with `speedup`, `accuracy`, `microseconds` or workload order.
   `export check` names the expected path of a file whose uuid is stale.
 
 ## Workflow
@@ -50,11 +50,11 @@ aklr/ops/
    `"entry_point": "kernel.py::run"`, so one file is `kernel.py` defining `run` (or edit `entry_point`); a hip
    kernel's are `.hip` and `.h` files, `kernel.hip::run` its entry ([hip kernels](#hip-kernels)); an hsaco
    kernel stores its code objects in `.py` files ([hsaco kernels](#hsaco-kernels)). To give a
-   scenario a second kernel, copy its committed file, delete `accuracy` and `speedup` from every workload (only CI
+   scenario a second kernel, copy its committed file, delete `accuracy`, `speedup` and `microseconds` from every workload (only CI
    writes them: `PERF_EDITED`), and fill the copy with the second kernel.
 4. Copy the file to the same relative path under `aklr/ops/` and rename it to the `<uuid>.json` that
    `python -m aklr export check` names (the uuid hashes the kernel). To change a committed kernel, edit its
-   `content` or `requires`, delete `accuracy` and `speedup` from every workload (only CI writes them:
+   `content` or `requires`, delete `accuracy`, `speedup` and `microseconds` from every workload (only CI writes them:
    `PERF_EDITED`), and rename the file the same way. Audit checks every committed kernel's sources, changed or not.
 5. Self-test: `python -m aklr export check`, then `python -m aklr validate --base origin/main`. The result does
    not count; CI decides.
@@ -147,7 +147,7 @@ only once a release breaks it. A kernel that fails where `requires` holds raises
 surrounding spaces, omitted when empty, and only recorded: dispatch and the build ignore it, and validation
 compares kernels without it (`KernelSpec.same_kernel`), so a committed kernel whose `author` alone changes keeps
 its audit exemption and the retention threshold. The uuid hashes it, so that edit still renames the file and
-deletes `speedup` and `accuracy` (step 4); dispatch serves the file again once CI writes them back.
+deletes `speedup`, `accuracy` and `microseconds` (step 4); dispatch serves the file again once CI writes them back.
 
 ```python
 def run(*, <every name of OpContract.kernel_call_keys>) -> None: ...
@@ -299,13 +299,16 @@ Each present tensor input carries its `distribution` (a `kind` and its parameter
 var axis): the values a kernel may assume, and how bench draws them. It is the contract's at the Point, written
 once per file; changing it is rejected, not a way to change the inputs.
 
-`workloads` is a list (model `WorkloadSpec`): `{"axes": {<var axis>: int}, "scalars": {...}, "accuracy": "passed" | "failed", "speedup": float}`,
+`workloads` is a list (model `WorkloadSpec`): `{"axes": {<var axis>: int}, "scalars": {...}, "accuracy": "passed" | "failed", "speedup": float, "microseconds": float}`,
 axes in contract order, sorted by their values, each Point once. A var axis the contract declares `any_size`
 (the rows of a KV cache, which the kernel does not depend on) is served at every value of its domain: its workload
 values are only the sizes bench runs. `scalars` holds every present scalar input, a
 captured or authored value inside its declared range; it is omitted when the schema has none. `speedup` (over `<contract>_baseline`) and
 `accuracy` are written by CI on every workload or none (a `failed` one may lack `speedup`; it is never dispatched),
-with one complete `kernel.targets` item.
+with one complete `kernel.targets` item; so is `microseconds`, the kernel's median time per call in the rounds against
+the baseline (graph timer, 3 significant digits), absent where no baseline was timed. CI rewrites a file
+only when a workload's accuracy changes, a speedup or time comes or goes, or a speedup moves by more than 2%, so
+`microseconds` can trail a re-bench that slows or speeds the kernel and the baseline alike.
 
 No workload carries a uuid. A workload is located by its file and its `axes` (`m=1` in reports). Every tensor is
 seeded from `workload_hash(name, workload)` (its axes and scalars), 16 hex digits of a sha256: the same Point with

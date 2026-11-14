@@ -76,8 +76,8 @@ How far the number moves with no change to the kernel:
 
 1. **One Point, one knob.** Change the knob in the branch the Point takes (files keep tables for other sizes, §14),
    with the constants the branch derives from it (scratch shapes, grid, flags): §5 shows what a lone change can do.
-2. **Write the copy beside the original, at its uuid.** Load the file with `json.loads`, pop `accuracy` and `speedup`
-   from every workload (`aklr/ops/README.md` § Workflow, steps 3 and 4), replace the text in the `content` of the
+2. **Write the copy beside the original, at its uuid.** Load the file with `json.loads`, pop `accuracy`, `speedup` and
+   `microseconds` from every workload (`aklr/ops/README.md` § Workflow, steps 3 and 4), replace the text in the `content` of the
    source you edit (assert that it occurs once) and write the result with `json_file_text` to
    `<same directory>/<schema_uuid(name, OpContract.authored_parts(schema))>.json`, as [authoring.md](authoring.md) §3
    does (compact JSON, sorted keys, indent 4 or no final newline audit as `schema_invalid`). `python -m aklr export
