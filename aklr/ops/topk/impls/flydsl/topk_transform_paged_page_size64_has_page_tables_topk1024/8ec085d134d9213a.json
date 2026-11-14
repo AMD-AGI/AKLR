@@ -4,6 +4,9 @@
   "contract_id": "topk_transform_paged@1.0",
   "description": "Select each row's topk highest scores among its first seq_lens candidates; write their positions, or their page slots, padded with -1.",
   "op_type": "topk",
+  "models": [
+    "deepseek-v4-pro"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

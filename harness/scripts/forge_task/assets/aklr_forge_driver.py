@@ -118,7 +118,9 @@ def _candidate_text() -> tuple[str, str]:
     ]
     contract = registry.for_schema_json(raw)
     point = contract.point_from_json(raw, raw["workloads"][0]["axes"])
-    text = contract.narrow(point, workloads=raw["workloads"], kernel=raw["kernel"]).schema_text()
+    text = contract.narrow(
+        point, workloads=raw["workloads"], kernel=raw["kernel"], models=raw["models"]
+    ).schema_text()
     return text, schema_uuid(raw["name"], op_contract.authored_parts(json.loads(text)))
 
 

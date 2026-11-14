@@ -29,7 +29,7 @@ aklr/ops/
 - Several files may share a `<name>` and its Points; dispatch serves each Point with the best measured one
   (`AKLR_MIN_SPEEDUP`).
 - `<uuid>` is 16 hex digits of `sha256(sorted_key_json([name, authored_parts]))` (`OpContract.authored_parts`): it
-  changes with the kernel, its targets, requires or author, the scalars or the Points, never with `speedup`, `accuracy` or workload order.
+  changes with the kernel, its targets, requires or author, the scalars or the Points, never with `models`, `speedup`, `accuracy` or workload order.
   `export check` names the expected path of a file whose uuid is stale.
 
 ## Workflow
@@ -39,11 +39,12 @@ aklr/ops/
    is counted in `<export dir>/calls.pid<p>.<run>.jsonl`, served or fallen back alike. A count is the number of
    Python-level dispatches: a CUDA graph replay is never counted, so decode shows its capture count. The set of
    Points is complete; never read the counts as throughput weights.
-2. `python -m aklr export [--from DIR] [--to DIR] [--language L]` writes under `--to`, per scenario name, one new
-   `<op>/impls/<language>/<name>/<uuid>.json` holding every called Point no committed file serves, with
-   `"sources": []`. A Point a committed file already serves is only listed with that file and its call count (and a
-   note when the calls came from a target the file does not list); a Point outside its contract's domain is only
-   counted.
+2. `python -m aklr export --model M [--from DIR] [--to DIR] [--language L]` writes under `--to`, per scenario name,
+   one new `<op>/impls/<language>/<name>/<uuid>.json` holding every called Point no committed file serves, with
+   `"models": ["M"]` and `"sources": []`; `M` names the model whose run made the calls (see Schema fields). A Point a
+   committed file already serves is only listed with that file and its call count (and a note when the calls came
+   from a target the file does not list, or when the file's `models` lacks `M`: add `M` to it); a Point outside its
+   contract's domain is only counted.
    Export never rewrites a committed file and never writes into `aklr/`; `--to` belongs outside the repository. A
    rerun removes only the earlier export's files whose `sources` is empty; filled files stay.
 3. Fill `kernel.sources` with one `{"path": "<file>.py", "content": "<the file's text>"}` per file; export writes
@@ -74,6 +75,7 @@ characters unescaped, a final newline. Anything else is rejected;
 | `contract_id` | export | `<contract>@<major>.<minor>` |
 | `description` | export | what the op computes |
 | `op_type` | export | the op family, the `<op>` of `aklr/ops/<op>/`; the api function is `aklr.ops.<op>.api.<contract>`. A plugin op's is its package's last name (`aklr/plugins/README.md`) |
+| `models` | export (`--model`), author | the models whose serving makes this scenario's calls, sorted, each once: the model's name as its publisher writes it, lowercased, without a parameter-count suffix (`kimi-k3`, `deepseek-v4-pro`, `glm-5.2`). When another model makes the same calls, add it. Not hashed into the uuid |
 | `axes` | export | the contract's axes, every one but the var ones pinned to this scenario's value; a derived axis's `expr` becomes its int value |
 | `attrs` | export | every attr, keeping this scenario's value alone |
 | `inputs` | export | every input of the contract, narrowed to this scenario |
@@ -84,7 +86,7 @@ characters unescaped, a final newline. Anything else is rejected;
 | `kernel` | export (`language`, `targets`, `entry_point`, `"sources": []`), author (`sources`, `requires`, `author`) | the kernel section; empty `sources` in the repository make a definition: loaded and audited, never served or benched |
 
 Every key written by export alone is derived from the Python contract and checked against it (`export check`). Editing one directly only produces an error. A committed file and its
-export differ only in `kernel.sources`, `kernel.requires` and `kernel.author`.
+export differ only in `models`, `kernel.sources`, `kernel.requires` and `kernel.author`.
 
 The fields below belong to the Python contract (`TensorSpec` and `ScalarSpec` in `aklr/core/contract/spec/_args.py`,
 read through the op's `contract.py`); a schema file's `inputs` and `outputs` items carry only `shape`, `dtype`,
@@ -361,7 +363,7 @@ A schema file carries no semantics stamp. After a change to the schema format, r
 
 | Command | Does | Exit |
 |---|---|---|
-| `python -m aklr export [--from DIR] [--to DIR] [--language L]` | export (`--from` and `--to` default to `AKLR_EXPORT_DIR`, else `./aklr_export`; `--language` required); fails with `no calls.*.jsonl in DIR` when there are no calls | 0 done, 1 error, 2 usage |
+| `python -m aklr export --model M [--from DIR] [--to DIR] [--language L]` | export (`--from` and `--to` default to `AKLR_EXPORT_DIR`, else `./aklr_export`; `--language` and `--model` required); fails with `no calls.*.jsonl in DIR` when there are no calls | 0 done, 1 error, 2 usage |
 | `python -m aklr export check` | checks every committed schema and `impls/`; no GPU, no environment | 0 clean, 1 problems on stderr, 2 usage |
 | `python -m aklr validate [PATH ...] [--base REV] [--stages audit,bench] ...` | audit and bench stages (default: both); writes `aklr_validation/report.json` and `report.md` | 0 passed, 1 failed, 2 usage, 3 aborted |
 

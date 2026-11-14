@@ -80,6 +80,32 @@ class TestSchemaFile:
         for field in ("language", "entry_point"):
             assert any(line.startswith(f"bad.json: kernel.{field}: ") for line in lines)
 
+    def test_models(self) -> None:
+        """``models`` follows ``op_type``: the models whose serving makes the calls,
+        sorted, once each, lowercase. The uuid does not hash it; a registered contract
+        has none."""
+        case = OpCase.of("gemm@1.0")
+        schema = case.schema()
+        data = json.loads(schema.schema_text())
+        assert list(data)[list(data).index("op_type") + 1] == "models"
+        parse = ContractRegistry.default().parse_schema
+
+        def with_models(models: object) -> bytes:
+            return expr.json_file_text({**data, "models": models}).encode()
+
+        parsed = parse(with_models(["glm-5.2", "kimi-k3"]), "a.json")
+        assert parsed.models == ("glm-5.2", "kimi-k3")
+        assert parsed.relative_path() == schema.relative_path()
+        for bad in ([], ["kimi-k3", "glm-5.2"], ["kimi-k3", "kimi-k3"], ["Kimi-K3"]):
+            with pytest.raises(ValueError, match=r"^a\.json: models"):
+                parse(with_models(bad), "a.json")
+        without = {k: v for k, v in data.items() if k != "models"}
+        with pytest.raises(ValueError, match=r"^a\.json: models \[\]"):
+            parse(expr.json_file_text(without).encode(), "a.json")
+        fields = {f: getattr(case.contract, f) for f in OpContract.model_fields}
+        with pytest.raises(ValueError, match="a registered contract has no workloads, kernel or models"):
+            OpContract.model_validate({**fields, "models": ("kimi-k3",)})
+
     def test_kernel_requires(self) -> None:
         """``kernel.requires`` follows ``targets`` and is absent when empty; a key is a
         language, a value a version specifier. The uuid hashes it."""

@@ -4,6 +4,9 @@
   "contract_id": "bmm@1.0",
   "description": "Batched 16-bit gemm: out[i] = a[i] @ b[i].T + bias[i], over all m.",
   "op_type": "gemm",
+  "models": [
+    "kimi-k3"
+  ],
   "axes": {
     "batch": {
       "type": "var",

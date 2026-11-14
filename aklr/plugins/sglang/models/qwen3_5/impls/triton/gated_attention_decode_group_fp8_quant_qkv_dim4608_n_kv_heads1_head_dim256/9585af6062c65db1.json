@@ -4,6 +4,10 @@
   "contract_id": "gated_attention_decode_group_fp8_quant@1.0",
   "description": "Qwen3.5 full-attention decode on one rank, between qkv_proj and o_proj, one token per row. projected_qkv holds each query head's query then its output gate, then the KV heads' keys, then their values. Q and K are RMS-normalized per head with weight 1 + norm weight and rounded to BF16; each head's first 64 channels take NeoX RoPE, rounded to BF16, whose frequency f in [0, 32) reads positions[1] when f % 3 == 1 and f < 33, positions[2] when f % 3 == 2 and f < 30, else positions[0], in cos_sin_cache's row of 32 cosines then 32 sines. Each row writes its K and V, cast to E4M3FN, at its cache_locations slot of key_cache and value_cache; rows sharing a slot leave one of their values there. Query head h then attends, through KV head h // (n_heads // n_kv_heads), the written slots kv_indices[kv_indptr[r]:kv_indptr[r + 1]] with scores q . k * scale; the softmax-weighted sum of their values is rounded to BF16, multiplied by sigmoid of the gate and rounded to BF16, then quantized in groups of 128 channels to E4M3FN with scale=max(amax,1e-10)/448. Unwritten slots and all other inputs are preserved.",
   "op_type": "qwen3_5",
+  "models": [
+    "qwen3-next",
+    "qwen3.5"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

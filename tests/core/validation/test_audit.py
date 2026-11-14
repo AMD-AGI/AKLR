@@ -453,6 +453,7 @@ class TestAuditStage:
                 case.point,
                 workloads=[{"axes": {"m": m}, **measurement} for m in ms],
                 kernel=case.schema(source).kernel.model_copy(update={"author": author}),
+                models=["test-model"],
             )
             return f"aklr/ops/{op_type}/{schema.relative_path()}", schema.schema_text()
 

@@ -4,6 +4,9 @@
   "contract_id": "fused_moe@1.0",
   "description": "Route each token to its top-k experts, run both projections, combine.",
   "op_type": "fused_moe",
+  "models": [
+    "minimax-m3.1"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

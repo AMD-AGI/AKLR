@@ -4,6 +4,9 @@
   "contract_id": "kimi_k3_attn_res@1.0",
   "description": "p = prefix, or bf16(prefix + addend) with an addend, then stored back to prefix; rows = bank[:, :n_valid_rows] and p; each row r scores (r . (score_norm_weight * score_proj_weight)) * rsqrt(mean(r**2) + score_eps); the softmax of the scores weights the rows into mix; out = mix * rsqrt(mean(mix**2) + norm_eps) * norm_weight with a norm_weight, else mix; the means over the hidden axis. With write_bank, bank[:, n_valid_rows] = p. Bank rows from n_valid_rows on, but the one written, are unwritten memory in vLLM: a kernel reads none of them.",
   "op_type": "attn_res",
+  "models": [
+    "kimi-k3"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

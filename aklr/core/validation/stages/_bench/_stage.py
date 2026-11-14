@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import itertools
 import json
 import logging
@@ -11,6 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Final
 
+from aklr.core.contract import expr
 from aklr.core.contract.locate import schema_op_dir
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
@@ -231,6 +233,16 @@ class BenchStage(PipelineStage[BenchReport]):
         served: dict[Any, list[tuple[OpContract, WorkloadSpec, str]]] = {}
         for path in paths:
             text = scope.text_at_base(path)
+            with contextlib.suppress(ValueError):
+                data = json.loads(text)
+                # shortcut: a base from before schemas named their models reads as naming this
+                # schema's; drop once no base validated against predates `models`
+                if isinstance(data, dict) and "models" not in data and "axes" in data:
+                    items = list(data.items())
+                    at = list(data).index("axes")
+                    text = expr.json_file_text(
+                        dict([*items[:at], ("models", list(schema.models)), *items[at:]])
+                    )
             try:
                 base = ContractRegistry.default().parse_schema(text.encode(), path)
             except ValueError as e:

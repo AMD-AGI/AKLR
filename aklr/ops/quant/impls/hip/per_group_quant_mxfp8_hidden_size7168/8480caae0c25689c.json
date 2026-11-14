@@ -4,6 +4,9 @@
   "contract_id": "per_group_quant_mxfp8@1.0",
   "description": "Quantize groups of 32 BF16 values to E4M3FN with row-major E8M0 dequantization scales, rounding each scale up to a power of two.",
   "op_type": "quant",
+  "models": [
+    "deepseek-v4-pro"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

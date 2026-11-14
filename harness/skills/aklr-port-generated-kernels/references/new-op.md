@@ -25,8 +25,8 @@ each file are in `aklr/ops/README.md`; this is the order and the traps.
 6. **Tests**: add the contract's base Point, small, to `_SMALL_POINTS` in `tests/op_case.py` (contract
    order), so the contract and reference suites cover it, and regenerate the variant names with
    `AKLR_UPDATE_NAMES=1 pytest tests/ops/test_contracts.py` (`tests/ops/names.txt`).
-7. **Schemas**: `python -m aklr export` from a `AKLR_EXPORT` capture of the model, or narrow the
-   contract to chosen Points with a script; say which in the PR. Then fill `kernel.sources`.
+7. **Schemas**: `python -m aklr export --model <model>` from a `AKLR_EXPORT` capture of the model, or narrow the
+   contract to chosen Points with a script (`models=[<model>]`); say which in the PR. Then fill `kernel.sources`.
 
 Such a PR changes code, so CI validates every committed schema, not only the new one
 (`aklr-read-validation`, ci.md): its kernel waits for that run.

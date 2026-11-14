@@ -4,6 +4,9 @@
   "contract_id": "dsa_sparse_mla_decode@1.0",
   "description": "sglang's DSA backend's sparse MLA decode on one rank, kv_b_proj absorbed (DeepseekSparseAttnBackend._forward_triton_decode): each head of each token attends the KV pool rows its top-k slots name (-1: none) with scores q . row * sm_scale, q and the rows the fp8 values sglang holds, unscaled; the output is the softmax-weighted sum of the rows' latent parts, 0 for a token that reads no row.",
   "op_type": "dsa_backend",
+  "models": [
+    "glm-5.2"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

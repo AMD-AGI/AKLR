@@ -4,6 +4,10 @@
   "contract_id": "fp8_paged_mqa_logits@1.0",
   "description": "DeepSeek-V4 indexer logits: for each request and each cached token t, sum over heads h of weights[h] * relu(q[h] . k_t) * scale_t, over a paged pool of fp8 keys with an fp32 scale per token.",
   "op_type": "mla",
+  "models": [
+    "glm-5.2",
+    "glm-5.3"
+  ],
   "axes": {
     "batch": {
       "type": "var",

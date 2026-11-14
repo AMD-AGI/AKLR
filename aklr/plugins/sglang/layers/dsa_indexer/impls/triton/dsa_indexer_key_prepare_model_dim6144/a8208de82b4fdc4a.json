@@ -4,6 +4,10 @@
   "contract_id": "dsa_indexer_key_prepare@1.0",
   "description": "sglang's DSA indexer's key-only path on one rank (Indexer._forward_cuda_k_only on HIP, the Hadamard-rotated index-K format), which stores the tokens' keys and computes no query. Each token's key is LayerNorm(x wk^T) (k_norm_weight, k_norm_bias, k_norm_eps), its first 64 values turned by RoPE in interleaved pairs (2i, 2i + 1) by cos_cache and sin_cache at the token's position, then the Hadamard transform over its 128 values (Sylvester order) times 128^-0.5, each step rounded to bf16 as sglang rounds it; it is stored into index_k_cache at its out_cache_loc slot as fp8 values at a scale of 2^ceil(log2(max(amax, 0.0001) / 448)) of its values, and that scale in fp32.",
   "op_type": "dsa_indexer",
+  "models": [
+    "glm-5.2",
+    "glm-5.3"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

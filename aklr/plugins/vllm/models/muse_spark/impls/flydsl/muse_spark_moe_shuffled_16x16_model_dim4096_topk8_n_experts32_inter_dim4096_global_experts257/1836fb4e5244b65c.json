@@ -4,6 +4,9 @@
   "contract_id": "muse_spark_moe@1.0",
   "description": "vLLM's MuseSpark1xMoE experts on one expert-parallel rank with MXFP4 experts, from the pooled rows to the unweighted output of each route: each row's pre-expert RMSNorm (fp32, times norm_weight + gain_center), then per route, the routes to the experts expert_mask gives this rank, down(silu(gate(x)) * up(x)) of its MXFP4 weights (fused_moe's: fp4 values at an e8m0 scale per 32); the routes to the others write zeros. The router weights, the post-expert norm and the sum over the routes are vLLM's, after it.",
   "op_type": "muse_spark",
+  "models": [
+    "muse-spark"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

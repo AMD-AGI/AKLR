@@ -4,6 +4,9 @@
   "contract_id": "mhc_fused_post_pre@1.0",
   "description": "mHC post, then the next mHC pre on the new streams rounded to residual's dtype; aiter's return order (next_post_mix, next_comb_mix, layer_input, next_residual), not sglang's residual-first order.",
   "op_type": "mhc",
+  "models": [
+    "deepseek-v4-flash"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

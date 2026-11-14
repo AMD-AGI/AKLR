@@ -4,6 +4,9 @@
   "contract_id": "qwen2_moe_mxfp4_moe@1.0",
   "description": "sglang's Qwen2MoeSparseMoeBlock.forward on one rank of its TP group, with MXFP4 routed experts and the shared expert apart in BF16 (sglang's path for a checkpoint that keeps its shared expert BF16, which cannot be fused): the logits hidden_states router_weight^T, rounded to bf16, pick each token's topk experts by descending logit, a tie going to the lower expert id, weighed by the softmax of their logits (the softmax over every expert, renormalized over the chosen ones); each routed expert down(silu(gate(x)) * up(x)) of its MXFP4 weights (fused_moe's: fp4 values at an e8m0 scale per 32), the shared expert down(silu(gate(x)) * up(x)) of its BF16 weights, weighed by sigmoid(hidden_states shared_gate_weight^T) and added; out is this rank's share of the block's output, which the TP group sums after the call",
   "op_type": "qwen2_moe",
+  "models": [
+    "qwen3.5"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

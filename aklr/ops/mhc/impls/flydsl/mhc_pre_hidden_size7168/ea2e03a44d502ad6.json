@@ -4,6 +4,9 @@
   "contract_id": "mhc_pre@1.0",
   "description": "Mix four residual streams into an optionally rms-normed layer input; derive the post mixes.",
   "op_type": "mhc",
+  "models": [
+    "deepseek-v4-pro"
+  ],
   "axes": {
     "n_tokens": {
       "type": "var",

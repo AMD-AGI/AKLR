@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+from aklr.core.contract import expr
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.spec import axes_text
@@ -907,6 +908,17 @@ class TestBaseline:
         _, (record,) = BenchStage(["cpu"])._judged_findings(scope, (a,), [crash], None, None)
         assert record.baseline == _SCHEMA
         assert record.is_timed is has_defined_baseline
+
+    def test_base_before_models_is_the_incumbent(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A base file of this very kernel from before schemas named their models is
+        still this kernel at base: kept at both workloads (B at 0.9 included)."""
+        base = json.loads(self._base_text({self._A: 1.2, self._B: 0.9}, same_kernel=True))
+        del base["models"]
+        scope = self._base_scope(monkeypatch, {self._A: 1.2})
+        monkeypatch.setattr(ValidationScope, "text_at_base", lambda self, path: expr.json_file_text(base))
+        requests = self._requests(scope)
+        assert requests[self._A].thresholds == requests[self._B].thresholds == {"baseline": "retain"}
+        assert requests[self._A].baseline == _SCHEMA
 
     def test_author_only_edit_is_this_kernel(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """A base file of this very kernel but another ``author`` is this kernel: kept

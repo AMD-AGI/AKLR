@@ -50,7 +50,7 @@ Only non-`.md` changes under `aklr/core/` make CI test **all** committed schemas
 
 ### 1. B contract exists: generate the concrete schema
 
-Pin the scenario (const axes, dtypes, attrs, layout) and list the var-axis values to serve. These values come from the real workloads. Call `ContractRegistry.default().get(...)`, `PointSpec`, `workload_for`, `narrow(..., kernel={"sources": []})` and `schema_text()` in turn, and write the result to `op_dir(contract.op_package) / schema.relative_path()`. You can start from the script template below (angle brackets are placeholders; for a complete runnable script, see the example below):
+Pin the scenario (const axes, dtypes, attrs, layout) and list the var-axis values to serve. These values come from the real workloads. Call `ContractRegistry.default().get(...)`, `PointSpec`, `workload_for`, `narrow(..., kernel={"sources": []}, models=[...])` and `schema_text()` in turn, and write the result to `op_dir(contract.op_package) / schema.relative_path()`. You can start from the script template below (angle brackets are placeholders; for a complete runnable script, see the example below):
 
 
 ```python
@@ -69,9 +69,11 @@ p = PointSpec(
     layout_variant_name="<layout>")
 # Build one workload per var-axis value ({}: scalars take their defaults)
 workloads = [c.workload_for(p.model_copy(update={"axes": {**p.axes, "<var axis>": t}}), {}) for t in (<v1>, <v2>, ...)]
-# Narrow to a schema; sources=[] means kernel-less; fill in language/targets/entry_point for the contract and target hardware
+# Narrow to a schema; sources=[] means kernel-less; fill in language/targets/entry_point for the contract and target hardware;
+# models names the models whose serving makes these calls (aklr/ops/README.md, Schema fields)
 s = c.narrow(p, workloads=workloads, kernel={"language": "<flydsl|triton|hip>", "targets": [{"arch": "<arch>", "hardware": "<hardware>"}],
-                                            "entry_point": "<entry file>::run", "requires": {}, "author": "", "sources": []})
+                                            "entry_point": "<entry file>::run", "requires": {}, "author": "", "sources": []},
+             models=["<model>"])
 # Output path: this uuid belongs to the kernel-less version only and is temporary
 path = op_dir(c.op_package) / s.relative_path()
 # Write out schema_text()
@@ -180,7 +182,7 @@ if len(sys.argv) > 1:                                                          #
     if not kernel["sources"]:
         sys.exit(f"no .py files in {sys.argv[1]}")
     kernel["author"] = "<your name>"                                           # optional
-schema = contract.narrow(base, workloads=workloads, kernel=kernel)
+schema = contract.narrow(base, workloads=workloads, kernel=kernel, models=["glm-5.2"])  # the model that makes these calls
 path = op_dir(contract.op_package) / schema.relative_path()
 path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(schema.schema_text(), encoding="utf-8")
@@ -190,6 +192,7 @@ print(path)
 Running `python ~/make_moe_schema.py` writes `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/<uuid0>.json` (`<uuid0>` belongs to the kernel-less version only and is temporary). Only `shuffled_16x16` appears in the name because it is not the first declared layout; every other attr/dtype is its first declared value and stays out of the name (the Names section of `aklr/ops/README.md`). Apart from `kernel.sources` and the measurement fields, the file equals the committed `aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/1fee59821837c26f.json`. An excerpt of the new file:
 
 ```json
+"models": ["glm-5.2"],
 "axes": {"n_tokens": {"type": "var", ...}, "model_dim": {"type": "const", "value": 6144, ...}, "n_experts": {..., "value": 257}, "topk": {..., "value": 9},
          "inter_dim": {..., "value": 256}, "gate_up_rows": {..., "value": 512}, "model_blocks": {..., "value": 192}, "inter_blocks": {..., "value": 8}},
 "attrs": {"activation": "silu", "quant_type": "per_1x32", "doweight_stage1": false, "gate_mode": "separated", "has_expert_mask": false, "act_quant": 4},
