@@ -22,18 +22,28 @@ REPO = Path(__file__).resolve().parents[2]
 with mock.patch.object(sys, "path", [str(REPO / "benchmarks/agentx"), *sys.path]):
     report_all = importlib.import_module("agentx_ci.report_all")
     utils = importlib.import_module("agentx_ci.utils")
+    serving_config = importlib.import_module("agentx_ci.serving_config")
 
 
 class AgentXReportOutcomeTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.results_dir = self.root / "results"
-        self.relative = utils.target_path("fixture", "fixture-gpu")
+        self.relative = utils.target_path("fixture", "fixture-gpu", "sglang")
+        selection = serving_config.seal_selection(
+            {
+                "points": ["tp8:1", "tp8:2"],
+                "policy": serving_config.POLICY,
+                "duration": None,
+                "points_requested": None,
+            }
+        )
         self.results_path = self.results_dir / self.relative / "results.json"
         self.results = {
-            "schema": 3,
+            "schema": 4,
             "model": {"id": "fixture", "display_name": "Fixture"},
             "target": {"id": "fixture-gpu"},
+            "framework": {"id": "sglang"},
             "run": {
                 "id": "fixture-run",
                 "mode": "live",
@@ -43,6 +53,8 @@ class AgentXReportOutcomeTests(unittest.TestCase):
                 "serving_sha256": "a" * 64,
                 "attempt_id": "fixture-attempt",
                 "finished_at": "2026-01-01T00:00:00Z",
+                "point_policy": serving_config.POLICY,
+                "selection": selection,
             },
             "points": [
                 {
@@ -64,15 +76,18 @@ class AgentXReportOutcomeTests(unittest.TestCase):
         self.results["control"]["run"]["aklr_mode"] = "disabled"
         utils.write_json(self.results_path, self.results)
         self.plan = {
-            "schema": 3,
+            "schema": 4,
             "run_id": "fixture-run",
             "targets": [
                 {
                     "model": self.results["model"],
                     "target": self.results["target"],
+                    "framework": self.results["framework"],
                     "status": "resolved",
                     "serving_sha256": "a" * 64,
                     "point_ids": ["tp8:1", "tp8:2"],
+                    "point_policy": serving_config.POLICY,
+                    "selection_manifest_sha256": selection["manifest_sha256"],
                 }
             ],
         }

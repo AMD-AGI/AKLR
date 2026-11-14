@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import re
 
-from agentx_ci.model_config import validate_model_id, validate_target_id
+from agentx_ci.model_config import validate_framework_id, validate_model_id, validate_target_id
 
 
 def pinned_image(image: str) -> bool:
@@ -47,6 +47,7 @@ def comparison_identity(results: dict, *, allow_empty_points: bool = False) -> d
     try:
         model_id = validate_model_id(results["model"]["id"])
         target_id = validate_target_id(results["target"]["id"])
+        framework_id = validate_framework_id(results["framework"]["id"])
         run = results["run"]
         execution = run["execution"]
         image = run["image"]["run"]
@@ -67,8 +68,8 @@ def comparison_identity(results: dict, *, allow_empty_points: bool = False) -> d
                 )
             ):
                 return None
-        source = run["inferencex"]
-        if not re.fullmatch(r"[0-9a-f]{40}", source["sha"]):
+        client = run["client"]
+        if not re.fullmatch(r"[0-9a-f]{40}", client["sha"]):
             return None
         traces = {}
         for point in results["points"]:
@@ -88,8 +89,9 @@ def comparison_identity(results: dict, *, allow_empty_points: bool = False) -> d
         return {
             "model_id": model_id,
             "target_id": target_id,
+            "framework_id": framework_id,
             "image_id": execution["image_id"],
-            "inferencex": {"repo": source["repo"], "sha": source["sha"]},
+            "client": {"repo": client["repo"], "sha": client["sha"]},
             "hardware": run["hardware"],
             "client_packages": packages,
             "server_packages": server,

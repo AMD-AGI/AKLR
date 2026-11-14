@@ -20,7 +20,7 @@ with mock.patch.object(sys, "path", [str(REPO / "benchmarks/agentx"), *sys.path]
     analysis = importlib.import_module("agentx_ci.performance_analysis")
     report = importlib.import_module("agentx_ci.report")
     report_all = importlib.import_module("agentx_ci.report_all")
-    recipe_resolve = importlib.import_module("agentx_ci.recipe_resolve")
+    serving_config = importlib.import_module("agentx_ci.serving_config")
 
 FULL_RESPONSE = "p90_full_response_intvty"
 E2E = "p90_e2e_norm_intvty"
@@ -28,6 +28,7 @@ E2E = "p90_e2e_norm_intvty"
 
 def aggregate(itl=0.00351, *, e2e=84.72682, throughput=3390.56736):
     return {
+        "num_gpus": 1,
         "num_requests_successful": 73,
         "request_metrics": {
             "latency": {
@@ -40,13 +41,24 @@ def aggregate(itl=0.00351, *, e2e=84.72682, throughput=3390.56736):
     }
 
 
+def sealed_selection(points):
+    selection = {
+        "points": list(points),
+        "policy": serving_config.POLICY,
+        "duration": None,
+        "points_requested": None,
+    }
+    return serving_config.seal_selection(selection)
+
+
 def legacy_results(run_id="fixture-run", *, itl=0.00351):
-    """A complete old-format run with verified, paired execution identities."""
+    """A complete run with cached E2E metrics and verified, paired execution identities."""
     image = "example.invalid/server@sha256:" + "a" * 64
     result = {
-        "schema": 3,
+        "schema": 4,
         "model": {"id": "fixture", "display_name": "Fixture"},
         "target": {"id": "fixture-gpu"},
+        "framework": {"id": "sglang"},
         "run": {
             "id": run_id,
             "attempt_id": "fixture-attempt",
@@ -60,9 +72,10 @@ def legacy_results(run_id="fixture-run", *, itl=0.00351):
             "finished_at": "2026-11-09T19:35:00Z",
             "host": "fixture-host",
             "arms_requested": "all",
-            "point_policy": "all",
+            "point_policy": serving_config.POLICY,
+            "selection": sealed_selection(["tp1:1"]),
             "duration_override_s": None,
-            "image": {"run": image, "inferencex": image},
+            "image": {"run": image, "recipe": image},
             "execution": {"image_reference": image, "image_id": "sha256:" + "d" * 64},
             "expected_hardware": {"gpu_count": 1, "gpu_name_pattern": "Fixture", "gpu_arch": "gfx950"},
             "hardware": {
@@ -71,7 +84,8 @@ def legacy_results(run_id="fixture-run", *, itl=0.00351):
             },
             "client_packages": {"agentx-harness": "1.0.13"},
             "server_packages": {"sglang": "0.5.22"},
-            "inferencex": {"repo": "example/source", "sha": "e" * 40, "config_key": "fixture"},
+            "source": {"kind": "inferencex", "repo": "example/source", "sha": "e" * 40},
+            "client": {"repo": "example/source", "sha": "e" * 40},
         },
         "serving": {
             "grid_sha256": "f" * 64,
@@ -91,6 +105,7 @@ def legacy_results(run_id="fixture-run", *, itl=0.00351):
                 "measurement": {
                     "trace": {"repo": "example/traces", "loader": "fixture", "revision": "3" * 40},
                     "launch": {"env": {"AKLR_SGLANG_PLUGIN": "1", "AKLR_DISABLE": "0"}},
+                    "client_env": {"FRAMEWORK": "sglang"},
                 },
             }
         ],
@@ -110,7 +125,7 @@ def legacy_results(run_id="fixture-run", *, itl=0.00351):
 
 class AgentXMetricTests(unittest.TestCase):
     def test_runtime_matches_csv_reciprocal_instead_of_other_interactivity_fields(self):
-        value = runtime.metrics_of(aggregate())
+        value = runtime.metrics_of(aggregate(), 1)
         self.assertEqual(value[FULL_RESPONSE], 1 / 0.00351)
         self.assertNotEqual(value[FULL_RESPONSE], 285.10342)
         self.assertNotEqual(value[FULL_RESPONSE], 84.72682)
@@ -120,11 +135,21 @@ class AgentXMetricTests(unittest.TestCase):
     def test_bad_or_missing_itl_never_falls_back_to_other_metrics(self):
         for itl in (0, -1, True, False, None, "0.00351", float("nan"), float("inf"), 5e-324, 10**400):
             with self.subTest(itl=itl), self.assertRaises(ValueError):
-                runtime.metrics_of(aggregate(itl))
+                runtime.metrics_of(aggregate(itl), 1)
         missing = aggregate()
         del missing["request_metrics"]["latency"]["full_response_itl"]
         with self.assertRaisesRegex(ValueError, "Missing full-response P90 ITL"):
-            runtime.metrics_of(missing)
+            runtime.metrics_of(missing, 1)
+
+    def test_client_gpu_count_must_match_the_point(self):
+        for counted in (None, 4, "8"):
+            value = aggregate()
+            value["num_gpus"] = counted
+            with self.subTest(counted=counted), self.assertRaisesRegex(ValueError, "counted"):
+                runtime.metrics_of(value, 8)
+        value = aggregate()
+        value["num_gpus"] = 8
+        self.assertEqual(runtime.metrics_of(value, 8)["tput_per_gpu"], 3390.56736)
 
     def test_legacy_modes_recompute_without_changing_raw_data_or_source_identity(self):
         source = legacy_results()
@@ -184,8 +209,7 @@ class AgentXMetricTests(unittest.TestCase):
         fast = {FULL_RESPONSE: 300, E2E: 10, "tput_per_gpu": 100}
         slow = {FULL_RESPONSE: 200, E2E: 20, "tput_per_gpu": 90}
         self.assertEqual(analysis.frontier([fast, slow]), [fast])
-        self.assertEqual(recipe_resolve.X, "p90_e2e_norm_intvty")
-        self.assertEqual(recipe_resolve.frontier([fast, slow], x_axis=recipe_resolve.X), [fast, slow])
+        self.assertEqual(analysis.frontier([fast, slow], x_axis=E2E), [fast, slow])
 
     def test_paired_and_weekly_ratios_use_full_response_after_migration(self):
         current = utils.validated_results(legacy_results())
@@ -203,7 +227,7 @@ class AgentXMetricTests(unittest.TestCase):
 class AgentXReportMetricMigrationTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        self.relative = utils.target_path("fixture", "fixture-gpu")
+        self.relative = utils.target_path("fixture", "fixture-gpu", "sglang")
         self.config = self.root / "config.yaml"
         self.config.write_text("report:\n  repo_url: https://example.invalid/repo\n")
         # Git history is independent of report metrics; keep this suite offline.
@@ -216,15 +240,18 @@ class AgentXReportMetricMigrationTests(unittest.TestCase):
             for result in (current, current["control"]):
                 result["run"]["duration_override_s"] = 600
         plan = {
-            "schema": 3,
+            "schema": 4,
             "run_id": current["run"]["id"],
             "targets": [
                 {
                     "model": current["model"],
                     "target": current["target"],
+                    "framework": current["framework"],
                     "status": "resolved",
                     "serving_sha256": current["run"]["serving_sha256"],
                     "point_ids": ["tp1:1"],
+                    "point_policy": current["run"]["point_policy"],
+                    "selection_manifest_sha256": current["run"]["selection"]["manifest_sha256"],
                 }
             ],
         }
@@ -233,7 +260,7 @@ class AgentXReportMetricMigrationTests(unittest.TestCase):
         utils.write_json(results_dir / self.relative / "results.json", current)
         prior = self.root / "previous"
         utils.write_json(prior / "manifest.json", plan)
-        baseline_path = utils.write_json(prior / self.relative / "baseline-live.json", baseline)
+        baseline_path = utils.write_json(prior / self.relative / "baseline-pareto.json", baseline)
         original_bytes = baseline_path.read_bytes()
         out = self.root / "site"
         manifest = report_all.build(
@@ -269,13 +296,13 @@ class AgentXReportMetricMigrationTests(unittest.TestCase):
         baseline = legacy_results("previous-run", itl=0.00702)
         original = copy.deepcopy(baseline)
         out, target = self.build_with_baseline(baseline)
-        stored = utils.read_json(out / self.relative / "baseline-live.json")
+        stored = utils.read_json(out / self.relative / "baseline-pareto.json")
         summary = utils.read_json(out / self.relative / "report.json")
         self.assertEqual(baseline, original)
         self.assertEqual(stored, original)
         self.assertEqual(summary["comparison"]["status"], "ok")
         self.assertAlmostEqual(summary["comparison"]["arms"]["tp1"]["points"][0]["intvty_ratio"], 2)
-        self.assertIn("live", target["baselines"])
+        self.assertIn("pareto", target["baselines"])
         self.assertFalse(target["baseline_unavailable"])
 
     def test_legacy_baseline_without_raw_is_preserved_without_mixing_axes(self):
@@ -283,12 +310,12 @@ class AgentXReportMetricMigrationTests(unittest.TestCase):
         for result in (baseline, baseline["control"]):
             del result["points"][0]["raw_data"]
         out, target = self.build_with_baseline(baseline)
-        self.assertEqual(utils.read_json(out / self.relative / "baseline-live.json"), baseline)
+        self.assertEqual(utils.read_json(out / self.relative / "baseline-pareto.json"), baseline)
         summary = utils.read_json(out / self.relative / "report.json")
         self.assertNotEqual(summary["comparison"]["status"], "ok")
         self.assertEqual(summary["comparison"]["arms"], {})
-        self.assertNotIn("live", target["baselines"])
-        self.assertIn("live", target["baseline_unavailable"])
+        self.assertNotIn("pareto", target["baselines"])
+        self.assertIn("pareto", target["baseline_unavailable"])
         self.assertIn("full-response P90 unavailable", (out / "index.html").read_text())
         self.assertIn("historical baseline is preserved", (out / self.relative / "index.html").read_text())
 
@@ -297,13 +324,13 @@ class AgentXReportMetricMigrationTests(unittest.TestCase):
         for result in (baseline, baseline["control"]):
             del result["points"][0]["raw_data"]
         out, target = self.build_with_baseline(baseline, formal=True)
-        stored = utils.read_json(out / self.relative / "baseline-live.json")
+        stored = utils.read_json(out / self.relative / "baseline-pareto.json")
         self.assertEqual(stored["run"]["id"], "fixture-run")
         self.assertEqual(stored, legacy_results())
         summary = utils.read_json(out / self.relative / "report.json")
         self.assertEqual(summary["frontiers"]["combined"][0][FULL_RESPONSE], 1 / 0.00351)
         self.assertEqual(summary["disabled_frontiers"]["combined"][0][FULL_RESPONSE], 1 / 0.00359)
-        self.assertIn("live", target["baselines"])
+        self.assertIn("pareto", target["baselines"])
         self.assertFalse(target["baseline_unavailable"])
 
     def test_unverifiable_cached_points_neither_compare_nor_replace_the_baseline(self):
@@ -318,7 +345,7 @@ class AgentXReportMetricMigrationTests(unittest.TestCase):
         )
 
         self.assertEqual((target["points_ok"], target["points_total"]), (0, 2))
-        self.assertEqual(utils.read_json(out / self.relative / "baseline-live.json"), baseline)
+        self.assertEqual(utils.read_json(out / self.relative / "baseline-pareto.json"), baseline)
         self.assertEqual(utils.read_json(out / self.relative / "results.json"), current)
         summary = utils.read_json(out / self.relative / "report.json")
         self.assertEqual(summary["comparison"]["arms"], {})
