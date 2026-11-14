@@ -1,0 +1,318 @@
+{
+  "schema_version": 5,
+  "name": "mla_decode_fwd_n_heads96",
+  "contract_id": "mla_decode_fwd@1.0",
+  "description": "aiter's MLA decode, one query per request, over a pool of 576-value fp8 rows (aiter.mla.mla_decode_fwd): request b reads pool rows kv_indices[kv_indptr[b]:kv_indptr[b + 1]]; logits are q . row * q_scale * kv_scale * sm_scale over the 576 values, the rope part last, and values row[:512] * kv_scale. A request reading no row: o 0, lse -inf.",
+  "op_type": "mla",
+  "axes": {
+    "batch": {
+      "type": "var",
+      "description": "Requests, one query each."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 96,
+      "description": "Query heads; under decode context parallelism, every rank's."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Rows of the KV pool."
+    },
+    "n_indices": {
+      "type": "var",
+      "description": "Entries of kv_indices; the first kv_indptr[batch] are read."
+    },
+    "n_offsets": {
+      "type": "var",
+      "description": "Entries of kv_indptr: batch + 1."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "q": {
+      "shape": [
+        "batch",
+        "n_heads",
+        576
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each request's query: the absorbed no-rope part, then the rope part."
+    },
+    "kv_buffer": {
+      "shape": [
+        "n_slots",
+        1,
+        1,
+        576
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The KV pool: a 576-value row a slot, the rope part last."
+    },
+    "kv_indptr": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "cu_seqlens",
+        "min_seqlen": 0,
+        "total": "n_indices"
+      },
+      "description": "Where each request's entries start in kv_indices, then where the last ends."
+    },
+    "kv_indices": {
+      "shape": [
+        "n_indices"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": "n_slots - 1",
+        "distinct": false
+      },
+      "description": "Pool rows, each request's back to back."
+    },
+    "q_scale": {
+      "shape": [1],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": 1
+      },
+      "description": "Multiplies every q value."
+    },
+    "kv_scale": {
+      "shape": [1],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": 1
+      },
+      "description": "Multiplies every KV value, in the logits and the values."
+    },
+    "sm_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every logit."
+    }
+  },
+  "outputs": {
+    "o": {
+      "shape": [
+        "batch",
+        "n_heads",
+        512
+      ],
+      "dtype": "bfloat16",
+      "description": "Softmax-weighted sum of the read values."
+    },
+    "lse": {
+      "shape": [
+        "batch",
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "description": "Natural log-sum-exp of the scaled logits."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "batch": 24,
+        "n_slots": 16777216,
+        "n_indices": 568272,
+        "n_offsets": 25
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 1.315
+    },
+    {
+      "axes": {
+        "batch": 28,
+        "n_slots": 16777216,
+        "n_indices": 662984,
+        "n_offsets": 29
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 1.275
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_slots": 16777216,
+        "n_indices": 131072,
+        "n_offsets": 33
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 1.262
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_slots": 16777216,
+        "n_indices": 757696,
+        "n_offsets": 33
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 1.279
+    },
+    {
+      "axes": {
+        "batch": 32,
+        "n_slots": 16777216,
+        "n_indices": 4194304,
+        "n_offsets": 33
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 1.239
+    },
+    {
+      "axes": {
+        "batch": 36,
+        "n_slots": 16777216,
+        "n_indices": 852408,
+        "n_offsets": 37
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "failed",
+      "speedup": 1.281
+    },
+    {
+      "axes": {
+        "batch": 40,
+        "n_slots": 16777216,
+        "n_indices": 947120,
+        "n_offsets": 41
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 1.287
+    },
+    {
+      "axes": {
+        "batch": 44,
+        "n_slots": 16777216,
+        "n_indices": 1041832,
+        "n_offsets": 45
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 1.31
+    },
+    {
+      "axes": {
+        "batch": 48,
+        "n_slots": 16777216,
+        "n_indices": 1136544,
+        "n_offsets": 49
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 1.298
+    },
+    {
+      "axes": {
+        "batch": 56,
+        "n_slots": 16777216,
+        "n_indices": 1325968,
+        "n_offsets": 57
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 1.29
+    },
+    {
+      "axes": {
+        "batch": 60,
+        "n_slots": 16777216,
+        "n_indices": 1420680,
+        "n_offsets": 61
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 1.297
+    },
+    {
+      "axes": {
+        "batch": 64,
+        "n_slots": 16777216,
+        "n_indices": 1515392,
+        "n_offsets": 65
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 1.283
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.2"
+    },
+    "author": "kyle-256",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"FlyDSL MLA decode (aiter.mla.mla_decode_fwd contract): fp8 queries of 96 heads over a pool of 576-value fp8 rows,\nrequest b reading rows kv_indices[kv_indptr[b]:kv_indptr[b + 1]]; q_scale and kv_scale are read on the device.\nOne CTA per chunk of up to MAXSEG request segments, its logit and value waves a step apart over a ring of raw fp8 LDS\ntiles that three value waves fill by async global-to-LDS DMAs DMAD steps ahead. Logits run on fp8 MFMAs, values on an\nfp16 GEMM over keys converted exactly at their transposed read; a combine kernel merges each request's partials in\nchunk order.\"\"\"\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl.compiler import from_c_void_p\nfrom flydsl._mlir.dialects import arith as _arith\nfrom flydsl._mlir.dialects import llvm as _llvm\nfrom flydsl._mlir.dialects import rocdl as _mrocdl\nfrom flydsl.expr import const_expr, range_constexpr, rocdl\nfrom flydsl.expr import math as fmath\nfrom flydsl.expr.typing import BFloat16, Float8E4M3FN, Float16, Float32, Int32, T\nfrom flydsl.expr.typing import Vector as Vec\n\nNHEAD = 96\nDQK = 576\nDV = 512\nBI = 32\n# Bytes of a raw fp8 tile, piece-major: (key k, 16-byte piece c) at (c BI + k) 16.\nTILE8 = DQK * BI\nNQK = DQK // 64  # 32x32x64 logit MFMAs a step (32 keys by 32 heads)\nNR = 4  # key tiles in the LDS ring\nDMAD = NR - 2  # steps a tile's async DMA is issued ahead of its use\nVTW = max(NR * TILE8, NHEAD * DV * 2) // 4  # LDS words of the key ring; the epilogue's staged partial aliases it\nNQT = NHEAD // 16\n# Waves 0 .. NQW - 1 run the logits and softmax of TPW head tiles of 16 each, as one 32-head MFMA a K read; the\n# others run the value GEMM of PDV or PDV - 1 value tiles of 16 dims for all heads, one step behind.\nTPW = 2\nNQW = NQT // TPW\nNWT = 8\nTHREADS = NWT * 64\nPDV = 7\nPWORDS = 64 * 4  # Int32 words of one head tile's fp16 P\n# The value waves NQW + 1 .. NWT - 2 DMA every key tile into LDS; waves NQW and NWT - 1, which share the SIMD that\n# runs no logits, gather none.\nNGW = NWT - NQW - 2  # gathering waves\nPPW = DQK // 32 // NGW  # 1 KiB DMAs (two pieces of 32 keys) a gathering wave a step\nNSR = 4  # slot-index ring entries of a gathering wave (one step's 32 table entries, twice)\nassert NSR > NR - 2\nassert PPW * NGW * 32 == DQK\nMINSTEPS = 8  # fewest steps a chunk is planned with\nCPT = DV // 64  # combine: value columns a lane\nHG = 4  # combine: heads of a CTA, one wave each\nCU = 8  # combine: chunks a merge round, their loads issued before any is consumed\nCG = 4  # combine: chunks a load group, issued only if its first chunk is live\nWIDEROWS = 32  # fewest rows merged a wave a head; fewer rows (more chunks a row) split each head over CSL waves\nCSL = 4  # wide combine: column slices of a head, one wave each, and chunk groups of a wave\nCUNR = 4  # wide combine: partial loads in flight a lane\nLOG2E = 1.4426950408889634\nLN2 = 0.6931471805599453\nNEGBIG = -1.0e30\nMINIT = -1.0e20\nTAU = 8.0  # rescale threshold (log2 units): P may reach 2^TAU between rescales\nVLA = 2  # value-GEMM raw tile reads in flight ahead of their MFMAs\nQLA = 3  # logit-GEMM tile reads in flight ahead of their MFMA\nMAXSEG = 3  # row segments of a chunk compiled straight-line\nSEGC = 15  # phantom steps a row segment is charged in the chunk split: its fixed start and flush cost\nSPANROWS = 28  # fewest rows compiled with row-spanning chunks\nSPANMIN = 2  # steps the row-spanning split must save to be used\nSEGF = 9  # Int32 fields of a segment-table entry, padded to SEGQ 16-byte words\nSEGQ = (SEGF + 3) // 4\nROWRED = (0xB1, 0x4E, 0x141, 0x140)  # DPP xor 1, xor 2, row mirror, row half mirror\nROWSHR = 0x110  # DPP row_shr:0\nROWROR8 = 0x128  # DPP row_ror:8\n\n_ROUNDS = ((64, 1), (80, 3))\n\n\ndef _rounds(rows):\n    \"\"\"Rounds of one CTA per CU the grid holds for a row count: few rows favour few long chunks, many rows a few\n    rounds to even out the CUs.\"\"\"\n    return next((r for top, r in _ROUNDS if rows <= top), 4)\n\n\ndef _keep_branch():\n    \"\"\"An empty side-effecting asm: keeps LLVM from if-converting the enclosing branch into selects.\"\"\"\n    _llvm.inline_asm(None, [], \"\", \"\", has_side_effects=True)\n\n\n@functools.cache\ndef _build(sm_scale, rows, width, dev):\n    \"\"\"Compile the partial and combine kernels for one row count and table width: a power of two at least\n    kv_indices' entries.\"\"\"\n    ncu = torch.cuda.get_device_properties(dev).multi_processor_count\n    nblk = _rounds(rows) * ncu\n    while nblk <= rows:\n        nblk += ncu\n    NGRP = (rows + 63) // 64\n\n    @fx.struct\n    class Shared:\n        \"\"\"LDS: NR key tiles rotating by step; P and the rescale factors (two parities each), 1 / sum per head,\n        and the row-spanning split's per-row (virtual start, steps, live length, first entry) and segment table.\n        \"\"\"\n\n        vt: fx.Array[Int32, VTW, 16]\n        pb: fx.Array[Int32, 2 * NWT * PWORDS, 16]\n        ab: fx.Array[Float32, 2 * NWT * 16, 16]\n        ib: fx.Array[Float32, NHEAD, 16]\n        ri: fx.Array[Int32, 4 * 64 * NGRP, 16]\n        sg: fx.Array[Int32, SEGQ * 4 * 64 * NGRP, 16]\n        sl: fx.Array[Int32, NGW * NSR * 64, 16]\n\n    tmax = rows * ((width + BI - 1) // BI)\n    # S = ceil(steps / (grid - rows)) always fits; hi - lo <= tot rows / (nblk (nblk - rows)) + 1 for any\n    # tot <= tmax, so the bisection covers just that range.\n    span = 2 + tmax * rows // (nblk * (nblk - rows))\n    NBIS = 1\n    while (1 << NBIS) <= span:\n        NBIS += 1\n    NSLOT = nblk + rows  # chunk b's segment of row r is slot r + b\n    # Below SPANROWS rows the row-aligned split's imbalance costs less than a segment switch and its planning.\n    SPANS = rows >= SPANROWS\n\n    smul = float(sm_scale) * LOG2E\n\n    def _dpp(x, ctrl):\n        \"\"\"Lane value of x under DPP control ctrl (every lane's source valid, else 0).\"\"\"\n        xi = fx.Int32(x).ir_value()\n        z = fx.Int32(0).ir_value()\n        return fx.Int32(rocdl.update_dpp(T.i32, z, xi, ctrl, 0xF, 0xF, True))\n\n    def _iswap(x, wide):\n        \"\"\"Lane value of x plus that of lane ^ 16 (wide: ^ 32), by one permlane swap.\"\"\"\n        xi = fx.Int32(x).ir_value()\n        op = rocdl.permlane32_swap if wide else rocdl.permlane16_swap\n        st = op(_llvm.StructType.get_literal([T.i32, T.i32]), xi, xi, False, False)\n        return fx.Int32(_llvm.extractvalue(T.i32, st, [0])) + fx.Int32(_llvm.extractvalue(T.i32, st, [1]))\n\n    def _wsum(x):\n        \"\"\"Sum of the Int32 x over the 64 lanes of the wave, as a scalar: DPP quad xors and row mirrors reduce each\n        16-lane row, two permlane swaps the rows.\"\"\"\n        for ctrl in ROWRED:\n            x = x + _dpp(x, ctrl)\n        x = _iswap(x, False)\n        x = _iswap(x, True)\n        return _uni(x)\n\n    def _uni(x):\n        \"\"\"A wave-uniform Int32 moved to a scalar register.\"\"\"\n        return fx.Int32(rocdl.readfirstlane(T.i32, x))\n\n    def _lane(x, l):\n        \"\"\"x of lane l (a scalar) as a scalar.\"\"\"\n        return fx.Int32(rocdl.readlane(T.i32, fx.Int32(x).ir_value(), fx.Int32(l).ir_value()))\n\n    def _first_lane(mask):\n        \"\"\"The lowest lane set in a ballot mask, as a scalar.\"\"\"\n        lo = _arith.trunci(T.i32, _llvm.intr_cttz(mask, False, results=[T.i64]))\n        return _uni(fx.Int32(lo) & fx.Int32(63))\n\n    def _xscan(x, lane):\n        \"\"\"Exclusive prefix sum of the Int32 x over the wave's lanes, and the wave total as a scalar: DPP row scans,\n        then the row totals read out of lanes 15, 31, 47, 63.\"\"\"\n        lr16 = lane % 16\n        pre = x\n        for sh in (1, 2, 4, 8):\n            rem = _dpp(pre, ROWSHR + sh)\n            pre = (lr16 >= fx.Int32(sh)).select(pre + rem, pre)\n        rt = [_lane(pre, 16 * k + 15) for k in range(4)]\n        pre = (\n            pre\n            + (lane >= fx.Int32(16)).select(rt[0], fx.Int32(0))\n            + (lane >= fx.Int32(32)).select(rt[1], fx.Int32(0))\n            + (lane >= fx.Int32(48)).select(rt[2], fx.Int32(0))\n        )\n        return pre - x, rt[0] + rt[1] + rt[2] + rt[3]\n\n    def _plan(ln_p, lane):\n        \"\"\"Each wave's own chunking (lane l holds rows l + 64 g): chunks of S steps, S the smallest whose chunk count\n        fits the grid. Returns the per-row state, the bisection's bounds on S and its round count; the kernel runs\n        the rounds with _fits and places its chunk with _place.\"\"\"\n        lcs = []\n        sts = []\n        oks = []\n        rts = []\n        tot = fx.Int32(0)\n        for g in range_constexpr(NGRP):\n            r = lane + fx.Int32(64 * g)\n            ok = r < fx.Int32(rows)\n            rs = ok.select(r, fx.Int32(0))\n            rt = fx.Int32(fx.ptr_load(fx.add_offset(ln_p, rs)))\n            ln = fx.ptr_load(fx.add_offset(ln_p, rs + fx.Int32(1))) - rt\n            lc = (ln > fx.Int32(width)).select(fx.Int32(width), ln)\n            lc = (lc < fx.Int32(0)).select(fx.Int32(0), lc)\n            lc = ok.select(lc, fx.Int32(0))\n            st = (lc + fx.Int32(BI - 1)) // BI\n            lcs.append(lc)\n            sts.append(st)\n            oks.append(ok)\n            rts.append(rt)\n            tot = tot + st\n        tot = _wsum(tot)\n\n        def chunks(s):\n            cs = []\n            for g in range_constexpr(NGRP):\n                c = (sts[g] + s - fx.Int32(1)) // s\n                c = (c < fx.Int32(1)).select(fx.Int32(1), c)\n                cs.append(oks[g].select(c, fx.Int32(0)))\n            return cs\n\n        lo = (tot + fx.Int32(nblk - 1)) // nblk\n        lo = (lo < fx.Int32(MINSTEPS)).select(fx.Int32(MINSTEPS), lo)\n        hi = (tot + fx.Int32(nblk - rows - 1)) // (nblk - rows)\n        hi = (hi < fx.Int32(MINSTEPS)).select(fx.Int32(MINSTEPS), hi)\n        # Bisection rounds: floor(log2(hi - lo)) + 1 halvings take [lo, hi] to one candidate.\n        dlh = hi - lo\n        nr = fx.Int32(0)\n        for k in range_constexpr(NBIS):\n            nr = nr + (dlh >= fx.Int32(1 << k)).select(fx.Int32(1), fx.Int32(0))\n        return (lcs, oks, rts, chunks), lo, hi, nr\n\n    def _fits(pl, s):\n        \"\"\"Whether chunks of s steps fit the grid.\"\"\"\n        cs = pl[3](s)\n        n = cs[0]\n        for g in range_constexpr(1, NGRP):\n            n = n + cs[g]\n        return _wsum(n) <= fx.Int32(nblk)\n\n    def _place(pl, stp, b, lane):\n        \"\"\"Chunk b's row, the row's first chunk, its chunk count and live length, the chunk length in keys, the\n        chunk count and the row's first table entry, for chunks of stp steps.\"\"\"\n        lcs, _, rts, chunks = pl\n        cs = chunks(stp)\n        # Chunk counts prefixed in row order, lane-major within each group of 64 rows.\n        base = fx.Int32(0)\n        row = fx.Int32(0)\n        cbase = fx.Int32(0)\n        crow = fx.Int32(0)\n        lrow = fx.Int32(0)\n        rowt = fx.Int32(0)\n        anyh = fx.Int32(0)\n        for g in range_constexpr(NGRP):\n            ex, gt = _xscan(cs[g], lane)\n            ex = base + ex\n            hit = (b >= ex).select((b < ex + cs[g]).select(fx.Int32(1), fx.Int32(0)), fx.Int32(0))\n            hb = hit != fx.Int32(0)\n            row = row + hb.select(lane + fx.Int32(64 * g), fx.Int32(0))\n            cbase = cbase + hb.select(ex, fx.Int32(0))\n            crow = crow + hb.select(cs[g], fx.Int32(0))\n            lrow = lrow + hb.select(lcs[g], fx.Int32(0))\n            rowt = rowt + hb.select(rts[g], fx.Int32(0))\n            anyh = anyh + hit\n            base = base + gt\n        # At most one lane of one group holds chunk b: read its values out of that lane.\n        hl = _first_lane(rocdl.ballot(T.i64, anyh != fx.Int32(0)))\n        row = _lane(row, hl)\n        cbase = _lane(cbase, hl)\n        crow = _lane(crow, hl)\n        lrow = _lane(lrow, hl)\n        rowt = _lane(rowt, hl)\n        cnum = _uni(base)\n        return row, cbase, crow, lrow, stp * BI, cnum, rowt\n\n    def _swap(x, wide):\n        \"\"\"The pair (x, x of lane ^ 16) (wide: ^ 32) in some order, in every lane, by one permlane swap.\"\"\"\n        xi = fx.Float32(x).bitcast(Int32).ir_value()\n        op = rocdl.permlane32_swap if wide else rocdl.permlane16_swap\n        st = op(_llvm.StructType.get_literal([T.i32, T.i32]), xi, xi, False, False)\n        return [fx.Int32(_llvm.extractvalue(T.i32, st, [k])).bitcast(Float32) for k in range(2)]\n\n    @flyc.kernel\n    def part_kernel(q_t, kv_t, bt_t, ln_t, mt_t, po_t, pl_t, out_t, lse_t, qs_t, ks_t):\n        tid = fx.thread_idx.x\n        vscale = fx.Float32(fx.ptr_load(fx.get_iter(ks_t)))\n        scale2 = fx.Float32(fx.ptr_load(fx.get_iter(qs_t))) * vscale * fx.Float32(smul)\n        b = fx.Int32(fx.block_idx.x)\n\n        lds = fx.SharedAllocator().allocate(Shared).peek()\n        vi = fx.recast_iter(Int32, lds.vt.ptr)\n        vb8 = fx.recast_iter(Float8E4M3FN, lds.vt.ptr)\n        pbp = lds.pb.ptr\n        abp = lds.ab.ptr\n        ibp = lds.ib.ptr\n\n        lane = tid % 64\n        wave = tid // 64\n        uw = _uni(wave)\n        lr = lane % 16\n        lg = lane // 16\n\n        # The row-aligned split: the fewest steps S whose chunks of S steps, each in one row, fit the grid.\n        pl, blo, bhi, nr = _plan(fx.get_iter(ln_t), lane)\n        for _, bs in range(fx.Int32(0), nr, fx.Int32(1), init=[blo, bhi]):\n            lo_ = fx.Int32(bs[0])\n            hi_ = fx.Int32(bs[1])\n            mid = (lo_ + hi_) // 2\n            fit = _fits(pl, mid)\n            bres = yield [fit.select(lo_, mid + fx.Int32(1)), fit.select(mid, hi_)]\n        S = fx.Int32(bres[1])\n        orow, ocbase, ocrow, oln, och, ocnum, orowt = _place(pl, S, b, lane)\n\n        def aligned_seg():\n            \"\"\"The row-aligned split's segment: (row, first slot, slot count, place, slot, key start, key end, steps,\n            first entry).\"\"\"\n            osp = b - ocbase\n            op0 = osp * och\n            oen = op0 + och\n            oen = (oen > oln).select(oln, oen)\n            osn = oen - op0\n            osn = (osn < fx.Int32(0)).select(fx.Int32(0), osn)\n            osteps = (osn + fx.Int32(BI - 1)) // BI\n            return orow, ocbase, ocrow, osp, b, op0, oen, osteps, orowt\n\n        if const_expr(SPANS):\n            rip = lds.ri.ptr\n            # Rows back to back in a virtual step space, each its live steps (at least one) after SEGC phantom steps\n            # that charge a chunk the fixed cost of starting a row; chunk b takes virtual steps [b A, (b + 1) A).\n            vbase = fx.Int32(0)\n            grp = []\n            lcs, oks, rts, _ = pl\n            for g in range_constexpr(NGRP):\n                ok, rt, lc = oks[g], rts[g], lcs[g]\n                stp = (lc + fx.Int32(BI - 1)) // BI\n                stp = (stp < fx.Int32(1)).select(fx.Int32(1), stp)\n                cost = ok.select(stp + fx.Int32(SEGC), fx.Int32(0))\n                ex, gt = _xscan(cost, lane)\n                grp.append((ok, rt, lc, stp, vbase + ex + fx.Int32(SEGC)))\n                vbase = vbase + gt\n            A = (vbase + fx.Int32(nblk - 1)) // nblk\n            A = (A < fx.Int32(MINSTEPS)).select(fx.Int32(MINSTEPS), A)\n            spans = A + fx.Int32(SPANMIN) <= S\n            vlo = b * A\n            vhi = vlo + A\n            nseg = fx.Int32(0)\n            r0 = fx.Int32(0)\n            for g in range_constexpr(NGRP - 1, -1, -1):\n                ok, rt, lc, stp, rsr = grp[g]\n                hit = ok & (rsr < vhi) & (rsr + stp > vlo)\n                hmask = rocdl.ballot(T.i64, hit)\n                r0 = (fx.Int64(hmask) != fx.Int64(0)).select(_first_lane(hmask) + fx.Int32(64 * g), r0)\n                nseg = nseg + _wsum(hit.select(fx.Int32(1), fx.Int32(0)))\n                if (uw == fx.Int32(0)) & ok:\n                    fx.ptr_store(\n                        Vec.from_elements([rsr, stp, lc, rt], Int32),\n                        fx.add_offset(rip, (lane + fx.Int32(64 * g)) * 4),\n                    )\n            fx.barrier()\n            # At most MAXSEG segments a chunk, else the row-aligned split: rows r .. r + MAXSEG share a chunk iff row r\n            # ends in or past the chunk where row r + MAXSEG starts.\n            nbad = fx.Int32(0)\n            for g in range_constexpr(NGRP):\n                ok, rt, lc, stp, rsr = grp[g]\n                rn = lane + fx.Int32(64 * g + MAXSEG)\n                okn = ok & (rn < fx.Int32(rows))\n                nx = fx.Int32(fx.ptr_load(fx.add_offset(rip, okn.select(rn, fx.Int32(0)) * 4)))\n                over = okn & ((rsr + stp - fx.Int32(1)) // A >= nx // A)\n                nbad = nbad + _wsum(over.select(fx.Int32(1), fx.Int32(0)))\n            spans = spans & (nbad == fx.Int32(0))\n            nseg = spans.select(nseg, (b < ocnum).select(fx.Int32(1), fx.Int32(0)))\n\n            def seg_lane(k):\n                \"\"\"Segment k (per lane) of this chunk: its row, the row's first slot and slot count, this slot's place\n                in the row, the slot, the key range in the row, its step count and the row's first table entry; the\n                row-aligned split's segment when the row-spanning split is not used.\"\"\"\n                r = r0 + k\n                inf = Vec(fx.ptr_load(fx.add_offset(rip, r * 4), T.i32x4))\n                rsr = fx.Int32(inf[0])\n                stp = fx.Int32(inf[1])\n                lc = fx.Int32(inf[2])\n                rt = fx.Int32(inf[3])\n                a0 = (vlo > rsr).select(vlo, rsr) - rsr\n                e0 = (vhi < rsr + stp).select(vhi, rsr + stp) - rsr\n                p0 = a0 * BI\n                en = e0 * BI\n                en = (en > lc).select(lc, en)\n                sn = en - p0\n                sn = (sn < fx.Int32(0)).select(fx.Int32(0), sn)\n                i0 = rsr // A\n                i1 = (rsr + stp - fx.Int32(1)) // A\n                steps = (sn + fx.Int32(BI - 1)) // BI\n                new = (\n                    r,\n                    r + i0,\n                    i1 - i0 + fx.Int32(1),\n                    b - i0,\n                    r + b,\n                    p0,\n                    en,\n                    steps,\n                    rt,\n                )\n                return [spans.select(x, y) for x, y in zip(new, aligned_seg())]\n\n            # The segment table, so that only the segment count stays live past the split.\n            sgp = lds.sg.ptr\n            if uw == fx.Int32(0):\n                for g in range_constexpr(NGRP):\n                    k = lane + fx.Int32(64 * g)\n                    if k < nseg:\n                        w = seg_lane(k) + [fx.Int32(0)] * (SEGQ * 4 - SEGF)\n                        for q in range_constexpr(SEGQ):\n                            fx.ptr_store(\n                                Vec.from_elements(w[4 * q : 4 * q + 4], Int32),\n                                fx.add_offset(sgp, k * (SEGQ * 4) + 4 * q),\n                            )\n            fx.barrier()\n\n            def seg_info(kseg):\n                \"\"\"Segment kseg's (row, first slot, slot count, place, slot, key start, key end, steps, first entry).\"\"\"\n                w = []\n                for q in range_constexpr(SEGQ):\n                    v = Vec(\n                        fx.ptr_load(\n                            fx.add_offset(sgp, fx.Int32(kseg) * (SEGQ * 4) + 4 * q),\n                            T.i32x4,\n                        )\n                    )\n                    w = w + [_uni(fx.Int32(v[e])) for e in range(4)]\n                return tuple(w[:SEGF])\n\n        else:\n            nseg = (b < ocnum).select(fx.Int32(1), fx.Int32(0))\n\n            def seg_info(kseg):\n                \"\"\"The chunk's one segment.\"\"\"\n                return aligned_seg()\n\n        def seg_body(kseg):\n            \"\"\"Segment kseg: its partial, or for a row's only slot its output.\"\"\"\n            row, cbase, crow, sp, slot, pos0, end, nsteps, rowt = seg_info(kseg)\n            # The previous segment's staged partial is consumed before this one's tiles overwrite it.\n            fx.barrier()\n            if tid + sp == fx.Int32(0):\n                fx.ptr_store(\n                    Vec.from_elements([cbase, crow], Int32),\n                    fx.add_offset(fx.get_iter(mt_t), row * 2),\n                )\n\n            # The pool comes as a raw pointer: it may span more than 2^31 words, past what a tensor argument's\n            # 32-bit shape or a 32-bit element offset reaches, so a row's address is formed in 64 bits.\n            kvbase = fx.Int64(fx.ptrtoint(kv_t))\n            kvrow = fx.PointerType.get(fx.Int32.ir_type, address_space=fx.AddressSpace.Global, alignment=16)\n\n            def kv_row(sidx):\n                \"\"\"Pool row sidx (an Int32 table entry, sign-extended as an element offset would be).\"\"\"\n                wide = fx.Int64(_arith.ExtSIOp(T.i64, fx.Int32(sidx).ir_value()).result)\n                return fx.inttoptr(kvrow, kvbase + wide * DQK)\n\n            btp = fx.get_iter(bt_t)\n            kk = tid % BI\n            # V read (ds_read_b64_tr_b8): lane 2j + h of group lg points at half h of key 4 lg + j % 4 + 16 (j // 4),\n            # so lane l gets dim l % 16 of keys 4 lg + e, 16 + 4 lg + e: the P layout of the logit waves.\n            jl = (lane % 16) // 2\n            trb8 = (lg * 4 + jl % 4 + (jl // 4) * 16) * 16 + (lane % 2) * 8\n            one_f = fx.Float32(1.0).ir_value()\n\n            lastk = end - fx.Int32(1)\n            lastk = (lastk < fx.Int32(0)).select(fx.Int32(0), lastk)\n\n            def table_pos(spos):\n                \"\"\"Where the table entry of the key at spos is read: past the chunk's end, its last key's (its logit\n                is masked); for a request reading no row entry 0, which exists, where the row's own start may lie past\n                the table's end.\"\"\"\n                return (end > fx.Int32(0)).select(rowt + (spos < end).select(spos, lastk), fx.Int32(0))\n\n            def slot_at(spos):\n                \"\"\"Table entry of the key at spos, or of the chunk's last key past its end (its logit is masked).\"\"\"\n                return fx.ptr_load(fx.add_offset(btp, table_pos(spos)))\n\n            # PV(-1) of the first step must add exactly zero: tile NR - 1's value blocks, P parity 1 and alpha\n            # parity 1.\n            zi4 = Vec.filled(4, 0, Int32)\n            for z in range_constexpr(DV * BI // 16 // THREADS):\n                fx.ptr_store(zi4, fx.add_offset(vi, (NR - 1) * TILE8 // 4 + (tid + THREADS * z) * 4))\n            fx.ptr_store(zi4, fx.add_offset(pbp, NWT * PWORDS + tid * 4))\n            if tid < fx.Int32(NWT * 16):\n                fx.ptr_store(\n                    Vec.from_elements([fx.Float32(1.0)], Float32),\n                    fx.add_offset(abp, NWT * 16 + tid),\n                )\n            tr_atom = fx.make_copy_atom(rocdl.cdna4.LDSReadTrans8_64b(), Float8E4M3FN)\n            tr_layout = fx.make_layout(8, 1)\n\n            def pv_offsets(n0, ndv):\n                \"\"\"Per-lane LDS byte offsets of value tiles n0 .. n0 + ndv - 1 (n0 wave-uniform): piece n.\"\"\"\n                return [trb8 + (n0 + fx.Int32(d)) * (BI * 16) for d in range(ndv)]\n\n            def pv_raw(off, base):\n                \"\"\"The raw fp8 A operand of a value tile: 8 fp8 values by one transposed read.\"\"\"\n                src = fx.make_view(fx.add_offset(vb8, off + base), tr_layout)\n                dst = fx.make_rmem_tensor(tr_layout, Float8E4M3FN)\n                fx.copy(tr_atom, src, dst)\n                return Vec(dst.load()).bitcast(Int32)\n\n            def pv_cvt(v, k):\n                \"\"\"fp16 pair k (0..3) of a raw value tile, converted exactly.\"\"\"\n                w = fx.Int32(v[k // 2]).ir_value()\n                pk = Vec(rocdl.cvt_scalef32_pk_f16_fp8(T.vec(2, T.f16), w, one_f, k % 2 == 1))\n                return fx.Int32(pk.bitcast(Int32)[0])\n\n            def pv_step(acc, offs, base, ppar):\n                \"\"\"acc[ndv h + d] = alpha_h acc[ndv h + d] + V_d P_h for the previous step (tile at base, parity\n                ppar). Value-tile major: tile d + 1's conversion and tile d + VLA's read issue between tile d's\n                MFMAs.\"\"\"\n                ndv = len(offs)\n                acc = list(acc)\n                raw = [pv_raw(offs[d], base) for d in range(min(VLA, ndv))]\n                ahs = [\n                    fx.Float32(fx.ptr_load(fx.add_offset(abp, ppar * (NWT * 16) + 16 * h + lr)))\n                    for h in range(NQT)\n                ]\n                phs = [\n                    Vec(\n                        fx.ptr_load(\n                            fx.add_offset(pbp, ppar * (NWT * PWORDS) + h * PWORDS + lane * 4),\n                            T.i32x4,\n                        )\n                    ).bitcast(Float16)\n                    for h in range(NQT)\n                ]\n                # Wave-uniform branches: most steps rescale no head of a tile.\n                for h in range_constexpr(NQT):\n                    ah = ahs[h]\n                    aa = [acc[ndv * h + d] for d in range(ndv)]\n                    rescale = fx.Int64(rocdl.ballot(T.i64, ah != fx.Float32(1.0)))\n                    if rescale != fx.Int64(0):\n                        _keep_branch()\n                        a4 = Vec.from_elements([ah] * 4, Float32)\n                        aa = [Vec(x * a4) for x in aa]\n                    for d in range_constexpr(ndv):\n                        acc[ndv * h + d] = aa[d]\n                cur = [pv_cvt(raw[0], k) for k in range(4)]\n                rocdl.sched_barrier(0)\n                for d in range_constexpr(ndv):\n                    vb = Vec.from_elements(cur, Int32).bitcast(Float16)\n                    if d + VLA < ndv:\n                        raw.append(pv_raw(offs[d + VLA], base))\n                    nxt = []\n                    for h in range_constexpr(NQT):\n                        acc[ndv * h + d] = Vec(rocdl.mfma_f32_16x16x32_f16(T.f32x4, [vb, phs[h], acc[ndv * h + d]]))\n                        if d + 1 < ndv and h < 4:\n                            nxt.append(pv_cvt(raw[d + 1], h))\n                        rocdl.sched_barrier(0)\n                    cur = nxt\n                return acc\n\n            nm1 = (nsteps > fx.Int32(0)).select(nsteps - fx.Int32(1), fx.Int32(0))\n\n            def pv_only(acc, poffs, itv):\n                \"\"\"Step itv of a value wave without conversion: PV(itv - 1) only.\"\"\"\n                fx.barrier()\n                return pv_step(\n                    acc,\n                    poffs,\n                    ((itv + fx.Int32(NR - 1)) % fx.Int32(NR)) * TILE8,\n                    fx.Int32(1) - (itv & fx.Int32(1)),\n                )\n\n            def store_out(acc, n0, ndv):\n                \"\"\"Stage the normalized fp16 partial in LDS (row-major by head, 16-byte chunks XOR-swizzled by head):\n                lane holds head 16h + lr, value dims 16 (n0 + d) + 4lg .. +4.\"\"\"\n                for h in range_constexpr(NQT):\n                    ivh = fx.Float32(fx.ptr_load(fx.add_offset(ibp, 16 * h + lr)))\n                    hrow = fx.Int32(16 * h) + lr\n                    for d in range_constexpr(ndv):\n                        vals = Vec.from_elements(\n                            [fx.Float32(acc[ndv * h + d][e]) * ivh for e in range(4)],\n                            Float32,\n                        ).to(Float16)\n                        chk = (n0 + fx.Int32(d)) * 2 + lg // 2\n                        off = hrow * (DV // 2) + (chk ^ ((lr % 8) * 2)) * 4 + (lg % 2) * 2\n                        fx.ptr_store(vals.bitcast(Int32), fx.add_offset(vi, off))\n\n            def staged(u):\n                \"\"\"16-byte chunk u of the staged partial, in head-major order.\"\"\"\n                hrow = u // (DV // 8)\n                chk = u % (DV // 8)\n                return fx.ptr_load(\n                    fx.add_offset(vi, hrow * (DV // 2) + (chk ^ ((hrow % 8) * 2)) * 4),\n                    T.i32x4,\n                )\n\n            def flush_out():\n                \"\"\"Every thread copies 16-byte chunks of the staged partial to global, contiguous across lanes.\"\"\"\n                pop = fx.get_iter(po_t)\n                obase = slot * (NHEAD * DV)\n                for k in range_constexpr(NHEAD * DV // 8 // THREADS):\n                    u = tid + fx.Int32(k * THREADS)\n                    fx.ptr_store(\n                        Vec(staged(u)).bitcast(Float16),\n                        fx.add_offset(pop, obase + u * 8),\n                    )\n\n            if uw < fx.Int32(NQW):\n                qp = fx.get_iter(q_t)\n                # 32x32x64 logit MFMAs: lane l holds head uw 32 + l % 32 (and key l % 32 of the tile), dims\n                # 64 m + 32 (l // 32) .. +32 of A and B alike, so the fp8 k order within an operand cancels.\n                hl = lane % 32\n                hc = lane // 32\n                qbase = (row * NHEAD + uw * 32 + hl) * (DQK // 4)\n                qv = []\n                for m in range_constexpr(NQK):\n                    qo = qbase + 16 * m + hc * 8\n                    h0 = Vec(fx.ptr_load(fx.add_offset(qp, qo), T.i32x4))\n                    h1 = Vec(fx.ptr_load(fx.add_offset(qp, qo + 4), T.i32x4))\n                    qv.append(h0.shuffle(h1, [0, 1, 2, 3, 4, 5, 6, 7]))\n                # The Q loads land before the loop, so the waitcnt pass emits no vmcnt waits inside it.\n                rocdl.s_waitcnt(vmcnt=0)\n                init = [fx.Float32(MINIT), fx.Float32(0.0)]\n\n                unit = fx.Int32(0x7F7F7F7F)  # E8M0 scale 1.0\n                # Piece-major tile: pieces 4 m + 2 hc and the next (+512 bytes) of key hl.\n                qkb = hl * 16 + hc * 1024\n\n                def kread(tb, m):\n                    \"\"\"K read m: key hl of the tile at byte tb, dims 64 m + 32 hc .. +32.\"\"\"\n                    kb = qkb + tb + 2048 * m\n                    h0 = Vec(fx.ptr_load(fx.add_offset(vi, kb // 4), T.i32x4))\n                    h1 = Vec(fx.ptr_load(fx.add_offset(vi, (kb + 512) // 4), T.i32x4))\n                    return h0.shuffle(h1, [0, 1, 2, 3, 4, 5, 6, 7])\n\n                tq = uw * TPW + hl // 16\n                pslot0 = tq * PWORDS + (hc * 16 + lr) * 4\n                pslot1 = tq * PWORDS + ((hc + 2) * 16 + lr) * 4\n                # Steps 0 .. nsteps - 1; the value waves' extra step (PV of the last) is matched by one barrier.\n                for it, st in range(fx.Int32(0), nsteps, fx.Int32(1), init=init):\n                    itv = fx.Int32(it)\n                    bpos = pos0 + itv * BI\n                    cur = itv % fx.Int32(NR)\n                    par = itv & fx.Int32(1)\n\n                    # One barrier a step: tile it is complete, P / alpha of step it - 2 are consumed, and every\n                    # wave is done with tile it - 2, whose buffer this step's DMAs (of step it + DMAD) overwrite.\n                    fx.barrier()\n                    sa = Vec.filled(16, 0.0, Float32)\n                    tb = cur * TILE8\n                    kvs = [kread(tb, i) for i in range(QLA)]\n                    rocdl.sched_barrier(0)\n                    for i in range_constexpr(NQK):\n                        sa = Vec(\n                            rocdl.mfma_scale_f32_32x32x64_f8f6f4(\n                                T.vec(16, T.f32), [kvs[i], qv[i], sa, 0, 0, 0, unit, 0, unit]\n                            )\n                        )\n                        if i + QLA < NQK:\n                            kvs.append(kread(tb, i + QLA))\n                        rocdl.sched_barrier(0)\n                    # Raw logits of head hl, keys 8 (r // 4) + 4 hc + r % 4; the scale is applied by the max (exact:\n                    # scale2 > 0) and folded into the exponent.\n                    sv = [fx.Float32(sa[r]) for r in range(16)]\n                    # Only the chunk's last step can hold keys past its end: a uniform branch. They are masked with\n                    # -inf, which weighs them 0 at any logit scale (the step holds a key of its own, so the max stays\n                    # finite).\n                    if bpos + fx.Int32(BI) > end:\n                        _keep_branch()\n                        kb = bpos + 4 * hc\n                        sv = [\n                            (kb + fx.Int32(8 * (r // 4) + r % 4) < end).select(sv[r], fx.Float32(float(\"-inf\")))\n                            for r in range(16)\n                        ]\n                    # The running sum stays a per-lane partial, reduced after the loop; the cross-lane max runs only\n                    # when a ballot on the lane-local maxima finds a head that gained more than TAU.\n                    mr = fx.Float32(st[0])\n                    sr = fx.Float32(st[1])\n                    m = sv[0]\n                    for e in range_constexpr(1, 16):\n                        m = m.maximumf(sv[e])\n                    mloc = m * scale2\n                    fires = fx.Int64(rocdl.ballot(T.i64, mloc > mr + fx.Float32(TAU))) != fx.Int64(0)\n                    mnew = mr\n                    alpha = fx.Float32(1.0)\n                    srs = sr\n                    if fires:\n                        _keep_branch()\n                        o = _swap(mloc, True)\n                        mnew = mr.maximumf(o[0].maximumf(o[1]))\n                        alpha = fmath.exp2(mr - mnew, fastmath=\"afn\")\n                        srs = sr * alpha\n                    fx.ptr_store(\n                        Vec.from_elements([alpha], Float32),\n                        fx.add_offset(abp, par * (NWT * 16) + uw * 32 + hl),\n                    )\n                    pv = [fmath.exp2(fx.fma(sv[r], scale2, -mnew), fastmath=\"afn\") for r in range(16)]\n                    pa = Vec.from_elements(pv[0:4] + pv[8:12], Float32).to(Float16)\n                    pb = Vec.from_elements(pv[4:8] + pv[12:16], Float32).to(Float16)\n                    pbase = par * (NWT * PWORDS)\n                    fx.ptr_store(pa.bitcast(Int32), fx.add_offset(pbp, pbase + pslot0))\n                    fx.ptr_store(pb.bitcast(Int32), fx.add_offset(pbp, pbase + pslot1))\n                    # The sum of the fp16 weights the value GEMM multiplies, so that o's numerator and\n                    # denominator round alike (a dominant key's weight cancels exactly).\n                    ra = Vec(pa.to(Float32))\n                    rb = Vec(pb.to(Float32))\n                    ssum = fx.Float32(ra[0]) + fx.Float32(rb[0])\n                    for e in range_constexpr(1, 8):\n                        ssum = ssum + (fx.Float32(ra[e]) + fx.Float32(rb[e]))\n                    res = yield [mnew, srs + ssum]\n\n                fx.barrier()\n                mrun = fx.Float32(res[0])\n                o = _swap(fx.Float32(res[1]), True)\n                srun = o[0] + o[1]\n                nonempty = srun > fx.Float32(0.0)\n                inv = nonempty.select(fx.Float32(1.0) / srun, fx.Float32(0.0))\n                lsev = nonempty.select(\n                    (mrun + fmath.log2(srun.maximumf(fx.Float32(1.0e-38)))) * LN2,\n                    fx.Float32(NEGBIG),\n                )\n                hq = uw * 32 + hl\n                fx.ptr_store(Vec.from_elements([inv], Float32), fx.add_offset(ibp, hq))\n                if lane < fx.Int32(32):\n                    if crow == fx.Int32(1):\n                        fx.ptr_store(\n                            Vec.from_elements(\n                                [nonempty.select(lsev, fx.Float32(float(\"-inf\")))],\n                                Float32,\n                            ),\n                            fx.add_offset(fx.get_iter(lse_t), row * NHEAD + hq),\n                        )\n                    else:\n                        fx.ptr_store(\n                            Vec.from_elements([lsev], Float32),\n                            fx.add_offset(fx.get_iter(pl_t), slot * NHEAD + hq),\n                        )\n                fx.barrier()\n                # The value waves stage the partial in LDS between these two barriers; the asm keeps them distinct.\n                _keep_branch()\n                fx.barrier()\n            else:\n                vw = uw - fx.Int32(NQW)\n\n                def plain_body(pn0, ndv):\n                    \"\"\"A value wave that gathers nothing: PV(it - 1) over value tiles pn0 .. pn0 + ndv - 1.\"\"\"\n                    poffs = pv_offsets(pn0, ndv)\n                    NA7 = NQT * ndv\n                    init = [Vec.filled(4, 0.0, Float32) for _ in range(NA7)]\n                    # Steps nsteps - 1 and nsteps run PV only, after the loop, as on the other value waves.\n                    for it, st in range(fx.Int32(0), nm1, fx.Int32(1), init=init):\n                        acc = [Vec(st[n]) for n in range(NA7)]\n                        itv = fx.Int32(it)\n                        prv = (itv + fx.Int32(NR - 1)) % fx.Int32(NR)\n                        ppar = fx.Int32(1) - (itv & fx.Int32(1))\n                        fx.barrier()\n                        acc = pv_step(acc, poffs, prv * TILE8, ppar)\n                        res = yield acc\n\n                    acc = [Vec(res[n]) for n in range(NA7)]\n                    if nsteps > fx.Int32(0):\n                        acc = pv_only(acc, poffs, nsteps - fx.Int32(1))\n                    acc = pv_only(acc, poffs, nsteps)\n                    fx.barrier()\n                    store_out(acc, pn0, ndv)\n                    fx.barrier()\n\n                def gather_body(pn0, ndv):\n                    \"\"\"A gathering value wave: PV(it - 1) over value tiles pn0 .. pn0 + ndv - 1.\"\"\"\n                    poffs = pv_offsets(pn0, ndv)\n                    NA = NQT * ndv\n                    # Async DMAs straight into the tile: lane l fetches piece 2 p + l // 32 of key l % 32, so one DMA\n                    # fills pieces 2 p, 2 p + 1 of the piece-major tile (1 KiB at byte 1024 p); this wave takes PPW\n                    # piece pairs. Step s's group issues at step s - DMAD, one async group a step.\n                    hh = lane // 32\n                    pp0 = (vw - fx.Int32(1)) * PPW\n\n                    def dma(sidx, s):\n                        \"\"\"Group of step s (wave-uniform) from pool row sidx (past nsteps each lane reads the\n                        chunk's last key: one row).\"\"\"\n                        gb = fx.add_offset(kv_row(sidx), hh * 4 + pp0 * 8)\n                        lb = (s % fx.Int32(NR)) * (TILE8 // 4) + pp0 * 256\n                        for i in range_constexpr(PPW):\n                            _mrocdl.load_async_to_lds(\n                                fx.to_llvm_ptr(fx.add_offset(gb, 8 * i)),\n                                fx.to_llvm_ptr(fx.add_offset(vi, lb + 256 * i)),\n                                16,\n                                0,\n                            )\n\n                    # The table entries of step t reach this wave's slot ring (lane l: key l % 32) by a 4-byte DMA\n                    # issued with the group of step t - DMAD, which reads them back one unit later.\n                    slp = lds.sl.ptr\n                    srb = (vw - fx.Int32(1)) * (NSR * 64)\n\n                    def sdma(t):\n                        spos = pos0 + t * BI + kk\n                        _mrocdl.load_async_to_lds(\n                            fx.to_llvm_ptr(fx.add_offset(btp, table_pos(spos))),\n                            fx.to_llvm_ptr(fx.add_offset(slp, srb + (t % fx.Int32(NSR)) * 64)),\n                            4,\n                            0,\n                        )\n\n                    # Memory ops issue in units: group g, then the slot DMA of step g + DMAD. Waiting for unit s\n                    # leaves DMAD - 1 younger units in flight. An explicit vmcnt, not async marks: their intrinsics\n                    # lack nocallback, which makes LLVM reserve AGPRs and halve the VGPR budget.\n                    VMW = (PPW + 1) * (DMAD - 1)\n                    ss = [slot_at(pos0 + k * BI + kk) for k in range(DMAD)]\n                    for k in range_constexpr(DMAD):\n                        dma(ss[k], fx.Int32(k))\n                        sdma(fx.Int32(k + DMAD))\n\n                    init = [Vec.filled(4, 0.0, Float32) for _ in range(NA)]\n                    for it, st in range(fx.Int32(0), nsteps, fx.Int32(1), init=init):\n                        acc = [Vec(st[n]) for n in range(NA)]\n                        itv = fx.Int32(it)\n                        prv = (itv + fx.Int32(NR - 1)) % fx.Int32(NR)\n                        ppar = fx.Int32(1) - (itv & fx.Int32(1))\n                        rocdl.s_waitcnt(vmcnt=VMW)\n                        fx.barrier()\n                        rocdl.sched_barrier(0)\n                        tn = itv + fx.Int32(DMAD)\n                        sidx = fx.Int32(fx.ptr_load(fx.add_offset(slp, srb + (tn % fx.Int32(NSR)) * 64 + lane)))\n                        dma(sidx, tn)\n                        sdma(tn + fx.Int32(DMAD))\n                        rocdl.sched_barrier(0)\n                        acc = pv_step(acc, poffs, prv * TILE8, ppar)\n                        res = yield acc\n\n                    acc = [Vec(res[n]) for n in range(NA)]\n                    acc = pv_only(acc, poffs, nsteps)\n                    # The trailing groups land before the staged partial overwrites the ring.\n                    rocdl.s_waitcnt(vmcnt=0)\n                    fx.barrier()\n                    store_out(acc, pn0, ndv)\n                    fx.barrier()\n                # Wave NQW and the first gathering wave take PDV value tiles, the others PDV - 1: with waves NQW and\n                # NWT - 1 sharing the SIMD that runs no logits, the four SIMDs' MFMA work evens out.\n                if vw == fx.Int32(0):\n                    plain_body(fx.Int32(0), PDV)\n                elif vw == fx.Int32(NWT - NQW - 1):\n                    plain_body(fx.Int32(DV // 16 - (PDV - 1)), PDV - 1)\n                elif vw == fx.Int32(1):\n                    gather_body(fx.Int32(PDV), PDV)\n                else:\n                    gather_body(fx.Int32(2 * PDV) + (vw - fx.Int32(2)) * (PDV - 1), PDV - 1)\n\n            ofp = fx.get_iter(out_t)\n            if crow == fx.Int32(1):\n                # The row's only chunk: its staged partial is the output, and the combine skips the row.\n                for k in range_constexpr(NHEAD * DV // 8 // THREADS):\n                    u = tid + fx.Int32(k * THREADS)\n                    wv = Vec(staged(u)).bitcast(Float16)\n                    wv = Vec(wv.to(Float32) * Vec.from_elements([vscale] * 8, Float32)).to(BFloat16)\n                    fx.ptr_store(wv, fx.add_offset(ofp, (row * NHEAD) * DV + u * 8))\n            else:\n                flush_out()\n\n        # The segments unrolled: a runtime loop would hoist each role's invariants out of it and spill.\n        for k in range_constexpr(MAXSEG if SPANS else 1):\n            if fx.Int32(k) < nseg:\n                seg_body(k)\n\n    def _pair(x, step):\n        \"\"\"The Float32 x of lane and of lane ^ step (8, 16 or 32), in some order: DPP row_ror:8, else a permlane\n        swap.\"\"\"\n        if step == 8:\n            return [x, _dpp(fx.Float32(x).bitcast(Int32), ROWROR8).bitcast(Float32)]\n        return _swap(x, step == 32)\n\n    def _mix(m, t, acc, step):\n        \"\"\"Merge the (max, sum, unnormalized acc) of lane and lane ^ step: the same bits in both.\"\"\"\n        mo = _pair(m, step)\n        mn = mo[0].maximumf(mo[1])\n        e = [fmath.exp2((x - mn) * LOG2E) for x in mo]\n        to = _pair(t, step)\n        ao = [_pair(fx.Float32(acc[i]), step) for i in range(CPT)]\n        acc = Vec.from_elements([ao[i][0] * e[0] + ao[i][1] * e[1] for i in range(CPT)], Float32)\n        return mn, to[0] * e[0] + to[1] * e[1], acc\n\n    @flyc.kernel\n    def comb_wide(po_t, pl_t, mt_t, out_t, lse_t, ks_t):\n        tid = fx.thread_idx.x\n        lane = tid % 64\n        sl = tid // 64\n        rh = fx.Int32(fx.block_idx.x)\n        row = rh // NHEAD\n        head = rh - row * NHEAD\n        mt = Vec(fx.ptr_load(fx.add_offset(fx.get_iter(mt_t), row * 2), T.i32x2))\n        cb = fx.Int32(mt[0])\n        nl = fx.Int32(mt[1])\n        # A row of one chunk was written by its chunk.\n        if nl != fx.Int32(1):\n            plp = fx.get_iter(pl_t)\n            pop = fx.get_iter(po_t)\n            negb = fx.Float32(NEGBIG)\n            zerof = fx.Float32(0.0)\n            # Wave sl takes columns sl DV / CSL ..; its lane group cg runs an online merge over chunks cg, cg + CSL, ..\n            # and the groups meet in a fixed tree, so the merge is the same bits on every run.\n            cg = lane // (64 // CSL)\n            col = sl * (DV // CSL) + (lane % (64 // CSL)) * CPT\n            mrun = negb\n            tot = zerof\n            acc = Vec.filled(CPT, 0.0, Float32)\n            for c0 in range(fx.Int32(0), nl, fx.Int32(CSL * CUNR)):\n                oks = []\n                lvs = []\n                ovs = []\n                for k in range_constexpr(CUNR):\n                    c = fx.Int32(c0) + fx.Int32(CSL * k) + cg\n                    oks.append(c < nl)\n                    off = (cb + (c < nl).select(c, fx.Int32(0))) * NHEAD + head\n                    lvs.append(fx.ptr_load(fx.add_offset(plp, off)))\n                    ovs.append(fx.ptr_load(fx.add_offset(pop, off * DV + col), T.f16x8))\n                lvs = [oks[k].select(fx.Float32(lvs[k]), negb) for k in range(CUNR)]\n                mn = mrun\n                for k in range_constexpr(CUNR):\n                    mn = mn.maximumf(lvs[k])\n                a0 = fmath.exp2((mrun - mn) * LOG2E)\n                tot = tot * a0\n                acc = Vec(acc * Vec.from_elements([a0] * CPT, Float32))\n                for k in range_constexpr(CUNR):\n                    w = oks[k].select(fmath.exp2((lvs[k] - mn) * LOG2E), zerof)\n                    tot = tot + w\n                    acc = Vec(\n                        fx.fma(\n                            Vec(ovs[k]).to(Float32),\n                            Vec.from_elements([w] * CPT, Float32),\n                            acc,\n                        )\n                    )\n                mrun = mn\n            for k in range_constexpr(CSL.bit_length() - 1):\n                mrun, tot, acc = _mix(mrun, tot, acc, (64 // CSL) << k)\n            vscale = fx.Float32(fx.ptr_load(fx.get_iter(ks_t)))\n            live = mrun > fx.Float32(-1.0e29)\n            lsef = mrun + fmath.log2(tot.maximumf(fx.Float32(1.0e-38))) * LN2\n            mul = live.select(vscale / tot.maximumf(fx.Float32(1.0e-38)), zerof)\n            if cg == fx.Int32(0):\n                fx.ptr_store(\n                    Vec(acc * Vec.from_elements([mul] * CPT, Float32)).to(BFloat16),\n                    fx.add_offset(fx.get_iter(out_t), (row * NHEAD + head) * DV + col),\n                )\n            if tid == fx.Int32(0):\n                fx.ptr_store(\n                    Vec.from_elements([live.select(lsef, fx.Float32(float(\"-inf\")))], Float32),\n                    fx.add_offset(fx.get_iter(lse_t), row * NHEAD + head),\n                )\n\n    @flyc.kernel\n    def comb_kernel(po_t, pl_t, mt_t, out_t, lse_t, ks_t):\n        tid = fx.thread_idx.x\n        lane = tid % 64\n        wv = _uni(tid // 64)\n        g = fx.Int32(fx.block_idx.x)\n        row = g // (NHEAD // HG)\n        head = (g - row * (NHEAD // HG)) * HG + wv\n        mt = Vec(fx.ptr_load(fx.add_offset(fx.get_iter(mt_t), row * 2), T.i32x2))\n        cb = fx.Int32(mt[0])\n        nl = fx.Int32(mt[1])\n        # A row of one chunk was written by its chunk.\n        if nl != fx.Int32(1):\n            plp = fx.get_iter(pl_t)\n            pop = fx.get_iter(po_t)\n            negb = fx.Float32(NEGBIG)\n            zerof = fx.Float32(0.0)\n            # One wave a head, 8 value columns a lane: an online merge over the row's chunks in chunk order, CU\n            # chunks' loads in flight (groups of CG past the row's chunk count issue none).\n            col = lane * CPT\n            mrun = negb\n            tot = zerof\n            acc = Vec.filled(CPT, 0.0, Float32)\n            for c0 in range(fx.Int32(0), nl, fx.Int32(CU)):\n                oks = []\n                lvs = []\n                ovs = []\n                for q in range_constexpr(CU // CG):\n                    lq = [negb] * CG\n                    oq = [Vec.filled(CPT, 0.0, Float16)] * CG\n                    if fx.Int32(c0) + fx.Int32(CG * q) < nl:\n                        lq = []\n                        oq = []\n                        for k in range_constexpr(CG):\n                            c = fx.Int32(c0) + fx.Int32(CG * q + k)\n                            ok = c < nl\n                            off = (cb + ok.select(c, fx.Int32(c0))) * NHEAD + head\n                            lq.append(ok.select(fx.Float32(fx.ptr_load(fx.add_offset(plp, off))), negb))\n                            oq.append(Vec(fx.ptr_load(fx.add_offset(pop, off * DV + col), T.f16x8)))\n                    for k in range_constexpr(CG):\n                        oks.append(fx.Int32(c0) + fx.Int32(CG * q + k) < nl)\n                        lvs.append(lq[k])\n                        ovs.append(oq[k])\n                mn = mrun\n                for k in range_constexpr(CU):\n                    mn = mn.maximumf(lvs[k])\n                a0 = fmath.exp2((mrun - mn) * LOG2E)\n                tot = tot * a0\n                acc = Vec(acc * Vec.from_elements([a0] * CPT, Float32))\n                for k in range_constexpr(CU):\n                    w = oks[k].select(fmath.exp2((lvs[k] - mn) * LOG2E), zerof)\n                    tot = tot + w\n                    acc = Vec(\n                        fx.fma(\n                            Vec(ovs[k]).to(Float32),\n                            Vec.from_elements([w] * CPT, Float32),\n                            acc,\n                        )\n                    )\n                mrun = mn\n            vscale = fx.Float32(fx.ptr_load(fx.get_iter(ks_t)))\n            live = mrun > fx.Float32(-1.0e29)\n            lsef = mrun + fmath.log2(tot.maximumf(fx.Float32(1.0e-38))) * LN2\n            mul = live.select(vscale / tot.maximumf(fx.Float32(1.0e-38)), zerof)\n            fx.ptr_store(\n                Vec(acc * Vec.from_elements([mul] * CPT, Float32)).to(BFloat16),\n                fx.add_offset(fx.get_iter(out_t), (row * NHEAD + head) * DV + col),\n            )\n            if lane == fx.Int32(0):\n                fx.ptr_store(\n                    Vec.from_elements([live.select(lsef, fx.Float32(float(\"-inf\")))], Float32),\n                    fx.add_offset(fx.get_iter(lse_t), row * NHEAD + head),\n                )\n\n    @flyc.jit\n    def launch_all(q_t, kv_t, bt_t, ln_t, mt_t, po_t, pl_t, out_t, lse_t, qs_t, ks_t, stream: fx.Stream):\n        part_kernel(q_t, kv_t, bt_t, ln_t, mt_t, po_t, pl_t, out_t, lse_t, qs_t, ks_t).launch(\n            grid=(nblk, 1, 1), block=(THREADS, 1, 1), stream=stream\n        )\n        if const_expr(rows >= WIDEROWS):\n            comb_kernel(po_t, pl_t, mt_t, out_t, lse_t, ks_t).launch(\n                grid=(rows * (NHEAD // HG), 1, 1), block=(64 * HG, 1, 1), stream=stream\n            )\n        else:\n            comb_wide(po_t, pl_t, mt_t, out_t, lse_t, ks_t).launch(\n                grid=(rows * NHEAD, 1, 1), block=(64 * CSL, 1, 1), stream=stream\n            )\n\n    def launch(q, kv_buffer, kv_indices, kv_indptr, q_scale, kv_scale, o, lse):\n        po = torch.empty((NSLOT * NHEAD * DV,), dtype=torch.float16, device=q.device)\n        pl = torch.empty((NSLOT * NHEAD,), dtype=torch.float32, device=q.device)\n        mt = torch.empty((rows * 2,), dtype=torch.int32, device=q.device)\n        launch_all(\n            q.view(torch.int32).view(-1),\n            from_c_void_p(Int32, kv_buffer.data_ptr(), assumed_align=16),\n            kv_indices.view(-1),\n            kv_indptr.view(-1),\n            mt,\n            po,\n            pl,\n            o.view(-1),\n            lse.view(-1),\n            q_scale.view(-1),\n            kv_scale.view(-1),\n            fx.Stream(torch.cuda.current_stream()),\n        )\n\n    return launch\n\n\ndef run(*, q, kv_buffer, kv_indptr, kv_indices, q_scale, kv_scale, sm_scale, o, lse):\n    \"\"\"Write the MLA decode of this request batch into o and lse.\"\"\"\n    # one build per power of two of kv_indices' entries, which bounds the split search and each row's length: a table\n    # length first seen while serving compiles only past every one seen before\n    width = 1 << max(kv_indices.numel() - 1, 1).bit_length()\n    fn = _build(float(sm_scale), q.shape[0], width, q.device.index)\n    fn(q, kv_buffer, kv_indices, kv_indptr, q_scale, kv_scale, o, lse)\n"
+      }
+    ]
+  }
+}

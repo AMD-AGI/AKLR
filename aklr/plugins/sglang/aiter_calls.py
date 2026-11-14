@@ -11,7 +11,10 @@ go by name to :mod:`aklr.plugins.aiter`.
 sglang calls ``mm`` on aiter's ``tgemm``, so hooking aiter's name reaches every call; sglang's hook registry
 also rebinds the names other modules imported, as the unquantized linear layers import aiter's Triton GEMM,
 which they call for at most 64 rows where the weight's K is at most 2048 (at most 512 rows where K is at most
-512). Those routes take the parameters of the aiter in the sglang release's image."""
+512). Those routes take the parameters of the aiter in the sglang release's image.
+
+sglang's hook registry rebinds aiter's ``mla_decode_fwd`` where sglang's modules imported it, so that route
+reaches every call; its parameters are those of the aiter in the sglang release's image."""
 
 from __future__ import annotations
 
@@ -122,4 +125,60 @@ def _triton_gemm_a16w16(
 ):
     return aklr_aiter.gemm_a16w16(
         x, w, bias=bias, dtype=dtype, y=y, activation=activation, skip_reduce=skip_reduce
+    )
+
+
+# the MLA decode under decode context parallelism (aiter_backend's DCP decode and DSpark verify)
+@sglang_route("aiter.mla.mla_decode_fwd", versions=("0.5.22",))
+def _mla_decode_fwd(
+    q,
+    kv_buffer,
+    o,
+    qo_indptr,
+    kv_indptr,
+    kv_indices,
+    kv_last_page_lens,
+    max_seqlen_q,
+    page_size=1,
+    nhead_kv=1,
+    sm_scale=None,
+    logit_cap=0.0,
+    num_kv_splits=None,
+    num_kv_splits_indptr=None,
+    work_meta_data=None,
+    work_indptr=None,
+    work_info_set=None,
+    reduce_indptr=None,
+    reduce_final_map=None,
+    reduce_partial_map=None,
+    q_scale=None,
+    kv_scale=None,
+    intra_batch_mode=False,
+    return_logits=False,
+    return_lse=False,
+    g_kv_indptr=None,
+    cp_world_size=1,
+    cp_rank=0,
+    causal=True,
+):
+    return aklr_aiter.mla_decode_fwd(
+        q,
+        kv_buffer,
+        o,
+        qo_indptr,
+        kv_indptr,
+        kv_indices,
+        kv_last_page_lens,
+        max_seqlen_q,
+        page_size=page_size,
+        nhead_kv=nhead_kv,
+        sm_scale=sm_scale,
+        logit_cap=logit_cap,
+        num_kv_splits_indptr=num_kv_splits_indptr,
+        q_scale=q_scale,
+        kv_scale=kv_scale,
+        return_logits=return_logits,
+        return_lse=return_lse,
+        g_kv_indptr=g_kv_indptr,
+        cp_world_size=cp_world_size,
     )

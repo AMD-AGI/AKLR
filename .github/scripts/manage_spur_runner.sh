@@ -10,7 +10,8 @@
 # the short-lived registration token is removed after use.
 #
 # AKLR_SPUR_ACCOUNT and AKLR_SPUR_PARTITION each hold one or more names separated
-# by commas and/or whitespace. prepare submits one allocation per account and
+# by commas and/or whitespace. An account may be written ACCOUNT:QOS to submit under
+# that QOS; a bare account uses its default QOS. prepare submits one allocation per account and
 # partition pair under the same job name; the first to start running is kept and
 # every other one is cancelled. The registration token is written only once every
 # other allocation has ended, so the kept allocation is the only one that can
@@ -120,19 +121,23 @@ load_github_credentials() {
     export GH_TOKEN
 }
 
+# load_name_list SETTING LIST [QOS_ALLOWED]: with QOS_ALLOWED, a name may carry a :QOS suffix.
 load_name_list() {
     local setting=$1 value=${!1:-} name
     local -n list=$2
+    local valid='[A-Za-z0-9][A-Za-z0-9_.-]{0,63}' pattern
 
+    pattern="^$valid\$"
+    [[ -z ${3:-} ]] || pattern="^$valid(:$valid)?\$"
     read -ra list <<< "${value//,/ }"
     ((${#list[@]} > 0)) || die "Set $setting"
     for name in "${list[@]}"; do
-        [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]] || die "Invalid name in $setting: $name"
+        [[ $name =~ $pattern ]] || die "Invalid name in $setting: $name"
     done
 }
 
 load_prepare_settings() {
-    load_name_list AKLR_SPUR_ACCOUNT spur_accounts
+    load_name_list AKLR_SPUR_ACCOUNT spur_accounts qos
     load_name_list AKLR_SPUR_PARTITION spur_partitions
 
     cpus_per_task=${AKLR_SPUR_CPUS:-64}
@@ -344,7 +349,7 @@ write_registration_token() {
 }
 
 submit_allocations() {
-    local bootstrap_command submit_response account partition
+    local bootstrap_command submit_response entry account qos partition log
     local -a submit_args
 
     printf -v bootstrap_command 'exec env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/bash %q %q %q %q %q %q' \
@@ -353,27 +358,31 @@ submit_allocations() {
 
     # Submit each pair exactly once. Uncertain responses are never retried; the
     # EXIT handler and release resolve them by job name.
-    for account in "${spur_accounts[@]}"; do
+    for entry in "${spur_accounts[@]}"; do
+        account=${entry%%:*} qos=''
+        [[ $entry != *:* ]] || qos=${entry#*:}
         for partition in "${spur_partitions[@]}"; do
+            log="$handoff_dir/allocation-${entry/:/-}-$partition.log"
             submit_args=(
                 submit --parsable
                 -A "$account" -p "$partition"
                 -N 1 -c "$cpus_per_task" --mem "$memory_per_node"
                 "--gpus-per-node=$gpus_per_node" -t "$allocation_time_limit"
                 -J "$runner_name" --export=NONE
-                --chdir "$handoff_dir" --output "$handoff_dir/allocation-$account-$partition.log"
+                --chdir "$handoff_dir" --output "$log"
                 --wrap "$bootstrap_command"
             )
+            [[ -z $qos ]] || submit_args+=(-q "$qos")
             [[ -z $exclude_nodes ]] || submit_args+=(--exclude "$exclude_nodes")
 
             submission_started=true
             if submit_response=$(run_spur "${submit_args[@]}") &&
                 [[ $submit_response =~ ^[1-9][0-9]*$ ]]; then
                 allocation_ids+=("$submit_response")
-                allocation_logs[$submit_response]="$handoff_dir/allocation-$account-$partition.log"
-                echo "Submitted $submit_response (account $account, partition $partition)."
+                allocation_logs[$submit_response]=$log
+                echo "Submitted $submit_response (account $entry, partition $partition)."
             else
-                echo "::warning::Spur submit for account $account, partition $partition failed or was uncertain; not retried" >&2
+                echo "::warning::Spur submit for account $entry, partition $partition failed or was uncertain; not retried" >&2
             fi
         done
     done

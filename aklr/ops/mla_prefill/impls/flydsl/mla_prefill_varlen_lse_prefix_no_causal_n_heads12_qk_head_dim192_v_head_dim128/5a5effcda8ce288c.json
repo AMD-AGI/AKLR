@@ -1,0 +1,262 @@
+{
+  "schema_version": 5,
+  "name": "mla_prefill_varlen_lse_prefix_no_causal_n_heads12_qk_head_dim192_v_head_dim128",
+  "contract_id": "mla_prefill_varlen_lse@1.0",
+  "description": "mla_prefill_varlen that also returns each query's log-sum-exp, the passes of a chunked prefix that sglang merges: sequence s's queries are q's rows cu_seqlens_q[s]:cu_seqlens_q[s + 1], its keys and values the rows cu_seqlens_k[s]:cu_seqlens_k[s + 1] of k and v (with no prefix, the queries' own rows). With causal, aligned at the end: query i of a sequence of Lq queries over Lk keys reads keys 0 .. Lk - Lq + i; without, every key of its sequence (a prefix chunk, each of whose keys precedes every query). Logits q . k * sm_scale over qk_head_dim; output the softmax-weighted sum of v, lse the natural log of the sum of exp(logit) over the keys read, per query row and head. With qkv_fp8 a kernel may round q, k and v to float8_e4m3fn first, as aiter's fp8 prefill does.",
+  "op_type": "mla_prefill",
+  "axes": {
+    "n_q": {
+      "type": "var",
+      "description": "Query rows, every sequence's back to back."
+    },
+    "n_kv": {
+      "type": "var",
+      "description": "Key and value rows, every sequence's back to back."
+    },
+    "n_offsets": {
+      "type": "var",
+      "description": "Sequence offsets: sequences + 1."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 12,
+      "description": "Heads on this rank; k and v carry q's."
+    },
+    "qk_head_dim": {
+      "type": "const",
+      "value": 192,
+      "description": "Values per q and k head: the no-rope and rope parts."
+    },
+    "v_head_dim": {
+      "type": "const",
+      "value": 128,
+      "description": "Values per v and output head."
+    }
+  },
+  "attrs": {
+    "has_prefix": true,
+    "qkv_fp8": true,
+    "causal": false
+  },
+  "inputs": {
+    "q": {
+      "shape": [
+        "n_q",
+        "n_heads",
+        "qk_head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Queries."
+    },
+    "k": {
+      "shape": [
+        "n_kv",
+        "n_heads",
+        "qk_head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Keys."
+    },
+    "v": {
+      "shape": [
+        "n_kv",
+        "n_heads",
+        "v_head_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Values."
+    },
+    "cu_seqlens_q": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "cu_seqlens",
+        "min_seqlen": 1,
+        "total": "n_q"
+      },
+      "description": "Where each sequence's queries start in q, then where the last ends."
+    },
+    "cu_seqlens_k": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "cu_seqlens",
+        "min_seqlen": 1,
+        "total": "n_kv"
+      },
+      "description": "Where each sequence's keys start in k and v, then where the last ends."
+    },
+    "sm_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every logit."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "n_q",
+        "n_heads",
+        "v_head_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "The softmax-weighted sum of the values each query reads."
+    },
+    "lse": {
+      "shape": [
+        "n_q",
+        "n_heads"
+      ],
+      "dtype": "float32",
+      "description": "Natural log-sum-exp of the scaled logits each query reads, [query row, head]."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_q": 257,
+        "n_kv": 49152,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 5.195
+    },
+    {
+      "axes": {
+        "n_q": 2732,
+        "n_kv": 35107,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 2.589
+    },
+    {
+      "axes": {
+        "n_q": 3392,
+        "n_kv": 49152,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 2.481
+    },
+    {
+      "axes": {
+        "n_q": 8480,
+        "n_kv": 131072,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 2.028
+    },
+    {
+      "axes": {
+        "n_q": 16384,
+        "n_kv": 1664,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 3.536
+    },
+    {
+      "axes": {
+        "n_q": 16384,
+        "n_kv": 65536,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 1.851
+    },
+    {
+      "axes": {
+        "n_q": 16384,
+        "n_kv": 116352,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 1.792
+    },
+    {
+      "axes": {
+        "n_q": 16384,
+        "n_kv": 131072,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      },
+      "accuracy": "passed",
+      "speedup": 1.774
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.2"
+    },
+    "author": "kyle-256",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"MLA prefill attention that also returns each query's log-sum-exp (sglang's chunked-prefix passes: the causal pass\nover the extend tokens, and the pass over a prefix chunk that every query reads whole; causal over a prefix too), in\nfp8: q, k and v are rounded to float8_e4m3fn (one FlyDSL launch for all three) and aiter's persistent ASM prefill\nruns at the native 12 heads, causal or not, on the work plan aiter's planner builds with need_lse, built here once\nper shape (``ps_plan.py``, so that aiter without need_lse serves too; a single sequence's offsets are fixed by the\nrow counts), so that every query tile, split or not, leaves fp32 partials with their log-sum-exp; the CU lists are\npermuted so each 3-head cluster sits on two XCDs. No ASM call reads more than 65536 keys: a longer key range is cut\ninto segments, each its own call (causal: the prefix before the queries' own keys in segments read whole, then each\n65536-query block reads its own keys' segments before it whole and its own causally). A FlyDSL kernel merges each\nquery tile's partials, from every segment, in a fixed order into the output and writes the tile's natural-log lse.\nOne sequence: dispatch serves only the sequence count the workloads measure.\"\"\"\n\nimport functools\nimport math\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl.expr import rocdl\nfrom flydsl.expr.typing import T\n\nN_HEADS = 12\nQK_DIM = 192\nV_DIM = 128\nTILE_Q = 256  # the plan's query tile\nN_CU = 256\n\n# --- FlyDSL map reduce. Each query tile s has a descriptor row [out_base, n_rows, n_splits, p_0 .. p_{MS-1}] with\n# out_base = q_start * H, n_rows = (q_end - q_start) * H and p_j = partial row j * H (padded with p_0). Row x of the\n# tile (x = local_q * H + h) merges partial rows p_j + x by their natural-log lse, in j order, into out_base + x, and\n# writes the merged lse, max + ln(sum of exp(lse_j - max)), to lse row out_base + x.\n_LOG2E = math.log2(math.e)\n_LN2 = math.log(2.0)\nVEC = 4  # fp32 values per lane: one 16-byte load\nLANES_PER_ROW = V_DIM // VEC\nNUM_THREADS = 256\nROWS_PER_BLOCK = NUM_THREADS // LANES_PER_ROW\nDESC_HEAD = 3\n\n\ndef _view(ptr, dtype, shape, stride):\n    return fx.rocdl.make_buffer_tensor(fx.make_view(fx.recast_iter(dtype, ptr), fx.make_layout(shape, stride)))\n\n\n@functools.cache\ndef compile_reduce(max_splits: int, short_splits: int = 0):\n    \"\"\"Tiles with at most short_splits splits take an unroll of that depth, the others one of max_splits.\"\"\"\n    MS = max_splits\n    STRIDE = DESC_HEAD + MS\n\n    @flyc.kernel(known_block_size=[NUM_THREADS, 1, 1])\n    def reduce_kernel(\n        part: fx.Pointer,  # f32 [P, V_DIM] (P = partial rows * H)\n        lse: fx.Pointer,  # f32 [P]\n        desc: fx.Pointer,  # i32 [n_tiles, STRIDE]\n        out: fx.Pointer,  # bf16 [R, V_DIM]\n        out_lse: fx.Pointer,  # f32 [R]\n        n_part: fx.Int32,\n        n_out: fx.Int32,\n        n_tiles: fx.Int32,\n    ):\n        tid = fx.thread_idx.x\n        bx = fx.block_idx.x\n        by = fx.block_idx.y\n        c_lanes = fx.Int32(LANES_PER_ROW)\n        x = bx * fx.Int32(ROWS_PER_BLOCK) + tid // c_lanes\n        lane = tid % c_lanes\n\n        g_desc = _view(desc, fx.Int32, (n_tiles * fx.Int32(STRIDE),), (1,))\n        g_part = _view(part, fx.Float32, (n_part, V_DIM), (V_DIM, 1))\n        g_lse = _view(lse, fx.Float32, (n_part,), (1,))\n        g_out = _view(out, fx.BFloat16, (n_out, V_DIM), (V_DIM, 1))\n        r_lse = rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(out_lse, n_out * fx.Int32(4)))\n\n        base = by * fx.Int32(STRIDE)\n        out_base = g_desc[base]\n        n_rows = g_desc[base + fx.Int32(1)]\n        n_splits = g_desc[base + fx.Int32(2)]\n        last = n_rows - fx.Int32(1)\n        # a row past the tile reads the tile's last (in bounds) and stores nothing\n        active = x <= last\n        x = (x > last).select(last, x)\n\n        reg_layout = fx.make_layout(VEC, 1)\n        atom = fx.make_copy_atom(fx.rocdl.BufferCopy128b(), fx.Float32)\n        neg_inf = fx.Float32(float(\"-inf\"))\n\n        def body(ms):\n            lses = []\n            parts = []\n            for j in fx.range_constexpr(ms):\n                prow = g_desc[base + fx.Int32(DESC_HEAD + j)] + x\n                l = g_lse[prow]\n                if j >= 1:  # an unsplit tile pads its one partial: weigh the copies 0\n                    l = (fx.Int32(j) < n_splits).select(l, neg_inf)\n                lses.append(l)\n                tiled = fx.logical_divide(fx.slice(g_part, (prow, None)), reg_layout)\n                frag = fx.make_rmem_tensor(reg_layout, fx.Float32)\n                fx.copy_atom_call(atom, fx.slice(tiled, (None, lane)), frag)\n                parts.append(frag.load())\n\n            m = lses[0]\n            for j in fx.range_constexpr(1, ms):\n                m = m.maximumf(lses[j])\n            zero = fx.Float32(0.0)\n            finite = m > neg_inf\n            m = finite.select(m, zero)\n\n            acc = [zero for _ in fx.range_constexpr(VEC)]\n            den = zero\n            for j in fx.range_constexpr(ms):\n                w = fx.Float32(fx.rocdl.exp2(T.f32, ((lses[j] - m) * _LOG2E).ir_value()))\n                den = den + w\n                v = parts[j]\n                acc = [acc[i] + w * v[i] for i in fx.range_constexpr(VEC)]\n            inv = fx.Float32((den > zero).select(fx.rocdl.rcp(T.f32, den.ir_value()), zero))\n\n            res = fx.make_rmem_tensor(reg_layout, fx.BFloat16)\n            res.store(fx.Vector.from_elements([(acc[i] * inv).to(fx.BFloat16) for i in fx.range_constexpr(VEC)],\n                                              dtype=fx.BFloat16))\n            out_atom = fx.make_copy_atom(fx.rocdl.BufferCopy64b(), fx.BFloat16)\n            out_tiled = fx.logical_divide(fx.slice(g_out, (out_base + x, None)), reg_layout)\n            # log2(0) = -inf leaves a row that read no key at -inf\n            row_lse = m + fx.Float32(fx.rocdl.log(T.f32, den.ir_value())) * _LN2\n            if active:\n                fx.copy_atom_call(out_atom, res, fx.slice(out_tiled, (None, lane)))\n                # the row's first lane stores its lse\n                if lane == fx.Int32(0):\n                    rocdl.raw_ptr_buffer_store(\n                        row_lse.ir_value(), r_lse, ((out_base + x) * fx.Int32(4)).ir_value(), fx.Int32(0).ir_value()\n                    )\n\n        if 0 < short_splits < MS:\n            if n_splits <= fx.Int32(short_splits):\n                body(short_splits)\n            else:\n                body(MS)\n        else:\n            body(MS)\n\n    @flyc.jit\n    def launch(\n        part: fx.Pointer,\n        lse: fx.Pointer,\n        desc: fx.Pointer,\n        out: fx.Pointer,\n        out_lse: fx.Pointer,\n        n_part: fx.Int32,\n        n_out: fx.Int32,\n        n_tiles: fx.Int32,\n        n_blocks: fx.Int32,\n        stream: fx.Stream = fx.Stream(None),\n    ):\n        reduce_kernel(part, lse, desc, out, out_lse, n_part, n_out, n_tiles).launch(\n            grid=(n_blocks, n_tiles, 1), block=(NUM_THREADS, 1, 1), stream=stream\n        )\n\n    return launch\n\n# --- FlyDSL fused bf16 -> fp8 e4m3fn cast of q, k and v in one launch. Each tensor is a flat run of 8-element rows;\n# block b owns unroll x 256 consecutive rows of one tensor (the blocks of q come first, then k, then v), each\n# lane one 16-byte nontemporal bf16 load and one 8-byte fp8 store per step. The buffers' sizes bound the tails.\nCAST_THREADS = 256\nCAST_VEC = 8\n# Rows per lane, and the loads' cache policy: the bf16 inputs are read once, so they load nontemporal (slc) and leave\n# the caches to the fp8 outputs the ASM reads next; the stores keep the default policy (nontemporal stores make the\n# cast alone 19 % faster on 893/35107 but the ASM slower by more). Measured on cast + ASM + reduce in CUDA graphs:\n# nontemporal loads at unroll 2 against default loads at unroll 1-2: 893/35107 -1.2 %, 2732/35107 -0.6 %,\n# 2732/104093 -1.8 %, 9397/104093 -0.5 %, 16384/65536 -0.5 %, 16384/131072 -0.4 %; unroll 2 beats 1, 3 and 4 there.\nCAST_UNROLL = 2\nCAST_LOAD_POLICY = 2  # slc: nontemporal\n\n\ndef _flat_view(ptr, dtype, n_rows, width):\n    t = fx.make_view(fx.recast_iter(dtype, ptr), fx.make_layout((n_rows, width), (width, 1)))\n    return fx.rocdl.make_buffer_tensor(t, max_size=False)\n\n\n@functools.cache\ndef compile_cast(unroll: int):\n    rows_per_block = CAST_THREADS * unroll\n    @flyc.kernel(known_block_size=[CAST_THREADS, 1, 1])\n    def cast_kernel(\n        q: fx.Pointer, k: fx.Pointer, v: fx.Pointer,  # bf16\n        qo: fx.Pointer, ko: fx.Pointer, vo: fx.Pointer,  # fp8 bytes, as i32 pairs\n        nq: fx.Int32, nk: fx.Int32, nv: fx.Int32,  # 8-element rows\n        bq: fx.Int32, bk: fx.Int32,  # blocks of q, of q and k\n    ):  # fmt: skip\n        tid = fx.thread_idx.x\n        bx = fx.block_idx.x\n        reg_in = fx.make_layout(CAST_VEC, 1)\n        reg_out = fx.make_layout(2, 1)\n        atom_in = fx.make_copy_atom(fx.rocdl.BufferCopy128b(CAST_LOAD_POLICY), fx.BFloat16)\n        atom_out = fx.make_copy_atom(fx.rocdl.BufferCopy64b(), fx.Int32)\n\n        def body(src, dst, n, b):\n            g_in = _flat_view(src, fx.BFloat16, n, CAST_VEC)\n            g_out = _flat_view(dst, fx.Int32, n, 2)\n            row0 = b * fx.Int32(rows_per_block) + tid\n            vals = []\n            for u in fx.range_constexpr(unroll):\n                row = row0 + fx.Int32(u * CAST_THREADS)\n                frag = fx.make_rmem_tensor(reg_in, fx.BFloat16)\n                fx.copy_atom_call(atom_in, fx.slice(g_in, (row, None)), frag)\n                vals.append(frag.load())\n            for u in fx.range_constexpr(unroll):\n                row = row0 + fx.Int32(u * CAST_THREADS)\n                x = vals[u]\n                f = [x[i].to(fx.Float32) for i in fx.range_constexpr(CAST_VEC)]\n                words = []\n                for w in fx.range_constexpr(2):\n                    lo = fx.rocdl.cvt_pk_fp8_f32(T.i32, f[4 * w].ir_value(), f[4 * w + 1].ir_value(),\n                                                  fx.Int32(0).ir_value(), False)\n                    hi = fx.rocdl.cvt_pk_fp8_f32(T.i32, f[4 * w + 2].ir_value(), f[4 * w + 3].ir_value(),\n                                                  lo, True)\n                    words.append(fx.Int32(hi))\n                res = fx.make_rmem_tensor(reg_out, fx.Int32)\n                res.store(fx.Vector.from_elements(words, dtype=fx.Int32))\n                fx.copy_atom_call(atom_out, res, fx.slice(g_out, (row, None)))\n\n        if bx < bq:\n            body(q, qo, nq, bx)\n        elif bx < bk:\n            body(k, ko, nk, bx - bq)\n        else:\n            body(v, vo, nv, bx - bk)\n\n    @flyc.jit\n    def launch(\n        q: fx.Pointer, k: fx.Pointer, v: fx.Pointer,\n        qo: fx.Pointer, ko: fx.Pointer, vo: fx.Pointer,\n        nq: fx.Int32, nk: fx.Int32, nv: fx.Int32,\n        bq: fx.Int32, bk: fx.Int32, n_blocks: fx.Int32,\n        stream: fx.Stream = fx.Stream(None),\n    ):  # fmt: skip\n        assert unroll >= 1  # the unroll is a closure int the launcher reads, so it is part of the cache key\n        cast_kernel(q, k, v, qo, ko, vo, nq, nk, nv, bq, bk).launch(\n            grid=(n_blocks, 1, 1), block=(CAST_THREADS, 1, 1), stream=stream\n        )\n\n    return launch\n\n\n# CAST_VEC-wide rows one launch converts of each tensor: their byte offsets stay within int32 (2**26 rows are 1 GiB\n# of bf16)\nCAST_MAX_ROWS = 1 << 26\n\n\ndef cast_fp8(q, k, v, qf, kf, vf, unroll: int):\n    \"\"\"q, k, v (contiguous bf16) -> qf, kf, vf (contiguous fp8 e4m3fn) in one launch, one per CAST_MAX_ROWS rows of\n    the largest past that.\"\"\"\n    counts = [x.numel() // CAST_VEC for x in (q, k, v)]\n    rows = CAST_THREADS * unroll\n    cb = lambda n: (n + rows - 1) // rows  # noqa: E731\n    stream = fx.Stream(torch.cuda.current_stream(q.device))\n    for r0 in range(0, max(counts), CAST_MAX_ROWS):\n        nq, nk, nv = (min(max(n - r0, 0), CAST_MAX_ROWS) for n in counts)\n        bq, bk, bv = cb(nq), cb(nk), cb(nv)\n        src = [x.data_ptr() + r0 * CAST_VEC * 2 for x in (q, k, v)]\n        dst = [x.data_ptr() + r0 * CAST_VEC for x in (qf, kf, vf)]\n        compile_cast(unroll)(\n            *(flyc.from_c_void_p(fx.BFloat16, p) for p in src), *(flyc.from_c_void_p(fx.Int32, p) for p in dst),\n            nq, nk, nv, bq, bq + bk, bq + bk + bv, stream,\n        )  # fmt: skip\n\n\ndef _d1a(work_indptr, work_info):\n    \"\"\"Permute aiter's whole CU lists so each 3-head cluster sits on two XCDs (WG w runs on XCD w % 8).\"\"\"\n    wi = work_indptr.tolist()\n    info = work_info.view(-1, 8).tolist()\n    n = len(wi) - 1\n    clusters = {}\n    for l in range(n):\n        cs = {(info[w][7] & 0xFFFF) // 3 for w in range(wi[l], wi[l + 1])}\n        if len(cs) != 1:\n            return work_indptr, work_info\n        clusters.setdefault(cs.pop(), []).append(l)\n    if n != N_CU or len(clusters) != 4 or any(len(v) != 64 for v in clusters.values()):\n        return work_indptr, work_info\n    new = [None] * n\n    for c, ls in clusters.items():\n        for i, l in enumerate(ls):\n            new[(i // 2) * 8 + 2 * c + (i % 2)] = info[wi[l] : wi[l + 1]]\n    indptr, flat = [0], []\n    for lst in new:\n        for it in lst:\n            flat += it\n        indptr.append(indptr[-1] + len(lst))\n    rest = work_info.view(-1)[len(flat):].tolist()\n    dev = work_info.device\n    return (torch.tensor(indptr, dtype=torch.int32, device=dev),\n            torch.tensor(flat + rest, dtype=torch.int32, device=dev).view(work_info.shape))\n\n\n# Most keys one ASM call reads: longer key ranges are cut into segments of this many, each its own call, and the\n# reduce merges every segment's partials by their lse.\nKV_SEGMENT = 65536\n# plans kept per shape: a forward's layers share one, and serving sees new lengths without end\nPLANS_KEPT = 64\n\n\n@functools.lru_cache(maxsize=PLANS_KEPT)\ndef _piece_plan(n_q: int, n_kv: int, causal: bool, device):\n    \"\"\"aiter's persistent plan with need_lse for n_q queries over n_kv keys (one sequence), its CU lists permuted,\n    the piece's offsets, and per query tile (q_start, q_end, its partial rows in split order).\n\n    The plan is built on the host and copied in stream order (aiter's own planner writes its device buffers with a\n    synchronous hipMemcpy on the null stream, which does not order with the current torch stream).\"\"\"\n    from .ps_plan import ps_plan\n\n    work_indptr, works, indptr, final, partial = ps_plan(\n        [0, n_q], [0, n_kv], [n_kv], N_HEADS, num_cus=N_CU, qlen_granularity=TILE_Q, kvlen_granularity=128,\n        block_size=1, is_causal=causal,\n    )  # fmt: skip\n    work_indptr, work_info = _d1a(torch.tensor(work_indptr, dtype=torch.int32), torch.tensor(works, dtype=torch.int32))\n    # in stream order, from pageable host memory: the copy has read it once it returns\n    work_indptr, work_info = work_indptr.to(device), work_info.to(device)\n    tiles = [(*final[t], partial[indptr[t] : indptr[t + 1]]) for t in range(len(final))]\n    n_partial = max(r for _, _, rows in tiles for r in rows) + TILE_Q\n    offsets_q = torch.tensor([0, n_q], dtype=torch.int32, device=device)\n    offsets_k = torch.tensor([0, n_kv], dtype=torch.int32, device=device)\n    indices = torch.arange(n_kv, dtype=torch.int32, device=device)\n    return work_indptr, work_info, offsets_q, offsets_k, indices, n_partial, tiles\n\n\n@functools.lru_cache(maxsize=PLANS_KEPT)\ndef _plan(n_q: int, n_kv: int, causal: bool, device):\n    \"\"\"The ASM calls over one sequence, none reading more than KV_SEGMENT keys, and the reduce over all of them.\n    Without the causal mask every query reads key segments [s, s + KV_SEGMENT); with it, the n_kv - n_q prefix keys\n    before the queries' own are read whole in such segments, and query block [j, j + KV_SEGMENT) reads its own keys'\n    segments before it whole and its own causally.\"\"\"\n    pieces = []\n    if causal:\n        prefix = n_kv - n_q\n        pieces = [(0, n_q, i, min(i + KV_SEGMENT, prefix), False) for i in range(0, prefix, KV_SEGMENT)]\n        for j in range(0, n_q, KV_SEGMENT):\n            q_end = min(j + KV_SEGMENT, n_q)\n            pieces += [(j, q_end, prefix + i, prefix + i + KV_SEGMENT, False) for i in range(0, j, KV_SEGMENT)]\n            pieces.append((j, q_end, prefix + j, prefix + q_end, True))\n    else:\n        pieces = [(0, n_q, i, min(i + KV_SEGMENT, n_kv), False) for i in range(0, n_kv, KV_SEGMENT)]\n    calls, groups, base = [], {}, 0\n    for q0, q1, k0, k1, piece_causal in pieces:\n        work_indptr, work_info, offsets_q, offsets_k, indices, n_partial, tiles = _piece_plan(\n            q1 - q0, k1 - k0, piece_causal, device\n        )\n        for q_start, q_end, rows in tiles:\n            groups.setdefault((q0 + q_start, q0 + q_end), []).extend(base + r for r in rows)\n        calls.append((q0, q1, k0, k1, piece_causal, work_indptr, work_info, offsets_q, offsets_k, indices, base,\n                      n_partial))  # fmt: skip\n        base += n_partial\n    spans = sorted(groups)\n    # every query row reduced exactly once\n    assert spans[0][0] == 0 and spans[-1][1] == n_q and all(a[1] == b[0] for a, b in zip(spans, spans[1:]))\n    max_splits = max(len(rows) for rows in groups.values())\n    desc = []\n    for q_start, q_end in spans:\n        ps = [r * N_HEADS for r in groups[(q_start, q_end)]]\n        ps += [ps[0]] * (max_splits - len(ps))\n        desc += [q_start * N_HEADS, (q_end - q_start) * N_HEADS, len(groups[(q_start, q_end)])] + ps\n    # tiles split less deeply than the deepest take their own unroll: the one that minimises the loads summed over\n    # tiles, when it saves at least 15 % of them\n    counts = [len(rows) for rows in groups.values()]\n    cost = lambda sh: sum(sh if n <= sh else max_splits for n in counts) if sh else max_splits * len(counts)  # noqa: E731\n    short = min(sorted({n for n in counts if n < max_splits}), key=lambda sh: (cost(sh), sh), default=0)\n    short = short if short and cost(short) <= 0.85 * cost(0) else 0\n    desc_t = torch.tensor(desc, dtype=torch.int32, device=device)\n    one = torch.ones((), dtype=torch.float32, device=device)\n    return tuple(calls), one, base, desc_t, len(spans), compile_reduce(max_splits, short)\n\n\ndef run(*, q, k, v, cu_seqlens_q, qkv_fp8, causal, cu_seqlens_k, sm_scale, output, lse):\n    # one sequence (the workloads' sequence count), whose offsets the row counts fix\n    n_q, n_kv = q.shape[0], k.shape[0]\n    from aiter import mla_prefill_ps_asm_fwd\n\n    calls, one, n_partial, desc, n_tiles, launch = _plan(n_q, n_kv, causal, q.device)\n    fp8 = torch.float8_e4m3fn\n    if q.is_contiguous() and k.is_contiguous() and v.is_contiguous():\n        nq, nk = q.numel(), k.numel()\n        buf = torch.empty(nq + nk + v.numel(), dtype=fp8, device=q.device)\n        qf, kf, vf = buf[:nq].view(q.shape), buf[nq : nq + nk].view(k.shape), buf[nq + nk :].view(v.shape)\n        cast_fp8(q, k, v, qf, kf, vf, CAST_UNROLL)\n    else:\n        qf, kf, vf = q.to(fp8), k.to(fp8), v.to(fp8)\n    logits = torch.empty((n_partial, N_HEADS, V_DIM), dtype=torch.float32, device=q.device)\n    part_lse = torch.empty((n_partial, N_HEADS), dtype=torch.float32, device=q.device)\n    for q0, q1, k0, k1, piece_causal, work_indptr, work_info, offsets_q, offsets_kv, indices, base, rows in calls:\n        mla_prefill_ps_asm_fwd(\n            qf[q0:q1], kf[k0:k1], vf[k0:k1], offsets_q, offsets_kv, indices, work_indptr, work_info, q1 - q0,\n            sm_scale, piece_causal, logits[base : base + rows], part_lse[base : base + rows], output[q0:q1],\n            one, one, one,\n        )  # fmt: skip\n    launch(\n        flyc.from_c_void_p(fx.Float32, logits.data_ptr()),\n        flyc.from_c_void_p(fx.Float32, part_lse.data_ptr()),\n        flyc.from_c_void_p(fx.Int32, desc.data_ptr()),\n        flyc.from_c_void_p(fx.BFloat16, output.data_ptr()),\n        flyc.from_c_void_p(fx.Float32, lse.data_ptr()),\n        n_partial * N_HEADS,\n        n_q * N_HEADS,\n        n_tiles,\n        (TILE_Q * N_HEADS) // ROWS_PER_BLOCK,\n        fx.Stream(torch.cuda.current_stream(output.device)),\n    )\n"
+      },
+      {
+        "path": "ps_plan.py",
+        "content": "\"\"\"aiter's persistent plan for its fp8 MLA prefill as ``get_ps_metadata_v1(..., need_lse=True)`` builds it\n(``csrc/kernels/mla/metadata/v1_2_host.cuh``), in Python: every query tile, split over CUs or not, leaves fp32\npartials with their log-sum-exp for the reduce. aiter's planner takes ``need_lse`` from 0.1.23 on; older ones (the\none in sglang 0.5.22's image) leave a tile one CU reads whole unreduced, so its lse is never written.\"\"\"\n\nfrom __future__ import annotations\n\nimport math\n\n\ndef _ceil_div(a: int, b: int) -> int:\n    \"\"\"C's ``(a + b - 1) / b``, which truncates toward zero.\"\"\"\n    n = a + b - 1\n    return n // b if n >= 0 else -(-n // b)\n\n\ndef ps_plan(\n    qo_indptr: list[int],\n    kv_indptr: list[int],\n    kv_lens: list[int],\n    num_heads_k: int,\n    *,\n    num_cus: int,\n    qlen_granularity: int = 256,\n    kvlen_granularity: int = 128,\n    block_size: int = 1,\n    is_causal: bool = True,\n) -> tuple[list[int], list[list[int]], list[int], list[list[int]], list[int]]:\n    \"\"\"``(work_indptr, work_info, reduce_indptr, reduce_final_map, reduce_partial_map)`` as lists, as aiter's planner\n    fills them with ``need_lse`` and one query head per key head (only its used rows: ``num_cus + 1``, one\n    ``[batch, partial_qo_loc, qo_start, qo_end, kv_start, kv_end, kv_offset, q_head_range]`` per work, one entry per\n    query tile), for sequences at ``qo_indptr``'s query rows over ``kv_indptr``'s key blocks, ``kv_lens`` keys each.\"\"\"\n    clusters = math.gcd(num_heads_k, num_cus)\n    tgs = num_cus // clusters\n    heads = num_heads_k // clusters\n    per_unit = kvlen_granularity // block_size\n\n    # each sequence's query tiles, head and tail alternately (0, n-1, 1, n-2, ...), with the key blocks they read\n    tiles, units = [], 0\n    for b in range(len(qo_indptr) - 1):\n        qo_len, kv_len = qo_indptr[b + 1] - qo_indptr[b], kv_lens[b]\n        ranges = [(s, min(s + qlen_granularity, qo_len)) for s in range(0, qo_len, qlen_granularity)]\n        for i in range(len(ranges)):\n            start, end = ranges[i // 2 if i % 2 == 0 else len(ranges) - 1 - i // 2]\n            kv = min(kv_len - qo_len + end, kv_len) if is_causal else kv_len\n            n = _ceil_div(kv, kvlen_granularity)\n            tiles.append((b, start + qo_indptr[b], end + qo_indptr[b], n * per_unit, kv))\n            units += n\n    average, remainder = units // tgs, units % tgs\n\n    work_indptr, works = [0] * (num_cus + 1), []\n    for cluster in range(clusters):\n        # each CU of the cluster takes its share of key blocks, the same for every head of the cluster\n        tile = block = partial = 0\n        for tg in range(tgs):\n            for h in range(heads):\n                head = cluster * heads + h\n                head_range = ((head + 1) << 16) | (head & 0xFFFF)\n                saved = (tile, block, partial)\n                capacity = (average + 1 if tg < remainder else average) * per_unit\n                while tile < len(tiles) and capacity > 0:\n                    b, qo_start, qo_end, n_blocks, kv = tiles[tile]\n                    kv_start = block + kv_indptr[b]\n                    if kv - block * block_size <= capacity * block_size:\n                        # the rest of the tile; reduced even when whole (need_lse), unless it reads nothing\n                        consumed = n_blocks - block\n                        loc = -1 if consumed == 0 else qlen_granularity * partial\n                        partial += consumed != 0\n                        kv_end = min(kv_start + consumed, kv_indptr[b + 1])\n                        works.append([b, loc, qo_start, qo_end, kv_start, kv_end, 0, head_range])\n                        tile, block = tile + 1, 0\n                    else:\n                        consumed = capacity\n                        kv_end = min(kv_start + consumed, kv_indptr[b + 1])\n                        kv_offset = kv_lens[b] - (kv_end - kv_indptr[b]) * block_size\n                        works.append([b, qlen_granularity * partial, qo_start, qo_end, kv_start, kv_end, kv_offset, head_range])  # fmt: skip\n                        partial += 1\n                        block += consumed\n                    capacity -= consumed\n                if h != heads - 1:\n                    tile, block, partial = saved\n            work_indptr[cluster * tgs + tg + 1] = len(works)\n\n    # one reduce per query tile, its partials in ascending order; every query row in exactly one\n    groups: dict[tuple[int, int], set[int]] = {}\n    for w in works:\n        if w[1] != -1:\n            groups.setdefault((w[2], w[3]), set()).add(w[1])\n    reduce_indptr, final, partials, covered = [0], [], [], 0\n    for start, end in sorted(groups):\n        if start != covered:\n            raise ValueError(\n                f\"query rows [{covered}, {start}) are in no reduce: their lse would be unwritten\"\n            )\n        covered = end\n        partials += sorted(groups[(start, end)])\n        reduce_indptr.append(len(partials))\n        final.append([start, end])\n    if covered != qo_indptr[-1]:\n        raise ValueError(\n            f\"query rows [{covered}, {qo_indptr[-1]}) are in no reduce: their lse would be unwritten\"\n        )\n    return work_indptr, works, reduce_indptr, final, partials\n"
+      }
+    ]
+  }
+}

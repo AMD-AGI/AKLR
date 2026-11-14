@@ -62,7 +62,9 @@
     {
       "axes": {
         "m": 16384
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.083
     }
   ],
   "layout_variants": {

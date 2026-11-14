@@ -158,37 +158,51 @@
     {
       "axes": {
         "n_tokens": 1024
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.127
     },
     {
       "axes": {
         "n_tokens": 1025
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.208
     },
     {
       "axes": {
         "n_tokens": 2048
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.141
     },
     {
       "axes": {
         "n_tokens": 2049
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.141
     },
     {
       "axes": {
         "n_tokens": 2232
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.179
     },
     {
       "axes": {
         "n_tokens": 3072
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.128
     },
     {
       "axes": {
         "n_tokens": 4096
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.207
     }
   ],
   "layout_variants": {
