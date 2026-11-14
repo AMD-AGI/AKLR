@@ -1,0 +1,141 @@
+{
+  "schema_version": 5,
+  "name": "gemm_n28672_k512",
+  "contract_id": "gemm@1.0",
+  "description": "16-bit gemm: out = a @ b.T + bias (b is (k, n) unless trans_b).",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 28672,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 512,
+      "description": "Reduction length."
+    }
+  },
+  "attrs": {
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 1
+      }
+    },
+    {
+      "axes": {
+        "m": 2
+      }
+    },
+    {
+      "axes": {
+        "m": 4
+      }
+    },
+    {
+      "axes": {
+        "m": 8
+      }
+    },
+    {
+      "axes": {
+        "m": 16
+      }
+    },
+    {
+      "axes": {
+        "m": 32
+      }
+    },
+    {
+      "axes": {
+        "m": 64
+      }
+    },
+    {
+      "axes": {
+        "m": 128
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.2"
+    },
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"FlyDSL bf16 GEMM out = a @ b^T (trans_b, no bias), one launch per call. Each workgroup DMAs K chunk\nby chunk into a ring of XOR-swizzled LDS slots while its waves run MFMAs on the chunks already landed, so\nevery output sums in one fixed order. Shapes without a configuration fall back to torch.matmul.\"\"\"\n\nimport functools\nimport types\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir\nfrom flydsl._mlir.dialects import llvm\nfrom flydsl._mlir.dialects import rocdl as rocdl_d\nfrom flydsl.compiler import from_c_void_p\nfrom flydsl.expr import const_expr, range_constexpr, rocdl\nfrom flydsl.expr.typing import T, Vector\n\n_N = 28672\n_K = 512\n_ELEM_BYTES = 2  # bf16\n_TILE_K = 64  # K per LDS chunk: one async DMA group and one wait each\n_SLOT_BYTES = 16  # one buffer_load_dwordx4 or ds_read_b128\n_SLOT_ELEMS = _SLOT_BYTES // _ELEM_BYTES\n_ROW_SLOTS = _TILE_K // _SLOT_ELEMS\n_LDS_BYTES = 163840\n_VMCNT_MAX = 63\n_SC1 = 16  # C store cache policy sc1\n\n_CONFIGS = types.MappingProxyType(\n    {\n        1: (16, 64, 1, 2, 5, 0),\n        2: (16, 64, 1, 2, 5, 0),\n        4: (16, 64, 1, 2, 5, 0),\n        8: (16, 64, 1, 2, 5, 0),\n        16: (16, 64, 1, 2, 5, 0),\n        32: (32, 64, 2, 1, 5, 0),\n        64: (64, 128, 4, 2, 4, 0),\n        128: (128, 128, 4, 2, 4, _SC1),\n    }\n)\n\n\ndef _rsrc(ptr, nbytes):\n    \"\"\"Buffer resource whose accesses past nbytes read 0 and drop stores.\"\"\"\n    return rocdl.get_buffer_rsrc(rocdl.make_buffer_ptr(ptr, nbytes))\n\n\ndef _bstore(data, rsrc, elem_off, aux=0):\n    data = fx.arith.unwrap(data)\n    off = fx.arith.unwrap(elem_off * (data.type.element_type.width // 8))\n    rocdl_d.RawPtrBufferStoreOp(data, rsrc, off, fx.arith.constant(0), aux=ir.IntegerAttr.get(T.i32, aux))\n\n\ndef _ptr(tensor):\n    return from_c_void_p(fx.BFloat16, tensor.data_ptr(), assumed_align=16)\n\n\n@functools.cache\ndef _launcher(m, device):\n    cfg = _CONFIGS.get(m)\n    if cfg is None:\n        return None\n    launch = _build_tile(m, *cfg)\n    c_ex = torch.empty((m, _N), device=device, dtype=torch.bfloat16)\n    a_ex = torch.empty((m, _K), device=device, dtype=torch.bfloat16)\n    b_ex = torch.empty((_N, _K), device=device, dtype=torch.bfloat16)\n    compiled = flyc.compile(\n        launch, _ptr(c_ex), _ptr(a_ex), _ptr(b_ex), fx.Stream(torch.cuda.current_stream(device))\n    )\n\n    def call(a, b, out):\n        compiled(_ptr(out), _ptr(a), _ptr(b), fx.Stream(torch.cuda.current_stream(a.device)))\n\n    return call\n\n\ndef _gep(base_ptr, byte_offset):\n    if isinstance(byte_offset, int):\n        return llvm.GEPOp(base_ptr.type, base_ptr, [], [byte_offset], T.i8, None).result\n    off = fx.arith.unwrap(byte_offset)\n    return llvm.GEPOp(base_ptr.type, base_ptr, [off], [-(2**31)], T.i8, None).result\n\n\ndef _swz(row):\n    \"\"\"XOR key of a tile row's 16 B slots: row pairs share a key, so one ds_read_b128 pass spans all banks.\"\"\"\n    return (row // 2) % _ROW_SLOTS\n\n\ndef _build_tile(m, TILE_M, TILE_N, WAVES_M, WAVES_N, STAGES, C_AUX):\n    \"\"\"Ring of STAGES LDS chunk slots; a slot is refilled once a barrier follows its chunk's last read.\"\"\"\n    n, k = _N, _K\n    CHUNKS = k // _TILE_K\n    assert STAGES < CHUNKS\n    THREADS = WAVES_M * WAVES_N * 64\n    WARP_M = TILE_M // WAVES_M\n    WARP_N = TILE_N // WAVES_N\n    M_STEPS = WARP_M // 16\n    N_STEPS = WARP_N // 16\n    assert M_STEPS >= 1 and N_STEPS % 2 == 0 and WARP_N % 32 == 0 and n % TILE_N == 0\n    assert m <= TILE_M\n    ROW_BYTES = _TILE_K * _ELEM_BYTES\n    A_BYTES = TILE_M * ROW_BYTES\n    B_BYTES = TILE_N * ROW_BYTES\n    CHUNK_BYTES = A_BYTES + B_BYTES\n    LDS_TOTAL = STAGES * CHUNK_BYTES\n    assert LDS_TOTAL <= _LDS_BYTES\n    DMA_PER_WAVE = 64 * _SLOT_BYTES\n    DMA_PER_PASS = WAVES_M * WAVES_N * DMA_PER_WAVE\n    A_DMAS = A_BYTES // DMA_PER_PASS\n    B_DMAS = B_BYTES // DMA_PER_PASS\n    assert A_DMAS * DMA_PER_PASS == A_BYTES and B_DMAS * DMA_PER_PASS == B_BYTES\n    PER_CHUNK = A_DMAS + B_DMAS\n    assert (STAGES - 1) * PER_CHUNK <= _VMCNT_MAX\n    Lds = fx.Array[fx.Float32, LDS_TOTAL // 4, 16]\n    ROWS_PER_PASS = THREADS // _ROW_SLOTS\n\n    @flyc.kernel(known_block_size=[THREADS, 1, 1])\n    def gemm_n28672_k512_tile(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer):\n        tid = fx.thread_idx.x\n        lane = tid % 64\n        wid = tid // 64\n        bn = fx.block_idx.x\n        a_rsrc = fx.arith.unwrap(_rsrc(A, m * k * _ELEM_BYTES))\n        b_rsrc = fx.arith.unwrap(_rsrc(B, n * k * _ELEM_BYTES))\n        c_rsrc = _rsrc(C, m * n * _ELEM_BYTES)\n\n        lds = fx.SharedAllocator().allocate(Lds).peek().ptr\n        lds_base = fx.to_llvm_ptr(lds)\n        wave_base = _gep(lds_base, rocdl.readfirstlane(T.i64, fx.Int64(wid * DMA_PER_WAVE)))\n        asm_a = \"s_mov_b32 m0, $0\\n\\tbuffer_load_dwordx4 $1, $2, 0 offen sc0 lds\"\n        asm_b = \"s_mov_b32 m0, $0\\n\\tbuffer_load_dwordx4 $1, $2, 0 offen nt lds\"  # B is streamed once\n\n        r = lane % 16\n        kq = lane // 16\n        wm = wid // WAVES_N * WARP_M\n        wn = wid % WAVES_N * WARP_N\n\n        drow = tid // _ROW_SLOTS\n        dslot = tid % _ROW_SLOTS\n        a_goff = []\n        for p in range_constexpr(A_DMAS):\n            lrow = p * ROWS_PER_PASS + drow\n            row = lrow\n            if const_expr(TILE_M > m):\n                row = (row < fx.Int32(m)).select(row, fx.Int32(0))\n            a_goff.append((row * k + (dslot ^ _swz(lrow)) * _SLOT_ELEMS) * _ELEM_BYTES)\n        b_goff = []\n        for p in range_constexpr(B_DMAS):\n            lrow = p * ROWS_PER_PASS + drow\n            # B rows are permuted so a lane's results of an MFMA pair are 8 adjacent columns: one 16 B store.\n            x = lrow % 32\n            tcol = (lrow - x) + ((x // 4) % 4) * 8 + (x // 16) * 4 + x % 4\n            b_goff.append(((bn * TILE_N + tcol) * k + (dslot ^ _swz(lrow)) * _SLOT_ELEMS) * _ELEM_BYTES)\n\n        def issue(rsrc, sb, goff, asm):\n            args = [_gep(wave_base, sb), fx.arith.unwrap(goff), rsrc]\n            llvm.InlineAsmOp(None, args, asm, \"s,v,s\", has_side_effects=True)\n\n        def issue_chunk(c):\n            base = (c % STAGES) * CHUNK_BYTES\n            for p in range_constexpr(A_DMAS):\n                issue(a_rsrc, base + p * DMA_PER_PASS, a_goff[p] + c * ROW_BYTES, asm_a)\n            for p in range_constexpr(B_DMAS):\n                issue(b_rsrc, base + A_BYTES + p * DMA_PER_PASS, b_goff[p] + c * ROW_BYTES, asm_b)\n\n        for c in range_constexpr(STAGES - 1):\n            issue_chunk(c)\n\n        a_fo = []\n        b_fo = []\n        for h in range_constexpr(2):\n            a_fo.append(\n                [\n                    fx.Int64(\n                        (wm + i * 16 + r) * ROW_BYTES + ((h * 4 + kq) ^ _swz(wm + i * 16 + r)) * _SLOT_BYTES\n                    )\n                    for i in range(M_STEPS)\n                ]\n            )\n            b_fo.append(\n                [\n                    fx.Int64(\n                        A_BYTES\n                        + (wn + j * 16 + r) * ROW_BYTES\n                        + ((h * 4 + kq) ^ _swz(wn + j * 16 + r)) * _SLOT_BYTES\n                    )\n                    for j in range(N_STEPS)\n                ]\n            )\n\n        def frag(off, c):\n            p = _gep(lds_base, off + (c % STAGES) * CHUNK_BYTES)\n            return llvm.LoadOp(T.bf16x8, p, alignment=16).result\n\n        def wait_barrier(cnt):  # lgkmcnt(0): a ring slot is rewritten after this barrier\n            llvm.InlineAsmOp(\n                None,\n                [],\n                f\"s_waitcnt lgkmcnt(0)\\n\\ts_waitcnt vmcnt({cnt})\\n\\ts_barrier\",\n                \"~{memory}\",\n                has_side_effects=True,\n            )\n\n        blgp = ir.Attribute.parse(\"#rocdl<mfma_perm_b none>\")\n        acc = [fx.arith.unwrap(fx.constant_vector(0.0, T.f32x4)) for _ in range(M_STEPS * N_STEPS)]\n\n        def reads(c, h):\n            bf = [frag(b_fo[h][j], c) for j in range(N_STEPS)]\n            return bf, [frag(a_fo[h][i], c) for i in range(M_STEPS)]\n\n        def mma(fr):\n            bf, af = fr\n            for i in range_constexpr(M_STEPS):\n                for j in range_constexpr(N_STEPS):\n                    acc[i * N_STEPS + j] = rocdl_d.mfma_f32_16x16x32_bf16(\n                        T.f32x4, bf[j], af[i], acc[i * N_STEPS + j], 0, 0, blgp\n                    ).res\n\n        def barrier_for(c):\n            rocdl.sched_barrier(0)\n            # Chunks c..min(c+STAGES-2, last) are in flight; chunk c+STAGES-1 reuses chunk c-1's slot.\n            wait_barrier((min(c + STAGES - 2, CHUNKS - 1) - c) * PER_CHUNK)\n            if const_expr(c + STAGES - 1 < CHUNKS):\n                issue_chunk(c + STAGES - 1)\n            rocdl.sched_barrier(0)\n\n        for c in range_constexpr(CHUNKS):\n            barrier_for(c)\n            fr = [reads(c, h) for h in range(2)]\n            for h in range_constexpr(2):\n                mma(fr[h])\n\n        # Rows >= m fall past the C descriptor's num_records, so the store drops them.\n        for i in range_constexpr(M_STEPS):\n            for p in range_constexpr(N_STEPS // 2):\n                lo = Vector(acc[i * N_STEPS + 2 * p]).to(fx.BFloat16)\n                v8 = lo.shuffle(Vector(acc[i * N_STEPS + 2 * p + 1]).to(fx.BFloat16), list(range(8)))\n                row = wm + i * 16 + r\n                col = bn * TILE_N + wn + p * 32 + kq * 8\n                _bstore(v8, c_rsrc, row * n + col, C_AUX)\n\n    @flyc.jit\n    def launch(C: fx.Pointer, A: fx.Pointer, B: fx.Pointer, stream: fx.Stream):\n        gemm_n28672_k512_tile(C, A, B).launch(\n            grid=(n // TILE_N, 1, 1),\n            block=(THREADS, 1, 1),\n            stream=stream,\n            value_attrs={\"rocdl.flat_work_group_size\": f\"{THREADS},{THREADS}\"},\n        )\n\n    return launch\n\n\ndef run(*, a, b, trans_b, bias, out_dtype, out):\n    call = None\n    if (\n        trans_b\n        and bias is None\n        and a.dtype == torch.bfloat16\n        and b.dtype == torch.bfloat16\n        and out.dtype == torch.bfloat16\n        and a.is_contiguous()\n        and b.is_contiguous()\n        and out.is_contiguous()\n        and tuple(b.shape) == (_N, _K)\n    ):\n        call = _launcher(a.shape[0], a.device)\n    if call is None:\n        torch.matmul(a, b.t() if trans_b else b, out=out)\n        if bias is not None:\n            out.add_(bias)\n        return\n    call(a, b, out)\n"
+      }
+    ]
+  }
+}
