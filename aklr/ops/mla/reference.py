@@ -20,7 +20,11 @@ def flash_mla_with_kvcache_reference(
     row_major_args: Mapping[str, Any],
     decode: Callable[[Tensor, str], Tensor],
 ) -> tuple[Tensor, Tensor]:
-    """Each head of a query attends over the KV rows its row reads."""
+    """Each head of a query attends over the KV rows its row reads. With has_inv_rope, the
+    output's last 64 lanes are then rotated back: per (cos, sin) pair of
+    rope_freqs[positions], even * cos + odd * sin and odd * cos - even * sin, on the unrounded
+    output (the kernels' bf16 rounding of the output before the rotation is error left to
+    compare). Without return_lse, lse is empty."""
     import torch
 
     q = decode(row_major_args["q"], point.dtypes["q"])
@@ -46,8 +50,11 @@ def flash_mla_with_kvcache_reference(
             pools.append((cache, slots.where(selected, 0), selected))
         visible = torch.cat([selected for *_, selected in pools], dim=-1)[:, None]
 
+        # with the inverse RoPE, the slots decode as aiter's kernel (sglang's) decodes them
+        exact_fp8 = point.attrs.get("has_inv_rope", False)
+
         def keys_of(rows: slice) -> Tensor:
-            # The kernel's literal bf16 bit assembly, not fp8 scaling.
+            # The kernel's literal bf16 bit assembly, not fp8 scaling (exact_fp8: fp8 scaling).
             keys = []
             for cache, slots, _ in pools:
                 page_size = cache.shape[1]
@@ -58,6 +65,14 @@ def flash_mla_with_kvcache_reference(
                 arange = torch.arange(448, device=raw.device)
                 codes = raw[payload + arange].int()
                 scales = raw[page + page_size * 576 + within * 8 + arange[:7]].int()
+                if exact_fp8:
+                    # aiter's scaled upcast: the fp8 value (subnormals and zero as e4m3
+                    # defines them) times 2 ** (exponent - 127)
+                    fp8 = codes.to(torch.uint8).view(torch.float8_e4m3fn).to(q.dtype)
+                    nope = fp8 * torch.exp2(scales.to(q.dtype) - 127).repeat_interleave(64, dim=-1)
+                    rope = raw[payload + 448 + arange[:128]].view(torch.bfloat16)
+                    keys.append(torch.cat((nope, rope.to(q.dtype)), dim=-1))
+                    continue
                 exponent = ((codes >> 3) & 15) + scales.repeat_interleave(64, dim=-1) - 7
                 bits = ((codes & 128) << 8) | (exponent << 7) | ((codes & 7) << 4)
                 nope = (bits & 65535).to(torch.int16).view(torch.bfloat16)
@@ -111,6 +126,16 @@ def flash_mla_with_kvcache_reference(
         weights = weights.masked_fill(empty[..., None], 0)
         output[rows] = weights @ (keys[:, None, :, :512] * row_major_args["kv_scale"])
         lse[rows] = row_lse.masked_fill(empty, empty_lse)
+    if point.attrs.get("has_inv_rope", False):
+        freqs = decode(row_major_args["rope_freqs"], point.dtypes["rope_freqs"])
+        freqs = freqs[row_major_args["positions"].long()][:, None, None]
+        cos, sin = freqs[..., 0::2], freqs[..., 1::2]
+        rope_dim = freqs.shape[-1]
+        even, odd = output[..., -rope_dim::2], output[..., -rope_dim + 1 :: 2]
+        rotated = torch.stack((even * cos + odd * sin, odd * cos - even * sin), dim=-1)
+        output = torch.cat((output[..., :-rope_dim], rotated.flatten(-2)), dim=-1)
+    if not point.attrs["return_lse"]:
+        lse = lse[..., :0]
     return output, lse
 
 
