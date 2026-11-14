@@ -194,7 +194,9 @@
       },
       "scalars": {
         "swiglu_limit": 10.0
-      }
+      },
+      "accuracy": "passed",
+      "speedup": 1.524
     }
   ],
   "layout_variants": {
