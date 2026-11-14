@@ -1,0 +1,236 @@
+{
+  "schema_version": 5,
+  "name": "gemm_n32_k4096",
+  "contract_id": "gemm@1.0",
+  "description": "16-bit gemm: out = a @ b.T + bias (b is (k, n) unless trans_b).",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 32,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 4096,
+      "description": "Reduction length."
+    }
+  },
+  "attrs": {
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 4
+      }
+    },
+    {
+      "axes": {
+        "m": 8
+      }
+    },
+    {
+      "axes": {
+        "m": 12
+      }
+    },
+    {
+      "axes": {
+        "m": 16
+      }
+    },
+    {
+      "axes": {
+        "m": 20
+      }
+    },
+    {
+      "axes": {
+        "m": 24
+      }
+    },
+    {
+      "axes": {
+        "m": 28
+      }
+    },
+    {
+      "axes": {
+        "m": 32
+      }
+    },
+    {
+      "axes": {
+        "m": 40
+      }
+    },
+    {
+      "axes": {
+        "m": 48
+      }
+    },
+    {
+      "axes": {
+        "m": 56
+      }
+    },
+    {
+      "axes": {
+        "m": 64
+      }
+    },
+    {
+      "axes": {
+        "m": 72
+      }
+    },
+    {
+      "axes": {
+        "m": 80
+      }
+    },
+    {
+      "axes": {
+        "m": 88
+      }
+    },
+    {
+      "axes": {
+        "m": 96
+      }
+    },
+    {
+      "axes": {
+        "m": 104
+      }
+    },
+    {
+      "axes": {
+        "m": 112
+      }
+    },
+    {
+      "axes": {
+        "m": 120
+      }
+    },
+    {
+      "axes": {
+        "m": 128
+      }
+    },
+    {
+      "axes": {
+        "m": 160
+      }
+    },
+    {
+      "axes": {
+        "m": 176
+      }
+    },
+    {
+      "axes": {
+        "m": 192
+      }
+    },
+    {
+      "axes": {
+        "m": 208
+      }
+    },
+    {
+      "axes": {
+        "m": 224
+      }
+    },
+    {
+      "axes": {
+        "m": 240
+      }
+    },
+    {
+      "axes": {
+        "m": 256
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Decode bf16 GEMM, out = a @ b.T, for n = 32 and k = 4096 on gfx950 (Triton).\n\nThe 256 KiB weight is far too narrow for MFMA tiles to fill the GPU: a 16x16\ntile grid has two workgroups. Instead every workgroup owns one output column\nfor one, two or four rows of `a` and the whole K range: it streams the column's\nweight row (`.cg`) and its rows of `a` in 2048-element chunks, multiplies in\nfp32 elementwise and reduces once at the end. That gives m * 32 / rows\nindependent workgroups, so at small m the call costs little more than its\nlaunch. Each output is one fixed-order reduction, so results are bitwise\nreproducible.\n\n- m <= 40: one row per workgroup.\n- m <= 128: two rows per workgroup share each weight load.\n- larger m: four rows per workgroup.\n\"\"\"\n\nimport functools\n\nimport triton\nimport triton.language as tl\n\n\n@triton.jit\ndef _rows_dot_kernel(\n    A,\n    B,\n    C,\n    M,\n    sam,\n    sak,\n    sbn,\n    sbk,\n    scm,\n    N: tl.constexpr,\n    K: tl.constexpr,\n    BLOCK_M: tl.constexpr,\n    CHUNK: tl.constexpr,\n):\n    pid = tl.program_id(0)\n    col = pid % N\n    rows = (pid // N) * BLOCK_M + tl.arange(0, BLOCK_M)\n    row_ok = rows < M\n    ks = tl.arange(0, CHUNK)\n    acc = tl.zeros((BLOCK_M, CHUNK), dtype=tl.float32)\n    for k0 in tl.static_range(0, K, CHUNK):\n        w = tl.load(B + col * sbn + (k0 + ks) * sbk, cache_modifier=\".cg\")\n        x = tl.load(\n            A + rows[:, None] * sam + (k0 + ks)[None, :] * sak,\n            mask=row_ok[:, None],\n            other=0.0,\n        )\n        acc += x.to(tl.float32) * w.to(tl.float32)[None, :]\n    tl.store(C + rows * scm + col, tl.sum(acc, axis=1).to(C.dtype.element_ty), mask=row_ok)\n\n\n@functools.cache\ndef _launch_for(m, n, k):\n    block_m = 1 if m <= 40 else 2 if m <= 128 else 4\n    grid = (triton.cdiv(m, block_m) * n,)\n\n    def launch(a, b, out):\n        _rows_dot_kernel[grid](\n            a,\n            b,\n            out,\n            m,\n            a.stride(0),\n            a.stride(1),\n            b.stride(0),\n            b.stride(1),\n            out.stride(0),\n            N=n,\n            K=k,\n            BLOCK_M=block_m,\n            CHUNK=2048,\n            num_warps=4,\n        )\n\n    return launch\n\n\ndef run(*, a, b, trans_b, bias, out_dtype, out):\n    _launch_for(a.shape[0], b.shape[0], b.shape[1])(a, b, out)\n"
+      }
+    ]
+  }
+}
