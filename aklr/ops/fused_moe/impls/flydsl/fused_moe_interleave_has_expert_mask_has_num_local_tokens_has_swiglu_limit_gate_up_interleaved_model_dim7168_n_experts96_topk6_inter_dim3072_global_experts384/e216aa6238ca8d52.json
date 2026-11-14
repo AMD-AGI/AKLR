@@ -1,0 +1,265 @@
+{
+  "schema_version": 5,
+  "name": "fused_moe_interleave_has_expert_mask_has_num_local_tokens_has_swiglu_limit_gate_up_interleaved_model_dim7168_n_experts96_topk6_inter_dim3072_global_experts384",
+  "contract_id": "fused_moe@1.0",
+  "description": "Route each token to its top-k experts, run both projections, combine.",
+  "op_type": "fused_moe",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens routed in this call."
+    },
+    "model_dim": {
+      "type": "const",
+      "value": 7168,
+      "description": "Hidden size."
+    },
+    "n_experts": {
+      "type": "const",
+      "value": 96,
+      "description": "Local experts on this rank."
+    },
+    "topk": {
+      "type": "const",
+      "value": 6,
+      "description": "Experts per token."
+    },
+    "inter_dim": {
+      "type": "const",
+      "value": 3072,
+      "description": "Expert intermediate size."
+    },
+    "global_experts": {
+      "type": "const",
+      "value": 384,
+      "description": "Experts of the whole expert-parallel group."
+    },
+    "gate_up_rows": {
+      "type": "const",
+      "value": 6144,
+      "description": "w1 rows: gate and up concatenated."
+    },
+    "model_blocks": {
+      "type": "const",
+      "value": 224,
+      "description": "w1 scale columns."
+    },
+    "inter_blocks": {
+      "type": "const",
+      "value": 96,
+      "description": "w2 scale columns."
+    }
+  },
+  "attrs": {
+    "activation": "silu",
+    "quant_type": "per_1x32",
+    "doweight_stage1": false,
+    "gate_mode": "interleave",
+    "has_expert_mask": true,
+    "has_num_local_tokens": true,
+    "has_swiglu_limit": true,
+    "act_quant": 4
+  },
+  "inputs": {
+    "hidden_states": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Token activations."
+    },
+    "w1": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Gate-up projection per expert: gate rows, then up rows."
+    },
+    "w2": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_dim"
+      ],
+      "dtype": "float4_e2m1",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Down projection per expert."
+    },
+    "topk_weights": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Routing weight of each chosen expert."
+    },
+    "topk_ids": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": 0,
+        "hi": 383,
+        "distinct": true
+      },
+      "description": "Chosen experts per token, distinct within a row; global ids under expert parallelism."
+    },
+    "w1_scale": {
+      "shape": [
+        "n_experts",
+        "gate_up_rows",
+        "model_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -11,
+        "log2_hi": -5
+      },
+      "description": "Per 1 x 32 block of w1."
+    },
+    "w2_scale": {
+      "shape": [
+        "n_experts",
+        "model_dim",
+        "inter_blocks"
+      ],
+      "dtype": "float8_e8m0",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -11,
+        "log2_hi": -5
+      },
+      "description": "Per 1 x 32 block of w2."
+    },
+    "expert_mask": {
+      "shape": [
+        "global_experts"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "expert_mask",
+        "local_experts": 96
+      },
+      "description": "1 for the experts this rank holds, in the order w1 holds them."
+    },
+    "num_local_tokens": {
+      "shape": [1],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": "n_tokens",
+        "hi": "n_tokens",
+        "distinct": false
+      },
+      "description": "Rows this rank received; later rows are unused."
+    },
+    "swiglu_limit": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Clamped SwiGLU bound: gate at most this, up within +/- this."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "n_tokens",
+        "model_dim"
+      ],
+      "dtype": "bfloat16",
+      "description": "Routing-weighted sum of the chosen experts' outputs; under expert parallelism, this rank's share."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1024
+      },
+      "scalars": {
+        "swiglu_limit": 10.0
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "gate_up_interleaved": {
+        "layouts": {
+          "w1": {
+            "kind": "gate_up_interleaved_weight",
+            "gate_up": true
+          },
+          "w2": {
+            "kind": "gate_up_interleaved_weight",
+            "gate_up": false
+          },
+          "w1_scale": {
+            "kind": "gate_up_interleaved_scales",
+            "gate_up": true
+          },
+          "w2_scale": {
+            "kind": "gate_up_interleaved_scales",
+            "gate_up": false
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "w1.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w2.is_shuffled",
+            "expected_value": true
+          },
+          {
+            "location": "tensor_attr",
+            "name": "w1_scale.ndim",
+            "expected_value": 2
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.001,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.2"
+    },
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Fused MoE (MXFP4 experts, e4m3 activations, clamped SwiGLU, EP mask) on aiter's FlyDSL pipeline:\nthe sort zeroes ``out`` for stage 2 to accumulate into, the GEMM grids cover only the blocks the\nlocal experts can fill, both stages are retiled, and stage 2 loads w2 non-temporal.\"\"\"\n\nimport functools\nimport inspect\nimport linecache\n\nimport torch\n\n\n@functools.cache\ndef _s2_builder_nt():\n    \"\"\"aiter's ``compile_mixed_moe_gemm2_common`` with ``b_nt`` applied to the w2 loads (aiter drops\n    it): each weight byte is read once per tile row, so caching it in L2 only evicts reused data.\"\"\"\n    from aiter.ops.flydsl.kernels import mixed_moe_gemm_2stage_common as mm\n\n    src = inspect.getsource(mm.compile_mixed_moe_gemm2_common)\n    for old, new in (\n        (\"    del b_nt\\n\", \"\"),\n        (\n            \"offset_in_bytes=(b_elem_bytes == 1),\\n\",\n            \"offset_in_bytes=(b_elem_bytes == 1), cache_modifier=b_nt,\\n\",\n        ),\n        ('f\"_vscale_fix3_fp4opt_v1{pm_tag}', 'f\"_vscale_fix3_fp4opt_v1_nt{b_nt}{pm_tag}'),\n    ):\n        if src.count(old) != 1:\n            raise RuntimeError(f\"stage-2 patch anchor matched {src.count(old)} times: {old!r}\")\n        src = src.replace(old, new)\n\n    filename = f\"<aklr_fused_moe_stage2_nt:{mm.__file__}>\"\n    linecache.cache[filename] = (len(src), None, src.splitlines(True), filename)\n    namespace = dict(mm.__dict__)\n    exec(compile(src, filename, \"exec\"), namespace)\n    return namespace[\"compile_mixed_moe_gemm2_common\"]\n\n\n@functools.cache\ndef _s2_compile_nt(**kwargs):\n    \"\"\"``compile_flydsl_moe_stage2``'s MX-weight branch, on the patched builder.\"\"\"\n    return _s2_builder_nt()(**kwargs)\n\n\ndef _stage2_nt(\n    inter_states,\n    w1,\n    w2,\n    sorted_token_ids,\n    sorted_expert_ids,\n    num_valid_ids,\n    out,\n    topk,\n    kernelName=\"\",\n    w2_scale=None,\n    a2_scale=None,\n    sorted_weights=None,\n    bias2=None,\n    inter_dim_pad=0,\n    model_dim_pad=0,\n    expert_mask=None,\n    topk_ids=None,\n    **_kwargs,\n):\n    \"\"\"aiter's ``_flydsl_stage2_wrapper`` with the compiler swapped for ``_s2_compile_nt``.\"\"\"\n    from aiter.fused_moe import _get_padding_for_flydsl\n    from aiter.ops.flydsl.moe_kernels import _flydsl_moe_stage2_impl, get_flydsl_kernel_params\n\n    inter_dim_pad, model_dim_pad = _get_padding_for_flydsl(inter_dim_pad, model_dim_pad, bias2)\n    parsed = get_flydsl_kernel_params(kernelName)\n    if parsed is None:\n        raise ValueError(f\"Invalid FlyDSL kernel name: {kernelName}\")\n    return _flydsl_moe_stage2_impl(\n        inter_states=inter_states,\n        w2=w2,\n        sorted_token_ids=sorted_token_ids,\n        sorted_expert_ids=sorted_expert_ids,\n        num_valid_ids=num_valid_ids,\n        out=out,\n        topk=topk,\n        tile_m=parsed[\"tile_m\"],\n        tile_n=parsed[\"tile_n\"],\n        tile_k=parsed[\"tile_k\"],\n        a_dtype=parsed[\"a_dtype\"],\n        b_dtype=parsed[\"b_dtype\"],\n        out_dtype=parsed[\"out_dtype\"],\n        mode=parsed.get(\"mode\", \"atomic\"),\n        w2_scale=w2_scale,\n        a2_scale=a2_scale,\n        sorted_weights=sorted_weights,\n        sort_block_m=parsed.get(\"sort_block_m\", 0),\n        waves_per_eu=parsed.get(\"waves_per_eu\", None),\n        use_async_copy=parsed.get(\"use_async_copy\", False),\n        cu_num_mul=parsed.get(\"cu_num_mul\", 1),\n        b_nt=parsed.get(\"b_nt\", 0),\n        persist=parsed.get(\"persist\", None),\n        inter_dim_pad=inter_dim_pad,\n        model_dim_pad=model_dim_pad,\n        bias=bias2,\n        xcd_swizzle=parsed.get(\"xcd_swizzle\", 0),\n        expert_mask=expert_mask,\n        topk_ids=topk_ids,\n        _compile_kernel=_s2_compile_nt,\n    )\n\n\n# aiter's default tiles for this layer, retuned: stage 1 at one more wave per EU, stage 2 at twice\n# the N tile (half the workgroups, each streaming twice the w2 bytes per row).\n_RETILE = {\n    \"flydsl_moe1_afp8_wfp4_bf16_t32x128x256_w2_gui\": \"flydsl_moe1_afp8_wfp4_bf16_t32x128x256_w3_gui\",\n    \"flydsl_moe2_afp8_wfp4_bf16_t32x128x256_atomic_bnt2\": \"flydsl_moe2_afp8_wfp4_bf16_t32x256x256_atomic_bnt2\",\n}\n\n\ndef _swap_stage2(metadata):\n    \"\"\"A copy of aiter's metadata retiled per ``_RETILE``, whose FlyDSL atomic stage 2 runs on the\n    nt-compiled kernel.\"\"\"\n    import dataclasses\n\n    from aiter.fused_moe import _flydsl_stage2_wrapper\n    from aiter.ops.flydsl.moe_kernels import get_flydsl_kernel_params\n\n    stages = {}\n    for field in (\"stage1\", \"stage2\"):\n        stage = getattr(metadata, field)\n        name = getattr(stage, \"keywords\", {}).get(\"kernelName\")\n        if name in _RETILE:\n            stages[field] = functools.partial(\n                stage.func, *stage.args, **{**stage.keywords, \"kernelName\": _RETILE[name]}\n            )\n    metadata = dataclasses.replace(metadata, **stages)\n    stage2 = metadata.stage2\n    if getattr(stage2, \"func\", None) is not _flydsl_stage2_wrapper:\n        return metadata\n    parsed = get_flydsl_kernel_params(stage2.keywords.get(\"kernelName\", \"\")) or {}\n    mode, a_dtype, b_dtype = parsed.get(\"mode\", \"atomic\"), parsed.get(\"a_dtype\"), parsed.get(\"b_dtype\")\n    if mode != \"atomic\" or a_dtype == \"bf16\" or b_dtype not in (\"fp4\", \"fp8\"):\n        return metadata\n    return dataclasses.replace(\n        metadata, stage2=functools.partial(_stage2_nt, *stage2.args, **stage2.keywords)\n    )\n\n\n@functools.cache\ndef _plan(n_tokens, topk, w1_shape, w2_shape, w1_dtype, out_dtype, global_experts, shuffled, gate_mode):\n    \"\"\"The configuration aiter picks for this shape (block size), resolved once.\"\"\"\n    from aiter import ActivationType, QuantType, dtypes\n    from aiter.fused_moe import GateMode, get_2stage_cfgs, get_inter_dim, get_padded_M\n\n    E, model_dim, inter_dim = get_inter_dim(w1_shape, w2_shape)\n    metadata = get_2stage_cfgs(\n        get_padded_M(n_tokens),\n        model_dim,\n        inter_dim,\n        E,\n        topk,\n        out_dtype,\n        dtypes.fp8,\n        w1_dtype,\n        QuantType.per_1x32,\n        inter_dim != w1_shape[1],\n        ActivationType.Silu,\n        False,\n        0,\n        0,\n        shuffled[0],\n        GateMode(gate_mode),\n        is_ep=True,\n        has_stage2_bias=False,\n        opus_weights_shuffled=shuffled[1],\n        config_file=None,\n    )\n    if metadata.run_1stage or metadata.flat or metadata.output_aux:\n        raise NotImplementedError(\"unexpected fused_moe configuration\")\n    max_num_tokens_padded = int(n_tokens * topk + global_experts * metadata.block_m - topk)\n    max_num_m_blocks = (max_num_tokens_padded + metadata.block_m - 1) // metadata.block_m\n    # At most n_tokens*topk routes land on the E local experts, each adding at most one partial\n    # block, so the GEMMs only see this prefix of the sorted blocks; the rest of the buffers is dead.\n    cap_blocks = min(max_num_m_blocks, (n_tokens * topk + metadata.block_m - 1) // metadata.block_m + E)\n    return (\n        int(metadata.block_m),\n        max_num_tokens_padded,\n        max_num_m_blocks,\n        cap_blocks,\n        inter_dim != w1_shape[1],\n    )\n\n\ndef run(\n    *,\n    hidden_states,\n    w1,\n    w2,\n    topk_weights,\n    topk_ids,\n    w1_scale,\n    w2_scale,\n    activation,\n    quant_type,\n    doweight_stage1,\n    gate_mode,\n    act_quant,\n    expert_mask,\n    num_local_tokens,\n    beta,\n    linear_beta,\n    swiglu_limit,\n    out_dtype,\n    out,\n):\n    import aiter\n    from aiter import ActivationType, QuantType, dtypes\n    from aiter.fused_moe import fused_moe_2stages\n\n    if activation != \"silu\" or quant_type != \"per_1x32\" or doweight_stage1 or act_quant != 4:\n        raise NotImplementedError(\"fused_moe: unsupported attributes\")\n    M, topk = topk_ids.shape\n    shuffled = (\n        bool(getattr(w1, \"is_shuffled\", False) or getattr(w2, \"is_shuffled\", False)),\n        bool(getattr(w1, \"is_shuffled\", False) and getattr(w2, \"is_shuffled\", False)),\n    )\n    block_m, max_tokens, max_blocks, cap_blocks, is_g1u1 = _plan(\n        M,\n        topk,\n        tuple(w1.shape),\n        tuple(w2.shape),\n        w1.dtype,\n        out.dtype,\n        expert_mask.numel(),\n        shuffled,\n        gate_mode,\n    )\n    device = topk_ids.device\n    sorted_ids = torch.empty(max_tokens, dtype=dtypes.i32, device=device)\n    sorted_weights = torch.empty(max_tokens, dtype=dtypes.fp32, device=device)\n    sorted_expert_ids = torch.empty(max_blocks, dtype=dtypes.i32, device=device)\n    num_valid_ids = torch.empty(2, dtype=dtypes.i32, device=device)\n    ws_size = aiter.moe_sorting_opus_get_workspace_size(M, expert_mask.numel(), topk, 0)\n    workspace = torch.empty(ws_size, dtype=torch.uint8, device=device) if ws_size > 0 else None\n    # The sort zeroes ``out`` (moe_buf) for stage 2's atomic accumulation.\n    aiter.moe_sorting_opus_fwd(\n        topk_ids,\n        topk_weights,\n        sorted_ids,\n        sorted_weights,\n        sorted_expert_ids,\n        num_valid_ids,\n        out,\n        expert_mask.numel(),\n        block_m,\n        expert_mask,\n        num_local_tokens,\n        workspace,\n        0,\n        None,\n        None,\n        None,\n    )\n    fused_moe_2stages(\n        hidden_states,\n        w1,\n        w2,\n        topk,\n        sorted_ids[: cap_blocks * block_m],\n        sorted_weights[: cap_blocks * block_m],\n        sorted_expert_ids[:cap_blocks],\n        num_valid_ids,\n        out,\n        is_g1u1,\n        block_m,\n        activation=ActivationType.Silu,\n        quant_type=QuantType.per_1x32,\n        doweight_stage1=False,\n        q_dtype_a=dtypes.fp8,\n        q_dtype_w=w1.dtype,\n        w1_scale=w1_scale,\n        w2_scale=w2_scale,\n        num_local_tokens=num_local_tokens,\n        topk_ids=topk_ids,\n        topk_weights=topk_weights,\n        swiglu_limit=swiglu_limit,\n        beta=beta,\n        linear_beta=linear_beta,\n        gate_mode=gate_mode,\n        expert_mask=expert_mask,\n        _metadata_transform=_swap_stage2,\n    )\n"
+      }
+    ]
+  }
+}
