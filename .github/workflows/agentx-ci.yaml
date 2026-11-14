@@ -13,19 +13,15 @@ on:
         type: string
         default: all
       targets:
-        description: Enabled target ids in selected models, comma-separated, or all (targets run serially)
+        description: Enabled target ids in selected models, comma-separated, or all (runs execute serially)
         type: string
         default: all
-      inferencex_ref:
-        description: InferenceX branch, tag or sha (grid, serving config and client)
-        type: string
-        default: ''
-      arms:
-        description: Arms to run (filters require exactly one selected target)
+      frameworks:
+        description: Enabled serving frameworks (sglang, vllm) in selected targets, comma-separated, or all
         type: string
         default: all
       points:
-        description: ARM:CONC points using generated ids from serving.json (single-target smoke runs)
+        description: ARM:CONC points from the recipe serving.<model>.json (single model/target/framework smoke runs)
         type: string
         default: ''
       duration_s:
@@ -72,9 +68,13 @@ jobs:
         (github.event.action != 'labeled' || github.event.label.name == 'ci:agentx-mi355x')))
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       matrix: ${{ steps.resolve.outputs.matrix }}
       count: ${{ steps.resolve.outputs.count }}
+      skipped: ${{ steps.resolve.outputs.skipped }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -84,31 +84,34 @@ jobs:
           python-version: '3.12'
       - name: Install PyYAML
         run: python -m pip install pyyaml==6.0.3
-      - name: Resolve selected model targets in order
+      - name: Read the PR description's AgentX models
+        # Read it now rather than from the event, so a re-run after editing the description uses the edit.
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.body // ""' > "$RUNNER_TEMP/pr-body.md"
+      - name: Plan selected model/target/framework runs from recipe files
         id: resolve
         env:
           MODELS: ${{ inputs.models || 'all' }}
           TARGETS: ${{ inputs.targets || 'all' }}
+          FRAMEWORKS: ${{ inputs.frameworks || 'all' }}
           RUNNER_LABEL: ${{ github.event_name != 'workflow_dispatch' && 'agentx-mi355x' || '' }}
-          INFERENCEX_REF: ${{ inputs.inferencex_ref }}
-          POINT_POLICY: ${{ github.event_name == 'pull_request' && 'inferencex-pareto' || 'all' }}
-          INFERENCEX_MODEL: ${{ github.event_name == 'pull_request' && 'auto' || '' }}
-          INFERENCEX_HARDWARE: ${{ github.event_name == 'pull_request' && 'mi355x' || '' }}
-          ARMS: ${{ inputs.arms || 'all' }}
           POINTS: ${{ inputs.points }}
           DURATION_S: ${{ github.event_name == 'pull_request' && '600' || inputs.duration_s }}
-          # Verify the upstream duration without a smoke override, preserving baseline eligibility.
+          # Verify the recipe duration without a smoke override, preserving baseline eligibility.
           REQUIRE_RECIPE_DURATION: ${{ github.event_name == 'schedule' && '3600' || '' }}
+          PR_BODY: ${{ github.event_name == 'pull_request' && 'pr-body.md' || '' }}
         run: |
-          python3 -m agentx_bench plan --models "$MODELS" --targets "$TARGETS" --arms "$ARMS" \
+          python3 -m agentx_bench plan --models "$MODELS" --targets "$TARGETS" --frameworks "$FRAMEWORKS" \
             ${RUNNER_LABEL:+--runner-label "$RUNNER_LABEL"} \
-            ${INFERENCEX_REF:+--inferencex-ref "$INFERENCEX_REF"} \
-            --point-policy "$POINT_POLICY" ${INFERENCEX_HARDWARE:+--inferencex-hardware "$INFERENCEX_HARDWARE"} \
-            ${INFERENCEX_MODEL:+--inferencex-model "$INFERENCEX_MODEL"} \
             ${POINTS:+--points "$POINTS"} ${DURATION_S:+--duration "$DURATION_S"} \
             ${REQUIRE_RECIPE_DURATION:+--require-recipe-duration "$REQUIRE_RECIPE_DURATION"} \
-            --work "$RUNNER_TEMP/work" --out "$RUNNER_TEMP/plan"
+            ${PR_BODY:+--pr-body "$RUNNER_TEMP/$PR_BODY"} \
+            --out "$RUNNER_TEMP/plan"
       - uses: actions/upload-artifact@v4
+        if: steps.resolve.outputs.skipped != 'true'
         with:
           name: agentx-plan
           path: ${{ runner.temp }}/plan/
@@ -136,26 +139,28 @@ jobs:
         with:
           name: agentx-plan
           path: ${{ runner.temp }}/plan
-      - name: Sweep one model target
+      - name: Sweep one model/target/framework run
         # Partial measurements succeed; the step summary retains failed point counts.
         env:
           MODEL_ID: ${{ matrix.model }}
           TARGET_ID: ${{ matrix.target }}
+          FRAMEWORK_ID: ${{ matrix.framework }}
           HF_HUB_DIR: ${{ vars.AGENTX_HF_HUB_DIR }}
         # exec: a cancelled run's SIGINT must reach the sweep, which then stops its container.
         run: |
-          exec python3 -m agentx_bench sweep --serving "$RUNNER_TEMP/plan/models/$MODEL_ID/targets/$TARGET_ID/serving.json" \
-            --hub "$HF_HUB_DIR" --run-id "$GITHUB_RUN_ID" --cache "$RUNNER_TEMP/aklr-cache/$MODEL_ID/$TARGET_ID" \
-            --work "$RUNNER_TEMP/agentx/$MODEL_ID/$TARGET_ID" \
-            --out "$RUNNER_TEMP/results/models/$MODEL_ID/targets/$TARGET_ID"
+          run="models/$MODEL_ID/targets/$TARGET_ID/frameworks/$FRAMEWORK_ID"
+          exec python3 -m agentx_bench sweep --serving "$RUNNER_TEMP/plan/$run/serving.json" \
+            --hub "$HF_HUB_DIR" --run-id "$GITHUB_RUN_ID" --cache "$RUNNER_TEMP/aklr-cache/$run" \
+            --work "$RUNNER_TEMP/agentx/$run" --out "$RUNNER_TEMP/results/$run"
       - name: Remove the sweep container left by a cancelled run
         # The runner kills the sweep 10 s after cancelling, which can be before its own cleanup ends.
         if: always()
         env:
           MODEL_ID: ${{ matrix.model }}
           TARGET_ID: ${{ matrix.target }}
+          FRAMEWORK_ID: ${{ matrix.framework }}
         run: |
-          out=$(realpath -m "$RUNNER_TEMP/results/models/$MODEL_ID/targets/$TARGET_ID")
+          out=$(realpath -m "$RUNNER_TEMP/results/models/$MODEL_ID/targets/$TARGET_ID/frameworks/$FRAMEWORK_ID")
           docker ps --all --quiet --filter "label=agentx.out=$out" | xargs --no-run-if-empty docker rm --force
       - uses: actions/upload-artifact@v4
         if: always()
@@ -166,7 +171,7 @@ jobs:
 
   report:
     needs: [plan, sweep]
-    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.skipped != 'true' }}
     outputs:
       publish_ready: ${{ steps.pages_artifact.outcome == 'success' }}
     runs-on: ubuntu-latest
@@ -216,7 +221,7 @@ jobs:
         env:
           RESULTS_DOWNLOAD_OUTCOME: ${{ steps.download_results.outcome }}
         run: |
-          jq -r '.targets[] | "\(.model.id)/\(.target.id): \(.status), \(.points_ok)/\(.points_total) paired points OK"' \
+          jq -r '.targets[] | "\(.model.id)/\(.target.id)/\(.framework.id): \(.status), \(.points_ok)/\(.points_total) paired points OK"' \
             "$RUNNER_TEMP/site/manifest.json"
           jq -e 'all(.targets[]; .failure_stage == null)' "$RUNNER_TEMP/site/manifest.json"
           test "$RESULTS_DOWNLOAD_OUTCOME" != failure

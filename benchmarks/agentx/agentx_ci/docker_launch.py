@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 
 from agentx_ci.preflight import pinned_image, verify_image
-from agentx_ci.recipe_resolve import selected_points
+from agentx_ci.serving_config import selected_points
 from agentx_ci.utils import REPO_ROOT, begin_attempt, pending_results, read_json, utc_now, write_json
 
 CONTAINER_COMMAND = r"""
@@ -28,7 +28,7 @@ mkdir /aklr
 tar -C /src --exclude='./.git' -cf - . | tar -C /aklr -xf -
 printf 'gitdir: %s\n' "$SOURCE_GIT_DIR" > /aklr/.git
 cd /aklr
-scripts/agentx/install_aklr.sh /agentx/cache 2>&1 | tee /agentx/out/install.log
+scripts/agentx/install_aklr.sh /agentx/cache /agentx/serving.json 2>&1 | tee /agentx/out/install.log
 set -a; . /agentx/cache/aklr.env; set +a
 cd benchmarks/agentx
 python3 -m agentx_bench sweep --in-container --serving /agentx/serving.json \
@@ -154,6 +154,7 @@ def save_failure(out, pending, error, cleanup_failed):
         if (
             current["model"] != pending["model"]
             or current.get("target") != pending.get("target")
+            or current.get("framework") != pending.get("framework")
             or current["run"].get("id") != pending["run"].get("id")
             or current["run"].get("serving_sha256") != pending["run"].get("serving_sha256")
         ):
@@ -173,7 +174,7 @@ def all_measurements_failed(out: Path, pending: dict) -> bool:
     """Recognize a completed all-failed sweep instead of reporting a container crash."""
     try:
         current = read_json(out / "results.json")
-        if any(current[key] != pending[key] for key in ("model", "target")) or any(
+        if any(current[key] != pending[key] for key in ("model", "target", "framework")) or any(
             current["run"].get(key) != pending["run"].get(key) for key in ("id", "serving_sha256")
         ):
             return False
@@ -237,7 +238,9 @@ def run(args, runtime_options: list[str]) -> int:
             hub = args.hub.resolve()
             reference = serving["image"]["run"]
             if args.image is not None and args.image != reference:
-                raise ValueError("--image conflicts with the plan; regenerate it with --run-image")
+                raise ValueError(
+                    "--image conflicts with the recipe image; update the recipe serving.json to change it"
+                )
             for path in (cache, work):
                 path.mkdir(parents=True, exist_ok=True)
             _, sha = launcher.command(["git", "-C", str(repo), "rev-parse", "HEAD"])
@@ -272,6 +275,9 @@ def run(args, runtime_options: list[str]) -> int:
                 "--security-opt=seccomp=unconfined",
                 "--ulimit",
                 "memlock=-1:-1",
+                # Serving images such as vllm-openai set ENTRYPOINT ["vllm", "serve"].
+                "--entrypoint",
+                "bash",
             ]
             for mount in (
                 f"{repo}:/src:ro",
@@ -294,7 +300,7 @@ def run(args, runtime_options: list[str]) -> int:
                 "AGENTX_EXECUTION_FILE": "/agentx/execution.json",
             }.items():
                 command.extend(["-e", f"{key}={value}"])
-            command.extend([image_id, "bash", "-c", CONTAINER_COMMAND, "sweep"])
+            command.extend([image_id, "-c", CONTAINER_COMMAND, "sweep"])
             command.extend(runtime_options)
             if args.run_id is None:
                 command.extend(["--run-id", str(run_id)])

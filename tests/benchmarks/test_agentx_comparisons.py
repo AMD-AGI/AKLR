@@ -22,6 +22,10 @@ def set_metrics(point, throughput, interactivity=20):
     metrics["latency"]["full_response_itl"]["p90"] = 1 / interactivity
 
 
+def slim(points):
+    return [analysis.frontier_point(point) for point in analysis.frontier(points)]
+
+
 def change_settings(point, change):
     if change == "missing-measurement":
         point.pop("measurement")
@@ -172,13 +176,14 @@ class AgentXPartialPairTests(unittest.TestCase):
         for path, value in (
             (("model", "id"), "another-model"),
             (("target", "id"), "another-target"),
+            (("framework", "id"), "vllm"),
             (("run", "id"), "another-run"),
             (("run", "attempt_id"), "another-attempt"),
             (("run", "aklr_sha"), "9" * 40),
             (("run", "serving_sha256"), "9" * 64),
             (("run", "execution", "image_id"), "sha256:" + "9" * 64),
             (("run", "client_packages", "agentx-harness"), "different-version"),
-            (("run", "inferencex", "sha"), "9" * 40),
+            (("run", "client", "sha"), "9" * 40),
             (("run", "aklr_mode"), "enabled"),
         ):
             with self.subTest(path=path):
@@ -279,12 +284,18 @@ class AgentXPartialWeeklyTests(unittest.TestCase):
         self.assertEqual(rows[2]["tput_ratio"], 1)
         self.assertIsNone(rows[3].get("tput_ratio"))
 
-    def test_global_identity_changes_still_disable_weekly_comparison(self):
+    def test_dirty_source_still_disables_weekly_comparison(self):
+        current = formal_results("current")
+        current["run"]["source_dirty"] = True
+        comparison = analysis.compare(current, formal_results("previous"))
+        self.assertEqual(comparison["status"], "no-baseline")
+        self.assertEqual(comparison["arms"], {})
+
+    def test_execution_changes_compare_frontiers(self):
         for path, value in (
-            (("run", "source_dirty"), True),
             (("run", "execution", "image_id"), "sha256:" + "9" * 64),
             (("run", "server_packages", "sglang"), "different-version"),
-            (("run", "inferencex", "sha"), "9" * 40),
+            (("run", "client_packages", "agentx-harness"), "different-version"),
         ):
             with self.subTest(path=path):
                 current = formal_results("current")
@@ -294,8 +305,162 @@ class AgentXPartialWeeklyTests(unittest.TestCase):
                     target = target[key]
                 target[path[-1]] = value
                 comparison = analysis.compare(current, baseline)
-                self.assertNotEqual(comparison["status"], "ok")
+                self.assertEqual((comparison["status"], comparison["method"]), ("ok", "curve"))
+                self.assertIn("execution image or dependencies changed", comparison["notes"])
+                arm = comparison["arms"]["tp1"]
+                self.assertEqual(arm["status"], "curve")
+                self.assertEqual(arm["points"], [])
+                self.assertAlmostEqual(arm["tput_geomean_ratio"], 1)
+
+    def test_other_hardware_client_or_traces_have_no_baseline(self):
+        def other_trace(results):
+            for point in results["points"]:
+                point["measurement"]["trace"]["revision"] = "9" * 40
+
+        def other_gpu(results):
+            results["run"]["hardware"]["devices"][0]["total_memory"] *= 2
+
+        def other_client(results):
+            results["run"]["client"]["sha"] = "9" * 40
+
+        for change in (other_trace, other_gpu, other_client):
+            with self.subTest(change=change.__name__):
+                current = formal_results("current")
+                change(current)
+                comparison = analysis.compare(current, formal_results("previous"))
+                self.assertEqual(comparison["status"], "no-baseline")
+                self.assertEqual(
+                    comparison["reason"], "hardware, AgentX client source or trace dataset changed"
+                )
                 self.assertEqual(comparison["arms"], {})
+
+    def test_curves_use_only_points_with_verified_measurements(self):
+        current = formal_results("current")
+        baseline = formal_results("previous")
+        current["run"]["execution"]["image_id"] = "sha256:" + "9" * 64
+        for point in current["points"]:
+            point.pop("measurement")
+        comparison = analysis.compare(current, baseline)
+        self.assertEqual(comparison["arms"]["tp1"]["status"], "curve-no-overlap")
+        self.assertEqual(comparison["arms"]["tp1"]["frontier_points"]["current"], 0)
+        self.assertIsNone(comparison["combined"]["tput_geomean_ratio"])
+
+    def test_settings_changed_on_every_point_reports_a_curve_method(self):
+        current = formal_results("current")
+        baseline = formal_results("previous")
+        for point in current["points"]:
+            change_settings(point, "duration")
+        comparison = analysis.compare(current, baseline)
+        self.assertEqual(comparison["arms"]["tp1"]["status"], "curve")
+        self.assertEqual(comparison["method"], "curve")
+        with mock.patch.object(report, "svg_chart", return_value="") as chart:
+            report.charts(current, baseline, comparison, "en")
+        previous = [item for item in chart.call_args.args[1] if item["color"] == report.BASELINE_COLOR]
+        self.assertEqual(previous[0]["frontier"], slim(analysis.verified(baseline, "tp1")))
+
+    def test_method_is_mixed_when_arms_compare_differently(self):
+        arms = {"a": {"status": "comparable"}, "b": {"status": "curve"}, "c": {"status": "new-arm"}}
+        self.assertEqual(analysis.comparison_method(arms), "mixed")
+        self.assertEqual(analysis.comparison_method({"c": {"status": "new-arm"}}), "point")
+
+    def test_changed_points_stay_out_of_the_combined_frontier(self):
+        for change in ("duration", "trace", "environment"):
+            with self.subTest(change=change):
+                current = formal_results("current")
+                baseline = formal_results("previous")
+                for point in baseline["points"]:
+                    set_metrics(point, 100)
+                set_metrics(current["points"][0], 150)
+                set_metrics(current["points"][1], 100_000)
+                set_metrics(current["points"][2], 600)
+                change_settings(current["points"][1], change)
+                refresh_hashes(current)
+                refresh_hashes(baseline)
+                comparison = analysis.compare(current, baseline)
+                arm = comparison["arms"]["tp1"]["tput_geomean_ratio"]
+                combined = comparison["combined"]["tput_geomean_ratio"]
+                self.assertLess(combined, 10)
+                self.assertLessEqual(combined, max(arm, 6))
+
+    def test_renamed_arms_under_a_run_level_change_keep_the_previous_frontier(self):
+        current = formal_results("current")
+        baseline = formal_results("previous")
+        for mode in (current, current["control"]):
+            mode["run"].update(point_policy="pareto", selection={"selection_sha256": "1" * 64})
+        for point in current["points"]:
+            point["arm"] = "renamed"
+        current["serving"]["arms"] = {"renamed": current["serving"]["arms"].pop("tp1")}
+        refresh_hashes(current)
+        comparison = analysis.compare(current, baseline)
+        self.assertEqual(comparison["method"], "curve")
+        self.assertEqual(comparison["combined"]["status"], "curve")
+        self.assertEqual(comparison["combined"]["baseline_frontier"], slim(analysis.measured(baseline)))
+        with mock.patch.object(report, "svg_chart", return_value="") as chart:
+            report.charts(current, baseline, comparison, "en")
+        previous = [item for item in chart.call_args.args[1] if item["color"] == report.BASELINE_COLOR]
+        self.assertEqual(previous[0]["frontier"], slim(analysis.measured(baseline)))
+
+
+class AgentXCurveComparisonTests(unittest.TestCase):
+    @staticmethod
+    def points(*pairs):
+        return [{"status": "ok", analysis.X: x, analysis.Y: y} for x, y in pairs]
+
+    def test_frontiers_interpolate_in_log_interactivity_over_the_shared_range(self):
+        current = self.points((10, 100), (40, 50), (20, 10))
+        baseline = self.points((20, 60), (80, 5))
+        curve = analysis.compare_curve(current, baseline, "fixture")
+        self.assertEqual(curve["status"], "curve")
+        self.assertEqual(curve["overlap"], [20, 40])
+        self.assertEqual([row["intvty"] for row in curve["positions"]], [20, 40])
+        first, last = curve["positions"]
+        self.assertAlmostEqual(first["current"], 75)
+        self.assertAlmostEqual(first["tput_ratio"], 1.25)
+        self.assertAlmostEqual(last["baseline"], 60 - 55 / 2)
+        self.assertAlmostEqual(curve["tput_ratio_min"], 1.25)
+        self.assertAlmostEqual(curve["tput_ratio_max"], 50 / 32.5)
+        self.assertAlmostEqual(curve["tput_geomean_ratio"], (1.25 * 50 / 32.5) ** 0.5)
+
+    def test_frontiers_without_a_shared_range_only_chart(self):
+        curve = analysis.compare_curve(self.points((10, 100)), self.points((20, 60), (30, 50)), "fixture")
+        self.assertEqual(curve["status"], "curve-no-overlap")
+        self.assertIsNone(curve["tput_geomean_ratio"])
+        self.assertEqual(
+            analysis.compare_curve([], self.points((1, 1)), "fixture")["status"], "curve-no-overlap"
+        )
+
+    def test_curves_compare_only_shared_traces(self):
+        def traced(points, revision):
+            for point in points:
+                point["measurement"] = {"trace": {"repo": "owner/traces", "revision": revision}}
+            return points
+
+        current = traced(self.points((10, 100), (40, 50)), "a" * 40)
+        current += traced(self.points((10, 9999), (40, 9999)), "b" * 40)
+        baseline = traced(self.points((10, 100), (40, 50)), "a" * 40)
+        curve = analysis.compare_curve(current, baseline, "fixture")
+        self.assertAlmostEqual(curve["tput_geomean_ratio"], 1)
+        other = traced(self.points((10, 100), (40, 50)), "c" * 40)
+        self.assertEqual(analysis.compare_curve(current[2:], other, "fixture")["status"], "curve-no-overlap")
+
+    def test_changed_selection_compares_frontiers(self):
+        current = formal_results("current")
+        baseline = formal_results("previous")
+        for mode in (current, current["control"]):
+            mode["run"].update(point_policy="pareto", selection={"selection_sha256": "1" * 64})
+        set_metrics(current["points"][0], 150, 40)
+        comparison = analysis.compare(current, baseline)
+        self.assertEqual((comparison["status"], comparison["method"]), ("ok", "curve"))
+        self.assertIn("point selection policy or selected recipes changed", comparison["notes"])
+        self.assertEqual(comparison["arms"]["tp1"]["status"], "curve")
+
+        with mock.patch.object(report, "svg_chart", return_value="") as chart:
+            report.charts(current, baseline, comparison, "en")
+        previous = [item for item in chart.call_args.args[1] if item["color"] == report.BASELINE_COLOR]
+        self.assertEqual(previous[0]["frontier"], slim(analysis.measured(baseline)))
+        html = report.comparison_tables(comparison, "zh")
+        self.assertIn("曲线比较", html)
+        self.assertIn("合并前沿", html)
 
 
 class AgentXPartialComparisonReportTests(unittest.TestCase):
@@ -312,15 +477,17 @@ class AgentXPartialComparisonReportTests(unittest.TestCase):
         series = chart.call_args.args[1]
         previous = [item for item in series if item["color"] == report.BASELINE_COLOR]
         self.assertEqual(len(previous), 1)
-        self.assertEqual(previous[0]["frontier"], [baseline["points"][0]])
+        self.assertEqual(previous[0]["frontier"], slim([baseline["points"][0]]))
         self.assertEqual(series[0]["points"], current["control"]["points"])
         self.assertEqual(series[1]["points"], [current["points"][0], current["points"][2]])
 
         fail(current["points"][0])
         comparison = analysis.compare(current, baseline)
+        self.assertEqual(comparison["method"], "curve")
         with mock.patch.object(report, "svg_chart", return_value="") as chart:
             report.charts(current, baseline, comparison, "en")
-        self.assertFalse(any(item["color"] == report.BASELINE_COLOR for item in chart.call_args.args[1]))
+        previous = [item for item in chart.call_args.args[1] if item["color"] == report.BASELINE_COLOR]
+        self.assertEqual(previous[0]["frontier"], slim(analysis.verified(baseline, "tp1")))
 
     def test_partial_report_exports_gains_and_drops_the_all_success_requirement(self):
         current = formal_results("current")

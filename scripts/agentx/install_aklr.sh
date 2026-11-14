@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cache=${1:?usage: install_aklr.sh <cache dir>}
+cache=${1:?usage: install_aklr.sh <cache dir> <serving.json>}
+AGENTX_SERVING=${2:?usage: install_aklr.sh <cache dir> <serving.json>}
+export AGENTX_SERVING
 root=$(pwd -P)
 git config --global --add safe.directory '*'
 mkdir -p "$cache"
@@ -25,6 +27,7 @@ export AITER_JIT_DIR="$cache/aiter-jit" FLYDSL_RUNTIME_CACHE_DIR="$cache/flydsl-
 AITER_USE_SYSTEM_TRITON=1 python3 -m pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@$AKLR_BASELINE_AITER"
 python3 -m pip install -e .
 python3 - <<'PY'
+import json
 import os
 from importlib.metadata import distribution, entry_points, version
 from pathlib import Path
@@ -40,7 +43,11 @@ assert Path(aklr.__file__).resolve().is_relative_to(root), aklr.__file__
 installed = Path(distribution("amd-aiter").locate_file("aiter/__init__.py")).resolve()
 assert aiter.__file__ and Path(aiter.__file__).resolve() == installed, aiter.__file__
 assert f"+g{os.environ['AKLR_BASELINE_AITER'][:7]}" in version("amd-aiter"), version("amd-aiter")
-assert any(ep.name == "aklr" for ep in entry_points(group="sglang.srt.plugins")), "sglang will not load AKLR"
+serving = json.loads(Path(os.environ["AGENTX_SERVING"]).read_text())
+framework = serving["framework"]["id"]
+assert all(p["client_env"]["FRAMEWORK"] == framework for p in serving["points"]), f"points must use {framework}"
+group = {"sglang": "sglang.srt.plugins", "vllm": "vllm.general_plugins"}[framework]
+assert any(ep.name == "aklr" for ep in entry_points(group=group)), f"{framework} will not load AKLR"
 PY
 
 out=${GITHUB_ENV:-$cache/aklr.env}

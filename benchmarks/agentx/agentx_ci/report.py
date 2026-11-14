@@ -12,7 +12,15 @@ from html import escape
 from pathlib import Path
 
 from agentx_ci.git_history import landed
-from agentx_ci.performance_analysis import X, Y, compare, compare_aklr, frontier, frontiers, measured
+from agentx_ci.performance_analysis import (
+    X,
+    Y,
+    compare,
+    compare_aklr,
+    frontier,
+    frontiers,
+    measured,
+)
 from agentx_ci.utils import (
     DEFAULT_CONFIG,
     REPO_ROOT,
@@ -79,9 +87,12 @@ ZH_MESSAGES = [
     (r"concurrency grid changed", "并发网格已变化"),
     (r"execution identity is missing or unverified", "执行身份缺失或未经验证"),
     (
-        r"execution image, InferenceX source, dependencies or hardware changed",
-        "执行镜像、InferenceX 源码、依赖或硬件已变化",
+        r"execution image, client source, dependencies or hardware changed",
+        "执行镜像、客户端源码、依赖或硬件已变化",
     ),
+    (r"point selection policy or selected recipes changed", "选点策略或所选 recipe 已变化"),
+    (r"baseline predates recipe files", "基线来自 recipe 文件格式切换之前"),
+    (r"combined frontier", "合并前沿"),
 ]
 
 
@@ -280,25 +291,27 @@ def charts(results: dict, baseline: dict | None, comparison: dict, lang: str) ->
                 "frontier": current["combined"],
             }
         )
-    previous_points = [
-        row["baseline"]
-        for view in comparison["arms"].values()
-        for row in view.get("points", [])
-        if row.get("tput_ratio") is not None
-    ]
-    if baseline is not None and comparison["status"] == "ok" and previous_points:
+    previous_frontier = (comparison.get("combined") or {}).get("baseline_frontier") or []
+    curve = comparison.get("method") in ("curve", "mixed")
+    if baseline is not None and comparison["status"] == "ok" and previous_frontier:
         series.append(
             {
                 "label": tr(
                     lang,
-                    "AKLR enabled · previous run (matched points)",
-                    "开启 AKLR · 上次运行（匹配点）",
+                    "AKLR enabled · previous run frontier"
+                    if curve
+                    else "AKLR enabled · previous run (matched points)",
+                    "开启 AKLR · 上次前沿" if curve else "开启 AKLR · 上次运行（匹配点）",
                 )
                 if control is not None
-                else tr(lang, "previous run frontier (matched points)", "上次前沿（匹配点）"),
+                else tr(
+                    lang,
+                    "previous run frontier" if curve else "previous run frontier (matched points)",
+                    "上次前沿" if curve else "上次前沿（匹配点）",
+                ),
                 "color": BASELINE_COLOR,
                 "points": [],
-                "frontier": frontier(previous_points),
+                "frontier": previous_frontier,
                 "dashed": True,
             }
         )
@@ -391,6 +404,44 @@ def aklr_section(results: dict, lang: str) -> str:
     return "\n".join(out)
 
 
+def curve_table(view: dict, lang: str) -> str:
+    """Render a frontier comparison: throughput ratios at shared interactivity positions."""
+    if view["status"] != "curve":
+        return (
+            '<p class="muted">'
+            + tr(
+                lang,
+                "The two frontiers share no interactivity range; only the chart compares them.",
+                "两条前沿的交互速度区间没有重叠，只在图上对比。",
+            )
+            + "</p>"
+        )
+    rows = "".join(
+        f"<tr><td>{num(row['intvty'])}</td><td>{num(row['current'])}</td><td>{num(row['baseline'])}</td>"
+        f"<td class='{delta_class(row['tput_ratio'])}'>{pct(row['tput_ratio'])}</td></tr>"
+        for row in view["positions"]
+    )
+    low, high = view["overlap"]
+    geo, worst, best = view["tput_geomean_ratio"], view["tput_ratio_min"], view["tput_ratio_max"]
+    previous = tr(lang, "previous", "上次")
+    return (
+        f"<table class='compact'><thead><tr><th>{tr(lang, 'P90 tok/s/user', 'P90 tok/s/user')}</th>"
+        f"<th>{tr(lang, 'Total tok/s/GPU', '总 tok/s/GPU')}</th><th>{previous}</th><th>Δ</th></tr></thead><tbody>"
+        + rows
+        + "</tbody></table><p class='muted'>"
+        + tr(
+            lang,
+            f"Interpolated in log(interactivity) over the shared range {num(low)}–{num(high)} tok/s/user. "
+            "Throughput geomean vs previous: ",
+            f"在共同交互速度区间 {num(low)}–{num(high)} tok/s/user 内按 log(交互速度) 插值。吞吐几何平均相对上次：",
+        )
+        + f"<span class='{delta_class(geo)}'>{pct(geo)}</span>"
+        + tr(lang, " · range ", " · 范围 ")
+        + f"<span class='{delta_class(worst)}'>{pct(worst)}</span> … "
+        + f"<span class='{delta_class(best)}'>{pct(best)}</span></p>"
+    )
+
+
 def comparison_tables(comparison: dict, lang: str) -> str:
     if comparison["status"] != "ok":
         reason = escape(localize(lang, comparison["reason"]))
@@ -403,7 +454,15 @@ def comparison_tables(comparison: dict, lang: str) -> str:
     if comparison["notes"]:
         items = "".join(f"<li>{escape(localize(lang, n))}</li>" for n in comparison["notes"])
         out.append(f'<ul class="notes">{items}</ul>')
-    for arm, view in comparison["arms"].items():
+    curve_note = tr(
+        lang,
+        "frontiers compared at equal interactivity",
+        "在相同交互速度下比较前沿",
+    )
+    views = list(comparison["arms"].items())
+    if comparison.get("combined"):
+        views.append((tr(lang, "Combined frontier", "合并前沿"), comparison["combined"]))
+    for arm, view in views:
         badge_class = view["status"]
         reason = localize(lang, view.get("reason", ""))
         badge = {
@@ -411,7 +470,8 @@ def comparison_tables(comparison: dict, lang: str) -> str:
                 tr(lang, "comparable", "可比"),
                 tr(lang, "comparing successful points with matching settings", "比较成功完成且配置匹配的点"),
             ),
-            "new-segment": (tr(lang, "new segment", "新分段"), reason),
+            "curve": (tr(lang, "curve comparison", "曲线比较"), f"{curve_note} · {reason}"),
+            "curve-no-overlap": (tr(lang, "curve comparison", "曲线比较"), f"{curve_note} · {reason}"),
             "new-arm": (tr(lang, "new arm", "新实验组"), reason),
         }[view["status"]]
         if view["status"] == "comparable" and not any(
@@ -427,18 +487,16 @@ def comparison_tables(comparison: dict, lang: str) -> str:
                 ),
             )
         head = f'<h3>{escape(arm)} <span class="badge {badge_class}">{badge[0]}</span> <span class="muted">{escape(badge[1])}</span></h3>'
-        if view["status"] == "new-segment":
-            changed = ", ".join(f"c{c}" for c in view["changed_concs"]) or tr(lang, "none", "无")
-            out.append(
-                head
-                + '<p class="muted">'
-                + tr(
-                    lang,
-                    f"Points whose serving or measurement settings changed: {changed}. Values are not compared.",
-                    f"服务或测量配置变化的点：{changed}。不做数值比较。",
+        if view["status"] in ("curve", "curve-no-overlap"):
+            changed = ""
+            if view.get("changed_concs"):
+                concs = ", ".join(f"c{c}" for c in view["changed_concs"])
+                changed = (
+                    '<p class="muted">'
+                    + tr(lang, f"Points whose settings changed: {concs}.", f"配置变化的点：{concs}。")
+                    + "</p>"
                 )
-                + "</p>"
-            )
+            out.append(head + changed + curve_table(view, lang))
             continue
         if view["status"] != "comparable":
             out.append(head)
@@ -596,6 +654,7 @@ th { background:#f1f5f9; font-weight:600; font-size:13px; }
 .badge.comparable { background:#dcfce7; color:#166534; } .badge.new-segment { background:#fef3c7; color:#92400e; }
 .badge.new-arm { background:#e0e7ff; color:#3730a3; }
 .badge.no-baseline { background:#f1f5f9; color:#475569; }
+.badge.curve, .badge.curve-no-overlap { background:#e0e7ff; color:#3730a3; }
 .warn { background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:8px 12px; }
 .warn li, .notes li { margin:2px 0; }
 code { font:12px ui-monospace,SFMono-Regular,Menlo,monospace; }
@@ -728,6 +787,8 @@ def render(
         + results.get("model", {}).get("display_name", "AgentX")
         + " · "
         + results.get("target", {}).get("id", "unknown")
+        + " · "
+        + results.get("framework", {}).get("id", "unknown")
         for lang in LANGS
     }
     pages = "\n".join(
@@ -746,9 +807,9 @@ def page(
     generated: str,
     notice: str | dict[str, str] | None = None,
 ) -> str:
-    run, inferencex = results["run"], results["run"]["inferencex"]
+    run = results["run"]
+    source, client = run["source"], run["client"]
     aklr_link = f'<a href="{repo_url}/commit/{run["aklr_sha"]}">{short(run["aklr_sha"])}</a>'
-    inferencex_link = f'<a href="https://github.com/{inferencex["repo"]}/commit/{inferencex["sha"]}">{short(inferencex["sha"])}</a>'
     message = notice.get(lang) if isinstance(notice, dict) else notice
     warn = f'<div class="warn">{escape(message)}</div>' if message else ""
     arms = "".join(
@@ -758,7 +819,7 @@ def page(
     )
     sources = "".join(
         f"<dt>{escape(path.removeprefix('inferencex-e2e/')).replace('/', '/<wbr>')}</dt><dd><code>{blob[:12]}</code></dd>"
-        for path, blob in inferencex.get("sources", {}).items()
+        for path, blob in (source.get("files") or source.get("sources") or {}).items()
     )
     baseline_line = (
         tr(
@@ -789,12 +850,14 @@ def page(
 <header>
 <div class="top"><h1>{tr(lang, "AgentX weekly", "AgentX 周报")} · {
         escape(results.get("model", {}).get("display_name", "AgentX"))
-    } · {escape(results.get("target", {}).get("id", "unknown"))}</h1>
+    } · {escape(results.get("target", {}).get("id", "unknown"))} · {
+        escape(results.get("framework", {}).get("id", "unknown"))
+    }</h1>
 {language_switch(lang)}</div>
 <div class="meta">{tr(lang, "run", "运行")} {escape(run["id"])} · {escape(run["finished_at"])} · {
         tr(lang, "host", "主机")
     } {escape(run["host"])} ·
-AKLR {aklr_link} · InferenceX {inferencex_link} · {progress} · {baseline_line}</div>
+AKLR {aklr_link} · {tr(lang, "client", "客户端")} {source_ref(client)} · {progress} · {baseline_line}</div>
 </header>
 <main>
 {warn}
@@ -836,6 +899,7 @@ AKLR {aklr_link} · InferenceX {inferencex_link} · {progress} · {baseline_line
 <dt>{tr(lang, "target id", "测试目标标识")}</dt><dd>{
         escape(results.get("target", {}).get("id", "unknown"))
     }</dd>
+<dt>{tr(lang, "framework", "框架")}</dt><dd>{escape(results.get("framework", {}).get("id", "unknown"))}</dd>
 <dt>{tr(lang, "weights", "权重")}</dt><dd>{escape(run.get("weights", {}).get("repo", "unknown"))} @ {
         escape(run.get("weights", {}).get("revision", "unknown"))
     }</dd>
@@ -846,13 +910,13 @@ AKLR {aklr_link} · InferenceX {inferencex_link} · {progress} · {baseline_line
 <dt>{tr(lang, "observed GPUs", "实际 GPU")}</dt><dd>{
         escape(json.dumps(run.get("hardware", {}), ensure_ascii=False))
     }</dd>
-<dt>{tr(lang, "InferenceX image", "InferenceX 镜像")}</dt><dd><code>{
-        escape(run["image"]["inferencex"])
+<dt>{tr(lang, "recipe image", "recipe 镜像")}</dt><dd><code>{
+        escape(run["image"].get("recipe") or "-")
     }</code></dd>
-<dt>InferenceX</dt><dd>{escape(inferencex["repo"])} {inferencex_link} · {
-        escape(inferencex.get("commit_subject", ""))
+<dt>{tr(lang, "recipe source", "recipe 来源")}</dt><dd>{escape(source.get("kind", ""))} · {
+        source_ref(source)
     }</dd>
-<dt>{tr(lang, "config key", "配置键")}</dt><dd><code>{escape(inferencex["config_key"])}</code></dd>
+<dt>{tr(lang, "client", "客户端")}</dt><dd>{source_ref(client)}</dd>
 {sources}{arms}
 <dt>{tr(lang, "generated", "生成时间")}</dt><dd>{generated}</dd>
 </dl></div>
@@ -861,59 +925,44 @@ AKLR {aklr_link} · InferenceX {inferencex_link} · {progress} · {baseline_line
 """
 
 
+def source_ref(source: dict) -> str:
+    """Link a repo@sha source, or show its URL and ref."""
+    repo, sha = source.get("repo"), source.get("sha")
+    if repo and sha:
+        text = f'{escape(repo)} <a href="https://github.com/{escape(repo)}/commit/{escape(sha)}">{short(sha)}</a>'
+    else:
+        text = escape(str(source.get("url") or repo or "-"))
+        if source.get("ref"):
+            text += f" @ {escape(str(source['ref']))}"
+    extra = source.get("config_key") or source.get("commit_subject")
+    return text + (f" · <code>{escape(str(extra))}</code>" if extra else "")
+
+
 def selection_section(results: dict, lang: str) -> str:
     selection = results["run"].get("selection")
-    if results["run"].get("point_policy", "all") != "inferencex-pareto" or not selection:
+    if not selection:
         return ""
     selected = len(selection["points"])
     successful = sum(p["status"] == "ok" for p in results["points"])
-    scope = selection["scope"]
-    text = tr(
-        lang,
-        f"InferenceX Pareto selection: {selected} of {selection['candidate_count']} local candidates selected; "
-        f"{successful}/{selected} succeeded. This validates the selected plan, not the full concurrency grid.",
-        f"InferenceX 前沿选点：从 {selection['candidate_count']} 个本地候选点中选中 {selected} 个，"
-        f"成功 {successful}/{selected}。本次验证范围为选点计划，不代表完整并发矩阵已验证。",
-    )
-    source = (
-        tr(lang, "Upstream curve", "上游曲线")
-        + ": "
-        + " / ".join(str(scope[key]) for key in ("model", "hardware", "framework", "precision"))
-        + f" · {selection['curve_date']} · {tr(lang, 'run', '运行')} {selection['curve_workflow_run_id']}"
-    )
-    reasons = {
-        "off-upstream-frontier": tr(lang, "Off upstream frontier", "未进入上游前沿"),
-        "no-matching-upstream-measurement": tr(lang, "No matching upstream measurement", "无匹配的上游测量"),
-    }
-    rows = "".join(
-        f"<tr><td><code>{escape(p['point_id'])}</code></td><td>"
-        + tr(lang, "Not run", "未运行")
-        + f"</td><td>{escape(reasons.get(p['reason'], p['reason']))}</td></tr>"
-        for p in selection["unselected"]
-    )
-    return (
-        f'<div class="card"><p>{escape(text)}</p><p>{escape(source)}</p>'
-        + "<p>"
+    paragraphs = [
+        escape(
+            tr(
+                lang,
+                f"Upstream Pareto frontier: {selected} points selected; {successful}/{selected} succeeded. "
+                "This validates the selected points, not the full grid.",
+                f"上游 Pareto 前沿选点：选中 {selected} 个，成功 {successful}/{selected}。"
+                "本次只验证选中的点，不代表完整并发矩阵。",
+            )
+        ),
+        tr(lang, "Selection", "选点")
+        + f" <code>{escape(selection['selection_sha256'][:12])}</code> · "
         + tr(
             lang,
-            "Upstream selection axes: P90 E2E normalized interactivity × input + output throughput/GPU",
-            "上游选点坐标：P90 端到端归一化交互速度 × 单 GPU 输入+输出吞吐",
-        )
-        + " · "
-        f"<code>{escape(selection['selection_sha256'][:12])}</code></p>"
-        + "<p>"
-        + tr(
-            lang,
-            "The upstream frontier selects candidates using E2E interactivity; the chart below recomputes "
-            "the frontier using this run's full-response interactivity. "
-            "Different hardware or runtime may have a different full frontier.",
-            "上游前沿按端到端交互速度选点；下图按本次实测的完整响应交互速度重新计算前沿。"
-            "硬件或运行环境不同，完整前沿可能不同。",
-        )
-        + "</p><details><summary>"
-        + tr(lang, "Unselected points", "未选中的点")
-        + f"</summary><table><tbody>{rows}</tbody></table></details></div>"
-    )
+            "the chart below recomputes the frontier from this run's full-response interactivity.",
+            "下图按本次实测的完整响应交互速度重新计算前沿。",
+        ),
+    ]
+    return '<div class="card">' + "".join(f"<p>{p}</p>" for p in paragraphs) + "</div>"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1003,10 +1052,6 @@ def write_report(
                 )
             )
         notices[lang] = " ".join(messages)
-    results = {
-        **results,
-        "serving": {key: value for key, value in results["serving"].items() if key != "warnings"},
-    }
     if results["run"].get("mode") != "live":
         raise ValueError("only live measurement results are supported")
     if baseline is not None and baseline["run"].get("mode") != "live":
@@ -1024,6 +1069,7 @@ def write_report(
         {
             "model": results.get("model", {}),
             "target": results.get("target", {}),
+            "framework": results.get("framework", {}),
             "axes": {"x": X, "y": Y},
             "frontiers": frontiers(results),
             "comparison": comparison,

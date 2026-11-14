@@ -15,9 +15,9 @@ from tests.benchmarks.test_agentx_metrics import (
     REPO,
     analysis,
     legacy_results,
-    recipe_resolve,
     report,
     report_all,
+    sealed_selection,
     utils,
 )
 
@@ -37,7 +37,7 @@ def formal_results(run_id="fixture-run"):
                 exp_name=f"tp1-c{conc}",
                 serve_spec_sha256=utils.sha256_json({"arm": "tp1", "conc": conc}),
             )
-            point["measurement"]["client_env"] = {"CONC": str(conc)}
+            point["measurement"]["client_env"] = {"FRAMEWORK": "sglang", "CONC": str(conc)}
             point["measurement_sha256"] = utils.sha256_json(point["measurement"])
             points.append(point)
         mode["points"] = points
@@ -45,6 +45,16 @@ def formal_results(run_id="fixture-run"):
             concs=[1, 2, 3],
             arm_measurement_sha256=utils.sha256_json({p["conc"]: p["measurement"] for p in points}),
         )
+    return use_selection(results, pareto_selection())
+
+
+def pareto_selection():
+    return sealed_selection(POINT_IDS)
+
+
+def use_selection(results, selection):
+    for mode in (results, results["control"]):
+        mode["run"].update(point_policy=selection["policy"], selection=copy.deepcopy(selection))
     return results
 
 
@@ -57,7 +67,7 @@ class AgentXBaselineTests(unittest.TestCase):
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         self.config = self.root / "config.yaml"
         self.config.write_text("report:\n  repo_url: https://example.invalid/repo\n")
-        self.relative = utils.target_path("fixture", "fixture-gpu")
+        self.relative = utils.target_path("fixture", "fixture-gpu", "sglang")
         self.site_count = 0
         # Git history is independent of baseline eligibility and metric comparisons.
         self.enterContext(mock.patch.object(report, "landed", return_value=None))
@@ -66,20 +76,20 @@ class AgentXBaselineTests(unittest.TestCase):
     def publish(self, results, previous=None):
         self.site_count += 1
         run_dir = self.root / f"run-{self.site_count}"
-        policy = results["run"].get("point_policy", "all")
+        policy = results["run"]["point_policy"]
         target = {
             "model": results["model"],
             "target": results["target"],
+            "framework": results["framework"],
             "status": "resolved",
             "serving_sha256": results["run"]["serving_sha256"],
             "point_policy": policy,
             "point_ids": POINT_IDS,
+            "selection_manifest_sha256": results["run"]["selection"]["manifest_sha256"],
         }
-        if policy == recipe_resolve.POLICY:
-            target["selection_manifest_sha256"] = results["run"]["selection"]["manifest_sha256"]
         plan_path = utils.write_json(
             run_dir / "plan.json",
-            {"schema": 3, "run_id": results["run"]["id"], "targets": [target]},
+            {"schema": 4, "run_id": results["run"]["id"], "targets": [target]},
         )
         results_dir = run_dir / "results"
         result_path = utils.write_json(results_dir / self.relative / "results.json", results)
@@ -98,7 +108,7 @@ class AgentXBaselineTests(unittest.TestCase):
         self.assertEqual(utils.read_json(site / "manifest.json"), manifest)
         return site, manifest["targets"][0]
 
-    def baseline(self, site, kind="live"):
+    def baseline(self, site, kind="pareto"):
         return utils.read_json(site / self.relative / f"baseline-{kind}.json")
 
     def test_any_successful_mode_promotes_without_requiring_a_successful_pair(self):
@@ -121,11 +131,22 @@ class AgentXBaselineTests(unittest.TestCase):
                 self.assertEqual(target["points_ok"], 2 if success == "disjoint" else 1)
                 self.assertEqual(target["points_total"], 6)
                 self.assertIsNone(target["failure_stage"])
-                self.assertEqual(target["baselines"]["live"], current["run"]["finished_at"])
+                self.assertEqual(target["baselines"]["pareto"], current["run"]["finished_at"])
                 stored = self.baseline(site)
                 self.assertEqual(stored, utils.validated_results(current))
                 self.assertFalse(utils.complete_measurement(stored))
                 self.assertNotEqual(analysis.compare_aklr(stored)["status"], "ok")
+
+    def test_sites_from_before_frameworks_start_fresh_baselines(self):
+        previous, _ = self.publish(formal_results("previous-run"))
+        manifest = utils.read_json(previous / "manifest.json")
+        utils.write_json(previous / "manifest.json", {**manifest, "schema": 3})
+        current = formal_results("current-run")
+        site, target = self.publish(current, previous)
+        self.assertEqual(target["baselines"], {"pareto": current["run"]["finished_at"]})
+        self.assertEqual(
+            utils.read_json(site / self.relative / "report.json")["comparison"]["status"], "no-baseline"
+        )
 
     def test_no_valid_success_preserves_the_previous_baseline(self):
         previous, _ = self.publish(formal_results("previous-run"))
@@ -158,7 +179,7 @@ class AgentXBaselineTests(unittest.TestCase):
                 fail(point)
         site, target = self.publish(current)
         self.assertEqual(target["baselines"], {})
-        self.assertFalse((site / self.relative / "baseline-live.json").exists())
+        self.assertFalse((site / self.relative / "baseline-pareto.json").exists())
 
     def test_partial_baseline_round_trips_and_compares_only_successful_points(self):
         prior = formal_results("previous-run")
@@ -234,7 +255,7 @@ class AgentXBaselineTests(unittest.TestCase):
                 self.assertIsNone(target["failure_stage"])
                 self.assertEqual(self.baseline(site), expected)
 
-    def test_interrupted_baseline_does_not_compare_changed_point_settings(self):
+    def test_changed_point_settings_compare_frontiers_instead_of_points(self):
         prior = formal_results("interrupted-run")
         for mode in (prior, prior["control"]):
             mode["points"] = mode["points"][:1]
@@ -253,8 +274,10 @@ class AgentXBaselineTests(unittest.TestCase):
         comparison = utils.read_json(site / self.relative / "report.json")["comparison"]
         self.assertEqual(comparison["status"], "ok")
         arm = comparison["arms"]["tp1"]
-        self.assertIsNone(arm.get("tput_geomean_ratio"))
-        self.assertFalse(any(row.get("tput_ratio") for row in arm["points"]))
+        self.assertEqual(arm["status"], "curve")
+        self.assertEqual(arm["changed_concs"], [1])
+        self.assertEqual(arm["points"], [])
+        self.assertAlmostEqual(arm["tput_geomean_ratio"], 1)
 
     def test_mismatched_pair_provenance_does_not_replace_the_baseline(self):
         previous, _ = self.publish(formal_results("previous-run"))
@@ -289,44 +312,3 @@ class AgentXBaselineTests(unittest.TestCase):
                 self.assertEqual(target["status"], "failed")
                 self.assertEqual(target["failure_stage"], "report")
                 self.assertEqual(self.baseline(site), expected)
-
-    def test_pareto_subset_updates_only_the_pareto_baseline(self):
-        previous, _ = self.publish(formal_results("full-grid-run"))
-        live = self.baseline(previous)
-        current = formal_results("pareto-run")
-        selection = {
-            "schema": 1,
-            "policy": recipe_resolve.POLICY,
-            "algorithm": recipe_resolve.ALGORITHM,
-            "scope": {
-                "model": "fixture",
-                "hardware": "fixture-gpu",
-                "framework": "sglang",
-                "precision": "fp4",
-            },
-            "curve_date": "2026-11-09",
-            "curve_workflow_run_id": "fixture-curve",
-            "candidate_count": 3,
-            "points": POINT_IDS,
-            "unselected": [],
-            "errors": [],
-            "selection_sha256": "5" * 64,
-        }
-        selection["manifest_sha256"] = utils.sha256_json(selection)
-        for mode in (current, current["control"]):
-            mode["run"].update(
-                point_policy=recipe_resolve.POLICY, selection=copy.deepcopy(selection), completed=False
-            )
-            mode["points"] = mode["points"][:1]
-            mode["serving"]["arms"]["tp1"].pop("arm_measurement_sha256")
-        site, target = self.publish(current, previous)
-        self.assertEqual(target["status"], "partial")
-        self.assertEqual(set(target["baselines"]), {"live", "pareto"})
-        self.assertEqual(self.baseline(site), live)
-        self.assertEqual(self.baseline(site, "pareto")["run"]["id"], "pareto-run")
-        next_site, _ = self.publish(formal_results("next-full-grid-run"), site)
-        self.assertEqual(self.baseline(next_site, "pareto")["run"]["id"], "pareto-run")
-
-
-if __name__ == "__main__":
-    unittest.main()

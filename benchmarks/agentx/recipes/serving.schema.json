@@ -1,0 +1,113 @@
+{
+ "$schema": "https://json-schema.org/draft/2020-12/schema",
+ "$id": "https://github.com/AMD-AGI/AKLR/benchmarks/agentx/recipes/serving.schema.json",
+ "title": "AgentX recipe serving.json (schema 4)",
+ "description": "Written by the recipe module to recipes/<family>/<target-id>/<framework>/serving.<model-id>.json and reviewed in a PR. model, target, framework, weights and hardware come from agentx.yaml, and every point's client_env.FRAMEWORK must equal that framework; plan adds arms, advisory env, devices, per-point trace, hashes and the sealed selection. None of those fields may appear here.",
+ "type": "object",
+ "required": ["schema", "image", "source", "client", "trace", "points"],
+ "not": {"anyOf": [
+  {"required": ["model"]}, {"required": ["target"]}, {"required": ["framework"]}, {"required": ["weights"]}, {"required": ["hardware"]},
+  {"required": ["arms"]}, {"required": ["plan_id"]}, {"required": ["grid_sha256"]}, {"required": ["selection"]}
+ ]},
+ "properties": {
+  "schema": {"const": 4},
+  "image": {
+   "type": "object",
+   "required": ["run"],
+   "properties": {
+    "run": {"description": "Execution image pinned by digest.", "type": "string", "pattern": "@sha256:[0-9a-f]{64}$"},
+    "recipe": {"description": "Image the upstream recipe was measured with, for reference.", "type": "string"}
+   }
+  },
+  "source": {
+   "description": "Where the recipe came from. Extra keys (config_key, files, deps, ...) are kept for review and reports.",
+   "type": "object",
+   "required": ["kind"],
+   "anyOf": [{"required": ["repo"]}, {"required": ["url"]}],
+   "properties": {
+    "kind": {"enum": ["inferencex", "cookbook"]},
+    "repo": {"type": "string"},
+    "url": {"type": "string"},
+    "ref": {"type": "string"},
+    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+   }
+  },
+  "client": {
+   "description": "InferenceX checkout providing the AgentX client and trace loaders (inferencex-e2e).",
+   "type": "object",
+   "required": ["repo", "sha"],
+   "properties": {"repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"}, "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}}
+  },
+  "trace": {
+   "description": "Agent trace dataset replayed by the client at every point; plan copies it into each point and sets client_env.WEKA_LOADER_OVERRIDE to loader.",
+   "type": "object",
+   "required": ["loader", "repo", "revision"],
+   "properties": {
+    "loader": {"type": "string", "minLength": 1},
+    "repo": {"type": "string", "minLength": 1},
+    "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+   }
+  },
+  "points": {
+   "description": "Only the points on the upstream measured Pareto frontier; plan runs all of them. ARM:CONC ids must be unique.",
+   "type": "array",
+   "minItems": 1,
+   "items": {
+    "type": "object",
+    "required": ["arm", "conc", "exp_name", "served_model_name", "gpus", "launch", "client_env", "runtime"],
+    "not": {"anyOf": [{"required": ["hashes"]}, {"required": ["trace"]}]},
+    "properties": {
+     "arm": {"description": "Serving scheme name; plan groups points by it.", "type": "string", "minLength": 1},
+     "conc": {"type": "integer", "minimum": 1},
+     "exp_name": {"description": "Unique per recipe; names the point's result directory.", "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
+     "served_model_name": {"type": "string", "minLength": 1},
+     "gpus": {"description": "Must not exceed the target's hardware.gpu_count; plan sets HIP_VISIBLE_DEVICES from it.", "type": "integer", "minimum": 1},
+     "launch": {
+      "description": "Exact server command and environment; ${AGENTX_MODEL_PATH} and ${AGENTX_PORT} are filled at run time.",
+      "type": "object",
+      "required": ["command", "env"],
+      "properties": {
+       "command": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+       "env": {
+        "type": "object",
+        "additionalProperties": {"type": "string"},
+        "not": {"anyOf": [
+         {"required": ["HIP_VISIBLE_DEVICES"]}, {"required": ["ROCR_VISIBLE_DEVICES"]}, {"required": ["CUDA_VISIBLE_DEVICES"]}
+        ]}
+       }
+      }
+     },
+     "client_env": {
+      "description": "Environment of the InferenceX AgentX client. Its parallelism sets the client's num_gpus and so throughput per GPU: TP x PP_SIZE x PCP_SIZE must equal gpus. CONC must equal the point's conc; AIPERF_EXPERIMENTAL_FAST must be 0, since fast mode replaces DURATION.",
+      "type": "object",
+      "required": ["FRAMEWORK", "CONC", "TP", "EP_SIZE", "PP_SIZE", "PCP_SIZE", "DCP_SIZE", "DP_ATTENTION", "TOTAL_CPU_DRAM_GB", "AIPERF_EXPERIMENTAL_FAST"],
+      "additionalProperties": {"type": "string"},
+      "properties": {
+       "CONC": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+       "TP": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+       "EP_SIZE": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+       "PP_SIZE": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+       "PCP_SIZE": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+       "DCP_SIZE": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+       "DP_ATTENTION": {"enum": ["true", "false"]},
+       "TOTAL_CPU_DRAM_GB": {"type": "string", "pattern": "^[0-9]+$"},
+       "AIPERF_EXPERIMENTAL_FAST": {"const": "0"}
+      },
+      "not": {"required": ["WEKA_LOADER_OVERRIDE"]}
+     },
+     "runtime": {
+      "type": "object",
+      "required": ["port", "ready_timeout_s", "point_timeout_s", "poll_s"],
+      "properties": {
+       "port": {"type": ["integer", "null"], "minimum": 1, "maximum": 65535},
+       "ready_timeout_s": {"type": "integer", "exclusiveMinimum": 0},
+       "point_timeout_s": {"type": "integer", "exclusiveMinimum": 0},
+       "poll_s": {"type": "number", "exclusiveMinimum": 0}
+      }
+     },
+     "recipe_fingerprint": {"type": "string"}
+    }
+   }
+  }
+ }
+}
