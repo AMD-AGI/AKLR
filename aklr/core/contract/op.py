@@ -17,6 +17,7 @@ from typing import Annotated, Any, Final
 from pydantic import Field, ValidationError, model_validator
 
 from aklr.core.contract import expr, semantics
+from aklr.core.contract.cost import Cost
 from aklr.core.contract.locate import (
     OP_PACKAGE_PATTERN,
     op_module,
@@ -569,6 +570,20 @@ class OpContract(FrozenModel):
         ``NotImplementedError`` for a call it does not serve."""
         return self._optional_function("baseline", self.baseline_name)
 
+    def cost_at(self, point: PointSpec) -> Cost | None:
+        """One call's work at ``point``: the op's ``cost.py`` function ``<contract>_cost``
+        of the Point's symbols (``Domain.symbols``) and each present tensor's bytes in
+        storage; None when the op has none."""
+        cost = self._optional_function("cost", f"{contract_name(self.contract_id)}_cost")
+        if cost is None:
+            return None
+        tensor_bytes = {
+            name: self.storage_bytes_of(name, point)
+            for name, dtype in point.dtypes.items()
+            if dtype is not None
+        }
+        return cost(self.domain.symbols(point), tensor_bytes)
+
     def _optional_function(self, submodule: str, name: str) -> Callable | None:
         try:
             module = op_module(self.op_package, submodule)
@@ -609,6 +624,12 @@ class OpContract(FrozenModel):
         """``dtype_storage_shape_of`` in ``tensor``'s layout at ``point``."""
         layout = self.layout_variants.by_name[point.layout_variant_name].layout_of(tensor)
         return layout.storage_shape(self.dtype_storage_shape_of(tensor, point))
+
+    def storage_bytes_of(self, tensor: str, point: PointSpec) -> int:
+        """The bytes of ``tensor``'s ``storage_shape_of``, whose last dim a 4-bit dtype
+        already packs two values a byte."""
+        bits = DTYPE_TRAITS[point.dtypes[tensor]].bits
+        return math.prod(self.storage_shape_of(tensor, point)) * max(bits, 8) // 8
 
     def name_at(self, point: PointSpec) -> str:
         """The schema name for ``point``: the contract name, each attr's part, root
