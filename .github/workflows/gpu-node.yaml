@@ -91,6 +91,7 @@ jobs:
       AKLR_GITHUB_TOKEN_FILE: ${{ vars.AKLR_GITHUB_TOKEN_FILE }}
       # Comma/space-separated lists; one allocation is requested per account and
       # partition pair, the first to start is kept and the rest are cancelled.
+      # An account entry may be ACCOUNT:QOS; a bare account uses its default QOS.
       AKLR_SPUR_ACCOUNT: ${{ vars.AKLR_SPUR_ACCOUNT }}
       AKLR_SPUR_PARTITION: ${{ vars.AKLR_SPUR_PARTITION }}
       # Unset resource settings take manage_spur_runner.sh's defaults.
