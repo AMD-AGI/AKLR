@@ -379,5 +379,6 @@ Read only by `RuntimeEnv()` in `aklr/core/platform/env.py`.
 | `AKLR_EXPORT` | `1`, `0`, unset | record calls; any other value is an error |
 | `AKLR_EXPORT_DIR` | a path | the export directory, default `./aklr_export`; setting it alone records nothing |
 | `AKLR_MEASURED_DIR` | a path | a directory laid out like the checkout whose schemas replace the committed ones they name |
+| `AKLR_FLYDSL_FASTCALL` | `1`, `0`, unset | `1` or unset: a FlyDSL kernel's launcher runs one `flyc.compile`d function per argument signature, skipping FlyDSL's per-call checks of globals, `FLYDSL_*` env vars and hints; `0`: FlyDSL's own call path, for a process that changes them after a launch; any other value is an error |
 | `AKLR_SGLANG_PLUGIN` | `1`, `0`, unset | `1`: the sglang plugin hooks sglang's layers to its ops (`aklr/plugins/README.md`); any other value is an error |
 | `AKLR_TRACE` | `plugin`, `op`, `all`, `0`, unset | log, as warnings, each distinct hooked call once per process: `plugin` the vLLM and sglang routes (`[aklr plugin]` lines, logger `aklr.trace.plugin`), `op` every op api dispatch, including the ones aiter makes (`[aklr op]` lines, logger `aklr.trace.op`: the Point, and the kernel serving it or the fallback reason), `all` both; CUDA graph replays run no Python and log nothing; any other value is an error |
