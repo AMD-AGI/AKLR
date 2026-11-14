@@ -122,6 +122,8 @@ def _triton_gemm_a16w16(
     skip_reduce=False,
     kernel_type="bandwidth_bound",
     backend=None,
+    # the K3 image's aiter adds a schedule option; CI's has none
+    persistent=None,
 ):
     return aklr_aiter.gemm_a16w16(
         x, w, bias=bias, dtype=dtype, y=y, activation=activation, skip_reduce=skip_reduce
