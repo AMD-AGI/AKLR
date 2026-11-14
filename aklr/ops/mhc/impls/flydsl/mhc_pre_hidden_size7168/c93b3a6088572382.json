@@ -1,0 +1,266 @@
+{
+  "schema_version": 5,
+  "name": "mhc_pre_hidden_size7168",
+  "contract_id": "mhc_pre@1.0",
+  "description": "Mix four residual streams into an optionally rms-normed layer input; derive the post mixes.",
+  "op_type": "mhc",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "hidden_size": {
+      "type": "const",
+      "value": 7168,
+      "description": "Hidden size of one stream."
+    },
+    "projection_size": {
+      "type": "const",
+      "value": 28672,
+      "description": "Projection input: four streams."
+    }
+  },
+  "attrs": {
+    "has_norm_weight": false
+  },
+  "inputs": {
+    "residual": {
+      "shape": [
+        "n_tokens",
+        4,
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Four residual streams."
+    },
+    "proj_weight": {
+      "shape": [
+        24,
+        "projection_size"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 28672
+      },
+      "description": "Projects the flattened streams to 24 mix logits."
+    },
+    "mix_scale": {
+      "shape": [3],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": 0,
+        "log2_hi": 0
+      },
+      "description": "Scale of the pre, post and combination logits."
+    },
+    "mix_bias": {
+      "shape": [24],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Bias of the 24 mix logits."
+    },
+    "rms_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to the mean square of the streams."
+    },
+    "pre_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to each pre mix after its sigmoid."
+    },
+    "sinkhorn_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added in each Sinkhorn normalization."
+    },
+    "post_multiplier": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies each post mix after its sigmoid."
+    },
+    "sinkhorn_iters": {
+      "shape": null,
+      "dtype": "int32",
+      "description": "Sinkhorn normalizations of the combination mix."
+    },
+    "norm_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to the mean square of layer_input."
+    }
+  },
+  "outputs": {
+    "post_mix": {
+      "shape": [
+        "n_tokens",
+        4,
+        1
+      ],
+      "dtype": "float32",
+      "description": "Post mix of the next mHC post."
+    },
+    "comb_mix": {
+      "shape": [
+        "n_tokens",
+        4,
+        4
+      ],
+      "dtype": "float32",
+      "description": "Combination mix of the next mHC post."
+    },
+    "layer_input": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The streams summed under the pre mix."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 1
+      },
+      "scalars": {
+        "rms_eps": 9.999999974752427e-07,
+        "pre_eps": 9.999999974752427e-07,
+        "sinkhorn_eps": 9.999999974752427e-07,
+        "post_multiplier": 2.0,
+        "sinkhorn_iters": 20,
+        "norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 2
+      },
+      "scalars": {
+        "rms_eps": 9.999999974752427e-07,
+        "pre_eps": 9.999999974752427e-07,
+        "sinkhorn_eps": 9.999999974752427e-07,
+        "post_multiplier": 2.0,
+        "sinkhorn_iters": 20,
+        "norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4
+      },
+      "scalars": {
+        "rms_eps": 9.999999974752427e-07,
+        "pre_eps": 9.999999974752427e-07,
+        "sinkhorn_eps": 9.999999974752427e-07,
+        "post_multiplier": 2.0,
+        "sinkhorn_iters": 20,
+        "norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8
+      },
+      "scalars": {
+        "rms_eps": 9.999999974752427e-07,
+        "pre_eps": 9.999999974752427e-07,
+        "sinkhorn_eps": 9.999999974752427e-07,
+        "post_multiplier": 2.0,
+        "sinkhorn_iters": 20,
+        "norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16
+      },
+      "scalars": {
+        "rms_eps": 9.999999974752427e-07,
+        "pre_eps": 9.999999974752427e-07,
+        "sinkhorn_eps": 9.999999974752427e-07,
+        "post_multiplier": 2.0,
+        "sinkhorn_iters": 20,
+        "norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 32
+      },
+      "scalars": {
+        "rms_eps": 9.999999974752427e-07,
+        "pre_eps": 9.999999974752427e-07,
+        "sinkhorn_eps": 9.999999974752427e-07,
+        "post_multiplier": 2.0,
+        "sinkhorn_iters": 20,
+        "norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 64
+      },
+      "scalars": {
+        "rms_eps": 9.999999974752427e-07,
+        "pre_eps": 9.999999974752427e-07,
+        "sinkhorn_eps": 9.999999974752427e-07,
+        "post_multiplier": 2.0,
+        "sinkhorn_iters": 20,
+        "norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 128
+      },
+      "scalars": {
+        "rms_eps": 9.999999974752427e-07,
+        "pre_eps": 9.999999974752427e-07,
+        "sinkhorn_eps": 9.999999974752427e-07,
+        "post_multiplier": 2.0,
+        "sinkhorn_iters": 20,
+        "norm_eps": 9.999999974752427e-07
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.2"
+    },
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"FlyDSL mHC pre without a norm weight: a matrix-core split-K projection of the residual onto the mix rows,\nthen one wave per (token, hidden block) that folds the partials into the gates, Sinkhorn and ``layer_input``.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nimport torch\nfrom flydsl._mlir import ir as _ir\nfrom flydsl._mlir.dialects import llvm as _llvm\n\nS = 4\nD = 7168\nP = S * D\nM = 2 * S + S * S  # pre, post and comb mixes\nNPART = 32  # the M mixes and the sum of squares, padded\nWAVE = 64\nTILE = 16  # MFMA M and N\nKSTEP = 32  # MFMA K\n_LOAD_BITS = 128\nVEC = _LOAD_BITS // fx.BFloat16.width  # bf16 per load\n_LOG2E = 1.4426950408889634\n\n\ndef _f32(v):\n    return fx.Float32(v)\n\n\ndef _rcp(x):\n    return fx.Float32(fx.rocdl.rcp(_ir.F32Type.get(), fx.as_ir_value(x)))\n\n\ndef _rsq(x):\n    return fx.Float32(fx.rocdl.rsq(_ir.F32Type.get(), fx.as_ir_value(x)))\n\n\ndef _exp(x):\n    return fx.Float32(fx.rocdl.exp2(_ir.F32Type.get(), fx.as_ir_value(x * _f32(_LOG2E))))\n\n\ndef _sigmoid(z):\n    return _rcp(_f32(1.0) + _exp(_f32(0.0) - z))\n\n\ndef _permute_pair(a, b, offset):\n    op = fx.rocdl.permlane16_swap if offset == 16 else fx.rocdl.permlane32_swap\n    ai = fx.Float32(a).bitcast(fx.Int32).ir_value()\n    bi = fx.Float32(b).bitcast(fx.Int32).ir_value()\n    pair = op(_ir.Type.parse(\"!llvm.struct<(i32, i32)>\"), ai, bi, False, True)\n    return [\n        fx.Int32(_llvm.ExtractValueOp(fx.Int32.ir_type, pair, [i]).result).bitcast(fx.Float32)\n        for i in range(2)\n    ]\n\n\ndef _fixed_shuffle(v, offset):\n    lo, hi = _permute_pair(v, v, offset)\n    return ((fx.thread_idx.x & offset) != 0).select(lo, hi)\n\n\ndef _scatter(vals, offset):\n    h = (len(vals) + 1) // 2\n    hi = vals[h:] + [_f32(0.0)] * (2 * h - len(vals))\n    out = []\n    for lo_k, hi_k in zip(vals[:h], hi):\n        a, b = _permute_pair(lo_k, hi_k, offset)\n        out.append(a + b)\n    return out\n\n\ndef _gather(vals, offset, n_orig):\n    pairs = [_permute_pair(v, v, offset) for v in vals]\n    return ([p[0] for p in pairs] + [p[1] for p in pairs])[:n_orig]\n\n\n_DPP_XOR1 = 0xB1  # quad_perm [1,0,3,2]\n_DPP_XOR2 = 0x4E  # quad_perm [2,3,0,1]\n_DPP_ROR4 = 0x124  # row_ror:4\n_DPP_ROR8 = 0x128  # row_ror:8\n_DPP_HMIRROR = 0x141  # row_half_mirror\n\n\ndef _dpp(v, ctrl):\n    return fx.Float32(\n        fx.rocdl.update_dpp(_ir.F32Type.get(), fx.as_ir_value(v), fx.as_ir_value(v), ctrl, 0xF, 0xF, True)\n    )\n\n\ndef _reduce_all(vals):\n    \"\"\"Wave reduction in a fixed order; every lane ends with every sum.\"\"\"\n    sizes = []\n    for offset in (32, 16):\n        sizes.append(len(vals))\n        vals = _scatter(vals, offset)\n    for ctrl in (_DPP_XOR1, _DPP_XOR2, _DPP_HMIRROR, _DPP_ROR8):\n        vals = [v + _dpp(v, ctrl) for v in vals]\n    for offset, n in zip((16, 32), reversed(sizes)):\n        vals = _gather(vals, offset, n)\n    return vals\n\n\ndef _sinkhorn_lane(vals, rms, s2, mbv, L, eps, iters):\n    \"\"\"Sinkhorn on the S x S comb matrix; lane ``L`` of a DPP row holds entry (L // S, L % S).\"\"\"\n    v = list(vals)\n    for b in range(len(v).bit_length() - 1):\n        up = (L & (1 << b)) != 0\n        v = [up.select(v[2 * m + 1], v[2 * m]) for m in range(len(v) // 2)]\n    z = v[0] * rms * s2 + mbv\n    mx = fx.max(z, _dpp(z, _DPP_XOR1))\n    mx = fx.max(mx, _dpp(mx, _DPP_XOR2))\n    e = _exp(z - mx)\n    tot = e + _dpp(e, _DPP_XOR1)\n    tot = tot + _dpp(tot, _DPP_XOR2)\n    c = e * _rcp(tot) + eps\n\n    def col(c):\n        cs = c + _dpp(c, _DPP_ROR4)\n        cs = cs + _dpp(cs, _DPP_ROR8)\n        return c * _rcp(cs + eps)\n\n    def row(c):\n        rs = c + _dpp(c, _DPP_XOR1)\n        rs = rs + _dpp(rs, _DPP_XOR2)\n        return c * _rcp(rs + eps)\n\n    c = col(c)\n    for _ in range(iters - 1):\n        c = col(row(c))\n    return c\n\n\ndef _load_vec(tensor, offset, size, dtype):\n    n = _LOAD_BITS // dtype.width\n    if size > n:\n        lo = _load_vec(tensor, offset, n, dtype)\n        hi = _load_vec(tensor, offset + n, size - n, dtype)\n        return fx.Vector.from_elements(\n            [lo[e] for e in range(n)] + [hi[e] for e in range(size - n)], dtype=dtype\n        )\n    ty = _ir.VectorType.get([size], dtype.ir_type)\n    return fx.Vector(fx.ptr_load(fx.get_iter(tensor) + offset, result_type=ty), (size,), dtype)\n\n\ndef _store_vec(tensor, offset, value):\n    fx.ptr_store(fx.as_ir_value(value), fx.get_iter(tensor) + offset)\n\n\ndef _buffer_view(tensor, shape):\n    row_major = tuple(range(len(shape) - 1, -1, -1))\n    view = fx.make_view(fx.get_iter(tensor), fx.make_ordered_layout(shape, row_major))\n    return fx.rocdl.make_buffer_tensor(view)\n\n\ndef _tok(T, base, idx):\n    if T < TILE:\n        return idx % T\n    return base + idx\n\n\ndef _config(T):\n    \"\"\"(K slices of k_part, hidden blocks of k_fin) for ``T`` tokens.\"\"\"\n    if T <= 32:\n        return 224, 14\n    if T <= 64:\n        return 224, 7\n    return 128, 2\n\n\ndef _make(T, NK, NHB, rms_eps, pre_eps, sk_eps, post_mult, iters):\n    NT = (T + TILE - 1) // TILE\n    KW = P // NK\n    STEPS = KW // KSTEP\n    assert KW % KSTEP == 0\n    KL = KSTEP * TILE // WAVE  # K elements per lane per MFMA\n    ACC = TILE * TILE // WAVE  # accumulator rows per lane\n    HB = D // NHB\n    FIT = HB // (WAVE * VEC)\n    assert FIT >= 1 and HB % (WAVE * VEC) == 0\n    NU = (NK + WAVE - 1) // WAVE\n\n    @flyc.kernel\n    def k_part(res: fx.Tensor, w: fx.Tensor, part: fx.Tensor):\n        res = _buffer_view(res, (T, P))\n        w = _buffer_view(w, (M, P))\n        part = _buffer_view(part, (T, NK, NPART))\n        acc_ty = _ir.VectorType.get([ACC], _ir.F32Type.get())\n        lane = fx.thread_idx.x\n        r = lane % TILE\n        q = lane // TILE\n        ks = fx.block_idx.x\n        tb = fx.block_idx.y\n        tok = _tok(T, tb * TILE, r)\n        m1 = TILE + r % (M - TILE)\n        k0 = ks * KW + q * KL\n\n        avs = []\n        w0s = []\n        w1s = []\n        for c in fx.range_constexpr(STEPS):\n            k = k0 + c * KSTEP\n            avs.append(_load_vec(res, tok * P + k, KL, fx.BFloat16))\n            w0s.append(_load_vec(w, r * P + k, KL, fx.Float32))\n            w1s.append(_load_vec(w, m1 * P + k, KL, fx.Float32))\n        zero = fx.Vector.from_elements([_f32(0.0)] * ACC, dtype=fx.Float32)\n        acc0 = zero\n        acc1 = zero\n        sq = _f32(0.0)\n        for c in fx.range_constexpr(STEPS):\n            av = avs[c]\n            for n in fx.range_constexpr(2):\n                # A bf16 high part plus a bf16 remainder of the fp32 weight keeps fp32-level accuracy.\n                wvv = w0s[c] if n == 0 else w1s[c]\n                whi = wvv.to(fx.BFloat16)\n                wlo = (wvv - whi.to(fx.Float32)).to(fx.BFloat16)\n                a = acc0 if n == 0 else acc1\n                a = fx.rocdl.mfma_f32_16x16x32_bf16(acc_ty, [av, whi, a, 0, 0, 0])\n                a = fx.rocdl.mfma_f32_16x16x32_bf16(acc_ty, [av, wlo, a, 0, 0, 0])\n                if n == 0:\n                    acc0 = a\n                else:\n                    acc1 = a\n            af = av.to(fx.Float32)\n            for e in fx.range_constexpr(KL):\n                sq = fx.math.fma(af[e], af[e], sq)\n        sq = sq + _fixed_shuffle(sq, TILE)\n        sq = sq + _fixed_shuffle(sq, 2 * TILE)\n        cv0 = fx.Vector(acc0, (ACC,), fx.Float32)\n        cv1 = fx.Vector(acc1, (ACC,), fx.Float32)\n        tts = [_tok(T, tb * TILE, q * ACC + i) for i in range(ACC)]\n        for i in fx.range_constexpr(ACC):\n            part[tts[i], ks, r] = cv0[i]\n        if r < M - TILE:\n            for i in fx.range_constexpr(ACC):\n                part[tts[i], ks, TILE + r] = cv1[i]\n        if q == 0:\n            part[tok, ks, M] = sq\n\n    @flyc.kernel\n    def k_fin(\n        part: fx.Tensor,\n        res: fx.Tensor,\n        ms: fx.Tensor,\n        mb: fx.Tensor,\n        opost: fx.Tensor,\n        ocomb: fx.Tensor,\n        oli: fx.Tensor,\n    ):\n        part = _buffer_view(part, (T, NK, NPART))\n        res = _buffer_view(res, (T, P))\n        ms = _buffer_view(ms, (3,))\n        mb = _buffer_view(mb, (M,))\n        opost = _buffer_view(opost, (T, S))\n        ocomb = _buffer_view(ocomb, (T, S * S))\n        oli = _buffer_view(oli, (T, D))\n        lane = fx.thread_idx.x\n        t = fx.block_idx.x\n        hb = fx.block_idx.y\n        L = lane % (S * S)\n        hs = [hb * HB + k * (WAVE * VEC) + lane * VEC for k in range(FIT)]\n        # Residual loads go first so they are in flight during the reduction.\n        rv = [[_load_vec(res, t * P + j * D + hs[k], VEC, fx.BFloat16) for j in range(S)] for k in range(FIT)]\n        # Lane holds K slices lane, lane + WAVE, ...\n        nv = _LOAD_BITS // fx.Float32.width\n        rows = []\n        for u in fx.range_constexpr(NU):\n            kk = lane + u * WAVE\n            kc = kk if NK % WAVE == 0 else (kk < NK).select(kk, 0)\n            vv = []\n            for g in fx.range_constexpr((M + nv) // nv):\n                vec = _load_vec(part, (t * NK + kc) * NPART + g * nv, nv, fx.Float32)\n                vv.extend([vec[e] for e in range(nv)])\n            vv = vv[: M + 1]\n            vv = vv if NK % WAVE == 0 else [(kk < NK).select(x, _f32(0.0)) for x in vv]\n            rows.append(vv)\n        s0 = fx.Float32(ms[0])\n        mbp = [fx.Float32(mb[a]) for a in range(S)]\n        vals = rows[0]\n        for u in fx.range_constexpr(NU - 1):\n            vals = [vals[j] + rows[u + 1][j] for j in range(M + 1)]\n        red = _reduce_all(vals)\n        rms = _rsq(red[M] * _f32(1.0 / float(P)) + _f32(rms_eps))\n        pre = [_sigmoid(red[a] * rms * s0 + mbp[a]) + _f32(pre_eps) for a in range(S)]\n        for k in fx.range_constexpr(FIT):\n            fs = [rv[k][j].to(fx.Float32) for j in range(S)]\n            acc = fs[0] * fx.Vector.from_elements([pre[0]] * VEC, dtype=fx.Float32)\n            for j in fx.range_constexpr(S - 1):\n                acc = fx.Vector(\n                    fx.math.fma(\n                        fs[j + 1], fx.Vector.from_elements([pre[j + 1]] * VEC, dtype=fx.Float32), acc\n                    ),\n                    (VEC,),\n                    fx.Float32,\n                )\n            _store_vec(oli, t * D + hs[k], acc.to(fx.BFloat16))\n        if hb == 0:\n            s1 = fx.Float32(ms[1])\n            s2 = fx.Float32(ms[2])\n            mbv = fx.Float32(mb[2 * S + L])\n            cl = _sinkhorn_lane([red[2 * S + k] for k in range(S * S)], rms, s2, mbv, L, _f32(sk_eps), iters)\n            if lane < S * S:\n                ocomb[t, L] = cl\n            pz = red[S]\n            for j in fx.range_constexpr(S - 1):\n                pz = (L == j + 1).select(red[S + j + 1], pz)\n            mbq = fx.Float32(mb[S + L % S])\n            if lane < S:\n                opost[t, L] = _sigmoid(pz * rms * s1 + mbq) * _f32(post_mult)\n\n    @flyc.jit\n    def launch(\n        res: fx.Tensor,\n        w: fx.Tensor,\n        ms: fx.Tensor,\n        mb: fx.Tensor,\n        part: fx.Tensor,\n        opost: fx.Tensor,\n        ocomb: fx.Tensor,\n        oli: fx.Tensor,\n        stream: fx.Stream,\n    ):\n        k_part(res, w, part).launch(grid=(NK, NT, 1), block=(WAVE, 1, 1), stream=stream)\n        k_fin(part, res, ms, mb, opost, ocomb, oli).launch(\n            grid=(T, NHB, 1), block=(WAVE, 1, 1), stream=stream\n        )\n\n    return launch, NK\n\n\n@functools.cache\ndef _compiled(T, rms_eps, pre_eps, sk_eps, post_mult, iters):\n    return _make(T, *_config(T), rms_eps, pre_eps, sk_eps, post_mult, iters)\n\n\ndef run(\n    *,\n    residual,\n    proj_weight,\n    mix_scale,\n    mix_bias,\n    rms_eps,\n    pre_eps,\n    sinkhorn_eps,\n    post_multiplier,\n    sinkhorn_iters,\n    norm_weight,\n    norm_eps,\n    post_mix,\n    comb_mix,\n    layer_input,\n):\n    \"\"\"Write post_mix, comb_mix and layer_input of the mHC pre for ``residual``.\"\"\"\n    T = int(residual.shape[0])\n    launch, NK = _compiled(\n        T, float(rms_eps), float(pre_eps), float(sinkhorn_eps), float(post_multiplier), int(sinkhorn_iters)\n    )\n    part = torch.empty((T, NK, NPART), dtype=torch.float32, device=residual.device)\n    launch(\n        residual,\n        proj_weight,\n        mix_scale,\n        mix_bias,\n        part,\n        post_mix,\n        comb_mix,\n        layer_input,\n        fx.Stream(torch.cuda.current_stream(residual.device).cuda_stream),\n    )\n"
+      }
+    ]
+  }
+}
