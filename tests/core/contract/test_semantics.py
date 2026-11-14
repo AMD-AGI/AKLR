@@ -54,6 +54,43 @@ class TestPoolDistributions:
         assert pool.dtype == torch.uint8
         assert torch.equal(pool.unique(), torch.arange(64, dtype=torch.uint8))
 
+    def test_distinct_ties_rank_by_index(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Distinct int_range values from equal draws come lowest index first, so every
+        task drawing the inputs gets the same page tables."""
+        monkeypatch.setattr(torch, "randn", lambda shape, generator: torch.zeros(shape))
+        distribution = semantics.IntRangeDistribution(lo=3, hi=12, distinct=True)
+        values = distribution.sample((2, 10), "int32", torch.Generator())
+        assert torch.equal(values, torch.arange(3, 13, dtype=torch.int32).expand(2, 10))
+
+    def test_permutation_ties_rank_by_index(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A permutation row of equal draws comes lowest index first."""
+        monkeypatch.setattr(torch, "rand", lambda shape, generator: torch.zeros(shape))
+        values = semantics.PermutationDistribution().sample((2, 8), "float32", torch.Generator())
+        assert torch.equal(values, (torch.arange(8) / 8).expand(2, 8))
+
+
+class TestInputsDigest:
+    """``inputs_digest``: one value per draw, whichever task drew it."""
+
+    def test_same_draw_same_digest(self) -> None:
+        """The fused_moe case's ``numeric/0``, drawn twice, digests alike."""
+        case = OpCase.of("fused_moe@1.0")
+        first, second = case.inputs("numeric/0"), case.inputs("numeric/0")
+        assert semantics.inputs_digest(first) == semantics.inputs_digest(second)
+
+    @pytest.mark.parametrize("dtype", [torch.int32, torch.uint8, torch.bfloat16])
+    def test_swapped_neighbours_change_the_digest(self, dtype: torch.dtype) -> None:
+        """Two neighbouring values swapped, as an unstable sort of tied draws swaps two
+        page-table entries, give another digest; so do another shape and dtype."""
+        values = torch.arange(1, 13).to(dtype).reshape(3, 4)
+        swapped = values.clone()
+        swapped[1, [1, 2]] = swapped[1, [2, 1]]
+        digest = semantics.inputs_digest({"x": values, "k": 2})
+        assert digest != semantics.inputs_digest({"x": swapped, "k": 2})
+        assert digest != semantics.inputs_digest({"x": values.reshape(4, 3), "k": 2})
+        assert digest != semantics.inputs_digest({"x": values.view(torch.int8)[..., :4], "k": 2})
+        assert digest != semantics.inputs_digest({"x": values, "k": 3})
+
 
 class TestCompareOutputs:
     """``compare_outputs`` fails an output off its reference."""

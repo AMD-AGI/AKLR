@@ -845,6 +845,7 @@ class TestBaseline:
                     findings=() if r.axes_text == self._B else (crash,),
                     rounds=(timed,) if r.axes_text == self._B else (),
                     output_keys=(),
+                    input_digests={},
                 )
                 for r in requests.values()
             ),
@@ -1011,9 +1012,9 @@ def test_post_timing_exposes_stale_weight_cache(monkeypatch: pytest.MonkeyPatch,
     dispatcher = Mock(dispatch=Mock(side_effect=dispatch))
     tripwire = Mock(armed=lambda: nullcontext([]))
     steps = [s for s in request.steps if s.check == "post_timing"]
-    outputs, filled = request.empty_outputs("cpu"), []
+    outputs, filled, digests = request.empty_outputs("cpu"), [], {}
     CandidateRun("cpu", tripwire, None).produce_outputs(
-        request, dispatcher, steps, outputs, filled, timing_call=timing_call
+        request, dispatcher, steps, outputs, filled, digests, timing_call=timing_call
     )
 
     assert weight.data_ptr() == pointer and weight._version == version
@@ -1025,6 +1026,7 @@ def test_post_timing_exposes_stale_weight_cache(monkeypatch: pytest.MonkeyPatch,
         assert torch.equal(outputs[step.output_key("out")], expected) == (cache_key == "none")
         assert step.mismatch_code is FindingCode.POST_TIMING_MISMATCH
     assert filled == [step.output_key("out") for step in steps]
+    assert digests == {s.input_set: _input_digests(request)[s.input_set] for s in steps}
 
 
 def test_a_call_writing_its_input_is_input_mutation(
@@ -1059,8 +1061,29 @@ def test_a_call_writing_its_input_is_input_mutation(
     tripwire = Mock(armed=lambda: nullcontext([]))
     step = next(s for s in request.steps if s.buffer_source == "new")
     with pytest.raises(StepFailed) as failed:
-        CandidateRun("cpu", tripwire, None).produce_outputs(request, dispatcher, [step], {}, [])
+        CandidateRun("cpu", tripwire, None).produce_outputs(request, dispatcher, [step], {}, [], {})
     assert failed.value.code is FindingCode.INPUT_MUTATION
+
+
+def test_an_input_set_drawn_otherwise_is_the_platforms() -> None:
+    """A step whose input set draws other values than an earlier step of the set fails
+    as PLATFORM_FAILURE before the candidate is called."""
+    from aklr.core.validation.stages._bench._evaluation._candidate import (
+        CandidateRun,
+        StepFailed,
+    )
+    from tests.op_case import OpCase
+
+    request = OpCase.of("gemm@1.0").request
+    dispatcher = Mock()
+    step = next(s for s in request.steps if s.input_set == "numeric/0")
+    with pytest.raises(StepFailed) as failed:
+        CandidateRun("cpu", Mock(), None).produce_outputs(
+            request, dispatcher, [step], {}, [], {"numeric/0": "drawn otherwise"}
+        )
+    assert failed.value.code is FindingCode.PLATFORM_FAILURE
+    assert "numeric/0 drew other values" in str(failed.value)
+    dispatcher.dispatch.assert_not_called()
 
 
 def test_warm_up_covers_the_workload_scalars(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1113,7 +1136,7 @@ def test_the_trial_evaluates_each_workload_its_baseline_did_not_decline(
     candidate = CandidateResult(
         findings=(),
         workload_results=tuple(
-            CandidateWorkloadResult(axes_text=a, findings=f, rounds=(), output_keys=())
+            CandidateWorkloadResult(axes_text=a, findings=f, rounds=(), output_keys=(), input_digests={})
             for a, f in (("m=1", ()), ("m=2", declined))
         ),
     )
@@ -1145,14 +1168,42 @@ def test_reference_compares_the_lent_outputs() -> None:
         for o, value in expected.items():
             outputs[step.output_key(o)].copy_(value)
     keys = [step.output_key(o) for step in request.steps for o in request.contract.mutable_tensors]
-    passed = WorkloadEvaluation(request, [outputs], [keys], ["cpu"]).evaluate()
+    digests = _input_digests(request)
+    passed = WorkloadEvaluation(request, [outputs], [keys], [digests], ["cpu"]).evaluate()
     assert passed.findings == () and passed.is_complete
 
     bad = request.steps[3]
     outputs[bad.output_key("out")].view(-1)[0] = torch.nan
-    failed = WorkloadEvaluation(request, [outputs], [keys[:-1]], ["cpu"]).evaluate()
+    failed = WorkloadEvaluation(request, [outputs], [keys[:-1]], [digests], ["cpu"]).evaluate()
     assert [f.code for f in failed.findings] == [bad.mismatch_code]
     assert failed.findings[0].detail.startswith(bad.label) and not failed.is_complete
+
+
+def test_reference_fails_inputs_the_candidate_drew_otherwise() -> None:
+    """An input set the candidate's task drew to other values is the platform's failure,
+    not the candidate's mismatch: the reference of other values judges nothing."""
+    from aklr.core.validation.stages._bench._evaluation._reference import (
+        WorkloadEvaluation,
+    )
+    from tests.op_case import OpCase
+
+    case = OpCase.of("gemm@1.0")
+    request = case.request
+    outputs = request.empty_outputs("cpu")
+    for step in request.steps:
+        for o, value in case.reference_outputs(request.compose_inputs(step, "cpu")).items():
+            outputs[step.output_key(o)].copy_(value)
+    digests = _input_digests(request) | {"numeric/1": "drawn otherwise"}
+    result = WorkloadEvaluation(request, [outputs], [list(outputs)], [digests], ["cpu"]).evaluate()
+    assert [f.code for f in result.findings] == [FindingCode.PLATFORM_FAILURE]
+    assert "drew other values of numeric/1" in result.findings[0].detail
+
+
+def _input_digests(request: Any) -> dict[str, str]:
+    """The digest of each input set of ``request``'s steps, drawn on the CPU."""
+    from aklr.core.contract import semantics
+
+    return {s.input_set: semantics.inputs_digest(request.compose_inputs(s, "cpu")) for s in request.steps}
 
 
 def test_reference_takes_float64_where_float32_overflows(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1181,10 +1232,13 @@ def test_reference_takes_float64_where_float32_overflows(monkeypatch: pytest.Mon
         type(request), "compose_inputs", lambda self, step, device, rank=0: cancelling(step, device, rank)
     )
     outputs = {k: v.zero_() for k, v in request.empty_outputs("cpu").items()}
-    assert WorkloadEvaluation(request, [outputs], [list(outputs)], ["cpu"]).evaluate().findings == ()
+    digests = _input_digests(request)
+    assert (
+        WorkloadEvaluation(request, [outputs], [list(outputs)], [digests], ["cpu"]).evaluate().findings == ()
+    )
     for v in outputs.values():
         v.fill_(torch.inf)
-    result = WorkloadEvaluation(request, [outputs], [list(outputs)], ["cpu"]).evaluate()
+    result = WorkloadEvaluation(request, [outputs], [list(outputs)], [digests], ["cpu"]).evaluate()
     mismatch_codes = {s.mismatch_code for s in request.steps}
     assert result.findings and all(f.code in mismatch_codes for f in result.findings), result.findings
 

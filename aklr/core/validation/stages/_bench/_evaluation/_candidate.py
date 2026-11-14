@@ -47,6 +47,8 @@ class CandidateWorkloadResult(FrozenModel):
     rounds: tuple[_measure.RoundTimes, ...]
     # the lent tensors it filled (Step.output_key), in step order
     output_keys: tuple[str, ...]
+    # semantics.inputs_digest of each input set it drew, by Step.input_set
+    input_digests: dict[str, str]
 
     @property
     def is_declined(self) -> bool:
@@ -229,13 +231,20 @@ def run_candidate(
     except StepFailed as e:
         batch_findings = (Finding.unlocated(e.code, str(e)),)
     output_keys: dict[str, tuple[str, ...]] = {}
+    input_digests: dict[str, dict[str, str]] = {}
     for request in requests:
         axes_text = request.axes_text
         filled: list[str] = []
+        input_digests[axes_text] = {}
         if not batch_findings and axes_text not in stopped:
             try:
                 rounds[axes_text] = run.check_and_time(
-                    request, dispatcher, incumbent_dispatchers.get(axes_text), outputs[axes_text], filled
+                    request,
+                    dispatcher,
+                    incumbent_dispatchers.get(axes_text),
+                    outputs[axes_text],
+                    filled,
+                    input_digests[axes_text],
                 )
             except StepFailed as e:
                 if rank is not None:
@@ -251,6 +260,7 @@ def run_candidate(
             findings=(stopped[r.axes_text],) if r.axes_text in stopped else (),
             rounds=rounds.get(r.axes_text, ()),
             output_keys=output_keys[r.axes_text],
+            input_digests=input_digests[r.axes_text],
         )
         for r in requests
     ]
@@ -390,6 +400,7 @@ class CandidateRun:
         incumbent_dispatcher: KernelDispatcher | None,
         lent: Mapping[str, Tensor],
         filled: list[str],
+        digests: dict[str, str],
     ) -> tuple[_measure.RoundTimes, ...]:
         """Run the workload's check steps, then its timing rounds; return the rounds."""
         from aklr.core.runtime.dispatch import FallbackReason
@@ -403,6 +414,7 @@ class CandidateRun:
                 [s for s in steps if s.check != "post_timing"],
                 lent,
                 filled,
+                digests,
             )
         call = request.assemble_call(request.compose_inputs(None, self.device, self.rank), self.device)
         allocated = dict.fromkeys(contract.allocated_outputs)
@@ -438,6 +450,7 @@ class CandidateRun:
                 [s for s in steps if s.check == "post_timing"],
                 lent,
                 filled,
+                digests,
                 timing_call=call,
             )
         return rounds
@@ -449,10 +462,12 @@ class CandidateRun:
         steps: Sequence[Step],
         lent: Mapping[str, Tensor],
         filled: list[str],
+        digests: dict[str, str],
         timing_call: Mapping[str, Any] | None = None,
     ) -> None:
         """Run ``steps``, each step's mutable tensors copied into the lent tensors of its
-        ``Step.output_key`` as it ends, the key then appended to ``filled``."""
+        ``Step.output_key`` as it ends, the key then appended to ``filled``; each step's
+        input set's ``semantics.inputs_digest`` in ``digests``."""
         import torch
 
         from aklr.core.runtime.dispatch import FallbackReason
@@ -465,13 +480,16 @@ class CandidateRun:
         for step in steps:
             label = step.label
             try:
-                values = request.assemble_call(
-                    request.compose_inputs(step, self.device, self.rank), self.device
-                )
+                row_major_args = request.compose_inputs(step, self.device, self.rank)
+                values = request.assemble_call(row_major_args, self.device)
             except ValueError:
                 if step.input_set != "workload":
                     raise
                 continue
+            digest = semantics.inputs_digest(row_major_args)
+            if digests.setdefault(step.input_set, digest) != digest:
+                detail = f"{label}: internal: {step.input_set} drew other values than before"
+                raise StepFailed(FindingCode.PLATFORM_FAILURE, detail)
             if step.buffer_source == "new":
                 live = values
             elif step.buffer_source == "timing":

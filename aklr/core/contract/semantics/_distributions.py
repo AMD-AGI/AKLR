@@ -172,7 +172,10 @@ class IntRangeDistribution(Distribution):
         if self.distinct:
             rows, n = math.prod(shape[:-1]), shape[-1]
             draws = torch.randn((rows, span), generator=generator)
-            index = (draws.topk(n, dim=-1).indices + self.lo).reshape(shape)
+            # each task draws its own inputs, and a GPU topk orders equal draws
+            # differently from process to process: a stable sort fixes them
+            ranked = draws.sort(dim=-1, descending=True, stable=True).indices[:, :n]
+            index = (ranked + self.lo).reshape(shape)
         elif storage_dtype.itemsize == 1 and self.lo == 0 and 256 % span == 0:
             # a multi-GB byte pool: masked random bytes, not an int64 draw per value
             n = math.prod(shape)
@@ -340,7 +343,8 @@ class PermutationDistribution(Distribution):
 
         n = shape[-1]
         draws = torch.rand((math.prod(shape[:-1]), n), generator=generator)
-        permutations = draws.argsort(dim=-1).reshape(shape)
+        # float32 draws tie; an unstable sort may order ties differently in another task
+        permutations = draws.argsort(dim=-1, stable=True).reshape(shape)
         return (permutations.double() / n).to(torch_dtypes(dtype)[0])
 
     # every decoded value is finite; rows need not be permutations
