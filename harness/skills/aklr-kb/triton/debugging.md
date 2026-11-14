@@ -437,10 +437,10 @@ A replayed graph pays none of the host cost; eager calls (an uncaptured many-tok
   `triton==3.8.0` wheel: the padded `gl.bank_conflicts` assertion of §4 sits at `LinearLayoutConversions.cpp:1364` in
   the image and at `:1379` in the wheel and in the v3.8.0 tag *(field, E12)*: confirm compile-only findings on the
   image.
-- **The baseline's aiter.** Most `aklr/ops` baselines call aiter (the bf16 GEMM's is its tuned `gemm_a16w16`, S46). CI
-  installs ROCm/aiter at `aiter` in `stack.json` (dbd8bf5 at 43e112e and on main) over the image's own aiter (e7d2453f2,
-  read from the image's build in [measured_a_different_build.md](../pitfalls/measured_a_different_build.md)) and checks
-  that the installed `amd-aiter` version carries `+g` and the commit's first 7 characters (S36); `report.json` does not
+- **The baseline's aiter.** Most `aklr/ops` baselines call aiter (the bf16 GEMM's is its tuned `gemm_a16w16`, S46). CI's
+  aiter lane installs ROCm/aiter at `aiter` in `stack.json` (dbd8bf5 at 43e112e and on main) over the image's own (`aiter_image`,
+  for now the sglang image), and its sglang lane times plugins against the sglang image's own aiter (e7d2453f2, read from the image's build in
+  [measured_a_different_build.md](../pitfalls/measured_a_different_build.md)); the aiter lane checks that the installed `amd-aiter` version carries `+g` and the commit's first 7 characters (S36); `report.json` does not
   record aiter, so print `importlib.metadata.version("amd-aiter")` beside your results. A run on the image's aiter times
   another baseline. Install the pinned one as CI does (without the variable, aiter's setup swaps in its Triton, S36):
   `AITER_USE_SYSTEM_TRITON=1 pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@<aiter in stack.json>"`.
@@ -565,7 +565,7 @@ whose bench timed calls with Kineto (AKLR's rocprofiler-sdk collector since #33)
 - S33 aklr/core/utils/testing.py:70 `flush_l2_cache` reads a 1 GiB buffer: "written lines would stay dirty for the next kernel" (:71)
 - S34 aklr/core/validation/command.py:25 `DEFAULT_REPORT_DIR = Path("aklr_validation")`, `--out` at :40
 - S35 aklr/core/validation/stages/_bench/_evaluation/_request.py:131 the steps `first_capture/0-2`, `numeric/0-3`, `large_magnitude/0`, `determinism/0`, `post_timing/*` and their codes (:34-40); a finding's detail starts with the step label (_reference.py:174); a mismatch's measures (aklr/core/contract/semantics/_compare.py:30-36)
-- S36 .github/workflows/ci.yaml:260 `TRITON_CACHE_DIR` under `$RUNNER_TEMP`, emptied at every job (:255); the baseline aiter installed over the image's with `AITER_USE_SYSTEM_TRITON=1`, "Keep the image's Triton: otherwise aiter's setup.py swaps in the one it pins" (:294-296); the job fails if the image's Triton changed (:295, :301); the `amd-aiter` version must contain `+g<commit[:7]>` (:312)
+- S36 .github/workflows/ci.yaml:216 `TRITON_CACHE_DIR` under `$RUNNER_TEMP`, emptied at every job (:204); the baseline aiter installed with `AITER_USE_SYSTEM_TRITON=1`, "Keep the image's Triton: otherwise aiter's setup.py swaps in the one it pins" (:229-231); the job fails if the image's Triton changed (:230, :234); the `amd-aiter` version must contain `+g<commit[:7]>` (:243)
 - S37 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:85 a candidate task that dies is `candidate_crash` with its last line, such as "runner … exited with code -11"
 - S38 aklr/plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads64_kv_dim576_topk2048/2ee56a6dbabc48a6.json#kernel.py:309 `if TILES > 1:` allocates `cache0`/`cache1`, the other branches `cache_shared` (:316-325); `TILES` at :285; 256 keys per tile (`key_offsets = gl.arange(0, 256, …)` at :308, the tile's indices at :337); the 64-head path reads `cache_shared` at :376; the host's split rule at :585
 - S39 aklr/plugins/sglang/models/minimax_m2/impls/triton/minimax_m2_mxfp4_moe_shuffled_16x16_model_dim3072_n_routed256_n_experts256_inter_dim512/655723f593921b08.json#kernel.py:1301 `gate_fold`; the scheduler attribute at :1306; the gate-up launch's constexprs and options at :1331-1336

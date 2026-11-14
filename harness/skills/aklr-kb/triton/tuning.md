@@ -61,8 +61,8 @@ How far the number moves with no change to the kernel:
   moved 4.0 to 11.8% *(field, E4)*, about the whole spread of its m ≤ 64 Points in §14.
 - **The baseline's build is part of the ruler.** A baseline that reaches aiter, the `gemm` op's directly (S7), a
   plugin's through SGLang's path (S8), can move with the aiter build: the bf16 n6144 GEMM's baseline moved 13.3% at m=8
-  from the image's aiter to CI's *(field, E46)*. CI installs the aiter commit `aiter` in `stack.json` over the image's
-  (S9); install it before comparing a local ratio with CI's (`CONTRIBUTING.md` § The AITER baseline). A re-run of the 154 schemas at 43e112e (its aiter build not recorded) read the aiter-baselined schemas at 0.985 to 1.11 of CI (fp8 GEMM, median 1.005) and 0.997 to 1.03
+  from the image's aiter to CI's *(field, E46)*. CI's aiter lane times `aklr/ops` against the aiter commit `aiter` in `stack.json`, its sglang
+  lane plugins against the sglang image's aiter (S9); install it before comparing a local ratio with CI's (`CONTRIBUTING.md` § The AITER baseline). A re-run of the 154 schemas at 43e112e (its aiter build not recorded) read the aiter-baselined schemas at 0.985 to 1.11 of CI (fp8 GEMM, median 1.005) and 0.997 to 1.03
   (bf16 GEMM, RMSNorm), lowest Point *(field, E5)*. With identical baseline times the baseline cancels algebraically; in the measured interleaved A/Bs, B/A of the ratios matched A/B
   of the call times within 0.2% over 8 pairs *(field, E3)*.
 - **The yardstick.** Among files whose workloads qualify (including accuracy), dispatch serves at a fixed-size Point the file with the highest stored speedup that reaches
@@ -535,7 +535,7 @@ main, except in paths pinned to an earlier commit.
 - S6 triton-lang/triton@c01b677:python/src/specialize.cc:274-283 a runtime int is keyed by its width (i32 or i64), the value 1 (a constexpr) and divisibility by 16 (`D`)
 - S7 aklr/ops/gemm/baseline.py:15-21 the gemm baseline is aiter's tuned gemm_a16w16
 - S8 aklr/plugins/sglang/models/qwen2_moe/baseline.py:63-78 a plugin baseline reaches aiter through SGLang's path (tgemm.mm or aiter's Triton GEMM)
-- S9 stack.json:4 `aiter`, installed over the image's aiter (.github/workflows/ci.yaml:296)
+- S9 stack.json:4 `aiter`, installed over the image's aiter (.github/workflows/ci.yaml:231)
 - S10 aklr/ops/README.md:31-33 the uuid hashes the authored parts; export check names the expected path
 - S11 aklr/plugins/sglang/models/qwen2_moe/impls/triton/qwen2_moe_router_model_dim4096_n_routed512_topk10/c3889614985b700a.json#kernel.py:27-34 split, tile and look-ahead per row count; :19-24 the `_ShapeConfig` fields; :113-129 the ring: AHEAD stages issued ahead, one refilled per step, DEPTH = AHEAD + 2 slots, a barrier after each wait
 - S12 aklr/plugins/sglang/models/qwen2_moe/impls/triton/qwen2_moe_router_model_dim4096_n_routed512_topk10/c3889614985b700a.json#kernel.py:294 grid rows / 32 × 512 / expert_tile × split, four warps

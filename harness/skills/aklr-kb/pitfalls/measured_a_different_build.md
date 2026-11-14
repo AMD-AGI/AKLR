@@ -36,9 +36,10 @@ Each channel puts a different build under the ruler.
 3. **The compile cache returns an earlier binary.** What FlyDSL's cache key does and does not see is in
    `../flydsl/debug-flydsl-kernel.md` § What the cache key sees.
 4. **Another venv or FlyDSL version.** Several changes between versions alter the result without an error
-   (`../flydsl/language/version_notes.md` § Behaviour that changes without an error). AKLR's CI installs the
-   baseline aiter (`aiter` in `stack.json`) over its image and runs the FlyDSL that aiter pins (S9, S10; read from
-   the workflow, not checked in a run's log), not necessarily the `flydsl>=0.3.2` of `pyproject.toml`. From this
+   (`../flydsl/language/version_notes.md` § Behaviour that changes without an error). AKLR's CI times `aklr/ops`
+   with the baseline aiter (`aiter` in `stack.json`) installed over its image's, on the FlyDSL that aiter pins, and
+   plugins on the image's own (S9, S10; read from the workflow, not checked in a run's log), neither
+   necessarily the `flydsl>=0.3.2` of `pyproject.toml`. From this
    repository's first commit (2026-10-31) to 2026-11-03 it installed the checkout with its dependencies, whose
    `pyproject.toml` pinned `flydsl==0.3.2` (S11). The repository the first schemas were measured in, whose history
    this one does not include, installed the checkout without its dependencies (S6), but that editable install ran

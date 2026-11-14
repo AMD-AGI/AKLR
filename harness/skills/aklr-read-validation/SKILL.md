@@ -18,8 +18,8 @@ Read [references/ruler.md](references/ruler.md) (how a Point is timed and judged
 
 1. **Get the report.** Locally, `python -m aklr validate --base origin/main --stages audit,bench
    <schemas> --out <dir>` writes `<dir>/report.md` and `report.json`. From CI, download the run's
-   artifact `validation-report-<attempt>`; the `validation` job's `Validate (<stages>)` log ends with
-   the findings, and `Enforce the overall CI result` only names the job that failed.
+   artifact `validation-report-aiter-<attempt>` (`aklr/ops`) or `validation-report-sglang-<attempt>`
+   (plugins); the `aiter-lane` and `sglang-lane` jobs' `Validate` step logs end with the findings, and `Enforce the overall CI result` only names the job that failed.
 2. **Separate findings from demotions.** A run fails on its `findings` (`not_faster`, `regressed`,
    accuracy, build, crash). `demotions` are committed kernels' Points that measured too slow and stop
    being served; they fail nothing. A committed Point that newly computes wrong is a demotion and a
