@@ -6,6 +6,7 @@ from __future__ import annotations
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
+    CausalTopkDistribution,
     CuSeqlensDistribution,
     DeterminismLevel,
     DType,
@@ -26,7 +27,13 @@ from aklr.core.contract.spec import (
     derived_axis,
 )
 
-__all__ = ["CONTRACTS", "DSA_SPARSE_MLA_DECODE", "DSA_TOPK_TRANSFORM", "ROPE_DIM"]
+__all__ = [
+    "CONTRACTS",
+    "DSA_SPARSE_MLA_DECODE",
+    "DSA_SPARSE_MLA_PREFILL",
+    "DSA_TOPK_TRANSFORM",
+    "ROPE_DIM",
+]
 
 _FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
 _INT32 = DTypeSpec(any_of=(DType.INT32,))
@@ -113,6 +120,35 @@ DSA_SPARSE_MLA_DECODE = OpContract(
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
 )
 
+DSA_SPARSE_MLA_PREFILL = OpContract(
+    contract_id="dsa_sparse_mla_prefill@1.0",
+    description=(
+        "sglang's DSA backend's sparse MLA prefill on one rank, kv_b_proj absorbed "
+        "(DeepseekSparseAttnBackend.forward_extend's triton_sparse_mla_fwd): each head of each "
+        "token attends the KV pool rows its top-k slots name (-1: none) with scores q . row * "
+        "sm_scale, q and the rows the fp8 values sglang holds, unscaled; the output is the "
+        "softmax-weighted sum of the rows' latent parts, 0 for a token that reads no row. Benched "
+        "as a new sequence's tokens: token i names min(i + 1, topk) slots, then -1."
+    ),
+    op_type="dsa_backend",
+    axes=DSA_SPARSE_MLA_DECODE.axes,
+    constraints=DSA_SPARSE_MLA_DECODE.constraints,
+    inputs={
+        **DSA_SPARSE_MLA_DECODE.inputs,
+        "topk_indices": TensorSpec(
+            description=(
+                "The slots each token attends; -1: none. Drawn as sglang's indexer picks them for "
+                "a new sequence: a token's positions while it has at most topk, else topk of them."
+            ),
+            shape=("n_tokens", "topk"),
+            dtype=DTypeSpec(any_of=(DType.INT32,)),
+            distribution=CausalTopkDistribution(hi="n_slots - 1"),
+        ),
+    },
+    outputs=DSA_SPARSE_MLA_DECODE.outputs,
+    layout_variants=DSA_SPARSE_MLA_DECODE.layout_variants,
+)
+
 DSA_TOPK_TRANSFORM = OpContract(
     contract_id="dsa_topk_transform@1.0",
     description=(
@@ -172,4 +208,4 @@ DSA_TOPK_TRANSFORM = OpContract(
     ),
 )
 
-CONTRACTS = (DSA_SPARSE_MLA_DECODE, DSA_TOPK_TRANSFORM)
+CONTRACTS = (DSA_SPARSE_MLA_DECODE, DSA_SPARSE_MLA_PREFILL, DSA_TOPK_TRANSFORM)
