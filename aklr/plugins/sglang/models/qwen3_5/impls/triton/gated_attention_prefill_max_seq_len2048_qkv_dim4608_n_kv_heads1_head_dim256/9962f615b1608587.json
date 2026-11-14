@@ -189,7 +189,7 @@
         "eps": 9.999999974752427e-07,
         "scale": 0.0625
       },
-      "accuracy": "failed",
+      "accuracy": "passed",
       "speedup": 1.234
     },
     {
@@ -204,7 +204,7 @@
         "scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.345
+      "speedup": 1.35
     }
   ],
   "layout_variants": {
