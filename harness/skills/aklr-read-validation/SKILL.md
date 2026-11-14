@@ -1,6 +1,6 @@
 ---
 name: aklr-read-validation
-description: Read a AKLR validation result, local or from CI, and decide what it means for a kernel - which Points pass, which fail and why, whether a failure is the kernel or the measurement, and which Points to keep. Use after `python -m aklr validate` or a failed CI `validation` job.
+description: Read a AKLR validation result, local or from CI, and decide what it means for a kernel - which Points pass, which fail and why, whether a failure is the kernel or the measurement, and which Points to keep. Use after `python -m aklr validate` or a failed CI `aiter-lane` or `sglang-lane` job.
 ---
 
 # Read a AKLR Validation Result
