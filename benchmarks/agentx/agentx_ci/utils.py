@@ -13,19 +13,50 @@ from pathlib import Path
 
 import yaml
 
-from agentx_ci.model_config import validate_model_id, validate_target_id
+from agentx_ci.model_config import (
+    PLUGIN_SWITCHES,
+    validate_framework_id,
+    validate_model_id,
+    validate_target_id,
+)
 
 APP_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = APP_DIR.parents[1]
 DEFAULT_CONFIG = APP_DIR / "agentx.yaml"
+SCHEMA = 4
+
+
+def plugin_switch(framework: str) -> str:
+    """Name AKLR's plugin switch for a serving framework."""
+    name = PLUGIN_SWITCHES.get(framework)
+    if name is None:
+        raise ValueError(f"unsupported serving framework {framework!r}")
+    return name
+
+
+def points_framework(points: list[dict]) -> str:
+    """Return the one serving framework shared by the planned points."""
+    frameworks = {point["client_env"]["FRAMEWORK"] for point in points}
+    if len(frameworks) != 1:
+        raise ValueError(f"the serving plan must use one framework, found {sorted(frameworks)}")
+    framework = frameworks.pop()
+    plugin_switch(framework)
+    return framework
 
 
 def load_config(path: str | Path = DEFAULT_CONFIG) -> dict:
     return yaml.safe_load(Path(path).read_text())
 
 
-def target_path(model_id: str, target_id: str) -> Path:
-    return Path("models") / validate_model_id(model_id) / "targets" / validate_target_id(target_id)
+def target_path(model_id: str, target_id: str, framework_id: str) -> Path:
+    return (
+        Path("models")
+        / validate_model_id(model_id)
+        / "targets"
+        / validate_target_id(target_id)
+        / "frameworks"
+        / validate_framework_id(framework_id)
+    )
 
 
 def sha256_json(value) -> str:
@@ -57,9 +88,10 @@ def begin_attempt(out: Path) -> str:
     write_json(
         out / "results.json",
         {
-            "schema": 3,
+            "schema": SCHEMA,
             "model": {},
             "target": {},
+            "framework": {},
             "run": {"attempt_id": attempt, "completed": False},
             "points": [],
         },
@@ -69,15 +101,19 @@ def begin_attempt(out: Path) -> str:
 
 def pending_results(serving: dict, points: list[dict], run_fields: dict) -> dict:
     """Keep plan identity available if setup fails."""
-    if serving.get("schema") != 3 or not isinstance(serving.get("target"), dict):
-        raise ValueError("serving plan has no target identity; regenerate it with plan or resolve")
-    target_path(serving["model"]["id"], serving["target"]["id"])
-    selection = serving.get("selection", {})
-    policy = selection.get("policy", "all")
+    if serving.get("schema") != SCHEMA or not all(
+        isinstance(serving.get(key), dict) for key in ("target", "framework")
+    ):
+        raise ValueError("serving plan has no target or framework identity; regenerate it with plan")
+    target_path(serving["model"]["id"], serving["target"]["id"], serving["framework"]["id"])
+    if points_framework(points) != serving["framework"]["id"]:
+        raise ValueError(f"planned points do not use the plan's framework {serving['framework']['id']!r}")
+    selection = serving["selection"]
     results = {
-        "schema": 3,
+        "schema": SCHEMA,
         "model": serving["model"],
         "target": serving["target"],
+        "framework": serving["framework"],
         "run": {
             "mode": "live",
             "started_at": utc_now(),
@@ -87,15 +123,16 @@ def pending_results(serving: dict, points: list[dict], run_fields: dict) -> dict
             "image": serving["image"],
             "expected_hardware": serving["hardware"],
             "aklr_mode": "enabled",
-            "inferencex": serving["provenance"]["inferencex"],
+            "source": serving["source"],
+            "client": serving["client"],
             "weights": serving["weights"],
             "points_expected": len(points),
-            "point_policy": policy,
-            "arms_requested": selection.get("arms", "all"),
-            "points_requested": selection.get("points") if policy == "all" else None,
+            "point_policy": selection["policy"],
+            "arms_requested": "all",
+            "points_requested": selection.get("points_requested"),
             "duration_override_s": selection.get("duration"),
             "model_path_override": None,
-            **({"selection": selection} if policy != "all" else {}),
+            "selection": selection,
             **run_fields,
         },
         "serving": {

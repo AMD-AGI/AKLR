@@ -4,19 +4,58 @@
 from __future__ import annotations
 
 import copy
+import json
 import math
 
 from agentx_ci.preflight import comparison_identity
-from agentx_ci.utils import METRIC_AXES, valid_measurement_points, valid_metrics
+from agentx_ci.utils import (
+    METRIC_AXES,
+    PLUGIN_SWITCHES,
+    plugin_switch,
+    valid_measurement_points,
+    valid_metrics,
+)
 
 X, Y = METRIC_AXES
 
 
-def _same_execution(first: dict, second: dict) -> bool:
+# Measurements on other hardware, another AgentX client or other traces are not comparable at all.
+INCOMPARABLE_EXECUTION = ("model_id", "target_id", "framework_id", "client", "hardware")
+
+
+def _same_traces(first: dict, second: dict) -> bool:
     """Partial runs may observe fewer traces; shared traces must still match."""
-    return {key: value for key, value in first.items() if key != "traces"} == {
-        key: value for key, value in second.items() if key != "traces"
-    } and all(trace == second["traces"].get(loader, trace) for loader, trace in first["traces"].items())
+    return all(trace == second["traces"].get(loader, trace) for loader, trace in first["traces"].items())
+
+
+def _comparable_execution(first: dict, second: dict) -> bool:
+    return all(first[key] == second[key] for key in INCOMPARABLE_EXECUTION)
+
+
+def _measured_traces(results: dict) -> list[dict]:
+    """Trace datasets of verified points; a point measured on another one is excluded on its own."""
+    return [p["measurement"]["trace"] for p in verified(results)]
+
+
+def _trace_key(point: dict) -> str:
+    return json.dumps((point.get("measurement") or {}).get("trace"), sort_keys=True)
+
+
+def frontier_point(point: dict) -> dict:
+    """The fields a chart needs from a frontier point."""
+    return {key: point[key] for key in ("arm", "conc", X, Y) if key in point}
+
+
+def _shared_traces(current: list[dict], baseline: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Keep only points measured on a trace dataset that both sides measured."""
+    shared = {_trace_key(p) for p in current} & {_trace_key(p) for p in baseline}
+    return [p for p in current if _trace_key(p) in shared], [p for p in baseline if _trace_key(p) in shared]
+
+
+def _same_execution(first: dict, second: dict) -> bool:
+    return _same_traces(first, second) and {
+        key: value for key, value in first.items() if key != "traces"
+    } == {key: value for key, value in second.items() if key != "traces"}
 
 
 def _run_identity(results: dict) -> dict | None:
@@ -38,15 +77,21 @@ def _point_settings(results: dict, point: dict, *, aklr_mode: str | None = None)
     measurement = point["measurement"]
     if aklr_mode is not None:
         measurement = copy.deepcopy(measurement)
-        launch = measurement.get("launch")
-        env = launch.get("env") if isinstance(launch, dict) else None
         expected = ("1", "0") if aklr_mode == "enabled" else ("0", "1")
-        if (
-            not isinstance(env, dict)
-            or (env.pop("AKLR_SGLANG_PLUGIN", None), env.pop("AKLR_DISABLE", None)) != expected
-        ):
+        if _pop_switches(measurement) != expected:
             return None
     return spec, measurement
+
+
+def _pop_switches(measurement: dict) -> tuple | None:
+    """Remove and return the framework's AKLR plugin switch and AKLR_DISABLE."""
+    launch = measurement.get("launch")
+    env = launch.get("env") if isinstance(launch, dict) else None
+    client_env = measurement.get("client_env")
+    framework = client_env.get("FRAMEWORK") if isinstance(client_env, dict) else None
+    if not isinstance(env, dict) or framework not in PLUGIN_SWITCHES:
+        return None
+    return env.pop(plugin_switch(framework), None), env.pop("AKLR_DISABLE", None)
 
 
 def measured(results: dict, arm: str | None = None) -> list[dict]:
@@ -55,6 +100,11 @@ def measured(results: dict, arm: str | None = None) -> list[dict]:
         for p in results["points"]
         if p["status"] == "ok" and valid_metrics(p) and (arm is None or p["arm"] == arm)
     ]
+
+
+def verified(results: dict, arm: str | None = None) -> list[dict]:
+    """Successful points whose recorded measurement settings and provenance verify."""
+    return [p for p in measured(results, arm) if _point_settings(results, p) is not None]
 
 
 def frontier(points: list[dict], *, x_axis: str = X) -> list[dict]:
@@ -83,7 +133,56 @@ def geomean(values: list[float]) -> float | None:
     return math.exp(sum(map(math.log, values)) / len(values)) if values else None
 
 
-def compare_arm(arm: str, current: dict, baseline: dict) -> dict:
+def _interpolate(line: list[dict], position: float) -> float | None:
+    """Throughput at an interactivity on a frontier, linear in log(interactivity)."""
+    for left, right in zip(line, line[1:]):
+        if left[X] <= position <= right[X]:
+            if right[X] == left[X]:
+                return max(left[Y], right[Y])
+            weight = (math.log(position) - math.log(left[X])) / (math.log(right[X]) - math.log(left[X]))
+            return left[Y] + weight * (right[Y] - left[Y])
+    return line[0][Y] if len(line) == 1 and line[0][X] == position else None
+
+
+def compare_curve(current: list[dict], baseline: list[dict], reason: str) -> dict:
+    """Compare two Pareto frontiers over their shared interactivity range and trace datasets."""
+    current, baseline = _shared_traces(current, baseline)
+    now, before = frontier(current), frontier(baseline)
+    result = {
+        "status": "curve-no-overlap",
+        "reason": reason,
+        "points": [],
+        "frontier_points": {"current": len(now), "baseline": len(before)},
+        "baseline_frontier": [frontier_point(p) for p in before],
+        "tput_geomean_ratio": None,
+    }
+    if not now or not before:
+        return result
+    low, high = max(now[0][X], before[0][X]), min(now[-1][X], before[-1][X])
+    if low > high:
+        return result
+    positions = []
+    for position in sorted({p[X] for p in now + before if low <= p[X] <= high}):
+        new, old = _interpolate(now, position), _interpolate(before, position)
+        if new is not None and old:
+            positions.append(
+                {"intvty": position, "current": new, "baseline": old, "tput_ratio": ratio(new, old)}
+            )
+    if not positions:
+        return result
+    ratios = [row["tput_ratio"] for row in positions]
+    return {
+        **result,
+        "status": "curve",
+        "overlap": [low, high],
+        "positions": positions,
+        "tput_geomean_ratio": geomean(ratios),
+        "tput_ratio_min": min(ratios),
+        "tput_ratio_max": max(ratios),
+    }
+
+
+def compare_arm(arm: str, current: dict, baseline: dict, curve_reason: str | None = None) -> dict:
     before_arm = baseline["serving"]["arms"].get(arm)
     if before_arm is None:
         return {
@@ -91,6 +190,8 @@ def compare_arm(arm: str, current: dict, baseline: dict) -> dict:
             "reason": "arm absent from the baseline",
             "points": [],
         }
+    if curve_reason is not None:
+        return compare_curve(verified(current, arm), verified(baseline, arm), curve_reason)
     base_points = {p["conc"]: p for p in baseline["points"] if p["arm"] == arm}
     rows, tput_ratios, changed_concs = [], [], []
     for point in sorted((p for p in current["points"] if p["arm"] == arm), key=lambda p: p["conc"]):
@@ -116,13 +217,12 @@ def compare_arm(arm: str, current: dict, baseline: dict) -> dict:
                 tput_ratios.append(row["tput_ratio"])
         rows.append(row)
     if changed_concs and not tput_ratios:
-        return {
-            "status": "new-segment",
-            "reason": "measurement settings changed (weights, launch, workload or selected points)",
-            "changed_concs": changed_concs,
-            "points": rows,
-            "tput_geomean_ratio": None,
-        }
+        curve = compare_curve(
+            verified(current, arm),
+            verified(baseline, arm),
+            "measurement settings changed (weights, launch, workload or selected points)",
+        )
+        return {**curve, "changed_concs": changed_concs, "point_rows": rows}
     return {
         "status": "comparable",
         "points": rows,
@@ -130,8 +230,22 @@ def compare_arm(arm: str, current: dict, baseline: dict) -> dict:
     }
 
 
+def _arm_inputs(arm: str, view: dict, current: dict, baseline: dict) -> tuple[list[dict], list[dict]]:
+    """The points an arm's comparison used: matched pairs, or its verified points for a curve."""
+    if is_curve(view):
+        return verified(current, arm), verified(baseline, arm)
+    pairs = [(row["current"], row["baseline"]) for row in view["points"] if row.get("tput_ratio") is not None]
+    return [new for new, _ in pairs], [old for _, old in pairs]
+
+
 def compare(current: dict, baseline: dict | None) -> dict:
-    """Compare a run with its previous published baseline."""
+    """Compare a run with its previous published baseline.
+
+    Matching selections and execution compare point by point; a changed selection, image or
+    package set compares Pareto frontiers instead. Other hardware, another AgentX client or other
+    traces have no baseline. The combined frontier uses the points the arms compared, or every
+    verified point when the whole run compares by curve; curves use only shared trace datasets.
+    """
     if (
         not valid_measurement_points(current)
         or not measured(current)
@@ -159,20 +273,7 @@ def compare(current: dict, baseline: dict | None) -> dict:
             "arms": {},
             "notes": [],
         }
-    current_policy = current["run"].get("point_policy", "all")
-    baseline_policy = baseline["run"].get("point_policy", "all")
-    if current_policy != baseline_policy or (
-        current_policy == "inferencex-pareto"
-        and current["run"].get("selection", {}).get("selection_sha256")
-        != baseline["run"].get("selection", {}).get("selection_sha256")
-    ):
-        return {
-            "status": "no-baseline",
-            "reason": "point selection policy or selected recipes changed",
-            "arms": {},
-            "notes": [],
-        }
-    for kind in ("model", "target"):
+    for kind in ("model", "target", "framework"):
         identity = current.get(kind, {}).get("id")
         if not identity or identity != baseline.get(kind, {}).get("id"):
             return {
@@ -192,26 +293,61 @@ def compare(current: dict, baseline: dict | None) -> dict:
             "arms": {},
             "notes": [],
         }
-    if not _same_execution(current_identity, baseline_identity):
+    current_traces, baseline_traces = _measured_traces(current), _measured_traces(baseline)
+    if not _comparable_execution(current_identity, baseline_identity) or (
+        current_traces and baseline_traces and not any(trace in baseline_traces for trace in current_traces)
+    ):
         return {
             "status": "no-baseline",
-            "reason": "execution image, InferenceX source, dependencies or hardware changed",
+            "reason": "hardware, AgentX client source or trace dataset changed",
             "arms": {},
             "notes": [],
         }
-    notes = []
+    notes, curve_reasons = [], []
+    if current["run"].get("point_policy") != baseline["run"].get("point_policy") or current["run"].get(
+        "selection", {}
+    ).get("selection_sha256") != baseline["run"].get("selection", {}).get("selection_sha256"):
+        curve_reasons.append("point selection policy or selected recipes changed")
+    if not _same_execution(current_identity, baseline_identity):
+        curve_reasons.append("execution image or dependencies changed")
     if baseline["run"]["image"]["run"] != current["run"]["image"]["run"]:
         notes.append("run image changed")
     if baseline["serving"]["grid_sha256"] != current["serving"]["grid_sha256"]:
         notes.append("concurrency grid changed")
-    arms = {arm: compare_arm(arm, current, baseline) for arm in current["serving"]["arms"]}
+    curve_reason = "; ".join(curve_reasons) or None
+    arms = {arm: compare_arm(arm, current, baseline, curve_reason) for arm in current["serving"]["arms"]}
+    if curve_reason is not None:
+        combined = compare_curve(verified(current), verified(baseline), curve_reason)
+    else:
+        inputs = [
+            _arm_inputs(arm, view, current, baseline)
+            for arm, view in arms.items()
+            if view["status"] != "new-arm"
+        ]
+        combined = compare_curve(
+            [p for new, _ in inputs for p in new], [p for _, old in inputs for p in old], "combined frontier"
+        )
     return {
         "status": "ok",
+        "method": "curve" if curve_reason is not None else comparison_method(arms),
         "baseline_run": baseline["run"]["id"],
         "baseline_aklr_sha": baseline["run"]["aklr_sha"],
         "arms": arms,
-        "notes": notes,
+        "combined": combined,
+        "notes": curve_reasons + notes,
     }
+
+
+def is_curve(view: dict) -> bool:
+    return view.get("status") in ("curve", "curve-no-overlap")
+
+
+def comparison_method(arms: dict) -> str:
+    """`point`, `curve` or `mixed`, from how the compared arms were actually compared."""
+    methods = {
+        "curve" if is_curve(view) else "point" for view in arms.values() if view["status"] != "new-arm"
+    }
+    return methods.pop() if len(methods) == 1 else "mixed" if methods else "point"
 
 
 def aklr_pairing_error(results: dict) -> str | None:
@@ -219,7 +355,7 @@ def aklr_pairing_error(results: dict) -> str | None:
     control = results.get("control")
     if not control:
         return "AKLR off/on execution records are required."
-    for kind in ("model", "target"):
+    for kind in ("model", "target", "framework"):
         identity = results.get(kind, {}).get("id")
         if not identity or identity != control.get(kind, {}).get("id"):
             return f"AKLR modes have different or missing {kind} identities."
@@ -239,8 +375,7 @@ def aklr_pairing_error(results: dict) -> str | None:
         for record in mode["points"]:
             key = (record["arm"], record["conc"])
             measurement = copy.deepcopy(record.get("measurement", {}))
-            env = measurement.get("launch", {}).get("env", {})
-            if env.pop("AKLR_SGLANG_PLUGIN", None) != plugin or env.pop("AKLR_DISABLE", None) != disable:
+            if _pop_switches(measurement) != (plugin, disable):
                 return "AKLR mode switches do not match their labels."
             if key in settings and settings[key] != measurement:
                 return "Settings other than the AKLR switches differ between modes."

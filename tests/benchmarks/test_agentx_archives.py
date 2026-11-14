@@ -19,7 +19,7 @@ from tests.benchmarks.test_agentx_metrics import REPO, legacy_results, report, r
 class AgentXArchiveTests(unittest.TestCase):
     def setUp(self):
         self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        self.relative = utils.target_path("fixture", "fixture-gpu")
+        self.relative = utils.target_path("fixture", "fixture-gpu", "sglang")
         self.serial = 0
         self.enterContext(mock.patch.object(report, "landed", return_value=None))
         self.enterContext(redirect_stdout(io.StringIO()))
@@ -32,20 +32,23 @@ class AgentXArchiveTests(unittest.TestCase):
         return {
             "model": results["model"],
             "target": results["target"],
+            "framework": results["framework"],
             "status": "resolved",
             "serving_sha256": results["run"]["serving_sha256"],
             "point_ids": [f"{point['arm']}:{point['conc']}" for point in results["points"]],
+            "point_policy": results["run"]["point_policy"],
+            "selection_manifest_sha256": results["run"]["selection"]["manifest_sha256"],
         }
 
     def previous(self, results, *, baseline=None):
         directory = self.directory("previous")
         utils.write_json(
             directory / "manifest.json",
-            {"schema": 3, "run_id": results["run"]["id"], "targets": [self.descriptor(results)]},
+            {"schema": 4, "run_id": results["run"]["id"], "targets": [self.descriptor(results)]},
         )
         utils.write_json(directory / self.relative / "results.json", results)
         if baseline is not None:
-            utils.write_json(directory / self.relative / "baseline-live.json", baseline)
+            utils.write_json(directory / self.relative / "baseline-pareto.json", baseline)
         return directory
 
     def publish(self, *, current=None, previous=None, selected=True, error=None):
@@ -55,7 +58,7 @@ class AgentXArchiveTests(unittest.TestCase):
         if error:
             planned.update(status="resolve-failed", error=error)
         plan = {
-            "schema": 3,
+            "schema": 4,
             "run_id": current["run"]["id"] if current else "current-run",
             "targets": [planned] if selected else [],
         }
@@ -87,14 +90,14 @@ class AgentXArchiveTests(unittest.TestCase):
                 for _ in range(2):
                     site, target = self.publish(previous=previous, selected=False)
                     self.assertEqual(utils.read_json(site / self.relative / "results.json"), original)
-                    self.assertEqual(utils.read_json(site / self.relative / "baseline-live.json"), original)
+                    self.assertEqual(utils.read_json(site / self.relative / "baseline-pareto.json"), original)
                     summary = utils.read_json(site / self.relative / "report.json")
                     pairs = summary["aklr_comparison"]["points"]
                     self.assertEqual(
                         [row["conc"] for row in pairs], [c for c in (1, 2, 3) if c not in missing]
                     )
                     self.assertEqual(target["points_ok"], 2 * (3 - len(missing)))
-                    self.assertEqual("live" in target["baseline_unavailable"], len(missing) == 3)
+                    self.assertEqual("pareto" in target["baseline_unavailable"], len(missing) == 3)
                     self.assertEqual((previous / self.relative / "results.json").read_bytes(), before)
                     previous = site
 
@@ -108,10 +111,10 @@ class AgentXArchiveTests(unittest.TestCase):
 
         site, target = self.publish(previous=previous, selected=False)
 
-        self.assertEqual(utils.read_json(site / self.relative / "baseline-live.json"), original)
+        self.assertEqual(utils.read_json(site / self.relative / "baseline-pareto.json"), original)
         self.assertEqual(utils.read_json(site / self.relative / "results.json"), original)
-        self.assertIn("live", target["baseline_unavailable"])
-        self.assertNotIn("live", target["baselines"])
+        self.assertIn("pareto", target["baseline_unavailable"])
+        self.assertNotIn("pareto", target["baselines"])
         self.assertEqual(target["points_ok"], 0)
         summary = utils.read_json(site / self.relative / "report.json")
         self.assertEqual(summary["frontiers"]["combined"], [])
@@ -127,7 +130,7 @@ class AgentXArchiveTests(unittest.TestCase):
 
         self.assertEqual(current, original)
         self.assertEqual(utils.read_json(site / self.relative / "results.json"), original)
-        self.assertEqual(utils.read_json(site / self.relative / "baseline-live.json"), original)
+        self.assertEqual(utils.read_json(site / self.relative / "baseline-pareto.json"), original)
         self.assertEqual(target["status"], "partial")
         self.assertEqual(target["points_ok"], 4)
         summary = utils.read_json(site / self.relative / "report.json")
@@ -162,7 +165,7 @@ class AgentXArchiveTests(unittest.TestCase):
         self.assertIsNone(target["failure_stage"])
         self.assertEqual(target["points_ok"], 1)
         self.assertEqual(utils.read_json(site / self.relative / "results.json"), original)
-        self.assertEqual(utils.read_json(site / self.relative / "baseline-live.json"), original)
+        self.assertEqual(utils.read_json(site / self.relative / "baseline-pareto.json"), original)
 
     def test_current_failure_is_visible_when_rendering_a_historical_target(self):
         previous = self.previous(legacy_results("previous-run"))

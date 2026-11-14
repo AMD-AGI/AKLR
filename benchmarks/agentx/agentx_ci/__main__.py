@@ -8,7 +8,6 @@ import sys
 
 COMMANDS = {
     "plan": ("agentx_ci.plan", "main"),
-    "resolve": ("agentx_ci.recipe_resolve", "main"),
     "sweep": ("agentx_ci.sweep", "main"),
     "pipeline": ("agentx_ci.pipeline", "main"),
     "report": ("agentx_ci.report", "main"),
