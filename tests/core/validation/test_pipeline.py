@@ -71,6 +71,14 @@ _LABEL = "/".join((*Path(_SCHEMA).parts[-3:-1], Path(_SCHEMA).stem[:8]))
 _LINE = re.compile(r"^\[\d\d:\d\d:\d\d\] (.+)$", re.MULTILINE)
 
 
+@pytest.fixture(autouse=True)
+def _requires_met(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The schemas here pin flydsl or triton, which a CPU test machine may lack."""
+    from aklr.core.validation.stages._bench import _stage
+
+    monkeypatch.setattr(_stage, "unmet_requirement", lambda requires: None)
+
+
 class _FixedStatus:
     def __init__(self, status: StageStatus | None) -> None:
         self.status = status
