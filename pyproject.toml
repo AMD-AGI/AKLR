@@ -21,6 +21,7 @@ dependencies = [
     "ninja",
     "packaging",
     "pydantic>=2.12",
+    "PyYAML>=6",
 ]
 
 [project.entry-points."sglang.srt.plugins"]
@@ -35,6 +36,7 @@ include = ["aklr", "aklr.*"]
 [tool.setuptools.package-data]
 "aklr.ops" = ["*/impls/*/*/*.json"]
 "aklr.plugins" = ["*/*/*/impls/*/*/*.json"]
+"aklr.core.validation.stages._e2e" = ["scenarios.yaml"]
 
 # The version is AKLR's commit: 0.1.devN+g<sha> before the first tag.
 [tool.setuptools_scm]

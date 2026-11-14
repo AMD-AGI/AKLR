@@ -1,0 +1,202 @@
+# SPDX-License-Identifier: MIT
+# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+
+"""The e2e configuration file: the cookbook recipes each scenario serves, and how."""
+
+from __future__ import annotations
+
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
+
+from pydantic import Field, PositiveInt, StrictBool
+
+from aklr.core.contract.spec import FrozenModel
+from aklr.core.validation.stages._e2e._cookbook import MatchValue
+
+__all__ = ["E2eConfig", "Scenario"]
+
+
+class ScenarioFeatures(FrozenModel):
+    """Feature choices extracted from one match; omitted switches inherit the cell."""
+
+    parsers: dict[str, StrictBool] = {}  # noqa: RUF012
+
+
+class Scenario(FrozenModel):
+    """One deployment shape of one model, each role from its own cookbook cell."""
+
+    name: str
+    model: str
+    display_name: str
+    enabled: bool
+    cookbook: str
+    # ``unified``, or ``prefill`` then ``decode``: the cell match of each role
+    roles: dict[str, dict[str, MatchValue]]
+    model_path: str
+    nnodes: dict[str, PositiveInt]  # by role; a role not named has its cell's
+    env: dict[str, dict[str, str]]  # by role
+    features: dict[str, ScenarioFeatures]  # by role
+    args: dict[str, dict[str, str | int | float | bool | None]]  # by role
+
+
+class _ScenarioEntry(FrozenModel):
+    enabled: bool = True
+    display_name: str = ""
+    cookbook: str = Field(min_length=1)
+    model_path: str = Field(min_length=1)
+    matches: tuple[dict[str, Any], ...] = Field(min_length=1)
+    # a cell may leave it out (GLM-5.2's multi-2 cells): one count, or one per PD role
+    nnodes: PositiveInt | dict[str, PositiveInt] | None = None
+    env: dict[str, Any] = {}  # noqa: RUF012
+    args: dict[str, Any] = {}  # noqa: RUF012
+
+
+class _CookbookSource(FrozenModel):
+    repo: str = "sgl-project/sglang"
+    source: str = "main"
+
+
+class _LongPrompt(FrozenModel):
+    """A reproducible long prompt with the needle centered between repeated filler."""
+
+    length_chars: PositiveInt
+    prefix: str
+    filler: str = Field(min_length=1)
+    needle: str = Field(min_length=1)
+    suffix: str
+
+    def render(self) -> str:
+        # Center the needle in the complete prompt, including its instructions.
+        left = (self.length_chars - len(self.needle)) // 2 - len(self.prefix)
+        right = self.length_chars - len(self.prefix + self.needle + self.suffix) - left
+        if min(left, right) < 0:
+            raise ValueError("prompt.length_chars is too short to center the needle with prefix and suffix")
+
+        def padding(length: int) -> str:
+            repeats, remainder = divmod(length, len(self.filler))
+            return self.filler * repeats + self.filler[:remainder]
+
+        return self.prefix + padding(left) + self.needle + padding(right) + self.suffix
+
+
+class _ConfigFile(FrozenModel):
+    cookbook: _CookbookSource = _CookbookSource()
+    hosts: tuple[str, ...] = Field(default=("127.0.0.1",), min_length=1)
+    work_dir: Path | None = None
+    prompt: str | _LongPrompt = Field(union_mode="left_to_right")
+    expected_answer: str = Field(min_length=1)
+    scenarios: tuple[_ScenarioEntry, ...]
+
+
+class E2eConfig(FrozenModel):
+    """The cookbook to read and the scenarios of an e2e configuration file, in its order."""
+
+    cookbook_repo: str
+    cookbook_source: str
+    hosts: tuple[str, ...] = ("127.0.0.1",)
+    work_dir: Path | None = None
+    prompt: str
+    expected_answer: str
+    scenarios: tuple[Scenario, ...]
+
+    @classmethod
+    def read(cls, path: Path | None = None) -> E2eConfig:
+        """Read the YAML file at ``path``, one scenario per item of a model's ``matches``."""
+        import yaml
+        from pydantic import ValidationError
+
+        path = path or Path(__file__).with_name("scenarios.yaml")
+        pd_roles = ("prefill", "decode")
+        try:
+            document = _ConfigFile.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+            prompt = document.prompt if isinstance(document.prompt, str) else document.prompt.render()
+            if not prompt.strip() or not document.expected_answer.strip():
+                raise ValueError("prompt and expected_answer must not be blank")
+        except (OSError, yaml.YAMLError, ValueError) as error:
+            raise ValueError(f"{path}: {error}") from error
+        scenarios: list[Scenario] = []
+        for entry in document.scenarios:
+            model = entry.cookbook.rsplit("/", 1)[-1]
+            for index, match in enumerate(entry.matches):
+                where = f"{path}: {model}: match {index}"
+                is_pd = set(match) == set(pd_roles) and all(isinstance(m, dict) for m in match.values())
+                roles = {role: match[role] for role in pd_roles} if is_pd else {"unified": match}
+                nnodes = (
+                    entry.nnodes if isinstance(entry.nnodes, dict) else dict.fromkeys(roles, entry.nnodes)
+                )
+                if entry.nnodes is None:
+                    nnodes = {}
+                if unknown := set(nnodes) - set(roles):
+                    raise ValueError(f"{where}: nnodes of roles it has not: {sorted(unknown)}")
+                try:
+                    # Features belong to each match, but do not participate in the cell lookup.
+                    feature_keys = ScenarioFeatures.model_fields
+                    features = {
+                        role: ScenarioFeatures.model_validate(
+                            {k: v for k, v in selection.items() if k in feature_keys}
+                        )
+                        for role, selection in roles.items()
+                    }
+                    roles = {
+                        role: {k: v for k, v in selection.items() if k not in feature_keys}
+                        for role, selection in roles.items()
+                    }
+                    values = []
+                    for role, cell_match in roles.items():
+                        values.extend(str(v) for v in cell_match.values())
+                        # Distinguish different feature combinations of the same base cell.
+                        values.extend(
+                            f"parsers-{parser}-{'on' if enabled else 'off'}"
+                            for parser, enabled in sorted(features[role].parsers.items())
+                        )
+                    scenario = Scenario(
+                        name="-".join([model, *values]),
+                        model=model,
+                        display_name=entry.display_name or model,
+                        enabled=entry.enabled,
+                        cookbook=entry.cookbook,
+                        roles=roles,
+                        model_path=entry.model_path,
+                        nnodes=nnodes,
+                        env={
+                            role: {k: str(v) for k, v in env.items()}
+                            for role, env in cls._expand_server_settings(entry.env, tuple(roles)).items()
+                        },
+                        features=features,
+                        args=cls._expand_server_settings(entry.args, tuple(roles)),
+                    )
+                except (ValueError, ValidationError) as error:
+                    raise ValueError(f"{where}: {error}") from error
+                if any(s.name == scenario.name for s in scenarios):
+                    raise ValueError(f"{where}: the scenario name {scenario.name} is repeated")
+                scenarios.append(scenario)
+        return cls(
+            cookbook_repo=document.cookbook.repo,
+            cookbook_source=document.cookbook.source,
+            hosts=document.hosts,
+            work_dir=document.work_dir,
+            prompt=prompt,
+            expected_answer=document.expected_answer,
+            scenarios=tuple(scenarios),
+        )
+
+    @staticmethod
+    def _expand_server_settings(
+        value: Mapping[str, Any], roles: tuple[str, ...]
+    ) -> dict[str, dict[str, Any]]:
+        """Expand shared or separate prefill/decode settings into each server's env or args."""
+        pd_roles = ("prefill", "decode")
+        is_per_role = (
+            bool(value) and set(value) <= set(pd_roles) and all(isinstance(v, dict) for v in value.values())
+        )
+        if not is_per_role:
+            return dict.fromkeys(roles, dict(value))
+        if roles != pd_roles:
+            raise ValueError(f"{sorted(value)}: per-role settings of a scenario with no PD roles")
+        return {role: dict(value.get(role, {})) for role in roles}
+
+    @property
+    def enabled_scenarios(self) -> tuple[Scenario, ...]:
+        """Every scenario whose model is enabled in scenarios.yaml."""
+        return tuple(s for s in self.scenarios if s.enabled)

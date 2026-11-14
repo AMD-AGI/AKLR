@@ -110,7 +110,7 @@ returns NaN or hangs. Do not deliver a kernel that fails it. For a Triton kernel
 
 ```bash
 python harness/scripts/forge_task publish $RUN
-python -m aklr export check && python -m aklr validate --base origin/main <the path publish printed>
+python -m aklr export check && python -m aklr validate --base origin/main --stages audit,bench <the path publish printed>
 ```
 
 Commit the published file as `aklr/ops/README.md` describes and open a pull request. What the run taught the skill
