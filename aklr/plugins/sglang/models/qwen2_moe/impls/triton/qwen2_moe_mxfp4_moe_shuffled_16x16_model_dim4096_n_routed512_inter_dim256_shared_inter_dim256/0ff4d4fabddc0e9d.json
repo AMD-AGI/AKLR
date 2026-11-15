@@ -182,7 +182,7 @@
         "n_tokens": 2
       },
       "accuracy": "passed",
-      "speedup": 2.845
+      "speedup": 2.847
     }
   ],
   "layout_variants": {

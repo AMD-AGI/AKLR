@@ -213,7 +213,7 @@
         "scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.785
+      "speedup": 1.77
     },
     {
       "axes": {
@@ -226,8 +226,8 @@
         "eps": 9.999999974752427e-07,
         "scale": 0.0625
       },
-      "accuracy": "passed",
-      "speedup": 1.708
+      "accuracy": "failed",
+      "speedup": 1.701
     },
     {
       "axes": {
@@ -241,7 +241,7 @@
         "scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.745
+      "speedup": 1.729
     }
   ],
   "layout_variants": {
