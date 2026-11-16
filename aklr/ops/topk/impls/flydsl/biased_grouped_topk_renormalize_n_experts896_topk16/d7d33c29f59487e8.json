@@ -80,7 +80,7 @@
         "routed_scaling_factor": 1.0
       },
       "accuracy": "passed",
-      "speedup": 2.672
+      "speedup": 2.744
     },
     {
       "axes": {
@@ -90,7 +90,7 @@
         "routed_scaling_factor": 1.0
       },
       "accuracy": "passed",
-      "speedup": 2.629
+      "speedup": 2.728
     },
     {
       "axes": {
@@ -100,7 +100,7 @@
         "routed_scaling_factor": 1.0
       },
       "accuracy": "passed",
-      "speedup": 2.67
+      "speedup": 2.756
     },
     {
       "axes": {
@@ -110,7 +110,7 @@
         "routed_scaling_factor": 1.0
       },
       "accuracy": "passed",
-      "speedup": 2.604
+      "speedup": 2.734
     },
     {
       "axes": {
@@ -120,7 +120,7 @@
         "routed_scaling_factor": 1.0
       },
       "accuracy": "passed",
-      "speedup": 2.649
+      "speedup": 2.789
     },
     {
       "axes": {
@@ -130,7 +130,7 @@
         "routed_scaling_factor": 1.0
       },
       "accuracy": "passed",
-      "speedup": 2.605
+      "speedup": 2.82
     },
     {
       "axes": {
@@ -140,7 +140,7 @@
         "routed_scaling_factor": 1.0
       },
       "accuracy": "passed",
-      "speedup": 2.623
+      "speedup": 2.867
     },
     {
       "axes": {
@@ -150,7 +150,7 @@
         "routed_scaling_factor": 1.0
       },
       "accuracy": "passed",
-      "speedup": 2.605
+      "speedup": 2.835
     },
     {
       "axes": {
@@ -160,7 +160,7 @@
         "routed_scaling_factor": 1.0
       },
       "accuracy": "passed",
-      "speedup": 2.629
+      "speedup": 2.812
     },
     {
       "axes": {
@@ -170,7 +170,7 @@
         "routed_scaling_factor": 1.0
       },
       "accuracy": "passed",
-      "speedup": 2.609
+      "speedup": 2.741
     },
     {
       "axes": {
@@ -180,7 +180,7 @@
         "routed_scaling_factor": 1.0
       },
       "accuracy": "passed",
-      "speedup": 2.625
+      "speedup": 2.785
     },
     {
       "axes": {
@@ -190,7 +190,7 @@
         "routed_scaling_factor": 1.0
       },
       "accuracy": "passed",
-      "speedup": 2.63
+      "speedup": 2.81
     },
     {
       "axes": {
@@ -200,7 +200,7 @@
         "routed_scaling_factor": 1.0
       },
       "accuracy": "passed",
-      "speedup": 2.619
+      "speedup": 2.821
     }
   ],
   "layout_variants": {

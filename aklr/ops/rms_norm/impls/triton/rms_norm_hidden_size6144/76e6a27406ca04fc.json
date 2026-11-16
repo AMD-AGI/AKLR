@@ -65,7 +65,7 @@
         "epsilon": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.023
+      "speedup": 1.019
     },
     {
       "axes": {
@@ -75,7 +75,7 @@
         "epsilon": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.021
+      "speedup": 1.02
     },
     {
       "axes": {
@@ -85,7 +85,7 @@
         "epsilon": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.026
+      "speedup": 1.023
     },
     {
       "axes": {
@@ -95,7 +95,7 @@
         "epsilon": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.023
+      "speedup": 1.021
     },
     {
       "axes": {
@@ -105,7 +105,7 @@
         "epsilon": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.021
+      "speedup": 1.02
     },
     {
       "axes": {
@@ -115,7 +115,7 @@
         "epsilon": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.023
+      "speedup": 1.022
     },
     {
       "axes": {
@@ -125,7 +125,7 @@
         "epsilon": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.022
+      "speedup": 1.02
     },
     {
       "axes": {
@@ -135,7 +135,7 @@
         "epsilon": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.028
+      "speedup": 1.03
     },
     {
       "axes": {
@@ -145,7 +145,7 @@
         "epsilon": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.048
+      "speedup": 1.052
     },
     {
       "axes": {
@@ -155,7 +155,7 @@
         "epsilon": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.082
+      "speedup": 1.083
     },
     {
       "axes": {
@@ -165,7 +165,7 @@
         "epsilon": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.165
+      "speedup": 1.164
     },
     {
       "axes": {
@@ -175,7 +175,7 @@
         "epsilon": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.056
+      "speedup": 1.081
     },
     {
       "axes": {
@@ -185,7 +185,7 @@
         "epsilon": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.203
+      "speedup": 1.201
     },
     {
       "axes": {
@@ -195,7 +195,7 @@
         "epsilon": 9.999999747378752e-06
       },
       "accuracy": "passed",
-      "speedup": 1.144
+      "speedup": 1.152
     }
   ],
   "layout_variants": {

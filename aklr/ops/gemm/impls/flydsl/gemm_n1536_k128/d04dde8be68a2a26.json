@@ -71,98 +71,98 @@
         "m": 12
       },
       "accuracy": "passed",
-      "speedup": 1.02
+      "speedup": 1.027
     },
     {
       "axes": {
         "m": 16
       },
       "accuracy": "passed",
-      "speedup": 1.018
+      "speedup": 1.023
     },
     {
       "axes": {
         "m": 24
       },
       "accuracy": "passed",
-      "speedup": 1.023
+      "speedup": 1.031
     },
     {
       "axes": {
         "m": 32
       },
       "accuracy": "passed",
-      "speedup": 1.021
+      "speedup": 1.028
     },
     {
       "axes": {
         "m": 40
       },
       "accuracy": "passed",
-      "speedup": 1.03
+      "speedup": 1.028
     },
     {
       "axes": {
         "m": 48
       },
       "accuracy": "passed",
-      "speedup": 1.024
+      "speedup": 1.031
     },
     {
       "axes": {
         "m": 56
       },
       "accuracy": "passed",
-      "speedup": 1.028
+      "speedup": 1.027
     },
     {
       "axes": {
         "m": 60
       },
       "accuracy": "passed",
-      "speedup": 1.021
+      "speedup": 1.028
     },
     {
       "axes": {
         "m": 64
       },
       "accuracy": "passed",
-      "speedup": 1.026
+      "speedup": 1.029
     },
     {
       "axes": {
         "m": 80
       },
       "accuracy": "passed",
-      "speedup": 1.028
+      "speedup": 1.026
     },
     {
       "axes": {
         "m": 96
       },
       "accuracy": "passed",
-      "speedup": 1.033
+      "speedup": 1.028
     },
     {
       "axes": {
         "m": 112
       },
       "accuracy": "passed",
-      "speedup": 1.038
+      "speedup": 1.008
     },
     {
       "axes": {
         "m": 893
       },
       "accuracy": "passed",
-      "speedup": 1.193
+      "speedup": 1.286
     },
     {
       "axes": {
         "m": 2732
       },
       "accuracy": "passed",
-      "speedup": 1.664
+      "speedup": 1.729
     },
     {
       "axes": {
@@ -176,7 +176,7 @@
         "m": 16384
       },
       "accuracy": "passed",
-      "speedup": 1.457
+      "speedup": 1.443
     }
   ],
   "layout_variants": {
