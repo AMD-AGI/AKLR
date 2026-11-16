@@ -676,6 +676,70 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"n_valid_rows": 2, "write_bank": False},
         layout_variant_name="row_major",
     ),
+    # Kimi-K3.1-Pro's DCP partial shrunk: one head block, a short top-k over a small pool
+    PointSpec(
+        contract_id="dsa_sparse_mla_dcp_partial@1.0",
+        axes={"n_rows": 4, "n_heads": 16, "topk": 64, "n_slots": 512},
+        dtypes={
+            "q_nope": "bfloat16",
+            "q_rope": "bfloat16",
+            "kv_cache": "uint8",
+            "indices": "int32",
+            "topk_length": "int32",
+            "output": "bfloat16",
+            "lse": "float32",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
+        contract_id="mla_v_absorb@1.0",
+        axes={"n_tokens": 4, "n_heads": 2, "v_head_dim": 32},
+        dtypes={"attn_output": "bfloat16", "w_vc": "bfloat16", "output": "bfloat16"},
+        attrs={},
+        layout_variant_name="row_major",
+    ),
+    # Kimi-K3.1's KDA chain verify shrunk: two heads (12 at TP8), chains of 3 tokens (5), a ring of 4
+    # rows (16); then the softplus gate on one head. No padding request is drawn: sglang's kernel
+    # leaves a padding request's output rows unwritten, which the GPU baseline test would compare.
+    *(
+        PointSpec(
+            contract_id="kda_chain_verify_ring@1.0",
+            axes={
+                "n_requests": n_requests,
+                "n_tokens": n_requests * n_verify_tokens,
+                "n_verify_tokens": n_verify_tokens,
+                "n_heads": n_heads,
+                "n_slots": n_slots,
+                "n_lines": n_lines,
+                "ring_len": ring_len,
+            },
+            dtypes={
+                "mixed_qkv": "bfloat16",
+                "conv_weight": "float32",
+                "conv_state": "bfloat16",
+                "cache_indices": "int32",
+                "conv_window": "bfloat16",
+                "window_indices": "int32",
+                "a": "bfloat16",
+                "b": "bfloat16",
+                "a_log": "float32",
+                "dt_bias": "float32",
+                "ssm_state": "float32",
+                "ring_v": "bfloat16",
+                "ring_k": "bfloat16",
+                "ring_g": "float32",
+                "ring_beta": "float32",
+                "output": "bfloat16",
+            },
+            attrs={"has_lower_bound": has_lower_bound},
+            layout_variant_name="row_major",
+        )
+        for n_requests, n_verify_tokens, n_heads, n_slots, n_lines, ring_len, has_lower_bound in (
+            (4, 3, 2, 8, 4, 4, True),
+            (3, 2, 1, 5, 3, 2, False),
+        )
+    ),
 )
 # whose baseline runs only on gfx950
 GFX950_CONTRACT_IDS = frozenset(
@@ -708,5 +772,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "gated_attention_decode@1.0",
         "gated_attention_prefill_group_fp8_quant@1.0",
         "gated_attention_prefill@1.0",
+        "dsa_sparse_mla_dcp_partial@1.0",
+        "kda_chain_verify_ring@1.0",
     }
 )

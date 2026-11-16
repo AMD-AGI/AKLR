@@ -32,7 +32,13 @@ from aklr.core.contract.spec import (
     axis,
 )
 
-__all__ = ["CONTRACTS", "FLASH_MLA_WITH_KVCACHE", "FP8_PAGED_MQA_LOGITS", "MLA_DECODE_FWD"]
+__all__ = [
+    "CONTRACTS",
+    "FLASH_MLA_WITH_KVCACHE",
+    "FP8_PAGED_MQA_LOGITS",
+    "FP8_PAGED_MQA_LOGITS_VERIFY",
+    "MLA_DECODE_FWD",
+]
 
 _FINITE_DISTRIBUTION = FiniteDistribution()
 _INT32 = DTypeSpec(any_of=(DType.INT32,))
@@ -416,6 +422,73 @@ FP8_PAGED_MQA_LOGITS = OpContract(
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
 )
 
+# the pool, its attrs and the logits' width are fp8_paged_mqa_logits'
+FP8_PAGED_MQA_LOGITS_VERIFY = OpContract(
+    contract_id="fp8_paged_mqa_logits_verify@1.0",
+    description=(
+        "DSA indexer logits of a speculative verify: request b's next_n query rows share its "
+        "block table row, and row (b, j) scores its first context_lens[b, j] cached tokens t with "
+        "the sum over heads h of weights[b, j, h] * relu(q[b, j, h] . k_t) * scale_t, over a paged "
+        "pool of fp8 keys with an fp32 scale per token."
+    ),
+    op_type="mla",
+    axes={
+        "batch": axis("Requests, next_n query rows each.", 1, 65536, is_var=True),
+        "next_n": axis("Query rows of each request: its tokens under verification.", 1, 1024),
+        "n_heads": FP8_PAGED_MQA_LOGITS.axes["n_heads"],
+        "n_pages": FP8_PAGED_MQA_LOGITS.axes["n_pages"],
+        "max_blocks": FP8_PAGED_MQA_LOGITS.axes["max_blocks"],
+        "max_seq_len": axis(
+            "Logits per query row: every token of its request's block table row.",
+            1,
+            _MQA_CONTEXT_LIMIT,
+            is_var=True,
+            any_size=True,
+        ),
+    },
+    attrs=FP8_PAGED_MQA_LOGITS.attrs,
+    constraints=FP8_PAGED_MQA_LOGITS.constraints,
+    inputs={
+        "q": TensorSpec(
+            description="The query rows of each request.",
+            shape=("batch", "next_n", "n_heads", 128),
+            dtype=DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,)),
+            distribution=_FINITE_DISTRIBUTION,
+        ),
+        "kv_cache": FP8_PAGED_MQA_LOGITS.inputs["kv_cache"],
+        "weights": TensorSpec(
+            description="Per-head weight of each query row.",
+            shape=("batch", "next_n", "n_heads"),
+            dtype=_FLOAT32,
+            distribution=_FINITE_DISTRIBUTION,
+        ),
+        "context_lens": TensorSpec(
+            description="Cached tokens each query row scores.",
+            shape=("batch", "next_n"),
+            dtype=_INT32,
+            # shortcut: full block tables only, as fp8_paged_mqa_logits; past a row's context
+            # aiter leaves its logits unspecified (sglang's top-k reads none of them)
+            distribution=IntRangeDistribution(lo="max_seq_len", hi="max_seq_len"),
+        ),
+        "block_tables": TensorSpec(
+            description="The pages of each request, in context order; its query rows share them.",
+            shape=("batch", "max_blocks"),
+            dtype=_INT32,
+            distribution=IntRangeDistribution(lo="0", hi="n_pages - 1"),
+        ),
+    },
+    outputs={
+        "logits": TensorSpec(
+            description="The logits of each query row's cached tokens.",
+            shape=("batch", "next_n", "max_seq_len"),
+            dtype=_FLOAT32,
+            error_bounds=SqnrBound(min_sqnr_db=30.0),
+        ),
+    },
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+)
+
 _FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
 
 
@@ -514,4 +587,4 @@ MLA_DECODE_FWD = OpContract(
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
 )
 
-CONTRACTS = (FLASH_MLA_WITH_KVCACHE, FP8_PAGED_MQA_LOGITS, MLA_DECODE_FWD)
+CONTRACTS = (FLASH_MLA_WITH_KVCACHE, FP8_PAGED_MQA_LOGITS, MLA_DECODE_FWD, FP8_PAGED_MQA_LOGITS_VERIFY)

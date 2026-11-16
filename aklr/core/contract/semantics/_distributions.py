@@ -520,6 +520,61 @@ class Mxfp8NopeRowsDistribution(Distribution):
         return bool(((codes & 0x7F) != 0x7F).all() & ((exponents >= 8) & (exponents <= 246)).all())
 
 
+# sglang's fp8_ds_mla KV row, in bytes: NoPE codes, then an fp32 scale per 128 of them, then the bf16 RoPE part
+_DS_MLA_NOPE, _DS_MLA_SCALES, _DS_MLA_ROW = 512, 16, 656
+
+
+class Fp8DsMlaRowsDistribution(Distribution):
+    """sglang's fp8_ds_mla KV rows: 512 E4M3FN NoPE codes, an fp32 scale per 128 of them, then 64
+    bf16 RoPE values. The scales are positive powers of two, as Kimi-K3.1's ue8m0 cache writer rounds
+    them; codes and RoPE values of ``_DISTINCT_PAGES`` rows repeat over a pool, each row's scales
+    drawn on their own."""
+
+    kind: Literal["fp8_ds_mla_rows"] = "fp8_ds_mla_rows"
+
+    def accepts_dtype(self, dtype):
+        return dtype == DType.UINT8
+
+    def sample(self, shape, dtype, generator):
+        import torch
+
+        if shape[-1] != _DS_MLA_ROW:
+            raise ValueError(f"an fp8_ds_mla row occupies {_DS_MLA_ROW} bytes")
+        rows = math.prod(shape[:-1])
+        distinct = min(rows, _DISTINCT_PAGES)
+        values = torch.randn((distinct, _DS_MLA_NOPE + 64), generator=generator)
+        # codes across the e4m3 range, as a tile scaled to its amax holds them
+        codes = (values[:, :_DS_MLA_NOPE] * 128).clamp(-448, 448).to(torch.float8_e4m3fn)
+        payload = torch.cat(
+            (codes.view(torch.uint8), values[:, _DS_MLA_NOPE:].to(torch.bfloat16).view(torch.uint8)), dim=-1
+        )
+        raw = torch.empty((rows, _DS_MLA_ROW), dtype=torch.uint8)
+        for start in range(0, rows, distinct):
+            count = min(distinct, rows - start)
+            raw[start : start + count, :_DS_MLA_NOPE] = payload[:count, :_DS_MLA_NOPE]
+            raw[start : start + count, _DS_MLA_NOPE + _DS_MLA_SCALES :] = payload[:count, _DS_MLA_NOPE:]
+        # 2**-10 .. 2**-7: keys of about unit size
+        exponents = torch.randint(
+            117, 121, (rows, _DS_MLA_SCALES // 4), generator=generator, dtype=torch.int32
+        )
+        raw[:, _DS_MLA_NOPE : _DS_MLA_NOPE + _DS_MLA_SCALES] = (exponents << 23).view(torch.uint8)
+        return raw.reshape(shape)
+
+    def contains(self, tensor, dtype):
+        """Scales positive normal powers of two, codes other than NaN, RoPE values finite."""
+        import torch
+
+        if tensor.shape[-1] != _DS_MLA_ROW:
+            return False
+        raw = tensor.reshape(-1, _DS_MLA_ROW)
+        codes = raw[:, :_DS_MLA_NOPE]
+        bits = raw[:, _DS_MLA_NOPE : _DS_MLA_NOPE + _DS_MLA_SCALES].contiguous().view(torch.int32)
+        exponents = bits >> 23
+        is_power = ((bits & 0x7FFFFF) == 0) & (exponents > 0) & (exponents < 255)
+        rope = raw[:, _DS_MLA_NOPE + _DS_MLA_SCALES :].contiguous().view(torch.bfloat16)
+        return bool(is_power.all() & ((codes & 0x7F) != 0x7F).all() & rope.isfinite().all())
+
+
 DistributionUnion = Annotated[
     FiniteDistribution
     | LogUniformDistribution
@@ -532,7 +587,8 @@ DistributionUnion = Annotated[
     | TopkStaticPlanDistribution
     | Deepseekv4Fp8KvCacheDistribution
     | Mxfp8NopeRowsDistribution
-    | DsaIndexKCacheDistribution,
+    | DsaIndexKCacheDistribution
+    | Fp8DsMlaRowsDistribution,
     Field(discriminator="kind"),
 ]
 _DISTRIBUTION_ADAPTER = TypeAdapter(DistributionUnion)
