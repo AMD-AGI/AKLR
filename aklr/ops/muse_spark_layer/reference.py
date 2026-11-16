@@ -38,14 +38,15 @@ def _rms(x: Tensor, eps: float) -> Tensor:
 def _mxfp4(x: Tensor) -> Tensor:
     """x through aiter's MXFP4 activation quantization and back: per 32 values, the E8M0
     scale of the block maximum rounded at mantissa bit 21, E2M1 rounded half to even and
-    saturated; computed on float32 bits, the values are exact in any wider float."""
+    saturated; computed on float32 bits, the values are exact in any wider float. (No
+    torch.ldexp: off the current device it runs on the current one.)"""
     import torch
 
     blocks = x.float().unflatten(-1, (-1, 32))
     amax = blocks.abs().amax(-1, keepdim=True)
     bits = (amax.view(torch.int32) + 0x200000) & -0x800000
     exponent = (((bits >> 23) & 0xFF) - 129).clamp(min=-127)
-    scaled = blocks * torch.ldexp(torch.ones_like(amax), -exponent)
+    scaled = blocks * torch.exp2(-exponent.float())
     a = scaled.abs()
     ab = a.view(torch.int32)
     subnormal = ((a + 4194304.0).view(torch.int32) - (149 << 23)) & 0xFF
@@ -53,7 +54,7 @@ def _mxfp4(x: Tensor) -> Tensor:
     code = torch.where(a >= 6.0, torch.full_like(subnormal, 7), torch.where(a < 1.0, subnormal, normal))
     magnitude = torch.tensor(_E2M1, device=x.device)[code.long()]
     value = torch.where(scaled < 0, -magnitude, magnitude)
-    return (value * torch.ldexp(torch.ones_like(amax), exponent)).flatten(-2).to(x.dtype)
+    return (value * torch.exp2(exponent.float())).flatten(-2).to(x.dtype)
 
 
 def _mx_weight(args: Mapping[str, Any], name: str, expert: int, decode: Callable) -> Tensor:
@@ -124,7 +125,9 @@ def _experts(
     import torch.nn.functional as F
 
     device = pooled.device
-    gain = decode(group_args[0]["expert_norm_weight"], "bfloat16")
+    gain = decode(group_args[0]["expert_norm_weight"], "bfloat16").to(
+        device
+    )  # shared: rank 0's is every rank's
     x = _mxfp4(pooled)
     out = torch.zeros_like(pooled)
     for expert in ids.unique().tolist():
