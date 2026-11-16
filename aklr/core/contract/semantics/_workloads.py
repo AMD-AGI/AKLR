@@ -73,6 +73,8 @@ def row_major_inputs(
     }
     symbols.update(workload["axes"])
     root_hash = workload_hash(schema["name"], workload)
+    # a shared input is the group's: every rank draws rank 0's values
+    group_seed = derive_seed(root_hash, input_set)
     input_set_seed = derive_seed(root_hash, input_set, *([rank] if rank else []))
     scalars = workload.get("scalars", {})
     inputs = {}
@@ -83,7 +85,9 @@ def row_major_inputs(
         elif name in distributions:
             dims = [d if isinstance(d, int) else symbols[d] for d in declaration["shape"]]
             dtype = declaration["dtype"]["any_of"][0]
-            seed = derive_seed(input_set_seed, "initialize", name)
+            seed = derive_seed(
+                group_seed if declaration.get("shared") else input_set_seed, "initialize", name
+            )
             generator = torch.Generator(device).manual_seed(seed)
             try:
                 with torch.device(device):
