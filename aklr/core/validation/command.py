@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
@@ -82,7 +83,10 @@ def main(argv: Sequence[str]) -> int:
         parser.error(str(error))
     report = pipeline.run(scope)
     report.write(args.out)
-    if not args.no_timing:  # untimed: no measurement to write back, no baseline compared with
+    if args.no_timing:  # nothing measured: no earlier run's rewrites or baselines stay beside this report
+        for export in ("schemas", "baseline"):
+            shutil.rmtree(args.out / export, ignore_errors=True)
+    else:
         report.write_schemas(scope.root, args.out / "schemas")
         report.write_baselines(scope, args.out / "baseline")
     print(f"validation {report.conclusion}: {args.out / 'report.md'}")
