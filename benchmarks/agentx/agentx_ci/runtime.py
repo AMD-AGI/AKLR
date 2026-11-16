@@ -9,6 +9,7 @@ import importlib.metadata
 import json
 import os
 import re
+import shutil
 import signal
 import socket
 import subprocess
@@ -161,7 +162,56 @@ def wait_ready(base_url: str, server: subprocess.Popen, timeout_s: float, interv
 
 
 class CleanupError(RuntimeError):
-    """A child process could not be stopped safely; the sweep must abort."""
+    """A child process could not be stopped or its GPUs freed; the sweep must abort."""
+
+
+GPU_IDLE_TIMEOUT_S = 300
+GPU_IDLE_POLL_S = 5
+
+
+def vram_used_percent() -> dict[int, int]:
+    """Whole-percent VRAM use of every GPU amd-smi lists, as rocm-smi's VRAM% reports it."""
+    try:
+        done = subprocess.run(
+            [shutil.which("amd-smi") or "/opt/rocm/bin/amd-smi", "metric", "--mem-usage", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise CleanupError(f"amd-smi could not run: {type(error).__name__}: {error}") from error
+    if done.returncode:
+        raise CleanupError(f"amd-smi exited with code {done.returncode}: {done.stderr.strip()[:200]}")
+    text = done.stdout
+    starts = [index for index in (text.find("["), text.find("{")) if index >= 0]
+    try:
+        data = json.loads(text[min(starts) :]) if starts else None
+        gpus = data.get("gpu_data") if isinstance(data, dict) else data
+        usage = {}
+        for gpu in gpus:
+            memory = gpu["mem_usage"]
+            used, total = float(memory["used_vram"]["value"]), float(memory["total_vram"]["value"])
+            usage[int(gpu["gpu"])] = int(used * 100 // total)
+    except (ValueError, KeyError, TypeError, ZeroDivisionError) as error:
+        raise CleanupError(f"amd-smi memory usage is unreadable: {type(error).__name__}: {error}") from error
+    if not usage:
+        raise CleanupError("amd-smi listed no GPUs")
+    return usage
+
+
+def wait_gpus_idle(timeout_s: float = GPU_IDLE_TIMEOUT_S, poll_s: float = GPU_IDLE_POLL_S) -> float:
+    """Wait until every GPU's VRAM use reads 0%; servers such as HiCache free memory late."""
+    began = time.monotonic()
+    while True:
+        busy = {gpu: percent for gpu, percent in sorted(vram_used_percent().items()) if percent}
+        waited = time.monotonic() - began
+        if not busy:
+            return waited
+        if waited >= timeout_s:
+            listed = ", ".join(f"GPU{gpu} {percent}%" for gpu, percent in busy.items())
+            raise CleanupError(f"GPU VRAM still in use after {timeout_s:.0f} s: {listed}")
+        time.sleep(min(poll_s, max(0, timeout_s - waited)))
 
 
 def stop(server: subprocess.Popen, grace_s: float = 120) -> None:
@@ -314,6 +364,9 @@ def prepare_traces(host: dict, points: list[dict], log_path: Path) -> None:
 
 def run_live(point: dict, out: Path, host: dict) -> dict:
     runtime = point["runtime"]
+    waited = wait_gpus_idle()
+    if waited >= 1:
+        print(f"  waited {waited:.0f} s for GPU VRAM to reach 0%", flush=True)
     port = runtime["port"] if runtime["port"] is not None else available_port()
     base_url = f"http://127.0.0.1:{port}"
     if not port_free(port):

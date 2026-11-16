@@ -81,7 +81,7 @@ python3 -m agentx_bench pipeline --help
 | --- | --- |
 | `pipeline` | 单个模型/target/框架一键 plan → sweep → report → 清理 |
 | `plan` | 读取一个或多个模型/target/框架运行的 recipe 文件，生成可供 report 校验的 manifest |
-| `sweep` | 在 Docker 中安装当前 checkout，为 SGLang 预先装好 Rust 工具链并编译 TreeCore，然后执行 serving 计划 |
+| `sweep` | 在 Docker 中安装当前 checkout，为 SGLang 预先装好 Rust 工具链并编译 TreeCore，然后执行 serving 计划。每个点启动服务前，等到 `amd-smi` 显示所有 GPU 的显存利用率都为 0%；超过 300 秒则中止 sweep |
 | `report` | 渲染单个结果；加 `--plan` 时校验计划、生成站点并管理基线 |
 
 ### 2.2 使用 pipeline 一键测试

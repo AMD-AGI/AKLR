@@ -32,6 +32,9 @@ class AgentXEnvironmentTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
+        idle = mock.patch.object(runtime, "wait_gpus_idle", return_value=0.0)
+        self.gpus_idle = idle.start()
+        self.addCleanup(idle.stop)
         self.root = Path(temporary.name)
         self.inspection_path = self.root / "execution.json"
         self.defaults = {
@@ -298,6 +301,7 @@ class AgentXEnvironmentTests(unittest.TestCase):
             mock.patch.object(runtime, "run_client", return_value=0) as client,
         ):
             self.assertEqual(runtime.run_live(self.point, out, self.host), self.aggregate)
+        self.gpus_idle.assert_called_once_with()
         server_env = server.call_args.kwargs["env"]
         client_env = client.call_args.kwargs["env"]
         self.assertEqual(server_env["SGLANG_USE_AITER"], "0")
@@ -490,6 +494,63 @@ class AgentXEnvironmentTests(unittest.TestCase):
                 {point["conc"]: point["measurement"]}
             )
         self.assertEqual(analysis.compare(results, legacy)["arms"]["tp1"]["status"], "curve")
+
+
+def amd_smi(*used_mb, wrap=False):
+    gpus = [
+        {
+            "gpu": index,
+            "mem_usage": {"total_vram": {"value": 294896, "unit": "MB"}, "used_vram": {"value": used}},
+        }
+        for index, used in enumerate(used_mb)
+    ]
+    stdout = "WARNING: fixture banner\n" + json.dumps({"gpu_data": gpus} if wrap else gpus)
+    return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+
+class AgentXGpuIdleTests(unittest.TestCase):
+    def test_vram_use_reads_whole_percent_from_either_amd_smi_layout(self):
+        for wrap in (False, True):
+            with (
+                self.subTest(wrap=wrap),
+                mock.patch.object(
+                    runtime.subprocess, "run", return_value=amd_smi(283, 2949, 294896, wrap=wrap)
+                ),
+            ):
+                self.assertEqual(runtime.vram_used_percent(), {0: 0, 1: 1, 2: 100})
+
+    def test_unreadable_amd_smi_aborts_the_sweep(self):
+        failures = {
+            "could not run": FileNotFoundError("amd-smi"),
+            "exited with code 2": SimpleNamespace(returncode=2, stdout="", stderr="no GPUs"),
+            "unreadable": SimpleNamespace(returncode=0, stdout='[{"gpu": 0}]', stderr=""),
+            "listed no GPUs": SimpleNamespace(returncode=0, stdout="[]", stderr=""),
+        }
+        for message, outcome in failures.items():
+            effect = {"side_effect": outcome} if isinstance(outcome, Exception) else {"return_value": outcome}
+            with self.subTest(message), mock.patch.object(runtime.subprocess, "run", **effect):
+                with self.assertRaisesRegex(runtime.CleanupError, message):
+                    runtime.vram_used_percent()
+
+    def test_wait_returns_once_every_gpu_reads_zero(self):
+        readings = [{0: 0, 1: 37}, {0: 0, 1: 2}, {0: 0, 1: 0}]
+        with (
+            mock.patch.object(runtime, "vram_used_percent", side_effect=readings) as read,
+            mock.patch.object(runtime.time, "sleep") as sleep,
+        ):
+            runtime.wait_gpus_idle(timeout_s=300, poll_s=5)
+        self.assertEqual(read.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_wait_times_out_naming_the_busy_gpus(self):
+        clock = iter([0, 0, 200, 301])
+        with (
+            mock.patch.object(runtime, "vram_used_percent", return_value={0: 0, 5: 12}),
+            mock.patch.object(runtime.time, "monotonic", side_effect=lambda: next(clock)),
+            mock.patch.object(runtime.time, "sleep"),
+        ):
+            with self.assertRaisesRegex(runtime.CleanupError, r"after 300 s: GPU5 12%"):
+                runtime.wait_gpus_idle(timeout_s=300, poll_s=5)
 
 
 if __name__ == "__main__":

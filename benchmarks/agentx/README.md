@@ -84,7 +84,7 @@ python3 -m agentx_bench pipeline --help
 | --- | --- |
 | `pipeline` | Run one model/target/framework through plan → sweep → report → cleanup |
 | `plan` | Load recipe files for one or more model/target/framework runs and generate a manifest for report validation |
-| `sweep` | Install the current checkout in Docker, install the Rust toolchain and build the TreeCore once for SGLang, then execute a serving plan |
+| `sweep` | Install the current checkout in Docker, install the Rust toolchain and build the TreeCore once for SGLang, then execute a serving plan. Before each point's server starts, it waits until `amd-smi` reads 0% VRAM use on every GPU; after 300 seconds it aborts the sweep |
 | `report` | Render a single result; with `--plan`, validate the plan, build a site, and manage baselines |
 
 ### 2.2 Run the Pipeline
