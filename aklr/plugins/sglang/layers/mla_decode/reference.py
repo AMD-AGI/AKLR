@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What kimi_k3_mla_decode's contract says, in torch, in fp32."""
+"""What mla_decode's contract says, in torch, in fp32."""
 
 from __future__ import annotations
 
@@ -11,10 +11,10 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from torch import Tensor
 
-__all__ = ["kimi_k3_mla_decode_reference"]
+__all__ = ["mla_decode_reference"]
 
 
-def kimi_k3_mla_decode_reference(
+def mla_decode_reference(
     point: Any,
     row_major_args: Mapping[str, Any],
     decode: Callable[[Tensor, str], Tensor],
