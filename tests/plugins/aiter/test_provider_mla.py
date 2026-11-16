@@ -264,6 +264,15 @@ def _calls():
     }
 
 
+# aiter's keyword-only parameters, by op: aiter hands them to select and run by name
+KEYWORD_ONLY = {"mla_decode_fwd": ("q_aux", "kv_aux", "nvfp4_params", "nvfp4_lse")}
+
+
+def _kwargs(case: str, call=None, **changes):
+    call = _call(case, **changes) if call is None else call
+    return {name: call.get(name) for name in KEYWORD_ONLY.get(_op(case), ())}
+
+
 def _op(case: str) -> str:
     return "mla_paged_decode" if case.startswith("mla_paged_decode") else case
 
@@ -279,7 +288,7 @@ def _args(case: str, call=None, **changes):
 
 
 def _select(case: str, call=None, **changes):
-    return base.SELECTORS[_op(case)][1](_args(case, call, **changes), {})
+    return base.SELECTORS[_op(case)][1](_args(case, call, **changes), _kwargs(case, call, **changes))
 
 
 def _selector_modules():
@@ -335,8 +344,11 @@ def test_a_served_call_offers_a_run_taking_aiters_contract(aklr_serves, case):
     """aiter hands run every positional parameter; one it cannot bind is a contract mismatch."""
     kernel, run = _select(case)
     assert kernel is KERNEL
-    inspect.signature(run).bind(*_args(case))
-    assert tuple(inspect.signature(run).parameters) == AITER_CONTRACTS[_op(case)][1]
+    inspect.signature(run).bind(*_args(case), **_kwargs(case))
+    assert tuple(inspect.signature(run).parameters) == (
+        *AITER_CONTRACTS[_op(case)][1],
+        *KEYWORD_ONLY.get(_op(case), ()),
+    )
 
 
 _PE = torch.zeros(2, 4, 64, dtype=BF16)
@@ -344,6 +356,8 @@ _WIDE = torch.zeros(2, 4, 640, dtype=BF16)
 
 DECLINED = [
     ("mla_decode_fwd", {"max_seqlen_q": 2}),
+    ("mla_decode_fwd", {"q_aux": torch.zeros(2, 16, 8, dtype=torch.uint8)}),
+    ("mla_decode_fwd", {"nvfp4_params": object()}),
     ("mla_decode_fwd", {"page_size": 64}),
     ("mla_decode_fwd", {"nhead_kv": 2}),
     ("mla_decode_fwd", {"logit_cap": 30.0}),
@@ -406,7 +420,7 @@ def test_mla_decode_fwd_hands_aklr_the_pool_and_aiters_o(monkeypatch, aklr_serve
     api = _Api(lambda *a, o, **k: (o, "lse"))
     monkeypatch.setattr(mla, "mla_decode_fwd", api)
     _, run = _select("mla_decode_fwd", call)
-    o, lse = run(*_args("mla_decode_fwd", call))
+    o, lse = run(*_args("mla_decode_fwd", call), **_kwargs("mla_decode_fwd", call))
     assert o is call["o"] and lse == "lse"
     (args, kwargs), *_ = api.calls
     expected = [call[name] for name in ("q", "kv_buffer", "kv_indptr", "kv_indices", "q_scale", "kv_scale")]
@@ -540,8 +554,14 @@ def aiter_plugin(monkeypatch):
 
         native.__signature__ = inspect.Signature(
             [
-                inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD, default=d)
-                for name, d in params
+                *(
+                    inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD, default=d)
+                    for name, d in params
+                ),
+                *(
+                    inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY, default=None)
+                    for name in KEYWORD_ONLY.get(op, ())
+                ),
             ]
         )
         routes[op] = plugin.route(op=op, version=version)(native)
