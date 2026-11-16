@@ -26,26 +26,53 @@ def test_csr_reference_preserves_operand_device(empty):
     torch.testing.assert_close(actual.cpu(), expected, atol=1e-12, rtol=1e-12)
 
 
-@pytest.mark.gpu
-@pytest.mark.gfx950
-def test_csr_prefill_repeated_calls_are_bitwise():
-    """Arrival order of tail chunks must not alter the published BF16 result."""
+def _csr_tail_workloads():
     schemas, errors = ContractRegistry.default().read_schemas("aklr.ops.mla_prefill")
     assert not errors
-    for _, schema in schemas:
+    workloads = []
+    for path, schema in schemas:
         if schema.kernel.language != "hip" or not schema.kernel.sources:
             continue
-        workload = next((w for w in schema.workloads if w.axes["n_tokens"] == 344), None)
-        if workload is None:
-            continue
-        case = OpCase(schema.point(workload.axes))
-        call = case.call(case.inputs(), "cuda")
-        call["output"] = torch.empty(
-            case.contract.storage_shape_of("output", case.point), device="cuda", dtype=torch.bfloat16
-        )
-        runnable = HipBuilder().build(schema)
+        for workload in schema.workloads:
+            if workload.axes["n_tokens"] == 344:
+                workloads.append(
+                    pytest.param(schema, workload, id=f"{path.stem}-prefix{workload.axes['prefix_rows']}")
+                )
+    assert workloads, "no HIP CSR tail workloads found"
+    return workloads
+
+
+@pytest.mark.gpu
+@pytest.mark.gfx950
+@pytest.mark.parametrize("schema,workload", _csr_tail_workloads())
+@pytest.mark.parametrize("input_set", ["numeric/0", "numeric/1"])
+def test_csr_prefill_repeated_calls_are_bitwise(
+    schema, workload, input_set, committed_kernel_cache, monkeypatch
+):
+    """Tail partials must be visible before merging, in eager calls and graph replays."""
+    monkeypatch.setenv("AKLR_KERNEL_CACHE_DIR", str(committed_kernel_cache))
+    case = OpCase(schema.point(workload.axes))
+    call = case.call(case.inputs(input_set), "cuda")
+    call["output"] = torch.empty(
+        case.contract.storage_shape_of("output", case.point), device="cuda", dtype=torch.bfloat16
+    )
+    runnable = HipBuilder().build(schema)
+    runnable(**call)
+    expected = call["output"].clone().view(torch.uint8)
+    for repeat in range(128):
         runnable(**call)
-        expected = call["output"].clone()
-        for _ in range(16):
+        assert torch.equal(call["output"].view(torch.uint8), expected), f"eager repeat {repeat}"
+
+    # Capture on a side stream after warming it up, then reuse the graph's scratch.
+    stream = torch.cuda.Stream()
+    stream.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(stream):
+        for _ in range(3):
             runnable(**call)
-            assert torch.equal(call["output"].view(torch.uint8), expected.view(torch.uint8))
+    torch.cuda.current_stream().wait_stream(stream)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph, stream=stream):
+        runnable(**call)
+    for repeat in range(128):
+        graph.replay()
+        assert torch.equal(call["output"].view(torch.uint8), expected), f"graph replay {repeat}"
