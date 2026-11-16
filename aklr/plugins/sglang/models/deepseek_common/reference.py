@@ -20,6 +20,7 @@ __all__ = [
     "mla_kc_rope_cache_reference",
     "mla_qkv_a_norm_fp8_reference",
     "mla_qkv_a_norm_reference",
+    "mla_vc_fp8_reference",
     "mla_vc_reference",
 ]
 
@@ -189,3 +190,23 @@ def mla_vc_reference(
         return decode(args[name], point.dtypes[name])
 
     return _absorbed(get("attn_output"), get("w_vc"), get("w_scale")).flatten(1)
+
+
+def mla_vc_fp8_reference(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+    decode: Callable[[Tensor, str], Tensor],
+) -> tuple[Tensor, Tensor]:
+    """(out_fp8, out_scale): mla_vc's output rounded to bf16 (sglang's absorb writes bf16), in
+    fp8 codes per 128-wide group, the scales group-major.
+    Rounding points: the attention output's fp8 codes (_absorbed), the output's bf16."""
+    import torch
+
+    args = row_major_args
+
+    def get(name: str) -> Tensor:
+        return decode(args[name], point.dtypes[name])
+
+    out = _absorbed(get("attn_output"), get("w_vc"), get("w_scale")).flatten(1)
+    codes, scales = _group_codes(out.to(torch.bfloat16))
+    return codes.to(out.dtype), scales.T.to(out.dtype)

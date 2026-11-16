@@ -12,9 +12,10 @@ from aklr.plugins.sglang.models.deepseek_common.contract import (
     MLA_QKV_A_NORM,
     MLA_QKV_A_NORM_FP8,
     MLA_VC,
+    MLA_VC_FP8,
 )
 
-__all__ = ["mla_kc_rope_cache", "mla_qkv_a_norm", "mla_qkv_a_norm_fp8", "mla_vc"]
+__all__ = ["mla_kc_rope_cache", "mla_qkv_a_norm", "mla_qkv_a_norm_fp8", "mla_vc", "mla_vc_fp8"]
 
 
 @api(MLA_QKV_A_NORM)
@@ -42,6 +43,10 @@ def mla_kc_rope_cache(
 
 @api(MLA_VC)
 def mla_vc(attn_output, w_vc, w_scale): ...
+
+
+@api(MLA_VC_FP8)
+def mla_vc_fp8(attn_output, w_vc, w_scale): ...
 
 
 @sglang_route(
@@ -258,7 +263,8 @@ def _forward_absorb_rocm_core(
 ):
     """The decode branch of forward_absorb_rocm_core whose query absorb prepare left to it
     (q_nope_unabsorbed, a DSA decode on gfx950): the fused absorb, RoPE and KV write as
-    mla_kc_rope_cache, sglang's attention, the value absorb as mla_vc, then o_proj. An op
+    mla_kc_rope_cache, sglang's attention, the value absorb as mla_vc (mla_vc_fp8 with its
+    output quantized for a block-fp8 o_proj), then o_proj. An op
     that declines the call leaves its step to sglang's own function; with neither taking it,
     sglang runs the whole method."""
     from sglang.srt.models.deepseek_common.attention_forward_methods import forward_mla_rocm as rocm
@@ -272,10 +278,11 @@ def _forward_absorb_rocm_core(
         else mla_kc_rope_cache.fallback_reason(**kc_arguments)
     )
     vc_arguments = _vc_arguments(self, rocm)
+    vc_op = mla_vc_fp8 if _block_fp8(self.o_proj) else mla_vc
     vc_reason = (
         FallbackReason.OUT_OF_CONTRACT
         if vc_arguments is None
-        else mla_vc.fallback_reason(attn_output=_attention_stand_in(self, q_pe), **vc_arguments)
+        else vc_op.fallback_reason(attn_output=_attention_stand_in(self, q_pe), **vc_arguments)
     )
     if kc_reason is not None and vc_reason is not None:
         return kc_reason
@@ -300,9 +307,13 @@ def _forward_absorb_rocm_core(
         **(dict(topk_indices=topk_indices) if topk_indices is not None else {}),
     )
     attn_output = attn_output.view(-1, self.num_local_heads, self.kv_lora_rank)
-    attn_bmm_output = None if vc_reason is not None else mla_vc(attn_output=attn_output, **vc_arguments)
+    attn_bmm_output = None if vc_reason is not None else vc_op(attn_output=attn_output, **vc_arguments)
     if attn_bmm_output is None or isinstance(attn_bmm_output, FallbackReason):
         attn_bmm_output = rocm.rocm_absorb_v_bmm(self, attn_output)
+    elif vc_op is mla_vc_fp8:
+        # o_proj takes the codes with their scales as aiter's preshuffled GEMM reads them
+        out_fp8, out_scale = attn_bmm_output
+        attn_bmm_output = (out_fp8, out_scale.T)
     output, _ = self.o_proj(attn_bmm_output)
     if self.next_skip_topk is None:
         return output
@@ -356,8 +367,9 @@ def _kc_arguments(attn, q_nope, q_pe, k_nope, k_pe, positions, forward_batch):
 
 
 def _vc_arguments(attn, rocm):
-    """mla_vc's weights as sglang holds them, for rocm_absorb_v_bmm's fp8 branch into a bf16
-    o_proj; None where it takes another branch."""
+    """mla_vc's and mla_vc_fp8's weights as sglang holds them, for rocm_absorb_v_bmm's fp8
+    branch into a bf16 o_proj or a block-fp8 one whose scales sglang's fused fp8 quantization
+    does not see; None where it takes another branch."""
     w_scale = _scale(attn.w_scale)
     if not (
         rocm._use_aiter_gfx95

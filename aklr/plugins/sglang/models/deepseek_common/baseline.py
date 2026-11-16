@@ -17,6 +17,7 @@ __all__ = [
     "mla_qkv_a_norm_baseline",
     "mla_qkv_a_norm_fp8_baseline",
     "mla_vc_baseline",
+    "mla_vc_fp8_baseline",
 ]
 
 
@@ -155,3 +156,20 @@ def mla_vc_baseline(attn_output, w_vc, w_scale, attn_bmm_output=None):
         config=rocm._absorb_bmm_config(heads, tokens, v_head_dim),
     )
     return out.flatten(1, 2)
+
+
+def mla_vc_fp8_baseline(attn_output, w_vc, w_scale, out_fp8=None, out_scale=None):
+    """rocm_absorb_v_bmm for fp8 w_vc into a block-fp8 o_proj whose scales sglang keeps as
+    weight_scale_inv (GLM-5.3's): mla_vc's batched GEMM into bf16, then the per-1x128
+    quantization o_proj's own aiter_w8a8_block_fp8_linear applies, its scale in the layout
+    that GEMM reads."""
+    from sglang.srt.layers.quantization import fp8_utils
+
+    out = mla_vc_baseline(attn_output, w_vc, w_scale)
+    transposed = out.shape[0] >= 2
+    codes, scales = fp8_utils.aiter_per1x128_quant(
+        out, quant_dtype=fp8_utils.aiter.dtypes.fp8, transpose_scale=transposed
+    )
+    if transposed:
+        scales = fp8_utils.view_aiter_fused_rms_transposed_fp8_scale(scales)
+    return codes, scales.T

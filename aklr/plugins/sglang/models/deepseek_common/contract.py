@@ -32,7 +32,15 @@ from aklr.core.contract.spec import (
     derived_axis,
 )
 
-__all__ = ["CONTRACTS", "FP8_GROUP", "MLA_KC_ROPE_CACHE", "MLA_QKV_A_NORM", "MLA_QKV_A_NORM_FP8", "MLA_VC"]
+__all__ = [
+    "CONTRACTS",
+    "FP8_GROUP",
+    "MLA_KC_ROPE_CACHE",
+    "MLA_QKV_A_NORM",
+    "MLA_QKV_A_NORM_FP8",
+    "MLA_VC",
+    "MLA_VC_FP8",
+]
 
 _BF16 = DTypeSpec(any_of=(DType.BFLOAT16,))
 _FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
@@ -488,4 +496,80 @@ MLA_VC = OpContract(
     compare=CompareSpec(determinism="bitwise"),
 )
 
-CONTRACTS = (MLA_QKV_A_NORM, MLA_QKV_A_NORM_FP8, MLA_KC_ROPE_CACHE, MLA_VC)
+# The value absorb's output in fp8 codes. Its sums carry gfx950's fp8 MFMA rounding (see mla_vc's
+# output), which a bf16 rounding or the group's amax may carry across an fp8 code boundary: one
+# step is up to 2**-3 of the code, and a small code takes the output's absolute error 448 / amax
+# times larger. On this contract's distributions (MI355X, 1 to 80 tokens, 200 input sets each; the
+# kernel's output equals aiter's absorb and quantization bit for bit) 9 of 1.2e8 codes passed
+# _Q_CODES's bound, peak 1.25x; this one peaked at 0.63x. The scales keep _Q_SCALES (peak 0.5x).
+_VC_CODES = ToleranceBound(absolute_tolerance=2**-6, relative_tolerance=2**-2)
+
+MLA_VC_FP8 = OpContract(
+    contract_id="mla_vc_fp8@1.0",
+    description=(
+        "sglang's absorbed MLA value projection on one rank, kv_b_proj in fp8 at one scale per "
+        "tensor, for a block-fp8 o_proj (rocm_absorb_v_bmm, then o_proj's input quantization): "
+        "each head's attention output, quantized per 128-wide group to fp8 at "
+        "max(amax, 1e-10) / 448, times w_vc and w_scale; the heads side by side, rounded to "
+        "bf16, quantized per 128-wide group to fp8 at max(amax, 1e-10) / 448, its scales group "
+        "by group."
+    ),
+    op_type="deepseek_common",
+    axes={
+        "n_tokens": axis("Tokens in this call, padding rows included.", 1, 65536, is_var=True),
+        "n_heads": axis("Query heads on this rank.", 1, 128),
+        "kv_lora_rank": axis(
+            "The latent: the attention output's width per head.", 128, 1024, multiple_of=128
+        ),
+        "v_head_dim": axis("A head's value channels.", 1, 1024),
+        "out_dim": derived_axis("The heads' value channels side by side.", "n_heads * v_head_dim"),
+        "out_groups": derived_axis("128-wide groups of the output.", "out_dim // 128"),
+    },
+    constraints=("out_dim % 128 == 0",),
+    inputs={
+        "attn_output": TensorSpec(
+            description="Each head's attention output, in the latent's basis.",
+            shape=("n_tokens", "n_heads", "kv_lora_rank"),
+            dtype=_BF16,
+            distribution=_FINITE,
+        ),
+        "w_vc": TensorSpec(
+            description=(
+                "kv_b_proj's value part per head, absorbed (sglang's w_vc, transposed): row v "
+                "maps the latent to value channel v."
+            ),
+            shape=("n_heads", "v_head_dim", "kv_lora_rank"),
+            dtype=_FP8,
+            distribution=_FINITE,
+            lifetime="weight",
+        ),
+        "w_scale": TensorSpec(
+            description="kv_b_proj's per-tensor scale, one element: sglang's 0-d w_scale, viewed.",
+            shape=(1,),
+            dtype=_FP32,
+            distribution=_W_SCALE,
+            lifetime="weight",
+        ),
+    },
+    outputs={
+        "out_fp8": TensorSpec(
+            description="Each token's value channels in fp8 codes, per 128-wide group: o_proj's input.",
+            shape=("n_tokens", "out_dim"),
+            dtype=_FP8,
+            error_bounds=_VC_CODES,
+        ),
+        "out_scale": TensorSpec(
+            description=(
+                "out_fp8's scale per group, group-major (row g holds group g of every token): "
+                "transposed, the column-major scale aiter's preshuffled GEMM reads."
+            ),
+            shape=("out_groups", "n_tokens"),
+            dtype=_FP32,
+            error_bounds=_Q_SCALES,
+        ),
+    },
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism="bitwise"),
+)
+
+CONTRACTS = (MLA_QKV_A_NORM, MLA_QKV_A_NORM_FP8, MLA_KC_ROPE_CACHE, MLA_VC, MLA_VC_FP8)

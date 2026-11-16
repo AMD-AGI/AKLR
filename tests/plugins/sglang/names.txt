@@ -125,6 +125,7 @@ mla_qkv_a_norm_hidden_dim#_q_lora_rank#_kv_lora_rank#_latent_dim#
 mla_qkv_a_norm_fp8_hidden_dim#_q_lora_rank#_kv_lora_rank#_latent_dim#
 mla_qkv_a_norm_fp8_shuffled_16x16_hidden_dim#_q_lora_rank#_kv_lora_rank#_latent_dim#
 mla_vc_n_heads#_kv_lora_rank#_v_head_dim#
+mla_vc_fp8_n_heads#_kv_lora_rank#_v_head_dim#
 qwen2_moe_fp8_experts_model_dim#_n_experts#_inter_dim#_topk#
 qwen2_moe_fp8_experts_shuffled_16x16_model_dim#_n_experts#_inter_dim#_topk#
 qwen2_moe_fp8_router_experts_model_dim#_n_routed#_inter_dim#

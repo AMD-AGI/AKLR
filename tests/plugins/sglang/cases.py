@@ -718,6 +718,19 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={},
         layout_variant_name="row_major",
     ),
+    PointSpec(
+        contract_id="mla_vc_fp8@1.0",
+        axes={"n_tokens": 4, "n_heads": 4, "kv_lora_rank": 256, "v_head_dim": 64},
+        dtypes={
+            "attn_output": "bfloat16",
+            "w_vc": "float8_e4m3fn",
+            "w_scale": "float32",
+            "out_fp8": "float8_e4m3fn",
+            "out_scale": "float32",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
     # GLM-5.2's qkv_a projection shrunk: a 512-wide hidden state into a 512-wide q latent, a
     # 128-wide KV latent and its 64-wide RoPE key
     PointSpec(
@@ -803,5 +816,6 @@ GFX950_CONTRACT_IDS = frozenset(
         "mla_qkv_a_norm@1.0",
         "mla_qkv_a_norm_fp8@1.0",
         "mla_vc@1.0",
+        "mla_vc_fp8@1.0",
     }
 )

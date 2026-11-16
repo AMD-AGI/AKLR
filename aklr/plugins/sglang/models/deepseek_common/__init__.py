@@ -6,6 +6,7 @@ from aklr.plugins.sglang.models.deepseek_common.api import (
     mla_qkv_a_norm,
     mla_qkv_a_norm_fp8,
     mla_vc,
+    mla_vc_fp8,
 )
 
-__all__ = ["mla_kc_rope_cache", "mla_qkv_a_norm", "mla_qkv_a_norm_fp8", "mla_vc"]
+__all__ = ["mla_kc_rope_cache", "mla_qkv_a_norm", "mla_qkv_a_norm_fp8", "mla_vc", "mla_vc_fp8"]
