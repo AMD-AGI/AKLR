@@ -54,6 +54,28 @@ class TestPoolDistributions:
         assert pool.dtype == torch.uint8
         assert torch.equal(pool.unique(), torch.arange(64, dtype=torch.uint8))
 
+    def test_distinct_values_differ_within_a_row(self) -> None:
+        """Distinct int_range rows shorter than the range: in range, no value twice."""
+        distribution = semantics.IntRangeDistribution(lo=3, hi=202, distinct=True)
+        values = distribution.sample((64, 100), "int32", torch.Generator().manual_seed(0))
+        assert values.shape == (64, 100) and values.dtype == torch.int32
+        assert distribution.contains(values, "int32")
+
+    @pytest.mark.gpu
+    def test_distinct_values_are_the_seeds_alone(self) -> None:
+        """A page table of 128 rows of 4096 distinct pages, drawn 20 times on the GPU
+        from one seed, is the same every time: each task draws its own inputs."""
+        distribution = semantics.IntRangeDistribution(lo=0, hi=4095, distinct=True)
+
+        def draw() -> torch.Tensor:
+            with torch.device("cuda"):
+                generator = torch.Generator("cuda").manual_seed(0)
+                return distribution.sample((128, 4096), "int32", generator)
+
+        first = draw()
+        assert distribution.contains(first, "int32")
+        assert all(torch.equal(draw(), first) for _ in range(20))
+
 
 class TestCompareOutputs:
     """``compare_outputs`` fails an output off its reference."""
