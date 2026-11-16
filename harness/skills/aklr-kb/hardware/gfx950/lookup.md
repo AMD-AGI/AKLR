@@ -53,8 +53,9 @@ grep -rni 'v_mfma_f32_16x16x128_f8f6f4' hardware/gfx950/cdna4/   # every mention
 `S_` names are spread over six files, so search all of `cdna4/`.
 
 **Reading an entry** (e.g. `V_PK_ADD_F32`, ch12_10, PDF page 287):
-- `Opcode: N` is the OP-field value in the encoding of the file you are in (§13). The same name in another
-  file has another number.
+- `Opcode: N` is the OP-field value in the encoding of the file you are in (§13), except for the VOP1-origin
+  entries of ch12_11, which print VOP1 + 384 for an OP field of VOP1 + 320 (below). The same name in another
+  file usually has another number; VOPC-origin entries keep theirs (below).
 - Pseudocode: `S0`/`S1`/`S2` are sources, `D0` the destination, `.f32`/`.u32`/`.b64` how the bits are read;
   `laneId`, `VCC.u64[laneId]` and `OPSEL` are per-lane state and instruction fields. Helpers such as
   `CalcBufferAddr`, `CalcDsAddr` and `f32_to_fp4_scale` are used but defined nowhere in the guide; take their
@@ -162,7 +163,8 @@ The operand codes are in Table 23 (`cdna4/ch06_vector_alu_operations.md` §6.2.2
 - Limits (§6.2.1): "At most one SGPR can be read per instruction, but the value can be used for more than one
   operand"; "At most one literal constant can be used, and only when an SGPR or M0 is not used as a source".
   ADDC, SUBB and CNDMASK already read VCC. "Any of the 32-bit microcode formats may use a 32-bit literal
-  constant, but not VOP3" (§6.1); SOPP and SOPK cannot (§5.2). Expansion of a literal used as a 64-bit
+  constant, but not VOP3" (§6.1); SOPP and SOPK cannot (§5.2), except the SOPK `S_SETREG_IMM32_B32`, which
+  "requires a 32-bit literal constant" (ch12_02). Expansion of a literal used as a 64-bit
   source: §6.2.1.1.
 - Alignment: 64-bit SGPR data in an even pair, quad alignment when a scalar load returns four or more dwords
   (§3.6.3, §5.2); 64-bit VGPR data in even VGPRs (§3.6.4); packed 32-bit ops (`V_PK_*_F32`) on even VGPRs (§6.7).
@@ -173,8 +175,10 @@ The operand codes are in Table 23 (`cdna4/ch06_vector_alu_operations.md` §6.2.2
   index); SCC §3.8, §5.3; VCC and VCCZ §3.9 ("VCC physically resides in the highest two user SGPRs"). VGPR
   indexing through M0: §6.6. Out of range: a source reads SGPR0 or VGPR0 and a destination is not written
   (§3.6.1, §6.2.3).
-- Modifiers (VOP3 only): ABS/NEG on float inputs, OMOD (×0.5, 1, 2, 4) and CLAMP on outputs. OMOD is ignored
-  when output denormals are enabled or the IEEE mode bit is set (§6.2.2).
+- Modifiers: ABS/NEG on float inputs, OMOD (×0.5, 1, 2, 4) and CLAMP on outputs, in VOP3 and SDWA (Table 91);
+  SDWAB (Table 92) and DPP (Table 93) carry ABS/NEG only, VOP3P NEG/NEG_HI and CLMP (Table 88), the 32-bit
+  VOP1/VOP2/VOPC words none (§13). OMOD is ignored when output denormals are enabled or the IEEE mode bit is set
+  (§6.2.2): at a hipcc kernel's launch MODE (IEEE 1, f32 denormals on) it had no effect *(field, E1)*.
 
 ## 4. Kernel state and limits (chapter 3)
 
@@ -186,7 +190,7 @@ The operand codes are in Table 23 (`cdna4/ch06_vector_alu_operations.md` §6.2.2
 | VGPR granule | "VGPRs are allocated in groups of eight Dwords." | ch03 §3.6.4 |
 | SGPRs | "16 to 102 SGPRs, in units of 16 GPRs (Dwords)", "logically viewed as SGPRs 0-101"; VCC is SGPR 106–107; a trap handler reserves 16 more | ch03 §3.6.2 |
 | LDS | "160 kB", "64 banks, each with 640 entries of 4 bytes"; "One work-group can request up to 160 kB" | ch02 §2.2.1, ch11 §11.1 |
-| LDS granule | "contiguous blocks of 1280 bytes on 1280-byte alignment"; accesses clamp to the smaller of the allocation and M0 | ch03 §3.6.5 |
+| LDS granule | "contiguous blocks of 1280 bytes on 1280-byte alignment"; accesses clamp to the smaller of the allocation and M0, but on gfx950 plain DS reads, writes and atomics ignore M0 (measured: `memory_and_sync.md` §4.1) | ch03 §3.6.5 |
 | Counters | VMCNT 6 bits, LGKMCNT 4 bits, EXPCNT 3 bits "Unused" | ch03 Table 2 → `memory_and_sync.md` |
 | PC | 48-bit byte address; S_GET_PC, S_SET_PC, S_SWAP_PC use "an even-aligned SGPR pair" | ch03 §3.2 |
 
@@ -242,7 +246,7 @@ The operand codes are in Table 23 (`cdna4/ch06_vector_alu_operations.md` §6.2.2
 ## 6. Reading caveats
 
 - **Page markers.** `<!-- page N -->` marks where a PDF page starts. A table that crosses pages sits whole under
-  its first page's marker and the following markers are empty: ch07 Table 38 spans PDF pages 75–77 under the
+  its first page's marker and the following markers are empty: ch07 Table 38 spans PDF pages 74–77, all under the
   page-74 marker, and ch13 has several such runs. Rows can also land under the previous page's marker (the M0,
   EXEC→DPP, v_cmpx and permlane rows of ch04 Table 11 are on PDF page 29). To find the marker above a line:
   `awk -v L=415 '/<!-- page/{pg=$3} FNR==L{print "marker: page " pg; exit}' hardware/gfx950/cdna4/ch12_08_vop1_instructions.md`;
@@ -256,7 +260,8 @@ The operand codes are in Table 23 (`cdna4/ch06_vector_alu_operations.md` §6.2.2
   (Figure 4, buffer addressing, ch09 §9.1.5, page 87), `x377.png` (LDS and memory address of a buffer load to
   LDS, ch09 §9.1.9, page 92) and `x393.png` (legal data-format pairs, ch09 §9.1.11, page 95). Address terms →
   `memory_and_sync.md`.
-- **Empty alt text.** The other figures (encoding bit maps, …) appear as `![](images/xNNN.png)`; find them by the
+- **Empty alt text.** Only the six numbered figures (Figures 1–6) carry their caption as alt text. The other
+  figures (encoding bit maps, …) appear as `![](images/xNNN.png)`; find them by the
   paragraph above. For most encodings the §13 Fields tables give the same fields as text.
 - **The PDF's own cross-references** ("See the S_SETPRIO instruction (page 12-49)", Table 3) use printed
   numbering, not `<!-- page N -->`; search by name.
@@ -267,3 +272,6 @@ The operand codes are in Table 23 (`cdna4/ch06_vector_alu_operations.md` §6.2.2
 
 ## Related
 `INDEX.md` (file map) · `matrix_core.md` · `memory_and_sync.md` · `cdna4/01_contents.md` · `../../SKILL.md`
+
+## Evidence
+- E1 [2026-11, gfx950 (MI355X), HIP 7.15 (hipcc), N=6 input sets of 64 lanes per arm and MODE, against host references with and without the modifier, MODE read back in the kernel] `v_add_f32` with OMOD ×2, ×4 and ÷2 in VOP3 and SDWA: the unmodified result on all 373 lanes where the references differ at the launch MODE 0x3f0 (IEEE 1, f32 denormals on), the modified result on all 373 with MODE 0x1c0 (IEEE 0, f32 denormals flushed) (inline-asm test kernel)

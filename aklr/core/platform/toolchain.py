@@ -14,11 +14,24 @@ __all__ = ["toolchain_version", "unmet_requirement"]
 
 def toolchain_version(name: str) -> str | None:
     """The ``__version__`` of the toolchain module ``name`` (a kernel language), None
-    when it does not import."""
+    when it does not import; ``hip`` is the HIP that torch was built with."""
+    if name == "hip":
+        return _hip_version()
     try:
         return importlib.import_module(name).__version__
     except ImportError:
         return None
+
+
+def _hip_version() -> str | None:
+    """``torch.version.hip`` without its build suffix ("7.15.26333-abc" -> "7.15.26333");
+    None without a ROCm torch."""
+    try:
+        import torch
+    except ImportError:
+        return None
+    hip = torch.version.hip
+    return hip.split("-")[0] if hip else None
 
 
 def unmet_requirement(requires: Mapping[str, str]) -> str | None:

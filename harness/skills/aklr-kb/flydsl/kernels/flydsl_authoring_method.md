@@ -17,9 +17,8 @@ flydsl: 0.3.2
 
 ## The one rule
 
-**Parameter tuning alone yields marginal gains. Do structural work in early patches and fall back to
-tuning in later ones.** A kernel whose structure is wrong cannot be tuned into a good one — you will
-just find the best member of a bad family.
+**Do structural work in early patches and fall back to tuning in later ones.** A kernel whose structure is wrong
+cannot be tuned into a good one — you will just find the best member of a bad family.
 
 ## Route here when
 Optimizing an authored FlyDSL kernel and the bottleneck is still broad. If the discussion has already
@@ -39,38 +38,46 @@ GEMM-like kernel, go to `../../gemm/INDEX.md`.
 
 ## Step 2 — classify, and know when to stop
 
-Check the arch via `get_hip_arch()` — LDS size, MFMA variants and wavefront width are arch-dependent
-(**gfx950: 160 KiB LDS, 64 banks, 256 CUs, wave64**).
+Check the arch via `flydsl.runtime.device.get_rocm_arch()` (S1; kernels import it as `get_hip_arch`) — LDS size,
+MFMA variants and wavefront width are arch-dependent (**gfx950: 160 KiB LDS, 64 banks, 256 CUs, wave64**).
 
 | Class | Lever |
 |---|---|
 | Memory-bound **with** cross-thread reuse (tiled GEMM operands, attention K/V tiles) | LDS staging, prefetch, vectorization |
-| Memory-bound **without** cross-thread reuse (elementwise, RoPE, cache-write-only) | **vectorization and coalescing only** |
+| Memory-bound **without** cross-thread reuse (elementwise, RoPE, cache-write-only) | **vectorization and coalescing**; prefetch when few waves are resident |
 | Compute-bound | MFMA selection, software pipelining |
 | Latency-bound (small shapes) | reduce launch count — fusion |
 
-**Two stop conditions that save whole sessions:**
+**Two checks that save whole sessions:**
 
-- **No cross-thread reuse → do not add LDS staging.** Each thread owns its slice; LDS adds
-  synchronization and address math with zero reuse benefit.
+- **No cross-thread reuse → LDS staging pays only if it buys something else: coalescing a layout change, or a
+  deeper load pipeline (Tier 2).** *(field, E1)* In the same layout it gained nothing (1.00× against direct 16-byte
+  loads and stores); on a transpose it beat per-element 2-byte stores by 1.42× but only matched an in-register
+  transpose with 16-byte accesses.
 - **Already fused** (name contains `fused_` / `*_2stage` / `*_multistage`, or the source already
-  combines the ops) → **the structural optimum is likely reached.** Skip to Tier 2/3. Further fusion
-  attempts here are the classic wasted patch.
+  combines the ops) → **not a reason to skip Tier 1.** On a FlyDSL 2-stage MXFP4 MoE at 8–64 tokens, folding the
+  routing sort into stage 1 removed a launch and shortened the call; on a MoE with a wide stage 1 a similar fold lost
+  (`../../moe/few_tokens.md` §2 and Counter-signals). Count the launches and HBM passes that remain first.
 
 ## Step 3 — the four tiers, in order
 
 ### Tier 1 — structural (highest impact, highest regression risk)
 
-**Guard: confirm the kernel is not already at the structural optimum before touching it.**
-Single-kernel, single-pass, or already `fused_*` → skip to Tier 2.
+**Guard: list what the structure still costs before touching it** — launches, passes over HBM, repeated loads.
+A `fused_*` or `*_2stage` name is no proof of the optimum (Step 2), and a single-pass kernel's loops and data
+layout can still be Tier 1 work.
 
-- **Kernel fusion** — if the `@flyc.jit` wrapper launches 2+ kernels sharing input data, merge them.
-  Removes launch overhead and redundant HBM reads.
+- **Kernel fusion** — if the `@flyc.jit` wrapper launches 2+ kernels sharing input data, try merging them.
+  It removes launch overhead and redundant HBM reads, but can enlarge the grid, repeat work in every workgroup or
+  raise register use: time it against the separate kernels per shape (Step 2).
 - **Fast-path relaxation** — look for over-restrictive guards on optimized paths (disabled branches,
-  alignment checks stricter than necessary). Relaxing them lets more shapes take the fast path.
-- **Loop restructuring** — convert constexpr unrolling to `scf.for` with loop-carried state **when**
-  unrolling causes measurable code bloat or register pressure. **Do not** convert when unrolling is
-  your main source of ILP or the trip count is small and fixed.
+  alignment checks stricter than necessary). Relaxing one lets more shapes take the fast path, but the guard may be
+  what keeps bounds or alignment correct: run the oracle on every newly admitted shape before timing it.
+- **Loop restructuring** — converting constexpr unrolling to `scf.for` is not a reliable speedup, even under code
+  bloat or register pressure; time both. *(field, E2)* On a FlyDSL MFMA K loop, 45–78 KB unrolled bodies ran within
+  2% of a constant-bound `scf.for`, cutting VGPRs 198 → 138 gained 1.7%, and one `scf.for` that LLVM unrolled by 2
+  was 27% slower. Keep small fixed loops unrolled: with Python-int bounds and a small trip count LLVM unrolls the `scf.for` back to the
+  same ISA.
 - **Redundant work elimination** — repeated loads, recomputed indices, overlapping branches.
 - **Algorithm replacement** — reduce pass count (online softmax vs two-pass; fused attention vs
   separate QKᵀ → softmax → ×V). **A single-pass elementwise kernel is already optimal at the pass
@@ -87,19 +94,23 @@ Single-kernel, single-pass, or already `fused_*` → skip to Tier 2.
 
 ### Tier 2 — memory hierarchy
 
-- **LDS staging** — only when the same global data is read multiple times **across threads in the same
-  workgroup**. Allocate with `fx.SharedAllocator().allocate(<@fx.struct>).peek()`; `SmemAllocator` /
+- **LDS staging** — when the same global data is read multiple times **across threads in the same
+  workgroup**, or to coalesce a layout change *(field, E1)* (Step 2) or deepen a load pipeline
+  (`../../gemm/small_m.md` §5). Allocate with `fx.SharedAllocator().allocate(<@fx.struct>).peek()`; `SmemAllocator` /
   `SmemPtr` are legacy.
 - **Vectorized access** — widest loads/stores matching the element type (`vec(8, ...)`, `vec(4, ...)`).
 - **Overlap loads with compute** — move global loads earlier; `sched_barrier` to control interleaving.
-  **Only helps when there is MFMA or non-trivial ALU work to overlap with.**
+  Issuing loads early also pays in a loop with no compute to overlap when few waves are resident (prefetch, below)
+  *(field, E3)*.
 - **Pre-load across passes** — load later-pass data during earlier passes.
 - **Coalescing** — restructure loop ordering if the access pattern is not coalesced.
-- **Register pressure** — balance registers against LDS spilling.
+- **Register pressure** — balance registers against occupancy and scratch spills.
 
-**Prefetch: when not to.** If the loop body is dominated by global loads with minimal compute, **do not
-add prefetch** — there is nothing to hide behind, and the extra carried state raises register pressure
-and can cut occupancy for no latency benefit.
+**Prefetch: check occupancy first.** In a loop dominated by global loads with minimal compute, prefetch still
+hides memory latency when few waves are resident. *(field, E3)* Issuing the next trip's loads early raised
+bandwidth 1.56–1.74× at 1 wave/SIMD (and at 2 with one load per trip) and gave 0.85–1.00× at 4–8 waves/SIMD. Add
+it when registers or LDS hold occupancy low; check that the carried state does not cut occupancy and that the loop
+does not wait `vmcnt(0)` every trip, which gained nothing without ALU work.
 
 **The prefetch shape**: prologue preloads iteration 0 → `scf.for` carries the prefetched values → the
 body unpacks current state and issues next-iteration loads **immediately** → epilogue consumes the
@@ -113,16 +124,21 @@ Three different problems that look alike and want different fixes:
 
 | Signal | Problem | Fix |
 |---|---|---|
-| Stall on `ds_read_*` / `ds_write_*` themselves | **bank conflicts** | swizzle or padding |
-| `s_waitcnt lgkmcnt(0)` spikes right after `ds_write` | **write-read latency exposed** | increase the distance |
+| Stall on the `ds_read_*` / `ds_write_*` rows themselves, often with a large `s_waitcnt lgkmcnt` right after them | **bank conflicts** | swizzle or padding |
+| `s_waitcnt lgkmcnt(0)` spikes right after `ds_write` while the `ds_write` rows themselves barely stall | **write-read latency exposed** | increase the distance |
 | `s_barrier` dominates a reduce/broadcast region | **cross-wave serialization** | fewer barrier stages, cheaper cross-lane primitives |
+
+A bank conflict can make the `lgkmcnt` wait after the LDS ops the top hotspot, and moving independent work before
+it then did nothing *(field, E4)*: check the `ds_*` rows before treating a wait spike as latency.
 
 **Do not treat all three as "a swizzle problem."** Use these metrics twice: before the rewrite to
 classify, after the rewrite to confirm the targeted stall actually moved.
 
-**gfx950 LDS: 160 KiB, 64 banks.** A layout that fully aliased banks on a 32-bank part may only
-partially conflict here — **swizzle masks and padding must be arch-aware, and inherited ones are
-unverified.** The extra headroom also makes padding affordable where it was not before.
+**gfx950 LDS: 160 KiB, 64 banks — but only `ds_read_b64` / `ds_read_b128` behave as 64 banks.** *(field, E5)*
+`ds_read_b32` and `ds_write_b32` / `b64` / `b128` conflicted as much at a lane stride of 32 dwords as at 64, as on
+a 32-bank part. A layout that fully aliased banks on a 32-bank part only partially conflicts here for those wide
+reads — **check swizzle masks and padding per instruction width and direction; inherited ones are unverified.**
+The extra headroom also makes padding affordable where it was not before.
 
 **Swizzle vs padding**: XOR swizzle when the access pattern is regular, read/write transforms can stay
 consistent, and LDS headroom is tight. Padding when the swizzle math would hurt maintainability and a
@@ -141,7 +157,7 @@ value = lds_ptr.load([offset])
 # AFTER: independent work before the synchronization point
 lds_ptr.store(data, [offset])
 next_offsets = compute_next_offsets()
-next_data = buffer_ops.buffer_load(next_rsrc, next_offsets, vec_width=4, dtype=fx.T.f32())
+next_data = buffer_ops.buffer_load(next_rsrc, next_offsets, vec_width=4, dtype=fx.T.f32)
 fx.gpu.barrier()
 value = lds_ptr.load([offset])
 ```
@@ -153,15 +169,17 @@ bottleneck.
 - **MFMA selection** — the most efficient variant for the arch, via `flydsl.expr.rocdl`.
 - **Software pipelining** — ping-pong buffers + scheduler barriers.
 - **Scheduler tuning** — match `sched_mfma` group counts to the **actual** MFMA ops per iteration;
-  verify `sched_dswr`/`sched_dsrd` timing. Copied constants from another kernel are worse than none.
+  verify `sched_dswr`/`sched_dsrd` timing. Copied constants are not reliably worse or better than none: time any
+  schedule, copied or your own, against no hints before keeping it. *(field, E6)* On FlyDSL's fp8 preshuffle GEMM a
+  copied schedule ran 4–8% slower on two tiles and took 10% less time on a third; one tile's own schedule was 7%
+  slower.
 - **Loop unrolling** — expose ILP; merge loops over the same range.
 
 ### Tier 4 — parameters (lowest impact)
 Block size, tile dimensions, unroll factors, `known_block_size` hints.
 
 **Tune only after structure stabilizes.** Treat old tuning conclusions as **stale** after any
-codegen-affecting refactor. When varying `Constexpr` values across recompiles, pass raw
-`torch.Tensor` objects rather than reusing cached `flyc.from_dlpack()` wrappers.
+codegen-affecting refactor.
 
 ## Modification rules
 - **Fusion**: you may create new `@flyc.kernel` functions, remove old ones, and modify the `@flyc.jit`
@@ -170,15 +188,15 @@ codegen-affecting refactor. When varying `Constexpr` values across recompiles, p
 - The `@flyc.jit` **external signature** (as called by the harness) must not change.
 - **Do not modify** the build system, compilation flags, test harness, or benchmark framework.
 
-## Correctness constraints — violations corrupt silently
+## Correctness constraints — violations can fail silently
 
 | Constraint | Why |
 |---|---|
-| **LDS limit** per `get_hip_arch()` (gfx950: 160 KiB) | exceeding it **silently corrupts results** |
-| `tile_k_bytes % 64 == 0`; `tile_m · tile_k · elem_bytes` divisible by thread count | tile divisibility |
-| **fp8 `0x80` is NaN in the FNUZ encoding** — sanitize loads with byte AND `0x7F` | gfx950 is OCP; this applies when handling FNUZ-encoded data |
+| **LDS limit** per `get_rocm_arch()` (gfx950: 160 KiB) | exceeding it raises no Python exception *(field, E8)*: the kernel does not run, so a reused output buffer still passes a correctness check and timing still returns a number; only stderr shows it, and the next PyTorch GPU kernel raises `AcceleratorError` |
+| aiter's preshuffle GEMM (`dbd8bf5`): `tile_m · tile_k · elem_bytes` a multiple of 4096 (256 threads × 16 B) | otherwise the A-tile copy truncates and computes on stale LDS with no error (S4, S5); FlyDSL 0.3.2's own copy raises `ValueError` (S5) |
+| aiter's mixed MoE GEMM, both stages: `tile_k_bytes % 64 == 0` | raises `ValueError` (S6) |
+| **fp8 `0x80` is NaN in the FNUZ encoding** — replace that one byte (compare and select), not a byte AND `0x7F`, which also turns every negative value positive | gfx950 is OCP, where `0x80` is −0 and `0x7F` / `0xFF` are NaN (S7); this applies when handling FNUZ-encoded data |
 | f32→f16: **clamp to ±65504 first** | otherwise Inf |
-| Vector/tile alignment | matches the kernel's access patterns |
 
 **FlyDSL memory contracts**
 - Legacy `buffer_ops.buffer_load` / `buffer_store` (now `kernels/common/buffer_ops.py`, not in the
@@ -228,3 +246,18 @@ codegen-affecting refactor. When varying `Constexpr` values across recompiles, p
 `../../gemm/INDEX.md` (dense-GEMM package) ·
 `../guides.md` § flydsl-kernel-authoring (first-time authoring) ·
 `../debug-flydsl-kernel.md` (correctness bugs)
+
+## Evidence
+
+- E1 [2026-11, gfx950 (MI355X), HIP 7.15, N=11 rounds, hipEvent median, arms rotated] bf16 stream through LDS against direct 16-byte loads and stores: same layout 1.00×; 16384×16384 transpose through an XOR-swizzled LDS tile 1.42× the rate of per-element 2-byte stores, 0.99× an in-register transpose with 16-byte accesses (HIP test kernel, not FlyDSL)
+- E2 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=7 rounds, CUDA-event median; no spills] time of `scf.for` over the fully unrolled MFMA K loop (16-byte global loads, no LDS): 45428 B and 78048 B unrolled bodies 0.98–1.00 against a constant-bound `scf.for`, 1.00 and 1.07 against a runtime-bound one; `scf.for` at 138 VGPRs against 198 unrolled 0.983, and 1.27 where LLVM unrolled it by 2; at 4 and 16 steps the constant-bound `scf.for` compiled to the unrolled ISA
+- E3 [2026-11, gfx950 (MI355X), HIP 7.15, N=11 rounds, hipEvent median, bandwidth = bytes read / time] streaming sum with 16-byte loads, next trip's loads issued early against none, with or without 8 FMAs per value: 1 wave/SIMD 1.59–1.74×, 2 waves/SIMD with one load per trip 1.56–1.57×, 4–8 waves/SIMD 0.85–1.00×; a rolled loop with a `vmcnt(0)` each trip 0.99–1.01× without FMAs (HIP test kernel, not FlyDSL)
+- E4 [2026-11, gfx950 (MI355X), HIP 7.15, rocprofv3 ATT per-instruction stall, N=1 traced dispatch per variant, timing N=7 rounds] 8 × `ds_read_b32` then `s_waitcnt lgkmcnt(0)`, 64 lanes on one bank against none: 61% of the added stall on the wait, the top hotspot; 32 independent `v_add_u32` moved between 8 conflicting or clean `ds_write_b32` and the wait: time 1.00× with the conflict, 0.91× without (HIP test kernel)
+- E5 [2026-11, gfx950 (MI355X), HIP 7.15, N=7 rounds, `clock64` cycles per instruction, median] 8 LDS instructions then `s_waitcnt lgkmcnt(0)`, lane l at dword l·s; extra cycles at s = 32 over those at s = 64: `ds_read_b32` 1.00, `ds_read_b64` 0.47, `ds_read_b128` 0.43, `ds_write_b32` / `b64` / `b128` 1.00 (HIP test kernel)
+- E6 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, N=15 rounds of 100 launches, median, arms rotated] `kernels/gemm/preshuffle_gemm.py`, fp8, M=N=16384, K=4096, time against no hints: another tile's `sched_*` sequence 0.90×, 1.08×, 1.04× on three tiles; each tile's own schedule 0.97×, 0.98×, 1.07×
+- E8 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, torch 2.11.0+rocm10.0.0, N=6 over-limit runs] probe kernel over 163840 B of LDS, static or dynamic: no Python exception, 0 of 256 outputs written, the error only on stderr; event timing still returned 21.9–24.1 µs per call; the next PyTorch GPU kernel raised `torch.AcceleratorError`
+- S1 ROCm/FlyDSL@dd8373349:python/flydsl/runtime/device.py:39 `def get_rocm_arch() -> str`; `kernels/attention/flash_attn_generic.py:26` imports it `as get_hip_arch`; the `flydsl` package defines no `get_hip_arch`
+- S4 ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/preshuffle_gemm.py:211 `total_threads = 256`, `a_load_bytes = 16`, `bytes_per_thread_a` and `num_a_loads` by truncating division (:213-214), no check on the remainder
+- S5 ROCm/FlyDSL@dd8373349:kernels/gemm/preshuffle_gemm.py:184 both divisions truncate, the tail of the A tile is left unfetched and the kernel computes on stale LDS; raises `ValueError` unless `tile_m * tile_k * elem_bytes` is a multiple of `total_threads * a_load_bytes` (:189-195)
+- S6 ROCm/aiter@dbd8bf5:aiter/ops/flydsl/kernels/mixed_moe_gemm_2stage_common.py:202 stage 1 raises `ValueError` unless `tile_k_bytes % 64 == 0`; stage 2 the same (:3525)
+- S7 hardware/gfx950/cdna4/ch07_matrix_arithmetic_instructions.md:708 FP8 E4M3: +0 `0x00`, −0 `0x80`, NaN `0x7F` / `0xFF`, max 448

@@ -3,6 +3,7 @@ What each kind of change needs (the review-tier check finds the kinds from the d
 - contract (schema, empty kernel.sources): Why, Scope, Verification (export), Risk. No GPU run.
 - kernel (schema with kernel.sources): every section. GPU validation (ci:gpu).
 - code, aklr/core above all: every section. CI validation of every schema and a code owner's approval.
+  A new plugin route, or one that now handles more cases: also End to end (docs/acceptance_criteria.md).
 - withdrawn kernel (deleted schema): Why, Scope, Risk.
 - document (docs/, harness/, .claude/, *.md: docs and agent skills): Why only.
 Kernels and contracts in a PR of their own merge on their evidence alone; mixed with code they
@@ -44,7 +45,8 @@ $ python -m aklr export check
 
 <!-- Required when the PR adds or changes a kernel; delete otherwise.
 One row per contract. Measured: workloads benched / all (a timeout is not measured).
-Accuracy: passing / measured, and the bound. Speedup: lower bound over the baseline, lowest – highest. -->
+Accuracy: passing / measured, and the bound. Speedup: lower bound over the baseline, lowest – highest.
+Each kernel file needs one workload at 1.05 or more (docs/acceptance_criteria.md). -->
 
 | contract | baseline | measured | accuracy (bound) | speedup |
 |---|---|---|---|---|
@@ -56,6 +58,24 @@ Accuracy: passing / measured, and the bound. Speedup: lower bound over the basel
 ```text
 $ python -m aklr validate --base origin/main --stages audit,bench <schemas>
 <output>
+```
+
+</details>
+
+### End to end
+
+<!-- Required when the PR adds a plugin route or makes one handle more cases; delete otherwise.
+What docs/acceptance_criteria.md asks: the model, GPUs and workload; this PR's ops off
+(AKLR_DISABLE=<contract id>,...) and on, and the gain (2% or more); the commands to reproduce. -->
+
+| model / config | workload | metric | ops off | ops on | gain |
+|---|---|---|---|---|---|
+| | | | | | |
+
+<details><summary>Commands</summary>
+
+```bash
+<server and benchmark commands>
 ```
 
 </details>

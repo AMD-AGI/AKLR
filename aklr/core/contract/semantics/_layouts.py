@@ -122,9 +122,11 @@ class Preshuffle(Layout):
 
 
 class E8M0Scales(Layout):
-    """Block scales (one per ``block_size`` values) padded with e8m0 1.0 (``0x7F``) to
-    multiples of ``pad_to``; ``shuffled``: aiter ``shuffle_scale`` on the last 2
-    dims."""
+    """Block scales (one per ``block_size`` values) padded with ``0x00`` (e8m0 2**-127)
+    to multiples of ``pad_to``, as aiter's ``dynamic_mxfp4_quant(shuffle=True)`` writes
+    them; ``shuffled``: aiter ``shuffle_scale`` on the last 2 dims. aiter's asm
+    ``gemm_a4w4`` reads the padded groups when K is not a multiple of 256: padded with
+    1.0 (``0x7F``) instead, its output is wrong."""
 
     kind: Literal["e8m0_scales"] = "e8m0_scales"
     block_size: int
@@ -142,7 +144,7 @@ class E8M0Scales(Layout):
 
         row_major_bytes = tensor.view(torch.uint8)
         shape = self.storage_shape(row_major_bytes.shape)
-        stored = row_major_bytes.new_full(shape, 0x7F)
+        stored = row_major_bytes.new_zeros(shape)
         rows, cols = row_major_bytes.shape[-2:]
         stored[..., :rows, :cols] = row_major_bytes
         if self.shuffled:

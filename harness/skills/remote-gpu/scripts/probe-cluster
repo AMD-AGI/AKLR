@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# probe-cluster HOST — read what a new cluster's manifest (templates/cluster.env) needs from its
+# login node over ssh: scheduler, login environment, partitions and node hardware, the user's
+# accounts and QOS, and the network filesystems that hold a directory of the user's. Read-only:
+# it submits nothing. Prints `KEY=value` lines and `== section` blocks of raw scheduler output.
+set -uo pipefail
+HOST=${1:?usage: probe-cluster HOST (an ssh destination of the login node)}
+SSH=(ssh -T -o BatchMode=yes -o ConnectTimeout=15 -o LogLevel=ERROR "$HOST")
+
+read -r -d '' BODY <<'EOF'
+have() { command -v "$1" >/dev/null 2>&1; }
+echo "LOGIN_HOSTNAME=$(hostname -s)"
+echo "LOGIN_SHELL=$(getent passwd "$USER" | cut -d: -f7 | xargs -r basename)"
+echo "HOME_FS=$(df --output=target "$HOME" | tail -1) HOME_AVAIL=$(df -h --output=avail "$HOME" | tail -1 | xargs) HOME_USED=$(df --output=pcent "$HOME" | tail -1 | xargs)"
+for c in rsync git python3 docker findmnt; do printf 'HAVE_%s=%s\n' "$c" "$(have "$c" && echo 1 || echo 0)"; done
+if have spur; then S=spur; elif have sinfo; then S=slurm; elif have qsub; then S=pbs; elif have flux; then S=flux; else S=unknown; fi
+echo "SCHEDULER=$S"
+echo "LOGIN_PROFILE_NEEDED=${NEED_PROFILE:-0}"
+case $S in
+  spur)
+    echo "SCHEDULER_VERSION=$(spur --version 2>&1 | awk '{print $2; exit}')"
+    echo "== partitions (spur nodes: partition avail timelimit nodes state)"
+    spur nodes -h 2>/dev/null | awk '{s[$1 " " $3 " " $5] += $4} END {for (k in s) print "  " k " " s[k]}' | sort
+    P=$(spur nodes -h 2>/dev/null | awk '$1 ~ /\*$/ {sub(/\*$/, "", $1); print $1; exit}')
+    N=$(spur nodes -p "$P" -h 2>/dev/null | awk '$5 == "idle" || $5 == "alloc" || $5 == "mix" {print $6; exit}')
+    echo "DEFAULT_PARTITION=$P"
+    echo "== a node of $P"
+    spur show node "$(sed -E 's/\[([0-9]+).*/\1/' <<<"$N")" 2>/dev/null | grep -oE '(NodeName|Gres|CPUTot|RealMemory|OS|Partitions)=[^ ]*' | sed 's/^/  /'
+    echo "== my associations"
+    spur accounts show user 2>/dev/null | awk -v u="$USER" 'NR <= 1 || $1 == u' | sed 's/^/  /'
+    echo "== qos (GrpTRES node= is a team cap; MaxWall in minutes)"
+    spur accounts show qos 2>/dev/null | sed 's/^/  /' ;;
+  slurm)
+    echo "SCHEDULER_VERSION=$(sinfo --version 2>&1 | awk '{print $2; exit}')"
+    echo "CLUSTER_NAME=$(scontrol show config 2>/dev/null | awk -F'= ' '/^ClusterName/ {print $2}')"
+    echo "== partitions (name | timelimit | nodes | state | gres | cpus | mem MB)"
+    sinfo -h -o '%P|%l|%D|%T|%G|%c|%m' 2>/dev/null | sed 's/^/  /'
+    echo "DEFAULT_PARTITION=$(sinfo -h -o '%P' | sed -n 's/\*$//p' | head -1)"
+    echo "== a node of the default partition"
+    scontrol show node "$(sinfo -h -p "$(sinfo -h -o '%P' | sed -n 's/\*$//p' | head -1)" -N -o '%N' | head -1)" 2>/dev/null |
+      grep -oE '(NodeName|Gres|CPUTot|RealMemory|OS|Partitions)=[^ ]*' | sed 's/^/  /'
+    echo "== my associations (account | partition | qos | default qos)"
+    sacctmgr -nP show assoc user="$USER" format=account,partition,qos,defaultqos 2>/dev/null | sed 's/^/  /'
+    echo "== qos limits"
+    sacctmgr -P show qos format=name,priority,maxwall,maxtrespu,maxjobspu,maxsubmitpu,grptres,preempt,preemptmode 2>/dev/null | sed 's/^/  /'
+    echo "== preemption and job_submit"
+    scontrol show config 2>/dev/null | grep -E '^(PreemptType|PreemptMode|PreemptExemptTime|JobSubmitPlugins|MinJobAge) ' | sed 's/^/  /' ;;
+  *) echo "== no Slurm or spur here: templates/slurm.sh does not fit; write cluster.sh by its structure" ;;
+esac
+echo "== network filesystems holding a writable dir named \$USER owned by \$USER (mount | size | avail)"
+findmnt -rn -t nfs,nfs4,lustre,gpfs,beegfs,cifs -o TARGET,SIZE,AVAIL 2>/dev/null | while read -r m sz av; do
+  [[ $m != */.snapshot* && -d $m/$USER && -O $m/$USER && -w $m/$USER ]] && echo "  $m $sz $av"
+done
+EOF
+
+# A scheduler command that only a login shell finds means LOGIN_PROFILE=1.
+plain=$("${SSH[@]}" 'exec env -u BASH_ENV bash --noprofile --norc -s' <<<'command -v spur || command -v sinfo || echo none') || {
+  echo "ERR cannot ssh to $HOST (check ~/.ssh/config and keys)" >&2; exit 255; }
+need=0; [[ $plain == none ]] && need=1
+if ((need)); then
+  "${SSH[@]}" 'exec env -u BASH_ENV bash --login -s' <<<"NEED_PROFILE=1; $BODY"
+else
+  "${SSH[@]}" 'exec env -u BASH_ENV bash --noprofile --norc -s' <<<"$BODY"
+fi

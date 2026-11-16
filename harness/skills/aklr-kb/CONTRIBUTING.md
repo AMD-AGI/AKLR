@@ -9,18 +9,26 @@ may have made it stale. `maintenance/kb_lint.py` enforces what can be checked me
 
 - Packages, one per op, each starting at its `INDEX.md`: `gemm/` dense GEMM · `moe/` fused MoE and its expert
   grouped GEMM · `attention/` attention
+- `communication/` the collectives between GPUs (EP against TP, collectives in traces) and the design of AKLR's
+  kernels that move data between GPUs (the `mega_moe` op's); its pages are kept as an op package's are
 - `patterns/` symptom pages · `cases/` delivered kernels · `pitfalls/` traps
 - `profile.md` trace capture and analysis, and perf-regression bisection: links to FlyDSL's own skills, with what
   this repository adds
 - `hardware/<arch>/` an architecture's ISA guide, and the guides to looking things up in it (`hardware/gfx950/`:
-  CDNA4)
+  CDNA4; `hardware/gfx942/`: CDNA3)
 - `maintenance/` the scripts that keep this knowledge base consistent (lint, indexes, gaps, citations) · `analysis/`
   scripts an agent runs on its own kernel (trace hotspots, L2/HBM counters, ISA diffs, register and LDS budget);
   § Scripts lists both
 - `flydsl/`, `triton/`, `hip/` a language's own pages, each starting at its `SKILL.md`. In `flydsl/`: `language/`
   what FlyDSL itself does (limits, compile errors, version differences), `guides.md` FlyDSL's own skills linked at
   `v0.3.2` with this repository's corrections, `debug-flydsl-kernel.md` debugging, `kernels/` aiter's FlyDSL
-  kernels, their knobs and how to write a new one
+  kernels, their knobs and how to write a new one, `<op>.md` (`gemm.md`, `moe.md`, `attention.md`) the FlyDSL side
+  of an op package's cards. A card states the mechanism and its numbers; how to write it in FlyDSL goes to that
+  page, under a heading named after the card's section (`mainloop §8`), and the card's section ends with a pointer
+  to it. In `triton/` (front matter `triton: 3.8.0` in place of `flydsl`): `authoring.md`, `debugging.md`,
+  `tuning.md`, `numerics.md` for any Triton or Gluon kernel, `gluon/` Gluon's layouts, data movement, MFMA and inline
+  assembly, `kernels/kernel_library.md` AKLR's Triton kernels by family, `<op>.md` (`gemm.md` with `gemm/`, `moe.md`,
+  `attention.md`, `gdn.md`) the Triton side of an op
 
 ## Page kinds
 
@@ -42,11 +50,12 @@ Pages written before these rules — `kind: language`, `index` and `reference` �
 card of numbered sections becomes a `topic` or `method` page where it is: its path and section numbers stay,
 because other pages cite them as `<card>.md §<n>`.
 
-- **Names**: no type prefix; `flydsl_` only on a card whose code is FlyDSL. A page's path and its section numbers
-  change only when the page is rewritten, and that pull request fixes every link to it.
+- **Names**: no type or language prefix; a language's own pages go in its folder (`flydsl/`, `triton/`, `hip/`). A
+  page's path and its section numbers change only when the page is rewritten, and that pull request fixes every link
+  to it.
 - **Hardware**: `hardware/<arch>/` holds only an architecture's ISA guide and the guides to looking things up in
   it. What one architecture changes for an op goes to the op's package, with `gens: [<arch>]` (gfx942's GEMM
-  notes: `gemm/flydsl_gemm_gfx942.md`).
+  notes: `gemm/gfx942.md`).
 - **FlyDSL's own skills are linked, never copied**, pinned to `v0.3.2`: `https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/<skill>/SKILL.md`. What this
   repository adds to or corrects in one goes to `flydsl/guides.md`, or to `profile.md` for the trace and
   bisection skills. A card links that page (`flydsl/guides.md` § <skill>, `profile.md` § <skill>), not the
@@ -58,7 +67,7 @@ because other pages cite them as `<card>.md §<n>`.
 
 Front matter is YAML: quote a value that contains `: `. `flydsl` is the version the page was checked against
 (`0.3.2`), `gens` the architectures (`[gfx950]`; `[gfx942]` on a page about gfx942 only, such as
-`gemm/flydsl_gemm_gfx942.md`), `regimes` the M ranges or regimes it covers.
+`gemm/gfx942.md`), `regimes` the M ranges, shapes or mechanisms it covers, never a phase (see below).
 
 ## Evidence
 
@@ -70,17 +79,23 @@ Front matter is YAML: quote a value that contains `: `. `flydsl` is the version 
   *(field)* alone, `*field:*` or *(field: …)*). Under `## Evidence` at the end of the page, give one line per mark:
 
   ```
-  - E1 [2026-09, gfx950, FlyDSL ?, N=?, run_perftest cold-L2] 34.1 → 5.0 µs with split-K 12 (1×32×6144; local:/workspace/code/gpt_oss_docker/sync/flydsl_optimizer/flydsl_campaigns/20260904_151953/goal.md:197)
-  - S1 kernels/preshuffle_gemm.py:210 the B tile is loaded once per K step
+  - E1 [2026-09, gfx950, FlyDSL ?, N=?, run_perftest cold-L2] 34.1 → 5.0 µs with split-K 12 (1×32×6144)
+  - S1 ROCm/FlyDSL@dd8373349:kernels/gemm/preshuffle_gemm.py:214 LDS holds only the A tile; B goes from global memory to registers (:518)
   ```
 
-  `E` lines are measurements: month, architecture, toolchain, repeat count, ruler, then the claim, the workloads
-  and a reference someone can open. `N=?` says the repeat count is unknown; such a line, like `N=1`, supports no
-  "always" or "never" in the paragraph that cites it. The reference is durable (a commit, `#<PR>`, a CI run or a
-  URL) or `local:<absolute path>` for a file on one machine, which may not outlive it. `S` lines cite source as
-  `file:line`. The text stays readable and every number stays checkable.
-- **A number measured on another kind of kernel says so in the sentence** ("on a grouped GEMM", "on an attention
-  kernel"), not only in its evidence line: readers do not read the evidence.
+  `E` lines are measurements: month, architecture, toolchain, repeat count, ruler, then the claim and the
+  workloads. `N=?` says the repeat count is unknown; such a line, like `N=1`, supports no "always" or "never" in
+  the paragraph that cites it. A run with a public record cites it (a commit, `#<PR>`, a CI run, a URL or a file in
+  this repository); a run without one gives the result alone. A number with no run record says `unverified` in its
+  line. The predecessor repository's commits, CI runs and PR numbers are not cited (its PR numbers point at
+  unrelated AKLR PRs); a measurement from it says "the predecessor repository's CI" with the month. This repository
+  is public: no page names a file of one machine (`local:`
+  references, workspace or shared-disk paths), and the linter rejects them. `S` lines cite public source as
+  `file:line`; source with no public copy is stated without one. The text stays readable.
+- **A number measured on another kind of kernel, or in another language, says so in the sentence** ("on a grouped
+  GEMM", "on an attention kernel", "in Triton"), not only in its evidence line: readers do not read the evidence.
+  The op packages' numbers were measured on FlyDSL kernels unless a sentence says otherwise, and each package's
+  `INDEX.md` says so once.
 - **A number worked out rather than measured** says "estimated" and gets no `E` line.
 - **Speedups in AKLR are per Point** against the faster of the kernel AKLR serves at that Point and the op's
   baseline, the same yardstick dispatch uses; never a mean over Points.
@@ -94,6 +109,12 @@ Front matter is YAML: quote a value that contains `: `. `flydsl` is the version 
   `aklr/ops/README.md` that states them, not restated: a restated rule goes stale when the README changes.
 - **No second page for the same thing.** A technique's `lever` is unique (`maintenance/kb_lint.py` reports a
   duplicate); search the skill for the lever, the op and the symptom before writing, and extend the page you find.
+- **No training-only or inference-only scope.** The same GEMM, attention and MoE kernels run in training and
+  inference, so a page says when it applies by mechanism and shape: the M range, rows per group, whether K varies
+  per group, query rows against KV length, causal or sparse access. Titles, file names and `regimes` carry no phase
+  word (training, inference, forward, backward, fwd, bwd, dgrad, wgrad, prefill, decode; `maintenance/kb_lint.py` reports
+  them), and an index or "Route here when" line routes by the problem, not by the phase. A measurement may still say
+  what it was measured on.
 - **No unchecked claim.** Every statement is checked against source, the ISA or a GPU run before it goes in.
 
 ## How a page gets in
@@ -141,4 +162,5 @@ like any other edit; one run covers this skill, its language folders included
 | `python analysis/hotspot_analyzer.py <dispatch_dir> --topk 15 --mode both` | the hot instructions of an ATT trace (`profile.md`) |
 | `python analysis/pmc_l2_analyzer.py <counters.csv>` | L2 and HBM efficiency from rocprofv3 PMC counters (`profile.md`) |
 
-They need Python 3.10 or later; PyYAML is used when installed.
+They need Python 3.9 or later and PyYAML: without it `maintenance/kb_lint.py` and `maintenance/kb_index.py`
+misread front matter, so lint reports errors and `--check` reports stale indexes that are not there.

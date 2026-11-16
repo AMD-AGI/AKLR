@@ -10,7 +10,8 @@
 # the short-lived registration token is removed after use.
 #
 # AKLR_SPUR_ACCOUNT and AKLR_SPUR_PARTITION each hold one or more names separated
-# by commas and/or whitespace. prepare submits one allocation per account and
+# by commas and/or whitespace. An account may be written ACCOUNT:QOS to submit under
+# that QOS; a bare account uses its default QOS. prepare submits one allocation per account and
 # partition pair under the same job name; the first to start running is kept and
 # every other one is cancelled. The registration token is written only once every
 # other allocation has ended, so the kept allocation is the only one that can
@@ -27,8 +28,6 @@ set -euo pipefail
 umask 077
 
 readonly COMMAND_TIMEOUT_SECONDS=30
-# gpu-node.yaml's prepare timeout covers both waits plus cancellation.
-readonly QUEUE_TIMEOUT_SECONDS=900
 readonly RUNNER_ONLINE_TIMEOUT_SECONDS=1200
 readonly CANCEL_TIMEOUT_SECONDS=120
 readonly POLL_INTERVAL_SECONDS=2
@@ -122,19 +121,23 @@ load_github_credentials() {
     export GH_TOKEN
 }
 
+# load_name_list SETTING LIST [QOS_ALLOWED]: with QOS_ALLOWED, a name may carry a :QOS suffix.
 load_name_list() {
     local setting=$1 value=${!1:-} name
     local -n list=$2
+    local valid='[A-Za-z0-9][A-Za-z0-9_.-]{0,63}' pattern
 
+    pattern="^$valid\$"
+    [[ -z ${3:-} ]] || pattern="^$valid(:$valid)?\$"
     read -ra list <<< "${value//,/ }"
     ((${#list[@]} > 0)) || die "Set $setting"
     for name in "${list[@]}"; do
-        [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]] || die "Invalid name in $setting: $name"
+        [[ $name =~ $pattern ]] || die "Invalid name in $setting: $name"
     done
 }
 
 load_prepare_settings() {
-    load_name_list AKLR_SPUR_ACCOUNT spur_accounts
+    load_name_list AKLR_SPUR_ACCOUNT spur_accounts qos
     load_name_list AKLR_SPUR_PARTITION spur_partitions
 
     cpus_per_task=${AKLR_SPUR_CPUS:-64}
@@ -320,7 +323,7 @@ release_runner() {
     echo "Released $runner_name; node cleanup is handled by Spur."
 }
 
-# ---- Prepare: bootstrap input, one submission, bounded readiness waits -------
+# ---- Prepare: bootstrap input, one submission, queue and runner waits --------
 
 on_prepare_exit() {
     local exit_status=$?
@@ -346,8 +349,7 @@ write_registration_token() {
 }
 
 submit_allocations() {
-    local queue_deadline=$1
-    local bootstrap_command submit_response account partition remaining_seconds
+    local bootstrap_command submit_response entry account qos partition log
     local -a submit_args
 
     printf -v bootstrap_command 'exec env -i PATH=/usr/local/bin:/usr/bin:/bin /usr/bin/bash %q %q %q %q %q %q' \
@@ -356,29 +358,31 @@ submit_allocations() {
 
     # Submit each pair exactly once. Uncertain responses are never retried; the
     # EXIT handler and release resolve them by job name.
-    for account in "${spur_accounts[@]}"; do
+    for entry in "${spur_accounts[@]}"; do
+        account=${entry%%:*} qos=''
+        [[ $entry != *:* ]] || qos=${entry#*:}
         for partition in "${spur_partitions[@]}"; do
-            remaining_seconds=$((queue_deadline - SECONDS))
-            ((remaining_seconds > 0)) || break 2
+            log="$handoff_dir/allocation-${entry/:/-}-$partition.log"
             submit_args=(
                 submit --parsable
                 -A "$account" -p "$partition"
                 -N 1 -c "$cpus_per_task" --mem "$memory_per_node"
                 "--gpus-per-node=$gpus_per_node" -t "$allocation_time_limit"
                 -J "$runner_name" --export=NONE
-                --chdir "$handoff_dir" --output "$handoff_dir/allocation-$account-$partition.log"
+                --chdir "$handoff_dir" --output "$log"
                 --wrap "$bootstrap_command"
             )
+            [[ -z $qos ]] || submit_args+=(-q "$qos")
             [[ -z $exclude_nodes ]] || submit_args+=(--exclude "$exclude_nodes")
 
             submission_started=true
-            if submit_response=$(timeout -k 5s "${remaining_seconds}s" spur "${submit_args[@]}") &&
+            if submit_response=$(run_spur "${submit_args[@]}") &&
                 [[ $submit_response =~ ^[1-9][0-9]*$ ]]; then
                 allocation_ids+=("$submit_response")
-                allocation_logs[$submit_response]="$handoff_dir/allocation-$account-$partition.log"
-                echo "Submitted $submit_response (account $account, partition $partition)."
+                allocation_logs[$submit_response]=$log
+                echo "Submitted $submit_response (account $entry, partition $partition)."
             else
-                echo "::warning::Spur submit for account $account, partition $partition failed or was uncertain; not retried" >&2
+                echo "::warning::Spur submit for account $entry, partition $partition failed or was uncertain; not retried" >&2
             fi
         done
     done
@@ -394,15 +398,12 @@ publish_workflow_outputs() {
 }
 
 # Keep the first allocation seen RUNNING. Ended ones are dropped from the race.
+# No deadline: a queued allocation waits for as long as Spur keeps it queued.
 wait_for_allocation() {
-    local queue_deadline=$1
     local id allocation_status
     local -a waiting_ids
 
     while :; do
-        if ((SECONDS >= queue_deadline)); then
-            die 'Spur queue deadline exceeded'
-        fi
         waiting_ids=()
         for id in "${allocation_ids[@]}"; do
             allocation_status=$(read_allocation_status "$id")
@@ -454,7 +455,7 @@ wait_for_runner() {
 }
 
 prepare_runner() {
-    local existing_allocations existing_runner queue_deadline
+    local existing_allocations existing_runner
 
     load_prepare_settings
     existing_allocations=$(find_allocation_ids)
@@ -472,10 +473,8 @@ prepare_runner() {
     # Snapshot the trusted script before submitting: another Host checkout must
     # not alter a queued allocation's bootstrap. The Host API token stays local.
     cp -- "$(dirname -- "${BASH_SOURCE[0]}")/run_gpu_runner.sh" "$handoff_dir/run_gpu_runner.sh"
-    # Submission and queueing share one budget; bootstrap gets a separate budget.
-    queue_deadline=$((SECONDS + QUEUE_TIMEOUT_SECONDS))
-    submit_allocations "$queue_deadline"
-    wait_for_allocation "$queue_deadline"
+    submit_allocations
+    wait_for_allocation
     cancel_other_allocations
     write_registration_token
     publish_workflow_outputs

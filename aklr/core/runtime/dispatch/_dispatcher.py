@@ -28,10 +28,11 @@ from aklr.core.contract.fastkey import (
     FastKeyFnGenerator,
 )
 from aklr.core.contract.op import OpContract
-from aklr.core.contract.spec import WorkloadSpec, axes_text
+from aklr.core.contract.spec import TOOLCHAINS, WorkloadSpec, axes_text
 from aklr.core.platform.env import ENV_DISABLE
 from aklr.core.platform.toolchain import toolchain_version
 from aklr.core.runtime.builder import Runnable
+from aklr.core.runtime.dispatch._trace import trace
 
 if TYPE_CHECKING:
     from aklr.core.runtime.dispatch._recorder import CallRecorder
@@ -44,8 +45,9 @@ _LOGGER = logging.getLogger(__name__)
 def kernel_failure_hint(contract_id: str, language: str) -> str:
     """What a failing kernel's message adds: its toolchain here, and the switch that
     turns its op off."""
-    version = toolchain_version(language) or "not installed"
-    return f"{language} {version} here; {ENV_DISABLE}={contract_id} turns this op off"
+    toolchain = TOOLCHAINS[language]
+    version = toolchain_version(toolchain) or "not installed"
+    return f"{toolchain} {version} here; {ENV_DISABLE}={contract_id} turns this op off"
 
 
 class FallbackReason(str, Enum):
@@ -196,6 +198,8 @@ class KernelDispatcher:
         """
         table = self.table
         if table is None:
+            if (tracer := trace()) is not None and tracer.is_op:
+                tracer.op(self.contract, None, self.closed_reason)
             return self.closed_reason
         key, match, runnable = table.lookup(call)
         if isinstance(runnable, FallbackReason):
@@ -224,6 +228,8 @@ class KernelDispatcher:
                 )
                 raise
             table.warmed_keys.add(match)
+        if (tracer := trace()) is not None and tracer.is_op:
+            tracer.op(self.contract, key, runnable)
         if self.recorder is not None:
             self.recorder.count(
                 self.contract,
@@ -238,10 +244,14 @@ class KernelDispatcher:
         ``dispatch`` counts it; nothing runs."""
         table = self.table
         if table is None:
+            if (tracer := trace()) is not None and tracer.is_op:
+                tracer.op(self.contract, None, self.closed_reason)
             return self.closed_reason
         key, _, runnable = table.lookup(call)
         if not isinstance(runnable, FallbackReason):
             return None
+        if (tracer := trace()) is not None and tracer.is_op:
+            tracer.op(self.contract, key, runnable)
         if self.recorder is not None:
             self.recorder.count(self.contract, key, call, runnable)
         return runnable

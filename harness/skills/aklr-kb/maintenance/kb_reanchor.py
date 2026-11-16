@@ -5,8 +5,8 @@ Each citation of PAGE is read against PAGE at REV (the text it was written again
 working copy with the same text, evidence marks and spacing ignored. A citation whose line is gone or appears more
 than once is listed for a person to fix, and left as it is.
 
-    python maintenance/kb_reanchor.py gemm/flydsl_gemm_small_m.md            # against HEAD
-    python maintenance/kb_reanchor.py gemm/flydsl_gemm_small_m.md --dry-run
+    python maintenance/kb_reanchor.py gemm/small_m.md            # against HEAD
+    python maintenance/kb_reanchor.py gemm/small_m.md --dry-run
 """
 
 from __future__ import annotations

@@ -34,7 +34,7 @@ An engine calls an AKLR operator. AKLR checks the inputs and picks a kernel that
 
 ## The Kernel Rosetta Stone
 
-The **Kernel Rosetta Stone** is a guide for agents writing AMD kernels. It brings together tips from handwritten kernels, AMD architecture and CDNA4 ISA documents, and real examples. Start at [`SKILL.md`](../harness/skills/aklr-kb/SKILL.md). As of 2026-11-03, it has **131 pages** and **1,192 findings with sources**.
+The **Kernel Rosetta Stone** is a guide for agents writing AMD kernels. It brings together tips from handwritten kernels, AMD architecture and CDNA3/CDNA4 ISA documents, and real examples. Start at [`SKILL.md`](../harness/skills/aklr-kb/SKILL.md).
 
 It aims to help agents reach the same speed sooner, use fewer tokens, and find faster kernels. Below is our first measurement on one GEMM ([details](../docs/kernel_rosetta_stone.md)):
 
@@ -69,7 +69,7 @@ SGLang loads AKLR at startup and, with `AKLR_SGLANG_PLUGIN=1`, runs AKLR's kerne
 | `AKLR_DISABLE=1` | Turn AKLR off |
 | `AKLR_DISABLE=<contract id>,...` | Turn off the listed ops, e.g. `gemm@1.0` |
 | `AKLR_SGLANG_PLUGIN=1` | Hook SGLang's functions to the plugin's ops ([aklr/plugins/README.md](../aklr/plugins/README.md)) |
-| `AKLR_MIN_SPEEDUP=<x>` | Serve only kernels with a measured speedup of at least x (default 1.03) |
+| `AKLR_MIN_SPEEDUP=<x>` | Serve only kernels with a measured speedup of at least x (default 1.05) |
 
 ## Development
 
@@ -92,3 +92,4 @@ python -m aklr validate --stages audit,bench --devices 0-7  # full validation
 
 - Commit hooks and the baseline: [CONTRIBUTING.md](../CONTRIBUTING.md)
 - PR descriptions: follow the [template](pull_request_template.md)
+- What a kernel or a plugin PR must show: the [acceptance criteria](../docs/acceptance_criteria.md) ([中文](../docs/acceptance_criteria.zh.md))

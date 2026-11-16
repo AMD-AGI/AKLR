@@ -39,9 +39,10 @@ def fused_moe_baseline(
         raise NotImplementedError(f"aiter's fused_moe: act_quant={act_quant} with activation={activation!r}")
     env = {"AITER_SITUV2_A8W4": "1"} if is_situv2 else {}
     if gate_mode == "interleave":
-        # sglang's DeepSeek-V4 recipe (aklr/benchmarks/models/deepseekv4/README.md): aiter's
-        # default of 256 has no kernel for the clamped SwiGLU's bf16 activations at 32-128 rows
-        env["AITER_BF16_FP8_MOE_BOUND"] = "16"
+        # DeepSeek-V4's serving recipes (sglang's cookbook, InferenceX): e4m3 activations at every
+        # row count. aiter's default of 256 has no kernel for the clamped SwiGLU's bf16 activations
+        # at 32-128 rows, nor at 7 and 14 for V4-Pro's inter_dim 384.
+        env["AITER_BF16_FP8_MOE_BOUND"] = "0"
     # the contract spells aiter's enums by their lower-case names
     activation, quant_type = (
         {m.name.lower(): m for m in enum.__members__.values()}[value]

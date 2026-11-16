@@ -39,4 +39,6 @@ def fused_moe(
     gate_mode: str | None = None,
     out_dtype=None,
     num_local_tokens: torch.Tensor | None = None,  # EP: [1] int32 rows received
+    act_quant=4,  # bits per quantized activation element: SiTUv2 quantizes to fp8 (8)
+    out: torch.Tensor | None = None,  # the caller's output buffer; None: dispatch allocates it
 ): ...
