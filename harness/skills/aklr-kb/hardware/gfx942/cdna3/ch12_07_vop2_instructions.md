@@ -1,0 +1,935 @@
+<!-- page 169 -->
+
+## 12.7. VOP2 Instructions
+
+![](images/x165.png)
+
+Instructions in this format may use a 32-bit literal constant, DPP or SDWA which occurs immediately after the instruction.
+
+#### V_CNDMASK_B32
+
+Opcode: 0
+
+Copy data from one of two inputs based on the per-lane condition code and store the result into a vector register.
+
+```
+D0.u32 = VCC.u64[laneId] ? S1.u32 : S0.u32
+```
+
+**Notes**
+
+In VOP3 the VCC source may be a scalar GPR specified in S2.
+
+Floating-point modifiers are valid for this instruction if S0 and S1 are 32-bit floating point values. This instruction is suitable for negating or taking the absolute value of a floating-point value.
+
+#### V_ADD_F32
+
+Opcode: 1
+
+Add two floating point inputs and store the result into a vector register.
+
+```
+D0.f32 = S0.f32 + S1.f32
+```
+
+**Notes**
+
+0.5ULP precision, denormals are supported.
+
+#### V_SUB_F32
+
+Opcode: 2
+
+Subtract the second floating point input from the first input and store the result into a vector register.
+
+```
+D0.f32 = S0.f32 - S1.f32
+```
+
+**Notes**
+
+0.5ULP precision, denormals are supported.
+
+<!-- page 170 -->
+
+#### V_SUBREV_F32
+
+Opcode: 3
+
+Subtract the _first_ floating point input from the _second_ input and store the result into a vector register.
+
+```
+D0.f32 = S1.f32 - S0.f32
+```
+
+**Notes**
+
+0.5ULP precision, denormals are supported.
+
+#### V_FMAC_F64
+
+Opcode: 4
+
+Multiply two floating point inputs and accumulate the result into the destination register using fused multiply add.
+
+```
+D0.f64 = fma(S0.f64, S1.f64, D0.f64)
+```
+
+#### V_MUL_F32
+
+Opcode: 5
+
+Multiply two floating point inputs and store the result into a vector register.
+
+```
+D0.f32 = S0.f32 * S1.f32
+```
+
+**Notes**
+
+0.5ULP precision, denormals are supported.
+
+#### V_MUL_I32_I24
+
+Opcode: 6
+
+Multiply two signed 24-bit integer inputs and store the result as a signed 32-bit integer into a vector register.
+
+```
+D0.i32 = 32'I(S0.i24) * 32'I(S1.i24)
+```
+
+**Notes**
+
+This opcode is expected to be as efficient as basic single-precision opcodes since it utilizes the single-precision floating point multiplier. See also V_MUL_HI_I32_I24.
+
+#### V_MUL_HI_I32_I24
+
+Opcode: 7
+
+<!-- page 171 -->
+
+Multiply two signed 24-bit integer inputs and store the high 32 bits of the result as a signed 32-bit integer into a vector register.
+
+```
+D0.i32 = 32'I((64'I(S0.i24) * 64'I(S1.i24)) >> 32U)
+```
+
+**Notes**
+
+See also V_MUL_I32_I24.
+
+#### V_MUL_U32_U24
+
+Opcode: 8
+
+Multiply two unsigned 24-bit integer inputs and store the result as an unsigned 32-bit integer into a vector register.
+
+```
+D0.u32 = 32'U(S0.u24) * 32'U(S1.u24)
+```
+
+**Notes**
+
+This opcode is expected to be as efficient as basic single-precision opcodes since it utilizes the single-precision floating point multiplier. See also V_MUL_HI_U32_U24.
+
+#### V_MUL_HI_U32_U24
+
+Opcode: 9
+
+Multiply two unsigned 24-bit integer inputs and store the high 32 bits of the result as an unsigned 32-bit integer into a vector register.
+
+```
+D0.u32 = 32'U((64'U(S0.u24) * 64'U(S1.u24)) >> 32U)
+```
+
+**Notes**
+
+See also V_MUL_U32_U24.
+
+#### V_MIN_F32
+
+Opcode: 10
+
+Select the minimum of two single-precision float inputs and store the result into a vector register.
+
+```
+if (WAVE_MODE.IEEE && isSignalNAN(64'F(S0.f32))) then
+    D0.f32 = 32'F(cvtToQuietNAN(64'F(S0.f32)))
+elsif (WAVE_MODE.IEEE && isSignalNAN(64'F(S1.f32))) then
+    D0.f32 = 32'F(cvtToQuietNAN(64'F(S1.f32)))
+elsif isNAN(64'F(S0.f32)) then
+    D0.f32 = S1.f32
+elsif isNAN(64'F(S1.f32)) then
+    D0.f32 = S0.f32
+elsif ((64'F(S0.f32) == +0.0) && (64'F(S1.f32) == -0.0)) then
+    D0.f32 = S1.f32
+elsif ((64'F(S0.f32) == -0.0) && (64'F(S1.f32) == +0.0)) then
+    D0.f32 = S0.f32
+else
+    // Note: there's no IEEE case here like there is for V_MAX_F32.
+    D0.f32 = S0.f32 < S1.f32 ? S0.f32 : S1.f32
+endif
+```
+
+<!-- page 172 -->
+
+#### V_MAX_F32
+
+Opcode: 11
+
+Select the maximum of two single-precision float inputs and store the result into a vector register.
+
+```
+if (WAVE_MODE.IEEE && isSignalNAN(64'F(S0.f32))) then
+    D0.f32 = 32'F(cvtToQuietNAN(64'F(S0.f32)))
+elsif (WAVE_MODE.IEEE && isSignalNAN(64'F(S1.f32))) then
+    D0.f32 = 32'F(cvtToQuietNAN(64'F(S1.f32)))
+elsif isNAN(64'F(S0.f32)) then
+    D0.f32 = S1.f32
+elsif isNAN(64'F(S1.f32)) then
+    D0.f32 = S0.f32
+elsif ((64'F(S0.f32) == +0.0) && (64'F(S1.f32) == -0.0)) then
+    D0.f32 = S0.f32
+elsif ((64'F(S0.f32) == -0.0) && (64'F(S1.f32) == +0.0)) then
+    D0.f32 = S1.f32
+elsif WAVE_MODE.IEEE then
+    D0.f32 = S0.f32 >= S1.f32 ? S0.f32 : S1.f32
+else
+    D0.f32 = S0.f32 > S1.f32 ? S0.f32 : S1.f32
+endif
+```
+
+#### V_MIN_I32
+
+Opcode: 12
+
+Select the minimum of two signed 32-bit integer inputs and store the selected value into a vector register.
+
+```
+D0.i32 = S0.i32 < S1.i32 ? S0.i32 : S1.i32
+```
+
+#### V_MAX_I32
+
+Opcode: 13
+
+Select the maximum of two signed 32-bit integer inputs and store the selected value into a vector register.
+
+```
+D0.i32 = S0.i32 >= S1.i32 ? S0.i32 : S1.i32
+```
+
+<!-- page 173 -->
+
+#### V_MIN_U32
+
+Opcode: 14
+
+Select the minimum of two unsigned 32-bit integer inputs and store the selected value into a vector register.
+
+```
+D0.u32 = S0.u32 < S1.u32 ? S0.u32 : S1.u32
+```
+
+#### V_MAX_U32
+
+Opcode: 15
+
+Select the maximum of two unsigned 32-bit integer inputs and store the selected value into a vector register.
+
+```
+D0.u32 = S0.u32 >= S1.u32 ? S0.u32 : S1.u32
+```
+
+#### V_LSHRREV_B32
+
+Opcode: 16
+
+Given a shift count in the _first_ vector input, calculate the logical shift right of the _second_ vector input and store the result into a vector register.
+
+```
+D0.u32 = (S1.u32 >> S0[4 : 0].u32)
+```
+
+#### V_ASHRREV_I32
+
+Opcode: 17
+
+Given a shift count in the _first_ vector input, calculate the arithmetic shift right (preserving sign bit) of the _second_ vector input and store the result into a vector register.
+
+```
+D0.i32 = (S1.i32 >> S0[4 : 0].u32)
+```
+
+#### V_LSHLREV_B32
+
+Opcode: 18
+
+Given a shift count in the _first_ vector input, calculate the logical shift left of the _second_ vector input and store the result into a vector register.
+
+```
+D0.u32 = (S1.u32 << S0[4 : 0].u32)
+```
+
+<!-- page 174 -->
+
+#### V_AND_B32
+
+Opcode: 19
+
+Calculate bitwise AND on two vector inputs and store the result into a vector register.
+
+```
+D0.u32 = (S0.u32 & S1.u32)
+```
+
+**Notes**
+
+Input and output modifiers not supported.
+
+#### V_OR_B32
+
+Opcode: 20
+
+Calculate bitwise OR on two vector inputs and store the result into a vector register.
+
+```
+D0.u32 = (S0.u32 | S1.u32)
+```
+
+**Notes**
+
+Input and output modifiers not supported.
+
+#### V_XOR_B32
+
+Opcode: 21
+
+Calculate bitwise XOR on two vector inputs and store the result into a vector register.
+
+```
+D0.u32 = (S0.u32 ^ S1.u32)
+```
+
+**Notes**
+
+Input and output modifiers not supported.
+
+#### V_FMAMK_F32
+
+Opcode: 23
+
+Multiply a single-precision float input with a literal constant and add a second single-precision float input using fused multiply add, and store the result into a vector register.
+
+```
+D0.f32 = fma(S0.f32, SIMM32.f32, S1.f32)
+```
+
+**Notes**
+
+This opcode cannot use the VOP3 encoding and cannot use input/output modifiers.
+
+<!-- page 175 -->
+
+#### V_FMAAK_F32
+
+Opcode: 24
+
+Multiply two single-precision float inputs and add a literal constant using fused multiply add, and store the result into a vector register.
+
+```
+D0.f32 = fma(S0.f32, S1.f32, SIMM32.f32)
+```
+
+**Notes**
+
+This opcode cannot use the VOP3 encoding and cannot use input/output modifiers.
+
+#### V_ADD_CO_U32
+
+Opcode: 25
+
+Add two unsigned 32-bit integer inputs, store the result into a vector register and store the carry-out mask into a scalar register.
+
+```
+tmp = 64'U(S0.u32) + 64'U(S1.u32);
+VCC.u64[laneId] = tmp >= 0x100000000ULL ? 1'1U : 1'0U;
+// VCC is an UNSIGNED overflow/carry-out for V_ADDC_CO_U32.
+D0.u32 = tmp.u32
+```
+
+**Notes**
+
+In VOP3 the VCC destination may be an arbitrary SGPR-pair.
+
+Supports saturation (unsigned 32-bit integer domain).
+
+#### V_SUB_CO_U32
+
+Opcode: 26
+
+Subtract the second unsigned 32-bit integer input from the first input, store the result into a vector register and store the carry-out mask into a scalar register.
+
+```
+tmp = S0.u32 - S1.u32;
+VCC.u64[laneId] = S1.u32 > S0.u32 ? 1'1U : 1'0U;
+// VCC is an UNSIGNED overflow/carry-out for V_SUBB_CO_U32.
+D0.u32 = tmp.u32
+```
+
+**Notes**
+
+In VOP3 the VCC destination may be an arbitrary SGPR-pair.
+
+Supports saturation (unsigned 32-bit integer domain).
+
+<!-- page 176 -->
+
+#### V_SUBREV_CO_U32
+
+Opcode: 27
+
+Subtract the _first_ unsigned 32-bit integer input from the _second_ input, store the result into a vector register and store the carry-out mask into a scalar register.
+
+```
+tmp = S1.u32 - S0.u32;
+VCC.u64[laneId] = S0.u32 > S1.u32 ? 1'1U : 1'0U;
+// VCC is an UNSIGNED overflow/carry-out for V_SUBB_CO_U32.
+D0.u32 = tmp.u32
+```
+
+**Notes**
+
+In VOP3 the VCC destination may be an arbitrary SGPR-pair.
+
+Supports saturation (unsigned 32-bit integer domain).
+
+#### V_ADDC_CO_U32
+
+Opcode: 28
+
+Add two unsigned 32-bit integer inputs and a bit from a carry-in mask, store the result into a vector register and store the carry-out mask into a scalar register.
+
+```
+tmp = 64'U(S0.u32) + 64'U(S1.u32) + VCC.u64[laneId].u64;
+VCC.u64[laneId] = tmp >= 0x100000000ULL ? 1'1U : 1'0U;
+// VCC is an UNSIGNED overflow/carry-out for V_ADDC_CO_U32.
+D0.u32 = tmp.u32
+```
+
+**Notes**
+
+In VOP3 the VCC destination may be an arbitrary SGPR-pair, and the VCC source comes from the SGPR-pair at S2.u.
+
+Supports saturation (unsigned 32-bit integer domain).
+
+#### V_SUBB_CO_U32
+
+Opcode: 29
+
+Subtract the second unsigned 32-bit integer input from the first input, subtract a bit from the carry-in mask, store the result into a vector register and store the carry-out mask into a scalar register.
+
+```
+tmp = S0.u32 - S1.u32 - VCC.u64[laneId].u32;
+VCC.u64[laneId] = 64'U(S1.u32) + VCC.u64[laneId].u64 > 64'U(S0.u32) ? 1'1U : 1'0U;
+// VCC is an UNSIGNED overflow/carry-out for V_SUBB_CO_U32.
+D0.u32 = tmp.u32
+```
+
+**Notes**
+
+<!-- page 177 -->
+
+In VOP3 the VCC destination may be an arbitrary SGPR-pair, and the VCC source comes from the SGPR-pair at S2.u.
+
+Supports saturation (unsigned 32-bit integer domain).
+
+#### V_SUBBREV_CO_U32
+
+Opcode: 30
+
+Subtract the _first_ unsigned 32-bit integer input from the _second_ input, subtract a bit from the carry-in mask, store the result into a vector register and store the carry-out mask into a scalar register.
+
+```
+tmp = S1.u32 - S0.u32 - VCC.u64[laneId].u32;
+VCC.u64[laneId] = 64'U(S0.u32) + VCC.u64[laneId].u64 > 64'U(S1.u32) ? 1'1U : 1'0U;
+// VCC is an UNSIGNED overflow/carry-out for V_SUBB_CO_U32.
+D0.u32 = tmp.u32
+```
+
+**Notes**
+
+In VOP3 the VCC destination may be an arbitrary SGPR-pair, and the VCC source comes from the SGPR-pair at S2.u.
+
+Supports saturation (unsigned 32-bit integer domain).
+
+#### V_ADD_F16
+
+Opcode: 31
+
+Add two floating point inputs and store the result into a vector register.
+
+```
+D0.f16 = S0.f16 + S1.f16
+```
+
+**Notes**
+
+0.5ULP precision. Supports denormals, round mode, exception flags and saturation.
+
+#### V_SUB_F16
+
+Opcode: 32
+
+Subtract the second floating point input from the first input and store the result into a vector register.
+
+```
+D0.f16 = S0.f16 - S1.f16
+```
+
+**Notes**
+
+0.5ULP precision. Supports denormals, round mode, exception flags and saturation.
+
+<!-- page 178 -->
+
+#### V_SUBREV_F16
+
+Opcode: 33
+
+Subtract the _first_ floating point input from the _second_ input and store the result into a vector register.
+
+```
+D0.f16 = S1.f16 - S0.f16
+```
+
+**Notes**
+
+0.5ULP precision. Supports denormals, round mode, exception flags and saturation.
+
+#### V_MUL_F16
+
+Opcode: 34
+
+Multiply two floating point inputs and store the result into a vector register.
+
+```
+D0.f16 = S0.f16 * S1.f16
+```
+
+**Notes**
+
+0.5ULP precision. Supports denormals, round mode, exception flags and saturation.
+
+#### V_MAC_F16
+
+Opcode: 35
+
+Multiply two floating point inputs and accumulate the result into the destination register. Implements IEEE rules and non-standard rule for OPSEL.
+
+```
+tmp = S0.f16 * S1.f16 + D0.f16;
+if OPSEL.u4[3] then
+    D0 = { tmp.f16, D0[15 : 0] }
+else
+    D0 = { 16'0, tmp.f16 }
+endif
+```
+
+**Notes**
+
+Supports round mode, exception flags, saturation.
+
+#### V_MADMK_F16
+
+Opcode: 36
+
+Multiply a floating point input with a literal constant and add a second floating point input, and store the result into a vector register. Implements IEEE rules.
+
+```
+tmp = S0.f16 * SIMM16.f16 + S1.f16;
+D0 = { 16'0, tmp.f16 }
+```
+
+<!-- page 179 -->
+
+**Notes**
+
+This opcode cannot use the VOP3 encoding and cannot use input/output modifiers. Supports round mode, exception flags, saturation.
+
+#### V_MADAK_F16
+
+Opcode: 37
+
+Multiply two floating point inputs and add a literal constant, and store the result into a vector register. Implements IEEE rules.
+
+```
+tmp = S0.f16 * S1.f16 + SIMM16.f16;
+D0 = { 16'0, tmp.f16 }
+```
+
+**Notes**
+
+This opcode cannot use the VOP3 encoding and cannot use input/output modifiers. Supports round mode, exception flags, saturation.
+
+#### V_ADD_U16
+
+Opcode: 38
+
+Add two unsigned 16-bit integer inputs and store the result into a vector register. No carry-in or carry-out support.
+
+```
+D0.u16 = S0.u16 + S1.u16
+```
+
+**Notes**
+
+Supports saturation (unsigned 16-bit integer domain).
+
+#### V_SUB_U16
+
+Opcode: 39
+
+Subtract the second unsigned 16-bit integer input from the first input and store the result into a vector register. No carry-in or carry-out support.
+
+```
+D0.u16 = S0.u16 - S1.u16
+```
+
+**Notes**
+
+Supports saturation (unsigned 16-bit integer domain).
+
+<!-- page 180 -->
+
+#### V_SUBREV_U16
+
+Opcode: 40
+
+Subtract the _first_ unsigned 16-bit integer input from the _second_ input and store the result into a vector register. No carry-in or carry-out support.
+
+```
+D0.u16 = S1.u16 - S0.u16
+```
+
+**Notes**
+
+Supports saturation (unsigned 16-bit integer domain).
+
+#### V_MUL_LO_U16
+
+Opcode: 41
+
+Multiply two unsigned 16-bit integer inputs and store the low bits of the result into a vector register.
+
+```
+D0.u16 = S0.u16 * S1.u16
+```
+
+**Notes**
+
+Supports saturation (unsigned 16-bit integer domain).
+
+#### V_LSHLREV_B16
+
+Opcode: 42
+
+Given a shift count in the _first_ vector input, calculate the logical shift left of the _second_ vector input and store the result into a vector register.
+
+```
+D0.u16 = (S1.u16 << S0[3 : 0].u32)
+```
+
+#### V_LSHRREV_B16
+
+Opcode: 43
+
+Given a shift count in the _first_ vector input, calculate the logical shift right of the _second_ vector input and store the result into a vector register.
+
+```
+D0.u16 = (S1.u16 >> S0[3 : 0].u32)
+```
+
+#### V_ASHRREV_I16
+
+Opcode: 44
+
+Given a shift count in the _first_ vector input, calculate the arithmetic shift right (preserving sign bit) of the _second_
+
+<!-- page 181 -->
+
+vector input and store the result into a vector register.
+
+```
+D0.i16 = (S1.i16 >> S0[3 : 0].u32)
+```
+
+#### V_MAX_F16
+
+Opcode: 45
+
+Select the maximum of two half-precision float inputs and store the result into a vector register.
+
+```
+if (WAVE_MODE.IEEE && isSignalNAN(64'F(S0.f16))) then
+    D0.f16 = 16'F(cvtToQuietNAN(64'F(S0.f16)))
+elsif (WAVE_MODE.IEEE && isSignalNAN(64'F(S1.f16))) then
+    D0.f16 = 16'F(cvtToQuietNAN(64'F(S1.f16)))
+elsif isNAN(64'F(S0.f16)) then
+    D0.f16 = S1.f16
+elsif isNAN(64'F(S1.f16)) then
+    D0.f16 = S0.f16
+elsif ((64'F(S0.f16) == +0.0) && (64'F(S1.f16) == -0.0)) then
+    D0.f16 = S0.f16
+elsif ((64'F(S0.f16) == -0.0) && (64'F(S1.f16) == +0.0)) then
+    D0.f16 = S1.f16
+elsif WAVE_MODE.IEEE then
+    D0.f16 = S0.f16 >= S1.f16 ? S0.f16 : S1.f16
+else
+    D0.f16 = S0.f16 > S1.f16 ? S0.f16 : S1.f16
+endif
+```
+
+**Notes**
+
+IEEE compliant. Supports denormals, round mode, exception flags, saturation.
+
+#### V_MIN_F16
+
+Opcode: 46
+
+Select the minimum of two half-precision float inputs and store the result into a vector register.
+
+```
+if (WAVE_MODE.IEEE && isSignalNAN(64'F(S0.f16))) then
+    D0.f16 = 16'F(cvtToQuietNAN(64'F(S0.f16)))
+elsif (WAVE_MODE.IEEE && isSignalNAN(64'F(S1.f16))) then
+    D0.f16 = 16'F(cvtToQuietNAN(64'F(S1.f16)))
+elsif isNAN(64'F(S0.f16)) then
+    D0.f16 = S1.f16
+elsif isNAN(64'F(S1.f16)) then
+    D0.f16 = S0.f16
+elsif ((64'F(S0.f16) == +0.0) && (64'F(S1.f16) == -0.0)) then
+    D0.f16 = S1.f16
+elsif ((64'F(S0.f16) == -0.0) && (64'F(S1.f16) == +0.0)) then
+    D0.f16 = S0.f16
+else
+    // Note: there's no IEEE case here like there is for V_MAX_F16.
+    D0.f16 = S0.f16 < S1.f16 ? S0.f16 : S1.f16
+endif
+```
+
+<!-- page 182 -->
+
+**Notes**
+
+IEEE compliant. Supports denormals, round mode, exception flags, saturation.
+
+#### V_MAX_U16
+
+Opcode: 47
+
+Select the maximum of two unsigned 16-bit integer inputs and store the selected value into a vector register.
+
+```
+D0.u16 = S0.u16 >= S1.u16 ? S0.u16 : S1.u16
+```
+
+#### V_MAX_I16
+
+Opcode: 48
+
+Select the maximum of two signed 16-bit integer inputs and store the selected value into a vector register.
+
+```
+D0.i16 = S0.i16 >= S1.i16 ? S0.i16 : S1.i16
+```
+
+#### V_MIN_U16
+
+Opcode: 49
+
+Select the minimum of two unsigned 16-bit integer inputs and store the selected value into a vector register.
+
+```
+D0.u16 = S0.u16 < S1.u16 ? S0.u16 : S1.u16
+```
+
+#### V_MIN_I16
+
+Opcode: 50
+
+Select the minimum of two signed 16-bit integer inputs and store the selected value into a vector register.
+
+```
+D0.i16 = S0.i16 < S1.i16 ? S0.i16 : S1.i16
+```
+
+#### V_LDEXP_F16
+
+Opcode: 51
+
+Multiply the first input, a floating point value, by an integral power of 2 specified in the second input, a signed integer value, and store the floating point result into a vector register.
+
+<!-- page 183 -->
+
+```
+D0.f16 = S0.f16 * 16'F(2.0F ** 32'I(S1.i16))
+```
+
+**Notes**
+
+Compare with the ldexp() function in C. Note that the S1 has a format of f16 since floating point literal constants are interpreted as 16 bit value for this opcode.
+
+#### V_ADD_U32
+
+Opcode: 52
+
+Add two unsigned 32-bit integer inputs and store the result into a vector register. No carry-in or carry-out support.
+
+```
+D0.u32 = S0.u32 + S1.u32
+```
+
+**Notes**
+
+Supports saturation (unsigned 32-bit integer domain).
+
+#### V_SUB_U32
+
+Opcode: 53
+
+Subtract the second unsigned 32-bit integer input from the first input and store the result into a vector register. No carry-in or carry-out support.
+
+```
+D0.u32 = S0.u32 - S1.u32
+```
+
+**Notes**
+
+Supports saturation (unsigned 32-bit integer domain).
+
+#### V_SUBREV_U32
+
+Opcode: 54
+
+Subtract the _first_ unsigned 32-bit integer input from the _second_ input and store the result into a vector register. No carry-in or carry-out support.
+
+```
+D0.u32 = S1.u32 - S0.u32
+```
+
+**Notes**
+
+Supports saturation (unsigned 32-bit integer domain).
+
+<!-- page 184 -->
+
+#### V_DOT2C_F32_F16
+
+Opcode: 55
+
+Compute the dot product of two packed 2-D half-precision float inputs in the single-precision float domain and accumulate with the single-precision float value in the destination register.
+
+```
+tmp = D0.f32;
+tmp += f16_to_f32(S0[15 : 0].f16) * f16_to_f32(S1[15 : 0].f16);
+tmp += f16_to_f32(S0[31 : 16].f16) * f16_to_f32(S1[31 : 16].f16);
+D0.f32 = tmp
+```
+
+#### V_DOT2C_I32_I16
+
+Opcode: 56
+
+Compute the dot product of two packed 2-D signed 16-bit integer inputs in the signed 32-bit integer domain and accumulate with the signed 32-bit integer value in the destination register.
+
+```
+tmp = D0.i32;
+tmp += i16_to_i32(S0[15 : 0].i16) * i16_to_i32(S1[15 : 0].i16);
+tmp += i16_to_i32(S0[31 : 16].i16) * i16_to_i32(S1[31 : 16].i16);
+D0.i32 = tmp
+```
+
+#### V_DOT4C_I32_I8
+
+Opcode: 57
+
+Compute the dot product of two packed 4-D signed 8-bit integer inputs in the signed 32-bit integer domain and accumulate with the signed 32-bit integer value in the destination register.
+
+```
+tmp = D0.i32;
+tmp += i8_to_i32(S0[7 : 0].i8) * i8_to_i32(S1[7 : 0].i8);
+tmp += i8_to_i32(S0[15 : 8].i8) * i8_to_i32(S1[15 : 8].i8);
+tmp += i8_to_i32(S0[23 : 16].i8) * i8_to_i32(S1[23 : 16].i8);
+tmp += i8_to_i32(S0[31 : 24].i8) * i8_to_i32(S1[31 : 24].i8);
+D0.i32 = tmp
+```
+
+#### V_DOT8C_I32_I4
+
+Opcode: 58
+
+Compute the dot product of two packed 8-D signed 4-bit integer inputs in the signed 32-bit integer domain and accumulate with the signed 32-bit integer value in the destination register.
+
+```
+tmp = D0.i32;
+tmp += i4_to_i32(S0[3 : 0].i4) * i4_to_i32(S1[3 : 0].i4);
+tmp += i4_to_i32(S0[7 : 4].i4) * i4_to_i32(S1[7 : 4].i4);
+tmp += i4_to_i32(S0[11 : 8].i4) * i4_to_i32(S1[11 : 8].i4);
+tmp += i4_to_i32(S0[15 : 12].i4) * i4_to_i32(S1[15 : 12].i4);
+tmp += i4_to_i32(S0[19 : 16].i4) * i4_to_i32(S1[19 : 16].i4);
+tmp += i4_to_i32(S0[23 : 20].i4) * i4_to_i32(S1[23 : 20].i4);
+tmp += i4_to_i32(S0[27 : 24].i4) * i4_to_i32(S1[27 : 24].i4);
+tmp += i4_to_i32(S0[31 : 28].i4) * i4_to_i32(S1[31 : 28].i4);
+D0.i32 = tmp
+```
+
+<!-- page 185 -->
+
+#### V_FMAC_F32
+
+Opcode: 59
+
+Multiply two floating point inputs and accumulate the result into the destination register using fused multiply add.
+
+```
+D0.f32 = fma(S0.f32, S1.f32, D0.f32)
+```
+
+#### V_PK_FMAC_F16
+
+Opcode: 60
+
+Multiply two packed half-precision float inputs component-wise and accumulate the result into the destination register using fused multiply add.
+
+```
+D0[15 : 0].f16 = fma(S0[15 : 0].f16, S1[15 : 0].f16, D0[15 : 0].f16);
+D0[31 : 16].f16 = fma(S0[31 : 16].f16, S1[31 : 16].f16, D0[31 : 16].f16)
+```
+
+#### V_XNOR_B32
+
+Opcode: 61
+
+Calculate bitwise XNOR on two vector inputs and store the result into a vector register.
+
+```
+D0.u32 = ~(S0.u32 ^ S1.u32)
+```
+
+**Notes**
+
+Input and output modifiers not supported.
+
+<!-- page 186 -->
+
+### 12.7.1. VOP2 using VOP3 encoding
+
+Instructions in this format may also be encoded as VOP3. This allows access to the extra control bits (e.g. ABS, OMOD) in exchange for not being able to use a literal constant. The VOP3 opcode is: VOP2 opcode + 0x100.
+
+![](images/x168.png)
+
+![](images/x169.png)

@@ -29,7 +29,7 @@ import torch
 
 from aklr.core.contract.locate import import_entry
 from aklr.core.contract.spec import write_sources
-from aklr.core.jit import hip_extension
+from aklr.core.jit import hip_extension, hsaco
 from aklr.core.platform.device import DeviceTarget
 from aklr.core.platform.env import (
     ENV_DISABLE,
@@ -51,6 +51,7 @@ __all__ = [
     "Builder",
     "FlyDSLBuilder",
     "HipBuilder",
+    "HsacoBuilder",
     "PythonBuilder",
     "TritonBuilder",
     "get_build_cache_path",
@@ -218,6 +219,18 @@ class FlyDSLBuilder(PythonBuilder):
         except ImportError:
             return False
         return True
+
+
+class HsacoBuilder(PythonBuilder):
+    """An hsaco kernel is python too: it launches precompiled code objects through
+    ``aklr.core.jit.hsaco``."""
+
+    _LANGUAGE: ClassVar[str] = "hsaco"
+
+    @staticmethod
+    def is_available() -> bool:
+        """Whether torch is a ROCm build."""
+        return hsaco.is_available()
 
 
 class HipBuilder(Builder):

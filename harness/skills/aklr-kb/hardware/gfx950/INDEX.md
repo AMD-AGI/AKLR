@@ -7,8 +7,9 @@ gens: [gfx950]
 # CDNA4 ISA
 
 `cdna4/` holds AMD's "CDNA4 Instruction Set Architecture Reference Guide", the ISA of gfx950 (MI350/MI355X),
-converted from the PDF to Markdown and split by chapter (chapter 12 by section). The text is not hand-edited:
-the split files differ from the converted guide only in the links of `cdna4/01_contents.md`, which point at the
+converted from the PDF to Markdown and split by chapter (chapter 12 by section). Apart from one sentence of ch07
+(PDF page 49) put back by hand from the PDF, the split files differ from the converted guide only in the links of
+`cdna4/01_contents.md`, which point at the
 file that holds each heading, and in the blank line that ended each split (see also the caveats below). The
 guide's Specification Agreement and notices are in `cdna4/00_front_matter.md`. Figures are in `cdna4/images/`.
 
@@ -58,4 +59,4 @@ is the specification to check them against.
 
 ## Related
 `../../SKILL.md` (this skill's map) · `../../gemm/INDEX.md` (dense GEMM package) ·
-`../../gemm/flydsl_gemm_mainloop.md` · `../../gemm/flydsl_gemm_datapath.md` · `../../gemm/flydsl_gemm_correctness.md`
+`../../gemm/mainloop.md` · `../../gemm/datapath.md` · `../../gemm/correctness.md`

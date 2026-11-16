@@ -71,7 +71,7 @@ A round takes 20–70 minutes. The loop keeps a round only when it beats the ker
 measured noise, and stops early once its directions are mined out.
 
 **3. Watch and steer.** `$RUN/workspace/forge_experiments/dashboard.html` shows the score, every round, and each
-workload against AKLR's serving bar (1.03x the baseline). A message to the agents, read from the next round on:
+workload against AKLR's serving bar (1.05x the baseline). A message to the agents, read from the next round on:
 
 ```bash
 python -m kernelforge.cli forge-say --workspace $RUN/workspace "focus on m<=64"

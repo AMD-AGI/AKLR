@@ -1,0 +1,143 @@
+{
+  "schema_version": 5,
+  "name": "dsa_sparse_mla_decode_n_heads16_kv_dim576_topk2048",
+  "contract_id": "dsa_sparse_mla_decode@1.0",
+  "description": "sglang's DSA backend's sparse MLA decode on one rank, kv_b_proj absorbed (DeepseekSparseAttnBackend._forward_triton_decode): each head of each token attends the KV pool rows its top-k slots name (-1: none) with scores q . row * sm_scale, q and the rows the fp8 values sglang holds, unscaled; the output is the softmax-weighted sum of the rows' latent parts, 0 for a token that reads no row.",
+  "op_type": "dsa_backend",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens in this call, one query each."
+    },
+    "n_heads": {
+      "type": "const",
+      "value": 16,
+      "description": "Query heads on this rank."
+    },
+    "kv_dim": {
+      "type": "const",
+      "value": 576,
+      "description": "A query head and a KV row: the latent, then 64 RoPE values."
+    },
+    "topk": {
+      "type": "const",
+      "value": 2048,
+      "description": "Top-k entries per token."
+    },
+    "n_slots": {
+      "type": "var",
+      "description": "Rows of the KV pool."
+    },
+    "kv_lora_rank": {
+      "type": "const",
+      "value": 512,
+      "description": "The latent's width: a row's first part, and the output's."
+    }
+  },
+  "attrs": {},
+  "inputs": {
+    "q": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "kv_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's query per head: q_nope times W_UK (the latent's basis), then the RoPE'd q_pe."
+    },
+    "kv_cache": {
+      "shape": [
+        "n_slots",
+        "kv_dim"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "This layer's KV pool: a row per slot, the latent then the RoPE part."
+    },
+    "topk_indices": {
+      "shape": [
+        "n_tokens",
+        "topk"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "int_range",
+        "lo": -1,
+        "hi": "n_slots - 1",
+        "distinct": true
+      },
+      "description": "The slots each token attends; -1: none."
+    },
+    "sm_scale": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Multiplies every score."
+    }
+  },
+  "outputs": {
+    "output": {
+      "shape": [
+        "n_tokens",
+        "n_heads",
+        "kv_lora_rank"
+      ],
+      "dtype": "bfloat16",
+      "description": "Each head's output in the latent's basis: the rows' latent parts weighed by the softmax of their scores."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 8,
+        "n_slots": 65536
+      },
+      "scalars": {
+        "sm_scale": 0.0625
+      },
+      "accuracy": "passed",
+      "speedup": 1.58
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "_decode.py",
+        "content": "# Created by OpenAI\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\n@gluon.jit\ndef _exp_mode(x, FAST: gl.constexpr):\n    if FAST:\n        return gl.exp2(x * 1.4426950408889634)\n    else:\n        return gl.exp(x)\n\n@gluon.jit\ndef _qk_operands(q, k, acc, NATIVE: gl.constexpr):\n    if NATIVE:\n        return gl.amd.cdna4.mfma_scaled(q, None, 'e4m3', k, None, 'e4m3', acc)\n    else:\n        return gl.amd.cdna4.mfma(q, k.to(gl.bfloat16), acc)\n"
+      },
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"Sparse paged MLA decode for GLM-5.2 on gfx950: TP4, 16 heads per rank.\n\nScheduled for 8 tokens.\n\nEach head attends the fp8 KV rows (512 latent values, then 64 RoPE values) its token's 2048\ntop-k slots name (-1: none), with scores q . row * softmax_scale on the fp8 query as sglang\nholds it; the output is the softmax-weighted sum of the rows' latent values, in bf16.\n\"\"\"\n\nimport torch\nimport triton\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\nfrom ._decode import _exp_mode as _exp, _qk_operands as _qk\n\ndef _schedule(rows):\n    if rows <= 2:\n        return (64, 128, 32, 4, 2, rows == 1)\n    if rows <= 8:\n        return (64, 256 if rows <= 4 else 512, 128, 4, 8, rows in (4, 8))\n    return (128, 512, 256 if rows == 16 else 128, 2, 8 if rows == 16 else 4, rows == 16)\n\n@gluon.jit\ndef _partial_offset(row, head, split, channel, HEADS: gl.constexpr, SPLITS: gl.constexpr, PACKED: gl.constexpr):\n    if PACKED:\n        d = channel\n        physical = d & 3 | (d & 64) >> 4 | (d & 12) << 1 | (d & 48) << 5 | (d & 384) << 4\n        block = ((row * gl.cdiv(HEADS, 16) + head // 16) * SPLITS + split) * 8192\n        return block + head % 16 * 32 + physical\n    else:\n        return ((row * HEADS + head) * SPLITS + split) * 512 + channel\n\n@gluon.jit\ndef _softmax(score, valid, FAST: gl.constexpr):\n    score = gl.where(valid[None, :], score, -float('inf'))\n    maximum = gl.max(score, 1)\n    safe = gl.where(maximum == -float('inf'), 0.0, maximum)\n    p = gl.where(valid[None, :], _exp(score - safe[:, None], FAST), 0.0)\n    return (p, maximum, gl.sum(p, 1))\n\n@gluon.jit\ndef _stage_operands(Q, Cache, Slots, row, head_base, split, HEADS: gl.constexpr, TOPK: gl.constexpr, KEYS: gl.constexpr, NATIVE: gl.constexpr, ASYNC: gl.constexpr, qm: gl.constexpr):\n    ROPE: gl.constexpr = 128 if NATIVE else 64\n    KW: gl.constexpr = 16 if NATIVE else 8\n    qa: gl.constexpr = gl.DotOperandLayout(0, qm, KW)\n    kb: gl.constexpr = gl.DotOperandLayout(1, qm, KW)\n    ql: gl.constexpr = gl.BlockedLayout([1, 8], [16, 4], [1, 4], [1, 0])\n    if ASYNC:\n        kl: gl.constexpr = gl.BlockedLayout([1, 16], [8, 8], [4, 1], [1, 0])\n    else:\n        kl: gl.constexpr = gl.BlockedLayout([1, 32], [16, 4], [4, 1], [1, 0])\n    shared: gl.constexpr = gl.SwizzledSharedLayout(16, 1, 8, [1, 0])\n    tiled: gl.constexpr = gl.SwizzledSharedLayout(16, 1, 8, [2, 1, 0])\n    query_type: gl.constexpr = Cache.dtype.element_ty if NATIVE else gl.bfloat16\n    h = head_base + gl.arange(0, 16, gl.SliceLayout(1, ql))\n    d = gl.arange(0, 512, gl.SliceLayout(0, ql))\n    r = gl.arange(0, ROPE, gl.SliceLayout(0, ql))\n    q = gl.load(Q + (row * HEADS + h[:, None]) * 576 + d[None, :], h[:, None] < HEADS, 0.0)\n    qr = gl.load(Q + (row * HEADS + h[:, None]) * 576 + 512 + r[None, :], (h[:, None] < HEADS) & (r[None, :] < 64), 0.0)\n    query = gl.allocate_shared_memory(query_type, [16, 512], shared, q.to(query_type))\n    rotary_query = gl.allocate_shared_memory(query_type, [16, ROPE], shared, qr.to(query_type))\n    i = split * KEYS + gl.arange(0, KEYS, gl.SliceLayout(1, kl))\n    if TOPK % KEYS == 0:\n        slot = gl.load(Slots + row * TOPK + i)\n    else:\n        slot = gl.load(Slots + row * TOPK + i, i < TOPK, -1)\n    valid = slot >= 0\n    kd = gl.arange(0, 512, gl.SliceLayout(0, kl))\n    kr = 512 + gl.arange(0, ROPE, gl.SliceLayout(0, kl))\n    if ASYNC:\n        raw_tiled: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, [2, 1, 0])\n        raw_shared: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, [1, 0])\n        latent_copy = gl.allocate_shared_memory(Cache.dtype.element_ty, [4, KEYS, 128], raw_tiled)\n        rope_copy = gl.allocate_shared_memory(Cache.dtype.element_ty, [KEYS, ROPE], raw_shared)\n        latent_tiles = latent_copy._reinterpret(layout=tiled)\n        rope = rope_copy._reinterpret(layout=shared)\n        base = gl.maximum(slot, 0) * 576\n        phase = (i & 7)[:, None] * 16\n        latent_offset = gl.max_contiguous(gl.multiple_of(base[:, None] + (kd[None, :] ^ phase), [1, 16]), [1, 16])\n        rotary_offset = gl.max_contiguous(gl.multiple_of(base[:, None] + 512 + (kr[None, :] - 512 ^ phase), [1, 16]), [1, 16])\n        rotary_mask = valid[:, None] & ((kr[None, :] < 576) == ((i & 4)[:, None] == 0))\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(latent_copy._reinterpret(dtype=gl.uint8), Cache.to(gl.pointer_type(gl.uint8)), latent_offset.reshape((KEYS, 4, 128)).permute((1, 0, 2)), valid[:, None].broadcast_to((KEYS, 512)).reshape((KEYS, 4, 128)).permute((1, 0, 2)))\n        gl.amd.cdna4.async_copy.buffer_load_to_shared(rope_copy._reinterpret(dtype=gl.uint8), Cache.to(gl.pointer_type(gl.uint8)), rotary_offset, rotary_mask)\n        gl.amd.cdna4.async_copy.commit_group()\n    else:\n        base = gl.maximum(slot, 0).to(gl.int64) * 576\n        k = gl.load(Cache + base[:, None] + kd[None, :], valid[:, None], 0.0)\n        rope_values = gl.load(Cache + base[:, None] + kr[None, :], valid[:, None] & (kr[None, :] < 576), 0.0)\n        latent_tiles = gl.allocate_shared_memory(Cache.dtype.element_ty, [4, KEYS, 128], tiled, k.reshape((KEYS, 4, 128)).permute((1, 0, 2)))\n        rope = gl.allocate_shared_memory(Cache.dtype.element_ty, [KEYS, ROPE], shared, rope_values)\n    q, qr = (query.load(qa), rotary_query.load(qa))\n    latent = latent_tiles.permute((1, 0, 2)).reshape((KEYS, 512))\n    if ASYNC:\n        gl.amd.cdna4.async_copy.wait_group(0)\n        km = gl.amd.cdna4.async_copy.load_shared_relaxed(latent.permute((1, 0)), kb)\n        rm = gl.amd.cdna4.async_copy.load_shared_relaxed(rope.permute((1, 0)), kb)\n    else:\n        km, rm = (latent.permute((1, 0)).load(kb), rope.permute((1, 0)).load(kb))\n    return (q, qr, km, rm, valid, latent_tiles)\n\n@gluon.jit\ndef _read_values(panels, tile, layout: gl.constexpr, RELAX: gl.constexpr):\n    if RELAX:\n        return gl.amd.cdna4.async_copy.load_shared_relaxed(panels.index(tile), layout)\n    else:\n        return panels.index(tile).load(layout)\n\n@gluon.jit\ndef _produce(Q, Cache, Slots, Partial, Stats, HEADS: gl.constexpr, TOPK: gl.constexpr, SCALE: gl.constexpr, SPLITS: gl.constexpr, KEYS: gl.constexpr, VALUES: gl.constexpr, NATIVE: gl.constexpr, ASYNC: gl.constexpr, PACKED: gl.constexpr, INTERLEAVE: gl.constexpr, PREFETCH: gl.constexpr, RELAX: gl.constexpr):\n    if INTERLEAVE:\n        group = gl.program_id(0)\n        rh = group // (512 // VALUES)\n        row = rh // gl.cdiv(HEADS, 16)\n        head_base = rh % gl.cdiv(HEADS, 16) * 16\n        shard = group % (512 // VALUES)\n        split = gl.program_id(1)\n    else:\n        row = gl.program_id(0) // gl.cdiv(HEADS, 16)\n        head_base = gl.program_id(0) % gl.cdiv(HEADS, 16) * 16\n        split, shard = (gl.program_id(1), gl.program_id(2))\n    qm: gl.constexpr = gl.amd.AMDMFMALayout(4, [16, 16, 128 if NATIVE else 32], True, [1, 4])\n    vm: gl.constexpr = gl.amd.AMDMFMALayout(4, [16, 16, 32], True, [1, 4])\n    pa: gl.constexpr = gl.DotOperandLayout(0, vm, 8)\n    vb: gl.constexpr = gl.DotOperandLayout(1, vm, 8)\n    shared: gl.constexpr = gl.SwizzledSharedLayout(16, 1, 8, [1, 0])\n    q, qr, km, rm, valid, latent_tiles = _stage_operands(Q, Cache, Slots, row, head_base, split, HEADS, TOPK, KEYS, NATIVE, ASYNC, qm)\n    score = _qk(q, km, gl.zeros((16, KEYS), gl.float32, qm), NATIVE)\n    score = _qk(qr, rm, score, NATIVE) * SCALE\n    if NATIVE:\n        sl: gl.constexpr = gl.BlockedLayout([1, 4], [4, 16], [4, 1], [1, 0])\n        score_shared = gl.allocate_shared_memory(gl.float32, [16, KEYS], gl.SwizzledSharedLayout(4, 1, 8, [1, 0]), score)\n        mask_shared = gl.allocate_shared_memory(gl.int32, [KEYS], gl.SwizzledSharedLayout(1, 1, 1, [0]), valid.to(gl.int32))\n        score = score_shared.load(sl)\n        mask = mask_shared.load(gl.SliceLayout(0, sl)).to(gl.int1)\n    else:\n        sl: gl.constexpr = qm\n        mask = gl.convert_layout(valid, gl.SliceLayout(0, sl))\n    p, maximum, denominator = _softmax(score, mask, ASYNC)\n    high = p.to(gl.float16)\n    probability = gl.allocate_shared_memory(gl.float16, [16, KEYS], gl.SwizzledSharedLayout(8, 1, 8, [1, 0]), high)\n    pm = probability.load(pa)\n    if not NATIVE:\n        pl = gl.convert_layout((p - high.to(gl.float32)).to(gl.float16), pa)\n    store_layout: gl.constexpr = vm if PACKED else gl.BlockedLayout([1, 8], [4, 16], [4, 1], [1, 0])\n    panels = latent_tiles._reinterpret(layout=shared)\n    if PREFETCH:\n        prefetched = _read_values(panels, shard * (VALUES // 128), vb, RELAX)\n    for tile in gl.static_range(VALUES // 128):\n        if PREFETCH:\n            v = prefetched.to(gl.float16)\n            if tile + 1 < VALUES // 128:\n                prefetched = _read_values(panels, shard * (VALUES // 128) + tile + 1, vb, RELAX)\n        else:\n            v = _read_values(panels, shard * (VALUES // 128) + tile, vb, RELAX).to(gl.float16)\n        num = gl.amd.cdna4.mfma(pm, v, gl.zeros((16, 128), gl.float32, vm))\n        if not NATIVE:\n            num = gl.amd.cdna4.mfma(pl, v, num)\n        stored = gl.convert_layout(num.to(gl.float16), store_layout)\n        oh = head_base + gl.arange(0, 16, gl.SliceLayout(1, store_layout))\n        ov = shard * VALUES + tile * 128 + gl.arange(0, 128, gl.SliceLayout(0, store_layout))\n        offsets = _partial_offset(row, oh[:, None], split, ov[None, :], HEADS, SPLITS, PACKED)\n        gl.store(Partial + offsets, stored, oh[:, None] < HEADS)\n    if shard == 0:\n        sh = head_base + gl.arange(0, 16, gl.SliceLayout(1, sl))\n        record = (row * HEADS + sh) * SPLITS + split\n        gl.store(Stats + record * 2, maximum, sh < HEADS)\n        gl.store(Stats + record * 2 + 1, denominator, sh < HEADS)\n\n@gluon.jit\ndef _merge(Partial, Stats, Out, HEADS: gl.constexpr, SPLITS: gl.constexpr, REDUCE: gl.constexpr, CHANNELS: gl.constexpr, SPLIT_LANES: gl.constexpr, VECTOR: gl.constexpr, PACKED: gl.constexpr, FAST: gl.constexpr, MATCHED: gl.constexpr):\n    if MATCHED:\n        HALF: gl.constexpr = 256 // CHANNELS\n        group = gl.program_id(0)\n        row = group // 2\n        head = gl.program_id(1)\n        cb = group % 2 * HALF + gl.program_id(2)\n    else:\n        row, head, cb = (gl.program_id(0), gl.program_id(1), gl.program_id(2))\n    head_row = row * HEADS + head\n    layout: gl.constexpr = gl.BlockedLayout([1, VECTOR], [SPLIT_LANES, 64 // SPLIT_LANES], [1, 1], [1, 0])\n    s = gl.arange(0, REDUCE, gl.SliceLayout(1, layout))\n    x = cb * CHANNELS + gl.arange(0, CHANNELS, gl.SliceLayout(0, layout))\n    record = head_row * SPLITS + s\n    maximum = gl.load(Stats + record * 2, s < SPLITS, -float('inf'))\n    denom = gl.load(Stats + record * 2 + 1, s < SPLITS, 0.0)\n    if PACKED:\n        block = ((row * gl.cdiv(HEADS, 16) + head // 16) * SPLITS + s) * 8192\n        pd = x & 31 | (x & 480) << 4\n        ptr = Partial + block[:, None] + (head % 16 << 5) + pd[None, :]\n    else:\n        offsets = _partial_offset(row, head, s[:, None], x[None, :], HEADS, SPLITS, False)\n        ptr = Partial + offsets\n    num = gl.load(ptr, (s < SPLITS)[:, None], 0.0).to(gl.float32)\n    m = gl.max(maximum, 0)\n    safe = gl.where(m == -float('inf'), 0.0, m)\n    weight = _exp(maximum - safe, FAST)\n    only_one = gl.sum((denom > 0).to(gl.int32), 0) == 1\n    weight = gl.where(only_one, (denom > 0).to(gl.float32), weight)\n    total = gl.sum(denom * weight, 0)\n    result = gl.sum(num * weight[:, None], 0) * gl.fdiv(1.0, gl.where(total > 0, total, 1.0))\n    if PACKED:\n        result = result.to(gl.bfloat16)\n        if CHANNELS < 128:\n            d = x & 3 | (x & 4) << 4 | (x & 120) >> 1 | x & 384\n            gl.store(Out + head_row * 512 + d, result)\n        else:\n            result = result.reshape((CHANNELS // 128, 4, 4, 2, 4)).permute((0, 3, 1, 2, 4)).reshape((CHANNELS,))\n            st: gl.constexpr = gl.BlockedLayout([4], [64], [1], [0])\n            result = gl.convert_layout(result, st)\n            d = cb * CHANNELS + gl.arange(0, CHANNELS, st)\n            gl.store(Out + head_row * 512 + d, result)\n    else:\n        gl.store(Out + head_row * 512 + x, result)\n\ndef sparse_paged_mla(query: torch.Tensor, cache: torch.Tensor, slots: torch.Tensor, *, softmax_scale: float=0.0625, value_dim: int=512, quantize_query: bool=True, out: torch.Tensor):\n    rows, heads, width = query.shape\n    assert rows > 0 and heads > 0 and (width == 576) and (value_dim == 512)\n    assert query.dtype in (torch.bfloat16, torch.float8_e4m3fn)\n    assert cache.ndim == 2 and cache.shape[1] == width and (cache.dtype == torch.float8_e4m3fn)\n    assert slots.ndim == 2 and slots.shape[0] == rows and (slots.dtype == torch.int32)\n    assert slots.shape[1] > 0 and softmax_scale > 0\n    assert all((t.is_contiguous() and t.device == query.device for t in (query, cache, slots)))\n    keys, values, channels, split_lanes, vector, packed = _schedule(rows)\n    native = quantize_query or query.dtype == torch.float8_e4m3fn\n    asynchronous = native and cache.numel() < 2 ** 31 and (cache.storage_offset() % 16 == 0)\n    matched = native and rows == 4\n    interleave = native and rows in (1, 4)\n    splits = triton.cdiv(slots.shape[1], keys)\n    head_groups = triton.cdiv(heads, 16)\n    padded_heads = head_groups * 16 if packed else heads\n    partial = torch.empty((rows, padded_heads, splits, 512), device=query.device, dtype=torch.float16)\n    stats = torch.empty((rows, heads, splits, 2), device=query.device, dtype=torch.float32)\n    producer_grid = (rows * head_groups * (512 // values), splits) if interleave else (rows * head_groups, splits, 512 // values)\n    _produce[producer_grid](query, cache, slots, partial, stats, heads, slots.shape[1], softmax_scale, splits, keys, values, native, asynchronous, packed, interleave, rows >= 4, asynchronous and rows != 4, num_warps=4)\n    merge_grid = (rows * 2, heads, 256 // channels) if matched else (rows, heads, 512 // channels)\n    _merge[merge_grid](partial, stats, out, heads, splits, triton.next_power_of_2(splits), channels, split_lanes, vector, packed, native and (packed or rows == 4), matched, num_warps=1)\n    return out\n\ndef run(*, q, kv_cache, topk_indices, sm_scale, output):\n    \"\"\"Writes ``output``: sparse_paged_mla on sglang's fp8 ``q``; quantize_query=True, the\n    default, keeps the query's fp8 values and the fp8 schedule.\"\"\"\n    sparse_paged_mla(q, kv_cache, topk_indices, softmax_scale=sm_scale, quantize_query=True, out=output)\n"
+      }
+    ]
+  }
+}

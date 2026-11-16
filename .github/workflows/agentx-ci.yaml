@@ -1,0 +1,237 @@
+name: AKLR-agentx-ci
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled]
+  schedule:
+    - cron: '17 10 * * 5'
+  workflow_dispatch:
+    inputs:
+      models:
+        description: Enabled model ids, comma-separated, or all
+        type: string
+        default: all
+      targets:
+        description: Enabled target ids in selected models, comma-separated, or all (targets run serially)
+        type: string
+        default: all
+      inferencex_ref:
+        description: InferenceX branch, tag or sha (grid, serving config and client)
+        type: string
+        default: ''
+      arms:
+        description: Arms to run (filters require exactly one selected target)
+        type: string
+        default: all
+      points:
+        description: ARM:CONC points using generated ids from serving.json (single-target smoke runs)
+        type: string
+        default: ''
+      duration_s:
+        description: DURATION per point for a smoke run (empty = the recipe's)
+        type: string
+        default: ''
+      publish:
+        description: Deploy the report to GitHub Pages (scheduled runs always do)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  # Ignored PR events must not replace a requested run waiting for the GPU runner.
+  group: >-
+    ${{ github.event_name == 'pull_request' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        contains(github.event.pull_request.labels.*.name, 'ci:agentx-mi355x') &&
+        (github.event.action != 'labeled' || github.event.label.name == 'ci:agentx-mi355x') &&
+        format('agentx-pr-{0}', github.event.pull_request.number) ||
+        github.event_name == 'pull_request' && format('agentx-ignored-{0}', github.run_id) ||
+        'agentx-weekly' }}
+  # A new commit on a labeled PR supersedes its running AgentX run; ignored PR events have a
+  # group of their own, and scheduled and manual runs still queue.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+    working-directory: benchmarks/agentx
+
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+
+jobs:
+  plan:
+    if: >-
+      (github.event_name != 'schedule' || vars.AGENTX_SCHEDULE_ENABLED == 'true') &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        contains(github.event.pull_request.labels.*.name, 'ci:agentx-mi355x') &&
+        (github.event.action != 'labeled' || github.event.label.name == 'ci:agentx-mi355x')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    outputs:
+      matrix: ${{ steps.resolve.outputs.matrix }}
+      count: ${{ steps.resolve.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python -m pip install pyyaml==6.0.3
+      - name: Resolve selected model targets in order
+        id: resolve
+        env:
+          MODELS: ${{ inputs.models || 'all' }}
+          TARGETS: ${{ inputs.targets || 'all' }}
+          RUNNER_LABEL: ${{ github.event_name != 'workflow_dispatch' && 'agentx-mi355x' || '' }}
+          INFERENCEX_REF: ${{ inputs.inferencex_ref }}
+          POINT_POLICY: ${{ github.event_name == 'pull_request' && 'inferencex-pareto' || 'all' }}
+          INFERENCEX_MODEL: ${{ github.event_name == 'pull_request' && 'auto' || '' }}
+          INFERENCEX_HARDWARE: ${{ github.event_name == 'pull_request' && 'mi355x' || '' }}
+          ARMS: ${{ inputs.arms || 'all' }}
+          POINTS: ${{ inputs.points }}
+          DURATION_S: ${{ github.event_name == 'pull_request' && '600' || inputs.duration_s }}
+          # Verify the upstream duration without a smoke override, preserving baseline eligibility.
+          REQUIRE_RECIPE_DURATION: ${{ github.event_name == 'schedule' && '3600' || '' }}
+        run: |
+          python3 -m agentx_bench plan --models "$MODELS" --targets "$TARGETS" --arms "$ARMS" \
+            ${RUNNER_LABEL:+--runner-label "$RUNNER_LABEL"} \
+            ${INFERENCEX_REF:+--inferencex-ref "$INFERENCEX_REF"} \
+            --point-policy "$POINT_POLICY" ${INFERENCEX_HARDWARE:+--inferencex-hardware "$INFERENCEX_HARDWARE"} \
+            ${INFERENCEX_MODEL:+--inferencex-model "$INFERENCEX_MODEL"} \
+            ${POINTS:+--points "$POINTS"} ${DURATION_S:+--duration "$DURATION_S"} \
+            ${REQUIRE_RECIPE_DURATION:+--require-recipe-duration "$REQUIRE_RECIPE_DURATION"} \
+            --work "$RUNNER_TEMP/work" --out "$RUNNER_TEMP/plan"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentx-plan
+          path: ${{ runner.temp }}/plan/
+
+  sweep:
+    needs: plan
+    if: ${{ needs.plan.outputs.count != '0' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 2520
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python -m pip install pyyaml==6.0.3
+      - uses: actions/download-artifact@v4
+        with:
+          name: agentx-plan
+          path: ${{ runner.temp }}/plan
+      - name: Sweep one model target
+        # Partial measurements succeed; the step summary retains failed point counts.
+        env:
+          MODEL_ID: ${{ matrix.model }}
+          TARGET_ID: ${{ matrix.target }}
+          HF_HUB_DIR: ${{ vars.AGENTX_HF_HUB_DIR }}
+        # exec: a cancelled run's SIGINT must reach the sweep, which then stops its container.
+        run: |
+          exec python3 -m agentx_bench sweep --serving "$RUNNER_TEMP/plan/models/$MODEL_ID/targets/$TARGET_ID/serving.json" \
+            --hub "$HF_HUB_DIR" --run-id "$GITHUB_RUN_ID" --cache "$RUNNER_TEMP/aklr-cache/$MODEL_ID/$TARGET_ID" \
+            --work "$RUNNER_TEMP/agentx/$MODEL_ID/$TARGET_ID" \
+            --out "$RUNNER_TEMP/results/models/$MODEL_ID/targets/$TARGET_ID"
+      - name: Remove the sweep container left by a cancelled run
+        # The runner kills the sweep 10 s after cancelling, which can be before its own cleanup ends.
+        if: always()
+        env:
+          MODEL_ID: ${{ matrix.model }}
+          TARGET_ID: ${{ matrix.target }}
+        run: |
+          out=$(realpath -m "$RUNNER_TEMP/results/models/$MODEL_ID/targets/$TARGET_ID")
+          docker ps --all --quiet --filter "label=agentx.out=$out" | xargs --no-run-if-empty docker rm --force
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agentx-results-${{ matrix.job_index }}
+          path: ${{ runner.temp }}/results/
+          if-no-files-found: ignore
+
+  report:
+    needs: [plan, sweep]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    outputs:
+      publish_ready: ${{ steps.pages_artifact.outcome == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # Commit comparisons need full history.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: python -m pip install pyyaml==6.0.3
+      - uses: actions/download-artifact@v4
+        with:
+          name: agentx-plan
+          path: ${{ runner.temp }}/plan
+      - uses: actions/download-artifact@v4
+        id: download_results
+        if: needs.plan.outputs.count != '0'
+        continue-on-error: true # Early failures may produce no artifact.
+        with:
+          pattern: agentx-results-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/results
+      - name: Render target reports and the combined index
+        env:
+          PAGES_URL: ${{ vars.AGENTX_PAGES_URL }}
+        run: |
+          owner=${GITHUB_REPOSITORY_OWNER,,}
+          url=${PAGES_URL:-https://$owner.github.io/${GITHUB_REPOSITORY#*/}}
+          python3 -m agentx_bench report --plan "$RUNNER_TEMP/plan/manifest.json" \
+            --results "$RUNNER_TEMP/results" --baseline-url "$url" --out "$RUNNER_TEMP/site"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agentx-site
+          path: ${{ runner.temp }}/site/
+      - uses: actions/upload-pages-artifact@v3
+        id: pages_artifact
+        if: github.event_name == 'schedule' || inputs.publish
+        with:
+          path: ${{ runner.temp }}/site/
+      - name: Summarize and check target outcomes after saving reports
+        # Sweep owns measurement failures; plan and report errors must still fail CI.
+        env:
+          RESULTS_DOWNLOAD_OUTCOME: ${{ steps.download_results.outcome }}
+        run: |
+          jq -r '.targets[] | "\(.model.id)/\(.target.id): \(.status), \(.points_ok)/\(.points_total) paired points OK"' \
+            "$RUNNER_TEMP/site/manifest.json"
+          jq -e 'all(.targets[]; .failure_stage == null)' "$RUNNER_TEMP/site/manifest.json"
+          test "$RESULTS_DOWNLOAD_OUTCOME" != failure
+
+  pages:
+    needs: report
+    if: ${{ !cancelled() && needs.report.outputs.publish_ready == 'true' && (github.event_name == 'schedule' || inputs.publish) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

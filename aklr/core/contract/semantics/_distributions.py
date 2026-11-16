@@ -142,7 +142,7 @@ class LogUniformDistribution(Distribution):
 
 class IntRangeDistribution(Distribution):
     """Integers in [lo, hi]; with ``distinct``, distinct along the last dim.
-    Drawn uniformly; distinct ones as the top indices of a row of N(0, 1) draws."""
+    Drawn uniformly; distinct ones as the top indices of a row of unique integer keys."""
 
     kind: Literal["int_range"] = "int_range"
     lo: str | int
@@ -171,8 +171,11 @@ class IntRangeDistribution(Distribution):
         span = self.hi - self.lo + 1
         if self.distinct:
             rows, n = math.prod(shape[:-1]), shape[-1]
-            draws = torch.randn((rows, span), generator=generator)
-            index = (draws.topk(n, dim=-1).indices + self.lo).reshape(shape)
+            # float draws tie, and a GPU topk orders tied draws differently call to call:
+            # the column in a key's low digits leaves no two keys of a row equal
+            draws = torch.randint(0, 2**62 // span, (rows, span), generator=generator)
+            keys = draws.mul_(span).add_(torch.arange(span))
+            index = (keys.topk(n, dim=-1).indices + self.lo).reshape(shape)
         elif storage_dtype.itemsize == 1 and self.lo == 0 and 256 % span == 0:
             # a multi-GB byte pool: masked random bytes, not an int64 draw per value
             n = math.prod(shape)

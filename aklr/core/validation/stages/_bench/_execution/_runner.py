@@ -512,7 +512,6 @@ class DisposableExecutionRunner(ExecutionRunner):
                         os.environ.update(
                             HIP_VISIBLE_DEVICES=visible,
                             CUDA_VISIBLE_DEVICES=visible,
-                            GPU_FORCE_QUEUE_PROFILING="1",
                             ROC_SIGNAL_POOL_SIZE="65536",
                             # tensors lent over KFD's own IPC handles: a dma-buf imported on the GPU it
                             # came from shares the exporter's GEM handle, which both frees delete, the
@@ -523,12 +522,7 @@ class DisposableExecutionRunner(ExecutionRunner):
                         )
                         import torch
 
-                        torch.cuda.set_device(0)
-                        # Kineto initialized before the task fingerprints its globals
-                        with torch.profiler.profile(
-                            activities=[torch.profiler.ProfilerActivity.CUDA],
-                        ):
-                            pass
+                        torch.cuda.init()  # a device that cannot start fails the runner, not a task
                     endpoint.send(RunnerStarted(runner_id=runner_id))
 
                     command = endpoint.receive()

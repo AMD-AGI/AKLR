@@ -70,8 +70,9 @@ def _moe_forward_normal(self, hidden_states, ...):  # 参数与被替换的函�
     # AKLR 不支持的 SGLang 配置
     if _forward_normal_falls_back(self, ...):
         return FallbackReason.OUT_OF_CONTRACT
-    # 把模块的权重和输入整理为算子参数
-    out = deepseek_v2_mxfp4_moe(**_moe_arguments(self, hidden_states))
+    # 按专家权重的格式选算子，并把模块的权重和输入整理为它的参数
+    op, arguments = _moe_call(self, hidden_states)
+    out = op(**arguments)
     # 算子不接，或原函数此时不做多卡归约
     if isinstance(out, FallbackReason) or not self.reduce_results:
         return out
@@ -84,7 +85,7 @@ def _moe_forward_normal(self, hidden_states, ...):  # 参数与被替换的函�
 它调用两个辅助函数：
 
 - `_forward_normal_falls_back`：遇到算子不支持的 SGLang 配置时为真，包括这次调用的某些参数（`skip_shared_experts`、`return_moe_output` 等）、图模式和专家并行设置（几个 MoE route 共用的检查，在 `models/moe_blocks.py` 中），以及其他格式的专家权重。
-- `_moe_arguments`：从模块中取出算子的参数：`hidden_states`、作为 `router_weight` 的 `mlp.gate.weight`、专家的权重和 scale，以及路由设置。
+- `_moe_call`：按专家权重的格式选算子（Quark 的 MXFP4 用 `deepseek_v2_mxfp4_moe`，按 128 x 128 分块缩放的 fp8 用 `deepseek_v2_fp8_moe`），并从模块中取出它的参数：`hidden_states`、作为 `router_weight` 的 `mlp.gate.weight`、专家的权重和 scale，以及路由设置。
 
 形状、dtype、token 数和 GPU 型号交给算子判断。route 的完整规范见 [aklr/plugins/README.md](../aklr/plugins/README.md#rules-for-routes)。
 
@@ -144,6 +145,8 @@ SGLANG_USE_AITER=1 AKLR_SGLANG_PLUGIN=1 python -m sglang.launch_server \
 ```
 
 日志会报告挂载了哪些函数（`aklr hooks N sglang functions on sglang 0.5.22`），模型的回答必须保持正确。
+
+新的 route 还要报告端到端提升：同一个 server 配置，分别在关闭这个算子（`AKLR_DISABLE=deepseek_v2_mxfp4_moe@1.0`）和打开时跑 benchmark，结果写进 PR 的 `End to end` 小节。标准是在说明的 workload 下提升 2%（[合入标准](acceptance_criteria.zh.md)）。
 
 ## 下一步
 

@@ -9,7 +9,11 @@ _append_shared_to_topk_output's fused gate; then FusedMoE on aiter's runner: sgl
 gfx950 small-M kernel where it serves, else aiter's fused_moe at per_128x128 (which
 quantizes the activations per 1 x 128). sglang's runner also patches aiter's MoE sorting
 for decode-sized calls (apply_aiter_small_moe_sort_patch); the baselines leave aiter's
-process state alone and time aiter's own sorting."""
+process state alone and time aiter's own sorting.
+
+With MXFP4 experts and the shared expert apart in BF16, the whole forward: the shared
+expert, then the gate, fused_topk and FusedMoE (sglang's gfx950 small-M kernel where it
+serves, else aiter's fused_moe at per_1x32), then the shared expert's fused gate added."""
 
 from __future__ import annotations
 
@@ -18,6 +22,7 @@ import functools
 __all__ = [
     "qwen2_moe_fp8_experts_baseline",
     "qwen2_moe_fp8_router_experts_baseline",
+    "qwen2_moe_mxfp4_moe_baseline",
     "qwen2_moe_router_baseline",
 ]
 
@@ -59,13 +64,18 @@ def _gate(hidden_states, router_weight):
     """The block's gate: ReplicatedLinear's UnquantizedLinearMethod.apply on aiter, aiter's
     triton gemm_a16w16 for the decode shapes _prefer_triton_a16w16 takes, else tgemm.mm.
     """
+    return _linear(hidden_states, router_weight)
+
+
+def _linear(x, weight):
+    """x weight^T as UnquantizedLinearMethod.apply runs it on aiter (gfx950, no bias)."""
     from sglang.srt.layers.quantization import unquant
 
-    if unquant._prefer_triton_a16w16(hidden_states, router_weight):
-        return unquant._aiter_triton_a16w16(hidden_states, router_weight, None, dtype=hidden_states.dtype)
+    if unquant._prefer_triton_a16w16(x, weight):
+        return unquant._aiter_triton_a16w16(x, weight, None, dtype=x.dtype)
     from aiter.tuned_gemm import tgemm
 
-    return tgemm.mm(hidden_states, router_weight, None, otype=hidden_states.dtype)
+    return tgemm.mm(x, weight, None, otype=x.dtype)
 
 
 def _topk(hidden_states, router_weight, topk):
@@ -195,3 +205,104 @@ def qwen2_moe_fp8_router_experts_baseline(
         routed = _with_shared(hidden_states, weights, ids, shared_gate_weight, router_weight.shape[0])
     weights, ids = routed
     return _experts(hidden_states, weights, ids, w1, w1_scale, w2, w2_scale)
+
+
+@functools.cache
+def _silu_and_mul():
+    """sglang's SiluAndMul, which picks the kernel the shared expert's does: sgl_kernel's
+    silu_and_mul on HIP, aiter's under SGLANG_OPT_USE_AITER_SILU_MUL."""
+    from sglang.srt.layers.activation import SiluAndMul
+
+    return SiluAndMul()
+
+
+def _fp4x2(weight):
+    """An MXFP4 weight as QuarkW4A4MXFp4MoE.apply_weights hands it to the runner: a
+    float4_e2m1fn_x2 view (where torch has the dtype), as shuffled as the weight."""
+    import torch
+
+    if not hasattr(torch, "float4_e2m1fn_x2"):
+        return weight
+    view = weight.view(torch.float4_e2m1fn_x2)
+    view.is_shuffled = getattr(weight, "is_shuffled", False)
+    return view
+
+
+def _mxfp4_experts(hidden_states, weights, ids, w1, w1_scale, w2, w2_scale):
+    """FusedMoE with QuarkW4A4MXFp4MoE on aiter's runner (AiterRunnerCore.run): sglang's
+    gfx950 small-M kernel where it serves (bf16 activations), else aiter's fused_moe at
+    per_1x32 (MXFP4 activations) with the gate and up rows apart, at sglang's sorting
+    dispatch policy; the scales are uint8, as sglang holds them."""
+    import torch
+    from aiter import ActivationType, QuantType
+    from aiter.fused_moe import fused_moe
+    from aiter.ops.flydsl.moe_common import GateMode
+    from sglang.srt.layers.moe.moe_runner import aiter as runner
+
+    w1, w2 = _fp4x2(w1), _fp4x2(w2)
+    w1_scale, w2_scale = w1_scale.view(torch.uint8), w2_scale.view(torch.uint8)
+    if runner._SMALLM_MOE_ON:
+        from sglang.kernels.ops.moe import smallm_moe_gfx950 as smallm
+
+        try:
+            if smallm.smallm_moe_supported(
+                hidden_states,
+                w1,
+                w2,
+                ids,
+                expert_mask=None,
+                doweight_stage1=False,
+                activation_is_silu=True,
+                has_bias=False,
+                a1_scale=None,
+                w13_scale=w1_scale,
+                w2_scale=w2_scale,
+            ):
+                out = smallm.smallm_moe_fwd(hidden_states, w1, w2, weights, ids, w1_scale, w2_scale)
+                if out is not None:
+                    return out
+        except smallm.SmallMMoeUnavailable:
+            pass
+    return fused_moe(
+        hidden_states,
+        w1,
+        w2,
+        weights,
+        ids,
+        activation=ActivationType.Silu,
+        quant_type=QuantType.per_1x32,
+        w1_scale=w1_scale,
+        w2_scale=w2_scale,
+        gate_mode=GateMode.SEPARATED.value,
+        moe_sorting_dispatch_policy=runner._MOE_SORTING_DISPATCH_POLICY,
+    )
+
+
+def qwen2_moe_mxfp4_moe_baseline(
+    hidden_states,
+    router_weight,
+    w1,
+    w1_scale,
+    w2,
+    w2_scale,
+    shared_w1,
+    shared_w2,
+    shared_gate_weight,
+    topk=10,
+    out_dtype=None,
+    out=None,
+):
+    """Qwen2MoeSparseMoeBlock.forward with the shared expert apart, on one stream as sglang
+    runs it eagerly: _forward_shared_experts (gate_up, SiluAndMul, down; its gate deferred),
+    _forward_router_experts (the gate, fused_topk, FusedMoE), then fused_gate_sigmoid_mul_add.
+    In decode capture sglang runs the shared expert beside the router and experts on a second
+    stream (forward_normal_dual_stream); the bench sums kernel times, which that overlap does
+    not shorten."""
+    _check_aiter_path()
+    from sglang.kernels.ops.elementwise.elementwise import fused_gate_sigmoid_mul_add
+
+    shared = _linear(_silu_and_mul()(_linear(hidden_states, shared_w1)), shared_w2)
+    weights, ids = _topk(hidden_states, router_weight, topk)
+    routed = _mxfp4_experts(hidden_states, weights, ids, w1, w1_scale, w2, w2_scale)
+    fused_gate_sigmoid_mul_add(hidden_states, shared_gate_weight.squeeze(), shared, routed)
+    return routed

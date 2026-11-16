@@ -157,4 +157,4 @@ dispatch: decide offline, bake the answer, never search in the serving path.
 ## Related
 `flydsl_kernel_library.md` (which family to call in the first place) ·
 `flydsl_authoring_method.md` (what to do when no knob setting is enough) ·
-`../../gemm/flydsl_gemm_small_m.md` (choosing these arguments at small M)
+`../../gemm/small_m.md` (choosing these arguments at small M)

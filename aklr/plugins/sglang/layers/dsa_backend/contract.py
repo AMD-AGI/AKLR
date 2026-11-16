@@ -6,12 +6,17 @@ from __future__ import annotations
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
+    CuSeqlensDistribution,
+    DeterminismLevel,
     DType,
+    ElementOrder,
     FiniteDistribution,
     IntRangeDistribution,
+    PermutationDistribution,
     SqnrBound,
 )
 from aklr.core.contract.spec import (
+    CompareSpec,
     DTypeSpec,
     LayoutVariant,
     LayoutVariantsSpec,
@@ -21,13 +26,16 @@ from aklr.core.contract.spec import (
     derived_axis,
 )
 
-__all__ = ["CONTRACTS", "DSA_SPARSE_MLA_DECODE", "ROPE_DIM"]
+__all__ = ["CONTRACTS", "DSA_SPARSE_MLA_DECODE", "DSA_TOPK_TRANSFORM", "ROPE_DIM"]
 
 _FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
+_INT32 = DTypeSpec(any_of=(DType.INT32,))
 _FINITE = FiniteDistribution()
 _POSITIVE_FLOAT32 = (2.0**-149, DTYPE_TRAITS["float32"].largest_finite_value)
 # The KV pool's bytes that 32-bit buffer offsets address: rows past them stay on sglang.
 _POOL_BYTES = 2**31 - 2
+# The DSA models' context, 2^20 tokens, and room for the draft tokens sglang's tables add past it
+_CONTEXT_LIMIT = 2**20 + 4096
 # The RoPE part of a query head and of a KV row: the DSA models' (sglang's kernel takes a
 # power of 2)
 ROPE_DIM = 64
@@ -105,4 +113,63 @@ DSA_SPARSE_MLA_DECODE = OpContract(
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
 )
 
-CONTRACTS = (DSA_SPARSE_MLA_DECODE,)
+DSA_TOPK_TRANSFORM = OpContract(
+    contract_id="dsa_topk_transform@1.0",
+    description=(
+        "sglang's DSA indexer top-k on HIP (sgl_kernel.fast_topk_transform_fused): each row "
+        "selects the topk highest of its first lengths scores and writes their slots in the "
+        "page_size=1 page table of its sequence, the cu_seqlens_q range holding the row; a row "
+        "of at most topk scores writes all of its slots in order, then -1."
+    ),
+    op_type="dsa_backend",
+    axes={
+        "n_tokens": axis("Rows, one per token.", 1, 65536, is_var=True),
+        "n_candidates": axis("Scores per row.", 1, _CONTEXT_LIMIT, is_var=True, any_size=True),
+        "n_seqs": axis("Sequences.", 1, 65536, is_var=True, any_size=True),
+        "n_starts": axis("Sequence boundaries: n_seqs + 1.", 2, 65537, is_var=True, any_size=True),
+        "n_slots": axis("Page table columns.", 1, _CONTEXT_LIMIT, is_var=True, any_size=True),
+        "topk": axis("Slots per row, 2048: all sglang's kernel takes.", 2048, 2048),
+    },
+    constraints=("n_starts == n_seqs + 1", "n_seqs <= n_tokens"),
+    inputs={
+        "score": TensorSpec(
+            description="Candidate scores per row.",
+            shape=("n_tokens", "n_candidates"),
+            dtype=DTypeSpec(any_of=(DType.FLOAT32,)),
+            distribution=PermutationDistribution(),
+        ),
+        "lengths": TensorSpec(
+            description="Valid candidates per row, a prefix its page table covers.",
+            shape=("n_tokens",),
+            dtype=_INT32,
+            distribution=IntRangeDistribution(lo="0", hi="min(n_candidates, n_slots)"),
+        ),
+        "page_table_size_1": TensorSpec(
+            description="Each sequence's slot of each candidate position, distinct within a row.",
+            shape=("n_seqs", "n_slots"),
+            dtype=_INT32,
+            distribution=IntRangeDistribution(lo="0", hi="n_slots - 1", distinct=True),
+        ),
+        "cu_seqlens_q": TensorSpec(
+            description="Each sequence's first row, then n_tokens.",
+            shape=("n_starts",),
+            dtype=_INT32,
+            distribution=CuSeqlensDistribution(min_seqlen=1, total="n_tokens"),
+        ),
+    },
+    outputs={
+        "out_page_indices": TensorSpec(
+            description="Selected slots; -1 after a short row's entries.",
+            shape=("n_tokens", "topk"),
+            dtype=_INT32,
+        )
+    },
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    # Ties and a full row's order are the kernel's choice.
+    compare=CompareSpec(
+        determinism=DeterminismLevel.BOUNDED,
+        element_order=ElementOrder.ANY_IN_FULL_ROWS,
+    ),
+)
+
+CONTRACTS = (DSA_SPARSE_MLA_DECODE, DSA_TOPK_TRANSFORM)

@@ -4,11 +4,13 @@
 from aklr.plugins.sglang.models.qwen2_moe.api import (
     qwen2_moe_fp8_experts,
     qwen2_moe_fp8_router_experts,
+    qwen2_moe_mxfp4_moe,
     qwen2_moe_router,
 )
 
 __all__ = [
     "qwen2_moe_fp8_experts",
     "qwen2_moe_fp8_router_experts",
+    "qwen2_moe_mxfp4_moe",
     "qwen2_moe_router",
 ]

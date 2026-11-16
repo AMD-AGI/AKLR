@@ -2,14 +2,17 @@
 name: forge-loop-campaign
 description: >
   Run an autonomous optimization campaign on a kernel-less AKLR schema with KernelForge on an MI355X
-  (gfx950) machine and deliver the kernel: prepare the task, run forge-loop, watch and steer it, stop or
-  resume it, review and squash the kept rounds, publish the kernel into AKLR, and hand over the skill
-  patch. Use when asked to optimize an AKLR op or schema with KernelForge or forge-loop, or to check on,
-  resume, finish or deliver such a run.
+  (gfx950) machine and deliver the kernel: prepare the task, run forge-loop, watch and steer it, stop or resume it, review
+  and squash the kept rounds, publish the kernel into AKLR, and hand over the skill patch. Use when asked
+  to optimize an AKLR op or schema with KernelForge or forge-loop, or to check on, resume, finish or
+  deliver such a run.
 allowed-tools: Read Edit Bash Grep Glob
 ---
 
 # Forge-loop campaign on an AKLR schema
+
+From step 2 until the campaign ends, **report progress** to me every 15m; the timer's prompt also says to resume
+the loop if it crashed, and to ask me if it crashes again before finishing a round.
 
 `harness/scripts/forge_task/README.md` § Run a campaign has the six steps and their commands: read it first and
 follow it. This skill adds what you decide, and what you must not forget, when you run the campaign yourself

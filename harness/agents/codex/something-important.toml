@@ -1,0 +1,8 @@
+# Codex reads custom agents only as TOML from .codex/agents (a symlink to this directory).
+# The prompt lives once, in ../something-important.md, so this file only points to it.
+name = "something-important"
+description = "Reads a long-running AKLR run's artifacts and returns the few facts its owner would act on, for a report-progress report. Read only."
+developer_instructions = """
+Read harness/agents/something-important.md from the repository root, skip its YAML front matter,
+and follow the rest exactly. The task message gives you the inputs it lists.
+"""
