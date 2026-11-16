@@ -40,6 +40,9 @@ class TestReference:
 
     @pytest.mark.gpu
     def test_backend_matches_reference(self, op_case: OpCase) -> None:
+        """The backend, an implementation independent of the reference, checks the reference: equal
+        integer outputs, floating ones within a relative L2 error. The contract's bounds are the
+        kernels', against the reference; the backend is not held to them."""
         if op_case.needs_gfx950 and DeviceTarget.current().arch != "gfx950":
             pytest.skip("the backend runs the Point only on gfx950")
         args = op_case.inputs()
@@ -47,17 +50,15 @@ class TestReference:
         outputs = op_case.contract.call_mutable_tensors(op_case.contract.baseline()(**call), call)
         results = op_case.compare(outputs, args, baseline_outputs=outputs)
         output_specs = semantics.mutable_tensor_declarations(op_case.request.schema_json)
-        baseline_relative = {
+        integral = {
             o
             for o, spec in output_specs.items()
-            if spec["error_bounds"] and spec["error_bounds"][0][1]["kind"] == "baseline_relative"
+            if semantics.DTYPE_TRAITS[spec["dtype"]["any_of"][0]].is_integral
         }
-        failed = {o: r.detail for o, r in results.items() if not r.is_passed and o not in baseline_relative}
-        assert failed == {}
-        # self-baselined compare is vacuous: check the reference by relative L2 error
+        assert {o: results[o].detail for o in integral if not results[o].is_passed} == {}
         # shortcut: 0.1 uncalibrated (MI300X skips), set to ~3-5x the gfx950 ratio once measured
         reference = op_case.reference_outputs(args)
-        for o in baseline_relative:
+        for o in output_specs.keys() - integral:
             error = (outputs[o].cpu().double() - reference[o]).norm()
             assert error <= 0.1 * reference[o].norm(), (
                 o,
