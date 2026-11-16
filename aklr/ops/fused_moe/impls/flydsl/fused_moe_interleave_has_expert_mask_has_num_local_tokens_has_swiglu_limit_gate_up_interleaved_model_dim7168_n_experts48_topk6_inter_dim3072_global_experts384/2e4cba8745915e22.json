@@ -194,9 +194,7 @@
       },
       "scalars": {
         "swiglu_limit": 10.0
-      },
-      "accuracy": "passed",
-      "speedup": 1.212
+      }
     }
   ],
   "layout_variants": {
@@ -254,7 +252,8 @@
       }
     ],
     "requires": {
-      "flydsl": ">=0.3.2"
+      "flydsl": ">=0.3.2",
+      "aiter": ">=0.1.21,<0.1.23"
     },
     "entry_point": "kernel.py::run",
     "sources": [

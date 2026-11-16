@@ -32,7 +32,7 @@ Language = Literal["flydsl", "hip", "hsaco", "triton"]
 LANGUAGES: Final = get_args(Language)
 # a library a kernel imports beyond torch, named in kernel.requires: a new one is a code PR first,
 # with its distribution in aklr/core/platform/toolchain.py
-Library = Literal["mori"]
+Library = Literal["aiter", "mori"]
 LIBRARIES: Final = get_args(Library)
 # each language's source suffixes, the entry file's first
 SOURCE_SUFFIXES: Final = {"flydsl": (".py",), "hip": (".hip", ".h"), "hsaco": (".py",), "triton": (".py",)}

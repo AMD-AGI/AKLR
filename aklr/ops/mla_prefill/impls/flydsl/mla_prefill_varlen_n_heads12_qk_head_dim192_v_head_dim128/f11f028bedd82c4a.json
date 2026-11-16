@@ -112,9 +112,7 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      },
-      "accuracy": "passed",
-      "speedup": 7.78
+      }
     },
     {
       "axes": {
@@ -124,9 +122,7 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      },
-      "accuracy": "passed",
-      "speedup": 3.548
+      }
     },
     {
       "axes": {
@@ -136,9 +132,7 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      },
-      "accuracy": "passed",
-      "speedup": 3.818
+      }
     },
     {
       "axes": {
@@ -148,9 +142,7 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      },
-      "accuracy": "passed",
-      "speedup": 2.714
+      }
     },
     {
       "axes": {
@@ -160,9 +152,7 @@
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      },
-      "accuracy": "passed",
-      "speedup": 2.17
+      }
     }
   ],
   "layout_variants": {
@@ -187,7 +177,8 @@
       }
     ],
     "requires": {
-      "flydsl": ">=0.3.2"
+      "flydsl": ">=0.3.2",
+      "aiter": ">=0.1.21"
     },
     "author": "kyle-256",
     "entry_point": "kernel.py::run",

@@ -13,8 +13,9 @@ from packaging.version import Version
 
 __all__ = ["toolchain_version", "unmet_requirement"]
 
-# libraries read from their installed distribution, not imported: importing mori sizes its heap
-_DISTRIBUTIONS: Final = {"mori": "amd_mori"}
+# libraries read from their installed distribution, not imported: importing aiter loads its JIT
+# modules, importing mori sizes its heap
+_DISTRIBUTIONS: Final = {"aiter": "amd-aiter", "mori": "amd_mori"}
 
 
 def toolchain_version(name: str) -> str | None:

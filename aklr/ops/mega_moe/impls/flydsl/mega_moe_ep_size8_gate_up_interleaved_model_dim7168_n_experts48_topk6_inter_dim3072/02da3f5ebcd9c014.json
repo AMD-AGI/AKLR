@@ -156,7 +156,7 @@
   "workloads": [
     {
       "axes": {
-        "n_tokens": 1
+        "n_tokens": 320
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -164,7 +164,7 @@
     },
     {
       "axes": {
-        "n_tokens": 2
+        "n_tokens": 384
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -172,7 +172,7 @@
     },
     {
       "axes": {
-        "n_tokens": 4
+        "n_tokens": 448
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -180,63 +180,7 @@
     },
     {
       "axes": {
-        "n_tokens": 7
-      },
-      "scalars": {
-        "swiglu_limit": 10.0
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 8
-      },
-      "scalars": {
-        "swiglu_limit": 10.0
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 16
-      },
-      "scalars": {
-        "swiglu_limit": 10.0
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 32
-      },
-      "scalars": {
-        "swiglu_limit": 10.0
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 64
-      },
-      "scalars": {
-        "swiglu_limit": 10.0
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 128
-      },
-      "scalars": {
-        "swiglu_limit": 10.0
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 192
-      },
-      "scalars": {
-        "swiglu_limit": 10.0
-      }
-    },
-    {
-      "axes": {
-        "n_tokens": 256
+        "n_tokens": 512
       },
       "scalars": {
         "swiglu_limit": 10.0
@@ -299,7 +243,8 @@
     ],
     "requires": {
       "flydsl": ">=0.3.2",
-      "mori": ">=1.2.4"
+      "mori": ">=1.2.4",
+      "aiter": ">=0.1.21"
     },
     "author": "zhengyao",
     "entry_point": "kernel.py::run",
@@ -314,7 +259,7 @@
       },
       {
         "path": "kernel.py",
-        "content": "\"\"\"MegaMoE for DeepSeek-V4 expert parallelism (EP8, a8w4) at up to 256 tokens a rank.\n\nOne launch per rank runs the whole step: MXFP8 quantization of the tokens, fixed-slot\ndispatch to the ranks holding their experts, GEMM1 with the clamped SwiGLU, GEMM2, and\nthe combine of the top-k outputs back on the token's rank. The ranks exchange through\nmori symmetric memory and wait on each other inside the kernel, so every rank of the\ngroup calls it once per step, in the same order, on one stream.\n\nEach rank decides from its own routed rows whether GEMM1 and GEMM2 keep their weights\ncached and whether its GEMM2 rows travel in MXFP8 (the combine decodes each peer's\nformat), so a rank receiving a hot expert does not slow the group.\nsource: aiter MegaMoEV2 small-input path (aiter/ops/flydsl/kernels/mega_moe/mega_moe_small_m.py)\n\"\"\"\n\nimport functools\n\nimport mori.shmem as ms\n\nfrom .mega_moe_small_m import build_small_m_runtime\n\n# the runtime's token capacity a rank; its dispatch slots and launch geometry follow it\n_MAX_TOKENS_PER_RANK = 256\n\n\n@functools.cache\ndef _runtime(model_dim, inter_dim, n_experts, topk, ep_size, swiglu_limit):\n    \"\"\"This rank's buffers and protocol state, in mori symmetric memory, for every layer.\"\"\"\n    if ms.shmem_npes() != ep_size:\n        raise ValueError(\n            f\"mori's group has {ms.shmem_npes()} ranks, the call's ep_size is {ep_size}\"\n        )\n    return build_small_m_runtime(\n        rank=ms.shmem_mype(),\n        world_size=ep_size,\n        model_dim=model_dim,\n        inter_dim=inter_dim,\n        experts=n_experts * ep_size,\n        topk=topk,\n        quant=\"a8w4\",\n        max_tok_per_rank=_MAX_TOKENS_PER_RANK,\n        swiglu_limit=swiglu_limit,\n    )\n\n\ndef run(\n    *,\n    hidden_states,\n    w1,\n    w2,\n    topk_weights,\n    topk_ids,\n    w1_scale,\n    w2_scale,\n    ep_size,\n    swiglu_limit,\n    out_dtype,\n    out,\n):\n    runtime = _runtime(\n        hidden_states.shape[1],\n        w1.shape[1] // 2,\n        w1.shape[0],\n        topk_ids.shape[1],\n        ep_size,\n        float(swiglu_limit),\n    )\n    runtime.forward(hidden_states, topk_weights, topk_ids, w1, w1_scale, w2, w2_scale, out)\n"
+        "content": "\"\"\"MegaMoE for DeepSeek-V4 expert parallelism (EP8, a8w4) at up to 512 tokens a rank.\n\nOne launch per rank runs the whole step: MXFP8 quantization of the tokens, fixed-slot\ndispatch to the ranks holding their experts, GEMM1 with the clamped SwiGLU, GEMM2, and\nthe combine of the top-k outputs back on the token's rank. The ranks exchange through\nmori symmetric memory and wait on each other inside the kernel, so every rank of the\ngroup calls it once per step, in the same order, on one stream.\n\nEach rank decides from its own routed rows whether GEMM1 and GEMM2 keep their weights\ncached and whether its GEMM2 rows travel in MXFP8 (the combine decodes each peer's\nformat), so a rank receiving a hot expert does not slow the group.\nsource: aiter MegaMoEV2 small-input path (aiter/ops/flydsl/kernels/mega_moe/mega_moe_small_m.py)\n\"\"\"\n\nimport functools\n\nimport mori.shmem as ms\n\nfrom .mega_moe_small_m import build_small_m_runtime\n\n# the runtime's token capacity a rank; its dispatch slots and launch geometry follow it\n_MAX_TOKENS_PER_RANK = 512\n\n\n@functools.cache\ndef _runtime(model_dim, inter_dim, n_experts, topk, ep_size, swiglu_limit):\n    \"\"\"This rank's buffers and protocol state, in mori symmetric memory, for every layer.\"\"\"\n    if ms.shmem_npes() != ep_size:\n        raise ValueError(\n            f\"mori's group has {ms.shmem_npes()} ranks, the call's ep_size is {ep_size}\"\n        )\n    return build_small_m_runtime(\n        rank=ms.shmem_mype(),\n        world_size=ep_size,\n        model_dim=model_dim,\n        inter_dim=inter_dim,\n        experts=n_experts * ep_size,\n        topk=topk,\n        quant=\"a8w4\",\n        max_tok_per_rank=_MAX_TOKENS_PER_RANK,\n        swiglu_limit=swiglu_limit,\n    )\n\n\ndef run(\n    *,\n    hidden_states,\n    w1,\n    w2,\n    topk_weights,\n    topk_ids,\n    w1_scale,\n    w2_scale,\n    ep_size,\n    swiglu_limit,\n    out_dtype,\n    out,\n):\n    runtime = _runtime(\n        hidden_states.shape[1],\n        w1.shape[1] // 2,\n        w1.shape[0],\n        topk_ids.shape[1],\n        ep_size,\n        float(swiglu_limit),\n    )\n    runtime.forward(hidden_states, topk_weights, topk_ids, w1, w1_scale, w2, w2_scale, out)\n"
       },
       {
         "path": "kernels_common.py",

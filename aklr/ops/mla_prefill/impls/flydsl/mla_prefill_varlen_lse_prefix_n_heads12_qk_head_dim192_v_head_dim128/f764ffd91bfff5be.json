@@ -1,6 +1,6 @@
 {
   "schema_version": 5,
-  "name": "mla_prefill_varlen_lse_n_heads12_qk_head_dim192_v_head_dim128",
+  "name": "mla_prefill_varlen_lse_prefix_n_heads12_qk_head_dim192_v_head_dim128",
   "contract_id": "mla_prefill_varlen_lse@1.0",
   "description": "mla_prefill_varlen that also returns each query's log-sum-exp, the passes of a chunked prefix that sglang merges: sequence s's queries are q's rows cu_seqlens_q[s]:cu_seqlens_q[s + 1], its keys and values the rows cu_seqlens_k[s]:cu_seqlens_k[s + 1] of k and v (with no prefix, the queries' own rows). With causal, aligned at the end: query i of a sequence of Lq queries over Lk keys reads keys 0 .. Lk - Lq + i; without, every key of its sequence (a prefix chunk, each of whose keys precedes every query). Logits q . k * sm_scale over qk_head_dim; output the softmax-weighted sum of v, lse the natural log of the sum of exp(logit) over the keys read, per query row and head. With qkv_fp8 a kernel may round q, k and v to float8_e4m3fn first, as aiter's fp8 prefill does.",
   "op_type": "mla_prefill",
@@ -34,7 +34,7 @@
     }
   },
   "attrs": {
-    "has_prefix": false,
+    "has_prefix": true,
     "qkv_fp8": true,
     "causal": true
   },
@@ -87,6 +87,18 @@
       },
       "description": "Where each sequence's queries start in q, then where the last ends."
     },
+    "cu_seqlens_k": {
+      "shape": [
+        "n_offsets"
+      ],
+      "dtype": "int32",
+      "distribution": {
+        "kind": "cu_seqlens",
+        "min_seqlen": 1,
+        "total": "n_kv"
+      },
+      "description": "Where each sequence's keys start in k and v, then where the last ends."
+    },
     "sm_scale": {
       "shape": null,
       "dtype": "float32",
@@ -115,99 +127,63 @@
   "workloads": [
     {
       "axes": {
-        "n_q": 257,
-        "n_kv": 257,
-        "n_offsets": 2
-      },
-      "scalars": {
-        "sm_scale": 0.07216878235340118
-      },
-      "accuracy": "passed",
-      "speedup": 1.978
-    },
-    {
-      "axes": {
-        "n_q": 893,
-        "n_kv": 893,
-        "n_offsets": 2
-      },
-      "scalars": {
-        "sm_scale": 0.07216878235340118
-      },
-      "accuracy": "passed",
-      "speedup": 2.984
-    },
-    {
-      "axes": {
         "n_q": 1696,
-        "n_kv": 1696,
+        "n_kv": 132768,
         "n_offsets": 2
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      },
-      "accuracy": "passed",
-      "speedup": 2.777
+      }
     },
     {
       "axes": {
         "n_q": 2732,
-        "n_kv": 2732,
+        "n_kv": 104093,
         "n_offsets": 2
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      },
-      "accuracy": "passed",
-      "speedup": 2.263
-    },
-    {
-      "axes": {
-        "n_q": 3392,
-        "n_kv": 3392,
-        "n_offsets": 2
-      },
-      "scalars": {
-        "sm_scale": 0.07216878235340118
-      },
-      "accuracy": "passed",
-      "speedup": 2.447
+      }
     },
     {
       "axes": {
         "n_q": 8480,
-        "n_kv": 8480,
+        "n_kv": 139552,
         "n_offsets": 2
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
-      },
-      "accuracy": "passed",
-      "speedup": 2.345
-    },
-    {
-      "axes": {
-        "n_q": 9397,
-        "n_kv": 9397,
-        "n_offsets": 2
-      },
-      "scalars": {
-        "sm_scale": 0.07216878235340118
-      },
-      "accuracy": "passed",
-      "speedup": 2.354
+      }
     },
     {
       "axes": {
         "n_q": 16384,
-        "n_kv": 16384,
+        "n_kv": 116352,
         "n_offsets": 2
       },
       "scalars": {
         "sm_scale": 0.07216878235340118
+      }
+    },
+    {
+      "axes": {
+        "n_q": 16384,
+        "n_kv": 131072,
+        "n_offsets": 2
       },
-      "accuracy": "passed",
-      "speedup": 2.338
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      }
+    },
+    {
+      "axes": {
+        "n_q": 16384,
+        "n_kv": 262144,
+        "n_offsets": 2
+      },
+      "scalars": {
+        "sm_scale": 0.07216878235340118
+      }
     }
   ],
   "layout_variants": {
@@ -232,7 +208,8 @@
       }
     ],
     "requires": {
-      "flydsl": ">=0.3.2"
+      "flydsl": ">=0.3.2",
+      "aiter": ">=0.1.21"
     },
     "author": "kyle-256",
     "entry_point": "kernel.py::run",
