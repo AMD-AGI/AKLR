@@ -62,7 +62,7 @@ sweep 遍历完所选数据点后，只要至少一次测量成功，job 就正�
 | --- | --- | --- | --- | --- |
 | 定时 | 全部绑定 `agentx-mi355x` 的 target 下已启用的框架 | recipe 中的 Pareto 点 | 3600 秒 | 是 |
 
-周环比：每次正式运行都与同一模型、target、框架最近的基线比较。
+周环比：每次正式运行都与同一模型、target、框架最近的基线比较。报告中的“周环比”和“上次运行以来的 AKLR 改动”两个板块暂时隐藏；比较结果和提交历史仍会计算并写入 `report.json`。
 
 ## 2. CLI 命令介绍
 
@@ -81,7 +81,7 @@ python3 -m agentx_bench pipeline --help
 | --- | --- |
 | `pipeline` | 单个模型/target/框架一键 plan → sweep → report → 清理 |
 | `plan` | 读取一个或多个模型/target/框架运行的 recipe 文件，生成可供 report 校验的 manifest |
-| `sweep` | 在 Docker 中安装当前 checkout 并执行 serving 计划 |
+| `sweep` | 在 Docker 中安装当前 checkout，为 SGLang 预先装好 Rust 工具链并编译 TreeCore，然后执行 serving 计划 |
 | `report` | 渲染单个结果；加 `--plan` 时校验计划、生成站点并管理基线 |
 
 ### 2.2 使用 pipeline 一键测试
@@ -139,7 +139,7 @@ python3 -m agentx_bench pipeline \
 | `--points` | 在 recipe 的点中做 smoke 过滤，格式为 `ARM:CONC,ARM:CONC`；设定后不晋升正式基线 |
 | `--duration` | 每点 DURATION 覆盖，单位秒；设定后不晋升正式基线 |
 | `--model-path` | 使用容器内可见的本地模型目录；不会自动新增挂载，且不晋升正式基线 |
-| `--git-dir` | 生成报告中 AKLR 提交历史所用的 checkout；默认本仓库 |
+| `--git-dir` | 生成 `report.json` 中 AKLR 提交历史所用的 checkout（报告中的对应板块暂时隐藏）；默认本仓库 |
 
 ### 2.3 分阶段测试
 
@@ -243,7 +243,7 @@ report:
 | `models.<id>.advisory_env` | 模型级补充环境，覆盖同名全局值。若与 recipe 文件 `launch.env` 中已设置的变量同名，会报冲突；设备变量由 `plan` 生成 |
 | `models.<id>.targets.<target-id>.advisory_env` | target 级补充环境，覆盖同名模型级和全局值；同样不允许与 recipe 文件 `launch.env` 冲突 |
 | `...frameworks.<framework>.advisory_env` | 框架级补充环境，覆盖以上各级同名值。不要在这里设置 AKLR plugin 开关，执行器会按模式设置。冲突规则相同 |
-| `report.repo_url` | 报告中 AKLR commit 与历史链接的仓库 URL；不是 Pages 站点地址 |
+| `report.repo_url` | 报告中 AKLR commit 链接所用的仓库 URL（历史链接暂时隐藏）；不是 Pages 站点地址 |
 
 `weights` 和 `precision` 由同一模型的各个 target 和框架共享。服务镜像只由 recipe 的 `image.run` 决定。
 

@@ -523,6 +523,12 @@ class AgentXPartialComparisonReportTests(unittest.TestCase):
             "两种模式需完整成功且配置匹配",
             "两种 AKLR 模式都需成功完成全部选中数据点",
             "测量未完成或有失败点；不计算周环比",
+            "Week over week",
+            "周环比",
+            "AKLR changes since the previous run",
+            "上次运行以来的 AKLR 改动",
+            "observed GPUs",
+            "实际 GPU",
         ):
             self.assertNotIn(obsolete, html)
 

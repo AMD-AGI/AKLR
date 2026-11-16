@@ -65,7 +65,7 @@ Set the repository variable `AGENTX_SCHEDULE_ENABLED` to `true` to enable the we
 | --- | --- | --- | --- | --- |
 | Schedule | All enabled frameworks of the targets assigned to `agentx-mi355x` | Recipe Pareto points | 3600 seconds | Yes |
 
-Week-over-week comparison: each formal run is compared with the latest baseline of the same model, target and framework.
+Week-over-week comparison: each formal run is compared with the latest baseline of the same model, target and framework. The report's "Week over week" and "AKLR changes since the previous run" sections are temporarily hidden; the comparison and commit history are still computed and written to `report.json`.
 
 ## 2. CLI Commands
 
@@ -84,7 +84,7 @@ python3 -m agentx_bench pipeline --help
 | --- | --- |
 | `pipeline` | Run one model/target/framework through plan → sweep → report → cleanup |
 | `plan` | Load recipe files for one or more model/target/framework runs and generate a manifest for report validation |
-| `sweep` | Install the current checkout in Docker and execute a serving plan |
+| `sweep` | Install the current checkout in Docker, install the Rust toolchain and build the TreeCore once for SGLang, then execute a serving plan |
 | `report` | Render a single result; with `--plan`, validate the plan, build a site, and manage baselines |
 
 ### 2.2 Run the Pipeline
@@ -142,7 +142,7 @@ Common options:
 | `--points` | Smoke filter over the recipe points, as `ARM:CONC,ARM:CONC`; excludes the run from baseline promotion |
 | `--duration` | Override DURATION per point in seconds; excludes the run from baseline promotion |
 | `--model-path` | Use a model directory visible inside the container; does not add a mount and excludes the run from baseline promotion |
-| `--git-dir` | Checkout used to generate AKLR commit history in the report; defaults to this repository |
+| `--git-dir` | Checkout used to generate AKLR commit history for `report.json` (the report section is temporarily hidden); defaults to this repository |
 
 ### 2.3 Run Individual Stages
 
@@ -246,7 +246,7 @@ report:
 | `models.<id>.advisory_env` | Model-level environment overriding global values. Conflicts with keys already set in the recipe's `launch.env` are rejected; `plan` sets device variables itself |
 | `models.<id>.targets.<target-id>.advisory_env` | Target-level environment overriding model and global values; conflicts with the recipe's `launch.env` keys are also rejected |
 | `...frameworks.<framework>.advisory_env` | Framework-level environment overriding the levels above. Do not set the AKLR plugin switch here; the executor sets it per mode. The same conflict rule applies |
-| `report.repo_url` | Repository URL used for AKLR commit and history links; not the Pages site URL |
+| `report.repo_url` | Repository URL used for AKLR commit links (history links are temporarily hidden); not the Pages site URL |
 
 Targets and frameworks within a model share its `weights` and `precision`. The server image is defined only by the recipe's `image.run`.
 

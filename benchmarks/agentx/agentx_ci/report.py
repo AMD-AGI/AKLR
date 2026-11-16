@@ -40,6 +40,10 @@ X_LABEL = "P90 Interactivity (tok/s/user)"
 Y_LABEL = "Throughput/Chip (tok/s)"
 # Highlight threshold, not a significance test.
 NOTABLE = 0.03
+# TEMPORARILY DISABLED: hides the "Week over week" and "AKLR changes since the previous run"
+# sections, plus the notice text that refers to them. The comparison and history are still
+# computed and written to report.json; set this back to True to restore them.
+SHOW_BASELINE_SECTIONS = False
 LANGS = ("en", "zh")
 ZH_MESSAGES = [
     (r"no valid successful measurement points to compare", "没有可用于比较的有效成功测量点"),
@@ -135,6 +139,42 @@ def nice_ticks(high: float, count: int = 5) -> list[float]:
     return [i * step for i in range(int(high / step) + 2)]
 
 
+def _monotone_slope(x0: float, y0: float, x1: float, y1: float, x2: float, y2: float) -> float:
+    """Interior tangent of d3.curveMonotoneX (Steffen), including its zero-width handling."""
+    h0, h1 = x1 - x0, x2 - x1
+
+    def secant(dy: float, h: float, other: float) -> float:
+        if h:
+            return dy / h
+        return math.nan if dy == 0 else math.copysign(math.inf, dy) * (-1 if other < 0 else 1)
+
+    s0, s1 = secant(y1 - y0, h0, h1), secant(y2 - y1, h1, h0)
+    p = (s0 * h1 + s1 * h0) / (h0 + h1) if h0 + h1 else math.nan
+    sign = (-1 if s0 < 0 else 1) + (-1 if s1 < 0 else 1)
+    bound = min(abs(s0), abs(s1), 0.5 * abs(p)) if not math.isnan(p + s0 + s1) else math.nan
+    slope = sign * bound
+    return 0.0 if math.isnan(slope) or not slope else slope
+
+
+def monotone_path(points: list[tuple[float, float]]) -> str:
+    """SVG path equivalent to d3.line().curve(d3.curveMonotoneX), as drawn by InferenceX."""
+    points = [p for i, p in enumerate(points) if i == 0 or p != points[i - 1]]
+    path = f"M{points[0][0]:.1f},{points[0][1]:.1f}"
+    if len(points) < 3:
+        return path + "".join(f"L{x:.1f},{y:.1f}" for x, y in points[1:])
+    tangents = (
+        [0.0] + [_monotone_slope(*a, *b, *c) for a, b, c in zip(points, points[1:], points[2:])] + [0.0]
+    )
+    for i, end in ((0, 1), (-1, -2)):
+        (xa, ya), (xb, yb) = points[i], points[i + (1 if i == 0 else -1)]
+        h = abs(xb - xa)
+        tangents[i] = (3 * (yb - ya) / (xb - xa) - tangents[end]) / 2 if h else tangents[end]
+    for (x0, y0), (x1, y1), t0, t1 in zip(points, points[1:], tangents, tangents[1:]):
+        dx = (x1 - x0) / 3
+        path += f"C{x0 + dx:.1f},{y0 + dx * t0:.1f} {x1 - dx:.1f},{y1 - dx * t1:.1f} {x1:.1f},{y1:.1f}"
+    return path
+
+
 def svg_chart(title: str, series: list[dict], lang: str, width: int = 620, height: int = 380) -> str:
     """Render scatter points and Pareto frontiers."""
     left, right, bottom = 64, 16, 52
@@ -189,11 +229,9 @@ def svg_chart(title: str, series: list[dict], lang: str, width: int = 620, heigh
     for s in series:
         line = s.get("frontier") or []
         if len(line) > 1:
-            path = " ".join(f"{sx(p[X]):.1f},{sy(p[Y]):.1f}" for p in line)
+            path = monotone_path([(sx(p[X]), sy(p[Y])) for p in line])
             dash = ' stroke-dasharray="6 4"' if s.get("dashed") else ""
-            out.append(
-                f'<polyline points="{path}" fill="none" stroke="{s["color"]}" stroke-width="2"{dash}/>'
-            )
+            out.append(f'<path d="{path}" fill="none" stroke="{s["color"]}" stroke-width="2"{dash}/>')
         for p in s["points"]:
             pareto_coordinates = s.get("pareto_coordinates")
             off_frontier = pareto_coordinates is not None and (p[X], p[Y]) not in pareto_coordinates
@@ -846,6 +884,23 @@ def page(
         control_table = f"<h3>{tr(lang, 'AKLR disabled points', '关闭 AKLR 数据点')}</h3>" + points_table(
             control, lang
         )
+    baseline_sections = ""
+    if SHOW_BASELINE_SECTIONS:
+        baseline_sections = f"""<h2>{tr(lang, "Week over week", "周环比")}</h2>
+<p class="muted">{
+            tr(
+                lang,
+                "Comparisons use only points that succeeded in both runs at the same arm and concurrency "
+                "with matching serving and measurement settings. "
+                f"Deltas are colored beyond ±{NOTABLE * 100:.0f}% (no noise model yet).",
+                "周环比仅比较本次与上次均成功、服务与测量配置一致的相同实验组和并发点。"
+                f"变化超过 ±{NOTABLE * 100:.0f}% 才着色（暂无噪声模型）。",
+            )
+        }</p>
+{comparison_tables(comparison, lang)}
+<h2>{tr(lang, "AKLR changes since the previous run", "上次运行以来的 AKLR 改动")}</h2>
+{history_section(history, run["aklr_sha"], repo_url, lang)}
+"""
     return f"""<div class="page" data-page="{lang}" lang="{tr(lang, "en", "zh-CN")}">
 <header>
 <div class="top"><h1>{tr(lang, "AgentX weekly", "AgentX 周报")} · {
@@ -876,21 +931,7 @@ AKLR {aklr_link} · {tr(lang, "client", "客户端")} {source_ref(client)} · {p
     }</p>
 {charts(results, baseline, comparison, lang)}
 {aklr_section(results, lang)}
-<h2>{tr(lang, "Week over week", "周环比")}</h2>
-<p class="muted">{
-        tr(
-            lang,
-            "Comparisons use only points that succeeded in both runs at the same arm and concurrency "
-            "with matching serving and measurement settings. "
-            f"Deltas are colored beyond ±{NOTABLE * 100:.0f}% (no noise model yet).",
-            "周环比仅比较本次与上次均成功、服务与测量配置一致的相同实验组和并发点。"
-            f"变化超过 ±{NOTABLE * 100:.0f}% 才着色（暂无噪声模型）。",
-        )
-    }</p>
-{comparison_tables(comparison, lang)}
-<h2>{tr(lang, "AKLR changes since the previous run", "上次运行以来的 AKLR 改动")}</h2>
-{history_section(history, run["aklr_sha"], repo_url, lang)}
-<h2>{tr(lang, "Points", "数据点")}</h2>
+{baseline_sections}<h2>{tr(lang, "Points", "数据点")}</h2>
 {points_table(results, lang)}
 {control_table}
 <h2>{tr(lang, "Provenance", "来源信息")}</h2>
@@ -907,9 +948,6 @@ AKLR {aklr_link} · {tr(lang, "client", "客户端")} {source_ref(client)} · {p
 <dt>{tr(lang, "verified image ID", "已验证镜像 ID")}</dt><dd><code>{
         escape(run.get("execution", {}).get("image_id", tr(lang, "unverified", "未经验证")))
     }</code></dd>
-<dt>{tr(lang, "observed GPUs", "实际 GPU")}</dt><dd>{
-        escape(json.dumps(run.get("hardware", {}), ensure_ascii=False))
-    }</dd>
 <dt>{tr(lang, "recipe image", "recipe 镜像")}</dt><dd><code>{
         escape(run["image"].get("recipe") or "-")
     }</code></dd>
@@ -1035,14 +1073,19 @@ def write_report(
         message = notice.get(lang) if isinstance(notice, dict) else notice
         messages = [message] if message else []
         if not complete_measurement(results):
-            messages.append(
-                tr(
-                    lang,
-                    "Incomplete measurement or failed points; week-over-week comparisons use only points "
-                    "that succeeded in both this run and the baseline with matching settings.",
-                    "测量未完成或有失败点；周环比只对本次与基线中均成功完成且配置一致的点计算。",
+            if SHOW_BASELINE_SECTIONS:
+                messages.append(
+                    tr(
+                        lang,
+                        "Incomplete measurement or failed points; week-over-week comparisons use only points "
+                        "that succeeded in both this run and the baseline with matching settings.",
+                        "测量未完成或有失败点；周环比只对本次与基线中均成功完成且配置一致的点计算。",
+                    )
                 )
-            )
+            else:
+                messages.append(
+                    tr(lang, "Incomplete measurement or failed points.", "测量未完成或有失败点。")
+                )
         if results["run"].get("source_dirty") is not False:
             messages.append(
                 tr(
