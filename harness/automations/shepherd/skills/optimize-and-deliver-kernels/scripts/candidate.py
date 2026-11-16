@@ -2,10 +2,13 @@
 
 Run at the repository root.
 
-`candidate.py list --config .shepherd/configuration.yaml --commit <main SHA>` prints the candidates at that
-commit, by strategy order with the configuration's filters, as {path, op, backend, input_sha256, strategy}
-sorted by path, then the skipped ones with their reason. Ledger and GitHub skips (delivered, competing PR,
-cooldown, blocked contract), the AKLR-baseline check and the GEMM regime split stay with the round.
+`candidate.py list --config .shepherd/configuration.yaml --commit <main SHA> --ledger <file>` prints the
+candidates at that commit, by strategy order with the configuration's filters, as {path, op, backend,
+input_sha256, strategy, contract_key} sorted by path, then the skipped ones with their reason. The ledger
+(a file holding `state.py show`'s output) skips what a campaign still works on, delivered, cools down or
+found blocked; when that campaign had a regime, only that regime is closed, listed in the candidate's
+`skip_regimes`. Competing PRs, the AKLR-baseline check and the GEMM regime split stay with the round.
+Exit 2: error.
 
 `candidate.py freshness --schema <path> --base <validation base> --main <main>` prints the changes between
 the evidence base and main that can alter the candidate's verdict. Exit 0: fresh; 1: stale (relevant
@@ -18,6 +21,7 @@ import json
 import subprocess
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import PurePosixPath
 
 OPS = PurePosixPath("aklr/ops")
@@ -30,6 +34,11 @@ def git(*args, stdin=None, check=True):
 @dataclass(frozen=True)
 class Candidate:
     path: PurePosixPath
+
+    @staticmethod
+    def workload_key(workload):
+        """What a workload is, without what was measured on it (accuracy, speedup)."""
+        return json.dumps({k: workload.get(k) for k in ("axes", "scalars")}, sort_keys=True)
 
     @classmethod
     def of(cls, schema_path):
@@ -51,13 +60,19 @@ class Candidate:
         return self.op_dir.name if self.op_dir.parent == OPS else None
 
     @classmethod
-    def listed(cls, commit, policy):
+    def listed(cls, commit, config, state):
         """The policy's candidates at the commit and the skipped ones, each with its strategy."""
+        policy = config["policy"]
         allowed, backends = policy["allowed_ops"], policy["backends"]
-        listed = []
+        # What lifts a blocked contract when it changes: the op's code (see `contract_key` below), this
+        # checkout's forge_task and the runtime.
+        forge_task = git("rev-parse", "HEAD:harness/scripts/forge_task", check=False).stdout.decode().strip()
+        runtime = (config.get("execution") or {}).get("runtime_revision")
+        now, op_trees = datetime.now(timezone.utc), {}
+        listed = {}  # path -> strategy; manual wins wherever it stands, as it names the schema.
         for strategy in policy["strategies"]:
             if strategy["type"] == "manual":
-                listed += [(path, "manual") for path in strategy.get("schemas") or []]
+                listed.update(dict.fromkeys(strategy.get("schemas") or [], "manual"))
             elif strategy["type"] == "kernel-less":
                 tree = git("ls-tree", "-r", "--name-only", commit, "--", str(OPS)).stdout.decode()
                 for path in tree.splitlines():
@@ -65,10 +80,10 @@ class Candidate:
                         cls.of(path)
                     except ValueError:
                         continue
-                    listed.append((path, "kernel-less"))
+                    listed.setdefault(path, "kernel-less")
             else:
-                raise SystemExit(f"unknown strategy {strategy['type']!r}")
-        paths = sorted({path for path, _ in listed})
+                raise ValueError(f"unknown strategy {strategy['type']!r}")
+        paths = sorted(listed)
         # Contents of each path at the commit, None when it is missing there.
         batch = git("cat-file", "--batch", stdin="".join(f"{commit}:{p}\n" for p in paths).encode()).stdout
         blobs, at = {}, 0
@@ -81,11 +96,19 @@ class Candidate:
             size = int(header[2])
             blobs[path] = batch[header_end + 1 : header_end + 1 + size]
             at = header_end + 1 + size + 1
-        candidates, skipped, seen = [], [], set()
-        for path, strategy in listed:
-            if path in seen:
-                continue
-            seen.add(path)
+        # The workloads a kernel already serves, by schema directory (one name and language).
+        served = {}
+        for path, blob in blobs.items():
+            try:
+                schema = json.loads(blob)
+                if schema["kernel"]["sources"]:
+                    served.setdefault(PurePosixPath(path).parent, set()).update(
+                        cls.workload_key(w) for w in schema["workloads"]
+                    )
+            except (ValueError, TypeError, KeyError, AttributeError):
+                continue  # No kernel, or unreadable: it serves nothing.
+        candidates, skipped = [], []
+        for path, strategy in listed.items():
             entry, blob = {"path": path, "strategy": strategy}, blobs[path]
             if blob is None:
                 skipped.append({**entry, "reason": "missing at this commit"})
@@ -95,17 +118,81 @@ class Candidate:
             except ValueError as exc:
                 skipped.append({**entry, "reason": str(exc)})
                 continue
-            kernel = json.loads(blob).get("kernel") or {}
-            backend = kernel.get("language") or candidate.path.parts[-3]
+            try:
+                kernel = json.loads(blob).get("kernel") or {}
+                backend = kernel.get("language") or candidate.path.parts[-3]
+            except (ValueError, AttributeError):
+                # One unreadable file on main must not hide every other candidate.
+                skipped.append({**entry, "reason": "not a schema: a JSON object whose kernel is an object"})
+                continue
             entry.update(op=candidate.op, backend=backend, input_sha256=hashlib.sha256(blob).hexdigest())
-            if strategy == "kernel-less" and kernel.get("sources"):
-                continue  # Already has a kernel: not a kernel-less candidate, nothing to report.
+            if strategy == "kernel-less":
+                workloads = {cls.workload_key(w) for w in json.loads(blob).get("workloads") or []}
+                # Has a kernel, or every workload is served by a kernel of a sibling schema: not
+                # kernel-less, nothing to report. One unserved workload keeps the whole schema.
+                if kernel.get("sources") or (
+                    workloads and workloads <= served.get(candidate.path.parent, set())
+                ):
+                    continue
             if "all" not in allowed and candidate.op not in allowed:
                 skipped.append({**entry, "reason": "op not in policy.allowed_ops"})
-            elif backend not in backends:
+                continue
+            if backend not in backends:
                 skipped.append({**entry, "reason": "language not in policy.backends"})
+                continue
+            op_dir = candidate.op_dir
+            if op_dir not in op_trees:
+                # The op directory without `impls/`, whose measurement updates are expected.
+                tree = git("ls-tree", commit, f"{op_dir}/").stdout.splitlines(keepends=True)
+                kept = b"".join(
+                    line.replace(f"{op_dir}/".encode(), b"")
+                    for line in tree
+                    if not line.endswith(b"/impls\n")
+                )
+                op_trees[op_dir] = git("mktree", stdin=kept).stdout.decode().strip()
+            key = {
+                "op_dir_tree_without_impls": op_trees[op_dir],
+                "forge_task_tree": forge_task,
+                "runtime_revision": runtime,
+            }
+            entry["contract_key"] = key
+            reason, regimes = None, []
+            for block in state.get("blocked_contracts", []):
+                lifts = block.get("lifts_when_changed") or {}
+                if block.get("op") == candidate.op and all(lifts.get(name) == key[name] for name in key):
+                    reason = f"blocked contract {block.get('contract')}"
+            for campaign in state["campaigns"]:
+                try:
+                    earlier = cls.of(campaign.get("schema_path", ""))
+                except ValueError:
+                    continue
+                if earlier.path != candidate.path:
+                    continue
+                if campaign.get("phase") != "ended":
+                    # Any regime: its merge would make another regime's evidence stale.
+                    reason = f"campaign {campaign['id']} is undelivered"
+                    continue
+                cooldown = campaign.get("cooldown_until")
+                try:
+                    # One that cannot be read keeps cooling down.
+                    cooling = cooldown is not None and not datetime.fromisoformat(cooldown) <= now
+                except (TypeError, ValueError):
+                    cooling = True
+                delivered = campaign.get("outcome") in ("delivered", "merged")
+                if delivered and campaign.get("input_sha256") == entry["input_sha256"]:
+                    done = f"already delivered by campaign {campaign['id']}"
+                elif cooling:
+                    done = f"cooldown until {cooldown} (campaign {campaign['id']})"
+                else:
+                    continue
+                if campaign.get("regime"):
+                    regimes.append({"regime": campaign["regime"], "reason": done})
+                else:
+                    reason = done
+            if reason:
+                skipped.append({**entry, "reason": reason})
             else:
-                candidates.append(entry)
+                candidates.append({**entry, **({"skip_regimes": regimes} if regimes else {})})
         candidates.sort(key=lambda entry: entry["path"])
         return {"commit": commit, "candidates": candidates, "skipped": skipped}
 
@@ -151,17 +238,25 @@ def main():
     listing = sub.add_parser("list", help="list the round's candidates at a commit")
     listing.add_argument("--config", required=True)
     listing.add_argument("--commit", required=True)
+    listing.add_argument("--ledger", required=True, help="file holding `state.py show`'s output")
     freshness = sub.add_parser("freshness", help="exit 0 fresh, 1 stale, 2 unknown")
     freshness.add_argument("--schema", required=True, help="repository-relative schema JSON path")
     freshness.add_argument("--base", required=True, help="commit the evidence was validated against")
     freshness.add_argument("--main", required=True, help="current main commit")
     args = parser.parse_args()
     if args.command == "list":
-        import yaml
+        try:
+            import yaml
 
-        with open(args.config) as stream:
-            policy = yaml.safe_load(stream)["policy"]
-        json.dump(Candidate.listed(args.commit, policy), sys.stdout, indent=2)
+            with open(args.config) as stream:
+                config = yaml.safe_load(stream)
+            with open(args.ledger) as stream:
+                state = json.load(stream)["state"]
+            listed = Candidate.listed(args.commit, config, state)
+        except (ImportError, OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as exc:
+            print(json.dumps({"error": f"{type(exc).__name__}: {exc}"}), file=sys.stderr)
+            return 2
+        json.dump(listed, sys.stdout, indent=2)
         print()
         return 0
     try:

@@ -8,7 +8,7 @@ disable-model-invocation: true
 
 shepherd is a dormant automation pack in the AKLR repository. This file and `optimize-and-deliver-kernels` are not slash skills.
 
-The human enters setup by pointing Cursor at `FOR_AGENTS.md`, which sends you here in the checkout that will run rounds.
+The human enters setup by pointing an agent at this file, in the checkout that will run rounds.
 
 shepherd needs one configuration file, one state directory and one live Cursor automation.
 
@@ -16,11 +16,11 @@ Do not create or update an automation until the user explicitly asks. Setup star
 
 ## 1. Check the checkout
 
-Do this before asking for configuration and before invoking `/automate`.
+Do this before asking for configuration.
 
 The round checkout is the AKLR checkout on the round host, on the base branch. It already holds this pack. Never copy pack files into it.
 
-Verify that it contains `FOR_AGENTS.md`, this file, `optimize-and-deliver-kernels` with its `references/` and `scripts/`, and the templates. If the copy that sent you here is newer (`git log -1 -- harness/automations/shepherd`), stop and ask the user to update the checkout.
+Verify that it contains this file, `optimize-and-deliver-kernels` with its `references/` and `scripts/`, and the templates. If you were sent here from another copy of the pack and it is newer (`git log -1 -- harness/automations/shepherd`), stop and ask the user to update the checkout.
 
 The automation runs each round itself and needs no plugin. Do not edit `.cursor/settings.json`.
 
@@ -56,7 +56,7 @@ Ask for or confirm, in one pass:
 - Strategies (`manual` paths, `kernel-less`), `batch_size`, `allowed_ops`, `backends`, `max_parallel_campaigns`, `max_open_prs`, `execution.pool_hours`, `cooldown_hours`.
 - Campaign model, reasoning effort, loop hours, node hours, model USD, `max_auto_resumes`, and `model_usd_per_hour`: the highest hourly spend of the model with KernelForge, from provider billing.
 - Cumulative budget, its recorded authorization, and the provider's hard limit: the spend cap on the API key or gateway the campaign calls (`claude auth status`, `ANTHROPIC_BASE_URL`). If none exists, the owner must set one.
-- Publication: draft PRs, PR comments, `ci:gpu` label, branch prefix.
+- Publication: draft PRs, PR comments, `ci:gpu` label, branch prefix, and the issue that is told when a round needs the owner (`attention_issue`; its subscribers are notified by GitHub).
 - Model slug and schedule of the Cursor automation, 15 minutes by default. That model runs every round, so pick a strong one.
 
 Use only model slugs the user's Cursor model picker shows. Do not guess a slug or carry over a private default.
@@ -103,54 +103,22 @@ Record the passing checks of step 4 and the budget authorization in `readiness.m
 
 ## 6. Prepare the live automation
 
-Ask whether this is first-time creation or an existing automation.
+The user chooses where and how the automation is created or updated; the pack does not depend on it. Finish configuration, host and state validation, then hand over these fields:
 
-Read `../../FOR_AGENTS.md` as the primary intent source for either path.
+- Name `shepherd`, and a description.
+- Prompt: [`automation-prompt.example.md`](../../templates/automation-prompt.example.md), as is or adapted. It must point at the committed `optimize-and-deliver-kernels` skill by its repository-relative path and at `.shepherd/configuration.yaml`. It keeps the template's two `begin` commands, so a skipped trigger reads nothing more, and otherwise never copies the skill's contents, paraphrases configuration values or uses a plugin cache path.
+- Trigger: only the configured schedule (every 15 minutes is cron `*/15 * * * *`). No repository-event triggers.
+- The self-hosted worker checked in step 4, the configured repository and base branch.
+- No integrations.
+- The automation model the user chose in step 3.
 
-### First-time creation
+For an existing automation, update these fields in place. Do not create a replacement or duplicate. When moving from another scheduler, disable the old trigger first, and keep the state directory and budgets.
 
-1. Read `../../templates/optimize-automation-prompt.md` as secondary source material.
-2. Turn `FOR_AGENTS.md`, the finished configuration and the template into a complete natural-language request.
-3. Point the live prompt at the committed `optimize-and-deliver-kernels` skill by its repository-relative path. Do not copy its contents or use a plugin cache path.
-4. Read and follow the built-in `automate` skill.
-5. Let `automate` discover the repository and confirm that the pack is committed there.
-6. Tell `automate` that `.shepherd/configuration.yaml` is uncommitted on purpose: the self-hosted worker uses the checkout that holds it.
-7. Let `automate` show its draft table, obtain approval, ask readiness, and open the Automations editor.
-
-Give `automate` this intent, filled from configuration:
-
-- Name `shepherd`.
-- Read and follow `harness/automations/shepherd/skills/optimize-and-deliver-kernels/SKILL.md` with `.shepherd/configuration.yaml` for every run.
-- Trigger only on the configured schedule. No repository-event triggers.
-- Run on the self-hosted worker checked in step 4, in the configured repository and base branch.
-- Add no integrations.
-- Run one round in the session itself (state helper `begin`, the work, `end`), so the run's transcript shows every step, and end with the round report.
-- Never edit, rebase, approve or merge an existing pull request, manage schedules, or reinitialize state.
-
-Do not duplicate `automate`'s own discovery, review, approval, readiness or handoff work.
-
-### Existing automation
-
-`automate` is creation-only. Do not use it to find, inspect or update an automation.
-
-Finish configuration, host and state validation. Then ask the user to update in the Automations editor:
-
-- Name and description
-- Instruction to read `harness/automations/shepherd/skills/optimize-and-deliver-kernels/SKILL.md` with `.shepherd/configuration.yaml`
-- Schedule trigger and interval; remove any repository-event trigger
-- Self-hosted worker, repository and base branch
-- No integrations
-- Paraphrased one-round (`begin` … `end`), report and no-edit instructions
-
-Do not create a replacement or duplicate. When moving from another scheduler, disable the old trigger first, and keep the state directory and budgets.
-
-### Creation boundary
-
-Never call an automation backend service or tool directly. Never use a browser URL that carries draft fields. Never build or open a Cursor deep link. The only finish path for a new automation is `automate`'s Automations editor handoff.
+Never call an automation backend service directly, and never build a link that carries draft fields.
 
 Record the automation's name, model and schedule in `readiness.md`. If the automation cannot be configured from here, hand over the prompt intent, configuration path, readiness results and remaining settings, and say it is not saved.
 
-Enable the automation only with `mode: observe`. Keep it there until step 7 passes. Observe rounds change nothing, so the trigger tests can run on the live automation.
+Enable the automation only with `mode: observe`. Keep it there until step 7 passes. The helper refuses an observe round's saves (the first `begin` migrates an older ledger), so the trigger tests can run on the live automation.
 
 ## 7. Test before paid operation
 
@@ -160,7 +128,7 @@ Verify with `mode: observe`:
 
 1. One round in this session (`begin --now`, the round, `end`) reads GitHub and existing runs, lists candidates, writes a report and changes nothing.
 2. `python -m pytest harness/tests/shepherd` passes with `TMPDIR` on a directory only you and root own, such as `/tmp`. The helper refuses a temp root under another user's directory.
-3. Through the automation's own trigger: two concurrent triggers start one round; a second round reads what the first saved; after stopping a running round in Cursor, the first trigger after its lease expires takes over with `recovered_from` set.
+3. Through the automation's own trigger: two concurrent triggers start one round; a second round begins once the first ended; after stopping a running round in Cursor, the first trigger after its lease expires takes over with `recovered_from` set.
 
 Then switch to `mode: run` on probation, within the owner's authorization:
 

@@ -160,14 +160,21 @@ cleanup() {
   [[ -n $containers ]] && docker rm -f $containers >/dev/null 2>&1
   echo "$(date +%T) $H cleanup ($reason): containers=[$(echo $containers)] tasks=${#process_groups[@]}"
   # The marker tells release (and its callers' ledgers) that nothing of this job is left here.
-  for pid in "${process_groups[@]}"; do kill -0 -- "-$pid" 2>/dev/null && survivors+=("task=$pid"); done
-  if command -v docker >/dev/null; then
-    if listed=$(docker ps -aq --filter "label=$C.job=$J"); then
-      for container in $listed; do survivors+=("container=$container"); done
-    else
-      survivors+=("containers=unknown")
+  # A --rm container is still listed for a moment after it stops, so look again for a while.
+  for attempt in $(seq 10); do
+    survivors=()
+    for pid in "${process_groups[@]}"; do kill -0 -- "-$pid" 2>/dev/null && survivors+=("task=$pid"); done
+    if command -v docker >/dev/null; then
+      if listed=$(docker ps -aq --filter "label=$C.job=$J" 2>/dev/null); then
+        for container in $listed; do survivors+=("container=$container"); done
+      # A user the daemon refuses started no container here.
+      elif [[ $(docker ps -aq 2>&1) != *"permission denied"* ]]; then
+        survivors+=("containers=unknown")
+      fi
     fi
-  fi
+    ((${#survivors[@]})) || break
+    sleep 1
+  done
   if ((${#survivors[@]})); then echo "$(date +%T) $H cleanup incomplete: ${survivors[*]}"; return 1; fi
   touch "$D/cleaned.$H"
 }
@@ -627,17 +634,19 @@ build_node_command() { # build_node_command RANK KIND CMD... -> CMD array to exe
          --rm --init --name "$C-$J-$TAG-$i" --label "$C.job=$J" --label "$C.user=$USER" --label "$C.kind=$kind"
          --network host --ipc host
          --device /dev/kfd --device /dev/dri --group-add video --cap-add SYS_PTRACE --security-opt seccomp=unconfined)
+    local roots=("$REL" "$HOME") root   # the host directories the container sees
     if ((${#MOUNTS[@]})); then
+      roots=()
       # --mount replaces the default work root and $HOME mounts; HOME is the first mount.
-      local m path home='' flag
-      for flag in $DOCKER_FLAGS; do
-        [[ $flag =~ ^(-v|--volume|--mount)(=|$|/) ]] &&
-          err USAGE "msg=\"--mount runs with only the given directories, but the manifest's DOCKER_FLAGS adds $flag\" hint=\"drop mounts from DOCKER_FLAGS\""
-      done
-      CMD+=($DOCKER_FLAGS)
+      # Any extra flag (--privileged, --volumes-from, --pid host ...) can show the command more.
+      local m path home=''
+      [[ -z ${DOCKER_FLAGS// /} ]] ||
+        err USAGE "msg=\"--mount runs with only the given directories, but the manifest sets DOCKER_FLAGS\" hint=\"empty DOCKER_FLAGS in the manifest, or run without --mount\""
       for m in "${MOUNTS[@]}"; do
         path=${m%:ro}; [[ $path == /* ]] || path=$REL/$path
         # docker -v would create a missing directory owned by root, which the user cannot write.
+        # shortcut: checked from the login node, so a node-local --mount is refused; check on the node when one is needed.
+        nfs_sync "${path%/*}"; roots+=("$path")
         [[ -d $path ]] || err USAGE "msg=\"--mount $m: $path is not a directory\" hint=\"create it first (remote-gpu exec -- mkdir -p $path)\""
         CMD+=(-v "$path:$path${m#"${m%:ro}"}"); home=${home:-$path}
       done
@@ -646,7 +655,12 @@ build_node_command() { # build_node_command RANK KIND CMD... -> CMD array to exe
       CMD+=("${DOCKER_X[@]}")
     fi
     local e; for e in "${E[@]}"; do CMD+=(-e "$e"); done
-    [[ -d $DIR ]] || err USAGE "msg=\"-C $DIR is not a directory\" hint=\"create it first; docker would create it owned by root\""
+    # A -C outside every mount is the image's own (docker makes it inside the container).
+    for root in "${roots[@]}"; do
+      [[ $DIR/ == "$root"/* ]] || continue
+      nfs_sync "${DIR%/*}"
+      [[ -d $DIR ]] || err USAGE "msg=\"-C $DIR is not a directory\" hint=\"create it first; docker would create it owned by root\""
+    done
     CMD+=(-w "$DIR" "$IMG" "$@")
   else
     CMD=(env "${NODE_ENV[@]}" "${E[@]}"
@@ -692,6 +706,7 @@ $R_EXEC" "x$RANDOM$RANDOM-$$"
 
 read -r -d '' R_BG <<'EOF'
 TN=$TAG; [[ $TN =~ ^[A-Za-z0-9_-]+$ ]] || err USAGE "bad --name $TN (use [A-Za-z0-9_-])"
+build_node_command 0 bg "$@"   # refuse bad --mount, -C or DOCKER_FLAGS before the name is claimed
 TD=$B/jobs/$J/tasks; mkdir "$TD/$TN.claim" 2>/dev/null || err USAGE "task $TN already exists in job $C:$J"
 for n in "${TARGET_NODES[@]}"; do echo "$(rank_of "$n") $n"; done >"$TD/$TN.claim/ranks"   # the ranks the task must run on
 SP=$B/jobs/$J/spawn; mkdir -p "$SP"

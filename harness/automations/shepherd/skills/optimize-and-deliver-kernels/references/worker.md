@@ -33,11 +33,10 @@ regular file (`find <pulled> ! -type f ! -type d` prints nothing), and run no co
 
 ## Running the campaign
 
-Follow `harness/skills/forge-loop-campaign/SKILL.md` for every command, except its timers and its stress
-gate (run in the validator, see [validation](validation.md)). Prepare with `--kernel-backend <the
-candidate's language>`; give KernelForge no `--gpu`, `--gpus` or `--gpu-pool`, whatever that skill shows:
-they set `HIP_VISIBLE_DEVICES` for every process it starts, replacing the container's mask, so `--gpu 0`
-puts every campaign of the node on its first card. Without them each step inherits the campaign's GPU.
+Follow `harness/skills/forge-loop-campaign/SKILL.md` for every command, as its "Called by an automation"
+section says: no timers, no KernelForge GPU flags (the container's `HIP_VISIBLE_DEVICES` is the
+campaign's card), and the stress gate run in the validator (see [validation](validation.md)). Prepare
+with `--kernel-backend <the candidate's language>`.
 For a Triton or Gluon kernel, finalize without `--review-guide` and skip distill.
 
 Start long steps as remote background tasks and return their handle. KernelForge has no spending limit of
@@ -54,5 +53,5 @@ cleaned too.
 Cleanup is confirmed when every container the campaign started is observed gone: each of its tasks ended
 (`remote-gpu logs -j <pool> <task>`) and `remote-gpu exec -j <pool> -- docker ps -a --filter name=<task
 container>` lists none, or its pool's release is confirmed. Until then it holds its GPU, whatever its
-phase. Save what was observed, settle the campaign in the same save (see [state](state.md#settling)),
+phase. Save what was observed, settle the campaign and move it to `ready_to_deliver` or `ended` in that one save (see [state](state.md#settling)),
 then free its GPU.

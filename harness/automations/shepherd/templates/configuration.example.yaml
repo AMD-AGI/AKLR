@@ -15,7 +15,7 @@ policy:
   strategies:  # Applied in order.
     - type: manual
       schemas: []  # Repository-relative paths to schema JSON files.
-    - type: kernel-less
+    - type: kernel-less  # Schemas with no kernel and a workload no sibling schema's kernel serves.
   batch_size: 10
   allowed_ops: [all]  # Op names, or all.
   backends: [flydsl, triton]  # Schema languages forge_task can drive (flydsl, triton, gluon).
@@ -39,4 +39,5 @@ publication:
   allow_draft_pr: false
   allow_pr_comments: false
   allow_ci_gpu_label: false  # GPU CI spending needs separate authorization.
+  attention_issue: null  # Issue number in the repository that gets a comment when a round needs the owner. None: only the report says so.
   branch_prefix: shepherd/

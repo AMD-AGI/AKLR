@@ -24,7 +24,9 @@ them before opening the pull request.
 2. **Split** when kernels or contracts are mixed with code: a PR of their own merges on its
    evidence alone; mixed with code it waits for CI validation of every schema. Ask the user
    before splitting their branch.
-3. **Gather evidence on the head commit**; rerun when the head moves.
+3. **Gather evidence on the head commit**; rerun when the head moves. When the caller validated the
+   head merged into a recorded base commit instead (an automation that never rebases), that merge's
+   reports are the evidence, and the body names the base.
    - Contracts: the model, serving config and `AKLR_EXPORT` run the workloads came from;
      `python -m aklr export check`.
    - Kernels: `python -m aklr validate --base origin/main --stages audit,bench <schemas>` on the target GPU (a

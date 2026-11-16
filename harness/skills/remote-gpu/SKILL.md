@@ -109,7 +109,7 @@ redirection use `bash -lc '...'`, which runs on the node, so `$VAR` expands ther
   IPC, the work root and `$HOME` mounted, plus the manifest's `DOCKER_FLAGS`. `release` removes it.
   `--mount DIR[:ro]` (repeatable, relative = under the work root) mounts only those directories instead
   and sets `HOME` to the first: use it when the command must not see or write anything else. It fails
-  when the manifest's `DOCKER_FLAGS` adds mounts of its own.
+  when the manifest sets any `DOCKER_FLAGS`.
 - **Multi-node.** `-N 2`+ with `exec --all` or `bg --all` runs one copy per node, each with
   `REMOTE_GPU_NODE_RANK`, `REMOTE_GPU_NNODES`, `REMOTE_GPU_NODES`, `MASTER_ADDR` and `MASTER_PORT`,
   e.g. `bash -lc 'torchrun --nnodes $REMOTE_GPU_NNODES --node-rank $REMOTE_GPU_NODE_RANK --master-addr $MASTER_ADDR ...'`.

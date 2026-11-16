@@ -110,6 +110,15 @@ def test_a_gemm_schema_starts_from_torch_with_its_contracts_call_keys(tmp_path: 
     compile(kernel, "kernel.py", "exec")
 
 
+def test_a_starting_kernel_takes_the_schemas_call_keys_not_every_api_param(tmp_path: Path):
+    # AKLR's builder binds the entry with the narrowed schema's kernel_call_keys only.
+    root = install_aklr(tmp_path / "aklr")
+    payload = schema_payload()
+    payload["inputs"]["mask"] = {"shape": ["m"], "dtype": "bool", "present_when": "has_mask"}
+    (kernel,) = workspace.builtin_starting_kernel(load(write_schema(root, payload)), root).values()
+    assert "def run(*, a, b, trans_b, bias, out_dtype, out):" in kernel
+
+
 def test_an_op_whose_contract_has_no_baseline_needs_a_starting_kernel(tmp_path: Path):
     root = install_aklr(tmp_path / "aklr")
     schema = load(write_schema(root, schema_payload("topk_demo", op_type="topk")))

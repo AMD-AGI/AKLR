@@ -787,13 +787,12 @@ def test_mount_refuses_a_directory_that_does_not_exist(env):
     assert not (Path(env["HOME"]) / "docker_calls").exists()
 
 
-def test_mount_refuses_extra_mounts_from_the_manifest(env):
+def test_mount_refuses_any_docker_flags_from_the_manifest(env):
+    # --privileged or --volumes-from would show the command more than the given directories.
     (Path(env["HOME"]) / "work/run/worker").mkdir(parents=True)
     directory = configure(env)
     env_file = directory / "cluster.env"
-    env_file.write_text(
-        env_file.read_text().replace("DOCKER_FLAGS=''", "DOCKER_FLAGS='--privileged -v /validate:/validate'")
-    )
+    env_file.write_text(env_file.read_text().replace("DOCKER_FLAGS=''", "DOCKER_FLAGS='--privileged'"))
     result = rg(
         env, "exec", "-j", "fake:1", "--image", "img", "--mount", "run/worker", "--", "true", timeout=15
     )
@@ -826,5 +825,46 @@ def test_holder_leaves_no_clean_marker_while_a_container_survives(env):
         holder.wait(timeout=60)
         assert not (directory / "cleaned.n0").exists()
         assert "cleanup incomplete" in (home / "work/fake/logs/1.n0.log").read_text()
+    finally:
+        stop_holder(holder)
+
+
+@pytest.mark.parametrize(
+    "docker",
+    [
+        # A --rm container stays listed for a moment after it is stopped.
+        'case $1 in ps) [[ -e $HOME/gone ]] || echo c1 ;; rm) (sleep 2; touch "$HOME/gone") & ;; esac\n',
+        # This user may not ask the daemon, so no container here is theirs.
+        'case $1 in ps) echo "permission denied while trying to connect" >&2; exit 1 ;; esac\n',
+    ],
+)
+def test_holder_marks_the_node_clean_once_no_container_is_left(env, docker):
+    home = Path(env["HOME"])
+    (Path(env["PATH"].split(":")[0]) / "docker").write_text("#!/bin/bash\n" + docker)
+    directory = home / "work/fake/jobs/1"
+    directory.mkdir(parents=True)
+    (directory / "release").touch()
+    holder = start_holder(env)
+    try:
+        holder.wait(timeout=60)
+        assert (directory / "cleaned.n0").exists(), (home / "work/fake/logs/1.n0.log").read_text()
+    finally:
+        stop_holder(holder)
+
+
+def test_a_workdir_of_the_image_need_not_exist_on_the_host(env):
+    result = rg(env, "exec", "-j", "fake:1", "--image", "img", "-C", "/image/only", "--", "true", timeout=15)
+    assert result.returncode == 0, result.stderr
+
+
+def test_bg_refused_for_its_arguments_leaves_the_name_free(env):
+    holder = start_holder(env)
+    try:
+        args = ("bg", "-j", "fake:1", "--name", "t", "--image", "img", "--mount", "run/worker", "--", "true")
+        assert rg(env, *args, timeout=15).returncode != 0
+        (Path(env["HOME"]) / "work/run/worker").mkdir(parents=True)
+        result = rg(env, *args, timeout=60)
+        assert "already exists" not in result.stderr
+        assert result.returncode == 0, result.stderr
     finally:
         stop_holder(holder)

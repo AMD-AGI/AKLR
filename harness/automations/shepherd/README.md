@@ -10,13 +10,15 @@ The round reuses the optimization, GPU, validation, PR and reporting skills in `
 
 ## Set it up
 
-1. Point the agent at [`FOR_AGENTS.md`](./FOR_AGENTS.md) and name the AKLR checkout, on the base branch,
-   that will run rounds. It already holds this pack; nothing is copied.
+1. Point an agent at [`setup-shepherd`](./skills/setup-shepherd/SKILL.md) in the AKLR checkout, on the
+   base branch, that will run rounds. It already holds this pack; nothing is copied.
 2. The Cursor automation runs each round itself, so its run shows every step. It reads the shared
    skills by path from that checkout, not from an installed plugin whose cached revision can lag.
 3. Keep user-owned configuration outside the pack, in `.shepherd/configuration.yaml` (ignored by
    Git). Adapt [`configuration.example.yaml`](./templates/configuration.example.yaml).
-4. Review the new automation draft or update the existing automation in its editor. Enable it with
+4. Create the automation, or update the existing one, with the fields setup hands over and a prompt
+   adapted from [`automation-prompt.example.md`](./templates/automation-prompt.example.md) (it begins
+   the round itself, so a skipped trigger costs two commands). Enable it with
    `mode: observe`, run the setup tests, then switch to `run` on probation (one campaign's budget,
    `max_parallel_campaigns: 1`, one PR) until a real campaign reaches a draft PR, and raise the budget
    and parallelism after.

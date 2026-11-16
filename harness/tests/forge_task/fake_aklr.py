@@ -25,8 +25,9 @@ class _Param:
 
 
 class _Narrowed:
-    def __init__(self, raw):
+    def __init__(self, raw, kernel_call_keys):
         self.raw = raw
+        self.kernel_call_keys = kernel_call_keys
 
     def schema_text(self):
         return json.dumps(self.raw, indent=2) + "\\n"
@@ -51,7 +52,9 @@ class _Contract:
         return axes
 
     def narrow(self, point, *, workloads, kernel):
-        return _Narrowed(dict(self.raw, workloads=workloads, kernel=kernel))
+        hidden = {name for name, spec in self.raw["inputs"].items() if "present_when" in spec}
+        keys = tuple(p.name for p in self.api_params if p.name not in hidden)
+        return _Narrowed(dict(self.raw, workloads=workloads, kernel=kernel), keys)
 
 
 class ContractRegistry:
