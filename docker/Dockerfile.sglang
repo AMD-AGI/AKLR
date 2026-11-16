@@ -1,0 +1,42 @@
+# syntax=docker/dockerfile:1
+# Supply the approved SGLang 0.5.22 ROCm image pinned by digest at deployment.
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}
+ARG AKLR_COMMIT
+# Match the baseline installed by ci.yaml. Keep system Triton at 3.8.0.
+ARG AKLR_BASELINE_AITER=dbd8bf5bd624120197a7a26780a8c72201824f0f
+ENV GPU_ARCHS=gfx950
+RUN AITER_USE_SYSTEM_TRITON=1 python3 -m pip install \
+    "amd-aiter @ git+https://github.com/ROCm/aiter.git@${AKLR_BASELINE_AITER}"
+LABEL org.opencontainers.image.source="https://github.com/AMD-AGI/AKLR" \
+      org.opencontainers.image.revision="${AKLR_COMMIT}"
+WORKDIR /opt/aklr
+# Explicit source allowlist: never copy .git, .env, keys, or local artifacts.
+COPY pyproject.toml /opt/aklr/pyproject.toml
+COPY LICENSE LICENSE-APACHE /opt/aklr/
+COPY aklr /opt/aklr/aklr
+# AKLR is separate from AITER. Resolve its dependencies; retain ROCm torch/Triton.
+RUN <<'SH'
+set -eu
+test "${#AKLR_COMMIT}" = 40
+SETUPTOOLS_SCM_PRETEND_VERSION="0.1.dev0+g${AKLR_COMMIT}" python3 -m pip install .
+python3 - <<'PY'
+import os
+from importlib.metadata import distribution, entry_points, version
+from pathlib import Path
+import aklr
+import aiter
+import triton
+import torch
+assert torch.version.hip
+assert version("sglang") == "0.5.22"
+assert triton.__version__.split("+")[0] == "3.8.0"
+assert os.environ["AKLR_COMMIT"] in version("aklr")
+assert "+g" + os.environ["AKLR_BASELINE_AITER"][:7] in version("amd-aiter")
+assert Path(aiter.__file__).resolve() == Path(distribution("amd-aiter").locate_file("aiter/__init__.py")).resolve()
+assert any(e.name == "aklr" and e.value == "aklr.plugins.sglang:register"
+           for e in entry_points(group="sglang.srt.plugins"))
+PY
+SH
+# The default SGLang plugin discovery must remain enabled.
+ENV AKLR_SGLANG_PLUGIN=1
