@@ -13,6 +13,24 @@ _DEADLINE_S = 20.0  # every in-kernel wait's deadline
 
 
 @functools.cache
+def _aiter_kernel_signature() -> None:
+    """sgl-amd-mono names its kernels with AITER's kernel_signature, newer than the AITER the
+    bench pins: install AITER's two lines where it is missing, before sgl-amd-mono imports it."""
+    from aiter.ops.flydsl.kernels import kernels_common
+
+    if hasattr(kernels_common, "kernel_signature"):
+        return
+
+    def kernel_signature(**params: object) -> str:
+        parts = [
+            f"{name}{int(value) if isinstance(value, bool) else value}" for name, value in params.items()
+        ]
+        return kernels_common.format_kernel_name("_".join(parts))
+
+    kernels_common.kernel_signature = kernel_signature
+
+
+@functools.cache
 def _group_state(device):
     """This rank's epoch, scratch and peer buffer, as sgl-amd-mono's MuseMonoRunner
     allocates them, the peer buffer in mori's symmetric heap; built by every rank of the
@@ -132,6 +150,8 @@ def muse_spark_layer_baseline(
     """sgl-amd-mono's Muse Spark whole-layer launch (the commit SGLang pins), on every rank
     of the group: its attention, K2, K3 and the next layer's K1 in one launch."""
     import torch
+
+    _aiter_kernel_signature()
     from sgl_amd_mono.muse_spark.gfx950 import config
 
     # the launch is built for Muse Spark's shapes at TP8 alone
