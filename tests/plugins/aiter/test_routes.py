@@ -18,6 +18,7 @@ from aklr.plugins import aiter as aklr_aiter
 moe_module = importlib.import_module("aklr.plugins.aiter.fused_moe")
 gemm_module = importlib.import_module("aklr.plugins.aiter.tuned_gemm")
 triton_gemm_module = importlib.import_module("aklr.plugins.aiter.triton_gemm")
+blockscale_gemm_module = importlib.import_module("aklr.plugins.aiter.blockscale_gemm")
 
 
 class ActivationType(enum.Enum):
@@ -40,6 +41,7 @@ def op_calls(monkeypatch):
     monkeypatch.setattr(moe_module, "aklr_fused_moe", op)
     monkeypatch.setattr(gemm_module, "gemm", op)
     monkeypatch.setattr(triton_gemm_module, "gemm", op)
+    monkeypatch.setattr(blockscale_gemm_module, "gemm_a8w8_blockwise_scaled", op)
     return calls
 
 
@@ -236,3 +238,17 @@ def test_a_triton_gemm_reaches_the_op_with_the_callers_buffer(op_calls):
     (call,) = op_calls
     assert call["out"] is y
     assert call["out_dtype"] is torch.float16
+
+
+def test_a_shuffled_block_scaled_gemm_reaches_the_op_with_the_callers_buffer(op_calls):
+    out = torch.empty(4, 256, dtype=torch.bfloat16)
+    x, w = torch.zeros(4, 256, dtype=FP8), torch.zeros(256, 256, dtype=FP8)
+    x_scale, w_scale = torch.ones(2, 4).T, torch.ones(2, 2)
+    assert (
+        aklr_aiter.gemm_a8w8_blockscale_bpreshuffle(x, w, x_scale, w_scale, dtype=torch.bfloat16, out=out)
+        == "aklr"
+    )
+    (call,) = op_calls
+    assert call["out"] is out
+    assert call["out_dtype"] is torch.bfloat16
+    assert call["operand_format"] == "none:preshuffled"

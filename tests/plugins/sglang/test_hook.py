@@ -67,8 +67,19 @@ def test_every_route_takes_its_targets_parameters(target, route):
         return
     # aiter's defaults are aiter's enums, which route modules cannot import. A newer aiter than the
     # installed one adds parameters at the end, which the route takes too.
-    taken = parameters(pkgutil.resolve_name(target), defaults=False)
+    taken = aiter_parameters(target)
     assert parameters(route, defaults=False)[: len(taken)] == taken
+
+
+def aiter_parameters(target):
+    """An aiter function's parameters without defaults; for one aiter registers as a torch op
+    behind ``(*args, **kwargs)``, those of the op's schema."""
+    taken = parameters(pkgutil.resolve_name(target), defaults=False)
+    if [kind for _, kind in taken] != [inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD]:
+        return taken
+    schema = getattr(torch.ops.aiter, target.rsplit(".", 1)[1]).default._schema
+    kinds = {False: inspect.Parameter.POSITIONAL_OR_KEYWORD, True: inspect.Parameter.KEYWORD_ONLY}
+    return [(a.name, kinds[a.kwarg_only]) for a in schema.arguments]
 
 
 def test_the_fused_moe_route_passes_sglangs_output_to_the_op(monkeypatch):

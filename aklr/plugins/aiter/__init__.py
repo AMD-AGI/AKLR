@@ -9,9 +9,16 @@ call's arguments into an AKLR op call and returns the op's result, or the
 plugin declares its route on the releases it was tested on, with the parameters of the aiter in that
 release's image, and passes every argument by name."""
 
+from aklr.plugins.aiter.blockscale_gemm import gemm_a8w8_blockscale_bpreshuffle
 from aklr.plugins.aiter.fused_moe import fused_moe
 from aklr.plugins.aiter.mla import mla_decode_fwd
 from aklr.plugins.aiter.triton_gemm import gemm_a16w16
 from aklr.plugins.aiter.tuned_gemm import mm
 
-__all__ = ["fused_moe", "gemm_a16w16", "mla_decode_fwd", "mm"]
+__all__ = [
+    "fused_moe",
+    "gemm_a16w16",
+    "gemm_a8w8_blockscale_bpreshuffle",
+    "mla_decode_fwd",
+    "mm",
+]
