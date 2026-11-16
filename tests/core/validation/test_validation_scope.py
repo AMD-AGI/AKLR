@@ -42,3 +42,7 @@ def test_under_keeps_the_schemas_inside_or_outside_a_directory(tmp_path: Path) -
     assert scope.under("aklr/op").schema_paths == ()
     assert scope.under("aklr/plugins", inside=False) == replace(scope, schema_paths=(ops,), bench_paths=())
     assert scope.under("aklr/op", inside=False) == scope
+    assert scope.under("./aklr/ops") == scope.under("aklr/ops")
+    assert scope.under(".") == scope
+    with pytest.raises(ValueError):
+        scope.under("..")

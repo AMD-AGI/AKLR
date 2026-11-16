@@ -72,8 +72,9 @@ class ValidationScope:
 
     def under(self, directory: str, *, inside: bool = True) -> ValidationScope:
         """This scope's schemas under ``directory``, a path relative to the root; not
-        ``inside``, those outside it."""
-        prefix = directory.rstrip("/") + "/"
+        ``inside``, those outside it. A directory outside the root is a ValueError."""
+        relative = self.relative_path(self.root / directory)
+        prefix = "" if relative == "." else relative + "/"
         kept = tuple(p for p in self.schema_paths if self.relative_path(p).startswith(prefix) == inside)
         bench = tuple(p for p in self.bench_paths if p in kept)
         return replace(self, schema_paths=kept, bench_paths=bench)
