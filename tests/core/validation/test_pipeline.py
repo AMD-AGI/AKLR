@@ -1241,6 +1241,26 @@ def test_a_kernel_whose_requires_the_environment_misses_is_skipped(monkeypatch: 
     assert report.skipped_schemas == {_SCHEMA: "flydsl 0.3.4.1 is not <0.3.4"}
 
 
+def test_an_untimed_bench_checks_no_workload_recorded_failed(tmp_path: Path) -> None:
+    """Dispatch never serves a workload recorded failed: an untimed bench leaves it out, a timed one
+    measures it again."""
+    registry = ContractRegistry.default()
+    schema = registry.parse_schema(Path(_SCHEMA).read_bytes(), _SCHEMA)
+    first, *rest = schema.workloads
+    stored = {axes_text(w.axes): w for w in schema.workloads}
+    stored[axes_text(first.axes)] = first.model_copy(update={"accuracy": "failed", "speedup": None})
+    path = tmp_path / _SCHEMA
+    path.parent.mkdir(parents=True)
+    path.write_text(schema.with_measurements(stored).schema_text())
+    scope = ValidationScope(tmp_path, "", None, (path,), (path,))
+
+    def checked(stage: BenchStage) -> list[str]:
+        return [r.axes_text for batch in stage._workloads_to_run(scope, path, registry) for r in batch]
+
+    assert checked(BenchStage(["cpu"], timed=False)) == [axes_text(w.axes) for w in rest]
+    assert checked(BenchStage(["cpu"])) == [axes_text(w.axes) for w in schema.workloads]
+
+
 def test_an_untimed_bench_compares_with_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     """``validate --no-timing``: no threshold, so no workload is timed, and no incumbent is read."""
     monkeypatch.setattr(ValidationScope, "paths_at_base", lambda self, directory: ())

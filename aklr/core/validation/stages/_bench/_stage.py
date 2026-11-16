@@ -73,7 +73,7 @@ class UnmetRequirement(RuntimeError):
 class BenchStage(PipelineStage[BenchReport]):
     """Each schema's workloads in batches, a trial task per batch and device (``run_trial``):
     the candidate in its child task, then the reference. Untimed (``timed=False``), a
-    kernel is built and checked only."""
+    kernel is built and checked only, on the workloads not recorded failed."""
 
     name = "bench"
     report_type = BenchReport
@@ -173,16 +173,15 @@ class BenchStage(PipelineStage[BenchReport]):
         schema_json = schema.model_dump(mode="json")
         workloads_json = {axes_text(w["axes"]): w for w in schema_json["workloads"]}
         content_hash = schema.kernel.content_hash
+        # untimed: a workload recorded failed is never dispatched, so there is nothing to check
+        workloads = [w for w in schema.workloads if self._timed or w.accuracy != "failed"]
         batches: list[tuple[TrialRequest, ...]] = []
         batch: list[TrialRequest] = []
         batch_bytes = 0
         # even batches: a short remainder would start late among other schemas'
-        n_batches = max(1, -(-len(schema.workloads) // MAX_BATCH_WORKLOADS))
-        sizes = [
-            len(schema.workloads) // n_batches + (k < len(schema.workloads) % n_batches)
-            for k in range(n_batches)
-        ]
-        for workload in schema.workloads:
+        n_batches = max(1, -(-len(workloads) // MAX_BATCH_WORKLOADS))
+        sizes = [len(workloads) // n_batches + (k < len(workloads) % n_batches) for k in range(n_batches)]
+        for workload in workloads:
             workload_axes_text = axes_text(workload.axes)
             point = schema.point_with_contract_id(workload.axes, contract.contract_id)
             contract.check_point(point)

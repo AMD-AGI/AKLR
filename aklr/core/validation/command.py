@@ -43,7 +43,7 @@ def main(argv: Sequence[str]) -> int:
     parser.add_argument(
         "--no-timing",
         action="store_true",
-        help="build and check the kernels only: nothing is timed or written back",
+        help="build and check the kernels only, on the workloads not recorded failed: nothing is timed or written back",
     )
     parser.add_argument("--out", type=Path, default=DEFAULT_REPORT_DIR)
     parser.add_argument(
