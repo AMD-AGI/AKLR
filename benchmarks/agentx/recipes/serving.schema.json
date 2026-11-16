@@ -2,51 +2,42 @@
  "$schema": "https://json-schema.org/draft/2020-12/schema",
  "$id": "https://github.com/AMD-AGI/AKLR/benchmarks/agentx/recipes/serving.schema.json",
  "title": "AgentX recipe serving.json (schema 4)",
- "description": "Written by the recipe module to recipes/<family>/<target-id>/<framework>/serving.<model-id>.json and reviewed in a PR. model, target, framework, weights and hardware come from agentx.yaml, and every point's client_env.FRAMEWORK must equal that framework; plan adds arms, advisory env, devices, per-point trace, hashes and the sealed selection. None of those fields may appear here.",
+ "description": "Written by the recipe module to recipes/<family>/<target-id>/<framework>/serving.<model-id>.json and reviewed in a PR. model, target, framework, weights and hardware come from agentx.yaml, and every point's client_env.FRAMEWORK must equal that framework; plan pins the framework's CI image from .github/workflows/ci.yaml (AKLR_CI_IMAGE for sglang, AKLR_VLLM_CI_IMAGE for vllm) as image.run; client and trace are fixed in $defs below and updated by maintainers; plan adds them, arms, advisory env, devices, per-point trace, hashes and the sealed selection. None of those fields may appear here.",
+ "$defs": {
+  "client": {
+   "description": "InferenceX checkout providing the AgentX client and trace loaders (inferencex-e2e), shared by every recipe. Maintainers bump it; plan copies it into every run.",
+   "const": {"repo": "SemiAnalysisAI/InferenceX", "sha": "8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4"}
+  },
+  "trace": {
+   "description": "Agent trace dataset replayed at every point of every recipe. Maintainers bump it; plan copies it into each point and sets client_env.WEKA_LOADER_OVERRIDE to loader.",
+   "const": {"loader": "semianalysis_cc_traces_weka_062126", "repo": "semianalysisai/cc-traces-weka-062126", "revision": "23f152f6f0f9399a85901b89a6458def0ef16729"}
+  }
+ },
  "type": "object",
- "required": ["schema", "image", "source", "client", "trace", "points"],
+ "required": ["schema", "source", "points"],
  "not": {"anyOf": [
+  {"required": ["image"]}, {"required": ["client"]}, {"required": ["trace"]},
   {"required": ["model"]}, {"required": ["target"]}, {"required": ["framework"]}, {"required": ["weights"]}, {"required": ["hardware"]},
   {"required": ["arms"]}, {"required": ["plan_id"]}, {"required": ["grid_sha256"]}, {"required": ["selection"]}
  ]},
  "properties": {
   "schema": {"const": 4},
-  "image": {
-   "type": "object",
-   "required": ["run"],
-   "properties": {
-    "run": {"description": "Execution image pinned by digest.", "type": "string", "pattern": "@sha256:[0-9a-f]{64}$"},
-    "recipe": {"description": "Image the upstream recipe was measured with, for reference.", "type": "string"}
-   }
-  },
   "source": {
-   "description": "Where the recipe came from. Extra keys (config_key, files, deps, ...) are kept for review and reports.",
-   "type": "object",
-   "required": ["kind"],
-   "anyOf": [{"required": ["repo"]}, {"required": ["url"]}],
-   "properties": {
-    "kind": {"enum": ["inferencex", "cookbook"]},
-    "repo": {"type": "string"},
-    "url": {"type": "string"},
-    "ref": {"type": "string"},
-    "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
-   }
-  },
-  "client": {
-   "description": "InferenceX checkout providing the AgentX client and trace loaders (inferencex-e2e).",
-   "type": "object",
-   "required": ["repo", "sha"],
-   "properties": {"repo": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"}, "sha": {"type": "string", "pattern": "^[0-9a-f]{40}$"}}
-  },
-  "trace": {
-   "description": "Agent trace dataset replayed by the client at every point; plan copies it into each point and sets client_env.WEKA_LOADER_OVERRIDE to loader.",
-   "type": "object",
-   "required": ["loader", "repo", "revision"],
-   "properties": {
-    "loader": {"type": "string", "minLength": 1},
-    "repo": {"type": "string", "minLength": 1},
-    "revision": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
-   }
+   "description": "Where the recipe came from: kind and the one locator agentx.yaml recipe_source names, which must match it (config_key for inferencex, url for cookbook).",
+   "oneOf": [
+    {
+     "type": "object",
+     "required": ["kind", "config_key"],
+     "additionalProperties": false,
+     "properties": {"kind": {"const": "inferencex"}, "config_key": {"type": "string", "minLength": 1}}
+    },
+    {
+     "type": "object",
+     "required": ["kind", "url"],
+     "additionalProperties": false,
+     "properties": {"kind": {"const": "cookbook"}, "url": {"type": "string", "minLength": 1}}
+    }
+   ]
   },
   "points": {
    "description": "Only the points on the upstream measured Pareto frontier; plan runs all of them. ARM:CONC ids must be unique.",
@@ -54,12 +45,11 @@
    "minItems": 1,
    "items": {
     "type": "object",
-    "required": ["arm", "conc", "exp_name", "served_model_name", "gpus", "launch", "client_env", "runtime"],
-    "not": {"anyOf": [{"required": ["hashes"]}, {"required": ["trace"]}]},
+    "required": ["arm", "conc", "served_model_name", "gpus", "launch", "client_env", "runtime"],
+    "additionalProperties": false,
     "properties": {
-     "arm": {"description": "Serving scheme name; plan groups points by it.", "type": "string", "minLength": 1},
+     "arm": {"description": "Serving scheme name; plan groups points by it and names each point's result directory <model>-<arm>-c<conc> (exp_name).", "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
      "conc": {"type": "integer", "minimum": 1},
-     "exp_name": {"description": "Unique per recipe; names the point's result directory.", "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"},
      "served_model_name": {"type": "string", "minLength": 1},
      "gpus": {"description": "Must not exceed the target's hardware.gpu_count; plan sets HIP_VISIBLE_DEVICES from it.", "type": "integer", "minimum": 1},
      "launch": {
@@ -104,8 +94,7 @@
        "point_timeout_s": {"type": "integer", "exclusiveMinimum": 0},
        "poll_s": {"type": "number", "exclusiveMinimum": 0}
       }
-     },
-     "recipe_fingerprint": {"type": "string"}
+     }
     }
    }
   }

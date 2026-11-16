@@ -1,48 +1,11 @@
 {
   "schema": 4,
-  "image": {
-    "run": "lmsysorg/sglang:v0.5.22-rocm10-mi35x@sha256:1438dd8b9000adaefb5828edb1cc5713992815d4296f4ad1a1e98dee4e9c7e5f",
-    "recipe": "lmsysorg/sglang-rocm:v0.5.22-rocm720-mi35x-20261028"
-  },
   "source": {
     "kind": "inferencex",
-    "repo": "SemiAnalysisAI/InferenceX",
-    "ref": "main",
-    "sha": "8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4",
-    "commit_time": "2026-11-12T19:16:28-08:00",
-    "commit_subject": "perf(amd): DSv4.1-Flash ATOM AgentX on the 1110 nightly with MXFP8 KV, tuned delayer TP points, DTP2 at c64 and DEP2 at c128/c256 / DSv4.1-Flash ATOM AgentX 更新至 1110 nightly，MXFP8 KV，TP 点调 delayer，c64 DTP2，c128/c256 DEP2 (#3965)",
-    "config_key": "glm5.2-fp4-mi355x-sglang-agentic-mtp",
-    "files": {
-      "inferencex-e2e/configs/amd-master.yaml": "bdba1eb4d77fb678c19ae79db50ece93d27e4b09",
-      "inferencex-e2e/benchmarks/single_node/srt-slurm-recipes/glm5.2/sglang/mi355x-fp4-mtp/agentic.yaml": "fb528110405b97d7d44db895777569a51138d2ef",
-      "inferencex-e2e/benchmarks/runtime_settings.sh": "c674e646ae904b51d5f4df887d65e618d89be7bc",
-      "inferencex-e2e/configs/runners.yaml": "ea5d3a5f156b4fbdf7b03128abb4e8acbba2dac8",
-      "inferencex-e2e/infx/launch/drivers/srt/config.py": "45219e038764682118e340416987f9fe5b09b59c",
-      "inferencex-e2e/infx/launch/drivers/srt/recipe.py": "57e63c9fe61e12b2431ceebe1e0aec61f8cb9896",
-      "inferencex-e2e/infx/launch/drivers/srt/lanes.py": "79ce544cc0a6363bf71eabc92226c201b3581bce",
-      "inferencex-e2e/infx/matrix/generate.py": "be6f466b3974c446cf37534d4ae3b04ffc58c88c"
-    },
-    "deps": {
-      "pydantic": "2.14.2",
-      "pydantic-core": "2.50.2",
-      "pyyaml": "6.0.3",
-      "annotated-types": "0.8.0",
-      "typing-extensions": "4.16.0",
-      "typing-inspection": "0.4.4"
-    }
-  },
-  "client": {
-    "repo": "SemiAnalysisAI/InferenceX",
-    "sha": "8f29d8dc12329bb30a0300cd1c31f4e4cc2a19e4"
-  },
-  "trace": {
-    "loader": "semianalysis_cc_traces_weka_062126",
-    "repo": "semianalysisai/cc-traces-weka-062126",
-    "revision": "23f152f6f0f9399a85901b89a6458def0ef16729"
+    "config_key": "glm5.2-fp4-mi355x-sglang-agentic-mtp"
   },
   "points": [
     {
-      "exp_name": "glm5.2_tp4_conc24_kvnone_spec-mtp",
       "arm": "tp4-ep4-dcp4-none-spec-mtp",
       "conc": 24,
       "served_model_name": "amd/GLM-5.2-MXFP4",
@@ -141,11 +104,9 @@
         "ready_timeout_s": 7200,
         "poll_s": 10,
         "point_timeout_s": 30000
-      },
-      "recipe_fingerprint": "faf3151b6ded703af1c0bb0fdc7cb6e4df1da1befdb4176aa7a474c08eff99a7"
+      }
     },
     {
-      "exp_name": "glm5.2_tp4_conc4_kvdram-hicache_spec-mtp",
       "arm": "tp4-ep4-dram-hicache-spec-mtp",
       "conc": 4,
       "served_model_name": "amd/GLM-5.2-MXFP4",
@@ -249,11 +210,9 @@
         "ready_timeout_s": 7200,
         "poll_s": 10,
         "point_timeout_s": 30000
-      },
-      "recipe_fingerprint": "222a9e6477de740c28e9a7dccb61edfedb6a845a6ee504fdfdc3373cd7847724"
+      }
     },
     {
-      "exp_name": "glm5.2_tp4_conc8_kvdram-hicache_spec-mtp",
       "arm": "tp4-ep4-dram-hicache-spec-mtp",
       "conc": 8,
       "served_model_name": "amd/GLM-5.2-MXFP4",
@@ -357,11 +316,9 @@
         "ready_timeout_s": 7200,
         "poll_s": 10,
         "point_timeout_s": 30000
-      },
-      "recipe_fingerprint": "2aca823429c7776aa2eba8f26edb95dfd2bed8895e64e53b9ad25cca254b7752"
+      }
     },
     {
-      "exp_name": "glm5.2_tp4_conc10_kvdram-hicache_spec-mtp",
       "arm": "tp4-ep4-dram-hicache-spec-mtp",
       "conc": 10,
       "served_model_name": "amd/GLM-5.2-MXFP4",
@@ -465,11 +422,9 @@
         "ready_timeout_s": 7200,
         "poll_s": 10,
         "point_timeout_s": 30000
-      },
-      "recipe_fingerprint": "dec1cb51e04b4fa724ac6c6c33124883b246fc08bb3959a8d62e9a0b94473cfd"
+      }
     },
     {
-      "exp_name": "glm5.2_tp4_conc12_kvdram-hicache_spec-mtp",
       "arm": "tp4-ep4-dram-hicache-spec-mtp",
       "conc": 12,
       "served_model_name": "amd/GLM-5.2-MXFP4",
@@ -573,11 +528,9 @@
         "ready_timeout_s": 7200,
         "poll_s": 10,
         "point_timeout_s": 30000
-      },
-      "recipe_fingerprint": "bd09d08cf05d1f00d5ad7e50be6a12466b628fc698b1b9d92acad0529e9fa55e"
+      }
     },
     {
-      "exp_name": "glm5.2_tp4_conc14_kvdram-hicache_spec-mtp",
       "arm": "tp4-ep4-dram-hicache-spec-mtp",
       "conc": 14,
       "served_model_name": "amd/GLM-5.2-MXFP4",
@@ -681,11 +634,9 @@
         "ready_timeout_s": 7200,
         "poll_s": 10,
         "point_timeout_s": 30000
-      },
-      "recipe_fingerprint": "65cfad9c4c25783939526c35a77f3371dd7f1b6ed3393f222c4756174ef3c55b"
+      }
     },
     {
-      "exp_name": "glm5.2_tp4_conc16_kvdram-hicache_spec-mtp",
       "arm": "tp4-ep4-dram-hicache-spec-mtp",
       "conc": 16,
       "served_model_name": "amd/GLM-5.2-MXFP4",
@@ -789,11 +740,9 @@
         "ready_timeout_s": 7200,
         "poll_s": 10,
         "point_timeout_s": 30000
-      },
-      "recipe_fingerprint": "8540932eda42fc71ea7380046996c97602404404b48c4f7df98d22947d4303e5"
+      }
     },
     {
-      "exp_name": "glm5.2_tp8_conc1_kvnone_spec-mtp",
       "arm": "tp8-ep1-none-spec-mtp",
       "conc": 1,
       "served_model_name": "amd/GLM-5.2-MXFP4",
@@ -890,11 +839,9 @@
         "ready_timeout_s": 7200,
         "poll_s": 10,
         "point_timeout_s": 30000
-      },
-      "recipe_fingerprint": "08617228a97a38c6f07c21160dd9d2c117f00b3fb85bb9327a2ad6edc440907e"
+      }
     },
     {
-      "exp_name": "glm5.2_tp8_conc2_kvnone_spec-mtp",
       "arm": "tp8-ep1-none-spec-mtp",
       "conc": 2,
       "served_model_name": "amd/GLM-5.2-MXFP4",
@@ -991,11 +938,9 @@
         "ready_timeout_s": 7200,
         "poll_s": 10,
         "point_timeout_s": 30000
-      },
-      "recipe_fingerprint": "898c9b78461b780e6dfda4881e427a4664bcb19d53b55b678a5383174e637eb6"
+      }
     },
     {
-      "exp_name": "glm5.2_tp8_conc4_kvnone_spec-mtp",
       "arm": "tp8-ep1-none-spec-mtp",
       "conc": 4,
       "served_model_name": "amd/GLM-5.2-MXFP4",
@@ -1092,8 +1037,7 @@
         "ready_timeout_s": 7200,
         "poll_s": 10,
         "point_timeout_s": 30000
-      },
-      "recipe_fingerprint": "184504a92eda3c84a31c052b04cf8e4750be9a2fbb2f1e56a3633e7f9a2bd41e"
+      }
     }
   ]
 }

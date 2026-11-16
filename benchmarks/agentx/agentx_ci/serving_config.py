@@ -4,21 +4,31 @@
 from __future__ import annotations
 
 import copy
+import json
 import math
 import re
 from pathlib import Path
 
+from agentx_ci import ci_image
 from agentx_ci.model_config import RECIPE_SOURCE_KINDS
 from agentx_ci.preflight import pinned_image
 from agentx_ci.utils import SCHEMA, sha256_json
 
 POLICY = "pareto"
 SOURCE_KINDS = RECIPE_SOURCE_KINDS
+# The one agentx.yaml recipe_source key a recipe's source repeats beside kind.
+SOURCE_LOCATORS = {"inferencex": "config_key", "cookbook": "url"}
+RECIPE_SCHEMA = Path(__file__).resolve().parents[1] / "recipes/serving.schema.json"
+# Shared by every recipe and fixed by maintainers in RECIPE_SCHEMA's $defs; plan copies them in.
+TEMPLATE_TOP = ("client", "trace")
+# The framework's CI image from .github/workflows/ci.yaml; plan pins it and copies it in.
+CI_TOP = ("image",)
 # Identity owned by agentx.yaml; plan copies it in.
 AGENTX_TOP = ("model", "target", "framework", "weights", "hardware")
 # Fields owned by plan; a recipe file must not contain them.
 RUN_TOP = ("plan_id", "grid_sha256", "arms", "selection")
-RUN_POINT = ("hashes", "trace")
+RUN_POINT = ("exp_name", "hashes", "trace")
+RECIPE_POINT = ("arm", "conc", "served_model_name", "gpus", "launch", "client_env", "runtime")
 RUN_CLIENT_ENV = ("WEKA_LOADER_OVERRIDE",)
 # The AgentX client derives num_gpus, and so throughput per GPU, from these.
 TOPOLOGY_ENV = ("TP", "PP_SIZE", "PCP_SIZE", "DCP_SIZE", "EP_SIZE")
@@ -27,7 +37,7 @@ DEVICE_ENV = ("HIP_VISIBLE_DEVICES", "ROCR_VISIBLE_DEVICES", "CUDA_VISIBLE_DEVIC
 RUNTIME_LIMITS = ("ready_timeout_s", "point_timeout_s", "poll_s")
 RUN_FIELDS = ("selection", "plan_id")
 SHA1 = re.compile(r"[0-9a-f]{40}")
-# exp_name names a result directory, so it must stay a single safe path component.
+# exp_name, and the arm inside it, names a result directory, so it must stay a single safe path component.
 EXP_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 GITHUB_REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 
@@ -58,6 +68,10 @@ def recipe_path(config: str | Path, definition: dict) -> Path:
 
 def point_id(point: dict) -> str:
     return f"{point['arm']}:{point['conc']}"
+
+
+def exp_name(model_id: str, point: dict) -> str:
+    return f"{model_id}-{point['arm']}-c{point['conc']}"
 
 
 def _expect(condition: bool, message: str) -> None:
@@ -128,67 +142,73 @@ def _check_source(source: dict, configured: dict) -> None:
     _expect(
         source.get("kind") == kind, f"recipe source.kind must be {kind!r}, as agentx.yaml recipe_source says"
     )
-    keys = ("repo", "config_key") if kind == "inferencex" else ("url",)
-    for key in keys:
-        _expect(
-            source.get(key) == configured.get(key),
-            f"recipe source.{key} must be {configured.get(key)!r}, as agentx.yaml recipe_source says",
-        )
-    expect = configured.get("expect") or {}
-    expected = [expect[key] for key in ("config_file", "recipe") if key in expect]
-    missing = [path for path in expected if path not in (source.get("files") or {})]
-    _expect(not missing, f"recipe source.files is missing the agentx.yaml recipe_source files: {missing}")
+    key = SOURCE_LOCATORS[kind]
+    extra = sorted(set(source) - {"kind", key})
+    _expect(not extra, f"recipe source holds only kind and {key}; remove {extra}")
+    _expect(
+        source.get(key) == configured.get(key),
+        f"recipe source.{key} must be {configured.get(key)!r}, as agentx.yaml recipe_source says",
+    )
+
+
+def template(path: Path | None = None) -> dict:
+    """The client and trace every recipe runs with, fixed in the recipe schema's $defs."""
+    path = Path(path or RECIPE_SCHEMA)
+    defs = json.loads(path.read_text(encoding="utf-8")).get("$defs") or {}
+    fixed = {key: (defs.get(key) or {}).get("const") for key in TEMPLATE_TOP}
+    client, trace = fixed["client"], fixed["trace"]
+    _expect(
+        isinstance(client, dict)
+        and isinstance(client.get("repo"), str)
+        and GITHUB_REPO.fullmatch(client["repo"])
+        and SHA1.fullmatch(str(client.get("sha"))),
+        f"{path.name} $defs.client.const needs an owner/name repo and a 40-character sha",
+    )
+    _expect(
+        isinstance(trace, dict)
+        and all(isinstance(trace.get(key), str) and trace[key] for key in ("loader", "repo"))
+        and SHA1.fullmatch(str(trace.get("revision"))),
+        f"{path.name} $defs.trace.const needs loader, repo and a pinned revision",
+    )
+    return fixed
 
 
 def check_recipe(recipe: dict, definition: dict) -> None:
     """Validate a recipe file against the schema 4 contract and agentx.yaml."""
     _expect(isinstance(recipe, dict) and recipe.get("schema") == SCHEMA, f"recipe schema must be {SCHEMA}")
+    leaked = [key for key in TEMPLATE_TOP if key in recipe]
+    _expect(not leaked, f"recipe contains fields fixed in {RECIPE_SCHEMA.name}: {leaked}")
+    leaked = [key for key in CI_TOP if key in recipe]
+    _expect(not leaked, f"recipe contains fields plan reads from {ci_image.CI_WORKFLOW.name}: {leaked}")
     leaked = [key for key in AGENTX_TOP if key in recipe]
     _expect(not leaked, f"recipe contains agentx.yaml-owned fields: {leaked}")
     leaked = [key for key in RUN_TOP if key in recipe]
     _expect(not leaked, f"recipe contains plan-owned fields: {leaked}")
-    for key in ("image", "source", "client", "trace"):
-        _expect(isinstance(recipe.get(key), dict), f"recipe.{key} must be an object")
-    _expect(pinned_image(recipe["image"].get("run", "")), "recipe image.run must be pinned by digest")
+    _expect(isinstance(recipe.get("source"), dict), "recipe.source must be an object")
     source = recipe["source"]
     _expect(source.get("kind") in SOURCE_KINDS, f"recipe source.kind must be one of {SOURCE_KINDS}")
-    _expect(
-        isinstance(source.get("repo") or source.get("url"), str), "recipe source needs a repo or url string"
-    )
     _check_source(source, definition["recipe_source"])
-    client = recipe["client"]
-    _expect(
-        isinstance(client.get("repo"), str)
-        and GITHUB_REPO.fullmatch(client["repo"])
-        and SHA1.fullmatch(str(client.get("sha"))),
-        "recipe client needs an owner/name repo and a 40-character sha",
-    )
-    trace = recipe["trace"]
-    _expect(
-        all(isinstance(trace.get(key), str) and trace[key] for key in ("loader", "repo"))
-        and SHA1.fullmatch(str(trace.get("revision"))),
-        "recipe trace needs loader, repo and a pinned revision",
-    )
     points = recipe.get("points")
     _expect(isinstance(points, list) and points, "recipe.points must be a nonempty list")
-    ids, exp_names = [], []
+    ids = []
     for point in points:
         _expect(
-            isinstance(point, dict) and isinstance(point.get("arm"), str) and point["arm"],
-            "every point needs an arm name",
+            isinstance(point, dict)
+            and isinstance(point.get("arm"), str)
+            and EXP_NAME.fullmatch(point["arm"]),
+            "every point needs an arm name of letters, digits, '.', '_' or '-'",
         )
         _expect(type(point.get("conc")) is int and point["conc"] > 0, "point conc must be a positive integer")
         label = point_id(point)
         ids.append(label)
         leaked = [key for key in RUN_POINT if key in point]
         _expect(not leaked, f"point {label} contains plan-owned fields: {leaked}")
-        for key in ("exp_name", "served_model_name"):
-            _expect(isinstance(point.get(key), str) and point[key], f"point {label} needs {key}")
+        unknown = sorted(set(point) - set(RECIPE_POINT) - set(RUN_POINT))
+        _expect(not unknown, f"point {label} contains unknown fields: {unknown}")
         _expect(
-            EXP_NAME.fullmatch(point["exp_name"]),
-            f"point {label} exp_name must be a single path component of letters, digits, '.', '_' or '-'",
+            isinstance(point.get("served_model_name"), str) and point["served_model_name"],
+            f"point {label} needs served_model_name",
         )
-        exp_names.append(point["exp_name"])
         _expect(
             type(point.get("gpus")) is int and 0 < point["gpus"] <= definition["hardware"]["gpu_count"],
             f"point {label} gpus must fit the target hardware",
@@ -215,7 +235,6 @@ def check_recipe(recipe: dict, definition: dict) -> None:
         _check_topology(label, point["client_env"], point["gpus"])
         check_point_runtime(label, point)
     _expect(len(ids) == len(set(ids)), "recipe points must have unique ARM:CONC ids")
-    _expect(len(exp_names) == len(set(exp_names)), "recipe points must have unique exp_name values")
 
 
 def spec_sha256(spec: dict) -> str:
@@ -232,14 +251,21 @@ def seal_selection(selection: dict) -> dict:
     return selection
 
 
-def build_run(recipe: dict, definition: dict) -> dict:
-    """Add agentx.yaml identity and plan-owned fields: env, trace, arms, hashes and a sealed selection."""
+def build_run(recipe: dict, definition: dict, image: str | None = None) -> dict:
+    """Add agentx.yaml identity, the pinned CI image, the schema's client and trace, and plan-owned fields:
+    exp_name, env, trace, arms, hashes and a sealed selection. image defaults to the framework's CI image now."""
     check_recipe(recipe, definition)
+    image = image or ci_image.run_image(definition["framework"]["id"])
+    _expect(pinned_image(image), f"execution image {image!r} must be pinned by digest")
     spec = {"schema": SCHEMA, **{key: copy.deepcopy(definition[key]) for key in AGENTX_TOP}}
+    spec["image"] = {"run": image}
     spec.update(copy.deepcopy(recipe))
-    trace = spec.pop("trace")
+    fixed = template()
+    spec["client"] = fixed["client"]
+    trace = fixed["trace"]
     advisory = definition.get("advisory_env") or {}
     for point in spec["points"]:
+        point["exp_name"] = exp_name(definition["model"]["id"], point)
         launch = point["launch"]
         clash = sorted(set(advisory) & set(launch["env"]))
         if clash:

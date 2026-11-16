@@ -10,6 +10,7 @@ import sys
 import uuid
 from pathlib import Path
 
+from agentx_ci import ci_image
 from agentx_ci import serving_config as sc
 from agentx_ci.model_config import ConfigError, model_config, select_models, select_runs
 from agentx_ci.pr_scope import declared_models
@@ -25,11 +26,16 @@ from agentx_ci.utils import (
 )
 
 
-def load_recipe(config: str | Path, definition: dict) -> dict:
+def load_recipe(config: str | Path, definition: dict, images: dict[str, str] | None = None) -> dict:
+    """Build a run from its reviewed recipe; images caches each framework's pinned CI image for one plan."""
     path = sc.recipe_path(config, definition)
     if not path.is_file():
         raise ConfigError(f"missing {path}; the recipe must be generated and reviewed first")
-    return sc.build_run(read_json(path), definition)
+    framework = definition["framework"]["id"]
+    images = {} if images is None else images
+    if framework not in images:
+        images[framework] = ci_image.run_image(framework)
+    return sc.build_run(read_json(path), definition, images[framework])
 
 
 def warn(message: str) -> None:
@@ -117,12 +123,13 @@ def build(args: argparse.Namespace) -> dict:
         ],
     }
     write_json(args.out / "manifest.json", manifest)
+    images: dict[str, str] = {}
     for item, definition in zip(manifest["targets"], definitions):
         run = (item["model"]["id"], item["target"]["id"], item["framework"]["id"])
         label = "/".join(run)
         print(f"[{utc_now()}] loading recipe for {label}", flush=True)
         try:
-            spec = load_recipe(args.config, definition)
+            spec = load_recipe(args.config, definition, images)
             spec["plan_id"] = uuid.uuid4().hex
             spec["selection"] = sc.narrow_selection(spec["selection"], points, duration)
             item["image"] = spec["image"]["run"]

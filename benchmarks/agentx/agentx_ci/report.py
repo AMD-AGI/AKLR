@@ -918,9 +918,6 @@ AKLR {aklr_link} · {tr(lang, "client", "客户端")} {source_ref(client)} · {p
 <dt>{tr(lang, "verified image ID", "已验证镜像 ID")}</dt><dd><code>{
         escape(run.get("execution", {}).get("image_id", tr(lang, "unverified", "未经验证")))
     }</code></dd>
-<dt>{tr(lang, "recipe image", "recipe 镜像")}</dt><dd><code>{
-        escape(run["image"].get("recipe") or "-")
-    }</code></dd>
 <dt>{tr(lang, "recipe source", "recipe 来源")}</dt><dd>{escape(source.get("kind", ""))} · {
         source_ref(source)
     }</dd>
@@ -934,16 +931,21 @@ AKLR {aklr_link} · {tr(lang, "client", "客户端")} {source_ref(client)} · {p
 
 
 def source_ref(source: dict) -> str:
-    """Link a repo@sha source, or show its URL and ref."""
+    """Link a repo@sha source, or show its URL and ref, then its config_key."""
     repo, sha = source.get("repo"), source.get("sha")
+    parts = []
     if repo and sha:
-        text = f'{escape(repo)} <a href="https://github.com/{escape(repo)}/commit/{escape(sha)}">{short(sha)}</a>'
-    else:
-        text = escape(str(source.get("url") or repo or "-"))
+        parts.append(
+            f'{escape(repo)} <a href="https://github.com/{escape(repo)}/commit/{escape(sha)}">{short(sha)}</a>'
+        )
+    elif source.get("url") or repo:
+        text = escape(str(source.get("url") or repo))
         if source.get("ref"):
             text += f" @ {escape(str(source['ref']))}"
-    extra = source.get("config_key") or source.get("commit_subject")
-    return text + (f" · <code>{escape(str(extra))}</code>" if extra else "")
+        parts.append(text)
+    if source.get("config_key"):
+        parts.append(f"<code>{escape(str(source['config_key']))}</code>")
+    return " · ".join(parts) or "-"
 
 
 def selection_section(results: dict, lang: str) -> str:

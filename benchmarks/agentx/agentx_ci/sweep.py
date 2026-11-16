@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--out", type=Path, required=True, help="Host directory for results and logs")
     parser.add_argument(
-        "--image", help="Must match the recipe image; update the recipe serving.json to change it"
+        "--image", help="Must match the planned image, which plan takes from .github/workflows/ci.yaml"
     )
     parser.add_argument("--cache", type=Path, help="Host kernel cache directory; defaults to <out>/cache")
     parser.add_argument("--work", type=Path, help="Host runtime/trace workspace; defaults to <out>/work")

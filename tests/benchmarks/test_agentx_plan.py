@@ -22,6 +22,7 @@ AGENTX = Path(__file__).resolve().parents[2] / "benchmarks/agentx"
 with mock.patch.object(sys, "path", [str(AGENTX), *sys.path]):
     plan = importlib.import_module("agentx_ci.plan")
     sc = importlib.import_module("agentx_ci.serving_config")
+    ci_image = importlib.import_module("agentx_ci.ci_image")
 
 try:
     import jsonschema
@@ -85,6 +86,7 @@ class AgentXRecipeTestCase(unittest.TestCase):
         self.durations = {}
         self.enterContext(redirect_stdout(io.StringIO()))
         self.enterContext(redirect_stderr(io.StringIO()))
+        self.run_image = self.enterContext(mock.patch.object(ci_image, "run_image", return_value=IMAGE))
 
     def write_config(self):
         self.config.write_text(yaml.safe_dump(self.definition, sort_keys=False))
@@ -95,15 +97,11 @@ class AgentXRecipeTestCase(unittest.TestCase):
     def recipe(self, model_id="first", target_id="mi355x", framework_id="sglang"):
         return {
             "schema": 4,
-            "image": {"run": IMAGE, "recipe": "example.invalid/upstream:tag"},
-            "source": {"kind": "cookbook", "url": "https://recipes.example.invalid/model.json", "ref": "v1"},
-            "client": {"repo": "example/inferencex", "sha": "c" * 40},
-            "trace": {"loader": "fixture", "repo": "example/traces", "revision": "d" * 40},
+            "source": {"kind": "cookbook", "url": "https://recipes.example.invalid/model.json"},
             "points": [
                 {
                     "arm": "tp8",
                     "conc": conc,
-                    "exp_name": f"{model_id}-tp8-c{conc}",
                     "served_model_name": "example/model",
                     "gpus": 8,
                     "launch": {
@@ -149,8 +147,10 @@ class AgentXRecipeContractTests(AgentXRecipeTestCase):
         definition = self.definition_of()
         for key in sc.AGENTX_TOP:
             self.assertEqual(spec[key], definition[key])
-        self.assertEqual(spec["points"][1]["trace"], recipe["trace"])
-        self.assertEqual(spec["points"][1]["client_env"]["WEKA_LOADER_OVERRIDE"], "fixture")
+        fixed = sc.template()
+        self.assertEqual(spec["client"], fixed["client"])
+        self.assertEqual(spec["points"][1]["trace"], fixed["trace"])
+        self.assertEqual(spec["points"][1]["client_env"]["WEKA_LOADER_OVERRIDE"], fixed["trace"]["loader"])
         self.assertEqual(spec["selection"]["points"], ["tp8:1", "tp8:2"])
         self.assertEqual(spec["arms"]["tp8"]["concs"], [1, 2])
         self.assertTrue(spec["arms"]["tp8"]["arm_serve_sha256"])
@@ -179,31 +179,29 @@ class AgentXRecipeContractTests(AgentXRecipeTestCase):
             "plan-owned fields: ['hashes']": lambda r: r["points"][0].update(hashes={}),
             "plan-owned fields: ['selection']": lambda r: r.update(selection={"method": "measured-frontier"}),
             "plan-owned fields: ['arms']": lambda r: r.update(arms={"tp8": {}}),
-            "plan-owned fields: ['trace']": lambda r: r["points"][0].update(trace=r["trace"]),
+            "plan-owned fields: ['trace']": lambda r: r["points"][0].update(trace={}),
+            "unknown fields: ['recipe_fingerprint']": lambda r: r["points"][0].update(recipe_fingerprint="f"),
+            "fixed in serving.schema.json: ['client']": lambda r: r.update(client=sc.template()["client"]),
+            "fixed in serving.schema.json: ['trace']": lambda r: r.update(trace=sc.template()["trace"]),
             "plan-owned keys": lambda r: r["points"][0]["client_env"].update(WEKA_LOADER_OVERRIDE="x"),
             "must not set devices": lambda r: r["points"][0]["launch"]["env"].update(HIP_VISIBLE_DEVICES="0"),
             "agentx.yaml-owned fields: ['model']": lambda r: r.update(model={"id": "first"}),
             "agentx.yaml-owned fields: ['hardware']": lambda r: r.update(hardware={}),
-            "pinned by digest": lambda r: r["image"].update(run="example.invalid/server:latest"),
+            "plan reads from ci.yaml: ['image']": lambda r: r.update(image={"run": IMAGE}),
             "source.kind": lambda r: r["source"].update(kind="other"),
             "source.kind must be 'cookbook'": lambda r: r["source"].update(kind="inferencex"),
             "source.url must be": lambda r: r["source"].update(url="https://elsewhere.invalid/model.json"),
-            "40-character sha": lambda r: r["client"].update(sha="main"),
+            "holds only kind and url; remove ['ref']": lambda r: r["source"].update(ref="v1"),
             "unique": lambda r: r["points"].append(copy.deepcopy(r["points"][0])),
             "arm name": lambda r: r["points"][0].update(arm=""),
             "fit the target": lambda r: r["points"][0].update(gpus=16),
-            "pinned revision": lambda r: r["trace"].update(revision="main"),
             "advisory env": lambda r: r["points"][0]["launch"]["env"].update(AKLR_SGLANG_PLUGIN="0"),
             "FRAMEWORK must be 'sglang'": lambda r: r["points"][1]["client_env"].update(FRAMEWORK="vllm"),
             "client_env.TP must be": lambda r: r["points"][0]["client_env"].pop("TP"),
             "client_env.DCP_SIZE must be": lambda r: r["points"][0]["client_env"].update(DCP_SIZE="0"),
             "must equal gpus": lambda r: r["points"][0]["client_env"].update(TP="4"),
             "DP_ATTENTION must be": lambda r: r["points"][0]["client_env"].update(DP_ATTENTION="True"),
-            "exp_name must be a single path component": lambda r: r["points"][0].update(
-                exp_name="/agentx/cache"
-            ),
-            "unique exp_name": lambda r: r["points"][1].update(exp_name=r["points"][0]["exp_name"]),
-            "owner/name repo": lambda r: r["client"].update(repo="https://evil.invalid/x"),
+            "plan-owned fields: ['exp_name']": lambda r: r["points"][0].update(exp_name="first-tp8-c1"),
             "AIPERF_EXPERIMENTAL_FAST must be '0'": lambda r: r["points"][0]["client_env"].update(
                 AIPERF_EXPERIMENTAL_FAST="1"
             ),
@@ -223,12 +221,36 @@ class AgentXRecipeContractTests(AgentXRecipeTestCase):
                 with self.assertRaisesRegex(sc.RecipeError, message.replace("[", r"\[").replace("]", r"\]")):
                     sc.build_run(recipe, self.definition_of())
 
-    def test_exp_names_cannot_leave_the_point_directory(self):
-        for name in ("/agentx/cache", "..", ".", "a/../b", "a\\b", "", ".hidden"):
+    def test_client_and_trace_come_from_the_schema(self):
+        schema = json.loads(sc.RECIPE_SCHEMA.read_text())
+        cases = {
+            "40-character sha": lambda d: d["client"]["const"].update(sha="main"),
+            "owner/name repo": lambda d: d["client"]["const"].update(repo="https://evil.invalid/x"),
+            "pinned revision": lambda d: d["trace"]["const"].update(revision="main"),
+            "needs loader": lambda d: d.pop("trace"),
+        }
+        for message, mutate in cases.items():
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as tmp:
+                broken = copy.deepcopy(schema)
+                mutate(broken["$defs"])
+                path = Path(tmp) / "serving.schema.json"
+                path.write_text(json.dumps(broken))
+                with self.assertRaisesRegex(sc.RecipeError, message):
+                    sc.template(path)
+                with mock.patch.object(sc, "RECIPE_SCHEMA", path):
+                    with self.assertRaisesRegex(sc.RecipeError, message):
+                        sc.build_run(self.recipe(), self.definition_of())
+
+    def test_plan_names_each_point_from_model_arm_and_conc(self):
+        spec = sc.build_run(self.recipe(), self.definition_of())
+        self.assertEqual([p["exp_name"] for p in spec["points"]], ["first-tp8-c1", "first-tp8-c2"])
+
+    def test_arms_cannot_leave_the_point_directory(self):
+        for name in ("/agentx/cache", "..", ".", "a/../b", "a\\b", "", ".hidden", "tp8:1"):
             with self.subTest(name=name):
                 recipe = self.recipe()
-                recipe["points"][0]["exp_name"] = name
-                with self.assertRaises(sc.RecipeError):
+                recipe["points"][0]["arm"] = name
+                with self.assertRaisesRegex(sc.RecipeError, "arm name"):
                     sc.build_run(recipe, self.definition_of())
 
     def test_inferencex_recipes_must_match_the_configured_entry(self):
@@ -244,14 +266,15 @@ class AgentXRecipeContractTests(AgentXRecipeTestCase):
             "expect": expect,
         }
         self.write_config()
-        source = {**configured, "sha": "e" * 40, "files": {path: "f" * 40 for path in expect.values()}}
+        source = {"kind": "inferencex", "config_key": "model-key"}
         recipe = self.recipe()
         recipe["source"] = source
         sc.build_run(recipe, self.definition_of())
         cases = {
-            "source.repo must be": lambda s: s.update(repo="example/fork"),
             "source.config_key must be": lambda s: s.update(config_key="other-key"),
-            "missing the agentx.yaml recipe_source files": lambda s: s["files"].pop("recipes/model.yaml"),
+            r"holds only kind and config_key; remove \['files', 'repo', 'sha'\]": lambda s: s.update(
+                repo=configured["repo"], sha="e" * 40, files={path: "f" * 40 for path in expect.values()}
+            ),
         }
         for message, mutate in cases.items():
             with self.subTest(message=message):
@@ -393,9 +416,29 @@ class AgentXPlanTests(AgentXRecipeTestCase):
             self.assertEqual(item["point_policy"], sc.POLICY)
             self.assertEqual(item["point_ids"], ["tp8:1", "tp8:2"])
             self.assertEqual(item["image"], IMAGE)
+            self.assertEqual(spec["image"], {"run": IMAGE})
             self.assertEqual(item["serving_sha256"], plan.sha256_json(spec))
             self.assertEqual(item["selection_manifest_sha256"], spec["selection"]["manifest_sha256"])
             self.assertTrue(spec["plan_id"])
+        # One digest lookup per framework, shared by its runs.
+        self.assertEqual(sorted(c.args[0] for c in self.run_image.call_args_list), ["sglang", "vllm"])
+
+    def test_execution_image_comes_from_the_ci_image_of_the_framework(self):
+        vllm = "example.invalid/vllm@sha256:" + "b" * 64
+        self.run_image.side_effect = lambda framework: vllm if framework == "vllm" else IMAGE
+        args = self.args()
+        manifest = plan.build(args)
+        for item in manifest["targets"]:
+            expected = vllm if item["framework"]["id"] == "vllm" else IMAGE
+            self.assertEqual(item["image"], expected)
+            run = (item["model"]["id"], item["target"]["id"], item["framework"]["id"])
+            self.assertEqual(self.serving_of(args, *run)["image"], {"run": expected})
+        with self.assertRaisesRegex(sc.RecipeError, "must be pinned by digest"):
+            sc.build_run(self.recipe(), self.definition_of(), "example.invalid/server:latest")
+        self.run_image.side_effect = ValueError("docker buildx imagetools inspect x failed: denied")
+        failed = plan.build(self.args())
+        self.assertEqual({item["status"] for item in failed["targets"]}, {"resolve-failed"})
+        self.assertIn("denied", failed["targets"][0]["error"])
 
     def test_default_selection_works_without_runner_label_attribute(self):
         args = self.args()

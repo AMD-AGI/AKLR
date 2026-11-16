@@ -75,7 +75,7 @@ def legacy_results(run_id="fixture-run", *, itl=0.00351):
             "point_policy": serving_config.POLICY,
             "selection": sealed_selection(["tp1:1"]),
             "duration_override_s": None,
-            "image": {"run": image, "recipe": image},
+            "image": {"run": image},
             "execution": {"image_reference": image, "image_id": "sha256:" + "d" * 64},
             "expected_hardware": {"gpu_count": 1, "gpu_name_pattern": "Fixture", "gpu_arch": "gfx950"},
             "hardware": {

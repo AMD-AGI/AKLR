@@ -8,8 +8,8 @@
 
 ```mermaid
 flowchart TD
-    X["InferenceX / cookbook"] -.->|"recipe 模块，PR 审核"| L["recipes/<family>/<target>/<framework>/serving.<model>.json"] --> P
     T["手动、PR 标签或定时触发"] --> P["plan：校验 recipe 并补充运行层字段"]
+    X["InferenceX / cookbook"] -.->|"recipe 模块，PR 审核"| L["recipes/#lt;family#gt;/#lt;target#gt;/#lt;framework#gt;/serving.#lt;model#gt;.json"] --> P
     P --> S["sweep：准备环境，逐模型逐点测试并保存结果"]
     S --> R["report：校验结果，生成报告与基线，汇总测量结果"]
     R -->|"满足发布条件"| D["pages：部署已上传的 Pages artifact"]
@@ -18,9 +18,7 @@ flowchart TD
     A -.->|"读取 manifest.json"| R
 ```
 
-实线表示 job 的执行顺序；虚线表示 artifact 的上传或读取。`agentx-plan` 只上传一次，分别供 sweep 和 report 读取。report 等待 plan 和 sweep 结束后运行；sweep 失败时仍可依据计划生成失败报告。
-
-sweep 遍历完所选数据点后，只要至少一次测量成功，job 就正常结束。有其他点失败时，摘要显示**部分成功**，全部测量失败时 sweep 才因测点结果报失败。一次运行（一个模型、target 与服务框架）的所有点成功完成正式测量且源码为干净状态，才会更新该运行的基线。失败、部分完成、dirty 或源码状态未知的运行不会更新基线。
+实线表示 job 的执行顺序；虚线表示 artifact 的上传或读取。`agentx-plan` 只上传一次，分别供 sweep 和 report 读取。report 等待 plan 和 sweep 结束后运行；sweep 失败时仍可依据计划生成失败报告。sweep 遍历完所选数据点后，只要至少一次测量成功，job 就正常结束。有其他点失败时，摘要显示**部分成功**，全部测量失败时 sweep 才因测点结果报失败。
 
 ### 1.1 使用 Github runner 触发
 
@@ -51,7 +49,7 @@ sweep 遍历完所选数据点后，只要至少一次测量成功，job 就正�
 - 保留标签后推送新提交会触发新的 run，该 PR 正在运行或排队的 AgentX run 会被自动取消。
 - `ci:agentx-mi355x` 是 **GitHub Actions runner 标签**。PR 运行只选择 target 配置为 `runner_label: agentx-mi355x` 的已启用模型、target 和框架。
 - PR 描述中的 `AgentX:` 行（见 PR 模板）用 `agentx.yaml` 中的模型 id（不区分大小写，已经支持的模型见 agentx.yaml） 列出改动可能影响的模型，以逗号或空格分隔，例如 `AgentX: glm52-fp4, minimaxm31flash-fp4`，只写 `AgentX: all`（`all` 是唯一的名字）则运行全部已启用模型。
-- 未列出的模型会被跳过。没有这一行，或只保留模板注释时，跳过本次运行。不是已启用模型 id 的名字也会被跳过；plan job 仍然成功，但会在运行页面上添加 warning 注释。
+- 未列出的模型会被跳过。没有这一行，或只保留模板注释时，跳过本次运行。不是已启用模型 id 的名字也会被跳过。
 - plan job 在运行时读取 PR 描述。修改 `AgentX:` 行后，需要 re-run workflow 或推送新提交才会生效；仅编辑描述不会触发运行。
 
 ### 1.3 定时运行
@@ -61,8 +59,6 @@ sweep 遍历完所选数据点后，只要至少一次测量成功，job 就正�
 | 触发方式 | 模型 / target 范围 | 测量点 | AKLR off/on 每次测量时长 | 发布 Pages |
 | --- | --- | --- | --- | --- |
 | 定时 | 全部绑定 `agentx-mi355x` 的 target 下已启用的框架 | recipe 中的 Pareto 点 | 3600 秒 | 是 |
-
-周环比：每次正式运行都与同一模型、target、框架最近的基线比较。报告中的“周环比”和“上次运行以来的 AKLR 改动”两个板块暂时隐藏；比较结果和提交历史仍会计算并写入 `report.json`。
 
 ## 2. CLI 命令介绍
 
@@ -235,8 +231,8 @@ report:
 | `hardware.gpu_arch`（target 内） | 要求的 GPU 架构，例如 `gfx950` |
 | `hardware.gpu_count`（target 内） | 目标主机的 GPU 数量；当前配置为 `8` |
 | `runner_label`（target 内） | GitHub 调度该 target 使用的 runner 标签，需与注册时的 `--label` 一致 |
-| `recipe_source.kind`（框架内） | recipe 模块从哪里取该框架的 recipe：`inferencex` 或 `cookbook`。显式填写，切换来源需经审核。`plan` 要求 recipe 的 `source` 与之一致：`kind` 相同；`inferencex` 还要求 `repo`、`config_key` 相同，且 `source.files` 包含 `expect.config_file` 和 `expect.recipe`；`cookbook` 要求 `url` 相同 |
-| `recipe_source.*`（框架内其余键） | 供 recipe 模块读取的来源定位信息。`inferencex`：`repo`、`ref`（解析出的 commit 记录在 `source.sha`）、`config_key`（上游 master 配置中的条目键）、`expect`（`config_file`、`recipe`、`model`、`model-prefix`、`framework`、`runner_pattern`，须与上游一致）；`cookbook`：例如 `framework`、`url` |
+| `recipe_source.kind`（框架内） | recipe 模块从哪里取该框架的 recipe：`inferencex` 或 `cookbook`。显式填写，切换来源需经审核。`plan` 要求 recipe 的 `source` 与之一致：`kind` 相同；`inferencex` 还要求 `config_key` 相同，`cookbook` 要求 `url` 相同 |
+| `recipe_source.*`（框架内其余键） | 供 recipe 模块读取的来源定位信息。`inferencex`：`repo`、`ref`、`config_key`（上游 master 配置中的条目键）、`expect`（`config_file`、`recipe`、`model`、`model-prefix`、`framework`、`runner_pattern`，须与上游一致）；`cookbook`：例如 `framework`、`url` |
 | `weights.repo` | Hugging Face 模型仓库，每个模型独立设置 |
 | `weights.revision` | 固定的权重 commit SHA；服务从该 snapshot 路径加载；与 srtctl 一致，不传 `--revision` |
 | `advisory_env` | 可选，全局服务器补充环境变量，值建议写成字符串 |
@@ -245,9 +241,7 @@ report:
 | `...frameworks.<framework>.advisory_env` | 框架级补充环境，覆盖以上各级同名值。不要在这里设置 AKLR plugin 开关，执行器会按模式设置。冲突规则相同 |
 | `report.repo_url` | 报告中 AKLR commit 链接所用的仓库 URL（历史链接暂时隐藏）；不是 Pages 站点地址 |
 
-`weights` 和 `precision` 由同一模型的各个 target 和框架共享。服务镜像只由 recipe 的 `image.run` 决定。
-
-执行器在两种模式下设置对应框架的 AKLR plugin 开关：SGLang 为 `AKLR_SGLANG_PLUGIN`，vLLM 为 `AKLR_VLLM_PLUGIN`，同时设置 `AKLR_DISABLE`。
+`weights` 和 `precision` 由同一模型的各个 target 和框架共享。服务镜像由 plan 从 `.github/workflows/ci.yaml` 读取对应框架的 CI 镜像，见 3.2 节。
 
 ### 3.2 新增模型
 
@@ -294,15 +288,15 @@ report:
           #     url: https://recipes.vllm.ai/<Hugging Face owner/model>.json
 ```
 
-然后将 InferenceX 或 SGLang/vLLM cookbook 的 recipe 转成 target 下每个已启用框架一份的 `recipes/<family>/<target-id>/<framework>/serving.<model-id>.json`，其中 `<family>` 是模型在 `agentx.yaml` 中的 `family`（`GLM`、`MiniMax` 等），`<framework>` 为 `sglang` 或 `vllm`，每个点的 `client_env.FRAMEWORK` 必须与之一致。文件通过 PR 更新，经审核后入库。约定见 [recipes/serving.schema.json](recipes/serving.schema.json)（schema 4）：
+然后将 InferenceX 或 SGLang/vLLM cookbook 的 recipe 转成 target 下每个已启用框架一份的 `recipes/<family>/<target-id>/<framework>/serving.<model-id>.json`，其中 `<family>` 是模型在 `agentx.yaml` 中的 `family`（`GLM`、`MiniMax` 等），`<framework>` 为 `sglang` 或 `vllm`，每个点的 `client_env.FRAMEWORK` 必须与之一致。文件通过 PR 更新，经审核后入库。约定见 [recipes/serving.schema.json](recipes/serving.schema.json)：
+
+recipe 需要手动填写的字段如下:
 
 | 字段 | 由 recipe 填写 |
 | --- | --- |
-| `image.run` / `image.recipe` | 固定 digest 的执行镜像 / recipe 上游测量用的镜像（仅供参考） |
-| `source` | `kind`（`inferencex` 或 `cookbook`）、`repo` 或 `url`，可选 `ref`、`sha`，以及 `config_key`、`files` 等来源细节 |
-| `client` | InferenceX 仓库的 `repo` 与 `sha`；无论 recipe 来自哪里，都用其中的 AgentX 客户端（压测与 trace 加载）按 InferenceX 的方法压测 |
-| `trace` | 每个点回放的 agent trace 数据集：`loader`、`repo`、固定的 `revision`；sweep 下载前会确认固定版本客户端中的 `loader` 解析到的正是 `repo` |
-| `points[]` | 只包含上游实测 Pareto 前沿上的点，plan 会全部运行：`arm`、`conc`、`exp_name`、`served_model_name`、`gpus`（不超过 `hardware.gpu_count`）、`launch.command` / `launch.env`、`client_env`（必须包含与 `conc` 相同的 `CONC`、纯数字的 `TOTAL_CPU_DRAM_GB`，以及 `AIPERF_EXPERIMENTAL_FAST: "0"`）、`runtime`（`port`，填 null 表示自动选空闲端口；以及正数的 `ready_timeout_s`、`point_timeout_s`、`poll_s`），可选 `recipe_fingerprint` |
+| `source` | `kind`（`inferencex` 或 `cookbook`）、优先添加 inferencex 已有的配置，若 inferencex 没有对应的配置，参考 cookbook 添加测试的配置点。只填 `kind` 和一个与 `agentx.yaml` `recipe_source` 相同的定位键：`inferencex` 填 `config_key`，`cookbook` 填 `url`，不能有其他键 |
+| `points[]` | 需要测试的配置点，plan 会全部运行：`arm`(每个点的配置，只能含字母、数字、`.`、`_`、`-`；plan 据此生成结果目录名 `exp_name` = `<model>-<arm>-c<conc>`)、`conc`(并发数)、`served_model_name`、`gpus`（不超过 `hardware.gpu_count`）、`launch.command` / `launch.env`(与 inferencex 或者 cookbook 中保持一致)、`client_env`（必须包含与 `conc` 相同的 `CONC`）、`runtime`（参考其他文件即可） |
+
 
 ## 4. 注册 runner
 

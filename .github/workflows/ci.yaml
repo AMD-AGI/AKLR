@@ -2,7 +2,10 @@ name: AKLR-CI
 
 env:
   # Shared by all GPU jobs; container.image cannot reference the env context.
+  # AgentX plan also reads it and pins its current digest as the sglang runs' server image.
   AKLR_CI_IMAGE: &ci_image lmsysorg/sglang:v0.5.22-rocm10-mi35x
+  # AgentX plan pins its current digest as the vllm runs' server image; no job here runs in it yet.
+  AKLR_VLLM_CI_IMAGE: vllm/vllm-openai-rocm:v0.33.0-rocm100
   # The AITER the bench times AKLR's kernels against: ROCm/aiter at this commit, installed over the image's.
   AKLR_BASELINE_AITER: dbd8bf5bd624120197a7a26780a8c72201824f0f
   PYTHONDONTWRITEBYTECODE: '1'

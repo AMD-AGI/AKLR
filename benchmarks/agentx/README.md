@@ -10,8 +10,8 @@ This guide covers the AKLR AgentX performance pipeline, GitHub triggers, local C
 
 ```mermaid
 flowchart TD
-    X["InferenceX / cookbook"] -.->|"recipe module, reviewed PR"| L["recipes/<family>/<target>/<framework>/serving.<model>.json"] --> P
     T["Manual, PR label, or scheduled trigger"] --> P["plan: check recipes and add run-layer fields"]
+    X["InferenceX / cookbook"] -.->|"recipe module, reviewed PR"| L["recipes/#lt;family#gt;/#lt;target#gt;/#lt;framework#gt;/serving.#lt;model#gt;.json"] --> P
     P --> S["sweep: prepare the environment, test models and points serially, save results"]
     S --> R["report: validate results, generate reports and baselines, summarize outcomes"]
     R -->|"Publishing enabled"| D["pages: deploy the uploaded Pages artifact"]
@@ -20,9 +20,7 @@ flowchart TD
     A -.->|"Read manifest.json"| R
 ```
 
-Solid arrows show job execution order; dashed arrows show artifact uploads and reads. `agentx-plan` is uploaded once and read by both sweep and report. The report job waits for plan and sweep to finish; it can use the plan to report failures even when sweep fails.
-
-After sweep finishes the selected points, the job completes successfully as long as at least one measurement succeeded. When other points fail, its summary says **Partial success**; sweep fails on point results only when every measurement failed. A run's baseline (one model, target and serving framework) is updated only when every point of that run completes a formal measurement successfully and the source tree is clean. Failed, incomplete, dirty, or unknown-source runs do not update the baseline.
+Solid arrows show job execution order; dashed arrows show artifact uploads and reads. `agentx-plan` is uploaded once and read by both sweep and report. The report job waits for plan and sweep to finish; it can use the plan to report failures even when sweep fails. After sweep finishes the selected points, the job completes successfully as long as at least one measurement succeeded. When other points fail, its summary says **Partial success**; sweep fails on point results only when every measurement failed.
 
 ### 1.1 Trigger with a GitHub Runner
 
@@ -54,7 +52,7 @@ Notes:
 - Pushing new commits while keeping the label triggers a new run and automatically cancels that PR's running or queued AgentX run.
 - `ci:agentx-mi355x` is a **GitHub Actions runner label**. PR runs select only the enabled models, targets and frameworks whose target has `runner_label: agentx-mi355x`.
 - The `AgentX:` line of the PR description (see the PR template) lists the models the change can affect by their ids in `agentx.yaml`, ignoring case (see `agentx.yaml` for the supported models), separated by commas or spaces, such as `AgentX: glm52-fp4, minimaxm31flash-fp4`; `AgentX: all`, with `all` as the only name, runs every enabled model.
-- Unlisted models are skipped. Without the line, or with only the template comment, the run is skipped. Names that are not enabled model ids are skipped too; the plan job still succeeds but adds a warning annotation to the run.
+- Unlisted models are skipped. Without the line, or with only the template comment, the run is skipped. Names that are not enabled model ids are skipped too.
 - The plan job reads the PR description when it runs. After editing the `AgentX:` line, re-run the workflow or push a new commit to apply it; editing the description alone does not start a run.
 
 ### 1.3 Scheduled Runs
@@ -64,8 +62,6 @@ Set the repository variable `AGENTX_SCHEDULE_ENABLED` to `true` to enable the we
 | Trigger | Model / target scope | Points | Duration per AKLR off/on measurement | Publish Pages |
 | --- | --- | --- | --- | --- |
 | Schedule | All enabled frameworks of the targets assigned to `agentx-mi355x` | Recipe Pareto points | 3600 seconds | Yes |
-
-Week-over-week comparison: each formal run is compared with the latest baseline of the same model, target and framework. The report's "Week over week" and "AKLR changes since the previous run" sections are temporarily hidden; the comparison and commit history are still computed and written to `report.json`.
 
 ## 2. CLI Commands
 
@@ -238,8 +234,8 @@ report:
 | Target-level `hardware.gpu_arch` | Required GPU architecture, such as `gfx950` |
 | Target-level `hardware.gpu_count` | GPU count on the target host; currently configured as `8` |
 | Target-level `runner_label` | GitHub runner label used to schedule the target; must match registration's `--label` |
-| Framework-level `recipe_source.kind` | Where the recipe module takes this framework's recipe from: `inferencex` or `cookbook`. Set explicitly; switching sources is a reviewed change. `plan` requires the recipe's `source` to match it: the same `kind`; for `inferencex` the same `repo` and `config_key`, with `expect.config_file` and `expect.recipe` listed in `source.files`; for `cookbook` the same `url` |
-| Framework-level `recipe_source.*` (other keys) | Source locator read by the recipe module. For `inferencex`: `repo`, `ref` (the resolved commit is recorded in `source.sha`), `config_key` (entry key in the upstream master configuration) and `expect` (`config_file`, `recipe`, `model`, `model-prefix`, `framework`, `runner_pattern`, which must match upstream). For `cookbook`: e.g. `framework` and `url` |
+| Framework-level `recipe_source.kind` | Where the recipe module takes this framework's recipe from: `inferencex` or `cookbook`. Set explicitly; switching sources is a reviewed change. `plan` requires the recipe's `source` to match it: the same `kind`, plus the same `config_key` for `inferencex` or the same `url` for `cookbook` |
+| Framework-level `recipe_source.*` (other keys) | Source locator read by the recipe module. For `inferencex`: `repo`, `ref`, `config_key` (entry key in the upstream master configuration) and `expect` (`config_file`, `recipe`, `model`, `model-prefix`, `framework`, `runner_pattern`, which must match upstream). For `cookbook`: e.g. `framework` and `url` |
 | `weights.repo` | Hugging Face model repository, configured separately for each model |
 | `weights.revision` | Pinned weight commit SHA, used for the snapshot path that the server loads; like srtctl, the server gets no `--revision` |
 | `advisory_env` | Optional global additional server environment; use string values |
@@ -248,9 +244,7 @@ report:
 | `...frameworks.<framework>.advisory_env` | Framework-level environment overriding the levels above. Do not set the AKLR plugin switch here; the executor sets it per mode. The same conflict rule applies |
 | `report.repo_url` | Repository URL used for AKLR commit links (history links are temporarily hidden); not the Pages site URL |
 
-Targets and frameworks within a model share its `weights` and `precision`. The server image is defined only by the recipe's `image.run`.
-
-The executor sets the framework's AKLR plugin switch for each mode: `AKLR_SGLANG_PLUGIN` for SGLang and `AKLR_VLLM_PLUGIN` for vLLM, together with `AKLR_DISABLE`.
+Targets and frameworks within a model share its `weights` and `precision`. Plan takes the server image from the framework's CI image in `.github/workflows/ci.yaml`; see section 3.2.
 
 ### 3.2 Add a Model
 
@@ -297,15 +291,15 @@ Add a separate entry under the existing `models:` mapping. Replace the angle-bra
           #     url: https://recipes.vllm.ai/<Hugging Face owner/model>.json
 ```
 
-Then turn the InferenceX or SGLang/vLLM cookbook recipe into one file per enabled framework of the target, `recipes/<family>/<target-id>/<framework>/serving.<model-id>.json`, where `<family>` is the model's `family` in `agentx.yaml` (`GLM`, `MiniMax`, ...) and `<framework>` is `sglang` or `vllm`; every point's `client_env.FRAMEWORK` must equal that framework. The file is updated through a PR and merged after review. Its contract is [recipes/serving.schema.json](recipes/serving.schema.json) (schema 4):
+Then turn the InferenceX or SGLang/vLLM cookbook recipe into one file per enabled framework of the target, `recipes/<family>/<target-id>/<framework>/serving.<model-id>.json`, where `<family>` is the model's `family` in `agentx.yaml` (`GLM`, `MiniMax`, ...) and `<framework>` is `sglang` or `vllm`; every point's `client_env.FRAMEWORK` must equal that framework. The file is updated through a PR and merged after review. Its contract is [recipes/serving.schema.json](recipes/serving.schema.json):
 
-| Field | Written by the recipe module |
+Fill in these recipe fields by hand:
+
+| Field | Filled in by the recipe |
 | --- | --- |
-| `image.run` / `image.recipe` | Execution image pinned by digest / image the recipe was measured with (reference only) |
-| `source` | `kind` (`inferencex` or `cookbook`), `repo` or `url`, optional `ref`, `sha`, and any source details such as `config_key` or `files` |
-| `client` | `repo` and `sha` of the InferenceX checkout whose AgentX client (load generator and trace loaders) runs every recipe, whatever its source |
-| `trace` | Agent trace dataset replayed at every point: `loader`, `repo`, pinned `revision`; before downloading, sweep checks that the pinned client's `loader` resolves to `repo` |
-| `points[]` | Only the points on the upstream measured Pareto frontier, all of which plan runs: `arm` (serving scheme name), `conc`, `exp_name`, `served_model_name`, `gpus` (at most `hardware.gpu_count`), `launch.command` / `launch.env`, `client_env` (must include `CONC` equal to `conc`, digit `TOTAL_CPU_DRAM_GB`, and `AIPERF_EXPERIMENTAL_FAST: "0"`), `runtime` (`port`, null for a free port, and positive `ready_timeout_s`, `point_timeout_s`, `poll_s`), optional `recipe_fingerprint` |
+| `source` | `kind` (`inferencex` or `cookbook`). Prefer an existing InferenceX config; when InferenceX has none, add the points to test from a cookbook. Fill in only `kind` and the one locator that matches `agentx.yaml` `recipe_source`: `config_key` for `inferencex`, `url` for `cookbook`; no other keys |
+| `points[]` | The points to test, all of which plan runs: `arm` (each point's serving scheme, of letters, digits, `.`, `_` or `-`; plan names each point's result directory `exp_name` = `<model>-<arm>-c<conc>` from it), `conc` (concurrency), `served_model_name`, `gpus` (at most `hardware.gpu_count`), `launch.command` / `launch.env` (the same as in InferenceX or the cookbook), `client_env` (must include `CONC` equal to `conc`), `runtime` (follow the other recipe files) |
+
 
 ## 4. Register a Runner
 
