@@ -50,7 +50,7 @@ if git fetch --no-tags origin aklr-perf/main; then
   while read -r sha path; do
     [[ $sha =~ ^[0-9a-f]{40}$ && $path =~ $schema_path ]] || continue
     if ! current "$sha"; then
-      printf '::warning::Dropped %q: measured at %s, before aklr/core changes on main\n' "$path" "$sha"
+      printf '::warning::Dropped %q: measured at %s, before aklr/core or stack.json changes on main\n' "$path" "$sha"
       continue
     fi
     git show "$prev:$path" > "$RUNNER_TEMP/carried.json"
@@ -64,7 +64,7 @@ if current "$GITHUB_SHA"; then
     done < <(find "$report/schemas" -mindepth 1 \( -type f -o -type l \) -print0)
   done
 else
-  echo "::warning::Dropped this run's measurements: main has aklr/core changes since $GITHUB_SHA"
+  echo "::warning::Dropped this run's measurements: main has aklr/core or stack.json changes since $GITHUB_SHA"
 fi
 if git diff --quiet; then
   echo 'No measured schema to publish.' >> "$GITHUB_STEP_SUMMARY"

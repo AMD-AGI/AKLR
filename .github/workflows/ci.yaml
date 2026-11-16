@@ -136,7 +136,7 @@ jobs:
           for sha in $shas; do
             [[ $sha =~ ^[0-9a-f]{40}$ ]] || { printf '::error::Malformed Measured-SHA %q\n' "$sha"; exit 1; }
             PYTHONPATH=. python -c "$AKLR_MEASUREMENT_CURRENT" "$sha" ||
-              { echo "::error::Measured at $sha, before aklr/core changes on main; a later publish-measurement rebuilds this PR without it"; exit 1; }
+              { echo "::error::Measured at $sha, before aklr/core or stack.json changes on main; a later publish-measurement rebuilds this PR without it"; exit 1; }
           done
       # CI only checks; authors export the schemas locally.
       - name: Check exported files
