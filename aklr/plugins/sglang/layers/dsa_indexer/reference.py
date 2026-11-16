@@ -25,6 +25,7 @@ from aklr.plugins.sglang.layers.dsa_indexer.contract import (
     FP8_MAX,
     HEAD_DIM,
     PAGE_SIZE,
+    Q_SCALE_FLOOR,
     ROPE_DIM,
     SCALE_FLOOR,
 )
@@ -32,7 +33,11 @@ from aklr.plugins.sglang.layers.dsa_indexer.contract import (
 if TYPE_CHECKING:
     from torch import Tensor
 
-__all__ = ["dsa_indexer_key_prepare_reference", "dsa_indexer_prepare_reference"]
+__all__ = [
+    "dsa_indexer_key_prepare_reference",
+    "dsa_indexer_prepare_reference",
+    "dsa_indexer_writer_prepare_reference",
+]
 
 # a page: PAGE_SIZE keys of HEAD_DIM fp8 values in 16 x 16 tiles, then their fp32 scales
 _TILE = 16
@@ -66,45 +71,53 @@ def _hadamard(v: Tensor) -> Tensor:
     return v
 
 
-def _rotate(v: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
+def _turn(v: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
     """RoPE on the first ROPE_DIM values in interleaved pairs (2i, 2i + 1), each turned value
-    rounded to bf16, then the Hadamard transform times HEAD_DIM^-0.5, rounded to bf16. ``v`` is
-    [..., HEAD_DIM] bf16 values in float64; cos and sin [..., ROPE_DIM // 2], broadcast."""
+    rounded to bf16. ``v`` is [..., HEAD_DIM] bf16 values in float64; cos and sin
+    [..., ROPE_DIM // 2], broadcast."""
     import torch
 
     pairs = v[..., :ROPE_DIM].reshape(*v.shape[:-1], ROPE_DIM // 2, 2)
     even, odd = pairs[..., 0], pairs[..., 1]
     turned = torch.stack((_bf16(even * cos - odd * sin), _bf16(odd * cos + even * sin)), dim=-1)
-    v = torch.cat((turned.reshape(*v.shape[:-1], ROPE_DIM), v[..., ROPE_DIM:]), dim=-1)
-    return _bf16(_hadamard(v) * HEAD_DIM**-0.5)
+    return torch.cat((turned.reshape(*v.shape[:-1], ROPE_DIM), v[..., ROPE_DIM:]), dim=-1)
 
 
-def _scales(v: Tensor) -> Tensor:
-    """Each row's fp8 scale: 2^ceil(log2(max(amax, SCALE_FLOOR) / FP8_MAX)), exact."""
+def _rotate(v: Tensor, cos: Tensor, sin: Tensor) -> Tensor:
+    """_turn, then the Hadamard transform times HEAD_DIM^-0.5, rounded to bf16."""
+    return _bf16(_hadamard(_turn(v, cos, sin)) * HEAD_DIM**-0.5)
+
+
+def _scales(v: Tensor, floor: float = SCALE_FLOOR) -> Tensor:
+    """Each row's fp8 scale: 2^ceil(log2(max(amax, floor) / FP8_MAX)), exact."""
     import torch
 
-    ratio = v.abs().amax(-1).clamp(min=SCALE_FLOOR) / FP8_MAX
+    ratio = v.abs().amax(-1).clamp(min=floor) / FP8_MAX
     mantissa, exponent = torch.frexp(ratio)
     # ratio = mantissa * 2^exponent, mantissa in [0.5, 1): a power of two is mantissa 0.5
     return torch.ldexp(torch.ones_like(ratio), exponent - (mantissa == 0.5).to(exponent.dtype))
 
 
+def _normalized(k: Tensor, args: Mapping[str, Any], value: Callable[[str], Tensor]) -> Tensor:
+    """k_norm's LayerNorm of the bf16 keys ``k``, exact, rounded to bf16."""
+    import torch
+
+    mean = k.mean(-1, keepdim=True)
+    variance = (k - mean).square().mean(-1, keepdim=True)
+    return _bf16(
+        (k - mean) / torch.sqrt(variance + args["k_norm_eps"]) * value("k_norm_weight") + value("k_norm_bias")
+    )
+
+
 def _keys(point: Any, args: Mapping[str, Any], decode: Callable) -> tuple[Tensor, Tensor]:
     """(keys [n_tokens, HEAD_DIM], their scales [n_tokens]): the turned, transformed bf16
     keys in float64, and their fp8 scales."""
-    import torch
-
     dtypes = point.dtypes
 
     def value(name: str) -> Tensor:
         return decode(args[name], dtypes[name]).double()
 
-    k = _project(value("x"), value("wk"))
-    mean = k.mean(-1, keepdim=True)
-    variance = (k - mean).square().mean(-1, keepdim=True)
-    k = _bf16(
-        (k - mean) / torch.sqrt(variance + args["k_norm_eps"]) * value("k_norm_weight") + value("k_norm_bias")
-    )
+    k = _normalized(_project(value("x"), value("wk")), args, value)
     cos, sin = _rotary(args, decode, dtypes)
     k = _rotate(k, cos, sin)
     return k, _scales(k)
@@ -126,12 +139,15 @@ def _stored_cache(
     scales: Tensor,
 ) -> Tensor:
     """index_k_cache after the call, its bytes as fp8 values in float64: each token's fp8
-    values (keys / scale, unrounded) and the bytes of its fp32 scale at its slot."""
+    values (keys / scale, unrounded) and the bytes of its fp32 scale at its slot; a negative
+    slot stores nothing."""
     import torch
 
     cache = args["index_k_cache"]
     pages = decode(cache, point.dtypes["index_k_cache"]).double().reshape(-1, _PAGE_BYTES).clone()
     slots = args["out_cache_loc"].long()
+    stored = slots >= 0
+    slots, keys, scales = slots[stored], keys[stored], scales[stored]
     page, key = slots // PAGE_SIZE, slots % PAGE_SIZE
     d = torch.arange(HEAD_DIM, device=slots.device)
     # aiter's preshuffled page: [key // 16, d // 16, key % 16, d % 16], then the scales
@@ -182,3 +198,57 @@ def dsa_indexer_key_prepare_reference(
     keys, key_scales = _keys(point, row_major_args, decode)
     cache = _stored_cache(point, row_major_args, decode, keys, key_scales)
     return torch.zeros(0, dtype=torch.float64, device=cache.device), cache
+
+
+def _block_fp8_project(a: Tensor, w: Tensor, w_scale: Tensor) -> Tensor:
+    """a w^T with ``a`` [tokens, k] quantized per 128-wide group of k as aiter's per-1x128
+    quantization does it (fp8 e4m3fn codes at max(amax, 1e-10) / 448, the codes a * (1 /
+    scale) in float32), times the fp8 ``w`` and its scale per 128 x 128 block ``w_scale``;
+    the exact sum rounded once to bf16."""
+    import torch
+
+    groups = a.float().unflatten(-1, (-1, 128))
+    scale = groups.abs().amax(-1, keepdim=True).clamp(min=1e-10) * (1.0 / FP8_MAX)
+    codes = (groups * (1.0 / scale)).clamp(-FP8_MAX, FP8_MAX).to(torch.float8_e4m3fn).double()
+    a_scaled = (codes * scale.double()).flatten(-2)
+    blocks = w_scale.repeat_interleave(128, 0)[: w.shape[0]].repeat_interleave(128, 1)
+    return _bf16(a_scaled @ (w * blocks).mT)
+
+
+def dsa_indexer_writer_prepare_reference(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+    decode: Callable[[Tensor, str], Tensor],
+) -> tuple[Tensor, Tensor, Tensor]:
+    """(q_fp8, head_weights, index_k_cache) in the writer's format: each query head
+    bf16(q_lora wq_b^T), turned, over its scale; head_weights bf16(x weights_proj^T) * that
+    scale * float32(HEAD_DIM^-0.5 n_heads^-0.5); each key LayerNorm(bf16(x wk^T)), turned,
+    stored at its slot. With weight scales, the projections take the activations in fp8 per
+    128-wide group (_block_fp8_project)."""
+    import torch
+
+    dtypes = point.dtypes
+    args = row_major_args
+    n_heads = point.axes["n_heads"]
+
+    def value(name: str) -> Tensor:
+        return decode(args[name], dtypes[name]).double()
+
+    if point.attrs["has_wq_b_scale"]:
+
+        def project(a: str, w: str) -> Tensor:
+            return _block_fp8_project(value(a), value(w), value(f"{w}_scale"))
+
+    else:
+
+        def project(a: str, w: str) -> Tensor:
+            return _project(value(a), value(w))
+
+    cos, sin = _rotary(args, decode, dtypes)
+    keys = _turn(_normalized(project("x", "wk"), args, value), cos, sin)
+    q = _turn(project("q_lora", "wq_b").reshape(-1, n_heads, HEAD_DIM), cos[:, None], sin[:, None])
+    q_scales = _scales(q, Q_SCALE_FLOOR)
+    weights_scale = torch.tensor(HEAD_DIM**-0.5 * n_heads**-0.5, dtype=torch.float32).item()
+    head_weights = _project(value("x"), value("weights_proj")) * q_scales * weights_scale
+    cache = _stored_cache(point, args, decode, keys, _scales(keys))
+    return q / q_scales[..., None], head_weights, cache
