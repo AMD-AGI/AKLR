@@ -50,6 +50,33 @@ group = {"sglang": "sglang.srt.plugins", "vllm": "vllm.general_plugins"}[framewo
 assert any(ep.name == "aklr" for ep in entry_points(group=group)), f"{framework} will not load AKLR"
 PY
 
+python3 - <<'PY'
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+if json.loads(Path(os.environ["AGENTX_SERVING"]).read_text())["framework"]["id"] != "sglang":
+    sys.exit(0)
+try:
+    from sglang.srt.mem_cache.unified_cache import tree_core_registry as registry
+except ImportError:
+    print("Rust TreeCore warmup skipped: this SGLang has no TreeCore registry")
+    sys.exit(0)
+
+try:
+    manifest = registry._RUST_TREE_CORE_MANIFEST
+    if manifest.is_file():
+        for command in (("cargo", "--version", "--verbose"), ("rustc", "-vV")):
+            subprocess.run(command, cwd=manifest.parent.parent, check=True)
+    import sglang.srt.mem_cache.rust_tree_core.extension  # noqa: F401
+except Exception as exc:
+    print(f"WARNING: Rust TreeCore warmup failed; servers will resolve it themselves: {exc!r}", file=sys.stderr)
+else:
+    print("Rust TreeCore warmed up")
+PY
+
 out=${GITHUB_ENV:-$cache/aklr.env}
 [[ -n ${GITHUB_ENV:-} ]] || : > "$out"
 for name in GPU_ARCHS AITER_JIT_DIR FLYDSL_RUNTIME_CACHE_DIR FLYDSL_AUTOTUNE_CACHE_DIR TRITON_CACHE_DIR \
