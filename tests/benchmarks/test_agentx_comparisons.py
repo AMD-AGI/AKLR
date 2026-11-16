@@ -356,7 +356,7 @@ class AgentXPartialWeeklyTests(unittest.TestCase):
         with mock.patch.object(report, "svg_chart", return_value="") as chart:
             report.charts(current, baseline, comparison, "en")
         previous = [item for item in chart.call_args.args[1] if item["color"] == report.BASELINE_COLOR]
-        self.assertEqual(previous[0]["frontier"], slim(analysis.verified(baseline, "tp1")))
+        self.assertEqual(previous[0]["line"], slim(analysis.verified(baseline, "tp1")))
 
     def test_method_is_mixed_when_arms_compare_differently(self):
         arms = {"a": {"status": "comparable"}, "b": {"status": "curve"}, "c": {"status": "new-arm"}}
@@ -398,7 +398,7 @@ class AgentXPartialWeeklyTests(unittest.TestCase):
         with mock.patch.object(report, "svg_chart", return_value="") as chart:
             report.charts(current, baseline, comparison, "en")
         previous = [item for item in chart.call_args.args[1] if item["color"] == report.BASELINE_COLOR]
-        self.assertEqual(previous[0]["frontier"], slim(analysis.measured(baseline)))
+        self.assertEqual(previous[0]["line"], slim(analysis.measured(baseline)))
 
 
 class AgentXCurveComparisonTests(unittest.TestCase):
@@ -457,7 +457,7 @@ class AgentXCurveComparisonTests(unittest.TestCase):
         with mock.patch.object(report, "svg_chart", return_value="") as chart:
             report.charts(current, baseline, comparison, "en")
         previous = [item for item in chart.call_args.args[1] if item["color"] == report.BASELINE_COLOR]
-        self.assertEqual(previous[0]["frontier"], slim(analysis.measured(baseline)))
+        self.assertEqual(previous[0]["line"], slim(analysis.measured(baseline)))
         html = report.comparison_tables(comparison, "zh")
         self.assertIn("曲线比较", html)
         self.assertIn("合并前沿", html)
@@ -477,7 +477,7 @@ class AgentXPartialComparisonReportTests(unittest.TestCase):
         series = chart.call_args.args[1]
         previous = [item for item in series if item["color"] == report.BASELINE_COLOR]
         self.assertEqual(len(previous), 1)
-        self.assertEqual(previous[0]["frontier"], slim([baseline["points"][0]]))
+        self.assertEqual(previous[0]["line"], slim([baseline["points"][0]]))
         self.assertEqual(series[0]["points"], current["control"]["points"])
         self.assertEqual(series[1]["points"], [current["points"][0], current["points"][2]])
 
@@ -487,7 +487,21 @@ class AgentXPartialComparisonReportTests(unittest.TestCase):
         with mock.patch.object(report, "svg_chart", return_value="") as chart:
             report.charts(current, baseline, comparison, "en")
         previous = [item for item in chart.call_args.args[1] if item["color"] == report.BASELINE_COLOR]
-        self.assertEqual(previous[0]["frontier"], slim(analysis.verified(baseline, "tp1")))
+        self.assertEqual(previous[0]["line"], slim(analysis.verified(baseline, "tp1")))
+
+    def test_chart_lines_connect_every_successful_point(self):
+        current = formal_results("current")
+        set_metrics(current["points"][0], 100, 40)
+        set_metrics(current["points"][1], 50, 20)
+        set_metrics(current["points"][2], 10, 30)
+        fail(current["control"]["points"][1])
+        with mock.patch.object(report, "svg_chart", return_value="") as chart:
+            report.charts(current, None, {"status": "none"}, "en")
+        disabled, enabled = chart.call_args.args[1]
+        self.assertEqual(enabled["line"], [current["points"][i] for i in (1, 2, 0)])
+        self.assertEqual(len(analysis.frontier(enabled["line"])), 1)
+        self.assertEqual(disabled["line"], report.through_all(analysis.measured(current["control"])))
+        self.assertEqual(len(disabled["line"]), len(current["control"]["points"]) - 1)
 
     def test_partial_report_exports_gains_and_drops_the_all_success_requirement(self):
         current = formal_results("current")

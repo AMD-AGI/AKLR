@@ -17,7 +17,6 @@ from agentx_ci.performance_analysis import (
     Y,
     compare,
     compare_aklr,
-    frontier,
     frontiers,
     measured,
 )
@@ -33,7 +32,6 @@ from agentx_ci.utils import (
 )
 
 ARM_COLORS = ("#2563eb", "#ea580c", "#16a34a", "#9333ea", "#0891b2")
-COMBINED_COLOR = "#111827"
 BASELINE_COLOR = "#9ca3af"
 # Keep the published InferenceX CSV labels in both report languages.
 X_LABEL = "P90 Interactivity (tok/s/user)"
@@ -176,7 +174,7 @@ def monotone_path(points: list[tuple[float, float]]) -> str:
 
 
 def svg_chart(title: str, series: list[dict], lang: str, width: int = 620, height: int = 380) -> str:
-    """Render scatter points and Pareto frontiers."""
+    """Render scatter points and the monotone curve through each series."""
     left, right, bottom = 64, 16, 52
     legend_rows: list[list[tuple[dict, float]]] = [[]]
     row_x = 0.0
@@ -192,7 +190,7 @@ def svg_chart(title: str, series: list[dict], lang: str, width: int = 620, heigh
     extent = [
         point
         for chart_series in series
-        for point in [*chart_series["points"], *(chart_series.get("frontier") or [])]
+        for point in [*chart_series["points"], *(chart_series.get("line") or [])]
     ]
     xs = [point[X] for point in extent] or [1.0]
     ys = [point[Y] for point in extent] or [1.0]
@@ -227,15 +225,12 @@ def svg_chart(title: str, series: list[dict], lang: str, width: int = 620, heigh
         f"{Y_LABEL}</text>"
     )
     for s in series:
-        line = s.get("frontier") or []
+        line = s.get("line") or []
         if len(line) > 1:
             path = monotone_path([(sx(p[X]), sy(p[Y])) for p in line])
             dash = ' stroke-dasharray="6 4"' if s.get("dashed") else ""
             out.append(f'<path d="{path}" fill="none" stroke="{s["color"]}" stroke-width="2"{dash}/>')
         for p in s["points"]:
-            pareto_coordinates = s.get("pareto_coordinates")
-            off_frontier = pareto_coordinates is not None and (p[X], p[Y]) not in pareto_coordinates
-            out.append('<g class="non-pareto-point">' if off_frontier else "<g>")
             fill = "white" if s.get("hollow") else s["color"]
             mode = {
                 "enabled": tr(lang, "AKLR enabled", "开启 AKLR"),
@@ -253,7 +248,6 @@ def svg_chart(title: str, series: list[dict], lang: str, width: int = 620, heigh
                 f'stroke="{s["color"]}" stroke-width="1.6" tabindex="0" role="img" '
                 f'aria-label="{escape(tip)}" aria-describedby="point-tooltip" data-point-tooltip="{escape(tip)}"/>'
             )
-            out.append("</g>")
     for i, row in enumerate(legend_rows):
         y = 44 + i * 18
         for s, offset in row:
@@ -285,14 +279,18 @@ def short(sha: str) -> str:
     return sha[:10]
 
 
+def through_all(points: list[dict]) -> list[dict]:
+    """Every point in interactivity order, so the curve connects them all as InferenceX does."""
+    return sorted(points, key=lambda p: (p[X], p[Y]))
+
+
 def charts(results: dict, baseline: dict | None, comparison: dict, lang: str) -> str:
     control = results.get("control")
     if control is not None:
-        title = tr(lang, "AKLR enabled vs disabled · Pareto frontiers", "开启与关闭 AKLR · Pareto 前沿")
+        title = tr(lang, "AKLR enabled vs disabled", "开启与关闭 AKLR")
         series = []
         for data, enabled in ((control, False), (results, True)):
             points = measured(data)
-            line = frontier(points)
             series.append(
                 {
                     "label": tr(lang, "AKLR enabled", "开启 AKLR")
@@ -300,35 +298,24 @@ def charts(results: dict, baseline: dict | None, comparison: dict, lang: str) ->
                     else tr(lang, "AKLR disabled", "关闭 AKLR"),
                     "color": "#16a34a" if enabled else "#64748b",
                     "points": points,
-                    "frontier": line,
+                    "line": through_all(points),
                     "dashed": not enabled,
                     "hollow": not enabled,
-                    "pareto_coordinates": {(p[X], p[Y]) for p in line},
                 }
             )
     else:
-        title = tr(lang, "All arms · combined Pareto frontier", "全部实验组 · 合并 Pareto 前沿")
-        current = frontiers(results)
-        pareto_coordinates = {(p[X], p[Y]) for p in current["combined"]}
-        arms = sorted(current["arms"])
+        title = tr(lang, "All arms", "全部实验组")
+        arms = sorted({p["arm"] for p in results["points"]})
         series = [
             {
                 "label": tr(lang, f"{arm} (this run)", f"{arm}（本次）"),
                 "color": arm_color(arm, arms),
                 "aklr_mode": results["run"].get("aklr_mode"),
                 "points": measured(results, arm),
-                "pareto_coordinates": pareto_coordinates,
+                "line": through_all(measured(results, arm)),
             }
             for arm in arms
         ]
-        series.append(
-            {
-                "label": tr(lang, "combined frontier", "合并前沿"),
-                "color": COMBINED_COLOR,
-                "points": [],
-                "frontier": current["combined"],
-            }
-        )
     previous_frontier = (comparison.get("combined") or {}).get("baseline_frontier") or []
     curve = comparison.get("method") in ("curve", "mixed")
     if baseline is not None and comparison["status"] == "ok" and previous_frontier:
@@ -349,17 +336,12 @@ def charts(results: dict, baseline: dict | None, comparison: dict, lang: str) ->
                 ),
                 "color": BASELINE_COLOR,
                 "points": [],
-                "frontier": previous_frontier,
+                "line": previous_frontier,
                 "dashed": True,
             }
         )
     chart = svg_chart(title, series, lang, width=1000, height=380)
-    toggle = (
-        '<label class="chart-toggle"><input type="checkbox" data-show-non-pareto checked> '
-        + tr(lang, "Show non-Pareto points", "显示非 Pareto 点")
-        + "</label>"
-    )
-    return f'<div class="card">{toggle}{chart}</div>'
+    return f'<div class="card">{chart}</div>'
 
 
 def aklr_section(results: dict, lang: str) -> str:
@@ -674,9 +656,6 @@ h2 { font-size:17px; margin:28px 0 12px; }
 h3 { font-size:15px; margin:18px 0 8px; }
 .card { background:white; border:1px solid var(--line); border-radius:10px; padding:12px 16px; }
 .chart { width:100%; height:auto; }
-.chart-toggle { display:flex; align-items:center; gap:6px; width:fit-content; cursor:pointer; margin:2px 0 10px; }
-.chart-toggle input { accent-color:#2563eb; }
-html[data-show-non-pareto="false"] .non-pareto-point { display:none; }
 .chart-title { font-size:14px; font-weight:600; fill:var(--fg); }
 .grid { stroke:#eef0f3; } .tick { font-size:11px; fill:var(--muted); }
 .axis { font-size:12px; fill:#374151; } .legend { font-size:12px; fill:#374151; }
@@ -774,15 +753,6 @@ SCRIPT = """
   });
   window.addEventListener("scroll", hidePoint, true);
   window.addEventListener("resize", hidePoint);
-  document.addEventListener("change", function (event) {
-    if (!event.target.matches("[data-show-non-pareto]")) { return; }
-    hidePoint();
-    var show = event.target.checked;
-    root.dataset.showNonPareto = String(show);
-    document.querySelectorAll("[data-show-non-pareto]").forEach(function (input) {
-      input.checked = show;
-    });
-  });
 })();
 """
 
@@ -917,7 +887,7 @@ AKLR {aklr_link} · {tr(lang, "client", "客户端")} {source_ref(client)} · {p
 <main>
 {warn}
 {selection_section(results, lang)}
-<h2>{tr(lang, "Pareto frontiers", "Pareto 前沿")}</h2>
+<h2>{tr(lang, "Throughput vs interactivity", "吞吐与交互速度")}</h2>
 <p class="muted">{
         tr(
             lang,
@@ -996,8 +966,8 @@ def selection_section(results: dict, lang: str) -> str:
         + f" <code>{escape(selection['selection_sha256'][:12])}</code> · "
         + tr(
             lang,
-            "the chart below recomputes the frontier from this run's full-response interactivity.",
-            "下图按本次实测的完整响应交互速度重新计算前沿。",
+            "the chart below connects every successful point of this run by its full-response interactivity.",
+            "下图按本次实测的完整响应交互速度，把每个成功的点连成曲线。",
         ),
     ]
     return '<div class="card">' + "".join(f"<p>{p}</p>" for p in paragraphs) + "</div>"
