@@ -149,12 +149,21 @@ class TestSchemaFile:
             assert f"names no {TOOLCHAINS[language]} version" in error
         assert kernel.model_copy(update={"sources": ()}).requires_error is None
 
-    def test_kernel_requires_the_libraries_its_sources_import(self) -> None:
+    @pytest.mark.parametrize(
+        ("line", "imports"),
+        [
+            ("import mori.shmem as ms", True),
+            ("import torch, mori", True),
+            ("if True: from mori.shmem import mori_shmem_create_tensor", True),
+            ('"""import mori"""', False),
+        ],
+    )
+    def test_kernel_requires_the_libraries_its_sources_import(self, line: str, imports: bool) -> None:
         kernel = OpCase.of("gemm@1.0").schema(language="flydsl").kernel
         entry, *rest = kernel.sources
-        sources = (entry.model_copy(update={"content": entry.content + "\nimport mori.shmem as ms\n"}), *rest)
+        sources = (entry.model_copy(update={"content": f"{entry.content}\n{line}\n"}), *rest)
         importing = kernel.model_copy(update={"requires": {"flydsl": ">=0.3.2"}, "sources": sources})
-        assert "names no mori version" in importing.requires_error
+        assert ("names no mori version" in (importing.requires_error or "")) == imports
         pinned = importing.model_copy(update={"requires": {"flydsl": ">=0.3.2", "mori": ">=1.2.4"}})
         assert pinned.requires_error is None
 

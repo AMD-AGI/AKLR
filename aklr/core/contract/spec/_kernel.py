@@ -3,11 +3,11 @@
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import dataclasses
 import hashlib
 import keyword
-import re
 from functools import cached_property
 from typing import Annotated, Any, Final, Literal, get_args
 
@@ -34,8 +34,6 @@ LANGUAGES: Final = get_args(Language)
 # with its distribution in aklr/core/platform/toolchain.py
 Library = Literal["mori"]
 LIBRARIES: Final = get_args(Library)
-# the top-level module of each import statement in a Python source
-_IMPORTED = re.compile(r"^\s*(?:import|from)\s+(\w+)", re.MULTILINE)
 # each language's source suffixes, the entry file's first
 SOURCE_SUFFIXES: Final = {"flydsl": (".py",), "hip": (".hip", ".h"), "hsaco": (".py",), "triton": (".py",)}
 # the toolchain each language's kernels need, which kernel.requires names: the language's own, but an
@@ -132,8 +130,7 @@ class KernelSpec(FrozenModel):
         sources import; None when it names both or there are no sources (a definition)."""
         if not self.sources:
             return None
-        python = (s.content for s in self.sources if s.path.endswith(".py"))
-        imported = {name for content in python for name in _IMPORTED.findall(content)}
+        imported = {name for s in self.sources if s.path.endswith(".py") for name in _imported(s.content)}
         for name in (TOOLCHAINS[self.language], *sorted(imported.intersection(LIBRARIES))):
             if name not in self.requires:
                 return f'kernel.requires names no {name} version, such as {{"{name}": ">=<developed on>"}}'
@@ -161,3 +158,19 @@ class KernelSpec(FrozenModel):
             "sources": [[s.path, s.content] for s in self.sources],
         }
         return hashlib.sha256(sorted_key_json(parts).encode()).hexdigest()
+
+
+def _imported(source: str) -> set[str]:
+    """The top-level modules a Python source imports, anywhere in it; none if it does not
+    parse (the audit reports that)."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+    names = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names |= {alias.name.partition(".")[0] for alias in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            names.add(node.module.partition(".")[0])
+    return names
