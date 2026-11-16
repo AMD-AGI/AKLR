@@ -28,11 +28,10 @@ def dsa_topk_transform(score, lengths, page_table_size_1, cu_seqlens_q, out_page
 def _forward_triton_decode(self, q_nope, q_rope, kv_cache, v_head_dim, page_table_1, sm_scale):
     """The decode's attention as one op call on the whole q, returned as sglang's kernel returns
     it, [1, tokens, heads, v_head_dim]; v_head_dim is q_nope's width, as sglang's kernel asserts."""
-    from sglang.srt.runtime_context import get_spec
-
     q = _whole_query(q_nope, q_rope)
-    # speculative decoding's draft steps stay on sglang
-    if q is None or get_spec().speculative_algorithm is not None:
+    # speculative decoding's draft steps are decodes too, a query per sequence over its own
+    # top-k; a decode context parallel rank holds every dcp_size-th slot under global indices
+    if q is None or self.dcp_size > 1:
         return FallbackReason.OUT_OF_CONTRACT
     output = dsa_sparse_mla_decode(
         q=q,
