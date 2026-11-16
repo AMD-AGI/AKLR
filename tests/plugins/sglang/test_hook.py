@@ -27,6 +27,7 @@ importlib.import_module("aklr.plugins.sglang.aiter_calls")
 importlib.import_module("aklr.plugins.sglang.models.kimi_k3_torch_gemm")
 importlib.import_module("aklr.plugins.sglang.models.dspark_torch_gemm")
 importlib.import_module("aklr.plugins.sglang.layers.logits_processor_torch_gemm")
+importlib.import_module("aklr.plugins.sglang.layers.aiter_backend_mla_prefill")
 DECLARED = list(hook._ROUTES)
 INSTALLED = "0.5.22"
 
@@ -196,6 +197,25 @@ def test_inside_a_compiled_region_the_route_is_not_traced(hooks):
     assert torch.equal(around(sglangs, torch.ones(2)), torch.full((2,), 11.0))
 
 
+def test_inside_a_compiled_region_an_eager_route_serves_outside_the_graph(hooks, monkeypatch):
+    served = []
+    monkeypatch.setattr(hook, "_EAGER", set())
+    hook.sglang_route(TARGET, versions=(INSTALLED,), eager=True)(lambda x: served.append(x) or x + 10)
+    hook.install()
+    around = wrapper(hooks)
+
+    def sglangs(x):
+        return x * 2
+
+    torch._dynamo.reset()
+    try:
+        compiled = torch.compile(lambda x: around(sglangs, x), backend="eager")
+        assert torch.equal(compiled(torch.ones(2)), torch.full((2,), 11.0))
+    finally:
+        torch._dynamo.reset()
+    assert len(served) == 1
+
+
 @pytest.fixture
 def register_calls(monkeypatch):
     """What register() did, in order."""
@@ -228,6 +248,7 @@ def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, hooked):
             "aklr.plugins.sglang.models.kimi_k3_torch_gemm",
             "aklr.plugins.sglang.models.dspark_torch_gemm",
             "aklr.plugins.sglang.layers.logits_processor_torch_gemm",
+            "aklr.plugins.sglang.layers.aiter_backend_mla_prefill",
             "install",
         ]
         if hooked

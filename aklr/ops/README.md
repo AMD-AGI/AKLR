@@ -23,7 +23,7 @@ aklr/ops/
   rank's inputs in rank order, each on its rank's device (`cuda:<rank>`), and `group.py`'s `<contract>_group_init()`, if any, sets up on each rank what the
   calls take for granted (as an engine does before the first, e.g. mori shmem).
 
-- `<language>` equals the schema's `kernel.language` (`flydsl`, `hip` or `triton`, `Language` in
+- `<language>` equals the schema's `kernel.language` (`flydsl`, `hip`, `hsaco` or `triton`, `Language` in
   `aklr/core/contract/spec/_kernel.py`). `impls/` is not a Python package: it holds language directories, they hold
   `<name>/` directories, and those hold `<uuid>.json` only.
 - Several files may share a `<name>` and its Points; dispatch serves each Point with the best measured one
@@ -48,7 +48,8 @@ aklr/ops/
    rerun removes only the earlier export's files whose `sources` is empty; filled files stay.
 3. Fill `kernel.sources` with one `{"path": "<file>.py", "content": "<the file's text>"}` per file; export writes
    `"entry_point": "kernel.py::run"`, so one file is `kernel.py` defining `run` (or edit `entry_point`); a hip
-   kernel's are `.hip` and `.h` files, `kernel.hip::run` its entry ([hip kernels](#hip-kernels)). To give a
+   kernel's are `.hip` and `.h` files, `kernel.hip::run` its entry ([hip kernels](#hip-kernels)); an hsaco
+   kernel stores its code objects in `.py` files ([hsaco kernels](#hsaco-kernels)). To give a
    scenario a second kernel, copy its committed file, delete `accuracy` and `speedup` from every workload (only CI
    writes them: `PERF_EDITED`), and fill the copy with the second kernel.
 4. Copy the file to the same relative path under `aklr/ops/` and rename it to the `<uuid>.json` that
@@ -134,10 +135,10 @@ than `__init__.py`, sorted and unique (a hip kernel's: [hip kernels](#hip-kernel
 file describes the kernel; its prose carries no history, commit or speedup, and trailing `key: value` metadata lines
 (such as `legacy_solution:`, `keep_commit:`, `device_edits:`) are allowed; audit rejects an empty docstring (SA4).
 
-`requires` maps a language to a PEP 440 specifier of the toolchain versions the kernel needs, such as
-`{"triton": ">=3.8"}`; a dev or rc build counts as its release. A kernel with sources names at least its own
-language: `flydsl`, `triton`, or `hip`, which is the HIP version torch was built with (`torch.version.hip`), not the
-ROCm release (ROCm 10.0 ships HIP 7.15);
+`requires` maps a toolchain to a PEP 440 specifier of the versions the kernel needs, such as
+`{"triton": ">=3.8"}`; a dev or rc build counts as its release. A kernel with sources names at least its
+language's toolchain (`TOOLCHAINS`): `flydsl`, `triton`, or `hip` for hip and hsaco kernels, which is the HIP
+version torch was built with (`torch.version.hip`), not the ROCm release (ROCm 10.0 ships HIP 7.15);
 `export check` rejects one that does not (`KernelSpec.requires_error`). It is omitted only in a definition. Where the installed toolchain misses it, the runtime skips the schema, logging why at INFO, and validation
 reports `no_matching_toolchain`. Give the version the kernel was developed on as the lower bound, and an upper bound
 only once a release breaks it. A kernel that fails where `requires` holds raises: nothing falls back on an error.
@@ -252,6 +253,41 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {
   synchronization, allocation outside torch, IPC, device or process change, environment, I/O or CUDA name (SH3);
   no `static` or `__device__` variable that is not const (SH4: a kernel keeps nothing between calls); the entry
   file's leading comment (SH5).
+
+### hsaco kernels
+
+An `hsaco` kernel launches precompiled code objects. Sources must be text, so the code objects are stored
+base64-encoded in a `.py` file, and the entry point launches them through `aklr/core/jit/hsaco.py`:
+
+```python
+import struct
+
+from aklr.core.jit import hsaco
+
+from .codeobjects import GEMM  # bytes
+
+_GEMM = hsaco.Kernel(GEMM, "gemm")
+
+
+def run(*, a, b, trans_b, bias, out_dtype, out):
+    kernarg = struct.pack("<QQQii", a.data_ptr(), b.data_ptr(), out.data_ptr(), b.shape[0], a.shape[1])
+    _GEMM.launch((a.shape[0],), (b.shape[0],), kernarg, device=a.device)
+```
+
+- `Kernel(code_object, symbol)` names a function in a code object built for the target's arch. The code object is
+  loaded into the HIP runtime that torch uses, once per device, on the first launch on that device.
+- `launch(grid, block, kernarg)` launches on the device's current stream. `kernarg` holds the kernel's explicit
+  arguments, laid out as the code object expects; HIP fills in the hidden arguments.
+- The launcher only supports regular launches through `hipModuleLaunchKernel`. Cooperative launches, cluster
+  launches, and memory shared between ranks are not supported; kernels that need them require changes to
+  `aklr/core/jit/hsaco.py`, or for shared memory, to the op's `group_init`.
+- `requires` pins the HIP that loads the code objects, such as `{"hip": ">=7.15"}`.
+- Sources are audited like other Python kernels (SA0–SA4), then by SC1–SC2
+  (`aklr/core/validation/stages/_audit/_hsaco.py`), so that kernel code reaches the GPU only through the launcher.
+  SC1 limits imports to sibling sources, `aklr.core.jit.hsaco`, `torch`, and a few standard modules with no side
+  effects. SC2 rejects `__import__`, `eval`, `exec`, `compile`, `globals`, `vars`, and the torch APIs that reach
+  native code (`torch._C`, `torch.ops.load_library`, `torch.utils.cpp_extension`, `torch.cuda.cudart`). The audit
+  cannot see what the code objects do; bench checks their results.
 
 A host capturing CUDA graphs calls every Point at least once outside a capture first (sglang does). A Point first
 called inside a capture returns `not_warmed`: its fallback is recorded into the graph, and replays no longer pass

@@ -100,7 +100,7 @@
         "sm_scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.675
+      "speedup": 1.664
     },
     {
       "axes": {
@@ -111,7 +111,7 @@
         "sm_scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.59
+      "speedup": 1.554
     },
     {
       "axes": {
@@ -122,7 +122,7 @@
         "sm_scale": 0.0625
       },
       "accuracy": "passed",
-      "speedup": 1.262
+      "speedup": 1.259
     }
   ],
   "layout_variants": {

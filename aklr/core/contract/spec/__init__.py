@@ -15,6 +15,7 @@ from aklr.core.contract.spec._args import (
 from aklr.core.contract.spec._kernel import (
     LANGUAGES,
     SOURCE_SUFFIXES,
+    TOOLCHAINS,
     KernelSpec,
     Language,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "CONTRACT_ID_PATTERN",
     "LANGUAGES",
     "SOURCE_SUFFIXES",
+    "TOOLCHAINS",
     "ArgSpec",
     "AttrSpec",
     "AxisSpec",

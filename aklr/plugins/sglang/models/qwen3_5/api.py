@@ -8,8 +8,11 @@ from aklr.plugins.sglang.hook import sglang_route
 from aklr.plugins.sglang.models.qwen3_5.contract import (
     GATED_ATTENTION_DECODE,
     GATED_ATTENTION_DECODE_GROUP_FP8_QUANT,
+    GATED_ATTENTION_PREFILL,
+    GATED_ATTENTION_PREFILL_GROUP_FP8_QUANT,
     GDN_DECODE,
     GDN_DECODE_GROUP_FP8_QUANT,
+    GDN_PREFILL,
     GDN_PREFILL_GROUP_FP8_QUANT,
     MROPE_SECTION,
     ROTARY_DIM,
@@ -18,14 +21,37 @@ from aklr.plugins.sglang.models.qwen3_5.contract import (
 __all__ = [
     "gated_attention_decode",
     "gated_attention_decode_group_fp8_quant",
+    "gated_attention_prefill",
+    "gated_attention_prefill_group_fp8_quant",
     "gdn_decode",
     "gdn_decode_group_fp8_quant",
+    "gdn_prefill",
     "gdn_prefill_group_fp8_quant",
 ]
 
 
 @api(GDN_PREFILL_GROUP_FP8_QUANT)
 def gdn_prefill_group_fp8_quant(
+    projected_qkvz,
+    projected_ba,
+    conv_state,
+    delta_state,
+    cache_indices,
+    cu_seqlens,
+    has_initial_state,
+    conv_weight,
+    conv_bias,
+    a_log,
+    dt_bias,
+    norm_weight,
+    scale=128**-0.5,
+    eps=1e-6,
+    max_seq_len=2048,
+): ...
+
+
+@api(GDN_PREFILL)
+def gdn_prefill(
     projected_qkvz,
     projected_ba,
     conv_state,
@@ -110,6 +136,40 @@ def gated_attention_decode(
 ): ...
 
 
+@api(GATED_ATTENTION_PREFILL_GROUP_FP8_QUANT)
+def gated_attention_prefill_group_fp8_quant(
+    projected_qkv,
+    q_norm_weight,
+    k_norm_weight,
+    positions,
+    cos_sin_cache,
+    cache_locations,
+    key_cache,
+    value_cache,
+    cu_seqlens,
+    eps=1e-6,
+    scale=256**-0.5,
+    max_seq_len=1024,
+): ...
+
+
+@api(GATED_ATTENTION_PREFILL)
+def gated_attention_prefill(
+    projected_qkv,
+    q_norm_weight,
+    k_norm_weight,
+    positions,
+    cos_sin_cache,
+    cache_locations,
+    key_cache,
+    value_cache,
+    cu_seqlens,
+    eps=1e-6,
+    scale=256**-0.5,
+    max_seq_len=1024,
+): ...
+
+
 @sglang_route("sglang.srt.models.qwen3_5.Qwen3_5GatedDeltaNet.forward", versions=("0.5.22",))
 def _gdn_forward(self, hidden_states, forward_batch):
     from sglang.srt.model_executor.forward_batch_info import ForwardMode
@@ -124,11 +184,11 @@ def _gdn_forward(self, hidden_states, forward_batch):
     if _layer_falls_back(self):
         return FallbackReason.OUT_OF_CONTRACT
     if not _takes_fp8_groups(self.out_proj):
-        # BF16 projections (an MXFP4 checkpoint keeps its GDN layers unquantized): decode on the
-        # BF16 op alone, whose output out_proj takes as sglang's own decode hands it
-        if run is _prefill or not _unquantized_projections(self):
+        # BF16 projections (an MXFP4 checkpoint keeps its GDN layers unquantized): the BF16 ops,
+        # whose output out_proj takes as sglang's own forward hands it
+        if not _unquantized_projections(self):
             return FallbackReason.OUT_OF_CONTRACT
-        run = _decode_unquantized
+        run = _prefill_unquantized if run is _prefill else _decode_unquantized
     # AMD's fused AR+norm hands a (bf16, fp8, scale) tuple, whole to sglang's input projections
     hidden = hidden_states[0] if isinstance(hidden_states, tuple) else hidden_states
     return run(self, hidden_states, hidden, forward_batch, get_attn_backend().linear_attn_backend)
@@ -172,8 +232,14 @@ def _takes_fp8_groups(linear) -> bool:
     )
 
 
-def _prefill(layer, hidden_states, hidden, forward_batch, backend):
-    """sglang's input projections, then the FP8 op, its values and per-head scales into out_proj."""
+def _prefill_unquantized(layer, hidden_states, hidden, forward_batch, backend):
+    """_prefill on the BF16 op, for a layer whose projections sglang runs unquantized."""
+    return _prefill(layer, hidden_states, hidden, forward_batch, backend, fp8_groups=False)
+
+
+def _prefill(layer, hidden_states, hidden, forward_batch, backend, *, fp8_groups=True):
+    """sglang's input projections, then the FP8 op, its values and per-head scales into out_proj
+    (without ``fp8_groups``: the BF16 op, its normalized rows into out_proj)."""
     metadata, lengths = backend.forward_metadata, forward_batch.extend_seq_lens_cpu
     if (
         # a capture would replay this call's lengths
@@ -196,14 +262,19 @@ def _prefill(layer, hidden_states, hidden, forward_batch, backend):
         "conv_bias": _no_bias(weight.shape[0], weight.dtype, weight.device),
         "max_seq_len": max(lengths),
     }
-    op = gdn_prefill_group_fp8_quant
+    op = gdn_prefill_group_fp8_quant if fp8_groups else gdn_prefill
     reason = op.fallback_reason(**_projection_stand_ins(arguments, hidden), **arguments)
     if reason is not None:
         return reason
     qkvz, ba = layer._forward_input_proj(hidden_states)
+    if not fp8_groups:
+        # up to 64 rows, sglang hands column slices of one BF16 GEMM's output (see _decode)
+        qkvz, ba = qkvz.contiguous(), ba.contiguous()
     result = op(projected_qkvz=qkvz, projected_ba=ba, **arguments)
     if isinstance(result, FallbackReason):
         return result
+    if not fp8_groups:
+        return layer.out_proj(result.reshape(hidden.shape[0], -1))[0]
     _, values, scales = result
     return layer.out_proj((values, scales))[0]
 
@@ -289,12 +360,17 @@ def _no_bias(size, dtype, device):
 @sglang_route("sglang.srt.models.qwen3_5.Qwen3_5AttentionDecoderLayer.self_attention", versions=("0.5.22",))
 def _attention_self_attention(self, positions, hidden_states, forward_batch):
     """Decode as HIP runs it (forward_prepare_fused_gate, the aiter backend's forward_decode,
-    fused_sigmoid_mul), graph capture too: sglang's qkv_proj, an op (_attention_op), then
-    sglang's o_proj on the FP8 op's values and scales or on the BF16 op's gated rows."""
+    fused_sigmoid_mul), graph capture too, and the prefill of fresh sequences (its
+    forward_extend without a prefix): sglang's qkv_proj, an op (_attention_op), then sglang's
+    o_proj on the FP8 op's values and scales or on the BF16 op's gated rows."""
+    from sglang.srt.model_executor.forward_batch_info import ForwardMode
     from sglang.srt.model_executor.forward_context import get_attn_backend
     from sglang.srt.models import qwen3_5 as model
 
-    if not model._is_hip or not forward_batch.forward_mode.is_decode() or forward_batch.spec_info is not None:
+    if not model._is_hip or forward_batch.spec_info is not None:
+        return FallbackReason.OUT_OF_CONTRACT
+    decode = forward_batch.forward_mode.is_decode()
+    if not decode and forward_batch.forward_mode != ForwardMode.EXTEND:
         return FallbackReason.OUT_OF_CONTRACT
     backend = get_attn_backend()
     backend = getattr(backend, "full_attn_backend", backend)
@@ -306,11 +382,10 @@ def _attention_self_attention(self, positions, hidden_states, forward_batch):
         hidden_states = model._select_fused_ar_input_for_linear(hidden_states, self.qkv_proj)
     hidden = hidden_states[0] if isinstance(hidden_states, tuple) else hidden_states
     rows = hidden.shape[0]
-    op = _attention_op(self.o_proj, rows)
+    op = _attention_op(self.o_proj, rows, decode)
     if op is None:
         return FallbackReason.OUT_OF_CONTRACT
     key_cache, value_cache = backend.token_to_kv_pool.get_kv_buffer(self.attn.layer_id)
-    metadata = backend.forward_metadata
     arguments = {
         "q_norm_weight": self.q_norm.weight,
         "k_norm_weight": self.k_norm.weight,
@@ -318,11 +393,20 @@ def _attention_self_attention(self, positions, hidden_states, forward_batch):
         "cache_locations": forward_batch.out_cache_loc[:rows],
         "key_cache": key_cache,
         "value_cache": value_cache,
-        "kv_indptr": metadata.kv_indptr,
-        "kv_indices": metadata.kv_indices,
         "eps": self.q_norm.variance_epsilon,
         "scale": backend.scale,
     }
+    if decode:
+        metadata = backend.forward_metadata
+        arguments |= {"kv_indptr": metadata.kv_indptr, "kv_indices": metadata.kv_indices}
+    else:
+        sequences = _fresh_sequences(forward_batch, rows)
+        if sequences is None:
+            return FallbackReason.OUT_OF_CONTRACT
+        arguments |= {
+            "cu_seqlens": backend.qo_indptr[: sequences + 1],
+            "max_seq_len": max(forward_batch.extend_seq_lens_cpu),
+        }
     reason = op.fallback_reason(**_attention_stand_ins(self, hidden, positions), **arguments)
     if reason is not None:
         return reason
@@ -331,24 +415,42 @@ def _attention_self_attention(self, positions, hidden_states, forward_batch):
     result = op(projected_qkv=qkv, positions=positions.contiguous(), **arguments)
     if isinstance(result, FallbackReason):
         return result
-    if op is gated_attention_decode:
+    if op in (gated_attention_decode, gated_attention_prefill):
         return self.o_proj(result)[0]
     values, scales = result
     return self.o_proj((values.view(rows, -1), scales))[0]
 
 
-def _attention_op(o_proj, rows):
+def _fresh_sequences(forward_batch, rows):
+    """The extend batch's sequence count where the prefill ops take it, else None: sequences
+    with no cached prefix (sglang's fresh-prefill path), whose host lengths cover the rows,
+    outside a graph capture (which would replay these lengths)."""
+    lengths, prefixes = forward_batch.extend_seq_lens_cpu, forward_batch.extend_prefix_lens_cpu
+    if (
+        torch.cuda.is_current_stream_capturing()
+        or forward_batch.attn_attend_prefix_cache
+        or lengths is None
+        or prefixes is None
+        or len(lengths) != forward_batch.batch_size
+        or sum(lengths) != rows
+        or any(prefixes)
+    ):
+        return None
+    return len(lengths)
+
+
+def _attention_op(o_proj, rows, decode=True):
     """The op whose output o_proj takes: the FP8 op where o_proj takes its FP8 groups
     (_takes_fp8_groups, and no row-wise FP8 copy for its small-M path, which only BF16
     inputs take); else the BF16 op where sglang hands o_proj the gated BF16 rows, that is
     where _fp8_tuple_input is false (an unquantized o_proj, for one); else None, as sglang
-    then quantizes the gated rows per token itself."""
+    then quantizes the gated rows per token itself. The decode ops, else the prefill ones."""
     from sglang.srt.models import qwen3_5 as model
 
     if _takes_fp8_groups(o_proj) and getattr(o_proj.weight, "_ptpc_weight", None) is None:
-        return gated_attention_decode_group_fp8_quant
+        return gated_attention_decode_group_fp8_quant if decode else gated_attention_prefill_group_fp8_quant
     if not model._fp8_tuple_input(o_proj, rows):
-        return gated_attention_decode
+        return gated_attention_decode if decode else gated_attention_prefill
     return None
 
 

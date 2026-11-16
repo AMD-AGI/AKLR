@@ -13,7 +13,7 @@ from aklr.core.contract import expr, locate, semantics
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.semantics import sorted_key_json
-from aklr.core.contract.spec import attr
+from aklr.core.contract.spec import TOOLCHAINS, attr
 from tests.op_case import HIP_GEMM_KERNEL_SOURCE, OpCase
 
 
@@ -113,12 +113,18 @@ class TestSchemaFile:
             ("flydsl", {}, False),
             ("flydsl", {"triton": ">=3.8"}, False),
             ("hip", {}, False),
+            ("hsaco", {"hip": ">=7.15"}, True),
+            ("hsaco", {"hsaco": ">=7.15"}, False),
         ],
-        ids=["flydsl", "triton_and_more", "hip", "flydsl_empty", "flydsl_other_language", "hip_empty"],
+        ids=[
+            *("flydsl", "triton_and_more", "hip", "flydsl_empty", "flydsl_other_language", "hip_empty"),
+            *("hsaco_pins_hip", "hsaco_pins_itself"),
+        ],
     )
     def test_kernel_requires_error(self, language: str, requires: dict[str, str], pinned: bool) -> None:
-        """A kernel names its own language in ``requires``; a definition (no sources)
-        needs nothing. ``export check`` reports the error."""
+        """A kernel names its language's toolchain in ``requires`` (an hsaco kernel's is the
+        HIP that loads it); a definition (no sources) needs nothing. ``export check`` reports
+        the error."""
         case = OpCase.of("gemm@1.0")
         schema = (
             case.schema(HIP_GEMM_KERNEL_SOURCE, language="hip")
@@ -129,7 +135,7 @@ class TestSchemaFile:
         error = kernel.requires_error
         assert (error is None) is pinned
         if not pinned:
-            assert f"names no {language} version" in error
+            assert f"names no {TOOLCHAINS[language]} version" in error
         assert kernel.model_copy(update={"sources": ()}).requires_error is None
 
     def test_kernel_author(self) -> None:

@@ -3,7 +3,14 @@
 
 from __future__ import annotations
 
-__all__ = ["flash_mla_with_kvcache_baseline", "fp8_paged_mqa_logits_baseline"]
+import weakref
+
+__all__ = ["flash_mla_with_kvcache_baseline", "fp8_paged_mqa_logits_baseline", "mla_decode_fwd_baseline"]
+
+# aiter's work schedule for a kv_indptr, by the tensor's id while it lives: a framework plans
+# it once a step for every MLA layer, not at each call
+_SCHEDULES: dict[tuple, tuple] = {}
+_NUM_KV_SPLITS = 64  # sglang's decode without speculation
 
 
 def flash_mla_with_kvcache_baseline(
@@ -107,3 +114,91 @@ def fp8_paged_mqa_logits_baseline(
         KVBlockSize=page_size,
     )
     return logits
+
+
+def mla_decode_fwd_baseline(
+    q, kv_buffer, kv_indptr, kv_indices, q_scale, kv_scale, sm_scale=None, o=None, lse=None
+):
+    """aiter's ASM MLA decode as sglang calls it under decode context parallelism: fp8 q and
+    pool, its persistent schedule (fast mode, 64 splits a request) planned once per kv_indptr."""
+    import torch
+    from aiter.mla import mla_decode_fwd
+    from aiter.ops.attention import get_mla_metadata_info_v1, get_mla_metadata_v1
+
+    batch, n_heads = q.shape[:2]
+    if o is None:
+        o = torch.empty((batch, n_heads, 512), dtype=torch.bfloat16, device=q.device)
+    # planned again for an offsets tensor rewritten in place, other heads, dtypes or device
+    key = (id(kv_indptr), kv_indptr._version, n_heads, q.dtype, kv_buffer.dtype, q.device)
+    schedule = _SCHEDULES.get(key)
+    if schedule is None:
+        qo_indptr = torch.arange(batch + 1, dtype=torch.int32, device=q.device)
+        last_page_lens = torch.ones(batch, dtype=torch.int32, device=q.device)
+        sizes = get_mla_metadata_info_v1(
+            batch,
+            1,
+            n_heads,
+            q.dtype,
+            kv_buffer.dtype,
+            is_sparse=False,
+            fast_mode=True,
+            num_kv_splits=_NUM_KV_SPLITS,
+            intra_batch_mode=False,
+        )
+        buffers = [torch.empty(size, dtype=dtype, device=q.device) for size, dtype in sizes]
+        work_metadata, work_indptr, work_info_set, reduce_indptr, reduce_final_map, reduce_partial_map = (
+            buffers
+        )
+        get_mla_metadata_v1(
+            qo_indptr,
+            kv_indptr,
+            last_page_lens,
+            n_heads,
+            1,
+            False,
+            work_metadata,
+            work_info_set,
+            work_indptr,
+            reduce_indptr,
+            reduce_final_map,
+            reduce_partial_map,
+            kv_granularity=16,
+            max_seqlen_qo=1,
+            uni_seqlen_qo=1,
+            fast_mode=True,
+            max_split_per_batch=_NUM_KV_SPLITS,
+            intra_batch_mode=False,
+            dtype_q=q.dtype,
+            dtype_kv=kv_buffer.dtype,
+        )
+        schedule = _SCHEDULES[key] = (qo_indptr, last_page_lens, buffers)
+        weakref.finalize(kv_indptr, _SCHEDULES.pop, key, None)
+    qo_indptr, last_page_lens, buffers = schedule
+    work_metadata, work_indptr, work_info_set, reduce_indptr, reduce_final_map, reduce_partial_map = buffers
+    _, final_lse = mla_decode_fwd(
+        q,
+        kv_buffer,
+        o,
+        qo_indptr,
+        kv_indptr,
+        kv_indices,
+        last_page_lens,
+        1,
+        sm_scale=sm_scale,
+        num_kv_splits=_NUM_KV_SPLITS,
+        work_meta_data=work_metadata,
+        work_indptr=work_indptr,
+        work_info_set=work_info_set,
+        reduce_indptr=reduce_indptr,
+        reduce_final_map=reduce_final_map,
+        reduce_partial_map=reduce_partial_map,
+        q_scale=q_scale,
+        kv_scale=kv_scale,
+        intra_batch_mode=False,
+        return_lse=True,
+    )
+    final_lse = final_lse.view(batch, n_heads)
+    if lse is None:
+        return o, final_lse
+    lse.copy_(final_lse)
+    return o, lse

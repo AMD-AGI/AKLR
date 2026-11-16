@@ -15,6 +15,7 @@ from aklr.core.runtime.builder import (
     BuilderRegistry,
     FlyDSLBuilder,
     HipBuilder,
+    HsacoBuilder,
     TritonBuilder,
 )
 from aklr.core.runtime.dispatch import DispatcherRegistry, FallbackReason
@@ -62,7 +63,7 @@ def op_case(request: pytest.FixtureRequest) -> OpCase:
 @pytest.fixture
 def builder_registry() -> Iterator[BuilderRegistry]:
     """A fresh process ``BuilderRegistry`` of the committed schemas' builders, installed with ``set_instance``."""
-    registry = BuilderRegistry([TritonBuilder(), FlyDSLBuilder(), HipBuilder()])
+    registry = BuilderRegistry([TritonBuilder(), FlyDSLBuilder(), HipBuilder(), HsacoBuilder()])
     BuilderRegistry.set_instance(registry)
     try:
         yield registry

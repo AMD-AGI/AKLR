@@ -27,10 +27,13 @@ from aklr.core.contract.spec._sources import SourceFile
 from aklr.core.platform.device import DeviceTarget
 
 # kernel.language and impls/<language>/: a new language is a code PR first, then a schema PR.
-Language = Literal["flydsl", "hip", "triton"]
+Language = Literal["flydsl", "hip", "hsaco", "triton"]
 LANGUAGES: Final = get_args(Language)
 # each language's source suffixes, the entry file's first
-SOURCE_SUFFIXES: Final = {"flydsl": (".py",), "hip": (".hip", ".h"), "triton": (".py",)}
+SOURCE_SUFFIXES: Final = {"flydsl": (".py",), "hip": (".hip", ".h"), "hsaco": (".py",), "triton": (".py",)}
+# the toolchain each language's kernels need, which kernel.requires names: the language's own, but an
+# hsaco kernel needs no compiler, only the HIP that loads its code objects
+TOOLCHAINS: Final = {"flydsl": "flydsl", "hip": "hip", "hsaco": "hip", "triton": "triton"}
 
 
 class KernelSpec(FrozenModel):
@@ -44,8 +47,8 @@ class KernelSpec(FrozenModel):
         Field(min_length=1),
         AfterValidator(DeviceTarget.normalize_targets),
     ]
-    # the toolchain versions the kernel needs, by language: {"triton": ">=3.8"}; a kernel
-    # names at least its own language (requires_error)
+    # the toolchain versions the kernel needs: {"triton": ">=3.8"}; a kernel names at least
+    # its language's toolchain (TOOLCHAINS, requires_error)
     requires: dict[Language, str] = {}  # noqa: RUF012
     # who wrote the kernel: a person, team or agent; "": not recorded
     author: str = ""
@@ -118,11 +121,12 @@ class KernelSpec(FrozenModel):
 
     @property
     def requires_error(self) -> str | None:
-        """Why ``requires`` names no version of the kernel's own language; None when it
-        does or there are no sources (a definition)."""
-        if not self.sources or self.language in self.requires:
+        """Why ``requires`` names no version of the toolchain the kernel's language needs;
+        None when it does or there are no sources (a definition)."""
+        toolchain = TOOLCHAINS[self.language]
+        if not self.sources or toolchain in self.requires:
             return None
-        return f'kernel.requires names no {self.language} version, such as {{"{self.language}": ">=<developed on>"}}'
+        return f'kernel.requires names no {toolchain} version, such as {{"{toolchain}": ">=<developed on>"}}'
 
     @property
     def entry_file(self) -> str:

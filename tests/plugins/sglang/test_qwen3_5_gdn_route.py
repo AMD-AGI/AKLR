@@ -2,8 +2,8 @@
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
 """The Qwen3.5 GDN route's choice of op, on stand-ins of sglang 0.5.22: a block-FP8 layer (the
-FP8 checkpoint) decodes on the FP8 op first, an unquantized one (the MXFP4 checkpoint) on the
-BF16 op alone, on contiguous projections."""
+FP8 checkpoint) decodes on the FP8 op first and prefills on the FP8 op, an unquantized one (the
+MXFP4 checkpoint) decodes and prefills on the BF16 ops alone, on contiguous projections."""
 
 import enum
 import sys
@@ -94,10 +94,13 @@ def sglang(monkeypatch):
         mamba_cache_indices=torch.zeros(ROWS, dtype=torch.int32),
         replayssm_write_pos=None,
         replayssm_force_flush=None,
+        has_mamba_track_mask=False,
+        query_start_loc=torch.tensor([0, ROWS // 2, ROWS], dtype=torch.int32),
     )
     backend = SimpleNamespace(
         forward_metadata=metadata,
         req_to_token_pool=SimpleNamespace(mamba2_layer_cache=lambda layer_id: cache),
+        mis_metadata=None,
         tracked=[],
     )
     backend._track_mamba_state_decode = lambda *args: backend.tracked.append(args)
@@ -131,8 +134,26 @@ def ops(monkeypatch):
     return fp8, bf16
 
 
+@pytest.fixture
+def prefill_ops(monkeypatch):
+    """The two prefill ops, each taking every call; no graph capture (as on a CPU-only torch)."""
+    monkeypatch.setattr(torch.cuda, "is_current_stream_capturing", lambda: False)
+    fp8 = Op((torch.zeros(ROWS, 16, 128), torch.zeros(ROWS, 2048), torch.zeros(ROWS, 16)))
+    bf16 = Op(torch.zeros(ROWS, 16, 128, dtype=torch.bfloat16))
+    monkeypatch.setattr(api, "gdn_prefill_group_fp8_quant", fp8)
+    monkeypatch.setattr(api, "gdn_prefill", bf16)
+    return fp8, bf16
+
+
 def forward(layer, mode=ForwardMode.DECODE):
-    return api._gdn_forward(layer, torch.zeros(ROWS, 4096), SimpleNamespace(forward_mode=mode))
+    # a prefill of two fresh sequences of ROWS // 2 tokens
+    batch = SimpleNamespace(
+        forward_mode=mode,
+        extend_seq_lens_cpu=[ROWS // 2] * 2,
+        batch_size=2,
+        extend_prefix_lens=torch.zeros(2, dtype=torch.int32),
+    )
+    return api._gdn_forward(layer, torch.zeros(ROWS, 4096), batch)
 
 
 @pytest.mark.parametrize("fp8_declines", [False, True], ids=["fp8_op", "bf16_op"])
@@ -171,17 +192,45 @@ def test_an_unquantized_layer_decodes_on_the_bf16_op_alone(sglang, ops):
     assert len(sglang.tracked) == 1
 
 
+def test_a_block_fp8_layer_prefills_on_the_fp8_op(sglang, prefill_ops):
+    """The FP8 checkpoint's layer: the FP8 prefill op at the batch's longest sequence, out_proj
+    taking its values and scales."""
+    fp8, bf16 = prefill_ops
+    layer = Layer((Fp8LinearMethod(), UnquantizedLinearMethod(), Fp8LinearMethod()))
+    assert forward(layer, ForwardMode.EXTEND) == "out_proj output"
+    assert bf16.asked == 0 and not bf16.calls
+    (call,) = fp8.calls
+    assert call["max_seq_len"] == ROWS // 2 and call["projected_qkvz"] is layer.projections[0]
+    (projected,) = layer.out_proj.inputs
+    assert projected == fp8.result[1:]
+
+
+def test_an_unquantized_layer_prefills_on_the_bf16_op(sglang, prefill_ops):
+    """The MXFP4 checkpoint's layer: the BF16 prefill op alone, handed contiguous copies of the
+    projections; out_proj takes its BF16 rows."""
+    fp8, bf16 = prefill_ops
+    layer = Layer((UnquantizedLinearMethod(),) * 3)
+    assert forward(layer, ForwardMode.EXTEND) == "out_proj output"
+    assert fp8.asked == 0 and not fp8.calls and bf16.asked == 1
+    (call,) = bf16.calls
+    assert call["max_seq_len"] == ROWS // 2
+    for name, projection in zip(("projected_qkvz", "projected_ba"), layer.projections, strict=True):
+        assert call[name].is_contiguous() and torch.equal(call[name], projection)
+    (projected,) = layer.out_proj.inputs
+    assert projected.shape == (ROWS, 2048) and projected.dtype == torch.bfloat16
+
+
+@pytest.mark.parametrize("mode", [ForwardMode.DECODE, ForwardMode.EXTEND], ids=["decode", "prefill"])
 @pytest.mark.parametrize(
-    ("methods", "mode"),
+    "methods",
     [
-        ((UnquantizedLinearMethod(),) * 3, ForwardMode.EXTEND),
-        ((UnquantizedLinearMethod(), UnquantizedLinearMethod(), object()), ForwardMode.DECODE),
-        ((object(), UnquantizedLinearMethod(), UnquantizedLinearMethod()), ForwardMode.DECODE),
+        (UnquantizedLinearMethod(), UnquantizedLinearMethod(), object()),
+        (object(), UnquantizedLinearMethod(), UnquantizedLinearMethod()),
     ],
-    ids=["unquantized_prefill", "other_out_proj", "other_in_proj"],
+    ids=["other_out_proj", "other_in_proj"],
 )
-def test_other_layers_stay_on_sglang(sglang, ops, methods, mode):
-    """Prefill of an unquantized layer (no BF16 prefill op), and projections quantized other
-    than block FP8 on out_proj: sglang's own path, before any op or projection runs."""
+def test_other_layers_stay_on_sglang(sglang, ops, prefill_ops, methods, mode):
+    """Projections quantized other than block FP8 on out_proj: sglang's own path, before any
+    op or projection runs."""
     assert forward(Layer(methods), mode) is FallbackReason.OUT_OF_CONTRACT
-    assert all(op.asked == 0 and not op.calls for op in ops)
+    assert all(op.asked == 0 and not op.calls for op in (*ops, *prefill_ops))
