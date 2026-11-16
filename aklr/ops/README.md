@@ -7,6 +7,7 @@ in the file it names; when the two disagree, the named file wins.
 aklr/ops/
   __init__.py                  re-exports op apis
   README.md                    this file
+  cost.py                      COSTS: one call's Cost for each contract a roofline can rank (see below)
   <op>/                        attention, gemm, fused_moe, mhc, mla, rms_norm, topk
     __init__.py                re-exports api.py's apis
     contract.py                OpContract constants, CONTRACTS
@@ -14,14 +15,14 @@ aklr/ops/
     api.py                     one @api function per contract
     baseline.py                one <contract>_baseline per contract that has a baseline
     group.py                   one <contract>_group_init per ranks contract that needs a set-up
-    cost.py                    one <contract>_cost per contract a roofline can rank (see below)
     impls/<language>/<name>/<uuid>.json        one kernel and the workloads it serves
 ```
 
-- `cost.py`'s `<contract>_cost(symbols, tensor_bytes)` returns one call's `Cost` (`aklr/core/contract/cost.py`): the
-  matrix-core operations, the dtype whose rate bounds them, and the least bytes moved, from the Point's symbols
-  (`Domain.symbols`) and each present tensor's bytes in storage. `OpContract.cost_at(point)` calls it; an op without
-  one has no cost, and nothing guesses it.
+- `cost.py`'s `COSTS` maps a contract name to a function `(symbols, tensor_bytes)` returning one call's `Cost`
+  (`aklr/core/contract/cost.py`): the matrix-core operations, the dtype whose rate bounds them, and the least bytes
+  moved, from the Point's symbols (`Domain.symbols`) and each present tensor's bytes in storage. A contract that only
+  moves its tensors is one more name beside `memory_cost`; one doing a GEMM's work, beside `gemm_cost`.
+  `OpContract.cost_at(point)` calls it; a contract absent from `COSTS` has no cost, and nothing guesses it.
 
 - A contract with `ranks` (the attr holding the group size, e.g. `ep_size`) is called by every rank of its group
   at once. The bench runs a process a rank, one device each, in one `torch.distributed` group; each rank draws its

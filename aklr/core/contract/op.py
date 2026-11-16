@@ -571,10 +571,12 @@ class OpContract(FrozenModel):
         return self._optional_function("baseline", self.baseline_name)
 
     def cost_at(self, point: PointSpec) -> Cost | None:
-        """One call's work at ``point``: the op's ``cost.py`` function ``<contract>_cost``
-        of the Point's symbols (``Domain.symbols``) and each present tensor's bytes in
-        storage; None when the op has none."""
-        cost = self._optional_function("cost", f"{contract_name(self.contract_id)}_cost")
+        """One call's work at ``point``: this contract's function in ``aklr/ops/cost.py``'s
+        ``COSTS``, of the Point's symbols (``Domain.symbols``) and each present tensor's
+        bytes in storage; None when it has none."""
+        from aklr.ops.cost import COSTS  # aklr.ops imports this module
+
+        cost = COSTS.get(contract_name(self.contract_id))
         if cost is None:
             return None
         tensor_bytes = {

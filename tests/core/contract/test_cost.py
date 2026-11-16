@@ -1,20 +1,17 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-import inspect
-
 import pytest
 
 from aklr.core.contract.cost import Cost
-from aklr.core.contract.locate import op_module
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.spec import contract_name
-from aklr.ops.fused_moe.cost import fused_moe_cost
+from aklr.ops.cost import COSTS, fused_moe_cost
 from tests.op_case import OpCase
 
 
 class TestCost:
-    """``OpContract.cost_at``: the op's ``cost.py`` function at a Point."""
+    """``OpContract.cost_at``: the contract's ``aklr/ops/cost.py`` function at a Point."""
 
     def test_gemm_does_2mnk_and_moves_each_tensor_once(self) -> None:
         """m 4, n 16, k 128 in bf16, no bias: a, b and out move once."""
@@ -62,20 +59,12 @@ class TestCost:
         case = OpCase.of("rms_norm@1.0")
         assert case.contract.cost_at(case.point) == Cost(0, (2 * 4 * 2048 + 2048) * 2, None)
 
-    def test_every_cost_function_is_a_contracts(self) -> None:
-        """``cost_at`` finds ``<contract name>_cost`` by name: one named after no contract of
-        its op is a misspelling that leaves the contract without a cost."""
-        contracts = ContractRegistry.default().contracts()
-        named = {(c.op_package, f"{contract_name(c.contract_id)}_cost") for c in contracts}
-        for package in {c.op_package for c in contracts}:
-            try:
-                module = op_module(package, "cost")
-            except ModuleNotFoundError:
-                continue
-            for name, _ in inspect.getmembers(module, inspect.isfunction):
-                if name.endswith("_cost"):
-                    assert (package, name) in named, f"{module.__name__}.{name}"
+    def test_every_cost_is_a_contracts(self) -> None:
+        """``cost_at`` finds its function by contract name: a name of no contract is a
+        misspelling that leaves the contract without a cost."""
+        names = {contract_name(c.contract_id) for c in ContractRegistry.default().contracts()}
+        assert set(COSTS) <= names
 
-    def test_an_op_without_a_cost_function_has_none(self) -> None:
+    def test_a_contract_without_a_cost_has_none(self) -> None:
         case = OpCase.of("unified_attention@1.0")
         assert case.contract.cost_at(case.point) is None
