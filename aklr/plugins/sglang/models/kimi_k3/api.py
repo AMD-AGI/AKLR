@@ -7,12 +7,14 @@ from aklr.core.runtime.dispatch import FallbackReason, api
 from aklr.plugins.sglang.hook import sglang_route
 from aklr.plugins.sglang.models import moe_blocks
 from aklr.plugins.sglang.models.kimi_k3.contract import (
+    KIMI_K3_KDA_VERIFY,
     KIMI_K3_LATENT_MOE,
     KIMI_K3_MLA_PREFILL_GATE,
     KIMI_K3_MLA_VC_OUTPUT_GATE,
 )
 
 __all__ = [
+    "kimi_k3_kda_verify",
     "kimi_k3_latent_moe",
     "kimi_k3_mla_prefill_gate",
     "kimi_k3_mla_vc_output_gate",
@@ -41,6 +43,30 @@ def kimi_k3_mla_vc_output_gate(latent, vc_weight, gate, output=None): ...
 
 @api(KIMI_K3_MLA_PREFILL_GATE)
 def kimi_k3_mla_prefill_gate(q, k, v, gate, qo_indptr, sm_scale=192**-0.5, max_seq_len=8192, output=None): ...
+
+
+@api(KIMI_K3_KDA_VERIFY)
+def kimi_k3_kda_verify(
+    projected_qkvg,
+    projected_bfa,
+    f_b_weight,
+    conv_weight,
+    a_log,
+    dt_bias,
+    norm_weight,
+    conv_state,
+    kda_state,
+    conv_windows,
+    ring_raw_v,
+    ring_raw_k,
+    ring_gate,
+    ring_beta,
+    cache_indices,
+    window_indices,
+    lower_bound=-5.0,
+    eps=1e-5,
+    scale=128**-0.5,
+): ...
 
 
 @sglang_route("sglang.srt.models.kimi_k3.KimiK3MoE._forward_fused", versions=("0.5.22",))
@@ -303,4 +329,115 @@ def _prefill_falls_back(attn, forward_batch) -> bool:
         or not getattr(attn, "use_output_gate", False)
         or attn._gate_hidden_states is None
         or attn.o_proj.weight.dtype != torch.bfloat16
+    )
+
+
+@sglang_route("sglang.srt.models.kimi_k3.KimiK3DeltaAttention.forward", versions=("0.5.22",))
+def _kda_forward(self, hidden_states, positions, forward_batch, zero_allocator):
+    """A KDA layer's speculative verify of dense chains with ReplaySSM rings, graph capture too:
+    sglang's two input projections, the op in place of the f_b projection, the conv update,
+    the recurrence and o_norm, then o_proj."""
+    if not forward_batch.forward_mode.is_target_verify() or _kda_layer_falls_back(self, hidden_states):
+        return FallbackReason.OUT_OF_CONTRACT
+    from sglang.srt.model_executor.forward_context import get_attn_backend
+
+    backend = get_attn_backend().linear_attn_backend
+    if _kda_verify_falls_back(self, backend, forward_batch, hidden_states):
+        return FallbackReason.OUT_OF_CONTRACT
+    rows, steps = hidden_states.shape[0], forward_batch.spec_info.draft_token_num
+    requests = rows // steps
+    cache = backend.req_to_token_pool.mamba2_layer_cache(self.attn.layer_id)
+    arguments = {
+        "f_b_weight": self._bfa_f_b_w,
+        "conv_weight": self.attn.conv_weights,
+        "a_log": self.A_log.view(-1),
+        "dt_bias": self.dt_bias,
+        "norm_weight": self.o_norm.weight,
+        "conv_state": cache.conv[0],
+        "kda_state": cache.temporal,
+        "conv_windows": cache.intermediate_conv_window[0],
+        "ring_raw_v": cache.replayssm_rawv,
+        "ring_raw_k": cache.replayssm_rawk,
+        "ring_gate": cache.replayssm_g,
+        "ring_beta": cache.replayssm_beta,
+        "cache_indices": backend.forward_metadata.mamba_cache_indices[:requests],
+        # select_verify_intermediate_state_indices' rows without pp_spec_stable_rows
+        "window_indices": backend.verify_intermediate_state_indices[:requests],
+        "lower_bound": self.attn.lower_bound,
+        "eps": self.o_norm.eps,
+        "scale": self.attn.head_k_dim**-0.5,
+    }
+    stand_ins = {
+        "projected_qkvg": hidden_states.new_empty((requests, steps, 4 * self.attn.v_dim)),
+        "projected_bfa": hidden_states.new_empty((requests, steps, self._bfa_w.shape[0])),
+    }
+    reason = kimi_k3_kda_verify.fallback_reason(**stand_ins, **arguments)
+    if reason is not None:
+        return reason
+    from sglang.kernels.ops.gemm import kimi_k3_tiny_gemm
+
+    qkvg, _ = self.fused_qkvg_proj(hidden_states)
+    bfa = kimi_k3_tiny_gemm(hidden_states, self._bfa_w)
+    normalized = kimi_k3_kda_verify(
+        projected_qkvg=qkvg.view(requests, steps, -1),
+        projected_bfa=bfa.view(requests, steps, -1),
+        **arguments,
+    )
+    if isinstance(normalized, FallbackReason):
+        raise RuntimeError(f"kimi_k3_kda_verify declined after the projections: {normalized}")
+    return self.o_proj(normalized.view(rows, -1))[0]
+
+
+def _kda_layer_falls_back(layer, hidden_states) -> bool:
+    """Whether ``layer`` computes other than the op's chain: other than the full-rank gate's
+    separate [f_a | b] projection (without it, or the one-GEMM in-projection at these rows), a
+    convolution bias, no gate lower bound, o_norm's gate fused into the recurrence, o_proj's
+    all-reduce fusion, or LoRA."""
+    from sglang.srt.runtime_context import get_lora
+
+    rows = hidden_states.shape[0]
+    return (
+        not layer.use_full_rank_gate
+        or layer._bfa_w is None
+        or (getattr(layer, "_qkvgbfa_sizes", None) is not None and 0 < rows <= layer._qkvgbfa_bs_limit)
+        or layer._kda_fused_decode_ready
+        or layer.all_reduce_fusion
+        or layer.attn.bias is not None
+        or layer.attn.lower_bound is None
+        or layer.attn.activation != "silu"
+        or layer.o_norm.activation != "sigmoid"
+        or layer.o_norm.bias is not None
+        or get_lora().enable_lora
+    )
+
+
+def _kda_verify_falls_back(layer, backend, forward_batch, hidden_states) -> bool:
+    """Whether the verify is other than a static dense chain of draft_token_num rows per request
+    on the KDA backend's triton recurrence with ReplaySSM rings: a tree or ragged layout, the
+    snapshot scratch, fused accept, the fused chain kernel, pipeline-stable scratch rows, or a
+    piecewise graph."""
+    from sglang.srt.layers.attention.linear.kda_backend import KDAAttnBackend
+    from sglang.srt.layers.attention.linear.kernels.kda_triton import TritonKDAKernel
+    from sglang.srt.layers.attention.linear.utils import pp_spec_stable_rows_enabled
+    from sglang.srt.model_executor.runner_backend_utils.tc_piecewise_cuda_graph import (
+        get_tc_piecewise_forward_context,
+    )
+
+    if type(backend) is not KDAAttnBackend:
+        return True
+    spec, metadata = forward_batch.spec_info, backend.forward_metadata
+    cache = backend.req_to_token_pool.mamba2_layer_cache(layer.attn.layer_id)
+    steps = spec.draft_token_num
+    return (
+        spec.ragged_verify_layout is not None
+        or metadata.retrieve_next_token is not None
+        or metadata.retrieve_parent_token is not None
+        or getattr(cache, "replayssm_rawv", None) is None
+        or getattr(cache, "intermediate_ssm", None) is not None
+        or getattr(backend, "accept_lens_pool", None) is not None
+        or backend._fused_chain_verify_fn is not None
+        or type(backend.kernel_dispatcher.verify_kernel) is not TritonKDAKernel
+        or pp_spec_stable_rows_enabled()
+        or get_tc_piecewise_forward_context() is not None
+        or hidden_states.shape[0] % steps != 0
     )

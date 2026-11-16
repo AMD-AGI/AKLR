@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""What kimi_k3_latent_moe's contract says, in torch, in fp32: every input decoded to fp32 and
-nothing rounded or quantized in between but what the contract rounds."""
+"""What the Kimi-K3 contracts say, in torch: every input decoded and nothing rounded or quantized
+in between but what the contract rounds."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from torch import Tensor
 
 __all__ = [
+    "kimi_k3_kda_verify_reference",
     "kimi_k3_latent_moe_reference",
     "kimi_k3_mla_prefill_gate_reference",
     "kimi_k3_mla_vc_output_gate_reference",
@@ -121,3 +122,59 @@ def kimi_k3_mla_prefill_gate_reference(
         weights = torch.softmax(scores.masked_fill(~causal, float("-inf")), dim=-1)
         attention[start:end] = torch.einsum("hqk,khd->qhd", weights, v[start:end])
     return rounded_to_bfloat16(attention).flatten(1) * rounded_to_bfloat16(torch.sigmoid(gate))
+
+
+def kimi_k3_kda_verify_reference(
+    point: Any,
+    row_major_args: Mapping[str, Any],
+    decode: Callable[[Tensor, str], Tensor],
+) -> tuple[Tensor, ...]:
+    """normalized, then the mutable inputs as the call leaves them: conv_state, conv_windows and
+    the four rings. Rounding points: each convolution output (what the rings hold), forget and
+    the core before its norm round to bf16."""
+    import torch
+
+    args, axes = row_major_args, point.axes
+
+    def f(name: str) -> Tensor:
+        return decode(args[name], point.dtypes[name])
+
+    qkvg, bfa = f("projected_qkvg"), f("projected_bfa")
+    requests, steps, _ = qkvg.shape
+    heads, dim, rank = axes["n_heads"], axes["head_dim"], axes["gate_rank"]
+    width = heads * dim
+    slots, rows = args["cache_indices"].long(), args["window_indices"].long()
+    # decode may return its input itself: the mutable tensors are written in copies
+    conv_state, windows = f("conv_state").clone(), f("conv_windows").clone()
+    rings = {n: f(n).clone() for n in ("ring_raw_v", "ring_raw_k", "ring_gate", "ring_beta")}
+
+    raw = torch.cat((conv_state[slots], qkvg[..., : 3 * width]), dim=1)
+    taps = f("conv_weight")
+    z = sum(raw[:, j : j + steps] * taps[:, j] for j in range(4))
+    conv = rounded_to_bfloat16(torch.nn.functional.silu(z))
+    for t in range(steps):
+        windows[rows, t] = raw[:, t + 1 : t + 4]
+    conv_state[slots] = raw[:, steps:]
+    q, k, v = (x.unflatten(-1, (heads, dim)) for x in conv.split(width, dim=-1))
+
+    forget = rounded_to_bfloat16(bfa[..., :rank] @ f("f_b_weight").T).unflatten(-1, (heads, dim))
+    magnitude = torch.exp(f("a_log"))[:, None]
+    gate = args["lower_bound"] * torch.sigmoid(magnitude * (forget + f("dt_bias").view(heads, dim)))
+    beta = torch.sigmoid(bfa[..., rank : rank + heads])
+    for name, value in (("ring_raw_v", v), ("ring_raw_k", k), ("ring_gate", gate), ("ring_beta", beta)):
+        rings[name][slots, :, :steps] = value.transpose(1, 2)
+
+    q = q * torch.rsqrt(q.square().sum(-1, keepdim=True) + 1e-6) * args["scale"]
+    k = k * torch.rsqrt(k.square().sum(-1, keepdim=True) + 1e-6)
+    state = f("kda_state")[slots]
+    core = torch.empty_like(v)
+    for t in range(steps):
+        state = state * torch.exp(gate[:, t, :, None, :])
+        update = (v[:, t] - (state * k[:, t, :, None, :]).sum(-1)) * beta[:, t, :, None]
+        state = state + update[..., None] * k[:, t, :, None, :]
+        core[:, t] = (state * q[:, t, :, None, :]).sum(-1)
+    core = rounded_to_bfloat16(core)
+    g = qkvg[..., 3 * width :].unflatten(-1, (heads, dim))
+    normalized = core * torch.rsqrt(core.square().mean(-1, keepdim=True) + args["eps"])
+    normalized = normalized * f("norm_weight") * torch.sigmoid(g)
+    return (normalized, conv_state, windows, *rings.values())

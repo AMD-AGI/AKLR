@@ -232,6 +232,43 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"max_seq_len": 1024},
         layout_variant_name="row_major",
     ),
+    # Kimi-K3's KDA verify shrunk to two heads: three requests of five rows
+    PointSpec(
+        contract_id="kimi_k3_kda_verify@1.0",
+        axes={
+            "n_requests": 3,
+            "tokens_per_request": 5,
+            "n_slots": 5,
+            "n_window_rows": 4,
+            "window_steps": 5,
+            "ring_len": 8,
+            "n_heads": 2,
+            "head_dim": 128,
+            "gate_rank": 128,
+            "bfa_dim": 136,
+        },
+        dtypes={
+            "projected_qkvg": "bfloat16",
+            "projected_bfa": "bfloat16",
+            "f_b_weight": "bfloat16",
+            "conv_weight": "float32",
+            "a_log": "float32",
+            "dt_bias": "float32",
+            "norm_weight": "bfloat16",
+            "conv_state": "bfloat16",
+            "kda_state": "float32",
+            "conv_windows": "bfloat16",
+            "ring_raw_v": "bfloat16",
+            "ring_raw_k": "bfloat16",
+            "ring_gate": "float32",
+            "ring_beta": "float32",
+            "cache_indices": "int32",
+            "window_indices": "int32",
+            "normalized": "bfloat16",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
     # MiniMax-M2's MoE shrunk: every routed expert on the rank, then half of them (expert
     # parallelism); the experts as sglang holds them for aiter
     *(
