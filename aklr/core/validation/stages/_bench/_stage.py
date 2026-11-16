@@ -141,7 +141,9 @@ class BenchStage(PipelineStage[BenchReport]):
         outcomes = [by_index[i] for i in range(len(batches))]
         findings = [*unreadable, *(f for found, _ in outcomes for f in found)]
         records = [r for _, batch_records in outcomes for r in batch_records]
-        return BenchReport.from_findings(findings, workload_records=tuple(records), skipped_schemas=skipped)
+        return BenchReport.from_findings(
+            findings, demote=self._timed, workload_records=tuple(records), skipped_schemas=skipped
+        )
 
     def _workloads_to_run(
         self,
@@ -316,7 +318,8 @@ class BenchStage(PipelineStage[BenchReport]):
             failures.append(Finding.unlocated(FindingCode.PLATFORM_FAILURE, f"trial: {detail}"))
         findings, records = self._judged_findings(scope, batch, failures, candidate, reference)
         try:
-            line = BenchReport.from_findings(findings, workload_records=tuple(records)).batch_line()
+            report = BenchReport.from_findings(findings, demote=self._timed, workload_records=tuple(records))
+            line = report.batch_line()
         except Exception:  # a progress line never costs the batch's records
             logging.getLogger(__name__).exception("bench progress line failed")
             line = f"{records[0].schema_path}: progress text unavailable"

@@ -1262,6 +1262,15 @@ def test_an_untimed_bench_never_runs_the_baseline(monkeypatch: pytest.MonkeyPatc
     CandidateRun("cpu", None, None).run_baseline(request)
 
 
+def test_an_untimed_bench_fails_on_any_incorrect_workload() -> None:
+    """An untimed bench writes nothing back, so a mismatch cannot demote its workload: it fails."""
+    findings = [Finding(code=FindingCode.NUMERIC_MISMATCH, schema_path=_SCHEMA, axes={"m": 1}, detail="")]
+    records = (_workload({"m": 1}, 1.5, 0.0), _workload({"m": 2}, 1.5, 0.0))
+    assert BenchReport.from_findings(findings, workload_records=records).status == "passed"
+    untimed = BenchReport.from_findings(findings, demote=False, workload_records=records)
+    assert (untimed.status, len(untimed.findings), untimed.demotions) == ("failed", 1, ())
+
+
 def test_a_device_the_kernel_does_not_state_aborts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A device the kernel does not state is the platform's fault: the candidate stops
     before its kernel is built."""
