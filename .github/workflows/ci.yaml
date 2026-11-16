@@ -185,7 +185,9 @@ jobs:
         --device=/dev/kfd --device=/dev/dri --ipc=host
         --security-opt=seccomp=unconfined --ulimit memlock=-1:-1
     # A full validation (no base: a force push, a replaced run, a dispatch) benches every schema.
-    timeout-minutes: 330
+    # Both lanes run within the node's lease (manage_spur_runner.sh, 8 hours unless
+    # AKLR_SPUR_TIME_LIMIT): their timeouts sum under it.
+    timeout-minutes: 240
     env:
       LANE: aiter
       TESTS: tests/core tests/ops tests/benchmarks
@@ -340,7 +342,7 @@ jobs:
     container:
       image: ${{ needs.code-lint.outputs.sglang_image }}
       options: *gpu_container_options
-    timeout-minutes: 330
+    timeout-minutes: 210
     env:
       LANE: sglang
       TESTS: tests/plugins
