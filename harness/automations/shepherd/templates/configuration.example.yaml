@@ -1,0 +1,42 @@
+# Copy to .shepherd/configuration.yaml (ignored by Git) and fill in the nulls.
+# Never write host names, usernames or personal absolute paths, even locally; credentials stay in the secret store.
+
+mode: run  # run: observe, optimize and open draft PRs; observe: inspect only; drain: finish existing work
+repository: AMD-AGI/AKLR
+base_branch: main
+execution:
+  state_dir: /var/tmp/$USER/shepherd/state  # Local disk that survives reboots (not NFS or /tmp), owned by you; env vars, never a literal username.
+  cluster: null  # remote-gpu cluster name.
+  image: null  # ROCm image pinned by digest, e.g. AKLR CI's tag (.github/workflows/ci.yaml) resolved to it.
+  pool_hours: 24  # Time limit of each pool node allocation (<= the cluster's MAX_TIME); its node-hour bound.
+  runtime_revision: null  # KernelForge (Hyperloom AKLR branch) commit and flydsl version the readiness checks ran.
+  round_agent: null  # Non-interactive agent argv the wrapper runs before the prompt, e.g. [claude, -p, --plugin-dir, harness, --model, <id>, --effort, <level>, <owner-chosen permission flags>]; it must load the shared skills from this checkout; a permission bypass is the owner's explicit choice.
+policy:
+  strategies:  # Applied in order.
+    - type: manual
+      schemas: []  # Repository-relative paths to schema JSON files.
+    - type: kernel-less
+  batch_size: 10
+  allowed_ops: [all]  # Op names, or all.
+  backends: [flydsl, triton]  # Schema languages forge_task can drive (flydsl, triton, gluon).
+  max_parallel_campaigns: 8  # Campaigns at once, one per GPU of a pool node. On probation: 1.
+  max_open_prs: 8
+  cooldown_hours: 72
+campaign:  # Per campaign.
+  model: null  # Model KernelForge runs with.
+  reasoning_effort: null
+  loop_hours: null
+  total_node_hours: null  # Wall hours from admission to its deadline: setup, loop, finalize, stress, validation.
+  max_model_usd: null  # Includes finalize and distill.
+  model_usd_per_hour: null  # Highest hourly model spend of a KernelForge step; its timeouts keep max_model_usd.
+  max_auto_resumes: 1
+budget:  # Cumulative: model USD over all campaigns, node hours over all pools. On probation: one campaign, one pool, max_open_prs 1.
+  authorization: null  # Recorded spending authorization, not a credential.
+  total_model_usd: null
+  total_node_hours: null  # Whole-node hours, even when using one GPU.
+  model_hard_limit_ref: null  # Name of the provider-side hard spending limit (API key or gateway cap), not a path. None: no admission.
+publication:
+  allow_draft_pr: false
+  allow_pr_comments: false
+  allow_ci_gpu_label: false  # GPU CI spending needs separate authorization.
+  branch_prefix: shepherd/

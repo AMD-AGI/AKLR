@@ -1,8 +1,10 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""Print, as a JSON list, the keyword arguments AKLR calls a schema's entry with. argv: the AKLR checkout,
-then the schema file."""
+"""Print, as JSON, the keyword arguments AKLR calls a schema's entry with (``params``), the outputs among them in
+the order the contract returns them (``outputs``), and its contract's baseline function as ``[module, name]``, or
+null when the contract has none. argv: the AKLR checkout, then the
+schema file."""
 
 import json
 import sys
@@ -15,4 +17,13 @@ from aklr.core.contract.registry import ContractRegistry
 contract = ContractRegistry.default().for_schema_json(
     json.loads(Path(sys.argv[2]).read_text(encoding="utf-8"))
 )
-print(json.dumps([param.name for param in contract.api_params]))
+baseline = contract.baseline()
+print(
+    json.dumps(
+        {
+            "params": [param.name for param in contract.api_params],
+            "outputs": list(contract.outputs),
+            "baseline": baseline and [baseline.__module__, baseline.__name__],
+        }
+    )
+)
