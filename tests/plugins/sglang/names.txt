@@ -43,6 +43,7 @@ dsa_indexer_prepare_model_dim#_q_lora_rank#_n_heads#
 dsa_sparse_mla_decode_n_heads#_kv_dim#_topk#
 dsa_sparse_mla_prefill_n_heads#_kv_dim#_topk#
 dsa_topk_transform_topk#
+fp8_mqa_logits_n_heads#
 gated_attention_decode_qkv_dim#_n_kv_heads#_head_dim#
 gated_attention_decode_group_fp8_quant_qkv_dim#_n_kv_heads#_head_dim#
 gated_attention_prefill_qkv_dim#_n_kv_heads#_head_dim#
