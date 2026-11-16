@@ -1,0 +1,302 @@
+{
+  "schema_version": 5,
+  "name": "gemm_a8w8_blockwise_scaled_b_shuffled_n2048_k2048",
+  "contract_id": "gemm_a8w8_blockwise_scaled@1.0",
+  "description": "fp8 gemm dequantized per block: a fp32 scale per 128 x 128 of b, per 1 x 128 of a, K-major or MN-major. operand_format is '<a>:<b>'; 'none:preshuffled' is aiter's 16 x 16 shuffle_weight b with a raw column-major a_scale. Set a_scale.is_row_major to pass a row-major a_scale with a shuffled b.",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 2048,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 2048,
+      "description": "Reduction length."
+    },
+    "scale_rows": {
+      "type": "const",
+      "value": 16,
+      "description": "Weight-scale rows."
+    },
+    "scale_columns": {
+      "type": "const",
+      "value": 16,
+      "description": "Scale columns."
+    }
+  },
+  "attrs": {
+    "scale_major_mode": "K",
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    },
+    "a_scale": {
+      "shape": [
+        "m",
+        "scale_columns"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "Per 1 x 128 block of a."
+    },
+    "b_scale": {
+      "shape": [
+        "scale_rows",
+        "scale_columns"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "Per 128 x 128 block of b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T, scaled."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 1
+      }
+    },
+    {
+      "axes": {
+        "m": 2
+      }
+    },
+    {
+      "axes": {
+        "m": 3
+      }
+    },
+    {
+      "axes": {
+        "m": 4
+      }
+    },
+    {
+      "axes": {
+        "m": 5
+      }
+    },
+    {
+      "axes": {
+        "m": 6
+      }
+    },
+    {
+      "axes": {
+        "m": 7
+      }
+    },
+    {
+      "axes": {
+        "m": 8
+      }
+    },
+    {
+      "axes": {
+        "m": 9
+      }
+    },
+    {
+      "axes": {
+        "m": 10
+      }
+    },
+    {
+      "axes": {
+        "m": 11
+      }
+    },
+    {
+      "axes": {
+        "m": 12
+      }
+    },
+    {
+      "axes": {
+        "m": 13
+      }
+    },
+    {
+      "axes": {
+        "m": 14
+      }
+    },
+    {
+      "axes": {
+        "m": 15
+      }
+    },
+    {
+      "axes": {
+        "m": 16
+      }
+    },
+    {
+      "axes": {
+        "m": 18
+      }
+    },
+    {
+      "axes": {
+        "m": 20
+      }
+    },
+    {
+      "axes": {
+        "m": 24
+      }
+    },
+    {
+      "axes": {
+        "m": 28
+      }
+    },
+    {
+      "axes": {
+        "m": 32
+      }
+    },
+    {
+      "axes": {
+        "m": 36
+      }
+    },
+    {
+      "axes": {
+        "m": 40
+      }
+    },
+    {
+      "axes": {
+        "m": 44
+      }
+    },
+    {
+      "axes": {
+        "m": 48
+      }
+    },
+    {
+      "axes": {
+        "m": 52
+      }
+    },
+    {
+      "axes": {
+        "m": 56
+      }
+    },
+    {
+      "axes": {
+        "m": 64
+      }
+    },
+    {
+      "axes": {
+        "m": 72
+      }
+    },
+    {
+      "axes": {
+        "m": 80
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "b_shuffled": {
+        "layouts": {
+          "b": {
+            "kind": "preshuffle",
+            "tile": [16, 16]
+          },
+          "a_scale": {
+            "kind": "column_major"
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "operand_format",
+            "expected_value": "none:preshuffled"
+          },
+          {
+            "location": "tensor_attr",
+            "name": "a_scale.is_row_major",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"q_b_proj of a block-fp8 MLA (GLM-5.3 FP8, TP8: 2048 -> 2048) in decode, verify and draft on\ngfx950: fp8 activations at 1 x 128 scales times aiter's 16 x 16 shuffled fp8 weight at 128 x 128\nscales, bf16 out. A program owns a panel of rows and 8 or 16 output columns and splits K over\nits waves in one batched MFMA; the panels' K partials are scaled, summed and exchanged through\nLDS. The row panel of a tuned profile tiles the call's rows.\"\"\"\n\nfrom typing import NamedTuple\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\nclass _Panels(NamedTuple):\n    count: int = 4\n    column_bits: int = 0\n    interleaved: bool = False\n    native_rows: bool = False\n\nclass _Profile(NamedTuple):\n    rows: int\n    cols: int = 8\n    waves: int = 4\n    panels: _Panels = _Panels()\n    activation: tuple = (1, 16, 4)\n    k_width: int = 16\n    x_load: str = 'buffer'\n    w_load: str = 'slab'\n    scales: tuple = (True, True)\n    scale_base: str = 'multiply'\n    scale_indexing: str = 'packed'\n    exchange: str = 'plain'\n    shared_order: tuple = (0, 2, 1)\n    column_lanes: int = 16\n    strips: int = 4\n    waves_per_eu: int = 0\n    walk: int = 0\n    rotation: int = 0\n    store: str = 'offset'\n    prefetch_scales: bool = False\n    early_conversion: bool = False\n    flat_grid: bool = False\n_PROFILES = {1: _Profile(1, activation=(1, 4, 8), x_load='global', w_load='global', scale_base='divide', exchange='reserved', shared_order=(1, 0, 2), column_lanes=8, walk=123, store='base'), 2: _Profile(2, activation=(1, 4, 8), x_load='rebased', w_load='buffer', scales=(False, False), exchange='reserved', column_lanes=8, walk=123), 4: _Profile(4, panels=_Panels(4, 1, True), x_load='factored', scales=(True, False), waves_per_eu=4, walk=123, store='merged'), 8: _Profile(4, cols=16, panels=_Panels(4, 2), activation=(1, 32, 4), k_width=32, w_load='buffer', scales=(False, False), exchange='xor', strips=8, waves_per_eu=4, rotation=48), 16: _Profile(8, cols=16, waves=8, panels=_Panels(2, 0, True, True), activation=(2, 16, 8), k_width=32, x_load='combined', w_load='reverse', scales=(False, False), exchange='compact', shared_order=(2, 0, 1), waves_per_eu=6, store='merged', prefetch_scales=True, early_conversion=True, flat_grid=True, scale_indexing='panel')}\n\n@gluon.constexpr_function\ndef _axis_layout(axis, layout):\n    for dim in range(layout.rank - 1, -1, -1):\n        if dim != axis:\n            layout = gl.SliceLayout(dim, layout)\n    return layout\n\n@gluon.jit\ndef _axis(size: gl.constexpr, axis: gl.constexpr, layout: gl.constexpr):\n    RANK: gl.constexpr = layout.rank\n    index = gl.arange(0, size, _axis_layout(axis, layout))\n    for dim in gl.static_range(0, RANK):\n        if dim != axis:\n            index = gl.expand_dims(index, dim)\n    return index\n\n@gluon.jit\ndef _group(batch, panel, batches: gl.constexpr, P: gl.constexpr):\n    if P.interleaved:\n        return batch + panel * batches\n    return batch * P.count + panel\n\n@gluon.jit\ndef _load(ptr, offset, buffered: gl.constexpr):\n    if buffered:\n        return gl.amd.cdna4.buffer_load(ptr, offset)\n    return gl.load(ptr + offset)\n\n@gluon.jit\ndef _operands(X, W, first_m, tile, K: gl.constexpr, XM: gl.constexpr, XK: gl.constexpr, C: gl.constexpr, mma: gl.constexpr):\n    P: gl.constexpr = C.panels\n    S: gl.constexpr = K // (128 * P.count)\n    al: gl.constexpr = gl.BlockedLayout([1, C.activation[0], C.activation[1]], [1, 64 // C.activation[2], C.activation[2]], [C.waves, 1, 1], [2, 1, 0])\n    if C.k_width == 32:\n        bl: gl.constexpr = gl.DotOperandLayout(1, mma, C.k_width)\n    else:\n        bl: gl.constexpr = gl.BlockedLayout([1, 16, 1], [1, 4, 16], [C.waves, 1, 1], [2, 1, 0])\n    batch, row, k = (_axis(S, 0, al), _axis(C.rows * P.count, 1, al), _axis(128, 2, al))\n    group = _group(batch, row % P.count, S, P)\n    if C.x_load == 'rebased':\n        base = X + (first_m * XM + batch * P.count * 128 * XK)\n        offset = row // P.count * XM + (row % P.count * 128 + k) * XK\n        a = gl.load(base + offset)\n    elif C.x_load == 'factored':\n        a = _load(X + first_m * XM, row // P.count * XM + group * (128 * XK) + k * XK, True)\n    elif C.x_load == 'combined':\n        a = _load(X, (first_m + row // P.count) * XM + (group * 128 + k) * XK, False)\n    else:\n        a = _load(X + first_m * XM, row // P.count * XM + (group * 128 + k) * XK, C.x_load == 'buffer')\n    if C.early_conversion:\n        a = gl.convert_layout(a, gl.DotOperandLayout(0, mma, C.k_width))\n    batch, k, col = (_axis(S, 0, bl), _axis(128, 1, bl), _axis(C.cols * P.count, 2, bl))\n    group = _group(batch, col // C.cols, S, P)\n    n = tile * C.cols % 16 + col % C.cols\n    if C.w_load == 'reverse':\n        offsets = k % 16 + n * 16 + k // 16 * 256 + group * 2048\n        base = W + tile // (16 // C.cols) * (K * 16)\n    elif C.w_load == 'slab':\n        offsets = group * 2048 + k // 16 * 256 + n * 16 + k % 16\n        base = W + tile * C.cols // 16 * K * 16\n    else:\n        kk = group * 128 + k\n        offsets = kk // 16 * 256 + n * 16 + kk % 16\n        base = W + tile * C.cols // 16 * K * 16\n    b = _load(base, offsets, C.w_load != 'global')\n    return (gl.convert_layout(a, gl.DotOperandLayout(0, mma, C.k_width)), gl.convert_layout(b, gl.DotOperandLayout(1, mma, C.k_width)))\n\n@gluon.jit\ndef _select_half(dot, BIT: gl.constexpr, BN: gl.constexpr, columns: gl.constexpr):\n    S: gl.constexpr = dot.shape[0]\n    R: gl.constexpr = dot.shape[1]\n    N: gl.constexpr = dot.shape[2]\n    if columns:\n        lo = gl.amd.slice(dot, (S, R, N // 2), (0, 0, 0))\n        hi = gl.amd.slice(dot, (S, R, N // 2), (0, 0, N // 2))\n        take_lo = _axis(R, 1, lo.type.layout) & BIT == 0\n    else:\n        lo, hi = gl.split(gl.permute(gl.reshape(dot, (S, R // 2, 2, N)), (0, 1, 3, 2)))\n        column = _axis(N, 2, lo.type.layout)\n        if N == 2 * BN and BIT == 1:\n            return gl.where(column >= BN, hi, lo)\n        if N == 2 * BN * BIT:\n            take_lo = column < BN * BIT\n        else:\n            take_lo = column // BN & BIT == 0\n    return gl.where(take_lo, lo, hi)\n\n@gluon.jit\ndef _diagonal(dot, C: gl.constexpr):\n    P: gl.constexpr = C.panels\n    S: gl.constexpr = dot.shape[0]\n    BITS: gl.constexpr = P.count.bit_length() - 1\n    RB: gl.constexpr = BITS - P.column_bits\n    selected = dot\n    for bit in gl.static_range(BITS - 1, RB - 1, -1):\n        selected = _select_half(selected, 1 << bit, C.cols, True)\n    if RB > 0:\n        if P.column_bits == 0 and (not P.native_rows):\n            rl: gl.constexpr = gl.BlockedLayout([1, P.count, 1], [1, 4, 16], [C.waves, 1, 1], [2, 1, 0])\n        else:\n            rl: gl.constexpr = dot.type.layout\n        selected = gl.convert_layout(selected, rl)\n        for bit in gl.static_range(0, RB):\n            selected = _select_half(selected, 1 << bit, C.cols, False)\n    H: gl.constexpr = P.count if P.column_bits == 0 else 1 << P.column_bits\n    L: gl.constexpr = P.count // H\n    return gl.reshape(selected, (S, C.rows, H, L * C.cols))\n\n@gluon.jit\ndef _scales(view, XS, WS, first_m, tile, XSM: gl.constexpr, XSK: gl.constexpr, WSN: gl.constexpr, WSK: gl.constexpr, C: gl.constexpr):\n    P: gl.constexpr = C.panels\n    S: gl.constexpr = view.shape[0]\n    H: gl.constexpr = view.shape[2]\n    L: gl.constexpr = P.count // H\n    if C.scale_indexing == 'packed':\n        index_view = gl.reshape(view, (S, C.rows * H, L * C.cols))\n        ul: gl.constexpr = index_view.type.layout\n        row_panel = _axis(C.rows * H, 1, ul)\n        row, panel = (row_panel // H, row_panel % H * L)\n        COL_AXIS: gl.constexpr = 2\n    else:\n        ul: gl.constexpr = view.type.layout\n        row, panel = (_axis(C.rows, 1, ul), _axis(H, 2, ul) * L)\n        COL_AXIS: gl.constexpr = 3\n    batch = _axis(S, 0, ul)\n    if L > 1:\n        panel = panel + _axis(L * C.cols, COL_AXIS, ul) // C.cols\n    group = _group(batch, panel, S, P)\n    if C.scales[0]:\n        sa = gl.amd.cdna4.buffer_load(XS + first_m * XSM, row * XSM + group * XSK)\n    else:\n        sa = gl.load(XS + (first_m + row) * XSM + group * XSK)\n    if C.scale_base == 'divide':\n        base = WS + tile // (128 // C.cols) * WSN\n    else:\n        base = WS + tile * C.cols // 128 * WSN\n    wo = group * WSK\n    if C.scale_indexing == 'packed' and P.column_bits == 0:\n        wo = wo + gl.full((1, 1, C.cols), 0, gl.int32, ul)\n    sw = _load(base, wo, C.scales[1])\n    return (sa, sw)\n\n@gluon.jit\ndef _fold(view, sa, sw, C: gl.constexpr):\n    S: gl.constexpr = view.shape[0]\n    H: gl.constexpr = view.shape[2]\n    L: gl.constexpr = view.shape[3] // C.cols\n    if C.scale_indexing == 'packed':\n        view = gl.reshape(view, (S, C.rows * H, L * C.cols))\n    scaled = view * sa * sw\n    folded = gl.sum(gl.reshape(scaled, (S, C.rows, H, L * C.cols)), 2)\n    return gl.sum(gl.reshape(folded, (S, C.rows, L, C.cols)), 2)\n\n@gluon.jit\ndef _readout(partial, Y, first_m, tile, N: gl.constexpr, C: gl.constexpr, reserved):\n    shared: gl.constexpr = gl.SwizzledSharedLayout(1, 1, 1, C.shared_order)\n    if C.exchange == 'compact':\n        compact: gl.constexpr = gl.SharedLinearLayout(((1, 0, 0), (2, 0, 0), (0, 0, 1), (0, 0, 2), (0, 0, 4), (0, 0, 8), (0, 1, 0), (0, 2, 0), (0, 4, 0), (4, 0, 0)))\n        smem = gl.allocate_shared_memory(gl.float32, partial.shape, compact)\n        group = _axis(partial.shape[0], 0, partial.type.layout)\n        row = _axis(C.rows, 1, partial.type.layout)\n        smem.scatter(partial, group ^ row >> 1 & 3, 0)\n        reader: gl.constexpr = gl.BlockedLayout([2, 1, 1], [1, 4, 16], [1, C.waves, 1], [0, 2, 1])\n    else:\n        if C.exchange == 'reserved':\n            smem = reserved\n            smem.store(partial)\n        elif C.exchange == 'xor':\n            smem = gl.allocate_shared_memory(gl.float32, partial.shape, shared)\n            group = _axis(partial.shape[0], 0, partial.type.layout)\n            row = _axis(C.rows, 1, partial.type.layout)\n            smem.scatter(partial, group ^ row & partial.shape[0] - 1, 0)\n        else:\n            smem = gl.allocate_shared_memory(gl.float32, partial.shape, shared, partial)\n        reader: gl.constexpr = gl.BlockedLayout([1, 1, 1], [1, 64 // C.column_lanes, C.column_lanes], [1, C.waves, 1], [2, 1, 0])\n    value = gl.sum(smem.load(reader), 0)\n    ol: gl.constexpr = value.type.layout\n    row = first_m + gl.arange(0, C.rows, gl.SliceLayout(1, ol))\n    col = tile * C.cols + gl.arange(0, C.cols, gl.SliceLayout(0, ol))\n    if C.store == 'base':\n        gl.store(Y + first_m * N + tile * C.cols + gl.arange(0, C.rows, gl.SliceLayout(1, ol))[:, None] * N + gl.arange(0, C.cols, gl.SliceLayout(0, ol))[None, :], value.to(gl.bfloat16), cache_modifier='.wt')\n    elif C.store == 'merged':\n        gl.store(Y + (row[:, None] * N + col[None, :]), value.to(gl.bfloat16), cache_modifier='.wt')\n    else:\n        gl.store(Y + row[:, None] * N + col[None, :], value.to(gl.bfloat16), cache_modifier='.wt')\n\n@gluon.jit\ndef _decode_gemm(X, XS, W, WS, Y, M: gl.constexpr, N: gl.constexpr, K: gl.constexpr, XM: gl.constexpr, XK: gl.constexpr, XSM: gl.constexpr, XSK: gl.constexpr, WSN: gl.constexpr, WSK: gl.constexpr, C: gl.constexpr):\n    P: gl.constexpr = C.panels\n    S: gl.constexpr = K // (128 * P.count)\n    gl.static_assert(K % (128 * P.count) == 0 and M % C.rows == 0)\n    gl.static_assert(N % C.cols == 0 and N // C.cols % C.strips == 0)\n    gl.static_assert(P.count > 0 and P.count & P.count - 1 == 0)\n    gl.static_assert(P.column_bits >= 0 and P.column_bits < P.count.bit_length())\n    gl.static_assert(C.cols <= 16 and 16 % C.cols == 0)\n    gl.static_assert(P.column_bits == 0 or C.cols * (P.count >> P.column_bits) % 16 == 0)\n    tile = gl.program_id(0).to(gl.uint32)\n    if C.flat_grid:\n        first_m = tile // (N // C.cols) * C.rows\n        tile = tile % (N // C.cols)\n        tile = tile % C.strips * (N // C.cols // C.strips) + tile // C.strips\n    else:\n        first_m = 0 if M == C.rows else gl.program_id(1).to(gl.uint32) * C.rows\n        if C.walk != 0 and N == 2048 and (K == 2048):\n            gl.static_assert(C.walk & 1 == 1)\n            tile = tile * C.walk % (N // C.cols)\n        else:\n            tile = tile % C.strips * (N // C.cols // C.strips) + tile // C.strips\n    if C.rotation != 0 and N == 2048 and (K == 2048):\n        tile = (tile + C.rotation) % (N // C.cols)\n    if C.exchange == 'reserved':\n        reserved = gl.allocate_shared_memory(gl.float32, (S, C.rows, C.cols), gl.SwizzledSharedLayout(1, 1, 1, C.shared_order))\n    else:\n        reserved = None\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(4, [16, 16, 32], False, [C.waves, 1, 1])\n    if C.prefetch_scales:\n        template = _diagonal(gl.zeros((S, C.rows * P.count, C.cols * P.count), gl.float32, mma), C)\n    a, b = _operands(X, W, first_m, tile, K, XM, XK, C, mma)\n    if C.prefetch_scales:\n        sa, sw = _scales(template, XS, WS, first_m, tile, XSM, XSK, WSN, WSK, C)\n    dot = gl.amd.cdna4.mfma(a, b, gl.zeros((S, C.rows * P.count, C.cols * P.count), gl.float32, mma))\n    view = _diagonal(dot, C)\n    if not C.prefetch_scales:\n        sa, sw = _scales(view, XS, WS, first_m, tile, XSM, XSK, WSN, WSK, C)\n    _readout(_fold(view, sa, sw, C), Y, first_m, tile, N, C, reserved)\n\n\ndef _profile(m):\n    \"\"\"The tuned profile (keyed by the row count it was tuned at) whose row panel tiles m rows.\"\"\"\n    if m in (1, 2, 4, 8, 16):\n        return _PROFILES[m]\n    if m % 8 == 0:\n        return _PROFILES[16]\n    if m % 4 == 0:\n        return _PROFILES[8]\n    return _PROFILES[2] if m % 2 == 0 else _PROFILES[1]\n\n\ndef run(*, a, b, a_scale, b_scale, scale_major_mode, trans_b, operand_format, bias, out_dtype, out):\n    \"\"\"out = (a * a_scale) @ (b * b_scale).T in bf16; a_scale holds its (m, k / 128) values column\n    by column, as aiter's preshuffled GEMM reads them.\"\"\"\n    m, k = a.shape\n    n = b.shape[0]\n    assert (n, k) == (2048, 2048) and a.stride() == (k, 1) and b_scale.stride() == (k // 128, 1)\n    profile = _profile(m)\n    tiles = n // profile.cols\n    grid = (tiles * (m // profile.rows),) if profile.flat_grid else (tiles, m // profile.rows)\n    common = (m, n, k, k, 1, 1, m, k // 128, 1)\n    _decode_gemm[grid](a, a_scale, b, b_scale, out, *common, profile, num_warps=profile.waves, waves_per_eu=profile.waves_per_eu)\n"
+      }
+    ]
+  }
+}

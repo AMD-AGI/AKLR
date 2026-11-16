@@ -1,0 +1,312 @@
+{
+  "schema_version": 5,
+  "name": "gemm_a8w8_blockwise_scaled_b_shuffled_n6144_k2048",
+  "contract_id": "gemm_a8w8_blockwise_scaled@1.0",
+  "description": "fp8 gemm dequantized per block: a fp32 scale per 128 x 128 of b, per 1 x 128 of a, K-major or MN-major. operand_format is '<a>:<b>'; 'none:preshuffled' is aiter's 16 x 16 shuffle_weight b with a raw column-major a_scale. Set a_scale.is_row_major to pass a row-major a_scale with a shuffled b.",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 6144,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 2048,
+      "description": "Reduction length."
+    },
+    "scale_rows": {
+      "type": "const",
+      "value": 48,
+      "description": "Weight-scale rows."
+    },
+    "scale_columns": {
+      "type": "const",
+      "value": 16,
+      "description": "Scale columns."
+    }
+  },
+  "attrs": {
+    "scale_major_mode": "K",
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "float8_e4m3fn",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    },
+    "a_scale": {
+      "shape": [
+        "m",
+        "scale_columns"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "Per 1 x 128 block of a."
+    },
+    "b_scale": {
+      "shape": [
+        "scale_rows",
+        "scale_columns"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -3,
+        "log2_hi": 0
+      },
+      "description": "Per 128 x 128 block of b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T, scaled."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 1
+      }
+    },
+    {
+      "axes": {
+        "m": 2
+      }
+    },
+    {
+      "axes": {
+        "m": 3
+      }
+    },
+    {
+      "axes": {
+        "m": 4
+      }
+    },
+    {
+      "axes": {
+        "m": 5
+      }
+    },
+    {
+      "axes": {
+        "m": 6
+      }
+    },
+    {
+      "axes": {
+        "m": 7
+      }
+    },
+    {
+      "axes": {
+        "m": 8
+      }
+    },
+    {
+      "axes": {
+        "m": 9
+      }
+    },
+    {
+      "axes": {
+        "m": 10
+      }
+    },
+    {
+      "axes": {
+        "m": 11
+      }
+    },
+    {
+      "axes": {
+        "m": 12
+      }
+    },
+    {
+      "axes": {
+        "m": 13
+      }
+    },
+    {
+      "axes": {
+        "m": 14
+      }
+    },
+    {
+      "axes": {
+        "m": 15
+      }
+    },
+    {
+      "axes": {
+        "m": 16
+      }
+    },
+    {
+      "axes": {
+        "m": 18
+      }
+    },
+    {
+      "axes": {
+        "m": 20
+      }
+    },
+    {
+      "axes": {
+        "m": 24
+      }
+    },
+    {
+      "axes": {
+        "m": 28
+      }
+    },
+    {
+      "axes": {
+        "m": 32
+      }
+    },
+    {
+      "axes": {
+        "m": 36
+      }
+    },
+    {
+      "axes": {
+        "m": 40
+      }
+    },
+    {
+      "axes": {
+        "m": 44
+      }
+    },
+    {
+      "axes": {
+        "m": 48
+      }
+    },
+    {
+      "axes": {
+        "m": 52
+      }
+    },
+    {
+      "axes": {
+        "m": 56
+      }
+    },
+    {
+      "axes": {
+        "m": 60
+      }
+    },
+    {
+      "axes": {
+        "m": 68
+      }
+    },
+    {
+      "axes": {
+        "m": 72
+      }
+    },
+    {
+      "axes": {
+        "m": 76
+      }
+    },
+    {
+      "axes": {
+        "m": 80
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "b_shuffled": {
+        "layouts": {
+          "b": {
+            "kind": "preshuffle",
+            "tile": [16, 16]
+          },
+          "a_scale": {
+            "kind": "column_major"
+          }
+        },
+        "detect_facts": [
+          {
+            "location": "arg",
+            "name": "operand_format",
+            "expected_value": "none:preshuffled"
+          },
+          {
+            "location": "tensor_attr",
+            "name": "a_scale.is_row_major",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bounded",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "openai",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "# Created by OpenAI\n\"\"\"o_proj of a block-fp8 MLA (GLM-5.3 FP8, TP8: 2048 -> 6144) in decode, verify and draft on gfx950:\nfp8 activations at 1 x 128 scales times aiter's 16 x 16 shuffled fp8 weight at 128 x 128 scales,\nbf16 out. One wave owns 32 output columns of a block of rows and runs the whole K in scaled\nMFMAs. The rows are split into blocks of a tuned size; when they do not fill the last block, its\nmissing rows read as 0 and are not stored.\"\"\"\n\nfrom typing import NamedTuple\nfrom triton.experimental import gluon\nfrom triton.experimental.gluon import language as gl\n\nclass _DecodeTuning(NamedTuple):\n    pack: int\n    batch: int\n    operand_width: int\n    partitions: int\n    tie_width: int\n    tie_mask: int\n    early_weights: int\n    weight_first: int\n    address_style: int = 0\n    clobber_mask: int = 0\n_DECODE_TUNING = {1: _DecodeTuning(4, 1, 32, 2, 2, 65535, 0, 5, address_style=2), 2: _DecodeTuning(4, 1, 16, 4, 4, 65356, 0, 7, address_style=8), 4: _DecodeTuning(4, 1, 16, 2, 4, 65356, 0, 7, address_style=8), 8: _DecodeTuning(2, 4, 16, 4, 1, 65535, 0, 0, address_style=8), 16: _DecodeTuning(1, 1, 16, 2, 4, 65450, 3, 0, clobber_mask=49152)}\n\n@gluon.jit\ndef _select_last(values, INDEX: gl.constexpr):\n    SHAPE: gl.constexpr = values.type.shape\n    SIZE: gl.constexpr = SHAPE[-1]\n    if SIZE == 1:\n        return values.reshape(SHAPE[:-1])\n    else:\n        even, odd = gl.split(values.reshape(SHAPE[:-1] + [SIZE // 2, 2]))\n        if INDEX % 2 == 0:\n            return _select_last(even, INDEX // 2)\n        else:\n            return _select_last(odd, INDEX // 2)\n\n@gluon.jit\ndef _register_tie(acc, WIDTH: gl.constexpr, CLOBBER: gl.constexpr):\n    if WIDTH == 1:\n        CONSTRAINT: gl.constexpr = '=v,0'\n    elif WIDTH == 2:\n        CONSTRAINT: gl.constexpr = '=v,=v,0,1'\n    else:\n        CONSTRAINT: gl.constexpr = '=v,=v,=v,=v,0,1,2,3'\n    return gl.inline_asm_elementwise('', CONSTRAINT + (',~{memory}' if CLOBBER else ''), [acc], gl.float32, False, WIDTH)\n\n@gluon.jit\ndef _rows_load(ptr, rows, live, MASKED: gl.constexpr):\n    if MASKED:\n        return gl.load(ptr, mask=rows < live, other=0.0)\n    return gl.load(ptr)\n\n\n@gluon.jit\ndef _rows_buffer_load(ptr, offsets, rows, live, MASKED: gl.constexpr):\n    if MASKED:\n        return gl.amd.cdna4.buffer_load(ptr, offsets, rows < live, 0.0)\n    return gl.amd.cdna4.buffer_load(ptr, offsets)\n\n\n@gluon.jit\ndef _rows_buffer_store(value, ptr, offsets, rows, live, MASKED: gl.constexpr):\n    if MASKED:\n        gl.amd.cdna4.buffer_store(value, ptr, offsets, rows < live)\n    else:\n        gl.amd.cdna4.buffer_store(value, ptr, offsets)\n\n@gluon.jit\ndef _packed_weight_offsets(n, k, K: gl.constexpr, LINEAR_K: gl.constexpr=False, STYLE: gl.constexpr=0):\n    if STYLE == 2:\n        return n // 16 * (K * 16) + (k // 16 * 16 + n % 16) * 16 + k % 16\n    elif STYLE == 6:\n        return n // 16 * (K * 16) + k // 32 * 512 + (k // 16 % 2 * 16 + n % 16) * 16 + k % 16\n    elif STYLE == 8:\n        return n // 16 * (K * 16) + (k // 32 * 32 + k // 16 % 2 * 16 + n % 16) * 16 + k % 16\n    elif LINEAR_K:\n        return n // 16 * (K * 16) + k // 16 * 256 + n % 16 * 16 + k % 16\n    else:\n        return n // 16 * (K * 16) + k // 32 * 512 + k // 16 % 2 * 256 + n % 16 * 16 + k % 16\n\n@gluon.jit\ndef _operand_offsets(M: gl.constexpr, BN: gl.constexpr, K: gl.constexpr, XM: gl.constexpr, XK: gl.constexpr, PACK: gl.constexpr, BATCH: gl.constexpr, KW: gl.constexpr, MMA: gl.constexpr, STYLE: gl.constexpr=0):\n    if BATCH == 1:\n        al: gl.constexpr = gl.DotOperandLayout(0, MMA, KW)\n        bl: gl.constexpr = gl.DotOperandLayout(1, MMA, KW)\n        ar = gl.arange(0, M * PACK, gl.SliceLayout(1, al))\n        ak = gl.arange(0, 128, gl.SliceLayout(0, al))\n        bk = gl.arange(0, 128, gl.SliceLayout(1, bl))\n        bc = gl.arange(0, BN * PACK, gl.SliceLayout(0, bl))\n        if PACK > 1:\n            ao = ar[:, None] // PACK * XM + (ar[:, None] % PACK * 128 + ak[None, :]) * XK\n            rows = ar[:, None] // PACK + 0 * ak[None, :]\n            bo = _packed_weight_offsets(bc[None, :] % BN, bc[None, :] // BN * 128 + bk[:, None], K, M >= 2, STYLE)\n        else:\n            ao = ar[:, None] * XM + ak[None, :] * XK\n            rows = ar[:, None] + 0 * ak[None, :]\n            bo = _packed_weight_offsets(bc[None, :], bk[:, None], K, True, STYLE)\n    else:\n        mma3: gl.constexpr = gl.amd.AMDMFMALayout(4, [16, 16, 128], False, [1, 1, 1])\n        al3: gl.constexpr = gl.DotOperandLayout(0, mma3, KW)\n        bl3: gl.constexpr = gl.DotOperandLayout(1, mma3, KW)\n        ai = gl.arange(0, BATCH, gl.SliceLayout(1, gl.SliceLayout(2, al3)))[:, None, None]\n        ar = gl.arange(0, M * PACK, gl.SliceLayout(0, gl.SliceLayout(2, al3)))[None, :, None]\n        ak = gl.arange(0, 128, gl.SliceLayout(0, gl.SliceLayout(1, al3)))[None, None, :]\n        bi = gl.arange(0, BATCH, gl.SliceLayout(1, gl.SliceLayout(2, bl3)))[:, None, None]\n        bk = gl.arange(0, 128, gl.SliceLayout(0, gl.SliceLayout(2, bl3)))[None, :, None]\n        bc = gl.arange(0, BN * PACK, gl.SliceLayout(0, gl.SliceLayout(1, bl3)))[None, None, :]\n        ao = ar // PACK * XM + (ar % PACK * 128 + ak + ai * PACK * 128) * XK\n        rows = ar // PACK + 0 * (ak + ai)\n        bo = _packed_weight_offsets(bc % BN, bc // BN * 128 + bk + bi * PACK * 128, K, True, STYLE)\n    return (ao, bo, rows)\n\n@gluon.jit\ndef _group_scales(XS, WS, sm, table, weight_scales, sn, XSM: gl.constexpr, XSK: gl.constexpr, WSN: gl.constexpr, WSK: gl.constexpr, M: gl.constexpr, OUT: gl.constexpr, GROUP: gl.constexpr, live, MASKED: gl.constexpr):\n    if M == 1:\n        sx = gl.convert_layout(_select_last(table, GROUP), gl.SliceLayout(1, OUT))\n        sw = 1.0\n    elif M <= 4:\n        sx = _rows_load(XS + sm * XSM + GROUP * XSK, sm, live, MASKED)\n        sw = gl.load(WS + sn // 128 * WSN + GROUP * WSK)\n    else:\n        sx = gl.convert_layout(_select_last(table, GROUP), gl.SliceLayout(1, OUT))\n        sw = weight_scales[GROUP]\n    return (sx, sw)\n\n@gluon.jit\ndef _consume(groups, M: gl.constexpr, BN: gl.constexpr, PACK: gl.constexpr, MMA: gl.constexpr, OUT: gl.constexpr, TIE: gl.constexpr, CLOBBER: gl.constexpr, TIE_MASK: gl.constexpr, CLOBBER_MASK: gl.constexpr=0):\n    zero = gl.zeros((M * PACK, BN * PACK), gl.float32, MMA)\n    acc = gl.zeros((M, BN), gl.float32, OUT)\n    for block in gl.static_range(len(groups)):\n        a, b, scales = groups[block]\n        product = gl.amd.cdna4.mfma_scaled(a, None, 'e4m3', b, None, 'e4m3', zero)\n        if PACK > 1:\n            fields = product.reshape((M, PACK, PACK, BN)).permute((0, 3, 1, 2))\n        for p in gl.static_range(PACK):\n            if PACK > 1:\n                partial = gl.convert_layout(_select_last(_select_last(fields, p), p), OUT)\n            else:\n                partial = product\n            sx, sw = scales[p]\n            acc = gl.fma(partial, sx[:, None] * sw, acc)\n            if TIE_MASK & 1 << block * PACK + p:\n                acc = _register_tie(acc, TIE, CLOBBER or (M == 8 and block * PACK + p >= 12) or CLOBBER_MASK & 1 << block * PACK + p != 0)\n    return acc\n\n@gluon.jit\ndef _gemm_decode(X, XS, W, WS, Y, ROWS, N: gl.constexpr, K: gl.constexpr, XM: gl.constexpr, XK: gl.constexpr, XSM: gl.constexpr, XSK: gl.constexpr, WSN: gl.constexpr, WSK: gl.constexpr, M: gl.constexpr, CFG: gl.constexpr, MASKED: gl.constexpr):\n    BN: gl.constexpr = 32\n    PACK: gl.constexpr = CFG.pack\n    BATCH: gl.constexpr = CFG.batch\n    KW: gl.constexpr = CFG.operand_width\n    TIE: gl.constexpr = CFG.tie_width\n    TIE_MASK: gl.constexpr = CFG.tie_mask\n    EARLY_W: gl.constexpr = CFG.early_weights\n    WEIGHT_FIRST: gl.constexpr = CFG.weight_first\n    PRELOAD_WS: gl.constexpr = M >= 8\n    GROUPS: gl.constexpr = K // 128\n    mma: gl.constexpr = gl.amd.AMDMFMALayout(4, [16, 16, 128], M == 16, [1, 1])\n    al: gl.constexpr = gl.DotOperandLayout(0, mma, KW)\n    bl: gl.constexpr = gl.DotOperandLayout(1, mma, KW)\n    if M == 8:\n        ol: gl.constexpr = gl.BlockedLayout([2, 1], [4, 16], [1, 1], [1, 0])\n    elif PACK > 1:\n        ol: gl.constexpr = gl.BlockedLayout([1, 1], [4, 16], [1, 1], [1, 0])\n    else:\n        ol: gl.constexpr = mma\n    om = gl.arange(0, M, gl.SliceLayout(1, ol))\n    on = gl.arange(0, BN, gl.SliceLayout(0, ol))\n    first = gl.program_id(2) * M\n    X = X + first * XM\n    XS = XS + first * XSM\n    Y = Y + first * N\n    live = ROWS - first\n    pid = gl.program_id(0).to(gl.uint32)\n    pid = pid * (N // BN // CFG.partitions) + gl.program_id(1).to(gl.uint32)\n    sn = pid * BN\n    if BATCH == 1:\n        ao, bo, rows = _operand_offsets(M, BN, K, XM, XK, PACK, BATCH, KW, mma, CFG.address_style)\n    early_b = ()\n    for e in gl.static_range(EARLY_W):\n        early_b += (gl.amd.cdna4.buffer_load(W, bo + sn * K + e * PACK * 2048),)\n    sw_tuple = ()\n    scale_table = ()\n    if PRELOAD_WS:\n        for g in gl.static_range(GROUPS):\n            sw_tuple += (gl.load(WS + sn // 128 * WSN + g * WSK),)\n    if M <= 4:\n        sm = gl.arange(0, M, gl.SliceLayout(1, ol))\n    else:\n        if M == 8:\n            sl: gl.constexpr = gl.BlockedLayout([1, GROUPS], [4, 16], [1, 1], [1, 0])\n        else:\n            sl: gl.constexpr = gl.BlockedLayout([1, GROUPS], [16, 4], [1, 1], [0, 1])\n        sm = gl.arange(0, M, gl.SliceLayout(1, sl))\n        sg = gl.arange(0, GROUPS, gl.SliceLayout(0, sl))\n        scale_table = _rows_load(XS + sm[:, None] * XSM + sg[None, :] * XSK, sm[:, None] + 0 * sg[None, :], live, MASKED)\n    if BATCH > 1:\n        ao, bo, rows = _operand_offsets(M, BN, K, XM, XK, PACK, BATCH, KW, mma, CFG.address_style)\n    if M == 1:\n        msl: gl.constexpr = gl.BlockedLayout([1, GROUPS], [4, 16], [1, 1], [1, 0])\n        ms = gl.arange(0, 1, gl.SliceLayout(1, msl))\n        gs = gl.arange(0, GROUPS, gl.SliceLayout(0, msl))\n    groups = ()\n    for block in gl.static_range(GROUPS // PACK // BATCH):\n        base_g = block * PACK * BATCH\n        if M <= 4:\n            if WEIGHT_FIRST & 1 << block:\n                b = gl.amd.cdna4.buffer_load(W, bo + sn * K + base_g * 2048)\n                a = _rows_load(X + ao + base_g * 128 * XK, rows, live, MASKED)\n            else:\n                a = _rows_load(X + ao + base_g * 128 * XK, rows, live, MASKED)\n                b = gl.amd.cdna4.buffer_load(W, bo + sn * K + base_g * 2048)\n        elif M == 8:\n            a = _rows_load(X + ao + base_g * 128 * XK, rows, live, MASKED)\n            b = gl.amd.cdna4.buffer_load(W + base_g * 2048, bo + sn * K)\n        else:\n            a = _rows_buffer_load(X, ao + base_g * 128 * XK, rows, live, MASKED)\n            if block < EARLY_W:\n                b = early_b[block]\n            else:\n                b = gl.amd.cdna4.buffer_load(W, bo + sn * K + base_g * 2048)\n        if M == 1 and block == 0:\n            scale_table = gl.load(XS + ms[:, None] * XSM + gs[None, :] * XSK) * gl.load(WS + sn // 128 * WSN + gs[None, :] * WSK)\n        if BATCH > 1:\n            av = a.permute((1, 2, 0))\n            bv = b.permute((1, 2, 0))\n        for i in gl.static_range(BATCH):\n            if BATCH > 1:\n                aa = gl.convert_layout(_select_last(av, i), al)\n                bb = gl.convert_layout(_select_last(bv, i), bl)\n            else:\n                aa, bb = (a, b)\n            scales_tuple = ()\n            for p in gl.static_range(PACK):\n                sx, sw = _group_scales(XS, WS, sm, scale_table, sw_tuple, sn, XSM, XSK, WSN, WSK, M, ol, block * PACK * BATCH + i * PACK + p, live, MASKED)\n                scales_tuple += ((sx, sw),)\n            groups += ((aa, bb, scales_tuple),)\n    acc = _consume(groups, M, BN, PACK, mma, ol, TIE, M == 2, TIE_MASK, CFG.clobber_mask)\n    if M == 16:\n        yl: gl.constexpr = gl.BlockedLayout([1, 8], [16, 4], [1, 1], [0, 1])\n        value = gl.convert_layout(acc.to(gl.bfloat16), yl)\n        ym = gl.arange(0, M, gl.SliceLayout(1, yl))\n        yn = gl.arange(0, BN, gl.SliceLayout(0, yl))\n        _rows_buffer_store(value, Y + sn, ym[:, None] * N + yn[None, :], ym[:, None] + 0 * yn[None, :], live, MASKED)\n    else:\n        _rows_buffer_store(acc.to(gl.bfloat16), Y + sn, om[:, None] * N + on[None, :], om[:, None] + 0 * on[None, :], live, MASKED)\n\n\n# rows per block where not the default below (the tuning of that block size is used)\n_BLOCK_ROWS = {1: 1, 2: 2, 3: 4, 4: 4, 5: 8, 6: 8, 7: 8, 8: 8}\n\n\ndef _block_rows(m):\n    if m in _BLOCK_ROWS:\n        return _BLOCK_ROWS[m]\n    return 16 if m % 16 == 0 or m > 32 else 8\n\n\ndef run(*, a, b, a_scale, b_scale, scale_major_mode, trans_b, operand_format, bias, out_dtype, out):\n    \"\"\"out = (a * a_scale) @ (b * b_scale).T in bf16; a_scale holds its (m, k / 128) values column\n    by column, as aiter's preshuffled GEMM reads them.\"\"\"\n    m, k = a.shape\n    n = b.shape[0]\n    assert (n, k) == (6144, 2048) and a.stride() == (k, 1) and b_scale.stride() == (k // 128, 1)\n    rows = _block_rows(m)\n    cfg = _DECODE_TUNING[rows]\n    grid = (cfg.partitions, n // (32 * cfg.partitions), -(-m // rows))\n    strides = (k, 1, 1, m, k // 128, 1)\n    _gemm_decode[grid](a, a_scale, b, b_scale, out, m, n, k, *strides, rows, cfg, m % rows != 0, num_warps=1, num_stages=1)\n"
+      }
+    ]
+  }
+}
