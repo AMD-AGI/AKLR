@@ -7,7 +7,7 @@ in the file it names; when the two disagree, the named file wins.
 aklr/ops/
   __init__.py                  re-exports op apis
   README.md                    this file
-  cost.py                      COSTS: one call's Cost for each contract a roofline can rank (see below)
+  cost.py                      one call's Cost for each contract that does more than move its tensors (see below)
   <op>/                        attention, gemm, fused_moe, mhc, mla, rms_norm, topk
     __init__.py                re-exports api.py's apis
     contract.py                OpContract constants, CONTRACTS
@@ -18,11 +18,12 @@ aklr/ops/
     impls/<language>/<name>/<uuid>.json        one kernel and the workloads it serves
 ```
 
-- `cost.py`'s `COSTS` maps a contract name to a function `(symbols, tensor_bytes)` returning one call's `Cost`
-  (`aklr/core/contract/cost.py`): the matrix-core operations, the dtype whose rate bounds them, and the least bytes
-  moved, from the Point's symbols (`Domain.symbols`) and each present tensor's bytes in storage. A contract that only
-  moves its tensors is one more name beside `memory_cost`; one doing a GEMM's work, beside `gemm_cost`.
-  `OpContract.cost_at(point)` calls it; a contract absent from `COSTS` has no cost, and nothing guesses it.
+- `OpContract.cost_at(point)` is one call's `Cost` (`aklr/core/contract/cost.py`): the matrix-core operations, the
+  dtype whose rate bounds them, and the least bytes moved. By default a call moves each present tensor once and does
+  no math, which needs nothing written. A contract that does matrix math has a formula in `cost.py`'s `COSTS`, by
+  contract name: a function `(symbols, tensor_bytes)` of the Point's symbols (`Domain.symbols`) and each tensor's
+  bytes in storage; one doing a GEMM's work is one more name beside `gemm_cost`. A default cost is `exact` only for
+  a contract named in `MEMORY_BOUND`; elsewhere it is a floor that leaves the contract's math uncounted.
 
 - A contract with `ranks` (the attr holding the group size, e.g. `ep_size`) is called by every rank of its group
   at once. The bench runs a process a rank, one device each, in one `torch.distributed` group; each rank draws its

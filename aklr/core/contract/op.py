@@ -570,21 +570,22 @@ class OpContract(FrozenModel):
         ``NotImplementedError`` for a call it does not serve."""
         return self._optional_function("baseline", self.baseline_name)
 
-    def cost_at(self, point: PointSpec) -> Cost | None:
-        """One call's work at ``point``: this contract's function in ``aklr/ops/cost.py``'s
+    def cost_at(self, point: PointSpec) -> Cost:
+        """One call's work at ``point``: this contract's formula in ``aklr/ops/cost.py``'s
         ``COSTS``, of the Point's symbols (``Domain.symbols``) and each present tensor's
-        bytes in storage; None when it has none."""
-        from aklr.ops.cost import COSTS  # aklr.ops imports this module
+        bytes in storage. Without a formula, those bytes moved once and no math, exact
+        only for a ``MEMORY_BOUND`` contract."""
+        from aklr.ops.cost import COSTS, MEMORY_BOUND  # aklr.ops imports this module
 
-        cost = COSTS.get(contract_name(self.contract_id))
-        if cost is None:
-            return None
+        name = contract_name(self.contract_id)
         tensor_bytes = {
-            name: self.storage_bytes_of(name, point)
-            for name, dtype in point.dtypes.items()
+            tensor: self.storage_bytes_of(tensor, point)
+            for tensor, dtype in point.dtypes.items()
             if dtype is not None
         }
-        return cost(self.domain.symbols(point), tensor_bytes)
+        if name in COSTS:
+            return COSTS[name](self.domain.symbols(point), tensor_bytes)
+        return Cost(0, sum(tensor_bytes.values()), None, exact=name in MEMORY_BOUND)
 
     def _optional_function(self, submodule: str, name: str) -> Callable | None:
         try:

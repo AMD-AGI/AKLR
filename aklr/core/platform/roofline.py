@@ -42,7 +42,7 @@ class Roofline:
         math in a dtype without a rate."""
         math_seconds = 0.0
         if cost.flops:
-            if cost.dtype not in self.flops_per_second:
-                raise ValueError(f"no matrix-core rate for {cost.dtype}")
-            math_seconds = cost.flops / self.flops_per_second[cost.dtype]
-        return max(math_seconds, cost.bytes / self.bytes_per_second, self.floor_seconds)
+            if cost.flops_dtype not in self.flops_per_second:
+                raise ValueError(f"no matrix-core rate for {cost.flops_dtype}")
+            math_seconds = cost.flops / self.flops_per_second[cost.flops_dtype]
+        return max(math_seconds, cost.bytes_moved / self.bytes_per_second, self.floor_seconds)

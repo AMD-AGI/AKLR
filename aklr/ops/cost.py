@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""The work of one call of each contract a roofline can rank (``OpContract.cost_at``)."""
+"""The work of one call of each contract that does more than move its tensors (``OpContract.cost_at``)."""
 
 from __future__ import annotations
 
@@ -9,14 +9,9 @@ from collections.abc import Callable, Mapping
 
 from aklr.core.contract.cost import Cost
 
-__all__ = ["COSTS", "fused_moe_cost", "gemm_cost", "memory_cost"]
+__all__ = ["COSTS", "MEMORY_BOUND", "fused_moe_cost", "gemm_cost"]
 
 Symbols = Mapping[str, int | str | bool]
-
-
-def memory_cost(symbols: Symbols, tensor_bytes: Mapping[str, int]) -> Cost:
-    """A call that moves every tensor once and does no matrix math."""
-    return Cost(0, sum(tensor_bytes.values()), None)
 
 
 def gemm_cost(symbols: Symbols, tensor_bytes: Mapping[str, int]) -> Cost:
@@ -48,12 +43,13 @@ def fused_moe_cost(symbols: Symbols, tensor_bytes: Mapping[str, int]) -> Cost:
     return Cost(flops, moved, dtype)
 
 
-# by contract name; a contract absent here has no cost, and nothing guesses it
+# by contract name; any other contract moves each tensor once (``OpContract.cost_at``)
 COSTS: Mapping[str, Callable[[Symbols, Mapping[str, int]], Cost]] = {
     **dict.fromkeys(("gemm", "gemm_a8w8", "gemm_a8w8_blockwise_scaled", "gemm_a4w4_mxfp4", "bmm"), gemm_cost),
     "fused_moe": fused_moe_cost,
-    **dict.fromkeys(
-        ("rms_norm", "add_rms_norm", "per_group_quant_fp8", "per_group_quant_mxfp8", "biased_grouped_topk"),
-        memory_cost,
-    ),
 }
+
+# the contracts without a formula whose bytes are all their work: their cost is exact
+MEMORY_BOUND = frozenset(
+    {"rms_norm", "add_rms_norm", "per_group_quant_fp8", "per_group_quant_mxfp8", "biased_grouped_topk"}
+)
