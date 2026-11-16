@@ -1,18 +1,25 @@
 name: Crystal Correctness Qualification
 
 on:
+  # Qualification jobs remain off unless CRYSTAL_SCHEDULE_ENABLED is exactly true.
+  schedule:
+    - cron: '17 10 * * 1,3,5'
   workflow_dispatch:
     inputs:
       pull_request:
-        description: Same-repository AKLR PR number (native GPU CI must pass first)
-        required: true
-        type: number
+        description: Optional open AKLR PR number; leave both inputs empty to test merged main
+        required: false
+        type: string
+      commit_sha:
+        description: Optional full release commit SHA already on main; do not combine with a PR number
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: crystal-accuracy-pr-${{ inputs.pull_request }}
+  group: crystal-accuracy-${{ inputs.pull_request || 'main' }}
   cancel-in-progress: false
 
 defaults:
@@ -21,6 +28,7 @@ defaults:
 
 jobs:
   resolve:
+    if: github.event_name != 'schedule' || vars.CRYSTAL_SCHEDULE_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -28,21 +36,25 @@ jobs:
       pull-requests: read
       actions: read
     outputs:
-      sha: ${{ steps.pr.outputs.sha }}
+      sha: ${{ steps.candidate.outputs.sha }}
+      pull_request: ${{ steps.candidate.outputs.pull_request }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - id: pr
-        name: Resolve PR and verify native CI
+      - id: candidate
+        name: Pin candidate and verify native CI
         uses: actions/github-script@v7
         env:
           PR_NUMBER: ${{ inputs.pull_request }}
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          SCHEDULE_ENABLED: ${{ vars.CRYSTAL_SCHEDULE_ENABLED }}
         with:
           script: |
             const resolve = require('./.github/scripts/resolve_crystal_candidate.cjs');
-            await resolve({github, context, core, prNumber: process.env.PR_NUMBER});
+            await resolve({github, context, core, prNumber: process.env.PR_NUMBER,
+              commitSha: process.env.COMMIT_SHA, scheduleEnabled: process.env.SCHEDULE_ENABLED});
 
   build:
     needs: resolve
@@ -94,7 +106,7 @@ jobs:
           if ! docker buildx build --push --platform linux/amd64 --provenance=false --sbom=false \
             --file control/docker/Dockerfile.sglang \
             --build-arg "BASE_IMAGE=$BASE_IMAGE" --build-arg "AKLR_COMMIT=$CANDIDATE_SHA" \
-            --tag "ghcr.io/amd-agi/aklr-sglang:pr-${CANDIDATE_SHA}-${GITHUB_RUN_ID}" \
+            --tag "ghcr.io/amd-agi/aklr-sglang:candidate-${CANDIDATE_SHA}-${GITHUB_RUN_ID}" \
             --metadata-file "$RUNNER_TEMP/crystal-image.json" candidate \
             >"$RUNNER_TEMP/crystal-build.log" 2>&1; then
             echo 'Candidate image build failed; contact the runner operator.'; exit 1
@@ -117,9 +129,10 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Confirm PR still points at tested commit
+        if: needs.resolve.outputs.pull_request != ''
         uses: actions/github-script@v7
         env:
-          PR_NUMBER: ${{ inputs.pull_request }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pull_request }}
           EXPECTED_SHA: ${{ needs.resolve.outputs.sha }}
         with:
           script: |
@@ -131,13 +144,15 @@ jobs:
         env:
           CRYSTAL_URL: ${{ secrets.CRYSTAL_URL }}
           CRYSTAL_AKLR_SUBMISSION_SECRET: ${{ secrets.CRYSTAL_AKLR_SUBMISSION_SECRET }}
-          PR_NUMBER: ${{ inputs.pull_request }}
+          PR_NUMBER: ${{ needs.resolve.outputs.pull_request }}
           CANDIDATE_SHA: ${{ needs.resolve.outputs.sha }}
           IMAGE_DIGEST: ${{ needs.build.outputs.digest }}
         run: |
+          args=()
+          if [[ -n "$PR_NUMBER" ]]; then args+=(--pull-request "$PR_NUMBER"); fi
           python3 .github/scripts/submit_crystal_qualification.py \
             --crystal-url "$CRYSTAL_URL" --request-id "aklr-${GITHUB_RUN_ID}" \
-            --pull-request "$PR_NUMBER" --commit-sha "$CANDIDATE_SHA" \
+            "${args[@]}" --commit-sha "$CANDIDATE_SHA" \
             --image "ghcr.io/amd-agi/aklr-sglang@${IMAGE_DIGEST}" \
             --profile-id aklr-sglang-v1 \
             --workflow-run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"

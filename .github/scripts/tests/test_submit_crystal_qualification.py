@@ -47,9 +47,21 @@ class Response:
 class SubmitCrystalQualificationTests(unittest.TestCase):
     def test_builds_deterministic_body(self):
         body = json.loads(MODULE.request_body(arguments()))
+        self.assertEqual(body["schema_version"], 2)
         self.assertEqual(body["pull_request"], 42)
         self.assertEqual(body["commit_sha"], "b" * 40)
         self.assertTrue(body["image"].endswith("@sha256:" + "a" * 64))
+
+    def test_main_commit_has_no_invented_pull_request(self):
+        body = json.loads(MODULE.request_body(arguments(pull_request=None)))
+        self.assertEqual(body["schema_version"], 2)
+        self.assertIsNone(body["pull_request"])
+        self.assertEqual(body["commit_sha"], "b" * 40)
+
+    def test_invalid_pull_requests_are_not_treated_as_main(self):
+        for value in [True, 0, -1, 1.5, "42", 2**31]:
+            with self.subTest(value=value), self.assertRaisesRegex(ValueError, "pull request"):
+                MODULE.request_body(arguments(pull_request=value))
 
     def test_signs_exact_body_and_posts_once(self):
         secret = "submission-secret-that-is-long-enough"

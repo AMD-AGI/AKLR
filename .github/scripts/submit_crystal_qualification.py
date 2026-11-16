@@ -40,8 +40,10 @@ def crystal_endpoint(base_url: str) -> str:
 def request_body(args: argparse.Namespace) -> bytes:
     if args.repository != "AMD-AGI/AKLR":
         raise ValueError("repository must be AMD-AGI/AKLR")
-    if args.pull_request < 1:
-        raise ValueError("pull request must be positive")
+    if args.pull_request is not None and (
+        type(args.pull_request) is not int or not 1 <= args.pull_request <= 2**31 - 1
+    ):
+        raise ValueError("pull request must be a positive integer or omitted for a main commit")
     if COMMIT_SHA.fullmatch(args.commit_sha) is None:
         raise ValueError("commit SHA must contain 40 lowercase hexadecimal characters")
     if IMAGE_DIGEST.fullmatch(args.image) is None:
@@ -56,7 +58,7 @@ def request_body(args: argparse.Namespace) -> bytes:
     ):
         raise ValueError("invalid workflow URL")
     payload = {
-        "schema_version": 1,
+        "schema_version": 2,
         "repository": args.repository,
         "pull_request": args.pull_request,
         "commit_sha": args.commit_sha,
@@ -105,7 +107,7 @@ def parser() -> argparse.ArgumentParser:
     result.add_argument("--crystal-url", required=True)
     result.add_argument("--request-id", required=True)
     result.add_argument("--repository", default="AMD-AGI/AKLR")
-    result.add_argument("--pull-request", required=True, type=int)
+    result.add_argument("--pull-request", type=int, help="Omit for a pinned main/release commit")
     result.add_argument("--commit-sha", required=True)
     result.add_argument("--image", required=True)
     result.add_argument("--profile-id", required=True)
