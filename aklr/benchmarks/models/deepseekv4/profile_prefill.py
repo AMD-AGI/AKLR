@@ -1,4 +1,8 @@
-"""DeepSeek-V4 per-module chunked-prefill timing and synthetic TTFT estimate."""
+###############################################################################
+# SPDX-License-Identifier: MIT
+#
+# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+###############################################################################
 
 import sys
 import time
@@ -28,7 +32,6 @@ class StepResult:
 
 
 def measure_step(args, mr, ops, context, step, counts, rank_print) -> StepResult:
-    """Time every op for one chunk, plus the full forward it is checked against."""
     batch = model_bench.make_prefill_batch(mr, context, step)
     fb = sglang_bench.forward_batch_of(batch, mr)
 
@@ -38,7 +41,7 @@ def measure_step(args, mr, ops, context, step, counts, rank_print) -> StepResult
     torch.cuda.synchronize()
     sglang_bench.assert_lockstep(saved)
 
-    # Run eagerly, as the server runs a chunk: this is what the roll-up is checked against and TTFT is summed from.
+    # Eager, as the server runs a chunk: the roll-up is checked against it and TTFT summed from it.
     rank_print("  timing: full forward")
     full_ms = sglang_bench.bench_eager(
         lambda: mr.model.forward(fb.input_ids, fb.positions, fb),
@@ -48,18 +51,18 @@ def measure_step(args, mr, ops, context, step, counts, rank_print) -> StepResult
 
     inner = sglang_bench.graph_reps_for(step.extend)
     times = {}
-    # Popped, not iterated: a recorded entry pins that op's chunk-sized input tensors.
     skipped = {}
+    # Popped, not iterated: a recorded entry pins that op's chunk-sized input tensors.
     for name in list(saved):
         rank_print(f"  timing: {name}")
         fn = model_bench.make_call(ops[name], saved.pop(name))
         try:
             times[name] = sglang_bench.bench(fn, args.reps, inner=inner, rounds=args.repeat)
         except torch.cuda.OutOfMemoryError:
-            # Not a shape mismatch: every later op would be skipped too, so abort instead of a partial report.
+            # Not a shape mismatch: every later op would fail too; abort, not a partial report.
             raise
         except RuntimeError as e:
-            # As in profile_decode: only a deterministic failure may be skipped, since every rank must skip the same ops.
+            # Skip only deterministic failures: every rank must skip the same ops.
             first = str(e).split("\n")[0]
             if "out of memory" in first.lower():
                 raise
@@ -122,7 +125,6 @@ def default_out(args, mr, layers) -> str:
 
 
 def ttft_ms(results) -> float:
-    """One request's time to first token: every chunk of its prefill."""
     return sum(r.full_ms for r in results)
 
 
@@ -162,7 +164,7 @@ def config_table(args, mr, layers) -> str:
     topk = model_bench.index_topk(mr)
     rows = [
         ("model", f"`{type(mr.model).__name__}`  {sa.model_path}"),
-        ("layers", layers.describe()),
+        ("layers", str(layers)),
         ("parallel", model_bench.parallel_line(mr)),
         *([("moe", line)] if (line := model_bench.moe_line(mr, layers)) else []),
         ("context", f"ISL {args.ISL:,} per request"),
@@ -194,7 +196,6 @@ def config_table(args, mr, layers) -> str:
 
 
 def timeline_table(results) -> str:
-    """The native V4 chunk shapes, eager timings and graph roll-up comparison."""
     rows = [
         (
             i + 1,
@@ -264,7 +265,6 @@ def kind_sections(result, counts) -> str:
 
 
 def report(args, mr, layers, results, ops):
-    """Returns (markdown, one-line headline for the log)."""
     last = results[-1]
     sections = [
         ("Summary", summary_table(args, results)),
@@ -291,7 +291,6 @@ def report(args, mr, layers, results, ops):
         [
             f"# {model_bench.model_tag(mr.server_args)} prefill profile",
             time.strftime("%Y-%m-%d %H:%M %Z"),
-            # Above the tables, not buried in Config.
             *filter(None, [model_bench.dummy_banner(mr.server_args)]),
         ]
         + [f"## {title}\n\n{body}" for title, body in sections]
@@ -319,6 +318,6 @@ def make_parser():
 
 if __name__ == "__main__":
     args = make_parser().parse_args()
-    # Not a flag: chunked prefill gives a long request the forward to itself, and every DP rank schedules its own.
+    # Not a flag: chunked prefill gives a long request the forward to itself, on every DP rank.
     args.CONC = sglang_bench.prefill_conc(args)
     model_bench.run(work, model_bench.build_server_args(args), args)

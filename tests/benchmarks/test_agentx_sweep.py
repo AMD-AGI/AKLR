@@ -5,16 +5,13 @@ from __future__ import annotations
 
 import copy
 import importlib
-import io
 import json
-import os
 import sys
-import tempfile
-import unittest
-from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+
+import pytest
 
 with mock.patch.object(
     sys, "path", [str(Path(__file__).resolve().parents[2] / "benchmarks/agentx"), *sys.path]
@@ -23,12 +20,11 @@ with mock.patch.object(
     docker_launch = importlib.import_module("agentx_ci.docker_launch")
 
 
-class AgentXSweepTests(unittest.TestCase):
-    def setUp(self):
-        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+class SweepCase:
+    def __init__(self, root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.root = root
         self.summary_path = self.root / "summary.md"
-        self.enterContext(mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": str(self.summary_path)}))
-        self.enterContext(redirect_stdout(io.StringIO()))
+        monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(self.summary_path))
         target = {
             "run": {"completed": True, "points_expected": 2},
             "points": [
@@ -61,82 +57,92 @@ class AgentXSweepTests(unittest.TestCase):
         with mock.patch.object(docker_launch, "run", side_effect=run):
             result = sweep.main(["--serving", str(self.root / "serving.json"), "--out", str(self.root)])
         if save:
-            self.assertEqual((self.root / "results.json").read_text(), before)
+            assert (self.root / "results.json").read_text() == before
         return result, self.summary_path.read_text()
 
-    def test_complete_sweep_reports_success(self):
-        code, summary = self.launch()
-        self.assertEqual(code, 0)
-        self.assertIn("AgentX sweep: Success", summary)
-        self.assertIn("4/4 measurement points successful", summary)
 
-    def test_partial_sweep_counts_both_modes_and_preserves_errors(self):
-        self.results["points"][0].update(status="failed", error="server failed before ready")
-        code, summary = self.launch()
-        self.assertEqual(code, 0)
-        self.assertIn("AgentX sweep: Partial success", summary)
-        self.assertIn("3/4 measurement points successful", summary)
-        self.assertIn("| enabled | 1 | 1 | 0 | 2 |", summary)
-        self.assertIn("| disabled | 2 | 0 | 0 | 2 |", summary)
-
-    def test_failed_or_invalid_points_do_not_count_as_successful(self):
-        for target in (self.results, self.results["control"]):
-            target["points"][0]["status"] = "failed"
-            target["points"][1]["tput_per_gpu"] = 0
-        code, summary = self.launch()
-        self.assertEqual(code, 1)
-        self.assertIn("AgentX sweep: Failed", summary)
-        self.assertIn("0/4 measurement points successful", summary)
-
-    def test_missing_measurements_are_distinct_from_failed_points(self):
-        self.results["run"]["completed"] = False
-        self.results["points"] = []
-        code, summary = self.launch()
-        self.assertEqual(code, 0)
-        self.assertIn("AgentX sweep: Partial success", summary)
-        self.assertIn("2/4 measurement points successful", summary)
-        self.assertIn("| enabled | 0 | 0 | 2 | 2 |", summary)
-
-    def test_process_failure_and_cancellation_are_not_hidden_by_saved_points(self):
-        self.results["points"].pop()
-        self.results["run"]["completed"] = False
-        for process_code in (1, 130, 137, 143):
-            with self.subTest(process_code=process_code):
-                code, summary = self.launch(process_code)
-                self.assertEqual(code, process_code)
-                self.assertIn("AgentX sweep: Failed", summary)
-                self.assertNotIn("AgentX sweep: Partial success", summary)
-                self.assertIn("3/4 measurement points successful", summary)
-                self.assertIn("| enabled | 1 | 0 | 1 | 2 |", summary)
-                self.assertIn("| disabled | 2 | 0 | 0 | 2 |", summary)
-                self.assertIn(f"Sweep process exited with status {process_code}", summary)
-
-    def test_process_failure_is_failed_even_when_all_points_succeeded(self):
-        code, summary = self.launch(1)
-        self.assertEqual(code, 1)
-        self.assertIn("AgentX sweep: Failed", summary)
-        self.assertNotIn("AgentX sweep: Partial success", summary)
-        self.assertIn("4/4 measurement points successful", summary)
-        self.assertIn("| enabled | 2 | 0 | 0 | 2 |", summary)
-        self.assertIn("| disabled | 2 | 0 | 0 | 2 |", summary)
-
-    def test_missing_results_cannot_turn_a_process_exit_into_success(self):
-        code, summary = self.launch(save=False)
-        self.assertEqual(code, 1)
-        self.assertIn("No usable measurement results were saved", summary)
-
-    def test_duplicate_measurements_are_not_reported_as_successful(self):
-        self.results["points"][1] = copy.deepcopy(self.results["points"][0])
-        code, summary = self.launch()
-        self.assertEqual(code, 1)
-        self.assertIn("No usable measurement results were saved", summary)
+@pytest.fixture
+def sweep_case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SweepCase:
+    return SweepCase(tmp_path, monkeypatch)
 
 
-class AgentXDockerOutcomeTests(unittest.TestCase):
-    def setUp(self):
-        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        self.enterContext(redirect_stdout(io.StringIO()))
-        self.enterContext(redirect_stderr(io.StringIO()))
+def test_complete_sweep_reports_success(sweep_case):
+    code, summary = sweep_case.launch()
+    assert code == 0
+    assert "AgentX sweep: Success" in summary
+    assert "4/4 measurement points successful" in summary
+
+
+def test_partial_sweep_counts_both_modes_and_preserves_errors(sweep_case):
+    sweep_case.results["points"][0].update(status="failed", error="server failed before ready")
+    code, summary = sweep_case.launch()
+    assert code == 0
+    assert "AgentX sweep: Partial success" in summary
+    assert "3/4 measurement points successful" in summary
+    assert "| enabled | 1 | 1 | 0 | 2 |" in summary
+    assert "| disabled | 2 | 0 | 0 | 2 |" in summary
+
+
+def test_failed_or_invalid_points_do_not_count_as_successful(sweep_case):
+    for target in (sweep_case.results, sweep_case.results["control"]):
+        target["points"][0]["status"] = "failed"
+        target["points"][1]["tput_per_gpu"] = 0
+    code, summary = sweep_case.launch()
+    assert code == 1
+    assert "AgentX sweep: Failed" in summary
+    assert "0/4 measurement points successful" in summary
+
+
+def test_missing_measurements_are_distinct_from_failed_points(sweep_case):
+    sweep_case.results["run"]["completed"] = False
+    sweep_case.results["points"] = []
+    code, summary = sweep_case.launch()
+    assert code == 0
+    assert "AgentX sweep: Partial success" in summary
+    assert "2/4 measurement points successful" in summary
+    assert "| enabled | 0 | 0 | 2 | 2 |" in summary
+
+
+@pytest.mark.parametrize("process_code", [1, 130, 137, 143])
+def test_process_failure_and_cancellation_are_not_hidden_by_saved_points(sweep_case, process_code):
+    sweep_case.results["points"].pop()
+    sweep_case.results["run"]["completed"] = False
+    code, summary = sweep_case.launch(process_code)
+    assert code == process_code
+    assert "AgentX sweep: Failed" in summary
+    assert "AgentX sweep: Partial success" not in summary
+    assert "3/4 measurement points successful" in summary
+    assert "| enabled | 1 | 0 | 1 | 2 |" in summary
+    assert "| disabled | 2 | 0 | 0 | 2 |" in summary
+    assert f"Sweep process exited with status {process_code}" in summary
+
+
+def test_process_failure_is_failed_even_when_all_points_succeeded(sweep_case):
+    code, summary = sweep_case.launch(1)
+    assert code == 1
+    assert "AgentX sweep: Failed" in summary
+    assert "AgentX sweep: Partial success" not in summary
+    assert "4/4 measurement points successful" in summary
+    assert "| enabled | 2 | 0 | 0 | 2 |" in summary
+    assert "| disabled | 2 | 0 | 0 | 2 |" in summary
+
+
+def test_missing_results_cannot_turn_a_process_exit_into_success(sweep_case):
+    code, summary = sweep_case.launch(save=False)
+    assert code == 1
+    assert "No usable measurement results were saved" in summary
+
+
+def test_duplicate_measurements_are_not_reported_as_successful(sweep_case):
+    sweep_case.results["points"][1] = copy.deepcopy(sweep_case.results["points"][0])
+    code, summary = sweep_case.launch()
+    assert code == 1
+    assert "No usable measurement results were saved" in summary
+
+
+class DockerOutcomeCase:
+    def __init__(self, root: Path) -> None:
+        self.root = root
         self.serving = {
             "schema": 3,
             "model": {"id": "fixture"},
@@ -197,22 +203,25 @@ class AgentXDockerOutcomeTests(unittest.TestCase):
             code = docker_launch.run(self.args, [])
         return code, json.loads((self.args.out / "results.json").read_text())
 
-    def test_all_failed_measurements_keep_completion_and_individual_errors(self):
-        code, results = self.launch(completed=True)
-        self.assertEqual(code, 1)
-        for target in (results, results["control"]):
-            self.assertTrue(target["run"]["completed"])
-            self.assertNotIn("error", target["run"])
-            self.assertEqual(target["points"][0]["error"], "server startup failed")
-        self.assertIn("All measurement points failed", (self.args.out / "launcher.log").read_text())
 
-    def test_container_failure_remains_failed_even_after_a_successful_point(self):
-        code, results = self.launch(completed=False)
-        self.assertEqual(code, 1)
-        self.assertFalse(results["run"]["completed"])
-        self.assertIn("Container exited with status 1", results["run"]["error"])
-        self.assertEqual(results["control"]["points"][0]["status"], "ok")
+@pytest.fixture
+def docker_case(tmp_path: Path) -> DockerOutcomeCase:
+    return DockerOutcomeCase(tmp_path)
 
 
-if __name__ == "__main__":
-    unittest.main()
+def test_all_failed_measurements_keep_completion_and_individual_errors(docker_case):
+    code, results = docker_case.launch(completed=True)
+    assert code == 1
+    for target in (results, results["control"]):
+        assert target["run"]["completed"]
+        assert "error" not in target["run"]
+        assert target["points"][0]["error"] == "server startup failed"
+    assert "All measurement points failed" in (docker_case.args.out / "launcher.log").read_text()
+
+
+def test_container_failure_remains_failed_even_after_a_successful_point(docker_case):
+    code, results = docker_case.launch(completed=False)
+    assert code == 1
+    assert not results["run"]["completed"]
+    assert "Container exited with status 1" in results["run"]["error"]
+    assert results["control"]["points"][0]["status"] == "ok"

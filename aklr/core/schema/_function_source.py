@@ -1,0 +1,77 @@
+###############################################################################
+# SPDX-License-Identifier: Apache-2.0
+#
+# Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
+# Copyright (c) 2025 by FlashInfer team.
+#
+# Adapted from FlashInfer (https://github.com/flashinfer-ai/flashinfer)
+# Modified by the AKLR team.
+#
+# This file is distributed under the Apache License 2.0 (see LICENSE-APACHE),
+# not the MIT license that covers the rest of AKLR (see LICENSE).
+###############################################################################
+
+from __future__ import annotations
+
+import ast
+import dis
+import inspect
+import textwrap
+from collections.abc import Callable
+from dataclasses import dataclass
+from types import CodeType, FunctionType
+
+
+@dataclass(frozen=True)
+class FunctionSource:
+    """How one kind of standard function (init, reference, check, baseline) is written as standalone source."""
+
+    preamble: str
+    entry: str = "run"
+
+    def render(self, fn: Callable) -> str:
+        """The standalone source of fn: preamble, the project functions it calls, fn, bound to entry."""
+        functions = (*self.dependencies(fn), fn)
+        for f in functions:
+            if f.__name__ == "<lambda>" or f.__code__.co_freevars:
+                raise ValueError(
+                    f"{f.__qualname__} must be a plain def without free variables to be kept as source"
+                )
+        parts = [self.preamble]
+        parts += [textwrap.dedent(inspect.getsource(f)) for f in functions]
+        if fn.__name__ != self.entry:
+            parts.append(f"{self.entry} = {fn.__name__}\n")
+        return "\n".join(parts)
+
+    def dependencies(self, fn: Callable) -> tuple[FunctionType, ...]:
+        imported = {
+            (alias.asname or alias.name).partition(".")[0]
+            for node in ast.parse(self.preamble).body
+            if isinstance(node, (ast.Import, ast.ImportFrom))
+            for alias in node.names
+        }
+        package = fn.__module__.partition(".")[0]
+        seen: set[Callable] = {fn}
+        ordered: list[FunctionType] = []
+
+        def visit(f: Callable) -> None:
+            codes = [f.__code__]
+            for code in codes:
+                # nested defs and comprehensions: code objects in co_consts, visited by this same loop
+                codes += [c for c in code.co_consts if isinstance(c, CodeType)]
+                for instruction in dis.get_instructions(code):
+                    name = instruction.argval
+                    if instruction.opname != "LOAD_GLOBAL" or name in imported or name not in f.__globals__:
+                        continue
+                    dep = f.__globals__[name]
+                    if not (isinstance(dep, FunctionType) and dep.__module__.partition(".")[0] == package):
+                        raise ValueError(
+                            f"{f.__qualname__} uses global '{name}' that the standalone source cannot bind"
+                        )
+                    if dep not in seen:
+                        seen.add(dep)
+                        visit(dep)
+                        ordered.append(dep)
+
+        visit(fn)
+        return tuple(ordered)

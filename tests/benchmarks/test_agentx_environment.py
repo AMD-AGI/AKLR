@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""AgentX image environment boundaries; runnable with unittest without GPU dependencies."""
+"""AgentX image environment boundaries, without GPU dependencies."""
 
 from __future__ import annotations
 
@@ -9,12 +9,12 @@ import io
 import json
 import os
 import sys
-import tempfile
-import unittest
 from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+
+import pytest
 
 with mock.patch.object(
     sys, "path", [str(Path(__file__).resolve().parents[2] / "benchmarks/agentx"), *sys.path]
@@ -27,11 +27,9 @@ IMAGE_REFERENCE = "example.invalid/server@sha256:" + "b" * 64
 SDK = "/opt/venv/lib/python3.12/site-packages/_rocm_sdk_devel"
 
 
-class AgentXEnvironmentTests(unittest.TestCase):
-    def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+class EnvironmentCase:
+    def __init__(self, root: Path) -> None:
+        self.root = root
         self.inspection_path = self.root / "execution.json"
         self.defaults = {
             "PATH": "/image/bin",
@@ -147,146 +145,6 @@ class AgentXEnvironmentTests(unittest.TestCase):
             code = runtime.main(["--serving", str(serving_path), "--out", str(out), "--run-id", "fixture"])
         return code, json.loads((out / "results.json").read_text()), calls
 
-    def test_partial_sweep_succeeds_and_retains_point_failures_in_both_modes(self):
-        for measurements in (
-            [RuntimeError("server failed"), self.aggregate],
-            [self.aggregate, RuntimeError("server failed")],
-        ):
-            with self.subTest(first_measurement=type(measurements[0]).__name__):
-                code, results, calls = self.run_main(measurements=measurements)
-                self.assertEqual(code, 0)
-                self.assertEqual(calls["run_live"].call_count, 2)
-                points = results["control"]["points"] + results["points"]
-                self.assertEqual(sum(point["status"] == "ok" for point in points), 1)
-                failure = next(point for point in points if point["status"] == "failed")
-                self.assertEqual(failure["error"], "RuntimeError: server failed")
-                for target in (results, results["control"]):
-                    self.assertTrue(target["run"]["completed"])
-                    self.assertNotIn("error", target["run"])
-                self.assertNotEqual(analysis.compare_aklr(results)["status"], "ok")
-
-    def test_sweep_fails_when_neither_mode_has_a_successful_point(self):
-        code, results, calls = self.run_main(
-            measurements=[RuntimeError("disabled failed"), RuntimeError("enabled failed")]
-        )
-        self.assertEqual(code, 1)
-        self.assertEqual(calls["run_live"].call_count, 2)
-        self.assertEqual(results["control"]["points"][0]["error"], "RuntimeError: disabled failed")
-        self.assertEqual(results["points"][0]["error"], "RuntimeError: enabled failed")
-        self.assertTrue(results["run"]["completed"])
-        self.assertTrue(results["control"]["run"]["completed"])
-
-    def test_process_cleanup_failure_stops_the_sweep_and_keeps_earlier_measurements(self):
-        second = copy.deepcopy(self.point)
-        second.update(conc=2, exp_name="tp1-c2")
-        self.serving["points"].append(second)
-
-        def client(*_args, **kwargs):
-            env = kwargs["env"]
-            path = Path(env["AGENTIC_OUTPUT_DIR"]) / f"{env['RESULT_FILENAME']}.json"
-            path.write_text(json.dumps(self.aggregate))
-            return 0
-
-        for failed_index in (1, 2):
-            with (
-                self.subTest(failed_mode="disabled" if failed_index == 1 else "enabled"),
-                mock.patch.object(runtime, "port_free", return_value=True),
-                mock.patch.object(runtime, "wait_ready"),
-                mock.patch.object(runtime.subprocess, "Popen") as server,
-                mock.patch.object(runtime, "run_client", side_effect=client),
-                mock.patch.object(
-                    runtime.os,
-                    "killpg",
-                    side_effect=[ProcessLookupError()] * failed_index
-                    + [PermissionError("cannot terminate process group")],
-                ) as kill,
-            ):
-                code, results, calls = self.run_main(measurements=runtime.run_live)
-            points = results["control"]["points"] + results["points"]
-            self.assertEqual(code, 1)
-            self.assertEqual(len(points), failed_index + 1)
-            self.assertEqual(sum(point["status"] == "ok" for point in points), failed_index)
-            self.assertEqual(points[-1]["status"], "failed")
-            self.assertTrue(points[-1]["cleanup_failed"])
-            self.assertIn("PermissionError: cannot terminate process group", points[-1]["error"])
-            self.assertFalse(results["run"]["completed"])
-            self.assertTrue(results["run"]["cleanup_failed"])
-            self.assertIn("cannot terminate process group", results["run"]["error"])
-            self.assertEqual(results["control"]["run"]["completed"], failed_index == 2)
-            self.assertEqual(calls["run_live"].call_count, failed_index + 1)
-            self.assertEqual(server.call_count, failed_index + 1)
-            self.assertEqual(kill.call_count, failed_index + 1)
-            self.assertNotEqual(analysis.compare_aklr(results)["status"], "ok")
-
-    def test_client_cleanup_failure_is_distinct_from_a_measurement_failure(self):
-        with (
-            mock.patch.object(runtime.subprocess, "Popen") as process,
-            mock.patch.object(runtime.os, "killpg", side_effect=PermissionError("cannot stop client")),
-        ):
-            process.return_value.wait.return_value = 0
-            with self.assertRaisesRegex(runtime.CleanupError, "PermissionError: cannot stop client"):
-                runtime.run_client(["fixture-client"], timeout=1)
-
-    def test_verified_defaults_are_read_once_and_not_taken_from_ambient_values(self):
-        self.write_inspection()
-        with (
-            mock.patch.dict(os.environ, self.environ, clear=True),
-            mock.patch.object(runtime, "read_json", wraps=runtime.read_json) as reader,
-        ):
-            identity, defaults = runtime.execution_identity(self.serving)
-            reader.assert_called_once_with(str(self.inspection_path))
-            self.inspection_path.unlink()
-            env = runtime.execution_env(defaults)
-        self.assertEqual(identity["image_id"], IMAGE_ID)
-        self.assertEqual(defaults, self.defaults)
-        self.assertEqual(env["SGLANG_USE_AITER"], "1")
-        self.assertEqual(env["ROCM_HOME"], SDK)
-        self.assertEqual(env["PATH"], "/runtime/bin")
-        self.assertEqual(env["HF_HUB_CACHE"], "/mounted/hub")
-        self.assertNotIn("ARBITRARY_TUNING", env)
-        self.assertEqual(identity["server_environment"]["defaults_sha256"], runtime.sha256_json(defaults))
-
-    def test_server_overrides_and_client_environment_stay_separate(self):
-        out = self.root / "point"
-        out.mkdir()
-        (out / "tp1-c1.json").write_text(json.dumps(self.aggregate))
-        with (
-            mock.patch.dict(os.environ, self.environ, clear=True),
-            mock.patch.object(runtime, "port_free", return_value=True),
-            mock.patch.object(runtime.subprocess, "Popen") as server,
-            mock.patch.object(runtime, "wait_ready"),
-            mock.patch.object(runtime, "stop"),
-            mock.patch.object(runtime, "run_client", return_value=0) as client,
-        ):
-            self.assertEqual(runtime.run_live(self.point, out, self.host), self.aggregate)
-        server_env = server.call_args.kwargs["env"]
-        client_env = client.call_args.kwargs["env"]
-        self.assertEqual(server_env["SGLANG_USE_AITER"], "0")
-        self.assertEqual(server_env["ROCM_HOME"], SDK)
-        self.assertEqual(server_env["PATH"], "/runtime/bin")
-        self.assertEqual(server_env["AKLR_SGLANG_PLUGIN"], "1")
-        self.assertEqual(server_env["AKLR_DISABLE"], "0")
-        self.assertEqual(server_env["HF_TOKEN"], "live-fixture-token")
-        self.assertEqual(client_env["DURATION"], "60")
-        self.assertEqual(client_env["HF_TOKEN"], "live-fixture-token")
-        for key in ("SGLANG_USE_AITER", "ROCM_HOME", "PIP_CONSTRAINT", "VIRTUAL_ENV", "AKLR_SGLANG_PLUGIN"):
-            self.assertNotIn(key, client_env)
-        self.assertNotIn("ARBITRARY_TUNING", server_env)
-        self.assertNotIn("ARBITRARY_TUNING", client_env)
-
-    def test_trace_preparation_and_package_inspection_keep_original_environment(self):
-        with (
-            mock.patch.dict(os.environ, self.environ, clear=True),
-            mock.patch.object(runtime, "run_client", return_value=0) as prepare,
-            mock.patch.object(runtime.subprocess, "check_output", return_value="{}") as packages,
-        ):
-            runtime.prepare_traces(self.host, [self.point], self.root / "prepare.log")
-            runtime.client_packages(self.host)
-        for env in (prepare.call_args.kwargs["env"], packages.call_args.kwargs["env"]):
-            self.assertEqual(env["PATH"], "/runtime/bin")
-            for key in ("SGLANG_USE_AITER", "ROCM_HOME", "PIP_CONSTRAINT", "VIRTUAL_ENV"):
-                self.assertNotIn(key, env)
-
     def prepare_model_hub(self, ref_content):
         hub = self.root / "hf-hub"
         model_dir = hub / "models--example--model"
@@ -298,134 +156,287 @@ class AgentXEnvironmentTests(unittest.TestCase):
         args = SimpleNamespace(work=self.root / "work", model_path=None, duration=None)
         return hub, model_dir, snapshot, main, args
 
-    def test_exact_model_ref_keeps_pinned_offline_tokenizer(self):
-        revision = self.serving["weights"]["revision"].encode()
-        hub, model_dir, snapshot, main, args = self.prepare_model_hub(revision)
-        with (
-            mock.patch.dict(os.environ, {"HF_HUB_CACHE": str(hub)}, clear=True),
-            mock.patch.object(runtime, "fetch_inferencex", return_value=self.root / "inferencex"),
-        ):
-            host = runtime.host_settings(args, self.serving)
-        self.assertEqual(main.stat().st_size, 40)
-        self.assertEqual(host["model_path"], str(snapshot))
-        self.assertEqual(host["tokenizer"], "example/model")
-        self.assertEqual((host["trace_hub"] / model_dir.name).resolve(), model_dir)
-        self.assertEqual(main.read_bytes(), revision)
 
-    def test_model_ref_trailing_newline_is_rejected_before_client_setup(self):
-        hub, _, _, main, args = self.prepare_model_hub(self.serving["weights"]["revision"].encode() + b"\n")
-        with (
-            mock.patch.dict(os.environ, {"HF_HUB_CACHE": str(hub)}, clear=True),
-            mock.patch.object(runtime, "fetch_inferencex") as fetch,
-        ):
-            with self.assertRaisesRegex(RuntimeError, "must contain exactly the pinned revision"):
-                runtime.host_settings(args, self.serving)
-        self.assertEqual(main.stat().st_size, 41)
-        fetch.assert_not_called()
-
-    def test_malformed_environment_is_rejected_before_gpu_inspection(self):
-        invalid = [
-            {},
-            {"Env": "SGLANG_USE_AITER=1"},
-            {"Env": [1]},
-            {"Env": ["MISSING_EQUALS"]},
-            {"Env": ["=missing-name"]},
-            {"Env": ["BAD-NAME=value"]},
-            {"Env": ["TOKEN=invalid\0secret"]},
-            {"Env": ["A=1", "A=2"]},
-        ]
-        for config in invalid:
-            with self.subTest(config=config):
-                inspection = {**self.inspection, "Config": config}
-                code, results, calls = self.run_main(inspection)
-                self.assertEqual(code, 1)
-                self.assertIn("Config.Env", results["run"]["error"])
-                calls["observed_hardware"].assert_not_called()
-                calls["run_live"].assert_not_called()
-                self.assertNotIn("secret", json.dumps(results))
-
-    def test_mismatched_image_is_rejected_before_environment_and_gpu_use(self):
-        inspection = {**self.inspection, "RepoDigests": [], "Config": {"Env": ["INVALID"]}}
-        code, results, calls = self.run_main(inspection)
-        self.assertEqual(code, 1)
-        self.assertIn("planned digest", results["run"]["error"])
-        calls["observed_hardware"].assert_not_called()
-        calls["run_live"].assert_not_called()
-
-    def test_empty_environment_and_values_with_equals(self):
-        for entries, expected in (
-            (None, {}),
-            ([], {}),
-            (["EMPTY=", "VALUE=a=b"], {"EMPTY": "", "VALUE": "a=b"}),
-        ):
-            with self.subTest(entries=entries):
-                self.write_inspection({**self.inspection, "Config": {"Env": entries}})
-                with mock.patch.dict(os.environ, self.environ, clear=True):
-                    _, defaults = runtime.execution_identity(self.serving)
-                self.assertEqual(defaults, expected)
-
-    def test_evidence_redacts_image_credentials_and_excludes_live_credentials(self):
-        image_credentials = {
-            "HF_TOKEN": "image-fixture-token",
-            "HTTPS_PROXY": "https://fixture:image-proxy-password@proxy.invalid",
-            "SERVICE_URL": "https://fixture:service-password@service.invalid",
-            "DOWNLOAD_URL": "https://service.invalid/file?signature=signed-fixture-secret",
-            "AZURE_STORAGE_CONNECTION_STRING": (
-                "DefaultEndpointsProtocol=https;AccountName=fixture;AccountKey=image-fixture-account-value"
-            ),
-            "APP_CONFIG": "opaque-image-fixture-value",
-        }
-        self.inspection["Config"]["Env"].extend(f"{key}={value}" for key, value in image_credentials.items())
-        self.write_inspection()
-        with mock.patch.dict(os.environ, self.environ, clear=True):
-            identity, defaults = runtime.execution_identity(self.serving)
-        for key, value in image_credentials.items():
-            self.assertEqual(defaults[key], value)
-            self.assertEqual(identity["server_environment"]["defaults"][key], "<redacted>")
-        code, results, calls = self.run_main()
-        self.assertEqual(code, 0)
-        serialized = json.dumps(results)
-        for value in [*image_credentials.values(), self.environ["HF_TOKEN"], self.environ["HTTPS_PROXY"]]:
-            self.assertNotIn(value, serialized)
-        for call in calls["run_live"].call_args_list:
-            for name, value in image_credentials.items():
-                self.assertEqual(call.args[2]["server_image_env"][name], value)
-
-    def test_redacted_image_values_still_determine_the_complete_environment_digest(self):
-        defaults = {**self.defaults, "APP_CONFIG": "opaque-image-fixture-value"}
-        original = defaults.copy()
-        evidence = runtime.image_environment_evidence(defaults)
-        self.assertEqual(defaults, original)
-        self.assertEqual(evidence["defaults"], {name: "<redacted>" for name in defaults})
-        self.assertEqual(evidence["defaults_sha256"], runtime.sha256_json(defaults))
-        self.assertEqual(runtime.image_environment_evidence(dict(reversed(list(defaults.items())))), evidence)
-        for name in ("SGLANG_USE_AITER", "APP_CONFIG"):
-            with self.subTest(name=name):
-                changed = runtime.image_environment_evidence({**defaults, name: "changed-fixture-value"})
-                self.assertEqual(changed["defaults"], evidence["defaults"])
-                self.assertNotEqual(changed["defaults_sha256"], evidence["defaults_sha256"])
-
-    def test_paired_measurements_share_defaults_and_separate_legacy_environment(self):
-        code, results, calls = self.run_main()
-        self.assertEqual(code, 0)
-        self.assertEqual(analysis.compare_aklr(results)["status"], "ok")
-        for call in calls["run_live"].call_args_list:
-            self.assertEqual(call.args[2]["server_image_env"], self.defaults)
-        for target in (results, results["control"]):
-            measurement = target["points"][0]["measurement"]
-            self.assertEqual(measurement["environment_policy"], "paired-aklr-image-env-v2")
-            self.assertEqual(measurement["server_image_env_sha256"], runtime.sha256_json(self.defaults))
-
-        legacy = copy.deepcopy(results)
-        for target in (legacy, legacy["control"]):
-            point = target["points"][0]
-            point["measurement"]["environment_policy"] = "paired-aklr-v1"
-            del point["measurement"]["server_image_env_sha256"]
-            target["serving"]["arms"]["tp1"]["arm_measurement_sha256"] = runtime.sha256_json(
-                {point["conc"]: point["measurement"]}
-            )
-        self.assertEqual(analysis.compare(results, legacy)["arms"]["tp1"]["status"], "new-segment")
+@pytest.fixture
+def case(tmp_path: Path) -> EnvironmentCase:
+    return EnvironmentCase(tmp_path)
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.parametrize("failed_mode", [0, 1], ids=["disabled", "enabled"])
+def test_partial_sweep_succeeds_and_retains_point_failures_in_both_modes(case, failed_mode):
+    measurements = [case.aggregate, case.aggregate]
+    measurements[failed_mode] = RuntimeError("server failed")
+    code, results, calls = case.run_main(measurements=measurements)
+    assert code == 0
+    assert calls["run_live"].call_count == 2
+    points = results["control"]["points"] + results["points"]
+    assert sum(point["status"] == "ok" for point in points) == 1
+    failure = next(point for point in points if point["status"] == "failed")
+    assert failure["error"] == "RuntimeError: server failed"
+    for target in (results, results["control"]):
+        assert target["run"]["completed"]
+        assert "error" not in target["run"]
+    assert analysis.compare_aklr(results)["status"] != "ok"
+
+
+def test_sweep_fails_when_neither_mode_has_a_successful_point(case):
+    code, results, calls = case.run_main(
+        measurements=[RuntimeError("disabled failed"), RuntimeError("enabled failed")]
+    )
+    assert code == 1
+    assert calls["run_live"].call_count == 2
+    assert results["control"]["points"][0]["error"] == "RuntimeError: disabled failed"
+    assert results["points"][0]["error"] == "RuntimeError: enabled failed"
+    assert results["run"]["completed"]
+    assert results["control"]["run"]["completed"]
+
+
+@pytest.mark.parametrize("failed_index", [1, 2], ids=["disabled", "enabled"])
+def test_process_cleanup_failure_stops_the_sweep_and_keeps_earlier_measurements(case, failed_index):
+    second = copy.deepcopy(case.point)
+    second.update(conc=2, exp_name="tp1-c2")
+    case.serving["points"].append(second)
+
+    def client(*_args, **kwargs):
+        env = kwargs["env"]
+        path = Path(env["AGENTIC_OUTPUT_DIR"]) / f"{env['RESULT_FILENAME']}.json"
+        path.write_text(json.dumps(case.aggregate))
+        return 0
+
+    with (
+        mock.patch.object(runtime, "port_free", return_value=True),
+        mock.patch.object(runtime, "wait_ready"),
+        mock.patch.object(runtime.subprocess, "Popen") as server,
+        mock.patch.object(runtime, "run_client", side_effect=client),
+        mock.patch.object(
+            runtime.os,
+            "killpg",
+            side_effect=[ProcessLookupError()] * failed_index
+            + [PermissionError("cannot terminate process group")],
+        ) as kill,
+    ):
+        code, results, calls = case.run_main(measurements=runtime.run_live)
+    points = results["control"]["points"] + results["points"]
+    assert code == 1
+    assert len(points) == failed_index + 1
+    assert sum(point["status"] == "ok" for point in points) == failed_index
+    assert points[-1]["status"] == "failed"
+    assert points[-1]["cleanup_failed"]
+    assert "PermissionError: cannot terminate process group" in points[-1]["error"]
+    assert not results["run"]["completed"]
+    assert results["run"]["cleanup_failed"]
+    assert "cannot terminate process group" in results["run"]["error"]
+    assert results["control"]["run"]["completed"] == (failed_index == 2)
+    assert calls["run_live"].call_count == failed_index + 1
+    assert server.call_count == failed_index + 1
+    assert kill.call_count == failed_index + 1
+    assert analysis.compare_aklr(results)["status"] != "ok"
+
+
+def test_client_cleanup_failure_is_distinct_from_a_measurement_failure():
+    with (
+        mock.patch.object(runtime.subprocess, "Popen") as process,
+        mock.patch.object(runtime.os, "killpg", side_effect=PermissionError("cannot stop client")),
+    ):
+        process.return_value.wait.return_value = 0
+        with pytest.raises(runtime.CleanupError, match="PermissionError: cannot stop client"):
+            runtime.run_client(["fixture-client"], timeout=1)
+
+
+def test_verified_defaults_are_read_once_and_not_taken_from_ambient_values(case):
+    case.write_inspection()
+    with (
+        mock.patch.dict(os.environ, case.environ, clear=True),
+        mock.patch.object(runtime, "read_json", wraps=runtime.read_json) as reader,
+    ):
+        identity, defaults = runtime.execution_identity(case.serving)
+        reader.assert_called_once_with(str(case.inspection_path))
+        case.inspection_path.unlink()
+        env = runtime.execution_env(defaults)
+    assert identity["image_id"] == IMAGE_ID
+    assert defaults == case.defaults
+    assert env["SGLANG_USE_AITER"] == "1"
+    assert env["ROCM_HOME"] == SDK
+    assert env["PATH"] == "/runtime/bin"
+    assert env["HF_HUB_CACHE"] == "/mounted/hub"
+    assert "ARBITRARY_TUNING" not in env
+    assert identity["server_environment"]["defaults_sha256"] == runtime.sha256_json(defaults)
+
+
+def test_server_overrides_and_client_environment_stay_separate(case):
+    out = case.root / "point"
+    out.mkdir()
+    (out / "tp1-c1.json").write_text(json.dumps(case.aggregate))
+    with (
+        mock.patch.dict(os.environ, case.environ, clear=True),
+        mock.patch.object(runtime, "port_free", return_value=True),
+        mock.patch.object(runtime.subprocess, "Popen") as server,
+        mock.patch.object(runtime, "wait_ready"),
+        mock.patch.object(runtime, "stop"),
+        mock.patch.object(runtime, "run_client", return_value=0) as client,
+    ):
+        assert runtime.run_live(case.point, out, case.host) == case.aggregate
+    server_env = server.call_args.kwargs["env"]
+    client_env = client.call_args.kwargs["env"]
+    assert server_env["SGLANG_USE_AITER"] == "0"
+    assert server_env["ROCM_HOME"] == SDK
+    assert server_env["PATH"] == "/runtime/bin"
+    assert server_env["AKLR_SGLANG_PLUGIN"] == "1"
+    assert server_env["AKLR_DISABLE"] == "0"
+    assert server_env["HF_TOKEN"] == "live-fixture-token"
+    assert client_env["DURATION"] == "60"
+    assert client_env["HF_TOKEN"] == "live-fixture-token"
+    for key in ("SGLANG_USE_AITER", "ROCM_HOME", "PIP_CONSTRAINT", "VIRTUAL_ENV", "AKLR_SGLANG_PLUGIN"):
+        assert key not in client_env
+    assert "ARBITRARY_TUNING" not in server_env
+    assert "ARBITRARY_TUNING" not in client_env
+
+
+def test_trace_preparation_and_package_inspection_keep_original_environment(case):
+    with (
+        mock.patch.dict(os.environ, case.environ, clear=True),
+        mock.patch.object(runtime, "run_client", return_value=0) as prepare,
+        mock.patch.object(runtime.subprocess, "check_output", return_value="{}") as packages,
+    ):
+        runtime.prepare_traces(case.host, [case.point], case.root / "prepare.log")
+        runtime.client_packages(case.host)
+    for env in (prepare.call_args.kwargs["env"], packages.call_args.kwargs["env"]):
+        assert env["PATH"] == "/runtime/bin"
+        for key in ("SGLANG_USE_AITER", "ROCM_HOME", "PIP_CONSTRAINT", "VIRTUAL_ENV"):
+            assert key not in env
+
+
+def test_exact_model_ref_keeps_pinned_offline_tokenizer(case):
+    revision = case.serving["weights"]["revision"].encode()
+    hub, model_dir, snapshot, main, args = case.prepare_model_hub(revision)
+    with (
+        mock.patch.dict(os.environ, {"HF_HUB_CACHE": str(hub)}, clear=True),
+        mock.patch.object(runtime, "fetch_inferencex", return_value=case.root / "inferencex"),
+    ):
+        host = runtime.host_settings(args, case.serving)
+    assert main.stat().st_size == 40
+    assert host["model_path"] == str(snapshot)
+    assert host["tokenizer"] == "example/model"
+    assert (host["trace_hub"] / model_dir.name).resolve() == model_dir
+    assert main.read_bytes() == revision
+
+
+def test_model_ref_trailing_newline_is_rejected_before_client_setup(case):
+    hub, _, _, main, args = case.prepare_model_hub(case.serving["weights"]["revision"].encode() + b"\n")
+    with (
+        mock.patch.dict(os.environ, {"HF_HUB_CACHE": str(hub)}, clear=True),
+        mock.patch.object(runtime, "fetch_inferencex") as fetch,
+    ):
+        with pytest.raises(RuntimeError, match="must contain exactly the pinned revision"):
+            runtime.host_settings(args, case.serving)
+    assert main.stat().st_size == 41
+    fetch.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {},
+        {"Env": "SGLANG_USE_AITER=1"},
+        {"Env": [1]},
+        {"Env": ["MISSING_EQUALS"]},
+        {"Env": ["=missing-name"]},
+        {"Env": ["BAD-NAME=value"]},
+        {"Env": ["TOKEN=invalid\0secret"]},
+        {"Env": ["A=1", "A=2"]},
+    ],
+    ids=str,
+)
+def test_malformed_environment_is_rejected_before_gpu_inspection(case, config):
+    inspection = {**case.inspection, "Config": config}
+    code, results, calls = case.run_main(inspection)
+    assert code == 1
+    assert "Config.Env" in results["run"]["error"]
+    calls["observed_hardware"].assert_not_called()
+    calls["run_live"].assert_not_called()
+    assert "secret" not in json.dumps(results)
+
+
+def test_mismatched_image_is_rejected_before_environment_and_gpu_use(case):
+    inspection = {**case.inspection, "RepoDigests": [], "Config": {"Env": ["INVALID"]}}
+    code, results, calls = case.run_main(inspection)
+    assert code == 1
+    assert "planned digest" in results["run"]["error"]
+    calls["observed_hardware"].assert_not_called()
+    calls["run_live"].assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("entries", "expected"),
+    [(None, {}), ([], {}), (["EMPTY=", "VALUE=a=b"], {"EMPTY": "", "VALUE": "a=b"})],
+    ids=str,
+)
+def test_empty_environment_and_values_with_equals(case, entries, expected):
+    case.write_inspection({**case.inspection, "Config": {"Env": entries}})
+    with mock.patch.dict(os.environ, case.environ, clear=True):
+        _, defaults = runtime.execution_identity(case.serving)
+    assert defaults == expected
+
+
+def test_evidence_redacts_image_credentials_and_excludes_live_credentials(case):
+    image_credentials = {
+        "HF_TOKEN": "image-fixture-token",
+        "HTTPS_PROXY": "https://fixture:image-proxy-password@proxy.invalid",
+        "SERVICE_URL": "https://fixture:service-password@service.invalid",
+        "DOWNLOAD_URL": "https://service.invalid/file?signature=signed-fixture-secret",
+        "AZURE_STORAGE_CONNECTION_STRING": (
+            "DefaultEndpointsProtocol=https;AccountName=fixture;AccountKey=image-fixture-account-value"
+        ),
+        "APP_CONFIG": "opaque-image-fixture-value",
+    }
+    case.inspection["Config"]["Env"].extend(f"{key}={value}" for key, value in image_credentials.items())
+    case.write_inspection()
+    with mock.patch.dict(os.environ, case.environ, clear=True):
+        identity, defaults = runtime.execution_identity(case.serving)
+    for key, value in image_credentials.items():
+        assert defaults[key] == value
+        assert identity["server_environment"]["defaults"][key] == "<redacted>"
+    code, results, calls = case.run_main()
+    assert code == 0
+    serialized = json.dumps(results)
+    for value in [*image_credentials.values(), case.environ["HF_TOKEN"], case.environ["HTTPS_PROXY"]]:
+        assert value not in serialized
+    for call in calls["run_live"].call_args_list:
+        for name, value in image_credentials.items():
+            assert call.args[2]["server_image_env"][name] == value
+
+
+@pytest.mark.parametrize("name", ["SGLANG_USE_AITER", "APP_CONFIG"])
+def test_redacted_image_values_still_determine_the_complete_environment_digest(case, name):
+    defaults = {**case.defaults, "APP_CONFIG": "opaque-image-fixture-value"}
+    original = defaults.copy()
+    evidence = runtime.image_environment_evidence(defaults)
+    assert defaults == original
+    assert evidence["defaults"] == {name: "<redacted>" for name in defaults}
+    assert evidence["defaults_sha256"] == runtime.sha256_json(defaults)
+    assert runtime.image_environment_evidence(dict(reversed(list(defaults.items())))) == evidence
+    changed = runtime.image_environment_evidence({**defaults, name: "changed-fixture-value"})
+    assert changed["defaults"] == evidence["defaults"]
+    assert changed["defaults_sha256"] != evidence["defaults_sha256"]
+
+
+def test_paired_measurements_share_defaults_and_separate_legacy_environment(case):
+    code, results, calls = case.run_main()
+    assert code == 0
+    assert analysis.compare_aklr(results)["status"] == "ok"
+    for call in calls["run_live"].call_args_list:
+        assert call.args[2]["server_image_env"] == case.defaults
+    for target in (results, results["control"]):
+        measurement = target["points"][0]["measurement"]
+        assert measurement["environment_policy"] == "paired-aklr-image-env-v2"
+        assert measurement["server_image_env_sha256"] == runtime.sha256_json(case.defaults)
+
+    legacy = copy.deepcopy(results)
+    for target in (legacy, legacy["control"]):
+        point = target["points"][0]
+        point["measurement"]["environment_policy"] = "paired-aklr-v1"
+        del point["measurement"]["server_image_env_sha256"]
+        target["serving"]["arms"]["tp1"]["arm_measurement_sha256"] = runtime.sha256_json(
+            {point["conc"]: point["measurement"]}
+        )
+    assert analysis.compare(results, legacy)["arms"]["tp1"]["status"] == "new-segment"

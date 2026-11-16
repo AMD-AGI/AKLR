@@ -6,17 +6,14 @@ from __future__ import annotations
 import argparse
 import copy
 import importlib
-import io
 import json
 import os
 import sys
-import tempfile
-import unittest
-from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 from urllib.parse import parse_qs, urlsplit
 
+import pytest
 import yaml
 
 with mock.patch.object(
@@ -40,9 +37,9 @@ def model(targets):
     return {"weights": {"repo": "example/model", "revision": "b" * 40}, "targets": targets}
 
 
-class AgentXPlanTests(unittest.TestCase):
-    def setUp(self):
-        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+class PlanCase:
+    def __init__(self, root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        self.root = root
         self.config = self.root / "agentx.yaml"
         self.config.write_text(
             yaml.safe_dump(
@@ -63,11 +60,10 @@ class AgentXPlanTests(unittest.TestCase):
             )
         )
         self.next_run = 0
-        self.enterContext(redirect_stdout(io.StringIO()))
-        self.enterContext(redirect_stderr(io.StringIO()))
-        self.enterContext(mock.patch.object(plan.rr, "resolve_image", return_value=(IMAGE, [])))
-        self.enterContext(mock.patch.object(plan.rr, "resolve_ref", return_value="c" * 40))
-        self.resolver = self.enterContext(mock.patch.object(plan.rr, "resolve", side_effect=self.serving))
+        monkeypatch.setattr(plan.rr, "resolve_image", mock.Mock(return_value=(IMAGE, [])))
+        monkeypatch.setattr(plan.rr, "resolve_ref", mock.Mock(return_value="c" * 40))
+        self.resolver = mock.Mock(side_effect=self.serving)
+        monkeypatch.setattr(plan.rr, "resolve", self.resolver)
         self.catalog = {
             "models": [
                 {"name": "First Model", "dbKeys": ["first"]},
@@ -81,9 +77,8 @@ class AgentXPlanTests(unittest.TestCase):
                 self.serving(argparse.Namespace(model=model_id, target="fixture", inferencex_ref="c" * 40))
             )
         ]
-        self.fetcher = self.enterContext(
-            mock.patch.object(plan.rr, "fetch_json", side_effect=self.fetch_json)
-        )
+        self.fetcher = mock.Mock(side_effect=self.fetch_json)
+        monkeypatch.setattr(plan.rr, "fetch_json", self.fetcher)
 
     def args(self, **overrides):
         self.next_run += 1
@@ -213,251 +208,257 @@ class AgentXPlanTests(unittest.TestCase):
     def pairs(manifest):
         return [(item["model"]["id"], item["target"]["id"]) for item in manifest["targets"]]
 
-    def test_runner_filter_selects_across_models_and_persists_only_matches(self):
-        args = self.args(runner_label=RUNNER_LABEL)
-        manifest = plan.build(args)
-        expected = [("first", "mi355x"), ("second", "different-target-id")]
-        self.assertEqual(self.pairs(manifest), expected)
-        self.assertEqual({item["status"] for item in manifest["targets"]}, {"resolved"})
-        self.assertEqual({item["target"]["runner_label"] for item in manifest["targets"]}, {RUNNER_LABEL})
-        self.assertEqual(
-            [(call.args[0].model, call.args[0].target) for call in self.resolver.call_args_list], expected
-        )
-        self.assertEqual(json.loads((args.out / "manifest.json").read_text()), manifest)
-        self.assertEqual(
-            {str(path.relative_to(args.out)) for path in args.out.rglob("serving.json")},
-            {f"models/{model_id}/targets/{target_id}/serving.json" for model_id, target_id in expected},
-        )
 
-    def test_default_selection_works_without_runner_label_attribute(self):
-        args = self.args()
-        self.assertFalse(hasattr(args, "runner_label"))
-        manifest = plan.build(args)
-        self.assertEqual(
-            self.pairs(manifest),
-            [("first", "mi355x"), ("first", "other"), ("second", "different-target-id")],
-        )
-        self.assertEqual({item["status"] for item in manifest["targets"]}, {"resolved"})
+@pytest.fixture
+def case(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> PlanCase:
+    return PlanCase(tmp_path, monkeypatch)
 
-    def test_missing_runner_fails_before_resolution_or_manifest_creation(self):
-        args = self.args(runner_label="agentx-missing")
-        with self.assertRaisesRegex(
-            plan.ConfigError, "no selected targets use runner label 'agentx-missing'"
-        ):
-            plan.build(args)
-        self.resolver.assert_not_called()
-        self.assertFalse((args.out / "manifest.json").exists())
 
-    def test_cli_filter_limits_manifest_and_github_job_matrix(self):
-        output = self.root / "github-output"
-        out = self.root / "cli-plan"
-        with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}):
-            code = plan.main(
-                [
-                    "--config",
-                    str(self.config),
-                    "--runner-label",
-                    RUNNER_LABEL,
-                    "--work",
-                    str(self.root / "cli-work"),
-                    "--out",
-                    str(out),
-                    "--run-id",
-                    "fixture",
-                ]
-            )
-        self.assertEqual(code, 0)
-        values = dict(line.split("=", 1) for line in output.read_text().splitlines())
-        self.assertEqual(values["count"], "2")
-        jobs = json.loads(values["matrix"])["include"]
-        self.assertEqual(
-            [(job["model"], job["target"], job["runner"]) for job in jobs],
-            [("first", "mi355x", RUNNER_LABEL), ("second", "different-target-id", RUNNER_LABEL)],
-        )
-        manifest = json.loads((out / "manifest.json").read_text())
-        self.assertEqual(self.pairs(manifest), [(job["model"], job["target"]) for job in jobs])
+def test_runner_filter_selects_across_models_and_persists_only_matches(case):
+    args = case.args(runner_label=RUNNER_LABEL)
+    manifest = plan.build(args)
+    expected = [("first", "mi355x"), ("second", "different-target-id")]
+    assert case.pairs(manifest) == expected
+    assert {item["status"] for item in manifest["targets"]} == {"resolved"}
+    assert {item["target"]["runner_label"] for item in manifest["targets"]} == {RUNNER_LABEL}
+    assert [(call.args[0].model, call.args[0].target) for call in case.resolver.call_args_list] == expected
+    assert json.loads((args.out / "manifest.json").read_text()) == manifest
+    assert {str(path.relative_to(args.out)) for path in args.out.rglob("serving.json")} == {
+        f"models/{model_id}/targets/{target_id}/serving.json" for model_id, target_id in expected
+    }
 
-    def test_smoke_single_target_checks_use_the_filtered_selection(self):
-        for smoke in ({"arms": "tp8"}, {"points": "tp8:1"}, {"duration": 60}):
-            with self.subTest(smoke=smoke):
-                manifest = plan.build(self.args(models="first", runner_label=RUNNER_LABEL, **smoke))
-                self.assertEqual(self.pairs(manifest), [("first", "mi355x")])
-                self.assertEqual(manifest["targets"][0]["status"], "resolved")
-                with self.assertRaisesRegex(plan.ConfigError, "smoke filters require exactly one"):
-                    plan.build(self.args(models="first", **smoke))
 
-    def test_smoke_filters_still_reject_multiple_matching_targets(self):
-        for smoke in ({"arms": "tp8"}, {"points": "tp8:1"}, {"duration": 60}):
-            with self.subTest(smoke=smoke):
-                with self.assertRaisesRegex(plan.ConfigError, "smoke filters require exactly one"):
-                    plan.build(self.args(runner_label=RUNNER_LABEL, **smoke))
-        self.resolver.assert_not_called()
+def test_default_selection_works_without_runner_label_attribute(case):
+    args = case.args()
+    assert not hasattr(args, "runner_label")
+    manifest = plan.build(args)
+    assert case.pairs(manifest) == [
+        ("first", "mi355x"),
+        ("first", "other"),
+        ("second", "different-target-id"),
+    ]
+    assert {item["status"] for item in manifest["targets"]} == {"resolved"}
 
-    def test_pareto_single_target_check_uses_the_filtered_selection(self):
-        options = {
-            "runner_label": RUNNER_LABEL,
-            "point_policy": plan.POLICY,
-            "inferencex_hardware": "mi355x",
-            "inferencex_model": "fixture",
-            "inferencex_results": None,
-            "inferencex_run_id": None,
-        }
-        # Pareto snapshot acquisition and selection are independent of the runner filter.
-        with (
-            mock.patch.object(
-                plan, "prepare", return_value={"policy": plan.POLICY, "manifest_sha256": "fixture-selection"}
-            ),
-            mock.patch.object(plan, "selected_points", side_effect=lambda spec: spec["points"]),
-        ):
-            manifest = plan.build(self.args(models="first", **options))
-        self.assertEqual(self.pairs(manifest), [("first", "mi355x")])
-        self.assertEqual(manifest["targets"][0]["status"], "resolved")
-        with self.assertRaisesRegex(plan.ConfigError, "Pareto selection requires exactly one"):
-            plan.build(self.args(**options))
 
-    def test_auto_pareto_resolves_independent_sources_and_multiple_points_per_arm(self):
-        args = self.auto_args()
-        manifest = plan.build(args)
-        self.assertEqual(self.pairs(manifest), [("first", "mi355x"), ("second", "different-target-id")])
-        self.assertEqual({item["status"] for item in manifest["targets"]}, {"resolved"})
-        self.assertEqual(args.inferencex_model, "auto")
-        requests = [call.args[0] for call in self.fetcher.call_args_list]
-        self.assertEqual(requests.count(plan.MODEL_CATALOG), 1)
-        self.assertEqual(
+def test_missing_runner_fails_before_resolution_or_manifest_creation(case):
+    args = case.args(runner_label="agentx-missing")
+    with pytest.raises(plan.ConfigError, match="no selected targets use runner label 'agentx-missing'"):
+        plan.build(args)
+    case.resolver.assert_not_called()
+    assert not (args.out / "manifest.json").exists()
+
+
+def test_cli_filter_limits_manifest_and_github_job_matrix(case):
+    output = case.root / "github-output"
+    out = case.root / "cli-plan"
+    with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}):
+        code = plan.main(
             [
-                parse_qs(urlsplit(url).query)["model"][0]
-                for url in requests
-                if url.startswith(plan.rr.API + "?")
-            ],
-            ["First Model", "Second Model"],
+                "--config",
+                str(case.config),
+                "--runner-label",
+                RUNNER_LABEL,
+                "--work",
+                str(case.root / "cli-work"),
+                "--out",
+                str(out),
+                "--run-id",
+                "fixture",
+            ]
         )
-        for model_id, target_id in self.pairs(manifest):
-            root = args.out / f"models/{model_id}/targets/{target_id}"
-            spec = json.loads((root / "serving.json").read_text())
-            selection = json.loads((root / "selection.json").read_text())
-            snapshot = json.loads((root / "upstream-snapshot.json").read_text())
-            self.assertEqual(selection, spec["selection"])
-            self.assertEqual(selection["scope"]["model"], model_id)
-            self.assertEqual(selection["scope"]["hardware"], "mi355x")
-            self.assertEqual(selection["duration"], 600)
-            self.assertEqual(selection["points"], ["tp8:1", "tp8:2"])
-            self.assertEqual(selection["errors"], [])
-            self.assertEqual({row["model"] for row in snapshot["payload"]["rows"]}, {model_id})
-            self.assertEqual(
-                [plan.rr.point_id(point) for point in plan.selected_points(spec)], ["tp8:1", "tp8:2"]
-            )
-
-    def test_auto_pareto_keeps_prefix_scopes_separate_in_one_display_bucket(self):
-        self.catalog = {"models": [{"name": "Shared Display", "dbKeys": ["first", "second"]}]}
-        args = self.auto_args()
-        manifest = plan.build(args)
-        self.assertEqual({item["status"] for item in manifest["targets"]}, {"resolved"})
-        for model_id, target_id in self.pairs(manifest):
-            root = args.out / f"models/{model_id}/targets/{target_id}"
-            selection = json.loads((root / "selection.json").read_text())
-            self.assertEqual(selection["scope"]["model"], model_id)
-            self.assertEqual(selection["upstream_count"], 3)
-            self.assertEqual(
-                {point["upstream_id"] for point in selection["selected"]},
-                {f"{model_id}-tp8-c1", f"{model_id}-tp8-c2"},
-            )
-
-    def test_auto_pareto_mapping_failure_preserves_other_targets_and_failure_evidence(self):
-        for row in self.rows:
-            if row["model"] == "second" and row["conc"] == 1:
-                row["recipe_fingerprint"] = "0" * 64
-        args = self.auto_args()
-        manifest = plan.build(args)
-        self.assertEqual([item["status"] for item in manifest["targets"]], ["resolved", "resolve-failed"])
-        self.assertIn("no exact local match", manifest["targets"][1]["error"])
-        self.assertEqual(json.loads((args.out / "manifest.json").read_text()), manifest)
-        failed = args.out / "models/second/targets/different-target-id"
-        selection = json.loads((failed / "selection.json").read_text())
-        self.assertTrue(selection["errors"])
-        self.assertTrue((failed / "upstream-snapshot.json").is_file())
-        self.assertTrue((args.out / "models/first/targets/mi355x/serving.json").is_file())
-
-    def test_auto_catalog_unknown_or_ambiguous_model_only_fails_that_target(self):
-        for second_entries in (
-            [],
-            [{"name": name, "dbKeys": ["second"]} for name in ("Second Model", "Other Display")],
-        ):
-            with self.subTest(entries=second_entries):
-                self.catalog = {"models": [{"name": "First Model", "dbKeys": ["first"]}, *second_entries]}
-                manifest = plan.build(self.auto_args())
-                self.assertEqual(
-                    [item["status"] for item in manifest["targets"]], ["resolved", "resolve-failed"]
-                )
-                self.assertIn("exactly one catalog match", manifest["targets"][1]["error"])
-
-    def test_auto_invalid_catalog_fails_closed(self):
-        for catalog in ({"models": {}}, {"models": [{"name": "Broken", "dbKeys": "first"}]}):
-            with self.subTest(catalog=catalog):
-                self.catalog = catalog
-                manifest = plan.build(self.auto_args())
-                self.assertEqual({item["status"] for item in manifest["targets"]}, {"resolve-failed"})
-                self.assertTrue(all("catalog" in item["error"] for item in manifest["targets"]))
-
-    def test_auto_rejects_explicit_run_or_result_source(self):
-        for override in ({"inferencex_run_id": "1234"}, {"inferencex_results": "snapshot.json"}):
-            with self.subTest(override=override):
-                with self.assertRaises(ValueError):
-                    plan.build(self.auto_args(**override))
-        self.resolver.assert_not_called()
-        self.fetcher.assert_not_called()
-
-    def test_recipe_duration_requirement_preserves_upstream_duration_without_an_override(self):
-        args = self.args(require_recipe_duration=3600)
-        manifest = plan.build(args)
-        self.assertEqual(len(manifest["targets"]), 3)
-        self.assertEqual({item["status"] for item in manifest["targets"]}, {"resolved"})
-        for path in args.out.rglob("serving.json"):
-            spec = json.loads(path.read_text())
-            self.assertIsNone(spec["selection"]["duration"])
-            self.assertEqual({point["client_env"]["DURATION"] for point in spec["points"]}, {"3600"})
-        self.fetcher.assert_not_called()
-
-    def test_recipe_duration_mismatch_is_reported_per_target(self):
-        def serving(args):
-            spec = self.serving(args)
-            if args.model == "second":
-                spec["points"][0]["client_env"]["DURATION"] = "1200"
-            return spec
-
-        self.resolver.side_effect = serving
-        args = self.args(runner_label=RUNNER_LABEL, require_recipe_duration=3600)
-        manifest = plan.build(args)
-        self.assertEqual([item["status"] for item in manifest["targets"]], ["resolved", "resolve-failed"])
-        self.assertIn("upstream DURATION must be 3600", manifest["targets"][1]["error"])
-        self.assertIn("tp8:1='1200'", manifest["targets"][1]["error"])
-        failed = args.out / "models/second/targets/different-target-id/serving.json"
-        self.assertIsNone(json.loads(failed.read_text())["selection"]["duration"])
-
-    def test_recipe_duration_requirement_only_checks_selected_points(self):
-        def serving(args):
-            spec = self.serving(args)
-            spec["points"][1]["client_env"]["DURATION"] = "1200"
-            return spec
-
-        self.resolver.side_effect = serving
-        args = self.args(
-            models="first", runner_label=RUNNER_LABEL, points="tp8:1", require_recipe_duration=3600
-        )
-        manifest = plan.build(args)
-        self.assertEqual(manifest["targets"][0]["status"], "resolved")
-        self.assertEqual(manifest["targets"][0]["point_ids"], ["tp8:1"])
-
-    def test_recipe_duration_requirement_rejects_invalid_or_overridden_values(self):
-        for options in (
-            {"require_recipe_duration": 0},
-            {"require_recipe_duration": -1},
-            {"require_recipe_duration": 3600, "duration": 3600},
-        ):
-            with self.subTest(options=options):
-                with self.assertRaisesRegex(plan.ConfigError, "--require-recipe-duration"):
-                    plan.build(self.args(**options))
-        self.resolver.assert_not_called()
+    assert code == 0
+    values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    assert values["count"] == "2"
+    jobs = json.loads(values["matrix"])["include"]
+    assert [(job["model"], job["target"], job["runner"]) for job in jobs] == [
+        ("first", "mi355x", RUNNER_LABEL),
+        ("second", "different-target-id", RUNNER_LABEL),
+    ]
+    manifest = json.loads((out / "manifest.json").read_text())
+    assert case.pairs(manifest) == [(job["model"], job["target"]) for job in jobs]
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.parametrize("smoke", [{"arms": "tp8"}, {"points": "tp8:1"}, {"duration": 60}], ids=str)
+def test_smoke_single_target_checks_use_the_filtered_selection(case, smoke):
+    manifest = plan.build(case.args(models="first", runner_label=RUNNER_LABEL, **smoke))
+    assert case.pairs(manifest) == [("first", "mi355x")]
+    assert manifest["targets"][0]["status"] == "resolved"
+    with pytest.raises(plan.ConfigError, match="smoke filters require exactly one"):
+        plan.build(case.args(models="first", **smoke))
+
+
+@pytest.mark.parametrize("smoke", [{"arms": "tp8"}, {"points": "tp8:1"}, {"duration": 60}], ids=str)
+def test_smoke_filters_still_reject_multiple_matching_targets(case, smoke):
+    with pytest.raises(plan.ConfigError, match="smoke filters require exactly one"):
+        plan.build(case.args(runner_label=RUNNER_LABEL, **smoke))
+    case.resolver.assert_not_called()
+
+
+def test_pareto_single_target_check_uses_the_filtered_selection(case):
+    options = {
+        "runner_label": RUNNER_LABEL,
+        "point_policy": plan.POLICY,
+        "inferencex_hardware": "mi355x",
+        "inferencex_model": "fixture",
+        "inferencex_results": None,
+        "inferencex_run_id": None,
+    }
+    # Pareto snapshot acquisition and selection are independent of the runner filter.
+    with (
+        mock.patch.object(
+            plan, "prepare", return_value={"policy": plan.POLICY, "manifest_sha256": "fixture-selection"}
+        ),
+        mock.patch.object(plan, "selected_points", side_effect=lambda spec: spec["points"]),
+    ):
+        manifest = plan.build(case.args(models="first", **options))
+    assert case.pairs(manifest) == [("first", "mi355x")]
+    assert manifest["targets"][0]["status"] == "resolved"
+    with pytest.raises(plan.ConfigError, match="Pareto selection requires exactly one"):
+        plan.build(case.args(**options))
+
+
+def test_auto_pareto_resolves_independent_sources_and_multiple_points_per_arm(case):
+    args = case.auto_args()
+    manifest = plan.build(args)
+    assert case.pairs(manifest) == [("first", "mi355x"), ("second", "different-target-id")]
+    assert {item["status"] for item in manifest["targets"]} == {"resolved"}
+    assert args.inferencex_model == "auto"
+    requests = [call.args[0] for call in case.fetcher.call_args_list]
+    assert requests.count(plan.MODEL_CATALOG) == 1
+    assert [
+        parse_qs(urlsplit(url).query)["model"][0] for url in requests if url.startswith(plan.rr.API + "?")
+    ] == ["First Model", "Second Model"]
+    for model_id, target_id in case.pairs(manifest):
+        root = args.out / f"models/{model_id}/targets/{target_id}"
+        spec = json.loads((root / "serving.json").read_text())
+        selection = json.loads((root / "selection.json").read_text())
+        snapshot = json.loads((root / "upstream-snapshot.json").read_text())
+        assert selection == spec["selection"]
+        assert selection["scope"]["model"] == model_id
+        assert selection["scope"]["hardware"] == "mi355x"
+        assert selection["duration"] == 600
+        assert selection["points"] == ["tp8:1", "tp8:2"]
+        assert selection["errors"] == []
+        assert {row["model"] for row in snapshot["payload"]["rows"]} == {model_id}
+        assert [plan.rr.point_id(point) for point in plan.selected_points(spec)] == ["tp8:1", "tp8:2"]
+
+
+def test_auto_pareto_keeps_prefix_scopes_separate_in_one_display_bucket(case):
+    case.catalog = {"models": [{"name": "Shared Display", "dbKeys": ["first", "second"]}]}
+    args = case.auto_args()
+    manifest = plan.build(args)
+    assert {item["status"] for item in manifest["targets"]} == {"resolved"}
+    for model_id, target_id in case.pairs(manifest):
+        root = args.out / f"models/{model_id}/targets/{target_id}"
+        selection = json.loads((root / "selection.json").read_text())
+        assert selection["scope"]["model"] == model_id
+        assert selection["upstream_count"] == 3
+        assert {point["upstream_id"] for point in selection["selected"]} == {
+            f"{model_id}-tp8-c1",
+            f"{model_id}-tp8-c2",
+        }
+
+
+def test_auto_pareto_mapping_failure_preserves_other_targets_and_failure_evidence(case):
+    for row in case.rows:
+        if row["model"] == "second" and row["conc"] == 1:
+            row["recipe_fingerprint"] = "0" * 64
+    args = case.auto_args()
+    manifest = plan.build(args)
+    assert [item["status"] for item in manifest["targets"]] == ["resolved", "resolve-failed"]
+    assert "no exact local match" in manifest["targets"][1]["error"]
+    assert json.loads((args.out / "manifest.json").read_text()) == manifest
+    failed = args.out / "models/second/targets/different-target-id"
+    selection = json.loads((failed / "selection.json").read_text())
+    assert selection["errors"]
+    assert (failed / "upstream-snapshot.json").is_file()
+    assert (args.out / "models/first/targets/mi355x/serving.json").is_file()
+
+
+@pytest.mark.parametrize(
+    "second_entries",
+    [[], [{"name": name, "dbKeys": ["second"]} for name in ("Second Model", "Other Display")]],
+    ids=str,
+)
+def test_auto_catalog_unknown_or_ambiguous_model_only_fails_that_target(case, second_entries):
+    case.catalog = {"models": [{"name": "First Model", "dbKeys": ["first"]}, *second_entries]}
+    manifest = plan.build(case.auto_args())
+    assert [item["status"] for item in manifest["targets"]] == ["resolved", "resolve-failed"]
+    assert "exactly one catalog match" in manifest["targets"][1]["error"]
+
+
+@pytest.mark.parametrize(
+    "catalog", [{"models": {}}, {"models": [{"name": "Broken", "dbKeys": "first"}]}], ids=str
+)
+def test_auto_invalid_catalog_fails_closed(case, catalog):
+    case.catalog = catalog
+    manifest = plan.build(case.auto_args())
+    assert {item["status"] for item in manifest["targets"]} == {"resolve-failed"}
+    assert all("catalog" in item["error"] for item in manifest["targets"])
+
+
+@pytest.mark.parametrize(
+    "override", [{"inferencex_run_id": "1234"}, {"inferencex_results": "snapshot.json"}], ids=str
+)
+def test_auto_rejects_explicit_run_or_result_source(case, override):
+    with pytest.raises(ValueError, match="cannot be combined"):
+        plan.build(case.auto_args(**override))
+    case.resolver.assert_not_called()
+    case.fetcher.assert_not_called()
+
+
+def test_recipe_duration_requirement_preserves_upstream_duration_without_an_override(case):
+    args = case.args(require_recipe_duration=3600)
+    manifest = plan.build(args)
+    assert len(manifest["targets"]) == 3
+    assert {item["status"] for item in manifest["targets"]} == {"resolved"}
+    for path in args.out.rglob("serving.json"):
+        spec = json.loads(path.read_text())
+        assert spec["selection"]["duration"] is None
+        assert {point["client_env"]["DURATION"] for point in spec["points"]} == {"3600"}
+    case.fetcher.assert_not_called()
+
+
+def test_recipe_duration_mismatch_is_reported_per_target(case):
+    def serving(args):
+        spec = case.serving(args)
+        if args.model == "second":
+            spec["points"][0]["client_env"]["DURATION"] = "1200"
+        return spec
+
+    case.resolver.side_effect = serving
+    args = case.args(runner_label=RUNNER_LABEL, require_recipe_duration=3600)
+    manifest = plan.build(args)
+    assert [item["status"] for item in manifest["targets"]] == ["resolved", "resolve-failed"]
+    assert "upstream DURATION must be 3600" in manifest["targets"][1]["error"]
+    assert "tp8:1='1200'" in manifest["targets"][1]["error"]
+    failed = args.out / "models/second/targets/different-target-id/serving.json"
+    assert json.loads(failed.read_text())["selection"]["duration"] is None
+
+
+def test_recipe_duration_requirement_only_checks_selected_points(case):
+    def serving(args):
+        spec = case.serving(args)
+        spec["points"][1]["client_env"]["DURATION"] = "1200"
+        return spec
+
+    case.resolver.side_effect = serving
+    args = case.args(models="first", runner_label=RUNNER_LABEL, points="tp8:1", require_recipe_duration=3600)
+    manifest = plan.build(args)
+    assert manifest["targets"][0]["status"] == "resolved"
+    assert manifest["targets"][0]["point_ids"] == ["tp8:1"]
+
+
+@pytest.mark.parametrize(
+    "options",
+    [
+        {"require_recipe_duration": 0},
+        {"require_recipe_duration": -1},
+        {"require_recipe_duration": 3600, "duration": 3600},
+    ],
+    ids=str,
+)
+def test_recipe_duration_requirement_rejects_invalid_or_overridden_values(case, options):
+    with pytest.raises(plan.ConfigError, match="--require-recipe-duration"):
+        plan.build(case.args(**options))
+    case.resolver.assert_not_called()

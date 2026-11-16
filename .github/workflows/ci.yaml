@@ -155,7 +155,7 @@ jobs:
         uses: pre-commit/action@v3.0.1
         with:
           extra_args: ${{ steps.lint.outputs.args }}
-      # export check and the audit load the default registry, which imports the ops' apis and torch.
+      # The audit loads the default registry, which imports the ops' apis and torch.
       - &install_cpu_deps
         name: Install pydantic, CPU torch and ruff
         run: |
@@ -174,10 +174,6 @@ jobs:
             PYTHONPATH=. python -c "$AKLR_MEASUREMENT_CURRENT" "$sha" ||
               { echo "::error::Measured at $sha, before aklr/core changes on main; a later publish-measurement rebuilds this PR without it"; exit 1; }
           done
-      # CI only checks; authors export the schemas locally.
-      - name: Check exported files
-        id: export
-        run: python -m aklr export check
       # A jq that decides the gate is its own assignment: inside echo, a failure would not stop the step.
       - name: Audit gate
         id: audit
@@ -248,7 +244,7 @@ jobs:
           cache="$AKLR_CI_STATE_DIR/cache"
           mkdir -p "$AKLR_CI_STATE_DIR/test-reports" "$cache"
           export FLYDSL_RUNTIME_CACHE_DIR="$cache/flydsl-runtime" FLYDSL_AUTOTUNE_CACHE_DIR="$cache/flydsl-autotune" \
-                 TRITON_CACHE_DIR="$cache/triton" XDG_CACHE_HOME="$cache/xdg" AKLR_KERNEL_CACHE_DIR="$cache/aklr-kernels"
+                 TRITON_CACHE_DIR="$cache/triton" XDG_CACHE_HOME="$cache/xdg" AKLR_BUILD_CACHE_DIR="$cache/aklr-kernels"
           # Not aiter's default, its site-packages tree or, if that is read-only, ~/.aiter,
           # which outlives the job.
           export AITER_JIT_DIR="$cache/aiter-jit"
@@ -301,11 +297,14 @@ jobs:
           from importlib.metadata import distribution, version
           import aiter
           import aklr
+          from aklr.core.runtime.seam import SeamRegistry
           root = Path.cwd().resolve()
           assert Path(aklr.__file__).resolve().is_relative_to(root), aklr.__file__
           # the aiter Python imports is the one pip just installed, not another copy on sys.path
           assert aiter.__file__ and Path(aiter.__file__).resolve() == Path(distribution("amd-aiter").locate_file("aiter/__init__.py")).resolve(), aiter.__file__
           assert f"+g{os.environ['AKLR_BASELINE_AITER'][:7]}" in version("amd-aiter"), version("amd-aiter")
+          SeamRegistry.default().install()
+          assert hasattr(aiter.gemm_a8w8, "aklr_adapter"), "AKLR did not patch aiter"
           print("Testing aklr", version("aklr"), "from", root, "against amd-aiter", version("amd-aiter"))
           PY
           echo '::endgroup::'
@@ -317,7 +316,7 @@ jobs:
             printf 'FLYDSL_AUTOTUNE_CACHE_DIR=%s\n' "$FLYDSL_AUTOTUNE_CACHE_DIR"
             printf 'TRITON_CACHE_DIR=%s\n' "$TRITON_CACHE_DIR"
             printf 'XDG_CACHE_HOME=%s\n' "$XDG_CACHE_HOME"
-            printf 'AKLR_KERNEL_CACHE_DIR=%s\n' "$AKLR_KERNEL_CACHE_DIR"
+            printf 'AKLR_BUILD_CACHE_DIR=%s\n' "$AKLR_BUILD_CACHE_DIR"
             printf 'AITER_JIT_DIR=%s\n' "$AITER_JIT_DIR"
             printf 'CPATH=%s\n' "$CPATH"
             printf 'TMPDIR=%s\n' "$TMPDIR"
@@ -572,7 +571,7 @@ jobs:
           token: ${{ steps.token.outputs.token }}
           # The carry and the current rule read every Measured-SHA commit.
           fetch-depth: 0
-      # export check and the current rule run main's aklr.
+      # The current rule runs main's aklr.
       - *setup_python
       - *install_cpu_deps
       # A missed measurement is not retried; the next aklr/core change on main re-benches every schema.
@@ -599,12 +598,13 @@ jobs:
             echo 'committed=false' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          schema_path='^aklr/(ops|plugins(/[^/]+)+)/[^/]+/impls/[^/]+/[^/]+/[0-9a-f]{16}\.json$'
-          authored='del(.workloads[] | .speedup, .accuracy)'
-          # Every workload measured; speedup absent only on a failed one.
+          schema_path='^aklr/ops/[^/]+/impls/[^/]+/[^/]+/[0-9a-f]{16}\.json$'
+          authored='del(.workloads[] | .evaluations)'
+          # Every workload measured on some hardware, each speedup positive.
           shape='(.workloads | length > 0) and all(.workloads[];
-            (.speedup == null or (.speedup | type == "number" and . > 0)) and
-            (.accuracy == "passed" and .speedup != null or .accuracy == "failed"))'
+            (.evaluations | length > 0) and all(.evaluations[];
+              (.accuracy == "passed" or .accuracy == "failed") and
+              all((.speedup // {})[]; .value | type == "number" and . > 0)))'
           manifest=$RUNNER_TEMP/manifest
           # accept <file> <path> <sha>: copy over main's file iff only measured fields change.
           accept() {
@@ -653,7 +653,6 @@ jobs:
           fi
           stray=$(comm -23 <(git diff --name-only | sort) <(cut -d' ' -f2 "$manifest" | sort -u))
           [[ -z $stray ]] || { printf '::error::Changed outside the accepted schemas: %q\n' "$stray"; exit 1; }
-          python -m aklr export check
           # The last measurement per changed path; a carried value already on main drops out.
           published=$(awk 'NR == FNR {changed[$0]; next} $2 in changed {sha[$2] = $1} END {for (p in sha) print sha[p], p}' \
             <(git diff --name-only) "$manifest" | sort -k2)

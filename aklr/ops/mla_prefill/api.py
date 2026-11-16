@@ -1,12 +1,19 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2026, Advanced Micro Devices, Inc. All rights reserved.
 
-from aklr.core.runtime.dispatch import api
+from __future__ import annotations
 
-from .contract import MLA_PREFILL_VARLEN, MLA_PREFILL_VARLEN_LSE, SPARSE_PREFILL_MXFP8
+from aklr.core.runtime.dispatch import aklr_api
+from aklr.ops.mla_prefill.schema import (
+    MLA_PREFILL_VARLEN_LSE_VARIANTS,
+    MLA_PREFILL_VARLEN_VARIANTS,
+    SPARSE_PREFILL_MXFP8,
+)
+
+__all__ = ["mla_prefill_varlen", "mla_prefill_varlen_lse", "sparse_prefill_mxfp8"]
 
 
-@api(SPARSE_PREFILL_MXFP8)
+@aklr_api(SPARSE_PREFILL_MXFP8)
 def sparse_prefill_mxfp8(
     q_nope,
     q_rope,
@@ -19,12 +26,12 @@ def sparse_prefill_mxfp8(
     extend_indices,
     extend_indptr,
     sinks,
-    *,
     softmax_scale=512**-0.5,
+    output=None,
 ): ...
 
 
-@api(MLA_PREFILL_VARLEN)
+@aklr_api(MLA_PREFILL_VARLEN_VARIANTS)
 def mla_prefill_varlen(
     q,
     k,
@@ -37,7 +44,7 @@ def mla_prefill_varlen(
 ): ...
 
 
-@api(MLA_PREFILL_VARLEN_LSE)
+@aklr_api(MLA_PREFILL_VARLEN_LSE_VARIANTS)
 def mla_prefill_varlen_lse(
     q,
     k,
