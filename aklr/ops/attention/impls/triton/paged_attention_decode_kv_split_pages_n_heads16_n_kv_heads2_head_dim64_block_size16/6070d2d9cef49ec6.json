@@ -1099,6 +1099,9 @@
         "hardware": "MI355X"
       }
     ],
+    "requires": {
+      "triton": ">=3.8"
+    },
     "author": "fanxingran",
     "entry_point": "kernel.py::run",
     "sources": [
