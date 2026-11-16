@@ -22,11 +22,9 @@ The round checkout is the AKLR checkout on the round host, on the base branch. I
 
 Verify that it contains `FOR_AGENTS.md`, this file, `optimize-and-deliver-kernels` with its `references/` and `scripts/`, and the templates. If the copy that sent you here is newer (`git log -1 -- harness/automations/shepherd`), stop and ask the user to update the checkout.
 
-The automation needs no plugin; it only starts the wrapper. Do not edit `.cursor/settings.json`.
+The automation runs each round itself and needs no plugin. Do not edit `.cursor/settings.json`.
 
-The round agent must load the shared skills from the checkout. An installed plugin is a cached revision that can lag the pack. For Claude CLI, put `--plugin-dir harness` in `execution.round_agent`.
-
-Once the round agent is chosen (step 3), disable any user-scoped `aklr` plugin (Claude CLI: `--settings '{"enabledPlugins":{"aklr@amd-aklr":false}}'`) and verify in the checkout that it resolves:
+Rounds read the shared skills by path from the checkout, never from an installed plugin or a discovered slash skill, whose cached revision can lag the pack. Verify that the checkout holds `harness/skills/<name>/SKILL.md` for:
 
 - `forge-loop-campaign`
 - `remote-gpu`
@@ -35,7 +33,7 @@ Once the round agent is chosen (step 3), disable any user-scoped `aklr` plugin (
 - `report-progress`
 - `aklr-kb`
 
-If any does not resolve, stop and explain the failure. Do not add `harness/automations/shepherd/skills/` to a plugin manifest.
+If any is missing, stop and explain the failure. Do not add `harness/automations/shepherd/skills/` to a plugin manifest.
 
 Tell the user that the pack must be committed on the base branch before the automation is enabled. Do not commit it unless the user asks.
 
@@ -54,12 +52,12 @@ Ask for or confirm, in one pass:
 - Repository and base branch. Infer them from the checkout.
 - Mode: `run`, `observe` or `drain`.
 - State directory, cluster, image digest and runtime revision. Offer found values: the image is `AKLR_CI_IMAGE` in `.github/workflows/ci.yaml`, resolved to its digest. The runtime is the Hyperloom `AKLR` branch commit (KernelForge) plus the flydsl version `harness/scripts/forge_task/README.md` pins.
-- `execution.round_agent`: the non-interactive agent command (CLI, model, reasoning effort, permission mode). It must load the shared skills from the checkout (step 1).
+- `execution.round_hours`: the round's lease, no longer than the automation's measured run limit (step 4).
 - Strategies (`manual` paths, `kernel-less`), `batch_size`, `allowed_ops`, `backends`, `max_parallel_campaigns`, `max_open_prs`, `execution.pool_hours`, `cooldown_hours`.
 - Campaign model, reasoning effort, loop hours, node hours, model USD, `max_auto_resumes`, and `model_usd_per_hour`: the highest hourly spend of the model with KernelForge, from provider billing.
 - Cumulative budget, its recorded authorization, and the provider's hard limit: the spend cap on the API key or gateway the campaign calls (`claude auth status`, `ANTHROPIC_BASE_URL`). If none exists, the owner must set one.
 - Publication: draft PRs, PR comments, `ci:gpu` label, branch prefix.
-- Model slug and schedule of the Cursor automation, 15 minutes by default.
+- Model slug and schedule of the Cursor automation, 15 minutes by default. That model runs every round, so pick a strong one.
 
 Use only model slugs the user's Cursor model picker shows. Do not guess a slug or carry over a private default.
 
@@ -77,19 +75,19 @@ The automation needs:
 
 - A self-hosted Cursor worker, not a cloud agent. A cloud agent has no persistent state directory, no `/proc` of earlier rounds and no cluster access.
 - A My Machines or repo-backed pool worker in the checkout that holds `.shepherd/configuration.yaml`. An any-repo pool worker with `--clone-git-repos` clones a fresh checkout without it.
-- A run limit of at least the round's 2-hour `timeout`. Cursor does not document one, so measure it on this worker with a harmless long command. A shorter limit cuts every long round; the next trigger reconciles it.
-- No GitHub or other integration. The automation only runs the wrapper.
+- A measured run limit. Cursor does not document one, so measure it on this worker with a harmless long command, and set `execution.round_hours` at or below it: a round the runner cuts off is then taken over as soon as its lease expires.
+- No GitHub or other integration. The round uses the host's own credentials.
 
-The round agent needs:
+The round needs:
 
 - The host's own GitHub credentials (`gh auth status`): read access to main, PRs, CI and reviews; with publication on, branch push and draft PR creation. The `ci:gpu` label is a separate authority.
 - `remote-gpu` reading the configured cluster, and `forge_task` and KernelForge help commands resolving in the pinned runtime. No node is needed for this.
 
 The host needs:
 
-- One host and one identity for the worker, wrapper, agent, ledger and GitHub credentials.
+- One host and one identity for the worker, ledger and GitHub credentials.
 - A state directory on local Linux disk with working `flock` and atomic rename. Not temporary storage, a fresh checkout, a copy, or an unverified network filesystem.
-- One PID namespace for every round, with `/proc` readable: the host itself or one long-lived container. The wrapper reads `/proc` to see whether a round is still running; a round in another namespace looks undecidable and blocks every later one.
+- PyYAML for the system `python3` (the state helper reads the configuration).
 
 Probe worker isolation on an allocated node. Start a container with the worker's mounts (`remote-gpu exec --image <image> --mount <probe>/worker --mount <probe>/secrets:ro`). Record its `docker inspect` mounts, that `gh auth status` fails, that no token-like variable is set, and that the validate directory and the cluster `$HOME` are not visible. The cluster `$HOME` holds no GitHub credentials. Image and tool versions are pinned.
 
@@ -126,7 +124,7 @@ Give `automate` this intent, filled from configuration:
 - Trigger only on the configured schedule. No repository-event triggers.
 - Run on the self-hosted worker checked in step 4, in the configured repository and base branch.
 - Add no integrations.
-- Run one round through the state helper's `round` wrapper, relay its result and report, then end.
+- Run one round in the session itself (state helper `begin`, the work, `end`), so the run's transcript shows every step, and end with the round report.
 - Never edit, rebase, approve or merge an existing pull request, manage schedules, or reinitialize state.
 
 Do not duplicate `automate`'s own discovery, review, approval, readiness or handoff work.
@@ -142,7 +140,7 @@ Finish configuration, host and state validation. Then ask the user to update in 
 - Schedule trigger and interval; remove any repository-event trigger
 - Self-hosted worker, repository and base branch
 - No integrations
-- Paraphrased one-round, wrapper, report and no-edit instructions
+- Paraphrased one-round (`begin` … `end`), report and no-edit instructions
 
 Do not create a replacement or duplicate. When moving from another scheduler, disable the old trigger first, and keep the state directory and budgets.
 
@@ -160,9 +158,9 @@ Confirm that the pack is committed on the automation's branch and that the live 
 
 Verify with `mode: observe`:
 
-1. One round through the wrapper (`round --now -- <round_agent> <prompt>`) reads GitHub and existing runs, lists candidates, writes a report and changes nothing.
+1. One round in this session (`begin --now`, the round, `end`) reads GitHub and existing runs, lists candidates, writes a report and changes nothing.
 2. `python -m pytest harness/tests/shepherd` passes with `TMPDIR` on a directory only you and root own, such as `/tmp`. The helper refuses a temp root under another user's directory.
-3. Through the automation's own trigger: two concurrent triggers start one round; a second round reads what the first saved; after `kill -9` of a running agent, the next trigger takes over with `SHEPHERD_RECOVERED_FROM` set.
+3. Through the automation's own trigger: two concurrent triggers start one round; a second round reads what the first saved; after stopping a running round in Cursor, the first trigger after its lease expires takes over with `recovered_from` set.
 
 Then switch to `mode: run` on probation, within the owner's authorization:
 

@@ -10,7 +10,7 @@ one cursor automation keeps optimizing aklr kernels unattended.
 - skip: a trigger starts no round while one is still running, or while the ledger's next wake time is ahead and the last round succeeded.
 - behavior: each round observes github and the gpu jobs, advances existing work as far as confirmed results allow, and admits new kernel-less schemas into free gpus.
 - campaign: each campaign optimizes one kernel with kernelforge on one gpu of a shared pool node, then finalizes, stress-tests and validates it in a trusted checkout.
-- tools: the automation only runs the round wrapper and relays its result. the round agent does the work with the host's own github credentials and the configured `remote-gpu` cluster.
+- tools: the automation runs the round itself, between the state helper's `begin` and `end`, with the host's own github credentials and the configured `remote-gpu` cluster. its run transcript is the round's record.
 - outcome: a draft pull request with head-bound evidence, followed until a maintainer merges or closes it, and a short report after every round.
 - boundary: at most `max_parallel_campaigns` campaigns, one per gpu, within the recorded budget. it never edits, rebases, approves or merges an existing pull request.
 
@@ -30,7 +30,7 @@ one cursor automation keeps optimizing aklr kernels unattended.
 - repository and base branch: `<repo>`, `<branch>`
 - mode: `<run | observe | drain>`
 - state directory, cluster, image, runtime revision: `<...>`
-- round agent: `<non-interactive agent command, model, reasoning effort>`
+- round lease: `<execution.round_hours, at most the automation's run limit>`
 - strategies, ops, backends, parallelism: `<...>`
 - campaign model, reasoning effort, per-campaign limits: `<...>`
 - cumulative budget and its authorization: `<...>`
@@ -47,7 +47,7 @@ the human enters setup by pointing cursor at this file. do not look for or invok
 2. check that it holds `harness/automations/shepherd/` at a revision no older than this file's. if it is older, stop and ask the user to update it. never copy pack files into it.
 3. read and follow `harness/automations/shepherd/skills/setup-shepherd/SKILL.md` from that checkout.
 
-the automation needs no plugin. the round agent must load the shared skills from the checkout, not from an installed plugin whose cache can lag. setup checks this with the round agent itself.
+the automation needs no plugin. rounds read the shared skills by path from the checkout, not from an installed plugin whose cache can lag.
 
 do not create or update an automation until the user explicitly asks.
 

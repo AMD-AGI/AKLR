@@ -8,7 +8,10 @@ from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "automations/shepherd/skills/optimize-and-deliver-kernels/scripts/freshness.py"
+SCRIPT = (
+    Path(__file__).resolve().parents[2]
+    / "automations/shepherd/skills/optimize-and-deliver-kernels/scripts/candidate.py"
+)
 SCHEMA = "aklr/ops/gemm/impls/flydsl/gemm_a8w8_n512/0123abcd.json"
 
 
@@ -30,7 +33,7 @@ def commit(repo, *paths):
 
 def check(repo, base, main, schema=SCHEMA):
     result = subprocess.run(
-        [sys.executable, "-I", str(SCRIPT), "--schema", schema, "--base", base, "--main", main],
+        [sys.executable, "-I", str(SCRIPT), "freshness", "--schema", schema, "--base", base, "--main", main],
         cwd=repo,
         capture_output=True,
         text=True,
