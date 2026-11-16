@@ -251,9 +251,9 @@ class KvSplitPages(Layout):
 
 
 class StridedRows(Layout):
-    """A ``(rows, heads, head_dim)`` tensor whose rows are dense and any distance apart,
-    at least a row: rows of a wider row-major buffer, as a query sliced from a fused
-    projection's output. A row-major tensor is one too."""
+    """A ``(rows, heads, head_dim)`` or ``(rows, width)`` tensor whose rows are dense and
+    any distance apart, at least a row: rows of a wider row-major buffer, as a query or a
+    projection sliced from a fused projection's output. A row-major tensor is one too."""
 
     kind: Literal["strided_rows"] = "strided_rows"
 
@@ -264,7 +264,10 @@ class StridedRows(Layout):
         return stored[:, : rows.shape[1]].unflatten(1, tensor.shape[1:])
 
     def storage_test(self):
-        return "T.stride()[1:] == (T.shape[2], 1) and T.stride(0) >= T.shape[1] * T.shape[2]"
+        return (
+            "T.stride()[-1] == 1 and (T.dim() == 2 or T.stride(1) == T.shape[2])"
+            " and T.stride(0) >= T.shape[1] * T.stride(1)"
+        )
 
 
 LayoutUnion = Annotated[
