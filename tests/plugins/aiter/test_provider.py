@@ -248,6 +248,13 @@ def test_a_call_outside_aklrs_contract_is_declined_before_aklr_is_asked(aklr_ser
     assert _select(case, **changes) is None
 
 
+def test_topk_gating_is_declined_while_aiter_routes_by_herd(monkeypatch, aklr_serves):
+    """With HERD, aiter's sigmoid topk_gating drops experts by batch popularity, not AKLR's exact top-k."""
+    assert _select("topk_gating") is not None
+    monkeypatch.setenv("AITER_FLYDSL_USE_HERD", "1")
+    assert _select("topk_gating") is None
+
+
 @pytest.mark.parametrize("case", list(_served_calls()))
 def test_a_call_aklr_falls_back_on_is_declined(monkeypatch, aklr_serves, case):
     _answer(monkeypatch, FallbackReason.NO_WORKLOAD)

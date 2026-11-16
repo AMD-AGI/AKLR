@@ -6,6 +6,8 @@ sigmoid scores, experts picked by score plus bias, weighted by the score alone."
 
 from __future__ import annotations
 
+import os
+
 from aklr.ops.topk.api import biased_grouped_topk
 from aklr.plugins.aiter.provider._base import offer, selector, served
 
@@ -23,7 +25,13 @@ def _select_topk_gating(args, kwargs):
         num_shared_experts,
         num_valid_rows,
     ) = args
-    if score_func != "sigmoid" or correction_bias is None or num_shared_experts or num_valid_rows is not None:
+    if (
+        score_func != "sigmoid"
+        or correction_bias is None
+        or num_shared_experts
+        or num_valid_rows is not None
+        or _herd()
+    ):
         return None
     return offer(
         biased_grouped_topk.serving(
@@ -63,3 +71,10 @@ def _run_topk_gating(
             routed_scaling_factor,
         )
     )
+
+
+def _herd() -> bool:
+    """Whether aiter routes by HERD (``AITER_FLYDSL_USE_HERD=1``, FlyDSL on gfx950): for its model profiles,
+    one group, top-(k+1) candidates and a drop by batch popularity rather than the exact top-k AKLR
+    computes."""
+    return os.environ.get("AITER_FLYDSL_USE_HERD", "0") == "1"
