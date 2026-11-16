@@ -412,6 +412,24 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"topk": 10},
         layout_variant_name="shuffled_16x16",
     ),
+    # Qwen3.5's AttnFP8-V2 MoE block shrunk: 16 routed experts and the MXFP4 shared one fused
+    # in after them, hidden and intermediate size 256, shuffled as sglang holds them
+    PointSpec(
+        contract_id="qwen2_moe_mxfp4_router_experts@1.0",
+        axes={"n_tokens": 4, "model_dim": 256, "n_routed": 16, "inter_dim": 256},
+        dtypes={
+            "hidden_states": "bfloat16",
+            "router_weight": "bfloat16",
+            "shared_gate_weight": "bfloat16",
+            "w1": "float4_e2m1",
+            "w1_scale": "float8_e8m0",
+            "w2": "float4_e2m1",
+            "w2_scale": "float8_e8m0",
+            "out": "bfloat16",
+        },
+        attrs={"topk": 10},
+        layout_variant_name="shuffled_16x16",
+    ),
     PointSpec(
         contract_id="qwen2_moe_router@1.0",
         axes={"n_tokens": 4, "model_dim": 256, "n_routed": 16, "topk": 10},
@@ -726,6 +744,7 @@ GFX950_CONTRACT_IDS = frozenset(
         "qwen2_moe_fp8_experts@1.0",
         "qwen2_moe_fp8_router_experts@1.0",
         "qwen2_moe_mxfp4_moe@1.0",
+        "qwen2_moe_mxfp4_router_experts@1.0",
         "qwen2_moe_router@1.0",
         "gdn_decode_group_fp8_quant@1.0",
         "qwen3_next_gdn_prefill_group_fp8_quant@1.0",
