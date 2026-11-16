@@ -299,7 +299,11 @@ jobs:
         run: |
           flags=(${BASE:+--base "$BASE"})
           [[ $MEASURED_BY_BOT != true ]] || flags+=(--allow-measured-edits)
-          python3 -m aklr validate "${flags[@]}" --under aklr/ops --out "$RUNNER_TEMP/validation-report"
+          # FIXME: mega_moe's baseline JIT-builds mori's device bitcode, which misses TheRock's
+          # <libdrm/drm.h> (mori/jit/core.py::_collect_include_dirs, ROCm/mori 29e0c086); measure
+          # mega_moe again once the image ships a mori that finds it.
+          python3 -m aklr validate "${flags[@]}" --under aklr/ops --exclude aklr/ops/mega_moe \
+            --out "$RUNNER_TEMP/validation-report"
       - &summarize
         # The PR head the reviewer signs; the checkout is the merge commit.
         name: Summarize
