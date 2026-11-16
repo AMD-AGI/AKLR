@@ -3,6 +3,8 @@
 
 import logging
 import sys
+import threading
+import time
 import types
 from pathlib import Path
 
@@ -383,6 +385,24 @@ class TestKernelDispatcher:
 
 class TestDispatcherRegistry:
     """``DispatcherRegistry.init`` over the committed schemas."""
+
+    def test_concurrent_first_calls_init_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Two threads starting AKLR at once: one init, and the other waits for it."""
+        calls = []
+
+        def init(registry: DispatcherRegistry) -> None:
+            calls.append(threading.get_ident())
+            time.sleep(0.05)
+            registry.is_initialized = True
+
+        monkeypatch.setattr(DispatcherRegistry, "init", init)
+        registry = DispatcherRegistry()
+        threads = [threading.Thread(target=registry.init_once) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        assert len(calls) == 1 and registry.is_initialized
 
     def test_disabled_init_closes_every_dispatcher(
         self,

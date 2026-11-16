@@ -19,7 +19,7 @@ provider = importlib.import_module("aklr.plugins.aiter.provider")
 base = importlib.import_module("aklr.plugins.aiter.provider._base")
 
 FP8, BF16, F32 = torch.float8_e4m3fn, torch.bfloat16, torch.float32
-E8M0 = getattr(torch, "float8_e8m0fnu", torch.uint8)
+E8M0 = getattr(torch, "float8_e8m0fnu", None)
 KERNEL = RunnableMetadata(
     build_type="flydsl", contract_id="any@1.0", schema_name="any_schema", content_hash="0123456789abcdef0123"
 )
@@ -161,6 +161,11 @@ def _served_calls():
     }
 
 
+def _served_cases():
+    """The served cases this torch can express: mxfp8 needs its e8m0 dtype."""
+    return [case for case in _served_calls() if E8M0 is not None or case != "per_group_quant_mxfp8"]
+
+
 def _op(case: str) -> str:
     return "per_group_quant" if case.startswith("per_group_quant") else case
 
@@ -209,7 +214,7 @@ def test_each_selector_serves_an_aiter_contract_at_its_version():
     assert provider.provider.op_versions == {op: {v} for op, (v, _) in AITER_CONTRACTS.items()}
 
 
-@pytest.mark.parametrize("case", list(_served_calls()))
+@pytest.mark.parametrize("case", _served_cases())
 def test_a_served_call_offers_a_run_taking_aiters_contract(aklr_serves, case):
     """aiter hands run every positional parameter; one it cannot bind is a contract mismatch."""
     kernel, run = _select(case)
@@ -243,6 +248,15 @@ DECLINED = [
 ]
 
 
+def _row_major(scale):
+    """``scale`` carrying AKLR's row-major marker."""
+    scale.is_row_major = True
+    return scale
+
+
+DECLINED.append(("gemm_a8w8_blockscale_bpreshuffle", {"x_scale": _row_major(torch.zeros(4, 1))}))
+
+
 @pytest.mark.parametrize(("case", "changes"), DECLINED)
 def test_a_call_outside_aklrs_contract_is_declined_before_aklr_is_asked(aklr_serves, case, changes):
     assert _select(case, **changes) is None
@@ -255,7 +269,7 @@ def test_topk_gating_is_declined_while_aiter_routes_by_herd(monkeypatch, aklr_se
     assert _select("topk_gating") is None
 
 
-@pytest.mark.parametrize("case", list(_served_calls()))
+@pytest.mark.parametrize("case", _served_cases())
 def test_a_call_aklr_falls_back_on_is_declined(monkeypatch, aklr_serves, case):
     _answer(monkeypatch, FallbackReason.NO_WORKLOAD)
     assert _select(case) is None
@@ -283,6 +297,12 @@ def test_runs_hand_aklr_aiters_layouts(monkeypatch, aklr_serves):
     _, run = _select("gemm_a8w8_blockscale_bpreshuffle")
     assert run(*_args("gemm_a8w8_blockscale_bpreshuffle")) == "y"
     assert calls == [{"out_dtype": BF16, "out": None, "operand_format": "none:preshuffled"}]
+
+
+def test_mxfp8_is_declined_on_a_torch_without_e8m0(monkeypatch, aklr_serves):
+    quant = importlib.import_module("aklr.plugins.aiter.provider.quant")
+    monkeypatch.setattr(quant, "_E8M0", None)
+    assert _select("per_group_quant_fp8", group_size=32, transpose_scale=False, scale_type=None) is None
 
 
 def test_a_fallback_after_select_accepted_raises(monkeypatch, aklr_serves):

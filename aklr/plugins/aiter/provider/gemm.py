@@ -38,7 +38,8 @@ def _run_gemm_a8w8_blockscale(xq, wq, x_scale, w_scale, dtype, is_b_preshuffled,
 @selector("gemm_a8w8_blockscale_bpreshuffle")
 def _select_gemm_a8w8_blockscale_bpreshuffle(args, kwargs):
     xq, wq, x_scale, w_scale, dtype, out = args
-    if not _fp32_scales(x_scale, w_scale):
+    # aiter reads x_scale's bytes column-major; AKLR's is_row_major marker would read them row-major
+    if not _fp32_scales(x_scale, w_scale) or getattr(x_scale, "is_row_major", False):
         return None
     # x_scale holds aiter's column-major bytes, AKLR's default for a shuffled weight
     return offer(

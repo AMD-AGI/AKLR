@@ -29,7 +29,7 @@ def _select_per_group_quant(args, kwargs):
         return None
     if group_size == 128 and transpose_scale and scale_type == torch.float32:
         return offer(per_group_quant_fp8.serving(x), _run_per_group_quant_fp8)
-    if group_size == 32 and not transpose_scale and scale_type == _E8M0:
+    if group_size == 32 and not transpose_scale and _E8M0 is not None and scale_type == _E8M0:
         return offer(per_group_quant_mxfp8.serving(x), _run_per_group_quant_mxfp8)
     return None
 
