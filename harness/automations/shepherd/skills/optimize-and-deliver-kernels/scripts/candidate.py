@@ -144,7 +144,9 @@ class Candidate:
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     sub = parser.add_subparsers(dest="command", required=True)
     listing = sub.add_parser("list", help="list the round's candidates at a commit")
     listing.add_argument("--config", required=True)
@@ -168,7 +170,9 @@ def main():
         if ancestor.returncode not in (0, 1):
             raise subprocess.CalledProcessError(ancestor.returncode, ancestor.args)
         if ancestor.returncode == 1:
-            print(json.dumps({"base": args.base, "main": args.main, "stale": "base is not an ancestor of main"}))
+            print(
+                json.dumps({"base": args.base, "main": args.main, "stale": "base is not an ancestor of main"})
+            )
             return 1
         relevant = candidate.relevant_changes(args.base, args.main)
     except (ValueError, OSError, subprocess.CalledProcessError) as exc:
