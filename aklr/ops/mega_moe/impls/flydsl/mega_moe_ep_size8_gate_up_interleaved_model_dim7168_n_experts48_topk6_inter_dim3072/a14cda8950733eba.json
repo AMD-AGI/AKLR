@@ -162,7 +162,7 @@
         "swiglu_limit": 10.0
       },
       "accuracy": "passed",
-      "speedup": 1.439
+      "speedup": 1.442
     },
     {
       "axes": {
@@ -172,7 +172,7 @@
         "swiglu_limit": 10.0
       },
       "accuracy": "passed",
-      "speedup": 1.45
+      "speedup": 1.456
     },
     {
       "axes": {
@@ -182,7 +182,7 @@
         "swiglu_limit": 10.0
       },
       "accuracy": "passed",
-      "speedup": 1.386
+      "speedup": 1.355
     },
     {
       "axes": {
@@ -192,7 +192,7 @@
         "swiglu_limit": 10.0
       },
       "accuracy": "passed",
-      "speedup": 1.214
+      "speedup": 1.228
     }
   ],
   "layout_variants": {
