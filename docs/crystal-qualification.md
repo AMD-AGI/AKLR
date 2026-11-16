@@ -45,6 +45,8 @@ read only, and must never generate events that start other workflows.
 `python3 -m unittest discover -s .github/scripts/tests -v` tests request signing,
 validation and public output. `node --test .github/scripts/tests/*.test.cjs`
 tests native-CI eligibility. Validate the YAML with actionlint before deployment.
+The separate `Crystal integration contract tests` workflow runs the Python and
+Node tests on relevant PRs without credentials, service access, or GPU runners.
 No real image build, GPU execution or Check publication occurs in these tests.
 
 The image enables `AKLR_SGLANG_PLUGIN=1`, retains AITER as a separate dependency,
