@@ -6,6 +6,7 @@ from __future__ import annotations
 from aklr.core.contract.op import OpContract
 from aklr.core.contract.semantics import (
     DTYPE_TRAITS,
+    BaselineRelativeBound,
     CuSeqlensDistribution,
     Deepseekv4Fp8KvCacheDistribution,
     Deepseekv4KvPages,
@@ -13,6 +14,7 @@ from aklr.core.contract.semantics import (
     DType,
     FiniteDistribution,
     IntRangeDistribution,
+    LogUniformDistribution,
     SqnrBound,
     ToleranceBound,
 )
@@ -30,7 +32,7 @@ from aklr.core.contract.spec import (
     axis,
 )
 
-__all__ = ["CONTRACTS", "FLASH_MLA_WITH_KVCACHE", "FP8_PAGED_MQA_LOGITS"]
+__all__ = ["CONTRACTS", "FLASH_MLA_WITH_KVCACHE", "FP8_PAGED_MQA_LOGITS", "MLA_DECODE_FWD"]
 
 _FINITE_DISTRIBUTION = FiniteDistribution()
 _INT32 = DTypeSpec(any_of=(DType.INT32,))
@@ -414,4 +416,102 @@ FP8_PAGED_MQA_LOGITS = OpContract(
     compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
 )
 
-CONTRACTS = (FLASH_MLA_WITH_KVCACHE, FP8_PAGED_MQA_LOGITS)
+_FP8 = DTypeSpec(any_of=(DType.FLOAT8_E4M3FN,))
+
+
+def _scale(description: str) -> TensorSpec:
+    return TensorSpec(
+        description=description,
+        shape=(1,),
+        can_squeeze=True,
+        dtype=_FLOAT32,
+        distribution=LogUniformDistribution(log2_lo="-1", log2_hi="1"),
+    )
+
+
+MLA_DECODE_FWD = OpContract(
+    contract_id="mla_decode_fwd@1.0",
+    description=(
+        "aiter's MLA decode, one query per request, over a pool of 576-value fp8 rows "
+        "(aiter.mla.mla_decode_fwd): request b reads pool rows kv_indices[kv_indptr[b]:kv_indptr[b + 1]]; "
+        "logits are q . row * q_scale * kv_scale * sm_scale over the 576 values, the rope part last, "
+        "and values row[:512] * kv_scale. A request reading no row: o 0, lse -inf."
+    ),
+    op_type="mla",
+    axes={
+        "batch": axis("Requests, one query each.", 1, 65536, is_var=True),
+        "n_heads": axis(
+            "Query heads; under decode context parallelism, every rank's.", 16, 128, multiple_of=16
+        ),
+        "n_slots": axis("Rows of the KV pool.", 1, _SLOT_LIMIT - 1, is_var=True, any_size=True),
+        "n_indices": axis(
+            "Entries of kv_indices; the first kv_indptr[batch] are read.",
+            1,
+            _SLOT_LIMIT - 1,
+            is_var=True,
+            any_size=True,
+        ),
+        "n_offsets": axis("Entries of kv_indptr: batch + 1.", 2, 65537, is_var=True),
+    },
+    constraints=(
+        "n_offsets == batch + 1",
+        # the head counts aiter's fp8 kernels take whole; others it folds, which no framework sends
+        "n_heads == 16 or n_heads == 32 or n_heads == 64 or n_heads == 96 or n_heads == 128",
+    ),
+    inputs={
+        "q": TensorSpec(
+            description="Each request's query: the absorbed no-rope part, then the rope part.",
+            shape=("batch", "n_heads", 576),
+            dtype=_FP8,
+            distribution=_FINITE_DISTRIBUTION,
+        ),
+        "kv_buffer": TensorSpec(
+            description="The KV pool: a 576-value row a slot, the rope part last.",
+            shape=("n_slots", 1, 1, 576),
+            dtype=_FP8,
+            distribution=_FINITE_DISTRIBUTION,
+            lifetime="weight",
+        ),
+        "kv_indptr": TensorSpec(
+            description="Where each request's entries start in kv_indices, then where the last ends.",
+            shape=("n_offsets",),
+            dtype=_INT32,
+            # a request may read no row: under decode context parallelism a short one holds none on some ranks
+            distribution=CuSeqlensDistribution(min_seqlen=0, total="n_indices"),
+        ),
+        "kv_indices": TensorSpec(
+            description="Pool rows, each request's back to back.",
+            shape=("n_indices",),
+            dtype=_INT32,
+            distribution=IntRangeDistribution(lo="0", hi="n_slots - 1"),
+        ),
+        "q_scale": _scale("Multiplies every q value."),
+        "kv_scale": _scale("Multiplies every KV value, in the logits and the values."),
+        # always passed: present_when gives the api default None, which declines
+        "sm_scale": ScalarSpec(
+            description="Multiplies every logit.",
+            dtype=DType.FLOAT32,
+            interval=_POSITIVE_FLOAT32,
+            present_when="True",
+        ),
+    },
+    outputs={
+        "o": TensorSpec(
+            description="Softmax-weighted sum of the read values.",
+            shape=("batch", "n_heads", 512),
+            dtype=DTypeSpec(any_of=(DType.BFLOAT16,)),
+            # aiter rounds the softmax weights to fp8 before it sums the values
+            error_bounds=BaselineRelativeBound(),
+        ),
+        "lse": TensorSpec(
+            description="Natural log-sum-exp of the scaled logits.",
+            shape=("batch", "n_heads"),
+            dtype=_FLOAT32,
+            error_bounds=ToleranceBound(absolute_tolerance=1e-3, relative_tolerance=1e-3),
+        ),
+    },
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism=DeterminismLevel.BOUNDED),
+)
+
+CONTRACTS = (FLASH_MLA_WITH_KVCACHE, FP8_PAGED_MQA_LOGITS, MLA_DECODE_FWD)

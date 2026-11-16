@@ -29,8 +29,11 @@ __all__ = [
     "CONTRACTS",
     "GATED_ATTENTION_DECODE",
     "GATED_ATTENTION_DECODE_GROUP_FP8_QUANT",
+    "GATED_ATTENTION_PREFILL",
+    "GATED_ATTENTION_PREFILL_GROUP_FP8_QUANT",
     "GDN_DECODE",
     "GDN_DECODE_GROUP_FP8_QUANT",
+    "GDN_PREFILL",
     "GDN_PREFILL_GROUP_FP8_QUANT",
     "MROPE_SECTION",
     "ROTARY_DIM",
@@ -92,9 +95,15 @@ GDN_PREFILL_GROUP_FP8_QUANT = OpContract(
             512,
             1024,
             1025,
+            4096,
             5000,
+            5120,
+            6144,
             8192,
             10000,
+            10240,
+            12288,
+            14336,
             16384,
             default=2048,
             param_name="max_seq_len",
@@ -186,6 +195,30 @@ GDN_PREFILL_GROUP_FP8_QUANT = OpContract(
             error_bounds=ToleranceBound(absolute_tolerance=1e-7, relative_tolerance=0.02),
         ),
     },
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism="bitwise"),
+)
+
+# The same prefill where out_proj takes BF16 (Qwen3.5's MXFP4 checkpoint keeps its GDN layers
+# unquantized): the gated normalized output alone.
+GDN_PREFILL = OpContract(
+    contract_id="gdn_prefill@1.0",
+    op_type="qwen3_5",
+    description=(
+        "Qwen3.5 GDN prefill from contiguous Q/K/V/Z and B/A projections. Each sequence "
+        "uses its distinct cache_indices slot; fresh sequences ignore the slot's old values. "
+        "Causal width-four SiLU convolution updates conv_state, Q and K are L2-normalized "
+        "and rounded to BF16, and the gated delta recurrence updates FP32 delta_state "
+        "in [value,key] order. BF16 attention output is gated RMS-normalized and rounded to "
+        "BF16. Only the indexed state slots change. cu_seqlens partitions all tokens into "
+        "positive sequences with actual maximum max_seq_len. Unindexed state slots and all "
+        "other inputs are preserved."
+    ),
+    axes=GDN_PREFILL_GROUP_FP8_QUANT.axes,
+    attrs=GDN_PREFILL_GROUP_FP8_QUANT.attrs,
+    constraints=GDN_PREFILL_GROUP_FP8_QUANT.constraints,
+    inputs=GDN_PREFILL_GROUP_FP8_QUANT.inputs,
+    outputs={"normalized": GDN_PREFILL_GROUP_FP8_QUANT.outputs["normalized"]},
     layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
     compare=CompareSpec(determinism="bitwise"),
 )
@@ -477,10 +510,138 @@ GATED_ATTENTION_DECODE = OpContract(
     compare=CompareSpec(determinism="bitwise"),
 )
 
+# Prefill of fresh sequences (no cached prefix): each row attends its own sequence's rows up to
+# itself, whose keys and values it has just written, so cu_seqlens alone gives what it reads.
+_PREFILL_ATTENTION_TEXT = (
+    "Qwen3.5 full-attention prefill of fresh sequences on one rank, between qkv_proj and "
+    "o_proj. projected_qkv holds each query head's query then its output gate, then the KV "
+    "heads' keys, then their values. Q and K are RMS-normalized per head with weight 1 + norm "
+    "weight and rounded to BF16; each head's first 64 channels take NeoX RoPE, rounded to "
+    "BF16, whose frequency f in [0, 32) reads positions[1] when f % 3 == 1 and f < 33, "
+    "positions[2] when f % 3 == 2 and f < 30, else positions[0], in cos_sin_cache's row of 32 "
+    "cosines then 32 sines. Each row writes its K and V, cast to E4M3FN, at its distinct "
+    "cache_locations slot of key_cache and value_cache. cu_seqlens partitions the rows into "
+    "sequences with actual maximum max_seq_len and no cached prefix: query head h of a row "
+    "attends, through KV head h // (n_heads // n_kv_heads), the written slots of its "
+    "sequence's rows up to itself with scores q . k * scale; the softmax-weighted sum of "
+    "their values is rounded to BF16, multiplied by sigmoid of the gate and rounded to BF16"
+)
+_PREFILL_ATTENTION_AXES = {
+    "n_tokens": axis("Prefill rows.", 1, 16384, is_var=True),
+    **{n: _FP8_ATTENTION.axes[n] for n in ("qkv_dim", "n_kv_heads", "head_dim", "n_slots")},
+    "n_positions": GATED_ATTENTION_DECODE.axes["n_positions"],
+    "n_starts": axis("Sequence boundaries: sequences + 1.", 2, 2048, is_var=True),
+    "n_heads": _FP8_ATTENTION.axes["n_heads"],
+}
+_PREFILL_ATTENTION_CONSTRAINTS = (
+    "(qkv_dim - 2 * n_kv_heads * head_dim) % (2 * head_dim) == 0",
+    "n_heads >= 1",
+    "n_heads % n_kv_heads == 0",
+    "n_tokens >= n_starts + max_seq_len - 2",
+    "n_tokens <= (n_starts - 1) * max_seq_len",
+    "n_slots >= n_tokens",
+)
+_PREFILL_ATTENTION_ATTRS = {
+    "max_seq_len": attr(
+        "Actual maximum sequence length.",
+        1024,
+        32,
+        2048,
+        3072,
+        4096,
+        5120,
+        6144,
+        7168,
+        8192,
+        10240,
+        12288,
+        14336,
+        16384,
+        default=1024,
+        param_name="max_seq_len",
+    ),
+}
+# Over thousands of rows a key's BF16 norm and RoPE, one ulp from the reference's, can round two
+# FP8 steps away; a wrong slot or an unrotated key is still far past this bound.
+_PREFILL_CACHE_BOUND = ToleranceBound(absolute_tolerance=2**-8, relative_tolerance=0.25)
+_PREFILL_ATTENTION_INPUTS = {
+    **{
+        n: _FP8_ATTENTION.inputs[n]
+        for n in (
+            "projected_qkv",
+            "q_norm_weight",
+            "k_norm_weight",
+            "positions",
+            "cos_sin_cache",
+            "cache_locations",
+        )
+    },
+    **{
+        n: _tensor(
+            f"This layer's {n.split('_')[0]} pool.",
+            ("n_slots", "n_kv_heads", "head_dim"),
+            _FP8,
+            mutable=True,
+            bound=_PREFILL_CACHE_BOUND,
+        )
+        for n in ("key_cache", "value_cache")
+    },
+    "cu_seqlens": _tensor(
+        "Cumulative sequence boundaries.",
+        ("n_starts",),
+        _INT32,
+        distribution=BoundedCuSeqlensDistribution(total="n_tokens", max_seqlen="max_seq_len"),
+    ),
+    **{n: _FP8_ATTENTION.inputs[n] for n in ("eps", "scale")},
+}
+
+# sglang's own fresh prefill (flash_attn_varlen_fp8_pertensor_func) attends Q, K and V cast to
+# E4M3FN; the bounds are the decode ops'.
+GATED_ATTENTION_PREFILL_GROUP_FP8_QUANT = OpContract(
+    contract_id="gated_attention_prefill_group_fp8_quant@1.0",
+    op_type="qwen3_5",
+    description=(
+        f"{_PREFILL_ATTENTION_TEXT}, then quantized in groups of 128 channels to E4M3FN "
+        "with scale=max(amax,1e-10)/448. Unwritten slots and all other inputs are preserved."
+    ),
+    axes={
+        **_PREFILL_ATTENTION_AXES,
+        "n_groups": _FP8_ATTENTION.axes["n_groups"],
+    },
+    attrs=_PREFILL_ATTENTION_ATTRS,
+    constraints=(
+        *_PREFILL_ATTENTION_CONSTRAINTS,
+        "(n_heads * head_dim) % 128 == 0",
+    ),
+    inputs=_PREFILL_ATTENTION_INPUTS,
+    outputs=_FP8_ATTENTION.outputs,
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism="bitwise"),
+)
+
+GATED_ATTENTION_PREFILL = OpContract(
+    contract_id="gated_attention_prefill@1.0",
+    op_type="qwen3_5",
+    description=f"{_PREFILL_ATTENTION_TEXT}. Unwritten slots and all other inputs are preserved.",
+    axes={
+        **_PREFILL_ATTENTION_AXES,
+        "attention_width": GATED_ATTENTION_DECODE.axes["attention_width"],
+    },
+    attrs=_PREFILL_ATTENTION_ATTRS,
+    constraints=_PREFILL_ATTENTION_CONSTRAINTS,
+    inputs=_PREFILL_ATTENTION_INPUTS,
+    outputs=GATED_ATTENTION_DECODE.outputs,
+    layout_variants=LayoutVariantsSpec(by_name={"row_major": LayoutVariant()}),
+    compare=CompareSpec(determinism="bitwise"),
+)
+
 CONTRACTS = (
     GDN_PREFILL_GROUP_FP8_QUANT,
+    GDN_PREFILL,
     GDN_DECODE_GROUP_FP8_QUANT,
     GDN_DECODE,
     GATED_ATTENTION_DECODE_GROUP_FP8_QUANT,
     GATED_ATTENTION_DECODE,
+    GATED_ATTENTION_PREFILL_GROUP_FP8_QUANT,
+    GATED_ATTENTION_PREFILL,
 )

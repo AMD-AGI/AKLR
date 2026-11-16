@@ -7,6 +7,38 @@ from aklr.core.contract.spec import PointSpec
 
 # full PointSpec literals; each contract's base Point first
 SMALL_POINTS: tuple[PointSpec, ...] = (
+    # Kimi-K3's attention residual shrunk: a layer folding the pending output into the prefix,
+    # then the first layer of a block, which stores its prefix as the next bank row
+    PointSpec(
+        contract_id="kimi_k3_attn_res@1.0",
+        axes={"n_tokens": 4, "hidden_size": 256, "n_bank_rows": 4},
+        dtypes={
+            "prefix": "bfloat16",
+            "addend": "bfloat16",
+            "bank": "bfloat16",
+            "score_norm_weight": "bfloat16",
+            "score_proj_weight": "bfloat16",
+            "norm_weight": "bfloat16",
+            "out": "bfloat16",
+        },
+        attrs={"n_valid_rows": 2, "write_bank": False, "has_addend": True, "has_norm": True},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
+        contract_id="kimi_k3_attn_res@1.0",
+        axes={"n_tokens": 4, "hidden_size": 256, "n_bank_rows": 4},
+        dtypes={
+            "prefix": "bfloat16",
+            "addend": None,
+            "bank": "bfloat16",
+            "score_norm_weight": "bfloat16",
+            "score_proj_weight": "bfloat16",
+            "norm_weight": "bfloat16",
+            "out": "bfloat16",
+        },
+        attrs={"n_valid_rows": 3, "write_bank": True, "has_addend": False, "has_norm": True},
+        layout_variant_name="row_major",
+    ),
     # Muse Spark's MoE experts shrunk: half the routed experts on the rank, as vLLM holds
     # them for aiter
     PointSpec(

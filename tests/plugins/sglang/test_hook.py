@@ -23,6 +23,11 @@ from aklr.plugins.sglang import hook
 for package in op_packages():
     if package.startswith("aklr.plugins.sglang."):
         importlib.import_module(f"{package}.api")
+importlib.import_module("aklr.plugins.sglang.aiter_calls")
+importlib.import_module("aklr.plugins.sglang.models.kimi_k3_torch_gemm")
+importlib.import_module("aklr.plugins.sglang.models.dspark_torch_gemm")
+importlib.import_module("aklr.plugins.sglang.layers.logits_processor_torch_gemm")
+importlib.import_module("aklr.plugins.sglang.layers.aiter_backend_mla_prefill")
 DECLARED = list(hook._ROUTES)
 INSTALLED = "0.5.22"
 
@@ -45,8 +50,11 @@ def test_every_route_was_tested_on_the_installed_sglang():
     assert [target for target, versions, _ in DECLARED if installed not in versions] == []
 
 
-def parameters(fn):
-    return [(p.name, p.kind, p.default) for p in inspect.signature(fn).parameters.values()]
+def parameters(fn, *, defaults=True):
+    return [
+        (p.name, p.kind, *((p.default,) if defaults else ()))
+        for p in inspect.signature(fn).parameters.values()
+    ]
 
 
 @pytest.mark.parametrize(
@@ -54,7 +62,25 @@ def parameters(fn):
 )
 def test_every_route_takes_its_targets_parameters(target, route):
     installed_sglang()
-    assert parameters(route) == parameters(pkgutil.resolve_name(target))
+    if not target.startswith("aiter."):
+        assert parameters(route) == parameters(pkgutil.resolve_name(target))
+        return
+    # aiter's defaults are aiter's enums, which route modules cannot import. A newer aiter than the
+    # installed one adds parameters at the end, which the route takes too.
+    taken = parameters(pkgutil.resolve_name(target), defaults=False)
+    assert parameters(route, defaults=False)[: len(taken)] == taken
+
+
+def test_the_fused_moe_route_passes_sglangs_output_to_the_op(monkeypatch):
+    """CI's aiter lacks ``output``, so the parameter test cannot see it: the route must take
+    sglang's ``output`` (MoRI EP's combine buffer) and pass it on."""
+    from aklr.plugins.sglang import aiter_calls
+
+    passed = {}
+    monkeypatch.setattr(aiter_calls.aklr_aiter, "fused_moe", lambda *args, **kwargs: passed.update(kwargs))
+    out = torch.empty(0)
+    aiter_calls._fused_moe(*[None] * 5, output=out)
+    assert passed["output"] is out
 
 
 @pytest.mark.parametrize(
@@ -171,6 +197,25 @@ def test_inside_a_compiled_region_the_route_is_not_traced(hooks):
     assert torch.equal(around(sglangs, torch.ones(2)), torch.full((2,), 11.0))
 
 
+def test_inside_a_compiled_region_an_eager_route_serves_outside_the_graph(hooks, monkeypatch):
+    served = []
+    monkeypatch.setattr(hook, "_EAGER", set())
+    hook.sglang_route(TARGET, versions=(INSTALLED,), eager=True)(lambda x: served.append(x) or x + 10)
+    hook.install()
+    around = wrapper(hooks)
+
+    def sglangs(x):
+        return x * 2
+
+    torch._dynamo.reset()
+    try:
+        compiled = torch.compile(lambda x: around(sglangs, x), backend="eager")
+        assert torch.equal(compiled(torch.ones(2)), torch.full((2,), 11.0))
+    finally:
+        torch._dynamo.reset()
+    assert len(served) == 1
+
+
 @pytest.fixture
 def register_calls(monkeypatch):
     """What register() did, in order."""
@@ -196,7 +241,19 @@ def test_only_1_turns_the_routes_on(monkeypatch, register_calls, env, hooked):
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     plugin.register()
-    routes = ["aklr.plugins.sglang.x.y.api", "install"] if hooked else []
+    routes = (
+        [
+            "aklr.plugins.sglang.x.y.api",
+            "aklr.plugins.sglang.aiter_calls",
+            "aklr.plugins.sglang.models.kimi_k3_torch_gemm",
+            "aklr.plugins.sglang.models.dspark_torch_gemm",
+            "aklr.plugins.sglang.layers.logits_processor_torch_gemm",
+            "aklr.plugins.sglang.layers.aiter_backend_mla_prefill",
+            "install",
+        ]
+        if hooked
+        else []
+    )
     assert register_calls == ["aklr starts", *routes]
 
 

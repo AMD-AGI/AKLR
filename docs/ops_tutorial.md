@@ -29,7 +29,7 @@ flowchart TD
 |---|---|---|
 | 1. A contract does not exist | Create `contract.py`/`reference.py`/`api.py`/`baseline.py`/`__init__.py` and small test Points, update `names.txt`, then narrow as in 1. B | New op package + kernel-less schema |
 | 1. B contract exists | `get` → `PointSpec` → `workload_for` → `narrow(sources=[])` → `schema_text()` | kernel-less schema (temporary uuid) |
-| 2. Develop the kernel | Fill in `kernel.sources` (optionally `requires`, `author`), then rerun the 1. B script | Schema with the kernel (new uuid) |
+| 2. Develop the kernel | Fill in `kernel.sources` and `requires` (optionally `author`), then rerun the 1. B script | Schema with the kernel (new uuid) |
 | 3. Local validation | `python -m aklr validate --base origin/main --stages audit,bench <schema>`; check the demoted list and delete the workloads that miss the bar | `aklr_validation/report.md`, `report.json` |
 | 4. PR/CI/write-back | Add `ci:gpu` to the PR; after merge, a bot PR writes back the measurements | Kernel merged into the main branch |
 
@@ -86,7 +86,7 @@ When developing the kernel, change only three fields in the kernel section: `ker
 - `sources`: for flydsl/triton the entry is `kernel.py::run`, and other files may only be imported relatively; hip uses `.hip`/`.h`, with the entry `kernel.hip::run`. The entry file must start with a docstring describing the kernel (a leading comment for hip). Writing it out with `narrow(..., kernel=...)` + `schema_text()` is recommended. Path rules:
   - flydsl/triton: a Python kernel is a flat package, so a path may not contain `/`, and there may be no `__init__.py`;
   - hip: nested directories are allowed, e.g. `include/utils.h`;
-- `requires`: toolchain version constraints, e.g. `{"triton": ">=3.8"}`.
+- `requires`: toolchain version constraints, required. Name at least the kernel's own language, with the version you developed on as the lower bound: `{"flydsl": ">=0.3.2"}`, `{"triton": ">=3.8"}`, or `{"hip": ">=7.15"}` (the HIP version torch reports, not the ROCm release: ROCm 10.0 ships HIP 7.15). `python -m aklr export check` rejects a kernel without it; at runtime a kernel whose `requires` the installed toolchain misses is skipped.
 - `author`: the author's name.
 
 Once every source field is filled in, rerun the 1.B script (replace `"sources": []` with `[SourceFile(path=..., content=...), ...]`, importing `SourceFile` from `aklr.core.contract.spec`; see the step 1 script in the example), which writes a schema file with a new uuid.

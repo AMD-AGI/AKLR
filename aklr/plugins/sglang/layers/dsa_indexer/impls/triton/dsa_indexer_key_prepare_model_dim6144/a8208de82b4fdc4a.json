@@ -150,7 +150,7 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.511
+      "speedup": 1.524
     },
     {
       "axes": {
@@ -162,7 +162,7 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.716
+      "speedup": 1.768
     },
     {
       "axes": {
@@ -174,7 +174,7 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.428
+      "speedup": 1.431
     },
     {
       "axes": {
@@ -186,7 +186,7 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.46
+      "speedup": 1.48
     },
     {
       "axes": {
@@ -198,7 +198,7 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.097
+      "speedup": 1.091
     },
     {
       "axes": {
@@ -210,7 +210,7 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.107
+      "speedup": 1.118
     },
     {
       "axes": {
@@ -222,7 +222,7 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.128
+      "speedup": 1.122
     },
     {
       "axes": {
@@ -234,7 +234,7 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.514
+      "speedup": 1.498
     },
     {
       "axes": {
@@ -246,7 +246,7 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.503
+      "speedup": 1.481
     },
     {
       "axes": {
@@ -258,7 +258,7 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.509
+      "speedup": 1.491
     },
     {
       "axes": {
@@ -270,7 +270,7 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.478
+      "speedup": 1.469
     },
     {
       "axes": {
@@ -282,7 +282,7 @@
         "k_norm_eps": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.223
+      "speedup": 1.29
     }
   ],
   "layout_variants": {

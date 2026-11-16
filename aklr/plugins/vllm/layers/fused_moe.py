@@ -9,8 +9,7 @@
 
 from __future__ import annotations
 
-from aklr.core.runtime.dispatch import FallbackReason
-from aklr.ops.fused_moe.api import fused_moe
+from aklr.plugins import aiter as aklr_aiter
 from aklr.plugins.vllm.hook import vllm_route
 
 __all__: list[str] = []
@@ -62,27 +61,7 @@ def _fused_moe(
     herd_topk=0,
     herd_routed_scaling_factor=1.0,
 ):
-    # the sorting policy and split-K pick aiter's internal schedule, not the result
-    if (
-        block_size_M is not None
-        or hidden_pad
-        or intermediate_pad
-        or a1_scale is not None
-        or a2_scale is not None
-        or bias1 is not None
-        or bias2 is not None
-        or shared_w1 is not None
-        or shared_w2 is not None
-        or shared_expert_id != -1
-        or stage2_scatter is not None
-        or output is not None
-        or quant_type_a is not None
-        or quant_dtype_a is not None
-        or quant_dtype_a2 is not None
-        or herd_topk
-    ):
-        return FallbackReason.OUT_OF_CONTRACT
-    return fused_moe(
+    return aklr_aiter.fused_moe(
         hidden_states,
         w1,
         w2,
@@ -94,10 +73,26 @@ def _fused_moe(
         doweight_stage1=doweight_stage1,
         w1_scale=w1_scale,
         w2_scale=w2_scale,
-        swiglu_limit=swiglu_limit or None,
+        a1_scale=a1_scale,
+        a2_scale=a2_scale,
+        block_size_M=block_size_M,
+        num_local_tokens=num_local_tokens,
+        dtype=dtype,
+        hidden_pad=hidden_pad,
+        intermediate_pad=intermediate_pad,
+        bias1=bias1,
+        bias2=bias2,
+        swiglu_limit=swiglu_limit,
         beta=beta,
         linear_beta=linear_beta,
         gate_mode=gate_mode,
-        out_dtype=dtype,
-        num_local_tokens=num_local_tokens,
+        shared_w1=shared_w1,
+        shared_w2=shared_w2,
+        shared_expert_id=shared_expert_id,
+        stage2_scatter=stage2_scatter,
+        output=output,
+        quant_type_a=quant_type_a,
+        quant_dtype_a=quant_dtype_a,
+        quant_dtype_a2=quant_dtype_a2,
+        herd_topk=herd_topk,
     )

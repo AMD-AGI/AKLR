@@ -27,6 +27,7 @@ from aklr.core.runtime.builder.builder import (
     BuildError,
     FlyDSLBuilder,
     HipBuilder,
+    HsacoBuilder,
     PythonBuilder,
     TritonBuilder,
     get_build_cache_path,
@@ -43,6 +44,7 @@ _BUILDER_PRIORITY: list[type[Builder]] = [
     TritonBuilder,
     FlyDSLBuilder,
     HipBuilder,
+    HsacoBuilder,
     PythonBuilder,
 ]
 

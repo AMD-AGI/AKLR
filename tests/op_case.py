@@ -3,8 +3,13 @@
 
 from __future__ import annotations
 
+import base64
+import functools
+import subprocess
+import tempfile
 from collections.abc import Callable, Mapping
 from functools import cached_property
+from pathlib import Path
 from typing import Any
 
 import torch
@@ -59,7 +64,69 @@ TORCH_LIBRARY_EXPAND(TORCH_EXTENSION_NAME, m) {
           &run);
 }
 """
+# the same as a code object's device function (hsaco_gemm_code_object), and the hsaco kernel
+# launching it from codeobjects.py (hsaco_gemm_sources)
+HSACO_GEMM_DEVICE_SOURCE = """\
+#include <hip/hip_bf16.h>
+#include <hip/hip_runtime.h>
+
+extern "C" __global__ void gemm(const __hip_bfloat16 *a, const __hip_bfloat16 *b, __hip_bfloat16 *out,
+                                int n, int k) {
+    float acc = 0.0f;
+    for (int i = 0; i < k; ++i) {
+        acc += __bfloat162float(a[blockIdx.x * k + i]) * __bfloat162float(b[threadIdx.x * k + i]);
+    }
+    out[blockIdx.x * n + threadIdx.x] = __float2bfloat16(acc);
+}
+"""
+HSACO_GEMM_KERNEL_SOURCE = '''\
+"""out = a @ b.T in bf16 from a code object, a thread an output element."""
+
+import struct
+
+from aklr.core.jit import hsaco
+
+from .codeobjects import GEMM
+
+_GEMM = hsaco.Kernel(GEMM, "gemm")
+
+
+def run(*, a, b, trans_b, bias, out_dtype, out):
+    kernarg = struct.pack("<QQQii", a.data_ptr(), b.data_ptr(), out.data_ptr(), b.shape[0], a.shape[1])
+    _GEMM.launch((a.shape[0],), (b.shape[0],), kernarg, device=a.device)
+'''
 KERNEL_TARGET = {"arch": "gfx950", "hardware": "MI355X"}  # as the committed schemas
+
+
+def hsaco_gemm_code_object() -> bytes:
+    """HSACO_GEMM_DEVICE_SOURCE's code object."""
+    return hsaco_code_object(HSACO_GEMM_DEVICE_SOURCE)
+
+
+@functools.cache
+def hsaco_code_object(device_source: str) -> bytes:
+    """``device_source`` built by ROCm's hipcc into a code object for the GPU's arch."""
+    from torch.utils import cpp_extension
+
+    arch = torch.cuda.get_device_properties(0).gcnArchName.partition(":")[0]
+    with tempfile.TemporaryDirectory() as tmp:
+        source, code_object = Path(tmp, "kernel.hip"), Path(tmp, "kernel.hsaco")
+        source.write_text(device_source)
+        hipcc = Path(cpp_extension.ROCM_HOME, "bin", "hipcc")
+        subprocess.run(
+            [hipcc, "--genco", f"--offload-arch={arch}", "-O3", source, "-o", code_object],
+            check=True,
+            capture_output=True,
+        )
+        return code_object.read_bytes()
+
+
+def hsaco_gemm_sources() -> dict[str, str]:
+    """codeobjects.py, holding hsaco_gemm_code_object as GEMM, for HSACO_GEMM_KERNEL_SOURCE."""
+    encoded = base64.b64encode(hsaco_gemm_code_object()).decode()
+    return {"codeobjects.py": f'"""The gemm."""\n\nimport base64\n\nGEMM = base64.b64decode("{encoded}")\n'}
+
+
 _NO_OP_KERNEL_SOURCE = "def run(**call): ...\n"  # a schema's kernel no test runs
 
 # every contract's small Points (tests/ops/cases.py, tests/plugins/<framework>/cases.py),

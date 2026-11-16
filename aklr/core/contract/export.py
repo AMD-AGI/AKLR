@@ -258,7 +258,9 @@ def repository_errors() -> list[str]:
     layout, per op. No GPU or environment; never raises."""
     errors = []
     for pkg in _registered_op_packages():
-        errors += ContractRegistry.default().read_schemas(pkg)[1]
+        schemas, schema_errors = ContractRegistry.default().read_schemas(pkg)
+        errors += schema_errors
+        errors += [f"{path}: {e}" for path, s in schemas if (e := s.kernel.requires_error) is not None]
         impls_dir = locate.op_dir(pkg) / "impls"
         for entry in sorted(impls_dir.iterdir()) if impls_dir.is_dir() else ():
             if not (entry.is_dir() and entry.name in spec.LANGUAGES):

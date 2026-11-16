@@ -100,6 +100,85 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"trans_b": True, "has_bias": False},
         layout_variant_name="row_major",
     ),
+    # Kimi-K3's MLA decode under decode context parallelism shrunk: 16 heads, a 64-row fp8 pool
+    PointSpec(
+        contract_id="mla_decode_fwd@1.0",
+        axes={"batch": 4, "n_heads": 16, "n_slots": 64, "n_indices": 40, "n_offsets": 5},
+        dtypes={
+            "q": "float8_e4m3fn",
+            "kv_buffer": "float8_e4m3fn",
+            "kv_indptr": "int32",
+            "kv_indices": "int32",
+            "q_scale": "float32",
+            "kv_scale": "float32",
+            "o": "bfloat16",
+            "lse": "float32",
+        },
+        attrs={},
+        layout_variant_name="row_major",
+    ),
+    # Kimi-K3's MLA prefill after kv_b, two sequences: 12 heads, which aiter's fp8 path tiles to 16
+    PointSpec(
+        contract_id="mla_prefill_varlen@1.0",
+        axes={"n_q": 300, "n_kv": 300, "n_offsets": 3, "n_heads": 12, "qk_head_dim": 192, "v_head_dim": 128},
+        dtypes={
+            "q": "bfloat16",
+            "k": "bfloat16",
+            "v": "bfloat16",
+            "cu_seqlens_q": "int32",
+            "cu_seqlens_k": None,
+            "output": "bfloat16",
+        },
+        attrs={"has_prefix": False, "qkv_fp8": True},
+        layout_variant_name="row_major",
+    ),
+    # the same with a cached prefix: each sequence's keys hold all 300 queries' worth at least
+    PointSpec(
+        contract_id="mla_prefill_varlen@1.0",
+        axes={"n_q": 300, "n_kv": 1000, "n_offsets": 3, "n_heads": 12, "qk_head_dim": 192, "v_head_dim": 128},
+        dtypes={
+            "q": "bfloat16",
+            "k": "bfloat16",
+            "v": "bfloat16",
+            "cu_seqlens_q": "int32",
+            "cu_seqlens_k": "int32",
+            "output": "bfloat16",
+        },
+        attrs={"has_prefix": True, "qkv_fp8": True},
+        layout_variant_name="row_major",
+    ),
+    # sglang's chunked-prefix passes over Kimi-K3's MLA prefill, two sequences: the causal one over the extend
+    # tokens and the one over a prefix chunk, each returning the lse that merges them
+    PointSpec(
+        contract_id="mla_prefill_varlen_lse@1.0",
+        axes={"n_q": 300, "n_kv": 300, "n_offsets": 3, "n_heads": 12, "qk_head_dim": 192, "v_head_dim": 128},
+        dtypes={
+            "q": "bfloat16",
+            "k": "bfloat16",
+            "v": "bfloat16",
+            "cu_seqlens_q": "int32",
+            "cu_seqlens_k": None,
+            "output": "bfloat16",
+            "lse": "float32",
+        },
+        attrs={"has_prefix": False, "qkv_fp8": True, "causal": True},
+        layout_variant_name="row_major",
+    ),
+    PointSpec(
+        contract_id="mla_prefill_varlen_lse@1.0",
+        axes={"n_q": 300, "n_kv": 1000, "n_offsets": 3, "n_heads": 12, "qk_head_dim": 192, "v_head_dim": 128},
+        dtypes={
+            "q": "bfloat16",
+            "k": "bfloat16",
+            "v": "bfloat16",
+            "cu_seqlens_q": "int32",
+            "cu_seqlens_k": "int32",
+            "output": "bfloat16",
+            "lse": "float32",
+        },
+        attrs={"has_prefix": True, "qkv_fp8": True, "causal": False},
+        layout_variant_name="row_major",
+    ),
     # sglang's pool: 64 * 584-byte pages start every 37440 bytes
     PointSpec(
         contract_id="flash_mla_with_kvcache@1.0",
@@ -659,6 +738,9 @@ GFX950_CONTRACT_IDS = frozenset(
         "gemm_a4w4_mxfp4@1.0",
         "mega_moe@1.0",
         "flash_mla_with_kvcache@1.0",
+        "mla_decode_fwd@1.0",  # aiter's ASM MLA
+        "mla_prefill_varlen@1.0",
+        "mla_prefill_varlen_lse@1.0",
         "fp8_paged_mqa_logits@1.0",  # gfx942 reads its fp8 bytes as e4m3fnuz
         "per_group_quant_fp8@1.0",
         "per_group_quant_mxfp8@1.0",
