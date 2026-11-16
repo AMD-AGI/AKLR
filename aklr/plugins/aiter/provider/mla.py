@@ -22,6 +22,10 @@ def _sm_scale(q, sm_scale):
     return q.shape[-1] ** -0.5 if sm_scale is None else float(sm_scale)
 
 
+# mla_decode_fwd's keyword-only parameters, which only its NVFP4 path takes
+_NVFP4 = ("q_aux", "kv_aux", "nvfp4_params", "nvfp4_lse")
+
+
 @selector("mla_decode_fwd")
 def _select_mla_decode_fwd(args, kwargs):
     (
@@ -62,9 +66,11 @@ def _select_mla_decode_fwd(args, kwargs):
     ) = args
     # one query a request over a page-size-1 pool of token-major rows, its lse returned. aiter's
     # schedule (work and reduce maps, splits, batch and fast modes) only orders its own kernel's work;
-    # causal has no effect on one query, nor cp_rank without context parallelism
+    # causal has no effect on one query, nor cp_rank without context parallelism. The keyword-only
+    # tensors are aiter's NVFP4 path
     if (
-        max_seqlen_q != 1
+        any(kwargs[name] is not None for name in _NVFP4)
+        or max_seqlen_q != 1
         or page_size != 1
         or nhead_kv != 1
         or logit_cap > 0
@@ -126,6 +132,11 @@ def _run_mla_decode_fwd(
     page_table,
     kv_csr_layout,
     fast_mode,
+    *,
+    q_aux=None,
+    kv_aux=None,
+    nvfp4_params=None,
+    nvfp4_lse=None,
 ):
     # (o, lse): aiter returns its split scratch first, which its callers do not read
     return served(
