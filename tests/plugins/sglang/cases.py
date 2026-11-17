@@ -776,3 +776,9 @@ GFX950_CONTRACT_IDS = frozenset(
         "kda_chain_verify_ring@1.0",
     }
 )
+# whose baseline is a kernel only a model image's sglang holds (a development build, as their routes
+# declare): the module the baseline imports
+MODEL_IMAGE_BASELINES = {
+    "dsa_sparse_mla_dcp_partial@1.0": "sglang.kernels.ops.attention.dsa.sparse_mla_decode_gfx950",
+    "kda_chain_verify_ring@1.0": "sglang.kernels.ops.attention.linear.kda_verify_gfx950",
+}

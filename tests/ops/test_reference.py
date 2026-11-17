@@ -42,6 +42,8 @@ class TestReference:
     def test_backend_matches_reference(self, op_case: OpCase) -> None:
         if op_case.needs_gfx950 and DeviceTarget.current().arch != "gfx950":
             pytest.skip("the backend runs the Point only on gfx950")
+        if (module := op_case.missing_baseline_module) is not None:
+            pytest.skip(f"the baseline's {module} is only in a model image's sglang")
         args = op_case.inputs()
         call = op_case.call(args, "cuda")
         outputs = op_case.contract.call_mutable_tensors(op_case.contract.baseline()(**call), call)
