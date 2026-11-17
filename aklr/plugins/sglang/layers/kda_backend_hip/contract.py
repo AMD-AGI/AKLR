@@ -39,9 +39,9 @@ _INT32 = DTypeSpec(any_of=(DType.INT32,))
 _FINITE = FiniteDistribution()
 _EXACT = ToleranceBound(absolute_tolerance=0, relative_tolerance=0)
 # The reference rounds each convolution output to BF16 from its exact value; a correct kernel sums
-# the four taps in FP32 and rounds from there, so next to a rounding midpoint it lands on the other
-# neighbour, one ulp (up to 2**-7 of the value) away; where the taps cancel, the FP32 sum's own
-# error (4 * 2**-24 of the products' magnitudes, under 1e-5 at N(0, 1) inputs) is all there is.
+# the four taps without losing what cancels (in FP64: each BF16 x FP32 product is exact) and rounds
+# to FP32, then BF16, so next to a rounding midpoint it lands on the other neighbour, one ulp (up to
+# 2**-7 of the value) away. An FP32 sum is not: taps 2**26, 1, -2**26 on ones give 0, not 1.
 _CONVOLVED = ToleranceBound(absolute_tolerance=2**-16, relative_tolerance=2**-7)
 # FP32 gates: a + dt_bias rounds to FP32 before exp(a_log) scales it, and exp is a hardware
 # approximation; an FP32 transcription of sglang's kernel stays within 1e-5 of the float64 gates.

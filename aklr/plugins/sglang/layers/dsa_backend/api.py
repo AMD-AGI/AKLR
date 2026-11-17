@@ -45,6 +45,23 @@ def _forward_triton_decode(self, q_nope, q_rope, kv_cache, v_head_dim, page_tabl
     return output.unsqueeze(0)
 
 
+# (query rows, whether a target verify) of the paged top-k sglang's indexer is running, noted by the route on
+# Indexer._get_topk_paged right before it asks for the logits and taken by that logits call: under DCP the
+# verify rows a request reach the logits as rows of their own, each with the request's table row, as a decode
+# batch's rows do, so only the forward mode tells the two apart
+_PAGED_TOPK_MODE: list[tuple[int, bool] | None] = [None]
+
+
+@sglang_route(
+    "sglang.srt.layers.attention.dsa.dsa_indexer.Indexer._get_topk_paged",
+    versions=("0.5.24.dev809",),
+)
+def _get_topk_paged(self, forward_batch, layer_id, q_fp8, *args, **kwargs):
+    """No op: notes whether this paged top-k is a target verify for _verify_logits; sglang runs its own."""
+    _PAGED_TOPK_MODE[0] = (q_fp8.shape[0], forward_batch.forward_mode.is_target_verify())
+    return FallbackReason.OUT_OF_CONTRACT
+
+
 @sglang_route(
     "sglang.kernels.ops.attention.dsa.paged_mqa_logits.aiter_paged_mqa_logits",
     versions=("0.5.22", "0.5.24.dev809"),
@@ -113,9 +130,13 @@ def _verify_logits(
     """The [rows, max_seq_len] logits of fp8_paged_mqa_logits_verify, else None. Under decode context
     parallelism sglang's indexer runs decode and verify alone, and with speculative decoding the target's
     decode is a verify: speculative_num_draft_tokens rows a request, each passed the request's block table
-    row (repeat_interleave)."""
+    row (repeat_interleave). Only rows the indexer's paged top-k noted as a target verify's are regrouped: a
+    decode batch (a draft's, or any batch whose row count the draft tokens divide) stays on the row op."""
     import torch
 
+    mode, _PAGED_TOPK_MODE[0] = _PAGED_TOPK_MODE[0], None
+    if mode != (q_fp8.shape[0], True):
+        return None
     try:
         from sglang.srt.runtime_context import get_parallel, get_spec
     except ImportError:
