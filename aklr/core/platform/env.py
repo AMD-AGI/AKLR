@@ -10,6 +10,7 @@ from pathlib import Path
 __all__ = [
     "DEFAULT_EXPORT_DIR",
     "DEFAULT_MIN_SPEEDUP",
+    "ENV_AITER_PLUGIN",
     "ENV_DISABLE",
     "ENV_EXPORT",
     "ENV_EXPORT_DIR",
@@ -32,6 +33,7 @@ ENV_EXPORT_DIR = "AKLR_EXPORT_DIR"
 ENV_MEASURED_DIR = "AKLR_MEASURED_DIR"
 ENV_SGLANG_PLUGIN = "AKLR_SGLANG_PLUGIN"
 ENV_VLLM_PLUGIN = "AKLR_VLLM_PLUGIN"
+ENV_AITER_PLUGIN = "AKLR_AITER_PLUGIN"
 ENV_TRACE = "AKLR_TRACE"
 DEFAULT_EXPORT_DIR = "aklr_export"
 # the least published speedup over the baseline that validation admits a kernel at and
@@ -73,6 +75,11 @@ class RuntimeEnv:
         if plugin not in ("0", "1"):
             raise ValueError(f"{ENV_VLLM_PLUGIN}={plugin!r}: expected '1' or '0'")
         self.is_vllm_plugin_enabled = plugin == "1"
+        # AKLR_AITER_PLUGIN: "1" enables AKLR among the providers aiter asks for its routed ops
+        plugin = os.environ.get(ENV_AITER_PLUGIN) or "0"
+        if plugin not in ("0", "1"):
+            raise ValueError(f"{ENV_AITER_PLUGIN}={plugin!r}: expected '1' or '0'")
+        self.is_aiter_plugin_enabled = plugin == "1"
         self.trace_mode = trace_mode()
         self.export_dir = Path(os.environ.get(ENV_EXPORT_DIR) or DEFAULT_EXPORT_DIR).absolute()
         # AKLR_MIN_SPEEDUP: least speedup over aiter to serve; <= 0 also serves unmeasured
