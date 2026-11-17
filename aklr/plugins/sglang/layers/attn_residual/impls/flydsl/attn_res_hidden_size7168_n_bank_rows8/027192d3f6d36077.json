@@ -1,0 +1,166 @@
+{
+  "schema_version": 5,
+  "name": "attn_res_hidden_size7168_n_bank_rows8",
+  "contract_id": "attn_res@1.0",
+  "description": "p = prefix; rows = bank[:, :n_valid_rows] and the prefix p; each row r scores (r . score_weight) * rsqrt(mean(r**2) + score_eps); the softmax of the scores weights the rows into mix; normalized = mix * rsqrt(mean(mix**2) + norm_eps) * norm_weight, the means over the hidden axis. With write_bank, bank[:, n_valid_rows] = p. Bank rows from n_valid_rows on are unwritten memory in sglang: a kernel reads none of them.",
+  "op_type": "attn_residual",
+  "axes": {
+    "n_tokens": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "hidden_size": {
+      "type": "const",
+      "value": 7168,
+      "description": "Width of the residual stream."
+    },
+    "n_bank_rows": {
+      "type": "const",
+      "value": 8,
+      "description": "Rows the bank holds per token."
+    }
+  },
+  "attrs": {
+    "n_valid_rows": 8,
+    "write_bank": false
+  },
+  "inputs": {
+    "prefix": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "The running prefix: this block's layer outputs so far."
+    },
+    "bank": {
+      "shape": [
+        "n_tokens",
+        "n_bank_rows",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Each token's bank: the embedding, then the sum of each block of layers' outputs."
+    },
+    "score_weight": {
+      "shape": [
+        "hidden_size"
+      ],
+      "dtype": "float32",
+      "distribution": {
+        "kind": "lecun_normal",
+        "fan_in": 7168
+      },
+      "description": "The score projection's weight times its RMSNorm's weight."
+    },
+    "norm_weight": {
+      "shape": [
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "log_uniform",
+        "log2_lo": -1,
+        "log2_hi": "0.58"
+      },
+      "description": "The layer norm's weight, scaling each normalized column."
+    },
+    "score_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to the mean square of each scored row."
+    },
+    "norm_eps": {
+      "shape": null,
+      "dtype": "float32",
+      "description": "Added to the mean square of the mix."
+    }
+  },
+  "outputs": {
+    "normalized": {
+      "shape": [
+        "n_tokens",
+        "hidden_size"
+      ],
+      "dtype": "bfloat16",
+      "description": "The normalized mix, scaled by norm_weight."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "n_tokens": 2048
+      },
+      "scalars": {
+        "score_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 4096
+      },
+      "scalars": {
+        "score_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 8192
+      },
+      "scalars": {
+        "score_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999974752427e-07
+      }
+    },
+    {
+      "axes": {
+        "n_tokens": 16384
+      },
+      "scalars": {
+        "score_eps": 9.999999974752427e-07,
+        "norm_eps": 9.999999974752427e-07
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": []
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "flydsl",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "flydsl": ">=0.3.2"
+    },
+    "author": "kyle-256",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Attention-residual aggregation in FlyDSL for gfx950: a softmax-scored mix of the bank rows and the prefix, then\nan RMS norm. One workgroup per token keeps the token's rows in registers, and every reduction has a fixed order,\nso the output is bitwise reproducible.\"\"\"\n\nfrom __future__ import annotations\n\nimport functools\n\nimport flydsl.compiler as flyc\nimport flydsl.expr as fx\nfrom flydsl._mlir import ir as _ir\nfrom flydsl._mlir.dialects import arith as _arith\nfrom flydsl._mlir.dialects import llvm as _llvm\nfrom flydsl._mlir.dialects import math as _math\nfrom flydsl._mlir.dialects import memref as _memref\nfrom flydsl._mlir.dialects import rocdl as _rocdl\nfrom flydsl._mlir.dialects import vector as _vector\nfrom flydsl.compiler.kernel_function import CompilationContext\nfrom flydsl.expr.gpu import lds_space as _lds_space\nfrom flydsl.utils.smem_allocator import SmemAllocator\n\nH = 7168\nNB = 8  # bank rows per token (all valid)\nNR = NB + 1  # scored rows: bank rows 0..7, then the prefix\nWAVE = 64\nNWAVE = 4\nBLOCK = NWAVE * WAVE\nNQ = 2 * NR  # partials per row set: 9 dot products, 9 sums of squares\nLOG2E = 1.4426950408889634\nLATE_PREFIX_BELOW = 6144  # below this many tokens the prefix row is issued after pass 1 of bank row 0\nKEEP_K = 4  # the last KEEP_K rows keep their pass-1 fp32 unpack live into the mix\nBUF_FLAGS = (7 << 12) | (4 << 15)  # CDNA raw buffer descriptor word 3\n\n# LDS: [wave][NQ] round-1 partials, then [wave] round-2 partials\nLDS_R1 = 0\nLDS_R2 = NWAVE * NQ\nLDS_WORDS = LDS_R2 + NWAVE\n\n# DPP controls (gfx9)\n_DPP_XOR1 = 0xB1  # quad_perm [1,0,3,2]\n_DPP_XOR2 = 0x4E  # quad_perm [2,3,0,1]\n_DPP_ROR8 = 0x128  # row_ror:8 (pairs lane i with i ^ 8 inside a 16-lane row)\n_DPP_HMIRROR = 0x141  # row_half_mirror (pairs lane i with 7 - i inside an 8-lane half row)\n_DPP_BY_BIT = {0: _DPP_XOR1, 1: _DPP_XOR2, 2: _DPP_HMIRROR, 3: _DPP_ROR8}\n\n\ndef _i32t():\n    return _ir.IntegerType.get_signless(32)\n\n\ndef _c32(v):\n    return _arith.ConstantOp(_i32t(), v).result\n\n\ndef _f32(v):\n    return fx.Float32(v)\n\n\ndef _bits_f32(i):\n    return fx.Float32(_arith.BitcastOp(_ir.F32Type.get(), i).result)\n\n\ndef _f32_bits(v):\n    return _arith.BitcastOp(_i32t(), fx.as_ir_value(v)).result\n\n\ndef _rsq(x):\n    return fx.Float32(fx.rocdl.rsq(_ir.F32Type.get(), fx.as_ir_value(x)))\n\n\ndef _rcp(x):\n    return fx.Float32(fx.rocdl.rcp(_ir.F32Type.get(), fx.as_ir_value(x)))\n\n\ndef _exp2(x):\n    return fx.Float32(fx.rocdl.exp2(_ir.F32Type.get(), fx.as_ir_value(x)))\n\n\ndef _dpp(v, ctrl):\n    return fx.Float32(\n        fx.rocdl.update_dpp(_ir.F32Type.get(), fx.as_ir_value(v), fx.as_ir_value(v), ctrl, 0xF, 0xF, True)\n    )\n\n\ndef _permute_pair(a, b, bit):\n    \"\"\"(a_low | b_low, a_high | b_high) across the 16- (bit 4) or 32-lane (bit 5) halves.\"\"\"\n    ai = _f32_bits(a)\n    bi = _f32_bits(b)\n    op = _rocdl.permlane16_swap if bit == 4 else _rocdl.permlane32_swap\n    pair = op(_ir.Type.parse(\"!llvm.struct<(i32, i32)>\"), ai, bi, False, True)\n    vals = [_llvm.ExtractValueOp(_i32t(), pair, [i]).result for i in range(2)]\n    return [_bits_f32(v) for v in vals]\n\n\ndef _reduce_scatter(vals, lane):\n    \"\"\"Fixed-tree wave reduce-scatter of ``vals`` (lane bits 5, 4 by permlane swap, 3..0 by DPP).\n\n    Returns the lane's single value; ``_scatter_owner`` names which input it is the wave sum of.\"\"\"\n    for b in (5, 4, 3, 2, 1, 0):\n        n = len(vals)\n        if n == 1:\n            if b < 4:\n                vals = [vals[0] + _dpp(vals[0], _DPP_BY_BIT[b])]\n            else:\n                a, c = _permute_pair(vals[0], vals[0], b)\n                vals = [a + c]\n            continue\n        h = (n + 1) // 2\n        lo = vals[:h]\n        hi = vals[h:] + [None] * (2 * h - n)\n        up = (lane & (1 << b)) != 0\n        out = []\n        for k in range(h):\n            hk = _f32(0.0) if hi[k] is None else hi[k]\n            if b >= 4:\n                a, c = _permute_pair(lo[k], hk, b)\n                out.append(a + c)\n            else:\n                keep = up.select(hk, lo[k])\n                send = up.select(lo[k], hk)\n                out.append(keep + _dpp(send, _DPP_BY_BIT[b]))\n        vals = out\n    return vals[0]\n\n\ndef _scatter_owner(n):\n    \"\"\"For each lane: the input index whose wave sum it holds after ``_reduce_scatter`` of n values, or None.\"\"\"\n    res = []\n    for lane in range(WAVE):\n        idxs = list(range(n))\n        for b in (5, 4, 3, 2, 1, 0):\n            m = len(idxs)\n            if m == 1:\n                continue\n            h = (m + 1) // 2\n            lo = idxs[:h]\n            hi = idxs[h:] + [None] * (2 * h - m)\n            idxs = hi if (lane >> b & 1) else lo\n        res.append(idxs[0])\n    return res\n\n\ndef _wave_allreduce(v, lane):\n    for b in (0, 1, 2, 3):\n        v = v + _dpp(v, _DPP_BY_BIT[b])\n    for b in (4, 5):\n        a, c = _permute_pair(v, v, b)\n        v = a + c\n    return v\n\n\ndef _rsrc(addr_i64):\n    ptr = _llvm.IntToPtrOp(_ir.Type.parse(\"!llvm.ptr\"), fx.as_ir_value(addr_i64)).result\n    return _rocdl.MakeBufferRsrcOp(\n        _ir.Type.parse(\"!llvm.ptr<8>\"),\n        ptr,\n        _arith.ConstantOp(_ir.IntegerType.get_signless(16), 0).result,\n        _arith.ConstantOp(_ir.IntegerType.get_signless(64), 0xFFFFFFFF).result,\n        _c32(BUF_FLAGS),\n    ).result\n\n\ndef _load_dw(rsrc, voff, nd, soff=0, aux=None):\n    \"\"\"``nd`` dwords at byte offset voff (+ scalar soff); returns the list of i32 values.\n\n    ``aux`` is the buffer cache-policy immediate (3 = sc0 nt: streamed, read once).\"\"\"\n    ty = _ir.VectorType.get([nd], _i32t())\n    if aux == 3:\n        v = fx.rocdl.raw_ptr_buffer_load(ty, rsrc, fx.as_ir_value(voff), _c32(soff), aux=3)\n    else:\n        v = fx.rocdl.raw_ptr_buffer_load(ty, rsrc, fx.as_ir_value(voff), _c32(soff))\n    return [_vector.ExtractOp(v, [], [i]).result for i in range(nd)]\n\n\ndef _store_dw(rsrc, voff, words):\n    \"\"\"Store packed words; aux 18 = nt sc1 (streamed, written once).\"\"\"\n    ty = _ir.VectorType.get([len(words)], _i32t())\n    v = _vector.FromElementsOp(ty, words).result\n    _rocdl.RawPtrBufferStoreOp(v, rsrc, fx.as_ir_value(voff), _c32(0), aux=_ir.IntegerAttr.get(_i32t(), 18))\n\n\ndef _load_row(rsrc, lane16, lane8, soff, aux=None):\n    \"\"\"The lane's 28 bf16 of one row as 14 packed i32 words.\"\"\"\n    words = []\n    for p in range(3):\n        words += _load_dw(rsrc, lane16 + p * 4096, 4, soff, aux)\n    words += _load_dw(rsrc, lane8 + 12288, 2, soff, aux)\n    return words\n\n\ndef _v2t():\n    return _ir.VectorType.get([2], _ir.F32Type.get())\n\n\ndef _pair(a, b):\n    return _vector.FromElementsOp(_v2t(), [fx.as_ir_value(a), fx.as_ir_value(b)]).result\n\n\ndef _splat2(a):\n    return _vector.BroadcastOp(_v2t(), fx.as_ir_value(a)).result\n\n\ndef _word_pair(w):\n    \"\"\"One packed bf16 word -> vector<2xf32> (exact).\"\"\"\n    lo = _arith.ShLIOp(w, _c32(16)).result\n    hi = _arith.AndIOp(w, _c32(-65536)).result\n    v = _vector.FromElementsOp(_ir.VectorType.get([2], _i32t()), [lo, hi]).result\n    return _vector.BitCastOp(_v2t(), v).result\n\n\n# Sums of squares are taken of the values times _SQ_SCALE, and the norms rescaled, which is exact (a power of two)\n# wherever float32 holds both: a bf16 value up to ~2**89 squares and sums without overflow, where unscaled ~2**57\n# overflowed. The eps term scales with them, kept at least float32's smallest normal so that a row of zeros keeps a\n# finite norm.\n_SQ_SCALE = 2.0**-32\n_FLT_MIN = 2.0**-126\n\n\ndef _fma2(a, b, c):\n    return _math.FmaOp(a, b, c).result\n\n\ndef _mul2(a, b):\n    return _arith.MulFOp(a, b).result\n\n\ndef _hsum2(v):\n    e0 = fx.Float32(_vector.ExtractOp(v, [], [0]).result)\n    e1 = fx.Float32(_vector.ExtractOp(v, [], [1]).result)\n    return e0 + e1\n\n\ndef _launder(words, dep):\n    \"\"\"Pass packed words through an empty asm tied to ``dep``: the asm emits no code, but LLVM can neither\n    reuse an earlier unpack of the words (which would keep 28 fp32 per row live) nor hoist the uses above\n    ``dep``.\"\"\"\n    out = []\n    for i in range(0, len(words), 2):\n        chunk = words[i : i + 2]\n        ty = _ir.VectorType.get([len(chunk)], _i32t())\n        v = _vector.FromElementsOp(ty, chunk).result\n        vo = _llvm.InlineAsmOp(ty, [v, fx.as_ir_value(dep)], \"\", \"=v,0,v\", has_side_effects=False).result\n        out += [_vector.ExtractOp(vo, [], [j]).result for j in range(len(chunk))]\n    return out\n\n\ndef _pack_bf16(vals):\n    \"\"\"fp32 list (even length) -> packed bf16 i32 words, round to nearest even.\"\"\"\n    vec = fx.Vector.from_elements(vals, dtype=fx.Float32).to(fx.BFloat16)\n    n = len(vals) // 2\n    raw = _vector.BitCastOp(_ir.VectorType.get([n], _i32t()), fx.as_ir_value(vec)).result\n    return [_vector.ExtractOp(raw, [], [i]).result for i in range(n)]\n\n\n_OWNER = _scatter_owner(NQ)\n\n\ndef _scatter_steps(n):\n    \"\"\"(lane bit, half size) per splitting level: a lane's slot is the sum of the halves of its set bits.\"\"\"\n    steps = []\n    for b in (5, 4, 3, 2, 1, 0):\n        if n == 1:\n            break\n        h = (n + 1) // 2\n        steps.append((b, h))\n        n = h\n    return steps\n\n\n_SCATTER_STEPS = _scatter_steps(NQ)\nassert all(\n    q is None or q == sum(h for b, h in _SCATTER_STEPS if lane >> b & 1) for lane, q in enumerate(_OWNER)\n)\n\n\ndef _owner_tables():\n    \"\"\"Bit mask of the lanes that write a round-1 total: lanes holding a valid slot, one of each lane pair.\"\"\"\n    mask = 0\n    for lane, q in enumerate(_OWNER):\n        if q is not None and lane % 2 == 0:\n            mask |= 1 << lane\n    return mask\n\n\n@functools.cache\ndef _build(late_prefix: bool):\n    allocator = SmemAllocator(None, arch=\"gfx950\", global_sym_name=\"attn_res_lds\")\n    allocator.ptr = LDS_WORDS * 4\n    write_mask = _owner_tables()\n    late_from = NB if late_prefix else NR  # rows from here on are issued once pass 1 of row 0 is done\n\n    @flyc.kernel\n    def attn_res_kernel(\n        prefix: fx.Tensor,\n        bank: fx.Tensor,\n        score_weight: fx.Tensor,\n        norm_weight: fx.Tensor,\n        out: fx.Tensor,\n        score_eps: fx.Float32,\n        norm_eps: fx.Float32,\n    ):\n        tid = fx.thread_idx.x\n        lane = tid % WAVE\n        wave = tid // WAVE\n        t = fx.Int64(fx.block_idx.x)\n\n        p_addr = fx.Int64(fx.ptrtoint(fx.get_iter(prefix))) + t * fx.Int64(H * 2)\n        b_addr = fx.Int64(fx.ptrtoint(fx.get_iter(bank))) + t * fx.Int64(NB * H * 2)\n        o_addr = fx.Int64(fx.ptrtoint(fx.get_iter(out))) + t * fx.Int64(H * 2)\n        cw_rs = _rsrc(fx.Int64(fx.ptrtoint(fx.get_iter(score_weight))))\n        ow_rs = _rsrc(fx.Int64(fx.ptrtoint(fx.get_iter(norm_weight))))\n        p_rs = _rsrc(p_addr)\n        b_rs = _rsrc(b_addr)\n        o_rs = _rsrc(o_addr)\n\n        lane_i = fx.Int32(tid)\n        lane16 = lane_i * fx.Int32(16)\n        lane8 = lane_i * fx.Int32(8)\n        lane32 = lane_i * fx.Int32(32)\n\n        # ---- one burst: score weight, then the rows (see late_from for the prefix) ----\n        cw = []\n        for p in fx.range_constexpr(3):\n            cw += _load_dw(cw_rs, lane32 + p * 8192, 4)\n            cw += _load_dw(cw_rs, lane32 + p * 8192 + 16, 4)\n        cw += _load_dw(cw_rs, lane16 + 24576, 4)\n        # the rows are read exactly once: stream them (nt) so they do not evict the shared weights from L2.\n        # A scheduling barrier after each group pins the issue order (weights, bank rows, prefix): pass 1 then\n        # waits row by row; issuing the prefix late on small grids paces the DRAM requests.\n        fx.rocdl.sched_barrier(0)\n\n        def issue_row(r):\n            if fx.const_expr(r < NB):\n                return _load_row(b_rs, lane16, lane8, r * H * 2, aux=3)\n            return _load_row(p_rs, lane16, lane8, 0, aux=3)\n\n        rows = []\n        for r in fx.range_constexpr(late_from):\n            rows.append(issue_row(r))\n            fx.rocdl.sched_barrier(0)\n\n        cw2 = [_pair(_bits_f32(cw[2 * j]), _bits_f32(cw[2 * j + 1])) for j in range(14)]\n\n        # ---- per row: dot with score weight, sum of squares (packed fp32 FMA chains) ----\n        dots = []\n        sqs = []\n        kept = {}\n        for r in fx.range_constexpr(NR):\n            if fx.const_expr(r == 1 and late_from < NR):\n                fx.rocdl.sched_barrier(0)\n                for q in fx.range_constexpr(late_from, NR):\n                    rows.append(issue_row(q))\n                    fx.rocdl.sched_barrier(0)\n            x2 = [_word_pair(w) for w in rows[r]]\n            if fx.const_expr(r >= NR - KEEP_K):\n                kept[r] = x2\n            d2 = _mul2(x2[0], cw2[0])\n            xs = [_mul2(x, _splat2(_f32(_SQ_SCALE))) for x in x2]\n            s2 = _mul2(xs[0], xs[0])\n            for j in fx.range_constexpr(1, 14):\n                d2 = _fma2(x2[j], cw2[j], d2)\n                s2 = _fma2(xs[j], xs[j], s2)\n            dots.append(_hsum2(d2))\n            sqs.append(_hsum2(s2))\n\n        lds_ty = _ir.MemRefType.get([LDS_WORDS], _ir.F32Type.get(), memory_space=_lds_space())\n        lds = _memref.view(\n            lds_ty, allocator.get_base(), _arith.ConstantOp(_ir.IndexType.get(), 0).result, sizes=[]\n        )\n\n        # ---- round 1: NQ partials -> every lane holds the token totals ----\n        red = _reduce_scatter(dots + sqs, lane)\n        qidx = fx.Int32(0)\n        for b, h in _SCATTER_STEPS:\n            qidx = qidx + ((lane_i >> b) & fx.Int32(1)) * fx.Int32(h)\n        wmask = fx.Int64(write_mask)\n        writes = ((wmask >> fx.Int64(lane)) & fx.Int64(1)) != fx.Int64(0)\n        if writes:\n            slot = fx.Int32(wave) * fx.Int32(NQ) + qidx\n            _memref.store(\n                fx.as_ir_value(red),\n                lds,\n                [_arith.IndexCastOp(_ir.IndexType.get(), fx.as_ir_value(slot)).result],\n            )\n        fx.gpu.barrier()\n        tot = []\n        for q in fx.range_constexpr(NQ):\n            acc = None\n            for w in fx.range_constexpr(NWAVE):\n                v = fx.Float32(\n                    _memref.load(lds, [_arith.ConstantOp(_ir.IndexType.get(), LDS_R1 + w * NQ + q).result])\n                )\n                acc = v if acc is None else acc + v\n            tot.append(acc)\n\n        # ---- softmax of the scores ----\n        inv_h = _f32(1.0 / H)\n        seps = (score_eps * _f32(_SQ_SCALE * _SQ_SCALE)).maximumf(_f32(_FLT_MIN))\n        scores = [tot[r] * _f32(_SQ_SCALE) * _rsq(tot[NR + r] * inv_h + seps) for r in range(NR)]\n        mx = scores[0]\n        for r in fx.range_constexpr(1, NR):\n            mx = mx.maximumf(scores[r])\n        es = [_exp2((scores[r] - mx) * _f32(LOG2E)) for r in range(NR)]\n        den = es[0]\n        for r in fx.range_constexpr(1, NR):\n            den = den + es[r]\n        inv = _rcp(den)\n        wts = [es[r] * inv for r in range(NR)]\n\n        # ---- mix ----\n        ow = _load_row(ow_rs, lane16, lane8, 0)\n        mix = None\n        for r in fx.range_constexpr(NR):\n            if fx.const_expr(r in kept):\n                x2 = kept[r]\n            else:\n                x2 = [_word_pair(w) for w in _launder(rows[r], wts[0])]\n            wr = _splat2(wts[r])\n            if fx.const_expr(r == 0):\n                mix = [_mul2(x, wr) for x in x2]\n            else:\n                mix = [_fma2(x, wr, m) for m, x in zip(mix, x2)]\n        ms = [_mul2(m, _splat2(_f32(_SQ_SCALE))) for m in mix]\n        ss2 = _mul2(ms[0], ms[0])\n        for j in fx.range_constexpr(1, 14):\n            ss2 = _fma2(ms[j], ms[j], ss2)\n        ss = _hsum2(ss2)\n\n        # ---- round 2: sum of squares of the mix ----\n        ssw = _wave_allreduce(ss, lane)\n        if lane == 0:\n            slot2 = fx.Int32(wave) + fx.Int32(LDS_R2)\n            _memref.store(\n                fx.as_ir_value(ssw),\n                lds,\n                [_arith.IndexCastOp(_ir.IndexType.get(), fx.as_ir_value(slot2)).result],\n            )\n        fx.gpu.barrier()\n        sst = None\n        for w in fx.range_constexpr(NWAVE):\n            v = fx.Float32(_memref.load(lds, [_arith.ConstantOp(_ir.IndexType.get(), LDS_R2 + w).result]))\n            sst = v if sst is None else sst + v\n        neps = (norm_eps * _f32(_SQ_SCALE * _SQ_SCALE)).maximumf(_f32(_FLT_MIN))\n        scale = _f32(_SQ_SCALE) * _rsq(sst * inv_h + neps)\n\n        sc2 = _splat2(scale)\n        res = []\n        for j in fx.range_constexpr(14):\n            o2 = _mul2(_mul2(mix[j], sc2), _word_pair(ow[j]))\n            res += [fx.Float32(_vector.ExtractOp(o2, [], [e]).result) for e in range(2)]\n        words = _pack_bf16(res)\n        for p in fx.range_constexpr(3):\n            _store_dw(o_rs, lane16 + p * 4096, words[4 * p : 4 * p + 4])\n        _store_dw(o_rs, lane8 + 12288, words[12:14])\n\n    @flyc.jit\n    def launch(\n        prefix: fx.Tensor,\n        bank: fx.Tensor,\n        score_weight: fx.Tensor,\n        norm_weight: fx.Tensor,\n        out: fx.Tensor,\n        score_eps: fx.Float32,\n        norm_eps: fx.Float32,\n        n_tokens: fx.Int32,\n        stream: fx.Stream,\n    ):\n        # names the build flag in the launcher, so the JIT cache key covers it\n        assert late_prefix in (False, True)\n        allocator.finalized = False\n        ctx = CompilationContext.get_current()\n        with _ir.InsertionPoint(ctx.gpu_module_body):\n            allocator.finalize()\n        attn_res_kernel(\n            prefix,\n            bank,\n            score_weight,\n            norm_weight,\n            out,\n            score_eps,\n            norm_eps,\n        ).launch(grid=(n_tokens, 1, 1), block=(BLOCK, 1, 1), stream=stream)\n\n    return launch\n\n\ndef run(\n    *, prefix, bank, score_weight, norm_weight, score_eps, norm_eps, n_valid_rows, write_bank, normalized\n):\n    import torch\n\n    assert n_valid_rows == NB and not write_bank\n    n_tokens = int(prefix.shape[0])\n    fn = _build(n_tokens < LATE_PREFIX_BELOW)\n    fn(\n        prefix,\n        bank,\n        score_weight,\n        norm_weight,\n        normalized,\n        float(score_eps),\n        float(norm_eps),\n        n_tokens,\n        fx.Stream(torch.cuda.current_stream().cuda_stream),\n    )\n"
+      }
+    ]
+  }
+}

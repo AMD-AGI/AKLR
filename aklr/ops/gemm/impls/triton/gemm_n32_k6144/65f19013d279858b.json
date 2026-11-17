@@ -1,0 +1,181 @@
+{
+  "schema_version": 5,
+  "name": "gemm_n32_k6144",
+  "contract_id": "gemm@1.0",
+  "description": "16-bit gemm: out = a @ b.T + bias (b is (k, n) unless trans_b).",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 32,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 6144,
+      "description": "Reduction length."
+    }
+  },
+  "attrs": {
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 6
+      }
+    },
+    {
+      "axes": {
+        "m": 12
+      }
+    },
+    {
+      "axes": {
+        "m": 18
+      }
+    },
+    {
+      "axes": {
+        "m": 24
+      }
+    },
+    {
+      "axes": {
+        "m": 30
+      }
+    },
+    {
+      "axes": {
+        "m": 36
+      }
+    },
+    {
+      "axes": {
+        "m": 42
+      }
+    },
+    {
+      "axes": {
+        "m": 48
+      }
+    },
+    {
+      "axes": {
+        "m": 54
+      }
+    },
+    {
+      "axes": {
+        "m": 60
+      }
+    },
+    {
+      "axes": {
+        "m": 66
+      }
+    },
+    {
+      "axes": {
+        "m": 72
+      }
+    },
+    {
+      "axes": {
+        "m": 78
+      }
+    },
+    {
+      "axes": {
+        "m": 84
+      }
+    },
+    {
+      "axes": {
+        "m": 90
+      }
+    },
+    {
+      "axes": {
+        "m": 96
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Narrow-n BF16 NT GEMM ``out = a @ b.T`` for k = 6144 and a few dozen rows (Triton, gfx950).\n\nThe weight is a few MB, so a column tiling alone leaves most CUs idle: K is split over SPLIT\nworkgroups per column tile. Each writes its fp32 partial through to memory and bumps the tile's\narrival counter; the last to arrive sums the partials in split order, stores bf16 and resets the\ncounter. The sum order is fixed, so the result is bitwise reproducible. Partials and counters are\nkept per device and stream.\"\"\"\n\nimport functools\n\nimport torch\nimport triton\nimport triton.language as tl\n\n\n@triton.jit\ndef _wait_stores(x):\n    return tl.inline_asm_elementwise(\"s_waitcnt vmcnt(0)\", \"=r,r\", [x], dtype=tl.int32, is_pure=False, pack=1)\n\n\n@triton.jit\ndef _splitk_kernel(\n    A,\n    B,\n    C,\n    P,\n    CNT,\n    M,\n    N: tl.constexpr,\n    K: tl.constexpr,\n    BLOCK_M: tl.constexpr,\n    BLOCK_N: tl.constexpr,\n    BLOCK_K: tl.constexpr,\n    SPLIT: tl.constexpr,\n):\n    pid_n = tl.program_id(0)\n    pid_k = tl.program_id(1)\n    pid_m = tl.program_id(2)\n    KC: tl.constexpr = K // SPLIT\n    offs_m = pid_m * BLOCK_M + tl.arange(0, BLOCK_M)\n    offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)\n    offs_k = pid_k * KC + tl.arange(0, BLOCK_K)\n    row_ok = offs_m[:, None] < M\n    a_ptrs = A + offs_m[:, None] * K + offs_k[None, :]\n    b_ptrs = B + offs_n[None, :] * K + offs_k[:, None]\n    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)\n    for _ in tl.range(0, KC // BLOCK_K):\n        a = tl.load(a_ptrs, mask=row_ok, other=0.0)\n        b = tl.load(b_ptrs, cache_modifier=\".cg\")\n        acc = tl.dot(a, b, acc=acc)\n        a_ptrs += BLOCK_K\n        b_ptrs += BLOCK_K\n    if SPLIT == 1:\n        tl.store(C + offs_m[:, None] * N + offs_n[None, :], acc.to(C.dtype.element_ty), mask=row_ok)\n    else:\n        tile_id = pid_m * tl.num_programs(0) + pid_n\n        tile = tile_id * BLOCK_M * BLOCK_N\n        loc = tl.arange(0, BLOCK_M)[:, None] * BLOCK_N + tl.arange(0, BLOCK_N)[None, :]\n        stride = tl.num_programs(2) * N * BLOCK_M\n        part = P + pid_k * stride + tile + loc\n        tl.store(part, acc, cache_modifier=\".wt\")\n        _wait_stores(pid_k)\n        tl.debug_barrier()\n        arrived = tl.atomic_add(CNT + tile_id, 1, sem=\"acq_rel\", scope=\"gpu\")\n        if arrived == SPLIT - 1:\n            tot = tl.load(P + tile + loc, cache_modifier=\".cv\")\n            for s in tl.static_range(1, SPLIT):\n                tot += tl.load(P + s * stride + tile + loc, cache_modifier=\".cv\")\n            c_ptrs = C + offs_m[:, None] * N + offs_n[None, :]\n            tl.store(c_ptrs, tot.to(C.dtype.element_ty), mask=row_ok)\n            tl.atomic_xchg(CNT + tile_id, 0, sem=\"relaxed\", scope=\"gpu\")\n\n\n# (n, k) -> m upper bound -> (BLOCK_M, BLOCK_N, SPLIT, BLOCK_K, num_warps)\n_CONFIGS = {\n    (32, 6144): {16: (16, 32, 24, 256, 4), 128: (16, 32, 12, 256, 2)},\n}\n_MAX_PART = 1 << 22  # fp32 partials per device and stream\n_MAX_TILES = 1024\n\n\n@functools.cache\ndef _workspace(device, stream):\n    p = torch.empty(_MAX_PART, device=device, dtype=torch.float32)\n    cnt = torch.zeros(_MAX_TILES, device=device, dtype=torch.int32)\n    return p, cnt\n\n\ndef launch(a, b, out, cfg):\n    m, k = a.shape\n    n = b.shape[0]\n    block_m, block_n, split, block_k, warps = cfg\n    m_tiles = triton.cdiv(m, block_m)\n    assert split * m_tiles * block_m * n <= _MAX_PART and m_tiles * (n // block_n) <= _MAX_TILES\n    p, cnt = _workspace(a.device, torch.cuda.current_stream(a.device).cuda_stream)\n    _splitk_kernel[(n // block_n, split, m_tiles)](\n        a, b, out, p, cnt, m, N=n, K=k, BLOCK_M=block_m, BLOCK_N=block_n, BLOCK_K=block_k, SPLIT=split,\n        num_warps=warps, num_stages=2,\n    )\n\n\ndef run(*, a, b, trans_b, bias, out_dtype, out):\n    m, k = a.shape\n    n = b.shape[0]\n    table = _CONFIGS.get((n, k))\n    if not trans_b or bias is not None or table is None or m > max(table):\n        torch.matmul(a, b.t() if trans_b else b, out=out)\n        if bias is not None:\n            out.add_(bias)\n        return\n    launch(a, b, out, table[min(x for x in table if m <= x)])\n"
+      }
+    ]
+  }
+}

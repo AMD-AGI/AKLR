@@ -50,6 +50,10 @@ def test_every_route_was_tested_on_the_installed_sglang():
     assert [target for target, versions, _ in DECLARED if installed not in versions] == []
 
 
+# aiter's options that pick a kernel's schedule, not its result
+_SCHEDULING_OPTIONS = frozenset({"config", "kernel_type", "backend", "persistent"})
+
+
 def parameters(fn, *, defaults=True):
     return [
         (p.name, p.kind, *((p.default,) if defaults else ()))
@@ -65,21 +69,51 @@ def test_every_route_takes_its_targets_parameters(target, route):
     if not target.startswith("aiter."):
         assert parameters(route) == parameters(pkgutil.resolve_name(target))
         return
-    # aiter's defaults are aiter's enums, which route modules cannot import. A newer aiter than the
-    # installed one adds parameters at the end, which the route takes too.
-    taken = aiter_parameters(target)
+    # A newer aiter than the installed one adds parameters at the end, which the route takes too.
+    aiters = aiter_parameters(target)
+    taken = [(p.name, p.kind) for p in aiters]
     assert parameters(route, defaults=False)[: len(taken)] == taken
+    # Defaults that shape the result match, all but aiter's own types (enums the route modules cannot import) and
+    # the scheduling options the routes do not take.
+    routes = {p.name: p.default for p in inspect.signature(route).parameters.values()}
+    for p in aiters:
+        if p.name not in _SCHEDULING_OPTIONS and type(p.default).__module__ in (
+            "builtins",
+            "torch",
+            "inspect",
+        ):
+            assert routes[p.name] == p.default, p.name
 
 
 def aiter_parameters(target):
-    """An aiter function's parameters without defaults; for one aiter registers as a torch op
-    behind ``(*args, **kwargs)``, those of the op's schema."""
-    taken = parameters(pkgutil.resolve_name(target), defaults=False)
-    if [kind for _, kind in taken] != [inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD]:
-        return taken
+    """An aiter function's parameters; for one aiter registers as a torch op behind
+    ``(*args, **kwargs)``, those of the op's schema, whose ScalarType defaults (kept as ints) are
+    not compared."""
+    found = list(inspect.signature(pkgutil.resolve_name(target)).parameters.values())
+    if [p.kind for p in found] != [inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD]:
+        return found
     schema = getattr(torch.ops.aiter, target.rsplit(".", 1)[1]).default._schema
-    kinds = {False: inspect.Parameter.POSITIONAL_OR_KEYWORD, True: inspect.Parameter.KEYWORD_ONLY}
-    return [(a.name, kinds[a.kwarg_only]) for a in schema.arguments]
+    return [
+        inspect.Parameter(
+            a.name,
+            inspect.Parameter.KEYWORD_ONLY if a.kwarg_only else inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            default=(
+                _UNCOMPARED
+                if str(a.real_type) == "ScalarType"
+                else a.default_value
+                if a.has_default_value()
+                else inspect.Parameter.empty
+            ),
+        )
+        for a in schema.arguments
+    ]
+
+
+class _Uncompared:
+    """A default the parameter test does not compare."""
+
+
+_UNCOMPARED = _Uncompared()
 
 
 def test_the_fused_moe_route_passes_sglangs_output_to_the_op(monkeypatch):
@@ -186,6 +220,26 @@ def test_a_route_untested_on_the_installed_sglang_is_neither_resolved_nor_hooked
 def test_a_target_that_does_not_resolve_raises(hooks):
     hook.sglang_route(f"{__name__}.missing", versions=(INSTALLED,))(lambda x: x)
     with pytest.raises((AttributeError, ImportError)):
+        hook.install()
+
+
+def test_a_target_in_a_package_that_is_not_installed_is_left_unhooked(hooks, caplog):
+    hook.sglang_route("aklr_absent_package.fused_moe.fused_moe", versions=(INSTALLED,))(lambda x: x)
+    declare(lambda x: f"aklr({x})")
+    hook.install()
+    assert [t for t, *_ in hooks] == [TARGET]
+    assert "aklr_absent_package.fused_moe.fused_moe (aklr_absent_package is not installed)" in caplog.text
+
+
+def test_a_target_whose_module_needs_a_missing_part_of_an_installed_package_raises(
+    hooks, monkeypatch, tmp_path
+):
+    (tmp_path / "aklr_test_needs_json_part.py").write_text(
+        "import json.aklr_absent_part\n\ndef f(x):\n    return x\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    hook.sglang_route("aklr_test_needs_json_part.f", versions=(INSTALLED,))(lambda x: x)
+    with pytest.raises(ModuleNotFoundError, match="json.aklr_absent_part"):
         hook.install()
 
 
