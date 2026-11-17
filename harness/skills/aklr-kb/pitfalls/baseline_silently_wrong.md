@@ -6,7 +6,7 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: single-observation
 sources:
-  - "aklr/core/validation/stages/_bench/_evaluation/_candidate.py:319"
+  - "aklr/core/validation/stages/_bench/_evaluation/_candidate.py:315"
   - "aklr/ops/gemm/contract.py:306"
 ---
 
@@ -84,7 +84,7 @@ kept. E3 is in the run's own records.
 - E4 [2026-10, gfx950, torch 2.11.0+rocm7.2 hipBLASLt, N=?, element-wise comparison with the fp32 reference] |out| ≤ |ref| on 99.4–100% of the elements of the MX bf16 outputs (the adapter's accuracy note)
 - E5 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0 aiter dbd8bf5, N=3 calls per cell, SNR against the fp64 product of the dequantized operands] `gemm_a4w4` as `gemm_a4w4_mxfp4_baseline` calls it (`bpreshuffle=True`), M×N 1024×1024 and 256×3072: with the scale padding at `0x7F`, 5.93–10.88 dB at K = 2880, 2944 and 3008 and 7.41–7.54 dB at K = 4160, none raising; with it at `0x00` or with aiter's own `dynamic_mxfp4_quant(shuffle=True)` scales, 55.59–55.62 dB; the CK path `gemm_a4w4_blockscale` raised `This GEMM is not supported!` at those K (MXFP4 dense GEMM)
 - E6 [2026-11, gfx950 (MI355X), torch 2.11.0+rocm10.0.0 (HIP 7.15) hipBLASLt, N=8 calls per shape, SNR against the fp64 product of the dequantized operands, each call compared bitwise with the first] `torch._scaled_mm` MXFP8 with bf16 output: 49.60 dB at 4096×4096×2944, 8192×5120×4224 and three more shapes with K % 256 == 128, every call bit-identical and none raising, as at K % 256 == 0 (49.59–49.61 dB) (MX dense GEMM)
-- S1 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:319 `run_baseline` calls `contract.baseline()` (:320) and discards its output; only `NotImplementedError` becomes `baseline_failed` (:198-199)
+- S1 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:315 `run_baseline` calls `contract.baseline()` (:316) and discards its output; only `NotImplementedError` becomes `baseline_failed` (:194-195)
 - S2 aklr/core/contract/semantics/_compare.py:278: `BaselineRelativeBound` allows a multiple of the baseline's error; under aklr/ops only the fused_moe contract uses it, for swiglu (aklr/ops/fused_moe/contract.py:268)
 - S3 aklr/ops/gemm/contract.py:312: `k` axis 64..65536, `multiple_of=64`; `gemm_a4w4_mxfp4_baseline` calls `aiter.ops.gemm_op_a4w4.gemm_a4w4` at aklr/ops/gemm/baseline.py:82
 - S4 the adapter's K padding (data 0, scale 127) and its extra-work percentage

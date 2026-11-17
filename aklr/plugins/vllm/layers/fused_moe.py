@@ -18,7 +18,7 @@ __all__: list[str] = []
 @vllm_route(
     "vllm._aiter_ops._rocm_aiter_fused_moe_impl",
     "aiter.fused_moe.fused_moe",
-    versions=("0.33.0rc1.dev910",),
+    versions=("0.33.0",),
 )
 def _fused_moe(
     hidden_states,
@@ -58,8 +58,6 @@ def _fused_moe(
     quant_dtype_a=None,
     quant_dtype_a2=None,
     clamp_shared=True,
-    herd_topk=0,
-    herd_routed_scaling_factor=1.0,
 ):
     return aklr_aiter.fused_moe(
         hidden_states,
@@ -94,5 +92,4 @@ def _fused_moe(
         quant_type_a=quant_type_a,
         quant_dtype_a=quant_dtype_a,
         quant_dtype_a2=quant_dtype_a2,
-        herd_topk=herd_topk,
     )

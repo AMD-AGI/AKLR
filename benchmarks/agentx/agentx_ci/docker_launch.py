@@ -239,7 +239,7 @@ def run(args, runtime_options: list[str]) -> int:
             reference = serving["image"]["run"]
             if args.image is not None and args.image != reference:
                 raise ValueError(
-                    "--image conflicts with the planned image; it comes from .github/workflows/ci.yaml, so "
+                    "--image conflicts with the planned image; it comes from stack.json, so "
                     "change the CI image there and plan again"
                 )
             for path in (cache, work):

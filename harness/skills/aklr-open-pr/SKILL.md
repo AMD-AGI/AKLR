@@ -36,7 +36,7 @@ them before opening the pull request.
      accuracy n/n and its bound, lowest – highest speedup. Note every `AKLR_*` or `AITER_*`
      variable set that loosens a check.
    - Code: the tests run and their result. CI validation of every schema is required: add the
-     `ci:gpu` label so CI runs it, and link the run once its `validation` job passes.
+     `ci:gpu` label so CI runs it, and link the run once its `aiter-test`, `sglang-test` and `vllm-test` jobs pass.
    - A new plugin route, or one that now handles more cases: the end-to-end run
      [docs/acceptance_criteria.md](../../../docs/acceptance_criteria.md) asks for, this PR's ops
      off and on, in the template's `End to end`. Kernels for an existing op

@@ -62,37 +62,27 @@
     {
       "axes": {
         "m": 256
-      },
-      "accuracy": "passed",
-      "speedup": 1.034
+      }
     },
     {
       "axes": {
         "m": 512
-      },
-      "accuracy": "passed",
-      "speedup": 1.071
+      }
     },
     {
       "axes": {
         "m": 1024
-      },
-      "accuracy": "passed",
-      "speedup": 1.046
+      }
     },
     {
       "axes": {
         "m": 2048
-      },
-      "accuracy": "passed",
-      "speedup": 1.019
+      }
     },
     {
       "axes": {
         "m": 4096
-      },
-      "accuracy": "passed",
-      "speedup": 0.996
+      }
     }
   ],
   "layout_variants": {
@@ -123,7 +113,8 @@
       }
     ],
     "requires": {
-      "flydsl": ">=0.3.2"
+      "flydsl": ">=0.3.2",
+      "aiter": ">=0.1.21"
     },
     "entry_point": "kernel.py::run",
     "sources": [

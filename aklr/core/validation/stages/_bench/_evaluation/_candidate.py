@@ -144,7 +144,6 @@ def run_candidate(
     import torch
 
     from aklr.core.platform.device import DeviceTarget
-    from aklr.core.platform.toolchain import unmet_requirement
 
     schema = requests[0].schema
     batch_findings: tuple[Finding, ...] = ()
@@ -168,9 +167,6 @@ def run_candidate(
         if not DeviceTarget.matches_target(target, schema.kernel.targets):
             detail = f"{target} matches no target of kernel.targets"
             raise StepFailed(FindingCode.NO_MATCHING_DEVICE, detail)
-        if (unmet := unmet_requirement(schema.kernel.requires)) is not None:
-            detail = f"kernel.requires: {unmet}"
-            raise StepFailed(FindingCode.NO_MATCHING_TOOLCHAIN, detail)
         with StepFailed.failing_as(FindingCode.PLATFORM_FAILURE, "compile tripwire: "):
             tripwire = _CompileTripwire.resolve()
         group = None
@@ -319,8 +315,8 @@ class CandidateRun:
 
     def run_baseline(self, request: TrialRequest) -> None:
         baseline = request.contract.baseline()
-        if baseline is None:
-            return  # the new case is its own baseline: nothing to run
+        if baseline is None or not request.thresholds:
+            return  # the new case is its own baseline, or an untimed bench: nothing to run
         row_major_args = None
         if request.has_workload_set:
             workload_step = next(s for s in request.steps if s.input_set == "workload")
@@ -422,7 +418,8 @@ class CandidateRun:
             elif "incumbent" in fns:  # no defined baseline: the incumbent is it
                 fns["baseline"] = fns.pop("incumbent")
             rounds = ()
-            if "baseline" in fns:  # none: the new case is its own baseline, untimed
+            # no baseline (the new case is its own) or no threshold (an untimed bench): untimed
+            if "baseline" in fns and request.thresholds:
                 root_hash = semantics.workload_hash(request.schema_json["name"], request.workload_json)
                 seed = semantics.derive_seed(root_hash, "timing")
                 rounds = self.clock.time_rounds(

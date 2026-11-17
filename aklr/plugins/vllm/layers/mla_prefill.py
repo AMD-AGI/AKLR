@@ -25,7 +25,7 @@ __all__: list[str] = []
 
 _LOGGER = logging.getLogger(__name__)
 _LOGGED: set[tuple] = set()
-_VERSIONS = ("0.33.0rc1.dev910",)
+_VERSIONS = ("0.33.0rc1.dev910", "0.33.0")
 # Fewer query rows stay on vLLM: a decode step's extends (a few tokens over the whole context) reach these passes
 # too, and the op's fp8 kernel, built for prefill chunks, casts the whole context and plans per shape on each call.
 # The op's workloads start at 257 rows.

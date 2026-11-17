@@ -25,6 +25,6 @@ go here.
 
 - RCCL's environment variables (protocol, channels, algorithm):
   https://rocm.docs.amd.com/projects/rccl/en/latest/api-reference/env-variables.html
-- aiter's custom allreduce: `csrc/include/custom_all_reduce.cuh` in the baseline aiter (`AKLR_BASELINE_AITER`).
+- aiter's custom allreduce: `csrc/include/custom_all_reduce.cuh` in the baseline aiter (`aiter` in `stack.json`).
 - KernelForge's notes on mori's EP dispatch/combine and its launch configuration (Hyperloom, branch `AKLR`):
   `src/kernelforge/knowledge/local_wiki/resources/framework/mori/`.

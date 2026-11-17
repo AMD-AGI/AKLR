@@ -1,6 +1,6 @@
 # What CI Validates and Where Its Report Is
 
-Sources: `.github/workflows/ci.yaml` (`validation` job),
+Sources: `.github/workflows/ci.yaml` (`aiter-test`, `sglang-test` and `vllm-test` jobs),
 `aklr/core/validation/stages/validation_scope.py` (`ValidationScope.of_working_tree`).
 
 ## Scope
@@ -16,10 +16,12 @@ Sources: `.github/workflows/ci.yaml` (`validation` job),
 
 ## Where the result is
 
-- The `validation` job's `Validate (<stages>)` step: the progress per schema, the outcome counts,
+- The test jobs' `Validate` steps (`aiter-test`: `aklr/ops`; `sglang-test` and `vllm-test`: their plugins, then `aklr/ops` untimed): the progress per schema, the outcome counts,
   and the findings, e.g. `not_faster <schema>: graph vs baseline ratio_lower_bound 0.9950 < 1.05`.
   It names the schema, not the Point. `regressed (demoted)` there counts demotions, not findings.
-- The run's artifact `validation-report-<attempt>`: `report.md` (one row per Point: verdict,
+- The run's artifacts `validation-report-<job>-<attempt>` for each of the three jobs, and
+  `validation-check-sglang-test-<attempt>` and `validation-check-vllm-test-<attempt>` (`aklr/ops` built and checked
+  in each image, no timing, no `schemas/`): `report.md` (one row per Point: verdict,
   `graph/baseline`, `graph/incumbent`, then the findings), `report.json`, `schemas/` (the schemas
   with the measured fields) and `baseline/` (what each Point was timed against).
 - The runners' work directories live on the CI's nodes under the CI's account; other accounts cannot

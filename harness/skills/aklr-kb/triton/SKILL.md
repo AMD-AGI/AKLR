@@ -108,7 +108,7 @@ commit, run or PR; `aklr/…` paths are on main unless pinned.
 - A flush preceded each of 85 timed calls; it stores only block sums. Flushed over hot time: 1.19–1.28× at 64–192
   MB, 1.00–1.01× at 512–1024 MB *(field, E12)*. Re-time with AKLR: at n6144 m = 64 the source tier lost hot too,
   1.08–1.13× the re-tuned time *(field, E13)* ([small M](gemm/small_m_gemm.md) §8).
-- CI requires 3.8.0; matched builds differ from 3.7.0. Check the version and re-time on CI's image
+- CI runs 3.8.0; matched builds differ from 3.7.0. Check the version and re-time on CI's image
   ([authoring](authoring.md) §11).
 
 ## Evidence

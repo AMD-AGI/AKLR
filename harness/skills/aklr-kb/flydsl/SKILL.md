@@ -18,7 +18,7 @@ link and what differs on gfx950 or what this repository adds. Read one with `cur
 without network, `guides.md` still has every correction.
 
 Every API statement here is for FlyDSL v0.3.2; AKLR requires `flydsl>=0.3.2` (`pyproject.toml`). CI measures on the
-FlyDSL that the baseline aiter installs (`AKLR_BASELINE_AITER` in `.github/workflows/ci.yaml`; its `setup.py` pins
+FlyDSL that the baseline aiter installs (`aiter` in `stack.json`; its `setup.py` pins
 0.3.2 today), so a new baseline can change it: check it before trusting a version difference
 (`../pitfalls/measured_a_different_build.md`).
 

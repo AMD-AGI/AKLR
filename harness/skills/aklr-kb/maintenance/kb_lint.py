@@ -40,7 +40,7 @@ DEFAULT_GENS = ("gfx950",)
 # Whole names and family forms (gfx9, gfx95x, gfx94*); the `*` of a bold `**gfx950**` is not a wildcard.
 ARCH_TOKEN_RE = re.compile(r"\bgfx\d{1,4}(?:[a-z]\b|\*(?!\*)|\b)|\bCDNA ?\d\b|\bMI\d{3}X?\b")
 PINNED_FLYDSL = "0.3.2"
-# The Triton that AKLR's CI pins (`.github/workflows/ci.yaml` checks triton==3.8.0); pages under triton/ give it in
+# The Triton of AKLR's CI image (`sglang_image` in `stack.json`); pages under triton/ give it in
 # `triton` where other pages give `flydsl`.
 PINNED_TRITON = "3.8.0"
 SKILL_MD_MAX_LINES = 150  # forge-loop inlines SKILL.md into every round's prompt

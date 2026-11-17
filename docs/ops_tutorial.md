@@ -20,7 +20,7 @@ flowchart TD
     R --> V["3. Local validation<br/>validate --base origin/main --stages audit,bench"]
     V -->|"no_qualifying_workload: fail"| D
     V -->|"demoted (performance or correctness fails): delete those workloads"| R
-    V -->|"pass: report.md / report.json"| P["4. Open a PR + ci:gpu<br/>CI: code-lint (incl. audit) → unittest-aklr → GPU validate"]
+    V -->|"pass: report.md / report.json"| P["4. Open a PR + ci:gpu<br/>CI: code-lint (incl. audit) → aiter-test → sglang-test → vllm-test"]
     P -->|"merged into main"| M["4. main's push CI remeasures<br/>publish-measurement bot updates the aklr-perf/main PR"]
     M -->|"bot PR merged"| N["4. workloads carry accuracy / speedup / microseconds"]
 ```
@@ -86,7 +86,7 @@ When developing the kernel, change only three fields in the kernel section: `ker
 - `sources`: for flydsl/triton the entry is `kernel.py::run`, and other files may only be imported relatively; hip uses `.hip`/`.h`, with the entry `kernel.hip::run`. The entry file must start with a docstring describing the kernel (a leading comment for hip). Writing it out with `narrow(..., kernel=...)` + `schema_text()` is recommended. Path rules:
   - flydsl/triton: a Python kernel is a flat package, so a path may not contain `/`, and there may be no `__init__.py`;
   - hip: nested directories are allowed, e.g. `include/utils.h`;
-- `requires`: toolchain version constraints, required. Name at least the kernel's own language, with the version you developed on as the lower bound: `{"flydsl": ">=0.3.2"}`, `{"triton": ">=3.8"}`, or `{"hip": ">=7.15"}` (the HIP version torch reports, not the ROCm release: ROCm 10.0 ships HIP 7.15). `python -m aklr export check` rejects a kernel without it; at runtime a kernel whose `requires` the installed toolchain misses is skipped.
+- `requires`: toolchain version constraints, required. Name at least the kernel's own language, with the version you developed on as the lower bound: `{"flydsl": ">=0.3.2"}`, `{"triton": ">=3.8"}`, or `{"hip": ">=7.15"}` (the HIP version torch reports, not the ROCm release: ROCm 10.0 ships HIP 7.15). `python -m aklr export check` rejects a kernel without it; at runtime a kernel whose `requires` the installed toolchain misses is skipped. Also name every library the kernel imports beyond torch, such as `{"mori": ">=1.2.4"}`; `export check` rejects a kernel that imports one without it.
 - `author`: the author's name.
 
 Once every source field is filled in, rerun the 1.B script (replace `"sources": []` with `[SourceFile(path=..., content=...), ...]`, importing `SourceFile` from `aklr.core.contract.spec`; see the step 1 script in the example), which writes a schema file with a new uuid.
@@ -114,8 +114,8 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 - Do not write `accuracy`/`speedup`/`microseconds` in a submitted PR (writing them by hand reports `perf_edited`). After merge, main's push CI remeasures and `publish-measurement` updates the `aklr-perf/main` bot PR; only after that bot PR is squash-merged under its own title do the workloads carry `accuracy`/`speedup`/`microseconds`.
 
 **CI rules**:
-- code-lint (CPU: pre-commit, `export check`, `validate --stages audit`) → unittest-aklr (GPU: all of pytest) → validation (GPU: `validate --base <merge base> --stages audit,bench`, run only when there are schemas to bench).
-- Only non-`.md` changes under `aklr/core/` test all schemas; any other change (schemas, docs, a new `aklr/ops/<op>`, and so on) tests only the schemas in the change set (`validation_scope.py`).
+- code-lint (CPU: pre-commit, `export check`, `validate --stages audit`) → aiter-test (GPU, `aiter_image`, for now the sglang image, with the baseline aiter installed over its own: `tests/core`, `tests/ops`, `tests/benchmarks`, then `validate --base <merge base> --under aklr/ops --exclude aklr/ops/mega_moe`, mega_moe's baseline needing a mori fix) → sglang-test (the same node, `sglang_image` as it ships: `tests/plugins/aiter`, `tests/plugins/sglang`, then `validate --under aklr/plugins --exclude aklr/plugins/vllm` and `--under aklr/ops --no-timing`) → vllm-test (the same node, `vllm_image` as it ships: `tests/plugins/vllm`, then `validate --under aklr/plugins/vllm` and `--under aklr/ops --no-timing`). Validation runs only when there are schemas to bench.
+- Only non-`.md` changes under `aklr/core/` and `stack.json` test all schemas; any other change (schemas, docs, a new `aklr/ops/<op>`, and so on) tests only the schemas in the change set (`validation_scope.py`).
 
 ## 5. Runtime dispatch
 

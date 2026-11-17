@@ -187,7 +187,7 @@ class AgentXRecipeContractTests(AgentXRecipeTestCase):
             "must not set devices": lambda r: r["points"][0]["launch"]["env"].update(HIP_VISIBLE_DEVICES="0"),
             "agentx.yaml-owned fields: ['model']": lambda r: r.update(model={"id": "first"}),
             "agentx.yaml-owned fields: ['hardware']": lambda r: r.update(hardware={}),
-            "plan reads from ci.yaml: ['image']": lambda r: r.update(image={"run": IMAGE}),
+            "plan reads from stack.json: ['image']": lambda r: r.update(image={"run": IMAGE}),
             "source.kind": lambda r: r["source"].update(kind="other"),
             "source.kind must be 'cookbook'": lambda r: r["source"].update(kind="inferencex"),
             "source.url must be": lambda r: r["source"].update(url="https://elsewhere.invalid/model.json"),
@@ -420,7 +420,7 @@ class AgentXPlanTests(AgentXRecipeTestCase):
             self.assertEqual(item["serving_sha256"], plan.sha256_json(spec))
             self.assertEqual(item["selection_manifest_sha256"], spec["selection"]["manifest_sha256"])
             self.assertTrue(spec["plan_id"])
-        # One digest lookup per framework, shared by its runs.
+        # One stack.json read per framework, shared by its runs.
         self.assertEqual(sorted(c.args[0] for c in self.run_image.call_args_list), ["sglang", "vllm"])
 
     def test_execution_image_comes_from_the_ci_image_of_the_framework(self):
@@ -435,10 +435,12 @@ class AgentXPlanTests(AgentXRecipeTestCase):
             self.assertEqual(self.serving_of(args, *run)["image"], {"run": expected})
         with self.assertRaisesRegex(sc.RecipeError, "must be pinned by digest"):
             sc.build_run(self.recipe(), self.definition_of(), "example.invalid/server:latest")
-        self.run_image.side_effect = ValueError("docker buildx imagetools inspect x failed: denied")
+        self.run_image.side_effect = ValueError(
+            "stack.json: vllm_image must be an image tag pinned by digest"
+        )
         failed = plan.build(self.args())
         self.assertEqual({item["status"] for item in failed["targets"]}, {"resolve-failed"})
-        self.assertIn("denied", failed["targets"][0]["error"])
+        self.assertIn("vllm_image", failed["targets"][0]["error"])
 
     def test_default_selection_works_without_runner_label_attribute(self):
         args = self.args()
