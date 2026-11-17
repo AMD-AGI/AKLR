@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-"""Build a target index with independent reports and baselines."""
+"""Build a model/target/framework index with independent reports and baselines."""
 
 from __future__ import annotations
 
@@ -9,15 +9,16 @@ import urllib.request
 from html import escape
 from pathlib import Path
 
-from agentx_ci.model_config import validate_model_id, validate_target_id
+from agentx_ci.model_config import validate_framework_id, validate_model_id, validate_target_id
 from agentx_ci.performance_analysis import aklr_pairing_error
-from agentx_ci.recipe_resolve import POLICY, SelectionError, point_id, validate_manifest
 from agentx_ci.report import LANGS, language_switch, render_document, status_label, tr, write_report
+from agentx_ci.serving_config import POLICY, SelectionError, point_id, validate_manifest
 from agentx_ci.utils import (
     DEFAULT_CONFIG,
     LEGACY_METRIC_AXES,
     METRIC_AXES,
     REPO_ROOT,
+    SCHEMA,
     complete_measurement,
     has_successful_measurement,
     load_config,
@@ -29,33 +30,39 @@ from agentx_ci.utils import (
 )
 
 
-def target_key(item: dict) -> tuple[str, str]:
+def target_key(item: dict) -> tuple[str, str, str]:
     try:
-        key = (validate_model_id(item["model"]["id"]), validate_target_id(item["target"]["id"]))
+        key = (
+            validate_model_id(item["model"]["id"]),
+            validate_target_id(item["target"]["id"]),
+            validate_framework_id(item["framework"]["id"]),
+        )
         if "control" in item and target_key(item["control"]) != key:
-            raise ValueError("AKLR modes belong to different model targets")
+            raise ValueError("AKLR modes belong to different model/target/framework runs")
         return key
     except (KeyError, TypeError) as error:
-        raise ValueError("model and target identities are required; regenerate the plan/run") from error
+        raise ValueError(
+            "model, target and framework identities are required; regenerate the plan/run"
+        ) from error
 
 
-def indexed_targets(manifest: dict) -> dict[tuple[str, str], dict]:
-    if manifest.get("schema") != 3 or not isinstance(manifest.get("targets"), list):
-        raise ValueError("target manifest schema 3 is required; regenerate the plan/run")
+def indexed_targets(manifest: dict) -> dict[tuple[str, str, str], dict]:
+    if manifest.get("schema") != SCHEMA or not isinstance(manifest.get("targets"), list):
+        raise ValueError(f"run manifest schema {SCHEMA} is required; regenerate the plan/run")
     entries = {}
     for item in manifest["targets"]:
         key = target_key(item)
         if key in entries:
-            raise ValueError(f"duplicate model target in manifest: {key[0]}/{key[1]}")
+            raise ValueError(f"duplicate model/target/framework in manifest: {'/'.join(key)}")
         entries[key] = item
     return entries
 
 
 def baseline_kind(results: dict) -> str:
-    policy = results["run"].get("point_policy", "all")
-    if policy not in ("all", POLICY):
+    policy = results["run"].get("point_policy")
+    if policy != POLICY:
         raise ValueError(f"unknown point policy: {policy}")
-    return "pareto" if policy == POLICY else "live"
+    return POLICY
 
 
 def eligible(
@@ -74,17 +81,16 @@ def eligible(
                 "points_expected"
             ):
                 return False
-            if kind == "pareto":
-                selection = mode["run"]["selection"]
-                validate_manifest(selection)
-                actual = [point_id(p) for p in mode["points"]]
-                if (
-                    len(actual) != len(set(actual))
-                    or not set(actual) <= set(selection["points"])
-                    or mode["run"].get("points_expected") != len(selection["points"])
-                    or selection["manifest_sha256"] != run["selection"]["manifest_sha256"]
-                ):
-                    return False
+            selection = mode["run"]["selection"]
+            validate_manifest(selection)
+            actual = [point_id(p) for p in mode["points"]]
+            if (
+                len(actual) != len(set(actual))
+                or not set(actual) <= set(selection["points"])
+                or mode["run"].get("points_expected") != len(selection["points"])
+                or selection["manifest_sha256"] != run["selection"]["manifest_sha256"]
+            ):
+                return False
         return bool(
             run.get("mode") == "live"
             and (run.get("source_dirty") is False or (historical and "source_dirty" not in run))
@@ -119,28 +125,24 @@ class PreviousSite:
 
 
 def render_index(manifest: dict) -> str:
-    titles = {lang: "AgentX · " + tr(lang, "Model targets", "模型与测试目标") for lang in LANGS}
+    titles = {
+        lang: "AgentX · " + tr(lang, "Models, targets and frameworks", "模型、测试目标与框架")
+        for lang in LANGS
+    }
     pages = "\n".join(index_page(manifest, lang, titles[lang]) for lang in LANGS)
     return render_document(titles, pages)
 
 
 def index_page(manifest: dict, lang: str, title: str) -> str:
-    modes = {
-        "live": tr(lang, "Live", "实测"),
-        "live / inferencex-pareto": tr(lang, "Live · Pareto-selected", "实测 · Pareto 选点"),
-    }
-    baseline_labels = {
-        "live": tr(lang, "Full grid", "全量"),
-        "pareto": tr(lang, "Pareto-selected", "前沿选点"),
-    }
+    modes = {"live / pareto": tr(lang, "Live · Pareto-selected", "实测 · Pareto 选点")}
+    baseline_labels = {"pareto": tr(lang, "Pareto-selected", "前沿选点")}
     rows = []
     for item in manifest["targets"]:
-        model_id, target_id = target_key(item)
+        model_id, target_id, framework_id = target_key(item)
         label = escape(item["model"]["display_name"])
         if item.get("report"):
-            label = (
-                f'<a href="{target_path(model_id, target_id).as_posix()}/index.html?lang={lang}">{label}</a>'
-            )
+            relative = target_path(model_id, target_id, framework_id).as_posix()
+            label = f'<a href="{relative}/index.html?lang={lang}">{label}</a>'
         baseline_lines = [
             f"{escape(baseline_labels.get(mode, mode))}: {escape(date)}"
             for mode, date in item.get("baselines", {}).items()
@@ -160,6 +162,7 @@ def index_page(manifest: dict, lang: str, title: str) -> str:
         )
         rows.append(
             f"<tr><td>{label}<br><code>{model_id}</code></td><td><code>{target_id}</code></td>"
+            f"<td><code>{framework_id}</code></td>"
             f"<td>{escape(status_label(lang, item['status']))}{detail}</td><td>{escape(modes.get(mode, mode))}</td>"
             f"<td>{item.get('points_ok', 0)}/{item.get('points_total', 0)}</td>"
             f"<td>{escape(item.get('measured_at', '—'))}</td><td>{baselines}</td></tr>"
@@ -167,6 +170,7 @@ def index_page(manifest: dict, lang: str, title: str) -> str:
     headers = (
         tr(lang, "Model", "模型"),
         tr(lang, "Target", "测试目标"),
+        tr(lang, "Framework", "框架"),
         tr(lang, "Status", "本轮状态"),
         tr(lang, "Mode", "模式"),
         tr(lang, "Points OK", "成功点"),
@@ -181,25 +185,21 @@ def index_page(manifest: dict, lang: str, title: str) -> str:
 <main><p>{
         tr(
             lang,
-            "Targets run serially and are compared only with baselines for the same model and target. "
-            "Historical reports retain their measurement date.",
-            "测试目标按串行运行，性能只与同一模型、同一目标的历史基线比较。"
-            "失败或未选择的目标如有历史报告，会明确标注测量时间。",
+            "Runs execute serially and are compared only with baselines for the same model, target and "
+            "framework. Historical reports retain their measurement date.",
+            "各运行串行执行，性能只与同一模型、同一目标、同一框架的历史基线比较。"
+            "失败或未选择的运行如有历史报告，会明确标注测量时间。",
         )
     }</p><p>{
         tr(
             lang,
             "Formal runs from a clean source tree with verified execution environments update baselines "
             "when at least one measurement in either AKLR mode succeeds. Failed points remain recorded; "
-            "comparisons use successful matched points. Smoke runs preserve the previous baseline.",
+            "comparisons use successful matched points, or Pareto frontiers when the selection, image or "
+            "dependencies changed. Changed hardware, AgentX client or trace dataset leaves no baseline. "
+            "Smoke runs preserve the previous baseline.",
             "源码干净、执行环境经校验的正式运行，只要 AKLR 开启或关闭任一侧至少一个测量点成功，就更新基线。"
-            "失败点保留记录，比较只使用成功且匹配的点；冒烟验证保留原基线。",
-        )
-    }</p><p>{
-        tr(
-            lang,
-            "Full-grid and Pareto-selected runs keep separate baselines.",
-            "全量与前沿选点分别保存基线。",
+            "失败点保留记录，比较使用成功且匹配的点，选点、镜像或依赖变化时比较 Pareto 前沿；硬件、AgentX client 或 trace 数据集变化时不作比较；冒烟验证保留原基线。",
         )
     }</p>
 <div class="card" style="overflow-x:auto"><table><thead><tr>{
@@ -213,18 +213,18 @@ def collect(
 ) -> dict:
     selected = indexed_targets(plan)
     prior_manifest = previous.read("manifest.json")
-    if prior_manifest and prior_manifest.get("schema") == 2 and "targets" not in prior_manifest:
-        print("Previous site predates targets; starting independent target baselines.")
+    if prior_manifest and prior_manifest.get("schema") != SCHEMA:
+        print("Previous site predates serving frameworks; starting fresh baselines.")
         prior_manifest = None
     if prior_manifest is None:
         prior = {}
         previous = PreviousSite(None, None)
     else:
         prior = indexed_targets(prior_manifest)
-    manifest = {"schema": 3, "run_id": plan["run_id"], "generated_at": utc_now(), "targets": []}
+    manifest = {"schema": SCHEMA, "run_id": plan["run_id"], "generated_at": utc_now(), "targets": []}
     for key in dict.fromkeys([*selected, *prior]):
-        model_id, target_id = key
-        relative = target_path(model_id, target_id)
+        label = "/".join(key)
+        relative = target_path(*key)
         planned = selected.get(key)
         item = dict(planned or prior[key])
         # Only plan/report failures fail the report job; sweep owns measurement failures.
@@ -249,10 +249,10 @@ def collect(
                         raise ValueError("AKLR enabled and disabled execution records are required")
                     current = validated_results(current_archive)
                     if target_key(current) != key or current["run"]["id"] != plan["run_id"]:
-                        raise ValueError("result model/target/run identity does not match the plan")
+                        raise ValueError("result model/target/framework/run identity does not match the plan")
                     if current["run"].get("mode") != "live":
                         raise ValueError("only live measurement results are supported")
-                    if current["run"].get("point_policy", "all") != planned.get("point_policy", "all"):
+                    if current["run"].get("point_policy") != planned.get("point_policy"):
                         raise ValueError("result selection policy does not match the plan")
                     if (
                         not planned.get("serving_sha256")
@@ -269,8 +269,8 @@ def collect(
                         raise ValueError("AKLR modes do not belong to the same planned execution attempt")
                     expected = planned["point_ids"]
                     modes = ((current, "enabled"), (current["control"], "disabled"))
-                    for mode, label in modes:
-                        if mode["run"].get("mode") != "live" or mode["run"].get("aklr_mode") != label:
+                    for mode, aklr_mode in modes:
+                        if mode["run"].get("mode") != "live" or mode["run"].get("aklr_mode") != aklr_mode:
                             raise ValueError("AKLR mode labels are missing or invalid")
                         identities = [point_id(p) for p in mode["points"]]
                         if (
@@ -280,17 +280,16 @@ def collect(
                             or mode["run"]["points_expected"] != len(expected)
                         ):
                             raise ValueError("result points do not match the planned points")
-                        if mode["run"].get("point_policy", "all") != planned.get("point_policy", "all"):
+                        if mode["run"].get("point_policy") != planned.get("point_policy"):
                             raise ValueError("result selection policy does not match the plan")
-                        if planned.get("point_policy") == POLICY:
-                            selection = mode["run"]["selection"]
-                            validate_manifest(selection)
-                            if selection["manifest_sha256"] != planned.get("selection_manifest_sha256"):
-                                raise ValueError("result selection manifest does not match the plan")
-                            if not set(identities) <= set(selection["points"]) or mode["run"][
-                                "points_expected"
-                            ] != len(selection["points"]):
-                                raise ValueError("result points do not match the selected plan")
+                        selection = mode["run"]["selection"]
+                        validate_manifest(selection)
+                        if selection["manifest_sha256"] != planned.get("selection_manifest_sha256"):
+                            raise ValueError("result selection manifest does not match the plan")
+                        if not set(identities) <= set(selection["points"]) or mode["run"][
+                            "points_expected"
+                        ] != len(selection["points"]):
+                            raise ValueError("result points do not match the selected plan")
                     ok = sum(
                         p["status"] == "ok"
                         for p in current["points"] + current.get("control", {}).get("points", [])
@@ -320,11 +319,11 @@ def collect(
             item["status"] = "not-run"
 
         baselines, report_baselines = {}, {}
-        for kind in ("live", "pareto"):
+        for kind in (POLICY,):
             candidate = previous.read((relative / f"baseline-{kind}.json").as_posix())
             if candidate is not None:
                 if target_key(candidate) != key or baseline_kind(candidate) != kind:
-                    raise ValueError(f"invalid {kind} baseline for {model_id}/{target_id}")
+                    raise ValueError(f"invalid {kind} baseline for {label}")
                 normalized = validated_results(candidate)
                 if eligible(normalized, historical=True):
                     baselines[kind] = candidate
@@ -336,21 +335,21 @@ def collect(
                     baselines[kind] = candidate
                     item["baseline_unavailable"][kind] = "historical baseline lacks full-response P90 ITL"
                 else:
-                    raise ValueError(f"invalid {kind} baseline for {model_id}/{target_id}")
+                    raise ValueError(f"invalid {kind} baseline for {label}")
                 report_baselines[kind] = normalized
         baseline = (
             report_baselines.get(baseline_kind(current))
             if current is not None
-            else report_baselines.get("live")
+            else report_baselines.get(POLICY)
         )
 
         shown = current_archive
         if shown is None:
             shown = previous.read((relative / "results.json").as_posix())
             if shown is not None and target_key(shown) != key:
-                raise ValueError(f"historical results belong to another model target: {model_id}/{target_id}")
+                raise ValueError(f"historical results belong to another run: {label}")
         if shown is not None and shown["run"].get("mode") != "live":
-            shown = baselines.get("live")
+            shown = baselines.get(POLICY)
         if shown is not None:
             mode = shown["run"]["mode"]
             notice = None
@@ -383,7 +382,7 @@ def collect(
             view = validated_results(shown)
             item.update(
                 report=True,
-                mode=mode + (" / inferencex-pareto" if baseline_kind(view) == "pareto" else ""),
+                mode=f"{mode} / {baseline_kind(view)}",
                 measured_at=view["run"]["finished_at"],
                 points_ok=sum(
                     p["status"] == "ok" for p in view["points"] + view.get("control", {}).get("points", [])

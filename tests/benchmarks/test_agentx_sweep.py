@@ -21,6 +21,7 @@ with mock.patch.object(
 ):
     sweep = importlib.import_module("agentx_ci.sweep")
     docker_launch = importlib.import_module("agentx_ci.docker_launch")
+    serving_config = importlib.import_module("agentx_ci.serving_config")
 
 
 class AgentXSweepTests(unittest.TestCase):
@@ -138,19 +139,30 @@ class AgentXDockerOutcomeTests(unittest.TestCase):
         self.enterContext(redirect_stdout(io.StringIO()))
         self.enterContext(redirect_stderr(io.StringIO()))
         self.serving = {
-            "schema": 3,
+            "schema": 4,
             "model": {"id": "fixture"},
             "target": {"id": "mi355x"},
+            "framework": {"id": "sglang"},
             "image": {"run": "example.invalid/server@sha256:" + "a" * 64},
             "hardware": {"gpu_count": 8},
             "weights": {"repo": "example/model", "revision": "b" * 40},
-            "provenance": {"inferencex": {"repo": "example/source", "sha": "c" * 40}},
+            "source": {"kind": "inferencex", "repo": "example/source", "sha": "c" * 40},
+            "client": {"repo": "example/source", "sha": "c" * 40},
             "grid_sha256": "d" * 64,
             "arms": {"tp8": {}},
-            "points": [{"arm": "tp8", "conc": 1}],
+            "points": [
+                {
+                    "arm": "tp8",
+                    "conc": 1,
+                    "client_env": {"FRAMEWORK": "sglang"},
+                    "hashes": {"serve_spec_sha256": "e" * 64},
+                }
+            ],
         }
         serving_path = self.root / "serving.json"
-        serving_path.write_text(json.dumps(self.serving))
+        serving_path.write_text(
+            json.dumps({**self.serving, "selection": serving_config.full_selection(self.serving)})
+        )
         self.args = SimpleNamespace(
             out=self.root / "out",
             cache=None,
@@ -162,7 +174,10 @@ class AgentXDockerOutcomeTests(unittest.TestCase):
         )
 
     def launch(self, *, completed):
+        self.commands = []
+
         def command(argv, **_kwargs):
+            self.commands.append(argv)
             if argv[:3] == ["docker", "start", "--attach"]:
                 current = json.loads((self.args.out / "results.json").read_text())
                 for target in (current, current["control"]):
@@ -205,6 +220,14 @@ class AgentXDockerOutcomeTests(unittest.TestCase):
             self.assertNotIn("error", target["run"])
             self.assertEqual(target["points"][0]["error"], "server startup failed")
         self.assertIn("All measurement points failed", (self.args.out / "launcher.log").read_text())
+
+    def test_container_runs_bash_instead_of_the_image_entrypoint(self):
+        self.launch(completed=True)
+        create = next(argv for argv in self.commands if argv[:2] == ["docker", "create"])
+        self.assertEqual(create[create.index("--entrypoint") + 1], "bash")
+        image = create.index("sha256:fixture")
+        self.assertEqual(create[image + 1 : image + 3], ["-c", docker_launch.CONTAINER_COMMAND])
+        self.assertIn("install_aklr.sh /agentx/cache /agentx/serving.json", docker_launch.CONTAINER_COMMAND)
 
     def test_container_failure_remains_failed_even_after_a_successful_point(self):
         code, results = self.launch(completed=False)
