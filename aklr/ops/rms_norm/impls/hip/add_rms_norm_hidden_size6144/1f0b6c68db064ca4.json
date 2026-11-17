@@ -84,7 +84,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.027
+      "speedup": 1.023,
+      "microseconds": 4.2
     },
     {
       "axes": {
@@ -94,7 +95,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.025
+      "speedup": 1.022,
+      "microseconds": 4.21
     },
     {
       "axes": {
@@ -104,7 +106,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.028
+      "speedup": 1.027,
+      "microseconds": 4.24
     },
     {
       "axes": {
@@ -114,7 +117,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.042
+      "speedup": 1.044,
+      "microseconds": 4.22
     },
     {
       "axes": {
@@ -124,7 +128,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.059
+      "speedup": 1.06,
+      "microseconds": 4.24
     },
     {
       "axes": {
@@ -134,7 +139,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.08
+      "speedup": 1.088,
+      "microseconds": 4.26
     },
     {
       "axes": {
@@ -144,7 +150,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.092
+      "speedup": 1.077,
+      "microseconds": 5.62
     },
     {
       "axes": {
@@ -154,7 +161,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.062
+      "speedup": 1.063,
+      "microseconds": 16.5
     },
     {
       "axes": {
@@ -164,7 +172,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.065
+      "speedup": 1.064,
+      "microseconds": 30.1
     },
     {
       "axes": {
@@ -174,7 +183,8 @@
         "epsilon": 9.999999974752427e-07
       },
       "accuracy": "passed",
-      "speedup": 1.06
+      "speedup": 1.052,
+      "microseconds": 56.7
     }
   ],
   "layout_variants": {

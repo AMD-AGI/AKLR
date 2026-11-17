@@ -165,7 +165,8 @@
         "routed_scaling_factor": 2.5
       },
       "accuracy": "passed",
-      "speedup": 1.419
+      "speedup": 1.376,
+      "microseconds": 349.0
     },
     {
       "axes": {
@@ -175,7 +176,8 @@
         "routed_scaling_factor": 2.5
       },
       "accuracy": "passed",
-      "speedup": 1.368
+      "speedup": 1.36,
+      "microseconds": 363.0
     }
   ],
   "layout_variants": {
