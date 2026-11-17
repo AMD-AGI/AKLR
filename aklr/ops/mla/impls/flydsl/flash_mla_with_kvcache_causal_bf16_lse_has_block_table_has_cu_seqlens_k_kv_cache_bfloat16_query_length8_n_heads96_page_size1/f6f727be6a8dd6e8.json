@@ -154,7 +154,8 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 2.538
+      "speedup": 2.556,
+      "microseconds": 4.55
     },
     {
       "axes": {
@@ -169,7 +170,8 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 2.399
+      "speedup": 2.435,
+      "microseconds": 4.68
     },
     {
       "axes": {
@@ -184,7 +186,8 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 1.254
+      "speedup": 1.25,
+      "microseconds": 4.78
     },
     {
       "axes": {
@@ -199,7 +202,8 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 1.253
+      "speedup": 1.262,
+      "microseconds": 4.89
     },
     {
       "axes": {
@@ -214,7 +218,8 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 1.273
+      "speedup": 1.248,
+      "microseconds": 5.12
     },
     {
       "axes": {
@@ -229,7 +234,8 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 1.687
+      "speedup": 1.68,
+      "microseconds": 6.13
     },
     {
       "axes": {
@@ -244,7 +250,8 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 1.667
+      "speedup": 1.666,
+      "microseconds": 6.28
     },
     {
       "axes": {
@@ -259,7 +266,8 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 1.663
+      "speedup": 1.666,
+      "microseconds": 6.44
     },
     {
       "axes": {
@@ -274,7 +282,8 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 1.648
+      "speedup": 1.651,
+      "microseconds": 6.75
     },
     {
       "axes": {
@@ -289,7 +298,8 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 1.88
+      "speedup": 1.893,
+      "microseconds": 7.95
     },
     {
       "axes": {
@@ -304,7 +314,8 @@
         "kv_scale": 1.0
       },
       "accuracy": "passed",
-      "speedup": 1.875
+      "speedup": 1.86,
+      "microseconds": 8.25
     }
   ],
   "layout_variants": {
