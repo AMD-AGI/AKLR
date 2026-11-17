@@ -22,7 +22,7 @@ flowchart TD
     V -->|"demoted（性能或正确性不过）：删掉这些 workload"| R
     V -->|"通过：report.md / report.json"| P["4. 开 PR + ci:gpu<br/>CI：code-lint（含 audit）→ unittest-aklr → GPU validate"]
     P -->|"合入 main"| M["4. main 的 push CI 重新测量<br/>publish-measurement bot 更新 aklr-perf/main PR"]
-    M -->|"bot PR 合入"| N["4. workload 带上 accuracy / speedup"]
+    M -->|"bot PR 合入"| N["4. workload 带上 accuracy / speedup / microseconds"]
 ```
 
 | 步骤 | 关键动作 | 产出 |

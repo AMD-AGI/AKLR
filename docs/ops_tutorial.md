@@ -22,7 +22,7 @@ flowchart TD
     V -->|"demoted (performance or correctness fails): delete those workloads"| R
     V -->|"pass: report.md / report.json"| P["4. Open a PR + ci:gpu<br/>CI: code-lint (incl. audit) → unittest-aklr → GPU validate"]
     P -->|"merged into main"| M["4. main's push CI remeasures<br/>publish-measurement bot updates the aklr-perf/main PR"]
-    M -->|"bot PR merged"| N["4. workloads carry accuracy / speedup"]
+    M -->|"bot PR merged"| N["4. workloads carry accuracy / speedup / microseconds"]
 ```
 
 | Step | Key actions | Output |
