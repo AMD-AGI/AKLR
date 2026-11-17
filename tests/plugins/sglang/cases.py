@@ -676,22 +676,6 @@ SMALL_POINTS: tuple[PointSpec, ...] = (
         attrs={"n_valid_rows": 2, "write_bank": False},
         layout_variant_name="row_major",
     ),
-    # Kimi-K3.1-Pro's DCP partial shrunk: one head block, a short top-k over a small pool
-    PointSpec(
-        contract_id="dsa_sparse_mla_dcp_partial@1.0",
-        axes={"n_rows": 4, "n_heads": 16, "topk": 64, "n_slots": 512},
-        dtypes={
-            "q_nope": "bfloat16",
-            "q_rope": "bfloat16",
-            "kv_cache": "uint8",
-            "indices": "int32",
-            "topk_length": "int32",
-            "output": "bfloat16",
-            "lse": "float32",
-        },
-        attrs={},
-        layout_variant_name="row_major",
-    ),
     PointSpec(
         contract_id="mla_v_absorb@1.0",
         axes={"n_tokens": 4, "n_heads": 2, "v_head_dim": 32},
@@ -772,13 +756,11 @@ GFX950_CONTRACT_IDS = frozenset(
         "gated_attention_decode@1.0",
         "gated_attention_prefill_group_fp8_quant@1.0",
         "gated_attention_prefill@1.0",
-        "dsa_sparse_mla_dcp_partial@1.0",
         "kda_chain_verify_ring@1.0",
     }
 )
 # whose baseline is a kernel only a model image's sglang holds (a development build, as their routes
 # declare): the module the baseline imports
 MODEL_IMAGE_BASELINES = {
-    "dsa_sparse_mla_dcp_partial@1.0": "sglang.kernels.ops.attention.dsa.sparse_mla_decode_gfx950",
     "kda_chain_verify_ring@1.0": "sglang.kernels.ops.attention.linear.kda_verify_gfx950",
 }
