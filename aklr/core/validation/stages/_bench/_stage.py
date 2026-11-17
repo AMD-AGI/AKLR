@@ -16,6 +16,7 @@ from aklr.core.contract.op import OpContract
 from aklr.core.contract.registry import ContractRegistry
 from aklr.core.contract.spec import WorkloadSpec, axes_text
 from aklr.core.platform.env import RuntimeEnv
+from aklr.core.platform.toolchain import unmet_requirement
 from aklr.core.validation.stages import _measure
 from aklr.core.validation.stages._bench._evaluation import (
     CandidateResult,
@@ -65,17 +66,23 @@ class UnreadableIncumbent(RuntimeError):
     without it."""
 
 
+class UnmetRequirement(RuntimeError):
+    """The environment misses the schema's ``kernel.requires``: it is skipped, as dispatch skips it."""
+
+
 class BenchStage(PipelineStage[BenchReport]):
     """Each schema's workloads in batches, a trial task per batch and device (``run_trial``):
-    the candidate in its child task, then the reference."""
+    the candidate in its child task, then the reference. Untimed (``timed=False``), a
+    kernel is built and checked only, on the workloads not recorded failed."""
 
     name = "bench"
     report_type = BenchReport
 
-    def __init__(self, devices: Sequence[str]) -> None:
+    def __init__(self, devices: Sequence[str], *, timed: bool = True) -> None:
         if not devices:
             raise ValueError("no device to run on")
         self._devices = tuple(devices)
+        self._timed = timed
 
     def run(self, scope: ValidationScope, earlier: PipelineReport) -> BenchReport:
         if not scope.bench_paths:
@@ -83,10 +90,14 @@ class BenchStage(PipelineStage[BenchReport]):
         self.progress.write(f"reading {len(scope.bench_paths)} schemas")
         registry = ContractRegistry.default()
         unreadable: list[Finding] = []
+        skipped: dict[str, str] = {}
         batches: list[tuple[TrialRequest, ...]] = []
         for path in scope.bench_paths:
             try:
                 batches += self._workloads_to_run(scope, path, registry)
+            except UnmetRequirement as e:
+                skipped[scope.relative_path(path)] = str(e)
+                self.progress.write(f"skipped {scope.relative_path(path)}: kernel.requires: {e}")
             except UnreadableIncumbent as e:
                 unreadable.append(
                     Finding(
@@ -130,7 +141,9 @@ class BenchStage(PipelineStage[BenchReport]):
         outcomes = [by_index[i] for i in range(len(batches))]
         findings = [*unreadable, *(f for found, _ in outcomes for f in found)]
         records = [r for _, batch_records in outcomes for r in batch_records]
-        return BenchReport.from_findings(findings, workload_records=tuple(records))
+        return BenchReport.from_findings(
+            findings, demote=self._timed, workload_records=tuple(records), skipped_schemas=skipped
+        )
 
     def _workloads_to_run(
         self,
@@ -144,28 +157,31 @@ class BenchStage(PipelineStage[BenchReport]):
         schema = registry.parse_schema(path.read_bytes(), schema_path)
         if not schema.kernel.sources:  # a definition: no kernel to bench
             return []
+        if (unmet := unmet_requirement(schema.kernel.requires)) is not None:
+            raise UnmetRequirement(unmet)
         contract = registry.get(schema.contract_id)
         baseline = contract.baseline()
         defined_baseline = None if baseline is None else f"{baseline.__module__}.{baseline.__qualname__}"
         # dispatch's rule: a kernel must beat the defined baseline, if there is one
         min_speedup = RuntimeEnv().min_speedup if defined_baseline is not None else 0
-        incumbents = self._incumbents(scope, schema_path, schema, contract, min_speedup) if base_sha else {}
+        incumbents = {}
+        if base_sha and self._timed:  # untimed: no incumbent to compare with
+            incumbents = self._incumbents(scope, schema_path, schema, contract, min_speedup)
         # A first release has no incumbent; per-kernel admission is in BenchReport.
         first_release = scope.is_first_release
         # the whole json the semantics read (the file holds the values at the Point)
         schema_json = schema.model_dump(mode="json")
         workloads_json = {axes_text(w["axes"]): w for w in schema_json["workloads"]}
         content_hash = schema.kernel.content_hash
+        # untimed: a workload recorded failed is never dispatched, so there is nothing to check
+        workloads = [w for w in schema.workloads if self._timed or w.accuracy != "failed"]
         batches: list[tuple[TrialRequest, ...]] = []
         batch: list[TrialRequest] = []
         batch_bytes = 0
         # even batches: a short remainder would start late among other schemas'
-        n_batches = max(1, -(-len(schema.workloads) // MAX_BATCH_WORKLOADS))
-        sizes = [
-            len(schema.workloads) // n_batches + (k < len(schema.workloads) % n_batches)
-            for k in range(n_batches)
-        ]
-        for workload in schema.workloads:
+        n_batches = max(1, -(-len(workloads) // MAX_BATCH_WORKLOADS))
+        sizes = [len(workloads) // n_batches + (k < len(workloads) % n_batches) for k in range(n_batches)]
+        for workload in workloads:
             workload_axes_text = axes_text(workload.axes)
             point = schema.point_with_contract_id(workload.axes, contract.contract_id)
             contract.check_point(point)
@@ -183,6 +199,8 @@ class BenchStage(PipelineStage[BenchReport]):
             if defined_baseline is None:
                 # the incumbent times as the baseline; with none, nothing is timed
                 thresholds = {"baseline": "retain"} if incumbent is not None else {}
+            if not self._timed:
+                thresholds = {}
             request = TrialRequest(
                 schema_path=str(path),
                 schema=schema,
@@ -299,7 +317,8 @@ class BenchStage(PipelineStage[BenchReport]):
             failures.append(Finding.unlocated(FindingCode.PLATFORM_FAILURE, f"trial: {detail}"))
         findings, records = self._judged_findings(scope, batch, failures, candidate, reference)
         try:
-            line = BenchReport.from_findings(findings, workload_records=tuple(records)).batch_line()
+            report = BenchReport.from_findings(findings, demote=self._timed, workload_records=tuple(records))
+            line = report.batch_line()
         except Exception:  # a progress line never costs the batch's records
             logging.getLogger(__name__).exception("bench progress line failed")
             line = f"{records[0].schema_path}: progress text unavailable"

@@ -21,6 +21,7 @@ with mock.patch.object(
 ):
     runtime = importlib.import_module("agentx_ci.runtime")
     analysis = importlib.import_module("agentx_ci.performance_analysis")
+    serving_config = importlib.import_module("agentx_ci.serving_config")
 
 IMAGE_ID = "sha256:" + "a" * 64
 IMAGE_REFERENCE = "example.invalid/server@sha256:" + "b" * 64
@@ -31,6 +32,9 @@ class AgentXEnvironmentTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
+        idle = mock.patch.object(runtime, "wait_gpus_idle", return_value=0.0)
+        self.gpus_idle = idle.start()
+        self.addCleanup(idle.stop)
         self.root = Path(temporary.name)
         self.inspection_path = self.root / "execution.json"
         self.defaults = {
@@ -59,27 +63,27 @@ class AgentXEnvironmentTests(unittest.TestCase):
                 "env": {"SGLANG_USE_AITER": "0", "AKLR_SGLANG_PLUGIN": "1", "AKLR_DISABLE": "0"},
             },
             "client_env": {
-                "TP": "1",
-                "PP_SIZE": "1",
-                "PCP_SIZE": "1",
-                "DCP_SIZE": "1",
-                "EP_SIZE": "1",
-                "DP_ATTENTION": "false",
+                "FRAMEWORK": "sglang",
                 "TOTAL_CPU_DRAM_GB": "16",
                 "DURATION": "60",
+                "CONC": "1",
+                "AIPERF_EXPERIMENTAL_FAST": "0",
+                "WEKA_LOADER_OVERRIDE": "fixture",
             },
             "runtime": {"port": 8888, "ready_timeout_s": 30, "point_timeout_s": 60, "poll_s": 0.1},
             "hashes": {"serve_spec_sha256": "c" * 64},
             "trace": {"repo": "example/traces", "revision": "d" * 40, "loader": "fixture"},
         }
         self.serving = {
-            "schema": 3,
+            "schema": 4,
             "model": {"id": "fixture"},
             "target": {"id": "fixture-gpu"},
+            "framework": {"id": "sglang"},
             "image": {"run": IMAGE_REFERENCE},
             "weights": {"repo": "example/model", "revision": "e" * 40},
             "hardware": {"gpu_count": 1, "gpu_name_pattern": "Fixture", "gpu_arch": "gfx950"},
-            "provenance": {"inferencex": {"repo": "example/source", "sha": "f" * 40}},
+            "source": {"kind": "inferencex", "repo": "example/source", "sha": "f" * 40},
+            "client": {"repo": "example/source", "sha": "f" * 40},
             "grid_sha256": "0" * 64,
             "arms": {"tp1": {"arm_serve_sha256": "1" * 64}},
             "points": [self.point],
@@ -95,6 +99,7 @@ class AgentXEnvironmentTests(unittest.TestCase):
             "server_image_env": self.defaults,
         }
         self.aggregate = {
+            "num_gpus": 1,
             "request_metrics": {
                 "throughput": {"per_gpu": {"total_tput_tps": 100}},
                 "latency": {"e2e_norm_intvty": {"p90": 10}, "full_response_itl": {"p90": 0.1}},
@@ -118,7 +123,9 @@ class AgentXEnvironmentTests(unittest.TestCase):
     def run_main(self, inspection=None, *, measurements=None):
         self.write_inspection(inspection)
         serving_path = self.root / "serving.json"
-        serving_path.write_text(json.dumps(self.serving))
+        serving_path.write_text(
+            json.dumps({**self.serving, "selection": serving_config.full_selection(self.serving)})
+        )
         out = self.root / "results"
         hardware = {
             "devices": [{"name": "Fixture", "arch": "gfx950", "total_memory": 1024}],
@@ -176,9 +183,44 @@ class AgentXEnvironmentTests(unittest.TestCase):
         self.assertTrue(results["run"]["completed"])
         self.assertTrue(results["control"]["run"]["completed"])
 
+    def test_vllm_sweep_switches_the_vllm_plugin_in_each_mode(self):
+        self.serving["framework"] = {"id": "vllm"}
+        self.point["client_env"]["FRAMEWORK"] = "vllm"
+        self.point["launch"] = {"command": ["vllm", "serve"], "env": {"VLLM_ROCM_USE_AITER": "1"}}
+        code, results, calls = self.run_main()
+        self.assertEqual(code, 0)
+        calls["server_packages"].assert_called_once_with("vllm")
+        for target, switches in ((results["control"], ("0", "1")), (results, ("1", "0"))):
+            env = target["points"][0]["measurement"]["launch"]["env"]
+            self.assertEqual((env["AKLR_VLLM_PLUGIN"], env["AKLR_DISABLE"]), switches)
+            self.assertNotIn("AKLR_SGLANG_PLUGIN", env)
+        self.assertIsNone(analysis.aklr_pairing_error(results))
+        env = results["points"][0]["measurement"]["launch"]["env"]
+        env["AKLR_SGLANG_PLUGIN"] = env.pop("AKLR_VLLM_PLUGIN")
+        self.assertEqual(
+            analysis.aklr_pairing_error(results), "AKLR mode switches do not match their labels."
+        )
+
+    def test_points_outside_the_plan_framework_fail_before_traces_and_servers(self):
+        self.point["client_env"]["FRAMEWORK"] = "vllm"
+        code, results, calls = self.run_main()
+        self.assertEqual(code, 1)
+        self.assertIn("do not use the plan's framework 'sglang'", results["run"]["error"])
+        calls["prepare_traces"].assert_not_called()
+        calls["run_live"].assert_not_called()
+
+    def test_unsupported_framework_fails_before_traces_and_servers(self):
+        self.point["client_env"]["FRAMEWORK"] = "trtllm"
+        code, results, calls = self.run_main()
+        self.assertEqual(code, 1)
+        self.assertIn("unsupported serving framework 'trtllm'", results["run"]["error"])
+        calls["prepare_traces"].assert_not_called()
+        calls["run_live"].assert_not_called()
+
     def test_process_cleanup_failure_stops_the_sweep_and_keeps_earlier_measurements(self):
         second = copy.deepcopy(self.point)
         second.update(conc=2, exp_name="tp1-c2")
+        second["client_env"]["CONC"] = "2"
         self.serving["points"].append(second)
 
         def client(*_args, **kwargs):
@@ -259,6 +301,7 @@ class AgentXEnvironmentTests(unittest.TestCase):
             mock.patch.object(runtime, "run_client", return_value=0) as client,
         ):
             self.assertEqual(runtime.run_live(self.point, out, self.host), self.aggregate)
+        self.gpus_idle.assert_called_once_with()
         server_env = server.call_args.kwargs["env"]
         client_env = client.call_args.kwargs["env"]
         self.assertEqual(server_env["SGLANG_USE_AITER"], "0")
@@ -279,6 +322,7 @@ class AgentXEnvironmentTests(unittest.TestCase):
             mock.patch.dict(os.environ, self.environ, clear=True),
             mock.patch.object(runtime, "run_client", return_value=0) as prepare,
             mock.patch.object(runtime.subprocess, "check_output", return_value="{}") as packages,
+            mock.patch.object(runtime, "verify_trace_loaders"),
         ):
             runtime.prepare_traces(self.host, [self.point], self.root / "prepare.log")
             runtime.client_packages(self.host)
@@ -286,6 +330,31 @@ class AgentXEnvironmentTests(unittest.TestCase):
             self.assertEqual(env["PATH"], "/runtime/bin")
             for key in ("SGLANG_USE_AITER", "ROCM_HOME", "PIP_CONSTRAINT", "VIRTUAL_ENV"):
                 self.assertNotIn(key, env)
+
+    def test_trace_loaders_must_replay_the_recorded_trace_dataset(self):
+        client = self.root / "client"
+        package = client / "infx/bench/agentic"
+        package.mkdir(parents=True)
+        for directory in (client / "infx", client / "infx/bench", package):
+            (directory / "__init__.py").write_text("")
+        (package / "traces.py").write_text(
+            "LOADERS = {'fixture': 'example/traces', 'capped': 'example/traces-256k'}\n"
+            "def resolve(prefix, override):\n"
+            "    if override not in LOADERS:\n"
+            "        raise ValueError(f'unknown WEKA_LOADER_OVERRIDE={override!r}')\n"
+            "    return override, LOADERS[override]\n"
+        )
+        host = {**self.host, "inferencex_e2e": str(client)}
+        runtime.verify_trace_loaders(host, [self.point])
+        for loader, message in (
+            ("capped", "replays 'example/traces-256k'"),
+            ("unknown", "rejects the trace loaders"),
+        ):
+            with self.subTest(loader=loader):
+                point = copy.deepcopy(self.point)
+                point["client_env"]["WEKA_LOADER_OVERRIDE"] = loader
+                with self.assertRaisesRegex(RuntimeError, message):
+                    runtime.verify_trace_loaders(host, [point])
 
     def prepare_model_hub(self, ref_content):
         hub = self.root / "hf-hub"
@@ -424,7 +493,64 @@ class AgentXEnvironmentTests(unittest.TestCase):
             target["serving"]["arms"]["tp1"]["arm_measurement_sha256"] = runtime.sha256_json(
                 {point["conc"]: point["measurement"]}
             )
-        self.assertEqual(analysis.compare(results, legacy)["arms"]["tp1"]["status"], "new-segment")
+        self.assertEqual(analysis.compare(results, legacy)["arms"]["tp1"]["status"], "curve")
+
+
+def amd_smi(*used_mb, wrap=False):
+    gpus = [
+        {
+            "gpu": index,
+            "mem_usage": {"total_vram": {"value": 294896, "unit": "MB"}, "used_vram": {"value": used}},
+        }
+        for index, used in enumerate(used_mb)
+    ]
+    stdout = "WARNING: fixture banner\n" + json.dumps({"gpu_data": gpus} if wrap else gpus)
+    return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+
+class AgentXGpuIdleTests(unittest.TestCase):
+    def test_vram_use_reads_whole_percent_from_either_amd_smi_layout(self):
+        for wrap in (False, True):
+            with (
+                self.subTest(wrap=wrap),
+                mock.patch.object(
+                    runtime.subprocess, "run", return_value=amd_smi(283, 2949, 294896, wrap=wrap)
+                ),
+            ):
+                self.assertEqual(runtime.vram_used_percent(), {0: 0, 1: 1, 2: 100})
+
+    def test_unreadable_amd_smi_aborts_the_sweep(self):
+        failures = {
+            "could not run": FileNotFoundError("amd-smi"),
+            "exited with code 2": SimpleNamespace(returncode=2, stdout="", stderr="no GPUs"),
+            "unreadable": SimpleNamespace(returncode=0, stdout='[{"gpu": 0}]', stderr=""),
+            "listed no GPUs": SimpleNamespace(returncode=0, stdout="[]", stderr=""),
+        }
+        for message, outcome in failures.items():
+            effect = {"side_effect": outcome} if isinstance(outcome, Exception) else {"return_value": outcome}
+            with self.subTest(message), mock.patch.object(runtime.subprocess, "run", **effect):
+                with self.assertRaisesRegex(runtime.CleanupError, message):
+                    runtime.vram_used_percent()
+
+    def test_wait_returns_once_every_gpu_reads_zero(self):
+        readings = [{0: 0, 1: 37}, {0: 0, 1: 2}, {0: 0, 1: 0}]
+        with (
+            mock.patch.object(runtime, "vram_used_percent", side_effect=readings) as read,
+            mock.patch.object(runtime.time, "sleep") as sleep,
+        ):
+            runtime.wait_gpus_idle(timeout_s=300, poll_s=5)
+        self.assertEqual(read.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_wait_times_out_naming_the_busy_gpus(self):
+        clock = iter([0, 0, 200, 301])
+        with (
+            mock.patch.object(runtime, "vram_used_percent", return_value={0: 0, 5: 12}),
+            mock.patch.object(runtime.time, "monotonic", side_effect=lambda: next(clock)),
+            mock.patch.object(runtime.time, "sleep"),
+        ):
+            with self.assertRaisesRegex(runtime.CleanupError, r"after 300 s: GPU5 12%"):
+                runtime.wait_gpus_idle(timeout_s=300, poll_s=5)
 
 
 if __name__ == "__main__":

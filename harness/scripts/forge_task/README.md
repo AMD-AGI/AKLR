@@ -21,8 +21,8 @@ one reviewed commit ── publish ──▶ aklr/ops ── aklr validate ─�
 
 - An MI355X (gfx950) machine, inside the ROCm container you run AKLR in.
 - A clone of AKLR that is yours alone: while a candidate is checked, the driver writes it into `aklr/ops/`.
-- AKLR installed in that container from your clone, and the baseline that its validate run times against, as AKLR's
-  README says (`pip install -e .`, then the `AKLR_BASELINE_AITER` install line).
+- AKLR installed in that container from your clone (`pip install -e .`), and the baseline that its validate run times
+  against, as `CONTRIBUTING.md` § The AITER baseline installs it.
 - In that container:
 
   ```bash
@@ -45,8 +45,9 @@ RUN=~/aklr-runs/bmm_n128_k512
 HIP_VISIBLE_DEVICES=0 python harness/scripts/forge_task prepare --schema bmm_n128_k512 --run-dir $RUN
 ```
 
-It checks the starting kernel with AKLR, records AKLR's baseline times and writes the task into `$RUN`. A GEMM
-schema starts from torch; any other needs `--starting-kernel <kernel.py>`, or `--starting-kernel <dir>` for a kernel
+It checks the starting kernel with AKLR, records AKLR's baseline times and writes the task into `$RUN`. A plain GEMM
+schema starts from torch; any other starts from its contract's AKLR baseline, copied into the preallocated outputs.
+A contract without a baseline needs `--starting-kernel <kernel.py>`, or `--starting-kernel <dir>` for a kernel
 of several files: every `*.py` in the directory, `kernel.py` among them.
 
 **2. Optimize.** Hours, and the agents cost money from here: in the Kimi-K3 runs, about $10 an hour on a GEMM
@@ -82,7 +83,7 @@ python -m kernelforge.cli forge-ablate --workspace $W --gpus 0
 # An agent reviews the whole change against AKLR's checks and squashes it into one commit
 # The review's guides: FlyDSL's own code-cleanup skill (linked, not kept in this repository) and what this
 # repository corrects in it. They go in a folder of their own: the review agent may edit the guides' folder.
-mkdir -p $RUN/review_guide && cp $A/harness/skills/aklr-kb/flydsl/guides.md $RUN/review_guide/
+mkdir -p $RUN/review_guide && cp $A/harness/skills/kb/flydsl/guides.md $RUN/review_guide/
 curl -sSfL https://raw.githubusercontent.com/ROCm/FlyDSL/v0.3.2/.claude/skills/kernel-code-cleanup/SKILL.md \
   -o $RUN/review_guide/flydsl_code_cleanup.md
 python -m kernelforge.cli forge-finalize --workspace $W --gpu 0 --model claude-opus-5-5 \
@@ -93,9 +94,9 @@ python -m kernelforge.cli forge-finalize --workspace $W --gpu 0 --model claude-o
 # The same answer, as the schema's determinism asks, on a stream limited to a few CUs and beside a second call of
 # its own: a kernel whose workgroups wait for each other does not give it, and validate cannot tell
 HIP_VISIBLE_DEVICES=0 python $W/driver.py --stress
-# What aklr-kb (its flydsl/ folder included) should learn from the run, as a patch for you to review
+# What kb (its flydsl/ folder included) should learn from the run, as a patch for you to review
 python -m kernelforge.cli forge-distill --workspace $W --model claude-opus-5-5 \
-  --skill-dir $A/harness/skills/aklr-kb --out $RUN/knowledge_patch \
+  --skill-dir $A/harness/skills/kb --out $RUN/knowledge_patch \
   --reference $A --guide CONTRIBUTING.md \
   --lint "python maintenance/kb_lint.py --errors-only --repo-root {repo}"
 ```
@@ -116,7 +117,7 @@ runs on an older release. Give validate that path: with none, it
 checks only the schema files a change touches, and only when it touches nothing else; on a branch that also changes
 code, it checks every schema in AKLR, which takes hours. Commit the kernel as `aklr/ops/README.md` describes and
 open a pull request. What the run taught goes into the same pull request: apply
-`$RUN/knowledge_patch/knowledge_patch.diff`, then review it item by item as aklr-kb's `CONTRIBUTING.md` says --
+`$RUN/knowledge_patch/knowledge_patch.diff`, then review it item by item as kb's `CONTRIBUTING.md` says --
 edits to existing pages in place, new pages in their folder, reviewed in the kernel's pull request. A change to the method itself
 (this README, the driver, the `forge-loop-campaign` skill) goes into a pull request of its own.
 

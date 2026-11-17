@@ -70,6 +70,15 @@ class ValidationScope:
     def relative_path(self, path: Path) -> str:
         return Path(path).resolve().relative_to(self.root.resolve()).as_posix()
 
+    def under(self, directory: str, *, inside: bool = True) -> ValidationScope:
+        """This scope's schemas under ``directory``, a path relative to the root; not
+        ``inside``, those outside it. A directory outside the root is a ValueError."""
+        relative = self.relative_path(self.root / directory)
+        prefix = "" if relative == "." else relative + "/"
+        kept = tuple(p for p in self.schema_paths if self.relative_path(p).startswith(prefix) == inside)
+        bench = tuple(p for p in self.bench_paths if p in kept)
+        return replace(self, schema_paths=kept, bench_paths=bench)
+
     def changed_paths(self) -> tuple[str, ...]:
         """The sorted change set: what differs from ``base_sha`` in the working tree."""
         if self.base_sha is None:
@@ -124,11 +133,11 @@ class ValidationScope:
 
     @staticmethod
     def path_kind(path: str) -> PathKind:
-        """aklr/core's code is the only change that re-benches every schema."""
+        """aklr/core's code and stack.json are the only changes that re-bench every schema."""
         match = _SCHEMA_PATH_PATTERN.fullmatch(path)
         is_schema_json = match is not None and match["language"] in spec.LANGUAGES
         if is_schema_json:
             return "schema_data"
-        if path.startswith("aklr/core/") and not path.endswith(".md"):
+        if path == "stack.json" or (path.startswith("aklr/core/") and not path.endswith(".md")):
             return "core"
         return "other"

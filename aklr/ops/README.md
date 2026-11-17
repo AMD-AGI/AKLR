@@ -29,7 +29,7 @@ aklr/ops/
 - Several files may share a `<name>` and its Points; dispatch serves each Point with the best measured one
   (`AKLR_MIN_SPEEDUP`).
 - `<uuid>` is 16 hex digits of `sha256(sorted_key_json([name, authored_parts]))` (`OpContract.authored_parts`): it
-  changes with the kernel, its targets, requires or author, the scalars or the Points, never with `speedup`, `accuracy` or workload order.
+  changes with the kernel, its targets, requires or author, the scalars or the Points, never with `speedup`, `accuracy`, `microseconds` or workload order.
   `export check` names the expected path of a file whose uuid is stale.
 
 ## Workflow
@@ -50,11 +50,11 @@ aklr/ops/
    `"entry_point": "kernel.py::run"`, so one file is `kernel.py` defining `run` (or edit `entry_point`); a hip
    kernel's are `.hip` and `.h` files, `kernel.hip::run` its entry ([hip kernels](#hip-kernels)); an hsaco
    kernel stores its code objects in `.py` files ([hsaco kernels](#hsaco-kernels)). To give a
-   scenario a second kernel, copy its committed file, delete `accuracy` and `speedup` from every workload (only CI
+   scenario a second kernel, copy its committed file, delete `accuracy`, `speedup` and `microseconds` from every workload (only CI
    writes them: `PERF_EDITED`), and fill the copy with the second kernel.
 4. Copy the file to the same relative path under `aklr/ops/` and rename it to the `<uuid>.json` that
    `python -m aklr export check` names (the uuid hashes the kernel). To change a committed kernel, edit its
-   `content` or `requires`, delete `accuracy` and `speedup` from every workload (only CI writes them:
+   `content` or `requires`, delete `accuracy`, `speedup` and `microseconds` from every workload (only CI writes them:
    `PERF_EDITED`), and rename the file the same way. Audit checks every committed kernel's sources, changed or not.
 5. Self-test: `python -m aklr export check`, then `python -m aklr validate --base origin/main`. The result does
    not count; CI decides.
@@ -135,19 +135,20 @@ than `__init__.py`, sorted and unique (a hip kernel's: [hip kernels](#hip-kernel
 file describes the kernel; its prose carries no history, commit or speedup, and trailing `key: value` metadata lines
 (such as `legacy_solution:`, `keep_commit:`, `device_edits:`) are allowed; audit rejects an empty docstring (SA4).
 
-`requires` maps a toolchain to a PEP 440 specifier of the versions the kernel needs, such as
+`requires` maps a toolchain or library to a PEP 440 specifier of the versions the kernel needs, such as
 `{"triton": ">=3.8"}`; a dev or rc build counts as its release. A kernel with sources names at least its
 language's toolchain (`TOOLCHAINS`): `flydsl`, `triton`, or `hip` for hip and hsaco kernels, which is the HIP
-version torch was built with (`torch.version.hip`), not the ROCm release (ROCm 10.0 ships HIP 7.15);
-`export check` rejects one that does not (`KernelSpec.requires_error`). It is omitted only in a definition. Where the installed toolchain misses it, the runtime skips the schema, logging why at INFO, and validation
-reports `no_matching_toolchain`. Give the version the kernel was developed on as the lower bound, and an upper bound
+version torch was built with (`torch.version.hip`), not the ROCm release (ROCm 10.0 ships HIP 7.15), and every
+library it imports beyond torch, such as `{"mori": ">=1.2.4"}` (`Library` in `aklr/core/contract/spec/_kernel.py`);
+`export check` rejects one that misses either (`KernelSpec.requires_error`). It is omitted only in a definition. Where the installed toolchain misses it, the runtime skips the schema, logging why at INFO, and validation
+skips it too, listing it in the report. Give the version the kernel was developed on as the lower bound, and an upper bound
 only once a release breaks it. A kernel that fails where `requires` holds raises: nothing falls back on an error.
 
 `author` names who wrote the kernel: a person, a team or an agent, such as `"GEAK"`. It is one line without
 surrounding spaces, omitted when empty, and only recorded: dispatch and the build ignore it, and validation
 compares kernels without it (`KernelSpec.same_kernel`), so a committed kernel whose `author` alone changes keeps
 its audit exemption and the retention threshold. The uuid hashes it, so that edit still renames the file and
-deletes `speedup` and `accuracy` (step 4); dispatch serves the file again once CI writes them back.
+deletes `speedup`, `accuracy` and `microseconds` (step 4); dispatch serves the file again once CI writes them back.
 
 ```python
 def run(*, <every name of OpContract.kernel_call_keys>) -> None: ...
@@ -299,13 +300,17 @@ Each present tensor input carries its `distribution` (a `kind` and its parameter
 var axis): the values a kernel may assume, and how bench draws them. It is the contract's at the Point, written
 once per file; changing it is rejected, not a way to change the inputs.
 
-`workloads` is a list (model `WorkloadSpec`): `{"axes": {<var axis>: int}, "scalars": {...}, "accuracy": "passed" | "failed", "speedup": float}`,
+`workloads` is a list (model `WorkloadSpec`): `{"axes": {<var axis>: int}, "scalars": {...}, "accuracy": "passed" | "failed", "speedup": float, "microseconds": float}`,
 axes in contract order, sorted by their values, each Point once. A var axis the contract declares `any_size`
 (the rows of a KV cache, which the kernel does not depend on) is served at every value of its domain: its workload
 values are only the sizes bench runs. `scalars` holds every present scalar input, a
 captured or authored value inside its declared range; it is omitted when the schema has none. `speedup` (over `<contract>_baseline`) and
 `accuracy` are written by CI on every workload or none (a `failed` one may lack `speedup`; it is never dispatched),
-with one complete `kernel.targets` item.
+with one complete `kernel.targets` item. `microseconds` records the time behind that `speedup`: the kernel's median
+time per call in the same rounds against the baseline (graph timer, 3 significant digits), absent on a workload that
+was not timed. CI rewrites a file only when a workload's accuracy changes, a speedup or time comes or goes, or a
+speedup moves by more than 2%, and then writes all three from one run, so `microseconds` always matches the
+`speedup` beside it. It is not meant for comparing times across files measured in different runs.
 
 No workload carries a uuid. A workload is located by its file and its `axes` (`m=1` in reports). Every tensor is
 seeded from `workload_hash(name, workload)` (its axes and scalars), 16 hex digits of a sha256: the same Point with
@@ -363,7 +368,7 @@ A schema file carries no semantics stamp. After a change to the schema format, r
 |---|---|---|
 | `python -m aklr export [--from DIR] [--to DIR] [--language L]` | export (`--from` and `--to` default to `AKLR_EXPORT_DIR`, else `./aklr_export`; `--language` required); fails with `no calls.*.jsonl in DIR` when there are no calls | 0 done, 1 error, 2 usage |
 | `python -m aklr export check` | checks every committed schema and `impls/`; no GPU, no environment | 0 clean, 1 problems on stderr, 2 usage |
-| `python -m aklr validate [PATH ...] [--base REV] [--stages audit,bench] ...` | audit and bench stages (default: both); writes `aklr_validation/report.json` and `report.md` | 0 passed, 1 failed, 2 usage, 3 aborted |
+| `python -m aklr validate [PATH ...] [--base REV] [--stages audit,bench] [--under DIR] [--exclude DIR] [--no-timing] ...` | audit and bench stages (default: both); writes `aklr_validation/report.json` and `report.md`. `--under` keeps the schemas under DIR, `--exclude` drops them; `--no-timing` builds and checks the kernels only, on the workloads not recorded `failed` (dispatch never serves those), timing and writing back nothing; any finding fails it. A schema whose `kernel.requires` the environment misses is skipped, as dispatch skips it | 0 passed, 1 failed, 2 usage, 3 aborted |
 
 Options and stages of `validate`: `python -m aklr validate --help`.
 

@@ -215,6 +215,12 @@ class DisposableExecutionRunner(ExecutionRunner):
         self._channel = channel
         self._child_endpoint = child_endpoint
         self._process = process
+        # rocprofiler-register exports these as the SDK configures, which a torch that links it does
+        # at GPU init; a child inheriting them configures the SDK as it starts, before its kernel
+        # tracer registers
+        for name in ("ROCPROFILER_REGISTER_FORCE_LOAD", "ROCPROFILER_REGISTER_LIBRARY"):
+            os.environ.pop(name, None)
+            os.unsetenv(name)
         try:
             process.start()
             event = self._receive_event(self._startup_timeout_seconds)
@@ -521,6 +527,10 @@ class DisposableExecutionRunner(ExecutionRunner):
                             HSA_ENABLE_IPC_MODE_LEGACY="1",
                         )
                         import torch
+
+                        # registers the kernel tracer before the GPU initializes, as a torch that links
+                        # rocprofiler-sdk needs
+                        import aklr.core.utils.testing  # noqa: F401
 
                         torch.cuda.init()  # a device that cannot start fails the runner, not a task
                     endpoint.send(RunnerStarted(runner_id=runner_id))
