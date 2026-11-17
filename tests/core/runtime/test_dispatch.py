@@ -7,6 +7,7 @@ import threading
 import time
 import types
 from pathlib import Path
+from typing import Any
 
 import pytest
 import torch
@@ -214,9 +215,23 @@ class TestKernelDispatcher:
             call[name] = call[name][:slots]
         assert dispatcher.dispatch(call) is FallbackReason.OUT_OF_CONTRACT
 
-    def test_any_size_axis_needs_each_workload_qualified(self, builder_registry: BuilderRegistry) -> None:
-        """Workloads differing in an any_size axis alone share a key, served only if each
-        of them qualifies: one too slow leaves the case's call unserved."""
+    @pytest.mark.parametrize(
+        ("other", "reason"),
+        [
+            ({"accuracy": "passed", "speedup": 0.5}, None),
+            ({"accuracy": "failed"}, FallbackReason.INACCURATE),
+        ],
+        ids=["too_slow", "failed"],
+    )
+    def test_any_size_axis_needs_one_workload_qualified(
+        self,
+        builder_registry: BuilderRegistry,
+        other: dict[str, Any],
+        reason: FallbackReason | None,
+    ) -> None:
+        """Workloads differing in an any_size axis alone share a key, served if one of
+        them qualifies: one too slow beside it still serves the case's call, a failed one
+        does not."""
         case = OpCase.of("gdn_decode@1.0")
         workload = case.contract.workload_for(case.point, {})
         doubled = {**workload.axes, "n_slots": 2 * workload.axes["n_slots"]}
@@ -224,12 +239,15 @@ class TestKernelDispatcher:
             builder_registry,
             (
                 workload.model_copy(update={"accuracy": "passed", "speedup": 2.0}),
-                workload.model_copy(update={"axes": doubled, "accuracy": "passed", "speedup": 0.5}),
+                workload.model_copy(update={"axes": doubled, **other}),
             ),
             min_speedup=1.0,
         )
-        call = case.call(case.inputs())
-        assert dispatcher.dispatch(call) is FallbackReason.NOT_QUALIFIED
+        output = dispatcher.dispatch(case.call(case.inputs()))
+        if reason is None:
+            assert not output.any()
+        else:
+            assert output is reason
 
     def test_mutable_input_sharing_bytes_declines(self, builder_registry: BuilderRegistry) -> None:
         """A mutable input sharing a byte with another input falls back, unwritten."""
