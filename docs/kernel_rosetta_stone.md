@@ -19,7 +19,7 @@ An optimizing agent works in rounds: plan a change, write the kernel, check it i
 
 ## What is in the knowledge base and skills
 
-**The knowledge base** ([SKILL.md](../harness/skills/aklr-kb/SKILL.md)) brings together tips from handwritten kernels, AMD architecture and CDNA4 instruction-set (ISA) documents, and real examples. It centers on FlyDSL, a GPU kernel language. As of 2026-11-05 it has:
+**The knowledge base** ([SKILL.md](../harness/skills/kb/SKILL.md)) brings together tips from handwritten kernels, AMD architecture and CDNA4 instruction-set (ISA) documents, and real examples. It centers on FlyDSL, a GPU kernel language. As of 2026-11-05 it has:
 
 - **123 pages**: by operator (GEMM; MoE and grouped GEMM; attention), 16 case studies of delivered kernels, recurring performance patterns and pitfalls, profiling, notes on writing kernels in FlyDSL, Triton and HIP, and 36 pages on the gfx950 GPU and its CDNA4 instruction set (ISA);
 - **1,204 findings**, each recording how it was measured and where it came from.
@@ -30,11 +30,11 @@ An optimizing agent works in rounds: plan a change, write the kernel, check it i
 
 | Skill | What it does for you |
 |---|---|
-| `aklr-kb` | Gives your agent the knowledge base, with how to write it in FlyDSL, Triton (and Gluon) and HIP in its `flydsl/`, `triton/` and `hip/` folders; KernelForge runs set up by `forge_task` load it by default (see below) |
+| `kb` | Gives your agent the knowledge base, with how to write it in FlyDSL, Triton (and Gluon) and HIP in its `flydsl/`, `triton/` and `hip/` folders; KernelForge runs set up by `forge_task` load it by default (see below) |
 | `forge-loop-campaign` | Has an agent run a whole KernelForge optimization of one AKLR task: prepare, run, watch, stop or resume, review, deliver |
 | `geak-campaign` | Runs such a campaign with GEAK (`AMD-AGI/GEAK`), another agent-driven optimizer, instead of KernelForge |
 
-FlyDSL's own skills, kernel code cleanup among them, are linked from `aklr-kb/flydsl/guides.md`. Both results below were measured with the knowledge base as it was before it was reorganized into `aklr-kb`.
+FlyDSL's own skills, kernel code cleanup among them, are linked from `kb/flydsl/guides.md`. Both results below were measured with the knowledge base as it was before it was reorganized into `kb`.
 
 ## What it saved on two tasks
 
@@ -102,4 +102,4 @@ This was one run each way. Here the knowledge base's notes were closer to the ta
 
 1. Read [forge_task.md](forge_task.md). You start from an AKLR schema, a JSON file that defines one kernel task and the workloads it must serve. `forge_task prepare` turns the schema into a KernelForge task and a script that runs it; for a FlyDSL kernel, that run gets the knowledge base by default (through KernelForge's `--skill-dir` option).
 2. To let an agent drive the whole campaign, have it load the [forge-loop-campaign](../harness/skills/forge-loop-campaign/SKILL.md) skill. To run the campaign with GEAK instead of KernelForge, use [geak-campaign](../harness/skills/geak-campaign/SKILL.md).
-3. Tuning a FlyDSL kernel by hand or with your own agent: start at the knowledge base's [SKILL.md](../harness/skills/aklr-kb/SKILL.md).
+3. Tuning a FlyDSL kernel by hand or with your own agent: start at the knowledge base's [SKILL.md](../harness/skills/kb/SKILL.md).

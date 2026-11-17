@@ -25,7 +25,7 @@ Run `aklr export check`, a targeted `aklr validate --base <validation base> --st
 stress gate with a driver made in the validator: `python harness/scripts/forge_task prepare` from the
 validator clone into `<campaign>/validate`, the frozen `kernel.py` placed in that workspace, then its
 `driver.py --stress`. Never run the worker's driver. Read every target Point with
-`harness/skills/aklr-read-validation/SKILL.md`. Pull the reports to this host at once and record their
+`harness/skills/read-validation/SKILL.md`. Pull the reports to this host at once and record their
 SHA-256 in the ledger; delivery uses only that copy. Any failure means no PR and no automatic repair.
 
 Before cleanup, while the GPU is still held, fetch main and run freshness from the validation base. If it

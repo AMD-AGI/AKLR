@@ -37,7 +37,7 @@ flowchart TD
 
 ### 1. A contract 不存在：创建 contract
 
-参考仓库里的 `harness/skills/aklr-port-generated-kernels/references/new-op.md` 依次实现以下文件：
+参考仓库里的 `harness/skills/port-generated-kernels/references/new-op.md` 依次实现以下文件：
 
 1. `contract.py`：定义 `OpContract` 和 `CONTRACTS`（registry 会自动发现）；`op_type` 取目录名 `<op>`；按数学含义命名；多输出时不能有叫 `out` 的；每个输出给出 `error_bounds`，contract 给出 `determinism`。
 2. `reference.py`：float64 的 `<contract>_reference(point, row_major_args, to_float64)`。

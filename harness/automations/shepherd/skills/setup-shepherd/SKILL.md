@@ -28,10 +28,10 @@ Rounds read the shared skills by path from the checkout, never from an installed
 
 - `forge-loop-campaign`
 - `remote-gpu`
-- `aklr-read-validation`
-- `aklr-open-pr`
+- `read-validation`
+- `open-pr`
 - `report-progress`
-- `aklr-kb`
+- `kb`
 
 If any is missing, stop and explain the failure. Do not add `harness/automations/shepherd/skills/` to a plugin manifest.
 
