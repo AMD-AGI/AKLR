@@ -1,0 +1,127 @@
+{
+  "schema_version": 5,
+  "name": "gemm_n6144_k2048",
+  "contract_id": "gemm@1.0",
+  "description": "16-bit gemm: out = a @ b.T + bias (b is (k, n) unless trans_b).",
+  "op_type": "gemm",
+  "axes": {
+    "m": {
+      "type": "var",
+      "description": "Tokens."
+    },
+    "n": {
+      "type": "const",
+      "value": 6144,
+      "description": "Output columns."
+    },
+    "k": {
+      "type": "const",
+      "value": 2048,
+      "description": "Reduction length."
+    }
+  },
+  "attrs": {
+    "trans_b": true,
+    "has_bias": false
+  },
+  "inputs": {
+    "a": {
+      "shape": [
+        "m",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Activations."
+    },
+    "b": {
+      "shape": [
+        "n",
+        "k"
+      ],
+      "dtype": "bfloat16",
+      "distribution": {
+        "kind": "finite"
+      },
+      "description": "Weights; (n, k) when trans_b."
+    }
+  },
+  "outputs": {
+    "out": {
+      "shape": [
+        "m",
+        "n"
+      ],
+      "dtype": "bfloat16",
+      "description": "a @ b.T + bias."
+    }
+  },
+  "workloads": [
+    {
+      "axes": {
+        "m": 6
+      }
+    },
+    {
+      "axes": {
+        "m": 12
+      }
+    },
+    {
+      "axes": {
+        "m": 18
+      }
+    },
+    {
+      "axes": {
+        "m": 24
+      }
+    },
+    {
+      "axes": {
+        "m": 30
+      }
+    }
+  ],
+  "layout_variants": {
+    "by_name": {
+      "row_major": {
+        "layouts": {},
+        "detect_facts": [
+          {
+            "location": "tensor_attr",
+            "name": "b.is_shuffled",
+            "expected_value": false
+          }
+        ]
+      }
+    }
+  },
+  "compare": {
+    "max_violation_fraction": 0.0,
+    "determinism": "bitwise",
+    "element_order": "fixed"
+  },
+  "kernel": {
+    "language": "triton",
+    "targets": [
+      {
+        "arch": "gfx950",
+        "hardware": "MI355X"
+      }
+    ],
+    "requires": {
+      "triton": ">=3.8"
+    },
+    "author": "GEAK",
+    "entry_point": "kernel.py::run",
+    "sources": [
+      {
+        "path": "kernel.py",
+        "content": "\"\"\"Decode bf16 GEMM, out = a @ b.T, for n = 6144 and k = 2048 on gfx950 (Triton).\n\nAt m <= 64 the call is a pure weight stream: the 25 MB weight is read exactly\nonce. Every workgroup owns one 32-column N tile across all rows of `a`,\naccumulates in fp32 registers and stores bf16 once, with no split-K and no\natomics, so the result is bitwise reproducible. Workgroups are remapped so that\neach XCD streams a contiguous run of N tiles, and the weight is loaded with the\n`.cg` cache modifier.\n\n- m <= 16: a 16-row tile, a [BLOCK_K, BLOCK_N] view of `b`, BLOCK_K = 256\n  (512 at a single row).\n- m <= 32: a 32-row tile, BLOCK_K = 64 unrolled by 4, the iterative-ILP\n  schedule, and a per-workgroup rotated K walk so the workgroups sharing an XCD\n  do not hit the same `a` lines in lockstep.\n- m <= 64: a 64-row tile, BLOCK_K = 256, the rotated K walk, `a` rows past m\n  masked off.\n\nStrides are folded to the contiguous row-major layout the dispatcher\nguarantees.\n\"\"\"\n\nimport functools\n\nimport torch\nimport triton\nimport triton.language as tl\n\n\n@triton.jit\ndef _gemm_m16_kernel(\n    A,\n    B,\n    C,\n    M,\n    N: tl.constexpr,\n    K: tl.constexpr,\n    BLOCK_M: tl.constexpr,\n    BLOCK_N: tl.constexpr,\n    BLOCK_K: tl.constexpr,\n    N_TILES: tl.constexpr,\n    NXCD: tl.constexpr,\n    EVEN_M: tl.constexpr,\n):\n    pid = tl.program_id(0)\n    pid = (pid % NXCD) * (N_TILES // NXCD) + (pid // NXCD)\n    offs_m = tl.arange(0, BLOCK_M)\n    offs_n = pid * BLOCK_N + tl.arange(0, BLOCK_N)\n    offs_k = tl.arange(0, BLOCK_K)\n    offs_k = tl.max_contiguous(tl.multiple_of(offs_k, BLOCK_K), BLOCK_K)\n    offs_n = tl.multiple_of(offs_n, BLOCK_N)\n    a_ptrs = A + offs_m[:, None] * K + offs_k[None, :]\n    b_ptrs = B + offs_n[None, :] * K + offs_k[:, None]\n    m_mask = offs_m < M\n    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)\n    for _ in tl.range(0, K // BLOCK_K):\n        if EVEN_M:\n            a = tl.load(a_ptrs)\n        else:\n            a = tl.load(a_ptrs, mask=m_mask[:, None], other=0.0)\n        b = tl.load(b_ptrs, cache_modifier=\".cg\")\n        acc = tl.dot(a, b, acc=acc)\n        a_ptrs += BLOCK_K\n        b_ptrs += BLOCK_K\n    c_ptrs = C + offs_m[:, None] * N + offs_n[None, :]\n    if EVEN_M:\n        tl.store(c_ptrs, acc.to(C.dtype.element_ty))\n    else:\n        tl.store(c_ptrs, acc.to(C.dtype.element_ty), mask=m_mask[:, None])\n\n\n@triton.jit\ndef _gemm_xcd_kernel(\n    A,\n    B,\n    C,\n    M,\n    N: tl.constexpr,\n    K: tl.constexpr,\n    BLOCK_M: tl.constexpr,\n    BLOCK_N: tl.constexpr,\n    BLOCK_K: tl.constexpr,\n    NXCD: tl.constexpr,\n    CHUNK: tl.constexpr,\n    EVEN_M: tl.constexpr,\n    UNROLL: tl.constexpr,\n    KROT: tl.constexpr,\n):\n    pid = tl.program_id(0)\n    n_kb: tl.constexpr = K // BLOCK_K\n    kphase = ((pid // NXCD) * KROT) & (n_kb - 1)\n    blk: tl.constexpr = NXCD * CHUNK\n    local = pid // NXCD\n    pid = (local // CHUNK) * blk + (pid % NXCD) * CHUNK + (local % CHUNK)\n    offs_m = tl.arange(0, BLOCK_M)\n    offs_n = pid * BLOCK_N + tl.arange(0, BLOCK_N)\n    offs_k = tl.arange(0, BLOCK_K)\n    row_ok = offs_m[:, None] < M\n    a_offs = offs_m[:, None] * K + offs_k[None, :]\n    b_offs = offs_k[:, None] + offs_n[None, :] * K\n    acc = tl.zeros((BLOCK_M, BLOCK_N), dtype=tl.float32)\n    for i in tl.range(0, n_kb, loop_unroll_factor=UNROLL):\n        kb = ((i + kphase) & (n_kb - 1)) * BLOCK_K\n        if EVEN_M:\n            a = tl.load((A + kb) + a_offs)\n        else:\n            a = tl.load((A + kb) + a_offs, mask=row_ok, other=0.0)\n        b = tl.load((B + kb) + b_offs, cache_modifier=\".cg\")\n        acc = tl.dot(a, b, acc=acc)\n    c_ptrs = C + offs_m[:, None] * N + offs_n[None, :]\n    if EVEN_M:\n        tl.store(c_ptrs, acc.to(C.dtype.element_ty))\n    else:\n        tl.store(c_ptrs, acc.to(C.dtype.element_ty), mask=row_ok)\n\n\n@functools.cache\ndef _launch_for(a_shape, b_shape):\n    m, k = a_shape\n    n = b_shape[0]\n    grid = (n // 32,)\n    if m <= 16:\n        even_m = m == 16\n        block_k = 512 if m == 1 else 256\n\n        def launch(a, b, out):\n            _gemm_m16_kernel[grid](\n                a,\n                b,\n                out,\n                m,\n                N=n,\n                K=k,\n                BLOCK_M=16,\n                BLOCK_N=32,\n                BLOCK_K=block_k,\n                N_TILES=n // 32,\n                NXCD=8,\n                EVEN_M=even_m,\n                num_warps=2,\n                num_stages=3,\n                waves_per_eu=2,\n            )\n\n        return launch\n    if m <= 32:\n        even_m = m == 32\n\n        def launch(a, b, out):\n            _gemm_xcd_kernel[grid](\n                a,\n                b,\n                out,\n                m,\n                N=n,\n                K=k,\n                BLOCK_M=32,\n                BLOCK_N=32,\n                BLOCK_K=64,\n                NXCD=8,\n                CHUNK=8,\n                EVEN_M=even_m,\n                UNROLL=4,\n                KROT=1,\n                num_warps=4,\n                num_stages=3,\n                waves_per_eu=2,\n                matrix_instr_nonkdim=16,\n                schedule_hint=\"memory-bound-attention\",\n            )\n\n        return launch\n    even_m = m == 64\n\n    def launch(a, b, out):\n        _gemm_xcd_kernel[grid](\n            a,\n            b,\n            out,\n            m,\n            N=n,\n            K=k,\n            BLOCK_M=64,\n            BLOCK_N=32,\n            BLOCK_K=256,\n            NXCD=8,\n            CHUNK=8,\n            EVEN_M=even_m,\n            UNROLL=1,\n            KROT=1,\n            num_warps=4,\n            num_stages=3,\n            waves_per_eu=2,\n            matrix_instr_nonkdim=16,\n        )\n\n    return launch\n\n\ndef run(*, a, b, trans_b, bias, out_dtype, out):\n    launch = _launch_for(tuple(a.shape), tuple(b.shape))\n    launch(a, b, out)\n"
+      }
+    ]
+  }
+}
