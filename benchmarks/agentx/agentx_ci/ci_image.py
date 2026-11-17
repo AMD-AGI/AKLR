@@ -1,28 +1,27 @@
 # SPDX-License-Identifier: MIT
-"""Each framework's execution image: AKLR's CI image for it in .github/workflows/ci.yaml, pinned at plan time."""
+"""Each framework's execution image: AKLR's CI image for it in stack.json, pinned at plan time."""
 
 from __future__ import annotations
 
+import json
 import re
 import subprocess
 from pathlib import Path
 
-import yaml
-
 ROOT = Path(__file__).resolve().parents[3]
-CI_WORKFLOW = ROOT / ".github/workflows/ci.yaml"
-VARIABLES = {"sglang": "AKLR_CI_IMAGE", "vllm": "AKLR_VLLM_CI_IMAGE"}
+STACK = ROOT / "stack.json"
+KEYS = {"sglang": "sglang_image", "vllm": "vllm_image"}
 DIGEST = re.compile(r"^Digest:\s+(sha256:[0-9a-f]{64})\s*$", re.M)
 
 
-def ci_images(workflow: Path | None = None) -> dict[str, str]:
-    workflow = Path(workflow or CI_WORKFLOW)
-    env = yaml.safe_load(workflow.read_text(encoding="utf-8"))["env"]
+def ci_images(stack: Path | None = None) -> dict[str, str]:
+    stack = Path(stack or STACK)
+    pins = json.loads(stack.read_text(encoding="utf-8"))
     images = {}
-    for framework, variable in VARIABLES.items():
-        image = env.get(variable)
+    for framework, key in KEYS.items():
+        image = pins.get(key)
         if not isinstance(image, str) or not image or "@" in image:
-            raise ValueError(f"{workflow}: env.{variable} must be an image tag without a digest")
+            raise ValueError(f"{stack}: {key} must be an image tag without a digest")
         images[framework] = image
     return images
 

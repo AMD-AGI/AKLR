@@ -124,11 +124,11 @@ class ValidationScope:
 
     @staticmethod
     def path_kind(path: str) -> PathKind:
-        """aklr/core's code is the only change that re-benches every schema."""
+        """aklr/core's code and stack.json are the only changes that re-bench every schema."""
         match = _SCHEMA_PATH_PATTERN.fullmatch(path)
         is_schema_json = match is not None and match["language"] in spec.LANGUAGES
         if is_schema_json:
             return "schema_data"
-        if path.startswith("aklr/core/") and not path.endswith(".md"):
+        if path == "stack.json" or (path.startswith("aklr/core/") and not path.endswith(".md")):
             return "core"
         return "other"

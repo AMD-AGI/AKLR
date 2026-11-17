@@ -27,7 +27,7 @@ it in a language is in that language's folder: `flydsl/SKILL.md` (with the FlyDS
 Paths below are relative to this folder, except those starting with `aklr/`, relative to the repository root, and
 `aiter/` or `csrc/`, relative to aiter's. File and line citations are to ROCm/FlyDSL `v0.3.2` (`dd8373349`),
 AMD-AGI/Primus-Turbo main `7615a5a2` (`ca1fdd67` for the expert GEMM in `moe/`) and ROCm/aiter `dbd8bf5`
-(`AKLR_BASELINE_AITER`); check out those revisions to follow them. FlyDSL's own skills are linked at `v0.3.2`, not
+(`aiter` in `stack.json`); check out those revisions to follow them. FlyDSL's own skills are linked at `v0.3.2`, not
 copied: `flydsl/guides.md` and `profile.md` give each link with what this repository corrects in it; a
 `§` marked as FlyDSL's is that skill's own numbering.
 
@@ -104,8 +104,8 @@ wins. Check a plan against this table before writing code.
 
 ## Also in AKLR
 
-- **The aiter these cards describe is the baseline**, ROCm/aiter at `AKLR_BASELINE_AITER`
-  (`.github/workflows/ci.yaml`): AKLR does not ship, patch or fall back to it, so its `aiter/` paths are that
+- **The aiter these cards describe is the baseline**, ROCm/aiter at the commit `aiter`
+  in `stack.json`: AKLR does not ship, patch or fall back to it, so its `aiter/` paths are that
   revision's, read as reference code. Price aiter through the op's `<contract>_baseline`
   (`aklr/ops/<op>/baseline.py`), the call bench times. At a Point no kernel serves, the api returns a
   `FallbackReason` and its caller runs its own path. AKLR's plugins route a model to plugin ops and to some

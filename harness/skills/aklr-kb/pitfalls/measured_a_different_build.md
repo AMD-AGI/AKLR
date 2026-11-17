@@ -37,7 +37,7 @@ Each channel puts a different build under the ruler.
    `../flydsl/debug-flydsl-kernel.md` § What the cache key sees.
 4. **Another venv or FlyDSL version.** Several changes between versions alter the result without an error
    (`../flydsl/language/version_notes.md` § Behaviour that changes without an error). AKLR's CI installs the
-   baseline aiter (`AKLR_BASELINE_AITER`) over its image and runs the FlyDSL that aiter pins (S9, S10; read from
+   baseline aiter (`aiter` in `stack.json`) over its image and runs the FlyDSL that aiter pins (S9, S10; read from
    the workflow, not checked in a run's log), not necessarily the `flydsl>=0.3.2` of `pyproject.toml`. From this
    repository's first commit (2026-10-31) to 2026-11-03 it installed the checkout with its dependencies, whose
    `pyproject.toml` pinned `flydsl==0.3.2` (S11). The repository the first schemas were measured in, whose history
@@ -96,7 +96,7 @@ Each channel puts a different build under the ruler.
 - S4 aklr/core/runtime/dispatch/_recorder.py:55: the call record's `fallback_reason`, `None` when served
 - S5 the server imports `sglang` from a separate checkout, not from the tree the campaign rsyncs its edits to (2026-09)
 - S6 .github/workflows/ci.yaml, in the repository before this one (not in this one's history): `pip install --no-build-isolation --no-deps -e .` inside `AKLR_CI_IMAGE`; `requirements.txt` pins `flydsl==0.3.2`
-- S7 ROCm/aiter@e7d2453f2:requirements.txt:24 `flydsl==0.3.4.1`; AKLR's CI image `lmsysorg/sglang:v0.5.22-rocm10-mi35x` (`.github/workflows/ci.yaml:5`) is built with `AITER_COMMIT=e7d2453f2`, and that build step runs `pip install -r requirements.txt` in the aiter checkout (image config, history step 94); no later step installs FlyDSL, and sglang v0.5.22 does not depend on it
+- S7 ROCm/aiter@e7d2453f2:requirements.txt:24 `flydsl==0.3.4.1`; AKLR's CI image `lmsysorg/sglang:v0.5.22-rocm10-mi35x` (`stack.json:2`) is built with `AITER_COMMIT=e7d2453f2`, and that build step runs `pip install -r requirements.txt` in the aiter checkout (image config, history step 94); no later step installs FlyDSL, and sglang v0.5.22 does not depend on it
 - S8 ROCm/aiter@c16d44b93:requirements.txt:24 `flydsl==0.3.1`; the CI image before it, `lmsysorg/sglang:v0.5.19-rocm724-mi35x`, is built with `AITER_COMMIT=c16d44b93`, whose build step installs that file (image config, history step 92)
 - S9 AMD-AGI/AKLR@f092828ea:.github/workflows/ci.yaml:285 `pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@$AKLR_BASELINE_AITER"`, over the image's aiter (:283); the commit is `AKLR_BASELINE_AITER` at :7
 - S10 ROCm/aiter@dbd8bf5:setup.py:17 `FLYDSL_VERSION = "flydsl==0.3.2"`, in `install_requires` at :478

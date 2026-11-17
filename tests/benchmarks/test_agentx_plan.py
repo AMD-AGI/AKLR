@@ -187,7 +187,7 @@ class AgentXRecipeContractTests(AgentXRecipeTestCase):
             "must not set devices": lambda r: r["points"][0]["launch"]["env"].update(HIP_VISIBLE_DEVICES="0"),
             "agentx.yaml-owned fields: ['model']": lambda r: r.update(model={"id": "first"}),
             "agentx.yaml-owned fields: ['hardware']": lambda r: r.update(hardware={}),
-            "plan reads from ci.yaml: ['image']": lambda r: r.update(image={"run": IMAGE}),
+            "plan reads from stack.json: ['image']": lambda r: r.update(image={"run": IMAGE}),
             "source.kind": lambda r: r["source"].update(kind="other"),
             "source.kind must be 'cookbook'": lambda r: r["source"].update(kind="inferencex"),
             "source.url must be": lambda r: r["source"].update(url="https://elsewhere.invalid/model.json"),

@@ -21,7 +21,7 @@ SOURCE_LOCATORS = {"inferencex": "config_key", "cookbook": "url"}
 RECIPE_SCHEMA = Path(__file__).resolve().parents[1] / "recipes/serving.schema.json"
 # Shared by every recipe and fixed by maintainers in RECIPE_SCHEMA's $defs; plan copies them in.
 TEMPLATE_TOP = ("client", "trace")
-# The framework's CI image from .github/workflows/ci.yaml; plan pins it and copies it in.
+# The framework's CI image from stack.json; plan pins it and copies it in.
 CI_TOP = ("image",)
 # Identity owned by agentx.yaml; plan copies it in.
 AGENTX_TOP = ("model", "target", "framework", "weights", "hardware")
@@ -179,7 +179,7 @@ def check_recipe(recipe: dict, definition: dict) -> None:
     leaked = [key for key in TEMPLATE_TOP if key in recipe]
     _expect(not leaked, f"recipe contains fields fixed in {RECIPE_SCHEMA.name}: {leaked}")
     leaked = [key for key in CI_TOP if key in recipe]
-    _expect(not leaked, f"recipe contains fields plan reads from {ci_image.CI_WORKFLOW.name}: {leaked}")
+    _expect(not leaked, f"recipe contains fields plan reads from {ci_image.STACK.name}: {leaked}")
     leaked = [key for key in AGENTX_TOP if key in recipe]
     _expect(not leaked, f"recipe contains agentx.yaml-owned fields: {leaked}")
     leaked = [key for key in RUN_TOP if key in recipe]

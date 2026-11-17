@@ -429,8 +429,8 @@ A replayed graph pays none of the host cost; eager calls (an uncaptured many-tok
   reads), the signature, constexprs and attributes, the target, the options and the cache-invalidating environment
   (S10). Another Triton or an edited source compiles anew; a stale binary comes from a stage override (§1) or from a
   run that never imported your file ([measured_a_different_build.md](../pitfalls/measured_a_different_build.md)).
-- **Which Triton ran.** `report.json` → `platform` names Triton, torch, ROCm and FlyDSL. CI requires Triton 3.8.0
-  (S36). Validated on a Triton outside a schema's `kernel.requires`, the schema reports `no_matching_toolchain`
+- **Which Triton ran.** `report.json` → `platform` names Triton, torch, ROCm and FlyDSL. CI runs its image's Triton
+  (3.8.0) and fails if installing aiter replaces it (S36). Validated on a Triton outside a schema's `kernel.requires`, the schema reports `no_matching_toolchain`
   (S42); at 43e112e, 135 of the 154 Triton schemas required `>=3.8` (261 of 280 on main), and the other 19 (the 15
   N = 3072 fp8 GEMMs, the two plain bf16 GEMMs and the two RMSNorms) run on whatever Triton is installed *(field, E2)*.
 - **Same version, another build.** The image's Triton 3.8.0 is built from another tree than the PyPI
@@ -438,12 +438,12 @@ A replayed graph pays none of the host cost; eager calls (an uncaptured many-tok
   the image and at `:1379` in the wheel and in the v3.8.0 tag *(field, E12)*: confirm compile-only findings on the
   image.
 - **The baseline's aiter.** Most `aklr/ops` baselines call aiter (the bf16 GEMM's is its tuned `gemm_a16w16`, S46). CI
-  installs ROCm/aiter at `AKLR_BASELINE_AITER` (dbd8bf5 at 43e112e and on main) over the image's own aiter (e7d2453f2,
+  installs ROCm/aiter at `aiter` in `stack.json` (dbd8bf5 at 43e112e and on main) over the image's own aiter (e7d2453f2,
   read from the image's build in [measured_a_different_build.md](../pitfalls/measured_a_different_build.md)) and checks
   that the installed `amd-aiter` version carries `+g` and the commit's first 7 characters (S36); `report.json` does not
   record aiter, so print `importlib.metadata.version("amd-aiter")` beside your results. A run on the image's aiter times
   another baseline. Install the pinned one as CI does (without the variable, aiter's setup swaps in its Triton, S36):
-  `AITER_USE_SYSTEM_TRITON=1 pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@<AKLR_BASELINE_AITER>"`.
+  `AITER_USE_SYSTEM_TRITON=1 pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@<aiter in stack.json>"`.
 - **An unchanged schema's ratio moves between runs of the same sources**: over three local `validate` runs on one
   MI355X, 2.8 % for the fp8 GEMM f3970dec at m = 16 and 0.1 % for the Qwen2 router c3889614 at 256 tokens
   *(field, E10)*; a ratio at one Point also ranks the baseline there ([tuning.md](tuning.md) §1). `validate --base`
@@ -565,7 +565,7 @@ whose bench timed calls with Kineto (AKLR's rocprofiler-sdk collector since #33)
 - S33 aklr/core/utils/testing.py:70 `flush_l2_cache` reads a 1 GiB buffer: "written lines would stay dirty for the next kernel" (:71)
 - S34 aklr/core/validation/command.py:25 `DEFAULT_REPORT_DIR = Path("aklr_validation")`, `--out` at :40
 - S35 aklr/core/validation/stages/_bench/_evaluation/_request.py:131 the steps `first_capture/0-2`, `numeric/0-3`, `large_magnitude/0`, `determinism/0`, `post_timing/*` and their codes (:34-40); a finding's detail starts with the step label (_reference.py:174); a mismatch's measures (aklr/core/contract/semantics/_compare.py:30-36)
-- S36 .github/workflows/ci.yaml:250 `TRITON_CACHE_DIR` under `$RUNNER_TEMP`, emptied at every job (:245); the baseline aiter installed over the image's with `AITER_USE_SYSTEM_TRITON=1`, "Keep the image's Triton: otherwise aiter's setup.py swaps in the one it pins" (:291-292); `triton==3.8.0` required (:296); the `amd-aiter` version must contain `+g<commit[:7]>` (:307)
+- S36 .github/workflows/ci.yaml:260 `TRITON_CACHE_DIR` under `$RUNNER_TEMP`, emptied at every job (:255); the baseline aiter installed over the image's with `AITER_USE_SYSTEM_TRITON=1`, "Keep the image's Triton: otherwise aiter's setup.py swaps in the one it pins" (:301-303); the job fails if the image's Triton changed (:302, :308); the `amd-aiter` version must contain `+g<commit[:7]>` (:319)
 - S37 aklr/core/validation/stages/_bench/_evaluation/_candidate.py:85 a candidate task that dies is `candidate_crash` with its last line, such as "runner … exited with code -11"
 - S38 aklr/plugins/sglang/layers/dsa_backend/impls/triton/dsa_sparse_mla_decode_n_heads64_kv_dim576_topk2048/2ee56a6dbabc48a6.json#kernel.py:309 `if TILES > 1:` allocates `cache0`/`cache1`, the other branches `cache_shared` (:316-325); `TILES` at :285; 256 keys per tile (`key_offsets = gl.arange(0, 256, …)` at :308, the tile's indices at :337); the 64-head path reads `cache_shared` at :376; the host's split rule at :585
 - S39 aklr/plugins/sglang/models/minimax_m2/impls/triton/minimax_m2_mxfp4_moe_shuffled_16x16_model_dim3072_n_routed256_n_experts256_inter_dim512/655723f593921b08.json#kernel.py:1301 `gate_fold`; the scheduler attribute at :1306; the gate-up launch's constexprs and options at :1331-1336
@@ -575,7 +575,7 @@ whose bench timed calls with Kineto (AKLR's rocprofiler-sdk collector since #33)
 - S43 triton-lang/triton@c01b677:third_party/amd/backend/compiler.py:181 `parse_options` keeps only the keys that are `HIPOptions` fields
 - S44 triton-lang/triton@c01b677:python/triton/runtime/jit.py:715 at the first compile of a launch, a keyword that is neither an option nor a parameter raises `KeyError("Keyword argument %s was specified but unrecognised")`
 - S45 triton-lang/triton@c01b677:python/triton/experimental/gluon/language/amd/cdna4/async_copy.py:91 `buffer_load_to_shared`: "size per thread * bits per element must be 128 or 32" for the offsets layout, or lowering to LLVM fails
-- S46 aklr/ops/gemm/baseline.py:16 `gemm_baseline`: "aiter's tuned 16-bit gemm" (`from aiter.tuned_gemm import gemm_a16w16`, :17); the RMSNorm baselines call `aiter.ops.rmsnorm` (aklr/ops/rms_norm/baseline.py:12, :24); `AKLR_BASELINE_AITER: dbd8bf5…` at .github/workflows/ci.yaml:7
+- S46 aklr/ops/gemm/baseline.py:16 `gemm_baseline`: "aiter's tuned 16-bit gemm" (`from aiter.tuned_gemm import gemm_a16w16`, :17); the RMSNorm baselines call `aiter.ops.rmsnorm` (aklr/ops/rms_norm/baseline.py:12, :24); `"aiter": "dbd8bf5…"` at stack.json:4
 - S47 triton-lang/triton@c01b677:python/src/ir.cc:1982 a failed pass-manager run throws `PassManager::run failed`; every run enables MLIR's crash reproducer, printed to the console without `TRITON_REPRODUCER_PATH` (:1956) and written to that path with it (:1953), which turns a crash inside a pass into a failed run
 - S48 triton-lang/triton@c01b677:third_party/amd/lib/TritonAMDGPUToLLVM/DotOpToLLVM/MFMA.cpp:273 "no matching matrix core intrinsic" when no instruction has the requested shape and types
 - S49 triton-lang/triton@c01b677:lib/Conversion/TritonGPUToLLVM/ScanOpToLLVM.cpp:474 "TODO: unsupported scan layout"

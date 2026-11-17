@@ -1,13 +1,6 @@
 name: AKLR-CI
 
 env:
-  # Shared by all GPU jobs; container.image cannot reference the env context.
-  # AgentX plan also reads it and pins its current digest as the sglang runs' server image.
-  AKLR_CI_IMAGE: &ci_image lmsysorg/sglang:v0.5.22-rocm10-mi35x
-  # AgentX plan pins its current digest as the vllm runs' server image; no job here runs in it yet.
-  AKLR_VLLM_CI_IMAGE: vllm/vllm-openai-rocm:v0.33.0-rocm100
-  # The AITER the bench times AKLR's kernels against: ROCm/aiter at this commit, installed over the image's.
-  AKLR_BASELINE_AITER: dbd8bf5bd624120197a7a26780a8c72201824f0f
   PYTHONDONTWRITEBYTECODE: '1'
   # The publish-measurement bot's rolling PR: sent and opened by the bot, from aklr-perf/main of
   # this repository. perf-guard.yaml spells the same expression.
@@ -17,7 +10,7 @@ env:
     github.head_ref == 'aklr-perf/main' && github.event.pull_request.head.repo.full_name == github.repository }}
   # The one "still current" rule, run by main's own code: a measurement taken at commit
   # argv[1] stands iff the working tree differs from it only in what the bench
-  # re-measures nothing for (all but aklr/core's code, ValidationScope.path_kind).
+  # re-measures nothing for (all but aklr/core's code and stack.json, ValidationScope.path_kind).
   # Callers keep scratch files under $RUNNER_TEMP: an untracked file counts as a change.
   AKLR_MEASUREMENT_CURRENT: |
     import sys
@@ -75,6 +68,8 @@ jobs:
       has_bench_paths: ${{ steps.audit.outputs.has_bench_paths }}
       validation_base: ${{ steps.lint.outputs.validation_base }}
       measured_by_bot: ${{ steps.lint.outputs.measured_by_bot }}
+      sglang_image: ${{ steps.stack.outputs.sglang_image }}
+      aiter: ${{ steps.stack.outputs.aiter }}
     steps:
       - name: Report whether GPU jobs run
         run: |
@@ -88,6 +83,15 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # The GPU jobs' image and the baseline AITER (ROCm/aiter at this commit, installed over the
+      # image's); container.image reads them from this job's outputs.
+      - name: Read stack.json
+        id: stack
+        run: |
+          sglang_image=$(jq -er '.sglang_image | select(test("^[A-Za-z0-9._/:@-]+$"))' stack.json)
+          aiter=$(jq -er '.aiter | select(test("^[0-9a-f]{40}$"))' stack.json)
+          { echo "sglang_image=$sglang_image"; echo "aiter=$aiter"; } >> "$GITHUB_OUTPUT"
+          echo "🧱 Stack: $sglang_image, ROCm/aiter@$aiter" | tee -a "$GITHUB_STEP_SUMMARY"
       - &setup_python
         name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -212,12 +216,12 @@ jobs:
       operation: prepare
 
   unittest-aklr:
-    needs: prepare-gpu
+    needs: [code-lint, prepare-gpu]
     # "Re-run failed jobs" reuses an earlier attempt's node, which release-gpu already freed.
     if: needs.prepare-gpu.outputs.attempt == github.run_attempt
     runs-on: ${{ needs.prepare-gpu.outputs.runner_label }}
     container:
-      image: *ci_image
+      image: ${{ needs.code-lint.outputs.sglang_image }}
       options: &gpu_container_options >-
         --device=/dev/kfd --device=/dev/dri --ipc=host
         --security-opt=seccomp=unconfined --ulimit memlock=-1:-1
@@ -231,6 +235,8 @@ jobs:
           persist-credentials: false
       - &setup_aklr_step
         name: Set up AKLR
+        env:
+          AKLR_BASELINE_AITER: ${{ needs.code-lint.outputs.aiter }}
         run: | # zizmor: ignore[github-env] fixed local workspace paths are exported
           set -euo pipefail
           setup_phase='prepare workspace'
@@ -293,11 +299,13 @@ jobs:
           # It also pins the FlyDSL that AKLR's kernels are built with.
           echo "📥 Install the baseline AITER, ROCm/aiter@$AKLR_BASELINE_AITER, over the image's."
           # Keep the image's Triton: otherwise aiter's setup.py swaps in the one it pins.
+          image_triton=$(python3 -c 'import torch, triton; print(triton.__version__)')
           AITER_USE_SYSTEM_TRITON=1 python3 -m pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@$AKLR_BASELINE_AITER"
           echo '📥 Install this checkout in editable mode.'
           python3 -m pip install -e . -v
-          echo '🔎 Verify Triton 3.8.0, AKLR from this checkout and the baseline AITER.'
-          python3 -c "import torch, triton, sys; v = triton.__version__.split('+')[0]; print(f'triton {triton.__version__}'); sys.exit(0 if v == '3.8.0' else f'triton==3.8.0 is required, found {triton.__version__}')"
+          echo "🔎 Verify the image's Triton $image_triton, AKLR from this checkout and the baseline AITER."
+          triton=$(python3 -c 'import torch, triton; print(triton.__version__)')
+          [[ $triton == "$image_triton" ]] || { echo "::error::The image's Triton $image_triton became $triton"; exit 1; }
           python3 - <<'PY'
           import os
           from pathlib import Path
@@ -387,7 +395,7 @@ jobs:
     if: needs.code-lint.outputs.has_bench_paths == 'true' && needs.prepare-gpu.outputs.attempt == github.run_attempt
     runs-on: ${{ needs.prepare-gpu.outputs.runner_label }}
     container:
-      image: *ci_image
+      image: ${{ needs.code-lint.outputs.sglang_image }}
       options: *gpu_container_options
     # A full validation (no base: a force push, a replaced run, a dispatch) benches every schema:
     # 247 schemas need about 225 minutes on 8 MI355X (170 of 257 batches ran in 150).
@@ -546,7 +554,7 @@ jobs:
   # the subject, otherwise main's push run fails with PERF_EDITED.
   # No job concurrency: main push runs already share the workflow group.
   publish-measurement:
-    needs: [validation]
+    needs: [code-lint, validation]
     if: >-
       !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
       vars.AKLR_BOT_LOGIN != '' && (needs.validation.result == 'success' || needs.validation.result == 'failure')
@@ -595,6 +603,7 @@ jobs:
         env:
           GH_TOKEN: ${{ steps.token.outputs.token }}
           BOT_LOGIN: ${{ vars.AKLR_BOT_LOGIN }}
+          SGLANG_IMAGE: ${{ needs.code-lint.outputs.sglang_image }}
         run: |
           schemas=$RUNNER_TEMP/validation-report/schemas
           if [[ ! -d $schemas ]]; then
@@ -667,7 +676,7 @@ jobs:
           git config user.name "$BOT_LOGIN"
           git config user.email "$bot_id+$BOT_LOGIN@users.noreply.github.com"
           {
-            echo "perf: measurements on $hardware (run $GITHUB_RUN_ID, image $AKLR_CI_IMAGE)"
+            echo "perf: measurements on $hardware (run $GITHUB_RUN_ID, image $SGLANG_IMAGE)"
             echo
             echo "$published"
             echo

@@ -241,7 +241,7 @@ report:
 | `...frameworks.<framework>.advisory_env` | 框架级补充环境，覆盖以上各级同名值。不要在这里设置 AKLR plugin 开关，执行器会按模式设置。冲突规则相同 |
 | `report.repo_url` | 报告中 AKLR commit 链接所用的仓库 URL（历史链接暂时隐藏）；不是 Pages 站点地址 |
 
-`weights` 和 `precision` 由同一模型的各个 target 和框架共享。服务镜像由 plan 从 `.github/workflows/ci.yaml` 读取对应框架的 CI 镜像，见 3.2 节。
+`weights` 和 `precision` 由同一模型的各个 target 和框架共享。服务镜像由 plan 从 [`stack.json`](../../stack.json) 读取对应框架的 CI 镜像，见 3.2 节。
 
 ### 3.2 新增模型
 

@@ -244,7 +244,7 @@ report:
 | `...frameworks.<framework>.advisory_env` | Framework-level environment overriding the levels above. Do not set the AKLR plugin switch here; the executor sets it per mode. The same conflict rule applies |
 | `report.repo_url` | Repository URL used for AKLR commit links (history links are temporarily hidden); not the Pages site URL |
 
-Targets and frameworks within a model share its `weights` and `precision`. Plan takes the server image from the framework's CI image in `.github/workflows/ci.yaml`; see section 3.2.
+Targets and frameworks within a model share its `weights` and `precision`. Plan takes the server image from the framework's CI image in [`stack.json`](../../stack.json); see section 3.2.
 
 ### 3.2 Add a Model
 

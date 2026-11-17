@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: MIT
-"""Execution images come from AKLR's CI images in ci.yaml; runs without network or GPU access."""
+"""Execution images come from AKLR's CI images in stack.json; runs without network or GPU access."""
 
 from __future__ import annotations
 
 import importlib
+import json
 import subprocess
 import sys
 import tempfile
@@ -31,16 +32,16 @@ class CiImageTest(unittest.TestCase):
 
     def test_ci_images_must_be_tags(self):
         with tempfile.TemporaryDirectory() as tmp:
-            workflow = Path(tmp) / "ci.yaml"
+            stack = Path(tmp) / "stack.json"
             sglang, vllm = IMAGES["sglang"], IMAGES["vllm"]
-            workflow.write_text(f"env:\n  AKLR_CI_IMAGE: &ci_image {sglang}\n  AKLR_VLLM_CI_IMAGE: {vllm}\n")
-            self.assertEqual(ci.ci_images(workflow), IMAGES)
-            workflow.write_text(f"env:\n  AKLR_CI_IMAGE: {sglang}\n  AKLR_VLLM_CI_IMAGE: {vllm}@{OLD}\n")
-            with self.assertRaisesRegex(ValueError, "AKLR_VLLM_CI_IMAGE must be an image tag"):
-                ci.ci_images(workflow)
-            workflow.write_text(f"env:\n  AKLR_CI_IMAGE: {sglang}\n")
-            with self.assertRaisesRegex(ValueError, "AKLR_VLLM_CI_IMAGE must be an image tag"):
-                ci.ci_images(workflow)
+            stack.write_text(json.dumps({"sglang_image": sglang, "vllm_image": vllm}))
+            self.assertEqual(ci.ci_images(stack), IMAGES)
+            stack.write_text(json.dumps({"sglang_image": sglang, "vllm_image": f"{vllm}@{OLD}"}))
+            with self.assertRaisesRegex(ValueError, "vllm_image must be an image tag"):
+                ci.ci_images(stack)
+            stack.write_text(json.dumps({"sglang_image": sglang}))
+            with self.assertRaisesRegex(ValueError, "vllm_image must be an image tag"):
+                ci.ci_images(stack)
 
     def test_digest_comes_from_the_top_level_manifest(self):
         tag = IMAGES["sglang"]

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (C) 2025-2026, Advanced Micro Devices, Inc. All rights reserved.
 
-"""Which changed paths are schema data, and which are aklr/core code."""
+"""Which changed paths are schema data, and which re-bench every schema."""
 
 import pytest
 
@@ -22,6 +22,7 @@ _UUID = "0123456789abcdef"
         ("aklr/ops/gemm/impls/triton/fp8/fp8_gfx950_m1.json", "other"),
         ("tests/plugins/sglang/test_qwen2_moe_contract.py", "other"),
         ("aklr/core/validation/stages/validation_scope.py", "core"),
+        ("stack.json", "core"),
         ("aklr/core/README.md", "other"),
     ],
 )

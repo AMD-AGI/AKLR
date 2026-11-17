@@ -8,8 +8,8 @@ root=$(pwd -P)
 git config --global --add safe.directory '*'
 mkdir -p "$cache"
 cache=$(cd "$cache" && pwd -P)
-AKLR_BASELINE_AITER=$(sed -n 's/^  AKLR_BASELINE_AITER: *//p' .github/workflows/ci.yaml)
-[[ $AKLR_BASELINE_AITER =~ ^[0-9a-f]{40}$ ]] || { echo "no AKLR_BASELINE_AITER sha in ci.yaml: '$AKLR_BASELINE_AITER'" >&2; exit 1; }
+AKLR_BASELINE_AITER=$(python3 -c 'import json; print(json.load(open("stack.json"))["aiter"])')
+[[ $AKLR_BASELINE_AITER =~ ^[0-9a-f]{40}$ ]] || { echo "no aiter sha in stack.json: '$AKLR_BASELINE_AITER'" >&2; exit 1; }
 export AKLR_BASELINE_AITER
 
 GPU_ARCHS=$(python3 - <<'PY'
@@ -24,6 +24,8 @@ export GPU_ARCHS
 export AITER_JIT_DIR="$cache/aiter-jit" FLYDSL_RUNTIME_CACHE_DIR="$cache/flydsl-runtime" \
   FLYDSL_AUTOTUNE_CACHE_DIR="$cache/flydsl-autotune" TRITON_CACHE_DIR="$cache/triton" \
   AKLR_KERNEL_CACHE_DIR="$cache/aklr-kernels" PIP_CACHE_DIR="$cache/pip"
+IMAGE_TRITON=$(python3 -c 'import torch, triton; print(triton.__version__)')
+export IMAGE_TRITON
 AITER_USE_SYSTEM_TRITON=1 python3 -m pip install "amd-aiter @ git+https://github.com/ROCm/aiter.git@$AKLR_BASELINE_AITER"
 python3 -m pip install -e .
 python3 - <<'PY'
@@ -36,8 +38,8 @@ import aiter
 import aklr
 import triton
 
-if triton.__version__.split('+')[0] != '3.8.0':
-    raise RuntimeError(f'triton==3.8.0 is required, found {triton.__version__}')
+if triton.__version__ != os.environ['IMAGE_TRITON']:
+    raise RuntimeError(f"the image's Triton {os.environ['IMAGE_TRITON']} became {triton.__version__}")
 root = Path.cwd().resolve()
 assert Path(aklr.__file__).resolve().is_relative_to(root), aklr.__file__
 installed = Path(distribution("amd-aiter").locate_file("aiter/__init__.py")).resolve()

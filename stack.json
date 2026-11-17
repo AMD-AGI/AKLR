@@ -1,0 +1,6 @@
+{
+  "sglang_image": "lmsysorg/sglang:v0.5.22-rocm10-mi35x",
+  "vllm_image": "vllm/vllm-openai-rocm:v0.33.0-rocm100",
+  "pytorch_image": "rocm/pytorch:rocm10.0_ubuntu24.04_py3.12_pytorch_release_2.11.0",
+  "aiter": "dbd8bf5bd624120197a7a26780a8c72201824f0f"
+}

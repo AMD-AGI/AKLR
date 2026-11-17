@@ -207,7 +207,7 @@ dbd8bf5bd that the schema carries, with a 39-line `kernel.py` that chooses the t
 
 Counter-signals:
 - **N 3584 keeps aiter's HGEMM as of dbd8bf5bd.** It was measured importing that code from aiter
-  0.1.21.dev66+gdbd8bf5bd, the commit CI pins as `AKLR_BASELINE_AITER` (`.github/workflows/ci.yaml`); the schema now
+  0.1.21.dev66+gdbd8bf5bd, the commit CI pins as `aiter` in `stack.json`; the schema now
   carries the copies, so a later aiter changes neither its import nor its kernel, and a later fix to aiter's HGEMM
   reaches it only through a new copy.
 - **The baseline is aiter's own dispatch.** Its tuned `gemm_a16w16` (`gemm_baseline`) picks its own kernel at these
@@ -225,7 +225,7 @@ Counter-signals:
 AKLR validate (measurement profile 19) on one MI355X at main 0e02a81, not CI: N 7168 × K 512 1.092–1.353 over aiter,
 highest at m 64 *(field, E12)*; N 3584 × K 512 1.181–1.303, highest at m 64, measured on the file that imported the
 HGEMM from aiter *(field, E13)*. Under stress every listed Point gave the output of the call alone *(field, E16)*.
-Reproduce on an MI355X with aiter at `AKLR_BASELINE_AITER` installed, with `python -m aklr validate` on
+Reproduce on an MI355X with aiter at `aiter` in `stack.json` installed, with `python -m aklr validate` on
 `aklr/ops/gemm/impls/flydsl/gemm_n7168_k512/d0d6e9e5c93fbd88.json` and
 `aklr/ops/gemm/impls/flydsl/gemm_n3584_k512/dacbceacd8d1ae5f.json` (§ Reproduce). To roll back, delete the file: its
 Points are then served by no file, and the caller runs its own path.
