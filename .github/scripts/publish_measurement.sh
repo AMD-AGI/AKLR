@@ -84,8 +84,12 @@ bot_id=$(gh api "users/$BOT_LOGIN" --jq .id)
 git config user.name "$BOT_LOGIN"
 git config user.email "$bot_id+$BOT_LOGIN@users.noreply.github.com"
 {
-  echo "perf: measurements on $hardware (run $GITHUB_RUN_ID, images $AITER_IMAGE for aklr/ops," \
-    "$SGLANG_IMAGE for aklr/plugins, $VLLM_IMAGE for aklr/plugins/vllm)"
+  # The subject is the bot PR's title, at most 256 characters: the images, pinned by digest, go in the body.
+  echo "perf: measurements on $hardware (run $GITHUB_RUN_ID)"
+  echo
+  echo "aklr/ops: $AITER_IMAGE"
+  echo "aklr/plugins: $SGLANG_IMAGE"
+  echo "aklr/plugins/vllm: $VLLM_IMAGE"
   echo
   echo "$published"
   echo
