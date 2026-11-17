@@ -29,5 +29,5 @@ def _compute_lm_head(self, hidden_states, lm_head, embedding_bias=None):
         or self.rl_on_policy_target is not None
     ):
         return FallbackReason.OUT_OF_CONTRACT
-    weight = lm_head.weight
-    return gemm(hidden_states.to(weight.dtype), weight)
+    # hidden states of another dtype than the head's go back to sglang, which converts them: none is copied first
+    return gemm(hidden_states, lm_head.weight)
