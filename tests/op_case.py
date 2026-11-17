@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import base64
 import functools
-import importlib.util
 import subprocess
 import tempfile
 from collections.abc import Callable, Mapping
@@ -141,7 +140,6 @@ _SMALL_POINTS: tuple[PointSpec, ...] = tuple(
 _GFX950_CONTRACT_IDS = (
     ops_cases.GFX950_CONTRACT_IDS | sglang_cases.GFX950_CONTRACT_IDS | vllm_cases.GFX950_CONTRACT_IDS
 )
-_MODEL_IMAGE_BASELINES = sglang_cases.MODEL_IMAGE_BASELINES
 
 
 class OpCase:
@@ -179,18 +177,6 @@ class OpCase:
     def needs_gfx950(self) -> bool:
         """Whether the backend runs the Point only on gfx950."""
         return self.contract_id in _GFX950_CONTRACT_IDS
-
-    @property
-    def missing_baseline_module(self) -> str | None:
-        """The module of a model image's sglang the baseline imports, if the installed sglang lacks
-        it; else ``None``."""
-        module = _MODEL_IMAGE_BASELINES.get(self.contract_id)
-        if module is None:
-            return None
-        try:
-            return None if importlib.util.find_spec(module) else module
-        except ModuleNotFoundError:
-            return module
 
     def schema(
         self,
