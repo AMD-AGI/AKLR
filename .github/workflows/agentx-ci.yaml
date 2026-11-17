@@ -84,13 +84,15 @@ jobs:
           python-version: '3.12'
       - name: Install PyYAML
         run: python -m pip install pyyaml==6.0.3
-      - name: Read the PR description's AgentX models
-        # Read it now rather than from the event, so a re-run after editing the description uses the edit.
+      - name: Read the PR comments that may authorize AgentX
+        # Read them now rather than from the event, so a re-run after a reviewer's comment uses it.
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.body // ""' > "$RUNNER_TEMP/pr-body.md"
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" \
+            --jq '.[] | {user: .user.login, body: (.body // ""), url: .html_url}' | jq -s . > "$RUNNER_TEMP/pr-comments.json"
       - name: Plan selected model/target/framework runs from recipe files
         id: resolve
         env:
@@ -102,13 +104,16 @@ jobs:
           DURATION_S: ${{ github.event_name == 'pull_request' && '600' || inputs.duration_s }}
           # Verify the recipe duration without a smoke override, preserving baseline eligibility.
           REQUIRE_RECIPE_DURATION: ${{ github.event_name == 'schedule' && '3600' || '' }}
-          PR_BODY: ${{ github.event_name == 'pull_request' && 'pr-body.md' || '' }}
+          PR_COMMENTS: ${{ github.event_name == 'pull_request' && 'pr-comments.json' || '' }}
+          # A manual run needs an allowlisted reviewer (who clicked Run or Re-run) and main.
+          MANUAL_ACTOR: ${{ github.event_name == 'workflow_dispatch' && github.triggering_actor || '' }}
         run: |
           python3 -m agentx_bench plan --models "$MODELS" --targets "$TARGETS" --frameworks "$FRAMEWORKS" \
             ${RUNNER_LABEL:+--runner-label "$RUNNER_LABEL"} \
             ${POINTS:+--points "$POINTS"} ${DURATION_S:+--duration "$DURATION_S"} \
             ${REQUIRE_RECIPE_DURATION:+--require-recipe-duration "$REQUIRE_RECIPE_DURATION"} \
-            ${PR_BODY:+--pr-body "$RUNNER_TEMP/$PR_BODY"} \
+            ${PR_COMMENTS:+--pr-comments "$RUNNER_TEMP/$PR_COMMENTS"} \
+            ${MANUAL_ACTOR:+--manual-actor "$MANUAL_ACTOR" --manual-ref "$GITHUB_REF"} \
             --out "$RUNNER_TEMP/plan"
       - uses: actions/upload-artifact@v4
         if: steps.resolve.outputs.skipped != 'true'

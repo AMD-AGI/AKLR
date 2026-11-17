@@ -9,11 +9,12 @@ import os
 import sys
 import uuid
 from pathlib import Path
+from typing import NoReturn
 
 from agentx_ci import ci_image
 from agentx_ci import serving_config as sc
 from agentx_ci.model_config import ConfigError, model_config, select_models, select_runs
-from agentx_ci.pr_scope import declared_models
+from agentx_ci.pr_scope import ALLOWLIST_FILE, COMMAND, authorized_request, load_reviewers, requested_models
 from agentx_ci.utils import (
     DEFAULT_CONFIG,
     SCHEMA,
@@ -38,41 +39,80 @@ def load_recipe(config: str | Path, definition: dict, images: dict[str, str] | N
     return sc.build_run(read_json(path), definition, images[framework])
 
 
-def warn(message: str) -> None:
-    """Annotate the GitHub run so a skipped or narrowed AgentX scope is visible on a green check."""
+def annotate(message: str, level: str = "warning") -> None:
+    """Annotate the GitHub run so a skipped, narrowed or refused AgentX scope is visible on its check."""
     if os.environ.get("GITHUB_ACTIONS") == "true":
         escaped = message.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-        print(f"::warning title=AgentX scope::{escaped}", flush=True)
+        print(f"::{level} title=AgentX scope::{escaped}", flush=True)
+
+
+def summarize(note: str) -> None:
+    print(note)
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+            summary.write(note + "\n")
+
+
+def refuse(message: str) -> NoReturn:
+    annotate(message, "error")
+    summarize(message)
+    raise ConfigError(message)
+
+
+def check_manual_trigger(args: argparse.Namespace) -> None:
+    """Let only an allowlisted reviewer start a manual run, and only from main."""
+    if args.manual_actor is None:
+        return
+    allowlist = load_reviewers(args.allowlist)
+    if args.manual_actor.lower() not in {login.lower() for login in allowlist}:
+        reviewers = ", ".join(f"@{login}" for login in allowlist)
+        refuse(
+            f"@{args.manual_actor} may not start AgentX manually. Ask one of {reviewers} to run it, "
+            "or to add you to benchmarks/agentx/allowlist.yaml."
+        )
+    if args.manual_ref != "refs/heads/main":
+        refuse(
+            f"Manual AgentX runs use main only, not {args.manual_ref}; choose main under `Use workflow from`."
+        )
 
 
 def apply_pr_scope(args: argparse.Namespace) -> tuple[str | None, bool]:
-    """Narrow --models to the PR description's `AgentX:` line.
+    """Narrow --models to the latest `/agentx-mi355x` request of an allowlisted reviewer on the PR.
 
-    Return a note for the job summary and whether to skip AgentX, as when the line selects no model.
+    Return a note for the job summary and whether to skip AgentX, as when the request selects no model.
+    Raise ConfigError when no allowlisted reviewer has requested AgentX on the PR.
     """
-    if args.pr_body is None:
+    if args.pr_comments is None:
         return None, False
     if args.models != "all":
-        raise ConfigError("--pr-body cannot be combined with --models")
-    declared, unmatched = declared_models(args.pr_body.read_text(), select_models(load_config(args.config)))
+        raise ConfigError("--pr-comments cannot be combined with --models")
+    allowlist = load_reviewers(args.allowlist)
+    request = authorized_request(json.loads(args.pr_comments.read_text()), allowlist)
+    if request is None:
+        reviewers = ", ".join(f"@{login}" for login in allowlist)
+        refuse(
+            f"No AgentX reviewer has authorized this PR. Ask one of {reviewers} to review it and comment "
+            f"`{COMMAND} <model ids or all>` on it, then re-run this workflow."
+        )
+    declared, unmatched = requested_models(request["body"], select_models(load_config(args.config)))
+    source = f"@{request['user']}'s `{COMMAND}` comment" + (
+        f" ({request['url']})" if request.get("url") else ""
+    )
     missed = (
         f" Not an enabled model id, skipped: {', '.join(f'`{name}`' for name in unmatched)}."
         if unmatched
         else ""
     )
     if not declared:
-        note = f"The PR description selects no model on an `AgentX:` line; skipping AgentX.{missed}"
-        warn(note)
+        note = f"{source} selects no model; skipping AgentX.{missed}"
+        annotate(note)
         return note, True
     if unmatched:
-        warn(missed.strip())
+        annotate(missed.strip())
     args.models = declared
     if declared == "all":
-        return "The PR description declares `AgentX: all`; running every enabled model.", False
-    return (
-        f"The PR description's `AgentX:` line selects {declared}; skipping the other models.{missed}",
-        False,
-    )
+        return f"{source} requests `all`; running every enabled model.", False
+    return f"{source} selects {declared}; skipping the other models.{missed}", False
 
 
 def write_outputs(ready: list[dict], skipped: bool = False) -> None:
@@ -180,18 +220,33 @@ def main(argv: list[str] | None = None) -> int:
         help="Require selected points' recipe DURATION without overriding it",
     )
     parser.add_argument(
-        "--pr-body",
+        "--pr-comments",
         type=Path,
-        help="PR description file; its `AgentX:` line (model ids or all) selects the models, or skips AgentX",
+        help=f"JSON list of PR comments ({{user, body, url}}, oldest first); the latest allowlisted reviewer's "
+        f"`{COMMAND} <model ids or all>` selects the models, and without one the plan fails",
+    )
+    parser.add_argument(
+        "--allowlist",
+        type=Path,
+        default=ALLOWLIST_FILE,
+        help="YAML file whose `reviewers` list holds the GitHub logins allowed to authorize a run",
+    )
+    parser.add_argument(
+        "--manual-actor",
+        help="GitHub login that started a manual run; the plan fails unless it is an allowlisted reviewer",
+    )
+    parser.add_argument(
+        "--manual-ref",
+        help="Git ref of a manual run (with --manual-actor); the plan fails unless it is refs/heads/main",
     )
     args = parser.parse_args(argv)
+    if (args.manual_actor is None) != (args.manual_ref is None):
+        parser.error("--manual-actor and --manual-ref go together")
     try:
+        check_manual_trigger(args)
         note, skip = apply_pr_scope(args)
         if note:
-            print(note)
-            if os.environ.get("GITHUB_STEP_SUMMARY"):
-                with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-                    summary.write(note + "\n")
+            summarize(note)
         if skip:
             write_outputs([], skipped=True)
             return 0

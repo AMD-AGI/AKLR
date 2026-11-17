@@ -22,13 +22,13 @@ flowchart TD
 
 ### 1.1 使用 Github runner 触发
 
-打开 [AKLR-agentx-ci workflow](https://github.com/AMD-AGI/AKLR/actions/workflows/agentx-ci.yaml)，点击 **Run workflow**，选择 AKLR 分支、填写下面的参数，再点击表单中的 **Run workflow**。runner 的注册与准备见第 4 节。
+打开 [AKLR-agentx-ci workflow](https://github.com/AMD-AGI/AKLR/actions/workflows/agentx-ci.yaml)，点击 **Run workflow**，只有 `allowlist.yaml` 中的 reviewer 可以手动运行或 re-run，且只能选择 `main`。填写下面的参数，再点击表单中的 **Run workflow**。runner 的注册与准备见第 4 节。
 
 表单共有 **6 个 workflow 输入项**，另有 GitHub 提供的 **Branch / Use workflow from** 选择器，合计 7 项设置；6 个输入项均可保留默认值。
 
 | 页面设置 / 输入名 | 默认值 | 含义 |
 | --- | --- | --- |
-| Branch / Use workflow from | 默认分支，通常为 `main` | 选择本次使用的 **AKLR** workflow、源码、配置和 recipe 版本 |
+| Branch / Use workflow from | 默认分支 `main` | 必须为 `main`；选择其他分支时 plan 报错 |
 | `models` | `all` | 选择已启用的模型 ID；多个用英文逗号分隔，例如 `glm52-fp4`；`all` 选择全部已启用模型 |
 | `targets` | `all` | 在所选模型中选择已启用的 target ID，例如 `mi355x`；多个用英文逗号分隔，所选运行按计划顺序串行执行 |
 | `frameworks` | `all` | 在所选 target 中选择已启用的服务框架：`sglang`、`vllm`，多个用英文逗号分隔 |
@@ -42,15 +42,13 @@ flowchart TD
 
 | 触发方式 | 模型 / target 范围 | 测量点 | AKLR off/on 每次测量时长 | 发布 Pages |
 | --- | --- | --- | --- | --- |
-| PR 标签 `ci:agentx-mi355x` | PR 描述 `AgentX:` 行所列模型中，绑定 `agentx-mi355x` 的 target 下已启用的框架 | recipe 中的 Pareto 点 | 600 秒 | 否 |
+| PR 标签 `ci:agentx-mi355x` | 白名单 reviewer 的 `/agentx-mi355x` 评论所列模型中，绑定 `agentx-mi355x` 的 target 下已启用的框架 | recipe 中的 Pareto 点 | 600 秒 | 否 |
 
 注意：
 - PR 创建、更新提交、重新打开时，如果保留该标签，就会触发运行。添加标签时，只有新增的标签正是 `ci:agentx-mi355x` 才会启动 AgentX 测试。
 - 保留标签后推送新提交会触发新的 run，该 PR 正在运行或排队的 AgentX run 会被自动取消。
-- `ci:agentx-mi355x` 是 **GitHub Actions runner 标签**。PR 运行只选择 target 配置为 `runner_label: agentx-mi355x` 的已启用模型、target 和框架。
-- PR 描述中的 `AgentX:` 行（见 PR 模板）用 `agentx.yaml` 中的模型 id（不区分大小写，已经支持的模型见 agentx.yaml） 列出改动可能影响的模型，以逗号或空格分隔，例如 `AgentX: glm52-fp4, minimaxm31flash-fp4`，只写 `AgentX: all`（`all` 是唯一的名字）则运行全部已启用模型。
-- 未列出的模型会被跳过。没有这一行，或只保留模板注释时，跳过本次运行。不是已启用模型 id 的名字也会被跳过。
-- plan job 在运行时读取 PR 描述。修改 `AgentX:` 行后，需要 re-run workflow 或推送新提交才会生效；仅编辑描述不会触发运行。
+- 由 `allowlist.yaml` 中的 reviewer 在 PR 下发评论授权并指定模型：评论第一行以 `/agentx-mi355x` 开头，后面跟 `agentx.yaml` 中的模型 id（不区分大小写），以逗号或空格分隔，例如 `/agentx-mi355x glm52-fp4, minimaxm31flash-fp4`；只写 `/agentx-mi355x all`（`all` 是唯一的名字）则运行全部已启用模型。
+- 评论本身不会触发运行。reviewer 评论后，需要 re-run workflow 或推送新提交。授权跟随 PR，之后的提交沿用同一请求，直到 reviewer 再次评论。
 
 ### 1.3 定时运行
 

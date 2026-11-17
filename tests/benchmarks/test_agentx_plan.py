@@ -494,12 +494,16 @@ class AgentXPlanTests(AgentXRecipeTestCase):
             self.runs(manifest), [(job["model"], job["target"], job["framework"]) for job in jobs]
         )
 
-    def run_with_pr_body(self, body: str, *extra: str):
+    def run_with_comment(self, body: str, *extra: str, comments: list[dict] | None = None):
         output, summary = self.root / "github-output", self.root / "github-summary"
         output.unlink(missing_ok=True)
         summary.unlink(missing_ok=True)
-        pr_body = self.root / "pr-body.md"
-        pr_body.write_text(body)
+        pr_comments = self.root / "pr-comments.json"
+        if comments is None:
+            comments = [{"user": "author", "body": "Ready."}, {"user": "RuibinCheung", "body": body}]
+        pr_comments.write_text(json.dumps(comments))
+        allowlist = self.root / "allowlist.yaml"
+        allowlist.write_text("reviewers: [RuibinCheung, xiaobochen-amd, jiejingzhangamd]\n")
         self.next_run += 1
         out = self.root / f"pr-plan-{self.next_run}"
         env = {"GITHUB_OUTPUT": str(output), "GITHUB_STEP_SUMMARY": str(summary)}
@@ -510,8 +514,10 @@ class AgentXPlanTests(AgentXRecipeTestCase):
                     str(self.config),
                     "--runner-label",
                     RUNNER_LABEL,
-                    "--pr-body",
-                    str(pr_body),
+                    "--pr-comments",
+                    str(pr_comments),
+                    "--allowlist",
+                    str(allowlist),
                     *extra,
                     "--out",
                     str(out),
@@ -522,8 +528,8 @@ class AgentXPlanTests(AgentXRecipeTestCase):
         )
         return code, values, out
 
-    def test_pr_description_selects_only_its_declared_models(self):
-        code, values, out = self.run_with_pr_body("## Risk\nAffects: decode\n**AgentX**: `second`\n")
+    def test_comment_selects_only_its_requested_models(self):
+        code, values, out = self.run_with_comment("/agentx-mi355x `second`\r\nDecode changed.\n")
         self.assertEqual(code, 0)
         self.assertEqual(values["skipped"], "false")
         jobs = json.loads(values["matrix"])["include"]
@@ -532,93 +538,215 @@ class AgentXPlanTests(AgentXRecipeTestCase):
         self.assertEqual(self.runs(json.loads((out / "manifest.json").read_text())), expected)
         self.assertIn("selects second;", (self.root / "github-summary").read_text())
 
-    def test_pr_description_all_runs_every_enabled_model(self):
-        for body in ("AgentX: all\n", "AgentX: `ALL`\n"):
+    def test_comment_all_runs_every_enabled_model(self):
+        for body in ("/agentx-mi355x all\n", "/agentx-mi355x `ALL`\n"):
             with self.subTest(body=body):
-                code, values, _ = self.run_with_pr_body(body)
+                code, values, _ = self.run_with_comment(body)
                 self.assertEqual(code, 0)
                 self.assertEqual(values["count"], "3")
 
-    def test_pr_description_scope_problems_warn_on_github(self):
+    def test_comment_scope_problems_warn_on_github(self):
         cases = (
-            ("AgentX: first, missing\n", "Not an enabled model id, skipped: `missing`."),
-            ("AgentX: missing\n", "selects no model"),
-            ("No line\n", "selects no model"),
+            ("/agentx-mi355x first, missing\n", "Not an enabled model id, skipped: `missing`."),
+            ("/agentx-mi355x missing\n", "selects no model"),
+            ("/agentx-mi355x\n", "selects no model"),
         )
         for body, message in cases:
             with self.subTest(body=body), mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
                 stdout = io.StringIO()
                 with redirect_stdout(stdout):
-                    code, _, _ = self.run_with_pr_body(body)
+                    code, _, _ = self.run_with_comment(body)
                 self.assertEqual(code, 0)
                 warnings = [line for line in stdout.getvalue().splitlines() if line.startswith("::warning")]
                 self.assertEqual(len(warnings), 1)
                 self.assertIn(message, warnings[0])
         stdout = io.StringIO()
         with mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}), redirect_stdout(stdout):
-            self.run_with_pr_body("AgentX: first\n")
+            self.run_with_comment("/agentx-mi355x first\n")
         self.assertNotIn("::warning", stdout.getvalue())
 
-    def test_pr_description_without_models_skips_without_a_plan(self):
-        template = "AgentX: <!-- model ids from agentx.yaml,\nor all -->\n"
-        for body in ("## Why\nNo AgentX line.\n", template, "AgentX:\n"):
+    def test_comment_without_models_skips_without_a_plan(self):
+        for body in ("/agentx-mi355x\nfirst\n", "/agentx-mi355x , \n"):
             with self.subTest(body=body):
-                code, values, out = self.run_with_pr_body(body)
+                code, values, out = self.run_with_comment(body)
                 self.assertEqual(code, 0)
                 self.assertEqual(values, {"matrix": '{"include": []}', "count": "0", "skipped": "true"})
                 self.assertFalse(out.exists())
                 self.assertIn(
-                    "selects no model on an `AgentX:` line; skipping AgentX.",
+                    "@RuibinCheung's `/agentx-mi355x` comment selects no model; skipping AgentX.",
                     (self.root / "github-summary").read_text(),
                 )
 
-    def test_pr_description_never_fails_the_plan(self):
+    def test_comment_never_fails_the_plan(self):
         cases = (
-            ("AgentX: first, missing\n", "2", ["first", "first"], "skipped: `missing`."),
-            ("AgentX: all, first\n", "2", ["first", "first"], "skipped: `all`."),
-            ("AgentX: FIRST\n", "2", ["first", "first"], "selects first;"),
-            ("AgentX: first\n* AgentX: second\n", "3", ["first", "first", "second"], "selects first,second"),
-            ("AgentX: none, second\n", "1", ["second"], "skipped: `none`."),
+            ("/agentx-mi355x first, missing\n", "2", ["first", "first"], "skipped: `missing`."),
+            ("/agentx-mi355x all, first\n", "2", ["first", "first"], "skipped: `all`."),
+            ("/agentx-mi355x FIRST\n", "2", ["first", "first"], "selects first;"),
+            ("/AgentX-MI355X first\n/agentx-mi355x second\n", "2", ["first", "first"], "selects first;"),
+            ("/agentx-mi355x none, second\n", "1", ["second"], "skipped: `none`."),
         )
         for body, count, models, note in cases:
             with self.subTest(body=body):
-                code, values, _ = self.run_with_pr_body(body)
+                code, values, _ = self.run_with_comment(body)
                 self.assertEqual(code, 0)
                 self.assertEqual(values["count"], count)
                 self.assertEqual([job["model"] for job in json.loads(values["matrix"])["include"]], models)
                 self.assertIn(note, (self.root / "github-summary").read_text())
 
-    def test_pr_description_matching_nothing_skips(self):
-        for body in ("AgentX: none\n", "AgentX: missing\n", "AgentX: -, other\n"):
+    def test_comment_matching_nothing_skips(self):
+        for body in ("/agentx-mi355x none\n", "/agentx-mi355x missing\n", "/agentx-mi355x -, other\n"):
             with self.subTest(body=body):
-                code, values, out = self.run_with_pr_body(body)
+                code, values, out = self.run_with_comment(body)
                 self.assertEqual(code, 0)
                 self.assertEqual(values["skipped"], "true")
                 self.assertFalse(out.exists())
                 self.assertIn("skipping AgentX", (self.root / "github-summary").read_text())
         self.assertIn("skipped: `-`, `other`.", (self.root / "github-summary").read_text())
 
-    def test_pr_body_with_explicit_models_is_a_cli_error(self):
-        code, values, _ = self.run_with_pr_body("AgentX: first\n", "--models", "second")
+    def test_comment_with_explicit_models_is_a_cli_error(self):
+        code, values, _ = self.run_with_comment("/agentx-mi355x first\n", "--models", "second")
         self.assertEqual((code, values), (1, {}))
 
-    def test_pr_description_parsing(self):
+    def test_comment_parsing(self):
         enabled = ["first", "second"]
         self.assertEqual(
-            plan.declared_models("- AgentX: second, first,, second\n", enabled), ("second,first", [])
+            plan.requested_models("/agentx-mi355x\tsecond, first,, second\n", enabled), ("second,first", [])
         )
-        self.assertEqual(plan.declared_models("AgentX: `first` second\n", enabled), ("first,second", []))
-        self.assertEqual(plan.declared_models("**AgentX:** NONE\n", enabled), ("", ["NONE"]))
-        self.assertEqual(plan.declared_models("", enabled), ("", []))
-        self.assertEqual(plan.declared_models("Uses AgentX: later.\n## AgentX: first\n", enabled), ("", []))
-
-    def test_pr_description_matches_model_ids_ignoring_case(self):
-        enabled = ["glm52-fp4", "minimaxm31flash-fp4"]
-        body = "AgentX: glm52, GLM52-FP4, minimax, glm52-fp4\n"
-        self.assertEqual(plan.declared_models(body, enabled), ("glm52-fp4", ["glm52", "minimax"]))
         self.assertEqual(
-            plan.declared_models("AgentX: glm52-fp4 not all of them\n", enabled),
+            plan.requested_models("/agentx-mi355x `first` second\n", enabled), ("first,second", [])
+        )
+        self.assertEqual(plan.requested_models("/agentx-mi355x NONE\n", enabled), ("", ["NONE"]))
+        self.assertEqual(plan.requested_models("", enabled), ("", []))
+        self.assertEqual(plan.requested_models("- /agentx-mi355x first\n", enabled), ("", []))
+        self.assertEqual(plan.requested_models("AgentX: first\n", enabled), ("", []))
+
+    def test_comment_matches_model_ids_ignoring_case(self):
+        enabled = ["glm52-fp4", "minimaxm31flash-fp4"]
+        body = "/agentx-mi355x glm52, GLM52-FP4, minimax, glm52-fp4\n"
+        self.assertEqual(plan.requested_models(body, enabled), ("glm52-fp4", ["glm52", "minimax"]))
+        self.assertEqual(
+            plan.requested_models("/agentx-mi355x glm52-fp4 not all of them\n", enabled),
             ("glm52-fp4", ["not", "all", "of", "them"]),
+        )
+
+    def test_plan_fails_without_an_allowlisted_reviewers_request(self):
+        unauthorized = (
+            [],
+            [{"user": "author", "body": "/agentx-mi355x all"}],
+            [{"user": "RuibinCheung", "body": "Looks good.\n/agentx-mi355x first"}],
+            [{"user": "RuibinCheung", "body": "/agentx-mi355xfirst"}],
+            [{"user": "RuibinCheung", "body": "LGTM"}, {"user": "someone", "body": "/agentx-mi355x first"}],
+        )
+        for comments in unauthorized:
+            with self.subTest(comments=comments), mock.patch.dict(os.environ, {"GITHUB_ACTIONS": "true"}):
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with redirect_stdout(stdout), redirect_stderr(stderr):
+                    code, values, out = self.run_with_comment("", comments=comments)
+                self.assertEqual((code, values), (1, {}))
+                self.assertFalse(out.exists())
+                message = "No AgentX reviewer has authorized this PR. Ask one of @RuibinCheung, @xiaobochen-amd, @jiejingzhangamd"
+                self.assertIn(message, (self.root / "github-summary").read_text())
+                self.assertIn(message, stderr.getvalue())
+                errors = [line for line in stdout.getvalue().splitlines() if line.startswith("::error")]
+                self.assertEqual(len(errors), 1)
+                self.assertIn("re-run this workflow", errors[0])
+
+    def test_latest_allowlisted_request_selects_the_models(self):
+        comments = [
+            {"user": "xiaobochen-amd", "body": "/agentx-mi355x all"},
+            {
+                "user": "JIEJINGZHANGAMD",
+                "body": "/agentx-mi355x second",
+                "url": "https://example.invalid/c/2",
+            },
+            {"user": "author", "body": "/agentx-mi355x first"},
+            {"user": "RuibinCheung", "body": "Thanks.\n/agentx-mi355x first"},
+        ]
+        code, values, _ = self.run_with_comment("", comments=comments)
+        self.assertEqual(code, 0)
+        self.assertEqual([job["model"] for job in json.loads(values["matrix"])["include"]], ["second"])
+        self.assertIn(
+            "@JIEJINGZHANGAMD's `/agentx-mi355x` comment (https://example.invalid/c/2) selects second;",
+            (self.root / "github-summary").read_text(),
+        )
+
+    def run_manual(self, actor: str, ref: str):
+        allowlist = self.root / "allowlist.yaml"
+        allowlist.write_text("reviewers: [RuibinCheung, xiaobochen-amd]\n")
+        summary = self.root / "github-summary"
+        summary.unlink(missing_ok=True)
+        self.next_run += 1
+        out = self.root / f"manual-plan-{self.next_run}"
+        argv = ["--config", str(self.config), "--runner-label", RUNNER_LABEL, "--allowlist", str(allowlist)]
+        argv += ["--manual-actor", actor, "--manual-ref", ref, "--out", str(out)]
+        env = {"GITHUB_STEP_SUMMARY": str(summary), "GITHUB_ACTIONS": "true"}
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.dict(os.environ, env), redirect_stdout(stdout), redirect_stderr(stderr):
+            code = plan.main(argv)
+        return code, out, stdout.getvalue(), summary.read_text() if summary.exists() else ""
+
+    def test_manual_runs_need_an_allowlisted_reviewer_on_main(self):
+        code, out, _, _ = self.run_manual("ruibincheung", "refs/heads/main")
+        self.assertEqual(code, 0)
+        self.assertTrue((out / "manifest.json").exists())
+        refused = (
+            (
+                "someone",
+                "refs/heads/main",
+                "@someone may not start AgentX manually. Ask one of @RuibinCheung, @xiaobochen-amd",
+            ),
+            (
+                "RuibinCheung",
+                "refs/heads/feature",
+                "Manual AgentX runs use main only, not refs/heads/feature",
+            ),
+        )
+        for actor, ref, message in refused:
+            with self.subTest(actor=actor, ref=ref):
+                code, out, stdout, summary = self.run_manual(actor, ref)
+                self.assertEqual(code, 1)
+                self.assertFalse(out.exists())
+                self.assertIn(message, summary)
+                self.assertTrue(
+                    any(line.startswith("::error") and message in line for line in stdout.splitlines())
+                )
+
+    def test_manual_actor_needs_its_ref(self):
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            plan.main(
+                [
+                    "--config",
+                    str(self.config),
+                    "--manual-actor",
+                    "RuibinCheung",
+                    "--out",
+                    str(self.root / "x"),
+                ]
+            )
+
+    def test_reviewers_file_must_list_distinct_github_logins(self):
+        path = self.root / "bad-allowlist.yaml"
+        for text in ("{}", "reviewers: []\n", "reviewers: [ok, 'not a login']\n", "reviewers: [Ok, ok]\n"):
+            with self.subTest(text=text):
+                path.write_text(text)
+                with self.assertRaises(plan.ConfigError):
+                    plan.load_reviewers(path)
+
+    def test_allowlist_and_workflow_read_the_pr_comments(self):
+        self.assertIn("RuibinCheung", plan.load_reviewers())
+        workflow = yaml.safe_load((AGENTX.parents[1] / ".github/workflows/agentx-ci.yaml").read_text())
+        steps = workflow["jobs"]["plan"]["steps"]
+        read = next(
+            step for step in steps if step.get("name") == "Read the PR comments that may authorize AgentX"
+        )
+        self.assertIn("issues/$PR_NUMBER/comments", read["run"])
+        self.assertIn("--paginate", read["run"])
+        resolve = next(step for step in steps if step.get("id") == "resolve")
+        self.assertIn('--pr-comments "$RUNNER_TEMP/$PR_COMMENTS"', resolve["run"])
+        self.assertIn('--manual-actor "$MANUAL_ACTOR" --manual-ref "$GITHUB_REF"', resolve["run"])
+        self.assertEqual(
+            resolve["env"]["MANUAL_ACTOR"],
+            "${{ github.event_name == 'workflow_dispatch' && github.triggering_actor || '' }}",
         )
 
     def test_smoke_points_narrow_the_selection(self):
