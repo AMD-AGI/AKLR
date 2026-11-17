@@ -41,8 +41,8 @@ class TestReference:
     @pytest.mark.gpu
     def test_backend_matches_reference(self, op_case: OpCase) -> None:
         """The backend, an implementation independent of the reference, checks the reference: equal
-        integer outputs, floating ones within a relative L2 error. The contract's bounds are the
-        kernels', against the reference; the backend is not held to them."""
+        integer outputs, floating ones at an SQNR, the contract's own min_sqnr_db where it
+        declares one. Other bounds are the kernels', per element; the backend is held to 20 dB."""
         if op_case.needs_gfx950 and DeviceTarget.current().arch != "gfx950":
             pytest.skip("the backend runs the Point only on gfx950")
         args = op_case.inputs()
@@ -56,13 +56,16 @@ class TestReference:
             if semantics.DTYPE_TRAITS[spec["dtype"]["any_of"][0]].is_integral
         }
         assert {o: results[o].detail for o in integral if not results[o].is_passed} == {}
-        # shortcut: 0.1 uncalibrated (MI300X skips), set to ~3-5x the gfx950 ratio once measured
         reference = op_case.reference_outputs(args)
         for o in output_specs.keys() - integral:
+            bound = output_specs[o]["error_bounds"][0][1]
+            # shortcut: 20 dB uncalibrated (MI300X skips), set from the gfx950 SQNRs once measured
+            min_sqnr_db = bound["min_sqnr_db"] if bound["kind"] == "sqnr" else 20.0
             error = (outputs[o].cpu().double() - reference[o]).norm()
-            assert error <= 0.1 * reference[o].norm(), (
+            assert error <= 10 ** (-min_sqnr_db / 20) * reference[o].norm(), (
                 o,
-                (error / reference[o].norm()).item(),
+                min_sqnr_db,
+                (20 * (reference[o].norm() / error).log10()).item(),
             )
 
 
