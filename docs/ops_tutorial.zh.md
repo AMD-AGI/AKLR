@@ -22,7 +22,7 @@ flowchart TD
     V -->|"demoted（性能或正确性不过）：删掉这些 workload"| R
     V -->|"通过：report.md / report.json"| P["4. 开 PR + ci:gpu<br/>CI：code-lint（含 audit）→ unittest-aklr → GPU validate"]
     P -->|"合入 main"| M["4. main 的 push CI 重新测量<br/>publish-measurement bot 更新 aklr-perf/main PR"]
-    M -->|"bot PR 合入"| N["4. workload 带上 accuracy / speedup"]
+    M -->|"bot PR 合入"| N["4. workload 带上 accuracy / speedup / microseconds"]
 ```
 
 | 步骤 | 关键动作 | 产出 |
@@ -111,7 +111,7 @@ python -m aklr validate --base origin/main --stages audit,bench aklr/ops/<op>/im
 **PR 规则**：
 - 按 `.github/pull_request_template.md` 写正文。kernel 和 code PR 都加 `ci:gpu`（fork 的 PR，或作者没有 write 权限的 PR，GPU job 要等 maintainer 批准后才跑）；kernel PR 贴 3. 的结果；
 - 新算子的代码（`contract.py` 等，属于 code）单独提 PR；kernel-less schema（模板里叫 contract）和带 kernel 的 schema 各按模板对应一节填写。
-- 提交 PR 不写 `accuracy`/`speedup`（手写会报 `perf_edited`）。合入后，main 的 push CI 重新测量，`publish-measurement` 更新 `aklr-perf/main` bot PR；这个 bot PR 以它自己的标题 squash merge 后，workload 才带上 `accuracy`/`speedup`。
+- 提交 PR 不写 `accuracy`/`speedup`/`microseconds`（手写会报 `perf_edited`）。合入后，main 的 push CI 重新测量，`publish-measurement` 更新 `aklr-perf/main` bot PR；这个 bot PR 以它自己的标题 squash merge 后，workload 才带上 `accuracy`/`speedup`/`microseconds`。
 
 **CI 规则**：
 - code-lint（CPU：pre-commit、`export check`、`validate --stages audit`）→ unittest-aklr（GPU：全部 pytest）→ validation（GPU：`validate --base <合并基> --stages audit,bench`，只在有要 bench 的 schema 时运行）。

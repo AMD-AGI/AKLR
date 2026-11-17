@@ -89,6 +89,13 @@ class WorkloadRecord(FrozenModel):
             return None
         return min(t.speedup_bounds[0] for t in baselines)
 
+    @property
+    def microseconds(self) -> float | None:
+        """The kernel's median graph time per call in the rounds against the baseline, in
+        µs to 3 significant digits; None with no baseline timed."""
+        times = [ms for t in self.timings if t.versus == "baseline" for ms in t.candidate_milliseconds]
+        return float(f"{statistics.median(times) * 1000:.3g}") if times else None
+
     def table_row(self, verdict: str) -> tuple[str, ...]:
         ratios = {f"{t.mode}/{t.versus}": f"{t.ratio_lower_bound:.4f}" for t in self.timings}
         return (
@@ -255,5 +262,7 @@ class BenchReport(StageReport):
             accuracy = "failed" if key in failed else "passed"
             if accuracy == "passed" and (record.speedup is None or record.worst_violation_fraction is None):
                 return None
-            measured[key] = workload.model_copy(update={"accuracy": accuracy, "speedup": record.speedup})
+            measured[key] = workload.model_copy(
+                update={"accuracy": accuracy, "speedup": record.speedup, "microseconds": record.microseconds}
+            )
         return measured

@@ -198,14 +198,21 @@ class TestPipeline:
         return report.status, len(report.findings), len(report.demotions)
 
     @staticmethod
-    def _writes_back(tmp_path: Path, speedup: float, bench_finding: FindingCode | None) -> bool:
-        """Whether ``write_schemas`` rewrites the schema stored at speedup 1.5, measured at
-        ``speedup``, with ``bench_finding`` on the schema; an earlier run's rewrite in the
-        directory does not count."""
+    def _writes_back(
+        tmp_path: Path,
+        speedup: float,
+        bench_finding: FindingCode | None,
+        stored_microseconds: float | None = 1000.0,
+    ) -> bool:
+        """Whether ``write_schemas`` rewrites the schema stored at speedup 1.5 and
+        ``stored_microseconds``, measured at ``speedup`` and 1000 µs, with ``bench_finding`` on the
+        schema; an earlier run's rewrite in the directory does not count."""
         registry = ContractRegistry.default()
         schema = registry.parse_schema(Path(_SCHEMA).read_bytes(), _SCHEMA)
         stored = {
-            axes_text(w.axes): w.model_copy(update={"accuracy": "passed", "speedup": 1.5})
+            axes_text(w.axes): w.model_copy(
+                update={"accuracy": "passed", "speedup": 1.5, "microseconds": stored_microseconds}
+            )
             for w in schema.workloads
         }
         for path in (tmp_path / _SCHEMA, tmp_path / "out" / _SCHEMA):
@@ -398,6 +405,11 @@ class TestPipeline:
             # PipelineReport.write_schemas: whether the schema stored at 1.5 is rewritten
             pytest.param(lambda p: TestPipeline._writes_back(p, 1.56, None), True, id="moved-4%"),
             pytest.param(lambda p: TestPipeline._writes_back(p, 1.52, None), False, id="moved-1.3%"),
+            pytest.param(
+                lambda p: TestPipeline._writes_back(p, 1.52, None, stored_microseconds=None),
+                True,
+                id="first-microseconds",
+            ),
             pytest.param(
                 lambda p: TestPipeline._writes_back(p, 1.56, FindingCode.PLATFORM_FAILURE),
                 False,
@@ -647,6 +659,11 @@ class TestSpeedupMeasures:
         record = _workload({"m": 1}, 1.5)
         assert record.speedup == pytest.approx(1.5)
 
+    def test_microseconds_is_the_median_kernel_time(self) -> None:
+        """Kernel rounds of 1.0 ms against the baseline publish as 1000 µs; none timed, none."""
+        assert _workload({"m": 1}, 1.5).microseconds == 1000.0
+        assert _workload({"m": 1}, None).microseconds is None
+
     def test_one_correct_fast_workload_admits_kernel(self) -> None:
         report = TestPipeline._bench(
             [(FindingCode.POST_TIMING_MISMATCH, {"m": 1}, "stale weights")],
@@ -701,6 +718,7 @@ class TestSpeedupMeasures:
         assert not failed.qualifies(0)
         for w in schema.workloads[1:]:
             assert measured[axes_text(w.axes)].accuracy == "passed"
+            assert measured[axes_text(w.axes)].microseconds == 1000.0
 
     @pytest.mark.parametrize(
         "code",
@@ -739,6 +757,7 @@ class TestSpeedupMeasures:
             if record.batch_stopped:
                 assert workload.accuracy == "failed"
                 assert workload.speedup is None
+                assert workload.microseconds is None
             assert not {"is_kept", "known_failed"} & record.model_dump().keys()
         assert PipelineReport.model_fields["version"].default == 2
 
