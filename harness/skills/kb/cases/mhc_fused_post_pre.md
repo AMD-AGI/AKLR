@@ -11,7 +11,7 @@ basis: measured N=1
 measured:
   - {metric: "speedup over aiter (mhc_fused_post_pre), CI, per Point", value: "1.100–1.510; 13 of 13 Points ≥ 1.03", gpu: MI355X, workload: "mhc_fused_post_pre_has_norm_weight_hidden_size4096, n_tokens 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
 sources:
-  - aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json
+  - aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/2827fc56bec5e893.json
 ---
 
 # mHC fused post + pre at hidden 4096: one pass over the residual, a Gram for the norm
@@ -139,7 +139,7 @@ On an MI355X, in a checkout that holds this file (on AKLR main its workloads hol
 table's numbers):
 
 ```
-python -m aklr validate aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json
+python -m aklr validate aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/2827fc56bec5e893.json
 ```
 
 It runs the audit and bench stages and writes `aklr_validation/report.md` with the per-Point speedup
@@ -160,16 +160,16 @@ calls the kernel on two devices or two streams, or a FlyDSL or LLVM upgrade that
 ## Evidence
 
 `<schema>.json#kernel.py:<line>` is a line of the `kernel.py` the schema embeds; `<schema>` is
-aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.
+aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/2827fc56bec5e893.
 
 - E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup over aiter per Point 1.100–1.510, 13 of 13 ≥ 1.03; T 1 1.167, 2 1.185, 4 1.117, 8 1.144, 16 1.125, 32 1.132, 64 1.100, 128 1.225, 256 1.325, 512 1.393, 1024 1.423, 2048 1.397, 4096 1.510 (mhc_fused_post_pre_has_norm_weight_hidden_size4096, T 1–4096)
 - E2 [2026-10, gfx950, FlyDSL 0.3.2, N=5, the predecessor repository's CI] per-Point range and served count in commit order: 1.042–1.217, 1.134–1.439, 1.095–1.504, 1.134–1.451, 1.100–1.510, 13 of 13 each time; the kernel text is the same in all five (mhc_fused_post_pre_has_norm_weight_hidden_size4096, under the file's name before the rename)
 - S1 aklr/ops/mhc/contract.py:227 compare `BOUNDED`; tolerance atol = rtol = 1e-2 at :39, on all four outputs at :151–169
 - S2 aklr/ops/mhc/baseline.py:79 `mhc_fused_post_pre_baseline` calls aiter's `mhc_fused_post_pre`; aiter/ops/mhc.py:560 aiter runs `mhc_post` and `mhc_pre` from 1024 tokens on gfx950
 - S3 aklr/ops/mhc/reference.py:103 the reference rounds `next_residual` to bf16 before the pre step
-- S4 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json#kernel.py:1783 `_config`; `_PCFG` at :1818; NK at :1839; `part` on `torch.device("cuda")` at :1843; per-scalar compile in `launch` at :1855
-- S5 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json#kernel.py:1247 `_make_kmm_p`: weight slab to bf16 LDS at :1372, 96 KiB reservation at :1270 with its comment at :1265, Gram MFMAs at T 512 and 2048 at :1262
-- S6 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json#kernel.py:788 `_kfin_epilogue`: sum of squares from the Gram at :796–803; rms from the Gram diagonal at :637
-- S7 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json#kernel.py:589 `_sinkhorn_el` with DPP row and column sums; fixed reduction tree in `_reduce_all` at :173
-- S8 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/3af43505318bd593.json#kernel.py:832 `ROLE`, `WSPLIT` at :835, `R32` at :836, `SKW` at :848, generic `k_fin` body from :1123; `_KFIN_W4_KW = 1` at :377
+- S4 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/2827fc56bec5e893.json#kernel.py:1783 `_config`; `_PCFG` at :1818; NK at :1839; `part` on `torch.device("cuda")` at :1843; per-scalar compile in `launch` at :1855
+- S5 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/2827fc56bec5e893.json#kernel.py:1247 `_make_kmm_p`: weight slab to bf16 LDS at :1372, 96 KiB reservation at :1270 with its comment at :1265, Gram MFMAs at T 512 and 2048 at :1262
+- S6 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/2827fc56bec5e893.json#kernel.py:788 `_kfin_epilogue`: sum of squares from the Gram at :796–803; rms from the Gram diagonal at :637
+- S7 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/2827fc56bec5e893.json#kernel.py:589 `_sinkhorn_el` with DPP row and column sums; fixed reduction tree in `_reduce_all` at :173
+- S8 aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size4096/2827fc56bec5e893.json#kernel.py:832 `ROLE`, `WSPLIT` at :835, `R32` at :836, `SKW` at :848, generic `k_fin` body from :1123; `_KFIN_W4_KW = 1` at :377
 - S9 aklr/ops/mhc/impls/hip/mhc_fused_post_pre_has_norm_weight_hidden_size7168/be760df4df24a189.json:4 `contract_id` `mhc_fused_post_pre@1.0`, a HIP kernel at :293, Points n_tokens 1, 2, 4, 7, 8, 16; aklr/ops/mhc/impls/flydsl/mhc_fused_post_pre_has_norm_weight_hidden_size7168/138d8923d8bbd221.json:315 empty `sources`; aklr/core/platform/env.py:40 `AKLR_DISABLE` lists contract ids

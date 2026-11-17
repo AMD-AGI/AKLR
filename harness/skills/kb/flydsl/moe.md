@@ -18,7 +18,7 @@ sources:
   - AMD-AGI/Primus-Turbo@ca1fdd67:primus_turbo/flydsl/quantization/
   - aiter/fused_moe.py
   - aiter/ops/flydsl/
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/4fbd9d02b4c053c7.json
+  - aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/5d5b47d0fbd5c2ba.json
 ---
 
 # MoE in FlyDSL
@@ -87,7 +87,7 @@ and MoE kernels FlyDSL lacks; the mapping is in § grouped_sorted_tokens §1 bel
 ## few_tokens How to write it
 
 Steps c and f of the head (`../moe/few_tokens.md` § How to write it), in `g1_fold.py` of the schema file
-`4fbd9d02b4c053c7.json`:
+`5d5b47d0fbd5c2ba.json`:
 
 ```python
 # c: one LDS atomic add per routed item (g1_fold.py:1965-1968)

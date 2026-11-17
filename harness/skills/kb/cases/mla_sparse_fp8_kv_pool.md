@@ -13,9 +13,9 @@ measured:
   - {metric: "speedup over the contract's baseline (sglang's TileLang dpsk_v4_fp8_attention_fwd), CI, per Point", value: "2.396–5.845; 61 of 61 Points ≥ 1.03", gpu: MI355X, workload: "flash_mla_with_kvcache_…_extra_page_size2_n_extra_indices8256, batch 1–256 × 4–9 pool sizes", date: "2026-10-28"}
   - {metric: "speedup over the contract's baseline (sglang's TileLang dpsk_v4_fp8_attention_fwd), CI, per Point", value: "2.362–5.078; 61 of 61 Points ≥ 1.03", gpu: MI355X, workload: "flash_mla_with_kvcache_…_extra_page_size64_n_extra_indices512, batch 1–256 × 4–9 pool sizes", date: "2026-10-28"}
 sources:
-  - aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/97e39bdef97d3e9b.json
-  - aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_extra_extra_idx_extra_lens_sinks_kv_cache_float8_e4m3fn_extra_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128_extra_page_size2_n_extra_indices8256/3b21a6af84ad0024.json
-  - aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_extra_extra_idx_extra_lens_sinks_kv_cache_float8_e4m3fn_extra_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128_extra_page_size64_n_extra_indices512/7afdc9a6fcb42ad3.json
+  - aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json
+  - aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_extra_extra_idx_extra_lens_sinks_kv_cache_float8_e4m3fn_extra_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128_extra_page_size2_n_extra_indices8256/09f5a6dd679e5878.json
+  - aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_extra_extra_idx_extra_lens_sinks_kv_cache_float8_e4m3fn_extra_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128_extra_page_size64_n_extra_indices512/e80a8786cd629998.json
 ---
 
 # Sparse MLA with one query token per sequence on the DeepSeek-V4 fp8 pool: one dequantised tile for all 64 heads
@@ -170,7 +170,7 @@ On an MI355X, in a checkout that holds these files (on AKLR main their workloads
 the table's numbers), one schema at a time:
 
 ```
-python -m aklr validate aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/97e39bdef97d3e9b.json
+python -m aklr validate aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json
 ```
 
 and the same for the other two paths under `sources`. Each runs the audit and bench stages and writes
@@ -205,9 +205,9 @@ lines are cited in the window-only file.
 - S2 aklr/ops/mla/reference.py:50 the reference's dequantisation is "the kernel's literal bf16 bit assembly, not fp8 scaling"
 - S3 aklr/ops/mla/baseline.py:35 `flash_mla_with_kvcache_baseline` calls sglang's `dpsk_v4_fp8_attention_fwd` (:40) for the `dsv4_fp8` cache format
 - S4 aklr/core/contract/fastkey/_codec.py:75 `match_key` drops only `any_size` axes from the dispatch key
-- S5 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/97e39bdef97d3e9b.json#kernel.py:35 `KTIERS`; `_slots` at :74; `_workspace` at :84; `_build` keyed by `sm_scale`, `kv_scale` at :93
-- S6 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/97e39bdef97d3e9b.json#kernel.py:171 `stage`: bias at :190, exponent arithmetic at :204, rope copy at :232
-- S7 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/97e39bdef97d3e9b.json#kernel.py:274 logits MFMA; max and sum shuffles at :285; alpha through LDS at :300; transposed reads at :319 and P·V MFMA at :330
-- S8 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/97e39bdef97d3e9b.json#kernel.py:374 `comb_kernel`: wave slices at :411, wave-order merge at :441, sink factor at :459
-- S9 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/97e39bdef97d3e9b.json#kernel.py:523 `_words` views the storage from offset 0 (:527); aklr/core/contract/semantics/_layouts.py:216 `Deepseekv4KvPages.storage_test` checks strides only
+- S5 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json#kernel.py:35 `KTIERS`; `_slots` at :74; `_workspace` at :84; `_build` keyed by `sm_scale`, `kv_scale` at :93
+- S6 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json#kernel.py:171 `stage`: bias at :190, exponent arithmetic at :204, rope copy at :232
+- S7 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json#kernel.py:274 logits MFMA; max and sum shuffles at :285; alpha through LDS at :300; transposed reads at :319 and P·V MFMA at :330
+- S8 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json#kernel.py:374 `comb_kernel`: wave slices at :411, wave-order merge at :441, sink factor at :459
+- S9 aklr/ops/mla/impls/flydsl/flash_mla_with_kvcache_lse_sparse_lens_sinks_kv_cache_float8_e4m3fn_padded_pages_query_length1_n_heads64_page_size256_n_indices128/30ca5406afa323e5.json#kernel.py:523 `_words` views the storage from offset 0 (:527); aklr/core/contract/semantics/_layouts.py:216 `Deepseekv4KvPages.storage_test` checks strides only
 - S10 the contract's other FlyDSL kernels under aklr/ops/mla/impls/flydsl/, each `contract_id` `flash_mla_with_kvcache@1.0` at :4: 64-head extra-8256 2d4eafd6ea816a59.json (pools of 1501–5229 pages), 128-head extra-8256 7c7c8b9d2c0ac20a.json and extra-1024 43b2d2975d491dd7.json, 64-head extra-1024 0e41dac662b070e5.json, 96-head fp8 f7b2bc6f70f00674.json and 854d38b4a14e3719.json; aklr/core/platform/env.py:40 `AKLR_DISABLE` lists contract ids

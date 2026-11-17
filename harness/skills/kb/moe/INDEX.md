@@ -123,14 +123,14 @@ tokens per call. Reuse the mechanism and re-derive the number.
   [fused_moe_interleave_swiglu.md](../cases/fused_moe_interleave_swiglu.md) (clamped SwiGLU, hidden 4096) and
   [fused_moe_interleave_swiglu_hidden7168.md](../cases/fused_moe_interleave_swiglu_hidden7168.md) (clamped SwiGLU,
   hidden 7168). Where the library's items run on main:
-  - `1fee5982…`: the tile descriptors written by the slot-`% BM` route run at m 32–256 and the loop-carried
+  - `f13fecf1…`: the tile descriptors written by the slot-`% BM` route run at m 32–256 and the loop-carried
     prefetch at m 128, 256, 2048, Points the file does not serve; at its served m 1, 2 the `ds_bpermute` gather runs.
-  - `ef15e878…`: `_route_block` runs at no Point (routing is `_quantize_route_fused` at m 2–32, `_route_expert` at
+  - `fa7e6f02…`: `_route_block` runs at no Point (routing is `_quantize_route_fused` at m 2–32, `_route_expert` at
     m ≥ 64, none at m 1); several row tiles per expert (`GROUP_M` > 1) only at m ≥ 512; fp8 rows at m 16, 32, 64 and
     m ≥ 128.
-  - `1bf41ccb…`: `_make_small_route` runs at m 4–128, none served; `FUSE_SPLIT_QUANT` (m 1) and `FULL_STAGE_A`
+  - `d0d05b32…`: `_make_small_route` runs at m 4–128, none served; `FUSE_SPLIT_QUANT` (m 1) and `FULL_STAGE_A`
     (m ≥ 256) run at served Points.
-  - `4fbd9d02…`: one stage-2 binary serves all four token counts; stage 1 compiles per count.
+  - `5d5b47d0…`: one stage-2 binary serves all four token counts; stage 1 compiles per count.
 - **aiter's FlyDSL MoE families** and their knobs: `../flydsl/kernels/flydsl_kernel_library.md` § Other
   FlyDSL families in the baseline aiter (MoE). aiter is the baseline; price it through `fused_moe_baseline`, which
   calls `aiter.fused_moe.fused_moe` (`grouped_sorted_tokens.md` §8).
@@ -272,11 +272,11 @@ In FlyDSL: `../flydsl/moe.md` § INDEX Kernel map.
 
 ## Evidence
 
-- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI, 2026-10; the files' current values differ] speedup over aiter at m 1: 2.472 (257 experts, 1fee59821837c26f), 1.258 (33 experts, ef15e87894a8ae06), 1.353 (65 experts, 1bf41ccba6750300), 3.015–3.359 (clamped SwiGLU, four files; 9dcb4d796b597d0b 3.089, a5a343437ee191a7 3.015)
+- E1 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI, 2026-10; the files' current values differ] speedup over aiter at m 1: 2.472 (257 experts, f13fecf15dbe0a9d), 1.258 (33 experts, fa7e6f02d24a4982), 1.353 (65 experts, d0d05b32522e5cb2), 3.015–3.359 (clamped SwiGLU, four files; 7f829107afe8cf06 3.089, 8e1a32b04ba2889d 3.015)
 - E2 [2026-10, gfx950, FlyDSL 0.3.2, N=1, bench_cudagraph: graph replay, 1 GiB flush per call, Kineto kernel time, median; one run per arm] 39.09–102.04 µs per call with a separate sort node, 34.38–95.67 µs with it folded into stage 1, at m 8–64 (257 experts, inter 256)
-- E4 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI, 2026-10; the file's current values differ] speedup over aiter at m 64–4096: 1.030, 1.147, 1.109, 1.257, 1.609, 1.081, 1.070 (fused_moe_shuffled_16x16_model_dim6144_n_experts33_topk9_inter_dim2048, file ef15e87894a8ae06)
+- E4 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI, 2026-10; the file's current values differ] speedup over aiter at m 64–4096: 1.030, 1.147, 1.109, 1.257, 1.609, 1.081, 1.070 (fused_moe_shuffled_16x16_model_dim6144_n_experts33_topk9_inter_dim2048, file fa7e6f02d24a4982)
 - E5 [2026-10, gfx950, FlyDSL ?, N=1, `python -m aklr validate --base origin/main`, not CI, on one MI355X: graph replay, 1 GiB flush per call, one-sided lower bound against aiter; touched experts counted from the same inputs] speedup over aiter at m 8–112: TP 1.373, 1.287, 1.243, 1.194, 1.168, 1.084, 1.069, 1.061, 1.058, 1.054, 1.043, 1.039, 1.038; EP8 1.592, 1.427, 1.347, 1.281, 1.220, 1.278, 1.282, 1.276, 1.262, 1.253, 1.245, 1.229, 1.240; weight bytes of the touched experts over the median candidate time 6.04–6.20 TB/s (TP, m 40–112) and 6.20–6.45 TB/s (EP8, m 32–112), aiter 5.0–5.97 TB/s; read roof 6.5 TB/s from a read-only kernel (the eight K3 kernel files)
-- E7 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, Triton 3.8.0, aiter dbd8bf5, N=5, graph wall clock, 1 GiB flush per call, flush-only graph subtracted] share of a call's time that a Triton read-only stream of the touched experts' weight bytes takes, less one 1.52 µs empty launch, at m 1 / 2: 1fee59821837c26f 33.1% / 46.3% (22.6 / 45.1 MB); ef15e87894a8ae06 and 1bf41ccba6750300 66.9–75.1% (180.5–320.9 MB)
+- E7 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, Triton 3.8.0, aiter dbd8bf5, N=5, graph wall clock, 1 GiB flush per call, flush-only graph subtracted] share of a call's time that a Triton read-only stream of the touched experts' weight bytes takes, less one 1.52 µs empty launch, at m 1 / 2: f13fecf15dbe0a9d 33.1% / 46.3% (22.6 / 45.1 MB); fa7e6f02d24a4982 and d0d05b32522e5cb2 66.9–75.1% (180.5–320.9 MB)
 - E8 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, Triton 3.8.0, aiter dbd8bf5, N=5, AKLR bench_cudagraph or graph wall clock, 1 GiB flush per call] touched experts' weight bytes over the call time: delivered kernels 6.09–6.31 TB/s (TP, m 40–112) and 6.22–6.48 (EP8, m 32–112); aiter 4.91–5.89; a 2 GiB Triton read-only stream 6.87 TB/s at its best configuration, 6.53 with uint8 loads; left 8.2–11.3% (TP) and 5.6–9.4% (EP8) (TP e0678268dac4bef6; EP8 b4c655c5220c02de and a22cc342a6677a10)
 - E9 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, Triton 3.8.0, aiter dbd8bf5, N=5, eager, torch.profiler kernel times after a 1 GiB flush] at 9397 and 16384 tokens, stage 1 and stage 2 useful TF/s over 4921 TF/s (a HIP microbenchmark's fp8 × MXFP4 MFMA rate) 0.32–0.44; touched weights, activations read once and output written once over the stage time, against a 6.66 TB/s Triton read-only stream, 0.31–0.48, and 0.70–0.89 at 2732 tokens (TP ae24d42e524edf7d, EP8 84181fb6b00938c6; eea13e61bb2a6241 and 6dba52d6b5e138ae at 2732)
 - E10 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=6 rounds (TP measured twice), eager, torch.profiler kernel times after a 1 GiB flush; useful FLOPs 2 · routes · N · K per GEMM] at 16384 tokens, delivered against aiter: TP stage 1 2168 / 2099 TF/s (aiter 1369), stage 2 1703 / 1679 (922), reduce 105.0 / 99.6 µs of 1260.7 / 1290.0 µs for all kernels; EP8 stage 1 2140 (1409), stage 2 1834 (1235) (TP ae24d42e524edf7d, EP8 84181fb6b00938c6)

@@ -14,12 +14,12 @@ measured:
   - {metric: "speedup over aiter, CI, per Point", value: "0.355–1.198; 2 of 13 Points ≥ 1.03 (m 1, 2), 1 served (m 1); at m 2–64 a Triton kernel of the same name is served", gpu: MI355X, workload: "gemm_n6144_k2048, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
   - {metric: "speedup over aiter, CI, per Point", value: "0.418–1.208; 2 of 13 Points ≥ 1.03 (m 1, 2)", gpu: MI355X, workload: "gemm_n6144_k3072, m 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096", date: "2026-10-28"}
 sources:
-  - aklr/ops/gemm/impls/flydsl/gemm_n2624_k6144/4001df477e6c67f6.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n3072_k6144/a85da0998ddc31b1.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n6144_k2048/eb749c07b94008ab.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n6144_k3072/d7fed2d1260b5f45.json
-  - aklr/ops/gemm/impls/triton/gemm_n2624_k6144/b88c8d5f28d86777.json
-  - aklr/ops/gemm/impls/triton/gemm_n6144_k2048/f806ad2b086d757d.json
+  - aklr/ops/gemm/impls/flydsl/gemm_n2624_k6144/2fc6db16022f2ad9.json
+  - aklr/ops/gemm/impls/flydsl/gemm_n3072_k6144/7c5f0948637e5072.json
+  - aklr/ops/gemm/impls/flydsl/gemm_n6144_k2048/41a72a4141c9d3ef.json
+  - aklr/ops/gemm/impls/flydsl/gemm_n6144_k3072/99d0a4cc37d8d1d7.json
+  - aklr/ops/gemm/impls/triton/gemm_n2624_k6144/7511d8bbfacd4d06.json
+  - aklr/ops/gemm/impls/triton/gemm_n6144_k2048/8307d207feb8e734.json
 ---
 
 # bf16 GEMM at wide N: a wave per output column at M ≤ 2
@@ -117,10 +117,10 @@ m = 2, the FlyDSL file passes 1.03 but the Triton file is served.
 On an MI355X with the repository's FlyDSL 0.3.2, from the repository root:
 
 ```
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n2624_k6144/4001df477e6c67f6.json
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n3072_k6144/a85da0998ddc31b1.json
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n6144_k2048/eb749c07b94008ab.json
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n6144_k3072/d7fed2d1260b5f45.json
+python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n2624_k6144/2fc6db16022f2ad9.json
+python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n3072_k6144/7c5f0948637e5072.json
+python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n6144_k2048/41a72a4141c9d3ef.json
+python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n6144_k3072/99d0a4cc37d8d1d7.json
 ```
 
 The Triton files validate the same way. The report goes to `aklr_validation/report.md`; a run outside CI checks the file,
@@ -144,4 +144,4 @@ back for a wrong result CI does not catch, for example after a FlyDSL or LLVM up
 - E4 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI] speedup over aiter per Point 0.418–1.208, 2 of 13 Points ≥ 1.03 (m 1, 2); m ≥ 4 (repacked) 0.418–0.711 (gemm_n6144_k3072 FlyDSL, m 1–4096)
 - E5 [2026-10, gfx950, Triton, N=1, the predecessor repository's CI] speedup over aiter per Point 1.077–1.195 at m 2, 4, 8, 64, all served (gemm_n2624_k6144 Triton)
 - E6 [2026-10, gfx950, Triton, N=1, the predecessor repository's CI] speedup over aiter per Point 1.078–1.285 at m 2–64, all served (gemm_n6144_k2048 Triton)
-- E7 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=6, AKLR `bench_cudagraph`, median per-call time per arm per round] the delivered call (pack, then GEMM) / the same GEMM on a copy packed beforehand / the pack launch alone / aiter, µs: n6144_k3072 m 16 23.51 / 9.99 / 15.03 / 10.33, m 256 41.74 / 24.92 / 14.64 / 21.68, m 4096 160.79 / 145.90 / 15.51 / 113.87; n2624_k6144 m 1024 59.79 / 46.75 / 13.22 / 59.35, m 16 23.08 / 10.44 / 13.04 / 9.66 (gemm_n6144_k3072 d7fed2d1260b5f45, gemm_n2624_k6144 4001df477e6c67f6)
+- E7 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=6, AKLR `bench_cudagraph`, median per-call time per arm per round] the delivered call (pack, then GEMM) / the same GEMM on a copy packed beforehand / the pack launch alone / aiter, µs: n6144_k3072 m 16 23.51 / 9.99 / 15.03 / 10.33, m 256 41.74 / 24.92 / 14.64 / 21.68, m 4096 160.79 / 145.90 / 15.51 / 113.87; n2624_k6144 m 1024 59.79 / 46.75 / 13.22 / 59.35, m 16 23.08 / 10.44 / 13.04 / 9.66 (gemm_n6144_k3072 99d0a4cc37d8d1d7, gemm_n2624_k6144 2fc6db16022f2ad9)

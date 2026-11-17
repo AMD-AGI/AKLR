@@ -10,8 +10,8 @@ flydsl: 0.3.2
 basis: measured N=4
 sources:
   - aklr/ops/gemm/impls/flydsl/gemm_n6144_k16384/e8a254fd87b9a03e.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n2048_k7168/1f5a93c79dbd12bf.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n64_k4096/3af3d3de3d0f2285.json
+  - aklr/ops/gemm/impls/flydsl/gemm_n2048_k7168/2a721151661b6ac1.json
+  - aklr/ops/gemm/impls/flydsl/gemm_n64_k4096/1ceb094e60e8e93a.json
 ---
 
 # Wait-free split-K fold
@@ -266,9 +266,9 @@ What was checked, and what was not, is under Cost and risk.
 - S9 the N=128, K=6144 campaign's final kernel, not committed: `_launch_tag` from the dispatch id's low and high words and the queue pointer's low word
 - S10 the N=128, K=6144 campaign's final kernel, not committed: the 16 B slot store at aux 17, `s_waitcnt(vmcnt=0)`, one load per split, C written if every tag matches
 - S11 the N=128, K=6144 campaign's final kernel, not committed: the slots in a `torch.empty` per call
-- S12 aklr/ops/gemm/impls/flydsl/gemm_n2048_k7168/1f5a93c79dbd12bf.json#kernel.py:394 planes stored, `vmcnt(0)` (:395), tag `did ^ rotl(qptr, 32)` (:403) stored to the wave's slot (:408), `vmcnt(0)` (:409), slots loaded (:413), `readfirstlane` (:422), fold if all match (:423)
-- S13 aklr/ops/gemm/impls/flydsl/gemm_n2048_k7168/1f5a93c79dbd12bf.json#kernel.py:467 the planes and slots in a `torch.empty` per call
-- S14 aklr/ops/gemm/impls/flydsl/gemm_n64_k4096/3af3d3de3d0f2285.json#kernel.py:304 the tile's counter word and the launch tag (`dispatch.id + queue.ptr · _TAG_MUL`, 56 bits) read before any DMA; the compare-and-swap reset of a stale word (:396-408) and the add whose old value `tag << 8 | S − 1` elects the folder (:410-418)
+- S12 aklr/ops/gemm/impls/flydsl/gemm_n2048_k7168/2a721151661b6ac1.json#kernel.py:394 planes stored, `vmcnt(0)` (:395), tag `did ^ rotl(qptr, 32)` (:403) stored to the wave's slot (:408), `vmcnt(0)` (:409), slots loaded (:413), `readfirstlane` (:422), fold if all match (:423)
+- S13 aklr/ops/gemm/impls/flydsl/gemm_n2048_k7168/2a721151661b6ac1.json#kernel.py:467 the planes and slots in a `torch.empty` per call
+- S14 aklr/ops/gemm/impls/flydsl/gemm_n64_k4096/1ceb094e60e8e93a.json#kernel.py:304 the tile's counter word and the launch tag (`dispatch.id + queue.ptr · _TAG_MUL`, 56 bits) read before any DMA; the compare-and-swap reset of a stale word (:396-408) and the add whose old value `tag << 8 | S − 1` elects the folder (:410-418)
 - S15 the N=256, K=6144 campaign's final kernel, not committed: two splits: `atomicrmw xchg` of the tag, the one that reads it back is second and swaps the sentinel back; lane 0 of each wave after its `vmcnt(0)`; own partial from registers plus the partner's
 - S16 the N=256, K=6144 campaign's final kernel, not committed: one 128 B counter slot per tile, one 8 B word per wave; the tag is the dispatch id alone
-- S17 aklr/ops/gemm/impls/flydsl/gemm_n384_k7168/d65ffa02dee32841.json#kernel.py:489 `slot_off`: two fp32 sums and the 64-bit tag (`dispatch.id` · H1 + `queue.ptr` · H2, :481) per 16 B slot, stored `sc0 sc1` at :501, `vmcnt(0)` at :502, the other splits' slots loaded at :509
+- S17 aklr/ops/gemm/impls/flydsl/gemm_n384_k7168/f6d4b839f507a44f.json#kernel.py:489 `slot_off`: two fp32 sums and the 64-bit tag (`dispatch.id` · H1 + `queue.ptr` · H2, :481) per 16 B slot, stored `sc0 sc1` at :501, `vmcnt(0)` at :502, the other splits' slots loaded at :509

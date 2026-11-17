@@ -9,17 +9,17 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1, AKLR validate measurement profile 19
 measured:
-  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.041–1.231; 5 of 5 Points above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n2048_k2048 file 8da6be976ff855b0, measured as its predecessor, which differs only in passing the stream of the input's device; m 256, 512, 1024, 2048, 4096", date: "2026-11-09"}
-  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.358–1.625; 5 of 5 Points above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n3584_k512 file 1fbaf19b1c4fdb45, m 256, 512, 1024, 2048, 4096", date: "2026-11-09"}
-  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.164–1.816; 5 of 5 Points above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n7168_k512 file 04da38be4d3af890, m 256, 512, 1024, 2048, 4096", date: "2026-11-09"}
-  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.173–1.452; 5 of 5 Points above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n28672_k512 file ce4647f84b8de43b, m 256, 512, 1024, 2048, 4096", date: "2026-11-09"}
-  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.156–1.257 at m 256–1024; m 2048 (0.999) and 4096 (0.982) dropped from the file", gpu: MI355X, workload: "gemm_n6144_k1536 kernel of file f665d33c162100b7, measured as an earlier file with the same kernel, m 256, 512, 1024, 2048, 4096", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.041–1.231; 5 of 5 Points above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n2048_k2048 file 5a9a1fa180113692, measured as its predecessor, which differs only in passing the stream of the input's device; m 256, 512, 1024, 2048, 4096", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.358–1.625; 5 of 5 Points above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n3584_k512 file ecae7e3c4af063b2, m 256, 512, 1024, 2048, 4096", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.164–1.816; 5 of 5 Points above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n7168_k512 file 869d8015b4aaff53, m 256, 512, 1024, 2048, 4096", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.173–1.452; 5 of 5 Points above AKLR_MIN_SPEEDUP", gpu: MI355X, workload: "gemm_n28672_k512 file 1bb4b87c023603b1, m 256, 512, 1024, 2048, 4096", date: "2026-11-09"}
+  - {metric: "speedup over aiter, AKLR validate profile 19, per Point", value: "1.156–1.257 at m 256–1024; m 2048 (0.999) and 4096 (0.982) dropped from the file", gpu: MI355X, workload: "gemm_n6144_k1536 kernel of file d98f240e6ff6c6bb, measured as an earlier file with the same kernel, m 256, 512, 1024, 2048, 4096", date: "2026-11-09"}
 sources:
-  - aklr/ops/gemm/impls/flydsl/gemm_n2048_k2048/8da6be976ff855b0.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n3584_k512/1fbaf19b1c4fdb45.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n7168_k512/04da38be4d3af890.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n28672_k512/ce4647f84b8de43b.json
-  - aklr/ops/gemm/impls/flydsl/gemm_n6144_k1536/f665d33c162100b7.json
+  - aklr/ops/gemm/impls/flydsl/gemm_n2048_k2048/5a9a1fa180113692.json
+  - aklr/ops/gemm/impls/flydsl/gemm_n3584_k512/ecae7e3c4af063b2.json
+  - aklr/ops/gemm/impls/flydsl/gemm_n7168_k512/869d8015b4aaff53.json
+  - aklr/ops/gemm/impls/flydsl/gemm_n28672_k512/1bb4b87c023603b1.json
+  - aklr/ops/gemm/impls/flydsl/gemm_n6144_k1536/d98f240e6ff6c6bb.json
 ---
 
 # bf16 GEMM at m 256–4096: whole-K tiles on one round, persistent past it
@@ -91,7 +91,7 @@ Shared:
   order.
 - **Kernel arguments preloaded** into SGPRs (`amdgpu-kernarg-preload-count`), except N 28672 at m 2048.
 
-**N 2048 × K 2048** (`8da6be97…`), BK 64, 256 workgroups, each XCD a box of tiles:
+**N 2048 × K 2048** (`5a9a1fa1…`), BK 64, 256 workgroups, each XCD a box of tiles:
 
 | m | Tile | Waves | Ring | First K tile | Loop |
 |---|---|---|---|---|---|
@@ -110,7 +110,7 @@ Shared:
   refill DMAs are cut into segments between them (`../gemm/schedule_and_locality.md` §3). B's rows are permuted in the
   fill so a lane's fragments 2j and 2j + 1 hold adjacent columns: one 4 B store per pair (`../gemm/epilogue.md` §3).
 
-**N 3584 × K 512** (`1fbaf19b…`), one tile per workgroup, B first in the MFMA, an unrolled K loop with the next K
+**N 3584 × K 512** (`ecae7e3c…`), one tile per workgroup, B first in the MFMA, an unrolled K loop with the next K
 step's fragments read ahead, C stored `sc1`; each XCD takes a contiguous run of tiles, 4 (8 at m 2048) M-tiles at a
 time; every stage barrier also waits `lgkmcnt(0)`:
 
@@ -122,7 +122,7 @@ time; every stage barrier also waits `lgkmcnt(0)`:
 | 2048 | 128×224, 4 × 2 | 64; 3 | 256 | the last slice staged one row group at a time in a stage it freed, two buffers alternating | refills issued after the slice's first fragment reads, A's spread between MFMA row groups |
 | 4096 | 256×224, 4 × 2 | 64; A 3, B 2 | 256 | as m 2048 | |
 
-**N 7168 × K 512** (`04da38be…`):
+**N 7168 × K 512** (`869d8015…`):
 - m 256, 512, `_build_large`: 64×128 tiles with 2 × 2 waves, BK 128, 3 stages (m 256); 128×128 with 4 × 2 waves,
   BK 64, 4 stages (m 512); 224 workgroups. A first in the MFMA with B's LDS rows filled from permuted rows, so a lane's
   fragments are adjacent columns and C goes out from registers, 8 B per lane, `sc1`; the last K block runs one M step
@@ -138,7 +138,7 @@ time; every stage barrier also waits `lgkmcnt(0)`:
   fewer start 120 `s_sleep` units late, so that their stores land mid-way through the others' second tile (the code's
   comment).
 
-**N 28672 × K 512** (`ce4647f8…`): 256-column tiles, 128 rows at m 256 and 256 rows above, BK 64, eight waves
+**N 28672 × K 512** (`1bb4b87c…`): 256-column tiles, 128 rows at m 256 and 256 rows above, BK 64, eight waves
 (2 × 4), `waves_per_eu` 2; B first in the MFMA; C staged per wave through swizzled LDS and stored 16 B per lane.
 
 | m | Work | Workgroups | Stages A / B | C |
@@ -157,7 +157,7 @@ time; every stage barrier also waits `lgkmcnt(0)`:
 - The tail body's lane values come from an opaque copy of the thread id made after the head loop, so none of them is
   kept live across it.
 
-**N 6144 × K 1536** (`f665d33c…`), `_build_tiled`, 256 workgroups in launch order, BK and stages per m, B loaded
+**N 6144 × K 1536** (`d98f240e…`), `_build_tiled`, 256 workgroups in launch order, BK and stages per m, B loaded
 `sc0 nt` and A `sc0`, B first in the MFMA, C staged in LDS at a padded row stride and stored 16 B with `sc1`:
 
 | m | Tile | BK, stages | Waves | Loop options |
@@ -175,11 +175,11 @@ time; every stage barrier also waits `lgkmcnt(0)`:
 
 | File | Points | Speedup over aiter | Highest |
 |---|---|---|---|
-| N 2048 × K 2048 `8da6be97…` *(field, E1)* | m 256–4096 | 1.041–1.231 | 1.231 at m 512 |
-| N 3584 × K 512 `1fbaf19b…` *(field, E2)* | m 256–4096 | 1.358–1.625 | 1.625 at m 256 |
-| N 7168 × K 512 `04da38be…` *(field, E3)* | m 256–4096 | 1.164–1.816 | 1.816 at m 1024 |
-| N 28672 × K 512 `ce4647f8…` *(field, E4)* | m 256–4096 | 1.173–1.452 | 1.452 at m 2048 |
-| N 6144 × K 1536 `f665d33c…` *(field, E5)* | m 256–1024 | 1.156–1.257 | 1.257 at m 256 |
+| N 2048 × K 2048 `5a9a1fa1…` *(field, E1)* | m 256–4096 | 1.041–1.231 | 1.231 at m 512 |
+| N 3584 × K 512 `ecae7e3c…` *(field, E2)* | m 256–4096 | 1.358–1.625 | 1.625 at m 256 |
+| N 7168 × K 512 `869d8015…` *(field, E3)* | m 256–4096 | 1.164–1.816 | 1.816 at m 1024 |
+| N 28672 × K 512 `1bb4b87c…` *(field, E4)* | m 256–4096 | 1.173–1.452 | 1.452 at m 2048 |
+| N 6144 × K 1536 `d98f240e…` *(field, E5)* | m 256–1024 | 1.156–1.257 | 1.257 at m 256 |
 
 Every Point passed accuracy.
 
@@ -188,7 +188,7 @@ Every Point passed accuracy.
 On an MI355X, from the repository root, one file at a time:
 
 ```
-python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n7168_k512/04da38be4d3af890.json
+python -m aklr validate aklr/ops/gemm/impls/flydsl/gemm_n7168_k512/869d8015b4aaff53.json
 ```
 
 and the same for the other paths under `sources`. The report goes to `aklr_validation/report.md`
@@ -210,17 +210,17 @@ example a wrong output of N 3584 at m 256 on a stream with few free CUs (§ Coun
 AKLR validate at 0e02a81, measurement profile 19, one-sided lower bound of the aiter / kernel time ratio over 16
 rounds of CUDA-graph replays with L2 flushed before each call, one MI355X, aiter 0.1.21.dev66+gdbd8bf5bd.
 
-- E1 [2026-11, gfx950, FlyDSL 0.3.2, N=16, AKLR validate profile 19] the predecessor of 8da6be976ff855b0, which differs only in passing the stream of the input's device: 1.214, 1.231, 1.224, 1.071, 1.041 at m 256, 512, 1024, 2048, 4096; accuracy passed (gemm_n2048_k2048)
-- E2 [2026-11, gfx950, FlyDSL 0.3.2, N=16, AKLR validate profile 19] 1fbaf19b1c4fdb45: 1.625, 1.527, 1.358, 1.538, 1.372 at m 256, 512, 1024, 2048, 4096; accuracy passed (gemm_n3584_k512)
-- E3 [2026-11, gfx950, FlyDSL 0.3.2, N=16, AKLR validate profile 19] 04da38be4d3af890: 1.164, 1.369, 1.816, 1.366, 1.323 at m 256, 512, 1024, 2048, 4096; accuracy passed (gemm_n7168_k512)
-- E4 [2026-11, gfx950, FlyDSL 0.3.2, N=16, AKLR validate profile 19] ce4647f84b8de43b: 1.339, 1.408, 1.298, 1.452, 1.173 at m 256, 512, 1024, 2048, 4096; accuracy passed (gemm_n28672_k512)
-- E5 [2026-11, gfx950, FlyDSL 0.3.2, N=16, AKLR validate profile 19] an earlier file with the same kernel as f665d33c162100b7: 1.257, 1.172, 1.156, 0.999, 0.982 at m 256, 512, 1024, 2048, 4096; m 2048 and 4096 demoted `not_faster`; accuracy passed (gemm_n6144_k1536)
+- E1 [2026-11, gfx950, FlyDSL 0.3.2, N=16, AKLR validate profile 19] the predecessor of 5a9a1fa180113692, which differs only in passing the stream of the input's device: 1.214, 1.231, 1.224, 1.071, 1.041 at m 256, 512, 1024, 2048, 4096; accuracy passed (gemm_n2048_k2048)
+- E2 [2026-11, gfx950, FlyDSL 0.3.2, N=16, AKLR validate profile 19] ecae7e3c4af063b2: 1.625, 1.527, 1.358, 1.538, 1.372 at m 256, 512, 1024, 2048, 4096; accuracy passed (gemm_n3584_k512)
+- E3 [2026-11, gfx950, FlyDSL 0.3.2, N=16, AKLR validate profile 19] 869d8015b4aaff53: 1.164, 1.369, 1.816, 1.366, 1.323 at m 256, 512, 1024, 2048, 4096; accuracy passed (gemm_n7168_k512)
+- E4 [2026-11, gfx950, FlyDSL 0.3.2, N=16, AKLR validate profile 19] 1bb4b87c023603b1: 1.339, 1.408, 1.298, 1.452, 1.173 at m 256, 512, 1024, 2048, 4096; accuracy passed (gemm_n28672_k512)
+- E5 [2026-11, gfx950, FlyDSL 0.3.2, N=16, AKLR validate profile 19] an earlier file with the same kernel as d98f240e6ff6c6bb: 1.257, 1.172, 1.156, 0.999, 0.982 at m 256, 512, 1024, 2048, 4096; m 2048 and 4096 demoted `not_faster`; accuracy passed (gemm_n6144_k1536)
 - E6 [2026-11, gfx950, FlyDSL 0.3.2, N=16, the run of E5] per-round times, kernel against aiter: m 2048 (`torch.matmul`) 35.20–35.28 against 35.19–35.28 µs; m 4096 67.46–67.89 against 66.40–66.65 (`candidate_milliseconds`, `versus_milliseconds`)
 - E7 [2026-11, gfx950, FlyDSL 0.3.2, N=3, the campaign driver's graph timer, medians of 3–9 readings (first run) and of 4 (later run), `torch.matmul` re-timed in the same runs] N 6144 × K 1536 at m 2048: 256×192, 128×192, 128×96, 128×256, 256×128 and 128×128 tiles at 2–4 stages read 38.35–55.89 µs against `torch.matmul` 33.97–34.07; later the 256×192 two-stage row with A first, read order and `soffset` 36.91 against 34.08
 - E8 [2026-11, gfx950, FlyDSL 0.3.2, N=20, the campaign's forge driver `--stress` and its 20-run probe per condition on streams limited to 16 and 64 CUs] N 3584 × K 512, m 256, an earlier build (64×64, BK 64, A 5 / B 4 slots, C staged through LDS): the stress check failed on 16 CUs, and the probe gave 2 bad runs, with and without the row guard; the symmetric ring, separate depths with C from registers, 32×112 with separate depths, and m 1024 either way gave 0; cause not found; the `lgkmcnt(0)` fence on every stage barrier kept in the next round, where the probe was not rerun
-- E9 [2026-11, gfx950, FlyDSL 0.3.2, N=20, eager and op-level CUDA-graph stress on one MI355X, main 0e02a81 with each schema, each try compared byte for byte with an eager call alone] the predecessor of 8da6be976ff855b0 (E1), 1fbaf19b1c4fdb45, 04da38be4d3af890, ce4647f84b8de43b and f665d33c162100b7, every listed Point: the forge driver's conditions (streams limited to 16 and 64 CUs; a second concurrent call on the same inputs) and one captured graph replayed on the same inputs, 20 tries each; one graph replayed 24 times with three AKLR input sets rotated into its buffers; two calls at once on two streams with different inputs, unrestricted and both on the same 64 CUs, 20 tries each: 0 tries differ, no hang
-- S1 aklr/ops/gemm/impls/flydsl/gemm_n2048_k2048/8da6be976ff855b0.json#kernel.py:28 `_ROUTE` per m; XCD box at :116-124; prefetch wave at :199-229; per-wave loop at :277-306; fenced ping-pong at :307-379; permuted B rows (`PAIR`) at :98 and :164-172; `torch.matmul` for other m at :458-463
-- S2 aklr/ops/gemm/impls/flydsl/gemm_n3584_k512/1fbaf19b1c4fdb45.json#kernel.py:34 `_CONFIGS` per m (knobs at :185-216); `lgkmcnt(0)` on every stage barrier at :253-255; XCD runs at :382-421; K start half-way on XCDs 4–7 at :430-435; B first in the MFMA at :618; LDS-staged and direct C stores at :942 and :985
-- S3 aklr/ops/gemm/impls/flydsl/gemm_n7168_k512/04da38be4d3af890.json#kernel.py:30 `_CONFIGS` and `_ROW_LLVM` (:40); permuted B rows at :126; `_build_large` store at :377-389; `_build_pipe` at :439 (grid and persistence at :473-475, XCD runs at :528-540, late start at :851-856)
-- S4 aklr/ops/gemm/impls/flydsl/gemm_n28672_k512/ce4647f84b8de43b.json#kernel.py:32 `_STAGGER`, `_SPLIT_PLAN` (:45), `_STRIDED_GM` (:48); `_plan` at :67; C store policy at :243; tile maps at :298-339; staggered start at :634-637; opaque thread id for the tail at :673-683; `torch.matmul` below m 256 at :712-715
-- S5 aklr/ops/gemm/impls/flydsl/gemm_n6144_k1536/f665d33c162100b7.json#kernel.py:23 `_CONFIGS` (m 256, 512, 1024, 4096); `_library` (`torch.matmul`) at :78 for any other m (:83-86); B `sc0 nt` at :135; 32×32×16 MFMA for the m 4096 row at :225; padded C stride at :175; kernarg preload at :529
+- E9 [2026-11, gfx950, FlyDSL 0.3.2, N=20, eager and op-level CUDA-graph stress on one MI355X, main 0e02a81 with each schema, each try compared byte for byte with an eager call alone] the predecessor of 5a9a1fa180113692 (E1), ecae7e3c4af063b2, 869d8015b4aaff53, 1bb4b87c023603b1 and d98f240e6ff6c6bb, every listed Point: the forge driver's conditions (streams limited to 16 and 64 CUs; a second concurrent call on the same inputs) and one captured graph replayed on the same inputs, 20 tries each; one graph replayed 24 times with three AKLR input sets rotated into its buffers; two calls at once on two streams with different inputs, unrestricted and both on the same 64 CUs, 20 tries each: 0 tries differ, no hang
+- S1 aklr/ops/gemm/impls/flydsl/gemm_n2048_k2048/5a9a1fa180113692.json#kernel.py:28 `_ROUTE` per m; XCD box at :116-124; prefetch wave at :199-229; per-wave loop at :277-306; fenced ping-pong at :307-379; permuted B rows (`PAIR`) at :98 and :164-172; `torch.matmul` for other m at :458-463
+- S2 aklr/ops/gemm/impls/flydsl/gemm_n3584_k512/ecae7e3c4af063b2.json#kernel.py:34 `_CONFIGS` per m (knobs at :185-216); `lgkmcnt(0)` on every stage barrier at :253-255; XCD runs at :382-421; K start half-way on XCDs 4–7 at :430-435; B first in the MFMA at :618; LDS-staged and direct C stores at :942 and :985
+- S3 aklr/ops/gemm/impls/flydsl/gemm_n7168_k512/869d8015b4aaff53.json#kernel.py:30 `_CONFIGS` and `_ROW_LLVM` (:40); permuted B rows at :126; `_build_large` store at :377-389; `_build_pipe` at :439 (grid and persistence at :473-475, XCD runs at :528-540, late start at :851-856)
+- S4 aklr/ops/gemm/impls/flydsl/gemm_n28672_k512/1bb4b87c023603b1.json#kernel.py:32 `_STAGGER`, `_SPLIT_PLAN` (:45), `_STRIDED_GM` (:48); `_plan` at :67; C store policy at :243; tile maps at :298-339; staggered start at :634-637; opaque thread id for the tail at :673-683; `torch.matmul` below m 256 at :712-715
+- S5 aklr/ops/gemm/impls/flydsl/gemm_n6144_k1536/d98f240e6ff6c6bb.json#kernel.py:23 `_CONFIGS` (m 256, 512, 1024, 4096); `_library` (`torch.matmul`) at :78 for any other m (:83-86); B `sc0 nt` at :135; 32×32×16 MFMA for the m 4096 row at :225; padded C stride at :175; kernarg preload at :529

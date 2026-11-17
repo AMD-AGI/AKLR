@@ -9,12 +9,12 @@ gens: [gfx950]
 flydsl: 0.3.2
 basis: measured N=1
 sources:
-  - aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/4fbd9d02b4c053c7.json
+  - aklr/ops/fused_moe/impls/flydsl/fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/5d5b47d0fbd5c2ba.json
 ---
 
 # MXFP4 fused MoE at 8–64 tokens: one graph node less
 
-The kernel this page reads from is the schema file `4fbd9d02b4c053c7.json` of
+The kernel this page reads from is the schema file `5d5b47d0fbd5c2ba.json` of
 `fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256`: `fused_moe@1.0` with MXFP4 weights and
 activations (E8M0 scale per 32), 257 experts, top-9, model dim 6144, inter dim 256, SiLU with a separate gate, at 8,
 16, 32 and 64 tokens. Its sources are `kernel.py` (the entry), `g1_fold.py` (stage 1) and `g2_port.py` (stage 2);
@@ -111,7 +111,7 @@ In FlyDSL: `../flydsl/moe.md` § few_tokens How to write it.
 ## Counter-signals
 
 - **1 and 2 tokens.** The kernel is not built there (`kernel.py:61`). The other file of the schema name,
-  `1fee59821837c26f.json`, runs two launches with no sort at all, one set of workgroups per route, and was served at
+  `f13fecf15dbe0a9d.json`, runs two launches with no sort at all, one set of workgroups per route, and was served at
   2.472 and 1.990 in the predecessor repository's CI (2026-10) *(field, E6)*.
 - **4 tokens, and 128 or more.** Not built folded, so not measured. The source had no folded build at 4 tokens, and
   its unfolded path calls aiter's C++ MXFP4 sort, which an AKLR kernel does not call (S2). At 128 or more the
@@ -129,7 +129,7 @@ In FlyDSL: `../flydsl/moe.md` § few_tokens How to write it.
 - **What aiter runs there.** The baseline aiter's table picks its inline-quantizing `f16in` stage 1 for 4–128
   tokens of this shape and a pre-quantized-activation stage 1 at 1 and 2 (S6).
 - **A bitwise contract.** The atomic stage 2 adds a token's 9 rows in arrival order. Use a fixed-order stage 2 there,
-  for example one wave per route and an LDS sum in route order, as `1fee59821837c26f.json` does at 1–2 tokens
+  for example one wave per route and an LDS sum in route order, as `f13fecf15dbe0a9d.json` does at 1–2 tokens
   (`grouped_sorted_tokens.md` §6, `../gemm/correctness.md` §8).
 
 ## How to confirm it took effect
@@ -167,14 +167,14 @@ contents' lines.
 - E2 [2026-10, gfx950, FlyDSL ?, N=?, AKLR bench_cudagraph in an in-process harness] a fully empty kernel, timed in place of the GEMM, read 4.21 µs at m = 8 (a dense bf16 GEMM forge run, gemm_n2112_k7168)
 - E3 [2026-10, gfx950, HIP, N=5, bench_cudagraph: graph replay, 1 GiB flush per call, median of 5 rounds] an add + RMSNorm HIP kernel read 3.93–4.04 µs at m 1, 2, 4, 8, 12, 16, 32, 64, 128, 256 with hidden 6144; aiter's 4.04–4.46 µs (add + RMSNorm)
 - E4 [2026-10, gfx950, FlyDSL 0.3.2, N=1, AKLR validator bench stage outside CI: one-sided lower bound over graph-replay rounds, L2 flushed per call] 1.1220, 1.0786, 1.0987, 1.0805 at 8, 16, 32, 64 tokens (an earlier schema, the same sources before the `author` field)
-- E5 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI, 2026-10; the file's current values differ] speedup over aiter 1.129, 1.087, 1.117, 1.090 at 8, 16, 32, 64 tokens (fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/4fbd9d02b4c053c7)
-- E6 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI, 2026-10; the file's current values differ] speedup over aiter 2.472 at 1 token and 1.990 at 2 (fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/1fee59821837c26f)
+- E5 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI, 2026-10; the file's current values differ] speedup over aiter 1.129, 1.087, 1.117, 1.090 at 8, 16, 32, 64 tokens (fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/5d5b47d0fbd5c2ba)
+- E6 [2026-10, gfx950, FlyDSL 0.3.2, N=1, the predecessor repository's CI, 2026-10; the file's current values differ] speedup over aiter 2.472 at 1 token and 1.990 at 2 (fused_moe_shuffled_16x16_model_dim6144_n_experts257_topk9_inter_dim256/f13fecf15dbe0a9d)
 - E7 [2026-10, gfx950, FlyDSL 0.3.2, N=3, three of the bench's input sets per token count, SQNR of the bf16 outputs] port vs aiter 45.88–49.89 dB, source vs aiter 45.85–51.88, port vs source 48.49–51.53, port run 2 vs run 1 48.35–51.87 at 8, 16, 32, 64 tokens
 - E8 [2026-10, gfx950, FlyDSL 0.3.2, N=1 per arm, graph-timer driver bench (warmup 3, 20 iterations), arms back to back in one session; prelude time from Kineto] separate prelude 3.9 / 4.7 / 4.7 / 5.1 / 5.4 µs at 8 / 12 / 16 / 24 / 32 tokens; folded with every row of the block quantized: 54.37 / 72.75 / 87.59 / 116.84 / 141.47 against 53.40 / 72.03 / 87.39 / 115.39 / 138.34 µs; folded with only rows 0–15 loaded and quantized into LDS (plus a swizzle at 8 tokens and one weight tile in flight at 12): 51.29 / 71.14 / 87.70 against 53.46 / 72.72 / 88.07 µs at 8 / 12 / 16 tokens; all 32 rows quantized into LDS read 58.62 / 84.02 / 93.88 against 51.82 / 72.08 / 89.46 µs (Kineto); the kept fold +1.07% of the score in a paired ablation (fp8-activation × MXFP4 SiTUv2 fused MoE, 896 experts, top-16, inter 384, model dim 3584)
 - E9 [2026-10, gfx950, FlyDSL 0.3.2, N=1–2, graph-timer driver bench (warmup 3, 20 iterations), one session] the sort chain (mask clear to placement barrier) run twice per stage-1 workgroup: +0.64 / +0.94 / +0.39 / +1.60 / +1.09 µs over 49.86 / 67.78 / 83.09 / 109.90 / 135.88 µs at 8 / 12 / 16 / 24 / 32 tokens; a per-wave sort with ballot, DPP prefix and no barrier on the load path: 50.15 / 67.67 / 83.38 / 110.92 / 136.38 µs, the same in a second bench (same kernel as E8)
 - E10 [2026-10, gfx950, FlyDSL 0.3.2, N=1, AKLR graph timer (bench_cudagraph, L2 flushed per replay), median of the readings; per-kernel times from Kineto after a flush] sort, token quant and `out` zeroing folded into stage 1, grid y = min(upper-bound m-blocks, 112): 80.66 / 83.84 / 110.13 / 128.70 / 175.01 µs against 45.66 / 62.58 / 97.07 / 119.84 / 169.06 at 8 / 12 / 16 / 24 / 32 tokens; stage 1 at 8 tokens 78.9 µs folded, 43.4 with an exact host-computed grid, against 38.0 + 4.6 µs sort (a8w4 SiTUv2 MoE, 112 of 896 experts local, top-16, model dim 3584, inter 3072)
 - E11 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=9, CUDA-graph replay of 20 back-to-back calls without a flush, arms alternated, ratios paired per round; per-kernel times from Kineto] the fold (stage 1 rebuilds the sort and quantizes only the live rows; stage 2 at 16 rows per block) against the same file's 4.64–5.00 µs prelude kernel with the unfolded stage 1: 10.2% / 8.3% / 6.6% / 5.0% / 4.9% less at 8 / 12 / 16 / 24 / 32 tokens; stage 2 1.28 / 1.48 / 0.98 µs of the 5.10 / 5.42 / 6.54 µs difference at 8 / 12 / 16 tokens (fused_moe_situv2_act_quant8_gate_up_interleaved_model_dim3584_n_experts896_topk16_inter_dim384/033eff70aa1f4ee2)
-- E12 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=8 / 6 / 5 rounds; back-to-back replay of a 20-call graph without a flush, and AKLR bench_cudagraph at measurement profiles 19 and 18; differences paired per round] the folded kernel with aiter's MXFP4 sort node (`mxfp4_moe_sort`) in front minus the folded kernel alone, at 8–64 tokens: back to back 2.80–5.82 µs, profile 19 3.96–6.03, profile 18 3.85–5.80 (4fbd9d02b4c053c7)
+- E12 [2026-11, gfx950 (MI355X), FlyDSL 0.3.2, aiter dbd8bf5, N=8 / 6 / 5 rounds; back-to-back replay of a 20-call graph without a flush, and AKLR bench_cudagraph at measurement profiles 19 and 18; differences paired per round] the folded kernel with aiter's MXFP4 sort node (`mxfp4_moe_sort`) in front minus the folded kernel alone, at 8–64 tokens: back to back 2.80–5.82 µs, profile 19 3.96–6.03, profile 18 3.85–5.80 (5d5b47d0fbd5c2ba)
 - S1 g1_fold.py:131 the source's note: the fold does, inside stage 1's block head, the work of a separate `moe_sort_quant` graph node, the 257-expert padded sort and the zero-init of the [M, D_HIDDEN] bf16 `moe_buf`; two FlyDSL kernels instead of aiter's sort + stage 1 + stage 2
 - S2 the AgentX deployment's fused-MoE seam (not public) folds only at M in {6, 12, …, 42} and otherwise calls aiter's `_fused_moe_impl`, whose sort is `aiter.mxfp4_moe_sort` (`aiter/fused_moe.py:161` of the baseline); the baseline's `aiter/ops/flydsl/moe_sorting.py:4-8` is a drop-in for `moe_sorting_fwd`, with the same signature
 - S3 g1_fold.py:1938 head steps b–f; histogram atomics at :1968, scans at :2018 and :2146
