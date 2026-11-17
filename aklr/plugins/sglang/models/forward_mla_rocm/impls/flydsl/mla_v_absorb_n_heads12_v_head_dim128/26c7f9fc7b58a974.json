@@ -103,7 +103,7 @@
       }
     ],
     "requires": {
-      "flydsl": ">=0.4.2"
+      "flydsl": ">=0.3.2"
     },
     "author": "Hyperloom",
     "entry_point": "kernel.py::run",
