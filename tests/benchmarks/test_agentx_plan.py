@@ -9,6 +9,7 @@ import importlib
 import io
 import json
 import os
+import re
 import sys
 import tempfile
 import unittest
@@ -619,6 +620,8 @@ class AgentXPlanTests(AgentXRecipeTestCase):
         self.assertEqual(plan.requested_models("", enabled), ("", []))
         self.assertEqual(plan.requested_models("- /agentx-mi355x first\n", enabled), ("", []))
         self.assertEqual(plan.requested_models("AgentX: first\n", enabled), ("", []))
+        self.assertEqual(plan.requested_models("    /agentx-mi355x first\n", enabled), ("", []))
+        self.assertEqual(plan.requested_models(" /agentx-mi355x first\n", enabled), ("", []))
 
     def test_comment_matches_model_ids_ignoring_case(self):
         enabled = ["glm52-fp4", "minimaxm31flash-fp4"]
@@ -635,6 +638,9 @@ class AgentXPlanTests(AgentXRecipeTestCase):
             [{"user": "author", "body": "/agentx-mi355x all"}],
             [{"user": "RuibinCheung", "body": "Looks good.\n/agentx-mi355x first"}],
             [{"user": "RuibinCheung", "body": "/agentx-mi355xfirst"}],
+            [{"user": "RuibinCheung", "body": "    /agentx-mi355x all"}],
+            [{"user": "RuibinCheung", "body": "\t/agentx-mi355x all"}],
+            [{"user": "RuibinCheung", "body": "```\n/agentx-mi355x all\n```"}],
             [{"user": "RuibinCheung", "body": "LGTM"}, {"user": "someone", "body": "/agentx-mi355x first"}],
         )
         for comments in unauthorized:
@@ -748,6 +754,27 @@ class AgentXPlanTests(AgentXRecipeTestCase):
             resolve["env"]["MANUAL_ACTOR"],
             "${{ github.event_name == 'workflow_dispatch' && github.triggering_actor || '' }}",
         )
+        main_allowlist = next(step for step in steps if step.get("name") == "Read main's AgentX allowlist")
+        self.assertEqual(main_allowlist["if"], "github.event_name != 'schedule'")
+        self.assertIn("contents/benchmarks/agentx/allowlist.yaml?ref=main", main_allowlist["run"])
+        self.assertIn('> "$RUNNER_TEMP/allowlist.yaml"', main_allowlist["run"])
+        self.assertIn('--allowlist "$RUNNER_TEMP/$ALLOWLIST"', resolve["run"])
+
+    def test_workflow_queue_allowlist_matches_the_allowlist_file(self):
+        group = yaml.safe_load((AGENTX.parents[1] / ".github/workflows/agentx-ci.yaml").read_text())[
+            "concurrency"
+        ]["group"]
+        lists = re.findall(r"fromJSON\('(\[[^']*\])'\),\s*github\.triggering_actor\)", group)
+        self.assertEqual(len(lists), 1)
+        self.assertEqual(json.loads(lists[0]), plan.load_reviewers())
+        self.assertIn("github.ref != 'refs/heads/main'", group)
+        self.assertIn("format('agentx-refused-{0}', github.run_id)", group)
+
+    def test_sweep_and_report_need_this_attempts_plan(self):
+        jobs = yaml.safe_load((AGENTX.parents[1] / ".github/workflows/agentx-ci.yaml").read_text())["jobs"]
+        self.assertEqual(jobs["plan"]["outputs"]["attempt"], "${{ github.run_attempt }}")
+        for job in ("sweep", "report"):
+            self.assertIn("needs.plan.outputs.attempt == github.run_attempt", jobs[job]["if"])
 
     def test_smoke_points_narrow_the_selection(self):
         full = self.serving_of_built()

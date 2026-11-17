@@ -24,7 +24,7 @@ Solid arrows show job execution order; dashed arrows show artifact uploads and r
 
 ### 1.1 Trigger with a GitHub Runner
 
-Open the [AKLR-agentx-ci workflow](https://github.com/AMD-AGI/AKLR/actions/workflows/agentx-ci.yaml), click **Run workflow**; only the reviewers in `allowlist.yaml` may start or re-run a manual run, and only from `main`. Fill in the parameters below and click **Run workflow** in the form. See section 4 for runner registration and setup.
+Open the [AKLR-agentx-ci workflow](https://github.com/AMD-AGI/AKLR/actions/workflows/agentx-ci.yaml), click **Run workflow**; only the reviewers in `main`'s `allowlist.yaml` may start or re-run a manual run, and only from `main`; re-run with **Re-run all jobs**, since a re-run that reuses the plan skips the sweep. Fill in the parameters below and click **Run workflow** in the form. See section 4 for runner registration and setup.
 
 The form has **6 workflow inputs**, plus GitHub's **Branch / Use workflow from** selector: 7 settings in total. All 6 inputs can be left at their defaults.
 
@@ -51,7 +51,7 @@ Notes:
 - Opening a PR, pushing new commits to it, or reopening it triggers a run when it carries this label. A label event starts AgentX tests only when the newly added label is `ci:agentx-mi355x`.
 - Pushing new commits while keeping the label triggers a new run and automatically cancels that PR's running or queued AgentX run.
 - A reviewer in `allowlist.yaml` authorizes the run and picks its models with a PR comment whose first line is `/agentx-mi355x` followed by model ids in `agentx.yaml`, ignoring case, separated by commas or spaces, such as `/agentx-mi355x glm52-fp4, minimaxm31flash-fp4`; `/agentx-mi355x all`, with `all` as the only name, runs every enabled model.
-- A comment does not start a run. After a reviewer comments, re-run the workflow or push a new commit. The authorization stays with the PR, so later commits run under the same request until a reviewer comments again.
+- A comment does not start a run. After a reviewer comments, re-run all jobs or push a new commit. Authorization uses `main`'s `allowlist.yaml`, so a PR that edits the list takes effect only after it merges. The authorization stays with the PR, so later commits run under the same request until a reviewer comments again.
 
 ### 1.3 Scheduled Runs
 

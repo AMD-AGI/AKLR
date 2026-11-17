@@ -22,7 +22,7 @@ flowchart TD
 
 ### 1.1 使用 Github runner 触发
 
-打开 [AKLR-agentx-ci workflow](https://github.com/AMD-AGI/AKLR/actions/workflows/agentx-ci.yaml)，点击 **Run workflow**，只有 `allowlist.yaml` 中的 reviewer 可以手动运行或 re-run，且只能选择 `main`。填写下面的参数，再点击表单中的 **Run workflow**。runner 的注册与准备见第 4 节。
+打开 [AKLR-agentx-ci workflow](https://github.com/AMD-AGI/AKLR/actions/workflows/agentx-ci.yaml)，点击 **Run workflow**，只有 `main` 上 `allowlist.yaml` 中的 reviewer 可以手动运行或 re-run，且只能选择 `main`；重跑请用 **Re-run all jobs**，沿用旧 plan 的重跑会跳过 sweep。填写下面的参数，再点击表单中的 **Run workflow**。runner 的注册与准备见第 4 节。
 
 表单共有 **6 个 workflow 输入项**，另有 GitHub 提供的 **Branch / Use workflow from** 选择器，合计 7 项设置；6 个输入项均可保留默认值。
 
@@ -48,7 +48,7 @@ flowchart TD
 - PR 创建、更新提交、重新打开时，如果保留该标签，就会触发运行。添加标签时，只有新增的标签正是 `ci:agentx-mi355x` 才会启动 AgentX 测试。
 - 保留标签后推送新提交会触发新的 run，该 PR 正在运行或排队的 AgentX run 会被自动取消。
 - 由 `allowlist.yaml` 中的 reviewer 在 PR 下发评论授权并指定模型：评论第一行以 `/agentx-mi355x` 开头，后面跟 `agentx.yaml` 中的模型 id（不区分大小写），以逗号或空格分隔，例如 `/agentx-mi355x glm52-fp4, minimaxm31flash-fp4`；只写 `/agentx-mi355x all`（`all` 是唯一的名字）则运行全部已启用模型。
-- 评论本身不会触发运行。reviewer 评论后，需要 re-run workflow 或推送新提交。授权跟随 PR，之后的提交沿用同一请求，直到 reviewer 再次评论。
+- 评论本身不会触发运行。reviewer 评论后，需要 Re-run all jobs 或推送新提交。授权以 `main` 上的 `allowlist.yaml` 为准，PR 中对名单的修改合入后才生效。授权跟随 PR，之后的提交沿用同一请求，直到 reviewer 再次评论。
 
 ### 1.3 定时运行
 

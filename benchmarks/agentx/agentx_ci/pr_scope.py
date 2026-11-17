@@ -30,9 +30,13 @@ def load_reviewers(path: str | Path = ALLOWLIST_FILE) -> list[str]:
 
 
 def is_request(body: str) -> bool:
-    """Whether the comment's first line starts with the command, ignoring case."""
-    words = (body or "").splitlines()[0].split(maxsplit=1) if body else []
-    return bool(words) and words[0].lower() == COMMAND
+    """Whether the comment's first line starts with the command, ignoring case.
+
+    Leading whitespace refuses it: GitHub renders an indented line as code, such as a quoted example.
+    """
+    first = body.splitlines()[0] if body else ""
+    words = first.split(maxsplit=1)
+    return bool(words) and not first[0].isspace() and words[0].lower() == COMMAND
 
 
 def authorized_request(comments: list[dict], reviewers: list[str]) -> dict | None:
