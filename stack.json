@@ -1,6 +1,6 @@
 {
-  "sglang_image": "lmsysorg/sglang:v0.5.22-rocm10-mi35x",
-  "vllm_image": "vllm/vllm-openai-rocm:v0.33.0-rocm100",
-  "aiter_image": "lmsysorg/sglang:v0.5.22-rocm10-mi35x",
+  "sglang_image": "lmsysorg/sglang:v0.5.22-rocm10-mi35x@sha256:1438dd8b9000adaefb5828edb1cc5713992815d4296f4ad1a1e98dee4e9c7e5f",
+  "vllm_image": "vllm/vllm-openai-rocm:v0.33.0-rocm100@sha256:4fcd39b758b660c4e9c345c021e2ea8f0ccdb31e3c32507d676cc3005ae83fba",
+  "aiter_image": "lmsysorg/sglang:v0.5.22-rocm10-mi35x@sha256:1438dd8b9000adaefb5828edb1cc5713992815d4296f4ad1a1e98dee4e9c7e5f",
   "aiter": "dbd8bf5bd624120197a7a26780a8c72201824f0f"
 }

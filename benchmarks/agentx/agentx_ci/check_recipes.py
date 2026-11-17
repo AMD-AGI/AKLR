@@ -16,13 +16,11 @@ from agentx_ci import serving_config as sc
 from agentx_ci.model_config import ConfigError, model_config
 from agentx_ci.utils import DEFAULT_CONFIG, load_config
 
-# Rules only: plan's registry lookup is skipped, so runs get the CI tag with a placeholder digest.
-PLACEHOLDER_DIGEST = "sha256:" + "0" * 64
 LAYOUT = "<family>/<target>/<framework>/serving.<model>.json"
 
 
 def recipe_errors(
-    path: Path, config_path: Path, config: dict, validator: jsonschema.Validator, tags: dict[str, str]
+    path: Path, config_path: Path, config: dict, validator: jsonschema.Validator, images: dict[str, str]
 ) -> list[str]:
     """Return the rule violations of one file under recipes/; empty when plan would accept it."""
     parts = path.relative_to(config_path.parent / "recipes").parts
@@ -48,7 +46,7 @@ def recipe_errors(
         )
     ]
     try:
-        sc.build_run(recipe, definition, f"{tags[framework_id]}@{PLACEHOLDER_DIGEST}")
+        sc.build_run(recipe, definition, images[framework_id])
     except sc.RecipeError as error:
         errors.append(f"plan: {error}")
     except (TypeError, KeyError, AttributeError):
@@ -67,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         jsonschema.Draft202012Validator.check_schema(schema)
         sc.template()
         config = load_config(config_path)
-        tags = ci_image.ci_images()
+        images = ci_image.ci_images()
     except (OSError, ValueError, yaml.YAMLError, jsonschema.SchemaError) as error:
         print(f"AgentX recipe check cannot start: {error}", file=sys.stderr)
         return 1
@@ -78,7 +76,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     failed = 0
     for path in paths:
-        errors = recipe_errors(path, config_path, config, validator, tags)
+        errors = recipe_errors(path, config_path, config, validator, images)
         failed += bool(errors)
         for error in errors:
             print(f"{path.relative_to(config_path.parent)}: {error}", file=sys.stderr)

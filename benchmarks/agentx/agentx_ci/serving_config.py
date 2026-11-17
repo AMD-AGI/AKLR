@@ -21,7 +21,7 @@ SOURCE_LOCATORS = {"inferencex": "config_key", "cookbook": "url"}
 RECIPE_SCHEMA = Path(__file__).resolve().parents[1] / "recipes/serving.schema.json"
 # Shared by every recipe and fixed by maintainers in RECIPE_SCHEMA's $defs; plan copies them in.
 TEMPLATE_TOP = ("client", "trace")
-# The framework's CI image from stack.json; plan pins it and copies it in.
+# The framework's CI image, pinned by digest in stack.json; plan copies it in.
 CI_TOP = ("image",)
 # Identity owned by agentx.yaml; plan copies it in.
 AGENTX_TOP = ("model", "target", "framework", "weights", "hardware")
